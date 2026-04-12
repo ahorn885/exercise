@@ -1,0 +1,28 @@
+{% extends 'base.html' %}
+{% block title %}{{ 'Edit' if entry else 'Log' }} Body Metrics{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h4 class="mb-0">{{ 'Edit' if entry else 'Log' }} Body Metrics</h4>
+  <a href="{{ url_for('body.list_entries') }}" class="btn btn-sm btn-outline-secondary">← Back</a>
+</div>
+<form method="post">
+  <div class="row g-3 mb-3">
+    <div class="col-md-2"><label class="form-label">Date</label>
+      <input type="date" name="date" class="form-control" required value="{{ entry.date if entry else '' }}"></div>
+    <div class="col-md-2"><label class="form-label">Weight (lb)</label>
+      <input type="number" name="weight_lbs" class="form-control" step="0.1" value="{{ entry.weight_lbs if entry else '' }}"></div>
+    <div class="col-md-2"><label class="form-label">Body Fat %</label>
+      <input type="number" name="body_fat_pct" class="form-control" step="0.1" value="{{ entry.body_fat_pct if entry else '' }}"></div>
+    <div class="col-md-2"><label class="form-label">VO2 Max</label>
+      <input type="number" name="vo2_max" class="form-control" step="0.1" value="{{ entry.vo2_max if entry else '' }}"></div>
+    <div class="col-md-2"><label class="form-label">Resting HR</label>
+      <input type="number" name="resting_hr" class="form-control" value="{{ entry.resting_hr if entry else '' }}"></div>
+    <div class="col-md-4"><label class="form-label">Notes</label>
+      <input type="text" name="notes" class="form-control" value="{{ entry.notes if entry else '' }}"></div>
+  </div>
+  <div class="d-flex gap-2">
+    <button type="submit" class="btn btn-primary">{{ 'Update' if entry else 'Save' }}</button>
+    <a href="{{ url_for('body.list_entries') }}" class="btn btn-outline-secondary">Cancel</a>
+  </div>
+</form>
+{% endblock %}

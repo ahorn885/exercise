@@ -1,0 +1,37 @@
+{% extends 'base.html' %}
+{% block title %}Log Injury{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h4 class="mb-0">{{ 'Edit' if entry else 'Log' }} Injury</h4>
+  <a href="{{ url_for('injuries.list_entries') }}" class="btn btn-sm btn-outline-secondary">← Back</a>
+</div>
+<form method="post">
+  <div class="row g-3 mb-3">
+    <div class="col-md-2"><label class="form-label">Start Date</label>
+      <input type="date" name="start_date" class="form-control" required value="{{ entry.start_date if entry else '' }}"></div>
+    <div class="col-md-3"><label class="form-label">Body Part</label>
+      <select name="body_part" class="form-select">
+        {% for b in body_parts %}<option value="{{ b }}" {% if entry and entry.body_part == b %}selected{% endif %}>{{ b }}</option>{% endfor %}
+      </select></div>
+    <div class="col-md-2"><label class="form-label">Severity (1–5)</label>
+      <select name="severity" class="form-select">
+        <option value="">—</option>
+        {% for i in range(1,6) %}<option value="{{ i }}" {% if entry and entry.severity == i %}selected{% endif %}>{{ i }} - {% if i==1%}Minor{% elif i==2%}Mild{% elif i==3%}Moderate{% elif i==4%}Significant{% else %}Severe{% endif %}</option>{% endfor %}
+      </select></div>
+    <div class="col-md-2"><label class="form-label">Status</label>
+      <select name="status" class="form-select">
+        {% for s in statuses %}<option value="{{ s }}" {% if entry and entry.status == s %}selected{% endif %}>{{ s }}</option>{% endfor %}
+      </select></div>
+    <div class="col-md-2"><label class="form-label">Resolved Date</label>
+      <input type="date" name="resolved_date" class="form-control" value="{{ entry.resolved_date if entry and entry.resolved_date else '' }}"></div>
+  </div>
+  <div class="mb-3"><label class="form-label">Description</label>
+    <textarea name="description" class="form-control" rows="2">{{ entry.description if entry else '' }}</textarea></div>
+  <div class="mb-3"><label class="form-label">Modifications Needed</label>
+    <textarea name="modifications_needed" class="form-control" rows="2">{{ entry.modifications_needed if entry else '' }}</textarea></div>
+  <div class="d-flex gap-2">
+    <button type="submit" class="btn btn-primary">{{ 'Update' if entry else 'Save' }}</button>
+    <a href="{{ url_for('injuries.list_entries') }}" class="btn btn-outline-secondary">Cancel</a>
+  </div>
+</form>
+{% endblock %}

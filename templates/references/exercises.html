@@ -1,0 +1,41 @@
+{% extends 'base.html' %}
+{% block title %}Exercise Inventory{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h4 class="mb-0">Exercise Inventory ({{ rows|length }})</h4>
+  <input type="text" id="search" class="form-control form-control-sm w-auto" placeholder="Search...">
+</div>
+<div class="table-responsive">
+  <table class="table table-sm table-hover table-striped" id="ex-table">
+    <thead class="table-dark">
+      <tr><th>Exercise</th><th>Type</th><th>Discipline</th><th>Pattern</th><th>Recovery</th><th>Where</th><th>Suggested Vol</th></tr>
+    </thead>
+    <tbody>
+    {% for r in rows %}
+    <tr>
+      <td>
+        {% if r.video_reference %}<a href="{{ r.video_reference }}" target="_blank">{{ r.exercise }}</a>
+        {% else %}{{ r.exercise }}{% endif %}
+      </td>
+      <td><span class="badge {% if r.type == 'Staple' %}bg-primary{% else %}bg-secondary{% endif %}">{{ r.type }}</span></td>
+      <td>{{ r.discipline }}</td>
+      <td>{{ r.movement_pattern }}</td>
+      <td><span class="badge {% if r.recovery_cost == 'Low' %}bg-success{% elif r.recovery_cost == 'Med' %}bg-warning text-dark{% else %}bg-danger{% endif %}">{{ r.recovery_cost }}</span></td>
+      <td class="text-muted small">{{ r.where_available }}</td>
+      <td class="text-muted small">{{ r.suggested_volume }}</td>
+    </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+document.getElementById('search').addEventListener('input', function() {
+  const q = this.value.toLowerCase();
+  document.querySelectorAll('#ex-table tbody tr').forEach(row => {
+    row.style.display = row.textContent.toLowerCase().includes(q) ? '' : 'none';
+  });
+});
+</script>
+{% endblock %}

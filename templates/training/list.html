@@ -1,0 +1,77 @@
+{% extends 'base.html' %}
+{% block title %}Strength Log{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h4 class="mb-0">Strength Log</h4>
+  <a href="{{ url_for('training.new_entry') }}" class="btn btn-primary">+ Log Workout</a>
+</div>
+
+<form class="row g-2 mb-3" method="get">
+  <div class="col-auto">
+    <input type="date" name="date" class="form-control form-control-sm" value="{{ date_filter }}">
+  </div>
+  <div class="col-auto">
+    <select name="exercise" class="form-select form-select-sm">
+      <option value="">All exercises</option>
+      {% for ex in exercises %}
+        <option value="{{ ex.exercise }}" {% if ex.exercise == exercise_filter %}selected{% endif %}>{{ ex.exercise }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div class="col-auto">
+    <button class="btn btn-sm btn-outline-secondary" type="submit">Filter</button>
+    <a href="{{ url_for('training.list_entries') }}" class="btn btn-sm btn-outline-secondary">Clear</a>
+  </div>
+</form>
+
+{% if entries %}
+<div class="table-responsive">
+  <table class="table table-sm table-hover table-striped">
+    <thead class="table-dark">
+      <tr>
+        <th>Date</th><th>Exercise</th><th>Target</th><th>Actual</th>
+        <th>RPE</th><th>1RM</th><th>Vol</th><th>Outcome</th><th>Next Rx</th><th></th>
+      </tr>
+    </thead>
+    <tbody>
+    {% for e in entries %}
+    <tr>
+      <td class="text-nowrap">{{ e.date }}</td>
+      <td>{{ e.exercise }}</td>
+      <td class="text-nowrap text-muted small">
+        {{ e.target_sets or '—' }}×{{ e.target_reps or '—' }}
+        {% if e.target_weight %}@ {{ e.target_weight }}lb{% endif %}
+      </td>
+      <td class="text-nowrap small">
+        {{ e.actual_sets or '—' }}×{{ e.actual_reps or '—' }}
+        {% if e.actual_weight %}@ {{ e.actual_weight }}lb{% endif %}
+      </td>
+      <td>{{ e.rpe or '—' }}</td>
+      <td>{{ e.est_1rm or '—' }}</td>
+      <td>{{ e.volume | int if e.volume else '—' }}</td>
+      <td>
+        {% if e.outcome %}
+          <span class="badge {% if '↑' in e.outcome %}bg-success{% elif '→' in e.outcome %}bg-warning text-dark{% else %}bg-danger{% endif %}">
+            {{ e.outcome }}
+          </span>
+        {% else %}—{% endif %}
+      </td>
+      <td class="text-nowrap text-muted small">
+        {% if e.next_sets %}{{ e.next_sets }}×{{ e.next_reps }}{% if e.next_weight %}@{{ e.next_weight }}lb{% endif %}{% endif %}
+      </td>
+      <td class="text-nowrap">
+        <a href="{{ url_for('training.edit_entry', entry_id=e.id) }}" class="btn btn-xs btn-outline-secondary btn-sm py-0 px-1">Edit</a>
+        <form method="post" action="{{ url_for('training.delete_entry', entry_id=e.id) }}" class="d-inline"
+              onsubmit="return confirm('Delete this entry?')">
+          <button class="btn btn-xs btn-outline-danger btn-sm py-0 px-1">Del</button>
+        </form>
+      </td>
+    </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% else %}
+<p class="text-muted">No entries found. <a href="{{ url_for('training.new_entry') }}">Log a workout.</a></p>
+{% endif %}
+{% endblock %}

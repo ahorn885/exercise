@@ -1,0 +1,104 @@
+{% extends 'base.html' %}
+{% block title %}{{ 'Edit' if entry else 'Log' }} Cardio{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h4 class="mb-0">{{ 'Edit Cardio' if entry else 'Log Cardio Session' }}</h4>
+  <a href="{{ url_for('cardio.list_entries') }}" class="btn btn-sm btn-outline-secondary">← Back</a>
+</div>
+<form method="post">
+  <div class="row g-3 mb-3">
+    <div class="col-md-3">
+      <label class="form-label">Date</label>
+      <input type="date" name="date" class="form-control" required value="{{ entry.date if entry else '' }}">
+    </div>
+    <div class="col-md-4">
+      <label class="form-label">Activity</label>
+      <select name="activity" id="activity-select" class="form-select" required onchange="toggleFields(this.value)">
+        {% for a in activities %}
+          <option value="{{ a }}" {% if entry and entry.activity == a %}selected{% endif %}>{{ a }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="col-md-5">
+      <label class="form-label">Activity Name / Route</label>
+      <input type="text" name="activity_name" class="form-control" placeholder="e.g. Morning treadmill Z2"
+             value="{{ entry.activity_name if entry else '' }}">
+    </div>
+  </div>
+
+  <div class="row g-3 mb-3">
+    <div class="col-6 col-md-2">
+      <label class="form-label">Duration (min)</label>
+      <input type="number" name="duration_min" class="form-control" step="0.5" value="{{ entry.duration_min if entry else '' }}">
+    </div>
+    <div class="col-6 col-md-2">
+      <label class="form-label">Moving Time (min)</label>
+      <input type="number" name="moving_time_min" class="form-control" step="0.5" value="{{ entry.moving_time_min if entry else '' }}">
+    </div>
+    <div class="col-6 col-md-2">
+      <label class="form-label">Distance (mi)</label>
+      <input type="number" name="distance_mi" class="form-control" step="0.01" value="{{ entry.distance_mi if entry else '' }}">
+    </div>
+    <div class="col-6 col-md-2">
+      <label class="form-label">Avg Pace (min/mi)</label>
+      <input type="text" name="avg_pace" class="form-control" placeholder="11:32" value="{{ entry.avg_pace if entry else '' }}">
+    </div>
+    <div class="col-6 col-md-2">
+      <label class="form-label">Avg HR</label>
+      <input type="number" name="avg_hr" class="form-control" value="{{ entry.avg_hr if entry else '' }}">
+    </div>
+    <div class="col-6 col-md-2">
+      <label class="form-label">Max HR</label>
+      <input type="number" name="max_hr" class="form-control" value="{{ entry.max_hr if entry else '' }}">
+    </div>
+  </div>
+
+  <div class="row g-3 mb-3">
+    <div class="col-6 col-md-2">
+      <label class="form-label">Calories</label>
+      <input type="number" name="calories" class="form-control" value="{{ entry.calories if entry else '' }}">
+    </div>
+    <div class="col-6 col-md-2">
+      <label class="form-label">Elev Gain (ft)</label>
+      <input type="number" name="elev_gain_ft" class="form-control" value="{{ entry.elev_gain_ft if entry else '' }}">
+    </div>
+    <div class="col-6 col-md-2">
+      <label class="form-label">Avg Cadence</label>
+      <input type="number" name="avg_cadence" class="form-control" value="{{ entry.avg_cadence if entry else '' }}">
+    </div>
+    <div class="col-6 col-md-2">
+      <label class="form-label">Aerobic TE</label>
+      <input type="number" name="aerobic_te" class="form-control" step="0.1" value="{{ entry.aerobic_te if entry else '' }}">
+    </div>
+    <div class="col-6 col-md-2 bike-field">
+      <label class="form-label">Norm Power (W)</label>
+      <input type="number" name="norm_power" class="form-control" value="{{ entry.norm_power if entry else '' }}">
+    </div>
+    <div class="col-6 col-md-2 paddle-field">
+      <label class="form-label">SWOLF</label>
+      <input type="number" name="swolf" class="form-control" value="{{ entry.swolf if entry else '' }}">
+    </div>
+  </div>
+
+  <div class="mb-3">
+    <label class="form-label">Notes / Route</label>
+    <textarea name="notes" class="form-control" rows="2">{{ entry.notes if entry else '' }}</textarea>
+  </div>
+
+  <div class="d-flex gap-2">
+    <button type="submit" class="btn btn-success">{{ 'Update' if entry else 'Save' }}</button>
+    <a href="{{ url_for('cardio.list_entries') }}" class="btn btn-outline-secondary">Cancel</a>
+  </div>
+</form>
+{% endblock %}
+{% block scripts %}
+<script>
+const BIKE_ACTIVITIES = ['Road Cycling','Mountain Biking','Gravel Cycling','Indoor Bike Trainer'];
+const PADDLE_ACTIVITIES = ['Kayaking','Pack Rafting','Kayak Ergometer','Rowing Ergometer'];
+function toggleFields(activity) {
+  document.querySelectorAll('.bike-field').forEach(el => el.style.display = BIKE_ACTIVITIES.includes(activity) ? '' : 'none');
+  document.querySelectorAll('.paddle-field').forEach(el => el.style.display = PADDLE_ACTIVITIES.includes(activity) ? '' : 'none');
+}
+toggleFields(document.getElementById('activity-select').value);
+</script>
+{% endblock %}

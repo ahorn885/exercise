@@ -1,0 +1,44 @@
+{% extends 'base.html' %}
+{% block title %}Edit Rx — {{ entry.exercise }}{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h4 class="mb-0">Edit Rx — {{ entry.exercise }}</h4>
+  <a href="{{ url_for('rx.list_entries') }}" class="btn btn-sm btn-outline-secondary">← Back</a>
+</div>
+<div class="card mb-3">
+  <div class="card-body text-muted small">
+    <strong>Pattern:</strong> {{ entry.movement_pattern }} &nbsp;|&nbsp;
+    <strong>Discipline:</strong> {{ entry.discipline }} &nbsp;|&nbsp;
+    <strong>Type:</strong> {{ entry.type }} &nbsp;|&nbsp;
+    <strong>Suggested:</strong> {{ entry.inventory_sugg_volume or '—' }}
+  </div>
+</div>
+<form method="post">
+  <div class="row g-3 mb-3">
+    <div class="col-6 col-md-2">
+      <label class="form-label">Sets</label>
+      <input type="number" name="current_sets" class="form-control" value="{{ entry.current_sets or '' }}">
+    </div>
+    <div class="col-6 col-md-2">
+      <label class="form-label">Reps</label>
+      <input type="number" name="current_reps" class="form-control" value="{{ entry.current_reps or '' }}">
+    </div>
+    <div class="col-6 col-md-2">
+      <label class="form-label">Weight (lb)</label>
+      <input type="number" name="current_weight" class="form-control" step="0.5" value="{{ entry.current_weight or '' }}">
+    </div>
+    <div class="col-6 col-md-2">
+      <label class="form-label">Duration (sec)</label>
+      <input type="number" name="current_duration" class="form-control" value="{{ entry.current_duration or '' }}">
+    </div>
+    <div class="col-md-4">
+      <label class="form-label">Suggested Volume</label>
+      <input type="text" name="inventory_sugg_volume" class="form-control" value="{{ entry.inventory_sugg_volume or '' }}">
+    </div>
+  </div>
+  <div class="d-flex gap-2">
+    <button type="submit" class="btn btn-primary">Save</button>
+    <a href="{{ url_for('rx.list_entries') }}" class="btn btn-outline-secondary">Cancel</a>
+  </div>
+</form>
+{% endblock %}

@@ -1,0 +1,113 @@
+{% extends 'base.html' %}
+{% block title %}{{ 'Edit' if entry else 'Log' }} Workout{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h4 class="mb-0">{{ 'Edit Entry' if entry else 'Log Strength Workout' }}</h4>
+  <a href="{{ url_for('training.list_entries') }}" class="btn btn-sm btn-outline-secondary">← Back</a>
+</div>
+
+<form method="post">
+  <div class="row g-3 mb-3">
+    <div class="col-md-3">
+      <label class="form-label">Date</label>
+      <input type="date" name="date" class="form-control" required
+             value="{{ entry.date if entry else '' }}">
+    </div>
+    <div class="col-md-5">
+      <label class="form-label">Exercise</label>
+      <select name="exercise" id="exercise-select" class="form-select" required onchange="loadRx(this.value)">
+        <option value="">— select exercise —</option>
+        {% for ex in exercises %}
+          <option value="{{ ex.exercise }}" {% if entry and entry.exercise == ex.exercise %}selected{% endif %}>
+            {{ ex.exercise }} ({{ ex.movement_pattern }})
+          </option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="col-md-2">
+      <label class="form-label">RPE (1–10)</label>
+      <input type="number" name="rpe" class="form-control" min="1" max="10" step="0.5"
+             value="{{ entry.rpe if entry else '' }}">
+    </div>
+    <div class="col-md-2">
+      <label class="form-label">Rest (sec)</label>
+      <input type="number" name="rest_sec" class="form-control"
+             value="{{ entry.rest_sec if entry else '' }}">
+    </div>
+  </div>
+
+  <div class="row g-3 mb-3">
+    <div class="col-12"><h6 class="text-muted">Target (from Rx)</h6></div>
+    <div class="col-6 col-md-3">
+      <label class="form-label">Sets</label>
+      <input type="number" name="target_sets" id="target_sets" class="form-control"
+             value="{{ entry.target_sets if entry else '' }}">
+    </div>
+    <div class="col-6 col-md-3">
+      <label class="form-label">Reps</label>
+      <input type="number" name="target_reps" id="target_reps" class="form-control"
+             value="{{ entry.target_reps if entry else '' }}">
+    </div>
+    <div class="col-6 col-md-3">
+      <label class="form-label">Weight (lb)</label>
+      <input type="number" name="target_weight" id="target_weight" class="form-control" step="0.5"
+             value="{{ entry.target_weight if entry else '' }}">
+    </div>
+    <div class="col-6 col-md-3">
+      <label class="form-label">Duration (sec)</label>
+      <input type="number" name="target_duration" id="target_duration" class="form-control"
+             value="{{ entry.target_duration if entry else '' }}">
+    </div>
+  </div>
+
+  <div class="row g-3 mb-3">
+    <div class="col-12"><h6 class="text-muted">Actual</h6></div>
+    <div class="col-6 col-md-3">
+      <label class="form-label">Sets</label>
+      <input type="number" name="actual_sets" class="form-control"
+             value="{{ entry.actual_sets if entry else '' }}">
+    </div>
+    <div class="col-6 col-md-3">
+      <label class="form-label">Reps</label>
+      <input type="number" name="actual_reps" class="form-control"
+             value="{{ entry.actual_reps if entry else '' }}">
+    </div>
+    <div class="col-6 col-md-3">
+      <label class="form-label">Weight (lb)</label>
+      <input type="number" name="actual_weight" class="form-control" step="0.5"
+             value="{{ entry.actual_weight if entry else '' }}">
+    </div>
+    <div class="col-6 col-md-3">
+      <label class="form-label">Duration (sec)</label>
+      <input type="number" name="actual_duration" class="form-control"
+             value="{{ entry.actual_duration if entry else '' }}">
+    </div>
+  </div>
+
+  <div class="mb-3">
+    <label class="form-label">Notes</label>
+    <textarea name="notes" class="form-control" rows="2">{{ entry.notes if entry else '' }}</textarea>
+  </div>
+
+  <div class="d-flex gap-2">
+    <button type="submit" class="btn btn-primary">{{ 'Update' if entry else 'Save' }}</button>
+    <a href="{{ url_for('training.list_entries') }}" class="btn btn-outline-secondary">Cancel</a>
+  </div>
+</form>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function loadRx(exercise) {
+  if (!exercise) return;
+  fetch('/api/rx/' + encodeURIComponent(exercise))
+    .then(r => r.json())
+    .then(data => {
+      if (data.current_sets) document.getElementById('target_sets').value = data.next_sets || data.current_sets;
+      if (data.current_reps) document.getElementById('target_reps').value = data.next_reps || data.current_reps;
+      if (data.current_weight) document.getElementById('target_weight').value = data.next_weight || data.current_weight;
+      if (data.current_duration) document.getElementById('target_duration').value = data.current_duration;
+    });
+}
+</script>
+{% endblock %}

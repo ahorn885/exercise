@@ -1,0 +1,42 @@
+{% extends 'base.html' %}
+{% block title %}Cardio Log{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h4 class="mb-0">Cardio Log</h4>
+  <a href="{{ url_for('cardio.new_entry') }}" class="btn btn-success">+ Log Cardio</a>
+</div>
+{% if entries %}
+<div class="table-responsive">
+  <table class="table table-sm table-hover table-striped">
+    <thead class="table-dark">
+      <tr><th>Date</th><th>Activity</th><th>Name</th><th>Duration</th><th>Distance</th>
+      <th>Avg HR</th><th>Elev+</th><th>Power NP</th><th>Aero TE</th><th></th></tr>
+    </thead>
+    <tbody>
+    {% for e in entries %}
+    <tr>
+      <td class="text-nowrap">{{ e.date }}</td>
+      <td>{{ e.activity }}</td>
+      <td class="text-muted small">{{ e.activity_name or '' }}</td>
+      <td>{{ e.duration_min or '—' }}{% if e.duration_min %} min{% endif %}</td>
+      <td>{{ e.distance_mi or '—' }}{% if e.distance_mi %} mi{% endif %}</td>
+      <td>{{ e.avg_hr or '—' }}</td>
+      <td>{{ e.elev_gain_ft or '—' }}</td>
+      <td>{{ e.norm_power or '—' }}</td>
+      <td>{{ e.aerobic_te or '—' }}</td>
+      <td class="text-nowrap">
+        <a href="{{ url_for('cardio.edit_entry', entry_id=e.id) }}" class="btn btn-sm btn-outline-secondary py-0 px-1">Edit</a>
+        <form method="post" action="{{ url_for('cardio.delete_entry', entry_id=e.id) }}" class="d-inline"
+              onsubmit="return confirm('Delete?')">
+          <button class="btn btn-sm btn-outline-danger py-0 px-1">Del</button>
+        </form>
+      </td>
+    </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% else %}
+<p class="text-muted">No cardio logged yet. <a href="{{ url_for('cardio.new_entry') }}">Log a session.</a></p>
+{% endif %}
+{% endblock %}

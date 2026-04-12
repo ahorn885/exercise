@@ -1,0 +1,44 @@
+{% extends 'base.html' %}
+{% block title %}Injury Log{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h4 class="mb-0">Injury Log</h4>
+  <a href="{{ url_for('injuries.new_entry') }}" class="btn btn-primary">+ Log Injury</a>
+</div>
+{% if entries %}
+<div class="table-responsive">
+  <table class="table table-sm table-hover">
+    <thead class="table-dark">
+      <tr><th>Start Date</th><th>Body Part</th><th>Description</th><th>Severity</th><th>Status</th><th>Modifications</th><th>Resolved</th><th></th></tr>
+    </thead>
+    <tbody>
+    {% for e in entries %}
+    <tr class="{% if e.status == 'Active' %}table-danger{% elif e.status == 'Managing' %}table-warning{% endif %}">
+      <td>{{ e.start_date }}</td>
+      <td><strong>{{ e.body_part }}</strong></td>
+      <td>{{ e.description or '—' }}</td>
+      <td>
+        {% if e.severity %}
+          <span class="badge {% if e.severity >= 4 %}bg-danger{% elif e.severity == 3 %}bg-warning text-dark{% else %}bg-secondary{% endif %}">
+            {{ e.severity }}/5
+          </span>
+        {% else %}—{% endif %}
+      </td>
+      <td><span class="badge {% if e.status == 'Active' %}bg-danger{% elif e.status == 'Managing' %}bg-warning text-dark{% else %}bg-success{% endif %}">{{ e.status }}</span></td>
+      <td class="text-muted small">{{ e.modifications_needed or '—' }}</td>
+      <td>{{ e.resolved_date or '—' }}</td>
+      <td class="text-nowrap">
+        <a href="{{ url_for('injuries.edit_entry', entry_id=e.id) }}" class="btn btn-sm btn-outline-secondary py-0 px-1">Edit</a>
+        <form method="post" action="{{ url_for('injuries.delete_entry', entry_id=e.id) }}" class="d-inline" onsubmit="return confirm('Delete?')">
+          <button class="btn btn-sm btn-outline-danger py-0 px-1">Del</button>
+        </form>
+      </td>
+    </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% else %}
+<p class="text-muted">No injuries logged. Train freely.</p>
+{% endif %}
+{% endblock %}
