@@ -10,20 +10,30 @@ def _is_postgres():
     return bool(DATABASE_URL)
 
 
+class _PgRow(dict):
+    """Dict that also supports integer indexing, matching sqlite3.Row behaviour."""
+    def __getitem__(self, key):
+        if isinstance(key, int):
+            return list(self.values())[key]
+        return super().__getitem__(key)
+
+
 class _CompatCursor:
     """Wraps a psycopg2 RealDictCursor to match sqlite3's interface."""
     def __init__(self, cursor):
         self._c = cursor
 
     def fetchone(self):
-        return self._c.fetchone()
+        row = self._c.fetchone()
+        return _PgRow(row) if row else None
 
     def fetchall(self):
-        return self._c.fetchall()
+        return [_PgRow(row) for row in self._c.fetchall()]
 
     @property
     def lastrowid(self):
-        return self._c.fetchone()[0] if self._c.description else None
+        row = self._c.fetchone()
+        return list(row.values())[0] if row else None
 
 
 class _PgConn:
