@@ -25,6 +25,11 @@ SPORT_MAP = {
     'gym': '__strength__',
 }
 
+# Sports where cadence is stored as one-leg (steps/min of one foot) → multiply by 2
+_ONE_LEG_CADENCE_SPORTS = {
+    'running', 'trail_running', 'treadmill', 'hiking', 'walking',
+}
+
 # Sub-sport overrides for cycling and swimming
 _CYCLING_SUB = {
     'mountain': 'Mountain Biking',
@@ -36,16 +41,20 @@ _SWIM_SUB = {
     'lap_swimming': 'Swimming Pool',
     'open_water': 'Swimming Open',
 }
+_SWIM_ACTIVITIES = {'Swimming Pool', 'Swimming Open'}
 
 
-def _resolve_activity(sport: str, sub_sport: str) -> str:
+def _resolve_activity(sport: str, sub_sport: str):
+    """Return (activity_name, sport_key) tuple."""
     sport = (sport or '').lower().replace(' ', '_')
     sub_sport = (sub_sport or '').lower().replace(' ', '_')
     if sport == 'cycling' and sub_sport in _CYCLING_SUB:
-        return _CYCLING_SUB[sub_sport]
-    if sport == 'swimming' and sub_sport in _SWIM_SUB:
-        return _SWIM_SUB[sub_sport]
-    return SPORT_MAP.get(sport, 'Running')
+        name = _CYCLING_SUB[sub_sport]
+    elif sport == 'swimming' and sub_sport in _SWIM_SUB:
+        name = _SWIM_SUB[sub_sport]
+    else:
+        name = SPORT_MAP.get(sport, 'Running')
+    return name, sport
 
 
 def _pace_from_speed(speed_ms: float) -> str:
@@ -58,6 +67,21 @@ def _pace_from_speed(speed_ms: float) -> str:
     return f'{mins}:{secs:02d}'
 
 
+def _fit_timestamp_to_date(ts) -> str:
+    """Convert FIT timestamp (seconds since 1989-12-31 UTC) or datetime to YYYY-MM-DD."""
+    if ts is None:
+        return ''
+    try:
+        if isinstance(ts, (int, float)):
+            fit_epoch = datetime(1989, 12, 31, tzinfo=timezone.utc)
+            dt = datetime.fromtimestamp(fit_epoch.timestamp() + ts, tz=timezone.utc)
+        else:
+            dt = ts
+        return dt.strftime('%Y-%m-%d')
+    except Exception:
+        return ''
+
+
 def parse_fit(fit_bytes: bytes) -> dict:
     """
     Parse raw FIT bytes. Returns:
@@ -66,10 +90,8 @@ def parse_fit(fit_bytes: bytes) -> dict:
     """
     from fit_tool.fit_file import FitFile
     from fit_tool.profile.messages.session_message import SessionMessage
-    from fit_tool.profile.messages.lap_message import LapMessage
     from fit_tool.profile.messages.set_message import SetMessage
 
-    # Write bytes to a temp file (fit-tool requires a path)
     tmp_path = os.path.join(tempfile.gettempdir(), f'fit_{uuid.uuid4().hex}.fit')
     try:
         with open(tmp_path, 'wb') as f:
@@ -81,10 +103,8 @@ def parse_fit(fit_bytes: bytes) -> dict:
         except OSError:
             pass
 
-    # Find the session record (has sport + summary stats)
     session = None
     sets = []
-    laps = []
 
     for record in fit.records:
         msg = record.message
@@ -92,8 +112,6 @@ def parse_fit(fit_bytes: bytes) -> dict:
             session = msg
         elif isinstance(msg, SetMessage):
             sets.append(msg)
-        elif isinstance(msg, LapMessage):
-            laps.append(msg)
 
     if session is None:
         raise ValueError('No session message found in FIT file.')
@@ -103,59 +121,84 @@ def parse_fit(fit_bytes: bytes) -> dict:
     sport_str = str(sport).lower().replace('sport.', '').replace(' ', '_') if sport else ''
     sub_str = str(sub_sport).lower().replace('sub_sport.', '').replace(' ', '_') if sub_sport else ''
 
-    activity_name = _resolve_activity(sport_str, sub_str)
+    activity_name, sport_key = _resolve_activity(sport_str, sub_str)
 
     if activity_name == '__strength__':
-        return _parse_strength(session, sets, laps)
+        return _parse_strength(session, sets)
 
-    return _parse_cardio(session, activity_name, laps)
+    return _parse_cardio(session, activity_name, sport_key)
 
 
-def _parse_cardio(session, activity_name: str, laps) -> dict:
-    """Extract cardio_log fields from a session message."""
+def _parse_cardio(session, activity_name: str, sport_key: str) -> dict:
     def _f(attr):
         v = getattr(session, attr, None)
         try:
-            return float(v) if v is not None else None
+            f = float(v)
+            return f if f != 0.0 else None
         except (TypeError, ValueError):
             return None
 
     def _i(attr):
         v = getattr(session, attr, None)
         try:
-            return int(v) if v is not None else None
+            i = int(v)
+            return i if i != 0 else None
         except (TypeError, ValueError):
             return None
 
-    # Timestamp → date string
     ts = getattr(session, 'start_time', None) or getattr(session, 'timestamp', None)
-    activity_date = ''
-    if ts is not None:
-        try:
-            if isinstance(ts, (int, float)):
-                # FIT epoch: seconds since 1989-12-31
-                fit_epoch = datetime(1989, 12, 31, tzinfo=timezone.utc)
-                dt = datetime.fromtimestamp(fit_epoch.timestamp() + ts, tz=timezone.utc)
-            else:
-                dt = ts
-            activity_date = dt.strftime('%Y-%m-%d')
-        except Exception:
-            activity_date = ''
+    activity_date = _fit_timestamp_to_date(ts)
 
     elapsed_s = _f('total_elapsed_time')
     timer_s = _f('total_timer_time')
     dist_m = _f('total_distance')
-    avg_speed_ms = _f('avg_speed')
     ascent_m = _f('total_ascent')
     descent_m = _f('total_descent')
 
     duration_min = round(elapsed_s / 60, 2) if elapsed_s else None
     moving_min = round(timer_s / 60, 2) if timer_s else None
     dist_mi = round(dist_m * 0.000621371, 3) if dist_m else None
-    avg_speed_mph = round(avg_speed_ms * 2.23694, 2) if avg_speed_ms else None
+
+    # Compute speed from distance/time — more reliable than avg_speed field
+    if dist_m and timer_s and timer_s > 0:
+        speed_ms = dist_m / timer_s
+    else:
+        speed_ms = None
+    avg_speed_mph = round(speed_ms * 2.23694, 2) if speed_ms else None
+    avg_pace = _pace_from_speed(speed_ms) if speed_ms else None
+
     elev_gain = round(ascent_m * 3.28084, 1) if ascent_m else None
     elev_loss = round(descent_m * 3.28084, 1) if descent_m else None
-    avg_pace = _pace_from_speed(avg_speed_ms) if avg_speed_ms else None
+
+    # Cadence: FIT stores one-leg (one foot/min) for running — multiply by 2
+    cadence_mult = 2 if sport_key in _ONE_LEG_CADENCE_SPORTS else 1
+    raw_avg_cad = _i('avg_cadence')
+    raw_max_cad = _i('max_cadence')
+    avg_cadence = raw_avg_cad * cadence_mult if raw_avg_cad else None
+    max_cadence = raw_max_cad * cadence_mult if raw_max_cad else None
+
+    # Power: only meaningful for cycling/rowing; treat 0 as null (already handled by _i)
+    avg_power = _i('avg_power')
+    max_power = _i('max_power')
+    norm_power = _i('normalized_power')
+
+    # Active lengths / SWOLF: swimming only
+    is_swim = activity_name in _SWIM_ACTIVITIES
+    active_lengths = _i('num_active_lengths') if is_swim else None
+    swolf = None  # computed per-lap for swimming; skip for now
+
+    # Training effect
+    aerobic_te = _f('total_training_effect')
+    anaerobic_te = _f('total_anaerobic_training_effect')
+
+    # Running dynamics (standard FIT fields — None if device doesn't record them)
+    stride_length_m = _f('avg_stride_length')     # m
+    raw_vert_osc = _f('avg_vertical_oscillation') # mm in FIT → show as cm
+    vert_oscillation_cm = round(raw_vert_osc / 10, 1) if raw_vert_osc else None
+    vert_ratio_pct = _f('avg_vertical_ratio')      # already %
+    gct_ms = _f('avg_stance_time')                 # ms
+    raw_gct_bal = _f('avg_stance_time_balance')    # 0–100 %, left side
+    gct_balance = f'{raw_gct_bal:.1f}% L / {100-raw_gct_bal:.1f}% R' if raw_gct_bal else None
 
     return {
         'log_type': 'cardio',
@@ -173,34 +216,30 @@ def _parse_cardio(session, activity_name: str, laps) -> dict:
             'calories': _i('total_calories'),
             'elev_gain_ft': elev_gain,
             'elev_loss_ft': elev_loss,
-            'avg_cadence': _i('avg_cadence'),
-            'max_cadence': _i('max_cadence'),
-            'avg_power': _i('avg_power'),
-            'max_power': _i('max_power'),
-            'norm_power': _i('normalized_power'),
-            'aerobic_te': _f('total_training_effect'),
-            'anaerobic_te': _f('total_anaerobic_training_effect'),
-            'swolf': None,
-            'active_lengths': _i('num_active_lengths'),
+            'avg_cadence': avg_cadence,
+            'max_cadence': max_cadence,
+            'avg_power': avg_power,
+            'max_power': max_power,
+            'norm_power': norm_power,
+            'aerobic_te': aerobic_te,
+            'anaerobic_te': anaerobic_te,
+            'swolf': swolf,
+            'active_lengths': active_lengths,
             'notes': '',
+            # Running dynamics
+            'stride_length_m': round(stride_length_m, 2) if stride_length_m else None,
+            'vert_oscillation_cm': vert_oscillation_cm,
+            'vert_ratio_pct': round(vert_ratio_pct, 1) if vert_ratio_pct else None,
+            'gct_ms': round(gct_ms, 0) if gct_ms else None,
+            'gct_balance': gct_balance,
         }
     }
 
 
-def _parse_strength(session, sets, laps) -> dict:
-    """Extract training_log rows from a strength session."""
-    ts = getattr(session, 'start_time', None) or getattr(session, 'timestamp', None)
-    activity_date = ''
-    if ts is not None:
-        try:
-            if isinstance(ts, (int, float)):
-                fit_epoch = datetime(1989, 12, 31, tzinfo=timezone.utc)
-                dt = datetime.fromtimestamp(fit_epoch.timestamp() + ts, tz=timezone.utc)
-            else:
-                dt = ts
-            activity_date = dt.strftime('%Y-%m-%d')
-        except Exception:
-            activity_date = ''
+def _parse_strength(session, sets) -> dict:
+    activity_date = _fit_timestamp_to_date(
+        getattr(session, 'start_time', None) or getattr(session, 'timestamp', None)
+    )
 
     rows = []
     for s in sets:
@@ -237,18 +276,16 @@ def _parse_strength(session, sets, laps) -> dict:
             'notes': '',
         })
 
-    # Merge consecutive sets of the same exercise into one row with set count
+    # Merge consecutive sets of the same exercise
     if rows:
         merged = []
         cur = dict(rows[0])
-        cur['actual_sets'] = 1
         for row in rows[1:]:
             if row['exercise'] == cur['exercise']:
                 cur['actual_sets'] += 1
             else:
                 merged.append(cur)
                 cur = dict(row)
-                cur['actual_sets'] = 1
         merged.append(cur)
         rows = merged
 

@@ -68,6 +68,11 @@
               {{ row('Aerobic TE', d.aerobic_te) }}
               {{ row('Anaerobic TE', d.anaerobic_te) }}
               {% if d.active_lengths %}{{ row('Active Lengths', d.active_lengths) }}{% endif %}
+              {% if d.stride_length_m %}{{ row('Avg Stride Length', d.stride_length_m, 'm') }}{% endif %}
+              {% if d.vert_oscillation_cm %}{{ row('Vertical Oscillation', d.vert_oscillation_cm, 'cm') }}{% endif %}
+              {% if d.vert_ratio_pct %}{{ row('Vertical Ratio', d.vert_ratio_pct, '%') }}{% endif %}
+              {% if d.gct_ms %}{{ row('Ground Contact Time', d.gct_ms, 'ms') }}{% endif %}
+              {% if d.gct_balance %}{{ row('GCT Balance', d.gct_balance) }}{% endif %}
             </tbody>
           </table>
 
