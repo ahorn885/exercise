@@ -1,0 +1,86 @@
+{% extends 'base.html' %}
+{% block title %}{{ plan.name }}{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-start mb-3">
+  <div>
+    <h2 class="mb-0">{{ plan.name }}</h2>
+    {% if plan.description %}<p class="text-muted mb-1">{{ plan.description }}</p>{% endif %}
+    <small class="text-muted">
+      {% if plan.sport_focus %}<span class="badge bg-secondary me-1">{{ plan.sport_focus }}</span>{% endif %}
+      {% if plan.start_date %}{{ plan.start_date }}{% endif %}
+      {% if plan.end_date %} → {{ plan.end_date }}{% endif %}
+    </small>
+  </div>
+  <a href="{{ url_for('plans.list_plans') }}" class="btn btn-outline-secondary btn-sm">← Plans</a>
+</div>
+
+{% if total > 0 %}
+<div class="mb-4">
+  <div class="d-flex justify-content-between mb-1">
+    <small class="text-muted">Progress: {{ completed }}/{{ total }} workouts completed</small>
+    <small class="text-muted">{{ (completed/total*100)|round|int }}%</small>
+  </div>
+  <div class="progress" style="height:10px">
+    <div class="progress-bar bg-success" style="width:{{ (completed/total*100)|round|int }}%"></div>
+  </div>
+</div>
+{% endif %}
+
+{% set status_colors = {'completed': 'success', 'skipped': 'secondary', 'scheduled': 'primary'} %}
+
+{% for (year, week), items in weeks.items() %}
+<div class="card mb-3">
+  <div class="card-header fw-semibold">Week {{ week }}, {{ year }}</div>
+  <div class="card-body p-0">
+    <table class="table table-sm table-hover mb-0 align-middle">
+      <thead class="table-light">
+        <tr>
+          <th style="width:100px">Date</th>
+          <th>Workout</th>
+          <th>Sport</th>
+          <th>Duration</th>
+          <th>Intensity</th>
+          <th>Status</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for item in items %}
+        <tr>
+          <td class="text-muted small">{{ item.item_date }}</td>
+          <td>
+            <a href="{{ url_for('plans.view_item', plan_id=plan.id, item_id=item.id) }}"
+               class="text-decoration-none fw-semibold">{{ item.workout_name }}</a>
+            {% if item.description %}
+            <br><small class="text-muted">{{ item.description[:80] }}{% if item.description|length > 80 %}…{% endif %}</small>
+            {% endif %}
+          </td>
+          <td><small>{{ item.sport_type }}</small></td>
+          <td><small>{% if item.target_duration_min %}{{ item.target_duration_min|int }} min{% else %}—{% endif %}</small></td>
+          <td><small>{{ item.intensity or '—' }}</small></td>
+          <td>
+            <span class="badge bg-{{ status_colors.get(item.status, 'secondary') }}">{{ item.status }}</span>
+          </td>
+          <td>
+            {% if item.status == 'scheduled' %}
+            <div class="d-flex gap-1">
+              <form method="post" action="{{ url_for('plans.complete_item', plan_id=plan.id, item_id=item.id) }}" class="d-inline">
+                <button type="submit" class="btn btn-xs btn-success py-0 px-1" style="font-size:.75rem" title="Mark complete">✓</button>
+              </form>
+              <form method="post" action="{{ url_for('plans.skip_item', plan_id=plan.id, item_id=item.id) }}" class="d-inline">
+                <button type="submit" class="btn btn-xs btn-outline-secondary py-0 px-1" style="font-size:.75rem" title="Skip">✕</button>
+              </form>
+            </div>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% else %}
+<p class="text-muted">No workouts in this plan yet.</p>
+{% endfor %}
+{% endblock %}

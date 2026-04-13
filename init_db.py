@@ -86,10 +86,55 @@ SQLITE_SCHEMA = '''
         item TEXT NOT NULL, est_cost TEXT, what_it_unlocks TEXT,
         exercises_impacted TEXT, priority TEXT
     );
+    CREATE TABLE IF NOT EXISTS training_plans (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        description TEXT,
+        sport_focus TEXT,
+        start_date TEXT,
+        end_date TEXT,
+        status TEXT DEFAULT 'active',
+        source_json TEXT,
+        created_at TEXT DEFAULT (datetime('now'))
+    );
+    CREATE TABLE IF NOT EXISTS plan_items (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        plan_id INTEGER NOT NULL REFERENCES training_plans(id),
+        item_date TEXT NOT NULL,
+        sport_type TEXT NOT NULL,
+        workout_name TEXT NOT NULL,
+        description TEXT,
+        target_duration_min REAL,
+        target_distance_mi REAL,
+        intensity TEXT,
+        garmin_workout_json TEXT,
+        status TEXT DEFAULT 'scheduled',
+        notes TEXT,
+        created_at TEXT DEFAULT (datetime('now'))
+    );
+    CREATE TABLE IF NOT EXISTS garmin_auth (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        garmin_username TEXT,
+        garth_session TEXT,
+        created_at TEXT DEFAULT (datetime('now')),
+        updated_at TEXT DEFAULT (datetime('now'))
+    );
+    CREATE TABLE IF NOT EXISTS garmin_workouts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        plan_item_id INTEGER REFERENCES plan_items(id),
+        garmin_workout_id TEXT NOT NULL,
+        workout_name TEXT,
+        sport_type TEXT,
+        scheduled_date TEXT,
+        status TEXT DEFAULT 'active',
+        created_at TEXT DEFAULT (datetime('now'))
+    );
     CREATE INDEX IF NOT EXISTS idx_tl_date ON training_log(date);
     CREATE INDEX IF NOT EXISTS idx_tl_exercise ON training_log(exercise);
     CREATE INDEX IF NOT EXISTS idx_cl_date ON cardio_log(date);
     CREATE INDEX IF NOT EXISTS idx_bm_date ON body_metrics(date);
+    CREATE INDEX IF NOT EXISTS idx_pi_plan ON plan_items(plan_id);
+    CREATE INDEX IF NOT EXISTS idx_pi_date ON plan_items(item_date);
 '''
 
 PG_SCHEMA = '''
@@ -173,10 +218,55 @@ PG_SCHEMA = '''
         item TEXT NOT NULL, est_cost TEXT, what_it_unlocks TEXT,
         exercises_impacted TEXT, priority TEXT
     );
+    CREATE TABLE IF NOT EXISTS training_plans (
+        id SERIAL PRIMARY KEY,
+        name TEXT NOT NULL,
+        description TEXT,
+        sport_focus TEXT,
+        start_date TEXT,
+        end_date TEXT,
+        status TEXT DEFAULT 'active',
+        source_json TEXT,
+        created_at TIMESTAMP DEFAULT NOW()
+    );
+    CREATE TABLE IF NOT EXISTS plan_items (
+        id SERIAL PRIMARY KEY,
+        plan_id INTEGER NOT NULL REFERENCES training_plans(id),
+        item_date TEXT NOT NULL,
+        sport_type TEXT NOT NULL,
+        workout_name TEXT NOT NULL,
+        description TEXT,
+        target_duration_min REAL,
+        target_distance_mi REAL,
+        intensity TEXT,
+        garmin_workout_json TEXT,
+        status TEXT DEFAULT 'scheduled',
+        notes TEXT,
+        created_at TIMESTAMP DEFAULT NOW()
+    );
+    CREATE TABLE IF NOT EXISTS garmin_auth (
+        id SERIAL PRIMARY KEY,
+        garmin_username TEXT,
+        garth_session TEXT,
+        created_at TIMESTAMP DEFAULT NOW(),
+        updated_at TIMESTAMP DEFAULT NOW()
+    );
+    CREATE TABLE IF NOT EXISTS garmin_workouts (
+        id SERIAL PRIMARY KEY,
+        plan_item_id INTEGER REFERENCES plan_items(id),
+        garmin_workout_id TEXT NOT NULL,
+        workout_name TEXT,
+        sport_type TEXT,
+        scheduled_date TEXT,
+        status TEXT DEFAULT 'active',
+        created_at TIMESTAMP DEFAULT NOW()
+    );
     CREATE INDEX IF NOT EXISTS idx_tl_date ON training_log(date);
     CREATE INDEX IF NOT EXISTS idx_tl_exercise ON training_log(exercise);
     CREATE INDEX IF NOT EXISTS idx_cl_date ON cardio_log(date);
     CREATE INDEX IF NOT EXISTS idx_bm_date ON body_metrics(date);
+    CREATE INDEX IF NOT EXISTS idx_pi_plan ON plan_items(plan_id);
+    CREATE INDEX IF NOT EXISTS idx_pi_date ON plan_items(item_date);
 '''
 
 EXERCISES = [

@@ -1,0 +1,128 @@
+{% extends 'base.html' %}
+{% block title %}Preview FIT Import{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+  <div class="col-lg-8">
+    <h2 class="mb-1">Preview Import</h2>
+    <p class="text-muted mb-4">
+      Review the parsed data below. Edit the name or notes if needed, then confirm to save.
+    </p>
+
+    {% if result.log_type == 'cardio' %}
+    {# ── CARDIO PREVIEW ── #}
+    {% set d = result.data %}
+    <form method="post" action="{{ url_for('garmin.import_confirm') }}">
+      <div class="card mb-3">
+        <div class="card-header d-flex justify-content-between align-items-center">
+          <span>Cardio Activity — will be saved to <strong>Cardio Log</strong></span>
+          <span class="badge bg-primary">{{ d.activity }}</span>
+        </div>
+        <div class="card-body">
+          <div class="row g-3 mb-3">
+            <div class="col-md-6">
+              <label class="form-label fw-semibold">Activity Type</label>
+              <select name="activity" class="form-select">
+                {% for opt in ['Running','Treadmill','Trail Running','Hiking','Stair Climbing',
+                               'Road Cycling','Mountain Biking','Gravel Cycling','Indoor Bike Trainer',
+                               'Kayaking','Pack Rafting','Kayak Ergometer','Rowing Ergometer',
+                               'Swimming Pool','Swimming Open','Yoga'] %}
+                <option value="{{ opt }}" {% if opt == d.activity %}selected{% endif %}>{{ opt }}</option>
+                {% endfor %}
+              </select>
+            </div>
+            <div class="col-md-6">
+              <label class="form-label fw-semibold">Date</label>
+              <input type="text" class="form-control" value="{{ d.date }}" disabled>
+            </div>
+          </div>
+          <div class="mb-3">
+            <label class="form-label fw-semibold">Activity Name / Route</label>
+            <input type="text" name="activity_name" class="form-control"
+                   value="{{ name_override or d.activity_name or '' }}">
+          </div>
+
+          <table class="table table-sm table-bordered">
+            <tbody>
+              {% macro row(label, val, unit='') %}
+              <tr>
+                <th class="text-muted" style="width:40%">{{ label }}</th>
+                <td>{% if val is not none %}{{ val }}{% if unit %} {{ unit }}{% endif %}{% else %}<span class="text-muted">—</span>{% endif %}</td>
+              </tr>
+              {% endmacro %}
+              {{ row('Duration', d.duration_min, 'min') }}
+              {{ row('Moving Time', d.moving_time_min, 'min') }}
+              {{ row('Distance', d.distance_mi, 'mi') }}
+              {{ row('Avg Pace', d.avg_pace, '/mi') }}
+              {{ row('Avg Speed', d.avg_speed, 'mph') }}
+              {{ row('Avg HR', d.avg_hr, 'bpm') }}
+              {{ row('Max HR', d.max_hr, 'bpm') }}
+              {{ row('Calories', d.calories) }}
+              {{ row('Elev Gain', d.elev_gain_ft, 'ft') }}
+              {{ row('Elev Loss', d.elev_loss_ft, 'ft') }}
+              {{ row('Avg Cadence', d.avg_cadence) }}
+              {{ row('Max Cadence', d.max_cadence) }}
+              {{ row('Avg Power', d.avg_power, 'W') }}
+              {{ row('Max Power', d.max_power, 'W') }}
+              {{ row('Norm Power', d.norm_power, 'W') }}
+              {{ row('Aerobic TE', d.aerobic_te) }}
+              {{ row('Anaerobic TE', d.anaerobic_te) }}
+              {% if d.active_lengths %}{{ row('Active Lengths', d.active_lengths) }}{% endif %}
+            </tbody>
+          </table>
+
+          <div class="mb-3">
+            <label class="form-label fw-semibold">Notes</label>
+            <textarea name="notes" class="form-control" rows="2">{{ notes }}</textarea>
+          </div>
+        </div>
+      </div>
+      <div class="d-flex gap-2">
+        <button type="submit" class="btn btn-success">Save to Cardio Log</button>
+        <a href="{{ url_for('garmin.import_fit') }}" class="btn btn-outline-secondary">Cancel</a>
+      </div>
+    </form>
+
+    {% elif result.log_type == 'strength' %}
+    {# ── STRENGTH PREVIEW ── #}
+    <form method="post" action="{{ url_for('garmin.import_confirm') }}">
+      <div class="card mb-3">
+        <div class="card-header d-flex justify-content-between align-items-center">
+          <span>Strength Session — will be saved to <strong>Training Log</strong></span>
+          <span class="badge bg-warning text-dark">{{ result.data | length }} exercises</span>
+        </div>
+        <div class="card-body p-0">
+          <table class="table table-sm table-bordered mb-0">
+            <thead class="table-light">
+              <tr>
+                <th>Exercise</th><th>Sets</th><th>Reps</th><th>Weight (lbs)</th><th>Duration (s)</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in result.data %}
+              <tr>
+                <td>{{ row.exercise }}</td>
+                <td>{{ row.actual_sets or '—' }}</td>
+                <td>{{ row.actual_reps or '—' }}</td>
+                <td>{{ row.actual_weight or '—' }}</td>
+                <td>{{ row.actual_duration or '—' }}</td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <div class="mb-3">
+        <label class="form-label fw-semibold">Notes (applied to all entries)</label>
+        <textarea name="notes" class="form-control" rows="2">{{ notes }}</textarea>
+      </div>
+      <div class="d-flex gap-2">
+        <button type="submit" class="btn btn-success">Save to Training Log</button>
+        <a href="{{ url_for('garmin.import_fit') }}" class="btn btn-outline-secondary">Cancel</a>
+      </div>
+    </form>
+    {% endif %}
+
+  </div>
+</div>
+{% endblock %}

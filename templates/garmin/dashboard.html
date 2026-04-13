@@ -1,0 +1,77 @@
+{% extends 'base.html' %}
+{% block title %}Garmin Dashboard{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+  <h2 class="mb-0">Garmin</h2>
+  <div class="d-flex gap-2">
+    <a href="{{ url_for('garmin.import_fit') }}" class="btn btn-primary">+ Import FIT File</a>
+    <a href="{{ url_for('plans.list_plans') }}" class="btn btn-outline-secondary">Training Plans</a>
+  </div>
+</div>
+
+<div class="row g-3 mb-4">
+  <div class="col-md-4">
+    <div class="card h-100">
+      <div class="card-body">
+        <h6 class="card-subtitle text-muted mb-2">Garmin Connect</h6>
+        <a href="{{ url_for('garmin.auth') }}" class="text-decoration-none">
+          <span class="badge fs-6 bg-{% if auth_status.authenticated %}success{% else %}warning text-dark{% endif %}">
+            {% if auth_status.authenticated %}
+              Connected{% if auth_status.username %} — {{ auth_status.username }}{% endif %}
+            {% else %}
+              Not Connected
+            {% endif %}
+          </span>
+        </a>
+        {% if not auth_status.authenticated %}
+        <p class="text-muted small mt-2 mb-0">
+          <a href="{{ url_for('garmin.auth') }}">Set up auth</a> to push workouts to Garmin Connect.
+        </p>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+  <div class="col-md-4">
+    <div class="card h-100">
+      <div class="card-body">
+        <h6 class="card-subtitle text-muted mb-2">FIT Import</h6>
+        <p class="mb-2">Upload <code>.fit</code> files from your Garmin device to auto-populate your logs.</p>
+        <a href="{{ url_for('garmin.import_fit') }}" class="btn btn-sm btn-outline-primary">Import FIT File</a>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-4">
+    <div class="card h-100">
+      <div class="card-body">
+        <h6 class="card-subtitle text-muted mb-2">Training Plans</h6>
+        <p class="mb-2">Import Claude-generated training plans and push workouts to Garmin Connect.</p>
+        <a href="{{ url_for('plans.import_plan') }}" class="btn btn-sm btn-outline-primary">Import Plan</a>
+      </div>
+    </div>
+  </div>
+</div>
+
+{% if recent_cardio %}
+<h5>Recent Cardio Entries</h5>
+<div class="table-responsive">
+  <table class="table table-sm table-hover">
+    <thead class="table-light">
+      <tr><th>Date</th><th>Activity</th><th>Name</th><th>Duration</th><th>Distance</th><th>Avg HR</th></tr>
+    </thead>
+    <tbody>
+      {% for r in recent_cardio %}
+      <tr>
+        <td>{{ r.date }}</td>
+        <td>{{ r.activity }}</td>
+        <td class="text-muted">{{ r.activity_name or '—' }}</td>
+        <td>{% if r.duration_min %}{{ r.duration_min }} min{% else %}—{% endif %}</td>
+        <td>{% if r.distance_mi %}{{ r.distance_mi }} mi{% else %}—{% endif %}</td>
+        <td>{% if r.avg_hr %}{{ r.avg_hr }} bpm{% else %}—{% endif %}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
+{% endblock %}

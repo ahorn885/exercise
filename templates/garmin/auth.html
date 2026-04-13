@@ -1,0 +1,58 @@
+{% extends 'base.html' %}
+{% block title %}Garmin Auth Settings{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+  <div class="col-lg-5">
+    <h2 class="mb-4">Garmin Connect Auth</h2>
+
+    <div class="alert {% if status.authenticated %}alert-success{% else %}alert-warning{% endif %} mb-4">
+      {% if status.authenticated %}
+        <strong>Authenticated</strong>{% if status.username %} as <code>{{ status.username }}</code>{% endif %}.
+        Session is stored in the database and will be reused automatically.
+      {% else %}
+        <strong>Not authenticated.</strong> Log in below to enable Garmin workout uploads.
+      {% endif %}
+    </div>
+
+    <div class="card">
+      <div class="card-header">Log in to Garmin Connect</div>
+      <div class="card-body">
+        <p class="text-muted small mb-3">
+          Credentials are used only to obtain a session token, which is then stored
+          in the database. Your password is not stored.
+        </p>
+        <form method="post" action="{{ url_for('garmin.auth_login') }}">
+          <div class="mb-3">
+            <label class="form-label fw-semibold">Garmin Email</label>
+            <input type="email" name="email" class="form-control" required
+                   placeholder="you@example.com">
+          </div>
+          <div class="mb-3">
+            <label class="form-label fw-semibold">Password</label>
+            <input type="password" name="password" class="form-control" required>
+          </div>
+          <div class="mb-3">
+            <label class="form-label fw-semibold">MFA Code <span class="text-muted fw-normal">(if prompted)</span></label>
+            <input type="text" name="mfa_code" class="form-control" maxlength="10"
+                   placeholder="Leave blank if not using MFA">
+          </div>
+          <button type="submit" class="btn btn-primary w-100">Authenticate</button>
+        </form>
+      </div>
+    </div>
+
+    <div class="card mt-3">
+      <div class="card-header">Notes</div>
+      <div class="card-body small text-muted">
+        <ul class="mb-0 ps-3">
+          <li>Uses <code>garth</code> (unofficial Garmin SSO) — not the official Garmin Developer API.</li>
+          <li>Session tokens are refreshed automatically on each API call.</li>
+          <li>If authentication fails with an MFA error, enter your 6-digit code above and try again immediately.</li>
+          <li>To re-authenticate, simply log in again — the existing session will be replaced.</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

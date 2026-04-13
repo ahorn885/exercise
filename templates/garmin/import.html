@@ -1,0 +1,51 @@
+{% extends 'base.html' %}
+{% block title %}Import FIT File{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+  <div class="col-lg-6">
+    <h2 class="mb-4">Import Garmin FIT File</h2>
+    <div class="card">
+      <div class="card-body">
+        <p class="text-muted mb-3">Upload a <code>.fit</code> file exported from your Garmin device or Garmin Connect. The activity will be parsed and added to your log (cardio or strength, depending on activity type).</p>
+        <form method="post" enctype="multipart/form-data">
+          <div class="mb-3">
+            <label class="form-label fw-semibold">FIT File <span class="text-danger">*</span></label>
+            <input type="file" name="fit_file" accept=".fit" class="form-control" required>
+          </div>
+          <div class="mb-3">
+            <label class="form-label fw-semibold">Activity Name / Route <span class="text-muted fw-normal">(optional override)</span></label>
+            <input type="text" name="activity_name" class="form-control" placeholder="e.g. Morning Run — Town Lake Loop">
+          </div>
+          <div class="mb-3">
+            <label class="form-label fw-semibold">Notes <span class="text-muted fw-normal">(optional)</span></label>
+            <textarea name="notes" class="form-control" rows="2"></textarea>
+          </div>
+          <div class="d-flex gap-2">
+            <button type="submit" class="btn btn-primary">Parse File</button>
+            <a href="{{ url_for('garmin.dashboard') }}" class="btn btn-outline-secondary">Cancel</a>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <div class="card mt-4">
+      <div class="card-header">Supported Activity Types</div>
+      <div class="card-body p-0">
+        <table class="table table-sm mb-0">
+          <thead class="table-light"><tr><th>FIT Sport</th><th>Logged As</th></tr></thead>
+          <tbody>
+            <tr><td>Running / Trail / Treadmill</td><td>Cardio Log</td></tr>
+            <tr><td>Cycling (road, MTB, gravel, indoor)</td><td>Cardio Log</td></tr>
+            <tr><td>Hiking / Walking</td><td>Cardio Log</td></tr>
+            <tr><td>Swimming (pool / open water)</td><td>Cardio Log</td></tr>
+            <tr><td>Yoga</td><td>Cardio Log</td></tr>
+            <tr><td>Rowing / Kayaking</td><td>Cardio Log</td></tr>
+            <tr><td>Strength Training</td><td>Training Log (one row per exercise)</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

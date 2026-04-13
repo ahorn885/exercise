@@ -1,0 +1,112 @@
+{% extends 'base.html' %}
+{% block title %}{{ item.workout_name }}{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-start mb-3">
+  <div>
+    <a href="{{ url_for('plans.view_plan', plan_id=plan_id) }}" class="text-muted small">← Back to Plan</a>
+    <h2 class="mb-0 mt-1">{{ item.workout_name }}</h2>
+    <small class="text-muted">{{ item.item_date }} · {{ item.sport_type }}</small>
+  </div>
+  {% set sc = {'completed': 'success', 'skipped': 'secondary', 'scheduled': 'primary'} %}
+  <span class="badge fs-6 bg-{{ sc.get(item.status, 'secondary') }}">{{ item.status }}</span>
+</div>
+
+<div class="row g-3">
+  <div class="col-md-6">
+    <div class="card h-100">
+      <div class="card-header">Workout Details</div>
+      <div class="card-body">
+        {% if item.description %}<p>{{ item.description }}</p>{% endif %}
+        <table class="table table-sm mb-0">
+          <tbody>
+            {% if item.target_duration_min %}
+            <tr><th class="text-muted">Target Duration</th><td>{{ item.target_duration_min|int }} min</td></tr>
+            {% endif %}
+            {% if item.target_distance_mi %}
+            <tr><th class="text-muted">Target Distance</th><td>{{ item.target_distance_mi }} mi</td></tr>
+            {% endif %}
+            {% if item.intensity %}
+            <tr><th class="text-muted">Intensity</th><td>{{ item.intensity }}</td></tr>
+            {% endif %}
+            {% if item.notes %}
+            <tr><th class="text-muted">Notes</th><td>{{ item.notes }}</td></tr>
+            {% endif %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-md-6">
+    <div class="card h-100">
+      <div class="card-header">Garmin Connect</div>
+      <div class="card-body">
+        {% if gw %}
+          <div class="alert alert-success py-2 mb-3">
+            Pushed to Garmin Connect<br>
+            <small>Workout ID: <code>{{ gw.garmin_workout_id }}</code></small>
+            {% if gw.scheduled_date %}<br><small>Scheduled: {{ gw.scheduled_date }}</small>{% endif %}
+          </div>
+        {% endif %}
+
+        {% if item.garmin_workout_json %}
+          {% if not gw %}
+          <form method="post" action="{{ url_for('plans.push_to_garmin', plan_id=plan_id, item_id=item.id) }}" class="mb-3">
+            {% if auth_status.authenticated %}
+              <button type="submit" class="btn btn-primary w-100">Push to Garmin Connect</button>
+            {% else %}
+              <button type="button" class="btn btn-secondary w-100" disabled>Push to Garmin Connect</button>
+              <small class="text-muted d-block mt-1">
+                <a href="{{ url_for('garmin.auth') }}">Set up Garmin auth</a> first.
+              </small>
+            {% endif %}
+          </form>
+          {% endif %}
+
+          <details>
+            <summary class="text-muted small" style="cursor:pointer">View Garmin Workout JSON</summary>
+            <pre class="mt-2 small p-2 bg-light rounded" style="max-height:200px;overflow:auto">{{ garmin_workout | tojson(indent=2) }}</pre>
+          </details>
+        {% else %}
+          <p class="text-muted small">No Garmin workout JSON attached to this plan item.</p>
+          <p class="text-muted small">To add one, re-import the plan with a <code>garmin_workout_json</code> field on this workout.</p>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+</div>
+
+{% if item.status == 'scheduled' %}
+<div class="row g-3 mt-1">
+  <div class="col-md-6">
+    <div class="card">
+      <div class="card-header">Mark as Completed</div>
+      <div class="card-body">
+        <form method="post" action="{{ url_for('plans.complete_item', plan_id=plan_id, item_id=item.id) }}">
+          <div class="mb-2">
+            <label class="form-label small text-muted">Notes (optional)</label>
+            <textarea name="notes" class="form-control form-control-sm" rows="2"></textarea>
+          </div>
+          <button type="submit" class="btn btn-success btn-sm">Mark Complete</button>
+        </form>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-6">
+    <div class="card">
+      <div class="card-header">Skip</div>
+      <div class="card-body">
+        <form method="post" action="{{ url_for('plans.skip_item', plan_id=plan_id, item_id=item.id) }}">
+          <div class="mb-2">
+            <label class="form-label small text-muted">Reason (optional)</label>
+            <textarea name="notes" class="form-control form-control-sm" rows="2"></textarea>
+          </div>
+          <button type="submit" class="btn btn-outline-secondary btn-sm">Skip Workout</button>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+{% endif %}
+{% endblock %}
