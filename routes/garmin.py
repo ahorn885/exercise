@@ -4,6 +4,32 @@ from database import get_db
 bp = Blueprint('garmin', __name__, url_prefix='/garmin')
 
 
+@bp.route('/debug-fit', methods=['GET', 'POST'])
+def debug_fit():
+    dump = None
+    if request.method == 'POST':
+        f = request.files.get('fit_file')
+        if not f or not f.filename:
+            flash('No file selected.', 'warning')
+            return redirect(url_for('garmin.debug_fit'))
+        try:
+            raw = f.read()
+            fname = f.filename.lower()
+            if fname.endswith('.zip'):
+                import zipfile, io
+                with zipfile.ZipFile(io.BytesIO(raw)) as zf:
+                    fit_names = [n for n in zf.namelist() if n.lower().endswith('.fit')]
+                    if not fit_names:
+                        flash('No .fit file found inside the zip.', 'danger')
+                        return redirect(url_for('garmin.debug_fit'))
+                    raw = zf.read(fit_names[0])
+            from garmin_fit_parser import _dump_fit
+            dump = _dump_fit(raw)
+        except Exception as e:
+            flash(f'Error: {e}', 'danger')
+    return render_template('garmin/debug_fit.html', dump=dump)
+
+
 @bp.route('/')
 def dashboard():
     db = get_db()
@@ -84,8 +110,10 @@ def import_confirm():
                 distance_mi, avg_pace, avg_speed, avg_hr, max_hr, calories,
                 elev_gain_ft, elev_loss_ft, avg_cadence, max_cadence,
                 avg_power, max_power, norm_power, aerobic_te, anaerobic_te,
-                swolf, active_lengths, notes)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
+                swolf, active_lengths,
+                stride_length_m, vert_oscillation_cm, vert_ratio_pct,
+                gct_ms, gct_balance, notes)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
             (data.get('date'), data.get('activity'), data.get('activity_name'),
              data.get('duration_min'), data.get('moving_time_min'),
              data.get('distance_mi'), data.get('avg_pace'), data.get('avg_speed'),
@@ -95,6 +123,8 @@ def import_confirm():
              data.get('avg_power'), data.get('max_power'), data.get('norm_power'),
              data.get('aerobic_te'), data.get('anaerobic_te'),
              data.get('swolf'), data.get('active_lengths'),
+             data.get('stride_length_m'), data.get('vert_oscillation_cm'),
+             data.get('vert_ratio_pct'), data.get('gct_ms'), data.get('gct_balance'),
              data.get('notes'))
         )
         db.commit()
