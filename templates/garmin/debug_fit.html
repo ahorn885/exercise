@@ -17,6 +17,18 @@
 
 {% if dump %}
 
+{# ── Copy-paste JSON block ── #}
+<div class="card mb-4">
+  <div class="card-header d-flex justify-content-between align-items-center fw-semibold">
+    <span>Raw JSON (copy/paste friendly)</span>
+    <button id="copyBtn" class="btn btn-sm btn-outline-secondary" onclick="copyDump()">Copy All</button>
+  </div>
+  <div class="card-body p-0">
+    <textarea id="dumpJson" class="form-control font-monospace border-0" rows="10" readonly
+              style="font-size:0.75rem; resize:vertical;">{{ dump | tojson(indent=2) }}</textarea>
+  </div>
+</div>
+
 {# ── Message type inventory ── #}
 <div class="card mb-3">
   <div class="card-header fw-semibold">Message Types in File</div>
@@ -144,4 +156,27 @@
 </details>
 
 {% endif %}{# end if dump #}
+{% endblock %}
+
+{% block scripts %}
+<script>
+function copyDump() {
+  var ta = document.getElementById('dumpJson');
+  ta.select();
+  ta.setSelectionRange(0, 99999);
+  try {
+    navigator.clipboard.writeText(ta.value).then(function() {
+      var btn = document.getElementById('copyBtn');
+      btn.textContent = 'Copied!';
+      btn.classList.replace('btn-outline-secondary', 'btn-success');
+      setTimeout(function() {
+        btn.textContent = 'Copy All';
+        btn.classList.replace('btn-success', 'btn-outline-secondary');
+      }, 2000);
+    });
+  } catch(e) {
+    document.execCommand('copy');
+  }
+}
+</script>
 {% endblock %}

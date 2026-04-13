@@ -273,6 +273,23 @@ PG_SCHEMA = '''
     CREATE INDEX IF NOT EXISTS idx_pi_date ON plan_items(item_date);
 '''
 
+# Migrations for existing databases — add columns that may not exist yet
+_SQLITE_MIGRATIONS = [
+    "ALTER TABLE cardio_log ADD COLUMN stride_length_m REAL",
+    "ALTER TABLE cardio_log ADD COLUMN vert_oscillation_cm REAL",
+    "ALTER TABLE cardio_log ADD COLUMN vert_ratio_pct REAL",
+    "ALTER TABLE cardio_log ADD COLUMN gct_ms REAL",
+    "ALTER TABLE cardio_log ADD COLUMN gct_balance TEXT",
+]
+
+_PG_MIGRATIONS = [
+    "ALTER TABLE cardio_log ADD COLUMN IF NOT EXISTS stride_length_m REAL",
+    "ALTER TABLE cardio_log ADD COLUMN IF NOT EXISTS vert_oscillation_cm REAL",
+    "ALTER TABLE cardio_log ADD COLUMN IF NOT EXISTS vert_ratio_pct REAL",
+    "ALTER TABLE cardio_log ADD COLUMN IF NOT EXISTS gct_ms REAL",
+    "ALTER TABLE cardio_log ADD COLUMN IF NOT EXISTS gct_balance TEXT",
+]
+
 EXERCISES = [
     ('Back Squat','Bike','Staple','Squat','3x6-8'),
     ('Front Squat','Bike','Staple','Squat','3x6-8'),
@@ -384,30 +401,13 @@ EXERCISES = [
 ]
 
 
-# Columns added after initial schema — run as migrations on existing DBs
-_PG_MIGRATIONS = [
-    "ALTER TABLE cardio_log ADD COLUMN IF NOT EXISTS stride_length_m REAL",
-    "ALTER TABLE cardio_log ADD COLUMN IF NOT EXISTS vert_oscillation_cm REAL",
-    "ALTER TABLE cardio_log ADD COLUMN IF NOT EXISTS vert_ratio_pct REAL",
-    "ALTER TABLE cardio_log ADD COLUMN IF NOT EXISTS gct_ms REAL",
-    "ALTER TABLE cardio_log ADD COLUMN IF NOT EXISTS gct_balance TEXT",
-]
-
-_SQLITE_MIGRATIONS = [
-    "ALTER TABLE cardio_log ADD COLUMN stride_length_m REAL",
-    "ALTER TABLE cardio_log ADD COLUMN vert_oscillation_cm REAL",
-    "ALTER TABLE cardio_log ADD COLUMN vert_ratio_pct REAL",
-    "ALTER TABLE cardio_log ADD COLUMN gct_ms REAL",
-    "ALTER TABLE cardio_log ADD COLUMN gct_balance TEXT",
-]
-
-
 def init_postgres():
     import psycopg2
     conn = psycopg2.connect(DATABASE_URL)
     cur = conn.cursor()
     for stmt in [s.strip() for s in PG_SCHEMA.split(';') if s.strip()]:
         cur.execute(stmt)
+    # Run migrations for columns added after initial deploy
     for stmt in _PG_MIGRATIONS:
         try:
             cur.execute(stmt)
@@ -431,11 +431,12 @@ def init_sqlite():
     os.makedirs(os.path.dirname(SQLITE_PATH), exist_ok=True)
     conn = sqlite3.connect(SQLITE_PATH)
     conn.executescript(SQLITE_SCHEMA)
+    # Run migrations for columns added after initial deploy
     for stmt in _SQLITE_MIGRATIONS:
         try:
             conn.execute(stmt)
-        except sqlite3.OperationalError:
-            pass  # Column already exists
+        except Exception:
+            pass
     conn.executemany(
         '''INSERT OR IGNORE INTO current_rx
            (exercise, discipline, type, movement_pattern, inventory_sugg_volume, rx_source)
