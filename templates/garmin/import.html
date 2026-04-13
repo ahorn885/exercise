@@ -7,11 +7,11 @@
     <h2 class="mb-4">Import Garmin FIT File</h2>
     <div class="card">
       <div class="card-body">
-        <p class="text-muted mb-3">Upload a <code>.fit</code> file exported from your Garmin device or Garmin Connect. The activity will be parsed and added to your log (cardio or strength, depending on activity type).</p>
+        <p class="text-muted mb-3">Upload a <code>.fit</code> file from your Garmin device, or the <code>.zip</code> exported directly from Garmin Connect's website. The activity will be parsed and added to your log (cardio or strength, depending on activity type).</p>
         <form method="post" enctype="multipart/form-data">
           <div class="mb-3">
             <label class="form-label fw-semibold">FIT File <span class="text-danger">*</span></label>
-            <input type="file" name="fit_file" accept=".fit" class="form-control" required>
+            <input type="file" name="fit_file" accept=".fit,.zip" class="form-control" required>
           </div>
           <div class="mb-3">
             <label class="form-label fw-semibold">Activity Name / Route <span class="text-muted fw-normal">(optional override)</span></label>

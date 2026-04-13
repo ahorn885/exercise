@@ -26,12 +26,22 @@ def import_fit():
             flash('No file selected.', 'warning')
             return redirect(url_for('garmin.import_fit'))
         fit_file = request.files['fit_file']
-        if not fit_file.filename.lower().endswith('.fit'):
-            flash('File must be a .fit file.', 'danger')
+        fname = fit_file.filename.lower()
+        if not (fname.endswith('.fit') or fname.endswith('.zip')):
+            flash('File must be a .fit or .zip file.', 'danger')
             return redirect(url_for('garmin.import_fit'))
         try:
+            raw = fit_file.read()
+            if fname.endswith('.zip'):
+                import zipfile, io
+                with zipfile.ZipFile(io.BytesIO(raw)) as zf:
+                    fit_names = [n for n in zf.namelist() if n.lower().endswith('.fit')]
+                    if not fit_names:
+                        flash('No .fit file found inside the zip.', 'danger')
+                        return redirect(url_for('garmin.import_fit'))
+                    raw = zf.read(fit_names[0])
             from garmin_fit_parser import parse_fit
-            result = parse_fit(fit_file.read())
+            result = parse_fit(raw)
             flask_session['fit_import'] = result
             flask_session['fit_name_override'] = request.form.get('activity_name', '')
             flask_session['fit_notes'] = request.form.get('notes', '')
