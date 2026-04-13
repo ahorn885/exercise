@@ -4,6 +4,32 @@ from database import get_db
 bp = Blueprint('garmin', __name__, url_prefix='/garmin')
 
 
+@bp.route('/debug-fit', methods=['GET', 'POST'])
+def debug_fit():
+    dump = None
+    if request.method == 'POST':
+        f = request.files.get('fit_file')
+        if not f or not f.filename:
+            flash('No file selected.', 'warning')
+            return redirect(url_for('garmin.debug_fit'))
+        try:
+            raw = f.read()
+            fname = f.filename.lower()
+            if fname.endswith('.zip'):
+                import zipfile, io
+                with zipfile.ZipFile(io.BytesIO(raw)) as zf:
+                    fit_names = [n for n in zf.namelist() if n.lower().endswith('.fit')]
+                    if not fit_names:
+                        flash('No .fit file found inside the zip.', 'danger')
+                        return redirect(url_for('garmin.debug_fit'))
+                    raw = zf.read(fit_names[0])
+            from garmin_fit_parser import _dump_fit
+            dump = _dump_fit(raw)
+        except Exception as e:
+            flash(f'Error: {e}', 'danger')
+    return render_template('garmin/debug_fit.html', dump=dump)
+
+
 @bp.route('/')
 def dashboard():
     db = get_db()

@@ -290,3 +290,106 @@ def _parse_strength(session, sets) -> dict:
         rows = merged
 
     return {'log_type': 'strength', 'data': rows}
+
+
+# ── Debug dump ────────────────────────────────────────────────────────────────
+
+def _dump_fit(fit_bytes: bytes) -> dict:
+    """
+    Return a comprehensive dump of every message and field in a FIT file —
+    standard fields, developer-defined fields, and developer data values.
+    Used by the /garmin/debug-fit route to discover what a device records.
+    """
+    from fit_tool.fit_file import FitFile
+
+    tmp_path = os.path.join(tempfile.gettempdir(), f'fit_{uuid.uuid4().hex}.fit')
+    try:
+        with open(tmp_path, 'wb') as f:
+            f.write(fit_bytes)
+        fit = FitFile.from_file(tmp_path)
+    finally:
+        try:
+            os.remove(tmp_path)
+        except OSError:
+            pass
+
+    # Count message types
+    msg_counts = {}
+    session_fields = {}
+    developer_field_defs = []   # from FieldDescriptionMessage
+    sample_records = []         # first 3 RecordMessage entries with non-None fields
+    all_message_samples = {}    # one sample per message type
+
+    for record in fit.records:
+        msg = record.message
+        msg_type = type(msg).__name__
+
+        # Count
+        msg_counts[msg_type] = msg_counts.get(msg_type, 0) + 1
+
+        # Collect all non-None attributes (skip private/dunder and callables)
+        def _fields(m):
+            out = {}
+            for attr in dir(m):
+                if attr.startswith('_'):
+                    continue
+                try:
+                    val = getattr(m, attr)
+                    if callable(val):
+                        continue
+                    if val is not None:
+                        out[attr] = val
+                except Exception:
+                    pass
+            return out
+
+        fields = _fields(msg)
+
+        # Session — capture everything
+        if msg_type == 'SessionMessage':
+            session_fields = fields
+
+        # Developer field definitions
+        elif msg_type == 'FieldDescriptionMessage':
+            developer_field_defs.append({
+                k: str(v) for k, v in fields.items()
+                if k in ('field_name', 'units', 'fit_base_type_id',
+                         'native_message_num', 'native_field_num',
+                         'developer_data_index', 'array')
+            })
+
+        # Sample records (first 3 with non-trivial data)
+        elif msg_type == 'RecordMessage' and len(sample_records) < 3:
+            sample_records.append({k: str(v) for k, v in fields.items()})
+
+        # One sample per message type (for types we haven't seen yet)
+        if msg_type not in all_message_samples:
+            all_message_samples[msg_type] = {k: str(v) for k, v in fields.items()}
+
+    # Try to extract developer data values from records
+    # fit-tool may expose them via a developer_fields property or similar
+    dev_data_samples = []
+    for record in fit.records:
+        msg = record.message
+        # Some versions of fit-tool expose developer_fields as a list/dict
+        dev_fields = getattr(msg, 'developer_fields', None)
+        if dev_fields:
+            entry = {'message_type': type(msg).__name__, 'developer_fields': {}}
+            if isinstance(dev_fields, dict):
+                entry['developer_fields'] = {k: str(v) for k, v in dev_fields.items()}
+            elif hasattr(dev_fields, '__iter__'):
+                for df in dev_fields:
+                    name = getattr(df, 'name', None) or getattr(df, 'field_name', str(df))
+                    value = getattr(df, 'value', getattr(df, 'raw_value', str(df)))
+                    entry['developer_fields'][str(name)] = str(value)
+            if entry['developer_fields'] and len(dev_data_samples) < 5:
+                dev_data_samples.append(entry)
+
+    return {
+        'message_counts': dict(sorted(msg_counts.items())),
+        'session_fields': {k: str(v) for k, v in session_fields.items()},
+        'developer_field_defs': developer_field_defs,
+        'developer_data_samples': dev_data_samples,
+        'sample_records': sample_records,
+        'all_message_samples': all_message_samples,
+    }

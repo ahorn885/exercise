@@ -1,0 +1,147 @@
+{% extends 'base.html' %}
+{% block title %}FIT File Debug Dump{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h2 class="mb-0">FIT File Debug Dump</h2>
+  <a href="{{ url_for('garmin.import_fit') }}" class="btn btn-outline-secondary btn-sm">← Import</a>
+</div>
+<p class="text-muted">Upload any <code>.fit</code> or <code>.zip</code> to see every field your device recorded — standard and developer data. Use this to discover what's available before adding new fields to the schema.</p>
+
+<form method="post" enctype="multipart/form-data" class="mb-4">
+  <div class="input-group" style="max-width:480px">
+    <input type="file" name="fit_file" accept=".fit,.zip" class="form-control" required>
+    <button type="submit" class="btn btn-primary">Dump</button>
+  </div>
+</form>
+
+{% if dump %}
+
+{# ── Message type inventory ── #}
+<div class="card mb-3">
+  <div class="card-header fw-semibold">Message Types in File</div>
+  <div class="card-body p-0">
+    <table class="table table-sm mb-0">
+      <thead class="table-light"><tr><th>Message Type</th><th>Count</th></tr></thead>
+      <tbody>
+        {% for msg_type, count in dump.message_counts.items() %}
+        <tr><td><code>{{ msg_type }}</code></td><td>{{ count }}</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+{# ── Session fields ── #}
+<div class="card mb-3">
+  <div class="card-header fw-semibold">Session Fields (non-null)</div>
+  <div class="card-body p-0">
+    <table class="table table-sm mb-0">
+      <thead class="table-light"><tr><th style="width:40%">Field</th><th>Value</th></tr></thead>
+      <tbody>
+        {% for k, v in dump.session_fields.items() | sort %}
+        <tr><td><code>{{ k }}</code></td><td>{{ v }}</td></tr>
+        {% endfor %}
+        {% if not dump.session_fields %}
+        <tr><td colspan="2" class="text-muted">No session message found.</td></tr>
+        {% endif %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+{# ── Developer field definitions ── #}
+<div class="card mb-3">
+  <div class="card-header fw-semibold">
+    Developer Field Definitions
+    <span class="badge bg-secondary ms-2">{{ dump.developer_field_defs | length }}</span>
+  </div>
+  {% if dump.developer_field_defs %}
+  <div class="card-body p-0">
+    <table class="table table-sm mb-0">
+      <thead class="table-light">
+        <tr><th>field_name</th><th>units</th><th>native_message_num</th><th>native_field_num</th><th>fit_base_type_id</th></tr>
+      </thead>
+      <tbody>
+        {% for d in dump.developer_field_defs %}
+        <tr>
+          <td><code>{{ d.get('field_name', '—') }}</code></td>
+          <td>{{ d.get('units', '—') }}</td>
+          <td>{{ d.get('native_message_num', '—') }}</td>
+          <td>{{ d.get('native_field_num', '—') }}</td>
+          <td>{{ d.get('fit_base_type_id', '—') }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div class="card-body text-muted">No developer field definitions found in this file.</div>
+  {% endif %}
+</div>
+
+{# ── Developer data values ── #}
+{% if dump.developer_data_samples %}
+<div class="card mb-3">
+  <div class="card-header fw-semibold">Developer Data Values (sample records)</div>
+  <div class="card-body">
+    {% for s in dump.developer_data_samples %}
+    <div class="mb-2">
+      <small class="text-muted">{{ s.message_type }}</small>
+      <table class="table table-sm mb-0">
+        <tbody>
+          {% for k, v in s.developer_fields.items() %}
+          <tr><td><code>{{ k }}</code></td><td>{{ v }}</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}
+
+{# ── Sample record messages ── #}
+{% if dump.sample_records %}
+<div class="card mb-3">
+  <div class="card-header fw-semibold">Sample Record Messages (first 3, non-null fields)</div>
+  <div class="card-body p-0">
+    <table class="table table-sm mb-0">
+      <thead class="table-light"><tr><th style="width:40%">Field</th><th>Value</th></tr></thead>
+      <tbody>
+        {% for rec in dump.sample_records %}
+        <tr class="table-secondary"><td colspan="2"><small class="text-muted">Record {{ loop.index }}</small></td></tr>
+        {% for k, v in rec.items() | sort %}
+        <tr><td><code>{{ k }}</code></td><td>{{ v }}</td></tr>
+        {% endfor %}
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+
+{# ── One sample per message type ── #}
+<details class="mb-3">
+  <summary class="fw-semibold text-muted" style="cursor:pointer">All Other Message Type Samples</summary>
+  {% for msg_type, fields in dump.all_message_samples.items() %}
+  {% if msg_type not in ('SessionMessage', 'RecordMessage') %}
+  <div class="card mt-2">
+    <div class="card-header py-1"><small><code>{{ msg_type }}</code></small></div>
+    <div class="card-body p-0">
+      <table class="table table-sm mb-0">
+        <tbody>
+          {% for k, v in fields.items() | sort %}
+          <tr><td style="width:40%"><code>{{ k }}</code></td><td>{{ v }}</td></tr>
+          {% endfor %}
+          {% if not fields %}<tr><td class="text-muted">No fields</td></tr>{% endif %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  {% endif %}
+  {% endfor %}
+</details>
+
+{% endif %}{# end if dump #}
+{% endblock %}
