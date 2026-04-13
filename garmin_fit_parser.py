@@ -20,10 +20,41 @@ SPORT_MAP = {
     'open_water_swimming': 'Swimming Open',
     'yoga': 'Yoga',
     'rowing': 'Rowing Ergometer',
+    'indoor_rowing': 'Rowing Ergometer',
     'kayaking': 'Kayaking',
     'strength_training': '__strength__',
     'weight_training': '__strength__',
     'gym': '__strength__',
+    'training': '__strength__',
+}
+
+# FIT numeric sport IDs (from FIT protocol spec)
+# fit-tool returns sport/sub_sport as integers, not enum names
+_SPORT_NUM_MAP = {
+    1:  'running',
+    2:  'cycling',
+    5:  'swimming',
+    10: 'training',           # strength/fitness equipment
+    11: 'walking',
+    15: 'rowing',
+    17: 'hiking',
+    19: 'paddling',
+    41: 'kayaking',
+    62: 'yoga',
+}
+
+# FIT numeric sub-sport IDs
+_SUB_SPORT_NUM_MAP = {
+    1:  'treadmill',
+    3:  'trail_running',
+    5:  'spin',
+    6:  'indoor_cycling',
+    7:  'indoor_rowing',
+    8:  'mountain',           # mountain biking (matches _CYCLING_SUB key)
+    10: 'gravel_cycling',
+    17: 'gravel_cycling',
+    19: 'lap_swimming',
+    20: 'open_water',
 }
 
 # Sports where cadence is stored as one-leg (steps/min of one foot) → multiply by 2
@@ -36,7 +67,9 @@ _CYCLING_SUB = {
     'mountain': 'Mountain Biking',
     'gravel_cycling': 'Gravel Cycling',
     'indoor_cycling': 'Indoor Bike Trainer',
+    'spin': 'Indoor Bike Trainer',
     'track_cycling': 'Road Cycling',
+    'indoor_rowing': 'Rowing Ergometer',
 }
 _SWIM_SUB = {
     'lap_swimming': 'Swimming Pool',
@@ -51,11 +84,40 @@ _SWIM_ACTIVITIES = {'Swimming Pool', 'Swimming Open'}
 #   uint16/scale=10   → 6553.5  (stance time ms)
 #   uint16/scale=100  → 655.35
 #   uint8/scale=10    → 25.5    (training effect)
+#   uint8/scale=2     → 127.5   (pedal smoothness)
 _FLOAT_SENTINELS = frozenset({
-    65535.0, 65.535, 6553.5, 655.35, 25.5, 2.55,
+    65535.0, 65.535, 6553.5, 655.35, 25.5, 2.55, 127.5,
     4294967295.0, 4294967.295, 429496.7295,
 })
 _INT_SENTINELS = frozenset({255, 65535, 4294967295})
+
+# fit-tool attributes that are internal metadata, not data fields
+_DUMP_SKIP_ATTRS = frozenset({
+    'definition_message', 'developer_fields', 'endian', 'fields',
+    'global_id', 'growable', 'local_id', 'size', 'ID', 'NAME', 'name',
+})
+
+
+def _sport_str(val) -> str:
+    """Normalize a sport value (int enum or string) to a lowercase underscore string."""
+    if val is None:
+        return ''
+    try:
+        i = int(val)
+        return _SPORT_NUM_MAP.get(i, str(i))
+    except (TypeError, ValueError):
+        return str(val).lower().replace('sport.', '').replace(' ', '_')
+
+
+def _sub_sport_str(val) -> str:
+    """Normalize a sub_sport value (int enum or string) to a lowercase underscore string."""
+    if val is None:
+        return ''
+    try:
+        i = int(val)
+        return _SUB_SPORT_NUM_MAP.get(i, str(i))
+    except (TypeError, ValueError):
+        return str(val).lower().replace('sub_sport.', '').replace(' ', '_')
 
 
 def _resolve_activity(sport: str, sub_sport: str):
@@ -82,14 +144,19 @@ def _pace_from_speed(speed_ms: float) -> str:
 
 
 def _fit_timestamp_to_date(ts) -> str:
-    """Convert FIT timestamp (seconds since 1989-12-31 UTC) or datetime to YYYY-MM-DD."""
+    """Convert fit-tool timestamp to YYYY-MM-DD.
+
+    fit-tool returns timestamps as Unix milliseconds (e.g. 1775964920000 for April 2026).
+    Also handles datetime objects returned by some fit-tool versions.
+    """
     if ts is None:
         return ''
     try:
         if isinstance(ts, (int, float)):
-            fit_epoch = datetime(1989, 12, 31, tzinfo=timezone.utc)
-            dt = datetime.fromtimestamp(fit_epoch.timestamp() + ts, tz=timezone.utc)
+            # fit-tool uses Unix milliseconds
+            dt = datetime.fromtimestamp(ts / 1000.0, tz=timezone.utc)
         else:
+            # Already a datetime object
             dt = ts
         return dt.strftime('%Y-%m-%d')
     except Exception:
@@ -130,12 +197,9 @@ def parse_fit(fit_bytes: bytes) -> dict:
     if session is None:
         raise ValueError('No session message found in FIT file.')
 
-    sport = getattr(session, 'sport', None)
-    sub_sport = getattr(session, 'sub_sport', None)
-    sport_str = str(sport).lower().replace('sport.', '').replace(' ', '_') if sport else ''
-    sub_str = str(sub_sport).lower().replace('sub_sport.', '').replace(' ', '_') if sub_sport else ''
-
-    activity_name, sport_key = _resolve_activity(sport_str, sub_str)
+    sport_key = _sport_str(getattr(session, 'sport', None))
+    sub_key = _sub_sport_str(getattr(session, 'sub_sport', None))
+    activity_name, sport_key = _resolve_activity(sport_key, sub_key)
 
     if activity_name == '__strength__':
         return _parse_strength(session, sets)
@@ -179,8 +243,8 @@ def _parse_cardio(session, activity_name: str, sport_key: str) -> dict:
     moving_min = round(timer_s / 60, 2) if timer_s else None
     dist_mi = round(dist_m * 0.000621371, 3) if dist_m else None
 
-    # Speed: prefer enhanced_avg_speed (uint32, more reliable on modern devices),
-    # fall back to computing from distance/time (most reliable), then avg_speed.
+    # Speed: prefer enhanced_avg_speed (uint32, reliable on modern Garmin),
+    # fall back to computing from distance/time, then avg_speed.
     enhanced_ms = _f('enhanced_avg_speed')
     if enhanced_ms:
         speed_ms = enhanced_ms
@@ -344,16 +408,17 @@ def _dump_fit(fit_bytes: bytes) -> dict:
     all_message_samples = {}     # one sample per message type
 
     def _fields(m):
+        """Collect non-None, non-internal attributes as str-converted values."""
         out = {}
         for attr in dir(m):
-            if attr.startswith('_'):
+            if attr.startswith('_') or attr in _DUMP_SKIP_ATTRS:
                 continue
             try:
                 val = getattr(m, attr)
                 if callable(val):
                     continue
                 if val is not None:
-                    out[attr] = val
+                    out[attr] = str(val)
             except Exception:
                 pass
         return out
@@ -370,16 +435,16 @@ def _dump_fit(fit_bytes: bytes) -> dict:
             session_fields = fields
         elif msg_type == 'FieldDescriptionMessage':
             developer_field_defs.append({
-                k: str(v) for k, v in fields.items()
+                k: v for k, v in fields.items()
                 if k in ('field_name', 'units', 'fit_base_type_id',
                          'native_message_num', 'native_field_num',
                          'developer_data_index', 'array')
             })
         elif msg_type == 'RecordMessage' and len(sample_records) < 3:
-            sample_records.append({k: str(v) for k, v in fields.items()})
+            sample_records.append(fields)
 
         if msg_type not in all_message_samples:
-            all_message_samples[msg_type] = {k: str(v) for k, v in fields.items()}
+            all_message_samples[msg_type] = fields
 
     # Extract developer data values from records
     dev_data_samples = []
@@ -400,7 +465,7 @@ def _dump_fit(fit_bytes: bytes) -> dict:
 
     return {
         'message_counts': dict(sorted(msg_counts.items())),
-        'session_fields': {k: str(v) for k, v in session_fields.items()},
+        'session_fields': session_fields,
         'developer_field_defs': developer_field_defs,
         'developer_data_samples': dev_data_samples,
         'sample_records': sample_records,
