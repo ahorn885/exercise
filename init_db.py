@@ -12,7 +12,8 @@ SQLITE_SCHEMA = '''
         type TEXT, discipline TEXT, equipment TEXT, muscles_worked TEXT,
         skills_ar_carryover TEXT, where_available TEXT, source TEXT,
         suggested_volume TEXT, substitution_group TEXT, recovery_cost TEXT,
-        movement_pattern TEXT, session_placement TEXT, form_cue TEXT, video_reference TEXT
+        movement_pattern TEXT, session_placement TEXT, form_cue TEXT, video_reference TEXT,
+        weight_increment REAL
     );
     CREATE TABLE IF NOT EXISTS training_log (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -30,7 +31,8 @@ SQLITE_SCHEMA = '''
         exercise TEXT NOT NULL UNIQUE, discipline TEXT, type TEXT, movement_pattern TEXT,
         inventory_sugg_volume TEXT, current_sets INTEGER, current_reps INTEGER,
         current_weight REAL, current_duration INTEGER, last_performed TEXT,
-        last_outcome TEXT, rx_source TEXT
+        last_outcome TEXT, consecutive_failures INTEGER DEFAULT 0, rx_source TEXT,
+        weight_increment REAL
     );
     CREATE TABLE IF NOT EXISTS cardio_log (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -146,7 +148,8 @@ PG_SCHEMA = '''
         type TEXT, discipline TEXT, equipment TEXT, muscles_worked TEXT,
         skills_ar_carryover TEXT, where_available TEXT, source TEXT,
         suggested_volume TEXT, substitution_group TEXT, recovery_cost TEXT,
-        movement_pattern TEXT, session_placement TEXT, form_cue TEXT, video_reference TEXT
+        movement_pattern TEXT, session_placement TEXT, form_cue TEXT, video_reference TEXT,
+        weight_increment REAL
     );
     CREATE TABLE IF NOT EXISTS training_log (
         id SERIAL PRIMARY KEY,
@@ -164,7 +167,8 @@ PG_SCHEMA = '''
         exercise TEXT NOT NULL UNIQUE, discipline TEXT, type TEXT, movement_pattern TEXT,
         inventory_sugg_volume TEXT, current_sets INTEGER, current_reps INTEGER,
         current_weight REAL, current_duration INTEGER, last_performed TEXT,
-        last_outcome TEXT, rx_source TEXT
+        last_outcome TEXT, consecutive_failures INTEGER DEFAULT 0, rx_source TEXT,
+        weight_increment REAL
     );
     CREATE TABLE IF NOT EXISTS cardio_log (
         id SERIAL PRIMARY KEY,
@@ -280,6 +284,9 @@ _SQLITE_MIGRATIONS = [
     "ALTER TABLE cardio_log ADD COLUMN vert_ratio_pct REAL",
     "ALTER TABLE cardio_log ADD COLUMN gct_ms REAL",
     "ALTER TABLE cardio_log ADD COLUMN gct_balance TEXT",
+    "ALTER TABLE exercise_inventory ADD COLUMN weight_increment REAL",
+    "ALTER TABLE current_rx ADD COLUMN consecutive_failures INTEGER DEFAULT 0",
+    "ALTER TABLE current_rx ADD COLUMN weight_increment REAL",
 ]
 
 _PG_MIGRATIONS = [
@@ -288,8 +295,33 @@ _PG_MIGRATIONS = [
     "ALTER TABLE cardio_log ADD COLUMN IF NOT EXISTS vert_ratio_pct REAL",
     "ALTER TABLE cardio_log ADD COLUMN IF NOT EXISTS gct_ms REAL",
     "ALTER TABLE cardio_log ADD COLUMN IF NOT EXISTS gct_balance TEXT",
+    "ALTER TABLE exercise_inventory ADD COLUMN IF NOT EXISTS weight_increment REAL",
+    "ALTER TABLE current_rx ADD COLUMN IF NOT EXISTS consecutive_failures INTEGER DEFAULT 0",
+    "ALTER TABLE current_rx ADD COLUMN IF NOT EXISTS weight_increment REAL",
 ]
 
+# Volume rationale for endurance athletes (cyclists, trail runners, kayakers):
+#   Strength training is supplemental — recovery cost must be managed alongside endurance work.
+#   2-3 sets per exercise is the evidence-based ceiling; 3 sets is the default here.
+#   2 sets is appropriate for novel/accessory work with higher recovery cost.
+#   Rep ranges: 6-8 for heavy compounds (strength emphasis), 8-12 for medium compounds,
+#               12-20 for accessories and isolation; max reps for bodyweight skills.
+#   Total weekly sets per movement pattern (10+) matters more than per-session count.
+#
+# Progression logic (see calculations.py for implementation):
+#   Weight increment is computed at workout time from actual_weight:
+#     actual_weight < 15 lb  → 2.5 lb increment  (light KB/DB; micro-plate scale)
+#     actual_weight >= 15 lb → 5.0 lb increment   (standard KB/DB or barbell)
+#   Bodyweight exercises (no weight): rep increment from PROGRESSION_RULES.
+#   Time-based: +5 sec per PROGRESS session.
+#   The weight_increment column in exercise_inventory stores an override if needed.
+#
+# Regression logic:
+#   REDUCE outcome (< 75% completion) increments a consecutive_failures counter.
+#   REPEAT (75–99%) freezes the counter — no progress, no regression.
+#   PROGRESS resets the counter to 0.
+#   After 3 consecutive REDUCE outcomes, weight/duration decreases by one step.
+#
 # where_available locale codes (comma-separated when multiple apply):
 #   home     = user's home gym (barbell, KB, DB, bands, pull-up bar)
 #   hotel    = hotel room / hotel gym (bodyweight; floor space available)

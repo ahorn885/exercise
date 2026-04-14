@@ -44,11 +44,17 @@
       <td>{{ e.current_reps or '—' }}</td>
       <td>{{ e.current_weight or '—' }}{% if e.current_weight %} lb{% endif %}</td>
       <td class="text-muted small text-nowrap">{{ e.last_performed or '—' }}</td>
-      <td>
+      <td class="text-nowrap">
         {% if e.last_outcome %}
           <span class="badge {% if '↑' in e.last_outcome %}bg-success{% elif '→' in e.last_outcome %}bg-warning text-dark{% elif '↓' in e.last_outcome %}bg-danger{% else %}bg-secondary{% endif %}">
             {{ e.last_outcome }}
           </span>
+          {% if e.consecutive_failures and e.consecutive_failures > 0 %}
+            <span class="badge {% if e.consecutive_failures >= 3 %}bg-danger{% elif e.consecutive_failures >= 2 %}bg-warning text-dark{% else %}bg-secondary{% endif %} ms-1"
+                  title="{{ e.consecutive_failures }} consecutive failure(s) — regression fires at 3">
+              {{ e.consecutive_failures }}/3
+            </span>
+          {% endif %}
         {% else %}
           <span class="text-muted small">needs setup</span>
         {% endif %}

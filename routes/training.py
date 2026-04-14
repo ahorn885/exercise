@@ -76,9 +76,14 @@ def _save_entry(db, entry_id):
     date = f.get('date', '')
     exercise = f.get('exercise', '')
 
-    rx = db.execute('SELECT movement_pattern, recovery_cost FROM current_rx WHERE exercise=?', (exercise,)).fetchone()
+    rx = db.execute(
+        'SELECT movement_pattern, recovery_cost, weight_increment, consecutive_failures FROM current_rx WHERE exercise=?',
+        (exercise,)
+    ).fetchone()
     movement_pattern = rx['movement_pattern'] if rx else None
     recovery_cost = rx['recovery_cost'] if rx else None
+    weight_increment = rx['weight_increment'] if rx else None
+    consecutive_failures = (rx['consecutive_failures'] or 0) if rx else 0
 
     def num(val, cast=float):
         try:
@@ -106,7 +111,9 @@ def _save_entry(db, entry_id):
     body_weight = body_wt_row['weight_lbs'] if body_wt_row else None
 
     nxt = calculate_next_rx(outcome, movement_pattern,
-                            actual_sets, actual_reps, actual_weight, actual_duration)
+                            actual_sets, actual_reps, actual_weight, actual_duration,
+                            weight_increment=weight_increment,
+                            consecutive_failures=consecutive_failures)
 
     if entry_id:
         db.execute('''UPDATE training_log SET
@@ -141,9 +148,10 @@ def _save_entry(db, entry_id):
     if outcome and exercise:
         db.execute('''UPDATE current_rx SET
             current_sets=?, current_reps=?, current_weight=?, current_duration=?,
-            last_performed=?, last_outcome=?, rx_source='From Training Log'
+            last_performed=?, last_outcome=?, consecutive_failures=?,
+            rx_source='From Training Log'
             WHERE exercise=?''',
             (actual_sets, actual_reps, actual_weight, actual_duration,
-             date, outcome, exercise))
+             date, outcome, nxt['consecutive_failures'], exercise))
 
     db.commit()

@@ -1,24 +1,57 @@
-"""Auto-calculation logic matching the Excel formulas."""
+"""Auto-calculation logic matching the Excel formulas.
+
+Progression rules (PROGRESSION_RULES):
+  Each movement pattern defines the default step sizes and regression threshold.
+  weight_incr   — fallback lb increment when actual_weight is unavailable (see _resolve_weight_incr)
+  rep_incr      — reps to add per PROGRESS session (bodyweight / rep-focused patterns)
+  duration_incr — seconds to add per PROGRESS session (time-based patterns)
+  regression_threshold — consecutive REDUCE outcomes before weight/duration actually decreases
+
+Weight increment runtime rule (overrides weight_incr when actual_weight is known):
+  actual_weight < 15 lb  → 2.5 lb increment  (light KB/DB; micro-plate scale)
+  actual_weight >= 15 lb → 5.0 lb increment   (standard KB/DB or barbell)
+  explicit weight_increment arg   → use that value instead (per-exercise override stored in exercise_inventory)
+
+Consecutive failure counter logic:
+  PROGRESS → reset to 0
+  REPEAT   → freeze (unchanged)
+  REDUCE   → increment by 1; regression fires when counter reaches regression_threshold
+"""
 
 
 PROGRESSION_RULES = {
-    'Squat':    {'weight_incr': 5, 'rep_incr': 0, 'duration_incr': 0},
-    'Hinge':    {'weight_incr': 5, 'rep_incr': 0, 'duration_incr': 0},
-    'Lunge':    {'weight_incr': 5, 'rep_incr': 0, 'duration_incr': 0},
-    'Push':     {'weight_incr': 5, 'rep_incr': 0, 'duration_incr': 0},
-    'Pull':     {'weight_incr': 5, 'rep_incr': 0, 'duration_incr': 0},
-    'Core':     {'weight_incr': 0, 'rep_incr': 2, 'duration_incr': 5},
-    'Carry':    {'weight_incr': 5, 'rep_incr': 0, 'duration_incr': 0},
-    'Rotation': {'weight_incr': 2.5, 'rep_incr': 0, 'duration_incr': 0},
-    'Plyo':     {'weight_incr': 0, 'rep_incr': 0, 'duration_incr': 0},  # add sets only
-    'Balance':  {'weight_incr': 0, 'rep_incr': 0, 'duration_incr': 5},
-    'Various':  {'weight_incr': 2.5, 'rep_incr': 1, 'duration_incr': 5},
-    'Complex':  {'weight_incr': 5, 'rep_incr': 0, 'duration_incr': 0},
-    'Conditioning': {'weight_incr': 0, 'rep_incr': 0, 'duration_incr': 5},
-    'Grip':     {'weight_incr': 0, 'rep_incr': 2, 'duration_incr': 5},
-    'Locomotion': {'weight_incr': 0, 'rep_incr': 0, 'duration_incr': 5},
-    'Mobility': {'weight_incr': 0, 'rep_incr': 0, 'duration_incr': 5},
+    'Squat':       {'weight_incr': 5,   'rep_incr': 0, 'duration_incr': 0,  'regression_threshold': 3},
+    'Hinge':       {'weight_incr': 5,   'rep_incr': 0, 'duration_incr': 0,  'regression_threshold': 3},
+    'Lunge':       {'weight_incr': 5,   'rep_incr': 0, 'duration_incr': 0,  'regression_threshold': 3},
+    'Push':        {'weight_incr': 5,   'rep_incr': 1, 'duration_incr': 0,  'regression_threshold': 3},
+    'Pull':        {'weight_incr': 5,   'rep_incr': 1, 'duration_incr': 0,  'regression_threshold': 3},
+    'Core':        {'weight_incr': 0,   'rep_incr': 2, 'duration_incr': 5,  'regression_threshold': 3},
+    'Carry':       {'weight_incr': 5,   'rep_incr': 0, 'duration_incr': 0,  'regression_threshold': 3},
+    'Rotation':    {'weight_incr': 2.5, 'rep_incr': 0, 'duration_incr': 0,  'regression_threshold': 3},
+    'Plyo':        {'weight_incr': 0,   'rep_incr': 0, 'duration_incr': 0,  'regression_threshold': 3},  # add sets only
+    'Balance':     {'weight_incr': 0,   'rep_incr': 0, 'duration_incr': 5,  'regression_threshold': 3},
+    'Various':     {'weight_incr': 2.5, 'rep_incr': 1, 'duration_incr': 5,  'regression_threshold': 3},
+    'Complex':     {'weight_incr': 5,   'rep_incr': 0, 'duration_incr': 0,  'regression_threshold': 3},
+    'Conditioning':{'weight_incr': 0,   'rep_incr': 0, 'duration_incr': 5,  'regression_threshold': 3},
+    'Grip':        {'weight_incr': 0,   'rep_incr': 2, 'duration_incr': 5,  'regression_threshold': 3},
+    'Locomotion':  {'weight_incr': 0,   'rep_incr': 0, 'duration_incr': 5,  'regression_threshold': 3},
+    'Mobility':    {'weight_incr': 0,   'rep_incr': 0, 'duration_incr': 5,  'regression_threshold': 3},
 }
+
+
+def _resolve_weight_incr(weight_increment_override, actual_weight, pattern_default):
+    """Return the lb increment to use for progression/regression.
+
+    Priority:
+      1. Explicit per-exercise override (stored in exercise_inventory.weight_increment)
+      2. Runtime rule from actual_weight: < 15 lb → 2.5, >= 15 lb → 5.0
+      3. Pattern default from PROGRESSION_RULES (fallback when weight unknown)
+    """
+    if weight_increment_override is not None:
+        return weight_increment_override
+    if actual_weight is not None:
+        return 2.5 if actual_weight < 15 else 5.0
+    return pattern_default
 
 
 def calculate_outcome(target_sets, target_reps, target_duration,
@@ -79,17 +112,29 @@ def calculate_volume(sets, reps, weight):
 
 
 def calculate_next_rx(outcome, movement_pattern,
-                      actual_sets, actual_reps, actual_weight, actual_duration):
-    """Apply progression rules based on outcome and movement pattern."""
+                      actual_sets, actual_reps, actual_weight, actual_duration,
+                      weight_increment=None, consecutive_failures=0):
+    """Apply progression rules based on outcome and movement pattern.
+
+    Args:
+        weight_increment: per-exercise override lb step (from exercise_inventory); None = auto
+        consecutive_failures: current count of consecutive REDUCE outcomes for this exercise
+
+    Returns dict with next_weight, next_sets, next_reps, next_duration, consecutive_failures.
+    """
     rules = PROGRESSION_RULES.get(movement_pattern, PROGRESSION_RULES['Various'])
 
     next_weight = actual_weight
     next_sets = actual_sets
     next_reps = actual_reps
+    next_duration = actual_duration
+    new_failures = consecutive_failures or 0
 
     if outcome == 'PROGRESS \u2191':
-        w_inc = rules['weight_incr']
+        new_failures = 0
+        w_inc = _resolve_weight_incr(weight_increment, actual_weight, rules['weight_incr'])
         r_inc = rules['rep_incr']
+        d_inc = rules['duration_incr']
 
         if movement_pattern == 'Plyo':
             next_sets = (actual_sets or 1) + 1
@@ -97,15 +142,29 @@ def calculate_next_rx(outcome, movement_pattern,
             next_weight = (actual_weight or 0) + w_inc
         elif r_inc and actual_reps:
             next_reps = (actual_reps or 0) + r_inc
-    elif outcome == 'REDUCE \u2193':
-        w_inc = rules['weight_incr']
-        if w_inc and actual_weight and actual_weight > w_inc:
-            next_weight = actual_weight - w_inc
+        elif d_inc and actual_duration:
+            next_duration = (actual_duration or 0) + d_inc
 
-    # REPEAT → keeps same values
+    elif outcome == 'REDUCE \u2193':
+        new_failures = (consecutive_failures or 0) + 1
+        threshold = rules.get('regression_threshold', 3)
+        if new_failures >= threshold:
+            w_inc = _resolve_weight_incr(weight_increment, actual_weight, rules['weight_incr'])
+            d_inc = rules['duration_incr']
+            r_inc = rules['rep_incr']
+            if w_inc and actual_weight and actual_weight > w_inc:
+                next_weight = actual_weight - w_inc
+            elif d_inc and actual_duration and actual_duration > d_inc:
+                next_duration = actual_duration - d_inc
+            elif r_inc and actual_reps and actual_reps > r_inc:
+                next_reps = actual_reps - r_inc
+
+    # REPEAT → keeps same values; new_failures unchanged (frozen)
 
     return {
         'next_weight': next_weight,
         'next_sets': next_sets,
         'next_reps': next_reps,
+        'next_duration': next_duration,
+        'consecutive_failures': new_failures,
     }
