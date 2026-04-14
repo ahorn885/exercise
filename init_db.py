@@ -32,7 +32,8 @@ SQLITE_SCHEMA = '''
         inventory_sugg_volume TEXT, current_sets INTEGER, current_reps INTEGER,
         current_weight REAL, current_duration INTEGER, last_performed TEXT,
         last_outcome TEXT, consecutive_failures INTEGER DEFAULT 0, rx_source TEXT,
-        weight_increment REAL
+        weight_increment REAL,
+        next_sets INTEGER, next_reps INTEGER, next_weight REAL
     );
     CREATE TABLE IF NOT EXISTS cardio_log (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -168,7 +169,8 @@ PG_SCHEMA = '''
         inventory_sugg_volume TEXT, current_sets INTEGER, current_reps INTEGER,
         current_weight REAL, current_duration INTEGER, last_performed TEXT,
         last_outcome TEXT, consecutive_failures INTEGER DEFAULT 0, rx_source TEXT,
-        weight_increment REAL
+        weight_increment REAL,
+        next_sets INTEGER, next_reps INTEGER, next_weight REAL
     );
     CREATE TABLE IF NOT EXISTS cardio_log (
         id SERIAL PRIMARY KEY,
@@ -287,6 +289,9 @@ _SQLITE_MIGRATIONS = [
     "ALTER TABLE exercise_inventory ADD COLUMN weight_increment REAL",
     "ALTER TABLE current_rx ADD COLUMN consecutive_failures INTEGER DEFAULT 0",
     "ALTER TABLE current_rx ADD COLUMN weight_increment REAL",
+    "ALTER TABLE current_rx ADD COLUMN next_sets INTEGER",
+    "ALTER TABLE current_rx ADD COLUMN next_reps INTEGER",
+    "ALTER TABLE current_rx ADD COLUMN next_weight REAL",
 ]
 
 _PG_MIGRATIONS = [
@@ -298,6 +303,9 @@ _PG_MIGRATIONS = [
     "ALTER TABLE exercise_inventory ADD COLUMN IF NOT EXISTS weight_increment REAL",
     "ALTER TABLE current_rx ADD COLUMN IF NOT EXISTS consecutive_failures INTEGER DEFAULT 0",
     "ALTER TABLE current_rx ADD COLUMN IF NOT EXISTS weight_increment REAL",
+    "ALTER TABLE current_rx ADD COLUMN IF NOT EXISTS next_sets INTEGER",
+    "ALTER TABLE current_rx ADD COLUMN IF NOT EXISTS next_reps INTEGER",
+    "ALTER TABLE current_rx ADD COLUMN IF NOT EXISTS next_weight REAL",
 ]
 
 # Volume rationale for endurance athletes (cyclists, trail runners, kayakers):

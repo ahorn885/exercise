@@ -149,9 +149,11 @@ def _save_entry(db, entry_id):
         db.execute('''UPDATE current_rx SET
             current_sets=?, current_reps=?, current_weight=?, current_duration=?,
             last_performed=?, last_outcome=?, consecutive_failures=?,
+            next_sets=?, next_reps=?, next_weight=?,
             rx_source='From Training Log'
             WHERE exercise=?''',
             (actual_sets, actual_reps, actual_weight, actual_duration,
-             date, outcome, nxt['consecutive_failures'], exercise))
+             date, outcome, nxt['consecutive_failures'],
+             nxt['next_sets'], nxt['next_reps'], nxt['next_weight'], exercise))
 
     db.commit()
