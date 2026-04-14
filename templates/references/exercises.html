@@ -5,10 +5,30 @@
   <h4 class="mb-0">Exercise Inventory ({{ rows|length }})</h4>
   <input type="text" id="search" class="form-control form-control-sm w-auto" placeholder="Search...">
 </div>
+<form class="row g-2 align-items-center mb-3" method="get">
+  <div class="col-auto">
+    <span class="text-muted small me-1">Available at:</span>
+  </div>
+  {% for loc in locales %}
+  <div class="col-auto">
+    <div class="form-check form-check-inline mb-0">
+      <input class="form-check-input" type="checkbox" name="locale" value="{{ loc }}"
+             id="loc_{{ loc }}" {% if loc in locale_filter %}checked{% endif %}
+             onchange="this.form.submit()">
+      <label class="form-check-label small" for="loc_{{ loc }}">{{ loc }}</label>
+    </div>
+  </div>
+  {% endfor %}
+  {% if locale_filter %}
+  <div class="col-auto">
+    <a href="{{ url_for('references.exercises') }}" class="btn btn-sm btn-outline-secondary">Clear</a>
+  </div>
+  {% endif %}
+</form>
 <div class="table-responsive">
   <table class="table table-sm table-hover table-striped" id="ex-table">
     <thead class="table-dark">
-      <tr><th>Exercise</th><th>Type</th><th>Discipline</th><th>Pattern</th><th>Recovery</th><th>Where</th><th>Suggested Vol</th></tr>
+      <tr><th>Exercise</th><th>Type</th><th>Discipline</th><th>Pattern</th><th>Recovery</th><th>Available</th><th>Suggested Vol</th></tr>
     </thead>
     <tbody>
     {% for r in rows %}
@@ -20,8 +40,16 @@
       <td><span class="badge {% if r.type == 'Staple' %}bg-primary{% else %}bg-secondary{% endif %}">{{ r.type }}</span></td>
       <td>{{ r.discipline }}</td>
       <td>{{ r.movement_pattern }}</td>
-      <td><span class="badge {% if r.recovery_cost == 'Low' %}bg-success{% elif r.recovery_cost == 'Med' %}bg-warning text-dark{% else %}bg-danger{% endif %}">{{ r.recovery_cost }}</span></td>
-      <td class="text-muted small">{{ r.where_available }}</td>
+      <td><span class="badge {% if r.recovery_cost == 'Low' %}bg-success{% elif r.recovery_cost == 'Med' %}bg-warning text-dark{% else %}bg-danger{% endif %}">{{ r.recovery_cost or '—' }}</span></td>
+      <td class="text-nowrap">
+        {% if r.where_available %}
+          {% for loc in r.where_available.split(',') %}
+            <span class="badge {% if loc == 'home' %}bg-primary{% elif loc == 'hotel' %}bg-success{% elif loc == 'partner' %}bg-warning text-dark{% elif loc == 'airport' %}bg-secondary{% else %}bg-light text-dark{% endif %} me-1">{{ loc }}</span>
+          {% endfor %}
+        {% else %}
+          <span class="text-muted small">gym only</span>
+        {% endif %}
+      </td>
       <td class="text-muted small">{{ r.suggested_volume }}</td>
     </tr>
     {% endfor %}

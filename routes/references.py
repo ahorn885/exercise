@@ -1,14 +1,25 @@
-from flask import Blueprint, render_template
+from flask import Blueprint, render_template, request
 from database import get_db
 
 bp = Blueprint('references', __name__)
+
+LOCALES = ['home', 'hotel', 'partner', 'airport']
 
 
 @bp.route('/exercises')
 def exercises():
     db = get_db()
+    locale_filter = request.args.getlist('locale')  # list of checked locales
+
     rows = db.execute('SELECT * FROM exercise_inventory ORDER BY discipline, exercise').fetchall()
-    return render_template('references/exercises.html', rows=rows)
+
+    if locale_filter:
+        # Keep rows that have ALL selected locales
+        rows = [r for r in rows
+                if all(loc in (r['where_available'] or '').split(',') for loc in locale_filter)]
+
+    return render_template('references/exercises.html', rows=rows,
+                           locale_filter=locale_filter, locales=LOCALES)
 
 
 @bp.route('/rx/setup/<exercise>', methods=['GET'])
