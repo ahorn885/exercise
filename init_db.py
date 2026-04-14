@@ -290,114 +290,122 @@ _PG_MIGRATIONS = [
     "ALTER TABLE cardio_log ADD COLUMN IF NOT EXISTS gct_balance TEXT",
 ]
 
+# where_available locale codes (comma-separated when multiple apply):
+#   home     = user's home gym (barbell, KB, DB, bands, pull-up bar)
+#   hotel    = hotel room / hotel gym (bodyweight; floor space available)
+#   partner  = partner's home (bodyweight / minimal equipment assumed)
+#   airport  = airport / transit (standing or seated; no floor exercises)
+# Blank = gym-only or requires equipment not at any listed locale.
+
 EXERCISES = [
-    ('Back Squat','Bike','Staple','Squat','3x6-8'),
-    ('Front Squat','Bike','Staple','Squat','3x6-8'),
-    ('Goblet Squat','Bike','Staple','Squat','3x8-12'),
-    ('Romanian Deadlift','Bike','Staple','Hinge','3x8-10'),
-    ('Glute Bridge / Hip Thrust','Bike','Staple','Hinge','3x12-15'),
-    ('Barbell Hip Thrust','Bike','Staple','Hinge','3x8-10'),
-    ('Push-Up','Bike','Staple','Push','3x15-20'),
-    ('Dip','Bike','Staple','Push','3x8-12'),
-    ('Plank','Bike','Staple','Core','3x30-60s'),
-    ('Side Plank','Bike','Staple','Core','3x30s ea'),
-    ('Pallof Press','Bike','Staple','Core','3x10 ea'),
-    ('Mountain Climbers','Bike','Staple','Core','3x30s'),
-    ('Single-Leg Calf Raise','Bike','Staple','Squat','3x15 ea'),
-    ('Box Jump','Bike','Staple','Plyo','3x5-8'),
-    ('Pedal Stance Deadlift','Bike','Novel','Hinge','2-3x5-10'),
-    ('Asymmetric Stab. Ball Push-Up','Bike','Novel','Push','3x10'),
-    ('TRX Mtn Climber / Unstable Bar','Bike','Novel','Core','3x20'),
-    ('Side Plank + Banded Leg Raise','Bike','Novel','Core','3x10 ea'),
-    ('Isometric Lunge Hold','Bike','Novel','Lunge','2-3x30-90s'),
-    ('Elevated Reverse Lunge','Bike','Novel','Lunge','3x8-10 ea'),
-    ('Renegade Row (Plank + DB Row)','Bike','Novel','Pull','3x8 ea'),
-    ('Weighted Box Step-Up','Foot','Staple','Lunge','3x10 ea'),
-    ('Bulgarian Split Squat','Foot','Staple','Lunge','3x8-10 ea'),
-    ('Nordic Hamstring Curl','Foot','Staple','Hinge','3x4-6, 2x/wk'),
-    ('Walking Lunge','Foot','Staple','Lunge','3x12 ea'),
-    ('Single-Leg Deadlift','Foot','Staple','Hinge','3x8-10 ea'),
-    ('Pull-Up','Foot','Staple','Pull','3x max'),
-    ('Single-Leg Glute Bridge','Foot','Staple','Hinge','3x20 ea'),
-    ('Dead Bug','Foot','Staple','Core','3x60s'),
-    ('Bird Dog','Foot','Staple','Core','3x10 ea'),
-    ('Glute Kickback (Banded)','Foot','Staple','Hinge','3x20 ea'),
-    ('Fire Hydrant (Banded)','Foot','Staple','Core','3x15 ea'),
-    ('Clamshell (Banded)','Foot','Staple','Core','3x15 ea'),
-    ('Oblique Press (Contralateral)','Foot','Staple','Core','3x60s alt.'),
-    ('Copenhagen Plank','Foot','Staple','Core','3x15-30s ea'),
-    ('Step-Down (Eccentric)','Foot','Staple','Squat','3x10 ea'),
-    ('Good Morning','Foot','Staple','Hinge','3x8-10'),
-    ('Back Extension / Rev. Hyper','Foot','Staple','Hinge','3x12-15'),
-    ('Banded Pull-Through','Foot','Staple','Hinge','3x12-15'),
-    ('Kettlebell Swing (Two-Hand)','Foot','Staple','Hinge','3-5x10-15'),
-    ('Single-Arm KB Swing','Foot','Staple','Hinge','3x10 ea'),
-    ('KB Clean & Press','Foot','Staple','Push','3x6-8 ea'),
-    ('KB Snatch','Foot','Staple','Hinge','3x5-8 ea'),
-    ('Farmer Carry','Foot','Staple','Carry','3-4x40-60m'),
-    ('Suitcase Carry','Foot','Staple','Carry','3x40-60m ea'),
-    ('Rack Carry','Foot','Staple','Carry','3x40-60m'),
-    ('Overhead Carry','Foot','Staple','Carry','3x30-40m ea'),
-    ('Bear Crawl','Foot','Staple','Core','3x20-30m'),
-    ('Sled Push','Foot','Staple','Squat','4-6x30-40m'),
-    ('Sled Pull (Hand-Over-Hand)','Foot','Staple','Pull','4-6x20-30m'),
-    ('Lunge to Rotation (Slam Ball/DB)','Foot','Staple','Lunge','3x8-10 ea'),
-    ('Hillbounding','Foot','Novel','Plyo','6-10x30s'),
-    ('4-Side Box Step-Up/Off','Foot','Novel','Lunge','Build to 4 circuits'),
-    ('1,000 Step-Up Challenge','Foot','Novel','Lunge','Build to 1000 w/25lb'),
-    ('Single-Leg Stance Eyes Closed','Foot','Novel','Balance','3x30s ea, daily'),
-    ('Towel Pull-Up','Foot','Novel','Pull','3x max'),
-    ('Hanging Leg Raise in Boots','Foot','Novel','Core','3x8-12'),
-    ('Side Split Lunges (Deep)','Foot','Novel','Squat','3x8 ea'),
-    ('Rapid Calf Raises','Foot','Novel','Plyo','3x30s'),
-    ('Weighted Treadmill Incline Walk','Foot','Novel','Locomotion','30-60 min Z2-3'),
-    ('Seated Cable Row','Water','Staple','Pull','3x10-12'),
-    ('Bent-Over Barbell Row','Water','Staple','Pull','3x6-8'),
-    ('Lat Pulldown','Water','Staple','Pull','3x10-12'),
-    ('Straight-Arm Lat Pulldown','Water','Staple','Pull','3x12-15'),
-    ('Dumbbell Chest Press','Water','Staple','Push','3x10-12'),
-    ('Plank with Rotation','Water','Staple','Core','3x10 ea'),
-    ('Forearm Wrist Curls','Water','Staple','Pull','3x15-20'),
-    ('Deadlift (Standard)','Water','Staple','Hinge','3x6-8'),
-    ('Face Pull','Water','Staple','Pull','3x15-20'),
-    ('Band Pull-Apart','Water','Staple','Pull','3x15-20'),
-    ('KB Sumo Deadlift','Water','Staple','Hinge','3x8-10'),
-    ('Battle Ropes','Water','Staple','Conditioning','3-6x30s on/off'),
-    ('Half-Kneeling 1-Arm Cable Row','Water','Novel','Pull','3x8-10 ea'),
-    ('Cable Woodchop (High-to-Low)','Water','Novel','Rotation','3x10-12 ea'),
-    ('Cable Woodchop (Low-to-High)','Water','Novel','Rotation','3x10-12 ea'),
-    ('Med Ball Wall Throws (Rotational)','Water','Novel','Rotation','3x10 ea'),
-    ('KB Swing on Inverted BOSU','Water','Novel','Hinge','3x10-12'),
-    ('Russian Twist (Feet Elevated)','Water','Novel','Rotation','3x20'),
-    ('Single-Arm DB Row (Staggered)','Water','Novel','Pull','3x8-10 ea'),
-    ('Med Ball Torso Rotation (Seated)','Water','Novel','Rotation','3x15 ea'),
-    ('High-Rep Strength Endurance Sets','Water','Novel','Various','3-5x12-20'),
-    ('KB Halo','Cross','Staple','Core','2-3x8 ea dir.'),
-    ('Push Press','Cross','Staple','Push','3x5-8'),
-    ('Sumo Deadlift High Pull','Cross','Staple','Pull','3x6-8'),
-    ('KB Windmill','Cross','Staple','Core','3x5-8 ea'),
-    ('Turkish Get-Up','Cross','Staple','Core','3x3-5 ea'),
-    ('Sandbag / Pack Carry (Bear Hug)','Cross','Staple','Carry','3x40-60m'),
-    ('Ab Wheel Rollout','Cross','Staple','Core','3x8-12'),
-    ('Hanging Knee Raise','Cross','Staple','Core','3x10-15'),
-    ('Sandbag Get-Up','Cross','Novel','Core','5 reps per side'),
-    ('Pistol Squat','Cross','Novel','Squat','3x5-8 ea'),
-    ('Hangboard Max Hangs','Cross','Novel','Grip','3-5x7-10s'),
-    ('7/3 Repeaters (Hangboard)','Cross','Novel','Grip','3-5 sets to fail'),
-    ('Front Lever Progression','Cross','Novel','Pull','3x5-10s holds'),
-    ('Rice Bucket','Cross','Novel','Grip','3-5 min daily'),
-    ('L-Sit Pull-Up','Cross','Novel','Pull','3x max'),
-    ('Treadwall Intervals','Cross','Novel','Conditioning','6x30s on/off'),
-    ('Nasal-Breathing-Only Climbing','Cross','Novel','Various','15-30 min cont.'),
-    ('Stability Ball Seated Shoulder Press','Water','Novel','Push','3x8-10'),
-    ('Stability Ball Single-Arm DB Press','Cross','Novel','Push','3x8-10 ea'),
-    ('Stability Ball Hamstring Curl','Foot','Novel','Hinge','3x10-12'),
-    ('Wall Sit','Cross','Staple','Squat','3x30-90s'),
-    ('Seated Glute Squeeze (Isometric)','Cross','Staple','Hinge','5x10s squeeze'),
-    ('Standing Hip Flexor Stretch','Foot','Staple','Mobility','2-3x30-60s each'),
-    ('Standing Figure-4 Stretch','Foot','Staple','Mobility','2-3x30-60s each'),
-    ('Wall Calf Stretch','Foot','Staple','Mobility','2x30s each leg'),
-    ('Wall Chest / Doorway Stretch','Water','Staple','Mobility','2-3x30s each'),
+    # (exercise, discipline, type, movement_pattern, suggested_volume, where_available)
+    ('Back Squat',                        'Bike',  'Staple', 'Squat',        '3x6-8',             'home'),
+    ('Front Squat',                       'Bike',  'Staple', 'Squat',        '3x6-8',             'home'),
+    ('Goblet Squat',                      'Bike',  'Staple', 'Squat',        '3x8-12',            'home'),
+    ('Romanian Deadlift',                 'Bike',  'Staple', 'Hinge',        '3x8-10',            'home'),
+    ('Glute Bridge / Hip Thrust',         'Bike',  'Staple', 'Hinge',        '3x12-15',           'home,hotel,partner'),
+    ('Barbell Hip Thrust',                'Bike',  'Staple', 'Hinge',        '3x8-10',            'home'),
+    ('Push-Up',                           'Bike',  'Staple', 'Push',         '3x15-20',           'home,hotel,partner'),
+    ('Dip',                               'Bike',  'Staple', 'Push',         '3x8-12',            'home'),
+    ('Plank',                             'Bike',  'Staple', 'Core',         '3x30-60s',          'home,hotel,partner'),
+    ('Side Plank',                        'Bike',  'Staple', 'Core',         '3x30s ea',          'home,hotel,partner'),
+    ('Pallof Press',                      'Bike',  'Staple', 'Core',         '3x10 ea',           'home'),
+    ('Mountain Climbers',                 'Bike',  'Staple', 'Core',         '3x30s',             'home,hotel,partner'),
+    ('Single-Leg Calf Raise',             'Bike',  'Staple', 'Squat',        '3x15 ea',           'home,hotel,partner,airport'),
+    ('Box Jump',                          'Bike',  'Staple', 'Plyo',         '3x5-8',             'home'),
+    ('Pedal Stance Deadlift',             'Bike',  'Novel',  'Hinge',        '2-3x5-10',          'home'),
+    ('Asymmetric Stab. Ball Push-Up',     'Bike',  'Novel',  'Push',         '3x10',              'home'),
+    ('TRX Mtn Climber / Unstable Bar',    'Bike',  'Novel',  'Core',         '3x20',              'home'),
+    ('Side Plank + Banded Leg Raise',     'Bike',  'Novel',  'Core',         '3x10 ea',           'home'),
+    ('Isometric Lunge Hold',              'Bike',  'Novel',  'Lunge',        '2-3x30-90s',        'home,hotel,partner,airport'),
+    ('Elevated Reverse Lunge',            'Bike',  'Novel',  'Lunge',        '3x8-10 ea',         'home,hotel,partner'),
+    ('Renegade Row (Plank + DB Row)',      'Bike',  'Novel',  'Pull',         '3x8 ea',            'home'),
+    ('Weighted Box Step-Up',              'Foot',  'Staple', 'Lunge',        '3x10 ea',           'home'),
+    ('Bulgarian Split Squat',             'Foot',  'Staple', 'Lunge',        '3x8-10 ea',         'home,hotel,partner'),
+    ('Nordic Hamstring Curl',             'Foot',  'Staple', 'Hinge',        '3x4-6, 2x/wk',     'home,hotel,partner'),
+    ('Walking Lunge',                     'Foot',  'Staple', 'Lunge',        '3x12 ea',           'home,hotel,partner'),
+    ('Single-Leg Deadlift',               'Foot',  'Staple', 'Hinge',        '3x8-10 ea',         'home,hotel,partner'),
+    ('Pull-Up',                           'Foot',  'Staple', 'Pull',         '3x max',            'home'),
+    ('Single-Leg Glute Bridge',           'Foot',  'Staple', 'Hinge',        '3x20 ea',           'home,hotel,partner'),
+    ('Dead Bug',                          'Foot',  'Staple', 'Core',         '3x60s',             'home,hotel,partner'),
+    ('Bird Dog',                          'Foot',  'Staple', 'Core',         '3x10 ea',           'home,hotel,partner'),
+    ('Glute Kickback (Banded)',            'Foot',  'Staple', 'Hinge',        '3x20 ea',           'home'),
+    ('Fire Hydrant (Banded)',              'Foot',  'Staple', 'Core',         '3x15 ea',           'home'),
+    ('Clamshell (Banded)',                'Foot',  'Staple', 'Core',         '3x15 ea',           'home'),
+    ('Oblique Press (Contralateral)',      'Foot',  'Staple', 'Core',         '3x60s alt.',        'home,hotel,partner'),
+    ('Copenhagen Plank',                  'Foot',  'Staple', 'Core',         '3x15-30s ea',       'home,hotel,partner'),
+    ('Step-Down (Eccentric)',              'Foot',  'Staple', 'Squat',        '3x10 ea',           'home,hotel,partner'),
+    ('Good Morning',                      'Foot',  'Staple', 'Hinge',        '3x8-10',            'home,hotel,partner'),
+    ('Back Extension / Rev. Hyper',       'Foot',  'Staple', 'Hinge',        '3x12-15',           'home'),
+    ('Banded Pull-Through',               'Foot',  'Staple', 'Hinge',        '3x12-15',           'home'),
+    ('Kettlebell Swing (Two-Hand)',        'Foot',  'Staple', 'Hinge',        '3-5x10-15',         'home'),
+    ('Single-Arm KB Swing',               'Foot',  'Staple', 'Hinge',        '3x10 ea',           'home'),
+    ('KB Clean & Press',                  'Foot',  'Staple', 'Push',         '3x6-8 ea',          'home'),
+    ('KB Snatch',                         'Foot',  'Staple', 'Hinge',        '3x5-8 ea',          'home'),
+    ('Farmer Carry',                      'Foot',  'Staple', 'Carry',        '3-4x40-60m',        'home'),
+    ('Suitcase Carry',                    'Foot',  'Staple', 'Carry',        '3x40-60m ea',       'home'),
+    ('Rack Carry',                        'Foot',  'Staple', 'Carry',        '3x40-60m',          'home'),
+    ('Overhead Carry',                    'Foot',  'Staple', 'Carry',        '3x30-40m ea',       'home'),
+    ('Bear Crawl',                        'Foot',  'Staple', 'Core',         '3x20-30m',          'home,hotel,partner'),
+    ('Sled Push',                         'Foot',  'Staple', 'Squat',        '4-6x30-40m',        ''),
+    ('Sled Pull (Hand-Over-Hand)',         'Foot',  'Staple', 'Pull',         '4-6x20-30m',        ''),
+    ('Lunge to Rotation (Slam Ball/DB)',   'Foot',  'Staple', 'Lunge',        '3x8-10 ea',         'home'),
+    ('Hillbounding',                      'Foot',  'Novel',  'Plyo',         '6-10x30s',          ''),
+    ('4-Side Box Step-Up/Off',            'Foot',  'Novel',  'Lunge',        'Build to 4 circuits','home'),
+    ('1,000 Step-Up Challenge',           'Foot',  'Novel',  'Lunge',        'Build to 1000 w/25lb','home'),
+    ('Single-Leg Stance Eyes Closed',     'Foot',  'Novel',  'Balance',      '3x30s ea, daily',   'home,hotel,partner,airport'),
+    ('Towel Pull-Up',                     'Foot',  'Novel',  'Pull',         '3x max',            'home'),
+    ('Hanging Leg Raise in Boots',        'Foot',  'Novel',  'Core',         '3x8-12',            'home'),
+    ('Side Split Lunges (Deep)',           'Foot',  'Novel',  'Squat',        '3x8 ea',            'home,hotel,partner,airport'),
+    ('Rapid Calf Raises',                 'Foot',  'Novel',  'Plyo',         '3x30s',             'home,hotel,partner,airport'),
+    ('Weighted Treadmill Incline Walk',   'Foot',  'Novel',  'Locomotion',   '30-60 min Z2-3',    ''),
+    ('Seated Cable Row',                  'Water', 'Staple', 'Pull',         '3x10-12',           ''),
+    ('Bent-Over Barbell Row',             'Water', 'Staple', 'Pull',         '3x6-8',             'home'),
+    ('Lat Pulldown',                      'Water', 'Staple', 'Pull',         '3x10-12',           ''),
+    ('Straight-Arm Lat Pulldown',         'Water', 'Staple', 'Pull',         '3x12-15',           ''),
+    ('Dumbbell Chest Press',              'Water', 'Staple', 'Push',         '3x10-12',           'home'),
+    ('Plank with Rotation',               'Water', 'Staple', 'Core',         '3x10 ea',           'home,hotel,partner'),
+    ('Forearm Wrist Curls',               'Water', 'Staple', 'Pull',         '3x15-20',           'home'),
+    ('Deadlift (Standard)',               'Water', 'Staple', 'Hinge',        '3x6-8',             'home'),
+    ('Face Pull',                         'Water', 'Staple', 'Pull',         '3x15-20',           'home'),
+    ('Band Pull-Apart',                   'Water', 'Staple', 'Pull',         '3x15-20',           'home'),
+    ('KB Sumo Deadlift',                  'Water', 'Staple', 'Hinge',        '3x8-10',            'home'),
+    ('Battle Ropes',                      'Water', 'Staple', 'Conditioning', '3-6x30s on/off',    ''),
+    ('Half-Kneeling 1-Arm Cable Row',     'Water', 'Novel',  'Pull',         '3x8-10 ea',         ''),
+    ('Cable Woodchop (High-to-Low)',       'Water', 'Novel',  'Rotation',     '3x10-12 ea',        ''),
+    ('Cable Woodchop (Low-to-High)',       'Water', 'Novel',  'Rotation',     '3x10-12 ea',        ''),
+    ('Med Ball Wall Throws (Rotational)', 'Water', 'Novel',  'Rotation',     '3x10 ea',           ''),
+    ('KB Swing on Inverted BOSU',         'Water', 'Novel',  'Hinge',        '3x10-12',           'home'),
+    ('Russian Twist (Feet Elevated)',      'Water', 'Novel',  'Rotation',     '3x20',              'home,hotel,partner'),
+    ('Single-Arm DB Row (Staggered)',      'Water', 'Novel',  'Pull',         '3x8-10 ea',         'home'),
+    ('Med Ball Torso Rotation (Seated)',   'Water', 'Novel',  'Rotation',     '3x15 ea',           ''),
+    ('High-Rep Strength Endurance Sets',  'Water', 'Novel',  'Various',      '3-5x12-20',         ''),
+    ('KB Halo',                           'Cross', 'Staple', 'Core',         '2-3x8 ea dir.',     'home'),
+    ('Push Press',                        'Cross', 'Staple', 'Push',         '3x5-8',             'home'),
+    ('Sumo Deadlift High Pull',           'Cross', 'Staple', 'Pull',         '3x6-8',             'home'),
+    ('KB Windmill',                       'Cross', 'Staple', 'Core',         '3x5-8 ea',          'home'),
+    ('Turkish Get-Up',                    'Cross', 'Staple', 'Core',         '3x3-5 ea',          'home'),
+    ('Sandbag / Pack Carry (Bear Hug)',    'Cross', 'Staple', 'Carry',        '3x40-60m',          'home'),
+    ('Ab Wheel Rollout',                  'Cross', 'Staple', 'Core',         '3x8-12',            'home'),
+    ('Hanging Knee Raise',                'Cross', 'Staple', 'Core',         '3x10-15',           'home'),
+    ('Sandbag Get-Up',                    'Cross', 'Novel',  'Core',         '5 reps per side',   'home'),
+    ('Pistol Squat',                      'Cross', 'Novel',  'Squat',        '3x5-8 ea',          'home,hotel,partner,airport'),
+    ('Hangboard Max Hangs',               'Cross', 'Novel',  'Grip',         '3-5x7-10s',         'home'),
+    ('7/3 Repeaters (Hangboard)',         'Cross', 'Novel',  'Grip',         '3-5 sets to fail',  'home'),
+    ('Front Lever Progression',           'Cross', 'Novel',  'Pull',         '3x5-10s holds',     'home'),
+    ('Rice Bucket',                       'Cross', 'Novel',  'Grip',         '3-5 min daily',     'home'),
+    ('L-Sit Pull-Up',                     'Cross', 'Novel',  'Pull',         '3x max',            'home'),
+    ('Treadwall Intervals',               'Cross', 'Novel',  'Conditioning', '6x30s on/off',      ''),
+    ('Nasal-Breathing-Only Climbing',     'Cross', 'Novel',  'Various',      '15-30 min cont.',   ''),
+    ('Stability Ball Seated Shoulder Press','Water','Novel', 'Push',         '3x8-10',            'home'),
+    ('Stability Ball Single-Arm DB Press','Cross', 'Novel',  'Push',         '3x8-10 ea',         'home'),
+    ('Stability Ball Hamstring Curl',     'Foot',  'Novel',  'Hinge',        '3x10-12',           'home'),
+    ('Wall Sit',                          'Cross', 'Staple', 'Squat',        '3x30-90s',          'home,hotel,partner,airport'),
+    ('Seated Glute Squeeze (Isometric)',   'Cross', 'Staple', 'Hinge',        '5x10s squeeze',     'home,hotel,partner,airport'),
+    ('Standing Hip Flexor Stretch',       'Foot',  'Staple', 'Mobility',     '2-3x30-60s each',   'home,hotel,partner,airport'),
+    ('Standing Figure-4 Stretch',         'Foot',  'Staple', 'Mobility',     '2-3x30-60s each',   'home,hotel,partner,airport'),
+    ('Wall Calf Stretch',                 'Foot',  'Staple', 'Mobility',     '2x30s each leg',    'home,hotel,partner,airport'),
+    ('Wall Chest / Doorway Stretch',      'Water', 'Staple', 'Mobility',     '2-3x30s each',      'home,hotel,partner,airport'),
 ]
 
 
@@ -413,18 +421,19 @@ def init_postgres():
             cur.execute(stmt)
         except Exception:
             conn.rollback()
-    # Seed current_rx
+    # Seed current_rx (5 columns — slice away where_available)
     cur.executemany(
         '''INSERT INTO current_rx (exercise, discipline, type, movement_pattern,
            inventory_sugg_volume, rx_source)
            VALUES (%s, %s, %s, %s, %s, 'Needs initial setup')
            ON CONFLICT (exercise) DO NOTHING''',
-        EXERCISES
+        [e[:5] for e in EXERCISES]
     )
-    # Seed exercise_inventory (exercise, discipline, type, movement_pattern, suggested_volume)
+    # Seed exercise_inventory
     cur.executemany(
-        '''INSERT INTO exercise_inventory (exercise, discipline, type, movement_pattern, suggested_volume)
-           VALUES (%s, %s, %s, %s, %s)
+        '''INSERT INTO exercise_inventory
+           (exercise, discipline, type, movement_pattern, suggested_volume, where_available)
+           VALUES (%s, %s, %s, %s, %s, %s)
            ON CONFLICT (exercise) DO NOTHING''',
         EXERCISES
     )
@@ -444,17 +453,18 @@ def init_sqlite():
             conn.execute(stmt)
         except Exception:
             pass
+    # Seed current_rx (5 columns — slice away where_available)
     conn.executemany(
         '''INSERT OR IGNORE INTO current_rx
            (exercise, discipline, type, movement_pattern, inventory_sugg_volume, rx_source)
            VALUES (?, ?, ?, ?, ?, 'Needs initial setup')''',
-        EXERCISES
+        [e[:5] for e in EXERCISES]
     )
-    # Seed exercise_inventory (exercise, discipline, type, movement_pattern, suggested_volume)
+    # Seed exercise_inventory
     conn.executemany(
         '''INSERT OR IGNORE INTO exercise_inventory
-           (exercise, discipline, type, movement_pattern, suggested_volume)
-           VALUES (?, ?, ?, ?, ?)''',
+           (exercise, discipline, type, movement_pattern, suggested_volume, where_available)
+           VALUES (?, ?, ?, ?, ?, ?)''',
         EXERCISES
     )
     conn.commit()
