@@ -421,6 +421,13 @@ def init_postgres():
            ON CONFLICT (exercise) DO NOTHING''',
         EXERCISES
     )
+    # Seed exercise_inventory (exercise, discipline, type, movement_pattern, suggested_volume)
+    cur.executemany(
+        '''INSERT INTO exercise_inventory (exercise, discipline, type, movement_pattern, suggested_volume)
+           VALUES (%s, %s, %s, %s, %s)
+           ON CONFLICT (exercise) DO NOTHING''',
+        EXERCISES
+    )
     conn.commit()
     cur.close()
     conn.close()
@@ -441,6 +448,13 @@ def init_sqlite():
         '''INSERT OR IGNORE INTO current_rx
            (exercise, discipline, type, movement_pattern, inventory_sugg_volume, rx_source)
            VALUES (?, ?, ?, ?, ?, 'Needs initial setup')''',
+        EXERCISES
+    )
+    # Seed exercise_inventory (exercise, discipline, type, movement_pattern, suggested_volume)
+    conn.executemany(
+        '''INSERT OR IGNORE INTO exercise_inventory
+           (exercise, discipline, type, movement_pattern, suggested_volume)
+           VALUES (?, ?, ?, ?, ?)''',
         EXERCISES
     )
     conn.commit()
