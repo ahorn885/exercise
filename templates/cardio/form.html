@@ -6,6 +6,8 @@
   <a href="{{ url_for('cardio.list_entries') }}" class="btn btn-sm btn-outline-secondary">← Back</a>
 </div>
 <form method="post">
+
+  {# ── Activity + Date ── #}
   <div class="row g-3 mb-3">
     <div class="col-md-3">
       <label class="form-label">Date</label>
@@ -21,11 +23,12 @@
     </div>
     <div class="col-md-5">
       <label class="form-label">Activity Name / Route</label>
-      <input type="text" name="activity_name" class="form-control" placeholder="e.g. Morning treadmill Z2"
+      <input type="text" name="activity_name" class="form-control" placeholder="e.g. Morning Z2 ride"
              value="{{ entry.activity_name if entry else '' }}">
     </div>
   </div>
 
+  {# ── Time + Distance ── #}
   <div class="row g-3 mb-3">
     <div class="col-6 col-md-2">
       <label class="form-label">Duration (min)</label>
@@ -39,10 +42,22 @@
       <label class="form-label">Distance (mi)</label>
       <input type="number" name="distance_mi" class="form-control" step="0.01" value="{{ entry.distance_mi if entry else '' }}">
     </div>
-    <div class="col-6 col-md-2">
+    <div class="col-6 col-md-2 run-field">
       <label class="form-label">Avg Pace (min/mi)</label>
       <input type="text" name="avg_pace" class="form-control" placeholder="11:32" value="{{ entry.avg_pace if entry else '' }}">
     </div>
+    <div class="col-6 col-md-2 bike-field">
+      <label class="form-label">Avg Speed (mph)</label>
+      <input type="number" name="avg_speed" class="form-control" step="0.1" value="{{ entry.avg_speed if entry else '' }}">
+    </div>
+    <div class="col-6 col-md-2">
+      <label class="form-label">Calories</label>
+      <input type="number" name="calories" class="form-control" value="{{ entry.calories if entry else '' }}">
+    </div>
+  </div>
+
+  {# ── HR + Elevation ── #}
+  <div class="row g-3 mb-3">
     <div class="col-6 col-md-2">
       <label class="form-label">Avg HR</label>
       <input type="number" name="avg_hr" class="form-control" value="{{ entry.avg_hr if entry else '' }}">
@@ -51,34 +66,85 @@
       <label class="form-label">Max HR</label>
       <input type="number" name="max_hr" class="form-control" value="{{ entry.max_hr if entry else '' }}">
     </div>
-  </div>
-
-  <div class="row g-3 mb-3">
-    <div class="col-6 col-md-2">
-      <label class="form-label">Calories</label>
-      <input type="number" name="calories" class="form-control" value="{{ entry.calories if entry else '' }}">
-    </div>
     <div class="col-6 col-md-2">
       <label class="form-label">Elev Gain (ft)</label>
-      <input type="number" name="elev_gain_ft" class="form-control" value="{{ entry.elev_gain_ft if entry else '' }}">
+      <input type="number" name="elev_gain_ft" class="form-control" step="0.1" value="{{ entry.elev_gain_ft if entry else '' }}">
+    </div>
+    <div class="col-6 col-md-2">
+      <label class="form-label">Elev Loss (ft)</label>
+      <input type="number" name="elev_loss_ft" class="form-control" step="0.1" value="{{ entry.elev_loss_ft if entry else '' }}">
     </div>
     <div class="col-6 col-md-2">
       <label class="form-label">Avg Cadence</label>
       <input type="number" name="avg_cadence" class="form-control" value="{{ entry.avg_cadence if entry else '' }}">
     </div>
     <div class="col-6 col-md-2">
-      <label class="form-label">Aerobic TE</label>
-      <input type="number" name="aerobic_te" class="form-control" step="0.1" value="{{ entry.aerobic_te if entry else '' }}">
+      <label class="form-label">Max Cadence</label>
+      <input type="number" name="max_cadence" class="form-control" value="{{ entry.max_cadence if entry else '' }}">
     </div>
-    <div class="col-6 col-md-2 bike-field">
+  </div>
+
+  {# ── Power (cycling/rowing) ── #}
+  <div class="row g-3 mb-3 bike-field">
+    <div class="col-6 col-md-3">
+      <label class="form-label">Avg Power (W)</label>
+      <input type="number" name="avg_power" class="form-control" value="{{ entry.avg_power if entry else '' }}">
+    </div>
+    <div class="col-6 col-md-3">
+      <label class="form-label">Max Power (W)</label>
+      <input type="number" name="max_power" class="form-control" value="{{ entry.max_power if entry else '' }}">
+    </div>
+    <div class="col-6 col-md-3">
       <label class="form-label">Norm Power (W)</label>
       <input type="number" name="norm_power" class="form-control" value="{{ entry.norm_power if entry else '' }}">
+    </div>
+    <div class="col-6 col-md-3">
+      <label class="form-label">Anaerobic TE</label>
+      <input type="number" name="anaerobic_te" class="form-control" step="0.1" value="{{ entry.anaerobic_te if entry else '' }}">
+    </div>
+  </div>
+
+  {# ── Training effect + swim ── #}
+  <div class="row g-3 mb-3">
+    <div class="col-6 col-md-2">
+      <label class="form-label">Aerobic TE</label>
+      <input type="number" name="aerobic_te" class="form-control" step="0.1" value="{{ entry.aerobic_te if entry else '' }}">
     </div>
     <div class="col-6 col-md-2 paddle-field">
       <label class="form-label">SWOLF</label>
       <input type="number" name="swolf" class="form-control" value="{{ entry.swolf if entry else '' }}">
     </div>
+    <div class="col-6 col-md-2 paddle-field">
+      <label class="form-label">Active Lengths</label>
+      <input type="number" name="active_lengths" class="form-control" value="{{ entry.active_lengths if entry else '' }}">
+    </div>
   </div>
+
+  {# ── Running dynamics (read-only, shown when present on FIT-imported entries) ── #}
+  {% if entry and (entry.stride_length_m or entry.vert_oscillation_cm or entry.gct_ms) %}
+  <div class="card mb-3 border-secondary">
+    <div class="card-header text-muted small py-1">Running Dynamics (from FIT file — read only)</div>
+    <div class="card-body py-2">
+      <div class="row g-2 text-muted small">
+        {% if entry.stride_length_m %}
+        <div class="col-auto"><strong>Stride:</strong> {{ entry.stride_length_m }} m</div>
+        {% endif %}
+        {% if entry.vert_oscillation_cm %}
+        <div class="col-auto"><strong>Vert Osc:</strong> {{ entry.vert_oscillation_cm }} cm</div>
+        {% endif %}
+        {% if entry.vert_ratio_pct %}
+        <div class="col-auto"><strong>Vert Ratio:</strong> {{ entry.vert_ratio_pct }}%</div>
+        {% endif %}
+        {% if entry.gct_ms %}
+        <div class="col-auto"><strong>GCT:</strong> {{ entry.gct_ms|int }} ms</div>
+        {% endif %}
+        {% if entry.gct_balance %}
+        <div class="col-auto"><strong>GCT Balance:</strong> {{ entry.gct_balance }}</div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+  {% endif %}
 
   <div class="mb-3">
     <label class="form-label">Notes / Route</label>
@@ -91,13 +157,22 @@
   </div>
 </form>
 {% endblock %}
+
 {% block scripts %}
 <script>
-const BIKE_ACTIVITIES = ['Road Cycling','Mountain Biking','Gravel Cycling','Indoor Bike Trainer'];
-const PADDLE_ACTIVITIES = ['Kayaking','Pack Rafting','Kayak Ergometer','Rowing Ergometer'];
+const BIKE_ACTIVITIES = ['Road Cycling','Mountain Biking','Gravel Cycling','Indoor Bike Trainer',
+                         'Kayak Ergometer','Rowing Ergometer'];
+const PADDLE_ACTIVITIES = ['Kayaking','Pack Rafting','Kayak Ergometer','Rowing Ergometer',
+                           'Swimming Pool','Swimming Open'];
+const RUN_ACTIVITIES  = ['Running','Trail Running','Treadmill','Hiking','Stair Climbing'];
+
 function toggleFields(activity) {
-  document.querySelectorAll('.bike-field').forEach(el => el.style.display = BIKE_ACTIVITIES.includes(activity) ? '' : 'none');
-  document.querySelectorAll('.paddle-field').forEach(el => el.style.display = PADDLE_ACTIVITIES.includes(activity) ? '' : 'none');
+  const isBike   = BIKE_ACTIVITIES.includes(activity);
+  const isPaddle = PADDLE_ACTIVITIES.includes(activity);
+  const isRun    = RUN_ACTIVITIES.includes(activity);
+  document.querySelectorAll('.bike-field').forEach(el => el.style.display = isBike   ? '' : 'none');
+  document.querySelectorAll('.paddle-field').forEach(el => el.style.display = isPaddle ? '' : 'none');
+  document.querySelectorAll('.run-field').forEach(el => el.style.display = isRun    ? '' : 'none');
 }
 toggleFields(document.getElementById('activity-select').value);
 </script>

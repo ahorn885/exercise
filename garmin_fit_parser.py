@@ -254,7 +254,9 @@ def _parse_cardio(session, activity_name: str, sport_key: str) -> dict:
         speed_ms = _f('avg_speed')
 
     avg_speed_mph = round(speed_ms * 2.23694, 2) if speed_ms else None
-    avg_pace = _pace_from_speed(speed_ms) if speed_ms else None
+    # Pace (min/mi) is only meaningful for foot sports; suppress for cycling/paddling
+    _PACE_SPORTS = {'running', 'trail_running', 'treadmill', 'hiking', 'walking'}
+    avg_pace = _pace_from_speed(speed_ms) if (speed_ms and sport_key in _PACE_SPORTS) else None
 
     elev_gain = round(ascent_m * 3.28084, 1) if ascent_m else None
     elev_loss = round(descent_m * 3.28084, 1) if descent_m else None

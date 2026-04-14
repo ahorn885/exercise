@@ -7,7 +7,7 @@ ACTIVITIES = [
     'Running', 'Treadmill', 'Trail Running', 'Hiking', 'Stair Climbing',
     'Road Cycling', 'Mountain Biking', 'Gravel Cycling', 'Indoor Bike Trainer',
     'Kayaking', 'Pack Rafting', 'Kayak Ergometer', 'Rowing Ergometer',
-    'Swimming (Pool)', 'Swimming (Open)', 'Yoga'
+    'Swimming Pool', 'Swimming Open', 'Yoga'
 ]
 
 
@@ -78,6 +78,7 @@ def _save(db, entry_id):
     )
 
     if entry_id:
+        # Running dynamics columns are read-only (FIT-imported); don't overwrite them
         db.execute('''UPDATE cardio_log SET
             date=?, activity=?, activity_name=?, duration_min=?, moving_time_min=?,
             distance_mi=?, avg_pace=?, avg_speed=?, avg_hr=?, max_hr=?, calories=?,

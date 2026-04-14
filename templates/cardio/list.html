@@ -9,25 +9,52 @@
 <div class="table-responsive">
   <table class="table table-sm table-hover table-striped">
     <thead class="table-dark">
-      <tr><th>Date</th><th>Activity</th><th>Name</th><th>Duration</th><th>Distance</th>
-      <th>Avg HR</th><th>Elev+</th><th>Power NP</th><th>Aero TE</th><th></th></tr>
+      <tr>
+        <th>Date</th>
+        <th>Activity</th>
+        <th>Name</th>
+        <th>Duration</th>
+        <th>Distance</th>
+        <th>Pace / Speed</th>
+        <th>Avg HR</th>
+        <th>Elev+</th>
+        <th>Power</th>
+        <th>TE</th>
+        <th></th>
+      </tr>
     </thead>
     <tbody>
+    {% set BIKE = ['Road Cycling','Mountain Biking','Gravel Cycling','Indoor Bike Trainer'] %}
+    {% set PADDLE = ['Kayaking','Pack Rafting','Kayak Ergometer','Rowing Ergometer'] %}
     {% for e in entries %}
     <tr>
       <td class="text-nowrap">{{ e.date }}</td>
-      <td>{{ e.activity }}</td>
+      <td class="text-nowrap">{{ e.activity }}</td>
       <td class="text-muted small">{{ e.activity_name or '' }}</td>
-      <td>{{ e.duration_min or '—' }}{% if e.duration_min %} min{% endif %}</td>
-      <td>{{ e.distance_mi or '—' }}{% if e.distance_mi %} mi{% endif %}</td>
+      <td class="text-nowrap">{{ e.duration_min or '—' }}{% if e.duration_min %} min{% endif %}</td>
+      <td class="text-nowrap">{{ e.distance_mi or '—' }}{% if e.distance_mi %} mi{% endif %}</td>
+      <td class="text-nowrap">
+        {%- if e.activity in BIKE and e.avg_speed -%}
+          {{ e.avg_speed }} mph
+        {%- elif e.avg_pace -%}
+          {{ e.avg_pace }}/mi
+        {%- elif e.avg_speed -%}
+          {{ e.avg_speed }} mph
+        {%- else -%}—{%- endif -%}
+      </td>
       <td>{{ e.avg_hr or '—' }}</td>
       <td>{{ e.elev_gain_ft or '—' }}</td>
-      <td>{{ e.norm_power or '—' }}</td>
+      <td>
+        {%- if e.avg_power -%}{{ e.avg_power }}W
+          {%- if e.norm_power %} <span class="text-muted small">(NP {{ e.norm_power }})</span>{% endif %}
+        {%- elif e.norm_power -%}NP {{ e.norm_power }}W
+        {%- else -%}—{%- endif -%}
+      </td>
       <td>{{ e.aerobic_te or '—' }}</td>
       <td class="text-nowrap">
         <a href="{{ url_for('cardio.edit_entry', entry_id=e.id) }}" class="btn btn-sm btn-outline-secondary py-0 px-1">Edit</a>
         <form method="post" action="{{ url_for('cardio.delete_entry', entry_id=e.id) }}" class="d-inline"
-              onsubmit="return confirm('Delete?')">
+              onsubmit="return confirm('Delete this entry?')">
           <button class="btn btn-sm btn-outline-danger py-0 px-1">Del</button>
         </form>
       </td>
