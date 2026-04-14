@@ -39,10 +39,13 @@ def edit_entry(entry_id):
             except: return None
         db.execute('''UPDATE current_rx SET
             current_sets=?, current_reps=?, current_weight=?, current_duration=?,
-            inventory_sugg_volume=?, rx_source=? WHERE id=?''',
+            inventory_sugg_volume=?, weight_increment=?, consecutive_failures=?,
+            rx_source=? WHERE id=?''',
             (num(f.get('current_sets'), int), num(f.get('current_reps'), int),
              num(f.get('current_weight')), num(f.get('current_duration'), int),
-             f.get('inventory_sugg_volume'), 'Manual override', entry_id))
+             f.get('inventory_sugg_volume'), num(f.get('weight_increment')),
+             0 if f.get('reset_failures') else num(f.get('consecutive_failures'), int),
+             'Manual override', entry_id))
         db.commit()
         flash('Rx updated.', 'success')
         return redirect(url_for('rx.list_entries'))
