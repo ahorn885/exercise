@@ -25,6 +25,15 @@
   </div>
   {% endif %}
 </form>
+{% if profiles_active %}
+<div class="alert alert-info py-2 px-3 small mb-2">
+  {% for loc, p in profiles_active.items() %}
+    {% set count = (p['equipment'] or '').split(',') | reject('equalto', '') | list | length %}
+    <strong class="text-capitalize">{{ loc }}</strong> profile active ({{ count }} item{{ 's' if count != 1 }}){% if p['notes'] %} — {{ p['notes'] }}{% endif %}{% if not loop.last %};&nbsp;{% endif %}
+  {% endfor %}
+  &nbsp;<a href="{{ url_for('locales.list_profiles') }}" class="ms-2">Edit profiles</a>
+</div>
+{% endif %}
 <div class="table-responsive">
   <table class="table table-sm table-hover table-striped" id="ex-table">
     <thead class="table-dark">

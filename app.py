@@ -30,6 +30,7 @@ from routes.body import bp as body_bp
 from routes.conditions import bp as conditions_bp
 from routes.injuries import bp as injuries_bp
 from routes.references import bp as references_bp
+from routes.locales import bp as locales_bp
 from routes.garmin import bp as garmin_bp
 from routes.plans import bp as plans_bp
 
@@ -41,6 +42,7 @@ app.register_blueprint(body_bp)
 app.register_blueprint(conditions_bp)
 app.register_blueprint(injuries_bp)
 app.register_blueprint(references_bp)
+app.register_blueprint(locales_bp)
 app.register_blueprint(garmin_bp)
 app.register_blueprint(plans_bp)
 

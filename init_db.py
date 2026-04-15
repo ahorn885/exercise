@@ -134,6 +134,12 @@ SQLITE_SCHEMA = '''
         status TEXT DEFAULT 'active',
         created_at TEXT DEFAULT (datetime('now'))
     );
+    CREATE TABLE IF NOT EXISTS locale_profiles (
+        locale TEXT PRIMARY KEY,
+        equipment TEXT DEFAULT '',
+        notes TEXT DEFAULT '',
+        updated_at TEXT DEFAULT (datetime('now'))
+    );
     CREATE INDEX IF NOT EXISTS idx_tl_date ON training_log(date);
     CREATE INDEX IF NOT EXISTS idx_tl_exercise ON training_log(exercise);
     CREATE INDEX IF NOT EXISTS idx_cl_date ON cardio_log(date);
@@ -271,6 +277,12 @@ PG_SCHEMA = '''
         status TEXT DEFAULT 'active',
         created_at TIMESTAMP DEFAULT NOW()
     );
+    CREATE TABLE IF NOT EXISTS locale_profiles (
+        locale TEXT PRIMARY KEY,
+        equipment TEXT DEFAULT '',
+        notes TEXT DEFAULT '',
+        updated_at TIMESTAMP DEFAULT NOW()
+    );
     CREATE INDEX IF NOT EXISTS idx_tl_date ON training_log(date);
     CREATE INDEX IF NOT EXISTS idx_tl_exercise ON training_log(exercise);
     CREATE INDEX IF NOT EXISTS idx_cl_date ON cardio_log(date);
@@ -292,6 +304,7 @@ _SQLITE_MIGRATIONS = [
     "ALTER TABLE current_rx ADD COLUMN next_sets INTEGER",
     "ALTER TABLE current_rx ADD COLUMN next_reps INTEGER",
     "ALTER TABLE current_rx ADD COLUMN next_weight REAL",
+    "CREATE TABLE IF NOT EXISTS locale_profiles (locale TEXT PRIMARY KEY, equipment TEXT DEFAULT '', notes TEXT DEFAULT '', updated_at TEXT DEFAULT (datetime('now')))",
 ]
 
 _PG_MIGRATIONS = [
@@ -306,6 +319,7 @@ _PG_MIGRATIONS = [
     "ALTER TABLE current_rx ADD COLUMN IF NOT EXISTS next_sets INTEGER",
     "ALTER TABLE current_rx ADD COLUMN IF NOT EXISTS next_reps INTEGER",
     "ALTER TABLE current_rx ADD COLUMN IF NOT EXISTS next_weight REAL",
+    "CREATE TABLE IF NOT EXISTS locale_profiles (locale TEXT PRIMARY KEY, equipment TEXT DEFAULT '', notes TEXT DEFAULT '', updated_at TIMESTAMP DEFAULT NOW())",
 ]
 
 # Volume rationale for endurance athletes (cyclists, trail runners, kayakers):
@@ -330,6 +344,128 @@ _PG_MIGRATIONS = [
 #   PROGRESS resets the counter to 0.
 #   After 3 consecutive REDUCE outcomes, weight/duration decreases by one step.
 #
+# Equipment required per exercise — used to filter exercises against locale profiles.
+# Tag syntax: 'a,b' = needs a AND b; 'a|b' = needs a OR b; '' = bodyweight (no restriction).
+# Tags must match keys in EQUIPMENT_CATEGORIES (defined in routes/locales.py).
+EXERCISE_EQUIPMENT = {
+    # Bike — Staple
+    'Back Squat':                        'barbell,squat_rack',
+    'Front Squat':                       'barbell,squat_rack',
+    'Goblet Squat':                      'kettlebell|dumbbells',
+    'Romanian Deadlift':                 'barbell|dumbbells',
+    'Glute Bridge / Hip Thrust':         '',
+    'Barbell Hip Thrust':                'barbell,bench_flat',
+    'Push-Up':                           '',
+    'Dip':                               'dip_bars',
+    'Plank':                             '',
+    'Side Plank':                        '',
+    'Pallof Press':                      'cable_machine|resistance_bands',
+    'Mountain Climbers':                 '',
+    'Single-Leg Calf Raise':             '',
+    'Box Jump':                          'plyo_box',
+    'Pedal Stance Deadlift':             'barbell|hex_bar',
+    # Bike — Novel
+    'Asymmetric Stab. Ball Push-Up':     'stability_ball',
+    'TRX Mtn Climber / Unstable Bar':    'trx',
+    'Side Plank + Banded Leg Raise':     'resistance_bands',
+    'Isometric Lunge Hold':              '',
+    'Elevated Reverse Lunge':            'bench_flat',
+    'Renegade Row (Plank + DB Row)':     'dumbbells',
+    # Foot — Staple
+    'Weighted Box Step-Up':              'plyo_box,dumbbells',
+    'Bulgarian Split Squat':             'bench_flat',
+    'Nordic Hamstring Curl':             '',
+    'Walking Lunge':                     '',
+    'Single-Leg Deadlift':               'dumbbells|kettlebell|barbell',
+    'Pull-Up':                           'pull_up_bar',
+    'Single-Leg Glute Bridge':           '',
+    'Dead Bug':                          '',
+    'Bird Dog':                          '',
+    'Glute Kickback (Banded)':           'resistance_bands',
+    'Fire Hydrant (Banded)':             'resistance_bands',
+    'Clamshell (Banded)':                'resistance_bands',
+    'Oblique Press (Contralateral)':     '',
+    'Copenhagen Plank':                  'bench_flat',
+    'Step-Down (Eccentric)':             'bench_flat',
+    'Good Morning':                      'barbell|dumbbells',
+    'Back Extension / Rev. Hyper':       'ghd',
+    'Banded Pull-Through':               'resistance_bands',
+    'Kettlebell Swing (Two-Hand)':       'kettlebell',
+    'Single-Arm KB Swing':               'kettlebell',
+    'KB Clean & Press':                  'kettlebell',
+    'KB Snatch':                         'kettlebell',
+    'Farmer Carry':                      'dumbbells|kettlebell',
+    'Suitcase Carry':                    'dumbbells|kettlebell',
+    'Rack Carry':                        'dumbbells|kettlebell',
+    'Overhead Carry':                    'dumbbells|kettlebell',
+    'Bear Crawl':                        '',
+    'Sled Push':                         'sled',
+    'Sled Pull (Hand-Over-Hand)':        'sled',
+    'Lunge to Rotation (Slam Ball/DB)':  'slam_ball|med_ball|dumbbells',
+    # Foot — Novel
+    'Hillbounding':                      '',
+    '4-Side Box Step-Up/Off':            'plyo_box',
+    '1,000 Step-Up Challenge':           'weighted_vest',
+    'Single-Leg Stance Eyes Closed':     '',
+    'Towel Pull-Up':                     'pull_up_bar',
+    'Hanging Leg Raise in Boots':        'pull_up_bar',
+    'Side Split Lunges (Deep)':          '',
+    'Rapid Calf Raises':                 '',
+    'Weighted Treadmill Incline Walk':   'treadmill',
+    # Water — Staple
+    'Seated Cable Row':                  'cable_machine',
+    'Bent-Over Barbell Row':             'barbell',
+    'Lat Pulldown':                      'lat_pulldown',
+    'Straight-Arm Lat Pulldown':         'lat_pulldown',
+    'Dumbbell Chest Press':              'dumbbells,bench_flat',
+    'Plank with Rotation':               '',
+    'Forearm Wrist Curls':               'dumbbells|barbell|ez_bar',
+    'Deadlift (Standard)':               'barbell|hex_bar',
+    'Face Pull':                         'cable_machine|resistance_bands',
+    'Band Pull-Apart':                   'resistance_bands',
+    'KB Sumo Deadlift':                  'kettlebell',
+    'Battle Ropes':                      'battle_ropes',
+    # Water — Novel
+    'Half-Kneeling 1-Arm Cable Row':     'cable_machine',
+    'Cable Woodchop (High-to-Low)':      'cable_machine',
+    'Cable Woodchop (Low-to-High)':      'cable_machine',
+    'Med Ball Wall Throws (Rotational)': 'med_ball',
+    'KB Swing on Inverted BOSU':         'kettlebell,bosu',
+    'Russian Twist (Feet Elevated)':     'dumbbells|med_ball',
+    'Single-Arm DB Row (Staggered)':     'dumbbells',
+    'Med Ball Torso Rotation (Seated)':  'med_ball',
+    'High-Rep Strength Endurance Sets':  '',
+    # Cross — Staple
+    'KB Halo':                           'kettlebell',
+    'Push Press':                        'barbell|dumbbells|kettlebell',
+    'Sumo Deadlift High Pull':           'barbell|dumbbells|kettlebell',
+    'KB Windmill':                       'kettlebell',
+    'Turkish Get-Up':                    'kettlebell|dumbbells',
+    'Sandbag / Pack Carry (Bear Hug)':   'sandbag',
+    'Ab Wheel Rollout':                  'ab_wheel',
+    'Hanging Knee Raise':                'pull_up_bar',
+    'Wall Sit':                          '',
+    'Seated Glute Squeeze (Isometric)':  '',
+    # Cross — Novel
+    'Sandbag Get-Up':                    'sandbag',
+    'Pistol Squat':                      '',
+    'Hangboard Max Hangs':               'hangboard',
+    '7/3 Repeaters (Hangboard)':         'hangboard',
+    'Front Lever Progression':           'pull_up_bar|rings',
+    'Rice Bucket':                       'rice_bucket',
+    'L-Sit Pull-Up':                     'pull_up_bar|rings',
+    'Treadwall Intervals':               'treadwall',
+    'Nasal-Breathing-Only Climbing':     'climbing_wall|treadwall',
+    'Stability Ball Seated Shoulder Press': 'stability_ball,dumbbells',
+    'Stability Ball Single-Arm DB Press':   'stability_ball,dumbbells',
+    'Stability Ball Hamstring Curl':        'stability_ball',
+    # Mobility — no equipment needed
+    'Standing Hip Flexor Stretch':       '',
+    'Standing Figure-4 Stretch':         '',
+    'Wall Calf Stretch':                 '',
+    'Wall Chest / Doorway Stretch':      '',
+}
+
 # where_available locale codes (comma-separated when multiple apply):
 #   home     = user's home gym (barbell, KB, DB, bands, pull-up bar)
 #   hotel    = hotel room / hotel gym (bodyweight; floor space available)
@@ -477,6 +613,12 @@ def init_postgres():
            ON CONFLICT (exercise) DO NOTHING''',
         EXERCISES
     )
+    # Seed exercise equipment tags (always update — safe to re-run)
+    for exercise, tags in EXERCISE_EQUIPMENT.items():
+        cur.execute(
+            'UPDATE exercise_inventory SET equipment=%s WHERE exercise=%s',
+            (tags, exercise)
+        )
     conn.commit()
     cur.close()
     conn.close()
@@ -507,6 +649,12 @@ def init_sqlite():
            VALUES (?, ?, ?, ?, ?, ?)''',
         EXERCISES
     )
+    # Seed exercise equipment tags (always update — safe to re-run)
+    for exercise, tags in EXERCISE_EQUIPMENT.items():
+        conn.execute(
+            'UPDATE exercise_inventory SET equipment=? WHERE exercise=?',
+            (tags, exercise)
+        )
     conn.commit()
     conn.close()
     print(f'SQLite database initialized at {SQLITE_PATH}')
