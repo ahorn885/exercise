@@ -1,3 +1,4 @@
+from collections import defaultdict
 from flask import Blueprint, render_template, request
 from database import get_db
 from routes.locales import LOCALES
@@ -5,20 +6,20 @@ from routes.locales import LOCALES
 bp = Blueprint('references', __name__)
 
 
-def _equipment_available(exercise_equipment, profile_equipment_set):
-    """Return True if the exercise's equipment requirement is satisfied by the profile.
+def _exercise_available(exercise_id, ex_eq_map, profile_equipment_ids):
+    """Return True if the exercise requires no equipment, or any option_group is fully covered.
 
-    Empty requirement → always True (bodyweight / no restriction).
-    '|' separates alternatives (OR); ',' separates co-requirements within an alternative (AND).
-    Example: 'barbell,squat_rack|smith_machine' → (barbell AND squat_rack) OR smith_machine.
+    ex_eq_map: {exercise_id: [(equipment_id, option_group), ...]}
+    option_group rows sharing the same group number are all required (AND);
+    the exercise is available if ANY group is fully satisfied (OR).
     """
-    if not exercise_equipment:
-        return True
-    for alternative in exercise_equipment.split('|'):
-        required = [t.strip() for t in alternative.split(',') if t.strip()]
-        if all(t in profile_equipment_set for t in required):
-            return True
-    return False
+    reqs = ex_eq_map.get(exercise_id)
+    if not reqs:
+        return True  # bodyweight / no equipment rows
+    groups = defaultdict(set)
+    for eq_id, grp in reqs:
+        groups[grp].add(eq_id)
+    return any(grp_ids.issubset(profile_equipment_ids) for grp_ids in groups.values())
 
 
 @bp.route('/exercises')
@@ -28,20 +29,42 @@ def exercises():
 
     rows = db.execute('SELECT * FROM exercise_inventory ORDER BY discipline, exercise').fetchall()
 
-    # Load saved equipment profiles for any selected locales
     profiles_active = {}
-    profile_equipment = set()
+    profile_equipment_ids = set()
+    ex_eq_map = {}
+    equipment_counts = {}
+
     if locale_filter:
         placeholders = ','.join('?' * len(locale_filter))
-        profile_rows = db.execute(
-            f'SELECT * FROM locale_profiles WHERE locale IN ({placeholders})',
-            locale_filter
-        ).fetchall()
-        for p in profile_rows:
+
+        # Profile metadata (notes, updated_at) for display banner
+        for p in db.execute(
+            f'SELECT * FROM locale_profiles WHERE locale IN ({placeholders})', locale_filter
+        ).fetchall():
             profiles_active[p['locale']] = p
-            for tag in (p['equipment'] or '').split(','):
-                if tag:
-                    profile_equipment.add(tag)
+
+        # Union of equipment_ids across all selected locales
+        for row in db.execute(
+            f'SELECT DISTINCT equipment_id FROM locale_equipment WHERE locale IN ({placeholders})',
+            locale_filter
+        ).fetchall():
+            profile_equipment_ids.add(row['equipment_id'])
+
+        # Per-locale item counts for display
+        for row in db.execute(
+            f'SELECT locale, COUNT(*) as cnt FROM locale_equipment '
+            f'WHERE locale IN ({placeholders}) GROUP BY locale',
+            locale_filter
+        ).fetchall():
+            equipment_counts[row['locale']] = row['cnt']
+
+        # Load full exercise_equipment map for availability check
+        for row in db.execute(
+            'SELECT exercise_id, equipment_id, option_group FROM exercise_equipment'
+        ).fetchall():
+            ex_eq_map.setdefault(row['exercise_id'], []).append(
+                (row['equipment_id'], row['option_group'])
+            )
 
     if locale_filter:
         filtered = []
@@ -51,14 +74,15 @@ def exercises():
             if not any(loc in ex_locales for loc in locale_filter):
                 continue
             # If any selected locale has a saved profile, apply equipment filter
-            if profiles_active and not _equipment_available(r['equipment'], profile_equipment):
+            if profiles_active and not _exercise_available(r['id'], ex_eq_map, profile_equipment_ids):
                 continue
             filtered.append(r)
         rows = filtered
 
     return render_template('references/exercises.html', rows=rows,
                            locale_filter=locale_filter, locales=LOCALES,
-                           profiles_active=profiles_active)
+                           profiles_active=profiles_active,
+                           equipment_counts=equipment_counts)
 
 
 @bp.route('/rx/setup/<exercise>', methods=['GET'])

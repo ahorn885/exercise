@@ -140,6 +140,23 @@ SQLITE_SCHEMA = '''
         notes TEXT DEFAULT '',
         updated_at TEXT DEFAULT (datetime('now'))
     );
+    CREATE TABLE IF NOT EXISTS equipment_items (
+        id       INTEGER PRIMARY KEY AUTOINCREMENT,
+        tag      TEXT NOT NULL UNIQUE,
+        label    TEXT NOT NULL,
+        category TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS exercise_equipment (
+        exercise_id  INTEGER NOT NULL REFERENCES exercise_inventory(id),
+        equipment_id INTEGER NOT NULL REFERENCES equipment_items(id),
+        option_group INTEGER NOT NULL DEFAULT 1,
+        PRIMARY KEY (exercise_id, equipment_id)
+    );
+    CREATE TABLE IF NOT EXISTS locale_equipment (
+        locale       TEXT NOT NULL,
+        equipment_id INTEGER NOT NULL REFERENCES equipment_items(id),
+        PRIMARY KEY (locale, equipment_id)
+    );
     CREATE INDEX IF NOT EXISTS idx_tl_date ON training_log(date);
     CREATE INDEX IF NOT EXISTS idx_tl_exercise ON training_log(exercise);
     CREATE INDEX IF NOT EXISTS idx_cl_date ON cardio_log(date);
@@ -283,6 +300,23 @@ PG_SCHEMA = '''
         notes TEXT DEFAULT '',
         updated_at TIMESTAMP DEFAULT NOW()
     );
+    CREATE TABLE IF NOT EXISTS equipment_items (
+        id       SERIAL PRIMARY KEY,
+        tag      TEXT NOT NULL UNIQUE,
+        label    TEXT NOT NULL,
+        category TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS exercise_equipment (
+        exercise_id  INTEGER NOT NULL REFERENCES exercise_inventory(id),
+        equipment_id INTEGER NOT NULL REFERENCES equipment_items(id),
+        option_group INTEGER NOT NULL DEFAULT 1,
+        PRIMARY KEY (exercise_id, equipment_id)
+    );
+    CREATE TABLE IF NOT EXISTS locale_equipment (
+        locale       TEXT NOT NULL,
+        equipment_id INTEGER NOT NULL REFERENCES equipment_items(id),
+        PRIMARY KEY (locale, equipment_id)
+    );
     CREATE INDEX IF NOT EXISTS idx_tl_date ON training_log(date);
     CREATE INDEX IF NOT EXISTS idx_tl_exercise ON training_log(exercise);
     CREATE INDEX IF NOT EXISTS idx_cl_date ON cardio_log(date);
@@ -305,6 +339,9 @@ _SQLITE_MIGRATIONS = [
     "ALTER TABLE current_rx ADD COLUMN next_reps INTEGER",
     "ALTER TABLE current_rx ADD COLUMN next_weight REAL",
     "CREATE TABLE IF NOT EXISTS locale_profiles (locale TEXT PRIMARY KEY, equipment TEXT DEFAULT '', notes TEXT DEFAULT '', updated_at TEXT DEFAULT (datetime('now')))",
+    "CREATE TABLE IF NOT EXISTS equipment_items (id INTEGER PRIMARY KEY AUTOINCREMENT, tag TEXT NOT NULL UNIQUE, label TEXT NOT NULL, category TEXT NOT NULL)",
+    "CREATE TABLE IF NOT EXISTS exercise_equipment (exercise_id INTEGER NOT NULL REFERENCES exercise_inventory(id), equipment_id INTEGER NOT NULL REFERENCES equipment_items(id), option_group INTEGER NOT NULL DEFAULT 1, PRIMARY KEY (exercise_id, equipment_id))",
+    "CREATE TABLE IF NOT EXISTS locale_equipment (locale TEXT NOT NULL, equipment_id INTEGER NOT NULL REFERENCES equipment_items(id), PRIMARY KEY (locale, equipment_id))",
 ]
 
 _PG_MIGRATIONS = [
@@ -320,6 +357,85 @@ _PG_MIGRATIONS = [
     "ALTER TABLE current_rx ADD COLUMN IF NOT EXISTS next_reps INTEGER",
     "ALTER TABLE current_rx ADD COLUMN IF NOT EXISTS next_weight REAL",
     "CREATE TABLE IF NOT EXISTS locale_profiles (locale TEXT PRIMARY KEY, equipment TEXT DEFAULT '', notes TEXT DEFAULT '', updated_at TIMESTAMP DEFAULT NOW())",
+    "CREATE TABLE IF NOT EXISTS equipment_items (id SERIAL PRIMARY KEY, tag TEXT NOT NULL UNIQUE, label TEXT NOT NULL, category TEXT NOT NULL)",
+    "CREATE TABLE IF NOT EXISTS exercise_equipment (exercise_id INTEGER NOT NULL REFERENCES exercise_inventory(id), equipment_id INTEGER NOT NULL REFERENCES equipment_items(id), option_group INTEGER NOT NULL DEFAULT 1, PRIMARY KEY (exercise_id, equipment_id))",
+    "CREATE TABLE IF NOT EXISTS locale_equipment (locale TEXT NOT NULL, equipment_id INTEGER NOT NULL REFERENCES equipment_items(id), PRIMARY KEY (locale, equipment_id))",
+]
+
+# Equipment catalog — single source of truth for seeding equipment_items and the locale profile UI.
+# Imported by routes/locales.py; defined here so init_db.py can seed without importing routes.
+EQUIPMENT_CATEGORIES = [
+    ('Free Weights', [
+        ('barbell',      'Barbell (Olympic)'),
+        ('ez_bar',       'EZ Curl Bar'),
+        ('tricep_bar',   'Tricep Bar (W-bar)'),
+        ('hex_bar',      'Hex / Trap Bar'),
+        ('dumbbells',    'Dumbbells'),
+        ('kettlebell',   'Kettlebell'),
+        ('sandbag',      'Sandbag'),
+        ('med_ball',     'Med Ball'),
+        ('slam_ball',    'Slam Ball'),
+    ]),
+    ('Racks & Benches', [
+        ('squat_rack',       'Squat Rack / Power Cage'),
+        ('smith_machine',    'Smith Machine'),
+        ('bench_flat',       'Flat Bench'),
+        ('bench_adjustable', 'Adjustable / Incline Bench'),
+        ('ghd',              'GHD / Hyperextension Bench'),
+        ('preacher_bench',   'Preacher Curl Bench'),
+    ]),
+    ('Bars & Bodyweight Rigs', [
+        ('pull_up_bar', 'Pull-Up Bar'),
+        ('dip_bars',    'Dip Bars / Parallel Bars'),
+        ('rings',       'Gymnastic Rings'),
+    ]),
+    ('Leg Machines', [
+        ('leg_press',          'Leg Press'),
+        ('hack_squat',         'Hack Squat Machine'),
+        ('leg_extension',      'Leg Extension Machine'),
+        ('leg_curl',           'Leg Curl Machine'),
+        ('calf_raise_machine', 'Calf Raise Machine'),
+    ]),
+    ('Upper Body Machines', [
+        ('cable_machine',          'Cable Machine / Crossover'),
+        ('lat_pulldown',           'Lat Pulldown Machine'),
+        ('seated_row_machine',     'Seated Row Machine'),
+        ('pec_deck',               'Pec Deck / Chest Fly Machine'),
+        ('shoulder_press_machine', 'Shoulder Press Machine'),
+        ('assisted_pullup',        'Assisted Pull-Up / Dip Machine'),
+    ]),
+    ('Cardio', [
+        ('treadmill',       'Treadmill'),
+        ('elliptical',      'Elliptical / Cross Trainer'),
+        ('stationary_bike', 'Stationary Bike (Upright)'),
+        ('recumbent_bike',  'Recumbent Bike'),
+        ('spin_bike',       'Spin Bike / Peloton'),
+        ('stair_climber',   'Stair Climber / StepMill'),
+        ('rowing_erg',      'Rowing Erg (Concept2)'),
+        ('air_bike',        'Air Bike / Assault Bike'),
+        ('ski_erg',         'SkiErg'),
+    ]),
+    ('Functional & Conditioning', [
+        ('sled',             'Sled'),
+        ('battle_ropes',     'Battle Ropes'),
+        ('plyo_box',         'Plyo Box'),
+        ('resistance_bands', 'Resistance Bands'),
+        ('trx',              'TRX / Suspension Trainer'),
+        ('weighted_vest',    'Weighted Vest'),
+        ('jump_rope',        'Jump Rope'),
+    ]),
+    ('Accessories', [
+        ('stability_ball', 'Stability Ball'),
+        ('bosu',           'BOSU Ball'),
+        ('ab_wheel',       'Ab Wheel'),
+        ('foam_roller',    'Foam Roller'),
+        ('rice_bucket',    'Rice Bucket'),
+    ]),
+    ('Specialty', [
+        ('hangboard',     'Hangboard'),
+        ('treadwall',     'Treadwall'),
+        ('climbing_wall', 'Climbing Wall / Bouldering'),
+    ]),
 ]
 
 # Volume rationale for endurance athletes (cyclists, trail runners, kayakers):
@@ -619,6 +735,47 @@ def init_postgres():
             'UPDATE exercise_inventory SET equipment=%s WHERE exercise=%s',
             (tags, exercise)
         )
+    # Phase 1 — Seed equipment_items catalog (idempotent)
+    for category_name, items in EQUIPMENT_CATEGORIES:
+        for tag, label in items:
+            cur.execute(
+                'INSERT INTO equipment_items (tag, label, category) VALUES (%s, %s, %s) '
+                'ON CONFLICT (tag) DO NOTHING',
+                (tag, label, category_name)
+            )
+    # Phase 2 — Build lookup dicts
+    cur.execute('SELECT id, tag FROM equipment_items')
+    tag_to_id = {row[1]: row[0] for row in cur.fetchall()}
+    cur.execute('SELECT id, exercise FROM exercise_inventory')
+    ex_to_id  = {row[1]: row[0] for row in cur.fetchall()}
+    # Phase 3 — Seed exercise_equipment (idempotent)
+    for exercise_name, tag_str in EXERCISE_EQUIPMENT.items():
+        ex_id = ex_to_id.get(exercise_name)
+        if ex_id is None or not tag_str:
+            continue
+        for group_num, group in enumerate(tag_str.split('|'), start=1):
+            for tag in [t.strip() for t in group.split(',') if t.strip()]:
+                eq_id = tag_to_id.get(tag)
+                if eq_id:
+                    cur.execute(
+                        'INSERT INTO exercise_equipment '
+                        '(exercise_id, equipment_id, option_group) VALUES (%s, %s, %s) '
+                        'ON CONFLICT DO NOTHING',
+                        (ex_id, eq_id, group_num)
+                    )
+    # Phase 4 — Migrate locale_profiles.equipment → locale_equipment (idempotent)
+    cur.execute('SELECT locale, equipment FROM locale_profiles')
+    for row in cur.fetchall():
+        for tag in (row[1] or '').split(','):
+            tag = tag.strip()
+            if tag:
+                eq_id = tag_to_id.get(tag)
+                if eq_id:
+                    cur.execute(
+                        'INSERT INTO locale_equipment (locale, equipment_id) VALUES (%s, %s) '
+                        'ON CONFLICT DO NOTHING',
+                        (row[0], eq_id)
+                    )
     conn.commit()
     cur.close()
     conn.close()
@@ -655,6 +812,41 @@ def init_sqlite():
             'UPDATE exercise_inventory SET equipment=? WHERE exercise=?',
             (tags, exercise)
         )
+    # Phase 1 — Seed equipment_items catalog (idempotent)
+    for category_name, items in EQUIPMENT_CATEGORIES:
+        for tag, label in items:
+            conn.execute(
+                'INSERT OR IGNORE INTO equipment_items (tag, label, category) VALUES (?, ?, ?)',
+                (tag, label, category_name)
+            )
+    # Phase 2 — Build lookup dicts (index-based access; no row_factory set here)
+    tag_to_id = {row[1]: row[0] for row in conn.execute('SELECT id, tag FROM equipment_items').fetchall()}
+    ex_to_id  = {row[1]: row[0] for row in conn.execute('SELECT id, exercise FROM exercise_inventory').fetchall()}
+    # Phase 3 — Seed exercise_equipment (idempotent)
+    for exercise_name, tag_str in EXERCISE_EQUIPMENT.items():
+        ex_id = ex_to_id.get(exercise_name)
+        if ex_id is None or not tag_str:
+            continue
+        for group_num, group in enumerate(tag_str.split('|'), start=1):
+            for tag in [t.strip() for t in group.split(',') if t.strip()]:
+                eq_id = tag_to_id.get(tag)
+                if eq_id:
+                    conn.execute(
+                        'INSERT OR IGNORE INTO exercise_equipment '
+                        '(exercise_id, equipment_id, option_group) VALUES (?, ?, ?)',
+                        (ex_id, eq_id, group_num)
+                    )
+    # Phase 4 — Migrate locale_profiles.equipment → locale_equipment (idempotent)
+    for row in conn.execute('SELECT locale, equipment FROM locale_profiles').fetchall():
+        for tag in (row[1] or '').split(','):
+            tag = tag.strip()
+            if tag:
+                eq_id = tag_to_id.get(tag)
+                if eq_id:
+                    conn.execute(
+                        'INSERT OR IGNORE INTO locale_equipment (locale, equipment_id) VALUES (?, ?)',
+                        (row[0], eq_id)
+                    )
     conn.commit()
     conn.close()
     print(f'SQLite database initialized at {SQLITE_PATH}')
