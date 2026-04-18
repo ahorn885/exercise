@@ -63,6 +63,7 @@ SQLITE_SCHEMA = '''
         upper_base_layer TEXT, lower_outer TEXT, lower_under TEXT,
         gloves TEXT, arm_warmers TEXT, socks TEXT, footwear TEXT,
         comfort INTEGER, comfort_notes TEXT,
+        cardio_log_id INTEGER REFERENCES cardio_log(id),
         created_at TEXT DEFAULT (datetime('now'))
     );
     CREATE TABLE IF NOT EXISTS injury_log (
@@ -234,6 +235,7 @@ PG_SCHEMA = '''
         upper_base_layer TEXT, lower_outer TEXT, lower_under TEXT,
         gloves TEXT, arm_warmers TEXT, socks TEXT, footwear TEXT,
         comfort INTEGER, comfort_notes TEXT,
+        cardio_log_id INTEGER REFERENCES cardio_log(id),
         created_at TIMESTAMP DEFAULT NOW()
     );
     CREATE TABLE IF NOT EXISTS injury_log (
@@ -367,6 +369,7 @@ _SQLITE_MIGRATIONS = [
     "CREATE TABLE IF NOT EXISTS injury_exercise_modifications (id INTEGER PRIMARY KEY AUTOINCREMENT, injury_id INTEGER NOT NULL REFERENCES injury_log(id), exercise_id INTEGER NOT NULL REFERENCES exercise_inventory(id), substitute_exercise_id INTEGER REFERENCES exercise_inventory(id), modification_type TEXT NOT NULL DEFAULT 'modify', modification_notes TEXT, created_at TEXT DEFAULT (datetime('now')))",
     "ALTER TABLE cardio_log ADD COLUMN plan_item_id INTEGER REFERENCES plan_items(id)",
     "ALTER TABLE training_log ADD COLUMN plan_item_id INTEGER REFERENCES plan_items(id)",
+    "ALTER TABLE conditions_log ADD COLUMN cardio_log_id INTEGER REFERENCES cardio_log(id)",
 ]
 
 _PG_MIGRATIONS = [
@@ -388,6 +391,7 @@ _PG_MIGRATIONS = [
     "CREATE TABLE IF NOT EXISTS injury_exercise_modifications (id SERIAL PRIMARY KEY, injury_id INTEGER NOT NULL REFERENCES injury_log(id), exercise_id INTEGER NOT NULL REFERENCES exercise_inventory(id), substitute_exercise_id INTEGER REFERENCES exercise_inventory(id), modification_type TEXT NOT NULL DEFAULT 'modify', modification_notes TEXT, created_at TIMESTAMP DEFAULT NOW())",
     "ALTER TABLE cardio_log ADD COLUMN IF NOT EXISTS plan_item_id INTEGER REFERENCES plan_items(id)",
     "ALTER TABLE training_log ADD COLUMN IF NOT EXISTS plan_item_id INTEGER REFERENCES plan_items(id)",
+    "ALTER TABLE conditions_log ADD COLUMN IF NOT EXISTS cardio_log_id INTEGER REFERENCES cardio_log(id)",
 ]
 
 # Equipment catalog — single source of truth for seeding equipment_items and the locale profile UI.
