@@ -66,9 +66,21 @@ def delete_entry(entry_id):
 def get_rx(exercise):
     db = get_db()
     rx = db.execute('SELECT * FROM current_rx WHERE exercise=?', (exercise,)).fetchone()
-    if rx:
-        return jsonify(dict(rx))
-    return jsonify({})
+    result = dict(rx) if rx else {}
+    # Include active injury modifications so the training form can warn the user
+    mods = db.execute(
+        '''SELECT iem.id, iem.modification_type, iem.modification_notes,
+                  il.body_part, il.status,
+                  ei_sub.exercise as substitute_name
+           FROM injury_exercise_modifications iem
+           JOIN injury_log il ON il.id = iem.injury_id
+           JOIN exercise_inventory ei ON ei.id = iem.exercise_id
+           LEFT JOIN exercise_inventory ei_sub ON ei_sub.id = iem.substitute_exercise_id
+           WHERE ei.exercise = ? AND il.status IN (\'Active\', \'Managing\')''',
+        (exercise,)
+    ).fetchall()
+    result['injury_mods'] = [dict(m) for m in mods]
+    return jsonify(result)
 
 
 def _save_entry(db, entry_id):

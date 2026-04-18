@@ -93,8 +93,28 @@ def view_plan(plan_id):
         weeks.setdefault(key, []).append(item)
     total = len(items)
     completed = sum(1 for i in items if i['status'] == 'completed')
+
+    # Load active injury modifications for the warning banner
+    active_mods = db.execute(
+        '''SELECT iem.modification_type, iem.modification_notes,
+                  il.body_part, il.status,
+                  ei.exercise as exercise_name,
+                  ei_sub.exercise as substitute_name
+           FROM injury_exercise_modifications iem
+           JOIN injury_log il ON il.id = iem.injury_id
+           JOIN exercise_inventory ei ON ei.id = iem.exercise_id
+           LEFT JOIN exercise_inventory ei_sub ON ei_sub.id = iem.substitute_exercise_id
+           WHERE il.status IN ('Active', 'Managing')
+           ORDER BY il.status, il.body_part, ei.exercise'''
+    ).fetchall()
+
+    # Build set of affected exercise names for plan item flagging (substring match)
+    affected_exercises = {m['exercise_name'] for m in active_mods}
+
     return render_template('plans/view.html', plan=plan, weeks=weeks,
-                           total=total, completed=completed)
+                           total=total, completed=completed,
+                           active_mods=active_mods,
+                           affected_exercises=affected_exercises)
 
 
 @bp.route('/<int:plan_id>/item/<int:item_id>')

@@ -15,6 +15,26 @@
   <a href="{{ url_for('plans.list_plans') }}" class="btn btn-outline-secondary btn-sm">← Plans</a>
 </div>
 
+{% if active_mods %}
+<div class="alert alert-warning py-2 px-3 mb-3 small">
+  <strong>⚠️ Active injury modifications</strong> — the following exercises have restrictions while you train:
+  <ul class="mb-0 mt-1">
+  {% for m in active_mods %}
+    <li>
+      <strong>{{ m.exercise_name }}</strong>
+      <span class="badge {% if m.modification_type == 'avoid' %}bg-danger{% elif m.modification_type == 'substitute' %}bg-warning text-dark{% elif m.modification_type == 'reduce_load' %}bg-info text-dark{% else %}bg-secondary{% endif %} ms-1">
+        {{ m.modification_type | replace('_', ' ') | title }}
+      </span>
+      <span class="text-muted ms-1">({{ m.body_part }} — {{ m.status }})</span>
+      {% if m.substitute_name %} → <strong>{{ m.substitute_name }}</strong>{% endif %}
+      {% if m.modification_notes %} — {{ m.modification_notes }}{% endif %}
+    </li>
+  {% endfor %}
+  </ul>
+  <a href="{{ url_for('injuries.list_entries') }}" class="ms-1">Manage injuries →</a>
+</div>
+{% endif %}
+
 {% if total > 0 %}
 <div class="mb-4">
   <div class="d-flex justify-content-between mb-1">
@@ -52,6 +72,15 @@
           <td>
             <a href="{{ url_for('plans.view_item', plan_id=plan.id, item_id=item.id) }}"
                class="text-decoration-none fw-semibold">{{ item.workout_name }}</a>
+            {% if affected_exercises %}
+              {% set ns = namespace(flagged=false) %}
+              {% for ex in affected_exercises %}
+                {% if not ns.flagged and (ex in (item.description or '') or ex in item.workout_name) %}
+                  <span class="badge bg-warning text-dark ms-1" title="Injury modification applies">⚠️</span>
+                  {% set ns.flagged = true %}
+                {% endif %}
+              {% endfor %}
+            {% endif %}
             {% if item.description %}
             <br><small class="text-muted">{{ item.description[:80] }}{% if item.description|length > 80 %}…{% endif %}</small>
             {% endif %}

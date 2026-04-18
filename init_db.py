@@ -157,6 +157,15 @@ SQLITE_SCHEMA = '''
         equipment_id INTEGER NOT NULL REFERENCES equipment_items(id),
         PRIMARY KEY (locale, equipment_id)
     );
+    CREATE TABLE IF NOT EXISTS injury_exercise_modifications (
+        id                     INTEGER PRIMARY KEY AUTOINCREMENT,
+        injury_id              INTEGER NOT NULL REFERENCES injury_log(id),
+        exercise_id            INTEGER NOT NULL REFERENCES exercise_inventory(id),
+        substitute_exercise_id INTEGER REFERENCES exercise_inventory(id),
+        modification_type      TEXT NOT NULL DEFAULT 'modify',
+        modification_notes     TEXT,
+        created_at             TEXT DEFAULT (datetime('now'))
+    );
     CREATE INDEX IF NOT EXISTS idx_tl_date ON training_log(date);
     CREATE INDEX IF NOT EXISTS idx_tl_exercise ON training_log(exercise);
     CREATE INDEX IF NOT EXISTS idx_cl_date ON cardio_log(date);
@@ -317,6 +326,15 @@ PG_SCHEMA = '''
         equipment_id INTEGER NOT NULL REFERENCES equipment_items(id),
         PRIMARY KEY (locale, equipment_id)
     );
+    CREATE TABLE IF NOT EXISTS injury_exercise_modifications (
+        id                     SERIAL PRIMARY KEY,
+        injury_id              INTEGER NOT NULL REFERENCES injury_log(id),
+        exercise_id            INTEGER NOT NULL REFERENCES exercise_inventory(id),
+        substitute_exercise_id INTEGER REFERENCES exercise_inventory(id),
+        modification_type      TEXT NOT NULL DEFAULT 'modify',
+        modification_notes     TEXT,
+        created_at             TIMESTAMP DEFAULT NOW()
+    );
     CREATE INDEX IF NOT EXISTS idx_tl_date ON training_log(date);
     CREATE INDEX IF NOT EXISTS idx_tl_exercise ON training_log(exercise);
     CREATE INDEX IF NOT EXISTS idx_cl_date ON cardio_log(date);
@@ -342,6 +360,7 @@ _SQLITE_MIGRATIONS = [
     "CREATE TABLE IF NOT EXISTS equipment_items (id INTEGER PRIMARY KEY AUTOINCREMENT, tag TEXT NOT NULL UNIQUE, label TEXT NOT NULL, category TEXT NOT NULL)",
     "CREATE TABLE IF NOT EXISTS exercise_equipment (exercise_id INTEGER NOT NULL REFERENCES exercise_inventory(id), equipment_id INTEGER NOT NULL REFERENCES equipment_items(id), option_group INTEGER NOT NULL DEFAULT 1, PRIMARY KEY (exercise_id, equipment_id))",
     "CREATE TABLE IF NOT EXISTS locale_equipment (locale TEXT NOT NULL, equipment_id INTEGER NOT NULL REFERENCES equipment_items(id), PRIMARY KEY (locale, equipment_id))",
+    "CREATE TABLE IF NOT EXISTS injury_exercise_modifications (id INTEGER PRIMARY KEY AUTOINCREMENT, injury_id INTEGER NOT NULL REFERENCES injury_log(id), exercise_id INTEGER NOT NULL REFERENCES exercise_inventory(id), substitute_exercise_id INTEGER REFERENCES exercise_inventory(id), modification_type TEXT NOT NULL DEFAULT 'modify', modification_notes TEXT, created_at TEXT DEFAULT (datetime('now')))",
 ]
 
 _PG_MIGRATIONS = [
@@ -360,6 +379,7 @@ _PG_MIGRATIONS = [
     "CREATE TABLE IF NOT EXISTS equipment_items (id SERIAL PRIMARY KEY, tag TEXT NOT NULL UNIQUE, label TEXT NOT NULL, category TEXT NOT NULL)",
     "CREATE TABLE IF NOT EXISTS exercise_equipment (exercise_id INTEGER NOT NULL REFERENCES exercise_inventory(id), equipment_id INTEGER NOT NULL REFERENCES equipment_items(id), option_group INTEGER NOT NULL DEFAULT 1, PRIMARY KEY (exercise_id, equipment_id))",
     "CREATE TABLE IF NOT EXISTS locale_equipment (locale TEXT NOT NULL, equipment_id INTEGER NOT NULL REFERENCES equipment_items(id), PRIMARY KEY (locale, equipment_id))",
+    "CREATE TABLE IF NOT EXISTS injury_exercise_modifications (id SERIAL PRIMARY KEY, injury_id INTEGER NOT NULL REFERENCES injury_log(id), exercise_id INTEGER NOT NULL REFERENCES exercise_inventory(id), substitute_exercise_id INTEGER REFERENCES exercise_inventory(id), modification_type TEXT NOT NULL DEFAULT 'modify', modification_notes TEXT, created_at TIMESTAMP DEFAULT NOW())",
 ]
 
 # Equipment catalog — single source of truth for seeding equipment_items and the locale profile UI.
