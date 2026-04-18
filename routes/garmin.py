@@ -84,9 +84,20 @@ def import_preview():
     if not result:
         flash('No FIT data in session. Please upload a file.', 'warning')
         return redirect(url_for('garmin.import_fit'))
+    db = get_db()
+    plan_items = db.execute(
+        '''SELECT pi.id, pi.item_date, pi.workout_name, pi.sport_type,
+                  tp.name as plan_name
+           FROM plan_items pi
+           JOIN training_plans tp ON tp.id = pi.plan_id
+           WHERE pi.status = 'scheduled'
+           ORDER BY pi.item_date ASC
+           LIMIT 60'''
+    ).fetchall()
     return render_template('garmin/import_preview.html', result=result,
                            name_override=flask_session.get('fit_name_override', ''),
-                           notes=flask_session.get('fit_notes', ''))
+                           notes=flask_session.get('fit_notes', ''),
+                           plan_items=plan_items)
 
 
 @bp.route('/import/confirm', methods=['POST'])
@@ -99,11 +110,18 @@ def import_confirm():
     db = get_db()
     log_type = result.get('log_type')
 
+    def _num_int(v):
+        try:
+            return int(v) if v else None
+        except (ValueError, TypeError):
+            return None
+
     if log_type == 'cardio':
         data = result['data']
         data['activity_name'] = request.form.get('activity_name') or data.get('activity_name')
         data['notes'] = request.form.get('notes') or data.get('notes')
         data['activity'] = request.form.get('activity') or data.get('activity', 'Running')
+        plan_item_id = _num_int(request.form.get('plan_item_id'))
         db.execute(
             '''INSERT INTO cardio_log
                (date, activity, activity_name, duration_min, moving_time_min,
@@ -112,8 +130,8 @@ def import_confirm():
                 avg_power, max_power, norm_power, aerobic_te, anaerobic_te,
                 swolf, active_lengths,
                 stride_length_m, vert_oscillation_cm, vert_ratio_pct,
-                gct_ms, gct_balance, notes)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
+                gct_ms, gct_balance, plan_item_id, notes)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
             (data.get('date'), data.get('activity'), data.get('activity_name'),
              data.get('duration_min'), data.get('moving_time_min'),
              data.get('distance_mi'), data.get('avg_pace'), data.get('avg_speed'),
@@ -125,8 +143,13 @@ def import_confirm():
              data.get('swolf'), data.get('active_lengths'),
              data.get('stride_length_m'), data.get('vert_oscillation_cm'),
              data.get('vert_ratio_pct'), data.get('gct_ms'), data.get('gct_balance'),
-             data.get('notes'))
+             plan_item_id, data.get('notes'))
         )
+        if plan_item_id:
+            db.execute(
+                "UPDATE plan_items SET status='completed' WHERE id=? AND status='scheduled'",
+                (plan_item_id,)
+            )
         db.commit()
         flask_session.pop('fit_import', None)
         flash('Activity imported into Cardio Log.', 'success')
@@ -134,20 +157,26 @@ def import_confirm():
 
     elif log_type == 'strength':
         rows = result['data']
+        plan_item_id = _num_int(request.form.get('plan_item_id'))
         inserted = 0
         for row in rows:
             row['notes'] = request.form.get('notes') or row.get('notes')
             db.execute(
                 '''INSERT INTO training_log
                    (date, exercise, actual_sets, actual_reps, actual_weight,
-                    actual_duration, notes)
-                   VALUES (?,?,?,?,?,?,?)''',
+                    actual_duration, plan_item_id, notes)
+                   VALUES (?,?,?,?,?,?,?,?)''',
                 (row.get('date'), row.get('exercise'),
                  row.get('actual_sets'), row.get('actual_reps'),
                  row.get('actual_weight'), row.get('actual_duration'),
-                 row.get('notes'))
+                 plan_item_id, row.get('notes'))
             )
             inserted += 1
+        if plan_item_id:
+            db.execute(
+                "UPDATE plan_items SET status='completed' WHERE id=? AND status='scheduled'",
+                (plan_item_id,)
+            )
         db.commit()
         flask_session.pop('fit_import', None)
         flash(f'Strength workout imported: {inserted} exercise entries added.', 'success')

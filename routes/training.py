@@ -35,7 +35,9 @@ def new_entry():
         flash('Workout logged.', 'success')
         return redirect(url_for('training.list_entries'))
     exercises = db.execute('SELECT exercise, movement_pattern FROM current_rx ORDER BY exercise').fetchall()
-    return render_template('training/form.html', entry=None, exercises=exercises)
+    plan_items = _load_plan_items(db)
+    return render_template('training/form.html', entry=None, exercises=exercises,
+                           plan_items=plan_items)
 
 
 @bp.route('/training/<int:entry_id>/edit', methods=['GET', 'POST'])
@@ -50,7 +52,9 @@ def edit_entry(entry_id):
         flash('Entry updated.', 'success')
         return redirect(url_for('training.list_entries'))
     exercises = db.execute('SELECT exercise, movement_pattern FROM current_rx ORDER BY exercise').fetchall()
-    return render_template('training/form.html', entry=entry, exercises=exercises)
+    plan_items = _load_plan_items(db)
+    return render_template('training/form.html', entry=entry, exercises=exercises,
+                           plan_items=plan_items)
 
 
 @bp.route('/training/<int:entry_id>/delete', methods=['POST'])
@@ -60,6 +64,19 @@ def delete_entry(entry_id):
     db.commit()
     flash('Entry deleted.', 'warning')
     return redirect(url_for('training.list_entries'))
+
+
+def _load_plan_items(db):
+    """Return upcoming scheduled plan items for the plan item selector."""
+    return db.execute(
+        '''SELECT pi.id, pi.item_date, pi.workout_name, pi.sport_type,
+                  tp.name as plan_name
+           FROM plan_items pi
+           JOIN training_plans tp ON tp.id = pi.plan_id
+           WHERE pi.status = 'scheduled'
+           ORDER BY pi.item_date ASC
+           LIMIT 60'''
+    ).fetchall()
 
 
 @bp.route('/api/rx/<exercise>')
@@ -103,6 +120,7 @@ def _save_entry(db, entry_id):
         except (ValueError, TypeError):
             return None
 
+    plan_item_id = num(f.get('plan_item_id'), int)
     target_sets = num(f.get('target_sets'), int)
     target_reps = num(f.get('target_reps'), int)
     target_weight = num(f.get('target_weight'))
@@ -133,28 +151,34 @@ def _save_entry(db, entry_id):
             target_sets=?, target_reps=?, target_weight=?, target_duration=?,
             actual_sets=?, actual_reps=?, actual_weight=?, actual_duration=?,
             rpe=?, rest_sec=?, outcome=?, est_1rm=?, volume=?, body_weight=?,
-            next_weight=?, next_sets=?, next_reps=?, notes=?
+            next_weight=?, next_sets=?, next_reps=?, plan_item_id=?, notes=?
             WHERE id=?''',
             (date, exercise, movement_pattern, recovery_cost,
              target_sets, target_reps, target_weight, target_duration,
              actual_sets, actual_reps, actual_weight, actual_duration,
              rpe, rest_sec, outcome, est_1rm, volume, body_weight,
              nxt['next_weight'], nxt['next_sets'], nxt['next_reps'],
-             f.get('notes', ''), entry_id))
+             plan_item_id, f.get('notes', ''), entry_id))
     else:
         db.execute('''INSERT INTO training_log
             (date, exercise, sub_group, recovery_cost,
              target_sets, target_reps, target_weight, target_duration,
              actual_sets, actual_reps, actual_weight, actual_duration,
              rpe, rest_sec, outcome, est_1rm, volume, body_weight,
-             next_weight, next_sets, next_reps, notes)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
+             next_weight, next_sets, next_reps, plan_item_id, notes)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
             (date, exercise, movement_pattern, recovery_cost,
              target_sets, target_reps, target_weight, target_duration,
              actual_sets, actual_reps, actual_weight, actual_duration,
              rpe, rest_sec, outcome, est_1rm, volume, body_weight,
              nxt['next_weight'], nxt['next_sets'], nxt['next_reps'],
-             f.get('notes', '')))
+             plan_item_id, f.get('notes', '')))
+
+    if plan_item_id:
+        db.execute(
+            "UPDATE plan_items SET status='completed' WHERE id=? AND status='scheduled'",
+            (plan_item_id,)
+        )
 
     # Update Current Rx with latest result
     if outcome and exercise:

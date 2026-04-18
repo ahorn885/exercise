@@ -24,6 +24,7 @@ SQLITE_SCHEMA = '''
         rpe REAL, rest_sec INTEGER, outcome TEXT, est_1rm REAL, volume REAL,
         body_weight REAL, next_weight REAL, next_sets INTEGER, next_reps INTEGER,
         progression_level TEXT, notes TEXT,
+        plan_item_id INTEGER REFERENCES plan_items(id),
         created_at TEXT DEFAULT (datetime('now'))
     );
     CREATE TABLE IF NOT EXISTS current_rx (
@@ -45,6 +46,7 @@ SQLITE_SCHEMA = '''
         aerobic_te REAL, anaerobic_te REAL, swolf INTEGER, active_lengths INTEGER,
         stride_length_m REAL, vert_oscillation_cm REAL, vert_ratio_pct REAL,
         gct_ms REAL, gct_balance TEXT,
+        plan_item_id INTEGER REFERENCES plan_items(id),
         notes TEXT, created_at TEXT DEFAULT (datetime('now'))
     );
     CREATE TABLE IF NOT EXISTS body_metrics (
@@ -193,6 +195,7 @@ PG_SCHEMA = '''
         rpe REAL, rest_sec INTEGER, outcome TEXT, est_1rm REAL, volume REAL,
         body_weight REAL, next_weight REAL, next_sets INTEGER, next_reps INTEGER,
         progression_level TEXT, notes TEXT,
+        plan_item_id INTEGER REFERENCES plan_items(id),
         created_at TIMESTAMP DEFAULT NOW()
     );
     CREATE TABLE IF NOT EXISTS current_rx (
@@ -214,6 +217,7 @@ PG_SCHEMA = '''
         aerobic_te REAL, anaerobic_te REAL, swolf INTEGER, active_lengths INTEGER,
         stride_length_m REAL, vert_oscillation_cm REAL, vert_ratio_pct REAL,
         gct_ms REAL, gct_balance TEXT,
+        plan_item_id INTEGER REFERENCES plan_items(id),
         notes TEXT, created_at TIMESTAMP DEFAULT NOW()
     );
     CREATE TABLE IF NOT EXISTS body_metrics (
@@ -361,6 +365,8 @@ _SQLITE_MIGRATIONS = [
     "CREATE TABLE IF NOT EXISTS exercise_equipment (exercise_id INTEGER NOT NULL REFERENCES exercise_inventory(id), equipment_id INTEGER NOT NULL REFERENCES equipment_items(id), option_group INTEGER NOT NULL DEFAULT 1, PRIMARY KEY (exercise_id, equipment_id))",
     "CREATE TABLE IF NOT EXISTS locale_equipment (locale TEXT NOT NULL, equipment_id INTEGER NOT NULL REFERENCES equipment_items(id), PRIMARY KEY (locale, equipment_id))",
     "CREATE TABLE IF NOT EXISTS injury_exercise_modifications (id INTEGER PRIMARY KEY AUTOINCREMENT, injury_id INTEGER NOT NULL REFERENCES injury_log(id), exercise_id INTEGER NOT NULL REFERENCES exercise_inventory(id), substitute_exercise_id INTEGER REFERENCES exercise_inventory(id), modification_type TEXT NOT NULL DEFAULT 'modify', modification_notes TEXT, created_at TEXT DEFAULT (datetime('now')))",
+    "ALTER TABLE cardio_log ADD COLUMN plan_item_id INTEGER REFERENCES plan_items(id)",
+    "ALTER TABLE training_log ADD COLUMN plan_item_id INTEGER REFERENCES plan_items(id)",
 ]
 
 _PG_MIGRATIONS = [
@@ -380,6 +386,8 @@ _PG_MIGRATIONS = [
     "CREATE TABLE IF NOT EXISTS exercise_equipment (exercise_id INTEGER NOT NULL REFERENCES exercise_inventory(id), equipment_id INTEGER NOT NULL REFERENCES equipment_items(id), option_group INTEGER NOT NULL DEFAULT 1, PRIMARY KEY (exercise_id, equipment_id))",
     "CREATE TABLE IF NOT EXISTS locale_equipment (locale TEXT NOT NULL, equipment_id INTEGER NOT NULL REFERENCES equipment_items(id), PRIMARY KEY (locale, equipment_id))",
     "CREATE TABLE IF NOT EXISTS injury_exercise_modifications (id SERIAL PRIMARY KEY, injury_id INTEGER NOT NULL REFERENCES injury_log(id), exercise_id INTEGER NOT NULL REFERENCES exercise_inventory(id), substitute_exercise_id INTEGER REFERENCES exercise_inventory(id), modification_type TEXT NOT NULL DEFAULT 'modify', modification_notes TEXT, created_at TIMESTAMP DEFAULT NOW())",
+    "ALTER TABLE cardio_log ADD COLUMN IF NOT EXISTS plan_item_id INTEGER REFERENCES plan_items(id)",
+    "ALTER TABLE training_log ADD COLUMN IF NOT EXISTS plan_item_id INTEGER REFERENCES plan_items(id)",
 ]
 
 # Equipment catalog — single source of truth for seeding equipment_items and the locale profile UI.
