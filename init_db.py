@@ -18,6 +18,7 @@ SQLITE_SCHEMA = '''
     CREATE TABLE IF NOT EXISTS training_log (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         date TEXT NOT NULL, exercise TEXT NOT NULL,
+        exercise_id INTEGER REFERENCES exercise_inventory(id),
         sub_group TEXT, recovery_cost TEXT,
         target_sets INTEGER, target_reps INTEGER, target_weight REAL, target_duration INTEGER,
         actual_sets INTEGER, actual_reps INTEGER, actual_weight REAL, actual_duration INTEGER,
@@ -29,7 +30,8 @@ SQLITE_SCHEMA = '''
     );
     CREATE TABLE IF NOT EXISTS current_rx (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        exercise TEXT NOT NULL UNIQUE, discipline TEXT, type TEXT, movement_pattern TEXT,
+        exercise TEXT NOT NULL UNIQUE, exercise_id INTEGER REFERENCES exercise_inventory(id),
+        discipline TEXT, type TEXT, movement_pattern TEXT,
         inventory_sugg_volume TEXT, current_sets INTEGER, current_reps INTEGER,
         current_weight REAL, current_duration INTEGER, last_performed TEXT,
         last_outcome TEXT, consecutive_failures INTEGER DEFAULT 0, rx_source TEXT,
@@ -190,6 +192,7 @@ PG_SCHEMA = '''
     CREATE TABLE IF NOT EXISTS training_log (
         id SERIAL PRIMARY KEY,
         date TEXT NOT NULL, exercise TEXT NOT NULL,
+        exercise_id INTEGER REFERENCES exercise_inventory(id),
         sub_group TEXT, recovery_cost TEXT,
         target_sets INTEGER, target_reps INTEGER, target_weight REAL, target_duration INTEGER,
         actual_sets INTEGER, actual_reps INTEGER, actual_weight REAL, actual_duration INTEGER,
@@ -201,7 +204,8 @@ PG_SCHEMA = '''
     );
     CREATE TABLE IF NOT EXISTS current_rx (
         id SERIAL PRIMARY KEY,
-        exercise TEXT NOT NULL UNIQUE, discipline TEXT, type TEXT, movement_pattern TEXT,
+        exercise TEXT NOT NULL UNIQUE, exercise_id INTEGER REFERENCES exercise_inventory(id),
+        discipline TEXT, type TEXT, movement_pattern TEXT,
         inventory_sugg_volume TEXT, current_sets INTEGER, current_reps INTEGER,
         current_weight REAL, current_duration INTEGER, last_performed TEXT,
         last_outcome TEXT, consecutive_failures INTEGER DEFAULT 0, rx_source TEXT,
@@ -370,6 +374,10 @@ _SQLITE_MIGRATIONS = [
     "ALTER TABLE cardio_log ADD COLUMN plan_item_id INTEGER REFERENCES plan_items(id)",
     "ALTER TABLE training_log ADD COLUMN plan_item_id INTEGER REFERENCES plan_items(id)",
     "ALTER TABLE conditions_log ADD COLUMN cardio_log_id INTEGER REFERENCES cardio_log(id)",
+    "ALTER TABLE training_log ADD COLUMN exercise_id INTEGER REFERENCES exercise_inventory(id)",
+    "UPDATE training_log SET exercise_id = (SELECT id FROM exercise_inventory WHERE exercise = training_log.exercise)",
+    "ALTER TABLE current_rx ADD COLUMN exercise_id INTEGER REFERENCES exercise_inventory(id)",
+    "UPDATE current_rx SET exercise_id = (SELECT id FROM exercise_inventory WHERE exercise = current_rx.exercise)",
 ]
 
 _PG_MIGRATIONS = [
@@ -392,6 +400,10 @@ _PG_MIGRATIONS = [
     "ALTER TABLE cardio_log ADD COLUMN IF NOT EXISTS plan_item_id INTEGER REFERENCES plan_items(id)",
     "ALTER TABLE training_log ADD COLUMN IF NOT EXISTS plan_item_id INTEGER REFERENCES plan_items(id)",
     "ALTER TABLE conditions_log ADD COLUMN IF NOT EXISTS cardio_log_id INTEGER REFERENCES cardio_log(id)",
+    "ALTER TABLE training_log ADD COLUMN IF NOT EXISTS exercise_id INTEGER REFERENCES exercise_inventory(id)",
+    "UPDATE training_log SET exercise_id = ei.id FROM exercise_inventory ei WHERE ei.exercise = training_log.exercise AND training_log.exercise_id IS NULL",
+    "ALTER TABLE current_rx ADD COLUMN IF NOT EXISTS exercise_id INTEGER REFERENCES exercise_inventory(id)",
+    "UPDATE current_rx SET exercise_id = ei.id FROM exercise_inventory ei WHERE ei.exercise = current_rx.exercise AND current_rx.exercise_id IS NULL",
 ]
 
 # Equipment catalog — single source of truth for seeding equipment_items and the locale profile UI.
@@ -808,6 +820,13 @@ def init_postgres():
                         'ON CONFLICT DO NOTHING',
                         (row[0], eq_id)
                     )
+    # Phase 5 — Backfill exercise_id FKs (runs after seeding so exercise_inventory is populated)
+    cur.execute('''UPDATE current_rx SET exercise_id = ei.id
+        FROM exercise_inventory ei WHERE ei.exercise = current_rx.exercise
+        AND current_rx.exercise_id IS NULL''')
+    cur.execute('''UPDATE training_log SET exercise_id = ei.id
+        FROM exercise_inventory ei WHERE ei.exercise = training_log.exercise
+        AND training_log.exercise_id IS NULL''')
     conn.commit()
     cur.close()
     conn.close()
@@ -879,6 +898,13 @@ def init_sqlite():
                         'INSERT OR IGNORE INTO locale_equipment (locale, equipment_id) VALUES (?, ?)',
                         (row[0], eq_id)
                     )
+    # Phase 5 — Backfill exercise_id FKs (runs after seeding so exercise_inventory is populated)
+    conn.execute('''UPDATE current_rx SET exercise_id =
+        (SELECT id FROM exercise_inventory WHERE exercise = current_rx.exercise)
+        WHERE exercise_id IS NULL''')
+    conn.execute('''UPDATE training_log SET exercise_id =
+        (SELECT id FROM exercise_inventory WHERE exercise = training_log.exercise)
+        WHERE exercise_id IS NULL''')
     conn.commit()
     conn.close()
     print(f'SQLite database initialized at {SQLITE_PATH}')

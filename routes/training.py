@@ -105,6 +105,9 @@ def _save_entry(db, entry_id):
     date = f.get('date', '')
     exercise = f.get('exercise', '')
 
+    ei_row = db.execute('SELECT id FROM exercise_inventory WHERE exercise=?', (exercise,)).fetchone()
+    exercise_id = ei_row['id'] if ei_row else None
+
     rx = db.execute(
         'SELECT movement_pattern, recovery_cost, weight_increment, consecutive_failures FROM current_rx WHERE exercise=?',
         (exercise,)
@@ -147,13 +150,13 @@ def _save_entry(db, entry_id):
 
     if entry_id:
         db.execute('''UPDATE training_log SET
-            date=?, exercise=?, sub_group=?, recovery_cost=?,
+            date=?, exercise=?, exercise_id=?, sub_group=?, recovery_cost=?,
             target_sets=?, target_reps=?, target_weight=?, target_duration=?,
             actual_sets=?, actual_reps=?, actual_weight=?, actual_duration=?,
             rpe=?, rest_sec=?, outcome=?, est_1rm=?, volume=?, body_weight=?,
             next_weight=?, next_sets=?, next_reps=?, plan_item_id=?, notes=?
             WHERE id=?''',
-            (date, exercise, movement_pattern, recovery_cost,
+            (date, exercise, exercise_id, movement_pattern, recovery_cost,
              target_sets, target_reps, target_weight, target_duration,
              actual_sets, actual_reps, actual_weight, actual_duration,
              rpe, rest_sec, outcome, est_1rm, volume, body_weight,
@@ -161,13 +164,13 @@ def _save_entry(db, entry_id):
              plan_item_id, f.get('notes', ''), entry_id))
     else:
         db.execute('''INSERT INTO training_log
-            (date, exercise, sub_group, recovery_cost,
+            (date, exercise, exercise_id, sub_group, recovery_cost,
              target_sets, target_reps, target_weight, target_duration,
              actual_sets, actual_reps, actual_weight, actual_duration,
              rpe, rest_sec, outcome, est_1rm, volume, body_weight,
              next_weight, next_sets, next_reps, plan_item_id, notes)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
-            (date, exercise, movement_pattern, recovery_cost,
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
+            (date, exercise, exercise_id, movement_pattern, recovery_cost,
              target_sets, target_reps, target_weight, target_duration,
              actual_sets, actual_reps, actual_weight, actual_duration,
              rpe, rest_sec, outcome, est_1rm, volume, body_weight,
@@ -183,12 +186,12 @@ def _save_entry(db, entry_id):
     # Update Current Rx with latest result
     if outcome and exercise:
         db.execute('''UPDATE current_rx SET
-            current_sets=?, current_reps=?, current_weight=?, current_duration=?,
+            exercise_id=?, current_sets=?, current_reps=?, current_weight=?, current_duration=?,
             last_performed=?, last_outcome=?, consecutive_failures=?,
             next_sets=?, next_reps=?, next_weight=?,
             rx_source='From Training Log'
             WHERE exercise=?''',
-            (actual_sets, actual_reps, actual_weight, actual_duration,
+            (exercise_id, actual_sets, actual_reps, actual_weight, actual_duration,
              date, outcome, nxt['consecutive_failures'],
              nxt['next_sets'], nxt['next_reps'], nxt['next_weight'], exercise))
 
