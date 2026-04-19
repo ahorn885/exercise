@@ -158,7 +158,7 @@ SQLITE_SCHEMA = '''
         PRIMARY KEY (exercise_id, equipment_id)
     );
     CREATE TABLE IF NOT EXISTS locale_equipment (
-        locale       TEXT NOT NULL,
+        locale       TEXT NOT NULL REFERENCES locale_profiles(locale),
         equipment_id INTEGER NOT NULL REFERENCES equipment_items(id),
         PRIMARY KEY (locale, equipment_id)
     );
@@ -332,7 +332,7 @@ PG_SCHEMA = '''
         PRIMARY KEY (exercise_id, equipment_id)
     );
     CREATE TABLE IF NOT EXISTS locale_equipment (
-        locale       TEXT NOT NULL,
+        locale       TEXT NOT NULL REFERENCES locale_profiles(locale),
         equipment_id INTEGER NOT NULL REFERENCES equipment_items(id),
         PRIMARY KEY (locale, equipment_id)
     );
@@ -369,7 +369,7 @@ _SQLITE_MIGRATIONS = [
     "CREATE TABLE IF NOT EXISTS locale_profiles (locale TEXT PRIMARY KEY, equipment TEXT DEFAULT '', notes TEXT DEFAULT '', updated_at TEXT DEFAULT (datetime('now')))",
     "CREATE TABLE IF NOT EXISTS equipment_items (id INTEGER PRIMARY KEY AUTOINCREMENT, tag TEXT NOT NULL UNIQUE, label TEXT NOT NULL, category TEXT NOT NULL)",
     "CREATE TABLE IF NOT EXISTS exercise_equipment (exercise_id INTEGER NOT NULL REFERENCES exercise_inventory(id), equipment_id INTEGER NOT NULL REFERENCES equipment_items(id), option_group INTEGER NOT NULL DEFAULT 1, PRIMARY KEY (exercise_id, equipment_id))",
-    "CREATE TABLE IF NOT EXISTS locale_equipment (locale TEXT NOT NULL, equipment_id INTEGER NOT NULL REFERENCES equipment_items(id), PRIMARY KEY (locale, equipment_id))",
+    "CREATE TABLE IF NOT EXISTS locale_equipment (locale TEXT NOT NULL REFERENCES locale_profiles(locale), equipment_id INTEGER NOT NULL REFERENCES equipment_items(id), PRIMARY KEY (locale, equipment_id))",
     "CREATE TABLE IF NOT EXISTS injury_exercise_modifications (id INTEGER PRIMARY KEY AUTOINCREMENT, injury_id INTEGER NOT NULL REFERENCES injury_log(id), exercise_id INTEGER NOT NULL REFERENCES exercise_inventory(id), substitute_exercise_id INTEGER REFERENCES exercise_inventory(id), modification_type TEXT NOT NULL DEFAULT 'modify', modification_notes TEXT, created_at TEXT DEFAULT (datetime('now')))",
     "ALTER TABLE cardio_log ADD COLUMN plan_item_id INTEGER REFERENCES plan_items(id)",
     "ALTER TABLE training_log ADD COLUMN plan_item_id INTEGER REFERENCES plan_items(id)",
@@ -395,7 +395,7 @@ _PG_MIGRATIONS = [
     "CREATE TABLE IF NOT EXISTS locale_profiles (locale TEXT PRIMARY KEY, equipment TEXT DEFAULT '', notes TEXT DEFAULT '', updated_at TIMESTAMP DEFAULT NOW())",
     "CREATE TABLE IF NOT EXISTS equipment_items (id SERIAL PRIMARY KEY, tag TEXT NOT NULL UNIQUE, label TEXT NOT NULL, category TEXT NOT NULL)",
     "CREATE TABLE IF NOT EXISTS exercise_equipment (exercise_id INTEGER NOT NULL REFERENCES exercise_inventory(id), equipment_id INTEGER NOT NULL REFERENCES equipment_items(id), option_group INTEGER NOT NULL DEFAULT 1, PRIMARY KEY (exercise_id, equipment_id))",
-    "CREATE TABLE IF NOT EXISTS locale_equipment (locale TEXT NOT NULL, equipment_id INTEGER NOT NULL REFERENCES equipment_items(id), PRIMARY KEY (locale, equipment_id))",
+    "CREATE TABLE IF NOT EXISTS locale_equipment (locale TEXT NOT NULL REFERENCES locale_profiles(locale), equipment_id INTEGER NOT NULL REFERENCES equipment_items(id), PRIMARY KEY (locale, equipment_id))",
     "CREATE TABLE IF NOT EXISTS injury_exercise_modifications (id SERIAL PRIMARY KEY, injury_id INTEGER NOT NULL REFERENCES injury_log(id), exercise_id INTEGER NOT NULL REFERENCES exercise_inventory(id), substitute_exercise_id INTEGER REFERENCES exercise_inventory(id), modification_type TEXT NOT NULL DEFAULT 'modify', modification_notes TEXT, created_at TIMESTAMP DEFAULT NOW())",
     "ALTER TABLE cardio_log ADD COLUMN IF NOT EXISTS plan_item_id INTEGER REFERENCES plan_items(id)",
     "ALTER TABLE training_log ADD COLUMN IF NOT EXISTS plan_item_id INTEGER REFERENCES plan_items(id)",
@@ -404,6 +404,7 @@ _PG_MIGRATIONS = [
     "UPDATE training_log SET exercise_id = ei.id FROM exercise_inventory ei WHERE ei.exercise = training_log.exercise AND training_log.exercise_id IS NULL",
     "ALTER TABLE current_rx ADD COLUMN IF NOT EXISTS exercise_id INTEGER REFERENCES exercise_inventory(id)",
     "UPDATE current_rx SET exercise_id = ei.id FROM exercise_inventory ei WHERE ei.exercise = current_rx.exercise AND current_rx.exercise_id IS NULL",
+    "ALTER TABLE locale_equipment ADD CONSTRAINT IF NOT EXISTS locale_equipment_locale_fk FOREIGN KEY (locale) REFERENCES locale_profiles(locale)",
 ]
 
 # Equipment catalog — single source of truth for seeding equipment_items and the locale profile UI.
