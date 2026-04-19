@@ -517,3 +517,41 @@ def auth_login():
     except Exception as e:
         flash(f'Authentication failed: {e}', 'danger')
     return redirect(url_for('garmin.auth'))
+
+
+@bp.route('/auth/import-tokens', methods=['POST'])
+def auth_import_tokens():
+    import json
+    raw = request.form.get('token_json', '').strip()
+    if not raw:
+        flash('No token JSON provided.', 'danger')
+        return redirect(url_for('garmin.auth'))
+    try:
+        token_data = json.loads(raw)
+    except json.JSONDecodeError as e:
+        flash(f'Invalid JSON: {e}', 'danger')
+        return redirect(url_for('garmin.auth'))
+    try:
+        from garmin_connect import _save_session_to_db, _write_session_to_tmp, GARTH_TMP
+        import garth, os
+        _write_session_to_tmp(json.dumps(token_data))
+        garth.resume(GARTH_TMP)
+        username = getattr(garth.client, 'username', '')
+        db = get_db()
+        existing = db.execute('SELECT id FROM garmin_auth LIMIT 1').fetchone()
+        session_json = json.dumps(token_data)
+        if existing:
+            db.execute(
+                "UPDATE garmin_auth SET garth_session=?, garmin_username=?, updated_at=datetime('now') WHERE id=?",
+                (session_json, username, existing[0])
+            )
+        else:
+            db.execute(
+                'INSERT INTO garmin_auth (garth_session, garmin_username) VALUES (?,?)',
+                (session_json, username)
+            )
+        db.commit()
+        flash(f'Tokens imported successfully{" for " + username if username else ""}.', 'success')
+    except Exception as e:
+        flash(f'Token import failed: {e}', 'danger')
+    return redirect(url_for('garmin.auth'))
