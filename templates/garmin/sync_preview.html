@@ -56,7 +56,12 @@
             {% if item.already_imported %}<br><small class="text-danger">already imported</small>{% endif %}
           </td>
           <td class="small">{% if act.duration_min %}{{ (act.duration_min)|round(0)|int }} min{% else %}—{% endif %}</td>
-          <td class="small">{% if act.distance_mi %}{{ act.distance_mi }} mi{% else %}—{% endif %}</td>
+          <td class="small">
+            {% if act._plan_sport_type == 'strength_training' %}
+              <span class="text-muted small fst-italic">FIT on import</span>
+            {% elif act.distance_mi %}{{ act.distance_mi }} mi
+            {% else %}—{% endif %}
+          </td>
           <td class="small">{% if act.avg_hr %}{{ act.avg_hr }} bpm{% else %}—{% endif %}</td>
           <td class="small">
             {% if item.plan_item %}

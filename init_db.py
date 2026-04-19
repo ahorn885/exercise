@@ -25,6 +25,7 @@ SQLITE_SCHEMA = '''
         rpe REAL, rest_sec INTEGER, outcome TEXT, est_1rm REAL, volume REAL,
         body_weight REAL, next_weight REAL, next_sets INTEGER, next_reps INTEGER,
         progression_level TEXT, notes TEXT,
+        garmin_activity_id TEXT,
         plan_item_id INTEGER REFERENCES plan_items(id),
         created_at TEXT DEFAULT (datetime('now'))
     );
@@ -208,6 +209,7 @@ PG_SCHEMA = '''
         rpe REAL, rest_sec INTEGER, outcome TEXT, est_1rm REAL, volume REAL,
         body_weight REAL, next_weight REAL, next_sets INTEGER, next_reps INTEGER,
         progression_level TEXT, notes TEXT,
+        garmin_activity_id TEXT,
         plan_item_id INTEGER REFERENCES plan_items(id),
         created_at TIMESTAMP DEFAULT NOW()
     );
@@ -398,6 +400,7 @@ _SQLITE_MIGRATIONS = [
     "UPDATE current_rx SET exercise_id = (SELECT id FROM exercise_inventory WHERE exercise = current_rx.exercise)",
     "CREATE TABLE IF NOT EXISTS plan_reviews (id INTEGER PRIMARY KEY AUTOINCREMENT, plan_id INTEGER NOT NULL REFERENCES training_plans(id), tier INTEGER NOT NULL, sessions_reviewed INTEGER DEFAULT 0, notes TEXT, created_at TEXT DEFAULT (datetime('now')))",
     "ALTER TABLE cardio_log ADD COLUMN garmin_activity_id TEXT",
+    "ALTER TABLE training_log ADD COLUMN garmin_activity_id TEXT",
 ]
 
 _PG_MIGRATIONS = [
@@ -427,6 +430,7 @@ _PG_MIGRATIONS = [
     "ALTER TABLE locale_equipment ADD CONSTRAINT IF NOT EXISTS locale_equipment_locale_fk FOREIGN KEY (locale) REFERENCES locale_profiles(locale)",
     "CREATE TABLE IF NOT EXISTS plan_reviews (id SERIAL PRIMARY KEY, plan_id INTEGER NOT NULL REFERENCES training_plans(id), tier INTEGER NOT NULL, sessions_reviewed INTEGER DEFAULT 0, notes TEXT, created_at TIMESTAMP DEFAULT NOW())",
     "ALTER TABLE cardio_log ADD COLUMN IF NOT EXISTS garmin_activity_id TEXT",
+    "ALTER TABLE training_log ADD COLUMN IF NOT EXISTS garmin_activity_id TEXT",
 ]
 
 # Equipment catalog — single source of truth for seeding equipment_items and the locale profile UI.

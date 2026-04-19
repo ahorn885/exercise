@@ -200,6 +200,17 @@ def fetch_activities(db, start_date: str, end_date: str) -> list:
     return activities or []
 
 
+def download_activity_fit(db, activity_id) -> bytes:
+    """Download the original FIT file for a Garmin activity. Returns raw bytes."""
+    client = _load_client(db)
+    data = client.download_activity(
+        activity_id,
+        dl_fmt=client.ActivityDownloadFormat.ORIGINAL
+    )
+    _save_session_to_db(db)
+    return bytes(data) if not isinstance(data, bytes) else data
+
+
 def normalize_activity(a: dict) -> dict:
     """Convert a raw Garmin API activity dict to cardio_log-compatible fields."""
     garmin_type = (a.get('activityType') or {}).get('typeKey', 'other')
