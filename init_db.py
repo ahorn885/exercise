@@ -48,6 +48,7 @@ SQLITE_SCHEMA = '''
         aerobic_te REAL, anaerobic_te REAL, swolf INTEGER, active_lengths INTEGER,
         stride_length_m REAL, vert_oscillation_cm REAL, vert_ratio_pct REAL,
         gct_ms REAL, gct_balance TEXT,
+        garmin_activity_id TEXT,
         plan_item_id INTEGER REFERENCES plan_items(id),
         notes TEXT, created_at TEXT DEFAULT (datetime('now'))
     );
@@ -230,6 +231,7 @@ PG_SCHEMA = '''
         aerobic_te REAL, anaerobic_te REAL, swolf INTEGER, active_lengths INTEGER,
         stride_length_m REAL, vert_oscillation_cm REAL, vert_ratio_pct REAL,
         gct_ms REAL, gct_balance TEXT,
+        garmin_activity_id TEXT,
         plan_item_id INTEGER REFERENCES plan_items(id),
         notes TEXT, created_at TIMESTAMP DEFAULT NOW()
     );
@@ -395,6 +397,7 @@ _SQLITE_MIGRATIONS = [
     "ALTER TABLE current_rx ADD COLUMN exercise_id INTEGER REFERENCES exercise_inventory(id)",
     "UPDATE current_rx SET exercise_id = (SELECT id FROM exercise_inventory WHERE exercise = current_rx.exercise)",
     "CREATE TABLE IF NOT EXISTS plan_reviews (id INTEGER PRIMARY KEY AUTOINCREMENT, plan_id INTEGER NOT NULL REFERENCES training_plans(id), tier INTEGER NOT NULL, sessions_reviewed INTEGER DEFAULT 0, notes TEXT, created_at TEXT DEFAULT (datetime('now')))",
+    "ALTER TABLE cardio_log ADD COLUMN garmin_activity_id TEXT",
 ]
 
 _PG_MIGRATIONS = [
@@ -423,6 +426,7 @@ _PG_MIGRATIONS = [
     "UPDATE current_rx SET exercise_id = ei.id FROM exercise_inventory ei WHERE ei.exercise = current_rx.exercise AND current_rx.exercise_id IS NULL",
     "ALTER TABLE locale_equipment ADD CONSTRAINT IF NOT EXISTS locale_equipment_locale_fk FOREIGN KEY (locale) REFERENCES locale_profiles(locale)",
     "CREATE TABLE IF NOT EXISTS plan_reviews (id SERIAL PRIMARY KEY, plan_id INTEGER NOT NULL REFERENCES training_plans(id), tier INTEGER NOT NULL, sessions_reviewed INTEGER DEFAULT 0, notes TEXT, created_at TIMESTAMP DEFAULT NOW())",
+    "ALTER TABLE cardio_log ADD COLUMN IF NOT EXISTS garmin_activity_id TEXT",
 ]
 
 # Equipment catalog — single source of truth for seeding equipment_items and the locale profile UI.

@@ -1,0 +1,104 @@
+{% extends 'base.html' %}
+{% block title %}Sync Preview{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h2 class="mb-0">Sync Preview</h2>
+  <a href="{{ url_for('garmin.sync') }}" class="btn btn-outline-secondary btn-sm">← Back</a>
+</div>
+<p class="text-muted small mb-4">{{ start_date }} → {{ end_date }} — {{ preview|length }} activit{% if preview|length == 1 %}y{% else %}ies{% endif %} found</p>
+
+{% if not preview %}
+<div class="alert alert-info">No activities found for this date range.</div>
+{% else %}
+
+{% set compliance_colors = {
+  'on_plan': 'success',
+  'short': 'warning',
+  'over': 'info',
+  'no_target': 'secondary',
+  'unmatched': 'secondary'
+} %}
+
+<form method="post" action="{{ url_for('garmin.sync_confirm') }}">
+  <div class="table-responsive mb-3">
+    <table class="table table-sm table-hover align-middle">
+      <thead class="table-light">
+        <tr>
+          <th style="width:36px">
+            <input type="checkbox" id="select-all" checked title="Select all new activities">
+          </th>
+          <th>Date</th>
+          <th>Activity</th>
+          <th>Duration</th>
+          <th>Distance</th>
+          <th>Avg HR</th>
+          <th>Plan Match</th>
+          <th>Compliance</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for item in preview %}
+        {% set act = item.activity %}
+        {% set comp = item.compliance %}
+        <tr class="{% if item.already_imported %}table-secondary text-muted{% endif %}">
+          <td>
+            {% if item.already_imported %}
+              <input type="checkbox" disabled title="Already imported">
+            {% else %}
+              <input type="checkbox" name="selected_ids" value="{{ act.garmin_activity_id }}" checked>
+            {% endif %}
+          </td>
+          <td class="small">{{ act.date }}</td>
+          <td>
+            <span class="fw-semibold">{{ act.activity_name or act.activity }}</span>
+            {% if act.activity_name %}<br><small class="text-muted">{{ act.activity }}</small>{% endif %}
+            {% if item.already_imported %}<br><small class="text-danger">already imported</small>{% endif %}
+          </td>
+          <td class="small">{% if act.duration_min %}{{ (act.duration_min)|round(0)|int }} min{% else %}—{% endif %}</td>
+          <td class="small">{% if act.distance_mi %}{{ act.distance_mi }} mi{% else %}—{% endif %}</td>
+          <td class="small">{% if act.avg_hr %}{{ act.avg_hr }} bpm{% else %}—{% endif %}</td>
+          <td class="small">
+            {% if item.plan_item %}
+              <span class="text-success">✓</span>
+              {{ item.plan_item.item_date }} — {{ item.plan_item.workout_name }}
+              {% if item.plan_item.target_duration_min %}
+                <br><small class="text-muted">Target: {{ item.plan_item.target_duration_min|int }} min
+                {%- if item.plan_item.target_distance_mi %} / {{ item.plan_item.target_distance_mi }} mi{% endif %}</small>
+              {% endif %}
+            {% else %}
+              <span class="text-muted">No match</span>
+            {% endif %}
+          </td>
+          <td>
+            {% if comp.label != 'unmatched' %}
+              <span class="badge bg-{{ compliance_colors.get(comp.label, 'secondary') }}">
+                {{ comp.label | replace('_', ' ') | title }}
+              </span>
+              {% if comp.duration_pct is not none %}
+                <br><small class="text-muted">{{ comp.duration_pct }}% dur</small>
+              {% endif %}
+              {% if comp.distance_pct is not none %}
+                <small class="text-muted">{{ comp.distance_pct }}% dist</small>
+              {% endif %}
+            {% else %}
+              <span class="text-muted small">—</span>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <button type="submit" class="btn btn-primary">Import Selected</button>
+  <a href="{{ url_for('garmin.sync') }}" class="btn btn-outline-secondary ms-2">Cancel</a>
+</form>
+
+<script>
+document.getElementById('select-all').addEventListener('change', function() {
+  document.querySelectorAll('input[name="selected_ids"]').forEach(cb => cb.checked = this.checked);
+});
+</script>
+{% endif %}
+{% endblock %}

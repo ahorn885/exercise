@@ -21,6 +21,44 @@ SPORT_TYPES = {
     'hiking': {'sportTypeId': 17, 'sportTypeKey': 'hiking'},
 }
 
+# Garmin typeKey → human-readable activity name (matches cardio_log.activity values)
+_GARMIN_TYPE_TO_ACTIVITY = {
+    'running': 'Running',
+    'trail_running': 'Trail Running',
+    'treadmill_running': 'Treadmill Running',
+    'track_running': 'Track Running',
+    'cycling': 'Road Cycling',
+    'road_biking': 'Road Cycling',
+    'mountain_biking': 'Mountain Biking',
+    'gravel_cycling': 'Gravel Cycling',
+    'indoor_cycling': 'Indoor Cycling',
+    'virtual_ride': 'Indoor Cycling',
+    'strength_training': 'Strength Training',
+    'swimming': 'Pool Swimming',
+    'open_water_swimming': 'Open Water Swimming',
+    'hiking': 'Hiking',
+    'walking': 'Walking',
+}
+
+# Garmin typeKey → plan sport_type category (for plan item matching)
+GARMIN_TYPE_TO_PLAN_SPORT = {
+    'running': 'running',
+    'trail_running': 'running',
+    'treadmill_running': 'running',
+    'track_running': 'running',
+    'cycling': 'cycling',
+    'road_biking': 'cycling',
+    'mountain_biking': 'cycling',
+    'gravel_cycling': 'cycling',
+    'indoor_cycling': 'cycling',
+    'virtual_ride': 'cycling',
+    'strength_training': 'strength_training',
+    'swimming': 'swimming',
+    'open_water_swimming': 'swimming',
+    'hiking': 'hiking',
+    'walking': 'walking',
+}
+
 
 # ── Session persistence helpers ───────────────────────────────────────────────
 
@@ -142,3 +180,78 @@ def delete_workout(db, workout_id: str):
     client = _load_client(db)
     client.delete_workout(workout_id)
     _save_session_to_db(db)
+
+
+def fetch_activities(db, start_date: str, end_date: str) -> list:
+    """Fetch activities from Garmin Connect for a date range.
+
+    Returns raw Garmin API activity dicts. Call normalize_activity() on each.
+    start_date / end_date: ISO strings YYYY-MM-DD.
+    """
+    client = _load_client(db)
+    try:
+        activities = client.get_activities_by_date(start_date, end_date)
+    except Exception:
+        # Fallback: fetch recent and filter client-side
+        activities = client.get_activities(0, 100) or []
+        activities = [a for a in activities
+                      if start_date <= (a.get('startTimeLocal') or '')[:10] <= end_date]
+    _save_session_to_db(db)
+    return activities or []
+
+
+def normalize_activity(a: dict) -> dict:
+    """Convert a raw Garmin API activity dict to cardio_log-compatible fields."""
+    garmin_type = (a.get('activityType') or {}).get('typeKey', 'other')
+    activity = _GARMIN_TYPE_TO_ACTIVITY.get(
+        garmin_type, garmin_type.replace('_', ' ').title()
+    )
+
+    duration_sec = a.get('duration') or a.get('elapsedDuration') or 0
+    duration_min = round(duration_sec / 60, 2) if duration_sec else None
+    moving_sec = a.get('movingDuration') or duration_sec or 0
+    moving_min = round(moving_sec / 60, 2) if moving_sec else None
+
+    distance_m = a.get('distance') or 0
+    distance_mi = round(distance_m * 0.000621371, 3) if distance_m else None
+
+    avg_speed_ms = a.get('averageSpeed') or 0
+    avg_speed_mph = round(avg_speed_ms * 2.23694, 2) if avg_speed_ms else None
+
+    avg_pace = None
+    if avg_speed_mph and avg_speed_mph > 0 and 'run' in garmin_type.lower():
+        pace_min = 60 / avg_speed_mph
+        avg_pace = f"{int(pace_min)}:{int((pace_min % 1) * 60):02d}"
+
+    elev_gain_m = a.get('elevationGain') or 0
+    elev_loss_m = a.get('elevationLoss') or 0
+
+    # Running cadence: Garmin stores one-leg steps; double it
+    cadence = (a.get('averageRunningCadenceInStepsPerMinute')
+               or a.get('averageCadence') or None)
+    if cadence is not None:
+        cadence = int(cadence * 2) if ('run' in garmin_type.lower() and cadence < 120) else int(cadence)
+
+    return {
+        'date': (a.get('startTimeLocal') or '')[:10],
+        'activity': activity,
+        'activity_name': a.get('activityName'),
+        'duration_min': duration_min,
+        'moving_time_min': moving_min,
+        'distance_mi': distance_mi,
+        'avg_pace': avg_pace,
+        'avg_speed': avg_speed_mph,
+        'avg_hr': a.get('averageHR'),
+        'max_hr': a.get('maxHR'),
+        'calories': a.get('calories'),
+        'elev_gain_ft': round(elev_gain_m * 3.28084, 1) if elev_gain_m else None,
+        'elev_loss_ft': round(elev_loss_m * 3.28084, 1) if elev_loss_m else None,
+        'avg_cadence': cadence,
+        'avg_power': a.get('avgPower'),
+        'max_power': a.get('maxPower'),
+        'norm_power': a.get('normPower'),
+        'aerobic_te': a.get('aerobicTrainingEffect'),
+        'anaerobic_te': a.get('anaerobicTrainingEffect'),
+        'garmin_activity_id': str(a.get('activityId', '')),
+        '_plan_sport_type': GARMIN_TYPE_TO_PLAN_SPORT.get(garmin_type, ''),
+    }

@@ -5,6 +5,7 @@
 <div class="d-flex justify-content-between align-items-center mb-4">
   <h2 class="mb-0">Garmin</h2>
   <div class="d-flex gap-2">
+    <a href="{{ url_for('garmin.sync') }}" class="btn btn-success">⟳ Sync from Garmin</a>
     <a href="{{ url_for('garmin.import_fit') }}" class="btn btn-primary">+ Import FIT File</a>
     <a href="{{ url_for('plans.list_plans') }}" class="btn btn-outline-secondary">Training Plans</a>
   </div>

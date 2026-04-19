@@ -1,0 +1,33 @@
+{% extends 'base.html' %}
+{% block title %}Sync from Garmin{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+  <h2 class="mb-0">Sync from Garmin Connect</h2>
+  <a href="{{ url_for('garmin.dashboard') }}" class="btn btn-outline-secondary btn-sm">← Garmin</a>
+</div>
+
+<div class="card mb-4" style="max-width:480px">
+  <div class="card-body">
+    <p class="text-muted small mb-3">
+      Fetches completed activities from Garmin Connect, auto-matches them to
+      scheduled plan items, and lets you import them into your logs.
+    </p>
+    <form method="post">
+      <div class="row g-2 mb-3">
+        <div class="col">
+          <label class="form-label small fw-semibold">From</label>
+          <input type="date" name="start_date" class="form-control form-control-sm"
+                 value="{{ default_start }}" required>
+        </div>
+        <div class="col">
+          <label class="form-label small fw-semibold">To</label>
+          <input type="date" name="end_date" class="form-control form-control-sm"
+                 value="{{ default_end }}" required>
+        </div>
+      </div>
+      <button type="submit" class="btn btn-primary">Fetch Activities</button>
+    </form>
+  </div>
+</div>
+{% endblock %}

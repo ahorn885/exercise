@@ -89,6 +89,38 @@ def _plan_health(db, plan_id):
         (plan_id,)
     ).fetchall()
 
+    # Compliance data for recently completed items linked to cardio_log
+    compliance_rows = db.execute(
+        '''SELECT pi.item_date, pi.workout_name,
+                  pi.target_duration_min, pi.target_distance_mi,
+                  cl.duration_min as actual_duration_min,
+                  cl.distance_mi as actual_distance_mi,
+                  cl.activity_name as garmin_activity_name,
+                  cl.avg_hr, cl.garmin_activity_id
+           FROM plan_items pi
+           JOIN cardio_log cl ON cl.plan_item_id = pi.id
+           WHERE pi.plan_id = ? AND pi.status = 'completed'
+           ORDER BY pi.item_date DESC LIMIT 10''',
+        (plan_id,)
+    ).fetchall()
+
+    compliance = []
+    for cr in compliance_rows:
+        dur_pct = None
+        dist_pct = None
+        if cr['target_duration_min'] and cr['actual_duration_min']:
+            dur_pct = round(cr['actual_duration_min'] / cr['target_duration_min'] * 100)
+        if cr['target_distance_mi'] and cr['actual_distance_mi']:
+            dist_pct = round(cr['actual_distance_mi'] / cr['target_distance_mi'] * 100)
+        compliance.append({
+            'item_date': cr['item_date'],
+            'workout_name': cr['workout_name'],
+            'garmin_activity': cr['garmin_activity_name'],
+            'duration_pct': dur_pct,
+            'distance_pct': dist_pct,
+            'avg_hr': cr['avg_hr'],
+        })
+
     return {
         'plan_id': plan_id,
         'sessions_since_tier1': sessions_since_t1,
@@ -99,6 +131,7 @@ def _plan_health(db, plan_id):
         'tier3_due': tier3_due,
         'recent_sessions': [dict(r) for r in recent],
         'upcoming_items': [dict(u) for u in upcoming],
+        'compliance': compliance,
     }
 
 
