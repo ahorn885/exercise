@@ -122,6 +122,14 @@ SQLITE_SCHEMA = '''
         notes TEXT,
         created_at TEXT DEFAULT (datetime('now'))
     );
+    CREATE TABLE IF NOT EXISTS plan_reviews (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        plan_id INTEGER NOT NULL REFERENCES training_plans(id),
+        tier INTEGER NOT NULL,
+        sessions_reviewed INTEGER DEFAULT 0,
+        notes TEXT,
+        created_at TEXT DEFAULT (datetime('now'))
+    );
     CREATE TABLE IF NOT EXISTS garmin_auth (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         garmin_username TEXT,
@@ -296,6 +304,14 @@ PG_SCHEMA = '''
         notes TEXT,
         created_at TIMESTAMP DEFAULT NOW()
     );
+    CREATE TABLE IF NOT EXISTS plan_reviews (
+        id SERIAL PRIMARY KEY,
+        plan_id INTEGER NOT NULL REFERENCES training_plans(id),
+        tier INTEGER NOT NULL,
+        sessions_reviewed INTEGER DEFAULT 0,
+        notes TEXT,
+        created_at TIMESTAMP DEFAULT NOW()
+    );
     CREATE TABLE IF NOT EXISTS garmin_auth (
         id SERIAL PRIMARY KEY,
         garmin_username TEXT,
@@ -378,6 +394,7 @@ _SQLITE_MIGRATIONS = [
     "UPDATE training_log SET exercise_id = (SELECT id FROM exercise_inventory WHERE exercise = training_log.exercise)",
     "ALTER TABLE current_rx ADD COLUMN exercise_id INTEGER REFERENCES exercise_inventory(id)",
     "UPDATE current_rx SET exercise_id = (SELECT id FROM exercise_inventory WHERE exercise = current_rx.exercise)",
+    "CREATE TABLE IF NOT EXISTS plan_reviews (id INTEGER PRIMARY KEY AUTOINCREMENT, plan_id INTEGER NOT NULL REFERENCES training_plans(id), tier INTEGER NOT NULL, sessions_reviewed INTEGER DEFAULT 0, notes TEXT, created_at TEXT DEFAULT (datetime('now')))",
 ]
 
 _PG_MIGRATIONS = [
@@ -405,6 +422,7 @@ _PG_MIGRATIONS = [
     "ALTER TABLE current_rx ADD COLUMN IF NOT EXISTS exercise_id INTEGER REFERENCES exercise_inventory(id)",
     "UPDATE current_rx SET exercise_id = ei.id FROM exercise_inventory ei WHERE ei.exercise = current_rx.exercise AND current_rx.exercise_id IS NULL",
     "ALTER TABLE locale_equipment ADD CONSTRAINT IF NOT EXISTS locale_equipment_locale_fk FOREIGN KEY (locale) REFERENCES locale_profiles(locale)",
+    "CREATE TABLE IF NOT EXISTS plan_reviews (id SERIAL PRIMARY KEY, plan_id INTEGER NOT NULL REFERENCES training_plans(id), tier INTEGER NOT NULL, sessions_reviewed INTEGER DEFAULT 0, notes TEXT, created_at TIMESTAMP DEFAULT NOW())",
 ]
 
 # Equipment catalog — single source of truth for seeding equipment_items and the locale profile UI.

@@ -12,7 +12,20 @@
       {% if plan.end_date %} → {{ plan.end_date }}{% endif %}
     </small>
   </div>
-  <a href="{{ url_for('plans.list_plans') }}" class="btn btn-outline-secondary btn-sm">← Plans</a>
+  <div class="d-flex align-items-center gap-2">
+    {% if health %}
+      {% if health.tier3_due %}
+        <span class="badge bg-danger" title="{{ health.scheduled_remaining }} sessions remaining — generate next 4-week block">🔴 Next block due</span>
+      {% elif health.tier2_due %}
+        <span class="badge bg-warning text-dark" title="{{ health.days_since_tier2 }} days since weekly review">🟠 Weekly review due</span>
+      {% elif health.tier1_due %}
+        <span class="badge bg-info text-dark" title="{{ health.sessions_since_tier1 }} session(s) since last check">🟡 Session check due</span>
+      {% else %}
+        <span class="badge bg-success">✅ Up to date</span>
+      {% endif %}
+    {% endif %}
+    <a href="{{ url_for('plans.list_plans') }}" class="btn btn-outline-secondary btn-sm">← Plans</a>
+  </div>
 </div>
 
 {% if active_mods %}
