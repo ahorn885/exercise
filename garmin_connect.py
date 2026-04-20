@@ -223,16 +223,19 @@ def fetch_activities(db, start_date: str, end_date: str) -> list:
     row = db.execute('SELECT garth_session FROM garmin_auth LIMIT 1').fetchone()
     if row and _is_browser_auth(row['garth_session']):
         s = _browser_requests_session(row['garth_session'])
-        resp = s.get(
-            'https://connect.garmin.com/activitylist-service/activities/search/activities',
-            params={'startDate': start_date, 'endDate': end_date, 'start': 0, 'limit': 100},
-            timeout=30,
-        )
+        params = {'startDate': start_date, 'endDate': end_date, 'start': 0, 'limit': 100}
+        for url in [
+            'https://connect.garmin.com/modern/proxy/activitylist-service/activities/search/activities',
+            'https://connectapi.garmin.com/activitylist-service/activities/search/activities',
+        ]:
+            resp = s.get(url, params=params, timeout=30)
+            if resp.status_code == 200:
+                data = resp.json()
+                if isinstance(data, list):
+                    return data
+                return data.get('activityList', data.get('activities', []))
         resp.raise_for_status()
-        data = resp.json()
-        if isinstance(data, list):
-            return data
-        return data.get('activityList', data.get('activities', []))
+        return []
 
     client = _load_client(db)
     try:
