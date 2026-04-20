@@ -6,11 +6,29 @@
   <a href="{{ url_for('conditions.list_entries') }}" class="btn btn-sm btn-outline-secondary">← Back</a>
 </div>
 <form method="post">
+  {% if cardio_sessions %}
+  <div class="row g-3 mb-3">
+    <div class="col-12">
+      <label class="form-label">Link to Cardio Session <span class="text-muted small">(optional — auto-fills date &amp; activity)</span></label>
+      <select name="cardio_log_id" id="cardio-session-select" class="form-select" onchange="fillFromSession(this)">
+        <option value="">— not linked to a session —</option>
+        {% for s in cardio_sessions %}
+          <option value="{{ s.id }}"
+            data-date="{{ s.date }}"
+            data-activity="{{ s.activity }}"
+            {% if entry and entry.cardio_log_id == s.id %}selected{% endif %}>
+            {{ s.date }} · {{ s.activity }}{% if s.activity_name %} — {{ s.activity_name }}{% endif %}
+          </option>
+        {% endfor %}
+      </select>
+    </div>
+  </div>
+  {% endif %}
   <div class="row g-3 mb-3">
     <div class="col-md-2"><label class="form-label">Date</label>
-      <input type="date" name="date" class="form-control" required value="{{ entry.date if entry else '' }}"></div>
+      <input type="date" name="date" id="cond-date" class="form-control" required value="{{ entry.date if entry else '' }}"></div>
     <div class="col-md-3"><label class="form-label">Activity</label>
-      <input type="text" name="activity" class="form-control" value="{{ entry.activity if entry else '' }}"></div>
+      <input type="text" name="activity" id="cond-activity" class="form-control" value="{{ entry.activity if entry else '' }}"></div>
     <div class="col-md-2"><label class="form-label">Temp (°F)</label>
       <input type="number" name="temp_f" class="form-control" step="0.1" value="{{ entry.temp_f if entry else '' }}"></div>
     <div class="col-md-2"><label class="form-label">Feels Like (°F)</label>
@@ -56,4 +74,17 @@
     <a href="{{ url_for('conditions.list_entries') }}" class="btn btn-outline-secondary">Cancel</a>
   </div>
 </form>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function fillFromSession(sel) {
+  const opt = sel.options[sel.selectedIndex];
+  if (!opt.value) return;
+  const dateEl = document.getElementById('cond-date');
+  const actEl  = document.getElementById('cond-activity');
+  if (dateEl && !dateEl.value) dateEl.value = opt.dataset.date;
+  if (actEl  && !actEl.value)  actEl.value  = opt.dataset.activity;
+}
+</script>
 {% endblock %}

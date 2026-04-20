@@ -1,0 +1,41 @@
+{% extends 'base.html' %}
+{% block title %}Locale Equipment Profiles{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h4 class="mb-0">Locale Equipment Profiles</h4>
+  <span class="text-muted small">Saved profiles filter the exercise list when you select a locale.</span>
+</div>
+<div class="row g-3">
+  {% for locale in locales %}
+    {% set p = profiles.get(locale) %}
+    {% set tag_count = counts.get(locale, 0) %}
+    <div class="col-12 col-md-6">
+      <div class="card h-100">
+        <div class="card-header d-flex justify-content-between align-items-center">
+          <span class="fw-semibold text-capitalize">{{ locale }}</span>
+          <a href="{{ url_for('locales.edit_profile', locale=locale) }}" class="btn btn-sm btn-outline-secondary">Edit</a>
+        </div>
+        <div class="card-body">
+          {% if tag_count > 0 %}
+            <p class="text-muted small mb-2">
+              {{ tag_count }} item{{ 's' if tag_count != 1 }}
+              {% if p and p['city'] %} &nbsp;·&nbsp; 📍 {{ p['city'] }}{% endif %}
+              &nbsp;·&nbsp; updated {{ p['updated_at'][:10] if p and p['updated_at'] else '—' }}
+            </p>
+            {% if p and p['notes'] %}
+              <p class="text-muted small fst-italic mb-2">{{ p['notes'] }}</p>
+            {% endif %}
+            <div>
+              {% for item in tags_by_locale.get(locale, []) %}
+                <span class="badge bg-secondary me-1 mb-1">{{ item['label'] }}</span>
+              {% endfor %}
+            </div>
+          {% else %}
+            <p class="text-muted small mb-0">No profile set — exercise filter uses static locale tags only.</p>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+  {% endfor %}
+</div>
+{% endblock %}

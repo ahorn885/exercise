@@ -1,0 +1,40 @@
+{% extends 'base.html' %}
+{% block title %}Equipment at {{ locale | capitalize }}{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h4 class="mb-0">Equipment at <span class="text-capitalize">{{ locale }}</span></h4>
+  <a href="{{ url_for('locales.list_profiles') }}" class="btn btn-sm btn-outline-secondary">← Back</a>
+</div>
+<p class="text-muted small mb-3">Check every item available at this locale. Saving replaces the previous profile entirely.</p>
+<form method="post">
+  <div class="row g-3 mb-3">
+    {% for category_name, items in equipment_categories %}
+    <div class="col-12 col-md-6 col-lg-4">
+      <fieldset>
+        <legend class="fw-semibold small text-uppercase text-muted mb-2">{{ category_name }}</legend>
+        {% for tag, label in items %}
+        <div class="form-check">
+          <input class="form-check-input" type="checkbox" name="equipment"
+                 value="{{ tag }}" id="eq_{{ tag }}"
+                 {% if tag in active %}checked{% endif %}>
+          <label class="form-check-label small" for="eq_{{ tag }}">{{ label }}</label>
+        </div>
+        {% endfor %}
+      </fieldset>
+    </div>
+    {% endfor %}
+  </div>
+  <div class="mb-3" style="max-width:480px">
+    <label class="form-label fw-semibold">City / Location <span class="text-muted small fw-normal">(optional — e.g. "Minneapolis, MN" or "Renton, WA")</span></label>
+    <input type="text" name="city" class="form-control" value="{{ city }}" placeholder="City where this locale is located">
+  </div>
+  <div class="mb-3" style="max-width:480px">
+    <label class="form-label fw-semibold">Notes <span class="text-muted small fw-normal">(optional — e.g. "DB up to 50 lb, no rack")</span></label>
+    <textarea name="notes" class="form-control" rows="2">{{ notes }}</textarea>
+  </div>
+  <div class="d-flex gap-2">
+    <button type="submit" class="btn btn-primary">Save Profile</button>
+    <a href="{{ url_for('locales.list_profiles') }}" class="btn btn-outline-secondary">Cancel</a>
+  </div>
+</form>
+{% endblock %}

@@ -49,12 +49,14 @@ _SUB_SPORT_NUM_MAP = {
     3:  'trail_running',
     5:  'spin',
     6:  'indoor_cycling',
-    7:  'indoor_rowing',
+    7:  'road',               # road cycling sub_sport
     8:  'mountain',           # mountain biking (matches _CYCLING_SUB key)
     10: 'gravel_cycling',
+    14: 'indoor_rowing',      # Garmin Forerunner indoor rowing sub_sport
     17: 'gravel_cycling',
     19: 'lap_swimming',
     20: 'open_water',
+    43: 'yoga',
 }
 
 # Sports where cadence is stored as one-leg (steps/min of one foot) → multiply by 2
@@ -62,20 +64,36 @@ _ONE_LEG_CADENCE_SPORTS = {
     'running', 'trail_running', 'treadmill', 'hiking', 'walking',
 }
 
-# Sub-sport overrides for cycling and swimming
+# Sub-sport overrides for running, cycling, and swimming
+_RUNNING_SUB = {
+    'trail_running': 'Trail Running',
+    'treadmill':     'Treadmill',
+}
 _CYCLING_SUB = {
     'mountain': 'Mountain Biking',
     'gravel_cycling': 'Gravel Cycling',
     'indoor_cycling': 'Indoor Bike Trainer',
     'spin': 'Indoor Bike Trainer',
     'track_cycling': 'Road Cycling',
-    'indoor_rowing': 'Rowing Ergometer',
 }
 _SWIM_SUB = {
     'lap_swimming': 'Swimming Pool',
     'open_water': 'Swimming Open',
 }
 _SWIM_ACTIVITIES = {'Swimming Pool', 'Swimming Open'}
+
+# Garmin FIT ExerciseCategory enum → human-readable name
+_EXERCISE_CATEGORY_MAP = {
+    0: 'Bench Press', 1: 'Calf Raise', 2: 'Cardio', 3: 'Carry',
+    4: 'Chop', 5: 'Core', 6: 'Crunch', 7: 'Curl',
+    8: 'Deadlift', 9: 'Flye', 10: 'Hip Raise', 11: 'Hip Stability',
+    12: 'Hip Swing', 13: 'Hyperextension', 14: 'Lateral Raise', 15: 'Leg Curl',
+    16: 'Leg Raise', 17: 'Lunge', 18: 'Olympic Lift', 19: 'Plank',
+    20: 'Hang', 21: 'Pull Up', 22: 'Push Up', 23: 'Row',
+    24: 'Shoulder Press', 25: 'Shoulder Stability', 26: 'Shrug', 27: 'Sit Up',
+    28: 'Squat', 29: 'Total Body', 30: 'Triceps Extension', 31: 'Warm Up',
+    32: 'Run',
+}
 
 # FIT sentinel values — these mean "field not recorded by device"
 # uint8 max=255, uint16 max=65535, uint32 max=4294967295
@@ -87,7 +105,7 @@ _SWIM_ACTIVITIES = {'Swimming Pool', 'Swimming Open'}
 #   uint8/scale=2     → 127.5   (pedal smoothness)
 _FLOAT_SENTINELS = frozenset({
     65535.0, 65.535, 6553.5, 655.35, 25.5, 2.55, 127.5,
-    4294967295.0, 4294967.295, 429496.7295,
+    4294967295.0, 4294967.295, 429496729.5, 42949672.95, 429496.7295,
 })
 _INT_SENTINELS = frozenset({255, 65535, 4294967295})
 
@@ -124,10 +142,15 @@ def _resolve_activity(sport: str, sub_sport: str):
     """Return (activity_name, sport_key) tuple."""
     sport = (sport or '').lower().replace(' ', '_')
     sub_sport = (sub_sport or '').lower().replace(' ', '_')
-    if sport == 'cycling' and sub_sport in _CYCLING_SUB:
+    if sport == 'running' and sub_sport in _RUNNING_SUB:
+        name = _RUNNING_SUB[sub_sport]
+    elif sport == 'cycling' and sub_sport in _CYCLING_SUB:
         name = _CYCLING_SUB[sub_sport]
     elif sport == 'swimming' and sub_sport in _SWIM_SUB:
         name = _SWIM_SUB[sub_sport]
+    elif sub_sport in SPORT_MAP and SPORT_MAP[sub_sport] != '__strength__':
+        # sub_sport overrides sport lookup (e.g. yoga stored under sport=training)
+        name = SPORT_MAP[sub_sport]
     else:
         name = SPORT_MAP.get(sport, 'Running')
     return name, sport
@@ -282,7 +305,9 @@ def _parse_cardio(session, activity_name: str, sport_key: str) -> dict:
     anaerobic_te = _f('total_anaerobic_training_effect')
 
     # Running dynamics (standard FIT fields — None if device doesn't record them)
-    stride_length_m = _f('avg_stride_length')
+    # avg_step_length is in mm (one step); a stride = 2 steps → convert to metres
+    _step_mm = _f('avg_step_length')
+    stride_length_m = round(_step_mm * 2 / 1000, 2) if _step_mm else None
     raw_vert_osc = _f('avg_vertical_oscillation')  # mm in FIT → convert to cm
     vert_oscillation_cm = round(raw_vert_osc / 10, 1) if raw_vert_osc else None
     vert_ratio_pct = _f('avg_vertical_ratio')       # already %
@@ -317,7 +342,7 @@ def _parse_cardio(session, activity_name: str, sport_key: str) -> dict:
             'active_lengths': active_lengths,
             'notes': '',
             # Running dynamics
-            'stride_length_m': round(stride_length_m, 2) if stride_length_m else None,
+            'stride_length_m': stride_length_m,
             'vert_oscillation_cm': vert_oscillation_cm,
             'vert_ratio_pct': round(vert_ratio_pct, 1) if vert_ratio_pct else None,
             'gct_ms': round(gct_ms, 0) if gct_ms else None,
@@ -331,13 +356,29 @@ def _parse_strength(session, sets) -> dict:
         getattr(session, 'start_time', None) or getattr(session, 'timestamp', None)
     )
 
+    def _exercise_name(s):
+        # Try resolved string attribute first (some fit-tool builds return it)
+        ex = getattr(s, 'exercise_name', None)
+        if ex is not None:
+            ex_str = str(ex)
+            if ex_str not in ('None', '', '65535', '65534'):
+                return ex_str.replace('_', ' ').title()
+        # category is a numeric array — take the first valid (non-sentinel) value
+        cat = getattr(s, 'category', None)
+        if cat is not None:
+            cats = cat if isinstance(cat, (list, tuple)) else [cat]
+            for c in cats:
+                try:
+                    c_int = int(c)
+                    if c_int < 65534:
+                        return _EXERCISE_CATEGORY_MAP.get(c_int, f'Exercise {c_int}')
+                except (TypeError, ValueError):
+                    pass
+        return 'Unknown Exercise'
+
     rows = []
     for s in sets:
-        exercise_name = getattr(s, 'exercise_name', None) or getattr(s, 'category', None)
-        if exercise_name:
-            exercise_name = str(exercise_name).replace('_', ' ').title()
-        else:
-            exercise_name = 'Unknown Exercise'
+        exercise_name = _exercise_name(s)
 
         reps = getattr(s, 'repetitions', None)
         weight_kg = getattr(s, 'weight', None)

@@ -35,7 +35,16 @@
           <small class="text-muted">{{ done }}/{{ total }}</small>
           {% else %}<span class="text-muted small">No workouts</span>{% endif %}
         </td>
-        <td><a href="{{ url_for('plans.view_plan', plan_id=p.id) }}" class="btn btn-sm btn-outline-secondary">View</a></td>
+        <td class="d-flex gap-1">
+          <a href="{{ url_for('plans.view_plan', plan_id=p.id) }}" class="btn btn-sm btn-outline-secondary">View</a>
+          <form method="post" action="{{ url_for('plans.archive_plan', plan_id=p.id) }}">
+            <button type="submit" class="btn btn-sm btn-outline-secondary" title="Archive">Archive</button>
+          </form>
+          <form method="post" action="{{ url_for('plans.delete_plan', plan_id=p.id) }}"
+                onsubmit="return confirm('Delete {{ p.name }}? This cannot be undone.')">
+            <button type="submit" class="btn btn-sm btn-outline-danger">Delete</button>
+          </form>
+        </td>
       </tr>
       {% endfor %}
     </tbody>
@@ -45,6 +54,30 @@
 <div class="text-center py-5 text-muted">
   <p>No training plans yet.</p>
   <a href="{{ url_for('plans.import_plan') }}" class="btn btn-primary">Import a Plan</a>
+</div>
+{% endif %}
+
+{% if archived %}
+<div class="mt-4">
+  <a class="text-muted small text-decoration-none" data-bs-toggle="collapse" href="#archived-plans">
+    📦 {{ archived|length }} archived plan{{ 's' if archived|length != 1 }} ▾
+  </a>
+  <div class="collapse mt-2" id="archived-plans">
+    <table class="table table-sm table-hover align-middle text-muted">
+      <tbody>
+        {% for p in archived %}
+        <tr>
+          <td><a href="{{ url_for('plans.view_plan', plan_id=p.id) }}" class="text-decoration-none text-muted">{{ p.name }}</a></td>
+          <td class="small">{{ p.start_date or '' }}{% if p.end_date %} → {{ p.end_date }}{% endif %}</td>
+          <td class="small">{{ (p.completed_count or 0) }}/{{ (p.item_count or 0) }} completed</td>
+          <td>
+            <a href="{{ url_for('plans.view_plan', plan_id=p.id) }}" class="btn btn-sm btn-outline-secondary">View</a>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
 </div>
 {% endif %}
 {% endblock %}

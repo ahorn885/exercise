@@ -42,6 +42,44 @@
       </div>
     </div>
 
+    <div class="card mt-3 border-primary">
+      <div class="card-header bg-primary text-white">Import Browser Session Cookies <span class="badge bg-light text-primary ms-1">Recommended if rate-limited</span></div>
+      <div class="card-body">
+        <p class="text-muted small mb-2">If login above returns 429, copy your session cookies directly from Chrome:</p>
+        <ol class="small text-muted mb-3">
+          <li>Go to <strong>connect.garmin.com</strong> in Chrome (already logged in)</li>
+          <li>Press <code>F12</code> → <strong>Network</strong> tab</li>
+          <li>Refresh the page, click any request to <code>connect.garmin.com</code></li>
+          <li>Scroll to <strong>Request Headers</strong> → find <strong>Cookie</strong></li>
+          <li>Click the value, select all (<code>Ctrl+A</code>), copy (<code>Ctrl+C</code>)</li>
+        </ol>
+        <form method="post" action="{{ url_for('garmin.auth_import_cookies') }}">
+          <div class="mb-3">
+            <textarea name="cookie_string" class="form-control font-monospace" rows="4"
+                      placeholder="Paste full Cookie header value here (SESSIONID=...; JWT_FGP=...; ...)"></textarea>
+          </div>
+          <button type="submit" class="btn btn-primary w-100">Import Browser Cookies</button>
+        </form>
+      </div>
+    </div>
+
+    <div class="card mt-3">
+      <div class="card-header">Import Garth Tokens</div>
+      <div class="card-body">
+        <p class="text-muted small mb-3">
+          If login above is rate-limited, generate tokens on your local machine using
+          <code>deploy/get_garmin_tokens.py</code>, then paste the JSON output here.
+        </p>
+        <form method="post" action="{{ url_for('garmin.auth_import_tokens') }}">
+          <div class="mb-3">
+            <textarea name="token_json" class="form-control font-monospace" rows="6"
+                      placeholder='{"oauth1_token.json": {...}, "oauth2_token.json": {...}}'></textarea>
+          </div>
+          <button type="submit" class="btn btn-outline-primary w-100">Import Tokens</button>
+        </form>
+      </div>
+    </div>
+
     <div class="card mt-3">
       <div class="card-header">Notes</div>
       <div class="card-body small text-muted">

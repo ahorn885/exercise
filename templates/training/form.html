@@ -23,6 +23,7 @@
           </option>
         {% endfor %}
       </select>
+      <div id="injury-warning" class="mt-2" style="display:none"></div>
     </div>
     <div class="col-md-2">
       <label class="form-label">RPE (1–10)</label>
@@ -84,6 +85,21 @@
     </div>
   </div>
 
+  {% if plan_items %}
+  <div class="mb-3">
+    <label class="form-label">Link to Plan Workout <span class="text-muted small">(optional — marks it complete)</span></label>
+    <select name="plan_item_id" class="form-select">
+      <option value="">— not linked to a plan —</option>
+      {% for pi in plan_items %}
+        <option value="{{ pi.id }}"
+          {% if entry and entry.plan_item_id == pi.id %}selected{% endif %}>
+          {{ pi.item_date }} · {{ pi.workout_name }} ({{ pi.sport_type }}) — {{ pi.plan_name }}
+        </option>
+      {% endfor %}
+    </select>
+  </div>
+  {% endif %}
+
   <div class="mb-3">
     <label class="form-label">Notes</label>
     <textarea name="notes" class="form-control" rows="2">{{ entry.notes if entry else '' }}</textarea>
@@ -99,7 +115,10 @@
 {% block scripts %}
 <script>
 function loadRx(exercise) {
-  if (!exercise) return;
+  if (!exercise) {
+    document.getElementById('injury-warning').style.display = 'none';
+    return;
+  }
   fetch('/api/rx/' + encodeURIComponent(exercise))
     .then(r => r.json())
     .then(data => {
@@ -107,7 +126,30 @@ function loadRx(exercise) {
       if (data.current_reps) document.getElementById('target_reps').value = data.next_reps || data.current_reps;
       if (data.current_weight) document.getElementById('target_weight').value = data.next_weight || data.current_weight;
       if (data.current_duration) document.getElementById('target_duration').value = data.current_duration;
+
+      const warn = document.getElementById('injury-warning');
+      const mods = data.injury_mods || [];
+      if (mods.length === 0) { warn.style.display = 'none'; return; }
+
+      const typeLabels = {avoid:'Avoid',substitute:'Substitute',reduce_load:'Reduce Load',modify:'Modify'};
+      const typeBadge  = {avoid:'danger',substitute:'warning',reduce_load:'info',modify:'secondary'};
+
+      let html = mods.map(m => {
+        const badge = `<span class="badge bg-${typeBadge[m.modification_type] || 'secondary'}">${typeLabels[m.modification_type] || m.modification_type}</span>`;
+        const sub   = m.substitute_name ? ` → <strong>${m.substitute_name}</strong>` : '';
+        const notes = m.modification_notes ? ` <span class="text-muted">${m.modification_notes}</span>` : '';
+        return `<div>${badge} <strong>${m.body_part}</strong> (${m.status})${sub}${notes}</div>`;
+      }).join('');
+      warn.innerHTML = `<div class="alert alert-warning py-2 px-3 mb-0 small">⚠️ Active injury modification${mods.length > 1 ? 's' : ''}:<br>${html}</div>`;
+      warn.style.display = '';
     });
 }
+{% if entry %}
+// Pre-load injury mods for exercise being edited
+window.addEventListener('DOMContentLoaded', function() {
+  const sel = document.getElementById('exercise-select');
+  if (sel && sel.value) loadRx(sel.value);
+});
+{% endif %}
 </script>
 {% endblock %}

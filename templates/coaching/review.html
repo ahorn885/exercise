@@ -1,0 +1,141 @@
+{% extends 'base.html' %}
+{% block title %}AI Plan Review — {{ plan.name }}{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+  <h2 class="mb-0">AI Plan Review</h2>
+  <a href="{{ url_for('plans.view_plan', plan_id=plan.id) }}" class="btn btn-outline-secondary btn-sm">← Back to Plan</a>
+</div>
+
+{% if not api_configured %}
+<div class="alert alert-danger">
+  <strong>API key not configured.</strong>
+  Set <code>ANTHROPIC_API_KEY</code> and restart the app.
+</div>
+{% endif %}
+
+<p class="text-muted mb-4">{{ plan.name }}</p>
+
+{% set tier_colors = {'tier1_due': 'warning', 'tier2_due': 'orange', 'tier3_due': 'danger'} %}
+
+<div class="row mb-4">
+  <div class="col-md-4">
+    <div class="card text-center {% if health.tier1_due %}border-warning{% endif %}">
+      <div class="card-body">
+        <div class="fs-4 mb-1">{% if health.tier1_due %}🟡{% else %}✅{% endif %}</div>
+        <div class="fw-semibold">Tier 1 — Session</div>
+        <div class="small text-muted">{{ health.sessions_since_tier1 }} session{% if health.sessions_since_tier1 != 1 %}s{% endif %} since last review</div>
+        {% if health.tier1_due %}<span class="badge bg-warning text-dark mt-1">Due</span>{% endif %}
+      </div>
+    </div>
+  </div>
+  <div class="col-md-4">
+    <div class="card text-center {% if health.tier2_due %}border-warning{% endif %}">
+      <div class="card-body">
+        <div class="fs-4 mb-1">{% if health.tier2_due %}🟠{% else %}✅{% endif %}</div>
+        <div class="fw-semibold">Tier 2 — Weekly</div>
+        <div class="small text-muted">{{ health.days_since_tier2 }} days since weekly review</div>
+        {% if health.tier2_due %}<span class="badge bg-warning text-dark mt-1">Due</span>{% endif %}
+      </div>
+    </div>
+  </div>
+  <div class="col-md-4">
+    <div class="card text-center {% if health.tier3_due %}border-danger{% endif %}">
+      <div class="card-body">
+        <div class="fs-4 mb-1">{% if health.tier3_due %}🔴{% else %}✅{% endif %}</div>
+        <div class="fw-semibold">Tier 3 — Next Block</div>
+        <div class="small text-muted">{{ health.scheduled_remaining }} sessions remaining</div>
+        {% if health.tier3_due %}<span class="badge bg-danger mt-1">Generate next block</span>{% endif %}
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="row">
+  <div class="col-lg-6">
+    <div class="card">
+      <div class="card-header fw-semibold">Run a Review</div>
+      <div class="card-body">
+        <form method="post">
+          <div class="mb-3">
+            <label class="form-label fw-semibold">Review Tier</label>
+            <select name="tier" class="form-select" id="tier-select">
+              <option value="1" {% if health.tier1_due and not health.tier2_due and not health.tier3_due %}selected{% endif %}>
+                Tier 1 — Session check (adjust next 1-2 sessions)
+              </option>
+              <option value="2" {% if health.tier2_due and not health.tier3_due %}selected{% endif %}>
+                Tier 2 — Weekly review (adjust next 1-2 weeks)
+              </option>
+              <option value="3" {% if health.tier3_due %}selected{% endif %}>
+                Tier 3 — Generate next 4-week block
+              </option>
+            </select>
+            <div class="form-text" id="tier-description"></div>
+          </div>
+          <div class="mb-3">
+            <label class="form-label fw-semibold">Current Locale</label>
+            <select name="locale" class="form-select">
+              {% for loc in locales %}
+              <option value="{{ loc }}" {% if loc == 'home' %}selected{% endif %}>{{ loc | capitalize }}</option>
+              {% endfor %}
+            </select>
+            <div class="form-text"><a href="{{ url_for('locales.list_profiles') }}">Edit equipment profiles →</a></div>
+          </div>
+          <div class="mb-3">
+            <label class="form-label fw-semibold">Coach Notes <span class="text-muted fw-normal">(optional)</span></label>
+            <textarea name="notes" class="form-control" rows="3"
+                      placeholder="e.g. 'Felt really fatigued this week — consider reducing intensity' or 'Adding a hotel week starting May 12'"></textarea>
+          </div>
+          <button type="submit" class="btn btn-primary w-100"
+                  {% if not api_configured %}disabled{% endif %}>
+            Run Review with Claude
+          </button>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-lg-6">
+    {% if health.recent_sessions %}
+    <div class="card mb-3">
+      <div class="card-header fw-semibold small">Recent Sessions</div>
+      <ul class="list-group list-group-flush">
+        {% for s in health.recent_sessions[:5] %}
+        <li class="list-group-item small d-flex justify-content-between">
+          <span>{{ s.item_date }} — {{ s.workout_name }}</span>
+          <span class="badge bg-{% if s.status == 'completed' %}success{% else %}secondary{% endif %}">{{ s.status }}</span>
+        </li>
+        {% endfor %}
+      </ul>
+    </div>
+    {% endif %}
+
+    {% if health.upcoming_items %}
+    <div class="card">
+      <div class="card-header fw-semibold small">Upcoming Scheduled</div>
+      <ul class="list-group list-group-flush">
+        {% for u in health.upcoming_items[:5] %}
+        <li class="list-group-item small">
+          <span class="fw-semibold">{{ u.item_date }}</span> — {{ u.workout_name }}
+          {% if u.intensity %}<span class="badge bg-secondary ms-1">{{ u.intensity }}</span>{% endif %}
+        </li>
+        {% endfor %}
+      </ul>
+    </div>
+    {% endif %}
+  </div>
+</div>
+
+<script>
+const descriptions = {
+  '1': 'Reads the last 7 days of training. Adjusts next 1-2 sessions if RPE or fatigue warrants it.',
+  '2': 'Reads the last 14 days. Patches upcoming workouts for the next 1-2 weeks. Handles volume, intensity, and substitutions.',
+  '3': 'Reads the last 30 days. Generates a brand-new 4-week plan block starting after the current plan ends.'
+};
+const sel = document.getElementById('tier-select');
+const desc = document.getElementById('tier-description');
+function update() { desc.textContent = descriptions[sel.value] || ''; }
+sel.addEventListener('change', update);
+update();
+</script>
+{% endblock %}

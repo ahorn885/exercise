@@ -1,0 +1,19 @@
+services:
+  web:
+    image: ghcr.io/ahorn885/exercise:latest
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./instance:/app/instance
+    env_file:
+      - .env
+    restart: unless-stopped
+
+  watchtower:
+    image: containrrr/watchtower
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      - WATCHTOWER_POLL_INTERVAL=300
+      - WATCHTOWER_CLEANUP=true
+    restart: unless-stopped

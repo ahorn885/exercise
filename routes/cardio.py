@@ -27,7 +27,9 @@ def new_entry():
         _save(db, None)
         flash('Cardio session logged.', 'success')
         return redirect(url_for('cardio.list_entries'))
-    return render_template('cardio/form.html', entry=None, activities=ACTIVITIES)
+    plan_items = _load_plan_items(db)
+    return render_template('cardio/form.html', entry=None, activities=ACTIVITIES,
+                           plan_items=plan_items)
 
 
 @bp.route('/cardio/<int:entry_id>/edit', methods=['GET', 'POST'])
@@ -41,7 +43,9 @@ def edit_entry(entry_id):
         _save(db, entry_id)
         flash('Entry updated.', 'success')
         return redirect(url_for('cardio.list_entries'))
-    return render_template('cardio/form.html', entry=entry, activities=ACTIVITIES)
+    plan_items = _load_plan_items(db)
+    return render_template('cardio/form.html', entry=entry, activities=ACTIVITIES,
+                           plan_items=plan_items)
 
 
 @bp.route('/cardio/<int:entry_id>/delete', methods=['POST'])
@@ -53,6 +57,19 @@ def delete_entry(entry_id):
     return redirect(url_for('cardio.list_entries'))
 
 
+def _load_plan_items(db):
+    """Return upcoming/recent plan items for the plan item selector."""
+    return db.execute(
+        '''SELECT pi.id, pi.item_date, pi.workout_name, pi.sport_type,
+                  tp.name as plan_name
+           FROM plan_items pi
+           JOIN training_plans tp ON tp.id = pi.plan_id
+           WHERE pi.status = 'scheduled'
+           ORDER BY pi.item_date ASC
+           LIMIT 60'''
+    ).fetchall()
+
+
 def _save(db, entry_id):
     f = request.form
 
@@ -61,6 +78,8 @@ def _save(db, entry_id):
             return cast(v) if v else None
         except (ValueError, TypeError):
             return None
+
+    plan_item_id = num(f.get('plan_item_id'), int)
 
     vals = (
         f.get('date'), f.get('activity'), f.get('activity_name'),
@@ -74,7 +93,7 @@ def _save(db, entry_id):
         num(f.get('norm_power'), int),
         num(f.get('aerobic_te')), num(f.get('anaerobic_te')),
         num(f.get('swolf'), int), num(f.get('active_lengths'), int),
-        f.get('notes')
+        plan_item_id, f.get('notes')
     )
 
     if entry_id:
@@ -84,7 +103,7 @@ def _save(db, entry_id):
             distance_mi=?, avg_pace=?, avg_speed=?, avg_hr=?, max_hr=?, calories=?,
             elev_gain_ft=?, elev_loss_ft=?, avg_cadence=?, max_cadence=?,
             avg_power=?, max_power=?, norm_power=?, aerobic_te=?, anaerobic_te=?,
-            swolf=?, active_lengths=?, notes=? WHERE id=?''',
+            swolf=?, active_lengths=?, plan_item_id=?, notes=? WHERE id=?''',
             vals + (entry_id,))
     else:
         db.execute('''INSERT INTO cardio_log
@@ -92,6 +111,12 @@ def _save(db, entry_id):
              distance_mi, avg_pace, avg_speed, avg_hr, max_hr, calories,
              elev_gain_ft, elev_loss_ft, avg_cadence, max_cadence,
              avg_power, max_power, norm_power, aerobic_te, anaerobic_te,
-             swolf, active_lengths, notes)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''', vals)
+             swolf, active_lengths, plan_item_id, notes)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''', vals)
+
+    if plan_item_id:
+        db.execute(
+            "UPDATE plan_items SET status='completed' WHERE id=? AND status='scheduled'",
+            (plan_item_id,)
+        )
     db.commit()

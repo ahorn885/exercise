@@ -76,6 +76,17 @@
             </tbody>
           </table>
 
+          {% if plan_items %}
+          <div class="mb-3">
+            <label class="form-label fw-semibold">Link to Plan Workout <span class="text-muted small fw-normal">(optional — marks it complete)</span></label>
+            <select name="plan_item_id" class="form-select">
+              <option value="">— not linked to a plan —</option>
+              {% for pi in plan_items %}
+                <option value="{{ pi.id }}">{{ pi.item_date }} · {{ pi.workout_name }} ({{ pi.sport_type }}) — {{ pi.plan_name }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          {% endif %}
           <div class="mb-3">
             <label class="form-label fw-semibold">Notes</label>
             <textarea name="notes" class="form-control" rows="2">{{ notes }}</textarea>
@@ -117,6 +128,17 @@
           </table>
         </div>
       </div>
+      {% if plan_items %}
+      <div class="mb-3">
+        <label class="form-label fw-semibold">Link to Plan Workout <span class="text-muted small fw-normal">(optional — marks it complete)</span></label>
+        <select name="plan_item_id" class="form-select">
+          <option value="">— not linked to a plan —</option>
+          {% for pi in plan_items %}
+            <option value="{{ pi.id }}">{{ pi.item_date }} · {{ pi.workout_name }} ({{ pi.sport_type }}) — {{ pi.plan_name }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      {% endif %}
       <div class="mb-3">
         <label class="form-label fw-semibold">Notes (applied to all entries)</label>
         <textarea name="notes" class="form-control" rows="2">{{ notes }}</textarea>

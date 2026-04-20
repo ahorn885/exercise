@@ -35,7 +35,9 @@ def new_entry():
         flash('Workout logged.', 'success')
         return redirect(url_for('training.list_entries'))
     exercises = db.execute('SELECT exercise, movement_pattern FROM current_rx ORDER BY exercise').fetchall()
-    return render_template('training/form.html', entry=None, exercises=exercises)
+    plan_items = _load_plan_items(db)
+    return render_template('training/form.html', entry=None, exercises=exercises,
+                           plan_items=plan_items)
 
 
 @bp.route('/training/<int:entry_id>/edit', methods=['GET', 'POST'])
@@ -50,7 +52,9 @@ def edit_entry(entry_id):
         flash('Entry updated.', 'success')
         return redirect(url_for('training.list_entries'))
     exercises = db.execute('SELECT exercise, movement_pattern FROM current_rx ORDER BY exercise').fetchall()
-    return render_template('training/form.html', entry=entry, exercises=exercises)
+    plan_items = _load_plan_items(db)
+    return render_template('training/form.html', entry=entry, exercises=exercises,
+                           plan_items=plan_items)
 
 
 @bp.route('/training/<int:entry_id>/delete', methods=['POST'])
@@ -62,13 +66,38 @@ def delete_entry(entry_id):
     return redirect(url_for('training.list_entries'))
 
 
+def _load_plan_items(db):
+    """Return upcoming scheduled plan items for the plan item selector."""
+    return db.execute(
+        '''SELECT pi.id, pi.item_date, pi.workout_name, pi.sport_type,
+                  tp.name as plan_name
+           FROM plan_items pi
+           JOIN training_plans tp ON tp.id = pi.plan_id
+           WHERE pi.status = 'scheduled'
+           ORDER BY pi.item_date ASC
+           LIMIT 60'''
+    ).fetchall()
+
+
 @bp.route('/api/rx/<exercise>')
 def get_rx(exercise):
     db = get_db()
     rx = db.execute('SELECT * FROM current_rx WHERE exercise=?', (exercise,)).fetchone()
-    if rx:
-        return jsonify(dict(rx))
-    return jsonify({})
+    result = dict(rx) if rx else {}
+    # Include active injury modifications so the training form can warn the user
+    mods = db.execute(
+        '''SELECT iem.id, iem.modification_type, iem.modification_notes,
+                  il.body_part, il.status,
+                  ei_sub.exercise as substitute_name
+           FROM injury_exercise_modifications iem
+           JOIN injury_log il ON il.id = iem.injury_id
+           JOIN exercise_inventory ei ON ei.id = iem.exercise_id
+           LEFT JOIN exercise_inventory ei_sub ON ei_sub.id = iem.substitute_exercise_id
+           WHERE ei.exercise = ? AND il.status IN (\'Active\', \'Managing\')''',
+        (exercise,)
+    ).fetchall()
+    result['injury_mods'] = [dict(m) for m in mods]
+    return jsonify(result)
 
 
 def _save_entry(db, entry_id):
@@ -76,9 +105,17 @@ def _save_entry(db, entry_id):
     date = f.get('date', '')
     exercise = f.get('exercise', '')
 
-    rx = db.execute('SELECT movement_pattern, recovery_cost FROM current_rx WHERE exercise=?', (exercise,)).fetchone()
+    ei_row = db.execute('SELECT id FROM exercise_inventory WHERE exercise=?', (exercise,)).fetchone()
+    exercise_id = ei_row['id'] if ei_row else None
+
+    rx = db.execute(
+        'SELECT movement_pattern, recovery_cost, weight_increment, consecutive_failures FROM current_rx WHERE exercise=?',
+        (exercise,)
+    ).fetchone()
     movement_pattern = rx['movement_pattern'] if rx else None
     recovery_cost = rx['recovery_cost'] if rx else None
+    weight_increment = rx['weight_increment'] if rx else None
+    consecutive_failures = (rx['consecutive_failures'] or 0) if rx else 0
 
     def num(val, cast=float):
         try:
@@ -86,6 +123,7 @@ def _save_entry(db, entry_id):
         except (ValueError, TypeError):
             return None
 
+    plan_item_id = num(f.get('plan_item_id'), int)
     target_sets = num(f.get('target_sets'), int)
     target_reps = num(f.get('target_reps'), int)
     target_weight = num(f.get('target_weight'))
@@ -106,44 +144,55 @@ def _save_entry(db, entry_id):
     body_weight = body_wt_row['weight_lbs'] if body_wt_row else None
 
     nxt = calculate_next_rx(outcome, movement_pattern,
-                            actual_sets, actual_reps, actual_weight, actual_duration)
+                            actual_sets, actual_reps, actual_weight, actual_duration,
+                            weight_increment=weight_increment,
+                            consecutive_failures=consecutive_failures)
 
     if entry_id:
         db.execute('''UPDATE training_log SET
-            date=?, exercise=?, sub_group=?, recovery_cost=?,
+            date=?, exercise=?, exercise_id=?, sub_group=?, recovery_cost=?,
             target_sets=?, target_reps=?, target_weight=?, target_duration=?,
             actual_sets=?, actual_reps=?, actual_weight=?, actual_duration=?,
             rpe=?, rest_sec=?, outcome=?, est_1rm=?, volume=?, body_weight=?,
-            next_weight=?, next_sets=?, next_reps=?, notes=?
+            next_weight=?, next_sets=?, next_reps=?, plan_item_id=?, notes=?
             WHERE id=?''',
-            (date, exercise, movement_pattern, recovery_cost,
+            (date, exercise, exercise_id, movement_pattern, recovery_cost,
              target_sets, target_reps, target_weight, target_duration,
              actual_sets, actual_reps, actual_weight, actual_duration,
              rpe, rest_sec, outcome, est_1rm, volume, body_weight,
              nxt['next_weight'], nxt['next_sets'], nxt['next_reps'],
-             f.get('notes', ''), entry_id))
+             plan_item_id, f.get('notes', ''), entry_id))
     else:
         db.execute('''INSERT INTO training_log
-            (date, exercise, sub_group, recovery_cost,
+            (date, exercise, exercise_id, sub_group, recovery_cost,
              target_sets, target_reps, target_weight, target_duration,
              actual_sets, actual_reps, actual_weight, actual_duration,
              rpe, rest_sec, outcome, est_1rm, volume, body_weight,
-             next_weight, next_sets, next_reps, notes)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
-            (date, exercise, movement_pattern, recovery_cost,
+             next_weight, next_sets, next_reps, plan_item_id, notes)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
+            (date, exercise, exercise_id, movement_pattern, recovery_cost,
              target_sets, target_reps, target_weight, target_duration,
              actual_sets, actual_reps, actual_weight, actual_duration,
              rpe, rest_sec, outcome, est_1rm, volume, body_weight,
              nxt['next_weight'], nxt['next_sets'], nxt['next_reps'],
-             f.get('notes', '')))
+             plan_item_id, f.get('notes', '')))
+
+    if plan_item_id:
+        db.execute(
+            "UPDATE plan_items SET status='completed' WHERE id=? AND status='scheduled'",
+            (plan_item_id,)
+        )
 
     # Update Current Rx with latest result
     if outcome and exercise:
         db.execute('''UPDATE current_rx SET
-            current_sets=?, current_reps=?, current_weight=?, current_duration=?,
-            last_performed=?, last_outcome=?, rx_source='From Training Log'
+            exercise_id=?, current_sets=?, current_reps=?, current_weight=?, current_duration=?,
+            last_performed=?, last_outcome=?, consecutive_failures=?,
+            next_sets=?, next_reps=?, next_weight=?,
+            rx_source='From Training Log'
             WHERE exercise=?''',
-            (actual_sets, actual_reps, actual_weight, actual_duration,
-             date, outcome, exercise))
+            (exercise_id, actual_sets, actual_reps, actual_weight, actual_duration,
+             date, outcome, nxt['consecutive_failures'],
+             nxt['next_sets'], nxt['next_reps'], nxt['next_weight'], exercise))
 
     db.commit()
