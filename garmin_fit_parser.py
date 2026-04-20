@@ -82,6 +82,19 @@ _SWIM_SUB = {
 }
 _SWIM_ACTIVITIES = {'Swimming Pool', 'Swimming Open'}
 
+# Garmin FIT ExerciseCategory enum → human-readable name
+_EXERCISE_CATEGORY_MAP = {
+    0: 'Bench Press', 1: 'Calf Raise', 2: 'Cardio', 3: 'Carry',
+    4: 'Chop', 5: 'Core', 6: 'Crunch', 7: 'Curl',
+    8: 'Deadlift', 9: 'Flye', 10: 'Hip Raise', 11: 'Hip Stability',
+    12: 'Hip Swing', 13: 'Hyperextension', 14: 'Lateral Raise', 15: 'Leg Curl',
+    16: 'Leg Raise', 17: 'Lunge', 18: 'Olympic Lift', 19: 'Plank',
+    20: 'Hang', 21: 'Pull Up', 22: 'Push Up', 23: 'Row',
+    24: 'Shoulder Press', 25: 'Shoulder Stability', 26: 'Shrug', 27: 'Sit Up',
+    28: 'Squat', 29: 'Total Body', 30: 'Triceps Extension', 31: 'Warm Up',
+    32: 'Run',
+}
+
 # FIT sentinel values — these mean "field not recorded by device"
 # uint8 max=255, uint16 max=65535, uint32 max=4294967295
 # Scaled sentinels appear after fit-tool applies scale factors:
@@ -340,13 +353,29 @@ def _parse_strength(session, sets) -> dict:
         getattr(session, 'start_time', None) or getattr(session, 'timestamp', None)
     )
 
+    def _exercise_name(s):
+        # Try resolved string attribute first (some fit-tool builds return it)
+        ex = getattr(s, 'exercise_name', None)
+        if ex is not None:
+            ex_str = str(ex)
+            if ex_str not in ('None', '', '65535', '65534'):
+                return ex_str.replace('_', ' ').title()
+        # category is a numeric array — take the first valid (non-sentinel) value
+        cat = getattr(s, 'category', None)
+        if cat is not None:
+            cats = cat if isinstance(cat, (list, tuple)) else [cat]
+            for c in cats:
+                try:
+                    c_int = int(c)
+                    if c_int < 65534:
+                        return _EXERCISE_CATEGORY_MAP.get(c_int, f'Exercise {c_int}')
+                except (TypeError, ValueError):
+                    pass
+        return 'Unknown Exercise'
+
     rows = []
     for s in sets:
-        exercise_name = getattr(s, 'exercise_name', None) or getattr(s, 'category', None)
-        if exercise_name:
-            exercise_name = str(exercise_name).replace('_', ' ').title()
-        else:
-            exercise_name = 'Unknown Exercise'
+        exercise_name = _exercise_name(s)
 
         reps = getattr(s, 'repetitions', None)
         weight_kg = getattr(s, 'weight', None)
