@@ -9,20 +9,43 @@ from database import get_db
 bp = Blueprint('plans', __name__, url_prefix='/plans')
 
 
-def _calorie_target(sport_type, intensity, duration_min):
-    """Return a calorie range string for a workout based on type/intensity/duration."""
+DAILY_SUPPLEMENTS = [
+    'Creatine 5g (morning)',
+    'Omega-3 2–3g',
+    'Vitamin D3 2000 IU',
+    'Magnesium Glycinate 400mg (pre-bed)',
+    'Multivitamin',
+]
+
+_NUTRITION_PROFILES = {
+    'rest':      {'cal': '2800–2900', 'carb': 45, 'protein': 29, 'fat': 24, 'fueling': None},
+    'moderate':  {'cal': '3000–3200', 'carb': 54, 'protein': 25, 'fat': 21,
+                  'fueling': '30–40g carbs/hr · 400–500ml fluid/hr (if 60–90 min)'},
+    'hard':      {'cal': '3400–3800', 'carb': 58, 'protein': 22, 'fat': 20,
+                  'fueling': '50–60g carbs/hr · 500mg Na/hr · 500–600ml fluid/hr'},
+    'heavy':     {'cal': '3900–4500', 'carb': 62, 'protein': 19, 'fat': 19,
+                  'fueling': '50–60g carbs/hr · 500mg Na/hr · BCAAs · Tart cherry 30ml post'},
+    'long_hike': {'cal': '4700–6200', 'carb': 64, 'protein': 17, 'fat': 19,
+                  'fueling': '50–60g carbs/hr · 500mg Na/hr · BCAAs · Tart cherry 30ml post'},
+}
+
+
+def _workout_nutrition(sport_type, intensity, duration_min):
+    """Return nutrition profile dict for a workout."""
     duration_min = duration_min or 0
     if sport_type == 'hiking' and duration_min >= 300:
-        return '4700–6200'
-    if sport_type == 'hiking' and duration_min >= 180:
-        return '3900–4500'
-    if intensity == 'very_hard' or duration_min > 180:
-        return '3900–4500'
-    if intensity == 'hard' or duration_min >= 90:
-        return '3400–3800'
-    if intensity in ('easy', 'moderate'):
-        return '3000–3200'
-    return '2800–2900'
+        key = 'long_hike'
+    elif sport_type == 'hiking' and duration_min >= 180:
+        key = 'heavy'
+    elif intensity == 'very_hard' or duration_min > 180:
+        key = 'heavy'
+    elif intensity == 'hard' or duration_min >= 90:
+        key = 'hard'
+    elif intensity in ('easy', 'moderate'):
+        key = 'moderate'
+    else:
+        key = 'rest'
+    return _NUTRITION_PROFILES[key]
 
 
 def _create_plan_from_dict(db, data):
@@ -305,7 +328,8 @@ def view_plan(plan_id):
                            active_mods=active_mods,
                            affected_exercises=affected_exercises,
                            health=health,
-                           calorie_target=_calorie_target)
+                           workout_nutrition=_workout_nutrition,
+                           daily_supplements=DAILY_SUPPLEMENTS)
 
 
 @bp.route('/<int:plan_id>/item/<int:item_id>')

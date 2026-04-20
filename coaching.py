@@ -273,10 +273,19 @@ def _parse_json_response(text):
     return json.loads(t.strip())
 
 
+_NUTRITION_GOAL_GUIDANCE = {
+    'maintain':     'Maintain current body weight and composition. Use standard calorie targets from the nutrition guidelines.',
+    'lose_fat':     'Reduce body fat. Apply a ~15% calorie deficit to the standard targets. Keep protein high to preserve muscle. Reduce carbs first, not protein or fat.',
+    'build_muscle': 'Build muscle with a slight caloric surplus (~+10%). Increase protein to the high end of targets. Prioritize carbs around training sessions.',
+    'performance':  'Maximize race performance. Prioritize carbohydrate availability. Do not restrict calories. Fuel all sessions aggressively, especially long and hard days.',
+}
+
+
 def generate_plan(db, start_date: str, weeks: int = 4, notes: str = '',
                   race_name: str = '', race_date: str = '', race_location: str = '',
                   race_disciplines: str = '', race_duration: str = '',
-                  race_website: str = '', locale: str = 'home') -> tuple:
+                  race_website: str = '', locale: str = 'home',
+                  nutrition_goal: str = 'maintain') -> tuple:
     """
     Generate a new training plan block.
     Returns (plan_dict, usage) where plan_dict matches _create_plan_from_dict schema.
@@ -292,13 +301,19 @@ def generate_plan(db, start_date: str, weeks: int = 4, notes: str = '',
 - Expected duration: {race_duration or 'Not specified'}
 - Website: {race_website or 'Not specified'}"""
 
+    nutrition_guidance = _NUTRITION_GOAL_GUIDANCE.get(nutrition_goal, _NUTRITION_GOAL_GUIDANCE['maintain'])
+
     user_msg = f"""Generate a {weeks}-week training plan block starting {start_date}.
 
 {race_section}
 
+## Nutrition Goal
+{nutrition_guidance}
+
 Determine the correct training phase based on start date vs race date above.
 Apply the periodization structure, weekly layout preferences, climbing ladder, and variety rules from your coaching framework.
 Tailor discipline emphasis to the race disciplines listed above.
+Apply the nutrition goal above to calorie and macro recommendations in workout descriptions.
 
 ## Current Training Context
 {json.dumps(ctx, indent=2, default=str)}

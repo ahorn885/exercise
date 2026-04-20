@@ -41,6 +41,7 @@ def generate():
         locale = request.form.get('locale', 'home')
         if locale not in LOCALES:
             locale = 'home'
+        nutrition_goal = request.form.get('nutrition_goal', 'maintain')
 
         if not start_date:
             flash('Start date is required.', 'danger')
@@ -58,6 +59,7 @@ def generate():
                 race_name=race_name, race_date=race_date, race_location=race_location,
                 race_disciplines=race_disciplines, race_duration=race_duration,
                 race_website=race_website, locale=locale,
+                nutrition_goal=nutrition_goal,
             )
             plan_id = _create_plan_from_dict(db, plan_data)
             db.commit()

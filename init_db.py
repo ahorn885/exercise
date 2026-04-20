@@ -510,6 +510,17 @@ EQUIPMENT_CATEGORIES = [
         ('treadwall',     'Treadwall'),
         ('climbing_wall', 'Climbing Wall / Bouldering'),
     ]),
+    ('Cycling Equipment', [
+        ('road_bike',       'Road Bike'),
+        ('mountain_bike',   'Mountain Bike (MTB)'),
+        ('gravel_bike',     'Gravel Bike'),
+        ('cycling_trainer', 'Cycling Trainer / Smart Trainer'),
+    ]),
+    ('Paddling Equipment', [
+        ('kayak',    'Kayak'),
+        ('packraft', 'Packraft'),
+        ('canoe',    'Canoe'),
+    ]),
     ('Outdoor & Terrain', [
         ('trail_running',       'Trail Running (singletrack / dirt)'),
         ('road_running',        'Road Running (pavement)'),

@@ -94,6 +94,15 @@
               </select>
               <div class="form-text"><a href="{{ url_for('locales.list_profiles') }}">Edit equipment profiles →</a></div>
             </div>
+            <div class="col-md-6">
+              <label class="form-label fw-semibold">Nutrition Goal</label>
+              <select name="nutrition_goal" class="form-select">
+                <option value="maintain">Maintain — current weight &amp; composition</option>
+                <option value="lose_fat">Lose body fat — calorie deficit (~–15%)</option>
+                <option value="build_muscle">Build muscle — slight surplus (+10%), higher protein</option>
+                <option value="performance">Race performance — maximize carb availability</option>
+              </select>
+            </div>
             <div class="col-12">
               <label class="form-label fw-semibold">Coach Notes <span class="text-muted fw-normal">(optional)</span></label>
               <textarea name="notes" class="form-control" rows="3"
