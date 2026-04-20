@@ -132,6 +132,21 @@ SQLITE_SCHEMA = '''
         notes TEXT,
         created_at TEXT DEFAULT (datetime('now'))
     );
+    CREATE TABLE IF NOT EXISTS coaching_preferences (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        category TEXT NOT NULL DEFAULT 'general',
+        content TEXT NOT NULL,
+        permanent INTEGER NOT NULL DEFAULT 1,
+        created_at TEXT DEFAULT (datetime('now'))
+    );
+    CREATE TABLE IF NOT EXISTS coaching_chat (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        plan_id INTEGER REFERENCES training_plans(id),
+        role TEXT NOT NULL,
+        content TEXT NOT NULL,
+        actions_json TEXT,
+        created_at TEXT DEFAULT (datetime('now'))
+    );
     CREATE TABLE IF NOT EXISTS garmin_auth (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         garmin_username TEXT,
@@ -316,6 +331,21 @@ PG_SCHEMA = '''
         notes TEXT,
         created_at TIMESTAMP DEFAULT NOW()
     );
+    CREATE TABLE IF NOT EXISTS coaching_preferences (
+        id SERIAL PRIMARY KEY,
+        category TEXT NOT NULL DEFAULT 'general',
+        content TEXT NOT NULL,
+        permanent INTEGER NOT NULL DEFAULT 1,
+        created_at TIMESTAMP DEFAULT NOW()
+    );
+    CREATE TABLE IF NOT EXISTS coaching_chat (
+        id SERIAL PRIMARY KEY,
+        plan_id INTEGER REFERENCES training_plans(id),
+        role TEXT NOT NULL,
+        content TEXT NOT NULL,
+        actions_json TEXT,
+        created_at TIMESTAMP DEFAULT NOW()
+    );
     CREATE TABLE IF NOT EXISTS garmin_auth (
         id SERIAL PRIMARY KEY,
         garmin_username TEXT,
@@ -401,6 +431,8 @@ _SQLITE_MIGRATIONS = [
     "CREATE TABLE IF NOT EXISTS plan_reviews (id INTEGER PRIMARY KEY AUTOINCREMENT, plan_id INTEGER NOT NULL REFERENCES training_plans(id), tier INTEGER NOT NULL, sessions_reviewed INTEGER DEFAULT 0, notes TEXT, created_at TEXT DEFAULT (datetime('now')))",
     "ALTER TABLE cardio_log ADD COLUMN garmin_activity_id TEXT",
     "ALTER TABLE training_log ADD COLUMN garmin_activity_id TEXT",
+    "CREATE TABLE IF NOT EXISTS coaching_preferences (id INTEGER PRIMARY KEY AUTOINCREMENT, category TEXT NOT NULL DEFAULT 'general', content TEXT NOT NULL, permanent INTEGER NOT NULL DEFAULT 1, created_at TEXT DEFAULT (datetime('now')))",
+    "CREATE TABLE IF NOT EXISTS coaching_chat (id INTEGER PRIMARY KEY AUTOINCREMENT, plan_id INTEGER REFERENCES training_plans(id), role TEXT NOT NULL, content TEXT NOT NULL, actions_json TEXT, created_at TEXT DEFAULT (datetime('now')))",
 ]
 
 _PG_MIGRATIONS = [
@@ -431,6 +463,8 @@ _PG_MIGRATIONS = [
     "CREATE TABLE IF NOT EXISTS plan_reviews (id SERIAL PRIMARY KEY, plan_id INTEGER NOT NULL REFERENCES training_plans(id), tier INTEGER NOT NULL, sessions_reviewed INTEGER DEFAULT 0, notes TEXT, created_at TIMESTAMP DEFAULT NOW())",
     "ALTER TABLE cardio_log ADD COLUMN IF NOT EXISTS garmin_activity_id TEXT",
     "ALTER TABLE training_log ADD COLUMN IF NOT EXISTS garmin_activity_id TEXT",
+    "CREATE TABLE IF NOT EXISTS coaching_preferences (id SERIAL PRIMARY KEY, category TEXT NOT NULL DEFAULT 'general', content TEXT NOT NULL, permanent INTEGER NOT NULL DEFAULT 1, created_at TIMESTAMP DEFAULT NOW())",
+    "CREATE TABLE IF NOT EXISTS coaching_chat (id SERIAL PRIMARY KEY, plan_id INTEGER REFERENCES training_plans(id), role TEXT NOT NULL, content TEXT NOT NULL, actions_json TEXT, created_at TIMESTAMP DEFAULT NOW())",
 ]
 
 # Equipment catalog — single source of truth for seeding equipment_items and the locale profile UI.

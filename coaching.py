@@ -219,6 +219,15 @@ def get_coaching_context(db, plan_id=None, lookback_days=14, locale='home'):
         except Exception:
             pass
 
+    # Coaching preferences (permanent notes, avoid lists, etc.)
+    try:
+        prefs = db.execute(
+            'SELECT category, content, permanent FROM coaching_preferences ORDER BY created_at ASC'
+        ).fetchall()
+        ctx['coaching_preferences'] = [dict(p) for p in prefs]
+    except Exception:
+        ctx['coaching_preferences'] = []
+
     return ctx
 
 
@@ -401,6 +410,62 @@ Only include fields that actually need changing. Return [] if no adjustments nee
         max_tokens=max_tokens,
         system=_cached_system(),
         messages=[{'role': 'user', 'content': user_msg}]
+    ) as stream:
+        response = stream.get_final_message()
+
+    text = next((b.text for b in response.content if b.type == 'text'), '')
+    result = _parse_json_response(text)
+    return result, response.usage
+
+
+_CHAT_RESPONSE_SCHEMA = """Respond ONLY with a JSON object (no markdown fences):
+{
+  "message": "Your conversational reply to the athlete",
+  "preferences_to_save": [
+    {"category": "avoid_exercise|prefer_exercise|nutrition|training|general", "content": "...", "permanent": true}
+  ],
+  "plan_patches": [
+    {"item_id": <int>, "workout_name": "...", "description": "...", "intensity": "easy|moderate|hard|very_hard", "target_duration_min": <num>, "notes": "..."}
+  ],
+  "confirm_required": false
+}
+
+Rules:
+- preferences_to_save: only include if the athlete expressed a lasting preference (avoid exercise, nutrition preference, training style, etc.). permanent=true for "never again" statements, false for temporary notes.
+- plan_patches: only include if an immediate plan change is clearly warranted. Set confirm_required=true if the change is significant (multiple sessions, big intensity jump).
+- item_id values come from plan_health.upcoming_items in the context. Only patch upcoming scheduled items.
+- Keep message conversational and brief. Confirm what you're storing/changing.
+- If nothing to store or patch, return empty arrays."""
+
+
+def chat_with_coach(db, plan_id: int, message: str, history: list, locale: str = 'home') -> tuple:
+    """
+    Process a conversational message. Returns (response_dict, usage).
+
+    response_dict keys: message, preferences_to_save, plan_patches, confirm_required
+    history: list of {'role': 'user'|'assistant', 'content': str}
+    """
+    client = _get_client()
+    ctx = get_coaching_context(db, plan_id=plan_id, lookback_days=14, locale=locale)
+
+    system_msg = _cached_system()
+
+    context_block = f"""## Current Training Context
+{json.dumps(ctx, indent=2, default=str)}
+
+## Response Format
+{_CHAT_RESPONSE_SCHEMA}"""
+
+    messages = []
+    for turn in history[-10:]:
+        messages.append({'role': turn['role'], 'content': turn['content']})
+    messages.append({'role': 'user', 'content': f"{message}\n\n---\n{context_block}"})
+
+    with client.messages.stream(
+        model=_model(),
+        max_tokens=2000,
+        system=system_msg,
+        messages=messages,
     ) as stream:
         response = stream.get_final_message()
 

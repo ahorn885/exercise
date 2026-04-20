@@ -279,6 +279,104 @@ def _check_api_key():
     return bool(os.environ.get('ANTHROPIC_API_KEY'))
 
 
+@bp.route('/chat/<int:plan_id>', methods=['GET', 'POST'])
+def chat(plan_id):
+    db = get_db()
+    plan = db.execute('SELECT * FROM training_plans WHERE id=?', (plan_id,)).fetchone()
+    if not plan:
+        return jsonify({'ok': False, 'error': 'Plan not found'}), 404
+
+    if request.method == 'GET':
+        rows = db.execute(
+            'SELECT role, content, actions_json, created_at FROM coaching_chat WHERE plan_id=? ORDER BY created_at ASC',
+            (plan_id,)
+        ).fetchall()
+        return jsonify([dict(r) for r in rows])
+
+    data = request.get_json(silent=True) or {}
+    message = data.get('message', '').strip()
+    locale = data.get('locale', 'home')
+    if not message:
+        return jsonify({'ok': False, 'error': 'message required'}), 400
+    if not _check_api_key():
+        return jsonify({'ok': False, 'error': 'ANTHROPIC_API_KEY not configured'}), 500
+
+    history = [{'role': r['role'], 'content': r['content']} for r in db.execute(
+        'SELECT role, content FROM coaching_chat WHERE plan_id=? ORDER BY created_at ASC',
+        (plan_id,)
+    ).fetchall()]
+
+    try:
+        from coaching import chat_with_coach
+        result, usage = chat_with_coach(db, plan_id, message, history, locale=locale)
+        _log_usage(usage, 'chat')
+
+        db.execute(
+            'INSERT INTO coaching_chat (plan_id, role, content) VALUES (?,?,?)',
+            (plan_id, 'user', message)
+        )
+
+        for pref in result.get('preferences_to_save', []):
+            db.execute(
+                'INSERT INTO coaching_preferences (category, content, permanent) VALUES (?,?,?)',
+                (pref.get('category', 'general'), pref['content'], 1 if pref.get('permanent', True) else 0)
+            )
+
+        patches_applied = 0
+        if not result.get('confirm_required', False):
+            allowed = {'description', 'intensity', 'target_duration_min', 'target_distance_mi', 'notes', 'workout_name'}
+            for patch in result.get('plan_patches', []):
+                item_id = patch.get('item_id')
+                updates = {k: v for k, v in patch.items() if k in allowed and v is not None}
+                if item_id and updates:
+                    set_clause = ', '.join(f'{k}=?' for k in updates)
+                    db.execute(
+                        f'UPDATE plan_items SET {set_clause} WHERE id=? AND plan_id=?',
+                        list(updates.values()) + [item_id, plan_id]
+                    )
+                    patches_applied += 1
+
+        import json as _json
+        db.execute(
+            'INSERT INTO coaching_chat (plan_id, role, content, actions_json) VALUES (?,?,?,?)',
+            (plan_id, 'assistant', result.get('message', ''), _json.dumps({
+                'preferences_saved': len(result.get('preferences_to_save', [])),
+                'patches_applied': patches_applied,
+                'confirm_required': result.get('confirm_required', False),
+                'pending_patches': result.get('plan_patches', []) if result.get('confirm_required') else [],
+            }))
+        )
+        db.commit()
+
+        return jsonify({
+            'ok': True,
+            'message': result.get('message', ''),
+            'preferences_saved': len(result.get('preferences_to_save', [])),
+            'patches_applied': patches_applied,
+            'confirm_required': result.get('confirm_required', False),
+            'pending_patches': result.get('plan_patches', []) if result.get('confirm_required') else [],
+        })
+    except Exception as e:
+        return jsonify({'ok': False, 'error': str(e)}), 500
+
+
+@bp.route('/preferences', methods=['GET'])
+def preferences():
+    db = get_db()
+    rows = db.execute(
+        'SELECT id, category, content, permanent, created_at FROM coaching_preferences ORDER BY created_at DESC'
+    ).fetchall()
+    return jsonify([dict(r) for r in rows])
+
+
+@bp.route('/preferences/<int:pref_id>/delete', methods=['POST'])
+def delete_preference(pref_id):
+    db = get_db()
+    db.execute('DELETE FROM coaching_preferences WHERE id=?', (pref_id,))
+    db.commit()
+    return jsonify({'ok': True})
+
+
 def _log_usage(usage, label):
     print(f'[coaching:{label}] in={usage.input_tokens} out={usage.output_tokens} '
           f'cache_read={usage.cache_read_input_tokens} '

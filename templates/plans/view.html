@@ -145,4 +145,107 @@
 {% else %}
 <p class="text-muted">No workouts in this plan yet.</p>
 {% endfor %}
+
+<div class="card mt-4" id="coach-chat-card">
+  <div class="card-header d-flex justify-content-between align-items-center">
+    <span class="fw-semibold">💬 Coach Chat</span>
+    <small class="text-muted">Ask anything — preferences and plan changes are applied automatically</small>
+  </div>
+  <div class="card-body p-0">
+    <div id="chat-history" style="height:280px; overflow-y:auto; padding:1rem; background:#f8f9fa;">
+      <div class="text-muted small text-center" id="chat-empty">Loading history…</div>
+    </div>
+  </div>
+  <div class="card-footer">
+    <div class="input-group">
+      <input type="text" id="chat-input" class="form-control"
+             placeholder="e.g. 'That ride felt too easy' or 'Never include burpees again'"
+             {% if not api_configured %}disabled{% endif %}>
+      <button class="btn btn-primary" id="chat-send" {% if not api_configured %}disabled{% endif %}>Send</button>
+    </div>
+    <div id="chat-status" class="small text-muted mt-1"></div>
+  </div>
+</div>
+
+<script>
+const planId = {{ plan.id }};
+const chatHistory = document.getElementById('chat-history');
+const chatEmpty = document.getElementById('chat-empty');
+const chatInput = document.getElementById('chat-input');
+const chatSend = document.getElementById('chat-send');
+const chatStatus = document.getElementById('chat-status');
+
+function renderMessage(role, content, meta) {
+  const div = document.createElement('div');
+  div.className = 'mb-2 d-flex ' + (role === 'user' ? 'justify-content-end' : 'justify-content-start');
+  const bubble = document.createElement('div');
+  bubble.className = 'px-3 py-2 rounded small ' + (role === 'user' ? 'bg-primary text-white' : 'bg-white border');
+  bubble.style.maxWidth = '80%';
+  bubble.textContent = content;
+  if (meta && (meta.preferences_saved > 0 || meta.patches_applied > 0)) {
+    const note = document.createElement('div');
+    note.className = 'mt-1 text-success' + (role === 'user' ? '' : '');
+    note.style.fontSize = '.7rem';
+    const parts = [];
+    if (meta.preferences_saved > 0) parts.push(`✓ ${meta.preferences_saved} preference${meta.preferences_saved > 1 ? 's' : ''} saved`);
+    if (meta.patches_applied > 0) parts.push(`✓ ${meta.patches_applied} workout${meta.patches_applied > 1 ? 's' : ''} updated`);
+    note.textContent = parts.join(' · ');
+    bubble.appendChild(note);
+  }
+  div.appendChild(bubble);
+  return div;
+}
+
+async function loadHistory() {
+  const res = await fetch(`/coaching/chat/${planId}`);
+  const rows = await res.json();
+  chatHistory.innerHTML = '';
+  if (rows.length === 0) {
+    chatHistory.innerHTML = '<div class="text-muted small text-center">No messages yet. Ask your coach anything.</div>';
+  } else {
+    rows.forEach(r => {
+      const meta = r.actions_json ? JSON.parse(r.actions_json) : null;
+      chatHistory.appendChild(renderMessage(r.role, r.content, meta));
+    });
+    chatHistory.scrollTop = chatHistory.scrollHeight;
+  }
+}
+
+async function sendMessage() {
+  const msg = chatInput.value.trim();
+  if (!msg) return;
+  chatInput.value = '';
+  chatSend.disabled = true;
+  chatStatus.textContent = 'Thinking…';
+  chatHistory.appendChild(renderMessage('user', msg, null));
+  chatHistory.scrollTop = chatHistory.scrollHeight;
+
+  try {
+    const res = await fetch(`/coaching/chat/${planId}`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({message: msg, locale: 'home'})
+    });
+    const data = await res.json();
+    if (data.ok) {
+      const meta = {preferences_saved: data.preferences_saved, patches_applied: data.patches_applied};
+      chatHistory.appendChild(renderMessage('assistant', data.message, meta));
+      chatStatus.textContent = '';
+      if (data.patches_applied > 0) {
+        setTimeout(() => location.reload(), 1500);
+      }
+    } else {
+      chatStatus.textContent = 'Error: ' + data.error;
+    }
+  } catch(e) {
+    chatStatus.textContent = 'Network error.';
+  }
+  chatSend.disabled = false;
+  chatHistory.scrollTop = chatHistory.scrollHeight;
+}
+
+chatSend.addEventListener('click', sendMessage);
+chatInput.addEventListener('keydown', e => { if (e.key === 'Enter') sendMessage(); });
+loadHistory();
+</script>
 {% endblock %}

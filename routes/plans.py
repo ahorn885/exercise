@@ -1,4 +1,5 @@
 import json
+import os
 from datetime import datetime
 from itertools import groupby
 from datetime import date as date_type
@@ -323,13 +324,15 @@ def view_plan(plan_id):
     affected_exercises = {m['exercise_name'] for m in active_mods}
     health = _plan_health(db, plan_id)
 
+    api_configured = bool(os.environ.get('ANTHROPIC_API_KEY'))
     return render_template('plans/view.html', plan=plan, weeks=weeks,
                            total=total, completed=completed,
                            active_mods=active_mods,
                            affected_exercises=affected_exercises,
                            health=health,
                            workout_nutrition=_workout_nutrition,
-                           daily_supplements=DAILY_SUPPLEMENTS)
+                           daily_supplements=DAILY_SUPPLEMENTS,
+                           api_configured=api_configured)
 
 
 @bp.route('/<int:plan_id>/item/<int:item_id>')
