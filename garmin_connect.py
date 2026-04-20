@@ -76,13 +76,27 @@ def _browser_requests_session(session_json: str):
     import requests as _requests
     cookie_string = json.loads(session_json).get('cookie', '')
     s = _requests.Session()
-    s.headers.update({
+
+    # Extract JWT_WEB to use as Bearer token
+    jwt_web = None
+    for part in cookie_string.split(';'):
+        part = part.strip()
+        if part.startswith('JWT_WEB='):
+            jwt_web = part[8:].strip()
+            break
+
+    headers = {
         'NK': 'NT',
         'X-App-Ver': '4.64.2.0',
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36',
         'Referer': 'https://connect.garmin.com/',
         'Cookie': cookie_string,
-    })
+        'X-Requested-With': 'XMLHttpRequest',
+    }
+    if jwt_web:
+        headers['Authorization'] = f'Bearer {jwt_web}'
+
+    s.headers.update(headers)
     return s
 
 
@@ -225,8 +239,8 @@ def fetch_activities(db, start_date: str, end_date: str) -> list:
         s = _browser_requests_session(row['garth_session'])
         params = {'startDate': start_date, 'endDate': end_date, 'start': 0, 'limit': 100}
         for url in [
-            'https://connect.garmin.com/modern/proxy/activitylist-service/activities/search/activities',
             'https://connectapi.garmin.com/activitylist-service/activities/search/activities',
+            'https://connect.garmin.com/modern/proxy/activitylist-service/activities/search/activities',
         ]:
             resp = s.get(url, params=params, timeout=30)
             print(f'[garmin browser] GET {url} → {resp.status_code}, body[:200]: {resp.text[:200]!r}')
