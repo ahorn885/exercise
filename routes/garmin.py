@@ -166,7 +166,7 @@ def import_preview():
                   tp.name as plan_name
            FROM plan_items pi
            JOIN training_plans tp ON tp.id = pi.plan_id
-           WHERE pi.status = 'scheduled'
+           WHERE pi.status = 'scheduled' AND tp.status != 'archived'
            ORDER BY pi.item_date ASC
            LIMIT 60'''
     ).fetchall()

@@ -182,7 +182,7 @@ def _plan_health(db, plan_id):
 @bp.route('/')
 def list_plans():
     db = get_db()
-    plans = db.execute(
+    all_plans = db.execute(
         '''SELECT p.*, COUNT(i.id) as item_count,
                   SUM(CASE WHEN i.status = 'completed' THEN 1 ELSE 0 END) as completed_count
            FROM training_plans p
@@ -190,7 +190,9 @@ def list_plans():
            GROUP BY p.id
            ORDER BY p.start_date DESC'''
     ).fetchall()
-    return render_template('plans/list.html', plans=plans)
+    plans = [p for p in all_plans if p['status'] != 'archived']
+    archived = [p for p in all_plans if p['status'] == 'archived']
+    return render_template('plans/list.html', plans=plans, archived=archived)
 
 
 @bp.route('/import', methods=['GET', 'POST'])
@@ -270,6 +272,24 @@ def plan_health(plan_id):
     if not db.execute('SELECT id FROM training_plans WHERE id=?', (plan_id,)).fetchone():
         return jsonify({'error': 'Plan not found'}), 404
     return jsonify(_plan_health(db, plan_id))
+
+
+@bp.route('/<int:plan_id>/archive', methods=['POST'])
+def archive_plan(plan_id):
+    db = get_db()
+    db.execute("UPDATE training_plans SET status='archived' WHERE id=?", (plan_id,))
+    db.commit()
+    flash('Plan archived.', 'secondary')
+    return redirect(url_for('plans.list_plans'))
+
+
+@bp.route('/<int:plan_id>/unarchive', methods=['POST'])
+def unarchive_plan(plan_id):
+    db = get_db()
+    db.execute("UPDATE training_plans SET status='active' WHERE id=?", (plan_id,))
+    db.commit()
+    flash('Plan restored to active.', 'success')
+    return redirect(url_for('plans.view_plan', plan_id=plan_id))
 
 
 @bp.route('/<int:plan_id>/delete', methods=['POST'])

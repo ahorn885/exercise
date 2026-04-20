@@ -24,14 +24,34 @@
         <span class="badge bg-success">✅ Up to date</span>
       {% endif %}
     {% endif %}
+    {% if plan.status != 'archived' %}
     <a href="{{ url_for('coaching.review', plan_id=plan.id) }}" class="btn btn-outline-primary btn-sm">AI Review</a>
+    {% endif %}
     <a href="{{ url_for('plans.list_plans') }}" class="btn btn-outline-secondary btn-sm">← Plans</a>
+    {% if plan.status == 'archived' %}
+    <form method="post" action="{{ url_for('plans.unarchive_plan', plan_id=plan.id) }}">
+      <button type="submit" class="btn btn-success btn-sm">Restore</button>
+    </form>
+    {% else %}
+    <form method="post" action="{{ url_for('plans.archive_plan', plan_id=plan.id) }}">
+      <button type="submit" class="btn btn-outline-secondary btn-sm">Archive</button>
+    </form>
+    {% endif %}
     <form method="post" action="{{ url_for('plans.delete_plan', plan_id=plan.id) }}"
           onsubmit="return confirm('Delete this plan? This cannot be undone.')">
       <button type="submit" class="btn btn-outline-danger btn-sm">Delete</button>
     </form>
   </div>
 </div>
+
+{% if plan.status == 'archived' %}
+<div class="alert alert-secondary py-2 px-3 mb-3 small">
+  📦 <strong>Archived plan</strong> — read-only. Completed workouts from this plan are still used as training history for new plan generation.
+  <form method="post" action="{{ url_for('plans.unarchive_plan', plan_id=plan.id) }}" class="d-inline ms-2">
+    <button type="submit" class="btn btn-sm btn-success py-0 px-2">Restore</button>
+  </form>
+</div>
+{% endif %}
 
 {% if active_mods %}
 <div class="alert alert-warning py-2 px-3 mb-3 small">
