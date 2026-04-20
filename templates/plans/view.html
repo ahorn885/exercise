@@ -100,79 +100,88 @@
 
 {% for (year, week), items in weeks.items() %}
 <div class="card mb-3">
-  <div class="card-header fw-semibold">Week {{ week }}, {{ year }}</div>
-  <div class="card-body p-0">
-    <table class="table table-sm table-hover mb-0 align-middle">
-      <thead class="table-light">
-        <tr>
-          <th style="width:100px">Date</th>
-          <th>Workout</th>
-          <th>Sport</th>
-          <th>Duration</th>
-          <th>Intensity</th>
-          <th>Nutrition</th>
-          <th>Status</th>
-          <th></th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for item in items %}
-        <tr>
-          <td class="text-muted small">{{ item.item_date }}</td>
-          <td>
-            <a href="{{ url_for('plans.view_item', plan_id=plan.id, item_id=item.id) }}"
-               class="text-decoration-none fw-semibold">{{ item.workout_name }}</a>
-            {% if affected_exercises %}
-              {% set ns = namespace(flagged=false) %}
-              {% for ex in affected_exercises %}
-                {% if not ns.flagged and (ex in (item.description or '') or ex in item.workout_name) %}
-                  <span class="badge bg-warning text-dark ms-1" title="Injury modification applies">⚠️</span>
-                  {% set ns.flagged = true %}
+  <div class="card-header fw-semibold d-flex justify-content-between align-items-center"
+       role="button" data-bs-toggle="collapse" data-bs-target="#week-{{ year }}-{{ week }}"
+       style="cursor:pointer">
+    <span>Week {{ week }}, {{ year }}</span>
+    <span class="text-muted small">▾</span>
+  </div>
+  <div class="collapse {% if loop.first %}show{% endif %}" id="week-{{ year }}-{{ week }}">
+    <div class="card-body p-0">
+      <div class="table-responsive">
+      <table class="table table-sm table-hover mb-0 align-middle">
+        <thead class="table-light">
+          <tr>
+            <th style="width:90px">Date</th>
+            <th>Workout</th>
+            <th class="d-none d-md-table-cell">Sport</th>
+            <th class="text-nowrap">Duration</th>
+            <th class="d-none d-md-table-cell">Intensity</th>
+            <th class="d-none d-md-table-cell">Nutrition</th>
+            <th>Status</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for item in items %}
+          <tr>
+            <td class="text-muted small text-nowrap">{{ item.item_date }}</td>
+            <td>
+              <a href="{{ url_for('plans.view_item', plan_id=plan.id, item_id=item.id) }}"
+                 class="text-decoration-none fw-semibold">{{ item.workout_name }}</a>
+              {% if affected_exercises %}
+                {% set ns = namespace(flagged=false) %}
+                {% for ex in affected_exercises %}
+                  {% if not ns.flagged and (ex in (item.description or '') or ex in item.workout_name) %}
+                    <span class="badge bg-warning text-dark ms-1" title="Injury modification applies">⚠️</span>
+                    {% set ns.flagged = true %}
+                  {% endif %}
+                {% endfor %}
+              {% endif %}
+              {% if item.description %}
+              <br><small class="text-muted">{{ item.description[:80] }}{% if item.description|length > 80 %}…{% endif %}</small>
+              {% endif %}
+            </td>
+            <td class="d-none d-md-table-cell"><small>{{ item.sport_type }}</small></td>
+            <td class="text-nowrap"><small>{% if item.target_duration_min %}{{ item.target_duration_min|int }} min{% else %}—{% endif %}</small></td>
+            <td class="d-none d-md-table-cell"><small>{{ item.intensity or '—' }}</small></td>
+            <td class="d-none d-md-table-cell">
+              {% if item.calorie_target %}
+                <small class="fw-semibold">{{ item.calorie_target }} kcal</small><br>
+                <small class="text-muted">C{{ item.macro_carb_pct }}% P{{ item.macro_protein_pct }}% F{{ item.macro_fat_pct }}%</small>
+                {% if item.session_fueling %}
+                <br><small class="text-muted fst-italic" style="font-size:.7rem">{{ item.session_fueling }}</small>
                 {% endif %}
-              {% endfor %}
-            {% endif %}
-            {% if item.description %}
-            <br><small class="text-muted">{{ item.description[:80] }}{% if item.description|length > 80 %}…{% endif %}</small>
-            {% endif %}
-          </td>
-          <td><small>{{ item.sport_type }}</small></td>
-          <td><small>{% if item.target_duration_min %}{{ item.target_duration_min|int }} min{% else %}—{% endif %}</small></td>
-          <td><small>{{ item.intensity or '—' }}</small></td>
-          <td>
-            {% if item.calorie_target %}
-              <small class="fw-semibold">{{ item.calorie_target }} kcal</small><br>
-              <small class="text-muted">C{{ item.macro_carb_pct }}% P{{ item.macro_protein_pct }}% F{{ item.macro_fat_pct }}%</small>
-              {% if item.session_fueling %}
-              <br><small class="text-muted fst-italic" style="font-size:.7rem">{{ item.session_fueling }}</small>
+              {% else %}
+                {% set nx = workout_nutrition(item.sport_type, item.intensity, item.target_duration_min) %}
+                <small class="fw-semibold">{{ nx.cal }} kcal</small><br>
+                <small class="text-muted">C{{ nx.carb }}% P{{ nx.protein }}% F{{ nx.fat }}%</small>
+                {% if nx.fueling %}
+                <br><small class="text-muted fst-italic" style="font-size:.7rem">{{ nx.fueling }}</small>
+                {% endif %}
               {% endif %}
-            {% else %}
-              {% set nx = workout_nutrition(item.sport_type, item.intensity, item.target_duration_min) %}
-              <small class="fw-semibold">{{ nx.cal }} kcal</small><br>
-              <small class="text-muted">C{{ nx.carb }}% P{{ nx.protein }}% F{{ nx.fat }}%</small>
-              {% if nx.fueling %}
-              <br><small class="text-muted fst-italic" style="font-size:.7rem">{{ nx.fueling }}</small>
+            </td>
+            <td>
+              <span class="badge bg-{{ status_colors.get(item.status, 'secondary') }}">{{ item.status }}</span>
+            </td>
+            <td>
+              {% if item.status == 'scheduled' %}
+              <div class="d-flex gap-1">
+                <form method="post" action="{{ url_for('plans.complete_item', plan_id=plan.id, item_id=item.id) }}" class="d-inline">
+                  <button type="submit" class="btn btn-xs btn-success py-0 px-1" style="font-size:.75rem" title="Mark complete">✓</button>
+                </form>
+                <form method="post" action="{{ url_for('plans.skip_item', plan_id=plan.id, item_id=item.id) }}" class="d-inline">
+                  <button type="submit" class="btn btn-xs btn-outline-secondary py-0 px-1" style="font-size:.75rem" title="Skip">✕</button>
+                </form>
+              </div>
               {% endif %}
-            {% endif %}
-          </td>
-          <td>
-            <span class="badge bg-{{ status_colors.get(item.status, 'secondary') }}">{{ item.status }}</span>
-          </td>
-          <td>
-            {% if item.status == 'scheduled' %}
-            <div class="d-flex gap-1">
-              <form method="post" action="{{ url_for('plans.complete_item', plan_id=plan.id, item_id=item.id) }}" class="d-inline">
-                <button type="submit" class="btn btn-xs btn-success py-0 px-1" style="font-size:.75rem" title="Mark complete">✓</button>
-              </form>
-              <form method="post" action="{{ url_for('plans.skip_item', plan_id=plan.id, item_id=item.id) }}" class="d-inline">
-                <button type="submit" class="btn btn-xs btn-outline-secondary py-0 px-1" style="font-size:.75rem" title="Skip">✕</button>
-              </form>
-            </div>
-            {% endif %}
-          </td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      </div>
+    </div>
   </div>
 </div>
 {% else %}

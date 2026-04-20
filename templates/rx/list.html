@@ -36,10 +36,10 @@
     {% for e in entries %}
     <tr>
       <td>{{ e.exercise }}</td>
-      <td><span class="badge bg-secondary">{{ e.discipline }}</span></td>
-      <td class="text-muted small">{{ e.type }}</td>
-      <td class="text-muted small">{{ e.movement_pattern }}</td>
-      <td class="text-muted small">{{ e.inventory_sugg_volume or '—' }}</td>
+      <td class="text-nowrap"><span class="badge bg-secondary">{{ e.discipline }}</span></td>
+      <td class="text-muted small text-nowrap">{{ e.type }}</td>
+      <td class="text-muted small text-nowrap">{{ e.movement_pattern }}</td>
+      <td class="text-muted small text-nowrap">{{ e.inventory_sugg_volume or '—' }}</td>
       <td>{{ e.current_sets or '—' }}</td>
       <td>{{ e.current_reps or '—' }}</td>
       <td>{{ e.current_weight or '—' }}{% if e.current_weight %} lb{% endif %}</td>
@@ -59,7 +59,7 @@
           <span class="text-muted small">needs setup</span>
         {% endif %}
       </td>
-      <td class="text-muted small">{{ e.rx_source or '—' }}</td>
+      <td class="text-muted small text-nowrap">{{ e.rx_source or '—' }}</td>
       <td>
         <a href="{{ url_for('rx.edit_entry', entry_id=e.id) }}" class="btn btn-sm btn-outline-secondary py-0 px-1">Edit</a>
       </td>

@@ -37,7 +37,7 @@
     {% for e in entries %}
     <tr>
       <td class="text-nowrap">{{ e.date }}</td>
-      <td>{{ e.exercise }}</td>
+      <td class="text-nowrap">{{ e.exercise }}</td>
       <td class="text-nowrap text-muted small">
         {{ e.target_sets or '—' }}×{{ e.target_reps or '—' }}
         {% if e.target_weight %}@ {{ e.target_weight }}lb{% endif %}
@@ -46,9 +46,9 @@
         {{ e.actual_sets or '—' }}×{{ e.actual_reps or '—' }}
         {% if e.actual_weight %}@ {{ e.actual_weight }}lb{% endif %}
       </td>
-      <td>{{ e.rpe or '—' }}</td>
-      <td>{{ e.est_1rm or '—' }}</td>
-      <td>{{ e.volume | int if e.volume else '—' }}</td>
+      <td class="text-nowrap">{{ e.rpe or '—' }}</td>
+      <td class="text-nowrap">{{ e.est_1rm or '—' }}</td>
+      <td class="text-nowrap">{{ e.volume | int if e.volume else '—' }}</td>
       <td>
         {% if e.outcome %}
           <span class="badge {% if '↑' in e.outcome %}bg-success{% elif '→' in e.outcome %}bg-warning text-dark{% else %}bg-danger{% endif %}">

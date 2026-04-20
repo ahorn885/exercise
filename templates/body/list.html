@@ -17,8 +17,8 @@
       <td>{{ e.date }}</td>
       <td>{{ e.weight_lbs or '—' }}</td>
       <td>{{ e.body_fat_pct or '—' }}</td>
-      <td>{{ e.vo2_max or '—' }}</td>
-      <td>{{ e.resting_hr or '—' }}</td>
+      <td class="text-nowrap">{{ e.vo2_max or '—' }}</td>
+      <td class="text-nowrap">{{ e.resting_hr or '—' }}</td>
       <td class="text-muted small">{{ e.notes or '' }}</td>
       <td class="text-nowrap">
         <a href="{{ url_for('body.edit_entry', entry_id=e.id) }}" class="btn btn-sm btn-outline-secondary py-0 px-1">Edit</a>

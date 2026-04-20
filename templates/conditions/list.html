@@ -17,8 +17,8 @@
       <td>{{ e.date }}</td>
       <td>{{ e.activity or '—' }}</td>
       <td>{{ e.temp_f or '—' }}{% if e.temp_f %}°F{% endif %}</td>
-      <td>{{ e.feels_like_f or '—' }}{% if e.feels_like_f %}°F{% endif %}</td>
-      <td>{{ e.conditions or '—' }}</td>
+      <td class="text-nowrap">{{ e.feels_like_f or '—' }}{% if e.feels_like_f %}°F{% endif %}</td>
+      <td class="text-nowrap">{{ e.conditions or '—' }}</td>
       <td>
         {% if e.comfort %}
           <span class="badge {% if e.comfort == 3 %}bg-success{% elif e.comfort in [1,2] %}bg-info{% else %}bg-warning text-dark{% endif %}">
