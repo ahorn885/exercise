@@ -9,7 +9,7 @@
 <div class="table-responsive">
   <table class="table table-sm table-hover table-striped">
     <thead class="table-dark">
-      <tr><th>Date</th><th>Activity</th><th>Temp</th><th>Feels Like</th><th>Conditions</th><th>Comfort</th><th>Notes</th><th></th></tr>
+      <tr><th>Date</th><th>Activity</th><th>Temp</th><th class="d-none d-md-table-cell">Feels Like</th><th class="d-none d-md-table-cell">Conditions</th><th>Comfort</th><th class="d-none d-md-table-cell">Notes</th><th></th></tr>
     </thead>
     <tbody>
     {% for e in entries %}
@@ -17,8 +17,8 @@
       <td>{{ e.date }}</td>
       <td>{{ e.activity or '—' }}</td>
       <td>{{ e.temp_f or '—' }}{% if e.temp_f %}°F{% endif %}</td>
-      <td>{{ e.feels_like_f or '—' }}{% if e.feels_like_f %}°F{% endif %}</td>
-      <td>{{ e.conditions or '—' }}</td>
+      <td class="d-none d-md-table-cell">{{ e.feels_like_f or '—' }}{% if e.feels_like_f %}°F{% endif %}</td>
+      <td class="d-none d-md-table-cell">{{ e.conditions or '—' }}</td>
       <td>
         {% if e.comfort %}
           <span class="badge {% if e.comfort == 3 %}bg-success{% elif e.comfort in [1,2] %}bg-info{% else %}bg-warning text-dark{% endif %}">
@@ -26,7 +26,7 @@
           </span>
         {% else %}—{% endif %}
       </td>
-      <td class="text-muted small">{{ e.comfort_notes or '' }}</td>
+      <td class="text-muted small d-none d-md-table-cell">{{ e.comfort_notes or '' }}</td>
       <td class="text-nowrap">
         <a href="{{ url_for('conditions.edit_entry', entry_id=e.id) }}" class="btn btn-sm btn-outline-secondary py-0 px-1">Edit</a>
         <form method="post" action="{{ url_for('conditions.delete_entry', entry_id=e.id) }}" class="d-inline" onsubmit="return confirm('Delete?')">

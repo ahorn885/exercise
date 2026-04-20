@@ -12,14 +12,14 @@
       <tr>
         <th>Date</th>
         <th>Activity</th>
-        <th>Name</th>
+        <th class="d-none d-md-table-cell">Name</th>
         <th>Duration</th>
         <th>Distance</th>
         <th>Pace / Speed</th>
-        <th>Avg HR</th>
-        <th>Elev+</th>
-        <th>Power</th>
-        <th>TE</th>
+        <th class="d-none d-md-table-cell">Avg HR</th>
+        <th class="d-none d-md-table-cell">Elev+</th>
+        <th class="d-none d-md-table-cell">Power</th>
+        <th class="d-none d-md-table-cell">TE</th>
         <th></th>
       </tr>
     </thead>
@@ -30,7 +30,7 @@
     <tr>
       <td class="text-nowrap">{{ e.date }}</td>
       <td class="text-nowrap">{{ e.activity }}</td>
-      <td class="text-muted small">{{ e.activity_name or '' }}</td>
+      <td class="text-muted small d-none d-md-table-cell">{{ e.activity_name or '' }}</td>
       <td class="text-nowrap">{{ e.duration_min or '—' }}{% if e.duration_min %} min{% endif %}</td>
       <td class="text-nowrap">{{ e.distance_mi or '—' }}{% if e.distance_mi %} mi{% endif %}</td>
       <td class="text-nowrap">
@@ -42,15 +42,15 @@
           {{ e.avg_speed }} mph
         {%- else -%}—{%- endif -%}
       </td>
-      <td>{{ e.avg_hr or '—' }}</td>
-      <td>{{ e.elev_gain_ft or '—' }}</td>
-      <td>
+      <td class="d-none d-md-table-cell">{{ e.avg_hr or '—' }}</td>
+      <td class="d-none d-md-table-cell">{{ e.elev_gain_ft or '—' }}</td>
+      <td class="d-none d-md-table-cell">
         {%- if e.avg_power -%}{{ e.avg_power }}W
           {%- if e.norm_power %} <span class="text-muted small">(NP {{ e.norm_power }})</span>{% endif %}
         {%- elif e.norm_power -%}NP {{ e.norm_power }}W
         {%- else -%}—{%- endif -%}
       </td>
-      <td>{{ e.aerobic_te or '—' }}</td>
+      <td class="d-none d-md-table-cell">{{ e.aerobic_te or '—' }}</td>
       <td class="text-nowrap">
         <a href="{{ url_for('cardio.edit_entry', entry_id=e.id) }}" class="btn btn-sm btn-outline-secondary py-0 px-1">Edit</a>
         <form method="post" action="{{ url_for('cardio.delete_entry', entry_id=e.id) }}" class="d-inline"

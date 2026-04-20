@@ -29,21 +29,21 @@
 <div class="table-responsive">
   <table class="table table-sm table-hover table-striped">
     <thead class="table-dark">
-      <tr><th>Exercise</th><th>Disc.</th><th>Type</th><th>Pattern</th><th>Sugg. Vol</th>
-      <th>Sets</th><th>Reps</th><th>Weight</th><th>Last Done</th><th>Outcome</th><th>Source</th><th></th></tr>
+      <tr><th>Exercise</th><th class="d-none d-md-table-cell">Disc.</th><th class="d-none d-md-table-cell">Type</th><th class="d-none d-md-table-cell">Pattern</th><th class="d-none d-md-table-cell">Sugg. Vol</th>
+      <th>Sets</th><th>Reps</th><th>Weight</th><th class="d-none d-md-table-cell">Last Done</th><th>Outcome</th><th class="d-none d-md-table-cell">Source</th><th></th></tr>
     </thead>
     <tbody>
     {% for e in entries %}
     <tr>
       <td>{{ e.exercise }}</td>
-      <td><span class="badge bg-secondary">{{ e.discipline }}</span></td>
-      <td class="text-muted small">{{ e.type }}</td>
-      <td class="text-muted small">{{ e.movement_pattern }}</td>
-      <td class="text-muted small">{{ e.inventory_sugg_volume or '—' }}</td>
+      <td class="d-none d-md-table-cell"><span class="badge bg-secondary">{{ e.discipline }}</span></td>
+      <td class="text-muted small d-none d-md-table-cell">{{ e.type }}</td>
+      <td class="text-muted small d-none d-md-table-cell">{{ e.movement_pattern }}</td>
+      <td class="text-muted small d-none d-md-table-cell">{{ e.inventory_sugg_volume or '—' }}</td>
       <td>{{ e.current_sets or '—' }}</td>
       <td>{{ e.current_reps or '—' }}</td>
       <td>{{ e.current_weight or '—' }}{% if e.current_weight %} lb{% endif %}</td>
-      <td class="text-muted small text-nowrap">{{ e.last_performed or '—' }}</td>
+      <td class="text-muted small text-nowrap d-none d-md-table-cell">{{ e.last_performed or '—' }}</td>
       <td class="text-nowrap">
         {% if e.last_outcome %}
           <span class="badge {% if '↑' in e.last_outcome %}bg-success{% elif '→' in e.last_outcome %}bg-warning text-dark{% elif '↓' in e.last_outcome %}bg-danger{% else %}bg-secondary{% endif %}">
@@ -59,7 +59,7 @@
           <span class="text-muted small">needs setup</span>
         {% endif %}
       </td>
-      <td class="text-muted small">{{ e.rx_source or '—' }}</td>
+      <td class="text-muted small d-none d-md-table-cell">{{ e.rx_source or '—' }}</td>
       <td>
         <a href="{{ url_for('rx.edit_entry', entry_id=e.id) }}" class="btn btn-sm btn-outline-secondary py-0 px-1">Edit</a>
       </td>
