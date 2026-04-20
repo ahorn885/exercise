@@ -29,16 +29,16 @@
   <table class="table table-sm table-hover table-striped">
     <thead class="table-dark">
       <tr>
-        <th>Date</th><th>Exercise</th><th class="d-none d-md-table-cell">Target</th><th>Actual</th>
-        <th class="d-none d-md-table-cell">RPE</th><th class="d-none d-md-table-cell">1RM</th><th class="d-none d-md-table-cell">Vol</th><th>Outcome</th><th class="d-none d-md-table-cell">Next Rx</th><th></th>
+        <th>Date</th><th>Exercise</th><th>Target</th><th>Actual</th>
+        <th>RPE</th><th>1RM</th><th>Vol</th><th>Outcome</th><th>Next Rx</th><th></th>
       </tr>
     </thead>
     <tbody>
     {% for e in entries %}
     <tr>
       <td class="text-nowrap">{{ e.date }}</td>
-      <td>{{ e.exercise }}</td>
-      <td class="text-nowrap text-muted small d-none d-md-table-cell">
+      <td class="text-nowrap">{{ e.exercise }}</td>
+      <td class="text-nowrap text-muted small">
         {{ e.target_sets or '—' }}×{{ e.target_reps or '—' }}
         {% if e.target_weight %}@ {{ e.target_weight }}lb{% endif %}
       </td>
@@ -46,9 +46,9 @@
         {{ e.actual_sets or '—' }}×{{ e.actual_reps or '—' }}
         {% if e.actual_weight %}@ {{ e.actual_weight }}lb{% endif %}
       </td>
-      <td class="d-none d-md-table-cell">{{ e.rpe or '—' }}</td>
-      <td class="d-none d-md-table-cell">{{ e.est_1rm or '—' }}</td>
-      <td class="d-none d-md-table-cell">{{ e.volume | int if e.volume else '—' }}</td>
+      <td class="text-nowrap">{{ e.rpe or '—' }}</td>
+      <td class="text-nowrap">{{ e.est_1rm or '—' }}</td>
+      <td class="text-nowrap">{{ e.volume | int if e.volume else '—' }}</td>
       <td>
         {% if e.outcome %}
           <span class="badge {% if '↑' in e.outcome %}bg-success{% elif '→' in e.outcome %}bg-warning text-dark{% else %}bg-danger{% endif %}">
@@ -56,7 +56,7 @@
           </span>
         {% else %}—{% endif %}
       </td>
-      <td class="text-nowrap text-muted small d-none d-md-table-cell">
+      <td class="text-nowrap text-muted small">
         {% if e.next_sets %}{{ e.next_sets }}×{{ e.next_reps }}{% if e.next_weight %}@{{ e.next_weight }}lb{% endif %}{% endif %}
       </td>
       <td class="text-nowrap">

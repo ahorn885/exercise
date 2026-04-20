@@ -9,7 +9,7 @@
 <div class="table-responsive">
   <table class="table table-sm table-hover table-striped">
     <thead class="table-dark">
-      <tr><th>Date</th><th>Weight (lb)</th><th>Body Fat %</th><th class="d-none d-md-table-cell">VO2 Max</th><th class="d-none d-md-table-cell">Resting HR</th><th class="d-none d-md-table-cell">Notes</th><th></th></tr>
+      <tr><th>Date</th><th>Weight (lb)</th><th>Body Fat %</th><th>VO2 Max</th><th>Resting HR</th><th>Notes</th><th></th></tr>
     </thead>
     <tbody>
     {% for e in entries %}
@@ -17,9 +17,9 @@
       <td>{{ e.date }}</td>
       <td>{{ e.weight_lbs or '—' }}</td>
       <td>{{ e.body_fat_pct or '—' }}</td>
-      <td class="d-none d-md-table-cell">{{ e.vo2_max or '—' }}</td>
-      <td class="d-none d-md-table-cell">{{ e.resting_hr or '—' }}</td>
-      <td class="text-muted small d-none d-md-table-cell">{{ e.notes or '' }}</td>
+      <td class="text-nowrap">{{ e.vo2_max or '—' }}</td>
+      <td class="text-nowrap">{{ e.resting_hr or '—' }}</td>
+      <td class="text-muted small">{{ e.notes or '' }}</td>
       <td class="text-nowrap">
         <a href="{{ url_for('body.edit_entry', entry_id=e.id) }}" class="btn btn-sm btn-outline-secondary py-0 px-1">Edit</a>
         <form method="post" action="{{ url_for('body.delete_entry', entry_id=e.id) }}" class="d-inline" onsubmit="return confirm('Delete?')">
