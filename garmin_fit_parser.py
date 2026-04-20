@@ -56,6 +56,7 @@ _SUB_SPORT_NUM_MAP = {
     17: 'gravel_cycling',
     19: 'lap_swimming',
     20: 'open_water',
+    43: 'yoga',
 }
 
 # Sports where cadence is stored as one-leg (steps/min of one foot) → multiply by 2
@@ -105,7 +106,7 @@ _EXERCISE_CATEGORY_MAP = {
 #   uint8/scale=2     → 127.5   (pedal smoothness)
 _FLOAT_SENTINELS = frozenset({
     65535.0, 65.535, 6553.5, 655.35, 25.5, 2.55, 127.5,
-    4294967295.0, 4294967.295, 429496.7295,
+    4294967295.0, 4294967.295, 429496729.5, 42949672.95, 429496.7295,
 })
 _INT_SENTINELS = frozenset({255, 65535, 4294967295})
 
@@ -148,6 +149,9 @@ def _resolve_activity(sport: str, sub_sport: str):
         name = _CYCLING_SUB[sub_sport]
     elif sport == 'swimming' and sub_sport in _SWIM_SUB:
         name = _SWIM_SUB[sub_sport]
+    elif sub_sport in SPORT_MAP and SPORT_MAP[sub_sport] != '__strength__':
+        # sub_sport overrides sport lookup (e.g. yoga stored under sport=training)
+        name = SPORT_MAP[sub_sport]
     else:
         name = SPORT_MAP.get(sport, 'Running')
     return name, sport
