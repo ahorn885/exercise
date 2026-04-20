@@ -52,6 +52,7 @@ _SUB_SPORT_NUM_MAP = {
     7:  'indoor_rowing',
     8:  'mountain',           # mountain biking (matches _CYCLING_SUB key)
     10: 'gravel_cycling',
+    14: 'indoor_rowing',      # Garmin Forerunner indoor rowing sub_sport
     17: 'gravel_cycling',
     19: 'lap_swimming',
     20: 'open_water',
@@ -62,7 +63,11 @@ _ONE_LEG_CADENCE_SPORTS = {
     'running', 'trail_running', 'treadmill', 'hiking', 'walking',
 }
 
-# Sub-sport overrides for cycling and swimming
+# Sub-sport overrides for running, cycling, and swimming
+_RUNNING_SUB = {
+    'trail_running': 'Trail Running',
+    'treadmill':     'Treadmill',
+}
 _CYCLING_SUB = {
     'mountain': 'Mountain Biking',
     'gravel_cycling': 'Gravel Cycling',
@@ -124,7 +129,9 @@ def _resolve_activity(sport: str, sub_sport: str):
     """Return (activity_name, sport_key) tuple."""
     sport = (sport or '').lower().replace(' ', '_')
     sub_sport = (sub_sport or '').lower().replace(' ', '_')
-    if sport == 'cycling' and sub_sport in _CYCLING_SUB:
+    if sport == 'running' and sub_sport in _RUNNING_SUB:
+        name = _RUNNING_SUB[sub_sport]
+    elif sport == 'cycling' and sub_sport in _CYCLING_SUB:
         name = _CYCLING_SUB[sub_sport]
     elif sport == 'swimming' and sub_sport in _SWIM_SUB:
         name = _SWIM_SUB[sub_sport]
@@ -282,7 +289,9 @@ def _parse_cardio(session, activity_name: str, sport_key: str) -> dict:
     anaerobic_te = _f('total_anaerobic_training_effect')
 
     # Running dynamics (standard FIT fields — None if device doesn't record them)
-    stride_length_m = _f('avg_stride_length')
+    # avg_step_length is in mm (one step); a stride = 2 steps → convert to metres
+    _step_mm = _f('avg_step_length')
+    stride_length_m = round(_step_mm * 2 / 1000, 2) if _step_mm else None
     raw_vert_osc = _f('avg_vertical_oscillation')  # mm in FIT → convert to cm
     vert_oscillation_cm = round(raw_vert_osc / 10, 1) if raw_vert_osc else None
     vert_ratio_pct = _f('avg_vertical_ratio')       # already %
@@ -317,7 +326,7 @@ def _parse_cardio(session, activity_name: str, sport_key: str) -> dict:
             'active_lengths': active_lengths,
             'notes': '',
             # Running dynamics
-            'stride_length_m': round(stride_length_m, 2) if stride_length_m else None,
+            'stride_length_m': stride_length_m,
             'vert_oscillation_cm': vert_oscillation_cm,
             'vert_ratio_pct': round(vert_ratio_pct, 1) if vert_ratio_pct else None,
             'gct_ms': round(gct_ms, 0) if gct_ms else None,
