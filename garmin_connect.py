@@ -159,10 +159,9 @@ def get_auth_status(db) -> dict:
         if not row or not row['garth_session']:
             return {'authenticated': False, 'username': None}
         if _is_browser_auth(row['garth_session']):
-            s = _browser_requests_session(row['garth_session'])
-            resp = s.get('https://connect.garmin.com/modern/currentuser-service/user/info', timeout=10)
-            if resp.status_code == 200:
-                username = row['garmin_username'] or resp.json().get('username', '')
+            cookie = json.loads(row['garth_session']).get('cookie', '')
+            if cookie:
+                username = row['garmin_username'] or 'browser session'
                 return {'authenticated': True, 'username': username, 'auth_type': 'browser_cookie'}
             return {'authenticated': False, 'username': None}
         import garth
