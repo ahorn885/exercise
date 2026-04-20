@@ -49,7 +49,7 @@ _SUB_SPORT_NUM_MAP = {
     3:  'trail_running',
     5:  'spin',
     6:  'indoor_cycling',
-    7:  'indoor_rowing',
+    7:  'road',               # road cycling sub_sport
     8:  'mountain',           # mountain biking (matches _CYCLING_SUB key)
     10: 'gravel_cycling',
     14: 'indoor_rowing',      # Garmin Forerunner indoor rowing sub_sport
@@ -75,7 +75,6 @@ _CYCLING_SUB = {
     'indoor_cycling': 'Indoor Bike Trainer',
     'spin': 'Indoor Bike Trainer',
     'track_cycling': 'Road Cycling',
-    'indoor_rowing': 'Rowing Ergometer',
 }
 _SWIM_SUB = {
     'lap_swimming': 'Swimming Pool',
