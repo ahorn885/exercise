@@ -48,6 +48,15 @@ def edit_profile(locale):
             tag_to_id = {r['tag']: r['id'] for r in eq_rows}
         else:
             tag_to_id = {}
+        # Upsert locale_profiles first — locale_equipment has a FK on this table
+        db.execute(
+            '''INSERT INTO locale_profiles (locale, notes, updated_at)
+               VALUES (?, ?, datetime('now'))
+               ON CONFLICT(locale) DO UPDATE SET
+                 notes=excluded.notes,
+                 updated_at=excluded.updated_at''',
+            (locale, notes)
+        )
         # Replace locale_equipment rows atomically
         db.execute('DELETE FROM locale_equipment WHERE locale = ?', (locale,))
         for tag in selected_tags:
@@ -57,15 +66,6 @@ def edit_profile(locale):
                     'INSERT INTO locale_equipment (locale, equipment_id) VALUES (?, ?)',
                     (locale, eq_id)
                 )
-        # UPSERT locale_profiles for notes/updated_at only (equipment column intentionally omitted)
-        db.execute(
-            '''INSERT INTO locale_profiles (locale, notes, updated_at)
-               VALUES (?, ?, datetime('now'))
-               ON CONFLICT(locale) DO UPDATE SET
-                 notes=excluded.notes,
-                 updated_at=excluded.updated_at''',
-            (locale, notes)
-        )
         db.commit()
         flash(f'{locale.title()} profile saved ({len(selected_tags)} items).', 'success')
         return redirect(url_for('locales.list_profiles'))
