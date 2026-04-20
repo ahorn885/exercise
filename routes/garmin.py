@@ -519,6 +519,31 @@ def auth_login():
     return redirect(url_for('garmin.auth'))
 
 
+@bp.route('/auth/import-cookies', methods=['POST'])
+def auth_import_cookies():
+    import json
+    cookie_string = request.form.get('cookie_string', '').strip()
+    if not cookie_string:
+        flash('No cookie string provided.', 'danger')
+        return redirect(url_for('garmin.auth'))
+    session_data = json.dumps({'type': 'browser_cookie', 'cookie': cookie_string})
+    db = get_db()
+    existing = db.execute('SELECT id FROM garmin_auth LIMIT 1').fetchone()
+    if existing:
+        db.execute(
+            "UPDATE garmin_auth SET garth_session=?, garmin_username=?, updated_at=datetime('now') WHERE id=?",
+            (session_data, '', existing[0])
+        )
+    else:
+        db.execute(
+            'INSERT INTO garmin_auth (garth_session, garmin_username) VALUES (?,?)',
+            (session_data, '')
+        )
+    db.commit()
+    flash('Browser session cookies saved. Testing connection on the sync page.', 'success')
+    return redirect(url_for('garmin.auth'))
+
+
 @bp.route('/auth/import-tokens', methods=['POST'])
 def auth_import_tokens():
     import json

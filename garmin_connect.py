@@ -4,6 +4,9 @@ Garmin Connect API wrapper — Vercel-compatible stateless design.
 Garth session tokens are stored as JSON in the garmin_auth DB table so they
 persist across serverless invocations. On each API call we write the session
 to /tmp/garth, use it, then serialize any refreshed tokens back to the DB.
+
+Browser-cookie auth: if garth SSO is rate-limited, store session cookies
+directly from Chrome. Stored as {"type": "browser_cookie", "cookie": "..."}.
 """
 import json
 import os
@@ -58,6 +61,29 @@ GARMIN_TYPE_TO_PLAN_SPORT = {
     'hiking': 'hiking',
     'walking': 'walking',
 }
+
+
+# ── Browser-cookie auth helpers ──────────────────────────────────────────────
+
+def _is_browser_auth(session_json: str) -> bool:
+    try:
+        return json.loads(session_json).get('type') == 'browser_cookie'
+    except Exception:
+        return False
+
+
+def _browser_requests_session(session_json: str):
+    import requests as _requests
+    cookie_string = json.loads(session_json).get('cookie', '')
+    s = _requests.Session()
+    s.headers.update({
+        'NK': 'NT',
+        'X-App-Ver': '4.64.2.0',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36',
+        'Referer': 'https://connect.garmin.com/',
+        'Cookie': cookie_string,
+    })
+    return s
 
 
 # ── Session persistence helpers ───────────────────────────────────────────────
@@ -129,14 +155,21 @@ def _load_client(db):
 def get_auth_status(db) -> dict:
     """Return {'authenticated': bool, 'username': str|None}."""
     try:
-        import garth
         row = db.execute('SELECT garth_session, garmin_username FROM garmin_auth LIMIT 1').fetchone()
         if not row or not row['garth_session']:
             return {'authenticated': False, 'username': None}
+        if _is_browser_auth(row['garth_session']):
+            s = _browser_requests_session(row['garth_session'])
+            resp = s.get('https://connect.garmin.com/modern/currentuser-service/user/info', timeout=10)
+            if resp.status_code == 200:
+                username = row['garmin_username'] or resp.json().get('username', '')
+                return {'authenticated': True, 'username': username, 'auth_type': 'browser_cookie'}
+            return {'authenticated': False, 'username': None}
+        import garth
         _write_session_to_tmp(row['garth_session'])
         garth.resume(GARTH_TMP)
         username = row['garmin_username'] or ''
-        return {'authenticated': True, 'username': username}
+        return {'authenticated': True, 'username': username, 'auth_type': 'garth'}
     except Exception:
         return {'authenticated': False, 'username': None}
 
@@ -188,11 +221,24 @@ def fetch_activities(db, start_date: str, end_date: str) -> list:
     Returns raw Garmin API activity dicts. Call normalize_activity() on each.
     start_date / end_date: ISO strings YYYY-MM-DD.
     """
+    row = db.execute('SELECT garth_session FROM garmin_auth LIMIT 1').fetchone()
+    if row and _is_browser_auth(row['garth_session']):
+        s = _browser_requests_session(row['garth_session'])
+        resp = s.get(
+            'https://connect.garmin.com/activitylist-service/activities/search/activities',
+            params={'startDate': start_date, 'endDate': end_date, 'start': 0, 'limit': 100},
+            timeout=30,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        if isinstance(data, list):
+            return data
+        return data.get('activityList', data.get('activities', []))
+
     client = _load_client(db)
     try:
         activities = client.get_activities_by_date(start_date, end_date)
     except Exception:
-        # Fallback: fetch recent and filter client-side
         activities = client.get_activities(0, 100) or []
         activities = [a for a in activities
                       if start_date <= (a.get('startTimeLocal') or '')[:10] <= end_date]
