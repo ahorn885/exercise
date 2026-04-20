@@ -24,7 +24,12 @@
         <span class="badge bg-success">✅ Up to date</span>
       {% endif %}
     {% endif %}
+    <a href="{{ url_for('coaching.review', plan_id=plan.id) }}" class="btn btn-outline-primary btn-sm">AI Review</a>
     <a href="{{ url_for('plans.list_plans') }}" class="btn btn-outline-secondary btn-sm">← Plans</a>
+    <form method="post" action="{{ url_for('plans.delete_plan', plan_id=plan.id) }}"
+          onsubmit="return confirm('Delete this plan? This cannot be undone.')">
+      <button type="submit" class="btn btn-outline-danger btn-sm">Delete</button>
+    </form>
   </div>
 </div>
 

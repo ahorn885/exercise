@@ -35,7 +35,13 @@
           <small class="text-muted">{{ done }}/{{ total }}</small>
           {% else %}<span class="text-muted small">No workouts</span>{% endif %}
         </td>
-        <td><a href="{{ url_for('plans.view_plan', plan_id=p.id) }}" class="btn btn-sm btn-outline-secondary">View</a></td>
+        <td class="d-flex gap-1">
+          <a href="{{ url_for('plans.view_plan', plan_id=p.id) }}" class="btn btn-sm btn-outline-secondary">View</a>
+          <form method="post" action="{{ url_for('plans.delete_plan', plan_id=p.id) }}"
+                onsubmit="return confirm('Delete {{ p.name }}? This cannot be undone.')">
+            <button type="submit" class="btn btn-sm btn-outline-danger">Delete</button>
+          </form>
+        </td>
       </tr>
       {% endfor %}
     </tbody>

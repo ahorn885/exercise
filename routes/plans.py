@@ -276,6 +276,7 @@ def plan_health(plan_id):
 def delete_plan(plan_id):
     db = get_db()
     db.execute('DELETE FROM plan_reviews WHERE plan_id=?', (plan_id,))
+    db.execute('DELETE FROM coaching_chat WHERE plan_id=?', (plan_id,))
     db.execute('DELETE FROM plan_items WHERE plan_id=?', (plan_id,))
     db.execute('DELETE FROM training_plans WHERE id=?', (plan_id,))
     db.commit()
