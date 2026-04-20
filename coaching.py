@@ -21,21 +21,20 @@ _SYSTEM_PROMPT = """You are an expert adventure racing coach for Andy. You have 
 # AR Coaching Framework
 
 ## Target Race
-- Event: Pocket Gopher Extreme 2026, Nerstrand MN, Jul 17–19
-- Duration: 48–56 hrs continuous (expedition)
-- Disciplines: Trail running, hiking, MTB, packrafting, rock climbing, abseiling
-- Plan start: Apr 1, 2026 — 15 weeks out
+Race details are provided per plan generation request. Apply the periodization structure below relative to the race date provided.
 
 ## Periodization
-| Phase | Weeks | Dates | Focus | Peak Vol |
-|-------|-------|-------|-------|----------|
-| 1 Base | 1–4 | Apr 1–26 | Aerobic foundation, movement patterns | ~18 hrs |
-| 2 Build | 5–8 | Apr 27–May 24 | Volume increase, bricks, strength up | ~26 hrs |
-| 3 Peak | 9–12 | May 25–Jun 21 | Max load, bricks, race simulation | ~33 hrs |
-| 4 Taper | 13–14 | Jun 22–Jul 12 | Volume -35→50%, maintain intensity | ~14→10 hrs |
-| Race | 15 | Jul 13–19 | Sharpening, travel, race | ~6 hrs + race |
+Phases are relative to weeks-until-race-day. Compute actual dates from the race date and plan start date provided in the request.
 
-Cutback weeks: every 4th week (4, 8, 12) — reduce volume ~30%, no deep fatigue.
+| Phase | Weeks out | Focus | Peak Vol |
+|-------|-----------|-------|----------|
+| 1 Base | 15–12 | Aerobic foundation, movement patterns | ~18 hrs |
+| 2 Build | 11–8 | Volume increase, bricks, strength up | ~26 hrs |
+| 3 Peak | 7–4 | Max load, bricks, race simulation | ~33 hrs |
+| 4 Taper | 3–2 | Volume -35→50%, maintain intensity | ~14→10 hrs |
+| Race | 1 | Sharpening, travel, race | ~6 hrs + race |
+
+Cutback weeks: every 4th week of training — reduce volume ~30%, no deep fatigue.
 
 ## Weekly Structure
 - Monday: Rest (mandatory)
@@ -263,7 +262,10 @@ def _parse_json_response(text):
     return json.loads(t.strip())
 
 
-def generate_plan(db, start_date: str, weeks: int = 4, notes: str = '') -> tuple:
+def generate_plan(db, start_date: str, weeks: int = 4, notes: str = '',
+                  race_name: str = '', race_date: str = '', race_location: str = '',
+                  race_disciplines: str = '', race_duration: str = '',
+                  race_website: str = '') -> tuple:
     """
     Generate a new training plan block.
     Returns (plan_dict, usage) where plan_dict matches _create_plan_from_dict schema.
@@ -271,10 +273,21 @@ def generate_plan(db, start_date: str, weeks: int = 4, notes: str = '') -> tuple
     client = _get_client()
     ctx = get_coaching_context(db)
 
+    race_section = f"""## Target Race
+- Event: {race_name or 'Not specified'}
+- Date: {race_date or 'Not specified'}
+- Location: {race_location or 'Not specified'}
+- Disciplines: {race_disciplines or 'Not specified'}
+- Expected duration: {race_duration or 'Not specified'}
+- Website: {race_website or 'Not specified'}"""
+
     user_msg = f"""Generate a {weeks}-week training plan block starting {start_date}.
 
-Determine the correct training phase based on start date vs race day (Jul 17, 2026).
+{race_section}
+
+Determine the correct training phase based on start date vs race date above.
 Apply the periodization structure, weekly layout preferences, climbing ladder, and variety rules from your coaching framework.
+Tailor discipline emphasis to the race disciplines listed above.
 
 ## Current Training Context
 {json.dumps(ctx, indent=2, default=str)}
@@ -287,7 +300,7 @@ Apply the periodization structure, weekly layout preferences, climbing ladder, a
 
     with client.messages.stream(
         model=_model(),
-        max_tokens=8000,
+        max_tokens=16000,
         system=_cached_system(),
         messages=[{'role': 'user', 'content': user_msg}]
     ) as stream:

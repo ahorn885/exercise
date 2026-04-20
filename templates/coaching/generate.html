@@ -28,44 +28,86 @@
 {% endif %}
 
 <div class="row">
-  <div class="col-lg-6">
-    <div class="card">
-      <div class="card-header fw-semibold">New Plan Block</div>
-      <div class="card-body">
-        <form method="post">
-          <div class="mb-3">
-            <label class="form-label fw-semibold">Start Date</label>
-            <input type="date" name="start_date" class="form-control"
-                   value="{{ suggested_start }}" required>
+  <div class="col-lg-7">
+    <form method="post">
+
+      <div class="card mb-3">
+        <div class="card-header fw-semibold">Target Race</div>
+        <div class="card-body">
+          <div class="row g-3">
+            <div class="col-md-8">
+              <label class="form-label fw-semibold">Race Name</label>
+              <input type="text" name="race_name" class="form-control"
+                     placeholder="e.g. Pocket Gopher Extreme 2026" required>
+            </div>
+            <div class="col-md-4">
+              <label class="form-label fw-semibold">Race Date</label>
+              <input type="date" name="race_date" class="form-control" required>
+            </div>
+            <div class="col-md-6">
+              <label class="form-label fw-semibold">Location</label>
+              <input type="text" name="race_location" class="form-control"
+                     placeholder="e.g. Nerstrand, MN">
+            </div>
+            <div class="col-md-6">
+              <label class="form-label fw-semibold">Expected Duration / Length</label>
+              <input type="text" name="race_duration" class="form-control"
+                     placeholder="e.g. 48–56 hrs continuous">
+            </div>
+            <div class="col-12">
+              <label class="form-label fw-semibold">Disciplines</label>
+              <input type="text" name="race_disciplines" class="form-control"
+                     placeholder="e.g. Trail running, MTB, packrafting, rock climbing, abseiling">
+            </div>
+            <div class="col-12">
+              <label class="form-label fw-semibold">Race Website <span class="text-muted fw-normal">(optional)</span></label>
+              <input type="url" name="race_website" class="form-control"
+                     placeholder="https://...">
+            </div>
           </div>
-          <div class="mb-3">
-            <label class="form-label fw-semibold">Weeks</label>
-            <select name="weeks" class="form-select">
-              <option value="2">2 weeks</option>
-              <option value="4" selected>4 weeks (standard block)</option>
-              <option value="6">6 weeks</option>
-            </select>
-          </div>
-          <div class="mb-3">
-            <label class="form-label fw-semibold">Coach Notes <span class="text-muted fw-normal">(optional)</span></label>
-            <textarea name="notes" class="form-control" rows="3"
-                      placeholder="e.g. 'Reduce run volume this block — left knee soreness' or 'Travel week 2, hotel only'"></textarea>
-            <div class="form-text">Any context you want Claude to factor in when building the plan.</div>
-          </div>
-          <button type="submit" class="btn btn-primary w-100" {% if not api_configured %}disabled{% endif %}>
-            Generate Plan with Claude
-          </button>
-        </form>
+        </div>
       </div>
-    </div>
+
+      <div class="card mb-3">
+        <div class="card-header fw-semibold">Plan Block</div>
+        <div class="card-body">
+          <div class="row g-3">
+            <div class="col-md-6">
+              <label class="form-label fw-semibold">Start Date</label>
+              <input type="date" name="start_date" class="form-control"
+                     value="{{ suggested_start }}" required>
+            </div>
+            <div class="col-md-6">
+              <label class="form-label fw-semibold">Weeks</label>
+              <select name="weeks" class="form-select">
+                <option value="2">2 weeks</option>
+                <option value="4" selected>4 weeks (standard block)</option>
+                <option value="6">6 weeks</option>
+              </select>
+            </div>
+            <div class="col-12">
+              <label class="form-label fw-semibold">Coach Notes <span class="text-muted fw-normal">(optional)</span></label>
+              <textarea name="notes" class="form-control" rows="3"
+                        placeholder="e.g. 'Reduce run volume this block — left knee soreness' or 'Travel week 2, hotel only'"></textarea>
+              <div class="form-text">Any context you want Claude to factor in when building the plan.</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <button type="submit" class="btn btn-primary w-100" {% if not api_configured %}disabled{% endif %}>
+        Generate Plan with Claude
+      </button>
+    </form>
   </div>
 
-  <div class="col-lg-6">
+  <div class="col-lg-5">
     <div class="card border-0 bg-light h-100">
       <div class="card-body">
         <h6 class="fw-semibold mb-3">What this does</h6>
         <ul class="small text-muted mb-3">
-          <li>Determines your current training phase based on the start date vs race day (Jul 17, 2026)</li>
+          <li>Determines your training phase based on start date vs race date</li>
+          <li>Tailors discipline emphasis to your race's specific requirements</li>
           <li>Applies your periodization structure, climbing ladder, and weekly layout preferences</li>
           <li>Incorporates active injuries and substitution rules</li>
           <li>Uses your recent training history for progressive overload</li>
@@ -73,7 +115,15 @@
         </ul>
         <h6 class="fw-semibold mb-2">Remote control (headless)</h6>
         <pre class="bg-white p-2 rounded small"><code>POST /coaching/api/generate
-{"start_date": "2026-05-01", "weeks": 4, "notes": "..."}</code></pre>
+{
+  "start_date": "2026-05-01",
+  "weeks": 4,
+  "race_name": "Pocket Gopher Extreme 2026",
+  "race_date": "2026-07-17",
+  "race_disciplines": "Trail running, MTB, packrafting",
+  "race_duration": "48-56 hrs",
+  "notes": "..."
+}</code></pre>
       </div>
     </div>
   </div>

@@ -29,6 +29,12 @@ def generate():
         start_date = request.form.get('start_date', '').strip()
         weeks = int(request.form.get('weeks', 4))
         notes = request.form.get('notes', '').strip()
+        race_name = request.form.get('race_name', '').strip()
+        race_date = request.form.get('race_date', '').strip()
+        race_location = request.form.get('race_location', '').strip()
+        race_disciplines = request.form.get('race_disciplines', '').strip()
+        race_duration = request.form.get('race_duration', '').strip()
+        race_website = request.form.get('race_website', '').strip()
 
         if not start_date:
             flash('Start date is required.', 'danger')
@@ -41,7 +47,12 @@ def generate():
         try:
             from coaching import generate_plan
             from routes.plans import _create_plan_from_dict
-            plan_data, usage = generate_plan(db, start_date, weeks=weeks, notes=notes)
+            plan_data, usage = generate_plan(
+                db, start_date, weeks=weeks, notes=notes,
+                race_name=race_name, race_date=race_date, race_location=race_location,
+                race_disciplines=race_disciplines, race_duration=race_duration,
+                race_website=race_website,
+            )
             plan_id = _create_plan_from_dict(db, plan_data)
             db.commit()
             _log_usage(usage, 'generate')
@@ -163,11 +174,22 @@ def api_generate():
     start_date = data.get('start_date', date.today().isoformat())
     weeks = int(data.get('weeks', 4))
     notes = data.get('notes', '')
+    race_name = data.get('race_name', '')
+    race_date = data.get('race_date', '')
+    race_location = data.get('race_location', '')
+    race_disciplines = data.get('race_disciplines', '')
+    race_duration = data.get('race_duration', '')
+    race_website = data.get('race_website', '')
     try:
         db = get_db()
         from coaching import generate_plan
         from routes.plans import _create_plan_from_dict
-        plan_data, usage = generate_plan(db, start_date, weeks=weeks, notes=notes)
+        plan_data, usage = generate_plan(
+            db, start_date, weeks=weeks, notes=notes,
+            race_name=race_name, race_date=race_date, race_location=race_location,
+            race_disciplines=race_disciplines, race_duration=race_duration,
+            race_website=race_website,
+        )
         plan_id = _create_plan_from_dict(db, plan_data)
         db.commit()
         return jsonify({
