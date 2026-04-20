@@ -229,13 +229,13 @@ def fetch_activities(db, start_date: str, end_date: str) -> list:
             'https://connectapi.garmin.com/activitylist-service/activities/search/activities',
         ]:
             resp = s.get(url, params=params, timeout=30)
-            if resp.status_code == 200:
+            print(f'[garmin browser] GET {url} → {resp.status_code}, body[:200]: {resp.text[:200]!r}')
+            if resp.status_code == 200 and resp.text.strip():
                 data = resp.json()
                 if isinstance(data, list):
                     return data
                 return data.get('activityList', data.get('activities', []))
-        resp.raise_for_status()
-        return []
+        raise RuntimeError(f'Garmin API returned {resp.status_code}: {resp.text[:300]}')
 
     client = _load_client(db)
     try:
