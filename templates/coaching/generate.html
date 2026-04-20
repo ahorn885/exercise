@@ -1,0 +1,81 @@
+{% extends 'base.html' %}
+{% block title %}Generate Training Plan{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+  <h2 class="mb-0">Generate Training Plan</h2>
+  <a href="{{ url_for('plans.list_plans') }}" class="btn btn-outline-secondary btn-sm">← Plans</a>
+</div>
+
+{% if not api_configured %}
+<div class="alert alert-danger">
+  <strong>API key not configured.</strong>
+  Set the <code>ANTHROPIC_API_KEY</code> environment variable and restart the app.
+</div>
+{% endif %}
+
+{% if plans %}
+<div class="card mb-4 border-0 bg-light">
+  <div class="card-body py-2">
+    <small class="text-muted">Existing plans:</small>
+    {% for p in plans %}
+      <a href="{{ url_for('plans.view_plan', plan_id=p.id) }}" class="badge bg-secondary text-decoration-none me-1">
+        {{ p.name }}{% if p.end_date %} (ends {{ p.end_date }}){% endif %}
+      </a>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}
+
+<div class="row">
+  <div class="col-lg-6">
+    <div class="card">
+      <div class="card-header fw-semibold">New Plan Block</div>
+      <div class="card-body">
+        <form method="post">
+          <div class="mb-3">
+            <label class="form-label fw-semibold">Start Date</label>
+            <input type="date" name="start_date" class="form-control"
+                   value="{{ suggested_start }}" required>
+          </div>
+          <div class="mb-3">
+            <label class="form-label fw-semibold">Weeks</label>
+            <select name="weeks" class="form-select">
+              <option value="2">2 weeks</option>
+              <option value="4" selected>4 weeks (standard block)</option>
+              <option value="6">6 weeks</option>
+            </select>
+          </div>
+          <div class="mb-3">
+            <label class="form-label fw-semibold">Coach Notes <span class="text-muted fw-normal">(optional)</span></label>
+            <textarea name="notes" class="form-control" rows="3"
+                      placeholder="e.g. 'Reduce run volume this block — left knee soreness' or 'Travel week 2, hotel only'"></textarea>
+            <div class="form-text">Any context you want Claude to factor in when building the plan.</div>
+          </div>
+          <button type="submit" class="btn btn-primary w-100" {% if not api_configured %}disabled{% endif %}>
+            Generate Plan with Claude
+          </button>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-lg-6">
+    <div class="card border-0 bg-light h-100">
+      <div class="card-body">
+        <h6 class="fw-semibold mb-3">What this does</h6>
+        <ul class="small text-muted mb-3">
+          <li>Determines your current training phase based on the start date vs race day (Jul 17, 2026)</li>
+          <li>Applies your periodization structure, climbing ladder, and weekly layout preferences</li>
+          <li>Incorporates active injuries and substitution rules</li>
+          <li>Uses your recent training history for progressive overload</li>
+          <li>Returns a complete plan with full exercise details, sets, reps, and calorie targets</li>
+        </ul>
+        <h6 class="fw-semibold mb-2">Remote control (headless)</h6>
+        <pre class="bg-white p-2 rounded small"><code>POST /coaching/api/generate
+{"start_date": "2026-05-01", "weeks": 4, "notes": "..."}</code></pre>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

@@ -33,6 +33,7 @@ from routes.references import bp as references_bp
 from routes.locales import bp as locales_bp
 from routes.garmin import bp as garmin_bp
 from routes.plans import bp as plans_bp
+from routes.coaching import bp as coaching_bp
 
 app.register_blueprint(dashboard_bp)
 app.register_blueprint(training_bp)
@@ -45,6 +46,7 @@ app.register_blueprint(references_bp)
 app.register_blueprint(locales_bp)
 app.register_blueprint(garmin_bp)
 app.register_blueprint(plans_bp)
+app.register_blueprint(coaching_bp)
 
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0', port=5000)
