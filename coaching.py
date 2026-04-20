@@ -102,13 +102,8 @@ Creatine 5g (morning), Omega-3 2-3g, Vitamin D3 2000 IU, Magnesium Glycinate 400
 
 # Substitution Rules
 
-## Active Injury: Left Wrist
-Pain/weakness with wrist extension. Hard rules:
-- NO standard push-ups (flat palm) — use fist/knuckle push-ups only
-- NO front squats with clean grip — use goblet or cross-arm
-- NO barbell curls with wrist extension — use hammer or neutral-grip curls
-- Climbing: grip-dominant moves OK; wrist-loaded moves NOT OK
-- Reverse wrist curls allowed at light weight (10 lb) — therapeutic
+## Injury Substitutions
+Active injuries and required modifications are provided per request from the training database. Always apply them strictly.
 
 ## Hotel Gym Substitutions
 Barbell → Dumbbell: Back squat→Goblet squat, DL→DB RDL, Barbell row→Single-arm DB row
@@ -124,16 +119,32 @@ Hiking: Treadmill 10-15% incline with weighted vest, extend duration
 
 ---
 
-# Equipment Available
-Road bike, mountain bike, cycling trainer, treadmill, kayak, paddling ergometer, home gym (Olympic weights, KBs, DBs, grip trainers, bands). Multiple outdoor trails (MTB, hike, run), rivers/lakes, road routes.
+# Equipment & Terrain
+Available equipment and outdoor terrain options are provided per request based on the current locale. Use them to select appropriate exercises and substitute where needed.
 """
 
 
 # ── Context gathering ─────────────────────────────────────────────────────────
 
-def get_coaching_context(db, plan_id=None, lookback_days=14):
+def get_coaching_context(db, plan_id=None, lookback_days=14, locale='home'):
     """Gather all training context for Claude. Returns a dict."""
-    ctx = {'today': date.today().isoformat()}
+    ctx = {'today': date.today().isoformat(), 'locale': locale}
+
+    # Equipment and terrain available at current locale
+    equipment_rows = db.execute(
+        '''SELECT ei.tag, ei.label, ei.category
+           FROM locale_equipment le
+           JOIN equipment_items ei ON ei.id = le.equipment_id
+           WHERE le.locale = ?
+           ORDER BY ei.category, ei.label''',
+        (locale,)
+    ).fetchall()
+    ctx['available_equipment'] = [dict(r) for r in equipment_rows]
+
+    locale_profile = db.execute(
+        'SELECT notes FROM locale_profiles WHERE locale = ?', (locale,)
+    ).fetchone()
+    ctx['locale_notes'] = locale_profile['notes'] if locale_profile and locale_profile['notes'] else ''
 
     # Active injuries
     injuries = db.execute(
@@ -265,13 +276,13 @@ def _parse_json_response(text):
 def generate_plan(db, start_date: str, weeks: int = 4, notes: str = '',
                   race_name: str = '', race_date: str = '', race_location: str = '',
                   race_disciplines: str = '', race_duration: str = '',
-                  race_website: str = '') -> tuple:
+                  race_website: str = '', locale: str = 'home') -> tuple:
     """
     Generate a new training plan block.
     Returns (plan_dict, usage) where plan_dict matches _create_plan_from_dict schema.
     """
     client = _get_client()
-    ctx = get_coaching_context(db)
+    ctx = get_coaching_context(db, locale=locale)
 
     race_section = f"""## Target Race
 - Event: {race_name or 'Not specified'}
@@ -311,7 +322,7 @@ Tailor discipline emphasis to the race disciplines listed above.
     return plan, response.usage
 
 
-def run_review(db, plan_id: int, tier: int, notes: str = '') -> tuple:
+def run_review(db, plan_id: int, tier: int, notes: str = '', locale: str = 'home') -> tuple:
     """
     Run a tier 1/2/3 coaching review.
 
@@ -323,7 +334,7 @@ def run_review(db, plan_id: int, tier: int, notes: str = '') -> tuple:
     """
     client = _get_client()
     lookback = {1: 7, 2: 14, 3: 30}.get(tier, 14)
-    ctx = get_coaching_context(db, plan_id=plan_id, lookback_days=lookback)
+    ctx = get_coaching_context(db, plan_id=plan_id, lookback_days=lookback, locale=locale)
 
     if tier == 3:
         # Get current plan end date for next block start

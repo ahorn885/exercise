@@ -73,6 +73,15 @@
             <div class="form-text" id="tier-description"></div>
           </div>
           <div class="mb-3">
+            <label class="form-label fw-semibold">Current Locale</label>
+            <select name="locale" class="form-select">
+              {% for loc in locales %}
+              <option value="{{ loc }}" {% if loc == 'home' %}selected{% endif %}>{{ loc | capitalize }}</option>
+              {% endfor %}
+            </select>
+            <div class="form-text"><a href="{{ url_for('locales.list_profiles') }}">Edit equipment profiles →</a></div>
+          </div>
+          <div class="mb-3">
             <label class="form-label fw-semibold">Coach Notes <span class="text-muted fw-normal">(optional)</span></label>
             <textarea name="notes" class="form-control" rows="3"
                       placeholder="e.g. 'Felt really fatigued this week — consider reducing intensity' or 'Adding a hotel week starting May 12'"></textarea>

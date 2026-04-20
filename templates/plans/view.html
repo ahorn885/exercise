@@ -74,6 +74,7 @@
           <th>Sport</th>
           <th>Duration</th>
           <th>Intensity</th>
+          <th title="Daily calorie target">Cal</th>
           <th>Status</th>
           <th></th>
         </tr>
@@ -101,6 +102,7 @@
           <td><small>{{ item.sport_type }}</small></td>
           <td><small>{% if item.target_duration_min %}{{ item.target_duration_min|int }} min{% else %}—{% endif %}</small></td>
           <td><small>{{ item.intensity or '—' }}</small></td>
+          <td><small class="text-muted">{{ calorie_target(item.sport_type, item.intensity, item.target_duration_min) }}</small></td>
           <td>
             <span class="badge bg-{{ status_colors.get(item.status, 'secondary') }}">{{ item.status }}</span>
           </td>

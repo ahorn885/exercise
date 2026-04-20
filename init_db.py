@@ -483,6 +483,7 @@ EQUIPMENT_CATEGORIES = [
         ('spin_bike',       'Spin Bike / Peloton'),
         ('stair_climber',   'Stair Climber / StepMill'),
         ('rowing_erg',      'Rowing Erg (Concept2)'),
+        ('kayak_erg',       'Kayak Ergometer'),
         ('air_bike',        'Air Bike / Assault Bike'),
         ('ski_erg',         'SkiErg'),
     ]),
@@ -500,12 +501,25 @@ EQUIPMENT_CATEGORIES = [
         ('bosu',           'BOSU Ball'),
         ('ab_wheel',       'Ab Wheel'),
         ('foam_roller',    'Foam Roller'),
+        ('grip_trainer',   'Grip Trainer (squeeze)'),
         ('rice_bucket',    'Rice Bucket'),
+        ('lacrosse_ball',  'Lacrosse Ball / Massage Ball'),
     ]),
     ('Specialty', [
         ('hangboard',     'Hangboard'),
         ('treadwall',     'Treadwall'),
         ('climbing_wall', 'Climbing Wall / Bouldering'),
+    ]),
+    ('Outdoor & Terrain', [
+        ('trail_running',       'Trail Running (singletrack / dirt)'),
+        ('road_running',        'Road Running (pavement)'),
+        ('road_cycling',        'Road Cycling'),
+        ('mtb_trails',          'Mountain Bike Trails (MTB)'),
+        ('gravel_routes',       'Gravel / Mixed-Terrain Cycling'),
+        ('open_water_paddle',   'Open Water Paddling (lake / river)'),
+        ('open_water_swim',     'Open Water Swimming'),
+        ('pool_swim',           'Pool Swimming'),
+        ('hills',               'Hills / Significant Elevation Gain'),
     ]),
 ]
 

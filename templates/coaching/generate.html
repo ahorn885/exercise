@@ -72,18 +72,27 @@
         <div class="card-header fw-semibold">Plan Block</div>
         <div class="card-body">
           <div class="row g-3">
-            <div class="col-md-6">
+            <div class="col-md-4">
               <label class="form-label fw-semibold">Start Date</label>
               <input type="date" name="start_date" class="form-control"
                      value="{{ suggested_start }}" required>
             </div>
-            <div class="col-md-6">
+            <div class="col-md-4">
               <label class="form-label fw-semibold">Weeks</label>
               <select name="weeks" class="form-select">
                 <option value="2">2 weeks</option>
                 <option value="4" selected>4 weeks (standard block)</option>
                 <option value="6">6 weeks</option>
               </select>
+            </div>
+            <div class="col-md-4">
+              <label class="form-label fw-semibold">Current Locale</label>
+              <select name="locale" class="form-select">
+                {% for loc in locales %}
+                <option value="{{ loc }}" {% if loc == 'home' %}selected{% endif %}>{{ loc | capitalize }}</option>
+                {% endfor %}
+              </select>
+              <div class="form-text"><a href="{{ url_for('locales.list_profiles') }}">Edit equipment profiles →</a></div>
             </div>
             <div class="col-12">
               <label class="form-label fw-semibold">Coach Notes <span class="text-muted fw-normal">(optional)</span></label>

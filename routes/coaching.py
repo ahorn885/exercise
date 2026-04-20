@@ -18,6 +18,9 @@ def context():
     return jsonify(ctx)
 
 
+LOCALES = ['home', 'hotel', 'partner', 'airport']
+
+
 @bp.route('/generate', methods=['GET', 'POST'])
 def generate():
     db = get_db()
@@ -35,6 +38,9 @@ def generate():
         race_disciplines = request.form.get('race_disciplines', '').strip()
         race_duration = request.form.get('race_duration', '').strip()
         race_website = request.form.get('race_website', '').strip()
+        locale = request.form.get('locale', 'home')
+        if locale not in LOCALES:
+            locale = 'home'
 
         if not start_date:
             flash('Start date is required.', 'danger')
@@ -51,7 +57,7 @@ def generate():
                 db, start_date, weeks=weeks, notes=notes,
                 race_name=race_name, race_date=race_date, race_location=race_location,
                 race_disciplines=race_disciplines, race_duration=race_duration,
-                race_website=race_website,
+                race_website=race_website, locale=locale,
             )
             plan_id = _create_plan_from_dict(db, plan_data)
             db.commit()
@@ -80,6 +86,7 @@ def generate():
     return render_template('coaching/generate.html',
                            plans=plans,
                            suggested_start=suggested_start,
+                           locales=LOCALES,
                            api_configured=_check_api_key())
 
 
@@ -97,6 +104,9 @@ def review(plan_id):
     if request.method == 'POST':
         tier = int(request.form.get('tier', 1))
         notes = request.form.get('notes', '').strip()
+        locale = request.form.get('locale', 'home')
+        if locale not in LOCALES:
+            locale = 'home'
 
         if not _check_api_key():
             flash('ANTHROPIC_API_KEY is not configured.', 'danger')
@@ -104,7 +114,7 @@ def review(plan_id):
 
         try:
             from coaching import run_review
-            result, usage = run_review(db, plan_id, tier, notes=notes)
+            result, usage = run_review(db, plan_id, tier, notes=notes, locale=locale)
             _log_usage(usage, f'review_t{tier}')
 
             if tier == 3:
@@ -162,6 +172,7 @@ def review(plan_id):
             flash(f'Review failed: {e}', 'danger')
 
     return render_template('coaching/review.html', plan=plan, health=health,
+                           locales=LOCALES,
                            api_configured=_check_api_key())
 
 

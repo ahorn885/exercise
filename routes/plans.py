@@ -9,6 +9,22 @@ from database import get_db
 bp = Blueprint('plans', __name__, url_prefix='/plans')
 
 
+def _calorie_target(sport_type, intensity, duration_min):
+    """Return a calorie range string for a workout based on type/intensity/duration."""
+    duration_min = duration_min or 0
+    if sport_type == 'hiking' and duration_min >= 300:
+        return '4700–6200'
+    if sport_type == 'hiking' and duration_min >= 180:
+        return '3900–4500'
+    if intensity == 'very_hard' or duration_min > 180:
+        return '3900–4500'
+    if intensity == 'hard' or duration_min >= 90:
+        return '3400–3800'
+    if intensity in ('easy', 'moderate'):
+        return '3000–3200'
+    return '2800–2900'
+
+
 def _create_plan_from_dict(db, data):
     """Insert a training plan from a dict. Returns plan_id."""
     workouts = data.get('workouts', [])
@@ -288,7 +304,8 @@ def view_plan(plan_id):
                            total=total, completed=completed,
                            active_mods=active_mods,
                            affected_exercises=affected_exercises,
-                           health=health)
+                           health=health,
+                           calorie_target=_calorie_target)
 
 
 @bp.route('/<int:plan_id>/item/<int:item_id>')
