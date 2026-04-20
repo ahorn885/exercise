@@ -42,6 +42,12 @@ def generate():
         if locale not in LOCALES:
             locale = 'home'
         nutrition_goal = request.form.get('nutrition_goal', 'maintain')
+        try:
+            travel_schedule = json.loads(request.form.get('travel_schedule', '[]'))
+            if not isinstance(travel_schedule, list):
+                travel_schedule = []
+        except (json.JSONDecodeError, ValueError):
+            travel_schedule = []
 
         if not start_date:
             flash('Start date is required.', 'danger')
@@ -60,8 +66,17 @@ def generate():
                 race_disciplines=race_disciplines, race_duration=race_duration,
                 race_website=race_website, locale=locale,
                 nutrition_goal=nutrition_goal,
+                travel_schedule=travel_schedule,
             )
             plan_id = _create_plan_from_dict(db, plan_data)
+            for trip in travel_schedule:
+                s = trip.get('start_date', '')
+                e = trip.get('end_date', '')
+                if s and e:
+                    db.execute(
+                        'INSERT INTO plan_travel (plan_id, start_date, end_date, locale, city) VALUES (?,?,?,?,?)',
+                        (plan_id, s, e, trip.get('locale', 'hotel'), trip.get('city', ''))
+                    )
             db.commit()
             _log_usage(usage, 'generate')
             flash(

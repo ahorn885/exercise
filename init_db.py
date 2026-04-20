@@ -173,7 +173,18 @@ SQLITE_SCHEMA = '''
         locale TEXT PRIMARY KEY,
         equipment TEXT DEFAULT '',
         notes TEXT DEFAULT '',
+        city TEXT DEFAULT '',
         updated_at TEXT DEFAULT (datetime('now'))
+    );
+    CREATE TABLE IF NOT EXISTS plan_travel (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        plan_id INTEGER NOT NULL REFERENCES training_plans(id),
+        start_date TEXT NOT NULL,
+        end_date TEXT NOT NULL,
+        locale TEXT NOT NULL,
+        city TEXT DEFAULT '',
+        notes TEXT DEFAULT '',
+        created_at TEXT DEFAULT (datetime('now'))
     );
     CREATE TABLE IF NOT EXISTS equipment_items (
         id       INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -377,7 +388,18 @@ PG_SCHEMA = '''
         locale TEXT PRIMARY KEY,
         equipment TEXT DEFAULT '',
         notes TEXT DEFAULT '',
+        city TEXT DEFAULT '',
         updated_at TIMESTAMP DEFAULT NOW()
+    );
+    CREATE TABLE IF NOT EXISTS plan_travel (
+        id SERIAL PRIMARY KEY,
+        plan_id INTEGER NOT NULL REFERENCES training_plans(id),
+        start_date TEXT NOT NULL,
+        end_date TEXT NOT NULL,
+        locale TEXT NOT NULL,
+        city TEXT DEFAULT '',
+        notes TEXT DEFAULT '',
+        created_at TIMESTAMP DEFAULT NOW()
     );
     CREATE TABLE IF NOT EXISTS equipment_items (
         id       SERIAL PRIMARY KEY,
@@ -448,6 +470,8 @@ _SQLITE_MIGRATIONS = [
     "ALTER TABLE plan_items ADD COLUMN macro_protein_pct INTEGER",
     "ALTER TABLE plan_items ADD COLUMN macro_fat_pct INTEGER",
     "ALTER TABLE plan_items ADD COLUMN session_fueling TEXT",
+    "ALTER TABLE locale_profiles ADD COLUMN city TEXT DEFAULT ''",
+    "CREATE TABLE IF NOT EXISTS plan_travel (id INTEGER PRIMARY KEY AUTOINCREMENT, plan_id INTEGER NOT NULL REFERENCES training_plans(id), start_date TEXT NOT NULL, end_date TEXT NOT NULL, locale TEXT NOT NULL, city TEXT DEFAULT '', notes TEXT DEFAULT '', created_at TEXT DEFAULT (datetime('now')))",
 ]
 
 _PG_MIGRATIONS = [
@@ -485,6 +509,8 @@ _PG_MIGRATIONS = [
     "ALTER TABLE plan_items ADD COLUMN IF NOT EXISTS macro_protein_pct INTEGER",
     "ALTER TABLE plan_items ADD COLUMN IF NOT EXISTS macro_fat_pct INTEGER",
     "ALTER TABLE plan_items ADD COLUMN IF NOT EXISTS session_fueling TEXT",
+    "ALTER TABLE locale_profiles ADD COLUMN IF NOT EXISTS city TEXT DEFAULT ''",
+    "CREATE TABLE IF NOT EXISTS plan_travel (id SERIAL PRIMARY KEY, plan_id INTEGER NOT NULL REFERENCES training_plans(id), start_date TEXT NOT NULL, end_date TEXT NOT NULL, locale TEXT NOT NULL, city TEXT DEFAULT '', notes TEXT DEFAULT '', created_at TIMESTAMP DEFAULT NOW())",
 ]
 
 # Equipment catalog — single source of truth for seeding equipment_items and the locale profile UI.

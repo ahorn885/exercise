@@ -38,6 +38,7 @@ def edit_profile(locale):
     if request.method == 'POST':
         selected_tags = [t for t in request.form.getlist('equipment') if t in ALL_TAGS]
         notes = request.form.get('notes', '').strip()
+        city = request.form.get('city', '').strip()
         # Resolve tags to equipment_ids
         if selected_tags:
             placeholders = ','.join('?' * len(selected_tags))
@@ -50,12 +51,13 @@ def edit_profile(locale):
             tag_to_id = {}
         # Upsert locale_profiles first — locale_equipment has a FK on this table
         db.execute(
-            '''INSERT INTO locale_profiles (locale, notes, updated_at)
-               VALUES (?, ?, datetime('now'))
+            '''INSERT INTO locale_profiles (locale, notes, city, updated_at)
+               VALUES (?, ?, ?, datetime('now'))
                ON CONFLICT(locale) DO UPDATE SET
                  notes=excluded.notes,
+                 city=excluded.city,
                  updated_at=excluded.updated_at''',
-            (locale, notes)
+            (locale, notes, city)
         )
         # Replace locale_equipment rows atomically
         db.execute('DELETE FROM locale_equipment WHERE locale = ?', (locale,))
@@ -81,4 +83,5 @@ def edit_profile(locale):
     return render_template('locales/form.html', locale=locale,
                            equipment_categories=EQUIPMENT_CATEGORIES,
                            active=active,
-                           notes=profile['notes'] if profile else '')
+                           notes=profile['notes'] if profile else '',
+                           city=profile['city'] if profile and profile['city'] else '')

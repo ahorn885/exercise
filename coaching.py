@@ -142,9 +142,10 @@ def get_coaching_context(db, plan_id=None, lookback_days=14, locale='home'):
     ctx['available_equipment'] = [dict(r) for r in equipment_rows]
 
     locale_profile = db.execute(
-        'SELECT notes FROM locale_profiles WHERE locale = ?', (locale,)
+        'SELECT notes, city FROM locale_profiles WHERE locale = ?', (locale,)
     ).fetchone()
     ctx['locale_notes'] = locale_profile['notes'] if locale_profile and locale_profile['notes'] else ''
+    ctx['locale_city'] = locale_profile['city'] if locale_profile and locale_profile['city'] else ''
 
     # Active injuries
     injuries = db.execute(
@@ -302,7 +303,8 @@ def generate_plan(db, start_date: str, weeks: int = 4, notes: str = '',
                   race_name: str = '', race_date: str = '', race_location: str = '',
                   race_disciplines: str = '', race_duration: str = '',
                   race_website: str = '', locale: str = 'home',
-                  nutrition_goal: str = 'maintain') -> tuple:
+                  nutrition_goal: str = 'maintain',
+                  travel_schedule: list = None) -> tuple:
     """
     Generate a new training plan block.
     Returns (plan_dict, usage) where plan_dict matches _create_plan_from_dict schema.
@@ -320,6 +322,16 @@ def generate_plan(db, start_date: str, weeks: int = 4, notes: str = '',
 
     nutrition_guidance = _NUTRITION_GOAL_GUIDANCE.get(nutrition_goal, _NUTRITION_GOAL_GUIDANCE['maintain'])
 
+    travel_section = ''
+    if travel_schedule:
+        lines = ['## Travel Schedule (adapt equipment and workout selection to locale for these date ranges)']
+        for t in travel_schedule:
+            loc = t.get('locale', 'hotel')
+            city = t.get('city', '')
+            city_str = f' ({city})' if city else ''
+            lines.append(f"- {t.get('start_date')} → {t.get('end_date')}: {loc.title()}{city_str}")
+        travel_section = '\n'.join(lines) + '\n'
+
     user_msg = f"""Generate a {weeks}-week training plan block starting {start_date}.
 
 {race_section}
@@ -327,7 +339,7 @@ def generate_plan(db, start_date: str, weeks: int = 4, notes: str = '',
 ## Nutrition Goal
 {nutrition_guidance}
 
-Determine the correct training phase based on start date vs race date above.
+{travel_section}Determine the correct training phase based on start date vs race date above.
 Apply the periodization structure, weekly layout preferences, climbing ladder, and variety rules from your coaching framework.
 Tailor discipline emphasis to the race disciplines listed above.
 Apply the nutrition goal above to calorie and macro recommendations in workout descriptions.

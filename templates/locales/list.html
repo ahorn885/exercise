@@ -17,7 +17,11 @@
         </div>
         <div class="card-body">
           {% if tag_count > 0 %}
-            <p class="text-muted small mb-2">{{ tag_count }} item{{ 's' if tag_count != 1 }} &nbsp;·&nbsp; updated {{ p['updated_at'][:10] if p and p['updated_at'] else '—' }}</p>
+            <p class="text-muted small mb-2">
+              {{ tag_count }} item{{ 's' if tag_count != 1 }}
+              {% if p and p['city'] %} &nbsp;·&nbsp; 📍 {{ p['city'] }}{% endif %}
+              &nbsp;·&nbsp; updated {{ p['updated_at'][:10] if p and p['updated_at'] else '—' }}
+            </p>
             {% if p and p['notes'] %}
               <p class="text-muted small fst-italic mb-2">{{ p['notes'] }}</p>
             {% endif %}

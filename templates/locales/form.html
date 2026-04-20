@@ -25,6 +25,10 @@
     {% endfor %}
   </div>
   <div class="mb-3" style="max-width:480px">
+    <label class="form-label fw-semibold">City / Location <span class="text-muted small fw-normal">(optional — e.g. "Minneapolis, MN" or "Renton, WA")</span></label>
+    <input type="text" name="city" class="form-control" value="{{ city }}" placeholder="City where this locale is located">
+  </div>
+  <div class="mb-3" style="max-width:480px">
     <label class="form-label fw-semibold">Notes <span class="text-muted small fw-normal">(optional — e.g. "DB up to 50 lb, no rack")</span></label>
     <textarea name="notes" class="form-control" rows="2">{{ notes }}</textarea>
   </div>
