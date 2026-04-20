@@ -67,12 +67,16 @@ def _create_plan_from_dict(db, data):
         db.execute(
             '''INSERT INTO plan_items
                (plan_id, item_date, sport_type, workout_name, description,
-                target_duration_min, target_distance_mi, intensity, garmin_workout_json)
-               VALUES (?,?,?,?,?,?,?,?,?)''',
+                target_duration_min, target_distance_mi, intensity, garmin_workout_json,
+                calorie_target, macro_carb_pct, macro_protein_pct, macro_fat_pct, session_fueling)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
             (plan_id, w.get('date'), w.get('sport_type', ''),
              w.get('workout_name', ''), w.get('description'),
              w.get('target_duration_min'), w.get('target_distance_mi'),
-             w.get('intensity'), garmin_str)
+             w.get('intensity'), garmin_str,
+             w.get('calorie_target'), w.get('macro_carb_pct'),
+             w.get('macro_protein_pct'), w.get('macro_fat_pct'),
+             w.get('session_fueling'))
         )
     return plan_id
 

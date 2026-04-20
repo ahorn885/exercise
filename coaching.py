@@ -248,10 +248,18 @@ _PLAN_SCHEMA_INSTRUCTIONS = """Return ONLY a JSON object (no markdown fences, no
       "description": "Full workout details including exercises, sets, reps, weights, durations. Be specific.",
       "target_duration_min": number_or_null,
       "target_distance_mi": number_or_null,
-      "intensity": "easy|moderate|hard|very_hard"
+      "intensity": "easy|moderate|hard|very_hard",
+      "calorie_target": "e.g. 3400-3800",
+      "macro_carb_pct": integer,
+      "macro_protein_pct": integer,
+      "macro_fat_pct": integer,
+      "session_fueling": "string_or_null — specific intra/post session fueling protocol, null if session <60 min"
     }
   ]
 }
+Use the nutrition guidelines from your framework to set calorie and macro values for each day.
+Apply the nutrition goal specified in the request (deficit/surplus/maintain/performance).
+Carb + protein + fat percentages must sum to 100.
 Skip rest days (Monday is always rest — omit it). Include every other day."""
 
 

@@ -122,6 +122,11 @@ SQLITE_SCHEMA = '''
         garmin_workout_json TEXT,
         status TEXT DEFAULT 'scheduled',
         notes TEXT,
+        calorie_target TEXT,
+        macro_carb_pct INTEGER,
+        macro_protein_pct INTEGER,
+        macro_fat_pct INTEGER,
+        session_fueling TEXT,
         created_at TEXT DEFAULT (datetime('now'))
     );
     CREATE TABLE IF NOT EXISTS plan_reviews (
@@ -321,6 +326,11 @@ PG_SCHEMA = '''
         garmin_workout_json TEXT,
         status TEXT DEFAULT 'scheduled',
         notes TEXT,
+        calorie_target TEXT,
+        macro_carb_pct INTEGER,
+        macro_protein_pct INTEGER,
+        macro_fat_pct INTEGER,
+        session_fueling TEXT,
         created_at TIMESTAMP DEFAULT NOW()
     );
     CREATE TABLE IF NOT EXISTS plan_reviews (
@@ -433,6 +443,11 @@ _SQLITE_MIGRATIONS = [
     "ALTER TABLE training_log ADD COLUMN garmin_activity_id TEXT",
     "CREATE TABLE IF NOT EXISTS coaching_preferences (id INTEGER PRIMARY KEY AUTOINCREMENT, category TEXT NOT NULL DEFAULT 'general', content TEXT NOT NULL, permanent INTEGER NOT NULL DEFAULT 1, created_at TEXT DEFAULT (datetime('now')))",
     "CREATE TABLE IF NOT EXISTS coaching_chat (id INTEGER PRIMARY KEY AUTOINCREMENT, plan_id INTEGER REFERENCES training_plans(id), role TEXT NOT NULL, content TEXT NOT NULL, actions_json TEXT, created_at TEXT DEFAULT (datetime('now')))",
+    "ALTER TABLE plan_items ADD COLUMN calorie_target TEXT",
+    "ALTER TABLE plan_items ADD COLUMN macro_carb_pct INTEGER",
+    "ALTER TABLE plan_items ADD COLUMN macro_protein_pct INTEGER",
+    "ALTER TABLE plan_items ADD COLUMN macro_fat_pct INTEGER",
+    "ALTER TABLE plan_items ADD COLUMN session_fueling TEXT",
 ]
 
 _PG_MIGRATIONS = [
@@ -465,6 +480,11 @@ _PG_MIGRATIONS = [
     "ALTER TABLE training_log ADD COLUMN IF NOT EXISTS garmin_activity_id TEXT",
     "CREATE TABLE IF NOT EXISTS coaching_preferences (id SERIAL PRIMARY KEY, category TEXT NOT NULL DEFAULT 'general', content TEXT NOT NULL, permanent INTEGER NOT NULL DEFAULT 1, created_at TIMESTAMP DEFAULT NOW())",
     "CREATE TABLE IF NOT EXISTS coaching_chat (id SERIAL PRIMARY KEY, plan_id INTEGER REFERENCES training_plans(id), role TEXT NOT NULL, content TEXT NOT NULL, actions_json TEXT, created_at TIMESTAMP DEFAULT NOW())",
+    "ALTER TABLE plan_items ADD COLUMN IF NOT EXISTS calorie_target TEXT",
+    "ALTER TABLE plan_items ADD COLUMN IF NOT EXISTS macro_carb_pct INTEGER",
+    "ALTER TABLE plan_items ADD COLUMN IF NOT EXISTS macro_protein_pct INTEGER",
+    "ALTER TABLE plan_items ADD COLUMN IF NOT EXISTS macro_fat_pct INTEGER",
+    "ALTER TABLE plan_items ADD COLUMN IF NOT EXISTS session_fueling TEXT",
 ]
 
 # Equipment catalog — single source of truth for seeding equipment_items and the locale profile UI.

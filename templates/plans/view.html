@@ -114,11 +114,19 @@
           <td><small>{% if item.target_duration_min %}{{ item.target_duration_min|int }} min{% else %}—{% endif %}</small></td>
           <td><small>{{ item.intensity or '—' }}</small></td>
           <td>
-            {% set nx = workout_nutrition(item.sport_type, item.intensity, item.target_duration_min) %}
-            <small class="fw-semibold">{{ nx.cal }} kcal</small><br>
-            <small class="text-muted">C{{ nx.carb }}% P{{ nx.protein }}% F{{ nx.fat }}%</small>
-            {% if nx.fueling %}
-            <br><small class="text-muted fst-italic" style="font-size:.7rem">{{ nx.fueling }}</small>
+            {% if item.calorie_target %}
+              <small class="fw-semibold">{{ item.calorie_target }} kcal</small><br>
+              <small class="text-muted">C{{ item.macro_carb_pct }}% P{{ item.macro_protein_pct }}% F{{ item.macro_fat_pct }}%</small>
+              {% if item.session_fueling %}
+              <br><small class="text-muted fst-italic" style="font-size:.7rem">{{ item.session_fueling }}</small>
+              {% endif %}
+            {% else %}
+              {% set nx = workout_nutrition(item.sport_type, item.intensity, item.target_duration_min) %}
+              <small class="fw-semibold">{{ nx.cal }} kcal</small><br>
+              <small class="text-muted">C{{ nx.carb }}% P{{ nx.protein }}% F{{ nx.fat }}%</small>
+              {% if nx.fueling %}
+              <br><small class="text-muted fst-italic" style="font-size:.7rem">{{ nx.fueling }}</small>
+              {% endif %}
             {% endif %}
           </td>
           <td>

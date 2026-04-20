@@ -145,7 +145,9 @@ def review(plan_id):
                     if not item_id or not patch:
                         continue
                     allowed = {'description', 'intensity', 'target_duration_min',
-                               'target_distance_mi', 'notes', 'workout_name'}
+                               'target_distance_mi', 'notes', 'workout_name',
+                               'calorie_target', 'macro_carb_pct', 'macro_protein_pct',
+                               'macro_fat_pct', 'session_fueling'}
                     updates = {k: v for k, v in patch.items() if k in allowed}
                     if updates:
                         set_clause = ', '.join(f'{k}=?' for k in updates)
@@ -324,7 +326,8 @@ def chat(plan_id):
 
         patches_applied = 0
         if not result.get('confirm_required', False):
-            allowed = {'description', 'intensity', 'target_duration_min', 'target_distance_mi', 'notes', 'workout_name'}
+            allowed = {'description', 'intensity', 'target_duration_min', 'target_distance_mi', 'notes', 'workout_name',
+                       'calorie_target', 'macro_carb_pct', 'macro_protein_pct', 'macro_fat_pct', 'session_fueling'}
             for patch in result.get('plan_patches', []):
                 item_id = patch.get('item_id')
                 updates = {k: v for k, v in patch.items() if k in allowed and v is not None}
