@@ -15,6 +15,13 @@ SQLITE_SCHEMA = '''
         movement_pattern TEXT, session_placement TEXT, form_cue TEXT, video_reference TEXT,
         weight_increment REAL
     );
+    CREATE TABLE IF NOT EXISTS training_sessions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        date TEXT NOT NULL,
+        notes TEXT,
+        plan_item_id INTEGER REFERENCES plan_items(id),
+        created_at TEXT DEFAULT (datetime('now'))
+    );
     CREATE TABLE IF NOT EXISTS training_log (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         date TEXT NOT NULL, exercise TEXT NOT NULL,
@@ -27,7 +34,16 @@ SQLITE_SCHEMA = '''
         progression_level TEXT, notes TEXT,
         garmin_activity_id TEXT,
         plan_item_id INTEGER REFERENCES plan_items(id),
+        session_id INTEGER REFERENCES training_sessions(id),
         created_at TEXT DEFAULT (datetime('now'))
+    );
+    CREATE TABLE IF NOT EXISTS training_log_sets (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        training_log_id INTEGER NOT NULL REFERENCES training_log(id) ON DELETE CASCADE,
+        set_number INTEGER NOT NULL,
+        reps INTEGER,
+        weight_lbs REAL,
+        duration_sec INTEGER
     );
     CREATE TABLE IF NOT EXISTS current_rx (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -230,6 +246,13 @@ PG_SCHEMA = '''
         movement_pattern TEXT, session_placement TEXT, form_cue TEXT, video_reference TEXT,
         weight_increment REAL
     );
+    CREATE TABLE IF NOT EXISTS training_sessions (
+        id SERIAL PRIMARY KEY,
+        date TEXT NOT NULL,
+        notes TEXT,
+        plan_item_id INTEGER REFERENCES plan_items(id),
+        created_at TIMESTAMP DEFAULT NOW()
+    );
     CREATE TABLE IF NOT EXISTS training_log (
         id SERIAL PRIMARY KEY,
         date TEXT NOT NULL, exercise TEXT NOT NULL,
@@ -242,7 +265,16 @@ PG_SCHEMA = '''
         progression_level TEXT, notes TEXT,
         garmin_activity_id TEXT,
         plan_item_id INTEGER REFERENCES plan_items(id),
+        session_id INTEGER REFERENCES training_sessions(id),
         created_at TIMESTAMP DEFAULT NOW()
+    );
+    CREATE TABLE IF NOT EXISTS training_log_sets (
+        id SERIAL PRIMARY KEY,
+        training_log_id INTEGER NOT NULL REFERENCES training_log(id) ON DELETE CASCADE,
+        set_number INTEGER NOT NULL,
+        reps INTEGER,
+        weight_lbs REAL,
+        duration_sec INTEGER
     );
     CREATE TABLE IF NOT EXISTS current_rx (
         id SERIAL PRIMARY KEY,
@@ -472,6 +504,12 @@ _SQLITE_MIGRATIONS = [
     "ALTER TABLE plan_items ADD COLUMN session_fueling TEXT",
     "ALTER TABLE locale_profiles ADD COLUMN city TEXT DEFAULT ''",
     "CREATE TABLE IF NOT EXISTS plan_travel (id INTEGER PRIMARY KEY AUTOINCREMENT, plan_id INTEGER NOT NULL REFERENCES training_plans(id), start_date TEXT NOT NULL, end_date TEXT NOT NULL, locale TEXT NOT NULL, city TEXT DEFAULT '', notes TEXT DEFAULT '', created_at TEXT DEFAULT (datetime('now')))",
+    "CREATE TABLE IF NOT EXISTS training_sessions (id INTEGER PRIMARY KEY AUTOINCREMENT, date TEXT NOT NULL, notes TEXT, plan_item_id INTEGER REFERENCES plan_items(id), created_at TEXT DEFAULT (datetime('now')))",
+    "CREATE TABLE IF NOT EXISTS training_log_sets (id INTEGER PRIMARY KEY AUTOINCREMENT, training_log_id INTEGER NOT NULL REFERENCES training_log(id) ON DELETE CASCADE, set_number INTEGER NOT NULL, reps INTEGER, weight_lbs REAL, duration_sec INTEGER)",
+    "ALTER TABLE training_log ADD COLUMN session_id INTEGER REFERENCES training_sessions(id)",
+    "CREATE INDEX IF NOT EXISTS idx_tl_session ON training_log(session_id)",
+    "CREATE INDEX IF NOT EXISTS idx_tls_log ON training_log_sets(training_log_id)",
+    "CREATE INDEX IF NOT EXISTS idx_ts_date ON training_sessions(date)",
 ]
 
 _PG_MIGRATIONS = [
@@ -511,6 +549,12 @@ _PG_MIGRATIONS = [
     "ALTER TABLE plan_items ADD COLUMN IF NOT EXISTS session_fueling TEXT",
     "ALTER TABLE locale_profiles ADD COLUMN IF NOT EXISTS city TEXT DEFAULT ''",
     "CREATE TABLE IF NOT EXISTS plan_travel (id SERIAL PRIMARY KEY, plan_id INTEGER NOT NULL REFERENCES training_plans(id), start_date TEXT NOT NULL, end_date TEXT NOT NULL, locale TEXT NOT NULL, city TEXT DEFAULT '', notes TEXT DEFAULT '', created_at TIMESTAMP DEFAULT NOW())",
+    "CREATE TABLE IF NOT EXISTS training_sessions (id SERIAL PRIMARY KEY, date TEXT NOT NULL, notes TEXT, plan_item_id INTEGER REFERENCES plan_items(id), created_at TIMESTAMP DEFAULT NOW())",
+    "CREATE TABLE IF NOT EXISTS training_log_sets (id SERIAL PRIMARY KEY, training_log_id INTEGER NOT NULL REFERENCES training_log(id) ON DELETE CASCADE, set_number INTEGER NOT NULL, reps INTEGER, weight_lbs REAL, duration_sec INTEGER)",
+    "ALTER TABLE training_log ADD COLUMN IF NOT EXISTS session_id INTEGER REFERENCES training_sessions(id)",
+    "CREATE INDEX IF NOT EXISTS idx_tl_session ON training_log(session_id)",
+    "CREATE INDEX IF NOT EXISTS idx_tls_log ON training_log_sets(training_log_id)",
+    "CREATE INDEX IF NOT EXISTS idx_ts_date ON training_sessions(date)",
 ]
 
 # Equipment catalog — single source of truth for seeding equipment_items and the locale profile UI.

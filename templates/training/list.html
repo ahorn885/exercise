@@ -3,7 +3,7 @@
 {% block content %}
 <div class="d-flex justify-content-between align-items-center mb-3">
   <h4 class="mb-0">Strength Log</h4>
-  <a href="{{ url_for('training.new_entry') }}" class="btn btn-primary">+ Log Workout</a>
+  <a href="{{ url_for('training.new_entry') }}" class="btn btn-primary">+ Log Session</a>
 </div>
 
 <form class="row g-2 mb-3" method="get">
@@ -29,8 +29,16 @@
   <table class="table table-sm table-hover table-striped">
     <thead class="table-dark">
       <tr>
-        <th>Date</th><th>Exercise</th><th>Target</th><th>Actual</th>
-        <th>RPE</th><th>1RM</th><th>Vol</th><th>Outcome</th><th>Next Rx</th><th></th>
+        <th class="text-nowrap">Date</th>
+        <th class="text-nowrap">Exercise</th>
+        <th class="text-nowrap">Target</th>
+        <th>Sets</th>
+        <th class="text-nowrap">RPE</th>
+        <th class="text-nowrap">1RM</th>
+        <th class="text-nowrap">Vol</th>
+        <th>Outcome</th>
+        <th class="text-nowrap">Next Rx</th>
+        <th></th>
       </tr>
     </thead>
     <tbody>
@@ -42,9 +50,22 @@
         {{ e.target_sets or '—' }}×{{ e.target_reps or '—' }}
         {% if e.target_weight %}@ {{ e.target_weight }}lb{% endif %}
       </td>
-      <td class="text-nowrap small">
-        {{ e.actual_sets or '—' }}×{{ e.actual_reps or '—' }}
-        {% if e.actual_weight %}@ {{ e.actual_weight }}lb{% endif %}
+      <td class="small">
+        {% if e.id in sets_by_log %}
+          {% for s in sets_by_log[e.id] %}
+            <span class="badge bg-secondary me-1">
+              S{{ s.set_number }}:
+              {%- if s.reps %} {{ s.reps }}r{%- endif %}
+              {%- if s.weight_lbs %} {{ s.weight_lbs }}lb{%- endif %}
+              {%- if s.duration_sec %} {{ s.duration_sec }}s{%- endif %}
+            </span>
+          {% endfor %}
+        {% else %}
+          <span class="text-muted">
+            {{ e.actual_sets or '—' }}×{{ e.actual_reps or '—' }}
+            {% if e.actual_weight %}@ {{ e.actual_weight }}lb{% endif %}
+          </span>
+        {% endif %}
       </td>
       <td class="text-nowrap">{{ e.rpe or '—' }}</td>
       <td class="text-nowrap">{{ e.est_1rm or '—' }}</td>
@@ -72,6 +93,6 @@
   </table>
 </div>
 {% else %}
-<p class="text-muted">No entries found. <a href="{{ url_for('training.new_entry') }}">Log a workout.</a></p>
+<p class="text-muted">No entries found. <a href="{{ url_for('training.new_entry') }}">Log a session.</a></p>
 {% endif %}
 {% endblock %}

@@ -1,0 +1,299 @@
+{% extends 'base.html' %}
+{% block title %}Log Strength Session{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h4 class="mb-0">Log Strength Session</h4>
+  <a href="{{ url_for('training.list_entries') }}" class="btn btn-sm btn-outline-secondary">← Back</a>
+</div>
+
+<div class="row g-3 mb-3">
+  <div class="col-md-3">
+    <label class="form-label">Date</label>
+    <input type="date" id="session-date" class="form-control" required>
+  </div>
+  {% if plan_items %}
+  <div class="col-md-6">
+    <label class="form-label">Link to Plan <span class="text-muted small">(optional — marks it complete)</span></label>
+    <select id="plan-item-id" class="form-select">
+      <option value="">— not linked —</option>
+      {% for pi in plan_items %}
+        <option value="{{ pi.id }}">{{ pi.item_date }} · {{ pi.workout_name }} — {{ pi.plan_name }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  {% endif %}
+</div>
+
+<div class="card mb-3">
+  <div class="card-header d-flex justify-content-between align-items-center">
+    <span class="fw-semibold">Set Log</span>
+    <small class="text-muted">Log each set as you perform it — circuits work naturally</small>
+  </div>
+  <div class="card-body p-0">
+    <div class="table-responsive">
+      <table class="table table-sm mb-0" id="set-log-table">
+        <thead class="table-light">
+          <tr>
+            <th style="min-width:180px">Exercise</th>
+            <th style="width:75px">Reps</th>
+            <th style="width:95px">Weight (lb)</th>
+            <th style="width:85px">Dur (sec)</th>
+            <th style="width:36px"></th>
+          </tr>
+        </thead>
+        <tbody id="set-log-body"></tbody>
+      </table>
+    </div>
+  </div>
+  <div class="card-footer">
+    <button type="button" class="btn btn-sm btn-outline-primary" id="add-set-btn">+ Add Set</button>
+  </div>
+</div>
+
+<div id="exercise-summaries"></div>
+
+<div class="mb-3">
+  <label class="form-label">Session Notes</label>
+  <textarea id="session-notes" class="form-control" rows="2" placeholder="How did the session go?"></textarea>
+</div>
+
+<div class="d-flex gap-2">
+  <button type="button" class="btn btn-primary" id="save-btn">Save Session</button>
+  <a href="{{ url_for('training.list_entries') }}" class="btn btn-outline-secondary">Cancel</a>
+</div>
+<div id="save-status" class="mt-2 small text-muted"></div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const ALL_EXERCISES = {{ exercises_json | tojson }};
+let rows = [];    // [{id, exercise}]
+let rxCache = {}; // exercise → rx object (null while fetching)
+let exRpe = {};   // exercise → rpe number
+let exNotes = {}; // exercise → notes string
+let nextId = 0;
+
+function exOptionsHtml(selected) {
+  let opts = '<option value="">— exercise —</option>';
+  for (const ex of ALL_EXERCISES) {
+    const esc = ex.exercise.replace(/&/g, '&amp;').replace(/"/g, '&quot;');
+    const sel = ex.exercise === selected ? ' selected' : '';
+    opts += `<option value="${esc}"${sel}>${esc}</option>`;
+  }
+  return opts;
+}
+
+function addRow(preExercise) {
+  const id = nextId++;
+  const lastEx = rows.length > 0 ? rows[rows.length - 1].exercise : '';
+  const ex = (preExercise !== undefined) ? preExercise : lastEx;
+  rows.push({id, exercise: ex});
+
+  const tr = document.createElement('tr');
+  tr.id = 'r' + id;
+  tr.innerHTML = `
+    <td>
+      <select class="form-select form-select-sm" onchange="onExChange(${id}, this.value)">
+        ${exOptionsHtml(ex)}
+      </select>
+    </td>
+    <td><input type="number" class="form-control form-control-sm" id="reps${id}" placeholder="—" min="1"></td>
+    <td><input type="number" class="form-control form-control-sm" id="wt${id}" placeholder="—" step="0.5" min="0"></td>
+    <td><input type="number" class="form-control form-control-sm" id="dur${id}" placeholder="—" min="0"></td>
+    <td>
+      <button type="button" class="btn btn-outline-danger py-0 px-1"
+              style="font-size:.7rem;line-height:1.6" onclick="removeRow(${id})">×</button>
+    </td>`;
+  document.getElementById('set-log-body').appendChild(tr);
+
+  ['reps', 'wt', 'dur'].forEach(prefix => {
+    document.getElementById(prefix + id)?.addEventListener('input', renderSummaries);
+  });
+
+  if (ex) fetchRx(ex);
+  renderSummaries();
+}
+
+function removeRow(id) {
+  rows = rows.filter(r => r.id !== id);
+  document.getElementById('r' + id)?.remove();
+  renderSummaries();
+}
+
+function onExChange(id, ex) {
+  const row = rows.find(r => r.id === id);
+  if (row) row.exercise = ex;
+  if (ex) fetchRx(ex);
+  renderSummaries();
+}
+
+function fetchRx(ex) {
+  if (ex in rxCache) return;
+  rxCache[ex] = null;
+  fetch('/api/rx/' + encodeURIComponent(ex))
+    .then(r => r.json())
+    .then(data => { rxCache[ex] = data; renderSummaries(); })
+    .catch(() => { rxCache[ex] = {}; });
+}
+
+function getRowValues(id) {
+  return {
+    reps: parseInt(document.getElementById('reps' + id)?.value) || null,
+    weight_lbs: parseFloat(document.getElementById('wt' + id)?.value) || null,
+    duration_sec: parseInt(document.getElementById('dur' + id)?.value) || null,
+  };
+}
+
+function saveSummaryInputs() {
+  document.querySelectorAll('[data-ex-rpe]').forEach(el => {
+    exRpe[el.dataset.exRpe] = el.value ? parseFloat(el.value) : null;
+  });
+  document.querySelectorAll('[data-ex-notes]').forEach(el => {
+    exNotes[el.dataset.exNotes] = el.value || '';
+  });
+}
+
+function renderSummaries() {
+  saveSummaryInputs();
+
+  // Group rows by exercise preserving first-seen order
+  const byEx = {};
+  const order = [];
+  for (const row of rows) {
+    if (!row.exercise) continue;
+    if (!byEx[row.exercise]) { byEx[row.exercise] = []; order.push(row.exercise); }
+    byEx[row.exercise].push(getRowValues(row.id));
+  }
+
+  const container = document.getElementById('exercise-summaries');
+  if (order.length === 0) { container.innerHTML = ''; return; }
+
+  let html = '';
+  for (const ex of order) {
+    const sets = byEx[ex];
+    const rx = rxCache[ex] || {};
+    const tSets = rx.next_sets || rx.current_sets;
+    const tReps = rx.next_reps || rx.current_reps;
+    const tWt = rx.next_weight || rx.current_weight;
+    const tDur = rx.current_duration;
+
+    let targetStr = '';
+    if (tSets && tReps) targetStr = `${tSets}×${tReps}${tWt ? ' @ ' + tWt + 'lb' : ''}`;
+    else if (tSets && tDur) targetStr = `${tSets}×${tDur}s`;
+
+    const chips = sets.map((s, i) => {
+      const label = [
+        s.reps ? s.reps + ' reps' : null,
+        s.weight_lbs ? s.weight_lbs + 'lb' : null,
+        s.duration_sec ? s.duration_sec + 's' : null,
+      ].filter(Boolean).join(' @ ') || '—';
+      return `<span class="badge bg-secondary me-1 mb-1">S${i + 1}: ${label}</span>`;
+    }).join('');
+
+    const rpe = exRpe[ex] != null ? exRpe[ex] : '';
+    const notes = (exNotes[ex] || '').replace(/"/g, '&quot;');
+    const exAttr = ex.replace(/&/g, '&amp;');
+    // onclick: exercise names have no single quotes so this is safe
+    const exOnClick = ex.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+
+    html += `
+      <div class="card mb-2">
+        <div class="card-body py-2">
+          <div class="d-flex flex-wrap justify-content-between align-items-start gap-2 mb-2">
+            <div>
+              <span class="fw-semibold">${ex.replace(/&/g, '&amp;')}</span>
+              <span class="badge bg-secondary ms-1">${sets.length} set${sets.length !== 1 ? 's' : ''}</span>
+              ${targetStr ? `<span class="text-muted small ms-2">Target: ${targetStr}</span>` : ''}
+            </div>
+            <div class="d-flex gap-2 align-items-center flex-wrap">
+              <span class="small text-muted">RPE:</span>
+              <input type="number" class="form-control form-control-sm" style="width:68px"
+                     min="1" max="10" step="0.5" placeholder="—"
+                     value="${rpe}" data-ex-rpe="${exAttr}">
+              <button type="button" class="btn btn-sm btn-outline-secondary py-0 px-2"
+                      style="font-size:.75rem" onclick="addRow('${exOnClick}')">+ Set</button>
+            </div>
+          </div>
+          <div class="mb-2">${chips}</div>
+          <input type="text" class="form-control form-control-sm"
+                 placeholder="Notes for this exercise…"
+                 value="${notes}"
+                 data-ex-notes="${exAttr}">
+        </div>
+      </div>`;
+  }
+  container.innerHTML = html;
+}
+
+function buildPayload() {
+  saveSummaryInputs();
+  const byEx = {};
+  const order = [];
+  for (const row of rows) {
+    if (!row.exercise) continue;
+    if (!byEx[row.exercise]) { byEx[row.exercise] = []; order.push(row.exercise); }
+    byEx[row.exercise].push(getRowValues(row.id));
+  }
+
+  const exercises = order.map(ex => {
+    const rx = rxCache[ex] || {};
+    const sets = byEx[ex].map((s, i) => ({set_number: i + 1, ...s}));
+    return {
+      exercise: ex,
+      rpe: exRpe[ex] || null,
+      rest_sec: null,
+      target_sets: rx.next_sets || rx.current_sets || null,
+      target_reps: rx.next_reps || rx.current_reps || null,
+      target_weight: rx.next_weight || rx.current_weight || null,
+      target_duration: rx.current_duration || null,
+      notes: exNotes[ex] || '',
+      sets,
+    };
+  });
+
+  const piEl = document.getElementById('plan-item-id');
+  return {
+    date: document.getElementById('session-date').value,
+    plan_item_id: piEl ? (piEl.value || null) : null,
+    notes: document.getElementById('session-notes').value,
+    exercises,
+  };
+}
+
+async function saveSession() {
+  const payload = buildPayload();
+  if (!payload.date) { alert('Please enter a date.'); return; }
+  if (payload.exercises.length === 0) { alert('No exercises logged — add at least one set.'); return; }
+
+  const btn = document.getElementById('save-btn');
+  const status = document.getElementById('save-status');
+  btn.disabled = true;
+  status.textContent = 'Saving…';
+
+  try {
+    const res = await fetch('/training/session', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json();
+    if (data.ok) {
+      window.location.href = '{{ url_for("training.list_entries") }}';
+    } else {
+      status.textContent = 'Error: ' + (data.error || 'Unknown');
+      btn.disabled = false;
+    }
+  } catch (e) {
+    status.textContent = 'Network error.';
+    btn.disabled = false;
+  }
+}
+
+document.addEventListener('DOMContentLoaded', function () {
+  document.getElementById('session-date').value = new Date().toISOString().slice(0, 10);
+  document.getElementById('add-set-btn').addEventListener('click', () => addRow());
+  document.getElementById('save-btn').addEventListener('click', saveSession);
+  addRow();
+});
+</script>
+{% endblock %}
