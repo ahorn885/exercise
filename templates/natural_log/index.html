@@ -1,0 +1,315 @@
+{% extends 'base.html' %}
+{% block title %}Log via Text{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h4 class="mb-0">Log Workout via Text</h4>
+  <a href="{{ url_for('dashboard.index') }}" class="btn btn-sm btn-outline-secondary">← Dashboard</a>
+</div>
+
+{% if not api_configured %}
+<div class="alert alert-warning mb-3">
+  <strong>AI not configured.</strong> Set <code>ANTHROPIC_API_KEY</code> in your environment to enable this feature.
+</div>
+{% endif %}
+
+{% if scheduled %}
+<div class="alert alert-info py-2 px-3 mb-3 small">
+  <strong>Scheduled today/yesterday:</strong>
+  {% for s in scheduled %}
+    <span class="badge bg-secondary me-1">{{ s.item_date }} · {{ s.workout_name }}</span>
+  {% endfor %}
+  — Claude will automatically try to link your entry to these.
+</div>
+{% endif %}
+
+<!-- Chat window -->
+<div class="card mb-3">
+  <div class="card-header fw-semibold d-flex justify-content-between align-items-center">
+    <span>💬 Describe your workout</span>
+    <small class="text-muted">e.g. "I ran outside for 45 min, about 5 miles"</small>
+  </div>
+  <div class="card-body p-0">
+    <div id="chat-area" style="min-height:160px; max-height:380px; overflow-y:auto; padding:1rem;">
+      <div class="text-muted small text-center" id="chat-hint">
+        Type what you did and hit Send — Claude will parse it and ask for clarification if needed.
+      </div>
+    </div>
+  </div>
+  <div class="card-footer">
+    <div class="input-group">
+      <textarea id="user-input" class="form-control" rows="2"
+                placeholder="Today I ran outside for 45 minutes and made it about 5 miles…"
+                {% if not api_configured %}disabled{% endif %}
+                style="resize:none"></textarea>
+      <button class="btn btn-primary" id="send-btn"
+              {% if not api_configured %}disabled{% endif %}>Send</button>
+    </div>
+    <div class="d-flex justify-content-between mt-1">
+      <div id="status" class="small text-muted"></div>
+      <button class="btn btn-link btn-sm text-muted p-0" id="restart-btn" style="display:none;font-size:.8rem">Start over</button>
+    </div>
+  </div>
+</div>
+
+<!-- Preview / confirm card — shown when Claude returns "ready" -->
+<div id="preview-card" class="card border-warning mb-3" style="display:none">
+  <div class="card-header d-flex justify-content-between align-items-center">
+    <span class="fw-semibold">Review &amp; Confirm</span>
+    <small class="text-muted">Edit any fields before saving</small>
+  </div>
+  <div class="card-body" id="preview-body"></div>
+  <div class="card-footer d-flex gap-2 flex-wrap">
+    <button class="btn btn-success" id="confirm-btn">✓ Save to Log</button>
+    <button class="btn btn-outline-secondary" id="discard-btn">✕ Discard</button>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const chatArea   = document.getElementById('chat-area');
+const chatHint   = document.getElementById('chat-hint');
+const userInput  = document.getElementById('user-input');
+const sendBtn    = document.getElementById('send-btn');
+const statusEl   = document.getElementById('status');
+const restartBtn = document.getElementById('restart-btn');
+const previewCard= document.getElementById('preview-card');
+const previewBody= document.getElementById('preview-body');
+const confirmBtn = document.getElementById('confirm-btn');
+const discardBtn = document.getElementById('discard-btn');
+
+// Client-side conversation history (sent with each parse request)
+let history = [];
+// Parsed entries + plan_match from the last "ready" response
+let pendingEntries = [];
+let pendingPlanMatch = null;
+
+// ── Message rendering ─────────────────────────────────────────────────────────
+function appendMessage(role, text) {
+  if (chatHint) chatHint.remove();
+  const wrap = document.createElement('div');
+  wrap.className = 'mb-2 d-flex ' + (role === 'user' ? 'justify-content-end' : 'justify-content-start');
+  const bubble = document.createElement('div');
+  bubble.className = 'px-3 py-2 rounded small '
+    + (role === 'user' ? 'bg-primary text-white' : 'bg-secondary bg-opacity-25 border');
+  bubble.style.maxWidth = '82%';
+  bubble.style.whiteSpace = 'pre-wrap';
+  bubble.textContent = text;
+  wrap.appendChild(bubble);
+  chatArea.appendChild(wrap);
+  chatArea.scrollTop = chatArea.scrollHeight;
+}
+
+// ── Send / parse ──────────────────────────────────────────────────────────────
+async function send() {
+  const msg = userInput.value.trim();
+  if (!msg) return;
+
+  appendMessage('user', msg);
+  history.push({role: 'user', content: msg});
+  userInput.value = '';
+  sendBtn.disabled = true;
+  statusEl.textContent = 'Thinking…';
+  previewCard.style.display = 'none';
+  pendingEntries = [];
+  pendingPlanMatch = null;
+
+  try {
+    const res = await fetch('/log-natural/parse', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({message: msg, history: history.slice(0, -1)}),
+    });
+    const data = await res.json();
+
+    if (!data.ok) {
+      appendMessage('assistant', '⚠ Error: ' + data.error);
+      statusEl.textContent = '';
+      sendBtn.disabled = false;
+      return;
+    }
+
+    if (data.type === 'clarify') {
+      const q = data.question;
+      appendMessage('assistant', q);
+      history.push({role: 'assistant', content: q});
+      statusEl.textContent = '';
+      sendBtn.disabled = false;
+      userInput.focus();
+      restartBtn.style.display = '';
+
+    } else if (data.type === 'ready') {
+      const summary = data.summary || 'Ready to log.';
+      appendMessage('assistant', '✓ ' + summary);
+      history.push({role: 'assistant', content: summary});
+      statusEl.textContent = '';
+      restartBtn.style.display = '';
+
+      pendingEntries = data.entries || [];
+      pendingPlanMatch = data.plan_match || null;
+      renderPreview(pendingEntries, pendingPlanMatch);
+      previewCard.style.display = '';
+
+    } else {
+      appendMessage('assistant', data.summary || JSON.stringify(data));
+      statusEl.textContent = '';
+      sendBtn.disabled = false;
+    }
+  } catch(e) {
+    appendMessage('assistant', '⚠ Network error: ' + e.message);
+    statusEl.textContent = '';
+    sendBtn.disabled = false;
+  }
+}
+
+// ── Preview rendering ─────────────────────────────────────────────────────────
+const FIELD_LABELS = {
+  activity: 'Activity', date: 'Date',
+  duration_min: 'Duration (min)', distance_mi: 'Distance (mi)',
+  avg_pace: 'Avg Pace (M:SS/mi)', avg_speed: 'Avg Speed (mph)',
+  avg_hr: 'Avg HR (bpm)', max_hr: 'Max HR (bpm)',
+  elev_gain_ft: 'Elev Gain (ft)', calories: 'Calories',
+  avg_power: 'Avg Power (W)', norm_power: 'NP (W)',
+  aerobic_te: 'Aerobic TE', notes: 'Notes',
+  weight_lbs: 'Weight (lb)', body_fat_pct: 'Body Fat %',
+  resting_hr: 'Resting HR', vo2_max: 'VO2 Max',
+};
+
+const SKIP_FIELDS = new Set(['log_type']);
+const TEXT_FIELDS = new Set(['activity', 'date', 'avg_pace', 'notes']);
+
+function renderPreview(entries, planMatch) {
+  let html = '';
+
+  if (planMatch) {
+    const conf = planMatch.confidence === 'high' ? 'bg-success' : 'bg-warning text-dark';
+    html += `
+      <div class="alert alert-success py-2 px-3 mb-3 small">
+        <strong>📅 Plan link suggested:</strong>
+        <span class="badge ${conf} ms-1">${planMatch.confidence}</span>
+        <strong class="ms-1">${planMatch.workout_name}</strong>
+        <span class="text-muted ms-1">— ${planMatch.reason || ''}</span>
+        <label class="form-check d-inline-flex align-items-center gap-2 ms-3 mb-0">
+          <input type="checkbox" class="form-check-input" id="link-plan" checked>
+          <span>Link and mark complete</span>
+        </label>
+      </div>`;
+  }
+
+  entries.forEach((entry, idx) => {
+    const logType = entry.log_type || 'cardio';
+    html += `<div class="mb-3 p-0">`;
+    if (entries.length > 1) {
+      html += `<h6 class="text-muted mb-2 text-uppercase small">${logType} entry ${idx + 1}</h6>`;
+    }
+    html += '<div class="row g-2">';
+
+    for (const [key, val] of Object.entries(entry)) {
+      if (SKIP_FIELDS.has(key)) continue;
+      const label = FIELD_LABELS[key] || key;
+      const inputId = `field-${idx}-${key}`;
+      const isText = TEXT_FIELDS.has(key) || key === 'notes';
+      const inputType = isText ? 'text' : 'number';
+      const step = ['distance_mi', 'body_fat_pct', 'aerobic_te', 'vo2_max'].includes(key) ? ' step="0.01"' : '';
+      const displayVal = val !== null && val !== undefined ? val : '';
+      const colClass = key === 'notes' ? 'col-12' : 'col-6 col-md-4';
+
+      if (key === 'notes') {
+        html += `
+          <div class="${colClass}">
+            <label class="form-label small text-muted mb-1" for="${inputId}">${label}</label>
+            <textarea class="form-control form-control-sm entry-field"
+                      id="${inputId}" data-idx="${idx}" data-key="${key}"
+                      rows="2">${displayVal}</textarea>
+          </div>`;
+      } else {
+        html += `
+          <div class="${colClass}">
+            <label class="form-label small text-muted mb-1" for="${inputId}">${label}</label>
+            <input type="${inputType}" class="form-control form-control-sm entry-field"
+                   id="${inputId}" data-idx="${idx}" data-key="${key}"
+                   value="${displayVal}"${step}>
+          </div>`;
+      }
+    }
+    html += '</div></div>';
+  });
+
+  previewBody.innerHTML = html;
+
+  // Sync edits back to pendingEntries
+  previewBody.querySelectorAll('.entry-field').forEach(el => {
+    el.addEventListener('input', () => {
+      const idx = parseInt(el.dataset.idx);
+      const key = el.dataset.key;
+      const raw = el.value;
+      const numKeys = Object.keys(FIELD_LABELS).filter(k => !TEXT_FIELDS.has(k) && k !== 'notes');
+      pendingEntries[idx][key] = numKeys.includes(key)
+        ? (raw === '' ? null : parseFloat(raw))
+        : (raw || null);
+    });
+  });
+}
+
+// ── Save ──────────────────────────────────────────────────────────────────────
+confirmBtn.addEventListener('click', async () => {
+  const linkPlanEl = document.getElementById('link-plan');
+  const planMatch = (linkPlanEl && linkPlanEl.checked) ? pendingPlanMatch : null;
+
+  confirmBtn.disabled = true;
+  confirmBtn.textContent = 'Saving…';
+
+  try {
+    const res = await fetch('/log-natural/save', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({entries: pendingEntries, plan_match: planMatch}),
+    });
+    const data = await res.json();
+    if (data.ok) {
+      // Redirect to the log of the first saved entry type
+      const first = (data.saved || [])[0];
+      const dest = first ? first.redirect : '/';
+      window.location.href = dest;
+    } else {
+      confirmBtn.disabled = false;
+      confirmBtn.textContent = '✓ Save to Log';
+      statusEl.textContent = 'Save failed: ' + data.error;
+    }
+  } catch(e) {
+    confirmBtn.disabled = false;
+    confirmBtn.textContent = '✓ Save to Log';
+    statusEl.textContent = 'Network error.';
+  }
+});
+
+discardBtn.addEventListener('click', () => {
+  previewCard.style.display = 'none';
+  pendingEntries = [];
+  pendingPlanMatch = null;
+  sendBtn.disabled = false;
+  statusEl.textContent = 'Discarded. You can rephrase and try again.';
+});
+
+restartBtn.addEventListener('click', () => {
+  history = [];
+  pendingEntries = [];
+  pendingPlanMatch = null;
+  chatArea.innerHTML = '<div class="text-muted small text-center" id="chat-hint">Type what you did and hit Send — Claude will parse it and ask for clarification if needed.</div>';
+  previewCard.style.display = 'none';
+  sendBtn.disabled = false;
+  statusEl.textContent = '';
+  restartBtn.style.display = 'none';
+  userInput.focus();
+});
+
+// ── Send triggers ─────────────────────────────────────────────────────────────
+sendBtn.addEventListener('click', send);
+userInput.addEventListener('keydown', e => {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
+});
+
+document.addEventListener('DOMContentLoaded', () => userInput.focus());
+</script>
+{% endblock %}

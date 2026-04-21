@@ -20,6 +20,8 @@
         <li class="nav-item dropdown">
           <a class="nav-link dropdown-toggle" href="#" data-bs-toggle="dropdown">Log</a>
           <ul class="dropdown-menu">
+            <li><a class="dropdown-item" href="{{ url_for('natural_log.index') }}">✨ Log via Text (AI)</a></li>
+            <li><hr class="dropdown-divider"></li>
             <li><a class="dropdown-item" href="{{ url_for('training.new_entry') }}">+ Strength Workout</a></li>
             <li><a class="dropdown-item" href="{{ url_for('cardio.new_entry') }}">+ Cardio Session</a></li>
             <li><a class="dropdown-item" href="{{ url_for('conditions.new_entry') }}">+ Conditions</a></li>
