@@ -40,8 +40,14 @@
 
   <div class="col-md-6">
     <div class="card h-100">
-      <div class="card-header">Garmin Connect</div>
+      <div class="card-header">Garmin</div>
       <div class="card-body">
+        <a href="{{ url_for('plans.download_item_fit', plan_id=plan_id, item_id=item.id) }}"
+           class="btn btn-outline-primary w-100 mb-3">
+          ⬇ Download Workout FIT File
+        </a>
+        <p class="text-muted small mb-3">Load this .fit file onto your Garmin device via Garmin Express or by copying it to the <code>GARMIN/NEWFILES</code> folder.</p>
+
         {% if gw %}
           <div class="alert alert-success py-2 mb-3">
             Pushed to Garmin Connect<br>
@@ -54,7 +60,7 @@
           {% if not gw %}
           <form method="post" action="{{ url_for('plans.push_to_garmin', plan_id=plan_id, item_id=item.id) }}" class="mb-3">
             {% if auth_status.authenticated %}
-              <button type="submit" class="btn btn-primary w-100">Push to Garmin Connect</button>
+              <button type="submit" class="btn btn-secondary w-100">Push to Garmin Connect</button>
             {% else %}
               <button type="button" class="btn btn-secondary w-100" disabled>Push to Garmin Connect</button>
               <small class="text-muted d-block mt-1">
@@ -68,9 +74,6 @@
             <summary class="text-muted small" style="cursor:pointer">View Garmin Workout JSON</summary>
             <pre class="mt-2 small p-2 bg-light rounded" style="max-height:200px;overflow:auto">{{ garmin_workout | tojson(indent=2) }}</pre>
           </details>
-        {% else %}
-          <p class="text-muted small">No Garmin workout JSON attached to this plan item.</p>
-          <p class="text-muted small">To add one, re-import the plan with a <code>garmin_workout_json</code> field on this workout.</p>
         {% endif %}
       </div>
     </div>

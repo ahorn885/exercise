@@ -4,7 +4,11 @@ from datetime import datetime
 from itertools import groupby
 from datetime import date as date_type
 
-from flask import Blueprint, render_template, request, redirect, url_for, flash, jsonify
+import io
+import re
+import zipfile
+
+from flask import Blueprint, render_template, request, redirect, url_for, flash, jsonify, Response
 from database import get_db
 
 bp = Blueprint('plans', __name__, url_prefix='/plans')
@@ -445,3 +449,68 @@ def push_to_garmin(plan_id, item_id):
     except Exception as e:
         flash(f'Garmin upload failed: {e}', 'danger')
     return redirect(url_for('plans.view_item', plan_id=plan_id, item_id=item_id))
+
+
+def _safe_filename(text: str, max_len: int = 40) -> str:
+    return re.sub(r'[^\w\-]+', '_', text or 'workout').strip('_')[:max_len]
+
+
+@bp.route('/<int:plan_id>/item/<int:item_id>/workout.fit')
+def download_item_fit(plan_id, item_id):
+    """Download a single workout as a Garmin FIT file."""
+    from fit_workout_generator import generate_workout_fit
+
+    db = get_db()
+    item = db.execute(
+        'SELECT * FROM plan_items WHERE id=? AND plan_id=?', (item_id, plan_id)
+    ).fetchone()
+    if not item:
+        flash('Item not found.', 'danger')
+        return redirect(url_for('plans.view_plan', plan_id=plan_id))
+
+    try:
+        fit_bytes = generate_workout_fit(dict(item))
+    except Exception as e:
+        flash(f'Could not generate FIT file: {e}', 'danger')
+        return redirect(url_for('plans.view_item', plan_id=plan_id, item_id=item_id))
+
+    filename = f"{item['item_date']}_{_safe_filename(item['workout_name'])}.fit"
+    return Response(
+        fit_bytes,
+        mimetype='application/octet-stream',
+        headers={'Content-Disposition': f'attachment; filename="{filename}"'},
+    )
+
+
+@bp.route('/<int:plan_id>/workouts.zip')
+def download_plan_fits(plan_id):
+    """Download all scheduled workouts in a plan as a ZIP of FIT files."""
+    from fit_workout_generator import generate_workout_fit
+
+    db = get_db()
+    plan = db.execute('SELECT name FROM training_plans WHERE id=?', (plan_id,)).fetchone()
+    if not plan:
+        flash('Plan not found.', 'danger')
+        return redirect(url_for('plans.list_plans'))
+
+    items = db.execute(
+        "SELECT * FROM plan_items WHERE plan_id=? AND status='scheduled' ORDER BY item_date ASC",
+        (plan_id,)
+    ).fetchall()
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as zf:
+        for item in items:
+            try:
+                fit_bytes = generate_workout_fit(dict(item))
+            except Exception:
+                continue
+            name = f"{item['item_date']}_{_safe_filename(item['workout_name'])}.fit"
+            zf.writestr(name, fit_bytes)
+
+    zip_filename = f"{_safe_filename(plan['name'], 30)}_workouts.zip"
+    return Response(
+        buf.getvalue(),
+        mimetype='application/zip',
+        headers={'Content-Disposition': f'attachment; filename="{zip_filename}"'},
+    )
