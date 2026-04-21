@@ -352,18 +352,28 @@ def _parse_cardio(session, activity_name: str, sport_key: str) -> dict:
 
 
 def _parse_strength(session, sets) -> dict:
+    """Parse a strength FIT session.
+
+    Returns per-exercise data with individual set details preserved:
+      {'log_type': 'strength', 'data': [
+        {'date': str, 'exercise': str,
+         'sets': [{'reps': int|None, 'weight_lbs': float|None, 'duration_sec': int|None}, ...]},
+        ...
+      ]}
+
+    Sets are grouped by exercise (all sets of the same exercise together),
+    preserving the order in which exercises first appear.
+    """
     activity_date = _fit_timestamp_to_date(
         getattr(session, 'start_time', None) or getattr(session, 'timestamp', None)
     )
 
     def _exercise_name(s):
-        # Try resolved string attribute first (some fit-tool builds return it)
         ex = getattr(s, 'exercise_name', None)
         if ex is not None:
             ex_str = str(ex)
             if ex_str not in ('None', '', '65535', '65534'):
                 return ex_str.replace('_', ' ').title()
-        # category is a numeric array — take the first valid (non-sentinel) value
         cat = getattr(s, 'category', None)
         if cat is not None:
             cats = cat if isinstance(cat, (list, tuple)) else [cat]
@@ -376,9 +386,12 @@ def _parse_strength(session, sets) -> dict:
                     pass
         return 'Unknown Exercise'
 
-    rows = []
+    # Group all sets by exercise, preserving first-seen order (handles circuits)
+    exercise_sets: dict = {}
+    exercise_order: list = []
+
     for s in sets:
-        exercise_name = _exercise_name(s)
+        name = _exercise_name(s)
 
         reps = getattr(s, 'repetitions', None)
         weight_kg = getattr(s, 'weight', None)
@@ -393,34 +406,22 @@ def _parse_strength(session, sets) -> dict:
         except (TypeError, ValueError):
             reps_int = None
         try:
-            duration_s_int = int(duration_s) if duration_s is not None else None
+            duration_sec = int(duration_s) if duration_s is not None else None
         except (TypeError, ValueError):
-            duration_s_int = None
+            duration_sec = None
 
-        rows.append({
-            'date': activity_date,
-            'exercise': exercise_name,
-            'actual_sets': 1,
-            'actual_reps': reps_int,
-            'actual_weight': weight_lbs,
-            'actual_duration': duration_s_int,
-            'notes': '',
-        })
+        if name not in exercise_sets:
+            exercise_sets[name] = []
+            exercise_order.append(name)
+        exercise_sets[name].append(
+            {'reps': reps_int, 'weight_lbs': weight_lbs, 'duration_sec': duration_sec}
+        )
 
-    # Merge consecutive sets of the same exercise
-    if rows:
-        merged = []
-        cur = dict(rows[0])
-        for row in rows[1:]:
-            if row['exercise'] == cur['exercise']:
-                cur['actual_sets'] += 1
-            else:
-                merged.append(cur)
-                cur = dict(row)
-        merged.append(cur)
-        rows = merged
-
-    return {'log_type': 'strength', 'data': rows}
+    data = [
+        {'date': activity_date, 'exercise': ex, 'sets': exercise_sets[ex]}
+        for ex in exercise_order
+    ]
+    return {'log_type': 'strength', 'data': data}
 
 
 # ── Debug dump ────────────────────────────────────────────────────────────────
