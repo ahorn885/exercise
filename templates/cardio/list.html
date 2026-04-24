@@ -5,6 +5,23 @@
   <h4 class="mb-0">Cardio Log</h4>
   <a href="{{ url_for('cardio.new_entry') }}" class="btn btn-success">+ Log Cardio</a>
 </div>
+<form class="row g-2 mb-3" method="get">
+  <div class="col-auto">
+    <input type="date" name="date" class="form-control form-control-sm" value="{{ date_filter }}">
+  </div>
+  <div class="col-auto">
+    <select name="activity" class="form-select form-select-sm">
+      <option value="">All activities</option>
+      {% for a in activities %}
+        <option value="{{ a.activity }}" {% if activity_filter == a.activity %}selected{% endif %}>{{ a.activity }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div class="col-auto">
+    <button class="btn btn-sm btn-outline-secondary">Filter</button>
+    <a href="{{ url_for('cardio.list_entries') }}" class="btn btn-sm btn-outline-secondary">Clear</a>
+  </div>
+</form>
 {% if entries %}
 <div class="table-responsive">
   <table class="table table-sm table-hover table-striped">

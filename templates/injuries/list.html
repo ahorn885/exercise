@@ -5,6 +5,23 @@
   <h4 class="mb-0">Injury Log</h4>
   <a href="{{ url_for('injuries.new_entry') }}" class="btn btn-primary">+ Log Injury</a>
 </div>
+<form class="row g-2 mb-3" method="get">
+  <div class="col-auto">
+    <select name="status" class="form-select form-select-sm">
+      <option value="">All statuses</option>
+      {% for s in statuses %}
+        <option value="{{ s }}" {% if status_filter == s %}selected{% endif %}>{{ s }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div class="col-auto">
+    <input type="text" name="body_part" class="form-control form-control-sm" placeholder="Body part…" value="{{ body_part_filter }}">
+  </div>
+  <div class="col-auto">
+    <button class="btn btn-sm btn-outline-secondary">Filter</button>
+    <a href="{{ url_for('injuries.list_entries') }}" class="btn btn-sm btn-outline-secondary">Clear</a>
+  </div>
+</form>
 {% if entries %}
 {% for e in entries %}
 {% set mods = modifications.get(e.id, []) %}

@@ -354,6 +354,15 @@ def view_plan(plan_id):
     health = _plan_health(db, plan_id)
 
     api_configured = bool(os.environ.get('ANTHROPIC_API_KEY'))
+
+    days_to_race = None
+    if plan['end_date']:
+        try:
+            race_date = date_type.fromisoformat(plan['end_date'])
+            days_to_race = (race_date - date_type.today()).days
+        except Exception:
+            pass
+
     return render_template('plans/view.html', plan=plan, weeks=weeks,
                            total=total, completed=completed,
                            active_mods=active_mods,
@@ -361,7 +370,8 @@ def view_plan(plan_id):
                            health=health,
                            workout_nutrition=_workout_nutrition,
                            daily_supplements=DAILY_SUPPLEMENTS,
-                           api_configured=api_configured)
+                           api_configured=api_configured,
+                           days_to_race=days_to_race)
 
 
 @bp.route('/<int:plan_id>/item/<int:item_id>')

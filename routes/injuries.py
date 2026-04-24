@@ -20,9 +20,19 @@ MOD_TYPES = [
 @bp.route('/injuries')
 def list_entries():
     db = get_db()
-    entries = db.execute(
-        "SELECT * FROM injury_log ORDER BY CASE status WHEN 'Active' THEN 0 WHEN 'Managing' THEN 1 ELSE 2 END, start_date DESC"
-    ).fetchall()
+    status_filter = request.args.get('status', '')
+    body_part_filter = request.args.get('body_part', '')
+
+    query = "SELECT * FROM injury_log WHERE 1=1"
+    params = []
+    if status_filter:
+        query += ' AND status=?'
+        params.append(status_filter)
+    if body_part_filter:
+        query += ' AND body_part LIKE ?'
+        params.append(f'%{body_part_filter}%')
+    query += " ORDER BY CASE status WHEN 'Active' THEN 0 WHEN 'Managing' THEN 1 ELSE 2 END, start_date DESC"
+    entries = db.execute(query, params).fetchall()
 
     # Load all modifications grouped by injury_id
     mod_rows = db.execute(
@@ -43,7 +53,9 @@ def list_entries():
 
     return render_template('injuries/list.html', entries=entries,
                            modifications=modifications, exercises=exercises,
-                           mod_types=MOD_TYPES)
+                           mod_types=MOD_TYPES,
+                           status_filter=status_filter, body_part_filter=body_part_filter,
+                           statuses=STATUSES)
 
 
 @bp.route('/injuries/new', methods=['GET', 'POST'])

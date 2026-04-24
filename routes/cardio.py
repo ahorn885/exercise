@@ -14,10 +14,24 @@ ACTIVITIES = [
 @bp.route('/cardio')
 def list_entries():
     db = get_db()
-    entries = db.execute(
-        'SELECT * FROM cardio_log ORDER BY date DESC, id DESC'
-    ).fetchall()
-    return render_template('cardio/list.html', entries=entries)
+    date_filter = request.args.get('date', '')
+    activity_filter = request.args.get('activity', '')
+
+    query = 'SELECT * FROM cardio_log WHERE 1=1'
+    params = []
+    if date_filter:
+        query += ' AND date=?'
+        params.append(date_filter)
+    if activity_filter:
+        query += ' AND activity LIKE ?'
+        params.append(f'%{activity_filter}%')
+    query += ' ORDER BY date DESC, id DESC'
+
+    entries = db.execute(query, params).fetchall()
+    activities = db.execute('SELECT DISTINCT activity FROM cardio_log ORDER BY activity').fetchall()
+    return render_template('cardio/list.html', entries=entries,
+                           date_filter=date_filter, activity_filter=activity_filter,
+                           activities=activities)
 
 
 @bp.route('/cardio/new', methods=['GET', 'POST'])
