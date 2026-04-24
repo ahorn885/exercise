@@ -5,35 +5,13 @@
 <div class="d-flex justify-content-between align-items-center mb-4">
   <h2 class="mb-0">Garmin</h2>
   <div class="d-flex flex-wrap gap-2">
-    <a href="{{ url_for('garmin.sync') }}" class="btn btn-sm btn-success">⟳ Sync</a>
     <a href="{{ url_for('garmin.import_fit') }}" class="btn btn-sm btn-primary">+ Import FIT</a>
     <a href="{{ url_for('plans.list_plans') }}" class="btn btn-sm btn-outline-secondary">Plans</a>
   </div>
 </div>
 
 <div class="row g-3 mb-4">
-  <div class="col-md-4">
-    <div class="card h-100">
-      <div class="card-body">
-        <h6 class="card-subtitle text-muted mb-2">Garmin Connect</h6>
-        <a href="{{ url_for('garmin.auth') }}" class="text-decoration-none">
-          <span class="badge fs-6 bg-{% if auth_status.authenticated %}success{% else %}warning text-dark{% endif %}">
-            {% if auth_status.authenticated %}
-              Connected{% if auth_status.username %} — {{ auth_status.username }}{% endif %}
-            {% else %}
-              Not Connected
-            {% endif %}
-          </span>
-        </a>
-        {% if not auth_status.authenticated %}
-        <p class="text-muted small mt-2 mb-0">
-          <a href="{{ url_for('garmin.auth') }}">Set up auth</a> to push workouts to Garmin Connect.
-        </p>
-        {% endif %}
-      </div>
-    </div>
-  </div>
-  <div class="col-md-4">
+  <div class="col-md-6">
     <div class="card h-100">
       <div class="card-body">
         <h6 class="card-subtitle text-muted mb-2">FIT Import</h6>
@@ -42,7 +20,7 @@
       </div>
     </div>
   </div>
-  <div class="col-md-4">
+  <div class="col-md-6">
     <div class="card h-100">
       <div class="card-body">
         <h6 class="card-subtitle text-muted mb-2">Training Plans</h6>

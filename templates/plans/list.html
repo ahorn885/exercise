@@ -12,20 +12,26 @@
   <table class="table table-hover align-middle">
     <thead class="table-dark">
       <tr>
-        <th>Name</th><th>Sport</th><th>Dates</th><th>Status</th><th>Progress</th><th></th>
+        <th>Name</th><th class="d-none d-md-table-cell">Sport</th><th>Dates</th><th>Status</th><th class="d-none d-md-table-cell">Progress</th><th></th>
       </tr>
     </thead>
     <tbody>
       {% for p in plans %}
       <tr>
-        <td><a href="{{ url_for('plans.view_plan', plan_id=p.id) }}" class="fw-semibold text-decoration-none">{{ p.name }}</a></td>
-        <td>{{ p.sport_focus or '—' }}</td>
-        <td class="text-muted small">{{ p.start_date or '' }}{% if p.end_date %} → {{ p.end_date }}{% endif %}</td>
         <td>
+          <a href="{{ url_for('plans.view_plan', plan_id=p.id) }}" class="fw-semibold text-decoration-none">{{ p.name }}</a>
+          <span class="d-md-none ms-1">
+            {% if p.status == 'active' %}<span class="badge bg-success">Active</span>
+            {% else %}<span class="badge bg-secondary">{{ p.status }}</span>{% endif %}
+          </span>
+        </td>
+        <td class="d-none d-md-table-cell">{{ p.sport_focus or '—' }}</td>
+        <td class="text-muted small">{{ p.start_date or '' }}{% if p.end_date %} → {{ p.end_date }}{% endif %}</td>
+        <td class="d-none d-md-table-cell">
           {% if p.status == 'active' %}<span class="badge bg-success">Active</span>
           {% else %}<span class="badge bg-secondary">{{ p.status }}</span>{% endif %}
         </td>
-        <td style="min-width:140px">
+        <td class="d-none d-md-table-cell" style="min-width:140px">
           {% set total = p.item_count or 0 %}
           {% set done = p.completed_count or 0 %}
           {% if total > 0 %}
@@ -35,15 +41,17 @@
           <small class="text-muted">{{ done }}/{{ total }}</small>
           {% else %}<span class="text-muted small">No workouts</span>{% endif %}
         </td>
-        <td class="d-flex gap-1">
-          <a href="{{ url_for('plans.view_plan', plan_id=p.id) }}" class="btn btn-sm btn-outline-secondary">View</a>
-          <form method="post" action="{{ url_for('plans.archive_plan', plan_id=p.id) }}">
-            <button type="submit" class="btn btn-sm btn-outline-secondary" title="Archive">Archive</button>
-          </form>
-          <form method="post" action="{{ url_for('plans.delete_plan', plan_id=p.id) }}"
-                onsubmit="return confirm('Delete {{ p.name }}? This cannot be undone.')">
-            <button type="submit" class="btn btn-sm btn-outline-danger">Delete</button>
-          </form>
+        <td>
+          <div class="d-flex gap-1">
+            <a href="{{ url_for('plans.view_plan', plan_id=p.id) }}" class="btn btn-sm btn-outline-secondary">View</a>
+            <form method="post" action="{{ url_for('plans.archive_plan', plan_id=p.id) }}" class="d-none d-md-inline">
+              <button type="submit" class="btn btn-sm btn-outline-secondary" title="Archive">Archive</button>
+            </form>
+            <form method="post" action="{{ url_for('plans.delete_plan', plan_id=p.id) }}"
+                  onsubmit="return confirm('Delete {{ p.name }}? This cannot be undone.')" class="d-none d-md-inline">
+              <button type="submit" class="btn btn-sm btn-outline-danger">Delete</button>
+            </form>
+          </div>
         </td>
       </tr>
       {% endfor %}

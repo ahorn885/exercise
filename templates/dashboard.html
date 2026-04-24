@@ -1,51 +1,185 @@
 {% extends 'base.html' %}
 {% block title %}Dashboard{% endblock %}
 {% block content %}
-<h4 class="mb-3">Dashboard — PGE 2026</h4>
 
-<div class="row g-3 mb-4">
-  <div class="col-6 col-md-3">
-    <div class="card text-center h-100">
+{# ── Today + Weather ── #}
+<div class="row g-3 mb-3">
+  <div class="col-md-8">
+    <div class="card h-100">
+      <div class="card-header d-flex justify-content-between align-items-center">
+        <span class="fw-semibold">Today's Workouts</span>
+        <small class="text-muted">{{ today }}</small>
+      </div>
+      <div class="card-body p-0">
+        {% if today_workouts %}
+          <ul class="list-group list-group-flush">
+            {% for w in today_workouts %}
+            <li class="list-group-item d-flex justify-content-between align-items-start">
+              <div>
+                <a href="{{ url_for('plans.view_item', plan_id=w.plan_id, item_id=w.id) }}" class="fw-semibold text-decoration-none">{{ w.workout_name }}</a>
+                <div class="text-muted small">
+                  <span class="badge bg-secondary me-1">{{ w.sport_type }}</span>
+                  {% if w.target_duration_min %}<span class="me-2">{{ w.target_duration_min|int }} min</span>{% endif %}
+                  {% if w.intensity %}<span>{{ w.intensity }}</span>{% endif %}
+                  <span class="text-muted ms-1">· {{ w.plan_name }}</span>
+                </div>
+              </div>
+              <div class="d-flex gap-1 ms-2">
+                <form method="post" action="{{ url_for('plans.complete_item', plan_id=w.plan_id, item_id=w.id) }}" class="d-inline" onsubmit="return confirm('Mark as complete?')">
+                  <button class="btn btn-sm btn-outline-success" title="Complete">✓</button>
+                </form>
+                <form method="post" action="{{ url_for('plans.skip_item', plan_id=w.plan_id, item_id=w.id) }}" class="d-inline" onsubmit="return confirm('Skip this workout?')">
+                  <button class="btn btn-sm btn-outline-secondary" title="Skip">✕</button>
+                </form>
+                <a href="{{ url_for('plans.download_item_fit', plan_id=w.plan_id, item_id=w.id) }}"
+                   class="btn btn-sm btn-outline-primary" title="Download FIT">⬇</a>
+              </div>
+            </li>
+            {% endfor %}
+          </ul>
+        {% else %}
+          <p class="text-muted p-3 mb-0">No workouts scheduled for today.</p>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+  <div class="col-md-4">
+    {% if weather %}
+    {% set cur = weather.current_condition[0] %}
+    {% set wd0 = weather.weather[0] %}
+    <div class="card h-100">
+      <div class="card-header fw-semibold">Today's Weather</div>
       <div class="card-body">
-        <div class="fs-2 fw-bold text-primary">{{ stats.training_total }}</div>
+        <div class="d-flex align-items-center mb-2">
+          <div class="fs-2 me-3">{{ cur.temp_F }}°F</div>
+          <div class="text-muted small">
+            Feels {{ cur.FeelsLikeF }}°F<br>
+            {{ cur.weatherDesc[0].value }}
+          </div>
+        </div>
+        <div class="text-muted small">High {{ wd0.maxtempF }}° / Low {{ wd0.mintempF }}°</div>
+      </div>
+    </div>
+    {% endif %}
+  </div>
+</div>
+
+{# ── Tomorrow ── #}
+<div class="row g-3 mb-3">
+  <div class="col-md-8">
+    <div class="card h-100">
+      <div class="card-header fw-semibold">Tomorrow's Workouts</div>
+      <div class="card-body p-0">
+        {% if tomorrow_workouts %}
+          <ul class="list-group list-group-flush">
+            {% for w in tomorrow_workouts %}
+            <li class="list-group-item">
+              <a href="{{ url_for('plans.view_item', plan_id=w.plan_id, item_id=w.id) }}" class="fw-semibold text-decoration-none">{{ w.workout_name }}</a>
+              <div class="text-muted small">
+                <span class="badge bg-secondary me-1">{{ w.sport_type }}</span>
+                {% if w.target_duration_min %}<span class="me-2">{{ w.target_duration_min|int }} min</span>{% endif %}
+                {% if w.intensity %}<span>{{ w.intensity }}</span>{% endif %}
+                <span class="text-muted ms-1">· {{ w.plan_name }}</span>
+              </div>
+            </li>
+            {% endfor %}
+          </ul>
+        {% else %}
+          <p class="text-muted p-3 mb-0">No workouts scheduled for tomorrow.</p>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+  <div class="col-md-4">
+    {% if weather and weather.weather|length > 1 %}
+    {% set wd1 = weather.weather[1] %}
+    <div class="card h-100">
+      <div class="card-header fw-semibold">Tomorrow's Weather</div>
+      <div class="card-body">
+        <div class="text-muted small mb-1">{{ wd1.hourly[4].weatherDesc[0].value if wd1.hourly|length > 4 else '' }}</div>
+        <div class="text-muted small">High {{ wd1.maxtempF }}° / Low {{ wd1.mintempF }}°</div>
+      </div>
+    </div>
+    {% endif %}
+  </div>
+</div>
+
+{# ── Missed Workouts ── #}
+{% if missed_workouts %}
+<div class="alert alert-warning mb-3">
+  <div class="d-flex justify-content-between align-items-center">
+    <strong>Missed Workouts (last 7 days)</strong>
+    <button class="btn btn-sm btn-outline-warning" data-bs-toggle="collapse" data-bs-target="#missedList">Show/Hide</button>
+  </div>
+  <div id="missedList" class="collapse mt-2">
+    <ul class="list-unstyled mb-0">
+      {% for w in missed_workouts %}
+      <li class="d-flex justify-content-between align-items-center py-1 border-bottom">
+        <div>
+          <span class="text-muted small">{{ w.item_date }}</span>
+          <a href="{{ url_for('plans.view_item', plan_id=w.plan_id, item_id=w.id) }}" class="ms-2 fw-semibold text-decoration-none">{{ w.workout_name }}</a>
+          <span class="badge bg-secondary ms-1">{{ w.sport_type }}</span>
+        </div>
+        <div class="d-flex gap-1">
+          <form method="post" action="{{ url_for('plans.complete_item', plan_id=w.plan_id, item_id=w.id) }}" class="d-inline" onsubmit="return confirm('Mark as complete?')">
+            <button class="btn btn-sm btn-outline-success">✓ Done</button>
+          </form>
+          <form method="post" action="{{ url_for('plans.skip_item', plan_id=w.plan_id, item_id=w.id) }}" class="d-inline" onsubmit="return confirm('Skip?')">
+            <button class="btn btn-sm btn-outline-secondary">✕ Skip</button>
+          </form>
+        </div>
+      </li>
+      {% endfor %}
+    </ul>
+  </div>
+</div>
+{% endif %}
+
+{# ── Stats row ── #}
+<div class="row g-3 mb-3">
+  <div class="col-6 col-md-3">
+    <div class="card text-center">
+      <div class="card-body py-2">
+        <div class="fs-3 fw-bold text-primary">{{ stats.training_total }}</div>
         <div class="text-muted small">Strength Entries</div>
       </div>
     </div>
   </div>
   <div class="col-6 col-md-3">
-    <div class="card text-center h-100">
-      <div class="card-body">
-        <div class="fs-2 fw-bold text-success">{{ stats.cardio_total }}</div>
+    <div class="card text-center">
+      <div class="card-body py-2">
+        <div class="fs-3 fw-bold text-success">{{ stats.cardio_total }}</div>
         <div class="text-muted small">Cardio Sessions</div>
       </div>
     </div>
   </div>
   <div class="col-6 col-md-3">
-    <div class="card text-center h-100">
-      <div class="card-body">
-        <div class="fs-2 fw-bold text-warning">{{ stats.exercises_progress }}</div>
+    <div class="card text-center">
+      <div class="card-body py-2">
+        <div class="fs-3 fw-bold text-warning">{{ stats.exercises_progress }}</div>
         <div class="text-muted small">Exercises at PROGRESS</div>
       </div>
     </div>
   </div>
   <div class="col-6 col-md-3">
-    <div class="card text-center h-100">
-      <div class="card-body">
-        <div class="fs-2 fw-bold {{ 'text-danger' if stats.active_injuries > 0 else 'text-secondary' }}">
-          {{ stats.active_injuries }}
-        </div>
+    <div class="card text-center">
+      <div class="card-body py-2">
+        <div class="fs-3 fw-bold {{ 'text-danger' if stats.active_injuries > 0 else 'text-secondary' }}">{{ stats.active_injuries }}</div>
         <div class="text-muted small">Active Injuries</div>
       </div>
     </div>
   </div>
 </div>
 
+{# ── Recent Activity ── #}
 <div class="row g-3">
   <div class="col-md-7">
     <div class="card">
       <div class="card-header d-flex justify-content-between align-items-center">
-        <span>Recent Strength Entries</span>
-        <a href="{{ url_for('training.new_entry') }}" class="btn btn-sm btn-primary">+ Log Workout</a>
+        <span>Recent Strength</span>
+        <a href="{{ url_for('training.new_entry') }}" class="btn btn-sm btn-primary">+ Log</a>
       </div>
       <div class="card-body p-0">
         {% if recent_training %}
@@ -63,9 +197,7 @@
               <td>{{ e.actual_weight or '—' }}{% if e.actual_weight %} lb{% endif %}</td>
               <td>
                 {% if e.outcome %}
-                  <span class="badge {% if '↑' in e.outcome %}bg-success{% elif '→' in e.outcome %}bg-warning text-dark{% else %}bg-danger{% endif %}">
-                    {{ e.outcome }}
-                  </span>
+                  <span class="badge {% if '↑' in e.outcome %}bg-success{% elif '→' in e.outcome %}bg-warning text-dark{% else %}bg-danger{% endif %}">{{ e.outcome }}</span>
                 {% endif %}
               </td>
             </tr>
@@ -111,7 +243,7 @@
 
     {% if stats.latest_weight %}
     <div class="card">
-      <div class="card-body">
+      <div class="card-body py-2">
         <div class="d-flex justify-content-between">
           <span class="text-muted small">Latest Weight</span>
           <span class="text-muted small">{{ stats.weight_date }}</span>

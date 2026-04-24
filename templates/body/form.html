@@ -20,9 +20,17 @@
     <div class="col-md-4"><label class="form-label">Notes</label>
       <input type="text" name="notes" class="form-control" value="{{ entry.notes if entry else '' }}"></div>
   </div>
-  <div class="d-flex gap-2">
-    <button type="submit" class="btn btn-primary">{{ 'Update' if entry else 'Save' }}</button>
-    <a href="{{ url_for('body.list_entries') }}" class="btn btn-outline-secondary">Cancel</a>
+  <div class="d-flex gap-2 justify-content-between">
+    <div class="d-flex gap-2">
+      <button type="submit" class="btn btn-primary">{{ 'Update' if entry else 'Save' }}</button>
+      <a href="{{ url_for('body.list_entries') }}" class="btn btn-outline-secondary">Cancel</a>
+    </div>
+    {% if entry %}
+    <form method="post" action="{{ url_for('body.delete_entry', entry_id=entry.id) }}"
+          onsubmit="return confirm('Delete this entry? This cannot be undone.')">
+      <button class="btn btn-outline-danger btn-sm">Delete</button>
+    </form>
+    {% endif %}
   </div>
 </form>
 {% endblock %}

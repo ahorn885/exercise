@@ -5,3 +5,4 @@ garth>=0.7.11
 garminconnect>=0.2.40
 fit-tool>=0.9.15
 anthropic>=0.40.0
+requests>=2.31

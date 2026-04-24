@@ -19,7 +19,7 @@
   <div class="card-body py-2">
     <small class="text-muted">Existing plans:</small>
     {% for p in plans %}
-      <a href="{{ url_for('plans.view_plan', plan_id=p.id) }}" class="badge bg-secondary text-decoration-none me-1">
+      <a href="{{ url_for('plans.view_plan', plan_id=p.id) }}" class="text-decoration-none small d-inline-block me-2">
         {{ p.name }}{% if p.end_date %} (ends {{ p.end_date }}){% endif %}
       </a>
     {% endfor %}
@@ -127,7 +127,7 @@
 
       <button type="submit" class="btn btn-primary w-100" {% if not api_configured %}disabled{% endif %}
               onclick="serializeTrips()">
-        Generate Plan with Claude
+        Generate Plan
       </button>
     </form>
 

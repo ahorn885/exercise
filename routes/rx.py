@@ -9,20 +9,43 @@ def list_entries():
     db = get_db()
     discipline = request.args.get('discipline', '')
     status = request.args.get('status', '')
+    locale_filter = request.args.get('locale', '')
 
-    query = 'SELECT * FROM current_rx WHERE 1=1'
+    query = '''SELECT cr.*, ei.video_reference, ei.where_available,
+                      ei.recovery_cost as ei_recovery_cost,
+                      ei.suggested_volume as ei_suggested_volume
+               FROM current_rx cr
+               LEFT JOIN exercise_inventory ei ON ei.exercise = cr.exercise
+               WHERE 1=1'''
     params = []
     if discipline:
-        query += ' AND discipline=?'
+        query += ' AND cr.discipline=?'
         params.append(discipline)
     if status:
-        query += " AND last_outcome LIKE ?"
+        query += ' AND cr.last_outcome LIKE ?'
         params.append(f'%{status}%')
-    query += ' ORDER BY discipline, exercise'
-
+    if locale_filter:
+        query += ' AND ei.where_available LIKE ?'
+        params.append(f'%{locale_filter}%')
+    query += ' ORDER BY cr.discipline, cr.exercise'
     entries = db.execute(query, params).fetchall()
+
+    # Exercises in inventory but with no current_rx entry
+    inv_query = '''SELECT ei.* FROM exercise_inventory ei
+                   WHERE NOT EXISTS (SELECT 1 FROM current_rx cr WHERE cr.exercise = ei.exercise)'''
+    inv_params = []
+    if locale_filter:
+        inv_query += ' AND ei.where_available LIKE ?'
+        inv_params.append(f'%{locale_filter}%')
+    inv_query += ' ORDER BY ei.discipline, ei.exercise'
+    inventory_only = db.execute(inv_query, inv_params).fetchall()
+
+    locales = db.execute('SELECT locale FROM locale_profiles ORDER BY locale').fetchall()
+
     return render_template('rx/list.html', entries=entries,
-                           discipline=discipline, status=status)
+                           inventory_only=inventory_only,
+                           discipline=discipline, status=status,
+                           locale_filter=locale_filter, locales=locales)
 
 
 @bp.route('/rx/<int:entry_id>/edit', methods=['GET', 'POST'])

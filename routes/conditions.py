@@ -11,8 +11,22 @@ CONDITIONS = ['Sunny', 'Partly Cloudy', 'Overcast', 'Light Rain', 'Heavy Rain',
 @bp.route('/conditions')
 def list_entries():
     db = get_db()
-    entries = db.execute('SELECT * FROM conditions_log ORDER BY date DESC').fetchall()
-    return render_template('conditions/list.html', entries=entries)
+    date_filter = request.args.get('date', '')
+    activity_filter = request.args.get('activity', '')
+
+    query = 'SELECT * FROM conditions_log WHERE 1=1'
+    params = []
+    if date_filter:
+        query += ' AND date=?'
+        params.append(date_filter)
+    if activity_filter:
+        query += ' AND activity LIKE ?'
+        params.append(f'%{activity_filter}%')
+    query += ' ORDER BY date DESC'
+
+    entries = db.execute(query, params).fetchall()
+    return render_template('conditions/list.html', entries=entries,
+                           date_filter=date_filter, activity_filter=activity_filter)
 
 
 @bp.route('/conditions/new', methods=['GET', 'POST'])
