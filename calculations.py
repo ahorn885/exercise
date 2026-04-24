@@ -94,6 +94,57 @@ def calculate_outcome(target_sets, target_reps, target_duration,
     return 'REDUCE \u2193'
 
 
+def calculate_outcome_from_sets(target_sets, target_reps, target_weight, target_duration, sets_data):
+    """Compute outcome from per-set logged data.
+
+    PROGRESS ↑: all sets passed AND at least one set exceeded target (more reps or more weight)
+    REPEAT →:   all sets passed AND none exceeded (exactly met target on every set)
+    REDUCE ↓:   fewer sets than target, or any set failed to meet target
+
+    sets_data: list of dicts with keys reps, weight_lbs, duration_sec (all optional/nullable).
+    """
+    if not sets_data:
+        return None
+    if not target_reps and not target_duration:
+        return None
+
+    target_s = target_sets or 0
+    target_r = target_reps or 0
+    target_w = target_weight or 0
+    target_d = target_duration or 0
+
+    if target_s and len(sets_data) < target_s:
+        return 'REDUCE ↓'
+
+    all_passed = True
+    any_exceeded = False
+
+    for s in sets_data:
+        reps = s.get('reps') or 0
+        weight = s.get('weight_lbs') or 0
+        duration = s.get('duration_sec') or 0
+
+        if target_d and not target_r:
+            passed = duration >= target_d
+            exceeded = duration > target_d
+        else:
+            rep_ok = (reps >= target_r) if target_r else True
+            wt_ok = (weight >= target_w) if target_w else True
+            passed = rep_ok and wt_ok
+            exceeded = (reps > target_r if target_r else False) or (weight > target_w if target_w else False)
+
+        if not passed:
+            all_passed = False
+        if exceeded:
+            any_exceeded = True
+
+    if not all_passed:
+        return 'REDUCE ↓'
+    if any_exceeded:
+        return 'PROGRESS ↑'
+    return 'REPEAT →'
+
+
 def calculate_1rm(weight, reps):
     """Epley formula: 1RM = weight * (1 + reps/30)"""
     if not weight or not reps or weight <= 0 or reps <= 0:

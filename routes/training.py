@@ -1,6 +1,7 @@
 from flask import Blueprint, render_template, request, redirect, url_for, flash, jsonify
 from database import get_db
-from calculations import calculate_outcome, calculate_1rm, calculate_volume, calculate_next_rx
+from calculations import (calculate_outcome, calculate_outcome_from_sets,
+                          calculate_1rm, calculate_volume, calculate_next_rx)
 
 bp = Blueprint('training', __name__)
 
@@ -23,21 +24,148 @@ def list_entries():
 
     entries = db.execute(query, params).fetchall()
     exercises = db.execute('SELECT DISTINCT exercise FROM current_rx ORDER BY exercise').fetchall()
+
+    # Fetch per-set data for entries that have it
+    log_ids = [e['id'] for e in entries]
+    sets_by_log = {}
+    if log_ids:
+        placeholders = ','.join('?' * len(log_ids))
+        set_rows = db.execute(
+            f'SELECT * FROM training_log_sets WHERE training_log_id IN ({placeholders}) ORDER BY training_log_id, set_number',
+            log_ids
+        ).fetchall()
+        for s in set_rows:
+            sets_by_log.setdefault(s['training_log_id'], []).append(s)
+
     return render_template('training/list.html', entries=entries, exercises=exercises,
-                           date_filter=date_filter, exercise_filter=exercise_filter)
+                           date_filter=date_filter, exercise_filter=exercise_filter,
+                           sets_by_log=sets_by_log)
 
 
-@bp.route('/training/new', methods=['GET', 'POST'])
+@bp.route('/training/new', methods=['GET'])
 def new_entry():
     db = get_db()
-    if request.method == 'POST':
-        _save_entry(db, None)
-        flash('Workout logged.', 'success')
-        return redirect(url_for('training.list_entries'))
     exercises = db.execute('SELECT exercise, movement_pattern FROM current_rx ORDER BY exercise').fetchall()
+    exercises_json = [{'exercise': e['exercise'], 'movement_pattern': e['movement_pattern']} for e in exercises]
     plan_items = _load_plan_items(db)
-    return render_template('training/form.html', entry=None, exercises=exercises,
-                           plan_items=plan_items)
+    return render_template('training/session_form.html', exercises=exercises,
+                           exercises_json=exercises_json, plan_items=plan_items)
+
+
+@bp.route('/training/session', methods=['POST'])
+def save_session():
+    data = request.get_json()
+    if not data:
+        return jsonify({'ok': False, 'error': 'No data'}), 400
+    db = get_db()
+
+    date = data.get('date', '')
+    plan_item_id = data.get('plan_item_id') or None
+    session_notes = data.get('notes', '')
+
+    cur = db.execute(
+        'INSERT INTO training_sessions (date, notes, plan_item_id) VALUES (?, ?, ?)',
+        (date, session_notes, plan_item_id)
+    )
+    session_id = cur.lastrowid
+
+    body_wt_row = db.execute('SELECT weight_lbs FROM body_metrics ORDER BY date DESC LIMIT 1').fetchone()
+    body_weight = body_wt_row['weight_lbs'] if body_wt_row else None
+
+    for ex_data in data.get('exercises', []):
+        exercise = ex_data.get('exercise', '').strip()
+        if not exercise:
+            continue
+
+        sets = ex_data.get('sets', [])
+
+        ei_row = db.execute('SELECT id FROM exercise_inventory WHERE exercise=?', (exercise,)).fetchone()
+        exercise_id = ei_row['id'] if ei_row else None
+
+        rx = db.execute(
+            'SELECT movement_pattern, weight_increment, consecutive_failures FROM current_rx WHERE exercise=?',
+            (exercise,)
+        ).fetchone()
+        movement_pattern = rx['movement_pattern'] if rx else None
+        recovery_cost = None
+        weight_increment = rx['weight_increment'] if rx else None
+        consecutive_failures = (rx['consecutive_failures'] or 0) if rx else 0
+
+        target_sets = ex_data.get('target_sets')
+        target_reps = ex_data.get('target_reps')
+        target_weight = ex_data.get('target_weight')
+        target_duration = ex_data.get('target_duration')
+        rpe = ex_data.get('rpe')
+        rest_sec = ex_data.get('rest_sec')
+        notes = ex_data.get('notes', '')
+
+        actual_sets = len(sets)
+        last_reps = sets[-1].get('reps') if sets else None
+        all_weights = [s.get('weight_lbs') or 0 for s in sets]
+        max_weight = max(all_weights) if all_weights else None
+        if max_weight == 0:
+            max_weight = None
+        last_duration = sets[-1].get('duration_sec') if sets else None
+        volume = sum((s.get('reps') or 0) * (s.get('weight_lbs') or 0) for s in sets) or None
+        if volume == 0:
+            volume = None
+
+        all_1rms = [calculate_1rm(s.get('weight_lbs'), s.get('reps')) or 0 for s in sets]
+        est_1rm = max(all_1rms) if all_1rms else None
+        if est_1rm == 0:
+            est_1rm = None
+
+        outcome = calculate_outcome_from_sets(target_sets, target_reps, target_weight, target_duration, sets)
+
+        nxt = calculate_next_rx(outcome, movement_pattern,
+                                actual_sets, last_reps, max_weight, last_duration,
+                                weight_increment=weight_increment,
+                                consecutive_failures=consecutive_failures)
+
+        log_cur = db.execute(
+            '''INSERT INTO training_log
+               (date, exercise, exercise_id, sub_group, recovery_cost, session_id,
+                target_sets, target_reps, target_weight, target_duration,
+                actual_sets, actual_reps, actual_weight, actual_duration,
+                rpe, rest_sec, outcome, est_1rm, volume, body_weight,
+                next_weight, next_sets, next_reps, plan_item_id, notes)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
+            (date, exercise, exercise_id, movement_pattern, recovery_cost, session_id,
+             target_sets, target_reps, target_weight, target_duration,
+             actual_sets, last_reps, max_weight, last_duration,
+             rpe, rest_sec, outcome, est_1rm, volume, body_weight,
+             nxt['next_weight'], nxt['next_sets'], nxt['next_reps'],
+             plan_item_id, notes)
+        )
+        log_id = log_cur.lastrowid
+
+        for s in sets:
+            db.execute(
+                'INSERT INTO training_log_sets (training_log_id, set_number, reps, weight_lbs, duration_sec) VALUES (?,?,?,?,?)',
+                (log_id, s.get('set_number', 0), s.get('reps'), s.get('weight_lbs'), s.get('duration_sec'))
+            )
+
+        if outcome and exercise:
+            db.execute(
+                '''UPDATE current_rx SET
+                   exercise_id=?, current_sets=?, current_reps=?, current_weight=?, current_duration=?,
+                   last_performed=?, last_outcome=?, consecutive_failures=?,
+                   next_sets=?, next_reps=?, next_weight=?,
+                   rx_source='From Training Log'
+                   WHERE exercise=?''',
+                (exercise_id, actual_sets, last_reps, max_weight, last_duration,
+                 date, outcome, nxt['consecutive_failures'],
+                 nxt['next_sets'], nxt['next_reps'], nxt['next_weight'], exercise)
+            )
+
+    if plan_item_id:
+        db.execute(
+            "UPDATE plan_items SET status='completed' WHERE id=? AND status='scheduled'",
+            (plan_item_id,)
+        )
+
+    db.commit()
+    return jsonify({'ok': True, 'session_id': session_id})
 
 
 @bp.route('/training/<int:entry_id>/edit', methods=['GET', 'POST'])
@@ -109,11 +237,11 @@ def _save_entry(db, entry_id):
     exercise_id = ei_row['id'] if ei_row else None
 
     rx = db.execute(
-        'SELECT movement_pattern, recovery_cost, weight_increment, consecutive_failures FROM current_rx WHERE exercise=?',
+        'SELECT movement_pattern, weight_increment, consecutive_failures FROM current_rx WHERE exercise=?',
         (exercise,)
     ).fetchone()
     movement_pattern = rx['movement_pattern'] if rx else None
-    recovery_cost = rx['recovery_cost'] if rx else None
+    recovery_cost = None
     weight_increment = rx['weight_increment'] if rx else None
     consecutive_failures = (rx['consecutive_failures'] or 0) if rx else 0
 

@@ -111,17 +111,25 @@
           <table class="table table-sm table-bordered mb-0">
             <thead class="table-light">
               <tr>
-                <th>Exercise</th><th>Sets</th><th>Reps</th><th>Weight (lbs)</th><th>Duration (s)</th>
+                <th>Exercise</th><th>Sets</th>
               </tr>
             </thead>
             <tbody>
               {% for row in result.data %}
               <tr>
-                <td>{{ row.exercise }}</td>
-                <td>{{ row.actual_sets or '—' }}</td>
-                <td>{{ row.actual_reps or '—' }}</td>
-                <td>{{ row.actual_weight or '—' }}</td>
-                <td>{{ row.actual_duration or '—' }}</td>
+                <td class="fw-semibold">{{ row.exercise }}</td>
+                <td>
+                  {% for s in row.sets %}
+                    <span class="badge bg-secondary me-1">
+                      S{{ loop.index }}:
+                      {% if s.reps %}{{ s.reps }} reps{% endif %}
+                      {% if s.weight_lbs %}@ {{ s.weight_lbs }}lb{% endif %}
+                      {% if s.duration_sec and not s.reps %}{{ s.duration_sec }}s{% endif %}
+                    </span>
+                  {% else %}
+                    <span class="text-muted">—</span>
+                  {% endfor %}
+                </td>
               </tr>
               {% endfor %}
             </tbody>

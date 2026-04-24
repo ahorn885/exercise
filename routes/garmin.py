@@ -2,6 +2,7 @@ from datetime import date, timedelta
 
 from flask import Blueprint, render_template, request, redirect, url_for, flash, jsonify, session as flask_session
 from database import get_db
+from calculations import calculate_outcome_from_sets, calculate_1rm, calculate_next_rx
 
 bp = Blueprint('garmin', __name__, url_prefix='/garmin')
 
@@ -234,20 +235,87 @@ def import_confirm():
     elif log_type == 'strength':
         rows = result['data']
         plan_item_id = _num_int(request.form.get('plan_item_id'))
+        global_notes = request.form.get('notes') or ''
+
+        session_date = rows[0]['date'] if rows else date.today().isoformat()
+        sess_cur = db.execute(
+            'INSERT INTO training_sessions (date, notes, plan_item_id) VALUES (?,?,?)',
+            (session_date, global_notes or None, plan_item_id)
+        )
+        session_id = sess_cur.lastrowid
+
+        body_wt_row = db.execute('SELECT weight_lbs FROM body_metrics ORDER BY date DESC LIMIT 1').fetchone()
+        body_weight = body_wt_row['weight_lbs'] if body_wt_row else None
+
         inserted = 0
         for row in rows:
-            row['notes'] = request.form.get('notes') or row.get('notes')
-            db.execute(
+            exercise = row.get('exercise', '')
+            sets = row.get('sets', [])
+
+            rx = db.execute(
+                'SELECT movement_pattern, weight_increment, consecutive_failures FROM current_rx WHERE exercise=?',
+                (exercise,)
+            ).fetchone()
+            movement_pattern = rx['movement_pattern'] if rx else None
+            weight_increment = rx['weight_increment'] if rx else None
+            consecutive_failures = (rx['consecutive_failures'] or 0) if rx else 0
+
+            actual_sets = len(sets)
+            last_reps = sets[-1].get('reps') if sets else None
+            all_weights = [s.get('weight_lbs') or 0 for s in sets]
+            max_weight = max(all_weights) if all_weights else None
+            if max_weight == 0:
+                max_weight = None
+            last_duration = sets[-1].get('duration_sec') if sets else None
+            volume = sum((s.get('reps') or 0) * (s.get('weight_lbs') or 0) for s in sets) or None
+            if volume == 0:
+                volume = None
+            all_1rms = [calculate_1rm(s.get('weight_lbs'), s.get('reps')) or 0 for s in sets]
+            est_1rm = max(all_1rms) if all_1rms else None
+            if est_1rm == 0:
+                est_1rm = None
+
+            outcome = calculate_outcome_from_sets(None, None, None, None, sets)
+            nxt = calculate_next_rx(outcome, movement_pattern,
+                                    actual_sets, last_reps, max_weight, last_duration,
+                                    weight_increment=weight_increment,
+                                    consecutive_failures=consecutive_failures)
+
+            log_cur = db.execute(
                 '''INSERT INTO training_log
-                   (date, exercise, actual_sets, actual_reps, actual_weight,
-                    actual_duration, plan_item_id, notes)
-                   VALUES (?,?,?,?,?,?,?,?)''',
-                (row.get('date'), row.get('exercise'),
-                 row.get('actual_sets'), row.get('actual_reps'),
-                 row.get('actual_weight'), row.get('actual_duration'),
-                 plan_item_id, row.get('notes'))
+                   (date, exercise, sub_group, session_id,
+                    actual_sets, actual_reps, actual_weight, actual_duration,
+                    outcome, est_1rm, volume, body_weight,
+                    next_weight, next_sets, next_reps, plan_item_id, notes)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
+                (row.get('date'), exercise, movement_pattern, session_id,
+                 actual_sets, last_reps, max_weight, last_duration,
+                 outcome, est_1rm, volume, body_weight,
+                 nxt['next_weight'], nxt['next_sets'], nxt['next_reps'],
+                 plan_item_id, global_notes or None)
             )
+            log_id = log_cur.lastrowid
+
+            for i, s in enumerate(sets, 1):
+                db.execute(
+                    'INSERT INTO training_log_sets (training_log_id, set_number, reps, weight_lbs, duration_sec) VALUES (?,?,?,?,?)',
+                    (log_id, i, s.get('reps'), s.get('weight_lbs'), s.get('duration_sec'))
+                )
+
+            if outcome and exercise:
+                db.execute(
+                    '''UPDATE current_rx SET
+                       current_sets=?, current_reps=?, current_weight=?, current_duration=?,
+                       last_performed=?, last_outcome=?, consecutive_failures=?,
+                       next_sets=?, next_reps=?, next_weight=?,
+                       rx_source='From FIT Import'
+                       WHERE exercise=?''',
+                    (actual_sets, last_reps, max_weight, last_duration,
+                     row.get('date'), outcome, nxt['consecutive_failures'],
+                     nxt['next_sets'], nxt['next_reps'], nxt['next_weight'], exercise)
+                )
             inserted += 1
+
         if plan_item_id:
             db.execute(
                 "UPDATE plan_items SET status='completed' WHERE id=? AND status='scheduled'",
@@ -301,17 +369,84 @@ def _import_activity(db, act: dict, plan_item, compliance: dict) -> dict:
 
         rows = parsed.get('data', []) if parsed.get('log_type') == 'strength' else []
         if rows:
+            session_date = rows[0]['date'] if rows else date.today().isoformat()
+            sess_cur = db.execute(
+                'INSERT INTO training_sessions (date, notes, plan_item_id) VALUES (?,?,?)',
+                (session_date, notes, plan_item_id)
+            )
+            session_id = sess_cur.lastrowid
+
+            body_wt_row = db.execute('SELECT weight_lbs FROM body_metrics ORDER BY date DESC LIMIT 1').fetchone()
+            body_weight = body_wt_row['weight_lbs'] if body_wt_row else None
+
             for row in rows:
-                db.execute(
+                exercise = row.get('exercise', '')
+                sets = row.get('sets', [])
+
+                rx = db.execute(
+                    'SELECT movement_pattern, weight_increment, consecutive_failures FROM current_rx WHERE exercise=?',
+                    (exercise,)
+                ).fetchone()
+                movement_pattern = rx['movement_pattern'] if rx else None
+                weight_increment = rx['weight_increment'] if rx else None
+                consecutive_failures = (rx['consecutive_failures'] or 0) if rx else 0
+
+                actual_sets = len(sets)
+                last_reps = sets[-1].get('reps') if sets else None
+                all_weights = [s.get('weight_lbs') or 0 for s in sets]
+                max_weight = max(all_weights) if all_weights else None
+                if max_weight == 0:
+                    max_weight = None
+                last_duration = sets[-1].get('duration_sec') if sets else None
+                volume = sum((s.get('reps') or 0) * (s.get('weight_lbs') or 0) for s in sets) or None
+                if volume == 0:
+                    volume = None
+                all_1rms = [calculate_1rm(s.get('weight_lbs'), s.get('reps')) or 0 for s in sets]
+                est_1rm = max(all_1rms) if all_1rms else None
+                if est_1rm == 0:
+                    est_1rm = None
+
+                outcome = calculate_outcome_from_sets(None, None, None, None, sets)
+                nxt = calculate_next_rx(outcome, movement_pattern,
+                                        actual_sets, last_reps, max_weight, last_duration,
+                                        weight_increment=weight_increment,
+                                        consecutive_failures=consecutive_failures)
+
+                log_cur = db.execute(
                     '''INSERT INTO training_log
-                       (date, exercise, actual_sets, actual_reps, actual_weight,
-                        actual_duration, garmin_activity_id, plan_item_id, notes)
-                       VALUES (?,?,?,?,?,?,?,?,?)''',
-                    (row.get('date'), row.get('exercise'),
-                     row.get('actual_sets'), row.get('actual_reps'),
-                     row.get('actual_weight'), row.get('actual_duration'),
+                       (date, exercise, sub_group, session_id,
+                        actual_sets, actual_reps, actual_weight, actual_duration,
+                        outcome, est_1rm, volume, body_weight,
+                        next_weight, next_sets, next_reps,
+                        garmin_activity_id, plan_item_id, notes)
+                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
+                    (row.get('date'), exercise, movement_pattern, session_id,
+                     actual_sets, last_reps, max_weight, last_duration,
+                     outcome, est_1rm, volume, body_weight,
+                     nxt['next_weight'], nxt['next_sets'], nxt['next_reps'],
                      gid, plan_item_id, notes)
                 )
+                log_id = log_cur.lastrowid
+
+                for i, s in enumerate(sets, 1):
+                    db.execute(
+                        'INSERT INTO training_log_sets (training_log_id, set_number, reps, weight_lbs, duration_sec) VALUES (?,?,?,?,?)',
+                        (log_id, i, s.get('reps'), s.get('weight_lbs'), s.get('duration_sec'))
+                    )
+
+                if outcome and exercise:
+                    db.execute(
+                        '''UPDATE current_rx SET
+                           current_sets=?, current_reps=?, current_weight=?, current_duration=?,
+                           last_performed=?, last_outcome=?, consecutive_failures=?,
+                           next_sets=?, next_reps=?, next_weight=?,
+                           rx_source='From FIT Import'
+                           WHERE exercise=?''',
+                        (actual_sets, last_reps, max_weight, last_duration,
+                         row.get('date'), outcome, nxt['consecutive_failures'],
+                         nxt['next_sets'], nxt['next_reps'], nxt['next_weight'], exercise)
+                    )
+
             if plan_item_id:
                 db.execute(
                     "UPDATE plan_items SET status='completed' WHERE id=? AND status='scheduled'",

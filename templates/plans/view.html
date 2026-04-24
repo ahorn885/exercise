@@ -26,6 +26,7 @@
     {% endif %}
     {% if plan.status != 'archived' %}
     <a href="{{ url_for('coaching.review', plan_id=plan.id) }}" class="btn btn-outline-primary btn-sm">AI Review</a>
+    <a href="{{ url_for('plans.download_plan_fits', plan_id=plan.id) }}" class="btn btn-outline-secondary btn-sm" title="Download all scheduled workouts as Garmin FIT files">⬇ FIT Files</a>
     {% endif %}
     <a href="{{ url_for('plans.list_plans') }}" class="btn btn-outline-secondary btn-sm">← Plans</a>
     {% if plan.status == 'archived' %}
@@ -165,16 +166,18 @@
               <span class="badge bg-{{ status_colors.get(item.status, 'secondary') }}">{{ item.status }}</span>
             </td>
             <td>
-              {% if item.status == 'scheduled' %}
-              <div class="d-flex gap-1">
+              <div class="d-flex gap-1 flex-wrap">
+                {% if item.status == 'scheduled' %}
                 <form method="post" action="{{ url_for('plans.complete_item', plan_id=plan.id, item_id=item.id) }}" class="d-inline">
                   <button type="submit" class="btn btn-xs btn-success py-0 px-1" style="font-size:.75rem" title="Mark complete">✓</button>
                 </form>
                 <form method="post" action="{{ url_for('plans.skip_item', plan_id=plan.id, item_id=item.id) }}" class="d-inline">
                   <button type="submit" class="btn btn-xs btn-outline-secondary py-0 px-1" style="font-size:.75rem" title="Skip">✕</button>
                 </form>
+                {% endif %}
+                <a href="{{ url_for('plans.download_item_fit', plan_id=plan.id, item_id=item.id) }}"
+                   class="btn btn-xs btn-outline-secondary py-0 px-1" style="font-size:.75rem" title="Download Garmin FIT file">⬇</a>
               </div>
-              {% endif %}
             </td>
           </tr>
           {% endfor %}
