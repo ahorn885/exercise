@@ -114,6 +114,31 @@
         </div>
       </div>
 
+      {# ── Event Goals ── #}
+      <div class="card mb-3">
+        <div class="card-header fw-semibold">Event Day Goals <span class="text-muted small fw-normal">(optional)</span></div>
+        <div class="card-body">
+          <p class="text-muted small mb-3">These goals inform event-day pacing and targets. They won't drive training directly but give the coach context for the bigger picture.</p>
+          <div class="row g-3">
+            <div class="col-md-6">
+              <label class="form-label fw-semibold">Goal Finish Time</label>
+              <input type="text" name="goal_finish_time" class="form-control"
+                     placeholder="e.g. Sub-36 hours, Top 10 finisher">
+            </div>
+            <div class="col-12">
+              <label class="form-label fw-semibold">Splits / Pacing Strategy</label>
+              <textarea name="goal_splits" class="form-control" rows="2"
+                        placeholder="e.g. Conservative first half, negative split on final run leg, walk all uphills over 15%"></textarea>
+            </div>
+            <div class="col-12">
+              <label class="form-label fw-semibold">Checkpoint / Aid Station / Transition Goals</label>
+              <textarea name="goal_checkpoints" class="form-control" rows="2"
+                        placeholder="e.g. CP1 &lt; 6 hrs, TA1 arrive by 4am, keep TA transitions under 20 min"></textarea>
+            </div>
+          </div>
+        </div>
+      </div>
+
       {# ── Plan Block ── #}
       <div class="card mb-3">
         <div class="card-header fw-semibold">Plan Block</div>

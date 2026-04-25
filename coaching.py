@@ -565,6 +565,7 @@ def generate_plan(db, start_date: str, weeks: int = 4, notes: str = '',
                   race_name: str = '', race_date: str = '', race_location: str = '',
                   race_disciplines: str = '', race_duration: str = '',
                   race_website: str = '', race_type: str = '',
+                  race_goals: str = '',
                   locale: str = 'home',
                   nutrition_goal: str = 'maintain',
                   travel_schedule: list = None,
@@ -587,6 +588,8 @@ def generate_plan(db, start_date: str, weeks: int = 4, notes: str = '',
         rest_days = [d.strip() for d in rest_days.split(',') if d.strip()]
     rest_days_str = ', '.join(rest_days) if rest_days else 'Monday'
 
+    goals_block = f'\n## Event Day Goals\n{race_goals}\n' if race_goals and race_goals.strip() else ''
+
     race_section = f"""## Target Event
 - Event: {race_name or 'Not specified'}
 - Type: {race_type or 'Not specified'}
@@ -594,7 +597,7 @@ def generate_plan(db, start_date: str, weeks: int = 4, notes: str = '',
 - Location: {race_location or 'Not specified'}
 - Disciplines: {race_disciplines or 'Not specified'}
 - Expected duration: {race_duration or 'Not specified'}
-- Website: {race_website or 'Not specified'}"""
+- Website: {race_website or 'Not specified'}{goals_block}"""
 
     philosophy_addendum = _PHILOSOPHY_ADDENDA.get(race_philosophy, _PHILOSOPHY_ADDENDA['Compete'])
     training_params = f"""## Training Parameters
@@ -759,7 +762,8 @@ def _get_performance_delta(db, plan_id: int, lookback_days: int) -> list:
     return result
 
 
-def run_review(db, plan_id: int, tier: int, notes: str = '', locale: str = 'home') -> tuple:
+def run_review(db, plan_id: int, tier: int, notes: str = '', locale: str = 'home',
+               race_goals: str = '', intensity_direction: str = '') -> tuple:
     """
     Run a tier 1/2/3 coaching review.
 
@@ -844,10 +848,17 @@ Return ONLY a JSON array of patch operations (no markdown, no explanation):
 Only include fields that actually need changing. Return [] if no adjustments needed."""
         max_tokens = 2000
 
+    goals_block = f'\n## Event Day Goals\n{race_goals}\n' if race_goals and race_goals.strip() else ''
+    intensity_block = (
+        f'\n## Intensity Adjustment Applied\nThe athlete reported the plan feels {intensity_direction}. '
+        f'All remaining sessions have been shifted {"down" if intensity_direction == "too_hard" else "up"} one intensity level. '
+        f'Factor this into your review.\n'
+    ) if intensity_direction in ('too_hard', 'too_easy') else ''
+
     user_msg = f"""## Coaching Review — Tier {tier}
 
 {instructions}
-{delta_section}
+{delta_section}{goals_block}{intensity_block}
 ## Training Context
 {json.dumps(ctx, indent=2, default=str)}
 

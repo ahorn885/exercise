@@ -524,6 +524,7 @@ _SQLITE_MIGRATIONS = [
     "CREATE INDEX IF NOT EXISTS idx_ts_date ON training_sessions(date)",
     "CREATE TABLE IF NOT EXISTS clothing_options (id INTEGER PRIMARY KEY AUTOINCREMENT, category TEXT NOT NULL, value TEXT NOT NULL, UNIQUE(category, value))",
     "ALTER TABLE plan_travel ADD COLUMN indoor_only INTEGER DEFAULT 0",
+    "ALTER TABLE training_plans ADD COLUMN race_goals TEXT DEFAULT ''",
 ]
 
 _PG_MIGRATIONS = [
@@ -571,6 +572,7 @@ _PG_MIGRATIONS = [
     "CREATE INDEX IF NOT EXISTS idx_ts_date ON training_sessions(date)",
     "CREATE TABLE IF NOT EXISTS clothing_options (id SERIAL PRIMARY KEY, category TEXT NOT NULL, value TEXT NOT NULL, UNIQUE(category, value))",
     "ALTER TABLE plan_travel ADD COLUMN IF NOT EXISTS indoor_only INTEGER DEFAULT 0",
+    "ALTER TABLE training_plans ADD COLUMN IF NOT EXISTS race_goals TEXT DEFAULT ''",
 ]
 
 _CLOTHING_SEEDS = [
