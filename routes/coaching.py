@@ -48,6 +48,13 @@ def generate():
                 travel_schedule = []
         except (json.JSONDecodeError, ValueError):
             travel_schedule = []
+        try:
+            weekly_hours = float(request.form.get('weekly_hours', 10))
+        except (ValueError, TypeError):
+            weekly_hours = 10.0
+        rest_day = request.form.get('rest_day', 'Monday')
+        race_philosophy = request.form.get('race_philosophy', 'Compete')
+        experience_level = request.form.get('experience_level', 'Intermediate')
 
         if not start_date:
             flash('Start date is required.', 'danger')
@@ -67,6 +74,10 @@ def generate():
                 race_website=race_website, locale=locale,
                 nutrition_goal=nutrition_goal,
                 travel_schedule=travel_schedule,
+                weekly_hours=weekly_hours,
+                rest_day=rest_day,
+                race_philosophy=race_philosophy,
+                experience_level=experience_level,
             )
             plan_id = _create_plan_from_dict(db, plan_data)
             for trip in travel_schedule:
@@ -210,6 +221,10 @@ def api_generate():
     race_disciplines = data.get('race_disciplines', '')
     race_duration = data.get('race_duration', '')
     race_website = data.get('race_website', '')
+    weekly_hours = float(data.get('weekly_hours', 10))
+    rest_day = data.get('rest_day', 'Monday')
+    race_philosophy = data.get('race_philosophy', 'Compete')
+    experience_level = data.get('experience_level', 'Intermediate')
     try:
         db = get_db()
         from coaching import generate_plan
@@ -219,6 +234,8 @@ def api_generate():
             race_name=race_name, race_date=race_date, race_location=race_location,
             race_disciplines=race_disciplines, race_duration=race_duration,
             race_website=race_website,
+            weekly_hours=weekly_hours, rest_day=rest_day,
+            race_philosophy=race_philosophy, experience_level=experience_level,
         )
         plan_id = _create_plan_from_dict(db, plan_data)
         db.commit()
