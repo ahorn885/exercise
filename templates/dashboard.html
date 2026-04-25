@@ -106,6 +106,57 @@
   </div>
 </div>
 
+{# ── Clothing Recommendations ── #}
+{% if clothing_recs %}
+<div class="card mb-3">
+  <div class="card-header fw-semibold d-flex justify-content-between align-items-center">
+    <span>Gear Recommendations — Next 7 Days</span>
+    <button class="btn btn-sm btn-outline-secondary" data-bs-toggle="collapse" data-bs-target="#clothingRecs">Show/Hide</button>
+  </div>
+  <div id="clothingRecs" class="collapse show">
+    <ul class="list-group list-group-flush">
+      {% for rec in clothing_recs %}
+      {% set past = rec.similar_past_conditions %}
+      {% set best = past[0] if past else none %}
+      <li class="list-group-item">
+        <div class="d-flex justify-content-between align-items-start">
+          <div>
+            <span class="fw-semibold">{{ rec.date }}</span>
+            <span class="text-muted ms-2">{{ rec.workout_name }}</span>
+            <span class="badge bg-secondary ms-1">{{ rec.sport_type }}</span>
+          </div>
+          {% if rec.forecast %}
+          <div class="text-muted small text-end">
+            {{ rec.forecast.avg_temp_f }}°F · {{ rec.forecast.description }}
+          </div>
+          {% endif %}
+        </div>
+        {% if best %}
+        <div class="mt-2 d-flex flex-wrap gap-1">
+          {% for field, label in [
+            ('upper_base_layer','Base'),('upper_mid_layer','Mid'),('upper_shell','Shell'),
+            ('lower_outer','Bottoms'),('headwear','Head'),('gloves','Gloves'),
+            ('footwear','Footwear'),('socks','Socks')
+          ] %}
+            {% if best[field] %}
+            <span class="badge bg-light text-dark border"><small class="text-muted">{{ label }}:</small> {{ best[field] }}</span>
+            {% endif %}
+          {% endfor %}
+        </div>
+        <div class="text-muted small mt-1">Based on {{ past|length }} similar past session{% if past|length != 1 %}s{% endif %}
+          {% if best.comfort %} · Past comfort {{ best.comfort }}/5{% endif %}
+          {% if best.comfort_notes %} · {{ best.comfort_notes }}{% endif %}
+        </div>
+        {% elif rec.forecast %}
+        <div class="text-muted small mt-1">No past conditions data for {{ rec.forecast.avg_temp_f }}°F — check your conditions log.</div>
+        {% endif %}
+      </li>
+      {% endfor %}
+    </ul>
+  </div>
+</div>
+{% endif %}
+
 {# ── Missed Workouts ── #}
 {% if missed_workouts %}
 <div class="alert alert-warning mb-3">
