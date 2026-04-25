@@ -90,6 +90,16 @@ def index():
 
     weather = _get_weather(db)
 
+    # Cardio sessions in the last 7 days with no conditions log entry
+    unconditioned_cardio = db.execute(
+        '''SELECT cl.id, cl.date, cl.activity, cl.activity_name, cl.duration_min
+           FROM cardio_log cl
+           LEFT JOIN conditions_log cond ON cond.cardio_log_id = cl.id
+           WHERE cl.date >= ? AND cond.id IS NULL
+           ORDER BY cl.date DESC''',
+        (week_ago,)
+    ).fetchall()
+
     # Clothing recommendations for upcoming outdoor sessions
     clothing_recs = []
     try:
@@ -119,4 +129,5 @@ def index():
                            missed_workouts=missed_workouts,
                            weather=weather,
                            today=today,
-                           clothing_recs=clothing_recs)
+                           clothing_recs=clothing_recs,
+                           unconditioned_cardio=unconditioned_cardio)

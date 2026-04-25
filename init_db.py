@@ -234,6 +234,12 @@ SQLITE_SCHEMA = '''
     CREATE INDEX IF NOT EXISTS idx_bm_date ON body_metrics(date);
     CREATE INDEX IF NOT EXISTS idx_pi_plan ON plan_items(plan_id);
     CREATE INDEX IF NOT EXISTS idx_pi_date ON plan_items(item_date);
+    CREATE TABLE IF NOT EXISTS clothing_options (
+        id       INTEGER PRIMARY KEY AUTOINCREMENT,
+        category TEXT NOT NULL,
+        value    TEXT NOT NULL,
+        UNIQUE(category, value)
+    );
 '''
 
 PG_SCHEMA = '''
@@ -465,6 +471,12 @@ PG_SCHEMA = '''
     CREATE INDEX IF NOT EXISTS idx_bm_date ON body_metrics(date);
     CREATE INDEX IF NOT EXISTS idx_pi_plan ON plan_items(plan_id);
     CREATE INDEX IF NOT EXISTS idx_pi_date ON plan_items(item_date);
+    CREATE TABLE IF NOT EXISTS clothing_options (
+        id       SERIAL PRIMARY KEY,
+        category TEXT NOT NULL,
+        value    TEXT NOT NULL,
+        UNIQUE(category, value)
+    );
 '''
 
 # Migrations for existing databases — add columns that may not exist yet
@@ -510,6 +522,7 @@ _SQLITE_MIGRATIONS = [
     "CREATE INDEX IF NOT EXISTS idx_tl_session ON training_log(session_id)",
     "CREATE INDEX IF NOT EXISTS idx_tls_log ON training_log_sets(training_log_id)",
     "CREATE INDEX IF NOT EXISTS idx_ts_date ON training_sessions(date)",
+    "CREATE TABLE IF NOT EXISTS clothing_options (id INTEGER PRIMARY KEY AUTOINCREMENT, category TEXT NOT NULL, value TEXT NOT NULL, UNIQUE(category, value))",
 ]
 
 _PG_MIGRATIONS = [
@@ -555,6 +568,35 @@ _PG_MIGRATIONS = [
     "CREATE INDEX IF NOT EXISTS idx_tl_session ON training_log(session_id)",
     "CREATE INDEX IF NOT EXISTS idx_tls_log ON training_log_sets(training_log_id)",
     "CREATE INDEX IF NOT EXISTS idx_ts_date ON training_sessions(date)",
+    "CREATE TABLE IF NOT EXISTS clothing_options (id SERIAL PRIMARY KEY, category TEXT NOT NULL, value TEXT NOT NULL, UNIQUE(category, value))",
+]
+
+_CLOTHING_SEEDS = [
+    ('headwear', 'Nothing'), ('headwear', 'Buff'), ('headwear', 'Ear Band'),
+    ('headwear', 'Baseball Cap'), ('headwear', 'Brim Hat'), ('headwear', 'Wool Beanie'),
+    ('headwear', 'Fleece Beanie'), ('headwear', 'Balaclava'),
+    ('face_neck', 'Nothing'), ('face_neck', 'Buff'), ('face_neck', 'Balaclava'),
+    ('upper_base_layer', 'Nothing'), ('upper_base_layer', 'Short Sleeve'),
+    ('upper_base_layer', 'Long Sleeve Technical'), ('upper_base_layer', 'Merino Long Sleeve'),
+    ('upper_mid_layer', 'Nothing'), ('upper_mid_layer', 'Fleece Pullover'),
+    ('upper_mid_layer', 'Fleece Vest'), ('upper_mid_layer', 'Down Vest'),
+    ('upper_mid_layer', 'Lightweight Puffy'),
+    ('upper_shell', 'Nothing'), ('upper_shell', 'Wind Shell'),
+    ('upper_shell', 'Softshell Jacket'), ('upper_shell', 'Rain Jacket'),
+    ('upper_shell', 'Hardshell'),
+    ('lower_under', 'Nothing'), ('lower_under', 'Shorts'), ('lower_under', 'Bib Shorts'),
+    ('lower_under', 'Tights'), ('lower_under', 'Thermal Tights'),
+    ('lower_outer', 'Nothing'), ('lower_outer', 'Wind Pants'),
+    ('lower_outer', 'Softshell Pants'), ('lower_outer', 'Rain Pants'),
+    ('gloves', 'Nothing'), ('gloves', 'Liner Gloves'), ('gloves', 'Lightweight Gloves'),
+    ('gloves', 'Waterproof Gloves'), ('gloves', 'Heavy Mitts'),
+    ('arm_warmers', 'Nothing'), ('arm_warmers', 'Arm Warmers'),
+    ('socks', 'Regular Socks'), ('socks', 'Wool Socks'),
+    ('socks', 'Waterproof Socks'), ('socks', 'Compression Socks'),
+    ('footwear', 'Trail Runners'), ('footwear', 'Road Running Shoes'),
+    ('footwear', 'Hiking Boots'), ('footwear', 'Waterproof Hiking Boots'),
+    ('footwear', 'Cycling Shoes'), ('footwear', 'Neoprene Booties'),
+    ('footwear', 'Gym Shoes'),
 ]
 
 # Equipment catalog — single source of truth for seeding equipment_items and the locale profile UI.
@@ -1003,6 +1045,12 @@ def init_postgres():
     cur.execute('''UPDATE training_log SET exercise_id = ei.id
         FROM exercise_inventory ei WHERE ei.exercise = training_log.exercise
         AND training_log.exercise_id IS NULL''')
+    # Seed clothing_options
+    for category, value in _CLOTHING_SEEDS:
+        cur.execute(
+            'INSERT INTO clothing_options (category, value) VALUES (%s, %s) ON CONFLICT DO NOTHING',
+            (category, value)
+        )
     conn.commit()
     cur.close()
     conn.close()
@@ -1081,6 +1129,11 @@ def init_sqlite():
     conn.execute('''UPDATE training_log SET exercise_id =
         (SELECT id FROM exercise_inventory WHERE exercise = training_log.exercise)
         WHERE exercise_id IS NULL''')
+    # Seed clothing_options
+    conn.executemany(
+        'INSERT OR IGNORE INTO clothing_options (category, value) VALUES (?, ?)',
+        _CLOTHING_SEEDS
+    )
     conn.commit()
     conn.close()
     print(f'SQLite database initialized at {SQLITE_PATH}')
