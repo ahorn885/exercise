@@ -564,11 +564,12 @@ def _build_nutrition_context(body_metrics: list, nutrition_goal: str, race_philo
 def generate_plan(db, start_date: str, weeks: int = 4, notes: str = '',
                   race_name: str = '', race_date: str = '', race_location: str = '',
                   race_disciplines: str = '', race_duration: str = '',
-                  race_website: str = '', locale: str = 'home',
+                  race_website: str = '', race_type: str = '',
+                  locale: str = 'home',
                   nutrition_goal: str = 'maintain',
                   travel_schedule: list = None,
                   weekly_hours: float = 10.0,
-                  rest_day: str = 'Monday',
+                  rest_days=None,
                   race_philosophy: str = 'Compete',
                   experience_level: str = 'Intermediate') -> tuple:
     """
@@ -580,8 +581,15 @@ def generate_plan(db, start_date: str, weeks: int = 4, notes: str = '',
 
     sport_module = _detect_sport_module(race_disciplines)
 
-    race_section = f"""## Target Race
+    if rest_days is None:
+        rest_days = ['Monday']
+    elif isinstance(rest_days, str):
+        rest_days = [d.strip() for d in rest_days.split(',') if d.strip()]
+    rest_days_str = ', '.join(rest_days) if rest_days else 'Monday'
+
+    race_section = f"""## Target Event
 - Event: {race_name or 'Not specified'}
+- Type: {race_type or 'Not specified'}
 - Date: {race_date or 'Not specified'}
 - Location: {race_location or 'Not specified'}
 - Disciplines: {race_disciplines or 'Not specified'}
@@ -591,7 +599,7 @@ def generate_plan(db, start_date: str, weeks: int = 4, notes: str = '',
     philosophy_addendum = _PHILOSOPHY_ADDENDA.get(race_philosophy, _PHILOSOPHY_ADDENDA['Compete'])
     training_params = f"""## Training Parameters
 - Weekly training hours available: {weekly_hours}h
-- Preferred rest day: {rest_day}
+- Rest day(s): {rest_days_str}
 - Race philosophy: {race_philosophy} — {philosophy_addendum}
 - Athlete experience level: {experience_level}"""
 
@@ -599,12 +607,13 @@ def generate_plan(db, start_date: str, weeks: int = 4, notes: str = '',
 
     travel_section = ''
     if travel_schedule:
-        lines = ['## Travel Schedule (adapt equipment and workout selection to locale for these date ranges)']
+        lines = ['## Locale Updates (adapt equipment and workout selection for these date ranges)']
         for t in travel_schedule:
             loc = t.get('locale', 'hotel')
             city = t.get('city', '')
             city_str = f' ({city})' if city else ''
-            lines.append(f"- {t.get('start_date')} → {t.get('end_date')}: {loc.title()}{city_str}")
+            indoor = ' — INDOOR ONLY (no outdoor activities)' if t.get('indoor_only') else ''
+            lines.append(f"- {t.get('start_date')} → {t.get('end_date')}: {loc.title()}{city_str}{indoor}")
         travel_section = '\n'.join(lines) + '\n'
 
     user_msg = f"""Generate a {weeks}-week training plan block starting {start_date}.

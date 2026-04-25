@@ -27,62 +27,112 @@
 </div>
 {% endif %}
 
+{% set MULTISPORT_TYPES = ['Triathlon', 'Duathlon', 'Adventure Race', 'Multisport', 'Pentathlon / Decathlon', 'Other multi-sport'] %}
+{% set ALL_DISCIPLINES = [
+  'Trail Running', 'Hiking', 'Orienteering / Navigation',
+  'Road Running', 'Kayaking', 'Packrafting', 'Canoeing',
+  'Mountain Biking', 'Gravel Cycling', 'Road Cycling',
+  'Rock Climbing', 'Rappelling / Abseiling', 'Mountaineering',
+  'Cross-Country Skiing', 'Swimming (Open Water)', 'Swimming (Pool)', 'Other'
+] %}
+{% set DAYS = ['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'] %}
+
 <div class="row">
   <div class="col-lg-7">
-    <form method="post">
+    <form method="post" id="gen-form">
 
+      {# ── Target Event ── #}
       <div class="card mb-3">
-        <div class="card-header fw-semibold">Target Race</div>
+        <div class="card-header fw-semibold">Target Event</div>
         <div class="card-body">
           <div class="row g-3">
             <div class="col-md-8">
-              <label class="form-label fw-semibold">Race Name</label>
+              <label class="form-label fw-semibold">Event Name</label>
               <input type="text" name="race_name" class="form-control"
                      placeholder="e.g. Pocket Gopher Extreme 2026" required>
             </div>
             <div class="col-md-4">
-              <label class="form-label fw-semibold">Race Date</label>
-              <input type="date" name="race_date" class="form-control" required>
+              <label class="form-label fw-semibold">Event Date</label>
+              <input type="date" name="race_date" id="race-date" class="form-control"
+                     onchange="updateUntilRaceLabel()">
+            </div>
+            <div class="col-md-6">
+              <label class="form-label fw-semibold">Event Type</label>
+              <select name="race_type" id="race-type" class="form-select" onchange="toggleDisciplines(this)">
+                <option value="">— select —</option>
+                <optgroup label="Single Sport">
+                  <option value="Running Race">Running Race</option>
+                  <option value="Trail Race">Trail Race</option>
+                  <option value="Cycling Race">Cycling Race</option>
+                  <option value="Endurance Hike / Fastpacking">Endurance Hike / Fastpacking</option>
+                  <option value="Swimming Race">Swimming Race</option>
+                  <option value="Ski Race">Ski Race</option>
+                </optgroup>
+                <optgroup label="Multi-Sport">
+                  <option value="Triathlon">Triathlon</option>
+                  <option value="Duathlon">Duathlon</option>
+                  <option value="Adventure Race">Adventure Race</option>
+                  <option value="Multisport">Multisport</option>
+                  <option value="Pentathlon / Decathlon">Pentathlon / Decathlon</option>
+                  <option value="Other multi-sport">Other multi-sport</option>
+                </optgroup>
+                <option value="Other">Other</option>
+              </select>
             </div>
             <div class="col-md-6">
               <label class="form-label fw-semibold">Location</label>
               <input type="text" name="race_location" class="form-control"
                      placeholder="e.g. Nerstrand, MN">
             </div>
+
+            {# Disciplines — shown only for multi-sport types #}
+            <div class="col-12" id="disciplines-section" style="display:none">
+              <label class="form-label fw-semibold">Disciplines</label>
+              <div class="row g-1">
+                {% for disc in ALL_DISCIPLINES %}
+                <div class="col-6 col-md-4">
+                  <div class="form-check">
+                    <input class="form-check-input" type="checkbox" name="disciplines"
+                           id="disc_{{ loop.index }}" value="{{ disc }}">
+                    <label class="form-check-label small" for="disc_{{ loop.index }}">{{ disc }}</label>
+                  </div>
+                </div>
+                {% endfor %}
+              </div>
+            </div>
+
             <div class="col-md-6">
               <label class="form-label fw-semibold">Expected Duration / Length</label>
               <input type="text" name="race_duration" class="form-control"
                      placeholder="e.g. 48–56 hrs continuous">
             </div>
-            <div class="col-12">
-              <label class="form-label fw-semibold">Disciplines</label>
-              <input type="text" name="race_disciplines" class="form-control"
-                     placeholder="e.g. Trail running, MTB, packrafting, rock climbing, abseiling">
-            </div>
-            <div class="col-12">
-              <label class="form-label fw-semibold">Race Website <span class="text-muted fw-normal">(optional)</span></label>
-              <input type="url" name="race_website" class="form-control"
-                     placeholder="https://...">
+            <div class="col-md-6">
+              <label class="form-label fw-semibold">Event Website <span class="text-muted fw-normal">(optional)</span></label>
+              <input type="url" name="race_website" class="form-control" placeholder="https://...">
             </div>
           </div>
         </div>
       </div>
 
+      {# ── Plan Block ── #}
       <div class="card mb-3">
         <div class="card-header fw-semibold">Plan Block</div>
         <div class="card-body">
           <div class="row g-3">
             <div class="col-md-4">
               <label class="form-label fw-semibold">Start Date</label>
-              <input type="date" name="start_date" class="form-control"
-                     value="{{ suggested_start }}" required>
+              <input type="date" name="start_date" id="start-date" class="form-control"
+                     value="{{ suggested_start }}" required onchange="updateUntilRaceLabel()">
             </div>
             <div class="col-md-4">
-              <label class="form-label fw-semibold">Weeks</label>
-              <select name="weeks" class="form-select">
+              <label class="form-label fw-semibold">Duration</label>
+              <select name="weeks" id="weeks-select" class="form-select">
                 <option value="2">2 weeks</option>
-                <option value="4" selected>4 weeks (standard block)</option>
+                <option value="4" selected>4 weeks</option>
                 <option value="6">6 weeks</option>
+                <option value="8">8 weeks</option>
+                <option value="12">12 weeks</option>
+                <option value="until_race" id="until-race-opt">Until the event</option>
               </select>
             </div>
             <div class="col-md-4">
@@ -113,6 +163,7 @@
         </div>
       </div>
 
+      {# ── Training Parameters ── #}
       <div class="card mb-3">
         <div class="card-header fw-semibold">Training Parameters</div>
         <div class="card-body">
@@ -124,20 +175,25 @@
               <div class="form-text">Total hours available per week</div>
             </div>
             <div class="col-md-4">
-              <label class="form-label fw-semibold">Preferred Rest Day</label>
-              <select name="rest_day" class="form-select">
-                {% for day in ['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'] %}
-                <option value="{{ day }}" {% if day == 'Monday' %}selected{% endif %}>{{ day }}</option>
-                {% endfor %}
-              </select>
-            </div>
-            <div class="col-md-4">
               <label class="form-label fw-semibold">Experience Level</label>
               <select name="experience_level" class="form-select">
                 <option value="Novice">Novice</option>
                 <option value="Intermediate" selected>Intermediate</option>
                 <option value="Advanced">Advanced</option>
               </select>
+            </div>
+            <div class="col-md-4">
+              <label class="form-label fw-semibold">Rest Day(s)</label>
+              <div class="border rounded p-2">
+                {% for day in DAYS %}
+                <div class="form-check form-check-inline">
+                  <input class="form-check-input" type="checkbox" name="rest_days"
+                         id="rest_{{ day }}" value="{{ day }}"
+                         {% if day == 'Monday' %}checked{% endif %}>
+                  <label class="form-check-label small" for="rest_{{ day }}">{{ day[:3] }}</label>
+                </div>
+                {% endfor %}
+              </div>
             </div>
             <div class="col-12">
               <label class="form-label fw-semibold">Race Philosophy</label>
@@ -166,13 +222,14 @@
         </div>
       </div>
 
+      {# ── Locale Updates ── #}
       <div class="card mb-3">
         <div class="card-header d-flex justify-content-between align-items-center">
-          <span class="fw-semibold">Travel Schedule <span class="text-muted small fw-normal">(optional)</span></span>
-          <button type="button" class="btn btn-sm btn-outline-secondary" id="add-trip-btn">+ Add Trip</button>
+          <span class="fw-semibold">Locale Updates <span class="text-muted small fw-normal">(optional)</span></span>
+          <button type="button" class="btn btn-sm btn-outline-secondary" id="add-trip-btn">+ Add</button>
         </div>
         <div class="card-body">
-          <p class="text-muted small mb-2">Add date ranges when you won't be at home. Claude will adapt workouts to available equipment and conditions.</p>
+          <p class="text-muted small mb-2">Log date ranges where your training environment changes — travel, events, or restricted access. Claude will adapt workouts to available equipment and conditions.</p>
           <div id="trip-rows"></div>
           <input type="hidden" name="travel_schedule" id="travel-schedule-json" value="[]">
         </div>
@@ -196,7 +253,7 @@
         <label class="form-label small mb-1">To</label>
         <input type="date" class="form-control form-control-sm trip-end">
       </div>
-      <div class="col-md-3">
+      <div class="col-md-2">
         <label class="form-label small mb-1">Locale</label>
         <select class="form-select form-select-sm trip-locale">
           {% for loc in locales %}
@@ -208,13 +265,75 @@
         <label class="form-label small mb-1">City</label>
         <input type="text" class="form-control form-control-sm trip-city" placeholder="e.g. Denver, CO">
       </div>
+      <div class="col-md-1 d-flex align-items-end pb-1">
+        <div class="form-check" title="Indoor only — no outdoor activities">
+          <input class="form-check-input trip-indoor" type="checkbox">
+          <label class="form-check-label small">Indoor<br>only</label>
+        </div>
+      </div>
     </div>
   </div>
 </template>
 
+  </div>
+
+  <div class="col-lg-5">
+    <div class="card border-0 bg-light h-100">
+      <div class="card-body">
+        <h6 class="fw-semibold mb-3">What this does</h6>
+        <ul class="small text-muted mb-3">
+          <li>Determines your training phase based on start date vs event date</li>
+          <li>Selects the right sport module based on event type and disciplines</li>
+          <li>Applies your periodization structure, weekly layout, and rest day preferences</li>
+          <li>Incorporates active injuries and substitution rules</li>
+          <li>Uses your recent training history for progressive overload</li>
+          <li>Adapts workouts to locale equipment and indoor/outdoor constraints</li>
+          <li>Returns a complete plan with full exercise details, sets, reps, and calorie targets</li>
+        </ul>
+        <details class="small">
+          <summary class="text-muted" style="cursor:pointer">Remote control (headless API)</summary>
+          <pre class="bg-white p-2 rounded mt-2"><code>POST /coaching/api/generate
+{
+  "start_date": "2026-05-01",
+  "weeks": 4,
+  "race_name": "Pocket Gopher 2026",
+  "race_type": "Adventure Race",
+  "race_date": "2026-07-17",
+  "race_disciplines": "Trail running, MTB, packrafting",
+  "race_duration": "48-56 hrs",
+  "rest_days": ["Monday"],
+  "notes": "..."
+}</code></pre>
+        </details>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
 <script>
+const MULTISPORT_TYPES = {{ MULTISPORT_TYPES | tojson }};
 const tripRows = document.getElementById('trip-rows');
 const template = document.getElementById('trip-row-template');
+
+function toggleDisciplines(sel) {
+  const show = MULTISPORT_TYPES.includes(sel.value);
+  document.getElementById('disciplines-section').style.display = show ? '' : 'none';
+}
+
+function updateUntilRaceLabel() {
+  const start = document.getElementById('start-date').value;
+  const race  = document.getElementById('race-date').value;
+  const opt   = document.getElementById('until-race-opt');
+  if (start && race) {
+    const days = Math.floor((new Date(race) - new Date(start)) / 86400000);
+    const wks  = Math.floor(days / 7);
+    opt.textContent = wks > 0 ? `Until the event (~${wks} weeks)` : 'Until the event';
+  } else {
+    opt.textContent = 'Until the event';
+  }
+}
 
 document.getElementById('add-trip-btn').addEventListener('click', () => {
   const row = template.content.cloneNode(true);
@@ -227,44 +346,16 @@ document.getElementById('add-trip-btn').addEventListener('click', () => {
 function serializeTrips() {
   const trips = [];
   tripRows.querySelectorAll('.trip-row').forEach(row => {
-    const start = row.querySelector('.trip-start').value;
-    const end = row.querySelector('.trip-end').value;
+    const start  = row.querySelector('.trip-start').value;
+    const end    = row.querySelector('.trip-end').value;
     const locale = row.querySelector('.trip-locale').value;
-    const city = row.querySelector('.trip-city').value.trim();
+    const city   = row.querySelector('.trip-city').value.trim();
+    const indoor = row.querySelector('.trip-indoor').checked;
     if (start && end) {
-      trips.push({ start_date: start, end_date: end, locale: locale, city: city });
+      trips.push({ start_date: start, end_date: end, locale, city, indoor_only: indoor });
     }
   });
   document.getElementById('travel-schedule-json').value = JSON.stringify(trips);
 }
 </script>
-  </div>
-
-  <div class="col-lg-5">
-    <div class="card border-0 bg-light h-100">
-      <div class="card-body">
-        <h6 class="fw-semibold mb-3">What this does</h6>
-        <ul class="small text-muted mb-3">
-          <li>Determines your training phase based on start date vs race date</li>
-          <li>Tailors discipline emphasis to your race's specific requirements</li>
-          <li>Applies your periodization structure, climbing ladder, and weekly layout preferences</li>
-          <li>Incorporates active injuries and substitution rules</li>
-          <li>Uses your recent training history for progressive overload</li>
-          <li>Returns a complete plan with full exercise details, sets, reps, and calorie targets</li>
-        </ul>
-        <h6 class="fw-semibold mb-2">Remote control (headless)</h6>
-        <pre class="bg-white p-2 rounded small"><code>POST /coaching/api/generate
-{
-  "start_date": "2026-05-01",
-  "weeks": 4,
-  "race_name": "Pocket Gopher Extreme 2026",
-  "race_date": "2026-07-17",
-  "race_disciplines": "Trail running, MTB, packrafting",
-  "race_duration": "48-56 hrs",
-  "notes": "..."
-}</code></pre>
-      </div>
-    </div>
-  </div>
-</div>
 {% endblock %}

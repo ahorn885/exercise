@@ -30,12 +30,30 @@ def generate():
 
     if request.method == 'POST':
         start_date = request.form.get('start_date', '').strip()
-        weeks = int(request.form.get('weeks', 4))
+        race_date = request.form.get('race_date', '').strip()
+
+        # Weeks: numeric or "until_race" (compute from start → race date)
+        weeks_raw = request.form.get('weeks', '4')
+        if weeks_raw == 'until_race' and start_date and race_date:
+            try:
+                from datetime import date as _date
+                delta = _date.fromisoformat(race_date) - _date.fromisoformat(start_date)
+                weeks = max(1, delta.days // 7)
+            except ValueError:
+                weeks = 4
+        else:
+            try:
+                weeks = int(weeks_raw)
+            except (ValueError, TypeError):
+                weeks = 4
+
         notes = request.form.get('notes', '').strip()
         race_name = request.form.get('race_name', '').strip()
-        race_date = request.form.get('race_date', '').strip()
+        race_type = request.form.get('race_type', '').strip()
         race_location = request.form.get('race_location', '').strip()
-        race_disciplines = request.form.get('race_disciplines', '').strip()
+        # Disciplines: collected as multi-select checkboxes, joined to string
+        disciplines_list = request.form.getlist('disciplines')
+        race_disciplines = ', '.join(disciplines_list) if disciplines_list else request.form.get('race_disciplines', '').strip()
         race_duration = request.form.get('race_duration', '').strip()
         race_website = request.form.get('race_website', '').strip()
         locale = request.form.get('locale', 'home')
@@ -52,7 +70,7 @@ def generate():
             weekly_hours = float(request.form.get('weekly_hours', 10))
         except (ValueError, TypeError):
             weekly_hours = 10.0
-        rest_day = request.form.get('rest_day', 'Monday')
+        rest_days = request.form.getlist('rest_days') or ['Monday']
         race_philosophy = request.form.get('race_philosophy', 'Compete')
         experience_level = request.form.get('experience_level', 'Intermediate')
 
@@ -71,11 +89,11 @@ def generate():
                 db, start_date, weeks=weeks, notes=notes,
                 race_name=race_name, race_date=race_date, race_location=race_location,
                 race_disciplines=race_disciplines, race_duration=race_duration,
-                race_website=race_website, locale=locale,
+                race_website=race_website, race_type=race_type, locale=locale,
                 nutrition_goal=nutrition_goal,
                 travel_schedule=travel_schedule,
                 weekly_hours=weekly_hours,
-                rest_day=rest_day,
+                rest_days=rest_days,
                 race_philosophy=race_philosophy,
                 experience_level=experience_level,
             )
@@ -85,8 +103,9 @@ def generate():
                 e = trip.get('end_date', '')
                 if s and e:
                     db.execute(
-                        'INSERT INTO plan_travel (plan_id, start_date, end_date, locale, city) VALUES (?,?,?,?,?)',
-                        (plan_id, s, e, trip.get('locale', 'hotel'), trip.get('city', ''))
+                        'INSERT INTO plan_travel (plan_id, start_date, end_date, locale, city, indoor_only) VALUES (?,?,?,?,?,?)',
+                        (plan_id, s, e, trip.get('locale', 'hotel'), trip.get('city', ''),
+                         1 if trip.get('indoor_only') else 0)
                     )
             db.commit()
             _log_usage(usage, 'generate')
@@ -217,12 +236,15 @@ def api_generate():
     notes = data.get('notes', '')
     race_name = data.get('race_name', '')
     race_date = data.get('race_date', '')
+    race_type = data.get('race_type', '')
     race_location = data.get('race_location', '')
     race_disciplines = data.get('race_disciplines', '')
     race_duration = data.get('race_duration', '')
     race_website = data.get('race_website', '')
     weekly_hours = float(data.get('weekly_hours', 10))
-    rest_day = data.get('rest_day', 'Monday')
+    rest_days = data.get('rest_days', ['Monday'])
+    if isinstance(rest_days, str):
+        rest_days = [rest_days]
     race_philosophy = data.get('race_philosophy', 'Compete')
     experience_level = data.get('experience_level', 'Intermediate')
     try:
@@ -233,8 +255,8 @@ def api_generate():
             db, start_date, weeks=weeks, notes=notes,
             race_name=race_name, race_date=race_date, race_location=race_location,
             race_disciplines=race_disciplines, race_duration=race_duration,
-            race_website=race_website,
-            weekly_hours=weekly_hours, rest_day=rest_day,
+            race_website=race_website, race_type=race_type,
+            weekly_hours=weekly_hours, rest_days=rest_days,
             race_philosophy=race_philosophy, experience_level=experience_level,
         )
         plan_id = _create_plan_from_dict(db, plan_data)
