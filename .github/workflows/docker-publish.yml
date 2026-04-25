@@ -4,7 +4,7 @@ on:
   push:
     branches:
       - main
-      - claude/review-handoff-file-681Tv
+      - claude/review-handoff-file-CDi71
 
 jobs:
   build-and-push:

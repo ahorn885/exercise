@@ -128,9 +128,9 @@
 
 <script>
 const descriptions = {
-  '1': 'Reads the last 7 days of training. Adjusts next 1-2 sessions if RPE or fatigue warrants it.',
-  '2': 'Reads the last 14 days. Patches upcoming workouts for the next 1-2 weeks. Handles volume, intensity, and substitutions.',
-  '3': 'Reads the last 30 days. Generates a brand-new 4-week plan block starting after the current plan ends.'
+  '1': 'Reads 90 days of training history. Adjusts next 1-2 sessions if RPE or fatigue warrants it. Includes clothing recommendations for upcoming outdoor sessions.',
+  '2': 'Reads 90 days of history + planned-vs-actual delta. Patches upcoming workouts for the next 1-2 weeks. Includes clothing recommendations for next 7 days.',
+  '3': 'Reads 90 days of history + prior plan blocks. Generates a brand-new 4-week plan starting after the current plan ends.'
 };
 const sel = document.getElementById('tier-select');
 const desc = document.getElementById('tier-description');
