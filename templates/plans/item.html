@@ -17,20 +17,43 @@
     <div class="card h-100">
       <div class="card-header">Workout Details</div>
       <div class="card-body">
-        {% if item.description %}<p>{{ item.description }}</p>{% endif %}
+        {% if item.description %}
+        {% set steps = item.description | workout_steps %}
+        {% if steps %}
+        <ul class="mb-3 ps-3" style="list-style-type:disc">
+          {% for step in steps %}
+          <li class="mb-1">{{ step }}</li>
+          {% endfor %}
+        </ul>
+        {% else %}
+        <p>{{ item.description }}</p>
+        {% endif %}
+        {% endif %}
         <table class="table table-sm mb-0">
           <tbody>
             {% if item.target_duration_min %}
-            <tr><th class="text-muted">Target Duration</th><td>{{ item.target_duration_min|int }} min</td></tr>
+            <tr><th class="text-muted" style="width:40%">Target Duration</th><td>{{ item.target_duration_min|int }} min</td></tr>
             {% endif %}
             {% if item.target_distance_mi %}
             <tr><th class="text-muted">Target Distance</th><td>{{ item.target_distance_mi }} mi</td></tr>
             {% endif %}
             {% if item.intensity %}
-            <tr><th class="text-muted">Intensity</th><td>{{ item.intensity }}</td></tr>
+            <tr><th class="text-muted">Intensity</th><td><span class="badge bg-secondary">{{ item.intensity }}</span></td></tr>
             {% endif %}
             {% if item.notes %}
-            <tr><th class="text-muted">Notes</th><td>{{ item.notes }}</td></tr>
+            <tr>
+              <th class="text-muted align-top">Notes</th>
+              <td>
+                {% set note_steps = item.notes | workout_steps %}
+                {% if note_steps | length > 1 %}
+                <ul class="mb-0 ps-3" style="list-style-type:disc">
+                  {% for n in note_steps %}<li class="small">{{ n }}</li>{% endfor %}
+                </ul>
+                {% else %}
+                <small>{{ item.notes }}</small>
+                {% endif %}
+              </td>
+            </tr>
             {% endif %}
           </tbody>
         </table>
