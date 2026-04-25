@@ -260,8 +260,21 @@
         </div>
       </div>
 
-      <button type="submit" class="btn btn-primary w-100" {% if not api_configured %}disabled{% endif %}
-              onclick="serializeTrips()">
+      <div id="clarify-section" style="display:none" class="mb-3">
+        <div class="card border-info">
+          <div class="card-header fw-semibold text-info-emphasis bg-info-subtle">
+            A few quick questions before generating
+          </div>
+          <div class="card-body" id="clarify-questions"></div>
+          <div class="card-footer d-flex gap-2">
+            <button type="button" class="btn btn-primary" id="clarify-confirm">Confirm &amp; Generate</button>
+            <button type="button" class="btn btn-outline-secondary" id="clarify-skip">Skip &amp; generate as-is</button>
+          </div>
+        </div>
+      </div>
+
+      <button type="button" class="btn btn-primary w-100" id="gen-submit-btn"
+              {% if not api_configured %}disabled{% endif %}>
         Generate Plan
       </button>
     </form>
@@ -381,6 +394,71 @@ function serializeTrips() {
     }
   });
   document.getElementById('travel-schedule-json').value = JSON.stringify(trips);
+}
+
+// ── Clarification flow ──────────────────────────────────────────────────────
+const submitBtn    = document.getElementById('gen-submit-btn');
+const clarifySection = document.getElementById('clarify-section');
+const clarifyQs    = document.getElementById('clarify-questions');
+
+submitBtn.addEventListener('click', async () => {
+  serializeTrips();
+  const notesEl = document.querySelector('textarea[name="notes"]');
+  const notes   = notesEl ? notesEl.value.trim() : '';
+
+  if (!notes) { document.getElementById('gen-form').submit(); return; }
+
+  submitBtn.disabled = true;
+  submitBtn.textContent = 'Checking notes…';
+
+  try {
+    const res  = await fetch('/coaching/clarify', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({notes, context: 'generate'})
+    });
+    const data = await res.json();
+
+    if (data.needs_clarification && data.questions.length) {
+      renderClarifyQuestions(data.questions, notesEl, () => document.getElementById('gen-form').submit());
+      submitBtn.disabled = false;
+      submitBtn.textContent = 'Generate Plan';
+    } else {
+      document.getElementById('gen-form').submit();
+    }
+  } catch(e) {
+    document.getElementById('gen-form').submit();
+  }
+});
+
+function renderClarifyQuestions(questions, notesEl, onConfirm) {
+  clarifyQs.innerHTML = '';
+  questions.forEach((q, i) => {
+    const div = document.createElement('div');
+    div.className = 'mb-3';
+    div.innerHTML = `<label class="form-label fw-semibold small">${q}</label>
+      <textarea class="form-control form-control-sm clarify-answer" rows="2" data-index="${i}"></textarea>`;
+    clarifyQs.appendChild(div);
+  });
+  clarifySection.style.display = '';
+  clarifySection.scrollIntoView({behavior: 'smooth', block: 'nearest'});
+
+  document.getElementById('clarify-confirm').onclick = () => {
+    const answers = [...document.querySelectorAll('.clarify-answer')]
+      .map((el, i) => el.value.trim() ? `${questions[i]}\n${el.value.trim()}` : '')
+      .filter(Boolean);
+    if (answers.length) {
+      const original = notesEl.value.trim();
+      notesEl.value = (original ? original + '\n\n' : '') + 'Additional context:\n' + answers.join('\n\n');
+    }
+    clarifySection.style.display = 'none';
+    onConfirm();
+  };
+
+  document.getElementById('clarify-skip').onclick = () => {
+    clarifySection.style.display = 'none';
+    onConfirm();
+  };
 }
 </script>
 {% endblock %}

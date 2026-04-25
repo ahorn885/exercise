@@ -414,6 +414,60 @@ def _check_api_key():
     return bool(os.environ.get('ANTHROPIC_API_KEY'))
 
 
+@bp.route('/clarify', methods=['POST'])
+def clarify():
+    """
+    Lightweight pre-flight check: given free-form coach notes, decide whether
+    clarifying questions are needed before running plan generation or review.
+    Returns {needs_clarification: bool, questions: [str]}.
+    """
+    if not _check_api_key():
+        return jsonify({'needs_clarification': False, 'questions': []})
+
+    data = request.get_json(silent=True) or {}
+    notes = (data.get('notes') or '').strip()
+    context = data.get('context', 'coaching')  # 'generate' | 'review' | 'coaching'
+
+    # Skip clarification for empty or very short clear inputs
+    if len(notes) < 8:
+        return jsonify({'needs_clarification': False, 'questions': []})
+
+    context_desc = {
+        'generate': 'generating a new multi-week training plan',
+        'review': 'running a coaching review to adjust an existing training plan',
+    }.get(context, 'providing coaching input')
+
+    prompt = f"""A user is {context_desc}. They wrote this in the coach notes field:
+
+"{notes}"
+
+Your job: decide if this input has important ambiguities that would meaningfully affect the coaching output. If so, return up to 3 short, specific clarifying questions. If the input is clear enough to act on (even if brief), return no questions.
+
+Only ask questions when the answer would change the plan or review in a concrete way. Do NOT ask for information the coach can reasonably infer or that doesn't affect the output.
+
+Respond ONLY with a JSON object (no markdown):
+{{"questions": ["question 1", "question 2"]}}
+
+Return an empty array if no clarification is needed."""
+
+    try:
+        import anthropic
+        client = anthropic.Anthropic(api_key=os.environ.get('ANTHROPIC_API_KEY'))
+        msg = client.messages.create(
+            model='claude-haiku-4-5-20251001',
+            max_tokens=256,
+            messages=[{'role': 'user', 'content': prompt}]
+        )
+        text = next((b.text for b in msg.content if b.type == 'text'), '{}')
+        import json as _json
+        parsed = _json.loads(text)
+        questions = [q for q in parsed.get('questions', []) if isinstance(q, str) and q.strip()]
+        return jsonify({'needs_clarification': bool(questions), 'questions': questions})
+    except Exception:
+        # On any error, silently skip clarification rather than blocking the user
+        return jsonify({'needs_clarification': False, 'questions': []})
+
+
 @bp.route('/chat/<int:plan_id>', methods=['GET', 'POST'])
 def chat(plan_id):
     db = get_db()
