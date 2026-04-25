@@ -90,6 +90,27 @@ def index():
 
     weather = _get_weather(db)
 
+    # Clothing recommendations for upcoming outdoor sessions
+    clothing_recs = []
+    try:
+        from coaching import get_clothing_context
+        active_plan = db.execute(
+            "SELECT id FROM training_plans WHERE status != 'archived' ORDER BY start_date DESC LIMIT 1"
+        ).fetchone()
+        if active_plan:
+            today_str = date.today().isoformat()
+            trip = db.execute(
+                "SELECT city FROM plan_travel WHERE start_date<=? AND end_date>=? AND city!='' LIMIT 1",
+                (today_str, today_str)
+            ).fetchone()
+            city = trip['city'] if trip else ''
+            if not city:
+                home = db.execute("SELECT city FROM locale_profiles WHERE locale='home' LIMIT 1").fetchone()
+                city = home['city'] if home and home['city'] else ''
+            clothing_recs = get_clothing_context(db, active_plan['id'], city)
+    except Exception:
+        pass
+
     return render_template('dashboard.html', stats=stats,
                            recent_training=recent_training,
                            recent_cardio=recent_cardio,
@@ -97,4 +118,5 @@ def index():
                            tomorrow_workouts=tomorrow_workouts,
                            missed_workouts=missed_workouts,
                            weather=weather,
-                           today=today)
+                           today=today,
+                           clothing_recs=clothing_recs)

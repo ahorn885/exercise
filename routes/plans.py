@@ -363,6 +363,22 @@ def view_plan(plan_id):
         except Exception:
             pass
 
+    clothing_recs = []
+    try:
+        from coaching import get_clothing_context
+        today_str = date_type.today().isoformat()
+        trip = db.execute(
+            "SELECT city FROM plan_travel WHERE plan_id=? AND start_date<=? AND end_date>=? AND city!='' LIMIT 1",
+            (plan_id, today_str, today_str)
+        ).fetchone()
+        city = trip['city'] if trip else ''
+        if not city:
+            home = db.execute("SELECT city FROM locale_profiles WHERE locale='home' LIMIT 1").fetchone()
+            city = home['city'] if home and home['city'] else ''
+        clothing_recs = get_clothing_context(db, plan_id, city)
+    except Exception:
+        pass
+
     return render_template('plans/view.html', plan=plan, weeks=weeks,
                            total=total, completed=completed,
                            active_mods=active_mods,
@@ -371,7 +387,8 @@ def view_plan(plan_id):
                            workout_nutrition=_workout_nutrition,
                            daily_supplements=DAILY_SUPPLEMENTS,
                            api_configured=api_configured,
-                           days_to_race=days_to_race)
+                           days_to_race=days_to_race,
+                           clothing_recs=clothing_recs)
 
 
 @bp.route('/<int:plan_id>/item/<int:item_id>')
