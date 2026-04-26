@@ -70,7 +70,8 @@
       <td class="text-nowrap">{{ e.aerobic_te or '—' }}</td>
       <td class="text-nowrap">
         <a href="{{ url_for('cardio.edit_entry', entry_id=e.id) }}" class="btn btn-sm btn-outline-secondary py-0 px-1">Edit</a>
-        <a href="{{ url_for('cardio.activity_fit', entry_id=e.id) }}" class="btn btn-sm btn-outline-info py-0 px-1" title="Download Activity FIT">FIT</a>
+        <a href="{{ url_for('cardio.activity_fit', entry_id=e.id) }}" class="btn btn-sm btn-outline-info py-0 px-1" title="Download Activity FIT"
+           onclick="return confirm('Generate and download an activity FIT file for this session?')">FIT</a>
         <form method="post" action="{{ url_for('cardio.delete_entry', entry_id=e.id) }}" class="d-inline"
               onsubmit="return confirm('Delete this entry?')">
           <button class="btn btn-sm btn-outline-danger py-0 px-1">Del</button>
