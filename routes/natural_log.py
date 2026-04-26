@@ -3,7 +3,7 @@ import json
 import os
 from datetime import date, timedelta
 
-from flask import Blueprint, render_template, request, jsonify
+from flask import Blueprint, render_template, request, jsonify, url_for
 from database import get_db
 
 bp = Blueprint('natural_log', __name__, url_prefix='/log-natural')
@@ -103,19 +103,19 @@ def _check_api_key():
 
 
 def _load_scheduled(db):
-    """Today's and yesterday's scheduled plan items for plan-linking context."""
+    """Scheduled plan items from the past 7 days for plan-linking context."""
     today = date.today().isoformat()
-    yesterday = (date.today() - timedelta(days=1)).isoformat()
+    week_ago = (date.today() - timedelta(days=7)).isoformat()
     rows = db.execute(
         '''SELECT pi.id, pi.item_date, pi.sport_type, pi.workout_name, pi.description,
                   pi.target_duration_min, pi.target_distance_mi, pi.intensity,
                   tp.name as plan_name
            FROM plan_items pi
            JOIN training_plans tp ON tp.id = pi.plan_id
-           WHERE pi.status = 'scheduled' AND pi.item_date IN (?, ?)
+           WHERE pi.status = 'scheduled' AND pi.item_date BETWEEN ? AND ?
              AND tp.status != 'archived'
            ORDER BY pi.item_date DESC''',
-        (today, yesterday)
+        (week_ago, today)
     ).fetchall()
     return [dict(r) for r in rows]
 
@@ -124,7 +124,7 @@ def _build_system(scheduled):
     today = date.today().isoformat()
     text = _SYSTEM.replace('{today}', today)
     if scheduled:
-        lines = ['\n\n## Scheduled workouts (today / yesterday) — use for plan matching']
+        lines = ['\n\n## Scheduled workouts (past 7 days) — use for plan matching']
         for s in scheduled:
             dur = f" {int(s['target_duration_min'])} min" if s.get('target_duration_min') else ''
             dist = f" / {s['target_distance_mi']} mi" if s.get('target_distance_mi') else ''
@@ -246,8 +246,13 @@ def save():
                     plan_item_id,
                 )
             )
-            saved.append({'type': 'cardio', 'id': cur.lastrowid,
-                          'redirect': '/cardio'})
+            new_id = cur.lastrowid
+            saved.append({
+                'type': 'cardio',
+                'id': new_id,
+                'redirect': '/cardio',
+                'fit_url': url_for('cardio.activity_fit', entry_id=new_id),
+            })
 
         elif log_type == 'body':
             db.execute(

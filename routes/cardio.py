@@ -1,5 +1,8 @@
-from flask import Blueprint, render_template, request, redirect, url_for, flash
+import io
+
+from flask import Blueprint, render_template, request, redirect, url_for, flash, send_file
 from database import get_db
+from fit_workout_generator import generate_activity_fit
 
 bp = Blueprint('cardio', __name__)
 
@@ -38,8 +41,10 @@ def list_entries():
 def new_entry():
     db = get_db()
     if request.method == 'POST':
-        _save(db, None)
+        new_id = _save(db, None)
         flash('Cardio session logged.', 'success')
+        if new_id:
+            return redirect(url_for('conditions.new_entry', cardio_log_id=new_id))
         return redirect(url_for('cardio.list_entries'))
     plan_items = _load_plan_items(db)
     return render_template('cardio/form.html', entry=None, activities=ACTIVITIES,
@@ -60,6 +65,24 @@ def edit_entry(entry_id):
     plan_items = _load_plan_items(db)
     return render_template('cardio/form.html', entry=entry, activities=ACTIVITIES,
                            plan_items=plan_items)
+
+
+@bp.route('/cardio/<int:entry_id>/activity-fit')
+def activity_fit(entry_id):
+    db = get_db()
+    entry = db.execute('SELECT * FROM cardio_log WHERE id=?', (entry_id,)).fetchone()
+    if not entry:
+        flash('Entry not found.', 'danger')
+        return redirect(url_for('cardio.list_entries'))
+    fit_bytes = generate_activity_fit(dict(entry))
+    activity_slug = (entry['activity'] or 'activity').lower().replace(' ', '_')
+    filename = f"activity_{entry['date']}_{activity_slug}.fit"
+    return send_file(
+        io.BytesIO(fit_bytes),
+        as_attachment=True,
+        download_name=filename,
+        mimetype='application/octet-stream',
+    )
 
 
 @bp.route('/cardio/<int:entry_id>/delete', methods=['POST'])
@@ -110,6 +133,7 @@ def _save(db, entry_id):
         plan_item_id, f.get('notes')
     )
 
+    new_id = None
     if entry_id:
         # Running dynamics columns are read-only (FIT-imported); don't overwrite them
         db.execute('''UPDATE cardio_log SET
@@ -120,13 +144,14 @@ def _save(db, entry_id):
             swolf=?, active_lengths=?, plan_item_id=?, notes=? WHERE id=?''',
             vals + (entry_id,))
     else:
-        db.execute('''INSERT INTO cardio_log
+        cur = db.execute('''INSERT INTO cardio_log
             (date, activity, activity_name, duration_min, moving_time_min,
              distance_mi, avg_pace, avg_speed, avg_hr, max_hr, calories,
              elev_gain_ft, elev_loss_ft, avg_cadence, max_cadence,
              avg_power, max_power, norm_power, aerobic_te, anaerobic_te,
              swolf, active_lengths, plan_item_id, notes)
             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''', vals)
+        new_id = cur.lastrowid
 
     if plan_item_id:
         db.execute(
@@ -134,3 +159,4 @@ def _save(db, entry_id):
             (plan_item_id,)
         )
     db.commit()
+    return new_id

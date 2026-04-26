@@ -5,6 +5,13 @@
   <h4 class="mb-0">{{ 'Edit' if entry else 'Log' }} Conditions</h4>
   <a href="{{ url_for('conditions.list_entries') }}" class="btn btn-sm btn-outline-secondary">← Back</a>
 </div>
+
+{# Determine initial values from entry or prefill #}
+{% set init_cardio_id = (entry.cardio_log_id if entry else (prefill.cardio_log_id if prefill else '')) %}
+{% set init_date      = (entry.date if entry else (prefill.date if prefill else '')) %}
+{% set init_activity  = (entry.activity if entry else (prefill.activity if prefill else '')) %}
+{% set is_indoor_init = init_activity in indoor_activities %}
+
 <form method="post">
   {% if cardio_sessions %}
   <div class="row g-3 mb-3">
@@ -16,7 +23,7 @@
           <option value="{{ s.id }}"
             data-date="{{ s.date }}"
             data-activity="{{ s.activity }}"
-            {% if entry and entry.cardio_log_id == s.id %}selected{% endif %}>
+            {% if init_cardio_id and init_cardio_id == s.id %}selected{% endif %}>
             {{ s.date }} · {{ s.activity }}{% if s.activity_name %} — {{ s.activity_name }}{% endif %}
           </option>
         {% endfor %}
@@ -24,51 +31,95 @@
     </div>
   </div>
   {% endif %}
+
   <div class="row g-3 mb-3">
-    <div class="col-md-2"><label class="form-label">Date</label>
-      <input type="date" name="date" id="cond-date" class="form-control" required value="{{ entry.date if entry else '' }}"></div>
-    <div class="col-md-3"><label class="form-label">Activity</label>
-      <input type="text" name="activity" id="cond-activity" class="form-control" value="{{ entry.activity if entry else '' }}"></div>
-    <div class="col-md-2"><label class="form-label">Temp (°F)</label>
-      <input type="number" name="temp_f" class="form-control" step="0.1" value="{{ entry.temp_f if entry else '' }}"></div>
-    <div class="col-md-2"><label class="form-label">Feels Like (°F)</label>
-      <input type="number" name="feels_like_f" class="form-control" step="0.1" value="{{ entry.feels_like_f if entry else '' }}"></div>
-    <div class="col-md-2"><label class="form-label">Wind (mph)</label>
-      <input type="number" name="wind_mph" class="form-control" step="0.1" value="{{ entry.wind_mph if entry else '' }}"></div>
-    <div class="col-md-1"><label class="form-label">Wind Dir</label>
+    <div class="col-md-2">
+      <label class="form-label">Date</label>
+      <input type="date" name="date" id="cond-date" class="form-control" required value="{{ init_date }}">
+    </div>
+    <div class="col-md-3">
+      <label class="form-label">Activity</label>
+      <select name="activity" id="cond-activity" class="form-select" onchange="updateIndoorFromActivity(this)">
+        <option value="">—</option>
+        {% for a in activities %}
+          <option value="{{ a }}" {% if init_activity == a %}selected{% endif %}>{{ a }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="col-md-2 d-flex align-items-end pb-1">
+      <div class="form-check">
+        <input class="form-check-input" type="checkbox" name="is_indoor" id="is-indoor"
+               onchange="toggleIndoor(this)"
+               {% if is_indoor_init %}checked{% endif %}>
+        <label class="form-check-label" for="is-indoor">Indoor</label>
+      </div>
+    </div>
+    <div class="col-md-2">
+      <label class="form-label">Temp (°F)</label>
+      <input type="number" name="temp_f" class="form-control" step="0.1" value="{{ entry.temp_f if entry else '' }}">
+    </div>
+    <div class="col-md-2">
+      <label class="form-label">Feels Like (°F)</label>
+      <input type="number" name="feels_like_f" class="form-control" step="0.1" value="{{ entry.feels_like_f if entry else '' }}">
+    </div>
+  </div>
+
+  <div id="outdoor-fields" class="row g-3 mb-3" {% if is_indoor_init %}style="display:none"{% endif %}>
+    <div class="col-md-2">
+      <label class="form-label">Wind (mph)</label>
+      <input type="number" name="wind_mph" class="form-control" step="0.1" value="{{ entry.wind_mph if entry else '' }}">
+    </div>
+    <div class="col-md-2">
+      <label class="form-label">Wind Dir</label>
       <select name="wind_dir" class="form-select">
         <option value="">—</option>
         {% for d in wind_dirs %}<option value="{{ d }}" {% if entry and entry.wind_dir == d %}selected{% endif %}>{{ d }}</option>{% endfor %}
-      </select></div>
-  </div>
-  <div class="row g-3 mb-3">
-    <div class="col-md-3"><label class="form-label">Conditions</label>
+      </select>
+    </div>
+    <div class="col-md-3">
+      <label class="form-label">Conditions</label>
       <select name="conditions" class="form-select">
         <option value="">—</option>
         {% for c in conditions_opts %}<option value="{{ c }}" {% if entry and entry.conditions == c %}selected{% endif %}>{{ c }}</option>{% endfor %}
-      </select></div>
+      </select>
+    </div>
   </div>
-  <h6 class="text-muted">Clothing</h6>
+
+  <h6 class="text-muted mt-2">Clothing</h6>
   <div class="row g-3 mb-3">
-    {% for field, label in [('headwear','Headwear'),('face_neck','Face/Neck'),('upper_shell','Upper Shell'),
-      ('upper_mid_layer','Upper Mid'),('upper_base_layer','Upper Base'),
-      ('lower_outer','Lower Outer'),('lower_under','Lower Under'),
-      ('gloves','Gloves'),('arm_warmers','Arm Warmers'),('socks','Socks'),('footwear','Footwear')] %}
+    {% for field, label in clothing_fields %}
+    {% set opts = clothing_options.get(field, []) %}
     <div class="col-6 col-md-3">
       <label class="form-label">{{ label }}</label>
-      <input type="text" name="{{ field }}" class="form-control" value="{{ entry[field] if entry and entry[field] else '' }}">
+      <input type="text" name="{{ field }}" class="form-control"
+             list="dl-{{ field }}"
+             value="{{ entry[field] if entry and entry[field] else '' }}"
+             autocomplete="off">
+      <datalist id="dl-{{ field }}">
+        {% for opt in opts %}<option value="{{ opt }}">{% endfor %}
+      </datalist>
     </div>
     {% endfor %}
   </div>
+
   <div class="row g-3 mb-3">
-    <div class="col-md-2"><label class="form-label">Comfort (1–5)</label>
+    <div class="col-md-2">
+      <label class="form-label">Comfort (1–5)</label>
       <select name="comfort" class="form-select">
         <option value="">—</option>
-        {% for i in range(1,6) %}<option value="{{ i }}" {% if entry and entry.comfort == i %}selected{% endif %}>{{ i }} {% if i==1%}Very Cold{% elif i==2%}Cold{% elif i==3%}Comfortable{% elif i==4%}Warm{% else %}Very Hot{% endif %}</option>{% endfor %}
-      </select></div>
-    <div class="col-md-6"><label class="form-label">Comfort Notes</label>
-      <input type="text" name="comfort_notes" class="form-control" value="{{ entry.comfort_notes if entry else '' }}"></div>
+        {% for i in range(1,6) %}
+          <option value="{{ i }}" {% if entry and entry.comfort == i %}selected{% endif %}>
+            {{ i }} {% if i==1 %}Very Cold{% elif i==2 %}Cold{% elif i==3 %}Comfortable{% elif i==4 %}Warm{% else %}Very Hot{% endif %}
+          </option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="col-md-6">
+      <label class="form-label">Comfort Notes</label>
+      <input type="text" name="comfort_notes" class="form-control" value="{{ entry.comfort_notes if entry else '' }}">
+    </div>
   </div>
+
   <div class="d-flex gap-2">
     <button type="submit" class="btn btn-primary">{{ 'Update' if entry else 'Save' }}</button>
     <a href="{{ url_for('conditions.list_entries') }}" class="btn btn-outline-secondary">Cancel</a>
@@ -78,13 +129,42 @@
 
 {% block scripts %}
 <script>
+const INDOOR_ACTIVITIES = {{ indoor_activities | list | tojson }};
+
 function fillFromSession(sel) {
   const opt = sel.options[sel.selectedIndex];
   if (!opt.value) return;
   const dateEl = document.getElementById('cond-date');
   const actEl  = document.getElementById('cond-activity');
   if (dateEl && !dateEl.value) dateEl.value = opt.dataset.date;
-  if (actEl  && !actEl.value)  actEl.value  = opt.dataset.activity;
+  if (actEl) {
+    if (!actEl.value) {
+      // Try to select matching option
+      for (let i = 0; i < actEl.options.length; i++) {
+        if (actEl.options[i].value === opt.dataset.activity) {
+          actEl.selectedIndex = i;
+          break;
+        }
+      }
+    }
+    updateIndoorFromActivity(actEl);
+  }
+}
+
+function updateIndoorFromActivity(sel) {
+  const isIndoor = INDOOR_ACTIVITIES.includes(sel.value);
+  const cb = document.getElementById('is-indoor');
+  if (cb && isIndoor) {
+    cb.checked = true;
+    toggleIndoor(cb);
+  }
+}
+
+function toggleIndoor(cb) {
+  const outdoor = document.getElementById('outdoor-fields');
+  if (outdoor) {
+    outdoor.style.display = cb.checked ? 'none' : '';
+  }
 }
 </script>
 {% endblock %}

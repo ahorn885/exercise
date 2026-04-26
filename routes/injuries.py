@@ -4,10 +4,23 @@ from database import get_db
 bp = Blueprint('injuries', __name__)
 
 STATUSES = ['Active', 'Managing', 'Resolved']
-BODY_PARTS = ['Left Wrist', 'Right Wrist', 'Left Knee', 'Right Knee', 'Left Ankle',
-              'Right Ankle', 'Left Hip', 'Right Hip', 'Lower Back', 'Upper Back',
-              'Left Shoulder', 'Right Shoulder', 'Neck', 'Left Hamstring',
-              'Right Hamstring', 'Left Quad', 'Right Quad', 'Other']
+BODY_PARTS = [
+    'Left Hand', 'Right Hand',
+    'Left Wrist', 'Right Wrist',
+    'Left Elbow', 'Right Elbow',
+    'Left Shoulder', 'Right Shoulder',
+    'Left Knee', 'Right Knee',
+    'Left Ankle', 'Right Ankle',
+    'Left Foot', 'Right Foot',
+    'Left Hip', 'Right Hip',
+    'Left Hamstring', 'Right Hamstring',
+    'Left Quad', 'Right Quad',
+    'Groin',
+    'Abdomen',
+    'Lower Back', 'Upper Back',
+    'Neck',
+    'Other',
+]
 
 MOD_TYPES = [
     ('avoid',       'Avoid — skip entirely'),

@@ -232,7 +232,18 @@
                 {% endfor %}
               {% endif %}
               {% if item.description %}
-              <br><small class="text-muted">{{ item.description[:80] }}{% if item.description|length > 80 %}…{% endif %}</small>
+              {% set steps = item.description | workout_steps %}
+              {% if steps %}
+              <ul class="mb-0 mt-1 ps-3" style="list-style-type:disc">
+                {% for step in steps %}
+                  {% if loop.index <= 6 %}
+                  <li class="small text-muted">{{ step }}</li>
+                  {% elif loop.index == 7 %}
+                  <li class="small text-muted text-secondary">… {{ steps|length - 6 }} more</li>
+                  {% endif %}
+                {% endfor %}
+              </ul>
+              {% endif %}
               {% endif %}
             </td>
             <td class="d-none d-md-table-cell"><small>{{ item.sport_type }}</small></td>

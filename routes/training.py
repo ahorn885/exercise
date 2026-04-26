@@ -1,7 +1,10 @@
-from flask import Blueprint, render_template, request, redirect, url_for, flash, jsonify
+import io
+
+from flask import Blueprint, render_template, request, redirect, url_for, flash, jsonify, send_file
 from database import get_db
 from calculations import (calculate_outcome, calculate_outcome_from_sets,
                           calculate_1rm, calculate_volume, calculate_next_rx)
+from fit_workout_generator import generate_activity_fit
 
 bp = Blueprint('training', __name__)
 
@@ -166,6 +169,35 @@ def save_session():
 
     db.commit()
     return jsonify({'ok': True, 'session_id': session_id})
+
+
+@bp.route('/training/session/<int:session_id>/activity-fit')
+def session_activity_fit(session_id):
+    db = get_db()
+    sess = db.execute('SELECT * FROM training_sessions WHERE id=?', (session_id,)).fetchone()
+    if not sess:
+        flash('Session not found.', 'danger')
+        return redirect(url_for('training.list_entries'))
+    duration_min = None
+    if sess['plan_item_id']:
+        pi = db.execute(
+            'SELECT target_duration_min FROM plan_items WHERE id=?', (sess['plan_item_id'],)
+        ).fetchone()
+        if pi and pi['target_duration_min']:
+            duration_min = pi['target_duration_min']
+    entry = {
+        'activity': 'strength_training',
+        'date': sess['date'],
+        'duration_min': duration_min,
+    }
+    fit_bytes = generate_activity_fit(entry)
+    filename = f"strength_{sess['date']}.fit"
+    return send_file(
+        io.BytesIO(fit_bytes),
+        as_attachment=True,
+        download_name=filename,
+        mimetype='application/octet-stream',
+    )
 
 
 @bp.route('/training/<int:entry_id>/edit', methods=['GET', 'POST'])

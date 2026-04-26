@@ -30,14 +30,44 @@ def generate():
 
     if request.method == 'POST':
         start_date = request.form.get('start_date', '').strip()
-        weeks = int(request.form.get('weeks', 4))
+        race_date = request.form.get('race_date', '').strip()
+
+        # Weeks: numeric or "until_race" (compute from start → race date)
+        weeks_raw = request.form.get('weeks', '4')
+        if weeks_raw == 'until_race' and start_date and race_date:
+            try:
+                from datetime import date as _date
+                delta = _date.fromisoformat(race_date) - _date.fromisoformat(start_date)
+                weeks = max(1, delta.days // 7)
+            except ValueError:
+                weeks = 4
+        else:
+            try:
+                weeks = int(weeks_raw)
+            except (ValueError, TypeError):
+                weeks = 4
+
         notes = request.form.get('notes', '').strip()
         race_name = request.form.get('race_name', '').strip()
-        race_date = request.form.get('race_date', '').strip()
+        race_type = request.form.get('race_type', '').strip()
         race_location = request.form.get('race_location', '').strip()
-        race_disciplines = request.form.get('race_disciplines', '').strip()
+        # Disciplines: collected as multi-select checkboxes, joined to string
+        disciplines_list = request.form.getlist('disciplines')
+        race_disciplines = ', '.join(disciplines_list) if disciplines_list else request.form.get('race_disciplines', '').strip()
         race_duration = request.form.get('race_duration', '').strip()
         race_website = request.form.get('race_website', '').strip()
+        # Build race_goals from structured fields
+        goal_finish = request.form.get('goal_finish_time', '').strip()
+        goal_splits = request.form.get('goal_splits', '').strip()
+        goal_checkpoints = request.form.get('goal_checkpoints', '').strip()
+        race_goals_parts = []
+        if goal_finish:
+            race_goals_parts.append(f'Goal finish time: {goal_finish}')
+        if goal_splits:
+            race_goals_parts.append(f'Splits / pacing strategy:\n{goal_splits}')
+        if goal_checkpoints:
+            race_goals_parts.append(f'Checkpoint / Aid Station / TA goals:\n{goal_checkpoints}')
+        race_goals = '\n\n'.join(race_goals_parts)
         locale = request.form.get('locale', 'home')
         if locale not in LOCALES:
             locale = 'home'
@@ -52,7 +82,7 @@ def generate():
             weekly_hours = float(request.form.get('weekly_hours', 10))
         except (ValueError, TypeError):
             weekly_hours = 10.0
-        rest_day = request.form.get('rest_day', 'Monday')
+        rest_days = request.form.getlist('rest_days') or ['Monday']
         race_philosophy = request.form.get('race_philosophy', 'Compete')
         experience_level = request.form.get('experience_level', 'Intermediate')
 
@@ -71,22 +101,25 @@ def generate():
                 db, start_date, weeks=weeks, notes=notes,
                 race_name=race_name, race_date=race_date, race_location=race_location,
                 race_disciplines=race_disciplines, race_duration=race_duration,
-                race_website=race_website, locale=locale,
-                nutrition_goal=nutrition_goal,
+                race_website=race_website, race_type=race_type, race_goals=race_goals,
+                locale=locale, nutrition_goal=nutrition_goal,
                 travel_schedule=travel_schedule,
                 weekly_hours=weekly_hours,
-                rest_day=rest_day,
+                rest_days=rest_days,
                 race_philosophy=race_philosophy,
                 experience_level=experience_level,
             )
             plan_id = _create_plan_from_dict(db, plan_data)
+            if race_goals:
+                db.execute('UPDATE training_plans SET race_goals=? WHERE id=?', (race_goals, plan_id))
             for trip in travel_schedule:
                 s = trip.get('start_date', '')
                 e = trip.get('end_date', '')
                 if s and e:
                     db.execute(
-                        'INSERT INTO plan_travel (plan_id, start_date, end_date, locale, city) VALUES (?,?,?,?,?)',
-                        (plan_id, s, e, trip.get('locale', 'hotel'), trip.get('city', ''))
+                        'INSERT INTO plan_travel (plan_id, start_date, end_date, locale, city, indoor_only) VALUES (?,?,?,?,?,?)',
+                        (plan_id, s, e, trip.get('locale', 'hotel'), trip.get('city', ''),
+                         1 if trip.get('indoor_only') else 0)
                     )
             db.commit()
             _log_usage(usage, 'generate')
@@ -136,19 +169,79 @@ def review(plan_id):
         if locale not in LOCALES:
             locale = 'home'
 
+        # ── Pre-review actions (applied before the AI call) ──────────────────
+
+        # 1. Locale updates
+        try:
+            locale_updates = json.loads(request.form.get('locale_updates', '[]'))
+            if not isinstance(locale_updates, list):
+                locale_updates = []
+        except (json.JSONDecodeError, ValueError):
+            locale_updates = []
+        for trip in locale_updates:
+            s = trip.get('start_date', '')
+            e = trip.get('end_date', '')
+            if s and e:
+                db.execute(
+                    'INSERT INTO plan_travel (plan_id, start_date, end_date, locale, city, indoor_only) VALUES (?,?,?,?,?,?)',
+                    (plan_id, s, e, trip.get('locale', 'hotel'), trip.get('city', ''),
+                     1 if trip.get('indoor_only') else 0)
+                )
+
+        # 2. Intensity adjustment — bulk-shift all remaining scheduled sessions
+        difficulty = request.form.get('difficulty_feedback', 'just_right')
+        adjust_intensity = bool(request.form.get('adjust_intensity'))
+        intensity_direction = ''
+        intensity_shifted = 0
+        if adjust_intensity and difficulty in ('too_hard', 'too_easy'):
+            intensity_direction = difficulty
+            if difficulty == 'too_hard':
+                sql = """UPDATE plan_items SET intensity = CASE intensity
+                    WHEN 'very_hard' THEN 'hard'
+                    WHEN 'hard' THEN 'moderate'
+                    WHEN 'moderate' THEN 'easy'
+                    ELSE intensity END
+                    WHERE plan_id=? AND status='scheduled'"""
+            else:
+                sql = """UPDATE plan_items SET intensity = CASE intensity
+                    WHEN 'easy' THEN 'moderate'
+                    WHEN 'moderate' THEN 'hard'
+                    WHEN 'hard' THEN 'very_hard'
+                    ELSE intensity END
+                    WHERE plan_id=? AND status='scheduled'"""
+            db.execute(sql, (plan_id,))
+            intensity_shifted = db.execute(
+                "SELECT changes()"
+            ).fetchone()[0]
+
+        # 3. Race goals update
+        race_goals_changed = bool(request.form.get('race_goals_changed'))
+        current_race_goals = plan['race_goals'] if 'race_goals' in plan.keys() else ''
+        if race_goals_changed:
+            updated_goals = request.form.get('updated_race_goals', '').strip()
+            if updated_goals:
+                db.execute('UPDATE training_plans SET race_goals=? WHERE id=?', (updated_goals, plan_id))
+                current_race_goals = updated_goals
+
         if not _check_api_key():
             flash('ANTHROPIC_API_KEY is not configured.', 'danger')
             return redirect(url_for('coaching.review', plan_id=plan_id))
 
         try:
             from coaching import run_review
-            result, usage = run_review(db, plan_id, tier, notes=notes, locale=locale)
+            result, usage = run_review(
+                db, plan_id, tier, notes=notes, locale=locale,
+                race_goals=current_race_goals, intensity_direction=intensity_direction,
+            )
             _log_usage(usage, f'review_t{tier}')
 
             if tier == 3:
-                # result is a new plan dict
                 from routes.plans import _create_plan_from_dict
                 new_plan_id = _create_plan_from_dict(db, result)
+                # Carry race_goals forward to the new plan
+                if current_race_goals:
+                    db.execute('UPDATE training_plans SET race_goals=? WHERE id=?',
+                               (current_race_goals, new_plan_id))
                 db.execute(
                     'INSERT INTO plan_reviews (plan_id, tier, sessions_reviewed, notes) VALUES (?,?,?,?)',
                     (plan_id, tier, health['sessions_since_tier1'],
@@ -163,7 +256,6 @@ def review(plan_id):
                 return redirect(url_for('plans.view_plan', plan_id=new_plan_id))
 
             else:
-                # result is a list of patch dicts
                 patches = result if isinstance(result, list) else []
                 applied = 0
                 for patch in patches:
@@ -183,15 +275,20 @@ def review(plan_id):
                         )
                         applied += 1
 
+                review_summary = f'Tier {tier} review — {applied} items patched'
+                if intensity_shifted:
+                    review_summary += f', intensity shifted {intensity_direction.replace("_", " ")} ({intensity_shifted} sessions)'
+                if race_goals_changed:
+                    review_summary += ', race goals updated'
                 db.execute(
                     'INSERT INTO plan_reviews (plan_id, tier, sessions_reviewed, notes) VALUES (?,?,?,?)',
-                    (plan_id, tier, health['sessions_since_tier1'],
-                     f'Tier {tier} review — {applied} items patched. {notes}')
+                    (plan_id, tier, health['sessions_since_tier1'], f'{review_summary}. {notes}')
                 )
                 db.commit()
                 flash(
-                    f'Tier {tier} review complete — {applied} workouts updated '
-                    f'({usage.output_tokens} tokens).',
+                    f'Tier {tier} review complete — {applied} workouts updated'
+                    + (f', intensity shifted {intensity_direction.replace("_", " ")}' if intensity_shifted else '')
+                    + f' ({usage.output_tokens} tokens).',
                     'success'
                 )
                 return redirect(url_for('plans.view_plan', plan_id=plan_id))
@@ -201,8 +298,9 @@ def review(plan_id):
         except Exception as e:
             flash(f'Review failed: {e}', 'danger')
 
+    current_race_goals = plan['race_goals'] if 'race_goals' in plan.keys() else ''
     return render_template('coaching/review.html', plan=plan, health=health,
-                           locales=LOCALES,
+                           locales=LOCALES, current_race_goals=current_race_goals,
                            api_configured=_check_api_key())
 
 
@@ -217,12 +315,15 @@ def api_generate():
     notes = data.get('notes', '')
     race_name = data.get('race_name', '')
     race_date = data.get('race_date', '')
+    race_type = data.get('race_type', '')
     race_location = data.get('race_location', '')
     race_disciplines = data.get('race_disciplines', '')
     race_duration = data.get('race_duration', '')
     race_website = data.get('race_website', '')
     weekly_hours = float(data.get('weekly_hours', 10))
-    rest_day = data.get('rest_day', 'Monday')
+    rest_days = data.get('rest_days', ['Monday'])
+    if isinstance(rest_days, str):
+        rest_days = [rest_days]
     race_philosophy = data.get('race_philosophy', 'Compete')
     experience_level = data.get('experience_level', 'Intermediate')
     try:
@@ -233,8 +334,8 @@ def api_generate():
             db, start_date, weeks=weeks, notes=notes,
             race_name=race_name, race_date=race_date, race_location=race_location,
             race_disciplines=race_disciplines, race_duration=race_duration,
-            race_website=race_website,
-            weekly_hours=weekly_hours, rest_day=rest_day,
+            race_website=race_website, race_type=race_type,
+            weekly_hours=weekly_hours, rest_days=rest_days,
             race_philosophy=race_philosophy, experience_level=experience_level,
         )
         plan_id = _create_plan_from_dict(db, plan_data)
@@ -311,6 +412,60 @@ def api_review():
 
 def _check_api_key():
     return bool(os.environ.get('ANTHROPIC_API_KEY'))
+
+
+@bp.route('/clarify', methods=['POST'])
+def clarify():
+    """
+    Lightweight pre-flight check: given free-form coach notes, decide whether
+    clarifying questions are needed before running plan generation or review.
+    Returns {needs_clarification: bool, questions: [str]}.
+    """
+    if not _check_api_key():
+        return jsonify({'needs_clarification': False, 'questions': []})
+
+    data = request.get_json(silent=True) or {}
+    notes = (data.get('notes') or '').strip()
+    context = data.get('context', 'coaching')  # 'generate' | 'review' | 'coaching'
+
+    # Skip clarification for empty or very short clear inputs
+    if len(notes) < 8:
+        return jsonify({'needs_clarification': False, 'questions': []})
+
+    context_desc = {
+        'generate': 'generating a new multi-week training plan',
+        'review': 'running a coaching review to adjust an existing training plan',
+    }.get(context, 'providing coaching input')
+
+    prompt = f"""A user is {context_desc}. They wrote this in the coach notes field:
+
+"{notes}"
+
+Your job: decide if this input has important ambiguities that would meaningfully affect the coaching output. If so, return up to 3 short, specific clarifying questions. If the input is clear enough to act on (even if brief), return no questions.
+
+Only ask questions when the answer would change the plan or review in a concrete way. Do NOT ask for information the coach can reasonably infer or that doesn't affect the output.
+
+Respond ONLY with a JSON object (no markdown):
+{{"questions": ["question 1", "question 2"]}}
+
+Return an empty array if no clarification is needed."""
+
+    try:
+        import anthropic
+        client = anthropic.Anthropic(api_key=os.environ.get('ANTHROPIC_API_KEY'))
+        msg = client.messages.create(
+            model='claude-haiku-4-5-20251001',
+            max_tokens=256,
+            messages=[{'role': 'user', 'content': prompt}]
+        )
+        text = next((b.text for b in msg.content if b.type == 'text'), '{}')
+        import json as _json
+        parsed = _json.loads(text)
+        questions = [q for q in parsed.get('questions', []) if isinstance(q, str) and q.strip()]
+        return jsonify({'needs_clarification': bool(questions), 'questions': questions})
+    except Exception:
+        # On any error, silently skip clarification rather than blocking the user
+        return jsonify({'needs_clarification': False, 'questions': []})
 
 
 @bp.route('/chat/<int:plan_id>', methods=['GET', 'POST'])

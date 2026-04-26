@@ -62,6 +62,20 @@
     <button class="btn btn-outline-secondary" id="discard-btn">✕ Discard</button>
   </div>
 </div>
+
+<!-- FIT download prompt — shown after successful save when a cardio entry was logged -->
+<div id="fit-card" class="card border-info mb-3" style="display:none">
+  <div class="card-body d-flex align-items-center justify-content-between flex-wrap gap-2">
+    <div>
+      <strong>Generate Activity FIT file?</strong>
+      <div class="small text-muted">Download a .fit file to manually sync this session to Garmin Connect or other platforms.</div>
+    </div>
+    <div class="d-flex gap-2">
+      <a id="fit-download-link" href="#" class="btn btn-info btn-sm" download>⬇ Download FIT</a>
+      <button id="fit-skip-btn" class="btn btn-outline-secondary btn-sm">Skip →</button>
+    </div>
+  </div>
+</div>
 {% endblock %}
 
 {% block scripts %}
@@ -72,10 +86,13 @@ const userInput  = document.getElementById('user-input');
 const sendBtn    = document.getElementById('send-btn');
 const statusEl   = document.getElementById('status');
 const restartBtn = document.getElementById('restart-btn');
-const previewCard= document.getElementById('preview-card');
-const previewBody= document.getElementById('preview-body');
-const confirmBtn = document.getElementById('confirm-btn');
-const discardBtn = document.getElementById('discard-btn');
+const previewCard    = document.getElementById('preview-card');
+const previewBody    = document.getElementById('preview-body');
+const confirmBtn     = document.getElementById('confirm-btn');
+const discardBtn     = document.getElementById('discard-btn');
+const fitCard        = document.getElementById('fit-card');
+const fitDownloadLink= document.getElementById('fit-download-link');
+const fitSkipBtn     = document.getElementById('fit-skip-btn');
 
 // Client-side conversation history (sent with each parse request)
 let history = [];
@@ -251,6 +268,8 @@ function renderPreview(entries, planMatch) {
 }
 
 // ── Save ──────────────────────────────────────────────────────────────────────
+let savedRedirect = '/';
+
 confirmBtn.addEventListener('click', async () => {
   const linkPlanEl = document.getElementById('link-plan');
   const planMatch = (linkPlanEl && linkPlanEl.checked) ? pendingPlanMatch : null;
@@ -266,10 +285,19 @@ confirmBtn.addEventListener('click', async () => {
     });
     const data = await res.json();
     if (data.ok) {
-      // Redirect to the log of the first saved entry type
-      const first = (data.saved || [])[0];
-      const dest = first ? first.redirect : '/';
-      window.location.href = dest;
+      previewCard.style.display = 'none';
+      const saved = data.saved || [];
+      const first = saved[0];
+      savedRedirect = first ? first.redirect : '/';
+
+      // Offer FIT download for cardio entries
+      const cardioEntry = saved.find(s => s.type === 'cardio' && s.fit_url);
+      if (cardioEntry) {
+        fitDownloadLink.href = cardioEntry.fit_url;
+        fitCard.style.display = '';
+      } else {
+        window.location.href = savedRedirect;
+      }
     } else {
       confirmBtn.disabled = false;
       confirmBtn.textContent = '✓ Save to Log';
@@ -280,6 +308,15 @@ confirmBtn.addEventListener('click', async () => {
     confirmBtn.textContent = '✓ Save to Log';
     statusEl.textContent = 'Network error.';
   }
+});
+
+fitDownloadLink.addEventListener('click', () => {
+  // Let the download start, then navigate after a short delay
+  setTimeout(() => { window.location.href = savedRedirect; }, 1200);
+});
+
+fitSkipBtn.addEventListener('click', () => {
+  window.location.href = savedRedirect;
 });
 
 discardBtn.addEventListener('click', () => {

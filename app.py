@@ -1,4 +1,5 @@
 import os
+import re as _re
 from flask import Flask
 from database import init_app
 
@@ -21,6 +22,28 @@ else:
     init_sqlite()
 
 init_app(app)
+
+
+def _workout_steps(description):
+    """Split a workout description into discrete steps for bullet rendering."""
+    if not description:
+        return []
+    if '\n' in description:
+        parts = description.split('\n')
+    else:
+        parts = _re.split(r'\.\s+', description)
+    steps = []
+    for p in parts:
+        p = p.strip().rstrip('.')
+        p = _re.sub(r'^[\s\-•·–—]+', '', p)   # strip leading bullets/dashes
+        p = _re.sub(r'^\d+[.)]\s*', '', p)      # strip leading numbers (1. or 1))
+        p = p.strip()
+        if p:
+            steps.append(p)
+    return steps
+
+
+app.jinja_env.filters['workout_steps'] = _workout_steps
 
 from routes.dashboard import bp as dashboard_bp
 from routes.training import bp as training_bp

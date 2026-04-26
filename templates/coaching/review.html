@@ -16,8 +16,6 @@
 
 <p class="text-muted mb-4">{{ plan.name }}</p>
 
-{% set tier_colors = {'tier1_due': 'warning', 'tier2_due': 'orange', 'tier3_due': 'danger'} %}
-
 <div class="row mb-4">
   <div class="col-md-4">
     <div class="card text-center {% if health.tier1_due %}border-warning{% endif %}">
@@ -52,50 +50,138 @@
 </div>
 
 <div class="row">
-  <div class="col-lg-6">
-    <div class="card">
-      <div class="card-header fw-semibold">Run a Review</div>
-      <div class="card-body">
-        <form method="post">
-          <div class="mb-3">
-            <label class="form-label fw-semibold">Review Tier</label>
-            <select name="tier" class="form-select" id="tier-select">
-              <option value="1" {% if health.tier1_due and not health.tier2_due and not health.tier3_due %}selected{% endif %}>
-                Tier 1 — Session check (adjust next 1-2 sessions)
-              </option>
-              <option value="2" {% if health.tier2_due and not health.tier3_due %}selected{% endif %}>
-                Tier 2 — Weekly review (adjust next 1-2 weeks)
-              </option>
-              <option value="3" {% if health.tier3_due %}selected{% endif %}>
-                Tier 3 — Generate next 4-week block
-              </option>
-            </select>
-            <div class="form-text" id="tier-description"></div>
-          </div>
-          <div class="mb-3">
-            <label class="form-label fw-semibold">Current Locale</label>
-            <select name="locale" class="form-select">
-              {% for loc in locales %}
-              <option value="{{ loc }}" {% if loc == 'home' %}selected{% endif %}>{{ loc | capitalize }}</option>
-              {% endfor %}
-            </select>
-            <div class="form-text"><a href="{{ url_for('locales.list_profiles') }}">Edit equipment profiles →</a></div>
-          </div>
-          <div class="mb-3">
-            <label class="form-label fw-semibold">Coach Notes <span class="text-muted fw-normal">(optional)</span></label>
-            <textarea name="notes" class="form-control" rows="3"
-                      placeholder="e.g. 'Felt really fatigued this week — consider reducing intensity' or 'Adding a hotel week starting May 12'"></textarea>
-          </div>
-          <button type="submit" class="btn btn-primary w-100"
-                  {% if not api_configured %}disabled{% endif %}>
-            Run Review
-          </button>
-        </form>
+  <div class="col-lg-7">
+    <form method="post" id="review-form">
+
+      {# ── Tier selector ── #}
+      <div class="card mb-3">
+        <div class="card-header fw-semibold">Review Tier</div>
+        <div class="card-body">
+          <select name="tier" class="form-select" id="tier-select">
+            <option value="1" {% if health.tier1_due and not health.tier2_due and not health.tier3_due %}selected{% endif %}>
+              Tier 1 — Session check (adjust next 1-2 sessions)
+            </option>
+            <option value="2" {% if health.tier2_due and not health.tier3_due %}selected{% endif %}>
+              Tier 2 — Weekly review (adjust next 1-2 weeks)
+            </option>
+            <option value="3" {% if health.tier3_due %}selected{% endif %}>
+              Tier 3 — Generate next 4-week block
+            </option>
+          </select>
+          <div class="form-text mt-1" id="tier-description"></div>
+        </div>
       </div>
-    </div>
+
+      {# ── Current locale ── #}
+      <div class="card mb-3">
+        <div class="card-header fw-semibold">Current Location</div>
+        <div class="card-body">
+          <label class="form-label">Where are you training from right now?</label>
+          <select name="locale" class="form-select">
+            {% for loc in locales %}
+            <option value="{{ loc }}" {% if loc == 'home' %}selected{% endif %}>{{ loc | capitalize }}</option>
+            {% endfor %}
+          </select>
+          <div class="form-text"><a href="{{ url_for('locales.list_profiles') }}">Edit equipment profiles →</a></div>
+        </div>
+      </div>
+
+      {# ── Locale updates ── #}
+      <div class="card mb-3">
+        <div class="card-header d-flex justify-content-between align-items-center">
+          <span class="fw-semibold">Upcoming Location Changes <span class="text-muted small fw-normal">(optional)</span></span>
+          <button type="button" class="btn btn-sm btn-outline-secondary" id="add-locale-btn">+ Add</button>
+        </div>
+        <div class="card-body">
+          <p class="text-muted small mb-2">Add date ranges where your training environment changes — travel, events, or restricted access. Claude will factor these in.</p>
+          <div id="locale-rows"></div>
+          <input type="hidden" name="locale_updates" id="locale-updates-json" value="[]">
+        </div>
+      </div>
+
+      {# ── Plan difficulty ── #}
+      <div class="card mb-3">
+        <div class="card-header fw-semibold">How is the Plan Feeling?</div>
+        <div class="card-body">
+          <div class="d-flex gap-3 mb-3">
+            {% for val, label in [('just_right','Just Right'),('too_hard','Too Hard'),('too_easy','Too Easy')] %}
+            <div class="form-check">
+              <input class="form-check-input" type="radio" name="difficulty_feedback"
+                     id="diff_{{ val }}" value="{{ val }}"
+                     {% if val == 'just_right' %}checked{% endif %}
+                     onchange="toggleIntensityAdjust()">
+              <label class="form-check-label" for="diff_{{ val }}">{{ label }}</label>
+            </div>
+            {% endfor %}
+          </div>
+          <div id="intensity-adjust-row" class="alert alert-info py-2 px-3 mb-0" style="display:none">
+            <div class="form-check mb-0">
+              <input class="form-check-input" type="checkbox" name="adjust_intensity" id="adjust-intensity-cb" value="1">
+              <label class="form-check-label" for="adjust-intensity-cb" id="adjust-intensity-label">
+                Adjust the intensity for all remaining sessions
+              </label>
+            </div>
+            <div class="form-text mt-1" id="intensity-shift-note"></div>
+          </div>
+        </div>
+      </div>
+
+      {# ── Race goals ── #}
+      <div class="card mb-3">
+        <div class="card-header fw-semibold">Event Goals</div>
+        <div class="card-body">
+          {% if current_race_goals %}
+          <div class="mb-3">
+            <label class="form-label text-muted small">Current goals</label>
+            <div class="border rounded p-2 bg-light small" style="white-space:pre-wrap">{{ current_race_goals }}</div>
+          </div>
+          {% endif %}
+          <div class="form-check mb-2">
+            <input class="form-check-input" type="checkbox" name="race_goals_changed"
+                   id="goals-changed-cb" value="1" onchange="toggleGoalsEdit()">
+            <label class="form-check-label" for="goals-changed-cb">
+              {% if current_race_goals %}My event goals have changed{% else %}Add event day goals{% endif %}
+            </label>
+          </div>
+          <div id="goals-edit-row" style="display:none">
+            <label class="form-label small">Updated goals — describe your goal finish time, pacing strategy, checkpoint targets, etc.</label>
+            <textarea name="updated_race_goals" class="form-control" rows="4"
+                      placeholder="Goal finish time: Sub-36 hours&#10;Splits: conservative first half&#10;CP1 target: under 6 hours">{{ current_race_goals }}</textarea>
+          </div>
+        </div>
+      </div>
+
+      {# ── General notes ── #}
+      <div class="card mb-3">
+        <div class="card-header fw-semibold">Coach Notes <span class="text-muted small fw-normal">(optional)</span></div>
+        <div class="card-body">
+          <textarea name="notes" class="form-control" rows="3"
+                    placeholder="e.g. 'Felt really fatigued this week — consider reducing volume' or 'Skip the Thursday run, I have a work event'"></textarea>
+          <div class="form-text">Any additional context for this review. For Tier 1/2, focus on recent sessions. For Tier 3, describe your priorities for the next block.</div>
+        </div>
+      </div>
+
+      <div id="clarify-section" style="display:none" class="mb-3">
+        <div class="card border-info">
+          <div class="card-header fw-semibold text-info-emphasis bg-info-subtle">
+            A few quick questions before the review
+          </div>
+          <div class="card-body" id="clarify-questions"></div>
+          <div class="card-footer d-flex gap-2">
+            <button type="button" class="btn btn-primary" id="clarify-confirm">Confirm &amp; Run Review</button>
+            <button type="button" class="btn btn-outline-secondary" id="clarify-skip">Skip &amp; run as-is</button>
+          </div>
+        </div>
+      </div>
+
+      <button type="button" class="btn btn-primary w-100" id="review-submit-btn"
+              {% if not api_configured %}disabled{% endif %}>
+        Run Review
+      </button>
+    </form>
   </div>
 
-  <div class="col-lg-6">
+  <div class="col-lg-5">
     {% if health.recent_sessions %}
     <div class="card mb-3">
       <div class="card-header fw-semibold small">Recent Sessions</div>
@@ -126,16 +212,166 @@
   </div>
 </div>
 
+<template id="locale-row-template">
+  <div class="locale-row border rounded p-2 mb-2 position-relative">
+    <button type="button" class="btn-close position-absolute top-0 end-0 m-1 remove-locale" aria-label="Remove"></button>
+    <div class="row g-2 align-items-end">
+      <div class="col-md-3">
+        <label class="form-label small mb-1">From</label>
+        <input type="date" class="form-control form-control-sm lr-start">
+      </div>
+      <div class="col-md-3">
+        <label class="form-label small mb-1">To</label>
+        <input type="date" class="form-control form-control-sm lr-end">
+      </div>
+      <div class="col-md-2">
+        <label class="form-label small mb-1">Locale</label>
+        <select class="form-select form-select-sm lr-locale">
+          {% for loc in locales %}
+          <option value="{{ loc }}" {% if loc == 'hotel' %}selected{% endif %}>{{ loc | capitalize }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-md-3">
+        <label class="form-label small mb-1">City</label>
+        <input type="text" class="form-control form-control-sm lr-city" placeholder="e.g. Denver, CO">
+      </div>
+      <div class="col-md-1 d-flex align-items-end pb-1">
+        <div class="form-check" title="Indoor only">
+          <input class="form-check-input lr-indoor" type="checkbox">
+          <label class="form-check-label small">Indoor<br>only</label>
+        </div>
+      </div>
+    </div>
+  </div>
+</template>
+{% endblock %}
+
+{% block scripts %}
 <script>
 const descriptions = {
-  '1': 'Reads 90 days of training history. Adjusts next 1-2 sessions if RPE or fatigue warrants it. Includes clothing recommendations for upcoming outdoor sessions.',
+  '1': 'Reads 90 days of training history. Adjusts next 1-2 sessions based on RPE, fatigue, or missed sessions. Includes clothing recommendations for outdoor sessions.',
   '2': 'Reads 90 days of history + planned-vs-actual delta. Patches upcoming workouts for the next 1-2 weeks. Includes clothing recommendations for next 7 days.',
   '3': 'Reads 90 days of history + prior plan blocks. Generates a brand-new 4-week plan starting after the current plan ends.'
 };
-const sel = document.getElementById('tier-select');
+const sel  = document.getElementById('tier-select');
 const desc = document.getElementById('tier-description');
-function update() { desc.textContent = descriptions[sel.value] || ''; }
-sel.addEventListener('change', update);
-update();
+function updateDesc() { desc.textContent = descriptions[sel.value] || ''; }
+sel.addEventListener('change', updateDesc);
+updateDesc();
+
+function toggleIntensityAdjust() {
+  const val   = document.querySelector('input[name="difficulty_feedback"]:checked').value;
+  const row   = document.getElementById('intensity-adjust-row');
+  const label = document.getElementById('adjust-intensity-label');
+  const note  = document.getElementById('intensity-shift-note');
+  if (val === 'just_right') {
+    row.style.display = 'none';
+    document.getElementById('adjust-intensity-cb').checked = false;
+  } else {
+    row.style.display = '';
+    if (val === 'too_hard') {
+      label.textContent = 'Shift intensity down one level for all remaining sessions';
+      note.textContent  = 'very_hard → hard → moderate → easy';
+    } else {
+      label.textContent = 'Shift intensity up one level for all remaining sessions';
+      note.textContent  = 'easy → moderate → hard → very_hard';
+    }
+  }
+}
+
+function toggleGoalsEdit() {
+  const show = document.getElementById('goals-changed-cb').checked;
+  document.getElementById('goals-edit-row').style.display = show ? '' : 'none';
+}
+
+// Locale updates
+const localeRows = document.getElementById('locale-rows');
+const localeTemplate = document.getElementById('locale-row-template');
+document.getElementById('add-locale-btn').addEventListener('click', () => {
+  const row = localeTemplate.content.cloneNode(true);
+  row.querySelector('.remove-locale').addEventListener('click', function() {
+    this.closest('.locale-row').remove();
+  });
+  localeRows.appendChild(row);
+});
+
+function serializeLocaleUpdates() {
+  const updates = [];
+  localeRows.querySelectorAll('.locale-row').forEach(row => {
+    const start  = row.querySelector('.lr-start').value;
+    const end    = row.querySelector('.lr-end').value;
+    const locale = row.querySelector('.lr-locale').value;
+    const city   = row.querySelector('.lr-city').value.trim();
+    const indoor = row.querySelector('.lr-indoor').checked;
+    if (start && end) updates.push({ start_date: start, end_date: end, locale, city, indoor_only: indoor });
+  });
+  document.getElementById('locale-updates-json').value = JSON.stringify(updates);
+}
+
+// ── Clarification flow ──────────────────────────────────────────────────────
+const reviewSubmitBtn  = document.getElementById('review-submit-btn');
+const clarifySection   = document.getElementById('clarify-section');
+const clarifyQs        = document.getElementById('clarify-questions');
+
+reviewSubmitBtn.addEventListener('click', async () => {
+  serializeLocaleUpdates();
+  const notesEl = document.querySelector('textarea[name="notes"]');
+  const notes   = notesEl ? notesEl.value.trim() : '';
+
+  if (!notes) { document.getElementById('review-form').submit(); return; }
+
+  reviewSubmitBtn.disabled = true;
+  reviewSubmitBtn.textContent = 'Checking notes…';
+
+  try {
+    const res  = await fetch('/coaching/clarify', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({notes, context: 'review'})
+    });
+    const data = await res.json();
+
+    if (data.needs_clarification && data.questions.length) {
+      renderClarifyQuestions(data.questions, notesEl, () => document.getElementById('review-form').submit());
+      reviewSubmitBtn.disabled = false;
+      reviewSubmitBtn.textContent = 'Run Review';
+    } else {
+      document.getElementById('review-form').submit();
+    }
+  } catch(e) {
+    document.getElementById('review-form').submit();
+  }
+});
+
+function renderClarifyQuestions(questions, notesEl, onConfirm) {
+  clarifyQs.innerHTML = '';
+  questions.forEach((q, i) => {
+    const div = document.createElement('div');
+    div.className = 'mb-3';
+    div.innerHTML = `<label class="form-label fw-semibold small">${q}</label>
+      <textarea class="form-control form-control-sm clarify-answer" rows="2" data-index="${i}"></textarea>`;
+    clarifyQs.appendChild(div);
+  });
+  clarifySection.style.display = '';
+  clarifySection.scrollIntoView({behavior: 'smooth', block: 'nearest'});
+
+  document.getElementById('clarify-confirm').onclick = () => {
+    const answers = [...document.querySelectorAll('.clarify-answer')]
+      .map((el, i) => el.value.trim() ? `${questions[i]}\n${el.value.trim()}` : '')
+      .filter(Boolean);
+    if (answers.length) {
+      const original = notesEl.value.trim();
+      notesEl.value = (original ? original + '\n\n' : '') + 'Additional context:\n' + answers.join('\n\n');
+    }
+    clarifySection.style.display = 'none';
+    onConfirm();
+  };
+
+  document.getElementById('clarify-skip').onclick = () => {
+    clarifySection.style.display = 'none';
+    onConfirm();
+  };
+}
 </script>
 {% endblock %}
