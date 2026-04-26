@@ -1,5 +1,8 @@
-from flask import Blueprint, render_template, request, redirect, url_for, flash
+import io
+
+from flask import Blueprint, render_template, request, redirect, url_for, flash, send_file
 from database import get_db
+from fit_workout_generator import generate_activity_fit
 
 bp = Blueprint('cardio', __name__)
 
@@ -62,6 +65,24 @@ def edit_entry(entry_id):
     plan_items = _load_plan_items(db)
     return render_template('cardio/form.html', entry=entry, activities=ACTIVITIES,
                            plan_items=plan_items)
+
+
+@bp.route('/cardio/<int:entry_id>/activity-fit')
+def activity_fit(entry_id):
+    db = get_db()
+    entry = db.execute('SELECT * FROM cardio_log WHERE id=?', (entry_id,)).fetchone()
+    if not entry:
+        flash('Entry not found.', 'danger')
+        return redirect(url_for('cardio.list_entries'))
+    fit_bytes = generate_activity_fit(dict(entry))
+    activity_slug = (entry['activity'] or 'activity').lower().replace(' ', '_')
+    filename = f"activity_{entry['date']}_{activity_slug}.fit"
+    return send_file(
+        io.BytesIO(fit_bytes),
+        as_attachment=True,
+        download_name=filename,
+        mimetype='application/octet-stream',
+    )
 
 
 @bp.route('/cardio/<int:entry_id>/delete', methods=['POST'])

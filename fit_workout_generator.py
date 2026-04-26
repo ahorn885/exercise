@@ -7,14 +7,18 @@ Example: "10 min easy warmup. 5x5 min @ tempo w/ 2 min jog recovery. 10 min cool
 → Warm Up (10 min, Z2) · Interval (5 min, Z4) · Recovery (2 min, Z2) ×5 · Cool Down (10 min, Z2)
 """
 import re
-from datetime import datetime
+from datetime import date, datetime
 
 from fit_tool.fit_file_builder import FitFileBuilder
+from fit_tool.profile.messages.activity_message import ActivityMessage
 from fit_tool.profile.messages.file_id_message import FileIdMessage
+from fit_tool.profile.messages.lap_message import LapMessage
+from fit_tool.profile.messages.session_message import SessionMessage
 from fit_tool.profile.messages.workout_message import WorkoutMessage
 from fit_tool.profile.messages.workout_step_message import WorkoutStepMessage
 from fit_tool.profile.profile_type import (
-    FileType, Sport, WorkoutStepDuration, WorkoutStepTarget, Intensity
+    Activity as ActivityType, Event, EventType,
+    FileType, Intensity, Sport, WorkoutStepDuration, WorkoutStepTarget,
 )
 
 # ── Sport mapping ──────────────────────────────────────────────────────────────
@@ -282,5 +286,107 @@ def generate_workout_fit(item: dict) -> bytes:
         step.target_value = s['target_value']
         step.intensity = s['intensity']
         builder.add(step)
+
+    return builder.build().to_bytes()
+
+
+def generate_activity_fit(entry: dict) -> bytes:
+    """Generate a minimal Garmin activity FIT file from a cardio_log entry dict.
+
+    Keys used: activity, date, duration_min, distance_mi, avg_hr, avg_speed,
+               avg_power, calories, elev_gain_ft
+    Returns raw bytes — no side effects.
+    """
+    sport = _map_sport(entry.get('activity', ''))
+    duration_min = float(entry.get('duration_min') or 0)
+    duration_s = int(duration_min * 60)   # total_elapsed_time / total_timer_time use seconds
+    distance_mi = float(entry.get('distance_mi') or 0)
+    distance_m = distance_mi * 1609.344 if distance_mi else 0
+
+    avg_speed_mph = entry.get('avg_speed')
+    if avg_speed_mph:
+        avg_speed_ms = float(avg_speed_mph) * 0.44704  # m/s
+    elif duration_min and distance_mi:
+        avg_speed_ms = distance_m / (duration_min * 60)
+    else:
+        avg_speed_ms = None
+
+    avg_hr = entry.get('avg_hr')
+    avg_power = entry.get('avg_power')
+    calories = entry.get('calories')
+    elev_gain_ft = entry.get('elev_gain_ft')
+    total_ascent_m = int(float(elev_gain_ft) * 0.3048) if elev_gain_ft else None
+
+    # start_time / timestamp fields use Unix milliseconds
+    date_str = entry.get('date') or date.today().isoformat()
+    try:
+        dt = datetime.strptime(date_str, '%Y-%m-%d')
+    except ValueError:
+        dt = datetime.now()
+    start_ms = round(dt.timestamp() * 1000)
+    now_ms = round(datetime.now().timestamp() * 1000)
+    end_ms = start_ms + duration_s * 1000
+
+    builder = FitFileBuilder(auto_define=True, min_string_size=50)
+
+    file_id = FileIdMessage()
+    file_id.type = FileType.ACTIVITY
+    file_id.manufacturer = 255
+    file_id.product = 0
+    file_id.time_created = now_ms
+    file_id.serial_number = 1
+    builder.add(file_id)
+
+    act = ActivityMessage()
+    act.total_timer_time = duration_s
+    act.num_sessions = 1
+    act.type = ActivityType.MANUAL
+    act.event = Event.ACTIVITY
+    act.event_type = EventType.STOP
+    act.timestamp = end_ms
+    builder.add(act)
+
+    sess = SessionMessage()
+    sess.sport = sport
+    sess.start_time = start_ms
+    sess.total_elapsed_time = duration_s
+    sess.total_timer_time = duration_s
+    if distance_m:
+        sess.total_distance = distance_m
+    if avg_hr:
+        sess.avg_heart_rate = int(float(avg_hr))
+    if avg_speed_ms:
+        sess.avg_speed = avg_speed_ms
+    if avg_power:
+        sess.avg_power = int(float(avg_power))
+    if calories:
+        sess.total_calories = int(float(calories))
+    if total_ascent_m:
+        sess.total_ascent = total_ascent_m
+    sess.event = Event.SESSION
+    sess.event_type = EventType.STOP
+    sess.timestamp = end_ms
+    builder.add(sess)
+
+    lap = LapMessage()
+    lap.start_time = start_ms
+    lap.total_elapsed_time = duration_s
+    lap.total_timer_time = duration_s
+    if distance_m:
+        lap.total_distance = distance_m
+    if avg_hr:
+        lap.avg_heart_rate = int(float(avg_hr))
+    if avg_speed_ms:
+        lap.avg_speed = avg_speed_ms
+    if avg_power:
+        lap.avg_power = int(float(avg_power))
+    if calories:
+        lap.total_calories = int(float(calories))
+    if total_ascent_m:
+        lap.total_ascent = total_ascent_m
+    lap.event = Event.LAP
+    lap.event_type = EventType.STOP
+    lap.timestamp = end_ms
+    builder.add(lap)
 
     return builder.build().to_bytes()
