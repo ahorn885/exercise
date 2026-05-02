@@ -23,7 +23,9 @@
         — {{ auto_match.plan_item.item_date }}
         {% if auto_match.day_offset == -1 %}<span class="text-muted small">(previous day)</span>
         {% elif auto_match.day_offset == -2 %}<span class="text-muted small">(2 days back)</span>
+        {% elif auto_match.day_offset == -3 %}<span class="text-muted small">(3 days back)</span>
         {% elif auto_match.day_offset == 1 %}<span class="text-muted small">(next day)</span>
+        {% elif auto_match.day_offset == 2 %}<span class="text-muted small">(2 days forward)</span>
         {% endif %}
       </div>
       <span class="badge bg-success">{{ '%.0f'|format(auto_match.score * 100) }}% match</span>
@@ -73,7 +75,7 @@
           <select name="plan_item_id" class="form-select">
             <option value="">— select —</option>
             {% if nearby %}
-              <optgroup label="Nearby (-2 to +1 days)">
+              <optgroup label="Nearby (-3 to +2 days)">
                 {{ plan_item_options(nearby, None) }}
               </optgroup>
             {% endif %}
