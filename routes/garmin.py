@@ -803,6 +803,15 @@ def import_wellness_confirm():
 def wellness_log():
     db = get_db()
     date_filter = request.args.get('date', '')
+
+    # Default to most recent date if none selected, so the chart has something to draw
+    if not date_filter:
+        latest = db.execute(
+            'SELECT date FROM wellness_log ORDER BY date DESC LIMIT 1'
+        ).fetchone()
+        if latest:
+            date_filter = latest['date']
+
     query = 'SELECT * FROM wellness_log'
     params = []
     if date_filter:
@@ -811,13 +820,30 @@ def wellness_log():
     query += ' ORDER BY timestamp_ms DESC LIMIT 2000'
     rows = db.execute(query, params).fetchall()
 
+    # Chart data: ASC by time, only for the single selected day. Each series
+    # carries its own x to skip nulls cleanly in Chart.js.
+    chart_data = None
+    if date_filter and rows:
+        asc = sorted([dict(r) for r in rows], key=lambda r: r['timestamp_ms'])
+        def series(field):
+            return [{'x': r['timestamp_ms'], 'y': r[field]}
+                    for r in asc if r.get(field) is not None]
+        chart_data = {
+            'date': date_filter,
+            'heart_rate':       series('heart_rate'),
+            'stress_level':     series('stress_level'),
+            'body_battery':     series('body_battery'),
+            'respiration_rate': series('respiration_rate'),
+        }
+
     # Distinct dates for the date picker
     dates = db.execute(
         'SELECT DISTINCT date FROM wellness_log ORDER BY date DESC LIMIT 60'
     ).fetchall()
 
     return render_template('garmin/wellness_log.html', rows=rows,
-                           dates=dates, date_filter=date_filter)
+                           dates=dates, date_filter=date_filter,
+                           chart_data=chart_data)
 
 
 @bp.route('/auth/import-tokens', methods=['POST'])

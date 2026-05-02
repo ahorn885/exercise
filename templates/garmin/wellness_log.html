@@ -2,92 +2,204 @@
 {% block title %}Wellness Log{% endblock %}
 
 {% block content %}
-<div class="d-flex justify-content-between align-items-center mb-3">
-  <h2 class="mb-0">Wellness Log</h2>
-  <div class="d-flex gap-2">
-    <a href="{{ url_for('garmin.import_wellness') }}" class="btn btn-sm btn-primary">+ Import Wellness FIT</a>
-    <a href="{{ url_for('garmin.dashboard') }}" class="btn btn-sm btn-outline-secondary">← Garmin</a>
+<div class="section-header">
+  <div>
+    <span class="eyebrow">Wellness</span>
+    <h2 class="mb-0">Wellness Log</h2>
+  </div>
+  <div class="d-flex gap-2 align-self-end">
+    <a href="{{ url_for('garmin.import_wellness') }}" class="btn btn-sm btn-primary">Import wellness FIT</a>
+    <a href="{{ url_for('garmin.dashboard') }}" class="btn btn-sm btn-outline-secondary">Back</a>
   </div>
 </div>
 
-<form class="row g-2 mb-3" method="get">
+<form class="row g-2 mb-4" method="get">
   <div class="col-auto">
+    <label class="form-label mb-1">Date</label>
     <select name="date" class="form-select form-select-sm" onchange="this.form.submit()">
-      <option value="">All dates</option>
       {% for d in dates %}
       <option value="{{ d.date }}" {% if date_filter == d.date %}selected{% endif %}>{{ d.date }}</option>
       {% endfor %}
     </select>
   </div>
-  {% if date_filter %}
-  <div class="col-auto">
-    <a href="{{ url_for('garmin.wellness_log') }}" class="btn btn-sm btn-outline-secondary">Clear</a>
-  </div>
-  {% endif %}
 </form>
 
+{% if chart_data %}
+{# ── Charts ────────────────────────────────────────────── #}
+<div class="row g-3 mb-4">
+  <div class="col-12 col-lg-6">
+    <div class="card h-100">
+      <div class="card-header"><span class="eyebrow">Heart rate</span></div>
+      <div class="card-body"><canvas id="chart-hr" height="120"></canvas></div>
+    </div>
+  </div>
+  <div class="col-12 col-lg-6">
+    <div class="card h-100">
+      <div class="card-header"><span class="eyebrow">Stress</span></div>
+      <div class="card-body"><canvas id="chart-stress" height="120"></canvas></div>
+    </div>
+  </div>
+  <div class="col-12 col-lg-6">
+    <div class="card h-100">
+      <div class="card-header"><span class="eyebrow">Body battery</span></div>
+      <div class="card-body"><canvas id="chart-bb" height="120"></canvas></div>
+    </div>
+  </div>
+  <div class="col-12 col-lg-6">
+    <div class="card h-100">
+      <div class="card-header"><span class="eyebrow">Respiration</span></div>
+      <div class="card-body"><canvas id="chart-resp" height="120"></canvas></div>
+    </div>
+  </div>
+</div>
+{% endif %}
+
 {% if rows %}
-<div class="table-responsive">
-  <table class="table table-sm table-hover table-striped">
-    <thead class="table-dark">
-      <tr>
-        <th>Date</th>
-        <th>Time (UTC)</th>
-        <th>HR</th>
-        <th>Stress</th>
-        <th>Body Bat.</th>
-        <th>Resp.</th>
-        <th>Steps</th>
-        <th>Cals</th>
-        <th>Active (s)</th>
-        <th>Dist (m)</th>
-      </tr>
-    </thead>
-    <tbody>
-      {% for r in rows %}
-      <tr>
-        <td class="text-nowrap">{{ r.date }}</td>
-        <td class="text-nowrap font-monospace small text-muted">
-          {{- (r.timestamp_ms / 1000) | int | string -}}
-        </td>
-        <td class="text-nowrap">
-          {% if r.heart_rate %}
-          <span class="text-danger fw-semibold">{{ r.heart_rate }}</span> <span class="text-muted small">bpm</span>
-          {% else %}—{% endif %}
-        </td>
-        <td class="text-nowrap">
-          {% if r.stress_level %}
-          <span class="
-            {% if r.stress_level < 26 %}text-success
-            {% elif r.stress_level < 51 %}text-warning
-            {% elif r.stress_level < 76 %}text-orange
-            {% else %}text-danger{% endif %}
-            fw-semibold">{{ r.stress_level }}</span>
-          {% else %}—{% endif %}
-        </td>
-        <td class="text-nowrap">
-          {% if r.body_battery is not none and r.body_battery != '' %}
-          <span class="
-            {% if r.body_battery >= 75 %}text-success
-            {% elif r.body_battery >= 40 %}text-warning
-            {% else %}text-danger{% endif %}
-            fw-semibold">{{ r.body_battery }}</span>
-          {% else %}—{% endif %}
-        </td>
-        <td class="text-nowrap">{{ r.respiration_rate or '—' }}{% if r.respiration_rate %}/min{% endif %}</td>
-        <td class="text-nowrap">{{ r.steps or '—' }}</td>
-        <td class="text-nowrap">{{ r.active_calories or '—' }}</td>
-        <td class="text-nowrap">{{ r.active_time_s or '—' }}</td>
-        <td class="text-nowrap">{{ r.distance_m or '—' }}</td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
+{# ── Records table ─────────────────────────────────────── #}
+<div class="card">
+  <div class="card-header"><span class="eyebrow">Records · {{ rows | length }}</span></div>
+  <div class="card-body p-0">
+    <div class="table-responsive">
+      <table class="table table-sm table-hover table-num mb-0">
+        <thead>
+          <tr>
+            <th>Date</th>
+            <th>Time (UTC)</th>
+            <th>HR</th>
+            <th>Stress</th>
+            <th>Body bat.</th>
+            <th>Resp.</th>
+            <th>Steps</th>
+            <th>Cals</th>
+            <th>Active (s)</th>
+            <th>Dist (m)</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for r in rows %}
+          <tr>
+            <td class="text-nowrap">{{ r.date }}</td>
+            <td class="text-nowrap small text-muted">
+              {{- (r.timestamp_ms / 1000) | int | string -}}
+            </td>
+            <td class="text-nowrap">{{ r.heart_rate or '—' }}</td>
+            <td class="text-nowrap">{{ r.stress_level or '—' }}</td>
+            <td class="text-nowrap">{{ r.body_battery if r.body_battery is not none and r.body_battery != '' else '—' }}</td>
+            <td class="text-nowrap">{{ r.respiration_rate or '—' }}</td>
+            <td class="text-nowrap">{{ r.steps or '—' }}</td>
+            <td class="text-nowrap">{{ r.active_calories or '—' }}</td>
+            <td class="text-nowrap">{{ r.active_time_s or '—' }}</td>
+            <td class="text-nowrap">{{ r.distance_m or '—' }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
 </div>
 {% if rows | length == 2000 %}
 <p class="text-muted small mt-2">Showing most recent 2,000 records. Use the date filter to see specific days.</p>
 {% endif %}
 {% else %}
 <p class="text-muted">No wellness data yet. <a href="{{ url_for('garmin.import_wellness') }}">Import a wellness FIT file.</a></p>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+{% if chart_data %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script>
+const wellness = {{ chart_data | tojson }};
+
+const cssVar = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+const ink     = cssVar('--ink')      || '#1B1D21';
+const ink3    = cssVar('--ink-3')    || '#444851';
+const orange  = cssVar('--orange')   || '#ED7A2D';
+const hairline = 'rgba(27,29,33,0.12)';
+
+Chart.defaults.font.family = "'Inter', system-ui, sans-serif";
+Chart.defaults.color = ink3;
+Chart.defaults.borderColor = hairline;
+
+function timeAxis() {
+  return {
+    type: 'linear',
+    ticks: {
+      font: { family: "'JetBrains Mono', monospace", size: 10 },
+      color: ink3,
+      maxRotation: 0,
+      callback: v => {
+        const d = new Date(v);
+        return d.getUTCHours().toString().padStart(2, '0') + ':' +
+               d.getUTCMinutes().toString().padStart(2, '0');
+      },
+    },
+    grid: { color: hairline, drawTicks: false },
+    border: { color: hairline },
+  };
+}
+
+function valueAxis(opts = {}) {
+  return Object.assign({
+    ticks: {
+      font: { family: "'JetBrains Mono', monospace", size: 10 },
+      color: ink3,
+    },
+    grid: { color: hairline, drawTicks: false },
+    border: { color: hairline },
+  }, opts);
+}
+
+function makeChart(canvasId, data, color, opts = {}) {
+  const el = document.getElementById(canvasId);
+  if (!el || !data || !data.length) return;
+  return new Chart(el, {
+    type: 'line',
+    data: {
+      datasets: [{
+        data,
+        borderColor: color,
+        backgroundColor: color,
+        borderWidth: 1.5,
+        pointRadius: 0,
+        pointHoverRadius: 4,
+        tension: 0.2,
+        fill: false,
+      }],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      animation: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          backgroundColor: ink,
+          titleFont: { family: "'JetBrains Mono', monospace", size: 11 },
+          bodyFont: { family: "'JetBrains Mono', monospace", size: 12 },
+          padding: 8,
+          displayColors: false,
+          callbacks: {
+            title: items => {
+              const d = new Date(items[0].parsed.x);
+              return d.toUTCString().replace(' GMT','');
+            },
+            label: ctx => `${ctx.parsed.y}${opts.unit || ''}`,
+          },
+        },
+      },
+      scales: {
+        x: timeAxis(),
+        y: valueAxis(opts.yAxis || {}),
+      },
+    },
+  });
+}
+
+makeChart('chart-hr',     wellness.heart_rate,       ink,    { unit: ' bpm' });
+makeChart('chart-stress', wellness.stress_level,     orange, { unit: '',     yAxis: { min: 0, max: 100 } });
+makeChart('chart-bb',     wellness.body_battery,     ink,    { unit: '',     yAxis: { min: 0, max: 100 } });
+makeChart('chart-resp',   wellness.respiration_rate, ink3,   { unit: ' /min' });
+</script>
 {% endif %}
 {% endblock %}

@@ -194,17 +194,125 @@ const FIELD_LABELS = {
 const SKIP_FIELDS = new Set(['log_type']);
 const TEXT_FIELDS = new Set(['activity', 'date', 'avg_pace', 'notes']);
 
+function escapeHtml(s) {
+  return String(s ?? '').replace(/[&<>"']/g, c => (
+    {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]
+  ));
+}
+
+function renderStrengthEntry(entry, idx) {
+  const exercises = entry.exercises || [];
+  let html = '<div class="row g-2">';
+
+  // Top-level: date, notes
+  html += `
+    <div class="col-6 col-md-4">
+      <label class="form-label">Date</label>
+      <input type="text" class="form-control form-control-sm entry-field"
+             data-idx="${idx}" data-key="date"
+             value="${escapeHtml(entry.date || '')}">
+    </div>
+    <div class="col-12">
+      <label class="form-label">Session notes</label>
+      <textarea class="form-control form-control-sm entry-field"
+                data-idx="${idx}" data-key="notes" rows="1">${escapeHtml(entry.notes || '')}</textarea>
+    </div>`;
+
+  // Per-exercise blocks
+  exercises.forEach((ex, exIdx) => {
+    const sets = ex.sets || [];
+    html += `
+      <div class="col-12 mt-2 pt-2 hairline-t">
+        <div class="d-flex align-items-baseline gap-2 mb-2">
+          <span class="eyebrow">Exercise ${exIdx + 1}</span>
+          <strong class="ms-auto">${escapeHtml(ex.exercise || '')}</strong>
+        </div>
+        <table class="table table-sm mb-2 table-num">
+          <thead><tr><th>Set</th><th>Reps</th><th>Weight (lb)</th><th>Duration (s)</th></tr></thead>
+          <tbody>`;
+    sets.forEach((s, sIdx) => {
+      html += `
+        <tr>
+          <td>${sIdx + 1}</td>
+          <td><input type="number" class="form-control form-control-sm strength-set"
+                     data-idx="${idx}" data-ex="${exIdx}" data-set="${sIdx}" data-key="reps"
+                     value="${s.reps ?? ''}"></td>
+          <td><input type="number" step="0.5" class="form-control form-control-sm strength-set"
+                     data-idx="${idx}" data-ex="${exIdx}" data-set="${sIdx}" data-key="weight_lbs"
+                     value="${s.weight_lbs ?? ''}"></td>
+          <td><input type="number" class="form-control form-control-sm strength-set"
+                     data-idx="${idx}" data-ex="${exIdx}" data-set="${sIdx}" data-key="duration_sec"
+                     value="${s.duration_sec ?? ''}"></td>
+        </tr>`;
+    });
+    html += `
+          </tbody>
+        </table>
+        <div class="row g-2">
+          <div class="col-md-3">
+            <label class="form-label">RPE</label>
+            <input type="number" step="0.5" class="form-control form-control-sm strength-ex"
+                   data-idx="${idx}" data-ex="${exIdx}" data-key="rpe"
+                   value="${ex.rpe ?? ''}">
+          </div>
+          <div class="col-md-9">
+            <label class="form-label">Notes</label>
+            <input type="text" class="form-control form-control-sm strength-ex"
+                   data-idx="${idx}" data-ex="${exIdx}" data-key="notes"
+                   value="${escapeHtml(ex.notes || '')}">
+          </div>
+        </div>
+      </div>`;
+  });
+  html += '</div>';
+  return html;
+}
+
+function renderFlatEntry(entry, idx) {
+  let html = '<div class="row g-2">';
+  for (const [key, val] of Object.entries(entry)) {
+    if (SKIP_FIELDS.has(key)) continue;
+    const label = FIELD_LABELS[key] || key;
+    const inputId = `field-${idx}-${key}`;
+    const isText = TEXT_FIELDS.has(key) || key === 'notes';
+    const inputType = isText ? 'text' : 'number';
+    const step = ['distance_mi', 'body_fat_pct', 'aerobic_te', 'vo2_max'].includes(key) ? ' step="0.01"' : '';
+    const displayVal = val !== null && val !== undefined ? val : '';
+    const colClass = key === 'notes' ? 'col-12' : 'col-6 col-md-4';
+
+    if (key === 'notes') {
+      html += `
+        <div class="${colClass}">
+          <label class="form-label" for="${inputId}">${label}</label>
+          <textarea class="form-control form-control-sm entry-field"
+                    id="${inputId}" data-idx="${idx}" data-key="${key}"
+                    rows="2">${escapeHtml(displayVal)}</textarea>
+        </div>`;
+    } else {
+      html += `
+        <div class="${colClass}">
+          <label class="form-label" for="${inputId}">${label}</label>
+          <input type="${inputType}" class="form-control form-control-sm entry-field"
+                 id="${inputId}" data-idx="${idx}" data-key="${key}"
+                 value="${escapeHtml(displayVal)}"${step}>
+        </div>`;
+    }
+  }
+  html += '</div>';
+  return html;
+}
+
 function renderPreview(entries, planMatch) {
   let html = '';
 
   if (planMatch) {
     const conf = planMatch.confidence === 'high' ? 'bg-success' : 'bg-warning text-dark';
     html += `
-      <div class="alert alert-success py-2 px-3 mb-3 small">
-        <strong>📅 Plan link suggested:</strong>
+      <div class="alert alert-info py-2 px-3 mb-3 small">
+        <strong>Plan link suggested:</strong>
         <span class="badge ${conf} ms-1">${planMatch.confidence}</span>
-        <strong class="ms-1">${planMatch.workout_name}</strong>
-        <span class="text-muted ms-1">— ${planMatch.reason || ''}</span>
+        <strong class="ms-1">${escapeHtml(planMatch.workout_name)}</strong>
+        <span class="text-muted ms-1">— ${escapeHtml(planMatch.reason || '')}</span>
         <label class="form-check d-inline-flex align-items-center gap-2 ms-3 mb-0">
           <input type="checkbox" class="form-check-input" id="link-plan" checked>
           <span>Link and mark complete</span>
@@ -215,45 +323,16 @@ function renderPreview(entries, planMatch) {
   entries.forEach((entry, idx) => {
     const logType = entry.log_type || 'cardio';
     html += `<div class="mb-3 p-0">`;
-    if (entries.length > 1) {
-      html += `<h6 class="text-muted mb-2 text-uppercase small">${logType} entry ${idx + 1}</h6>`;
+    if (entries.length > 1 || logType === 'strength') {
+      html += `<h6 class="eyebrow mb-2">${logType} entry${entries.length > 1 ? ' ' + (idx + 1) : ''}</h6>`;
     }
-    html += '<div class="row g-2">';
-
-    for (const [key, val] of Object.entries(entry)) {
-      if (SKIP_FIELDS.has(key)) continue;
-      const label = FIELD_LABELS[key] || key;
-      const inputId = `field-${idx}-${key}`;
-      const isText = TEXT_FIELDS.has(key) || key === 'notes';
-      const inputType = isText ? 'text' : 'number';
-      const step = ['distance_mi', 'body_fat_pct', 'aerobic_te', 'vo2_max'].includes(key) ? ' step="0.01"' : '';
-      const displayVal = val !== null && val !== undefined ? val : '';
-      const colClass = key === 'notes' ? 'col-12' : 'col-6 col-md-4';
-
-      if (key === 'notes') {
-        html += `
-          <div class="${colClass}">
-            <label class="form-label small text-muted mb-1" for="${inputId}">${label}</label>
-            <textarea class="form-control form-control-sm entry-field"
-                      id="${inputId}" data-idx="${idx}" data-key="${key}"
-                      rows="2">${displayVal}</textarea>
-          </div>`;
-      } else {
-        html += `
-          <div class="${colClass}">
-            <label class="form-label small text-muted mb-1" for="${inputId}">${label}</label>
-            <input type="${inputType}" class="form-control form-control-sm entry-field"
-                   id="${inputId}" data-idx="${idx}" data-key="${key}"
-                   value="${displayVal}"${step}>
-          </div>`;
-      }
-    }
-    html += '</div></div>';
+    html += logType === 'strength' ? renderStrengthEntry(entry, idx) : renderFlatEntry(entry, idx);
+    html += '</div>';
   });
 
   previewBody.innerHTML = html;
 
-  // Sync edits back to pendingEntries
+  // Sync flat fields
   previewBody.querySelectorAll('.entry-field').forEach(el => {
     el.addEventListener('input', () => {
       const idx = parseInt(el.dataset.idx);
@@ -263,6 +342,24 @@ function renderPreview(entries, planMatch) {
       pendingEntries[idx][key] = numKeys.includes(key)
         ? (raw === '' ? null : parseFloat(raw))
         : (raw || null);
+    });
+  });
+  // Sync strength exercise-level fields
+  previewBody.querySelectorAll('.strength-ex').forEach(el => {
+    el.addEventListener('input', () => {
+      const idx = +el.dataset.idx, ex = +el.dataset.ex, key = el.dataset.key;
+      const raw = el.value;
+      pendingEntries[idx].exercises[ex][key] =
+        key === 'rpe' ? (raw === '' ? null : parseFloat(raw)) : (raw || null);
+    });
+  });
+  // Sync strength set fields
+  previewBody.querySelectorAll('.strength-set').forEach(el => {
+    el.addEventListener('input', () => {
+      const idx = +el.dataset.idx, ex = +el.dataset.ex, sIdx = +el.dataset.set, key = el.dataset.key;
+      const raw = el.value;
+      pendingEntries[idx].exercises[ex].sets[sIdx][key] =
+        raw === '' ? null : parseFloat(raw);
     });
   });
 }

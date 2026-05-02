@@ -198,9 +198,12 @@ hr { border: 0; border-top: 1px solid var(--hairline); opacity: 1; }
   padding: 0.6rem 1rem;
 }
 .navbar .navbar-brand {
-  font-size: 20px;
+  font-size: 24px;
   padding: 0.25rem 0;
-  margin-right: 1.5rem;
+  margin-right: 1.75rem;
+}
+@media (min-width: 992px) {
+  .navbar .navbar-brand { font-size: 28px; }
 }
 .navbar .navbar-brand::before {
   content: "";
@@ -561,6 +564,12 @@ pre code { background: none; border: 0; padding: 0; }
 .stat-tile.live .stat-label,
 .stat-tile.live .stat-value,
 .stat-tile.live .stat-unit { color: var(--ink); }
+
+/* ── Dashboard brand hero ─────────────────────────────── */
+.dashboard-hero {
+  border-bottom: 1px solid var(--hairline);
+}
+.dashboard-hero .wordmark { line-height: 1; }
 
 /* ── Section header (eyebrow + title) ─────────────────── */
 .section-header {
