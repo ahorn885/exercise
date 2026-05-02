@@ -74,6 +74,12 @@
               {{ e.consecutive_failures }}/3
             </span>
           {% endif %}
+          {% if e.sessions_since_progress and e.sessions_since_progress >= 5 %}
+            <span class="badge bg-warning text-dark ms-1"
+                  title="{{ e.sessions_since_progress }} sessions without PROGRESS — consider a deload week (drop 10–20%, rebuild)">
+              deload
+            </span>
+          {% endif %}
         {% else %}
           <span class="text-muted small">needs setup</span>
         {% endif %}
