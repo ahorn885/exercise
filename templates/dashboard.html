@@ -6,9 +6,17 @@
 <header class="dashboard-hero d-flex flex-wrap align-items-end justify-content-between gap-3 mb-4 pb-3">
   <div>
     <span class="eyebrow d-block mb-2">Dashboard · {{ today }}</span>
-    <span class="wordmark display-2 d-inline-flex" aria-label="AIDSTATION">
-      <span class="aid">AID</span><span class="station">STATION</span>
-    </span>
+    <div class="d-flex align-items-center gap-3">
+      <svg class="dashboard-mark" viewBox="0 0 100 100" aria-hidden="true">
+        <path d="M26 30 L74 30 L67 84 Q 50 92, 33 84 Z" fill="none" stroke="currentColor" stroke-width="6" stroke-linejoin="round"/>
+        <line x1="26" y1="30" x2="74" y2="30" stroke="currentColor" stroke-width="6" stroke-linecap="round"/>
+        <path d="M40 54 L48 60 L40 66" stroke="currentColor" stroke-width="5" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+        <rect x="53" y="55" width="9" height="10" fill="#E8893A"/>
+      </svg>
+      <span class="wordmark display-2 d-inline-flex" aria-label="AIDSTATION">
+        <span class="aid">AID</span><span class="station">STATION</span>
+      </span>
+    </div>
   </div>
   <p class="lede mb-0 d-none d-md-block" style="max-width: 360px; font-size: 15px;">
     AI-driven training for the data-obsessed endurance athlete.

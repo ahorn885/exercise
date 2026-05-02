@@ -1,9 +1,13 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
-  <rect width="256" height="256" fill="#FFFFFF"></rect>
-  <g transform="translate(32 32) scale(1.92)">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 200" width="720" height="200">
+  <rect width="720" height="200" fill="#FFFFFF"></rect>
+  <g transform="translate(24 24) scale(1.52)">
     <path d="M26 30 L74 30 L67 84 Q 50 92, 33 84 Z" fill="none" stroke="#0E0F11" stroke-width="6" stroke-linejoin="round"></path>
     <line x1="26" y1="30" x2="74" y2="30" stroke="#0E0F11" stroke-width="6" stroke-linecap="round"></line>
     <path d="M40 54 L48 60 L40 66" stroke="#0E0F11" stroke-width="5" fill="none" stroke-linecap="round" stroke-linejoin="round"></path>
     <rect x="53" y="55" width="9" height="10" fill="#E8893A"></rect>
+  </g>
+  <g font-family="Inter, &#39;Helvetica Neue&#39;, Arial, sans-serif" font-size="78" letter-spacing="2" fill="#0E0F11">
+    <text x="216" y="128" font-weight="700">AID</text>
+    <text x="376" y="128" font-weight="400">STATION</text>
   </g>
 </svg>

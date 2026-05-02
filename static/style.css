@@ -198,23 +198,24 @@ hr { border: 0; border-top: 1px solid var(--hairline); opacity: 1; }
   padding: 0.6rem 1rem;
 }
 .navbar .navbar-brand {
-  font-size: 24px;
+  font-size: 22px;
   padding: 0.25rem 0;
   margin-right: 1.75rem;
 }
 @media (min-width: 992px) {
-  .navbar .navbar-brand { font-size: 28px; }
+  .navbar .navbar-brand { font-size: 26px; }
 }
-.navbar .navbar-brand::before {
-  content: "";
-  display: inline-block;
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--orange);
-  margin-right: 12px;
-  transform: translateY(-2px);
+.navbar .navbar-brand.lockup {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5em;
 }
+.navbar .navbar-brand .brand-mark {
+  width: 1.4em;
+  height: 1.4em;
+  flex-shrink: 0;
+}
+.navbar .navbar-brand .lockup-text { line-height: 1; }
 .navbar .nav-link {
   font-family: var(--font-mono);
   font-size: 11px;
@@ -570,6 +571,12 @@ pre code { background: none; border: 0; padding: 0; }
   border-bottom: 1px solid var(--hairline);
 }
 .dashboard-hero .wordmark { line-height: 1; }
+.dashboard-hero .dashboard-mark {
+  width: clamp(56px, 6vw, 80px);
+  height: clamp(56px, 6vw, 80px);
+  color: var(--ink);
+  flex-shrink: 0;
+}
 
 /* ── Section header (eyebrow + title) ─────────────────── */
 .section-header {
