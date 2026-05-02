@@ -68,6 +68,23 @@ Body metrics entry:
   "notes": ""
 }
 
+Strength session entry (one entry per session, may contain many exercises):
+{
+  "log_type": "strength",
+  "date": "YYYY-MM-DD",
+  "exercises": [
+    {
+      "exercise": "<must match a name from the strength exercise list below — pick closest>",
+      "sets": [
+        {"reps": <int or null>, "weight_lbs": <number or null>, "duration_sec": <int or null>}
+      ],
+      "rpe": <0.0-10.0 or null>,
+      "notes": ""
+    }
+  ],
+  "notes": ""
+}
+
 ## Valid activity values (pick the closest match):
 Running, Trail Running, Road Cycling, Mountain Biking, Gravel Cycling,
 Indoor Bike Trainer, Hiking, Backpacking, Kayaking, Pack Rafting,
@@ -86,7 +103,9 @@ Otherwise set plan_match to null.
 - Ask about plan linking only if you see a plausible match but can't be certain
 - Do NOT ask about optional fields (HR, elevation, power, calories) — leave them null
 - If duration was given in any form (time range, "about X", etc.) that's enough — estimate it
-- Strength sessions: tell the user to use the Session Logger instead; do not create a "strength" entry
+- Strength: build a single "strength" entry with exercises[] for the session. If the user
+  gives a shorthand like "3x5 @ 185", expand it to 3 sets of {reps:5, weight_lbs:185}.
+  If an exercise name doesn't match the list closely, ask which exercise they mean.
 
 ## Date rules
 - Default to today unless the user says "yesterday", "last night", "this morning" etc.
@@ -100,6 +119,14 @@ Today: {today}
 
 def _check_api_key():
     return bool(os.environ.get('ANTHROPIC_API_KEY'))
+
+
+def _load_strength_exercises(db):
+    """Names of strength exercises Andy currently uses, for prompt-side matching."""
+    rows = db.execute(
+        'SELECT exercise FROM current_rx ORDER BY exercise'
+    ).fetchall()
+    return [r['exercise'] for r in rows if r['exercise']]
 
 
 def _load_scheduled(db):
@@ -120,9 +147,12 @@ def _load_scheduled(db):
     return [dict(r) for r in rows]
 
 
-def _build_system(scheduled):
+def _build_system(scheduled, strength_exercises=None):
     today = date.today().isoformat()
     text = _SYSTEM.replace('{today}', today)
+    if strength_exercises:
+        text += '\n\n## Strength exercise list (match closest by name)\n'
+        text += ', '.join(strength_exercises)
     if scheduled:
         lines = ['\n\n## Scheduled workouts (past 7 days) — use for plan matching']
         for s in scheduled:
@@ -172,7 +202,8 @@ def parse():
 
     db = get_db()
     scheduled = _load_scheduled(db)
-    system_text = _build_system(scheduled)
+    strength = _load_strength_exercises(db)
+    system_text = _build_system(scheduled, strength)
 
     messages = [{'role': t['role'], 'content': t['content']} for t in history]
     messages.append({'role': 'user', 'content': message})
@@ -253,6 +284,68 @@ def save():
                 'redirect': '/cardio',
                 'fit_url': url_for('cardio.activity_fit', entry_id=new_id),
             })
+
+        elif log_type == 'strength':
+            session_date = entry.get('date', date.today().isoformat())
+            session_notes = entry.get('notes', '')
+            plan_item_id = plan_match.get('plan_item_id') if plan_match else None
+
+            cur = db.execute(
+                'INSERT INTO training_sessions (date, notes, plan_item_id) VALUES (?, ?, ?)',
+                (session_date, session_notes, plan_item_id)
+            )
+            session_id = cur.lastrowid
+
+            body_wt_row = db.execute(
+                'SELECT weight_lbs FROM body_metrics ORDER BY date DESC LIMIT 1'
+            ).fetchone()
+            body_weight = body_wt_row['weight_lbs'] if body_wt_row else None
+
+            for ex_data in entry.get('exercises', []):
+                exercise = (ex_data.get('exercise') or '').strip()
+                if not exercise:
+                    continue
+                sets = ex_data.get('sets') or []
+
+                ei = db.execute(
+                    'SELECT id FROM exercise_inventory WHERE exercise=?', (exercise,)
+                ).fetchone()
+                exercise_id = ei['id'] if ei else None
+                rx = db.execute(
+                    'SELECT movement_pattern FROM current_rx WHERE exercise=?', (exercise,)
+                ).fetchone()
+                movement_pattern = rx['movement_pattern'] if rx else None
+
+                actual_sets = len(sets)
+                last_reps = sets[-1].get('reps') if sets else None
+                weights = [s.get('weight_lbs') or 0 for s in sets]
+                max_weight = max(weights) if weights and max(weights) > 0 else None
+                last_duration = sets[-1].get('duration_sec') if sets else None
+                volume = sum((s.get('reps') or 0) * (s.get('weight_lbs') or 0) for s in sets) or None
+
+                log_cur = db.execute(
+                    '''INSERT INTO training_log
+                       (date, exercise, exercise_id, sub_group, session_id,
+                        actual_sets, actual_reps, actual_weight, actual_duration,
+                        rpe, volume, body_weight, plan_item_id, notes)
+                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
+                    (session_date, exercise, exercise_id, movement_pattern, session_id,
+                     actual_sets, last_reps, max_weight, last_duration,
+                     ex_data.get('rpe'), volume, body_weight,
+                     plan_item_id, ex_data.get('notes', ''))
+                )
+                log_id = log_cur.lastrowid
+
+                for i, s in enumerate(sets, start=1):
+                    db.execute(
+                        '''INSERT INTO training_log_sets
+                           (training_log_id, set_number, reps, weight_lbs, duration_sec)
+                           VALUES (?,?,?,?,?)''',
+                        (log_id, s.get('set_number') or i,
+                         s.get('reps'), s.get('weight_lbs'), s.get('duration_sec'))
+                    )
+
+            saved.append({'type': 'strength', 'id': session_id, 'redirect': '/training'})
 
         elif log_type == 'body':
             db.execute(

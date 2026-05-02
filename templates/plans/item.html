@@ -15,8 +15,13 @@
 <div class="row g-3">
   <div class="col-md-6">
     <div class="card h-100">
-      <div class="card-header">Workout Details</div>
-      <div class="card-body">
+      <div class="card-header d-flex justify-content-between align-items-center">
+        <span>Workout Details</span>
+        {% if item.status == 'scheduled' %}
+        <button type="button" id="edit-toggle" class="btn btn-sm btn-outline-secondary">Edit</button>
+        {% endif %}
+      </div>
+      <div class="card-body" id="item-view">
         {% if item.description %}
         {% set steps = item.description | workout_steps %}
         {% if steps %}
@@ -58,6 +63,47 @@
           </tbody>
         </table>
       </div>
+
+      {% if item.status == 'scheduled' %}
+      <div class="card-body border-top" id="item-edit" style="display:none">
+        <form id="edit-form" class="row g-2">
+          <div class="col-12">
+            <label class="form-label">Workout name</label>
+            <input type="text" name="workout_name" class="form-control form-control-sm"
+                   value="{{ item.workout_name or '' }}">
+          </div>
+          <div class="col-12">
+            <label class="form-label">Description</label>
+            <textarea name="description" class="form-control form-control-sm" rows="4">{{ item.description or '' }}</textarea>
+          </div>
+          <div class="col-6">
+            <label class="form-label">Duration (min)</label>
+            <input type="number" name="target_duration_min" step="1" class="form-control form-control-sm"
+                   value="{{ item.target_duration_min if item.target_duration_min is not none else '' }}">
+          </div>
+          <div class="col-6">
+            <label class="form-label">Distance (mi)</label>
+            <input type="number" name="target_distance_mi" step="0.01" class="form-control form-control-sm"
+                   value="{{ item.target_distance_mi if item.target_distance_mi is not none else '' }}">
+          </div>
+          <div class="col-12">
+            <label class="form-label">Intensity</label>
+            <input type="text" name="intensity" class="form-control form-control-sm"
+                   placeholder="e.g. Z2, Tempo, VO2"
+                   value="{{ item.intensity or '' }}">
+          </div>
+          <div class="col-12">
+            <label class="form-label">Notes</label>
+            <textarea name="notes" class="form-control form-control-sm" rows="2">{{ item.notes or '' }}</textarea>
+          </div>
+          <div class="col-12 d-flex gap-2">
+            <button type="submit" class="btn btn-primary btn-sm">Save</button>
+            <button type="button" id="edit-cancel" class="btn btn-outline-secondary btn-sm">Cancel</button>
+            <span id="edit-status" class="small text-muted ms-2 align-self-center"></span>
+          </div>
+        </form>
+      </div>
+      {% endif %}
     </div>
   </div>
 
@@ -134,5 +180,59 @@
     </div>
   </div>
 </div>
+{% endif %}
+
+{% if item.status == 'scheduled' %}
+<script>
+(() => {
+  const toggleBtn = document.getElementById('edit-toggle');
+  const cancelBtn = document.getElementById('edit-cancel');
+  const view = document.getElementById('item-view');
+  const edit = document.getElementById('item-edit');
+  const form = document.getElementById('edit-form');
+  const status = document.getElementById('edit-status');
+  if (!toggleBtn || !form) return;
+
+  const show = (mode) => {
+    view.style.display = mode === 'edit' ? 'none' : '';
+    edit.style.display = mode === 'edit' ? '' : 'none';
+    toggleBtn.textContent = mode === 'edit' ? 'Close' : 'Edit';
+  };
+  toggleBtn.addEventListener('click', () => {
+    show(edit.style.display === 'none' ? 'edit' : 'view');
+  });
+  cancelBtn.addEventListener('click', () => show('view'));
+
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const fd = new FormData(form);
+    const payload = {};
+    fd.forEach((v, k) => {
+      v = (v ?? '').toString().trim();
+      if (k === 'target_duration_min' || k === 'target_distance_mi') {
+        payload[k] = v === '' ? null : parseFloat(v);
+      } else {
+        payload[k] = v;
+      }
+    });
+    status.textContent = 'Saving…';
+    try {
+      const res = await fetch('{{ url_for("plans.api_patch_plan_item", item_id=item.id) }}', {
+        method: 'PATCH',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json();
+      if (data.ok) {
+        location.reload();
+      } else {
+        status.textContent = 'Error: ' + (data.error || 'save failed');
+      }
+    } catch (err) {
+      status.textContent = 'Network error';
+    }
+  });
+})();
+</script>
 {% endif %}
 {% endblock %}

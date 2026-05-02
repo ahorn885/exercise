@@ -2,6 +2,19 @@
 {% block title %}Dashboard{% endblock %}
 {% block content %}
 
+{# ── Brand header ── #}
+<header class="dashboard-hero d-flex flex-wrap align-items-end justify-content-between gap-3 mb-4 pb-3">
+  <div>
+    <span class="eyebrow d-block mb-2">Dashboard · {{ today }}</span>
+    <span class="wordmark display-2 d-inline-flex" aria-label="AIDSTATION">
+      <span class="aid">AID</span><span class="station">STATION</span>
+    </span>
+  </div>
+  <p class="lede mb-0 d-none d-md-block" style="max-width: 360px; font-size: 15px;">
+    AI-driven training for the data-obsessed endurance athlete.
+  </p>
+</header>
+
 {# ── Today + Weather ── #}
 <div class="row g-3 mb-3">
   <div class="col-md-8">
