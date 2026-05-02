@@ -18,6 +18,10 @@ Semantics (per Andy's 2026-05 rules):
     from the upload.
   - new current_rx rows are created on demand (UPSERT) so a FIT file with
     a never-before-logged exercise still produces a baseline.
+  - sessions_since_progress: counts non-PROGRESS sessions (REPEAT + REDUCE)
+    in a row. Used to surface a deload suggestion at >= DELOAD_THRESHOLD,
+    catching plateaus where REPEAT/REDUCE alternate without ever hitting
+    3-in-a-row to trigger the regression machinery.
 """
 
 from calculations import (
@@ -25,6 +29,9 @@ from calculations import (
     calculate_next_rx,
     project_next_from_current,
 )
+
+
+DELOAD_THRESHOLD = 5
 
 
 def _bootstrap_baseline(sets):
@@ -66,6 +73,7 @@ def apply_session_outcome(db, exercise, date, sets,
     """
     rx = db.execute(
         '''SELECT movement_pattern, weight_increment, consecutive_failures,
+                  sessions_since_progress,
                   current_sets, current_reps, current_weight, current_duration
            FROM current_rx WHERE exercise=?''',
         (exercise,)
@@ -85,6 +93,7 @@ def apply_session_outcome(db, exercise, date, sets,
         if weight_increment is None and ei:
             weight_increment = ei['weight_increment']
         consecutive_failures = rx['consecutive_failures'] or 0
+        sessions_since_progress = rx['sessions_since_progress'] or 0
         baseline_sets = rx['current_sets']
         baseline_reps = rx['current_reps']
         baseline_weight = rx['current_weight']
@@ -93,6 +102,7 @@ def apply_session_outcome(db, exercise, date, sets,
         movement_pattern = ei['movement_pattern'] if ei else None
         weight_increment = ei['weight_increment'] if ei else None
         consecutive_failures = 0
+        sessions_since_progress = 0
         baseline_sets = baseline_reps = baseline_weight = baseline_duration = None
 
     result = calculate_outcome_from_sets(
@@ -167,17 +177,28 @@ def apply_session_outcome(db, exercise, date, sets,
         )
         new_failures = consecutive_failures
 
+    # Plateau counter — independent from consecutive_failures (which only
+    # counts REDUCEs). Resets on PROGRESS, increments on REPEAT or REDUCE.
+    # Bootstrap (outcome is None) leaves it alone — a target-less FIT import
+    # is neither a win nor a stall.
+    if outcome == 'PROGRESS ↑':
+        new_sessions_since_progress = 0
+    elif outcome in ('REPEAT →', 'REDUCE ↓'):
+        new_sessions_since_progress = sessions_since_progress + 1
+    else:
+        new_sessions_since_progress = sessions_since_progress
+
     # UPSERT current_rx
     if rx:
         db.execute(
             '''UPDATE current_rx SET
                  exercise_id=?, current_sets=?, current_reps=?, current_weight=?, current_duration=?,
-                 last_performed=?, last_outcome=?, consecutive_failures=?,
+                 last_performed=?, last_outcome=?, consecutive_failures=?, sessions_since_progress=?,
                  next_sets=?, next_reps=?, next_weight=?, next_duration=?,
                  rx_source=?
                WHERE exercise=?''',
             (exercise_id, new_baseline_sets, new_baseline_reps, new_baseline_weight, new_baseline_duration,
-             date, outcome, new_failures,
+             date, outcome, new_failures, new_sessions_since_progress,
              nxt['next_sets'], nxt['next_reps'], nxt['next_weight'], nxt['next_duration'],
              rx_source, exercise)
         )
@@ -189,12 +210,13 @@ def apply_session_outcome(db, exercise, date, sets,
             '''INSERT INTO current_rx
                  (exercise, exercise_id, discipline, type, movement_pattern,
                   inventory_sugg_volume, current_sets, current_reps, current_weight, current_duration,
-                  last_performed, last_outcome, consecutive_failures, weight_increment,
+                  last_performed, last_outcome, consecutive_failures, sessions_since_progress,
+                  weight_increment,
                   next_sets, next_reps, next_weight, next_duration, rx_source)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
             (exercise, exercise_id, discipline, ex_type, movement_pattern,
              sugg_vol, new_baseline_sets, new_baseline_reps, new_baseline_weight, new_baseline_duration,
-             date, outcome, new_failures, weight_increment,
+             date, outcome, new_failures, new_sessions_since_progress, weight_increment,
              nxt['next_sets'], nxt['next_reps'], nxt['next_weight'], nxt['next_duration'],
              rx_source)
         )
@@ -213,4 +235,6 @@ def apply_session_outcome(db, exercise, date, sets,
         'next_weight': nxt['next_weight'],
         'next_duration': nxt['next_duration'],
         'consecutive_failures': new_failures,
+        'sessions_since_progress': new_sessions_since_progress,
+        'deload_suggested': new_sessions_since_progress >= DELOAD_THRESHOLD,
     }

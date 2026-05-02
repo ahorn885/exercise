@@ -563,6 +563,7 @@ _SQLITE_MIGRATIONS = [
     "CREATE INDEX IF NOT EXISTS idx_wl_date ON wellness_log(date)",
     "ALTER TABLE current_rx ADD COLUMN next_duration INTEGER",
     "ALTER TABLE training_log ADD COLUMN next_duration INTEGER",
+    "ALTER TABLE current_rx ADD COLUMN sessions_since_progress INTEGER DEFAULT 0",
 ]
 
 _PG_MIGRATIONS = [
@@ -615,6 +616,7 @@ _PG_MIGRATIONS = [
     "CREATE INDEX IF NOT EXISTS idx_wl_date ON wellness_log(date)",
     "ALTER TABLE current_rx ADD COLUMN IF NOT EXISTS next_duration INTEGER",
     "ALTER TABLE training_log ADD COLUMN IF NOT EXISTS next_duration INTEGER",
+    "ALTER TABLE current_rx ADD COLUMN IF NOT EXISTS sessions_since_progress INTEGER DEFAULT 0",
 ]
 
 _CLOTHING_SEEDS = [
