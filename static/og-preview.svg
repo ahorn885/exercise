@@ -1,0 +1,76 @@
+<svg viewBox="0 0 1280 640" xmlns="http://www.w3.org/2000/svg">
+  <rect width="1280" height="640" fill="#0E0F11"></rect>
+
+  
+  <g stroke="#1A1C1F" stroke-width="1">
+    <line x1="0" y1="80" x2="1280" y2="80"></line>
+    <line x1="0" y1="560" x2="1280" y2="560"></line>
+  </g>
+
+  
+  <g font-family="JetBrains Mono, monospace" font-size="11" letter-spacing="3" fill="#5A5C60">
+    <text x="80" y="58">AIDSTATION.PRO · OPEN SOURCE</text>
+    <text x="1200" y="58" text-anchor="end">v0.1 · MAIN</text>
+  </g>
+
+  
+  <g transform="translate(80 130)">
+    
+    <g transform="scale(1.6)">
+      <path d="M26 30 L74 30 L67 84 Q 50 92, 33 84 Z" fill="none" stroke="#F4F4F2" stroke-width="6" stroke-linejoin="round"></path>
+      <line x1="26" y1="30" x2="74" y2="30" stroke="#F4F4F2" stroke-width="6" stroke-linecap="round"></line>
+      <path d="M40 54 L48 60 L40 66" stroke="#F4F4F2" stroke-width="5" fill="none" stroke-linecap="round" stroke-linejoin="round"></path>
+      <rect x="53" y="55" width="9" height="10" fill="#E8893A"></rect>
+    </g>
+  </g>
+
+  
+  <g transform="translate(80 320)">
+    <g font-family="Inter, sans-serif" fill="#F4F4F2">
+      <text x="0" y="0" font-size="84" font-weight="700" letter-spacing="2">AID<tspan font-weight="400">STATION</tspan></text>
+    </g>
+    <text x="0" y="48" font-family="JetBrains Mono, monospace" font-size="13" letter-spacing="3" fill="#E8893A">TRAIN THE DATA.</text>
+
+    <text x="0" y="110" font-family="Inter, sans-serif" font-size="20" fill="#BFC0BD">AI coaching for Ironman, ultra,</text>
+    <text x="0" y="138" font-family="Inter, sans-serif" font-size="20" fill="#BFC0BD">and adventure race.</text>
+
+    <text x="0" y="200" font-family="JetBrains Mono, monospace" font-size="11" letter-spacing="3" fill="#5A5C60">MIT · TYPESCRIPT · ATHLETE-BUILT</text>
+  </g>
+
+  
+  <g transform="translate(640 110)">
+    <rect x="0" y="0" width="560" height="420" rx="8" fill="#16181B" stroke="#2A2C30"></rect>
+
+    
+    <circle cx="22" cy="22" r="5" fill="#3A3D42"></circle>
+    <circle cx="40" cy="22" r="5" fill="#3A3D42"></circle>
+    <circle cx="58" cy="22" r="5" fill="#3A3D42"></circle>
+    <text x="280" y="27" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="11" letter-spacing="2" fill="#8A8B88">aidstation/exercise — main</text>
+    <line x1="0" y1="44" x2="560" y2="44" stroke="#2A2C30"></line>
+
+    
+    <g font-family="JetBrains Mono, monospace" font-size="14">
+      <text x="24" y="80" fill="#8A8B88">$ <tspan fill="#F4F4F2">git clone</tspan> aidstation/exercise</text>
+      <text x="24" y="104" fill="#5A5C60">Cloning into &#39;exercise&#39;...</text>
+      <text x="24" y="128" fill="#5A5C60">Receiving objects: 100% (1284/1284)</text>
+
+      <text x="24" y="172" fill="#8A8B88">$ <tspan fill="#F4F4F2">aidstation</tspan> plan today</text>
+      <text x="24" y="196" fill="#BFC0BD">→ Block 04 / Build · Wk 9 of 14</text>
+      <text x="24" y="220" fill="#BFC0BD">→ Today: <tspan fill="#E8893A">5h Brick</tspan> · bike + run off bike</text>
+      <text x="24" y="244" fill="#BFC0BD">→ Fuel: 75g carb/hr · sodium 600mg</text>
+
+      <text x="24" y="288" fill="#8A8B88">$ <tspan fill="#F4F4F2">aidstation</tspan> race-day --target IMLP</text>
+      <text x="24" y="312" fill="#BFC0BD">→ <tspan fill="#E8893A">35 days</tspan> out · taper begins T-21</text>
+      <text x="24" y="336" fill="#BFC0BD">→ readiness 0.84 · CTL 84 · TSB −12</text>
+
+      <text x="24" y="380" fill="#8A8B88">$ <tspan fill="#F4F4F2">_</tspan></text>
+    </g>
+    <rect x="56" y="368" width="10" height="15" fill="#E8893A"></rect>
+  </g>
+
+  
+  <g font-family="JetBrains Mono, monospace" font-size="11" letter-spacing="3" fill="#5A5C60">
+    <text x="80" y="595">github.com/aidstation/exercise</text>
+    <text x="1200" y="595" text-anchor="end">SWIM · BIKE · RUN · RECOVER</text>
+  </g>
+</svg>
