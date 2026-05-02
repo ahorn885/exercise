@@ -1,3 +1,7 @@
+import json
+import os
+import tempfile
+import uuid
 from datetime import date, timedelta
 
 from flask import Blueprint, render_template, request, redirect, url_for, flash, jsonify, session as flask_session
@@ -677,6 +681,143 @@ def auth_import_cookies():
     db.commit()
     flash('Browser session cookies saved. Testing connection on the sync page.', 'success')
     return redirect(url_for('garmin.auth'))
+
+
+@bp.route('/import-wellness', methods=['GET', 'POST'])
+def import_wellness():
+    if request.method == 'GET':
+        return render_template('garmin/import_wellness.html', preview=None)
+
+    f = request.files.get('fit_file')
+    if not f or not f.filename:
+        flash('No file selected.', 'warning')
+        return redirect(url_for('garmin.import_wellness'))
+
+    fname = f.filename.lower()
+    if not (fname.endswith('.fit') or fname.endswith('.zip')):
+        flash('File must be a .fit or .zip file.', 'danger')
+        return redirect(url_for('garmin.import_wellness'))
+
+    try:
+        raw = f.read()
+        if fname.endswith('.zip'):
+            import zipfile, io
+            with zipfile.ZipFile(io.BytesIO(raw)) as zf:
+                fit_names = [n for n in zf.namelist() if n.lower().endswith('.fit')]
+                if not fit_names:
+                    flash('No .fit file found inside the zip.', 'danger')
+                    return redirect(url_for('garmin.import_wellness'))
+                raw = zf.read(fit_names[0])
+
+        from garmin_fit_parser import parse_wellness_fit
+        rows = parse_wellness_fit(raw)
+
+        if not rows:
+            flash('No wellness data found in this FIT file. Make sure it\'s a wellness/monitoring file, not an activity file.', 'warning')
+            return redirect(url_for('garmin.import_wellness'))
+
+        # Write parsed rows to a temp file — avoids cookie session size limits
+        tmp_path = os.path.join(tempfile.gettempdir(), f'wellness_{uuid.uuid4().hex}.json')
+        with open(tmp_path, 'w') as fh:
+            json.dump(rows, fh)
+        flask_session['wellness_tmp'] = tmp_path
+
+        # Build preview summary
+        dates = sorted({r['date'] for r in rows if r['date']})
+        counts = {
+            'total': len(rows),
+            'heart_rate': sum(1 for r in rows if r.get('heart_rate')),
+            'stress_level': sum(1 for r in rows if r.get('stress_level')),
+            'body_battery': sum(1 for r in rows if r.get('body_battery')),
+            'respiration_rate': sum(1 for r in rows if r.get('respiration_rate')),
+            'steps': sum(1 for r in rows if r.get('steps')),
+        }
+        preview = {
+            'date_min': dates[0] if dates else '?',
+            'date_max': dates[-1] if dates else '?',
+            'date_count': len(dates),
+            'counts': counts,
+            'sample': rows[:8],
+        }
+        return render_template('garmin/import_wellness.html', preview=preview)
+
+    except Exception as e:
+        flash(f'Error parsing wellness FIT file: {e}', 'danger')
+        return redirect(url_for('garmin.import_wellness'))
+
+
+@bp.route('/import-wellness/confirm', methods=['POST'])
+def import_wellness_confirm():
+    tmp_path = flask_session.get('wellness_tmp')
+    if not tmp_path or not os.path.exists(tmp_path):
+        flash('Session expired or data missing. Please re-upload the file.', 'warning')
+        return redirect(url_for('garmin.import_wellness'))
+
+    try:
+        with open(tmp_path) as fh:
+            rows = json.load(fh)
+    except Exception:
+        flash('Could not read parsed data. Please re-upload.', 'danger')
+        return redirect(url_for('garmin.import_wellness'))
+    finally:
+        try:
+            os.remove(tmp_path)
+        except OSError:
+            pass
+        flask_session.pop('wellness_tmp', None)
+
+    db = get_db()
+    inserted = skipped = 0
+
+    for row in rows:
+        try:
+            cur = db.execute(
+                '''INSERT OR IGNORE INTO wellness_log
+                   (date, timestamp_ms, heart_rate, stress_level, body_battery,
+                    respiration_rate, steps, active_calories, active_time_s,
+                    distance_m, activity_type)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?)''',
+                (row.get('date'), row.get('timestamp_ms'), row.get('heart_rate'),
+                 row.get('stress_level'), row.get('body_battery'),
+                 row.get('respiration_rate'), row.get('steps'),
+                 row.get('active_calories'), row.get('active_time_s'),
+                 row.get('distance_m'), row.get('activity_type'))
+            )
+            if cur.rowcount:
+                inserted += 1
+            else:
+                skipped += 1
+        except Exception:
+            skipped += 1
+
+    db.commit()
+
+    msg = f'{inserted} wellness records imported'
+    if skipped:
+        msg += f', {skipped} already existed (skipped)'
+    flash(msg + '.', 'success')
+    return redirect(url_for('garmin.wellness_log'))
+
+
+@bp.route('/wellness')
+def wellness_log():
+    db = get_db()
+    date_filter = request.args.get('date', '')
+    query = 'SELECT * FROM wellness_log'
+    params = []
+    if date_filter:
+        query += ' WHERE date = ?'
+        params.append(date_filter)
+    query += ' ORDER BY timestamp_ms DESC LIMIT 2000'
+    rows = db.execute(query, params).fetchall()
+
+    # Distinct dates for the date picker
+    dates = db.execute(
+        'SELECT DISTINCT date FROM wellness_log ORDER BY date DESC LIMIT 60'
+    ).fetchall()
+
+    return render_template('garmin/wellness_log.html', rows=rows,
+                           dates=dates, date_filter=date_filter)
 
 
 @bp.route('/auth/import-tokens', methods=['POST'])

@@ -1,0 +1,105 @@
+{% extends 'base.html' %}
+{% block title %}Import Wellness FIT{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h2 class="mb-0">Import Wellness FIT</h2>
+  <a href="{{ url_for('garmin.dashboard') }}" class="btn btn-outline-secondary btn-sm">← Garmin</a>
+</div>
+<p class="text-muted">Upload a Garmin wellness <code>.fit</code> file (from your device's <code>MONITOR/</code> folder, or a zip) to import heart rate, stress, body battery, respiration, and step data.</p>
+
+<form method="post" enctype="multipart/form-data" class="mb-4">
+  <div class="input-group" style="max-width:480px">
+    <input type="file" name="fit_file" accept=".fit,.zip" class="form-control" required>
+    <button type="submit" class="btn btn-primary">Parse</button>
+  </div>
+</form>
+
+{% if preview %}
+
+{# ── Summary ── #}
+<div class="card mb-3 border-info">
+  <div class="card-header fw-semibold text-info-emphasis">
+    Preview — {{ preview.counts.total }} records found
+  </div>
+  <div class="card-body">
+    <div class="row g-3">
+      <div class="col-sm-6 col-md-4">
+        <div class="text-muted small mb-1">Date range</div>
+        <div class="fw-semibold">{{ preview.date_min }} → {{ preview.date_max }}</div>
+        <div class="text-muted small">{{ preview.date_count }} day{% if preview.date_count != 1 %}s{% endif %}</div>
+      </div>
+      <div class="col-sm-6 col-md-8">
+        <div class="text-muted small mb-1">Data types</div>
+        <div class="d-flex flex-wrap gap-2">
+          {% if preview.counts.heart_rate %}
+          <span class="badge bg-danger">❤ {{ preview.counts.heart_rate }} HR readings</span>
+          {% endif %}
+          {% if preview.counts.stress_level %}
+          <span class="badge bg-warning text-dark">⚡ {{ preview.counts.stress_level }} stress readings</span>
+          {% endif %}
+          {% if preview.counts.body_battery %}
+          <span class="badge bg-success">🔋 {{ preview.counts.body_battery }} body battery</span>
+          {% endif %}
+          {% if preview.counts.respiration_rate %}
+          <span class="badge bg-info text-dark">💨 {{ preview.counts.respiration_rate }} respiration</span>
+          {% endif %}
+          {% if preview.counts.steps %}
+          <span class="badge bg-secondary">👟 {{ preview.counts.steps }} step intervals</span>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+{# ── Sample rows ── #}
+<div class="card mb-4">
+  <div class="card-header fw-semibold">Sample Records (first 8)</div>
+  <div class="card-body p-0">
+    <div class="table-responsive">
+      <table class="table table-sm mb-0">
+        <thead class="table-light">
+          <tr>
+            <th>Date</th>
+            <th>Time (UTC)</th>
+            <th>HR</th>
+            <th>Stress</th>
+            <th>Body Bat.</th>
+            <th>Resp.</th>
+            <th>Steps</th>
+            <th>Cals</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for r in preview.sample %}
+          <tr>
+            <td>{{ r.date }}</td>
+            <td class="text-muted small font-monospace">{{ (r.timestamp_ms / 1000) | int | string }}</td>
+            <td>{{ r.heart_rate or '—' }}{% if r.heart_rate %} bpm{% endif %}</td>
+            <td>{{ r.stress_level or '—' }}</td>
+            <td>{{ r.body_battery or '—' }}</td>
+            <td>{{ r.respiration_rate or '—' }}{% if r.respiration_rate %}/min{% endif %}</td>
+            <td>{{ r.steps or '—' }}</td>
+            <td>{{ r.active_calories or '—' }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+{# ── Confirm ── #}
+<form method="post" action="{{ url_for('garmin.import_wellness_confirm') }}">
+  <div class="d-flex gap-2 align-items-center">
+    <button type="submit" class="btn btn-success">
+      Import {{ preview.counts.total }} Records
+    </button>
+    <a href="{{ url_for('garmin.import_wellness') }}" class="btn btn-outline-secondary">Cancel</a>
+    <span class="text-muted small ms-2">Duplicate timestamps are skipped automatically.</span>
+  </div>
+</form>
+
+{% endif %}
+{% endblock %}

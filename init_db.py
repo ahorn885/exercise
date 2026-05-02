@@ -240,6 +240,23 @@ SQLITE_SCHEMA = '''
         value    TEXT NOT NULL,
         UNIQUE(category, value)
     );
+    CREATE TABLE IF NOT EXISTS wellness_log (
+        id             INTEGER PRIMARY KEY AUTOINCREMENT,
+        date           TEXT NOT NULL,
+        timestamp_ms   INTEGER NOT NULL,
+        heart_rate     INTEGER,
+        stress_level   INTEGER,
+        body_battery   INTEGER,
+        respiration_rate REAL,
+        steps          INTEGER,
+        active_calories INTEGER,
+        active_time_s  REAL,
+        distance_m     REAL,
+        activity_type  INTEGER,
+        source         TEXT DEFAULT 'wellness_fit',
+        UNIQUE(timestamp_ms)
+    );
+    CREATE INDEX IF NOT EXISTS idx_wl_date ON wellness_log(date);
 '''
 
 PG_SCHEMA = '''
@@ -477,6 +494,23 @@ PG_SCHEMA = '''
         value    TEXT NOT NULL,
         UNIQUE(category, value)
     );
+    CREATE TABLE IF NOT EXISTS wellness_log (
+        id             SERIAL PRIMARY KEY,
+        date           TEXT NOT NULL,
+        timestamp_ms   BIGINT NOT NULL,
+        heart_rate     INTEGER,
+        stress_level   INTEGER,
+        body_battery   INTEGER,
+        respiration_rate REAL,
+        steps          INTEGER,
+        active_calories INTEGER,
+        active_time_s  REAL,
+        distance_m     REAL,
+        activity_type  INTEGER,
+        source         TEXT DEFAULT 'wellness_fit',
+        UNIQUE(timestamp_ms)
+    );
+    CREATE INDEX IF NOT EXISTS idx_wl_date ON wellness_log(date);
 '''
 
 # Migrations for existing databases — add columns that may not exist yet
@@ -525,6 +559,8 @@ _SQLITE_MIGRATIONS = [
     "CREATE TABLE IF NOT EXISTS clothing_options (id INTEGER PRIMARY KEY AUTOINCREMENT, category TEXT NOT NULL, value TEXT NOT NULL, UNIQUE(category, value))",
     "ALTER TABLE plan_travel ADD COLUMN indoor_only INTEGER DEFAULT 0",
     "ALTER TABLE training_plans ADD COLUMN race_goals TEXT DEFAULT ''",
+    "CREATE TABLE IF NOT EXISTS wellness_log (id INTEGER PRIMARY KEY AUTOINCREMENT, date TEXT NOT NULL, timestamp_ms INTEGER NOT NULL, heart_rate INTEGER, stress_level INTEGER, body_battery INTEGER, respiration_rate REAL, steps INTEGER, active_calories INTEGER, active_time_s REAL, distance_m REAL, activity_type INTEGER, source TEXT DEFAULT 'wellness_fit', UNIQUE(timestamp_ms))",
+    "CREATE INDEX IF NOT EXISTS idx_wl_date ON wellness_log(date)",
 ]
 
 _PG_MIGRATIONS = [
@@ -573,6 +609,8 @@ _PG_MIGRATIONS = [
     "CREATE TABLE IF NOT EXISTS clothing_options (id SERIAL PRIMARY KEY, category TEXT NOT NULL, value TEXT NOT NULL, UNIQUE(category, value))",
     "ALTER TABLE plan_travel ADD COLUMN IF NOT EXISTS indoor_only INTEGER DEFAULT 0",
     "ALTER TABLE training_plans ADD COLUMN IF NOT EXISTS race_goals TEXT DEFAULT ''",
+    "CREATE TABLE IF NOT EXISTS wellness_log (id SERIAL PRIMARY KEY, date TEXT NOT NULL, timestamp_ms BIGINT NOT NULL, heart_rate INTEGER, stress_level INTEGER, body_battery INTEGER, respiration_rate REAL, steps INTEGER, active_calories INTEGER, active_time_s REAL, distance_m REAL, activity_type INTEGER, source TEXT DEFAULT 'wellness_fit', UNIQUE(timestamp_ms))",
+    "CREATE INDEX IF NOT EXISTS idx_wl_date ON wellness_log(date)",
 ]
 
 _CLOTHING_SEEDS = [
