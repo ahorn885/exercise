@@ -33,19 +33,19 @@
         <div class="text-muted small mb-1">Data types</div>
         <div class="d-flex flex-wrap gap-2">
           {% if preview.counts.heart_rate %}
-          <span class="badge bg-danger">❤ {{ preview.counts.heart_rate }} HR readings</span>
+          <span class="badge bg-secondary">HR · {{ preview.counts.heart_rate }}</span>
           {% endif %}
           {% if preview.counts.stress_level %}
-          <span class="badge bg-warning text-dark">⚡ {{ preview.counts.stress_level }} stress readings</span>
+          <span class="badge bg-secondary">Stress · {{ preview.counts.stress_level }}</span>
           {% endif %}
           {% if preview.counts.body_battery %}
-          <span class="badge bg-success">🔋 {{ preview.counts.body_battery }} body battery</span>
+          <span class="badge bg-secondary">Body battery · {{ preview.counts.body_battery }}</span>
           {% endif %}
           {% if preview.counts.respiration_rate %}
-          <span class="badge bg-info text-dark">💨 {{ preview.counts.respiration_rate }} respiration</span>
+          <span class="badge bg-secondary">Respiration · {{ preview.counts.respiration_rate }}</span>
           {% endif %}
           {% if preview.counts.steps %}
-          <span class="badge bg-secondary">👟 {{ preview.counts.steps }} step intervals</span>
+          <span class="badge bg-secondary">Steps · {{ preview.counts.steps }}</span>
           {% endif %}
         </div>
       </div>
