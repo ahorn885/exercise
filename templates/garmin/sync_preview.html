@@ -1,6 +1,17 @@
 {% extends 'base.html' %}
 {% block title %}Sync Preview{% endblock %}
 
+{% macro plan_item_options(items, selected_id) %}
+  {% for pi in items %}
+    <option value="{{ pi.id }}" {% if selected_id and pi.id == selected_id %}selected{% endif %}>
+      {{ pi.item_date }} · {{ pi.workout_name }} ({{ pi.sport_type }})
+      {% if pi.target_duration_min %} — {{ pi.target_duration_min }}m{% endif %}
+      {% if pi.target_distance_mi %} · {{ pi.target_distance_mi }}mi{% endif %}
+      — {{ pi.plan_name }}
+    </option>
+  {% endfor %}
+{% endmacro %}
+
 {% block content %}
 <div class="d-flex justify-content-between align-items-center mb-3">
   <h2 class="mb-0">Sync Preview</h2>
@@ -35,18 +46,25 @@
           <th>Avg HR</th>
           <th>Plan Match</th>
           <th>Compliance</th>
+          <th style="width:88px"></th>
         </tr>
       </thead>
       <tbody>
         {% for item in preview %}
         {% set act = item.activity %}
         {% set comp = item.compliance %}
+        {% set gid = act.garmin_activity_id %}
+        {% set auto_pid = item.plan_item.id if item.plan_item else '' %}
+        {% set default_disp = 'completed' if item.plan_item else 'none' %}
+        {# Dedupe: drop scheduled items already in this row's nearby list. #}
+        {% set nearby_ids = item.nearby | map(attribute='id') | list %}
+        {% set wider = all_scheduled | rejectattr('id', 'in', nearby_ids) | list %}
         <tr class="{% if item.already_imported %}table-secondary text-muted{% endif %}">
           <td>
             {% if item.already_imported %}
               <input type="checkbox" disabled title="Already imported">
             {% else %}
-              <input type="checkbox" name="selected_ids" value="{{ act.garmin_activity_id }}" checked>
+              <input type="checkbox" name="selected_ids" value="{{ gid }}" checked>
             {% endif %}
           </td>
           <td class="small">{{ act.date }}</td>
@@ -66,13 +84,15 @@
           <td class="small">
             {% if item.plan_item %}
               <span class="text-success">✓</span>
-              {{ item.plan_item.item_date }} — {{ item.plan_item.workout_name }}
+              <span class="resolve-summary" data-gid="{{ gid }}">
+                {{ item.plan_item.item_date }} — {{ item.plan_item.workout_name }}
+              </span>
               {% if item.plan_item.target_duration_min %}
                 <br><small class="text-muted">Target: {{ item.plan_item.target_duration_min|int }} min
                 {%- if item.plan_item.target_distance_mi %} / {{ item.plan_item.target_distance_mi }} mi{% endif %}</small>
               {% endif %}
             {% else %}
-              <span class="text-muted">No match</span>
+              <span class="resolve-summary text-muted" data-gid="{{ gid }}">No match</span>
             {% endif %}
           </td>
           <td>
@@ -90,7 +110,98 @@
               <span class="text-muted small">—</span>
             {% endif %}
           </td>
+          <td class="text-end">
+            {% if not item.already_imported %}
+              <button type="button" class="btn btn-outline-secondary btn-sm resolve-toggle"
+                      data-gid="{{ gid }}">Resolve</button>
+            {% endif %}
+          </td>
         </tr>
+        {% if not item.already_imported %}
+        <tr class="resolve-row" id="resolve-row-{{ gid }}" hidden>
+          <td colspan="9" class="bg-body-tertiary">
+            <div class="p-2">
+              {% if item.plan_item %}
+                <div class="small text-muted mb-2">
+                  Auto-matched to <strong>{{ item.plan_item.workout_name }}</strong>
+                  on {{ item.plan_item.item_date }}
+                  {% if item.match_score %}({{ '%.0f'|format(item.match_score * 100) }}% match){% endif %}.
+                  Override below if needed.
+                </div>
+              {% else %}
+                <div class="small text-muted mb-2">
+                  No automatic plan match for this activity.
+                </div>
+              {% endif %}
+
+              <div class="row g-2">
+                <div class="col-md-5">
+                  <div class="form-check">
+                    <input class="form-check-input disp-radio" type="radio"
+                           name="disposition_{{ gid }}" id="disp-none-{{ gid }}"
+                           value="none" data-gid="{{ gid }}"
+                           {% if default_disp == 'none' %}checked{% endif %}>
+                    <label class="form-check-label small" for="disp-none-{{ gid }}">
+                      <strong>Standalone</strong> — no plan link
+                    </label>
+                  </div>
+                  <div class="form-check">
+                    <input class="form-check-input disp-radio" type="radio"
+                           name="disposition_{{ gid }}" id="disp-completed-{{ gid }}"
+                           value="completed" data-gid="{{ gid }}"
+                           {% if default_disp == 'completed' %}checked{% endif %}>
+                    <label class="form-check-label small" for="disp-completed-{{ gid }}">
+                      <strong>This was the planned workout</strong>
+                    </label>
+                  </div>
+                  <div class="form-check">
+                    <input class="form-check-input disp-radio" type="radio"
+                           name="disposition_{{ gid }}" id="disp-swap-{{ gid }}"
+                           value="swapped_for" data-gid="{{ gid }}">
+                    <label class="form-check-label small" for="disp-swap-{{ gid }}">
+                      <strong>Did this instead of</strong>
+                    </label>
+                  </div>
+                  <div class="form-check">
+                    <input class="form-check-input disp-radio" type="radio"
+                           name="disposition_{{ gid }}" id="disp-add-{{ gid }}"
+                           value="in_addition_to" data-gid="{{ gid }}">
+                    <label class="form-check-label small" for="disp-add-{{ gid }}">
+                      <strong>Did this in addition to</strong>
+                    </label>
+                  </div>
+                </div>
+
+                <div class="col-md-7">
+                  <div class="picker mb-2"
+                       id="picker-{{ gid }}"
+                       {% if default_disp != 'completed' %}hidden{% endif %}>
+                    <label class="form-label small mb-1">Which planned workout?</label>
+                    <select name="plan_item_id_{{ gid }}" class="form-select form-select-sm">
+                      <option value="">— select —</option>
+                      {% if item.nearby %}
+                        <optgroup label="Nearby (-3 to +2 days)">
+                          {{ plan_item_options(item.nearby, auto_pid) }}
+                        </optgroup>
+                      {% endif %}
+                      {% if wider %}
+                        <optgroup label="All scheduled">
+                          {{ plan_item_options(wider, auto_pid) }}
+                        </optgroup>
+                      {% endif %}
+                    </select>
+                  </div>
+                  <div class="reason" id="reason-{{ gid }}" hidden>
+                    <label class="form-label small mb-1">Why?</label>
+                    <textarea name="swap_reason_{{ gid }}" class="form-control form-control-sm" rows="2"
+                              placeholder="e.g., didn't feel like running, did a bike ride instead"></textarea>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </td>
+        </tr>
+        {% endif %}
         {% endfor %}
       </tbody>
     </table>
@@ -101,9 +212,32 @@
 </form>
 
 <script>
-document.getElementById('select-all').addEventListener('change', function() {
-  document.querySelectorAll('input[name="selected_ids"]').forEach(cb => cb.checked = this.checked);
-});
+(function() {
+  document.getElementById('select-all').addEventListener('change', function() {
+    document.querySelectorAll('input[name="selected_ids"]').forEach(cb => cb.checked = this.checked);
+  });
+
+  document.querySelectorAll('.resolve-toggle').forEach(btn => {
+    btn.addEventListener('click', function() {
+      const gid = this.dataset.gid;
+      const row = document.getElementById('resolve-row-' + gid);
+      row.hidden = !row.hidden;
+      this.textContent = row.hidden ? 'Resolve' : 'Hide';
+    });
+  });
+
+  // Per-row visibility for picker + reason based on disposition radio.
+  document.querySelectorAll('.disp-radio').forEach(r => {
+    r.addEventListener('change', function() {
+      const gid = this.dataset.gid;
+      const v = this.value;
+      const picker = document.getElementById('picker-' + gid);
+      const reason = document.getElementById('reason-' + gid);
+      picker.hidden = !(v === 'completed' || v === 'swapped_for' || v === 'in_addition_to');
+      reason.hidden = !(v === 'swapped_for' || v === 'in_addition_to');
+    });
+  });
+})();
 </script>
 {% endif %}
 {% endblock %}
