@@ -50,13 +50,12 @@
           </ul>
         </li>
         <li class="nav-item dropdown">
-          <a class="nav-link dropdown-toggle" href="#" data-bs-toggle="dropdown">Garmin</a>
+          <a class="nav-link dropdown-toggle" href="#" data-bs-toggle="dropdown">Connections</a>
           <ul class="dropdown-menu">
-            <li><a class="dropdown-item" href="{{ url_for('garmin.dashboard') }}">Dashboard</a></li>
-            <li><a class="dropdown-item" href="{{ url_for('garmin.import_fit') }}">Import FIT file</a></li>
+            <li><a class="dropdown-item" href="{{ url_for('garmin.dashboard') }}">Garmin dashboard</a></li>
             <li><a class="dropdown-item" href="{{ url_for('garmin.debug_fit') }}">Debug FIT file</a></li>
             <li><hr class="dropdown-divider"></li>
-            <li class="d-none d-md-block"><a class="dropdown-item" href="{{ url_for('garmin.auth') }}">Auth settings</a></li>
+            <li class="d-none d-md-block"><a class="dropdown-item" href="{{ url_for('garmin.auth') }}">Settings</a></li>
           </ul>
         </li>
       </ul>

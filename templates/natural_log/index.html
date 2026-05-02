@@ -9,7 +9,9 @@
 
 {% if not api_configured %}
 <div class="alert alert-warning mb-3">
-  <strong>AI not configured.</strong> Set <code>ANTHROPIC_API_KEY</code> in your environment to enable this feature.
+  <strong>AI not configured.</strong> Set <code>ANTHROPIC_API_KEY</code> in your <code>.env</code> file
+  next to <code>docker-compose.yml</code>, then run <code>docker compose up -d</code> on the host
+  to recreate the container with the new env. Watchtower image updates do not reload <code>.env</code>.
 </div>
 {% endif %}
 
@@ -38,10 +40,8 @@
     <div class="input-group">
       <textarea id="user-input" class="form-control" rows="2"
                 placeholder="Today I ran outside for 45 minutes and made it about 5 miles…"
-                {% if not api_configured %}disabled{% endif %}
                 style="resize:none"></textarea>
-      <button class="btn btn-primary" id="send-btn"
-              {% if not api_configured %}disabled{% endif %}>Send</button>
+      <button class="btn btn-primary" id="send-btn">Send</button>
     </div>
     <div class="d-flex justify-content-between mt-1">
       <div id="status" class="small text-muted"></div>
