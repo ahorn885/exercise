@@ -6,21 +6,34 @@
   <h2 class="mb-0">Garmin</h2>
   <div class="d-flex flex-wrap gap-2">
     <a href="{{ url_for('garmin.import_fit') }}" class="btn btn-sm btn-primary">+ Import FIT</a>
+    <a href="{{ url_for('garmin.import_wellness') }}" class="btn btn-sm btn-outline-success">+ Import Wellness</a>
     <a href="{{ url_for('plans.list_plans') }}" class="btn btn-sm btn-outline-secondary">Plans</a>
   </div>
 </div>
 
 <div class="row g-3 mb-4">
-  <div class="col-md-6">
+  <div class="col-md-4">
     <div class="card h-100">
       <div class="card-body">
-        <h6 class="card-subtitle text-muted mb-2">FIT Import</h6>
+        <h6 class="card-subtitle text-muted mb-2">Activity FIT Import</h6>
         <p class="mb-2">Upload <code>.fit</code> files from your Garmin device to auto-populate your logs.</p>
         <a href="{{ url_for('garmin.import_fit') }}" class="btn btn-sm btn-outline-primary">Import FIT File</a>
       </div>
     </div>
   </div>
-  <div class="col-md-6">
+  <div class="col-md-4">
+    <div class="card h-100">
+      <div class="card-body">
+        <h6 class="card-subtitle text-muted mb-2">Wellness FIT Import</h6>
+        <p class="mb-2">Import HR, stress, body battery, and step data from wellness <code>.fit</code> files.</p>
+        <div class="d-flex gap-2">
+          <a href="{{ url_for('garmin.import_wellness') }}" class="btn btn-sm btn-outline-success">Import Wellness</a>
+          <a href="{{ url_for('garmin.wellness_log') }}" class="btn btn-sm btn-outline-secondary">View Log</a>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-4">
     <div class="card h-100">
       <div class="card-body">
         <h6 class="card-subtitle text-muted mb-2">Training Plans</h6>

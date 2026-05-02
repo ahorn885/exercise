@@ -515,3 +515,229 @@ def _dump_fit(fit_bytes: bytes) -> dict:
         'sample_records': sample_records,
         'all_message_samples': all_message_samples,
     }
+
+
+# ── Wellness FIT parser ───────────────────────────────────────────────────────
+
+# Garmin wellness GenericMessage types fit_tool has no typed profiles for.
+# Maps global_id → {field_id → semantic_name}
+_WELLNESS_GENERIC_MAP = {
+    233: {0: 'heart_rate'},        # monitoring_hr_data: HR in bpm
+    279: {0: 'respiration_rate'},  # respiration_rate: breaths/min
+    297: {0: 'body_battery'},      # body_battery: 0-100 (negative = invalid)
+}
+
+_FIT_TS_FIELD_ID = 253         # FIT protocol standard timestamp field_id
+_FIT_EPOCH_OFFSET_S = 631065600  # seconds from 1970-01-01 to FIT epoch 1989-01-01
+
+
+def _fit_ts_to_unix_ms(raw_ts) -> int:
+    """Normalize a raw FIT timestamp to Unix milliseconds.
+
+    fit_tool typed messages return Unix ms; raw GenericMessage field values
+    may be in FIT epoch seconds, Unix seconds, or Unix ms.
+    """
+    if raw_ts is None:
+        return 0
+    try:
+        ts = int(raw_ts)
+        if ts <= 0:
+            return 0
+        if ts > 1_000_000_000_000:   # already Unix ms (> 1 trillion)
+            return ts
+        if ts > 1_500_000_000:       # Unix seconds (post-2017)
+            return ts * 1000
+        if ts > 500_000_000:         # FIT epoch seconds
+            return (ts + _FIT_EPOCH_OFFSET_S) * 1000
+        return 0
+    except (TypeError, ValueError):
+        return 0
+
+
+def parse_wellness_fit(fit_bytes: bytes) -> list:
+    """Parse a Garmin wellness .fit file.
+
+    Extracts heart rate, stress, body battery, respiration, and monitoring
+    interval data (steps, calories, active time, distance).
+
+    Returns a list of row dicts ready for INSERT INTO wellness_log, merged
+    by second-level timestamp to produce at most one row per second.
+    """
+    from fit_tool.fit_file import FitFile
+
+    tmp_path = os.path.join(tempfile.gettempdir(), f'fit_{uuid.uuid4().hex}.fit')
+    try:
+        with open(tmp_path, 'wb') as f:
+            f.write(fit_bytes)
+        fit = FitFile.from_file(tmp_path)
+    finally:
+        try:
+            os.remove(tmp_path)
+        except OSError:
+            pass
+
+    # readings[second_key_ms] → merged row dict
+    readings: dict = {}
+
+    def _slot(ts_ms: int) -> dict:
+        """Get or create a row slot for the given second boundary."""
+        key = (ts_ms // 1000) * 1000
+        if key not in readings:
+            readings[key] = {
+                'timestamp_ms': key,
+                'date': '',
+                'heart_rate': None,
+                'stress_level': None,
+                'body_battery': None,
+                'respiration_rate': None,
+                'steps': None,
+                'active_calories': None,
+                'active_time_s': None,
+                'distance_m': None,
+                'activity_type': None,
+            }
+        return readings[key]
+
+    def _safe_int(v, lo=None, hi=None):
+        try:
+            i = int(v)
+            if lo is not None and i < lo:
+                return None
+            if hi is not None and i > hi:
+                return None
+            return i
+        except (TypeError, ValueError):
+            return None
+
+    def _safe_float(v, lo=None, hi=None):
+        try:
+            f = float(v)
+            if lo is not None and f < lo:
+                return None
+            if hi is not None and f > hi:
+                return None
+            return f
+        except (TypeError, ValueError):
+            return None
+
+    def _generic_ts(msg) -> int:
+        """Extract timestamp from a GenericMessage: named attr first, then field_id=253."""
+        raw = getattr(msg, 'timestamp', None)
+        if raw is not None:
+            ts = _fit_ts_to_unix_ms(raw)
+            if ts:
+                return ts
+        for field in getattr(msg, 'fields', []):
+            if getattr(field, 'field_id', None) == _FIT_TS_FIELD_ID:
+                try:
+                    return _fit_ts_to_unix_ms(field.get_value(0))
+                except Exception:
+                    pass
+        return 0
+
+    for record in fit.records:
+        msg = record.message
+        mtype = type(msg).__name__
+
+        if mtype == 'MonitoringMessage':
+            ts_ms = _fit_ts_to_unix_ms(getattr(msg, 'timestamp', None))
+            if not ts_ms:
+                continue
+            r = _slot(ts_ms)
+
+            steps = _safe_int(getattr(msg, 'steps', None), lo=1)
+            if steps is not None and r['steps'] is None:
+                r['steps'] = steps
+
+            cals = _safe_int(getattr(msg, 'active_calories', None), lo=1)
+            if cals is not None and r['active_calories'] is None:
+                r['active_calories'] = cals
+
+            act_time = _safe_float(getattr(msg, 'active_time', None), lo=0.01)
+            if act_time is not None and r['active_time_s'] is None:
+                r['active_time_s'] = round(act_time, 2)
+
+            dist = _safe_float(getattr(msg, 'distance', None), lo=0.01)
+            if dist is not None and r['distance_m'] is None:
+                r['distance_m'] = round(dist, 2)
+
+            atype = getattr(msg, 'activity_type', None)
+            if atype is not None and r['activity_type'] is None:
+                try:
+                    r['activity_type'] = int(atype)
+                except (TypeError, ValueError):
+                    pass
+
+        elif mtype == 'StressLevelMessage':
+            raw_ts = getattr(msg, 'stress_level_time', None) or getattr(msg, 'timestamp', None)
+            ts_ms = _fit_ts_to_unix_ms(raw_ts)
+            if not ts_ms:
+                continue
+            # -2 = computing, -1 = off-wrist; filter with lo=1
+            sv = _safe_int(getattr(msg, 'stress_level_value', None), lo=1, hi=100)
+            if sv is not None:
+                r = _slot(ts_ms)
+                if r['stress_level'] is None:
+                    r['stress_level'] = sv
+
+        elif mtype == 'GenericMessage':
+            gid = getattr(msg, 'global_id', None)
+            if gid not in _WELLNESS_GENERIC_MAP:
+                continue
+            field_map = _WELLNESS_GENERIC_MAP[gid]
+            fields_list = getattr(msg, 'fields', [])
+
+            ts_ms = _generic_ts(msg)
+            if not ts_ms:
+                continue
+
+            extracted = {}
+            for field in fields_list:
+                fid = getattr(field, 'field_id', None)
+                if fid not in field_map:
+                    continue
+                try:
+                    val = field.get_value(0)
+                    if val is not None:
+                        extracted[field_map[fid]] = val
+                except Exception:
+                    pass
+
+            if not extracted:
+                continue
+
+            r = _slot(ts_ms)
+
+            if 'heart_rate' in extracted:
+                hr = _safe_int(extracted['heart_rate'], lo=1, hi=250)
+                if hr is not None and r['heart_rate'] is None:
+                    r['heart_rate'] = hr
+
+            if 'body_battery' in extracted:
+                bb = _safe_int(extracted['body_battery'], lo=0, hi=100)
+                if bb is not None and r['body_battery'] is None:
+                    r['body_battery'] = bb
+
+            if 'respiration_rate' in extracted:
+                rr = _safe_float(extracted['respiration_rate'], lo=1.0, hi=60.0)
+                if rr is not None and r['respiration_rate'] is None:
+                    r['respiration_rate'] = round(rr, 1)
+
+    # Build output list — fill date, skip empty rows
+    result = []
+    for ts_ms in sorted(readings):
+        row = readings[ts_ms]
+        try:
+            dt = datetime.fromtimestamp(ts_ms / 1000.0, tz=timezone.utc)
+            row['date'] = dt.strftime('%Y-%m-%d')
+        except Exception:
+            continue
+        has_data = any(
+            row[f] is not None
+            for f in ('heart_rate', 'stress_level', 'body_battery',
+                      'respiration_rate', 'steps', 'active_calories', 'active_time_s')
+        )
+        if has_data:
+            result.append(row)
+
+    return result
