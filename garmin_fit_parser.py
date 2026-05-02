@@ -467,28 +467,48 @@ def _dump_fit(fit_bytes: bytes) -> dict:
                 pass
         return out
 
+    def _generic_fields(m):
+        """Extract fields from a GenericMessage by iterating its typed field list."""
+        gid = getattr(m, 'global_id', '?')
+        out = {'global_id': str(gid)}
+        for field in getattr(m, 'fields', []):
+            try:
+                name = getattr(field, 'name', None) or f'field_{getattr(field, "field_id", "?")}'
+                val = field.get_value(0)
+                if val is not None:
+                    out[name] = str(val)
+            except Exception:
+                pass
+        return out
+
     for record in fit.records:
         msg = record.message
         msg_type = type(msg).__name__
 
-        msg_counts[msg_type] = msg_counts.get(msg_type, 0) + 1
+        if msg_type == 'GenericMessage':
+            gid = getattr(msg, 'global_id', '?')
+            sample_key = f'GenericMessage[{gid}]'
+            msg_counts[sample_key] = msg_counts.get(sample_key, 0) + 1
+            fields = _generic_fields(msg)
+        else:
+            sample_key = msg_type
+            msg_counts[msg_type] = msg_counts.get(msg_type, 0) + 1
+            fields = _fields(msg)
 
-        fields = _fields(msg)
-
-        if msg_type == 'SessionMessage':
+        if sample_key == 'SessionMessage':
             session_fields = fields
-        elif msg_type == 'FieldDescriptionMessage':
+        elif sample_key == 'FieldDescriptionMessage':
             developer_field_defs.append({
                 k: v for k, v in fields.items()
                 if k in ('field_name', 'units', 'fit_base_type_id',
                          'native_message_num', 'native_field_num',
                          'developer_data_index', 'array')
             })
-        elif msg_type == 'RecordMessage' and len(sample_records) < 3:
+        elif sample_key == 'RecordMessage' and len(sample_records) < 3:
             sample_records.append(fields)
 
-        if len(fields) > len(all_message_samples.get(msg_type, {})):
-            all_message_samples[msg_type] = fields
+        if len(fields) > len(all_message_samples.get(sample_key, {})):
+            all_message_samples[sample_key] = fields
 
     # Extract developer data values from records
     dev_data_samples = []
