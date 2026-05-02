@@ -1,6 +1,115 @@
 {% extends 'base.html' %}
 {% block title %}Preview FIT Import{% endblock %}
 
+{% macro plan_item_options(items, selected_id) %}
+  {% for pi in items %}
+    <option value="{{ pi.id }}" {% if selected_id and pi.id == selected_id %}selected{% endif %}>
+      {{ pi.item_date }} · {{ pi.workout_name }} ({{ pi.sport_type }})
+      {% if pi.target_duration_min %} — {{ pi.target_duration_min }}m{% endif %}
+      {% if pi.target_distance_mi %} · {{ pi.target_distance_mi }}mi{% endif %}
+      — {{ pi.plan_name }}
+    </option>
+  {% endfor %}
+{% endmacro %}
+
+{% macro resolve_section(auto_match, nearby, plan_items) %}
+  {# Auto-match summary banner — visible whenever the matcher returned a hit #}
+  {% if auto_match %}
+    <div class="alert alert-success py-2 d-flex justify-content-between align-items-center mb-3">
+      <div>
+        <strong>Auto-matched</strong> to
+        <span class="fw-semibold">{{ auto_match.plan_item.workout_name }}</span>
+        ({{ auto_match.plan_item.sport_type }})
+        — {{ auto_match.plan_item.item_date }}
+        {% if auto_match.day_offset == -1 %}<span class="text-muted small">(previous day)</span>
+        {% elif auto_match.day_offset == -2 %}<span class="text-muted small">(2 days back)</span>
+        {% elif auto_match.day_offset == 1 %}<span class="text-muted small">(next day)</span>
+        {% endif %}
+      </div>
+      <span class="badge bg-success">{{ '%.0f'|format(auto_match.score * 100) }}% match</span>
+    </div>
+    <input type="hidden" name="disposition" value="completed">
+    <input type="hidden" name="plan_item_id" value="{{ auto_match.plan_item.id }}">
+  {% else %}
+    {# No auto-match — ask the user which plan (or none) #}
+    <div class="card mb-3">
+      <div class="card-header">No planned workout matched — what was this?</div>
+      <div class="card-body">
+        <div class="form-check mb-2">
+          <input class="form-check-input disposition-radio" type="radio"
+                 name="disposition" id="dispNone" value="none" checked>
+          <label class="form-check-label" for="dispNone">
+            <strong>Standalone activity</strong>
+            <span class="text-muted small">— not associated with any planned workout</span>
+          </label>
+        </div>
+        <div class="form-check mb-2">
+          <input class="form-check-input disposition-radio" type="radio"
+                 name="disposition" id="dispCompleted" value="completed">
+          <label class="form-check-label" for="dispCompleted">
+            <strong>This was the planned workout</strong>
+            <span class="text-muted small">— mark plan item complete</span>
+          </label>
+        </div>
+        <div class="form-check mb-2">
+          <input class="form-check-input disposition-radio" type="radio"
+                 name="disposition" id="dispSwap" value="swapped_for">
+          <label class="form-check-label" for="dispSwap">
+            <strong>I did this instead of a planned workout</strong>
+            <span class="text-muted small">— mark plan item swapped, capture why</span>
+          </label>
+        </div>
+        <div class="form-check mb-3">
+          <input class="form-check-input disposition-radio" type="radio"
+                 name="disposition" id="dispAddition" value="in_addition_to">
+          <label class="form-check-label" for="dispAddition">
+            <strong>I did this in addition to my planned workout</strong>
+            <span class="text-muted small">— logged standalone, plan item stays scheduled</span>
+          </label>
+        </div>
+
+        <div id="planItemPicker" class="mb-3" style="display:none">
+          <label class="form-label fw-semibold">Which planned workout?</label>
+          <select name="plan_item_id" class="form-select">
+            <option value="">— select —</option>
+            {% if nearby %}
+              <optgroup label="Nearby (-2 to +1 days)">
+                {{ plan_item_options(nearby, None) }}
+              </optgroup>
+            {% endif %}
+            {% if plan_items %}
+              <optgroup label="All scheduled">
+                {{ plan_item_options(plan_items, None) }}
+              </optgroup>
+            {% endif %}
+          </select>
+        </div>
+
+        <div id="reasonField" class="mb-1" style="display:none">
+          <label class="form-label fw-semibold">Why?</label>
+          <textarea name="swap_reason" class="form-control" rows="2"
+                    placeholder="e.g., didn't feel like running, did a bike ride instead"></textarea>
+        </div>
+      </div>
+    </div>
+    <script>
+      // Toggle plan-item dropdown + reason textarea based on disposition radio.
+      (function() {
+        const radios = document.querySelectorAll('.disposition-radio');
+        const picker = document.getElementById('planItemPicker');
+        const reason = document.getElementById('reasonField');
+        function refresh() {
+          const v = document.querySelector('.disposition-radio:checked')?.value;
+          picker.style.display = (v === 'completed' || v === 'swapped_for' || v === 'in_addition_to') ? '' : 'none';
+          reason.style.display = (v === 'swapped_for' || v === 'in_addition_to') ? '' : 'none';
+        }
+        radios.forEach(r => r.addEventListener('change', refresh));
+        refresh();
+      })();
+    </script>
+  {% endif %}
+{% endmacro %}
+
 {% block content %}
 <div class="row justify-content-center">
   <div class="col-lg-8">
@@ -13,6 +122,8 @@
     {# ── CARDIO PREVIEW ── #}
     {% set d = result.data %}
     <form method="post" action="{{ url_for('garmin.import_confirm') }}">
+      {{ resolve_section(auto_match, nearby, plan_items) }}
+
       <div class="card mb-3">
         <div class="card-header d-flex justify-content-between align-items-center">
           <span>Cardio Activity — will be saved to <strong>Cardio Log</strong></span>
@@ -76,17 +187,6 @@
             </tbody>
           </table>
 
-          {% if plan_items %}
-          <div class="mb-3">
-            <label class="form-label fw-semibold">Link to Plan Workout <span class="text-muted small fw-normal">(optional — marks it complete)</span></label>
-            <select name="plan_item_id" class="form-select">
-              <option value="">— not linked to a plan —</option>
-              {% for pi in plan_items %}
-                <option value="{{ pi.id }}">{{ pi.item_date }} · {{ pi.workout_name }} ({{ pi.sport_type }}) — {{ pi.plan_name }}</option>
-              {% endfor %}
-            </select>
-          </div>
-          {% endif %}
           <div class="mb-3">
             <label class="form-label fw-semibold">Notes</label>
             <textarea name="notes" class="form-control" rows="2">{{ notes }}</textarea>
@@ -102,6 +202,8 @@
     {% elif result.log_type == 'strength' %}
     {# ── STRENGTH PREVIEW ── #}
     <form method="post" action="{{ url_for('garmin.import_confirm') }}">
+      {{ resolve_section(auto_match, nearby, plan_items) }}
+
       <div class="card mb-3">
         <div class="card-header d-flex justify-content-between align-items-center">
           <span>Strength Session — will be saved to <strong>Training Log</strong></span>
@@ -136,17 +238,6 @@
           </table>
         </div>
       </div>
-      {% if plan_items %}
-      <div class="mb-3">
-        <label class="form-label fw-semibold">Link to Plan Workout <span class="text-muted small fw-normal">(optional — marks it complete)</span></label>
-        <select name="plan_item_id" class="form-select">
-          <option value="">— not linked to a plan —</option>
-          {% for pi in plan_items %}
-            <option value="{{ pi.id }}">{{ pi.item_date }} · {{ pi.workout_name }} ({{ pi.sport_type }}) — {{ pi.plan_name }}</option>
-          {% endfor %}
-        </select>
-      </div>
-      {% endif %}
       <div class="mb-3">
         <label class="form-label fw-semibold">Notes (applied to all entries)</label>
         <textarea name="notes" class="form-control" rows="2">{{ notes }}</textarea>

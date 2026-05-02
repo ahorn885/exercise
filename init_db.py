@@ -564,6 +564,9 @@ _SQLITE_MIGRATIONS = [
     "ALTER TABLE current_rx ADD COLUMN next_duration INTEGER",
     "ALTER TABLE training_log ADD COLUMN next_duration INTEGER",
     "ALTER TABLE current_rx ADD COLUMN sessions_since_progress INTEGER DEFAULT 0",
+    "CREATE TABLE IF NOT EXISTS plan_item_disposition (id INTEGER PRIMARY KEY AUTOINCREMENT, plan_item_id INTEGER NOT NULL REFERENCES plan_items(id), log_type TEXT NOT NULL, log_id INTEGER NOT NULL, disposition TEXT NOT NULL, reason TEXT, created_at TEXT DEFAULT (datetime('now')))",
+    "CREATE INDEX IF NOT EXISTS idx_pid_plan ON plan_item_disposition(plan_item_id)",
+    "CREATE INDEX IF NOT EXISTS idx_pid_log ON plan_item_disposition(log_type, log_id)",
 ]
 
 _PG_MIGRATIONS = [
@@ -617,6 +620,9 @@ _PG_MIGRATIONS = [
     "ALTER TABLE current_rx ADD COLUMN IF NOT EXISTS next_duration INTEGER",
     "ALTER TABLE training_log ADD COLUMN IF NOT EXISTS next_duration INTEGER",
     "ALTER TABLE current_rx ADD COLUMN IF NOT EXISTS sessions_since_progress INTEGER DEFAULT 0",
+    "CREATE TABLE IF NOT EXISTS plan_item_disposition (id SERIAL PRIMARY KEY, plan_item_id INTEGER NOT NULL REFERENCES plan_items(id), log_type TEXT NOT NULL, log_id INTEGER NOT NULL, disposition TEXT NOT NULL, reason TEXT, created_at TIMESTAMP DEFAULT NOW())",
+    "CREATE INDEX IF NOT EXISTS idx_pid_plan ON plan_item_disposition(plan_item_id)",
+    "CREATE INDEX IF NOT EXISTS idx_pid_log ON plan_item_disposition(log_type, log_id)",
 ]
 
 _CLOTHING_SEEDS = [

@@ -8,82 +8,14 @@ from flask import Blueprint, render_template, request, redirect, url_for, flash,
 from database import get_db
 from calculations import calculate_1rm
 from rx_engine import apply_session_outcome
+from plan_match import (
+    find_best_match,
+    candidate_plan_items,
+    record_disposition,
+    compute_compliance,
+)
 
 bp = Blueprint('garmin', __name__, url_prefix='/garmin')
-
-
-# ── Plan-matching helpers ─────────────────────────────────────────────────────
-
-# Plan sport_type aliases — values that mean the same category as each key
-_SPORT_ALIASES = {
-    'running':          {'run', 'trail run', 'trail_run', 'treadmill', 'track', 'jog'},
-    'cycling':          {'bike', 'biking', 'cycle', 'mtb', 'road bike', 'gravel'},
-    'strength_training': {'strength', 'weights', 'gym', 'lifting', 'strength training'},
-    'hiking':           {'hike', 'trail hike'},
-    'swimming':         {'swim', 'pool', 'open water'},
-    'walking':          {'walk'},
-}
-
-
-def _sports_compatible(garmin_plan_sport: str, plan_sport_type: str) -> bool:
-    """Return True if a Garmin activity sport matches a plan item's sport_type."""
-    g = garmin_plan_sport.lower().strip()
-    p = (plan_sport_type or '').lower().strip()
-    if g == p or g in p or p in g:
-        return True
-    aliases = _SPORT_ALIASES.get(g, set())
-    return p in aliases or any(alias in p for alias in aliases)
-
-
-def _find_plan_match(db, activity_date: str, plan_sport_type: str):
-    """Return the best matching scheduled plan_items row, or None."""
-    if not plan_sport_type:
-        return None
-    for offset in (0, 1, -1):
-        try:
-            target = (date.fromisoformat(activity_date) + timedelta(days=offset)).isoformat()
-        except (ValueError, TypeError):
-            continue
-        items = db.execute(
-            "SELECT * FROM plan_items WHERE item_date=? AND status='scheduled'",
-            (target,)
-        ).fetchall()
-        sport_match = next(
-            (i for i in items if _sports_compatible(plan_sport_type, i['sport_type'])),
-            None
-        )
-        if sport_match:
-            return sport_match
-        # Same-day fallback: if only one item that day, match regardless of sport
-        if offset == 0 and len(items) == 1:
-            return items[0]
-    return None
-
-
-def _compute_compliance(activity: dict, plan_item) -> dict:
-    """Return compliance percentages and a label for actual vs planned workout."""
-    result = {'duration_pct': None, 'distance_pct': None, 'label': 'no_target'}
-    if not plan_item:
-        result['label'] = 'unmatched'
-        return result
-    target_dur = plan_item['target_duration_min']
-    actual_dur = activity.get('duration_min')
-    if target_dur and actual_dur:
-        result['duration_pct'] = round(actual_dur / target_dur * 100)
-    target_dist = plan_item['target_distance_mi']
-    actual_dist = activity.get('distance_mi')
-    if target_dist and actual_dist:
-        result['distance_pct'] = round(actual_dist / target_dist * 100)
-    primary = result['duration_pct'] if result['duration_pct'] is not None else result['distance_pct']
-    if primary is None:
-        result['label'] = 'no_target'
-    elif primary >= 80 and primary <= 130:
-        result['label'] = 'on_plan'
-    elif primary < 80:
-        result['label'] = 'short'
-    else:
-        result['label'] = 'over'
-    return result
 
 
 @bp.route('/debug-fit', methods=['GET', 'POST'])
@@ -167,8 +99,21 @@ def import_preview():
         flash('No FIT data in session. Please upload a file.', 'warning')
         return redirect(url_for('garmin.import_fit'))
     db = get_db()
+
+    # Auto-match: derive a representative activity dict (date + duration + sport)
+    # for the matcher. For strength sessions the rows share a date and we use
+    # the first as the representative.
+    match_activity = _activity_match_repr(result)
+    auto_match = find_best_match(db, match_activity) if match_activity else None
+
+    # Nearby candidates for the resolve dropdown (or to swap from auto-match).
+    nearby = candidate_plan_items(db, match_activity.get('date') if match_activity else None)
+    nearby_dicts = [dict(r) for r in nearby]
+
+    # Wider list as fallback — same as before, used when nearby is empty.
     plan_items = db.execute(
         '''SELECT pi.id, pi.item_date, pi.workout_name, pi.sport_type,
+                  pi.target_duration_min, pi.target_distance_mi,
                   tp.name as plan_name
            FROM plan_items pi
            JOIN training_plans tp ON tp.id = pi.plan_id
@@ -176,10 +121,91 @@ def import_preview():
            ORDER BY pi.item_date ASC
            LIMIT 60'''
     ).fetchall()
+
     return render_template('garmin/import_preview.html', result=result,
                            name_override=flask_session.get('fit_name_override', ''),
                            notes=flask_session.get('fit_notes', ''),
-                           plan_items=plan_items)
+                           plan_items=plan_items,
+                           nearby=nearby_dicts,
+                           auto_match=(
+                               {'plan_item': dict(auto_match['plan_item']),
+                                'score': auto_match['score'],
+                                'day_offset': auto_match['day_offset']}
+                               if auto_match else None
+                           ))
+
+
+def _record_disposition_for_import(db, disposition, plan_item_id, raw_plan_item_id,
+                                   log_type, log_id, reason=None):
+    """Translate a form-submitted disposition into a disposition row.
+
+    `plan_item_id` is what was actually written to the log row (None for
+    'in_addition_to'). `raw_plan_item_id` is what the user picked in the
+    dropdown — used to mark the plan item swapped/completed even when the
+    log itself isn't linked.
+    """
+    if disposition == 'completed' and plan_item_id:
+        record_disposition(db, plan_item_id, log_type, log_id, 'completed', reason)
+    elif disposition == 'swapped_for' and raw_plan_item_id:
+        # The log row links to the plan item; the disposition row marks the swap.
+        record_disposition(db, raw_plan_item_id, log_type, log_id, 'swapped_for', reason)
+    elif disposition == 'none' and plan_item_id:
+        # Legacy dropdown-only flow: a plan item was picked without a radio.
+        # Treat as completion so the plan item gets marked done.
+        record_disposition(db, plan_item_id, log_type, log_id, 'completed', reason)
+    # 'in_addition_to' — intentional no-op
+
+
+def _disposition_flash(log_type_label, disposition, raw_plan_item_id):
+    """Build the post-import flash message for the user."""
+    base = 'Activity imported into ' + (
+        'Cardio Log' if log_type_label == 'cardio' else 'Training Log'
+    )
+    if disposition == 'completed' and raw_plan_item_id:
+        return f'{base}. Planned workout marked complete.'
+    if disposition == 'swapped_for' and raw_plan_item_id:
+        return f'{base}. Planned workout marked swapped.'
+    if disposition == 'in_addition_to':
+        return f'{base} as a standalone log (planned workout left scheduled).'
+    return base + '.'
+
+
+def _activity_match_repr(parsed):
+    """Build the activity dict the matcher expects from a parse_fit() result.
+
+    Cardio FIT carries date/duration/distance/activity directly. Strength FIT
+    is a list of per-exercise rows; we build a session-level dict from the
+    first row's date, sum sets to estimate duration if available, and tag the
+    sport so the matcher knows it's a strength session.
+    """
+    if not parsed:
+        return None
+    log_type = parsed.get('log_type')
+    if log_type == 'cardio':
+        d = parsed['data']
+        return {
+            'date': d.get('date'),
+            'duration_min': d.get('duration_min'),
+            'distance_mi': d.get('distance_mi'),
+            'activity': d.get('activity'),
+        }
+    if log_type == 'strength':
+        rows = parsed.get('data') or []
+        if not rows:
+            return None
+        # Sum all set durations as a rough session duration (in minutes).
+        total_sec = 0
+        for row in rows:
+            for s in row.get('sets', []):
+                if s.get('duration_sec'):
+                    total_sec += s['duration_sec']
+        return {
+            'date': rows[0].get('date'),
+            'duration_min': (total_sec / 60.0) if total_sec else None,
+            'activity': 'strength_training',
+            '_plan_sport_type': 'strength_training',
+        }
+    return None
 
 
 @bp.route('/import/confirm', methods=['POST'])
@@ -198,13 +224,27 @@ def import_confirm():
         except (ValueError, TypeError):
             return None
 
+    # disposition: one of 'completed' | 'swapped_for' | 'in_addition_to' | 'none'
+    # 'in_addition_to' is captured here for messaging only — it does NOT link
+    # to the plan_item in the DB (per Andy's note: "user-friendly framing,
+    # not a link"). plan_item_id is forced to NULL in that case.
+    disposition = request.form.get('disposition', 'none')
+    raw_plan_item_id = _num_int(request.form.get('plan_item_id'))
+    swap_reason = (request.form.get('swap_reason') or '').strip() or None
+
+    if disposition == 'in_addition_to':
+        plan_item_id = None
+    elif disposition in ('completed', 'swapped_for'):
+        plan_item_id = raw_plan_item_id
+    else:  # 'none'
+        plan_item_id = raw_plan_item_id  # legacy: dropdown alone = completed
+
     if log_type == 'cardio':
         data = result['data']
         data['activity_name'] = request.form.get('activity_name') or data.get('activity_name')
         data['notes'] = request.form.get('notes') or data.get('notes')
         data['activity'] = request.form.get('activity') or data.get('activity', 'Running')
-        plan_item_id = _num_int(request.form.get('plan_item_id'))
-        db.execute(
+        cur = db.execute(
             '''INSERT INTO cardio_log
                (date, activity, activity_name, duration_min, moving_time_min,
                 distance_mi, avg_pace, avg_speed, avg_hr, max_hr, calories,
@@ -227,19 +267,18 @@ def import_confirm():
              data.get('vert_ratio_pct'), data.get('gct_ms'), data.get('gct_balance'),
              plan_item_id, data.get('notes'))
         )
-        if plan_item_id:
-            db.execute(
-                "UPDATE plan_items SET status='completed' WHERE id=? AND status='scheduled'",
-                (plan_item_id,)
-            )
+        log_id = cur.lastrowid
+        _record_disposition_for_import(
+            db, disposition, plan_item_id, raw_plan_item_id,
+            log_type='cardio', log_id=log_id, reason=swap_reason,
+        )
         db.commit()
         flask_session.pop('fit_import', None)
-        flash('Activity imported into Cardio Log.', 'success')
+        flash(_disposition_flash('cardio', disposition, raw_plan_item_id), 'success')
         return redirect(url_for('cardio.list_entries'))
 
     elif log_type == 'strength':
         rows = result['data']
-        plan_item_id = _num_int(request.form.get('plan_item_id'))
         global_notes = request.form.get('notes') or ''
 
         session_date = rows[0]['date'] if rows else date.today().isoformat()
@@ -253,6 +292,7 @@ def import_confirm():
         body_weight = body_wt_row['weight_lbs'] if body_wt_row else None
 
         inserted = 0
+        first_log_id = None
         for row in rows:
             exercise = row.get('exercise', '')
             sets = row.get('sets', [])
@@ -294,6 +334,8 @@ def import_confirm():
                  plan_item_id, global_notes or None)
             )
             log_id = log_cur.lastrowid
+            if first_log_id is None:
+                first_log_id = log_id
 
             for i, s in enumerate(sets, 1):
                 db.execute(
@@ -302,14 +344,18 @@ def import_confirm():
                 )
             inserted += 1
 
-        if plan_item_id:
-            db.execute(
-                "UPDATE plan_items SET status='completed' WHERE id=? AND status='scheduled'",
-                (plan_item_id,)
+        # Disposition is recorded against the session-level row (first log id
+        # is the canonical anchor) so a plan item only gets one disposition
+        # row even though a strength session spans many training_log rows.
+        if first_log_id is not None:
+            _record_disposition_for_import(
+                db, disposition, plan_item_id, raw_plan_item_id,
+                log_type='strength', log_id=first_log_id, reason=swap_reason,
             )
         db.commit()
         flask_session.pop('fit_import', None)
-        flash(f'Strength workout imported: {inserted} exercise entries added.', 'success')
+        flash(_disposition_flash('strength', disposition, raw_plan_item_id) +
+              f' ({inserted} exercise entries added.)', 'success')
         return redirect(url_for('training.list_entries'))
 
     flash('Unknown activity type.', 'danger')
@@ -414,14 +460,18 @@ def _import_activity(db, act: dict, plan_item, compliance: dict) -> dict:
                     )
 
             if plan_item_id:
-                db.execute(
-                    "UPDATE plan_items SET status='completed' WHERE id=? AND status='scheduled'",
-                    (plan_item_id,)
-                )
+                # Sync auto-match: surface as 'completed'. User can re-classify
+                # by editing the plan item if it was actually a swap.
+                first_log = db.execute(
+                    'SELECT id FROM training_log WHERE session_id=? ORDER BY id LIMIT 1',
+                    (session_id,)
+                ).fetchone()
+                if first_log:
+                    record_disposition(db, plan_item_id, 'strength', first_log['id'], 'completed')
             return {'ok': True, 'log_type': 'strength', 'rows': len(rows), 'error': None}
         # FIT didn't yield strength data — fall through to cardio insert
 
-    db.execute(
+    cur = db.execute(
         '''INSERT INTO cardio_log
            (date, activity, activity_name, duration_min, moving_time_min,
             distance_mi, avg_pace, avg_speed, avg_hr, max_hr, calories,
@@ -439,10 +489,7 @@ def _import_activity(db, act: dict, plan_item, compliance: dict) -> dict:
          gid, plan_item_id, notes)
     )
     if plan_item_id:
-        db.execute(
-            "UPDATE plan_items SET status='completed' WHERE id=? AND status='scheduled'",
-            (plan_item_id,)
-        )
+        record_disposition(db, plan_item_id, 'cardio', cur.lastrowid, 'completed')
     return {'ok': True, 'log_type': 'cardio', 'rows': 1, 'error': None}
 
 
@@ -454,13 +501,16 @@ def _build_preview(db, raw_activities: list) -> list:
         norm = normalize_activity(a)
         gid = norm.get('garmin_activity_id', '')
         already = _already_imported(db, gid)
-        plan_item = _find_plan_match(db, norm['date'], norm.get('_plan_sport_type', ''))
-        compliance = _compute_compliance(norm, plan_item)
+        match = find_best_match(db, norm)
+        plan_item = match['plan_item'] if match else None
+        compliance = compute_compliance(norm, plan_item)
         preview.append({
             'activity': norm,
             'already_imported': already,
             'plan_item': dict(plan_item) if plan_item else None,
             'compliance': compliance,
+            'match_score': match['score'] if match else None,
+            'match_day_offset': match['day_offset'] if match else None,
         })
     return preview
 
