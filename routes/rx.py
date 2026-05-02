@@ -1,5 +1,6 @@
 from flask import Blueprint, render_template, request, redirect, url_for, flash
 from database import get_db
+from calculations import project_next_from_current
 
 bp = Blueprint('rx', __name__)
 
@@ -60,14 +61,30 @@ def edit_entry(entry_id):
         def num(v, cast=float):
             try: return cast(v) if v else None
             except: return None
+        cur_sets = num(f.get('current_sets'), int)
+        cur_reps = num(f.get('current_reps'), int)
+        cur_weight = num(f.get('current_weight'))
+        cur_duration = num(f.get('current_duration'), int)
+        weight_increment = num(f.get('weight_increment'))
+
+        # Re-derive next_* from the manually-edited current_*. Without this,
+        # the prescription stays stale at whatever was last computed from a
+        # logged session, which contradicts "any update to current should
+        # also be used to calculate next."
+        nxt = project_next_from_current(
+            cur_sets, cur_reps, cur_weight, cur_duration,
+            entry['movement_pattern'], weight_increment=weight_increment,
+        )
+
         db.execute('''UPDATE current_rx SET
             current_sets=?, current_reps=?, current_weight=?, current_duration=?,
             inventory_sugg_volume=?, weight_increment=?, consecutive_failures=?,
+            next_sets=?, next_reps=?, next_weight=?, next_duration=?,
             rx_source=? WHERE id=?''',
-            (num(f.get('current_sets'), int), num(f.get('current_reps'), int),
-             num(f.get('current_weight')), num(f.get('current_duration'), int),
-             f.get('inventory_sugg_volume'), num(f.get('weight_increment')),
+            (cur_sets, cur_reps, cur_weight, cur_duration,
+             f.get('inventory_sugg_volume'), weight_increment,
              0 if f.get('reset_failures') else num(f.get('consecutive_failures'), int),
+             nxt['next_sets'], nxt['next_reps'], nxt['next_weight'], nxt['next_duration'],
              'Manual override', entry_id))
         db.commit()
         flash('Rx updated.', 'success')
