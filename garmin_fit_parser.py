@@ -487,7 +487,7 @@ def _dump_fit(fit_bytes: bytes) -> dict:
         elif msg_type == 'RecordMessage' and len(sample_records) < 3:
             sample_records.append(fields)
 
-        if msg_type not in all_message_samples:
+        if len(fields) > len(all_message_samples.get(msg_type, {})):
             all_message_samples[msg_type] = fields
 
     # Extract developer data values from records
