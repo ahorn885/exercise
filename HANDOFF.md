@@ -383,3 +383,209 @@ publishes `ghcr.io/ahorn885/exercise:latest`. Watchtower polls every
 - Auto-deload action button next to the `deload` badge — one click to
   drop weight 10% and reset the plateau counter, as a faster alternative
   to manually editing the Rx.
+
+---
+
+## Multi-User Retrofit Roadmap
+
+AIDSTATION is single-user today. Andy decided to make it multi-user — built
+**properly now** so there are no leaky intermediate states where one user
+can see another's data. Registration, MFA, passkeys, BYOK API keys, and
+WebAuthn are explicitly parked for later sessions.
+
+The retrofit spans 29 tables, ~150 query sites across 18 files, an
+athlete-profile feature, a coach-memory UI, and per-user Garmin plumbing.
+Too large for one session — split into the five sessions below. Each session
+must land cleanly so the app is never sitting in a half-scoped state where
+new accounts could leak data.
+
+### Storage decision (lands with Session 1)
+
+**Production becomes Neon Postgres.** SQLite on Vercel is ephemeral and
+can't hold user accounts across cold starts. The codebase already supports
+Postgres dual-mode via `database.py` (translates `?` → `%s`), so no code
+rewrite — just point `DATABASE_URL` at Neon. Local dev keeps SQLite.
+
+Verify migrations run cleanly against a fresh Neon DB before any user-id
+work lands.
+
+### Session 1 — Auth foundation + lock the app
+
+**Goal:** add auth + login gate. App still has unscoped queries, but
+registration is closed and only Andy has an account, so the single-user
+assumption holds.
+
+**Deliverables:**
+- `users(id, username, email, password_hash, display_name, created_at,
+  last_login)` — both SQLite + Postgres migrations
+- `routes/auth.py` blueprint: `/auth/login`, `/auth/logout`, `/auth/register`
+  (registration gated by env-var `ALLOW_REGISTRATION` until Session 2 ships)
+- `templates/auth/login.html`, `templates/auth/register.html`
+- `current_user_id()` helper, `@login_required` decorator (or
+  `before_request` hook checking `flask_session['user_id']`)
+- One-time bootstrap: when no users exist, prompt to create the first one
+  (Andy) on first request
+- Apply login gate globally in `app.py` (allowlist `/auth/*` and static)
+- Add `bcrypt` to `requirements.txt`
+
+**Out of scope:** user_id columns on domain tables, query scoping, profile UI.
+
+**Verification:** Andy can register/log in; logged-out requests redirect
+to `/auth/login`; existing routes still render his data when logged in;
+register without `ALLOW_REGISTRATION=1` returns 403.
+
+### Session 2 — Per-user scoping (the big one)
+
+**Goal:** add `user_id` to every per-user table, backfill existing rows
+to user_id=1, update every query to scope by current user. Open
+registration after this lands.
+
+**Tables gaining `user_id INTEGER NOT NULL REFERENCES users(id)`:**
+`current_rx`, `training_sessions`, `training_log`, `cardio_log`,
+`body_metrics`, `conditions_log`, `injury_log`, `training_plans`,
+`coaching_preferences`, `wellness_log`, `garmin_auth`, `garmin_workouts`,
+`locale_profiles` (PK becomes composite `(user_id, locale)`).
+
+**Stay shared (catalog, no user_id):** `exercise_inventory`,
+`equipment_items`, `exercise_equipment`, `training_modalities`,
+`equipment_matrix`, `training_methods`, `recommended_purchases`.
+
+**Child tables — scope follows parent FK:** `training_log_sets`,
+`injury_exercise_modifications`, `plan_items`, `plan_item_disposition`,
+`plan_reviews`, `coaching_chat`, `locale_equipment`, `plan_travel`.
+
+**Migration approach (per table):**
+1. Postgres: `ALTER TABLE x ADD COLUMN user_id INTEGER REFERENCES users(id)`
+2. SQLite: `ALTER TABLE x ADD COLUMN user_id INTEGER`
+3. Backfill: `UPDATE x SET user_id = 1 WHERE user_id IS NULL`
+4. Postgres: `ALTER TABLE x ALTER COLUMN user_id SET NOT NULL`
+5. Composite index where queries filter by date:
+   `CREATE INDEX IF NOT EXISTS idx_x_user_date ON x(user_id, date)`
+
+**Query updates** touch `routes/*.py` (13 files), `coaching.py`,
+`rx_engine.py`, `plan_match.py`, `garmin_connect.py`. Pattern: import
+`current_user_id()`, prefix every WHERE with `user_id = ?` (or add it for
+queries with no WHERE today). For multi-table joins, scope the parent
+table only — children flow via FK.
+
+**Top 5 hot-spots to verify first** (unscoped queries that would leak data):
+1. `routes/dashboard.py:84` — recent training log without WHERE
+2. `routes/cardio.py:30` — `WHERE 1=1` defaults to all users
+3. `routes/training.py:27` — same pattern
+4. `routes/body.py:13` — body metrics list unscoped
+5. `coaching.py:358` — body metrics in AI context unscoped
+
+Also: `garmin_connect.py` singleton `SELECT FROM garmin_auth LIMIT 1` must
+become `WHERE user_id = ?`.
+
+**Verification:** create test user_id=2 via direct DB insert, log in,
+confirm empty dashboard / training log / cardio / body metrics / plans /
+coaching / Garmin. Log back in as Andy, confirm everything still there.
+Then open `ALLOW_REGISTRATION`.
+
+### Session 3 — `clothing_options` per-user + `locale_profiles` cleanup
+
+These two tables need shape changes beyond a simple `user_id` add.
+
+**`clothing_options` redesign.** Today: one shared seeded list. Andy:
+**values are per-user; only category names are universal.** New shape:
+```
+clothing_options(
+  id INTEGER PRIMARY KEY,
+  user_id INTEGER NOT NULL REFERENCES users(id),
+  category TEXT NOT NULL,
+  value TEXT NOT NULL,
+  UNIQUE(user_id, category, value)
+)
+```
+Category list (`headwear`, `face_neck`, `upper_shell`, …) stays
+hardcoded — already implied by `conditions_log` columns. **Open
+question:** new users start empty (recommended for clean per-user model)
+or get a seeded starter set on registration. Decide before this session.
+
+`_load_clothing_options()` in `routes/conditions.py` becomes
+`SELECT category, value FROM clothing_options WHERE user_id = ?`.
+
+**`locale_profiles` cleanup.** PK becomes composite `(user_id, locale)`.
+`locale_equipment` child gets the extended FK. Routes in
+`routes/locales.py` need scope updates.
+
+**Verification:** test user_id=2 sees no clothing values until they enter
+some; their entries don't bleed into Andy's; locales are independent
+per user.
+
+### Session 4 — Athlete profile + coach-memory UI
+
+**`athlete_profile` table** (minimal placeholder — full field list
+intentionally parked, will grow over time):
+```
+athlete_profile(
+  user_id INTEGER PRIMARY KEY REFERENCES users(id),
+  date_of_birth TEXT,
+  sex TEXT,
+  height_cm REAL,
+  primary_sport TEXT,
+  target_event_name TEXT,
+  target_event_date TEXT,
+  weekly_hours_target REAL,
+  training_window TEXT,    -- 'morning' | 'midday' | 'evening' | 'flexible'
+  notes TEXT,
+  updated_at TEXT DEFAULT (datetime('now'))
+)
+```
+
+**New code:**
+- `routes/profile.py` blueprint at `/profile`
+- `templates/profile/edit.html` with three sections:
+  1. **Profile** — form fields above
+  2. **Coach memory** — list `coaching_preferences` rows with delete
+     buttons + a manual-add form (folds in the missing UI for that table)
+  3. **Account** — display username, change-password form
+- Helpers in `athlete.py`:
+  - `get_athlete_profile(db, user_id) → dict`
+  - `upsert_athlete_profile(db, user_id, **fields)`
+- Read into `get_coaching_context()` (`coaching.py:272`) under
+  `ctx['athlete_profile']`
+- Mention in `_BASE_PROMPT` so Claude uses it for plan generation/review
+
+**Verification:** Andy fills out profile, generates a plan, confirms the
+coach prompt references his target event date / weekly hours; second
+test user has empty profile, doesn't see Andy's data.
+
+### Session 5 — Garmin per-user OAuth flow
+
+The `/tmp/garth_session` file caching in `garmin_connect.py` is shared
+today — for multi-user it must be per-user-aware. The previously parked
+"Garmin auth refresh" follow-up folds in here.
+
+**Changes:**
+- `/tmp/garth_session_{user_id}` paths (or in-memory cache keyed by user)
+- Audit `_write_session_to_tmp`, `_serialize_session_from_tmp`,
+  `_get_garmin_client` for shared-state assumptions
+- Confirm `garmin_auth` row scoping (gained `user_id` in Session 2)
+- Handle 401 / token-expired errors with a redirect to re-auth
+
+**Verification:** two users with separate Garmin Connect accounts can
+both sync without overwriting each other's session.
+
+### Parked for later sessions (don't lose these)
+
+- **MFA (TOTP)** — `pyotp` + setup flow on profile page
+- **Passkeys / WebAuthn** — Andy's preference; deferred because the
+  WebAuthn flow is non-trivial (use the `webauthn` Python pkg)
+- **BYOK Anthropic API key** — per-user override of the shared key in env
+- **Password reset / email verification** — depends on email infra
+
+### End-to-end verification (after all five sessions)
+
+1. Register two test users (A and B) via `/auth/register`.
+2. As A, create a workout, log a cardio activity, sync a Garmin FIT,
+   fill out profile, add a coach-memory entry.
+3. Log out, log in as B. Confirm: empty dashboard, training log, cardio,
+   body metrics, plans, coaching, Garmin status, profile, coach memory,
+   clothing options, locales.
+4. As B, create separate data, generate a plan, confirm it uses B's
+   profile not A's.
+5. Log back in as Andy (user_id=1), confirm all original data intact.
+6. Run schema migrations against a fresh Neon Postgres DB; confirm clean.
+7. Confirm cookie session size stays under 4 KB.
