@@ -153,11 +153,19 @@ SQLITE_SCHEMA = '''
         notes TEXT,
         created_at TEXT DEFAULT (datetime('now'))
     );
+    CREATE TABLE IF NOT EXISTS feedback_log (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        source TEXT NOT NULL,
+        source_ref_id INTEGER,
+        raw_content TEXT NOT NULL,
+        captured_at TEXT DEFAULT (datetime('now'))
+    );
     CREATE TABLE IF NOT EXISTS coaching_preferences (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         category TEXT NOT NULL DEFAULT 'general',
         content TEXT NOT NULL,
         permanent INTEGER NOT NULL DEFAULT 1,
+        source_feedback_id INTEGER REFERENCES feedback_log(id),
         created_at TEXT DEFAULT (datetime('now'))
     );
     CREATE TABLE IF NOT EXISTS coaching_chat (
@@ -407,11 +415,19 @@ PG_SCHEMA = '''
         notes TEXT,
         created_at TIMESTAMP DEFAULT NOW()
     );
+    CREATE TABLE IF NOT EXISTS feedback_log (
+        id SERIAL PRIMARY KEY,
+        source TEXT NOT NULL,
+        source_ref_id INTEGER,
+        raw_content TEXT NOT NULL,
+        captured_at TIMESTAMP DEFAULT NOW()
+    );
     CREATE TABLE IF NOT EXISTS coaching_preferences (
         id SERIAL PRIMARY KEY,
         category TEXT NOT NULL DEFAULT 'general',
         content TEXT NOT NULL,
         permanent INTEGER NOT NULL DEFAULT 1,
+        source_feedback_id INTEGER REFERENCES feedback_log(id),
         created_at TIMESTAMP DEFAULT NOW()
     );
     CREATE TABLE IF NOT EXISTS coaching_chat (
@@ -567,6 +583,9 @@ _SQLITE_MIGRATIONS = [
     "CREATE TABLE IF NOT EXISTS plan_item_disposition (id INTEGER PRIMARY KEY AUTOINCREMENT, plan_item_id INTEGER NOT NULL REFERENCES plan_items(id), log_type TEXT NOT NULL, log_id INTEGER NOT NULL, disposition TEXT NOT NULL, reason TEXT, created_at TEXT DEFAULT (datetime('now')))",
     "CREATE INDEX IF NOT EXISTS idx_pid_plan ON plan_item_disposition(plan_item_id)",
     "CREATE INDEX IF NOT EXISTS idx_pid_log ON plan_item_disposition(log_type, log_id)",
+    "CREATE TABLE IF NOT EXISTS feedback_log (id INTEGER PRIMARY KEY AUTOINCREMENT, source TEXT NOT NULL, source_ref_id INTEGER, raw_content TEXT NOT NULL, captured_at TEXT DEFAULT (datetime('now')))",
+    "CREATE INDEX IF NOT EXISTS idx_fb_captured ON feedback_log(captured_at)",
+    "ALTER TABLE coaching_preferences ADD COLUMN source_feedback_id INTEGER REFERENCES feedback_log(id)",
 ]
 
 _PG_MIGRATIONS = [
@@ -623,6 +642,9 @@ _PG_MIGRATIONS = [
     "CREATE TABLE IF NOT EXISTS plan_item_disposition (id SERIAL PRIMARY KEY, plan_item_id INTEGER NOT NULL REFERENCES plan_items(id), log_type TEXT NOT NULL, log_id INTEGER NOT NULL, disposition TEXT NOT NULL, reason TEXT, created_at TIMESTAMP DEFAULT NOW())",
     "CREATE INDEX IF NOT EXISTS idx_pid_plan ON plan_item_disposition(plan_item_id)",
     "CREATE INDEX IF NOT EXISTS idx_pid_log ON plan_item_disposition(log_type, log_id)",
+    "CREATE TABLE IF NOT EXISTS feedback_log (id SERIAL PRIMARY KEY, source TEXT NOT NULL, source_ref_id INTEGER, raw_content TEXT NOT NULL, captured_at TIMESTAMP DEFAULT NOW())",
+    "CREATE INDEX IF NOT EXISTS idx_fb_captured ON feedback_log(captured_at)",
+    "ALTER TABLE coaching_preferences ADD COLUMN IF NOT EXISTS source_feedback_id INTEGER REFERENCES feedback_log(id)",
 ]
 
 _CLOTHING_SEEDS = [

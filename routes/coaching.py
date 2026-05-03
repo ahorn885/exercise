@@ -228,7 +228,12 @@ def review(plan_id):
             return redirect(url_for('coaching.review', plan_id=plan_id))
 
         try:
-            from coaching import run_review
+            from coaching import run_review, capture_and_normalize_feedback
+            # Capture review notes into the feedback pipeline before the AI call
+            # so any extracted preferences are visible to run_review's context.
+            if notes:
+                capture_and_normalize_feedback(db, 'plan_review', notes, source_ref_id=plan_id)
+                db.commit()
             result, usage = run_review(
                 db, plan_id, tier, notes=notes, locale=locale,
                 race_goals=current_race_goals, intensity_direction=intensity_direction,
@@ -496,7 +501,7 @@ def chat(plan_id):
     ).fetchall()]
 
     try:
-        from coaching import chat_with_coach
+        from coaching import chat_with_coach, capture_feedback, save_preferences_from_feedback
         result, usage = chat_with_coach(db, plan_id, message, history, locale=locale)
         _log_usage(usage, 'chat')
 
@@ -505,11 +510,10 @@ def chat(plan_id):
             (plan_id, 'user', message)
         )
 
-        for pref in result.get('preferences_to_save', []):
-            db.execute(
-                'INSERT INTO coaching_preferences (category, content, permanent) VALUES (?,?,?)',
-                (pref.get('category', 'general'), pref['content'], 1 if pref.get('permanent', True) else 0)
-            )
+        # Route the chat-extracted preferences through the feedback_log pipeline
+        # so each pref carries provenance back to the user's raw message.
+        fb_id = capture_feedback(db, 'chat', message, source_ref_id=plan_id)
+        save_preferences_from_feedback(db, fb_id, result.get('preferences_to_save', []))
 
         patches_applied = 0
         if not result.get('confirm_required', False):

@@ -244,6 +244,7 @@ def save():
     data = request.get_json(silent=True) or {}
     entries = data.get('entries', [])
     plan_match = data.get('plan_match')
+    history = data.get('history', [])
 
     db = get_db()
     saved = []
@@ -368,6 +369,19 @@ def save():
             "UPDATE plan_items SET status='completed' WHERE id=? AND status='scheduled'",
             (plan_match['plan_item_id'],)
         )
+
+    # Capture the user's natural-language messages as feedback so any durable
+    # preferences ("never log a swim again", "always treat 8.5 RPE as hard")
+    # get normalized into coaching_preferences with provenance.
+    user_text = '\n'.join(
+        (t.get('content') or '').strip()
+        for t in history
+        if isinstance(t, dict) and t.get('role') == 'user' and (t.get('content') or '').strip()
+    )
+    if user_text and saved:
+        from coaching import capture_and_normalize_feedback
+        first_id = next((s.get('id') for s in saved if s.get('id')), None)
+        capture_and_normalize_feedback(db, 'natural_log', user_text, source_ref_id=first_id)
 
     db.commit()
     return jsonify({'ok': True, 'saved': saved})

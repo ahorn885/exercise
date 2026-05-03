@@ -128,14 +128,93 @@ no live consumers):
 - `recommended_purchases` — minimal Andy-specific seed; rebuild parked as
   shared catalog + per-user wishlist layer
 
-**New table arriving in Session 0:**
+**Session 0 schema additions (landed in this branch):**
 - `feedback_log(id, source, source_ref_id, raw_content, captured_at)` —
-  verbatim feedback storage paired with a normalize pass that writes
-  cleaned `coaching_preferences` rows.
+  verbatim feedback storage. Source values currently in use: `chat`,
+  `plan_review`, `natural_log`, `workout_note_strength`,
+  `workout_note_cardio`.
+- `coaching_preferences.source_feedback_id` — FK back to `feedback_log(id)`,
+  populated on every new pref so provenance is preserved.
 
 ---
 
 ## What Was Done This Session
+
+### Workflow trigger cleanup (commit `969c2c6`)
+
+Dropped the long-gone `claude/review-handoff-file-CDi71` branch from
+`.github/workflows/docker-publish.yml`. The Docker image now publishes only
+on pushes to `main`.
+
+### Session 0 — coaching capture + context awareness
+
+The full coaching memory + context awareness layer landed in this branch.
+
+**New table.** `feedback_log(id, source, source_ref_id, raw_content,
+captured_at)` plus `coaching_preferences.source_feedback_id` FK back to it.
+Schema added to both `SQLITE_SCHEMA`/`PG_SCHEMA` (with `feedback_log` placed
+ahead of `coaching_preferences` so the FK declaration resolves on fresh
+Postgres installs) and to both migration lists for upgrades.
+
+**New helpers in `coaching.py`** (around line 940 onward):
+- `extract_preferences(raw_text, source) → list[{category, content, permanent}]`
+  — Haiku-backed normalizer with a deliberately conservative prompt that
+  skips performance commentary, weather notes, and one-off facts.
+- `capture_feedback(db, source, raw_content, source_ref_id=None) → fb_id`
+  — raw insert into `feedback_log`. No commit.
+- `save_preferences_from_feedback(db, fb_id, prefs) → count`
+  — writes prefs with `source_feedback_id` back-link. No commit.
+- `capture_and_normalize_feedback(db, source, raw_content, source_ref_id=None)
+  → (fb_id, saved_count)` — full pipeline.
+- `get_wellness_summary(db, lookback_days=14) → dict` — daily aggregates
+  from `wellness_log` (resting HR, stress, body battery, respiration,
+  steps) plus 3-day vs prior-3-day deltas. Returns `{}` when no data.
+
+**Hook sites** (all four feedback surfaces now flow through the pipeline):
+1. `routes/coaching.py:chat` — user message captured into `feedback_log`,
+   then chat-extracted prefs are written via
+   `save_preferences_from_feedback` so each carries provenance back to the
+   originating message. The chat call still does the smart extraction (it
+   has full conversation context); only the storage path changed.
+2. `routes/coaching.py:review` — review notes captured + normalized
+   *before* the AI review call, so any extracted prefs are visible in the
+   context the reviewer sees.
+3. `routes/natural_log.py:save` — concatenated user-role messages from the
+   parse session captured + normalized after entries are written. Client
+   payload (`templates/natural_log/index.html`) was extended to include
+   `history` on the save POST.
+4. `routes/training.py:save_session` (session-level notes only) and
+   `routes/cardio.py:_save` — workout notes captured under
+   `workout_note_strength` / `workout_note_cardio` source values with
+   `source_ref_id` pointing at the session/cardio_log row.
+
+**`get_coaching_context()` extensions** (`coaching.py:272`):
+- `current_rx` SELECT now exposes `sessions_since_progress`
+- `deload_flags`: list of `{exercise, sessions_since_progress}` for any
+  exercise at or above the threshold (≥ 5)
+- `recent_plans` aggregate now also counts `swapped` plan items
+- `recent_dispositions`: last-30-days `plan_item_disposition` rows
+  joined to `plan_items` (planned date / workout / sport, plus the
+  athlete's `reason` text)
+- `wellness_summary`: read via `get_wellness_summary(db, lookback_days)`
+
+**`_BASE_PROMPT` addition.** New "Athlete Signals" section at the bottom
+of the base prompt tells Claude how to use `deload_flags`,
+`recent_dispositions`, `wellness_summary`, and `coaching_preferences`.
+Lives inside the prompt-cached system block so it costs nothing on warm
+calls.
+
+**Source values used.** `chat`, `plan_review`, `natural_log`,
+`workout_note_strength`, `workout_note_cardio`. Session 4's coach-memory
+UI will surface these as the provenance label on each pref row.
+
+**Verification covered.** Schema applies cleanly to a fresh SQLite DB
+(`feedback_log` and `coaching_preferences.source_feedback_id` present);
+helpers round-trip with provenance; `get_coaching_context` returns the
+new keys; app boots with all 13 blueprints registered. End-to-end Claude
+extraction paths weren't exercised in this environment — there's no
+`ANTHROPIC_API_KEY` available — but `extract_preferences` is defensive
+about that (returns `[]` and the route flows continue normally).
 
 ### Plan-match window widened to -3 / +2 + dedupe (commit `b5ee4d2`)
 
@@ -329,9 +408,6 @@ publishes `ghcr.io/ahorn885/exercise:latest`. Watchtower polls every
 - **TrueNAS `.env`** — needs `ANTHROPIC_API_KEY` and `SECRET_KEY` set, then
   run `docker compose up -d` from that directory to recreate the container.
   Watchtower won't reload `.env` on its own. Vercel side is already done.
-- **Stale workflow trigger** — `.github/workflows/docker-publish.yml` still
-  triggers on a long-gone branch (`claude/review-handoff-file-CDi71`).
-  Should be `branches: [main]` only. One-line cleanup, ship anytime.
 - **Neon `DATABASE_URL`** — to be wired into Vercel and TrueNAS env at the
   start of Session 1.
 
