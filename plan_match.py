@@ -6,7 +6,7 @@ both manual FIT upload and Garmin sync.
 
 Match flow (per Andy's 2026-05 rules):
   Tier 1 — same day, fuzzy match on duration + distance.
-  Tier 2 — nearby days (-2 / +1), same scoring.
+  Tier 2 — nearby days (-3 / +2), same scoring.
   Tier 3 — no match: caller asks the user (handled by routes/garmin.py).
 
 Scoring is forgiving on purpose: a strength session that bailed early or
@@ -153,7 +153,7 @@ def score_match(activity, plan_item):
 def find_best_match(db, activity, min_score=SCORE_AUTO_MATCH):
     """Find the best-scoring scheduled plan_items row for an activity.
 
-    Searches Tier 1 (same day) first, then Tier 2 (-2 / +1 days). Returns the
+    Searches Tier 1 (same day) first, then Tier 2 (-3 / +2 days). Returns the
     same-day match if one passes `min_score`, even if a later-day item scores
     higher — same-day always wins ties.
 
@@ -170,8 +170,8 @@ def find_best_match(db, activity, min_score=SCORE_AUTO_MATCH):
 
     # Search same day first — if anything matches there, we don't bother with
     # neighbouring days. Real-world: people record what they do on the day,
-    # not on the day before/after.
-    for offset in (0, -1, 1, -2):
+    # not on the day before/after. Closer days win on ties.
+    for offset in (0, -1, 1, -2, 2, -3):
         target = (base_date + timedelta(days=offset)).isoformat()
         items = db.execute(
             '''SELECT pi.*, tp.name as plan_name
@@ -196,7 +196,7 @@ def find_best_match(db, activity, min_score=SCORE_AUTO_MATCH):
     return None
 
 
-def candidate_plan_items(db, activity_date, days_back=2, days_forward=1):
+def candidate_plan_items(db, activity_date, days_back=3, days_forward=2):
     """Return plan_items in the matching window — used by the ask-user prompt.
 
     No score filter; the user picks. Useful for the "instead of / in addition

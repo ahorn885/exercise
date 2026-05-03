@@ -110,8 +110,10 @@ def import_preview():
     nearby = candidate_plan_items(db, match_activity.get('date') if match_activity else None)
     nearby_dicts = [dict(r) for r in nearby]
 
-    # Wider list as fallback — same as before, used when nearby is empty.
-    plan_items = db.execute(
+    # Wider list as fallback. Dedupe against `nearby` so a near-future item
+    # doesn't appear in both optgroups.
+    nearby_ids = {r['id'] for r in nearby_dicts}
+    all_scheduled = db.execute(
         '''SELECT pi.id, pi.item_date, pi.workout_name, pi.sport_type,
                   pi.target_duration_min, pi.target_distance_mi,
                   tp.name as plan_name
@@ -121,6 +123,7 @@ def import_preview():
            ORDER BY pi.item_date ASC
            LIMIT 60'''
     ).fetchall()
+    plan_items = [r for r in all_scheduled if r['id'] not in nearby_ids]
 
     return render_template('garmin/import_preview.html', result=result,
                            name_override=flask_session.get('fit_name_override', ''),
@@ -372,22 +375,60 @@ def _already_imported(db, gid: str) -> bool:
     )
 
 
-def _import_activity(db, act: dict, plan_item, compliance: dict) -> dict:
+def _import_activity(db, act: dict, plan_item, compliance: dict,
+                     disposition: str = 'completed',
+                     raw_plan_item_id=None,
+                     reason: str | None = None) -> dict:
     """Insert one activity into the correct log table. Does NOT commit.
+
+    `disposition` + `raw_plan_item_id` control the plan-item link and the
+    disposition row (if any):
+      - 'completed'      → log links to plan; disposition row 'completed'
+      - 'swapped_for'    → log links to plan; disposition row 'swapped_for'
+      - 'in_addition_to' → log standalone; no disposition row
+      - 'none'           → log standalone; no disposition row
+
+    Default args preserve the prior auto-match-only behavior: pass `plan_item`
+    alone and the activity is recorded as completing it.
 
     Returns {'ok': bool, 'log_type': str, 'rows': int, 'error': str|None}
     """
     gid = act.get('garmin_activity_id', '')
-    plan_item_id = plan_item['id'] if plan_item else None
     is_strength = act.get('_plan_sport_type') == 'strength_training'
+
+    if raw_plan_item_id is None and plan_item:
+        raw_plan_item_id = plan_item['id']
+    plan_item_id = raw_plan_item_id if disposition in ('completed', 'swapped_for') else None
+
+    # If the user picked a different plan item than the auto-match, refresh
+    # plan_item + compliance so notes reflect what they actually chose.
+    if raw_plan_item_id and (not plan_item or plan_item['id'] != raw_plan_item_id):
+        chosen = db.execute(
+            '''SELECT pi.*, tp.name as plan_name
+               FROM plan_items pi
+               JOIN training_plans tp ON tp.id = pi.plan_id
+               WHERE pi.id = ?''',
+            (raw_plan_item_id,)
+        ).fetchone()
+        if chosen:
+            plan_item = dict(chosen)
+            compliance = compute_compliance(act, plan_item)
 
     notes_parts = []
     if plan_item:
-        notes_parts.append(f"Auto-matched: \"{plan_item['workout_name']}\"")
+        verb = {
+            'completed': 'Auto-matched',
+            'swapped_for': 'Swapped for',
+            'in_addition_to': 'In addition to',
+            'none': 'Unmatched from',
+        }.get(disposition, 'Auto-matched')
+        notes_parts.append(f'{verb}: "{plan_item["workout_name"]}"')
         if compliance.get('duration_pct') is not None:
             notes_parts.append(f"Duration {compliance['duration_pct']}% of target")
         if compliance.get('distance_pct') is not None:
             notes_parts.append(f"Distance {compliance['distance_pct']}% of target")
+    if reason and disposition in ('swapped_for', 'in_addition_to'):
+        notes_parts.append(f'Reason: {reason}')
     notes = '. '.join(notes_parts) or None
 
     if is_strength:
@@ -459,15 +500,16 @@ def _import_activity(db, act: dict, plan_item, compliance: dict) -> dict:
                         (log_id, i, s.get('reps'), s.get('weight_lbs'), s.get('duration_sec'))
                     )
 
-            if plan_item_id:
-                # Sync auto-match: surface as 'completed'. User can re-classify
-                # by editing the plan item if it was actually a swap.
+            if raw_plan_item_id:
                 first_log = db.execute(
                     'SELECT id FROM training_log WHERE session_id=? ORDER BY id LIMIT 1',
                     (session_id,)
                 ).fetchone()
                 if first_log:
-                    record_disposition(db, plan_item_id, 'strength', first_log['id'], 'completed')
+                    _record_disposition_for_import(
+                        db, disposition, plan_item_id, raw_plan_item_id,
+                        'strength', first_log['id'], reason
+                    )
             return {'ok': True, 'log_type': 'strength', 'rows': len(rows), 'error': None}
         # FIT didn't yield strength data — fall through to cardio insert
 
@@ -488,8 +530,11 @@ def _import_activity(db, act: dict, plan_item, compliance: dict) -> dict:
          act.get('aerobic_te'), act.get('anaerobic_te'),
          gid, plan_item_id, notes)
     )
-    if plan_item_id:
-        record_disposition(db, plan_item_id, 'cardio', cur.lastrowid, 'completed')
+    if raw_plan_item_id:
+        _record_disposition_for_import(
+            db, disposition, plan_item_id, raw_plan_item_id,
+            'cardio', cur.lastrowid, reason
+        )
     return {'ok': True, 'log_type': 'cardio', 'rows': 1, 'error': None}
 
 
@@ -504,6 +549,7 @@ def _build_preview(db, raw_activities: list) -> list:
         match = find_best_match(db, norm)
         plan_item = match['plan_item'] if match else None
         compliance = compute_compliance(norm, plan_item)
+        nearby = candidate_plan_items(db, norm.get('date'))
         preview.append({
             'activity': norm,
             'already_imported': already,
@@ -511,6 +557,7 @@ def _build_preview(db, raw_activities: list) -> list:
             'compliance': compliance,
             'match_score': match['score'] if match else None,
             'match_day_offset': match['day_offset'] if match else None,
+            'nearby': [dict(r) for r in nearby],
         })
     return preview
 
@@ -542,8 +589,28 @@ def sync():
             return redirect(url_for('garmin.sync'))
 
         preview = _build_preview(db, raw)
-        flask_session['garmin_sync_preview'] = preview
+
+        # `nearby` is only used for template rendering (per-row dropdown
+        # candidates); confirm just reads form fields. Drop it from the session
+        # copy to keep the cookie under 4 KB.
+        flask_session['garmin_sync_preview'] = [
+            {k: v for k, v in item.items() if k != 'nearby'} for item in preview
+        ]
+
+        # All-scheduled fallback list shared across rows. Per-row `nearby` is
+        # already on each preview item.
+        all_scheduled = db.execute(
+            '''SELECT pi.id, pi.item_date, pi.workout_name, pi.sport_type,
+                      pi.target_duration_min, pi.target_distance_mi,
+                      tp.name as plan_name
+               FROM plan_items pi
+               JOIN training_plans tp ON tp.id = pi.plan_id
+               WHERE pi.status = 'scheduled' AND tp.status != 'archived'
+               ORDER BY pi.item_date ASC
+               LIMIT 60'''
+        ).fetchall()
         return render_template('garmin/sync_preview.html', preview=preview,
+                               all_scheduled=[dict(r) for r in all_scheduled],
                                start_date=start_date, end_date=end_date)
 
     return render_template('garmin/sync.html', auth_status=auth_status,
@@ -559,17 +626,43 @@ def sync_confirm():
 
     selected = set(request.form.getlist('selected_ids'))
     db = get_db()
-    imported = matched = errors = 0
+    imported = matched = swapped = added = errors = 0
+
+    def _num(v):
+        try:
+            return int(v) if v not in (None, '', '0') else None
+        except (TypeError, ValueError):
+            return None
 
     for item in preview:
         gid = item['activity'].get('garmin_activity_id', '')
         if gid not in selected or item['already_imported']:
             continue
-        result = _import_activity(db, item['activity'], item.get('plan_item'), item.get('compliance', {}))
+
+        # Per-row resolve. Defaults preserve auto-match-as-completed when the
+        # user didn't touch the row.
+        default_disp = 'completed' if item.get('plan_item') else 'none'
+        disposition = request.form.get(f'disposition_{gid}', default_disp)
+        raw_pid = _num(request.form.get(f'plan_item_id_{gid}'))
+        if raw_pid is None and item.get('plan_item'):
+            raw_pid = item['plan_item']['id']
+        reason = (request.form.get(f'swap_reason_{gid}') or '').strip() or None
+
+        result = _import_activity(
+            db, item['activity'], item.get('plan_item'),
+            item.get('compliance', {}),
+            disposition=disposition,
+            raw_plan_item_id=raw_pid,
+            reason=reason,
+        )
         if result['ok']:
             imported += result['rows']
-            if item.get('plan_item'):
+            if disposition == 'completed' and raw_pid:
                 matched += 1
+            elif disposition == 'swapped_for' and raw_pid:
+                swapped += 1
+            elif disposition == 'in_addition_to':
+                added += 1
         else:
             errors += 1
             flash(f"Error importing {item['activity'].get('activity_name')}: {result['error']}", 'warning')
@@ -577,8 +670,15 @@ def sync_confirm():
     db.commit()
     flask_session.pop('garmin_sync_preview', None)
     msg = f'{imported} activit{"y" if imported == 1 else "ies"} imported'
+    bits = []
     if matched:
-        msg += f', {matched} matched to plan items'
+        bits.append(f'{matched} matched')
+    if swapped:
+        bits.append(f'{swapped} swapped')
+    if added:
+        bits.append(f'{added} added alongside plan')
+    if bits:
+        msg += ' (' + ', '.join(bits) + ')'
     if errors:
         msg += f', {errors} error(s)'
     flash(msg + '.', 'success')
