@@ -5,6 +5,7 @@ from database import get_db
 from calculations import calculate_1rm, calculate_volume
 from rx_engine import apply_session_outcome
 from fit_workout_generator import generate_activity_fit
+from routes.auth import current_user_id
 
 bp = Blueprint('training', __name__)
 
@@ -15,8 +16,8 @@ def list_entries():
     date_filter = request.args.get('date', '')
     exercise_filter = request.args.get('exercise', '')
 
-    query = 'SELECT * FROM training_log WHERE 1=1'
-    params = []
+    query = 'SELECT * FROM training_log WHERE user_id = ?'
+    params = [current_user_id()]
     if date_filter:
         query += ' AND date = ?'
         params.append(date_filter)

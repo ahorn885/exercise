@@ -3,6 +3,7 @@ import io
 from flask import Blueprint, render_template, request, redirect, url_for, flash, send_file
 from database import get_db
 from fit_workout_generator import generate_activity_fit
+from routes.auth import current_user_id
 
 bp = Blueprint('cardio', __name__)
 
@@ -20,8 +21,8 @@ def list_entries():
     date_filter = request.args.get('date', '')
     activity_filter = request.args.get('activity', '')
 
-    query = 'SELECT * FROM cardio_log WHERE 1=1'
-    params = []
+    query = 'SELECT * FROM cardio_log WHERE user_id = ?'
+    params = [current_user_id()]
     if date_filter:
         query += ' AND date=?'
         params.append(date_filter)
