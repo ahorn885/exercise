@@ -2,8 +2,10 @@
 import os
 import sqlite3
 
+from database import sqlite_path
+
 DATABASE_URL = os.environ.get('DATABASE_URL')
-SQLITE_PATH = os.path.join(os.path.dirname(__file__), 'instance', 'training.db')
+SQLITE_PATH = sqlite_path()
 
 SQLITE_SCHEMA = '''
     CREATE TABLE IF NOT EXISTS users (

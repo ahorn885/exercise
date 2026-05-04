@@ -1,10 +1,10 @@
 import os
 import re as _re
 from flask import Flask, request, redirect, url_for, session, g
-from database import init_app, get_db
+from database import init_app, get_db, sqlite_path
 
 app = Flask(__name__, instance_relative_config=True)
-app.config['DATABASE'] = os.path.join(app.instance_path, 'training.db')
+app.config['DATABASE'] = sqlite_path()
 app.secret_key = os.environ.get('SECRET_KEY', 'ar-training-2026')
 
 if os.environ.get('DATABASE_URL'):
@@ -16,10 +16,15 @@ if os.environ.get('DATABASE_URL'):
     except Exception as _e:
         print(f'Warning: DB init skipped: {_e}')
 else:
-    # SQLite (local dev)
-    os.makedirs(app.instance_path, exist_ok=True)
+    os.makedirs(os.path.dirname(app.config['DATABASE']), exist_ok=True)
     from init_db import init_sqlite
-    init_sqlite()
+    try:
+        init_sqlite()
+    except Exception as _e:
+        # Don't fail module import on init errors — surface them in logs so
+        # the actual route 500 (not a cryptic import-time failure) is what
+        # the operator sees.
+        print(f'Warning: SQLite init failed: {_e}')
 
 init_app(app)
 
