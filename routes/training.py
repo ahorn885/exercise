@@ -67,9 +67,10 @@ def save_session():
     plan_item_id = data.get('plan_item_id') or None
     session_notes = data.get('notes', '')
 
+    uid = current_user_id()
     cur = db.execute(
-        'INSERT INTO training_sessions (date, notes, plan_item_id) VALUES (?, ?, ?)',
-        (date, session_notes, plan_item_id)
+        'INSERT INTO training_sessions (date, notes, plan_item_id, user_id) VALUES (?, ?, ?, ?)',
+        (date, session_notes, plan_item_id, uid)
     )
     session_id = cur.lastrowid
 
@@ -112,7 +113,7 @@ def save_session():
             db, exercise, date, sets,
             target_sets=target_sets, target_reps=target_reps,
             target_weight=target_weight, target_duration=target_duration,
-            rx_source='From Training Log',
+            rx_source='From Training Log', user_id=uid,
         )
 
         log_cur = db.execute(
@@ -121,21 +122,21 @@ def save_session():
                 target_sets, target_reps, target_weight, target_duration,
                 actual_sets, actual_reps, actual_weight, actual_duration,
                 rpe, rest_sec, outcome, est_1rm, volume, body_weight,
-                next_weight, next_sets, next_reps, next_duration, plan_item_id, notes)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
+                next_weight, next_sets, next_reps, next_duration, plan_item_id, notes, user_id)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
             (date, exercise, rx['exercise_id'], rx['movement_pattern'], None, session_id,
              target_sets, target_reps, target_weight, target_duration,
              actual_sets, last_reps, max_weight, last_duration,
              rpe, rest_sec, rx['outcome'], est_1rm, volume, body_weight,
              rx['next_weight'], rx['next_sets'], rx['next_reps'], rx['next_duration'],
-             plan_item_id, notes)
+             plan_item_id, notes, uid)
         )
         log_id = log_cur.lastrowid
 
         for s in sets:
             db.execute(
-                'INSERT INTO training_log_sets (training_log_id, set_number, reps, weight_lbs, duration_sec) VALUES (?,?,?,?,?)',
-                (log_id, s.get('set_number', 0), s.get('reps'), s.get('weight_lbs'), s.get('duration_sec'))
+                'INSERT INTO training_log_sets (training_log_id, set_number, reps, weight_lbs, duration_sec, user_id) VALUES (?,?,?,?,?,?)',
+                (log_id, s.get('set_number', 0), s.get('reps'), s.get('weight_lbs'), s.get('duration_sec'), uid)
             )
 
     if plan_item_id:
@@ -147,7 +148,7 @@ def save_session():
     if session_notes:
         from coaching import capture_and_normalize_feedback
         capture_and_normalize_feedback(db, 'workout_note_strength', session_notes,
-                                       source_ref_id=session_id)
+                                       source_ref_id=session_id, user_id=uid)
 
     db.commit()
     return jsonify({'ok': True, 'session_id': session_id})
@@ -280,11 +281,12 @@ def _save_entry(db, entry_id):
     body_wt_row = db.execute('SELECT weight_lbs FROM body_metrics ORDER BY date DESC LIMIT 1').fetchone()
     body_weight = body_wt_row['weight_lbs'] if body_wt_row else None
 
+    uid = current_user_id()
     rx = apply_session_outcome(
         db, exercise, date, synthesized_sets,
         target_sets=target_sets, target_reps=target_reps,
         target_weight=target_weight, target_duration=target_duration,
-        rx_source='From Training Log',
+        rx_source='From Training Log', user_id=uid,
     )
 
     if entry_id:
@@ -307,14 +309,14 @@ def _save_entry(db, entry_id):
              target_sets, target_reps, target_weight, target_duration,
              actual_sets, actual_reps, actual_weight, actual_duration,
              rpe, rest_sec, outcome, est_1rm, volume, body_weight,
-             next_weight, next_sets, next_reps, next_duration, plan_item_id, notes)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
+             next_weight, next_sets, next_reps, next_duration, plan_item_id, notes, user_id)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
             (date, exercise, rx['exercise_id'], rx['movement_pattern'], None,
              target_sets, target_reps, target_weight, target_duration,
              actual_sets, actual_reps, actual_weight, actual_duration,
              rpe, rest_sec, rx['outcome'], est_1rm, volume, body_weight,
              rx['next_weight'], rx['next_sets'], rx['next_reps'], rx['next_duration'],
-             plan_item_id, f.get('notes', '')))
+             plan_item_id, f.get('notes', ''), uid))
 
     if plan_item_id:
         db.execute(

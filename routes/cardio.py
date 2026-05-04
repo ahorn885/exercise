@@ -134,6 +134,7 @@ def _save(db, entry_id):
         plan_item_id, f.get('notes')
     )
 
+    uid = current_user_id()
     new_id = None
     if entry_id:
         # Running dynamics columns are read-only (FIT-imported); don't overwrite them
@@ -150,8 +151,8 @@ def _save(db, entry_id):
              distance_mi, avg_pace, avg_speed, avg_hr, max_hr, calories,
              elev_gain_ft, elev_loss_ft, avg_cadence, max_cadence,
              avg_power, max_power, norm_power, aerobic_te, anaerobic_te,
-             swolf, active_lengths, plan_item_id, notes)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''', vals)
+             swolf, active_lengths, plan_item_id, notes, user_id)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''', vals + (uid,))
         new_id = cur.lastrowid
 
     if plan_item_id:
@@ -165,7 +166,7 @@ def _save(db, entry_id):
         from coaching import capture_and_normalize_feedback
         ref_id = entry_id or new_id
         capture_and_normalize_feedback(db, 'workout_note_cardio', cardio_notes,
-                                       source_ref_id=ref_id)
+                                       source_ref_id=ref_id, user_id=uid)
 
     db.commit()
     return new_id

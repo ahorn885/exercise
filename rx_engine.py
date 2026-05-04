@@ -55,7 +55,7 @@ def _bootstrap_baseline(sets):
 def apply_session_outcome(db, exercise, date, sets,
                           target_sets=None, target_reps=None,
                           target_weight=None, target_duration=None,
-                          rx_source='From Training Log'):
+                          rx_source='From Training Log', user_id=None):
     """Compute outcome, project next, UPSERT current_rx, return result for caller.
 
     Caller uses returned dict to populate the training_log row's outcome /
@@ -212,13 +212,13 @@ def apply_session_outcome(db, exercise, date, sets,
                   inventory_sugg_volume, current_sets, current_reps, current_weight, current_duration,
                   last_performed, last_outcome, consecutive_failures, sessions_since_progress,
                   weight_increment,
-                  next_sets, next_reps, next_weight, next_duration, rx_source)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
+                  next_sets, next_reps, next_weight, next_duration, rx_source, user_id)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
             (exercise, exercise_id, discipline, ex_type, movement_pattern,
              sugg_vol, new_baseline_sets, new_baseline_reps, new_baseline_weight, new_baseline_duration,
              date, outcome, new_failures, new_sessions_since_progress, weight_increment,
              nxt['next_sets'], nxt['next_reps'], nxt['next_weight'], nxt['next_duration'],
-             rx_source)
+             rx_source, user_id)
         )
 
     return {

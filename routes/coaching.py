@@ -3,6 +3,7 @@ from datetime import date, timedelta
 
 from flask import Blueprint, render_template, request, redirect, url_for, flash, jsonify
 from database import get_db
+from routes.auth import current_user_id
 
 bp = Blueprint('coaching', __name__, url_prefix='/coaching')
 
@@ -232,7 +233,8 @@ def review(plan_id):
             # Capture review notes into the feedback pipeline before the AI call
             # so any extracted preferences are visible to run_review's context.
             if notes:
-                capture_and_normalize_feedback(db, 'plan_review', notes, source_ref_id=plan_id)
+                capture_and_normalize_feedback(db, 'plan_review', notes, source_ref_id=plan_id,
+                                               user_id=current_user_id())
                 db.commit()
             result, usage = run_review(
                 db, plan_id, tier, notes=notes, locale=locale,
@@ -505,15 +507,16 @@ def chat(plan_id):
         result, usage = chat_with_coach(db, plan_id, message, history, locale=locale)
         _log_usage(usage, 'chat')
 
+        uid = current_user_id()
         db.execute(
-            'INSERT INTO coaching_chat (plan_id, role, content) VALUES (?,?,?)',
-            (plan_id, 'user', message)
+            'INSERT INTO coaching_chat (plan_id, role, content, user_id) VALUES (?,?,?,?)',
+            (plan_id, 'user', message, uid)
         )
 
         # Route the chat-extracted preferences through the feedback_log pipeline
         # so each pref carries provenance back to the user's raw message.
-        fb_id = capture_feedback(db, 'chat', message, source_ref_id=plan_id)
-        save_preferences_from_feedback(db, fb_id, result.get('preferences_to_save', []))
+        fb_id = capture_feedback(db, 'chat', message, source_ref_id=plan_id, user_id=uid)
+        save_preferences_from_feedback(db, fb_id, result.get('preferences_to_save', []), user_id=uid)
 
         patches_applied = 0
         if not result.get('confirm_required', False):
@@ -532,13 +535,13 @@ def chat(plan_id):
 
         import json as _json
         db.execute(
-            'INSERT INTO coaching_chat (plan_id, role, content, actions_json) VALUES (?,?,?,?)',
+            'INSERT INTO coaching_chat (plan_id, role, content, actions_json, user_id) VALUES (?,?,?,?,?)',
             (plan_id, 'assistant', result.get('message', ''), _json.dumps({
                 'preferences_saved': len(result.get('preferences_to_save', [])),
                 'patches_applied': patches_applied,
                 'confirm_required': result.get('confirm_required', False),
                 'pending_patches': result.get('plan_patches', []) if result.get('confirm_required') else [],
-            }))
+            }), uid)
         )
         db.commit()
 

@@ -53,6 +53,7 @@ def delete_entry(entry_id):
 
 def _save(db, entry_id):
     f = request.form
+    uid = current_user_id()
     def num(v, cast=float):
         try: return cast(v) if v else None
         except: return None
@@ -63,11 +64,11 @@ def _save(db, entry_id):
                    vals + (entry_id,))
     else:
         if _IS_PG:
-            db.execute('''INSERT INTO body_metrics (date,weight_lbs,body_fat_pct,vo2_max,resting_hr,notes)
-                VALUES (?,?,?,?,?,?)
+            db.execute('''INSERT INTO body_metrics (date,weight_lbs,body_fat_pct,vo2_max,resting_hr,notes,user_id)
+                VALUES (?,?,?,?,?,?,?)
                 ON CONFLICT (date) DO UPDATE SET
                 weight_lbs=EXCLUDED.weight_lbs, body_fat_pct=EXCLUDED.body_fat_pct,
-                vo2_max=EXCLUDED.vo2_max, resting_hr=EXCLUDED.resting_hr, notes=EXCLUDED.notes''', vals)
+                vo2_max=EXCLUDED.vo2_max, resting_hr=EXCLUDED.resting_hr, notes=EXCLUDED.notes''', vals + (uid,))
         else:
-            db.execute('INSERT OR REPLACE INTO body_metrics (date,weight_lbs,body_fat_pct,vo2_max,resting_hr,notes) VALUES (?,?,?,?,?,?)', vals)
+            db.execute('INSERT OR REPLACE INTO body_metrics (date,weight_lbs,body_fat_pct,vo2_max,resting_hr,notes,user_id) VALUES (?,?,?,?,?,?,?)', vals + (uid,))
     db.commit()
