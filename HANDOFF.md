@@ -1,13 +1,162 @@
 # AIDSTATION — Session Handoff
 
 **Date:** 2026-05-04
-**Latest session branch:** `claude/review-handoff-doc-gNJdO` (merging into `main` at end of session)
+**Latest session branch (merged into `main`):** `claude/review-handoff-doc-gNJdO`
+**Deploy state:** TrueNAS (Docker) + Vercel both shipped post-merge. First-run
+bootstrap user (user_id=1) is registered on both. TrueNAS `.env` has
+`SECRET_KEY` and `ANTHROPIC_API_KEY`. Session 2A backfill verified on
+TrueNAS — all real data scoped to user 1.
 
-**Next session picks up at:** Session 2B — query scoping, hot-spots first.
-The schema is fully ready: every per-user table has a nullable `user_id`
-column backfilled to user 1, indexes are in place, dead tables are gone.
-Now wire `user_id = ?` into the WHERE clauses (5 hot-spots first per the
-roadmap) and add `user_id` to every INSERT.
+---
+
+## Session 2B kickoff — read this first
+
+Sessions 0, 1, and 2A landed on `main` last session. Schema is fully
+multi-user-shaped: every per-user table has a nullable `user_id` column,
+backfilled to user 1, with composite `(user_id, date)` indexes. The app
+is login-gated. **No query sites have been scoped yet** — that's 2B's
+job.
+
+### 2B scope (in priority order)
+
+1. **The five hot-spot SELECTs** flagged in the multi-user roadmap
+   below. These are the queries that would leak data the moment a
+   second user registers, so they go first:
+   - `routes/dashboard.py:84` — recent training log (no WHERE today)
+   - `routes/cardio.py:30` — `WHERE 1=1` defaults to all users
+   - `routes/training.py:27` — same pattern
+   - `routes/body.py:13` — body metrics list, unscoped
+   - `coaching.py:358` — body metrics in AI context, unscoped
+2. **`garmin_connect.py` singleton** — `SELECT * FROM garmin_auth LIMIT 1`
+   → `WHERE user_id = ?`. Process-shared `/tmp/garth_session` collision
+   risk stays accepted until the parked Garmin per-user OAuth work
+   unblocks; this is just the row-level scope fix.
+3. **Every INSERT gains `user_id`.** New rows must be scoped from this
+   point forward, even if the SELECT scoping for that table waits for
+   2C. Otherwise 2D's NOT NULL won't be reachable. Touch every route
+   that writes — list in the "Pattern: every INSERT site" section
+   below.
+4. **Helper import path.** Settle on `from routes.auth import current_user_id`.
+   Returns `int | None`. Use directly in queries; trust that the
+   `before_request` gate has populated the session before any
+   non-`/auth/*` route runs.
+
+### Out of scope for 2B (saved for 2C)
+
+The remaining ~140 query sites across all the other `routes/*.py`
+files, `coaching.py:get_coaching_context()`, `rx_engine.py`,
+`plan_match.py`. SELECTs that don't appear in the hot-spot list keep
+returning everything for now — until 2C finishes, the user 2 isolation
+guarantee isn't there. Don't open `ALLOW_REGISTRATION` until 2D ships.
+
+### Pattern reference for 2B
+
+**Helper import:**
+```python
+from routes.auth import current_user_id
+uid = current_user_id()  # int when logged in, None pre-login
+```
+
+**Pattern: scope a SELECT (no existing WHERE):**
+```python
+# Before
+db.execute('SELECT * FROM cardio_log ORDER BY date DESC')
+# After
+db.execute('SELECT * FROM cardio_log WHERE user_id = ? ORDER BY date DESC',
+           (current_user_id(),))
+```
+
+**Pattern: scope a SELECT (with existing WHERE):**
+```python
+# Before
+db.execute('SELECT * FROM training_log WHERE date = ?', (d,))
+# After
+db.execute('SELECT * FROM training_log WHERE user_id = ? AND date = ?',
+           (current_user_id(), d))
+```
+
+**Pattern: scope a SELECT with `WHERE 1=1`:**
+```python
+# Before
+query = 'SELECT * FROM cardio_log WHERE 1=1'
+# After
+query = 'SELECT * FROM cardio_log WHERE user_id = ?'
+params = [current_user_id()]
+```
+
+**Pattern: every INSERT site:**
+```python
+# Before
+db.execute('INSERT INTO cardio_log (date, activity) VALUES (?, ?)', (d, a))
+# After
+db.execute('INSERT INTO cardio_log (user_id, date, activity) VALUES (?, ?, ?)',
+           (current_user_id(), d, a))
+```
+
+For denormalized children (`plan_items`, `plan_item_disposition`,
+`coaching_chat`, `training_log_sets`), pass `user_id` to the INSERT
+explicitly — don't rely on inheriting from the parent at write time.
+The 2A backfill walked parents because rows were already inserted; new
+rows from 2B onward should write the column directly.
+
+**Pattern: helpers that do INSERTs need a `user_id` parameter.**
+`coaching.capture_feedback`, `coaching.save_preferences_from_feedback`,
+`coaching.capture_and_normalize_feedback` all currently INSERT without
+`user_id` — extend their signatures and update every call site (5
+sites: `routes/coaching.py:chat` and `:review`, `routes/training.py:save_session`,
+`routes/cardio.py:_save`, `routes/natural_log.py:save`).
+
+`rx_engine.apply_session_outcome` writes to `current_rx` and
+`training_log` — it'll need `user_id` plumbed in (callers pass it; no
+session-context reach inside the engine).
+
+`plan_match.record_disposition` writes `plan_item_disposition` — pass
+`user_id` from the route layer.
+
+`garmin_connect.py` writes `garmin_auth` (singleton today) and reads
+`wellness_log`, `cardio_log` — INSERTs need user_id; the singleton SELECT
+needs scope.
+
+### 2B verification gate
+
+Don't merge 2B without confirming:
+- New strength session, cardio entry, body metric, conditions entry
+  all save with `user_id=1` (run a quick `SELECT user_id FROM x ORDER
+  BY id DESC LIMIT 1` on each)
+- The five hot-spot routes still render correctly
+- Coach chat / plan review / natural-log all complete and the new
+  `feedback_log` rows have `user_id=1`
+- `current_rx` updates from `apply_session_outcome` carry user_id
+- App boot still 200s on `/`, `/training`, `/cardio`, `/body`, `/rx`,
+  `/plans`
+
+### Open issue worth investigating in 2B
+
+A 500 was observed on Vercel **immediately after** the first-run
+`/auth/register` POST — the account was created (login worked on
+reload), but the post-register redirect to `/` rendered an error.
+TrueNAS didn't repro. Could be a dashboard query that doesn't tolerate
+a brand-new user state, or the wttr.in fetch timing out, or something
+specific to Vercel's SQLite-on-/tmp ephemerality. Worth a glance at
+Vercel function logs and at `routes/dashboard.py` while you're already
+in the scoping pass.
+
+### Known UNIQUE constraint debt for 2D
+
+These are single-column UNIQUE constraints that prevent two users
+from having parallel rows. Not a problem with one user, blocks 2D's
+second-user verification:
+- `current_rx.exercise UNIQUE` → `UNIQUE(user_id, exercise)`
+- `body_metrics.date UNIQUE` → `UNIQUE(user_id, date)`
+- `wellness_log.timestamp_ms UNIQUE` → `UNIQUE(user_id, timestamp_ms)`
+- `clothing_options UNIQUE(category, value)` becomes per-user via
+  Session 3's clothing_options redesign
+
+SQLite can't easily change UNIQUE in place — table rebuild required.
+Postgres can DROP CONSTRAINT + ADD. Plan to handle these in 2D
+(or earlier if 2C's testing surfaces a real bite).
+
+---
 
 > The product is branded **AIDSTATION** (per Claude Design's brand handoff
 > v0.1 + v0.2). The repo and the codebase still go by `exercise` / `AidStation`
@@ -454,6 +603,31 @@ For full detail on these, see commit messages.
 
 ## Key Patterns / Gotchas
 
+### Auth + per-user scoping (Sessions 1 + 2A landed)
+
+- Every non-`/auth/*` non-static route is gated by a global
+  `before_request` hook in `app.py`. By the time a route handler runs,
+  `flask_session['user_id']` is set.
+- Use `from routes.auth import current_user_id` — returns `int | None`.
+  `None` only happens pre-bootstrap or in tests; production routes can
+  treat it as guaranteed-int.
+- Templates have `current_user` available via context processor
+  (`app.py:_inject_current_user`). The base nav uses it for the
+  signed-in dropdown.
+- Schema: every per-user table has a nullable `user_id INTEGER
+  REFERENCES users(id)` column. **Backfill is done; query scoping
+  isn't.** SELECTs still return all rows (single-user app, so this
+  works); 2B/2C wire `WHERE user_id = ?`. INSERTs writing user_id
+  start in 2B.
+- The `coaching_chat` and `routes/coaching.py:chat` flow now routes
+  user messages through `feedback_log` first; chat-extracted prefs
+  carry `source_feedback_id` provenance back to the raw message.
+- Andy's `current_rx` rows from before Session 0 had
+  `rx_source='Needs initial setup'` for the seeded exercises (107
+  rows). His real progress is in the FIT-bootstrapped or actively-used
+  rows. Plan-only usage is the dominant pattern today (no manual
+  strength/cardio logging).
+
 ### DB Access
 ```python
 db = get_db()
@@ -463,6 +637,14 @@ dict(row)  # row_factory gives sqlite3.Row (dict-like); access by column name
 The codebase uses `?` placeholders everywhere — works for SQLite locally and
 the Vercel deployment is also SQLite-shaped. Don't introduce `%s`. The
 Postgres adapter (`database.py:_PgConn`) translates `?` → `%s` on the fly.
+
+⚠ `cur.lastrowid` works on `sqlite3.Cursor` but the `_CompatCursor` PG
+wrapper does a `fetchone()` against the cursor — it returns `None`
+unless the INSERT used `RETURNING id`. Most existing INSERTs (including
+`routes/auth.py:register`) don't have RETURNING, so they work on
+current SQLite-backed production but will silently break when Neon
+ships in 2D. Fix path: add `RETURNING id` to every INSERT that needs
+the new id, or wrap the helper to detect dialect.
 
 ### Migrations
 New columns/tables go in BOTH `_SQLITE_MIGRATIONS` and `_PG_MIGRATIONS`.
@@ -561,26 +743,37 @@ publishes `ghcr.io/ahorn885/exercise:latest`. Watchtower polls every
 ## Pending / Open
 
 ### Carry-forward to-dos
-- **First-run bootstrap on each deploy.** Session 1 ships a login gate
-  with a first-user bootstrap. After this branch lands on TrueNAS and
-  Vercel, hit `/auth/login` once on each — it'll redirect to
-  `/auth/register` for the bootstrap (no `ALLOW_REGISTRATION` env var
-  needed for the very first user). Set a strong password; this becomes
-  user_id=1 and unlocks the Session 2A backfills on the next cold
-  start. Until that happens the migrations are a no-op (guarded by
-  `EXISTS (SELECT 1 FROM users WHERE id = 1)`).
-- **TrueNAS `.env`** — needs `ANTHROPIC_API_KEY`, `SECRET_KEY`, and a
-  strong rotated `SECRET_KEY` (cookie-signing — required for the
-  Session 1 login session). Run `docker compose up -d` from that
-  directory to recreate the container after editing.
-- **Neon `DATABASE_URL`** — to be wired into Vercel and TrueNAS env
-  before opening registration in Session 2D. Verify migrations run
-  cleanly against a fresh Neon DB at that point (forward-FK caveat in
-  the 2A notes).
-- **`/coaching/api/*` headless endpoints are now login-gated.** If the
-  remote-control flow is in use, either authenticate via session
+
+**Deploy state confirmed at end of last session:**
+- TrueNAS at `/mnt/storage/exercise/` running Docker compose with the
+  merged `main`. `.env` has `SECRET_KEY` + `ANTHROPIC_API_KEY`. User 1
+  bootstrapped. Session 2A backfill verified — all real rows scoped:
+  `current_rx 107/107`, `training_plans 1/1`, `plan_items 28/28`,
+  `body_metrics 1/1`, `injury_log 1/1`, `garmin_auth 1/1`. Empty
+  tables (training_log, cardio_log, wellness_log, etc.) stay empty —
+  not a problem, just where the user is in their logging today.
+- Vercel running the merged `main`. User 1 bootstrapped. `SECRET_KEY`
+  + `ANTHROPIC_API_KEY` already configured. **Known issue**: 500 on
+  the post-register redirect (account got created — login on reload
+  worked). Repro and root-cause as part of 2B; see "Open issue worth
+  investigating" in the kickoff section above.
+
+**Still pending:**
+- **Investigate the Vercel post-register 500** (above). Vercel SQLite
+  is `/tmp`-ephemeral so don't expect persistent data there until
+  Neon ships in 2D.
+- **Neon `DATABASE_URL`** — wire into Vercel and TrueNAS env before
+  opening registration in Session 2D. Verify migrations run cleanly
+  against a fresh Neon DB at that point (forward-FK caveat in the 2A
+  notes — `training_sessions.plan_item_id REFERENCES plan_items(id)`
+  is a forward ref in PG_SCHEMA, present before Session 2A; if PG
+  rejects it, fix is reordering CREATEs or moving FKs to ALTER TABLE
+  migrations).
+- **`/coaching/api/*` headless endpoints are now login-gated.** If
+  the remote-control flow is in use, either authenticate via session
   cookie (curl with `--cookie-jar` after a POST to `/auth/login`) or
-  add a token-auth shim. Out of scope for this branch.
+  add a token-auth shim. Out of scope for 2B unless it's actively
+  blocking something.
 
 ### Standalone ideas (no roadmap dependency)
 - A multi-day wellness chart (7-day trend) would complement the per-day
@@ -621,7 +814,11 @@ rewrite — just point `DATABASE_URL` at Neon. Local dev keeps SQLite.
 Verify migrations run cleanly against a fresh Neon DB before any user-id
 work lands.
 
-### Session 0 — Coaching capture + context awareness
+### Session 0 — Coaching capture + context awareness  ✅ shipped
+
+Landed last session. See "What Was Done This Session — Session 0" above
+for the full delta. The detailed scope below is preserved as historical
+context for the design decisions.
 
 **Why first:** the multi-user foundation is mechanical schema + scoping.
 The coaching memory layer is product design — what gets captured, how it
