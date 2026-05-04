@@ -1,0 +1,23 @@
+{% extends "auth/_shell.html" %}
+{% block title %}Sign in — AIDSTATION{% endblock %}
+
+{% block content %}
+<div class="card border-0 shadow-sm">
+  <div class="card-body p-4">
+    <h1 class="h4 mb-3">Sign in</h1>
+    <form method="post" action="{{ url_for('auth.login', next=request.args.get('next')) }}">
+      <div class="mb-3">
+        <label for="username" class="form-label">Username</label>
+        <input type="text" class="form-control" id="username" name="username"
+               value="{{ username }}" autocomplete="username" required autofocus>
+      </div>
+      <div class="mb-3">
+        <label for="password" class="form-label">Password</label>
+        <input type="password" class="form-control" id="password" name="password"
+               autocomplete="current-password" required>
+      </div>
+      <button type="submit" class="btn btn-primary w-100">Sign in</button>
+    </form>
+  </div>
+</div>
+{% endblock %}

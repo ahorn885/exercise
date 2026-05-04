@@ -146,6 +146,65 @@ Dropped the long-gone `claude/review-handoff-file-CDi71` branch from
 `.github/workflows/docker-publish.yml`. The Docker image now publishes only
 on pushes to `main`.
 
+### Session 1 — auth foundation + lock the app
+
+The app is now login-gated. Single-user assumption still holds — domain
+queries are unscoped, registration is closed except for the first-user
+bootstrap, and only Andy will have an account until Session 2 ships
+per-user scoping.
+
+**New table.** `users(id, username, email, password_hash, display_name,
+created_at, last_login)` — both SQLITE_SCHEMA / PG_SCHEMA and both
+migration lists.
+
+**`requirements.txt`** gains `bcrypt>=4.1`.
+
+**`routes/auth.py`** (new blueprint, prefix `/auth`):
+- `/auth/login` GET/POST — bcrypt verify, sets `session['user_id']`,
+  updates `last_login`, honours `?next=` (rejects non-relative URLs)
+- `/auth/logout` GET/POST — clears session
+- `/auth/register` GET/POST — gated by env var `ALLOW_REGISTRATION` in
+  (`1`, `true`, `yes`, `on`); always open when zero users exist
+  (first-run bootstrap); validates uniqueness, password length (≥ 8),
+  password match
+- Helpers: `current_user_id()`, `current_user(db)` for use in routes
+
+**`app.py`**:
+- Registers `auth_bp`
+- `@app.before_request` gate: redirects unauthenticated GETs to
+  `/auth/login?next=<path>`, returns 401 on unauth POST. Allowlist:
+  `auth.login`, `auth.logout`, `auth.register`, anything ending in
+  `.static`, and any path under `/static/`.
+- `@app.context_processor` injects `current_user` into all templates
+  so the nav can show the signed-in user.
+
+**Templates:**
+- `templates/auth/_shell.html` — minimal brand-only layout (no nav)
+- `templates/auth/login.html`
+- `templates/auth/register.html` — switches header to "First-run setup"
+  when `is_bootstrap=True`
+
+**`templates/base.html`** gets a right-aligned dropdown showing
+`current_user.display_name` with a sign-out form button.
+
+**Verification covered.** Test client confirmed: anonymous → login,
+no-users → bootstrap register, register POST creates user and lands on
+dashboard, logout clears session, second register without
+`ALLOW_REGISTRATION` returns 403, bad-password renders form with error,
+good-password redirects to `?next=` (with off-site URLs rejected),
+`/static/*` reachable while logged out.
+
+**Known caveats / follow-ups:**
+- The `/coaching/api/*` headless endpoints are now also gated. They'll
+  need either session-cookie auth (curl with `--cookie-jar` after a
+  POST to `/auth/login`) or a token-auth shim. Out of scope for
+  Session 1 — flagged as a follow-up.
+- `garmin_connect.py` has a singleton `SELECT FROM garmin_auth LIMIT 1`
+  pattern that's fine while there's only one user, but will need
+  `WHERE user_id = ?` in Session 2.
+- `/tmp/garth_session` file caching is process-shared; collision risk
+  is accepted until the parked Garmin per-user OAuth work unblocks.
+
 ### Session 0 — coaching capture + context awareness
 
 The full coaching memory + context awareness layer landed in this branch.
@@ -547,32 +606,21 @@ confirm the prompt context includes recent dispositions, deload flags,
 and wellness summary. Existing flows (chat, generate, review) keep
 working.
 
-### Session 1 — Auth foundation + lock the app
+### Session 1 — Auth foundation + lock the app  ✅ shipped
 
-**Goal:** add auth + login gate. App still has unscoped queries, but
-registration is closed and only Andy has an account, so the single-user
-assumption holds.
+Landed in `claude/review-handoff-doc-gNJdO`. See "What Was Done This
+Session — Session 1" for the full delta. Headlines:
+- `users` table on both schemas + migrations; `bcrypt` dep added
+- `routes/auth.py` blueprint with login / logout / bootstrap-aware
+  register
+- Global `before_request` login gate in `app.py`; allowlist `/auth/*`
+  and static
+- Right-aligned signed-in user dropdown in `templates/base.html`
 
-**Deliverables:**
-- `users(id, username, email, password_hash, display_name, created_at,
-  last_login)` — both SQLite + Postgres migrations
-- `routes/auth.py` blueprint: `/auth/login`, `/auth/logout`,
-  `/auth/register` (registration gated by env-var `ALLOW_REGISTRATION`
-  until Session 2 ships)
-- `templates/auth/login.html`, `templates/auth/register.html`
-- `current_user_id()` helper, `@login_required` decorator (or
-  `before_request` hook checking `flask_session['user_id']`)
-- One-time bootstrap: when no users exist, prompt to create the first one
-  (Andy) on first request
-- Apply login gate globally in `app.py` (allowlist `/auth/*` and static)
-- Add `bcrypt` to `requirements.txt`
-
-**Out of scope:** user_id columns on domain tables, query scoping,
-profile UI.
-
-**Verification:** Andy can register/log in; logged-out requests redirect
-to `/auth/login`; existing routes still render his data when logged in;
-register without `ALLOW_REGISTRATION=1` returns 403.
+Carry-forward from this session:
+- `/coaching/api/*` are gated — token-auth shim is a follow-up
+- Open `ALLOW_REGISTRATION=1` only after Session 2 lands per-user
+  scoping (the first additional user would otherwise see Andy's data)
 
 ### Session 2 — Per-user scoping + drop dead tables (the big one)
 

@@ -160,6 +160,15 @@ SQLITE_SCHEMA = '''
         raw_content TEXT NOT NULL,
         captured_at TEXT DEFAULT (datetime('now'))
     );
+    CREATE TABLE IF NOT EXISTS users (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        username TEXT NOT NULL UNIQUE,
+        email TEXT UNIQUE,
+        password_hash TEXT NOT NULL,
+        display_name TEXT,
+        created_at TEXT DEFAULT (datetime('now')),
+        last_login TEXT
+    );
     CREATE TABLE IF NOT EXISTS coaching_preferences (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         category TEXT NOT NULL DEFAULT 'general',
@@ -422,6 +431,15 @@ PG_SCHEMA = '''
         raw_content TEXT NOT NULL,
         captured_at TIMESTAMP DEFAULT NOW()
     );
+    CREATE TABLE IF NOT EXISTS users (
+        id SERIAL PRIMARY KEY,
+        username TEXT NOT NULL UNIQUE,
+        email TEXT UNIQUE,
+        password_hash TEXT NOT NULL,
+        display_name TEXT,
+        created_at TIMESTAMP DEFAULT NOW(),
+        last_login TIMESTAMP
+    );
     CREATE TABLE IF NOT EXISTS coaching_preferences (
         id SERIAL PRIMARY KEY,
         category TEXT NOT NULL DEFAULT 'general',
@@ -586,6 +604,7 @@ _SQLITE_MIGRATIONS = [
     "CREATE TABLE IF NOT EXISTS feedback_log (id INTEGER PRIMARY KEY AUTOINCREMENT, source TEXT NOT NULL, source_ref_id INTEGER, raw_content TEXT NOT NULL, captured_at TEXT DEFAULT (datetime('now')))",
     "CREATE INDEX IF NOT EXISTS idx_fb_captured ON feedback_log(captured_at)",
     "ALTER TABLE coaching_preferences ADD COLUMN source_feedback_id INTEGER REFERENCES feedback_log(id)",
+    "CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT NOT NULL UNIQUE, email TEXT UNIQUE, password_hash TEXT NOT NULL, display_name TEXT, created_at TEXT DEFAULT (datetime('now')), last_login TEXT)",
 ]
 
 _PG_MIGRATIONS = [
@@ -645,6 +664,7 @@ _PG_MIGRATIONS = [
     "CREATE TABLE IF NOT EXISTS feedback_log (id SERIAL PRIMARY KEY, source TEXT NOT NULL, source_ref_id INTEGER, raw_content TEXT NOT NULL, captured_at TIMESTAMP DEFAULT NOW())",
     "CREATE INDEX IF NOT EXISTS idx_fb_captured ON feedback_log(captured_at)",
     "ALTER TABLE coaching_preferences ADD COLUMN IF NOT EXISTS source_feedback_id INTEGER REFERENCES feedback_log(id)",
+    "CREATE TABLE IF NOT EXISTS users (id SERIAL PRIMARY KEY, username TEXT NOT NULL UNIQUE, email TEXT UNIQUE, password_hash TEXT NOT NULL, display_name TEXT, created_at TIMESTAMP DEFAULT NOW(), last_login TIMESTAMP)",
 ]
 
 _CLOTHING_SEEDS = [
