@@ -122,11 +122,11 @@ static/             — AIDSTATION brand system (style.css, logo/, favicon, og-p
 | `training_modalities` | Activity types with AR carryover ratings |
 | `clothing_options` | Seeded clothing picklist values. **Multi-user roadmap Session 3 makes this per-user; new users start with an empty list.** |
 
-**Tables scheduled for drop in Session 2** (only referenced in `init_db.py`,
-no live consumers):
+**Tables dropped in Session 2A** (no live consumers, only referenced in
+`init_db.py`):
 - `equipment_matrix` — superseded by per-user `locale_equipment`
-- `recommended_purchases` — minimal Andy-specific seed; rebuild parked as
-  shared catalog + per-user wishlist layer
+- `recommended_purchases` — minimal Andy-specific seed; rebuild parked
+  as shared catalog + per-user wishlist layer
 
 **Session 0 schema additions (landed in this branch):**
 - `feedback_log(id, source, source_ref_id, raw_content, captured_at)` —
@@ -145,6 +145,97 @@ no live consumers):
 Dropped the long-gone `claude/review-handoff-file-CDi71` branch from
 `.github/workflows/docker-publish.yml`. The Docker image now publishes only
 on pushes to `main`.
+
+### Session 2A — Schema migrations + table drops
+
+The skeleton for per-user scoping. No query sites changed; all `user_id`
+columns are nullable and unread for now, so existing single-user
+behaviour is preserved. Sessions 2B/2C wire the WHEREs and INSERTs;
+2D adds NOT NULL after backfill is provably complete.
+
+**Tables that gained `user_id INTEGER REFERENCES users(id)`:**
+
+*Parent-scoped (13):* `training_sessions`, `training_log`, `current_rx`,
+`cardio_log`, `body_metrics`, `conditions_log`, `injury_log`,
+`training_plans`, `feedback_log`, `coaching_preferences`, `garmin_auth`,
+`garmin_workouts`, `locale_profiles`, `wellness_log`.
+
+*Denormalized children (4):* `training_log_sets` (parent: `training_log`),
+`plan_items` (parent: `training_plans`), `plan_item_disposition`
+(parent: `plan_items`), `coaching_chat` (parent: `training_plans`).
+
+*Untouched (shared catalog or parent-JOIN scoped):*
+`exercise_inventory`, `training_modalities`, `training_methods`,
+`equipment_items`, `exercise_equipment`, `clothing_options`,
+`plan_reviews`, `plan_travel`, `locale_equipment`,
+`injury_exercise_modifications`.
+
+**Tables dropped** (no live consumers, only referenced in `init_db.py`):
+`equipment_matrix`, `recommended_purchases`. Removed from both
+SQLITE_SCHEMA and PG_SCHEMA, plus `DROP TABLE IF EXISTS` migrations to
+reclaim them on existing databases.
+
+**Backfill strategy.** All UPDATEs are guarded so the migration is safe
+to run before user 1 has registered (e.g., when 2A deploys ahead of the
+first-run bootstrap):
+- Parents: `UPDATE x SET user_id = 1 WHERE user_id IS NULL AND EXISTS
+  (SELECT 1 FROM users WHERE id = 1)` — no-op pre-bootstrap, fires
+  cleanly on the next cold start after registration.
+- Denormalized children: pull from parent
+  (`UPDATE child SET user_id = (SELECT user_id FROM parent ...)`).
+  Safe before the parent is backfilled (sets NULL = NULL, harmless).
+  Postgres uses the `UPDATE ... FROM ... WHERE` form for the same
+  result.
+
+**Composite indexes added** for the date-filtered hot paths:
+`idx_tl_user_date`, `idx_cl_user_date`, `idx_bm_user_date`,
+`idx_cond_user_date`, `idx_ts_user_date`, `idx_wl_user_date`,
+`idx_pi_user_date`.
+
+**Schema reorder.** `users` is now the FIRST table created in both
+schemas so subsequent `REFERENCES users(id)` clauses resolve on fresh
+installs.
+
+**Verification covered.**
+1. Fresh SQLite install — schema applies, every per-user table has
+   `user_id`, dead tables absent, composite indexes present.
+2. Simulated pre-2A upgrade — migrations on a manually-built old-shape
+   DB drop the dead tables and backfill all 13 parents + 4 denormalized
+   children to `user_id=1` from sample rows that started with NULL.
+3. Pre-bootstrap upgrade — when no users exist yet, parent backfills
+   are no-ops; running migrations again after user 1 registers
+   completes the backfill cleanly.
+4. App boot — all routes (`/`, `/training`, `/cardio`, `/body`, `/rx`,
+   `/plans`) still return 200 after the migrations. Single-user flows
+   continue to work because queries are still unscoped.
+
+**Known follow-ups for 2B/2C/2D:**
+- 2B: scope the 5 hot-spots (`dashboard.py:84`, `cardio.py:30`,
+  `training.py:27`, `body.py:13`, `coaching.py:358`) plus
+  `garmin_connect.py` singleton SELECT, and add `user_id` to every
+  INSERT.
+- 2C: systematic per-route scoping pass + `coaching.py` context
+  gathering, `rx_engine.py`, `plan_match.py`.
+- 2D: Postgres `ALTER COLUMN ... SET NOT NULL` after backfill;
+  end-to-end second-user verification; open `ALLOW_REGISTRATION`.
+
+**UNIQUE constraint debt** to handle alongside 2D (or earlier if
+Andy's tooling needs it before then):
+- `current_rx.exercise UNIQUE` should become `UNIQUE(user_id, exercise)`
+- `body_metrics.date UNIQUE` should become `UNIQUE(user_id, date)`
+- `wellness_log.timestamp_ms UNIQUE` should become
+  `UNIQUE(user_id, timestamp_ms)`
+- `clothing_options UNIQUE(category, value)` becomes per-user via
+  Session 3's `clothing_options` redesign
+
+**Fresh-install Postgres caveat.** PG_SCHEMA contains pre-existing
+forward FK references (e.g., `training_sessions.plan_item_id REFERENCES
+plan_items(id)` is declared before `plan_items` is created). This was
+present before Session 2A and isn't something we introduced; verify a
+fresh Neon install applies cleanly during 2D verification, ahead of
+opening registration. If PG rejects it, the fix is reordering CREATEs
+or dropping the inline FK in favour of an `ALTER TABLE ADD CONSTRAINT`
+migration after both tables exist.
 
 ### Session 1 — auth foundation + lock the app
 
@@ -624,10 +715,47 @@ Carry-forward from this session:
 
 ### Session 2 — Per-user scoping + drop dead tables (the big one)
 
-**Goal:** add `user_id` to every per-user table, backfill existing rows
-to user_id=1, update every query to scope by current user. Drop
-`equipment_matrix` and `recommended_purchases`. Open registration after
-this lands.
+Split into 4 sub-sessions for tractability. **2A shipped** in this
+branch (see "What Was Done This Session"); 2B/2C/2D remain.
+
+#### Session 2A ✅ shipped — schema migrations + table drops
+
+- All `user_id` columns added (NULLABLE for now); backfilled to user 1
+- `equipment_matrix` and `recommended_purchases` dropped
+- Composite `(user_id, date)` indexes added
+- No query sites changed — single-user flows continue unmodified
+
+#### Session 2B — query scoping, hot-spots first
+
+- HANDOFF top-5 hot-spots: `dashboard.py:84`, `cardio.py:30`,
+  `training.py:27`, `body.py:13`, `coaching.py:358`
+- `garmin_connect.py` singleton `SELECT FROM garmin_auth LIMIT 1` →
+  `WHERE user_id = ?`
+- Add `user_id` to every INSERT so new rows are scoped from this point
+  forward (denormalized children get user_id from `current_user_id()`
+  too, not derived from parent)
+- Settle the helper import path: `from routes.auth import current_user_id`
+
+#### Session 2C — systematic per-route scoping
+
+The remaining ~150 query sites across 18 files: `routes/*.py`
+(13 files), `coaching.py`, `rx_engine.py`, `plan_match.py`,
+`garmin_connect.py`. Every WHERE prefixes `user_id = ?`; multi-table
+joins scope the parent only (children flow via FK unless they were
+denormalized in 2A — those scope directly).
+
+#### Session 2D — NOT NULL constraints + verification
+
+- Postgres: `ALTER COLUMN user_id SET NOT NULL` on each table (run
+  after all backfills are confirmed clean and all routes write user_id
+  on INSERT)
+- Composite UNIQUE constraints (debt list in 2A above)
+- Create test user_id=2; verify empty dashboard/training/cardio/body/
+  plans/coaching/Garmin/coach memory; log back in as Andy, confirm
+  data intact
+- Run schema migrations against a fresh Neon Postgres DB to verify
+  forward-FK references (the caveat called out in 2A) — fix if needed
+- Open `ALLOW_REGISTRATION`
 
 **Tables gaining `user_id INTEGER NOT NULL REFERENCES users(id)`:**
 `current_rx`, `training_sessions`, `training_log`, `cardio_log`,

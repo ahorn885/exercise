@@ -6,6 +6,15 @@ DATABASE_URL = os.environ.get('DATABASE_URL')
 SQLITE_PATH = os.path.join(os.path.dirname(__file__), 'instance', 'training.db')
 
 SQLITE_SCHEMA = '''
+    CREATE TABLE IF NOT EXISTS users (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        username TEXT NOT NULL UNIQUE,
+        email TEXT UNIQUE,
+        password_hash TEXT NOT NULL,
+        display_name TEXT,
+        created_at TEXT DEFAULT (datetime('now')),
+        last_login TEXT
+    );
     CREATE TABLE IF NOT EXISTS exercise_inventory (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         exercise TEXT NOT NULL UNIQUE,
@@ -17,6 +26,7 @@ SQLITE_SCHEMA = '''
     );
     CREATE TABLE IF NOT EXISTS training_sessions (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER REFERENCES users(id),
         date TEXT NOT NULL,
         notes TEXT,
         plan_item_id INTEGER REFERENCES plan_items(id),
@@ -24,6 +34,7 @@ SQLITE_SCHEMA = '''
     );
     CREATE TABLE IF NOT EXISTS training_log (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER REFERENCES users(id),
         date TEXT NOT NULL, exercise TEXT NOT NULL,
         exercise_id INTEGER REFERENCES exercise_inventory(id),
         sub_group TEXT, recovery_cost TEXT,
@@ -39,6 +50,7 @@ SQLITE_SCHEMA = '''
     );
     CREATE TABLE IF NOT EXISTS training_log_sets (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER REFERENCES users(id),
         training_log_id INTEGER NOT NULL REFERENCES training_log(id) ON DELETE CASCADE,
         set_number INTEGER NOT NULL,
         reps INTEGER,
@@ -47,6 +59,7 @@ SQLITE_SCHEMA = '''
     );
     CREATE TABLE IF NOT EXISTS current_rx (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER REFERENCES users(id),
         exercise TEXT NOT NULL UNIQUE, exercise_id INTEGER REFERENCES exercise_inventory(id),
         discipline TEXT, type TEXT, movement_pattern TEXT,
         inventory_sugg_volume TEXT, current_sets INTEGER, current_reps INTEGER,
@@ -57,6 +70,7 @@ SQLITE_SCHEMA = '''
     );
     CREATE TABLE IF NOT EXISTS cardio_log (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER REFERENCES users(id),
         date TEXT NOT NULL, activity TEXT NOT NULL, activity_name TEXT,
         duration_min REAL, moving_time_min REAL, distance_mi REAL, avg_pace TEXT,
         avg_speed REAL, avg_hr INTEGER, max_hr INTEGER, calories INTEGER,
@@ -71,12 +85,14 @@ SQLITE_SCHEMA = '''
     );
     CREATE TABLE IF NOT EXISTS body_metrics (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER REFERENCES users(id),
         date TEXT NOT NULL UNIQUE, weight_lbs REAL, body_fat_pct REAL,
         vo2_max REAL, resting_hr INTEGER, notes TEXT,
         created_at TEXT DEFAULT (datetime('now'))
     );
     CREATE TABLE IF NOT EXISTS conditions_log (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER REFERENCES users(id),
         date TEXT NOT NULL, activity TEXT, temp_f REAL, feels_like_f REAL,
         wind_mph REAL, wind_dir TEXT, conditions TEXT,
         headwear TEXT, face_neck TEXT, upper_shell TEXT, upper_mid_layer TEXT,
@@ -88,6 +104,7 @@ SQLITE_SCHEMA = '''
     );
     CREATE TABLE IF NOT EXISTS injury_log (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER REFERENCES users(id),
         start_date TEXT NOT NULL, body_part TEXT NOT NULL, description TEXT,
         severity INTEGER, modifications_needed TEXT, status TEXT DEFAULT 'Active',
         resolved_date TEXT, created_at TEXT DEFAULT (datetime('now'))
@@ -97,25 +114,13 @@ SQLITE_SCHEMA = '''
         activity TEXT NOT NULL UNIQUE, category TEXT, primary_benefits TEXT,
         equipment_needed TEXT, where_available TEXT, ar_carryover TEXT
     );
-    CREATE TABLE IF NOT EXISTS equipment_matrix (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        equipment TEXT NOT NULL UNIQUE,
-        home TEXT DEFAULT '—', hotel_travel TEXT DEFAULT '—',
-        commercial_gym TEXT DEFAULT '—', climbing_gym TEXT DEFAULT '—',
-        outdoors TEXT DEFAULT '—', partner_home TEXT DEFAULT '—',
-        airport_public TEXT DEFAULT '—'
-    );
     CREATE TABLE IF NOT EXISTS training_methods (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         method TEXT NOT NULL, description TEXT, apply_to TEXT, source TEXT
     );
-    CREATE TABLE IF NOT EXISTS recommended_purchases (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        item TEXT NOT NULL, est_cost TEXT, what_it_unlocks TEXT,
-        exercises_impacted TEXT, priority TEXT
-    );
     CREATE TABLE IF NOT EXISTS training_plans (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER REFERENCES users(id),
         name TEXT NOT NULL,
         description TEXT,
         sport_focus TEXT,
@@ -127,6 +132,7 @@ SQLITE_SCHEMA = '''
     );
     CREATE TABLE IF NOT EXISTS plan_items (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER REFERENCES users(id),
         plan_id INTEGER NOT NULL REFERENCES training_plans(id),
         item_date TEXT NOT NULL,
         sport_type TEXT NOT NULL,
@@ -155,22 +161,15 @@ SQLITE_SCHEMA = '''
     );
     CREATE TABLE IF NOT EXISTS feedback_log (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER REFERENCES users(id),
         source TEXT NOT NULL,
         source_ref_id INTEGER,
         raw_content TEXT NOT NULL,
         captured_at TEXT DEFAULT (datetime('now'))
     );
-    CREATE TABLE IF NOT EXISTS users (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        username TEXT NOT NULL UNIQUE,
-        email TEXT UNIQUE,
-        password_hash TEXT NOT NULL,
-        display_name TEXT,
-        created_at TEXT DEFAULT (datetime('now')),
-        last_login TEXT
-    );
     CREATE TABLE IF NOT EXISTS coaching_preferences (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER REFERENCES users(id),
         category TEXT NOT NULL DEFAULT 'general',
         content TEXT NOT NULL,
         permanent INTEGER NOT NULL DEFAULT 1,
@@ -179,6 +178,7 @@ SQLITE_SCHEMA = '''
     );
     CREATE TABLE IF NOT EXISTS coaching_chat (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER REFERENCES users(id),
         plan_id INTEGER REFERENCES training_plans(id),
         role TEXT NOT NULL,
         content TEXT NOT NULL,
@@ -187,6 +187,7 @@ SQLITE_SCHEMA = '''
     );
     CREATE TABLE IF NOT EXISTS garmin_auth (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER REFERENCES users(id),
         garmin_username TEXT,
         garth_session TEXT,
         created_at TEXT DEFAULT (datetime('now')),
@@ -194,6 +195,7 @@ SQLITE_SCHEMA = '''
     );
     CREATE TABLE IF NOT EXISTS garmin_workouts (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER REFERENCES users(id),
         plan_item_id INTEGER REFERENCES plan_items(id),
         garmin_workout_id TEXT NOT NULL,
         workout_name TEXT,
@@ -204,6 +206,7 @@ SQLITE_SCHEMA = '''
     );
     CREATE TABLE IF NOT EXISTS locale_profiles (
         locale TEXT PRIMARY KEY,
+        user_id INTEGER REFERENCES users(id),
         equipment TEXT DEFAULT '',
         notes TEXT DEFAULT '',
         city TEXT DEFAULT '',
@@ -259,6 +262,7 @@ SQLITE_SCHEMA = '''
     );
     CREATE TABLE IF NOT EXISTS wellness_log (
         id             INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id        INTEGER REFERENCES users(id),
         date           TEXT NOT NULL,
         timestamp_ms   INTEGER NOT NULL,
         heart_rate     INTEGER,
@@ -277,6 +281,15 @@ SQLITE_SCHEMA = '''
 '''
 
 PG_SCHEMA = '''
+    CREATE TABLE IF NOT EXISTS users (
+        id SERIAL PRIMARY KEY,
+        username TEXT NOT NULL UNIQUE,
+        email TEXT UNIQUE,
+        password_hash TEXT NOT NULL,
+        display_name TEXT,
+        created_at TIMESTAMP DEFAULT NOW(),
+        last_login TIMESTAMP
+    );
     CREATE TABLE IF NOT EXISTS exercise_inventory (
         id SERIAL PRIMARY KEY,
         exercise TEXT NOT NULL UNIQUE,
@@ -288,6 +301,7 @@ PG_SCHEMA = '''
     );
     CREATE TABLE IF NOT EXISTS training_sessions (
         id SERIAL PRIMARY KEY,
+        user_id INTEGER REFERENCES users(id),
         date TEXT NOT NULL,
         notes TEXT,
         plan_item_id INTEGER REFERENCES plan_items(id),
@@ -295,6 +309,7 @@ PG_SCHEMA = '''
     );
     CREATE TABLE IF NOT EXISTS training_log (
         id SERIAL PRIMARY KEY,
+        user_id INTEGER REFERENCES users(id),
         date TEXT NOT NULL, exercise TEXT NOT NULL,
         exercise_id INTEGER REFERENCES exercise_inventory(id),
         sub_group TEXT, recovery_cost TEXT,
@@ -310,6 +325,7 @@ PG_SCHEMA = '''
     );
     CREATE TABLE IF NOT EXISTS training_log_sets (
         id SERIAL PRIMARY KEY,
+        user_id INTEGER REFERENCES users(id),
         training_log_id INTEGER NOT NULL REFERENCES training_log(id) ON DELETE CASCADE,
         set_number INTEGER NOT NULL,
         reps INTEGER,
@@ -318,6 +334,7 @@ PG_SCHEMA = '''
     );
     CREATE TABLE IF NOT EXISTS current_rx (
         id SERIAL PRIMARY KEY,
+        user_id INTEGER REFERENCES users(id),
         exercise TEXT NOT NULL UNIQUE, exercise_id INTEGER REFERENCES exercise_inventory(id),
         discipline TEXT, type TEXT, movement_pattern TEXT,
         inventory_sugg_volume TEXT, current_sets INTEGER, current_reps INTEGER,
@@ -328,6 +345,7 @@ PG_SCHEMA = '''
     );
     CREATE TABLE IF NOT EXISTS cardio_log (
         id SERIAL PRIMARY KEY,
+        user_id INTEGER REFERENCES users(id),
         date TEXT NOT NULL, activity TEXT NOT NULL, activity_name TEXT,
         duration_min REAL, moving_time_min REAL, distance_mi REAL, avg_pace TEXT,
         avg_speed REAL, avg_hr INTEGER, max_hr INTEGER, calories INTEGER,
@@ -342,12 +360,14 @@ PG_SCHEMA = '''
     );
     CREATE TABLE IF NOT EXISTS body_metrics (
         id SERIAL PRIMARY KEY,
+        user_id INTEGER REFERENCES users(id),
         date TEXT NOT NULL UNIQUE, weight_lbs REAL, body_fat_pct REAL,
         vo2_max REAL, resting_hr INTEGER, notes TEXT,
         created_at TIMESTAMP DEFAULT NOW()
     );
     CREATE TABLE IF NOT EXISTS conditions_log (
         id SERIAL PRIMARY KEY,
+        user_id INTEGER REFERENCES users(id),
         date TEXT NOT NULL, activity TEXT, temp_f REAL, feels_like_f REAL,
         wind_mph REAL, wind_dir TEXT, conditions TEXT,
         headwear TEXT, face_neck TEXT, upper_shell TEXT, upper_mid_layer TEXT,
@@ -359,6 +379,7 @@ PG_SCHEMA = '''
     );
     CREATE TABLE IF NOT EXISTS injury_log (
         id SERIAL PRIMARY KEY,
+        user_id INTEGER REFERENCES users(id),
         start_date TEXT NOT NULL, body_part TEXT NOT NULL, description TEXT,
         severity INTEGER, modifications_needed TEXT, status TEXT DEFAULT 'Active',
         resolved_date TEXT, created_at TIMESTAMP DEFAULT NOW()
@@ -368,25 +389,13 @@ PG_SCHEMA = '''
         activity TEXT NOT NULL UNIQUE, category TEXT, primary_benefits TEXT,
         equipment_needed TEXT, where_available TEXT, ar_carryover TEXT
     );
-    CREATE TABLE IF NOT EXISTS equipment_matrix (
-        id SERIAL PRIMARY KEY,
-        equipment TEXT NOT NULL UNIQUE,
-        home TEXT DEFAULT '—', hotel_travel TEXT DEFAULT '—',
-        commercial_gym TEXT DEFAULT '—', climbing_gym TEXT DEFAULT '—',
-        outdoors TEXT DEFAULT '—', partner_home TEXT DEFAULT '—',
-        airport_public TEXT DEFAULT '—'
-    );
     CREATE TABLE IF NOT EXISTS training_methods (
         id SERIAL PRIMARY KEY,
         method TEXT NOT NULL, description TEXT, apply_to TEXT, source TEXT
     );
-    CREATE TABLE IF NOT EXISTS recommended_purchases (
-        id SERIAL PRIMARY KEY,
-        item TEXT NOT NULL, est_cost TEXT, what_it_unlocks TEXT,
-        exercises_impacted TEXT, priority TEXT
-    );
     CREATE TABLE IF NOT EXISTS training_plans (
         id SERIAL PRIMARY KEY,
+        user_id INTEGER REFERENCES users(id),
         name TEXT NOT NULL,
         description TEXT,
         sport_focus TEXT,
@@ -398,6 +407,7 @@ PG_SCHEMA = '''
     );
     CREATE TABLE IF NOT EXISTS plan_items (
         id SERIAL PRIMARY KEY,
+        user_id INTEGER REFERENCES users(id),
         plan_id INTEGER NOT NULL REFERENCES training_plans(id),
         item_date TEXT NOT NULL,
         sport_type TEXT NOT NULL,
@@ -426,22 +436,15 @@ PG_SCHEMA = '''
     );
     CREATE TABLE IF NOT EXISTS feedback_log (
         id SERIAL PRIMARY KEY,
+        user_id INTEGER REFERENCES users(id),
         source TEXT NOT NULL,
         source_ref_id INTEGER,
         raw_content TEXT NOT NULL,
         captured_at TIMESTAMP DEFAULT NOW()
     );
-    CREATE TABLE IF NOT EXISTS users (
-        id SERIAL PRIMARY KEY,
-        username TEXT NOT NULL UNIQUE,
-        email TEXT UNIQUE,
-        password_hash TEXT NOT NULL,
-        display_name TEXT,
-        created_at TIMESTAMP DEFAULT NOW(),
-        last_login TIMESTAMP
-    );
     CREATE TABLE IF NOT EXISTS coaching_preferences (
         id SERIAL PRIMARY KEY,
+        user_id INTEGER REFERENCES users(id),
         category TEXT NOT NULL DEFAULT 'general',
         content TEXT NOT NULL,
         permanent INTEGER NOT NULL DEFAULT 1,
@@ -450,6 +453,7 @@ PG_SCHEMA = '''
     );
     CREATE TABLE IF NOT EXISTS coaching_chat (
         id SERIAL PRIMARY KEY,
+        user_id INTEGER REFERENCES users(id),
         plan_id INTEGER REFERENCES training_plans(id),
         role TEXT NOT NULL,
         content TEXT NOT NULL,
@@ -458,6 +462,7 @@ PG_SCHEMA = '''
     );
     CREATE TABLE IF NOT EXISTS garmin_auth (
         id SERIAL PRIMARY KEY,
+        user_id INTEGER REFERENCES users(id),
         garmin_username TEXT,
         garth_session TEXT,
         created_at TIMESTAMP DEFAULT NOW(),
@@ -465,6 +470,7 @@ PG_SCHEMA = '''
     );
     CREATE TABLE IF NOT EXISTS garmin_workouts (
         id SERIAL PRIMARY KEY,
+        user_id INTEGER REFERENCES users(id),
         plan_item_id INTEGER REFERENCES plan_items(id),
         garmin_workout_id TEXT NOT NULL,
         workout_name TEXT,
@@ -475,6 +481,7 @@ PG_SCHEMA = '''
     );
     CREATE TABLE IF NOT EXISTS locale_profiles (
         locale TEXT PRIMARY KEY,
+        user_id INTEGER REFERENCES users(id),
         equipment TEXT DEFAULT '',
         notes TEXT DEFAULT '',
         city TEXT DEFAULT '',
@@ -530,6 +537,7 @@ PG_SCHEMA = '''
     );
     CREATE TABLE IF NOT EXISTS wellness_log (
         id             SERIAL PRIMARY KEY,
+        user_id        INTEGER REFERENCES users(id),
         date           TEXT NOT NULL,
         timestamp_ms   BIGINT NOT NULL,
         heart_rate     INTEGER,
@@ -605,6 +613,60 @@ _SQLITE_MIGRATIONS = [
     "CREATE INDEX IF NOT EXISTS idx_fb_captured ON feedback_log(captured_at)",
     "ALTER TABLE coaching_preferences ADD COLUMN source_feedback_id INTEGER REFERENCES feedback_log(id)",
     "CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT NOT NULL UNIQUE, email TEXT UNIQUE, password_hash TEXT NOT NULL, display_name TEXT, created_at TEXT DEFAULT (datetime('now')), last_login TEXT)",
+    # Session 2A — drop dead tables (no live consumers)
+    "DROP TABLE IF EXISTS equipment_matrix",
+    "DROP TABLE IF EXISTS recommended_purchases",
+    # Session 2A — add user_id columns to per-user tables. NULLABLE for now;
+    # query scoping ships in Session 2B/C, NOT NULL constraint lands in 2D.
+    # Backfill UPDATEs are guarded by EXISTS so they're harmless if user 1
+    # hasn't been registered yet (fresh-install or pre-bootstrap upgrade).
+    "ALTER TABLE training_sessions ADD COLUMN user_id INTEGER REFERENCES users(id)",
+    "ALTER TABLE training_log ADD COLUMN user_id INTEGER REFERENCES users(id)",
+    "ALTER TABLE training_log_sets ADD COLUMN user_id INTEGER REFERENCES users(id)",
+    "ALTER TABLE current_rx ADD COLUMN user_id INTEGER REFERENCES users(id)",
+    "ALTER TABLE cardio_log ADD COLUMN user_id INTEGER REFERENCES users(id)",
+    "ALTER TABLE body_metrics ADD COLUMN user_id INTEGER REFERENCES users(id)",
+    "ALTER TABLE conditions_log ADD COLUMN user_id INTEGER REFERENCES users(id)",
+    "ALTER TABLE injury_log ADD COLUMN user_id INTEGER REFERENCES users(id)",
+    "ALTER TABLE training_plans ADD COLUMN user_id INTEGER REFERENCES users(id)",
+    "ALTER TABLE plan_items ADD COLUMN user_id INTEGER REFERENCES users(id)",
+    "ALTER TABLE plan_item_disposition ADD COLUMN user_id INTEGER REFERENCES users(id)",
+    "ALTER TABLE feedback_log ADD COLUMN user_id INTEGER REFERENCES users(id)",
+    "ALTER TABLE coaching_preferences ADD COLUMN user_id INTEGER REFERENCES users(id)",
+    "ALTER TABLE coaching_chat ADD COLUMN user_id INTEGER REFERENCES users(id)",
+    "ALTER TABLE garmin_auth ADD COLUMN user_id INTEGER REFERENCES users(id)",
+    "ALTER TABLE garmin_workouts ADD COLUMN user_id INTEGER REFERENCES users(id)",
+    "ALTER TABLE locale_profiles ADD COLUMN user_id INTEGER REFERENCES users(id)",
+    "ALTER TABLE wellness_log ADD COLUMN user_id INTEGER REFERENCES users(id)",
+    # Backfill parent tables — guarded by user-1 existence so the migration is
+    # safe to run before the first user has registered.
+    "UPDATE training_sessions   SET user_id = 1 WHERE user_id IS NULL AND EXISTS (SELECT 1 FROM users WHERE id = 1)",
+    "UPDATE training_log        SET user_id = 1 WHERE user_id IS NULL AND EXISTS (SELECT 1 FROM users WHERE id = 1)",
+    "UPDATE current_rx          SET user_id = 1 WHERE user_id IS NULL AND EXISTS (SELECT 1 FROM users WHERE id = 1)",
+    "UPDATE cardio_log          SET user_id = 1 WHERE user_id IS NULL AND EXISTS (SELECT 1 FROM users WHERE id = 1)",
+    "UPDATE body_metrics        SET user_id = 1 WHERE user_id IS NULL AND EXISTS (SELECT 1 FROM users WHERE id = 1)",
+    "UPDATE conditions_log      SET user_id = 1 WHERE user_id IS NULL AND EXISTS (SELECT 1 FROM users WHERE id = 1)",
+    "UPDATE injury_log          SET user_id = 1 WHERE user_id IS NULL AND EXISTS (SELECT 1 FROM users WHERE id = 1)",
+    "UPDATE training_plans      SET user_id = 1 WHERE user_id IS NULL AND EXISTS (SELECT 1 FROM users WHERE id = 1)",
+    "UPDATE feedback_log        SET user_id = 1 WHERE user_id IS NULL AND EXISTS (SELECT 1 FROM users WHERE id = 1)",
+    "UPDATE coaching_preferences SET user_id = 1 WHERE user_id IS NULL AND EXISTS (SELECT 1 FROM users WHERE id = 1)",
+    "UPDATE garmin_auth         SET user_id = 1 WHERE user_id IS NULL AND EXISTS (SELECT 1 FROM users WHERE id = 1)",
+    "UPDATE garmin_workouts     SET user_id = 1 WHERE user_id IS NULL AND EXISTS (SELECT 1 FROM users WHERE id = 1)",
+    "UPDATE locale_profiles     SET user_id = 1 WHERE user_id IS NULL AND EXISTS (SELECT 1 FROM users WHERE id = 1)",
+    "UPDATE wellness_log        SET user_id = 1 WHERE user_id IS NULL AND EXISTS (SELECT 1 FROM users WHERE id = 1)",
+    # Denormalized children — pull from parent (after parent backfill above).
+    "UPDATE plan_items SET user_id = (SELECT user_id FROM training_plans WHERE training_plans.id = plan_items.plan_id) WHERE user_id IS NULL",
+    "UPDATE plan_item_disposition SET user_id = (SELECT user_id FROM plan_items WHERE plan_items.id = plan_item_disposition.plan_item_id) WHERE user_id IS NULL",
+    "UPDATE coaching_chat SET user_id = (SELECT user_id FROM training_plans WHERE training_plans.id = coaching_chat.plan_id) WHERE user_id IS NULL",
+    "UPDATE training_log_sets SET user_id = (SELECT user_id FROM training_log WHERE training_log.id = training_log_sets.training_log_id) WHERE user_id IS NULL",
+    # Composite indexes for the date-filtered hot queries.
+    "CREATE INDEX IF NOT EXISTS idx_tl_user_date ON training_log(user_id, date)",
+    "CREATE INDEX IF NOT EXISTS idx_cl_user_date ON cardio_log(user_id, date)",
+    "CREATE INDEX IF NOT EXISTS idx_bm_user_date ON body_metrics(user_id, date)",
+    "CREATE INDEX IF NOT EXISTS idx_cond_user_date ON conditions_log(user_id, date)",
+    "CREATE INDEX IF NOT EXISTS idx_ts_user_date ON training_sessions(user_id, date)",
+    "CREATE INDEX IF NOT EXISTS idx_wl_user_date ON wellness_log(user_id, date)",
+    "CREATE INDEX IF NOT EXISTS idx_pi_user_date ON plan_items(user_id, item_date)",
 ]
 
 _PG_MIGRATIONS = [
@@ -665,6 +727,57 @@ _PG_MIGRATIONS = [
     "CREATE INDEX IF NOT EXISTS idx_fb_captured ON feedback_log(captured_at)",
     "ALTER TABLE coaching_preferences ADD COLUMN IF NOT EXISTS source_feedback_id INTEGER REFERENCES feedback_log(id)",
     "CREATE TABLE IF NOT EXISTS users (id SERIAL PRIMARY KEY, username TEXT NOT NULL UNIQUE, email TEXT UNIQUE, password_hash TEXT NOT NULL, display_name TEXT, created_at TIMESTAMP DEFAULT NOW(), last_login TIMESTAMP)",
+    # Session 2A — drop dead tables (no live consumers)
+    "DROP TABLE IF EXISTS equipment_matrix",
+    "DROP TABLE IF EXISTS recommended_purchases",
+    # Session 2A — add user_id columns to per-user tables. NULLABLE for now;
+    # query scoping ships in Session 2B/C, NOT NULL constraint lands in 2D.
+    "ALTER TABLE training_sessions ADD COLUMN IF NOT EXISTS user_id INTEGER REFERENCES users(id)",
+    "ALTER TABLE training_log ADD COLUMN IF NOT EXISTS user_id INTEGER REFERENCES users(id)",
+    "ALTER TABLE training_log_sets ADD COLUMN IF NOT EXISTS user_id INTEGER REFERENCES users(id)",
+    "ALTER TABLE current_rx ADD COLUMN IF NOT EXISTS user_id INTEGER REFERENCES users(id)",
+    "ALTER TABLE cardio_log ADD COLUMN IF NOT EXISTS user_id INTEGER REFERENCES users(id)",
+    "ALTER TABLE body_metrics ADD COLUMN IF NOT EXISTS user_id INTEGER REFERENCES users(id)",
+    "ALTER TABLE conditions_log ADD COLUMN IF NOT EXISTS user_id INTEGER REFERENCES users(id)",
+    "ALTER TABLE injury_log ADD COLUMN IF NOT EXISTS user_id INTEGER REFERENCES users(id)",
+    "ALTER TABLE training_plans ADD COLUMN IF NOT EXISTS user_id INTEGER REFERENCES users(id)",
+    "ALTER TABLE plan_items ADD COLUMN IF NOT EXISTS user_id INTEGER REFERENCES users(id)",
+    "ALTER TABLE plan_item_disposition ADD COLUMN IF NOT EXISTS user_id INTEGER REFERENCES users(id)",
+    "ALTER TABLE feedback_log ADD COLUMN IF NOT EXISTS user_id INTEGER REFERENCES users(id)",
+    "ALTER TABLE coaching_preferences ADD COLUMN IF NOT EXISTS user_id INTEGER REFERENCES users(id)",
+    "ALTER TABLE coaching_chat ADD COLUMN IF NOT EXISTS user_id INTEGER REFERENCES users(id)",
+    "ALTER TABLE garmin_auth ADD COLUMN IF NOT EXISTS user_id INTEGER REFERENCES users(id)",
+    "ALTER TABLE garmin_workouts ADD COLUMN IF NOT EXISTS user_id INTEGER REFERENCES users(id)",
+    "ALTER TABLE locale_profiles ADD COLUMN IF NOT EXISTS user_id INTEGER REFERENCES users(id)",
+    "ALTER TABLE wellness_log ADD COLUMN IF NOT EXISTS user_id INTEGER REFERENCES users(id)",
+    # Backfill parent tables — guarded by user-1 existence.
+    "UPDATE training_sessions   SET user_id = 1 WHERE user_id IS NULL AND EXISTS (SELECT 1 FROM users WHERE id = 1)",
+    "UPDATE training_log        SET user_id = 1 WHERE user_id IS NULL AND EXISTS (SELECT 1 FROM users WHERE id = 1)",
+    "UPDATE current_rx          SET user_id = 1 WHERE user_id IS NULL AND EXISTS (SELECT 1 FROM users WHERE id = 1)",
+    "UPDATE cardio_log          SET user_id = 1 WHERE user_id IS NULL AND EXISTS (SELECT 1 FROM users WHERE id = 1)",
+    "UPDATE body_metrics        SET user_id = 1 WHERE user_id IS NULL AND EXISTS (SELECT 1 FROM users WHERE id = 1)",
+    "UPDATE conditions_log      SET user_id = 1 WHERE user_id IS NULL AND EXISTS (SELECT 1 FROM users WHERE id = 1)",
+    "UPDATE injury_log          SET user_id = 1 WHERE user_id IS NULL AND EXISTS (SELECT 1 FROM users WHERE id = 1)",
+    "UPDATE training_plans      SET user_id = 1 WHERE user_id IS NULL AND EXISTS (SELECT 1 FROM users WHERE id = 1)",
+    "UPDATE feedback_log        SET user_id = 1 WHERE user_id IS NULL AND EXISTS (SELECT 1 FROM users WHERE id = 1)",
+    "UPDATE coaching_preferences SET user_id = 1 WHERE user_id IS NULL AND EXISTS (SELECT 1 FROM users WHERE id = 1)",
+    "UPDATE garmin_auth         SET user_id = 1 WHERE user_id IS NULL AND EXISTS (SELECT 1 FROM users WHERE id = 1)",
+    "UPDATE garmin_workouts     SET user_id = 1 WHERE user_id IS NULL AND EXISTS (SELECT 1 FROM users WHERE id = 1)",
+    "UPDATE locale_profiles     SET user_id = 1 WHERE user_id IS NULL AND EXISTS (SELECT 1 FROM users WHERE id = 1)",
+    "UPDATE wellness_log        SET user_id = 1 WHERE user_id IS NULL AND EXISTS (SELECT 1 FROM users WHERE id = 1)",
+    # Denormalized children — pull from parent.
+    "UPDATE plan_items SET user_id = tp.user_id FROM training_plans tp WHERE tp.id = plan_items.plan_id AND plan_items.user_id IS NULL",
+    "UPDATE plan_item_disposition SET user_id = pi.user_id FROM plan_items pi WHERE pi.id = plan_item_disposition.plan_item_id AND plan_item_disposition.user_id IS NULL",
+    "UPDATE coaching_chat SET user_id = tp.user_id FROM training_plans tp WHERE tp.id = coaching_chat.plan_id AND coaching_chat.user_id IS NULL",
+    "UPDATE training_log_sets SET user_id = tl.user_id FROM training_log tl WHERE tl.id = training_log_sets.training_log_id AND training_log_sets.user_id IS NULL",
+    # Composite indexes for the date-filtered hot queries.
+    "CREATE INDEX IF NOT EXISTS idx_tl_user_date ON training_log(user_id, date)",
+    "CREATE INDEX IF NOT EXISTS idx_cl_user_date ON cardio_log(user_id, date)",
+    "CREATE INDEX IF NOT EXISTS idx_bm_user_date ON body_metrics(user_id, date)",
+    "CREATE INDEX IF NOT EXISTS idx_cond_user_date ON conditions_log(user_id, date)",
+    "CREATE INDEX IF NOT EXISTS idx_ts_user_date ON training_sessions(user_id, date)",
+    "CREATE INDEX IF NOT EXISTS idx_wl_user_date ON wellness_log(user_id, date)",
+    "CREATE INDEX IF NOT EXISTS idx_pi_user_date ON plan_items(user_id, item_date)",
 ]
 
 _CLOTHING_SEEDS = [
