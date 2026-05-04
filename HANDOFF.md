@@ -1,7 +1,13 @@
 # AIDSTATION — Session Handoff
 
-**Date:** 2026-05-03
-**Latest session branch:** `claude/review-handoff-ePQXO` (merging into `main` at end of session)
+**Date:** 2026-05-04
+**Latest session branch:** `claude/review-handoff-doc-gNJdO` (merging into `main` at end of session)
+
+**Next session picks up at:** Session 2B — query scoping, hot-spots first.
+The schema is fully ready: every per-user table has a nullable `user_id`
+column backfilled to user 1, indexes are in place, dead tables are gone.
+Now wire `user_id = ?` into the WHERE clauses (5 hot-spots first per the
+roadmap) and add `user_id` to every INSERT.
 
 > The product is branded **AIDSTATION** (per Claude Design's brand handoff
 > v0.1 + v0.2). The repo and the codebase still go by `exercise` / `AidStation`
@@ -555,11 +561,26 @@ publishes `ghcr.io/ahorn885/exercise:latest`. Watchtower polls every
 ## Pending / Open
 
 ### Carry-forward to-dos
-- **TrueNAS `.env`** — needs `ANTHROPIC_API_KEY` and `SECRET_KEY` set, then
-  run `docker compose up -d` from that directory to recreate the container.
-  Watchtower won't reload `.env` on its own. Vercel side is already done.
-- **Neon `DATABASE_URL`** — to be wired into Vercel and TrueNAS env at the
-  start of Session 1.
+- **First-run bootstrap on each deploy.** Session 1 ships a login gate
+  with a first-user bootstrap. After this branch lands on TrueNAS and
+  Vercel, hit `/auth/login` once on each — it'll redirect to
+  `/auth/register` for the bootstrap (no `ALLOW_REGISTRATION` env var
+  needed for the very first user). Set a strong password; this becomes
+  user_id=1 and unlocks the Session 2A backfills on the next cold
+  start. Until that happens the migrations are a no-op (guarded by
+  `EXISTS (SELECT 1 FROM users WHERE id = 1)`).
+- **TrueNAS `.env`** — needs `ANTHROPIC_API_KEY`, `SECRET_KEY`, and a
+  strong rotated `SECRET_KEY` (cookie-signing — required for the
+  Session 1 login session). Run `docker compose up -d` from that
+  directory to recreate the container after editing.
+- **Neon `DATABASE_URL`** — to be wired into Vercel and TrueNAS env
+  before opening registration in Session 2D. Verify migrations run
+  cleanly against a fresh Neon DB at that point (forward-FK caveat in
+  the 2A notes).
+- **`/coaching/api/*` headless endpoints are now login-gated.** If the
+  remote-control flow is in use, either authenticate via session
+  cookie (curl with `--cookie-jar` after a POST to `/auth/login`) or
+  add a token-auth shim. Out of scope for this branch.
 
 ### Standalone ideas (no roadmap dependency)
 - A multi-day wellness chart (7-day trend) would complement the per-day
