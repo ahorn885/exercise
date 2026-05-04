@@ -158,5 +158,13 @@ def _save(db, entry_id):
             "UPDATE plan_items SET status='completed' WHERE id=? AND status='scheduled'",
             (plan_item_id,)
         )
+
+    cardio_notes = (f.get('notes') or '').strip()
+    if cardio_notes:
+        from coaching import capture_and_normalize_feedback
+        ref_id = entry_id or new_id
+        capture_and_normalize_feedback(db, 'workout_note_cardio', cardio_notes,
+                                       source_ref_id=ref_id)
+
     db.commit()
     return new_id

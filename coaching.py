@@ -80,7 +80,18 @@ Targets are provided dynamically per request in the Nutrition Context block, adj
 ---
 
 # Equipment & Terrain
-Available equipment and outdoor terrain options are provided per request based on the current locale. Use them to select appropriate exercises and substitute where needed."""
+Available equipment and outdoor terrain options are provided per request based on the current locale. Use them to select appropriate exercises and substitute where needed.
+
+---
+
+# Athlete Signals (use when present in the request context)
+
+The training context block may include these signals. Use them to inform plan generation and review decisions:
+
+- **deload_flags**: Exercises where `sessions_since_progress >= 5`. Treat as a recommendation to drop weight ~10% on the next prescription for that exercise and reset the plateau.
+- **recent_dispositions**: Audit trail of swap / completion decisions on past plan items (last 30 days). When the athlete consistently swaps a workout type, factor that into upcoming selection. The `reason` field, when present, captures the athlete's words.
+- **wellness_summary**: Aggregated wellness signals (resting HR, stress, body battery, respiration) with short-term trends. Rising resting HR or falling body battery over the recent window is a recovery flag — bias toward easier sessions or rest.
+- **coaching_preferences**: Durable athlete preferences captured from chat / reviews / natural-log / workout notes. Honour permanent preferences strictly. Non-permanent preferences are advisory."""
 
 
 # ── Sport-specific modules (one selected per call) ────────────────────────────
@@ -318,6 +329,7 @@ def get_coaching_context(db, plan_id=None, lookback_days=14, locale='home'):
         '''SELECT cr.exercise, cr.current_sets, cr.current_reps, cr.current_weight,
                   cr.next_sets, cr.next_reps, cr.next_weight,
                   cr.last_performed, cr.last_outcome, cr.consecutive_failures,
+                  cr.sessions_since_progress,
                   ei.skills_ar_carryover, ei.recovery_cost,
                   ei.movement_pattern, ei.where_available, ei.discipline
            FROM current_rx cr
@@ -325,6 +337,12 @@ def get_coaching_context(db, plan_id=None, lookback_days=14, locale='home'):
            ORDER BY cr.last_performed DESC'''
     ).fetchall()
     ctx['current_rx'] = [dict(r) for r in rx]
+    ctx['deload_flags'] = [
+        {'exercise': r['exercise'],
+         'sessions_since_progress': r['sessions_since_progress']}
+        for r in rx
+        if (r['sessions_since_progress'] or 0) >= 5
+    ]
 
     # Raw training and cardio always look back 90 days regardless of tier lookback
     log_cutoff = (date.today() - timedelta(days=90)).isoformat()
@@ -377,6 +395,7 @@ def get_coaching_context(db, plan_id=None, lookback_days=14, locale='home'):
             '''SELECT tp.id, tp.name, tp.sport_focus, tp.start_date, tp.end_date,
                       COUNT(CASE WHEN pi.status = 'completed' THEN 1 END) as completed,
                       COUNT(CASE WHEN pi.status = 'skipped' THEN 1 END) as skipped,
+                      COUNT(CASE WHEN pi.status = 'swapped' THEN 1 END) as swapped,
                       COUNT(pi.id) as total_scheduled
                FROM training_plans tp
                LEFT JOIN plan_items pi ON pi.plan_id = tp.id
@@ -415,6 +434,31 @@ def get_coaching_context(db, plan_id=None, lookback_days=14, locale='home'):
         ctx['coaching_preferences'] = [dict(p) for p in prefs]
     except Exception:
         ctx['coaching_preferences'] = []
+
+    # Recent plan-item dispositions (swap / completed audit trail, last 30 days)
+    disp_cutoff = (date.today() - timedelta(days=30)).isoformat()
+    try:
+        disp = db.execute(
+            '''SELECT pid.disposition, pid.reason, pid.log_type, pid.log_id,
+                      pid.created_at,
+                      pi.id as plan_item_id, pi.item_date as planned_date,
+                      pi.workout_name as planned_workout, pi.sport_type as planned_sport
+               FROM plan_item_disposition pid
+               JOIN plan_items pi ON pi.id = pid.plan_item_id
+               WHERE date(pid.created_at) >= ?
+               ORDER BY pid.created_at DESC
+               LIMIT 50''',
+            (disp_cutoff,)
+        ).fetchall()
+        ctx['recent_dispositions'] = [dict(d) for d in disp]
+    except Exception:
+        ctx['recent_dispositions'] = []
+
+    # Wellness summary — aggregate trends for the lookback window
+    try:
+        ctx['wellness_summary'] = get_wellness_summary(db, lookback_days=lookback_days)
+    except Exception:
+        ctx['wellness_summary'] = {}
 
     return ctx
 
@@ -932,3 +976,175 @@ def chat_with_coach(db, plan_id: int, message: str, history: list, locale: str =
     text = next((b.text for b in response.content if b.type == 'text'), '')
     result = _parse_json_response(text)
     return result, response.usage
+
+
+# ── Feedback capture + preference normalization ───────────────────────────────
+
+_FEEDBACK_EXTRACT_PROMPT = """You extract durable coaching preferences from athlete feedback. Be conservative — most feedback is just performance commentary, not a preference.
+
+Return ONLY a JSON object (no markdown):
+{"preferences": [{"category": "...", "content": "...", "permanent": true}]}
+
+Categories: avoid_exercise, prefer_exercise, nutrition, training, scheduling, equipment, general
+
+Rules:
+- Only extract preferences the athlete clearly wants applied to FUTURE sessions
+- "permanent": true for "never again", "always", "I hate", "I don't want"; false for one-off temporary notes
+- Skip pure performance commentary ("felt strong", "slow today", "knee tight"), session ratings, weather observations, and one-time facts
+- Skip questions, plan-edit requests, and clarifications
+- One feedback may yield zero, one, or several preferences
+- Phrase content as a directive a coach would file ("Burpees excluded at user request")
+- Source context: {source}
+
+Return {"preferences": []} if nothing durable is expressed."""
+
+
+def extract_preferences(raw_text: str, source: str = 'unknown') -> list:
+    """
+    Run a Claude pass to extract durable preferences from free-text feedback.
+    Returns list of {category, content, permanent} dicts. Empty on no signal,
+    parse failure, or empty input. Uses Haiku for cost.
+    """
+    text = (raw_text or '').strip()
+    if len(text) < 8:
+        return []
+    try:
+        client = _get_client()
+    except RuntimeError:
+        return []
+    prompt = _FEEDBACK_EXTRACT_PROMPT.replace('{source}', source) + f'\n\nFeedback:\n"""\n{text}\n"""'
+    try:
+        msg = client.messages.create(
+            model='claude-haiku-4-5-20251001',
+            max_tokens=512,
+            messages=[{'role': 'user', 'content': prompt}],
+        )
+        body = next((b.text for b in msg.content if b.type == 'text'), '{}')
+        parsed = _parse_json_response(body)
+    except Exception:
+        return []
+    prefs = parsed.get('preferences', []) if isinstance(parsed, dict) else []
+    out = []
+    for p in prefs:
+        if not isinstance(p, dict):
+            continue
+        content = (p.get('content') or '').strip()
+        if not content:
+            continue
+        out.append({
+            'category': (p.get('category') or 'general').strip() or 'general',
+            'content': content,
+            'permanent': bool(p.get('permanent', True)),
+        })
+    return out
+
+
+def capture_feedback(db, source: str, raw_content: str, source_ref_id=None) -> int:
+    """
+    Insert raw feedback into feedback_log. Returns the new feedback_log id, or 0
+    if the content is empty. Caller is responsible for db.commit().
+    """
+    text = (raw_content or '').strip()
+    if not text:
+        return 0
+    cur = db.execute(
+        'INSERT INTO feedback_log (source, source_ref_id, raw_content) VALUES (?,?,?)',
+        (source, source_ref_id, text)
+    )
+    return cur.lastrowid
+
+
+def save_preferences_from_feedback(db, fb_id: int, prefs: list) -> int:
+    """
+    Persist normalized preferences with a back-link to their source feedback row.
+    Returns the count actually inserted. Caller is responsible for db.commit().
+    """
+    if not fb_id or not prefs:
+        return 0
+    n = 0
+    for p in prefs:
+        content = (p.get('content') or '').strip()
+        if not content:
+            continue
+        db.execute(
+            'INSERT INTO coaching_preferences (category, content, permanent, source_feedback_id) '
+            'VALUES (?,?,?,?)',
+            (p.get('category', 'general'), content,
+             1 if p.get('permanent', True) else 0, fb_id)
+        )
+        n += 1
+    return n
+
+
+def capture_and_normalize_feedback(db, source: str, raw_content: str,
+                                    source_ref_id=None) -> tuple:
+    """
+    Full pipeline: capture raw text, run extract pass, write preferences with
+    source_feedback_id back-link. Returns (fb_id, prefs_saved). Skips on empty
+    input or extraction failure. Caller is responsible for db.commit().
+    """
+    fb_id = capture_feedback(db, source, raw_content, source_ref_id)
+    if not fb_id:
+        return (0, 0)
+    prefs = extract_preferences(raw_content, source)
+    saved = save_preferences_from_feedback(db, fb_id, prefs)
+    return (fb_id, saved)
+
+
+# ── Wellness summary for coaching context ─────────────────────────────────────
+
+def get_wellness_summary(db, lookback_days: int = 14) -> dict:
+    """
+    Aggregate recent wellness signals from wellness_log into trend-friendly
+    numbers a coach can reason about. Returns {} if no data in window.
+    """
+    cutoff = (date.today() - timedelta(days=lookback_days)).isoformat()
+    try:
+        rows = db.execute(
+            '''SELECT date,
+                      MIN(CASE WHEN heart_rate > 30 THEN heart_rate END) AS resting_hr_proxy,
+                      AVG(CASE WHEN stress_level >= 0 THEN stress_level END) AS avg_stress,
+                      AVG(body_battery) AS avg_body_battery,
+                      MAX(body_battery) AS max_body_battery,
+                      MIN(body_battery) AS min_body_battery,
+                      AVG(CASE WHEN respiration_rate > 0 THEN respiration_rate END) AS avg_respiration,
+                      SUM(steps) AS total_steps
+                 FROM wellness_log
+                WHERE date >= ?
+             GROUP BY date
+             ORDER BY date DESC''',
+            (cutoff,)
+        ).fetchall()
+    except Exception:
+        return {}
+
+    days = [dict(r) for r in rows]
+    if not days:
+        return {}
+
+    def _avg(key):
+        vals = [d[key] for d in days if d.get(key) is not None]
+        return round(sum(vals) / len(vals), 1) if vals else None
+
+    def _trend(key):
+        # Compare latest 3 days vs prior 3 days within the window
+        recent = [d[key] for d in days[:3] if d.get(key) is not None]
+        prior = [d[key] for d in days[3:6] if d.get(key) is not None]
+        if not recent or not prior:
+            return None
+        delta = (sum(recent) / len(recent)) - (sum(prior) / len(prior))
+        return round(delta, 1)
+
+    return {
+        'lookback_days': lookback_days,
+        'days_with_data': len(days),
+        'avg_resting_hr': _avg('resting_hr_proxy'),
+        'resting_hr_trend': _trend('resting_hr_proxy'),
+        'avg_stress': _avg('avg_stress'),
+        'stress_trend': _trend('avg_stress'),
+        'avg_body_battery': _avg('avg_body_battery'),
+        'body_battery_trend': _trend('avg_body_battery'),
+        'avg_respiration': _avg('avg_respiration'),
+        'avg_daily_steps': _avg('total_steps'),
+        'latest_date': days[0]['date'],
+    }

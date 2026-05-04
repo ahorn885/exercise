@@ -143,6 +143,11 @@ def save_session():
             (plan_item_id,)
         )
 
+    if session_notes:
+        from coaching import capture_and_normalize_feedback
+        capture_and_normalize_feedback(db, 'workout_note_strength', session_notes,
+                                       source_ref_id=session_id)
+
     db.commit()
     return jsonify({'ok': True, 'session_id': session_id})
 

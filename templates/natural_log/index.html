@@ -378,7 +378,7 @@ confirmBtn.addEventListener('click', async () => {
     const res = await fetch('/log-natural/save', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({entries: pendingEntries, plan_match: planMatch}),
+      body: JSON.stringify({entries: pendingEntries, plan_match: planMatch, history: history}),
     });
     const data = await res.json();
     if (data.ok) {

@@ -1,7 +1,13 @@
 # AIDSTATION — Session Handoff
 
-**Date:** 2026-05-03
-**Latest session branch:** `claude/review-handoff-ePQXO` (merging into `main` at end of session)
+**Date:** 2026-05-04
+**Latest session branch:** `claude/review-handoff-doc-gNJdO` (merging into `main` at end of session)
+
+**Next session picks up at:** Session 2B — query scoping, hot-spots first.
+The schema is fully ready: every per-user table has a nullable `user_id`
+column backfilled to user 1, indexes are in place, dead tables are gone.
+Now wire `user_id = ?` into the WHERE clauses (5 hot-spots first per the
+roadmap) and add `user_id` to every INSERT.
 
 > The product is branded **AIDSTATION** (per Claude Design's brand handoff
 > v0.1 + v0.2). The repo and the codebase still go by `exercise` / `AidStation`
@@ -122,20 +128,249 @@ static/             — AIDSTATION brand system (style.css, logo/, favicon, og-p
 | `training_modalities` | Activity types with AR carryover ratings |
 | `clothing_options` | Seeded clothing picklist values. **Multi-user roadmap Session 3 makes this per-user; new users start with an empty list.** |
 
-**Tables scheduled for drop in Session 2** (only referenced in `init_db.py`,
-no live consumers):
+**Tables dropped in Session 2A** (no live consumers, only referenced in
+`init_db.py`):
 - `equipment_matrix` — superseded by per-user `locale_equipment`
-- `recommended_purchases` — minimal Andy-specific seed; rebuild parked as
-  shared catalog + per-user wishlist layer
+- `recommended_purchases` — minimal Andy-specific seed; rebuild parked
+  as shared catalog + per-user wishlist layer
 
-**New table arriving in Session 0:**
+**Session 0 schema additions (landed in this branch):**
 - `feedback_log(id, source, source_ref_id, raw_content, captured_at)` —
-  verbatim feedback storage paired with a normalize pass that writes
-  cleaned `coaching_preferences` rows.
+  verbatim feedback storage. Source values currently in use: `chat`,
+  `plan_review`, `natural_log`, `workout_note_strength`,
+  `workout_note_cardio`.
+- `coaching_preferences.source_feedback_id` — FK back to `feedback_log(id)`,
+  populated on every new pref so provenance is preserved.
 
 ---
 
 ## What Was Done This Session
+
+### Workflow trigger cleanup (commit `969c2c6`)
+
+Dropped the long-gone `claude/review-handoff-file-CDi71` branch from
+`.github/workflows/docker-publish.yml`. The Docker image now publishes only
+on pushes to `main`.
+
+### Session 2A — Schema migrations + table drops
+
+The skeleton for per-user scoping. No query sites changed; all `user_id`
+columns are nullable and unread for now, so existing single-user
+behaviour is preserved. Sessions 2B/2C wire the WHEREs and INSERTs;
+2D adds NOT NULL after backfill is provably complete.
+
+**Tables that gained `user_id INTEGER REFERENCES users(id)`:**
+
+*Parent-scoped (13):* `training_sessions`, `training_log`, `current_rx`,
+`cardio_log`, `body_metrics`, `conditions_log`, `injury_log`,
+`training_plans`, `feedback_log`, `coaching_preferences`, `garmin_auth`,
+`garmin_workouts`, `locale_profiles`, `wellness_log`.
+
+*Denormalized children (4):* `training_log_sets` (parent: `training_log`),
+`plan_items` (parent: `training_plans`), `plan_item_disposition`
+(parent: `plan_items`), `coaching_chat` (parent: `training_plans`).
+
+*Untouched (shared catalog or parent-JOIN scoped):*
+`exercise_inventory`, `training_modalities`, `training_methods`,
+`equipment_items`, `exercise_equipment`, `clothing_options`,
+`plan_reviews`, `plan_travel`, `locale_equipment`,
+`injury_exercise_modifications`.
+
+**Tables dropped** (no live consumers, only referenced in `init_db.py`):
+`equipment_matrix`, `recommended_purchases`. Removed from both
+SQLITE_SCHEMA and PG_SCHEMA, plus `DROP TABLE IF EXISTS` migrations to
+reclaim them on existing databases.
+
+**Backfill strategy.** All UPDATEs are guarded so the migration is safe
+to run before user 1 has registered (e.g., when 2A deploys ahead of the
+first-run bootstrap):
+- Parents: `UPDATE x SET user_id = 1 WHERE user_id IS NULL AND EXISTS
+  (SELECT 1 FROM users WHERE id = 1)` — no-op pre-bootstrap, fires
+  cleanly on the next cold start after registration.
+- Denormalized children: pull from parent
+  (`UPDATE child SET user_id = (SELECT user_id FROM parent ...)`).
+  Safe before the parent is backfilled (sets NULL = NULL, harmless).
+  Postgres uses the `UPDATE ... FROM ... WHERE` form for the same
+  result.
+
+**Composite indexes added** for the date-filtered hot paths:
+`idx_tl_user_date`, `idx_cl_user_date`, `idx_bm_user_date`,
+`idx_cond_user_date`, `idx_ts_user_date`, `idx_wl_user_date`,
+`idx_pi_user_date`.
+
+**Schema reorder.** `users` is now the FIRST table created in both
+schemas so subsequent `REFERENCES users(id)` clauses resolve on fresh
+installs.
+
+**Verification covered.**
+1. Fresh SQLite install — schema applies, every per-user table has
+   `user_id`, dead tables absent, composite indexes present.
+2. Simulated pre-2A upgrade — migrations on a manually-built old-shape
+   DB drop the dead tables and backfill all 13 parents + 4 denormalized
+   children to `user_id=1` from sample rows that started with NULL.
+3. Pre-bootstrap upgrade — when no users exist yet, parent backfills
+   are no-ops; running migrations again after user 1 registers
+   completes the backfill cleanly.
+4. App boot — all routes (`/`, `/training`, `/cardio`, `/body`, `/rx`,
+   `/plans`) still return 200 after the migrations. Single-user flows
+   continue to work because queries are still unscoped.
+
+**Known follow-ups for 2B/2C/2D:**
+- 2B: scope the 5 hot-spots (`dashboard.py:84`, `cardio.py:30`,
+  `training.py:27`, `body.py:13`, `coaching.py:358`) plus
+  `garmin_connect.py` singleton SELECT, and add `user_id` to every
+  INSERT.
+- 2C: systematic per-route scoping pass + `coaching.py` context
+  gathering, `rx_engine.py`, `plan_match.py`.
+- 2D: Postgres `ALTER COLUMN ... SET NOT NULL` after backfill;
+  end-to-end second-user verification; open `ALLOW_REGISTRATION`.
+
+**UNIQUE constraint debt** to handle alongside 2D (or earlier if
+Andy's tooling needs it before then):
+- `current_rx.exercise UNIQUE` should become `UNIQUE(user_id, exercise)`
+- `body_metrics.date UNIQUE` should become `UNIQUE(user_id, date)`
+- `wellness_log.timestamp_ms UNIQUE` should become
+  `UNIQUE(user_id, timestamp_ms)`
+- `clothing_options UNIQUE(category, value)` becomes per-user via
+  Session 3's `clothing_options` redesign
+
+**Fresh-install Postgres caveat.** PG_SCHEMA contains pre-existing
+forward FK references (e.g., `training_sessions.plan_item_id REFERENCES
+plan_items(id)` is declared before `plan_items` is created). This was
+present before Session 2A and isn't something we introduced; verify a
+fresh Neon install applies cleanly during 2D verification, ahead of
+opening registration. If PG rejects it, the fix is reordering CREATEs
+or dropping the inline FK in favour of an `ALTER TABLE ADD CONSTRAINT`
+migration after both tables exist.
+
+### Session 1 — auth foundation + lock the app
+
+The app is now login-gated. Single-user assumption still holds — domain
+queries are unscoped, registration is closed except for the first-user
+bootstrap, and only Andy will have an account until Session 2 ships
+per-user scoping.
+
+**New table.** `users(id, username, email, password_hash, display_name,
+created_at, last_login)` — both SQLITE_SCHEMA / PG_SCHEMA and both
+migration lists.
+
+**`requirements.txt`** gains `bcrypt>=4.1`.
+
+**`routes/auth.py`** (new blueprint, prefix `/auth`):
+- `/auth/login` GET/POST — bcrypt verify, sets `session['user_id']`,
+  updates `last_login`, honours `?next=` (rejects non-relative URLs)
+- `/auth/logout` GET/POST — clears session
+- `/auth/register` GET/POST — gated by env var `ALLOW_REGISTRATION` in
+  (`1`, `true`, `yes`, `on`); always open when zero users exist
+  (first-run bootstrap); validates uniqueness, password length (≥ 8),
+  password match
+- Helpers: `current_user_id()`, `current_user(db)` for use in routes
+
+**`app.py`**:
+- Registers `auth_bp`
+- `@app.before_request` gate: redirects unauthenticated GETs to
+  `/auth/login?next=<path>`, returns 401 on unauth POST. Allowlist:
+  `auth.login`, `auth.logout`, `auth.register`, anything ending in
+  `.static`, and any path under `/static/`.
+- `@app.context_processor` injects `current_user` into all templates
+  so the nav can show the signed-in user.
+
+**Templates:**
+- `templates/auth/_shell.html` — minimal brand-only layout (no nav)
+- `templates/auth/login.html`
+- `templates/auth/register.html` — switches header to "First-run setup"
+  when `is_bootstrap=True`
+
+**`templates/base.html`** gets a right-aligned dropdown showing
+`current_user.display_name` with a sign-out form button.
+
+**Verification covered.** Test client confirmed: anonymous → login,
+no-users → bootstrap register, register POST creates user and lands on
+dashboard, logout clears session, second register without
+`ALLOW_REGISTRATION` returns 403, bad-password renders form with error,
+good-password redirects to `?next=` (with off-site URLs rejected),
+`/static/*` reachable while logged out.
+
+**Known caveats / follow-ups:**
+- The `/coaching/api/*` headless endpoints are now also gated. They'll
+  need either session-cookie auth (curl with `--cookie-jar` after a
+  POST to `/auth/login`) or a token-auth shim. Out of scope for
+  Session 1 — flagged as a follow-up.
+- `garmin_connect.py` has a singleton `SELECT FROM garmin_auth LIMIT 1`
+  pattern that's fine while there's only one user, but will need
+  `WHERE user_id = ?` in Session 2.
+- `/tmp/garth_session` file caching is process-shared; collision risk
+  is accepted until the parked Garmin per-user OAuth work unblocks.
+
+### Session 0 — coaching capture + context awareness
+
+The full coaching memory + context awareness layer landed in this branch.
+
+**New table.** `feedback_log(id, source, source_ref_id, raw_content,
+captured_at)` plus `coaching_preferences.source_feedback_id` FK back to it.
+Schema added to both `SQLITE_SCHEMA`/`PG_SCHEMA` (with `feedback_log` placed
+ahead of `coaching_preferences` so the FK declaration resolves on fresh
+Postgres installs) and to both migration lists for upgrades.
+
+**New helpers in `coaching.py`** (around line 940 onward):
+- `extract_preferences(raw_text, source) → list[{category, content, permanent}]`
+  — Haiku-backed normalizer with a deliberately conservative prompt that
+  skips performance commentary, weather notes, and one-off facts.
+- `capture_feedback(db, source, raw_content, source_ref_id=None) → fb_id`
+  — raw insert into `feedback_log`. No commit.
+- `save_preferences_from_feedback(db, fb_id, prefs) → count`
+  — writes prefs with `source_feedback_id` back-link. No commit.
+- `capture_and_normalize_feedback(db, source, raw_content, source_ref_id=None)
+  → (fb_id, saved_count)` — full pipeline.
+- `get_wellness_summary(db, lookback_days=14) → dict` — daily aggregates
+  from `wellness_log` (resting HR, stress, body battery, respiration,
+  steps) plus 3-day vs prior-3-day deltas. Returns `{}` when no data.
+
+**Hook sites** (all four feedback surfaces now flow through the pipeline):
+1. `routes/coaching.py:chat` — user message captured into `feedback_log`,
+   then chat-extracted prefs are written via
+   `save_preferences_from_feedback` so each carries provenance back to the
+   originating message. The chat call still does the smart extraction (it
+   has full conversation context); only the storage path changed.
+2. `routes/coaching.py:review` — review notes captured + normalized
+   *before* the AI review call, so any extracted prefs are visible in the
+   context the reviewer sees.
+3. `routes/natural_log.py:save` — concatenated user-role messages from the
+   parse session captured + normalized after entries are written. Client
+   payload (`templates/natural_log/index.html`) was extended to include
+   `history` on the save POST.
+4. `routes/training.py:save_session` (session-level notes only) and
+   `routes/cardio.py:_save` — workout notes captured under
+   `workout_note_strength` / `workout_note_cardio` source values with
+   `source_ref_id` pointing at the session/cardio_log row.
+
+**`get_coaching_context()` extensions** (`coaching.py:272`):
+- `current_rx` SELECT now exposes `sessions_since_progress`
+- `deload_flags`: list of `{exercise, sessions_since_progress}` for any
+  exercise at or above the threshold (≥ 5)
+- `recent_plans` aggregate now also counts `swapped` plan items
+- `recent_dispositions`: last-30-days `plan_item_disposition` rows
+  joined to `plan_items` (planned date / workout / sport, plus the
+  athlete's `reason` text)
+- `wellness_summary`: read via `get_wellness_summary(db, lookback_days)`
+
+**`_BASE_PROMPT` addition.** New "Athlete Signals" section at the bottom
+of the base prompt tells Claude how to use `deload_flags`,
+`recent_dispositions`, `wellness_summary`, and `coaching_preferences`.
+Lives inside the prompt-cached system block so it costs nothing on warm
+calls.
+
+**Source values used.** `chat`, `plan_review`, `natural_log`,
+`workout_note_strength`, `workout_note_cardio`. Session 4's coach-memory
+UI will surface these as the provenance label on each pref row.
+
+**Verification covered.** Schema applies cleanly to a fresh SQLite DB
+(`feedback_log` and `coaching_preferences.source_feedback_id` present);
+helpers round-trip with provenance; `get_coaching_context` returns the
+new keys; app boots with all 13 blueprints registered. End-to-end Claude
+extraction paths weren't exercised in this environment — there's no
+`ANTHROPIC_API_KEY` available — but `extract_preferences` is defensive
+about that (returns `[]` and the route flows continue normally).
 
 ### Plan-match window widened to -3 / +2 + dedupe (commit `b5ee4d2`)
 
@@ -326,14 +561,26 @@ publishes `ghcr.io/ahorn885/exercise:latest`. Watchtower polls every
 ## Pending / Open
 
 ### Carry-forward to-dos
-- **TrueNAS `.env`** — needs `ANTHROPIC_API_KEY` and `SECRET_KEY` set, then
-  run `docker compose up -d` from that directory to recreate the container.
-  Watchtower won't reload `.env` on its own. Vercel side is already done.
-- **Stale workflow trigger** — `.github/workflows/docker-publish.yml` still
-  triggers on a long-gone branch (`claude/review-handoff-file-CDi71`).
-  Should be `branches: [main]` only. One-line cleanup, ship anytime.
-- **Neon `DATABASE_URL`** — to be wired into Vercel and TrueNAS env at the
-  start of Session 1.
+- **First-run bootstrap on each deploy.** Session 1 ships a login gate
+  with a first-user bootstrap. After this branch lands on TrueNAS and
+  Vercel, hit `/auth/login` once on each — it'll redirect to
+  `/auth/register` for the bootstrap (no `ALLOW_REGISTRATION` env var
+  needed for the very first user). Set a strong password; this becomes
+  user_id=1 and unlocks the Session 2A backfills on the next cold
+  start. Until that happens the migrations are a no-op (guarded by
+  `EXISTS (SELECT 1 FROM users WHERE id = 1)`).
+- **TrueNAS `.env`** — needs `ANTHROPIC_API_KEY`, `SECRET_KEY`, and a
+  strong rotated `SECRET_KEY` (cookie-signing — required for the
+  Session 1 login session). Run `docker compose up -d` from that
+  directory to recreate the container after editing.
+- **Neon `DATABASE_URL`** — to be wired into Vercel and TrueNAS env
+  before opening registration in Session 2D. Verify migrations run
+  cleanly against a fresh Neon DB at that point (forward-FK caveat in
+  the 2A notes).
+- **`/coaching/api/*` headless endpoints are now login-gated.** If the
+  remote-control flow is in use, either authenticate via session
+  cookie (curl with `--cookie-jar` after a POST to `/auth/login`) or
+  add a token-auth shim. Out of scope for this branch.
 
 ### Standalone ideas (no roadmap dependency)
 - A multi-day wellness chart (7-day trend) would complement the per-day
@@ -471,39 +718,65 @@ confirm the prompt context includes recent dispositions, deload flags,
 and wellness summary. Existing flows (chat, generate, review) keep
 working.
 
-### Session 1 — Auth foundation + lock the app
+### Session 1 — Auth foundation + lock the app  ✅ shipped
 
-**Goal:** add auth + login gate. App still has unscoped queries, but
-registration is closed and only Andy has an account, so the single-user
-assumption holds.
+Landed in `claude/review-handoff-doc-gNJdO`. See "What Was Done This
+Session — Session 1" for the full delta. Headlines:
+- `users` table on both schemas + migrations; `bcrypt` dep added
+- `routes/auth.py` blueprint with login / logout / bootstrap-aware
+  register
+- Global `before_request` login gate in `app.py`; allowlist `/auth/*`
+  and static
+- Right-aligned signed-in user dropdown in `templates/base.html`
 
-**Deliverables:**
-- `users(id, username, email, password_hash, display_name, created_at,
-  last_login)` — both SQLite + Postgres migrations
-- `routes/auth.py` blueprint: `/auth/login`, `/auth/logout`,
-  `/auth/register` (registration gated by env-var `ALLOW_REGISTRATION`
-  until Session 2 ships)
-- `templates/auth/login.html`, `templates/auth/register.html`
-- `current_user_id()` helper, `@login_required` decorator (or
-  `before_request` hook checking `flask_session['user_id']`)
-- One-time bootstrap: when no users exist, prompt to create the first one
-  (Andy) on first request
-- Apply login gate globally in `app.py` (allowlist `/auth/*` and static)
-- Add `bcrypt` to `requirements.txt`
-
-**Out of scope:** user_id columns on domain tables, query scoping,
-profile UI.
-
-**Verification:** Andy can register/log in; logged-out requests redirect
-to `/auth/login`; existing routes still render his data when logged in;
-register without `ALLOW_REGISTRATION=1` returns 403.
+Carry-forward from this session:
+- `/coaching/api/*` are gated — token-auth shim is a follow-up
+- Open `ALLOW_REGISTRATION=1` only after Session 2 lands per-user
+  scoping (the first additional user would otherwise see Andy's data)
 
 ### Session 2 — Per-user scoping + drop dead tables (the big one)
 
-**Goal:** add `user_id` to every per-user table, backfill existing rows
-to user_id=1, update every query to scope by current user. Drop
-`equipment_matrix` and `recommended_purchases`. Open registration after
-this lands.
+Split into 4 sub-sessions for tractability. **2A shipped** in this
+branch (see "What Was Done This Session"); 2B/2C/2D remain.
+
+#### Session 2A ✅ shipped — schema migrations + table drops
+
+- All `user_id` columns added (NULLABLE for now); backfilled to user 1
+- `equipment_matrix` and `recommended_purchases` dropped
+- Composite `(user_id, date)` indexes added
+- No query sites changed — single-user flows continue unmodified
+
+#### Session 2B — query scoping, hot-spots first
+
+- HANDOFF top-5 hot-spots: `dashboard.py:84`, `cardio.py:30`,
+  `training.py:27`, `body.py:13`, `coaching.py:358`
+- `garmin_connect.py` singleton `SELECT FROM garmin_auth LIMIT 1` →
+  `WHERE user_id = ?`
+- Add `user_id` to every INSERT so new rows are scoped from this point
+  forward (denormalized children get user_id from `current_user_id()`
+  too, not derived from parent)
+- Settle the helper import path: `from routes.auth import current_user_id`
+
+#### Session 2C — systematic per-route scoping
+
+The remaining ~150 query sites across 18 files: `routes/*.py`
+(13 files), `coaching.py`, `rx_engine.py`, `plan_match.py`,
+`garmin_connect.py`. Every WHERE prefixes `user_id = ?`; multi-table
+joins scope the parent only (children flow via FK unless they were
+denormalized in 2A — those scope directly).
+
+#### Session 2D — NOT NULL constraints + verification
+
+- Postgres: `ALTER COLUMN user_id SET NOT NULL` on each table (run
+  after all backfills are confirmed clean and all routes write user_id
+  on INSERT)
+- Composite UNIQUE constraints (debt list in 2A above)
+- Create test user_id=2; verify empty dashboard/training/cardio/body/
+  plans/coaching/Garmin/coach memory; log back in as Andy, confirm
+  data intact
+- Run schema migrations against a fresh Neon Postgres DB to verify
+  forward-FK references (the caveat called out in 2A) — fix if needed
+- Open `ALLOW_REGISTRATION`
 
 **Tables gaining `user_id INTEGER NOT NULL REFERENCES users(id)`:**
 `current_rx`, `training_sessions`, `training_log`, `cardio_log`,

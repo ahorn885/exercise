@@ -1,7 +1,7 @@
 import os
 import re as _re
-from flask import Flask
-from database import init_app
+from flask import Flask, request, redirect, url_for, session, g
+from database import init_app, get_db
 
 app = Flask(__name__, instance_relative_config=True)
 app.config['DATABASE'] = os.path.join(app.instance_path, 'training.db')
@@ -58,6 +58,7 @@ from routes.garmin import bp as garmin_bp
 from routes.plans import bp as plans_bp
 from routes.coaching import bp as coaching_bp
 from routes.natural_log import bp as natural_log_bp
+from routes.auth import bp as auth_bp, current_user
 
 app.register_blueprint(dashboard_bp)
 app.register_blueprint(training_bp)
@@ -72,6 +73,47 @@ app.register_blueprint(garmin_bp)
 app.register_blueprint(plans_bp)
 app.register_blueprint(coaching_bp)
 app.register_blueprint(natural_log_bp)
+app.register_blueprint(auth_bp)
+
+
+# ── Auth gate ────────────────────────────────────────────────────────────────
+# Endpoints that don't require a logged-in user. Anything else redirects to
+# /auth/login when the user has no session. Per-user query scoping ships in
+# Session 2 of the multi-user retrofit.
+_AUTH_EXEMPT_ENDPOINTS = {
+    'static',
+    'auth.login',
+    'auth.logout',
+    'auth.register',
+}
+
+
+@app.before_request
+def _require_login():
+    endpoint = request.endpoint or ''
+    if endpoint in _AUTH_EXEMPT_ENDPOINTS:
+        return None
+    if session.get('user_id'):
+        return None
+    # Static files served from blueprints also include the dot-form 'X.static'.
+    if endpoint.endswith('.static'):
+        return None
+    if request.path.startswith('/static/'):
+        return None
+    if request.method == 'GET':
+        return redirect(url_for('auth.login', next=request.path))
+    return ('Authentication required.', 401)
+
+
+@app.context_processor
+def _inject_current_user():
+    """Expose the logged-in user to all templates as `current_user`."""
+    if not session.get('user_id'):
+        return {'current_user': None}
+    try:
+        return {'current_user': current_user(get_db())}
+    except Exception:
+        return {'current_user': None}
 
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0', port=5000)
