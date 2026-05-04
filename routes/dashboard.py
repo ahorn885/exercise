@@ -5,6 +5,7 @@ import requests
 from flask import Blueprint, render_template
 from database import get_db
 from datetime import date, timedelta
+from routes.auth import current_user_id
 
 bp = Blueprint('dashboard', __name__)
 
@@ -81,7 +82,9 @@ def index():
         (week_ago, today)).fetchall()
 
     recent_training = db.execute(
-        'SELECT date, exercise, actual_sets, actual_reps, actual_weight, outcome FROM training_log ORDER BY date DESC, id DESC LIMIT 10'
+        'SELECT date, exercise, actual_sets, actual_reps, actual_weight, outcome '
+        'FROM training_log WHERE user_id = ? ORDER BY date DESC, id DESC LIMIT 10',
+        (current_user_id(),)
     ).fetchall()
 
     recent_cardio = db.execute(

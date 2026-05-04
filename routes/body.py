@@ -1,6 +1,7 @@
 import os
 from flask import Blueprint, render_template, request, redirect, url_for, flash
 from database import get_db
+from routes.auth import current_user_id
 
 _IS_PG = bool(os.environ.get('DATABASE_URL'))
 
@@ -10,7 +11,10 @@ bp = Blueprint('body', __name__)
 @bp.route('/body')
 def list_entries():
     db = get_db()
-    entries = db.execute('SELECT * FROM body_metrics ORDER BY date DESC').fetchall()
+    entries = db.execute(
+        'SELECT * FROM body_metrics WHERE user_id = ? ORDER BY date DESC',
+        (current_user_id(),)
+    ).fetchall()
     return render_template('body/list.html', entries=entries)
 
 

@@ -13,6 +13,8 @@ from datetime import date, timedelta
 import anthropic
 import requests
 
+from routes.auth import current_user_id
+
 # ── Base system prompt (generic, always included) ─────────────────────────────
 
 _BASE_PROMPT = """You are an expert endurance sports coach. You have deep knowledge of the athlete's training framework, current situation, and preferences. Apply this knowledge precisely when generating or adjusting plans.
@@ -374,7 +376,8 @@ def get_coaching_context(db, plan_id=None, lookback_days=14, locale='home'):
     # Body metrics — last 4 entries for trend visibility
     metrics_rows = db.execute(
         'SELECT date, weight_lbs, body_fat_pct, vo2_max, resting_hr FROM body_metrics '
-        'ORDER BY date DESC LIMIT 4'
+        'WHERE user_id = ? ORDER BY date DESC LIMIT 4',
+        (current_user_id(),)
     ).fetchall()
     ctx['body_metrics'] = [dict(m) for m in metrics_rows]
 
