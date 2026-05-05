@@ -1,43 +1,221 @@
 # AIDSTATION — Session Handoff
 
 **Date:** 2026-05-05
-**Last commit on `main`:** the consolidated multi-user retrofit + UX
-batch (this one). Squashed from a series of intermediate commits;
-`git log` is a single Session 2C → 4 + standalones entry.
-**Deploy state:** TrueNAS (Docker) + Vercel last pulled at the 2B
-merge. Watchtower (300s poll) and Vercel will pick up this batch on
-the next cycle.
+**Last commit on `main`:** `32e8c38` — the consolidated multi-user
+retrofit + UX batch. Squashed from 14 intermediate commits; per-piece
+detail lives in that commit's body. The pre-squash branch was
+`claude/review-handoff-doc-VyeBE` (deleted locally; remote pointer
+still at `f313e8f` and unreferenced — the harness rejected the remote
+delete).
+
+**Deploy state:**
+- ✅ GitHub Actions (`docker-publish.yml`) ran green on `32e8c38`.
+- ✅ Vercel deploy of `32e8c38` is live (still on ephemeral `/tmp`
+  SQLite until operator step 1 wires Neon).
+- ⚠️ TrueNAS — Watchtower polls every 300s but operator hasn't
+  confirmed the pull. Likely picked up by now; verify in operator
+  step 0 below.
 
 The multi-user retrofit roadmap is **complete on the code side**.
 Andy and a second user can fully isolate their data — training logs,
 plans, prescriptions, body metrics, conditions / clothing, locales,
 profiles, coach preferences. The remaining work is operator-side env
-plumbing (3 steps) plus a thin standalone backlog.
+plumbing plus a thin standalone backlog.
 
 ---
 
-## Pending operator action — gates opening multi-user
+## Next session — operator steps walkthrough
 
 These are the only things between "code ready" and "live multi-user".
+Read this section start to finish before starting; the order matters.
 
-1. **Wire `DATABASE_URL` in Vercel** to a fresh Neon Postgres DB. The
-   first request triggers `init_postgres()` which builds the schema,
-   runs migrations, and seeds the catalog tables. Verify a clean
-   apply — the **forward-FK caveat** from 2A is unchanged:
-   `training_sessions.plan_item_id REFERENCES plan_items(id)` is
-   declared in `PG_SCHEMA` *before* `plan_items` is created. If Neon
-   rejects the schema on this, the fix is to reorder CREATE TABLEs in
-   `PG_SCHEMA` or move the FK to an `ALTER TABLE ADD CONSTRAINT`
-   migration line.
-2. **Set `ALLOW_REGISTRATION=1`** in Vercel + TrueNAS env vars. Until
-   this flips, only the bootstrap user (Andy) can register. After,
-   any visitor can register.
-3. **Browser-test a second account end-to-end.** Register, log
-   different data than Andy, confirm none of his data is visible.
-   `/tmp/verify_2c.py` covers this programmatically; the in-browser
-   pass is your final smoke test.
+### Step 0 — confirm TrueNAS picked up the new image
 
-After step 3, registration can stay open in production.
+SSH into TrueNAS, then:
+
+```bash
+# Check the running container's image hash
+docker inspect $(docker ps -q --filter name=web) --format '{{.Image}}'
+docker images ghcr.io/ahorn885/exercise:latest --format '{{.ID}} {{.CreatedAt}}'
+```
+
+The two hashes should match, and the `CreatedAt` timestamp should be
+**after 2026-05-05 ~21:00 UTC** (when GitHub Actions pushed the image
+for `32e8c38`). If older, force a pull:
+
+```bash
+cd /mnt/storage/exercise
+docker compose pull && docker compose up -d
+```
+
+After it's up, hit the dashboard in a browser and confirm:
+- The page loads (no 500)
+- You're still logged in as Andy (session cookie survives)
+- A workout / plan / Rx page renders normally — this confirms the
+  Session 2D rebuild migrations ran cleanly against Andy's existing
+  SQLite data
+
+If anything looks off, the rebuild migration logs are in the
+container output: `docker compose logs web | tail -200`. Look for
+`SQLite database initialized at /mnt/...` as the success marker.
+
+### Step 1 — wire `DATABASE_URL` to Neon Postgres in Vercel
+
+a. Create a fresh Neon Postgres database (https://neon.tech). The
+   free tier is plenty. Copy the pooled connection string — it
+   should look like:
+
+   ```
+   postgresql://user:pass@ep-xxx.us-east-1.aws.neon.tech/neondb?sslmode=require
+   ```
+
+b. In Vercel → Project Settings → Environment Variables, add
+   `DATABASE_URL` set to that connection string. Production scope
+   only is fine (preview/dev can stay on SQLite).
+
+c. **Vercel does NOT auto-redeploy on env-var changes.** Trigger a
+   redeploy: either push an empty commit (`git commit --allow-empty
+   -m "trigger redeploy" && git push`) or hit "Redeploy" on the
+   latest deployment in the Vercel dashboard.
+
+d. After redeploy lands, hit the Vercel URL. The first request
+   triggers `init_postgres()` which:
+   - Creates every table per `PG_SCHEMA`
+   - Runs all migrations (most no-op on a fresh DB)
+   - Seeds catalog tables (exercise_inventory, equipment_items,
+     exercise_equipment, training_modalities)
+   - Skips `current_rx` seeding because no user 1 exists yet — that
+     happens in step 2 when you bootstrap an account
+
+e. **Forward-FK caveat to watch for.** `PG_SCHEMA` declares
+   `training_sessions.plan_item_id REFERENCES plan_items(id)`
+   *before* `plan_items` itself is created. If Neon rejects the
+   schema on this, you'll see an error in the Vercel function logs
+   like `relation "plan_items" does not exist`. Two fixes:
+
+   - **Reorder** the `CREATE TABLE` blocks in `init_db.py:PG_SCHEMA`
+     so `plan_items` is created before `training_sessions` (search
+     for `CREATE TABLE IF NOT EXISTS plan_items` and move it up).
+   - **Or** move the FK to a deferred ALTER. Inside `PG_SCHEMA`,
+     drop the `REFERENCES plan_items(id)` clause from the
+     `training_sessions.plan_item_id` column declaration; add a
+     migration to `_PG_MIGRATIONS`:
+
+     ```python
+     "ALTER TABLE training_sessions ADD CONSTRAINT IF NOT EXISTS "
+     "training_sessions_plan_item_id_fkey "
+     "FOREIGN KEY (plan_item_id) REFERENCES plan_items(id)",
+     ```
+
+   The reorder is simpler. Either fix needs a fresh Neon DB to test
+   against — drop and recreate the Neon DB to retry from clean.
+
+### Step 2 — bootstrap Andy on the new Neon-backed Vercel
+
+a. Hit `https://<your-vercel-url>/auth/register` directly (or just
+   visit the root and you'll be redirected since no users exist).
+b. Register Andy. Bootstrap path doesn't require
+   `ALLOW_REGISTRATION` — first user always works.
+c. After registration, you should immediately see Andy's `/rx`
+   populated with all 107 seeded exercises. This is
+   `_seed_current_rx_for_user` running inline from
+   `auth.register` (Session 2D feature).
+
+### Step 3 — open registration
+
+Set `ALLOW_REGISTRATION=1` on **both** Vercel and TrueNAS:
+
+- **Vercel:** Project Settings → Environment Variables. Then
+  redeploy (env-var changes don't auto-trigger).
+- **TrueNAS:** edit `/mnt/storage/exercise/.env`, add a line
+  `ALLOW_REGISTRATION=1`, then `cd /mnt/storage/exercise && docker
+  compose up -d` to recreate the container with the new env baked
+  in. (Watchtower image pulls do NOT reload `env_file`.)
+
+### Step 4 — second-user smoke test
+
+Register a second account from a private browser window or a
+different machine. Pick a username unlike "andy" (e.g. "test").
+Then walk through:
+
+- Dashboard, /training, /cardio, /body, /rx, /plans/, /injuries,
+  /conditions, /garmin/, /log-natural/, /locales, /profile/ — all
+  should be empty / placeholder for the new user.
+- Log a strength session against `Back Squat` (a seeded exercise).
+  Confirm it goes into the new user's `current_rx`, not Andy's. The
+  Session 2D composite UNIQUE makes this work.
+- Save a `home` locale with some equipment. Andy's home setup
+  should be untouched.
+- Add a clothing value via `/conditions/new` — confirm Andy's
+  conditions form doesn't show it.
+- Generate a small plan via `/coaching/generate` (or import a JSON
+  via `/plans/import`). Confirm Andy doesn't see it on his
+  `/plans/`.
+
+If all pass, log out, log in as Andy, do a final pass to confirm
+his data is intact and he doesn't see the test user's stuff.
+
+### Step 5 — clean up
+
+- Delete the test user via direct DB query if you want a clean
+  state, or leave it as a sanity safety net. (No UI for user
+  deletion — would require a Session 5+ admin page.)
+- If you opened registration just for the smoke test and want to
+  re-close it, set `ALLOW_REGISTRATION=0` (or just unset). Existing
+  users can still log in.
+
+After step 4 passes, multi-user is live in production.
+
+---
+
+## Carry-forward issues to watch during operator steps
+
+Real chance of hitting these; keep an eye out:
+
+1. **`cur.lastrowid` vs Postgres `RETURNING id`.** SQLite's
+   `cur.lastrowid` works directly, but Postgres returns `None`
+   unless the INSERT used `RETURNING id`. Most existing INSERTs
+   (including `routes/auth.py:register`) don't have it. The
+   `database.py:_CompatCursor` PG wrapper does a `fetchone()` against
+   the cursor — quietly returns `None` for the new id. **This may
+   silently break parts of the app on Neon.** Symptoms: registration
+   redirects to `/dashboard` but the session has `user_id=None`, or
+   plan-item INSERT logs new rows but the redirect to
+   `/plans/<None>` 404s. Fix path: search for `cur.lastrowid` in
+   `routes/` + `init_db.py` and add `RETURNING id` to the SQL +
+   `cur.fetchone()[0]` to read it back. The `database.py` wrapper
+   already supports this — it just isn't used everywhere.
+
+2. **The forward-FK caveat in step 1e.** Detailed there.
+
+3. **`/coaching/api/*` endpoints are login-gated.** If you have
+   any external tooling hitting them (Claude Desktop, scripts),
+   they'll need session-cookie auth (curl with `--cookie-jar`
+   after a `/auth/login` POST) or a token-auth shim. Out of
+   scope; flagged.
+
+---
+
+## After the operator steps — what's next
+
+Once multi-user is live, the remaining backlog (in priority order):
+
+1. **`RETURNING id` sweep** if step 1 surfaces issues. Even if it
+   doesn't, worth doing pre-emptively for new INSERTs. See
+   carry-forward note 1 above.
+2. **Multi-day wellness chart** on `/garmin/wellness` — 7-day
+   trend complementing the per-day view. Smallest standalone
+   left, ~2 hours.
+3. **Recommended-purchases rebuild** — needs catalog content
+   design + per-user `user_purchase_recommendations` layer.
+   Worth its own session; content design is the heaviest part.
+4. **`coaching.py:capture_and_normalize_feedback` payload size**
+   — the Haiku call sends raw_content; if Andy's chat history grows
+   long, prompt cost rises linearly. Worth profiling once there's
+   real second-user data.
+
+The full backlog (parked items, future ideas) is in the Backlog
+section near the bottom.
 
 ---
 
