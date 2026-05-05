@@ -56,8 +56,13 @@
         <li class="nav-item"><a class="nav-link" href="{{ url_for('body.list_entries') }}">Body</a></li>
         <li class="nav-item"><a class="nav-link" href="{{ url_for('conditions.list_entries') }}">Conditions</a></li>
         <li class="nav-item"><a class="nav-link" href="{{ url_for('injuries.list_entries') }}">Injuries</a></li>
-        <li class="nav-item"><a class="nav-link" href="{{ url_for('locales.list_profiles') }}">Locales</a></li>
-        <li class="nav-item"><a class="nav-link" href="{{ url_for('purchases.list_purchases') }}">Purchases</a></li>
+        <li class="nav-item dropdown">
+          <a class="nav-link dropdown-toggle" href="#" data-bs-toggle="dropdown">Gear</a>
+          <ul class="dropdown-menu">
+            <li><a class="dropdown-item" href="{{ url_for('locales.list_profiles') }}">Locale profiles</a></li>
+            <li><a class="dropdown-item" href="{{ url_for('purchases.list_purchases') }}">Recommended purchases</a></li>
+          </ul>
+        </li>
         <li class="nav-item dropdown">
           <a class="nav-link dropdown-toggle" href="#" data-bs-toggle="dropdown">Plans</a>
           <ul class="dropdown-menu">

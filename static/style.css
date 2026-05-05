@@ -242,8 +242,21 @@ hr { border: 0; border-top: 1px solid var(--hairline); opacity: 1; }
 .navbar-toggler {
   border-width: 1px;
   padding: 4px 8px;
+  /* Explicit white-stroke hamburger SVG. Bootstrap 5.3 deprecated
+     .navbar-dark and the toggler icon variable doesn't always inherit
+     reliably — set it directly so the icon is visible against any
+     rendered background. */
+  --bs-navbar-toggler-icon-bg: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 30 30'%3e%3cpath stroke='rgba%28255,255,255,0.95%29' stroke-linecap='round' stroke-miterlimit='10' stroke-width='2' d='M4 7h22M4 15h22M4 23h22'/%3e%3c/svg%3e");
+  margin-left: auto;  /* never let the brand push it offscreen */
 }
 .navbar-toggler:focus { box-shadow: none; }
+/* Defensive wrap: if the nav's intrinsic content is wider than the
+   viewport (lots of items on a narrow widescreen), let it wrap onto
+   a second row instead of overflowing horizontally and pushing the
+   user dropdown / toggler past the right edge of the navbar's dark
+   background. */
+.navbar > .container-fluid { flex-wrap: wrap; }
+body { overflow-x: hidden; }
 
 /* ── Cards ─────────────────────────────────────────────── */
 .card {
