@@ -31,7 +31,10 @@ def new_entry():
 @bp.route('/body/<int:entry_id>/edit', methods=['GET', 'POST'])
 def edit_entry(entry_id):
     db = get_db()
-    entry = db.execute('SELECT * FROM body_metrics WHERE id=?', (entry_id,)).fetchone()
+    entry = db.execute(
+        'SELECT * FROM body_metrics WHERE id=? AND user_id=?',
+        (entry_id, current_user_id())
+    ).fetchone()
     if not entry:
         flash('Entry not found.', 'danger')
         return redirect(url_for('body.list_entries'))
@@ -45,7 +48,10 @@ def edit_entry(entry_id):
 @bp.route('/body/<int:entry_id>/delete', methods=['POST'])
 def delete_entry(entry_id):
     db = get_db()
-    db.execute('DELETE FROM body_metrics WHERE id=?', (entry_id,))
+    db.execute(
+        'DELETE FROM body_metrics WHERE id=? AND user_id=?',
+        (entry_id, current_user_id())
+    )
     db.commit()
     flash('Entry deleted.', 'warning')
     return redirect(url_for('body.list_entries'))
@@ -60,8 +66,9 @@ def _save(db, entry_id):
     vals = (f.get('date'), num(f.get('weight_lbs')), num(f.get('body_fat_pct')),
             num(f.get('vo2_max')), num(f.get('resting_hr'), int), f.get('notes'))
     if entry_id:
-        db.execute('UPDATE body_metrics SET date=?,weight_lbs=?,body_fat_pct=?,vo2_max=?,resting_hr=?,notes=? WHERE id=?',
-                   vals + (entry_id,))
+        db.execute('UPDATE body_metrics SET date=?,weight_lbs=?,body_fat_pct=?,vo2_max=?,resting_hr=?,notes=? '
+                   'WHERE id=? AND user_id=?',
+                   vals + (entry_id, uid))
     else:
         if _IS_PG:
             db.execute('''INSERT INTO body_metrics (date,weight_lbs,body_fat_pct,vo2_max,resting_hr,notes,user_id)

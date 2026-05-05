@@ -37,8 +37,9 @@ def list_entries():
     status_filter = request.args.get('status', '')
     body_part_filter = request.args.get('body_part', '')
 
-    query = "SELECT * FROM injury_log WHERE 1=1"
-    params = []
+    uid = current_user_id()
+    query = "SELECT * FROM injury_log WHERE user_id = ?"
+    params = [uid]
     if status_filter:
         query += ' AND status=?'
         params.append(status_filter)
@@ -48,14 +49,17 @@ def list_entries():
     query += " ORDER BY CASE status WHEN 'Active' THEN 0 WHEN 'Managing' THEN 1 ELSE 2 END, start_date DESC"
     entries = db.execute(query, params).fetchall()
 
-    # Load all modifications grouped by injury_id
+    # Load all modifications grouped by injury_id (parent-JOIN scoped via injury_log)
     mod_rows = db.execute(
         '''SELECT iem.*, ei.exercise as exercise_name,
                   ei_sub.exercise as substitute_name
            FROM injury_exercise_modifications iem
+           JOIN injury_log il ON il.id = iem.injury_id
            JOIN exercise_inventory ei ON ei.id = iem.exercise_id
            LEFT JOIN exercise_inventory ei_sub ON ei_sub.id = iem.substitute_exercise_id
-           ORDER BY iem.injury_id, iem.id'''
+           WHERE il.user_id = ?
+           ORDER BY iem.injury_id, iem.id''',
+        (uid,)
     ).fetchall()
     modifications = {}
     for m in mod_rows:
@@ -86,7 +90,10 @@ def new_entry():
 @bp.route('/injuries/<int:entry_id>/edit', methods=['GET', 'POST'])
 def edit_entry(entry_id):
     db = get_db()
-    entry = db.execute('SELECT * FROM injury_log WHERE id=?', (entry_id,)).fetchone()
+    entry = db.execute(
+        'SELECT * FROM injury_log WHERE id=? AND user_id=?',
+        (entry_id, current_user_id())
+    ).fetchone()
     if not entry:
         flash('Entry not found.', 'danger')
         return redirect(url_for('injuries.list_entries'))
@@ -101,8 +108,15 @@ def edit_entry(entry_id):
 @bp.route('/injuries/<int:entry_id>/delete', methods=['POST'])
 def delete_entry(entry_id):
     db = get_db()
+    uid = current_user_id()
+    # Verify ownership before clearing the parent-JOIN scoped child
+    if not db.execute(
+        'SELECT 1 FROM injury_log WHERE id=? AND user_id=?', (entry_id, uid)
+    ).fetchone():
+        flash('Entry not found.', 'danger')
+        return redirect(url_for('injuries.list_entries'))
     db.execute('DELETE FROM injury_exercise_modifications WHERE injury_id=?', (entry_id,))
-    db.execute('DELETE FROM injury_log WHERE id=?', (entry_id,))
+    db.execute('DELETE FROM injury_log WHERE id=? AND user_id=?', (entry_id, uid))
     db.commit()
     flash('Entry deleted.', 'warning')
     return redirect(url_for('injuries.list_entries'))
@@ -124,6 +138,14 @@ def add_modification(entry_id):
     if mod_type not in valid_types:
         mod_type = 'modify'
 
+    # Verify the parent injury belongs to the current user
+    if not db.execute(
+        'SELECT 1 FROM injury_log WHERE id=? AND user_id=?',
+        (entry_id, current_user_id())
+    ).fetchone():
+        flash('Injury not found.', 'danger')
+        return redirect(url_for('injuries.list_entries'))
+
     db.execute(
         '''INSERT INTO injury_exercise_modifications
            (injury_id, exercise_id, substitute_exercise_id, modification_type, modification_notes)
@@ -138,6 +160,12 @@ def add_modification(entry_id):
 @bp.route('/injuries/<int:entry_id>/modifications/<int:mod_id>/delete', methods=['POST'])
 def delete_modification(entry_id, mod_id):
     db = get_db()
+    # Parent-JOIN scope: ensure the injury belongs to the user before deleting
+    if not db.execute(
+        'SELECT 1 FROM injury_log WHERE id=? AND user_id=?',
+        (entry_id, current_user_id())
+    ).fetchone():
+        return redirect(url_for('injuries.list_entries'))
     db.execute(
         'DELETE FROM injury_exercise_modifications WHERE id=? AND injury_id=?',
         (mod_id, entry_id)
@@ -159,8 +187,8 @@ def _save(db, entry_id):
     )
     if entry_id:
         db.execute('''UPDATE injury_log SET start_date=?,body_part=?,description=?,
-            severity=?,modifications_needed=?,status=?,resolved_date=? WHERE id=?''',
-            vals + (entry_id,))
+            severity=?,modifications_needed=?,status=?,resolved_date=? WHERE id=? AND user_id=?''',
+            vals + (entry_id, uid))
     else:
         db.execute('''INSERT INTO injury_log
             (start_date,body_part,description,severity,modifications_needed,status,resolved_date,user_id)

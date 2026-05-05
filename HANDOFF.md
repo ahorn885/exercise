@@ -1,15 +1,184 @@
 # AIDSTATION — Session Handoff
 
 **Date:** 2026-05-05
-**Latest session branch (merged into `main`):** `claude/session-5-04-2b-GeYuK`
-**Deploy state:** TrueNAS (Docker) + Vercel both shipped post-merge. First-run
-bootstrap user (user_id=1) is registered on both. TrueNAS `.env` has
-`SECRET_KEY` and `ANTHROPIC_API_KEY`. Session 2B verified end-to-end on a
-fresh local DB — every per-user table writes `user_id=1` correctly.
+**Latest session branch:** `claude/review-handoff-doc-VyeBE` (Session 2C)
+**Deploy state:** TrueNAS (Docker) + Vercel both ran the previous merge
+(2B). TrueNAS `.env` has `SECRET_KEY` and `ANTHROPIC_API_KEY`.
+
+Session 2C ships the long tail of per-user scoping plus a second-user
+verification on a fresh local DB. **Do not open `ALLOW_REGISTRATION` in
+production yet** — the UNIQUE constraint debt (current_rx.exercise,
+body_metrics.date, wellness_log.timestamp_ms) has to land in 2D first or
+user 2's first INSERT for any seeded exercise will collide.
 
 ---
 
-## Session 2C kickoff — read this first
+## Session 2D kickoff — read this first
+
+Sessions 0, 1, 2A, 2B, and 2C are all on `main`/this branch. Every
+SELECT/UPDATE/DELETE in the route layer + engine helpers is `user_id`-scoped,
+and the second-user verification harness confirms zero cross-user
+visibility on the hot routes and on `/coaching/context`.
+
+The remaining work for 2D:
+
+1. **UNIQUE constraint replacements** (the current blocker on opening
+   registration). SQLite via table rebuild, Postgres via DROP CONSTRAINT
+   + ADD:
+   - `current_rx.exercise UNIQUE` → `UNIQUE(user_id, exercise)`
+   - `body_metrics.date UNIQUE` → `UNIQUE(user_id, date)`
+   - `wellness_log.timestamp_ms UNIQUE` → `UNIQUE(user_id, timestamp_ms)`
+   - `clothing_options UNIQUE(category, value)` — handled by Session 3.
+
+   Why this is gating: 2C scoped the `current_rx` SELECT/UPDATE in
+   `rx_engine.apply_session_outcome` so each user's prescription is
+   isolated, but the seed rows still sit at `user_id=1` and the
+   single-column UNIQUE prevents user 2 from inserting their own row for
+   any exercise that already exists. The verification harness side-steps
+   this by using fresh exercise names (`AliceCustomLift` / `BobCustomLift`).
+   Real users would hit it on their first squat log.
+
+2. **Postgres `ALTER COLUMN ... SET NOT NULL`** on every `user_id` column
+   once 2A backfill is provably clean.
+
+3. **`INSERT OR REPLACE INTO body_metrics`** in `routes/body.py:_save`
+   and `routes/natural_log.py:save` becomes safe once the composite
+   UNIQUE lands. Until then, user 2 inserting on a date that user 1
+   already has would REPLACE user 1's row.
+
+4. **Second-user end-to-end on a fresh Neon Postgres DB** — verify the
+   forward-FK caveat called out in 2A doesn't break the schema apply.
+
+5. **Open `ALLOW_REGISTRATION=1`** in Vercel + TrueNAS prod env vars.
+
+### Session 2C — what shipped
+
+Branch: `claude/review-handoff-doc-VyeBE`. Every read query in the route
+layer (`routes/*.py`) and the three engine helpers (`coaching.py`,
+`rx_engine.py`, `plan_match.py`) now filters on `user_id`. Fetch-by-id
+handlers gained `AND user_id = ?` so a crafted URL can't read or destroy
+another user's row. JOINs to a parent that's already scoped (e.g.
+`plan_items JOIN training_plans`) scope the parent and let the FK carry
+the child — matches the denormalized-`user_id` columns 2B added.
+
+**Files touched** (14):
+
+- `coaching.py` — `get_coaching_context()`, `get_clothing_context()`,
+  `_get_performance_delta()`, `_get_plan_sport_module()`, `run_review()`,
+  `get_wellness_summary()` all scoped. `body_metrics` (already scoped
+  in 2B) preserved.
+- `rx_engine.py` — `current_rx` SELECT and the UPSERT UPDATE both
+  scoped. The INSERT branch already wrote `user_id` from 2B; the new
+  comment flags the UNIQUE-constraint debt that gates user 2's first
+  log of any seeded exercise (Session 2D fix).
+- `plan_match.py` — `find_best_match()` and `candidate_plan_items()`
+  gain `user_id=None` parameters (default to `current_user_id()` when
+  not passed). `record_disposition()`'s `UPDATE plan_items` clauses
+  also gained `AND user_id = ?`.
+- `routes/dashboard.py` — every stats query, `today_workouts`,
+  `tomorrow_workouts`, `missed_workouts`, recent training/cardio,
+  `unconditioned_cardio`, active-plan lookup, plan_travel + locale
+  fallbacks for clothing recs.
+- `routes/body.py` — fetch-by-id and DELETE-by-id handlers.
+- `routes/cardio.py` — `_load_plan_items` parent scope, edit/delete
+  fetch-by-id, UPDATE WHERE, plan_item completion UPDATE.
+- `routes/conditions.py` — list query (`WHERE 1=1` → `WHERE user_id`),
+  `_load_cardio_sessions`, edit/delete fetch-by-id, UPDATE WHERE,
+  cardio_log fetch on prefill. `_load_clothing_options` left shared
+  (catalog redesign is Session 3).
+- `routes/injuries.py` — list query, edit/delete fetch-by-id, UPDATE
+  WHERE, modification add/delete now verifies parent injury ownership.
+- `routes/plans.py` — `_plan_health` (every subquery), `list_plans`,
+  `api_plan_review` ownership check, `api_patch_plan_item`,
+  `plan_health` route, `archive_plan` / `unarchive_plan` /
+  `delete_plan` (with up-front ownership check before child DELETEs),
+  `view_plan`, `view_item`, `complete_item`, `skip_item`,
+  `push_to_garmin` (and the `garmin_workouts` INSERT now writes
+  `user_id` — that table was missing from 2B's INSERT pass),
+  `download_item_fit`, `download_plan_fits`.
+- `routes/rx.py` — list query (`WHERE 1=1` → `WHERE cr.user_id`),
+  inventory-only NOT EXISTS subquery, locales list, edit fetch-by-id,
+  UPDATE WHERE.
+- `routes/training.py` — list, `_load_plan_items` parent scope,
+  `new_entry` exercises list, `save_session` body weight + plan-item
+  completion, `session_activity_fit`, `edit_entry` fetch-by-id +
+  exercises list, `delete_entry`, `_load_plan_items`, `/api/rx/<exercise>`
+  injury-mods JOIN, `_save_entry` body weight + UPDATE WHERE.
+- `routes/natural_log.py` — `_load_strength_exercises`, `_load_scheduled`,
+  body weight, `current_rx` movement-pattern lookup, plan-item completion.
+- `routes/locales.py` — `list_profiles` (locale_profiles + locale_equipment
+  parent-JOIN scoped), `edit_profile` UPSERT writes `user_id`, GET
+  fetches scoped. The `locale` PK is still global until Session 3, so
+  user 2 can't claim a locale name user 1 already has — defensive
+  scoping only.
+- `routes/references.py` — locale_profiles + locale_equipment lookups
+  scoped via parent JOIN; `rx_setup` redirect gated on `current_rx`
+  ownership.
+- `routes/coaching.py` — `generate` (training_plans list,
+  race_goals UPDATEs), `review` (plan fetch, intensity-shift UPDATE,
+  race_goals UPDATEs, plan_items patch UPDATEs), `api_review` (plan
+  ownership check up front, plan_items patch), `chat` (plan fetch,
+  history reads, plan_items patch), `preferences` /
+  `delete_preference`. `routes/garmin.py` — `dashboard`,
+  `import_preview` `all_scheduled`, `_already_imported` per-user dedupe,
+  `_import_activity` chosen-item lookup + body weight, strength
+  session_id lookup, sync `all_scheduled`, `wellness_log` SELECTs,
+  `import_wellness_confirm` INSERT now writes `user_id` (also a 2B miss).
+
+**Engine helper signatures** kept the 2B convention (`user_id=None`
+optional). Routes pass it through where required:
+`plan_match.find_best_match(db, act, user_id=...)`,
+`plan_match.candidate_plan_items(db, date, user_id=...)`. Default
+falls back to `current_user_id()` so existing call sites continue to
+work without code changes.
+
+**Two missed INSERTs from 2B fixed in 2C:**
+- `wellness_log` (`routes/garmin.py:import_wellness_confirm`) — was
+  inserting without `user_id`. Now writes it.
+- `garmin_workouts` (`routes/plans.py:push_to_garmin`) — same.
+
+### 2C verification on a fresh local DB
+
+`/tmp/verify_2c.py` (deleted post-commit; recreate from this section):
+
+1. Bootstrap-register `alice` (user 1), then with
+   `ALLOW_REGISTRATION=1` register `bob` (user 2).
+2. As alice: log a body metric, cardio, strength session
+   (`AliceCustomLift`), injury, condition, plan.
+3. As bob: log body, cardio, strength (`BobCustomLift`), injury,
+   condition, plan — different dates so existing UNIQUE constraints
+   don't collide.
+4. Confirm per-user row counts in 9 hot tables (`body_metrics`,
+   `cardio_log`, `training_log`, `training_log_sets`,
+   `training_sessions`, `injury_log`, `conditions_log`,
+   `training_plans`, `plan_items`).
+5. Confirm `rx_engine` wrote scoped `current_rx` rows.
+6. As alice: GET `/`, `/cardio`, `/training`, `/body`, `/injuries`,
+   `/conditions`, `/plans/`, `/rx`, `/garmin/` — confirm none
+   contain bob's markers (`Bob hike`, `BobCustomLift`, `bob baseline`,
+   `bob injury`, `BobCap`, `Bob Plan`).
+7. As bob: same in reverse with alice's markers.
+8. As alice: GET `/coaching/context?plan_id=<alice_plan>` and
+   `/coaching/context?plan_id=<bob_plan>` — confirm no bob markers
+   leak in either response.
+9. Both users: 200 on every hot route (`/`, `/training`, `/cardio`,
+   `/body`, `/rx`, `/plans/`, `/injuries`, `/conditions`, `/garmin/`,
+   `/log-natural/`, `/locales`).
+
+All 9 checks pass. Verification harness deletes the temp DB on success.
+
+### Out of scope for 2C (deferred to 2D)
+
+- The UNIQUE constraint replacements above.
+- `NOT NULL` on `user_id` columns.
+- Opening `ALLOW_REGISTRATION` in production.
+- The `INSERT OR REPLACE INTO body_metrics` / `INSERT OR IGNORE INTO
+  wellness_log` paths — both safe once the composite UNIQUE lands; no
+  fix landed in 2C because the SQL shape doesn't accept a WHERE.
+
+---
+
+## Historical: Session 2B kickoff (preserved for context)
 
 Sessions 0, 1, 2A, and 2B have all landed on `main`. Schema is multi-user
 shaped and backfilled (2A); the five hot-spot SELECTs are scoped, the
@@ -1021,13 +1190,23 @@ branch (see "What Was Done This Session"); 2B/2C/2D remain.
 - Vercel post-register 500 fixed via `database.sqlite_path()` writing
   to `/tmp/training.db` on `/var/task`-readonly serverless
 
-#### Session 2C — systematic per-route scoping
+#### Session 2C ✅ shipped — systematic per-route scoping
 
-The remaining ~150 query sites across 18 files: `routes/*.py`
-(13 files), `coaching.py`, `rx_engine.py`, `plan_match.py`,
-`garmin_connect.py`. Every WHERE prefixes `user_id = ?`; multi-table
-joins scope the parent only (children flow via FK unless they were
-denormalized in 2A — those scope directly).
+Every remaining read query across 14 files is now `user_id`-scoped:
+`routes/*.py` (13 files), `coaching.py`, `rx_engine.py`,
+`plan_match.py`. Multi-table joins to a scoped parent (e.g.
+`plan_items JOIN training_plans`) scope `tp.user_id`; denormalized
+children scope directly. Two INSERT misses from 2B (`wellness_log`,
+`garmin_workouts`) also fixed.
+
+Engine helpers (`plan_match.find_best_match`,
+`plan_match.candidate_plan_items`) gained `user_id=None` parameters
+matching the 2B convention; default falls back to `current_user_id()`.
+
+Verified end-to-end with two real users (alice + bob) registered via
+the bootstrap form: zero cross-user row visibility on 9 hot routes,
+`/coaching/context` doesn't leak across plans, all 11 routes return
+200 for both users.
 
 #### Session 2D — NOT NULL constraints + verification
 

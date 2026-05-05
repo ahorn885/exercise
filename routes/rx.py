@@ -1,6 +1,7 @@
 from flask import Blueprint, render_template, request, redirect, url_for, flash
 from database import get_db
 from calculations import project_next_from_current
+from routes.auth import current_user_id
 
 bp = Blueprint('rx', __name__)
 
@@ -8,6 +9,7 @@ bp = Blueprint('rx', __name__)
 @bp.route('/rx')
 def list_entries():
     db = get_db()
+    uid = current_user_id()
     discipline = request.args.get('discipline', '')
     status = request.args.get('status', '')
     locale_filter = request.args.get('locale', '')
@@ -17,8 +19,8 @@ def list_entries():
                       ei.suggested_volume as ei_suggested_volume
                FROM current_rx cr
                LEFT JOIN exercise_inventory ei ON ei.exercise = cr.exercise
-               WHERE 1=1'''
-    params = []
+               WHERE cr.user_id = ?'''
+    params = [uid]
     if discipline:
         query += ' AND cr.discipline=?'
         params.append(discipline)
@@ -31,17 +33,23 @@ def list_entries():
     query += ' ORDER BY cr.discipline, cr.exercise'
     entries = db.execute(query, params).fetchall()
 
-    # Exercises in inventory but with no current_rx entry
+    # Exercises in inventory but with no current_rx entry for this user
     inv_query = '''SELECT ei.* FROM exercise_inventory ei
-                   WHERE NOT EXISTS (SELECT 1 FROM current_rx cr WHERE cr.exercise = ei.exercise)'''
-    inv_params = []
+                   WHERE NOT EXISTS (
+                       SELECT 1 FROM current_rx cr
+                       WHERE cr.exercise = ei.exercise AND cr.user_id = ?
+                   )'''
+    inv_params = [uid]
     if locale_filter:
         inv_query += ' AND ei.where_available LIKE ?'
         inv_params.append(f'%{locale_filter}%')
     inv_query += ' ORDER BY ei.discipline, ei.exercise'
     inventory_only = db.execute(inv_query, inv_params).fetchall()
 
-    locales = db.execute('SELECT locale FROM locale_profiles ORDER BY locale').fetchall()
+    locales = db.execute(
+        'SELECT locale FROM locale_profiles WHERE user_id = ? ORDER BY locale',
+        (uid,)
+    ).fetchall()
 
     return render_template('rx/list.html', entries=entries,
                            inventory_only=inventory_only,
@@ -52,7 +60,10 @@ def list_entries():
 @bp.route('/rx/<int:entry_id>/edit', methods=['GET', 'POST'])
 def edit_entry(entry_id):
     db = get_db()
-    entry = db.execute('SELECT * FROM current_rx WHERE id=?', (entry_id,)).fetchone()
+    uid = current_user_id()
+    entry = db.execute(
+        'SELECT * FROM current_rx WHERE id=? AND user_id=?', (entry_id, uid)
+    ).fetchone()
     if not entry:
         flash('Entry not found.', 'danger')
         return redirect(url_for('rx.list_entries'))
@@ -81,13 +92,13 @@ def edit_entry(entry_id):
             inventory_sugg_volume=?, weight_increment=?, consecutive_failures=?,
             sessions_since_progress=?,
             next_sets=?, next_reps=?, next_weight=?, next_duration=?,
-            rx_source=? WHERE id=?''',
+            rx_source=? WHERE id=? AND user_id=?''',
             (cur_sets, cur_reps, cur_weight, cur_duration,
              f.get('inventory_sugg_volume'), weight_increment,
              0 if f.get('reset_failures') else num(f.get('consecutive_failures'), int),
              0 if f.get('reset_plateau') else (entry['sessions_since_progress'] or 0),
              nxt['next_sets'], nxt['next_reps'], nxt['next_weight'], nxt['next_duration'],
-             'Manual override', entry_id))
+             'Manual override', entry_id, uid))
         db.commit()
         flash('Rx updated.', 'success')
         return redirect(url_for('rx.list_entries'))

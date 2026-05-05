@@ -49,7 +49,8 @@ def debug_fit():
 def dashboard():
     db = get_db()
     recent_cardio = db.execute(
-        "SELECT * FROM cardio_log ORDER BY date DESC LIMIT 10"
+        "SELECT * FROM cardio_log WHERE user_id = ? ORDER BY date DESC LIMIT 10",
+        (current_user_id(),)
     ).fetchall()
     try:
         from garmin_connect import get_auth_status
@@ -120,9 +121,11 @@ def import_preview():
                   tp.name as plan_name
            FROM plan_items pi
            JOIN training_plans tp ON tp.id = pi.plan_id
-           WHERE pi.status = 'scheduled' AND tp.status != 'archived'
+           WHERE tp.user_id = ?
+             AND pi.status = 'scheduled' AND tp.status != 'archived'
            ORDER BY pi.item_date ASC
-           LIMIT 60'''
+           LIMIT 60''',
+        (current_user_id(),)
     ).fetchall()
     plan_items = [r for r in all_scheduled if r['id'] not in nearby_ids]
 
@@ -293,7 +296,11 @@ def import_confirm():
         )
         session_id = sess_cur.lastrowid
 
-        body_wt_row = db.execute('SELECT weight_lbs FROM body_metrics ORDER BY date DESC LIMIT 1').fetchone()
+        body_wt_row = db.execute(
+            'SELECT weight_lbs FROM body_metrics WHERE user_id = ? '
+            'ORDER BY date DESC LIMIT 1',
+            (uid,)
+        ).fetchone()
         body_weight = body_wt_row['weight_lbs'] if body_wt_row else None
 
         inserted = 0
@@ -368,12 +375,18 @@ def import_confirm():
 
 
 def _already_imported(db, gid: str) -> bool:
-    """Return True if this Garmin activity ID is already in cardio_log or training_log."""
+    """Return True if this Garmin activity ID is already in cardio_log or training_log
+    for the current user. Two users sharing a Garmin account import independently."""
+    uid = current_user_id()
     return (
-        db.execute('SELECT id FROM cardio_log WHERE garmin_activity_id=?', (gid,)).fetchone()
-        is not None
-        or db.execute('SELECT id FROM training_log WHERE garmin_activity_id=?', (gid,)).fetchone()
-        is not None
+        db.execute(
+            'SELECT id FROM cardio_log WHERE garmin_activity_id=? AND user_id=?',
+            (gid, uid)
+        ).fetchone() is not None
+        or db.execute(
+            'SELECT id FROM training_log WHERE garmin_activity_id=? AND user_id=?',
+            (gid, uid)
+        ).fetchone() is not None
     )
 
 
@@ -409,8 +422,8 @@ def _import_activity(db, act: dict, plan_item, compliance: dict,
             '''SELECT pi.*, tp.name as plan_name
                FROM plan_items pi
                JOIN training_plans tp ON tp.id = pi.plan_id
-               WHERE pi.id = ?''',
-            (raw_plan_item_id,)
+               WHERE pi.id = ? AND tp.user_id = ?''',
+            (raw_plan_item_id, current_user_id())
         ).fetchone()
         if chosen:
             plan_item = dict(chosen)
@@ -452,7 +465,11 @@ def _import_activity(db, act: dict, plan_item, compliance: dict,
             )
             session_id = sess_cur.lastrowid
 
-            body_wt_row = db.execute('SELECT weight_lbs FROM body_metrics ORDER BY date DESC LIMIT 1').fetchone()
+            body_wt_row = db.execute(
+            'SELECT weight_lbs FROM body_metrics WHERE user_id = ? '
+            'ORDER BY date DESC LIMIT 1',
+            (uid,)
+        ).fetchone()
             body_weight = body_wt_row['weight_lbs'] if body_wt_row else None
 
             for row in rows:
@@ -505,8 +522,9 @@ def _import_activity(db, act: dict, plan_item, compliance: dict,
 
             if raw_plan_item_id:
                 first_log = db.execute(
-                    'SELECT id FROM training_log WHERE session_id=? ORDER BY id LIMIT 1',
-                    (session_id,)
+                    'SELECT id FROM training_log WHERE session_id=? AND user_id=? '
+                    'ORDER BY id LIMIT 1',
+                    (session_id, uid)
                 ).fetchone()
                 if first_log:
                     _record_disposition_for_import(
@@ -608,9 +626,11 @@ def sync():
                       tp.name as plan_name
                FROM plan_items pi
                JOIN training_plans tp ON tp.id = pi.plan_id
-               WHERE pi.status = 'scheduled' AND tp.status != 'archived'
+               WHERE tp.user_id = ?
+                 AND pi.status = 'scheduled' AND tp.status != 'archived'
                ORDER BY pi.item_date ASC
-               LIMIT 60'''
+               LIMIT 60''',
+            (current_user_id(),)
         ).fetchall()
         return render_template('garmin/sync_preview.html', preview=preview,
                                all_scheduled=[dict(r) for r in all_scheduled],
@@ -883,6 +903,7 @@ def import_wellness_confirm():
         flask_session.pop('wellness_tmp', None)
 
     db = get_db()
+    uid = current_user_id()
     inserted = skipped = 0
 
     for row in rows:
@@ -891,13 +912,13 @@ def import_wellness_confirm():
                 '''INSERT OR IGNORE INTO wellness_log
                    (date, timestamp_ms, heart_rate, stress_level, body_battery,
                     respiration_rate, steps, active_calories, active_time_s,
-                    distance_m, activity_type)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?)''',
+                    distance_m, activity_type, user_id)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?)''',
                 (row.get('date'), row.get('timestamp_ms'), row.get('heart_rate'),
                  row.get('stress_level'), row.get('body_battery'),
                  row.get('respiration_rate'), row.get('steps'),
                  row.get('active_calories'), row.get('active_time_s'),
-                 row.get('distance_m'), row.get('activity_type'))
+                 row.get('distance_m'), row.get('activity_type'), uid)
             )
             if cur.rowcount:
                 inserted += 1
@@ -918,20 +939,23 @@ def import_wellness_confirm():
 @bp.route('/wellness')
 def wellness_log():
     db = get_db()
+    uid = current_user_id()
     date_filter = request.args.get('date', '')
 
     # Default to most recent date if none selected, so the chart has something to draw
     if not date_filter:
         latest = db.execute(
-            'SELECT date FROM wellness_log ORDER BY date DESC LIMIT 1'
+            'SELECT date FROM wellness_log WHERE user_id = ? '
+            'ORDER BY date DESC LIMIT 1',
+            (uid,)
         ).fetchone()
         if latest:
             date_filter = latest['date']
 
-    query = 'SELECT * FROM wellness_log'
-    params = []
+    query = 'SELECT * FROM wellness_log WHERE user_id = ?'
+    params = [uid]
     if date_filter:
-        query += ' WHERE date = ?'
+        query += ' AND date = ?'
         params.append(date_filter)
     query += ' ORDER BY timestamp_ms DESC LIMIT 2000'
     rows = db.execute(query, params).fetchall()
@@ -954,7 +978,9 @@ def wellness_log():
 
     # Distinct dates for the date picker
     dates = db.execute(
-        'SELECT DISTINCT date FROM wellness_log ORDER BY date DESC LIMIT 60'
+        'SELECT DISTINCT date FROM wellness_log WHERE user_id = ? '
+        'ORDER BY date DESC LIMIT 60',
+        (uid,)
     ).fetchall()
 
     return render_template('garmin/wellness_log.html', rows=rows,
