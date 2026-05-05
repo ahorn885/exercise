@@ -292,6 +292,165 @@ def api_patch_plan_item(item_id):
     return jsonify({'ok': True})
 
 
+# Sport types where target_duration_min isn't the primary load axis. Skipped
+# during the duration_scale bulk action because the actual load lives in the
+# description (sets/reps/weight, etc.) and scaling the clock won't shrink the
+# work prescribed.
+_DURATION_SCALE_SKIP_SPORTS = {'strength_training'}
+
+# Intensity ladder for the intensity_step bulk action. Same ordering as the
+# existing Tier 2 review's "too hard" / "too easy" toggle in routes/coaching.py.
+_INTENSITY_LADDER = ['easy', 'moderate', 'hard', 'very_hard']
+
+
+@bp.route('/<int:plan_id>/items/bulk', methods=['POST'])
+def api_bulk_edit_items(plan_id):
+    """Apply a single mechanical action to a set of scheduled plan items.
+
+    JSON body:
+      {
+        "item_ids": [int, ...],
+        "action":   "shift_date" | "intensity_step" | "duration_scale" | "mark_skipped",
+        "value":    action-dependent (see below)
+      }
+
+    action / value pairs:
+      shift_date       value: int (days, can be negative)
+      intensity_step   value: "down" | "up"
+      duration_scale   value: float (multiplier, e.g. 0.7 / 0.85 / 1.15 / 1.3)
+      mark_skipped     value: ignored
+
+    Only operates on items where status='scheduled' AND the parent plan is
+    owned by the current user. Returns counts of updated / skipped items.
+    """
+    from datetime import date as date_type, timedelta as _td
+    data = request.get_json(silent=True) or {}
+    item_ids = data.get('item_ids') or []
+    action = data.get('action')
+    value = data.get('value')
+
+    if not isinstance(item_ids, list) or not all(isinstance(i, int) for i in item_ids):
+        return jsonify({'ok': False, 'error': 'item_ids must be a list of integers'}), 400
+    if not item_ids:
+        return jsonify({'ok': False, 'error': 'No items selected'}), 400
+    if action not in ('shift_date', 'intensity_step', 'duration_scale', 'mark_skipped'):
+        return jsonify({'ok': False, 'error': f'Unknown action: {action!r}'}), 400
+
+    db = get_db()
+    uid = current_user_id()
+    if not db.execute(
+        'SELECT 1 FROM training_plans WHERE id=? AND user_id=?', (plan_id, uid)
+    ).fetchone():
+        return jsonify({'ok': False, 'error': 'Plan not found'}), 404
+
+    # Pull the scoped, scheduled items in one query — anything missing from
+    # this set is silently skipped (covers cross-user IDs, cross-plan IDs,
+    # already-completed/skipped items).
+    placeholders = ','.join('?' * len(item_ids))
+    rows = db.execute(
+        f'''SELECT id, item_date, sport_type, intensity, target_duration_min, status
+            FROM plan_items
+            WHERE id IN ({placeholders})
+              AND plan_id = ? AND user_id = ? AND status = 'scheduled' ''',
+        list(item_ids) + [plan_id, uid]
+    ).fetchall()
+    eligible = {r['id']: r for r in rows}
+    not_eligible_count = len(item_ids) - len(eligible)
+
+    updated = 0
+    skipped_reason = None
+
+    if action == 'shift_date':
+        try:
+            delta_days = int(value)
+        except (TypeError, ValueError):
+            return jsonify({'ok': False, 'error': 'shift_date value must be an int'}), 400
+        if delta_days == 0:
+            return jsonify({'ok': True, 'updated': 0, 'skipped': not_eligible_count})
+        for r in rows:
+            try:
+                d = date_type.fromisoformat(r['item_date'])
+            except (ValueError, TypeError):
+                continue
+            new_date = (d + _td(days=delta_days)).isoformat()
+            db.execute(
+                'UPDATE plan_items SET item_date=? WHERE id=? AND user_id=?',
+                (new_date, r['id'], uid)
+            )
+            updated += 1
+
+    elif action == 'intensity_step':
+        if value not in ('down', 'up'):
+            return jsonify({'ok': False, 'error': "intensity_step value must be 'down' or 'up'"}), 400
+        direction = -1 if value == 'down' else 1
+        skipped_unknown = 0
+        for r in rows:
+            cur = (r['intensity'] or '').strip().lower()
+            try:
+                idx = _INTENSITY_LADDER.index(cur)
+            except ValueError:
+                # Unknown intensity (NULL or non-standard) — leave alone
+                skipped_unknown += 1
+                continue
+            new_idx = max(0, min(len(_INTENSITY_LADDER) - 1, idx + direction))
+            if new_idx == idx:
+                continue  # already at the rail; no change
+            new_intensity = _INTENSITY_LADDER[new_idx]
+            db.execute(
+                'UPDATE plan_items SET intensity=? WHERE id=? AND user_id=?',
+                (new_intensity, r['id'], uid)
+            )
+            updated += 1
+        if skipped_unknown:
+            skipped_reason = f'{skipped_unknown} item(s) had no intensity set'
+
+    elif action == 'duration_scale':
+        try:
+            mult = float(value)
+        except (TypeError, ValueError):
+            return jsonify({'ok': False, 'error': 'duration_scale value must be a number'}), 400
+        if mult <= 0:
+            return jsonify({'ok': False, 'error': 'duration_scale value must be > 0'}), 400
+        skipped_strength = 0
+        skipped_no_duration = 0
+        for r in rows:
+            if r['sport_type'] in _DURATION_SCALE_SKIP_SPORTS:
+                skipped_strength += 1
+                continue
+            if not r['target_duration_min']:
+                skipped_no_duration += 1
+                continue
+            new_duration = max(1, int(round(r['target_duration_min'] * mult)))
+            db.execute(
+                'UPDATE plan_items SET target_duration_min=? WHERE id=? AND user_id=?',
+                (new_duration, r['id'], uid)
+            )
+            updated += 1
+        bits = []
+        if skipped_strength:
+            bits.append(f'{skipped_strength} strength session(s)')
+        if skipped_no_duration:
+            bits.append(f'{skipped_no_duration} item(s) with no duration set')
+        if bits:
+            skipped_reason = 'Skipped: ' + ', '.join(bits)
+
+    else:  # mark_skipped
+        for r in rows:
+            db.execute(
+                "UPDATE plan_items SET status='skipped' WHERE id=? AND user_id=?",
+                (r['id'], uid)
+            )
+            updated += 1
+
+    db.commit()
+    return jsonify({
+        'ok': True,
+        'updated': updated,
+        'skipped': not_eligible_count,
+        'reason': skipped_reason,
+    })
+
+
 @bp.route('/<int:plan_id>/health')
 def plan_health(plan_id):
     db = get_db()
