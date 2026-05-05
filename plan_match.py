@@ -224,7 +224,7 @@ def candidate_plan_items(db, activity_date, days_back=3, days_forward=2):
     return items
 
 
-def record_disposition(db, plan_item_id, log_type, log_id, disposition, reason=None):
+def record_disposition(db, plan_item_id, log_type, log_id, disposition, reason=None, user_id=None):
     """Insert a plan_item_disposition row.
 
     `disposition` is one of:
@@ -241,9 +241,9 @@ def record_disposition(db, plan_item_id, log_type, log_id, disposition, reason=N
         raise ValueError(f'unknown disposition: {disposition}')
     db.execute(
         '''INSERT INTO plan_item_disposition
-             (plan_item_id, log_type, log_id, disposition, reason)
-           VALUES (?, ?, ?, ?, ?)''',
-        (plan_item_id, log_type, log_id, disposition, reason)
+             (plan_item_id, log_type, log_id, disposition, reason, user_id)
+           VALUES (?, ?, ?, ?, ?, ?)''',
+        (plan_item_id, log_type, log_id, disposition, reason, user_id)
     )
     if disposition == 'completed':
         db.execute(

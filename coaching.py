@@ -1042,7 +1042,7 @@ def extract_preferences(raw_text: str, source: str = 'unknown') -> list:
     return out
 
 
-def capture_feedback(db, source: str, raw_content: str, source_ref_id=None) -> int:
+def capture_feedback(db, source: str, raw_content: str, source_ref_id=None, user_id=None) -> int:
     """
     Insert raw feedback into feedback_log. Returns the new feedback_log id, or 0
     if the content is empty. Caller is responsible for db.commit().
@@ -1051,13 +1051,13 @@ def capture_feedback(db, source: str, raw_content: str, source_ref_id=None) -> i
     if not text:
         return 0
     cur = db.execute(
-        'INSERT INTO feedback_log (source, source_ref_id, raw_content) VALUES (?,?,?)',
-        (source, source_ref_id, text)
+        'INSERT INTO feedback_log (source, source_ref_id, raw_content, user_id) VALUES (?,?,?,?)',
+        (source, source_ref_id, text, user_id)
     )
     return cur.lastrowid
 
 
-def save_preferences_from_feedback(db, fb_id: int, prefs: list) -> int:
+def save_preferences_from_feedback(db, fb_id: int, prefs: list, user_id=None) -> int:
     """
     Persist normalized preferences with a back-link to their source feedback row.
     Returns the count actually inserted. Caller is responsible for db.commit().
@@ -1070,27 +1070,27 @@ def save_preferences_from_feedback(db, fb_id: int, prefs: list) -> int:
         if not content:
             continue
         db.execute(
-            'INSERT INTO coaching_preferences (category, content, permanent, source_feedback_id) '
-            'VALUES (?,?,?,?)',
+            'INSERT INTO coaching_preferences (category, content, permanent, source_feedback_id, user_id) '
+            'VALUES (?,?,?,?,?)',
             (p.get('category', 'general'), content,
-             1 if p.get('permanent', True) else 0, fb_id)
+             1 if p.get('permanent', True) else 0, fb_id, user_id)
         )
         n += 1
     return n
 
 
 def capture_and_normalize_feedback(db, source: str, raw_content: str,
-                                    source_ref_id=None) -> tuple:
+                                    source_ref_id=None, user_id=None) -> tuple:
     """
     Full pipeline: capture raw text, run extract pass, write preferences with
     source_feedback_id back-link. Returns (fb_id, prefs_saved). Skips on empty
     input or extraction failure. Caller is responsible for db.commit().
     """
-    fb_id = capture_feedback(db, source, raw_content, source_ref_id)
+    fb_id = capture_feedback(db, source, raw_content, source_ref_id, user_id=user_id)
     if not fb_id:
         return (0, 0)
     prefs = extract_preferences(raw_content, source)
-    saved = save_preferences_from_feedback(db, fb_id, prefs)
+    saved = save_preferences_from_feedback(db, fb_id, prefs, user_id=user_id)
     return (fb_id, saved)
 
 

@@ -146,8 +146,8 @@ def _save_session_to_db(db, username: str = ''):
         )
     else:
         db.execute(
-            'INSERT INTO garmin_auth (garth_session, garmin_username) VALUES (?, ?)',
-            (session_json, username)
+            'INSERT INTO garmin_auth (garth_session, garmin_username, user_id) VALUES (?, ?, ?)',
+            (session_json, username, current_user_id())
         )
     db.commit()
 

@@ -1,5 +1,6 @@
 from flask import Blueprint, render_template, request, redirect, url_for, flash
 from database import get_db
+from routes.auth import current_user_id
 
 bp = Blueprint('injuries', __name__)
 
@@ -147,6 +148,7 @@ def delete_modification(entry_id, mod_id):
 
 def _save(db, entry_id):
     f = request.form
+    uid = current_user_id()
     def num(v, cast=int):
         try: return cast(v) if v else None
         except: return None
@@ -161,6 +163,6 @@ def _save(db, entry_id):
             vals + (entry_id,))
     else:
         db.execute('''INSERT INTO injury_log
-            (start_date,body_part,description,severity,modifications_needed,status,resolved_date)
-            VALUES (?,?,?,?,?,?,?)''', vals)
+            (start_date,body_part,description,severity,modifications_needed,status,resolved_date,user_id)
+            VALUES (?,?,?,?,?,?,?,?)''', vals + (uid,))
     db.commit()

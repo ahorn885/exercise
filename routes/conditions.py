@@ -1,5 +1,6 @@
 from flask import Blueprint, render_template, request, redirect, url_for, flash
 from database import get_db
+from routes.auth import current_user_id
 
 bp = Blueprint('conditions', __name__)
 
@@ -166,6 +167,7 @@ def _save(db, entry_id):
         num(f.get('comfort'), int), f.get('comfort_notes') or None, cardio_log_id
     )
 
+    uid = current_user_id()
     if entry_id:
         db.execute('''UPDATE conditions_log SET date=?,activity=?,temp_f=?,feels_like_f=?,
             wind_mph=?,wind_dir=?,conditions=?,headwear=?,face_neck=?,upper_shell=?,
@@ -177,7 +179,7 @@ def _save(db, entry_id):
         db.execute('''INSERT INTO conditions_log
             (date,activity,temp_f,feels_like_f,wind_mph,wind_dir,conditions,headwear,
              face_neck,upper_shell,upper_mid_layer,upper_base_layer,lower_outer,lower_under,
-             gloves,arm_warmers,socks,footwear,comfort,comfort_notes,cardio_log_id)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''', vals)
+             gloves,arm_warmers,socks,footwear,comfort,comfort_notes,cardio_log_id,user_id)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''', vals + (uid,))
 
     db.commit()

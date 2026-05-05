@@ -5,6 +5,7 @@ from datetime import date, timedelta
 
 from flask import Blueprint, render_template, request, jsonify, url_for
 from database import get_db
+from routes.auth import current_user_id
 
 bp = Blueprint('natural_log', __name__, url_prefix='/log-natural')
 
@@ -247,6 +248,7 @@ def save():
     history = data.get('history', [])
 
     db = get_db()
+    uid = current_user_id()
     saved = []
 
     for entry in entries:
@@ -258,8 +260,8 @@ def save():
                 '''INSERT INTO cardio_log
                    (date, activity, duration_min, distance_mi, avg_pace, avg_speed,
                     avg_hr, max_hr, elev_gain_ft, calories, avg_power, norm_power,
-                    aerobic_te, notes, plan_item_id)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
+                    aerobic_te, notes, plan_item_id, user_id)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
                 (
                     entry.get('date', date.today().isoformat()),
                     entry.get('activity', ''),
@@ -276,6 +278,7 @@ def save():
                     entry.get('aerobic_te'),
                     entry.get('notes', ''),
                     plan_item_id,
+                    uid,
                 )
             )
             new_id = cur.lastrowid
@@ -292,8 +295,8 @@ def save():
             plan_item_id = plan_match.get('plan_item_id') if plan_match else None
 
             cur = db.execute(
-                'INSERT INTO training_sessions (date, notes, plan_item_id) VALUES (?, ?, ?)',
-                (session_date, session_notes, plan_item_id)
+                'INSERT INTO training_sessions (date, notes, plan_item_id, user_id) VALUES (?, ?, ?, ?)',
+                (session_date, session_notes, plan_item_id, uid)
             )
             session_id = cur.lastrowid
 
@@ -328,22 +331,22 @@ def save():
                     '''INSERT INTO training_log
                        (date, exercise, exercise_id, sub_group, session_id,
                         actual_sets, actual_reps, actual_weight, actual_duration,
-                        rpe, volume, body_weight, plan_item_id, notes)
-                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
+                        rpe, volume, body_weight, plan_item_id, notes, user_id)
+                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
                     (session_date, exercise, exercise_id, movement_pattern, session_id,
                      actual_sets, last_reps, max_weight, last_duration,
                      ex_data.get('rpe'), volume, body_weight,
-                     plan_item_id, ex_data.get('notes', ''))
+                     plan_item_id, ex_data.get('notes', ''), uid)
                 )
                 log_id = log_cur.lastrowid
 
                 for i, s in enumerate(sets, start=1):
                     db.execute(
                         '''INSERT INTO training_log_sets
-                           (training_log_id, set_number, reps, weight_lbs, duration_sec)
-                           VALUES (?,?,?,?,?)''',
+                           (training_log_id, set_number, reps, weight_lbs, duration_sec, user_id)
+                           VALUES (?,?,?,?,?,?)''',
                         (log_id, s.get('set_number') or i,
-                         s.get('reps'), s.get('weight_lbs'), s.get('duration_sec'))
+                         s.get('reps'), s.get('weight_lbs'), s.get('duration_sec'), uid)
                     )
 
             saved.append({'type': 'strength', 'id': session_id, 'redirect': '/training'})
@@ -351,8 +354,8 @@ def save():
         elif log_type == 'body':
             db.execute(
                 '''INSERT OR REPLACE INTO body_metrics
-                   (date, weight_lbs, body_fat_pct, resting_hr, vo2_max, notes)
-                   VALUES (?,?,?,?,?,?)''',
+                   (date, weight_lbs, body_fat_pct, resting_hr, vo2_max, notes, user_id)
+                   VALUES (?,?,?,?,?,?,?)''',
                 (
                     entry.get('date', date.today().isoformat()),
                     entry.get('weight_lbs'),
@@ -360,6 +363,7 @@ def save():
                     entry.get('resting_hr'),
                     entry.get('vo2_max'),
                     entry.get('notes', ''),
+                    uid,
                 )
             )
             saved.append({'type': 'body', 'redirect': '/body'})
@@ -381,7 +385,7 @@ def save():
     if user_text and saved:
         from coaching import capture_and_normalize_feedback
         first_id = next((s.get('id') for s in saved if s.get('id')), None)
-        capture_and_normalize_feedback(db, 'natural_log', user_text, source_ref_id=first_id)
+        capture_and_normalize_feedback(db, 'natural_log', user_text, source_ref_id=first_id, user_id=uid)
 
     db.commit()
     return jsonify({'ok': True, 'saved': saved})

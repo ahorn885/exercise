@@ -10,6 +10,7 @@ import zipfile
 
 from flask import Blueprint, render_template, request, redirect, url_for, flash, jsonify, Response
 from database import get_db
+from routes.auth import current_user_id
 
 bp = Blueprint('plans', __name__, url_prefix='/plans')
 
@@ -55,14 +56,15 @@ def _workout_nutrition(sport_type, intensity, duration_min):
 
 def _create_plan_from_dict(db, data):
     """Insert a training plan from a dict. Returns plan_id."""
+    uid = current_user_id()
     workouts = data.get('workouts', [])
     raw = json.dumps(data)
     cur = db.execute(
         '''INSERT INTO training_plans
-           (name, description, sport_focus, start_date, end_date, source_json)
-           VALUES (?,?,?,?,?,?)''',
+           (name, description, sport_focus, start_date, end_date, source_json, user_id)
+           VALUES (?,?,?,?,?,?,?)''',
         (data['name'], data.get('description'), data.get('sport_focus'),
-         data.get('start_date'), data.get('end_date'), raw)
+         data.get('start_date'), data.get('end_date'), raw, uid)
     )
     plan_id = cur.lastrowid
     for w in workouts:
@@ -72,15 +74,16 @@ def _create_plan_from_dict(db, data):
             '''INSERT INTO plan_items
                (plan_id, item_date, sport_type, workout_name, description,
                 target_duration_min, target_distance_mi, intensity, garmin_workout_json,
-                calorie_target, macro_carb_pct, macro_protein_pct, macro_fat_pct, session_fueling)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
+                calorie_target, macro_carb_pct, macro_protein_pct, macro_fat_pct, session_fueling,
+                user_id)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
             (plan_id, w.get('date'), w.get('sport_type', ''),
              w.get('workout_name', ''), w.get('description'),
              w.get('target_duration_min'), w.get('target_distance_mi'),
              w.get('intensity'), garmin_str,
              w.get('calorie_target'), w.get('macro_carb_pct'),
              w.get('macro_protein_pct'), w.get('macro_fat_pct'),
-             w.get('session_fueling'))
+             w.get('session_fueling'), uid)
         )
     return plan_id
 
