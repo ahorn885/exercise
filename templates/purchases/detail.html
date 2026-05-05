@@ -1,0 +1,84 @@
+{% extends 'base.html' %}
+{% block title %}{{ pr.label }}{% endblock %}
+{% block content %}
+
+{% macro cost_range(lo, hi) -%}
+  {%- if lo and hi -%}${{ lo }}–${{ hi }}
+  {%- elif lo -%}${{ lo }}+
+  {%- elif hi -%}up to ${{ hi }}
+  {%- else -%}—{%- endif -%}
+{%- endmacro %}
+
+<nav aria-label="breadcrumb" class="small mb-2">
+  <a href="{{ url_for('purchases.list_purchases') }}">← All recommendations</a>
+</nav>
+
+<div class="card mb-3">
+  <div class="card-body">
+    <div class="d-flex justify-content-between align-items-start gap-3 flex-wrap">
+      <div>
+        <h4 class="mb-1">{{ pr.label }}</h4>
+        <div class="small text-muted">
+          <span class="text-uppercase">{{ pr.priority }} priority</span>
+          &middot;
+          <span class="font-monospace">{{ cost_range(pr.est_cost_low, pr.est_cost_high) }}</span>
+          {% if pr.equipment_label %}
+            &middot; equipment tag <code>{{ pr.equipment_tag }}</code>
+          {% endif %}
+        </div>
+      </div>
+      <form method="post" action="{{ url_for('purchases.set_status', purchase_id=pr.id) }}" class="d-flex gap-1 align-items-start flex-wrap">
+        <input type="hidden" name="redirect_to" value="detail">
+        {% for s in valid_statuses %}
+          <button name="status" value="{{ s }}"
+                  class="btn btn-sm btn-outline-secondary {% if pr.status == s %}active{% endif %}"
+                  {% if pr.status == s %}disabled{% endif %}>
+            {{ s|capitalize }}
+          </button>
+        {% endfor %}
+        {% if pr.status %}
+          <button name="status" value="clear" class="btn btn-sm btn-link text-muted">Clear</button>
+        {% endif %}
+      </form>
+    </div>
+    {% if pr.rationale %}
+      <p class="mt-3 mb-0">{{ pr.rationale }}</p>
+    {% endif %}
+  </div>
+</div>
+
+<h5 class="mb-2">Exercises this unlocks <span class="text-muted small">({{ impacted|length }})</span></h5>
+{% if impacted %}
+  <p class="text-muted small">
+    Exercises with an option group that includes this equipment. Some are
+    bodyweight-only with this listed as one option among several — owning
+    this gear isn't always strictly required.
+  </p>
+  <div class="table-responsive">
+    <table class="table table-sm">
+      <thead>
+        <tr>
+          <th>Exercise</th>
+          <th>Discipline</th>
+          <th>Pattern</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for ex in impacted %}
+          <tr>
+            <td>{{ ex.exercise }}</td>
+            <td class="text-muted">{{ ex.discipline or '—' }}</td>
+            <td class="text-muted">{{ ex.movement_pattern or '—' }}</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+{% else %}
+  <p class="text-muted small">
+    No exercises in the catalog strictly require this equipment. The
+    recommendation stands on its own merits — see rationale above.
+  </p>
+{% endif %}
+
+{% endblock %}

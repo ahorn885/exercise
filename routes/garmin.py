@@ -261,7 +261,7 @@ def import_confirm():
                 swolf, active_lengths,
                 stride_length_m, vert_oscillation_cm, vert_ratio_pct,
                 gct_ms, gct_balance, plan_item_id, notes, user_id)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) RETURNING id''',
             (data.get('date'), data.get('activity'), data.get('activity_name'),
              data.get('duration_min'), data.get('moving_time_min'),
              data.get('distance_mi'), data.get('avg_pace'), data.get('avg_speed'),
@@ -291,7 +291,7 @@ def import_confirm():
 
         session_date = rows[0]['date'] if rows else date.today().isoformat()
         sess_cur = db.execute(
-            'INSERT INTO training_sessions (date, notes, plan_item_id, user_id) VALUES (?,?,?,?)',
+            'INSERT INTO training_sessions (date, notes, plan_item_id, user_id) VALUES (?,?,?,?) RETURNING id',
             (session_date, global_notes or None, plan_item_id, uid)
         )
         session_id = sess_cur.lastrowid
@@ -338,7 +338,7 @@ def import_confirm():
                     actual_sets, actual_reps, actual_weight, actual_duration,
                     outcome, est_1rm, volume, body_weight,
                     next_weight, next_sets, next_reps, next_duration, plan_item_id, notes, user_id)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) RETURNING id''',
                 (row.get('date'), exercise, rx['exercise_id'], rx['movement_pattern'], session_id,
                  actual_sets, last_reps, max_weight, last_duration,
                  rx['outcome'], est_1rm, volume, body_weight,
@@ -460,7 +460,7 @@ def _import_activity(db, act: dict, plan_item, compliance: dict,
         if rows:
             session_date = rows[0]['date'] if rows else date.today().isoformat()
             sess_cur = db.execute(
-                'INSERT INTO training_sessions (date, notes, plan_item_id, user_id) VALUES (?,?,?,?)',
+                'INSERT INTO training_sessions (date, notes, plan_item_id, user_id) VALUES (?,?,?,?) RETURNING id',
                 (session_date, notes, plan_item_id, uid)
             )
             session_id = sess_cur.lastrowid
@@ -505,7 +505,7 @@ def _import_activity(db, act: dict, plan_item, compliance: dict,
                         outcome, est_1rm, volume, body_weight,
                         next_weight, next_sets, next_reps, next_duration,
                         garmin_activity_id, plan_item_id, notes, user_id)
-                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
+                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) RETURNING id''',
                     (row.get('date'), exercise, rx['exercise_id'], rx['movement_pattern'], session_id,
                      actual_sets, last_reps, max_weight, last_duration,
                      rx['outcome'], est_1rm, volume, body_weight,
@@ -541,7 +541,7 @@ def _import_activity(db, act: dict, plan_item, compliance: dict,
             elev_gain_ft, elev_loss_ft, avg_cadence,
             avg_power, max_power, norm_power, aerobic_te, anaerobic_te,
             garmin_activity_id, plan_item_id, notes, user_id)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) RETURNING id''',
         (act.get('date'), act.get('activity'), act.get('activity_name'),
          act.get('duration_min'), act.get('moving_time_min'),
          act.get('distance_mi'), act.get('avg_pace'), act.get('avg_speed'),

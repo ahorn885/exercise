@@ -1076,7 +1076,7 @@ def capture_feedback(db, source: str, raw_content: str, source_ref_id=None, user
     if not text:
         return 0
     cur = db.execute(
-        'INSERT INTO feedback_log (source, source_ref_id, raw_content, user_id) VALUES (?,?,?,?)',
+        'INSERT INTO feedback_log (source, source_ref_id, raw_content, user_id) VALUES (?,?,?,?) RETURNING id',
         (source, source_ref_id, text, user_id)
     )
     return cur.lastrowid

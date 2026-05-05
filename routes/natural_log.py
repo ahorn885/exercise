@@ -263,7 +263,7 @@ def save():
                    (date, activity, duration_min, distance_mi, avg_pace, avg_speed,
                     avg_hr, max_hr, elev_gain_ft, calories, avg_power, norm_power,
                     aerobic_te, notes, plan_item_id, user_id)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) RETURNING id''',
                 (
                     entry.get('date', date.today().isoformat()),
                     entry.get('activity', ''),
@@ -297,7 +297,7 @@ def save():
             plan_item_id = plan_match.get('plan_item_id') if plan_match else None
 
             cur = db.execute(
-                'INSERT INTO training_sessions (date, notes, plan_item_id, user_id) VALUES (?, ?, ?, ?)',
+                'INSERT INTO training_sessions (date, notes, plan_item_id, user_id) VALUES (?, ?, ?, ?) RETURNING id',
                 (session_date, session_notes, plan_item_id, uid)
             )
             session_id = cur.lastrowid
@@ -338,7 +338,7 @@ def save():
                        (date, exercise, exercise_id, sub_group, session_id,
                         actual_sets, actual_reps, actual_weight, actual_duration,
                         rpe, volume, body_weight, plan_item_id, notes, user_id)
-                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
+                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) RETURNING id''',
                     (session_date, exercise, exercise_id, movement_pattern, session_id,
                      actual_sets, last_reps, max_weight, last_duration,
                      ex_data.get('rpe'), volume, body_weight,
