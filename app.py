@@ -102,13 +102,34 @@ def _require_login():
     endpoint = request.endpoint or ''
     if endpoint in _AUTH_EXEMPT_ENDPOINTS:
         return None
-    if session.get('user_id'):
-        return None
     # Static files served from blueprints also include the dot-form 'X.static'.
-    if endpoint.endswith('.static'):
+    if endpoint.endswith('.static') or request.path.startswith('/static/'):
         return None
-    if request.path.startswith('/static/'):
-        return None
+
+    uid = session.get('user_id')
+    if uid:
+        # Hydrate the user row once per request. Stash on `g` so the
+        # context processor and any handler that wants the row can read
+        # it without re-querying. This also defends against stale session
+        # cookies pointing at a row that no longer exists — e.g. after a
+        # DB swap (SQLite→Neon cutover) or an admin deletion. Without
+        # this, the gate would happily admit a "ghost" user whose
+        # templates render with `current_user=None`, hiding the nav
+        # dropdown (and the only logout button) until they manually
+        # navigate to /auth/logout.
+        try:
+            user = current_user(get_db())
+        except Exception as e:
+            # Surface any unexpected DB / decode failure in the logs
+            # rather than silently rendering as a logged-out user.
+            print(f'auth: hydration failed for user_id={uid}: {e}')
+            user = None
+        if user:
+            g.current_user_row = user
+            return None
+        # Stale or unhydratable session — clear and re-prompt.
+        session.clear()
+
     if request.method == 'GET':
         return redirect(url_for('auth.login', next=request.path))
     return ('Authentication required.', 401)
@@ -116,13 +137,9 @@ def _require_login():
 
 @app.context_processor
 def _inject_current_user():
-    """Expose the logged-in user to all templates as `current_user`."""
-    if not session.get('user_id'):
-        return {'current_user': None}
-    try:
-        return {'current_user': current_user(get_db())}
-    except Exception:
-        return {'current_user': None}
+    """Expose the logged-in user to all templates as `current_user`.
+    Reads the row hydrated by `_require_login` — single query per request."""
+    return {'current_user': getattr(g, 'current_user_row', None)}
 
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0', port=5000)
