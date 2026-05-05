@@ -62,13 +62,14 @@ SQLITE_SCHEMA = '''
     CREATE TABLE IF NOT EXISTS current_rx (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         user_id INTEGER REFERENCES users(id),
-        exercise TEXT NOT NULL UNIQUE, exercise_id INTEGER REFERENCES exercise_inventory(id),
+        exercise TEXT NOT NULL, exercise_id INTEGER REFERENCES exercise_inventory(id),
         discipline TEXT, type TEXT, movement_pattern TEXT,
         inventory_sugg_volume TEXT, current_sets INTEGER, current_reps INTEGER,
         current_weight REAL, current_duration INTEGER, last_performed TEXT,
         last_outcome TEXT, consecutive_failures INTEGER DEFAULT 0, rx_source TEXT,
         weight_increment REAL,
-        next_sets INTEGER, next_reps INTEGER, next_weight REAL
+        next_sets INTEGER, next_reps INTEGER, next_weight REAL,
+        UNIQUE(user_id, exercise)
     );
     CREATE TABLE IF NOT EXISTS cardio_log (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -88,9 +89,10 @@ SQLITE_SCHEMA = '''
     CREATE TABLE IF NOT EXISTS body_metrics (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         user_id INTEGER REFERENCES users(id),
-        date TEXT NOT NULL UNIQUE, weight_lbs REAL, body_fat_pct REAL,
+        date TEXT NOT NULL, weight_lbs REAL, body_fat_pct REAL,
         vo2_max REAL, resting_hr INTEGER, notes TEXT,
-        created_at TEXT DEFAULT (datetime('now'))
+        created_at TEXT DEFAULT (datetime('now')),
+        UNIQUE(user_id, date)
     );
     CREATE TABLE IF NOT EXISTS conditions_log (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -277,7 +279,7 @@ SQLITE_SCHEMA = '''
         distance_m     REAL,
         activity_type  INTEGER,
         source         TEXT DEFAULT 'wellness_fit',
-        UNIQUE(timestamp_ms)
+        UNIQUE(user_id, timestamp_ms)
     );
     CREATE INDEX IF NOT EXISTS idx_wl_date ON wellness_log(date);
 '''
@@ -337,13 +339,14 @@ PG_SCHEMA = '''
     CREATE TABLE IF NOT EXISTS current_rx (
         id SERIAL PRIMARY KEY,
         user_id INTEGER REFERENCES users(id),
-        exercise TEXT NOT NULL UNIQUE, exercise_id INTEGER REFERENCES exercise_inventory(id),
+        exercise TEXT NOT NULL, exercise_id INTEGER REFERENCES exercise_inventory(id),
         discipline TEXT, type TEXT, movement_pattern TEXT,
         inventory_sugg_volume TEXT, current_sets INTEGER, current_reps INTEGER,
         current_weight REAL, current_duration INTEGER, last_performed TEXT,
         last_outcome TEXT, consecutive_failures INTEGER DEFAULT 0, rx_source TEXT,
         weight_increment REAL,
-        next_sets INTEGER, next_reps INTEGER, next_weight REAL
+        next_sets INTEGER, next_reps INTEGER, next_weight REAL,
+        UNIQUE(user_id, exercise)
     );
     CREATE TABLE IF NOT EXISTS cardio_log (
         id SERIAL PRIMARY KEY,
@@ -363,9 +366,10 @@ PG_SCHEMA = '''
     CREATE TABLE IF NOT EXISTS body_metrics (
         id SERIAL PRIMARY KEY,
         user_id INTEGER REFERENCES users(id),
-        date TEXT NOT NULL UNIQUE, weight_lbs REAL, body_fat_pct REAL,
+        date TEXT NOT NULL, weight_lbs REAL, body_fat_pct REAL,
         vo2_max REAL, resting_hr INTEGER, notes TEXT,
-        created_at TIMESTAMP DEFAULT NOW()
+        created_at TIMESTAMP DEFAULT NOW(),
+        UNIQUE(user_id, date)
     );
     CREATE TABLE IF NOT EXISTS conditions_log (
         id SERIAL PRIMARY KEY,
@@ -552,10 +556,139 @@ PG_SCHEMA = '''
         distance_m     REAL,
         activity_type  INTEGER,
         source         TEXT DEFAULT 'wellness_fit',
-        UNIQUE(timestamp_ms)
+        UNIQUE(user_id, timestamp_ms)
     );
     CREATE INDEX IF NOT EXISTS idx_wl_date ON wellness_log(date);
 '''
+
+
+# ── Session 2D — composite-UNIQUE rebuild helpers (SQLite) ────────────────────
+#
+# SQLite can't ALTER a constraint in place. The Session 2D contract is to
+# move three single-column UNIQUEs to composite (user_id, X) so each user
+# can independently own a row — current_rx.exercise, body_metrics.date,
+# wellness_log.timestamp_ms.
+#
+# These helpers detect via sqlite_master.sql whether the new constraint is
+# already present. If so, no-op. Otherwise rebuild the table by copying rows
+# forward into a new table with the desired shape and renaming.
+
+def _rebuild_table_if_legacy_unique(conn, table, new_create_sql, new_constraint_substr):
+    """Rebuild `table` by copy-into-new-and-rename if the existing schema
+    doesn't already contain `new_constraint_substr`. Idempotent."""
+    row = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name=?", (table,)
+    ).fetchone()
+    if not row or row[0] is None:
+        return  # Table doesn't exist; CREATE TABLE in the schema uses the new shape.
+    if new_constraint_substr in row[0]:
+        return  # Already rebuilt.
+
+    # Pull the existing column list so the INSERT-into-new is column-explicit
+    # (defensive against column-order mismatches between old and new shapes).
+    cols = [r[1] for r in conn.execute(f'PRAGMA table_info({table})').fetchall()]
+    col_list = ', '.join(cols)
+
+    conn.commit()  # flush any pending implicit-tx state
+    conn.execute('PRAGMA foreign_keys = OFF')
+    try:
+        conn.execute(f'DROP TABLE IF EXISTS {table}__rebuild_tmp')
+        # Build the new table under a temporary name so we can rename atomically.
+        # The caller's `new_create_sql` references `<table>` literally; rewrite the
+        # first occurrence to the temp name. Triggered FKs / indexes are NOT copied
+        # here — none currently apply to the three rebuild targets.
+        conn.execute(new_create_sql.replace(table, f'{table}__rebuild_tmp', 1))
+        conn.execute(
+            f'INSERT INTO {table}__rebuild_tmp ({col_list}) SELECT {col_list} FROM {table}'
+        )
+        conn.execute(f'DROP TABLE {table}')
+        conn.execute(f'ALTER TABLE {table}__rebuild_tmp RENAME TO {table}')
+        conn.commit()
+    finally:
+        conn.execute('PRAGMA foreign_keys = ON')
+
+
+def _migrate_current_rx_unique(conn):
+    _rebuild_table_if_legacy_unique(
+        conn, 'current_rx',
+        '''CREATE TABLE current_rx (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER REFERENCES users(id),
+            exercise TEXT NOT NULL,
+            exercise_id INTEGER REFERENCES exercise_inventory(id),
+            discipline TEXT, type TEXT, movement_pattern TEXT,
+            inventory_sugg_volume TEXT, current_sets INTEGER, current_reps INTEGER,
+            current_weight REAL, current_duration INTEGER, last_performed TEXT,
+            last_outcome TEXT, consecutive_failures INTEGER DEFAULT 0, rx_source TEXT,
+            weight_increment REAL,
+            next_sets INTEGER, next_reps INTEGER, next_weight REAL,
+            next_duration INTEGER, sessions_since_progress INTEGER DEFAULT 0,
+            UNIQUE(user_id, exercise)
+        )''',
+        'UNIQUE(user_id, exercise)',
+    )
+
+
+def _migrate_body_metrics_unique(conn):
+    _rebuild_table_if_legacy_unique(
+        conn, 'body_metrics',
+        '''CREATE TABLE body_metrics (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER REFERENCES users(id),
+            date TEXT NOT NULL, weight_lbs REAL, body_fat_pct REAL,
+            vo2_max REAL, resting_hr INTEGER, notes TEXT,
+            created_at TEXT DEFAULT (datetime('now')),
+            UNIQUE(user_id, date)
+        )''',
+        'UNIQUE(user_id, date)',
+    )
+
+
+def _migrate_wellness_log_unique(conn):
+    _rebuild_table_if_legacy_unique(
+        conn, 'wellness_log',
+        '''CREATE TABLE wellness_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER REFERENCES users(id),
+            date TEXT NOT NULL, timestamp_ms INTEGER NOT NULL,
+            heart_rate INTEGER, stress_level INTEGER, body_battery INTEGER,
+            respiration_rate REAL, steps INTEGER, active_calories INTEGER,
+            active_time_s REAL, distance_m REAL, activity_type INTEGER,
+            source TEXT DEFAULT 'wellness_fit',
+            UNIQUE(user_id, timestamp_ms)
+        )''',
+        'UNIQUE(user_id, timestamp_ms)',
+    )
+
+
+# ── Per-user seed (current_rx) ────────────────────────────────────────────────
+#
+# Each user gets their own copy of the seeded "Needs initial setup" rows so
+# rx_engine has something to UPSERT against on their first logged session.
+# The composite UNIQUE(user_id, exercise) lets us seed the same exercise list
+# for every user without collisions. routes/auth.py:register calls this for
+# the first-user bootstrap so Andy doesn't have to wait for a cold start.
+
+def _seed_current_rx_for_user(executor, user_id, is_postgres=False):
+    """INSERT seeded current_rx rows for a single user. Idempotent — relies on
+    the composite UNIQUE(user_id, exercise) to skip rows that already exist."""
+    if is_postgres:
+        executor.executemany(
+            '''INSERT INTO current_rx (exercise, discipline, type, movement_pattern,
+               inventory_sugg_volume, rx_source, user_id)
+               VALUES (%s, %s, %s, %s, %s, 'Needs initial setup', %s)
+               ON CONFLICT (user_id, exercise) DO NOTHING''',
+            [tuple(e[:5]) + (user_id,) for e in EXERCISES]
+        )
+    else:
+        executor.executemany(
+            '''INSERT OR IGNORE INTO current_rx
+               (exercise, discipline, type, movement_pattern, inventory_sugg_volume,
+                rx_source, user_id)
+               VALUES (?, ?, ?, ?, ?, 'Needs initial setup', ?)''',
+            [tuple(e[:5]) + (user_id,) for e in EXERCISES]
+        )
+
 
 # Migrations for existing databases — add columns that may not exist yet
 _SQLITE_MIGRATIONS = [
@@ -669,6 +802,12 @@ _SQLITE_MIGRATIONS = [
     "CREATE INDEX IF NOT EXISTS idx_ts_user_date ON training_sessions(user_id, date)",
     "CREATE INDEX IF NOT EXISTS idx_wl_user_date ON wellness_log(user_id, date)",
     "CREATE INDEX IF NOT EXISTS idx_pi_user_date ON plan_items(user_id, item_date)",
+    # Session 2D — composite UNIQUE replacements. SQLite can't ALTER a constraint;
+    # callable migrations rebuild the table only if the new constraint isn't
+    # already present. Each is idempotent.
+    _migrate_current_rx_unique,
+    _migrate_body_metrics_unique,
+    _migrate_wellness_log_unique,
 ]
 
 _PG_MIGRATIONS = [
@@ -780,6 +919,50 @@ _PG_MIGRATIONS = [
     "CREATE INDEX IF NOT EXISTS idx_ts_user_date ON training_sessions(user_id, date)",
     "CREATE INDEX IF NOT EXISTS idx_wl_user_date ON wellness_log(user_id, date)",
     "CREATE INDEX IF NOT EXISTS idx_pi_user_date ON plan_items(user_id, item_date)",
+    # Session 2D — composite UNIQUE replacements. Drop the legacy single-col
+    # constraint (auto-named <table>_<col>_key by Postgres) and add the
+    # composite. Wrapped in DO blocks so the ADD is idempotent across cold
+    # starts. The runner's try/except still catches anything unexpected.
+    "ALTER TABLE current_rx DROP CONSTRAINT IF EXISTS current_rx_exercise_key",
+    """DO $$ BEGIN
+        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'current_rx_user_id_exercise_key') THEN
+            ALTER TABLE current_rx ADD CONSTRAINT current_rx_user_id_exercise_key UNIQUE (user_id, exercise);
+        END IF;
+       END $$""",
+    "ALTER TABLE body_metrics DROP CONSTRAINT IF EXISTS body_metrics_date_key",
+    """DO $$ BEGIN
+        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'body_metrics_user_id_date_key') THEN
+            ALTER TABLE body_metrics ADD CONSTRAINT body_metrics_user_id_date_key UNIQUE (user_id, date);
+        END IF;
+       END $$""",
+    "ALTER TABLE wellness_log DROP CONSTRAINT IF EXISTS wellness_log_timestamp_ms_key",
+    """DO $$ BEGIN
+        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'wellness_log_user_id_timestamp_ms_key') THEN
+            ALTER TABLE wellness_log ADD CONSTRAINT wellness_log_user_id_timestamp_ms_key UNIQUE (user_id, timestamp_ms);
+        END IF;
+       END $$""",
+    # Session 2D — NOT NULL on user_id columns. SET NOT NULL is idempotent on
+    # already-NOT-NULL columns. Will fail until the per-table backfill above
+    # runs to completion (the migration runner catches the failure and the
+    # next cold start retries — eventually consistent on Andy's bootstrap).
+    "ALTER TABLE training_sessions   ALTER COLUMN user_id SET NOT NULL",
+    "ALTER TABLE training_log        ALTER COLUMN user_id SET NOT NULL",
+    "ALTER TABLE training_log_sets   ALTER COLUMN user_id SET NOT NULL",
+    "ALTER TABLE current_rx          ALTER COLUMN user_id SET NOT NULL",
+    "ALTER TABLE cardio_log          ALTER COLUMN user_id SET NOT NULL",
+    "ALTER TABLE body_metrics        ALTER COLUMN user_id SET NOT NULL",
+    "ALTER TABLE conditions_log      ALTER COLUMN user_id SET NOT NULL",
+    "ALTER TABLE injury_log          ALTER COLUMN user_id SET NOT NULL",
+    "ALTER TABLE training_plans      ALTER COLUMN user_id SET NOT NULL",
+    "ALTER TABLE plan_items          ALTER COLUMN user_id SET NOT NULL",
+    "ALTER TABLE plan_item_disposition ALTER COLUMN user_id SET NOT NULL",
+    "ALTER TABLE feedback_log        ALTER COLUMN user_id SET NOT NULL",
+    "ALTER TABLE coaching_preferences ALTER COLUMN user_id SET NOT NULL",
+    "ALTER TABLE coaching_chat       ALTER COLUMN user_id SET NOT NULL",
+    "ALTER TABLE garmin_auth         ALTER COLUMN user_id SET NOT NULL",
+    "ALTER TABLE garmin_workouts     ALTER COLUMN user_id SET NOT NULL",
+    "ALTER TABLE locale_profiles     ALTER COLUMN user_id SET NOT NULL",
+    "ALTER TABLE wellness_log        ALTER COLUMN user_id SET NOT NULL",
 ]
 
 _CLOTHING_SEEDS = [
@@ -1180,20 +1363,25 @@ def init_postgres():
     cur = conn.cursor()
     for stmt in [s.strip() for s in PG_SCHEMA.split(';') if s.strip()]:
         cur.execute(stmt)
-    # Run migrations for columns added after initial deploy
+    # Run migrations for columns added after initial deploy. Callable migrations
+    # receive `cur`; string migrations are executed directly. Each migration
+    # runs in its own transaction so a failure (e.g. SET NOT NULL on a column
+    # that still has NULLs pre-bootstrap) doesn't abort the whole batch.
     for stmt in _PG_MIGRATIONS:
         try:
-            cur.execute(stmt)
+            if callable(stmt):
+                stmt(cur)
+            else:
+                cur.execute(stmt)
+            conn.commit()
         except Exception:
             conn.rollback()
-    # Seed current_rx (5 columns — slice away where_available)
-    cur.executemany(
-        '''INSERT INTO current_rx (exercise, discipline, type, movement_pattern,
-           inventory_sugg_volume, rx_source)
-           VALUES (%s, %s, %s, %s, %s, 'Needs initial setup')
-           ON CONFLICT (exercise) DO NOTHING''',
-        [e[:5] for e in EXERCISES]
-    )
+    # Seed current_rx for user 1 only — pre-bootstrap, the table stays empty
+    # (NOT NULL on user_id post-2D would reject NULL inserts anyway). Andy's
+    # rows are seeded inline by routes/auth.py:register on first-user bootstrap.
+    cur.execute('SELECT 1 FROM users WHERE id = 1')
+    if cur.fetchone():
+        _seed_current_rx_for_user(cur, 1, is_postgres=True)
     # Seed exercise_inventory
     cur.executemany(
         '''INSERT INTO exercise_inventory
@@ -1272,19 +1460,23 @@ def init_sqlite():
     os.makedirs(os.path.dirname(SQLITE_PATH), exist_ok=True)
     conn = sqlite3.connect(SQLITE_PATH)
     conn.executescript(SQLITE_SCHEMA)
-    # Run migrations for columns added after initial deploy
+    # Run migrations for columns added after initial deploy. Callable migrations
+    # (Session 2D rebuilds) receive `conn`; string migrations are executed
+    # directly. try/except swallows any single-statement failure so the rest
+    # of the batch continues — matches the pre-2D pattern.
     for stmt in _SQLITE_MIGRATIONS:
         try:
-            conn.execute(stmt)
+            if callable(stmt):
+                stmt(conn)
+            else:
+                conn.execute(stmt)
         except Exception:
             pass
-    # Seed current_rx (5 columns — slice away where_available)
-    conn.executemany(
-        '''INSERT OR IGNORE INTO current_rx
-           (exercise, discipline, type, movement_pattern, inventory_sugg_volume, rx_source)
-           VALUES (?, ?, ?, ?, ?, 'Needs initial setup')''',
-        [e[:5] for e in EXERCISES]
-    )
+    # Seed current_rx for user 1 only — pre-bootstrap, the table stays empty.
+    # Andy's rows are seeded inline by routes/auth.py:register on first-user
+    # bootstrap so /rx isn't blank between registration and the next cold start.
+    if conn.execute('SELECT 1 FROM users WHERE id = 1').fetchone():
+        _seed_current_rx_for_user(conn, 1, is_postgres=False)
     # Seed exercise_inventory
     conn.executemany(
         '''INSERT OR IGNORE INTO exercise_inventory
