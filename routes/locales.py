@@ -1,6 +1,7 @@
 from flask import Blueprint, render_template, request, redirect, url_for, flash
 from database import get_db
 from init_db import EQUIPMENT_CATEGORIES
+from routes.auth import current_user_id
 
 bp = Blueprint('locales', __name__)
 
@@ -13,12 +14,25 @@ ALL_TAGS = {tag for _, items in EQUIPMENT_CATEGORIES for tag, _ in items}
 @bp.route('/locales')
 def list_profiles():
     db = get_db()
-    profiles = {r['locale']: r for r in db.execute('SELECT * FROM locale_profiles').fetchall()}
+    uid = current_user_id()
+    # locale_profiles is parent-scoped; locale_equipment is parent-JOIN scoped
+    # via locale_profiles. Session 3 makes the locale PK composite (user_id, locale)
+    # so users can have independent locales — until then, the global PK means a
+    # user 2 can't claim a locale name user 1 already owns.
+    profiles = {
+        r['locale']: r for r in db.execute(
+            'SELECT * FROM locale_profiles WHERE user_id = ?', (uid,)
+        ).fetchall()
+    }
     tags_by_locale = {}
     for row in db.execute(
         '''SELECT le.locale, ei.tag, ei.label
-           FROM locale_equipment le JOIN equipment_items ei ON ei.id = le.equipment_id
-           ORDER BY le.locale, ei.category, ei.label'''
+           FROM locale_equipment le
+           JOIN equipment_items ei ON ei.id = le.equipment_id
+           JOIN locale_profiles lp ON lp.locale = le.locale
+           WHERE lp.user_id = ?
+           ORDER BY le.locale, ei.category, ei.label''',
+        (uid,)
     ).fetchall():
         tags_by_locale.setdefault(row['locale'], []).append(
             {'tag': row['tag'], 'label': row['label']}
@@ -35,11 +49,12 @@ def edit_profile(locale):
         flash('Unknown locale.', 'danger')
         return redirect(url_for('locales.list_profiles'))
     db = get_db()
+    uid = current_user_id()
     if request.method == 'POST':
         selected_tags = [t for t in request.form.getlist('equipment') if t in ALL_TAGS]
         notes = request.form.get('notes', '').strip()
         city = request.form.get('city', '').strip()
-        # Resolve tags to equipment_ids
+        # Resolve tags to equipment_ids (shared catalog)
         if selected_tags:
             placeholders = ','.join('?' * len(selected_tags))
             eq_rows = db.execute(
@@ -49,15 +64,18 @@ def edit_profile(locale):
             tag_to_id = {r['tag']: r['id'] for r in eq_rows}
         else:
             tag_to_id = {}
-        # Upsert locale_profiles first — locale_equipment has a FK on this table
+        # Upsert locale_profiles first — locale_equipment has a FK on this table.
+        # NOTE: locale is still a global PK until Session 3; the ON CONFLICT
+        # clause cannot scope by user_id today. user_id is set on INSERT and
+        # preserved on UPDATE.
         db.execute(
-            '''INSERT INTO locale_profiles (locale, notes, city, updated_at)
-               VALUES (?, ?, ?, datetime('now'))
+            '''INSERT INTO locale_profiles (locale, notes, city, updated_at, user_id)
+               VALUES (?, ?, ?, datetime('now'), ?)
                ON CONFLICT(locale) DO UPDATE SET
                  notes=excluded.notes,
                  city=excluded.city,
                  updated_at=excluded.updated_at''',
-            (locale, notes, city)
+            (locale, notes, city, uid)
         )
         # Replace locale_equipment rows atomically
         db.execute('DELETE FROM locale_equipment WHERE locale = ?', (locale,))
@@ -71,13 +89,17 @@ def edit_profile(locale):
         db.commit()
         flash(f'{locale.title()} profile saved ({len(selected_tags)} items).', 'success')
         return redirect(url_for('locales.list_profiles'))
-    # GET — load active equipment from locale_equipment
-    profile = db.execute('SELECT * FROM locale_profiles WHERE locale=?', (locale,)).fetchone()
+    # GET — load active equipment from locale_equipment (parent-JOIN scoped)
+    profile = db.execute(
+        'SELECT * FROM locale_profiles WHERE locale=? AND user_id=?',
+        (locale, uid)
+    ).fetchone()
     active_rows = db.execute(
         '''SELECT ei.tag FROM locale_equipment le
            JOIN equipment_items ei ON ei.id = le.equipment_id
-           WHERE le.locale = ?''',
-        (locale,)
+           JOIN locale_profiles lp ON lp.locale = le.locale
+           WHERE le.locale = ? AND lp.user_id = ?''',
+        (locale, uid)
     ).fetchall()
     active = {row['tag'] for row in active_rows}
     return render_template('locales/form.html', locale=locale,

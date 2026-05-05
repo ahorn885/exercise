@@ -26,7 +26,8 @@ LOCALES = ['home', 'hotel', 'partner', 'airport']
 def generate():
     db = get_db()
     plans = db.execute(
-        'SELECT id, name, end_date FROM training_plans ORDER BY start_date DESC'
+        'SELECT id, name, end_date FROM training_plans WHERE user_id = ? ORDER BY start_date DESC',
+        (current_user_id(),)
     ).fetchall()
 
     if request.method == 'POST':
@@ -112,7 +113,10 @@ def generate():
             )
             plan_id = _create_plan_from_dict(db, plan_data)
             if race_goals:
-                db.execute('UPDATE training_plans SET race_goals=? WHERE id=?', (race_goals, plan_id))
+                db.execute(
+                    'UPDATE training_plans SET race_goals=? WHERE id=? AND user_id=?',
+                    (race_goals, plan_id, current_user_id())
+                )
             for trip in travel_schedule:
                 s = trip.get('start_date', '')
                 e = trip.get('end_date', '')
@@ -155,7 +159,10 @@ def generate():
 @bp.route('/review/<int:plan_id>', methods=['GET', 'POST'])
 def review(plan_id):
     db = get_db()
-    plan = db.execute('SELECT * FROM training_plans WHERE id=?', (plan_id,)).fetchone()
+    uid = current_user_id()
+    plan = db.execute(
+        'SELECT * FROM training_plans WHERE id=? AND user_id=?', (plan_id, uid)
+    ).fetchone()
     if not plan:
         flash('Plan not found.', 'danger')
         return redirect(url_for('plans.list_plans'))
@@ -202,15 +209,15 @@ def review(plan_id):
                     WHEN 'hard' THEN 'moderate'
                     WHEN 'moderate' THEN 'easy'
                     ELSE intensity END
-                    WHERE plan_id=? AND status='scheduled'"""
+                    WHERE plan_id=? AND user_id=? AND status='scheduled'"""
             else:
                 sql = """UPDATE plan_items SET intensity = CASE intensity
                     WHEN 'easy' THEN 'moderate'
                     WHEN 'moderate' THEN 'hard'
                     WHEN 'hard' THEN 'very_hard'
                     ELSE intensity END
-                    WHERE plan_id=? AND status='scheduled'"""
-            db.execute(sql, (plan_id,))
+                    WHERE plan_id=? AND user_id=? AND status='scheduled'"""
+            db.execute(sql, (plan_id, uid))
             intensity_shifted = db.execute(
                 "SELECT changes()"
             ).fetchone()[0]
@@ -221,7 +228,10 @@ def review(plan_id):
         if race_goals_changed:
             updated_goals = request.form.get('updated_race_goals', '').strip()
             if updated_goals:
-                db.execute('UPDATE training_plans SET race_goals=? WHERE id=?', (updated_goals, plan_id))
+                db.execute(
+                    'UPDATE training_plans SET race_goals=? WHERE id=? AND user_id=?',
+                    (updated_goals, plan_id, uid)
+                )
                 current_race_goals = updated_goals
 
         if not _check_api_key():
@@ -247,8 +257,10 @@ def review(plan_id):
                 new_plan_id = _create_plan_from_dict(db, result)
                 # Carry race_goals forward to the new plan
                 if current_race_goals:
-                    db.execute('UPDATE training_plans SET race_goals=? WHERE id=?',
-                               (current_race_goals, new_plan_id))
+                    db.execute(
+                        'UPDATE training_plans SET race_goals=? WHERE id=? AND user_id=?',
+                        (current_race_goals, new_plan_id, uid)
+                    )
                 db.execute(
                     'INSERT INTO plan_reviews (plan_id, tier, sessions_reviewed, notes) VALUES (?,?,?,?)',
                     (plan_id, tier, health['sessions_since_tier1'],
@@ -277,8 +289,8 @@ def review(plan_id):
                     if updates:
                         set_clause = ', '.join(f'{k}=?' for k in updates)
                         db.execute(
-                            f'UPDATE plan_items SET {set_clause} WHERE id=? AND plan_id=?',
-                            list(updates.values()) + [item_id, plan_id]
+                            f'UPDATE plan_items SET {set_clause} WHERE id=? AND plan_id=? AND user_id=?',
+                            list(updates.values()) + [item_id, plan_id, uid]
                         )
                         applied += 1
 
@@ -373,6 +385,12 @@ def api_review():
         return jsonify({'ok': False, 'error': 'plan_id required'}), 400
     try:
         db = get_db()
+        uid = current_user_id()
+        # Verify plan ownership before any review work
+        if not db.execute(
+            'SELECT 1 FROM training_plans WHERE id=? AND user_id=?', (plan_id, uid)
+        ).fetchone():
+            return jsonify({'ok': False, 'error': 'Plan not found'}), 404
         from coaching import run_review
         from routes.plans import _plan_health
         result, usage = run_review(db, plan_id, tier, notes=notes)
@@ -402,8 +420,8 @@ def api_review():
                 if updates:
                     set_clause = ', '.join(f'{k}=?' for k in updates)
                     db.execute(
-                        f'UPDATE plan_items SET {set_clause} WHERE id=? AND plan_id=?',
-                        list(updates.values()) + [item_id, plan_id]
+                        f'UPDATE plan_items SET {set_clause} WHERE id=? AND plan_id=? AND user_id=?',
+                        list(updates.values()) + [item_id, plan_id, uid]
                     )
                     applied += 1
             db.execute(
@@ -478,14 +496,18 @@ Return an empty array if no clarification is needed."""
 @bp.route('/chat/<int:plan_id>', methods=['GET', 'POST'])
 def chat(plan_id):
     db = get_db()
-    plan = db.execute('SELECT * FROM training_plans WHERE id=?', (plan_id,)).fetchone()
+    uid = current_user_id()
+    plan = db.execute(
+        'SELECT * FROM training_plans WHERE id=? AND user_id=?', (plan_id, uid)
+    ).fetchone()
     if not plan:
         return jsonify({'ok': False, 'error': 'Plan not found'}), 404
 
     if request.method == 'GET':
         rows = db.execute(
-            'SELECT role, content, actions_json, created_at FROM coaching_chat WHERE plan_id=? ORDER BY created_at ASC',
-            (plan_id,)
+            'SELECT role, content, actions_json, created_at FROM coaching_chat '
+            'WHERE plan_id=? AND user_id=? ORDER BY created_at ASC',
+            (plan_id, uid)
         ).fetchall()
         return jsonify([dict(r) for r in rows])
 
@@ -498,8 +520,9 @@ def chat(plan_id):
         return jsonify({'ok': False, 'error': 'ANTHROPIC_API_KEY not configured'}), 500
 
     history = [{'role': r['role'], 'content': r['content']} for r in db.execute(
-        'SELECT role, content FROM coaching_chat WHERE plan_id=? ORDER BY created_at ASC',
-        (plan_id,)
+        'SELECT role, content FROM coaching_chat '
+        'WHERE plan_id=? AND user_id=? ORDER BY created_at ASC',
+        (plan_id, uid)
     ).fetchall()]
 
     try:
@@ -528,8 +551,8 @@ def chat(plan_id):
                 if item_id and updates:
                     set_clause = ', '.join(f'{k}=?' for k in updates)
                     db.execute(
-                        f'UPDATE plan_items SET {set_clause} WHERE id=? AND plan_id=?',
-                        list(updates.values()) + [item_id, plan_id]
+                        f'UPDATE plan_items SET {set_clause} WHERE id=? AND plan_id=? AND user_id=?',
+                        list(updates.values()) + [item_id, plan_id, uid]
                     )
                     patches_applied += 1
 
@@ -561,7 +584,9 @@ def chat(plan_id):
 def preferences():
     db = get_db()
     rows = db.execute(
-        'SELECT id, category, content, permanent, created_at FROM coaching_preferences ORDER BY created_at DESC'
+        'SELECT id, category, content, permanent, created_at FROM coaching_preferences '
+        'WHERE user_id = ? ORDER BY created_at DESC',
+        (current_user_id(),)
     ).fetchall()
     return jsonify([dict(r) for r in rows])
 
@@ -569,7 +594,10 @@ def preferences():
 @bp.route('/preferences/<int:pref_id>/delete', methods=['POST'])
 def delete_preference(pref_id):
     db = get_db()
-    db.execute('DELETE FROM coaching_preferences WHERE id=?', (pref_id,))
+    db.execute(
+        'DELETE FROM coaching_preferences WHERE id=? AND user_id=?',
+        (pref_id, current_user_id())
+    )
     db.commit()
     return jsonify({'ok': True})
 

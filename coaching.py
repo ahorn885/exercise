@@ -271,7 +271,8 @@ def _get_plan_sport_module(db, plan_id: int) -> str:
     """Detect sport module from a stored plan's name and description."""
     try:
         plan = db.execute(
-            'SELECT name, description FROM training_plans WHERE id=?', (plan_id,)
+            'SELECT name, description FROM training_plans WHERE id=? AND user_id=?',
+            (plan_id, current_user_id())
         ).fetchone()
         if plan:
             return _detect_sport_module((plan['name'] or '') + ' ' + (plan['description'] or ''))
@@ -287,18 +288,21 @@ def get_coaching_context(db, plan_id=None, lookback_days=14, locale='home'):
     ctx = {'today': date.today().isoformat(), 'locale': locale}
 
     # Equipment and terrain available at current locale
+    uid = current_user_id()
     equipment_rows = db.execute(
         '''SELECT ei.tag, ei.label, ei.category
            FROM locale_equipment le
            JOIN equipment_items ei ON ei.id = le.equipment_id
-           WHERE le.locale = ?
+           JOIN locale_profiles lp ON lp.locale = le.locale
+           WHERE le.locale = ? AND lp.user_id = ?
            ORDER BY ei.category, ei.label''',
-        (locale,)
+        (locale, uid)
     ).fetchall()
     ctx['available_equipment'] = [dict(r) for r in equipment_rows]
 
     locale_profile = db.execute(
-        'SELECT notes, city FROM locale_profiles WHERE locale = ?', (locale,)
+        'SELECT notes, city FROM locale_profiles WHERE locale = ? AND user_id = ?',
+        (locale, uid)
     ).fetchone()
     ctx['locale_notes'] = locale_profile['notes'] if locale_profile and locale_profile['notes'] else ''
     ctx['locale_city'] = locale_profile['city'] if locale_profile and locale_profile['city'] else ''
@@ -306,11 +310,12 @@ def get_coaching_context(db, plan_id=None, lookback_days=14, locale='home'):
     # Active injuries
     injuries = db.execute(
         "SELECT start_date, body_part, description, severity, status FROM injury_log "
-        "WHERE status IN ('Active','Managing') ORDER BY start_date DESC"
+        "WHERE user_id = ? AND status IN ('Active','Managing') ORDER BY start_date DESC",
+        (uid,)
     ).fetchall()
     ctx['active_injuries'] = [dict(i) for i in injuries]
 
-    # Injury modifications
+    # Injury modifications (parent-JOIN scoped via injury_log.user_id)
     try:
         mods = db.execute(
             '''SELECT iem.modification_type, iem.modification_notes,
@@ -320,7 +325,8 @@ def get_coaching_context(db, plan_id=None, lookback_days=14, locale='home'):
                JOIN injury_log il ON il.id = iem.injury_id
                JOIN exercise_inventory ei ON ei.id = iem.exercise_id
                LEFT JOIN exercise_inventory ei_sub ON ei_sub.id = iem.substitute_exercise_id
-               WHERE il.status IN ('Active','Managing')'''
+               WHERE il.user_id = ? AND il.status IN ('Active','Managing')''',
+            (uid,)
         ).fetchall()
         ctx['injury_modifications'] = [dict(m) for m in mods]
     except Exception:
@@ -336,7 +342,9 @@ def get_coaching_context(db, plan_id=None, lookback_days=14, locale='home'):
                   ei.movement_pattern, ei.where_available, ei.discipline
            FROM current_rx cr
            LEFT JOIN exercise_inventory ei ON ei.id = cr.exercise_id
-           ORDER BY cr.last_performed DESC'''
+           WHERE cr.user_id = ?
+           ORDER BY cr.last_performed DESC''',
+        (uid,)
     ).fetchall()
     ctx['current_rx'] = [dict(r) for r in rx]
     ctx['deload_flags'] = [
@@ -353,10 +361,10 @@ def get_coaching_context(db, plan_id=None, lookback_days=14, locale='home'):
         '''SELECT date, exercise, actual_sets, actual_reps, actual_weight,
                   rpe, outcome, notes
            FROM training_log
-           WHERE date >= ?
+           WHERE user_id = ? AND date >= ?
            ORDER BY date DESC
            LIMIT 150''',
-        (log_cutoff,)
+        (uid, log_cutoff)
     ).fetchall()
     ctx['recent_training'] = [dict(t) for t in training]
 
@@ -366,10 +374,10 @@ def get_coaching_context(db, plan_id=None, lookback_days=14, locale='home'):
                   avg_hr, avg_pace, avg_power, norm_power,
                   aerobic_te, anaerobic_te, max_hr, elev_gain_ft, notes
            FROM cardio_log
-           WHERE date >= ?
+           WHERE user_id = ? AND date >= ?
            ORDER BY date DESC
            LIMIT 75''',
-        (log_cutoff,)
+        (uid, log_cutoff)
     ).fetchall()
     ctx['recent_cardio'] = [dict(c) for c in cardio]
 
@@ -377,7 +385,7 @@ def get_coaching_context(db, plan_id=None, lookback_days=14, locale='home'):
     metrics_rows = db.execute(
         'SELECT date, weight_lbs, body_fat_pct, vo2_max, resting_hr FROM body_metrics '
         'WHERE user_id = ? ORDER BY date DESC LIMIT 4',
-        (current_user_id(),)
+        (uid,)
     ).fetchall()
     ctx['body_metrics'] = [dict(m) for m in metrics_rows]
 
@@ -402,18 +410,20 @@ def get_coaching_context(db, plan_id=None, lookback_days=14, locale='home'):
                       COUNT(pi.id) as total_scheduled
                FROM training_plans tp
                LEFT JOIN plan_items pi ON pi.plan_id = tp.id
-               WHERE date(tp.start_date) >= date('now', '-90 days')
+               WHERE tp.user_id = ?
+                 AND date(tp.start_date) >= date('now', '-90 days')
                  AND (? IS NULL OR tp.id != ?)
                GROUP BY tp.id
                ORDER BY tp.start_date DESC''',
-            (plan_id, plan_id)
+            (uid, plan_id, plan_id)
         ).fetchall()
         prior = []
         for p in prior_plans:
             row = dict(p)
             sample = db.execute(
-                'SELECT DISTINCT workout_name FROM plan_items WHERE plan_id=? LIMIT 10',
-                (p['id'],)
+                'SELECT DISTINCT workout_name FROM plan_items '
+                'WHERE plan_id=? AND user_id=? LIMIT 10',
+                (p['id'], uid)
             ).fetchall()
             row['sample_workouts'] = [w['workout_name'] for w in sample]
             prior.append(row)
@@ -432,7 +442,9 @@ def get_coaching_context(db, plan_id=None, lookback_days=14, locale='home'):
     # Coaching preferences (permanent notes, avoid lists, etc.)
     try:
         prefs = db.execute(
-            'SELECT category, content, permanent FROM coaching_preferences ORDER BY created_at ASC'
+            'SELECT category, content, permanent FROM coaching_preferences '
+            'WHERE user_id = ? ORDER BY created_at ASC',
+            (uid,)
         ).fetchall()
         ctx['coaching_preferences'] = [dict(p) for p in prefs]
     except Exception:
@@ -448,10 +460,10 @@ def get_coaching_context(db, plan_id=None, lookback_days=14, locale='home'):
                       pi.workout_name as planned_workout, pi.sport_type as planned_sport
                FROM plan_item_disposition pid
                JOIN plan_items pi ON pi.id = pid.plan_item_id
-               WHERE date(pid.created_at) >= ?
+               WHERE pid.user_id = ? AND date(pid.created_at) >= ?
                ORDER BY pid.created_at DESC
                LIMIT 50''',
-            (disp_cutoff,)
+            (uid, disp_cutoff)
         ).fetchall()
         ctx['recent_dispositions'] = [dict(d) for d in disp]
     except Exception:
@@ -710,13 +722,14 @@ def get_clothing_context(db, plan_id: int, city: str, days_ahead: int = 7) -> li
     today_str = today.isoformat()
     end_str = (today + timedelta(days=days_ahead)).isoformat()
 
+    uid = current_user_id()
     sessions = db.execute(
         '''SELECT id, item_date, sport_type, workout_name
            FROM plan_items
-           WHERE plan_id=? AND sport_type != 'strength_training'
+           WHERE user_id=? AND plan_id=? AND sport_type != 'strength_training'
              AND status='scheduled' AND item_date BETWEEN ? AND ?
            ORDER BY item_date ASC''',
-        (plan_id, today_str, end_str)
+        (uid, plan_id, today_str, end_str)
     ).fetchall()
 
     if not sessions:
@@ -758,9 +771,9 @@ def get_clothing_context(db, plan_id: int, city: str, days_ahead: int = 7) -> li
                               arm_warmers, socks, footwear, comfort, comfort_notes,
                               temp_f, conditions, date
                        FROM conditions_log
-                       WHERE temp_f BETWEEN ? AND ?
+                       WHERE user_id = ? AND temp_f BETWEEN ? AND ?
                        ORDER BY comfort DESC, date DESC LIMIT 5''',
-                    (avg_temp - 10, avg_temp + 10)
+                    (uid, avg_temp - 10, avg_temp + 10)
                 ).fetchall()
                 rec['similar_past_conditions'] = [dict(p) for p in past]
             except Exception:
@@ -784,11 +797,11 @@ def _get_performance_delta(db, plan_id: int, lookback_days: int) -> list:
            FROM plan_items pi
            LEFT JOIN training_log tl ON tl.plan_item_id = pi.id
            LEFT JOIN cardio_log cl ON cl.plan_item_id = pi.id
-           WHERE pi.plan_id = ? AND pi.item_date >= ?
+           WHERE pi.user_id = ? AND pi.plan_id = ? AND pi.item_date >= ?
              AND pi.status IN ('completed', 'skipped')
            GROUP BY pi.id
            ORDER BY pi.item_date ASC''',
-        (plan_id, cutoff)
+        (current_user_id(), plan_id, cutoff)
     ).fetchall()
 
     result = []
@@ -828,7 +841,8 @@ def run_review(db, plan_id: int, tier: int, notes: str = '', locale: str = 'home
 
     if tier == 3:
         plan = db.execute(
-            'SELECT end_date FROM training_plans WHERE id=?', (plan_id,)
+            'SELECT end_date FROM training_plans WHERE id=? AND user_id=?',
+            (plan_id, current_user_id())
         ).fetchone()
         next_start = plan['end_date'] if plan else date.today().isoformat()
 
@@ -851,9 +865,9 @@ Use the full training history below as context for progressive overload and volu
         upcoming = db.execute(
             '''SELECT id, item_date, workout_name, sport_type, intensity,
                       target_duration_min, target_distance_mi
-               FROM plan_items WHERE plan_id=? AND status='scheduled'
+               FROM plan_items WHERE plan_id=? AND user_id=? AND status='scheduled'
                ORDER BY item_date ASC''',
-            (plan_id,)
+            (plan_id, current_user_id())
         ).fetchall()
         delta_section += f'\n## Full Remaining Plan\n{json.dumps([dict(u) for u in upcoming], indent=2, default=str)}\n'
 
@@ -1113,10 +1127,10 @@ def get_wellness_summary(db, lookback_days: int = 14) -> dict:
                       AVG(CASE WHEN respiration_rate > 0 THEN respiration_rate END) AS avg_respiration,
                       SUM(steps) AS total_steps
                  FROM wellness_log
-                WHERE date >= ?
+                WHERE user_id = ? AND date >= ?
              GROUP BY date
              ORDER BY date DESC''',
-            (cutoff,)
+            (current_user_id(), cutoff)
         ).fetchall()
     except Exception:
         return {}

@@ -37,8 +37,8 @@ def list_entries():
     date_filter = request.args.get('date', '')
     activity_filter = request.args.get('activity', '')
 
-    query = 'SELECT * FROM conditions_log WHERE 1=1'
-    params = []
+    query = 'SELECT * FROM conditions_log WHERE user_id = ?'
+    params = [current_user_id()]
     if date_filter:
         query += ' AND date=?'
         params.append(date_filter)
@@ -66,7 +66,8 @@ def new_entry():
     cardio_log_id = request.args.get('cardio_log_id', type=int)
     if cardio_log_id:
         row = db.execute(
-            'SELECT id, date, activity FROM cardio_log WHERE id=?', (cardio_log_id,)
+            'SELECT id, date, activity FROM cardio_log WHERE id=? AND user_id=?',
+            (cardio_log_id, current_user_id())
         ).fetchone()
         if row:
             prefill = {'cardio_log_id': row['id'], 'date': row['date'], 'activity': row['activity']}
@@ -80,7 +81,10 @@ def new_entry():
 @bp.route('/conditions/<int:entry_id>/edit', methods=['GET', 'POST'])
 def edit_entry(entry_id):
     db = get_db()
-    entry = db.execute('SELECT * FROM conditions_log WHERE id=?', (entry_id,)).fetchone()
+    entry = db.execute(
+        'SELECT * FROM conditions_log WHERE id=? AND user_id=?',
+        (entry_id, current_user_id())
+    ).fetchone()
     if not entry:
         flash('Entry not found.', 'danger')
         return redirect(url_for('conditions.list_entries'))
@@ -100,7 +104,10 @@ def edit_entry(entry_id):
 @bp.route('/conditions/<int:entry_id>/delete', methods=['POST'])
 def delete_entry(entry_id):
     db = get_db()
-    db.execute('DELETE FROM conditions_log WHERE id=?', (entry_id,))
+    db.execute(
+        'DELETE FROM conditions_log WHERE id=? AND user_id=?',
+        (entry_id, current_user_id())
+    )
     db.commit()
     flash('Entry deleted.', 'warning')
     return redirect(url_for('conditions.list_entries'))
@@ -110,13 +117,18 @@ def _load_cardio_sessions(db):
     return db.execute(
         '''SELECT id, date, activity, activity_name
            FROM cardio_log
+           WHERE user_id = ?
            ORDER BY date DESC, id DESC
-           LIMIT 60'''
+           LIMIT 60''',
+        (current_user_id(),)
     ).fetchall()
 
 
 def _load_clothing_options(db):
-    """Return {category: [value, ...]} dict from clothing_options table."""
+    """Return {category: [value, ...]} dict from clothing_options table.
+
+    NOTE: clothing_options is shared today (per Session 3 it becomes per-user).
+    Until Session 3 ships, all users see the same accumulated values."""
     rows = db.execute('SELECT category, value FROM clothing_options ORDER BY category, value').fetchall()
     opts = {}
     for row in rows:
@@ -173,8 +185,8 @@ def _save(db, entry_id):
             wind_mph=?,wind_dir=?,conditions=?,headwear=?,face_neck=?,upper_shell=?,
             upper_mid_layer=?,upper_base_layer=?,lower_outer=?,lower_under=?,gloves=?,
             arm_warmers=?,socks=?,footwear=?,comfort=?,comfort_notes=?,cardio_log_id=?
-            WHERE id=?''',
-            vals + (entry_id,))
+            WHERE id=? AND user_id=?''',
+            vals + (entry_id, uid))
     else:
         db.execute('''INSERT INTO conditions_log
             (date,activity,temp_f,feels_like_f,wind_mph,wind_dir,conditions,headwear,

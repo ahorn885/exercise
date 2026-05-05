@@ -90,21 +90,32 @@ def _create_plan_from_dict(db, data):
 
 def _plan_health(db, plan_id):
     """Compute plan review health status for the three-tier incremental pattern."""
-    plan = db.execute('SELECT created_at FROM training_plans WHERE id=?', (plan_id,)).fetchone()
+    uid = current_user_id()
+    plan = db.execute(
+        'SELECT created_at FROM training_plans WHERE id=? AND user_id=?',
+        (plan_id, uid)
+    ).fetchone()
     plan_created = plan['created_at'] if plan else '1970-01-01'
 
+    # plan_reviews is parent-JOIN scoped via training_plans
     last_t1 = db.execute(
-        'SELECT sessions_reviewed FROM plan_reviews WHERE plan_id=? AND tier=1 ORDER BY created_at DESC LIMIT 1',
-        (plan_id,)
+        '''SELECT pr.sessions_reviewed FROM plan_reviews pr
+           JOIN training_plans tp ON tp.id = pr.plan_id
+           WHERE pr.plan_id=? AND tp.user_id=? AND pr.tier=1
+           ORDER BY pr.created_at DESC LIMIT 1''',
+        (plan_id, uid)
     ).fetchone()
     last_t2 = db.execute(
-        'SELECT created_at FROM plan_reviews WHERE plan_id=? AND tier=2 ORDER BY created_at DESC LIMIT 1',
-        (plan_id,)
+        '''SELECT pr.created_at FROM plan_reviews pr
+           JOIN training_plans tp ON tp.id = pr.plan_id
+           WHERE pr.plan_id=? AND tp.user_id=? AND pr.tier=2
+           ORDER BY pr.created_at DESC LIMIT 1''',
+        (plan_id, uid)
     ).fetchone()
 
     current_completed = db.execute(
-        "SELECT COUNT(*) FROM plan_items WHERE plan_id=? AND status='completed'",
-        (plan_id,)
+        "SELECT COUNT(*) FROM plan_items WHERE plan_id=? AND user_id=? AND status='completed'",
+        (plan_id, uid)
     ).fetchone()[0]
 
     sessions_since_t1 = current_completed - (last_t1['sessions_reviewed'] if last_t1 else 0)
@@ -118,8 +129,8 @@ def _plan_health(db, plan_id):
         days_since_t2 = 0
 
     scheduled_remaining = db.execute(
-        "SELECT COUNT(*) FROM plan_items WHERE plan_id=? AND status='scheduled'",
-        (plan_id,)
+        "SELECT COUNT(*) FROM plan_items WHERE plan_id=? AND user_id=? AND status='scheduled'",
+        (plan_id, uid)
     ).fetchone()[0]
 
     tier1_due = sessions_since_t1 > 0
@@ -128,16 +139,16 @@ def _plan_health(db, plan_id):
 
     recent = db.execute(
         '''SELECT item_date, workout_name, sport_type, status, notes
-           FROM plan_items WHERE plan_id=? AND status IN ('completed','skipped')
+           FROM plan_items WHERE plan_id=? AND user_id=? AND status IN ('completed','skipped')
            ORDER BY item_date DESC LIMIT 5''',
-        (plan_id,)
+        (plan_id, uid)
     ).fetchall()
 
     upcoming = db.execute(
         '''SELECT item_date, workout_name, sport_type, intensity, target_duration_min
-           FROM plan_items WHERE plan_id=? AND status='scheduled'
+           FROM plan_items WHERE plan_id=? AND user_id=? AND status='scheduled'
            ORDER BY item_date ASC LIMIT 7''',
-        (plan_id,)
+        (plan_id, uid)
     ).fetchall()
 
     # Compliance data for recently completed items linked to cardio_log
@@ -150,9 +161,9 @@ def _plan_health(db, plan_id):
                   cl.avg_hr, cl.garmin_activity_id
            FROM plan_items pi
            JOIN cardio_log cl ON cl.plan_item_id = pi.id
-           WHERE pi.plan_id = ? AND pi.status = 'completed'
+           WHERE pi.plan_id = ? AND pi.user_id = ? AND pi.status = 'completed'
            ORDER BY pi.item_date DESC LIMIT 10''',
-        (plan_id,)
+        (plan_id, uid)
     ).fetchall()
 
     compliance = []
@@ -194,8 +205,10 @@ def list_plans():
                   SUM(CASE WHEN i.status = 'completed' THEN 1 ELSE 0 END) as completed_count
            FROM training_plans p
            LEFT JOIN plan_items i ON i.plan_id = p.id
+           WHERE p.user_id = ?
            GROUP BY p.id
-           ORDER BY p.start_date DESC'''
+           ORDER BY p.start_date DESC''',
+        (current_user_id(),)
     ).fetchall()
     plans = [p for p in all_plans if p['status'] != 'archived']
     archived = [p for p in all_plans if p['status'] == 'archived']
@@ -245,9 +258,15 @@ def api_plan_review():
     if not plan_id or tier not in (1, 2, 3):
         return jsonify({'ok': False, 'error': 'plan_id and tier (1, 2, or 3) required'}), 400
     db = get_db()
+    uid = current_user_id()
+    # Verify plan ownership before writing a review for it
+    if not db.execute(
+        'SELECT 1 FROM training_plans WHERE id=? AND user_id=?', (plan_id, uid)
+    ).fetchone():
+        return jsonify({'ok': False, 'error': 'Plan not found'}), 404
     completed = db.execute(
-        "SELECT COUNT(*) FROM plan_items WHERE plan_id=? AND status='completed'",
-        (plan_id,)
+        "SELECT COUNT(*) FROM plan_items WHERE plan_id=? AND user_id=? AND status='completed'",
+        (plan_id, uid)
     ).fetchone()[0]
     db.execute(
         'INSERT INTO plan_reviews (plan_id, tier, sessions_reviewed, notes) VALUES (?,?,?,?)',
@@ -267,8 +286,8 @@ def api_patch_plan_item(item_id):
         return jsonify({'ok': False, 'error': 'No valid fields to update'}), 400
     db = get_db()
     set_clause = ', '.join(f'{k}=?' for k in updates)
-    values = list(updates.values()) + [item_id]
-    db.execute(f'UPDATE plan_items SET {set_clause} WHERE id=?', values)
+    values = list(updates.values()) + [item_id, current_user_id()]
+    db.execute(f'UPDATE plan_items SET {set_clause} WHERE id=? AND user_id=?', values)
     db.commit()
     return jsonify({'ok': True})
 
@@ -276,7 +295,10 @@ def api_patch_plan_item(item_id):
 @bp.route('/<int:plan_id>/health')
 def plan_health(plan_id):
     db = get_db()
-    if not db.execute('SELECT id FROM training_plans WHERE id=?', (plan_id,)).fetchone():
+    if not db.execute(
+        'SELECT id FROM training_plans WHERE id=? AND user_id=?',
+        (plan_id, current_user_id())
+    ).fetchone():
         return jsonify({'error': 'Plan not found'}), 404
     return jsonify(_plan_health(db, plan_id))
 
@@ -284,7 +306,10 @@ def plan_health(plan_id):
 @bp.route('/<int:plan_id>/archive', methods=['POST'])
 def archive_plan(plan_id):
     db = get_db()
-    db.execute("UPDATE training_plans SET status='archived' WHERE id=?", (plan_id,))
+    db.execute(
+        "UPDATE training_plans SET status='archived' WHERE id=? AND user_id=?",
+        (plan_id, current_user_id())
+    )
     db.commit()
     flash('Plan archived.', 'secondary')
     return redirect(url_for('plans.list_plans'))
@@ -293,7 +318,10 @@ def archive_plan(plan_id):
 @bp.route('/<int:plan_id>/unarchive', methods=['POST'])
 def unarchive_plan(plan_id):
     db = get_db()
-    db.execute("UPDATE training_plans SET status='active' WHERE id=?", (plan_id,))
+    db.execute(
+        "UPDATE training_plans SET status='active' WHERE id=? AND user_id=?",
+        (plan_id, current_user_id())
+    )
     db.commit()
     flash('Plan restored to active.', 'success')
     return redirect(url_for('plans.view_plan', plan_id=plan_id))
@@ -302,10 +330,19 @@ def unarchive_plan(plan_id):
 @bp.route('/<int:plan_id>/delete', methods=['POST'])
 def delete_plan(plan_id):
     db = get_db()
+    uid = current_user_id()
+    # Verify plan ownership before deleting child rows that lack user_id
+    if not db.execute(
+        'SELECT 1 FROM training_plans WHERE id=? AND user_id=?', (plan_id, uid)
+    ).fetchone():
+        if request.is_json or request.headers.get('Accept') == 'application/json':
+            return jsonify({'ok': False, 'error': 'Plan not found'}), 404
+        flash('Plan not found.', 'danger')
+        return redirect(url_for('plans.list_plans'))
     db.execute('DELETE FROM plan_reviews WHERE plan_id=?', (plan_id,))
-    db.execute('DELETE FROM coaching_chat WHERE plan_id=?', (plan_id,))
-    db.execute('DELETE FROM plan_items WHERE plan_id=?', (plan_id,))
-    db.execute('DELETE FROM training_plans WHERE id=?', (plan_id,))
+    db.execute('DELETE FROM coaching_chat WHERE plan_id=? AND user_id=?', (plan_id, uid))
+    db.execute('DELETE FROM plan_items WHERE plan_id=? AND user_id=?', (plan_id, uid))
+    db.execute('DELETE FROM training_plans WHERE id=? AND user_id=?', (plan_id, uid))
     db.commit()
     if request.is_json or request.headers.get('Accept') == 'application/json':
         return jsonify({'ok': True})
@@ -316,13 +353,17 @@ def delete_plan(plan_id):
 @bp.route('/<int:plan_id>')
 def view_plan(plan_id):
     db = get_db()
-    plan = db.execute('SELECT * FROM training_plans WHERE id = ?', (plan_id,)).fetchone()
+    uid = current_user_id()
+    plan = db.execute(
+        'SELECT * FROM training_plans WHERE id = ? AND user_id = ?',
+        (plan_id, uid)
+    ).fetchone()
     if not plan:
         flash('Plan not found.', 'danger')
         return redirect(url_for('plans.list_plans'))
     items = db.execute(
-        'SELECT * FROM plan_items WHERE plan_id = ? ORDER BY item_date ASC',
-        (plan_id,)
+        'SELECT * FROM plan_items WHERE plan_id = ? AND user_id = ? ORDER BY item_date ASC',
+        (plan_id, uid)
     ).fetchall()
 
     def week_key(item):
@@ -349,8 +390,9 @@ def view_plan(plan_id):
            JOIN injury_log il ON il.id = iem.injury_id
            JOIN exercise_inventory ei ON ei.id = iem.exercise_id
            LEFT JOIN exercise_inventory ei_sub ON ei_sub.id = iem.substitute_exercise_id
-           WHERE il.status IN ('Active', 'Managing')
-           ORDER BY il.status, il.body_part, ei.exercise'''
+           WHERE il.user_id = ? AND il.status IN ('Active', 'Managing')
+           ORDER BY il.status, il.body_part, ei.exercise''',
+        (uid,)
     ).fetchall()
 
     affected_exercises = {m['exercise_name'] for m in active_mods}
@@ -370,13 +412,20 @@ def view_plan(plan_id):
     try:
         from coaching import get_clothing_context
         today_str = date_type.today().isoformat()
+        # plan_travel is parent-JOIN scoped via training_plans
         trip = db.execute(
-            "SELECT city FROM plan_travel WHERE plan_id=? AND start_date<=? AND end_date>=? AND city!='' LIMIT 1",
-            (plan_id, today_str, today_str)
+            '''SELECT pt.city FROM plan_travel pt
+               JOIN training_plans tp ON tp.id = pt.plan_id
+               WHERE pt.plan_id=? AND tp.user_id=?
+                 AND pt.start_date<=? AND pt.end_date>=? AND pt.city!='' LIMIT 1''',
+            (plan_id, uid, today_str, today_str)
         ).fetchone()
         city = trip['city'] if trip else ''
         if not city:
-            home = db.execute("SELECT city FROM locale_profiles WHERE locale='home' LIMIT 1").fetchone()
+            home = db.execute(
+                "SELECT city FROM locale_profiles WHERE locale='home' AND user_id=? LIMIT 1",
+                (uid,)
+            ).fetchone()
             city = home['city'] if home and home['city'] else ''
         clothing_recs = get_clothing_context(db, plan_id, city)
     except Exception:
@@ -397,8 +446,10 @@ def view_plan(plan_id):
 @bp.route('/<int:plan_id>/item/<int:item_id>')
 def view_item(plan_id, item_id):
     db = get_db()
+    uid = current_user_id()
     item = db.execute(
-        'SELECT * FROM plan_items WHERE id = ? AND plan_id = ?', (item_id, plan_id)
+        'SELECT * FROM plan_items WHERE id = ? AND plan_id = ? AND user_id = ?',
+        (item_id, plan_id, uid)
     ).fetchone()
     if not item:
         flash('Item not found.', 'danger')
@@ -410,8 +461,8 @@ def view_item(plan_id, item_id):
         except Exception:
             pass
     gw = db.execute(
-        'SELECT * FROM garmin_workouts WHERE plan_item_id = ? AND status = "active"',
-        (item_id,)
+        'SELECT * FROM garmin_workouts WHERE plan_item_id = ? AND user_id = ? AND status = "active"',
+        (item_id, uid)
     ).fetchone()
     try:
         from garmin_connect import get_auth_status
@@ -428,8 +479,9 @@ def complete_item(plan_id, item_id):
     db = get_db()
     notes = request.form.get('notes', '')
     db.execute(
-        "UPDATE plan_items SET status = 'completed', notes = ? WHERE id = ? AND plan_id = ?",
-        (notes, item_id, plan_id)
+        "UPDATE plan_items SET status = 'completed', notes = ? "
+        "WHERE id = ? AND plan_id = ? AND user_id = ?",
+        (notes, item_id, plan_id, current_user_id())
     )
     db.commit()
     flash('Workout marked as completed.', 'success')
@@ -441,8 +493,9 @@ def skip_item(plan_id, item_id):
     db = get_db()
     notes = request.form.get('notes', '')
     db.execute(
-        "UPDATE plan_items SET status = 'skipped', notes = ? WHERE id = ? AND plan_id = ?",
-        (notes, item_id, plan_id)
+        "UPDATE plan_items SET status = 'skipped', notes = ? "
+        "WHERE id = ? AND plan_id = ? AND user_id = ?",
+        (notes, item_id, plan_id, current_user_id())
     )
     db.commit()
     flash('Workout marked as skipped.', 'warning')
@@ -452,8 +505,10 @@ def skip_item(plan_id, item_id):
 @bp.route('/<int:plan_id>/item/<int:item_id>/push-to-garmin', methods=['POST'])
 def push_to_garmin(plan_id, item_id):
     db = get_db()
+    uid = current_user_id()
     item = db.execute(
-        'SELECT * FROM plan_items WHERE id = ? AND plan_id = ?', (item_id, plan_id)
+        'SELECT * FROM plan_items WHERE id = ? AND plan_id = ? AND user_id = ?',
+        (item_id, plan_id, uid)
     ).fetchone()
     if not item:
         flash('Item not found.', 'danger')
@@ -469,10 +524,10 @@ def push_to_garmin(plan_id, item_id):
             schedule_workout(db, workout_id, item['item_date'])
         db.execute(
             '''INSERT INTO garmin_workouts
-               (plan_item_id, garmin_workout_id, workout_name, sport_type, scheduled_date)
-               VALUES (?,?,?,?,?)''',
+               (plan_item_id, garmin_workout_id, workout_name, sport_type, scheduled_date, user_id)
+               VALUES (?,?,?,?,?,?)''',
             (item_id, workout_id, item['workout_name'],
-             item['sport_type'], item['item_date'])
+             item['sport_type'], item['item_date'], uid)
         )
         db.commit()
         flash(f'Workout uploaded to Garmin Connect (ID: {workout_id}).', 'success')
@@ -492,7 +547,8 @@ def download_item_fit(plan_id, item_id):
 
     db = get_db()
     item = db.execute(
-        'SELECT * FROM plan_items WHERE id=? AND plan_id=?', (item_id, plan_id)
+        'SELECT * FROM plan_items WHERE id=? AND plan_id=? AND user_id=?',
+        (item_id, plan_id, current_user_id())
     ).fetchone()
     if not item:
         flash('Item not found.', 'danger')
@@ -518,14 +574,18 @@ def download_plan_fits(plan_id):
     from fit_workout_generator import generate_workout_fit
 
     db = get_db()
-    plan = db.execute('SELECT name FROM training_plans WHERE id=?', (plan_id,)).fetchone()
+    uid = current_user_id()
+    plan = db.execute(
+        'SELECT name FROM training_plans WHERE id=? AND user_id=?', (plan_id, uid)
+    ).fetchone()
     if not plan:
         flash('Plan not found.', 'danger')
         return redirect(url_for('plans.list_plans'))
 
     items = db.execute(
-        "SELECT * FROM plan_items WHERE plan_id=? AND status='scheduled' ORDER BY item_date ASC",
-        (plan_id,)
+        "SELECT * FROM plan_items WHERE plan_id=? AND user_id=? AND status='scheduled' "
+        "ORDER BY item_date ASC",
+        (plan_id, uid)
     ).fetchall()
 
     buf = io.BytesIO()
