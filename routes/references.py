@@ -46,22 +46,21 @@ def exercises():
         ).fetchall():
             profiles_active[p['locale']] = p
 
-        # Union of equipment_ids across all selected locales (parent-JOIN scoped)
+        # Union of equipment_ids across all selected locales (locale_equipment
+        # carries user_id directly since Session 3).
         for row in db.execute(
-            f'SELECT DISTINCT le.equipment_id FROM locale_equipment le '
-            f'JOIN locale_profiles lp ON lp.locale = le.locale '
-            f'WHERE le.locale IN ({placeholders}) AND lp.user_id = ?',
-            list(locale_filter) + [uid]
+            f'SELECT DISTINCT equipment_id FROM locale_equipment '
+            f'WHERE user_id = ? AND locale IN ({placeholders})',
+            [uid] + list(locale_filter)
         ).fetchall():
             profile_equipment_ids.add(row['equipment_id'])
 
         # Per-locale item counts for display
         for row in db.execute(
-            f'SELECT le.locale, COUNT(*) as cnt FROM locale_equipment le '
-            f'JOIN locale_profiles lp ON lp.locale = le.locale '
-            f'WHERE le.locale IN ({placeholders}) AND lp.user_id = ? '
-            f'GROUP BY le.locale',
-            list(locale_filter) + [uid]
+            f'SELECT locale, COUNT(*) as cnt FROM locale_equipment '
+            f'WHERE user_id = ? AND locale IN ({placeholders}) '
+            f'GROUP BY locale',
+            [uid] + list(locale_filter)
         ).fetchall():
             equipment_counts[row['locale']] = row['cnt']
 

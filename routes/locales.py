@@ -29,8 +29,7 @@ def list_profiles():
         '''SELECT le.locale, ei.tag, ei.label
            FROM locale_equipment le
            JOIN equipment_items ei ON ei.id = le.equipment_id
-           JOIN locale_profiles lp ON lp.locale = le.locale
-           WHERE lp.user_id = ?
+           WHERE le.user_id = ?
            ORDER BY le.locale, ei.category, ei.label''',
         (uid,)
     ).fetchall():
@@ -64,27 +63,28 @@ def edit_profile(locale):
             tag_to_id = {r['tag']: r['id'] for r in eq_rows}
         else:
             tag_to_id = {}
-        # Upsert locale_profiles first — locale_equipment has a FK on this table.
-        # NOTE: locale is still a global PK until Session 3; the ON CONFLICT
-        # clause cannot scope by user_id today. user_id is set on INSERT and
-        # preserved on UPDATE.
+        # Upsert locale_profiles first — locale_equipment has an FK on this
+        # table. PK is composite (user_id, locale) since Session 3.
         db.execute(
-            '''INSERT INTO locale_profiles (locale, notes, city, updated_at, user_id)
-               VALUES (?, ?, ?, datetime('now'), ?)
-               ON CONFLICT(locale) DO UPDATE SET
+            '''INSERT INTO locale_profiles (user_id, locale, notes, city, updated_at)
+               VALUES (?, ?, ?, ?, datetime('now'))
+               ON CONFLICT(user_id, locale) DO UPDATE SET
                  notes=excluded.notes,
                  city=excluded.city,
                  updated_at=excluded.updated_at''',
-            (locale, notes, city, uid)
+            (uid, locale, notes, city)
         )
-        # Replace locale_equipment rows atomically
-        db.execute('DELETE FROM locale_equipment WHERE locale = ?', (locale,))
+        # Replace locale_equipment rows atomically (scoped per-user)
+        db.execute(
+            'DELETE FROM locale_equipment WHERE user_id = ? AND locale = ?',
+            (uid, locale)
+        )
         for tag in selected_tags:
             eq_id = tag_to_id.get(tag)
             if eq_id:
                 db.execute(
-                    'INSERT INTO locale_equipment (locale, equipment_id) VALUES (?, ?)',
-                    (locale, eq_id)
+                    'INSERT INTO locale_equipment (user_id, locale, equipment_id) VALUES (?, ?, ?)',
+                    (uid, locale, eq_id)
                 )
         db.commit()
         flash(f'{locale.title()} profile saved ({len(selected_tags)} items).', 'success')
@@ -97,9 +97,8 @@ def edit_profile(locale):
     active_rows = db.execute(
         '''SELECT ei.tag FROM locale_equipment le
            JOIN equipment_items ei ON ei.id = le.equipment_id
-           JOIN locale_profiles lp ON lp.locale = le.locale
-           WHERE le.locale = ? AND lp.user_id = ?''',
-        (locale, uid)
+           WHERE le.user_id = ? AND le.locale = ?''',
+        (uid, locale)
     ).fetchall()
     active = {row['tag'] for row in active_rows}
     return render_template('locales/form.html', locale=locale,

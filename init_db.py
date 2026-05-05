@@ -209,12 +209,13 @@ SQLITE_SCHEMA = '''
         created_at TEXT DEFAULT (datetime('now'))
     );
     CREATE TABLE IF NOT EXISTS locale_profiles (
-        locale TEXT PRIMARY KEY,
-        user_id INTEGER REFERENCES users(id),
+        user_id INTEGER NOT NULL REFERENCES users(id),
+        locale TEXT NOT NULL,
         equipment TEXT DEFAULT '',
         notes TEXT DEFAULT '',
         city TEXT DEFAULT '',
-        updated_at TEXT DEFAULT (datetime('now'))
+        updated_at TEXT DEFAULT (datetime('now')),
+        PRIMARY KEY (user_id, locale)
     );
     CREATE TABLE IF NOT EXISTS plan_travel (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -239,9 +240,11 @@ SQLITE_SCHEMA = '''
         PRIMARY KEY (exercise_id, equipment_id)
     );
     CREATE TABLE IF NOT EXISTS locale_equipment (
-        locale       TEXT NOT NULL REFERENCES locale_profiles(locale),
+        user_id      INTEGER NOT NULL REFERENCES users(id),
+        locale       TEXT NOT NULL,
         equipment_id INTEGER NOT NULL REFERENCES equipment_items(id),
-        PRIMARY KEY (locale, equipment_id)
+        PRIMARY KEY (user_id, locale, equipment_id),
+        FOREIGN KEY (user_id, locale) REFERENCES locale_profiles(user_id, locale)
     );
     CREATE TABLE IF NOT EXISTS injury_exercise_modifications (
         id                     INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -260,9 +263,10 @@ SQLITE_SCHEMA = '''
     CREATE INDEX IF NOT EXISTS idx_pi_date ON plan_items(item_date);
     CREATE TABLE IF NOT EXISTS clothing_options (
         id       INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id  INTEGER NOT NULL REFERENCES users(id),
         category TEXT NOT NULL,
         value    TEXT NOT NULL,
-        UNIQUE(category, value)
+        UNIQUE(user_id, category, value)
     );
     CREATE TABLE IF NOT EXISTS wellness_log (
         id             INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -486,12 +490,13 @@ PG_SCHEMA = '''
         created_at TIMESTAMP DEFAULT NOW()
     );
     CREATE TABLE IF NOT EXISTS locale_profiles (
-        locale TEXT PRIMARY KEY,
-        user_id INTEGER REFERENCES users(id),
+        user_id INTEGER NOT NULL REFERENCES users(id),
+        locale TEXT NOT NULL,
         equipment TEXT DEFAULT '',
         notes TEXT DEFAULT '',
         city TEXT DEFAULT '',
-        updated_at TIMESTAMP DEFAULT NOW()
+        updated_at TIMESTAMP DEFAULT NOW(),
+        PRIMARY KEY (user_id, locale)
     );
     CREATE TABLE IF NOT EXISTS plan_travel (
         id SERIAL PRIMARY KEY,
@@ -516,9 +521,11 @@ PG_SCHEMA = '''
         PRIMARY KEY (exercise_id, equipment_id)
     );
     CREATE TABLE IF NOT EXISTS locale_equipment (
-        locale       TEXT NOT NULL REFERENCES locale_profiles(locale),
+        user_id      INTEGER NOT NULL REFERENCES users(id),
+        locale       TEXT NOT NULL,
         equipment_id INTEGER NOT NULL REFERENCES equipment_items(id),
-        PRIMARY KEY (locale, equipment_id)
+        PRIMARY KEY (user_id, locale, equipment_id),
+        FOREIGN KEY (user_id, locale) REFERENCES locale_profiles(user_id, locale)
     );
     CREATE TABLE IF NOT EXISTS injury_exercise_modifications (
         id                     SERIAL PRIMARY KEY,
@@ -537,9 +544,10 @@ PG_SCHEMA = '''
     CREATE INDEX IF NOT EXISTS idx_pi_date ON plan_items(item_date);
     CREATE TABLE IF NOT EXISTS clothing_options (
         id       SERIAL PRIMARY KEY,
+        user_id  INTEGER NOT NULL REFERENCES users(id),
         category TEXT NOT NULL,
         value    TEXT NOT NULL,
-        UNIQUE(category, value)
+        UNIQUE(user_id, category, value)
     );
     CREATE TABLE IF NOT EXISTS wellness_log (
         id             SERIAL PRIMARY KEY,
@@ -659,6 +667,130 @@ def _migrate_wellness_log_unique(conn):
         )''',
         'UNIQUE(user_id, timestamp_ms)',
     )
+
+
+# ── Session 3 — clothing_options + locale_profiles per-user (SQLite) ──────────
+#
+# Three connected rebuilds:
+#   - clothing_options: drop the global seed list; new shape is (user_id,
+#     category, value) UNIQUE, NOT NULL on user_id. Existing rows on a
+#     populated DB belong to Andy → backfill user_id=1 during rebuild.
+#   - locale_profiles: PK becomes composite (user_id, locale). Existing
+#     rows have user_id from 2A (NULLABLE) — coerce to user_id=1 on
+#     rebuild; drop any orphan NULL rows (none expected post-2A backfill).
+#   - locale_equipment: gain user_id, composite FK, composite PK. Backfill
+#     user_id from the parent locale_profiles row.
+#
+# Order matters because of FKs. PRAGMA foreign_keys=OFF is held across
+# all three rebuilds.
+
+def _migrate_session3_locale_clothing(conn):
+    """Per-user clothing_options + composite-PK locale_profiles +
+    user-scoped locale_equipment. Idempotent — checks each table's schema
+    via sqlite_master before rebuilding."""
+
+    def _has_new_shape(table, sentinel):
+        row = conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name=?", (table,)
+        ).fetchone()
+        return bool(row and row[0] and sentinel in row[0])
+
+    needs_clothing = not _has_new_shape('clothing_options', 'UNIQUE(user_id, category, value)')
+    needs_locale_profiles = not _has_new_shape('locale_profiles', 'PRIMARY KEY (user_id, locale)')
+    needs_locale_equipment = not _has_new_shape('locale_equipment', 'PRIMARY KEY (user_id, locale, equipment_id)')
+
+    if not (needs_clothing or needs_locale_profiles or needs_locale_equipment):
+        return
+
+    conn.commit()
+    conn.execute('PRAGMA foreign_keys = OFF')
+    try:
+        if needs_clothing and conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='clothing_options'"
+        ).fetchone():
+            conn.execute('DROP TABLE IF EXISTS clothing_options__rebuild_tmp')
+            conn.execute('''CREATE TABLE clothing_options__rebuild_tmp (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL REFERENCES users(id),
+                category TEXT NOT NULL,
+                value TEXT NOT NULL,
+                UNIQUE(user_id, category, value)
+            )''')
+            # Existing rows belong to Andy if user 1 exists. Otherwise drop
+            # them — fresh installs start empty per the per-user design.
+            if conn.execute('SELECT 1 FROM users WHERE id = 1').fetchone():
+                conn.execute(
+                    'INSERT OR IGNORE INTO clothing_options__rebuild_tmp (category, value, user_id) '
+                    'SELECT category, value, 1 FROM clothing_options'
+                )
+            conn.execute('DROP TABLE clothing_options')
+            conn.execute('ALTER TABLE clothing_options__rebuild_tmp RENAME TO clothing_options')
+
+        if needs_locale_profiles and conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='locale_profiles'"
+        ).fetchone():
+            conn.execute('DROP TABLE IF EXISTS locale_profiles__rebuild_tmp')
+            conn.execute('''CREATE TABLE locale_profiles__rebuild_tmp (
+                user_id INTEGER NOT NULL REFERENCES users(id),
+                locale TEXT NOT NULL,
+                equipment TEXT DEFAULT '',
+                notes TEXT DEFAULT '',
+                city TEXT DEFAULT '',
+                updated_at TEXT DEFAULT (datetime('now')),
+                PRIMARY KEY (user_id, locale)
+            )''')
+            # Coerce any rows with NULL user_id to user 1 (legacy backfill
+            # from 2A should have caught them, but defend against partial
+            # state). Drop NULL rows entirely if user 1 doesn't exist.
+            cols_pre = [r[1] for r in conn.execute('PRAGMA table_info(locale_profiles)').fetchall()]
+            shared_cols = [c for c in cols_pre
+                           if c in ('user_id', 'locale', 'equipment', 'notes',
+                                    'city', 'updated_at')]
+            select_list = ', '.join(
+                'COALESCE(user_id, 1) AS user_id' if c == 'user_id' else c
+                for c in shared_cols
+            )
+            insert_list = ', '.join(shared_cols)
+            if conn.execute('SELECT 1 FROM users WHERE id = 1').fetchone():
+                conn.execute(
+                    f'INSERT OR IGNORE INTO locale_profiles__rebuild_tmp ({insert_list}) '
+                    f'SELECT {select_list} FROM locale_profiles'
+                )
+            else:
+                conn.execute(
+                    f'INSERT OR IGNORE INTO locale_profiles__rebuild_tmp ({insert_list}) '
+                    f'SELECT {select_list} FROM locale_profiles WHERE user_id IS NOT NULL'
+                )
+            conn.execute('DROP TABLE locale_profiles')
+            conn.execute('ALTER TABLE locale_profiles__rebuild_tmp RENAME TO locale_profiles')
+
+        if needs_locale_equipment and conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='locale_equipment'"
+        ).fetchone():
+            conn.execute('DROP TABLE IF EXISTS locale_equipment__rebuild_tmp')
+            conn.execute('''CREATE TABLE locale_equipment__rebuild_tmp (
+                user_id INTEGER NOT NULL REFERENCES users(id),
+                locale TEXT NOT NULL,
+                equipment_id INTEGER NOT NULL REFERENCES equipment_items(id),
+                PRIMARY KEY (user_id, locale, equipment_id),
+                FOREIGN KEY (user_id, locale) REFERENCES locale_profiles(user_id, locale)
+            )''')
+            # Backfill user_id by joining to the (now rebuilt) locale_profiles
+            # table — every locale value in legacy locale_equipment matches
+            # exactly one rebuilt locale_profiles row.
+            conn.execute(
+                'INSERT OR IGNORE INTO locale_equipment__rebuild_tmp '
+                '(user_id, locale, equipment_id) '
+                'SELECT lp.user_id, le.locale, le.equipment_id '
+                'FROM locale_equipment le '
+                'JOIN locale_profiles lp ON lp.locale = le.locale'
+            )
+            conn.execute('DROP TABLE locale_equipment')
+            conn.execute('ALTER TABLE locale_equipment__rebuild_tmp RENAME TO locale_equipment')
+
+        conn.commit()
+    finally:
+        conn.execute('PRAGMA foreign_keys = ON')
 
 
 # ── Per-user seed (current_rx) ────────────────────────────────────────────────
@@ -808,6 +940,10 @@ _SQLITE_MIGRATIONS = [
     _migrate_current_rx_unique,
     _migrate_body_metrics_unique,
     _migrate_wellness_log_unique,
+    # Session 3 — clothing_options per-user + locale_profiles composite PK +
+    # locale_equipment user-scoping. All three rebuilds happen atomically
+    # under a single PRAGMA foreign_keys=OFF window.
+    _migrate_session3_locale_clothing,
 ]
 
 _PG_MIGRATIONS = [
@@ -963,6 +1099,46 @@ _PG_MIGRATIONS = [
     "ALTER TABLE garmin_workouts     ALTER COLUMN user_id SET NOT NULL",
     "ALTER TABLE locale_profiles     ALTER COLUMN user_id SET NOT NULL",
     "ALTER TABLE wellness_log        ALTER COLUMN user_id SET NOT NULL",
+    # Session 3 — clothing_options per-user
+    "ALTER TABLE clothing_options ADD COLUMN IF NOT EXISTS user_id INTEGER REFERENCES users(id)",
+    "UPDATE clothing_options SET user_id = 1 WHERE user_id IS NULL AND EXISTS (SELECT 1 FROM users WHERE id = 1)",
+    "ALTER TABLE clothing_options DROP CONSTRAINT IF EXISTS clothing_options_category_value_key",
+    """DO $$ BEGIN
+        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'clothing_options_user_id_category_value_key') THEN
+            ALTER TABLE clothing_options ADD CONSTRAINT clothing_options_user_id_category_value_key UNIQUE (user_id, category, value);
+        END IF;
+       END $$""",
+    "DELETE FROM clothing_options WHERE user_id IS NULL",
+    "ALTER TABLE clothing_options ALTER COLUMN user_id SET NOT NULL",
+    # Session 3 — locale_equipment gain user_id (denormalized from parent)
+    "ALTER TABLE locale_equipment ADD COLUMN IF NOT EXISTS user_id INTEGER REFERENCES users(id)",
+    """UPDATE locale_equipment SET user_id = lp.user_id
+       FROM locale_profiles lp WHERE lp.locale = locale_equipment.locale
+       AND locale_equipment.user_id IS NULL""",
+    # Session 3 — locale_profiles PK becomes composite (user_id, locale).
+    # Drop dependent FKs first, swap PK, then re-create FKs.
+    "ALTER TABLE locale_equipment DROP CONSTRAINT IF EXISTS locale_equipment_locale_fkey",
+    "ALTER TABLE locale_equipment DROP CONSTRAINT IF EXISTS locale_equipment_locale_fk",
+    "ALTER TABLE locale_profiles DROP CONSTRAINT IF EXISTS locale_profiles_pkey",
+    """DO $$ BEGIN
+        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'locale_profiles_pkey') THEN
+            ALTER TABLE locale_profiles ADD CONSTRAINT locale_profiles_pkey PRIMARY KEY (user_id, locale);
+        END IF;
+       END $$""",
+    # locale_equipment composite PK + composite FK
+    "ALTER TABLE locale_equipment DROP CONSTRAINT IF EXISTS locale_equipment_pkey",
+    """DO $$ BEGIN
+        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'locale_equipment_pkey') THEN
+            ALTER TABLE locale_equipment ADD CONSTRAINT locale_equipment_pkey PRIMARY KEY (user_id, locale, equipment_id);
+        END IF;
+       END $$""",
+    """DO $$ BEGIN
+        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'locale_equipment_user_locale_fkey') THEN
+            ALTER TABLE locale_equipment ADD CONSTRAINT locale_equipment_user_locale_fkey
+              FOREIGN KEY (user_id, locale) REFERENCES locale_profiles(user_id, locale);
+        END IF;
+       END $$""",
+    "ALTER TABLE locale_equipment ALTER COLUMN user_id SET NOT NULL",
 ]
 
 _CLOTHING_SEEDS = [
@@ -1424,18 +1600,21 @@ def init_postgres():
                         'ON CONFLICT DO NOTHING',
                         (ex_id, eq_id, group_num)
                     )
-    # Phase 4 — Migrate locale_profiles.equipment → locale_equipment (idempotent)
-    cur.execute('SELECT locale, equipment FROM locale_profiles')
+    # Phase 4 — Migrate locale_profiles.equipment → locale_equipment (idempotent).
+    # locale_equipment now carries user_id directly (Session 3 composite PK).
+    cur.execute('SELECT user_id, locale, equipment FROM locale_profiles')
     for row in cur.fetchall():
-        for tag in (row[1] or '').split(','):
+        if row[0] is None:
+            continue  # Skip pre-bootstrap NULLs (cleaned up by Session 3 rebuild migration).
+        for tag in (row[2] or '').split(','):
             tag = tag.strip()
             if tag:
                 eq_id = tag_to_id.get(tag)
                 if eq_id:
                     cur.execute(
-                        'INSERT INTO locale_equipment (locale, equipment_id) VALUES (%s, %s) '
-                        'ON CONFLICT DO NOTHING',
-                        (row[0], eq_id)
+                        'INSERT INTO locale_equipment (user_id, locale, equipment_id) '
+                        'VALUES (%s, %s, %s) ON CONFLICT DO NOTHING',
+                        (row[0], row[1], eq_id)
                     )
     # Phase 5 — Backfill exercise_id FKs (runs after seeding so exercise_inventory is populated)
     cur.execute('''UPDATE current_rx SET exercise_id = ei.id
@@ -1444,12 +1623,8 @@ def init_postgres():
     cur.execute('''UPDATE training_log SET exercise_id = ei.id
         FROM exercise_inventory ei WHERE ei.exercise = training_log.exercise
         AND training_log.exercise_id IS NULL''')
-    # Seed clothing_options
-    for category, value in _CLOTHING_SEEDS:
-        cur.execute(
-            'INSERT INTO clothing_options (category, value) VALUES (%s, %s) ON CONFLICT DO NOTHING',
-            (category, value)
-        )
+    # clothing_options is now per-user (Session 3) — values accumulate as
+    # the user types into the conditions form. No global seed.
     conn.commit()
     cur.close()
     conn.close()
@@ -1514,16 +1689,22 @@ def init_sqlite():
                         '(exercise_id, equipment_id, option_group) VALUES (?, ?, ?)',
                         (ex_id, eq_id, group_num)
                     )
-    # Phase 4 — Migrate locale_profiles.equipment → locale_equipment (idempotent)
-    for row in conn.execute('SELECT locale, equipment FROM locale_profiles').fetchall():
-        for tag in (row[1] or '').split(','):
+    # Phase 4 — Migrate locale_profiles.equipment → locale_equipment (idempotent).
+    # locale_equipment now carries user_id directly (Session 3 composite PK).
+    for row in conn.execute(
+        'SELECT user_id, locale, equipment FROM locale_profiles'
+    ).fetchall():
+        if row[0] is None:
+            continue  # Skip pre-bootstrap NULLs.
+        for tag in (row[2] or '').split(','):
             tag = tag.strip()
             if tag:
                 eq_id = tag_to_id.get(tag)
                 if eq_id:
                     conn.execute(
-                        'INSERT OR IGNORE INTO locale_equipment (locale, equipment_id) VALUES (?, ?)',
-                        (row[0], eq_id)
+                        'INSERT OR IGNORE INTO locale_equipment '
+                        '(user_id, locale, equipment_id) VALUES (?, ?, ?)',
+                        (row[0], row[1], eq_id)
                     )
     # Phase 5 — Backfill exercise_id FKs (runs after seeding so exercise_inventory is populated)
     conn.execute('''UPDATE current_rx SET exercise_id =
@@ -1532,11 +1713,8 @@ def init_sqlite():
     conn.execute('''UPDATE training_log SET exercise_id =
         (SELECT id FROM exercise_inventory WHERE exercise = training_log.exercise)
         WHERE exercise_id IS NULL''')
-    # Seed clothing_options
-    conn.executemany(
-        'INSERT OR IGNORE INTO clothing_options (category, value) VALUES (?, ?)',
-        _CLOTHING_SEEDS
-    )
+    # clothing_options is now per-user (Session 3) — values accumulate as
+    # the user types into the conditions form. No global seed.
     conn.commit()
     conn.close()
     print(f'SQLite database initialized at {SQLITE_PATH}')
