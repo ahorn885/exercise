@@ -1,57 +1,178 @@
 # AIDSTATION — Session Handoff
 
 **Date:** 2026-05-05
-**Latest session branch:** `claude/review-handoff-doc-VyeBE` (Session 2C)
-**Deploy state:** TrueNAS (Docker) + Vercel both ran the previous merge
-(2B). TrueNAS `.env` has `SECRET_KEY` and `ANTHROPIC_API_KEY`.
+**Latest merged session:** Session 2D — schema stabilization + composite UNIQUEs + Postgres NOT NULL.
+**Deploy state:** TrueNAS (Docker) + Vercel both running 2B at last update;
+2C and 2D will land on the next Watchtower / Vercel pickup.
 
-Session 2C ships the long tail of per-user scoping plus a second-user
-verification on a fresh local DB. **Do not open `ALLOW_REGISTRATION` in
-production yet** — the UNIQUE constraint debt (current_rx.exercise,
-body_metrics.date, wellness_log.timestamp_ms) has to land in 2D first or
-user 2's first INSERT for any seeded exercise will collide.
+**Session 2D shipped.** Composite UNIQUEs replace the three single-column
+ones; Postgres SET NOT NULL applied to all 18 user_id columns; the seed
+flow now creates per-user `current_rx` rows on registration so each user
+gets independent Back Squat / etc. rows from day one.
+
+**Pending operator action (5 minutes):**
+1. Wire `DATABASE_URL` into Vercel pointing at a fresh Neon Postgres DB.
+   First request triggers `init_postgres()` which builds the schema, runs
+   migrations, and seeds catalog tables. Verify a clean apply (the
+   forward-FK caveat from 2A — `training_sessions.plan_item_id REFERENCES
+   plan_items(id)` declared before `plan_items` — has not been touched
+   in 2D; if Neon rejects the schema, the fix is to reorder CREATEs in
+   `PG_SCHEMA` or move the FK to an `ALTER TABLE ADD CONSTRAINT` migration).
+2. Set `ALLOW_REGISTRATION=1` in Vercel + TrueNAS env vars.
+3. Register a second account end-to-end and confirm isolation.
+
+After step 3, the multi-user retrofit (Sessions 0–2D) is fully
+production-ready. Session 3 (clothing_options + locale_profiles redesign)
+is the next major piece, plus the standalone backlog items.
 
 ---
 
-## Session 2D kickoff — read this first
+## Session 2D — what shipped
 
-Sessions 0, 1, 2A, 2B, and 2C are all on `main`/this branch. Every
-SELECT/UPDATE/DELETE in the route layer + engine helpers is `user_id`-scoped,
-and the second-user verification harness confirms zero cross-user
-visibility on the hot routes and on `/coaching/context`.
+The schema stabilization session. Composite UNIQUEs unblock the
+registration-open path and let `rx_engine` create per-user `current_rx`
+rows without colliding on the legacy single-column `UNIQUE(exercise)`.
 
-The remaining work for 2D:
+### Schema changes
 
-1. **UNIQUE constraint replacements** (the current blocker on opening
-   registration). SQLite via table rebuild, Postgres via DROP CONSTRAINT
-   + ADD:
-   - `current_rx.exercise UNIQUE` → `UNIQUE(user_id, exercise)`
-   - `body_metrics.date UNIQUE` → `UNIQUE(user_id, date)`
-   - `wellness_log.timestamp_ms UNIQUE` → `UNIQUE(user_id, timestamp_ms)`
-   - `clothing_options UNIQUE(category, value)` — handled by Session 3.
+**Composite UNIQUE replacements** (was → is):
 
-   Why this is gating: 2C scoped the `current_rx` SELECT/UPDATE in
-   `rx_engine.apply_session_outcome` so each user's prescription is
-   isolated, but the seed rows still sit at `user_id=1` and the
-   single-column UNIQUE prevents user 2 from inserting their own row for
-   any exercise that already exists. The verification harness side-steps
-   this by using fresh exercise names (`AliceCustomLift` / `BobCustomLift`).
-   Real users would hit it on their first squat log.
+| Table | Was | Is |
+|---|---|---|
+| `current_rx` | `UNIQUE(exercise)` | `UNIQUE(user_id, exercise)` |
+| `body_metrics` | `UNIQUE(date)` | `UNIQUE(user_id, date)` |
+| `wellness_log` | `UNIQUE(timestamp_ms)` | `UNIQUE(user_id, timestamp_ms)` |
 
-2. **Postgres `ALTER COLUMN ... SET NOT NULL`** on every `user_id` column
-   once 2A backfill is provably clean.
+**Postgres NOT NULL** applied to `user_id` on 18 tables: `current_rx`,
+`training_sessions`, `training_log`, `training_log_sets`, `cardio_log`,
+`body_metrics`, `conditions_log`, `injury_log`, `training_plans`,
+`plan_items`, `plan_item_disposition`, `feedback_log`,
+`coaching_preferences`, `coaching_chat`, `garmin_auth`, `garmin_workouts`,
+`locale_profiles`, `wellness_log`. SQLite leaves `user_id` NULLABLE —
+SQLite's NOT NULL enforcement on existing schemas is incomplete without
+a full table rebuild, and the practical defense (every write carries
+`user_id`) is in place from Sessions 2B/2C.
 
-3. **`INSERT OR REPLACE INTO body_metrics`** in `routes/body.py:_save`
-   and `routes/natural_log.py:save` becomes safe once the composite
-   UNIQUE lands. Until then, user 2 inserting on a date that user 1
-   already has would REPLACE user 1's row.
+### Migration mechanics
 
-4. **Second-user end-to-end on a fresh Neon Postgres DB** — verify the
-   forward-FK caveat called out in 2A doesn't break the schema apply.
+**SQLite path:** SQLite can't `ALTER ... DROP CONSTRAINT`. Three callable
+migrations (`_migrate_current_rx_unique`, `_migrate_body_metrics_unique`,
+`_migrate_wellness_log_unique`) detect via `sqlite_master.sql` whether
+the new constraint substring is present. If not, they rebuild via
+copy-into-`*__rebuild_tmp` + `DROP` + `ALTER ... RENAME`. The migration
+runner gained callable-migration support — entries can be either SQL
+strings (string `conn.execute`) or Python callables (called with the
+connection).
 
-5. **Open `ALLOW_REGISTRATION=1`** in Vercel + TrueNAS prod env vars.
+**Postgres path:** `ALTER TABLE ... DROP CONSTRAINT IF EXISTS
+<table>_<col>_key` (Postgres's auto-generated UNIQUE name), then
+`DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname =
+...) THEN ALTER TABLE ... ADD CONSTRAINT ... UNIQUE (...); END IF; END $$`
+to add the composite idempotently.
 
-### Session 2C — what shipped
+The PG migration runner now commits each statement individually so a
+failed `SET NOT NULL` (e.g. on a fresh DB pre-bootstrap, where seed rows
+have NULL `user_id`) doesn't roll back successful prior migrations.
+
+### Seed flow rework
+
+`current_rx`'s seed used to insert 107 rows with `user_id=NULL` on every
+cold start, then a backfill UPDATE filled `user_id=1` once Andy
+registered. Under composite `UNIQUE(user_id, exercise)`, NULLs are
+distinct in SQLite, so re-runs would have accumulated duplicate NULL
+rows; under Postgres NOT NULL, the NULL insert would fail.
+
+New flow:
+- `_seed_current_rx_for_user(executor, user_id, is_postgres)` — single
+  helper that inserts the 107 seed rows for one user, idempotent via
+  `ON CONFLICT (user_id, exercise) DO NOTHING` (Postgres) or
+  `INSERT OR IGNORE` (SQLite).
+- `init_sqlite` / `init_postgres` only call it when user 1 exists.
+  Pre-bootstrap, `current_rx` stays empty.
+- `routes/auth.py:register` calls it for the new user on every successful
+  registration. Andy's `/rx` is populated immediately on bootstrap; Bob's
+  `/rx` is populated immediately on register.
+
+### Code touch points
+
+- `init_db.py` — schema CREATE TABLEs updated to composite UNIQUE,
+  rebuild helpers, callable-migration support, three new SQLite
+  migrations, four new PG migration blocks (3 UNIQUEs + 18 NOT NULLs),
+  seed flow refactored, `_seed_current_rx_for_user` helper extracted.
+- `routes/auth.py:register` — calls `_seed_current_rx_for_user` after
+  successful insert, both for first-user bootstrap and subsequent
+  registrations. Wrapped in try/except so a seed failure doesn't block
+  registration; the next cold-start init will retry.
+- `routes/body.py:_save` — Postgres `ON CONFLICT (date)` →
+  `ON CONFLICT (user_id, date)` to match the new composite key.
+  `INSERT OR REPLACE` on SQLite already targets the composite (REPLACE
+  matches any UNIQUE) — no change.
+- `routes/natural_log.py:save` — `INSERT OR REPLACE INTO body_metrics`
+  unchanged; SQLite's REPLACE covers the new composite UNIQUE.
+
+### Verification
+
+`/tmp/verify_2d.py` covers two scenarios:
+
+**Scenario A — pre-2D DB upgrade.** Builds a SQLite DB with the OLD
+single-column UNIQUE shape, populates Andy's data (current_rx,
+body_metrics, wellness_log rows). Runs `init_sqlite()`. Confirms:
+- All three tables rebuilt with composite UNIQUE, legacy single-col gone
+- Andy's data preserved verbatim through the rebuild
+- Composite UNIQUE constrains `(1, X)` from duplicating but allows `(2, X)`
+- Re-running init is idempotent (no data change)
+
+**Scenario B — fresh DB + multi-user.** Fresh `init_sqlite`, register
+Andy via bootstrap, register Bob with `ALLOW_REGISTRATION=1`. Confirms:
+- Pre-bootstrap `current_rx` is empty (no NOT NULL violation risk)
+- Post-bootstrap, Andy's 107 seed rows present immediately (auth.register
+  seed call worked)
+- Bob's 107 seed rows present immediately on his registration
+- Both users have independent Back Squat rows
+- **Bob can log Back Squat (a SEEDED exercise) — the case 2C couldn't
+  run because of the legacy `UNIQUE(exercise)` constraint.** Bob's row
+  is updated by his session; Andy's is untouched.
+- Both users can write `body_metrics` on the same date — composite
+  `UNIQUE(user_id, date)` lets them coexist.
+
+All 16 checks pass.
+
+`/tmp/verify_2c.py` re-run post-2D — all 9 checks still green, no
+regression.
+
+### What 2D didn't do (and why)
+
+- **No live Neon test.** Per operator decision: "the real DB has only
+  very minor data for one user, not worried about that data". Migrations
+  are written defensively; first deploy to Neon is the live verification.
+  If the forward-FK from 2A breaks the fresh schema apply, fix is
+  reordering `PG_SCHEMA` CREATE TABLEs or moving `training_sessions
+  .plan_item_id REFERENCES plan_items(id)` to an ALTER TABLE migration.
+- **`ALLOW_REGISTRATION` not opened.** Operator step (env var on Vercel
+  + TrueNAS).
+- **`coaching_preferences.permanent` and similar single-col uniques** —
+  none exist; only the three migrated above.
+
+### Known carry-forward from 2D
+
+- **SQLite NOT NULL on user_id** — left NULLABLE because SQLite's NOT
+  NULL on existing schemas requires a full rebuild, and the runtime
+  defenses (every write path carries user_id, every read path scopes
+  user_id) make it a defense-in-depth concern rather than a correctness
+  blocker. If SQLite ever needs strict NOT NULL, extend the rebuild
+  migrations to declare it on the new tables.
+- **Vercel ephemeral SQLite** — `database.sqlite_path()` still routes
+  to `/tmp/training.db` on serverless. Once `DATABASE_URL` is set,
+  `init_postgres()` runs instead and SQLite is bypassed entirely.
+
+---
+
+## Session 2C — what shipped (preserved for context)
+
+The long tail of per-user scoping. Every SELECT/UPDATE/DELETE in the
+route layer + engine helpers is `user_id`-scoped, and the second-user
+verification harness confirms zero cross-user visibility on the hot
+routes and on `/coaching/context`.
 
 Branch: `claude/review-handoff-doc-VyeBE`. Every read query in the route
 layer (`routes/*.py`) and the three engine helpers (`coaching.py`,
@@ -1208,18 +1329,21 @@ the bootstrap form: zero cross-user row visibility on 9 hot routes,
 `/coaching/context` doesn't leak across plans, all 11 routes return
 200 for both users.
 
-#### Session 2D — NOT NULL constraints + verification
+#### Session 2D ✅ shipped — composite UNIQUEs + Postgres NOT NULL
 
-- Postgres: `ALTER COLUMN user_id SET NOT NULL` on each table (run
-  after all backfills are confirmed clean and all routes write user_id
-  on INSERT)
-- Composite UNIQUE constraints (debt list in 2A above)
-- Create test user_id=2; verify empty dashboard/training/cardio/body/
-  plans/coaching/Garmin/coach memory; log back in as Andy, confirm
-  data intact
-- Run schema migrations against a fresh Neon Postgres DB to verify
-  forward-FK references (the caveat called out in 2A) — fix if needed
-- Open `ALLOW_REGISTRATION`
+- Three single-col UNIQUEs migrated to composite (current_rx, body_metrics,
+  wellness_log). SQLite via callable rebuild migrations; Postgres via
+  DROP + DO-block ADD.
+- Postgres NOT NULL applied to `user_id` on 18 tables. SQLite stays
+  NULLABLE (rebuild cost not worth it given the runtime defenses).
+- Seed flow refactored to per-user: `_seed_current_rx_for_user` is
+  invoked from `routes/auth.py:register` so a new user gets 107 seed
+  rows immediately, not on the next cold start.
+- Verification: scenario A (pre-2D DB upgrade) preserves Andy's data
+  through the rebuild; scenario B (fresh DB + multi-user) confirms
+  Bob can log a SEEDED exercise (Back Squat) without touching Andy's
+  row. 16 checks passed. Open carry-forwards: live Neon test (deferred
+  to operator), `ALLOW_REGISTRATION` env var (operator step).
 
 **Tables gaining `user_id INTEGER NOT NULL REFERENCES users(id)`:**
 `current_rx`, `training_sessions`, `training_log`, `cardio_log`,

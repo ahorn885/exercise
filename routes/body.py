@@ -73,7 +73,7 @@ def _save(db, entry_id):
         if _IS_PG:
             db.execute('''INSERT INTO body_metrics (date,weight_lbs,body_fat_pct,vo2_max,resting_hr,notes,user_id)
                 VALUES (?,?,?,?,?,?,?)
-                ON CONFLICT (date) DO UPDATE SET
+                ON CONFLICT (user_id, date) DO UPDATE SET
                 weight_lbs=EXCLUDED.weight_lbs, body_fat_pct=EXCLUDED.body_fat_pct,
                 vo2_max=EXCLUDED.vo2_max, resting_hr=EXCLUDED.resting_hr, notes=EXCLUDED.notes''', vals + (uid,))
         else:
