@@ -1,29 +1,153 @@
 # AIDSTATION — Session Handoff
 
 **Date:** 2026-05-05
-**Latest merged session:** Session 3 — clothing_options + locale_profiles per-user.
-**Deploy state:** TrueNAS (Docker) + Vercel are still on the 2B merge as of
-the last update; 2C, 2D, the deload button, the bulk plan editor, and now
-Session 3 will all land on the next Watchtower / Vercel pickup.
+**Latest merged session:** Session 4 — athlete profile + coach memory UI.
+**Deploy state:** TrueNAS (Docker) + Vercel are still on the 2B merge as
+of the last update; 2C, 2D, the deload button, the bulk plan editor,
+Session 3, and now Session 4 will all land on the next Watchtower /
+Vercel pickup.
 
-**Session 3 shipped.** `clothing_options` becomes per-user (each athlete's
-typed values are private to them), `locale_profiles` PK becomes composite
-`(user_id, locale)`, and `locale_equipment` gains its own `user_id` column
-with composite FK to the new parent PK. The global `_CLOTHING_SEEDS` list
-is dropped — values now accumulate purely from user input.
+**Session 4 shipped.** New `/profile` page with three tabs: athlete
+profile (DOB / sex / height / target event / weekly hours / training
+window / notes), coach memory (list `coaching_preferences` with
+provenance + delete + manual-add), and account (username / change
+password). Profile fields surface in `get_coaching_context()` under
+`ctx['athlete_profile']`; `_BASE_PROMPT` documents how Claude should
+use them.
 
-**Pending operator action (5 minutes, unchanged from 2D):**
+**Multi-user retrofit roadmap is complete on the code side.** All
+five sessions (0, 1, 2A–D, 3, 4) are merged. Andy + a second user can
+fully isolate their data, including profiles and coach preferences.
+
+**Pending operator action (5 minutes, unchanged):**
 1. Wire `DATABASE_URL` into Vercel pointing at a fresh Neon Postgres DB.
    First request triggers `init_postgres()` which builds the schema, runs
-   migrations, and seeds catalog tables. Verify clean apply (forward-FK
-   caveat from 2A unchanged in 2D/3; reorder `PG_SCHEMA` CREATEs or move
-   to ALTER migration if Neon complains).
+   migrations, and seeds catalog tables.
 2. Set `ALLOW_REGISTRATION=1` in Vercel + TrueNAS env vars.
-3. Register a second account end-to-end and confirm isolation.
+3. Register a second account end-to-end and confirm isolation in browser.
 
-After step 3, the multi-user retrofit (Sessions 0–3) is fully
-production-ready. Session 4 (athlete profile + coach memory UI) is the
-last roadmap session, plus the standalone backlog items.
+---
+
+## Session 4 — what shipped
+
+The last roadmap session. Athlete profile + coach memory UI + account
+management — all three on a single `/profile` page with tabs.
+
+### Schema
+
+New `athlete_profile` table:
+
+```
+athlete_profile(
+  user_id INTEGER PRIMARY KEY REFERENCES users(id),
+  date_of_birth TEXT,
+  sex TEXT,
+  height_cm REAL,
+  primary_sport TEXT,
+  target_event_name TEXT,
+  target_event_date TEXT,
+  weekly_hours_target REAL,
+  training_window TEXT,    -- 'morning' | 'midday' | 'evening' | 'flexible'
+  notes TEXT,
+  updated_at TEXT/TIMESTAMP DEFAULT NOW
+)
+```
+
+Both engines. Migration entries (`CREATE TABLE IF NOT EXISTS`) are
+idempotent and append-only — fresh installs and existing DBs both end
+up with the table.
+
+### New code
+
+- `athlete.py` — `get_athlete_profile(db, user_id)` returns dict or
+  None; `upsert_athlete_profile(db, user_id, **fields)` filters to
+  `PROFILE_FIELDS`, runs an INSERT-or-UPDATE, returns the resulting
+  row. Dialect-aware `updated_at` (NOW() on Postgres, datetime('now')
+  on SQLite). The allowlist sidesteps mass-assignment risk from
+  `request.form` POSTs.
+- `routes/profile.py` — blueprint at `/profile/`:
+  - `GET /` — render `profile/edit.html` with the user's profile,
+    coach memory rows (joined to `feedback_log` for provenance), and
+    account info.
+  - `POST /` — save profile fields.
+  - `POST /preference/add` — manually add a `coaching_preferences`
+    row with NULL `source_feedback_id` (the UI label distinguishes
+    manual entries from auto-captured ones).
+  - `POST /preference/<id>/delete` — scoped on `user_id`; cross-user
+    POSTs no-op silently.
+  - `GET /feedback/<id>` — show the original `feedback_log` raw
+    content for an auto-captured pref. 404s for other users' rows.
+  - `POST /password` — verify current via `bcrypt.checkpw`, length-
+    check new (≥8) + match-confirm, write new hash.
+- `templates/profile/edit.html` — Bootstrap 5 tabbed page. Three
+  tabs: Athlete (form), Coach memory (list + manual-add form),
+  Account (display + change-password form). Each preference row
+  shows provenance: "Captured from chat on 2026-04-30 · view
+  original" with a link to `/profile/feedback/<id>`, or "Added
+  manually on YYYY-MM-DD" for entries with NULL source.
+- `templates/profile/feedback.html` — verbatim `raw_content` view
+  with a back-to-profile button.
+
+### Wiring
+
+- `app.py` — registers `profile_bp`.
+- `templates/base.html` — user dropdown gains a "Profile" link
+  above the Sign-out button (with a divider).
+
+### Coaching integration
+
+- `coaching.py:get_coaching_context()` reads
+  `get_athlete_profile(db, current_user_id())` into
+  `ctx['athlete_profile']`. Falls back to `{}` on any exception so
+  pre-Session-4 DBs that haven't run the migration still work.
+- `_BASE_PROMPT` gains an `athlete_profile` bullet under "Athlete
+  Signals", documenting how Claude should treat the profile (use as
+  defaults when the user hasn't restated; read `notes` carefully
+  for free-text constraints the structured fields can't capture).
+
+### Verification
+
+`/tmp/verify_4.py` covers 15 checks, all green:
+
+1. Empty `/profile/` renders all three section tabs (Athlete /
+   Coach memory / Account).
+2. Profile POST inserts a row with the submitted fields.
+3. Re-POST with the full form is an UPDATE (not a duplicate INSERT)
+   and unchanged fields remain unchanged.
+4. `get_coaching_context()` surfaces Andy's profile under
+   `ctx['athlete_profile']`.
+5. Bob's coaching context has empty profile (no leak).
+6. Manual `/preference/add` inserts a row with NULL
+   `source_feedback_id`.
+7. Auto-captured prefs (with `source_feedback_id`) render with
+   provenance line + view-original link; manual prefs render with
+   "Added manually" provenance.
+8. `/profile/feedback/<id>` shows the original raw_content.
+9. Cross-user defense: Bob 404s on Andy's `feedback/<id>`.
+10. Cross-user defense: Bob's POST to delete Andy's preference
+    no-ops; the row remains.
+11. Andy successfully deletes his own preference.
+12. Wrong current password rejected; original still works.
+13. Valid password change applied: new password works, old rejected.
+14. Profile nav link present on dashboard.
+15. Bob's `/profile/` is empty — Andy's data doesn't leak.
+
+Re-ran 2C, 2D, 3, deload, and strength-load suites — no regressions.
+The pre-existing bulk-edit test that asserts the old (pre-strength-load)
+behavior still fails as expected; the strength-load suite covers the
+new contract correctly.
+
+### Open carry-forwards
+
+None for the core roadmap. Standalone backlog items remain:
+
+- Multi-day wellness chart (7-day trend on `/garmin/wellness`)
+- Recommended-purchases rebuild (HANDOFF "Parked for later sessions"
+  — needs a shared catalog + per-user wishlist layer; the catalog
+  content design is the heaviest part)
+- BYOK Anthropic API key (per-user override of the shared key)
+- MFA / passkeys / WebAuthn — explicitly parked
+- Garmin per-user OAuth — parked
 
 ---
 
@@ -1553,7 +1677,7 @@ hardcoded — already implied by `conditions_log` columns.
 some; their entries don't bleed into Andy's; locales are independent
 per user.
 
-### Session 4 — Athlete profile + coach-memory UI
+### Session 4 ✅ shipped — Athlete profile + coach-memory UI
 
 **`athlete_profile` table** (minimal placeholder — full field list
 intentionally parked, will grow over time):

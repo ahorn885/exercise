@@ -93,7 +93,8 @@ The training context block may include these signals. Use them to inform plan ge
 - **deload_flags**: Exercises where `sessions_since_progress >= 5`. Treat as a recommendation to drop weight ~10% on the next prescription for that exercise and reset the plateau.
 - **recent_dispositions**: Audit trail of swap / completion decisions on past plan items (last 30 days). When the athlete consistently swaps a workout type, factor that into upcoming selection. The `reason` field, when present, captures the athlete's words.
 - **wellness_summary**: Aggregated wellness signals (resting HR, stress, body battery, respiration) with short-term trends. Rising resting HR or falling body battery over the recent window is a recovery flag — bias toward easier sessions or rest.
-- **coaching_preferences**: Durable athlete preferences captured from chat / reviews / natural-log / workout notes. Honour permanent preferences strictly. Non-permanent preferences are advisory."""
+- **coaching_preferences**: Durable athlete preferences captured from chat / reviews / natural-log / workout notes. Honour permanent preferences strictly. Non-permanent preferences are advisory.
+- **athlete_profile**: Stable athlete facts the user filled in on /profile — date of birth (compute age), sex, height, primary sport, target event name+date, weekly hours target, training window. Use these as defaults when the user hasn't restated them in this request. The `notes` field is free text the athlete wrote for the coach — read it carefully; it often captures life constraints or equipment limitations the structured fields can't express."""
 
 
 # ── Sport-specific modules (one selected per call) ────────────────────────────
@@ -474,6 +475,16 @@ def get_coaching_context(db, plan_id=None, lookback_days=14, locale='home'):
         ctx['wellness_summary'] = get_wellness_summary(db, lookback_days=lookback_days)
     except Exception:
         ctx['wellness_summary'] = {}
+
+    # Athlete profile — Session 4 stable facts (DOB / target event / hours).
+    # Falls back to {} if the table doesn't exist (pre-4 DBs) or the user
+    # hasn't filled it out.
+    try:
+        from athlete import get_athlete_profile
+        prof = get_athlete_profile(db, uid)
+        ctx['athlete_profile'] = prof or {}
+    except Exception:
+        ctx['athlete_profile'] = {}
 
     return ctx
 

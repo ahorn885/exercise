@@ -17,6 +17,19 @@ SQLITE_SCHEMA = '''
         created_at TEXT DEFAULT (datetime('now')),
         last_login TEXT
     );
+    CREATE TABLE IF NOT EXISTS athlete_profile (
+        user_id INTEGER PRIMARY KEY REFERENCES users(id),
+        date_of_birth TEXT,
+        sex TEXT,
+        height_cm REAL,
+        primary_sport TEXT,
+        target_event_name TEXT,
+        target_event_date TEXT,
+        weekly_hours_target REAL,
+        training_window TEXT,
+        notes TEXT,
+        updated_at TEXT DEFAULT (datetime('now'))
+    );
     CREATE TABLE IF NOT EXISTS exercise_inventory (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         exercise TEXT NOT NULL UNIQUE,
@@ -297,6 +310,19 @@ PG_SCHEMA = '''
         display_name TEXT,
         created_at TIMESTAMP DEFAULT NOW(),
         last_login TIMESTAMP
+    );
+    CREATE TABLE IF NOT EXISTS athlete_profile (
+        user_id INTEGER PRIMARY KEY REFERENCES users(id),
+        date_of_birth TEXT,
+        sex TEXT,
+        height_cm REAL,
+        primary_sport TEXT,
+        target_event_name TEXT,
+        target_event_date TEXT,
+        weekly_hours_target REAL,
+        training_window TEXT,
+        notes TEXT,
+        updated_at TIMESTAMP DEFAULT NOW()
     );
     CREATE TABLE IF NOT EXISTS exercise_inventory (
         id SERIAL PRIMARY KEY,
@@ -944,6 +970,14 @@ _SQLITE_MIGRATIONS = [
     # locale_equipment user-scoping. All three rebuilds happen atomically
     # under a single PRAGMA foreign_keys=OFF window.
     _migrate_session3_locale_clothing,
+    # Session 4 — athlete profile.
+    """CREATE TABLE IF NOT EXISTS athlete_profile (
+        user_id INTEGER PRIMARY KEY REFERENCES users(id),
+        date_of_birth TEXT, sex TEXT, height_cm REAL,
+        primary_sport TEXT, target_event_name TEXT, target_event_date TEXT,
+        weekly_hours_target REAL, training_window TEXT, notes TEXT,
+        updated_at TEXT DEFAULT (datetime('now'))
+    )""",
 ]
 
 _PG_MIGRATIONS = [
@@ -1139,6 +1173,14 @@ _PG_MIGRATIONS = [
         END IF;
        END $$""",
     "ALTER TABLE locale_equipment ALTER COLUMN user_id SET NOT NULL",
+    # Session 4 — athlete profile.
+    """CREATE TABLE IF NOT EXISTS athlete_profile (
+        user_id INTEGER PRIMARY KEY REFERENCES users(id),
+        date_of_birth TEXT, sex TEXT, height_cm REAL,
+        primary_sport TEXT, target_event_name TEXT, target_event_date TEXT,
+        weekly_hours_target REAL, training_window TEXT, notes TEXT,
+        updated_at TIMESTAMP DEFAULT NOW()
+    )""",
 ]
 
 _CLOTHING_SEEDS = [
