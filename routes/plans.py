@@ -62,7 +62,7 @@ def _create_plan_from_dict(db, data):
     cur = db.execute(
         '''INSERT INTO training_plans
            (name, description, sport_focus, start_date, end_date, source_json, user_id)
-           VALUES (?,?,?,?,?,?,?)''',
+           VALUES (?,?,?,?,?,?,?) RETURNING id''',
         (data['name'], data.get('description'), data.get('sport_focus'),
          data.get('start_date'), data.get('end_date'), raw, uid)
     )

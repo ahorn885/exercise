@@ -333,6 +333,39 @@ PG_SCHEMA = '''
         movement_pattern TEXT, session_placement TEXT, form_cue TEXT, video_reference TEXT,
         weight_increment REAL
     );
+    CREATE TABLE IF NOT EXISTS training_plans (
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER REFERENCES users(id),
+        name TEXT NOT NULL,
+        description TEXT,
+        sport_focus TEXT,
+        start_date TEXT,
+        end_date TEXT,
+        status TEXT DEFAULT 'active',
+        source_json TEXT,
+        created_at TIMESTAMP DEFAULT NOW()
+    );
+    CREATE TABLE IF NOT EXISTS plan_items (
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER REFERENCES users(id),
+        plan_id INTEGER NOT NULL REFERENCES training_plans(id),
+        item_date TEXT NOT NULL,
+        sport_type TEXT NOT NULL,
+        workout_name TEXT NOT NULL,
+        description TEXT,
+        target_duration_min REAL,
+        target_distance_mi REAL,
+        intensity TEXT,
+        garmin_workout_json TEXT,
+        status TEXT DEFAULT 'scheduled',
+        notes TEXT,
+        calorie_target TEXT,
+        macro_carb_pct INTEGER,
+        macro_protein_pct INTEGER,
+        macro_fat_pct INTEGER,
+        session_fueling TEXT,
+        created_at TIMESTAMP DEFAULT NOW()
+    );
     CREATE TABLE IF NOT EXISTS training_sessions (
         id SERIAL PRIMARY KEY,
         user_id INTEGER REFERENCES users(id),
@@ -428,39 +461,6 @@ PG_SCHEMA = '''
     CREATE TABLE IF NOT EXISTS training_methods (
         id SERIAL PRIMARY KEY,
         method TEXT NOT NULL, description TEXT, apply_to TEXT, source TEXT
-    );
-    CREATE TABLE IF NOT EXISTS training_plans (
-        id SERIAL PRIMARY KEY,
-        user_id INTEGER REFERENCES users(id),
-        name TEXT NOT NULL,
-        description TEXT,
-        sport_focus TEXT,
-        start_date TEXT,
-        end_date TEXT,
-        status TEXT DEFAULT 'active',
-        source_json TEXT,
-        created_at TIMESTAMP DEFAULT NOW()
-    );
-    CREATE TABLE IF NOT EXISTS plan_items (
-        id SERIAL PRIMARY KEY,
-        user_id INTEGER REFERENCES users(id),
-        plan_id INTEGER NOT NULL REFERENCES training_plans(id),
-        item_date TEXT NOT NULL,
-        sport_type TEXT NOT NULL,
-        workout_name TEXT NOT NULL,
-        description TEXT,
-        target_duration_min REAL,
-        target_distance_mi REAL,
-        intensity TEXT,
-        garmin_workout_json TEXT,
-        status TEXT DEFAULT 'scheduled',
-        notes TEXT,
-        calorie_target TEXT,
-        macro_carb_pct INTEGER,
-        macro_protein_pct INTEGER,
-        macro_fat_pct INTEGER,
-        session_fueling TEXT,
-        created_at TIMESTAMP DEFAULT NOW()
     );
     CREATE TABLE IF NOT EXISTS plan_reviews (
         id SERIAL PRIMARY KEY,

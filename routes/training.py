@@ -77,7 +77,7 @@ def save_session():
 
     uid = current_user_id()
     cur = db.execute(
-        'INSERT INTO training_sessions (date, notes, plan_item_id, user_id) VALUES (?, ?, ?, ?)',
+        'INSERT INTO training_sessions (date, notes, plan_item_id, user_id) VALUES (?, ?, ?, ?) RETURNING id',
         (date, session_notes, plan_item_id, uid)
     )
     session_id = cur.lastrowid
@@ -135,7 +135,7 @@ def save_session():
                 actual_sets, actual_reps, actual_weight, actual_duration,
                 rpe, rest_sec, outcome, est_1rm, volume, body_weight,
                 next_weight, next_sets, next_reps, next_duration, plan_item_id, notes, user_id)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) RETURNING id''',
             (date, exercise, rx['exercise_id'], rx['movement_pattern'], None, session_id,
              target_sets, target_reps, target_weight, target_duration,
              actual_sets, last_reps, max_weight, last_duration,

@@ -139,7 +139,7 @@ def register():
 
         cur = db.execute(
             'INSERT INTO users (username, email, password_hash, display_name) '
-            'VALUES (?,?,?,?)',
+            'VALUES (?,?,?,?) RETURNING id',
             (username, email, _hash_password(password), display_name)
         )
         new_user_id = cur.lastrowid

@@ -165,7 +165,7 @@ def _save(db, entry_id):
              elev_gain_ft, elev_loss_ft, avg_cadence, max_cadence,
              avg_power, max_power, norm_power, aerobic_te, anaerobic_te,
              swolf, active_lengths, plan_item_id, notes, user_id)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''', vals + (uid,))
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) RETURNING id''', vals + (uid,))
         new_id = cur.lastrowid
 
     if plan_item_id:
