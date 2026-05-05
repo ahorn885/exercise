@@ -27,16 +27,21 @@ def list_entries():
     query += ' ORDER BY date DESC, id DESC'
 
     entries = db.execute(query, params).fetchall()
-    exercises = db.execute('SELECT DISTINCT exercise FROM current_rx ORDER BY exercise').fetchall()
+    exercises = db.execute(
+        'SELECT DISTINCT exercise FROM current_rx WHERE user_id = ? ORDER BY exercise',
+        (current_user_id(),)
+    ).fetchall()
 
-    # Fetch per-set data for entries that have it
+    # Fetch per-set data for entries that have it (children of user-scoped log)
     log_ids = [e['id'] for e in entries]
     sets_by_log = {}
     if log_ids:
         placeholders = ','.join('?' * len(log_ids))
         set_rows = db.execute(
-            f'SELECT * FROM training_log_sets WHERE training_log_id IN ({placeholders}) ORDER BY training_log_id, set_number',
-            log_ids
+            f'SELECT * FROM training_log_sets '
+            f'WHERE training_log_id IN ({placeholders}) AND user_id = ? '
+            f'ORDER BY training_log_id, set_number',
+            log_ids + [current_user_id()]
         ).fetchall()
         for s in set_rows:
             sets_by_log.setdefault(s['training_log_id'], []).append(s)
@@ -49,7 +54,10 @@ def list_entries():
 @bp.route('/training/new', methods=['GET'])
 def new_entry():
     db = get_db()
-    exercises = db.execute('SELECT exercise, movement_pattern FROM current_rx ORDER BY exercise').fetchall()
+    exercises = db.execute(
+        'SELECT exercise, movement_pattern FROM current_rx WHERE user_id = ? ORDER BY exercise',
+        (current_user_id(),)
+    ).fetchall()
     exercises_json = [{'exercise': e['exercise'], 'movement_pattern': e['movement_pattern']} for e in exercises]
     plan_items = _load_plan_items(db)
     return render_template('training/session_form.html', exercises=exercises,
@@ -74,7 +82,11 @@ def save_session():
     )
     session_id = cur.lastrowid
 
-    body_wt_row = db.execute('SELECT weight_lbs FROM body_metrics ORDER BY date DESC LIMIT 1').fetchone()
+    body_wt_row = db.execute(
+        'SELECT weight_lbs FROM body_metrics WHERE user_id = ? '
+        'ORDER BY date DESC LIMIT 1',
+        (uid,)
+    ).fetchone()
     body_weight = body_wt_row['weight_lbs'] if body_wt_row else None
 
     for ex_data in data.get('exercises', []):
@@ -141,8 +153,9 @@ def save_session():
 
     if plan_item_id:
         db.execute(
-            "UPDATE plan_items SET status='completed' WHERE id=? AND status='scheduled'",
-            (plan_item_id,)
+            "UPDATE plan_items SET status='completed' "
+            "WHERE id=? AND user_id=? AND status='scheduled'",
+            (plan_item_id, uid)
         )
 
     if session_notes:
@@ -157,14 +170,19 @@ def save_session():
 @bp.route('/training/session/<int:session_id>/activity-fit')
 def session_activity_fit(session_id):
     db = get_db()
-    sess = db.execute('SELECT * FROM training_sessions WHERE id=?', (session_id,)).fetchone()
+    uid = current_user_id()
+    sess = db.execute(
+        'SELECT * FROM training_sessions WHERE id=? AND user_id=?',
+        (session_id, uid)
+    ).fetchone()
     if not sess:
         flash('Session not found.', 'danger')
         return redirect(url_for('training.list_entries'))
     duration_min = None
     if sess['plan_item_id']:
         pi = db.execute(
-            'SELECT target_duration_min FROM plan_items WHERE id=?', (sess['plan_item_id'],)
+            'SELECT target_duration_min FROM plan_items WHERE id=? AND user_id=?',
+            (sess['plan_item_id'], uid)
         ).fetchone()
         if pi and pi['target_duration_min']:
             duration_min = pi['target_duration_min']
@@ -186,7 +204,10 @@ def session_activity_fit(session_id):
 @bp.route('/training/<int:entry_id>/edit', methods=['GET', 'POST'])
 def edit_entry(entry_id):
     db = get_db()
-    entry = db.execute('SELECT * FROM training_log WHERE id=?', (entry_id,)).fetchone()
+    uid = current_user_id()
+    entry = db.execute(
+        'SELECT * FROM training_log WHERE id=? AND user_id=?', (entry_id, uid)
+    ).fetchone()
     if not entry:
         flash('Entry not found.', 'danger')
         return redirect(url_for('training.list_entries'))
@@ -194,7 +215,10 @@ def edit_entry(entry_id):
         _save_entry(db, entry_id)
         flash('Entry updated.', 'success')
         return redirect(url_for('training.list_entries'))
-    exercises = db.execute('SELECT exercise, movement_pattern FROM current_rx ORDER BY exercise').fetchall()
+    exercises = db.execute(
+        'SELECT exercise, movement_pattern FROM current_rx WHERE user_id = ? ORDER BY exercise',
+        (uid,)
+    ).fetchall()
     plan_items = _load_plan_items(db)
     return render_template('training/form.html', entry=entry, exercises=exercises,
                            plan_items=plan_items)
@@ -203,7 +227,10 @@ def edit_entry(entry_id):
 @bp.route('/training/<int:entry_id>/delete', methods=['POST'])
 def delete_entry(entry_id):
     db = get_db()
-    db.execute('DELETE FROM training_log WHERE id=?', (entry_id,))
+    db.execute(
+        'DELETE FROM training_log WHERE id=? AND user_id=?',
+        (entry_id, current_user_id())
+    )
     db.commit()
     flash('Entry deleted.', 'warning')
     return redirect(url_for('training.list_entries'))
@@ -216,18 +243,22 @@ def _load_plan_items(db):
                   tp.name as plan_name
            FROM plan_items pi
            JOIN training_plans tp ON tp.id = pi.plan_id
-           WHERE pi.status = 'scheduled'
+           WHERE tp.user_id = ? AND pi.status = 'scheduled'
            ORDER BY pi.item_date ASC
-           LIMIT 60'''
+           LIMIT 60''',
+        (current_user_id(),)
     ).fetchall()
 
 
 @bp.route('/api/rx/<exercise>')
 def get_rx(exercise):
     db = get_db()
-    rx = db.execute('SELECT * FROM current_rx WHERE exercise=?', (exercise,)).fetchone()
+    uid = current_user_id()
+    rx = db.execute(
+        'SELECT * FROM current_rx WHERE exercise=? AND user_id=?', (exercise, uid)
+    ).fetchone()
     result = dict(rx) if rx else {}
-    # Include active injury modifications so the training form can warn the user
+    # Include active injury modifications (parent-JOIN scoped via injury_log)
     mods = db.execute(
         '''SELECT iem.id, iem.modification_type, iem.modification_notes,
                   il.body_part, il.status,
@@ -236,8 +267,9 @@ def get_rx(exercise):
            JOIN injury_log il ON il.id = iem.injury_id
            JOIN exercise_inventory ei ON ei.id = iem.exercise_id
            LEFT JOIN exercise_inventory ei_sub ON ei_sub.id = iem.substitute_exercise_id
-           WHERE ei.exercise = ? AND il.status IN (\'Active\', \'Managing\')''',
-        (exercise,)
+           WHERE ei.exercise = ? AND il.user_id = ?
+             AND il.status IN (\'Active\', \'Managing\')''',
+        (exercise, uid)
     ).fetchall()
     result['injury_mods'] = [dict(m) for m in mods]
     return jsonify(result)
@@ -278,10 +310,14 @@ def _save_entry(db, entry_id):
     est_1rm = calculate_1rm(actual_weight, actual_reps)
     volume = calculate_volume(actual_sets, actual_reps, actual_weight)
 
-    body_wt_row = db.execute('SELECT weight_lbs FROM body_metrics ORDER BY date DESC LIMIT 1').fetchone()
+    uid = current_user_id()
+    body_wt_row = db.execute(
+        'SELECT weight_lbs FROM body_metrics WHERE user_id = ? '
+        'ORDER BY date DESC LIMIT 1',
+        (uid,)
+    ).fetchone()
     body_weight = body_wt_row['weight_lbs'] if body_wt_row else None
 
-    uid = current_user_id()
     rx = apply_session_outcome(
         db, exercise, date, synthesized_sets,
         target_sets=target_sets, target_reps=target_reps,
@@ -296,13 +332,13 @@ def _save_entry(db, entry_id):
             actual_sets=?, actual_reps=?, actual_weight=?, actual_duration=?,
             rpe=?, rest_sec=?, outcome=?, est_1rm=?, volume=?, body_weight=?,
             next_weight=?, next_sets=?, next_reps=?, next_duration=?, plan_item_id=?, notes=?
-            WHERE id=?''',
+            WHERE id=? AND user_id=?''',
             (date, exercise, rx['exercise_id'], rx['movement_pattern'], None,
              target_sets, target_reps, target_weight, target_duration,
              actual_sets, actual_reps, actual_weight, actual_duration,
              rpe, rest_sec, rx['outcome'], est_1rm, volume, body_weight,
              rx['next_weight'], rx['next_sets'], rx['next_reps'], rx['next_duration'],
-             plan_item_id, f.get('notes', ''), entry_id))
+             plan_item_id, f.get('notes', ''), entry_id, uid))
     else:
         db.execute('''INSERT INTO training_log
             (date, exercise, exercise_id, sub_group, recovery_cost,
@@ -320,8 +356,9 @@ def _save_entry(db, entry_id):
 
     if plan_item_id:
         db.execute(
-            "UPDATE plan_items SET status='completed' WHERE id=? AND status='scheduled'",
-            (plan_item_id,)
+            "UPDATE plan_items SET status='completed' "
+            "WHERE id=? AND user_id=? AND status='scheduled'",
+            (plan_item_id, uid)
         )
 
     db.commit()

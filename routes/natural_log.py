@@ -123,9 +123,10 @@ def _check_api_key():
 
 
 def _load_strength_exercises(db):
-    """Names of strength exercises Andy currently uses, for prompt-side matching."""
+    """Names of strength exercises the current user has, for prompt-side matching."""
     rows = db.execute(
-        'SELECT exercise FROM current_rx ORDER BY exercise'
+        'SELECT exercise FROM current_rx WHERE user_id = ? ORDER BY exercise',
+        (current_user_id(),)
     ).fetchall()
     return [r['exercise'] for r in rows if r['exercise']]
 
@@ -140,10 +141,11 @@ def _load_scheduled(db):
                   tp.name as plan_name
            FROM plan_items pi
            JOIN training_plans tp ON tp.id = pi.plan_id
-           WHERE pi.status = 'scheduled' AND pi.item_date BETWEEN ? AND ?
+           WHERE tp.user_id = ?
+             AND pi.status = 'scheduled' AND pi.item_date BETWEEN ? AND ?
              AND tp.status != 'archived'
            ORDER BY pi.item_date DESC''',
-        (week_ago, today)
+        (current_user_id(), week_ago, today)
     ).fetchall()
     return [dict(r) for r in rows]
 
@@ -301,7 +303,9 @@ def save():
             session_id = cur.lastrowid
 
             body_wt_row = db.execute(
-                'SELECT weight_lbs FROM body_metrics ORDER BY date DESC LIMIT 1'
+                'SELECT weight_lbs FROM body_metrics WHERE user_id = ? '
+                'ORDER BY date DESC LIMIT 1',
+                (uid,)
             ).fetchone()
             body_weight = body_wt_row['weight_lbs'] if body_wt_row else None
 
@@ -311,12 +315,14 @@ def save():
                     continue
                 sets = ex_data.get('sets') or []
 
+                # exercise_inventory is a shared catalog
                 ei = db.execute(
                     'SELECT id FROM exercise_inventory WHERE exercise=?', (exercise,)
                 ).fetchone()
                 exercise_id = ei['id'] if ei else None
                 rx = db.execute(
-                    'SELECT movement_pattern FROM current_rx WHERE exercise=?', (exercise,)
+                    'SELECT movement_pattern FROM current_rx WHERE exercise=? AND user_id=?',
+                    (exercise, uid)
                 ).fetchone()
                 movement_pattern = rx['movement_pattern'] if rx else None
 
@@ -370,8 +376,9 @@ def save():
 
     if plan_match and plan_match.get('plan_item_id') and saved:
         db.execute(
-            "UPDATE plan_items SET status='completed' WHERE id=? AND status='scheduled'",
-            (plan_match['plan_item_id'],)
+            "UPDATE plan_items SET status='completed' "
+            "WHERE id=? AND user_id=? AND status='scheduled'",
+            (plan_match['plan_item_id'], uid)
         )
 
     # Capture the user's natural-language messages as feedback so any durable

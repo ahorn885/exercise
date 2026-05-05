@@ -150,7 +150,18 @@ def score_match(activity, plan_item):
     return sum(parts) / len(parts)
 
 
-def find_best_match(db, activity, min_score=SCORE_AUTO_MATCH):
+def _resolve_user_id(user_id):
+    """Default user_id to the current request's user if not passed explicitly."""
+    if user_id is not None:
+        return user_id
+    try:
+        from routes.auth import current_user_id
+        return current_user_id()
+    except Exception:
+        return None
+
+
+def find_best_match(db, activity, min_score=SCORE_AUTO_MATCH, user_id=None):
     """Find the best-scoring scheduled plan_items row for an activity.
 
     Searches Tier 1 (same day) first, then Tier 2 (-3 / +2 days). Returns the
@@ -168,6 +179,8 @@ def find_best_match(db, activity, min_score=SCORE_AUTO_MATCH):
     except (ValueError, TypeError):
         return None
 
+    uid = _resolve_user_id(user_id)
+
     # Search same day first — if anything matches there, we don't bother with
     # neighbouring days. Real-world: people record what they do on the day,
     # not on the day before/after. Closer days win on ties.
@@ -177,9 +190,10 @@ def find_best_match(db, activity, min_score=SCORE_AUTO_MATCH):
             '''SELECT pi.*, tp.name as plan_name
                FROM plan_items pi
                JOIN training_plans tp ON tp.id = pi.plan_id
-               WHERE pi.item_date=? AND pi.status='scheduled'
+               WHERE tp.user_id = ?
+                 AND pi.item_date=? AND pi.status='scheduled'
                  AND tp.status != 'archived' ''',
-            (target,)
+            (uid, target)
         ).fetchall()
 
         best_for_day = None
@@ -196,7 +210,7 @@ def find_best_match(db, activity, min_score=SCORE_AUTO_MATCH):
     return None
 
 
-def candidate_plan_items(db, activity_date, days_back=3, days_forward=2):
+def candidate_plan_items(db, activity_date, days_back=3, days_forward=2, user_id=None):
     """Return plan_items in the matching window — used by the ask-user prompt.
 
     No score filter; the user picks. Useful for the "instead of / in addition
@@ -208,6 +222,7 @@ def candidate_plan_items(db, activity_date, days_back=3, days_forward=2):
         base_date = date.fromisoformat(activity_date)
     except (ValueError, TypeError):
         return []
+    uid = _resolve_user_id(user_id)
     items = []
     for offset in range(-days_back, days_forward + 1):
         target = (base_date + timedelta(days=offset)).isoformat()
@@ -215,10 +230,11 @@ def candidate_plan_items(db, activity_date, days_back=3, days_forward=2):
             '''SELECT pi.*, tp.name as plan_name, ? as day_offset
                FROM plan_items pi
                JOIN training_plans tp ON tp.id = pi.plan_id
-               WHERE pi.item_date=? AND pi.status='scheduled'
+               WHERE tp.user_id = ?
+                 AND pi.item_date=? AND pi.status='scheduled'
                  AND tp.status != 'archived'
                ORDER BY pi.id''',
-            (offset, target)
+            (offset, uid, target)
         ).fetchall()
         items.extend(rows)
     return items
@@ -247,13 +263,15 @@ def record_disposition(db, plan_item_id, log_type, log_id, disposition, reason=N
     )
     if disposition == 'completed':
         db.execute(
-            "UPDATE plan_items SET status='completed' WHERE id=? AND status='scheduled'",
-            (plan_item_id,)
+            "UPDATE plan_items SET status='completed' "
+            "WHERE id=? AND user_id=? AND status='scheduled'",
+            (plan_item_id, user_id)
         )
     else:  # swapped_for
         db.execute(
-            "UPDATE plan_items SET status='swapped' WHERE id=? AND status='scheduled'",
-            (plan_item_id,)
+            "UPDATE plan_items SET status='swapped' "
+            "WHERE id=? AND user_id=? AND status='scheduled'",
+            (plan_item_id, user_id)
         )
 
 

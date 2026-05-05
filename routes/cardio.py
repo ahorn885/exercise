@@ -32,7 +32,10 @@ def list_entries():
     query += ' ORDER BY date DESC, id DESC'
 
     entries = db.execute(query, params).fetchall()
-    activities = db.execute('SELECT DISTINCT activity FROM cardio_log ORDER BY activity').fetchall()
+    activities = db.execute(
+        'SELECT DISTINCT activity FROM cardio_log WHERE user_id = ? ORDER BY activity',
+        (current_user_id(),)
+    ).fetchall()
     return render_template('cardio/list.html', entries=entries,
                            date_filter=date_filter, activity_filter=activity_filter,
                            activities=activities)
@@ -55,7 +58,10 @@ def new_entry():
 @bp.route('/cardio/<int:entry_id>/edit', methods=['GET', 'POST'])
 def edit_entry(entry_id):
     db = get_db()
-    entry = db.execute('SELECT * FROM cardio_log WHERE id=?', (entry_id,)).fetchone()
+    entry = db.execute(
+        'SELECT * FROM cardio_log WHERE id=? AND user_id=?',
+        (entry_id, current_user_id())
+    ).fetchone()
     if not entry:
         flash('Entry not found.', 'danger')
         return redirect(url_for('cardio.list_entries'))
@@ -71,7 +77,10 @@ def edit_entry(entry_id):
 @bp.route('/cardio/<int:entry_id>/activity-fit')
 def activity_fit(entry_id):
     db = get_db()
-    entry = db.execute('SELECT * FROM cardio_log WHERE id=?', (entry_id,)).fetchone()
+    entry = db.execute(
+        'SELECT * FROM cardio_log WHERE id=? AND user_id=?',
+        (entry_id, current_user_id())
+    ).fetchone()
     if not entry:
         flash('Entry not found.', 'danger')
         return redirect(url_for('cardio.list_entries'))
@@ -89,7 +98,10 @@ def activity_fit(entry_id):
 @bp.route('/cardio/<int:entry_id>/delete', methods=['POST'])
 def delete_entry(entry_id):
     db = get_db()
-    db.execute('DELETE FROM cardio_log WHERE id=?', (entry_id,))
+    db.execute(
+        'DELETE FROM cardio_log WHERE id=? AND user_id=?',
+        (entry_id, current_user_id())
+    )
     db.commit()
     flash('Entry deleted.', 'warning')
     return redirect(url_for('cardio.list_entries'))
@@ -102,9 +114,10 @@ def _load_plan_items(db):
                   tp.name as plan_name
            FROM plan_items pi
            JOIN training_plans tp ON tp.id = pi.plan_id
-           WHERE pi.status = 'scheduled'
+           WHERE tp.user_id = ? AND pi.status = 'scheduled'
            ORDER BY pi.item_date ASC
-           LIMIT 60'''
+           LIMIT 60''',
+        (current_user_id(),)
     ).fetchall()
 
 
@@ -143,8 +156,8 @@ def _save(db, entry_id):
             distance_mi=?, avg_pace=?, avg_speed=?, avg_hr=?, max_hr=?, calories=?,
             elev_gain_ft=?, elev_loss_ft=?, avg_cadence=?, max_cadence=?,
             avg_power=?, max_power=?, norm_power=?, aerobic_te=?, anaerobic_te=?,
-            swolf=?, active_lengths=?, plan_item_id=?, notes=? WHERE id=?''',
-            vals + (entry_id,))
+            swolf=?, active_lengths=?, plan_item_id=?, notes=? WHERE id=? AND user_id=?''',
+            vals + (entry_id, uid))
     else:
         cur = db.execute('''INSERT INTO cardio_log
             (date, activity, activity_name, duration_min, moving_time_min,
@@ -157,8 +170,9 @@ def _save(db, entry_id):
 
     if plan_item_id:
         db.execute(
-            "UPDATE plan_items SET status='completed' WHERE id=? AND status='scheduled'",
-            (plan_item_id,)
+            "UPDATE plan_items SET status='completed' "
+            "WHERE id=? AND user_id=? AND status='scheduled'",
+            (plan_item_id, uid)
         )
 
     cardio_notes = (f.get('notes') or '').strip()

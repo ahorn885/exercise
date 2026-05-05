@@ -83,6 +83,8 @@
               {{ current_user.display_name or current_user.username }}
             </a>
             <ul class="dropdown-menu dropdown-menu-end">
+              <li><a class="dropdown-item" href="{{ url_for('profile.edit') }}">Profile</a></li>
+              <li><hr class="dropdown-divider"></li>
               <li>
                 <form method="post" action="{{ url_for('auth.logout') }}" class="m-0">
                   <button type="submit" class="dropdown-item">Sign out</button>

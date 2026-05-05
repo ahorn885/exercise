@@ -30,6 +30,8 @@
     {% endif %}
     {% if plan.status != 'archived' %}
     <a href="{{ url_for('coaching.review', plan_id=plan.id) }}" class="btn btn-outline-primary btn-sm">AI Review</a>
+    <button type="button" class="btn btn-outline-secondary btn-sm" id="bulk-toggle-btn"
+            title="Select multiple scheduled items and apply mechanical changes (shift dates, intensity, duration scale, mark skipped)">Bulk edit</button>
     <a href="{{ url_for('plans.download_plan_fits', plan_id=plan.id) }}" class="btn btn-outline-secondary btn-sm" title="Download all scheduled workouts as Garmin FIT files">⬇ FIT Files</a>
     {% endif %}
     <a href="{{ url_for('plans.list_plans') }}" class="btn btn-outline-secondary btn-sm">← Plans</a>
@@ -204,6 +206,10 @@
       <table class="table table-sm table-hover mb-0 align-middle">
         <thead class="table-light">
           <tr>
+            <th class="bulk-only" style="width:30px">
+              <input type="checkbox" class="form-check-input bulk-week-toggle"
+                     data-week="{{ year }}-{{ week }}" title="Select all scheduled items in this week">
+            </th>
             <th style="width:90px">Date</th>
             <th>Workout</th>
             <th class="d-none d-md-table-cell">Sport</th>
@@ -216,6 +222,12 @@
         <tbody>
           {% for item in items %}
           <tr>
+            <td class="bulk-only">
+              {% if item.status == 'scheduled' %}
+              <input type="checkbox" class="form-check-input bulk-item-checkbox"
+                     data-item-id="{{ item.id }}" data-week="{{ year }}-{{ week }}">
+              {% endif %}
+            </td>
             <td class="text-muted small text-nowrap">{{ item.item_date }}
               {% if item.target_duration_min %}<br class="d-md-none"><small class="d-md-none text-muted">{{ item.target_duration_min|int }} min</small>{% endif %}
             </td>
@@ -293,6 +305,173 @@
 {% else %}
 <p class="text-muted">No workouts in this plan yet.</p>
 {% endfor %}
+
+{# Bulk-edit floating action bar — only shown when ≥1 item is selected #}
+<div id="bulk-action-bar"
+     class="d-none position-fixed bottom-0 start-0 end-0 bg-white border-top shadow-lg p-3"
+     style="z-index:1040">
+  <div class="container-fluid d-flex align-items-center gap-2 flex-wrap">
+    <span class="fw-semibold me-2"><span id="bulk-count">0</span> selected</span>
+
+    <div class="dropdown">
+      <button class="btn btn-sm btn-outline-secondary dropdown-toggle" data-bs-toggle="dropdown">
+        Shift dates
+      </button>
+      <ul class="dropdown-menu">
+        <li><a class="dropdown-item bulk-action" href="#" data-action="shift_date" data-value="-2">−2 days</a></li>
+        <li><a class="dropdown-item bulk-action" href="#" data-action="shift_date" data-value="-1">−1 day</a></li>
+        <li><a class="dropdown-item bulk-action" href="#" data-action="shift_date" data-value="1">+1 day</a></li>
+        <li><a class="dropdown-item bulk-action" href="#" data-action="shift_date" data-value="2">+2 days</a></li>
+        <li><a class="dropdown-item bulk-action" href="#" data-action="shift_date" data-value="7">+7 days</a></li>
+      </ul>
+    </div>
+
+    <div class="dropdown">
+      <button class="btn btn-sm btn-outline-secondary dropdown-toggle" data-bs-toggle="dropdown">
+        Intensity
+      </button>
+      <ul class="dropdown-menu">
+        <li><a class="dropdown-item bulk-action" href="#" data-action="intensity_step" data-value="down">Drop one notch</a></li>
+        <li><a class="dropdown-item bulk-action" href="#" data-action="intensity_step" data-value="up">Raise one notch</a></li>
+      </ul>
+    </div>
+
+    <div class="dropdown">
+      <button class="btn btn-sm btn-outline-secondary dropdown-toggle" data-bs-toggle="dropdown">
+        Scale load
+      </button>
+      <ul class="dropdown-menu">
+        <li><a class="dropdown-item bulk-action" href="#" data-action="duration_scale" data-value="0.7">×0.70 (cut 30%)</a></li>
+        <li><a class="dropdown-item bulk-action" href="#" data-action="duration_scale" data-value="0.85">×0.85 (cut 15%)</a></li>
+        <li><a class="dropdown-item bulk-action" href="#" data-action="duration_scale" data-value="1.15">×1.15 (+15%)</a></li>
+        <li><a class="dropdown-item bulk-action" href="#" data-action="duration_scale" data-value="1.3">×1.30 (+30%)</a></li>
+        <li><hr class="dropdown-divider"></li>
+        <li><span class="dropdown-item-text small text-muted">Cardio: scales target duration. Strength: appends a load-scale note to the description (athlete adjusts weights manually).</span></li>
+      </ul>
+    </div>
+
+    <button type="button" class="btn btn-sm btn-outline-warning bulk-action"
+            data-action="mark_skipped" data-value="">Mark skipped</button>
+
+    <div class="ms-auto d-flex gap-2">
+      <button type="button" id="bulk-cancel-btn" class="btn btn-sm btn-outline-secondary">Cancel</button>
+    </div>
+  </div>
+  <div id="bulk-status" class="container-fluid small mt-1"></div>
+</div>
+
+<script>
+(function() {
+  const planId = {{ plan.id }};
+  const bulkBar = document.getElementById('bulk-action-bar');
+  const bulkCount = document.getElementById('bulk-count');
+  const bulkStatus = document.getElementById('bulk-status');
+  const toggleBtn = document.getElementById('bulk-toggle-btn');
+  const cancelBtn = document.getElementById('bulk-cancel-btn');
+
+  // Bulk-mode visibility — gated by .bulk-mode on <body>; checkbox columns
+  // and headers are .bulk-only and hidden by default.
+  function setBulkMode(on) {
+    document.body.classList.toggle('bulk-mode', on);
+    if (!on) {
+      document.querySelectorAll('.bulk-item-checkbox, .bulk-week-toggle')
+        .forEach(cb => { cb.checked = false; });
+      updateSelection();
+      bulkBar.classList.add('d-none');
+      if (toggleBtn) toggleBtn.classList.remove('active');
+    } else {
+      if (toggleBtn) toggleBtn.classList.add('active');
+    }
+  }
+
+  if (toggleBtn) toggleBtn.addEventListener('click', () => {
+    setBulkMode(!document.body.classList.contains('bulk-mode'));
+  });
+  if (cancelBtn) cancelBtn.addEventListener('click', () => setBulkMode(false));
+
+  function selectedIds() {
+    return Array.from(document.querySelectorAll('.bulk-item-checkbox:checked'))
+      .map(cb => parseInt(cb.dataset.itemId, 10))
+      .filter(n => !isNaN(n));
+  }
+
+  function updateSelection() {
+    const ids = selectedIds();
+    bulkCount.textContent = ids.length;
+    bulkStatus.textContent = '';
+    if (ids.length === 0) {
+      bulkBar.classList.add('d-none');
+    } else if (document.body.classList.contains('bulk-mode')) {
+      bulkBar.classList.remove('d-none');
+    }
+  }
+
+  document.addEventListener('change', (e) => {
+    if (e.target.classList.contains('bulk-item-checkbox')) {
+      updateSelection();
+    } else if (e.target.classList.contains('bulk-week-toggle')) {
+      const week = e.target.dataset.week;
+      document.querySelectorAll(`.bulk-item-checkbox[data-week="${week}"]`)
+        .forEach(cb => { cb.checked = e.target.checked; });
+      updateSelection();
+    }
+  });
+
+  document.addEventListener('click', async (e) => {
+    const btn = e.target.closest('.bulk-action');
+    if (!btn) return;
+    e.preventDefault();
+    const action = btn.dataset.action;
+    const rawVal = btn.dataset.value;
+    const value =
+      action === 'shift_date' ? parseInt(rawVal, 10) :
+      action === 'duration_scale' ? parseFloat(rawVal) :
+      action === 'intensity_step' ? rawVal :
+      null;
+    const ids = selectedIds();
+    if (ids.length === 0) return;
+
+    const labels = {
+      shift_date: `Shift ${ids.length} item(s) by ${value > 0 ? '+' : ''}${value} day(s)?`,
+      intensity_step: `${value === 'down' ? 'Drop' : 'Raise'} intensity one notch on ${ids.length} item(s)?`,
+      duration_scale: `Scale ×${value} on ${ids.length} item(s)? Cardio durations are scaled; strength items get a load-scale note appended.`,
+      mark_skipped: `Mark ${ids.length} item(s) as skipped?`,
+    };
+    if (!confirm(labels[action] || `Apply to ${ids.length} item(s)?`)) return;
+
+    bulkStatus.textContent = 'Applying…';
+    try {
+      const r = await fetch(`/plans/${planId}/items/bulk`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({item_ids: ids, action, value}),
+      });
+      const data = await r.json();
+      if (!r.ok || !data.ok) {
+        bulkStatus.textContent = `Error: ${data.error || r.statusText}`;
+        bulkStatus.className = 'container-fluid small mt-1 text-danger';
+        return;
+      }
+      let msg = `Updated ${data.updated} item(s).`;
+      if (data.skipped) msg += ` ${data.skipped} skipped (not eligible).`;
+      if (data.reason) msg += ` ${data.reason}.`;
+      bulkStatus.textContent = msg + ' Reloading…';
+      bulkStatus.className = 'container-fluid small mt-1 text-success';
+      setTimeout(() => window.location.reload(), 600);
+    } catch (err) {
+      bulkStatus.textContent = `Error: ${err.message}`;
+      bulkStatus.className = 'container-fluid small mt-1 text-danger';
+    }
+  });
+})();
+</script>
+
+<style>
+  .bulk-only { display: none; }
+  body.bulk-mode .bulk-only { display: table-cell; }
+  body.bulk-mode { padding-bottom: 80px; }  /* room for the floating bar */
+  #bulk-toggle-btn.active { background-color: var(--bs-secondary-bg, #e9ecef); }
+</style>
 
 <div class="card mt-4" id="coach-chat-card">
   <div class="card-header d-flex justify-content-between align-items-center">

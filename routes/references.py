@@ -1,6 +1,7 @@
 from collections import defaultdict
 from flask import Blueprint, render_template, request
 from database import get_db
+from routes.auth import current_user_id
 from routes.locales import LOCALES
 
 bp = Blueprint('references', __name__)
@@ -35,30 +36,35 @@ def exercises():
     equipment_counts = {}
 
     if locale_filter:
+        uid = current_user_id()
         placeholders = ','.join('?' * len(locale_filter))
 
         # Profile metadata (notes, updated_at) for display banner
         for p in db.execute(
-            f'SELECT * FROM locale_profiles WHERE locale IN ({placeholders})', locale_filter
+            f'SELECT * FROM locale_profiles WHERE locale IN ({placeholders}) AND user_id = ?',
+            list(locale_filter) + [uid]
         ).fetchall():
             profiles_active[p['locale']] = p
 
-        # Union of equipment_ids across all selected locales
+        # Union of equipment_ids across all selected locales (locale_equipment
+        # carries user_id directly since Session 3).
         for row in db.execute(
-            f'SELECT DISTINCT equipment_id FROM locale_equipment WHERE locale IN ({placeholders})',
-            locale_filter
+            f'SELECT DISTINCT equipment_id FROM locale_equipment '
+            f'WHERE user_id = ? AND locale IN ({placeholders})',
+            [uid] + list(locale_filter)
         ).fetchall():
             profile_equipment_ids.add(row['equipment_id'])
 
         # Per-locale item counts for display
         for row in db.execute(
             f'SELECT locale, COUNT(*) as cnt FROM locale_equipment '
-            f'WHERE locale IN ({placeholders}) GROUP BY locale',
-            locale_filter
+            f'WHERE user_id = ? AND locale IN ({placeholders}) '
+            f'GROUP BY locale',
+            [uid] + list(locale_filter)
         ).fetchall():
             equipment_counts[row['locale']] = row['cnt']
 
-        # Load full exercise_equipment map for availability check
+        # Load full exercise_equipment map for availability check (shared catalog)
         for row in db.execute(
             'SELECT exercise_id, equipment_id, option_group FROM exercise_equipment'
         ).fetchall():
@@ -90,7 +96,10 @@ def rx_setup(exercise):
     """Redirect to rx edit for setup."""
     from flask import redirect, url_for
     db = get_db()
-    row = db.execute('SELECT id FROM current_rx WHERE exercise=?', (exercise,)).fetchone()
+    row = db.execute(
+        'SELECT id FROM current_rx WHERE exercise=? AND user_id=?',
+        (exercise, current_user_id())
+    ).fetchone()
     if row:
         return redirect(url_for('rx.edit_entry', entry_id=row['id']))
     return redirect(url_for('rx.list_entries'))
