@@ -1,6 +1,7 @@
 from flask import Blueprint, render_template, request, redirect, url_for, flash
 from database import get_db
-from calculations import project_next_from_current
+from calculations import project_next_from_current, compute_deload_baseline
+from rx_engine import DELOAD_THRESHOLD
 from routes.auth import current_user_id
 
 bp = Blueprint('rx', __name__)
@@ -51,10 +52,67 @@ def list_entries():
         (uid,)
     ).fetchall()
 
+    deload_pending = [
+        e for e in entries
+        if (e['sessions_since_progress'] or 0) >= DELOAD_THRESHOLD
+    ]
+
     return render_template('rx/list.html', entries=entries,
                            inventory_only=inventory_only,
                            discipline=discipline, status=status,
-                           locale_filter=locale_filter, locales=locales)
+                           locale_filter=locale_filter, locales=locales,
+                           deload_pending=deload_pending,
+                           deload_threshold=DELOAD_THRESHOLD)
+
+
+@bp.route('/rx/<int:entry_id>/deload', methods=['POST'])
+def deload_entry(entry_id):
+    """One-click 10% deload: drop the primary baseline dimension, re-project
+    next_*, and reset both plateau and failure counters."""
+    db = get_db()
+    uid = current_user_id()
+    entry = db.execute(
+        'SELECT * FROM current_rx WHERE id=? AND user_id=?', (entry_id, uid)
+    ).fetchone()
+    if not entry:
+        flash('Entry not found.', 'danger')
+        return redirect(url_for('rx.list_entries'))
+
+    deloaded = compute_deload_baseline(
+        entry['current_sets'], entry['current_reps'],
+        entry['current_weight'], entry['current_duration'],
+        entry['movement_pattern'],
+        weight_increment=entry['weight_increment'],
+    )
+    nxt = project_next_from_current(
+        deloaded['sets'], deloaded['reps'], deloaded['weight'], deloaded['duration'],
+        entry['movement_pattern'], weight_increment=entry['weight_increment'],
+    )
+
+    db.execute('''UPDATE current_rx SET
+        current_sets=?, current_reps=?, current_weight=?, current_duration=?,
+        next_sets=?, next_reps=?, next_weight=?, next_duration=?,
+        consecutive_failures=0, sessions_since_progress=0,
+        rx_source=?
+        WHERE id=? AND user_id=?''',
+        (deloaded['sets'], deloaded['reps'], deloaded['weight'], deloaded['duration'],
+         nxt['next_sets'], nxt['next_reps'], nxt['next_weight'], nxt['next_duration'],
+         'Auto-deload', entry_id, uid))
+    db.commit()
+
+    # Build a human-readable note about what changed
+    if entry['current_weight'] and deloaded['weight'] != entry['current_weight']:
+        delta = f"{entry['current_weight']} → {deloaded['weight']} lb"
+    elif entry['current_duration'] and deloaded['duration'] != entry['current_duration']:
+        delta = f"{entry['current_duration']} → {deloaded['duration']} sec"
+    elif entry['current_reps'] and deloaded['reps'] != entry['current_reps']:
+        delta = f"{entry['current_reps']} → {deloaded['reps']} reps"
+    elif entry['current_sets'] and deloaded['sets'] != entry['current_sets']:
+        delta = f"{entry['current_sets']} → {deloaded['sets']} sets"
+    else:
+        delta = 'no change applied'
+    flash(f"{entry['exercise']} deloaded ({delta}). Plateau counter reset.", 'success')
+    return redirect(url_for('rx.list_entries'))
 
 
 @bp.route('/rx/<int:entry_id>/edit', methods=['GET', 'POST'])
