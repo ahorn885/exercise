@@ -292,15 +292,43 @@ def api_patch_plan_item(item_id):
     return jsonify({'ok': True})
 
 
-# Sport types where target_duration_min isn't the primary load axis. Skipped
-# during the duration_scale bulk action because the actual load lives in the
-# description (sets/reps/weight, etc.) and scaling the clock won't shrink the
-# work prescribed.
-_DURATION_SCALE_SKIP_SPORTS = {'strength_training'}
+# Sport types where target_duration_min isn't the primary load axis. The
+# duration_scale bulk action reaches these via a description note instead
+# (the actual load is the sets/reps/weight prescribed in the description,
+# which we can't reliably parse + rewrite).
+_LOAD_NOTE_SPORTS = {'strength_training'}
 
 # Intensity ladder for the intensity_step bulk action. Same ordering as the
 # existing Tier 2 review's "too hard" / "too easy" toggle in routes/coaching.py.
 _INTENSITY_LADDER = ['easy', 'moderate', 'hard', 'very_hard']
+
+# Marker that wraps the load-scale note we append to strength descriptions.
+# Idempotent re-application: a re-run with a different multiplier replaces
+# the existing note rather than stacking. Anchored at end of string so it
+# always sits at the bottom of the description.
+_LOAD_NOTE_RE = re.compile(
+    r'\n*\[Load scaled to \d+% — (?:reduce|increase) weights ~\d+% from prescribed\]\s*$'
+)
+
+
+def _build_load_note(mult: float) -> str:
+    """Render the load-scale note appended to strength descriptions."""
+    pct = round(mult * 100)
+    if mult < 1:
+        delta = round((1 - mult) * 100)
+        return f'\n\n[Load scaled to {pct}% — reduce weights ~{delta}% from prescribed]'
+    if mult > 1:
+        delta = round((mult - 1) * 100)
+        return f'\n\n[Load scaled to {pct}% — increase weights ~{delta}% from prescribed]'
+    # mult == 1.0 → no note (caller should not invoke for a no-op multiplier)
+    return ''
+
+
+def _apply_load_note(description: str | None, mult: float) -> str:
+    """Replace any existing load note (idempotent) and append the new one."""
+    base = _LOAD_NOTE_RE.sub('', description or '').rstrip()
+    note = _build_load_note(mult)
+    return (base + note) if note else base
 
 
 @bp.route('/<int:plan_id>/items/bulk', methods=['POST'])
@@ -348,7 +376,8 @@ def api_bulk_edit_items(plan_id):
     # already-completed/skipped items).
     placeholders = ','.join('?' * len(item_ids))
     rows = db.execute(
-        f'''SELECT id, item_date, sport_type, intensity, target_duration_min, status
+        f'''SELECT id, item_date, sport_type, intensity,
+                   target_duration_min, description, status
             FROM plan_items
             WHERE id IN ({placeholders})
               AND plan_id = ? AND user_id = ? AND status = 'scheduled' ''',
@@ -411,11 +440,22 @@ def api_bulk_edit_items(plan_id):
             return jsonify({'ok': False, 'error': 'duration_scale value must be a number'}), 400
         if mult <= 0:
             return jsonify({'ok': False, 'error': 'duration_scale value must be > 0'}), 400
-        skipped_strength = 0
+        if mult == 1.0:
+            return jsonify({'ok': True, 'updated': 0, 'skipped': not_eligible_count})
+        load_noted = 0
         skipped_no_duration = 0
         for r in rows:
-            if r['sport_type'] in _DURATION_SCALE_SKIP_SPORTS:
-                skipped_strength += 1
+            if r['sport_type'] in _LOAD_NOTE_SPORTS:
+                # Strength: append a load-scale note to description instead
+                # of touching duration. The athlete reads the note and
+                # adjusts their working weights on the fly.
+                new_description = _apply_load_note(r['description'], mult)
+                db.execute(
+                    'UPDATE plan_items SET description=? WHERE id=? AND user_id=?',
+                    (new_description, r['id'], uid)
+                )
+                load_noted += 1
+                updated += 1
                 continue
             if not r['target_duration_min']:
                 skipped_no_duration += 1
@@ -427,12 +467,12 @@ def api_bulk_edit_items(plan_id):
             )
             updated += 1
         bits = []
-        if skipped_strength:
-            bits.append(f'{skipped_strength} strength session(s)')
+        if load_noted:
+            bits.append(f'{load_noted} strength item(s) annotated with load-scale note')
         if skipped_no_duration:
-            bits.append(f'{skipped_no_duration} item(s) with no duration set')
+            bits.append(f'{skipped_no_duration} item(s) skipped (no duration set)')
         if bits:
-            skipped_reason = 'Skipped: ' + ', '.join(bits)
+            skipped_reason = '; '.join(bits)
 
     else:  # mark_skipped
         for r in rows:

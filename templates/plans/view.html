@@ -338,7 +338,7 @@
 
     <div class="dropdown">
       <button class="btn btn-sm btn-outline-secondary dropdown-toggle" data-bs-toggle="dropdown">
-        Scale duration
+        Scale load
       </button>
       <ul class="dropdown-menu">
         <li><a class="dropdown-item bulk-action" href="#" data-action="duration_scale" data-value="0.7">×0.70 (cut 30%)</a></li>
@@ -346,7 +346,7 @@
         <li><a class="dropdown-item bulk-action" href="#" data-action="duration_scale" data-value="1.15">×1.15 (+15%)</a></li>
         <li><a class="dropdown-item bulk-action" href="#" data-action="duration_scale" data-value="1.3">×1.30 (+30%)</a></li>
         <li><hr class="dropdown-divider"></li>
-        <li><span class="dropdown-item-text small text-muted">Strength sessions are skipped (load lives in the description, not the clock).</span></li>
+        <li><span class="dropdown-item-text small text-muted">Cardio: scales target duration. Strength: appends a load-scale note to the description (athlete adjusts weights manually).</span></li>
       </ul>
     </div>
 
@@ -434,7 +434,7 @@
     const labels = {
       shift_date: `Shift ${ids.length} item(s) by ${value > 0 ? '+' : ''}${value} day(s)?`,
       intensity_step: `${value === 'down' ? 'Drop' : 'Raise'} intensity one notch on ${ids.length} item(s)?`,
-      duration_scale: `Scale duration ×${value} on ${ids.length} item(s)? (strength sessions skipped)`,
+      duration_scale: `Scale ×${value} on ${ids.length} item(s)? Cardio durations are scaled; strength items get a load-scale note appended.`,
       mark_skipped: `Mark ${ids.length} item(s) as skipped?`,
     };
     if (!confirm(labels[action] || `Apply to ${ids.length} item(s)?`)) return;
