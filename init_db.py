@@ -299,6 +299,26 @@ SQLITE_SCHEMA = '''
         UNIQUE(user_id, timestamp_ms)
     );
     CREATE INDEX IF NOT EXISTS idx_wl_date ON wellness_log(date);
+    CREATE TABLE IF NOT EXISTS purchase_recommendations (
+        id           INTEGER PRIMARY KEY AUTOINCREMENT,
+        slug         TEXT NOT NULL UNIQUE,
+        label        TEXT NOT NULL,
+        equipment_id INTEGER REFERENCES equipment_items(id),
+        est_cost_low INTEGER,
+        est_cost_high INTEGER,
+        priority     TEXT NOT NULL DEFAULT 'medium',
+        rationale    TEXT,
+        sort_order   INTEGER NOT NULL DEFAULT 0,
+        active       INTEGER NOT NULL DEFAULT 1
+    );
+    CREATE TABLE IF NOT EXISTS user_purchase_recommendations (
+        user_id     INTEGER NOT NULL REFERENCES users(id),
+        purchase_id INTEGER NOT NULL REFERENCES purchase_recommendations(id),
+        status      TEXT NOT NULL,
+        user_notes  TEXT,
+        updated_at  TEXT DEFAULT (datetime('now')),
+        PRIMARY KEY (user_id, purchase_id)
+    );
 '''
 
 PG_SCHEMA = '''
@@ -593,6 +613,26 @@ PG_SCHEMA = '''
         UNIQUE(user_id, timestamp_ms)
     );
     CREATE INDEX IF NOT EXISTS idx_wl_date ON wellness_log(date);
+    CREATE TABLE IF NOT EXISTS purchase_recommendations (
+        id            SERIAL PRIMARY KEY,
+        slug          TEXT NOT NULL UNIQUE,
+        label         TEXT NOT NULL,
+        equipment_id  INTEGER REFERENCES equipment_items(id),
+        est_cost_low  INTEGER,
+        est_cost_high INTEGER,
+        priority      TEXT NOT NULL DEFAULT 'medium',
+        rationale     TEXT,
+        sort_order    INTEGER NOT NULL DEFAULT 0,
+        active        INTEGER NOT NULL DEFAULT 1
+    );
+    CREATE TABLE IF NOT EXISTS user_purchase_recommendations (
+        user_id     INTEGER NOT NULL REFERENCES users(id),
+        purchase_id INTEGER NOT NULL REFERENCES purchase_recommendations(id),
+        status      TEXT NOT NULL,
+        user_notes  TEXT,
+        updated_at  TIMESTAMP DEFAULT NOW(),
+        PRIMARY KEY (user_id, purchase_id)
+    );
 '''
 
 
@@ -848,6 +888,138 @@ def _seed_current_rx_for_user(executor, user_id, is_postgres=False):
         )
 
 
+# ── Recommended purchases — shared catalog ───────────────────────────────────
+#
+# Each entry binds to an equipment_items.tag (so "exercises impacted" can be
+# derived live from the exercise_equipment join) and carries cost ranges +
+# priority + a short rationale tailored to the AR / endurance profile.
+# Idempotency is keyed on `slug` — entries can be added or have their copy
+# tweaked over time without disturbing per-user state in
+# user_purchase_recommendations.
+#
+# Cost ranges are USD whole dollars (street price, new). Priority defaults:
+#   high   — foundational; most home gyms benefit from this
+#   medium — strong returns, but second-tier (or has a workable substitute)
+#   low    — specialty / situational
+PURCHASE_RECOMMENDATIONS = [
+    # slug, label, equipment_tag, cost_low, cost_high, priority, rationale, sort
+    ('adjustable_dumbbells', 'Adjustable Dumbbells (5–50 lb pair)', 'dumbbells',
+     300, 700, 'high',
+     'Single biggest unlock for a home gym — dozens of exercises (presses, rows, '
+     'lunges, RDLs, carries, accessories) collapse onto one footprint. '
+     'PowerBlock or Bowflex SelectTech land in this range.', 10),
+    ('pull_up_bar', 'Doorway / Wall-Mount Pull-Up Bar', 'pull_up_bar',
+     30, 120, 'high',
+     'Most homes have no pulling-pattern equipment — this fixes it for under '
+     '$50. Wall-mount is more rigid; doorway is non-permanent.', 20),
+    ('kettlebell_pair', 'Kettlebells (one heavy + one moderate)', 'kettlebell',
+     80, 250, 'high',
+     'Swings, goblet squats, suitcase carries, Turkish get-ups, snatches — '
+     'one tool covers explosive hip-hinge work and grip endurance.', 30),
+    ('resistance_bands', 'Resistance Band Set (light to heavy)', 'resistance_bands',
+     30, 80, 'high',
+     'Warm-ups, pull-aparts, banded face-pulls, hip-mobility work, assisted '
+     'pull-ups, travel kit. Cheap; high utility.', 40),
+    ('foam_roller', 'High-Density Foam Roller', 'foam_roller',
+     20, 60, 'high',
+     'Daily recovery tool. Pairs with a lacrosse ball for trigger-point work. '
+     'Cheap and there is no good substitute.', 50),
+
+    ('squat_rack', 'Power Rack / Squat Stand', 'squat_rack',
+     350, 900, 'medium',
+     'Unlocks heavy barbell squats and bench safely without a spotter. Only '
+     'worth it if you already own (or plan to buy) a barbell + plates.', 110),
+    ('barbell_plates', 'Olympic Barbell + Plate Set (300+ lb)', 'barbell',
+     400, 900, 'medium',
+     'Required for heavy compound lifts (squat, deadlift, bench). Pair with a '
+     'rack for safety. The single biggest leg-strength multiplier.', 120),
+    ('bench_adjustable', 'Adjustable / Incline Bench', 'bench_adjustable',
+     150, 400, 'medium',
+     'Required for bench press, incline DB press, single-arm rows, split-stance '
+     'work. Adjustable is worth the upcharge over flat-only.', 130),
+    ('plyo_box', 'Stackable Plyo Box (12/18/24 in)', 'plyo_box',
+     90, 200, 'medium',
+     'Box jumps, step-ups, depth drops, elevated push-ups. Stackable saves '
+     'space and gives you 3 heights in one footprint.', 140),
+    ('weighted_vest', 'Adjustable Weighted Vest (20–40 lb)', 'weighted_vest',
+     80, 200, 'medium',
+     'Loaded carries and ruck training translate directly to AR pack-carrying '
+     'demands. Also makes bodyweight pull-ups / push-ups progressively '
+     'harder without buying more equipment.', 150),
+    ('trx', 'TRX / Suspension Trainer', 'trx',
+     100, 200, 'medium',
+     'Bodyweight rows, anti-rotation work, atomic push-ups. Especially useful '
+     'for hotel-room training where no rack is available.', 160),
+    ('hangboard', 'Hangboard (climbing fingerboard)', 'hangboard',
+     30, 150, 'medium',
+     'Grip endurance for paddling, climbing transitions, and rope work in AR. '
+     'Mounts above a doorway pull-up bar.', 170),
+
+    ('sandbag', 'Sandbag (filled, 40–80 lb)', 'sandbag',
+     50, 180, 'low',
+     'Odd-object carries are the single most AR-specific strength stimulus — '
+     'irregular load, awkward grip, replicates carrying gear or a teammate.', 210),
+    ('rings', 'Gymnastic Rings', 'rings',
+     30, 80, 'low',
+     'Advanced bodyweight pulling, dips, and shoulder-stability work. Pairs '
+     'with the pull-up bar — minimal incremental cost, high ceiling.', 220),
+    ('jump_rope', 'Speed Jump Rope', 'jump_rope',
+     15, 40, 'low',
+     'Calf / ankle prep, footwork, conditioning warm-up. Trivial cost. Good '
+     'for hotel-room bursts when an erg is unavailable.', 230),
+    ('ab_wheel', 'Ab Wheel', 'ab_wheel',
+     15, 40, 'low',
+     'Anti-extension core work that hits harder than planks. Cheap; one of '
+     'the best ROI accessories.', 240),
+    ('slam_ball', 'Slam Ball (20–40 lb)', 'slam_ball',
+     40, 120, 'low',
+     'Power output without ballistic shoulder load. Floor slams, rotational '
+     'throws — useful for paddle-stroke power transfer.', 250),
+    ('rowing_erg', 'Rowing Erg (Concept2)', 'rowing_erg',
+     900, 1100, 'low',
+     'Premium pulling-pattern aerobic work and the closest land-based proxy '
+     'for paddle endurance. Big-ticket; only worth it once foundational gear '
+     'is in place.', 260),
+]
+
+
+def _seed_purchase_recommendations(executor, tag_to_id, is_postgres=False):
+    """Seed the shared purchase_recommendations catalog. Idempotent —
+    UPSERT on slug so copy/cost edits propagate to existing rows on every
+    cold start, while purchase_id stays stable for any user state already
+    referencing it. Caller supplies the equipment_items tag→id map (already
+    built upstream during equipment seeding)."""
+    if is_postgres:
+        sql = (
+            'INSERT INTO purchase_recommendations '
+            '(slug, label, equipment_id, est_cost_low, est_cost_high, '
+            ' priority, rationale, sort_order, active) '
+            'VALUES (%s,%s,%s,%s,%s,%s,%s,%s,1) '
+            'ON CONFLICT (slug) DO UPDATE SET '
+            '  label=EXCLUDED.label, equipment_id=EXCLUDED.equipment_id, '
+            '  est_cost_low=EXCLUDED.est_cost_low, '
+            '  est_cost_high=EXCLUDED.est_cost_high, '
+            '  priority=EXCLUDED.priority, rationale=EXCLUDED.rationale, '
+            '  sort_order=EXCLUDED.sort_order, active=1'
+        )
+    else:
+        sql = (
+            'INSERT INTO purchase_recommendations '
+            '(slug, label, equipment_id, est_cost_low, est_cost_high, '
+            ' priority, rationale, sort_order, active) '
+            'VALUES (?,?,?,?,?,?,?,?,1) '
+            'ON CONFLICT(slug) DO UPDATE SET '
+            '  label=excluded.label, equipment_id=excluded.equipment_id, '
+            '  est_cost_low=excluded.est_cost_low, '
+            '  est_cost_high=excluded.est_cost_high, '
+            '  priority=excluded.priority, rationale=excluded.rationale, '
+            '  sort_order=excluded.sort_order, active=1'
+        )
+    for slug, label, eq_tag, lo, hi, prio, rationale, sort in PURCHASE_RECOMMENDATIONS:
+        eq_id = tag_to_id.get(eq_tag)
+        executor.execute(sql, (slug, label, eq_id, lo, hi, prio, rationale, sort))
+
+
 # Migrations for existing databases — add columns that may not exist yet
 _SQLITE_MIGRATIONS = [
     "ALTER TABLE cardio_log ADD COLUMN stride_length_m REAL",
@@ -977,6 +1149,26 @@ _SQLITE_MIGRATIONS = [
         primary_sport TEXT, target_event_name TEXT, target_event_date TEXT,
         weekly_hours_target REAL, training_window TEXT, notes TEXT,
         updated_at TEXT DEFAULT (datetime('now'))
+    )""",
+    # Session 5 — recommended-purchases rebuild. Shared catalog +
+    # per-user state. CREATE IF NOT EXISTS is idempotent on existing DBs;
+    # the catalog is then seeded by _seed_purchase_recommendations on every
+    # cold start (idempotent via UNIQUE(slug)).
+    """CREATE TABLE IF NOT EXISTS purchase_recommendations (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        slug TEXT NOT NULL UNIQUE, label TEXT NOT NULL,
+        equipment_id INTEGER REFERENCES equipment_items(id),
+        est_cost_low INTEGER, est_cost_high INTEGER,
+        priority TEXT NOT NULL DEFAULT 'medium',
+        rationale TEXT, sort_order INTEGER NOT NULL DEFAULT 0,
+        active INTEGER NOT NULL DEFAULT 1
+    )""",
+    """CREATE TABLE IF NOT EXISTS user_purchase_recommendations (
+        user_id INTEGER NOT NULL REFERENCES users(id),
+        purchase_id INTEGER NOT NULL REFERENCES purchase_recommendations(id),
+        status TEXT NOT NULL, user_notes TEXT,
+        updated_at TEXT DEFAULT (datetime('now')),
+        PRIMARY KEY (user_id, purchase_id)
     )""",
 ]
 
@@ -1180,6 +1372,23 @@ _PG_MIGRATIONS = [
         primary_sport TEXT, target_event_name TEXT, target_event_date TEXT,
         weekly_hours_target REAL, training_window TEXT, notes TEXT,
         updated_at TIMESTAMP DEFAULT NOW()
+    )""",
+    # Session 5 — recommended-purchases rebuild.
+    """CREATE TABLE IF NOT EXISTS purchase_recommendations (
+        id SERIAL PRIMARY KEY,
+        slug TEXT NOT NULL UNIQUE, label TEXT NOT NULL,
+        equipment_id INTEGER REFERENCES equipment_items(id),
+        est_cost_low INTEGER, est_cost_high INTEGER,
+        priority TEXT NOT NULL DEFAULT 'medium',
+        rationale TEXT, sort_order INTEGER NOT NULL DEFAULT 0,
+        active INTEGER NOT NULL DEFAULT 1
+    )""",
+    """CREATE TABLE IF NOT EXISTS user_purchase_recommendations (
+        user_id INTEGER NOT NULL REFERENCES users(id),
+        purchase_id INTEGER NOT NULL REFERENCES purchase_recommendations(id),
+        status TEXT NOT NULL, user_notes TEXT,
+        updated_at TIMESTAMP DEFAULT NOW(),
+        PRIMARY KEY (user_id, purchase_id)
     )""",
 ]
 
@@ -1627,6 +1836,8 @@ def init_postgres():
     tag_to_id = {row[1]: row[0] for row in cur.fetchall()}
     cur.execute('SELECT id, exercise FROM exercise_inventory')
     ex_to_id  = {row[1]: row[0] for row in cur.fetchall()}
+    # Phase 2b — Seed shared purchase_recommendations catalog (UPSERT on slug)
+    _seed_purchase_recommendations(cur, tag_to_id, is_postgres=True)
     # Phase 3 — Seed exercise_equipment (idempotent)
     for exercise_name, tag_str in EXERCISE_EQUIPMENT.items():
         ex_id = ex_to_id.get(exercise_name)
@@ -1717,6 +1928,8 @@ def init_sqlite():
     # Phase 2 — Build lookup dicts (index-based access; no row_factory set here)
     tag_to_id = {row[1]: row[0] for row in conn.execute('SELECT id, tag FROM equipment_items').fetchall()}
     ex_to_id  = {row[1]: row[0] for row in conn.execute('SELECT id, exercise FROM exercise_inventory').fetchall()}
+    # Phase 2b — Seed shared purchase_recommendations catalog (UPSERT on slug)
+    _seed_purchase_recommendations(conn, tag_to_id, is_postgres=False)
     # Phase 3 — Seed exercise_equipment (idempotent)
     for exercise_name, tag_str in EXERCISE_EQUIPMENT.items():
         ex_id = ex_to_id.get(exercise_name)

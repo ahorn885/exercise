@@ -1,12 +1,20 @@
 # AIDSTATION — Session Handoff
 
-**Date:** 2026-05-05
+**Date:** 2026-05-05 (afternoon update)
 **Last commit on `main`:** `32e8c38` — the consolidated multi-user
 retrofit + UX batch. Squashed from 14 intermediate commits; per-piece
 detail lives in that commit's body. The pre-squash branch was
 `claude/review-handoff-doc-VyeBE` (deleted locally; remote pointer
 still at `f313e8f` and unreferenced — the harness rejected the remote
 delete).
+
+**This session's branch (unmerged):** `claude/review-handoff-doc-jvsWF`
+carries two follow-ups on top of `main`:
+- Pre-Neon de-risking: PG_SCHEMA forward-FK reorder + `RETURNING id`
+  sweep across 15 INSERT sites. Both items in the operator-step
+  carry-forward list are resolved.
+- Recommended-purchases rebuild: shared catalog + per-user state +
+  `/purchases` UI with live "exercises this unlocks" derivation.
 
 **Deploy state:**
 - ✅ GitHub Actions (`docker-publish.yml`) ran green on `32e8c38`.
@@ -168,25 +176,24 @@ After step 4 passes, multi-user is live in production.
 
 ---
 
-## Carry-forward issues to watch during operator steps
+## Carry-forward issues to watch
 
 Real chance of hitting these; keep an eye out:
 
-1. **`cur.lastrowid` vs Postgres `RETURNING id`.** SQLite's
-   `cur.lastrowid` works directly, but Postgres returns `None`
-   unless the INSERT used `RETURNING id`. Most existing INSERTs
-   (including `routes/auth.py:register`) don't have it. The
-   `database.py:_CompatCursor` PG wrapper does a `fetchone()` against
-   the cursor — quietly returns `None` for the new id. **This may
-   silently break parts of the app on Neon.** Symptoms: registration
-   redirects to `/dashboard` but the session has `user_id=None`, or
-   plan-item INSERT logs new rows but the redirect to
-   `/plans/<None>` 404s. Fix path: search for `cur.lastrowid` in
-   `routes/` + `init_db.py` and add `RETURNING id` to the SQL +
-   `cur.fetchone()[0]` to read it back. The `database.py` wrapper
-   already supports this — it just isn't used everywhere.
+1. **`cur.lastrowid` ↔ Postgres `RETURNING id`.** ✅ Pre-emptively
+   resolved this session. Every INSERT in `routes/` + `coaching.py`
+   that reads `cur.lastrowid` afterwards now carries `RETURNING id`,
+   and the `database.py:_CompatCursor.lastrowid` wrapper already does
+   `fetchone()` to surface it on Postgres. SQLite's native
+   `cur.lastrowid` ignores the unread row. If you add new INSERTs
+   whose new id you read, keep the pattern: add `RETURNING id` to
+   the SQL and the existing `cur.lastrowid` access will Just Work
+   on both backends.
 
-2. **The forward-FK caveat in step 1e.** Detailed there.
+2. **Forward-FK caveat in step 1e.** ✅ Resolved this session.
+   `PG_SCHEMA` is now ordered so every `REFERENCES` resolves at
+   `CREATE TABLE` time. A fresh Neon DB no longer needs a manual
+   reorder or deferred ALTER.
 
 3. **`/coaching/api/*` endpoints are login-gated.** If you have
    any external tooling hitting them (Claude Desktop, scripts),
@@ -200,19 +207,16 @@ Real chance of hitting these; keep an eye out:
 
 Once multi-user is live, the remaining backlog (in priority order):
 
-1. **`RETURNING id` sweep** if step 1 surfaces issues. Even if it
-   doesn't, worth doing pre-emptively for new INSERTs. See
-   carry-forward note 1 above.
-2. **Multi-day wellness chart** on `/garmin/wellness` — 7-day
+1. **Multi-day wellness chart** on `/garmin/wellness` — 7-day
    trend complementing the per-day view. Smallest standalone
    left, ~2 hours.
-3. **Recommended-purchases rebuild** — needs catalog content
-   design + per-user `user_purchase_recommendations` layer.
-   Worth its own session; content design is the heaviest part.
-4. **`coaching.py:capture_and_normalize_feedback` payload size**
+2. **`coaching.py:capture_and_normalize_feedback` payload size**
    — the Haiku call sends raw_content; if Andy's chat history grows
    long, prompt cost rises linearly. Worth profiling once there's
    real second-user data.
+
+`RETURNING id` sweep and recommended-purchases rebuild are now
+shipped — see "What's currently live" below.
 
 The full backlog (parked items, future ideas) is in the Backlog
 section near the bottom.
@@ -269,6 +273,25 @@ harnesses referenced below.
   should use it.
 
 **Standalone improvements:**
+- Pre-emptive Neon-cutover de-risking: `PG_SCHEMA` reordered so
+  `training_plans` + `plan_items` precede `training_sessions` /
+  `training_log` / `cardio_log` (forward-FK fix); every INSERT site
+  whose `cur.lastrowid` is read back gained `RETURNING id` (15 sites
+  across `coaching.py`, `routes/{auth,cardio,garmin,natural_log,plans,training}.py`).
+  The existing `_CompatCursor.lastrowid` wrapper does `fetchone()` so
+  the returned id surfaces unchanged on Postgres; SQLite's native
+  `lastrowid` ignores the unread RETURNING row.
+- Recommended-purchases rebuild shipped. Shared catalog
+  (`purchase_recommendations`, slug-keyed for idempotent UPSERT
+  re-seed; equipment_id FK to `equipment_items`) + per-user state
+  (`user_purchase_recommendations(user_id, purchase_id)` PK, status ∈
+  {wanted, owned, passed}). 18 seeded items targeting AR/endurance gaps
+  (adjustable DBs, pull-up bar, KB, bands, weighted vest, sandbag,
+  hangboard, etc.) grouped by priority. New `/purchases` list +
+  `/purchases/<id>` detail showing live-derived "exercises this
+  unlocks" via `exercise_equipment` join. Locale-tag hint surfaces
+  when the equipment is already in any of the user's locales.
+  Cross-user defended.
 - Plan-match window widened to -3 / +2 days with deduped resolve
   dropdowns.
 - Per-row swap/addition resolve UI on Garmin sync preview.
@@ -389,6 +412,9 @@ routes/
   body.py, conditions.py, injuries.py, locales.py, references.py
   profile.py        — /profile/ (Session 4): edit + preference add/delete +
                       feedback/<id> view + change password
+  purchases.py      — /purchases (list, grouped by priority) + /<id> detail
+                      (live exercises-unlocked join) + POST /<id>/status.
+                      Shared catalog seeded via _seed_purchase_recommendations.
   auth.py           — /auth/login, /auth/logout, /auth/register
 templates/          — Jinja2 per blueprint
 static/             — AIDSTATION brand system (style.css, logo/, favicon, og-preview)
@@ -429,10 +455,13 @@ static/             — AIDSTATION brand system (style.css, logo/, favicon, og-p
 | `exercise_equipment` | Many-to-many exercise↔equipment with option groups. **Shared junction (between two shared tables).** |
 | `training_modalities` | Activity types with AR carryover ratings. **Shared catalog.** |
 | `clothing_options` | Per-user clothing values (`UNIQUE(user_id, category, value)`). New users start empty; values accumulate as they type into the conditions form. |
+| `purchase_recommendations` | Shared catalog of recommended gear purchases. **`slug` UNIQUE** for idempotent UPSERT re-seed. `equipment_id` FK to `equipment_items` lets "exercises this unlocks" be derived live via `exercise_equipment`. Seeded by `_seed_purchase_recommendations` on every cold start. |
+| `user_purchase_recommendations` | Per-user state on each recommendation. PK `(user_id, purchase_id)`. `status` ∈ {`wanted`, `owned`, `passed`}; clearing the status deletes the row. |
 
 **Tables dropped during the retrofit** (no live consumers):
-`equipment_matrix`, `recommended_purchases`. The recommended-purchases
-rebuild is parked — see Backlog.
+`equipment_matrix`, `recommended_purchases` (the latter has since been
+rebuilt as `purchase_recommendations` + `user_purchase_recommendations`,
+described above).
 
 **Reference: child table scoping decisions.** Tables queried by id
 get a denormalized `user_id` so the scope check doesn't require a
@@ -486,15 +515,13 @@ The codebase uses `?` placeholders everywhere — works for SQLite
 locally and for the Postgres adapter (`database.py:_PgConn`)
 translates `?` → `%s` on the fly. Don't introduce `%s` directly.
 
-⚠ `cur.lastrowid` works on `sqlite3.Cursor` but the `_CompatCursor`
-PG wrapper does a `fetchone()` against the cursor — it returns
-`None` unless the INSERT used `RETURNING id`. **Most existing
-INSERTs (including `routes/auth.py:register`) don't have
-RETURNING**, so they work on SQLite-backed production but will
-silently break when Neon is wired up. Fix path: add `RETURNING id`
-to every INSERT that needs the new id, or wrap the helper to
-detect dialect. **This is the next gotcha to investigate after
-the operator wires Neon.**
+⚠ `cur.lastrowid` works on `sqlite3.Cursor` directly, and on the
+`_CompatCursor` PG wrapper via a `fetchone()` against the cursor —
+**but only if the INSERT included `RETURNING id`**. Every existing
+INSERT whose new id is read back carries `RETURNING id` as of this
+session's pre-Neon sweep. **Pattern for new INSERTs:** add
+`RETURNING id` to the SQL and access `cur.lastrowid` as usual; both
+backends behave identically.
 
 ### Migrations
 
@@ -633,18 +660,11 @@ Andy's data lives at `/mnt/storage/exercise/` (persistent SQLite at
 
 - **Multi-day wellness chart** — 7-day trend on `/garmin/wellness`,
   complementing the per-day view. Smallest standalone left.
-- **Recommended-purchases rebuild** — design and seed a robust
-  shared reference catalog of equipment recommendations (cost,
-  what it unlocks, exercises impacted, priority defaults), then
-  add a per-user `user_purchase_recommendations(user_id,
-  purchase_id, status, notes)` layer where `status` ∈ {wanted,
-  owned, passed}. Worth its own session; catalog content design
-  is the heaviest part.
-- **`RETURNING id` on INSERTs** — see DB Access gotcha. Pre-empt
-  the silent breakage when Neon is wired by adding `RETURNING id`
-  to every INSERT whose new id is read after, or wrap `get_db()`
-  to detect dialect and fall back. Easiest to do as a sweep after
-  Neon is live and you can spot the breakages.
+- **Purchases catalog curation** — the seeded `PURCHASE_RECOMMENDATIONS`
+  list in `init_db.py` is a starter (~18 items, AR-leaning). Cost
+  ranges, copy, and priorities are easy to tune as the user's needs
+  evolve; UPSERT-on-slug means edits propagate without disturbing
+  per-user state. New items just append to the list.
 
 ### Parked
 
