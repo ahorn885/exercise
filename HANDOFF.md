@@ -1,29 +1,149 @@
 # AIDSTATION — Session Handoff
 
 **Date:** 2026-05-05
-**Latest merged session:** Session 2D — schema stabilization + composite UNIQUEs + Postgres NOT NULL.
-**Deploy state:** TrueNAS (Docker) + Vercel both running 2B at last update;
-2C and 2D will land on the next Watchtower / Vercel pickup.
+**Latest merged session:** Session 3 — clothing_options + locale_profiles per-user.
+**Deploy state:** TrueNAS (Docker) + Vercel are still on the 2B merge as of
+the last update; 2C, 2D, the deload button, the bulk plan editor, and now
+Session 3 will all land on the next Watchtower / Vercel pickup.
 
-**Session 2D shipped.** Composite UNIQUEs replace the three single-column
-ones; Postgres SET NOT NULL applied to all 18 user_id columns; the seed
-flow now creates per-user `current_rx` rows on registration so each user
-gets independent Back Squat / etc. rows from day one.
+**Session 3 shipped.** `clothing_options` becomes per-user (each athlete's
+typed values are private to them), `locale_profiles` PK becomes composite
+`(user_id, locale)`, and `locale_equipment` gains its own `user_id` column
+with composite FK to the new parent PK. The global `_CLOTHING_SEEDS` list
+is dropped — values now accumulate purely from user input.
 
-**Pending operator action (5 minutes):**
+**Pending operator action (5 minutes, unchanged from 2D):**
 1. Wire `DATABASE_URL` into Vercel pointing at a fresh Neon Postgres DB.
    First request triggers `init_postgres()` which builds the schema, runs
-   migrations, and seeds catalog tables. Verify a clean apply (the
-   forward-FK caveat from 2A — `training_sessions.plan_item_id REFERENCES
-   plan_items(id)` declared before `plan_items` — has not been touched
-   in 2D; if Neon rejects the schema, the fix is to reorder CREATEs in
-   `PG_SCHEMA` or move the FK to an `ALTER TABLE ADD CONSTRAINT` migration).
+   migrations, and seeds catalog tables. Verify clean apply (forward-FK
+   caveat from 2A unchanged in 2D/3; reorder `PG_SCHEMA` CREATEs or move
+   to ALTER migration if Neon complains).
 2. Set `ALLOW_REGISTRATION=1` in Vercel + TrueNAS env vars.
 3. Register a second account end-to-end and confirm isolation.
 
-After step 3, the multi-user retrofit (Sessions 0–2D) is fully
-production-ready. Session 3 (clothing_options + locale_profiles redesign)
-is the next major piece, plus the standalone backlog items.
+After step 3, the multi-user retrofit (Sessions 0–3) is fully
+production-ready. Session 4 (athlete profile + coach memory UI) is the
+last roadmap session, plus the standalone backlog items.
+
+---
+
+## Session 3 — what shipped
+
+Per-user shape changes for the two tables that 2A's blanket `user_id`
+column couldn't fix without restructuring: `clothing_options` (was a
+shared dictionary for everyone) and `locale_profiles` (was keyed on
+`locale` alone, couldn't have two users own "home").
+
+### Schema changes
+
+| Table | Was | Is |
+|---|---|---|
+| `locale_profiles` | `PRIMARY KEY (locale)` | `PRIMARY KEY (user_id, locale)`, `user_id NOT NULL` |
+| `locale_equipment` | `(locale, equipment_id)` PK + FK to `locale_profiles(locale)` | `(user_id, locale, equipment_id)` PK + composite FK to `locale_profiles(user_id, locale)`, `user_id NOT NULL` |
+| `clothing_options` | `UNIQUE(category, value)`, no `user_id` | `UNIQUE(user_id, category, value)`, `user_id NOT NULL` |
+
+### Per-user clothing
+
+`_CLOTHING_SEEDS` (50+ hardcoded values) is dropped from both
+`init_sqlite` and `init_postgres`. Values now accumulate purely from
+user input — `routes/conditions.py:_save` writes
+`(current_user_id(), category, value)` whenever a new clothing value
+appears in a logged session, idempotent via the composite UNIQUE.
+`_load_clothing_options(db)` filters on `user_id = current_user_id()`,
+so each athlete's autocomplete dropdown only contains their own typed
+values.
+
+For an existing populated DB, the rebuild migration backfills all
+existing `clothing_options` rows to `user_id = 1` (Andy's accumulated
+list). New users start empty.
+
+### Per-user locales
+
+`locale_profiles` was the last table where two users couldn't own the
+same logical row (both wanting a "home" entry). Composite PK fixes it.
+`locale_equipment` gained a denormalized `user_id` column so queries
+can scope directly without a JOIN — `coaching.py:get_coaching_context`,
+`routes/locales.py:list_profiles`, and `routes/references.py` all read
+`le.user_id` instead of joining to `lp.user_id`.
+
+The `routes/locales.py:edit_profile` UPSERT switched to
+`ON CONFLICT(user_id, locale)`. The DELETE before re-inserting
+`locale_equipment` now scopes both columns.
+
+### Migration mechanics
+
+**SQLite:** `_migrate_session3_locale_clothing` is a single callable
+that holds `PRAGMA foreign_keys = OFF` across all three rebuilds. Each
+table is rebuilt only if its `sqlite_master.sql` doesn't already
+contain the new sentinel (`UNIQUE(user_id, category, value)`,
+`PRIMARY KEY (user_id, locale)`,
+`PRIMARY KEY (user_id, locale, equipment_id)`). Existing rows are
+copied forward with `user_id = COALESCE(user_id, 1)` for
+`locale_profiles`, and `locale_equipment.user_id` is filled by joining
+to the (already rebuilt) `locale_profiles`. Idempotent on re-run.
+
+**Postgres:** new migration block adds `user_id` columns where
+missing, backfills via SELECT-from-parent, drops legacy FKs/PKs,
+re-creates them as composite via DO blocks (idempotent), and applies
+NOT NULL last. Sequence:
+1. `clothing_options.user_id` ADD + backfill + DROP legacy UNIQUE +
+   ADD composite UNIQUE + delete NULL stragglers + SET NOT NULL.
+2. `locale_equipment.user_id` ADD + backfill from `locale_profiles`
+   via `UPDATE ... FROM`.
+3. `locale_profiles_pkey` DROP + ADD composite PK.
+4. `locale_equipment_pkey` DROP + ADD composite PK + ADD composite FK
+   + SET NOT NULL.
+
+### `init_db` Phase 4 update
+
+The legacy `locale_profiles.equipment` (comma-separated string) →
+`locale_equipment` migration loop now reads `user_id` from
+`locale_profiles` and includes it in the INSERT. Pre-bootstrap rows
+with NULL `user_id` are skipped (the rebuild migration will have
+already coerced them or dropped them).
+
+### Code touch points
+
+- `init_db.py` — `SQLITE_SCHEMA` and `PG_SCHEMA` updated for all three
+  tables; `_migrate_session3_locale_clothing` callable added; new
+  Postgres migration block; `_CLOTHING_SEEDS` loop dropped from both
+  init paths; Phase 4 loop updated to thread `user_id`.
+- `routes/conditions.py` — `_load_clothing_options` scopes on
+  `user_id`; `_save` writes `user_id` when persisting a new value.
+- `routes/locales.py` — `list_profiles` and `edit_profile` updated for
+  the composite PK / FK; UPSERT uses `ON CONFLICT(user_id, locale)`;
+  DELETE before re-inserting equipment scopes both columns.
+- `routes/references.py` — locale_equipment queries simplified to read
+  `le.user_id` directly (no JOIN to `locale_profiles` needed).
+- `coaching.py:get_coaching_context` — same simplification.
+
+### Verification
+
+`/tmp/verify_3.py` covers two scenarios with **9 checks total, all green**:
+
+**Scenario A (pre-3 DB upgrade).** Build a SQLite DB with the OLD
+shapes — `locale_profiles(locale TEXT PRIMARY KEY)`, `locale_equipment`
+without `user_id`, `clothing_options(UNIQUE(category, value))` — populate
+Andy's data including referenced equipment_items rows. Run
+`init_sqlite()`. Confirms:
+- All three tables rebuilt with new shapes
+- Andy's data preserved verbatim with `user_id = 1`
+- Composite PK / UNIQUE actually constrain (Bob can claim 'home'
+  alongside Andy; same Buff value coexists per-user)
+- Re-running init is idempotent
+
+**Scenario B (fresh DB + per-user isolation).** Register Andy + Bob.
+Each saves a 'home' locale via `/locales/home/edit` with different
+cities and equipment selections. Each types unique clothing values
+into `/conditions/new`. Confirms:
+- Both home rows coexist; cities differ
+- `locale_equipment` is fully isolated per user
+- `clothing_options` is fully isolated per user
+- Each user's `/conditions/new` autocomplete only shows their own
+  typed values; the other user's values don't leak
+
+Re-ran 2C, 2D, and the deload button verification suites — no
+regressions.
 
 ---
 
@@ -1403,7 +1523,7 @@ confirm empty dashboard / training log / cardio / body metrics / plans /
 coaching / Garmin / coach memory. Log back in as Andy, confirm everything
 still there. Then open `ALLOW_REGISTRATION`.
 
-### Session 3 — `clothing_options` per-user + `locale_profiles` cleanup
+### Session 3 ✅ shipped — `clothing_options` per-user + `locale_profiles` cleanup
 
 These two tables need shape changes beyond a simple `user_id` add.
 

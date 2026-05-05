@@ -127,9 +127,13 @@ def _load_cardio_sessions(db):
 def _load_clothing_options(db):
     """Return {category: [value, ...]} dict from clothing_options table.
 
-    NOTE: clothing_options is shared today (per Session 3 it becomes per-user).
-    Until Session 3 ships, all users see the same accumulated values."""
-    rows = db.execute('SELECT category, value FROM clothing_options ORDER BY category, value').fetchall()
+    Per-user (Session 3) — values accumulate as the current user types
+    into the form, scoped to their own user_id."""
+    rows = db.execute(
+        'SELECT category, value FROM clothing_options '
+        'WHERE user_id = ? ORDER BY category, value',
+        (current_user_id(),)
+    ).fetchall()
     opts = {}
     for row in rows:
         opts.setdefault(row['category'], []).append(row['value'])
@@ -153,7 +157,10 @@ def _save(db, entry_id):
     wind_dir = None if is_indoor else f.get('wind_dir') or None
     conditions = None if is_indoor else f.get('conditions') or None
 
-    # Auto-persist any new clothing values typed by the user
+    # Auto-persist any new clothing values typed by the user — per-user
+    # since Session 3, so user 2's "Brim Hat" doesn't leak into user 1's
+    # autocomplete and vice versa.
+    uid_clothing = current_user_id()
     clothing_vals = {}
     for field, _label in CLOTHING_FIELDS:
         val = f.get(field) or None
@@ -161,8 +168,8 @@ def _save(db, entry_id):
         if val:
             try:
                 db.execute(
-                    'INSERT OR IGNORE INTO clothing_options (category, value) VALUES (?, ?)',
-                    (field, val)
+                    'INSERT OR IGNORE INTO clothing_options (user_id, category, value) VALUES (?, ?, ?)',
+                    (uid_clothing, field, val)
                 )
             except Exception:
                 pass

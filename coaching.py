@@ -287,16 +287,16 @@ def get_coaching_context(db, plan_id=None, lookback_days=14, locale='home'):
     """Gather all training context for Claude. Returns a dict."""
     ctx = {'today': date.today().isoformat(), 'locale': locale}
 
-    # Equipment and terrain available at current locale
+    # Equipment and terrain available at current locale (per-user since
+    # Session 3 — locale_equipment carries user_id directly).
     uid = current_user_id()
     equipment_rows = db.execute(
         '''SELECT ei.tag, ei.label, ei.category
            FROM locale_equipment le
            JOIN equipment_items ei ON ei.id = le.equipment_id
-           JOIN locale_profiles lp ON lp.locale = le.locale
-           WHERE le.locale = ? AND lp.user_id = ?
+           WHERE le.user_id = ? AND le.locale = ?
            ORDER BY ei.category, ei.label''',
-        (locale, uid)
+        (uid, locale)
     ).fetchall()
     ctx['available_equipment'] = [dict(r) for r in equipment_rows]
 
