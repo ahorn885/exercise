@@ -91,10 +91,38 @@ def build_report(
     )
     if vocab["sport_warnings"]:
         lines.append("")
-        lines.append("Sport names in `sport_exercise_map` not present in `sport_discipline_bridge.exercise_db_sport`:")
+        lines.append(
+            "Sport names in `sport_exercise_map` not present in "
+            "`sport_discipline_bridge.exercise_db_sport`. The bridge "
+            "currently uses the framework's `sport_name` for both columns "
+            "of its mapping (a placeholder); resolving these warnings is "
+            "the manual reconciliation pass spec Open Item #5 calls for. "
+            "Suggested candidates are the closest bridge sports by string "
+            "similarity (≥ 0.55 ratio); the rightmost column shows which "
+            "framework sports each candidate is currently mapped to."
+        )
         lines.append("")
+        lines.append("| Exercise-DB sport | # exercises | Closest bridge candidate(s) | Maps to framework |")
+        lines.append("|---|---:|---|---|")
         for w in vocab["sport_warnings"]:
-            lines.append(f"- {w['sport_name']!r}")
+            if w["candidates"]:
+                cands = " · ".join(
+                    f"{c['candidate']} ({c['ratio']:.2f})"
+                    for c in w["candidates"]
+                )
+                framework = " · ".join(
+                    sorted({fs for c in w["candidates"] for fs in c["framework_sports"]})
+                )
+            else:
+                cands = "(no close match)"
+                framework = ""
+            # collapse internal newlines from xlsx wrapping
+            sport = w["sport_name"].replace("\n", " ")
+            cands = cands.replace("\n", " ")
+            framework = framework.replace("\n", " ")
+            lines.append(
+                f"| {sport} | {w['exercise_count']} | {cands} | {framework} |"
+            )
         lines.append("")
 
     # ----- extras (dropped dupes, etc.) -----
