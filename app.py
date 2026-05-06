@@ -123,7 +123,7 @@ from routes.natural_log import bp as natural_log_bp
 from routes.profile import bp as profile_bp
 from routes.purchases import bp as purchases_bp
 from routes.admin import bp as admin_bp
-from routes.auth import bp as auth_bp, current_user
+from routes.auth import bp as auth_bp, current_user, verify_bearer_token
 
 app.register_blueprint(dashboard_bp)
 app.register_blueprint(training_bp)
@@ -166,6 +166,31 @@ def _require_login():
     # Static files served from blueprints also include the dot-form 'X.static'.
     if endpoint.endswith('.static') or request.path.startswith('/static/'):
         return None
+
+    # Bearer-token auth (headless API clients) is checked before the session
+    # path so an external script's Authorization header beats any stale
+    # session cookie that might be lying around. On a successful match we
+    # stash the user id on g so current_user_id() picks it up, hydrate the
+    # row the same way the session path does, and short-circuit the rest
+    # of the gate.
+    try:
+        token_uid = verify_bearer_token(get_db())
+    except Exception as e:
+        print(f'auth: bearer-token verify failed: {e}')
+        token_uid = None
+    if token_uid:
+        try:
+            g.api_user_id = token_uid
+            user = current_user(get_db())
+        except Exception as e:
+            print(f'auth: hydration failed for token user_id={token_uid}: {e}')
+            user = None
+        if user:
+            g.current_user_row = user
+            g.api_authed = True
+            return None
+        # Token resolved to a user that no longer exists — treat as unauthed.
+        g.api_user_id = None
 
     uid = session.get('user_id')
     if uid:

@@ -323,7 +323,27 @@ def review(plan_id):
                            api_configured=_check_api_key())
 
 
+def _csrf_exempt(view):
+    """Mark a view exempt from Flask-WTF CSRFProtect.
+
+    The /coaching/api/* endpoints are bearer-token authed for external
+    clients, which (a) don't have a CSRF token to send and (b) aren't
+    vulnerable to the CSRF attack model anyway — a cross-origin form
+    submission can't set the Authorization header. Same-origin browser
+    callers either send the token explicitly (no session involved) or
+    aren't authed and get bounced by the gate.
+
+    Imports lazily to avoid a circular import on app startup.
+    """
+    try:
+        from app import csrf
+    except Exception:
+        return view
+    return csrf.exempt(view)
+
+
 @bp.route('/api/generate', methods=['POST'])
+@_csrf_exempt
 def api_generate():
     """Headless plan generation for remote control."""
     if not _check_api_key():
@@ -373,6 +393,7 @@ def api_generate():
 
 
 @bp.route('/api/review', methods=['POST'])
+@_csrf_exempt
 def api_review():
     """Headless plan review for remote control."""
     if not _check_api_key():
