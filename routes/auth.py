@@ -68,14 +68,16 @@ def login():
         password = request.form.get('password') or ''
         if not username or not password:
             flash('Username and password are required.', 'danger')
-            return render_template('auth/login.html', username=username)
+            return render_template('auth/login.html', username=username,
+                                   registration_open=_registration_open())
 
         row = db.execute(
             'SELECT id, password_hash FROM users WHERE username=?', (username,)
         ).fetchone()
         if not row or not _check_password(password, row['password_hash']):
             flash('Invalid username or password.', 'danger')
-            return render_template('auth/login.html', username=username)
+            return render_template('auth/login.html', username=username,
+                                   registration_open=_registration_open())
 
         session.clear()
         session['user_id'] = row['id']
@@ -90,7 +92,8 @@ def login():
             next_url = url_for('dashboard.index')
         return redirect(next_url)
 
-    return render_template('auth/login.html', username='')
+    return render_template('auth/login.html', username='',
+                           registration_open=_registration_open())
 
 
 @bp.route('/logout', methods=['GET', 'POST'])
