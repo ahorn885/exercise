@@ -9,12 +9,13 @@ test), set `ALLOW_REGISTRATION=0` (or `false`/`no`/`off`). The first-user
 bootstrap path is unconditional: when no users exist in the DB, the next
 request lands on the register page regardless.
 """
+import hashlib
 import os
 import secrets
 from datetime import datetime, timedelta
 
 import bcrypt
-from flask import Blueprint, render_template, request, redirect, url_for, flash, session
+from flask import Blueprint, render_template, request, redirect, url_for, flash, session, g
 from zxcvbn import zxcvbn
 
 from database import get_db
@@ -83,8 +84,65 @@ def _check_password(password: str, hashed: str) -> bool:
 
 
 def current_user_id():
-    """Flask session user id, or None when nobody is logged in."""
+    """Authenticated user id for this request, or None when unauthed.
+
+    Reads from `g.api_user_id` first (set by the auth gate when a
+    valid Bearer token authed the request) so token-authed callers
+    see the same per-user scoping as session-authed ones. Falls back
+    to the Flask session.
+    """
+    api_uid = getattr(g, 'api_user_id', None)
+    if api_uid:
+        return api_uid
     return session.get('user_id')
+
+
+# ── API tokens ──────────────────────────────────────────────────────────────
+# Per-user bearer tokens for headless access to /coaching/api/*. Plaintext is
+# shown to the user once on creation and never persisted; we store SHA-256.
+# SHA-256 (not bcrypt) is fine because tokens are 32 bytes of cryptographic
+# random — there's nothing to brute-force.
+
+API_TOKEN_PREFIX = 'aid_'
+
+
+def _hash_api_token(plaintext: str) -> str:
+    return hashlib.sha256(plaintext.encode('utf-8')).hexdigest()
+
+
+def generate_api_token() -> tuple[str, str]:
+    """Return (plaintext, hash). Plaintext is shown to the user once."""
+    raw = secrets.token_urlsafe(32)
+    plaintext = f'{API_TOKEN_PREFIX}{raw}'
+    return plaintext, _hash_api_token(plaintext)
+
+
+def verify_bearer_token(db) -> int | None:
+    """Resolve an `Authorization: Bearer <token>` header to a user id.
+
+    Returns None on missing/malformed/revoked/unknown tokens. Updates
+    `last_used_at` on a hit so the operator can see which tokens are
+    actually in use.
+    """
+    auth = request.headers.get('Authorization', '')
+    if not auth.lower().startswith('bearer '):
+        return None
+    plaintext = auth[7:].strip()
+    if not plaintext.startswith(API_TOKEN_PREFIX):
+        return None
+    h = _hash_api_token(plaintext)
+    row = db.execute(
+        'SELECT id, user_id, revoked_at FROM api_tokens WHERE token_hash = ?',
+        (h,)
+    ).fetchone()
+    if not row or row['revoked_at']:
+        return None
+    db.execute(
+        'UPDATE api_tokens SET last_used_at = ? WHERE id = ?',
+        (datetime.utcnow().isoformat(timespec='seconds'), row['id'])
+    )
+    db.commit()
+    return row['user_id']
 
 
 def current_user(db):

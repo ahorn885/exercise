@@ -12,11 +12,16 @@ auto-capture pipeline (Session 0) are surfaced verbatim with their
 `source` and `captured_at` from the originating `feedback_log` row.
 """
 
+from datetime import datetime
+
 import bcrypt
 from flask import Blueprint, render_template, request, redirect, url_for, flash, abort
 
 from database import get_db
-from routes.auth import current_user_id, _hash_password, _check_password, _password_strength_errors
+from routes.auth import (
+    current_user_id, _hash_password, _check_password, _password_strength_errors,
+    generate_api_token,
+)
 from athlete import (
     PROFILE_FIELDS, TRAINING_WINDOWS,
     get_athlete_profile, upsert_athlete_profile,
@@ -103,6 +108,16 @@ def edit():
     user_row = db.execute(
         'SELECT username, display_name, email, last_login FROM users WHERE id=?', (uid,)
     ).fetchone()
+    api_tokens = db.execute(
+        'SELECT id, name, created_at, last_used_at, revoked_at '
+        'FROM api_tokens WHERE user_id=? ORDER BY created_at DESC',
+        (uid,)
+    ).fetchall()
+    # New-token plaintext is shown exactly once after creation, then cleared
+    # from the session. Storing in flask session means a successful create
+    # redirects to GET, then the GET handler reads-and-clears.
+    from flask import session as flask_session
+    new_token_plaintext = flask_session.pop('new_api_token_plaintext', None)
     return render_template(
         'profile/edit.html',
         profile=profile,
@@ -110,6 +125,8 @@ def edit():
         preference_categories=PREFERENCE_CATEGORIES,
         training_windows=TRAINING_WINDOWS,
         user_row=dict(user_row) if user_row else {},
+        api_tokens=[dict(t) for t in api_tokens],
+        new_api_token=new_token_plaintext,
     )
 
 
@@ -205,4 +222,47 @@ def change_password():
     )
     db.commit()
     flash('Password changed.', 'success')
+    return redirect(url_for('profile.edit'))
+
+
+@bp.route('/api-tokens', methods=['POST'])
+def create_api_token():
+    """Issue a new bearer token for the current user.
+
+    The plaintext is shown exactly once after creation (stashed in the
+    Flask session and read-and-cleared on the next GET /profile/).
+    Only the SHA-256 hash is persisted, so a leaked DB doesn't expose
+    usable tokens.
+    """
+    name = (request.form.get('name') or '').strip()
+    if not name or len(name) > 80:
+        flash('Token name is required (1–80 characters).', 'danger')
+        return redirect(url_for('profile.edit'))
+    plaintext, hashed = generate_api_token()
+    db = get_db()
+    db.execute(
+        'INSERT INTO api_tokens (user_id, name, token_hash) VALUES (?,?,?)',
+        (current_user_id(), name, hashed)
+    )
+    db.commit()
+    from flask import session as flask_session
+    flask_session['new_api_token_plaintext'] = plaintext
+    flash(f'Token "{name}" created. Copy it now — you won\'t see it again.', 'success')
+    return redirect(url_for('profile.edit'))
+
+
+@bp.route('/api-tokens/<int:token_id>/revoke', methods=['POST'])
+def revoke_api_token(token_id):
+    """Revoke a token. Scoped on user_id so a crafted POST can't reach
+    another user's row. Soft-revoke (sets revoked_at) so the audit
+    trail of past usage is preserved."""
+    db = get_db()
+    db.execute(
+        'UPDATE api_tokens SET revoked_at = ? WHERE id = ? AND user_id = ? '
+        'AND revoked_at IS NULL',
+        (datetime.utcnow().isoformat(timespec='seconds'),
+         token_id, current_user_id())
+    )
+    db.commit()
+    flash('Token revoked.', 'info')
     return redirect(url_for('profile.edit'))

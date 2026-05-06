@@ -1194,6 +1194,20 @@ _SQLITE_MIGRATIONS = [
         created_at TEXT NOT NULL DEFAULT (datetime('now'))
     )""",
     "CREATE INDEX IF NOT EXISTS admin_audit_created_at_idx ON admin_audit(created_at DESC)",
+    # Per-user API tokens. Plaintext is shown to the user once at creation
+    # and never persisted; we store the SHA-256 hex digest. SHA-256 (not
+    # bcrypt) is fine because tokens are 32 bytes of cryptographic random
+    # — there's nothing to brute-force.
+    """CREATE TABLE IF NOT EXISTS api_tokens (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL REFERENCES users(id),
+        name TEXT NOT NULL,
+        token_hash TEXT NOT NULL UNIQUE,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        last_used_at TEXT,
+        revoked_at TEXT
+    )""",
+    "CREATE INDEX IF NOT EXISTS api_tokens_user_id_idx ON api_tokens(user_id)",
 ]
 
 _PG_MIGRATIONS = [
@@ -1434,6 +1448,17 @@ _PG_MIGRATIONS = [
         created_at TIMESTAMP NOT NULL DEFAULT NOW()
     )""",
     "CREATE INDEX IF NOT EXISTS admin_audit_created_at_idx ON admin_audit(created_at DESC)",
+    # Per-user API tokens. See SQLite migration above for rationale.
+    """CREATE TABLE IF NOT EXISTS api_tokens (
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER NOT NULL REFERENCES users(id),
+        name TEXT NOT NULL,
+        token_hash TEXT NOT NULL UNIQUE,
+        created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        last_used_at TIMESTAMP,
+        revoked_at TIMESTAMP
+    )""",
+    "CREATE INDEX IF NOT EXISTS api_tokens_user_id_idx ON api_tokens(user_id)",
 ]
 
 _CLOTHING_SEEDS = [
