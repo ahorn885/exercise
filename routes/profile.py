@@ -16,7 +16,7 @@ import bcrypt
 from flask import Blueprint, render_template, request, redirect, url_for, flash, abort
 
 from database import get_db
-from routes.auth import current_user_id, _hash_password, _check_password
+from routes.auth import current_user_id, _hash_password, _check_password, _password_strength_errors
 from athlete import (
     PROFILE_FIELDS, TRAINING_WINDOWS,
     get_athlete_profile, upsert_athlete_profile,
@@ -180,16 +180,23 @@ def change_password():
     if not current or not new:
         flash('Current and new password are both required.', 'danger')
         return redirect(url_for('profile.edit'))
-    if len(new) < 8:
-        flash('New password must be at least 8 characters.', 'danger')
+    user_row = db.execute(
+        'SELECT password_hash, username, display_name, email FROM users WHERE id=?',
+        (uid,)
+    ).fetchone()
+    if not user_row or not _check_password(current, user_row['password_hash']):
+        flash('Current password is incorrect.', 'danger')
+        return redirect(url_for('profile.edit'))
+    strength_errors = _password_strength_errors(
+        new, user_inputs=[user_row['username'], user_row['display_name'] or '',
+                          user_row['email'] or '']
+    )
+    if strength_errors:
+        for e in strength_errors:
+            flash(e, 'danger')
         return redirect(url_for('profile.edit'))
     if new != confirm:
         flash('New passwords do not match.', 'danger')
-        return redirect(url_for('profile.edit'))
-
-    row = db.execute('SELECT password_hash FROM users WHERE id=?', (uid,)).fetchone()
-    if not row or not _check_password(current, row['password_hash']):
-        flash('Current password is incorrect.', 'danger')
         return redirect(url_for('profile.edit'))
 
     db.execute(

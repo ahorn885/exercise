@@ -15,11 +15,19 @@ from datetime import datetime, timedelta
 
 import bcrypt
 from flask import Blueprint, render_template, request, redirect, url_for, flash, session
+from zxcvbn import zxcvbn
 
 from database import get_db
 from email_helper import send_email, email_configured
 
 PASSWORD_RESET_TTL_MIN = 30
+# zxcvbn score table: 0=too guessable, 1=very guessable,
+# 2=somewhat guessable, 3=safely unguessable, 4=very unguessable.
+# 3 protects against offline slow-hash attack; with bcrypt + the rate
+# limit on /auth/login, this is a comfortable bar for the friends-only
+# install. Crank to 4 if onboarding strangers later.
+MIN_PASSWORD_SCORE = 3
+MIN_PASSWORD_LENGTH = 8
 
 bp = Blueprint('auth', __name__, url_prefix='/auth')
 
@@ -35,6 +43,34 @@ def _no_users(db) -> bool:
 
 def _hash_password(password: str) -> str:
     return bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+
+
+def _password_strength_errors(password: str, *, user_inputs=None) -> list[str]:
+    """Return a list of error messages if `password` is too weak; empty list otherwise.
+
+    `user_inputs` is fed to zxcvbn so it knows to penalize passwords that
+    incorporate the username, email, or display name. zxcvbn handles
+    breach lists, keyboard patterns, dates, l33t-substitutions, and dict
+    matches in 30+ languages — all of which a hand-rolled rule set
+    misses.
+    """
+    errors: list[str] = []
+    if len(password) < MIN_PASSWORD_LENGTH:
+        errors.append(f'Password must be at least {MIN_PASSWORD_LENGTH} characters.')
+        # No point running zxcvbn on a too-short string — it'll obviously fail.
+        return errors
+    result = zxcvbn(password, user_inputs=[s for s in (user_inputs or []) if s])
+    if result['score'] < MIN_PASSWORD_SCORE:
+        feedback = result.get('feedback') or {}
+        warning = (feedback.get('warning') or '').strip()
+        suggestions = [s.strip() for s in (feedback.get('suggestions') or []) if s and s.strip()]
+        msg = 'Password is too weak.'
+        if warning:
+            msg += f' {warning}.'
+        if suggestions:
+            msg += ' ' + ' '.join(suggestions)
+        errors.append(msg)
+    return errors
 
 
 def _check_password(password: str, hashed: str) -> bool:
@@ -143,8 +179,10 @@ def register():
         errors = []
         if len(username) < 3 or len(username) > 32:
             errors.append('Username must be 3–32 characters.')
-        if len(password) < 8:
-            errors.append('Password must be at least 8 characters.')
+        errors.extend(_password_strength_errors(
+            password,
+            user_inputs=[username, email or '', display_name or '']
+        ))
         if password != confirm:
             errors.append('Passwords do not match.')
         if username and db.execute(
@@ -260,8 +298,14 @@ def reset(token):
     if request.method == 'POST':
         password = request.form.get('password') or ''
         confirm = request.form.get('confirm') or ''
-        if len(password) < 8:
-            flash('Password must be at least 8 characters.', 'danger')
+        # Username from the row above seeds zxcvbn so a password matching
+        # the user's name is rejected even though we don't take it as input.
+        strength_errors = _password_strength_errors(
+            password, user_inputs=[row['username'], row['display_name'] or '']
+        )
+        if strength_errors:
+            for e in strength_errors:
+                flash(e, 'danger')
             return render_template('auth/reset.html', token=token, error=None)
         if password != confirm:
             flash('Passwords do not match.', 'danger')
