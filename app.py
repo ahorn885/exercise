@@ -21,6 +21,18 @@ if not _secret:
     )
 app.secret_key = _secret
 
+# SECRET_KEY_FALLBACKS lets us rotate SECRET_KEY without bouncing every
+# logged-in user. Set SECRET_KEY to the new value and SECRET_KEY_FALLBACK
+# to the old one; Flask signs new cookies with the new key but verifies
+# against either, so existing sessions keep working until they expire or
+# the fallback is dropped. Comma-separated for multi-step rotations.
+_fallbacks = [
+    s.strip() for s in (os.environ.get('SECRET_KEY_FALLBACK', '') or '').split(',')
+    if s.strip()
+]
+if _fallbacks:
+    app.config['SECRET_KEY_FALLBACKS'] = _fallbacks
+
 # Session cookie hardening. SECURE defaults on when the deploy looks
 # HTTPS-fronted (Vercel sets DATABASE_URL; local dev over HTTP doesn't).
 # Override explicitly via SESSION_COOKIE_SECURE=0/1 if needed.
