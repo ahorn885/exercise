@@ -806,7 +806,7 @@ def auth_import_cookies():
     existing = db.execute('SELECT id FROM garmin_auth WHERE user_id=? LIMIT 1', (uid,)).fetchone()
     if existing:
         db.execute(
-            "UPDATE garmin_auth SET garth_session=?, garmin_username=?, updated_at=datetime('now') WHERE id=?",
+            "UPDATE garmin_auth SET garth_session=?, garmin_username=?, updated_at=CURRENT_TIMESTAMP WHERE id=?",
             (session_data, '', existing[0])
         )
     else:
@@ -909,11 +909,12 @@ def import_wellness_confirm():
     for row in rows:
         try:
             cur = db.execute(
-                '''INSERT OR IGNORE INTO wellness_log
+                '''INSERT INTO wellness_log
                    (date, timestamp_ms, heart_rate, stress_level, body_battery,
                     respiration_rate, steps, active_calories, active_time_s,
                     distance_m, activity_type, user_id)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?)''',
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+                   ON CONFLICT(user_id, timestamp_ms) DO NOTHING''',
                 (row.get('date'), row.get('timestamp_ms'), row.get('heart_rate'),
                  row.get('stress_level'), row.get('body_battery'),
                  row.get('respiration_rate'), row.get('steps'),
@@ -1012,7 +1013,7 @@ def auth_import_tokens():
         session_json = json.dumps(token_data)
         if existing:
             db.execute(
-                "UPDATE garmin_auth SET garth_session=?, garmin_username=?, updated_at=datetime('now') WHERE id=?",
+                "UPDATE garmin_auth SET garth_session=?, garmin_username=?, updated_at=CURRENT_TIMESTAMP WHERE id=?",
                 (session_json, username, existing[0])
             )
         else:
