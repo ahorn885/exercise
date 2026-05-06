@@ -65,6 +65,7 @@ from routes.coaching import bp as coaching_bp
 from routes.natural_log import bp as natural_log_bp
 from routes.profile import bp as profile_bp
 from routes.purchases import bp as purchases_bp
+from routes.admin import bp as admin_bp
 from routes.auth import bp as auth_bp, current_user
 
 app.register_blueprint(dashboard_bp)
@@ -82,6 +83,7 @@ app.register_blueprint(coaching_bp)
 app.register_blueprint(natural_log_bp)
 app.register_blueprint(profile_bp)
 app.register_blueprint(purchases_bp)
+app.register_blueprint(admin_bp)
 app.register_blueprint(auth_bp)
 
 

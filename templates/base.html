@@ -90,6 +90,9 @@
             </a>
             <ul class="dropdown-menu dropdown-menu-end">
               <li><a class="dropdown-item" href="{{ url_for('profile.edit') }}">Profile</a></li>
+              {% if current_user.id == 1 %}
+              <li><a class="dropdown-item" href="{{ url_for('admin.dashboard') }}">Admin</a></li>
+              {% endif %}
               <li><hr class="dropdown-divider"></li>
               <li>
                 <form method="post" action="{{ url_for('auth.logout') }}" class="m-0">
