@@ -47,7 +47,7 @@
     </form>
     {% endif %}
     <form method="post" action="{{ url_for('plans.delete_plan', plan_id=plan.id) }}"
-          onsubmit="return confirm('Delete this plan? This cannot be undone.')">
+          data-confirm="Delete this plan? This cannot be undone.">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <button type="submit" class="btn btn-outline-danger btn-sm">Delete</button>
     </form>
@@ -83,7 +83,7 @@
       <button type="submit" class="btn btn-outline-secondary btn-sm w-100">Archive</button>
     </form>
     <form method="post" action="{{ url_for('plans.delete_plan', plan_id=plan.id) }}"
-          onsubmit="return confirm('Delete this plan?')" class="flex-fill">
+          data-confirm="Delete this plan?" class="flex-fill">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <button type="submit" class="btn btn-outline-danger btn-sm w-100">Delete</button>
     </form>
@@ -368,7 +368,7 @@
   <div id="bulk-status" class="container-fluid small mt-1"></div>
 </div>
 
-<script>
+<script nonce="{{ csp_nonce() }}">
 (function() {
   const planId = {{ plan.id }};
   const bulkBar = document.getElementById('bulk-action-bar');
@@ -502,7 +502,7 @@
   </div>
 </div>
 
-<script>
+<script nonce="{{ csp_nonce() }}">
 const planId = {{ plan.id }};
 const chatHistory = document.getElementById('chat-history');
 const chatEmpty = document.getElementById('chat-empty');

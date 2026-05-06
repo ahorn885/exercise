@@ -83,7 +83,7 @@
       <td class="text-nowrap">
         <a href="{{ url_for('training.edit_entry', entry_id=e.id) }}" class="btn btn-xs btn-outline-secondary btn-sm py-0 px-1">Edit</a>
         <form method="post" action="{{ url_for('training.delete_entry', entry_id=e.id) }}" class="d-inline"
-              onsubmit="return confirm('Delete this entry?')">
+              data-confirm="Delete this entry?">
           <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
           <button class="btn btn-xs btn-outline-danger btn-sm py-0 px-1">Del</button>
         </form>

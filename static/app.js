@@ -31,3 +31,44 @@
     return origFetch(input, init);
   };
 })();
+
+// Delegated confirm() handler. Inline onsubmit/onclick="return confirm(...)"
+// got refactored to data-confirm="..." (CSP nonce migration) so we don't
+// need 'unsafe-inline' on script-src. The semantics are identical:
+//  - <form data-confirm="...">     → submit cancelled if user dismisses
+//  - <a data-confirm="...">        → navigation cancelled if user dismisses
+//  - <button data-confirm="...">   → click cancelled (form submit too)
+(function () {
+  document.addEventListener('submit', function (e) {
+    var msg = e.target && e.target.dataset && e.target.dataset.confirm;
+    if (msg && !window.confirm(msg)) e.preventDefault();
+  }, true);
+
+  document.addEventListener('click', function (e) {
+    // Walk up to the nearest element with data-confirm so a click on a
+    // child <span> inside a button/anchor still triggers the prompt.
+    var el = e.target;
+    while (el && el !== document) {
+      if (el.dataset && el.dataset.confirm) {
+        if (!window.confirm(el.dataset.confirm)) {
+          e.preventDefault();
+          e.stopPropagation();
+        }
+        return;
+      }
+      el = el.parentNode;
+    }
+  }, true);
+})();
+
+// data-autosubmit: a <select> or <input> that should submit its enclosing
+// form when changed. Replaces inline onchange="this.form.submit()".
+(function () {
+  document.addEventListener('change', function (e) {
+    var el = e.target;
+    if (el && el.dataset && 'autosubmit' in el.dataset && el.form) {
+      el.form.submit();
+    }
+  });
+})();
+

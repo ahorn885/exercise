@@ -94,7 +94,7 @@
         </div>
       </div>
     </div>
-    <script>
+    <script nonce="{{ csp_nonce() }}">
       // Toggle plan-item dropdown + reason textarea based on disposition radio.
       (function() {
         const radios = document.querySelectorAll('.disposition-radio');

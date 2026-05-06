@@ -28,7 +28,7 @@
     </div>
     {% if entry %}
     <form method="post" action="{{ url_for('body.delete_entry', entry_id=entry.id) }}"
-          onsubmit="return confirm('Delete this entry? This cannot be undone.')">
+          data-confirm="Delete this entry? This cannot be undone.">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <button class="btn btn-outline-danger btn-sm">Delete</button>
     </form>

@@ -1,5 +1,6 @@
 import os
 import re as _re
+import secrets as _secrets
 from flask import Flask, request, redirect, url_for, session, g
 from flask_wtf.csrf import CSRFProtect, CSRFError
 from flask_limiter import Limiter
@@ -240,19 +241,31 @@ def _inject_current_user():
     return {'current_user': getattr(g, 'current_user_row', None)}
 
 
-# Content-Security-Policy. 'unsafe-inline' on script-src/style-src is a
-# concession to the existing template inline-event-handler usage (onclick,
-# onsubmit, onchange, inline <script> blocks, inline style="..."). Migrating
-# to nonces would touch every template and is its own session — but even
-# with 'unsafe-inline' allowed for scripts/styles, the directives below
-# still close the data-exfiltration vectors that matter most: connect-src
-# stops JS from POSTing to external origins, img-src stops pixel-tracker
-# leaks, form-action keeps form submissions same-origin, frame-ancestors
-# blocks clickjacking, object-src kills <object>/Flash, base-uri prevents
-# <base href> injection. upgrade-insecure-requests only fires on HTTPS.
-_CSP_DIRECTIVES = [
+# Content-Security-Policy. script-src uses a per-request nonce so we can
+# drop 'unsafe-inline' for scripts — every inline <script> block in
+# templates renders nonce="{{ csp_nonce() }}", and inline event handler
+# attributes (onclick, onsubmit, ...) have been refactored to data-attr
+# delegation in static/app.js or addEventListener inside nonce'd script
+# blocks. style-src keeps 'unsafe-inline' because inline style="..." is
+# pervasive (Bootstrap utility-class hybrid pattern across templates) and
+# the security gain from refactoring it is small relative to the work.
+#
+# What this still buys with style 'unsafe-inline':
+#   connect-src 'self'   stops injected JS from POSTing exfil to externals
+#   img-src 'self' data: blocks pixel-tracker exfiltration
+#   form-action 'self'   defends against form-action injection
+#   frame-ancestors 'none' blocks clickjacking
+#   base-uri 'self'      prevents <base href> injection
+#   object-src 'none'    kills <object>/<embed>/Flash
+#   nonce'd script-src   blocks XSS-injected inline <script>
+_CSP_BASE_DIRECTIVES = [
     "default-src 'self'",
-    "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net",
+    # script-src 'self' is fine for our /static/app.js. Nonce covers all
+    # inline <script> blocks we render from templates. 'strict-dynamic'
+    # would let nonce'd scripts load further scripts, but we don't need
+    # that today — the third-party CDN imports are explicit <script src=...>
+    # tags that match script-src 'self' https://cdn.jsdelivr.net.
+    None,  # placeholder for script-src — filled per-request with the nonce
     "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://fonts.googleapis.com",
     "font-src 'self' https://fonts.gstatic.com",
     "img-src 'self' data:",
@@ -263,18 +276,35 @@ _CSP_DIRECTIVES = [
     "object-src 'none'",
 ]
 if os.environ.get('DATABASE_URL'):
-    # Production is HTTPS-fronted — silently rewrite any stray http:// asset
-    # references to https. Skipped on local dev (which is plain HTTP).
-    _CSP_DIRECTIVES.append('upgrade-insecure-requests')
-_CSP_HEADER_VALUE = '; '.join(_CSP_DIRECTIVES)
-# Set CSP_REPORT_ONLY=1 to deploy as Content-Security-Policy-Report-Only —
-# violations are logged by the browser console but not enforced. Useful
-# for catching unexpected breakage before flipping to enforcement.
+    _CSP_BASE_DIRECTIVES.append('upgrade-insecure-requests')
 _CSP_HEADER_NAME = (
     'Content-Security-Policy-Report-Only'
     if _envbool('CSP_REPORT_ONLY', default=False)
     else 'Content-Security-Policy'
 )
+
+
+def _csp_for_nonce(nonce: str) -> str:
+    parts = list(_CSP_BASE_DIRECTIVES)
+    parts[1] = (
+        f"script-src 'self' 'nonce-{nonce}' https://cdn.jsdelivr.net"
+    )
+    return '; '.join(parts)
+
+
+@app.before_request
+def _generate_csp_nonce():
+    # 16 random bytes → 22 base64url chars. Per-request, so each response's
+    # CSP header carries a fresh value that an attacker can't predict.
+    g.csp_nonce = _secrets.token_urlsafe(16)
+
+
+@app.context_processor
+def _inject_csp_nonce():
+    """Expose csp_nonce() to templates so every inline <script> can render
+    nonce="{{ csp_nonce() }}". Falls back to '' if the before_request
+    hook hasn't run (test client without an active request, etc.)."""
+    return {'csp_nonce': lambda: getattr(g, 'csp_nonce', '')}
 
 
 @app.after_request
@@ -287,7 +317,9 @@ def _set_security_headers(resp):
         'Permissions-Policy',
         'geolocation=(), microphone=(), camera=(), payment=(), usb=()'
     )
-    resp.headers.setdefault(_CSP_HEADER_NAME, _CSP_HEADER_VALUE)
+    resp.headers.setdefault(
+        _CSP_HEADER_NAME, _csp_for_nonce(getattr(g, 'csp_nonce', ''))
+    )
     return resp
 
 if __name__ == '__main__':

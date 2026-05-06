@@ -41,7 +41,7 @@
         <span class="badge bg-info">{{ mods|length }} exercise mod{{ 's' if mods|length != 1 }}</span>
       {% endif %}
       <a href="{{ url_for('injuries.edit_entry', entry_id=e.id) }}" class="btn btn-sm btn-outline-secondary py-0 px-2">Edit</a>
-      <form method="post" action="{{ url_for('injuries.delete_entry', entry_id=e.id) }}" class="d-inline" onsubmit="return confirm('Delete injury and all its exercise modifications?')">
+      <form method="post" action="{{ url_for('injuries.delete_entry', entry_id=e.id) }}" class="d-inline" data-confirm="Delete injury and all its exercise modifications?">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <button class="btn btn-sm btn-outline-danger py-0 px-2">Del</button>
       </form>
@@ -166,7 +166,7 @@
 {% endblock %}
 
 {% block scripts %}
-<script>
+<script nonce="{{ csp_nonce() }}">
 // Show/hide substitute field based on modification type
 document.querySelectorAll('.mod-type-select').forEach(function(sel) {
   const injuryId = sel.dataset.injury;

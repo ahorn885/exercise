@@ -16,7 +16,7 @@
     </div>
     <div class="col-md-5">
       <label class="form-label">Exercise</label>
-      <select name="exercise" id="exercise-select" class="form-select" required onchange="loadRx(this.value)">
+      <select name="exercise" id="exercise-select" class="form-select" required>
         <option value="">— select exercise —</option>
         {% for ex in exercises %}
           <option value="{{ ex.exercise }}" {% if entry and entry.exercise == ex.exercise %}selected{% endif %}>
@@ -114,7 +114,7 @@
 {% endblock %}
 
 {% block scripts %}
-<script>
+<script nonce="{{ csp_nonce() }}">
 function loadRx(exercise) {
   if (!exercise) {
     document.getElementById('injury-warning').style.display = 'none';
@@ -145,12 +145,11 @@ function loadRx(exercise) {
       warn.style.display = '';
     });
 }
-{% if entry %}
-// Pre-load injury mods for exercise being edited
 window.addEventListener('DOMContentLoaded', function() {
   const sel = document.getElementById('exercise-select');
-  if (sel && sel.value) loadRx(sel.value);
+  if (!sel) return;
+  sel.addEventListener('change', e => loadRx(e.target.value));
+  {% if entry %}if (sel.value) loadRx(sel.value);{% endif %}
 });
-{% endif %}
 </script>
 {% endblock %}

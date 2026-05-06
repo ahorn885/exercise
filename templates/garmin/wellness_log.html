@@ -16,7 +16,7 @@
 <form class="row g-2 mb-4" method="get">
   <div class="col-auto">
     <label class="form-label mb-1">Date</label>
-    <select name="date" class="form-select form-select-sm" onchange="this.form.submit()">
+    <select name="date" class="form-select form-select-sm" data-autosubmit>
       {% for d in dates %}
       <option value="{{ d.date }}" {% if date_filter == d.date %}selected{% endif %}>{{ d.date }}</option>
       {% endfor %}
@@ -107,8 +107,8 @@
 
 {% block scripts %}
 {% if chart_data %}
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
-<script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js" nonce="{{ csp_nonce() }}"></script>
+<script nonce="{{ csp_nonce() }}">
 const wellness = {{ chart_data | tojson }};
 
 const cssVar = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim();

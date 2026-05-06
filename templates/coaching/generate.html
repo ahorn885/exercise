@@ -54,12 +54,11 @@
             </div>
             <div class="col-md-4">
               <label class="form-label fw-semibold">Event Date</label>
-              <input type="date" name="race_date" id="race-date" class="form-control"
-                     onchange="updateUntilRaceLabel()">
+              <input type="date" name="race_date" id="race-date" class="form-control">
             </div>
             <div class="col-md-6">
               <label class="form-label fw-semibold">Event Type</label>
-              <select name="race_type" id="race-type" class="form-select" onchange="toggleDisciplines(this)">
+              <select name="race_type" id="race-type" class="form-select">
                 <option value="">— select —</option>
                 <optgroup label="Single Sport">
                   <option value="Running Race">Running Race</option>
@@ -148,7 +147,7 @@
             <div class="col-md-4">
               <label class="form-label fw-semibold">Start Date</label>
               <input type="date" name="start_date" id="start-date" class="form-control"
-                     value="{{ suggested_start }}" required onchange="updateUntilRaceLabel()">
+                     value="{{ suggested_start }}" required>
             </div>
             <div class="col-md-4">
               <label class="form-label fw-semibold">Duration</label>
@@ -351,7 +350,7 @@
 {% endblock %}
 
 {% block scripts %}
-<script>
+<script nonce="{{ csp_nonce() }}">
 const MULTISPORT_TYPES = {{ MULTISPORT_TYPES | tojson }};
 const tripRows = document.getElementById('trip-rows');
 const template = document.getElementById('trip-row-template');
@@ -373,6 +372,9 @@ function updateUntilRaceLabel() {
     opt.textContent = 'Until the event';
   }
 }
+document.getElementById('race-date').addEventListener('change', updateUntilRaceLabel);
+document.getElementById('start-date').addEventListener('change', updateUntilRaceLabel);
+document.getElementById('race-type').addEventListener('change', e => toggleDisciplines(e.target));
 
 document.getElementById('add-trip-btn').addEventListener('click', () => {
   const row = template.content.cloneNode(true);
