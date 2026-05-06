@@ -980,18 +980,26 @@ def chat_with_coach(db, plan_id: int, message: str, history: list, locale: str =
     client = _get_client()
     ctx = get_coaching_context(db, plan_id=plan_id, lookback_days=14, locale=locale)
     sport_module = _get_plan_sport_module(db, plan_id)
-    system_msg = _cached_system(sport_module)
 
+    # System is two cached blocks: the static base+sport prompt at 1h TTL, and
+    # the per-turn coaching context at 5m TTL. The context block's text is
+    # identical across turns within the same chat session unless the athlete
+    # logs new training mid-conversation, so subsequent turns hit cache and
+    # skip re-tokenising the JSON dump.
     context_block = f"""## Current Training Context
 {json.dumps(ctx, indent=2, default=str)}
 
 ## Response Format
 {_CHAT_RESPONSE_SCHEMA}"""
+    system_msg = _cached_system(sport_module) + [
+        {'type': 'text', 'text': context_block,
+         'cache_control': {'type': 'ephemeral', 'ttl': '5m'}},
+    ]
 
     messages = []
     for turn in history[-10:]:
         messages.append({'role': turn['role'], 'content': turn['content']})
-    messages.append({'role': 'user', 'content': f"{message}\n\n---\n{context_block}"})
+    messages.append({'role': 'user', 'content': message})
 
     with client.messages.stream(
         model=_model(),
@@ -1027,6 +1035,27 @@ Rules:
 Return {"preferences": []} if nothing durable is expressed."""
 
 
+# Conservative gate: skip the extract Haiku call when the message looks like
+# a question. False negatives (real preferences phrased as questions) are
+# rare and just miss a pref — the user can re-state. Removes ~30% of Haiku
+# calls during a typical chat session.
+_QUESTION_WORDS = frozenset({
+    'who', 'what', 'when', 'where', 'why', 'how',
+    'is', 'are', 'was', 'were', 'can', 'could', 'should', 'would',
+    'will', 'do', 'does', 'did', 'have', 'has', 'may', 'might',
+})
+
+
+def _looks_like_question(text: str) -> bool:
+    stripped = text.strip()
+    if not stripped:
+        return True
+    if stripped.startswith('?') or stripped.endswith('?'):
+        return True
+    first = stripped.split(maxsplit=1)[0].lower().rstrip('?,.!:;')
+    return first in _QUESTION_WORDS
+
+
 def extract_preferences(raw_text: str, source: str = 'unknown') -> list:
     """
     Run a Claude pass to extract durable preferences from free-text feedback.
@@ -1036,17 +1065,27 @@ def extract_preferences(raw_text: str, source: str = 'unknown') -> list:
     text = (raw_text or '').strip()
     if len(text) < 8:
         return []
+    if _looks_like_question(text):
+        return []
     try:
         client = _get_client()
     except RuntimeError:
         return []
-    prompt = _FEEDBACK_EXTRACT_PROMPT.replace('{source}', source) + f'\n\nFeedback:\n"""\n{text}\n"""'
+    # System prompt is cached so a sequence of extracts for the same source
+    # within the cache window pays the input-token cost once.
+    system_prompt = _FEEDBACK_EXTRACT_PROMPT.replace('{source}', source)
     try:
         msg = client.messages.create(
             model='claude-haiku-4-5-20251001',
             max_tokens=512,
-            messages=[{'role': 'user', 'content': prompt}],
+            system=[{'type': 'text', 'text': system_prompt,
+                     'cache_control': {'type': 'ephemeral'}}],
+            messages=[{'role': 'user', 'content': f'Feedback:\n"""\n{text}\n"""'}],
         )
+        u = msg.usage
+        print(f'[coaching:feedback_extract:{source}] in={u.input_tokens} '
+              f'out={u.output_tokens} cache_read={u.cache_read_input_tokens} '
+              f'cache_write={u.cache_creation_input_tokens}')
         body = next((b.text for b in msg.content if b.type == 'text'), '{}')
         parsed = _parse_json_response(body)
     except Exception:
@@ -1107,14 +1146,26 @@ def save_preferences_from_feedback(db, fb_id: int, prefs: list, user_id=None) ->
 def capture_and_normalize_feedback(db, source: str, raw_content: str,
                                     source_ref_id=None, user_id=None) -> tuple:
     """
-    Full pipeline: capture raw text, run extract pass, write preferences with
-    source_feedback_id back-link. Returns (fb_id, prefs_saved). Skips on empty
-    input or extraction failure. Caller is responsible for db.commit().
+    Full pipeline: extract preferences first, write a feedback_log row only
+    when at least one durable preference was found, save them with a
+    source_feedback_id back-link. Returns (fb_id, prefs_saved). Skips on
+    empty input, question-shaped messages, or extraction failure. Caller is
+    responsible for db.commit().
+
+    Order matters: extracting first lets the question-heuristic and the empty
+    LLM result both short-circuit before we add a feedback_log row, which
+    keeps the /profile feedback view from filling up with pure conversational
+    chatter.
     """
-    fb_id = capture_feedback(db, source, raw_content, source_ref_id, user_id=user_id)
+    text = (raw_content or '').strip()
+    if not text:
+        return (0, 0)
+    prefs = extract_preferences(text, source)
+    if not prefs:
+        return (0, 0)
+    fb_id = capture_feedback(db, source, text, source_ref_id, user_id=user_id)
     if not fb_id:
         return (0, 0)
-    prefs = extract_preferences(raw_content, source)
     saved = save_preferences_from_feedback(db, fb_id, prefs, user_id=user_id)
     return (fb_id, saved)
 

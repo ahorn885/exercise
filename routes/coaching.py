@@ -538,8 +538,13 @@ def chat(plan_id):
 
         # Route the chat-extracted preferences through the feedback_log pipeline
         # so each pref carries provenance back to the user's raw message.
-        fb_id = capture_feedback(db, 'chat', message, source_ref_id=plan_id, user_id=uid)
-        save_preferences_from_feedback(db, fb_id, result.get('preferences_to_save', []), user_id=uid)
+        # Defer the insert until we actually have a pref to save — pure
+        # conversational turns ("when's my next ride?") used to leave a row
+        # in feedback_log even though they extracted zero prefs.
+        prefs_to_save = result.get('preferences_to_save', [])
+        if prefs_to_save:
+            fb_id = capture_feedback(db, 'chat', message, source_ref_id=plan_id, user_id=uid)
+            save_preferences_from_feedback(db, fb_id, prefs_to_save, user_id=uid)
 
         patches_applied = 0
         if not result.get('confirm_required', False):
