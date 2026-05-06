@@ -121,6 +121,24 @@ def _load_plan_items(db):
     ).fetchall()
 
 
+def _derive_pace(moving_time_min, duration_min, distance_mi):
+    """Return 'M:SS' avg pace from time+distance, or None if either
+    is missing/non-positive. Prefers moving_time when both are given —
+    matches Garmin semantics (pace excludes paused time)."""
+    minutes = moving_time_min if moving_time_min else duration_min
+    if not minutes or not distance_mi or minutes <= 0 or distance_mi <= 0:
+        return None
+    pace = minutes / distance_mi
+    if pace >= 100:  # sanity ceiling — beyond this we're probably mis-parsing units
+        return None
+    whole = int(pace)
+    secs = int(round((pace - whole) * 60))
+    if secs == 60:
+        whole += 1
+        secs = 0
+    return f'{whole}:{secs:02d}'
+
+
 def _save(db, entry_id):
     f = request.form
 
@@ -132,10 +150,17 @@ def _save(db, entry_id):
 
     plan_item_id = num(f.get('plan_item_id'), int)
 
+    duration_min = num(f.get('duration_min'))
+    moving_time_min = num(f.get('moving_time_min'))
+    distance_mi = num(f.get('distance_mi'))
+    avg_pace = (f.get('avg_pace') or '').strip()
+    if not avg_pace:
+        avg_pace = _derive_pace(moving_time_min, duration_min, distance_mi)
+
     vals = (
         f.get('date'), f.get('activity'), f.get('activity_name'),
-        num(f.get('duration_min')), num(f.get('moving_time_min')),
-        num(f.get('distance_mi')), f.get('avg_pace'),
+        duration_min, moving_time_min,
+        distance_mi, avg_pace,
         num(f.get('avg_speed')), num(f.get('avg_hr'), int),
         num(f.get('max_hr'), int), num(f.get('calories'), int),
         num(f.get('elev_gain_ft')), num(f.get('elev_loss_ft')),
