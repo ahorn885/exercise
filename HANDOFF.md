@@ -1,159 +1,60 @@
 # AIDSTATION — Session Handoff
 
-**Date:** 2026-05-05 (afternoon update)
-**Last commit on `main`:** `32e8c38` — the consolidated multi-user
-retrofit + UX batch. Squashed from 14 intermediate commits; per-piece
-detail lives in that commit's body. The pre-squash branch was
-`claude/review-handoff-doc-VyeBE` (deleted locally; remote pointer
-still at `f313e8f` and unreferenced — the harness rejected the remote
-delete).
-
-**This session's branch (unmerged):** `claude/review-handoff-doc-jvsWF`
-carries two follow-ups on top of `main`:
-- Pre-Neon de-risking: PG_SCHEMA forward-FK reorder + `RETURNING id`
-  sweep across 15 INSERT sites. Both items in the operator-step
-  carry-forward list are resolved.
-- Recommended-purchases rebuild: shared catalog + per-user state +
-  `/purchases` UI with live "exercises this unlocks" derivation.
+**Date:** 2026-05-06
+**Last commit on `main`:** `9409d0d` — nav UX fix (Gear dropdown +
+defensive toggler/overflow rules). Stacked on top of `8af8d29`
+(auth-gate hardening), `2c2f312` (merge of the Neon de-risking +
+purchases rebuild branch), and `32e8c38` (Sessions 0–4 multi-user
+retrofit).
 
 **Deploy state:**
-- ✅ GitHub Actions (`docker-publish.yml`) ran green on `32e8c38`.
-- ✅ Vercel deploy of `32e8c38` is live (still on ephemeral `/tmp`
-  SQLite until operator step 1 wires Neon).
-- ⚠️ TrueNAS — Watchtower polls every 300s but operator hasn't
-  confirmed the pull. Likely picked up by now; verify in operator
-  step 0 below.
+- ✅ Vercel: `9409d0d` live at `https://aidstation-pro.vercel.app`,
+  backed by Neon Postgres (`DATABASE_URL` wired during this session).
+  Andy is bootstrapped (user 1) and using it in production.
+- ✅ TrueNAS: GitHub Actions builds + Watchtower auto-pulls on every
+  push to `main`. Should be on `9409d0d` within ~5 min of the latest
+  push; verify with `docker images ghcr.io/ahorn885/exercise:latest
+  --format '{{.CreatedAt}}'` if anything looks off.
 
-The multi-user retrofit roadmap is **complete on the code side**.
-Andy and a second user can fully isolate their data — training logs,
-plans, prescriptions, body metrics, conditions / clothing, locales,
-profiles, coach preferences. The remaining work is operator-side env
-plumbing plus a thin standalone backlog.
+The multi-user retrofit is fully shipped end-to-end. The Neon
+cutover happened this session and resolved both carry-forward
+warnings from the prior handoff (forward-FK + `RETURNING id`).
+Single-user in practice today — operator just hasn't flipped
+`ALLOW_REGISTRATION` yet.
 
 ---
 
-## Next session — operator steps walkthrough
+## Next session — what's left for the operator
 
-These are the only things between "code ready" and "live multi-user".
-Read this section start to finish before starting; the order matters.
+Most of the prior walkthrough's steps are done. Remaining:
 
-### Step 0 — confirm TrueNAS picked up the new image
+### Step A — open registration (when ready for a second user)
 
-SSH into TrueNAS, then:
+Set `ALLOW_REGISTRATION=1` on **both** environments:
 
-```bash
-# Check the running container's image hash
-docker inspect $(docker ps -q --filter name=web) --format '{{.Image}}'
-docker images ghcr.io/ahorn885/exercise:latest --format '{{.ID}} {{.CreatedAt}}'
-```
-
-The two hashes should match, and the `CreatedAt` timestamp should be
-**after 2026-05-05 ~21:00 UTC** (when GitHub Actions pushed the image
-for `32e8c38`). If older, force a pull:
-
-```bash
-cd /mnt/storage/exercise
-docker compose pull && docker compose up -d
-```
-
-After it's up, hit the dashboard in a browser and confirm:
-- The page loads (no 500)
-- You're still logged in as Andy (session cookie survives)
-- A workout / plan / Rx page renders normally — this confirms the
-  Session 2D rebuild migrations ran cleanly against Andy's existing
-  SQLite data
-
-If anything looks off, the rebuild migration logs are in the
-container output: `docker compose logs web | tail -200`. Look for
-`SQLite database initialized at /mnt/...` as the success marker.
-
-### Step 1 — wire `DATABASE_URL` to Neon Postgres in Vercel
-
-a. Create a fresh Neon Postgres database (https://neon.tech). The
-   free tier is plenty. Copy the pooled connection string — it
-   should look like:
-
-   ```
-   postgresql://user:pass@ep-xxx.us-east-1.aws.neon.tech/neondb?sslmode=require
-   ```
-
-b. In Vercel → Project Settings → Environment Variables, add
-   `DATABASE_URL` set to that connection string. Production scope
-   only is fine (preview/dev can stay on SQLite).
-
-c. **Vercel does NOT auto-redeploy on env-var changes.** Trigger a
-   redeploy: either push an empty commit (`git commit --allow-empty
-   -m "trigger redeploy" && git push`) or hit "Redeploy" on the
-   latest deployment in the Vercel dashboard.
-
-d. After redeploy lands, hit the Vercel URL. The first request
-   triggers `init_postgres()` which:
-   - Creates every table per `PG_SCHEMA`
-   - Runs all migrations (most no-op on a fresh DB)
-   - Seeds catalog tables (exercise_inventory, equipment_items,
-     exercise_equipment, training_modalities)
-   - Skips `current_rx` seeding because no user 1 exists yet — that
-     happens in step 2 when you bootstrap an account
-
-e. **Forward-FK caveat to watch for.** `PG_SCHEMA` declares
-   `training_sessions.plan_item_id REFERENCES plan_items(id)`
-   *before* `plan_items` itself is created. If Neon rejects the
-   schema on this, you'll see an error in the Vercel function logs
-   like `relation "plan_items" does not exist`. Two fixes:
-
-   - **Reorder** the `CREATE TABLE` blocks in `init_db.py:PG_SCHEMA`
-     so `plan_items` is created before `training_sessions` (search
-     for `CREATE TABLE IF NOT EXISTS plan_items` and move it up).
-   - **Or** move the FK to a deferred ALTER. Inside `PG_SCHEMA`,
-     drop the `REFERENCES plan_items(id)` clause from the
-     `training_sessions.plan_item_id` column declaration; add a
-     migration to `_PG_MIGRATIONS`:
-
-     ```python
-     "ALTER TABLE training_sessions ADD CONSTRAINT IF NOT EXISTS "
-     "training_sessions_plan_item_id_fkey "
-     "FOREIGN KEY (plan_item_id) REFERENCES plan_items(id)",
-     ```
-
-   The reorder is simpler. Either fix needs a fresh Neon DB to test
-   against — drop and recreate the Neon DB to retry from clean.
-
-### Step 2 — bootstrap Andy on the new Neon-backed Vercel
-
-a. Hit `https://<your-vercel-url>/auth/register` directly (or just
-   visit the root and you'll be redirected since no users exist).
-b. Register Andy. Bootstrap path doesn't require
-   `ALLOW_REGISTRATION` — first user always works.
-c. After registration, you should immediately see Andy's `/rx`
-   populated with all 107 seeded exercises. This is
-   `_seed_current_rx_for_user` running inline from
-   `auth.register` (Session 2D feature).
-
-### Step 3 — open registration
-
-Set `ALLOW_REGISTRATION=1` on **both** Vercel and TrueNAS:
-
-- **Vercel:** Project Settings → Environment Variables. Then
-  redeploy (env-var changes don't auto-trigger).
-- **TrueNAS:** edit `/mnt/storage/exercise/.env`, add a line
+- **Vercel:** Project Settings → Environment Variables. Then click
+  "Redeploy" on the latest production deployment (env-var changes
+  don't auto-trigger a build).
+- **TrueNAS:** edit `/mnt/storage/exercise/.env`, add
   `ALLOW_REGISTRATION=1`, then `cd /mnt/storage/exercise && docker
-  compose up -d` to recreate the container with the new env baked
-  in. (Watchtower image pulls do NOT reload `env_file`.)
+  compose up -d` to recreate the container with the new env
+  baked in. (Watchtower image pulls do NOT reload `env_file`.)
 
-### Step 4 — second-user smoke test
+### Step B — second-user smoke test
 
-Register a second account from a private browser window or a
-different machine. Pick a username unlike "andy" (e.g. "test").
-Then walk through:
+Register a second account from a private window or a different
+machine. Pick a username unlike "andy" (e.g. `test`). Walk through:
 
 - Dashboard, /training, /cardio, /body, /rx, /plans/, /injuries,
-  /conditions, /garmin/, /log-natural/, /locales, /profile/ — all
-  should be empty / placeholder for the new user.
-- Log a strength session against `Back Squat` (a seeded exercise).
-  Confirm it goes into the new user's `current_rx`, not Andy's. The
-  Session 2D composite UNIQUE makes this work.
+  /conditions, /garmin/, /log-natural/, **/locales** (under Gear),
+  **/purchases** (under Gear), /profile/ — all should be empty /
+  placeholder for the new user.
+- Log a strength session against `Back Squat`. Confirm it goes into
+  the new user's `current_rx`, not Andy's.
 - Save a `home` locale with some equipment. Andy's home setup
   should be untouched.
+- Mark a couple of `/purchases` items wanted/owned. Confirm Andy
+  still sees his own statuses unchanged.
 - Add a clothing value via `/conditions/new` — confirm Andy's
   conditions form doesn't show it.
 - Generate a small plan via `/coaching/generate` (or import a JSON
@@ -163,71 +64,132 @@ Then walk through:
 If all pass, log out, log in as Andy, do a final pass to confirm
 his data is intact and he doesn't see the test user's stuff.
 
-### Step 5 — clean up
+### Step C — clean up
 
 - Delete the test user via direct DB query if you want a clean
   state, or leave it as a sanity safety net. (No UI for user
-  deletion — would require a Session 5+ admin page.)
+  deletion — would require an admin page.)
 - If you opened registration just for the smoke test and want to
   re-close it, set `ALLOW_REGISTRATION=0` (or just unset). Existing
   users can still log in.
 
-After step 4 passes, multi-user is live in production.
+After Step B passes, multi-user is verified live in production.
 
 ---
 
 ## Carry-forward issues to watch
 
-Real chance of hitting these; keep an eye out:
+Both prior carry-forwards (`RETURNING id` and forward-FK) are
+resolved on `main`. Things to keep in mind going forward:
 
-1. **`cur.lastrowid` ↔ Postgres `RETURNING id`.** ✅ Pre-emptively
-   resolved this session. Every INSERT in `routes/` + `coaching.py`
-   that reads `cur.lastrowid` afterwards now carries `RETURNING id`,
-   and the `database.py:_CompatCursor.lastrowid` wrapper already does
-   `fetchone()` to surface it on Postgres. SQLite's native
-   `cur.lastrowid` ignores the unread row. If you add new INSERTs
-   whose new id you read, keep the pattern: add `RETURNING id` to
-   the SQL and the existing `cur.lastrowid` access will Just Work
-   on both backends.
+1. **`RETURNING id` is the pattern.** Every existing INSERT whose
+   new id is read back uses it, and the `_CompatCursor.lastrowid`
+   wrapper already does `fetchone()` to surface it on Postgres.
+   SQLite's native `lastrowid` ignores the unread RETURNING row.
+   For new INSERTs: add `RETURNING id` to the SQL and `cur.lastrowid`
+   reads work on both backends unchanged.
 
-2. **Forward-FK caveat in step 1e.** ✅ Resolved this session.
-   `PG_SCHEMA` is now ordered so every `REFERENCES` resolves at
-   `CREATE TABLE` time. A fresh Neon DB no longer needs a manual
-   reorder or deferred ALTER.
+2. **Auth gate hydrates the user row.** `app.py:_require_login` does
+   one `users` SELECT per authenticated request and stashes the row
+   on `g.current_user_row`; the context processor reads from there
+   instead of re-querying. If hydration fails (stale cookie, user
+   deleted, DB error), the session is cleared and the request is
+   bounced — no more "ghost user" admitted with no logout button.
+   Hydration errors `print()` to stdout (visible in Vercel logs) so
+   any failure surfaces instead of being silently swallowed.
 
-3. **`/coaching/api/*` endpoints are login-gated.** If you have
-   any external tooling hitting them (Claude Desktop, scripts),
-   they'll need session-cookie auth (curl with `--cookie-jar`
-   after a `/auth/login` POST) or a token-auth shim. Out of
-   scope; flagged.
+3. **`/coaching/api/*` endpoints are login-gated.** External tooling
+   (Claude Desktop, scripts) needs session-cookie auth (curl with
+   `--cookie-jar` after a `/auth/login` POST) or a token-auth shim.
+   Out of scope; flagged.
+
+4. **Brand CSS overrides Bootstrap aggressively.** `.navbar` is
+   forced to `var(--ink) !important`, `--bs-navbar-toggler-icon-bg`
+   is set explicitly to a white-stroke SVG, and `body` clips
+   `overflow-x` to defend against horizontal overflow trapping the
+   user dropdown / toggler off-canvas. If you add navbar items, keep
+   an eye on the total intrinsic width at ≥992px viewports — the
+   `Gear` dropdown was added this session specifically to keep the
+   top bar fitting after `Purchases` pushed it over the edge.
 
 ---
 
-## After the operator steps — what's next
+## What's next on the code side
 
-Once multi-user is live, the remaining backlog (in priority order):
+Backlog in priority order (independent of the operator steps above):
 
 1. **Multi-day wellness chart** on `/garmin/wellness` — 7-day
    trend complementing the per-day view. Smallest standalone
-   left, ~2 hours.
-2. **`coaching.py:capture_and_normalize_feedback` payload size**
-   — the Haiku call sends raw_content; if Andy's chat history grows
-   long, prompt cost rises linearly. Worth profiling once there's
-   real second-user data.
-
-`RETURNING id` sweep and recommended-purchases rebuild are now
-shipped — see "What's currently live" below.
+   left, ~2 hours. Last unfinished item from the original plan.
+2. **Purchases catalog curation.** The seeded
+   `PURCHASE_RECOMMENDATIONS` list in `init_db.py` is a starter
+   (~18 items, AR-leaning). Cost ranges, copy, and priorities are
+   easy to tune as you use the page; UPSERT-on-slug means edits
+   propagate to existing rows on the next cold start without
+   disturbing per-user state. New items just append to the list.
+3. **`coaching.py:capture_and_normalize_feedback` payload size** —
+   the Haiku call sends raw_content; if chat history grows long,
+   prompt cost rises linearly. Worth profiling once there's real
+   second-user data.
 
 The full backlog (parked items, future ideas) is in the Backlog
 section near the bottom.
 
 ---
 
-## What's currently live (in this batch)
+## What shipped this session (on top of `32e8c38`)
 
-The git log entry is one squashed commit; this list is what's in it.
-Per-piece detail lives in the conversation transcript and the verify
-harnesses referenced below.
+Four commits on `main`, in order:
+
+**`504445c` — Pre-empt Neon cutover.**
+- `PG_SCHEMA` reordered: `training_plans` + `plan_items` precede
+  `training_sessions` / `training_log` / `cardio_log`, so every
+  forward FK resolves at CREATE TABLE time on Neon. SQLite-side
+  `CREATE TABLE IF NOT EXISTS` makes it a no-op on existing DBs.
+- `RETURNING id` sweep across 15 INSERT sites in `coaching.py` +
+  `routes/{auth,cardio,garmin,natural_log,plans,training}.py`.
+
+**`541207b` — Recommended-purchases rebuild.**
+- `purchase_recommendations` (shared catalog, `slug` UNIQUE for
+  UPSERT-on-cold-start re-seed; `equipment_id` FK to
+  `equipment_items`) + `user_purchase_recommendations(user_id,
+  purchase_id)` PK, status ∈ {wanted, owned, passed}.
+- 18 seeded items targeting AR/endurance gear gaps (adjustable DBs,
+  pull-up bar, KB, bands, foam roller, weighted vest, sandbag,
+  hangboard, etc.).
+- `/purchases` list (grouped by priority, locale-tag hint when the
+  equipment is already in any of the user's locales, impacted-count
+  via `exercise_equipment` join) + `/purchases/<id>` detail
+  (live-derived "exercises this unlocks") + `POST .../status`
+  cross-user-defended UPSERT.
+
+**`8af8d29` — Auth gate hardening.**
+- Closes a back-door surfaced during Neon cutover: a session cookie
+  pointing at a nonexistent users row was silently admitted as a
+  "ghost user" whose templates rendered with `current_user=None`,
+  hiding the only logout button.
+- Hydrate the row once per request in `_require_login`, stash on
+  `g.current_user_row`. Stale cookies → `session.clear()` + bounce.
+  Hydration failures `print()` to logs instead of being swallowed.
+- Net side benefit: every auth'd request does one `users` SELECT
+  total instead of two.
+
+**`9409d0d` — Nav UX fix.**
+- 11 top-level nav items overflowed the navbar at typical desktop
+  widths after `Purchases` was added; the user dropdown / toggler
+  ended up past the right edge of the navbar's dark background,
+  against the white body bg, with the toggler's white icon
+  invisible.
+- Consolidated `Locales` + `Purchases` under a single `Gear`
+  dropdown.
+- Defensive CSS: `flex-wrap: wrap` on `.navbar > .container-fluid`,
+  `body { overflow-x: hidden }`, explicit white-stroke
+  `--bs-navbar-toggler-icon-bg` SVG (Bootstrap 5.3 deprecated
+  `.navbar-dark`), `margin-left: auto` on the toggler.
+
+---
+
+## What's currently live
 
 **Multi-user retrofit (Sessions 0–4):**
 - Session 0 — coaching-feedback capture pipeline (`feedback_log` +
@@ -272,26 +234,7 @@ harnesses referenced below.
   `ctx['athlete_profile']`; `_BASE_PROMPT` documents how Claude
   should use it.
 
-**Standalone improvements:**
-- Pre-emptive Neon-cutover de-risking: `PG_SCHEMA` reordered so
-  `training_plans` + `plan_items` precede `training_sessions` /
-  `training_log` / `cardio_log` (forward-FK fix); every INSERT site
-  whose `cur.lastrowid` is read back gained `RETURNING id` (15 sites
-  across `coaching.py`, `routes/{auth,cardio,garmin,natural_log,plans,training}.py`).
-  The existing `_CompatCursor.lastrowid` wrapper does `fetchone()` so
-  the returned id surfaces unchanged on Postgres; SQLite's native
-  `lastrowid` ignores the unread RETURNING row.
-- Recommended-purchases rebuild shipped. Shared catalog
-  (`purchase_recommendations`, slug-keyed for idempotent UPSERT
-  re-seed; equipment_id FK to `equipment_items`) + per-user state
-  (`user_purchase_recommendations(user_id, purchase_id)` PK, status ∈
-  {wanted, owned, passed}). 18 seeded items targeting AR/endurance gaps
-  (adjustable DBs, pull-up bar, KB, bands, weighted vest, sandbag,
-  hangboard, etc.) grouped by priority. New `/purchases` list +
-  `/purchases/<id>` detail showing live-derived "exercises this
-  unlocks" via `exercise_equipment` join. Locale-tag hint surfaces
-  when the equipment is already in any of the user's locales.
-  Cross-user defended.
+**Standalone improvements (in the original `32e8c38` batch):**
 - Plan-match window widened to -3 / +2 days with deduped resolve
   dropdowns.
 - Per-row swap/addition resolve UI on Garmin sync preview.
@@ -487,12 +430,17 @@ parent-scoped.
 ### Auth + per-user scoping
 
 - Every non-`/auth/*` non-static route is gated by a global
-  `before_request` hook in `app.py`. By the time a route handler
-  runs, `flask_session['user_id']` is set.
+  `before_request` hook in `app.py`. The gate hydrates the
+  user row from `users` and stashes it on `g.current_user_row`;
+  if the row doesn't exist (stale cookie pointing at a deleted /
+  not-yet-existent user), the session is cleared and the request
+  is bounced. By the time a route handler runs, both
+  `flask_session['user_id']` and `g.current_user_row` are valid.
 - Use `from routes.auth import current_user_id` — returns
   `int | None`. `None` only happens pre-bootstrap or in tests.
 - Templates have `current_user` available via context processor
-  (`app.py:_inject_current_user`). The base nav uses it for the
+  (`app.py:_inject_current_user`); it reads from `g.current_user_row`
+  so it does not double-query. The base nav uses it for the
   signed-in dropdown.
 - Schema: every per-user table has a `user_id` column. Postgres
   enforces `NOT NULL`; SQLite is NULLABLE because the rebuild cost
@@ -632,10 +580,15 @@ transient data flow.
 
 Builds on every push to `main` via `@vercel/python`. All routes go
 through `app.py`. Env vars come from Vercel's project settings.
-**Storage moves to Neon Postgres** when `DATABASE_URL` is wired in
-(operator step 1). Until then, SQLite at `/tmp/training.db` (per
-`database.sqlite_path()`'s `/var/task`-readonly serverless detection)
-— ephemeral across cold starts.
+**Storage is Neon Postgres** in production via `DATABASE_URL` (wired
+this session). Without `DATABASE_URL` the app falls back to SQLite at
+`/tmp/training.db` — ephemeral across cold starts; useful for preview
+deployments only.
+
+The Vercel build emits a warning about the `builds` block in
+`vercel.json` overriding Project Settings. That's intentional — the
+`builds` block is the source of truth here. Harmless; can be cleaned
+up later by removing the (now-unused) Project Settings overrides.
 
 ### TrueNAS via Docker + Watchtower (`docker-compose.yml`)
 
