@@ -22,7 +22,7 @@
 <div class="card mb-4">
   <div class="card-header d-flex justify-content-between align-items-center fw-semibold">
     <span>Raw JSON (copy/paste friendly)</span>
-    <button id="copyBtn" class="btn btn-sm btn-outline-secondary" onclick="copyDump()">Copy All</button>
+    <button id="copyBtn" class="btn btn-sm btn-outline-secondary" type="button">Copy All</button>
   </div>
   <div class="card-body p-0">
     <textarea id="dumpJson" class="form-control font-monospace border-0" rows="10" readonly
@@ -160,7 +160,7 @@
 {% endblock %}
 
 {% block scripts %}
-<script>
+<script nonce="{{ csp_nonce() }}">
 function copyDump() {
   var ta = document.getElementById('dumpJson');
   ta.select();
@@ -179,5 +179,6 @@ function copyDump() {
     document.execCommand('copy');
   }
 }
+document.getElementById('copyBtn').addEventListener('click', copyDump);
 </script>
 {% endblock %}

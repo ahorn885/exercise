@@ -79,7 +79,7 @@
 {% endblock %}
 
 {% block scripts %}
-<script>
+<script nonce="{{ csp_nonce() }}">
 const chatArea   = document.getElementById('chat-area');
 const chatHint   = document.getElementById('chat-hint');
 const userInput  = document.getElementById('user-input');

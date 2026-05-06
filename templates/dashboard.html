@@ -46,11 +46,11 @@
                 </div>
               </div>
               <div class="d-flex gap-1 ms-2">
-                <form method="post" action="{{ url_for('plans.complete_item', plan_id=w.plan_id, item_id=w.id) }}" class="d-inline" onsubmit="return confirm('Mark as complete?')">
+                <form method="post" action="{{ url_for('plans.complete_item', plan_id=w.plan_id, item_id=w.id) }}" class="d-inline" data-confirm="Mark as complete?">
                   <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                   <button class="btn btn-sm btn-outline-success" title="Complete">✓</button>
                 </form>
-                <form method="post" action="{{ url_for('plans.skip_item', plan_id=w.plan_id, item_id=w.id) }}" class="d-inline" onsubmit="return confirm('Skip this workout?')">
+                <form method="post" action="{{ url_for('plans.skip_item', plan_id=w.plan_id, item_id=w.id) }}" class="d-inline" data-confirm="Skip this workout?">
                   <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                   <button class="btn btn-sm btn-outline-secondary" title="Skip">✕</button>
                 </form>
@@ -222,11 +222,11 @@
           <span class="badge bg-secondary ms-1">{{ w.sport_type }}</span>
         </div>
         <div class="d-flex gap-1">
-          <form method="post" action="{{ url_for('plans.complete_item', plan_id=w.plan_id, item_id=w.id) }}" class="d-inline" onsubmit="return confirm('Mark as complete?')">
+          <form method="post" action="{{ url_for('plans.complete_item', plan_id=w.plan_id, item_id=w.id) }}" class="d-inline" data-confirm="Mark as complete?">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <button class="btn btn-sm btn-outline-success">✓ Done</button>
           </form>
-          <form method="post" action="{{ url_for('plans.skip_item', plan_id=w.plan_id, item_id=w.id) }}" class="d-inline" onsubmit="return confirm('Skip?')">
+          <form method="post" action="{{ url_for('plans.skip_item', plan_id=w.plan_id, item_id=w.id) }}" class="d-inline" data-confirm="Skip?">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <button class="btn btn-sm btn-outline-secondary">✕ Skip</button>
           </form>

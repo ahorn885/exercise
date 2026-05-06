@@ -78,7 +78,7 @@
 {% endblock %}
 
 {% block scripts %}
-<script>
+<script nonce="{{ csp_nonce() }}">
 const ALL_EXERCISES = {{ exercises_json | tojson }};
 let rows = [];    // [{id, exercise}]
 let rxCache = {}; // exercise → rx object (null while fetching)
@@ -106,7 +106,7 @@ function addRow(preExercise) {
   tr.id = 'r' + id;
   tr.innerHTML = `
     <td>
-      <select class="form-select form-select-sm" onchange="onExChange(${id}, this.value)">
+      <select class="form-select form-select-sm">
         ${exOptionsHtml(ex)}
       </select>
     </td>
@@ -115,9 +115,13 @@ function addRow(preExercise) {
     <td><input type="number" class="form-control form-control-sm" id="dur${id}" placeholder="—" min="0"></td>
     <td>
       <button type="button" class="btn btn-outline-danger py-0 px-1"
-              style="font-size:.7rem;line-height:1.6" onclick="removeRow(${id})">×</button>
+              style="font-size:.7rem;line-height:1.6">×</button>
     </td>`;
   document.getElementById('set-log-body').appendChild(tr);
+  // Wire row-level handlers programmatically — inline onchange/onclick
+  // attributes injected via innerHTML are blocked by the CSP nonce policy.
+  tr.querySelector('select').addEventListener('change', e => onExChange(id, e.target.value));
+  tr.querySelector('button').addEventListener('click', () => removeRow(id));
 
   ['reps', 'wt', 'dur'].forEach(prefix => {
     document.getElementById(prefix + id)?.addEventListener('input', renderSummaries);
@@ -206,8 +210,6 @@ function renderSummaries() {
     const rpe = exRpe[ex] != null ? exRpe[ex] : '';
     const notes = (exNotes[ex] || '').replace(/"/g, '&quot;');
     const exAttr = ex.replace(/&/g, '&amp;');
-    // onclick: exercise names have no single quotes so this is safe
-    const exOnClick = ex.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
 
     html += `
       <div class="card mb-2">
@@ -223,8 +225,8 @@ function renderSummaries() {
               <input type="number" class="form-control form-control-sm" style="width:68px"
                      min="1" max="10" step="0.5" placeholder="—"
                      value="${rpe}" data-ex-rpe="${exAttr}">
-              <button type="button" class="btn btn-sm btn-outline-secondary py-0 px-2"
-                      style="font-size:.75rem" onclick="addRow('${exOnClick}')">+ Set</button>
+              <button type="button" class="btn btn-sm btn-outline-secondary py-0 px-2 add-set-btn"
+                      style="font-size:.75rem" data-exercise="${exAttr}">+ Set</button>
             </div>
           </div>
           <div class="mb-2">${chips}</div>
@@ -236,6 +238,11 @@ function renderSummaries() {
       </div>`;
   }
   container.innerHTML = html;
+  // Delegated click for the dynamically-injected "+ Set" buttons.
+  // Inline onclick attributes inside innerHTML are blocked by CSP.
+  container.querySelectorAll('.add-set-btn').forEach(btn => {
+    btn.addEventListener('click', () => addRow(btn.dataset.exercise));
+  });
 }
 
 function buildPayload() {

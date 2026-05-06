@@ -127,7 +127,7 @@
             </div>
           </div>
           <form method="post" action="{{ url_for('profile.delete_preference', pref_id=p.id) }}"
-                onsubmit="return confirm('Delete this preference?');">
+                data-confirm="Delete this preference?">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <button class="btn btn-sm btn-outline-danger py-0 px-1">Delete</button>
           </form>
@@ -256,7 +256,7 @@
             <td class="text-end">
               {% if not t.revoked_at %}
               <form method="post" action="{{ url_for('profile.revoke_api_token', token_id=t.id) }}"
-                    class="d-inline" onsubmit="return confirm('Revoke this token? Any clients using it will stop working.');">
+                    class="d-inline" data-confirm="Revoke this token? Any clients using it will stop working.">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 <button class="btn btn-sm btn-outline-danger">Revoke</button>
               </form>
