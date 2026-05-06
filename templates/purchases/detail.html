@@ -28,6 +28,7 @@
         </div>
       </div>
       <form method="post" action="{{ url_for('purchases.set_status', purchase_id=pr.id) }}" class="d-flex gap-1 align-items-start flex-wrap">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <input type="hidden" name="redirect_to" value="detail">
         {% for s in valid_statuses %}
           <button name="status" value="{{ s }}"

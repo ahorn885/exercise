@@ -6,6 +6,7 @@
   <a href="{{ url_for('injuries.list_entries') }}" class="btn btn-sm btn-outline-secondary">← Back</a>
 </div>
 <form method="post">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
   <div class="row g-3 mb-3">
     <div class="col-md-2"><label class="form-label">Start Date</label>
       <input type="date" name="start_date" class="form-control" required value="{{ entry.start_date if entry else '' }}"></div>

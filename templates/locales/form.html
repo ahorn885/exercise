@@ -7,6 +7,7 @@
 </div>
 <p class="text-muted small mb-3">Check every item available at this location. Saving replaces the previous profile entirely.</p>
 <form method="post">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
   <div class="row g-3 mb-3">
     {% for category_name, items in equipment_categories %}
     <div class="col-12 col-md-6 col-lg-4">

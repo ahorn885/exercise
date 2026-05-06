@@ -46,6 +46,7 @@
         <form method="post" action="{{ url_for('admin.delete_user', user_id=u.id) }}"
               onsubmit="return confirm('Delete user \'{{ u.username }}\' and ALL of their data? This cannot be undone.');"
               class="d-inline">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
           <button type="submit" class="btn btn-sm btn-outline-danger">Delete</button>
         </form>
         {% endif %}

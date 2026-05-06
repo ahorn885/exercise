@@ -1,11 +1,40 @@
 import os
 import re as _re
 from flask import Flask, request, redirect, url_for, session, g
+from flask_wtf.csrf import CSRFProtect, CSRFError
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
 from database import init_app, get_db, sqlite_path
 
 app = Flask(__name__, instance_relative_config=True)
 app.config['DATABASE'] = sqlite_path()
-app.secret_key = os.environ.get('SECRET_KEY', 'ar-training-2026')
+
+# SECRET_KEY is mandatory: Flask session cookies are signed with it, so a
+# predictable value lets anyone forge a session for any user. Refuse to
+# boot without it rather than fall back to a hardcoded default.
+_secret = os.environ.get('SECRET_KEY')
+if not _secret:
+    raise RuntimeError(
+        'SECRET_KEY environment variable is required. Generate one with '
+        '`python -c "import secrets; print(secrets.token_urlsafe(48))"` and '
+        'set it on every deploy target before starting the app.'
+    )
+app.secret_key = _secret
+
+# Session cookie hardening. SECURE defaults on when the deploy looks
+# HTTPS-fronted (Vercel sets DATABASE_URL; local dev over HTTP doesn't).
+# Override explicitly via SESSION_COOKIE_SECURE=0/1 if needed.
+def _envbool(name: str, default: bool) -> bool:
+    v = os.environ.get(name)
+    if v is None:
+        return default
+    return v.strip().lower() not in ('0', 'false', 'no', 'off', '')
+
+app.config['SESSION_COOKIE_HTTPONLY'] = True
+app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
+app.config['SESSION_COOKIE_SECURE'] = _envbool(
+    'SESSION_COOKIE_SECURE', default=bool(os.environ.get('DATABASE_URL'))
+)
 
 if os.environ.get('DATABASE_URL'):
     # Postgres (production) — auto-migrate schema on every cold start
@@ -27,6 +56,34 @@ else:
         print(f'Warning: SQLite init failed: {_e}')
 
 init_app(app)
+
+# CSRF protection on every state-changing form/JSON POST. Flask-WTF reads the
+# token from a `csrf_token` form field or an `X-CSRFToken` header. JSON
+# fetches from JS rely on the header — see static/app.js, which wraps
+# window.fetch to inject it from the <meta name="csrf-token"> tag.
+csrf = CSRFProtect(app)
+
+
+@app.errorhandler(CSRFError)
+def _handle_csrf_error(e):
+    # Render a plain message rather than the default HTML — keeps responses
+    # uniform regardless of whether the caller is a browser form or a JS
+    # fetch. 400 (not 403) matches Flask-WTF's default.
+    return (f'CSRF validation failed: {e.description}', 400)
+
+
+# Rate limiting. Defaults are intentionally absent — only the auth blueprint
+# routes opt in (see routes/auth.py). Storage is in-process memory; across
+# multiple workers each enforces independently, which is fine for the
+# single-instance deploys this app targets. Swap in Redis (RATELIMIT_STORAGE_URI)
+# if scaling up.
+limiter = Limiter(
+    key_func=get_remote_address,
+    app=app,
+    storage_uri=os.environ.get('RATELIMIT_STORAGE_URI', 'memory://'),
+    default_limits=[],
+    headers_enabled=True,
+)
 
 
 def _workout_steps(description):

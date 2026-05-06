@@ -13,6 +13,7 @@
 {% set is_indoor_init = init_activity in indoor_activities %}
 
 <form method="post">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
   {% if cardio_sessions %}
   <div class="row g-3 mb-3">
     <div class="col-12">

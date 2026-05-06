@@ -42,6 +42,7 @@
       {% endif %}
       <a href="{{ url_for('injuries.edit_entry', entry_id=e.id) }}" class="btn btn-sm btn-outline-secondary py-0 px-2">Edit</a>
       <form method="post" action="{{ url_for('injuries.delete_entry', entry_id=e.id) }}" class="d-inline" onsubmit="return confirm('Delete injury and all its exercise modifications?')">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <button class="btn btn-sm btn-outline-danger py-0 px-2">Del</button>
       </form>
     </div>
@@ -93,6 +94,7 @@
               </td>
               <td>
                 <form method="post" action="{{ url_for('injuries.delete_modification', entry_id=e.id, mod_id=m.id) }}" class="d-inline">
+                  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                   <button class="btn btn-xs btn-outline-danger py-0 px-1" style="font-size:.7rem" title="Remove">✕</button>
                 </form>
               </td>
@@ -106,6 +108,7 @@
         {# Add modification form #}
         <form method="post" action="{{ url_for('injuries.add_modification', entry_id=e.id) }}"
               class="row g-2 align-items-end border rounded p-2 bg-light">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
           <div class="col-12 col-md-3">
             <label class="form-label form-label-sm mb-1">Affected Exercise</label>
             <select name="exercise_id" class="form-select form-select-sm" required>

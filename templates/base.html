@@ -3,6 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="csrf-token" content="{{ csrf_token() }}">
   <title>{% block title %}AIDSTATION{% endblock %}</title>
   <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='favicon.svg') }}">
   <meta property="og:type" content="website">
@@ -96,6 +97,7 @@
               <li><hr class="dropdown-divider"></li>
               <li>
                 <form method="post" action="{{ url_for('auth.logout') }}" class="m-0">
+                  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                   <button type="submit" class="dropdown-item">Sign out</button>
                 </form>
               </li>

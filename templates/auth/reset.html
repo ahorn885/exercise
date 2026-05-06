@@ -14,6 +14,7 @@
     <p class="text-muted small mb-3">Resetting password for <span class="font-monospace">{{ username }}</span>.</p>
     {% endif %}
     <form method="post" action="{{ url_for('auth.reset', token=token) }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <div class="mb-3">
         <label for="password" class="form-label">New password</label>
         <input type="password" class="form-control" id="password" name="password"

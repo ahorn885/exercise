@@ -75,6 +75,7 @@
                 <p class="small mt-2 mb-2">{{ it.rationale }}</p>
               {% endif %}
               <form method="post" action="{{ url_for('purchases.set_status', purchase_id=it.id) }}" class="d-flex gap-1 flex-wrap mt-2">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 {% for s in valid_statuses %}
                   <button name="status" value="{{ s }}"
                           class="btn btn-sm btn-outline-secondary {% if it.status == s %}active{% endif %}"

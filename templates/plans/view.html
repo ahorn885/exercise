@@ -37,15 +37,18 @@
     <a href="{{ url_for('plans.list_plans') }}" class="btn btn-outline-secondary btn-sm">← Plans</a>
     {% if plan.status == 'archived' %}
     <form method="post" action="{{ url_for('plans.unarchive_plan', plan_id=plan.id) }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <button type="submit" class="btn btn-success btn-sm">Restore</button>
     </form>
     {% else %}
     <form method="post" action="{{ url_for('plans.archive_plan', plan_id=plan.id) }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <button type="submit" class="btn btn-outline-secondary btn-sm">Archive</button>
     </form>
     {% endif %}
     <form method="post" action="{{ url_for('plans.delete_plan', plan_id=plan.id) }}"
           onsubmit="return confirm('Delete this plan? This cannot be undone.')">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <button type="submit" class="btn btn-outline-danger btn-sm">Delete</button>
     </form>
   </div>
@@ -76,10 +79,12 @@
   <div class="d-flex gap-2">
     <a href="{{ url_for('plans.list_plans') }}" class="btn btn-outline-secondary btn-sm flex-fill">← Plans</a>
     <form method="post" action="{{ url_for('plans.archive_plan', plan_id=plan.id) }}" class="flex-fill">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <button type="submit" class="btn btn-outline-secondary btn-sm w-100">Archive</button>
     </form>
     <form method="post" action="{{ url_for('plans.delete_plan', plan_id=plan.id) }}"
           onsubmit="return confirm('Delete this plan?')" class="flex-fill">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <button type="submit" class="btn btn-outline-danger btn-sm w-100">Delete</button>
     </form>
   </div>
@@ -92,6 +97,7 @@
 <div class="alert alert-secondary py-2 px-3 mb-3 small">
   📦 <strong>Archived plan</strong> — read-only. Completed workouts from this plan are still used as training history for new plan generation.
   <form method="post" action="{{ url_for('plans.unarchive_plan', plan_id=plan.id) }}" class="d-inline ms-2">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <button type="submit" class="btn btn-sm btn-success py-0 px-2">Restore</button>
   </form>
 </div>
@@ -283,9 +289,11 @@
                 <div class="d-flex gap-1">
                   {% if item.status == 'scheduled' %}
                   <form method="post" action="{{ url_for('plans.complete_item', plan_id=plan.id, item_id=item.id) }}" class="d-inline">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                     <button type="submit" class="btn btn-xs btn-success py-0 px-1" style="font-size:.75rem" title="Mark complete">✓</button>
                   </form>
                   <form method="post" action="{{ url_for('plans.skip_item', plan_id=plan.id, item_id=item.id) }}" class="d-inline">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                     <button type="submit" class="btn btn-xs btn-outline-secondary py-0 px-1" style="font-size:.75rem" title="Skip">✕</button>
                   </form>
                   {% endif %}
