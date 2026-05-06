@@ -203,11 +203,46 @@ def _inject_current_user():
     return {'current_user': getattr(g, 'current_user_row', None)}
 
 
+# Content-Security-Policy. 'unsafe-inline' on script-src/style-src is a
+# concession to the existing template inline-event-handler usage (onclick,
+# onsubmit, onchange, inline <script> blocks, inline style="..."). Migrating
+# to nonces would touch every template and is its own session — but even
+# with 'unsafe-inline' allowed for scripts/styles, the directives below
+# still close the data-exfiltration vectors that matter most: connect-src
+# stops JS from POSTing to external origins, img-src stops pixel-tracker
+# leaks, form-action keeps form submissions same-origin, frame-ancestors
+# blocks clickjacking, object-src kills <object>/Flash, base-uri prevents
+# <base href> injection. upgrade-insecure-requests only fires on HTTPS.
+_CSP_DIRECTIVES = [
+    "default-src 'self'",
+    "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net",
+    "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://fonts.googleapis.com",
+    "font-src 'self' https://fonts.gstatic.com",
+    "img-src 'self' data:",
+    "connect-src 'self'",
+    "frame-ancestors 'none'",
+    "base-uri 'self'",
+    "form-action 'self'",
+    "object-src 'none'",
+]
+if os.environ.get('DATABASE_URL'):
+    # Production is HTTPS-fronted — silently rewrite any stray http:// asset
+    # references to https. Skipped on local dev (which is plain HTTP).
+    _CSP_DIRECTIVES.append('upgrade-insecure-requests')
+_CSP_HEADER_VALUE = '; '.join(_CSP_DIRECTIVES)
+# Set CSP_REPORT_ONLY=1 to deploy as Content-Security-Policy-Report-Only —
+# violations are logged by the browser console but not enforced. Useful
+# for catching unexpected breakage before flipping to enforcement.
+_CSP_HEADER_NAME = (
+    'Content-Security-Policy-Report-Only'
+    if _envbool('CSP_REPORT_ONLY', default=False)
+    else 'Content-Security-Policy'
+)
+
+
 @app.after_request
 def _set_security_headers(resp):
-    # Defensive headers that don't depend on per-page tuning. CSP is
-    # deliberately not set here — it needs a per-template inline-script
-    # audit and a CDN strategy first (see security backlog item 10b).
+    # Defensive headers that don't depend on per-page tuning.
     resp.headers.setdefault('X-Content-Type-Options', 'nosniff')
     resp.headers.setdefault('X-Frame-Options', 'DENY')
     resp.headers.setdefault('Referrer-Policy', 'strict-origin-when-cross-origin')
@@ -215,6 +250,7 @@ def _set_security_headers(resp):
         'Permissions-Policy',
         'geolocation=(), microphone=(), camera=(), payment=(), usb=()'
     )
+    resp.headers.setdefault(_CSP_HEADER_NAME, _CSP_HEADER_VALUE)
     return resp
 
 if __name__ == '__main__':
