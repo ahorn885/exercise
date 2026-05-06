@@ -39,8 +39,8 @@
 
 <p class="text-muted small">
   Each recommendation is tied to an equipment item; "exercises this unlocks" is
-  computed live from the exercise/equipment map. The "in your locales" hint
-  shows when you already have it tagged in a locale profile.
+  computed live from the exercise/equipment map. The "in your locations" hint
+  shows when you already have it tagged in a location profile.
 </p>
 
 {% for prio in ['high', 'medium', 'low'] %}
@@ -65,7 +65,7 @@
                       exercise{{ 's' if it.impacted_count != 1 }}
                     {% endif %}
                     {% if it.in_locale %}
-                      &middot; <span class="text-success">✓ tagged in your locales</span>
+                      &middot; <span class="text-success">✓ tagged in your locations</span>
                     {% endif %}
                   </div>
                 </div>

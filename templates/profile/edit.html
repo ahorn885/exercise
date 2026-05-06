@@ -115,12 +115,12 @@
             <div class="small text-muted mt-1">
               {% if p.fb_source %}
                 Captured from <em>{{ p.fb_source|replace('_', ' ') }}</em>
-                {% if p.fb_captured_at %}on {{ p.fb_captured_at[:10] }}{% endif %}
+                {% if p.fb_captured_at %}on {{ (p.fb_captured_at|string)[:10] }}{% endif %}
                 {% if p.source_feedback_id %}
                   · <a href="{{ url_for('profile.view_feedback', fb_id=p.source_feedback_id) }}">view original</a>
                 {% endif %}
               {% else %}
-                Added manually{% if p.created_at %} on {{ p.created_at[:10] }}{% endif %}
+                Added manually{% if p.created_at %} on {{ (p.created_at|string)[:10] }}{% endif %}
               {% endif %}
             </div>
           </div>

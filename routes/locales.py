@@ -45,7 +45,7 @@ def list_profiles():
 @bp.route('/locales/<locale>/edit', methods=['GET', 'POST'])
 def edit_profile(locale):
     if locale not in LOCALES:
-        flash('Unknown locale.', 'danger')
+        flash('Unknown location.', 'danger')
         return redirect(url_for('locales.list_profiles'))
     db = get_db()
     uid = current_user_id()

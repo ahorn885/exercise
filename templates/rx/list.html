@@ -40,7 +40,7 @@
   </div>
   <div class="col-auto">
     <select name="locale" class="form-select form-select-sm">
-      <option value="">All locales</option>
+      <option value="">All locations</option>
       {% for l in locales %}
         <option value="{{ l.locale }}" {% if locale_filter == l.locale %}selected{% endif %}>{{ l.locale }}</option>
       {% endfor %}

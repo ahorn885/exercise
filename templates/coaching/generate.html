@@ -161,7 +161,7 @@
               </select>
             </div>
             <div class="col-md-4">
-              <label class="form-label fw-semibold">Current Locale</label>
+              <label class="form-label fw-semibold">Current Location</label>
               <select name="locale" class="form-select">
                 {% for loc in locales %}
                 <option value="{{ loc }}" {% if loc == 'home' %}selected{% endif %}>{{ loc | capitalize }}</option>
@@ -250,7 +250,7 @@
       {# ── Locale Updates ── #}
       <div class="card mb-3">
         <div class="card-header d-flex justify-content-between align-items-center">
-          <span class="fw-semibold">Locale Updates <span class="text-muted small fw-normal">(optional)</span></span>
+          <span class="fw-semibold">Location Updates <span class="text-muted small fw-normal">(optional)</span></span>
           <button type="button" class="btn btn-sm btn-outline-secondary" id="add-trip-btn">+ Add</button>
         </div>
         <div class="card-body">
@@ -292,7 +292,7 @@
         <input type="date" class="form-control form-control-sm trip-end">
       </div>
       <div class="col-md-2">
-        <label class="form-label small mb-1">Locale</label>
+        <label class="form-label small mb-1">Location</label>
         <select class="form-select form-select-sm trip-locale">
           {% for loc in locales %}
           <option value="{{ loc }}" {% if loc == 'hotel' %}selected{% endif %}>{{ loc | capitalize }}</option>
@@ -325,7 +325,7 @@
           <li>Applies your periodization structure, weekly layout, and rest day preferences</li>
           <li>Incorporates active injuries and substitution rules</li>
           <li>Uses your recent training history for progressive overload</li>
-          <li>Adapts workouts to locale equipment and indoor/outdoor constraints</li>
+          <li>Adapts workouts to location equipment and indoor/outdoor constraints</li>
           <li>Returns a complete plan with full exercise details, sets, reps, and calorie targets</li>
         </ul>
         <details class="small">
