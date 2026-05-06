@@ -23,10 +23,8 @@ from typing import Any
 
 def run_vocab_alignment(conn) -> dict[str, Any]:
     body_parts_canon = _load_canonical_set(conn, "layer0.body_parts", "canonical_name")
-    bridge_sports = _load_canonical_set(
-        conn, "layer0.sport_discipline_bridge", "exercise_db_sport"
-    )
-    bridge_framework_for = _load_bridge_framework_lookup(conn)
+    bridge_sports = _load_alias_exercise_sports(conn)
+    bridge_framework_for = _load_alias_framework_lookup(conn)
     sport_exercise_counts = _load_sport_exercise_counts(conn)
 
     # Check (a) — exercises × body_parts
@@ -162,4 +160,39 @@ def _suggest_candidates(
             "ratio": round(ratio, 2),
             "framework_sports": sorted(bridge_framework_for.get(candidate, [])),
         })
+    return out
+
+
+def _load_alias_exercise_sports(conn) -> set[str]:
+    """All exercise_db_sport values currently in the alias map (lowercased)."""
+    out: set[str] = set()
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT DISTINCT exercise_db_sport
+              FROM layer0.sport_name_aliases
+             WHERE superseded_at IS NULL
+            """
+        )
+        for (val,) in cur.fetchall():
+            if val:
+                out.add(val.strip().lower())
+    return out
+
+
+def _load_alias_framework_lookup(conn) -> dict[str, list[str]]:
+    """exercise_db_sport (lowercased) → list of framework_sport names,
+    sourced from the alias map."""
+    out: dict[str, list[str]] = {}
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT DISTINCT exercise_db_sport, framework_sport
+              FROM layer0.sport_name_aliases
+             WHERE superseded_at IS NULL
+            """
+        )
+        for ex_sport, framework in cur.fetchall():
+            key = ex_sport.strip().lower()
+            out.setdefault(key, []).append(framework)
     return out

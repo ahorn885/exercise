@@ -157,7 +157,7 @@ def _f(value: Any) -> float | None:
 def _t(value: Any) -> str | None:
     if value is None:
         return None
-    s = str(value).strip()
+    s = str(value).strip().replace("\n", " ")
     return s or None
 
 

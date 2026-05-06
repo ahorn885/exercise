@@ -263,3 +263,17 @@ CREATE TABLE IF NOT EXISTS layer0.sport_exercise_map (
   superseded_at       TIMESTAMPTZ,
   UNIQUE (exercise_id, sport_name, etl_version)
 );
+
+----------------------------------------------------------------------
+-- Sport name alias map (Open Item #5 resolution)
+----------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS layer0.sport_name_aliases (
+  id                SERIAL PRIMARY KEY,
+  exercise_db_sport TEXT NOT NULL,
+  framework_sport   TEXT NOT NULL,
+  etl_version       TEXT NOT NULL,
+  etl_run_at        TIMESTAMPTZ NOT NULL,
+  superseded_at     TIMESTAMPTZ,
+  UNIQUE (exercise_db_sport, framework_sport, etl_version)
+);

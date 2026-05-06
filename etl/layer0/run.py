@@ -15,6 +15,7 @@ from pathlib import Path
 from etl.layer0 import db
 from etl.layer0.db import insert_versioned, now_utc, to_jsonb
 from etl.layer0.extractors import exercise_db, sports_framework, vocabulary
+from etl.layer0.sport_name_aliases import SPORT_NAME_ALIASES, _ALL
 from etl.layer0.validation.report import build_report
 from etl.layer0.validation.sum_to_100 import run_sum_to_100
 from etl.layer0.validation.vocab_alignment import run_vocab_alignment
@@ -116,6 +117,29 @@ def main(argv: list[str] | None = None) -> int:
         )
         _print(f"layer0.sport_specific_gear_toggles: inserted {n} rows")
         summaries.append(f"layer0.sport_specific_gear_toggles: {n}")
+
+        # Alias map — curated vocabulary artifact, versioned under 0C
+        # Load framework sport names directly from xlsx (Sports Index sheet)
+        # so this block does not depend on Phase 2 having run first.
+        _wb_si = sports_framework.open_workbook(SPORTS_XLSX)["Sports Index"]
+        _all_fw = [
+            str(_wb_si.cell(row=r, column=1).value).strip().replace("\n", " ")
+            for r in range(2, _wb_si.max_row + 1)
+            if _wb_si.cell(row=r, column=1).value
+        ]
+        alias_rows = []
+        for ex_sport, targets in SPORT_NAME_ALIASES.items():
+            fw_list = _all_fw if targets == _ALL else targets
+            for fw in fw_list:
+                alias_rows.append((ex_sport, fw))
+        n = insert_versioned(
+            conn, "layer0.sport_name_aliases",
+            ["exercise_db_sport", "framework_sport"],
+            alias_rows,
+            v_0c, run_at, source_family="0C",
+        )
+        _print(f"layer0.sport_name_aliases: inserted {n} rows")
+        summaries.append(f"layer0.sport_name_aliases: {n}")
 
         # ----- Phase 2 — Sports framework (0A) -----
         _print("[layer0 ETL] Phase 2 — Sports Framework")
