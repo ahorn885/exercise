@@ -91,6 +91,15 @@ def delete_user(user_id):
     username = row['username']
     try:
         _delete_user_and_data(db, user_id)
+        # Audit the action in the same transaction as the delete — either
+        # both succeed or both roll back. actor_user_id captured before the
+        # commit so the FK reference is still valid.
+        db.execute(
+            'INSERT INTO admin_audit '
+            '(actor_user_id, action, target_user_id, target_username) '
+            'VALUES (?,?,?,?)',
+            (current_user_id(), 'delete_user', user_id, username)
+        )
         db.commit()
     except Exception as e:
         flash(f'Delete failed: {e}', 'danger')

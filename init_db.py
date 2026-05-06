@@ -1179,6 +1179,21 @@ _SQLITE_MIGRATIONS = [
         used_at TEXT
     )""",
     "CREATE INDEX IF NOT EXISTS password_resets_user_id_idx ON password_resets(user_id)",
+    # Admin action audit log. Written by routes/admin.py whenever the
+    # admin (user_id=1) takes a destructive action, so post-hoc we can
+    # answer "who deleted whom, and when?". actor_user_id can be NULL if
+    # the actor row was itself deleted later. target_user_id is plain
+    # INTEGER (no FK) so the row survives target deletion.
+    """CREATE TABLE IF NOT EXISTS admin_audit (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        actor_user_id INTEGER REFERENCES users(id),
+        action TEXT NOT NULL,
+        target_user_id INTEGER,
+        target_username TEXT,
+        details TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    )""",
+    "CREATE INDEX IF NOT EXISTS admin_audit_created_at_idx ON admin_audit(created_at DESC)",
 ]
 
 _PG_MIGRATIONS = [
@@ -1408,6 +1423,17 @@ _PG_MIGRATIONS = [
         used_at TIMESTAMP
     )""",
     "CREATE INDEX IF NOT EXISTS password_resets_user_id_idx ON password_resets(user_id)",
+    # Admin action audit log. See SQLite migration above for rationale.
+    """CREATE TABLE IF NOT EXISTS admin_audit (
+        id SERIAL PRIMARY KEY,
+        actor_user_id INTEGER REFERENCES users(id),
+        action TEXT NOT NULL,
+        target_user_id INTEGER,
+        target_username TEXT,
+        details TEXT,
+        created_at TIMESTAMP NOT NULL DEFAULT NOW()
+    )""",
+    "CREATE INDEX IF NOT EXISTS admin_audit_created_at_idx ON admin_audit(created_at DESC)",
 ]
 
 _CLOTHING_SEEDS = [
