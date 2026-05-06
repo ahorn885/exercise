@@ -1,4 +1,5 @@
-"""Authentication: login, logout, registration, first-user bootstrap.
+"""Authentication: login, logout, registration, first-user bootstrap,
+password reset.
 
 Session 1 of the multi-user retrofit. Domain queries are still unscoped —
 this layer only gates entry. Per-user scoping lands in Session 2.
@@ -9,12 +10,16 @@ bootstrap path is unconditional: when no users exist in the DB, the next
 request lands on the register page regardless.
 """
 import os
-from datetime import datetime
+import secrets
+from datetime import datetime, timedelta
 
 import bcrypt
 from flask import Blueprint, render_template, request, redirect, url_for, flash, session
 
 from database import get_db
+from email_helper import send_email, email_configured
+
+PASSWORD_RESET_TTL_MIN = 30
 
 bp = Blueprint('auth', __name__, url_prefix='/auth')
 
@@ -168,3 +173,114 @@ def register():
     return render_template('auth/register.html',
                            username='', email='', display_name='',
                            is_bootstrap=is_bootstrap)
+
+
+# ── Password reset ───────────────────────────────────────────────────────────
+
+@bp.route('/forgot', methods=['GET', 'POST'])
+def forgot():
+    """Request a password-reset email.
+
+    Always renders the same "if an account exists, an email is on its way"
+    response on POST so this endpoint can't be used to enumerate
+    registered email addresses. Real users see the link land in their
+    inbox; non-users see the same success message and nothing happens.
+    """
+    if request.method == 'POST':
+        email = (request.form.get('email') or '').strip().lower()
+        if email:
+            db = get_db()
+            row = db.execute(
+                'SELECT id, username, display_name FROM users WHERE LOWER(email) = ?',
+                (email,)
+            ).fetchone()
+            if row:
+                token = secrets.token_urlsafe(32)
+                now = datetime.utcnow()
+                expires = now + timedelta(minutes=PASSWORD_RESET_TTL_MIN)
+                db.execute(
+                    'INSERT INTO password_resets (token, user_id, expires_at) VALUES (?,?,?)',
+                    (token, row['id'], expires.isoformat(timespec='seconds'))
+                )
+                db.commit()
+                reset_url = url_for('auth.reset', token=token, _external=True)
+                _send_password_reset_email(email, row['display_name'] or row['username'],
+                                            reset_url)
+        flash('If an account exists for that email, a reset link is on its way. '
+              'Check your inbox (and spam folder). Links expire in '
+              f'{PASSWORD_RESET_TTL_MIN} minutes.', 'info')
+        return redirect(url_for('auth.login'))
+
+    return render_template('auth/forgot.html',
+                           email_configured=email_configured())
+
+
+@bp.route('/reset/<token>', methods=['GET', 'POST'])
+def reset(token):
+    """Complete a password reset with a single-use, time-limited token."""
+    db = get_db()
+    row = db.execute(
+        'SELECT pr.token, pr.user_id, pr.expires_at, pr.used_at, '
+        '       u.username, u.display_name '
+        '  FROM password_resets pr '
+        '  JOIN users u ON u.id = pr.user_id '
+        ' WHERE pr.token = ?',
+        (token,)
+    ).fetchone()
+    if not row or row['used_at']:
+        return render_template('auth/reset.html', token=None,
+                               error='This reset link is invalid or has already been used.')
+    expires_at = row['expires_at']
+    expires_dt = (expires_at if isinstance(expires_at, datetime)
+                  else datetime.fromisoformat(str(expires_at)))
+    if expires_dt < datetime.utcnow():
+        return render_template('auth/reset.html', token=None,
+                               error=f'This reset link has expired. Request a new one from /auth/forgot.')
+
+    if request.method == 'POST':
+        password = request.form.get('password') or ''
+        confirm = request.form.get('confirm') or ''
+        if len(password) < 8:
+            flash('Password must be at least 8 characters.', 'danger')
+            return render_template('auth/reset.html', token=token, error=None)
+        if password != confirm:
+            flash('Passwords do not match.', 'danger')
+            return render_template('auth/reset.html', token=token, error=None)
+
+        db.execute('UPDATE users SET password_hash = ? WHERE id = ?',
+                   (_hash_password(password), row['user_id']))
+        db.execute('UPDATE password_resets SET used_at = ? WHERE token = ?',
+                   (datetime.utcnow().isoformat(timespec='seconds'), token))
+        db.commit()
+        # Clear any active session — the user can sign back in with the new
+        # password. Defends against an attacker who hijacked a session via
+        # a leaked cookie still being authenticated after the reset.
+        session.clear()
+        flash('Password updated. Sign in with your new password.', 'success')
+        return redirect(url_for('auth.login'))
+
+    return render_template('auth/reset.html', token=token, error=None,
+                           username=row['username'])
+
+
+def _send_password_reset_email(to_address: str, display_name: str, reset_url: str) -> None:
+    subject = 'AIDSTATION — password reset'
+    text = (
+        f'Hi {display_name},\n\n'
+        f'Use this link to set a new AIDSTATION password:\n\n'
+        f'  {reset_url}\n\n'
+        f'The link expires in {PASSWORD_RESET_TTL_MIN} minutes and can only '
+        f'be used once. If you didn\'t request a reset, you can ignore this '
+        f'email — your account is unchanged.\n\n'
+        f'— AIDSTATION\n'
+    )
+    html = f"""<!doctype html>
+<html><body style="font-family:system-ui,-apple-system,sans-serif;line-height:1.5;color:#0E0F11;">
+<p>Hi {display_name},</p>
+<p>Use this link to set a new AIDSTATION password:</p>
+<p><a href="{reset_url}" style="display:inline-block;padding:10px 18px;background:#ED7A2D;color:#fff;text-decoration:none;border-radius:4px;">Set a new password</a></p>
+<p style="font-size:12px;color:#666;">Or paste this into your browser:<br><span style="font-family:ui-monospace,monospace;word-break:break-all;">{reset_url}</span></p>
+<p style="font-size:12px;color:#666;">The link expires in {PASSWORD_RESET_TTL_MIN} minutes and can only be used once. If you didn't request a reset, you can ignore this email — your account is unchanged.</p>
+<p style="font-size:12px;color:#666;">— AIDSTATION</p>
+</body></html>"""
+    send_email(to_address, subject, text, html)

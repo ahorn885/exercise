@@ -1170,6 +1170,15 @@ _SQLITE_MIGRATIONS = [
         updated_at TEXT DEFAULT (datetime('now')),
         PRIMARY KEY (user_id, purchase_id)
     )""",
+    # Session 6 — password reset tokens. Single-use, time-limited.
+    """CREATE TABLE IF NOT EXISTS password_resets (
+        token TEXT PRIMARY KEY,
+        user_id INTEGER NOT NULL REFERENCES users(id),
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        expires_at TEXT NOT NULL,
+        used_at TEXT
+    )""",
+    "CREATE INDEX IF NOT EXISTS password_resets_user_id_idx ON password_resets(user_id)",
 ]
 
 _PG_MIGRATIONS = [
@@ -1390,6 +1399,15 @@ _PG_MIGRATIONS = [
         updated_at TIMESTAMP DEFAULT NOW(),
         PRIMARY KEY (user_id, purchase_id)
     )""",
+    # Session 6 — password reset tokens. Single-use, time-limited.
+    """CREATE TABLE IF NOT EXISTS password_resets (
+        token TEXT PRIMARY KEY,
+        user_id INTEGER NOT NULL REFERENCES users(id),
+        created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        expires_at TIMESTAMP NOT NULL,
+        used_at TIMESTAMP
+    )""",
+    "CREATE INDEX IF NOT EXISTS password_resets_user_id_idx ON password_resets(user_id)",
 ]
 
 _CLOTHING_SEEDS = [

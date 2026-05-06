@@ -94,6 +94,8 @@ _AUTH_EXEMPT_ENDPOINTS = {
     'auth.login',
     'auth.logout',
     'auth.register',
+    'auth.forgot',
+    'auth.reset',
 }
 
 
