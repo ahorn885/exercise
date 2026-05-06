@@ -1,47 +1,63 @@
 # AIDSTATION — Session Handoff
 
 **Date:** 2026-05-06
-**Last commit on `main`:** `0f6bb36` (DATABASE.md merge). The branch
-`claude/csp-nonces` (PR #17, head `29bcae5`) is the tip of this
-session's security stack. Stack base is the previous handoff merge
-`aebb6b1`. Seven PRs on this stack, intended to merge in order.
+**Last commit on `main`:** `fc961eb` (rx_engine_spec.md merge, PR #19).
+The previous handoff (`24f52c4`, PR #18) merged in the same session;
+this refresh captures everything that's now live on main, including
+the new spec doc.
 
-**This session in one line:** the entire 10-item security backlog
-from the previous handoff shipped as seven stacked PRs (#11–#17).
+**Two-line summary:**
+1. The 10-item security backlog from the prior handoff shipped as
+   PRs #11–#17, and all eight session PRs (#11–#18) merged.
+2. A v2 rebuild of the app is on the horizon — schema, routes, and
+   most code will be thrown out. To preserve the one piece of earned
+   domain knowledge, `rx_engine_spec.md` (PR #19) was written as a
+   standalone, language-agnostic spec for the strength progression
+   algorithm.
 
 **Deploy state:**
-- ✅ Vercel: still on `0f6bb36` until the security stack merges. Once
-  it does, all seven preview deploys are already verified green
-  (Vercel build success on each).
-- ✅ TrueNAS: same — Watchtower will pull on push to `main`.
+- ✅ Vercel: now on `fc961eb` post-merge. Neon Postgres backed.
+- ✅ TrueNAS: Watchtower auto-pulls on every push to `main`. Should
+  catch up within ~5 min of the most recent merge.
 
-**Next focus (per Andy):** open question. Security is closed. Suggest
-**HANDOFF.md → DATABASE.md sync** (this doc reflects new schema; the
-DATABASE.md table catalog is now a session behind), and then either
-the multi-day wellness chart from the original code backlog, or
-content work on `init_db.py:PURCHASE_RECOMMENDATIONS`.
+**Next focus (per Andy):** **v2 rebuild scoping.** Security and the
+algorithm spec are both done. The current app is in maintenance mode
+unless something live breaks. Suggested order: kick off the v2
+rebuild plan, do the post-merge live smoke checks below, and roll
+the small remaining items into v2 rather than retrofitting v1.
 
 ---
 
-## ⚠️ Database changes this session
+## ⚠️ Pre-rebuild reading order
 
-Two new tables and one altered cascade chain. Both schemas (SQLite
-and Postgres) ship the additions; the migrations are
-idempotent (`CREATE TABLE IF NOT EXISTS`) so existing deploys pick
-them up on next cold start.
+The v2 rebuild has three pieces of canonical context. Read in this
+order:
 
-### New: `admin_audit` (PR #12)
+1. **`HANDOFF.md`** (this doc) — operational state, what's live, what's
+   parked.
+2. **`DATABASE.md`** (~1050 lines) — schema reference. **Caveat:** it
+   pre-dates the two new tables added in this session (`admin_audit`
+   and `api_tokens`); see "Database state" below for canonical
+   definitions until the doc gets a sync.
+3. **`rx_engine_spec.md`** (NEW this session, ~900 lines) — the
+   strength progression algorithm. This is the only piece of domain
+   knowledge worth preserving verbatim into v2; everything else is
+   reasonable to redesign.
 
-Append-only log of admin actions. Currently written from
-`routes/admin.delete_user`, captured in the same transaction as the
-delete so the audit trail and the deletion succeed/fail together.
+---
+
+## ⚠️ Database state on `main`
+
+35 tables total. Two added this session:
+
+### `admin_audit` (PR #12, merged `5f834f4`)
 
 ```
 admin_audit
   id              INTEGER / SERIAL  PK
   actor_user_id   INTEGER          REFERENCES users(id) — NULL if actor was later deleted
   action          TEXT             e.g. 'delete_user'
-  target_user_id  INTEGER          plain INT (no FK) so row survives target deletion
+  target_user_id  INTEGER          plain INT (no FK) so the row survives target deletion
   target_username TEXT             snapshotted at delete time
   details         TEXT             optional JSON / freetext payload
   created_at      TIMESTAMP        default NOW() / datetime('now')
@@ -49,14 +65,14 @@ admin_audit
   INDEX admin_audit_created_at_idx ON admin_audit(created_at DESC)
 ```
 
-**Convention:** any new admin route that mutates state should write a
-row here with a fresh `action` string. Read access through a future
-`/admin/audit` view; not built yet.
+Currently written from `routes/admin.delete_user` in the same
+transaction as the cascade-delete. **Convention:** any new admin
+mutation should add a row with a fresh `action` string. **Don't add
+the FK** to `target_user_id` — the row's whole point is to survive
+target deletion. Audit rows are intentionally **not** in
+`_delete_user_and_data`'s cascade chain.
 
-### New: `api_tokens` (PR #15)
-
-Per-user bearer tokens for headless access to `/coaching/api/*`
-(currently `/coaching/api/generate` and `/coaching/api/review`).
+### `api_tokens` (PR #15, merged `83df664`)
 
 ```
 api_tokens
@@ -71,133 +87,89 @@ api_tokens
   INDEX api_tokens_user_id_idx ON api_tokens(user_id)
 ```
 
-**Storage convention:** plaintext is shown to the user **once** at
+**Hashing convention:** plaintext is shown to the user **once** at
 creation (passed through one-shot `flask_session['new_api_token_plaintext']`)
 and never persisted. We store SHA-256 of `aid_<base64url(32)>`.
 SHA-256 (not bcrypt) is fine — tokens are 32 bytes of cryptographic
-random, no brute-force surface. Verification: SHA-256 the inbound
+random, no brute-force surface. Verification = SHA-256 the inbound
 header value, look up by `token_hash`, check `revoked_at IS NULL`.
 
-### Updated cascade-delete chain (PR #15)
+**Cascade-delete:** `routes/admin._delete_user_and_data` picks up
+`api_tokens` before `users` (added in PR #15). Any new user-scoped
+table added in v2 (or a follow-on retrofit) **must** be added to
+this chain.
 
-`routes/admin._delete_user_and_data` picks up `api_tokens` before
-`users`. Other tables unchanged. New tables added in this session
-(`api_tokens`) **must** also be added to this chain — `admin_audit`
-intentionally is **not** in the chain because we want the audit row
-to survive admin deletion (target_user_id is FK-less for the same
-reason).
+### `DATABASE.md` ↔ code drift to sync
 
-### What didn't change in the schema
+Two minor inaccuracies in `DATABASE.md` flagged by `rx_engine_spec.md`
+during the audit. **Code is the source of truth.**
 
-No column additions, no index changes on existing tables, no new
-constraints, no data migrations. `password_resets` (the previous
-session's addition) is unchanged. The new tables add ~6 KB to the
-schema and zero ongoing cost until they're written to.
+- `training_log.outcome` literally holds `'PROGRESS ↑'`, `'REPEAT →'`,
+  `'REDUCE ↓'` (arrows are part of the value), or `NULL` on
+  bootstrap-mode imports. `DATABASE.md` paraphrases as
+  `{PROGRESS, REPEAT, FAIL}` — incorrect.
+- NLP entries (`routes/natural_log.py:/log-natural/save`) **do not**
+  flow through `rx_engine.apply_session_outcome`. They insert
+  `training_log` / `training_log_sets` directly with
+  `outcome=NULL` and don't update `current_rx`. `DATABASE.md`
+  states the opposite.
+
+Worth a short doc-only sync PR before the v2 rebuild starts, or
+fold into v2's fresh schema doc.
 
 ---
 
 ## What shipped this session
 
-Seven PRs on the security stack:
+Nine PRs merged on top of `aebb6b1` (the prior handoff merge).
 
-**`a379a8e` — PR #11 — Security pass: SECRET_KEY, CSRF, rate limits,
-cookie hardening.**
-- `SECRET_KEY` is now mandatory: `app.py` raises `RuntimeError` on
-  boot if unset (no more `'ar-training-2026'` default). Both deploys
-  already have it set.
-- Flask-WTF `CSRFProtect` on every state-changing form. `<meta
-  name="csrf-token">` in `base.html` + `auth/_shell.html`; hidden
-  `csrf_token` input added to all 34 form templates. `static/app.js`
-  wraps `fetch` to inject `X-CSRFToken` on same-origin
-  POST/PUT/PATCH/DELETE.
-- Flask-Limiter on the auth blueprint:
-  - `/auth/login` — 10 / 5 min
-  - `/auth/register` — 10 / hour
-  - `/auth/forgot` — 5 / 15 min
-  - `/auth/reset` — 10 / 15 min
-  In-process memory store; swap in Redis via `RATELIMIT_STORAGE_URI`
-  if scaling out.
-- `SESSION_COOKIE_HTTPONLY=True`, `SESSION_COOKIE_SAMESITE='Lax'`.
-  `SESSION_COOKIE_SECURE` defaults on when `DATABASE_URL` is set
-  (proxy for the HTTPS-fronted Vercel deploy). Override via env var.
+### Security stack — PRs #11 through #17
 
-**`c4c3ff7` — PR #12 — Easy security headers + admin audit + FIT
-filename sanitization.**
-- `after_request` hook on every response:
-  `X-Content-Type-Options=nosniff`, `X-Frame-Options=DENY`,
-  `Referrer-Policy=strict-origin-when-cross-origin`,
-  `Permissions-Policy` revoking geolocation/mic/camera/payment/usb.
-  Set with `setdefault` so a route can still override.
-- `admin_audit` table (see DB section above) + write on
-  `delete_user`.
-- `werkzeug.secure_filename` applied at every `request.files` read in
-  `routes/garmin` (`debug_fit`, `import_fit`, `import_wellness`).
+| PR | Merge | Title |
+| :---: | :---: | :--- |
+| #11 | `d503dc0` | Security pass: SECRET_KEY required, CSRF, rate limits, cookie hardening |
+| #12 | `5f834f4` | Easy headers, admin audit log, FIT filename sanitization |
+| #13 | `45817d9` | Password policy: enforce zxcvbn score ≥ 3 |
+| #14 | `fe1761e` | CSP baseline (with `unsafe-inline` initially) |
+| #15 | `83df664` | API tokens: bearer auth on `/coaching/api/*` |
+| #16 | `e626f65` | `SECRET_KEY_FALLBACK` env var for graceful key rotation |
+| #17 | `0ea755d` | CSP nonces: drop `'unsafe-inline'` from script-src |
 
-**`b25c8a6` — PR #13 — Password strength via zxcvbn.**
-- `MIN_PASSWORD_SCORE = 3` (zxcvbn 0–4, "safely unguessable") on
-  `/auth/register`, `/auth/reset`, and `/profile/password`.
-- Username, email, and display name fed in as `user_inputs` so
-  passwords incorporating the user's identifiers get penalized.
-- zxcvbn's `feedback.warning` and `feedback.suggestions` surfaced via
-  `flash()` so rejected users get useful guidance.
-- Keeps the 8-char short-circuit lower bound as a fast-path.
-- New dep: `zxcvbn>=4.4.28`.
+The previous handoff (PR #18, merge `24f52c4`) covers each PR's
+detail in full — what code changed, the rationale, the operator
+notes. That doc is preserved at the previous commit if you need to
+diff back; this handoff is the current snapshot.
 
-**`780fe18` — PR #14 — Content-Security-Policy baseline (with
-`'unsafe-inline'` initially).**
-- Wires CSP into the same `after_request` hook. Operator escape
-  hatch: `CSP_REPORT_ONLY=1` flips to
-  `Content-Security-Policy-Report-Only`.
-- Even with `'unsafe-inline'` on script-src/style-src, the rest of
-  the directives close real exfiltration vectors (connect-src,
-  img-src, form-action, frame-ancestors, base-uri, object-src,
-  upgrade-insecure-requests on HTTPS).
-- *Superseded by PR #17 for `script-src` — see below.*
+### `rx_engine_spec.md` — PR #19, merge `fc961eb`
 
-**`721b770` — PR #15 — API tokens / bearer auth on `/coaching/api/*`.**
-- New `api_tokens` table (see DB section).
-- `app._require_login` tries `Authorization: Bearer <token>` before
-  the session, short-circuits the gate on a hit, and updates
-  `last_used_at` on every successful verify.
-- `current_user_id()` reads `g.api_user_id` first, so token-authed
-  callers see the same per-user scoping as session-authed ones.
-- `/coaching/api/generate` and `/coaching/api/review` exempted from
-  CSRFProtect — bearer auth isn't reachable from a cross-origin
-  form.
-- New "API access" tab on `/profile` for token CRUD; plaintext shown
-  once on creation via a one-shot `flask_session` value.
+~900-line standalone spec for the strength-training progression
+algorithm. Written from the brief: "produce a single markdown file
+that documents the algorithm completely enough for a developer to
+reimplement it from scratch in a different language without reading
+the existing Python."
 
-**`7eace11` — PR #16 — `SECRET_KEY_FALLBACK` env var for graceful
-rotation.**
-- Reads `SECRET_KEY_FALLBACK` (comma-separated for multi-step
-  rotations) from env and stashes the parsed list on
-  `app.config['SECRET_KEY_FALLBACKS']`. Flask 2.3+ verifies cookies
-  against any fallback; signs new ones with `SECRET_KEY`.
-- Operator workflow:
-  1. Set `SECRET_KEY=<new>` and `SECRET_KEY_FALLBACK=<old>`.
-     Redeploy. Existing sessions stay valid.
-  2. After drain window (24h or whatever), drop
-     `SECRET_KEY_FALLBACK` and redeploy. Old cookies invalid.
+Sections covered:
+1. Inputs / outputs of `apply_session_outcome`.
+2. Outcome computation (`PROGRESS ↑` / `REPEAT →` / `REDUCE ↓`,
+   the 0.75 volume threshold).
+3. Family A vs Family B + the full `PROGRESSION_RULES` table.
+4. The 2× kicker on significance (1.10 multiplier, ≥ 2 sets).
+5. Family-B baseline promotion (`min(over-target)` over ≥ 2 sets).
+6. Counter logic — including the explicit REPEAT-resets-failures
+   rule.
+7. Deload trigger and baseline (`compute_deload_baseline`).
+8. Next-session projection (`calculate_next_rx` with kicker vs
+   `project_next_from_current` without).
+9. Per-set storage and aggregation up to `training_log`.
+10. UPSERT semantics on `(user_id, exercise)`.
+11. Bootstrap mode (FIT import / first-time exercise).
+12. Edge cases (11 sub-sections).
 
-**`29bcae5` — PR #17 — CSP nonces: drop `'unsafe-inline'` from
-script-src.**
-- `script-src 'self' 'nonce-<per-request>' https://cdn.jsdelivr.net`.
-  Every inline `<script>` block in templates renders
-  `nonce="{{ csp_nonce() }}"`; the `before_request` hook generates a
-  fresh 16-byte base64url nonce per request.
-- 33 inline event handlers (`onclick`, `onsubmit`, `onchange`)
-  refactored across 22 templates:
-  - 17× `onsubmit/onclick="return confirm('...')"` → `data-confirm="..."`
-    with a delegated handler in `static/app.js`.
-  - `onchange="this.form.submit()"` → `data-autosubmit` (also
-    delegated).
-  - Function-call handlers → `addEventListener` inside the
-    template's existing nonce'd `<script>` block.
-  - `training/session_form` had `onclick=...` injected via
-    `innerHTML` template literal — those don't inherit the page
-    nonce; rewrote to `data-exercise` + class-based delegation.
-- `style-src` keeps `'unsafe-inline'` (inline `style="..."` is
-  pervasive; refactor is its own session).
+Plus a constants at-a-glance table, an ASCII flow diagram, and an
+**"Open items flagged for the rebuild"** section calling out the
+five rules whose rationale isn't captured in code comments
+(REPEAT-resets-failures, regression-vs-progression dimension
+priority, NLP bypass, FIT-without-targets, no concurrency control).
 
 ---
 
@@ -205,25 +177,33 @@ script-src.**
 
 ### Tabled — pending operator action
 
-**SendGrid setup** *(unchanged from previous handoff)* — PR #8
-shipped the email helper + password reset code; live deploy still
+**SendGrid setup** *(unchanged from the previous two handoffs)*. PR
+#8 shipped the email helper + password reset code; live deploy still
 logs reset links to stdout. Same setup steps:
 
 1. sendgrid.com (free tier: 100/day).
 2. Verify a sender.
 3. Restricted-Access API key, Mail Send → Full Access.
-4. `SENDGRID_API_KEY=...`, `EMAIL_FROM_ADDRESS=...` (and optionally
-   `EMAIL_FROM_NAME`).
+4. Set on Vercel + TrueNAS env: `SENDGRID_API_KEY`,
+   `EMAIL_FROM_ADDRESS` (and optionally `EMAIL_FROM_NAME`).
 5. Vercel: redeploy. TrueNAS: `cd /mnt/storage/exercise && docker
    compose up -d`.
 
 Until configured, password-reset is functionally unavailable to
-anyone without shell access to the function logs.
+anyone without shell access to the function logs. **If the v2
+rebuild lands first, fold this into v2's email layer rather than
+configuring v1.**
 
-### Optional spot-checks on the live site after the security stack lands
+### Optional spot-checks on the post-merge live site
 
-- Sign in / sign out: confirm the Sign-out form still works (CSRF
-  hidden input added in PR #11).
+These were listed in PR #18's body and are still the right post-deploy
+sanity checks:
+
+- Sign in / sign out: confirm the Sign-out form still works (the
+  CSRF hidden input added in PR #11).
+- Browser devtools console on every section after the CSP-nonces
+  merge: should be **zero CSP violations**. If any fire, set
+  `CSP_REPORT_ONLY=1` while debugging.
 - `/admin/`: delete a throwaway user, then `SELECT * FROM admin_audit
   ORDER BY id DESC LIMIT 1` — confirm a row landed with
   `actor_user_id=1`, `action='delete_user'`.
@@ -231,50 +211,65 @@ anyone without shell access to the function logs.
   is shown exactly once and is empty after page reload.
 - `curl -X POST .../coaching/api/generate -H "Authorization: Bearer aid_..."`
   with the new token — confirm the plan generates.
-- Browser devtools console on every section: should be **zero CSP
-  violations**. If any fire, set `CSP_REPORT_ONLY=1` while
-  debugging.
 - Try a deliberately weak password on `/profile/password` (e.g.
   `password`) — should get rejected with the zxcvbn warning string.
-- Auth rate-limiting: deliberately mistype the login password 11
-  times — should get a 429 on the 11th.
+- Auth rate-limit: deliberately mistype the login password 11 times —
+  should get a 429 on the 11th.
 
 ---
 
 ## What's currently live
 
-All shipped from the multi-user retrofit (Sessions 0–4) plus the
-previous session's coaching/admin/email work, plus this session's
-security stack:
+Everything from prior handoffs plus this session's security stack
+(PRs #11–#17), all on `main` as of `fc961eb`:
 
-- Multi-user auth, bcrypt, per-request user-row hydration.
-- Per-user data isolation across 25+ scoped tables. Composite
-  UNIQUEs for UPSERT idempotency.
-- Strength training pipeline (`rx_engine.apply_session_outcome`),
-  cardio log, conditions log, plans + auto-match, coaching with
-  prompt cache, Garmin Connect import.
-- Admin dashboard + cascade-delete + (post-merge) audit log.
-- Password reset flow (email-blocked).
-- Recommended-purchases catalog, locations, athlete profile.
-- **Security baseline (post-merge of this session's stack):**
-  mandatory `SECRET_KEY` with rotation drain, CSRF on every form,
-  rate limits on auth, hardened session cookies, defensive HTTP
-  headers, CSP with nonces (no `'unsafe-inline'` on script-src),
-  zxcvbn password policy, secure_filename on uploads, admin audit
-  log, per-user API tokens for `/coaching/api/*`.
+- **Multi-user** auth, bcrypt, per-request user-row hydration. 35
+  scoped tables; composite UNIQUEs for UPSERT idempotency.
+- **Strength training pipeline:** `rx_engine.apply_session_outcome`
+  as single source of truth, Family-A 2× kicker on significance,
+  Family-B baseline promotion, per-set storage in
+  `training_log_sets`, deload on `consecutive_failures` plateau.
+  **Spec:** `rx_engine_spec.md`.
+- **Cardio log** (Garmin metric set, server-side `avg_pace`
+  derivation).
+- **Conditions log** with weather + 11 clothing categories.
+- **Plans + plan items + auto-match** (`plan_match.find_best_match`,
+  -3/+2 day window), four-option resolve UI.
+- **Coaching:** sport-adaptive system prompt, prompt-cached
+  system + 5m-cached context, Haiku-extracted feedback.
+- **Garmin Connect** OAuth + activity / wellness FIT import.
+- **Athlete profile** (`/profile`) — three tabs, change-password,
+  plus a fourth **API access** tab as of PR #15.
+- **Admin dashboard** for cascade-delete user, plus `admin_audit`
+  trail since PR #12.
+- **Password reset** flow (still SendGrid-blocked).
+- **Recommended-purchases catalog** + per-user state.
+- **Locations** (`/locales` URL, "Location" UI).
+- **Per-user API tokens** (`api_tokens`) for headless access to
+  `/coaching/api/*`.
+- **Security baseline (NEW):** mandatory `SECRET_KEY` with rotation
+  drain, CSRF on every form, rate limits on auth, hardened session
+  cookies, defensive HTTP headers (X-Content-Type-Options,
+  X-Frame-Options, Referrer-Policy, Permissions-Policy), CSP with
+  per-request nonces (no `'unsafe-inline'` on `script-src`), zxcvbn
+  password policy, `secure_filename` on uploads, admin audit log.
 
 ---
 
 ## Code backlog
 
-### Security tail (small, optional)
+### v1 maintenance (pick up only if v2 doesn't ship soon)
 
+- **`DATABASE.md` sync.** Add `admin_audit` and `api_tokens` to the
+  table catalog; correct the `outcome`-string and NLP-bypass entries
+  (see "DATABASE.md ↔ code drift" above). 30-min doc-only PR.
 - **CSP `style-src` nonces.** Drop `'unsafe-inline'` from style-src.
-  Touches every template with an inline `style="..."` attribute and
-  is its own session. Lower priority than scripts because the XSS
-  surface for inline styles is narrower.
+  Touches every template with an inline `style="..."` attribute,
+  several hundred occurrences. Lower priority than the script-src
+  pass that already shipped — XSS surface for inline styles is
+  narrower.
 - **Token expiry on `api_tokens`.** Currently no `expires_at`
-  enforcement; revocation is the only way to invalidate. Add
+  enforcement; revocation is the only invalidation path. Add
   optional TTL on creation if desired.
 - **`/admin/audit` view.** Write-only today; build a read view when
   the log accumulates anything interesting.
@@ -282,190 +277,222 @@ security stack:
 ### Standalone, no dependencies
 
 - **Multi-day wellness chart** on `/garmin/wellness` (~2h, top of the
-  original backlog). Still tabled.
+  original code backlog). Still tabled.
 - **Purchases catalog curation** in `init_db.py:PURCHASE_RECOMMENDATIONS`.
   Iterative content work.
 
 ### Dependent on SendGrid
 
-- **Email invites flow.** Admin form → invite token → emailed
+- **Email invites flow** — admin form → invite token → emailed
   registration link bypassing `ALLOW_REGISTRATION=0`.
-- **Email verification on signup.**
-- **Password reset is functionally tabled until SendGrid is live.**
+- **Email verification** on signup.
+- **Password reset is functionally tabled** until SendGrid is live.
 
 ### Parked
 
 - **Garmin per-user OAuth.** `garmin_auth` rows scoped per-user but
   `/tmp/garth_session` file caching is process-shared.
 - **MFA (TOTP).** `pyotp` + setup on `/profile`.
-- **Passkeys / WebAuthn.** Andy's preference; deferred for the
-  WebAuthn flow complexity.
-- **BYOK Anthropic API key.** Per-user override of the shared key.
-- **Custom user-authored exercises.** Migrate `exercise_inventory`
-  to nullable `user_id`.
-- **SMS / WhatsApp invites.** Twilio is ~$1.15/mo + ~$0.008/msg.
-  WhatsApp needs Meta Business API approval.
+- **Passkeys / WebAuthn.**
+- **BYOK Anthropic API key** per-user.
+- **Custom user-authored exercises** (`exercise_inventory.user_id`
+  nullable).
+- **SMS / WhatsApp invites.**
+
+### Expected to be redesigned in v2
+
+- The whole stack. Per the v2 brief: "schema, routes, and most code
+  will be thrown out." The one thing to preserve verbatim is the
+  progression algorithm, captured in `rx_engine_spec.md`.
 
 ---
 
 ## Carry-forward issues to watch
 
+These are invariants v1 still expects. If v2 reuses any of this code,
+they apply; if v2 rewrites from scratch, they're informational.
+
 1. **`RETURNING id` is the pattern.** Every INSERT whose new id is
    read back uses `RETURNING id`; `_CompatCursor.lastrowid`
-   `fetchone()`s to surface it on Postgres.
+   `fetchone()`s to surface it on Postgres. SQLite's native
+   `lastrowid` ignores the unread RETURNING row, so the same SQL
+   works on both backends.
 
 2. **Auth gate hydrates the user row.** `app.py:_require_login` does
    one `users` SELECT per authed request and stashes on
-   `g.current_user_row`. ⚠ **Updated this session:** the gate now
-   tries `Authorization: Bearer <token>` first; on a hit it sets
-   `g.api_user_id` and `g.api_authed = True` so `current_user_id()`
-   resolves the same way as a session-authed request. New routes
-   that need to know "session vs token" can read `g.api_authed`.
+   `g.current_user_row`. Bearer tokens are tried before the session
+   cookie; on a hit the gate sets `g.api_user_id` and
+   `g.api_authed = True` so `current_user_id()` resolves the same
+   way as a session-authed request.
 
-3. **`/coaching/api/*` endpoints accept bearer tokens now.** No more
-   cookie-jar dance for external tooling.
+3. **`/coaching/api/*` accepts bearer tokens.** No more cookie-jar
+   dance for external tooling. CSRF is exempted on those two
+   endpoints (`api_generate`, `api_review`); CSRF still required
+   on every other state-changing form.
 
-4. **Brand CSS overrides Bootstrap aggressively.** Unchanged.
-
-5. **`INSERT OR IGNORE`, `INSERT OR REPLACE`, and `datetime('now')`
+4. **`INSERT OR IGNORE`, `INSERT OR REPLACE`, and `datetime('now')`
    are SQLite-only.** Use `ON CONFLICT … DO NOTHING/UPDATE` and
-   `CURRENT_TIMESTAMP` / `NOW()` instead. Unchanged.
+   `CURRENT_TIMESTAMP` / `NOW()` instead.
 
-6. **Postgres `TIMESTAMP` columns return `datetime`; SQLite's are
-   TEXT.** Wrap `[:10]`-slicing with `|string`. Unchanged.
+5. **Postgres `TIMESTAMP` columns return `datetime`; SQLite's are
+   TEXT.** Wrap `[:10]`-slicing with `|string` in templates.
 
-7. **SendGrid not configured yet.** Same status as previous handoff.
+6. **Brand CSS overrides Bootstrap aggressively.** `.navbar` is
+   forced to `var(--ink) !important`, `--bs-navbar-toggler-icon-bg`
+   is set explicitly, `body` clips `overflow-x` to defend against
+   horizontal-overflow trapping the toggler off-canvas.
 
-8. **`SECRET_KEY` is now required.** ✅ Done. Rotation has a drain
-   mechanism via `SECRET_KEY_FALLBACK` (PR #16).
+7. **`SECRET_KEY` is required at boot.** App raises `RuntimeError`
+   if unset. Rotation has a graceful drain via
+   `SECRET_KEY_FALLBACK` (comma-separated for multi-step rotations).
 
-9. **CSP is enforced and uses nonces.** ⚠ **New:** any new template
-   that inlines `<script>` content **must** render
+8. **CSP enforces nonces on `<script>`.** Any new template that
+   inlines a `<script>` block **must** render
    `nonce="{{ csp_nonce() }}"` on the tag. Inline event handlers
    (`onclick`, `onsubmit`, `onchange`, etc.) are blocked — use
    `addEventListener` from inside a nonce'd `<script>`, or one of
    the delegated patterns in `static/app.js`:
    - `<form data-confirm="...">` for submit-time prompts.
-   - `<button data-confirm="...">` / `<a data-confirm="...">` for
-     click-time prompts.
-   - `<input data-autosubmit>` / `<select data-autosubmit>` to
-     submit the enclosing form on change.
+   - `<button|a data-confirm="...">` for click-time prompts.
+   - `<input|select data-autosubmit>` to submit the enclosing form
+     on change.
    Inline handlers injected via `innerHTML` template literals (see
    `training/session_form.html`) similarly do **not** inherit the
    page nonce; wire them with `addEventListener` after the
    `innerHTML =` assignment.
 
-10. **CSRF tokens on every state-changing form.** ⚠ **New:** every
-    `<form method="post">` template needs
-    `<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">`.
-    JS `fetch` POSTs to same-origin pick up `X-CSRFToken` from the
-    `<meta name="csrf-token">` automatically via the `static/app.js`
-    wrapper.
+9. **CSRF tokens on every state-changing form.** Every
+   `<form method="post">` template needs
+   `<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">`.
+   JS `fetch` POSTs to same-origin pick up `X-CSRFToken` from the
+   `<meta name="csrf-token">` automatically via the `static/app.js`
+   wrapper.
 
-11. **Rate limits on auth endpoints.** ⚠ **New:** `/auth/login`
-    (10/5min), `/auth/register` (10/hr), `/auth/forgot` (5/15min),
-    `/auth/reset` (10/15min). Returns 429 once the budget's gone.
-    Configured via `@_limit('...')` decorator in `routes/auth.py`;
-    swap the storage backend with `RATELIMIT_STORAGE_URI`.
+10. **Rate limits on auth endpoints.** `/auth/login` 10/5min,
+    `/auth/register` 10/hr, `/auth/forgot` 5/15min, `/auth/reset`
+    10/15min. Returns 429 once the budget's gone.
 
-12. **`api_tokens` are SHA-256, not bcrypt.** Tokens are 32 bytes of
+11. **`api_tokens` are SHA-256, not bcrypt.** Tokens are 32 bytes of
     crypto random — no brute-force surface, no need for slow
     hashing. Plaintext is shown once, then the user copies it.
-    Don't change this to bcrypt; it would break verification (which
+    Don't switch to bcrypt; it would break verification (which
     needs a deterministic hash for lookup).
 
-13. **`admin_audit` rows survive target deletion.** `target_user_id`
-    is FK-less (plain INTEGER) by design. Don't add the FK.
+12. **`admin_audit.target_user_id` is FK-less by design.** Don't
+    add the FK; the row's job is to outlive the target.
+
+13. **rx_engine outcome strings include arrows.** `'PROGRESS ↑'`,
+    `'REPEAT →'`, `'REDUCE ↓'`. Or `NULL` on bootstrap-mode FIT
+    imports. See `rx_engine_spec.md` §1.4.
+
+14. **NLP entries bypass `rx_engine`.** `routes/natural_log.py`
+    inserts `training_log` / `training_log_sets` directly without
+    calling `apply_session_outcome`. Outcome is `NULL`; `current_rx`
+    is not updated. Documented in `rx_engine_spec.md` §12.7 as an
+    open item — possibly intentional (NLP as journal-only),
+    possibly oversight; v2 should make a deliberate call.
 
 ---
 
 ## Architecture quick reference
 
-For data-layer detail see `DATABASE.md` (note: pre-dates this
-session's two new tables — `admin_audit` and `api_tokens` aren't in
-the table catalog yet; the two definitions in `init_db.py` are the
-source of truth until the doc is updated).
+For full data-layer detail see `DATABASE.md` (note: pre-dates
+`admin_audit` and `api_tokens`). For the strength progression math
+see `rx_engine_spec.md`.
 
 ```
 app.py              — Flask app; registers blueprints; runs DB init.
-                      ⚠ NEW this session:
-                        - SECRET_KEY required + SECRET_KEY_FALLBACKS
-                        - SESSION_COOKIE_{SECURE,HTTPONLY,SAMESITE}
-                        - CSRFProtect (Flask-WTF) + CSRFError handler
-                        - Limiter (Flask-Limiter), in-memory by default
-                        - before_request: per-request CSP nonce +
-                          bearer-token auth path (g.api_user_id)
-                        - after_request: defensive headers + CSP
-database.py         — get_db(); SQLite + psycopg2; ?→%s; lastrowid via
-                      RETURNING. Unchanged this session.
+                      Hosts CSRFProtect, Limiter, before_request
+                      (CSP nonce + bearer-token auth path),
+                      after_request (defensive headers + CSP).
+database.py         — get_db(); SQLite + psycopg2; ?→%s; lastrowid
+                      via RETURNING.
 init_db.py          — SQLITE_SCHEMA, PG_SCHEMA, _SQLITE_MIGRATIONS,
-                      _PG_MIGRATIONS. ⚠ NEW: admin_audit and
-                      api_tokens tables added to both backends.
-calculations.py     — Pure progression math. Unchanged.
-rx_engine.py        — Single sanctioned writer to current_rx /
-                      training_log / training_log_sets. Unchanged.
-plan_match.py       — Auto-match + record_disposition. Unchanged.
-coaching.py         — Claude API. Unchanged.
-athlete.py          — get/upsert_athlete_profile. Unchanged.
-email_helper.py     — send_email. Unchanged (still SendGrid-blocked).
-garmin_fit_parser.py — parse_fit etc. Unchanged.
-garmin_connect.py   — OAuth + activity fetch. Unchanged.
-fit_workout_generator.py — generate_activity_fit. Unchanged.
+                      _PG_MIGRATIONS. Migrations idempotent, run on
+                      cold start. admin_audit and api_tokens added
+                      this session.
+calculations.py     — Pure progression math. Outcome computation,
+                      2× kicker on significance, REPEAT-resets-
+                      failures, project_next_from_current,
+                      compute_deload_baseline. SPECIFIED IN
+                      rx_engine_spec.md.
+rx_engine.py        — apply_session_outcome — only sanctioned writer
+                      to current_rx + training_log_sets path.
+                      SPECIFIED IN rx_engine_spec.md.
+plan_match.py       — Auto-match logged activities to scheduled plan
+                      items.
+coaching.py         — Claude API. Sport-adaptive system prompt with
+                      cache_control. get_coaching_context surfaces
+                      everything Claude needs. Haiku-extracted
+                      feedback into coaching_preferences.
+athlete.py          — get/upsert_athlete_profile.
+email_helper.py     — send_email (SendGrid HTTP API). Falls back to
+                      stdout when SENDGRID_API_KEY isn't set.
+garmin_fit_parser.py — parse_fit, parse_wellness_fit, _dump_fit.
+garmin_connect.py   — Garmin Connect OAuth + activity fetch.
+fit_workout_generator.py — generate_activity_fit (manual log FIT).
 routes/
-  auth.py           — ⚠ NEW: zxcvbn _password_strength_errors,
-                      generate_api_token, verify_bearer_token,
-                      _hash_api_token. current_user_id reads
-                      g.api_user_id first. Rate-limit decorators on
-                      login/register/forgot/reset.
-  admin.py          — ⚠ NEW: writes admin_audit row in delete_user
-                      transaction. Cascade-delete picks up api_tokens.
-  coaching.py       — ⚠ NEW: api_generate, api_review @csrf.exempt.
-  garmin.py         — ⚠ NEW: secure_filename on every request.files
-                      filename read.
-  profile.py        — ⚠ NEW: API access tab + create_api_token,
-                      revoke_api_token. zxcvbn check on
+  auth.py           — /auth/login, logout, register, forgot, reset,
+                      + zxcvbn _password_strength_errors,
+                      + generate_api_token, verify_bearer_token,
+                      + rate-limit decorators on auth endpoints.
+  admin.py          — /admin/ (gated to user_id == 1) +
+                      cascade-delete + admin_audit write.
+  coaching.py       — /coaching/* (generate, review, chat, prefs)
+                      + api_generate, api_review (CSRF-exempt,
+                      bearer-authed).
+  garmin.py         — /garmin/* (FIT import, sync, wellness, debug,
+                      auth) + secure_filename on every upload read.
+  profile.py        — /profile/ (Athlete / Coach memory / Account /
+                      API access). zxcvbn check on
                       change_password.
-  …rest unchanged.
+  …other routes (training, cardio, body, conditions, injuries,
+   references, locales, plans, rx, purchases, natural_log,
+   dashboard) unchanged this session.
 templates/
-  base.html         — ⚠ NEW: <meta name="csrf-token">; <script> tags
-                      have nonce="{{ csp_nonce() }}"; logout form has
-                      hidden csrf_token input.
-  auth/_shell.html  — ⚠ NEW: <meta name="csrf-token"> + script nonce.
-  *every form*      — ⚠ NEW: hidden csrf_token input.
-  *templates with inline handlers* — ⚠ NEW: 33 inline event handlers
-                      refactored to data-confirm/data-autosubmit
-                      delegated handlers or addEventListener inside
-                      nonce'd <script> blocks.
-  profile/edit.html — ⚠ NEW: API access tab (token CRUD).
-static/app.js       — ⚠ NEW: fetch wrapper for X-CSRFToken;
-                      delegated handlers for data-confirm,
-                      data-autosubmit.
-DATABASE.md         — Full data-layer reference; needs a follow-up
-                      append for admin_audit and api_tokens.
+  base.html         — <meta name="csrf-token">, <script> tags with
+                      nonce="{{ csp_nonce() }}", logout-form CSRF.
+  auth/_shell.html  — same.
+  *every form*      — hidden csrf_token input.
+  *templates with inline handlers* — refactored to data-confirm /
+                      data-autosubmit / addEventListener.
+  profile/edit.html — API access tab.
+static/app.js       — fetch wrapper for X-CSRFToken; delegated
+                      handlers for data-confirm, data-autosubmit.
+DATABASE.md         — full data-layer reference; pending sync for
+                      admin_audit, api_tokens, outcome strings,
+                      NLP bypass.
 HANDOFF.md          — this file.
+rx_engine_spec.md   — NEW this session. Standalone spec for the
+                      progression algorithm, intended to survive
+                      the v2 rebuild.
 ```
 
 ---
 
-## Env vars introduced this session
+## Env vars (current)
 
-| Name                       | Required | Purpose                                                                      | Default                                |
-| :------------------------- | :------- | :--------------------------------------------------------------------------- | :------------------------------------- |
-| `SECRET_KEY`               | **yes**  | Flask session signing. App refuses to boot without it.                       | (none — must be set)                   |
-| `SECRET_KEY_FALLBACK`      | no       | Comma-separated old keys used for cookie verification during rotation.       | unset                                  |
-| `SESSION_COOKIE_SECURE`    | no       | Override the auto-on-when-`DATABASE_URL`-set behavior.                       | on if `DATABASE_URL` set, else off     |
-| `RATELIMIT_STORAGE_URI`    | no       | Swap Flask-Limiter's storage from in-memory to e.g. `redis://...`.           | `memory://`                            |
-| `CSP_REPORT_ONLY`          | no       | Set to `1` to ship CSP as `Content-Security-Policy-Report-Only`.             | unset (enforced)                       |
-| `ALLOW_REGISTRATION`       | no       | Existing — close registration with `0/false/no/off`.                         | open                                   |
-| `SENDGRID_API_KEY`         | no       | Existing — enables real email sending.                                       | unset (logs to stdout)                 |
-| `EMAIL_FROM_ADDRESS`       | no       | Existing — required for SendGrid.                                            | unset                                  |
-| `ANTHROPIC_API_KEY`        | yes for AI | Existing — coaching / generation.                                          | unset (AI features disabled)           |
+| Name                       | Required | Purpose                                                                          | Default                                |
+| :------------------------- | :------- | :------------------------------------------------------------------------------- | :------------------------------------- |
+| `SECRET_KEY`               | **yes**  | Flask session signing. App refuses to boot without it.                           | (none — must be set)                   |
+| `SECRET_KEY_FALLBACK`      | no       | Comma-separated old keys used for cookie verification during rotation.           | unset                                  |
+| `SESSION_COOKIE_SECURE`    | no       | Override the auto-on-when-`DATABASE_URL`-set behavior.                           | on if `DATABASE_URL` set, else off     |
+| `RATELIMIT_STORAGE_URI`    | no       | Swap Flask-Limiter's storage from in-memory to e.g. `redis://...`.               | `memory://`                            |
+| `CSP_REPORT_ONLY`          | no       | Set to `1` to ship CSP as `Content-Security-Policy-Report-Only`.                 | unset (enforced)                       |
+| `ALLOW_REGISTRATION`       | no       | Close registration with `0/false/no/off`.                                        | open                                   |
+| `SENDGRID_API_KEY`         | no       | Enables real email sending. Without it, links log to stdout.                     | unset                                  |
+| `EMAIL_FROM_ADDRESS`       | no       | Required for SendGrid send.                                                      | unset                                  |
+| `EMAIL_FROM_NAME`          | no       | Friendly From-name on outgoing email.                                            | unset                                  |
+| `ANTHROPIC_API_KEY`        | yes for AI | Coaching / generation.                                                         | unset (AI features disabled)           |
+| `DATABASE_URL`             | yes for prod | Postgres connection string. Absence selects SQLite (local / TrueNAS).        | unset (SQLite at `/instance/training.db`) |
 
 ---
 
 ## Pair this handoff with
 
-- `DATABASE.md` — schema reference (pending a sync for the two new
-  tables; meanwhile the migration code in `init_db.py` is canonical).
-- The seven security PRs (#11–#17) for per-change rationale and test
-  plans. Stack base is `aebb6b1` (previous handoff merge).
+- **`DATABASE.md`** — schema reference (pending sync for the two
+  new tables; meanwhile `init_db.py` is canonical).
+- **`rx_engine_spec.md`** (NEW) — the strength progression
+  algorithm, specified to survive a language change.
+- **PRs #11–#19** for per-change rationale and test plans
+  (all merged on `main` between `aebb6b1` and `fc961eb`).
