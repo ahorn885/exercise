@@ -14,6 +14,7 @@
       scheduled plan items, and lets you import them into your logs.
     </p>
     <form method="post">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <div class="row g-2 mb-3">
         <div class="col">
           <label class="form-label small fw-semibold">From</label>

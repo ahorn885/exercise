@@ -23,6 +23,7 @@
           in the database. Your password is not stored.
         </p>
         <form method="post" action="{{ url_for('garmin.auth_login') }}">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
           <div class="mb-3">
             <label class="form-label fw-semibold">Garmin Email</label>
             <input type="email" name="email" class="form-control" required
@@ -54,6 +55,7 @@
           <li>Click the value, select all (<code>Ctrl+A</code>), copy (<code>Ctrl+C</code>)</li>
         </ol>
         <form method="post" action="{{ url_for('garmin.auth_import_cookies') }}">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
           <div class="mb-3">
             <textarea name="cookie_string" class="form-control font-monospace" rows="4"
                       placeholder="Paste full Cookie header value here (SESSIONID=...; JWT_FGP=...; ...)"></textarea>
@@ -71,6 +73,7 @@
           <code>deploy/get_garmin_tokens.py</code>, then paste the JSON output here.
         </p>
         <form method="post" action="{{ url_for('garmin.auth_import_tokens') }}">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
           <div class="mb-3">
             <textarea name="token_json" class="form-control font-monospace" rows="6"
                       placeholder='{"oauth1_token.json": {...}, "oauth2_token.json": {...}}'></textarea>

@@ -62,7 +62,24 @@ def current_user(db):
     return dict(row) if row else None
 
 
+def _limit(spec):
+    """Apply a Flask-Limiter rate limit to the wrapped POST handler.
+
+    Imports lazily to avoid a circular import (app.py imports this module).
+    Returns the decorator without limit when limiter isn't initialized yet
+    (e.g. during unit-test imports that build the blueprint without an app).
+    """
+    def decorator(fn):
+        try:
+            from app import limiter
+        except Exception:
+            return fn
+        return limiter.limit(spec, methods=['POST'])(fn)
+    return decorator
+
+
 @bp.route('/login', methods=['GET', 'POST'])
+@_limit('10 per 5 minutes')
 def login():
     db = get_db()
     if _no_users(db):
@@ -109,6 +126,7 @@ def logout():
 
 
 @bp.route('/register', methods=['GET', 'POST'])
+@_limit('10 per hour')
 def register():
     db = get_db()
     is_bootstrap = _no_users(db)
@@ -178,6 +196,7 @@ def register():
 # ── Password reset ───────────────────────────────────────────────────────────
 
 @bp.route('/forgot', methods=['GET', 'POST'])
+@_limit('5 per 15 minutes')
 def forgot():
     """Request a password-reset email.
 
@@ -216,6 +235,7 @@ def forgot():
 
 
 @bp.route('/reset/<token>', methods=['GET', 'POST'])
+@_limit('10 per 15 minutes')
 def reset(token):
     """Complete a password reset with a single-use, time-limited token."""
     db = get_db()

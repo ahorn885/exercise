@@ -32,6 +32,7 @@
 } %}
 
 <form method="post" action="{{ url_for('garmin.sync_confirm') }}">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
   <div class="table-responsive mb-3">
     <table class="table table-sm table-hover align-middle">
       <thead class="table-light">

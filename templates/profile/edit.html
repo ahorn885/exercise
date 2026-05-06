@@ -20,6 +20,7 @@
       anything left blank is just absent from the prompt.
     </p>
     <form method="post" action="{{ url_for('profile.edit') }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <div class="row g-3">
 
         <div class="col-md-4">
@@ -126,6 +127,7 @@
           </div>
           <form method="post" action="{{ url_for('profile.delete_preference', pref_id=p.id) }}"
                 onsubmit="return confirm('Delete this preference?');">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <button class="btn btn-sm btn-outline-danger py-0 px-1">Delete</button>
           </form>
         </div>
@@ -138,6 +140,7 @@
 
     <h6 class="mb-2">Add a preference manually</h6>
     <form method="post" action="{{ url_for('profile.add_preference') }}" class="row g-2">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <div class="col-md-3">
         <select class="form-select form-select-sm" name="category" required>
           {% for c in preference_categories %}
@@ -174,6 +177,7 @@
 
     <h6 class="mb-2">Change password</h6>
     <form method="post" action="{{ url_for('profile.change_password') }}" class="row g-2">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <div class="col-md-4">
         <label class="form-label small" for="current_password">Current password</label>
         <input type="password" class="form-control form-control-sm" id="current_password" name="current_password" autocomplete="current-password" required>

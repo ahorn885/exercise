@@ -74,6 +74,7 @@
            onclick="return confirm('Generate and download an activity FIT file for this session?')">FIT</a>
         <form method="post" action="{{ url_for('cardio.delete_entry', entry_id=e.id) }}" class="d-inline"
               onsubmit="return confirm('Delete this entry?')">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
           <button class="btn btn-sm btn-outline-danger py-0 px-1">Del</button>
         </form>
       </td>

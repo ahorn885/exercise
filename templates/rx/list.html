@@ -105,6 +105,7 @@
         {% if e.sessions_since_progress and e.sessions_since_progress >= deload_threshold %}
           <form method="post" action="{{ url_for('rx.deload_entry', entry_id=e.id) }}" class="d-inline"
                 onsubmit="return confirm('Drop {{ e.exercise }} by 10% and reset the plateau counter?');">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <button class="btn btn-sm btn-warning py-0 px-1"
                     title="Drop primary dimension 10%, re-derive next, reset plateau + failure counters">
               Deload −10%

@@ -6,6 +6,7 @@
   <a href="{{ url_for('cardio.list_entries') }}" class="btn btn-sm btn-outline-secondary">← Back</a>
 </div>
 <form method="post">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
 
   {# ── Activity + Date ── #}
   <div class="row g-3 mb-3">
