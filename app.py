@@ -202,5 +202,20 @@ def _inject_current_user():
     Reads the row hydrated by `_require_login` — single query per request."""
     return {'current_user': getattr(g, 'current_user_row', None)}
 
+
+@app.after_request
+def _set_security_headers(resp):
+    # Defensive headers that don't depend on per-page tuning. CSP is
+    # deliberately not set here — it needs a per-template inline-script
+    # audit and a CDN strategy first (see security backlog item 10b).
+    resp.headers.setdefault('X-Content-Type-Options', 'nosniff')
+    resp.headers.setdefault('X-Frame-Options', 'DENY')
+    resp.headers.setdefault('Referrer-Policy', 'strict-origin-when-cross-origin')
+    resp.headers.setdefault(
+        'Permissions-Policy',
+        'geolocation=(), microphone=(), camera=(), payment=(), usb=()'
+    )
+    return resp
+
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0', port=5000)

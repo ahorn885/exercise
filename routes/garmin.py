@@ -5,6 +5,7 @@ import uuid
 from datetime import date, timedelta
 
 from flask import Blueprint, render_template, request, redirect, url_for, flash, jsonify, session as flask_session
+from werkzeug.utils import secure_filename
 from database import get_db
 from calculations import calculate_1rm
 from rx_engine import apply_session_outcome
@@ -29,7 +30,9 @@ def debug_fit():
             return redirect(url_for('garmin.debug_fit'))
         try:
             raw = f.read()
-            fname = f.filename.lower()
+            # secure_filename strips path components and unsafe characters
+            # before we look at the suffix or echo the name anywhere.
+            fname = secure_filename(f.filename or '').lower()
             if fname.endswith('.zip'):
                 import zipfile, io
                 with zipfile.ZipFile(io.BytesIO(raw)) as zf:
@@ -68,7 +71,7 @@ def import_fit():
             flash('No file selected.', 'warning')
             return redirect(url_for('garmin.import_fit'))
         fit_file = request.files['fit_file']
-        fname = fit_file.filename.lower()
+        fname = secure_filename(fit_file.filename or '').lower()
         if not (fname.endswith('.fit') or fname.endswith('.zip')):
             flash('File must be a .fit or .zip file.', 'danger')
             return redirect(url_for('garmin.import_fit'))
@@ -829,7 +832,7 @@ def import_wellness():
         flash('No file selected.', 'warning')
         return redirect(url_for('garmin.import_wellness'))
 
-    fname = f.filename.lower()
+    fname = secure_filename(f.filename or '').lower()
     if not (fname.endswith('.fit') or fname.endswith('.zip')):
         flash('File must be a .fit or .zip file.', 'danger')
         return redirect(url_for('garmin.import_wellness'))
