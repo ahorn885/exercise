@@ -359,9 +359,15 @@ def save():
 
         elif log_type == 'body':
             db.execute(
-                '''INSERT OR REPLACE INTO body_metrics
+                '''INSERT INTO body_metrics
                    (date, weight_lbs, body_fat_pct, resting_hr, vo2_max, notes, user_id)
-                   VALUES (?,?,?,?,?,?,?)''',
+                   VALUES (?,?,?,?,?,?,?)
+                   ON CONFLICT(user_id, date) DO UPDATE SET
+                     weight_lbs=excluded.weight_lbs,
+                     body_fat_pct=excluded.body_fat_pct,
+                     resting_hr=excluded.resting_hr,
+                     vo2_max=excluded.vo2_max,
+                     notes=excluded.notes''',
                 (
                     entry.get('date', date.today().isoformat()),
                     entry.get('weight_lbs'),

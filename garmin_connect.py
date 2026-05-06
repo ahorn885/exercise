@@ -141,7 +141,7 @@ def _save_session_to_db(db, username: str = ''):
     ).fetchone()
     if existing:
         db.execute(
-            "UPDATE garmin_auth SET garth_session = ?, garmin_username = ?, updated_at = datetime('now') WHERE id = ?",
+            "UPDATE garmin_auth SET garth_session = ?, garmin_username = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
             (session_json, username, existing['id'] if hasattr(existing, '__getitem__') else existing[0])
         )
     else:

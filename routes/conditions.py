@@ -166,13 +166,15 @@ def _save(db, entry_id):
         val = f.get(field) or None
         clothing_vals[field] = val
         if val:
-            try:
-                db.execute(
-                    'INSERT OR IGNORE INTO clothing_options (user_id, category, value) VALUES (?, ?, ?)',
-                    (uid_clothing, field, val)
-                )
-            except Exception:
-                pass
+            # ON CONFLICT DO NOTHING is portable across SQLite (3.24+) and
+            # Postgres; INSERT OR IGNORE was SQLite-only and a failed
+            # statement on PG aborts the surrounding transaction, which
+            # then 500s the main conditions_log write below.
+            db.execute(
+                'INSERT INTO clothing_options (user_id, category, value) VALUES (?, ?, ?) '
+                'ON CONFLICT(user_id, category, value) DO NOTHING',
+                (uid_clothing, field, val)
+            )
 
     vals = (
         f.get('date'), f.get('activity'),

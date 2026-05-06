@@ -65,9 +65,11 @@ def edit_profile(locale):
             tag_to_id = {}
         # Upsert locale_profiles first — locale_equipment has an FK on this
         # table. PK is composite (user_id, locale) since Session 3.
+        # CURRENT_TIMESTAMP is portable; datetime('now') is SQLite-only and
+        # blew up the UPSERT on Postgres. ON CONFLICT works on both backends.
         db.execute(
             '''INSERT INTO locale_profiles (user_id, locale, notes, city, updated_at)
-               VALUES (?, ?, ?, ?, datetime('now'))
+               VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
                ON CONFLICT(user_id, locale) DO UPDATE SET
                  notes=excluded.notes,
                  city=excluded.city,

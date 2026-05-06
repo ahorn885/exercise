@@ -3,9 +3,10 @@
 Session 1 of the multi-user retrofit. Domain queries are still unscoped —
 this layer only gates entry. Per-user scoping lands in Session 2.
 
-Registration is closed by default; set the env var `ALLOW_REGISTRATION=1`
-to open it. The exception is the first-user bootstrap: when no users
-exist in the DB, the next request lands on the register page regardless.
+Registration is open by default. To close it again (e.g. after a smoke
+test), set `ALLOW_REGISTRATION=0` (or `false`/`no`/`off`). The first-user
+bootstrap path is unconditional: when no users exist in the DB, the next
+request lands on the register page regardless.
 """
 import os
 from datetime import datetime
@@ -19,7 +20,7 @@ bp = Blueprint('auth', __name__, url_prefix='/auth')
 
 
 def _registration_open() -> bool:
-    return os.environ.get('ALLOW_REGISTRATION', '').strip() in ('1', 'true', 'yes', 'on')
+    return os.environ.get('ALLOW_REGISTRATION', '').strip().lower() not in ('0', 'false', 'no', 'off')
 
 
 def _no_users(db) -> bool:
