@@ -12,7 +12,7 @@ from openpyxl import load_workbook
 from openpyxl.worksheet.worksheet import Worksheet
 
 from etl.layer0.vocabulary_transforms import (
-    transform_body_part_string,
+    split_contraindicated_string,
     transform_equipment_string,
 )
 
@@ -129,9 +129,10 @@ def extract_exercises(ws: Worksheet) -> list[dict[str, Any]]:
                 _t(ws.cell(row=r, column=11).value)
             ),
             "physical_proxies": parse_physical_proxies(_t(ws.cell(row=r, column=12).value)),
-            "contraindicated_parts": transform_body_part_string(
-                _t(ws.cell(row=r, column=13).value)
-            ),
+            **dict(zip(
+                ("contraindicated_parts", "contraindicated_conditions"),
+                split_contraindicated_string(_t(ws.cell(row=r, column=13).value)),
+            )),
             "progression_exercise_id": progression["exercise_id"],
             "progression_exercise_name": progression["exercise_name"],
             "regression_exercise_id": regression["exercise_id"],

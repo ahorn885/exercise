@@ -183,3 +183,78 @@ def test_validate_unknown():
 def test_empty_input():
     assert transform_equipment_string("") == []
     assert transform_equipment_string(None) == []
+
+
+# ---------------------------------------------------------------------------
+# split_contraindicated_string tests
+# ---------------------------------------------------------------------------
+
+from etl.layer0.vocabulary_transforms import split_contraindicated_string
+
+
+def test_split_body_part_only():
+    bp, cond = split_contraindicated_string("Knee, Lower back")
+    assert bp == ["Knee", "Lower back"]
+    assert cond == []
+
+
+def test_split_systemic_only():
+    bp, cond = split_contraindicated_string("Cardiac, Cognitive")
+    assert bp == []
+    assert set(cond) == {"Cardiac", "Cognitive"}
+
+
+def test_split_mixed():
+    bp, cond = split_contraindicated_string("Shoulder, Cardiac, Knee, Cognitive")
+    assert bp == ["Shoulder", "Knee"]
+    assert set(cond) == {"Cardiac", "Cognitive"}
+
+
+def test_split_drops_grip():
+    bp, cond = split_contraindicated_string("Wrist, Grip, Elbow")
+    assert bp == ["Wrist", "Elbow"]
+    assert cond == []
+
+
+def test_split_renames_tricep_bicep():
+    bp, cond = split_contraindicated_string("Tricep, Bicep")
+    assert "Triceps" in bp
+    assert "Biceps" in bp
+    assert "Tricep" not in bp
+    assert "Bicep" not in bp
+
+
+def test_split_new_body_parts():
+    bp, cond = split_contraindicated_string("TFL, Trapezius, Diaphragm, Thumb, Trachea")
+    assert set(bp) == {"TFL", "Trapezius", "Diaphragm", "Thumb", "Trachea"}
+    assert cond == []
+
+
+def test_split_slash_decompose_with_condition():
+    # Cognitive/Cardiac should decompose and both route to conditions
+    bp, cond = split_contraindicated_string("Cognitive/Cardiac")
+    assert bp == []
+    assert set(cond) == {"Cognitive", "Cardiac"}
+
+
+def test_split_empty_input():
+    assert split_contraindicated_string(None) == ([], [])
+    assert split_contraindicated_string("") == ([], [])
+
+
+def test_split_deduplication():
+    bp, cond = split_contraindicated_string("Knee, Knee, Cardiac, Cardiac")
+    assert bp == ["Knee"]
+    assert cond == ["Cardiac"]
+
+
+def test_split_sciatica_routes_to_conditions():
+    bp, cond = split_contraindicated_string("Lower back, Sciatica")
+    assert bp == ["Lower back"]
+    assert "Sciatica" in cond
+
+
+def test_split_core_temperature_routes_to_conditions():
+    bp, cond = split_contraindicated_string("Core Temperature")
+    assert bp == []
+    assert "Core Temperature" in cond

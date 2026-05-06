@@ -5,9 +5,11 @@ documented in `Vocabulary_Audit_v2.md` Section 5. Applied at ETL time per
 spec §3.1 option (b) — source xlsx is never modified.
 
 Public functions:
-    transform_equipment_string(raw)        -> list[str]   (col 7)
-    transform_body_part_string(raw)        -> list[str]   (col 13)
-    validate_against_canonical(name, set)  -> str         ('match'/'unknown')
+    transform_equipment_string(raw)         -> list[str]   (col 7)
+    transform_body_part_string(raw)         -> list[str]   (col 13, body parts only)
+    split_contraindicated_string(raw)       -> tuple[list[str], list[str]]
+                                               (col 13, splits body parts ↔ conditions)
+    validate_against_canonical(name, set)   -> str         ('match'/'unknown')
 """
 from __future__ import annotations
 
@@ -215,8 +217,31 @@ _BODY_RENAME: dict[str, str] = {
     "sacrum": "SI joint",
     "ribs": "Rib",
     "hip crest": "Hip crest (iliac crest)",
+    "spine": "Spine (general)",
     "finger flexor pulley": "Finger pulley",
     "finger": "Fingers",
+    "tricep": "Triceps",
+    "bicep": "Biceps",
+}
+
+# Tokens in col 13 that are health/systemic conditions, not body parts.
+# Routed to contraindicated_conditions by split_contraindicated_string().
+SYSTEMIC_TOKENS: set[str] = {
+    "cognitive",
+    "cardiac",
+    "lungs",
+    "gi",
+    "skin",
+    "blister",
+    "goggle",
+    "saddle",
+    "core temperature",
+    "sciatica",
+}
+
+# Tokens to drop from col 13 entirely — functional capacity, not anatomical.
+_CONTRA_DROP: set[str] = {
+    "grip",
 }
 
 # "Chest/Rib" splits into ["Chest", "Rib"] per audit §5.
@@ -264,6 +289,55 @@ def transform_body_part_string(raw: str | None) -> list[str]:
         seen.add(key)
         out.append(t)
     return out
+
+
+def split_contraindicated_string(
+    raw: str | None,
+) -> tuple[list[str], list[str]]:
+    """Split a col-13 contraindicated string into body parts and conditions.
+
+    Pipeline per token (after comma-split and slash-decompose):
+      - Token in SYSTEMIC_TOKENS  → append to conditions list
+      - Token in _CONTRA_DROP     → drop silently
+      - Otherwise                 → apply _BODY_RENAME, append to body_parts list
+
+    Returns (body_parts, conditions). Each list is deduplicated, order preserved.
+    """
+    if not raw:
+        return [], []
+    s = str(raw).strip()
+    if not s:
+        return [], []
+
+    body_parts: list[str] = []
+    conditions: list[str] = []
+    seen_bp: set[str] = set()
+    seen_cond: set[str] = set()
+
+    for chunk in s.split(","):
+        chunk = chunk.strip()
+        if not chunk:
+            continue
+        for piece in _decompose_slash(chunk):
+            piece = piece.strip()
+            if not piece:
+                continue
+            lower = piece.lower()
+
+            if lower in _CONTRA_DROP:
+                continue
+            elif lower in SYSTEMIC_TOKENS:
+                if lower not in seen_cond:
+                    seen_cond.add(lower)
+                    conditions.append(piece)
+            else:
+                renamed = _BODY_RENAME.get(lower, piece)
+                rkey = renamed.lower()
+                if rkey not in seen_bp:
+                    seen_bp.add(rkey)
+                    body_parts.append(renamed)
+
+    return body_parts, conditions
 
 
 def validate_against_canonical(

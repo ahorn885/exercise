@@ -40,6 +40,7 @@ For Injury Record `Body Part` field (Section B.1). Side picker (L/R/Both/N/A) is
 | Neck | proposed + col 13 (Neck, Cervical, Cervical Spine — all merged) | |
 | Jaw | proposed | |
 | Trapezius | col 13 | Spans neck/upper back/shoulder; kept distinct because col 13 uses it |
+| Trachea | Exercise DB col-13 | Added v2.1 — airway contraindication flag |
 
 ## Shoulder
 
@@ -65,6 +66,9 @@ For Injury Record `Body Part` field (Section B.1). Side picker (L/R/Both/N/A) is
 | Finger pulley | col 13 | Climbing-specific (pulley A1–A4 strain) |
 | DIP joint | col 13 | Climbing-specific (distal finger joint) |
 | CMC joint | col 13 | Climbing-specific (thumb base) |
+| Biceps | Exercise DB col-13 | Added v2.1 — rename from "Bicep" |
+| Triceps | Exercise DB col-13 | Added v2.1 — rename from "Tricep" |
+| Thumb | Exercise DB col-13 | Added v2.1 |
 
 ## Back
 
@@ -75,6 +79,7 @@ For Injury Record `Body Part` field (Section B.1). Side picker (L/R/Both/N/A) is
 | Spine (general) | col 13 | For non-region-specific spinal flags |
 | SI joint | proposed (col 13 "Sacrum" folds in here) | |
 | Sciatica | col 13 | Nerve symptom; functionally distinct from generic Lower back for filtering |
+| Trapezius | Exercise DB col-13 | Added v2.1 |
 
 ## Hip
 
@@ -86,6 +91,7 @@ For Injury Record `Body Part` field (Section B.1). Side picker (L/R/Both/N/A) is
 | Glute | proposed (absorbs col 13 "Hip Abductor") | Glute med = hip abductor; one label is enough |
 | Hip crest (iliac crest) | col 13 | Pack-belt rub site; bony landmark — kept |
 | TFL | col 13 | Tensor Fasciae Latae — athletes who get this know the term |
+| TFL | Exercise DB col-13 | Added v2.1 — Tensor Fasciae Latae |
 
 ## Upper leg
 
@@ -132,6 +138,7 @@ For Injury Record `Body Part` field (Section B.1). Side picker (L/R/Both/N/A) is
 |---|---|---|
 | Rib | col 13 | (col 13 "Ribs" and "Chest/Rib" — Chest/Rib should be split into Rib + Chest at col 13 cleanup time) |
 | Chest | derived | Add as canonical for split of "Chest/Rib" |
+| Diaphragm | Exercise DB col-13 | Added v2.1 — breathing muscle, relevant for breath-hold / contact exercises |
 
 **Total:** 41 canonical body parts.
 

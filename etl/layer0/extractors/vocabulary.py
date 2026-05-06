@@ -88,10 +88,18 @@ def parse_vocabulary_md(path: str | Path) -> dict[str, list[dict[str, Any]]]:
 # ---------------------------------------------------------------------------
 
 def _parse_body_parts(text: str) -> list[dict[str, Any]]:
-    """Walk the §1 H2 headers and extract markdown table rows under each."""
+    """Walk the §1 H2 headers and extract markdown table rows under each.
+
+    Dedupes by canonical_name (first-seen wins) — the audit lists a few
+    body parts under multiple regions for navigation (e.g. Trapezius
+    appears under both Head/Neck and Back, TFL appears twice under Hip).
+    The schema's UNIQUE (canonical_name, etl_version) only allows one row
+    per canonical name, so we collapse here.
+    """
     sec_text = _slice_section(text, "# Section 1 — Body Part Canonical List",
                               "# Section 2 — Health Conditions Canonical List")
     rows: list[dict[str, Any]] = []
+    seen: set[str] = set()
     for region in _BODY_REGION_HEADERS:
         block = _slice_block(sec_text, f"## {region}", _next_h2_marker(sec_text, f"## {region}"))
         if not block:
@@ -100,6 +108,10 @@ def _parse_body_parts(text: str) -> list[dict[str, Any]]:
             canonical = record.get("Canonical")
             if not canonical:
                 continue
+            key = canonical.strip().lower()
+            if key in seen:
+                continue
+            seen.add(key)
             rows.append({
                 "canonical_name": canonical,
                 "body_region": region,

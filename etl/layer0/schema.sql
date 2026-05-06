@@ -236,6 +236,7 @@ CREATE TABLE IF NOT EXISTS layer0.exercises (
   equipment_required          TEXT[],
   injury_flags_text           TEXT,
   contraindicated_parts       TEXT[],
+  contraindicated_conditions  TEXT[],
   equipment_substitutes       JSONB,
   physical_proxies            JSONB,
   progression_exercise_id     TEXT,
@@ -277,3 +278,10 @@ CREATE TABLE IF NOT EXISTS layer0.sport_name_aliases (
   superseded_at     TIMESTAMPTZ,
   UNIQUE (exercise_db_sport, framework_sport, etl_version)
 );
+
+----------------------------------------------------------------------
+-- Additive column migrations (idempotent)
+----------------------------------------------------------------------
+
+ALTER TABLE layer0.exercises
+  ADD COLUMN IF NOT EXISTS contraindicated_conditions TEXT[];

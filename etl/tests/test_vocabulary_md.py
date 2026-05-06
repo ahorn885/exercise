@@ -25,10 +25,14 @@ def parsed():
 # ---------------------------------------------------------------------------
 
 def test_body_parts_total_count(parsed):
-    # Audit §1 enumerates 50 entries across 10 body regions, even though
-    # the section's stated total of 41 is wrong — the table contents are
-    # the source of truth.
-    assert len(parsed["body_parts"]) == 50
+    # 50 original + 4 actually-new in v2.1 (Trachea, Biceps, Triceps,
+    # Diaphragm). The handoff also instructed adding Thumb, Trapezius, TFL,
+    # but those were already present in the audit before v2.1 — they get
+    # deduped first-seen-wins by the parser. The handoff's expected total
+    # of 57 didn't account for those collisions; 54 is the actual outcome.
+    # The section's stated total of 41 in §1 is also wrong; the table
+    # contents are the source of truth.
+    assert len(parsed["body_parts"]) == 54
 
 
 def test_body_parts_known_canonicals_present(parsed):
