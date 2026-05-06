@@ -14,14 +14,14 @@
 <body class="auth-body">
 <div class="container py-5" style="max-width: 460px;">
   <div class="text-center mb-4">
-    <a class="navbar-brand wordmark lockup d-inline-flex" href="{{ url_for('auth.login') }}" aria-label="AIDSTATION home">
-      <svg class="brand-mark" viewBox="0 0 100 100" aria-hidden="true" style="width:48px;height:48px;">
-        <path d="M26 30 L74 30 L67 84 Q 50 92, 33 84 Z" fill="none" stroke="currentColor" stroke-width="6" stroke-linejoin="round"/>
-        <line x1="26" y1="30" x2="74" y2="30" stroke="currentColor" stroke-width="6" stroke-linecap="round"/>
-        <path d="M40 54 L48 60 L40 66" stroke="currentColor" stroke-width="5" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
-        <rect x="53" y="55" width="9" height="10" fill="#E8893A"/>
-      </svg>
-      <span class="lockup-text ms-2"><span class="aid">AID</span><span class="station">STATION</span></span>
+    {# Use the standalone light-bg lockup SVG. The inline-SVG pattern from
+       base.html relies on the dark navbar to colour the strokes/text via
+       --bs-navbar-brand-color: var(--paper); on the auth shell's paper
+       background that token bleeds through and renders the whole lockup
+       white-on-white. #}
+    <a href="{{ url_for('auth.login') }}" aria-label="AIDSTATION home">
+      <img src="{{ url_for('static', filename='logo/lockup-light.svg') }}"
+           alt="AIDSTATION" style="height:60px;width:auto;">
     </a>
   </div>
 
