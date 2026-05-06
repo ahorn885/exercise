@@ -1,0 +1,380 @@
+"""Layer 0 ETL — orchestrator.
+
+Usage:
+    python -m etl.layer0.run --version-tag 1.0
+
+Reads `DATABASE_URL` from the environment. Spec: §6 (run order),
+§4 (per-table parsing).
+"""
+from __future__ import annotations
+
+import argparse
+import sys
+from pathlib import Path
+
+from etl.layer0 import db
+from etl.layer0.db import insert_versioned, now_utc, to_jsonb
+from etl.layer0.extractors import exercise_db, sports_framework, vocabulary
+from etl.layer0.validation.report import build_report
+from etl.layer0.validation.sum_to_100 import run_sum_to_100
+from etl.layer0.validation.vocab_alignment import run_vocab_alignment
+
+SOURCES = Path(__file__).parent.parent / "sources"
+SPORTS_XLSX = SOURCES / "Sports_Framework_v6.xlsx"
+EXERCISES_XLSX = SOURCES / "AR_Exercise_Database_v17.xlsx"
+VOCAB_MD = SOURCES / "Vocabulary_Audit_v2.md"
+
+
+def _v(family: str, tag: str) -> str:
+    return f"{family}-v{tag}"
+
+
+def _print(line: str) -> None:
+    print(line, flush=True)
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="Run the Layer 0 ETL.")
+    parser.add_argument(
+        "--version-tag",
+        required=True,
+        help="Version tag suffix (e.g. '1.0' → 0A-v1.0, 0B-v1.0, 0C-v1.0).",
+    )
+    args = parser.parse_args(argv)
+    tag = args.version_tag.strip()
+    v_0a = _v("0A", tag)
+    v_0b = _v("0B", tag)
+    v_0c = _v("0C", tag)
+    run_at = now_utc()
+
+    _print("[layer0 ETL] Connecting to Neon...")
+    summaries: list[str] = []
+    warnings_per_step: list[tuple[str, int]] = []
+
+    with db.connect() as conn:
+        db.apply_schema(conn)
+
+        # ----- Phase 1 — Vocabularies (0C) -----
+        _print("[layer0 ETL] Phase 1 — Vocabularies")
+        vocab = vocabulary.parse_vocabulary_md(VOCAB_MD)
+
+        n = insert_versioned(
+            conn, "layer0.body_parts",
+            ["canonical_name", "body_region", "source_origin", "notes"],
+            [
+                (r["canonical_name"], r["body_region"], r["source_origin"], r["notes"])
+                for r in vocab["body_parts"]
+            ],
+            v_0c, run_at, source_family="0C",
+        )
+        _print(f"layer0.body_parts: inserted {n} rows")
+        summaries.append(f"layer0.body_parts: {n}")
+
+        n = insert_versioned(
+            conn, "layer0.health_condition_categories",
+            ["category_name", "description"],
+            [(r["category_name"], r["description"]) for r in vocab["health_condition_categories"]],
+            v_0c, run_at, source_family="0C",
+        )
+        _print(f"layer0.health_condition_categories: inserted {n} rows")
+        summaries.append(f"layer0.health_condition_categories: {n}")
+
+        n = insert_versioned(
+            conn, "layer0.equipment_items",
+            ["canonical_name", "equipment_category", "is_universal", "notes"],
+            [
+                (r["canonical_name"], r["equipment_category"], r["is_universal"], r["notes"])
+                for r in vocab["equipment_items"]
+            ],
+            v_0c, run_at, source_family="0C",
+        )
+        _print(f"layer0.equipment_items: inserted {n} rows")
+        summaries.append(f"layer0.equipment_items: {n}")
+
+        n = insert_versioned(
+            conn, "layer0.terrain_types",
+            ["canonical_name", "notes"],
+            [(r["canonical_name"], r["notes"]) for r in vocab["terrain_types"]],
+            v_0c, run_at, source_family="0C",
+        )
+        _print(f"layer0.terrain_types: inserted {n} rows")
+        summaries.append(f"layer0.terrain_types: {n}")
+
+        n = insert_versioned(
+            conn, "layer0.sport_specific_gear_toggles",
+            ["toggle_name", "display_label", "description", "paired_equipment_categories"],
+            [
+                (
+                    r["toggle_name"],
+                    r["display_label"],
+                    r["description"],
+                    r["paired_equipment_categories"],
+                )
+                for r in vocab["sport_specific_gear_toggles"]
+            ],
+            v_0c, run_at, source_family="0C",
+        )
+        _print(f"layer0.sport_specific_gear_toggles: inserted {n} rows")
+        summaries.append(f"layer0.sport_specific_gear_toggles: {n}")
+
+        # ----- Phase 2 — Sports framework (0A) -----
+        _print("[layer0 ETL] Phase 2 — Sports Framework")
+        wb = sports_framework.open_workbook(SPORTS_XLSX)
+
+        sports_rows = sports_framework.extract_sports(wb["Sports Index"])
+        n = insert_versioned(
+            conn, "layer0.sports",
+            [
+                "sport_name", "typical_duration_range", "team_vs_solo",
+                "flag_navigation", "navigation_notes",
+                "flag_sleep_deprivation", "sleep_deprivation_notes",
+                "flag_pack_carry", "pack_carry_notes",
+                "pack_weight_lbs_low", "pack_weight_lbs_high",
+                "flag_transition_training", "transition_training_notes",
+                "primary_discipline_count", "secondary_discipline_count",
+                "status_label",
+            ],
+            [tuple(r[k] for k in [
+                "sport_name", "typical_duration_range", "team_vs_solo",
+                "flag_navigation", "navigation_notes",
+                "flag_sleep_deprivation", "sleep_deprivation_notes",
+                "flag_pack_carry", "pack_carry_notes",
+                "pack_weight_lbs_low", "pack_weight_lbs_high",
+                "flag_transition_training", "transition_training_notes",
+                "primary_discipline_count", "secondary_discipline_count",
+                "status_label",
+            ]) for r in sports_rows],
+            v_0a, run_at, source_family="0A",
+        )
+        _print(f"layer0.sports: inserted {n} rows")
+        summaries.append(f"layer0.sports: {n}")
+
+        disc_rows = sports_framework.extract_disciplines(wb["Discipline Library"])
+        n = insert_versioned(
+            conn, "layer0.disciplines",
+            [
+                "discipline_id", "discipline_name", "discipline_category",
+                "min_base_phase_text", "min_base_phase_weeks_low", "min_base_phase_weeks_high",
+                "periodization_text", "ramp_text", "age_adjusted_ramp_text",
+                "age_ramp_40_44_pct", "age_ramp_45_54_pct", "age_ramp_55_plus_pct",
+                "taper_norms_text", "common_injury_patterns", "injury_preceding_behaviors",
+                "recovery_priority_text", "recovery_modalities", "evidence_quality_text",
+            ],
+            [tuple(r[k] for k in [
+                "discipline_id", "discipline_name", "discipline_category",
+                "min_base_phase_text", "min_base_phase_weeks_low", "min_base_phase_weeks_high",
+                "periodization_text", "ramp_text", "age_adjusted_ramp_text",
+                "age_ramp_40_44_pct", "age_ramp_45_54_pct", "age_ramp_55_plus_pct",
+                "taper_norms_text", "common_injury_patterns", "injury_preceding_behaviors",
+                "recovery_priority_text", "recovery_modalities", "evidence_quality_text",
+            ]) for r in disc_rows],
+            v_0a, run_at, source_family="0A",
+        )
+        _print(f"layer0.disciplines: inserted {n} rows")
+        summaries.append(f"layer0.disciplines: {n}")
+
+        dropped_sd_dupes: list = []
+        sd_rows = sports_framework.extract_sport_discipline_map(
+            wb["Sport × Discipline Map"], dropped_dupes=dropped_sd_dupes,
+        )
+        if dropped_sd_dupes:
+            _print(
+                f"  [warn] sport_discipline_map: dropped {len(dropped_sd_dupes)} duplicate "
+                f"(sport, discipline_id) rows — see report"
+            )
+        n = insert_versioned(
+            conn, "layer0.sport_discipline_map",
+            [
+                "sport_name", "discipline_id", "discipline_name", "applicability", "role",
+                "race_time_pct_text", "race_time_pct_low", "race_time_pct_high",
+                "sport_specific_context", "b2b_pairing_rule_text", "phase_load_text",
+            ],
+            [tuple(r[k] for k in [
+                "sport_name", "discipline_id", "discipline_name", "applicability", "role",
+                "race_time_pct_text", "race_time_pct_low", "race_time_pct_high",
+                "sport_specific_context", "b2b_pairing_rule_text", "phase_load_text",
+            ]) for r in sd_rows],
+            v_0a, run_at, source_family="0A",
+        )
+        _print(f"layer0.sport_discipline_map: inserted {n} rows")
+        summaries.append(f"layer0.sport_discipline_map: {n}")
+
+        # discipline_pairing — matrix + b2b fallback
+        matrix_rows = sports_framework.extract_discipline_pairing_matrix(
+            wb["Discipline Pairing Matrix"]
+        )
+        name_to_id = {d["discipline_name"]: d["discipline_id"] for d in disc_rows}
+        matrix_pairs = {(r["discipline_id_a"], r["discipline_id_b"]) for r in matrix_rows}
+        fallback_rows = sports_framework.extract_pairing_b2b_fallback(
+            sd_rows, name_to_id, matrix_pairs
+        )
+        all_pair_rows = matrix_rows + fallback_rows
+        n = insert_versioned(
+            conn, "layer0.discipline_pairing",
+            ["discipline_id_a", "discipline_id_b", "pairing_rating", "rationale", "source"],
+            [tuple(r[k] for k in [
+                "discipline_id_a", "discipline_id_b", "pairing_rating", "rationale", "source"
+            ]) for r in all_pair_rows],
+            v_0a, run_at, source_family="0A",
+        )
+        _print(f"layer0.discipline_pairing: inserted {n} rows "
+               f"({len(matrix_rows)} matrix + {len(fallback_rows)} fallback)")
+        summaries.append(
+            f"layer0.discipline_pairing: {n} ({len(matrix_rows)} matrix + {len(fallback_rows)} fallback)"
+        )
+
+        pl_rows = sports_framework.extract_phase_load_allocation(wb["Phase Load Allocation"])
+        n = insert_versioned(
+            conn, "layer0.phase_load_allocation",
+            [
+                "sport_name", "discipline_id", "discipline_name", "role",
+                "base_pct_low", "base_pct_high", "build_pct_low", "build_pct_high",
+                "peak_pct_low", "peak_pct_high", "taper_pct_low", "taper_pct_high",
+                "notes_conditions",
+            ],
+            [tuple(r[k] for k in [
+                "sport_name", "discipline_id", "discipline_name", "role",
+                "base_pct_low", "base_pct_high", "build_pct_low", "build_pct_high",
+                "peak_pct_low", "peak_pct_high", "taper_pct_low", "taper_pct_high",
+                "notes_conditions",
+            ]) for r in pl_rows],
+            v_0a, run_at, source_family="0A",
+        )
+        _print(f"layer0.phase_load_allocation: inserted {n} rows")
+        summaries.append(f"layer0.phase_load_allocation: {n}")
+
+        tf_rows = sports_framework.extract_team_formats(wb["Team Format Cross-Reference"])
+        n = insert_versioned(
+            conn, "layer0.team_formats",
+            [
+                "sport_name", "formats_available", "team_format_types",
+                "unified_team_description", "relay_specialist_description",
+                "training_implication_unified", "training_implication_relay",
+                "key_distinctions_notes",
+            ],
+            [tuple(r[k] for k in [
+                "sport_name", "formats_available", "team_format_types",
+                "unified_team_description", "relay_specialist_description",
+                "training_implication_unified", "training_implication_relay",
+                "key_distinctions_notes",
+            ]) for r in tf_rows],
+            v_0a, run_at, source_family="0A",
+        )
+        _print(f"layer0.team_formats: inserted {n} rows")
+        summaries.append(f"layer0.team_formats: {n}")
+
+        csp_rows = sports_framework.extract_cross_sport_properties(wb["Cross-Sport Properties"])
+        n = insert_versioned(
+            conn, "layer0.cross_sport_properties",
+            [
+                "property_id", "property_name", "description", "scope",
+                "ranking_text", "estimated_values", "source_evidence", "notes",
+            ],
+            [tuple(r[k] for k in [
+                "property_id", "property_name", "description", "scope",
+                "ranking_text", "estimated_values", "source_evidence", "notes",
+            ]) for r in csp_rows],
+            v_0a, run_at, source_family="0A",
+        )
+        _print(f"layer0.cross_sport_properties: inserted {n} rows")
+        summaries.append(f"layer0.cross_sport_properties: {n}")
+
+        # ----- Phase 3 — Bridge + 0B -----
+        _print("[layer0 ETL] Phase 3 — Bridge + Exercise DB")
+        bridge_rows = sports_framework.build_sport_discipline_bridge(sd_rows)
+        n = insert_versioned(
+            conn, "layer0.sport_discipline_bridge",
+            [
+                "framework_sport", "discipline_id", "discipline_name", "exercise_db_sport",
+                "role", "default_race_time_pct_low", "default_race_time_pct_high",
+            ],
+            [tuple(r[k] for k in [
+                "framework_sport", "discipline_id", "discipline_name", "exercise_db_sport",
+                "role", "default_race_time_pct_low", "default_race_time_pct_high",
+            ]) for r in bridge_rows],
+            v_0a, run_at, source_family="0A",
+        )
+        _print(f"layer0.sport_discipline_bridge: inserted {n} rows")
+        summaries.append(f"layer0.sport_discipline_bridge: {n}")
+
+        wb_ex = exercise_db.open_workbook(EXERCISES_XLSX)
+        ex_rows = exercise_db.extract_exercises(wb_ex["Exercise Master"])
+        n = insert_versioned(
+            conn, "layer0.exercises",
+            [
+                "exercise_id", "exercise_name", "exercise_type",
+                "movement_patterns", "primary_muscles", "secondary_muscles",
+                "equipment_required", "injury_flags_text", "contraindicated_parts",
+                "equipment_substitutes", "physical_proxies",
+                "progression_exercise_id", "progression_exercise_name",
+                "regression_exercise_id", "regression_exercise_name",
+                "sport_count", "coaching_cues",
+            ],
+            [(
+                r["exercise_id"], r["exercise_name"], r["exercise_type"],
+                r["movement_patterns"], r["primary_muscles"], r["secondary_muscles"],
+                r["equipment_required"], r["injury_flags_text"], r["contraindicated_parts"],
+                to_jsonb(r["equipment_substitutes"]), to_jsonb(r["physical_proxies"]),
+                r["progression_exercise_id"], r["progression_exercise_name"],
+                r["regression_exercise_id"], r["regression_exercise_name"],
+                r["sport_count"], r["coaching_cues"],
+            ) for r in ex_rows],
+            v_0b, run_at, source_family="0B",
+        )
+        _print(f"layer0.exercises: inserted {n} rows")
+        summaries.append(f"layer0.exercises: {n}")
+
+        dropped_sxm_dupes: list = []
+        sxm_rows = exercise_db.extract_sport_exercise_map(
+            wb_ex["Sport-Exercise Map"], dropped_dupes=dropped_sxm_dupes,
+        )
+        if dropped_sxm_dupes:
+            _print(
+                f"  [warn] sport_exercise_map: dropped {len(dropped_sxm_dupes)} duplicate "
+                f"(exercise_id, sport_name) rows — see report"
+            )
+        n = insert_versioned(
+            conn, "layer0.sport_exercise_map",
+            [
+                "exercise_id", "exercise_name", "exercise_type",
+                "sport_name", "sport_relevance_note", "priority",
+            ],
+            [tuple(r[k] for k in [
+                "exercise_id", "exercise_name", "exercise_type",
+                "sport_name", "sport_relevance_note", "priority",
+            ]) for r in sxm_rows],
+            v_0b, run_at, source_family="0B",
+        )
+        _print(f"layer0.sport_exercise_map: inserted {n} rows")
+        summaries.append(f"layer0.sport_exercise_map: {n}")
+
+        # ----- Phase 5 — Validation -----
+        _print("[layer0 ETL] Validation")
+        sum_to_100_result = run_sum_to_100(conn)
+        _print(
+            f"sum_to_100: {sum_to_100_result['sports_checked']} sports checked, "
+            f"{sum_to_100_result['pass_count']} PASS, {sum_to_100_result['warn_count']} WARN"
+        )
+        vocab_result = run_vocab_alignment(conn)
+        _print(
+            f"vocab_alignment: {vocab_result['exercises_checked']} exercises checked, "
+            f"{vocab_result['pass_count']} PASS, {vocab_result['warn_count']} WARN; "
+            f"{vocab_result['sport_names_checked']} sport names checked, "
+            f"{vocab_result['sport_pass']} PASS, {vocab_result['sport_warn']} WARN"
+        )
+
+        report_path = build_report(
+            tag, run_at, summaries, sum_to_100_result, vocab_result,
+            extras={
+                "dropped_sd_dupes": dropped_sd_dupes,
+                "dropped_sxm_dupes": dropped_sxm_dupes,
+            },
+        )
+        _print(f"[layer0 ETL] Report written to {report_path}")
+
+    _print("[layer0 ETL] Done.")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
