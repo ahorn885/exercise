@@ -3,7 +3,7 @@
 -- Idempotent: re-running is a no-op. Every table lives in the `layer0`
 -- schema, isolated from the existing app's `public` schema.
 --
--- Spec: etl/sources/Layer0_ETL_Spec_v2.md §4
+-- Spec: etl/sources/Layer0_ETL_Spec_v3.md §4
 
 CREATE SCHEMA IF NOT EXISTS layer0;
 
@@ -280,8 +280,88 @@ CREATE TABLE IF NOT EXISTS layer0.sport_name_aliases (
 );
 
 ----------------------------------------------------------------------
+-- v10 — new tables (Layer0 ETL Spec v3 §4.13–§4.15)
+----------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS layer0.discipline_substitutes (
+  id                  SERIAL PRIMARY KEY,
+  target_id           TEXT NOT NULL,
+  target_name         TEXT NOT NULL,
+  substitute_id       TEXT NOT NULL,
+  substitute_name     TEXT NOT NULL,
+  fidelity            NUMERIC NOT NULL,
+  constraints         TEXT,
+  category            TEXT,
+  substitute_covers   TEXT[],
+  etl_version         TEXT NOT NULL,
+  etl_run_at          TIMESTAMPTZ NOT NULL,
+  superseded_at       TIMESTAMPTZ,
+  UNIQUE (target_id, substitute_id, etl_version)
+);
+
+CREATE TABLE IF NOT EXISTS layer0.discipline_training_gaps (
+  id                          SERIAL PRIMARY KEY,
+  discipline_id               TEXT NOT NULL,
+  discipline_name             TEXT NOT NULL,
+  gap_type                    TEXT NOT NULL,
+  notes                       TEXT,
+  multi_substitute_candidate  BOOLEAN,
+  etl_version                 TEXT NOT NULL,
+  etl_run_at                  TIMESTAMPTZ NOT NULL,
+  superseded_at               TIMESTAMPTZ,
+  UNIQUE (discipline_id, etl_version)
+);
+
+CREATE TABLE IF NOT EXISTS layer0.phase_load_weekly_totals (
+  id                  SERIAL PRIMARY KEY,
+  sport_name          TEXT NOT NULL,
+  phase               TEXT NOT NULL,
+  weekly_low_hours    NUMERIC,
+  weekly_high_hours   NUMERIC,
+  weekly_target_text  TEXT,
+  etl_version         TEXT NOT NULL,
+  etl_run_at          TIMESTAMPTZ NOT NULL,
+  superseded_at       TIMESTAMPTZ,
+  UNIQUE (sport_name, phase, etl_version)
+);
+
+----------------------------------------------------------------------
 -- Additive column migrations (idempotent)
 ----------------------------------------------------------------------
 
 ALTER TABLE layer0.exercises
   ADD COLUMN IF NOT EXISTS contraindicated_conditions TEXT[];
+
+-- v10: Sports Index gained four classification columns
+ALTER TABLE layer0.sports
+  ADD COLUMN IF NOT EXISTS constituent_movements TEXT[];
+ALTER TABLE layer0.sports
+  ADD COLUMN IF NOT EXISTS endurance_profile TEXT;
+ALTER TABLE layer0.sports
+  ADD COLUMN IF NOT EXISTS participation_format TEXT;
+ALTER TABLE layer0.sports
+  ADD COLUMN IF NOT EXISTS multi_discipline BOOLEAN;
+
+-- v10: Discipline Library gained one nullable column (data populated later)
+ALTER TABLE layer0.disciplines
+  ADD COLUMN IF NOT EXISTS stimulus_components TEXT[];
+
+-- v10: Phase Load Allocation gained a default_inclusion column and the
+-- Notes column is now split into prescription_note + audit_log + raw_notes
+ALTER TABLE layer0.phase_load_allocation
+  ADD COLUMN IF NOT EXISTS default_inclusion TEXT;
+ALTER TABLE layer0.phase_load_allocation
+  ADD COLUMN IF NOT EXISTS prescription_note TEXT;
+ALTER TABLE layer0.phase_load_allocation
+  ADD COLUMN IF NOT EXISTS audit_log TEXT;
+ALTER TABLE layer0.phase_load_allocation
+  ADD COLUMN IF NOT EXISTS raw_notes TEXT;
+
+-- v10: Cross-Sport Properties — three new columns
+-- (notes already exists in the base CREATE; ADD COLUMN IF NOT EXISTS is a no-op)
+ALTER TABLE layer0.cross_sport_properties
+  ADD COLUMN IF NOT EXISTS source_text TEXT;
+ALTER TABLE layer0.cross_sport_properties
+  ADD COLUMN IF NOT EXISTS confidence TEXT;
+ALTER TABLE layer0.cross_sport_properties
+  ADD COLUMN IF NOT EXISTS notes TEXT;

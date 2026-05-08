@@ -16,14 +16,28 @@ from etl.layer0 import db
 from etl.layer0.db import insert_versioned, now_utc, to_jsonb
 from etl.layer0.extractors import exercise_db, sports_framework, vocabulary
 from etl.layer0.sport_name_aliases import SPORT_NAME_ALIASES, _ALL
+from etl.layer0.validation.contraindicated_conditions import (
+    run_contraindicated_conditions,
+)
+from etl.layer0.validation.default_inclusion import run_default_inclusion
+from etl.layer0.validation.fk_checks import (
+    run_substitution_fks,
+    run_training_gap_fks,
+)
 from etl.layer0.validation.report import build_report
 from etl.layer0.validation.sum_to_100 import run_sum_to_100
 from etl.layer0.validation.vocab_alignment import run_vocab_alignment
 
 SOURCES = Path(__file__).parent.parent / "sources"
-SPORTS_XLSX = SOURCES / "Sports_Framework_v6.xlsx"
+SPORTS_XLSX = SOURCES / "Sports_Framework_v10.xlsx"
 EXERCISES_XLSX = SOURCES / "AR_Exercise_Database_v17.xlsx"
 VOCAB_MD = SOURCES / "Vocabulary_Audit_v2.md"
+
+# v10 source-version strings (re-run #3). 0A bumps with the framework xlsx.
+# 0B/0C content is unchanged — `-r3` marks the schema env this load runs in.
+SOURCE_VERSION_0A = "0A-v10.0"
+SOURCE_VERSION_0B = "0B-v17.0-r3"
+SOURCE_VERSION_0C = "0C-v2.0-r1"
 
 
 def _v(family: str, tag: str) -> str:
@@ -43,9 +57,15 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
     tag = args.version_tag.strip()
-    v_0a = _v("0A", tag)
-    v_0b = _v("0B", tag)
-    v_0c = _v("0C", tag)
+    # When the tag is "1.3" we use the explicit v10 / r3 / r1 strings;
+    # otherwise fall back to family-vTAG so older version strings keep
+    # working (regression guard for ad-hoc reruns).
+    if tag == "1.3":
+        v_0a, v_0b, v_0c = SOURCE_VERSION_0A, SOURCE_VERSION_0B, SOURCE_VERSION_0C
+    else:
+        v_0a = _v("0A", tag)
+        v_0b = _v("0B", tag)
+        v_0c = _v("0C", tag)
     run_at = now_utc()
 
     _print("[layer0 ETL] Connecting to Neon...")
@@ -145,53 +165,50 @@ def main(argv: list[str] | None = None) -> int:
         _print("[layer0 ETL] Phase 2 — Sports Framework")
         wb = sports_framework.open_workbook(SPORTS_XLSX)
 
-        sports_rows = sports_framework.extract_sports(wb["Sports Index"])
+        movement_warnings: list = []
+        sports_rows = sports_framework.extract_sports(
+            wb["Sports Index"], movement_warnings=movement_warnings,
+        )
+        if movement_warnings:
+            _print(
+                f"  [warn] sports: {len(movement_warnings)} row(s) had unknown "
+                f"movement / endurance / format tokens — see report"
+            )
+        sports_columns = [
+            "sport_name", "typical_duration_range", "team_vs_solo",
+            "flag_navigation", "navigation_notes",
+            "flag_sleep_deprivation", "sleep_deprivation_notes",
+            "flag_pack_carry", "pack_carry_notes",
+            "pack_weight_lbs_low", "pack_weight_lbs_high",
+            "flag_transition_training", "transition_training_notes",
+            "primary_discipline_count", "secondary_discipline_count",
+            "status_label",
+            "constituent_movements", "endurance_profile",
+            "participation_format", "multi_discipline",
+        ]
         n = insert_versioned(
             conn, "layer0.sports",
-            [
-                "sport_name", "typical_duration_range", "team_vs_solo",
-                "flag_navigation", "navigation_notes",
-                "flag_sleep_deprivation", "sleep_deprivation_notes",
-                "flag_pack_carry", "pack_carry_notes",
-                "pack_weight_lbs_low", "pack_weight_lbs_high",
-                "flag_transition_training", "transition_training_notes",
-                "primary_discipline_count", "secondary_discipline_count",
-                "status_label",
-            ],
-            [tuple(r[k] for k in [
-                "sport_name", "typical_duration_range", "team_vs_solo",
-                "flag_navigation", "navigation_notes",
-                "flag_sleep_deprivation", "sleep_deprivation_notes",
-                "flag_pack_carry", "pack_carry_notes",
-                "pack_weight_lbs_low", "pack_weight_lbs_high",
-                "flag_transition_training", "transition_training_notes",
-                "primary_discipline_count", "secondary_discipline_count",
-                "status_label",
-            ]) for r in sports_rows],
+            sports_columns,
+            [tuple(r[k] for k in sports_columns) for r in sports_rows],
             v_0a, run_at, source_family="0A",
         )
         _print(f"layer0.sports: inserted {n} rows")
         summaries.append(f"layer0.sports: {n}")
 
         disc_rows = sports_framework.extract_disciplines(wb["Discipline Library"])
+        disciplines_columns = [
+            "discipline_id", "discipline_name", "discipline_category",
+            "min_base_phase_text", "min_base_phase_weeks_low", "min_base_phase_weeks_high",
+            "periodization_text", "ramp_text", "age_adjusted_ramp_text",
+            "age_ramp_40_44_pct", "age_ramp_45_54_pct", "age_ramp_55_plus_pct",
+            "taper_norms_text", "common_injury_patterns", "injury_preceding_behaviors",
+            "recovery_priority_text", "recovery_modalities", "evidence_quality_text",
+            "stimulus_components",
+        ]
         n = insert_versioned(
             conn, "layer0.disciplines",
-            [
-                "discipline_id", "discipline_name", "discipline_category",
-                "min_base_phase_text", "min_base_phase_weeks_low", "min_base_phase_weeks_high",
-                "periodization_text", "ramp_text", "age_adjusted_ramp_text",
-                "age_ramp_40_44_pct", "age_ramp_45_54_pct", "age_ramp_55_plus_pct",
-                "taper_norms_text", "common_injury_patterns", "injury_preceding_behaviors",
-                "recovery_priority_text", "recovery_modalities", "evidence_quality_text",
-            ],
-            [tuple(r[k] for k in [
-                "discipline_id", "discipline_name", "discipline_category",
-                "min_base_phase_text", "min_base_phase_weeks_low", "min_base_phase_weeks_high",
-                "periodization_text", "ramp_text", "age_adjusted_ramp_text",
-                "age_ramp_40_44_pct", "age_ramp_45_54_pct", "age_ramp_55_plus_pct",
-                "taper_norms_text", "common_injury_patterns", "injury_preceding_behaviors",
-                "recovery_priority_text", "recovery_modalities", "evidence_quality_text",
-            ]) for r in disc_rows],
+            disciplines_columns,
+            [tuple(r[k] for k in disciplines_columns) for r in disc_rows],
             v_0a, run_at, source_family="0A",
         )
         _print(f"layer0.disciplines: inserted {n} rows")
@@ -224,8 +241,13 @@ def main(argv: list[str] | None = None) -> int:
         summaries.append(f"layer0.sport_discipline_map: {n}")
 
         # discipline_pairing — matrix + b2b fallback
+        matrix_meta: dict = {}
         matrix_rows = sports_framework.extract_discipline_pairing_matrix(
-            wb["Discipline Pairing Matrix"]
+            wb["Discipline Pairing Matrix"], debug_meta=matrix_meta,
+        )
+        _print(
+            f"  discipline_pairing matrix: scanned R11–R{matrix_meta.get('matrix_last_data_row')}, "
+            f"{len(matrix_meta.get('matrix_header_ids', []))} header IDs"
         )
         name_to_id = {d["discipline_name"]: d["discipline_id"] for d in disc_rows}
         matrix_pairs = {(r["discipline_id_a"], r["discipline_id_b"]) for r in matrix_rows}
@@ -247,25 +269,56 @@ def main(argv: list[str] | None = None) -> int:
             f"layer0.discipline_pairing: {n} ({len(matrix_rows)} matrix + {len(fallback_rows)} fallback)"
         )
 
-        pl_rows = sports_framework.extract_phase_load_allocation(wb["Phase Load Allocation"])
+        pl_split_stats: dict = {}
+        pl_rows = sports_framework.extract_phase_load_allocation(
+            wb["Phase Load Allocation"], split_stats=pl_split_stats,
+        )
+        pl_columns = [
+            "sport_name", "discipline_id", "discipline_name", "role",
+            "base_pct_low", "base_pct_high", "build_pct_low", "build_pct_high",
+            "peak_pct_low", "peak_pct_high", "taper_pct_low", "taper_pct_high",
+            "notes_conditions", "default_inclusion",
+            "prescription_note", "audit_log", "raw_notes",
+        ]
         n = insert_versioned(
             conn, "layer0.phase_load_allocation",
-            [
-                "sport_name", "discipline_id", "discipline_name", "role",
-                "base_pct_low", "base_pct_high", "build_pct_low", "build_pct_high",
-                "peak_pct_low", "peak_pct_high", "taper_pct_low", "taper_pct_high",
-                "notes_conditions",
-            ],
-            [tuple(r[k] for k in [
-                "sport_name", "discipline_id", "discipline_name", "role",
-                "base_pct_low", "base_pct_high", "build_pct_low", "build_pct_high",
-                "peak_pct_low", "peak_pct_high", "taper_pct_low", "taper_pct_high",
-                "notes_conditions",
-            ]) for r in pl_rows],
+            pl_columns,
+            [tuple(r[k] for k in pl_columns) for r in pl_rows],
             v_0a, run_at, source_family="0A",
         )
-        _print(f"layer0.phase_load_allocation: inserted {n} rows")
+        if pl_split_stats.get("rows"):
+            pct = (pl_split_stats["with_prescription"] / pl_split_stats["rows"]) * 100
+            _print(
+                f"layer0.phase_load_allocation: inserted {n} rows "
+                f"(prescription_note coverage: {pl_split_stats['with_prescription']}/"
+                f"{pl_split_stats['rows']} = {pct:.1f}%)"
+            )
+        else:
+            _print(f"layer0.phase_load_allocation: inserted {n} rows")
         summaries.append(f"layer0.phase_load_allocation: {n}")
+
+        weekly_failures: list = []
+        wt_rows = sports_framework.extract_phase_load_weekly_totals(
+            wb["Phase Load Allocation"], parse_failures=weekly_failures,
+        )
+        wt_columns = [
+            "sport_name", "phase",
+            "weekly_low_hours", "weekly_high_hours",
+            "weekly_target_text",
+        ]
+        n = insert_versioned(
+            conn, "layer0.phase_load_weekly_totals",
+            wt_columns,
+            [tuple(r[k] for k in wt_columns) for r in wt_rows],
+            v_0a, run_at, source_family="0A",
+        )
+        if weekly_failures:
+            _print(
+                f"  [warn] phase_load_weekly_totals: {len(weekly_failures)} sport(s) "
+                f"failed to parse 4 phases — see report"
+            )
+        _print(f"layer0.phase_load_weekly_totals: inserted {n} rows")
+        summaries.append(f"layer0.phase_load_weekly_totals: {n}")
 
         tf_rows = sports_framework.extract_team_formats(wb["Team Format Cross-Reference"])
         n = insert_versioned(
@@ -288,20 +341,57 @@ def main(argv: list[str] | None = None) -> int:
         summaries.append(f"layer0.team_formats: {n}")
 
         csp_rows = sports_framework.extract_cross_sport_properties(wb["Cross-Sport Properties"])
+        csp_columns = [
+            "property_id", "property_name", "description", "scope",
+            "ranking_text", "estimated_values",
+            "source_evidence", "source_text", "confidence", "notes",
+        ]
         n = insert_versioned(
             conn, "layer0.cross_sport_properties",
-            [
-                "property_id", "property_name", "description", "scope",
-                "ranking_text", "estimated_values", "source_evidence", "notes",
-            ],
-            [tuple(r[k] for k in [
-                "property_id", "property_name", "description", "scope",
-                "ranking_text", "estimated_values", "source_evidence", "notes",
-            ]) for r in csp_rows],
+            csp_columns,
+            [tuple(r[k] for k in csp_columns) for r in csp_rows],
             v_0a, run_at, source_family="0A",
         )
         _print(f"layer0.cross_sport_properties: inserted {n} rows")
         summaries.append(f"layer0.cross_sport_properties: {n}")
+
+        # v10 — Discipline Substitution Map
+        substitute_warnings: list = []
+        ds_rows = sports_framework.extract_discipline_substitutes(
+            wb, parse_warnings=substitute_warnings,
+        )
+        ds_columns = [
+            "target_id", "target_name", "substitute_id", "substitute_name",
+            "fidelity", "constraints", "category", "substitute_covers",
+        ]
+        n = insert_versioned(
+            conn, "layer0.discipline_substitutes",
+            ds_columns,
+            [tuple(r[k] for k in ds_columns) for r in ds_rows],
+            v_0a, run_at, source_family="0A",
+        )
+        if substitute_warnings:
+            _print(
+                f"  [warn] discipline_substitutes: dropped {len(substitute_warnings)} "
+                f"row(s) with bad fidelity — see report"
+            )
+        _print(f"layer0.discipline_substitutes: inserted {n} rows")
+        summaries.append(f"layer0.discipline_substitutes: {n}")
+
+        # v10 — Discipline Training Gaps
+        dtg_rows = sports_framework.extract_discipline_training_gaps(wb)
+        dtg_columns = [
+            "discipline_id", "discipline_name", "gap_type",
+            "notes", "multi_substitute_candidate",
+        ]
+        n = insert_versioned(
+            conn, "layer0.discipline_training_gaps",
+            dtg_columns,
+            [tuple(r[k] for k in dtg_columns) for r in dtg_rows],
+            v_0a, run_at, source_family="0A",
+        )
+        _print(f"layer0.discipline_training_gaps: inserted {n} rows")
+        summaries.append(f"layer0.discipline_training_gaps: {n}")
 
         # ----- Phase 3 — Bridge + 0B -----
         _print("[layer0 ETL] Phase 3 — Bridge + Exercise DB")
@@ -389,11 +479,42 @@ def main(argv: list[str] | None = None) -> int:
             f"{vocab_result['sport_pass']} PASS, {vocab_result['sport_warn']} WARN"
         )
 
+        # v10 — new validators
+        sub_fk_result = run_substitution_fks(conn)
+        _print(
+            f"substitution_fks: {sub_fk_result['rows_checked']} substitute rows, "
+            f"{sub_fk_result['pass_count']} PASS, {sub_fk_result['error_count']} ERROR"
+        )
+        gap_fk_result = run_training_gap_fks(conn)
+        _print(
+            f"training_gap_fks: {gap_fk_result['rows_checked']} gap rows, "
+            f"{gap_fk_result['pass_count']} PASS, {gap_fk_result['error_count']} ERROR"
+        )
+        contra_result = run_contraindicated_conditions(conn)
+        _print(
+            f"contraindicated_conditions: {contra_result['exercises_checked']} exercises, "
+            f"{contra_result['pass_count']} PASS, {contra_result['warn_count']} WARN"
+        )
+        di_result = run_default_inclusion(conn)
+        _print(
+            f"default_inclusion: {di_result['rows_checked']} rows, "
+            f"{di_result['pass_count']} PASS, {di_result['error_count']} ERROR"
+        )
+
         report_path = build_report(
             tag, run_at, summaries, sum_to_100_result, vocab_result,
             extras={
                 "dropped_sd_dupes": dropped_sd_dupes,
                 "dropped_sxm_dupes": dropped_sxm_dupes,
+                "movement_warnings": movement_warnings,
+                "matrix_meta": matrix_meta,
+                "pl_split_stats": pl_split_stats,
+                "weekly_failures": weekly_failures,
+                "substitute_warnings": substitute_warnings,
+                "substitution_fks": sub_fk_result,
+                "training_gap_fks": gap_fk_result,
+                "contraindicated_conditions": contra_result,
+                "default_inclusion": di_result,
             },
         )
         _print(f"[layer0 ETL] Report written to {report_path}")

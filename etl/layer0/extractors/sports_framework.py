@@ -1,7 +1,7 @@
-"""Layer 0 ETL — extractor for Sports_Framework_v6.xlsx (source 0A).
+"""Layer 0 ETL — extractor for Sports_Framework_v10.xlsx (source 0A).
 
 One function per sheet. Each returns a list of dicts ready for INSERT.
-Parsing rules per spec §4.2–§4.8.
+Parsing rules per spec §4.2–§4.15 (Layer0_ETL_Spec_v3.md).
 """
 from __future__ import annotations
 
@@ -22,6 +22,32 @@ _DASH = r"[–\-]"
 _PACK_WEIGHT_RE = re.compile(rf"(\d+)(?:\s*{_DASH}\s*(\d+))?\s*lb", re.IGNORECASE)
 _WEEKS_RE = re.compile(rf"(\d+)(?:\s*{_DASH}\s*(\d+))?\s*weeks?", re.IGNORECASE)
 _PCT_RE = re.compile(rf"(\d+(?:\.\d+)?)(?:\s*{_DASH}\s*(\d+(?:\.\d+)?))?\s*%")
+
+# v10 — Sports Index col 13 enum tokens (split on `;`)
+ENUM_MOVEMENTS = {
+    "running", "cycling", "swimming", "paddling", "skiing",
+    "climbing", "hiking", "navigation", "other_skill",
+}
+ENUM_ENDURANCE = {"Pure endurance", "Mixed", "Technical-dominant"}
+ENUM_FORMAT = {"Individual", "Team", "Both"}
+ENUM_DEFAULT_INCLUSION = {"included", "excluded", "prompt_required"}
+
+# v10 — Phase Load Allocation Notes split heuristic
+_AUDIT_PREFIXES = (
+    "[", "Source:", "Audit:", "*CONDITIONAL", "PENDING",
+    "[AUDIT", "*Conditional", "[TAPER feasibility patch",
+)
+
+# v10 — WEEKLY TOTAL TARGET parser
+_WEEKLY_PARSE = re.compile(
+    rf"(?P<phase>\w+):\s*~?\s*(?P<low>\d+(?:\.\d+)?)"
+    rf"(?:\s*{_DASH}\s*(?P<high>\d+(?:\.\d+)?))?\s*hrs?",
+    re.IGNORECASE,
+)
+_PHASE_CANON = {"base": "Base", "build": "Build", "peak": "Peak", "taper": "Taper"}
+
+# v10 — Cross-Sport Properties row filter
+_PROPERTY_ID_RE = re.compile(r"^[A-Z]+_[A-Z]+_\d{3}$")
 
 # Age band header markers — used to slice the age_adjusted_ramp text
 # into per-band sections. The text format is consistently
@@ -161,6 +187,94 @@ def _t(value: Any) -> str | None:
     return s or None
 
 
+def _t_raw(value: Any) -> str | None:
+    """Like `_t` but preserves embedded newlines (used for raw_notes)."""
+    if value is None:
+        return None
+    s = str(value).strip()
+    return s or None
+
+
+def _parse_constituent_movements(raw: Any) -> tuple[list[str] | None, list[str]]:
+    """Parse the Sports Index `Constituent Movements` cell.
+
+    Returns (tokens, unknowns). `unknowns` is a list of tokens that are not
+    in `ENUM_MOVEMENTS`. The caller decides whether to surface them.
+    """
+    if not raw:
+        return None, []
+    tokens = [t.strip() for t in str(raw).split(";") if t.strip()]
+    if not tokens:
+        return None, []
+    bad = [t for t in tokens if t not in ENUM_MOVEMENTS]
+    return tokens, bad
+
+
+def _parse_bool(raw: Any) -> bool | None:
+    if raw is None:
+        return None
+    if isinstance(raw, bool):
+        return raw
+    s = str(raw).strip().upper()
+    if s in ("TRUE", "T", "1", "YES"):
+        return True
+    if s in ("FALSE", "F", "0", "NO"):
+        return False
+    return None
+
+
+def _split_phase_load_notes(notes: Any) -> tuple[str | None, str | None]:
+    """Split Notes / Conditions cell into (prescription_note, audit_log).
+
+    `prescription_note` is the first sentence/clause that doesn't begin with
+    an audit prefix, trimmed and capped at ~120 chars. `audit_log` is the
+    remaining chunks joined with ` | `. Returns `(None, raw)` on parse failure.
+    """
+    if not notes:
+        return None, None
+    text = str(notes).strip()
+    try:
+        parts = re.split(r"(?<=[.;])\s+|\n+", text)
+    except re.error:
+        return None, text
+    prescription: str | None = None
+    audit_chunks: list[str] = []
+    for p in parts:
+        p_clean = p.strip()
+        if not p_clean:
+            continue
+        is_audit = any(p_clean.startswith(prefix) for prefix in _AUDIT_PREFIXES)
+        if not is_audit and prescription is None:
+            prescription = p_clean[:120].rstrip()
+        else:
+            audit_chunks.append(p_clean)
+    audit_log = " | ".join(audit_chunks) if audit_chunks else None
+    return prescription, audit_log
+
+
+def _parse_weekly_total_text(text: Any) -> dict[str, tuple[float, float]] | None:
+    """Returns {Base: (low, high), Build, Peak, Taper} or None on bad parse.
+
+    Supports both `BASE: 6–9 hrs` and `BASE: ~18 hrs` (single value → low=high).
+    """
+    if not text:
+        return None
+    matches = list(_WEEKLY_PARSE.finditer(str(text)))
+    if not matches:
+        return None
+    out: dict[str, tuple[float, float]] = {}
+    for m in matches:
+        phase = _PHASE_CANON.get(m.group("phase").lower())
+        if not phase or phase in out:
+            continue
+        low = float(m.group("low"))
+        high = float(m.group("high")) if m.group("high") else low
+        out[phase] = (low, high)
+    if len(out) < 4:
+        return None
+    return out
+
+
 # ---------------------------------------------------------------------------
 # Sheet extractors
 # ---------------------------------------------------------------------------
@@ -169,8 +283,17 @@ def open_workbook(path: str | Path):
     return load_workbook(str(path), read_only=False, data_only=True)
 
 
-def extract_sports(ws: Worksheet) -> list[dict[str, Any]]:
-    """Sheet 1 — Sports Index. Header on R1, data R2+."""
+def extract_sports(
+    ws: Worksheet,
+    movement_warnings: list[dict[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
+    """Sheet 1 — Sports Index. Header on R1, data R2+.
+
+    v10 adds four classification columns at cols 13/14/15/16:
+    Constituent Movements, Endurance Profile, Participation Format,
+    Multi-Discipline. Unknown enum tokens are surfaced via
+    `movement_warnings` if provided (informational, never fails the ETL).
+    """
     rows: list[dict[str, Any]] = []
     for r in range(2, ws.max_row + 1):
         sport = _t(ws.cell(row=r, column=1).value)
@@ -186,6 +309,34 @@ def extract_sports(ws: Worksheet) -> list[dict[str, Any]]:
         flag_pack, pack_full = _parse_yes_no(pack_text)
         flag_trans, trans_full = _parse_yes_no(trans_text)
         pack_low, pack_high = _parse_pack_weight(pack_full) if flag_pack else (None, None)
+
+        movements, bad_movements = _parse_constituent_movements(
+            ws.cell(row=r, column=13).value
+        )
+        endurance = _t(ws.cell(row=r, column=14).value)
+        participation = _t(ws.cell(row=r, column=15).value)
+        multi_disc = _parse_bool(ws.cell(row=r, column=16).value)
+
+        warns: list[str] = []
+        if bad_movements:
+            warns.append(f"unknown movement tokens: {bad_movements}")
+        if endurance and endurance not in ENUM_ENDURANCE:
+            warns.append(f"unknown endurance_profile {endurance!r}")
+        if participation and participation not in ENUM_FORMAT:
+            warns.append(f"unknown participation_format {participation!r}")
+        if multi_disc is not None and movements is not None:
+            derived = len(movements) > 1
+            if derived != multi_disc:
+                warns.append(
+                    f"multi_discipline={multi_disc} disagrees with derived "
+                    f"len(constituent_movements)>1={derived}"
+                )
+        if warns and movement_warnings is not None:
+            movement_warnings.append({
+                "sport_name": sport,
+                "row_number": r,
+                "warnings": warns,
+            })
 
         rows.append({
             "sport_name": sport,
@@ -204,6 +355,10 @@ def extract_sports(ws: Worksheet) -> list[dict[str, Any]]:
             "primary_discipline_count": _i(ws.cell(row=r, column=10).value),
             "secondary_discipline_count": _i(ws.cell(row=r, column=11).value),
             "status_label": _t(ws.cell(row=r, column=12).value),
+            "constituent_movements": movements,
+            "endurance_profile": endurance,
+            "participation_format": participation,
+            "multi_discipline": multi_disc,
         })
     return rows
 
@@ -240,6 +395,8 @@ def extract_disciplines(ws: Worksheet) -> list[dict[str, Any]]:
             "recovery_priority_text": recovery_text,
             "recovery_modalities": _parse_recovery_modalities(recovery_text),
             "evidence_quality_text": _t(ws.cell(row=r, column=13).value),
+            # v10: schema column added for future use; v10 sheet has no source col yet
+            "stimulus_components": None,
         })
     return rows
 
@@ -296,10 +453,21 @@ def extract_sport_discipline_map(
     return rows
 
 
-def extract_discipline_pairing_matrix(ws: Worksheet) -> list[dict[str, Any]]:
-    """Sheet 4 — primary matrix. Header on R10; data R11–R27.
+def extract_discipline_pairing_matrix(
+    ws: Worksheet,
+    *,
+    debug_meta: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
+    """Sheet 4 — primary matrix. Header on R10; data R11+.
 
-    R29–R37 are commentary rationales — not turned into pairing rows.
+    The matrix can extend beyond R27 in v10 (D-008 split into D-008a/D-008b),
+    so the last data row is detected dynamically: scan downward until the
+    first row whose col 1 doesn't start with `D-`. Rows after the matrix
+    (KEY PAIRING RATIONALE etc.) are commentary, not pairing rows.
+
+    Header cells starting with "D-" yield a destination column. Cells whose
+    first token doesn't match `D-\\d+[a-z]?` are non-discipline columns and
+    are ignored. This handles `D-008a` / `D-008b` IDs introduced in v10.
     """
     rows: list[dict[str, Any]] = []
     rating_map = {
@@ -314,19 +482,28 @@ def extract_discipline_pairing_matrix(ws: Worksheet) -> list[dict[str, Any]]:
         "IMPRACTICAL": "IMPRACTICAL",
     }
 
+    _ID_RE = re.compile(r"(D-\d+[a-z]?)")
+
     # Read header row R10 to extract destination D-IDs
     header_ids: list[str | None] = [None]  # col 1 is "FROM" label
     for c in range(2, ws.max_column + 1):
         val = _t(ws.cell(row=10, column=c).value)
-        # Header cell looks like "D-001\nTrail Run"
-        m = re.search(r"(D-\d+)", val or "")
+        m = _ID_RE.search(val or "")
         header_ids.append(m.group(1) if m else None)
 
-    for r in range(11, 28):
+    # Dynamically find the last data row: first empty/non-D row signals end.
+    last_data_row = 10
+    for r in range(11, ws.max_row + 1):
+        first = _t(ws.cell(row=r, column=1).value)
+        if not first or not _ID_RE.match(first):
+            break
+        last_data_row = r
+
+    for r in range(11, last_data_row + 1):
         first = _t(ws.cell(row=r, column=1).value)
         if not first:
             continue
-        m = re.match(r"(D-\d+)", first)
+        m = _ID_RE.match(first)
         if not m:
             continue
         from_id = m.group(1)
@@ -345,6 +522,10 @@ def extract_discipline_pairing_matrix(ws: Worksheet) -> list[dict[str, Any]]:
                 "rationale": None,
                 "source": "matrix",
             })
+
+    if debug_meta is not None:
+        debug_meta["matrix_last_data_row"] = last_data_row
+        debug_meta["matrix_header_ids"] = [h for h in header_ids if h]
     return rows
 
 
@@ -403,21 +584,47 @@ def extract_pairing_b2b_fallback(
     return rows
 
 
-def extract_phase_load_allocation(ws: Worksheet) -> list[dict[str, Any]]:
-    """Sheet 5 — Phase Load Allocation. Header R1, data R2+."""
+def extract_phase_load_allocation(
+    ws: Worksheet,
+    *,
+    split_stats: dict[str, int] | None = None,
+) -> list[dict[str, Any]]:
+    """Sheet 5 — Phase Load Allocation. Header R1, data R2+.
+
+    v10 additions:
+      - Col 14 `Default Inclusion` (enum: included / excluded / prompt_required).
+      - Notes (col 13) is split into:
+          * `prescription_note` — leading non-audit clause (≤120 chars)
+          * `audit_log` — remaining audit / source / patch chunks
+          * `raw_notes` — the original cell text, unaltered
+        See `_split_phase_load_notes` for the heuristic. Counts of rows
+        producing a non-NULL `prescription_note` are returned via `split_stats`
+        if provided.
+    """
     rows: list[dict[str, Any]] = []
     last_sport: str | None = None
+    n_with_prescription = 0
+    n_total = 0
     for r in range(2, ws.max_row + 1):
         sport = _t(ws.cell(row=r, column=1).value)
-        # Some rows omit the sport column (block layout) — carry the last
-        # seen sport value forward only when discipline col is non-empty.
         if sport:
             last_sport = sport
         disc = _t(ws.cell(row=r, column=3).value)
         role = _t(ws.cell(row=r, column=4).value)
-        # Skip blank rows
         if not disc and not role:
             continue
+
+        raw_notes = _t_raw(ws.cell(row=r, column=13).value)
+        prescription, audit = _split_phase_load_notes(raw_notes)
+        default_inclusion = _t(ws.cell(row=r, column=14).value)
+        # Normalize whitespace; preserve original token for validation
+        if default_inclusion:
+            default_inclusion = default_inclusion.strip()
+
+        n_total += 1
+        if prescription:
+            n_with_prescription += 1
+
         rows.append({
             "sport_name": last_sport or "",
             "discipline_id": _t(ws.cell(row=r, column=2).value),
@@ -432,7 +639,61 @@ def extract_phase_load_allocation(ws: Worksheet) -> list[dict[str, Any]]:
             "taper_pct_low": _f(ws.cell(row=r, column=11).value),
             "taper_pct_high": _f(ws.cell(row=r, column=12).value),
             "notes_conditions": _t(ws.cell(row=r, column=13).value),
+            "default_inclusion": default_inclusion,
+            "prescription_note": prescription,
+            "audit_log": audit,
+            "raw_notes": raw_notes,
         })
+
+    if split_stats is not None:
+        split_stats["rows"] = n_total
+        split_stats["with_prescription"] = n_with_prescription
+    return rows
+
+
+def extract_phase_load_weekly_totals(
+    ws: Worksheet,
+    *,
+    parse_failures: list[dict[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
+    """Spec v3 §4.6b — derive 4 (Base/Build/Peak/Taper) hour-range rows per
+    sport from the `WEEKLY TOTAL TARGET` aggregator row in Phase Load
+    Allocation. Parse the Notes (col 13) cell for `PHASE: low–high hrs`
+    matches.
+
+    Discipline-name detection is case-insensitive and matches both em-dash
+    `WEEKLY TOTAL TARGET` and minor typo variants. Rows whose Notes cell
+    fails to yield 4 phase ranges contribute zero output rows and are
+    appended to `parse_failures` if provided.
+    """
+    rows: list[dict[str, Any]] = []
+    last_sport: str | None = None
+    for r in range(2, ws.max_row + 1):
+        sport = _t(ws.cell(row=r, column=1).value)
+        if sport:
+            last_sport = sport
+        disc = _t(ws.cell(row=r, column=3).value)
+        if not disc or "WEEKLY TOTAL TARGET" not in disc.upper():
+            continue
+        notes = _t_raw(ws.cell(row=r, column=13).value)
+        parsed = _parse_weekly_total_text(notes)
+        if not parsed:
+            if parse_failures is not None:
+                parse_failures.append({
+                    "row_number": r,
+                    "sport_name": last_sport or "",
+                    "weekly_target_text": notes,
+                })
+            continue
+        for phase in ("Base", "Build", "Peak", "Taper"):
+            low, high = parsed[phase]
+            rows.append({
+                "sport_name": last_sport or "",
+                "phase": phase,
+                "weekly_low_hours": low,
+                "weekly_high_hours": high,
+                "weekly_target_text": notes,
+            })
     return rows
 
 
@@ -466,30 +727,122 @@ def extract_team_formats(ws: Worksheet) -> list[dict[str, Any]]:
 def extract_cross_sport_properties(ws: Worksheet) -> list[dict[str, Any]]:
     """Sheet 8 — header R1, data R2+.
 
-    Stops at the EXTENSION NOTES marker; everything below it is commentary.
-    A blank row before the marker is also a stop signal (the substantive
-    block ends at the first gap).
+    v10 schema (9 cols): Property ID | Property Name | Description | Scope |
+    Ranking | Estimated Values | Source(s) | Confidence | Notes.
+
+    Filters by Property ID regex (`^[A-Z]+_[A-Z]+_\\d{3}$`) so EXTENSION
+    NOTES commentary, blank rows, and banner cells are skipped automatically.
     """
     rows: list[dict[str, Any]] = []
-    seen_any_data = False
     for r in range(2, ws.max_row + 1):
         prop = _t(ws.cell(row=r, column=1).value)
-        if prop and prop.upper().startswith("EXTENSION NOTES"):
-            break
-        if not prop:
-            if seen_any_data:
-                break
+        if not prop or not _PROPERTY_ID_RE.match(prop.strip()):
             continue
-        seen_any_data = True
         rows.append({
-            "property_id": prop,
-            "property_name": _t(ws.cell(row=r, column=2).value) or prop,
+            "property_id": prop.strip(),
+            "property_name": _t(ws.cell(row=r, column=2).value) or prop.strip(),
             "description": _t(ws.cell(row=r, column=3).value),
             "scope": _t(ws.cell(row=r, column=4).value),
             "ranking_text": _t(ws.cell(row=r, column=5).value),
             "estimated_values": _t(ws.cell(row=r, column=6).value),
+            "source_text": _t(ws.cell(row=r, column=7).value),
+            # `source_evidence` retained for backwards compatibility with the
+            # v2 schema column; same content as source_text.
             "source_evidence": _t(ws.cell(row=r, column=7).value),
-            "notes": _t(ws.cell(row=r, column=9).value) or _t(ws.cell(row=r, column=8).value),
+            "confidence": _t(ws.cell(row=r, column=8).value),
+            "notes": _t(ws.cell(row=r, column=9).value),
+        })
+    return rows
+
+
+def extract_discipline_substitutes(
+    wb,
+    *,
+    parse_warnings: list[dict[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
+    """Spec v3 §4.13 — read the Discipline Substitution Map sheet.
+
+    Columns (R1 header, R2+ data): Target ID | Target Name | Substitute ID |
+    Substitute Name | Fidelity (0-1) | Constraints | Category.
+
+    Rows with a missing or non-numeric `fidelity` are dropped and (if
+    `parse_warnings` is provided) appended for the report. `substitute_covers`
+    is initialized to NULL — populated in a later session.
+    """
+    if "Discipline Substitution Map" not in wb.sheetnames:
+        return []
+    ws = wb["Discipline Substitution Map"]
+    rows: list[dict[str, Any]] = []
+    for r in range(2, ws.max_row + 1):
+        target_id = _t(ws.cell(row=r, column=1).value)
+        if not target_id:
+            continue
+        substitute_id = _t(ws.cell(row=r, column=3).value)
+        if not substitute_id:
+            continue
+        fidelity = _f(ws.cell(row=r, column=5).value)
+        if fidelity is None:
+            if parse_warnings is not None:
+                parse_warnings.append({
+                    "row_number": r,
+                    "target_id": target_id,
+                    "substitute_id": substitute_id,
+                    "reason": "missing or non-numeric fidelity",
+                })
+            continue
+        rows.append({
+            "target_id": target_id,
+            "target_name": _t(ws.cell(row=r, column=2).value) or target_id,
+            "substitute_id": substitute_id,
+            "substitute_name": _t(ws.cell(row=r, column=4).value) or substitute_id,
+            "fidelity": fidelity,
+            "constraints": _t_raw(ws.cell(row=r, column=6).value),
+            "category": _t(ws.cell(row=r, column=7).value),
+            "substitute_covers": None,
+        })
+    return rows
+
+
+def extract_discipline_training_gaps(wb) -> list[dict[str, Any]]:
+    """Spec v3 §4.14 — read the Discipline Training Gaps sheet.
+
+    Columns (R1 header, R2+ data): Discipline ID | Discipline Name |
+    Gap Description (free text). Maps the free-text into structured
+    `gap_type` and `multi_substitute_candidate` fields.
+    """
+    if "Discipline Training Gaps" not in wb.sheetnames:
+        return []
+    ws = wb["Discipline Training Gaps"]
+    rows: list[dict[str, Any]] = []
+    for r in range(2, ws.max_row + 1):
+        did = _t(ws.cell(row=r, column=1).value)
+        if not did:
+            continue
+        notes = _t_raw(ws.cell(row=r, column=3).value) or ""
+        notes_l = notes.lower()
+        if "no good single" in notes_l or "no good single substitute" in notes_l:
+            gap_type = "no_single_substitute"
+        elif (
+            "no off-snow" in notes_l
+            or "no off-environment" in notes_l
+            or "no off-" in notes_l
+        ):
+            gap_type = "no_off_environment_substitute"
+        elif "no discipline-level substitute" in notes_l:
+            gap_type = "no_substitute_available"
+        else:
+            gap_type = "other"
+        multi_sub = (
+            "multi-substitute" in notes_l
+            or "multi substitute" in notes_l
+            or "compose" in notes_l
+        )
+        rows.append({
+            "discipline_id": did,
+            "discipline_name": _t(ws.cell(row=r, column=2).value) or did,
+            "gap_type": gap_type,
+            "notes": notes or None,
+            "multi_substitute_candidate": multi_sub,
         })
     return rows
 

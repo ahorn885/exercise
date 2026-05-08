@@ -125,8 +125,157 @@ def build_report(
             )
         lines.append("")
 
-    # ----- extras (dropped dupes, etc.) -----
+    # ----- v10 validators -----
     extras = extras or {}
+    sub_fk = extras.get("substitution_fks")
+    gap_fk = extras.get("training_gap_fks")
+    contra = extras.get("contraindicated_conditions")
+    di = extras.get("default_inclusion")
+
+    if sub_fk is not None:
+        lines.append("## Validation — substitution_fks")
+        lines.append("")
+        lines.append(
+            f"**Rows checked:** {sub_fk['rows_checked']}  ·  "
+            f"**PASS:** {sub_fk['pass_count']}  ·  "
+            f"**ERROR:** {sub_fk['error_count']}"
+        )
+        if sub_fk["errors"]:
+            lines.append("")
+            lines.append("| Target ID | Substitute ID | Broken |")
+            lines.append("|---|---|---|")
+            for e in sub_fk["errors"]:
+                lines.append(
+                    f"| {e['target_id']} | {e['substitute_id']} | "
+                    f"{', '.join(e['broken'])} |"
+                )
+        lines.append("")
+
+    if gap_fk is not None:
+        lines.append("## Validation — training_gap_fks")
+        lines.append("")
+        lines.append(
+            f"**Rows checked:** {gap_fk['rows_checked']}  ·  "
+            f"**PASS:** {gap_fk['pass_count']}  ·  "
+            f"**ERROR:** {gap_fk['error_count']}"
+        )
+        if gap_fk["errors"]:
+            lines.append("")
+            lines.append("| Discipline ID | Discipline name | Gap type |")
+            lines.append("|---|---|---|")
+            for e in gap_fk["errors"]:
+                lines.append(
+                    f"| {e['discipline_id']} | {e['discipline_name']} | "
+                    f"{e['gap_type']} |"
+                )
+        lines.append("")
+
+    if contra is not None:
+        lines.append("## Validation — contraindicated_conditions")
+        lines.append("")
+        lines.append(
+            f"**Exercises checked:** {contra['exercises_checked']}  ·  "
+            f"**PASS:** {contra['pass_count']}  ·  "
+            f"**WARN:** {contra['warn_count']}"
+        )
+        if contra["warnings"]:
+            lines.append("")
+            lines.append(
+                "Conditions in `exercises.contraindicated_conditions[]` "
+                "not present in `layer0.health_condition_categories.category_name`:"
+            )
+            lines.append("")
+            for w in contra["warnings"]:
+                unknown = ", ".join(repr(c) for c in w["unknown_conditions"])
+                lines.append(
+                    f"- `{w['exercise_id']}` {w['exercise_name']} → unknown: {unknown}"
+                )
+        lines.append("")
+
+    if di is not None:
+        lines.append("## Validation — default_inclusion")
+        lines.append("")
+        lines.append(
+            f"**Rows checked:** {di['rows_checked']}  ·  "
+            f"**PASS:** {di['pass_count']}  ·  "
+            f"**ERROR:** {di['error_count']}"
+        )
+        if di["errors"]:
+            lines.append("")
+            lines.append("| Sport | Discipline ID | Default inclusion |")
+            lines.append("|---|---|---|")
+            for e in di["errors"]:
+                lines.append(
+                    f"| {e['sport_name']} | {e['discipline_id']} | "
+                    f"{e['default_inclusion']!r} |"
+                )
+        lines.append("")
+
+    # ----- v10 extractor diagnostics -----
+    movement_warnings = extras.get("movement_warnings") or []
+    matrix_meta = extras.get("matrix_meta") or {}
+    pl_split = extras.get("pl_split_stats") or {}
+    weekly_failures = extras.get("weekly_failures") or []
+    substitute_warnings = extras.get("substitute_warnings") or []
+
+    if matrix_meta or pl_split or movement_warnings or weekly_failures or substitute_warnings:
+        lines.append("## v10 extractor diagnostics")
+        lines.append("")
+
+    if matrix_meta:
+        lines.append(
+            f"**Discipline pairing matrix:** scanned R11–R{matrix_meta.get('matrix_last_data_row')}"
+            f", {len(matrix_meta.get('matrix_header_ids', []))} header discipline IDs."
+        )
+        ids = matrix_meta.get("matrix_header_ids", [])
+        if ids:
+            lines.append("")
+            lines.append(f"Header IDs: {', '.join(ids)}")
+        lines.append("")
+
+    if pl_split:
+        rows_n = pl_split.get("rows", 0)
+        with_pres = pl_split.get("with_prescription", 0)
+        pct = (with_pres / rows_n * 100) if rows_n else 0.0
+        lines.append(
+            f"**Phase Load Notes split:** {with_pres}/{rows_n} rows yielded a "
+            f"non-NULL `prescription_note` ({pct:.1f}%)."
+        )
+        if pct < 70.0:
+            lines.append("")
+            lines.append(
+                "⚠️ Coverage below 70% — the heuristic may need tuning. "
+                "Inspect `_split_phase_load_notes` and the audit-prefix list."
+            )
+        lines.append("")
+
+    if weekly_failures:
+        lines.append("**Weekly Total Target parser failures:**")
+        lines.append("")
+        for f in weekly_failures:
+            txt = (f.get("weekly_target_text") or "")[:120].replace("\n", " ")
+            lines.append(f"- R{f['row_number']} {f['sport_name']} → {txt!r}…")
+        lines.append("")
+
+    if movement_warnings:
+        lines.append("**Sports Index — unknown enum tokens:**")
+        lines.append("")
+        for w in movement_warnings:
+            for warn in w["warnings"]:
+                lines.append(f"- R{w['row_number']} {w['sport_name']}: {warn}")
+        lines.append("")
+
+    if substitute_warnings:
+        lines.append("**Discipline Substitution Map — dropped rows:**")
+        lines.append("")
+        for w in substitute_warnings:
+            lines.append(
+                f"- R{w['row_number']} {w['target_id']} → "
+                f"{w['substitute_id']}: {w['reason']}"
+            )
+        lines.append("")
+
+    # ----- extras (dropped dupes, etc.) -----
     dropped = extras.get("dropped_sd_dupes") or []
     dropped_sxm = extras.get("dropped_sxm_dupes") or []
     if dropped or dropped_sxm:
