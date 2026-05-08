@@ -248,13 +248,28 @@ def test_split_deduplication():
     assert cond == ["Cardiac"]
 
 
-def test_split_sciatica_routes_to_conditions():
+def test_split_sciatica_renames_to_neurological():
+    # Sciatica is a nerve-root condition, not a body part — alias to the
+    # canonical Neurological category so the contraindicated_conditions
+    # validator matches against health_condition_categories.
     bp, cond = split_contraindicated_string("Lower back, Sciatica")
     assert bp == ["Lower back"]
-    assert "Sciatica" in cond
+    assert "Neurological" in cond
+    assert "Sciatica" not in cond
 
 
-def test_split_core_temperature_routes_to_conditions():
-    bp, cond = split_contraindicated_string("Core Temperature")
+def test_split_lungs_renames_to_respiratory():
+    bp, cond = split_contraindicated_string("Lungs")
     assert bp == []
-    assert "Core Temperature" in cond
+    assert cond == ["Respiratory"]
+
+
+def test_split_drops_gear_and_thermal_tokens():
+    # Saddle / Goggle / Blister are gear-fit adaptations (Vocab Audit §2.2
+    # excluded list); Core Temperature is captured by the Thermoregulation
+    # category but the raw token is dropped from contraindications.
+    bp, cond = split_contraindicated_string(
+        "Saddle, Goggle, Blister, Core Temperature, Knee"
+    )
+    assert bp == ["Knee"]
+    assert cond == []

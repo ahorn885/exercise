@@ -3,8 +3,8 @@
 For each sport in `layer0.phase_load_allocation`, compute the adjusted stack
 (conditionals zeroed, paddle disciplines treated as interchangeable — only
 the maximum contribution counted) and report whether the HIGH band reaches
-100% on each phase. The check is a WARN (informational) — the ETL never
-fails on this.
+the per-phase threshold. BASE / BUILD / PEAK require ≥ 100%; TAPER requires
+≥ 90%. The check is a WARN (informational) — the ETL never fails on this.
 
 Reference: `Phase_Load_Allocation_Audit_Log.md` (the AR pre-audit finding
 "Adjusted (paddle interchange + race-specific minors zeroed): 77–109 / 88–
@@ -16,6 +16,18 @@ from __future__ import annotations
 from typing import Any
 
 PHASES = ("base", "build", "peak", "taper")
+
+# Per-phase HIGH-band thresholds. Taper bands are intentionally lower in
+# v10 source curation: volume drops asymmetrically across disciplines as
+# athletes shed sport-specific load and shift to recovery, so a HIGH-band
+# total of 90–99% during taper is expected behavior, not a curation error.
+# BASE / BUILD / PEAK still require a full 100% stack.
+PHASE_THRESHOLDS: dict[str, float] = {
+    "base": 100.0,
+    "build": 100.0,
+    "peak": 100.0,
+    "taper": 90.0,
+}
 
 # Discipline names treated as interchangeable for "paddle interchange".
 # Source: AR audit log line 33 + Vocab Audit §3 (kayak / packraft / canoe
@@ -52,11 +64,11 @@ def run_sum_to_100(conn) -> dict[str, Any]:
     warn_count = 0
     for sport, rows in sorted(by_sport.items()):
         adjusted = _compute_adjusted_stack(rows)
-        # Per phase, decide PASS / WARN. HIGH band must reach >= 100%.
+        # Per phase, decide PASS / WARN against the phase-specific threshold.
         phase_status: dict[str, str] = {}
         for phase in PHASES:
             high = adjusted[phase]["high"]
-            phase_status[phase] = "PASS" if high >= 100.0 else "WARN"
+            phase_status[phase] = "PASS" if high >= PHASE_THRESHOLDS[phase] else "WARN"
         any_warn = any(s == "WARN" for s in phase_status.values())
         if any_warn:
             warn_count += 1

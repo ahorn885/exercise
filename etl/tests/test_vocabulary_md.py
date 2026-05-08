@@ -63,15 +63,18 @@ def test_body_parts_arm_region_includes_climbing_specific(parsed):
 # ---------------------------------------------------------------------------
 
 def test_health_categories_count(parsed):
-    # Audit §2.2 has 11 system categories. Spec §4.12.2 says ~21 — wrong;
-    # source is the source of truth.
-    assert len(parsed["health_condition_categories"]) == 11
+    # Audit §2.2 has 12 system categories (11 originals + Cognitive added
+    # in v1.3.1 to cover skill-heavy drill gating for TBI / processing-
+    # speed conditions). Spec §4.12.2 says ~21 — wrong; source is the
+    # source of truth.
+    assert len(parsed["health_condition_categories"]) == 12
 
 
 def test_health_categories_known_present(parsed):
     names = {c["category_name"] for c in parsed["health_condition_categories"]}
     for required in ["Cardiac", "Respiratory", "Endocrine / Metabolic",
                      "GI", "Neurological", "Cognitive / Mental health",
+                     "Cognitive",
                      "Musculoskeletal (chronic, non-injury)", "Skin",
                      "Thermoregulation", "Immune / Autoimmune", "Other"]:
         assert required in names

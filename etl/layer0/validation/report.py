@@ -45,7 +45,9 @@ def build_report(
         " equals `Conditional`) are zeroed; among paddle disciplines"
         " (Packrafting, Kayaking, Canoeing, SUP, Rowing, Sea Kayak) only"
         " the maximum per-phase contribution is counted (athlete picks one"
-        " for race day). HIGH band must reach ≥ 100% on every phase."
+        " for race day). Per-phase HIGH-band thresholds: BASE / BUILD /"
+        " PEAK ≥ 100%; TAPER ≥ 90% (taper-band undershoot is expected"
+        " behavior, not a curation error)."
     )
     lines.append("")
     if sum_to_100["warn_count"]:

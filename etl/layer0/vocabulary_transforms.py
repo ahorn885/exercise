@@ -232,16 +232,30 @@ SYSTEMIC_TOKENS: set[str] = {
     "lungs",
     "gi",
     "skin",
-    "blister",
-    "goggle",
-    "saddle",
-    "core temperature",
     "sciatica",
 }
 
-# Tokens to drop from col 13 entirely — functional capacity, not anatomical.
+# Aliases applied to systemic tokens before they land in
+# contraindicated_conditions. Maps a raw col-13 token (lower-cased) to the
+# canonical health_condition_categories.category_name. Tokens not in this
+# map pass through unchanged.
+_CONTRA_RENAME: dict[str, str] = {
+    "lungs": "Respiratory",
+    "sciatica": "Neurological",
+}
+
+# Tokens to drop from col 13 entirely — functional capacity / gear-side
+# adaptations / non-systemic flags that aren't athlete health data.
+# Saddle / Goggle / Blister are gear-fit adaptations built up through
+# training (Vocab Audit §2.2 "excluded — col 13 keeps as filter flags but
+# no athlete-side field"); Core Temperature is captured by the
+# Thermoregulation category but the raw token isn't a category itself.
 _CONTRA_DROP: set[str] = {
     "grip",
+    "saddle",
+    "goggle",
+    "blister",
+    "core temperature",
 }
 
 # "Chest/Rib" splits into ["Chest", "Rib"] per audit §5.
@@ -258,11 +272,12 @@ def transform_body_part_string(raw: str | None) -> list[str]:
       2. Apply body-part rename map.
       3. Dedupe preserving order.
 
-    Tokens that map to non-body-part filter flags (Saddle, Goggle, Blister,
-    Cardiac, Cognitive, Lungs, GI, Skin, Core Temperature) pass through
-    unchanged — they're surfaced as warnings by the vocab alignment
-    validator, which is the correct behavior since they're not body parts.
-    The v2 query layer should route them to health_condition_categories.
+    Tokens that map to non-body-part filter flags (Cardiac, Cognitive,
+    Lungs, GI, Skin) pass through unchanged — they're surfaced as warnings
+    by the vocab alignment validator, which is the correct behavior since
+    they're not body parts. The v2 query layer should route them to
+    health_condition_categories. The contraindication splitter
+    (`split_contraindicated_string`) handles the routing automatically.
     """
     if not raw:
         return []
@@ -297,8 +312,9 @@ def split_contraindicated_string(
     """Split a col-13 contraindicated string into body parts and conditions.
 
     Pipeline per token (after comma-split and slash-decompose):
-      - Token in SYSTEMIC_TOKENS  → append to conditions list
       - Token in _CONTRA_DROP     → drop silently
+      - Token in SYSTEMIC_TOKENS  → apply _CONTRA_RENAME (if present),
+                                    append to conditions list
       - Otherwise                 → apply _BODY_RENAME, append to body_parts list
 
     Returns (body_parts, conditions). Each list is deduplicated, order preserved.
@@ -327,9 +343,11 @@ def split_contraindicated_string(
             if lower in _CONTRA_DROP:
                 continue
             elif lower in SYSTEMIC_TOKENS:
-                if lower not in seen_cond:
-                    seen_cond.add(lower)
-                    conditions.append(piece)
+                canonical = _CONTRA_RENAME.get(lower, piece)
+                ckey = canonical.lower()
+                if ckey not in seen_cond:
+                    seen_cond.add(ckey)
+                    conditions.append(canonical)
             else:
                 renamed = _BODY_RENAME.get(lower, piece)
                 rkey = renamed.lower()
