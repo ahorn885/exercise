@@ -169,6 +169,7 @@ Replaces both **Chronic Medical Conditions** (multi-select field, v1) and **Syst
 | GI | Race-fueling planning; aid-station strategy; avoid high-jostle post-fueling | IBS, IBD, Crohn's, celiac, chronic reflux |
 | Neurological | Coordination/disorientation drill caution; concussion return-to-load; seizure-risk gating | Concussion history, migraine, epilepsy, MS, neuropathy |
 | Cognitive / Mental health | Plan complexity calibration; recovery prioritisation; stimulant interaction with HR | ADHD, anxiety, depression, OCD — when affects training adherence/intensity |
+| Cognitive | Skill-heavy drill gating; sequencing-load caution; processing-speed-aware progression | TBI, post-concussion processing-speed deficits, cognitive impairment affecting drill execution |
 | Musculoskeletal (chronic, non-injury) | Permanent regression chain; load management; flare-up flags | Arthritis, fibromyalgia, hypermobility, congenital structural |
 | Skin | Sun-exposure exercise filtering; abrasion-risk surfaces; sweat-irritation gear | Photosensitivity, eczema, severe sweat allergy |
 | Thermoregulation | Heat/cold tolerance flags; pairs with system-tracked heat-acclim history | Heat intolerance, Raynaud's, MS-related thermal dysreg |
@@ -180,10 +181,11 @@ Replaces both **Chronic Medical Conditions** (multi-select field, v1) and **Syst
 | Old col 13 token | New System category |
 |---|---|
 | Cardiac | Cardiac |
-| Cognitive | Cognitive / Mental health |
+| Cognitive | Cognitive |
 | Lungs | Respiratory |
 | GI | GI |
 | Skin | Skin |
+| Sciatica | Neurological |
 | Core Temperature | Thermoregulation |
 
 **Excluded — col 13 keeps as filter flags but no athlete-side field:**
