@@ -296,7 +296,7 @@ CREATE TABLE IF NOT EXISTS layer0.discipline_substitutes (
   etl_version         TEXT NOT NULL,
   etl_run_at          TIMESTAMPTZ NOT NULL,
   superseded_at       TIMESTAMPTZ,
-  UNIQUE (target_id, substitute_id, etl_version)
+  UNIQUE (target_id, substitute_id, substitute_name, etl_version)
 );
 
 CREATE TABLE IF NOT EXISTS layer0.discipline_training_gaps (
