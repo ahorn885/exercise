@@ -344,3 +344,48 @@ def project_next_from_current(current_sets, current_reps, current_weight, curren
         'next_weight': next_weight,
         'next_duration': next_duration,
     }
+
+
+def compute_deload_baseline(current_sets, current_reps, current_weight, current_duration,
+                            movement_pattern, weight_increment=None, pct=0.10):
+    """Drop the primary progression dimension by `pct` (default 10%).
+
+    Mirrors `project_next_from_current`'s dimension priority so the dimension
+    we deload is the same one progression would touch:
+      Plyo            → drop sets by 1 (min 1)
+      else weight     → drop weight by pct, rounded to weight increment
+      else reps       → drop reps by max(1, round(reps * pct))
+      else duration   → drop duration by pct (rounded to nearest 5s)
+      else            → no-op (returns the input unchanged)
+
+    Returns a {sets, reps, weight, duration} dict, suitable for use as the
+    new baseline. Caller is responsible for re-projecting next_* from it.
+    """
+    new_sets = current_sets
+    new_reps = current_reps
+    new_weight = current_weight
+    new_duration = current_duration
+
+    rules = PROGRESSION_RULES.get(movement_pattern, PROGRESSION_RULES['Various'])
+
+    if movement_pattern == 'Plyo' and current_sets:
+        new_sets = max(1, current_sets - 1)
+    elif current_weight:
+        w_inc = _resolve_weight_incr(weight_increment, current_weight, rules['weight_incr']) or 5.0
+        target = current_weight * (1 - pct)
+        # Round down to a multiple of the increment so we never round back up
+        # to the original weight.
+        new_weight = max(w_inc, math.floor(target / w_inc) * w_inc)
+    elif current_reps:
+        drop = max(1, round(current_reps * pct))
+        new_reps = max(1, current_reps - drop)
+    elif current_duration:
+        target = current_duration * (1 - pct)
+        new_duration = max(5, int(round(target / 5)) * 5)
+
+    return {
+        'sets': new_sets,
+        'reps': new_reps,
+        'weight': new_weight,
+        'duration': new_duration,
+    }

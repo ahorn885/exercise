@@ -128,6 +128,7 @@
         {% if item.garmin_workout_json %}
           {% if not gw %}
           <form method="post" action="{{ url_for('plans.push_to_garmin', plan_id=plan_id, item_id=item.id) }}" class="mb-3">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             {% if auth_status.authenticated %}
               <button type="submit" class="btn btn-secondary w-100">Push to Garmin Connect</button>
             {% else %}
@@ -156,6 +157,7 @@
       <div class="card-header">Mark as Completed</div>
       <div class="card-body">
         <form method="post" action="{{ url_for('plans.complete_item', plan_id=plan_id, item_id=item.id) }}">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
           <div class="mb-2">
             <label class="form-label small text-muted">Notes (optional)</label>
             <textarea name="notes" class="form-control form-control-sm" rows="2"></textarea>
@@ -170,6 +172,7 @@
       <div class="card-header">Skip</div>
       <div class="card-body">
         <form method="post" action="{{ url_for('plans.skip_item', plan_id=plan_id, item_id=item.id) }}">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
           <div class="mb-2">
             <label class="form-label small text-muted">Reason (optional)</label>
             <textarea name="notes" class="form-control form-control-sm" rows="2"></textarea>
@@ -183,7 +186,7 @@
 {% endif %}
 
 {% if item.status == 'scheduled' %}
-<script>
+<script nonce="{{ csp_nonce() }}">
 (() => {
   const toggleBtn = document.getElementById('edit-toggle');
   const cancelBtn = document.getElementById('edit-cancel');

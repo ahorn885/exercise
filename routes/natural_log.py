@@ -5,6 +5,7 @@ from datetime import date, timedelta
 
 from flask import Blueprint, render_template, request, jsonify, url_for
 from database import get_db
+from routes.auth import current_user_id
 
 bp = Blueprint('natural_log', __name__, url_prefix='/log-natural')
 
@@ -122,9 +123,10 @@ def _check_api_key():
 
 
 def _load_strength_exercises(db):
-    """Names of strength exercises Andy currently uses, for prompt-side matching."""
+    """Names of strength exercises the current user has, for prompt-side matching."""
     rows = db.execute(
-        'SELECT exercise FROM current_rx ORDER BY exercise'
+        'SELECT exercise FROM current_rx WHERE user_id = ? ORDER BY exercise',
+        (current_user_id(),)
     ).fetchall()
     return [r['exercise'] for r in rows if r['exercise']]
 
@@ -139,10 +141,11 @@ def _load_scheduled(db):
                   tp.name as plan_name
            FROM plan_items pi
            JOIN training_plans tp ON tp.id = pi.plan_id
-           WHERE pi.status = 'scheduled' AND pi.item_date BETWEEN ? AND ?
+           WHERE tp.user_id = ?
+             AND pi.status = 'scheduled' AND pi.item_date BETWEEN ? AND ?
              AND tp.status != 'archived'
            ORDER BY pi.item_date DESC''',
-        (week_ago, today)
+        (current_user_id(), week_ago, today)
     ).fetchall()
     return [dict(r) for r in rows]
 
@@ -244,8 +247,10 @@ def save():
     data = request.get_json(silent=True) or {}
     entries = data.get('entries', [])
     plan_match = data.get('plan_match')
+    history = data.get('history', [])
 
     db = get_db()
+    uid = current_user_id()
     saved = []
 
     for entry in entries:
@@ -257,8 +262,8 @@ def save():
                 '''INSERT INTO cardio_log
                    (date, activity, duration_min, distance_mi, avg_pace, avg_speed,
                     avg_hr, max_hr, elev_gain_ft, calories, avg_power, norm_power,
-                    aerobic_te, notes, plan_item_id)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
+                    aerobic_te, notes, plan_item_id, user_id)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) RETURNING id''',
                 (
                     entry.get('date', date.today().isoformat()),
                     entry.get('activity', ''),
@@ -275,6 +280,7 @@ def save():
                     entry.get('aerobic_te'),
                     entry.get('notes', ''),
                     plan_item_id,
+                    uid,
                 )
             )
             new_id = cur.lastrowid
@@ -291,13 +297,15 @@ def save():
             plan_item_id = plan_match.get('plan_item_id') if plan_match else None
 
             cur = db.execute(
-                'INSERT INTO training_sessions (date, notes, plan_item_id) VALUES (?, ?, ?)',
-                (session_date, session_notes, plan_item_id)
+                'INSERT INTO training_sessions (date, notes, plan_item_id, user_id) VALUES (?, ?, ?, ?) RETURNING id',
+                (session_date, session_notes, plan_item_id, uid)
             )
             session_id = cur.lastrowid
 
             body_wt_row = db.execute(
-                'SELECT weight_lbs FROM body_metrics ORDER BY date DESC LIMIT 1'
+                'SELECT weight_lbs FROM body_metrics WHERE user_id = ? '
+                'ORDER BY date DESC LIMIT 1',
+                (uid,)
             ).fetchone()
             body_weight = body_wt_row['weight_lbs'] if body_wt_row else None
 
@@ -307,12 +315,14 @@ def save():
                     continue
                 sets = ex_data.get('sets') or []
 
+                # exercise_inventory is a shared catalog
                 ei = db.execute(
                     'SELECT id FROM exercise_inventory WHERE exercise=?', (exercise,)
                 ).fetchone()
                 exercise_id = ei['id'] if ei else None
                 rx = db.execute(
-                    'SELECT movement_pattern FROM current_rx WHERE exercise=?', (exercise,)
+                    'SELECT movement_pattern FROM current_rx WHERE exercise=? AND user_id=?',
+                    (exercise, uid)
                 ).fetchone()
                 movement_pattern = rx['movement_pattern'] if rx else None
 
@@ -327,31 +337,37 @@ def save():
                     '''INSERT INTO training_log
                        (date, exercise, exercise_id, sub_group, session_id,
                         actual_sets, actual_reps, actual_weight, actual_duration,
-                        rpe, volume, body_weight, plan_item_id, notes)
-                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
+                        rpe, volume, body_weight, plan_item_id, notes, user_id)
+                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) RETURNING id''',
                     (session_date, exercise, exercise_id, movement_pattern, session_id,
                      actual_sets, last_reps, max_weight, last_duration,
                      ex_data.get('rpe'), volume, body_weight,
-                     plan_item_id, ex_data.get('notes', ''))
+                     plan_item_id, ex_data.get('notes', ''), uid)
                 )
                 log_id = log_cur.lastrowid
 
                 for i, s in enumerate(sets, start=1):
                     db.execute(
                         '''INSERT INTO training_log_sets
-                           (training_log_id, set_number, reps, weight_lbs, duration_sec)
-                           VALUES (?,?,?,?,?)''',
+                           (training_log_id, set_number, reps, weight_lbs, duration_sec, user_id)
+                           VALUES (?,?,?,?,?,?)''',
                         (log_id, s.get('set_number') or i,
-                         s.get('reps'), s.get('weight_lbs'), s.get('duration_sec'))
+                         s.get('reps'), s.get('weight_lbs'), s.get('duration_sec'), uid)
                     )
 
             saved.append({'type': 'strength', 'id': session_id, 'redirect': '/training'})
 
         elif log_type == 'body':
             db.execute(
-                '''INSERT OR REPLACE INTO body_metrics
-                   (date, weight_lbs, body_fat_pct, resting_hr, vo2_max, notes)
-                   VALUES (?,?,?,?,?,?)''',
+                '''INSERT INTO body_metrics
+                   (date, weight_lbs, body_fat_pct, resting_hr, vo2_max, notes, user_id)
+                   VALUES (?,?,?,?,?,?,?)
+                   ON CONFLICT(user_id, date) DO UPDATE SET
+                     weight_lbs=excluded.weight_lbs,
+                     body_fat_pct=excluded.body_fat_pct,
+                     resting_hr=excluded.resting_hr,
+                     vo2_max=excluded.vo2_max,
+                     notes=excluded.notes''',
                 (
                     entry.get('date', date.today().isoformat()),
                     entry.get('weight_lbs'),
@@ -359,15 +375,30 @@ def save():
                     entry.get('resting_hr'),
                     entry.get('vo2_max'),
                     entry.get('notes', ''),
+                    uid,
                 )
             )
             saved.append({'type': 'body', 'redirect': '/body'})
 
     if plan_match and plan_match.get('plan_item_id') and saved:
         db.execute(
-            "UPDATE plan_items SET status='completed' WHERE id=? AND status='scheduled'",
-            (plan_match['plan_item_id'],)
+            "UPDATE plan_items SET status='completed' "
+            "WHERE id=? AND user_id=? AND status='scheduled'",
+            (plan_match['plan_item_id'], uid)
         )
+
+    # Capture the user's natural-language messages as feedback so any durable
+    # preferences ("never log a swim again", "always treat 8.5 RPE as hard")
+    # get normalized into coaching_preferences with provenance.
+    user_text = '\n'.join(
+        (t.get('content') or '').strip()
+        for t in history
+        if isinstance(t, dict) and t.get('role') == 'user' and (t.get('content') or '').strip()
+    )
+    if user_text and saved:
+        from coaching import capture_and_normalize_feedback
+        first_id = next((s.get('id') for s in saved if s.get('id')), None)
+        capture_and_normalize_feedback(db, 'natural_log', user_text, source_ref_id=first_id, user_id=uid)
 
     db.commit()
     return jsonify({'ok': True, 'saved': saved})

@@ -5,9 +5,11 @@ import uuid
 from datetime import date, timedelta
 
 from flask import Blueprint, render_template, request, redirect, url_for, flash, jsonify, session as flask_session
+from werkzeug.utils import secure_filename
 from database import get_db
 from calculations import calculate_1rm
 from rx_engine import apply_session_outcome
+from routes.auth import current_user_id
 from plan_match import (
     find_best_match,
     candidate_plan_items,
@@ -28,7 +30,9 @@ def debug_fit():
             return redirect(url_for('garmin.debug_fit'))
         try:
             raw = f.read()
-            fname = f.filename.lower()
+            # secure_filename strips path components and unsafe characters
+            # before we look at the suffix or echo the name anywhere.
+            fname = secure_filename(f.filename or '').lower()
             if fname.endswith('.zip'):
                 import zipfile, io
                 with zipfile.ZipFile(io.BytesIO(raw)) as zf:
@@ -48,7 +52,8 @@ def debug_fit():
 def dashboard():
     db = get_db()
     recent_cardio = db.execute(
-        "SELECT * FROM cardio_log ORDER BY date DESC LIMIT 10"
+        "SELECT * FROM cardio_log WHERE user_id = ? ORDER BY date DESC LIMIT 10",
+        (current_user_id(),)
     ).fetchall()
     try:
         from garmin_connect import get_auth_status
@@ -66,7 +71,7 @@ def import_fit():
             flash('No file selected.', 'warning')
             return redirect(url_for('garmin.import_fit'))
         fit_file = request.files['fit_file']
-        fname = fit_file.filename.lower()
+        fname = secure_filename(fit_file.filename or '').lower()
         if not (fname.endswith('.fit') or fname.endswith('.zip')):
             flash('File must be a .fit or .zip file.', 'danger')
             return redirect(url_for('garmin.import_fit'))
@@ -119,9 +124,11 @@ def import_preview():
                   tp.name as plan_name
            FROM plan_items pi
            JOIN training_plans tp ON tp.id = pi.plan_id
-           WHERE pi.status = 'scheduled' AND tp.status != 'archived'
+           WHERE tp.user_id = ?
+             AND pi.status = 'scheduled' AND tp.status != 'archived'
            ORDER BY pi.item_date ASC
-           LIMIT 60'''
+           LIMIT 60''',
+        (current_user_id(),)
     ).fetchall()
     plan_items = [r for r in all_scheduled if r['id'] not in nearby_ids]
 
@@ -139,7 +146,7 @@ def import_preview():
 
 
 def _record_disposition_for_import(db, disposition, plan_item_id, raw_plan_item_id,
-                                   log_type, log_id, reason=None):
+                                   log_type, log_id, reason=None, user_id=None):
     """Translate a form-submitted disposition into a disposition row.
 
     `plan_item_id` is what was actually written to the log row (None for
@@ -148,14 +155,14 @@ def _record_disposition_for_import(db, disposition, plan_item_id, raw_plan_item_
     log itself isn't linked.
     """
     if disposition == 'completed' and plan_item_id:
-        record_disposition(db, plan_item_id, log_type, log_id, 'completed', reason)
+        record_disposition(db, plan_item_id, log_type, log_id, 'completed', reason, user_id=user_id)
     elif disposition == 'swapped_for' and raw_plan_item_id:
         # The log row links to the plan item; the disposition row marks the swap.
-        record_disposition(db, raw_plan_item_id, log_type, log_id, 'swapped_for', reason)
+        record_disposition(db, raw_plan_item_id, log_type, log_id, 'swapped_for', reason, user_id=user_id)
     elif disposition == 'none' and plan_item_id:
         # Legacy dropdown-only flow: a plan item was picked without a radio.
         # Treat as completion so the plan item gets marked done.
-        record_disposition(db, plan_item_id, log_type, log_id, 'completed', reason)
+        record_disposition(db, plan_item_id, log_type, log_id, 'completed', reason, user_id=user_id)
     # 'in_addition_to' — intentional no-op
 
 
@@ -242,6 +249,7 @@ def import_confirm():
     else:  # 'none'
         plan_item_id = raw_plan_item_id  # legacy: dropdown alone = completed
 
+    uid = current_user_id()
     if log_type == 'cardio':
         data = result['data']
         data['activity_name'] = request.form.get('activity_name') or data.get('activity_name')
@@ -255,8 +263,8 @@ def import_confirm():
                 avg_power, max_power, norm_power, aerobic_te, anaerobic_te,
                 swolf, active_lengths,
                 stride_length_m, vert_oscillation_cm, vert_ratio_pct,
-                gct_ms, gct_balance, plan_item_id, notes)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
+                gct_ms, gct_balance, plan_item_id, notes, user_id)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) RETURNING id''',
             (data.get('date'), data.get('activity'), data.get('activity_name'),
              data.get('duration_min'), data.get('moving_time_min'),
              data.get('distance_mi'), data.get('avg_pace'), data.get('avg_speed'),
@@ -268,12 +276,12 @@ def import_confirm():
              data.get('swolf'), data.get('active_lengths'),
              data.get('stride_length_m'), data.get('vert_oscillation_cm'),
              data.get('vert_ratio_pct'), data.get('gct_ms'), data.get('gct_balance'),
-             plan_item_id, data.get('notes'))
+             plan_item_id, data.get('notes'), uid)
         )
         log_id = cur.lastrowid
         _record_disposition_for_import(
             db, disposition, plan_item_id, raw_plan_item_id,
-            log_type='cardio', log_id=log_id, reason=swap_reason,
+            log_type='cardio', log_id=log_id, reason=swap_reason, user_id=uid,
         )
         db.commit()
         flask_session.pop('fit_import', None)
@@ -286,12 +294,16 @@ def import_confirm():
 
         session_date = rows[0]['date'] if rows else date.today().isoformat()
         sess_cur = db.execute(
-            'INSERT INTO training_sessions (date, notes, plan_item_id) VALUES (?,?,?)',
-            (session_date, global_notes or None, plan_item_id)
+            'INSERT INTO training_sessions (date, notes, plan_item_id, user_id) VALUES (?,?,?,?) RETURNING id',
+            (session_date, global_notes or None, plan_item_id, uid)
         )
         session_id = sess_cur.lastrowid
 
-        body_wt_row = db.execute('SELECT weight_lbs FROM body_metrics ORDER BY date DESC LIMIT 1').fetchone()
+        body_wt_row = db.execute(
+            'SELECT weight_lbs FROM body_metrics WHERE user_id = ? '
+            'ORDER BY date DESC LIMIT 1',
+            (uid,)
+        ).fetchone()
         body_weight = body_wt_row['weight_lbs'] if body_wt_row else None
 
         inserted = 0
@@ -320,7 +332,7 @@ def import_confirm():
             # a current_rx row if this exercise is new.
             rx = apply_session_outcome(
                 db, exercise, row.get('date'), sets,
-                rx_source='From FIT Import',
+                rx_source='From FIT Import', user_id=uid,
             )
 
             log_cur = db.execute(
@@ -328,13 +340,13 @@ def import_confirm():
                    (date, exercise, exercise_id, sub_group, session_id,
                     actual_sets, actual_reps, actual_weight, actual_duration,
                     outcome, est_1rm, volume, body_weight,
-                    next_weight, next_sets, next_reps, next_duration, plan_item_id, notes)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
+                    next_weight, next_sets, next_reps, next_duration, plan_item_id, notes, user_id)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) RETURNING id''',
                 (row.get('date'), exercise, rx['exercise_id'], rx['movement_pattern'], session_id,
                  actual_sets, last_reps, max_weight, last_duration,
                  rx['outcome'], est_1rm, volume, body_weight,
                  rx['next_weight'], rx['next_sets'], rx['next_reps'], rx['next_duration'],
-                 plan_item_id, global_notes or None)
+                 plan_item_id, global_notes or None, uid)
             )
             log_id = log_cur.lastrowid
             if first_log_id is None:
@@ -342,8 +354,8 @@ def import_confirm():
 
             for i, s in enumerate(sets, 1):
                 db.execute(
-                    'INSERT INTO training_log_sets (training_log_id, set_number, reps, weight_lbs, duration_sec) VALUES (?,?,?,?,?)',
-                    (log_id, i, s.get('reps'), s.get('weight_lbs'), s.get('duration_sec'))
+                    'INSERT INTO training_log_sets (training_log_id, set_number, reps, weight_lbs, duration_sec, user_id) VALUES (?,?,?,?,?,?)',
+                    (log_id, i, s.get('reps'), s.get('weight_lbs'), s.get('duration_sec'), uid)
                 )
             inserted += 1
 
@@ -353,7 +365,7 @@ def import_confirm():
         if first_log_id is not None:
             _record_disposition_for_import(
                 db, disposition, plan_item_id, raw_plan_item_id,
-                log_type='strength', log_id=first_log_id, reason=swap_reason,
+                log_type='strength', log_id=first_log_id, reason=swap_reason, user_id=uid,
             )
         db.commit()
         flask_session.pop('fit_import', None)
@@ -366,12 +378,18 @@ def import_confirm():
 
 
 def _already_imported(db, gid: str) -> bool:
-    """Return True if this Garmin activity ID is already in cardio_log or training_log."""
+    """Return True if this Garmin activity ID is already in cardio_log or training_log
+    for the current user. Two users sharing a Garmin account import independently."""
+    uid = current_user_id()
     return (
-        db.execute('SELECT id FROM cardio_log WHERE garmin_activity_id=?', (gid,)).fetchone()
-        is not None
-        or db.execute('SELECT id FROM training_log WHERE garmin_activity_id=?', (gid,)).fetchone()
-        is not None
+        db.execute(
+            'SELECT id FROM cardio_log WHERE garmin_activity_id=? AND user_id=?',
+            (gid, uid)
+        ).fetchone() is not None
+        or db.execute(
+            'SELECT id FROM training_log WHERE garmin_activity_id=? AND user_id=?',
+            (gid, uid)
+        ).fetchone() is not None
     )
 
 
@@ -407,8 +425,8 @@ def _import_activity(db, act: dict, plan_item, compliance: dict,
             '''SELECT pi.*, tp.name as plan_name
                FROM plan_items pi
                JOIN training_plans tp ON tp.id = pi.plan_id
-               WHERE pi.id = ?''',
-            (raw_plan_item_id,)
+               WHERE pi.id = ? AND tp.user_id = ?''',
+            (raw_plan_item_id, current_user_id())
         ).fetchone()
         if chosen:
             plan_item = dict(chosen)
@@ -431,6 +449,7 @@ def _import_activity(db, act: dict, plan_item, compliance: dict,
         notes_parts.append(f'Reason: {reason}')
     notes = '. '.join(notes_parts) or None
 
+    uid = current_user_id()
     if is_strength:
         try:
             from garmin_connect import download_activity_fit
@@ -444,12 +463,16 @@ def _import_activity(db, act: dict, plan_item, compliance: dict,
         if rows:
             session_date = rows[0]['date'] if rows else date.today().isoformat()
             sess_cur = db.execute(
-                'INSERT INTO training_sessions (date, notes, plan_item_id) VALUES (?,?,?)',
-                (session_date, notes, plan_item_id)
+                'INSERT INTO training_sessions (date, notes, plan_item_id, user_id) VALUES (?,?,?,?) RETURNING id',
+                (session_date, notes, plan_item_id, uid)
             )
             session_id = sess_cur.lastrowid
 
-            body_wt_row = db.execute('SELECT weight_lbs FROM body_metrics ORDER BY date DESC LIMIT 1').fetchone()
+            body_wt_row = db.execute(
+            'SELECT weight_lbs FROM body_metrics WHERE user_id = ? '
+            'ORDER BY date DESC LIMIT 1',
+            (uid,)
+        ).fetchone()
             body_weight = body_wt_row['weight_lbs'] if body_wt_row else None
 
             for row in rows:
@@ -475,7 +498,7 @@ def _import_activity(db, act: dict, plan_item, compliance: dict,
                 # so this runs in bootstrap mode (seeds baseline + projects next).
                 rx = apply_session_outcome(
                     db, exercise, row.get('date'), sets,
-                    rx_source='From FIT Import',
+                    rx_source='From FIT Import', user_id=uid,
                 )
 
                 log_cur = db.execute(
@@ -484,31 +507,32 @@ def _import_activity(db, act: dict, plan_item, compliance: dict,
                         actual_sets, actual_reps, actual_weight, actual_duration,
                         outcome, est_1rm, volume, body_weight,
                         next_weight, next_sets, next_reps, next_duration,
-                        garmin_activity_id, plan_item_id, notes)
-                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
+                        garmin_activity_id, plan_item_id, notes, user_id)
+                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) RETURNING id''',
                     (row.get('date'), exercise, rx['exercise_id'], rx['movement_pattern'], session_id,
                      actual_sets, last_reps, max_weight, last_duration,
                      rx['outcome'], est_1rm, volume, body_weight,
                      rx['next_weight'], rx['next_sets'], rx['next_reps'], rx['next_duration'],
-                     gid, plan_item_id, notes)
+                     gid, plan_item_id, notes, uid)
                 )
                 log_id = log_cur.lastrowid
 
                 for i, s in enumerate(sets, 1):
                     db.execute(
-                        'INSERT INTO training_log_sets (training_log_id, set_number, reps, weight_lbs, duration_sec) VALUES (?,?,?,?,?)',
-                        (log_id, i, s.get('reps'), s.get('weight_lbs'), s.get('duration_sec'))
+                        'INSERT INTO training_log_sets (training_log_id, set_number, reps, weight_lbs, duration_sec, user_id) VALUES (?,?,?,?,?,?)',
+                        (log_id, i, s.get('reps'), s.get('weight_lbs'), s.get('duration_sec'), uid)
                     )
 
             if raw_plan_item_id:
                 first_log = db.execute(
-                    'SELECT id FROM training_log WHERE session_id=? ORDER BY id LIMIT 1',
-                    (session_id,)
+                    'SELECT id FROM training_log WHERE session_id=? AND user_id=? '
+                    'ORDER BY id LIMIT 1',
+                    (session_id, uid)
                 ).fetchone()
                 if first_log:
                     _record_disposition_for_import(
                         db, disposition, plan_item_id, raw_plan_item_id,
-                        'strength', first_log['id'], reason
+                        'strength', first_log['id'], reason, user_id=uid,
                     )
             return {'ok': True, 'log_type': 'strength', 'rows': len(rows), 'error': None}
         # FIT didn't yield strength data — fall through to cardio insert
@@ -519,8 +543,8 @@ def _import_activity(db, act: dict, plan_item, compliance: dict,
             distance_mi, avg_pace, avg_speed, avg_hr, max_hr, calories,
             elev_gain_ft, elev_loss_ft, avg_cadence,
             avg_power, max_power, norm_power, aerobic_te, anaerobic_te,
-            garmin_activity_id, plan_item_id, notes)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
+            garmin_activity_id, plan_item_id, notes, user_id)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) RETURNING id''',
         (act.get('date'), act.get('activity'), act.get('activity_name'),
          act.get('duration_min'), act.get('moving_time_min'),
          act.get('distance_mi'), act.get('avg_pace'), act.get('avg_speed'),
@@ -528,12 +552,12 @@ def _import_activity(db, act: dict, plan_item, compliance: dict,
          act.get('elev_gain_ft'), act.get('elev_loss_ft'), act.get('avg_cadence'),
          act.get('avg_power'), act.get('max_power'), act.get('norm_power'),
          act.get('aerobic_te'), act.get('anaerobic_te'),
-         gid, plan_item_id, notes)
+         gid, plan_item_id, notes, uid)
     )
     if raw_plan_item_id:
         _record_disposition_for_import(
             db, disposition, plan_item_id, raw_plan_item_id,
-            'cardio', cur.lastrowid, reason
+            'cardio', cur.lastrowid, reason, user_id=uid,
         )
     return {'ok': True, 'log_type': 'cardio', 'rows': 1, 'error': None}
 
@@ -605,9 +629,11 @@ def sync():
                       tp.name as plan_name
                FROM plan_items pi
                JOIN training_plans tp ON tp.id = pi.plan_id
-               WHERE pi.status = 'scheduled' AND tp.status != 'archived'
+               WHERE tp.user_id = ?
+                 AND pi.status = 'scheduled' AND tp.status != 'archived'
                ORDER BY pi.item_date ASC
-               LIMIT 60'''
+               LIMIT 60''',
+            (current_user_id(),)
         ).fetchall()
         return render_template('garmin/sync_preview.html', preview=preview,
                                all_scheduled=[dict(r) for r in all_scheduled],
@@ -779,16 +805,17 @@ def auth_import_cookies():
         return redirect(url_for('garmin.auth'))
     session_data = json.dumps({'type': 'browser_cookie', 'cookie': cookie_string})
     db = get_db()
-    existing = db.execute('SELECT id FROM garmin_auth LIMIT 1').fetchone()
+    uid = current_user_id()
+    existing = db.execute('SELECT id FROM garmin_auth WHERE user_id=? LIMIT 1', (uid,)).fetchone()
     if existing:
         db.execute(
-            "UPDATE garmin_auth SET garth_session=?, garmin_username=?, updated_at=datetime('now') WHERE id=?",
+            "UPDATE garmin_auth SET garth_session=?, garmin_username=?, updated_at=CURRENT_TIMESTAMP WHERE id=?",
             (session_data, '', existing[0])
         )
     else:
         db.execute(
-            'INSERT INTO garmin_auth (garth_session, garmin_username) VALUES (?,?)',
-            (session_data, '')
+            'INSERT INTO garmin_auth (garth_session, garmin_username, user_id) VALUES (?,?,?)',
+            (session_data, '', uid)
         )
     db.commit()
     flash('Browser session cookies saved. Testing connection on the sync page.', 'success')
@@ -805,7 +832,7 @@ def import_wellness():
         flash('No file selected.', 'warning')
         return redirect(url_for('garmin.import_wellness'))
 
-    fname = f.filename.lower()
+    fname = secure_filename(f.filename or '').lower()
     if not (fname.endswith('.fit') or fname.endswith('.zip')):
         flash('File must be a .fit or .zip file.', 'danger')
         return redirect(url_for('garmin.import_wellness'))
@@ -879,21 +906,23 @@ def import_wellness_confirm():
         flask_session.pop('wellness_tmp', None)
 
     db = get_db()
+    uid = current_user_id()
     inserted = skipped = 0
 
     for row in rows:
         try:
             cur = db.execute(
-                '''INSERT OR IGNORE INTO wellness_log
+                '''INSERT INTO wellness_log
                    (date, timestamp_ms, heart_rate, stress_level, body_battery,
                     respiration_rate, steps, active_calories, active_time_s,
-                    distance_m, activity_type)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?)''',
+                    distance_m, activity_type, user_id)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+                   ON CONFLICT(user_id, timestamp_ms) DO NOTHING''',
                 (row.get('date'), row.get('timestamp_ms'), row.get('heart_rate'),
                  row.get('stress_level'), row.get('body_battery'),
                  row.get('respiration_rate'), row.get('steps'),
                  row.get('active_calories'), row.get('active_time_s'),
-                 row.get('distance_m'), row.get('activity_type'))
+                 row.get('distance_m'), row.get('activity_type'), uid)
             )
             if cur.rowcount:
                 inserted += 1
@@ -914,20 +943,23 @@ def import_wellness_confirm():
 @bp.route('/wellness')
 def wellness_log():
     db = get_db()
+    uid = current_user_id()
     date_filter = request.args.get('date', '')
 
     # Default to most recent date if none selected, so the chart has something to draw
     if not date_filter:
         latest = db.execute(
-            'SELECT date FROM wellness_log ORDER BY date DESC LIMIT 1'
+            'SELECT date FROM wellness_log WHERE user_id = ? '
+            'ORDER BY date DESC LIMIT 1',
+            (uid,)
         ).fetchone()
         if latest:
             date_filter = latest['date']
 
-    query = 'SELECT * FROM wellness_log'
-    params = []
+    query = 'SELECT * FROM wellness_log WHERE user_id = ?'
+    params = [uid]
     if date_filter:
-        query += ' WHERE date = ?'
+        query += ' AND date = ?'
         params.append(date_filter)
     query += ' ORDER BY timestamp_ms DESC LIMIT 2000'
     rows = db.execute(query, params).fetchall()
@@ -950,7 +982,9 @@ def wellness_log():
 
     # Distinct dates for the date picker
     dates = db.execute(
-        'SELECT DISTINCT date FROM wellness_log ORDER BY date DESC LIMIT 60'
+        'SELECT DISTINCT date FROM wellness_log WHERE user_id = ? '
+        'ORDER BY date DESC LIMIT 60',
+        (uid,)
     ).fetchall()
 
     return render_template('garmin/wellness_log.html', rows=rows,
@@ -977,17 +1011,18 @@ def auth_import_tokens():
         garth.resume(GARTH_TMP)
         username = getattr(garth.client, 'username', '')
         db = get_db()
-        existing = db.execute('SELECT id FROM garmin_auth LIMIT 1').fetchone()
+        uid = current_user_id()
+        existing = db.execute('SELECT id FROM garmin_auth WHERE user_id=? LIMIT 1', (uid,)).fetchone()
         session_json = json.dumps(token_data)
         if existing:
             db.execute(
-                "UPDATE garmin_auth SET garth_session=?, garmin_username=?, updated_at=datetime('now') WHERE id=?",
+                "UPDATE garmin_auth SET garth_session=?, garmin_username=?, updated_at=CURRENT_TIMESTAMP WHERE id=?",
                 (session_json, username, existing[0])
             )
         else:
             db.execute(
-                'INSERT INTO garmin_auth (garth_session, garmin_username) VALUES (?,?)',
-                (session_json, username)
+                'INSERT INTO garmin_auth (garth_session, garmin_username, user_id) VALUES (?,?,?)',
+                (session_json, username, uid)
             )
         db.commit()
         flash(f'Tokens imported successfully{" for " + username if username else ""}.', 'success')

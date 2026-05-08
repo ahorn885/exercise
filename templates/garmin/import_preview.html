@@ -94,7 +94,7 @@
         </div>
       </div>
     </div>
-    <script>
+    <script nonce="{{ csp_nonce() }}">
       // Toggle plan-item dropdown + reason textarea based on disposition radio.
       (function() {
         const radios = document.querySelectorAll('.disposition-radio');
@@ -124,6 +124,7 @@
     {# ── CARDIO PREVIEW ── #}
     {% set d = result.data %}
     <form method="post" action="{{ url_for('garmin.import_confirm') }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       {{ resolve_section(auto_match, nearby, plan_items) }}
 
       <div class="card mb-3">
@@ -204,6 +205,7 @@
     {% elif result.log_type == 'strength' %}
     {# ── STRENGTH PREVIEW ── #}
     <form method="post" action="{{ url_for('garmin.import_confirm') }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       {{ resolve_section(auto_match, nearby, plan_items) }}
 
       <div class="card mb-3">

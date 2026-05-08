@@ -6,6 +6,7 @@
   <a href="{{ url_for('cardio.list_entries') }}" class="btn btn-sm btn-outline-secondary">← Back</a>
 </div>
 <form method="post">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
 
   {# ── Activity + Date ── #}
   <div class="row g-3 mb-3">
@@ -15,7 +16,7 @@
     </div>
     <div class="col-md-4">
       <label class="form-label">Activity</label>
-      <select name="activity" id="activity-select" class="form-select" required onchange="toggleFields(this.value)">
+      <select name="activity" id="activity-select" class="form-select" required>
         {% for a in activities %}
           <option value="{{ a }}" {% if entry and entry.activity == a %}selected{% endif %}>{{ a }}</option>
         {% endfor %}
@@ -174,7 +175,7 @@
 {% endblock %}
 
 {% block scripts %}
-<script>
+<script nonce="{{ csp_nonce() }}">
 const BIKE_ACTIVITIES = ['Road Cycling','Mountain Biking','Gravel Cycling','Indoor Bike Trainer',
                          'Kayak Ergometer','Rowing Ergometer'];
 const PADDLE_ACTIVITIES = ['Kayaking','Pack Rafting','Kayak Ergometer','Rowing Ergometer',
@@ -189,6 +190,8 @@ function toggleFields(activity) {
   document.querySelectorAll('.paddle-field').forEach(el => el.style.display = isPaddle ? '' : 'none');
   document.querySelectorAll('.run-field').forEach(el => el.style.display = isRun    ? '' : 'none');
 }
-toggleFields(document.getElementById('activity-select').value);
+const activitySelect = document.getElementById('activity-select');
+activitySelect.addEventListener('change', e => toggleFields(e.target.value));
+toggleFields(activitySelect.value);
 </script>
 {% endblock %}

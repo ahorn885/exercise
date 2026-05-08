@@ -9,6 +9,7 @@
 <p class="text-muted">Upload any <code>.fit</code> or <code>.zip</code> to see every field your device recorded — standard and developer data. Use this to discover what's available before adding new fields to the schema.</p>
 
 <form method="post" enctype="multipart/form-data" class="mb-4">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
   <div class="input-group" style="max-width:480px">
     <input type="file" name="fit_file" accept=".fit,.zip" class="form-control" required>
     <button type="submit" class="btn btn-primary">Dump</button>
@@ -21,7 +22,7 @@
 <div class="card mb-4">
   <div class="card-header d-flex justify-content-between align-items-center fw-semibold">
     <span>Raw JSON (copy/paste friendly)</span>
-    <button id="copyBtn" class="btn btn-sm btn-outline-secondary" onclick="copyDump()">Copy All</button>
+    <button id="copyBtn" class="btn btn-sm btn-outline-secondary" type="button">Copy All</button>
   </div>
   <div class="card-body p-0">
     <textarea id="dumpJson" class="form-control font-monospace border-0" rows="10" readonly
@@ -159,7 +160,7 @@
 {% endblock %}
 
 {% block scripts %}
-<script>
+<script nonce="{{ csp_nonce() }}">
 function copyDump() {
   var ta = document.getElementById('dumpJson');
   ta.select();
@@ -178,5 +179,6 @@ function copyDump() {
     document.execCommand('copy');
   }
 }
+document.getElementById('copyBtn').addEventListener('click', copyDump);
 </script>
 {% endblock %}

@@ -1,5 +1,6 @@
 from flask import Blueprint, render_template, request, redirect, url_for, flash
 from database import get_db
+from routes.auth import current_user_id
 
 bp = Blueprint('conditions', __name__)
 
@@ -36,8 +37,8 @@ def list_entries():
     date_filter = request.args.get('date', '')
     activity_filter = request.args.get('activity', '')
 
-    query = 'SELECT * FROM conditions_log WHERE 1=1'
-    params = []
+    query = 'SELECT * FROM conditions_log WHERE user_id = ?'
+    params = [current_user_id()]
     if date_filter:
         query += ' AND date=?'
         params.append(date_filter)
@@ -65,7 +66,8 @@ def new_entry():
     cardio_log_id = request.args.get('cardio_log_id', type=int)
     if cardio_log_id:
         row = db.execute(
-            'SELECT id, date, activity FROM cardio_log WHERE id=?', (cardio_log_id,)
+            'SELECT id, date, activity FROM cardio_log WHERE id=? AND user_id=?',
+            (cardio_log_id, current_user_id())
         ).fetchone()
         if row:
             prefill = {'cardio_log_id': row['id'], 'date': row['date'], 'activity': row['activity']}
@@ -79,7 +81,10 @@ def new_entry():
 @bp.route('/conditions/<int:entry_id>/edit', methods=['GET', 'POST'])
 def edit_entry(entry_id):
     db = get_db()
-    entry = db.execute('SELECT * FROM conditions_log WHERE id=?', (entry_id,)).fetchone()
+    entry = db.execute(
+        'SELECT * FROM conditions_log WHERE id=? AND user_id=?',
+        (entry_id, current_user_id())
+    ).fetchone()
     if not entry:
         flash('Entry not found.', 'danger')
         return redirect(url_for('conditions.list_entries'))
@@ -99,7 +104,10 @@ def edit_entry(entry_id):
 @bp.route('/conditions/<int:entry_id>/delete', methods=['POST'])
 def delete_entry(entry_id):
     db = get_db()
-    db.execute('DELETE FROM conditions_log WHERE id=?', (entry_id,))
+    db.execute(
+        'DELETE FROM conditions_log WHERE id=? AND user_id=?',
+        (entry_id, current_user_id())
+    )
     db.commit()
     flash('Entry deleted.', 'warning')
     return redirect(url_for('conditions.list_entries'))
@@ -109,14 +117,23 @@ def _load_cardio_sessions(db):
     return db.execute(
         '''SELECT id, date, activity, activity_name
            FROM cardio_log
+           WHERE user_id = ?
            ORDER BY date DESC, id DESC
-           LIMIT 60'''
+           LIMIT 60''',
+        (current_user_id(),)
     ).fetchall()
 
 
 def _load_clothing_options(db):
-    """Return {category: [value, ...]} dict from clothing_options table."""
-    rows = db.execute('SELECT category, value FROM clothing_options ORDER BY category, value').fetchall()
+    """Return {category: [value, ...]} dict from clothing_options table.
+
+    Per-user (Session 3) — values accumulate as the current user types
+    into the form, scoped to their own user_id."""
+    rows = db.execute(
+        'SELECT category, value FROM clothing_options '
+        'WHERE user_id = ? ORDER BY category, value',
+        (current_user_id(),)
+    ).fetchall()
     opts = {}
     for row in rows:
         opts.setdefault(row['category'], []).append(row['value'])
@@ -140,19 +157,24 @@ def _save(db, entry_id):
     wind_dir = None if is_indoor else f.get('wind_dir') or None
     conditions = None if is_indoor else f.get('conditions') or None
 
-    # Auto-persist any new clothing values typed by the user
+    # Auto-persist any new clothing values typed by the user — per-user
+    # since Session 3, so user 2's "Brim Hat" doesn't leak into user 1's
+    # autocomplete and vice versa.
+    uid_clothing = current_user_id()
     clothing_vals = {}
     for field, _label in CLOTHING_FIELDS:
         val = f.get(field) or None
         clothing_vals[field] = val
         if val:
-            try:
-                db.execute(
-                    'INSERT OR IGNORE INTO clothing_options (category, value) VALUES (?, ?)',
-                    (field, val)
-                )
-            except Exception:
-                pass
+            # ON CONFLICT DO NOTHING is portable across SQLite (3.24+) and
+            # Postgres; INSERT OR IGNORE was SQLite-only and a failed
+            # statement on PG aborts the surrounding transaction, which
+            # then 500s the main conditions_log write below.
+            db.execute(
+                'INSERT INTO clothing_options (user_id, category, value) VALUES (?, ?, ?) '
+                'ON CONFLICT(user_id, category, value) DO NOTHING',
+                (uid_clothing, field, val)
+            )
 
     vals = (
         f.get('date'), f.get('activity'),
@@ -166,18 +188,19 @@ def _save(db, entry_id):
         num(f.get('comfort'), int), f.get('comfort_notes') or None, cardio_log_id
     )
 
+    uid = current_user_id()
     if entry_id:
         db.execute('''UPDATE conditions_log SET date=?,activity=?,temp_f=?,feels_like_f=?,
             wind_mph=?,wind_dir=?,conditions=?,headwear=?,face_neck=?,upper_shell=?,
             upper_mid_layer=?,upper_base_layer=?,lower_outer=?,lower_under=?,gloves=?,
             arm_warmers=?,socks=?,footwear=?,comfort=?,comfort_notes=?,cardio_log_id=?
-            WHERE id=?''',
-            vals + (entry_id,))
+            WHERE id=? AND user_id=?''',
+            vals + (entry_id, uid))
     else:
         db.execute('''INSERT INTO conditions_log
             (date,activity,temp_f,feels_like_f,wind_mph,wind_dir,conditions,headwear,
              face_neck,upper_shell,upper_mid_layer,upper_base_layer,lower_outer,lower_under,
-             gloves,arm_warmers,socks,footwear,comfort,comfort_notes,cardio_log_id)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''', vals)
+             gloves,arm_warmers,socks,footwear,comfort,comfort_notes,cardio_log_id,user_id)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''', vals + (uid,))
 
     db.commit()

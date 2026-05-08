@@ -13,6 +13,8 @@ import os
 import shutil
 import tempfile
 
+from routes.auth import current_user_id
+
 GARTH_TMP = os.path.join(tempfile.gettempdir(), 'garth_session')
 
 SPORT_TYPES = {
@@ -133,16 +135,19 @@ def _read_session_from_tmp() -> str:
 def _save_session_to_db(db, username: str = ''):
     """Read /tmp/garth and upsert into garmin_auth table."""
     session_json = _read_session_from_tmp()
-    existing = db.execute('SELECT id FROM garmin_auth LIMIT 1').fetchone()
+    existing = db.execute(
+        'SELECT id FROM garmin_auth WHERE user_id = ? LIMIT 1',
+        (current_user_id(),)
+    ).fetchone()
     if existing:
         db.execute(
-            "UPDATE garmin_auth SET garth_session = ?, garmin_username = ?, updated_at = datetime('now') WHERE id = ?",
+            "UPDATE garmin_auth SET garth_session = ?, garmin_username = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
             (session_json, username, existing['id'] if hasattr(existing, '__getitem__') else existing[0])
         )
     else:
         db.execute(
-            'INSERT INTO garmin_auth (garth_session, garmin_username) VALUES (?, ?)',
-            (session_json, username)
+            'INSERT INTO garmin_auth (garth_session, garmin_username, user_id) VALUES (?, ?, ?)',
+            (session_json, username, current_user_id())
         )
     db.commit()
 
@@ -152,7 +157,10 @@ def _load_client(db):
     import garth
     from garminconnect import Garmin
 
-    row = db.execute('SELECT garth_session, garmin_username FROM garmin_auth LIMIT 1').fetchone()
+    row = db.execute(
+        'SELECT garth_session, garmin_username FROM garmin_auth WHERE user_id = ? LIMIT 1',
+        (current_user_id(),)
+    ).fetchone()
     if not row or not row['garth_session']:
         raise RuntimeError('No saved Garmin session. Please log in via Garmin Auth Settings.')
 
@@ -169,7 +177,10 @@ def _load_client(db):
 def get_auth_status(db) -> dict:
     """Return {'authenticated': bool, 'username': str|None}."""
     try:
-        row = db.execute('SELECT garth_session, garmin_username FROM garmin_auth LIMIT 1').fetchone()
+        row = db.execute(
+            'SELECT garth_session, garmin_username FROM garmin_auth WHERE user_id = ? LIMIT 1',
+            (current_user_id(),)
+        ).fetchone()
         if not row or not row['garth_session']:
             return {'authenticated': False, 'username': None}
         if _is_browser_auth(row['garth_session']):
@@ -234,7 +245,10 @@ def fetch_activities(db, start_date: str, end_date: str) -> list:
     Returns raw Garmin API activity dicts. Call normalize_activity() on each.
     start_date / end_date: ISO strings YYYY-MM-DD.
     """
-    row = db.execute('SELECT garth_session FROM garmin_auth LIMIT 1').fetchone()
+    row = db.execute(
+        'SELECT garth_session FROM garmin_auth WHERE user_id = ? LIMIT 1',
+        (current_user_id(),)
+    ).fetchone()
     if row and _is_browser_auth(row['garth_session']):
         s = _browser_requests_session(row['garth_session'])
         params = {'startDate': start_date, 'endDate': end_date, 'start': 0, 'limit': 100}

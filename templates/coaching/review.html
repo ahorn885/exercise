@@ -52,6 +52,7 @@
 <div class="row">
   <div class="col-lg-7">
     <form method="post" id="review-form">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
 
       {# ── Tier selector ── #}
       <div class="card mb-3">
@@ -106,10 +107,9 @@
           <div class="d-flex gap-3 mb-3">
             {% for val, label in [('just_right','Just Right'),('too_hard','Too Hard'),('too_easy','Too Easy')] %}
             <div class="form-check">
-              <input class="form-check-input" type="radio" name="difficulty_feedback"
+              <input class="form-check-input difficulty-feedback-radio" type="radio" name="difficulty_feedback"
                      id="diff_{{ val }}" value="{{ val }}"
-                     {% if val == 'just_right' %}checked{% endif %}
-                     onchange="toggleIntensityAdjust()">
+                     {% if val == 'just_right' %}checked{% endif %}>
               <label class="form-check-label" for="diff_{{ val }}">{{ label }}</label>
             </div>
             {% endfor %}
@@ -138,7 +138,7 @@
           {% endif %}
           <div class="form-check mb-2">
             <input class="form-check-input" type="checkbox" name="race_goals_changed"
-                   id="goals-changed-cb" value="1" onchange="toggleGoalsEdit()">
+                   id="goals-changed-cb" value="1">
             <label class="form-check-label" for="goals-changed-cb">
               {% if current_race_goals %}My event goals have changed{% else %}Add event day goals{% endif %}
             </label>
@@ -225,7 +225,7 @@
         <input type="date" class="form-control form-control-sm lr-end">
       </div>
       <div class="col-md-2">
-        <label class="form-label small mb-1">Locale</label>
+        <label class="form-label small mb-1">Location</label>
         <select class="form-select form-select-sm lr-locale">
           {% for loc in locales %}
           <option value="{{ loc }}" {% if loc == 'hotel' %}selected{% endif %}>{{ loc | capitalize }}</option>
@@ -248,7 +248,7 @@
 {% endblock %}
 
 {% block scripts %}
-<script>
+<script nonce="{{ csp_nonce() }}">
 const descriptions = {
   '1': 'Reads 90 days of training history. Adjusts next 1-2 sessions based on RPE, fatigue, or missed sessions. Includes clothing recommendations for outdoor sessions.',
   '2': 'Reads 90 days of history + planned-vs-actual delta. Patches upcoming workouts for the next 1-2 weeks. Includes clothing recommendations for next 7 days.',
@@ -284,6 +284,10 @@ function toggleGoalsEdit() {
   const show = document.getElementById('goals-changed-cb').checked;
   document.getElementById('goals-edit-row').style.display = show ? '' : 'none';
 }
+document.querySelectorAll('.difficulty-feedback-radio').forEach(el => {
+  el.addEventListener('change', toggleIntensityAdjust);
+});
+document.getElementById('goals-changed-cb').addEventListener('change', toggleGoalsEdit);
 
 // Locale updates
 const localeRows = document.getElementById('locale-rows');

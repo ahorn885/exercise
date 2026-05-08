@@ -3,6 +3,7 @@ from datetime import date, timedelta
 
 from flask import Blueprint, render_template, request, redirect, url_for, flash, jsonify
 from database import get_db
+from routes.auth import current_user_id
 
 bp = Blueprint('coaching', __name__, url_prefix='/coaching')
 
@@ -25,7 +26,8 @@ LOCALES = ['home', 'hotel', 'partner', 'airport']
 def generate():
     db = get_db()
     plans = db.execute(
-        'SELECT id, name, end_date FROM training_plans ORDER BY start_date DESC'
+        'SELECT id, name, end_date FROM training_plans WHERE user_id = ? ORDER BY start_date DESC',
+        (current_user_id(),)
     ).fetchall()
 
     if request.method == 'POST':
@@ -111,7 +113,10 @@ def generate():
             )
             plan_id = _create_plan_from_dict(db, plan_data)
             if race_goals:
-                db.execute('UPDATE training_plans SET race_goals=? WHERE id=?', (race_goals, plan_id))
+                db.execute(
+                    'UPDATE training_plans SET race_goals=? WHERE id=? AND user_id=?',
+                    (race_goals, plan_id, current_user_id())
+                )
             for trip in travel_schedule:
                 s = trip.get('start_date', '')
                 e = trip.get('end_date', '')
@@ -154,7 +159,10 @@ def generate():
 @bp.route('/review/<int:plan_id>', methods=['GET', 'POST'])
 def review(plan_id):
     db = get_db()
-    plan = db.execute('SELECT * FROM training_plans WHERE id=?', (plan_id,)).fetchone()
+    uid = current_user_id()
+    plan = db.execute(
+        'SELECT * FROM training_plans WHERE id=? AND user_id=?', (plan_id, uid)
+    ).fetchone()
     if not plan:
         flash('Plan not found.', 'danger')
         return redirect(url_for('plans.list_plans'))
@@ -201,15 +209,15 @@ def review(plan_id):
                     WHEN 'hard' THEN 'moderate'
                     WHEN 'moderate' THEN 'easy'
                     ELSE intensity END
-                    WHERE plan_id=? AND status='scheduled'"""
+                    WHERE plan_id=? AND user_id=? AND status='scheduled'"""
             else:
                 sql = """UPDATE plan_items SET intensity = CASE intensity
                     WHEN 'easy' THEN 'moderate'
                     WHEN 'moderate' THEN 'hard'
                     WHEN 'hard' THEN 'very_hard'
                     ELSE intensity END
-                    WHERE plan_id=? AND status='scheduled'"""
-            db.execute(sql, (plan_id,))
+                    WHERE plan_id=? AND user_id=? AND status='scheduled'"""
+            db.execute(sql, (plan_id, uid))
             intensity_shifted = db.execute(
                 "SELECT changes()"
             ).fetchone()[0]
@@ -220,7 +228,10 @@ def review(plan_id):
         if race_goals_changed:
             updated_goals = request.form.get('updated_race_goals', '').strip()
             if updated_goals:
-                db.execute('UPDATE training_plans SET race_goals=? WHERE id=?', (updated_goals, plan_id))
+                db.execute(
+                    'UPDATE training_plans SET race_goals=? WHERE id=? AND user_id=?',
+                    (updated_goals, plan_id, uid)
+                )
                 current_race_goals = updated_goals
 
         if not _check_api_key():
@@ -228,7 +239,13 @@ def review(plan_id):
             return redirect(url_for('coaching.review', plan_id=plan_id))
 
         try:
-            from coaching import run_review
+            from coaching import run_review, capture_and_normalize_feedback
+            # Capture review notes into the feedback pipeline before the AI call
+            # so any extracted preferences are visible to run_review's context.
+            if notes:
+                capture_and_normalize_feedback(db, 'plan_review', notes, source_ref_id=plan_id,
+                                               user_id=current_user_id())
+                db.commit()
             result, usage = run_review(
                 db, plan_id, tier, notes=notes, locale=locale,
                 race_goals=current_race_goals, intensity_direction=intensity_direction,
@@ -240,8 +257,10 @@ def review(plan_id):
                 new_plan_id = _create_plan_from_dict(db, result)
                 # Carry race_goals forward to the new plan
                 if current_race_goals:
-                    db.execute('UPDATE training_plans SET race_goals=? WHERE id=?',
-                               (current_race_goals, new_plan_id))
+                    db.execute(
+                        'UPDATE training_plans SET race_goals=? WHERE id=? AND user_id=?',
+                        (current_race_goals, new_plan_id, uid)
+                    )
                 db.execute(
                     'INSERT INTO plan_reviews (plan_id, tier, sessions_reviewed, notes) VALUES (?,?,?,?)',
                     (plan_id, tier, health['sessions_since_tier1'],
@@ -270,8 +289,8 @@ def review(plan_id):
                     if updates:
                         set_clause = ', '.join(f'{k}=?' for k in updates)
                         db.execute(
-                            f'UPDATE plan_items SET {set_clause} WHERE id=? AND plan_id=?',
-                            list(updates.values()) + [item_id, plan_id]
+                            f'UPDATE plan_items SET {set_clause} WHERE id=? AND plan_id=? AND user_id=?',
+                            list(updates.values()) + [item_id, plan_id, uid]
                         )
                         applied += 1
 
@@ -304,7 +323,27 @@ def review(plan_id):
                            api_configured=_check_api_key())
 
 
+def _csrf_exempt(view):
+    """Mark a view exempt from Flask-WTF CSRFProtect.
+
+    The /coaching/api/* endpoints are bearer-token authed for external
+    clients, which (a) don't have a CSRF token to send and (b) aren't
+    vulnerable to the CSRF attack model anyway — a cross-origin form
+    submission can't set the Authorization header. Same-origin browser
+    callers either send the token explicitly (no session involved) or
+    aren't authed and get bounced by the gate.
+
+    Imports lazily to avoid a circular import on app startup.
+    """
+    try:
+        from app import csrf
+    except Exception:
+        return view
+    return csrf.exempt(view)
+
+
 @bp.route('/api/generate', methods=['POST'])
+@_csrf_exempt
 def api_generate():
     """Headless plan generation for remote control."""
     if not _check_api_key():
@@ -354,6 +393,7 @@ def api_generate():
 
 
 @bp.route('/api/review', methods=['POST'])
+@_csrf_exempt
 def api_review():
     """Headless plan review for remote control."""
     if not _check_api_key():
@@ -366,6 +406,12 @@ def api_review():
         return jsonify({'ok': False, 'error': 'plan_id required'}), 400
     try:
         db = get_db()
+        uid = current_user_id()
+        # Verify plan ownership before any review work
+        if not db.execute(
+            'SELECT 1 FROM training_plans WHERE id=? AND user_id=?', (plan_id, uid)
+        ).fetchone():
+            return jsonify({'ok': False, 'error': 'Plan not found'}), 404
         from coaching import run_review
         from routes.plans import _plan_health
         result, usage = run_review(db, plan_id, tier, notes=notes)
@@ -395,8 +441,8 @@ def api_review():
                 if updates:
                     set_clause = ', '.join(f'{k}=?' for k in updates)
                     db.execute(
-                        f'UPDATE plan_items SET {set_clause} WHERE id=? AND plan_id=?',
-                        list(updates.values()) + [item_id, plan_id]
+                        f'UPDATE plan_items SET {set_clause} WHERE id=? AND plan_id=? AND user_id=?',
+                        list(updates.values()) + [item_id, plan_id, uid]
                     )
                     applied += 1
             db.execute(
@@ -471,14 +517,18 @@ Return an empty array if no clarification is needed."""
 @bp.route('/chat/<int:plan_id>', methods=['GET', 'POST'])
 def chat(plan_id):
     db = get_db()
-    plan = db.execute('SELECT * FROM training_plans WHERE id=?', (plan_id,)).fetchone()
+    uid = current_user_id()
+    plan = db.execute(
+        'SELECT * FROM training_plans WHERE id=? AND user_id=?', (plan_id, uid)
+    ).fetchone()
     if not plan:
         return jsonify({'ok': False, 'error': 'Plan not found'}), 404
 
     if request.method == 'GET':
         rows = db.execute(
-            'SELECT role, content, actions_json, created_at FROM coaching_chat WHERE plan_id=? ORDER BY created_at ASC',
-            (plan_id,)
+            'SELECT role, content, actions_json, created_at FROM coaching_chat '
+            'WHERE plan_id=? AND user_id=? ORDER BY created_at ASC',
+            (plan_id, uid)
         ).fetchall()
         return jsonify([dict(r) for r in rows])
 
@@ -491,25 +541,31 @@ def chat(plan_id):
         return jsonify({'ok': False, 'error': 'ANTHROPIC_API_KEY not configured'}), 500
 
     history = [{'role': r['role'], 'content': r['content']} for r in db.execute(
-        'SELECT role, content FROM coaching_chat WHERE plan_id=? ORDER BY created_at ASC',
-        (plan_id,)
+        'SELECT role, content FROM coaching_chat '
+        'WHERE plan_id=? AND user_id=? ORDER BY created_at ASC',
+        (plan_id, uid)
     ).fetchall()]
 
     try:
-        from coaching import chat_with_coach
+        from coaching import chat_with_coach, capture_feedback, save_preferences_from_feedback
         result, usage = chat_with_coach(db, plan_id, message, history, locale=locale)
         _log_usage(usage, 'chat')
 
+        uid = current_user_id()
         db.execute(
-            'INSERT INTO coaching_chat (plan_id, role, content) VALUES (?,?,?)',
-            (plan_id, 'user', message)
+            'INSERT INTO coaching_chat (plan_id, role, content, user_id) VALUES (?,?,?,?)',
+            (plan_id, 'user', message, uid)
         )
 
-        for pref in result.get('preferences_to_save', []):
-            db.execute(
-                'INSERT INTO coaching_preferences (category, content, permanent) VALUES (?,?,?)',
-                (pref.get('category', 'general'), pref['content'], 1 if pref.get('permanent', True) else 0)
-            )
+        # Route the chat-extracted preferences through the feedback_log pipeline
+        # so each pref carries provenance back to the user's raw message.
+        # Defer the insert until we actually have a pref to save — pure
+        # conversational turns ("when's my next ride?") used to leave a row
+        # in feedback_log even though they extracted zero prefs.
+        prefs_to_save = result.get('preferences_to_save', [])
+        if prefs_to_save:
+            fb_id = capture_feedback(db, 'chat', message, source_ref_id=plan_id, user_id=uid)
+            save_preferences_from_feedback(db, fb_id, prefs_to_save, user_id=uid)
 
         patches_applied = 0
         if not result.get('confirm_required', False):
@@ -521,20 +577,20 @@ def chat(plan_id):
                 if item_id and updates:
                     set_clause = ', '.join(f'{k}=?' for k in updates)
                     db.execute(
-                        f'UPDATE plan_items SET {set_clause} WHERE id=? AND plan_id=?',
-                        list(updates.values()) + [item_id, plan_id]
+                        f'UPDATE plan_items SET {set_clause} WHERE id=? AND plan_id=? AND user_id=?',
+                        list(updates.values()) + [item_id, plan_id, uid]
                     )
                     patches_applied += 1
 
         import json as _json
         db.execute(
-            'INSERT INTO coaching_chat (plan_id, role, content, actions_json) VALUES (?,?,?,?)',
+            'INSERT INTO coaching_chat (plan_id, role, content, actions_json, user_id) VALUES (?,?,?,?,?)',
             (plan_id, 'assistant', result.get('message', ''), _json.dumps({
                 'preferences_saved': len(result.get('preferences_to_save', [])),
                 'patches_applied': patches_applied,
                 'confirm_required': result.get('confirm_required', False),
                 'pending_patches': result.get('plan_patches', []) if result.get('confirm_required') else [],
-            }))
+            }), uid)
         )
         db.commit()
 
@@ -554,7 +610,9 @@ def chat(plan_id):
 def preferences():
     db = get_db()
     rows = db.execute(
-        'SELECT id, category, content, permanent, created_at FROM coaching_preferences ORDER BY created_at DESC'
+        'SELECT id, category, content, permanent, created_at FROM coaching_preferences '
+        'WHERE user_id = ? ORDER BY created_at DESC',
+        (current_user_id(),)
     ).fetchall()
     return jsonify([dict(r) for r in rows])
 
@@ -562,7 +620,10 @@ def preferences():
 @bp.route('/preferences/<int:pref_id>/delete', methods=['POST'])
 def delete_preference(pref_id):
     db = get_db()
-    db.execute('DELETE FROM coaching_preferences WHERE id=?', (pref_id,))
+    db.execute(
+        'DELETE FROM coaching_preferences WHERE id=? AND user_id=?',
+        (pref_id, current_user_id())
+    )
     db.commit()
     return jsonify({'ok': True})
 

@@ -10,6 +10,28 @@ def _is_postgres():
     return bool(DATABASE_URL)
 
 
+def _on_vercel() -> bool:
+    """True when running inside a Vercel serverless function.
+
+    Vercel sets VERCEL=1; AWS_LAMBDA_FUNCTION_NAME is the underlying Lambda
+    signal. Either is sufficient to mean: the package directory is read-only
+    and only /tmp is writable.
+    """
+    return bool(os.environ.get('VERCEL') or os.environ.get('AWS_LAMBDA_FUNCTION_NAME'))
+
+
+def sqlite_path() -> str:
+    """Single source of truth for the SQLite file location.
+
+    On Vercel the package dir is read-only, so writes have to go to /tmp
+    (ephemeral, but it's all we have until DATABASE_URL points at Neon).
+    Locally we keep the historical instance/ path.
+    """
+    if _on_vercel():
+        return '/tmp/training.db'
+    return os.path.join(os.path.dirname(os.path.abspath(__file__)), 'instance', 'training.db')
+
+
 class _PgRow(dict):
     """Dict that also supports integer indexing, matching sqlite3.Row behaviour."""
     def __getitem__(self, key):

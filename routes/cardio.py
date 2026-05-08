@@ -3,6 +3,7 @@ import io
 from flask import Blueprint, render_template, request, redirect, url_for, flash, send_file
 from database import get_db
 from fit_workout_generator import generate_activity_fit
+from routes.auth import current_user_id
 
 bp = Blueprint('cardio', __name__)
 
@@ -20,8 +21,8 @@ def list_entries():
     date_filter = request.args.get('date', '')
     activity_filter = request.args.get('activity', '')
 
-    query = 'SELECT * FROM cardio_log WHERE 1=1'
-    params = []
+    query = 'SELECT * FROM cardio_log WHERE user_id = ?'
+    params = [current_user_id()]
     if date_filter:
         query += ' AND date=?'
         params.append(date_filter)
@@ -31,7 +32,10 @@ def list_entries():
     query += ' ORDER BY date DESC, id DESC'
 
     entries = db.execute(query, params).fetchall()
-    activities = db.execute('SELECT DISTINCT activity FROM cardio_log ORDER BY activity').fetchall()
+    activities = db.execute(
+        'SELECT DISTINCT activity FROM cardio_log WHERE user_id = ? ORDER BY activity',
+        (current_user_id(),)
+    ).fetchall()
     return render_template('cardio/list.html', entries=entries,
                            date_filter=date_filter, activity_filter=activity_filter,
                            activities=activities)
@@ -54,7 +58,10 @@ def new_entry():
 @bp.route('/cardio/<int:entry_id>/edit', methods=['GET', 'POST'])
 def edit_entry(entry_id):
     db = get_db()
-    entry = db.execute('SELECT * FROM cardio_log WHERE id=?', (entry_id,)).fetchone()
+    entry = db.execute(
+        'SELECT * FROM cardio_log WHERE id=? AND user_id=?',
+        (entry_id, current_user_id())
+    ).fetchone()
     if not entry:
         flash('Entry not found.', 'danger')
         return redirect(url_for('cardio.list_entries'))
@@ -70,7 +77,10 @@ def edit_entry(entry_id):
 @bp.route('/cardio/<int:entry_id>/activity-fit')
 def activity_fit(entry_id):
     db = get_db()
-    entry = db.execute('SELECT * FROM cardio_log WHERE id=?', (entry_id,)).fetchone()
+    entry = db.execute(
+        'SELECT * FROM cardio_log WHERE id=? AND user_id=?',
+        (entry_id, current_user_id())
+    ).fetchone()
     if not entry:
         flash('Entry not found.', 'danger')
         return redirect(url_for('cardio.list_entries'))
@@ -88,7 +98,10 @@ def activity_fit(entry_id):
 @bp.route('/cardio/<int:entry_id>/delete', methods=['POST'])
 def delete_entry(entry_id):
     db = get_db()
-    db.execute('DELETE FROM cardio_log WHERE id=?', (entry_id,))
+    db.execute(
+        'DELETE FROM cardio_log WHERE id=? AND user_id=?',
+        (entry_id, current_user_id())
+    )
     db.commit()
     flash('Entry deleted.', 'warning')
     return redirect(url_for('cardio.list_entries'))
@@ -101,10 +114,29 @@ def _load_plan_items(db):
                   tp.name as plan_name
            FROM plan_items pi
            JOIN training_plans tp ON tp.id = pi.plan_id
-           WHERE pi.status = 'scheduled'
+           WHERE tp.user_id = ? AND pi.status = 'scheduled'
            ORDER BY pi.item_date ASC
-           LIMIT 60'''
+           LIMIT 60''',
+        (current_user_id(),)
     ).fetchall()
+
+
+def _derive_pace(moving_time_min, duration_min, distance_mi):
+    """Return 'M:SS' avg pace from time+distance, or None if either
+    is missing/non-positive. Prefers moving_time when both are given —
+    matches Garmin semantics (pace excludes paused time)."""
+    minutes = moving_time_min if moving_time_min else duration_min
+    if not minutes or not distance_mi or minutes <= 0 or distance_mi <= 0:
+        return None
+    pace = minutes / distance_mi
+    if pace >= 100:  # sanity ceiling — beyond this we're probably mis-parsing units
+        return None
+    whole = int(pace)
+    secs = int(round((pace - whole) * 60))
+    if secs == 60:
+        whole += 1
+        secs = 0
+    return f'{whole}:{secs:02d}'
 
 
 def _save(db, entry_id):
@@ -118,10 +150,17 @@ def _save(db, entry_id):
 
     plan_item_id = num(f.get('plan_item_id'), int)
 
+    duration_min = num(f.get('duration_min'))
+    moving_time_min = num(f.get('moving_time_min'))
+    distance_mi = num(f.get('distance_mi'))
+    avg_pace = (f.get('avg_pace') or '').strip()
+    if not avg_pace:
+        avg_pace = _derive_pace(moving_time_min, duration_min, distance_mi)
+
     vals = (
         f.get('date'), f.get('activity'), f.get('activity_name'),
-        num(f.get('duration_min')), num(f.get('moving_time_min')),
-        num(f.get('distance_mi')), f.get('avg_pace'),
+        duration_min, moving_time_min,
+        distance_mi, avg_pace,
         num(f.get('avg_speed')), num(f.get('avg_hr'), int),
         num(f.get('max_hr'), int), num(f.get('calories'), int),
         num(f.get('elev_gain_ft')), num(f.get('elev_loss_ft')),
@@ -133,6 +172,7 @@ def _save(db, entry_id):
         plan_item_id, f.get('notes')
     )
 
+    uid = current_user_id()
     new_id = None
     if entry_id:
         # Running dynamics columns are read-only (FIT-imported); don't overwrite them
@@ -141,22 +181,31 @@ def _save(db, entry_id):
             distance_mi=?, avg_pace=?, avg_speed=?, avg_hr=?, max_hr=?, calories=?,
             elev_gain_ft=?, elev_loss_ft=?, avg_cadence=?, max_cadence=?,
             avg_power=?, max_power=?, norm_power=?, aerobic_te=?, anaerobic_te=?,
-            swolf=?, active_lengths=?, plan_item_id=?, notes=? WHERE id=?''',
-            vals + (entry_id,))
+            swolf=?, active_lengths=?, plan_item_id=?, notes=? WHERE id=? AND user_id=?''',
+            vals + (entry_id, uid))
     else:
         cur = db.execute('''INSERT INTO cardio_log
             (date, activity, activity_name, duration_min, moving_time_min,
              distance_mi, avg_pace, avg_speed, avg_hr, max_hr, calories,
              elev_gain_ft, elev_loss_ft, avg_cadence, max_cadence,
              avg_power, max_power, norm_power, aerobic_te, anaerobic_te,
-             swolf, active_lengths, plan_item_id, notes)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''', vals)
+             swolf, active_lengths, plan_item_id, notes, user_id)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) RETURNING id''', vals + (uid,))
         new_id = cur.lastrowid
 
     if plan_item_id:
         db.execute(
-            "UPDATE plan_items SET status='completed' WHERE id=? AND status='scheduled'",
-            (plan_item_id,)
+            "UPDATE plan_items SET status='completed' "
+            "WHERE id=? AND user_id=? AND status='scheduled'",
+            (plan_item_id, uid)
         )
+
+    cardio_notes = (f.get('notes') or '').strip()
+    if cardio_notes:
+        from coaching import capture_and_normalize_feedback
+        ref_id = entry_id or new_id
+        capture_and_normalize_feedback(db, 'workout_note_cardio', cardio_notes,
+                                       source_ref_id=ref_id, user_id=uid)
+
     db.commit()
     return new_id

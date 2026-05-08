@@ -6,6 +6,7 @@
   <a href="{{ url_for('body.list_entries') }}" class="btn btn-sm btn-outline-secondary">← Back</a>
 </div>
 <form method="post">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
   <div class="row g-3 mb-3">
     <div class="col-md-2"><label class="form-label">Date</label>
       <input type="date" name="date" class="form-control" required value="{{ entry.date if entry else '' }}"></div>
@@ -27,7 +28,8 @@
     </div>
     {% if entry %}
     <form method="post" action="{{ url_for('body.delete_entry', entry_id=entry.id) }}"
-          onsubmit="return confirm('Delete this entry? This cannot be undone.')">
+          data-confirm="Delete this entry? This cannot be undone.">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <button class="btn btn-outline-danger btn-sm">Delete</button>
     </form>
     {% endif %}

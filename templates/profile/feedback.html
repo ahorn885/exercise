@@ -1,0 +1,24 @@
+{% extends 'base.html' %}
+{% block title %}Original feedback — AIDSTATION{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-start mb-3">
+  <h4 class="mb-0">Original feedback</h4>
+  <a href="{{ url_for('profile.edit') }}" class="btn btn-sm btn-outline-secondary">← Back to profile</a>
+</div>
+
+<div class="card mb-3">
+  <div class="card-body">
+    <div class="small text-muted mb-2">
+      <span class="badge bg-secondary me-1">{{ feedback.source|replace('_', ' ') }}</span>
+      Captured {{ feedback.captured_at }}
+    </div>
+    <pre class="mb-0" style="white-space: pre-wrap; font-family: inherit;">{{ feedback.raw_content }}</pre>
+  </div>
+</div>
+
+<p class="text-muted small">
+  This is the verbatim text that produced the linked coaching preference.
+  Edits to this raw row aren't supported — if the extracted preference is
+  wrong, delete it from the profile page and add a corrected one manually.
+</p>
+{% endblock %}

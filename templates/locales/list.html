@@ -1,9 +1,9 @@
 {% extends 'base.html' %}
-{% block title %}Locale Equipment Profiles{% endblock %}
+{% block title %}Location Equipment Profiles{% endblock %}
 {% block content %}
 <div class="d-flex justify-content-between align-items-center mb-3">
-  <h4 class="mb-0">Locale Equipment Profiles</h4>
-  <span class="text-muted small">Saved profiles filter the exercise list when you select a locale.</span>
+  <h4 class="mb-0">Location Equipment Profiles</h4>
+  <span class="text-muted small">Saved profiles filter the exercise list when you select a location.</span>
 </div>
 <div class="row g-3">
   {% for locale in locales %}
@@ -20,7 +20,9 @@
             <p class="text-muted small mb-2">
               {{ tag_count }} item{{ 's' if tag_count != 1 }}
               {% if p and p['city'] %} &nbsp;·&nbsp; 📍 {{ p['city'] }}{% endif %}
-              &nbsp;·&nbsp; updated {{ p['updated_at'][:10] if p and p['updated_at'] else '—' }}
+              {# str() so this works on both backends — SQLite stores updated_at as TEXT,
+                 Postgres returns it as a datetime.datetime that isn't subscriptable. #}
+              &nbsp;·&nbsp; updated {{ (p['updated_at']|string)[:10] if p and p['updated_at'] else '—' }}
             </p>
             {% if p and p['notes'] %}
               <p class="text-muted small fst-italic mb-2">{{ p['notes'] }}</p>
@@ -35,7 +37,7 @@
               {% endif %}
             </div>
           {% else %}
-            <p class="text-muted small mb-0">No profile set — exercise filter uses static locale tags only.</p>
+            <p class="text-muted small mb-0">No profile set — exercise filter uses static location tags only.</p>
           {% endif %}
         </div>
       </div>

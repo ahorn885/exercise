@@ -41,7 +41,8 @@
       <td class="text-muted small">{{ e.comfort_notes or '' }}</td>
       <td class="text-nowrap">
         <a href="{{ url_for('conditions.edit_entry', entry_id=e.id) }}" class="btn btn-sm btn-outline-secondary py-0 px-1">Edit</a>
-        <form method="post" action="{{ url_for('conditions.delete_entry', entry_id=e.id) }}" class="d-inline" onsubmit="return confirm('Delete?')">
+        <form method="post" action="{{ url_for('conditions.delete_entry', entry_id=e.id) }}" class="d-inline" data-confirm="Delete?">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
           <button class="btn btn-sm btn-outline-danger py-0 px-1">Del</button>
         </form>
       </td>

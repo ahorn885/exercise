@@ -55,7 +55,7 @@ def _bootstrap_baseline(sets):
 def apply_session_outcome(db, exercise, date, sets,
                           target_sets=None, target_reps=None,
                           target_weight=None, target_duration=None,
-                          rx_source='From Training Log'):
+                          rx_source='From Training Log', user_id=None):
     """Compute outcome, project next, UPSERT current_rx, return result for caller.
 
     Caller uses returned dict to populate the training_log row's outcome /
@@ -71,12 +71,16 @@ def apply_session_outcome(db, exercise, date, sets,
           consecutive_failures,
         }
     """
+    # Scope by user_id so each user keeps their own prescription. Until Session
+    # 2D replaces UNIQUE(exercise) with UNIQUE(user_id, exercise), a second
+    # user's first INSERT for a seeded exercise can still hit the unique
+    # constraint — that's the gating UNIQUE debt 2D resolves.
     rx = db.execute(
         '''SELECT movement_pattern, weight_increment, consecutive_failures,
                   sessions_since_progress,
                   current_sets, current_reps, current_weight, current_duration
-           FROM current_rx WHERE exercise=?''',
-        (exercise,)
+           FROM current_rx WHERE exercise=? AND user_id=?''',
+        (exercise, user_id)
     ).fetchone()
 
     ei = db.execute(
@@ -196,11 +200,11 @@ def apply_session_outcome(db, exercise, date, sets,
                  last_performed=?, last_outcome=?, consecutive_failures=?, sessions_since_progress=?,
                  next_sets=?, next_reps=?, next_weight=?, next_duration=?,
                  rx_source=?
-               WHERE exercise=?''',
+               WHERE exercise=? AND user_id=?''',
             (exercise_id, new_baseline_sets, new_baseline_reps, new_baseline_weight, new_baseline_duration,
              date, outcome, new_failures, new_sessions_since_progress,
              nxt['next_sets'], nxt['next_reps'], nxt['next_weight'], nxt['next_duration'],
-             rx_source, exercise)
+             rx_source, exercise, user_id)
         )
     else:
         discipline = ei['discipline'] if ei else None
@@ -212,13 +216,13 @@ def apply_session_outcome(db, exercise, date, sets,
                   inventory_sugg_volume, current_sets, current_reps, current_weight, current_duration,
                   last_performed, last_outcome, consecutive_failures, sessions_since_progress,
                   weight_increment,
-                  next_sets, next_reps, next_weight, next_duration, rx_source)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
+                  next_sets, next_reps, next_weight, next_duration, rx_source, user_id)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
             (exercise, exercise_id, discipline, ex_type, movement_pattern,
              sugg_vol, new_baseline_sets, new_baseline_reps, new_baseline_weight, new_baseline_duration,
              date, outcome, new_failures, new_sessions_since_progress, weight_increment,
              nxt['next_sets'], nxt['next_reps'], nxt['next_weight'], nxt['next_duration'],
-             rx_source)
+             rx_source, user_id)
         )
 
     return {

@@ -1,0 +1,98 @@
+{% extends 'base.html' %}
+{% block title %}Recommended Purchases{% endblock %}
+{% block content %}
+
+{% macro status_badge(status) -%}
+  {%- if status == 'wanted' -%}
+    <span class="badge bg-warning text-dark">Wanted</span>
+  {%- elif status == 'owned' -%}
+    <span class="badge bg-success">Owned</span>
+  {%- elif status == 'passed' -%}
+    <span class="badge bg-secondary">Passed</span>
+  {%- else -%}
+    <span class="badge bg-light text-muted border">No status</span>
+  {%- endif -%}
+{%- endmacro %}
+
+{% macro priority_label(p) -%}
+  {%- if p == 'high' -%}High priority
+  {%- elif p == 'medium' -%}Medium priority
+  {%- else -%}Low priority{%- endif -%}
+{%- endmacro %}
+
+{% macro cost_range(lo, hi) -%}
+  {%- if lo and hi -%}${{ lo }}–${{ hi }}
+  {%- elif lo -%}${{ lo }}+
+  {%- elif hi -%}up to ${{ hi }}
+  {%- else -%}—{%- endif -%}
+{%- endmacro %}
+
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h4 class="mb-0">Recommended Purchases</h4>
+  <span class="text-muted small">
+    {{ counts_by_status.wanted }} wanted &middot;
+    {{ counts_by_status.owned }} owned &middot;
+    {{ counts_by_status.passed }} passed &middot;
+    {{ counts_by_status.none }} no status
+  </span>
+</div>
+
+<p class="text-muted small">
+  Each recommendation is tied to an equipment item; "exercises this unlocks" is
+  computed live from the exercise/equipment map. The "in your locations" hint
+  shows when you already have it tagged in a location profile.
+</p>
+
+{% for prio in ['high', 'medium', 'low'] %}
+  {% set items = grouped.get(prio, []) %}
+  {% if items %}
+    <h5 class="mt-4 mb-2 text-uppercase small text-muted">{{ priority_label(prio) }}</h5>
+    <div class="row g-3">
+      {% for it in items %}
+        <div class="col-12 col-lg-6">
+          <div class="card h-100">
+            <div class="card-body">
+              <div class="d-flex justify-content-between align-items-start gap-2">
+                <div>
+                  <h6 class="mb-1">
+                    <a href="{{ url_for('purchases.detail', purchase_id=it.id) }}" class="text-decoration-none">{{ it.label }}</a>
+                  </h6>
+                  <div class="small text-muted">
+                    <span class="font-monospace">{{ cost_range(it.est_cost_low, it.est_cost_high) }}</span>
+                    {% if it.impacted_count %}
+                      &middot; unlocks
+                      <span class="font-monospace">{{ it.impacted_count }}</span>
+                      exercise{{ 's' if it.impacted_count != 1 }}
+                    {% endif %}
+                    {% if it.in_locale %}
+                      &middot; <span class="text-success">✓ tagged in your locations</span>
+                    {% endif %}
+                  </div>
+                </div>
+                <div>{{ status_badge(it.status) }}</div>
+              </div>
+              {% if it.rationale %}
+                <p class="small mt-2 mb-2">{{ it.rationale }}</p>
+              {% endif %}
+              <form method="post" action="{{ url_for('purchases.set_status', purchase_id=it.id) }}" class="d-flex gap-1 flex-wrap mt-2">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                {% for s in valid_statuses %}
+                  <button name="status" value="{{ s }}"
+                          class="btn btn-sm btn-outline-secondary {% if it.status == s %}active{% endif %}"
+                          {% if it.status == s %}disabled{% endif %}>
+                    {{ s|capitalize }}
+                  </button>
+                {% endfor %}
+                {% if it.status %}
+                  <button name="status" value="clear" class="btn btn-sm btn-link text-muted">Clear</button>
+                {% endif %}
+              </form>
+            </div>
+          </div>
+        </div>
+      {% endfor %}
+    </div>
+  {% endif %}
+{% endfor %}
+
+{% endblock %}

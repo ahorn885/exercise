@@ -32,6 +32,7 @@
 } %}
 
 <form method="post" action="{{ url_for('garmin.sync_confirm') }}">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
   <div class="table-responsive mb-3">
     <table class="table table-sm table-hover align-middle">
       <thead class="table-light">
@@ -211,7 +212,7 @@
   <a href="{{ url_for('garmin.sync') }}" class="btn btn-outline-secondary ms-2">Cancel</a>
 </form>
 
-<script>
+<script nonce="{{ csp_nonce() }}">
 (function() {
   document.getElementById('select-all').addEventListener('change', function() {
     document.querySelectorAll('input[name="selected_ids"]').forEach(cb => cb.checked = this.checked);

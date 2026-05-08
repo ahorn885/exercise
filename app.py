@@ -1,11 +1,53 @@
 import os
 import re as _re
-from flask import Flask
-from database import init_app
+import secrets as _secrets
+from flask import Flask, request, redirect, url_for, session, g
+from flask_wtf.csrf import CSRFProtect, CSRFError
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
+from database import init_app, get_db, sqlite_path
 
 app = Flask(__name__, instance_relative_config=True)
-app.config['DATABASE'] = os.path.join(app.instance_path, 'training.db')
-app.secret_key = os.environ.get('SECRET_KEY', 'ar-training-2026')
+app.config['DATABASE'] = sqlite_path()
+
+# SECRET_KEY is mandatory: Flask session cookies are signed with it, so a
+# predictable value lets anyone forge a session for any user. Refuse to
+# boot without it rather than fall back to a hardcoded default.
+_secret = os.environ.get('SECRET_KEY')
+if not _secret:
+    raise RuntimeError(
+        'SECRET_KEY environment variable is required. Generate one with '
+        '`python -c "import secrets; print(secrets.token_urlsafe(48))"` and '
+        'set it on every deploy target before starting the app.'
+    )
+app.secret_key = _secret
+
+# SECRET_KEY_FALLBACKS lets us rotate SECRET_KEY without bouncing every
+# logged-in user. Set SECRET_KEY to the new value and SECRET_KEY_FALLBACK
+# to the old one; Flask signs new cookies with the new key but verifies
+# against either, so existing sessions keep working until they expire or
+# the fallback is dropped. Comma-separated for multi-step rotations.
+_fallbacks = [
+    s.strip() for s in (os.environ.get('SECRET_KEY_FALLBACK', '') or '').split(',')
+    if s.strip()
+]
+if _fallbacks:
+    app.config['SECRET_KEY_FALLBACKS'] = _fallbacks
+
+# Session cookie hardening. SECURE defaults on when the deploy looks
+# HTTPS-fronted (Vercel sets DATABASE_URL; local dev over HTTP doesn't).
+# Override explicitly via SESSION_COOKIE_SECURE=0/1 if needed.
+def _envbool(name: str, default: bool) -> bool:
+    v = os.environ.get(name)
+    if v is None:
+        return default
+    return v.strip().lower() not in ('0', 'false', 'no', 'off', '')
+
+app.config['SESSION_COOKIE_HTTPONLY'] = True
+app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
+app.config['SESSION_COOKIE_SECURE'] = _envbool(
+    'SESSION_COOKIE_SECURE', default=bool(os.environ.get('DATABASE_URL'))
+)
 
 if os.environ.get('DATABASE_URL'):
     # Postgres (production) — auto-migrate schema on every cold start
@@ -16,12 +58,45 @@ if os.environ.get('DATABASE_URL'):
     except Exception as _e:
         print(f'Warning: DB init skipped: {_e}')
 else:
-    # SQLite (local dev)
-    os.makedirs(app.instance_path, exist_ok=True)
+    os.makedirs(os.path.dirname(app.config['DATABASE']), exist_ok=True)
     from init_db import init_sqlite
-    init_sqlite()
+    try:
+        init_sqlite()
+    except Exception as _e:
+        # Don't fail module import on init errors — surface them in logs so
+        # the actual route 500 (not a cryptic import-time failure) is what
+        # the operator sees.
+        print(f'Warning: SQLite init failed: {_e}')
 
 init_app(app)
+
+# CSRF protection on every state-changing form/JSON POST. Flask-WTF reads the
+# token from a `csrf_token` form field or an `X-CSRFToken` header. JSON
+# fetches from JS rely on the header — see static/app.js, which wraps
+# window.fetch to inject it from the <meta name="csrf-token"> tag.
+csrf = CSRFProtect(app)
+
+
+@app.errorhandler(CSRFError)
+def _handle_csrf_error(e):
+    # Render a plain message rather than the default HTML — keeps responses
+    # uniform regardless of whether the caller is a browser form or a JS
+    # fetch. 400 (not 403) matches Flask-WTF's default.
+    return (f'CSRF validation failed: {e.description}', 400)
+
+
+# Rate limiting. Defaults are intentionally absent — only the auth blueprint
+# routes opt in (see routes/auth.py). Storage is in-process memory; across
+# multiple workers each enforces independently, which is fine for the
+# single-instance deploys this app targets. Swap in Redis (RATELIMIT_STORAGE_URI)
+# if scaling up.
+limiter = Limiter(
+    key_func=get_remote_address,
+    app=app,
+    storage_uri=os.environ.get('RATELIMIT_STORAGE_URI', 'memory://'),
+    default_limits=[],
+    headers_enabled=True,
+)
 
 
 def _workout_steps(description):
@@ -58,6 +133,10 @@ from routes.garmin import bp as garmin_bp
 from routes.plans import bp as plans_bp
 from routes.coaching import bp as coaching_bp
 from routes.natural_log import bp as natural_log_bp
+from routes.profile import bp as profile_bp
+from routes.purchases import bp as purchases_bp
+from routes.admin import bp as admin_bp
+from routes.auth import bp as auth_bp, current_user, verify_bearer_token
 
 app.register_blueprint(dashboard_bp)
 app.register_blueprint(training_bp)
@@ -72,6 +151,176 @@ app.register_blueprint(garmin_bp)
 app.register_blueprint(plans_bp)
 app.register_blueprint(coaching_bp)
 app.register_blueprint(natural_log_bp)
+app.register_blueprint(profile_bp)
+app.register_blueprint(purchases_bp)
+app.register_blueprint(admin_bp)
+app.register_blueprint(auth_bp)
+
+
+# ── Auth gate ────────────────────────────────────────────────────────────────
+# Endpoints that don't require a logged-in user. Anything else redirects to
+# /auth/login when the user has no session. Per-user query scoping ships in
+# Session 2 of the multi-user retrofit.
+_AUTH_EXEMPT_ENDPOINTS = {
+    'static',
+    'auth.login',
+    'auth.logout',
+    'auth.register',
+    'auth.forgot',
+    'auth.reset',
+}
+
+
+@app.before_request
+def _require_login():
+    endpoint = request.endpoint or ''
+    if endpoint in _AUTH_EXEMPT_ENDPOINTS:
+        return None
+    # Static files served from blueprints also include the dot-form 'X.static'.
+    if endpoint.endswith('.static') or request.path.startswith('/static/'):
+        return None
+
+    # Bearer-token auth (headless API clients) is checked before the session
+    # path so an external script's Authorization header beats any stale
+    # session cookie that might be lying around. On a successful match we
+    # stash the user id on g so current_user_id() picks it up, hydrate the
+    # row the same way the session path does, and short-circuit the rest
+    # of the gate.
+    try:
+        token_uid = verify_bearer_token(get_db())
+    except Exception as e:
+        print(f'auth: bearer-token verify failed: {e}')
+        token_uid = None
+    if token_uid:
+        try:
+            g.api_user_id = token_uid
+            user = current_user(get_db())
+        except Exception as e:
+            print(f'auth: hydration failed for token user_id={token_uid}: {e}')
+            user = None
+        if user:
+            g.current_user_row = user
+            g.api_authed = True
+            return None
+        # Token resolved to a user that no longer exists — treat as unauthed.
+        g.api_user_id = None
+
+    uid = session.get('user_id')
+    if uid:
+        # Hydrate the user row once per request. Stash on `g` so the
+        # context processor and any handler that wants the row can read
+        # it without re-querying. This also defends against stale session
+        # cookies pointing at a row that no longer exists — e.g. after a
+        # DB swap (SQLite→Neon cutover) or an admin deletion. Without
+        # this, the gate would happily admit a "ghost" user whose
+        # templates render with `current_user=None`, hiding the nav
+        # dropdown (and the only logout button) until they manually
+        # navigate to /auth/logout.
+        try:
+            user = current_user(get_db())
+        except Exception as e:
+            # Surface any unexpected DB / decode failure in the logs
+            # rather than silently rendering as a logged-out user.
+            print(f'auth: hydration failed for user_id={uid}: {e}')
+            user = None
+        if user:
+            g.current_user_row = user
+            return None
+        # Stale or unhydratable session — clear and re-prompt.
+        session.clear()
+
+    if request.method == 'GET':
+        return redirect(url_for('auth.login', next=request.path))
+    return ('Authentication required.', 401)
+
+
+@app.context_processor
+def _inject_current_user():
+    """Expose the logged-in user to all templates as `current_user`.
+    Reads the row hydrated by `_require_login` — single query per request."""
+    return {'current_user': getattr(g, 'current_user_row', None)}
+
+
+# Content-Security-Policy. script-src uses a per-request nonce so we can
+# drop 'unsafe-inline' for scripts — every inline <script> block in
+# templates renders nonce="{{ csp_nonce() }}", and inline event handler
+# attributes (onclick, onsubmit, ...) have been refactored to data-attr
+# delegation in static/app.js or addEventListener inside nonce'd script
+# blocks. style-src keeps 'unsafe-inline' because inline style="..." is
+# pervasive (Bootstrap utility-class hybrid pattern across templates) and
+# the security gain from refactoring it is small relative to the work.
+#
+# What this still buys with style 'unsafe-inline':
+#   connect-src 'self'   stops injected JS from POSTing exfil to externals
+#   img-src 'self' data: blocks pixel-tracker exfiltration
+#   form-action 'self'   defends against form-action injection
+#   frame-ancestors 'none' blocks clickjacking
+#   base-uri 'self'      prevents <base href> injection
+#   object-src 'none'    kills <object>/<embed>/Flash
+#   nonce'd script-src   blocks XSS-injected inline <script>
+_CSP_BASE_DIRECTIVES = [
+    "default-src 'self'",
+    # script-src 'self' is fine for our /static/app.js. Nonce covers all
+    # inline <script> blocks we render from templates. 'strict-dynamic'
+    # would let nonce'd scripts load further scripts, but we don't need
+    # that today — the third-party CDN imports are explicit <script src=...>
+    # tags that match script-src 'self' https://cdn.jsdelivr.net.
+    None,  # placeholder for script-src — filled per-request with the nonce
+    "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://fonts.googleapis.com",
+    "font-src 'self' https://fonts.gstatic.com",
+    "img-src 'self' data:",
+    "connect-src 'self'",
+    "frame-ancestors 'none'",
+    "base-uri 'self'",
+    "form-action 'self'",
+    "object-src 'none'",
+]
+if os.environ.get('DATABASE_URL'):
+    _CSP_BASE_DIRECTIVES.append('upgrade-insecure-requests')
+_CSP_HEADER_NAME = (
+    'Content-Security-Policy-Report-Only'
+    if _envbool('CSP_REPORT_ONLY', default=False)
+    else 'Content-Security-Policy'
+)
+
+
+def _csp_for_nonce(nonce: str) -> str:
+    parts = list(_CSP_BASE_DIRECTIVES)
+    parts[1] = (
+        f"script-src 'self' 'nonce-{nonce}' https://cdn.jsdelivr.net"
+    )
+    return '; '.join(parts)
+
+
+@app.before_request
+def _generate_csp_nonce():
+    # 16 random bytes → 22 base64url chars. Per-request, so each response's
+    # CSP header carries a fresh value that an attacker can't predict.
+    g.csp_nonce = _secrets.token_urlsafe(16)
+
+
+@app.context_processor
+def _inject_csp_nonce():
+    """Expose csp_nonce() to templates so every inline <script> can render
+    nonce="{{ csp_nonce() }}". Falls back to '' if the before_request
+    hook hasn't run (test client without an active request, etc.)."""
+    return {'csp_nonce': lambda: getattr(g, 'csp_nonce', '')}
+
+
+@app.after_request
+def _set_security_headers(resp):
+    # Defensive headers that don't depend on per-page tuning.
+    resp.headers.setdefault('X-Content-Type-Options', 'nosniff')
+    resp.headers.setdefault('X-Frame-Options', 'DENY')
+    resp.headers.setdefault('Referrer-Policy', 'strict-origin-when-cross-origin')
+    resp.headers.setdefault(
+        'Permissions-Policy',
+        'geolocation=(), microphone=(), camera=(), payment=(), usb=()'
+    )
+    resp.headers.setdefault(
+        _CSP_HEADER_NAME, _csp_for_nonce(getattr(g, 'csp_nonce', ''))
+    )
+    return resp
 
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0', port=5000)

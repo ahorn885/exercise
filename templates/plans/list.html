@@ -45,10 +45,12 @@
           <div class="d-flex gap-1">
             <a href="{{ url_for('plans.view_plan', plan_id=p.id) }}" class="btn btn-sm btn-outline-secondary">View</a>
             <form method="post" action="{{ url_for('plans.archive_plan', plan_id=p.id) }}" class="d-none d-md-inline">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
               <button type="submit" class="btn btn-sm btn-outline-secondary" title="Archive">Archive</button>
             </form>
             <form method="post" action="{{ url_for('plans.delete_plan', plan_id=p.id) }}"
-                  onsubmit="return confirm('Delete {{ p.name }}? This cannot be undone.')" class="d-none d-md-inline">
+                  data-confirm="Delete {{ p.name }}? This cannot be undone." class="d-none d-md-inline">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
               <button type="submit" class="btn btn-sm btn-outline-danger">Delete</button>
             </form>
           </div>
