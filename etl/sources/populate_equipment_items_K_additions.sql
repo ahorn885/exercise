@@ -55,7 +55,7 @@ VALUES
   ('Stairs',                'Bodyweight & Portable',         FALSE,
    'A full flight of stairs (multi-step structure); distinct from Stair climber machine. Single steps / edges are universal and not tracked.',
    '0A-v17.K', NOW())
-ON CONFLICT (canonical_name) DO NOTHING;
+ON CONFLICT (canonical_name, etl_version) DO NOTHING;
 
 -- ── Verification ──────────────────────────────────────────────────────────
 DO $$
