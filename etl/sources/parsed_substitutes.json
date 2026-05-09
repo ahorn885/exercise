@@ -1,0 +1,4511 @@
+[
+  {
+    "ex_id": "EX001",
+    "name": "Back Squat (Barbell)",
+    "substitutes": [
+      {
+        "substitute_text": "Safety Bar Squat",
+        "equipment_required": [
+          [
+            "Safety squat bar"
+          ]
+        ],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "Hack Squat machine",
+        "equipment_required": [
+          [
+            "Hack squat machine"
+          ]
+        ],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "Smith Machine Squat",
+        "equipment_required": [
+          [
+            "Smith machine"
+          ]
+        ],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "Backpack loaded with books or water (goblet hold) for hotel squat",
+        "equipment_required": [
+          [
+            "Backpack"
+          ],
+          [
+            "Weighted vest"
+          ]
+        ],
+        "is_improvised": true
+      }
+    ]
+  },
+  {
+    "ex_id": "EX002",
+    "name": "Goblet Squat (DB/KB)",
+    "substitutes": [
+      {
+        "substitute_text": "Bodyweight squat (no load)",
+        "equipment_required": [],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "Sandbag Goblet Squat",
+        "equipment_required": [
+          [
+            "Sandbag"
+          ]
+        ],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "Gallon water jug (~8.5 lb) as light goblet load",
+        "equipment_required": [],
+        "is_improvised": true
+      },
+      {
+        "substitute_text": "filled suitcase held at chest",
+        "equipment_required": [],
+        "is_improvised": true
+      }
+    ]
+  },
+  {
+    "ex_id": "EX003",
+    "name": "Romanian Deadlift (Barbell)",
+    "substitutes": [
+      {
+        "substitute_text": "DB Romanian Deadlift",
+        "equipment_required": [
+          [
+            "Dumbbell"
+          ]
+        ],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "KB Deadlift",
+        "equipment_required": [
+          [
+            "Kettlebell"
+          ]
+        ],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "Trap Bar Deadlift",
+        "equipment_required": [
+          [
+            "Trap bar"
+          ]
+        ],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "Filled suitcase as barbell substitute (held at mid-thigh)",
+        "equipment_required": [],
+        "is_improvised": true
+      },
+      {
+        "substitute_text": "backpack deadlift",
+        "equipment_required": [
+          [
+            "Backpack"
+          ],
+          [
+            "Weighted vest"
+          ]
+        ],
+        "is_improvised": false
+      }
+    ]
+  },
+  {
+    "ex_id": "EX004",
+    "name": "Single-Leg RDL (DB)",
+    "substitutes": [
+      {
+        "substitute_text": "KB Single-Leg RDL",
+        "equipment_required": [
+          [
+            "Kettlebell"
+          ]
+        ],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "Single-Leg Good Morning (bodyweight)",
+        "equipment_required": [],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "Gallon water jug as light DB",
+        "equipment_required": [],
+        "is_improvised": true
+      },
+      {
+        "substitute_text": "bodyweight single-leg RDL (balance focus)",
+        "equipment_required": [],
+        "is_improvised": false
+      }
+    ]
+  },
+  {
+    "ex_id": "EX005",
+    "name": "Dead Hang",
+    "substitutes": [
+      {
+        "substitute_text": "Door frame hang",
+        "equipment_required": [],
+        "is_improvised": true
+      },
+      {
+        "substitute_text": "Towel-over-bar hang",
+        "equipment_required": [],
+        "is_improvised": true
+      },
+      {
+        "substitute_text": "Gymnastics rings",
+        "equipment_required": [
+          [
+            "Gymnastic rings"
+          ]
+        ],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "Sturdy door frame",
+        "equipment_required": [],
+        "is_improvised": true
+      },
+      {
+        "substitute_text": "playground monkey bars",
+        "equipment_required": [],
+        "is_improvised": true
+      },
+      {
+        "substitute_text": "tree branch (test before full weight)",
+        "equipment_required": [],
+        "is_improvised": true
+      },
+      {
+        "substitute_text": "stairwell railing overhang",
+        "equipment_required": [],
+        "is_improvised": true
+      }
+    ]
+  },
+  {
+    "ex_id": "EX006",
+    "name": "Pull-Up (BW)",
+    "substitutes": [
+      {
+        "substitute_text": "Band-assisted Pull-Up",
+        "equipment_required": [
+          [
+            "Resistance band"
+          ]
+        ],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "TRX Row (horizontal sub)",
+        "equipment_required": [
+          [
+            "TRX / suspension trainer"
+          ]
+        ],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "Ring Row",
+        "equipment_required": [
+          [
+            "Gymnastic rings"
+          ]
+        ],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "Playground bar or sturdy tree branch",
+        "equipment_required": [],
+        "is_improvised": true
+      },
+      {
+        "substitute_text": "parking garage beam (concrete)",
+        "equipment_required": [],
+        "is_improvised": true
+      },
+      {
+        "substitute_text": "hotel room door-mount pull-up bar",
+        "equipment_required": [
+          [
+            "Pull-up bar"
+          ]
+        ],
+        "is_improvised": true
+      }
+    ]
+  },
+  {
+    "ex_id": "EX007",
+    "name": "Box Jump",
+    "substitutes": [
+      {
+        "substitute_text": "Step-up box jump (lower box)",
+        "equipment_required": [
+          [
+            "Plyo box"
+          ]
+        ],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "Stair jump",
+        "equipment_required": [],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "Stair step or park bench for lower box jump",
+        "equipment_required": [],
+        "is_improvised": true
+      },
+      {
+        "substitute_text": "hotel bed (careful — test stability first)",
+        "equipment_required": [],
+        "is_improvised": true
+      }
+    ]
+  },
+  {
+    "ex_id": "EX008",
+    "name": "Broad Jump",
+    "substitutes": [
+      {
+        "substitute_text": "Marked floor for distance",
+        "equipment_required": [],
+        "is_improvised": true
+      },
+      {
+        "substitute_text": "Sand or grass for impact reduction",
+        "equipment_required": [],
+        "is_improvised": true
+      },
+      {
+        "substitute_text": "No equipment needed",
+        "equipment_required": [],
+        "is_improvised": true
+      },
+      {
+        "substitute_text": "mark distance with tape, shoes, or chalk",
+        "equipment_required": [],
+        "is_improvised": true
+      }
+    ]
+  },
+  {
+    "ex_id": "EX009",
+    "name": "Farmer Carry",
+    "substitutes": [
+      {
+        "substitute_text": "Suitcase carry (one DB)",
+        "equipment_required": [
+          [
+            "Dumbbell"
+          ]
+        ],
+        "is_improvised": true
+      },
+      {
+        "substitute_text": "Loaded backpack carry",
+        "equipment_required": [
+          [
+            "Backpack"
+          ],
+          [
+            "Weighted vest"
+          ]
+        ],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "Sandbag carry",
+        "equipment_required": [
+          [
+            "Sandbag"
+          ]
+        ],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "Gallon jugs in each hand",
+        "equipment_required": [],
+        "is_improvised": true
+      },
+      {
+        "substitute_text": "filled grocery bags",
+        "equipment_required": [],
+        "is_improvised": true
+      },
+      {
+        "substitute_text": "suitcases",
+        "equipment_required": [],
+        "is_improvised": true
+      }
+    ]
+  },
+  {
+    "ex_id": "EX010",
+    "name": "Rucking (Weighted Hike)",
+    "substitutes": [
+      {
+        "substitute_text": "Stair climb with pack",
+        "equipment_required": [
+          [
+            "Stairs",
+            "Backpack"
+          ],
+          [
+            "Stairs",
+            "Weighted vest"
+          ]
+        ],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "Weighted vest walk",
+        "equipment_required": [
+          [
+            "Weighted vest"
+          ]
+        ],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "Backpack loaded with books, water bottles, or bag of rice",
+        "equipment_required": [
+          [
+            "Backpack"
+          ],
+          [
+            "Weighted vest"
+          ]
+        ],
+        "is_improvised": true
+      },
+      {
+        "substitute_text": "weighted vest alternative: load a hydration pack with water",
+        "equipment_required": [
+          [
+            "Weighted vest"
+          ]
+        ],
+        "is_improvised": false
+      }
+    ]
+  },
+  {
+    "ex_id": "EX011",
+    "name": "Pallof Press (Band/Cable)",
+    "substitutes": [
+      {
+        "substitute_text": "Half-kneeling band version (rotation not anti-rotation)",
+        "equipment_required": [
+          [
+            "Resistance band"
+          ]
+        ],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "Landmine Pallof",
+        "equipment_required": [
+          [
+            "Landmine attachment"
+          ]
+        ],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "Band anchored in closed door at chest height",
+        "equipment_required": [],
+        "is_improvised": true
+      },
+      {
+        "substitute_text": "or hug a heavy backpack and resist rotation standing",
+        "equipment_required": [
+          [
+            "Backpack"
+          ],
+          [
+            "Weighted vest"
+          ]
+        ],
+        "is_improvised": true
+      }
+    ]
+  },
+  {
+    "ex_id": "EX012",
+    "name": "Copenhagen Plank",
+    "substitutes": [
+      {
+        "substitute_text": "Side-lying hip adduction (no bench)",
+        "equipment_required": [],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "Adductor squeeze (ball between knees)",
+        "equipment_required": [],
+        "is_improvised": true
+      },
+      {
+        "substitute_text": "Bed edge or chair seat for top foot elevation",
+        "equipment_required": [],
+        "is_improvised": true
+      }
+    ]
+  },
+  {
+    "ex_id": "EX013",
+    "name": "Hip Circle (Band)",
+    "substitutes": [
+      {
+        "substitute_text": "Standing hip circle without band",
+        "equipment_required": [],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "Loop a towel or belt around knees as improvised band",
+        "equipment_required": [],
+        "is_improvised": true
+      },
+      {
+        "substitute_text": "no equipment for unresisted version",
+        "equipment_required": [],
+        "is_improvised": true
+      }
+    ]
+  },
+  {
+    "ex_id": "EX014",
+    "name": "World's Greatest Stretch",
+    "substitutes": [
+      {
+        "substitute_text": "No equipment needed",
+        "equipment_required": [],
+        "is_improvised": true
+      }
+    ]
+  },
+  {
+    "ex_id": "EX015",
+    "name": "Pigeon Pose",
+    "substitutes": [
+      {
+        "substitute_text": "Supine figure-4 stretch (floor sub for pigeon)",
+        "equipment_required": [],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "Thread-the-needle",
+        "equipment_required": [],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "Folded towel under hip for comfort",
+        "equipment_required": [],
+        "is_improvised": true
+      },
+      {
+        "substitute_text": "hotel bed corner for elevated pigeon",
+        "equipment_required": [],
+        "is_improvised": true
+      }
+    ]
+  },
+  {
+    "ex_id": "EX016",
+    "name": "Thoracic Rotation Drill",
+    "substitutes": [
+      {
+        "substitute_text": "Side-lying thoracic rotation (wall sub)",
+        "equipment_required": [],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "No equipment needed",
+        "equipment_required": [],
+        "is_improvised": true
+      },
+      {
+        "substitute_text": "lie on hotel bed for side-lying version",
+        "equipment_required": [],
+        "is_improvised": true
+      }
+    ]
+  },
+  {
+    "ex_id": "EX017",
+    "name": "Lateral Band Walk",
+    "substitutes": [
+      {
+        "substitute_text": "Theraband substitution",
+        "equipment_required": [
+          [
+            "Resistance band"
+          ]
+        ],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "Lateral walk without band (reduced stimulus)",
+        "equipment_required": [],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "Towel or belt loop around ankles",
+        "equipment_required": [],
+        "is_improvised": true
+      },
+      {
+        "substitute_text": "hair tie or rubber bands doubled as light resistance",
+        "equipment_required": [],
+        "is_improvised": true
+      }
+    ]
+  },
+  {
+    "ex_id": "EX018",
+    "name": "Foam Roll (IT Band / Quads / Lats)",
+    "substitutes": [
+      {
+        "substitute_text": "Lacrosse ball (targeted)",
+        "equipment_required": [
+          [
+            "Lacrosse ball"
+          ]
+        ],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "Massage gun",
+        "equipment_required": [
+          [
+            "Massage gun"
+          ]
+        ],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "Stick roller",
+        "equipment_required": [
+          [
+            "Stick roller"
+          ]
+        ],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "Tennis ball, lacrosse ball, or water bottle for targeted rolling",
+        "equipment_required": [],
+        "is_improvised": true
+      },
+      {
+        "substitute_text": "rolled-up towel under IT band",
+        "equipment_required": [],
+        "is_improvised": true
+      },
+      {
+        "substitute_text": "massage gun if available",
+        "equipment_required": [
+          [
+            "Massage gun"
+          ]
+        ],
+        "is_improvised": false
+      }
+    ]
+  },
+  {
+    "ex_id": "EX019",
+    "name": "Barbell Hip Thrust",
+    "substitutes": [
+      {
+        "substitute_text": "Single-Leg Hip Thrust",
+        "equipment_required": [],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "KB Hip Thrust",
+        "equipment_required": [
+          [
+            "Kettlebell"
+          ]
+        ],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "Barbell on bench (no rack)",
+        "equipment_required": [
+          [
+            "Barbell",
+            "Squat rack"
+          ]
+        ],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "Single-leg hip thrust on hotel bed edge",
+        "equipment_required": [],
+        "is_improvised": true
+      },
+      {
+        "substitute_text": "backpack across hips for load",
+        "equipment_required": [
+          [
+            "Backpack"
+          ],
+          [
+            "Weighted vest"
+          ]
+        ],
+        "is_improvised": false
+      }
+    ]
+  },
+  {
+    "ex_id": "EX020",
+    "name": "Nordic Hamstring Curl",
+    "substitutes": [
+      {
+        "substitute_text": "Nordic on bed anchor (feet under bed frame)",
+        "equipment_required": [],
+        "is_improvised": true
+      },
+      {
+        "substitute_text": "Sliding disc hamstring curl",
+        "equipment_required": [
+          [
+            "Slider discs"
+          ]
+        ],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "Feet anchored under bed frame or heavy dresser",
+        "equipment_required": [],
+        "is_improvised": true
+      },
+      {
+        "substitute_text": "towel-assisted Nordic on smooth floor",
+        "equipment_required": [],
+        "is_improvised": true
+      }
+    ]
+  },
+  {
+    "ex_id": "EX021",
+    "name": "Bulgarian Split Squat (DB)",
+    "substitutes": [
+      {
+        "substitute_text": "Barbell Bulgarian Split Squat (if rack available)",
+        "equipment_required": [
+          [
+            "Barbell",
+            "Squat rack"
+          ]
+        ],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "Sandbag on shoulder",
+        "equipment_required": [
+          [
+            "Sandbag"
+          ]
+        ],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "Chair or bed edge for rear foot elevation",
+        "equipment_required": [],
+        "is_improvised": true
+      },
+      {
+        "substitute_text": "backpack for load",
+        "equipment_required": [
+          [
+            "Backpack"
+          ],
+          [
+            "Weighted vest"
+          ]
+        ],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "stair step as platform",
+        "equipment_required": [],
+        "is_improvised": false
+      }
+    ]
+  },
+  {
+    "ex_id": "EX022",
+    "name": "Reverse Lunge (DB or BW)",
+    "substitutes": [
+      {
+        "substitute_text": "Barbell Reverse Lunge",
+        "equipment_required": [
+          [
+            "Barbell",
+            "Squat rack"
+          ]
+        ],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "Sandbag Lunge",
+        "equipment_required": [
+          [
+            "Sandbag"
+          ]
+        ],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "Backpack for load",
+        "equipment_required": [
+          [
+            "Backpack"
+          ],
+          [
+            "Weighted vest"
+          ]
+        ],
+        "is_improvised": true
+      },
+      {
+        "substitute_text": "gallon jugs in each hand",
+        "equipment_required": [],
+        "is_improvised": true
+      }
+    ]
+  },
+  {
+    "ex_id": "EX023",
+    "name": "Lateral Lunge (DB or BW)",
+    "substitutes": [
+      {
+        "substitute_text": "Barbell Lateral Lunge",
+        "equipment_required": [
+          [
+            "Barbell",
+            "Squat rack"
+          ]
+        ],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "Bodyweight lateral lunge (no load)",
+        "equipment_required": [],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "Gallon jugs in each hand for light lateral lunge load",
+        "equipment_required": [],
+        "is_improvised": true
+      }
+    ]
+  },
+  {
+    "ex_id": "EX024",
+    "name": "Step-Up High Box (Loaded)",
+    "substitutes": [
+      {
+        "substitute_text": "Barbell Step-Up",
+        "equipment_required": [
+          [
+            "Barbell",
+            "Squat rack"
+          ]
+        ],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "Loaded backpack step-up",
+        "equipment_required": [
+          [
+            "Backpack"
+          ],
+          [
+            "Weighted vest"
+          ]
+        ],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "Stair step, park bench, or sturdy chair as box",
+        "equipment_required": [],
+        "is_improvised": true
+      },
+      {
+        "substitute_text": "backpack for load",
+        "equipment_required": [
+          [
+            "Backpack"
+          ],
+          [
+            "Weighted vest"
+          ]
+        ],
+        "is_improvised": false
+      }
+    ]
+  },
+  {
+    "ex_id": "EX025",
+    "name": "Single-Leg Calf Raise (Loaded)",
+    "substitutes": [
+      {
+        "substitute_text": "Smith Machine Calf Raise",
+        "equipment_required": [
+          [
+            "Smith machine"
+          ]
+        ],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "Leg Press calf raise",
+        "equipment_required": [
+          [
+            "Leg press machine"
+          ]
+        ],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "Barbell calf raise",
+        "equipment_required": [
+          [
+            "Barbell",
+            "Squat rack"
+          ]
+        ],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "Stair edge for full ROM calf raise",
+        "equipment_required": [],
+        "is_improvised": true
+      },
+      {
+        "substitute_text": "curb",
+        "equipment_required": [],
+        "is_improvised": true
+      },
+      {
+        "substitute_text": "thick book on floor",
+        "equipment_required": [],
+        "is_improvised": true
+      },
+      {
+        "substitute_text": "doorway threshold",
+        "equipment_required": [],
+        "is_improvised": true
+      }
+    ]
+  },
+  {
+    "ex_id": "EX026",
+    "name": "Seated Calf Raise",
+    "substitutes": [
+      {
+        "substitute_text": "Barbell across thighs (no machine)",
+        "equipment_required": [
+          [
+            "Barbell",
+            "Squat rack"
+          ]
+        ],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "Smith Machine Seated Calf Raise",
+        "equipment_required": [
+          [
+            "Smith machine"
+          ]
+        ],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "Seated on chair with heavy backpack across knees",
+        "equipment_required": [
+          [
+            "Backpack"
+          ],
+          [
+            "Weighted vest"
+          ]
+        ],
+        "is_improvised": true
+      },
+      {
+        "substitute_text": "gallon jugs on thighs",
+        "equipment_required": [],
+        "is_improvised": true
+      }
+    ]
+  },
+  {
+    "ex_id": "EX027",
+    "name": "Tibialis Raise (Wall or Machine)",
+    "substitutes": [
+      {
+        "substitute_text": "Seated tibialis raise (plate on toe)",
+        "equipment_required": [
+          [
+            "Weight plates"
+          ]
+        ],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "Band dorsiflexion",
+        "equipment_required": [
+          [
+            "Resistance band"
+          ]
+        ],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "Heels on stair edge, dorsiflex toes toward shins",
+        "equipment_required": [],
+        "is_improvised": true
+      },
+      {
+        "substitute_text": "no equipment needed for wall version",
+        "equipment_required": [],
+        "is_improvised": true
+      }
+    ]
+  },
+  {
+    "ex_id": "EX028",
+    "name": "Pistol Squat / Assisted Pistol",
+    "substitutes": [
+      {
+        "substitute_text": "TRX-assisted Pistol Squat",
+        "equipment_required": [
+          [
+            "TRX / suspension trainer"
+          ]
+        ],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "Pole-assisted Pistol Squat",
+        "equipment_required": [],
+        "is_improvised": true
+      },
+      {
+        "substitute_text": "Doorframe or chair back for balance assist",
+        "equipment_required": [],
+        "is_improvised": true
+      },
+      {
+        "substitute_text": "no equipment needed for bodyweight version",
+        "equipment_required": [],
+        "is_improvised": true
+      }
+    ]
+  },
+  {
+    "ex_id": "EX029",
+    "name": "Sled Push",
+    "substitutes": [
+      {
+        "substitute_text": "Band sprint drill (resistance band anchored behind)",
+        "equipment_required": [
+          [
+            "Resistance band"
+          ]
+        ],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "Prowler (same pattern)",
+        "equipment_required": [
+          [
+            "Weighted sled"
+          ]
+        ],
+        "is_improvised": false
+      }
+    ]
+  },
+  {
+    "ex_id": "EX030",
+    "name": "Reverse Sled Drag",
+    "substitutes": [
+      {
+        "substitute_text": "Band walk-back (resistance band substitution for sled)",
+        "equipment_required": [
+          [
+            "Resistance band"
+          ]
+        ],
+        "is_improvised": false
+      }
+    ]
+  },
+  {
+    "ex_id": "EX031",
+    "name": "Kettlebell Swing (Two-Hand)",
+    "substitutes": [
+      {
+        "substitute_text": "DB Swing",
+        "equipment_required": [
+          [
+            "Dumbbell"
+          ]
+        ],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "Single-arm KB Swing",
+        "equipment_required": [
+          [
+            "Kettlebell"
+          ]
+        ],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "Filled suitcase or heavy backpack for improvised KB swing (two-hand grip on handle)",
+        "equipment_required": [
+          [
+            "Backpack"
+          ],
+          [
+            "Weighted vest"
+          ]
+        ],
+        "is_improvised": true
+      },
+      {
+        "substitute_text": "gallon jug",
+        "equipment_required": [],
+        "is_improvised": true
+      }
+    ]
+  },
+  {
+    "ex_id": "EX032",
+    "name": "Jump Squat (BW or Light Load)",
+    "substitutes": [
+      {
+        "substitute_text": "Barbell Jump Squat (< 20% 1RM)",
+        "equipment_required": [
+          [
+            "Barbell",
+            "Squat rack"
+          ]
+        ],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "Sandbag Jump Squat",
+        "equipment_required": [
+          [
+            "Sandbag"
+          ]
+        ],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "No equipment needed for bodyweight version",
+        "equipment_required": [],
+        "is_improvised": true
+      },
+      {
+        "substitute_text": "backpack for light load",
+        "equipment_required": [
+          [
+            "Backpack"
+          ],
+          [
+            "Weighted vest"
+          ]
+        ],
+        "is_improvised": false
+      }
+    ]
+  },
+  {
+    "ex_id": "EX033",
+    "name": "Depth Drop (Eccentric Landing Practice)",
+    "substitutes": [
+      {
+        "substitute_text": "Stair step-off (lower height)",
+        "equipment_required": [],
+        "is_improvised": true
+      },
+      {
+        "substitute_text": "Curb depth drop",
+        "equipment_required": [],
+        "is_improvised": true
+      },
+      {
+        "substitute_text": "Stair step or curb for low-height depth drop",
+        "equipment_required": [],
+        "is_improvised": true
+      },
+      {
+        "substitute_text": "park bench (test stability)",
+        "equipment_required": [],
+        "is_improvised": true
+      }
+    ]
+  },
+  {
+    "ex_id": "EX034",
+    "name": "Lateral Bound",
+    "substitutes": [
+      {
+        "substitute_text": "Lateral hop over line (marked floor)",
+        "equipment_required": [],
+        "is_improvised": true
+      },
+      {
+        "substitute_text": "Mini hurdle lateral hop",
+        "equipment_required": [
+          [
+            "Mini hurdles"
+          ]
+        ],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "No equipment needed",
+        "equipment_required": [],
+        "is_improvised": true
+      },
+      {
+        "substitute_text": "mark landing targets with tape or shoes",
+        "equipment_required": [],
+        "is_improvised": true
+      }
+    ]
+  },
+  {
+    "ex_id": "EX035",
+    "name": "Ankle Hops / Pogo Jumps",
+    "substitutes": [
+      {
+        "substitute_text": "Jump rope (double-under rhythm sim)",
+        "equipment_required": [
+          [
+            "Jump rope"
+          ]
+        ],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "Rebounding on mini trampoline",
+        "equipment_required": [
+          [
+            "Mini trampoline"
+          ]
+        ],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "No equipment needed",
+        "equipment_required": [],
+        "is_improvised": true
+      },
+      {
+        "substitute_text": "any flat surface",
+        "equipment_required": [],
+        "is_improvised": true
+      }
+    ]
+  },
+  {
+    "ex_id": "EX036",
+    "name": "Running Bounds (Exaggerated Stride)",
+    "substitutes": [
+      {
+        "substitute_text": "Uphill bounding (terrain sub)",
+        "equipment_required": [],
+        "is_improvised": true
+      },
+      {
+        "substitute_text": "Resist band bounds (added resistance)",
+        "equipment_required": [
+          [
+            "Resistance band"
+          ]
+        ],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "No equipment needed",
+        "equipment_required": [],
+        "is_improvised": true
+      },
+      {
+        "substitute_text": "hallway, parking lot, or park grass",
+        "equipment_required": [],
+        "is_improvised": true
+      }
+    ]
+  },
+  {
+    "ex_id": "EX037",
+    "name": "Wall Sit",
+    "substitutes": [
+      {
+        "substitute_text": "Any wall",
+        "equipment_required": [],
+        "is_improvised": true
+      },
+      {
+        "substitute_text": "hotel room wall",
+        "equipment_required": [],
+        "is_improvised": true
+      },
+      {
+        "substitute_text": "add backpack on thighs for progression",
+        "equipment_required": [
+          [
+            "Backpack"
+          ],
+          [
+            "Weighted vest"
+          ]
+        ],
+        "is_improvised": false
+      }
+    ]
+  },
+  {
+    "ex_id": "EX038",
+    "name": "Split Squat ISO Hold",
+    "substitutes": [
+      {
+        "substitute_text": "Barbell split squat hold at bottom",
+        "equipment_required": [
+          [
+            "Barbell",
+            "Squat rack"
+          ]
+        ],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "Loaded sandbag version",
+        "equipment_required": [
+          [
+            "Sandbag"
+          ]
+        ],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "Chair seat for rear foot elevation",
+        "equipment_required": [],
+        "is_improvised": true
+      },
+      {
+        "substitute_text": "bed edge",
+        "equipment_required": [],
+        "is_improvised": true
+      },
+      {
+        "substitute_text": "no equipment for floor version",
+        "equipment_required": [],
+        "is_improvised": true
+      }
+    ]
+  },
+  {
+    "ex_id": "EX039",
+    "name": "Glute Bridge (Double-Leg)",
+    "substitutes": [
+      {
+        "substitute_text": "Barbell Glute Bridge",
+        "equipment_required": [
+          [
+            "Barbell",
+            "Squat rack"
+          ]
+        ],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "Single-Leg Glute Bridge",
+        "equipment_required": [],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "Band above knees variant",
+        "equipment_required": [
+          [
+            "Resistance band"
+          ]
+        ],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "No equipment needed",
+        "equipment_required": [],
+        "is_improvised": true
+      },
+      {
+        "substitute_text": "backpack across hips for load",
+        "equipment_required": [
+          [
+            "Backpack"
+          ],
+          [
+            "Weighted vest"
+          ]
+        ],
+        "is_improvised": false
+      }
+    ]
+  },
+  {
+    "ex_id": "EX040",
+    "name": "Clamshell (Band)",
+    "substitutes": [
+      {
+        "substitute_text": "Lateral lying hip abduction without band",
+        "equipment_required": [],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "Towel or belt loop around knees",
+        "equipment_required": [],
+        "is_improvised": true
+      },
+      {
+        "substitute_text": "no equipment for unresisted version",
+        "equipment_required": [],
+        "is_improvised": true
+      }
+    ]
+  },
+  {
+    "ex_id": "EX041",
+    "name": "Monster Walk (Band)",
+    "substitutes": [
+      {
+        "substitute_text": "Lateral walk without band (reduced stimulus)",
+        "equipment_required": [],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "Towel or belt loop around ankles",
+        "equipment_required": [],
+        "is_improvised": true
+      },
+      {
+        "substitute_text": "no equipment for unresisted version",
+        "equipment_required": [],
+        "is_improvised": true
+      }
+    ]
+  },
+  {
+    "ex_id": "EX042",
+    "name": "Donkey Kick / Fire Hydrant",
+    "substitutes": [
+      {
+        "substitute_text": "No equipment needed",
+        "equipment_required": [],
+        "is_improvised": true
+      }
+    ]
+  },
+  {
+    "ex_id": "EX043",
+    "name": "Single-Leg Balance Hold",
+    "substitutes": [
+      {
+        "substitute_text": "Balance disc",
+        "equipment_required": [
+          [
+            "Balance disc"
+          ]
+        ],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "BOSU (see EX044)",
+        "equipment_required": [
+          [
+            "BOSU ball"
+          ]
+        ],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "Wobble board",
+        "equipment_required": [
+          [
+            "Wobble board"
+          ]
+        ],
+        "is_improvised": false
+      }
+    ]
+  },
+  {
+    "ex_id": "EX044",
+    "name": "BOSU Single-Leg Squat",
+    "substitutes": [
+      {
+        "substitute_text": "Balance disc squat",
+        "equipment_required": [
+          [
+            "Balance disc"
+          ]
+        ],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "Wobble board single-leg",
+        "equipment_required": [
+          [
+            "Wobble board"
+          ]
+        ],
+        "is_improvised": false
+      }
+    ]
+  },
+  {
+    "ex_id": "EX045",
+    "name": "Ankle Mobility Drill (Wall)",
+    "substitutes": [
+      {
+        "substitute_text": "Any wall",
+        "equipment_required": [],
+        "is_improvised": true
+      },
+      {
+        "substitute_text": "measure knee-to-wall distance with phone or ruler to track progress",
+        "equipment_required": [],
+        "is_improvised": true
+      }
+    ]
+  },
+  {
+    "ex_id": "EX046",
+    "name": "Hip Flexor Lunge Stretch",
+    "substitutes": [
+      {
+        "substitute_text": "Folded towel or pillow under kneeling knee",
+        "equipment_required": [],
+        "is_improvised": true
+      },
+      {
+        "substitute_text": "bed edge for rear foot elevation (couch stretch position)",
+        "equipment_required": [],
+        "is_improvised": true
+      }
+    ]
+  },
+  {
+    "ex_id": "EX047",
+    "name": "Calf / Achilles Wall Stretch",
+    "substitutes": [
+      {
+        "substitute_text": "Stair edge or curb for deeper calf stretch",
+        "equipment_required": [],
+        "is_improvised": true
+      },
+      {
+        "substitute_text": "wall in any room",
+        "equipment_required": [],
+        "is_improvised": true
+      }
+    ]
+  },
+  {
+    "ex_id": "EX048",
+    "name": "Hill Repeats",
+    "substitutes": [
+      {
+        "substitute_text": "Treadmill at 8–12% incline (terrain sub)",
+        "equipment_required": [
+          [
+            "Treadmill"
+          ]
+        ],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "Stair climber",
+        "equipment_required": [
+          [
+            "Stair climber"
+          ]
+        ],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "Hotel or building stairs — walk/run up 3–5 flights, elevator or walk down, repeat",
+        "equipment_required": [
+          [
+            "Stairs"
+          ]
+        ],
+        "is_improvised": true
+      },
+      {
+        "substitute_text": "parking garage ramp",
+        "equipment_required": [],
+        "is_improvised": true
+      },
+      {
+        "substitute_text": "highway overpass",
+        "equipment_required": [],
+        "is_improvised": true
+      }
+    ]
+  },
+  {
+    "ex_id": "EX049",
+    "name": "Strides (Flying Sprints)",
+    "substitutes": [
+      {
+        "substitute_text": "Treadmill sprint intervals",
+        "equipment_required": [
+          [
+            "Treadmill"
+          ]
+        ],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "Curved treadmill strides",
+        "equipment_required": [
+          [
+            "Treadmill"
+          ]
+        ],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "Hotel hallway (quiet hours permitting)",
+        "equipment_required": [],
+        "is_improvised": true
+      },
+      {
+        "substitute_text": "parking lot",
+        "equipment_required": [],
+        "is_improvised": true
+      },
+      {
+        "substitute_text": "any flat 100m stretch",
+        "equipment_required": [],
+        "is_improvised": true
+      }
+    ]
+  },
+  {
+    "ex_id": "EX050",
+    "name": "Treadmill Incline Walk (Loaded Pack)",
+    "substitutes": [
+      {
+        "substitute_text": "Stair climb with pack",
+        "equipment_required": [
+          [
+            "Stairs",
+            "Backpack"
+          ],
+          [
+            "Stairs",
+            "Weighted vest"
+          ]
+        ],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "Weighted vest incline walk",
+        "equipment_required": [
+          [
+            "Weighted vest"
+          ]
+        ],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "Hotel stairs with loaded backpack (walk up, elevator down)",
+        "equipment_required": [
+          [
+            "Stairs",
+            "Backpack"
+          ],
+          [
+            "Stairs",
+            "Weighted vest"
+          ]
+        ],
+        "is_improvised": true
+      },
+      {
+        "substitute_text": "building stairwell with pack",
+        "equipment_required": [
+          [
+            "Stairs",
+            "Backpack"
+          ],
+          [
+            "Stairs",
+            "Weighted vest"
+          ]
+        ],
+        "is_improvised": false
+      }
+    ]
+  },
+  {
+    "ex_id": "EX051",
+    "name": "Uphill Running Technique Drill",
+    "substitutes": [
+      {
+        "substitute_text": "Treadmill at high incline for uphill mechanics practice",
+        "equipment_required": [
+          [
+            "Treadmill"
+          ]
+        ],
+        "is_improvised": false
+      }
+    ]
+  },
+  {
+    "ex_id": "EX052",
+    "name": "Downhill Running Technique Drill",
+    "substitutes": [
+      {
+        "substitute_text": "Steep treadmill (decline if available)",
+        "equipment_required": [
+          [
+            "Treadmill"
+          ]
+        ],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "Grass hill",
+        "equipment_required": [],
+        "is_improvised": true
+      }
+    ]
+  },
+  {
+    "ex_id": "EX053",
+    "name": "Agility Ladder Drill",
+    "substitutes": [
+      {
+        "substitute_text": "Marked tape lines on floor",
+        "equipment_required": [],
+        "is_improvised": true
+      },
+      {
+        "substitute_text": "Sidewalk cracks as rungs",
+        "equipment_required": [],
+        "is_improvised": true
+      }
+    ]
+  },
+  {
+    "ex_id": "EX059",
+    "name": "Neck Isometric Hold (Map Reading Position)",
+    "substitutes": [
+      {
+        "substitute_text": "Light plate on head (1–2 kg)",
+        "equipment_required": [
+          [
+            "Weight plates"
+          ]
+        ],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "Band resistance under chin",
+        "equipment_required": [
+          [
+            "Resistance band"
+          ]
+        ],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "Book balanced on top of head for isometric neck hold",
+        "equipment_required": [],
+        "is_improvised": true
+      },
+      {
+        "substitute_text": "no equipment needed for bodyweight version",
+        "equipment_required": [],
+        "is_improvised": true
+      }
+    ]
+  },
+  {
+    "ex_id": "EX060",
+    "name": "Single-Leg Press (Machine)",
+    "substitutes": [
+      {
+        "substitute_text": "Leg Press (bilateral then unilateral)",
+        "equipment_required": [
+          [
+            "Leg press machine"
+          ]
+        ],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "Hack Squat machine single-leg",
+        "equipment_required": [
+          [
+            "Hack squat machine"
+          ]
+        ],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "Wall sit (EX037) as machine-free substitute",
+        "equipment_required": [],
+        "is_improvised": true
+      },
+      {
+        "substitute_text": "chair-depth squat for ROM reference",
+        "equipment_required": [],
+        "is_improvised": true
+      }
+    ]
+  },
+  {
+    "ex_id": "EX061",
+    "name": "Good Morning (Barbell)",
+    "substitutes": [
+      {
+        "substitute_text": "DB Good Morning",
+        "equipment_required": [
+          [
+            "Dumbbell"
+          ]
+        ],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "Safety Bar Good Morning",
+        "equipment_required": [
+          [
+            "Safety squat bar"
+          ]
+        ],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "Broomstick across shoulders for movement pattern",
+        "equipment_required": [],
+        "is_improvised": true
+      },
+      {
+        "substitute_text": "backpack for light load",
+        "equipment_required": [
+          [
+            "Backpack"
+          ],
+          [
+            "Weighted vest"
+          ]
+        ],
+        "is_improvised": false
+      }
+    ]
+  },
+  {
+    "ex_id": "EX062",
+    "name": "Banded Hip Flexion (Standing)",
+    "substitutes": [
+      {
+        "substitute_text": "Cable Hip Flexion (cable at ankle)",
+        "equipment_required": [
+          [
+            "Cable machine"
+          ]
+        ],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "Band at lower position",
+        "equipment_required": [
+          [
+            "Resistance band"
+          ]
+        ],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "Band anchored to bed leg or door handle behind you",
+        "equipment_required": [],
+        "is_improvised": true
+      },
+      {
+        "substitute_text": "towel looped around foot and door handle",
+        "equipment_required": [],
+        "is_improvised": true
+      }
+    ]
+  },
+  {
+    "ex_id": "EX063",
+    "name": "Terminal Knee Extension (TKE)",
+    "substitutes": [
+      {
+        "substitute_text": "Cable TKE (ankle attachment)",
+        "equipment_required": [
+          [
+            "Cable machine"
+          ]
+        ],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "Band at different height",
+        "equipment_required": [
+          [
+            "Resistance band"
+          ]
+        ],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "Band anchored to chair or table leg behind knee",
+        "equipment_required": [],
+        "is_improvised": true
+      }
+    ]
+  },
+  {
+    "ex_id": "EX064",
+    "name": "Reverse Nordic Curl",
+    "substitutes": [
+      {
+        "substitute_text": "Sliding hamstring curl (eccentric only)",
+        "equipment_required": [
+          [
+            "Slider discs"
+          ]
+        ],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "Nordic on bench",
+        "equipment_required": [
+          [
+            "Bench"
+          ]
+        ],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "Feet anchored under bed frame",
+        "equipment_required": [],
+        "is_improvised": true
+      },
+      {
+        "substitute_text": "knee pad from folded towel or pillow",
+        "equipment_required": [],
+        "is_improvised": true
+      }
+    ]
+  },
+  {
+    "ex_id": "EX065",
+    "name": "Scapular Wall Slide",
+    "substitutes": [
+      {
+        "substitute_text": "Any wall",
+        "equipment_required": [],
+        "is_improvised": true
+      },
+      {
+        "substitute_text": "hotel room wall works fine",
+        "equipment_required": [],
+        "is_improvised": true
+      }
+    ]
+  },
+  {
+    "ex_id": "EX066",
+    "name": "Band Pull-Apart",
+    "substitutes": [
+      {
+        "substitute_text": "Towel or t-shirt stretched between hands (pull apart motion)",
+        "equipment_required": [],
+        "is_improvised": true
+      },
+      {
+        "substitute_text": "no resistance but patterns the movement",
+        "equipment_required": [],
+        "is_improvised": true
+      }
+    ]
+  },
+  {
+    "ex_id": "EX067",
+    "name": "MTB Attack Position Hold",
+    "substitutes": [
+      {
+        "substitute_text": "No equipment needed",
+        "equipment_required": [],
+        "is_improvised": true
+      },
+      {
+        "substitute_text": "hotel room floor space",
+        "equipment_required": [],
+        "is_improvised": true
+      },
+      {
+        "substitute_text": "add backpack for load",
+        "equipment_required": [
+          [
+            "Backpack"
+          ],
+          [
+            "Weighted vest"
+          ]
+        ],
+        "is_improvised": false
+      }
+    ]
+  },
+  {
+    "ex_id": "EX068",
+    "name": "Wrist Pronation / Supination (DB)",
+    "substitutes": [
+      {
+        "substitute_text": "Forearm on bench with light plate (same rotation pattern)",
+        "equipment_required": [
+          [
+            "Weight plates"
+          ]
+        ],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "Broomstick held at one end for rotation drill",
+        "equipment_required": [],
+        "is_improvised": true
+      },
+      {
+        "substitute_text": "light hammer or mallet for wrist rotation",
+        "equipment_required": [],
+        "is_improvised": true
+      }
+    ]
+  },
+  {
+    "ex_id": "EX069",
+    "name": "Neck Extension Strengthening (Plate / Band)",
+    "substitutes": [
+      {
+        "substitute_text": "Light weight plate on forehead",
+        "equipment_required": [
+          [
+            "Weight plates"
+          ]
+        ],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "Band under chin",
+        "equipment_required": [
+          [
+            "Resistance band"
+          ]
+        ],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "Towel around forehead with manual resistance (push head back against towel)",
+        "equipment_required": [],
+        "is_improvised": true
+      },
+      {
+        "substitute_text": "lie face down on bed with head off edge for gravity resistance",
+        "equipment_required": [],
+        "is_improvised": true
+      }
+    ]
+  },
+  {
+    "ex_id": "EX073",
+    "name": "Threshold Intervals (Bike)",
+    "substitutes": [
+      {
+        "substitute_text": "Rowing erg intervals (cross-training)",
+        "equipment_required": [
+          [
+            "Rowing ergometer"
+          ]
+        ],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "Running threshold intervals",
+        "equipment_required": [],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "Hotel stairs at sustained effort (climb continuously)",
+        "equipment_required": [
+          [
+            "Stairs"
+          ]
+        ],
+        "is_improvised": true
+      },
+      {
+        "substitute_text": "running tempo equivalent",
+        "equipment_required": [],
+        "is_improvised": false
+      }
+    ]
+  },
+  {
+    "ex_id": "EX074",
+    "name": "VO2 Max Intervals (Bike)",
+    "substitutes": [
+      {
+        "substitute_text": "Rowing erg VO2",
+        "equipment_required": [
+          [
+            "Rowing ergometer"
+          ]
+        ],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "Running intervals at equivalent effort",
+        "equipment_required": [],
+        "is_improvised": false
+      }
+    ]
+  },
+  {
+    "ex_id": "EX075",
+    "name": "Sweet Spot Training (Bike)",
+    "substitutes": [
+      {
+        "substitute_text": "Rowing erg sweet spot",
+        "equipment_required": [
+          [
+            "Rowing ergometer"
+          ]
+        ],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "Running sustained aerobic",
+        "equipment_required": [],
+        "is_improvised": false
+      }
+    ]
+  },
+  {
+    "ex_id": "EX076",
+    "name": "Couch Stretch (Cyclist Hip Flexor)",
+    "substitutes": [
+      {
+        "substitute_text": "Bed edge, chair, or wall for rear foot elevation",
+        "equipment_required": [],
+        "is_improvised": true
+      },
+      {
+        "substitute_text": "couch arm works well",
+        "equipment_required": [],
+        "is_improvised": true
+      }
+    ]
+  },
+  {
+    "ex_id": "EX077",
+    "name": "Doorway Pec Stretch",
+    "substitutes": [
+      {
+        "substitute_text": "Any doorway or wall corner",
+        "equipment_required": [],
+        "is_improvised": true
+      }
+    ]
+  },
+  {
+    "ex_id": "EX078",
+    "name": "Single-Arm DB Row",
+    "substitutes": [
+      {
+        "substitute_text": "Cable Row single-arm",
+        "equipment_required": [
+          [
+            "Seated row machine"
+          ]
+        ],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "Band Row single-arm",
+        "equipment_required": [
+          [
+            "Resistance band"
+          ]
+        ],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "TRX Row",
+        "equipment_required": [
+          [
+            "TRX / suspension trainer"
+          ]
+        ],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "Gallon jug row",
+        "equipment_required": [],
+        "is_improvised": true
+      },
+      {
+        "substitute_text": "suitcase row",
+        "equipment_required": [],
+        "is_improvised": true
+      },
+      {
+        "substitute_text": "towel anchored in closed door for inverted row",
+        "equipment_required": [],
+        "is_improvised": true
+      }
+    ]
+  },
+  {
+    "ex_id": "EX079",
+    "name": "Seated Cable Row (Narrow Grip)",
+    "substitutes": [
+      {
+        "substitute_text": "Band Seated Row",
+        "equipment_required": [
+          [
+            "Seated row machine"
+          ]
+        ],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "TRX Row (bilateral)",
+        "equipment_required": [
+          [
+            "TRX / suspension trainer"
+          ]
+        ],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "DB Row (bilateral)",
+        "equipment_required": [
+          [
+            "Dumbbell"
+          ]
+        ],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "Towel in closed door — sit on floor and row toward door",
+        "equipment_required": [],
+        "is_improvised": true
+      },
+      {
+        "substitute_text": "resistance band anchored to door handle",
+        "equipment_required": [
+          [
+            "Resistance band"
+          ]
+        ],
+        "is_improvised": true
+      }
+    ]
+  },
+  {
+    "ex_id": "EX080",
+    "name": "Lat Pulldown (Wide Grip)",
+    "substitutes": [
+      {
+        "substitute_text": "Band Lat Pulldown",
+        "equipment_required": [
+          [
+            "Lat pulldown machine"
+          ]
+        ],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "TRX Row (horizontal)",
+        "equipment_required": [
+          [
+            "TRX / suspension trainer"
+          ]
+        ],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "Rope Lat Pulldown",
+        "equipment_required": [
+          [
+            "Lat pulldown machine"
+          ]
+        ],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "Towel over door-mount bar for lat pulldown motion",
+        "equipment_required": [],
+        "is_improvised": true
+      },
+      {
+        "substitute_text": "band over top of door",
+        "equipment_required": [
+          [
+            "Resistance band"
+          ]
+        ],
+        "is_improvised": true
+      }
+    ]
+  },
+  {
+    "ex_id": "EX081",
+    "name": "Band Face Pull",
+    "substitutes": [
+      {
+        "substitute_text": "Cable Face Pull",
+        "equipment_required": [
+          [
+            "Cable machine"
+          ]
+        ],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "Light DB prone rear delt raise",
+        "equipment_required": [
+          [
+            "Dumbbell"
+          ]
+        ],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "Towel or t-shirt stretched between hands at face height",
+        "equipment_required": [],
+        "is_improvised": true
+      },
+      {
+        "substitute_text": "band anchored on door handle",
+        "equipment_required": [
+          [
+            "Resistance band"
+          ]
+        ],
+        "is_improvised": true
+      }
+    ]
+  },
+  {
+    "ex_id": "EX082",
+    "name": "External Rotation (Band / Cable)",
+    "substitutes": [
+      {
+        "substitute_text": "Light DB External Rotation",
+        "equipment_required": [
+          [
+            "Dumbbell"
+          ]
+        ],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "Prone rear delt raise (internal/external sim)",
+        "equipment_required": [],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "Gallon jug (light external rotation)",
+        "equipment_required": [],
+        "is_improvised": true
+      },
+      {
+        "substitute_text": "towel through door handle for rotation resistance",
+        "equipment_required": [],
+        "is_improvised": true
+      }
+    ]
+  },
+  {
+    "ex_id": "EX083",
+    "name": "Serratus Punch",
+    "substitutes": [
+      {
+        "substitute_text": "No equipment needed for bodyweight serratus punch (lie on floor, punch ceiling with fist)",
+        "equipment_required": [],
+        "is_improvised": true
+      }
+    ]
+  },
+  {
+    "ex_id": "EX084",
+    "name": "Scapular Depression Hold",
+    "substitutes": [
+      {
+        "substitute_text": "Gymnastics rings hang with scapular depression",
+        "equipment_required": [
+          [
+            "Gymnastic rings"
+          ]
+        ],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "TRX scapular depression",
+        "equipment_required": [
+          [
+            "TRX / suspension trainer"
+          ]
+        ],
+        "is_improvised": false
+      }
+    ]
+  },
+  {
+    "ex_id": "EX085",
+    "name": "Med Ball Rotational Throw (Wall)",
+    "substitutes": [
+      {
+        "substitute_text": "Ball against wall if medicine ball unavailable",
+        "equipment_required": [
+          [
+            "Medicine ball"
+          ]
+        ],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "Band rotational throw",
+        "equipment_required": [
+          [
+            "Resistance band"
+          ]
+        ],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "Throw a heavy backpack or filled duffel against a concrete wall",
+        "equipment_required": [
+          [
+            "Backpack"
+          ],
+          [
+            "Weighted vest"
+          ]
+        ],
+        "is_improvised": true
+      },
+      {
+        "substitute_text": "sandbag against outdoor wall",
+        "equipment_required": [
+          [
+            "Sandbag"
+          ]
+        ],
+        "is_improvised": false
+      }
+    ]
+  },
+  {
+    "ex_id": "EX086",
+    "name": "Landmine Rotation",
+    "substitutes": [
+      {
+        "substitute_text": "Barbell in corner (landmine improvised)",
+        "equipment_required": [
+          [
+            "Landmine attachment"
+          ]
+        ],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "DB rotational press",
+        "equipment_required": [
+          [
+            "Dumbbell"
+          ]
+        ],
+        "is_improvised": false
+      }
+    ]
+  },
+  {
+    "ex_id": "EX087",
+    "name": "Cable High-to-Low Chop",
+    "substitutes": [
+      {
+        "substitute_text": "Band Chop (resistance band sub for cable)",
+        "equipment_required": [
+          [
+            "Cable machine"
+          ]
+        ],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "Band anchored high on door for chop motion",
+        "equipment_required": [],
+        "is_improvised": true
+      },
+      {
+        "substitute_text": "broomstick with band",
+        "equipment_required": [
+          [
+            "Resistance band"
+          ]
+        ],
+        "is_improvised": true
+      }
+    ]
+  },
+  {
+    "ex_id": "EX088",
+    "name": "Russian Twist (DB / Med Ball)",
+    "substitutes": [
+      {
+        "substitute_text": "Gallon water jug held at chest",
+        "equipment_required": [],
+        "is_improvised": true
+      },
+      {
+        "substitute_text": "filled backpack",
+        "equipment_required": [
+          [
+            "Backpack"
+          ],
+          [
+            "Weighted vest"
+          ]
+        ],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "no weight needed (bodyweight rotation)",
+        "equipment_required": [],
+        "is_improvised": false
+      }
+    ]
+  },
+  {
+    "ex_id": "EX089",
+    "name": "Hollow Body Hold",
+    "substitutes": [
+      {
+        "substitute_text": "No equipment needed",
+        "equipment_required": [],
+        "is_improvised": true
+      }
+    ]
+  },
+  {
+    "ex_id": "EX090",
+    "name": "Paddling Ergometer Session",
+    "substitutes": [
+      {
+        "substitute_text": "Indoor rower (Concept2) with arm-only setting",
+        "equipment_required": [
+          [
+            "Rowing ergometer"
+          ]
+        ],
+        "is_improvised": true
+      },
+      {
+        "substitute_text": "Shadow paddle with band",
+        "equipment_required": [
+          [
+            "Resistance band"
+          ]
+        ],
+        "is_improvised": false
+      }
+    ]
+  },
+  {
+    "ex_id": "EX095",
+    "name": "Portage Carry Simulation",
+    "substitutes": [
+      {
+        "substitute_text": "Loaded backpack portage",
+        "equipment_required": [
+          [
+            "Backpack"
+          ],
+          [
+            "Weighted vest"
+          ]
+        ],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "Sandbag carry (shape sim)",
+        "equipment_required": [
+          [
+            "Sandbag"
+          ]
+        ],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "Carry two loaded grocery bags plus a suitcase over rough ground",
+        "equipment_required": [],
+        "is_improvised": true
+      },
+      {
+        "substitute_text": "duffel bag over shoulder on uneven terrain",
+        "equipment_required": [],
+        "is_improvised": true
+      }
+    ]
+  },
+  {
+    "ex_id": "EX096",
+    "name": "90/90 Shoulder Stretch",
+    "substitutes": [
+      {
+        "substitute_text": "Bed or floor",
+        "equipment_required": [],
+        "is_improvised": true
+      },
+      {
+        "substitute_text": "no equipment needed",
+        "equipment_required": [],
+        "is_improvised": true
+      }
+    ]
+  },
+  {
+    "ex_id": "EX097",
+    "name": "Pec Minor Stretch (Low Doorway)",
+    "substitutes": [
+      {
+        "substitute_text": "Any doorway",
+        "equipment_required": [],
+        "is_improvised": true
+      }
+    ]
+  },
+  {
+    "ex_id": "EX098",
+    "name": "DB Shoulder Press",
+    "substitutes": [
+      {
+        "substitute_text": "KB Overhead Press",
+        "equipment_required": [
+          [
+            "Kettlebell"
+          ]
+        ],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "Barbell Overhead Press",
+        "equipment_required": [
+          [
+            "Barbell",
+            "Squat rack"
+          ]
+        ],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "Band Overhead Press",
+        "equipment_required": [
+          [
+            "Resistance band"
+          ]
+        ],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "Gallon water jugs pressed overhead",
+        "equipment_required": [],
+        "is_improvised": true
+      },
+      {
+        "substitute_text": "backpack held overhead for time (isometric)",
+        "equipment_required": [
+          [
+            "Backpack"
+          ],
+          [
+            "Weighted vest"
+          ]
+        ],
+        "is_improvised": false
+      }
+    ]
+  },
+  {
+    "ex_id": "EX099",
+    "name": "External Rotation to Press (Band / Cable)",
+    "substitutes": [
+      {
+        "substitute_text": "Band version (resistance band sub for cable)",
+        "equipment_required": [
+          [
+            "Cable machine"
+          ]
+        ],
+        "is_improvised": false
+      }
+    ]
+  },
+  {
+    "ex_id": "EX100",
+    "name": "Hangboard Half-Crimp Hold",
+    "substitutes": [
+      {
+        "substitute_text": "Towel-wrapped pull-up bar hang (texture sim)",
+        "equipment_required": [
+          [
+            "Pull-up bar"
+          ]
+        ],
+        "is_improvised": true
+      },
+      {
+        "substitute_text": "Door frame crimp hold",
+        "equipment_required": [],
+        "is_improvised": true
+      },
+      {
+        "substitute_text": "Doorframe edge (fingertip hang — careful on painted wood)",
+        "equipment_required": [],
+        "is_improvised": true
+      },
+      {
+        "substitute_text": "towel draped over bar for grip texture",
+        "equipment_required": [],
+        "is_improvised": true
+      }
+    ]
+  },
+  {
+    "ex_id": "EX101",
+    "name": "Hangboard Open-Hand Hold",
+    "substitutes": [
+      {
+        "substitute_text": "Towel-wrapped bar hang (open hand)",
+        "equipment_required": [],
+        "is_improvised": true
+      },
+      {
+        "substitute_text": "Climbing holds mounted on wall",
+        "equipment_required": [
+          [
+            "Climbing holds"
+          ]
+        ],
+        "is_improvised": false
+      }
+    ]
+  },
+  {
+    "ex_id": "EX102",
+    "name": "Pinch Grip (Plate / Block)",
+    "substitutes": [
+      {
+        "substitute_text": "Pinch a loaded dumbbell head",
+        "equipment_required": [
+          [
+            "Dumbbell"
+          ]
+        ],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "Weight plate pinch (smooth surface)",
+        "equipment_required": [
+          [
+            "Weight plates"
+          ]
+        ],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "Pinch two books together and hold for time",
+        "equipment_required": [],
+        "is_improvised": true
+      },
+      {
+        "substitute_text": "pinch a brick or heavy book by spine",
+        "equipment_required": [],
+        "is_improvised": true
+      }
+    ]
+  },
+  {
+    "ex_id": "EX103",
+    "name": "Wrist Roller",
+    "substitutes": [
+      {
+        "substitute_text": "Towel twist (resistance sim)",
+        "equipment_required": [],
+        "is_improvised": true
+      },
+      {
+        "substitute_text": "Plate wrist curl (both directions)",
+        "equipment_required": [
+          [
+            "Weight plates"
+          ]
+        ],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "Broomstick with bag of books tied to centre by rope — roll up and down",
+        "equipment_required": [],
+        "is_improvised": true
+      }
+    ]
+  },
+  {
+    "ex_id": "EX104",
+    "name": "Rice Bucket Drill",
+    "substitutes": [
+      {
+        "substitute_text": "Dry rice, sand, or dried lentils (texture sub)",
+        "equipment_required": [],
+        "is_improvised": true
+      },
+      {
+        "substitute_text": "Bag of dry rice from grocery store",
+        "equipment_required": [],
+        "is_improvised": true
+      },
+      {
+        "substitute_text": "bucket of sand",
+        "equipment_required": [],
+        "is_improvised": true
+      },
+      {
+        "substitute_text": "bag of dried beans or lentils",
+        "equipment_required": [],
+        "is_improvised": true
+      }
+    ]
+  },
+  {
+    "ex_id": "EX105",
+    "name": "Finger Extension (Band)",
+    "substitutes": [
+      {
+        "substitute_text": "Rubber band",
+        "equipment_required": [
+          [
+            "Resistance band"
+          ]
+        ],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "Hairband (any resistive loop around fingers)",
+        "equipment_required": [],
+        "is_improvised": true
+      },
+      {
+        "substitute_text": "Rubber band, hair tie, or thick elastic around fingers",
+        "equipment_required": [],
+        "is_improvised": true
+      }
+    ]
+  },
+  {
+    "ex_id": "EX106",
+    "name": "Lock-Off Hold (90°, 120°)",
+    "substitutes": [
+      {
+        "substitute_text": "Doorframe-mount bar",
+        "equipment_required": [],
+        "is_improvised": true
+      },
+      {
+        "substitute_text": "playground bar",
+        "equipment_required": [],
+        "is_improvised": true
+      },
+      {
+        "substitute_text": "stairwell railing if strong enough",
+        "equipment_required": [],
+        "is_improvised": true
+      }
+    ]
+  },
+  {
+    "ex_id": "EX109",
+    "name": "Scapular Pull-Up",
+    "substitutes": [
+      {
+        "substitute_text": "Doorframe-mount bar",
+        "equipment_required": [],
+        "is_improvised": true
+      },
+      {
+        "substitute_text": "playground equipment",
+        "equipment_required": [],
+        "is_improvised": true
+      }
+    ]
+  },
+  {
+    "ex_id": "EX110",
+    "name": "Antagonist Push-Up (Fist / Flat)",
+    "substitutes": [
+      {
+        "substitute_text": "No equipment needed",
+        "equipment_required": [],
+        "is_improvised": true
+      },
+      {
+        "substitute_text": "fist position on carpet for wrist protection",
+        "equipment_required": [],
+        "is_improvised": true
+      }
+    ]
+  },
+  {
+    "ex_id": "EX111",
+    "name": "Reverse Wrist Curl (DB)",
+    "substitutes": [
+      {
+        "substitute_text": "EZ Bar Reverse Curl (wrist curl angle sim)",
+        "equipment_required": [
+          [
+            "EZ curl bar"
+          ]
+        ],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "Hammer Curl (partial sub)",
+        "equipment_required": [
+          [
+            "Dumbbell"
+          ]
+        ],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "Broomstick or light gallon jug for reverse wrist curl",
+        "equipment_required": [],
+        "is_improvised": true
+      },
+      {
+        "substitute_text": "forearm on chair arm for support",
+        "equipment_required": [],
+        "is_improvised": true
+      }
+    ]
+  },
+  {
+    "ex_id": "EX115",
+    "name": "Foot Smear Strength (Incline Board)",
+    "substitutes": [
+      {
+        "substitute_text": "Inclined wooden board",
+        "equipment_required": [],
+        "is_improvised": true
+      },
+      {
+        "substitute_text": "Wedge under foot on floor",
+        "equipment_required": [],
+        "is_improvised": true
+      }
+    ]
+  },
+  {
+    "ex_id": "EX116",
+    "name": "Mantling Technique Drill",
+    "substitutes": [
+      {
+        "substitute_text": "Low box or chair (mantle height progression)",
+        "equipment_required": [
+          [
+            "Plyo box"
+          ]
+        ],
+        "is_improvised": true
+      }
+    ]
+  },
+  {
+    "ex_id": "EX117",
+    "name": "Loaded Step-Down (Eccentric Box)",
+    "substitutes": [
+      {
+        "substitute_text": "Step or stair edge (height progression)",
+        "equipment_required": [],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "Box or bench",
+        "equipment_required": [
+          [
+            "Bench"
+          ]
+        ],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "Stair step or curb as box",
+        "equipment_required": [],
+        "is_improvised": true
+      },
+      {
+        "substitute_text": "backpack or gallon jug for load",
+        "equipment_required": [
+          [
+            "Backpack"
+          ],
+          [
+            "Weighted vest"
+          ]
+        ],
+        "is_improvised": true
+      }
+    ]
+  },
+  {
+    "ex_id": "EX119",
+    "name": "Weighted Step-Up (High Box, Heavy Load)",
+    "substitutes": [
+      {
+        "substitute_text": "Barbell Step-Up",
+        "equipment_required": [
+          [
+            "Barbell",
+            "Squat rack"
+          ]
+        ],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "Loaded backpack step-up (no dumbbell)",
+        "equipment_required": [
+          [
+            "Backpack"
+          ],
+          [
+            "Weighted vest"
+          ]
+        ],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "Park bench or stairs as high box",
+        "equipment_required": [],
+        "is_improvised": true
+      },
+      {
+        "substitute_text": "backpack loaded with books for weight",
+        "equipment_required": [
+          [
+            "Backpack"
+          ],
+          [
+            "Weighted vest"
+          ]
+        ],
+        "is_improvised": false
+      }
+    ]
+  },
+  {
+    "ex_id": "EX126",
+    "name": "Freestyle Pull (With Buoy)",
+    "substitutes": [
+      {
+        "substitute_text": "Swim buoy improvised (water bottle between thighs)",
+        "equipment_required": [],
+        "is_improvised": true
+      },
+      {
+        "substitute_text": "Arm-only lane swimming",
+        "equipment_required": [],
+        "is_improvised": true
+      }
+    ]
+  },
+  {
+    "ex_id": "EX127",
+    "name": "Band Swimming Shoulder Prehab (Y-T-W-L)",
+    "substitutes": [
+      {
+        "substitute_text": "Light DB prone (2–3 lb)",
+        "equipment_required": [
+          [
+            "Dumbbell"
+          ]
+        ],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "Theraband at reduced resistance",
+        "equipment_required": [
+          [
+            "Resistance band"
+          ]
+        ],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "Lie face down on bed edge (arms hanging)",
+        "equipment_required": [],
+        "is_improvised": true
+      },
+      {
+        "substitute_text": "light water bottles in each hand for Y-T-W-L pattern",
+        "equipment_required": [],
+        "is_improvised": true
+      }
+    ]
+  },
+  {
+    "ex_id": "EX128",
+    "name": "Kicking Drill (Flutter / Frog)",
+    "substitutes": [
+      {
+        "substitute_text": "Kickboard improvised (pool noodle)",
+        "equipment_required": [
+          [
+            "Kickboard"
+          ]
+        ],
+        "is_improvised": true
+      },
+      {
+        "substitute_text": "Kick drill without board",
+        "equipment_required": [],
+        "is_improvised": false
+      }
+    ]
+  },
+  {
+    "ex_id": "EX133",
+    "name": "Brake Hand Squeeze Hold",
+    "substitutes": [
+      {
+        "substitute_text": "Towel-wrapped bar (rope texture sim)",
+        "equipment_required": [],
+        "is_improvised": true
+      },
+      {
+        "substitute_text": "Friction rope segment",
+        "equipment_required": [
+          [
+            "Climbing rope"
+          ]
+        ],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "Towel draped over doorframe-mount bar — grip towel ends in brake hand position",
+        "equipment_required": [],
+        "is_improvised": true
+      }
+    ]
+  },
+  {
+    "ex_id": "EX160",
+    "name": "Seated Paddling Position Endurance",
+    "substitutes": [
+      {
+        "substitute_text": "Sit on floor with legs extended against wall",
+        "equipment_required": [],
+        "is_improvised": true
+      },
+      {
+        "substitute_text": "folded towel as seat pad",
+        "equipment_required": [],
+        "is_improvised": true
+      },
+      {
+        "substitute_text": "add band around feet and pull to simulate paddle load",
+        "equipment_required": [
+          [
+            "Resistance band"
+          ]
+        ],
+        "is_improvised": false
+      }
+    ]
+  },
+  {
+    "ex_id": "EX168",
+    "name": "Skinning Uphill Technique",
+    "substitutes": [
+      {
+        "substitute_text": "Nordic ski machine (if available)",
+        "equipment_required": [
+          [
+            "Ski erg"
+          ]
+        ],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "Ski erg (if available)",
+        "equipment_required": [
+          [
+            "Ski erg"
+          ]
+        ],
+        "is_improvised": false
+      }
+    ]
+  },
+  {
+    "ex_id": "EX173",
+    "name": "Tuck Position Isometric Hold (SkiMo Descent)",
+    "substitutes": [
+      {
+        "substitute_text": "No equipment needed",
+        "equipment_required": [],
+        "is_improvised": true
+      },
+      {
+        "substitute_text": "add backpack for pack-weight simulation",
+        "equipment_required": [
+          [
+            "Backpack"
+          ],
+          [
+            "Weighted vest"
+          ]
+        ],
+        "is_improvised": false
+      }
+    ]
+  },
+  {
+    "ex_id": "EX174",
+    "name": "Aero / TT Position Hold",
+    "substitutes": [
+      {
+        "substitute_text": "Road bike with clip-on aero bars",
+        "equipment_required": [
+          [
+            "Road bike"
+          ]
+        ],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "Handlebar spacer reduction (position change)",
+        "equipment_required": [],
+        "is_improvised": true
+      }
+    ]
+  },
+  {
+    "ex_id": "EX175",
+    "name": "Brick Run Drill (Bike-to-Run Transition)",
+    "substitutes": [
+      {
+        "substitute_text": "Stationary bike then treadmill (trainer sub)",
+        "equipment_required": [
+          [
+            "Treadmill"
+          ]
+        ],
+        "is_improvised": false
+      }
+    ]
+  },
+  {
+    "ex_id": "EX178",
+    "name": "Tempo Run (Flat / Road)",
+    "substitutes": [
+      {
+        "substitute_text": "Track (surface sub for road)",
+        "equipment_required": [],
+        "is_improvised": true
+      },
+      {
+        "substitute_text": "Treadmill at 0–1% grade",
+        "equipment_required": [
+          [
+            "Treadmill"
+          ]
+        ],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "Hotel or building hallway if treadmill unavailable",
+        "equipment_required": [],
+        "is_improvised": true
+      },
+      {
+        "substitute_text": "parking lot loops",
+        "equipment_required": [],
+        "is_improvised": true
+      }
+    ]
+  },
+  {
+    "ex_id": "EX179",
+    "name": "Marathon Pace Run",
+    "substitutes": [
+      {
+        "substitute_text": "Track at goal pace",
+        "equipment_required": [],
+        "is_improvised": true
+      },
+      {
+        "substitute_text": "Treadmill at goal pace",
+        "equipment_required": [
+          [
+            "Treadmill"
+          ]
+        ],
+        "is_improvised": false
+      }
+    ]
+  },
+  {
+    "ex_id": "EX180",
+    "name": "Walk-Run Interval Method (Ultra Pacing)",
+    "substitutes": [
+      {
+        "substitute_text": "Garmin run/walk alert (interval timer sub)",
+        "equipment_required": [],
+        "is_improvised": true
+      }
+    ]
+  },
+  {
+    "ex_id": "EX190",
+    "name": "En Garde Position Hold",
+    "substitutes": [
+      {
+        "substitute_text": "No equipment needed",
+        "equipment_required": [],
+        "is_improvised": true
+      },
+      {
+        "substitute_text": "hotel room floor space",
+        "equipment_required": [],
+        "is_improvised": true
+      },
+      {
+        "substitute_text": "hold broomstick as weapon arm substitute",
+        "equipment_required": [],
+        "is_improvised": true
+      }
+    ]
+  },
+  {
+    "ex_id": "EX193",
+    "name": "Shooting Breath Control & Stance",
+    "substitutes": [
+      {
+        "substitute_text": "Air pistol (ISSF)",
+        "equipment_required": [],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "Laser pistol",
+        "equipment_required": [],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "Dry-fire with training pistol",
+        "equipment_required": [],
+        "is_improvised": false
+      }
+    ]
+  },
+  {
+    "ex_id": "EX195",
+    "name": "Rope Climb",
+    "substitutes": [
+      {
+        "substitute_text": "Rope segment on pull-up bar (texture sim)",
+        "equipment_required": [
+          [
+            "Pull-up bar"
+          ]
+        ],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "Towel pull-up (grip sim)",
+        "equipment_required": [],
+        "is_improvised": true
+      },
+      {
+        "substitute_text": "Towel draped over playground bar (grip texture sim)",
+        "equipment_required": [],
+        "is_improvised": true
+      },
+      {
+        "substitute_text": "knotted bedsheet over sturdy beam",
+        "equipment_required": [],
+        "is_improvised": true
+      }
+    ]
+  },
+  {
+    "ex_id": "EX196",
+    "name": "Obstacle Vault & Wall Traversal",
+    "substitutes": [
+      {
+        "substitute_text": "Low box (height progression)",
+        "equipment_required": [
+          [
+            "Plyo box"
+          ]
+        ],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "Mat over obstacle (impact sim)",
+        "equipment_required": [],
+        "is_improvised": true
+      }
+    ]
+  },
+  {
+    "ex_id": "EX201",
+    "name": "Catch Position Hold (Rowing)",
+    "substitutes": [
+      {
+        "substitute_text": "Sit on floor with back against wall, knees fully compressed, arms extended — hold position",
+        "equipment_required": [],
+        "is_improvised": true
+      }
+    ]
+  },
+  {
+    "ex_id": "EX203",
+    "name": "Rowing Erg Interval Session",
+    "substitutes": [
+      {
+        "substitute_text": "Ski erg",
+        "equipment_required": [
+          [
+            "Ski erg"
+          ]
+        ],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "Arm bike (upper body ergometer)",
+        "equipment_required": [
+          [
+            "Arm bike / UBE"
+          ]
+        ],
+        "is_improvised": false
+      }
+    ]
+  },
+  {
+    "ex_id": "EX205",
+    "name": "Classic Diagonal Stride Technique",
+    "substitutes": [
+      {
+        "substitute_text": "Rollerskis (dry land sub)",
+        "equipment_required": [
+          [
+            "Rollerskis"
+          ]
+        ],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "Inline skates (skating pattern sim for EX206)",
+        "equipment_required": [
+          [
+            "Inline skates"
+          ]
+        ],
+        "is_improvised": false
+      }
+    ]
+  },
+  {
+    "ex_id": "EX206",
+    "name": "Skate Skiing V1 & V2 Technique",
+    "substitutes": [
+      {
+        "substitute_text": "Inline skates",
+        "equipment_required": [
+          [
+            "Inline skates"
+          ]
+        ],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "Rollerski (skate technique sim)",
+        "equipment_required": [
+          [
+            "Rollerskis"
+          ]
+        ],
+        "is_improvised": false
+      }
+    ]
+  },
+  {
+    "ex_id": "EX207",
+    "name": "Double Pole Technique (XC Skiing)",
+    "substitutes": [
+      {
+        "substitute_text": "Rollerskis",
+        "equipment_required": [
+          [
+            "Rollerskis"
+          ]
+        ],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "Poles on dry land (double pole drill without skis)",
+        "equipment_required": [],
+        "is_improvised": true
+      }
+    ]
+  },
+  {
+    "ex_id": "EX210",
+    "name": "SUP Standing Balance & Stability Drill",
+    "substitutes": [
+      {
+        "substitute_text": "Balance disc",
+        "equipment_required": [
+          [
+            "Balance disc"
+          ]
+        ],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "Wobble board",
+        "equipment_required": [
+          [
+            "Wobble board"
+          ]
+        ],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "Inflatable balance pad",
+        "equipment_required": [
+          [
+            "Foam pad"
+          ]
+        ],
+        "is_improvised": false
+      }
+    ]
+  },
+  {
+    "ex_id": "EX215",
+    "name": "Extreme Gradient Uphill Pacing (VK / Sky Technique)",
+    "substitutes": [
+      {
+        "substitute_text": "Treadmill at maximum grade (15%)",
+        "equipment_required": [
+          [
+            "Treadmill"
+          ]
+        ],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "Stair climber at max rate",
+        "equipment_required": [
+          [
+            "Stair climber"
+          ]
+        ],
+        "is_improvised": false
+      }
+    ]
+  },
+  {
+    "ex_id": "EX216",
+    "name": "Plank (Front)",
+    "substitutes": [
+      {
+        "substitute_text": "Forearm plank (wrist sub)",
+        "equipment_required": [],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "TRX plank",
+        "equipment_required": [
+          [
+            "TRX / suspension trainer"
+          ]
+        ],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "Stability ball plank",
+        "equipment_required": [
+          [
+            "Stability ball"
+          ]
+        ],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "No equipment needed",
+        "equipment_required": [],
+        "is_improvised": true
+      },
+      {
+        "substitute_text": "forearm plank on carpet or towel for elbow comfort",
+        "equipment_required": [],
+        "is_improvised": true
+      }
+    ]
+  },
+  {
+    "ex_id": "EX217",
+    "name": "Dead Bug",
+    "substitutes": [
+      {
+        "substitute_text": "No equipment needed",
+        "equipment_required": [],
+        "is_improvised": true
+      },
+      {
+        "substitute_text": "bed or carpet for back comfort",
+        "equipment_required": [],
+        "is_improvised": true
+      }
+    ]
+  },
+  {
+    "ex_id": "EX218",
+    "name": "Bird-Dog",
+    "substitutes": [
+      {
+        "substitute_text": "No equipment needed",
+        "equipment_required": [],
+        "is_improvised": true
+      },
+      {
+        "substitute_text": "towel under knees for comfort on hard floor",
+        "equipment_required": [],
+        "is_improvised": true
+      }
+    ]
+  },
+  {
+    "ex_id": "EX219",
+    "name": "Side Plank",
+    "substitutes": [
+      {
+        "substitute_text": "Forearm side plank (wrist sub)",
+        "equipment_required": [],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "TRX side plank",
+        "equipment_required": [
+          [
+            "TRX / suspension trainer"
+          ]
+        ],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "No equipment needed",
+        "equipment_required": [],
+        "is_improvised": true
+      },
+      {
+        "substitute_text": "forearm version on carpet or towel",
+        "equipment_required": [],
+        "is_improvised": true
+      }
+    ]
+  },
+  {
+    "ex_id": "EX220",
+    "name": "Superman / Back Extension (BW)",
+    "substitutes": [
+      {
+        "substitute_text": "Stability ball back extension",
+        "equipment_required": [
+          [
+            "Stability ball"
+          ]
+        ],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "GHD back extension",
+        "equipment_required": [
+          [
+            "Glute ham developer (GHD)"
+          ]
+        ],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "Prone cobra (lower load)",
+        "equipment_required": [],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "No equipment needed",
+        "equipment_required": [],
+        "is_improvised": true
+      },
+      {
+        "substitute_text": "bed or floor",
+        "equipment_required": [],
+        "is_improvised": true
+      },
+      {
+        "substitute_text": "pillow under hips for comfort",
+        "equipment_required": [],
+        "is_improvised": true
+      }
+    ]
+  },
+  {
+    "ex_id": "EX221",
+    "name": "Mountain Climber",
+    "substitutes": [
+      {
+        "substitute_text": "No equipment needed",
+        "equipment_required": [],
+        "is_improvised": true
+      }
+    ]
+  },
+  {
+    "ex_id": "EX222",
+    "name": "Ab Wheel Rollout",
+    "substitutes": [
+      {
+        "substitute_text": "Barbell rollout (barbell with plates sub for ab wheel)",
+        "equipment_required": [
+          [
+            "Barbell",
+            "Squat rack"
+          ]
+        ],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "Stability ball rollout",
+        "equipment_required": [
+          [
+            "Stability ball"
+          ]
+        ],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "Towel on smooth floor (slide out and back)",
+        "equipment_required": [],
+        "is_improvised": true
+      },
+      {
+        "substitute_text": "plastic bag under hands on carpet",
+        "equipment_required": [],
+        "is_improvised": true
+      },
+      {
+        "substitute_text": "office chair with wheels on hard floor",
+        "equipment_required": [],
+        "is_improvised": true
+      }
+    ]
+  },
+  {
+    "ex_id": "EX223",
+    "name": "Hanging Knee Raise / Toes-to-Bar",
+    "substitutes": [
+      {
+        "substitute_text": "Ab straps (grip sub)",
+        "equipment_required": [
+          [
+            "Ab straps"
+          ]
+        ],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "Captain's chair knee raise",
+        "equipment_required": [],
+        "is_improvised": true
+      },
+      {
+        "substitute_text": "Doorframe-mount pull-up bar",
+        "equipment_required": [],
+        "is_improvised": true
+      },
+      {
+        "substitute_text": "playground bar",
+        "equipment_required": [],
+        "is_improvised": true
+      },
+      {
+        "substitute_text": "lie on floor for reverse crunch (regression)",
+        "equipment_required": [],
+        "is_improvised": true
+      }
+    ]
+  },
+  {
+    "ex_id": "EX224",
+    "name": "Bicycle Crunch",
+    "substitutes": [
+      {
+        "substitute_text": "No equipment needed",
+        "equipment_required": [],
+        "is_improvised": true
+      }
+    ]
+  },
+  {
+    "ex_id": "EX225",
+    "name": "V-Sit Hold",
+    "substitutes": [
+      {
+        "substitute_text": "No equipment needed",
+        "equipment_required": [],
+        "is_improvised": true
+      }
+    ]
+  },
+  {
+    "ex_id": "EX226",
+    "name": "L-Sit (Between Chairs / Parallettes)",
+    "substitutes": [
+      {
+        "substitute_text": "Dip bars",
+        "equipment_required": [
+          [
+            "Dip bars"
+          ]
+        ],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "Gymnastics rings",
+        "equipment_required": [
+          [
+            "Gymnastic rings"
+          ]
+        ],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "Sturdy chairs",
+        "equipment_required": [],
+        "is_improvised": true
+      },
+      {
+        "substitute_text": "Two sturdy chairs",
+        "equipment_required": [],
+        "is_improvised": true
+      },
+      {
+        "substitute_text": "countertop corner",
+        "equipment_required": [],
+        "is_improvised": true
+      },
+      {
+        "substitute_text": "stairwell railing supports",
+        "equipment_required": [],
+        "is_improvised": true
+      }
+    ]
+  },
+  {
+    "ex_id": "EX227",
+    "name": "Compression Tuck Hold",
+    "substitutes": [
+      {
+        "substitute_text": "No equipment needed",
+        "equipment_required": [],
+        "is_improvised": true
+      }
+    ]
+  },
+  {
+    "ex_id": "EX228",
+    "name": "Push-Up (Bodyweight)",
+    "substitutes": [
+      {
+        "substitute_text": "Incline push-up (regression)",
+        "equipment_required": [],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "Deficit push-up (progression)",
+        "equipment_required": [],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "Band-resisted push-up",
+        "equipment_required": [
+          [
+            "Resistance band"
+          ]
+        ],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "No equipment needed",
+        "equipment_required": [],
+        "is_improvised": true
+      },
+      {
+        "substitute_text": "chair seat for incline push-up (regression)",
+        "equipment_required": [],
+        "is_improvised": true
+      },
+      {
+        "substitute_text": "chair seat for decline push-up (progression)",
+        "equipment_required": [],
+        "is_improvised": true
+      },
+      {
+        "substitute_text": "countertop for very easy regression",
+        "equipment_required": [],
+        "is_improvised": true
+      }
+    ]
+  },
+  {
+    "ex_id": "EX229",
+    "name": "Bench Press (Barbell / DB)",
+    "substitutes": [
+      {
+        "substitute_text": "DB floor press (no bench)",
+        "equipment_required": [],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "Landmine press (angle variant)",
+        "equipment_required": [
+          [
+            "Landmine attachment"
+          ]
+        ],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "Floor press with gallon jugs or filled bags",
+        "equipment_required": [],
+        "is_improvised": true
+      },
+      {
+        "substitute_text": "push-up with backpack for load",
+        "equipment_required": [
+          [
+            "Backpack"
+          ],
+          [
+            "Weighted vest"
+          ]
+        ],
+        "is_improvised": false
+      }
+    ]
+  },
+  {
+    "ex_id": "EX230",
+    "name": "Conventional Deadlift (Barbell)",
+    "substitutes": [
+      {
+        "substitute_text": "Trap bar deadlift",
+        "equipment_required": [
+          [
+            "Trap bar"
+          ]
+        ],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "Sumo deadlift",
+        "equipment_required": [
+          [
+            "Barbell",
+            "Squat rack"
+          ]
+        ],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "DB deadlift (lighter load sub)",
+        "equipment_required": [
+          [
+            "Dumbbell"
+          ]
+        ],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "Filled suitcase or heavy duffel bag from floor",
+        "equipment_required": [],
+        "is_improvised": true
+      },
+      {
+        "substitute_text": "not a true substitute but patterns the hinge",
+        "equipment_required": [],
+        "is_improvised": true
+      }
+    ]
+  },
+  {
+    "ex_id": "EX231",
+    "name": "Front Squat (Barbell / KB)",
+    "substitutes": [
+      {
+        "substitute_text": "KB front rack squat (one or two KBs)",
+        "equipment_required": [
+          [
+            "Kettlebell"
+          ]
+        ],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "Cross-arm grip front squat",
+        "equipment_required": [],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "DB goblet squat (EX002)",
+        "equipment_required": [
+          [
+            "Dumbbell"
+          ]
+        ],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "Gallon jugs in front rack position",
+        "equipment_required": [],
+        "is_improvised": true
+      },
+      {
+        "substitute_text": "backpack held at chest (goblet position)",
+        "equipment_required": [
+          [
+            "Backpack"
+          ],
+          [
+            "Weighted vest"
+          ]
+        ],
+        "is_improvised": false
+      }
+    ]
+  },
+  {
+    "ex_id": "EX232",
+    "name": "Hang Clean (Barbell / KB)",
+    "substitutes": [
+      {
+        "substitute_text": "KB clean (single-arm sub EX245)",
+        "equipment_required": [
+          [
+            "Kettlebell"
+          ]
+        ],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "DB hang clean",
+        "equipment_required": [
+          [
+            "Dumbbell"
+          ]
+        ],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "Muscle clean (reduced load technique)",
+        "equipment_required": [],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "Gallon jug or filled bag for improvised KB/DB clean",
+        "equipment_required": [],
+        "is_improvised": true
+      },
+      {
+        "substitute_text": "broomstick for pattern practice without load",
+        "equipment_required": [],
+        "is_improvised": true
+      }
+    ]
+  },
+  {
+    "ex_id": "EX233",
+    "name": "Lateral Raise (DB / Band)",
+    "substitutes": [
+      {
+        "substitute_text": "Cable lateral raise",
+        "equipment_required": [
+          [
+            "Cable machine"
+          ]
+        ],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "Plate lateral raise",
+        "equipment_required": [
+          [
+            "Weight plates"
+          ]
+        ],
+        "is_improvised": false
+      }
+    ]
+  },
+  {
+    "ex_id": "EX234",
+    "name": "Hammer Curl (DB)",
+    "substitutes": [
+      {
+        "substitute_text": "Cable hammer curl",
+        "equipment_required": [
+          [
+            "Cable machine"
+          ]
+        ],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "Band hammer curl",
+        "equipment_required": [
+          [
+            "Resistance band"
+          ]
+        ],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "Gallon water jug held with neutral grip",
+        "equipment_required": [],
+        "is_improvised": true
+      },
+      {
+        "substitute_text": "loaded grocery bag with rigid handle",
+        "equipment_required": [],
+        "is_improvised": true
+      }
+    ]
+  },
+  {
+    "ex_id": "EX235",
+    "name": "Tricep Pushdown / Extension (Cable / Band)",
+    "substitutes": [
+      {
+        "substitute_text": "Band tricep extension",
+        "equipment_required": [
+          [
+            "Resistance band"
+          ]
+        ],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "Overhead DB extension",
+        "equipment_required": [
+          [
+            "Dumbbell"
+          ]
+        ],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "Skull crusher (barbell)",
+        "equipment_required": [
+          [
+            "Barbell",
+            "Squat rack"
+          ]
+        ],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "Chair dips (hands on chair seat, feet on floor)",
+        "equipment_required": [],
+        "is_improvised": true
+      },
+      {
+        "substitute_text": "band anchored overhead on door for pushdown",
+        "equipment_required": [
+          [
+            "Resistance band"
+          ]
+        ],
+        "is_improvised": true
+      },
+      {
+        "substitute_text": "diamond push-up (bodyweight tricep emphasis)",
+        "equipment_required": [],
+        "is_improvised": false
+      }
+    ]
+  },
+  {
+    "ex_id": "EX236",
+    "name": "Leg Curl (Machine / Band)",
+    "substitutes": [
+      {
+        "substitute_text": "Stability ball hamstring curl",
+        "equipment_required": [
+          [
+            "Stability ball"
+          ]
+        ],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "Sliding disc hamstring curl",
+        "equipment_required": [
+          [
+            "Slider discs"
+          ]
+        ],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "Band ankle curl",
+        "equipment_required": [
+          [
+            "Resistance band"
+          ]
+        ],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "Towel hamstring curl on smooth floor (heel slides)",
+        "equipment_required": [],
+        "is_improvised": true
+      },
+      {
+        "substitute_text": "band around ankle anchored to bed leg",
+        "equipment_required": [
+          [
+            "Resistance band"
+          ]
+        ],
+        "is_improvised": true
+      }
+    ]
+  },
+  {
+    "ex_id": "EX237",
+    "name": "Leg Extension (Machine)",
+    "substitutes": [
+      {
+        "substitute_text": "Band terminal knee extension (EX063 as partial sub)",
+        "equipment_required": [
+          [
+            "Resistance band"
+          ]
+        ],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "Sissy squat (bodyweight quad isolation)",
+        "equipment_required": [],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "No direct substitute — use wall sit (EX037) or TKE with band on chair leg",
+        "equipment_required": [],
+        "is_improvised": true
+      }
+    ]
+  },
+  {
+    "ex_id": "EX238",
+    "name": "Burpee",
+    "substitutes": [
+      {
+        "substitute_text": "Step-back burpee (reduced impact)",
+        "equipment_required": [],
+        "is_improvised": true
+      },
+      {
+        "substitute_text": "Box burpee (elevated hands)",
+        "equipment_required": [],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "No equipment needed",
+        "equipment_required": [],
+        "is_improvised": true
+      },
+      {
+        "substitute_text": "hotel room floor space",
+        "equipment_required": [],
+        "is_improvised": true
+      }
+    ]
+  },
+  {
+    "ex_id": "EX239",
+    "name": "Turkish Get-Up (KB / DB)",
+    "substitutes": [
+      {
+        "substitute_text": "Bodyweight get-up (no load)",
+        "equipment_required": [],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "Half get-up (stop at kneeling)",
+        "equipment_required": [],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "Gallon water jug or filled bag as KB substitute",
+        "equipment_required": [],
+        "is_improvised": true
+      },
+      {
+        "substitute_text": "shoe held overhead for bodyweight patterning",
+        "equipment_required": [],
+        "is_improvised": false
+      }
+    ]
+  },
+  {
+    "ex_id": "EX240",
+    "name": "Bear Crawl",
+    "substitutes": [
+      {
+        "substitute_text": "No equipment needed",
+        "equipment_required": [],
+        "is_improvised": true
+      },
+      {
+        "substitute_text": "towel under hands on smooth floor for reduced friction",
+        "equipment_required": [],
+        "is_improvised": true
+      }
+    ]
+  },
+  {
+    "ex_id": "EX241",
+    "name": "Single-Arm KB Front Squat",
+    "substitutes": [
+      {
+        "substitute_text": "Double KB front squat (bilateral KB rack sub for asymmetric)",
+        "equipment_required": [
+          [
+            "Kettlebell"
+          ]
+        ],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "Goblet squat (EX002 as bilateral sub)",
+        "equipment_required": [
+          [
+            "Dumbbell"
+          ],
+          [
+            "Kettlebell"
+          ]
+        ],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "Gallon jug or filled bag held at shoulder in rack position",
+        "equipment_required": [],
+        "is_improvised": true
+      }
+    ]
+  },
+  {
+    "ex_id": "EX242",
+    "name": "Single-Arm DB Bench Press",
+    "substitutes": [
+      {
+        "substitute_text": "Floor press single-arm (no bench)",
+        "equipment_required": [],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "Cable single-arm press (standing)",
+        "equipment_required": [
+          [
+            "Cable machine"
+          ]
+        ],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "Single-arm floor press with gallon jug",
+        "equipment_required": [],
+        "is_improvised": true
+      },
+      {
+        "substitute_text": "single-arm push-up (advanced)",
+        "equipment_required": [],
+        "is_improvised": false
+      }
+    ]
+  },
+  {
+    "ex_id": "EX243",
+    "name": "Suitcase Carry",
+    "substitutes": [
+      {
+        "substitute_text": "Farmer carry (EX009 bilateral version)",
+        "equipment_required": [],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "Loaded backpack one-strap carry",
+        "equipment_required": [
+          [
+            "Backpack"
+          ],
+          [
+            "Weighted vest"
+          ]
+        ],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "Gallon jug in one hand",
+        "equipment_required": [],
+        "is_improvised": true
+      },
+      {
+        "substitute_text": "filled grocery bag",
+        "equipment_required": [],
+        "is_improvised": true
+      },
+      {
+        "substitute_text": "suitcase in one hand",
+        "equipment_required": [],
+        "is_improvised": true
+      }
+    ]
+  },
+  {
+    "ex_id": "EX244",
+    "name": "Overhead Carry / Waiter Walk",
+    "substitutes": [
+      {
+        "substitute_text": "Single-arm overhead KB carry (both KB and DB work)",
+        "equipment_required": [
+          [
+            "Dumbbell"
+          ]
+        ],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "Bottoms-up KB carry (instability progression)",
+        "equipment_required": [
+          [
+            "Kettlebell"
+          ]
+        ],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "Gallon jug locked out overhead",
+        "equipment_required": [],
+        "is_improvised": true
+      },
+      {
+        "substitute_text": "filled bag held overhead",
+        "equipment_required": [],
+        "is_improvised": true
+      }
+    ]
+  },
+  {
+    "ex_id": "EX245",
+    "name": "Single-Arm KB Clean",
+    "substitutes": [
+      {
+        "substitute_text": "Single-arm KB swing (regression — no catch)",
+        "equipment_required": [
+          [
+            "Kettlebell"
+          ]
+        ],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "DB clean (DB substitution for KB)",
+        "equipment_required": [
+          [
+            "Dumbbell"
+          ]
+        ],
+        "is_improvised": false
+      },
+      {
+        "substitute_text": "Gallon jug (light single-arm clean)",
+        "equipment_required": [],
+        "is_improvised": true
+      },
+      {
+        "substitute_text": "filled bag with handle",
+        "equipment_required": [],
+        "is_improvised": true
+      }
+    ]
+  }
+]
