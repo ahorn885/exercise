@@ -111,7 +111,7 @@ def extract_exercises(ws: Worksheet) -> list[dict[str, Any]]:
         progression = parse_exercise_ref(_t(ws.cell(row=r, column=14).value))
         regression = parse_exercise_ref(_t(ws.cell(row=r, column=15).value))
         equipment_raw = _t(ws.cell(row=r, column=7).value)
-        equipment_canonical = transform_equipment_string(equipment_raw)
+        equipment_canonical, terrain_required = transform_equipment_string(equipment_raw)
 
         rows.append({
             "exercise_id": ex_id,
@@ -121,6 +121,7 @@ def extract_exercises(ws: Worksheet) -> list[dict[str, Any]]:
             "primary_muscles": _split_comma(ws.cell(row=r, column=5).value),
             "secondary_muscles": _split_comma(ws.cell(row=r, column=6).value),
             "equipment_required": equipment_canonical,
+            "terrain_required": terrain_required,
             # col 7 (Novelty) excluded entirely per spec §4.10
             "injury_flags_text": _t(ws.cell(row=r, column=9).value),
             # col 9 = "Notes / Coaching Cues" → coaching_cues field

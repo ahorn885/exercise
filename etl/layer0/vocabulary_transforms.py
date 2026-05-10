@@ -5,7 +5,8 @@ documented in `Vocabulary_Audit_v2.md` Section 5. Applied at ETL time per
 spec §3.1 option (b) — source xlsx is never modified.
 
 Public functions:
-    transform_equipment_string(raw)         -> list[str]   (col 7)
+    transform_equipment_string(raw)         -> tuple[list[str], list[str]]
+                                               (col 7, returns (equipment, terrain_required))
     transform_body_part_string(raw)         -> list[str]   (col 13, body parts only)
     split_contraindicated_string(raw)       -> tuple[list[str], list[str]]
                                                (col 13, splits body parts ↔ conditions)
@@ -57,6 +58,53 @@ _DROP_TOKENS: set[str] = {
     "cups",
     "soft flask",
 }
+
+
+# ---------------------------------------------------------------------------
+# Terrain + situational classification — Open Item J
+#
+# Terrain tokens that must be moved out of equipment[] into terrain_required[].
+# Source: Vocabulary_Audit_v2.md §3 Terrain table.
+# ---------------------------------------------------------------------------
+
+TERRAIN_TOKENS: frozenset[str] = frozenset({
+    # Foot terrains
+    'Outdoor Hill', 'Steep Hill', 'Steep Mountain', 'Steep Track',
+    'Trail', 'Flat Trail', 'Gravel or Dirt Trail',
+    'Road', 'Descent Road', 'Gravel Road',
+    # MTB-specific
+    'Pump Track',
+    # Water
+    'Pool', 'Open Water', 'Open Water Body', 'Pool or Flat Water',
+    'Open Water or Ocean', 'Ocean or Surf', 'Flat or Choppy Water',
+    'Whitewater', 'Moving Water', 'River',
+    # Snow
+    'Snow Slope', 'Groomed Slope', 'Groomed Track', 'Deep Snow or Sand',
+    # Rock / scrambling
+    'Rocky Terrain', 'Boulders', 'Scree Field', 'Loose Rocky Slope',
+    # Fell
+    'Fell Terrain', 'Steep Grass', 'Moorland', 'Heather', 'Bog',
+    # Climbing surfaces
+    'Climb', 'Rock Wall', 'Climbing Gym',
+    # Generic
+    'Varied Terrain',
+})
+
+# Situational tokens — neither terrain nor equipment. Discarded entirely.
+# These describe race conditions or training partners, not what the athlete
+# needs to perform the exercise as written.
+SITUATIONAL_TOKENS: frozenset[str] = frozenset({
+    'Darkness',
+    'Group Riding Environment',
+    'Partner or Visual Cue', 'Tandem Partner', 'Team',
+})
+
+# Internal — case-insensitive lookup helpers. The whole-chunk match is needed
+# because some terrain tokens contain " or " (e.g. "Pool or Flat Water"),
+# which the slash-decompose pipeline would otherwise split apart.
+_TERRAIN_LOWER: frozenset[str] = frozenset(t.lower() for t in TERRAIN_TOKENS)
+_SITUATIONAL_LOWER: frozenset[str] = frozenset(t.lower() for t in SITUATIONAL_TOKENS)
+_TERRAIN_CANONICAL: dict[str, str] = {t.lower(): t for t in TERRAIN_TOKENS}
 
 
 # ---------------------------------------------------------------------------
@@ -152,55 +200,94 @@ _BOULDERING_CONTEXT_TOKENS = {
 # Public API
 # ---------------------------------------------------------------------------
 
-def transform_equipment_string(raw: str | None) -> list[str]:
-    """Apply the Vocab Audit §5 rules to a raw col-7 equipment string.
+def transform_equipment_string(raw: str | None) -> tuple[list[str], list[str]]:
+    """Apply the Vocab Audit §5 rules to a raw col-7 equipment string,
+    routing terrain tokens to a separate list per Open Item J.
 
     Pipeline:
-      1. Split the raw string on `,` into items.
-      2. For each item, decompose on `/` (slash-strings → atomic items per §5).
-      3. Strip whitespace, drop empties.
-      4. Apply the rename map.
-      5. Apply the sport-specific rollup map.
-      6. Drop race-fueling tokens entirely.
-      7. Deduplicate while preserving first-seen order.
+      1. Split the raw string on `,` into chunks.
+      2. For each chunk:
+         a. If the whole chunk (case-insensitive) is in TERRAIN_TOKENS or
+            SITUATIONAL_TOKENS, route or drop before slash-decompose. This
+            preserves multi-word terrains containing " or " such as
+            "Pool or Flat Water".
+         b. Otherwise decompose on `/` / " or " into atomic pieces. Each
+            piece is routed to terrain[] if matching, dropped if
+            situational, else queued for equipment processing.
+      3. Equipment pieces flow through rename + rollup + drop pipeline.
+      4. Both lists are deduplicated while preserving first-seen order.
 
-    Returns a list of canonical equipment names. Empty input → [].
+    Returns (equipment, terrain). Empty input → ([], []).
     """
     if not raw:
-        return []
+        return [], []
     s = str(raw).strip()
     if not s:
-        return []
+        return [], []
 
-    raw_items: list[str] = []
+    raw_equipment: list[str] = []
+    raw_terrain: list[str] = []
     for chunk in s.split(","):
         chunk = chunk.strip()
         if not chunk:
             continue
+        # ORDER MATTERS: classify the whole chunk against TERRAIN/SITUATIONAL
+        # *before* `_decompose_slash`. Several tokens in those sets contain
+        # " or " (e.g. "Pool or Flat Water", "Open Water or Ocean",
+        # "Partner or Visual Cue") and `_decompose_slash` splits on " or ".
+        # Decomposing first would shred those into pieces that no longer
+        # match the canonical set, silently leaking terrain into equipment[]
+        # and resurrecting the bug Open Item J was filed to fix.
+        chunk_lower = chunk.lower()
+        if chunk_lower in _TERRAIN_LOWER:
+            raw_terrain.append(_TERRAIN_CANONICAL[chunk_lower])
+            continue
+        if chunk_lower in _SITUATIONAL_LOWER:
+            continue
+        # Whole-chunk classification didn't match — decompose for atomic
+        # pieces (e.g. "Trail / Road" → ["Trail", "Road"], both terrain).
         for piece in _decompose_slash(chunk):
             piece = piece.strip()
-            if piece:
-                raw_items.append(piece)
+            if not piece:
+                continue
+            piece_lower = piece.lower()
+            if piece_lower in _TERRAIN_LOWER:
+                raw_terrain.append(_TERRAIN_CANONICAL[piece_lower])
+            elif piece_lower in _SITUATIONAL_LOWER:
+                continue
+            else:
+                raw_equipment.append(piece)
 
-    # Round 1 — apply rename + rollup + drop tokens
+    # Round 1 — apply rename + rollup + drop tokens to equipment items
     intermediate: list[str] = []
-    lower_set: set[str] = set(t.lower() for t in raw_items)
-    for token in raw_items:
+    lower_set: set[str] = set(t.lower() for t in raw_equipment)
+    for token in raw_equipment:
         canonical = _resolve_token(token, lower_set)
         if canonical is None:
             continue
         intermediate.append(canonical)
 
-    # Dedupe preserving order
+    # Dedupe equipment preserving order
     seen: set[str] = set()
-    out: list[str] = []
+    equipment: list[str] = []
     for t in intermediate:
         key = t.lower()
         if key in seen:
             continue
         seen.add(key)
-        out.append(t)
-    return out
+        equipment.append(t)
+
+    # Dedupe terrain preserving order
+    seen_t: set[str] = set()
+    terrain: list[str] = []
+    for t in raw_terrain:
+        key = t.lower()
+        if key in seen_t:
+            continue
+        seen_t.add(key)
+        terrain.append(t)
+
+    return equipment, terrain
 
 
 # ---------------------------------------------------------------------------

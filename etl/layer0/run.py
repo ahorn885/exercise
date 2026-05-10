@@ -418,7 +418,8 @@ def main(argv: list[str] | None = None) -> int:
             [
                 "exercise_id", "exercise_name", "exercise_type",
                 "movement_patterns", "primary_muscles", "secondary_muscles",
-                "equipment_required", "injury_flags_text", "contraindicated_parts",
+                "equipment_required", "terrain_required",
+                "injury_flags_text", "contraindicated_parts",
                 "contraindicated_conditions",
                 "equipment_substitutes", "physical_proxies",
                 "progression_exercise_id", "progression_exercise_name",
@@ -428,7 +429,8 @@ def main(argv: list[str] | None = None) -> int:
             [(
                 r["exercise_id"], r["exercise_name"], r["exercise_type"],
                 r["movement_patterns"], r["primary_muscles"], r["secondary_muscles"],
-                r["equipment_required"], r["injury_flags_text"], r["contraindicated_parts"],
+                r["equipment_required"], r["terrain_required"],
+                r["injury_flags_text"], r["contraindicated_parts"],
                 r["contraindicated_conditions"],
                 to_jsonb(r["equipment_substitutes"]), to_jsonb(r["physical_proxies"]),
                 r["progression_exercise_id"], r["progression_exercise_name"],

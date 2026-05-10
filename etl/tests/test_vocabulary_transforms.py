@@ -65,78 +65,79 @@ def test_body_part_systemic_flags_pass_through():
 
 
 def test_passthrough_canonical_items():
-    assert transform_equipment_string("Barbell, Rack") == ["Barbell", "Rack"]
+    assert transform_equipment_string("Barbell, Rack") == (["Barbell", "Rack"], [])
 
 
 def test_rename_band_family():
-    assert transform_equipment_string("Band") == ["Resistance Band"]
-    assert transform_equipment_string("Rubber Band") == ["Resistance Band"]
+    assert transform_equipment_string("Band") == (["Resistance Band"], [])
+    assert transform_equipment_string("Rubber Band") == (["Resistance Band"], [])
 
 
 def test_rename_mtb():
-    assert transform_equipment_string("MTB") == ["Mountain Bike"]
+    assert transform_equipment_string("MTB") == (["Mountain Bike"], [])
 
 
 def test_rename_cable_to_cable_machine():
-    assert transform_equipment_string("Cable") == ["Cable Machine"]
+    assert transform_equipment_string("Cable") == (["Cable Machine"], [])
 
 
 def test_rename_box_to_plyo_box():
-    assert transform_equipment_string("Box") == ["Plyo Box"]
-    assert transform_equipment_string("Vault Box") == ["Plyo Box"]
+    assert transform_equipment_string("Box") == (["Plyo Box"], [])
+    assert transform_equipment_string("Vault Box") == (["Plyo Box"], [])
 
 
 def test_rename_vest_family():
-    assert transform_equipment_string("Vest") == ["Weighted Vest"]
-    assert transform_equipment_string("Weight Vest") == ["Weighted Vest"]
+    assert transform_equipment_string("Vest") == (["Weighted Vest"], [])
+    assert transform_equipment_string("Weight Vest") == (["Weighted Vest"], [])
 
 
 def test_rename_shoes_to_running_shoes():
-    assert transform_equipment_string("Shoes") == ["Running Shoes"]
+    assert transform_equipment_string("Shoes") == (["Running Shoes"], [])
 
 
 def test_rename_rings_to_gymnastic_rings():
-    assert transform_equipment_string("Rings") == ["Gymnastic Rings"]
+    assert transform_equipment_string("Rings") == (["Gymnastic Rings"], [])
 
 
 def test_rename_trainer_to_bike_trainer():
-    assert transform_equipment_string("Trainer") == ["Bike Trainer"]
+    assert transform_equipment_string("Trainer") == (["Bike Trainer"], [])
     # Comma-split artifact "or Trainer"
-    assert "Bike Trainer" in transform_equipment_string("TT Bike, or Trainer")
+    eq, _ = transform_equipment_string("TT Bike, or Trainer")
+    assert "Bike Trainer" in eq
 
 
 def test_decompose_slash_string_kayak_packraft():
-    out = transform_equipment_string("Kayak / Packraft")
+    out, _ = transform_equipment_string("Kayak / Packraft")
     assert out == ["Kayak", "Packraft"]
 
 
 def test_decompose_three_way_slash():
-    out = transform_equipment_string("Kayak / Canoe / Packraft")
+    out, _ = transform_equipment_string("Kayak / Canoe / Packraft")
     assert out == ["Kayak", "Canoe", "Packraft"]
 
 
 def test_or_treated_as_slash():
-    out = transform_equipment_string("Bench or Box")
+    out, _ = transform_equipment_string("Bench or Box")
     assert out == ["Bench", "Plyo Box"]
 
 
 def test_rollup_climbing_roped():
-    out = transform_equipment_string("Climbing Rope, Belay Device, Carabiners")
+    out, _ = transform_equipment_string("Climbing Rope, Belay Device, Carabiners")
     assert out == ["Climbing — roped"]
 
 
 def test_rollup_bouldering():
-    out = transform_equipment_string("Bouldering Shoes, Crash Pad")
+    out, _ = transform_equipment_string("Bouldering Shoes, Crash Pad")
     assert out == ["Bouldering"]
 
 
 def test_rollup_touring_at_ski():
-    out = transform_equipment_string("Touring Skis, Climbing Skins, Ski Crampons")
+    out, _ = transform_equipment_string("Touring Skis, Climbing Skins, Ski Crampons")
     assert out == ["Touring/AT ski setup"]
 
 
 def test_rollup_whitewater():
-    out = transform_equipment_string(
+    out, _ = transform_equipment_string(
         "Spray Skirt, Whitewater Helmet, Whitewater PFD, Throw Bag"
     )
     assert out == ["Whitewater paddling setup"]
@@ -144,28 +145,63 @@ def test_rollup_whitewater():
 
 def test_ambiguous_crampons_in_ski_context():
     # In ski context: route to Touring/AT ski setup
-    out = transform_equipment_string("Touring Skis, Crampons")
+    out, _ = transform_equipment_string("Touring Skis, Crampons")
     assert out == ["Touring/AT ski setup"]
 
 
 def test_ambiguous_crampons_default_to_mountaineering():
     # No ski context: route to Mountaineering
-    out = transform_equipment_string("Crampons, Mountaineering Boots")
+    out, _ = transform_equipment_string("Crampons, Mountaineering Boots")
     assert out == ["Mountaineering"]
 
 
 def test_drop_race_fueling_tokens():
-    out = transform_equipment_string("Backpack, Gels, Soft Flask")
+    out, _ = transform_equipment_string("Backpack, Gels, Soft Flask")
     assert out == ["Backpack"]
 
 
 def test_dedupe_preserves_order():
     # Multiple sub-components rolling up to same toggle dedupe to a single
     # canonical token, keeping the order they first appeared.
-    out = transform_equipment_string(
+    out, _ = transform_equipment_string(
         "Climbing Rope, Bouldering Shoes, Carabiners, Crash Pad"
     )
     assert out == ["Climbing — roped", "Bouldering"]
+
+
+# ---------------------------------------------------------------------------
+# Terrain extraction (Open Item J)
+# ---------------------------------------------------------------------------
+
+
+def test_terrain_alone():
+    assert transform_equipment_string("Trail") == ([], ["Trail"])
+
+
+def test_terrain_compound_with_or_preserved():
+    # "Pool or Flat Water" must match TERRAIN_TOKENS as a whole chunk rather
+    # than being split by `_decompose_slash` on " or " into two unmatched
+    # pieces. Regression guard for the order-sensitive check.
+    assert transform_equipment_string("Pool or Flat Water") == ([], ["Pool or Flat Water"])
+
+
+def test_terrain_mixed_with_equipment():
+    assert transform_equipment_string("Dumbbell, Trail") == (["Dumbbell"], ["Trail"])
+
+
+def test_situational_dropped():
+    assert transform_equipment_string("Darkness") == ([], [])
+
+
+def test_terrain_slash_decomposed():
+    # "Trail / Road" doesn't match TERRAIN as a whole chunk, so it falls
+    # through to `_decompose_slash`; both pieces individually match terrain.
+    assert transform_equipment_string("Trail / Road") == ([], ["Trail", "Road"])
+
+
+def test_equipment_terrain_situational_mix():
+    # Situational silently dropped, terrain routed, equipment retained.
+    assert transform_equipment_string("Dumbbell, Trail, Darkness") == (["Dumbbell"], ["Trail"])
 
 
 def test_validate_against_canonical_match():
@@ -181,8 +217,8 @@ def test_validate_unknown():
 
 
 def test_empty_input():
-    assert transform_equipment_string("") == []
-    assert transform_equipment_string(None) == []
+    assert transform_equipment_string("") == ([], [])
+    assert transform_equipment_string(None) == ([], [])
 
 
 # ---------------------------------------------------------------------------
