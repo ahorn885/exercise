@@ -30,13 +30,14 @@ from etl.layer0.validation.vocab_alignment import run_vocab_alignment
 
 SOURCES = Path(__file__).parent.parent / "sources"
 SPORTS_XLSX = SOURCES / "Sports_Framework_v10.xlsx"
-EXERCISES_XLSX = SOURCES / "AR_Exercise_Database_v17.xlsx"
+EXERCISES_XLSX = SOURCES / "AR_Exercise_Database_v19.xlsx"
 VOCAB_MD = SOURCES / "Vocabulary_Audit_v2.md"
 
-# v10 source-version strings (re-run #3). 0A bumps with the framework xlsx.
-# 0B/0C content is unchanged — `-r3` marks the schema env this load runs in.
+# 0A source unchanged from v10. 0B bumped from v17 → v19 after the Pass 1+2
+# Equipment-column cleanup that normalized tokens to canonical vocabulary
+# (211 exercises, 105 equipment tokens). 0C unchanged.
 SOURCE_VERSION_0A = "0A-v10.0"
-SOURCE_VERSION_0B = "0B-v17.0-r3"
+SOURCE_VERSION_0B = "0B-v19.0-r1"
 SOURCE_VERSION_0C = "0C-v2.0-r1"
 
 

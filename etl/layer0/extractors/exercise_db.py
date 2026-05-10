@@ -1,4 +1,4 @@
-"""Layer 0 ETL — extractor for AR_Exercise_Database_v17.xlsx (source 0B).
+"""Layer 0 ETL — extractor for AR_Exercise_Database_v19.xlsx (source 0B).
 
 Reads Exercise Master + Sport-Exercise Map (header on R2 in both per spec).
 """
@@ -150,7 +150,7 @@ def extract_sport_exercise_map(
     """Sport-Exercise Map sheet. Header on R2; data R3+.
 
     Dedupes by `(exercise_id, sport_name)` to satisfy the spec's UNIQUE
-    constraint. First-seen wins. As of v17 the source has 3 such pairs
+    constraint. First-seen wins. As of v17 the source had 3 such pairs
     (EX163/Canoeing, EX023/Fencing, EX207/XC Skiing) where the same
     exercise is listed twice with different relevance notes — likely
     accidental rephrasings during DB curation.

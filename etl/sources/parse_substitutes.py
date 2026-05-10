@@ -334,7 +334,7 @@ def patch_goblet_squat(data: list) -> None:
 
 def main(xlsx_path: str = None, output_path: str = None):
     if xlsx_path is None:
-        xlsx_path = Path(__file__).parent / 'AR_Exercise_Database_v17.xlsx'
+        xlsx_path = Path(__file__).parent / 'AR_Exercise_Database_v19.xlsx'
     if output_path is None:
         output_path = Path(__file__).parent / 'parsed_substitutes.json'
 
