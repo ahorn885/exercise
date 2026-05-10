@@ -7,7 +7,7 @@
 --         Equipment_Column_Canonical_Addendum.md (Pass 2 decisions)
 -- ETL version tag: 0B-v19.K2
 --
--- Idempotent: ON CONFLICT (canonical_name) DO NOTHING
+-- Idempotent: ON CONFLICT (canonical_name, etl_version) DO NOTHING
 -- Safe to run multiple times. Run BEFORE ETL against v19.
 
 BEGIN;
@@ -121,7 +121,7 @@ VALUES
    'Inflatable single-person raft. Normalized from "Inflatable Raft", "Loaded Packraft". Functionally equivalent to Inflatable Raft for AR purposes.',
    '0B-v19.K2', NOW())
 
-ON CONFLICT (canonical_name) DO NOTHING;
+ON CONFLICT (canonical_name, etl_version) DO NOTHING;
 
 -- ── Verification ─────────────────────────────────────────────────────────────
 DO $$
