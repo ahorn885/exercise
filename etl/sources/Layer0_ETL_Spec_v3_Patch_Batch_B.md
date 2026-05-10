@@ -69,9 +69,18 @@ selected = top 0–2 by priority, rotating across plan-week
 
 ---
 
-## §4.12 update — exercises retypes
+## §4.12 update — exercises retypes + schema correction
 
-13 exercises previously typed `Technical / Skill` were retyped to load-bearing types in Batch B. No schema change. Document the type-vocabulary rule:
+**Schema correction (v4 must fix):** the v3 spec at §4.12 declares both
+`exercise_id TEXT NOT NULL UNIQUE` (column-level) AND
+`UNIQUE (exercise_id, etl_version)` (table-level). These are contradictory —
+the column-level UNIQUE would prevent version-bumped reinserts, breaking the
+§4.1 versioning pattern. Production schema (verified `\d layer0.exercises`
+on 2026-05-10) deploys only the table-level constraint; the column-level
+UNIQUE was never materialized. **v4 should remove `UNIQUE` from line 524**
+of the v3 schema block. The deployed DB needs no change.
+
+**Type vocabulary update:** 13 exercises previously typed `Technical / Skill` were retyped to load-bearing types in Batch B. No schema change. Document the type-vocabulary rule:
 
 > **Rule:** `exercise_type = 'Technical / Skill'` is **deprecated** as of `0B-v19.B`. New exercises must be typed against the load-bearing vocabulary (`Aerobic / Endurance`, `Strength`, `Power`, `Plyometric`, `Core / Stability`, `Mobility / Recovery`, `Activation / Primer`, `Interval / Tempo`, `Loaded Carry`). Pure-technique entries belong in `layer0.discipline_technique_foci`, not `layer0.exercises`.
 
