@@ -69,18 +69,71 @@ selected = top 0–2 by priority, rotating across plan-week
 
 ---
 
-## §4.12 update — exercises retypes + schema correction
+## §4.12 update — exercises retypes + comprehensive schema correction
 
-**Schema correction (v4 must fix):** the v3 spec at §4.12 declares both
-`exercise_id TEXT NOT NULL UNIQUE` (column-level) AND
-`UNIQUE (exercise_id, etl_version)` (table-level). These are contradictory —
-the column-level UNIQUE would prevent version-bumped reinserts, breaking the
-§4.1 versioning pattern. Production schema (verified `\d layer0.exercises`
-on 2026-05-10) deploys only the table-level constraint; the column-level
-UNIQUE was never materialized. **v4 should remove `UNIQUE` from line 524**
-of the v3 schema block. The deployed DB needs no change.
+**Spec drift discovered 2026-05-10.** A pre-flight schema dump of the deployed `layer0.exercises` table revealed that the v3 spec at §4.12 has diverged materially from production. This section logs all known discrepancies for v4. **No DB action is needed — production is the source of truth.** Spec must be rewritten to match.
 
-**Type vocabulary update:** 13 exercises previously typed `Technical / Skill` were retyped to load-bearing types in Batch B. No schema change. Document the type-vocabulary rule:
+### Column renames
+
+| v3 spec | Deployed | Notes |
+|---|---|---|
+| `equipment` | `equipment_required` | rename |
+| `injury_flag` | `injury_flags_text` | rename |
+| `progression_id` | `progression_exercise_id` | rename |
+| `regression_id` | `regression_exercise_id` | rename |
+
+### Column structure changes
+
+| v3 spec | Deployed | Notes |
+|---|---|---|
+| `equipment_substitutes_standard TEXT[]` + `equipment_substitutes_improvised TEXT[]` | single `equipment_substitutes JSONB` | The split documented in spec was never deployed; both sub-fields live inside the JSONB. The 🏠 prefix marker travels inside the JSONB structure. |
+
+### Columns removed (vs spec)
+
+| v3 spec | Deployed | Notes |
+|---|---|---|
+| `novelty_text TEXT` | (does not exist) | Col 7 "Novelty" was excluded per spec §4.10 (prompt payload exclusion); the column was never created. Remove from §4.12 schema block. |
+
+### Columns added (not in spec)
+
+| Deployed | Type | Notes |
+|---|---|---|
+| `primary_muscles` | TEXT (or TEXT[]) | source col 5 |
+| `secondary_muscles` | TEXT (or TEXT[]) | source col 6 |
+| `progression_exercise_name` | TEXT | name carried alongside ID |
+| `regression_exercise_name` | TEXT | name carried alongside ID |
+| `sport_count` | INTEGER | denormalized from sport_exercise_map cardinality |
+| `terrain_required` | TEXT[] | added by `migrate_exercises_terrain_required.sql` |
+| `equipment_substitutes_structured` | JSONB | added by `migrate_exercises_substitutes_structured.sql` |
+
+### Column-level UNIQUE on `exercise_id`
+
+Spec line 524 declares `exercise_id TEXT NOT NULL UNIQUE` (column-level) AND `UNIQUE (exercise_id, etl_version)` (table-level). The two are contradictory — the column-level UNIQUE would prevent version-bumped reinserts. **Production schema (verified 2026-05-10) deploys only the table-level constraint;** the column-level UNIQUE was never materialized. v4 must drop the `UNIQUE` token from line 524.
+
+### Canonical column set (deployed)
+
+```
+exercise_id, exercise_name, exercise_type,
+movement_patterns, primary_muscles, secondary_muscles,
+equipment_required, injury_flags_text,
+contraindicated_parts, contraindicated_conditions,
+equipment_substitutes, physical_proxies,
+progression_exercise_id, progression_exercise_name,
+regression_exercise_id, regression_exercise_name,
+sport_count, coaching_cues,
+terrain_required, equipment_substitutes_structured,
+etl_version, etl_run_at, superseded_at
+```
+
+24 columns total, plus PK `id` (sequence-backed). Use this as the reference when writing any future migration that touches `layer0.exercises` by column name.
+
+### Process lesson (added to lessons-learned log)
+
+The prior batch's lesson — "trust spec over precedent" — applies when comparing spec intent vs. legacy code. It does **not** apply when comparing spec vs. deployed reality. For any script that touches a live table by column name, **dump the deployed schema first**; if it disagrees with spec, deployed wins for the script and spec gets a correction patch. The pre-flight introspection block now in `update_retype_keeper_exercises.sql` (v2) is the pattern for future migrations.
+
+### Type vocabulary update
+
+13 exercises previously typed `Technical / Skill` were retyped to load-bearing types in Batch B. Document the type-vocabulary rule:
 
 > **Rule:** `exercise_type = 'Technical / Skill'` is **deprecated** as of `0B-v19.B`. New exercises must be typed against the load-bearing vocabulary (`Aerobic / Endurance`, `Strength`, `Power`, `Plyometric`, `Core / Stability`, `Mobility / Recovery`, `Activation / Primer`, `Interval / Tempo`, `Loaded Carry`). Pure-technique entries belong in `layer0.discipline_technique_foci`, not `layer0.exercises`.
 
