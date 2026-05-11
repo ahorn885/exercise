@@ -53,7 +53,7 @@ def main():
         print(f"ERROR: {json_path} not found", file=sys.stderr)
         sys.exit(1)
 
-    with open(json_path) as f:
+    with open(json_path, encoding="utf-8") as f:
         parsed = json.load(f)
 
     conn = psycopg2.connect(db_url)

@@ -72,3 +72,21 @@
   });
 })();
 
+// data-progress="N": set element.style.width to N% on DOM-ready. Used by
+// progress bars whose width is computed in Jinja — CSP style-src forbids
+// parser-set inline style attributes, so the width is carried in a data-
+// attribute and applied by script (script-set styles are not filtered).
+(function () {
+  function apply() {
+    document.querySelectorAll('[data-progress]').forEach(function (el) {
+      var v = parseFloat(el.getAttribute('data-progress'));
+      if (!isNaN(v)) el.style.width = v + '%';
+    });
+  }
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', apply);
+  } else {
+    apply();
+  }
+})();
+

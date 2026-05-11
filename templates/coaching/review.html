@@ -114,7 +114,7 @@
             </div>
             {% endfor %}
           </div>
-          <div id="intensity-adjust-row" class="alert alert-info py-2 px-3 mb-0" style="display:none">
+          <div id="intensity-adjust-row" class="alert alert-info py-2 px-3 mb-0 d-none">
             <div class="form-check mb-0">
               <input class="form-check-input" type="checkbox" name="adjust_intensity" id="adjust-intensity-cb" value="1">
               <label class="form-check-label" for="adjust-intensity-cb" id="adjust-intensity-label">
@@ -133,7 +133,7 @@
           {% if current_race_goals %}
           <div class="mb-3">
             <label class="form-label text-muted small">Current goals</label>
-            <div class="border rounded p-2 bg-light small" style="white-space:pre-wrap">{{ current_race_goals }}</div>
+            <div class="border rounded p-2 bg-light small u-pre-wrap">{{ current_race_goals }}</div>
           </div>
           {% endif %}
           <div class="form-check mb-2">
@@ -143,7 +143,7 @@
               {% if current_race_goals %}My event goals have changed{% else %}Add event day goals{% endif %}
             </label>
           </div>
-          <div id="goals-edit-row" style="display:none">
+          <div id="goals-edit-row" class="d-none">
             <label class="form-label small">Updated goals — describe your goal finish time, pacing strategy, checkpoint targets, etc.</label>
             <textarea name="updated_race_goals" class="form-control" rows="4"
                       placeholder="Goal finish time: Sub-36 hours&#10;Splits: conservative first half&#10;CP1 target: under 6 hours">{{ current_race_goals }}</textarea>
@@ -161,7 +161,7 @@
         </div>
       </div>
 
-      <div id="clarify-section" style="display:none" class="mb-3">
+      <div id="clarify-section" class="mb-3 d-none">
         <div class="card border-info">
           <div class="card-header fw-semibold text-info-emphasis bg-info-subtle">
             A few quick questions before the review
@@ -266,10 +266,10 @@ function toggleIntensityAdjust() {
   const label = document.getElementById('adjust-intensity-label');
   const note  = document.getElementById('intensity-shift-note');
   if (val === 'just_right') {
-    row.style.display = 'none';
+    row.classList.add('d-none');
     document.getElementById('adjust-intensity-cb').checked = false;
   } else {
-    row.style.display = '';
+    row.classList.remove('d-none');
     if (val === 'too_hard') {
       label.textContent = 'Shift intensity down one level for all remaining sessions';
       note.textContent  = 'very_hard → hard → moderate → easy';
@@ -282,7 +282,7 @@ function toggleIntensityAdjust() {
 
 function toggleGoalsEdit() {
   const show = document.getElementById('goals-changed-cb').checked;
-  document.getElementById('goals-edit-row').style.display = show ? '' : 'none';
+  document.getElementById('goals-edit-row').classList.toggle('d-none', !show);
 }
 document.querySelectorAll('.difficulty-feedback-radio').forEach(el => {
   el.addEventListener('change', toggleIntensityAdjust);
@@ -357,7 +357,7 @@ function renderClarifyQuestions(questions, notesEl, onConfirm) {
       <textarea class="form-control form-control-sm clarify-answer" rows="2" data-index="${i}"></textarea>`;
     clarifyQs.appendChild(div);
   });
-  clarifySection.style.display = '';
+  clarifySection.classList.remove('d-none');
   clarifySection.scrollIntoView({behavior: 'smooth', block: 'nearest'});
 
   document.getElementById('clarify-confirm').onclick = () => {
@@ -368,12 +368,12 @@ function renderClarifyQuestions(questions, notesEl, onConfirm) {
       const original = notesEl.value.trim();
       notesEl.value = (original ? original + '\n\n' : '') + 'Additional context:\n' + answers.join('\n\n');
     }
-    clarifySection.style.display = 'none';
+    clarifySection.classList.add('d-none');
     onConfirm();
   };
 
   document.getElementById('clarify-skip').onclick = () => {
-    clarifySection.style.display = 'none';
+    clarifySection.classList.add('d-none');
     onConfirm();
   };
 }

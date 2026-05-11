@@ -25,7 +25,7 @@
         {% if item.description %}
         {% set steps = item.description | workout_steps %}
         {% if steps %}
-        <ul class="mb-3 ps-3" style="list-style-type:disc">
+        <ul class="mb-3 ps-3 u-bullet">
           {% for step in steps %}
           <li class="mb-1">{{ step }}</li>
           {% endfor %}
@@ -37,7 +37,7 @@
         <table class="table table-sm mb-0">
           <tbody>
             {% if item.target_duration_min %}
-            <tr><th class="text-muted" style="width:40%">Target Duration</th><td>{{ item.target_duration_min|int }} min</td></tr>
+            <tr><th class="text-muted u-w-40pct">Target Duration</th><td>{{ item.target_duration_min|int }} min</td></tr>
             {% endif %}
             {% if item.target_distance_mi %}
             <tr><th class="text-muted">Target Distance</th><td>{{ item.target_distance_mi }} mi</td></tr>
@@ -51,7 +51,7 @@
               <td>
                 {% set note_steps = item.notes | workout_steps %}
                 {% if note_steps | length > 1 %}
-                <ul class="mb-0 ps-3" style="list-style-type:disc">
+                <ul class="mb-0 ps-3 u-bullet">
                   {% for n in note_steps %}<li class="small">{{ n }}</li>{% endfor %}
                 </ul>
                 {% else %}
@@ -65,7 +65,7 @@
       </div>
 
       {% if item.status == 'scheduled' %}
-      <div class="card-body border-top" id="item-edit" style="display:none">
+      <div class="card-body border-top d-none" id="item-edit">
         <form id="edit-form" class="row g-2">
           <div class="col-12">
             <label class="form-label">Workout name</label>
@@ -141,8 +141,8 @@
           {% endif %}
 
           <details>
-            <summary class="text-muted small" style="cursor:pointer">View Garmin Workout JSON</summary>
-            <pre class="mt-2 small p-2 bg-light rounded" style="max-height:200px;overflow:auto">{{ garmin_workout | tojson(indent=2) }}</pre>
+            <summary class="text-muted small u-clickable">View Garmin Workout JSON</summary>
+            <pre class="mt-2 small p-2 bg-light rounded u-scrollbox-200">{{ garmin_workout | tojson(indent=2) }}</pre>
           </details>
         {% endif %}
       </div>
@@ -197,12 +197,12 @@
   if (!toggleBtn || !form) return;
 
   const show = (mode) => {
-    view.style.display = mode === 'edit' ? 'none' : '';
-    edit.style.display = mode === 'edit' ? '' : 'none';
+    view.classList.toggle('d-none', mode === 'edit');
+    edit.classList.toggle('d-none', mode !== 'edit');
     toggleBtn.textContent = mode === 'edit' ? 'Close' : 'Edit';
   };
   toggleBtn.addEventListener('click', () => {
-    show(edit.style.display === 'none' ? 'edit' : 'view');
+    show(edit.classList.contains('d-none') ? 'edit' : 'view');
   });
   cancelBtn.addEventListener('click', () => show('view'));
 

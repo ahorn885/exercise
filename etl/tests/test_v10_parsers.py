@@ -133,10 +133,10 @@ def test_weekly_totals_happy_path():
     text = "WEEKLY TARGET HOURS: BASE: 6–9 hrs | BUILD: 7–11 hrs | PEAK: 8–12 hrs | TAPER: 5–7 hrs"
     out = _parse_weekly_total_text(text)
     assert out == {
-        "Base": (6.0, 9.0),
-        "Build": (7.0, 11.0),
-        "Peak": (8.0, 12.0),
-        "Taper": (5.0, 7.0),
+        "Base": (6.0, 9.0, "hrs"),
+        "Build": (7.0, 11.0, "hrs"),
+        "Peak": (8.0, 12.0, "hrs"),
+        "Taper": (5.0, 7.0, "hrs"),
     }
 
 
@@ -154,8 +154,67 @@ def test_weekly_totals_single_value_phase():
     text = "BASE: ~18 hrs\nBUILD: ~22-28 hrs\nPEAK: ~28-35 hrs\nTAPER: ~12-14 hrs"
     out = _parse_weekly_total_text(text)
     assert out is not None
-    assert out["Base"] == (18.0, 18.0)
-    assert out["Taper"] == (12.0, 14.0)
+    assert out["Base"] == (18.0, 18.0, "hrs")
+    assert out["Taper"] == (12.0, 14.0, "hrs")
+
+
+def test_weekly_totals_km_volume():
+    # Open Water Marathon Swimming (10km / Olympic). Source row R192.
+    text = (
+        "WEEKLY TARGET VOLUME (km/wk): BASE: 30–45 km | BUILD: 40–55 km | "
+        "PEAK: 45–60 km | TAPER: 20–30 km  Volume measured in km"
+    )
+    out = _parse_weekly_total_text(text)
+    assert out == {
+        "Base": (30.0, 45.0, "km"),
+        "Build": (40.0, 55.0, "km"),
+        "Peak": (45.0, 60.0, "km"),
+        "Taper": (20.0, 30.0, "km"),
+    }
+
+
+def test_weekly_totals_multi_subformat_aggregates_envelope():
+    # Swimrun (R65) — three sub-formats per phase, aggregated to min/max
+    # envelope across them. Parenthesized km distances must NOT be
+    # mistaken for target values.
+    text = (
+        "WEEKLY TARGET HOURS: "
+        "BASE: Sprint (10–25km): 4–6 hrs World Series (25–40km): 8–12 hrs ÖTILLÖ (75km): 12–16 hrs "
+        "BUILD: Sprint (10–25km): 5–7 hrs World Series (25–40km): 10–14 hrs ÖTILLÖ (75km): 14–18 hrs "
+        "PEAK: Sprint (10–25km): 6–8 hrs World Series (25–40km): 12–16 hrs ÖTILLÖ (75km): 16–20 hrs "
+        "TAPER: Sprint (10–25km): 3–5 hrs World Series (25–40km): 6–9 hrs ÖTILLÖ (75km): 8–12 hrs"
+    )
+    out = _parse_weekly_total_text(text)
+    assert out == {
+        "Base": (4.0, 16.0, "hrs"),
+        "Build": (5.0, 18.0, "hrs"),
+        "Peak": (6.0, 20.0, "hrs"),
+        "Taper": (3.0, 12.0, "hrs"),
+    }
+
+
+def test_weekly_totals_offroad_multisport_subformats():
+    # Off-Road / Adventure Multisport (R167). Three sub-formats per phase
+    # without parenthesized labels — purely whitespace-delimited.
+    text = (
+        "WEEKLY TARGET HOURS: "
+        "BASE: XTERRA: 8–12 hrs Quadrathlon: 9–13 hrs Free-format: 8–14 hrs "
+        "BUILD: XTERRA: 10–15 hrs Quadrathlon: 11–16 hrs Free-format: 10–18 hrs "
+        "PEAK: XTERRA: 12–18 hrs Quadrathlon: 13–18 hrs Free-format: 12–20 hrs "
+        "TAPER: XTERRA: 5–8 hrs Quadrathlon: 6–9 hrs Free-format: 5–10 hrs"
+    )
+    out = _parse_weekly_total_text(text)
+    assert out is not None
+    assert out["Base"] == (8.0, 14.0, "hrs")
+    assert out["Taper"] == (5.0, 10.0, "hrs")
+
+
+def test_weekly_totals_mixed_units_within_phase_rejects_phase():
+    # If a phase mixes hrs and km, treat as ambiguous and skip — the row
+    # then fails the 4-phase quorum.
+    text = "BASE: 6–9 hrs and 10–20 km | BUILD: 7–11 hrs | PEAK: 8–12 hrs | TAPER: 5–7 hrs"
+    out = _parse_weekly_total_text(text)
+    assert out is None
 
 
 # ---------------------------------------------------------------------------

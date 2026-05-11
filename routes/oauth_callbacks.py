@@ -1,47 +1,66 @@
 """OAuth provider callback stubs.
 
-Placeholder endpoints so the redirect URIs registered in the Garmin,
-Strava, Polar, and Wahoo developer portals resolve to a real route
-instead of 404ing during provider-side verification. Each handler
-returns 501 until the real OAuth flow is implemented.
+Placeholder endpoints so the redirect URIs registered in each provider's
+developer portal resolve to a real route instead of 404ing during
+provider-side verification. Each provider returns 501 until the real
+OAuth exchange is implemented.
 
-Registered URIs (production):
-- https://aidstation-pro.vercel.app/auth/garmin/callback
-- https://aidstation-pro.vercel.app/auth/strava/callback
-- https://aidstation-pro.vercel.app/auth/polar/callback
-- https://aidstation-pro.vercel.app/auth/wahoo/callback
+Adding a new provider:
+  1. Append a `(slug, display_name)` tuple to `_PROVIDERS` below.
+  2. Register `https://aidstation-pro.vercel.app/auth/<slug>/callback`
+     in the provider's developer portal.
 
-These endpoints are added to `_AUTH_EXEMPT_ENDPOINTS` in `app.py` so the
-provider can hit them without a logged-in session.
+The single endpoint name `oauth_callbacks.callback` is in
+`_AUTH_EXEMPT_ENDPOINTS` in `app.py`, so all current and future provider
+slugs are exempt without any further wiring.
 """
-from flask import Blueprint
+from flask import Blueprint, abort
 
 bp = Blueprint('oauth_callbacks', __name__, url_prefix='/auth')
 
 
-def _stub(provider: str):
+# (slug, display_name). slug must be URL-safe (lowercase, hyphenated).
+# display_name is shown in the 501 body and is the only place a
+# brand-correct spelling lives — keep it canonical (e.g. "adidas Running"
+# is intentionally lowercase-a, "V.02" keeps the period).
+_PROVIDERS: tuple[tuple[str, str], ...] = (
+    # Wave 1 — initial integrations
+    ('garmin',          'Garmin'),
+    ('strava',          'Strava'),
+    ('polar',           'Polar'),
+    ('wahoo',           'Wahoo'),
+    # Wave 2 — added 2026-05-11
+    ('coros',           'COROS'),
+    ('google-health',   'Google Health'),
+    ('apple-health',    'Apple Health'),
+    ('whoop',           'Whoop'),
+    ('trainingpeaks',   'TrainingPeaks'),
+    ('zwift',           'Zwift'),
+    ('vo2',             'V.02'),
+    ('nike-run-club',   'Nike Run Club'),
+    ('ride-with-gps',   'Ride With GPS'),
+    ('decathlon',       'Decathlon'),
+    ('adidas-running',  'adidas Running'),
+    ('komoot',          'Komoot'),
+    ('final-surge',     'Final Surge'),
+    ('myfitnesspal',    'MyFitnessPal'),
+)
+_PROVIDER_NAMES = dict(_PROVIDERS)
+
+
+@bp.route('/<provider>/callback', methods=['GET', 'POST'])
+def callback(provider: str):
+    name = _PROVIDER_NAMES.get(provider)
+    if name is None:
+        abort(404)
     return (
-        f'{provider} OAuth callback not yet implemented.',
+        f'{name} OAuth callback not yet implemented.',
         501,
         {'Content-Type': 'text/plain; charset=utf-8'},
     )
 
 
-@bp.route('/garmin/callback', methods=['GET', 'POST'])
-def garmin():
-    return _stub('Garmin')
-
-
-@bp.route('/strava/callback', methods=['GET', 'POST'])
-def strava():
-    return _stub('Strava')
-
-
-@bp.route('/polar/callback', methods=['GET', 'POST'])
-def polar():
-    return _stub('Polar')
-
-
-@bp.route('/wahoo/callback', methods=['GET', 'POST'])
-def wahoo():
-    return _stub('Wahoo')
+def provider_slugs() -> tuple[str, ...]:
+    """Public accessor — used by the wellness page footer to enumerate
+    registered providers without re-declaring the list."""
+    return tuple(slug for slug, _ in _PROVIDERS)

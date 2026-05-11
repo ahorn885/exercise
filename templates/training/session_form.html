@@ -34,11 +34,11 @@
       <table class="table table-sm mb-0" id="set-log-table">
         <thead class="table-light">
           <tr>
-            <th style="min-width:180px">Exercise</th>
-            <th style="width:75px">Reps</th>
-            <th style="width:95px">Weight (lb)</th>
-            <th style="width:85px">Dur (sec)</th>
-            <th style="width:36px"></th>
+            <th class="u-minw-180">Exercise</th>
+            <th class="u-w-75">Reps</th>
+            <th class="u-w-95">Weight (lb)</th>
+            <th class="u-w-85">Dur (sec)</th>
+            <th class="u-w-36"></th>
           </tr>
         </thead>
         <tbody id="set-log-body"></tbody>
@@ -63,7 +63,7 @@
 </div>
 <div id="save-status" class="mt-2 small text-muted"></div>
 
-<div id="fit-card" class="card border-info mt-3" style="display:none">
+<div id="fit-card" class="card border-info mt-3 d-none">
   <div class="card-body d-flex align-items-center justify-content-between flex-wrap gap-2">
     <div>
       <strong>Generate Activity FIT file?</strong>
@@ -114,8 +114,7 @@ function addRow(preExercise) {
     <td><input type="number" class="form-control form-control-sm" id="wt${id}" placeholder="—" step="0.5" min="0"></td>
     <td><input type="number" class="form-control form-control-sm" id="dur${id}" placeholder="—" min="0"></td>
     <td>
-      <button type="button" class="btn btn-outline-danger py-0 px-1"
-              style="font-size:.7rem;line-height:1.6">×</button>
+      <button type="button" class="btn btn-outline-danger py-0 px-1 u-fs-70 u-lh-1-6">×</button>
     </td>`;
   document.getElementById('set-log-body').appendChild(tr);
   // Wire row-level handlers programmatically — inline onchange/onclick
@@ -222,11 +221,11 @@ function renderSummaries() {
             </div>
             <div class="d-flex gap-2 align-items-center flex-wrap">
               <span class="small text-muted">RPE:</span>
-              <input type="number" class="form-control form-control-sm" style="width:68px"
+              <input type="number" class="form-control form-control-sm u-w-68"
                      min="1" max="10" step="0.5" placeholder="—"
                      value="${rpe}" data-ex-rpe="${exAttr}">
-              <button type="button" class="btn btn-sm btn-outline-secondary py-0 px-2 add-set-btn"
-                      style="font-size:.75rem" data-exercise="${exAttr}">+ Set</button>
+              <button type="button" class="btn btn-sm btn-outline-secondary py-0 px-2 add-set-btn u-fs-75"
+                      data-exercise="${exAttr}">+ Set</button>
             </div>
           </div>
           <div class="mb-2">${chips}</div>
@@ -306,7 +305,7 @@ async function saveSession() {
       fitLink.addEventListener('click', () => {
         setTimeout(() => { window.location.href = '{{ url_for("training.list_entries") }}'; }, 1200);
       });
-      fitCard.style.display = '';
+      fitCard.classList.remove('d-none');
     } else {
       status.textContent = 'Error: ' + (data.error || 'Unknown');
       btn.disabled = false;

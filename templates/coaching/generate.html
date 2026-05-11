@@ -86,7 +86,7 @@
             </div>
 
             {# Disciplines — shown only for multi-sport types #}
-            <div class="col-12" id="disciplines-section" style="display:none">
+            <div class="col-12 d-none" id="disciplines-section">
               <label class="form-label fw-semibold">Disciplines</label>
               <div class="row g-1">
                 {% for disc in ALL_DISCIPLINES %}
@@ -260,7 +260,7 @@
         </div>
       </div>
 
-      <div id="clarify-section" style="display:none" class="mb-3">
+      <div id="clarify-section" class="mb-3 d-none">
         <div class="card border-info">
           <div class="card-header fw-semibold text-info-emphasis bg-info-subtle">
             A few quick questions before generating
@@ -329,7 +329,7 @@
           <li>Returns a complete plan with full exercise details, sets, reps, and calorie targets</li>
         </ul>
         <details class="small">
-          <summary class="text-muted" style="cursor:pointer">Remote control (headless API)</summary>
+          <summary class="text-muted u-clickable">Remote control (headless API)</summary>
           <pre class="bg-white p-2 rounded mt-2"><code>POST /coaching/api/generate
 {
   "start_date": "2026-05-01",
@@ -357,7 +357,7 @@ const template = document.getElementById('trip-row-template');
 
 function toggleDisciplines(sel) {
   const show = MULTISPORT_TYPES.includes(sel.value);
-  document.getElementById('disciplines-section').style.display = show ? '' : 'none';
+  document.getElementById('disciplines-section').classList.toggle('d-none', !show);
 }
 
 function updateUntilRaceLabel() {
@@ -443,7 +443,7 @@ function renderClarifyQuestions(questions, notesEl, onConfirm) {
       <textarea class="form-control form-control-sm clarify-answer" rows="2" data-index="${i}"></textarea>`;
     clarifyQs.appendChild(div);
   });
-  clarifySection.style.display = '';
+  clarifySection.classList.remove('d-none');
   clarifySection.scrollIntoView({behavior: 'smooth', block: 'nearest'});
 
   document.getElementById('clarify-confirm').onclick = () => {
@@ -454,12 +454,12 @@ function renderClarifyQuestions(questions, notesEl, onConfirm) {
       const original = notesEl.value.trim();
       notesEl.value = (original ? original + '\n\n' : '') + 'Additional context:\n' + answers.join('\n\n');
     }
-    clarifySection.style.display = 'none';
+    clarifySection.classList.add('d-none');
     onConfirm();
   };
 
   document.getElementById('clarify-skip').onclick = () => {
-    clarifySection.style.display = 'none';
+    clarifySection.classList.add('d-none');
     onConfirm();
   };
 }

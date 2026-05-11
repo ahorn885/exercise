@@ -109,7 +109,7 @@ def edit():
         'SELECT username, display_name, email, last_login FROM users WHERE id=?', (uid,)
     ).fetchone()
     api_tokens = db.execute(
-        'SELECT id, name, created_at, last_used_at, revoked_at '
+        'SELECT id, name, created_at, last_used_at, revoked_at, expires_at '
         'FROM api_tokens WHERE user_id=? ORDER BY created_at DESC',
         (uid,)
     ).fetchall()
@@ -118,6 +118,7 @@ def edit():
     # redirects to GET, then the GET handler reads-and-clears.
     from flask import session as flask_session
     new_token_plaintext = flask_session.pop('new_api_token_plaintext', None)
+    from datetime import datetime as _dt
     return render_template(
         'profile/edit.html',
         profile=profile,
@@ -127,6 +128,9 @@ def edit():
         user_row=dict(user_row) if user_row else {},
         api_tokens=[dict(t) for t in api_tokens],
         new_api_token=new_token_plaintext,
+        # Used by the template to render an "Expired" badge without
+        # round-tripping the timestamp through a Jinja-only comparison.
+        now_iso=_dt.utcnow().isoformat(timespec='seconds'),
     )
 
 
@@ -225,6 +229,9 @@ def change_password():
     return redirect(url_for('profile.edit'))
 
 
+_TOKEN_TTL_DAYS_CHOICES = {'', '30', '90', '365'}
+
+
 @bp.route('/api-tokens', methods=['POST'])
 def create_api_token():
     """Issue a new bearer token for the current user.
@@ -233,16 +240,34 @@ def create_api_token():
     Flask session and read-and-cleared on the next GET /profile/).
     Only the SHA-256 hash is persisted, so a leaked DB doesn't expose
     usable tokens.
+
+    `ttl_days` is optional — empty / unset means the token never expires.
+    Accepted values are restricted to the dropdown choices (30/90/365)
+    to keep the UI simple; widen the allowlist when there's a real
+    request for arbitrary TTLs.
     """
     name = (request.form.get('name') or '').strip()
     if not name or len(name) > 80:
         flash('Token name is required (1–80 characters).', 'danger')
         return redirect(url_for('profile.edit'))
+
+    ttl_raw = (request.form.get('ttl_days') or '').strip()
+    if ttl_raw not in _TOKEN_TTL_DAYS_CHOICES:
+        flash('Invalid expiry choice.', 'danger')
+        return redirect(url_for('profile.edit'))
+    expires_at = None
+    if ttl_raw:
+        from datetime import datetime, timedelta
+        expires_at = (
+            datetime.utcnow() + timedelta(days=int(ttl_raw))
+        ).isoformat(timespec='seconds')
+
     plaintext, hashed = generate_api_token()
     db = get_db()
     db.execute(
-        'INSERT INTO api_tokens (user_id, name, token_hash) VALUES (?,?,?)',
-        (current_user_id(), name, hashed)
+        'INSERT INTO api_tokens (user_id, name, token_hash, expires_at) '
+        'VALUES (?,?,?,?)',
+        (current_user_id(), name, hashed, expires_at)
     )
     db.commit()
     from flask import session as flask_session

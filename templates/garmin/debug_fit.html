@@ -10,7 +10,7 @@
 
 <form method="post" enctype="multipart/form-data" class="mb-4">
   <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-  <div class="input-group" style="max-width:480px">
+  <div class="input-group u-mw-480">
     <input type="file" name="fit_file" accept=".fit,.zip" class="form-control" required>
     <button type="submit" class="btn btn-primary">Dump</button>
   </div>
@@ -25,8 +25,8 @@
     <button id="copyBtn" class="btn btn-sm btn-outline-secondary" type="button">Copy All</button>
   </div>
   <div class="card-body p-0">
-    <textarea id="dumpJson" class="form-control font-monospace border-0" rows="10" readonly
-              style="font-size:0.75rem; resize:vertical;">{{ dump | tojson(indent=2) }}</textarea>
+    <textarea id="dumpJson" class="form-control font-monospace border-0 u-fs-75 u-resize-v"
+              rows="10" readonly>{{ dump | tojson(indent=2) }}</textarea>
   </div>
 </div>
 
@@ -50,7 +50,7 @@
   <div class="card-header fw-semibold">Session Fields (non-null)</div>
   <div class="card-body p-0">
     <table class="table table-sm mb-0">
-      <thead class="table-light"><tr><th style="width:40%">Field</th><th>Value</th></tr></thead>
+      <thead class="table-light"><tr><th class="u-w-40pct">Field</th><th>Value</th></tr></thead>
       <tbody>
         {% for k, v in dump.session_fields.items() | sort %}
         <tr><td><code>{{ k }}</code></td><td>{{ v }}</td></tr>
@@ -120,7 +120,7 @@
   <div class="card-header fw-semibold">Sample Record Messages (first 3, non-null fields)</div>
   <div class="card-body p-0">
     <table class="table table-sm mb-0">
-      <thead class="table-light"><tr><th style="width:40%">Field</th><th>Value</th></tr></thead>
+      <thead class="table-light"><tr><th class="u-w-40pct">Field</th><th>Value</th></tr></thead>
       <tbody>
         {% for rec in dump.sample_records %}
         <tr class="table-secondary"><td colspan="2"><small class="text-muted">Record {{ loop.index }}</small></td></tr>
@@ -136,7 +136,7 @@
 
 {# ── One sample per message type ── #}
 <details class="mb-3">
-  <summary class="fw-semibold text-muted" style="cursor:pointer">All Other Message Type Samples</summary>
+  <summary class="fw-semibold text-muted u-clickable">All Other Message Type Samples</summary>
   {% for msg_type, fields in dump.all_message_samples.items() %}
   {% if msg_type not in ('SessionMessage', 'RecordMessage') %}
   <div class="card mt-2">
@@ -145,7 +145,7 @@
       <table class="table table-sm mb-0">
         <tbody>
           {% for k, v in fields.items() | sort %}
-          <tr><td style="width:40%"><code>{{ k }}</code></td><td>{{ v }}</td></tr>
+          <tr><td class="u-w-40pct"><code>{{ k }}</code></td><td>{{ v }}</td></tr>
           {% endfor %}
           {% if not fields %}<tr><td class="text-muted">No fields</td></tr>{% endif %}
         </tbody>

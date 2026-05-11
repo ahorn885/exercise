@@ -179,8 +179,8 @@
     <small class="text-muted">Progress: {{ completed }}/{{ total }} workouts completed</small>
     <small class="text-muted">{{ (completed/total*100)|round|int }}%</small>
   </div>
-  <div class="progress" style="height:10px">
-    <div class="progress-bar bg-success" style="width:{{ (completed/total*100)|round|int }}%"></div>
+  <div class="progress u-h-10">
+    <div class="progress-bar bg-success" data-progress="{{ (completed/total*100)|round|int }}"></div>
   </div>
 </div>
 {% endif %}
@@ -200,9 +200,8 @@
 
 {% for (year, week), items in weeks.items() %}
 <div class="card mb-3">
-  <div class="card-header fw-semibold d-flex justify-content-between align-items-center"
-       role="button" data-bs-toggle="collapse" data-bs-target="#week-{{ year }}-{{ week }}"
-       style="cursor:pointer">
+  <div class="card-header fw-semibold d-flex justify-content-between align-items-center u-clickable"
+       role="button" data-bs-toggle="collapse" data-bs-target="#week-{{ year }}-{{ week }}">
     <span>Week {{ loop.index }}</span>
     <span class="text-muted small">▾</span>
   </div>
@@ -212,11 +211,11 @@
       <table class="table table-sm table-hover mb-0 align-middle">
         <thead class="table-light">
           <tr>
-            <th class="bulk-only" style="width:30px">
+            <th class="bulk-only u-w-30">
               <input type="checkbox" class="form-check-input bulk-week-toggle"
                      data-week="{{ year }}-{{ week }}" title="Select all scheduled items in this week">
             </th>
-            <th style="width:90px">Date</th>
+            <th class="u-w-90">Date</th>
             <th>Workout</th>
             <th class="d-none d-md-table-cell">Sport</th>
             <th class="d-none d-md-table-cell text-nowrap">Duration</th>
@@ -252,7 +251,7 @@
               {% if item.description %}
               {% set steps = item.description | workout_steps %}
               {% if steps %}
-              <ul class="mb-0 mt-1 ps-3" style="list-style-type:disc">
+              <ul class="mb-0 mt-1 ps-3 u-bullet">
                 {% for step in steps %}
                   {% if loop.index <= 6 %}
                   <li class="small text-muted">{{ step }}</li>
@@ -272,14 +271,14 @@
                 <small class="fw-semibold">{{ item.calorie_target }} kcal</small><br>
                 <small class="text-muted">C{{ item.macro_carb_pct }}% P{{ item.macro_protein_pct }}% F{{ item.macro_fat_pct }}%</small>
                 {% if item.session_fueling %}
-                <br><small class="text-muted fst-italic" style="font-size:.7rem">{{ item.session_fueling }}</small>
+                <br><small class="text-muted fst-italic u-fs-70">{{ item.session_fueling }}</small>
                 {% endif %}
               {% else %}
                 {% set nx = workout_nutrition(item.sport_type, item.intensity, item.target_duration_min) %}
                 <small class="fw-semibold">{{ nx.cal }} kcal</small><br>
                 <small class="text-muted">C{{ nx.carb }}% P{{ nx.protein }}% F{{ nx.fat }}%</small>
                 {% if nx.fueling %}
-                <br><small class="text-muted fst-italic" style="font-size:.7rem">{{ nx.fueling }}</small>
+                <br><small class="text-muted fst-italic u-fs-70">{{ nx.fueling }}</small>
                 {% endif %}
               {% endif %}
             </td>
@@ -290,15 +289,15 @@
                   {% if item.status == 'scheduled' %}
                   <form method="post" action="{{ url_for('plans.complete_item', plan_id=plan.id, item_id=item.id) }}" class="d-inline">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                    <button type="submit" class="btn btn-xs btn-success py-0 px-1" style="font-size:.75rem" title="Mark complete">✓</button>
+                    <button type="submit" class="btn btn-xs btn-success py-0 px-1 u-fs-75" title="Mark complete">✓</button>
                   </form>
                   <form method="post" action="{{ url_for('plans.skip_item', plan_id=plan.id, item_id=item.id) }}" class="d-inline">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                    <button type="submit" class="btn btn-xs btn-outline-secondary py-0 px-1" style="font-size:.75rem" title="Skip">✕</button>
+                    <button type="submit" class="btn btn-xs btn-outline-secondary py-0 px-1 u-fs-75" title="Skip">✕</button>
                   </form>
                   {% endif %}
                   <a href="{{ url_for('plans.download_item_fit', plan_id=plan.id, item_id=item.id) }}"
-                     class="btn btn-xs btn-outline-secondary py-0 px-1" style="font-size:.75rem" title="Download Garmin FIT file">⬇</a>
+                     class="btn btn-xs btn-outline-secondary py-0 px-1 u-fs-75" title="Download Garmin FIT file">⬇</a>
                 </div>
               </div>
             </td>
@@ -316,8 +315,7 @@
 
 {# Bulk-edit floating action bar — only shown when ≥1 item is selected #}
 <div id="bulk-action-bar"
-     class="d-none position-fixed bottom-0 start-0 end-0 bg-white border-top shadow-lg p-3"
-     style="z-index:1040">
+     class="d-none position-fixed bottom-0 start-0 end-0 bg-white border-top shadow-lg p-3 u-z-overlay">
   <div class="container-fluid d-flex align-items-center gap-2 flex-wrap">
     <span class="fw-semibold me-2"><span id="bulk-count">0</span> selected</span>
 
@@ -474,7 +472,7 @@
 })();
 </script>
 
-<style>
+<style nonce="{{ csp_nonce() }}">
   .bulk-only { display: none; }
   body.bulk-mode .bulk-only { display: table-cell; }
   body.bulk-mode { padding-bottom: 80px; }  /* room for the floating bar */
@@ -487,7 +485,7 @@
     <small class="text-muted">Ask anything — preferences and plan changes are applied automatically</small>
   </div>
   <div class="card-body p-0">
-    <div id="chat-history" style="height:280px; overflow-y:auto; padding:1rem; background:#f8f9fa;">
+    <div id="chat-history" class="u-chat-scroll-light">
       <div class="text-muted small text-center" id="chat-empty">Loading history…</div>
     </div>
   </div>

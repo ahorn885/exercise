@@ -135,6 +135,7 @@ from routes.coaching import bp as coaching_bp
 from routes.natural_log import bp as natural_log_bp
 from routes.profile import bp as profile_bp
 from routes.purchases import bp as purchases_bp
+from routes.wellness import bp as wellness_bp
 from routes.admin import bp as admin_bp
 from routes.auth import bp as auth_bp, current_user, verify_bearer_token
 from routes.oauth_callbacks import bp as oauth_callbacks_bp
@@ -154,6 +155,7 @@ app.register_blueprint(coaching_bp)
 app.register_blueprint(natural_log_bp)
 app.register_blueprint(profile_bp)
 app.register_blueprint(purchases_bp)
+app.register_blueprint(wellness_bp)
 app.register_blueprint(admin_bp)
 app.register_blueprint(auth_bp)
 app.register_blueprint(oauth_callbacks_bp)
@@ -170,10 +172,10 @@ _AUTH_EXEMPT_ENDPOINTS = {
     'auth.register',
     'auth.forgot',
     'auth.reset',
-    'oauth_callbacks.garmin',
-    'oauth_callbacks.strava',
-    'oauth_callbacks.polar',
-    'oauth_callbacks.wahoo',
+    # Single endpoint covers every registered provider (slug allowlist
+    # lives in routes/oauth_callbacks.py). Adding a new provider does
+    # not require a change here.
+    'oauth_callbacks.callback',
 }
 
 
@@ -247,23 +249,26 @@ def _inject_current_user():
     return {'current_user': getattr(g, 'current_user_row', None)}
 
 
-# Content-Security-Policy. script-src uses a per-request nonce so we can
-# drop 'unsafe-inline' for scripts — every inline <script> block in
-# templates renders nonce="{{ csp_nonce() }}", and inline event handler
-# attributes (onclick, onsubmit, ...) have been refactored to data-attr
-# delegation in static/app.js or addEventListener inside nonce'd script
-# blocks. style-src keeps 'unsafe-inline' because inline style="..." is
-# pervasive (Bootstrap utility-class hybrid pattern across templates) and
-# the security gain from refactoring it is small relative to the work.
+# Content-Security-Policy. Both script-src and style-src use per-request
+# nonces and drop 'unsafe-inline'. Inline <script> blocks render
+# nonce="{{ csp_nonce() }}"; inline event handler attributes have been
+# refactored to data-attr delegation in static/app.js. Parser-set
+# style="..." attributes have been refactored to utility classes (see
+# static/style.css `.u-*` and Bootstrap utilities); dynamic widths use
+# data-progress + a JS init pass in static/app.js. The one remaining
+# <style> block (plans/view.html) renders the same nonce.
+# Script-driven `element.style.foo = bar` is not filtered by CSP, so the
+# JS-toggled `classList.toggle('d-none', …)` pattern is fine.
 #
-# What this still buys with style 'unsafe-inline':
-#   connect-src 'self'   stops injected JS from POSTing exfil to externals
-#   img-src 'self' data: blocks pixel-tracker exfiltration
-#   form-action 'self'   defends against form-action injection
+# What the lockdown buys:
+#   connect-src 'self'     stops injected JS from POSTing exfil to externals
+#   img-src 'self' data:   blocks pixel-tracker exfiltration
+#   form-action 'self'     defends against form-action injection
 #   frame-ancestors 'none' blocks clickjacking
-#   base-uri 'self'      prevents <base href> injection
-#   object-src 'none'    kills <object>/<embed>/Flash
-#   nonce'd script-src   blocks XSS-injected inline <script>
+#   base-uri 'self'        prevents <base href> injection
+#   object-src 'none'      kills <object>/<embed>/Flash
+#   nonce'd script-src     blocks XSS-injected inline <script>
+#   nonce'd style-src      blocks XSS-injected inline style attrs / blocks
 _CSP_BASE_DIRECTIVES = [
     "default-src 'self'",
     # script-src 'self' is fine for our /static/app.js. Nonce covers all
@@ -272,7 +277,7 @@ _CSP_BASE_DIRECTIVES = [
     # that today — the third-party CDN imports are explicit <script src=...>
     # tags that match script-src 'self' https://cdn.jsdelivr.net.
     None,  # placeholder for script-src — filled per-request with the nonce
-    "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://fonts.googleapis.com",
+    None,  # placeholder for style-src  — filled per-request with the nonce
     "font-src 'self' https://fonts.gstatic.com",
     "img-src 'self' data:",
     "connect-src 'self'",
@@ -294,6 +299,10 @@ def _csp_for_nonce(nonce: str) -> str:
     parts = list(_CSP_BASE_DIRECTIVES)
     parts[1] = (
         f"script-src 'self' 'nonce-{nonce}' https://cdn.jsdelivr.net"
+    )
+    parts[2] = (
+        f"style-src 'self' 'nonce-{nonce}' "
+        f"https://cdn.jsdelivr.net https://fonts.googleapis.com"
     )
     return '; '.join(parts)
 

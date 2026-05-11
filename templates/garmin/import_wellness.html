@@ -10,7 +10,7 @@
 
 <form method="post" enctype="multipart/form-data" class="mb-4">
   <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-  <div class="input-group" style="max-width:480px">
+  <div class="input-group u-mw-480">
     <input type="file" name="fit_file" accept=".fit,.zip" class="form-control" required>
     <button type="submit" class="btn btn-primary">Parse</button>
   </div>

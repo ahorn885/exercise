@@ -363,7 +363,7 @@ def main(xlsx_path: str = None, output_path: str = None):
     total = sum(len(e['substitutes']) for e in parsed)
     print(f"parse_substitutes v3: {len(parsed)} exercises, {total} total entries")
 
-    with open(output_path, 'w') as f:
+    with open(output_path, 'w', encoding="utf-8") as f:
         json.dump(parsed, f, indent=2, ensure_ascii=False)
 
 

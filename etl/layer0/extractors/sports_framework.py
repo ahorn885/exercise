@@ -39,11 +39,28 @@ _AUDIT_PREFIXES = (
 )
 
 # v10 — WEEKLY TOTAL TARGET parser
-_WEEKLY_PARSE = re.compile(
-    rf"(?P<phase>\w+):\s*~?\s*(?P<low>\d+(?:\.\d+)?)"
-    rf"(?:\s*{_DASH}\s*(?P<high>\d+(?:\.\d+)?))?\s*hrs?",
+#
+# Two notation families appear in the source spreadsheet:
+#   1. Time-based:  "BASE: 6–9 hrs | BUILD: 7–11 hrs | ..."
+#                   "BASE: ~18 hrs" (single value → low=high)
+#   2. Volume-based (open-water swim only):
+#                   "BASE: 30–45 km | BUILD: 40–55 km | ..."
+#   3. Multi sub-format time:
+#                   "BASE: Sprint (10–25km): 4–6 hrs World Series: 8–12 hrs BUILD: ..."
+#                   Aggregated to one (min_low, max_high) range per phase.
+#
+# `_PHASE_HEAD_RE` locates phase section starts; `_RANGE_RE` finds the
+# numeric ranges inside each section. Parenthesized sub-format labels are
+# stripped before range matching so `(10–25km)` doesn't get mistaken for a
+# target value.
+_PHASE_HEAD_RE = re.compile(r"\b(?P<phase>BASE|BUILD|PEAK|TAPER)\s*:", re.IGNORECASE)
+_RANGE_RE = re.compile(
+    rf"~?\s*(?P<low>\d+(?:\.\d+)?)"
+    rf"(?:\s*{_DASH}\s*(?P<high>\d+(?:\.\d+)?))?"
+    rf"\s*(?P<unit>hrs?|km)\b",
     re.IGNORECASE,
 )
+_PAREN_RE = re.compile(r"\([^()]*\)")
 _PHASE_CANON = {"base": "Base", "build": "Build", "peak": "Peak", "taper": "Taper"}
 
 # v10 — Cross-Sport Properties row filter
@@ -252,24 +269,61 @@ def _split_phase_load_notes(notes: Any) -> tuple[str | None, str | None]:
     return prescription, audit_log
 
 
-def _parse_weekly_total_text(text: Any) -> dict[str, tuple[float, float]] | None:
-    """Returns {Base: (low, high), Build, Peak, Taper} or None on bad parse.
+def _parse_weekly_total_text(
+    text: Any,
+) -> dict[str, tuple[float, float, str]] | None:
+    """Returns {Base: (low, high, unit), Build, Peak, Taper} or None on bad parse.
 
-    Supports both `BASE: 6–9 hrs` and `BASE: ~18 hrs` (single value → low=high).
+    Handles three notation families seen in the source spreadsheet:
+
+      1. Direct time:   `BASE: 6–9 hrs | BUILD: 7–11 hrs | ...`
+                        `BASE: ~18 hrs` (single value → low=high)
+      2. Direct volume: `BASE: 30–45 km | BUILD: 40–55 km | ...` (open-water
+                        marathon swimming is measured in km/wk, not hrs)
+      3. Multi sub-format time: `BASE: Sprint (10–25km): 4–6 hrs World Series
+                        (25–40km): 8–12 hrs BUILD: ...` — each phase carries
+                        multiple sub-format ranges; aggregated to one envelope
+                        `(min(lows), max(highs))` per phase.
+
+    Per-phase unit must be consistent (all hrs or all km); mixing causes the
+    phase to be rejected. All four phases must be populated for the row to
+    be considered valid.
     """
     if not text:
         return None
-    matches = list(_WEEKLY_PARSE.finditer(str(text)))
-    if not matches:
+    text_str = str(text)
+    heads = list(_PHASE_HEAD_RE.finditer(text_str))
+    if not heads:
         return None
-    out: dict[str, tuple[float, float]] = {}
-    for m in matches:
+
+    out: dict[str, tuple[float, float, str]] = {}
+    for i, m in enumerate(heads):
         phase = _PHASE_CANON.get(m.group("phase").lower())
         if not phase or phase in out:
             continue
-        low = float(m.group("low"))
-        high = float(m.group("high")) if m.group("high") else low
-        out[phase] = (low, high)
+        section_start = m.end()
+        section_end = heads[i + 1].start() if i + 1 < len(heads) else len(text_str)
+        section = text_str[section_start:section_end]
+        # Strip parenthesized sub-format labels like "(10–25km)" so their
+        # numbers don't get mistaken for targets.
+        section = _PAREN_RE.sub(" ", section)
+
+        lows: list[float] = []
+        highs: list[float] = []
+        units: set[str] = set()
+        for rm in _RANGE_RE.finditer(section):
+            low = float(rm.group("low"))
+            high = float(rm.group("high")) if rm.group("high") else low
+            unit = rm.group("unit").lower()
+            unit = "hrs" if unit.startswith("hr") else unit
+            lows.append(low)
+            highs.append(high)
+            units.add(unit)
+
+        if not lows or len(units) != 1:
+            continue
+        out[phase] = (min(lows), max(highs), next(iter(units)))
+
     if len(out) < 4:
         return None
     return out
@@ -686,13 +740,20 @@ def extract_phase_load_weekly_totals(
                 })
             continue
         for phase in ("Base", "Build", "Peak", "Taper"):
-            low, high = parsed[phase]
+            low, high, unit = parsed[phase]
+            # The `weekly_low_hours` / `weekly_high_hours` column names are
+            # legacy (the schema predates the km-volume open-water swim
+            # sports). They hold the numeric range in whatever unit the
+            # source row used; `weekly_unit` ('hrs' | 'km') disambiguates.
+            # Consumers MUST check `weekly_unit` before treating the values
+            # as hours.
             rows.append({
                 "sport_name": last_sport or "",
                 "phase": phase,
                 "weekly_low_hours": low,
                 "weekly_high_hours": high,
                 "weekly_target_text": notes,
+                "weekly_unit": unit,
             })
     return rows
 

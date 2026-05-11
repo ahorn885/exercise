@@ -365,3 +365,11 @@ ALTER TABLE layer0.cross_sport_properties
   ADD COLUMN IF NOT EXISTS confidence TEXT;
 ALTER TABLE layer0.cross_sport_properties
   ADD COLUMN IF NOT EXISTS notes TEXT;
+
+-- Open-water marathon swimming weekly targets are expressed in km/wk, not
+-- hours. `weekly_unit` disambiguates the numeric range in
+-- `weekly_low_hours` / `weekly_high_hours` (column names are legacy; the
+-- values are in the declared unit). NULL means "hrs" for back-compat with
+-- pre-migration rows.
+ALTER TABLE layer0.phase_load_weekly_totals
+  ADD COLUMN IF NOT EXISTS weekly_unit TEXT;

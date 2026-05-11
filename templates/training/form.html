@@ -24,7 +24,7 @@
           </option>
         {% endfor %}
       </select>
-      <div id="injury-warning" class="mt-2" style="display:none"></div>
+      <div id="injury-warning" class="mt-2 d-none"></div>
     </div>
     <div class="col-md-2">
       <label class="form-label">RPE (1–10)</label>
@@ -117,7 +117,7 @@
 <script nonce="{{ csp_nonce() }}">
 function loadRx(exercise) {
   if (!exercise) {
-    document.getElementById('injury-warning').style.display = 'none';
+    document.getElementById('injury-warning').classList.add('d-none');
     return;
   }
   fetch('/api/rx/' + encodeURIComponent(exercise))
@@ -130,7 +130,7 @@ function loadRx(exercise) {
 
       const warn = document.getElementById('injury-warning');
       const mods = data.injury_mods || [];
-      if (mods.length === 0) { warn.style.display = 'none'; return; }
+      if (mods.length === 0) { warn.classList.add('d-none'); return; }
 
       const typeLabels = {avoid:'Avoid',substitute:'Substitute',reduce_load:'Reduce Load',modify:'Modify'};
       const typeBadge  = {avoid:'danger',substitute:'warning',reduce_load:'info',modify:'secondary'};
@@ -142,7 +142,7 @@ function loadRx(exercise) {
         return `<div>${badge} <strong>${m.body_part}</strong> (${m.status})${sub}${notes}</div>`;
       }).join('');
       warn.innerHTML = `<div class="alert alert-warning py-2 px-3 mb-0 small">⚠️ Active injury modification${mods.length > 1 ? 's' : ''}:<br>${html}</div>`;
-      warn.style.display = '';
+      warn.classList.remove('d-none');
     });
 }
 window.addEventListener('DOMContentLoaded', function() {

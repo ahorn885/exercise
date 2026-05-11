@@ -1205,9 +1205,30 @@ _SQLITE_MIGRATIONS = [
         token_hash TEXT NOT NULL UNIQUE,
         created_at TEXT NOT NULL DEFAULT (datetime('now')),
         last_used_at TEXT,
-        revoked_at TEXT
+        revoked_at TEXT,
+        expires_at TEXT
     )""",
     "CREATE INDEX IF NOT EXISTS api_tokens_user_id_idx ON api_tokens(user_id)",
+    # `expires_at` was added after initial deploy. SQLite ADD COLUMN doesn't
+    # support IF NOT EXISTS; failures are swallowed by the migration loop.
+    "ALTER TABLE api_tokens ADD COLUMN expires_at TEXT",
+    # Per-day wellness self-report. Added 2026-05-11. UNIQUE (user_id, date)
+    # so the form on /wellness can UPSERT without an explicit lookup.
+    """CREATE TABLE IF NOT EXISTS wellness_self_report (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL REFERENCES users(id),
+        date TEXT NOT NULL,
+        sleep_hours REAL,
+        sleep_quality INTEGER,
+        energy INTEGER,
+        soreness INTEGER,
+        mood INTEGER,
+        notes TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+        UNIQUE(user_id, date)
+    )""",
+    "CREATE INDEX IF NOT EXISTS wellness_self_report_user_date_idx ON wellness_self_report(user_id, date)",
 ]
 
 _PG_MIGRATIONS = [
@@ -1456,9 +1477,28 @@ _PG_MIGRATIONS = [
         token_hash TEXT NOT NULL UNIQUE,
         created_at TIMESTAMP NOT NULL DEFAULT NOW(),
         last_used_at TIMESTAMP,
-        revoked_at TIMESTAMP
+        revoked_at TIMESTAMP,
+        expires_at TIMESTAMP
     )""",
     "CREATE INDEX IF NOT EXISTS api_tokens_user_id_idx ON api_tokens(user_id)",
+    # `expires_at` was added after initial deploy.
+    "ALTER TABLE api_tokens ADD COLUMN IF NOT EXISTS expires_at TIMESTAMP",
+    # Per-day wellness self-report. See SQLite migration above for rationale.
+    """CREATE TABLE IF NOT EXISTS wellness_self_report (
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER NOT NULL REFERENCES users(id),
+        date TEXT NOT NULL,
+        sleep_hours REAL,
+        sleep_quality INTEGER,
+        energy INTEGER,
+        soreness INTEGER,
+        mood INTEGER,
+        notes TEXT,
+        created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        UNIQUE(user_id, date)
+    )""",
+    "CREATE INDEX IF NOT EXISTS wellness_self_report_user_date_idx ON wellness_self_report(user_id, date)",
 ]
 
 _CLOTHING_SEEDS = [

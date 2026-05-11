@@ -1,0 +1,238 @@
+{% extends 'base.html' %}
+{% block title %}Wellness{% endblock %}
+
+{% block content %}
+<div class="section-header">
+  <div>
+    <span class="eyebrow">Wellness</span>
+    <h2 class="mb-0">Wellness</h2>
+  </div>
+  <form method="get" action="{{ url_for('wellness.index') }}" class="d-flex align-items-end gap-2">
+    <div>
+      <label class="form-label small mb-1" for="range-select">Range</label>
+      <select id="range-select" name="range" class="form-select form-select-sm" data-autosubmit>
+        {% for n in range_choices %}
+        <option value="{{ n }}" {% if n == range_days %}selected{% endif %}>Last {{ n }} days</option>
+        {% endfor %}
+      </select>
+    </div>
+  </form>
+</div>
+
+{# ── Self-report form ─────────────────────────────────────── #}
+<div class="card mb-4">
+  <div class="card-header">
+    <span class="eyebrow">Self-report · today</span>
+    {% if today_row %}
+    <span class="text-muted small ms-2">Already logged for {{ today_iso }} — save again to update.</span>
+    {% endif %}
+  </div>
+  <div class="card-body">
+    <form method="post" action="{{ url_for('wellness.index') }}" class="row g-3">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <input type="hidden" name="date" value="{{ today_iso }}">
+      <input type="hidden" name="range" value="{{ range_days }}">
+
+      <div class="col-md-2 col-6">
+        <label class="form-label small mb-1" for="sleep_hours">Sleep (h)</label>
+        <input type="number" step="0.25" min="0" max="24"
+               id="sleep_hours" name="sleep_hours" class="form-control form-control-sm"
+               value="{{ today_row.sleep_hours if today_row.sleep_hours is not none else '' }}"
+               placeholder="7.5">
+      </div>
+
+      {% for field, label in [('sleep_quality', 'Sleep quality'), ('energy', 'Energy'),
+                              ('soreness', 'Soreness'), ('mood', 'Mood')] %}
+      <div class="col-md-2 col-6">
+        <label class="form-label small mb-1" for="{{ field }}">{{ label }} (1–5)</label>
+        <select id="{{ field }}" name="{{ field }}" class="form-select form-select-sm">
+          <option value="">—</option>
+          {% for n in [1, 2, 3, 4, 5] %}
+          <option value="{{ n }}" {% if today_row.get(field) == n %}selected{% endif %}>{{ n }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      {% endfor %}
+
+      <div class="col-12">
+        <label class="form-label small mb-1" for="notes">Notes</label>
+        <textarea id="notes" name="notes" class="form-control form-control-sm u-resize-v"
+                  rows="2" placeholder="Anything worth noting — illness, travel, big workout yesterday, etc.">{{ today_row.notes or '' }}</textarea>
+      </div>
+
+      <div class="col-12">
+        <button class="btn btn-sm btn-primary">{{ 'Update' if today_row else 'Save' }}</button>
+        <span class="text-muted small ms-2">
+          Scale: 1 = worst · 5 = best (for soreness, 1 = sore everywhere · 5 = fresh)
+        </span>
+      </div>
+    </form>
+  </div>
+</div>
+
+{# ── Charts ───────────────────────────────────────────────── #}
+{% if not has_any_data %}
+<div class="card">
+  <div class="card-body text-muted small">
+    No data in the last {{ range_days }} days. Log a wellness self-report above, or add
+    <a href="{{ url_for('body.new_entry') }}">body metrics</a>,
+    <a href="{{ url_for('cardio.list_entries') }}">cardio</a>, or
+    <a href="{{ url_for('training.list_entries') }}">strength</a> entries to see them charted here.
+  </div>
+</div>
+{% else %}
+
+{% if chart_data.self_report %}
+<div class="card mb-3">
+  <div class="card-header"><span class="eyebrow">Self-report</span></div>
+  <div class="card-body row g-3">
+    <div class="col-12 col-lg-6"><canvas id="chart-sleep-hours" height="140"></canvas></div>
+    <div class="col-12 col-lg-6"><canvas id="chart-ratings"      height="140"></canvas></div>
+  </div>
+</div>
+{% endif %}
+
+{% if chart_data.body %}
+<div class="card mb-3">
+  <div class="card-header"><span class="eyebrow">Body composition</span></div>
+  <div class="card-body row g-3">
+    {% if chart_data.body.weight_lbs %}<div class="col-12 col-lg-4"><canvas id="chart-weight" height="160"></canvas></div>{% endif %}
+    {% if chart_data.body.body_fat_pct %}<div class="col-12 col-lg-4"><canvas id="chart-bf" height="160"></canvas></div>{% endif %}
+    {% if chart_data.body.resting_hr %}<div class="col-12 col-lg-4"><canvas id="chart-rhr" height="160"></canvas></div>{% endif %}
+  </div>
+</div>
+{% endif %}
+
+{% if chart_data.training %}
+<div class="card mb-3">
+  <div class="card-header"><span class="eyebrow">Training load · minutes/day</span></div>
+  <div class="card-body"><canvas id="chart-load" height="120"></canvas></div>
+</div>
+{% endif %}
+
+{% if chart_data.garmin %}
+<div class="card mb-3">
+  <div class="card-header"><span class="eyebrow">Garmin · daily aggregates</span></div>
+  <div class="card-body row g-3">
+    {% if chart_data.garmin.avg_hr %}<div class="col-12 col-lg-4"><canvas id="chart-g-hr" height="160"></canvas></div>{% endif %}
+    {% if chart_data.garmin.peak_stress %}<div class="col-12 col-lg-4"><canvas id="chart-g-stress" height="160"></canvas></div>{% endif %}
+    {% if chart_data.garmin.min_bb %}<div class="col-12 col-lg-4"><canvas id="chart-g-bb" height="160"></canvas></div>{% endif %}
+  </div>
+</div>
+{% endif %}
+
+{% endif %}
+
+<p class="text-muted small mt-3">
+  Provider integrations will appear here once their OAuth callbacks land.
+  Stubs are already wired for {{ provider_count }} providers (Garmin,
+  Strava, Polar, Wahoo, COROS, Whoop, TrainingPeaks, Zwift, Apple Health,
+  Google Health, and others) at
+  <code>/auth/&lt;provider&gt;/callback</code>.
+</p>
+{% endblock %}
+
+{% block scripts %}
+{% if has_any_data %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js" nonce="{{ csp_nonce() }}"></script>
+<script nonce="{{ csp_nonce() }}">
+const data = {{ chart_data | tojson }};
+
+const cssVar  = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+const ink     = cssVar('--ink')    || '#1B1D21';
+const ink3    = cssVar('--ink-3')  || '#444851';
+const orange  = cssVar('--orange') || '#ED7A2D';
+const hairline = 'rgba(27,29,33,0.12)';
+
+Chart.defaults.font.family = "'Inter', system-ui, sans-serif";
+Chart.defaults.color = ink3;
+Chart.defaults.borderColor = hairline;
+
+function dateAxis() {
+  return {
+    type: 'category',
+    ticks: { font: { family: "'JetBrains Mono', monospace", size: 10 }, color: ink3, maxRotation: 0, autoSkip: true, maxTicksLimit: 8 },
+    grid: { color: hairline, drawTicks: false },
+    border: { color: hairline },
+  };
+}
+function valueAxis(opts = {}) {
+  return Object.assign({
+    ticks: { font: { family: "'JetBrains Mono', monospace", size: 10 }, color: ink3 },
+    grid: { color: hairline, drawTicks: false },
+    border: { color: hairline },
+  }, opts);
+}
+
+function line(canvasId, datasets, opts = {}) {
+  const el = document.getElementById(canvasId);
+  if (!el) return;
+  return new Chart(el, {
+    type: 'line',
+    data: { datasets },
+    options: {
+      responsive: true, maintainAspectRatio: false, animation: false,
+      parsing: false,  // datasets carry {x,y} objects already
+      plugins: {
+        legend: { display: datasets.length > 1, labels: { font: { size: 11 } } },
+        tooltip: {
+          backgroundColor: ink,
+          titleFont: { family: "'JetBrains Mono', monospace", size: 11 },
+          bodyFont:  { family: "'JetBrains Mono', monospace", size: 12 },
+          padding: 8, displayColors: false,
+          callbacks: { label: ctx => `${ctx.dataset.label || ''}: ${ctx.parsed.y}${opts.unit || ''}` },
+        },
+      },
+      scales: { x: dateAxis(), y: valueAxis(opts.yAxis || {}) },
+    },
+  });
+}
+
+function ds(label, points, color, fill = false) {
+  return {
+    label, data: points, borderColor: color, backgroundColor: color,
+    borderWidth: 1.5, pointRadius: 2, pointHoverRadius: 4, tension: 0.2, fill,
+  };
+}
+
+// ─── Self-report ────────────────────────────────────────────
+if (data.self_report) {
+  if (data.self_report.sleep_hours && data.self_report.sleep_hours.length) {
+    line('chart-sleep-hours',
+      [ds('Sleep (h)', data.self_report.sleep_hours, ink)],
+      { unit: ' h' });
+  }
+  const rating = [
+    ['sleep_quality', 'Sleep quality', ink],
+    ['energy',        'Energy',        orange],
+    ['soreness',      'Soreness',      '#4A90E2'],
+    ['mood',          'Mood',          '#5BA572'],
+  ].filter(([k]) => data.self_report[k] && data.self_report[k].length)
+   .map(([k, label, color]) => ds(label, data.self_report[k], color));
+  if (rating.length) line('chart-ratings', rating, { yAxis: { min: 0, max: 5 } });
+}
+
+// ─── Body ───────────────────────────────────────────────────
+if (data.body) {
+  if (data.body.weight_lbs   && data.body.weight_lbs.length)   line('chart-weight', [ds('Weight (lb)', data.body.weight_lbs, ink)],     { unit: ' lb' });
+  if (data.body.body_fat_pct && data.body.body_fat_pct.length) line('chart-bf',     [ds('Body fat %', data.body.body_fat_pct, orange)], { unit: ' %'  });
+  if (data.body.resting_hr   && data.body.resting_hr.length)   line('chart-rhr',    [ds('Resting HR', data.body.resting_hr,   ink3)],   { unit: ' bpm'});
+}
+
+// ─── Training load ─────────────────────────────────────────
+if (data.training) {
+  line('chart-load', [
+    ds('Cardio',   data.training.cardio_min,   ink),
+    ds('Strength', data.training.strength_min, orange),
+  ], { unit: ' min' });
+}
+
+// ─── Garmin ─────────────────────────────────────────────────
+if (data.garmin) {
+  if (data.garmin.avg_hr      && data.garmin.avg_hr.length)      line('chart-g-hr',     [ds('Avg HR',      data.garmin.avg_hr,      ink)],   { unit: ' bpm' });
+  if (data.garmin.peak_stress && data.garmin.peak_stress.length) line('chart-g-stress', [ds('Peak stress', data.garmin.peak_stress, orange)],{ yAxis: { min: 0, max: 100 } });
+  if (data.garmin.min_bb      && data.garmin.min_bb.length)      line('chart-g-bb',     [ds('Min body battery', data.garmin.min_bb, ink3)], { yAxis: { min: 0, max: 100 } });
+}
+</script>
+{% endif %}
+{% endblock %}

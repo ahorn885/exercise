@@ -1,11 +1,10 @@
 """Admin dashboard.
 
 Gated to user_id == 1 (the bootstrap user, conventionally the operator).
-Only surface today is the user list + cascade-delete for cleanup of test
-accounts. Adding more admin views: build them inside this blueprint and
-keep the same `_require_admin()` gate at the top of every handler.
+Adding more admin views: build them inside this blueprint and keep the
+same `_require_admin()` gate at the top of every handler.
 """
-from flask import Blueprint, render_template, redirect, url_for, flash, abort
+from flask import Blueprint, render_template, redirect, url_for, flash, abort, request
 
 from database import get_db
 from routes.auth import current_user_id
@@ -45,6 +44,7 @@ def _delete_user_and_data(db, user_id):
     db.execute('DELETE FROM coaching_preferences          WHERE user_id = ?', (user_id,))
     db.execute('DELETE FROM feedback_log                  WHERE user_id = ?', (user_id,))
     db.execute('DELETE FROM wellness_log                  WHERE user_id = ?', (user_id,))
+    db.execute('DELETE FROM wellness_self_report          WHERE user_id = ?', (user_id,))
     db.execute('DELETE FROM garmin_auth                   WHERE user_id = ?', (user_id,))
     db.execute('DELETE FROM garmin_workouts               WHERE user_id = ?', (user_id,))
     db.execute('DELETE FROM locale_equipment              WHERE user_id = ?', (user_id,))
@@ -108,3 +108,60 @@ def delete_user(user_id):
 
     flash(f'Deleted user "{username}" and all associated data.', 'success')
     return redirect(url_for('admin.dashboard'))
+
+
+@bp.route('/audit')
+def audit():
+    """Read view over the admin_audit log.
+
+    Filterable by action and actor via query string. Cap rows returned —
+    the table only grows on admin mutations, so the cap is generous, but
+    we'd rather page than render unbounded.
+    """
+    _require_admin()
+    db = get_db()
+
+    action = (request.args.get('action') or '').strip()
+    actor = (request.args.get('actor') or '').strip()
+    limit = 500
+
+    where = []
+    params: list = []
+    if action:
+        where.append('a.action = ?')
+        params.append(action)
+    if actor:
+        # Accept either a numeric id or a username substring.
+        if actor.isdigit():
+            where.append('a.actor_user_id = ?')
+            params.append(int(actor))
+        else:
+            where.append('u.username LIKE ?')
+            params.append(f'%{actor}%')
+    where_sql = ('WHERE ' + ' AND '.join(where)) if where else ''
+
+    rows = db.execute(
+        f'''SELECT a.id, a.actor_user_id, u.username AS actor_username,
+                   a.action, a.target_user_id, a.target_username,
+                   a.details, a.created_at
+              FROM admin_audit a
+              LEFT JOIN users u ON u.id = a.actor_user_id
+              {where_sql}
+             ORDER BY a.id DESC
+             LIMIT {limit}''',
+        params,
+    ).fetchall()
+
+    # Distinct action values for the filter dropdown.
+    actions = [
+        r['action'] for r in db.execute(
+            'SELECT DISTINCT action FROM admin_audit ORDER BY action'
+        ).fetchall()
+    ]
+
+    return render_template(
+        'admin/audit.html',
+        rows=rows, actions=actions,
+        selected_action=action, selected_actor=actor,
+        limit=limit,
+    )
