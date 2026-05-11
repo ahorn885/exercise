@@ -44,6 +44,7 @@ def _delete_user_and_data(db, user_id):
     db.execute('DELETE FROM coaching_preferences          WHERE user_id = ?', (user_id,))
     db.execute('DELETE FROM feedback_log                  WHERE user_id = ?', (user_id,))
     db.execute('DELETE FROM wellness_log                  WHERE user_id = ?', (user_id,))
+    db.execute('DELETE FROM wellness_self_report          WHERE user_id = ?', (user_id,))
     db.execute('DELETE FROM garmin_auth                   WHERE user_id = ?', (user_id,))
     db.execute('DELETE FROM garmin_workouts               WHERE user_id = ?', (user_id,))
     db.execute('DELETE FROM locale_equipment              WHERE user_id = ?', (user_id,))

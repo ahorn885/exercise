@@ -490,6 +490,30 @@ Daily body-composition snapshot.
 - Index: `(user_id, date)`, `(date)` legacy.
 - Writes: `routes/body.py`, `routes/natural_log.py` (NLP).
 
+#### `wellness_self_report`
+
+Per-day self-reported sleep / energy / soreness / mood. Added 2026-05-11
+alongside the unified `/wellness` dashboard. Distinct from
+`wellness_log` (Garmin-imported per-minute series) and `conditions_log`
+(weather + clothing tied to a cardio session) — neither of those have a
+spot for general daily wellness.
+
+- Columns: `id`, `user_id`, `date`, `sleep_hours` (REAL, 0–24),
+  `sleep_quality` / `energy` / `soreness` / `mood` (INTEGER 1–5,
+  nullable), `notes`, `created_at`, `updated_at`.
+- Constraint: `UNIQUE (user_id, date)` — one report per day. The
+  `/wellness` POST does an existence-check + UPDATE-or-INSERT (manual
+  UPSERT shape because the form doesn't always carry every column).
+- Index: `(user_id, date)`.
+- Writes: `routes/wellness.py:index` (POST handler) only.
+- Reads: `routes/wellness.py:index` (charts the last N days where N is
+  one of {7, 30, 90}).
+- Cascade-delete: in `_delete_user_and_data` after `wellness_log`.
+- **Scale convention:** for `sleep_quality`, `energy`, `mood` higher is
+  better. For `soreness` higher is better too (5 = fresh, 1 = sore
+  everywhere). The template makes this explicit so the user doesn't
+  invert it.
+
 #### `conditions_log`
 
 Weather + clothing per activity. Optionally linked to a `cardio_log` row
@@ -816,6 +840,7 @@ that touches X, look here."
 | `cardio_log` | `cardio`, `conditions`, `dashboard`, `garmin`, `natural_log`, `admin` | `coaching.py` |
 | `body_metrics` | `body`, `dashboard`, `garmin`, `natural_log`, `training`, `admin` | `coaching.py` |
 | `conditions_log` | `conditions`, `admin` | `coaching.py` |
+| `wellness_self_report` | `wellness`, `admin` (cascade) | — |
 | `clothing_options` | `conditions`, `admin` | — |
 | `injury_log` | `dashboard`, `injuries`, `admin` | `coaching.py` |
 | `injury_exercise_modifications` | `injuries`, `plans`, `training`, `admin` | `coaching.py` |
@@ -1099,9 +1124,9 @@ back to the tables it touches.
      `body_metrics`, `conditions_log`,
      `injury_exercise_modifications` (parent-JOIN), `injury_log`,
      `coaching_preferences`, `feedback_log`, `wellness_log`,
-     `garmin_auth`, `garmin_workouts`, `locale_equipment`,
-     `locale_profiles`, `clothing_options`, `current_rx`,
-     `athlete_profile`, `user_purchase_recommendations`,
+     `garmin_auth`, `garmin_workouts`, `wellness_self_report`,
+     `locale_equipment`, `locale_profiles`, `clothing_options`,
+     `current_rx`, `athlete_profile`, `user_purchase_recommendations`,
      `api_tokens`.
    - Finally: `users`.
 4. **Same transaction:** an `admin_audit` row is inserted with
