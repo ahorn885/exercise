@@ -22,6 +22,7 @@ from flask import Blueprint, render_template, request, redirect, url_for, flash
 import database
 from database import get_db
 from routes.auth import current_user_id
+from routes.oauth_callbacks import provider_slugs
 
 bp = Blueprint('wellness', __name__)
 
@@ -135,6 +136,7 @@ def index():
         range_choices=sorted(_RANGE_CHOICES.values()),
         chart_data=chart_data,
         has_any_data=any(chart_data.values()),
+        provider_count=len(provider_slugs()),
     )
 
 

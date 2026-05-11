@@ -124,9 +124,11 @@
 {% endif %}
 
 <p class="text-muted small mt-3">
-  Provider integrations (Strava / Polar / Wahoo) will appear here once the
-  OAuth callbacks land. Their stubs already exist at
-  <code>/auth/{strava,polar,wahoo}/callback</code>.
+  Provider integrations will appear here once their OAuth callbacks land.
+  Stubs are already wired for {{ provider_count }} providers (Garmin,
+  Strava, Polar, Wahoo, COROS, Whoop, TrainingPeaks, Zwift, Apple Health,
+  Google Health, and others) at
+  <code>/auth/&lt;provider&gt;/callback</code>.
 </p>
 {% endblock %}
 

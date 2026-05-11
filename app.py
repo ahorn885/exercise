@@ -172,10 +172,10 @@ _AUTH_EXEMPT_ENDPOINTS = {
     'auth.register',
     'auth.forgot',
     'auth.reset',
-    'oauth_callbacks.garmin',
-    'oauth_callbacks.strava',
-    'oauth_callbacks.polar',
-    'oauth_callbacks.wahoo',
+    # Single endpoint covers every registered provider (slug allowlist
+    # lives in routes/oauth_callbacks.py). Adding a new provider does
+    # not require a change here.
+    'oauth_callbacks.callback',
 }
 
 

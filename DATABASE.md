@@ -1014,12 +1014,16 @@ its endpoint name to `_AUTH_EXEMPT_ENDPOINTS` in `app.py`. Otherwise
 the gate redirects un-authed users back to `/auth/login` and the new
 flow never runs.
 
-As of 2026-05-11 the set also includes
-`oauth_callbacks.{garmin,strava,polar,wahoo}` — the four stub callbacks
-that satisfy provider-side URL-resolution checks at
-`/auth/<provider>/callback`. The handlers return 501 until the real
-OAuth exchange is implemented; the per-user token storage table is
-still TBD.
+As of 2026-05-11 the set also includes `oauth_callbacks.callback` —
+the single parameterised endpoint that backs the per-provider stub
+callbacks at `/auth/<slug>/callback`. The slug allowlist lives in
+`routes/oauth_callbacks.py:_PROVIDERS` (currently 18 entries: Garmin,
+Strava, Polar, Wahoo, COROS, Google Health, Apple Health, Whoop,
+TrainingPeaks, Zwift, V.02, Nike Run Club, Ride With GPS, Decathlon,
+adidas Running, Komoot, Final Surge, MyFitnessPal). All return 501
+until the real OAuth exchange is implemented; the per-user token
+storage table is still TBD. Adding the next provider is a one-line
+tuple append — no change here.
 
 ### Admin gate
 
