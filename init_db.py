@@ -1205,9 +1205,13 @@ _SQLITE_MIGRATIONS = [
         token_hash TEXT NOT NULL UNIQUE,
         created_at TEXT NOT NULL DEFAULT (datetime('now')),
         last_used_at TEXT,
-        revoked_at TEXT
+        revoked_at TEXT,
+        expires_at TEXT
     )""",
     "CREATE INDEX IF NOT EXISTS api_tokens_user_id_idx ON api_tokens(user_id)",
+    # `expires_at` was added after initial deploy. SQLite ADD COLUMN doesn't
+    # support IF NOT EXISTS; failures are swallowed by the migration loop.
+    "ALTER TABLE api_tokens ADD COLUMN expires_at TEXT",
 ]
 
 _PG_MIGRATIONS = [
@@ -1456,9 +1460,12 @@ _PG_MIGRATIONS = [
         token_hash TEXT NOT NULL UNIQUE,
         created_at TIMESTAMP NOT NULL DEFAULT NOW(),
         last_used_at TIMESTAMP,
-        revoked_at TIMESTAMP
+        revoked_at TIMESTAMP,
+        expires_at TIMESTAMP
     )""",
     "CREATE INDEX IF NOT EXISTS api_tokens_user_id_idx ON api_tokens(user_id)",
+    # `expires_at` was added after initial deploy.
+    "ALTER TABLE api_tokens ADD COLUMN IF NOT EXISTS expires_at TIMESTAMP",
 ]
 
 _CLOTHING_SEEDS = [

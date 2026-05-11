@@ -120,9 +120,9 @@ def generate_api_token() -> tuple[str, str]:
 def verify_bearer_token(db) -> int | None:
     """Resolve an `Authorization: Bearer <token>` header to a user id.
 
-    Returns None on missing/malformed/revoked/unknown tokens. Updates
-    `last_used_at` on a hit so the operator can see which tokens are
-    actually in use.
+    Returns None on missing/malformed/revoked/expired/unknown tokens.
+    Updates `last_used_at` on a hit so the operator can see which tokens
+    are actually in use.
     """
     auth = request.headers.get('Authorization', '')
     if not auth.lower().startswith('bearer '):
@@ -132,10 +132,13 @@ def verify_bearer_token(db) -> int | None:
         return None
     h = _hash_api_token(plaintext)
     row = db.execute(
-        'SELECT id, user_id, revoked_at FROM api_tokens WHERE token_hash = ?',
+        'SELECT id, user_id, revoked_at, expires_at FROM api_tokens '
+        'WHERE token_hash = ?',
         (h,)
     ).fetchone()
     if not row or row['revoked_at']:
+        return None
+    if row['expires_at'] and _is_past(row['expires_at']):
         return None
     db.execute(
         'UPDATE api_tokens SET last_used_at = ? WHERE id = ?',
@@ -143,6 +146,26 @@ def verify_bearer_token(db) -> int | None:
     )
     db.commit()
     return row['user_id']
+
+
+def _is_past(ts) -> bool:
+    """Return True if the timestamp (datetime from Postgres, ISO-8601 string
+    from SQLite) is at or before now. Defensive parse — on any failure
+    treat as not-expired so a malformed value doesn't lock a user out."""
+    if ts is None:
+        return False
+    if isinstance(ts, datetime):
+        cmp = ts.replace(tzinfo=None) if ts.tzinfo else ts
+        return cmp <= datetime.utcnow()
+    try:
+        s = str(ts).strip()
+        # Strip trailing 'Z' or timezone offset for naive comparison.
+        if s.endswith('Z'):
+            s = s[:-1]
+        parsed = datetime.fromisoformat(s.split('+')[0].split(' UTC')[0])
+        return parsed <= datetime.utcnow()
+    except Exception:
+        return False
 
 
 def current_user(db):
