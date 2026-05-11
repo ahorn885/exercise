@@ -122,10 +122,20 @@ Neon's built-in pooler would be the next step.
 
 1. Allow if endpoint is in `_AUTH_EXEMPT_ENDPOINTS`
    (`auth.login`, `auth.logout`, `auth.register`, `auth.forgot`,
-   `auth.reset`, `static`, blueprint-static).
-2. Read `session['user_id']`. If missing → redirect to `/auth/login`.
-3. **Hydrate the user row once** via `current_user(get_db())` and stash on
-   `g.current_user_row`. Two reasons:
+   `auth.reset`, the four `oauth_callbacks.*` stubs, `static`,
+   blueprint-static).
+2. **Bearer-token auth** is checked first (so an external script's
+   Authorization header beats any stale cookie). `verify_bearer_token`
+   in `routes/auth.py` SHA-256-hashes the inbound `Bearer <token>`
+   value, looks up `api_tokens.token_hash`, refuses if `revoked_at`
+   or `expires_at` (when set) is in the past, and on hit sets
+   `g.api_user_id = row.user_id`, `g.api_authed = True`, and bumps
+   `last_used_at`. `current_user_id()` resolves to this id the same
+   way it would resolve a session id.
+3. Otherwise read `session['user_id']`. If missing → redirect to
+   `/auth/login`.
+4. **Hydrate the user row once** via `current_user(get_db())` and
+   stash on `g.current_user_row`. Two reasons:
    - The context processor and any route handler can read the user row
      without re-querying.
    - It defends against a stale session cookie pointing at a `users` row
@@ -133,12 +143,14 @@ Neon's built-in pooler would be the next step.
      cutover). Without hydration, the gate would admit a "ghost" user
      whose templates render with `current_user=None`, hiding the only
      logout button.
-4. If hydration fails, `session.clear()` and bounce. Errors print to
+5. If hydration fails, `session.clear()` and bounce. Errors print to
    stdout (visible in Vercel logs) so failures surface instead of being
    silently swallowed.
 
-`current_user_id()` (in `routes/auth.py`) returns `session.get('user_id')`
-without a DB hit — used by every route to scope queries.
+`current_user_id()` (in `routes/auth.py`) returns `g.api_user_id` when
+the request came in via bearer token, otherwise
+`session.get('user_id')`. No DB hit — used by every route to scope
+queries.
 
 The context processor `_inject_current_user` makes `current_user`
 available to every template, reading from `g.current_user_row` (no
@@ -312,6 +324,59 @@ includes `ctx['athlete_profile']`).
 - Surfaced on: `/profile` (Athlete tab) and in every coaching API call's
   context block.
 
+#### `admin_audit`
+
+Append-only log of admin mutations. Added PR #12 alongside the cascade-
+delete handler; surfaced for browsing by the read view added in the
+2026-05-11 session.
+
+- Columns: `id` (SERIAL/INTEGER PK), `actor_user_id` (INTEGER FK to
+  `users(id)` — NULLABLE so the row survives if the admin who took the
+  action is later deleted), `action` (TEXT — conventional values like
+  `'delete_user'`; freeform, one string per admin mutation type),
+  `target_user_id` (INTEGER, **deliberately FK-less** so the row also
+  survives target deletion), `target_username` (TEXT — snapshotted at
+  delete time), `details` (TEXT, optional JSON or freetext payload),
+  `created_at`.
+- Index: `(created_at DESC)` for the read view.
+- Writes: `routes/admin.py:delete_user` only, **in the same transaction
+  as the cascade delete** — both succeed or both roll back.
+- Reads: `routes/admin.py:audit` (the read view at `/admin/audit`).
+- **Convention:** every new admin-mutation handler should append a row
+  with a fresh `action` string. Don't add the FK to `target_user_id` —
+  the row's job is to outlive the target. Audit rows are intentionally
+  not in `_delete_user_and_data`'s cascade chain.
+
+#### `api_tokens`
+
+Per-user bearer tokens for headless access to `/coaching/api/*`. Added
+PR #15; `expires_at` column added in the 2026-05-11 session.
+
+- Columns: `id` (SERIAL/INTEGER PK), `user_id` (INTEGER NOT NULL FK),
+  `name` (TEXT — user-supplied label), `token_hash` (TEXT NOT NULL
+  UNIQUE — SHA-256 hex digest of the plaintext), `created_at`,
+  `last_used_at` (updated by `verify_bearer_token` on every hit),
+  `revoked_at` (soft-revoke; preserves audit trail),
+  `expires_at` (NULL = never expires; otherwise the verify path
+  refuses the token when the timestamp is in the past).
+- Index: `(user_id)`.
+- **Hashing convention:** plaintext is `aid_<base64url(32)>` (32 bytes
+  of cryptographic random with a stable prefix). Shown to the user
+  exactly once at creation via one-shot session storage
+  (`flask_session['new_api_token_plaintext']`) and never persisted.
+  Verification = SHA-256 the inbound header value and look up by
+  `token_hash`. **SHA-256, not bcrypt**: tokens are crypto-random with
+  no brute-force surface, and the verify path needs a deterministic
+  hash for index lookup.
+- Writes: `routes/profile.py:create_api_token` (issue),
+  `routes/profile.py:revoke_api_token` (soft-revoke),
+  `routes/auth.py:verify_bearer_token` (`last_used_at` bump on hit).
+- Reads: `routes/profile.py:edit` (token list on the API access tab),
+  `routes/auth.py:verify_bearer_token` (the auth gate).
+- Cascade-delete: `routes/admin._delete_user_and_data` picks up
+  `api_tokens` before `users`. **Any new user-scoped table must be
+  added to that chain.**
+
 ### Strength training
 
 #### `training_sessions`
@@ -338,13 +403,20 @@ session.
   `body_weight`, `next_*`, `progression_level`, `notes`,
   `garmin_activity_id`, `plan_item_id`, `session_id`, `created_at`.
 - Indexes: `(user_id, date)`, `(date)`, `(exercise)`, `(session_id)`.
-- Single source of truth for writing rows: `rx_engine.apply_session_outcome()`.
-  Don't insert into `training_log` directly except through that function
-  or the equally-disciplined NLP / FIT importers — both branches run the
-  same Family-A/Family-B baseline math.
-- `outcome` ∈ {`PROGRESS`, `REPEAT`, `FAIL`}. Drives the
+- Single source of truth for writing rows that should update `current_rx`:
+  `rx_engine.apply_session_outcome()`. The training form (`routes/training.py`)
+  and the FIT importer (`routes/garmin.py`) both route through it.
+  **Exception:** `routes/natural_log.py:/log-natural/save` inserts
+  `training_log` / `training_log_sets` directly with `outcome=NULL` and
+  does **not** call `apply_session_outcome` or update `current_rx`. See
+  `rx_engine_spec.md` §12.7 — flagged as an open item for v2 to decide
+  (journal-only by design vs. unintended bypass).
+- `outcome` literally holds `'PROGRESS ↑'`, `'REPEAT →'`, `'REDUCE ↓'`
+  (the arrows are part of the value) or `NULL` on bootstrap-mode FIT
+  imports and NLP entries. The arrowed strings drive the
   Family-B-promotion logic and the `consecutive_failures` /
-  `sessions_since_progress` counters in `current_rx`.
+  `sessions_since_progress` counters in `current_rx`. Templates that
+  display the value should render it as-is.
 
 #### `training_log_sets`
 
@@ -766,6 +838,8 @@ that touches X, look here."
 | `wellness_log` | `garmin`, `admin` | `coaching.py` |
 | `training_modalities` | — | `coaching.py` (reference only) |
 | `training_methods` | — | (read in plan generation) |
+| `admin_audit` | `admin` (write in `delete_user`, read in `audit`) | — |
+| `api_tokens` | `auth` (verify), `profile` (issue, revoke, list), `admin` (cascade) | — |
 
 ---
 
@@ -915,6 +989,13 @@ its endpoint name to `_AUTH_EXEMPT_ENDPOINTS` in `app.py`. Otherwise
 the gate redirects un-authed users back to `/auth/login` and the new
 flow never runs.
 
+As of 2026-05-11 the set also includes
+`oauth_callbacks.{garmin,strava,polar,wahoo}` — the four stub callbacks
+that satisfy provider-side URL-resolution checks at
+`/auth/<provider>/callback`. The handlers return 501 until the real
+OAuth exchange is implemented; the per-user token storage table is
+still TBD.
+
 ### Admin gate
 
 `routes/admin.py` is the one place where `user_id` scoping is
@@ -1020,14 +1101,22 @@ back to the tables it touches.
      `coaching_preferences`, `feedback_log`, `wellness_log`,
      `garmin_auth`, `garmin_workouts`, `locale_equipment`,
      `locale_profiles`, `clothing_options`, `current_rx`,
-     `athlete_profile`, `user_purchase_recommendations`.
+     `athlete_profile`, `user_purchase_recommendations`,
+     `api_tokens`.
    - Finally: `users`.
-4. Shared catalogs (`exercise_inventory`, `equipment_items`,
+4. **Same transaction:** an `admin_audit` row is inserted with
+   `actor_user_id=current_user_id()`, `action='delete_user'`,
+   `target_user_id`, and the snapshotted `target_username`. `details`
+   is left NULL today; reserved for any payload future actions want
+   to record. The audit row is intentionally **not** in the cascade
+   chain so it survives target deletion.
+5. Shared catalogs (`exercise_inventory`, `equipment_items`,
    `purchase_recommendations`, `training_modalities`, `training_methods`,
    `exercise_equipment`) untouched.
-5. Commit; success flash. The deleted user's session cookie, if it
+6. Commit; success flash. The deleted user's session cookie, if it
    still existed, gets cleared on the next request by
    `_require_login`'s hydration check.
+7. The row is visible at `/admin/audit` (filter by action or actor).
 
 ### Resetting a forgotten password
 
