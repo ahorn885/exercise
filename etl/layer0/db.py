@@ -41,7 +41,7 @@ def connect() -> Iterator[psycopg2.extensions.connection]:
 
 def apply_schema(conn: psycopg2.extensions.connection) -> None:
     """Run schema.sql. Idempotent — every CREATE uses IF NOT EXISTS."""
-    sql = SCHEMA_PATH.read_text()
+    sql = SCHEMA_PATH.read_text(encoding="utf-8")
     with conn.cursor() as cur:
         cur.execute(sql)
     conn.commit()

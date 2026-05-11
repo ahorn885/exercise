@@ -73,7 +73,7 @@ def parse_vocabulary_md(path: str | Path) -> dict[str, list[dict[str, Any]]]:
           "sport_specific_gear_toggles": [...],
         }
     """
-    text = Path(path).read_text()
+    text = Path(path).read_text(encoding="utf-8")
     return {
         "body_parts": _parse_body_parts(text),
         "health_condition_categories": _parse_health_categories(text),
