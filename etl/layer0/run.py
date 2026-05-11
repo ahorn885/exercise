@@ -306,6 +306,7 @@ def main(argv: list[str] | None = None) -> int:
             "sport_name", "phase",
             "weekly_low_hours", "weekly_high_hours",
             "weekly_target_text",
+            "weekly_unit",
         ]
         n = insert_versioned(
             conn, "layer0.phase_load_weekly_totals",
