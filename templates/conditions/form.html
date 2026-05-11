@@ -64,7 +64,7 @@
     </div>
   </div>
 
-  <div id="outdoor-fields" class="row g-3 mb-3" {% if is_indoor_init %}style="display:none"{% endif %}>
+  <div id="outdoor-fields" class="row g-3 mb-3{% if is_indoor_init %} d-none{% endif %}">
     <div class="col-md-2">
       <label class="form-label">Wind (mph)</label>
       <input type="number" name="wind_mph" class="form-control" step="0.1" value="{{ entry.wind_mph if entry else '' }}">
@@ -163,7 +163,7 @@ function updateIndoorFromActivity(sel) {
 function toggleIndoor(cb) {
   const outdoor = document.getElementById('outdoor-fields');
   if (outdoor) {
-    outdoor.style.display = cb.checked ? 'none' : '';
+    outdoor.classList.toggle('d-none', cb.checked);
   }
 }
 document.getElementById('cardio-session-select').addEventListener('change', e => fillFromSession(e.target));

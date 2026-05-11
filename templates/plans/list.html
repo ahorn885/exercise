@@ -31,12 +31,12 @@
           {% if p.status == 'active' %}<span class="badge bg-success">Active</span>
           {% else %}<span class="badge bg-secondary">{{ p.status }}</span>{% endif %}
         </td>
-        <td class="d-none d-md-table-cell" style="min-width:140px">
+        <td class="d-none d-md-table-cell u-minw-140">
           {% set total = p.item_count or 0 %}
           {% set done = p.completed_count or 0 %}
           {% if total > 0 %}
-          <div class="progress" style="height:8px">
-            <div class="progress-bar bg-success" style="width:{{ (done/total*100)|round|int }}%"></div>
+          <div class="progress u-h-8">
+            <div class="progress-bar bg-success" data-progress="{{ (done/total*100)|round|int }}"></div>
           </div>
           <small class="text-muted">{{ done }}/{{ total }}</small>
           {% else %}<span class="text-muted small">No workouts</span>{% endif %}

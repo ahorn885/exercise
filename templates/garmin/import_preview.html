@@ -70,7 +70,7 @@
           </label>
         </div>
 
-        <div id="planItemPicker" class="mb-3" style="display:none">
+        <div id="planItemPicker" class="mb-3 d-none">
           <label class="form-label fw-semibold">Which planned workout?</label>
           <select name="plan_item_id" class="form-select">
             <option value="">— select —</option>
@@ -87,7 +87,7 @@
           </select>
         </div>
 
-        <div id="reasonField" class="mb-1" style="display:none">
+        <div id="reasonField" class="mb-1 d-none">
           <label class="form-label fw-semibold">Why?</label>
           <textarea name="swap_reason" class="form-control" rows="2"
                     placeholder="e.g., didn't feel like running, did a bike ride instead"></textarea>
@@ -102,8 +102,8 @@
         const reason = document.getElementById('reasonField');
         function refresh() {
           const v = document.querySelector('.disposition-radio:checked')?.value;
-          picker.style.display = (v === 'completed' || v === 'swapped_for' || v === 'in_addition_to') ? '' : 'none';
-          reason.style.display = (v === 'swapped_for' || v === 'in_addition_to') ? '' : 'none';
+          picker.classList.toggle('d-none', !(v === 'completed' || v === 'swapped_for' || v === 'in_addition_to'));
+          reason.classList.toggle('d-none', !(v === 'swapped_for' || v === 'in_addition_to'));
         }
         radios.forEach(r => r.addEventListener('change', refresh));
         refresh();
@@ -160,7 +160,7 @@
             <tbody>
               {% macro row(label, val, unit='') %}
               <tr>
-                <th class="text-muted" style="width:40%">{{ label }}</th>
+                <th class="text-muted u-w-40pct">{{ label }}</th>
                 <td>{% if val is not none %}{{ val }}{% if unit %} {{ unit }}{% endif %}{% else %}<span class="text-muted">—</span>{% endif %}</td>
               </tr>
               {% endmacro %}

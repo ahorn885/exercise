@@ -95,7 +95,7 @@
               <td>
                 <form method="post" action="{{ url_for('injuries.delete_modification', entry_id=e.id, mod_id=m.id) }}" class="d-inline">
                   <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                  <button class="btn btn-xs btn-outline-danger py-0 px-1" style="font-size:.7rem" title="Remove">✕</button>
+                  <button class="btn btn-xs btn-outline-danger py-0 px-1 u-fs-70" title="Remove">✕</button>
                 </form>
               </td>
             </tr>

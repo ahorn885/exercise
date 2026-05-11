@@ -13,7 +13,7 @@
   <link href="{{ url_for('static', filename='style.css') }}" rel="stylesheet">
 </head>
 <body class="auth-body">
-<div class="container py-5" style="max-width: 460px;">
+<div class="container py-5 u-mw-460">
   <div class="text-center mb-4">
     {# Use the standalone light-bg lockup SVG. The inline-SVG pattern from
        base.html relies on the dark navbar to colour the strokes/text via
@@ -22,7 +22,7 @@
        white-on-white. #}
     <a href="{{ url_for('auth.login') }}" aria-label="AIDSTATION home">
       <img src="{{ url_for('static', filename='logo/lockup-light.svg') }}"
-           alt="AIDSTATION" style="height:60px;width:auto;">
+           alt="AIDSTATION" class="u-logo-thumb">
     </a>
   </div>
 
