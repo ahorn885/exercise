@@ -139,6 +139,8 @@ from routes.wellness import bp as wellness_bp
 from routes.admin import bp as admin_bp
 from routes.auth import bp as auth_bp, current_user, verify_bearer_token
 from routes.oauth_callbacks import bp as oauth_callbacks_bp
+from routes.status import bp as status_bp
+from routes.coros import bp as coros_bp
 
 app.register_blueprint(dashboard_bp)
 app.register_blueprint(training_bp)
@@ -159,6 +161,13 @@ app.register_blueprint(wellness_bp)
 app.register_blueprint(admin_bp)
 app.register_blueprint(auth_bp)
 app.register_blueprint(oauth_callbacks_bp)
+app.register_blueprint(status_bp)
+app.register_blueprint(coros_bp)
+# COROS pushes workout-summary data to /coros/webhook from their servers,
+# not from a browser session, so the global CSRF protection doesn't apply
+# (and would 400 every push). Auth is via the `client` + `secret` request
+# headers, verified inside the blueprint in Phase 6.
+csrf.exempt(coros_bp)
 
 
 # ── Auth gate ────────────────────────────────────────────────────────────────
@@ -176,6 +185,11 @@ _AUTH_EXEMPT_ENDPOINTS = {
     # lives in routes/oauth_callbacks.py). Adding a new provider does
     # not require a change here.
     'oauth_callbacks.callback',
+    # Health-check probe and COROS webhook stub: both are called by
+    # external systems (uptime monitors, COROS push service) with no
+    # session cookie.
+    'status.status',
+    'coros.webhook',
 }
 
 
