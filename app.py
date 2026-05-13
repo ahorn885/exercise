@@ -141,6 +141,7 @@ from routes.auth import bp as auth_bp, current_user, verify_bearer_token
 from routes.oauth_callbacks import bp as oauth_callbacks_bp
 from routes.status import bp as status_bp
 from routes.coros import bp as coros_bp
+from routes.ride_with_gps import bp as ride_with_gps_bp
 
 app.register_blueprint(dashboard_bp)
 app.register_blueprint(training_bp)
@@ -163,11 +164,16 @@ app.register_blueprint(auth_bp)
 app.register_blueprint(oauth_callbacks_bp)
 app.register_blueprint(status_bp)
 app.register_blueprint(coros_bp)
+app.register_blueprint(ride_with_gps_bp)
 # COROS pushes workout-summary data to /coros/webhook from their servers,
 # not from a browser session, so the global CSRF protection doesn't apply
 # (and would 400 every push). Auth is via the `client` + `secret` request
 # headers, verified inside the blueprint in Phase 6.
 csrf.exempt(coros_bp)
+# Same rationale for Ride With GPS: pushes originate from RWGPS servers
+# with an `x-rwgps-signature` HMAC header, not from a browser. Signature
+# verification happens inside the blueprint when the stub is promoted.
+csrf.exempt(ride_with_gps_bp)
 
 
 # ── Auth gate ────────────────────────────────────────────────────────────────
@@ -190,6 +196,7 @@ _AUTH_EXEMPT_ENDPOINTS = {
     # session cookie.
     'status.status',
     'coros.webhook',
+    'ride_with_gps.webhook',
 }
 
 
