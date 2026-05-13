@@ -47,17 +47,23 @@ _PROVIDERS: tuple[tuple[str, str], ...] = (
 )
 _PROVIDER_NAMES = dict(_PROVIDERS)
 
+# Providers whose developer portal HEAD- or GET-probes the registered
+# redirect URI when the partner saves the API-client form. For these we
+# return 200 instead of 501 so the form-side validation passes. Once the
+# real OAuth exchange ships, the provider drops out of this set.
+_PROBED_AT_REGISTRATION: frozenset[str] = frozenset({
+    'ride-with-gps',
+})
+
 
 @bp.route('/<provider>/callback', methods=['GET', 'POST'])
 def callback(provider: str):
     name = _PROVIDER_NAMES.get(provider)
     if name is None:
         abort(404)
-    return (
-        f'{name} OAuth callback not yet implemented.',
-        501,
-        {'Content-Type': 'text/plain; charset=utf-8'},
-    )
+    body = f'{name} OAuth callback not yet implemented.'
+    status = 200 if provider in _PROBED_AT_REGISTRATION else 501
+    return (body, status, {'Content-Type': 'text/plain; charset=utf-8'})
 
 
 def provider_slugs() -> tuple[str, ...]:
