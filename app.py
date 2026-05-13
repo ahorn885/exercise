@@ -142,6 +142,10 @@ from routes.oauth_callbacks import bp as oauth_callbacks_bp
 from routes.status import bp as status_bp
 from routes.coros import bp as coros_bp
 from routes.ride_with_gps import bp as ride_with_gps_bp
+from routes.strava import bp as strava_bp
+from routes.whoop import bp as whoop_bp
+from routes.trainingpeaks import bp as trainingpeaks_bp
+from routes.zwift import bp as zwift_bp
 
 app.register_blueprint(dashboard_bp)
 app.register_blueprint(training_bp)
@@ -165,6 +169,10 @@ app.register_blueprint(oauth_callbacks_bp)
 app.register_blueprint(status_bp)
 app.register_blueprint(coros_bp)
 app.register_blueprint(ride_with_gps_bp)
+app.register_blueprint(strava_bp)
+app.register_blueprint(whoop_bp)
+app.register_blueprint(trainingpeaks_bp)
+app.register_blueprint(zwift_bp)
 # COROS pushes workout-summary data to /coros/webhook from their servers,
 # not from a browser session, so the global CSRF protection doesn't apply
 # (and would 400 every push). Auth is via the `client` + `secret` request
@@ -174,6 +182,12 @@ csrf.exempt(coros_bp)
 # with an `x-rwgps-signature` HMAC header, not from a browser. Signature
 # verification happens inside the blueprint when the stub is promoted.
 csrf.exempt(ride_with_gps_bp)
+# Strava / Whoop / TrainingPeaks / Zwift webhooks all originate from
+# provider servers, not a browser session — same CSRF rationale.
+csrf.exempt(strava_bp)
+csrf.exempt(whoop_bp)
+csrf.exempt(trainingpeaks_bp)
+csrf.exempt(zwift_bp)
 
 
 # ── Auth gate ────────────────────────────────────────────────────────────────
@@ -197,6 +211,10 @@ _AUTH_EXEMPT_ENDPOINTS = {
     'status.status',
     'coros.webhook',
     'ride_with_gps.webhook',
+    'strava.webhook',
+    'whoop.webhook',
+    'trainingpeaks.webhook',
+    'zwift.webhook',
 }
 
 
