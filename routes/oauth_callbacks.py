@@ -53,6 +53,10 @@ _PROVIDER_NAMES = dict(_PROVIDERS)
 # real OAuth exchange ships, the provider drops out of this set.
 _PROBED_AT_REGISTRATION: frozenset[str] = frozenset({
     'ride-with-gps',
+    'strava',
+    'whoop',
+    'trainingpeaks',
+    'zwift',
 })
 
 
