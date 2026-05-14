@@ -65,16 +65,19 @@ _STATUS_DISPLAY = {
 }
 
 
-def _load_connections(db, uid):
-    """Build the Connections-tab data. Returns a list of dicts in
+def load_connections(db, uid, return_to=None):
+    """Build provider-connection display data. Returns a list of dicts in
     `CONNECTION_PROVIDERS` order, one per known provider. Each entry
-    carries the on-disk `provider_auth` row (or None) plus the
-    pre-computed display fields the template renders.
+    carries the on-disk `provider_auth` row (or None) plus pre-computed
+    display fields (status label, badge class, is_connected flag,
+    connect_url) the templates render.
 
-    Connect / re-auth links route through `<provider>.oauth_start` with
-    `return_to=/profile?tab=connections` so the post-OAuth redirect
-    lands the athlete back on the Connections tab with the
-    `?<provider>_connected=1` passive-prefill prompt visible.
+    `return_to` is the relative path the provider's OAuth callback
+    redirects to with `?<provider>_connected=1` / `?<provider>_oauth_error=…`
+    appended. Defaults to `/profile?tab=connections` so the existing
+    Connections-tab callers (PR4) keep working unchanged; the onboarding
+    Step-2 connect screen (PR5) passes `/onboarding/connect` so the
+    post-OAuth bounce lands the athlete back in the onboarding flow.
     """
     rows = db.execute(
         'SELECT provider, status, registered_at, scopes, '
@@ -83,7 +86,8 @@ def _load_connections(db, uid):
         (uid,),
     ).fetchall()
     by_provider = {r['provider']: dict(r) for r in rows}
-    return_to = url_for('profile.edit') + '?tab=connections'
+    if return_to is None:
+        return_to = url_for('profile.edit') + '?tab=connections'
     out = []
     for slug, label, endpoint in CONNECTION_PROVIDERS:
         row = by_provider.get(slug)
@@ -182,7 +186,7 @@ def edit():
     # redirects to GET, then the GET handler reads-and-clears.
     from flask import session as flask_session
     new_token_plaintext = flask_session.pop('new_api_token_plaintext', None)
-    connections = _load_connections(db, uid)
+    connections = load_connections(db, uid)
     # Post-OAuth-callback flags. `<provider>.oauth_callback` redirects to
     # `return_to?<slug>_connected=1` on success (or `?<slug>_oauth_error=...`
     # / `?<slug>_register_error=1` on failure). Surface the connected

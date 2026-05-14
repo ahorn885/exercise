@@ -386,7 +386,7 @@
    passive prompt visible, rather than the Athlete tab where the user
    started. Active tab passed in from the route handler when available;
    otherwise we read it from the URL directly. #}
-<script>
+<script nonce="{{ csp_nonce() }}">
 (function() {
   var params = new URLSearchParams(window.location.search);
   var requested = {{ (active_tab or '')|tojson }};

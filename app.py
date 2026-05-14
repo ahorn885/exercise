@@ -134,6 +134,7 @@ from routes.plans import bp as plans_bp
 from routes.coaching import bp as coaching_bp
 from routes.natural_log import bp as natural_log_bp
 from routes.profile import bp as profile_bp
+from routes.onboarding import bp as onboarding_bp
 from routes.purchases import bp as purchases_bp
 from routes.wellness import bp as wellness_bp
 from routes.admin import bp as admin_bp
@@ -162,6 +163,7 @@ app.register_blueprint(plans_bp)
 app.register_blueprint(coaching_bp)
 app.register_blueprint(natural_log_bp)
 app.register_blueprint(profile_bp)
+app.register_blueprint(onboarding_bp)
 app.register_blueprint(purchases_bp)
 app.register_blueprint(wellness_bp)
 app.register_blueprint(admin_bp)
