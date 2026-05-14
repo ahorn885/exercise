@@ -182,9 +182,21 @@ conventions every new table must follow (`?` placeholders, branch on
 
 Constraint: `UNIQUE (user_id, provider)` — UPSERT target.
 
-Replaces the per-provider `garmin_auth` pattern. `garmin_auth` itself
-stays as-is (legacy; `garth`-based username/password flow has no
-OAuth tokens). New providers all go in `provider_auth`.
+Replaces the per-provider `garmin_auth` pattern. **Plan:** when Garmin
+API access reopens (Garmin temporarily closed new API onboarding as
+of 2026-05-14), Garmin migrates to `provider_auth` with a new
+`session_blob TEXT` column on `provider_auth` to carry the `garth`
+session JSON. The legacy `garmin_auth` table is dropped at that point
+(cleanup, not a data migration — there is no production data and no
+Garmin-connected users to preserve). Until the API reopens,
+`garmin_auth` stays in `init_db.py` as-is and the existing
+`routes/garmin.py` / `garmin_connect.py` continue to use it. New
+providers (Polar, Wahoo, COROS, RWGPS, Strava, Whoop, TrainingPeaks,
+Zwift, etc.) all go straight into `provider_auth`.
+
+Reconciled with `aidstation-sources/Athlete_Data_Integration_Spec_v3`
+§2.3 in the 2026-05-14 single-repo reconciliation pass — both
+documents now agree on the target state.
 
 **`webhook_events`** — generic audit + dedup for incoming pushes.
 
@@ -305,7 +317,12 @@ Worked example for `slug = "ride-with-gps"`:
 ## 7. What stays out of this schema
 
 - **`garmin_auth`** — pre-OAuth, uses `garth` username/password flow.
-  Not being migrated to `provider_auth`. Stays as documented in
+  **Currently still in use** in `init_db.py` and `routes/garmin.py`.
+  **Planned for removal** once Garmin API access reopens — Garmin
+  will then move to `provider_auth` with a `session_blob TEXT`
+  column for the `garth` session JSON. Tracked as D-55 in
+  `aidstation-sources/Project_Backlog_v12` (status: ⏸ Paused).
+  Until then, `garmin_auth` stays as documented in
   `DATABASE.md:garmin_auth`.
 - **Per-provider migration files** — all schema changes are additive
   via `_PG_MIGRATIONS` / `_SQLITE_MIGRATIONS` lists in `init_db.py`.
