@@ -167,7 +167,7 @@ This context matters because Andy dogfoods his own product — coaching guidance
 When you start a fresh session, do this before anything else:
 
 1. Read this CLAUDE.md fully.
-2. Read `backlog/Project_Backlog_v11.md` (or highest `_vN`).
+2. Read `Project_Backlog_v11.md` (or highest `_vN`).
 3. Read the most recent handoff in `handoffs/`.
 4. Apply Rule #9 — verify the previous handoff's claimed edits actually landed.
 5. Tell Andy: (a) what you understand current state to be, (b) what you understand the next focus to be, (c) any drift you found between handoff narrative and on-disk state.
