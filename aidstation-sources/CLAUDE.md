@@ -52,13 +52,13 @@ Architecture overview lives in `Control_Spec` (resolve to highest `_vN.md`).
 Last shipped session: **L3-Spec-Trio Round 2** — see `handoffs/L3_Spec_Trio_R2_Closing_Handoff_v1.md`.
 
 **Authoritative current files** (always resolve by listing directory and viewing the highest `_vN`):
-- Architecture: `Control_Spec_v6.md`
-- Backlog: `Project_Backlog_v11.md`
-- Onboarding data: `Athlete_Onboarding_Data_Spec_v4.md`
-- Integration: `Athlete_Data_Integration_Spec_v2.md`
+- Architecture: `Control_Spec_v7.md`
+- Backlog: `Project_Backlog_v15.md`
+- Onboarding data: `Athlete_Onboarding_Data_Spec_v4.md` (Onboarding Design Wave consolidates into v5: D-59 + D-60 shipped as `Onboarding_D59_Design_v1.md` + `Onboarding_D60_Design_v1.md`; D-61 + D-58 pending)
+- Integration: `Athlete_Data_Integration_Spec_v4.md`
 - Catalog migration: `Catalog_Migration_Plan_v2.md`
 - Layer 0 ETL: `Layer0_ETL_Spec_v7.md`
-- Layer 3 done: `Layer3_3A_Spec.md`
+- Layer 3 done: `Layer3_3A_Spec.md`, `Layer3_3B_Spec.md`
 - Vocabulary audit: `Vocabulary_Audit_v3.md`
 - Exercise DB: `data/AR_Exercise_Database_v19.xlsx` (245 exercises, 36 sports, 1,068 sport-exercise pairings)
 - Sports framework: `data/Sports_Framework_v10.xlsx`
