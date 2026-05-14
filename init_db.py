@@ -28,6 +28,11 @@ SQLITE_SCHEMA = '''
         weekly_hours_target REAL,
         training_window TEXT,
         notes TEXT,
+        body_weight_kg REAL,
+        hrmax_bpm INTEGER,
+        lactate_threshold_hr_bpm INTEGER,
+        vo2max REAL,
+        cycling_ftp_w INTEGER,
         updated_at TEXT DEFAULT (datetime('now'))
     );
     CREATE TABLE IF NOT EXISTS exercise_inventory (
@@ -342,6 +347,11 @@ PG_SCHEMA = '''
         weekly_hours_target REAL,
         training_window TEXT,
         notes TEXT,
+        body_weight_kg REAL,
+        hrmax_bpm INTEGER,
+        lactate_threshold_hr_bpm INTEGER,
+        vo2max REAL,
+        cycling_ftp_w INTEGER,
         updated_at TIMESTAMP DEFAULT NOW()
     );
     CREATE TABLE IF NOT EXISTS exercise_inventory (
@@ -1148,6 +1158,8 @@ _SQLITE_MIGRATIONS = [
         date_of_birth TEXT, sex TEXT, height_cm REAL,
         primary_sport TEXT, target_event_name TEXT, target_event_date TEXT,
         weekly_hours_target REAL, training_window TEXT, notes TEXT,
+        body_weight_kg REAL, hrmax_bpm INTEGER,
+        lactate_threshold_hr_bpm INTEGER, vo2max REAL, cycling_ftp_w INTEGER,
         updated_at TEXT DEFAULT (datetime('now'))
     )""",
     # Session 5 — recommended-purchases rebuild. Shared catalog +
@@ -1377,6 +1389,14 @@ _SQLITE_MIGRATIONS = [
     "ALTER TABLE training_log ADD COLUMN polar_exercise_id TEXT",
     "ALTER TABLE training_log ADD COLUMN wahoo_workout_id TEXT",
     "ALTER TABLE training_log ADD COLUMN coros_label_id TEXT",
+    # PR6 (D-51) — v5 §A.2 prefill-eligible baselines added to athlete_profile.
+    # Self-report at onboarding today; provider extractors (D2a/PR7) will
+    # populate via athlete_profile_field_provenance once registry + UI ship.
+    "ALTER TABLE athlete_profile ADD COLUMN body_weight_kg REAL",
+    "ALTER TABLE athlete_profile ADD COLUMN hrmax_bpm INTEGER",
+    "ALTER TABLE athlete_profile ADD COLUMN lactate_threshold_hr_bpm INTEGER",
+    "ALTER TABLE athlete_profile ADD COLUMN vo2max REAL",
+    "ALTER TABLE athlete_profile ADD COLUMN cycling_ftp_w INTEGER",
 ]
 
 _PG_MIGRATIONS = [
@@ -1578,6 +1598,8 @@ _PG_MIGRATIONS = [
         date_of_birth TEXT, sex TEXT, height_cm REAL,
         primary_sport TEXT, target_event_name TEXT, target_event_date TEXT,
         weekly_hours_target REAL, training_window TEXT, notes TEXT,
+        body_weight_kg REAL, hrmax_bpm INTEGER,
+        lactate_threshold_hr_bpm INTEGER, vo2max REAL, cycling_ftp_w INTEGER,
         updated_at TIMESTAMP DEFAULT NOW()
     )""",
     # Session 5 — recommended-purchases rebuild.
@@ -1927,6 +1949,14 @@ _PG_MIGRATIONS = [
     "CREATE UNIQUE INDEX IF NOT EXISTS cardio_log_polar_exercise_uidx ON cardio_log (user_id, polar_exercise_id) WHERE polar_exercise_id IS NOT NULL",
     "CREATE UNIQUE INDEX IF NOT EXISTS cardio_log_coros_label_uidx ON cardio_log (user_id, coros_label_id) WHERE coros_label_id IS NOT NULL",
     "CREATE UNIQUE INDEX IF NOT EXISTS cardio_log_wahoo_workout_uidx ON cardio_log (user_id, wahoo_workout_id) WHERE wahoo_workout_id IS NOT NULL",
+    # PR6 (D-51) — v5 §A.2 prefill-eligible baselines added to athlete_profile.
+    # Self-report at onboarding today; provider extractors (D2a/PR7) will
+    # populate via athlete_profile_field_provenance once registry + UI ship.
+    "ALTER TABLE athlete_profile ADD COLUMN IF NOT EXISTS body_weight_kg REAL",
+    "ALTER TABLE athlete_profile ADD COLUMN IF NOT EXISTS hrmax_bpm INTEGER",
+    "ALTER TABLE athlete_profile ADD COLUMN IF NOT EXISTS lactate_threshold_hr_bpm INTEGER",
+    "ALTER TABLE athlete_profile ADD COLUMN IF NOT EXISTS vo2max REAL",
+    "ALTER TABLE athlete_profile ADD COLUMN IF NOT EXISTS cycling_ftp_w INTEGER",
 ]
 
 _CLOTHING_SEEDS = [

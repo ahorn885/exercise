@@ -23,10 +23,11 @@ from routes.auth import (
     generate_api_token,
 )
 from athlete import (
-    PROFILE_FIELDS, TRAINING_WINDOWS,
+    PROFILE_FIELDS, PREFILL_ELIGIBLE_FIELDS, TRAINING_WINDOWS,
     get_athlete_profile, upsert_athlete_profile,
 )
 from routes import provider_auth as pa
+import database
 
 
 bp = Blueprint('profile', __name__, url_prefix='/profile')
@@ -108,6 +109,43 @@ def load_connections(db, uid, return_to=None):
     return out
 
 
+def _record_self_report_provenance(db, uid, field_values):
+    """Write `athlete_profile_field_provenance` rows for prefill-eligible
+    fields the athlete just saved. v5 §A.2.3: an athlete entering a value
+    into a never-prefilled field sets `source='self_report'`.
+
+    PR6 always writes 'self_report' because no prefill mechanism exists
+    yet — the rows we touch are either non-existent (first save) or
+    already 'self_report' (prior save). D2 PRs add the
+    'provider_<X>' → 'manual_override' flip when an athlete edits a value
+    that came from a connected provider.
+
+    PG-only per Athlete_Data_Integration_Spec_v4 §2.5 (SQLite frozen).
+    The table is in `_PG_MIGRATIONS` only; we early-return on SQLite so
+    a local dev save doesn't error, just skips the provenance row.
+
+    `field_values` is a dict keyed by `athlete_profile.field_name`. None
+    values are skipped — clearing a field doesn't write a provenance row
+    in PR6 (D2's manual_override clear path will handle the inverse).
+    """
+    if not database._is_postgres():
+        return
+    for field_name, value in field_values.items():
+        if value is None:
+            continue
+        if field_name not in PREFILL_ELIGIBLE_FIELDS:
+            continue
+        db.execute(
+            'INSERT INTO athlete_profile_field_provenance '
+            '(user_id, field_name, source) '
+            'VALUES (?, ?, ?) '
+            'ON CONFLICT (user_id, field_name) DO UPDATE SET '
+            '    source = EXCLUDED.source, '
+            '    last_updated_at = NOW()',
+            (uid, field_name, 'self_report'),
+        )
+
+
 def _load_memory(db, user_id):
     """Return the coach-memory rows for the current user with provenance.
 
@@ -155,6 +193,13 @@ def edit():
         if window not in (None,) + TRAINING_WINDOWS:
             window = None
 
+        prefill_values = {
+            'body_weight_kg': _num('body_weight_kg'),
+            'hrmax_bpm': _num('hrmax_bpm', cast=int),
+            'lactate_threshold_hr_bpm': _num('lactate_threshold_hr_bpm', cast=int),
+            'vo2max': _num('vo2max'),
+            'cycling_ftp_w': _num('cycling_ftp_w', cast=int),
+        }
         upsert_athlete_profile(
             db, uid,
             date_of_birth=_str('date_of_birth'),
@@ -166,7 +211,9 @@ def edit():
             weekly_hours_target=_num('weekly_hours_target'),
             training_window=window,
             notes=_str('notes'),
+            **prefill_values,
         )
+        _record_self_report_provenance(db, uid, prefill_values)
         db.commit()
         flash('Profile saved.', 'success')
         return redirect(url_for('profile.edit'))
