@@ -79,6 +79,49 @@
                  value="{{ profile.target_event_date or '' }}">
         </div>
 
+        {# v5 §A.2 prefill-eligible baselines (PR6 D-51). Manual entry today;
+           connected providers (COROS / Polar / Wahoo) will auto-populate
+           these in a future release with the per-field comparison UI. #}
+        <div class="col-12">
+          <hr class="my-2">
+          <h6 class="text-muted small text-uppercase mb-1">Performance baselines</h6>
+          <p class="text-muted small mb-2">
+            Optional. Feeds Layer 3 athlete-evaluation calculations. Connected
+            providers will auto-populate these in a future release; for now
+            self-report is the only path.
+          </p>
+        </div>
+        <div class="col-md-4">
+          <label class="form-label" for="body_weight_kg">Body weight (kg)</label>
+          <input type="number" step="0.1" min="20" max="300"
+                 class="form-control" id="body_weight_kg" name="body_weight_kg"
+                 value="{{ profile.body_weight_kg if profile.body_weight_kg is not none else '' }}">
+        </div>
+        <div class="col-md-4">
+          <label class="form-label" for="hrmax_bpm">HRmax (bpm)</label>
+          <input type="number" step="1" min="100" max="240"
+                 class="form-control" id="hrmax_bpm" name="hrmax_bpm"
+                 value="{{ profile.hrmax_bpm if profile.hrmax_bpm is not none else '' }}">
+        </div>
+        <div class="col-md-4">
+          <label class="form-label" for="lactate_threshold_hr_bpm">Lactate threshold HR (bpm)</label>
+          <input type="number" step="1" min="100" max="220"
+                 class="form-control" id="lactate_threshold_hr_bpm" name="lactate_threshold_hr_bpm"
+                 value="{{ profile.lactate_threshold_hr_bpm if profile.lactate_threshold_hr_bpm is not none else '' }}">
+        </div>
+        <div class="col-md-4">
+          <label class="form-label" for="vo2max">VO2max (ml/kg/min)</label>
+          <input type="number" step="0.1" min="20" max="100"
+                 class="form-control" id="vo2max" name="vo2max"
+                 value="{{ profile.vo2max if profile.vo2max is not none else '' }}">
+        </div>
+        <div class="col-md-4">
+          <label class="form-label" for="cycling_ftp_w">Cycling FTP (watts)</label>
+          <input type="number" step="1" min="50" max="500"
+                 class="form-control" id="cycling_ftp_w" name="cycling_ftp_w"
+                 value="{{ profile.cycling_ftp_w if profile.cycling_ftp_w is not none else '' }}">
+        </div>
+
         <div class="col-12">
           <label class="form-label" for="notes">Notes for the coach</label>
           <textarea class="form-control" id="notes" name="notes" rows="3"

@@ -25,6 +25,26 @@ PROFILE_FIELDS = (
     'weekly_hours_target',
     'training_window',
     'notes',
+    # v5 §A.2 prefill-eligible baselines (PR6 D-51 column foundation).
+    # Self-report at onboarding today; provider extractors land in PR7
+    # (D2a) and write to athlete_profile_field_provenance.
+    'body_weight_kg',
+    'hrmax_bpm',
+    'lactate_threshold_hr_bpm',
+    'vo2max',
+    'cycling_ftp_w',
+)
+
+# Subset of PROFILE_FIELDS that v5 §A.2.1 marks as provider-prefill-eligible.
+# routes/profile.py:edit() writes athlete_profile_field_provenance rows
+# scoped to this tuple on save (source='self_report' for PR6; D2 PRs
+# add the manual_override flip when an athlete edits a prefilled value).
+PREFILL_ELIGIBLE_FIELDS = (
+    'body_weight_kg',
+    'hrmax_bpm',
+    'lactate_threshold_hr_bpm',
+    'vo2max',
+    'cycling_ftp_w',
 )
 
 TRAINING_WINDOWS = ('morning', 'midday', 'evening', 'flexible')

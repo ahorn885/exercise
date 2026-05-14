@@ -90,7 +90,9 @@ def _ingest_activity(db: Any, user_id: int, item: dict) -> None:
     """COROS activity (`sportDataList[]`) → `cardio_log`. Dedup via
     `coros_label_id`; subsequent re-deliveries of the same activity
     (COROS retries; user re-syncs) update the existing row in place
-    rather than appending."""
+    rather than appending. UPSERT against `cardio_log_coros_label_uidx`
+    (PR3 partial UNIQUE on `(user_id, coros_label_id) WHERE coros_label_id
+    IS NOT NULL`) so concurrent webhook deliveries are race-safe."""
     label_id = item.get('labelId')
     if not label_id:
         return  # Without a dedup key we can't safely insert.
@@ -106,11 +108,6 @@ def _ingest_activity(db: Any, user_id: int, item: dict) -> None:
     elev_loss_ft = descent_m * _METERS_TO_FEET if descent_m is not None else None
     date = _epoch_ms_to_date(item.get('startTime')) or _today_iso()
 
-    cur = db.execute(
-        'SELECT id FROM cardio_log WHERE user_id = ? AND coros_label_id = ?',
-        (user_id, str(label_id)),
-    )
-    existing = cur.fetchone()
     cols = {
         'date': date,
         'activity': activity,
@@ -124,21 +121,16 @@ def _ingest_activity(db: Any, user_id: int, item: dict) -> None:
         'avg_cadence': _as_int(item.get('avgCadence')),
         'max_cadence': _as_int(item.get('maxCadence')),
     }
-    if existing:
-        set_clause = ', '.join(f'{c} = ?' for c in cols)
-        db.execute(
-            f'UPDATE cardio_log SET {set_clause} WHERE id = ?',
-            list(cols.values()) + [existing['id']],
-        )
-    else:
-        cols['user_id'] = user_id
-        cols['coros_label_id'] = str(label_id)
-        col_names = list(cols)
-        placeholders = ', '.join(['?'] * len(col_names))
-        db.execute(
-            f'INSERT INTO cardio_log ({", ".join(col_names)}) VALUES ({placeholders})',
-            [cols[c] for c in col_names],
-        )
+    set_clause = ', '.join(f'{c} = EXCLUDED.{c}' for c in cols)
+    col_names = ['user_id', 'coros_label_id'] + list(cols)
+    placeholders = ', '.join(['?'] * len(col_names))
+    db.execute(
+        f'INSERT INTO cardio_log ({", ".join(col_names)}) '
+        f'VALUES ({placeholders}) '
+        f'ON CONFLICT (user_id, coros_label_id) WHERE coros_label_id IS NOT NULL '
+        f'DO UPDATE SET {set_clause}',
+        [user_id, str(label_id)] + [cols[c] for c in cols],
+    )
 
 
 def _ingest_daily_summary(db: Any, user_id: int, item: dict) -> None:
