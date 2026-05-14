@@ -1792,6 +1792,47 @@ _PG_MIGRATIONS = [
     "ALTER TABLE training_log ADD COLUMN IF NOT EXISTS polar_exercise_id TEXT",
     "ALTER TABLE training_log ADD COLUMN IF NOT EXISTS wahoo_workout_id TEXT",
     "ALTER TABLE training_log ADD COLUMN IF NOT EXISTS coros_label_id TEXT",
+    # D-58 §7 — provider-sourced prefill provenance + 14-day connect-provider
+    # nudge. PG-only per Athlete_Data_Integration_Spec_v4 §2.5 (SQLite frozen).
+    # `field_name` is free-text TEXT here; the canonical KNOWN_PROFILE_FIELDS
+    # registry + insert validation lands with the prefill UI PR (Open Item #17).
+    """CREATE TABLE IF NOT EXISTS athlete_profile_field_provenance (
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER NOT NULL REFERENCES users(id),
+        field_name TEXT NOT NULL,
+        source TEXT NOT NULL,
+        source_provider_id INTEGER REFERENCES provider_auth(id),
+        source_synced_at TIMESTAMP,
+        last_updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        UNIQUE (user_id, field_name)
+    )""",
+    "CREATE INDEX IF NOT EXISTS apfp_user_idx ON athlete_profile_field_provenance (user_id)",
+    "CREATE INDEX IF NOT EXISTS apfp_user_source_idx ON athlete_profile_field_provenance (user_id, source) WHERE source = 'manual_override'",
+    """CREATE TABLE IF NOT EXISTS account_nudges (
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER NOT NULL REFERENCES users(id),
+        nudge_type TEXT NOT NULL,
+        created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        displayed_at TIMESTAMP,
+        dismissed_at TIMESTAMP,
+        UNIQUE (user_id, nudge_type)
+    )""",
+    # v5 Account Config 3 — disclosure acknowledgment records. One row per
+    # acknowledgment event. The `oauth_scope_<provider>` rows are written
+    # by routes/provider_auth.py:record_oauth_scope_ack at OAuth callback
+    # success (D-58 §7.3 / v5 Account Config 3). Re-acknowledgment writes a
+    # new row; query MAX(acknowledged_at) per (user_id, disclosure_id) to
+    # find current state.
+    """CREATE TABLE IF NOT EXISTS disclosure_acknowledgments (
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER NOT NULL REFERENCES users(id),
+        disclosure_id TEXT NOT NULL,
+        version_id TEXT,
+        scopes_granted TEXT,
+        delivery_method TEXT NOT NULL DEFAULT 'in_app',
+        acknowledged_at TIMESTAMP NOT NULL DEFAULT NOW()
+    )""",
+    "CREATE INDEX IF NOT EXISTS disclosure_acks_user_idx ON disclosure_acknowledgments (user_id, disclosure_id, acknowledged_at DESC)",
 ]
 
 _CLOTHING_SEEDS = [
