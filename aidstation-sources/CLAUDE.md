@@ -98,6 +98,10 @@ When a handoff defers edits, include mechanically-applicable instructions:
 
 Revised files save with a numeric version suffix (`_v1.md`, `_v2.md`, …). Each revision bumps N from the highest existing. Old versions accumulate as in-project history — do not delete. Cross-references cite the logical name without version; resolve via directory listing to the highest N at use time.
 
+### Rule #13 — Every closing handoff names CLAUDE.md as the first re-read
+
+Every closing handoff's forward-pointer / next-session reading list begins with **"Read `aidstation-sources/CLAUDE.md` fully"** as the first explicit step, before any domain-specific reads (backlog, prior handoff, target spec files). The First-session checklist already names CLAUDE.md as item 1; Rule #13 makes it the handoff author's responsibility to reinforce it in the handoff itself, so the next session's Rule #9 reconciliation runs against the latest operating context (rules, framing, stop-and-ask triggers) rather than only the latest spec narrative. Especially important when operating rules or framing have changed mid-stream — a session that reads only the latest handoff and skips CLAUDE.md will operate on stale context.
+
 ---
 
 ## Stop-and-ask trigger list
