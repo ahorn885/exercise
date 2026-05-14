@@ -305,7 +305,14 @@ def register():
         session['user_id'] = new_user_id
         session['username'] = username
         flash(f'Account created — welcome, {display_name or username}.', 'success')
-        return redirect(url_for('dashboard.index'))
+        # v5 onboarding Step 2: drop new athletes on the connect screen
+        # before the dashboard. The connect screen is itself skippable;
+        # athletes who skip land on /profile?tab=athlete per
+        # onboarding._POST_STEP2_TARGET. The route doesn't require any
+        # special state (no `onboarded_at` flag) — existing athletes
+        # hitting /onboarding/connect directly see the same surface as
+        # a fresh signup, and can revisit any time.
+        return redirect(url_for('onboarding.connect'))
 
     return render_template('auth/register.html',
                            username='', email='', display_name='',
