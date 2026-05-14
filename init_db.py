@@ -1833,6 +1833,92 @@ _PG_MIGRATIONS = [
         acknowledged_at TIMESTAMP NOT NULL DEFAULT NOW()
     )""",
     "CREATE INDEX IF NOT EXISTS disclosure_acks_user_idx ON disclosure_acknowledgments (user_id, disclosure_id, acknowledged_at DESC)",
+    # D-59 §9 — `locale_profiles` columns for Mapbox-anchored place lookup +
+    # chain detection. `locale_name` is the athlete-supplied display label
+    # (replaces the v1 hardcoded `locale` enum at the UX layer; the column
+    # itself coexists). `chain_id` is a FK-style pointer to chain_registry.py
+    # GYM_CHAINS[].chain_id; `chain_name` is the denormalized canonical name.
+    # `category` is set by chain detection and refined by D-60 design.
+    # `manual_entry=TRUE` rows skip Mapbox; coords + chain stay NULL.
+    "ALTER TABLE locale_profiles ADD COLUMN IF NOT EXISTS locale_name TEXT",
+    "ALTER TABLE locale_profiles ADD COLUMN IF NOT EXISTS mapbox_id TEXT",
+    "ALTER TABLE locale_profiles ADD COLUMN IF NOT EXISTS lat DOUBLE PRECISION",
+    "ALTER TABLE locale_profiles ADD COLUMN IF NOT EXISTS lng DOUBLE PRECISION",
+    "ALTER TABLE locale_profiles ADD COLUMN IF NOT EXISTS chain_id TEXT",
+    "ALTER TABLE locale_profiles ADD COLUMN IF NOT EXISTS chain_name TEXT",
+    "ALTER TABLE locale_profiles ADD COLUMN IF NOT EXISTS category TEXT",
+    "ALTER TABLE locale_profiles ADD COLUMN IF NOT EXISTS manual_entry BOOLEAN DEFAULT FALSE",
+    "ALTER TABLE locale_profiles ADD COLUMN IF NOT EXISTS place_payload TEXT",
+    "ALTER TABLE locale_profiles ADD COLUMN IF NOT EXISTS place_fetched_at TIMESTAMP",
+    # D-60 §5 — shared gym profiles + per-athlete overrides. JSON columns
+    # (equipment, toggles, disputed_items) are written whole on each save;
+    # see §5.1 rationale for not normalising. `private=TRUE` rows are
+    # visible only to created_by_user_id (when an athlete has sharing
+    # disabled at locale creation time).
+    """CREATE TABLE IF NOT EXISTS gym_profiles (
+        id SERIAL PRIMARY KEY,
+        mapbox_id TEXT UNIQUE,
+        address_fingerprint TEXT,
+        display_name TEXT,
+        category TEXT NOT NULL,
+        equipment TEXT,
+        toggles TEXT,
+        disputed_items TEXT,
+        private BOOLEAN DEFAULT FALSE,
+        created_by_user_id INTEGER REFERENCES users(id),
+        created_at TIMESTAMP DEFAULT NOW(),
+        last_confirmed_by INTEGER REFERENCES users(id),
+        last_confirmed_at TIMESTAMP DEFAULT NOW(),
+        contribution_count INTEGER DEFAULT 1
+    )""",
+    "CREATE INDEX IF NOT EXISTS gym_profiles_mapbox_idx ON gym_profiles (mapbox_id) WHERE mapbox_id IS NOT NULL",
+    "CREATE INDEX IF NOT EXISTS gym_profiles_address_idx ON gym_profiles (address_fingerprint) WHERE address_fingerprint IS NOT NULL",
+    """CREATE TABLE IF NOT EXISTS locale_equipment_overrides (
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER NOT NULL REFERENCES users(id),
+        locale_id INTEGER NOT NULL REFERENCES locale_profiles(id),
+        equipment_tag TEXT NOT NULL,
+        action TEXT NOT NULL,
+        created_at TIMESTAMP DEFAULT NOW(),
+        UNIQUE (user_id, locale_id, equipment_tag, action)
+    )""",
+    "CREATE INDEX IF NOT EXISTS leo_user_locale_idx ON locale_equipment_overrides (user_id, locale_id)",
+    """CREATE TABLE IF NOT EXISTS locale_toggle_overrides (
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER NOT NULL REFERENCES users(id),
+        locale_id INTEGER NOT NULL REFERENCES locale_profiles(id),
+        toggle_name TEXT NOT NULL,
+        value BOOLEAN NOT NULL,
+        created_at TIMESTAMP DEFAULT NOW(),
+        UNIQUE (user_id, locale_id, toggle_name)
+    )""",
+    "ALTER TABLE locale_profiles ADD COLUMN IF NOT EXISTS gym_profile_id INTEGER REFERENCES gym_profiles(id)",
+    "ALTER TABLE locale_profiles ADD COLUMN IF NOT EXISTS sharing_opt_out BOOLEAN DEFAULT FALSE",
+    # D-61 §7 — per-day availability windows. Primary-window rows (window_index=0)
+    # exist for every athlete × 7 days at onboarding completion; secondary-window
+    # rows (window_index=1) only when athlete picked Doubles Feasible ≠ No.
+    # CHECK constraint pairs enabled with start/duration so disabled rows can't
+    # carry stale values. `preferred` on locale_profiles flags an athlete's
+    # default locale; no uniqueness — §4.3 semantics.
+    """CREATE TABLE IF NOT EXISTS daily_availability_windows (
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER NOT NULL REFERENCES users(id),
+        day_of_week SMALLINT NOT NULL,
+        window_index SMALLINT NOT NULL DEFAULT 0,
+        enabled BOOLEAN NOT NULL DEFAULT FALSE,
+        window_start TIME,
+        window_duration_min INTEGER,
+        updated_at TIMESTAMP DEFAULT NOW(),
+        UNIQUE (user_id, day_of_week, window_index),
+        CHECK (window_index IN (0, 1)),
+        CHECK (
+            (enabled = FALSE AND window_start IS NULL AND window_duration_min IS NULL)
+            OR (enabled = TRUE AND window_start IS NOT NULL AND window_duration_min IS NOT NULL)
+        ),
+        CHECK (window_duration_min IS NULL OR window_duration_min BETWEEN 30 AND 360)
+    )""",
+    "CREATE INDEX IF NOT EXISTS daw_user_day_idx ON daily_availability_windows (user_id, day_of_week)",
+    "ALTER TABLE locale_profiles ADD COLUMN IF NOT EXISTS preferred BOOLEAN DEFAULT FALSE",
 ]
 
 _CLOTHING_SEEDS = [
