@@ -1,0 +1,972 @@
+======================================================================
+Equipment Column Cleanup — v17 → v18
+======================================================================
+
+## Summary
+
+Total exercise rows:        245
+Rows changed:               167
+Rows unchanged:             78
+Rows emptied (no equipment after cleanup): 42
+Total tokens before:        456
+Total tokens after:         330
+Net token reduction:        126
+
+## Operation counts
+
+  TRANSFORM: 134
+  DROP: 114
+  STRIP_PARENS: 1
+
+## ⚠️  FLAGGED DROPS — manual review needed
+
+These exercises had tokens dropped that may have been their primary
+equipment requirement. Review whether each exercise still has a usable
+Equipment column after cleanup.
+
+  EX026 (Seated Calf Raise): dropped ['Machine']
+    final Equipment column: Barbell
+  EX027 (Tibialis Raise (Wall or Machine)): dropped ['Machine']
+    final Equipment column: Resistance band
+
+## Top transformations
+
+   17 × Resistance Band → Resistance band
+    6 × Mountain Bike → Mountain bike
+    6 × Road Bike → Road bike
+    6 × Rope → Climbing gear
+    5 × Cable → Cable machine
+    5 × MTB → Mountain bike
+    5 × Trainer → Bike trainer
+    4 × Vest → Weighted vest
+    4 × Band → Resistance band
+    4 × Cable Machine → Cable machine
+    4 × Harness → Climbing gear
+    3 × Plyo Box → Plyo box
+    3 × Light Dumbbell → Dumbbell
+    3 × Ski Boots → Touring ski kit
+    3 × Touring Skis → Touring ski kit
+    3 × Stand-Up Paddleboard → SUP
+    2 × Rack → Squat rack
+    2 × Anchor Point → Climbing gear
+    2 × BOSU → BOSU ball
+    2 × Weight Plate → Weight plates
+
+## Per-exercise diff
+
+EX001 — Back Squat (Barbell)
+  BEFORE: Barbell, Rack
+  AFTER:  Barbell, Squat rack
+    → NORMALIZE: 'Rack' → 'Squat rack'
+
+EX007 — Box Jump
+  BEFORE: Plyo Box
+  AFTER:  Plyo box
+    → NORMALIZE: 'Plyo Box' → 'Plyo box'
+
+EX008 — Broad Jump
+  BEFORE: Bodyweight
+  AFTER:  (empty)
+    - DROP: 'Bodyweight'
+
+EX010 — Rucking (Weighted Hike)
+  BEFORE: Backpack, Weight Vest
+  AFTER:  Backpack, Weighted vest
+    → NORMALIZE: 'Weight Vest' → 'Weighted vest'
+
+EX011 — Pallof Press (Band/Cable)
+  BEFORE: Resistance Band, Cable
+  AFTER:  Resistance band, Cable machine
+    → NORMALIZE: 'Resistance Band' → 'Resistance band'
+    → NORMALIZE: 'Cable' → 'Cable machine'
+
+EX012 — Copenhagen Plank
+  BEFORE: Bench or Box
+  AFTER:  Bench, Plyo box
+    → SPLIT: 'Bench or Box' → ['Bench', 'Plyo box']
+
+EX013 — Hip Circle (Band)
+  BEFORE: Resistance Band
+  AFTER:  Resistance band
+    → NORMALIZE: 'Resistance Band' → 'Resistance band'
+
+EX014 — World's Greatest Stretch
+  BEFORE: Bodyweight
+  AFTER:  (empty)
+    - DROP: 'Bodyweight'
+
+EX015 — Pigeon Pose
+  BEFORE: Bodyweight
+  AFTER:  (empty)
+    - DROP: 'Bodyweight'
+
+EX016 — Thoracic Rotation Drill
+  BEFORE: Bodyweight
+  AFTER:  (empty)
+    - DROP: 'Bodyweight'
+
+EX017 — Lateral Band Walk
+  BEFORE: Resistance Band
+  AFTER:  Resistance band
+    → NORMALIZE: 'Resistance Band' → 'Resistance band'
+
+EX020 — Nordic Hamstring Curl
+  BEFORE: Anchor Point
+  AFTER:  Climbing gear
+    → NORMALIZE: 'Anchor Point' → 'Climbing gear'
+
+EX022 — Reverse Lunge (DB or BW)
+  BEFORE: Dumbbell, Bodyweight
+  AFTER:  Dumbbell
+    - DROP: 'Bodyweight'
+
+EX023 — Lateral Lunge (DB or BW)
+  BEFORE: Dumbbell, Bodyweight
+  AFTER:  Dumbbell
+    - DROP: 'Bodyweight'
+
+EX024 — Step-Up High Box (Loaded)
+  BEFORE: Dumbbell, Barbell, Vest
+  AFTER:  Dumbbell, Barbell, Weighted vest
+    → NORMALIZE: 'Vest' → 'Weighted vest'
+
+EX025 — Single-Leg Calf Raise (Loaded)
+  BEFORE: Bodyweight, Dumbbell
+  AFTER:  Dumbbell
+    - DROP: 'Bodyweight'
+
+EX026 — Seated Calf Raise
+  BEFORE: Machine, Barbell on Thighs
+  AFTER:  Barbell
+    - DROP: 'Machine' [DROP_FLAGGED(Machine)]
+    → NORMALIZE: 'Barbell on Thighs' → 'Barbell'
+
+EX027 — Tibialis Raise (Wall or Machine)
+  BEFORE: Wall, Machine, Band
+  AFTER:  Resistance band
+    - DROP: 'Wall'
+    - DROP: 'Machine' [DROP_FLAGGED(Machine)]
+    → NORMALIZE: 'Band' → 'Resistance band'
+
+EX028 — Pistol Squat / Assisted Pistol
+  BEFORE: Bodyweight, TRX
+  AFTER:  TRX / suspension trainer
+    - DROP: 'Bodyweight'
+    → NORMALIZE: 'TRX' → 'TRX / suspension trainer'
+
+EX032 — Jump Squat (BW or Light Load)
+  BEFORE: Bodyweight, Vest
+  AFTER:  Weighted vest
+    - DROP: 'Bodyweight'
+    → NORMALIZE: 'Vest' → 'Weighted vest'
+
+EX033 — Depth Drop (Eccentric Landing Practice)
+  BEFORE: Plyo Box
+  AFTER:  Plyo box
+    → NORMALIZE: 'Plyo Box' → 'Plyo box'
+
+EX034 — Lateral Bound
+  BEFORE: Bodyweight
+  AFTER:  (empty)
+    - DROP: 'Bodyweight'
+
+EX035 — Ankle Hops / Pogo Jumps
+  BEFORE: Bodyweight
+  AFTER:  (empty)
+    - DROP: 'Bodyweight'
+
+EX036 — Running Bounds (Exaggerated Stride)
+  BEFORE: Bodyweight
+  AFTER:  (empty)
+    - DROP: 'Bodyweight'
+
+EX037 — Wall Sit
+  BEFORE: Wall
+  AFTER:  (empty)
+    - DROP: 'Wall'
+
+EX038 — Split Squat ISO Hold
+  BEFORE: Bodyweight, Dumbbell
+  AFTER:  Dumbbell
+    - DROP: 'Bodyweight'
+
+EX039 — Glute Bridge (Double-Leg)
+  BEFORE: Bodyweight, Resistance Band, Barbell
+  AFTER:  Resistance band, Barbell
+    - DROP: 'Bodyweight'
+    → NORMALIZE: 'Resistance Band' → 'Resistance band'
+
+EX040 — Clamshell (Band)
+  BEFORE: Resistance Band
+  AFTER:  Resistance band
+    → NORMALIZE: 'Resistance Band' → 'Resistance band'
+
+EX041 — Monster Walk (Band)
+  BEFORE: Resistance Band
+  AFTER:  Resistance band
+    → NORMALIZE: 'Resistance Band' → 'Resistance band'
+
+EX042 — Donkey Kick / Fire Hydrant
+  BEFORE: Bodyweight, Band
+  AFTER:  Resistance band
+    - DROP: 'Bodyweight'
+    → NORMALIZE: 'Band' → 'Resistance band'
+
+EX043 — Single-Leg Balance Hold
+  BEFORE: Bodyweight, BOSU, Balance Disc
+  AFTER:  BOSU ball, Balance Disc
+    - DROP: 'Bodyweight'
+    → NORMALIZE: 'BOSU' → 'BOSU ball'
+
+EX044 — BOSU Single-Leg Squat
+  BEFORE: BOSU
+  AFTER:  BOSU ball
+    → NORMALIZE: 'BOSU' → 'BOSU ball'
+
+EX045 — Ankle Mobility Drill (Wall)
+  BEFORE: Wall
+  AFTER:  (empty)
+    - DROP: 'Wall'
+
+EX046 — Hip Flexor Lunge Stretch
+  BEFORE: Bodyweight
+  AFTER:  (empty)
+    - DROP: 'Bodyweight'
+
+EX047 — Calf / Achilles Wall Stretch
+  BEFORE: Wall
+  AFTER:  (empty)
+    - DROP: 'Wall'
+
+EX049 — Strides (Flying Sprints)
+  BEFORE: Outdoor, Treadmill
+  AFTER:  Treadmill
+    - DROP: 'Outdoor'
+
+EX055 — Lateral Shuffle Sprint
+  BEFORE: Bodyweight
+  AFTER:  (empty)
+    - DROP: 'Bodyweight'
+
+EX056 — Reactive Direction Change Drill
+  BEFORE: Cones, Partner or Visual Cue
+  AFTER:  Cones
+    - DROP: 'Partner or Visual Cue'
+
+EX057 — Map Navigation Run
+  BEFORE: Topographic Map, Compass
+  AFTER:  (empty)
+    - DROP: 'Topographic Map'
+    - DROP: 'Compass'
+
+EX058 — Compass Bearing Walk / Run
+  BEFORE: Compass, Topographic Map
+  AFTER:  (empty)
+    - DROP: 'Compass'
+    - DROP: 'Topographic Map'
+
+EX059 — Neck Isometric Hold (Map Reading Position)
+  BEFORE: Bodyweight, Light Plate
+  AFTER:  Weight plates
+    - DROP: 'Bodyweight'
+    → NORMALIZE: 'Light Plate' → 'Weight plates'
+
+EX062 — Banded Hip Flexion (Standing)
+  BEFORE: Resistance Band
+  AFTER:  Resistance band
+    → NORMALIZE: 'Resistance Band' → 'Resistance band'
+
+EX063 — Terminal Knee Extension (TKE)
+  BEFORE: Resistance Band
+  AFTER:  Resistance band
+    → NORMALIZE: 'Resistance Band' → 'Resistance band'
+
+EX064 — Reverse Nordic Curl
+  BEFORE: Anchor Point, Knee Pad
+  AFTER:  Climbing gear
+    → NORMALIZE: 'Anchor Point' → 'Climbing gear'
+    - DROP: 'Knee Pad'
+
+EX065 — Scapular Wall Slide
+  BEFORE: Wall
+  AFTER:  (empty)
+    - DROP: 'Wall'
+
+EX066 — Band Pull-Apart
+  BEFORE: Resistance Band
+  AFTER:  Resistance band
+    → NORMALIZE: 'Resistance Band' → 'Resistance band'
+
+EX067 — MTB Attack Position Hold
+  BEFORE: Bodyweight
+  AFTER:  (empty)
+    - DROP: 'Bodyweight'
+
+EX068 — Wrist Pronation / Supination (DB)
+  BEFORE: Light Dumbbell
+  AFTER:  Dumbbell
+    → NORMALIZE: 'Light Dumbbell' → 'Dumbbell'
+
+EX069 — Neck Extension Strengthening (Plate / Band)
+  BEFORE: Weight Plate, Band
+  AFTER:  Weight plates, Resistance band
+    → NORMALIZE: 'Weight Plate' → 'Weight plates'
+    → NORMALIZE: 'Band' → 'Resistance band'
+
+EX070 — Single-Leg Cycling Drill (Trainer)
+  BEFORE: Bike Trainer
+  AFTER:  Bike trainer
+    → NORMALIZE: 'Bike Trainer' → 'Bike trainer'
+
+EX071 — Cornering Technique Drill (MTB)
+  BEFORE: Mountain Bike, Trail
+  AFTER:  Mountain bike, Trail
+    → NORMALIZE: 'Mountain Bike' → 'Mountain bike'
+
+EX072 — Pump Track / Trail Feature Technique
+  BEFORE: Mountain Bike, Pump Track
+  AFTER:  Mountain bike, Pump Track
+    → NORMALIZE: 'Mountain Bike' → 'Mountain bike'
+
+EX073 — Threshold Intervals (Bike)
+  BEFORE: Road Bike, MTB, Trainer
+  AFTER:  Road bike, Mountain bike, Bike trainer
+    → NORMALIZE: 'Road Bike' → 'Road bike'
+    → NORMALIZE: 'MTB' → 'Mountain bike'
+    → NORMALIZE: 'Trainer' → 'Bike trainer'
+
+EX074 — VO2 Max Intervals (Bike)
+  BEFORE: Road Bike, MTB, Trainer
+  AFTER:  Road bike, Mountain bike, Bike trainer
+    → NORMALIZE: 'Road Bike' → 'Road bike'
+    → NORMALIZE: 'MTB' → 'Mountain bike'
+    → NORMALIZE: 'Trainer' → 'Bike trainer'
+
+EX075 — Sweet Spot Training (Bike)
+  BEFORE: Road Bike, MTB, Trainer
+  AFTER:  Road bike, Mountain bike, Bike trainer
+    → NORMALIZE: 'Road Bike' → 'Road bike'
+    → NORMALIZE: 'MTB' → 'Mountain bike'
+    → NORMALIZE: 'Trainer' → 'Bike trainer'
+
+EX076 — Couch Stretch (Cyclist Hip Flexor)
+  BEFORE: Wall, Bench
+  AFTER:  Bench
+    - DROP: 'Wall'
+
+EX079 — Seated Cable Row (Narrow Grip)
+  BEFORE: Cable Machine, Band
+  AFTER:  Cable machine, Resistance band
+    → NORMALIZE: 'Cable Machine' → 'Cable machine'
+    → NORMALIZE: 'Band' → 'Resistance band'
+
+EX080 — Lat Pulldown (Wide Grip)
+  BEFORE: Cable Machine
+  AFTER:  Cable machine
+    → NORMALIZE: 'Cable Machine' → 'Cable machine'
+
+EX081 — Band Face Pull
+  BEFORE: Resistance Band, Cable
+  AFTER:  Resistance band, Cable machine
+    → NORMALIZE: 'Resistance Band' → 'Resistance band'
+    → NORMALIZE: 'Cable' → 'Cable machine'
+
+EX082 — External Rotation (Band / Cable)
+  BEFORE: Resistance Band, Cable, Light DB
+  AFTER:  Resistance band, Cable machine, Dumbbell
+    → NORMALIZE: 'Resistance Band' → 'Resistance band'
+    → NORMALIZE: 'Cable' → 'Cable machine'
+    → NORMALIZE: 'Light DB' → 'Dumbbell'
+
+EX083 — Serratus Punch
+  BEFORE: Bodyweight, Light Dumbbell
+  AFTER:  Dumbbell
+    - DROP: 'Bodyweight'
+    → NORMALIZE: 'Light Dumbbell' → 'Dumbbell'
+
+EX085 — Med Ball Rotational Throw (Wall)
+  BEFORE: Medicine Ball, Wall
+  AFTER:  Medicine Ball
+    - DROP: 'Wall'
+
+EX087 — Cable High-to-Low Chop
+  BEFORE: Cable Machine, Resistance Band
+  AFTER:  Cable machine, Resistance band
+    → NORMALIZE: 'Cable Machine' → 'Cable machine'
+    → NORMALIZE: 'Resistance Band' → 'Resistance band'
+
+EX089 — Hollow Body Hold
+  BEFORE: Bodyweight
+  AFTER:  (empty)
+    - DROP: 'Bodyweight'
+
+EX091 — Forward Stroke Technique Drill
+  BEFORE: Kayak / Packraft, Paddle
+  AFTER:  Kayak / Packraft
+    - DROP: 'Paddle'
+
+EX092 — Bracing Stroke Drill (High and Low)
+  BEFORE: Kayak / Packraft, Paddle
+  AFTER:  Kayak / Packraft
+    - DROP: 'Paddle'
+
+EX095 — Portage Carry Simulation
+  BEFORE: Loaded Packraft, Backpack
+  AFTER:  Packraft, Backpack
+    → NORMALIZE: 'Loaded Packraft' → 'Packraft'
+
+EX096 — 90/90 Shoulder Stretch
+  BEFORE: Floor or Bench
+  AFTER:  Bench
+    → NORMALIZE: 'Floor or Bench' → 'Bench'
+
+EX097 — Pec Minor Stretch (Low Doorway)
+  BEFORE: Doorway, Floor
+  AFTER:  Doorway
+    - DROP: 'Floor'
+
+EX099 — External Rotation to Press (Band / Cable)
+  BEFORE: Resistance Band, Cable
+  AFTER:  Resistance band, Cable machine
+    → NORMALIZE: 'Resistance Band' → 'Resistance band'
+    → NORMALIZE: 'Cable' → 'Cable machine'
+
+EX102 — Pinch Grip (Plate / Block)
+  BEFORE: Weight Plate, Pinch Block
+  AFTER:  Weight plates, Pinch Block
+    → NORMALIZE: 'Weight Plate' → 'Weight plates'
+
+EX104 — Rice Bucket Drill
+  BEFORE: Rice Bucket
+  AFTER:  (empty)
+    - DROP: 'Rice Bucket'
+
+EX105 — Finger Extension (Band)
+  BEFORE: Rubber Band
+  AFTER:  Resistance band
+    → NORMALIZE: 'Rubber Band' → 'Resistance band'
+
+EX108 — Foot-On Campus Board Move
+  BEFORE: Campus Board, Feet on Wall
+  AFTER:  Campus Board
+    - DROP: 'Feet on Wall'
+
+EX110 — Antagonist Push-Up (Fist / Flat)
+  BEFORE: Bodyweight
+  AFTER:  (empty)
+    - DROP: 'Bodyweight'
+
+EX111 — Reverse Wrist Curl (DB)
+  BEFORE: Light Dumbbell
+  AFTER:  Dumbbell
+    → NORMALIZE: 'Light Dumbbell' → 'Dumbbell'
+
+EX112 — Belay Simulation (Device Practice)
+  BEFORE: Belay Device, Rope
+  AFTER:  Climbing gear
+    → NORMALIZE: 'Belay Device' → 'Climbing gear'
+    → NORMALIZE: 'Rope' → 'Climbing gear'
+
+EX113 — Movement on Route (Top-Rope / Lead)
+  BEFORE: Rock Wall, Rope, Harness
+  AFTER:  Rock Wall, Climbing gear
+    → NORMALIZE: 'Rope' → 'Climbing gear'
+    → NORMALIZE: 'Harness' → 'Climbing gear'
+
+EX114 — Flagging / Hip Drop Technique Drill
+  BEFORE: Rock Wall, Bodyweight
+  AFTER:  Rock Wall
+    - DROP: 'Bodyweight'
+
+EX116 — Mantling Technique Drill
+  BEFORE: Rock Wall, Box
+  AFTER:  Rock Wall, Plyo box
+    → NORMALIZE: 'Box' → 'Plyo box'
+
+EX117 — Loaded Step-Down (Eccentric Box)
+  BEFORE: Box, Dumbbell, Vest
+  AFTER:  Plyo box, Dumbbell, Weighted vest
+    → NORMALIZE: 'Box' → 'Plyo box'
+    → NORMALIZE: 'Vest' → 'Weighted vest'
+
+EX119 — Weighted Step-Up (High Box, Heavy Load)
+  BEFORE: Heavy Dumbbell, Barbell, Vest
+  AFTER:  Dumbbell, Barbell, Weighted vest
+    → NORMALIZE: 'Heavy Dumbbell' → 'Dumbbell'
+    → NORMALIZE: 'Vest' → 'Weighted vest'
+
+EX122 — Hip Hinge Under Pack (Practice Drill)
+  BEFORE: Loaded Backpack
+  AFTER:  Backpack
+    → NORMALIZE: 'Loaded Backpack' → 'Backpack'
+
+EX125 — Quad-Eccentric Walk (Controlled Descent)
+  BEFORE: Bodyweight
+  AFTER:  (empty)
+    - DROP: 'Bodyweight'
+
+EX126 — Freestyle Pull (With Buoy)
+  BEFORE: Pull Buoy, Pool
+  AFTER:  Pool
+    - DROP: 'Pull Buoy'
+
+EX127 — Band Swimming Shoulder Prehab (Y-T-W-L)
+  BEFORE: Resistance Band, Incline Bench
+  AFTER:  Resistance band, Bench
+    → NORMALIZE: 'Resistance Band' → 'Resistance band'
+    → NORMALIZE: 'Incline Bench' → 'Bench'
+
+EX129 — Swim-Specific Rotational Core (Dry Land)
+  BEFORE: Bodyweight, Cable
+  AFTER:  Cable machine
+    - DROP: 'Bodyweight'
+    → NORMALIZE: 'Cable' → 'Cable machine'
+
+EX130 — Rappel Device Operation Drill
+  BEFORE: Belay Device (ATC/GriGri), Rope, Harness
+  AFTER:  Climbing gear
+    → NORMALIZE: 'Belay Device (ATC/GriGri)' → 'Climbing gear'
+    → NORMALIZE: 'Rope' → 'Climbing gear'
+    → NORMALIZE: 'Harness' → 'Climbing gear'
+
+EX131 — Wall Walk Descent Technique
+  BEFORE: Rock Wall, Rope, Harness
+  AFTER:  Rock Wall, Climbing gear
+    → NORMALIZE: 'Rope' → 'Climbing gear'
+    → NORMALIZE: 'Harness' → 'Climbing gear'
+
+EX132 — Anchor Setup & Inspection
+  BEFORE: Slings, Carabiners, Anchor Hardware
+  AFTER:  Climbing gear
+    → NORMALIZE: 'Slings' → 'Climbing gear'
+    → NORMALIZE: 'Carabiners' → 'Climbing gear'
+    → NORMALIZE: 'Anchor Hardware' → 'Climbing gear'
+
+EX133 — Brake Hand Squeeze Hold
+  BEFORE: Rope, Pull-Up Bar Towel Wrap
+  AFTER:  Climbing gear
+    → NORMALIZE: 'Rope' → 'Climbing gear'
+    - DROP: 'Pull-Up Bar Towel Wrap'
+
+EX134 — Ascender / Jumar Technique Drill
+  BEFORE: Mechanical Ascender, Fixed Rope
+  AFTER:  Climbing gear
+    → NORMALIZE: 'Mechanical Ascender' → 'Climbing gear'
+    → NORMALIZE: 'Fixed Rope' → 'Climbing gear'
+
+EX135 — Via Ferrata Progressive Clip Drill
+  BEFORE: Via Ferrata Y-Lanyard, Carabiners
+  AFTER:  Climbing gear
+    → NORMALIZE: 'Via Ferrata Y-Lanyard' → 'Climbing gear'
+    → NORMALIZE: 'Carabiners' → 'Climbing gear'
+
+EX136 — Fixed Rope Body Position & Rest Drill
+  BEFORE: Fixed Rope or Sling, Harness
+  AFTER:  Climbing gear
+    → NORMALIZE: 'Fixed Rope or Sling' → 'Climbing gear'
+    → NORMALIZE: 'Harness' → 'Climbing gear'
+
+EX137 — Route Reading & Visualization
+  BEFORE: Bodyweight, Route
+  AFTER:  (empty)
+    - DROP: 'Bodyweight'
+    - DROP: 'Route'
+
+EX141 — Wetsuit Swimming Technique
+  BEFORE: Wetsuit, Open Water
+  AFTER:  Open Water
+    - DROP: 'Wetsuit'
+
+EX143 — Water & Stream Crossing Technique
+  BEFORE: Trekking Poles, Bodyweight
+  AFTER:  Trekking Poles
+    - DROP: 'Bodyweight'
+
+EX144 — Hike-a-Bike Carry Drill
+  BEFORE: Mountain Bike, Backpack
+  AFTER:  Mountain bike, Backpack
+    → NORMALIZE: 'Mountain Bike' → 'Mountain bike'
+
+EX145 — Loaded Bike Low-Speed Balance Drill
+  BEFORE: Mountain Bike, Backpack
+  AFTER:  Mountain bike, Backpack
+    → NORMALIZE: 'Mountain Bike' → 'Mountain bike'
+
+EX146 — Navigation While Cycling Drill
+  BEFORE: Mountain Bike, Topographic Map, GPS
+  AFTER:  Mountain bike
+    → NORMALIZE: 'Mountain Bike' → 'Mountain bike'
+    - DROP: 'Topographic Map'
+    - DROP: 'GPS'
+
+EX147 — Loose Surface Threshold Braking
+  BEFORE: Mountain Bike, Gravel or Dirt Trail
+  AFTER:  Mountain bike, Gravel or Dirt Trail
+    → NORMALIZE: 'Mountain Bike' → 'Mountain bike'
+
+EX151 — Rope Team Travel Drill
+  BEFORE: Rope, Mountaineering Harness, Ice Axe
+  AFTER:  Climbing gear, Ice Axe
+    → NORMALIZE: 'Rope' → 'Climbing gear'
+    → NORMALIZE: 'Mountaineering Harness' → 'Climbing gear'
+
+EX152 — Post-Hole Recovery Gait
+  BEFORE: Bodyweight, Deep Snow or Sand
+  AFTER:  Deep Snow or Sand
+    - DROP: 'Bodyweight'
+
+EX156 — Sweep Stroke Technique Drill
+  BEFORE: Kayak / Canoe / Packraft, Paddle
+  AFTER:  Kayak / Canoe / Packraft
+    - DROP: 'Paddle'
+
+EX157 — Draw Stroke & Pry Technique
+  BEFORE: Kayak / Canoe, Paddle
+  AFTER:  Kayak / Canoe
+    - DROP: 'Paddle'
+
+EX159 — Wet Exit & Re-entry (Kayak)
+  BEFORE: Kayak, Spray Skirt, Pool or Flat Water
+  AFTER:  Kayak, Pool or Flat Water
+    - DROP: 'Spray Skirt'
+
+EX161 — J-Stroke Technique
+  BEFORE: Canoe, Single-Blade Paddle
+  AFTER:  Canoe
+    - DROP: 'Single-Blade Paddle'
+
+EX162 — Tandem Canoe Coordination Drill
+  BEFORE: Canoe, Two Paddles, Tandem Partner
+  AFTER:  Canoe
+    - DROP: 'Two Paddles'
+    - DROP: 'Tandem Partner'
+
+EX163 — Canoe Portage Yoke Carry
+  BEFORE: Canoe with Yoke or Padded Gunwales
+  AFTER:  (empty)
+    - DROP: 'Canoe with Yoke or Padded Gunwales'
+
+EX165 — Raft Paddle Synchronisation & Power Phase
+  BEFORE: Inflatable Raft, Paddle, Team
+  AFTER:  Inflatable Raft
+    - DROP: 'Paddle'
+    - DROP: 'Team'
+
+EX168 — Skinning Uphill Technique
+  BEFORE: Touring Skis with Climbing Skins, Ski Boots, Poles
+  AFTER:  Touring ski kit, Poles
+    → NORMALIZE: 'Touring Skis with Climbing Skins' → 'Touring ski kit'
+    → NORMALIZE: 'Ski Boots' → 'Touring ski kit'
+
+EX169 — Ski Kick-Turn on Slope
+  BEFORE: Touring Skis, Ski Boots, Poles
+  AFTER:  Touring ski kit, Poles
+    → NORMALIZE: 'Touring Skis' → 'Touring ski kit'
+    → NORMALIZE: 'Ski Boots' → 'Touring ski kit'
+
+EX170 — SkiMo Race Transition Drill
+  BEFORE: Touring Skis, Climbing Skins, Ski Crampons, Boot Buckles
+  AFTER:  Touring ski kit
+    → NORMALIZE: 'Touring Skis' → 'Touring ski kit'
+    → NORMALIZE: 'Climbing Skins' → 'Touring ski kit'
+    → NORMALIZE: 'Ski Crampons' → 'Touring ski kit'
+    - DROP: 'Boot Buckles'
+
+EX171 — Touring Ski Descent Technique
+  BEFORE: Touring Skis, Ski Boots (ski mode), Poles
+  AFTER:  Touring ski kit, Poles
+    → NORMALIZE: 'Touring Skis' → 'Touring ski kit'
+    → NORMALIZE: 'Ski Boots (ski mode)' → 'Touring ski kit'
+
+EX172 — Lateral Ski Edge Control Drill
+  BEFORE: Touring Skis or Alpine Skis, Ski Boots, Groomed Slope
+  AFTER:  Touring ski kit, Groomed Slope
+    → NORMALIZE: 'Touring Skis or Alpine Skis' → 'Touring ski kit'
+    → NORMALIZE: 'Ski Boots' → 'Touring ski kit'
+
+EX173 — Tuck Position Isometric Hold (SkiMo Descent)
+  BEFORE: Bodyweight (ski boots if available)
+  AFTER:  (empty)
+    - DROP: 'Bodyweight (ski boots if available)'
+
+EX174 — Aero / TT Position Hold
+  BEFORE: TT Bike or Road Bike on Trainer, Aero Bars
+  AFTER:  TT Bike, Road bike, Bike trainer
+    → SPLIT: 'TT Bike or Road Bike on Trainer' → ['TT Bike', 'Road bike', 'Bike trainer']
+    - DROP: 'Aero Bars'
+
+EX175 — Brick Run Drill (Bike-to-Run Transition)
+  BEFORE: Road Bike or Trainer, Running Shoes
+  AFTER:  Road bike, Bike trainer
+    → SPLIT: 'Road Bike or Trainer' → ['Road bike', 'Bike trainer']
+    - DROP: 'Running Shoes'
+
+EX176 — Triathlon Transition Practice (T1 & T2)
+  BEFORE: Full Triathlon Gear Set (Wetsuit, Bike, Helmet, Shoes, Race Belt)
+  AFTER:  (empty)
+    - DROP: 'Full Triathlon Gear Set (Wetsuit, Bike, Helmet, Shoes, Race Belt)'
+
+EX177 — Open Water Mass Start Technique
+  BEFORE: Open Water, Wetsuit (optional), Swim Cap and Goggles
+  AFTER:  Open Water
+    - DROP: 'Wetsuit (optional)'
+    - DROP: 'Swim Cap and Goggles'
+
+EX179 — Marathon Pace Run
+  BEFORE: Road, Flat Trail, Track, Treadmill
+  AFTER:  Road, Flat Trail, Treadmill
+    - DROP: 'Track'
+
+EX181 — On-the-Run Fueling Drill
+  BEFORE: Road or Trail, Gels, Chews, Soft Flask, Cups
+  AFTER:  Road or Trail
+    - DROP: 'Gels'
+    - DROP: 'Chews'
+    - DROP: 'Soft Flask'
+    - DROP: 'Cups'
+
+EX182 — Night Running & Low-Light Technique
+  BEFORE: Headlamp, Trail or Road, Darkness
+  AFTER:  Trail or Road, Darkness
+    - DROP: 'Headlamp'
+
+EX184 — Road Cycling Descending Technique
+  BEFORE: Road Bike, Descent Road
+  AFTER:  Road bike, Descent Road
+    → NORMALIZE: 'Road Bike' → 'Road bike'
+
+EX185 — Climb Pacing & Cadence Management
+  BEFORE: Road Bike, MTB, or Trainer, Climb or Inclined Treadmill
+  AFTER:  Road bike, Mountain bike, Bike trainer, Treadmill
+    → NORMALIZE: 'Road Bike' → 'Road bike'
+    → NORMALIZE: 'MTB' → 'Mountain bike'
+    → NORMALIZE: 'Trainer' → 'Bike trainer'
+    → NORMALIZE: 'Climb or Inclined Treadmill' → 'Treadmill'
+
+EX186 — High Cadence Spin Drill
+  BEFORE: Road Bike, MTB, or Trainer
+  AFTER:  Road bike, Mountain bike, Bike trainer
+    → NORMALIZE: 'Road Bike' → 'Road bike'
+    → NORMALIZE: 'MTB' → 'Mountain bike'
+    → NORMALIZE: 'Trainer' → 'Bike trainer'
+
+EX187 — Gravel Surface Reading & Line Selection
+  BEFORE: Gravel Bike, Gravel Road
+  AFTER:  Gravel bike, Gravel Road
+    → NORMALIZE: 'Gravel Bike' → 'Gravel bike'
+
+EX188 — Loaded Touring / Bikepacking Bike Handling
+  BEFORE: Loaded Touring Bike or Bikepacking Setup, Varied Terrain
+  AFTER:  Varied Terrain
+    - DROP: 'Loaded Touring Bike or Bikepacking Setup'
+
+EX189 — Road & Gravel Paceline Technique
+  BEFORE: Road or Gravel Bike, Group Riding Environment
+  AFTER:  Road bike, Gravel bike, Group Riding Environment
+    → SPLIT: 'Road or Gravel Bike' → ['Road bike', 'Gravel bike']
+
+EX190 — En Garde Position Hold
+  BEFORE: Bodyweight
+  AFTER:  (empty)
+    - DROP: 'Bodyweight'
+
+EX191 — Fencing Lunge & Recovery
+  BEFORE: Bodyweight, Fencing Strip or Open Space
+  AFTER:  (empty)
+    - DROP: 'Bodyweight'
+    - DROP: 'Fencing Strip or Open Space'
+
+EX192 — Fencing Advance-Retreat Footwork Drill
+  BEFORE: Bodyweight, Fencing Strip or Marked Floor
+  AFTER:  (empty)
+    - DROP: 'Bodyweight'
+    - DROP: 'Fencing Strip or Marked Floor'
+
+EX193 — Shooting Breath Control & Stance
+  BEFORE: Laser Pistol or Air Pistol, Target, Shooting Range
+  AFTER:  (empty)
+    - DROP: 'Laser Pistol or Air Pistol'
+    - DROP: 'Target'
+    - DROP: 'Shooting Range'
+
+EX194 — Laser-Run Drill (Run-to-Shoot Transition)
+  BEFORE: Laser Pistol, Target, Running Space
+  AFTER:  (empty)
+    - DROP: 'Laser Pistol'
+    - DROP: 'Target'
+    - DROP: 'Running Space'
+
+EX195 — Rope Climb
+  BEFORE: Climbing Rope, Rope Rig
+  AFTER:  Climbing rope
+    → NORMALIZE: 'Climbing Rope' → 'Climbing rope'
+    → NORMALIZE: 'Rope Rig' → 'Climbing rope'
+
+EX196 — Obstacle Vault & Wall Traversal
+  BEFORE: Vault Box, Plyo Box, Gymnastics Horse, Wall
+  AFTER:  Plyo box
+    - DROP: 'Vault Box'
+    → NORMALIZE: 'Plyo Box' → 'Plyo box'
+    - DROP: 'Gymnastics Horse'
+    - DROP: 'Wall'
+
+EX197 — Double Brick / Run-Bike-Run Pacing Drill
+  BEFORE: Road or Trail, Road or MTB Bike
+  AFTER:  Road or Trail, Road bike, Mountain bike
+    → SPLIT: 'Road or MTB Bike' → ['Road bike', 'Mountain bike']
+
+EX198 — Running in Wetsuit (SwimRun)
+  BEFORE: Wetsuit (SwimRun cut or full), Trail or Road
+  AFTER:  Trail or Road
+    - DROP: 'Wetsuit (SwimRun cut or full)'
+
+EX199 — SwimRun Water Entry & Exit Technique
+  BEFORE: Open Water, Wetsuit, SwimRun Paddles (optional)
+  AFTER:  Open Water
+    - DROP: 'Wetsuit'
+    - DROP: 'SwimRun Paddles (optional)'
+
+EX202 — Blade Extraction & Feathering Drill
+  BEFORE: Rowing Oar, Sculling Blade, Erg Handle
+  AFTER:  (empty)
+    - DROP: 'Rowing Oar'
+    - DROP: 'Sculling Blade'
+    - DROP: 'Erg Handle'
+
+EX204 — On-Water Boat Balance Drill (Single / Double)
+  BEFORE: Rowing Shell, Oars, Water
+  AFTER:  Rowing Shell
+    - DROP: 'Oars'
+    - DROP: 'Water'
+
+EX205 — Classic Diagonal Stride Technique
+  BEFORE: Classic Cross-Country Skis, Poles, Groomed Track
+  AFTER:  XC ski kit, Poles, Groomed Track
+    → NORMALIZE: 'Classic Cross-Country Skis' → 'XC ski kit'
+
+EX206 — Skate Skiing V1 & V2 Technique
+  BEFORE: Skate Cross-Country Skis, Poles, Groomed Track
+  AFTER:  XC ski kit, Poles, Groomed Track
+    → NORMALIZE: 'Skate Cross-Country Skis' → 'XC ski kit'
+
+EX207 — Double Pole Technique (XC Skiing)
+  BEFORE: Cross-Country Skis or Ski Poles on Flat Ground
+  AFTER:  XC ski kit
+    → NORMALIZE: 'Cross-Country Skis or Ski Poles on Flat Ground' → 'XC ski kit'
+
+EX208 — Herringbone & Steep Uphill Technique (XC)
+  BEFORE: Classic or Skate Cross-Country Skis, Steep Track
+  AFTER:  XC ski kit, Steep Track
+    → NORMALIZE: 'Classic or Skate Cross-Country Skis' → 'XC ski kit'
+
+EX209 — SUP Forward Stroke Technique
+  BEFORE: Stand-Up Paddleboard, SUP Paddle
+  AFTER:  SUP
+    → NORMALIZE: 'Stand-Up Paddleboard' → 'SUP'
+    - DROP: 'SUP Paddle'
+
+EX210 — SUP Standing Balance & Stability Drill
+  BEFORE: Stand-Up Paddleboard, Flat or Choppy Water
+  AFTER:  SUP, Flat or Choppy Water
+    → NORMALIZE: 'Stand-Up Paddleboard' → 'SUP'
+
+EX211 — SUP Downwind & Wave Reading
+  BEFORE: Stand-Up Paddleboard, Open Water or Ocean
+  AFTER:  SUP, Open Water or Ocean
+    → NORMALIZE: 'Stand-Up Paddleboard' → 'SUP'
+
+EX214 — Fell Descent Technique (Steep Grass, Bog, Heather)
+  BEFORE: Fell Terrain (Steep Grass, Moorland, Heather, Bog)
+  AFTER:  Fell Terrain
+    ~ STRIP_PARENS: 'Fell Terrain (Steep Grass, Moorland, Heather, Bog)' → 'Fell Terrain'
+
+EX215 — Extreme Gradient Uphill Pacing (VK / Sky Technique)
+  BEFORE: Steep Mountain, Inclined Treadmill at Maximum Grade
+  AFTER:  Steep Mountain, Treadmill
+    → NORMALIZE: 'Inclined Treadmill at Maximum Grade' → 'Treadmill'
+
+EX216 — Plank (Front)
+  BEFORE: Bodyweight
+  AFTER:  (empty)
+    - DROP: 'Bodyweight'
+
+EX217 — Dead Bug
+  BEFORE: Bodyweight
+  AFTER:  (empty)
+    - DROP: 'Bodyweight'
+
+EX218 — Bird-Dog
+  BEFORE: Bodyweight
+  AFTER:  (empty)
+    - DROP: 'Bodyweight'
+
+EX219 — Side Plank
+  BEFORE: Bodyweight
+  AFTER:  (empty)
+    - DROP: 'Bodyweight'
+
+EX220 — Superman / Back Extension (BW)
+  BEFORE: Bodyweight
+  AFTER:  (empty)
+    - DROP: 'Bodyweight'
+
+EX221 — Mountain Climber
+  BEFORE: Bodyweight
+  AFTER:  (empty)
+    - DROP: 'Bodyweight'
+
+EX222 — Ab Wheel Rollout
+  BEFORE: Ab Wheel, Barbell with Plates
+  AFTER:  Ab Wheel, Barbell
+    → NORMALIZE: 'Barbell with Plates' → 'Barbell'
+
+EX224 — Bicycle Crunch
+  BEFORE: Bodyweight
+  AFTER:  (empty)
+    - DROP: 'Bodyweight'
+
+EX225 — V-Sit Hold
+  BEFORE: Bodyweight
+  AFTER:  (empty)
+    - DROP: 'Bodyweight'
+
+EX227 — Compression Tuck Hold
+  BEFORE: Bodyweight
+  AFTER:  (empty)
+    - DROP: 'Bodyweight'
+
+EX228 — Push-Up (Bodyweight)
+  BEFORE: Bodyweight
+  AFTER:  (empty)
+    - DROP: 'Bodyweight'
+
+EX229 — Bench Press (Barbell / DB)
+  BEFORE: Barbell, Dumbbell, Bench, Rack
+  AFTER:  Barbell, Dumbbell, Bench, Squat rack
+    → NORMALIZE: 'Rack' → 'Squat rack'
+
+EX233 — Lateral Raise (DB / Band)
+  BEFORE: Dumbbell, Resistance Band
+  AFTER:  Dumbbell, Resistance band
+    → NORMALIZE: 'Resistance Band' → 'Resistance band'
+
+EX235 — Tricep Pushdown / Extension (Cable / Band)
+  BEFORE: Cable Machine, Resistance Band
+  AFTER:  Cable machine, Resistance band
+    → NORMALIZE: 'Cable Machine' → 'Cable machine'
+    → NORMALIZE: 'Resistance Band' → 'Resistance band'
+
+EX236 — Leg Curl (Machine / Band)
+  BEFORE: Leg Curl Machine, Resistance Band, Stability Ball
+  AFTER:  Leg Curl Machine, Resistance band, Stability Ball
+    → NORMALIZE: 'Resistance Band' → 'Resistance band'
+
+EX238 — Burpee
+  BEFORE: Bodyweight
+  AFTER:  (empty)
+    - DROP: 'Bodyweight'
+
+EX240 — Bear Crawl
+  BEFORE: Bodyweight
+  AFTER:  (empty)
+    - DROP: 'Bodyweight'
