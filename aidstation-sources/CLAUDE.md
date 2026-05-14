@@ -47,30 +47,36 @@ Architecture overview lives in `Control_Spec` (resolve to highest `_vN.md`).
 
 ---
 
-## Current state (as of 2026-05-13)
+## Current state (as of 2026-05-14)
 
-Last shipped session: **L3-Spec-Trio Round 2** — see `handoffs/L3_Spec_Trio_R2_Closing_Handoff_v1.md`.
+Last shipped session: **Onboarding v5 spec rewrite** — see `handoffs/V5_Onboarding_Spec_Closing_Handoff_v1.md`. Consolidates the Onboarding Design Wave (D-58 + D-59 + D-60 + D-61) into `Athlete_Onboarding_Data_Spec_v5.md`. Predecessor handoffs from earlier in the wave: `D50_Review_and_Onboarding_Wave_D59_D60_Closing_Handoff_v1.md` (D-50 review + D-59 + D-60), `D61_Onboarding_Wave_Closing_Handoff_v1.md` (intermediate), `D58_Onboarding_Wave_Closing_Handoff_v1.md`.
 
 **Authoritative current files** (always resolve by listing directory and viewing the highest `_vN`):
-- Architecture: `Control_Spec_v6.md`
-- Backlog: `Project_Backlog_v11.md`
-- Onboarding data: `Athlete_Onboarding_Data_Spec_v4.md`
-- Integration: `Athlete_Data_Integration_Spec_v2.md`
+- Architecture: `Control_Spec_v7.md`
+- Backlog: `Project_Backlog_v15.md`
+- Onboarding data: `Athlete_Onboarding_Data_Spec_v5.md` (consolidates D-58 + D-59 + D-60 + D-61; v4 retained as in-project history per Rule #12)
+- Onboarding design wave inputs: `Onboarding_D58_Design_v1.md`, `Onboarding_D59_Design_v1.md`, `Onboarding_D60_Design_v1.md`, `Onboarding_D61_Design_v1.md`
+- Integration: `Athlete_Data_Integration_Spec_v4.md`
 - Catalog migration: `Catalog_Migration_Plan_v2.md`
 - Layer 0 ETL: `Layer0_ETL_Spec_v7.md`
-- Layer 3 done: `Layer3_3A_Spec.md`
+- Layer 3 done: `Layer3_3A_Spec.md`, `Layer3_3B_Spec.md`
 - Vocabulary audit: `Vocabulary_Audit_v3.md`
 - Exercise DB: `data/AR_Exercise_Database_v19.xlsx` (245 exercises, 36 sports, 1,068 sport-exercise pairings)
 - Sports framework: `data/Sports_Framework_v10.xlsx`
 
-**Next forward move:** `Layer3_3B_Spec.md` (goal-timeline viability + periodization shape).
+**Next forward move:** Andy's choice. Candidates with the design wave complete:
+- **v5 onboarding implementation PR** — substantial code work: `_PG_MIGRATIONS` for `daily_availability_windows`, `gym_profiles`, `locale_equipment_overrides`, `locale_toggle_overrides`, `athlete_profile_field_provenance`, `account_nudges`; `locale_profiles` column additions; `chain_registry.py` module; OAuth-first onboarding flow frontend; provider prefill UX; shared-gym-profile inherit/override/dispute UI; per-day windows UI; session-card JIT swap.
+- **D-50 wiring resumption** — now unblocked by D-58. PR1 scope: `provider_auth.py` helper + first real OAuth flow (COROS recommended) + COROS webhook recording + D-58 connect-step frontend integration.
+- **Layer 4 plan-gen spec** — Layer 3A/3B done; Layer 4 is the next unspecced layer in the pipeline.
 
-**Independent parallel tracks** (do not block Layer 3 spec writing):
-- D-50 Phase 1 integration deployment — schema migration + app code promotion in this repo (root `init_db.py`, `routes/`, `app.py`)
+**Independent parallel tracks:**
+- D-50 wiring (now unblocked by D-58) — see "Next forward move" above for PR1 scope
 - D-52 Catalog Migration Phase 1 — fuzzy-match HITL alias audit
+- D-54 SQLite collapse — queued; Catalog Migration Phase 5
 - D-55 Garmin onto `provider_auth` — **paused** until Garmin reopens API access
 - D-57 Research re-evaluation cadence design
-- D-58–D-61 onboarding architectural restructures (scope as a single design wave; they interact heavily)
+- D-58–D-61 Onboarding Design Wave — ✅ **complete** (design + v5 spec consolidation shipped 2026-05-14)
+- D-62 webhook_events retention prune — tracked; lands alongside first real webhook handler implementation
 
 ---
 
