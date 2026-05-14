@@ -1919,6 +1919,14 @@ _PG_MIGRATIONS = [
     )""",
     "CREATE INDEX IF NOT EXISTS daw_user_day_idx ON daily_availability_windows (user_id, day_of_week)",
     "ALTER TABLE locale_profiles ADD COLUMN IF NOT EXISTS preferred BOOLEAN DEFAULT FALSE",
+    # PR3 follow-up to D-50 §6 — partial UNIQUE indexes on the provider dedup
+    # columns so webhook ingest can use ON CONFLICT instead of the defensive
+    # SELECT-then-INSERT-or-UPDATE pattern coros_ingest currently uses. NULL
+    # rows excluded so manual cardio_log entries (pre-provider-sync) don't
+    # collide with each other.
+    "CREATE UNIQUE INDEX IF NOT EXISTS cardio_log_polar_exercise_uidx ON cardio_log (user_id, polar_exercise_id) WHERE polar_exercise_id IS NOT NULL",
+    "CREATE UNIQUE INDEX IF NOT EXISTS cardio_log_coros_label_uidx ON cardio_log (user_id, coros_label_id) WHERE coros_label_id IS NOT NULL",
+    "CREATE UNIQUE INDEX IF NOT EXISTS cardio_log_wahoo_workout_uidx ON cardio_log (user_id, wahoo_workout_id) WHERE wahoo_workout_id IS NOT NULL",
 ]
 
 _CLOTHING_SEEDS = [
