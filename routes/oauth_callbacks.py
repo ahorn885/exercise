@@ -30,7 +30,9 @@ _PROVIDERS: tuple[tuple[str, str], ...] = (
     ('polar',           'Polar'),
     ('wahoo',           'Wahoo'),
     # Wave 2 — added 2026-05-11
-    ('coros',           'COROS'),
+    # COROS is no longer a stub; the real OAuth callback lives at
+    # /coros/oauth/callback in routes/coros.py. Its developer-portal
+    # redirect_uri must point there, not at /auth/coros/callback.
     ('google-health',   'Google Health'),
     ('apple-health',    'Apple Health'),
     ('whoop',           'Whoop'),
