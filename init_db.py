@@ -1229,6 +1229,154 @@ _SQLITE_MIGRATIONS = [
         UNIQUE(user_id, date)
     )""",
     "CREATE INDEX IF NOT EXISTS wellness_self_report_user_date_idx ON wellness_self_report(user_id, date)",
+    # D-50 Phase 1 — provider integration tables. Per Athlete_Data_Integration_Spec
+    # v3 §4–§6. Generic provider_auth + webhook_events plus per-provider tables
+    # for Polar / Wahoo / COROS. Garmin paused (D-55); no per-provider table here.
+    # SQLite types: TIMESTAMP → TEXT (datetime('now') default), BIGINT → INTEGER
+    # (SQLite INTEGER is 64-bit), BOOLEAN → INTEGER. Partial indexes supported
+    # since SQLite 3.8.
+    """CREATE TABLE IF NOT EXISTS provider_auth (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL REFERENCES users(id),
+        provider TEXT NOT NULL,
+        access_token TEXT,
+        refresh_token TEXT,
+        token_expires_at TEXT,
+        session_blob TEXT,
+        provider_user_id TEXT,
+        scopes TEXT,
+        webhook_token TEXT,
+        status TEXT,
+        registered_at TEXT,
+        created_at TEXT DEFAULT (datetime('now')),
+        updated_at TEXT DEFAULT (datetime('now')),
+        UNIQUE (user_id, provider)
+    )""",
+    "CREATE INDEX IF NOT EXISTS provider_auth_status_idx ON provider_auth (status) WHERE status IN ('error', 'pending_backfill')",
+    """CREATE TABLE IF NOT EXISTS webhook_events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        provider TEXT NOT NULL,
+        event_type TEXT,
+        provider_user_id TEXT,
+        entity_id TEXT,
+        user_id INTEGER REFERENCES users(id),
+        payload TEXT,
+        signature_ok INTEGER,
+        received_at TEXT DEFAULT (datetime('now')),
+        processed_at TEXT,
+        error TEXT
+    )""",
+    "CREATE INDEX IF NOT EXISTS idx_webhook_events_lookup ON webhook_events (provider, provider_user_id, entity_id, event_type)",
+    "CREATE INDEX IF NOT EXISTS idx_webhook_events_pending ON webhook_events (received_at) WHERE processed_at IS NULL",
+    """CREATE TABLE IF NOT EXISTS polar_sleep (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL REFERENCES users(id),
+        date TEXT NOT NULL,
+        sleep_start_time TEXT,
+        sleep_end_time TEXT,
+        total_sleep_min INTEGER,
+        continuity REAL,
+        light_sleep_min INTEGER,
+        deep_sleep_min INTEGER,
+        rem_sleep_min INTEGER,
+        unknown_sleep_min INTEGER,
+        stages_json TEXT,
+        raw_payload TEXT,
+        fetched_at TEXT DEFAULT (datetime('now')),
+        UNIQUE (user_id, date)
+    )""",
+    """CREATE TABLE IF NOT EXISTS polar_nightly_recharge (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL REFERENCES users(id),
+        date TEXT NOT NULL,
+        ans_charge INTEGER,
+        ans_charge_status TEXT,
+        hrv_rmssd_ms REAL,
+        breathing_rate REAL,
+        recovery_indicator TEXT,
+        raw_payload TEXT,
+        fetched_at TEXT DEFAULT (datetime('now')),
+        UNIQUE (user_id, date)
+    )""",
+    """CREATE TABLE IF NOT EXISTS polar_cardio_load (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL REFERENCES users(id),
+        date TEXT NOT NULL,
+        daily_load REAL,
+        acute_load REAL,
+        chronic_load REAL,
+        cardio_load_status TEXT,
+        strain REAL,
+        raw_payload TEXT,
+        fetched_at TEXT DEFAULT (datetime('now')),
+        UNIQUE (user_id, date)
+    )""",
+    """CREATE TABLE IF NOT EXISTS polar_continuous_hr_samples (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL REFERENCES users(id),
+        timestamp_ms INTEGER NOT NULL,
+        heart_rate INTEGER,
+        UNIQUE (user_id, timestamp_ms)
+    )""",
+    "CREATE INDEX IF NOT EXISTS idx_polar_hr_user_time ON polar_continuous_hr_samples (user_id, timestamp_ms)",
+    """CREATE TABLE IF NOT EXISTS wahoo_plans (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL REFERENCES users(id),
+        plan_item_id INTEGER REFERENCES plan_items(id),
+        wahoo_plan_id TEXT,
+        wahoo_workout_id TEXT,
+        external_id TEXT,
+        provider_updated_at TEXT,
+        status TEXT,
+        push_payload TEXT,
+        created_at TEXT DEFAULT (datetime('now')),
+        updated_at TEXT DEFAULT (datetime('now'))
+    )""",
+    "CREATE INDEX IF NOT EXISTS idx_wahoo_plans_plan_item ON wahoo_plans (plan_item_id)",
+    """CREATE TABLE IF NOT EXISTS coros_daily_summary (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL REFERENCES users(id),
+        happen_day TEXT NOT NULL,
+        rhr INTEGER,
+        calories INTEGER,
+        steps INTEGER,
+        ppg_hrv INTEGER,
+        sleep_avg_hr INTEGER,
+        sleep_start_ms INTEGER,
+        sleep_end_ms INTEGER,
+        raw_payload TEXT,
+        fetched_at TEXT DEFAULT (datetime('now')),
+        UNIQUE (user_id, happen_day)
+    )""",
+    """CREATE TABLE IF NOT EXISTS coros_hrv_samples (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL REFERENCES users(id),
+        timestamp_s INTEGER NOT NULL,
+        hrv INTEGER,
+        hr INTEGER,
+        UNIQUE (user_id, timestamp_s)
+    )""",
+    """CREATE TABLE IF NOT EXISTS coros_plans (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL REFERENCES users(id),
+        plan_item_id INTEGER REFERENCES plan_items(id),
+        coros_label_id TEXT,
+        push_payload TEXT,
+        status TEXT,
+        created_at TEXT DEFAULT (datetime('now')),
+        updated_at TEXT DEFAULT (datetime('now'))
+    )""",
+    "CREATE INDEX IF NOT EXISTS idx_coros_plans_plan_item ON coros_plans (plan_item_id)",
+    # D-50 §6 — foreign-id columns on existing app tables for provider dedup.
+    # SQLite ADD COLUMN has no IF NOT EXISTS; the migration loop's try/except
+    # handles re-run idempotency.
+    "ALTER TABLE cardio_log ADD COLUMN polar_exercise_id TEXT",
+    "ALTER TABLE cardio_log ADD COLUMN wahoo_workout_id TEXT",
+    "ALTER TABLE cardio_log ADD COLUMN coros_label_id TEXT",
+    "ALTER TABLE cardio_log ADD COLUMN rwgps_trip_id TEXT",
+    "ALTER TABLE training_log ADD COLUMN polar_exercise_id TEXT",
+    "ALTER TABLE training_log ADD COLUMN wahoo_workout_id TEXT",
+    "ALTER TABLE training_log ADD COLUMN coros_label_id TEXT",
 ]
 
 _PG_MIGRATIONS = [
@@ -1499,6 +1647,151 @@ _PG_MIGRATIONS = [
         UNIQUE(user_id, date)
     )""",
     "CREATE INDEX IF NOT EXISTS wellness_self_report_user_date_idx ON wellness_self_report(user_id, date)",
+    # D-50 Phase 1 — provider integration tables. Mirrors the SQLite block
+    # above with PG-native types (SERIAL, TIMESTAMP DEFAULT NOW(), BIGINT,
+    # BOOLEAN). Per Athlete_Data_Integration_Spec v3 §4–§6. Garmin paused
+    # (D-55); no per-provider Garmin table here. Per spec §4.2, `payload`
+    # stays TEXT (not JSONB) for dispatch-logic portability.
+    """CREATE TABLE IF NOT EXISTS provider_auth (
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER NOT NULL REFERENCES users(id),
+        provider TEXT NOT NULL,
+        access_token TEXT,
+        refresh_token TEXT,
+        token_expires_at TIMESTAMP,
+        session_blob TEXT,
+        provider_user_id TEXT,
+        scopes TEXT,
+        webhook_token TEXT,
+        status TEXT,
+        registered_at TIMESTAMP,
+        created_at TIMESTAMP DEFAULT NOW(),
+        updated_at TIMESTAMP DEFAULT NOW(),
+        UNIQUE (user_id, provider)
+    )""",
+    "CREATE INDEX IF NOT EXISTS provider_auth_status_idx ON provider_auth (status) WHERE status IN ('error', 'pending_backfill')",
+    """CREATE TABLE IF NOT EXISTS webhook_events (
+        id SERIAL PRIMARY KEY,
+        provider TEXT NOT NULL,
+        event_type TEXT,
+        provider_user_id TEXT,
+        entity_id TEXT,
+        user_id INTEGER REFERENCES users(id),
+        payload TEXT,
+        signature_ok BOOLEAN,
+        received_at TIMESTAMP DEFAULT NOW(),
+        processed_at TIMESTAMP,
+        error TEXT
+    )""",
+    "CREATE INDEX IF NOT EXISTS idx_webhook_events_lookup ON webhook_events (provider, provider_user_id, entity_id, event_type)",
+    "CREATE INDEX IF NOT EXISTS idx_webhook_events_pending ON webhook_events (received_at) WHERE processed_at IS NULL",
+    """CREATE TABLE IF NOT EXISTS polar_sleep (
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER NOT NULL REFERENCES users(id),
+        date TEXT NOT NULL,
+        sleep_start_time TIMESTAMP,
+        sleep_end_time TIMESTAMP,
+        total_sleep_min INTEGER,
+        continuity REAL,
+        light_sleep_min INTEGER,
+        deep_sleep_min INTEGER,
+        rem_sleep_min INTEGER,
+        unknown_sleep_min INTEGER,
+        stages_json TEXT,
+        raw_payload TEXT,
+        fetched_at TIMESTAMP DEFAULT NOW(),
+        UNIQUE (user_id, date)
+    )""",
+    """CREATE TABLE IF NOT EXISTS polar_nightly_recharge (
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER NOT NULL REFERENCES users(id),
+        date TEXT NOT NULL,
+        ans_charge INTEGER,
+        ans_charge_status TEXT,
+        hrv_rmssd_ms REAL,
+        breathing_rate REAL,
+        recovery_indicator TEXT,
+        raw_payload TEXT,
+        fetched_at TIMESTAMP DEFAULT NOW(),
+        UNIQUE (user_id, date)
+    )""",
+    """CREATE TABLE IF NOT EXISTS polar_cardio_load (
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER NOT NULL REFERENCES users(id),
+        date TEXT NOT NULL,
+        daily_load REAL,
+        acute_load REAL,
+        chronic_load REAL,
+        cardio_load_status TEXT,
+        strain REAL,
+        raw_payload TEXT,
+        fetched_at TIMESTAMP DEFAULT NOW(),
+        UNIQUE (user_id, date)
+    )""",
+    """CREATE TABLE IF NOT EXISTS polar_continuous_hr_samples (
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER NOT NULL REFERENCES users(id),
+        timestamp_ms BIGINT NOT NULL,
+        heart_rate INTEGER,
+        UNIQUE (user_id, timestamp_ms)
+    )""",
+    "CREATE INDEX IF NOT EXISTS idx_polar_hr_user_time ON polar_continuous_hr_samples (user_id, timestamp_ms)",
+    """CREATE TABLE IF NOT EXISTS wahoo_plans (
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER NOT NULL REFERENCES users(id),
+        plan_item_id INTEGER REFERENCES plan_items(id),
+        wahoo_plan_id TEXT,
+        wahoo_workout_id TEXT,
+        external_id TEXT,
+        provider_updated_at TIMESTAMP,
+        status TEXT,
+        push_payload TEXT,
+        created_at TIMESTAMP DEFAULT NOW(),
+        updated_at TIMESTAMP DEFAULT NOW()
+    )""",
+    "CREATE INDEX IF NOT EXISTS idx_wahoo_plans_plan_item ON wahoo_plans (plan_item_id)",
+    """CREATE TABLE IF NOT EXISTS coros_daily_summary (
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER NOT NULL REFERENCES users(id),
+        happen_day TEXT NOT NULL,
+        rhr INTEGER,
+        calories INTEGER,
+        steps INTEGER,
+        ppg_hrv INTEGER,
+        sleep_avg_hr INTEGER,
+        sleep_start_ms BIGINT,
+        sleep_end_ms BIGINT,
+        raw_payload TEXT,
+        fetched_at TIMESTAMP DEFAULT NOW(),
+        UNIQUE (user_id, happen_day)
+    )""",
+    """CREATE TABLE IF NOT EXISTS coros_hrv_samples (
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER NOT NULL REFERENCES users(id),
+        timestamp_s BIGINT NOT NULL,
+        hrv INTEGER,
+        hr INTEGER,
+        UNIQUE (user_id, timestamp_s)
+    )""",
+    """CREATE TABLE IF NOT EXISTS coros_plans (
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER NOT NULL REFERENCES users(id),
+        plan_item_id INTEGER REFERENCES plan_items(id),
+        coros_label_id TEXT,
+        push_payload TEXT,
+        status TEXT,
+        created_at TIMESTAMP DEFAULT NOW(),
+        updated_at TIMESTAMP DEFAULT NOW()
+    )""",
+    "CREATE INDEX IF NOT EXISTS idx_coros_plans_plan_item ON coros_plans (plan_item_id)",
+    # D-50 §6 — foreign-id columns on existing app tables for provider dedup.
+    "ALTER TABLE cardio_log ADD COLUMN IF NOT EXISTS polar_exercise_id TEXT",
+    "ALTER TABLE cardio_log ADD COLUMN IF NOT EXISTS wahoo_workout_id TEXT",
+    "ALTER TABLE cardio_log ADD COLUMN IF NOT EXISTS coros_label_id TEXT",
+    "ALTER TABLE cardio_log ADD COLUMN IF NOT EXISTS rwgps_trip_id TEXT",
+    "ALTER TABLE training_log ADD COLUMN IF NOT EXISTS polar_exercise_id TEXT",
+    "ALTER TABLE training_log ADD COLUMN IF NOT EXISTS wahoo_workout_id TEXT",
+    "ALTER TABLE training_log ADD COLUMN IF NOT EXISTS coros_label_id TEXT",
 ]
 
 _CLOTHING_SEEDS = [
