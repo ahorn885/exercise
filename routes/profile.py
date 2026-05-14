@@ -26,6 +26,7 @@ from athlete import (
     PROFILE_FIELDS, TRAINING_WINDOWS,
     get_athlete_profile, upsert_athlete_profile,
 )
+from routes import provider_auth as pa
 
 
 bp = Blueprint('profile', __name__, url_prefix='/profile')
@@ -38,6 +39,69 @@ PREFERENCE_CATEGORIES = (
     'avoid_exercise', 'prefer_exercise',
     'nutrition', 'training', 'scheduling', 'equipment', 'general',
 )
+
+# Providers surfaced on the Account Config 1 Connections tab. Order is the
+# rendering order; entries here must have a `<slug>.oauth_start` Flask
+# endpoint (the connect button links to it via url_for) and ideally a
+# matching disconnect path through `provider_auth.disconnect`. New
+# providers slot in as their OAuth blueprints land (Wahoo / Strava / Whoop
+# / TrainingPeaks / Zwift / RWGPS — RWGPS already wired but the OAuth
+# start endpoint name may differ; verify before adding).
+CONNECTION_PROVIDERS = (
+    ('coros', 'COROS', 'coros.oauth_start'),
+    ('polar', 'Polar', 'polar.oauth_start'),
+)
+
+# pa.status → (badge label, Bootstrap badge class). Mirrors v5 §Account
+# Config 1 "Connection Status" enum (Connected / Disconnected / Auth
+# Error / Sync Paused) plus the pending_backfill mid-state PR3 introduced
+# for Polar's two-phase OAuth+registration flow.
+_STATUS_DISPLAY = {
+    pa.STATUS_ACTIVE: ('Connected', 'bg-success'),
+    pa.STATUS_REVOKED: ('Disconnected', 'bg-secondary'),
+    pa.STATUS_ERROR: ('Auth error', 'bg-danger'),
+    pa.STATUS_PENDING_BACKFILL: ('Setup in progress', 'bg-warning text-dark'),
+    pa.STATUS_MIGRATING: ('Migrating', 'bg-info text-dark'),
+}
+
+
+def _load_connections(db, uid):
+    """Build the Connections-tab data. Returns a list of dicts in
+    `CONNECTION_PROVIDERS` order, one per known provider. Each entry
+    carries the on-disk `provider_auth` row (or None) plus the
+    pre-computed display fields the template renders.
+
+    Connect / re-auth links route through `<provider>.oauth_start` with
+    `return_to=/profile?tab=connections` so the post-OAuth redirect
+    lands the athlete back on the Connections tab with the
+    `?<provider>_connected=1` passive-prefill prompt visible.
+    """
+    rows = db.execute(
+        'SELECT provider, status, registered_at, scopes, '
+        'updated_at, created_at, provider_user_id '
+        'FROM provider_auth WHERE user_id = ?',
+        (uid,),
+    ).fetchall()
+    by_provider = {r['provider']: dict(r) for r in rows}
+    return_to = url_for('profile.edit') + '?tab=connections'
+    out = []
+    for slug, label, endpoint in CONNECTION_PROVIDERS:
+        row = by_provider.get(slug)
+        status = (row or {}).get('status')
+        display_label, badge_class = _STATUS_DISPLAY.get(
+            status, ('Not connected', 'bg-light text-dark border')
+        )
+        out.append({
+            'slug': slug,
+            'label': label,
+            'row': row,
+            'status': status,
+            'status_label': display_label,
+            'badge_class': badge_class,
+            'is_connected': status == pa.STATUS_ACTIVE,
+            'connect_url': url_for(endpoint, return_to=return_to),
+        })
+    return out
 
 
 def _load_memory(db, user_id):
@@ -118,6 +182,28 @@ def edit():
     # redirects to GET, then the GET handler reads-and-clears.
     from flask import session as flask_session
     new_token_plaintext = flask_session.pop('new_api_token_plaintext', None)
+    connections = _load_connections(db, uid)
+    # Post-OAuth-callback flags. `<provider>.oauth_callback` redirects to
+    # `return_to?<slug>_connected=1` on success (or `?<slug>_oauth_error=...`
+    # / `?<slug>_register_error=1` on failure). Surface the connected
+    # label so the template can render the passive prompt without
+    # re-implementing the slug → label mapping. Per v5 spec §A.2.5 this
+    # is the post-connect re-onboarding prompt surface; the full
+    # per-field prefill UX lands in D2.
+    just_connected_label = None
+    just_connected_slug = None
+    for slug, label, _endpoint in CONNECTION_PROVIDERS:
+        if request.args.get(f'{slug}_connected') == '1':
+            just_connected_label = label
+            just_connected_slug = slug
+            break
+    # Best-effort surface for OAuth failures. Same shape — the callback
+    # writes `?<slug>_oauth_error=<reason>` or `?<slug>_register_error=1`.
+    oauth_error_label = None
+    for slug, label, _endpoint in CONNECTION_PROVIDERS:
+        if request.args.get(f'{slug}_oauth_error') or request.args.get(f'{slug}_register_error'):
+            oauth_error_label = label
+            break
     from datetime import datetime as _dt
     return render_template(
         'profile/edit.html',
@@ -128,10 +214,37 @@ def edit():
         user_row=dict(user_row) if user_row else {},
         api_tokens=[dict(t) for t in api_tokens],
         new_api_token=new_token_plaintext,
+        connections=connections,
+        just_connected_label=just_connected_label,
+        just_connected_slug=just_connected_slug,
+        oauth_error_label=oauth_error_label,
+        active_tab=request.args.get('tab'),
         # Used by the template to render an "Expired" badge without
         # round-tripping the timestamp through a Jinja-only comparison.
         now_iso=_dt.utcnow().isoformat(timespec='seconds'),
     )
+
+
+@bp.route('/connections/<provider>/disconnect', methods=['POST'])
+def disconnect_provider(provider):
+    """Athlete-initiated disconnect from the Account Config 1 tab.
+    Scoped on `current_user_id()`; unknown provider slugs 404.
+    `pa.disconnect` nulls credentials + flips status to `revoked` (no
+    row delete — audit + scope-ack history is preserved).
+    """
+    if provider not in {slug for slug, _label, _endpoint in CONNECTION_PROVIDERS}:
+        abort(404)
+    db = get_db()
+    changed = pa.disconnect(db, current_user_id(), provider)
+    label = next(
+        (lbl for slug, lbl, _endpoint in CONNECTION_PROVIDERS if slug == provider),
+        provider,
+    )
+    if changed:
+        flash(f'{label} disconnected.', 'info')
+    else:
+        flash(f'{label} was already disconnected.', 'info')
+    return redirect(url_for('profile.edit', tab='connections'))
 
 
 @bp.route('/preference/add', methods=['POST'])

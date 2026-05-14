@@ -4,8 +4,10 @@
 
 <h4 class="mb-3">Profile</h4>
 
+{% set connection_count = connections|selectattr('is_connected')|list|length %}
 <ul class="nav nav-tabs mb-3" role="tablist">
   <li class="nav-item"><button class="nav-link active" data-bs-toggle="tab" data-bs-target="#tab-profile" type="button">Athlete</button></li>
+  <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-connections" type="button">Connections <span class="badge bg-secondary">{{ connection_count }}</span></button></li>
   <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-memory" type="button">Coach memory <span class="badge bg-secondary">{{ memory|length }}</span></button></li>
   <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-account" type="button">Account</button></li>
   <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-api" type="button">API access</button></li>
@@ -93,6 +95,93 @@
         </div>
       </div>
     </form>
+  </div>
+
+  {# ── Connections (Account Config 1) ───────────────────────────── #}
+  <div class="tab-pane fade" id="tab-connections" role="tabpanel">
+    <p class="text-muted small mb-3">
+      Connect your training services so AIDSTATION can pull activity,
+      sleep, and HR data automatically. Disconnect or re-authorise any
+      time. Provider data is used to prefill your profile fields where
+      the source signal is reliable — you can override any prefilled
+      value, and manual values are kept until you clear them.
+    </p>
+
+    {% if just_connected_label %}
+      <div class="alert alert-success d-flex justify-content-between align-items-start" role="alert">
+        <div>
+          <strong>{{ just_connected_label }} connected.</strong>
+          We'll start pulling your activity, sleep, and heart-rate data
+          on the next provider sync. The per-field prefill walkthrough
+          (which {{ just_connected_label }} values to pull into your
+          profile) ships in the next release.
+        </div>
+        <a href="{{ url_for('profile.edit', tab='connections') }}" class="btn-close" aria-label="Dismiss"></a>
+      </div>
+    {% endif %}
+
+    {% if oauth_error_label %}
+      <div class="alert alert-danger d-flex justify-content-between align-items-start" role="alert">
+        <div>
+          <strong>{{ oauth_error_label }} did not connect.</strong>
+          The OAuth handshake or partner-user registration failed. Try
+          the Connect button again; if it keeps failing, the provider's
+          auth surface may be down.
+        </div>
+        <a href="{{ url_for('profile.edit', tab='connections') }}" class="btn-close" aria-label="Dismiss"></a>
+      </div>
+    {% endif %}
+
+    <div class="list-group">
+      {% for c in connections %}
+        <div class="list-group-item">
+          <div class="d-flex flex-wrap justify-content-between align-items-start gap-2">
+            <div>
+              <div class="d-flex align-items-center gap-2 mb-1">
+                <h6 class="mb-0">{{ c.label }}</h6>
+                <span class="badge {{ c.badge_class }}">{{ c.status_label }}</span>
+              </div>
+              <div class="text-muted small">
+                {% if c.row and c.row.registered_at %}
+                  Connected since {{ (c.row.registered_at|string)[:10] }}.
+                {% elif c.row and c.row.created_at %}
+                  First authorised {{ (c.row.created_at|string)[:10] }}.
+                {% else %}
+                  Not yet connected.
+                {% endif %}
+                {% if c.row and c.row.scopes %}
+                  <span class="d-block">Scopes: <code class="small">{{ c.row.scopes }}</code></span>
+                {% endif %}
+                {% if c.row and c.row.updated_at %}
+                  <span class="d-block">Last activity {{ (c.row.updated_at|string)[:19] }}.</span>
+                {% endif %}
+              </div>
+            </div>
+            <div class="d-flex flex-wrap gap-2">
+              {% if c.is_connected %}
+                <a href="{{ c.connect_url }}" class="btn btn-sm btn-outline-secondary"
+                   title="Run the OAuth handshake again to refresh tokens or scope grants.">Re-authorise</a>
+                <form method="post"
+                      action="{{ url_for('profile.disconnect_provider', provider=c.slug) }}"
+                      class="d-inline"
+                      data-confirm="Disconnect {{ c.label }}? Your existing data stays, but no new syncs will run until you re-connect.">
+                  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                  <button class="btn btn-sm btn-outline-danger" type="submit">Disconnect</button>
+                </form>
+              {% else %}
+                <a href="{{ c.connect_url }}" class="btn btn-sm btn-primary">Connect</a>
+              {% endif %}
+            </div>
+          </div>
+        </div>
+      {% endfor %}
+    </div>
+
+    <p class="text-muted small mt-3 mb-0">
+      More providers (Wahoo, Strava, Whoop, TrainingPeaks, Zwift, Ride
+      With GPS) ship as their OAuth blueprints come online. Garmin is
+      paused while Garmin's API access is closed.
+    </p>
   </div>
 
   {# ── Coach memory ──────────────────────────────────────────────── #}
@@ -288,4 +377,34 @@
   </div>
 
 </div>
+
+{# Activate the right tab from the URL. Triggered by:
+   - `?tab=connections` (post-disconnect redirect, manual deep link)
+   - `?<provider>_connected=1` (post-OAuth success callback)
+   - `?<provider>_oauth_error=…` / `?<provider>_register_error=1` (failure)
+   so a returning OAuth callback lands on the Connections tab with the
+   passive prompt visible, rather than the Athlete tab where the user
+   started. Active tab passed in from the route handler when available;
+   otherwise we read it from the URL directly. #}
+<script>
+(function() {
+  var params = new URLSearchParams(window.location.search);
+  var requested = {{ (active_tab or '')|tojson }};
+  if (!requested) requested = params.get('tab');
+  if (!requested) {
+    {% for c in connections %}
+      if (params.get('{{ c.slug }}_connected') === '1' ||
+          params.get('{{ c.slug }}_oauth_error') ||
+          params.get('{{ c.slug }}_register_error')) {
+        requested = 'connections';
+      }
+    {% endfor %}
+  }
+  if (!requested) return;
+  var target = document.querySelector('[data-bs-target="#tab-' + requested + '"]');
+  if (target && window.bootstrap && window.bootstrap.Tab) {
+    window.bootstrap.Tab.getOrCreateInstance(target).show();
+  }
+})();
+</script>
 {% endblock %}
