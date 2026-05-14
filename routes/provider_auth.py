@@ -120,6 +120,44 @@ def set_status(db: Any, auth_id: int, status: str) -> None:
     db.commit()
 
 
+def disconnect(db: Any, user_id: int, provider: str) -> bool:
+    """Athlete-initiated disconnect from Account Config 1.
+
+    Flips status to `revoked` and nulls every credential-bearing column
+    on the `(user_id, provider)` row. Preserves `scopes` and
+    `registered_at` (audit), and `token_expires_at` (informational; gets
+    overwritten on re-connect).
+
+    `provider_user_id` is nulled deliberately: provider webhooks identify
+    the local user via `get_auth_by_provider_user_id`, and the existing
+    handlers do not gate on `status`. Nulling the reverse-lookup key
+    causes any in-flight webhook to land in the unmapped-event branch
+    (audit row written, no ingest), which is the correct post-disconnect
+    behaviour without having to thread a status check through every
+    handler. The raw provider-side identifier is still preserved in
+    `webhook_events.payload` if forensic recovery is ever needed.
+
+    Returns True if a row was updated, False if no `(user_id, provider)`
+    row existed. Caller can treat False as a no-op (the screen already
+    showed the disconnect button on a non-existent row, or a double-tap
+    raced).
+    """
+    cur = db.execute(
+        'UPDATE provider_auth '
+        'SET status = ?, '
+        '    access_token = NULL, '
+        '    refresh_token = NULL, '
+        '    session_blob = NULL, '
+        '    webhook_token = NULL, '
+        '    provider_user_id = NULL, '
+        '    updated_at = NOW() '
+        'WHERE user_id = ? AND provider = ?',
+        (STATUS_REVOKED, user_id, provider),
+    )
+    db.commit()
+    return (cur.rowcount or 0) > 0
+
+
 def rotate_webhook_token(
     db: Any, user_id: int, provider: str, webhook_token: str,
 ) -> None:
