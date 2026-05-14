@@ -782,6 +782,94 @@ Per-second wellness data from Garmin wellness FIT files.
 - Surfaced in coaching context as `wellness_summary` — aggregated trends
   for the lookback window.
 
+### Provider integrations
+
+D-50 Phase 1 schema per `aidstation-sources/Athlete_Data_Integration_Spec_v3.md`
+§4–§6. Tables exist; route wiring lands in a subsequent PR. Garmin
+remains on the legacy `garmin_auth` table above (D-55 paused until
+Garmin reopens API access; `provider_auth.session_blob` is the
+designed destination once Garmin can be rebuilt).
+
+#### `provider_auth`
+
+Per-user, per-provider credentials and registration state. Replaces
+the legacy `garmin_auth` shape for every non-Garmin provider; Garmin
+will join when rebuilt onto `session_blob`.
+
+- Columns: `id`, `user_id`, `provider` (slug matching
+  `oauth_callbacks._PROVIDERS`), `access_token`, `refresh_token`,
+  `token_expires_at`, `session_blob` (non-OAuth session JSON; Garmin
+  only), `provider_user_id`, `scopes`, `webhook_token` (Wahoo —
+  rotates per event), `status` (active / revoked / error /
+  pending_backfill / migrating), `registered_at`, `created_at`,
+  `updated_at`.
+- Constraint: `UNIQUE (user_id, provider)`.
+- Index: partial `provider_auth_status_idx` on `status` WHERE
+  `status IN ('error', 'pending_backfill')` for error/backfill scans.
+
+#### `webhook_events`
+
+Append-only audit + dedup log for incoming provider pushes.
+
+- Columns: `id`, `provider`, `event_type`, `provider_user_id`,
+  `entity_id` (provider-side workout/exercise/route ID; dedup key),
+  `user_id` (NULL while pending dispatch resolution), `payload`
+  (raw JSON body as TEXT), `signature_ok`, `received_at`,
+  `processed_at` (NULL = pending), `error`.
+- Indexes: lookup `(provider, provider_user_id, entity_id, event_type)`;
+  partial pending index on `received_at` WHERE `processed_at IS NULL`.
+
+#### `polar_sleep`, `polar_nightly_recharge`, `polar_cardio_load`, `polar_continuous_hr_samples`
+
+Per-provider Polar tables. All user-scoped.
+
+- `polar_sleep` — UNIQUE `(user_id, date)`; sleep stages in
+  `stages_json`; UPSERT-capable per spec note (Polar re-analyzes
+  post-sync).
+- `polar_nightly_recharge` — ANS charge + HRV + recovery.
+  UNIQUE `(user_id, date)`.
+- `polar_cardio_load` — daily TRIMP + acute/chronic load.
+  UNIQUE `(user_id, date)`. Polar's ACWR equivalent; treat as one
+  input, not authoritative.
+- `polar_continuous_hr_samples` — opt-in continuous HR.
+  UNIQUE `(user_id, timestamp_ms)`; index `(user_id, timestamp_ms)`.
+
+#### `wahoo_plans`
+
+Outbound push log for Wahoo workout plans.
+
+- Columns: `id`, `user_id`, `plan_item_id` (FK to `plan_items`),
+  `wahoo_plan_id`, `wahoo_workout_id`, `external_id`,
+  `provider_updated_at`, `status` (pushed / completed / cancelled /
+  error), `push_payload`, `created_at`, `updated_at`.
+- Index: `(plan_item_id)`.
+- **Note:** inbound Wahoo activities flow into `cardio_log` via the
+  new `cardio_log.wahoo_workout_id` column; no separate inbound table.
+
+#### `coros_daily_summary`, `coros_hrv_samples`, `coros_plans`
+
+Per-provider COROS tables.
+
+- `coros_daily_summary` — daily wellness + sleep window.
+  UNIQUE `(user_id, happen_day)`.
+- `coros_hrv_samples` — per-sample HRV + HR.
+  UNIQUE `(user_id, timestamp_s)`.
+- `coros_plans` — outbound plan push log. FK `plan_items`.
+  Index `(plan_item_id)`.
+
+#### Foreign-id columns on existing tables
+
+Provider dedup IDs added to existing app tables (see also `garmin_activity_id`
+already present):
+
+- `cardio_log` — `polar_exercise_id`, `wahoo_workout_id`, `coros_label_id`,
+  `rwgps_trip_id`.
+- `training_log` — `polar_exercise_id`, `wahoo_workout_id`,
+  `coros_label_id`. (No `rwgps_trip_id` — RWGPS is cycling-only.)
+
+`strava_activity_id` on `cardio_log` is deferred per spec §6 until
+Strava integration design lands (D-48).
+
 ### Shared catalogs
 
 These tables have **no `user_id`** column. Edits propagate to all users.
