@@ -66,8 +66,9 @@ Last shipped session: **L3-Spec-Trio Round 2** — see `handoffs/L3_Spec_Trio_R2
 **Next forward move:** `Layer3_3B_Spec.md` (goal-timeline viability + periodization shape).
 
 **Independent parallel tracks** (do not block Layer 3 spec writing):
-- D-50 Phase 1 integration deployment (Vercel-app codebase, separate repo)
+- D-50 Phase 1 integration deployment — schema migration + app code promotion in this repo (root `init_db.py`, `routes/`, `app.py`)
 - D-52 Catalog Migration Phase 1 — fuzzy-match HITL alias audit
+- D-55 Garmin onto `provider_auth` — **paused** until Garmin reopens API access
 - D-57 Research re-evaluation cadence design
 - D-58–D-61 onboarding architectural restructures (scope as a single design wave; they interact heavily)
 
@@ -96,6 +97,10 @@ When a handoff defers edits, include mechanically-applicable instructions:
 ### Rule #12 — Numeric version suffixes
 
 Revised files save with a numeric version suffix (`_v1.md`, `_v2.md`, …). Each revision bumps N from the highest existing. Old versions accumulate as in-project history — do not delete. Cross-references cite the logical name without version; resolve via directory listing to the highest N at use time.
+
+### Rule #13 — Every closing handoff names CLAUDE.md as the first re-read
+
+Every closing handoff's forward-pointer / next-session reading list begins with **"Read `aidstation-sources/CLAUDE.md` fully"** as the first explicit step, before any domain-specific reads (backlog, prior handoff, target spec files). The First-session checklist already names CLAUDE.md as item 1; Rule #13 makes it the handoff author's responsibility to reinforce it in the handoff itself, so the next session's Rule #9 reconciliation runs against the latest operating context (rules, framing, stop-and-ask triggers) rather than only the latest spec narrative. Especially important when operating rules or framing have changed mid-stream — a session that reads only the latest handoff and skips CLAUDE.md will operate on stale context.
 
 ---
 
@@ -145,10 +150,28 @@ For each, the expected output before stopping is: options considered, tradeoffs,
 ## Stack
 
 - **AI backend:** Claude API (Sonnet/Opus latest)
-- **Database:** PostgreSQL with JSONB
+- **Database:** PostgreSQL (Neon) in production; SQLite locally
 - **ETL / data work:** Python (openpyxl, rapidfuzz, pandas)
-- **Web app:** TBD (not yet scaffolded)
-- **Athlete integrations planned:** Garmin, Strava, Wahoo, Whoop, Apple Health, Samsung Health, Polar, Coros
+- **Web app:** Flask + Jinja templates, deployed to Vercel (`aidstation-pro.vercel.app`) and TrueNAS via Docker (Watchtower auto-deploys on push to `main`). Code at the repo root (`app.py`, `routes/`, `init_db.py`, etc.). This is the **v1 app**, which is the current production target for the v2 LLM-pipeline build being designed in `aidstation-sources/`.
+- **Athlete integrations:** COROS + Ride With GPS shipped (Phase-0 webhook stubs); Strava/Whoop/TrainingPeaks/Zwift stubs prepped on a separate branch (uncommitted at time of writing per `HANDOFF-2026-05-13-stub-batch.md`); Polar + Wahoo next; Garmin paused (API closed); Apple Health + Samsung Health out of scope (need native iOS/Android clients).
+
+---
+
+## Operating context (v1 + v2, selective rebuild)
+
+This repo holds **two parallel work tracks**:
+
+1. **v1 Flask app at the repo root.** Live production AIDSTATION. Strength-training + cardio-logging + Garmin FIT ingestion + Claude-API-based coaching. The current code path. Has no users in production — Andy is the only test athlete (one test account).
+2. **v2 LLM-pipeline design in `aidstation-sources/`.** Layers 0–5 spec-first build. Layer 0 reference data is deployed; Layers 2A–2E specced; Layer 3 in progress (3A done, 3B next).
+
+**Selective rebuild (the v1→v2 path):**
+- **Keep:** provider integration layer (`routes/`, `*_connect.py`, OAuth callback plumbing), auth + accounts, DB scaffolding pattern (`init_db.py`, `_PG_MIGRATIONS` / `_SQLITE_MIGRATIONS`, the `database.py` compatibility layer), and `rx_engine_spec.md` as the strength-progression algorithm spec.
+- **Replace:** coaching + plan-generation. The current `coaching.py` is one big Claude call; v2 is the structured 0–5 layer pipeline.
+- **Revisit later:** v1 strength UI, the broader v1 schema rot, the dual-backend SQLite/Postgres pattern (`layer0.*` is Postgres-only — Catalog Migration Plan Phase 5 collapses SQLite support).
+
+**Strangler-fig sequencing.** v2 modules ship into the running v1 app one at a time, replacing pieces. No parallel staging environment. v1 having no users (only Andy as test athlete) makes this safe — schema migrations and route swaps don't need backward-compatibility shims.
+
+**"Push to production as we go" rule (Andy 2026-05-14):** prefer shipping working v2 code into v1 over accumulating more design ahead of any implementation. The 5-file ceiling and spec-first sequencing still apply, but specs should be scoped to what we're about to build, not everything ahead.
 
 ---
 
@@ -167,7 +190,7 @@ This context matters because Andy dogfoods his own product — coaching guidance
 When you start a fresh session, do this before anything else:
 
 1. Read this CLAUDE.md fully.
-2. Read `backlog/Project_Backlog_v11.md` (or highest `_vN`).
+2. Read `Project_Backlog_v11.md` (or highest `_vN`).
 3. Read the most recent handoff in `handoffs/`.
 4. Apply Rule #9 — verify the previous handoff's claimed edits actually landed.
 5. Tell Andy: (a) what you understand current state to be, (b) what you understand the next focus to be, (c) any drift you found between handoff narrative and on-disk state.
