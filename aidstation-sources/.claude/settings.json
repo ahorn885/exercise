@@ -1,0 +1,10 @@
+{
+  "$schema": "https://json-schema.org/claude-code-settings.json",
+  "permissions": {
+    "deny": [
+      "Read(.env*)",
+      "Read(**/secrets/**)",
+      "Read(**/.env*)"
+    ]
+  }
+}
