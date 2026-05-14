@@ -27,12 +27,14 @@ _PROVIDERS: tuple[tuple[str, str], ...] = (
     # Wave 1 — initial integrations
     ('garmin',          'Garmin'),
     ('strava',          'Strava'),
-    ('polar',           'Polar'),
     ('wahoo',           'Wahoo'),
     # Wave 2 — added 2026-05-11
     # COROS is no longer a stub; the real OAuth callback lives at
     # /coros/oauth/callback in routes/coros.py. Its developer-portal
     # redirect_uri must point there, not at /auth/coros/callback.
+    # Polar (PR3, 2026-05-14) is no longer a stub either; the real
+    # OAuth callback lives at /polar/oauth/callback in routes/polar.py.
+    # Same redirect_uri requirement as COROS.
     ('google-health',   'Google Health'),
     ('apple-health',    'Apple Health'),
     ('whoop',           'Whoop'),

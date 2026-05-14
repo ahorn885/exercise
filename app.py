@@ -141,6 +141,7 @@ from routes.auth import bp as auth_bp, current_user, verify_bearer_token
 from routes.oauth_callbacks import bp as oauth_callbacks_bp
 from routes.status import bp as status_bp
 from routes.coros import bp as coros_bp
+from routes.polar import bp as polar_bp
 from routes.ride_with_gps import bp as ride_with_gps_bp
 from routes.strava import bp as strava_bp
 from routes.whoop import bp as whoop_bp
@@ -168,6 +169,7 @@ app.register_blueprint(auth_bp)
 app.register_blueprint(oauth_callbacks_bp)
 app.register_blueprint(status_bp)
 app.register_blueprint(coros_bp)
+app.register_blueprint(polar_bp)
 app.register_blueprint(ride_with_gps_bp)
 app.register_blueprint(strava_bp)
 app.register_blueprint(whoop_bp)
@@ -178,6 +180,10 @@ app.register_blueprint(zwift_bp)
 # (and would 400 every push). Auth is via the `client` + `secret` request
 # headers, verified inside the blueprint in Phase 6.
 csrf.exempt(coros_bp)
+# Polar pushes notifications to /polar/webhook from their AccessLink
+# servers. Auth is via the Polar-Webhook-Signature HMAC-SHA256 header
+# verified against POLAR_WEBHOOK_SECRET inside the blueprint (PR3).
+csrf.exempt(polar_bp)
 # Same rationale for Ride With GPS: pushes originate from RWGPS servers
 # with an `x-rwgps-signature` HMAC header, not from a browser. Signature
 # verification happens inside the blueprint when the stub is promoted.
@@ -210,6 +216,7 @@ _AUTH_EXEMPT_ENDPOINTS = {
     # session cookie.
     'status.status',
     'coros.webhook',
+    'polar.webhook',
     'ride_with_gps.webhook',
     'strava.webhook',
     'whoop.webhook',
