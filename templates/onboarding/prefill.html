@@ -1,0 +1,134 @@
+{% extends 'base.html' %}
+{% block title %}Review your profile data — AIDSTATION{% endblock %}
+{% block content %}
+
+{# v5 onboarding Step 3a — "Prefill review" (D-58 / PR7 / D2a).
+   Read-side of v5 §A.2 prefill UX. Per-field comparison cards showing
+   the athlete's stored value next to each connected provider's
+   extractor output. PR7 stub-renders [Use provider] / [Keep current]
+   buttons; D2b wires the write path + manual_override flip. #}
+
+<div class="mb-4">
+  <ol class="list-inline small text-muted mb-1">
+    <li class="list-inline-item"><span class="badge bg-success">✓</span> Step 1 — Account</li>
+    <li class="list-inline-item">›</li>
+    <li class="list-inline-item"><span class="badge bg-success">✓</span> Step 2 — Connect providers</li>
+    <li class="list-inline-item">›</li>
+    <li class="list-inline-item"><strong class="text-body">Step 3 — Review your profile data</strong></li>
+  </ol>
+  <h4 class="mb-0">Review your profile data</h4>
+</div>
+
+{% if connected_count == 0 %}
+  <div class="alert alert-info" role="alert">
+    <strong>No providers connected yet.</strong>
+    You skipped Step 2 or connected zero providers, so there's nothing to
+    prefill from. You'll enter the values below manually on the next page.
+    You can connect providers any time from Profile → Connections and
+    re-run this review.
+  </div>
+{% elif fields_with_candidates == 0 %}
+  <p class="text-muted">
+    Your {{ connected_count }} connected provider{{ '' if connected_count == 1 else 's' }}
+    {{ 'has' if connected_count == 1 else 'have' }} not synced enough data yet
+    to fill in any of the performance baselines below. Continue to the
+    profile form to enter them manually; we'll prefill from your providers
+    automatically as their data arrives.
+  </p>
+{% else %}
+  <p class="text-muted">
+    We found provider data for
+    <strong>{{ fields_with_candidates }} of {{ fields|length }}</strong>
+    performance baseline{{ '' if fields|length == 1 else 's' }}.
+    Review each value below. The write-back controls
+    (<em>Use provider</em> / <em>Keep current</em>) ship in the next
+    release — for now this page is read-only and you'll enter or adjust
+    values on the profile form on the next page.
+  </p>
+{% endif %}
+
+<div class="row row-cols-1 row-cols-md-2 g-3 mb-4">
+  {% for f in fields %}
+    <div class="col">
+      <div class="card h-100">
+        <div class="card-header d-flex justify-content-between align-items-center">
+          <h6 class="mb-0">{{ f.label }}</h6>
+          <span class="text-muted small">{{ f.unit }}</span>
+        </div>
+        <div class="card-body">
+
+          <dl class="row mb-0 small">
+            <dt class="col-sm-5 text-muted">Currently stored</dt>
+            <dd class="col-sm-7">
+              {% if f.current_value is not none %}
+                <strong>{{ f.current_value }}</strong>
+                {% if f.provenance %}
+                  <span class="badge bg-light text-dark border ms-1">
+                    {% if f.provenance.source == 'self_report' %}Self-reported
+                    {% elif f.provenance.source == 'manual_override' %}Manually set
+                    {% elif f.provenance.source.startswith('provider_') %}From {{ f.provenance.source[9:] }}
+                    {% else %}{{ f.provenance.source }}{% endif %}
+                  </span>
+                {% endif %}
+              {% else %}
+                <em class="text-muted">Not set</em>
+              {% endif %}
+            </dd>
+
+            {% if f.candidates %}
+              {% for c in f.candidates %}
+                <dt class="col-sm-5 text-muted">{{ c.provider_label }} suggests</dt>
+                <dd class="col-sm-7">
+                  <strong>{{ c.value }}</strong>
+                  {% if c.synced_at %}
+                    <div class="text-muted small">As of {{ c.synced_at|string }}.</div>
+                  {% endif %}
+                  {% if c.note %}
+                    <div class="text-muted small">{{ c.note }}</div>
+                  {% endif %}
+                </dd>
+              {% endfor %}
+            {% else %}
+              <dt class="col-sm-5 text-muted">Provider data</dt>
+              <dd class="col-sm-7">
+                <em class="text-muted">None of your connected providers
+                supply this field yet.</em>
+              </dd>
+            {% endif %}
+          </dl>
+
+          {% if f.candidates %}
+            <div class="mt-3 d-flex flex-wrap gap-2">
+              <button type="button" class="btn btn-sm btn-outline-primary disabled"
+                      aria-disabled="true"
+                      title="Write-back ships in the next release.">
+                Use provider value
+              </button>
+              <button type="button" class="btn btn-sm btn-outline-secondary disabled"
+                      aria-disabled="true"
+                      title="Write-back ships in the next release.">
+                Keep current
+              </button>
+            </div>
+          {% endif %}
+
+        </div>
+      </div>
+    </div>
+  {% endfor %}
+</div>
+
+<p class="text-muted small">
+  These five fields are the v5 spec's prefill-eligible performance
+  baselines (§A.2). More fields (sleep, training volume, race results)
+  ship as their provider extractors come online. Profile data you
+  enter on the next page is always editable from Profile → Athlete.
+</p>
+
+<div class="d-flex justify-content-end align-items-center mt-4 pt-3 border-top">
+  <a href="{{ post_step3_target }}" class="btn btn-primary">
+    Continue to profile
+  </a>
+</div>
+
+{% endblock %}
