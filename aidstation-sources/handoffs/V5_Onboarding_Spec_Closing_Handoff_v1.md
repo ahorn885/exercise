@@ -107,6 +107,54 @@ No drift between the design-doc narrative and the v5 spec content; cross-design-
 
 ## 5. Mechanically-applicable instructions for next session (Rule #11)
 
+### 5.0 PR1 scope — LOCKED 2026-05-14 (Andy)
+
+Andy chose **Option A+B interleaved** (per §5.1). PR1 scope is locked at the 5-file bundle below. Next session opens a fresh chat to execute.
+
+**PR1 file inventory (target ~5 files; v1 has only Andy as test athlete, so this ships to production per the strangler-fig pattern):**
+
+| # | File | Change |
+|---|---|---|
+| 1 | `init_db.py` (`_PG_MIGRATIONS` block only — SQLite freeze still in force) | Add `athlete_profile_field_provenance` table (per v5 §A.2 / D-58 §7); add `account_nudges` table (per D-58 §7). DDL specifics in `Onboarding_D58_Design_v1.md` §7.1 + §7.2 |
+| 2 | `routes/provider_auth.py` (new) | Helper module: UPSERT by `(user_id, provider)`, status transitions per `Athlete_Data_Integration_Spec_v4` §4.1, token-refresh skeleton, webhook_token rotation Pattern A. Provider-agnostic |
+| 3 | `routes/coros.py` (rewrite — currently a 19-line stub per `D50_Phase1_Schema_Closing_Handoff_v1.md`) | OAuth callback: code-for-token exchange → `provider_auth.upsert` → Account Config 3 `oauth_scope_coros` acknowledgment row → redirect per D-58 §3 flow rules (mid-onboarding → onboarding Step 3; post-onboarding → Account Config 1 management; trigger §A.2.5 re-onboarding prompt if any prefill-eligible field has data) |
+| 4 | `routes/coros.py` (same file as #3) | Webhook handler: signature verify per Integration v4 §4.2 → row into `webhook_events` → dispatch to ingestion (#5) |
+| 5 | `routes/coros_ingest.py` (new) | First-pass ingestion: COROS payload → `cardio_log` / `training_log` writes per Integration v4 §5 + §6 |
+
+**Deferred from PR1 (land as follow-on PRs in the implementation arc):**
+
+- D-59 + D-60 + D-61 schema migrations (no dependency from PR1; ship as PR2+).
+- All frontend work — connect step UI at onboarding Step 2, prefill UX (provenance tags + edit-in-place + manual_override clear), locale-creation flow (Mapbox + inherit/override/dispute), per-day windows UI, session-card JIT swap, Account Config 1 management screen reframe.
+- Other provider OAuth flows (Polar, Wahoo, RWGPS, Strava, Whoop, TrainingPeaks, Zwift) — repeat the COROS pattern per provider.
+- 14-day connect-provider nudge background job.
+- `chain_registry.py` Python module + 30-entry seed (lands with D-59 frontend; no backend dependency from PR1).
+
+**Pre-step reads for the PR1 chat (Rule #13 ordering):**
+
+1. **`aidstation-sources/CLAUDE.md` fully** — Rule #13 first re-read.
+2. `aidstation-sources/handoffs/V5_Onboarding_Spec_Closing_Handoff_v1.md` (this file) — read this §5.0 first.
+3. `aidstation-sources/Athlete_Data_Integration_Spec_v4.md` §3 (provider list + COROS-specific notes) + §4 (`provider_auth` + `webhook_events` schema) + §4.1 (status transitions) + §4.2 (webhook flow) + §5 (per-provider ingestion mapping for COROS) + §6 (`cardio_log` / `training_log` write columns).
+4. `aidstation-sources/Athlete_Onboarding_Data_Spec_v5.md` §A.2 (prefill mechanics — what `athlete_profile_field_provenance` is for) + §A.1 (Connected Service consent + per-provider OAuth scope acknowledgment storage) + §Account Config 3 (new `disclosure_id` values).
+5. `aidstation-sources/Onboarding_D58_Design_v1.md` §7 (full DDL for `athlete_profile_field_provenance` and `account_nudges`).
+6. `init_db.py` — read the `_PG_MIGRATIONS` block to understand the migration append pattern; the D-50 Phase 1 schema (10 tables) already lives there as the reference for shape.
+7. `routes/coros.py` (current 19-line stub) — replace target.
+8. `routes/connect_oauth.py` (or whatever the existing OAuth-callback pattern is — check after listing `routes/`) — to mirror the existing connect-flow style.
+9. `aidstation-sources/handoffs/D50_Phase1_Schema_Closing_Handoff_v1.md` + `D50_Phase1_Schema_Review_v1.md` — to understand the D-50 Phase 1 schema state PR1 builds against.
+
+**Sanity checks the PR1 chat must run:**
+
+- COROS API docs check: confirm OAuth endpoint URLs, token exchange shape, webhook signature method, and webhook payload structure are still as Integration v4 §3 / §5 describes. The integration spec was written 2026-05; if COROS changed their API surface in the interim, PR1 needs to align.
+- Account Config 3 `disclosure_id` `oauth_scope_coros` write path: confirm Account Config 3 has an existing helper or build one inline. Cross-check against the spec — v5 says scope acknowledgments are stored in Account Config 3 alongside other disclosures.
+- Redirect logic in step #3: needs to know whether the athlete is mid-onboarding or post-onboarding to pick the right redirect target. Recommend a session-state flag or query-param signal; the PR1 chat decides.
+
+**What PR1 does NOT need to do:**
+
+- It does NOT need to ship the D-58 frontend connect step. The OAuth callback just needs to work when triggered; how athletes get to it (onboarding Step 2 link vs. Account Config 1 button) is frontend work in a later PR.
+- It does NOT need to implement the §A.2.5 re-onboarding prompt UI. The callback hook to "trigger the prompt" is a placeholder function for now; the prompt's actual rendering is frontend work.
+- It does NOT need to implement the 14-day nudge job. The `account_nudges` table is added in #1, but the job that creates rows + the banner that displays them is a later PR.
+
+This is a backend-only PR. Frontend work for the v5 onboarding reshape lands as PR2+.
+
 ### 5.1 Forward move — Andy's choice (3 candidates)
 
 The Onboarding Design Wave is fully consolidated. Andy chooses among three substantive next-session candidates:
