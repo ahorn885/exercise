@@ -53,7 +53,8 @@ Last shipped session: **Onboarding v5 spec rewrite** — see `handoffs/V5_Onboar
 
 **Authoritative current files** (always resolve by listing directory and viewing the highest `_vN`):
 - Architecture: `Control_Spec_v7.md`
-- Backlog: `Project_Backlog_v21.md`
+- Backlog: `Project_Backlog_v22.md`
+- PR verification status: `PR_Verification_Status.md` (per-PR §5.0 step state — read at session start so prior PRs' "still owed" carry-forward is reconciled against actual on-disk truth instead of treated as monolithically pending)
 - Onboarding data: `Athlete_Onboarding_Data_Spec_v5.md` (consolidates D-58 + D-59 + D-60 + D-61; v4 retained as in-project history per Rule #12)
 - Onboarding design wave inputs: `Onboarding_D58_Design_v1.md`, `Onboarding_D59_Design_v1.md`, `Onboarding_D60_Design_v1.md`, `Onboarding_D61_Design_v1.md`
 - Integration: `Athlete_Data_Integration_Spec_v4.md`
@@ -199,6 +200,7 @@ When you start a fresh session, do this before anything else:
 2. Read `Project_Backlog_v11.md` (or highest `_vN`).
 3. Read the most recent handoff in `handoffs/`.
 4. Apply Rule #9 — verify the previous handoff's claimed edits actually landed.
+   - Also read `PR_Verification_Status.md` so you know which §5.0 steps Andy has already walked / what's blocked vs. genuinely owed. Don't re-list completed items as "still owed."
 5. Tell Andy: (a) what you understand current state to be, (b) what you understand the next focus to be, (c) any drift you found between handoff narrative and on-disk state.
 6. **Do not start work** until Andy confirms scope.
 

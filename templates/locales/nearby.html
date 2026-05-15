@@ -1,0 +1,35 @@
+{% extends 'base.html' %}
+{% block title %}Nearby {{ canonical }} locations{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h4 class="mb-0">Nearby {{ canonical }} locations</h4>
+  <a href="{{ url_for('locales.list_profiles') }}" class="btn btn-sm btn-outline-secondary">Skip</a>
+</div>
+<p class="text-muted small mb-3">
+  We found {{ candidates|length }} other {{ canonical }} location{{ 's' if candidates|length != 1 }}
+  within 42 km of <span class="fw-semibold">{{ anchor.locale_name or anchor.locale }}</span>.
+  Add any you also use? Each opt-in creates a new locale row inheriting the chain
+  category — equipment is set per-locale via Edit.
+</p>
+
+{% if not candidates %}
+  <p>No same-chain matches in the area. <a href="{{ url_for('locales.list_profiles') }}">Back to locales</a>.</p>
+{% else %}
+  <form method="post" class="u-mw-720">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    {% for f in candidates %}
+      <div class="form-check mb-2 p-3 border rounded">
+        <input class="form-check-input" type="checkbox" name="mapbox_id" value="{{ f.mapbox_id }}" id="mb_{{ loop.index }}">
+        <label class="form-check-label" for="mb_{{ loop.index }}">
+          <span class="fw-semibold">{{ f.text }}</span>
+          <span class="d-block small text-muted">{{ f.place_name }}</span>
+        </label>
+      </div>
+    {% endfor %}
+    <div class="d-flex gap-2 mt-3">
+      <button type="submit" class="btn btn-primary">Add selected</button>
+      <a href="{{ url_for('locales.list_profiles') }}" class="btn btn-outline-secondary">Skip — done</a>
+    </div>
+  </form>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,107 @@
+{% extends 'base.html' %}
+{% block title %}New Locale{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h4 class="mb-0">New Locale</h4>
+  <a href="{{ url_for('locales.list_profiles') }}" class="btn btn-sm btn-outline-secondary">← Back</a>
+</div>
+
+{% if manual %}
+  {# ── Manual fallback (D-59 §6) ─────────────────────────────────── #}
+  <p class="text-muted small mb-3">
+    No place lookup. Coordinates and chain detection stay empty;
+    plan-gen treats this as a no-proximity-cluster locale.
+  </p>
+  <form method="post" action="{{ url_for('locales.save_manual_locale') }}" class="u-mw-480">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <div class="mb-3">
+      <label class="form-label fw-semibold">Locale name</label>
+      <input type="text" name="locale_name" class="form-control" required maxlength="80" placeholder="e.g. Home gym, Hotel Rapid City">
+    </div>
+    <div class="mb-3">
+      <label class="form-label fw-semibold">Address <span class="text-muted small fw-normal">(optional)</span></label>
+      <textarea name="address" class="form-control" rows="2" maxlength="240"></textarea>
+    </div>
+    <div class="mb-3">
+      <label class="form-label fw-semibold">Type</label>
+      <select name="category" class="form-select">
+        <option value="">— choose —</option>
+        {% for value, label in manual_categories %}
+          <option value="{{ value }}">{{ label }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="d-flex gap-2">
+      <button type="submit" class="btn btn-primary">Save</button>
+      <a href="{{ url_for('locales.new_locale') }}" class="btn btn-outline-secondary">Use place lookup instead</a>
+    </div>
+  </form>
+
+{% elif not acked %}
+  {# ── Disclosure (D-59 §8) ──────────────────────────────────────── #}
+  <div class="card mb-3 u-mw-480">
+    <div class="card-body">
+      <h5 class="card-title mb-2">Place lookup uses Mapbox</h5>
+      <p class="small mb-2">
+        We send your search text to Mapbox (third-party geocoding) to convert it
+        into coordinates and find nearby gyms. Mapbox's privacy policy applies to
+        data they receive. AIDSTATION stores Mapbox's response (place name,
+        coordinates, category) on your account; we don't share your locale list
+        with Mapbox or anyone else.
+      </p>
+      <p class="small text-muted mb-3">Acknowledge once per disclosure version (current: {{ disclosure_version }}).</p>
+      <form method="post" action="{{ url_for('locales.acknowledge_mapbox_disclosure') }}" class="d-inline">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <input type="hidden" name="q" value="{{ query }}">
+        <button type="submit" class="btn btn-primary btn-sm">Acknowledge & continue</button>
+      </form>
+      <a href="{{ url_for('locales.new_locale', manual=1) }}" class="btn btn-outline-secondary btn-sm ms-2">Use manual entry instead</a>
+    </div>
+  </div>
+
+{% else %}
+  {# ── Search form (D-59 §3.1) ───────────────────────────────────── #}
+  <form method="get" action="{{ url_for('locales.new_locale') }}" class="u-mw-480 mb-3">
+    <label class="form-label fw-semibold">Search for a place</label>
+    <div class="d-flex gap-2">
+      <input type="text" name="q" class="form-control" value="{{ query }}" placeholder="e.g. Planet Fitness Minneapolis" required>
+      <button type="submit" class="btn btn-primary">Search</button>
+    </div>
+    <div class="form-text">
+      Or <a href="{{ url_for('locales.new_locale', manual=1) }}">enter address manually</a>.
+    </div>
+  </form>
+
+  {% if error %}
+    <div class="alert alert-warning u-mw-480">{{ error }}</div>
+  {% endif %}
+
+  {% if results %}
+    <p class="small text-muted mb-2">{{ results|length }} match{{ 'es' if results|length != 1 }}. Pick one and give it a locale name.</p>
+    {% for r in results %}
+      <div class="card mb-2 u-mw-480">
+        <div class="card-body">
+          <div class="fw-semibold">{{ r.text }}</div>
+          <div class="small text-muted mb-2">{{ r.place_name }}{% if r.category %} <span class="badge bg-light text-dark ms-1">{{ r.category }}</span>{% endif %}</div>
+          <form method="post" action="{{ url_for('locales.new_locale') }}" class="d-flex gap-2 align-items-end">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <input type="hidden" name="mapbox_id" value="{{ r.mapbox_id }}">
+            <input type="hidden" name="text" value="{{ r.text }}">
+            <input type="hidden" name="place_name" value="{{ r.place_name }}">
+            <input type="hidden" name="lng" value="{{ r.lng }}">
+            <input type="hidden" name="lat" value="{{ r.lat }}">
+            <input type="hidden" name="mapbox_category" value="{{ r.category }}">
+            <input type="hidden" name="raw_payload" value="{{ r.raw_payload }}">
+            <div class="flex-grow-1">
+              <label class="form-label small mb-1">Locale name</label>
+              <input type="text" name="locale_name" class="form-control form-control-sm" value="{{ r.text }}" required maxlength="80">
+            </div>
+            <button type="submit" class="btn btn-sm btn-primary">Save this</button>
+          </form>
+        </div>
+      </div>
+    {% endfor %}
+  {% endif %}
+
+{% endif %}
+{% endblock %}
