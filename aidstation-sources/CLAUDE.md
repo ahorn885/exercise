@@ -47,16 +47,17 @@ Architecture overview lives in `Control_Spec` (resolve to highest `_vN.md`).
 
 ---
 
-## Current state (as of 2026-05-14)
+## Current state (as of 2026-05-15)
 
-Last shipped session: **Onboarding v5 spec rewrite** — see `handoffs/V5_Onboarding_Spec_Closing_Handoff_v1.md`. Consolidates the Onboarding Design Wave (D-58 + D-59 + D-60 + D-61) into `Athlete_Onboarding_Data_Spec_v5.md`. Predecessor handoffs from earlier in the wave: `D50_Review_and_Onboarding_Wave_D59_D60_Closing_Handoff_v1.md` (D-50 review + D-59 + D-60), `D61_Onboarding_Wave_Closing_Handoff_v1.md` (intermediate), `D58_Onboarding_Wave_Closing_Handoff_v1.md`.
+Last shipped session: **Plan-execution design pass — D-63 + D-64** — see `handoffs/V5_Design_D63_D64_Closing_Handoff_v1.md`. Adds two new D-rows: D-63 on-demand workout ("build me a workout right now"; off-plan single-session synthesis with D-60 equipment view + Layer 1 profile + Layer 3A state; storage extends `cardio_log`/`training_log`; T1 hook into D-64) and D-64 plan refresh tiers (T1 next-2-days / T2 next-7-days / T3 next-28-days-or-initial-plan-gen; athlete-initiated button + free-text NL with LLM intent parser routing upstream layer triggers; atomic versioning; soft frequency caps). Both gate implementation on Layer 4 spec landing. Predecessor: PR11 D3b shipped 2026-05-15 closing v5 §J locale work — see `handoffs/V5_Implementation_PR11_Closing_Handoff_v1.md`.
 
 **Authoritative current files** (always resolve by listing directory and viewing the highest `_vN`):
 - Architecture: `Control_Spec_v7.md`
-- Backlog: `Project_Backlog_v23.md`
+- Backlog: `Project_Backlog_v24.md`
 - PR verification status: `PR_Verification_Status.md` (per-PR §5.0 step state — read at session start so prior PRs' "still owed" carry-forward is reconciled against actual on-disk truth instead of treated as monolithically pending)
 - Onboarding data: `Athlete_Onboarding_Data_Spec_v5.md` (consolidates D-58 + D-59 + D-60 + D-61; v4 retained as in-project history per Rule #12)
 - Onboarding design wave inputs: `Onboarding_D58_Design_v1.md`, `Onboarding_D59_Design_v1.md`, `Onboarding_D60_Design_v1.md`, `Onboarding_D61_Design_v1.md`
+- Plan-execution design wave inputs: `OnDemand_Workout_D63_Design_v1.md`, `Plan_Refresh_D64_Design_v1.md` (both 🟡 implementation gates on Layer 4 spec landing)
 - Integration: `Athlete_Data_Integration_Spec_v4.md`
 - Catalog migration: `Catalog_Migration_Plan_v2.md`
 - Layer 0 ETL: `Layer0_ETL_Spec_v7.md`
