@@ -82,7 +82,7 @@
       <div class="card mb-2 u-mw-480">
         <div class="card-body">
           <div class="fw-semibold">{{ r.text }}</div>
-          <div class="small text-muted mb-2">{{ r.place_name }}{% if r.category %} <span class="badge bg-light text-dark ms-1">{{ r.category }}</span>{% endif %}</div>
+          <div class="small text-muted mb-2">{{ r.place_name }}</div>
           <form method="post" action="{{ url_for('locales.new_locale') }}" class="d-flex gap-2 align-items-end">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <input type="hidden" name="mapbox_id" value="{{ r.mapbox_id }}">
