@@ -13,6 +13,7 @@ Andy updates as steps are walked; Claude reads at session start.
 - ⏸ Blocked on external dependency (note what)
 - 🟡 Owed — can be walked now (no external dependency)
 - ⚪ N/A — superseded by later PR or otherwise not applicable
+- 🔴 BUG — feature didn't behave as spec'd; needs investigation / fix PR
 
 ## How to update this file
 
@@ -170,21 +171,23 @@ Schema-only PR. No §5.0 distinct verification owed. Tables/columns (`daily_avai
 
 | # | Step | Status | Last update | Notes |
 |---|------|--------|-------------|-------|
-| 1 | Schema unchanged | 🟡 owed | 2026-05-15 | Pending merge + deploy. |
+| 1 | Schema unchanged | ✅ Done | 2026-05-15 | `\d disclosure_acknowledgments` confirms shape unchanged (id, user_id, disclosure_id, version_id, scopes_granted, delivery_method, acknowledged_at + indexes). |
 | 2 | `MAPBOX_PUBLIC_TOKEN` env var set on Vercel + TrueNAS | ✅ Done | 2026-05-15 | Andy confirmed. |
-| 3 | `/locales/new` disclosure card on first visit | 🟡 owed | 2026-05-15 | Pending merge + deploy. |
-| 4 | Acknowledge writes `disclosure_acknowledgments` row | 🟡 owed | 2026-05-15 | |
-| 5 | Search happy path: results with hidden mapbox_id/lat/lng + Save button | 🟡 owed | 2026-05-15 | |
-| 6 | Save chain-anchored: redirect to `/locales/<slug>/nearby`; row has correct chain_id/category | 🟡 owed | 2026-05-15 | |
-| 7 | Nearby picker: same-chain matches + opt-in INSERT | 🟡 owed | 2026-05-15 | |
-| 8 | Save non-chain: no nearby redirect; row has `chain_id IS NULL` | 🟡 owed | 2026-05-15 | |
-| 9 | Manual entry: row with `manual_entry=TRUE`, NULL coords | 🟡 owed | 2026-05-15 | |
-| 10 | `/locales` list shows legacy + athlete-created rows | 🟡 owed | 2026-05-15 | |
-| 11 | 0-results inline warning | 🟡 owed | 2026-05-15 | |
-| 12 | Token-missing inline error (temporarily unset token) | 🟡 owed | 2026-05-15 | |
-| 13 | Disclosure version bump re-prompts | 🟡 owed | 2026-05-15 | |
-| 14 | Cross-user scoping on /nearby | 🟡 owed | 2026-05-15 | |
-| 15 | Regression sweep | 🟡 owed | 2026-05-15 | |
+| 3 | `/locales/new` disclosure card on first visit | ✅ Done | 2026-05-15 | |
+| 4 | Acknowledge writes `disclosure_acknowledgments` row | ✅ Done | 2026-05-15 | |
+| 5 | Search happy path: results with hidden mapbox_id/lat/lng + Save button | 🟡 re-verify after fix | 2026-05-15 | **Initial walk surfaced 🔴 BUG:** Mapbox Geocoding v5 (`mapbox.places` endpoint) dropped business-name tokens from multi-word queries — "Planet Fitness Minneapolis" reduced to "Minneapolis" and geocoded to addresses, returning zero POIs. Foreseen in D-59 §12 but the actual behaviour was no chain hits at all, not just sparse coverage. **Fix shipped (post-walk, same session):** `mapbox_client.py` rewritten to use Mapbox Search Box API forward endpoint (`/search/searchbox/v1/forward`) which is designed for POI/brand search. Diagnostic curl on 2026-05-15 confirmed Search Box returns the expected Planet Fitness POIs for the same query. Public interface unchanged — `search_places` / `search_nearby` / `MapboxError` hierarchy identical; only internals (URL, query param shape, response normalization) differ. Re-verify after the fix lands on `main`. |
+| 6 | Save chain-anchored: redirect to `/locales/<slug>/nearby`; row has correct chain_id/category | 🟡 owed (unblocked by step-5 fix) | 2026-05-15 | Walk after the Search Box API fix deploys. |
+| 7 | Nearby picker: same-chain matches + opt-in INSERT | 🟡 owed (unblocked by step-5 fix) | 2026-05-15 | Walk after the Search Box API fix deploys. |
+| 8 | Save non-chain: no nearby redirect; row has `chain_id IS NULL` | ✅ Done | 2026-05-15 | Save + non-redirect work correctly. `category IS NULL` for hotel / address-only results is correct per D-59 §4.2 step 3 third bullet — Mapbox's `properties.category` doesn't contain gym/fitness/climbing tokens for non-gym places, so derivation falls through to NULL by design. Cascading concern: if step 5 is fixed and Mapbox starts returning POI categories, this path should produce `independent_gym` for non-chain gym POIs. |
+| 9 | Manual entry: row with `manual_entry=TRUE`, NULL coords | ✅ Done | 2026-05-15 | |
+| 10 | `/locales` list shows legacy + athlete-created rows | ✅ Done | 2026-05-15 | Edit works for both legacy and athlete-created rows. Categorized commercial gym row not testable until step 5 is fixed. |
+| 11 | 0-results inline warning | ✅ Done | 2026-05-15 | |
+| 12 | Token-missing inline error (temporarily unset token) | 🟡 skipped | 2026-05-15 | Andy chose to skip — non-critical with token already set. |
+| 13 | Disclosure version bump re-prompts | 🟡 owed | 2026-05-15 | Not walked yet. |
+| 14 | Cross-user scoping on /nearby | ⚪ N/A | 2026-05-15 | Single-test-athlete state. |
+| 15 | Regression sweep | ✅ Done | 2026-05-15 | |
+
+**Step 5 follow-up:** Investigation owed. Curl directly to Mapbox to see raw `features[]` shape. If `place_type: ["poi"]` is present, the `types=poi,address` filter is the suspect; if absent, Mapbox's POI database is the limit and we need the Search Box API or a provider switch.
 
 ---
 
@@ -201,15 +204,20 @@ Schema-only PR. No §5.0 distinct verification owed. Tables/columns (`daily_avai
 | PR7 | 6 | 1 | 0 | 1 | 8* |
 | PR8 | 1 | 5 | 3 | 0 | 9 |
 | PR9 | 14 | 0 | 0 | 0 | 14 |
-| PR10 | 1 | 0 | 14 | 0 | 15 |
-| **Total** | **31** | **21** | **23** | **2** | **77** |
+| PR10 | 9 | 0 | 5 | 1 | 15** |
+| **Total** | **39** | **21** | **14** | **3** | **77** |
+
+(PR10 step 5 had a 🔴 BUG mid-walk; fixed same session by switching to Mapbox Search Box API. Re-counted as 🟡 owed pending re-verification on the fix deploy.)
 
 *PR7 row 7 is ⚪ N/A (superseded by PR8); 7 testable + 1 superseded = 8.
 
-**Headlines:**
-- **31 done**, **21 blocked** (all on COROS/Polar partner credentials), **23 doable now** (mostly PR10 pending merge + a handful of independent steps across PR2/3/4/5/8).
-- The COROS/Polar credential block is the dominant theme — once those land, ~21 steps unblock at once.
-- Next non-blocked work: PR10 merge → walk PR10's 14 owed steps (1 already done). Then mop up the independent steps in PR2 (1) + PR3 (1) + PR4 (1) + PR5 (3) + PR8 (3) = 9 standalone steps.
+**PR10 row 5 is 🔴 BUG (Mapbox returns no POIs); 9 done + 2 blocked-on-bug + 2 owed + 1 N/A + 1 bug = 15.
+
+**Headlines (2026-05-15 evening, post-PR10 walk + step-5 fix):**
+- **39 done**, **21 blocked on COROS/Polar partner credentials**, **14 doable now**, **3 N/A**.
+- **PR10 step 5 — Mapbox POI/business search not returning POIs.** Diagnostic curl confirmed Geocoding v5 isn't a POI search endpoint (dropped "Planet Fitness" from the query, only geocoded "Minneapolis"). **Fix shipped same session:** `mapbox_client.py` rewritten to use Mapbox Search Box API forward endpoint (`/search/searchbox/v1/forward`). Public interface (`search_places` / `search_nearby` / `MapboxError` hierarchy) unchanged — route + templates need no changes. Re-walk steps 5, 6, 7 after the fix deploys.
+- The COROS/Polar credential block is still the dominant blocker — once those land, ~21 steps unblock.
+- 14 doable-now steps: PR2 (1) + PR3 (1) + PR4 (1) + PR5 (3) + PR8 (3) + PR10 (5 — steps 5/6/7 re-walk after fix + 12 token-missing + 13 disclosure version bump).
 
 ---
 
