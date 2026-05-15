@@ -1895,25 +1895,69 @@ _PG_MIGRATIONS = [
     )""",
     "CREATE INDEX IF NOT EXISTS gym_profiles_mapbox_idx ON gym_profiles (mapbox_id) WHERE mapbox_id IS NOT NULL",
     "CREATE INDEX IF NOT EXISTS gym_profiles_address_idx ON gym_profiles (address_fingerprint) WHERE address_fingerprint IS NOT NULL",
+    # PR2's original D-60 batch declared these tables with
+    # `locale_id INTEGER NOT NULL REFERENCES locale_profiles(id)`, but
+    # locale_profiles' PK is composite (user_id, locale) — there is no `id`
+    # column. PG rejects the inline FK; the migration runner's try/except
+    # swallows the error, so the tables never actually got created in
+    # production. PR11 corrects the shape: `locale TEXT` keyed against the
+    # composite PK via a composite FK. ON DELETE CASCADE so per-athlete
+    # overrides go away when a locale row is deleted.
     """CREATE TABLE IF NOT EXISTS locale_equipment_overrides (
         id SERIAL PRIMARY KEY,
         user_id INTEGER NOT NULL REFERENCES users(id),
-        locale_id INTEGER NOT NULL REFERENCES locale_profiles(id),
+        locale TEXT NOT NULL,
         equipment_tag TEXT NOT NULL,
-        action TEXT NOT NULL,
+        action TEXT NOT NULL CHECK (action IN ('add', 'remove')),
         created_at TIMESTAMP DEFAULT NOW(),
-        UNIQUE (user_id, locale_id, equipment_tag, action)
+        UNIQUE (user_id, locale, equipment_tag, action),
+        FOREIGN KEY (user_id, locale) REFERENCES locale_profiles(user_id, locale) ON DELETE CASCADE
     )""",
-    "CREATE INDEX IF NOT EXISTS leo_user_locale_idx ON locale_equipment_overrides (user_id, locale_id)",
+    "CREATE INDEX IF NOT EXISTS leo_user_locale_idx ON locale_equipment_overrides (user_id, locale)",
     """CREATE TABLE IF NOT EXISTS locale_toggle_overrides (
         id SERIAL PRIMARY KEY,
         user_id INTEGER NOT NULL REFERENCES users(id),
-        locale_id INTEGER NOT NULL REFERENCES locale_profiles(id),
+        locale TEXT NOT NULL,
         toggle_name TEXT NOT NULL,
         value BOOLEAN NOT NULL,
         created_at TIMESTAMP DEFAULT NOW(),
-        UNIQUE (user_id, locale_id, toggle_name)
+        UNIQUE (user_id, locale, toggle_name),
+        FOREIGN KEY (user_id, locale) REFERENCES locale_profiles(user_id, locale) ON DELETE CASCADE
     )""",
+    # Idempotent fix-up: if a prior boot somehow created either table with
+    # the broken `locale_id INTEGER` shape (e.g. partial-DDL state from a
+    # PG version that accepted the inline FK as deferred), bring it to the
+    # correct shape. No-op on clean deploys.
+    """DO $$ BEGIN
+        IF EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_name='locale_equipment_overrides' AND column_name='locale_id'
+        ) THEN
+            ALTER TABLE locale_equipment_overrides
+                DROP CONSTRAINT IF EXISTS locale_equipment_overrides_locale_id_fkey;
+            IF NOT EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_name='locale_equipment_overrides' AND column_name='locale'
+            ) THEN
+                ALTER TABLE locale_equipment_overrides ADD COLUMN locale TEXT;
+            END IF;
+            ALTER TABLE locale_equipment_overrides DROP COLUMN locale_id;
+        END IF;
+        IF EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_name='locale_toggle_overrides' AND column_name='locale_id'
+        ) THEN
+            ALTER TABLE locale_toggle_overrides
+                DROP CONSTRAINT IF EXISTS locale_toggle_overrides_locale_id_fkey;
+            IF NOT EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_name='locale_toggle_overrides' AND column_name='locale'
+            ) THEN
+                ALTER TABLE locale_toggle_overrides ADD COLUMN locale TEXT;
+            END IF;
+            ALTER TABLE locale_toggle_overrides DROP COLUMN locale_id;
+        END IF;
+    END $$""",
     "ALTER TABLE locale_profiles ADD COLUMN IF NOT EXISTS gym_profile_id INTEGER REFERENCES gym_profiles(id)",
     "ALTER TABLE locale_profiles ADD COLUMN IF NOT EXISTS sharing_opt_out BOOLEAN DEFAULT FALSE",
     # D-61 §7 — per-day availability windows. Primary-window rows (window_index=0)
