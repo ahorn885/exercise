@@ -1,38 +1,60 @@
-"""Mapbox Geocoding API client (D-59 §3).
+"""Mapbox Search Box API client (D-59 §3, post-PR10 step-5 fix).
 
-Forward geocoding only — D-59 §3.1 is explicit that v1 doesn't use reverse
-geocoding (athletes always start from a search string). Two surfaces:
+PR10's first verification surfaced a real problem: the legacy Mapbox
+Geocoding v5 endpoint (`mapbox.places`) is not a POI / business-name
+search. A query like "Planet Fitness Minneapolis" is silently reduced to
+just "Minneapolis" and geocoded to addresses, returning zero Planet
+Fitness POIs. D-59 §12 foresaw "Mapbox's chain coverage is going to
+disappoint" but the actual behaviour was worse — no chain hits at all,
+not just sparse coverage.
 
-  - search_places(query)        — autocomplete for /locales/new search box
-  - search_nearby(query, lng, lat) — proximity discovery for the 42.2 km
-                                     nearby-chain-instance picker (D-59 §5)
+This module now uses Mapbox's Search Box API forward endpoint
+(`/search/searchbox/v1/forward`), which is designed for POI / brand
+queries and returns rich `poi_category` metadata. The diagnostic curl
+on 2026-05-15 confirmed it returns the expected Planet Fitness POIs for
+the same query that returned zero from Geocoding v5.
 
-Both wrap the same Mapbox endpoint (`/geocoding/v5/mapbox.places/{q}.json`)
-with different query params. Returns a list of normalized feature dicts
-(see _normalize_feature) — caller never touches raw Mapbox JSON except via
-`raw_payload` for audit storage on locale_profiles.place_payload.
+Public surface unchanged from the PR10 ship — `search_places(query)` and
+`search_nearby(query, lng, lat, radius_km)` return the same normalised
+feature dict shape (`mapbox_id`, `text`, `place_name`, `lng`, `lat`,
+`category`, `raw_payload`) so `routes/locales.py` + the templates need
+zero code changes. Internals differ:
 
-Token via MAPBOX_PUBLIC_TOKEN env var (D-59 §3.2; PR9 handoff §5.1 names
-this var). Public-scope (`pk.*`) tokens are fine for server-side geocoding
-calls. When the env var is unset, every call raises MapboxTokenMissing —
-routes catch this and degrade to manual-entry-only UX (D-59 §3.4 row 1).
+  - Endpoint base path is `/search/searchbox/v1/forward` (not
+    `/geocoding/v5/mapbox.places/{q}.json`).
+  - Query is a `q` parameter, not embedded in the URL path.
+  - Response shape is GeoJSON-FeatureCollection with each feature's
+    coords in `geometry.coordinates` (was `feature.center`) and the
+    business name in `properties.name` / `properties.name_preferred`
+    (was `feature.text`). `_normalize_feature` translates.
+  - `poi_category` is a list (was a comma-string under
+    `properties.category`); we join with `, ` so the route's substring
+    match (`'gym' in mb_category`) still works.
+  - No `session_token` plumbing — the `/forward` endpoint is one-shot,
+    unlike the `/suggest` + `/retrieve` pair.
 
-Failure handling per D-59 §3.4: 5xx + network errors retry once with 1s
-backoff; 4xx and 0-results raise typed exceptions for the caller to render
-inline. No automatic fallback to manual entry — the route layer owns that
-UX decision.
+Token via `MAPBOX_PUBLIC_TOKEN` env var (unchanged); 1-retry on 5xx with
+1s backoff (unchanged); 4xx + persistent 5xx + network errors raise
+`MapboxAPIError`; 0-results raises `MapboxNoResults`; missing env var
+raises `MapboxTokenMissing` before any HTTP call (unchanged).
+
+`mapbox_id` format changes between the two APIs (Geocoding v5 used
+`poi.123456789`; Search Box API uses opaque base64-ish strings). The
+column is TEXT and treated opaquely everywhere it's read, so no schema
+or code impact — existing test rows with old-format IDs stay valid as
+stored data; new writes use new-format IDs.
 """
 
 import json
+import math
 import os
 import time
-import urllib.parse
 
 import requests
 
 
 MAPBOX_TOKEN_ENV = 'MAPBOX_PUBLIC_TOKEN'
-MAPBOX_BASE_URL = 'https://api.mapbox.com/geocoding/v5/mapbox.places'
+MAPBOX_BASE_URL = 'https://api.mapbox.com/search/searchbox/v1/forward'
 DEFAULT_RADIUS_KM = 42.2  # D-59 §3 row 3 — marathon-distance threshold
 REQUEST_TIMEOUT_S = 5
 
@@ -69,31 +91,29 @@ def _bbox(lng: float, lat: float, radius_km: float) -> str:
     """Return Mapbox-style bbox `min_lng,min_lat,max_lng,max_lat` string for
     a square approximating the radius around the anchor.
 
-    Mapbox's bbox parameter is a rectangle, not a circle (D-59 §3.1 note).
-    We approximate: 1° latitude ≈ 111 km globally; 1° longitude ≈
-    111 km × cos(lat). The square overshoots the circular radius at the
-    corners but undershoots nothing — chain instances inside the radius
-    are guaranteed inside the bbox.
+    Mapbox's bbox parameter is a rectangle, not a circle. We approximate:
+    1° latitude ≈ 111 km globally; 1° longitude ≈ 111 km × cos(lat). The
+    square overshoots the circular radius at the corners but undershoots
+    nothing — chain instances inside the radius are guaranteed inside the
+    bbox.
     """
-    import math
     lat_delta = radius_km / 111.0
     lng_delta = radius_km / (111.0 * max(math.cos(math.radians(lat)), 0.01))
     return f'{lng - lng_delta},{lat - lat_delta},{lng + lng_delta},{lat + lat_delta}'
 
 
 def _request(query: str, params: dict) -> dict:
-    """Single Mapbox forward-geocoding call with 1-retry on 5xx (D-59 §3.4
-    rows 3/4). Returns parsed JSON; raises MapboxAPIError on persistent
-    failure or 4xx.
+    """Single Mapbox Search Box API forward call with 1-retry on 5xx
+    (D-59 §3.4 rows 3/4). Returns parsed JSON; raises MapboxAPIError on
+    persistent failure or 4xx.
     """
-    encoded = urllib.parse.quote(query, safe='')
-    url = f'{MAPBOX_BASE_URL}/{encoded}.json'
     full_params = dict(params)
+    full_params['q'] = query
     full_params['access_token'] = _get_token()
     last_exc: Exception | None = None
     for attempt in range(2):
         try:
-            r = requests.get(url, params=full_params, timeout=REQUEST_TIMEOUT_S)
+            r = requests.get(MAPBOX_BASE_URL, params=full_params, timeout=REQUEST_TIMEOUT_S)
         except requests.RequestException as e:
             last_exc = e
             if attempt == 0:
@@ -109,40 +129,61 @@ def _request(query: str, params: dict) -> dict:
         if r.status_code != 200:
             raise MapboxAPIError(f'mapbox {r.status_code}: {r.text[:200]}')
         return r.json()
-    # Unreachable — both branches above either return or raise.
     raise MapboxAPIError(f'unreachable: {last_exc}')
 
 
 def _normalize_feature(feature: dict) -> dict:
-    """Project the Mapbox `features[i]` shape down to the fields the app
-    consumes. `raw_payload` carries the full feature for audit storage in
-    locale_profiles.place_payload.
+    """Project the Search Box API forward `features[i]` shape down to the
+    fields the app consumes. `raw_payload` carries the full feature for
+    audit storage in locale_profiles.place_payload.
+
+    Search Box API differences from legacy Geocoding v5:
+      - coords live in `geometry.coordinates`, not `feature.center`
+      - business name lives in `properties.name` (or `name_preferred`
+        for branded POIs), not `feature.text`
+      - full address lives in `properties.full_address`, not
+        `feature.place_name`
+      - `properties.poi_category` is a list of category strings;
+        join with `, ` so the route's substring match still works.
     """
-    center = feature.get('center') or [None, None]
+    props = feature.get('properties') or {}
+    coords = (feature.get('geometry') or {}).get('coordinates') or [None, None]
+    poi_category = props.get('poi_category') or []
+    if isinstance(poi_category, list):
+        category_str = ', '.join(str(c) for c in poi_category)
+    else:
+        category_str = str(poi_category)
     return {
-        'mapbox_id': feature.get('id', ''),
-        'text': feature.get('text', ''),  # primary name — fed to detect_chain
-        'place_name': feature.get('place_name', ''),  # full breadcrumb display
-        'lng': center[0] if len(center) > 0 else None,
-        'lat': center[1] if len(center) > 1 else None,
-        'category': (feature.get('properties') or {}).get('category', ''),
+        # Prefer name_preferred (brand-canonical, e.g. "Planet Fitness")
+        # over name (which may include disambiguation suffixes like #234).
+        'mapbox_id': props.get('mapbox_id', ''),
+        'text': props.get('name_preferred') or props.get('name', ''),
+        'place_name': props.get('full_address') or props.get('place_formatted', ''),
+        'lng': coords[0] if len(coords) > 0 else None,
+        'lat': coords[1] if len(coords) > 1 else None,
+        'category': category_str,
         'raw_payload': json.dumps(feature),
     }
 
 
 def search_places(query: str, limit: int = 5) -> list[dict]:
-    """Forward geocoding for /locales/new search box (D-59 §3.1 row 1).
+    """Forward POI/address search for /locales/new search box.
 
-    Returns up to `limit` normalized features; raises MapboxNoResults when
-    Mapbox returns an empty features array (route renders inline "no
-    matches" guidance per D-59 §3.4 row 5).
+    Uses the Search Box API `/forward` endpoint, which is designed for
+    POI / business-name queries (unlike legacy Geocoding v5 which dropped
+    POI tokens from multi-word queries). `types=poi,address,place` lets
+    Mapbox return the best match across POIs, street addresses, and named
+    places.
+
+    Returns up to `limit` normalised features; raises MapboxNoResults
+    when Mapbox returns an empty features array (route renders inline
+    "no matches" guidance per D-59 §3.4 row 5).
     """
     if not (query or '').strip():
         raise MapboxNoResults('empty query')
     payload = _request(query, {
-        'autocomplete': 'true',
-        'types': 'poi,address',
         'limit': str(limit),
+        'types': 'poi,address,place',
     })
     features = payload.get('features') or []
     if not features:
@@ -155,10 +196,11 @@ def search_nearby(query: str, lng: float, lat: float,
                   limit: int = 10) -> list[dict]:
     """Proximity search for nearby chain instances (D-59 §5).
 
-    Caller computes the bbox via `_bbox()` and passes the chain's canonical
-    name as `query`. Result filtering (only instances of the same chain;
-    exclude the anchor) is the route's responsibility — this function just
-    surfaces what Mapbox returns inside the bbox.
+    Caller passes the chain's canonical name as `query` and the anchor's
+    coords as the proximity origin. `bbox` cuts results to a square
+    approximating the radius. Result filtering (only instances of the
+    same chain; exclude the anchor) is the route's responsibility — this
+    function just surfaces what Mapbox returns inside the bbox.
 
     Raises MapboxNoResults when Mapbox returns zero features in the bbox
     (rare — most chains have multiple metro-area instances).

@@ -175,9 +175,9 @@ Schema-only PR. No §5.0 distinct verification owed. Tables/columns (`daily_avai
 | 2 | `MAPBOX_PUBLIC_TOKEN` env var set on Vercel + TrueNAS | ✅ Done | 2026-05-15 | Andy confirmed. |
 | 3 | `/locales/new` disclosure card on first visit | ✅ Done | 2026-05-15 | |
 | 4 | Acknowledge writes `disclosure_acknowledgments` row | ✅ Done | 2026-05-15 | |
-| 5 | Search happy path: results with hidden mapbox_id/lat/lng + Save button | 🔴 BUG | 2026-05-15 | Mapbox returning street/city addresses only — no POI/business name results. Result format partially good (bold name, full address) but no `properties.category` value. Locale name field is editable as designed. Foreseen in D-59 §12 ("Mapbox's chain coverage is going to disappoint") but biting harder than expected. Diagnosis curl owed: check if `features[].place_type` contains `poi` at all. Likely fix paths: (A) drop `address` from `types` filter, (B) migrate to Mapbox Search Box API, (C) verify token has POI scope. |
-| 6 | Save chain-anchored: redirect to `/locales/<slug>/nearby`; row has correct chain_id/category | ⏸ blocked on step 5 | 2026-05-15 | Can't test until Mapbox returns business results. |
-| 7 | Nearby picker: same-chain matches + opt-in INSERT | ⏸ blocked on step 5/6 | 2026-05-15 | |
+| 5 | Search happy path: results with hidden mapbox_id/lat/lng + Save button | 🟡 re-verify after fix | 2026-05-15 | **Initial walk surfaced 🔴 BUG:** Mapbox Geocoding v5 (`mapbox.places` endpoint) dropped business-name tokens from multi-word queries — "Planet Fitness Minneapolis" reduced to "Minneapolis" and geocoded to addresses, returning zero POIs. Foreseen in D-59 §12 but the actual behaviour was no chain hits at all, not just sparse coverage. **Fix shipped (post-walk, same session):** `mapbox_client.py` rewritten to use Mapbox Search Box API forward endpoint (`/search/searchbox/v1/forward`) which is designed for POI/brand search. Diagnostic curl on 2026-05-15 confirmed Search Box returns the expected Planet Fitness POIs for the same query. Public interface unchanged — `search_places` / `search_nearby` / `MapboxError` hierarchy identical; only internals (URL, query param shape, response normalization) differ. Re-verify after the fix lands on `main`. |
+| 6 | Save chain-anchored: redirect to `/locales/<slug>/nearby`; row has correct chain_id/category | 🟡 owed (unblocked by step-5 fix) | 2026-05-15 | Walk after the Search Box API fix deploys. |
+| 7 | Nearby picker: same-chain matches + opt-in INSERT | 🟡 owed (unblocked by step-5 fix) | 2026-05-15 | Walk after the Search Box API fix deploys. |
 | 8 | Save non-chain: no nearby redirect; row has `chain_id IS NULL` | ✅ Done | 2026-05-15 | Save + non-redirect work correctly. `category IS NULL` for hotel / address-only results is correct per D-59 §4.2 step 3 third bullet — Mapbox's `properties.category` doesn't contain gym/fitness/climbing tokens for non-gym places, so derivation falls through to NULL by design. Cascading concern: if step 5 is fixed and Mapbox starts returning POI categories, this path should produce `independent_gym` for non-chain gym POIs. |
 | 9 | Manual entry: row with `manual_entry=TRUE`, NULL coords | ✅ Done | 2026-05-15 | |
 | 10 | `/locales` list shows legacy + athlete-created rows | ✅ Done | 2026-05-15 | Edit works for both legacy and athlete-created rows. Categorized commercial gym row not testable until step 5 is fixed. |
@@ -204,20 +204,20 @@ Schema-only PR. No §5.0 distinct verification owed. Tables/columns (`daily_avai
 | PR7 | 6 | 1 | 0 | 1 | 8* |
 | PR8 | 1 | 5 | 3 | 0 | 9 |
 | PR9 | 14 | 0 | 0 | 0 | 14 |
-| PR10 | 9 | 2 | 2 | 1 | 15** |
-| **Total** | **39** | **23** | **11** | **3** | **77** |
+| PR10 | 9 | 0 | 5 | 1 | 15** |
+| **Total** | **39** | **21** | **14** | **3** | **77** |
 
-(Plus 1 🔴 BUG on PR10 step 5 — Mapbox POI search returning addresses only.)
+(PR10 step 5 had a 🔴 BUG mid-walk; fixed same session by switching to Mapbox Search Box API. Re-counted as 🟡 owed pending re-verification on the fix deploy.)
 
 *PR7 row 7 is ⚪ N/A (superseded by PR8); 7 testable + 1 superseded = 8.
 
 **PR10 row 5 is 🔴 BUG (Mapbox returns no POIs); 9 done + 2 blocked-on-bug + 2 owed + 1 N/A + 1 bug = 15.
 
-**Headlines (2026-05-15 evening, post-PR10 walk):**
-- **39 done**, **21 blocked on COROS/Polar partner credentials**, **2 blocked on PR10 step-5 bug**, **11 doable now**, **3 N/A**.
-- **🔴 PR10 step 5 — Mapbox returning street/city addresses, not POI/business names.** Most acute open item. Foreseen in D-59 §12 but biting harder than expected. Investigation owed: curl Mapbox directly to inspect `features[].place_type`. Likely fix paths: (A) drop `address` from `types` filter, (B) migrate to Mapbox Search Box API, (C) check token scopes. PR10 steps 6 + 7 (chain-anchored save + nearby picker) are unverifiable until this is fixed.
+**Headlines (2026-05-15 evening, post-PR10 walk + step-5 fix):**
+- **39 done**, **21 blocked on COROS/Polar partner credentials**, **14 doable now**, **3 N/A**.
+- **PR10 step 5 — Mapbox POI/business search not returning POIs.** Diagnostic curl confirmed Geocoding v5 isn't a POI search endpoint (dropped "Planet Fitness" from the query, only geocoded "Minneapolis"). **Fix shipped same session:** `mapbox_client.py` rewritten to use Mapbox Search Box API forward endpoint (`/search/searchbox/v1/forward`). Public interface (`search_places` / `search_nearby` / `MapboxError` hierarchy) unchanged — route + templates need no changes. Re-walk steps 5, 6, 7 after the fix deploys.
 - The COROS/Polar credential block is still the dominant blocker — once those land, ~21 steps unblock.
-- 11 doable-now steps remaining: PR2 (1 schema spot-check) + PR3 (1 index spot-check) + PR4 (1 page-render) + PR5 (3) + PR8 (3) + PR10 (2 — disclosure version-bump + skipped token-missing).
+- 14 doable-now steps: PR2 (1) + PR3 (1) + PR4 (1) + PR5 (3) + PR8 (3) + PR10 (5 — steps 5/6/7 re-walk after fix + 12 token-missing + 13 disclosure version bump).
 
 ---
 

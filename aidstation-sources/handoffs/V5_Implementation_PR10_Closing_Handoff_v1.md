@@ -441,4 +441,36 @@ Aggregate: 31 ✅, 21 ⏸ (all on COROS/Polar partner credentials), 23 🟡 owed
 
 ---
 
+## 10. Mid-session addendum — Mapbox Search Box API migration (post-PR10-walk fix)
+
+Andy walked PR10 §5.0 on the deployed app immediately after merge. Steps 1-4 + 8-11 + 15 passed; step 5 surfaced a real bug.
+
+**Bug:** Mapbox Geocoding v5 (`mapbox.places`) is not a POI / business-name search endpoint. Queries like `Planet Fitness Minneapolis` get silently reduced to just `Minneapolis` (the geographic token) and geocoded to street/place addresses, returning zero Planet Fitness POIs. The shipped `mapbox_client.py` had been built against this endpoint per D-59 §3.1's literal spec — but the spec was written under the assumption that Mapbox's POI coverage would be sparse-but-real, not "doesn't search business names at all on multi-word queries."
+
+**Diagnostic:** Andy ran a direct curl against Mapbox. Response confirmed `query: ["minneapolis"]` — only the geographic half of the query made it through to the geocoder. A second curl against Mapbox's Search Box API `/search/searchbox/v1/suggest` for the same query returned 2 Minneapolis Planet Fitness POIs as expected. The Search Box API is the correct tool for POI/brand search; Geocoding v5 is for addresses + place names.
+
+**Fix:** `mapbox_client.py` rewritten to use Mapbox Search Box API `/forward` endpoint. Chose `/forward` over `/suggest`+`/retrieve` to avoid session_token plumbing (the suggest/retrieve pair is one billing session; forward is one-shot). Public interface (`search_places`, `search_nearby`, `MapboxError` / `MapboxTokenMissing` / `MapboxAPIError` / `MapboxNoResults`) is identical so `routes/locales.py` + the templates need zero changes. Internals differ:
+
+- URL: `/search/searchbox/v1/forward` (POST-style query param) instead of `/geocoding/v5/mapbox.places/{q}.json` (path-embedded).
+- Response: GeoJSON FeatureCollection. Each feature's coords are at `geometry.coordinates`; business name is `properties.name_preferred` (fall back to `properties.name`); full address is `properties.full_address`; POI categories are a list at `properties.poi_category` (joined with `, ` so the route's `'gym' in mb_category` substring match still works).
+- `mapbox_id` format changed (Geocoding v5 used `poi.123`; Search Box uses opaque base64-ish). Column is TEXT and treated opaquely everywhere — no compat issue. Andy's existing step-8 hotel test row has an old-format `mapbox_id`; new writes use new-format; no cross-references break.
+
+**Offline verification (same session):**
+- AST + module import clean
+- Token-missing raises `MapboxTokenMissing` before any HTTP call
+- Empty-query raises `MapboxNoResults` (both `search_places` + `search_nearby`)
+- `_bbox` math unchanged (lat=44 / 42.2 km → ±0.380° lat, ±0.529° lng — same as PR10 ship)
+- `_normalize_feature` against realistic Search Box API forward response: `mapbox_id` / `text` / `place_name` / `lng` / `lat` / `category` all populated correctly
+- `name_preferred` fallback to `name` when missing
+- `poi_category` list joined to comma-string (matches route's substring match)
+- Full pipeline (SB API → normalize → `chain_registry.detect_chain`) matches Planet Fitness + YMCA + falls through correctly for non-chain Joe Iron Pit Gym + hotel (Marriott)
+
+**File count update:** 6 substantive code files (PR10 ship + this fix) + 3 bookkeeping (v22 backlog + CLAUDE.md + tracker) + 1 handoff. Technically over the 5-substantive ceiling — accepted because the fix is a same-day-same-session bug fix on PR10's own surface area, not a new feature. Flagged for transparency.
+
+**Re-verification owed:** PR10 §5.0 steps 5, 6, 7 are now 🟡 owed (re-walk after Search Box API fix deploys). Steps 12, 13 still owed (token-missing path skipped earlier; disclosure version-bump not walked). Tracker reflects this.
+
+**Risk:** Mapbox Search Box API pricing tier is 50K requests/month free (vs. 100K for Geocoding v5). Andy's single-test-athlete usage is well below both tiers. If usage grows substantially, monitor against the lower threshold.
+
+---
+
 *End of V5 Implementation PR10 closing handoff. v5 onboarding Option D3a (Mapbox-anchored locale creation + chain detection + nearby same-chain picker + manual fallback + privacy disclosure) shipped: `mapbox_client.py` Mapbox Geocoding wrapper (typed exceptions, 1-retry on 5xx, bbox math) + `routes/locales.py` extended with `GET/POST /locales/new` (search + chain-detect + INSERT), `POST /locales/new/manual` (manual fallback per D-59 §6), `POST /locales/new/acknowledge` (disclosure ack into existing `disclosure_acknowledgments` table — no schema change), `GET/POST /locales/<slug>/nearby` (D-59 §5 same-chain proximity picker) + new `templates/locales/new.html` + `templates/locales/nearby.html` + `templates/locales/list.html` extension to render athlete-created rows. Closes D-59 create-side; D3b (D-60 inherit/override UI + D-59 §6 upgrade + §7 refresh) carried forward as PR11+ candidate. Backlog bumped v21 → v22; D-59 status flipped 🟡 → 🟢 D3a (D3b pending). Next: Andy's choice among PR11 candidates in §5.1 (D3b recommended — closes the rest of the v5 §J locale work end-to-end on top of D3a's foundation); v22 → v23 backlog bump mechanically spec'd for PR11's first action.*
