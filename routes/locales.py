@@ -1,3 +1,4 @@
+import json
 import re
 
 from flask import Blueprint, render_template, request, redirect, url_for, flash
@@ -22,17 +23,31 @@ ALL_TAGS = {tag for _, items in EQUIPMENT_CATEGORIES for tag, _ in items}
 MAPBOX_DISCLOSURE_ID = 'mapbox_geocoding_consent'
 MAPBOX_DISCLOSURE_VERSION = 'v1'
 
-# D-59 §6 — manual-entry category dropdown values. Subset of the D-60 §3
-# taxonomy that's meaningful when chain detection is bypassed.
+# D-60 §3 — locale category taxonomy. Manual-entry dropdown surfaces the
+# whole taxonomy so athletes can pick the right value when bypassing chain
+# detection. The seven shared-profile categories (SHARED_PROFILE_CATEGORIES
+# below) gate the inherit/override UI on the edit screen.
 MANUAL_CATEGORIES = (
-    ('commercial_chain_gym', 'Commercial chain gym'),
-    ('independent_gym', 'Independent gym'),
-    ('home_gym', 'Home gym'),
+    ('commercial_chain_gym', 'Commercial gym (chain)'),
+    ('independent_gym', 'Commercial gym (independent)'),
     ('hotel_gym', 'Hotel gym'),
-    ('climbing_gym', 'Climbing gym'),
-    ('outdoor', 'Outdoor (trail/park)'),
-    ('other', 'Other'),
+    ('climbing_gym_chain', 'Climbing gym (chain)'),
+    ('climbing_gym_indie', 'Climbing gym (independent)'),
+    ('pool_indoor', 'Indoor pool'),
+    ('pool_outdoor', 'Outdoor pool'),
+    ('home_gym', 'Home gym'),
+    ('outdoor_park', 'Outdoor / trail / park'),
+    ('other_residence', 'Other residence'),
 )
+
+# D-60 §3 — the seven gym/pool categories that expect a shared gym_profiles
+# row. The remaining three (home_gym, outdoor_park, other_residence) stay
+# per-athlete; their equipment lives in legacy `locale_equipment`.
+SHARED_PROFILE_CATEGORIES = frozenset({
+    'commercial_chain_gym', 'independent_gym', 'hotel_gym',
+    'climbing_gym_chain', 'climbing_gym_indie',
+    'pool_indoor', 'pool_outdoor',
+})
 
 
 def _slugify(name: str) -> str:
@@ -100,6 +115,158 @@ def _canonical_name(chain_id: str) -> str:
     return ''
 
 
+def _row_has(row, col: str) -> bool:
+    """True when `col` is in the row's column set. PG returns RealDictRow;
+    SQLite returns sqlite3.Row. Both expose `.keys()`. Guards against the
+    new D-59/D-60 columns being absent on SQLite (frozen migrations)."""
+    if row is None:
+        return False
+    try:
+        return col in row.keys()
+    except Exception:
+        return False
+
+
+def _is_shared_profile_locale(profile_row) -> bool:
+    """True when this locale should use the D-60 gym_profiles inherit/
+    override model. False for legacy enums, manual-entry rows, no-shared-
+    profile categories (home_gym/outdoor_park/other_residence), and any
+    row missing a mapbox_id (no stable join key for the shared profile)."""
+    if not profile_row:
+        return False
+    if not database._is_postgres():
+        return False
+    if not _row_has(profile_row, 'category') or not _row_has(profile_row, 'mapbox_id'):
+        return False
+    category = profile_row['category']
+    if category not in SHARED_PROFILE_CATEGORIES:
+        return False
+    if not profile_row['mapbox_id']:
+        return False
+    if _row_has(profile_row, 'manual_entry') and profile_row['manual_entry']:
+        return False
+    return True
+
+
+def _find_gym_profile(db, mapbox_id):
+    """Look up the shared gym profile keyed by mapbox_id (D-60 §4.1). Returns
+    the row or None. mapbox_id is UNIQUE on gym_profiles."""
+    if not mapbox_id or not database._is_postgres():
+        return None
+    return db.execute(
+        'SELECT * FROM gym_profiles WHERE mapbox_id = ?',
+        (mapbox_id,),
+    ).fetchone()
+
+
+def _shared_equipment_set(profile_row) -> set:
+    """Parse gym_profiles.equipment (JSON array) into a tag set."""
+    if not profile_row or not _row_has(profile_row, 'equipment'):
+        return set()
+    payload = profile_row['equipment']
+    if not payload:
+        return set()
+    try:
+        tags = json.loads(payload)
+    except (ValueError, TypeError):
+        return set()
+    return {t for t in tags if isinstance(t, str) and t in ALL_TAGS}
+
+
+def _load_overrides(db, uid: int, locale: str):
+    """Return ({add_tags}, {remove_tags}) for the athlete's overrides on
+    this locale. Empty sets when the table doesn't exist (SQLite) or no
+    rows match."""
+    if not database._is_postgres():
+        return set(), set()
+    rows = db.execute(
+        '''SELECT equipment_tag, action FROM locale_equipment_overrides
+           WHERE user_id = ? AND locale = ?''',
+        (uid, locale),
+    ).fetchall()
+    adds = {r['equipment_tag'] for r in rows if r['action'] == 'add'}
+    removes = {r['equipment_tag'] for r in rows if r['action'] == 'remove'}
+    return adds, removes
+
+
+def _effective_equipment(shared_tags: set, adds: set, removes: set) -> set:
+    """Per D-60 §4.4: (shared ∪ adds) ∖ removes."""
+    return (set(shared_tags) | set(adds)) - set(removes)
+
+
+def _save_overrides(db, uid: int, locale: str, shared_tags: set, athlete_tags: set) -> None:
+    """Replace this athlete's overrides on this locale with the diff of
+    athlete_tags vs. shared_tags. Atomic-per-locale: DELETE-then-INSERT."""
+    if not database._is_postgres():
+        return
+    db.execute(
+        'DELETE FROM locale_equipment_overrides WHERE user_id = ? AND locale = ?',
+        (uid, locale),
+    )
+    adds = athlete_tags - shared_tags
+    removes = shared_tags - athlete_tags
+    for tag in adds:
+        if tag in ALL_TAGS:
+            db.execute(
+                '''INSERT INTO locale_equipment_overrides
+                   (user_id, locale, equipment_tag, action)
+                   VALUES (?, ?, ?, ?)''',
+                (uid, locale, tag, 'add'),
+            )
+    for tag in removes:
+        if tag in ALL_TAGS:
+            db.execute(
+                '''INSERT INTO locale_equipment_overrides
+                   (user_id, locale, equipment_tag, action)
+                   VALUES (?, ?, ?, ?)''',
+                (uid, locale, tag, 'remove'),
+            )
+
+
+def _create_gym_profile(db, uid: int, profile_row, equipment_tags: set):
+    """First-athlete-at-this-mapbox flow (D-60 §4.2). Creates a new
+    gym_profiles row with `equipment` as JSON and returns the new id.
+    Caller links via locale_profiles.gym_profile_id."""
+    if not database._is_postgres():
+        return None
+    equipment_json = json.dumps(sorted(t for t in equipment_tags if t in ALL_TAGS))
+    display = profile_row['locale_name'] if _row_has(profile_row, 'locale_name') else None
+    category = profile_row['category'] if _row_has(profile_row, 'category') else None
+    mapbox_id = profile_row['mapbox_id'] if _row_has(profile_row, 'mapbox_id') else None
+    row = db.execute(
+        '''INSERT INTO gym_profiles
+           (mapbox_id, display_name, category, equipment,
+            created_by_user_id, last_confirmed_by, last_confirmed_at,
+            contribution_count, private)
+           VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, 1, FALSE)
+           RETURNING id''',
+        (mapbox_id, display, category, equipment_json, uid, uid),
+    ).fetchone()
+    return row['id'] if row else None
+
+
+def _link_gym_profile(db, uid: int, locale: str, gym_profile_id: int) -> None:
+    db.execute(
+        '''UPDATE locale_profiles SET gym_profile_id = ?
+           WHERE user_id = ? AND locale = ?''',
+        (gym_profile_id, uid, locale),
+    )
+
+
+def _touch_gym_profile_confirmation(db, uid: int, gym_profile_id: int) -> None:
+    """Bump last_confirmed_by/at + contribution_count on inherit. Tracks
+    D-60 §4.3 inherit signal so subsequent athletes see fresh provenance."""
+    if not database._is_postgres():
+        return
+    db.execute(
+        '''UPDATE gym_profiles
+           SET last_confirmed_by = ?, last_confirmed_at = CURRENT_TIMESTAMP,
+               contribution_count = COALESCE(contribution_count, 0) + 1
+           WHERE id = ?''',
+        (uid, gym_profile_id),
+    )
+
+
 @bp.route('/locales')
 def list_profiles():
     db = get_db()
@@ -152,6 +319,24 @@ def edit_profile(locale):
         if not existing:
             flash('Unknown location.', 'danger')
             return redirect(url_for('locales.list_profiles'))
+    profile = db.execute(
+        'SELECT * FROM locale_profiles WHERE locale=? AND user_id=?',
+        (locale, uid)
+    ).fetchone()
+    # D-60 §4 — branch into the shared-profile path when the locale's
+    # category is one of the seven gym/pool flavors and we have a stable
+    # mapbox_id to key on. Legacy enums (home/hotel/partner/airport),
+    # manual-entry rows, and no-shared-profile categories fall through to
+    # the legacy locale_equipment path.
+    if _is_shared_profile_locale(profile):
+        return _edit_shared_locale(db, uid, locale, profile)
+    return _edit_legacy_locale(db, uid, locale, profile)
+
+
+def _edit_legacy_locale(db, uid: int, locale: str, profile):
+    """Legacy per-athlete `locale_equipment` flow (pre-D-60). Used for
+    legacy enums, manual-entry rows, and no-shared-profile categories
+    (home_gym, outdoor_park, other_residence)."""
     if request.method == 'POST':
         selected_tags = [t for t in request.form.getlist('equipment') if t in ALL_TAGS]
         notes = request.form.get('notes', '').strip()
@@ -195,10 +380,6 @@ def edit_profile(locale):
         flash(f'{locale.title()} profile saved ({len(selected_tags)} items).', 'success')
         return redirect(url_for('locales.list_profiles'))
     # GET — load active equipment from locale_equipment (parent-JOIN scoped)
-    profile = db.execute(
-        'SELECT * FROM locale_profiles WHERE locale=? AND user_id=?',
-        (locale, uid)
-    ).fetchone()
     active_rows = db.execute(
         '''SELECT ei.tag FROM locale_equipment le
            JOIN equipment_items ei ON ei.id = le.equipment_id
@@ -206,11 +387,86 @@ def edit_profile(locale):
         (uid, locale)
     ).fetchall()
     active = {row['tag'] for row in active_rows}
-    return render_template('locales/form.html', locale=locale,
+    is_manual = bool(_row_has(profile, 'manual_entry') and profile['manual_entry'])
+    is_mapbox_anchored = bool(_row_has(profile, 'mapbox_id') and profile['mapbox_id'])
+    return render_template('locales/form.html', mode='legacy', locale=locale,
+                           profile=profile,
                            equipment_categories=EQUIPMENT_CATEGORIES,
                            active=active,
                            notes=profile['notes'] if profile else '',
-                           city=profile['city'] if profile and profile['city'] else '')
+                           city=profile['city'] if profile and profile['city'] else '',
+                           is_manual=is_manual,
+                           is_mapbox_anchored=is_mapbox_anchored)
+
+
+def _edit_shared_locale(db, uid: int, locale: str, profile):
+    """D-60 §4.2/§4.3/§4.4 — shared gym profile inherit/override flow.
+    First athlete at this mapbox_id creates the gym_profiles row; subsequent
+    athletes inherit and write deltas to locale_equipment_overrides."""
+    mapbox_id = profile['mapbox_id']
+    gym_profile_id = profile['gym_profile_id'] if _row_has(profile, 'gym_profile_id') else None
+    shared = None
+    if gym_profile_id:
+        shared = db.execute(
+            'SELECT * FROM gym_profiles WHERE id = ?',
+            (gym_profile_id,),
+        ).fetchone()
+    if not shared:
+        # No FK yet — look up a peer profile for this mapbox_id (another
+        # athlete may have built one). If found, treat this as the inherit
+        # case and link the FK on first save.
+        shared = _find_gym_profile(db, mapbox_id)
+    shared_tags = _shared_equipment_set(shared)
+    if request.method == 'POST':
+        submitted = {t for t in request.form.getlist('equipment') if t in ALL_TAGS}
+        notes = request.form.get('notes', '').strip()
+        if not shared:
+            # First athlete here — build the shared profile from this
+            # athlete's submission. Athlete's effective view becomes the
+            # base; no overrides yet.
+            new_id = _create_gym_profile(db, uid, profile, submitted)
+            if new_id:
+                _link_gym_profile(db, uid, locale, new_id)
+            db.execute(
+                '''UPDATE locale_profiles
+                   SET notes = ?, updated_at = CURRENT_TIMESTAMP
+                   WHERE user_id = ? AND locale = ?''',
+                (notes, uid, locale),
+            )
+            db.commit()
+            flash(f'Built the equipment profile for {profile["locale_name"] or locale} ({len(submitted)} items).', 'success')
+            return redirect(url_for('locales.list_profiles'))
+        # Inherit case — link FK if not yet linked, then save deltas vs.
+        # the shared base.
+        if not gym_profile_id:
+            _link_gym_profile(db, uid, locale, shared['id'])
+            _touch_gym_profile_confirmation(db, uid, shared['id'])
+        _save_overrides(db, uid, locale, shared_tags, submitted)
+        db.execute(
+            '''UPDATE locale_profiles
+               SET notes = ?, updated_at = CURRENT_TIMESTAMP
+               WHERE user_id = ? AND locale = ?''',
+            (notes, uid, locale),
+        )
+        db.commit()
+        flash(f'Saved your view of {profile["locale_name"] or locale} ({len(submitted)} items).', 'success')
+        return redirect(url_for('locales.list_profiles'))
+    # GET — render either the build-new form or the inherit-with-overrides
+    # form. Effective view drives the pre-checked state.
+    adds, removes = _load_overrides(db, uid, locale)
+    effective = _effective_equipment(shared_tags, adds, removes) if shared else set()
+    mode = 'shared_inherit' if shared else 'shared_build'
+    return render_template('locales/form.html', mode=mode, locale=locale,
+                           profile=profile,
+                           equipment_categories=EQUIPMENT_CATEGORIES,
+                           active=effective,
+                           shared_tags=shared_tags,
+                           adds=adds, removes=removes,
+                           shared=shared,
+                           notes=profile['notes'] if profile and profile['notes'] else '',
+                           city=profile['city'] if profile and profile['city'] else '',
+                           is_manual=False,
+                           is_mapbox_anchored=True)
 
 
 # ── D-59 — Mapbox-anchored locale creation ──────────────────────────────
@@ -232,6 +488,20 @@ def new_locale():
         return _save_mapbox_anchored(db, uid)
     manual = request.args.get('manual') == '1'
     query = (request.args.get('q') or '').strip()
+    # D-59 §6 step 3 — `?upgrade=<slug>` lets athletes flip an existing
+    # manual_entry=TRUE row to Mapbox-anchored. The upgrade row is shown
+    # to the template + carried through the disclosure ack roundtrip + the
+    # save POST as a hidden form field.
+    upgrade_slug = (request.args.get('upgrade') or '').strip()
+    upgrade_locale = None
+    if upgrade_slug:
+        upgrade_locale = db.execute(
+            'SELECT * FROM locale_profiles WHERE user_id = ? AND locale = ?',
+            (uid, upgrade_slug),
+        ).fetchone()
+        if not upgrade_locale:
+            flash('Unknown location to upgrade.', 'danger')
+            return redirect(url_for('locales.list_profiles'))
     acked = _disclosure_acked(db, uid)
     results: list[dict] = []
     error: str | None = None
@@ -248,7 +518,9 @@ def new_locale():
                            manual=manual, query=query,
                            acked=acked, results=results, error=error,
                            manual_categories=MANUAL_CATEGORIES,
-                           disclosure_version=MAPBOX_DISCLOSURE_VERSION)
+                           disclosure_version=MAPBOX_DISCLOSURE_VERSION,
+                           upgrade_slug=upgrade_slug,
+                           upgrade_locale=upgrade_locale)
 
 
 @bp.route('/locales/new/acknowledge', methods=['POST'])
@@ -260,12 +532,19 @@ def acknowledge_mapbox_disclosure():
     db = get_db()
     uid = current_user_id()
     _record_disclosure_ack(db, uid)
+    upgrade_slug = (request.form.get('upgrade_slug') or '').strip()
+    if upgrade_slug:
+        return redirect(url_for('locales.new_locale',
+                                q=request.form.get('q', ''),
+                                upgrade=upgrade_slug))
     return redirect(url_for('locales.new_locale', q=request.form.get('q', '')))
 
 
 def _save_mapbox_anchored(db, uid: int):
-    """POST /locales/new handler — INSERTs a Mapbox-anchored locale row,
+    """POST /locales/new handler — INSERTs a Mapbox-anchored locale row
+    (or UPDATEs in place when `upgrade_slug` is set per D-59 §6 step 3),
     runs chain detection, and decides where to redirect next."""
+    upgrade_slug = (request.form.get('upgrade_slug') or '').strip()
     locale_name = (request.form.get('locale_name') or '').strip()
     mapbox_id = (request.form.get('mapbox_id') or '').strip()
     text = (request.form.get('text') or '').strip()
@@ -276,15 +555,10 @@ def _save_mapbox_anchored(db, uid: int):
         lat = float(request.form.get('lat') or '')
     except ValueError:
         flash('Place lookup result was malformed; try again.', 'danger')
-        return redirect(url_for('locales.new_locale'))
+        return redirect(url_for('locales.new_locale', upgrade=upgrade_slug or None))
     if not locale_name or not mapbox_id:
         flash('Locale name and a place selection are required.', 'danger')
-        return redirect(url_for('locales.new_locale'))
-    base_slug = _slugify(locale_name)
-    if not base_slug:
-        flash('Locale name needs at least one letter or number.', 'danger')
-        return redirect(url_for('locales.new_locale'))
-    slug = _unique_slug(db, uid, base_slug)
+        return redirect(url_for('locales.new_locale', upgrade=upgrade_slug or None))
     chain = detect_chain(text)
     chain_id = chain['chain_id'] if chain else None
     chain_name = chain['canonical_name'] if chain else None
@@ -299,6 +573,41 @@ def _save_mapbox_anchored(db, uid: int):
             category = 'independent_gym'
         else:
             category = None
+    if upgrade_slug:
+        # D-59 §6 step 3 — flip a manual_entry=TRUE row to Mapbox-anchored.
+        # Slug stays the same so all FKs (locale_equipment, override rows)
+        # remain valid; locale_name updates to the Mapbox feature's name
+        # so the list view reflects what was looked up.
+        existing = db.execute(
+            'SELECT manual_entry FROM locale_profiles WHERE user_id = ? AND locale = ?',
+            (uid, upgrade_slug),
+        ).fetchone()
+        if not existing:
+            flash('Unknown location to upgrade.', 'danger')
+            return redirect(url_for('locales.list_profiles'))
+        db.execute(
+            '''UPDATE locale_profiles
+               SET locale_name = ?, mapbox_id = ?, lat = ?, lng = ?,
+                   chain_id = ?, chain_name = ?, category = ?,
+                   manual_entry = FALSE,
+                   place_payload = ?, place_fetched_at = CURRENT_TIMESTAMP,
+                   updated_at = CURRENT_TIMESTAMP
+               WHERE user_id = ? AND locale = ?''',
+            (locale_name, mapbox_id, lat, lng,
+             chain_id, chain_name, category,
+             raw_payload or place_name,
+             uid, upgrade_slug),
+        )
+        db.commit()
+        flash(f'Upgraded {locale_name} with place data.', 'success')
+        if chain_id:
+            return redirect(url_for('locales.nearby_instances', locale=upgrade_slug))
+        return redirect(url_for('locales.list_profiles'))
+    base_slug = _slugify(locale_name)
+    if not base_slug:
+        flash('Locale name needs at least one letter or number.', 'danger')
+        return redirect(url_for('locales.new_locale'))
+    slug = _unique_slug(db, uid, base_slug)
     db.execute(
         '''INSERT INTO locale_profiles
            (user_id, locale, locale_name, mapbox_id, lat, lng,
@@ -413,3 +722,118 @@ def nearby_instances(locale):
     return render_template('locales/nearby.html',
                            anchor=anchor, canonical=canonical,
                            candidates=same_chain)
+
+
+# ── D-59 §7 — on-demand Mapbox refresh ──────────────────────────────────
+
+
+@bp.route('/locales/<locale>/refresh', methods=['POST'])
+def refresh_from_mapbox(locale):
+    """D-59 §7 on-demand refresh. POSTed from the edit screen / list view.
+    Re-fetches Mapbox using the stored locale_name + coords as the query;
+    matches against the stored mapbox_id. If name + chain are unchanged,
+    apply the fresh place_payload silently. If anything material changed,
+    render a confirmation prompt so the athlete can opt in or out."""
+    db = get_db()
+    uid = current_user_id()
+    profile = db.execute(
+        'SELECT * FROM locale_profiles WHERE user_id = ? AND locale = ?',
+        (uid, locale),
+    ).fetchone()
+    if not profile:
+        flash('Unknown location.', 'danger')
+        return redirect(url_for('locales.list_profiles'))
+    stored_mapbox_id = profile['mapbox_id'] if _row_has(profile, 'mapbox_id') else None
+    stored_lng = profile['lng'] if _row_has(profile, 'lng') else None
+    stored_lat = profile['lat'] if _row_has(profile, 'lat') else None
+    if not stored_mapbox_id:
+        flash('Only Mapbox-anchored locales can be refreshed.', 'warning')
+        return redirect(url_for('locales.edit_profile', locale=locale))
+    confirm = request.form.get('confirm') == '1'
+    if confirm:
+        # Apply phase — the refreshed data was embedded as hidden fields in
+        # the confirm form. Trust those values (re-fetching here would
+        # double the Mapbox call cost and might return different results
+        # if Mapbox's index shifts mid-flow).
+        new_text = (request.form.get('refresh_text') or '').strip()
+        new_chain_id = (request.form.get('refresh_chain_id') or '').strip() or None
+        new_chain_name = (request.form.get('refresh_chain_name') or '').strip() or None
+        new_category = (request.form.get('refresh_category') or '').strip() or None
+        new_payload = request.form.get('refresh_payload') or ''
+        if not new_text:
+            flash('Refresh confirmation was malformed; try again.', 'danger')
+            return redirect(url_for('locales.list_profiles'))
+        db.execute(
+            '''UPDATE locale_profiles
+               SET locale_name = ?, chain_id = ?, chain_name = ?, category = ?,
+                   place_payload = ?, place_fetched_at = CURRENT_TIMESTAMP,
+                   updated_at = CURRENT_TIMESTAMP
+               WHERE user_id = ? AND locale = ?''',
+            (new_text, new_chain_id, new_chain_name, new_category,
+             new_payload, uid, locale),
+        )
+        db.commit()
+        flash(f'Refreshed {new_text}.', 'success')
+        return redirect(url_for('locales.list_profiles'))
+    # Fetch phase — re-search by name + proximity, match by mapbox_id.
+    name_q = profile['locale_name'] if _row_has(profile, 'locale_name') and profile['locale_name'] else locale
+    try:
+        if stored_lng is not None and stored_lat is not None:
+            results = mapbox_client.search_nearby(
+                name_q, float(stored_lng), float(stored_lat), limit=10,
+            )
+        else:
+            results = mapbox_client.search_places(name_q, limit=5)
+    except mapbox_client.MapboxTokenMissing:
+        flash('Place lookup is not configured on the server.', 'danger')
+        return redirect(url_for('locales.list_profiles'))
+    except mapbox_client.MapboxNoResults:
+        flash(f'Mapbox no longer returns results for {name_q!r}.', 'warning')
+        return redirect(url_for('locales.edit_profile', locale=locale))
+    except mapbox_client.MapboxError as e:
+        flash(f'Refresh failed: {e}.', 'danger')
+        return redirect(url_for('locales.list_profiles'))
+    refreshed = next((f for f in results if f['mapbox_id'] == stored_mapbox_id), None)
+    if refreshed is None:
+        flash('Mapbox no longer returns this exact place. Edit the locale to relink.', 'warning')
+        return redirect(url_for('locales.edit_profile', locale=locale))
+    # Recompute chain + category from the refreshed feature.
+    chain = detect_chain(refreshed['text'])
+    new_chain_id = chain['chain_id'] if chain else None
+    new_chain_name = chain['canonical_name'] if chain else None
+    if chain:
+        new_category = chain['category']
+    else:
+        mb_category = (refreshed['category'] or '').lower()
+        if any(tok in mb_category for tok in ('gym', 'fitness', 'climbing')):
+            new_category = 'independent_gym'
+        else:
+            new_category = profile['category'] if _row_has(profile, 'category') else None
+    old_text = profile['locale_name'] if _row_has(profile, 'locale_name') else ''
+    old_chain_id = profile['chain_id'] if _row_has(profile, 'chain_id') else None
+    old_chain_name = profile['chain_name'] if _row_has(profile, 'chain_name') else None
+    name_changed = refreshed['text'] and refreshed['text'] != old_text
+    chain_changed = new_chain_id != old_chain_id
+    if not (name_changed or chain_changed):
+        # Silent path — refresh place_payload + bump place_fetched_at,
+        # leave name/chain/category as-is.
+        db.execute(
+            '''UPDATE locale_profiles
+               SET place_payload = ?, place_fetched_at = CURRENT_TIMESTAMP,
+                   updated_at = CURRENT_TIMESTAMP
+               WHERE user_id = ? AND locale = ?''',
+            (refreshed['raw_payload'], uid, locale),
+        )
+        db.commit()
+        flash(f'Refreshed {old_text or locale} — no changes detected.', 'info')
+        return redirect(url_for('locales.list_profiles'))
+    return render_template('locales/refresh_confirm.html',
+                           locale=locale, profile=profile,
+                           refreshed=refreshed,
+                           old_text=old_text,
+                           old_chain_name=old_chain_name,
+                           new_chain_id=new_chain_id,
+                           new_chain_name=new_chain_name,
+                           new_category=new_category,
+                           name_changed=name_changed,
+                           chain_changed=chain_changed)

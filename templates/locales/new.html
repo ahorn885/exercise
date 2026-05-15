@@ -1,10 +1,23 @@
 {% extends 'base.html' %}
-{% block title %}New Locale{% endblock %}
+{% block title %}{% if upgrade_slug %}Look up {{ upgrade_locale['locale_name'] if upgrade_locale and upgrade_locale['locale_name'] else upgrade_slug }} on map{% else %}New Locale{% endif %}{% endblock %}
 {% block content %}
 <div class="d-flex justify-content-between align-items-center mb-3">
-  <h4 class="mb-0">New Locale</h4>
+  <h4 class="mb-0">
+    {% if upgrade_slug %}
+      Look up on map — {{ upgrade_locale['locale_name'] if upgrade_locale and upgrade_locale['locale_name'] else upgrade_slug }}
+    {% else %}
+      New Locale
+    {% endif %}
+  </h4>
   <a href="{{ url_for('locales.list_profiles') }}" class="btn btn-sm btn-outline-secondary">← Back</a>
 </div>
+
+{% if upgrade_slug %}
+  <div class="alert alert-info py-2 small u-mw-480">
+    Picking a Mapbox feature replaces this locale's manual address with coordinates + chain detection.
+    The slug ({{ upgrade_slug }}) and any equipment you've set stay the same.
+  </div>
+{% endif %}
 
 {% if manual %}
   {# ── Manual fallback (D-59 §6) ─────────────────────────────────── #}
@@ -53,23 +66,29 @@
       <form method="post" action="{{ url_for('locales.acknowledge_mapbox_disclosure') }}" class="d-inline">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <input type="hidden" name="q" value="{{ query }}">
+        {% if upgrade_slug %}<input type="hidden" name="upgrade_slug" value="{{ upgrade_slug }}">{% endif %}
         <button type="submit" class="btn btn-primary btn-sm">Acknowledge & continue</button>
       </form>
-      <a href="{{ url_for('locales.new_locale', manual=1) }}" class="btn btn-outline-secondary btn-sm ms-2">Use manual entry instead</a>
+      {% if not upgrade_slug %}
+        <a href="{{ url_for('locales.new_locale', manual=1) }}" class="btn btn-outline-secondary btn-sm ms-2">Use manual entry instead</a>
+      {% endif %}
     </div>
   </div>
 
 {% else %}
   {# ── Search form (D-59 §3.1) ───────────────────────────────────── #}
   <form method="get" action="{{ url_for('locales.new_locale') }}" class="u-mw-480 mb-3">
+    {% if upgrade_slug %}<input type="hidden" name="upgrade" value="{{ upgrade_slug }}">{% endif %}
     <label class="form-label fw-semibold">Search for a place</label>
     <div class="d-flex gap-2">
       <input type="text" name="q" class="form-control" value="{{ query }}" placeholder="e.g. Planet Fitness Minneapolis" required>
       <button type="submit" class="btn btn-primary">Search</button>
     </div>
+    {% if not upgrade_slug %}
     <div class="form-text">
       Or <a href="{{ url_for('locales.new_locale', manual=1) }}">enter address manually</a>.
     </div>
+    {% endif %}
   </form>
 
   {% if error %}
@@ -92,11 +111,13 @@
             <input type="hidden" name="lat" value="{{ r.lat }}">
             <input type="hidden" name="mapbox_category" value="{{ r.category }}">
             <input type="hidden" name="raw_payload" value="{{ r.raw_payload }}">
+            {% if upgrade_slug %}<input type="hidden" name="upgrade_slug" value="{{ upgrade_slug }}">{% endif %}
             <div class="flex-grow-1">
               <label class="form-label small mb-1">Locale name</label>
-              <input type="text" name="locale_name" class="form-control form-control-sm" value="{{ r.text }}" required maxlength="80">
+              <input type="text" name="locale_name" class="form-control form-control-sm"
+                     value="{{ r.text }}" required maxlength="80">
             </div>
-            <button type="submit" class="btn btn-sm btn-primary">Save this</button>
+            <button type="submit" class="btn btn-sm btn-primary">{% if upgrade_slug %}Upgrade to this{% else %}Save this{% endif %}</button>
           </form>
         </div>
       </div>

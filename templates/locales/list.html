@@ -31,7 +31,15 @@
               {% endif %}
             {% endif %}
           </span>
-          <a href="{{ url_for('locales.edit_profile', locale=locale) }}" class="btn btn-sm btn-outline-secondary">Edit</a>
+          <div class="d-flex gap-1">
+            {% if not is_legacy and p and p['mapbox_id'] %}
+              <form method="post" action="{{ url_for('locales.refresh_from_mapbox', locale=locale) }}" class="d-inline">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <button type="submit" class="btn btn-sm btn-outline-secondary" title="Refresh from Mapbox">⟳</button>
+              </form>
+            {% endif %}
+            <a href="{{ url_for('locales.edit_profile', locale=locale) }}" class="btn btn-sm btn-outline-secondary">Edit</a>
+          </div>
         </div>
         <div class="card-body">
           {% if tag_count > 0 %}

@@ -191,6 +191,29 @@ Schema-only PR. No §5.0 distinct verification owed. Tables/columns (`daily_avai
 
 ---
 
+## PR11 — D3b D-60 inherit/override UI + D-59 §6 upgrade + §7 refresh + PR2 FK fix (pending merge)
+
+§5.0 has 14 testable steps. PR11 is on branch `claude/v5-closing-handoff-eZFt9`; PR creation + merge + deploy pending.
+
+| # | Step | Status | Last update | Notes |
+|---|------|--------|-------------|-------|
+| 1 | `locale_equipment_overrides` + `locale_toggle_overrides` FK shape (`locale TEXT NOT NULL`, composite FK to `locale_profiles(user_id, locale) ON DELETE CASCADE`) | 🟡 owed | 2026-05-15 | Post-deploy `\d` in psql to confirm. |
+| 2 | D-60 first-athlete: build profile flow writes `gym_profiles` + links `gym_profile_id` | 🟡 owed | 2026-05-15 | |
+| 3 | D-60 subsequent-athlete: inherit + override flow writes `locale_equipment_overrides` rows; bumps `last_confirmed_*` + `contribution_count` | 🟡 owed | 2026-05-15 | Simulated at N=1 by editing the same locale twice (the second edit is functionally the inherit path). |
+| 4 | §6 manual→Mapbox upgrade flips `manual_entry=FALSE` + preserves slug + FKs | 🟡 owed | 2026-05-15 | |
+| 5 | §7 refresh — no-change path | 🟡 owed | 2026-05-15 | |
+| 6 | §7 refresh — change path renders confirm template + Yes applies | 🟡 owed | 2026-05-15 | Mock a change with psql UPDATE. |
+| 7 | §7 refresh — token-missing path | 🟡 owed | 2026-05-15 | Skippable if Andy already walked PR10 step 12 equivalent. |
+| 8 | §7 refresh — stale mapbox_id path | 🟡 owed | 2026-05-15 | psql-mock the mapbox_id to 'nonsense'. |
+| 9 | `MANUAL_CATEGORIES` dropdown shows all 10 D-60 §3 entries | 🟡 owed | 2026-05-15 | Quick visual check on `/locales/new?manual=1`. |
+| 10 | Regression — legacy enum edit forms unchanged | 🟡 owed | 2026-05-15 | |
+| 11 | Regression — athlete-created no-shared-profile categories (home_gym/outdoor_park/other_residence) take legacy flow | 🟡 owed | 2026-05-15 | |
+| 12 | Regression sweep on /profile, /onboarding/connect, /onboarding/prefill, /dashboard, /training | 🟡 owed | 2026-05-15 | |
+| 13 | Cross-user scoping on /locales/<slug>/edit (shared) + /locales/<slug>/refresh | ⚪ N/A | 2026-05-15 | Single-test-athlete state. |
+| 14 | Pre-existing PR2 FK bug `locale_equipment_overrides.locale_id → locale_profiles(id)` corrected end-to-end (table actually exists post-deploy) | 🟡 owed | 2026-05-15 | Confirms the PR2 silent-failure pattern is closed. |
+
+---
+
 ## Aggregate status (2026-05-15)
 
 | PR | ✅ | ⏸ | 🟡 | ⚪ | Total |
@@ -205,7 +228,8 @@ Schema-only PR. No §5.0 distinct verification owed. Tables/columns (`daily_avai
 | PR8 | 1 | 5 | 3 | 0 | 9 |
 | PR9 | 14 | 0 | 0 | 0 | 14 |
 | PR10 | 12 | 0 | 2 | 1 | 15** |
-| **Total** | **42** | **21** | **11** | **3** | **77** |
+| PR11 | 0 | 0 | 13 | 1 | 14 |
+| **Total** | **42** | **21** | **24** | **4** | **91** |
 
 (PR10 step 5 had a 🔴 BUG mid-walk on 2026-05-15; fixed same session by switching to Mapbox Search Box API forward endpoint (PR #43, merge `dcddeff`). Re-walked + verified: steps 5/6/7 now ✅.)
 
@@ -213,11 +237,12 @@ Schema-only PR. No §5.0 distinct verification owed. Tables/columns (`daily_avai
 
 **PR10 row 5 is 🔴 BUG (Mapbox returns no POIs); 9 done + 2 blocked-on-bug + 2 owed + 1 N/A + 1 bug = 15.
 
-**Headlines (2026-05-15 late evening, post-Search Box API fix + re-walk):**
-- **42 done**, **21 blocked on COROS/Polar partner credentials**, **11 doable now**, **3 N/A**.
-- **PR10 D3a fully functional end-to-end** after the Search Box API migration (PR #43) + result-card badge cleanup. Re-walk confirmed: search returns real POI results (Planet Fitness / Anytime Fitness / etc.); chain detection matches correctly; chain-anchored save + nearby picker work; same-chain Anytime Fitness rows saved with collision-suffix slugs (`anytime_fitness` / `_2` / `_3`); badges render on `/locales` list.
+**Headlines (2026-05-15 late evening, post-PR11 ship):**
+- **42 done**, **21 blocked on COROS/Polar partner credentials**, **24 doable now** (13 are PR11 fresh from this session), **4 N/A**.
+- **PR10 D3a fully functional end-to-end** after the Search Box API migration (PR #43) + result-card badge cleanup.
+- **PR11 D3b shipped** to feature branch — 13 walk-through steps owed at deploy time covering FK fix verification, D-60 first-athlete + inherit flows, §6 upgrade, §7 refresh (no-change + change + token-missing + stale-mapbox-id), `MANUAL_CATEGORIES` realignment, and regression sweeps. Step 13 (cross-user scoping) is ⚪ N/A at N=1 athlete same as the PR10 equivalent.
 - The COROS/Polar credential block is still the dominant blocker — once those land, ~21 steps unblock at once.
-- 11 doable-now steps: PR2 (1) + PR3 (1) + PR4 (1) + PR5 (3) + PR8 (3) + PR10 (2 — step 12 token-missing + step 13 disclosure version bump).
+- 24 doable-now steps: PR2 (1) + PR3 (1) + PR4 (1) + PR5 (3) + PR8 (3) + PR10 (2 — step 12 token-missing + step 13 disclosure version bump) + PR11 (13).
 
 ---
 
