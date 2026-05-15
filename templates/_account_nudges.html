@@ -1,0 +1,28 @@
+{# v5 §A.2.4 passive in-app nudge banner.
+
+   Rendered by base.html on every authed page. `active_nudges` is
+   injected by the context processor in app.py and is the result of
+   routes.nudges.get_active_nudges(db, current_user.id) — undismissed
+   account_nudges rows for the current user, registry-decorated with
+   message / cta_label / cta_endpoint / category.
+
+   No JS: dismiss is a real <form method="post"> to /nudges/<id>/dismiss
+   so the banner survives reloads until DB-dismissed (Bootstrap's
+   data-bs-dismiss="alert" would only hide it visually until the next
+   page render). Matches PR5–PR8's no-JS-required posture. #}
+{% if active_nudges %}
+  {% for n in active_nudges %}
+    <div class="alert alert-{{ n.category }} d-flex align-items-center justify-content-between" role="alert">
+      <div class="me-3">
+        {{ n.message }}
+        {% if n.cta_label and n.cta_endpoint %}
+          <a href="{{ url_for(n.cta_endpoint) }}" class="alert-link ms-1">{{ n.cta_label }}</a>
+        {% endif %}
+      </div>
+      <form method="post" action="{{ url_for('nudges.dismiss', nudge_id=n.id) }}" class="m-0">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button type="submit" class="btn-close" aria-label="Dismiss"></button>
+      </form>
+    </div>
+  {% endfor %}
+{% endif %}
