@@ -148,6 +148,7 @@ from routes.strava import bp as strava_bp
 from routes.whoop import bp as whoop_bp
 from routes.trainingpeaks import bp as trainingpeaks_bp
 from routes.zwift import bp as zwift_bp
+from routes.nudges import bp as nudges_bp, get_active_nudges
 
 app.register_blueprint(dashboard_bp)
 app.register_blueprint(training_bp)
@@ -177,6 +178,7 @@ app.register_blueprint(strava_bp)
 app.register_blueprint(whoop_bp)
 app.register_blueprint(trainingpeaks_bp)
 app.register_blueprint(zwift_bp)
+app.register_blueprint(nudges_bp)
 # COROS pushes workout-summary data to /coros/webhook from their servers,
 # not from a browser session, so the global CSRF protection doesn't apply
 # (and would 400 every push). Auth is via the `client` + `secret` request
@@ -224,6 +226,10 @@ _AUTH_EXEMPT_ENDPOINTS = {
     'whoop.webhook',
     'trainingpeaks.webhook',
     'zwift.webhook',
+    # Vercel Cron hits the daily nudge scanner with no session cookie;
+    # auth is via the `Authorization: Bearer $CRON_SECRET` header
+    # verified inside the route.
+    'nudges.scan_connect_provider_14d',
 }
 
 
@@ -295,6 +301,24 @@ def _inject_current_user():
     """Expose the logged-in user to all templates as `current_user`.
     Reads the row hydrated by `_require_login` — single query per request."""
     return {'current_user': getattr(g, 'current_user_row', None)}
+
+
+@app.context_processor
+def _inject_active_nudges():
+    """Expose undismissed `account_nudges` rows for the current user as
+    `active_nudges` (v5 §A.2.4). Empty list when logged out or on
+    SQLite dev. Reads via `routes.nudges.get_active_nudges` on every
+    request, but the underlying query is one SELECT scoped by user_id
+    + a partial-index-friendly WHERE — negligible per-render cost.
+    """
+    user = getattr(g, 'current_user_row', None)
+    if not user:
+        return {'active_nudges': []}
+    try:
+        return {'active_nudges': get_active_nudges(get_db(), user['id'])}
+    except Exception as e:
+        print(f'nudges: get_active_nudges failed: {e}')
+        return {'active_nudges': []}
 
 
 # Content-Security-Policy. Both script-src and style-src use per-request
