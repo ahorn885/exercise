@@ -111,30 +111,51 @@ def load_connections(db, uid, return_to=None):
 
 def _record_self_report_provenance(db, uid, field_values):
     """Write `athlete_profile_field_provenance` rows for prefill-eligible
-    fields the athlete just saved. v5 §A.2.3: an athlete entering a value
-    into a never-prefilled field sets `source='self_report'`.
+    fields the athlete just saved via the profile form.
 
-    PR6 always writes 'self_report' because no prefill mechanism exists
-    yet — the rows we touch are either non-existent (first save) or
-    already 'self_report' (prior save). D2 PRs add the
-    'provider_<X>' → 'manual_override' flip when an athlete edits a value
-    that came from a connected provider.
+    Source-flip rules per v5 §A.2.3:
 
-    PG-only per Athlete_Data_Integration_Spec_v4 §2.5 (SQLite frozen).
-    The table is in `_PG_MIGRATIONS` only; we early-return on SQLite so
-    a local dev save doesn't error, just skips the provenance row.
+      - Prior `source` starts with `'provider_'` → flip to `'manual_override'`
+        (the athlete is overriding a provider-prefilled value by typing
+        their own).
+      - Prior `source = 'manual_override'` → stays `'manual_override'`
+        (subsequent edits of an already-overridden value).
+      - Prior row missing OR `source = 'self_report'` → write `'self_report'`
+        (never-prefilled field, athlete is filling in or correcting).
+
+    PG-only per `Athlete_Data_Integration_Spec_v4` §2.5 (SQLite frozen).
+    Local-dev SQLite saves skip the provenance write.
 
     `field_values` is a dict keyed by `athlete_profile.field_name`. None
     values are skipped — clearing a field doesn't write a provenance row
-    in PR6 (D2's manual_override clear path will handle the inverse).
+    here (see `routes/onboarding.py:keep_current` for the explicit
+    "athlete reviewed and rejected the provider candidate" path).
+
+    Field-name validation is registry-driven: only names in
+    `PREFILL_ELIGIBLE_FIELDS` produce writes. Unknown keys are silently
+    dropped (the table's `field_name` column is free-text TEXT today;
+    this filter is the enforcement layer until a CHECK constraint ships).
     """
     if not database._is_postgres():
         return
+    prior_rows = db.execute(
+        'SELECT field_name, source '
+        'FROM athlete_profile_field_provenance WHERE user_id = ?',
+        (uid,),
+    ).fetchall()
+    prior_by_field = {r['field_name']: r['source'] for r in prior_rows}
     for field_name, value in field_values.items():
         if value is None:
             continue
         if field_name not in PREFILL_ELIGIBLE_FIELDS:
             continue
+        prior_source = prior_by_field.get(field_name)
+        if prior_source and prior_source.startswith('provider_'):
+            new_source = 'manual_override'
+        elif prior_source == 'manual_override':
+            new_source = 'manual_override'
+        else:
+            new_source = 'self_report'
         db.execute(
             'INSERT INTO athlete_profile_field_provenance '
             '(user_id, field_name, source) '
@@ -142,7 +163,7 @@ def _record_self_report_provenance(db, uid, field_values):
             'ON CONFLICT (user_id, field_name) DO UPDATE SET '
             '    source = EXCLUDED.source, '
             '    last_updated_at = NOW()',
-            (uid, field_name, 'self_report'),
+            (uid, field_name, new_source),
         )
 
 

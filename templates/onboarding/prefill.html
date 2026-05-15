@@ -2,11 +2,12 @@
 {% block title %}Review your profile data — AIDSTATION{% endblock %}
 {% block content %}
 
-{# v5 onboarding Step 3a — "Prefill review" (D-58 / PR7 / D2a).
-   Read-side of v5 §A.2 prefill UX. Per-field comparison cards showing
-   the athlete's stored value next to each connected provider's
-   extractor output. PR7 stub-renders [Use provider] / [Keep current]
-   buttons; D2b wires the write path + manual_override flip. #}
+{# v5 onboarding Step 3a — "Prefill review" (D-58).
+   Per-field comparison cards showing the athlete's stored value next
+   to each connected provider's extractor output. [Use provider value]
+   applies the winning candidate; [Keep current] suppresses re-prefill
+   via 'manual_override'. An inline "Use {provider} value instead" link
+   beneath a manual_override badge restores prefill (v5 §A.2.6). #}
 
 <div class="mb-4">
   <ol class="list-inline small text-muted mb-1">
@@ -40,10 +41,10 @@
     We found provider data for
     <strong>{{ fields_with_candidates }} of {{ fields|length }}</strong>
     performance baseline{{ '' if fields|length == 1 else 's' }}.
-    Review each value below. The write-back controls
-    (<em>Use provider</em> / <em>Keep current</em>) ship in the next
-    release — for now this page is read-only and you'll enter or adjust
-    values on the profile form on the next page.
+    Click <em>Use provider value</em> to apply a candidate, or
+    <em>Keep current</em> to suppress re-prefill for a value you've
+    already set. You can revisit this page any time after connecting
+    additional providers.
   </p>
 {% endif %}
 
@@ -66,9 +67,25 @@
                   <span class="badge bg-light text-dark border ms-1">
                     {% if f.provenance.source == 'self_report' %}Self-reported
                     {% elif f.provenance.source == 'manual_override' %}Manually set
-                    {% elif f.provenance.source.startswith('provider_') %}From {{ f.provenance.source[9:] }}
+                    {% elif f.provenance.source.startswith('provider_') %}From {{ provider_label(f.provenance.source[9:]) }}
                     {% else %}{{ f.provenance.source }}{% endif %}
                   </span>
+                {% endif %}
+                {# v5 §A.2.6 clear-override path. Inline "switch back"
+                   form beneath the badge — surfaces only when source
+                   is manual_override AND a live provider candidate
+                   exists (the suggestion to switch to). #}
+                {% if f.provenance and f.provenance.source == 'manual_override' and f.candidates %}
+                  <div class="mt-1">
+                    <form method="post" action="{{ url_for('onboarding.use_provider', field=f.name) }}" class="d-inline">
+                      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                      <button type="submit" class="btn btn-link btn-sm p-0 text-decoration-underline align-baseline">
+                        Use {{ f.candidates[0].provider_label }} value
+                        ({{ f.candidates[0].value }} {{ f.unit }}{% if f.candidates[0].synced_at %}, as of {{ f.candidates[0].synced_at|string }}{% endif %})
+                        instead
+                      </button>
+                    </form>
+                  </div>
                 {% endif %}
               {% else %}
                 <em class="text-muted">Not set</em>
@@ -99,16 +116,25 @@
 
           {% if f.candidates %}
             <div class="mt-3 d-flex flex-wrap gap-2">
-              <button type="button" class="btn btn-sm btn-outline-primary disabled"
-                      aria-disabled="true"
-                      title="Write-back ships in the next release.">
-                Use provider value
-              </button>
-              <button type="button" class="btn btn-sm btn-outline-secondary disabled"
-                      aria-disabled="true"
-                      title="Write-back ships in the next release.">
-                Keep current
-              </button>
+              <form method="post" action="{{ url_for('onboarding.use_provider', field=f.name) }}" class="d-inline">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <button type="submit" class="btn btn-sm btn-primary">
+                  Use {{ f.candidates[0].provider_label }} value
+                </button>
+              </form>
+              {# [Keep current] only meaningful when there's a value to
+                 keep — clicking it writes `'manual_override'` to
+                 suppress future re-prefill per v5 §A.2.3. Hidden for
+                 empty fields (athlete fills in manually on the profile
+                 page; no override-stickiness state to express). #}
+              {% if f.current_value is not none %}
+                <form method="post" action="{{ url_for('onboarding.keep_current', field=f.name) }}" class="d-inline">
+                  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                  <button type="submit" class="btn btn-sm btn-outline-secondary">
+                    Keep current
+                  </button>
+                </form>
+              {% endif %}
             </div>
           {% endif %}
 
