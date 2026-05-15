@@ -416,4 +416,29 @@ Counter to the counter: shipping infrastructure ahead of users means the Mapbox 
 
 ---
 
+## 9. Mid-session addendum — `PR_Verification_Status.md` tracker added
+
+Late in this session Andy surfaced a gap: each PR's §5.0 "still owed" carry-forward had grown monotonically across PR1–PR10, conflating "genuinely owed," "blocked on external creds," and "already done." No session was tracking which steps had actually been walked.
+
+Added `aidstation-sources/PR_Verification_Status.md` — single-file per-PR/per-step tracker with a 4-state legend (✅ Done / ⏸ Blocked / 🟡 Owed / ⚪ N/A). Seeded with what Andy reported in this session:
+
+- **PR9** — 14/14 ✅ Done (Andy walked all banner / cron / dismiss steps).
+- **PR6** — 6/7 ✅ Done; step 7 (COROS webhook ON CONFLICT) ⏸ blocked.
+- **PR7** — 5/7 ✅ Done; step 3 ⏸ blocked on COROS data; step 7 ⚪ N/A (superseded by PR8).
+- **PR5** — steps 1-2 ✅; steps 3-4 ⏸ blocked on COROS OAuth; steps 5-7 🟡 owed.
+- **PR1** — step 4 ✅ (D-58 schema verified implicitly by PR6+PR9 working); steps 1-3 ⏸ blocked on COROS creds.
+- **PR3** — step 5 (index spot-check) 🟡 owed; steps 1-4 ⏸ blocked on Polar creds.
+- **PR4** — step 1 (page render) 🟡 owed; steps 2-6 ⏸ blocked on at least one of COROS/Polar.
+- **PR2** — schema-only; one 🟡 owed spot-check on locale tables.
+- **PR8** — step 1 ✅; steps 2-6 ⏸ blocked on COROS data; steps 7-9 (defensive guards + 404 + CSRF) 🟡 owed.
+- **PR10** — `MAPBOX_PUBLIC_TOKEN` env var ✅ set (Andy confirmed); 14 walk-through steps 🟡 pending merge + deploy.
+
+Aggregate: 31 ✅, 21 ⏸ (all on COROS/Polar partner credentials), 23 🟡 owed, 2 ⚪ N/A across 77 step-rows.
+
+**Future sessions** read `PR_Verification_Status.md` at session start (CLAUDE.md First-session checklist step 4 extended). Future handoffs no longer need to enumerate "PR<N-1> §5.0 still owed if not completed" carry-forward — the tracker is the source of truth.
+
+**File count update:** original PR10 count was 5 substantive + 2 bookkeeping + 1 handoff = 8 total. Adding the tracker (`PR_Verification_Status.md` new) + 2-line CLAUDE.md edit + this addendum = +1 bookkeeping, no substantive code change. Still at the 5-substantive ceiling.
+
+---
+
 *End of V5 Implementation PR10 closing handoff. v5 onboarding Option D3a (Mapbox-anchored locale creation + chain detection + nearby same-chain picker + manual fallback + privacy disclosure) shipped: `mapbox_client.py` Mapbox Geocoding wrapper (typed exceptions, 1-retry on 5xx, bbox math) + `routes/locales.py` extended with `GET/POST /locales/new` (search + chain-detect + INSERT), `POST /locales/new/manual` (manual fallback per D-59 §6), `POST /locales/new/acknowledge` (disclosure ack into existing `disclosure_acknowledgments` table — no schema change), `GET/POST /locales/<slug>/nearby` (D-59 §5 same-chain proximity picker) + new `templates/locales/new.html` + `templates/locales/nearby.html` + `templates/locales/list.html` extension to render athlete-created rows. Closes D-59 create-side; D3b (D-60 inherit/override UI + D-59 §6 upgrade + §7 refresh) carried forward as PR11+ candidate. Backlog bumped v21 → v22; D-59 status flipped 🟡 → 🟢 D3a (D3b pending). Next: Andy's choice among PR11 candidates in §5.1 (D3b recommended — closes the rest of the v5 §J locale work end-to-end on top of D3a's foundation); v22 → v23 backlog bump mechanically spec'd for PR11's first action.*
