@@ -473,4 +473,38 @@ Andy walked PR10 §5.0 on the deployed app immediately after merge. Steps 1-4 + 
 
 ---
 
+## 11. Closing-final addendum — PR10 verification complete + badge polish (PR #44)
+
+Continuing from §10's same-session fix push: Andy re-walked PR10 §5.0 steps 5, 6, 7 on the deployed Search Box API fix. All passed.
+
+**Re-walk results (2026-05-15 late):**
+
+- **Step 5 ✅** — search "Planet Fitness Minneapolis" (and "Anytime Fitness" queries) returned real POI results with place name + full address. Initial post-fix render showed a raw Mapbox `poi_category` badge ("gym, services") on each result card — cosmetic only since the stored `category` in `locale_profiles` is correctly derived from chain registry / substring match, but visually inconsistent with the internal taxonomy. **Fixed same session in PR #44** by removing the inline `<span class="badge bg-light text-dark">{{ r.category }}</span>` from `templates/locales/new.html` line 85. Result-card display now shows place name + full address only; stored category badge on `/locales` list view unchanged.
+- **Step 6 ✅** — chain-anchored save worked. Anytime Fitness anchor row stored correctly: `chain_id='anytime_fitness'`, `chain_name='Anytime Fitness'`, `category='commercial_chain_gym'`, `lat`/`lng` populated, `manual_entry=false`, `mapbox_id` is opaque Search Box format. Post-save redirect to `/locales/<slug>/nearby` fired as designed.
+- **Step 7 ✅** — nearby picker rendered same-chain Anytime Fitness matches; Andy ticked 2 and saved. `_unique_slug` collision-suffix produced 3 distinct rows: `anytime_fitness`, `anytime_fitness_2`, `anytime_fitness_3`. Each row carries `chain_id='anytime_fitness'` + distinct `mapbox_id`. Working as designed.
+- **Step 10 ✅** (already verified earlier; reconfirmed in this walk) — `/locales` list shows the legacy 4-enum cards + athlete-created Anytime Fitness rows with chain badge. Edit works on athlete-created rows.
+
+**Final PR10 verification state:** 12 ✅ / 0 ⏸ / 2 🟡 / 1 ⚪ of 15 steps. Remaining 🟡: step 12 (token-missing inline error — Andy skipped earlier; non-blocking) + step 13 (disclosure version-bump re-prompts — not walked). The 1 ⚪ is step 14 (cross-user scoping — N/A in single-test-athlete state).
+
+**Aggregate tracker state after this session:** 42 ✅ / 21 ⏸ / 11 🟡 / 3 ⚪ across 77 step-rows. COROS/Polar partner credentials remain the dominant block (21 steps) — those land + ~21 unblock at once.
+
+**PR10 D3a is functionally complete end-to-end.** The Mapbox-anchored locale creation + chain detection + nearby same-chain picker + manual fallback + privacy disclosure all work against the deployed app. v5 §J create-side is done.
+
+**Session PRs landed (all merged to `main` 2026-05-15):**
+
+| PR | Commit | Scope |
+|----|--------|-------|
+| #42 | `3122273` (merge of `0851c68`) | D3a ship: `mapbox_client.py` (Geocoding v5 — superseded) + `routes/locales.py` extensions + 3 templates + v22 backlog + CLAUDE.md ref + handoff |
+| (—) | `28e790e` | Bookkeeping: `PR_Verification_Status.md` tracker + CLAUDE.md tracker ref + §9 addendum |
+| (—) | `3a96105` | Tracker: PR10 §5.0 walk results — step 5 Mapbox POI bug surfaced |
+| #43 | `dcddeff` (merge of `c2c819e`) | Fix: `mapbox_client.py` rewritten for Search Box API forward endpoint; tracker + §10 addendum |
+| (—) | `0865881` | Tracker: PR10 §5.0 steps 5/6/7 re-verified ✅ |
+| #44 | `9a6cd10` (merge of `f6aa8fe`) | Polish: hide raw Mapbox `poi_category` badge on search result cards; tracker note |
+
+Final file count: 6 substantive (`mapbox_client.py` twice — original + rewrite, `routes/locales.py`, `templates/locales/new.html` × 2 — original + badge edit, `templates/locales/nearby.html`, `templates/locales/list.html`) + 4 bookkeeping (v22 backlog, CLAUDE.md, `PR_Verification_Status.md`, this handoff). 6 substantive is over the 5-ceiling; flagged as same-session bug-fix-on-own-surface-area in §10.
+
+**§8 forward pointer correction:** "Before next code lands: PR10 §5.0 spot-check on the deployed app" — done this session. Recommended next is still **D3b** (D-60 inherit/override UI + D-59 §6 upgrade + §7 refresh + the `locale_equipment_overrides` FK fix from §5.3) per §5.1.
+
+---
+
 *End of V5 Implementation PR10 closing handoff. v5 onboarding Option D3a (Mapbox-anchored locale creation + chain detection + nearby same-chain picker + manual fallback + privacy disclosure) shipped: `mapbox_client.py` Mapbox Geocoding wrapper (typed exceptions, 1-retry on 5xx, bbox math) + `routes/locales.py` extended with `GET/POST /locales/new` (search + chain-detect + INSERT), `POST /locales/new/manual` (manual fallback per D-59 §6), `POST /locales/new/acknowledge` (disclosure ack into existing `disclosure_acknowledgments` table — no schema change), `GET/POST /locales/<slug>/nearby` (D-59 §5 same-chain proximity picker) + new `templates/locales/new.html` + `templates/locales/nearby.html` + `templates/locales/list.html` extension to render athlete-created rows. Closes D-59 create-side; D3b (D-60 inherit/override UI + D-59 §6 upgrade + §7 refresh) carried forward as PR11+ candidate. Backlog bumped v21 → v22; D-59 status flipped 🟡 → 🟢 D3a (D3b pending). Next: Andy's choice among PR11 candidates in §5.1 (D3b recommended — closes the rest of the v5 §J locale work end-to-end on top of D3a's foundation); v22 → v23 backlog bump mechanically spec'd for PR11's first action.*
