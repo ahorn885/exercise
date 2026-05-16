@@ -2,7 +2,7 @@ from collections import defaultdict
 from flask import Blueprint, render_template, request
 from database import get_db
 from routes.auth import current_user_id
-from routes.locales import LOCALES
+from routes.locales import athlete_locale_choices
 
 bp = Blueprint('references', __name__)
 
@@ -26,7 +26,10 @@ def _exercise_available(exercise_id, ex_eq_map, profile_equipment_ids):
 @bp.route('/exercises')
 def exercises():
     db = get_db()
-    locale_filter = request.args.getlist('locale')
+    uid = current_user_id()
+    locale_choices = athlete_locale_choices(db, uid)
+    valid_slugs = {c['slug'] for c in locale_choices}
+    locale_filter = [s for s in request.args.getlist('locale') if s in valid_slugs]
 
     rows = db.execute('SELECT * FROM exercise_inventory ORDER BY discipline, exercise').fetchall()
 
@@ -36,7 +39,6 @@ def exercises():
     equipment_counts = {}
 
     if locale_filter:
-        uid = current_user_id()
         placeholders = ','.join('?' * len(locale_filter))
 
         # Profile metadata (notes, updated_at) for display banner
@@ -73,20 +75,25 @@ def exercises():
             )
 
     if locale_filter:
+        # Map each selected athlete-slug → Layer 0 where_available bucket via
+        # the choice list (legacy slug == bucket; custom locales come via
+        # CATEGORY_TO_WHERE_AVAILABLE_BUCKET — outdoor_park resolves to '' and
+        # contributes nothing, matching no exercises until the park-tags
+        # follow-up lands).
+        selected_buckets = {c['bucket'] for c in locale_choices
+                            if c['slug'] in locale_filter and c['bucket']}
         filtered = []
         for r in rows:
-            # Must be tagged for at least one selected locale
             ex_locales = set((r['where_available'] or '').split(','))
-            if not any(loc in ex_locales for loc in locale_filter):
+            if not (selected_buckets & ex_locales):
                 continue
-            # If any selected locale has a saved profile, apply equipment filter
             if profiles_active and not _exercise_available(r['id'], ex_eq_map, profile_equipment_ids):
                 continue
             filtered.append(r)
         rows = filtered
 
     return render_template('references/exercises.html', rows=rows,
-                           locale_filter=locale_filter, locales=LOCALES,
+                           locale_filter=locale_filter, locales=locale_choices,
                            profiles_active=profiles_active,
                            equipment_counts=equipment_counts)
 

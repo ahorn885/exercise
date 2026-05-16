@@ -53,6 +53,54 @@ SHARED_PROFILE_CATEGORIES = frozenset({
     'pool_indoor', 'pool_outdoor', 'outdoor_park',
 })
 
+# PR19 Item E — map MANUAL_CATEGORIES → Layer 0 exercise_inventory.where_available
+# buckets. The 4-bucket where_available taxonomy is gym-centric (home / hotel /
+# partner / airport); the locale-CRUD model lets athletes save arbitrary places
+# with richer categories. This map is what /references/exercises uses to decide
+# which exercises are relevant for a selected athlete locale. outdoor_park has
+# no analog — parks resolve to '' and match no exercises until the park-specific
+# tag taxonomy lands (PR18 closing handoff §5.2).
+CATEGORY_TO_WHERE_AVAILABLE_BUCKET = {
+    'home_gym': 'home',
+    'other_residence': 'home',
+    'hotel_gym': 'hotel',
+    'commercial_chain_gym': 'partner',
+    'independent_gym': 'partner',
+    'climbing_gym_chain': 'partner',
+    'climbing_gym_indie': 'partner',
+    'pool_indoor': 'partner',
+    'pool_outdoor': 'partner',
+    'outdoor_park': '',
+}
+
+
+def athlete_locale_choices(db, uid: int) -> list:
+    """Return ordered list of {slug, label, bucket} dicts representing every
+    locale the athlete can pick — legacy enum slots (home/hotel/partner/
+    airport) always present + athlete-created rows. `bucket` is the
+    where_available analog used by /references filter logic; for legacy slugs
+    bucket == slug, for custom slugs bucket comes from
+    CATEGORY_TO_WHERE_AVAILABLE_BUCKET (may be '' when no Layer 0 analog).
+    """
+    rows = db.execute(
+        'SELECT locale, locale_name, category FROM locale_profiles '
+        'WHERE user_id = ?',
+        (uid,),
+    ).fetchall()
+    by_slug = {r['locale']: r for r in rows}
+
+    choices = []
+    for slug in LOCALES:
+        row = by_slug.get(slug)
+        label = (row['locale_name'] if row and row['locale_name'] else slug.capitalize())
+        choices.append({'slug': slug, 'label': label, 'bucket': slug})
+    for slug in sorted(s for s in by_slug if s not in LOCALES):
+        row = by_slug[slug]
+        label = row['locale_name'] or slug
+        bucket = CATEGORY_TO_WHERE_AVAILABLE_BUCKET.get(row['category'] or '', '')
+        choices.append({'slug': slug, 'label': label, 'bucket': bucket})
+    return choices
+
 
 def _slugify(name: str) -> str:
     """URL-safe slug for the `locale` PK column. Lowercase, alnum-only,

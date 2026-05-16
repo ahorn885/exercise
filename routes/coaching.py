@@ -4,6 +4,7 @@ from datetime import date, timedelta
 from flask import Blueprint, render_template, request, redirect, url_for, flash, jsonify
 from database import get_db
 from routes.auth import current_user_id
+from routes.locales import athlete_locale_choices
 
 bp = Blueprint('coaching', __name__, url_prefix='/coaching')
 
@@ -19,7 +20,11 @@ def context():
     return jsonify(ctx)
 
 
-LOCALES = ['home', 'hotel', 'partner', 'airport']
+# Trip-environment-type taxonomy used by plan_travel.locale + Claude prompt
+# construction. Separate from the athlete's saved-locale list — trip-locales
+# are kinds of places (hotel, partner gym, airport gym) the athlete will be at
+# during travel, not specific saved locations.
+TRIP_LOCALE_TYPES = ('home', 'hotel', 'partner', 'airport')
 
 
 @bp.route('/generate', methods=['GET', 'POST'])
@@ -70,9 +75,11 @@ def generate():
         if goal_checkpoints:
             race_goals_parts.append(f'Checkpoint / Aid Station / TA goals:\n{goal_checkpoints}')
         race_goals = '\n\n'.join(race_goals_parts)
-        locale = request.form.get('locale', 'home')
-        if locale not in LOCALES:
-            locale = 'home'
+        locale = (request.form.get('locale') or '').strip()
+        valid_slugs = {c['slug'] for c in athlete_locale_choices(db, current_user_id())}
+        if locale not in valid_slugs:
+            flash('Select a valid current location.', 'danger')
+            return redirect(url_for('coaching.generate'))
         nutrition_goal = request.form.get('nutrition_goal', 'maintain')
         try:
             travel_schedule = json.loads(request.form.get('travel_schedule', '[]'))
@@ -152,7 +159,8 @@ def generate():
     return render_template('coaching/generate.html',
                            plans=plans,
                            suggested_start=suggested_start,
-                           locales=LOCALES,
+                           locales=athlete_locale_choices(db, current_user_id()),
+                           trip_locale_types=TRIP_LOCALE_TYPES,
                            api_configured=_check_api_key())
 
 
@@ -173,9 +181,11 @@ def review(plan_id):
     if request.method == 'POST':
         tier = int(request.form.get('tier', 1))
         notes = request.form.get('notes', '').strip()
-        locale = request.form.get('locale', 'home')
-        if locale not in LOCALES:
-            locale = 'home'
+        locale = (request.form.get('locale') or '').strip()
+        valid_slugs = {c['slug'] for c in athlete_locale_choices(db, uid)}
+        if locale not in valid_slugs:
+            flash('Select a valid current location.', 'danger')
+            return redirect(url_for('coaching.review', plan_id=plan_id))
 
         # ── Pre-review actions (applied before the AI call) ──────────────────
 
@@ -319,7 +329,9 @@ def review(plan_id):
 
     current_race_goals = plan['race_goals'] if 'race_goals' in plan.keys() else ''
     return render_template('coaching/review.html', plan=plan, health=health,
-                           locales=LOCALES, current_race_goals=current_race_goals,
+                           locales=athlete_locale_choices(db, uid),
+                           trip_locale_types=TRIP_LOCALE_TYPES,
+                           current_race_goals=current_race_goals,
                            api_configured=_check_api_key())
 
 
