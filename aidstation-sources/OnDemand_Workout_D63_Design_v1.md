@@ -235,7 +235,7 @@ This is a soft override — synthesis modulates; it doesn't refuse. Athlete can 
 
 ### 6.3 Sport availability at location
 
-If athlete picks "MTB" + "home gym," the location's effective equipment view can't support the sport. Synthesis returns an error session: "MTB not possible at Home Gym (no bike). Pick a different location or sport." [Pick another location] / [Pick another sport] buttons.
+If athlete picks "MTB" + "home gym," the location's effective equipment view can't support the sport. **D-63 caller pre-checks sport availability against the picked locale's equipment view (or against `quick_equipment` when in "Somewhere else" mode) before invoking Layer 4.** When the picked sport is not resolvable, D-63 returns its own structured "sport unavailable" response directly to the frontend — Layer 4 is never invoked — and the frontend renders: "MTB not possible at Home Gym (no bike). Pick a different location or sport." [Pick another location] / [Pick another sport] buttons. The rest-shape is reserved for genuine coaching-chosen rest days; the system-error path stays separate from the coaching domain. Layer 4 raises `Layer4InputError('request_sport_unavailable_at_locale')` defensively per Layer4_Spec §4.4 if the caller-side pre-check is missed.
 
 ### 6.4 Off-plan-day check
 
@@ -279,7 +279,7 @@ When D-63 implements:
 2. Athlete clicks [Log this workout] → `cardio_log` row written with `is_ad_hoc=TRUE`; suggestion row → `status='logged'`; T1 hook banner appears.
 3. Athlete clicks [Yes — refresh] on T1 hook → D-64 T1 fires with NL pre-filled; `plan_refresh_log.triggered_by_ad_hoc_id` set.
 4. Athlete clicks [Regenerate] → new suggestion row created; old row → `status='regenerated'`; `regenerated_into_id` chain populated.
-5. Athlete picks MTB + 60min + Hard + Home Gym (no bike) → synthesis returns error session per §6.3; no suggestion row written.
+5. Athlete picks MTB + 60min + Hard + Home Gym (no bike) → D-63 caller pre-check per §6.3 catches the unavailable sport; D-63 returns the unavailable response directly to the frontend ([Pick another location] / [Pick another sport]); Layer 4 not invoked; no suggestion row written.
 6. Athlete picks Strength + 45min + Moderate + Commercial Gym → strength session synthesized using D-60 effective view of the gym's equipment; respects active injuries.
 7. Athlete with active wrist injury picks Strength → no wrist-loaded exercises in the output (Decision #4 + §6.1).
 8. Athlete picks "Somewhere else" + checks dumbbells + barbell → quick-add path; no locale created; synthesis uses checked equipment only.

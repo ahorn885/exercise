@@ -267,7 +267,7 @@ Fires when `days_to_event ≤ 14` (orchestrator-triggered as the athlete approac
 
 All four entry points raise typed errors. Detail in §4 stub.
 
-- `Layer4InputError(code)` — precondition violations. Includes `race_week_brief_requires_event_mode` for §3.4 misuse.
+- `Layer4InputError(code)` — precondition violations. Includes `race_week_brief_requires_event_mode` for §3.4 misuse and `request_sport_unavailable_at_locale` for §4.4 D-63 sport-availability precondition (caller is expected to pre-check per D-63 §6.3; Layer 4 defensively raises if the check is missed).
 - `Layer4OutputError(code)` — validator could not produce an accepted plan within the retry cap AND the best-effort fallback could not be assembled (rare).
 - `Layer4ShapeInfeasibleError(...)` — 3B periodization shape is structurally impossible for the athlete's §K availability + 2D exclusions; surfaces to 3D for the next gate, not handled by Layer 4 itself.
 
@@ -719,6 +719,7 @@ Apply to every entry point before per-entry rules run.
 | 2C payload for picked locale present | `layer2c_payload_for_locale_missing` | When `request.locale_slug` non-None, `layer2c_payload_for_locale` non-None and its `locale_slug` matches the request. |
 | Sport in 2A inclusion | `sport_not_in_inclusion` | `request.sport ∈ layer2a_payload.discipline_inclusion`. |
 | Athlete owns the locale | `locale_not_athlete_scoped` | When `request.locale_slug` specified, the locale's `user_id` matches the call-site user. |
+| Sport equipment-resolvable at request locale or via `quick_equipment` | `request_sport_unavailable_at_locale` | When `request.locale_slug` non-None: `request.sport` must resolve to at least one exercise / activity entry in `layer2c_payload_for_locale`'s effective equipment view (Tier 1/2/3). When `request.quick_equipment` non-empty: the sport's minimum equipment must be a subset of `request.quick_equipment` (or the sport must be doable bodyweight per Layer 0A). **Caller-side pre-check expected** per D-63 §6.3: D-63 catches this case before invoking Layer 4 and returns the "sport unavailable" response with `[Pick another location]` / `[Pick another sport]` affordances directly to the frontend. Layer 4 raises this code defensively if the caller-side pre-check is missed — the LLM is never invoked on impossible requests. |
 
 ### 4.5 `llm_layer4_race_week_brief`
 
@@ -1267,7 +1268,7 @@ When raised, `Layer4ShapeInfeasibleError` propagates per §3.5: orchestrator cat
 
 | Case | Trigger | Spec contract | Expected behavior |
 |---|---|---|---|
-| Sport unavailable at any locale | `request.sport` not present in any locale's effective equipment view AND not satisfiable via `quick_equipment` | D-63 §6.3 | Returns `Layer4Payload` with `len(sessions) == 1`, session shape is an "error session" carrying `kind=='rest'` + `rest_reason='athlete_unavailable'` + `session_notes` explaining sport unavailability + `notable_observations` contains `Observation(category='sport_unavailable_at_locale', ...)`. Athlete-facing surface renders the error inline. |
+| Sport unavailable at request locale | `request.sport` not equipment-resolvable at the picked locale (or via `request.quick_equipment` when in "Somewhere else" mode) | §4.4 precondition + D-63 §6.3 | **Caller-side pre-check path.** D-63 catches this case before invoking Layer 4 and returns its own "sport unavailable" response (with `[Pick another location]` / `[Pick another sport]` affordances) directly to the frontend; no Layer 4 invocation. Layer 4 raises `Layer4InputError('request_sport_unavailable_at_locale')` defensively if the caller-side pre-check is missed. The LLM is never invoked on impossible requests; no rest-shape repurposing (the rest-shape is reserved for genuine coaching-chosen rest days). |
 | Locale equipment changed mid-request | Athlete edits `locale_equipment_overrides` between D-63 request submission and Layer 4 invocation | §4.1 | Caught by `etl_version_set_mismatch` precondition — if the 2C re-resolution bumps `etl_version_set['layer2c']`, raises `Layer4InputError('etl_version_set_mismatch')`. Orchestrator catches, re-runs 2C, re-invokes Layer 4 with updated payloads. v1 doesn't retry transparently; surfaces to the athlete with a "your equipment list changed; retrying" inline message. |
 | Wrist injury + only-strength-day request | D-63 `request.intensity == 'hard'`, strength sport, but 3A `active_injuries` excludes every available compound lift | §5.4 `injury_violation_*` | Validator fails with `injury_violation_blocker`; capped retry fires; synthesizer substitutes per 2C Tier-2/3 to body-part-safe alternatives. If retry cap exhausts, best-effort session emitted + `Observation(category='warning', elevates_to_hitl=True, text='all standard upper-body strength options blocked by active wrist injury; recommended rest day')`. |
 | Athlete picks "Somewhere else" with empty `quick_equipment` | `request.locale_slug is None` AND `len(request.quick_equipment) == 0` | §4.4 | Raises `Layer4InputError('locale_and_quick_equipment_both_unset')`. D-63 frontend should pre-validate, but Layer 4 enforces. |
@@ -1640,7 +1641,7 @@ Full Cartesian is impractical; the TS set below picks high-signal coverage (~50 
 
 | TS | Inputs | Expected outputs | Contracts exercised |
 |---|---|---|---|
-| **TS-33** | Andy: D-63 request for MTB at home gym (no bike per locale's equipment view) | Returns `Layer4Payload` with `len(sessions)==1`, error session (`kind='rest'`, `rest_reason='athlete_unavailable'`), `Observation(category='sport_unavailable_at_locale', ...)`; `is_ad_hoc=True`; `suggestion_id` populated | §3.3, §10.4, D-63 §6.3 |
+| **TS-33** | Andy: D-63 request for MTB at home gym (no bike per locale's equipment view) | D-63 caller pre-check per §6.3 catches the unavailable sport and returns the unavailable response (`[Pick another location]` / `[Pick another sport]` affordances) directly to the frontend — Layer 4 not invoked, no `Layer4Payload` produced, no `suggestion_id` allocated. If the pre-check is bypassed (defensive path): Layer 4 raises `Layer4InputError('request_sport_unavailable_at_locale')` per §4.4. | §3.5, §4.4, §10.4, D-63 §6.3 |
 | **TS-34** | Andy: D-63 strength session at hotel gym; wrist injury active | Returns one strength session; wrist-extension-loaded exercises excluded via 2D; Tier-2 substitutes appear in `StrengthExercise.substitute_text` | §3.3, §5.4 `injury_violation_*` |
 | **TS-35** | Andy: D-63 `intensity='hard'` but 3A shows yesterday was hard + elevated ACWR | Synthesizer modulates intensity to `moderate`; `coaching_flags=['intensity_modulated']` LLM-emitted; `Observation(category='intensity_modulated', elevates_to_hitl=False)` auto-emitted | §3.3, §8.6, §8.7, D-63 §6.2 |
 | **TS-36** | D-63 with `locale_slug=None` AND `quick_equipment=[]` | `Layer4InputError('locale_and_quick_equipment_both_unset')` | §4.4 |
