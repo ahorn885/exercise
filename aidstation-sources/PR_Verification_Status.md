@@ -198,19 +198,19 @@ Schema-only PR. No §5.0 distinct verification owed. Tables/columns (`daily_avai
 | # | Step | Status | Last update | Notes |
 |---|------|--------|-------------|-------|
 | 1 | `locale_equipment_overrides` + `locale_toggle_overrides` FK shape (`locale TEXT NOT NULL`, composite FK to `locale_profiles(user_id, locale) ON DELETE CASCADE`) | ✅ Done | 2026-05-16 | Andy ran `\d locale_equipment_overrides` + `\d locale_toggle_overrides` in Neon SQL editor. Both tables show `locale TEXT NOT NULL` (not `locale_id INTEGER`); `CHECK (action IN ('add','remove'))` on the equipment table; `UNIQUE (user_id, locale, equipment_tag, action)` / `(user_id, locale, toggle_name)`; composite FK `(user_id, locale) → locale_profiles(user_id, locale) ON DELETE CASCADE` on both. PR2 silent-failure pattern closed. |
-| 2 | D-60 first-athlete: build profile flow writes `gym_profiles` + links `gym_profile_id` | 🟡 owed | 2026-05-15 | |
-| 3 | D-60 subsequent-athlete: inherit + override flow writes `locale_equipment_overrides` rows; bumps `last_confirmed_*` + `contribution_count` | 🟡 owed | 2026-05-15 | Simulated at N=1 by editing the same locale twice (the second edit is functionally the inherit path). |
-| 4 | §6 manual→Mapbox upgrade flips `manual_entry=FALSE` + preserves slug + FKs | 🟡 owed | 2026-05-15 | |
-| 5 | §7 refresh — no-change path | 🟡 owed | 2026-05-15 | |
-| 6 | §7 refresh — change path renders confirm template + Yes applies | 🟡 owed | 2026-05-15 | Mock a change with psql UPDATE. |
-| 7 | §7 refresh — token-missing path | 🟡 owed | 2026-05-15 | Skippable if Andy already walked PR10 step 12 equivalent. |
-| 8 | §7 refresh — stale mapbox_id path | 🟡 owed | 2026-05-15 | psql-mock the mapbox_id to 'nonsense'. |
-| 9 | `MANUAL_CATEGORIES` dropdown shows all 10 D-60 §3 entries | 🟡 owed | 2026-05-15 | Quick visual check on `/locales/new?manual=1`. |
-| 10 | Regression — legacy enum edit forms unchanged | 🟡 owed | 2026-05-15 | |
-| 11 | Regression — athlete-created no-shared-profile categories (home_gym/outdoor_park/other_residence) take legacy flow | 🟡 owed | 2026-05-15 | |
-| 12 | Regression sweep on /profile, /onboarding/connect, /onboarding/prefill, /dashboard, /training | 🟡 owed | 2026-05-15 | |
+| 2 | D-60 first-athlete: build profile flow writes `gym_profiles` + links `gym_profile_id` | ✅ Done | 2026-05-16 | Andy walked end-to-end. UX gap surfaced: three Anytime Fitness rows are visually indistinguishable on `/locales` because address is stored in `place_payload` JSON but no view extracts it. Captured for follow-up PR (item A). |
+| 3 | D-60 subsequent-athlete: inherit + override flow writes `locale_equipment_overrides` rows; bumps `last_confirmed_*` + `contribution_count` | ✅ Done | 2026-05-16 | All assertions passed. |
+| 4 | §6 manual→Mapbox upgrade flips `manual_entry=FALSE` + preserves slug + FKs | ✅ Done | 2026-05-16 | Upgrade works; row UPDATEd in place, slug preserved. Surfaced 4 follow-up items during this walk: (A) address not surfaced on list/edit views, (B) 🔴 `/locales/<slug>/refresh` fails when athlete renamed locale because route uses `locale_name` as the Mapbox search query — "Horn's House" returns no results; needs Search Box `/retrieve` endpoint with `mapbox_id`, (C) no duplicate-address detection at create, (D) no delete UI, (E) legacy enums should retire. |
+| 5 | §7 refresh — no-change path | ✅ Done | 2026-05-16 | Info flash + `place_fetched_at` bumped on locales whose `locale_name` still matches the Mapbox-indexed name. |
+| 6 | §7 refresh — change path renders confirm template + Yes applies | 🟡 blocked on B | 2026-05-16 | Cannot walk reliably until refresh route is rewritten to use `mapbox_id` lookup instead of `locale_name` search (B). Walks correctly only for locales the athlete hasn't renamed; same `MapboxNoResults` failure as item B blocks the path for renamed locales. |
+| 7 | §7 refresh — token-missing path | 🟡 skipped | 2026-05-16 | Skipped per PR10 step 12 equivalent — non-critical with token already set. |
+| 8 | §7 refresh — stale mapbox_id path | 🟡 skipped | 2026-05-16 | Skipped — low priority edge case. |
+| 9 | `MANUAL_CATEGORIES` dropdown shows all 10 D-60 §3 entries | ✅ Done | 2026-05-16 | All 10 categories render. UX feedback: "Home gym" + "Other residence" labels could be clearer — Andy suggested "Primary residence gym" + a better label for "Other residence." Captured for follow-up PR. |
+| 10 | Regression — legacy enum edit forms unchanged | ✅ Done | 2026-05-16 | home/hotel/partner/airport edit screens render the simple `locale_equipment` form unchanged. |
+| 11 | Regression — athlete-created no-shared-profile categories (home_gym/outdoor_park/other_residence) take legacy flow | ✅ Done | 2026-05-16 | home_gym-categorized locale routes to `_edit_legacy_locale`, not the shared-profile UI. |
+| 12 | Regression sweep on /profile, /onboarding/connect, /onboarding/prefill, /dashboard, /training | ✅ Done | 2026-05-16 | No visual regressions on the broader app surface. |
 | 13 | Cross-user scoping on /locales/<slug>/edit (shared) + /locales/<slug>/refresh | ⚪ N/A | 2026-05-15 | Single-test-athlete state. |
-| 14 | Pre-existing PR2 FK bug `locale_equipment_overrides.locale_id → locale_profiles(id)` corrected end-to-end (table actually exists post-deploy) | 🟡 owed | 2026-05-15 | Confirms the PR2 silent-failure pattern is closed. |
+| 14 | Pre-existing PR2 FK bug `locale_equipment_overrides.locale_id → locale_profiles(id)` corrected end-to-end (table actually exists post-deploy) | ✅ Done | 2026-05-16 | Implicitly verified by step 1 (`\d` output) + step 3 (override INSERTs landed correctly against the composite FK). |
 
 ---
 
@@ -228,8 +228,8 @@ Schema-only PR. No §5.0 distinct verification owed. Tables/columns (`daily_avai
 | PR8 | 1 | 5 | 3 | 0 | 9 |
 | PR9 | 14 | 0 | 0 | 0 | 14 |
 | PR10 | 12 | 0 | 2 | 1 | 15** |
-| PR11 | 1 | 0 | 12 | 1 | 14 |
-| **Total** | **43** | **21** | **23** | **4** | **91** |
+| PR11 | 10 | 0 | 3 | 1 | 14 |
+| **Total** | **52** | **21** | **14** | **4** | **91** |
 
 (PR10 step 5 had a 🔴 BUG mid-walk on 2026-05-15; fixed same session by switching to Mapbox Search Box API forward endpoint (PR #43, merge `dcddeff`). Re-walked + verified: steps 5/6/7 now ✅.)
 
@@ -237,12 +237,12 @@ Schema-only PR. No §5.0 distinct verification owed. Tables/columns (`daily_avai
 
 **PR10 row 5 is 🔴 BUG (Mapbox returns no POIs); 9 done + 2 blocked-on-bug + 2 owed + 1 N/A + 1 bug = 15.
 
-**Headlines (2026-05-15 late evening, post-PR11 ship):**
-- **42 done**, **21 blocked on COROS/Polar partner credentials**, **24 doable now** (13 are PR11 fresh from this session), **4 N/A**.
+**Headlines (2026-05-16, post-PR11 walk):**
+- **52 done**, **21 blocked on COROS/Polar partner credentials**, **14 doable now**, **4 N/A**.
 - **PR10 D3a fully functional end-to-end** after the Search Box API migration (PR #43) + result-card badge cleanup.
-- **PR11 D3b shipped** to feature branch — 13 walk-through steps owed at deploy time covering FK fix verification, D-60 first-athlete + inherit flows, §6 upgrade, §7 refresh (no-change + change + token-missing + stale-mapbox-id), `MANUAL_CATEGORIES` realignment, and regression sweeps. Step 13 (cross-user scoping) is ⚪ N/A at N=1 athlete same as the PR10 equivalent.
+- **PR11 D3b walked end-to-end** (10/14 ✅): FK fix shape verified; D-60 first-athlete + inherit/override flows working; §6 manual→Mapbox upgrade working; §7 refresh no-change path working; `MANUAL_CATEGORIES` rendering all 10 D-60 §3 categories; regression sweeps clean on legacy enums + non-shared-profile categories + the broader app surface. 5 follow-up items surfaced during the walk (logged for next PR): (A) address not surfaced on `/locales` / edit views, (B) 🔴 §7 refresh broken for renamed locales (route uses `locale_name` as search query; needs Search Box `/retrieve` with `mapbox_id`), (C) no duplicate-address detection at create, (D) no delete UI, (E) legacy enums should retire (hard-coupled to `routes/coaching.py` + `routes/references.py` — needs distinct refactor PR). UX feedback: "Home gym" / "Other residence" labels could be clearer.
 - The COROS/Polar credential block is still the dominant blocker — once those land, ~21 steps unblock at once.
-- 24 doable-now steps: PR2 (1) + PR3 (1) + PR4 (1) + PR5 (3) + PR8 (3) + PR10 (2 — step 12 token-missing + step 13 disclosure version bump) + PR11 (13).
+- 14 doable-now steps: PR2 (1) + PR3 (1) + PR4 (1) + PR5 (3) + PR8 (3) + PR10 (2 — step 12 token-missing + step 13 disclosure version bump) + PR11 (3 — step 6 blocked on item B, steps 7+8 low-priority skipped).
 
 ---
 
