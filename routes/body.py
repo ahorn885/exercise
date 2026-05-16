@@ -1,9 +1,6 @@
-import os
 from flask import Blueprint, render_template, request, redirect, url_for, flash
 from database import get_db
 from routes.auth import current_user_id
-
-_IS_PG = bool(os.environ.get('DATABASE_URL'))
 
 bp = Blueprint('body', __name__)
 
@@ -70,12 +67,9 @@ def _save(db, entry_id):
                    'WHERE id=? AND user_id=?',
                    vals + (entry_id, uid))
     else:
-        if _IS_PG:
-            db.execute('''INSERT INTO body_metrics (date,weight_lbs,body_fat_pct,vo2_max,resting_hr,notes,user_id)
-                VALUES (?,?,?,?,?,?,?)
-                ON CONFLICT (user_id, date) DO UPDATE SET
-                weight_lbs=EXCLUDED.weight_lbs, body_fat_pct=EXCLUDED.body_fat_pct,
-                vo2_max=EXCLUDED.vo2_max, resting_hr=EXCLUDED.resting_hr, notes=EXCLUDED.notes''', vals + (uid,))
-        else:
-            db.execute('INSERT OR REPLACE INTO body_metrics (date,weight_lbs,body_fat_pct,vo2_max,resting_hr,notes,user_id) VALUES (?,?,?,?,?,?,?)', vals + (uid,))
+        db.execute('''INSERT INTO body_metrics (date,weight_lbs,body_fat_pct,vo2_max,resting_hr,notes,user_id)
+            VALUES (?,?,?,?,?,?,?)
+            ON CONFLICT (user_id, date) DO UPDATE SET
+            weight_lbs=EXCLUDED.weight_lbs, body_fat_pct=EXCLUDED.body_fat_pct,
+            vo2_max=EXCLUDED.vo2_max, resting_hr=EXCLUDED.resting_hr, notes=EXCLUDED.notes''', vals + (uid,))
     db.commit()
