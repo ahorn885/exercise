@@ -197,7 +197,7 @@ Schema-only PR. No §5.0 distinct verification owed. Tables/columns (`daily_avai
 
 | # | Step | Status | Last update | Notes |
 |---|------|--------|-------------|-------|
-| 1 | `locale_equipment_overrides` + `locale_toggle_overrides` FK shape (`locale TEXT NOT NULL`, composite FK to `locale_profiles(user_id, locale) ON DELETE CASCADE`) | 🟡 owed | 2026-05-15 | Post-deploy `\d` in psql to confirm. |
+| 1 | `locale_equipment_overrides` + `locale_toggle_overrides` FK shape (`locale TEXT NOT NULL`, composite FK to `locale_profiles(user_id, locale) ON DELETE CASCADE`) | ✅ Done | 2026-05-16 | Andy ran `\d locale_equipment_overrides` + `\d locale_toggle_overrides` in Neon SQL editor. Both tables show `locale TEXT NOT NULL` (not `locale_id INTEGER`); `CHECK (action IN ('add','remove'))` on the equipment table; `UNIQUE (user_id, locale, equipment_tag, action)` / `(user_id, locale, toggle_name)`; composite FK `(user_id, locale) → locale_profiles(user_id, locale) ON DELETE CASCADE` on both. PR2 silent-failure pattern closed. |
 | 2 | D-60 first-athlete: build profile flow writes `gym_profiles` + links `gym_profile_id` | 🟡 owed | 2026-05-15 | |
 | 3 | D-60 subsequent-athlete: inherit + override flow writes `locale_equipment_overrides` rows; bumps `last_confirmed_*` + `contribution_count` | 🟡 owed | 2026-05-15 | Simulated at N=1 by editing the same locale twice (the second edit is functionally the inherit path). |
 | 4 | §6 manual→Mapbox upgrade flips `manual_entry=FALSE` + preserves slug + FKs | 🟡 owed | 2026-05-15 | |
@@ -228,8 +228,8 @@ Schema-only PR. No §5.0 distinct verification owed. Tables/columns (`daily_avai
 | PR8 | 1 | 5 | 3 | 0 | 9 |
 | PR9 | 14 | 0 | 0 | 0 | 14 |
 | PR10 | 12 | 0 | 2 | 1 | 15** |
-| PR11 | 0 | 0 | 13 | 1 | 14 |
-| **Total** | **42** | **21** | **24** | **4** | **91** |
+| PR11 | 1 | 0 | 12 | 1 | 14 |
+| **Total** | **43** | **21** | **23** | **4** | **91** |
 
 (PR10 step 5 had a 🔴 BUG mid-walk on 2026-05-15; fixed same session by switching to Mapbox Search Box API forward endpoint (PR #43, merge `dcddeff`). Re-walked + verified: steps 5/6/7 now ✅.)
 
