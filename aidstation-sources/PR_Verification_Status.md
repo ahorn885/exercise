@@ -237,7 +237,27 @@ Schema-only PR. No §5.0 distinct verification owed. Tables/columns (`daily_avai
 
 ---
 
-## Aggregate status (2026-05-16, post-PR18 ship)
+## PR19 — retire legacy `LOCALES` external consumers (PR18 follow-on Item E; pending merge)
+
+§5.0 has 11 testable steps. PR19 is on branch `claude/locale-crud-bundle-closing-imqrG`; PR creation + merge + deploy pending.
+
+| # | Step | Status | Last update | Notes |
+|---|------|--------|-------------|-------|
+| 1 | `/coaching/generate` GET — primary "Current Location" dropdown shows athlete's actual locales | 🟡 Owed | 2026-05-16 | Walk: open `/coaching/generate`. Expect: dropdown lists 4 legacy slots first (`Home`/`Hotel`/`Partner`/`Airport`, using `locale_name` if a row exists or capitalize(slug) otherwise) + any athlete-created locales alpha by slug with their `locale_name` labels. Pre-selected option = `home`. Confirm DOM `<option value="home" selected>` is the first item. |
+| 2 | `/coaching/generate` GET — trip-locale dropdown still shows the 4-bucket type taxonomy | 🟡 Owed | 2026-05-16 | Walk: add a trip row in the form's travel-schedule section. Expect: the trip's Location dropdown shows only the 4 legacy buckets (`Home`/`Hotel`/`Partner`/`Airport`) — NOT the athlete's saved locales. Pre-selected = `hotel`. Iterates `trip_locale_types`, not `locales`. |
+| 3 | `/coaching/generate` POST validation — invalid locale rejected, no silent fallback | 🟡 Owed | 2026-05-16 | Walk: tamper the form's `locale` field via devtools to `<option value="not_a_slug">` + submit. Expect: red flash "Select a valid current location." + redirect back to `/coaching/generate` (GET). No plan generated. Replaces the pre-PR19 silent rewrite to `'home'`. |
+| 4 | `/coaching/review` GET — same primary + trip dropdown behavior | 🟡 Owed | 2026-05-16 | Walk: open an existing plan's `/coaching/review/<plan_id>`. Confirm same behavior as steps 1 + 2. The locale-rows JS template (`#locale-row-template`) trip dropdown also iterates `trip_locale_types`. |
+| 5 | `/coaching/review` POST validation — same form-level guard | 🟡 Owed | 2026-05-16 | Walk: tamper + submit. Expect: same flash + redirect to GET. |
+| 6 | `/references/exercises` GET — filter checkboxes show athlete's actual locales | 🟡 Owed | 2026-05-16 | Walk: open `/references/exercises`. Expect: checkbox row shows athlete's locale list (legacy slots + custom), using `locale_name` labels for any saved rows. NOT the raw 4-bucket enum. |
+| 7 | `/references/exercises?locale=home` — legacy-bucket filter still works | 🟡 Owed | 2026-05-16 | Walk: tick `Home` checkbox. Expect: exercise rows filtered to those with `home` in `where_available` CSV; equipment-overlap filter from `locale_equipment` still applies. Regression check on the pre-PR19 happy path. |
+| 8 | `/references/exercises?locale=<custom_chain_slug>` — custom-locale filter maps via category bucket | 🟡 Owed | 2026-05-16 | Set up: have a `commercial_chain_gym` locale saved. Walk: tick its checkbox. Expect: exercise rows filtered to those with `partner` in `where_available` (the category's mapped bucket); equipment-overlap filter applies if `locale_equipment` rows exist. |
+| 9 | `/references/exercises?locale=<outdoor_park_slug>` — outdoor_park resolves to empty bucket → 0 exercises | 🟡 Owed | 2026-05-16 | Set up: have an outdoor_park locale saved. Walk: tick only that checkbox. Expect: zero exercise rows shown (the bucket map resolves to `''`, contributing nothing to the intersection). Known follow-up per handoff §6 / PR18 §5.2 — needs a park-tag taxonomy. |
+| 10 | `/references/exercises?locale=fake_slug` — tampered URL params sanitized | 🟡 Owed | 2026-05-16 | Walk: hit `/references/exercises?locale=fake_slug` directly. Expect: the unknown slug is filtered out of `locale_filter` (defensive sanitize against `valid_slugs`); page renders as if no filter were applied. No crash, no 500. |
+| 11 | No external `LOCALES` references remain in codebase | 🟡 Owed | 2026-05-16 | Verification grep post-deploy: `grep -rn "from routes.locales import LOCALES\|^LOCALES = \['home'" --include="*.py" .` returns only `routes/locales.py:15` (the internal-only literal). |
+
+---
+
+## Aggregate status (2026-05-16, post-PR19 ship)
 
 | PR | ✅ | ⏸ | 🟡 | ⚪ | Total |
 |----|---|---|---|---|-------|
@@ -253,7 +273,8 @@ Schema-only PR. No §5.0 distinct verification owed. Tables/columns (`daily_avai
 | PR10 | 12 | 0 | 2 | 1 | 15** |
 | PR11 | 10 | 0 | 3 | 1 | 14 |
 | PR18 | 0 | 0 | 12 | 0 | 12 |
-| **Total** | **52** | **21** | **26** | **4** | **103** |
+| PR19 | 0 | 0 | 11 | 0 | 11 |
+| **Total** | **52** | **21** | **37** | **4** | **114** |
 
 (PR10 step 5 had a 🔴 BUG mid-walk on 2026-05-15; fixed same session by switching to Mapbox Search Box API forward endpoint (PR #43, merge `dcddeff`). Re-walked + verified: steps 5/6/7 now ✅.)
 
@@ -261,13 +282,14 @@ Schema-only PR. No §5.0 distinct verification owed. Tables/columns (`daily_avai
 
 **PR10 row 5 is 🔴 BUG (Mapbox returns no POIs); 9 done + 2 blocked-on-bug + 2 owed + 1 N/A + 1 bug = 15.
 
-**Headlines (2026-05-16, post-PR18 ship):**
-- **52 done**, **21 blocked on COROS/Polar partner credentials**, **26 doable now (14 pre-PR18 + 12 PR18 §5.0 walks)**, **4 N/A**.
+**Headlines (2026-05-16, post-PR19 ship):**
+- **52 done**, **21 blocked on COROS/Polar partner credentials**, **37 doable now (14 pre-PR18 + 12 PR18 §5.0 walks + 11 PR19 §5.0 walks)**, **4 N/A**.
 - **PR10 D3a fully functional end-to-end** after the Search Box API migration (PR #43) + result-card badge cleanup.
-- **PR11 D3b walked end-to-end** (10/14 ✅); step 6 was blocked on PR18 item B and unblocks once the `/retrieve`-based refresh ships to production. The 5 follow-up items captured during the PR11 walk: items A/B/C/D bundled into PR18 (this PR); item E (retire legacy `LOCALES` enum cards) stays its own PR per the PR11-follow-on handoff §3.5 because of `routes/coaching.py` + `routes/references.py` hard consumers.
-- **PR18 locale-CRUD bundle shipped** — 4 substantive code files (`mapbox_client.py` `retrieve`, `routes/locales.py` multi-edit, `templates/locales/list.html`, `templates/locales/form.html`). 12 testable §5.0 steps owed for the post-merge walk. After the walk, PR11 step 6 should also be re-walkable + flipped ✅.
+- **PR11 D3b walked end-to-end** (10/14 ✅); step 6 was blocked on PR18 item B and unblocks once the `/retrieve`-based refresh ships to production.
+- **PR18 locale-CRUD bundle shipped** — 12 testable §5.0 steps owed for the post-merge walk. After the walk, PR11 step 6 should also be re-walkable + flipped ✅.
+- **PR19 retire legacy `LOCALES` external consumers shipped** — closes the PR18 closing-handoff §5.1 deferred item. 6 substantive code files (`routes/locales.py` additive helper + bucket-map, `routes/coaching.py` LOCALES drop + TRIP_LOCALE_TYPES + form-level guard refactor, `routes/references.py` import swap + bucket-mapped filter, 3 templates). 11 testable §5.0 steps owed for post-merge walk. Closes the v1-coaching-form `LOCALES` hard-coupling story.
 - The COROS/Polar credential block is still the dominant blocker — once those land, ~21 steps unblock at once.
-- 14 doable-now steps (pre-PR18): PR2 (1) + PR3 (1) + PR4 (1) + PR5 (3) + PR8 (3) + PR10 (2 — step 12 token-missing + step 13 disclosure version bump) + PR11 (3 — step 6 unblocks post-PR18, steps 7+8 low-priority skipped). Post-PR18 deploy, these become **14 + 12 = 26 doable-now**.
+- 14 pre-PR18 doable-now steps: PR2 (1) + PR3 (1) + PR4 (1) + PR5 (3) + PR8 (3) + PR10 (2 — step 12 token-missing + step 13 disclosure version bump) + PR11 (3 — step 6 unblocks post-PR18, steps 7+8 low-priority skipped). Post-PR18+PR19 deploy, these become **14 + 12 + 11 = 37 doable-now**.
 
 ---
 
