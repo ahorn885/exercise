@@ -1,5 +1,6 @@
 import json
 import re
+import uuid
 
 from flask import Blueprint, render_template, request, redirect, url_for, flash
 
@@ -24,8 +25,11 @@ MAPBOX_DISCLOSURE_VERSION = 'v1'
 
 # D-60 §3 — locale category taxonomy. Manual-entry dropdown surfaces the
 # whole taxonomy so athletes can pick the right value when bypassing chain
-# detection. The seven shared-profile categories (SHARED_PROFILE_CATEGORIES
-# below) gate the inherit/override UI on the edit screen.
+# detection. The eight shared-profile categories (SHARED_PROFILE_CATEGORIES
+# below) gate the inherit/override UI on the edit screen. PR18 reclassified
+# outdoor_park into shared-profile: the privacy boundary is residence-vs-
+# public, not gym-vs-non-gym — parks with verifiable Mapbox addresses are
+# publicly shareable.
 MANUAL_CATEGORIES = (
     ('commercial_chain_gym', 'Commercial gym (chain)'),
     ('independent_gym', 'Commercial gym (independent)'),
@@ -34,18 +38,19 @@ MANUAL_CATEGORIES = (
     ('climbing_gym_indie', 'Climbing gym (independent)'),
     ('pool_indoor', 'Indoor pool'),
     ('pool_outdoor', 'Outdoor pool'),
-    ('home_gym', 'Home gym'),
+    ('home_gym', 'Home (primary residence)'),
     ('outdoor_park', 'Outdoor / trail / park'),
-    ('other_residence', 'Other residence'),
+    ('other_residence', 'Other residence (in-laws / friend / AirBnB)'),
 )
 
-# D-60 §3 — the seven gym/pool categories that expect a shared gym_profiles
-# row. The remaining three (home_gym, outdoor_park, other_residence) stay
-# per-athlete; their equipment lives in legacy `locale_equipment`.
+# D-60 §3 — categories that expect a shared gym_profiles row. The
+# remaining two (home_gym, other_residence) stay per-athlete + private;
+# their equipment lives in legacy `locale_equipment` and they're never
+# enterprise-shareable.
 SHARED_PROFILE_CATEGORIES = frozenset({
     'commercial_chain_gym', 'independent_gym', 'hotel_gym',
     'climbing_gym_chain', 'climbing_gym_indie',
-    'pool_indoor', 'pool_outdoor',
+    'pool_indoor', 'pool_outdoor', 'outdoor_park',
 })
 
 
@@ -124,9 +129,9 @@ def _row_has(row, col: str) -> bool:
 
 def _is_shared_profile_locale(profile_row) -> bool:
     """True when this locale should use the D-60 gym_profiles inherit/
-    override model. False for legacy enums, manual-entry rows, no-shared-
-    profile categories (home_gym/outdoor_park/other_residence), and any
-    row missing a mapbox_id (no stable join key for the shared profile)."""
+    override model. False for legacy enums, manual-entry rows, private
+    residential categories (home_gym/other_residence), and any row
+    missing a mapbox_id (no stable join key for the shared profile)."""
     if not profile_row:
         return False
     if not _row_has(profile_row, 'category') or not _row_has(profile_row, 'mapbox_id'):
@@ -252,6 +257,51 @@ def _touch_gym_profile_confirmation(db, uid: int, gym_profile_id: int) -> None:
     )
 
 
+def _display_address(profile_row) -> str:
+    """Pull the human-readable street address out of `place_payload` JSON
+    for UI rendering (PR18 item A — athletes need to distinguish two rows
+    with the same locale_name). Returns the Mapbox feature's
+    `properties.full_address` (preferred), `properties.place_formatted`
+    (fallback), or '' when the payload is absent / malformed / lacks both."""
+    if not profile_row or not _row_has(profile_row, 'place_payload'):
+        return ''
+    payload = profile_row['place_payload']
+    if not payload:
+        return ''
+    try:
+        feature = json.loads(payload)
+    except (ValueError, TypeError):
+        return ''
+    if not isinstance(feature, dict):
+        return ''
+    props = feature.get('properties') or {}
+    return props.get('full_address') or props.get('place_formatted') or ''
+
+
+def _existing_locale_by_mapbox_id(db, uid: int, mapbox_id: str, exclude_slug: str | None = None):
+    """Return the existing (slug, locale_name) for a row this athlete
+    already has pointing at the same Mapbox feature (PR18 item C —
+    duplicate detection at create-time). `exclude_slug` lets the upgrade
+    path skip the row being upgraded. None when no duplicate exists."""
+    if not mapbox_id:
+        return None
+    if exclude_slug:
+        row = db.execute(
+            '''SELECT locale, locale_name FROM locale_profiles
+               WHERE user_id = ? AND mapbox_id = ? AND locale != ?
+               LIMIT 1''',
+            (uid, mapbox_id, exclude_slug),
+        ).fetchone()
+    else:
+        row = db.execute(
+            '''SELECT locale, locale_name FROM locale_profiles
+               WHERE user_id = ? AND mapbox_id = ?
+               LIMIT 1''',
+            (uid, mapbox_id),
+        ).fetchone()
+    return row
+
+
 @bp.route('/locales')
 def list_profiles():
     db = get_db()
@@ -284,10 +334,12 @@ def list_profiles():
             {'tag': row['tag'], 'label': row['label']}
         )
     counts = {loc: len(items) for loc, items in tags_by_locale.items()}
+    display_addresses = {loc: _display_address(p) for loc, p in profiles.items()}
     return render_template('locales/list.html', locales=displayed_locales,
                            legacy_locales=LOCALES, profiles=profiles,
                            equipment_categories=EQUIPMENT_CATEGORIES,
-                           tags_by_locale=tags_by_locale, counts=counts)
+                           tags_by_locale=tags_by_locale, counts=counts,
+                           display_addresses=display_addresses)
 
 
 @bp.route('/locales/<locale>/edit', methods=['GET', 'POST'])
@@ -372,6 +424,7 @@ def _edit_legacy_locale(db, uid: int, locale: str, profile):
     active = {row['tag'] for row in active_rows}
     is_manual = bool(_row_has(profile, 'manual_entry') and profile['manual_entry'])
     is_mapbox_anchored = bool(_row_has(profile, 'mapbox_id') and profile['mapbox_id'])
+    is_deletable = locale not in LOCALES
     return render_template('locales/form.html', mode='legacy', locale=locale,
                            profile=profile,
                            equipment_categories=EQUIPMENT_CATEGORIES,
@@ -379,7 +432,9 @@ def _edit_legacy_locale(db, uid: int, locale: str, profile):
                            notes=profile['notes'] if profile else '',
                            city=profile['city'] if profile and profile['city'] else '',
                            is_manual=is_manual,
-                           is_mapbox_anchored=is_mapbox_anchored)
+                           is_mapbox_anchored=is_mapbox_anchored,
+                           is_deletable=is_deletable,
+                           display_address=_display_address(profile))
 
 
 def _edit_shared_locale(db, uid: int, locale: str, profile):
@@ -449,7 +504,9 @@ def _edit_shared_locale(db, uid: int, locale: str, profile):
                            notes=profile['notes'] if profile and profile['notes'] else '',
                            city=profile['city'] if profile and profile['city'] else '',
                            is_manual=False,
-                           is_mapbox_anchored=True)
+                           is_mapbox_anchored=True,
+                           is_deletable=locale not in LOCALES,
+                           display_address=_display_address(profile))
 
 
 # ── D-59 — Mapbox-anchored locale creation ──────────────────────────────
@@ -568,6 +625,13 @@ def _save_mapbox_anchored(db, uid: int):
         if not existing:
             flash('Unknown location to upgrade.', 'danger')
             return redirect(url_for('locales.list_profiles'))
+        # PR18 item C — block when this athlete already has a *different*
+        # locale pointing at the same Mapbox feature.
+        dup = _existing_locale_by_mapbox_id(db, uid, mapbox_id, exclude_slug=upgrade_slug)
+        if dup:
+            dup_label = dup['locale_name'] or dup['locale']
+            flash(f'You already have a locale at this address ({dup_label}). Edit it instead.', 'warning')
+            return redirect(url_for('locales.edit_profile', locale=dup['locale']))
         db.execute(
             '''UPDATE locale_profiles
                SET locale_name = ?, mapbox_id = ?, lat = ?, lng = ?,
@@ -586,6 +650,14 @@ def _save_mapbox_anchored(db, uid: int):
         if chain_id:
             return redirect(url_for('locales.nearby_instances', locale=upgrade_slug))
         return redirect(url_for('locales.list_profiles'))
+    # PR18 item C — duplicate detection at create-time. If the athlete
+    # already has a row pointing at the same Mapbox feature, redirect
+    # them to edit the existing one instead of inserting a duplicate.
+    dup = _existing_locale_by_mapbox_id(db, uid, mapbox_id)
+    if dup:
+        dup_label = dup['locale_name'] or dup['locale']
+        flash(f'You already have a locale at this address ({dup_label}). Edit it instead.', 'warning')
+        return redirect(url_for('locales.edit_profile', locale=dup['locale']))
     base_slug = _slugify(locale_name)
     if not base_slug:
         flash('Locale name needs at least one letter or number.', 'danger')
@@ -681,6 +753,17 @@ def nearby_instances(locale):
     if request.method == 'POST':
         selected_ids = set(request.form.getlist('mapbox_id'))
         selected = [f for f in same_chain if f['mapbox_id'] in selected_ids]
+        # PR18 item C — skip selections this athlete already has saved at
+        # the same mapbox_id. The D-60 inherit machinery handles the
+        # duplicate gracefully (both link to the same gym_profile), but
+        # the UX is confusing — better to surface "already saved" once
+        # than to render two identical-looking rows on /locales.
+        existing_ids = {r['mapbox_id'] for r in db.execute(
+            'SELECT mapbox_id FROM locale_profiles WHERE user_id = ? AND mapbox_id IS NOT NULL',
+            (uid,),
+        ).fetchall() if r['mapbox_id']}
+        skipped = len([f for f in selected if f['mapbox_id'] in existing_ids])
+        selected = [f for f in selected if f['mapbox_id'] not in existing_ids]
         added = 0
         for f in selected:
             base_slug = _slugify(f['text'] or canonical)
@@ -701,6 +784,8 @@ def nearby_instances(locale):
         db.commit()
         if added:
             flash(f'Added {added} nearby {canonical} location{"s" if added != 1 else ""}.', 'success')
+        if skipped:
+            flash(f'Skipped {skipped} already-saved location{"s" if skipped != 1 else ""}.', 'info')
         return redirect(url_for('locales.list_profiles'))
     return render_template('locales/nearby.html',
                            anchor=anchor, canonical=canonical,
@@ -713,10 +798,12 @@ def nearby_instances(locale):
 @bp.route('/locales/<locale>/refresh', methods=['POST'])
 def refresh_from_mapbox(locale):
     """D-59 §7 on-demand refresh. POSTed from the edit screen / list view.
-    Re-fetches Mapbox using the stored locale_name + coords as the query;
-    matches against the stored mapbox_id. If name + chain are unchanged,
-    apply the fresh place_payload silently. If anything material changed,
-    render a confirmation prompt so the athlete can opt in or out."""
+    PR18 item B: Phase 1 calls `/retrieve/{stored_mapbox_id}` directly
+    instead of name-searching, so locales the athlete has renamed
+    ("Horn's House" instead of "123 Main St") still refresh. If name +
+    chain are unchanged, apply the fresh place_payload silently. If
+    anything material changed, render a confirmation prompt so the
+    athlete can opt in or out."""
     db = get_db()
     uid = current_user_id()
     profile = db.execute(
@@ -727,8 +814,6 @@ def refresh_from_mapbox(locale):
         flash('Unknown location.', 'danger')
         return redirect(url_for('locales.list_profiles'))
     stored_mapbox_id = profile['mapbox_id'] if _row_has(profile, 'mapbox_id') else None
-    stored_lng = profile['lng'] if _row_has(profile, 'lng') else None
-    stored_lat = profile['lat'] if _row_has(profile, 'lat') else None
     if not stored_mapbox_id:
         flash('Only Mapbox-anchored locales can be refreshed.', 'warning')
         return redirect(url_for('locales.edit_profile', locale=locale))
@@ -758,28 +843,24 @@ def refresh_from_mapbox(locale):
         db.commit()
         flash(f'Refreshed {new_text}.', 'success')
         return redirect(url_for('locales.list_profiles'))
-    # Fetch phase — re-search by name + proximity, match by mapbox_id.
-    name_q = profile['locale_name'] if _row_has(profile, 'locale_name') and profile['locale_name'] else locale
+    # Fetch phase — PR18 item B. Old path used `search_nearby(locale_name,
+    # lng, lat)` + match-by-id, which broke for athletes who renamed
+    # locales ("Horn's House" returned zero matches). New path uses
+    # `/retrieve/{mapbox_id}` directly, which is name-agnostic and queries
+    # Mapbox's live state for the exact feature we stored.
     try:
-        if stored_lng is not None and stored_lat is not None:
-            results = mapbox_client.search_nearby(
-                name_q, float(stored_lng), float(stored_lat), limit=10,
-            )
-        else:
-            results = mapbox_client.search_places(name_q, limit=5)
+        refreshed = mapbox_client.retrieve(
+            stored_mapbox_id, session_token=uuid.uuid4().hex,
+        )
     except mapbox_client.MapboxTokenMissing:
         flash('Place lookup is not configured on the server.', 'danger')
         return redirect(url_for('locales.list_profiles'))
     except mapbox_client.MapboxNoResults:
-        flash(f'Mapbox no longer returns results for {name_q!r}.', 'warning')
+        flash('Mapbox no longer returns this exact place. Edit the locale to relink.', 'warning')
         return redirect(url_for('locales.edit_profile', locale=locale))
     except mapbox_client.MapboxError as e:
         flash(f'Refresh failed: {e}.', 'danger')
         return redirect(url_for('locales.list_profiles'))
-    refreshed = next((f for f in results if f['mapbox_id'] == stored_mapbox_id), None)
-    if refreshed is None:
-        flash('Mapbox no longer returns this exact place. Edit the locale to relink.', 'warning')
-        return redirect(url_for('locales.edit_profile', locale=locale))
     # Recompute chain + category from the refreshed feature.
     chain = detect_chain(refreshed['text'])
     new_chain_id = chain['chain_id'] if chain else None
@@ -820,3 +901,61 @@ def refresh_from_mapbox(locale):
                            new_category=new_category,
                            name_changed=name_changed,
                            chain_changed=chain_changed)
+
+
+# ── PR18 item D — delete with privacy-aware split rule ─────────────────
+
+
+@bp.route('/locales/<locale>/delete', methods=['POST'])
+def delete_locale(locale):
+    """Delete an athlete-created locale. FK CASCADE on locale_profiles
+    drops the dependent rows (locale_equipment, locale_equipment_overrides,
+    locale_toggle_overrides) automatically.
+
+    Residential split rule: home_gym + other_residence are private and
+    never enterprise-shareable, so if one happens to have a linked
+    gym_profiles row (defensive — under the current taxonomy residential
+    locales don't enter the shared-profile flow at all), drop that
+    gym_profiles row too. Chain + shared categories leave the shared
+    gym_profiles row intact so enterprise data is preserved for other
+    athletes.
+
+    Legacy enum slugs (home/hotel/partner/airport) are not deletable
+    here — they auto-render on /locales independent of any row, and the
+    delete UI is gated behind the athlete-created edit screen.
+    """
+    db = get_db()
+    uid = current_user_id()
+    if locale in LOCALES:
+        flash('Legacy locale slots cannot be deleted.', 'warning')
+        return redirect(url_for('locales.edit_profile', locale=locale))
+    profile = db.execute(
+        '''SELECT category, gym_profile_id, locale_name
+           FROM locale_profiles WHERE user_id = ? AND locale = ?''',
+        (uid, locale),
+    ).fetchone()
+    if not profile:
+        flash('Unknown location.', 'danger')
+        return redirect(url_for('locales.list_profiles'))
+    category = profile['category'] if _row_has(profile, 'category') else None
+    gym_profile_id = (
+        profile['gym_profile_id'] if _row_has(profile, 'gym_profile_id') else None
+    )
+    display = (
+        profile['locale_name']
+        if _row_has(profile, 'locale_name') and profile['locale_name']
+        else locale
+    )
+    db.execute(
+        'DELETE FROM locale_profiles WHERE user_id = ? AND locale = ?',
+        (uid, locale),
+    )
+    if category in ('home_gym', 'other_residence') and gym_profile_id:
+        db.execute(
+            '''DELETE FROM gym_profiles
+               WHERE id = ? AND created_by_user_id = ?''',
+            (gym_profile_id, uid),
+        )
+    db.commit()
+    flash(f'Deleted {display}.', 'success')
+    return redirect(url_for('locales.list_profiles'))

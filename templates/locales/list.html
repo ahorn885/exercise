@@ -29,6 +29,10 @@
               {% if p and p['manual_entry'] %}
                 <span class="badge bg-light text-dark ms-1">manual</span>
               {% endif %}
+              {% set addr = display_addresses.get(locale) %}
+              {% if addr %}
+                <div class="text-muted small fw-normal mt-1">{{ addr }}</div>
+              {% endif %}
             {% endif %}
           </span>
           <div class="d-flex gap-1">

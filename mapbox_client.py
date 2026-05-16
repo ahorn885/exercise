@@ -55,6 +55,7 @@ import requests
 
 MAPBOX_TOKEN_ENV = 'MAPBOX_PUBLIC_TOKEN'
 MAPBOX_BASE_URL = 'https://api.mapbox.com/search/searchbox/v1/forward'
+MAPBOX_RETRIEVE_URL = 'https://api.mapbox.com/search/searchbox/v1/retrieve'
 DEFAULT_RADIUS_KM = 42.2  # D-59 §3 row 3 — marathon-distance threshold
 REQUEST_TIMEOUT_S = 5
 
@@ -189,6 +190,67 @@ def search_places(query: str, limit: int = 5) -> list[dict]:
     if not features:
         raise MapboxNoResults(f'no matches for {query!r}')
     return [_normalize_feature(f) for f in features]
+
+
+def _request_retrieve(mapbox_id: str, params: dict) -> dict:
+    """GET /search/searchbox/v1/retrieve/{mapbox_id} with 1-retry on 5xx.
+
+    Same retry + error semantics as `_request` for the forward endpoint,
+    but the id sits in the URL path, not in a `q` parameter.
+    """
+    full_params = dict(params)
+    full_params['access_token'] = _get_token()
+    url = f'{MAPBOX_RETRIEVE_URL}/{mapbox_id}'
+    last_exc: Exception | None = None
+    for attempt in range(2):
+        try:
+            r = requests.get(url, params=full_params, timeout=REQUEST_TIMEOUT_S)
+        except requests.RequestException as e:
+            last_exc = e
+            if attempt == 0:
+                time.sleep(1)
+                continue
+            raise MapboxAPIError(f'network error: {e}') from e
+        if 500 <= r.status_code < 600:
+            last_exc = MapboxAPIError(f'mapbox {r.status_code}: {r.text[:200]}')
+            if attempt == 0:
+                time.sleep(1)
+                continue
+            raise last_exc
+        if r.status_code != 200:
+            raise MapboxAPIError(f'mapbox {r.status_code}: {r.text[:200]}')
+        return r.json()
+    raise MapboxAPIError(f'unreachable: {last_exc}')
+
+
+def retrieve(mapbox_id: str, session_token: str | None = None) -> dict:
+    """Look up a single feature by its stored `mapbox_id` (PR18 item B).
+
+    Used by the §7 refresh path so locales the athlete has renamed
+    ("Horn's House" instead of "123 Main St") still refresh — name search
+    would return no matches. The id is opaque and stable across name
+    changes, so retrieve is the right tool.
+
+    `session_token` is optional. Search Box `/retrieve` accepts it to
+    bill against a prior `/suggest` session. Refresh isn't tied to a
+    prior suggest call, so callers pass a fresh UUID per invocation;
+    Mapbox treats it as a one-shot session and bills accordingly.
+
+    Returns the same normalised feature shape as `search_places` /
+    `search_nearby`. Raises `MapboxNoResults` when Mapbox returns an
+    empty features array (id no longer exists on Mapbox's side — the
+    place was deleted or merged upstream).
+    """
+    if not (mapbox_id or '').strip():
+        raise MapboxNoResults('empty mapbox_id')
+    params: dict = {}
+    if session_token:
+        params['session_token'] = session_token
+    payload = _request_retrieve(mapbox_id, params)
+    features = payload.get('features') or []
+    if not features:
+        raise MapboxNoResults(f'no feature for {mapbox_id!r}')
+    return _normalize_feature(features[0])
 
 
 def search_nearby(query: str, lng: float, lat: float,

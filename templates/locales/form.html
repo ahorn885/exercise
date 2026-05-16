@@ -1,7 +1,7 @@
 {% extends 'base.html' %}
 {% block title %}Equipment at {{ (profile['locale_name'] if profile and profile['locale_name'] else locale) | capitalize }}{% endblock %}
 {% block content %}
-<div class="d-flex justify-content-between align-items-center mb-3">
+<div class="d-flex justify-content-between align-items-center mb-1">
   <h4 class="mb-0">
     {% if mode == 'legacy' and locale in ['home','hotel','partner','airport'] %}
       Equipment at <span class="text-capitalize">{{ locale }}</span>
@@ -16,6 +16,11 @@
   </h4>
   <a href="{{ url_for('locales.list_profiles') }}" class="btn btn-sm btn-outline-secondary">← Back</a>
 </div>
+{% if display_address %}
+  <p class="text-muted small mb-3">{{ display_address }}</p>
+{% else %}
+  <div class="mb-3"></div>
+{% endif %}
 
 {# ── D-59 §6/§7 — upgrade + refresh affordances on Mapbox-anchored or manual-entry rows ── #}
 {% if mode != 'legacy' or is_manual or is_mapbox_anchored %}
@@ -102,4 +107,14 @@
     <a href="{{ url_for('locales.list_profiles') }}" class="btn btn-outline-secondary">Cancel</a>
   </div>
 </form>
+
+{% if is_deletable %}
+  <hr class="my-4">
+  <form method="post"
+        action="{{ url_for('locales.delete_locale', locale=locale) }}"
+        onsubmit="return confirm('Delete this locale? Your equipment overrides for it will be removed too. This cannot be undone.');">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <button type="submit" class="btn btn-sm btn-outline-danger">Delete this locale</button>
+  </form>
+{% endif %}
 {% endblock %}
