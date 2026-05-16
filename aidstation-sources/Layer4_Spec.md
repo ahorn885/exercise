@@ -819,7 +819,7 @@ Pure-function rule set; no LLM. Runs after every synthesis call in both patterns
 | Weekly volume in 2A band | `volume_band_*` | (week, discipline, phase) | Per-(week, discipline) total volume (hours or km per 2A measure) inside `phase_load_bands[discipline][phase].(low, high)`. Severity: `blocker` if outside ±15%; `warning` if outside ±5%. |
 | ACWR forward projection | `acwr_*` | Cross-window | Acute-to-chronic workload ratio projected across the scope window stays inside 0.8–1.3 (per-phase tunable; Base/Build tighter, Peak slightly wider, Taper anchored low). `blocker` outside 0.7–1.4; `warning` outside 0.8–1.3. |
 | Rest-day spacing | `rest_spacing_*` | Per discipline per (date, date+1) | No two consecutive hard sessions for the same discipline without `coaching_flags` containing an explicit rationale (`overreach_test`, `race_rehearsal`). |
-| Intensity distribution match | `intensity_dist_*` | Per phase | Per-phase total hours by zone vs. intended distribution. **v1 defaults** (per-phase tunable; flagged in §12): Base ≈ 80/15/5 (Z1-Z2/Z3/Z4-Z5); Build ≈ 70/20/10; Peak ≈ 60/25/15; Taper ≈ 75/15/10. Tolerance ±10pp per zone. |
+| Intensity distribution match | `intensity_dist_*` | Per phase | Per-phase total hours by zone vs. intended distribution. **v1 defaults** (per-phase tunable; flagged in §12): Base ≈ 80/15/5 (Z1-Z2/Z3/Z4-Z5); Build ≈ 70/20/10; Peak ≈ 70/20/10; Taper ≈ 75/15/10. Tolerance ±10pp per zone. Peak shares Build's zone distribution (per Andy 2026-05-16 session-3 calibration: pyramidal-polarized stays flat through Peak for the endurance / ultra / AR / multi-sport disciplines this spec serves; race-pace work in Peak surfaces via the `race_pace_specific` per-session flag per §8.4 rather than via a zone-distribution shift). Differentiation between Build and Peak is via volume shape (Peak typically holds higher absolute volume, with the highest-volume week tagged `peak_volume_marker` per §8.4) + race-specific intensity placement (LLM-emitted `race_pace_specific`), not zone-distribution. |
 | Two-sessions-per-day rules | `two_per_day_*` | Per date | Per §7.12: max 2 sessions per date; no strength+strength same day; no two `intensity_summary=='hard'` same day; at least one of two must be `kind=='cardio'`. |
 | Equipment availability | `equipment_unavailable_*` | Per session | Every prescribed exercise / cardio sport-equipment requirement resolves in the picked locale's effective equipment view (per 2C resolution tiers). Tier-3 proxy substitution is allowed; raw unavailable is a blocker. |
 | Injury exclusion | `injury_violation_*` | Per session | No exercise hits a body part in 3A `active_injuries` with `restriction_text` indicating exclusion. Wrist-extension-loaded check is the v1 motivating example. |
@@ -860,7 +860,7 @@ Pure-function helper `phase_structure_from_3b(layer3b_payload, plan_start_date) 
 - `layer3b_payload.mode` (event vs. open-ended)
 - `plan_start_date` (orchestrator-supplied)
 
-**Total horizon resolution.** Event mode: `total_weeks = layer3b_payload.time_to_event_weeks`. Open-ended mode: v1 defaults to 16 weeks rolling forward; revisit per D7-held tiered-horizon decision (§12).
+**Total horizon resolution.** Event mode: `total_weeks = layer3b_payload.time_to_event_weeks`. Open-ended mode: v1 defaults to 12 weeks (one mesocycle) rolling forward (per Andy 2026-05-16 session-3 calibration). Extension is via T3 refresh as the 12-week horizon approaches its end — orchestrator-triggered scheduled re-eval is D-57 (currently deferred); athlete-initiated T3 is supported on the existing refresh path per §3.2. The broader tiered tight/loose horizon question (D7 HELD per header) is unaffected; this is just the v1 fixed-horizon length.
 
 **Per-mode proportions** (applied to `total_weeks` for the phases that the athlete still needs to traverse from `start_phase` onward):
 
@@ -871,7 +871,9 @@ Pure-function helper `phase_structure_from_3b(layer3b_payload, plan_start_date) 
 | `extended` | 60% | 25% | 10% | 5% |
 | `custom` | per `phase_weeks` dict (verbatim) | | | |
 
-Proportions round to whole weeks with the remainder allocated to Base (most flexible phase). Taper has a floor of 1 week and a ceiling of 4 weeks regardless of mode (race-prep evidence base; longer Taper produces detraining). When `start_phase != 'Base'`, the skipped earlier phases' percentages are simply dropped — the remaining phases keep their relative proportions and re-normalize to fit `total_weeks`.
+Proportions round to whole weeks with the remainder allocated to Base (most flexible phase). When `start_phase != 'Base'`, the skipped earlier phases' percentages are simply dropped — the remaining phases keep their relative proportions and re-normalize to fit `total_weeks`.
+
+**Taper duration — synthesizer-picked within proportion budget.** Per Andy 2026-05-16 session-3 calibration: the hard 1–4 week Taper bounds are removed. Taper length is duration-based coaching judgment (race format + §H.2 `estimated_duration_hr` are the primary drivers; not discipline alone). The §6.1 mode proportions allocate a Taper budget; the synthesizer prompt picks the actual Taper length within that budget informed by race context. v1 prompt guidance to surface (informational, not enforced): typical 1–2 weeks for sub-marathon events; 2–3 weeks for marathon / half-IM class; 3+ weeks for expedition AR + multi-day ultras + full-IM class. The synthesizer can compress or extend within the mode proportion when athlete state or race format warrants. Prompt body design deferred per stop-and-ask trigger #2; this paragraph is the spec contract for the prompt to honor.
 
 **`start_phase` handling.** When `start_phase != 'Base'`, earlier phases are excluded from `phase_structure.phases` (athlete is already past them); `phase_structure.phases[0].start_date = plan_start_date`; subsequent phases follow the proportional weeks. The synthesizer prompt for the starting phase receives an "athlete is starting at `<phase>`; prior phases assumed to have established `<intended exit state per 2A>`" context block — prompt body design deferred per stop-and-ask trigger #2.
 
@@ -996,7 +998,7 @@ The deterministic validator (§5.4) additionally checks: if a spec-auto-emit rul
 | Synthesizer prescribes strength accessory work for a 3A `weak_links` entry | The strength session | `weak_link_targeted` | LLM-emitted |
 | Synthesizer prescribes an intentional brief overreach week (typically last Build week before deload) | All sessions in the overreach week | `overreach_test` | LLM-emitted |
 | Synthesizer prescribes race-discipline-specific intensity work for the first time in the plan (e.g., race-pace intervals) | The first such session | `discipline_specific_intensity` | LLM-emitted |
-| ACWR forward projection for the week reaches the upper half of the safe band (≥ 1.15) AND is still inside the blocker threshold (≤ 1.4) | Every cardio session in the week | `volume_ramp_aggressive` | Spec-auto |
+| ACWR forward projection for the week reaches ≥ 1.25 AND is still inside the blocker threshold (≤ 1.4) | Every cardio session in the week | `volume_ramp_aggressive` | Spec-auto (per Andy 2026-05-16 session-3 calibration: threshold raised from ≥ 1.15 to ≥ 1.25 so the flag fires only on genuinely aggressive ramps, not on every mid-band Build week) |
 
 ### 8.4 Peak-phase per-session flags
 

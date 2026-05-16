@@ -192,4 +192,45 @@ Same state as sessions 1 and 2:
 
 ---
 
+---
+
+## 10. Post-handoff calibration pass (Andy 2026-05-16, same chat)
+
+After this handoff was committed (`9055bca`), Andy walked through the policy items flagged in §6.1 + the carry-forward set. Decisions captured below; the spec was amended in a follow-on commit on the same branch (no new structural Andy decisions — these are tuning parameter calls within already-decided contracts, so no Decision 9+ in the header source-decisions block).
+
+### 10.1 Resolved this pass
+
+| Item | Resolution | Spec edit site |
+|---|---|---|
+| §5.4 validator tolerance thresholds (carry-forward from session 2 §6.1) | Keep as-is: ±15% volume blocker / ±5% warning; ACWR safe-band 0.8–1.3 (blocker 0.7–1.4); ±10pp intensity per zone. | No edit. |
+| §5.4 intensity-distribution per-phase defaults (carry-forward from session 2 §6.1) | Peak lowered from 60/25/15 to **70/20/10** (matches Build's zone distribution). Build / Peak differentiate via volume shape + race-specific intensity placement (LLM-emitted `race_pace_specific` flag per §8.4), not zone distribution. Pyramidal-polarized stays flat through Peak for endurance / ultra / AR / multi-sport disciplines. Base 80/15/5 + Taper 75/15/10 unchanged. | §5.4 intensity-distribution rule row. |
+| §6.1 open-ended-mode total horizon (carry-forward from session 2 §6.1) | Changed from 16 weeks to **12 weeks (one mesocycle)** rolling forward. Extension is via T3 refresh as the 12-week horizon approaches end (D-57 scheduled re-eval still deferred; athlete-initiated T3 supported on existing refresh path). Broader D7 tiered tight/loose question unchanged — still HELD. | §6.1 "Total horizon resolution" paragraph. |
+| §6.1 Taper bounds (carry-forward from session 2 §6.1) | **Hard 1–4 wk bounds removed.** Taper length is duration-based coaching judgment (race format + §H.2 `estimated_duration_hr` primary drivers; not discipline alone). Synthesizer picks within mode proportion budget. v1 prompt guidance (informational, not enforced): ~1–2 wk sub-marathon; ~2–3 wk marathon / half-IM; 3+ wk expedition AR + multi-day ultras + full-IM. | §6.1 — Taper paragraph rewritten; prior 1/4-wk floor/ceiling deleted. |
+| §8.3 `volume_ramp_aggressive` ACWR threshold (this session §6.1 item 3) | Threshold raised from **≥ 1.15 to ≥ 1.25** so the flag fires only on genuinely aggressive ramps, not on every mid-band Build week. | §8.3 ACWR row. |
+
+### 10.2 Deferred / pending
+
+| Item | Status |
+|---|---|
+| §6.4 `shape_override` trigger set completeness (carry-forward from session 2 §6.1) | Deferred to §10 edge-case drafting (session 4). Andy: "defer to science here. what does research and coaching [say]" — surface relevant research framing in session 4 §10 draft + bring options to him before locking. |
+| §8.1 two-kinds split (this session §6.1 item 1) | Pending. Andy hasn't pushed back; if §10/§11 surfaces a need for a validator-emitted third category, that's a small spec amendment. |
+| §8.2 Base-phase flag set completeness (this session §6.1 item 2) | Pending. Easy to add later — taxonomy is closed-set but extensible via spec amendment. |
+| §8.6 cross-phase flag set completeness (this session §6.1 item 4) | Pending. Layer-4.5 joint-coordinator flag intentionally absent in v1; revisit when 4.5 spec is drafted. |
+| §9.5 cache lifetime (this session §6.1 item 5) | Pending. Orchestrator concern; no spec enforcement. |
+
+### 10.3 Handoff §6.1 status (post-calibration)
+
+The five "items flagged for Andy review post-session-3" in §6.1 above resolve as: item 1 (two-kinds split) pending; item 2 (Base flag set) pending; item 3 (ACWR threshold) ✅ resolved → ≥ 1.25; item 4 (cross-phase flag set) pending; item 5 (cache lifetime) pending.
+
+The carry-forward set from session 2 §6.1 resolves as: validator tolerances ✅ kept; intensity-distribution ✅ Peak lowered to 70/20/10; open-ended horizon ✅ 12 weeks; Taper bounds ✅ removed (LLM-picked); `shape_override` triggers deferred to §10 with research framing.
+
+### 10.4 Bookkeeping
+
+- Spec commit covering all five edits: pushed alongside this handoff amendment.
+- No new Decision 9+ in the source-decisions block — these are calibration tweaks within already-decided contracts (Decision 4 race-prep + the §5.4/§6.1/§8.3 v1-defaults framework). The "Andy 2026-05-16 session-3 calibration" attributions live inline at each change site.
+- No CLAUDE.md / backlog bump (v1-commit deferral rule still standing).
+- File count this calibration micro-pass: 2 (spec + this handoff edit). Session total: 1 substantive spec + 1 handoff + 1 calibration amendment = 3 files. Still under 5-file ceiling.
+
+---
+
 **End of handoff.**
