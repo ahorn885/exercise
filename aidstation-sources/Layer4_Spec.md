@@ -1,6 +1,6 @@
 # Layer 4 — Plan Generation (LLM Synthesis + LLM Seam Review)
 
-**Status:** Draft v1, 2026-05-16. Session 4 of an expected 3–5 sessions to land the full 14-section spec. Session 1 covered §§1–3 + §7 Payload schema (including `RaceWeekBrief` + `RacePlan`). Session 2 added §§4–6 + Decision 8 (seam-reviewer authority = β propose-patch). Session 3 covered §§8–9 (coaching flag rules + caching/determinism). **Session 4 (this update) covers §10 Edge cases, §11 Performance budget, and §13 Test scenarios** — including concrete detection algorithms for the four `Layer4ShapeInfeasibleError` classes that the session-3 calibration round-2 flagged forward. §§12 + §14 + end-of-arc CLAUDE.md/backlog bump land in session 5. No new source decisions this session — §§10/11/13 are mechanical fleshing-out of session-1/2/3 contracts.
+**Status:** Draft v1, 2026-05-16. Contract sections (§§1–13) complete; §14 retrospective deferred to a follow-on session with fresh eyes (§12.6). Session 1 covered §§1–3 + §7 Payload schema (including `RaceWeekBrief` + `RacePlan`). Session 2 added §§4–6 + Decision 8 (seam-reviewer authority = β propose-patch). Session 3 covered §§8–9 (coaching flag rules + caching/determinism) + 2 calibration rounds resolving all session-1/2/3 policy-default backlog. Session 4 drafted §§10/11/13 (edge cases + performance budget + test scenarios) including concrete detection algorithms for the four `Layer4ShapeInfeasibleError` classes. **Session-4 close pass (this update): §12 (open items / forward references) drafted with 6 subsections — resolved items, prompt-body forward-pointers, downstream-spec forward-pointers, tuning candidates, substantive direction holds, §14 retro deferral; §14 stub re-labeled to reflect intentional deferral.** Per Andy 2026-05-16: ship the v1 spec arc as a PR + merge now (per the "push to production as we go" rule); §14 retro lands before Layer 4 implementation. No new source decisions this update.
 
 **Type:** LLM. Two call patterns, picked per entry point + scope:
 - **Pattern A — per-phase synthesis + LLM seam reviewer.** Used by `llm_layer4_plan_create` and by `llm_layer4_plan_refresh` T3 when the refresh window spans a phase boundary. One LLM synthesizer call per phase (Base → Build → Peak → Taper, skipping per 3B `start_phase`); one LLM seam-reviewer call per adjacent-phase boundary; deterministic validator on top of all of it.
@@ -1477,24 +1477,101 @@ Surfaces per §9.6 observability: cache hit rate per entry point + per-phase hit
 
 All threshold tuning is v1 default; production rates drive re-tuning per §12.
 
-## 12. Open items / forward references — to be drafted in a later session
+## 12. Open items / forward references
 
-- ~~LLM seam-reviewer authority semantics~~ — **Resolved 2026-05-16 (session 2, Decision 8): propose-patch / β.** See §6.2.
-- Per-phase synthesizer prompt body design (defer to its own session; stop-and-ask trigger #2 — this spec defines the contract).
-- Per-tier T1/T2 synthesizer prompt body design (same defer).
-- Single-session synthesizer prompt body design (same defer).
-- Seam-reviewer prompt body design (same defer; smaller scope — reads two phase outputs + boundary state, emits verdict).
-- Race-week-brief prompt body design (same defer; produces RaceWeekBrief + optional RacePlan).
-- Plan-revert UX (per-day pointer flip; storage shape in §7.11 supports it; UI lands separately).
-- **Layer 4.5 — Joint Session Coordinator** — its own spec, separate file. Andy 2026-05-16 picked the post-pass approach: each athlete gets a solo Layer 4 run; 4.5 reads two-or-more linked athletes' Layer 4 payloads + §L joint-session definitions and harmonizes the joint-session days (picks shared session shape, adjusts per-athlete intensity within fitness levels, resolves per-athlete equipment differences). Lands when team-features track activates. Layer 4 §2 + §7 schemas are joint-coordinator-ready (PlanSession has session_id + plan_version_id; 4.5 can supersede a solo `PlanSession` with a joint one via a new `joint_session_id` FK on `plan_session` rows — schema addition deferred to 4.5 spec).
-- **Tiered tight/loose plan horizon** — Andy 2026-05-16: substantive direction change held. Currently spec'd as 'plan_create produces sessions for the full 3B periodization shape window at uniform quality'. Proposed future direction: `plan_create` produces tight ~12 weeks at Pattern A quality + loose weeks 13+ at degraded quality (smaller model? weekly-summary granularity? fewer inputs?); scheduled refresh ~1–2 weeks before tight horizon expires; T3 horizon becomes variable ("extend the tight window") rather than fixed 28 days. Un-defers D-57 (scheduled re-evaluation cadence). Substantial; revisit after Layer 4 v1 lands and we have measured cost/quality data on uniform-quality long-horizon plans.
+Pruning + tightening pass after sessions 1–4 drafted §§1–11 + 13. Items grouped by class: resolved (closed); forward-pointers to downstream specs; tuning candidates (v1 defaults; measure post-launch); substantive direction holds (revisit after v1 ships).
+
+### 12.1 Resolved this arc
+
+| Item | Resolution | Site |
+|---|---|---|
+| LLM seam-reviewer authority semantics | Decision 8 — propose-patch (β). | §6.2 |
+| Validator's `intended_intensity_distribution` per-phase defaults | Locked via session-3 calibration round 1 (Base 80/15/5; Build 70/20/10; Peak 70/20/10 per Andy 2026-05-16 calibration; Taper 75/15/10). | §5.4 |
+| Open-ended-mode total horizon | Locked at 12 weeks (one mesocycle) rolling forward per session-3 calibration. | §6.1 |
+| Taper bounds | Hard 1–4 wk bounds removed per session-3 calibration; synthesizer picks within mode proportion budget. | §6.1 |
+| Cost-cap interaction with D-64 frequency caps | Spec'd in §11.5 (cumulative cost ceilings — independent of frequency caps) + §11.6 (frequency-cap interaction is orchestrator-level; Layer 4 honors transparently). Cap-hit cost surfaces in `latency_ms_total` + token totals per §11.8 telemetry. | §§11.5, 11.6, 11.8 |
+| §6.4 `shape_override` trigger set completeness | Locked via session-3 calibration round 2 — 4th trigger added (3A `very_sparse` + 3B non-Base → Base) + escalation table for the four `Layer4ShapeInfeasibleError` classes. | §6.4 |
+| `Layer4ShapeInfeasibleError` detection algorithms | Spec'd as pure-function rules in §10.2 with v1 tolerance defaults. | §10.2 |
+
+### 12.2 Prompt body design — deferred to dedicated sessions (stop-and-ask trigger #2)
+
+These specs define the I/O contract + algorithm; the actual prompt body for each LLM call is its own design session. None of these are in this spec's scope.
+
+- **Per-phase synthesizer prompt body** (Pattern A; one prompt per phase or a parameterized template that takes `phase_name` + context).
+- **Per-tier T1/T2 synthesizer prompt bodies** (Pattern B refresh; two prompts or one parameterized).
+- **Single-session synthesizer prompt body** (Pattern B D-63 path).
+- **Seam-reviewer prompt body** (Pattern A; reads two phase outputs + boundary state, emits verdict).
+- **Race-week-brief prompt body** (Pattern B; produces `RaceWeekBrief` + optional `RacePlan`).
+
+Each lands in its own session per stop-and-ask trigger #2. Andy's call on order; the seam-reviewer is the smallest and may slot first as a learning vehicle.
+
+### 12.3 Forward-pointers to downstream / sibling specs
+
+- **Layer 4.5 — Joint Session Coordinator** — its own spec, separate file. Post-pass over multiple linked athletes' Layer 4 payloads. Schema-ready additions deferred to 4.5 spec (new `joint_session_id` FK on `plan_session` rows that supersedes solo `PlanSession`). Lands when team-features track activates.
+- **Layer 5 consumption contract** — Layer 5 advisors (daily nutrition, supplements, 7-day clothing/conditions) consume `PlanSession.session_notes` + `cardio_blocks` for fuel timing; for race-week, Layer 5 reads `RaceWeekBrief.race_day_fueling_plan` + (multi-day) `RacePlan.fueling_strategy` for kit/conditions overlays. Contract details defer to Layer 5 spec.
+- **D-57 — Periodic re-evaluation cadence** — scheduled (orchestrator-triggered) plan refresh; currently deferred per backlog. Un-defers when Layer 4 implementation lands + measured cost/quality data exists. Several §11 + §10 paths fold cleaner once D-57 is concrete (e.g., open-ended-mode horizon rollover; race_week_brief auto-fire policy).
+- **Plan-revert UX** — per-day pointer flip; storage shape in §7.11 supports it; UI lands separately as a plan-execution-surface task.
 - **Multi-day race plan post-race analytics** — `RacePlan.segments[*]` doesn't include athlete-checkin shape (actual vs. expected time/pace per segment). Once the race-execution surface is designed, add per-segment actuals. Out of v1.
-- Layer 5 consumption — Layer 5 advisors (daily nutrition, supplements, clothing) consume `PlanSession.session_notes` + `cardio_blocks` for fuel timing; for race-week, Layer 5 reads `RaceWeekBrief.race_day_fueling_plan` + (multi-day) `RacePlan.fueling_strategy` for kit/conditions overlays. Contract details defer to Layer 5 spec.
-- Validator's `intended_intensity_distribution` per-phase defaults — currently default to Base 80/15/5; need to pin Build/Peak/Taper defaults in §5 algorithm draft.
-- Cost-cap interaction with D-64 frequency caps — if validator hits cap on a Pattern A plan, the cost of that one call exceeds expected; should the soft-cap warning factor expected vs. actual cost? Defer.
-- `Layer4ShapeInfeasibleError` routing — does this surface as a 3D gate item for the next run, or as an inline athlete-facing error in the current run? Defer.
-- Seam-reviewer model downgrade (Haiku for cheaper reviewing) — measure post-launch.
-- `race_week_brief` trigger policy — orchestrator auto-fires when `days_to_event ≤ 14`, but exact firing cadence (daily? once at 14, again at 7, again at 1?) needs explicit policy. Currently flagged as "single fire at 14 + athlete-triggerable re-runs"; tune post-launch.
+- **`race_week_brief` trigger policy** — orchestrator auto-fires when `days_to_event ≤ 14`; exact firing cadence (single fire at 14? again at 7, 1? daily?) is orchestrator policy, not Layer 4's. Currently flagged as "single fire at 14 + athlete-triggerable re-runs"; tune post-launch.
+- **`Layer4ShapeInfeasibleError` routing to athlete surface** — does this surface as a 3D gate item for the next run, or as an inline athlete-facing error in the current run? Orchestrator's call; Layer 4 produces the error + evidence per §10.2.
+
+### 12.4 Tuning candidates — v1 defaults; measure post-launch
+
+Bundled below: numeric thresholds and policy defaults that Layer 4 ships with conservative v1 values, with the expectation that production telemetry drives a tuning pass. None block implementation; all are adjustable without restructuring the spec.
+
+**Validator tolerances (§5.4):**
+
+- Volume band: ±15% blocker / ±5% warning.
+- ACWR safe band: 0.8–1.3 typical (per-phase tunable); blocker 0.7–1.4.
+- Intensity distribution: ±10pp per zone tolerance.
+
+**Coaching-flag thresholds (§§8.2–8.6):**
+
+- §8.3 `volume_ramp_aggressive` ACWR threshold (≥ 1.25 post session-3 calibration round 1).
+- §8.2 `volume_ramp_conservative` `data_density` trigger (currently `{'sparse', 'very_sparse'}`).
+- §8.4 `peak_volume_marker` "highest-volume week" definition (currently single highest-volume week; could tighten to "weeks within 5% of highest").
+
+**Shape-infeasibility detection (§10.2):**
+
+- `schedule_volume_infeasible` 0.85 × `phase_load_bands.low` floor.
+- `skill_acquisition_infeasible` 4-week Base minimum for skill-heavy disciplines (swim, MTB, packraft, rock climbing, skimo).
+- `discipline_frequency_infeasible` + `cumulative_load_injury_infeasible` strict (no tolerance).
+
+**Token budgets (§11.2):**
+
+- Per-call input/output estimates per entry point. Unmeasured v1; re-derive from production telemetry.
+
+**Cost framing (§11.3):**
+
+- Sonnet 4.6 pricing snapshot ($3/$15 per MTok). Subject to vendor changes; headline `plan_create` $0.50–1.10 is the load-bearing claim.
+
+**Cache hit-rate assumptions (§11.4):**
+
+- Six per-entry-point rates + per-phase rates yielding ~$14/yr/athlete amortized cost vs. ~$40–60 no-cache. All unmeasured; re-measure once §9.6 observability lands.
+
+**Cumulative cost ceilings (§11.5):**
+
+- $0.50/$2.00 per day soft/hard; $2/$10 per week; $8/$30 per month. Orchestrator-enforced.
+
+**Regression detection alert thresholds (§11.8):**
+
+- p95 > 2× design for 5 measurements; retry rate > 20%; cost per invocation > 2× design for 24h rolling; cache hit rate < 50% of assumed for 7 days.
+
+**Models + temperatures:**
+
+- Default `model_synthesizer = model_seam_reviewer = "claude-sonnet-4-6"`; `temperature=0.2` for Pattern A, `0.3` for single-session. Seam-reviewer model downgrade to Haiku for cost savings is post-launch tuning; measurement framework is in place per §11.4 + §11.8.
+
+### 12.5 Substantive direction holds
+
+These are not tuning; they're real design alternatives held for post-v1 evaluation.
+
+- **D7 — Tiered tight/loose plan horizon** (Andy 2026-05-16, session 1, HELD). Currently spec'd as uniform-quality across the full 3B periodization shape window. Proposed future direction: `plan_create` produces tight ~12 weeks at Pattern A quality + loose weeks 13+ at degraded quality (smaller model? weekly-summary granularity? fewer inputs?); scheduled refresh ~1–2 weeks before tight horizon expires; T3 horizon becomes variable. Un-defers D-57. Substantial; revisit after Layer 4 v1 lands and we have measured cost/quality data on uniform-quality long-horizon plans.
+- **`opportunity` observation expansion** — currently the single LLM-emitted exception in §8.7. If production cases show synthesizer routinely emits multiple opportunity types, consider sub-categorizing (e.g., `opportunity.skill`, `opportunity.modality_introduction`) for downstream consumers. Defer until usage patterns surface.
+- **Seam reviewer concurrency** — §5.2 notes seam reviews COULD parallelize across non-overlapping pairs. v1 implementation is sequential; parallelism is a §11 performance-budget optimization to revisit if production p95 hits the latency ceiling.
+
+### 12.6 §14 retrospective deferred to a follow-on session
+
+§14 gut-check (per the 14-section depth standard in CLAUDE.md "Layer specs follow a depth standard") is intentionally deferred to a follow-on session with fresh eyes. Author confirmation bias on a critical-evaluation pass is the risk being managed; the retro will be drafted before Layer 4 implementation begins so the implementation track gets the benefit of the second-mind read. Tracked as a backlog item; not a blocker for D-63 / D-64 implementation, which both gate on the contract sections (§§1–13) — those are now complete.
 
 ## 13. Test scenarios
 
@@ -1658,10 +1735,12 @@ A handful of end-to-end happy-path scenarios that should always pass in CI / sta
 - **Cost telemetry assertions** — once orchestrator-side cost tracking is implemented, add per-TS cost-ceiling assertions per §11.5.
 - **Per-prompt-body regression tests** — gated on prompt-body design landing (stop-and-ask trigger #2; deferred to its own spec session per §12).
 
-## 14. Gut check — to be drafted in a later session
+## 14. Gut check — deferred to follow-on session
+
+Per §12.6: the §14 retrospective is intentionally deferred to a follow-on session with fresh eyes to avoid author confirmation bias on a critical-evaluation pass over §§1–13. The retro will be drafted before Layer 4 implementation begins so the implementation track gets the benefit of the second-mind read. Not a blocker for D-63 / D-64 implementation, which gate on the contract sections (§§1–13) — those are complete as of this commit.
 
 End-of-spec retrospective per the 14-section template. Topics expected to land: what this spec gets right (the discriminated-union session shape collapses 3 downstream consumer paths into 1; the per-phase + seam-reviewer architecture matches the coaching intuition that seams are where periodization actually goes wrong; three entry points keep the expensive Pattern A out of the cheap-call paths); risks (per-phase decomposition may exhibit the same dependency-on-prior-phase coupling that makes parallelism impossible; the seam reviewer's verdict authority is the single most likely place to over-spec or under-spec; cost is real and unmeasured; intensity-distribution defaults across phases are policy not data); what might be missing (joint sessions, Layer 5 consumption contract, the prompt bodies themselves); best argument against this spec's scope (the three-entry-point shape is a complexity multiplier; a unified entry point with a `mode` discriminator would be simpler if the per-mode prompts can be parameterized; counter — Andy explicitly picked separate functions per Decision 2, and the prompts ARE the per-mode complexity that separation makes inspectable).
 
 ---
 
-*End of Layer 4 spec draft v1 (session 4 of expected 3–5). Sections drafted after session 4: §§1–9 unchanged from session 3 close. **§10 Edge cases** (10 subsections covering degenerate timelines, shape-infeasibility detection algorithms for the four `Layer4ShapeInfeasibleError` classes, refresh edge cases, D-63 single-session, race-week brief, cache + concurrency, validator + retry, ETL + version drift, Layer-4.5-boundary cases, misc catch-all). **§11 Performance budget** (8 subsections: latency targets per entry point, token budgets, cost per invocation, cache hit-rate assumptions + amortized cost, cumulative ceilings, frequency-cap interaction, concurrency assumptions, performance-regression detection thresholds). **§13 Test scenarios** (84 numbered TS rows organized by entry point + coaching-flag emit + cache + edge-case categories + 5 smoke tests gating CI + coverage gaps tracked forward). §§12 + §14 remain stubbed for session 5. Next session: §12 open-items maintenance + §14 gut check + end-of-arc CLAUDE.md/backlog bump + PR. No new source decisions this session.*
+*End of Layer 4 spec draft v1. **Contract sections §§1–13 complete; §14 retrospective deferred to a follow-on fresh-eyes session per §12.6.** Sections drafted across the arc: §1 Purpose, §2 What 4 does NOT do, §3 Function signature (4 entry points), §4 Input validation, §5 Algorithm (Pattern A + Pattern B + deterministic validator + capped-retry semantics), §6 Periodization decomposition + seam-review semantics (β propose-patch per Decision 8), §7 Payload schema (with `RaceWeekBrief` + `RacePlan` + `seam_unresolved` enum addition), §8 Coaching flag rules (closed-set taxonomy + LLM-emitted vs spec-auto-emitted convention + call-level observation triggers), §9 Caching & determinism (per-entry cache keys + per-phase cache for Pattern A + invalidation triggers + determinism guarantees + scope/lifetime + observability), §10 Edge cases (10 subsections covering degenerate timelines, shape-infeasibility detection algorithms for the four `Layer4ShapeInfeasibleError` classes, refresh + D-63 + race-week-brief edge cases, cache + concurrency, validator + retry, ETL + version drift, Layer-4.5-boundary, misc), §11 Performance budget (8 subsections: latency + token + cost + cache hit-rate + cumulative ceilings + frequency-cap interaction + concurrency + regression-detection thresholds), §12 Open items / forward references (resolved + prompt-body forward-pointers + downstream-spec forward-pointers + tuning candidates + substantive direction holds + §14 deferral), §13 Test scenarios (84 numbered TS rows + 5 CI smoke tests + coverage gaps tracked forward). Arc total: 4 chat sessions + 2 mid-arc calibration commits + this close-out pass. §14 retro will land in a follow-on session before Layer 4 implementation begins.*

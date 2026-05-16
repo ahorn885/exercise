@@ -196,4 +196,66 @@ Same state as sessions 1/2/3:
 
 ---
 
+---
+
+## 10. Post-handoff close-out pass (Andy 2026-05-16, same chat)
+
+After this handoff was committed (`a50bcbb`) and the spec commit (`9f6957f`) was pushed, I checked in with Andy on whether we had room for more work this session. My recommendation was to start a new session for session 5 (§12 + §14 + bookkeeping + PR) because §14 is best done with fresh eyes — author confirmation bias on a critical-evaluation pass is real. Andy redirected: do the §12 pruning now and ship the v1 arc as a PR + merge in this same chat; §14 retro stays deferred to a follow-on session.
+
+This is consistent with the CLAUDE.md "push to production as we go" rule (Andy 2026-05-14): prefer shipping over accumulating more design ahead of implementation. The §12 pruning IS mechanical and benefits from fresh memory of what just landed in §§10/11/13. §14 retro doesn't block implementation — D-63 / D-64 implementation gates on the contract sections (§§1–13), which are complete.
+
+### 10.1 §12 drafted in this close-out pass
+
+Six subsections per the new structure (replacing the flat bullet-list stub):
+
+- **§12.1 Resolved this arc** — table of 7 items closed across sessions 1–4 + calibration rounds (seam-reviewer authority Decision 8; intensity-distribution defaults locked; open-ended horizon at 12 weeks; Taper hard bounds removed; cost-cap interaction with D-64 frequency caps spec'd in §11.5/§11.6/§11.8; §6.4 trigger set completeness; `Layer4ShapeInfeasibleError` detection algorithms in §10.2).
+- **§12.2 Prompt body design — deferred to dedicated sessions** — 5 sessions queued per stop-and-ask trigger #2 (per-phase synthesizer, per-tier T1/T2, single-session, seam-reviewer, race-week-brief). Andy picks order; seam-reviewer is the smallest and may slot first.
+- **§12.3 Forward-pointers to downstream / sibling specs** — Layer 4.5 (Joint Session Coordinator), Layer 5 (consumption contract), D-57 (scheduled re-eval), plan-revert UX, multi-day race plan post-race analytics, `race_week_brief` trigger policy, `Layer4ShapeInfeasibleError` routing to athlete surface.
+- **§12.4 Tuning candidates — v1 defaults; measure post-launch** — validator tolerances; coaching-flag thresholds; shape-infeasibility detection tolerances; token budgets; cost framing; cache hit-rate assumptions; cumulative cost ceilings; regression detection alert thresholds; model + temperature defaults. None block implementation.
+- **§12.5 Substantive direction holds** — D7 tiered tight/loose plan horizon (HELD); `opportunity` observation expansion; seam reviewer concurrency.
+- **§12.6 §14 retrospective deferred** — explicit deferral rationale: author confirmation bias on the critical-evaluation pass; retro lands before Layer 4 implementation begins.
+
+### 10.2 §14 stub re-labeled
+
+Changed from "## 14. Gut check — to be drafted in a later session" to "## 14. Gut check — deferred to follow-on session" with a 1-paragraph body explaining the §12.6 deferral. Section header retains its place in the 14-section depth standard per CLAUDE.md "Layer specs follow a depth standard."
+
+### 10.3 Header + footer updates
+
+- Status line: reframed from session-4-only to a 4-session-arc summary; explicit "Contract sections (§§1–13) complete; §14 retrospective deferred to a follow-on session" + Andy 2026-05-16 ship-now framing.
+- End-of-spec footer: reframed to a full arc summary across all 13 contract sections + the §14 deferral + arc total (4 chat sessions + 2 mid-arc calibration commits + this close-out pass).
+
+### 10.4 CLAUDE.md + backlog bumps (end-of-arc per v1-commit deferral rule)
+
+End-of-arc bookkeeping now lands in this close-out pass since the PR ships the v1 spec arc:
+
+- **CLAUDE.md:**
+  - Layer-pipeline table: Layer 4 status `Not yet specced` → `SPEC v1 DONE (§§1–13; §14 retro deferred to fresh-eyes session)`.
+  - Last-shipped-narrative: full Layer 4 spec arc summary replacing the PR17 line (PR17 carries forward as the predecessor).
+  - Authoritative current files: `Layer4_Spec.md` added under "Layer 4 done (v1; §14 retro pending)"; backlog reference bumped v30 → v31.
+  - Next forward move: rewritten with §14 retro + 5 prompt-body sessions + Layer 4 implementation + Layer 4.5 + Layer 5 as the new candidate set.
+- **Project_Backlog_v30.md → v31.md:**
+  - New top-line file-revision entry for v31 capturing the full 4-session arc + close-out.
+  - D-63 row status note: "🟡 Implementation pending — Layer 4 spec v1 landed 2026-05-16 (gates lifted); ready for implementation" + body detail on what implementation can land pre-prompt-body (deterministic-validator harness + `ad_hoc_workout_suggestions` schema + UX scaffold).
+  - D-64 row status note: same status flip + body detail (plan_versions table per §7.11 + per-day pointer resolver per §7.12 + frequency-cap orchestrator + diff renderer + `plan_refresh_log` schema can land pre-prompt-body).
+
+### 10.5 Bookkeeping
+
+- Close-out spec commit (this commit) covers: §12 (6 subsections), §14 stub re-label, header status line rewrite, end-of-spec footer rewrite, CLAUDE.md edits, Project_Backlog_v31.md (new file), this handoff addendum.
+- No new Decision 9+ in the source-decisions block — §12 / §14 framing are spec-internal choices, not source decisions.
+- File count for the close-out pass: 4 substantive files (Layer4_Spec.md, CLAUDE.md, Project_Backlog_v31.md, this handoff). Session 4 total across both passes: 1 substantive spec + 1 calibration round + 1 handoff + 1 close-out pass touching 3 distinct files + this addendum = 4 distinct files. Under 5-file ceiling.
+
+### 10.6 Next session pointers (post-merge)
+
+Andy's choice from the new "Next forward move" candidate set in CLAUDE.md:
+
+1. **Layer 4 §14 retrospective** — fresh-eyes pass; lands before implementation per §12.6.
+2. **Layer 4 prompt-body design sessions** — five queued; seam-reviewer is smallest and may slot first.
+3. **Layer 4 implementation track** — D-63 / D-64 gates removed; implementation can start with scaffolding ahead of prompt bodies.
+4. **v5 onboarding implementation PR** — substantial code work; unchanged from prior CLAUDE.md.
+5. **D-50 wiring resumption** — unchanged from prior CLAUDE.md.
+6. **Layer 4.5 — Joint Session Coordinator spec** — separate file; lands when team-features track activates.
+7. **Layer 5 spec** — parallel supplemental outputs.
+
+---
+
 **End of handoff.**
