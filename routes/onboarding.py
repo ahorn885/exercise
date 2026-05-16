@@ -33,7 +33,6 @@ from flask import (
     Blueprint, render_template, request, redirect, url_for, flash, abort,
 )
 
-import database
 from database import get_db
 from athlete import (
     DAY_TOKENS, DAY_LABELS, DOUBLES_FEASIBLE_CHOICES,
@@ -179,12 +178,7 @@ def _resolve_candidates(db, uid, field_def, connected_slugs):
 
 
 def _write_provider_provenance(db, uid, field_name, provider_slug):
-    """UPSERT a `'provider_<slug>'` provenance row. PG-only — the table
-    is in `_PG_MIGRATIONS` only per Integration v4 §2.5. SQLite dev
-    skips silently so apply-from-prefill works locally (the value lands
-    in `athlete_profile`; just no provenance trail)."""
-    if not database._is_postgres():
-        return
+    """UPSERT a `'provider_<slug>'` provenance row."""
     db.execute(
         'INSERT INTO athlete_profile_field_provenance '
         '(user_id, field_name, source) VALUES (?, ?, ?) '
@@ -195,11 +189,8 @@ def _write_provider_provenance(db, uid, field_name, provider_slug):
 
 
 def _write_manual_override_provenance(db, uid, field_name):
-    """UPSERT a `'manual_override'` provenance row. Same PG-only guard
-    as `_write_provider_provenance`. Called by `keep_current` when the
-    athlete explicitly chooses to suppress provider re-prefill."""
-    if not database._is_postgres():
-        return
+    """UPSERT a `'manual_override'` provenance row. Called by `keep_current`
+    when the athlete explicitly chooses to suppress provider re-prefill."""
     db.execute(
         'INSERT INTO athlete_profile_field_provenance '
         '(user_id, field_name, source) VALUES (?, ?, ?) '
@@ -220,9 +211,6 @@ def prefill():
         `source` tag in the UI.
       - Per-connected-provider candidate values via
         `_resolve_candidates`.
-
-    PG-only provenance read mirrors `routes/profile.py:_record_self_report_provenance` —
-    SQLite dev returns no rows since the table is in `_PG_MIGRATIONS` only.
     """
     db = get_db()
     uid = current_user_id()
@@ -232,14 +220,12 @@ def prefill():
     connections = load_connections(db, uid)
     connected_slugs = {c['slug'] for c in connections if c['is_connected']}
 
-    provenance_by_field = {}
-    if database._is_postgres():
-        rows = db.execute(
-            'SELECT field_name, source, last_updated_at '
-            'FROM athlete_profile_field_provenance WHERE user_id = ?',
-            (uid,),
-        ).fetchall()
-        provenance_by_field = {r['field_name']: dict(r) for r in rows}
+    rows = db.execute(
+        'SELECT field_name, source, last_updated_at '
+        'FROM athlete_profile_field_provenance WHERE user_id = ?',
+        (uid,),
+    ).fetchall()
+    provenance_by_field = {r['field_name']: dict(r) for r in rows}
 
     fields = []
     for field_def in KNOWN_PROFILE_FIELDS:

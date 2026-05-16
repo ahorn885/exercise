@@ -49,11 +49,11 @@ Architecture overview lives in `Control_Spec` (resolve to highest `_vN.md`).
 
 ## Current state (as of 2026-05-16)
 
-Last shipped session: **PR12 D-61 §G + onboarding integration** (Option A1) — see `handoffs/V5_Implementation_PR12_Closing_Handoff_v1.md`. Implements the v5 §G per-day-windows form as a new `/onboarding/schedule` step (Step 3b) slotted between `/onboarding/prefill` and `/profile?tab=athlete`. Per-day windows persist to the `daily_availability_windows` table (PG-only); 5 new orthogonal-capacity columns added to `athlete_profile` (Long Session Available + day-set + max hr; Doubles Feasible enum; Preferred Rest Day day-set). JIT session-card swap UI explicitly deferred — gates on Layer 4 spec. D-61 status flipped 🟡 Implementation pending → 🟢 §G + onboarding integration shipped (JIT pending Layer 4). Predecessors: design pass shipping D-63 + D-64 (`V5_Design_D63_D64_Closing_Handoff_v1.md`, 2026-05-15) and PR11 D3b closing v5 §J locale work (`V5_Implementation_PR11_Closing_Handoff_v1.md`, 2026-05-15).
+Last shipped session: **PR13 — SQLite + TrueNAS retirement** — see `handoffs/V5_Implementation_PR13_Closing_Handoff_v1.md`. Strips the dual-backend SQLite path (`SQLITE_SCHEMA`, `_SQLITE_MIGRATIONS`, `init_sqlite`, `sqlite_path`, all `_is_postgres()` runtime guards) and the unused TrueNAS Docker deployment artifacts (`Dockerfile`, `docker-compose.yml`, `deploy/truenas_setup.sh`, `deploy/update.sh`). PG-only via `DATABASE_URL`; `get_db()` raises if it's unset. D-54 status flipped 🟡 Deferred → ✅ Resolved. Predecessor: **PR12 D-61 §G + onboarding integration** (Option A1) — `handoffs/V5_Implementation_PR12_Closing_Handoff_v1.md`. Implements the v5 §G per-day-windows form as a new `/onboarding/schedule` step (Step 3b) slotted between `/onboarding/prefill` and `/profile?tab=athlete`. Per-day windows persist to the `daily_availability_windows` table (PG-only); 5 new orthogonal-capacity columns added to `athlete_profile` (Long Session Available + day-set + max hr; Doubles Feasible enum; Preferred Rest Day day-set). JIT session-card swap UI explicitly deferred — gates on Layer 4 spec. D-61 status flipped 🟡 Implementation pending → 🟢 §G + onboarding integration shipped (JIT pending Layer 4). Predecessors: design pass shipping D-63 + D-64 (`V5_Design_D63_D64_Closing_Handoff_v1.md`, 2026-05-15) and PR11 D3b closing v5 §J locale work (`V5_Implementation_PR11_Closing_Handoff_v1.md`, 2026-05-15).
 
 **Authoritative current files** (always resolve by listing directory and viewing the highest `_vN`):
 - Architecture: `Control_Spec_v7.md`
-- Backlog: `Project_Backlog_v25.md`
+- Backlog: `Project_Backlog_v26.md`
 - PR verification status: `PR_Verification_Status.md` (per-PR §5.0 step state — read at session start so prior PRs' "still owed" carry-forward is reconciled against actual on-disk truth instead of treated as monolithically pending)
 - Onboarding data: `Athlete_Onboarding_Data_Spec_v5.md` (consolidates D-58 + D-59 + D-60 + D-61; v4 retained as in-project history per Rule #12)
 - Onboarding design wave inputs: `Onboarding_D58_Design_v1.md`, `Onboarding_D59_Design_v1.md`, `Onboarding_D60_Design_v1.md`, `Onboarding_D61_Design_v1.md`
@@ -74,7 +74,7 @@ Last shipped session: **PR12 D-61 §G + onboarding integration** (Option A1) —
 **Independent parallel tracks:**
 - D-50 wiring (now unblocked by D-58) — see "Next forward move" above for PR1 scope
 - D-52 Catalog Migration Phase 1 — fuzzy-match HITL alias audit
-- D-54 SQLite collapse — queued; Catalog Migration Phase 5
+- D-54 SQLite collapse — ✅ Resolved 2026-05-16 (PR13 — stripped `SQLITE_SCHEMA`, `_SQLITE_MIGRATIONS`, `init_sqlite`, `sqlite_path`, `_is_postgres()` guards across `database.py`/`init_db.py`/`app.py`/route files; PG-only via `DATABASE_URL`)
 - D-55 Garmin onto `provider_auth` — **paused** until Garmin reopens API access
 - D-57 Research re-evaluation cadence design
 - D-58–D-61 Onboarding Design Wave — ✅ **complete** (design + v5 spec consolidation shipped 2026-05-14)
@@ -158,9 +158,9 @@ For each, the expected output before stopping is: options considered, tradeoffs,
 ## Stack
 
 - **AI backend:** Claude API (Sonnet/Opus latest)
-- **Database:** PostgreSQL (Neon) in production; SQLite locally
+- **Database:** PostgreSQL (Neon) — both production and dev. SQLite path retired 2026-05-16 (PR13)
 - **ETL / data work:** Python (openpyxl, rapidfuzz, pandas)
-- **Web app:** Flask + Jinja templates, deployed to Vercel (`aidstation-pro.vercel.app`) and TrueNAS via Docker (Watchtower auto-deploys on push to `main`). Code at the repo root (`app.py`, `routes/`, `init_db.py`, etc.). This is the **v1 app**, which is the current production target for the v2 LLM-pipeline build being designed in `aidstation-sources/`.
+- **Web app:** Flask + Jinja templates, deployed to Vercel (`aidstation-pro.vercel.app`). Code at the repo root (`app.py`, `routes/`, `init_db.py`, etc.). This is the **v1 app**, which is the current production target for the v2 LLM-pipeline build being designed in `aidstation-sources/`. TrueNAS / Docker deployment path retired 2026-05-16 (PR13) — was never used in practice.
 - **Athlete integrations:** COROS + Ride With GPS shipped (Phase-0 webhook stubs); Strava/Whoop/TrainingPeaks/Zwift stubs prepped on a separate branch (uncommitted at time of writing per `HANDOFF-2026-05-13-stub-batch.md`); Polar + Wahoo next; Garmin paused (API closed); Apple Health + Samsung Health out of scope (need native iOS/Android clients).
 
 ---
@@ -175,7 +175,7 @@ This repo holds **two parallel work tracks**:
 **Selective rebuild (the v1→v2 path):**
 - **Keep:** provider integration layer (`routes/`, `*_connect.py`, OAuth callback plumbing), auth + accounts, DB scaffolding pattern (`init_db.py`, `_PG_MIGRATIONS` / `_SQLITE_MIGRATIONS`, the `database.py` compatibility layer), and `rx_engine_spec.md` as the strength-progression algorithm spec.
 - **Replace:** coaching + plan-generation. The current `coaching.py` is one big Claude call; v2 is the structured 0–5 layer pipeline.
-- **Revisit later:** v1 strength UI, the broader v1 schema rot, the dual-backend SQLite/Postgres pattern (`layer0.*` is Postgres-only — Catalog Migration Plan Phase 5 collapses SQLite support).
+- **Revisit later:** v1 strength UI, the broader v1 schema rot.
 
 **Strangler-fig sequencing.** v2 modules ship into the running v1 app one at a time, replacing pieces. No parallel staging environment. v1 having no users (only Andy as test athlete) makes this safe — schema migrations and route swaps don't need backward-compatibility shims.
 

@@ -1,5 +1,14 @@
 # AIDSTATION — Session Handoff
 
+> **Note (2026-05-16, PR13):** This is the 2026-05-06 v1-maintenance
+> handoff, kept for historical context. The v2 LLM-pipeline build has
+> been in flight since 2026-05-08; current state lives in
+> `aidstation-sources/CLAUDE.md` + the latest handoff in
+> `aidstation-sources/handoffs/`. Notably out-of-date here: the
+> TrueNAS/Docker deployment was retired 2026-05-16 (PR13) — Vercel is
+> now the only deploy target, and Postgres (Neon) is the only DB
+> backend.
+
 **Date:** 2026-05-06
 **Last commit on `main`:** `fc961eb` (rx_engine_spec.md merge, PR #19).
 The previous handoff (`24f52c4`, PR #18) merged in the same session;

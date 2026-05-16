@@ -12,8 +12,6 @@ columns. New fields added in future sessions go in this list and the
 
 from typing import Optional
 
-import database
-
 
 PROFILE_FIELDS = (
     'date_of_birth',
@@ -104,8 +102,8 @@ def get_daily_availability_windows(db, user_id):
             (user_id,),
         ).fetchall()
     except Exception:
-        # SQLite dev without the table, or a transient DB hiccup — return
-        # all-disabled rather than crash the onboarding form render.
+        # Transient DB hiccup — return all-disabled rather than crash the
+        # onboarding form render.
         rows = []
 
     by_day_idx = {(r['day_of_week'], r['window_index']): r for r in rows}
@@ -163,16 +161,10 @@ def upsert_daily_availability_windows(db, user_id, windows):
     workable, but the form submits the full week every time so wipe-
     then-insert is cleaner and idempotent.
 
-    PG-only — the table is in `_PG_MIGRATIONS` only per Integration v4
-    §2.5. SQLite dev skips silently so the §G form still saves the
-    athlete_profile capacity toggles locally; just no per-day windows.
-
     Caller is responsible for db.commit().
     """
     if user_id is None:
         raise ValueError('user_id required')
-    if not database._is_postgres():
-        return
 
     db.execute(
         'DELETE FROM daily_availability_windows WHERE user_id = ?',
@@ -224,15 +216,13 @@ def upsert_athlete_profile(db, user_id, **fields) -> dict:
         raise ValueError('user_id required')
 
     clean = {k: fields[k] for k in PROFILE_FIELDS if k in fields}
-    now_sql = 'NOW()' if database._is_postgres() else "datetime('now')"
-
     if db.execute(
         'SELECT 1 FROM athlete_profile WHERE user_id = ?', (user_id,)
     ).fetchone():
         if clean:
             assigns = ', '.join(f'{k}=?' for k in clean)
             db.execute(
-                f'UPDATE athlete_profile SET {assigns}, updated_at = {now_sql} '
+                f'UPDATE athlete_profile SET {assigns}, updated_at = NOW() '
                 f'WHERE user_id = ?',
                 list(clean.values()) + [user_id]
             )

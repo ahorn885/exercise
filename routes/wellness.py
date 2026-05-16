@@ -19,7 +19,6 @@ from datetime import date, datetime, timedelta
 
 from flask import Blueprint, render_template, request, redirect, url_for, flash
 
-import database
 from database import get_db
 from routes.auth import current_user_id
 from routes.oauth_callbacks import provider_slugs
@@ -157,20 +156,18 @@ def _save_self_report(db, uid):
     mood          = _parse_int(request.form.get('mood'),          lo=1, hi=5)
     notes         = (request.form.get('notes') or '').strip() or None
 
-    # UPSERT on (user_id, date). The UNIQUE constraint is the conflict
-    # target on both backends; database.py's `?` placeholder handles the
-    # parameter style.
+    # UPSERT on (user_id, date). database.py's `?` placeholder handles
+    # the parameter style.
     existing = db.execute(
         'SELECT id FROM wellness_self_report WHERE user_id=? AND date=?',
         (uid, submitted_date)
     ).fetchone()
-    now_sql = 'NOW()' if database._is_postgres() else "datetime('now')"
     if existing:
         db.execute(
-            f'UPDATE wellness_self_report SET '
-            f'sleep_hours=?, sleep_quality=?, energy=?, soreness=?, mood=?, notes=?, '
-            f'updated_at={now_sql} '
-            f'WHERE id=?',
+            'UPDATE wellness_self_report SET '
+            'sleep_hours=?, sleep_quality=?, energy=?, soreness=?, mood=?, notes=?, '
+            'updated_at=NOW() '
+            'WHERE id=?',
             (sleep_hours, sleep_quality, energy, soreness, mood, notes,
              existing['id'])
         )
