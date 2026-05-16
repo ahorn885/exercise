@@ -1,6 +1,6 @@
 # Layer 4 — Plan Generation (LLM Synthesis + LLM Seam Review)
 
-**Status:** Draft v1, 2026-05-16. Session 1 of an expected 3–5 sessions to land the full 14-section spec. This session covers §1 Purpose, §2 Boundaries, §3 Function signature (three entry points), and §7 Payload schema. §§4–6 + §§8–14 are stubbed at the bottom of the file with brief targets so the next session has a clear scope.
+**Status:** Draft v1, 2026-05-16. Session 1 of an expected 3–5 sessions to land the full 14-section spec. This session covers §1 Purpose, §2 Boundaries, §3 Function signature (four entry points), and §7 Payload schema (including `RaceWeekBrief` + `RacePlan` for multi-day-event support). §§4–6 + §§8–14 are stubbed at the bottom of the file with brief targets so the next session has a clear scope. Mid-session refinements per Andy 2026-05-16 chat: added `race_week_brief` entry point (Decision 4), `RacePlan` multi-day schema (Decision 5), Layer 4.5 Joint Session Coordinator forward-pointer (Decision 6), tiered tight/loose horizon held (Decision 7), `session_index_in_day` + `time_of_day` on `PlanSession`.
 
 **Type:** LLM. Two call patterns, picked per entry point + scope:
 - **Pattern A — per-phase synthesis + LLM seam reviewer.** Used by `llm_layer4_plan_create` and by `llm_layer4_plan_refresh` T3 when the refresh window spans a phase boundary. One LLM synthesizer call per phase (Base → Build → Peak → Taper, skipping per 3B `start_phase`); one LLM seam-reviewer call per adjacent-phase boundary; deterministic validator on top of all of it.
@@ -11,8 +11,12 @@ Both patterns wrap the synthesis in a capped correction loop (cap=2 retries per 
 **Source decisions (this session, 2026-05-16):**
 
 - **Decision 1 (topology):** Andy picked the per-phase synthesis + LLM seam reviewer architecture for the "big" calls (Pattern A above), explicitly accepting the latency tradeoff ("plan-gen is being taken seriously; 30–60s wait is fine") and the cost tradeoff ("design well, cut later if too costly"). Short-horizon calls use Pattern B with their own prompts.
-- **Decision 2 (entry points):** Andy picked three distinct entry points (`plan_create`, `plan_refresh`, `single_session_synthesize`) so the expensive Pattern A only fires on `plan_create` and on T3 refreshes that span phase boundaries. T1/T2 refreshes and D-63 single-session each get their own tuned prompt under Pattern B.
-- **Decision 3 (session shape):** Andy picked the discriminated-union shape — a single `PlanSession` dataclass with `kind: Literal['cardio', 'strength', 'rest']` and conditional sub-blocks. One importable type for all downstream consumers (Layer 3A re-eval, plan view UI, D-63 storage handoff, D-64 diff rendering).
+- **Decision 2 (entry points):** Andy picked three distinct entry points (`plan_create`, `plan_refresh`, `single_session_synthesize`) so the expensive Pattern A only fires on `plan_create` and on T3 refreshes that span phase boundaries. T1/T2 refreshes and D-63 single-session each get their own tuned prompt under Pattern B. A fourth entry point (`llm_layer4_race_week_brief`) was added later in the same chat per the Decision-5 race-prep handling pick.
+- **Decision 3 (session shape):** Andy picked the discriminated-union shape — a single `PlanSession` dataclass with `kind: Literal['cardio', 'strength', 'rest']` and conditional sub-blocks. One importable type for all downstream consumers (Layer 3A re-eval, plan view UI, D-63 storage handoff, D-64 diff rendering). Mid-session refinement: added `session_index_in_day: int` + `time_of_day` fields to support two sessions per day (strength + cardio, or two cardios of different types) with schema-level rules forbidding strength+strength and two-hards same day.
+- **Decision 4 (race-prep handling):** Andy picked BOTH (a) Taper-phase coaching_flags auto-emitted (`race_rehearsal`, `fueling_practice`, `kit_check`, `pacing_lock`, `pre_race_taper`) AND (b) a separate `llm_layer4_race_week_brief` entry point producing `RaceWeekBrief` + (for multi-day events) `RacePlan`. (a) lives inside existing `plan_create` / Pattern-A as auto-emit rules; (b) is a new fourth entry point with its own dedicated brief + multi-day-race schemas.
+- **Decision 5 (race-day handling):** Andy picked the `RacePlan` entity for multi-day events. Single-day events: regular `PlanSession` with `coaching_flags=['race_day']` + 2E race-day fueling targets in `session_notes`. Multi-day events (expedition AR, stage races, multi-day ultras): `RacePlan` dataclass with segments + transitions + pacing + fueling + contingencies, produced by `race_week_brief`. v1 schema is intentionally lean (no per-segment athlete-checkin / actuals shape); session 2+ adds depth.
+- **Decision 6 (multi-athlete coordination):** Andy picked the post-pass approach. Each athlete gets a solo Layer 4 run; a new **Layer 4.5 — Joint Session Coordinator** runs after Layer 4 for linked athletes, harmonizing joint-session days (shared shape + per-athlete intensity adjustments). Layer 4.5 is its own spec; Layer 4 §2 + §7 schemas are 4.5-ready (joint coordinator can supersede solo PlanSessions via a future `joint_session_id` FK addition).
+- **Decision 7 (tiered tight/loose plan horizon — HELD):** Andy 2026-05-16: substantive direction held. Plan currently spec'd as uniform-quality across the full 3B periodization shape window. Proposed future direction (tight ~12 weeks + loose remainder + scheduled re-run as tight horizon decays) flagged as substantive open item in §12; revisit after Layer 4 v1 lands and cost/quality measured.
 
 **Source decisions (predecessor specs):**
 
@@ -40,13 +44,16 @@ Layer 4 takes the gated outputs of Layers 2 and 3 (the five typed 2A–2E payloa
 
 Layer 4 owns the actual coaching synthesis: WHICH sport on WHICH day, at WHAT intensity, with WHICH exercises, for WHAT duration, at WHICH locale. Everything upstream is constraint and context; Layer 4 makes the coaching decision.
 
-Layer 4 supports three entry points scoped to three different athlete intents:
+Layer 4 supports four entry points scoped to four different athlete intents:
 
 - **`llm_layer4_plan_create`** — initial plan generation, called when no plan exists for the athlete (post-onboarding) or when a major upstream re-eval has invalidated the entire plan (T3 refresh of an athlete whose 3B periodization shape changed materially). Pattern A always. The single most expensive Layer 4 invocation. Output covers the full periodization window 3B sized.
 - **`llm_layer4_plan_refresh`** — D-64 athlete-initiated refresh scoped to T1 (next 2 days), T2 (next 7 days), or T3 (next 28 days). T1 + T2 are Pattern B with tier-specific prompts. T3 is Pattern A when the 28-day scope spans a phase boundary (the common case mid-plan); T3 falls back to Pattern B with a per-phase prompt when the scope is entirely inside a single phase (e.g., athlete is mid-Base with 6+ weeks of Base remaining).
 - **`llm_layer4_single_session_synthesize`** — D-63 on-demand workout. Off-plan, no phase context, no 3B/3C/3D dependency. Athlete picks sport + duration + intensity + locale (or "Somewhere else" with quick-equipment); Layer 4 produces one `PlanSession` (`is_ad_hoc=True`) consistent with the athlete's profile + current state + the picked location's equipment view. Pattern B.
+- **`llm_layer4_race_week_brief`** — event-mode-only. Fires when `days_to_event ≤ 14` (orchestrator-triggered as the athlete approaches the event; also athlete-triggerable via a "Generate race-week brief" surface). Produces (a) modified Taper-phase sessions with race-week `coaching_flags` (`race_rehearsal`, `fueling_practice`, `kit_check`, `pacing_lock`) auto-populated, plus (b) a structured `RaceWeekBrief` (logistics, drop-bag strategy, kit manifest, pre-race meal, pacing summary, contingencies, mental prep cues), plus (c) for multi-day events (expedition AR, stage races, multi-day ultras), a structured `RacePlan` covering segments, transitions, pacing strategy, fueling strategy, and contingencies across the race itself. Pattern B with a longer max_tokens budget. Single-day events get only (a) + (b); multi-day events get (a) + (b) + (c).
 
-All three entry points return `Layer4Payload` records exposing a `sessions: list[PlanSession]` field. Downstream consumers (Layer 3A re-eval on the next refresh, Layer 5 advisors, the athlete-facing plan view, D-63's `ad_hoc_workout_suggestions` storage handoff, D-64's diff renderer) read the same `PlanSession` shape regardless of which entry point produced the payload.
+All four entry points return `Layer4Payload` records. The `mode` discriminator + (for race_week_brief) the `race_plan` field distinguish the produced shape. Downstream consumers (Layer 3A re-eval on the next refresh, Layer 5 advisors, the athlete-facing plan view, D-63's `ad_hoc_workout_suggestions` storage handoff, D-64's diff renderer, race-week-brief surface) read the same `PlanSession` shape for session content regardless of which entry point produced the payload.
+
+**Multi-athlete coordination is out of Layer 4's scope.** Joint sessions per §L are produced by a separate post-pass — **Layer 4.5 — Joint Session Coordinator** — which reads two or more linked athletes' Layer 4 payloads and harmonizes the joint-session days into a shared shape with per-athlete intensity adjustments. Layer 4.5 is its own spec; v1 Layer 4 produces solo plans only. Per Andy 2026-05-16 direction (post-pass coordinator approach picked over pre-pass-in-Layer-4 + cross-athlete-entry-point alternatives); see §12 forward-pointer.
 
 The periodization validator wraps every synthesis call. Deterministic rule checks on every pass: weekly volume inside 2A `phase_load_bands` per discipline; ACWR forward-projection across the scope window stays inside the safe band (0.8–1.3 typical; per-phase tunable); rest-day spacing per discipline (no two consecutive hard sessions for the same discipline without an explicit rationale); intensity distribution matches the phase intent (Base ≈ 80/15/5 Z1-Z2/Z3/Z4-Z5; Build, Peak, Taper tunable). On Pattern A, an additional LLM seam-review pass runs between each pair of adjacent phases: the reviewer reads both phase outputs + the intended boundary state (volume + intensity exit/entry per 3B + 2A) and either approves the seam, flags it (minor or major), or proposes a patch direction (re-prompt the prior phase, re-prompt the next phase, or accept-with-observation). Validator failures trigger capped re-synthesis at the per-phase granularity; persistent failure surfaces a best-effort plan with a `best_effort_plan` coaching observation.
 
@@ -62,7 +69,7 @@ Boundary clarifications. Each line is a piece of work that lives elsewhere and t
 - **Does not run the 3D HITL gate.** Layer 4 only runs after 3D returns `gate_status = green`. Layer 4 may produce `notable_observations` with `elevates_to_hitl=True` that 3D considers for the NEXT plan invocation — the current run does not block on its own observations.
 - **Does not own the plan-version table's `plan_version_id` allocation policy.** The plan-gen orchestrator allocates `plan_version_id` before invoking Layer 4 and passes it in. Layer 4 writes session rows pointing to that ID. The orchestrator owns the atomic-write boundary per D-64 §6.2 (commit-or-rollback). Plan-version table SCHEMA is defined in §7.7 below (lifting the D-64 §7.2 stub).
 - **Does not own the partial-update orchestrator.** Per Control_Spec §4, the orchestrator outside Layer 4 decides which upstream layers re-run on data changes; Layer 4 just gets called with the updated payloads.
-- **Does not handle multi-athlete coordination (joint sessions per §L).** §L of the Onboarding spec carves out joint training overlays for athletes with linked accounts; v1 Layer 4 produces solo plans only. Joint session integration is an open item (§12 stub).
+- **Does not coordinate joint sessions across linked athletes.** §L of the Onboarding spec carves out joint training overlays for athletes with linked accounts. Layer 4 produces solo plans only; **Layer 4.5 — Joint Session Coordinator** runs as a post-pass over multiple athletes' Layer 4 payloads and harmonizes joint-session days (picks shared session shape, adjusts per-athlete intensity within fitness levels). Layer 4.5 spec is its own work item; see §12 forward-pointer.
 - **Does not write to integration tables.** When the athlete LOGS a session (completes it), the plan-execution surface writes to `cardio_log` / `training_log`. Layer 4 produces the spec; execution stores it; logging captures completion. The `is_ad_hoc=True` D-63 session is written to `ad_hoc_workout_suggestions` by D-63's caller (not Layer 4); Layer 4 only returns the `PlanSession` for the caller to persist.
 - **Does not re-evaluate the plan on a schedule.** Time-based re-eval cadence is D-57 (deferred). Layer 4 runs when invoked.
 - **Does not parse free-text athlete input.** That's the D-64 NL intent parser. Layer 4 consumes the parsed `ParsedIntent` dataclass + the `raw_text` passthrough; it does not re-classify the NL itself.
@@ -208,11 +215,58 @@ def llm_layer4_single_session_synthesize(
 
 **Returns:** `Layer4Payload` with `mode='single_session_synthesize'`, `len(sessions) == 1`, `sessions[0].is_ad_hoc == True`, `suggestion_id` populated, `phase_structure is None`, `seam_reviews is None`.
 
-### 3.4 Errors raised
+### 3.4 Race-week brief
 
-All three entry points raise typed errors. Detail in §4 stub.
+```python
+def llm_layer4_race_week_brief(
+    user_id: int,
+    layer1_payload: Layer1Payload,
+    layer2a_payload: Layer2APayload,
+    layer2b_payload: Layer2BPayload,
+    layer2c_payloads: dict[str, Layer2CPayload],
+    layer2d_payload: Layer2DPayload,
+    layer2e_payload: Layer2EPayload,
+    layer3a_payload: Layer3APayload,
+    layer3b_payload: Layer3BPayload,
+    prior_plan_session_window: list[PlanSession],
+    plan_version_id: int,
+    etl_version_set: dict[str, str],
+    *,
+    model: str = "claude-sonnet-4-6",
+    temperature: float = 0.2,
+    max_tokens: int = 6000,
+    capped_retries: int = 2,
+) -> Layer4Payload:
+    ...
+```
 
-- `Layer4InputError(code)` — precondition violations.
+Fires when `days_to_event ≤ 14` (orchestrator-triggered as the athlete approaches the event) OR when the athlete explicitly requests a race-week brief via the dedicated surface. Event-mode only (`layer3b_payload.mode == 'event'`); raises `Layer4InputError('race_week_brief_requires_event_mode')` otherwise.
+
+**Parameters:**
+
+| Param | Type | Source | Notes |
+|---|---|---|---|
+| `user_id` | int | Orchestrator | — |
+| `layer1_payload` | `Layer1Payload` | Per `q_layer1_payload` | Full Layer 1; §H.2 event details + §J event-locale equipment view + §I lifestyle for pre-race sleep/recovery guidance. |
+| `layer2a_payload` | `Layer2APayload` | 2A node output | Discipline weights for race-segment sport classification (multi-day events). |
+| `layer2b_payload` | `Layer2BPayload` | 2B node output | Race terrain × environment classification; drives pacing/kit guidance per segment. |
+| `layer2c_payloads` | `dict[str, Layer2CPayload]` | 2C call per locale (including race locale) | Equipment view for kit-check + race-locale equipment availability. |
+| `layer2d_payload` | `Layer2DPayload` | 2D node output | Active injury exclusions applied to race-rehearsal session content + flagged in contingencies. |
+| `layer2e_payload` | `Layer2EPayload` | 2E node output | Race-day fueling tier + macro/sodium/fluid targets; drives `RaceWeekBrief.race_day_fueling_plan` + `RacePlan.fueling_strategy`. |
+| `layer3a_payload` | `Layer3APayload` | 3A node output | Current state + recent trajectory; modulates pacing-strategy aggressiveness + contingency depth. |
+| `layer3b_payload` | `Layer3BPayload` | 3B node output | `goal_viability` + `periodization_shape.phase_weeks['Taper']` drives Taper-session race-week flag distribution. |
+| `prior_plan_session_window` | `list[PlanSession]` | Plan-gen orchestrator | The current plan's Taper-phase sessions (typically the last 14–21 days of the plan). Layer 4 may modify these in place (adding race-week `coaching_flags`) and return the modified set in `Layer4Payload.sessions`. |
+| `plan_version_id` | int | Orchestrator | New version ID per D-64 §6.2 atomic-write. |
+| `etl_version_set` | dict[str, str] | Plan-gen pin | — |
+| `model` / `temperature` / `max_tokens` / `capped_retries` | various | Defaults | `max_tokens=6000` is higher than other Pattern B paths because the brief + (for multi-day events) the RacePlan can be substantial output. |
+
+**Returns:** `Layer4Payload` with `mode='race_week_brief'`, `pattern='B'`, `sessions` = modified Taper-phase sessions, `race_week_brief` non-None, `race_plan` non-None for multi-day events (`race_format` ∈ `{'expedition_ar', 'stage_race', 'multi_day_ultra'}`) and None for single-day events (`race_format == 'single_day'`), `phase_structure is None`, `seam_reviews is None`.
+
+### 3.5 Errors raised
+
+All four entry points raise typed errors. Detail in §4 stub.
+
+- `Layer4InputError(code)` — precondition violations. Includes `race_week_brief_requires_event_mode` for §3.4 misuse.
 - `Layer4OutputError(code)` — validator could not produce an accepted plan within the retry cap AND the best-effort fallback could not be assembled (rare).
 - `Layer4ShapeInfeasibleError(...)` — 3B periodization shape is structurally impossible for the athlete's §K availability + 2D exclusions; surfaces to 3D for the next gate, not handled by Layer 4 itself.
 
@@ -227,7 +281,7 @@ All three entry points raise typed errors. Detail in §4 stub.
 class Layer4Payload:
     # ─── Metadata ──────────────────────────────────────────────────────
     user_id: int
-    mode: Literal['plan_create', 'plan_refresh', 'single_session_synthesize']
+    mode: Literal['plan_create', 'plan_refresh', 'single_session_synthesize', 'race_week_brief']
     plan_version_id: int
     scope_start_date: date                 # First date covered by sessions[]
     scope_end_date: date                   # Last date covered by sessions[] (inclusive)
@@ -259,6 +313,10 @@ class Layer4Payload:
 
     # ─── D-63 handoff metadata (populated only for single_session_synthesize mode) ─
     suggestion_id: int | None
+
+    # ─── Race-week brief (populated only for race_week_brief mode) ─────────
+    race_week_brief: RaceWeekBrief | None
+    race_plan: RacePlan | None             # Multi-day events only; None for single-day events even in race_week_brief mode
 ```
 
 ### 7.2 PlanSession (discriminated union)
@@ -271,6 +329,8 @@ class PlanSession:
     plan_version_id: int                   # FK to the plan version this session was written under
     date: date
     day_of_week: Literal['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
+    session_index_in_day: int              # 0 = first session of the day; 1 = second; v1 max = 1 (two sessions per day)
+    time_of_day: Literal['morning', 'afternoon', 'evening', 'unspecified']
     kind: Literal['cardio', 'strength', 'rest']
 
     # ─── Discipline + locale + summary ───────────────────────────────
@@ -480,6 +540,10 @@ Each `plan_session` row carries a `plan_version_id` FK; the per-day version poin
 - `Layer4Payload.mode == 'plan_refresh'` + `pattern == 'A'` requires `phase_structure` non-None + `seam_reviews` non-None.
 - `Layer4Payload.mode == 'plan_refresh'` + `pattern == 'B'` requires `phase_structure is None` + `seam_reviews is None`.
 - `Layer4Payload.mode == 'single_session_synthesize'` requires `pattern == 'B'` + `len(sessions) == 1` + `sessions[0].is_ad_hoc == True` + `phase_structure is None` + `seam_reviews is None` + `suggestion_id` non-None.
+- `Layer4Payload.mode == 'race_week_brief'` requires `pattern == 'B'` + `race_week_brief` non-None + `phase_structure is None` + `seam_reviews is None`. `race_plan` non-None iff `race_week_brief.race_format != 'single_day'`.
+- `PlanSession` natural key is `(plan_version_id, date, session_index_in_day)`. v1 invariant: `0 ≤ session_index_in_day ≤ 1` (max two sessions per day).
+- On any given `(plan_version_id, date)` pair: if `count(sessions) == 2`, NOT both `kind == 'strength'` (no strength+strength same day); NOT both `intensity_summary == 'hard'` (no two hard sessions same day, regardless of `kind`). At least one of the two sessions must have `kind == 'cardio'`.
+- `time_of_day == 'unspecified'` is allowed; consumers default to ordering by `session_index_in_day` when time is unspecified.
 - `PlanSession.kind == 'cardio'` requires `cardio_blocks` non-None and non-empty + `strength_exercises is None` + `rest_reason is None`.
 - `PlanSession.kind == 'strength'` requires `strength_exercises` non-None and non-empty + `cardio_blocks is None` + `rest_reason is None`.
 - `PlanSession.kind == 'rest'` requires `cardio_blocks is None` + `strength_exercises is None` + `rest_reason` non-None + `duration_min == 0` + `discipline_id is None` + `locale_id is None`.
@@ -492,6 +556,111 @@ Each `plan_session` row carries a `plan_version_id` FK; the per-day version poin
 - `StrengthExercise.resolution_tier == 1` requires `substitute_text is None` + `proxy_origin_id is None`.
 - `ShapeOverride` non-None requires the corresponding `Layer4Payload.notable_observations` contains an entry with `category == 'shape_override'`.
 - `ValidatorResult` list is non-empty and the LAST entry has `accepted == True` (the final pass is always the accepted one — including the best-effort acceptance after the retry cap, in which case the corresponding pass has `accepted=True` + `rule_failures` retains the unresolved failures as `warning` severity + `notable_observations` carries a `best_effort_plan` entry).
+
+### 7.13 RaceWeekBrief (race_week_brief mode only)
+
+Produced by `llm_layer4_race_week_brief` for all event-mode invocations (single-day and multi-day). The brief is athlete-facing; consumed by the race-week-brief surface (UI TBD) and by Layer 5's clothing/conditions advisor for race-day kit overlays.
+
+```python
+@dataclass
+class RaceWeekBrief:
+    days_to_event: int
+    event_name: str                        # From §H.2
+    event_date: date
+    event_locale: str                      # Locale ID; resolves to lat/lon/name via Layer 1 §J
+    race_format: Literal['single_day', 'expedition_ar', 'stage_race', 'multi_day_ultra']
+    goal_outcome: str                      # From 3B + §H.2 (e.g., 'Finish', 'Compete mid-pack', 'Podium attempt')
+
+    # Pre-race logistics
+    pre_race_logistics: str                # Travel + arrival timing + sleep strategy (1–3 sentences)
+    drop_bag_strategy: str | None          # For events with drop-bag systems; None when not applicable
+    course_familiarization_notes: str | None  # Recon recommendations + critical course sections
+
+    # Equipment
+    kit_manifest: list[KitItem]            # Per-locale + per-segment equipment to bring
+    kit_check_dates: list[date]            # When to verify kit (typically days_to_event-7, -3, -1)
+
+    # Fueling
+    race_day_fueling_plan: str             # From 2E race-day fueling tier; athlete-facing summary
+    pre_race_meal_strategy: str            # Last 24h fueling + race-morning meal timing
+
+    # Pacing + mental
+    pacing_strategy_summary: str           # 1–2 sentences; defers to RacePlan.pacing_strategy for multi-day depth
+    contingencies: list[str]               # Pre-thought-through plans for known failure modes
+    mental_prep_cues: list[str]            # Direct, evidence-grounded — no platitudes per CLAUDE.md coaching voice
+
+@dataclass
+class KitItem:
+    item: str                              # Canonical equipment name from layer0.equipment_items where applicable; free-text otherwise
+    purpose: str                           # Why it's on the list (e.g., 'mandatory by race rules', 'nutrition transport', 'safety')
+    optional: bool                         # False = must-have; True = nice-to-have
+```
+
+### 7.14 RacePlan (race_week_brief mode, multi-day events only)
+
+Produced by `llm_layer4_race_week_brief` only when `event_format != 'single_day'`. Captures the multi-segment execution shape of expedition AR, stage races, and multi-day ultras. Athletes consume during the race itself (typically printed / loaded offline) and the post-pass coordinator (D-64 NL parser when athlete uses race-week NL refresh) reads it for context.
+
+```python
+@dataclass
+class RacePlan:
+    race_name: str
+    race_start_datetime: datetime          # Includes timezone
+    race_end_estimate_datetime: datetime   # Estimated; per §H.2 estimated_duration_hr
+    race_format: Literal['expedition_ar', 'stage_race', 'multi_day_ultra']
+    locales: list[str]                     # Locale IDs covering the race route (in route order)
+    segments: list[RaceSegment]            # Chronologically ordered
+    transitions: list[TransitionSpec]      # Between adjacent segments
+    pacing_strategy: PacingStrategy
+    fueling_strategy: FuelingStrategy
+    contingencies: list[Contingency]
+
+@dataclass
+class RaceSegment:
+    segment_id: str                        # UUID; stable per RacePlan
+    segment_index: int                     # 0-indexed chronological order
+    sport: str                             # Layer 0A canonical sport name
+    estimated_start_offset_hr: float       # Hours from race_start_datetime
+    estimated_duration_min: int
+    distance_km: float | None              # None when not applicable (e.g., a nav-puzzle segment)
+    elevation_gain_m: float | None
+    terrain_notes: str                     # Surface + technical features + key landmarks
+    pacing_target: dict                    # Same shape as CardioBlock.intensity_target (zone + measure)
+    coaching_notes: str                    # Per-segment direct guidance
+
+@dataclass
+class TransitionSpec:
+    from_segment_id: str
+    to_segment_id: str
+    estimated_duration_min: int
+    gear_changes: list[str]                # e.g., ['swap pack to MTB pack', 'change shoes to MTB shoes']
+    is_fueling_window: bool                # True when this transition is a 'eat substantially' opportunity
+    notes: str
+
+@dataclass
+class PacingStrategy:
+    overall_intensity_target: str          # e.g., 'Z2 dominant; no Z4 unless emergency'
+    night_section_adjustment: str | None   # For multi-day events crossing night hours; None when not applicable
+    pacing_milestones: list[str]           # Per-segment expected splits or check-in times
+    rationale_text: str                    # Why this strategy fits the athlete + race + 3A current state
+
+@dataclass
+class FuelingStrategy:
+    cho_g_per_hr_low: int                  # Range; varies by intensity zone (Z1-Z2 lower; Z3+ higher)
+    cho_g_per_hr_high: int
+    sodium_mg_per_hr: int                  # From 2E race-day fueling + heat_acclim_state
+    fluid_ml_per_hr: int                   # Adjustable per RaceSegment.terrain_notes (hot vs. cool)
+    caffeine_strategy: str
+    night_section_strategy: str | None     # Multi-day events; sleep deprivation fueling per 2E §I sleep_dep
+    rationale_text: str
+
+@dataclass
+class Contingency:
+    trigger: str                           # Specific observable signal (e.g., 'GI distress past hour 12', 'rain onset + temp drop')
+    action_plan: str                       # What to do
+    threshold_to_invoke: str               # When to act (e.g., 'persists >30min and Pepto fails')
+```
+
+The `RacePlan` schema is intentionally lean for v1 — it captures the load-bearing structure (segments + transitions + strategy + contingencies) without over-specifying. Session 2 may add per-segment athlete-checkin shape (logging actual time/pace per segment for post-race analysis) once the race-execution surface is designed.
 
 ---
 
@@ -510,6 +679,18 @@ Layer-4-specific design decisions. (a) Phase boundary identification — given 3
 ## 8. Coaching flag rules — to be drafted in session 2
 
 Auto-emit triggers for `notable_observations` + per-session `coaching_flags`. Required observations include `best_effort_plan` (validator hit cap), `shape_override` (Layer 4 overrode 3B), `intensity_modulated` (D-63 synthesizer modulated picked intensity per §6.2 of D-63), `sport_unavailable_at_locale` (D-63 §6.3 error case). Per-session `coaching_flags` like `race_rehearsal` (race-day fueling practice session), `fueling_practice` (2E target surfaced in session_notes), `weak_link_targeted` (strength session prescribes accessory work for a 3A `weak_links` entry), `first_introduction_to_<discipline>` (first session for a discipline newly in 2A inclusion).
+
+**Taper-phase auto-emit rules** (to be detailed in session 2 — committed direction per Andy 2026-05-16 race-prep handling):
+
+| Trigger | Auto-emitted on | Flag |
+|---|---|---|
+| Phase is Taper AND `days_to_event ≤ 14` AND session is a long session | One Taper session per week | `race_rehearsal` (full race-day fueling + pacing + kit practice) |
+| Phase is Taper AND session is a long-or-moderate cardio session | All Taper cardio sessions ≥ 60min | `fueling_practice` (use race-day fueling tier from 2E) |
+| `days_to_event == 7` | One Taper session (typically a light easy day) | `kit_check` (verify equipment per RaceWeekBrief.kit_manifest) |
+| `days_to_event ∈ [3, 5]` AND session is a moderate-or-easy run/ride | One Taper session | `pacing_lock` (rehearse race-day pacing for ≥30 min at race target zone) |
+| `days_to_event ≤ 2` AND session exists | All remaining Taper sessions | `pre_race_taper` (mobility, easy spinning, no novel stimulus) |
+
+These flags apply on every Layer 4 invocation that touches Taper-phase sessions (`plan_create` covering Taper, `plan_refresh` T2/T3 that includes Taper days, `race_week_brief`). The `race_week_brief` entry point may modify already-existing Taper flags in `prior_plan_session_window` based on the brief's contents (e.g., kit_check date moves if the brief picks a different verification cadence).
 
 ## 9. Caching & determinism — to be drafted in session 2
 
@@ -530,13 +711,17 @@ Per-call-pattern targets. **Pattern A `plan_create` (4 phases + 3 seams + 1 dete
 - Per-tier T1/T2 synthesizer prompt body design (same defer).
 - Single-session synthesizer prompt body design (same defer).
 - Seam-reviewer prompt body design (same defer; smaller scope — reads two phase outputs + boundary state, emits verdict).
+- Race-week-brief prompt body design (same defer; produces RaceWeekBrief + optional RacePlan).
 - Plan-revert UX (per-day pointer flip; storage shape in §7.11 supports it; UI lands separately).
-- Joint sessions (§L of Layer 1 / team-features track; v2+).
-- Layer 5 consumption — Layer 5 advisors (daily nutrition, supplements, clothing) consume `PlanSession.session_notes` + `cardio_blocks` for fuel timing; contract details defer to Layer 5 spec.
+- **Layer 4.5 — Joint Session Coordinator** — its own spec, separate file. Andy 2026-05-16 picked the post-pass approach: each athlete gets a solo Layer 4 run; 4.5 reads two-or-more linked athletes' Layer 4 payloads + §L joint-session definitions and harmonizes the joint-session days (picks shared session shape, adjusts per-athlete intensity within fitness levels, resolves per-athlete equipment differences). Lands when team-features track activates. Layer 4 §2 + §7 schemas are joint-coordinator-ready (PlanSession has session_id + plan_version_id; 4.5 can supersede a solo `PlanSession` with a joint one via a new `joint_session_id` FK on `plan_session` rows — schema addition deferred to 4.5 spec).
+- **Tiered tight/loose plan horizon** — Andy 2026-05-16: substantive direction change held. Currently spec'd as 'plan_create produces sessions for the full 3B periodization shape window at uniform quality'. Proposed future direction: `plan_create` produces tight ~12 weeks at Pattern A quality + loose weeks 13+ at degraded quality (smaller model? weekly-summary granularity? fewer inputs?); scheduled refresh ~1–2 weeks before tight horizon expires; T3 horizon becomes variable ("extend the tight window") rather than fixed 28 days. Un-defers D-57 (scheduled re-evaluation cadence). Substantial; revisit after Layer 4 v1 lands and we have measured cost/quality data on uniform-quality long-horizon plans.
+- **Multi-day race plan post-race analytics** — `RacePlan.segments[*]` doesn't include athlete-checkin shape (actual vs. expected time/pace per segment). Once the race-execution surface is designed, add per-segment actuals. Out of v1.
+- Layer 5 consumption — Layer 5 advisors (daily nutrition, supplements, clothing) consume `PlanSession.session_notes` + `cardio_blocks` for fuel timing; for race-week, Layer 5 reads `RaceWeekBrief.race_day_fueling_plan` + (multi-day) `RacePlan.fueling_strategy` for kit/conditions overlays. Contract details defer to Layer 5 spec.
 - Validator's `intended_intensity_distribution` per-phase defaults — currently default to Base 80/15/5; need to pin Build/Peak/Taper defaults in §5 algorithm draft.
 - Cost-cap interaction with D-64 frequency caps — if validator hits cap on a Pattern A plan, the cost of that one call exceeds expected; should the soft-cap warning factor expected vs. actual cost? Defer.
 - `Layer4ShapeInfeasibleError` routing — does this surface as a 3D gate item for the next run, or as an inline athlete-facing error in the current run? Defer.
 - Seam-reviewer model downgrade (Haiku for cheaper reviewing) — measure post-launch.
+- `race_week_brief` trigger policy — orchestrator auto-fires when `days_to_event ≤ 14`, but exact firing cadence (daily? once at 14, again at 7, again at 1?) needs explicit policy. Currently flagged as "single fire at 14 + athlete-triggerable re-runs"; tune post-launch.
 
 ## 13. Test scenarios — to be drafted in session 2
 
