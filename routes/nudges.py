@@ -32,7 +32,6 @@ from flask import (
     Blueprint, request, redirect, url_for, abort, jsonify,
 )
 
-import database
 from database import get_db
 from routes.auth import current_user_id
 
@@ -66,11 +65,9 @@ def get_active_nudges(db, uid):
     registry catches up produces an ugly-but-visible banner rather
     than a silent miss.
 
-    PG-only: SQLite dev returns []. Empty when `uid` is falsy so the
-    context processor is safe to call on logged-out pages.
+    Empty when `uid` is falsy so the context processor is safe to call
+    on logged-out pages.
     """
-    if not database._is_postgres():
-        return []
     if not uid:
         return []
     rows = db.execute(
@@ -132,17 +129,11 @@ def scan_connect_provider_14d():
     overlaps (re-running the scanner is otherwise idempotent on its
     own NOT EXISTS guard).
 
-    Returns JSON `{inserted: N}`. PG-only; SQLite dev returns
-    `inserted=0` with a note so local probes don't 500.
+    Returns JSON `{inserted: N}`.
     """
     if not _cron_authorized():
         abort(401)
     db = get_db()
-    if not database._is_postgres():
-        return jsonify(
-            inserted=0,
-            note='SQLite dev: account_nudges is PG-only',
-        ), 200
     cur = db.execute(
         '''
         INSERT INTO account_nudges (user_id, nudge_type)
@@ -175,11 +166,10 @@ def dismiss(nudge_id):
     """
     db = get_db()
     uid = current_user_id()
-    if database._is_postgres():
-        db.execute(
-            'UPDATE account_nudges SET dismissed_at = NOW() '
-            'WHERE id = ? AND user_id = ?',
-            (nudge_id, uid),
-        )
-        db.commit()
+    db.execute(
+        'UPDATE account_nudges SET dismissed_at = NOW() '
+        'WHERE id = ? AND user_id = ?',
+        (nudge_id, uid),
+    )
+    db.commit()
     return redirect(request.referrer or url_for('dashboard.index'))

@@ -3,7 +3,6 @@ import re
 
 from flask import Blueprint, render_template, request, redirect, url_for, flash
 
-import database
 import mapbox_client
 from chain_registry import GYM_CHAINS, detect_chain
 from database import get_db
@@ -82,8 +81,6 @@ def _disclosure_acked(db, uid: int) -> bool:
     disclosure version (D-59 §8). PG-only — disclosure_acknowledgments is
     a PR1 D-58 PG-only table; SQLite dev returns True so local probes
     don't gate on a missing table."""
-    if not database._is_postgres():
-        return True
     row = db.execute(
         '''SELECT 1 FROM disclosure_acknowledgments
            WHERE user_id = ? AND disclosure_id = ? AND version_id = ?
@@ -97,8 +94,6 @@ def _record_disclosure_ack(db, uid: int) -> None:
     """Insert one disclosure_acknowledgments row. Re-ack writes a new row
     per the comment at init_db.py:1842 (MAX(acknowledged_at) is the
     current-state query, not uniqueness)."""
-    if not database._is_postgres():
-        return
     db.execute(
         '''INSERT INTO disclosure_acknowledgments
            (user_id, disclosure_id, version_id, delivery_method)
@@ -134,8 +129,6 @@ def _is_shared_profile_locale(profile_row) -> bool:
     row missing a mapbox_id (no stable join key for the shared profile)."""
     if not profile_row:
         return False
-    if not database._is_postgres():
-        return False
     if not _row_has(profile_row, 'category') or not _row_has(profile_row, 'mapbox_id'):
         return False
     category = profile_row['category']
@@ -151,7 +144,7 @@ def _is_shared_profile_locale(profile_row) -> bool:
 def _find_gym_profile(db, mapbox_id):
     """Look up the shared gym profile keyed by mapbox_id (D-60 §4.1). Returns
     the row or None. mapbox_id is UNIQUE on gym_profiles."""
-    if not mapbox_id or not database._is_postgres():
+    if not mapbox_id:
         return None
     return db.execute(
         'SELECT * FROM gym_profiles WHERE mapbox_id = ?',
@@ -177,8 +170,6 @@ def _load_overrides(db, uid: int, locale: str):
     """Return ({add_tags}, {remove_tags}) for the athlete's overrides on
     this locale. Empty sets when the table doesn't exist (SQLite) or no
     rows match."""
-    if not database._is_postgres():
-        return set(), set()
     rows = db.execute(
         '''SELECT equipment_tag, action FROM locale_equipment_overrides
            WHERE user_id = ? AND locale = ?''',
@@ -197,8 +188,6 @@ def _effective_equipment(shared_tags: set, adds: set, removes: set) -> set:
 def _save_overrides(db, uid: int, locale: str, shared_tags: set, athlete_tags: set) -> None:
     """Replace this athlete's overrides on this locale with the diff of
     athlete_tags vs. shared_tags. Atomic-per-locale: DELETE-then-INSERT."""
-    if not database._is_postgres():
-        return
     db.execute(
         'DELETE FROM locale_equipment_overrides WHERE user_id = ? AND locale = ?',
         (uid, locale),
@@ -227,8 +216,6 @@ def _create_gym_profile(db, uid: int, profile_row, equipment_tags: set):
     """First-athlete-at-this-mapbox flow (D-60 §4.2). Creates a new
     gym_profiles row with `equipment` as JSON and returns the new id.
     Caller links via locale_profiles.gym_profile_id."""
-    if not database._is_postgres():
-        return None
     equipment_json = json.dumps(sorted(t for t in equipment_tags if t in ALL_TAGS))
     display = profile_row['locale_name'] if _row_has(profile_row, 'locale_name') else None
     category = profile_row['category'] if _row_has(profile_row, 'category') else None
@@ -256,8 +243,6 @@ def _link_gym_profile(db, uid: int, locale: str, gym_profile_id: int) -> None:
 def _touch_gym_profile_confirmation(db, uid: int, gym_profile_id: int) -> None:
     """Bump last_confirmed_by/at + contribution_count on inherit. Tracks
     D-60 §4.3 inherit signal so subsequent athletes see fresh provenance."""
-    if not database._is_postgres():
-        return
     db.execute(
         '''UPDATE gym_profiles
            SET last_confirmed_by = ?, last_confirmed_at = CURRENT_TIMESTAMP,

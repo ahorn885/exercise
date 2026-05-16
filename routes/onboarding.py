@@ -33,9 +33,12 @@ from flask import (
     Blueprint, render_template, request, redirect, url_for, flash, abort,
 )
 
-import database
 from database import get_db
-from athlete import get_athlete_profile, upsert_athlete_profile
+from athlete import (
+    DAY_TOKENS, DAY_LABELS, DOUBLES_FEASIBLE_CHOICES,
+    LONG_SESSION_MAX_HR_CHOICES, get_athlete_profile, upsert_athlete_profile,
+    get_daily_availability_windows, upsert_daily_availability_windows,
+)
 from routes.auth import current_user_id
 from routes.profile import CONNECTION_PROVIDERS, load_connections
 from routes.profile_fields import KNOWN_PROFILE_FIELDS, provider_label
@@ -47,11 +50,13 @@ bp = Blueprint('onboarding', __name__, url_prefix='/onboarding')
 # Where to drop the athlete after Continue / Skip on Step 2. PR7 flips
 # Continue to the new prefill comparison page; Skip still jumps straight
 # to the profile form since an athlete who skipped connecting providers
-# has nothing to compare against. The post-prefill target stays
-# `/profile?tab=athlete` (the v1 §A entry surface).
+# has nothing to compare against. PR12 (D-61) slots `/onboarding/schedule`
+# between Step 3a (prefill) and the §A profile entry — Step 3b owns the
+# per-day-windows §G surface.
 _POST_STEP2_CONTINUE_TARGET = '/onboarding/prefill'
 _POST_STEP2_SKIP_TARGET = '/profile?tab=athlete'
-_POST_STEP3_TARGET = '/profile?tab=athlete'
+_POST_STEP3_TARGET = '/onboarding/schedule'
+_POST_STEP3B_TARGET = '/profile?tab=athlete'
 
 # Back-compat alias for the connect template (passes the value through
 # to the Skip/Continue button copy via Jinja). Pre-PR7 callers expected
@@ -173,12 +178,7 @@ def _resolve_candidates(db, uid, field_def, connected_slugs):
 
 
 def _write_provider_provenance(db, uid, field_name, provider_slug):
-    """UPSERT a `'provider_<slug>'` provenance row. PG-only — the table
-    is in `_PG_MIGRATIONS` only per Integration v4 §2.5. SQLite dev
-    skips silently so apply-from-prefill works locally (the value lands
-    in `athlete_profile`; just no provenance trail)."""
-    if not database._is_postgres():
-        return
+    """UPSERT a `'provider_<slug>'` provenance row."""
     db.execute(
         'INSERT INTO athlete_profile_field_provenance '
         '(user_id, field_name, source) VALUES (?, ?, ?) '
@@ -189,11 +189,8 @@ def _write_provider_provenance(db, uid, field_name, provider_slug):
 
 
 def _write_manual_override_provenance(db, uid, field_name):
-    """UPSERT a `'manual_override'` provenance row. Same PG-only guard
-    as `_write_provider_provenance`. Called by `keep_current` when the
-    athlete explicitly chooses to suppress provider re-prefill."""
-    if not database._is_postgres():
-        return
+    """UPSERT a `'manual_override'` provenance row. Called by `keep_current`
+    when the athlete explicitly chooses to suppress provider re-prefill."""
     db.execute(
         'INSERT INTO athlete_profile_field_provenance '
         '(user_id, field_name, source) VALUES (?, ?, ?) '
@@ -214,9 +211,6 @@ def prefill():
         `source` tag in the UI.
       - Per-connected-provider candidate values via
         `_resolve_candidates`.
-
-    PG-only provenance read mirrors `routes/profile.py:_record_self_report_provenance` —
-    SQLite dev returns no rows since the table is in `_PG_MIGRATIONS` only.
     """
     db = get_db()
     uid = current_user_id()
@@ -226,14 +220,12 @@ def prefill():
     connections = load_connections(db, uid)
     connected_slugs = {c['slug'] for c in connections if c['is_connected']}
 
-    provenance_by_field = {}
-    if database._is_postgres():
-        rows = db.execute(
-            'SELECT field_name, source, last_updated_at '
-            'FROM athlete_profile_field_provenance WHERE user_id = ?',
-            (uid,),
-        ).fetchall()
-        provenance_by_field = {r['field_name']: dict(r) for r in rows}
+    rows = db.execute(
+        'SELECT field_name, source, last_updated_at '
+        'FROM athlete_profile_field_provenance WHERE user_id = ?',
+        (uid,),
+    ).fetchall()
+    provenance_by_field = {r['field_name']: dict(r) for r in rows}
 
     fields = []
     for field_def in KNOWN_PROFILE_FIELDS:
@@ -337,3 +329,241 @@ def keep_current(field):
         'info',
     )
     return redirect(url_for('onboarding.prefill'))
+
+
+# ---------------------------------------------------------------------------
+# Step 3b — Schedule & Availability (D-61 §G)
+# ---------------------------------------------------------------------------
+
+# v5 §G form field shape per `Onboarding_D61_Design_v1.md`. Per-day rows
+# carry primary (and optional secondary) window inputs; three orthogonal
+# capacity toggles capture long-session capacity, doubles feasibility,
+# and preferred rest days. JIT session-card swap UI explicitly deferred
+# to post-Layer-4 per PR11 §5.1 Option A1.
+
+
+def _parse_int(value, *, min_=None, max_=None):
+    """Coerce a form value to an int inside [min_, max_]; None on miss."""
+    if value is None or value == '':
+        return None
+    try:
+        n = int(value)
+    except (TypeError, ValueError):
+        return None
+    if min_ is not None and n < min_:
+        return None
+    if max_ is not None and n > max_:
+        return None
+    return n
+
+
+def _parse_time(value):
+    """Accept 'HH:MM' (24h). Returns string or None. Strict parse — bad
+    values are dropped rather than silently zeroed."""
+    if not value or not isinstance(value, str):
+        return None
+    parts = value.split(':')
+    if len(parts) != 2:
+        return None
+    try:
+        h, m = int(parts[0]), int(parts[1])
+    except ValueError:
+        return None
+    if not (0 <= h <= 23 and 0 <= m <= 59):
+        return None
+    return f'{h:02d}:{m:02d}'
+
+
+def _filter_day_tokens(values):
+    """Return the subset of `values` that are valid day tokens, ordered
+    by DAY_TOKENS (Sunday..Saturday). Empty list when nothing valid."""
+    if not values:
+        return []
+    s = set(values)
+    return [t for t in DAY_TOKENS if t in s]
+
+
+def _parse_schedule_form(form):
+    """Parse the §G form payload into ({windows, profile_updates}, errors).
+
+    `windows` matches `upsert_daily_availability_windows`'s input shape.
+    `profile_updates` is a dict of athlete_profile column updates.
+    `errors` is a list of human-readable strings (rendered as flashes).
+
+    The form is permissive — disabled days drop start/duration silently;
+    invalid times/durations drop their day to disabled with a flash so
+    the athlete can correct on the re-render rather than seeing a 500.
+    """
+    errors = []
+    windows = []
+    enabled_day_tokens = []
+
+    doubles = form.get('doubles_feasible', '').strip().lower()
+    if doubles not in DOUBLES_FEASIBLE_CHOICES:
+        doubles = 'no'
+    doubles_allows_second = doubles in ('regularly', 'occasionally')
+
+    for dow, token in enumerate(DAY_TOKENS):
+        primary_enabled = bool(form.get(f'enabled_{token}'))
+        primary_start = _parse_time(form.get(f'start_{token}'))
+        primary_dur = _parse_int(
+            form.get(f'duration_{token}'), min_=30, max_=360,
+        )
+        if primary_enabled and (primary_start is None or primary_dur is None):
+            errors.append(
+                f'{DAY_LABELS[dow]}: start time and duration (30–360 min) '
+                'are required when the day is enabled. The day was left '
+                'disabled.'
+            )
+            primary_enabled = False
+            primary_start = None
+            primary_dur = None
+
+        secondary = None
+        if doubles_allows_second:
+            second_enabled = bool(form.get(f'enabled2_{token}'))
+            if second_enabled and not primary_enabled:
+                errors.append(
+                    f'{DAY_LABELS[dow]}: a second window requires the '
+                    "primary window enabled. Second window dropped."
+                )
+                second_enabled = False
+            if second_enabled:
+                second_start = _parse_time(form.get(f'start2_{token}'))
+                second_dur = _parse_int(
+                    form.get(f'duration2_{token}'), min_=30, max_=360,
+                )
+                if second_start is None or second_dur is None:
+                    errors.append(
+                        f'{DAY_LABELS[dow]}: second-window start and '
+                        'duration (30–360 min) are required. Second '
+                        'window dropped.'
+                    )
+                else:
+                    secondary = {
+                        'enabled': True,
+                        'window_start': second_start,
+                        'window_duration_min': second_dur,
+                    }
+
+        if primary_enabled:
+            enabled_day_tokens.append(token)
+
+        windows.append({
+            'day_of_week': dow,
+            'day_token': token,
+            'day_label': DAY_LABELS[dow],
+            'primary': {
+                'enabled': primary_enabled,
+                'window_start': primary_start,
+                'window_duration_min': primary_dur,
+            },
+            'secondary': secondary,
+        })
+
+    # Long Session Available — Y/N + day-set (subset of enabled) + max hr.
+    long_available = bool(form.get('long_session_available'))
+    raw_long_days = _filter_day_tokens(form.getlist('long_session_days'))
+    long_days = [t for t in raw_long_days if t in enabled_day_tokens]
+    if long_available and raw_long_days and not long_days:
+        errors.append(
+            'Long-session days must be a subset of your enabled training '
+            'days. Long-session selection cleared.'
+        )
+    long_max_hr = _parse_int(form.get('long_session_max_hr'))
+    if long_max_hr is not None and long_max_hr not in LONG_SESSION_MAX_HR_CHOICES:
+        long_max_hr = None
+    if long_available and (not long_days or long_max_hr is None):
+        errors.append(
+            'Long Session Available was selected but day(s) and max '
+            'duration are required — long-session capacity not saved.'
+        )
+        long_available = False
+        long_days = []
+        long_max_hr = None
+    if not long_available:
+        long_days = []
+        long_max_hr = None
+
+    # Preferred Rest Day(s) — soft signal; no strict-subset enforcement.
+    rest_days = _filter_day_tokens(form.getlist('preferred_rest_days'))
+
+    profile_updates = {
+        'long_session_available': long_available,
+        'long_session_days': ','.join(long_days) if long_days else None,
+        'long_session_max_hr': long_max_hr,
+        'doubles_feasible': doubles,
+        'preferred_rest_days': ','.join(rest_days) if rest_days else None,
+    }
+    return windows, profile_updates, errors
+
+
+def _split_csv_days(value):
+    """Comma-separated day tokens -> list, defensively filtering invalid."""
+    if not value:
+        return []
+    return _filter_day_tokens([t.strip().lower() for t in value.split(',')])
+
+
+@bp.route('/schedule', methods=['GET'])
+def schedule():
+    """Render the v5 §G Schedule & Availability form (Step 3b).
+
+    Reads existing per-day windows + athlete-profile capacity fields and
+    renders the form pre-populated. Athletes returning to the page see
+    their last save; new athletes see seven disabled-day rows.
+    """
+    db = get_db()
+    uid = current_user_id()
+
+    profile = get_athlete_profile(db, uid) or {}
+    days = get_daily_availability_windows(db, uid)
+
+    long_days = _split_csv_days(profile.get('long_session_days'))
+    rest_days = _split_csv_days(profile.get('preferred_rest_days'))
+    doubles = (profile.get('doubles_feasible') or 'no').lower()
+    if doubles not in DOUBLES_FEASIBLE_CHOICES:
+        doubles = 'no'
+
+    return render_template(
+        'onboarding/schedule.html',
+        days=days,
+        doubles_feasible=doubles,
+        doubles_choices=DOUBLES_FEASIBLE_CHOICES,
+        long_session_available=bool(profile.get('long_session_available')),
+        long_session_days=long_days,
+        long_session_max_hr=profile.get('long_session_max_hr'),
+        long_session_max_hr_choices=LONG_SESSION_MAX_HR_CHOICES,
+        preferred_rest_days=rest_days,
+        day_tokens=DAY_TOKENS,
+        day_labels=DAY_LABELS,
+        post_step3b_target=_POST_STEP3B_TARGET,
+    )
+
+
+@bp.route('/schedule', methods=['POST'])
+def schedule_save():
+    """Persist the §G form. Per-day windows replace existing rows for
+    this user; athlete_profile carries the three orthogonal capacity
+    toggles. Errors flash and re-render; partial saves are allowed —
+    any field that parsed cleanly persists.
+    """
+    db = get_db()
+    uid = current_user_id()
+
+    windows, profile_updates, errors = _parse_schedule_form(request.form)
+
+    upsert_daily_availability_windows(db, uid, windows)
+    upsert_athlete_profile(db, uid, **profile_updates)
+    db.commit()
+
+    for msg in errors:
+        flash(msg, 'warning')
+
+    if errors:
+        # Re-render with the just-persisted state so the athlete can fix
+        # the rows that didn't make it through validation.
+        return redirect(url_for('onboarding.schedule'))
+
+    flash('Schedule saved. You can edit per-day windows any time from your profile.', 'success')
+    return redirect(_POST_STEP3B_TARGET)

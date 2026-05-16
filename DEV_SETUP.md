@@ -15,10 +15,11 @@ How to get the app and the Layer 0 ETL running on a fresh machine.
    python -c "import secrets; print(secrets.token_urlsafe(48))"
    # then paste into .env
    ```
-3. Pick a backend:
-   - **SQLite (default)** — leave `DATABASE_URL` unset; the app creates
-     `instance/training.db` on first boot.
-   - **Postgres / Neon** — set `DATABASE_URL` in `.env`.
+3. Set `DATABASE_URL` in `.env` to a Postgres / Neon connection string.
+   The app is Postgres-only (SQLite path retired 2026-05-16, PR13);
+   `get_db()` raises if `DATABASE_URL` is unset. Use a Neon dev branch
+   for local work — the production branch should not be the target of
+   routine local runs.
 4. Run:
    ```
    flask --app app run

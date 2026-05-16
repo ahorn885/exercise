@@ -5,10 +5,9 @@ from flask import Flask, request, redirect, url_for, session, g
 from flask_wtf.csrf import CSRFProtect, CSRFError
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
-from database import init_app, get_db, sqlite_path
+from database import init_app, get_db
 
 app = Flask(__name__, instance_relative_config=True)
-app.config['DATABASE'] = sqlite_path()
 
 # SECRET_KEY is mandatory: Flask session cookies are signed with it, so a
 # predictable value lets anyone forge a session for any user. Refuse to
@@ -49,24 +48,13 @@ app.config['SESSION_COOKIE_SECURE'] = _envbool(
     'SESSION_COOKIE_SECURE', default=bool(os.environ.get('DATABASE_URL'))
 )
 
-if os.environ.get('DATABASE_URL'):
-    # Postgres (production) — auto-migrate schema on every cold start
-    # All statements use IF NOT EXISTS so this is safe to run repeatedly.
-    from init_db import init_postgres
-    try:
-        init_postgres()
-    except Exception as _e:
-        print(f'Warning: DB init skipped: {_e}')
-else:
-    os.makedirs(os.path.dirname(app.config['DATABASE']), exist_ok=True)
-    from init_db import init_sqlite
-    try:
-        init_sqlite()
-    except Exception as _e:
-        # Don't fail module import on init errors — surface them in logs so
-        # the actual route 500 (not a cryptic import-time failure) is what
-        # the operator sees.
-        print(f'Warning: SQLite init failed: {_e}')
+# Postgres — auto-migrate schema on every cold start. All statements use
+# IF NOT EXISTS so this is safe to run repeatedly.
+from init_db import init_postgres
+try:
+    init_postgres()
+except Exception as _e:
+    print(f'Warning: DB init skipped: {_e}')
 
 init_app(app)
 

@@ -4,6 +4,14 @@ How the data layer is shaped, how the app talks to it, and how each table
 participates in real user flows. Pair this with `HANDOFF.md` (which covers
 the broader product state) when onboarding a new session.
 
+> **Note (2026-05-16, PR13):** The app is now Postgres-only (Neon). The
+> Overview + Architecture sections below have been rewritten for the
+> PG-only posture, but several deeper sections still reference the
+> historical SQLite path (e.g., "watch out for these SQLite footguns,"
+> `_SQLITE_MIGRATIONS`, `INSERT OR IGNORE`). Those passages are stale
+> historical reference — ignore for new code. A full rewrite of the
+> deeper sections is owed but not blocking.
+
 ---
 
 ## Contents
@@ -39,74 +47,62 @@ the broader product state) when onboarding a new session.
 
 ## Overview
 
-AIDSTATION is a Flask app with **two interchangeable backends**:
+AIDSTATION is a Flask app on **PostgreSQL (Neon)**. Both production
+(Vercel `aidstation-pro.vercel.app`) and local dev point at Neon — local
+work uses a Neon dev branch via `DATABASE_URL` in `.env`. The SQLite path
+and the TrueNAS Docker deployment were retired 2026-05-16 (PR13).
 
-- **SQLite** for local dev and the TrueNAS Docker deployment. File at
-  `instance/training.db` (mounted as a volume on TrueNAS).
-- **Postgres** for the Vercel production deployment, hosted on Neon. Picked
-  up via `DATABASE_URL`.
+`database.py` exposes a thin compatibility layer kept from the previous
+dual-backend era: it accepts `?` placeholders, translates them to `%s`
+inline, wraps psycopg2's `RealDictCursor` so `row['column']` and `row[0]`
+both work, and surfaces a `lastrowid` shim that reads the first column
+of the next fetched row (so INSERTs that need the new id must include
+`RETURNING id`).
 
-Application code uses one set of SQL for both. A thin compatibility layer
-(`database.py`) translates `?` placeholders to `%s`, wraps psycopg2 cursors
-to look like `sqlite3.Row`, and surfaces the same `lastrowid` semantics on
-both. Almost every table behaves identically across the two backends; the
-handful of cases where they diverge (`NOT NULL` enforcement on `user_id`,
-`SERIAL` vs `AUTOINCREMENT`, `TIMESTAMP` vs `TEXT` for `created_at`) are
-called out per-table below.
-
-Schema is multi-user, retrofitted in five sessions (0–4 in
-`HANDOFF.md`). Every per-user table carries a `user_id` column and every
-read/write path scopes by it. Shared catalogs (exercises, equipment,
-purchase recommendations, training modalities) have no `user_id`.
+Schema is multi-user. Every per-user table carries a `user_id` column;
+every read/write path scopes by it. Shared catalogs (exercises,
+equipment, purchase recommendations, training modalities, locale
+`gym_profiles`) have no `user_id`.
 
 ---
 
 ## Architecture
 
-### Backends and where they live
+### Where the DB lives
 
-| Deployment | Backend | Location | Persistence |
-|------------|---------|----------|-------------|
-| Local dev | SQLite | `instance/training.db` | Persistent on disk |
-| Vercel (prod) | Postgres | Neon (`DATABASE_URL`) | Persistent, managed |
-| Vercel preview without `DATABASE_URL` | SQLite | `/tmp/training.db` | **Ephemeral** — cleared on cold start |
-| TrueNAS Docker | SQLite | `/mnt/storage/exercise/instance/training.db` | Persistent volume |
+| Deployment | Location | Persistence |
+|------------|----------|-------------|
+| Vercel (prod) | Neon (`DATABASE_URL`) | Persistent, managed |
+| Local dev | Neon dev branch (`DATABASE_URL` in `.env`) | Persistent on Neon |
 
-`database.py:_is_postgres()` returns `True` when `DATABASE_URL` is set.
-Without it, SQLite is used. `sqlite_path()` is the single source of truth
-for the SQLite file location and accounts for Vercel's read-only package
-directory.
+`get_db()` raises `RuntimeError` if `DATABASE_URL` is unset — the app
+has no SQLite fallback path.
 
 ### The `database.py` compatibility layer
 
 ```
 Flask request ─▶ get_db() ─▶ stash on flask.g.db
-                  │
-                  ├─ DATABASE_URL set? ─ yes ▶ psycopg2.connect → _PgConn(raw)
-                  │                              └─ wraps execute() to ?-→%s
-                  │                                  and return _CompatCursor
-                  └─ no                          ▶ sqlite3.connect → row_factory=Row
+                  └─ psycopg2.connect(DATABASE_URL) → _PgConn(raw)
+                       └─ wraps execute() to ?→%s
+                           and returns _CompatCursor
 ```
 
-`_PgConn` (Postgres connection wrapper):
-- `execute(sql, params)` — translates `?` → `%s` on the fly. **Don't write
-  raw `%s` placeholders** — they break the SQLite path.
-- Returns `_CompatCursor`, which provides `fetchone()`, `fetchall()`, and
-  `lastrowid` matching `sqlite3.Cursor`.
+`_PgConn`:
+- `execute(sql, params)` — translates `?` → `%s` on the fly. Routes use
+  `?` placeholders; the wrapper does the rewrite so route code reads
+  the same as it did under the historical dual-backend.
+- Returns `_CompatCursor`, which provides `fetchone()`, `fetchall()`,
+  and a `lastrowid` shim.
 
-`_CompatCursor.lastrowid` has one critical wrinkle: psycopg2 doesn't
-populate `lastrowid` on its own. The wrapper does an extra `fetchone()`
-against the cursor and returns the first column of that row. This works
-**only if the INSERT statement included `RETURNING id`**. Every existing
-INSERT that needs the new id reads it back uses `RETURNING id` (this was a
-single-session sweep — see `HANDOFF.md`). New INSERTs must follow the same
-pattern.
+`_CompatCursor.lastrowid` has one wrinkle: psycopg2 doesn't populate
+`lastrowid` natively. The wrapper does an extra `fetchone()` against the
+cursor and returns the first column of that row. This works **only if
+the INSERT statement included `RETURNING id`**. Every existing INSERT
+that reads back the new id uses `RETURNING id`; new INSERTs must follow
+the same pattern.
 
-Row access:
-- SQLite returns `sqlite3.Row` (dict-like by column name, also indexable
-  by integer).
-- Postgres uses `_PgRow` (a dict subclass) which mimics the same dual
-  access. So `row['column']` and `row[0]` both work on both backends.
+Row access: `_PgRow` is a dict subclass that supports `row['column']`
+and `row[0]` interchangeably.
 
 ### Connection lifecycle
 

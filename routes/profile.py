@@ -27,7 +27,6 @@ from athlete import (
     get_athlete_profile, upsert_athlete_profile,
 )
 from routes import provider_auth as pa
-import database
 
 
 bp = Blueprint('profile', __name__, url_prefix='/profile')
@@ -136,8 +135,6 @@ def _record_self_report_provenance(db, uid, field_values):
     dropped (the table's `field_name` column is free-text TEXT today;
     this filter is the enforcement layer until a CHECK constraint ships).
     """
-    if not database._is_postgres():
-        return
     prior_rows = db.execute(
         'SELECT field_name, source '
         'FROM athlete_profile_field_provenance WHERE user_id = ?',
