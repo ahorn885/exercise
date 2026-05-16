@@ -208,28 +208,45 @@ After this handoff was committed (`9055bca`), Andy walked through the policy ite
 | §6.1 Taper bounds (carry-forward from session 2 §6.1) | **Hard 1–4 wk bounds removed.** Taper length is duration-based coaching judgment (race format + §H.2 `estimated_duration_hr` primary drivers; not discipline alone). Synthesizer picks within mode proportion budget. v1 prompt guidance (informational, not enforced): ~1–2 wk sub-marathon; ~2–3 wk marathon / half-IM; 3+ wk expedition AR + multi-day ultras + full-IM. | §6.1 — Taper paragraph rewritten; prior 1/4-wk floor/ceiling deleted. |
 | §8.3 `volume_ramp_aggressive` ACWR threshold (this session §6.1 item 3) | Threshold raised from **≥ 1.15 to ≥ 1.25** so the flag fires only on genuinely aggressive ramps, not on every mid-band Build week. | §8.3 ACWR row. |
 
-### 10.2 Deferred / pending
+### 10.2 Deferred / pending (after second calibration round)
 
-| Item | Status |
-|---|---|
-| §6.4 `shape_override` trigger set completeness (carry-forward from session 2 §6.1) | Deferred to §10 edge-case drafting (session 4). Andy: "defer to science here. what does research and coaching [say]" — surface relevant research framing in session 4 §10 draft + bring options to him before locking. |
-| §8.1 two-kinds split (this session §6.1 item 1) | Pending. Andy hasn't pushed back; if §10/§11 surfaces a need for a validator-emitted third category, that's a small spec amendment. |
-| §8.2 Base-phase flag set completeness (this session §6.1 item 2) | Pending. Easy to add later — taxonomy is closed-set but extensible via spec amendment. |
-| §8.6 cross-phase flag set completeness (this session §6.1 item 4) | Pending. Layer-4.5 joint-coordinator flag intentionally absent in v1; revisit when 4.5 spec is drafted. |
-| §9.5 cache lifetime (this session §6.1 item 5) | Pending. Orchestrator concern; no spec enforcement. |
+After the first calibration round (§10.1 above), Andy walked through the remaining deferred items in chat. Second-round resolutions captured below; spec amended in a follow-on commit.
 
-### 10.3 Handoff §6.1 status (post-calibration)
+| Item | Resolution | Spec edit site |
+|---|---|---|
+| §6.4 `shape_override` trigger set completeness (carry-forward from session 2 §6.1) | **Locked in this pass** (no need to defer to session 4 per Andy). Added 4th trigger: 3A `data_density == 'very_sparse'` + 3B `start_phase != 'Base'` → `start_phase = 'Base'` (keep mode); rationale = ramp-rate prescription needs baseline. Added "Infeasibility cases that do NOT shape_override" sub-table covering schedule-volume / discipline-frequency / skill-acquisition / cumulative-load+injury — these escalate via `Layer4ShapeInfeasibleError` per §3.5 (concrete detection algorithms still land in §10 session 4). Updated row 2 rationale to remove the now-stale "Taper-floor of 1 week" reference (Taper bounds removed in §10.1 round). | §6.4 — 4th row added to triggers table; new constraints paragraph + escalation table appended. |
+| §8.1 two-kinds split (this session §6.1 item 1) | **Locked: leave as two-kinds.** Three-kinds (with validator-emitted as separate category) was the alternative; Andy agreed two-kinds is fine. Revisit only if session-4 §13 test-scenario drafting makes mock-setup messier than it needs to be. | No spec edit. |
+| §8.2 Base-phase flag set completeness (this session §6.1 item 2) | **Locked: two flags added.** `long_slow_distance` (LLM-emitted) marks THE canonical weekly long-duration session per discipline; `recovery_day_after_long` (spec-auto) fires on the next §K-available calendar day after any `long_slow_distance` session. Other candidate flags (aerobic_threshold_marker, cross_training_intro, body_composition_focus) dropped — too granular or out of v1 scope. | §8.2 table — 2 rows appended. |
+| §8.6 cross-phase flag set completeness (this session §6.1 item 4) | **Locked: one flag added.** `recovery_week` (spec-auto) on every periodic deload week per standard periodization. Joint-coordinator flag still intentionally absent (Layer 4.5 territory). Other candidates (travel_day_constraint, equipment_change_pending) dropped as redundant or too rare. | §8.6 table — 1 row appended. |
+| §9.5 cache lifetime (this session §6.1 item 5) | **Locked: leave as-is (no TTL in v1).** Andy asked whether TTL is effectively "forced re-synthesis = auto plan refresh" — answer: no, TTL only forces a cache miss on the NEXT external invocation; it doesn't actively call Layer 4. D-57 (deferred) is the right primitive for scheduled re-eval; cache TTL becomes redundant defense-in-depth once D-57 lands. Skip for v1. | No spec edit. |
 
-The five "items flagged for Andy review post-session-3" in §6.1 above resolve as: item 1 (two-kinds split) pending; item 2 (Base flag set) pending; item 3 (ACWR threshold) ✅ resolved → ≥ 1.25; item 4 (cross-phase flag set) pending; item 5 (cache lifetime) pending.
+### 10.3 Handoff §6.1 status (post-both-calibration-rounds)
 
-The carry-forward set from session 2 §6.1 resolves as: validator tolerances ✅ kept; intensity-distribution ✅ Peak lowered to 70/20/10; open-ended horizon ✅ 12 weeks; Taper bounds ✅ removed (LLM-picked); `shape_override` triggers deferred to §10 with research framing.
+All ten policy items flagged in §6.1 + session-2 carry-forward are now resolved:
+
+**Session-2 carry-forward (5 items):**
+1. §5.4 validator tolerances — ✅ kept as-is
+2. §5.4 intensity-distribution defaults — ✅ Peak lowered to 70/20/10
+3. §6.1 open-ended horizon — ✅ 12 weeks (one mesocycle)
+4. §6.1 Taper bounds — ✅ removed (LLM picks within proportion)
+5. §6.4 `shape_override` trigger set — ✅ 4th trigger added + escalation table added
+
+**Session-3 new items (5 items):**
+6. §8.1 two-kinds split — ✅ kept as two-kinds
+7. §8.2 Base-phase flag set — ✅ `long_slow_distance` + `recovery_day_after_long` added
+8. §8.3 ACWR threshold — ✅ raised to ≥ 1.25
+9. §8.6 cross-phase flag set — ✅ `recovery_week` added
+10. §9.5 cache lifetime — ✅ no TTL in v1; D-57 handles scheduled freshness when it lands
+
+Zero items still pending. Session 4 can focus on §10 + §11 + §13 drafting without policy-default backlog hanging over it.
 
 ### 10.4 Bookkeeping
 
-- Spec commit covering all five edits: pushed alongside this handoff amendment.
-- No new Decision 9+ in the source-decisions block — these are calibration tweaks within already-decided contracts (Decision 4 race-prep + the §5.4/§6.1/§8.3 v1-defaults framework). The "Andy 2026-05-16 session-3 calibration" attributions live inline at each change site.
+- Round-1 spec commit (`4b2f17e`) covered: Peak intensity 70/20/10, 12-week open-ended horizon, Taper bounds removed, ACWR threshold ≥ 1.25.
+- Round-2 spec commit (this commit) covers: §6.4 4th trigger + escalation table, §8.2 `long_slow_distance` + `recovery_day_after_long`, §8.6 `recovery_week`.
+- No new Decision 9+ in the source-decisions block — these are calibration tweaks within already-decided contracts. "Andy 2026-05-16 session-3 calibration" attributions live inline at each change site.
 - No CLAUDE.md / backlog bump (v1-commit deferral rule still standing).
-- File count this calibration micro-pass: 2 (spec + this handoff edit). Session total: 1 substantive spec + 1 handoff + 1 calibration amendment = 3 files. Still under 5-file ceiling.
+- File count for the calibration passes: 2 files (spec + this handoff). Session 3 total: 1 substantive spec + 1 handoff + 2 calibration amendments to same 2 files = 2 distinct files touched across 3 commits. Still under 5-file ceiling.
 
 ---
 

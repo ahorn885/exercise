@@ -929,13 +929,14 @@ Minimizes per-refresh latency: a typical T3 cross-phase refresh hits 2 affected 
 
 ### 6.4 `shape_override` path
 
-When 3B's periodization shape is structurally infeasible given 3A current state — narrow rule set (v1 defaults; revisit only if production cases surface a fourth trigger):
+When 3B's periodization shape is structurally infeasible given 3A current state — narrow rule set (four v1 triggers; revisit only if production cases surface a fifth):
 
 | Trigger | Override | Rationale |
 |---|---|---|
 | 3B `mode == 'standard'` + `time_to_event_weeks < 8` | `mode = 'compressed'` | Standard proportions require ≥8 weeks for meaningful Base; below that, Build dominance is mandatory. |
-| 3B `mode == 'compressed'` + `time_to_event_weeks < 4` | `mode = 'extended'`, `start_phase = 'Peak'` | Sub-4-week compressed is nonsense; Peak-only with Taper-floor of 1 week is the only viable shape. |
+| 3B `mode == 'compressed'` + `time_to_event_weeks < 4` | `mode = 'extended'`, `start_phase = 'Peak'` | Sub-4-week compressed is nonsense; Peak-only with synthesizer-picked Taper (~1 week per v1 prompt guidance per §6.1) is the only viable shape. |
 | 3B `start_phase == 'Base'` + 3A `aerobic_state ∈ {'high', 'very_high'}` + `time_to_event_weeks < 12` | `start_phase = 'Build'` (keep `mode`) | Athlete is already aerobically prepared; Base would waste weeks. |
+| 3A `data_density == 'very_sparse'` + 3B `start_phase != 'Base'` | `start_phase = 'Base'` (keep `mode`) | Starting at Build/Peak without baseline training-load data is unsafe — ramp-rate prescription depends on knowing current capacity. Coaching practice: always re-establish Base when data is missing. Per Andy 2026-05-16 session-3 calibration. |
 
 **Constraints on override:**
 
@@ -943,6 +944,17 @@ When 3B's periodization shape is structurally infeasible given 3A current state 
 - Override produces `ShapeOverride` per §7.8 + `Observation(category='shape_override', elevates_to_hitl=True)`.
 - The override propagates to athlete-facing rationale via 3B `reasoning_text` + `ShapeOverride.rationale_text` (per 3B §6.3 contract).
 - Beyond the rule-set above, no override: Layer 4 synthesizes against the 3B-given shape even when suboptimal. Override is for structural infeasibility only, not preference.
+
+**Infeasibility cases that do NOT shape_override — escalate via `Layer4ShapeInfeasibleError`:**
+
+Per Andy 2026-05-16 session-3 calibration: the following infeasibility classes do NOT auto-shape-override. The athlete is making a real choice (more days, drop a discipline, more weeks) that Layer 4 should not silently rearrange. These escalate via `Layer4ShapeInfeasibleError(...)` per §3.5 and surface either to the next 3D gate or as an inline athlete-facing error per orchestrator routing (concrete routing tracked in §12; §10 in session 4 enumerates detection algorithms).
+
+| Class | Detection (informal; pin in §10) | Why not auto-fix |
+|---|---|---|
+| Schedule-volume infeasibility | §K available-windows total time < 2A `phase_load_bands.low` for the upcoming phase | Athlete needs more available days or longer plan; not Layer 4's call. |
+| Discipline-frequency infeasibility | N disciplines × min-frequency-per-discipline > §K available days/week | Drop a discipline (2A re-eval) or merge as cross-training; not Layer 4's call. |
+| Skill-acquisition infeasibility | Skill-heavy discipline newly in 2A inclusion + insufficient Base weeks for skill consolidation (coaching heuristic; threshold TBD in §10) | Extend Base via upstream re-eval, or defer discipline introduction; needs human coaching input. |
+| Cumulative load + active injury | 2D exclusions remove enough session options that remaining set cannot meet 2A volume × race demand | Extend Build (more weeks under restriction) or escalate to HITL re-evaluation. |
 
 ### 6.5 `start_phase != 'Base'` handling
 
@@ -990,6 +1002,8 @@ The deterministic validator (§5.4) additionally checks: if a spec-auto-emit rul
 | Phase is Base AND session is a cardio session | Every Base-phase cardio session | `aerobic_base_focus` | Spec-auto |
 | Synthesizer prescribes drill/skill work for a 3A `weak_links` entry of skill type (e.g., bike-handling, swim technique) | The session containing the drill block | `technique_emphasis` | LLM-emitted |
 | 3A `data_density` ∈ `{'sparse', 'very_sparse'}` AND week is a Base ramp week | Every cardio session in the ramp week | `volume_ramp_conservative` | Spec-auto |
+| Synthesizer prescribes the canonical weekly long-duration aerobic session for a discipline (the "long run" / "long ride" / "long swim" cornerstone of Base) | The session | `long_slow_distance` | LLM-emitted (per Andy 2026-05-16 session-3 calibration: added so the athlete-facing UI can highlight the weekly cornerstone session and Layer 3A re-eval can read it as "this was the LSD anchor of the week") |
+| The most-recent prior session within the plan carries the `long_slow_distance` flag AND this session is on the next §K-available calendar day | That session | `recovery_day_after_long` | Spec-auto (per Andy 2026-05-16 session-3 calibration: reinforces "this easy day is intentional, not laziness" for the athlete-facing surface) |
 
 ### 8.3 Build-phase per-session flags
 
@@ -1028,6 +1042,7 @@ These flags apply on every Layer 4 invocation that touches Taper-phase sessions 
 |---|---|---|---|
 | `PlanSession.date == event_date` (event-mode plans) | The race-day session | `race_day` | Spec-auto |
 | Synthesizer modulated athlete's picked D-63 intensity per §6.2 of D-63 | The synthesized single session | `intensity_modulated` | LLM-emitted |
+| Week is a periodic deload week per standard periodization (typically every 4th week in standard mode; cycle lengths per mode TBD in prompt body) | All sessions in the deload week | `recovery_week` | Spec-auto (per Andy 2026-05-16 session-3 calibration: canonical periodization concept; absence was a real gap) |
 
 ### 8.7 Call-level observations — auto-emit rules
 
