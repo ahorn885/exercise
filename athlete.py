@@ -33,6 +33,15 @@ PROFILE_FIELDS = (
     'lactate_threshold_hr_bpm',
     'vo2max',
     'cycling_ftp_w',
+    # v5 §G orthogonal capacity toggles (PR12 D-61). Per-day windows live
+    # in the `daily_availability_windows` table; these three flags carry
+    # the per-week capacity that doesn't fit a daily-windows shape. Day-
+    # set fields are comma-separated tokens drawn from DAY_TOKENS below.
+    'long_session_available',
+    'long_session_days',
+    'long_session_max_hr',
+    'doubles_feasible',
+    'preferred_rest_days',
 )
 
 # Subset of PROFILE_FIELDS that v5 §A.2.1 marks as provider-prefill-eligible.
@@ -48,6 +57,148 @@ PREFILL_ELIGIBLE_FIELDS = (
 )
 
 TRAINING_WINDOWS = ('morning', 'midday', 'evening', 'flexible')
+
+# v5 §G day tokens. Sunday=0 mirrors the daily_availability_windows
+# storage convention (matches §7.1 schema comment: 0=Sunday, 6=Saturday).
+DAY_TOKENS = ('sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat')
+DAY_LABELS = ('Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday')
+
+# §G Long Session max-duration options. 8 represents "8+ hr" per D-61
+# decision #1 (the picker enumerates 2 / 3 / 4 / 5 / 6 / 8+).
+LONG_SESSION_MAX_HR_CHOICES = (2, 3, 4, 5, 6, 8)
+
+# §G Doubles Feasible enum. The third value ('no') disables second-window
+# entry in the form; 'occasionally' surfaces second windows but plan-gen
+# treats them as discretionary per D-61 §3.3.
+DOUBLES_FEASIBLE_CHOICES = ('regularly', 'occasionally', 'no')
+
+
+def get_daily_availability_windows(db, user_id):
+    """Return per-day windows for `user_id` as a list of 7 dicts (Sun..Sat).
+
+    Each entry has shape::
+
+        {'day_of_week': 0..6, 'day_token': 'sun'..'sat',
+         'day_label': 'Sunday'..'Saturday',
+         'primary': {'enabled': bool, 'window_start': 'HH:MM'|None,
+                     'window_duration_min': int|None},
+         'secondary': {...same keys...} | None}
+
+    Days with no stored rows fall back to enabled=False everywhere — the
+    form renders them as unchecked rows. `secondary` is None when no
+    second-window row exists (athlete didn't enable doubles for that day).
+
+    Reads from `daily_availability_windows`. PG-only table per
+    `_PG_MIGRATIONS`; on SQLite dev the SELECT returns no rows and every
+    day reads as disabled.
+    """
+    if user_id is None:
+        return [_empty_day(i) for i in range(7)]
+
+    rows = []
+    try:
+        rows = db.execute(
+            'SELECT day_of_week, window_index, enabled, window_start, '
+            'window_duration_min FROM daily_availability_windows '
+            'WHERE user_id = ?',
+            (user_id,),
+        ).fetchall()
+    except Exception:
+        # SQLite dev without the table, or a transient DB hiccup — return
+        # all-disabled rather than crash the onboarding form render.
+        rows = []
+
+    by_day_idx = {(r['day_of_week'], r['window_index']): r for r in rows}
+    out = []
+    for dow in range(7):
+        primary_row = by_day_idx.get((dow, 0))
+        secondary_row = by_day_idx.get((dow, 1))
+        out.append({
+            'day_of_week': dow,
+            'day_token': DAY_TOKENS[dow],
+            'day_label': DAY_LABELS[dow],
+            'primary': _window_dict(primary_row),
+            'secondary': _window_dict(secondary_row) if secondary_row else None,
+        })
+    return out
+
+
+def _empty_day(dow):
+    return {
+        'day_of_week': dow,
+        'day_token': DAY_TOKENS[dow],
+        'day_label': DAY_LABELS[dow],
+        'primary': {'enabled': False, 'window_start': None, 'window_duration_min': None},
+        'secondary': None,
+    }
+
+
+def _window_dict(row):
+    if row is None:
+        return {'enabled': False, 'window_start': None, 'window_duration_min': None}
+    start = row['window_start']
+    # PG returns datetime.time; SQLite returns whatever string came in.
+    # Template renders HH:MM either way.
+    if start is not None and hasattr(start, 'strftime'):
+        start = start.strftime('%H:%M')
+    elif isinstance(start, str) and len(start) >= 5:
+        start = start[:5]
+    return {
+        'enabled': bool(row['enabled']),
+        'window_start': start,
+        'window_duration_min': row['window_duration_min'],
+    }
+
+
+def upsert_daily_availability_windows(db, user_id, windows):
+    """Replace this user's per-day windows with `windows`.
+
+    `windows` is a list of 7 dicts (one per day-of-week, Sun..Sat) shaped
+    like the output of `get_daily_availability_windows`. For each day,
+    the primary row is always present; the secondary row exists only
+    when the day's secondary dict carries `enabled=True`.
+
+    Strategy: DELETE-then-INSERT scoped to user_id. The table's
+    UNIQUE(user_id, day_of_week, window_index) makes upserting per-row
+    workable, but the form submits the full week every time so wipe-
+    then-insert is cleaner and idempotent.
+
+    PG-only — the table is in `_PG_MIGRATIONS` only per Integration v4
+    §2.5. SQLite dev skips silently so the §G form still saves the
+    athlete_profile capacity toggles locally; just no per-day windows.
+
+    Caller is responsible for db.commit().
+    """
+    if user_id is None:
+        raise ValueError('user_id required')
+    if not database._is_postgres():
+        return
+
+    db.execute(
+        'DELETE FROM daily_availability_windows WHERE user_id = ?',
+        (user_id,),
+    )
+    for day in windows:
+        dow = day['day_of_week']
+        for idx, key in ((0, 'primary'), (1, 'secondary')):
+            w = day.get(key)
+            if w is None:
+                continue
+            if idx == 1 and not w.get('enabled'):
+                # Don't materialise disabled secondary rows; absence is
+                # the canonical signal that the athlete didn't enable a
+                # second window for this day.
+                continue
+            enabled = bool(w.get('enabled'))
+            start = w.get('window_start') if enabled else None
+            dur = w.get('window_duration_min') if enabled else None
+            db.execute(
+                'INSERT INTO daily_availability_windows '
+                '(user_id, day_of_week, window_index, enabled, '
+                ' window_start, window_duration_min) '
+                'VALUES (?, ?, ?, ?, ?, ?)',
+                (user_id, dow, idx, enabled, start, dur),
+            )
 
 
 def get_athlete_profile(db, user_id) -> Optional[dict]:

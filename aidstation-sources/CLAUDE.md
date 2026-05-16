@@ -47,13 +47,13 @@ Architecture overview lives in `Control_Spec` (resolve to highest `_vN.md`).
 
 ---
 
-## Current state (as of 2026-05-15)
+## Current state (as of 2026-05-16)
 
-Last shipped session: **Plan-execution design pass — D-63 + D-64** — see `handoffs/V5_Design_D63_D64_Closing_Handoff_v1.md`. Adds two new D-rows: D-63 on-demand workout ("build me a workout right now"; off-plan single-session synthesis with D-60 equipment view + Layer 1 profile + Layer 3A state; storage extends `cardio_log`/`training_log`; T1 hook into D-64) and D-64 plan refresh tiers (T1 next-2-days / T2 next-7-days / T3 next-28-days-or-initial-plan-gen; athlete-initiated button + free-text NL with LLM intent parser routing upstream layer triggers; atomic versioning; soft frequency caps). Both gate implementation on Layer 4 spec landing. Predecessor: PR11 D3b shipped 2026-05-15 closing v5 §J locale work — see `handoffs/V5_Implementation_PR11_Closing_Handoff_v1.md`.
+Last shipped session: **PR12 D-61 §G + onboarding integration** (Option A1) — see `handoffs/V5_Implementation_PR12_Closing_Handoff_v1.md`. Implements the v5 §G per-day-windows form as a new `/onboarding/schedule` step (Step 3b) slotted between `/onboarding/prefill` and `/profile?tab=athlete`. Per-day windows persist to the `daily_availability_windows` table (PG-only); 5 new orthogonal-capacity columns added to `athlete_profile` (Long Session Available + day-set + max hr; Doubles Feasible enum; Preferred Rest Day day-set). JIT session-card swap UI explicitly deferred — gates on Layer 4 spec. D-61 status flipped 🟡 Implementation pending → 🟢 §G + onboarding integration shipped (JIT pending Layer 4). Predecessors: design pass shipping D-63 + D-64 (`V5_Design_D63_D64_Closing_Handoff_v1.md`, 2026-05-15) and PR11 D3b closing v5 §J locale work (`V5_Implementation_PR11_Closing_Handoff_v1.md`, 2026-05-15).
 
 **Authoritative current files** (always resolve by listing directory and viewing the highest `_vN`):
 - Architecture: `Control_Spec_v7.md`
-- Backlog: `Project_Backlog_v24.md`
+- Backlog: `Project_Backlog_v25.md`
 - PR verification status: `PR_Verification_Status.md` (per-PR §5.0 step state — read at session start so prior PRs' "still owed" carry-forward is reconciled against actual on-disk truth instead of treated as monolithically pending)
 - Onboarding data: `Athlete_Onboarding_Data_Spec_v5.md` (consolidates D-58 + D-59 + D-60 + D-61; v4 retained as in-project history per Rule #12)
 - Onboarding design wave inputs: `Onboarding_D58_Design_v1.md`, `Onboarding_D59_Design_v1.md`, `Onboarding_D60_Design_v1.md`, `Onboarding_D61_Design_v1.md`

@@ -33,6 +33,11 @@ SQLITE_SCHEMA = '''
         lactate_threshold_hr_bpm INTEGER,
         vo2max REAL,
         cycling_ftp_w INTEGER,
+        long_session_available INTEGER DEFAULT 0,
+        long_session_days TEXT,
+        long_session_max_hr INTEGER,
+        doubles_feasible TEXT,
+        preferred_rest_days TEXT,
         updated_at TEXT DEFAULT (datetime('now'))
     );
     CREATE TABLE IF NOT EXISTS exercise_inventory (
@@ -352,6 +357,11 @@ PG_SCHEMA = '''
         lactate_threshold_hr_bpm INTEGER,
         vo2max REAL,
         cycling_ftp_w INTEGER,
+        long_session_available BOOLEAN DEFAULT FALSE,
+        long_session_days TEXT,
+        long_session_max_hr SMALLINT,
+        doubles_feasible TEXT,
+        preferred_rest_days TEXT,
         updated_at TIMESTAMP DEFAULT NOW()
     );
     CREATE TABLE IF NOT EXISTS exercise_inventory (
@@ -1160,6 +1170,9 @@ _SQLITE_MIGRATIONS = [
         weekly_hours_target REAL, training_window TEXT, notes TEXT,
         body_weight_kg REAL, hrmax_bpm INTEGER,
         lactate_threshold_hr_bpm INTEGER, vo2max REAL, cycling_ftp_w INTEGER,
+        long_session_available INTEGER DEFAULT 0, long_session_days TEXT,
+        long_session_max_hr INTEGER, doubles_feasible TEXT,
+        preferred_rest_days TEXT,
         updated_at TEXT DEFAULT (datetime('now'))
     )""",
     # Session 5 — recommended-purchases rebuild. Shared catalog +
@@ -1600,6 +1613,9 @@ _PG_MIGRATIONS = [
         weekly_hours_target REAL, training_window TEXT, notes TEXT,
         body_weight_kg REAL, hrmax_bpm INTEGER,
         lactate_threshold_hr_bpm INTEGER, vo2max REAL, cycling_ftp_w INTEGER,
+        long_session_available BOOLEAN DEFAULT FALSE, long_session_days TEXT,
+        long_session_max_hr SMALLINT, doubles_feasible TEXT,
+        preferred_rest_days TEXT,
         updated_at TIMESTAMP DEFAULT NOW()
     )""",
     # Session 5 — recommended-purchases rebuild.
@@ -2001,6 +2017,18 @@ _PG_MIGRATIONS = [
     "ALTER TABLE athlete_profile ADD COLUMN IF NOT EXISTS lactate_threshold_hr_bpm INTEGER",
     "ALTER TABLE athlete_profile ADD COLUMN IF NOT EXISTS vo2max REAL",
     "ALTER TABLE athlete_profile ADD COLUMN IF NOT EXISTS cycling_ftp_w INTEGER",
+    # PR12 (D-61) — §G orthogonal capacity toggles. Per-day windows live in
+    # `daily_availability_windows`; these are the three remaining v5 §G fields
+    # (Long Session Available + Doubles Feasible + Preferred Rest Day) that
+    # capture per-week orthogonal capacity. `long_session_days` and
+    # `preferred_rest_days` are comma-separated day tokens (sun..sat) because
+    # day-set membership is small and the storage shape matches §G form
+    # checkboxes. `long_session_max_hr` is 2/3/4/5/6/8 — 8 represents "8+".
+    "ALTER TABLE athlete_profile ADD COLUMN IF NOT EXISTS long_session_available BOOLEAN DEFAULT FALSE",
+    "ALTER TABLE athlete_profile ADD COLUMN IF NOT EXISTS long_session_days TEXT",
+    "ALTER TABLE athlete_profile ADD COLUMN IF NOT EXISTS long_session_max_hr SMALLINT",
+    "ALTER TABLE athlete_profile ADD COLUMN IF NOT EXISTS doubles_feasible TEXT",
+    "ALTER TABLE athlete_profile ADD COLUMN IF NOT EXISTS preferred_rest_days TEXT",
 ]
 
 _CLOTHING_SEEDS = [
