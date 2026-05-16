@@ -214,7 +214,30 @@ Schema-only PR. No §5.0 distinct verification owed. Tables/columns (`daily_avai
 
 ---
 
-## Aggregate status (2026-05-15)
+## PR18 — locale-CRUD bundle (PR11 follow-on; pending merge)
+
+§5.0 has 12 testable steps. PR18 is on branch `claude/review-handoff-docs-SiQAY`; PR creation + merge + deploy pending.
+
+| # | Step | Status | Last update | Notes |
+|---|------|--------|-------------|-------|
+| 1 | Item A — address caption renders on `/locales` cards under each non-legacy locale name | 🟡 Owed | 2026-05-16 | Walk on Vercel after deploy. Set up: have ≥3 saved Mapbox-anchored locales (ideally 2+ with the same `locale_name` to verify the original UX gap is closed). Expect: each card shows the street address as muted small text below the title; empty/legacy locales render no address line. Confirm via DOM inspection that `<div class="text-muted small fw-normal mt-1">` only appears when `display_addresses[locale]` is non-empty. |
+| 2 | Item A — address caption renders on edit form header for Mapbox-anchored locales | 🟡 Owed | 2026-05-16 | Walk: open `/locales/<chain-slug>/edit`. Expect: address shown as muted small `<p>` under the header. Legacy enum edit screens + manual-entry rows without a `place_payload` show no address (empty placeholder div). |
+| 3 | Item B 🔴 — refresh works on a renamed locale (the actual bug fix) | 🟡 Owed | 2026-05-16 | Set up: save a chain locale, then rename `locale_name` to something Mapbox-unindexable like "Horn's House"; click ⟳ Refresh from Mapbox. Expected old behavior: `MapboxNoResults` flash + edit redirect. Expected new behavior: silent or confirm-path success because `/retrieve/{mapbox_id}` is name-agnostic. Verify in Neon: `place_fetched_at` bumped; `place_payload` JSON refreshed. |
+| 4 | Item B regression — refresh on an un-renamed locale still works | 🟡 Owed | 2026-05-16 | Walk a previously-working refresh path; expect identical UX (silent / confirm dialog as appropriate). Confirms the `retrieve` swap didn't regress the happy path. |
+| 5 | Item C — dup-check on `_save_mapbox_anchored` INSERT path | 🟡 Owed | 2026-05-16 | Walk: from `/locales/new`, search for a place this athlete already has saved; pick it; submit. Expect: warning flash "You already have a locale at this address (X). Edit it instead." + redirect to `/locales/<dup-slug>/edit`. No new row in `locale_profiles`. |
+| 6 | Item C — dup-check on upgrade path | 🟡 Owed | 2026-05-16 | Walk: have a manual-entry row M and a Mapbox-anchored row X with the same Mapbox feature in mind. Try to upgrade M to X's feature; expect the same dup warning + redirect to X's edit screen. Verify M stays `manual_entry=TRUE`, unchanged. |
+| 7 | Item C — dup-filter on `nearby_instances` POST | 🟡 Owed | 2026-05-16 | Walk: trigger the nearby picker on a chain; pick at least one box that's already saved. Expect: "Skipped N already-saved location(s)" info flash; new chain instances added; no duplicate rows in `locale_profiles`. |
+| 8 | Item D — delete a chain locale (shared `gym_profiles` row preserved) | 🟡 Owed | 2026-05-16 | Walk: navigate to a chain-locale edit screen; confirm Delete button visible at bottom; click → browser confirm → POST. Expect: row deleted from `/locales`; flash "Deleted X."; Neon shows `locale_profiles` row gone + cascaded `locale_equipment_overrides` / `locale_toggle_overrides` rows gone; **`gym_profiles` row for that mapbox_id stays** (enterprise data preserved for other athletes). |
+| 9 | Item D — delete a `home_gym` locale (linked `gym_profiles` also deleted if created by this user) | 🟡 Owed | 2026-05-16 | Set up: create a `home_gym`-category locale; if the schema doesn't auto-link a `gym_profiles` row (it shouldn't under current taxonomy), force-link one for the test by setting `gym_profile_id` via SQL. Delete. Expect: `locale_profiles` gone; `gym_profiles` row also gone (privacy: residences never enterprise-shareable). Confirm `created_by_user_id = uid` guard via test where another user is set as creator — that row should survive. |
+| 10 | Item D — delete button hidden on legacy enum edit screens + DELETE route rejects legacy slugs | 🟡 Owed | 2026-05-16 | Walk: open `/locales/home/edit`. Expect: no Delete button. Direct POST to `/locales/home/delete` (curl): expect warning flash "Legacy locale slots cannot be deleted." + redirect to edit. |
+| 11 | outdoor_park reclassification — inherit/override UI renders | 🟡 Owed | 2026-05-16 | Set up: create an outdoor_park-category locale with a `mapbox_id` (e.g., search "Theodore Wirth Park" on `/locales/new`). Open the edit screen. Expect: shared-profile inherit/override UI renders (mode `shared_build` for the first athlete; `shared_inherit` for subsequent). Equipment list is gym-centric — most checkboxes don't apply (known follow-up per handoff §6). Confirm `SHARED_PROFILE_CATEGORIES` count = 8 in code. |
+| 12 | Label tweaks render — `Home (primary residence)` + `Other residence (in-laws / friend / AirBnB)` | 🟡 Owed | 2026-05-16 | Walk: `/locales/new?manual=1`. Confirm category dropdown shows the new labels (enum values `home_gym` / `other_residence` unchanged in DB). |
+
+**Cross-user dup-detection scoping** (would be step 13) is ⚪ N/A at N=1 single-test-athlete state — the dup-check is correctly scoped by `user_id` in code; cross-user verification gates on a second test account.
+
+---
+
+## Aggregate status (2026-05-16, post-PR18 ship)
 
 | PR | ✅ | ⏸ | 🟡 | ⚪ | Total |
 |----|---|---|---|---|-------|
@@ -229,7 +252,8 @@ Schema-only PR. No §5.0 distinct verification owed. Tables/columns (`daily_avai
 | PR9 | 14 | 0 | 0 | 0 | 14 |
 | PR10 | 12 | 0 | 2 | 1 | 15** |
 | PR11 | 10 | 0 | 3 | 1 | 14 |
-| **Total** | **52** | **21** | **14** | **4** | **91** |
+| PR18 | 0 | 0 | 12 | 0 | 12 |
+| **Total** | **52** | **21** | **26** | **4** | **103** |
 
 (PR10 step 5 had a 🔴 BUG mid-walk on 2026-05-15; fixed same session by switching to Mapbox Search Box API forward endpoint (PR #43, merge `dcddeff`). Re-walked + verified: steps 5/6/7 now ✅.)
 
@@ -237,12 +261,13 @@ Schema-only PR. No §5.0 distinct verification owed. Tables/columns (`daily_avai
 
 **PR10 row 5 is 🔴 BUG (Mapbox returns no POIs); 9 done + 2 blocked-on-bug + 2 owed + 1 N/A + 1 bug = 15.
 
-**Headlines (2026-05-16, post-PR11 walk):**
-- **52 done**, **21 blocked on COROS/Polar partner credentials**, **14 doable now**, **4 N/A**.
+**Headlines (2026-05-16, post-PR18 ship):**
+- **52 done**, **21 blocked on COROS/Polar partner credentials**, **26 doable now (14 pre-PR18 + 12 PR18 §5.0 walks)**, **4 N/A**.
 - **PR10 D3a fully functional end-to-end** after the Search Box API migration (PR #43) + result-card badge cleanup.
-- **PR11 D3b walked end-to-end** (10/14 ✅): FK fix shape verified; D-60 first-athlete + inherit/override flows working; §6 manual→Mapbox upgrade working; §7 refresh no-change path working; `MANUAL_CATEGORIES` rendering all 10 D-60 §3 categories; regression sweeps clean on legacy enums + non-shared-profile categories + the broader app surface. 5 follow-up items surfaced during the walk (logged for next PR): (A) address not surfaced on `/locales` / edit views, (B) 🔴 §7 refresh broken for renamed locales (route uses `locale_name` as search query; needs Search Box `/retrieve` with `mapbox_id`), (C) no duplicate-address detection at create, (D) no delete UI, (E) legacy enums should retire (hard-coupled to `routes/coaching.py` + `routes/references.py` — needs distinct refactor PR). UX feedback: "Home gym" / "Other residence" labels could be clearer.
+- **PR11 D3b walked end-to-end** (10/14 ✅); step 6 was blocked on PR18 item B and unblocks once the `/retrieve`-based refresh ships to production. The 5 follow-up items captured during the PR11 walk: items A/B/C/D bundled into PR18 (this PR); item E (retire legacy `LOCALES` enum cards) stays its own PR per the PR11-follow-on handoff §3.5 because of `routes/coaching.py` + `routes/references.py` hard consumers.
+- **PR18 locale-CRUD bundle shipped** — 4 substantive code files (`mapbox_client.py` `retrieve`, `routes/locales.py` multi-edit, `templates/locales/list.html`, `templates/locales/form.html`). 12 testable §5.0 steps owed for the post-merge walk. After the walk, PR11 step 6 should also be re-walkable + flipped ✅.
 - The COROS/Polar credential block is still the dominant blocker — once those land, ~21 steps unblock at once.
-- 14 doable-now steps: PR2 (1) + PR3 (1) + PR4 (1) + PR5 (3) + PR8 (3) + PR10 (2 — step 12 token-missing + step 13 disclosure version bump) + PR11 (3 — step 6 blocked on item B, steps 7+8 low-priority skipped).
+- 14 doable-now steps (pre-PR18): PR2 (1) + PR3 (1) + PR4 (1) + PR5 (3) + PR8 (3) + PR10 (2 — step 12 token-missing + step 13 disclosure version bump) + PR11 (3 — step 6 unblocks post-PR18, steps 7+8 low-priority skipped). Post-PR18 deploy, these become **14 + 12 = 26 doable-now**.
 
 ---
 
