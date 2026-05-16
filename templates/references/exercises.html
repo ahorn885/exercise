@@ -9,13 +9,13 @@
   <div class="col-auto">
     <span class="text-muted small me-1">Available at:</span>
   </div>
-  {% for loc in locales %}
+  {% for c in locales %}
   <div class="col-auto">
     <div class="form-check form-check-inline mb-0">
-      <input class="form-check-input" type="checkbox" name="locale" value="{{ loc }}"
-             id="loc_{{ loc }}" {% if loc in locale_filter %}checked{% endif %}
+      <input class="form-check-input" type="checkbox" name="locale" value="{{ c.slug }}"
+             id="loc_{{ c.slug }}" {% if c.slug in locale_filter %}checked{% endif %}
              data-autosubmit>
-      <label class="form-check-label small" for="loc_{{ loc }}">{{ loc }}</label>
+      <label class="form-check-label small" for="loc_{{ c.slug }}">{{ c.label }}</label>
     </div>
   </div>
   {% endfor %}

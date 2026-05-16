@@ -163,8 +163,8 @@
             <div class="col-md-4">
               <label class="form-label fw-semibold">Current Location</label>
               <select name="locale" class="form-select">
-                {% for loc in locales %}
-                <option value="{{ loc }}" {% if loc == 'home' %}selected{% endif %}>{{ loc | capitalize }}</option>
+                {% for c in locales %}
+                <option value="{{ c.slug }}" {% if c.slug == 'home' %}selected{% endif %}>{{ c.label }}</option>
                 {% endfor %}
               </select>
               <div class="form-text"><a href="{{ url_for('locales.list_profiles') }}">Edit equipment profiles →</a></div>
@@ -294,8 +294,8 @@
       <div class="col-md-2">
         <label class="form-label small mb-1">Location</label>
         <select class="form-select form-select-sm trip-locale">
-          {% for loc in locales %}
-          <option value="{{ loc }}" {% if loc == 'hotel' %}selected{% endif %}>{{ loc | capitalize }}</option>
+          {% for t in trip_locale_types %}
+          <option value="{{ t }}" {% if t == 'hotel' %}selected{% endif %}>{{ t | capitalize }}</option>
           {% endfor %}
         </select>
       </div>
