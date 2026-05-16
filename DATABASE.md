@@ -4,17 +4,16 @@ How the data layer is shaped, how the app talks to it, and how each table
 participates in real user flows. Pair this with `HANDOFF.md` (which covers
 the broader product state) when onboarding a new session.
 
-> **Note (2026-05-16, PR13 + PR14):** The app is now Postgres-only (Neon).
-> The Overview + Architecture sections below were rewritten 2026-05-16
-> for the PG-only posture. Sections from `## Init and seed flow` onward
-> still reference the historical SQLite path (`_SQLITE_MIGRATIONS`,
-> `init_sqlite()`, `INSERT OR IGNORE`, `datetime('now')`, "SQLite
-> footguns," dual-type strategy). **Those passages are stale historical
-> reference and have been flagged inline with `[STALE — SQLite path
-> retired PR13]` markers.** Ignore for new code; the live source of
-> truth is `init_db.py`'s `PG_SCHEMA` + `_PG_MIGRATIONS` list. A full
-> rewrite of the deeper sections is owed but not blocking — captured as
-> a deferred cleanup item in `Project_Backlog_v27.md`.
+> **Note (2026-05-16, PR13 + PR14 + PR17):** The app is Postgres-only
+> (Neon). PR13 stripped the dual-backend SQLite path from the codebase;
+> PR14 added the top-of-file marker + inline `[STALE]` flags on the
+> four biggest historical-SQLite subsections; PR17 (this revision)
+> finished the rewrite — every section now describes the PG path
+> directly. Historical SQLite framing (`_SQLITE_MIGRATIONS`,
+> `init_sqlite()`, `INSERT OR IGNORE`, `datetime('now')`, dual-syntax
+> tables, "Postgres datetime vs SQLite TEXT" footguns) is gone from
+> this file. Live source of truth: `init_db.py`'s `PG_SCHEMA` +
+> `_PG_MIGRATIONS` list.
 >
 > For any "what does the schema actually look like right now?" question,
 > read `init_db.py` directly. For any "why does this column exist?"
@@ -163,55 +162,31 @@ double-query).
 
 ### Migration philosophy
 
-> **[STALE — SQLite path retired PR13 (2026-05-16).]** The
-> dual-`_SQLITE_MIGRATIONS` / `_PG_MIGRATIONS` framing below is
-> historical. Only `_PG_MIGRATIONS` and `PG_SCHEMA` remain in
-> `init_db.py`. The "new columns or tables go in both lists" rule and
-> the "don't write SQLite-only syntax" rule no longer apply — the
-> dual-syntax footguns are gone. Subsection retained as historical
-> reference; live truth is `init_db.py`'s `_PG_MIGRATIONS` list (one
-> list, PG-only).
-
-Two parallel migration lists exist in `init_db.py`:
-
-- `_SQLITE_MIGRATIONS` — list of SQL strings or callables. SQLite-specific
-  syntax allowed (e.g. `INSERT OR IGNORE`, `datetime('now')`).
-- `_PG_MIGRATIONS` — same shape, Postgres-specific. Uses
-  `ALTER TABLE ... ADD COLUMN IF NOT EXISTS`, `DO $$ ... $$` blocks for
-  conditional constraint changes, `ALTER COLUMN ... SET NOT NULL`.
+`_PG_MIGRATIONS` lives in `init_db.py` — a list of SQL strings or
+callables. Postgres-specific syntax throughout: `ALTER TABLE ... ADD
+COLUMN IF NOT EXISTS`, `DO $$ ... $$` blocks for conditional constraint
+changes, `ALTER COLUMN ... SET NOT NULL`, `NOW()`, `ON CONFLICT(...)
+DO NOTHING`, `ON CONFLICT(...) DO UPDATE SET ...`.
 
 **Rules:**
 - Migrations run on **every cold start**. They must be idempotent — every
   `CREATE TABLE` / `ADD COLUMN` / `CREATE INDEX` is `IF NOT EXISTS`.
-- New columns or tables go in **both** lists.
+- New columns or tables go in `_PG_MIGRATIONS`.
 - Postgres runs each statement in its own commit so a single failure
   (e.g. `SET NOT NULL` on a column that still has nulls during bootstrap)
   doesn't roll back prior successful migrations.
-- SQLite supports callable migrations for the table-rebuild patterns it
-  can't do via `ALTER` (used in Session 3 for the `clothing_options` /
+- Callable migrations are available for patterns that can't be expressed
+  as a single SQL string (used historically for `clothing_options` /
   `locale_profiles` PK rebuilds).
-
-**Don't write SQLite-only syntax in route code.** Use:
-- `ON CONFLICT(...) DO NOTHING` instead of `INSERT OR IGNORE`
-- `ON CONFLICT(...) DO UPDATE SET ...` instead of `INSERT OR REPLACE`
-- `CURRENT_TIMESTAMP` instead of `datetime('now')`
-- `NOW()` is Postgres-only — branch on `database._is_postgres()` if you
-  must use it (see `athlete.py:upsert_athlete_profile`).
 
 ### Init and seed flow
 
-> **[STALE — SQLite path retired PR13.]** `init_sqlite()` no longer
-> exists. `app.py` calls `init_postgres()` unconditionally; `get_db()`
-> raises `RuntimeError` if `DATABASE_URL` is unset. The five-phase
-> shape below still describes the PG path accurately if you read it as
-> "PG only."
+`app.py` import time → `init_postgres()`. `get_db()` raises
+`RuntimeError` if `DATABASE_URL` is unset. Five phases:
 
-`app.py` import time → `init_postgres()` (if `DATABASE_URL`) or
-`init_sqlite()`. Each does the same five phases:
-
-1. **Schema** — execute `PG_SCHEMA` / `SQLITE_SCHEMA` (everything wrapped
-   in `IF NOT EXISTS`, so re-running is a no-op).
-2. **Migrations** — run `_PG_MIGRATIONS` / `_SQLITE_MIGRATIONS` in order.
+1. **Schema** — execute `PG_SCHEMA` (everything wrapped in
+   `IF NOT EXISTS`, so re-running is a no-op).
+2. **Migrations** — run `_PG_MIGRATIONS` in order.
 3. **Catalog seeds** — populate `exercise_inventory`, `equipment_items`,
    `exercise_equipment`, `training_modalities`, `training_methods` from
    the Python lists at the top of `init_db.py`. Seeders are
@@ -229,9 +204,9 @@ Two parallel migration lists exist in `init_db.py`:
 ## Multi-user scoping
 
 Every per-user table carries a `user_id INTEGER REFERENCES users(id)`
-column. **Postgres enforces `NOT NULL`** on every per-user `user_id` (set
-in Session 2D); **SQLite allows NULL** because table rebuilds for
-that constraint weren't worth the cost given the runtime defenses below.
+column. **Postgres enforces `NOT NULL`** on every per-user `user_id`
+(set in Session 2D). Runtime defenses are the second line of safety
+(see below).
 
 **Every read scopes by `user_id`.** Every write threads `user_id` from
 `current_user_id()`. Fetch-by-id handlers add `AND user_id = ?` so a
@@ -304,10 +279,10 @@ The auth root. Every per-user row in every other table FKs back here.
   `email` (TEXT UNIQUE — nullable), `password_hash` (TEXT NOT NULL),
   `display_name` (TEXT), `created_at`, `last_login`.
 - Indexes: PK, UNIQUE on `username`, UNIQUE on `email`.
-- Backend differences: `created_at`/`last_login` are `TIMESTAMP` on PG,
-  `TEXT` (ISO 8601) on SQLite. Hydrate via `str(...)` if slicing in
-  templates — see the lesson learned in
-  `templates/locales/list.html`.
+- Types: `created_at`/`last_login` are `TIMESTAMP`. Templates that slice
+  date strings should pass values through `|string` first — Jinja's
+  default Python `datetime` `__str__` produces an ISO 8601 prefix that's
+  safe to slice (`{{ row.created_at|string|truncate(10, end='') }}`).
 - Writes: `routes/auth.py` (register, login last-login bump, password
   reset rehash); `routes/profile.py` (display name + email edit, change
   password); `routes/admin.py` (delete cascade ends with this row).
@@ -339,8 +314,8 @@ includes `ctx['athlete_profile']`).
   `upsert_athlete_profile(db, user_id, **fields)`. `PROFILE_FIELDS`
   allowlist — unknown keys silently dropped, so `request.form` can be
   passed straight through.
-- Backend branch: `upsert_athlete_profile` picks `NOW()` vs
-  `datetime('now')` for `updated_at` based on `database._is_postgres()`.
+- Timestamp: `upsert_athlete_profile` sets `updated_at = NOW()` on every
+  UPDATE.
 - Surfaced on: `/profile` (Athlete tab) and in every coaching API call's
   context block.
 
@@ -505,8 +480,8 @@ Daily body-composition snapshot.
 - Columns: `id`, `user_id`, `date`, `weight_lbs`, `body_fat_pct`,
   `vo2_max`, `resting_hr`, `notes`, `created_at`.
 - Constraint: `UNIQUE (user_id, date)` — one snapshot per day. UPSERT
-  target on Postgres; `INSERT OR REPLACE` on SQLite (branched in
-  `routes/body.py`).
+  target via `INSERT … ON CONFLICT (user_id, date) DO UPDATE SET ...`
+  in `routes/body.py`.
 - Index: `(user_id, date)`, `(date)` legacy.
 - Writes: `routes/body.py`, `routes/natural_log.py` (NLP).
 
@@ -1029,8 +1004,8 @@ inputs short-circuit before the Haiku call.
 ### `athlete.py` — `athlete_profile` UPSERT
 
 `get_athlete_profile(db, user_id)` and `upsert_athlete_profile(db,
-user_id, **fields)` with a `PROFILE_FIELDS` allowlist. Backend-aware
-`updated_at` (uses `NOW()` on PG, `datetime('now')` on SQLite).
+user_id, **fields)` with a `PROFILE_FIELDS` allowlist. `updated_at`
+is set to `NOW()` on every UPDATE.
 
 ### `garmin_connect.py` — OAuth via `garth`
 
@@ -1048,58 +1023,34 @@ parked items in `HANDOFF.md`.
 Every SQL string uses `?` placeholders. The PG adapter rewrites them to
 `%s` on the way out. **Never write raw `%s` placeholders in route
 code** — the `?` → `%s` translation in `database.py` assumes the route
-side is `?`-only; mixed forms in one statement will misparse. (The
-"breaks the SQLite path" framing was true pre-PR13; today the
-requirement is purely about staying inside the compatibility layer's
-contract.)
+side is `?`-only; mixed forms in one statement will misparse.
 
-### Backend-portable upserts
+### UPSERT patterns
 
-> **[STALE — SQLite path retired PR13.]** The dual-syntax table below
-> is historical. Use the PG forms in every route: `ON CONFLICT(...)
-> DO NOTHING`, `ON CONFLICT(...) DO UPDATE SET ...`, `NOW()` or
-> `CURRENT_TIMESTAMP`. The SQLite-only forms (`INSERT OR IGNORE`,
-> `INSERT OR REPLACE`, `datetime('now')`) are gone from the codebase
-> and should not be reintroduced — there is no SQLite path for them
-> to support.
+Use these PG forms in route code:
 
-| Operation | SQLite (≤3.23) | Both (3.24+ / PG) |
-|---|---|---|
-| Insert-or-skip | `INSERT OR IGNORE` | `INSERT … ON CONFLICT(...) DO NOTHING` |
-| Insert-or-replace | `INSERT OR REPLACE` | `INSERT … ON CONFLICT(...) DO UPDATE SET ...` |
-| Current timestamp | `datetime('now')` | `CURRENT_TIMESTAMP` (works on both) |
-| Postgres NOW() | n/a | `NOW()` |
+| Operation | SQL |
+|---|---|
+| Insert-or-skip | `INSERT … ON CONFLICT(...) DO NOTHING` |
+| Insert-or-replace | `INSERT … ON CONFLICT(...) DO UPDATE SET ...` |
+| Current timestamp | `CURRENT_TIMESTAMP` or `NOW()` |
 
-The `INSERT OR IGNORE` and `datetime('now')` forms are **SQLite-only**.
-Using them in route code that hits Postgres causes the statement to
-fail and aborts the whole transaction (psycopg2's
-`InFailedSqlTransaction` then 500s the next write in the same request,
-even if the bad statement was wrapped in `try/except`). Lesson learned
-in PR #2 of the multi-user enable session.
+`INSERT … ON CONFLICT DO NOTHING` is preferred for idempotent inserts
+where a failed row should not abort the transaction — psycopg2's
+`InFailedSqlTransaction` 500s the next write in the same request
+otherwise.
 
 ### `RETURNING id` for new INSERTs
 
 If a code path needs `cur.lastrowid` after an INSERT, the SQL **must
 include `RETURNING id`**. The `_CompatCursor.lastrowid` wrapper does a
-`fetchone()` against the cursor and returns the first column —
-SQLite's native `lastrowid` happily ignores the unread RETURNING row,
-so the same SQL works on both backends.
+`fetchone()` against the cursor and returns the first column — without
+`RETURNING id` there's nothing to fetch and `lastrowid` is `None`.
 
-### Postgres datetime vs SQLite TEXT in templates
+### Datetime columns in templates
 
-> **[STALE — SQLite path retired PR13.]** This footgun was specifically
-> a dual-backend mismatch. Today every column comes back as a
-> `datetime` (PG), so the `|string` wrap is no longer "defensive
-> against SQLite returning TEXT" but a routine `datetime → ISO string`
-> conversion. Subsection retained because the three template sites
-> still need the same `|string` wrap to render the date prefix
-> correctly.
-
-`TIMESTAMP` columns in Postgres come back as Python `datetime` objects;
-the same columns are `TEXT` in SQLite. Templates that slice the date
-prefix (`{{ row.updated_at[:10] }}`) work on SQLite and crash on
-Postgres with `TypeError: 'datetime.datetime' object is not
-subscriptable`. Wrap with `|string`:
+`TIMESTAMP` columns come back as Python `datetime` objects, not strings.
+Templates that slice a date prefix must wrap with `|string` first:
 
 ```jinja
 {{ (row.updated_at|string)[:10] }}
@@ -1122,9 +1073,8 @@ crafted URLs pointing at other users' rows.
 `current_rx`, `body_metrics`, `wellness_log`, `clothing_options`, and
 `locale_profiles` rely on `UNIQUE (user_id, ...)` constraints as
 UPSERT conflict targets. The constraints are added by Session-2D
-migrations on Postgres and table-rebuild callable migrations on
-SQLite. New per-user tables that need the same idempotency story
-should follow the same pattern.
+`_PG_MIGRATIONS` entries. New per-user tables that need the same
+idempotency story should follow the same pattern.
 
 ### Flask session size limit
 
