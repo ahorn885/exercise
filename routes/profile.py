@@ -24,7 +24,10 @@ from routes.auth import (
 )
 from athlete import (
     PROFILE_FIELDS, PREFILL_ELIGIBLE_FIELDS, TRAINING_WINDOWS,
+    DAY_TOKENS, DAY_LABELS, DOUBLES_FEASIBLE_CHOICES,
+    LONG_SESSION_MAX_HR_CHOICES,
     get_athlete_profile, upsert_athlete_profile,
+    get_daily_availability_windows, upsert_daily_availability_windows,
 )
 from routes import provider_auth as pa
 
@@ -164,6 +167,17 @@ def _record_self_report_provenance(db, uid, field_values):
         )
 
 
+def _split_csv_day_tokens(value):
+    """Comma-separated day tokens -> ordered list, defensively filtering
+    invalid entries. Mirrors `routes.onboarding._split_csv_days` so the
+    profile-tab schedule GET path can pre-populate without lazy-importing
+    on every render."""
+    if not value:
+        return []
+    s = {t.strip().lower() for t in value.split(',') if t.strip()}
+    return [t for t in DAY_TOKENS if t in s]
+
+
 def _load_memory(db, user_id):
     """Return the coach-memory rows for the current user with provenance.
 
@@ -238,6 +252,14 @@ def edit():
 
     profile = get_athlete_profile(db, uid) or {}
     memory = _load_memory(db, uid)
+
+    days = get_daily_availability_windows(db, uid)
+    long_days = _split_csv_day_tokens(profile.get('long_session_days'))
+    rest_days = _split_csv_day_tokens(profile.get('preferred_rest_days'))
+    doubles = (profile.get('doubles_feasible') or 'no').lower()
+    if doubles not in DOUBLES_FEASIBLE_CHOICES:
+        doubles = 'no'
+
     user_row = db.execute(
         'SELECT username, display_name, email, last_login FROM users WHERE id=?', (uid,)
     ).fetchone()
@@ -288,10 +310,52 @@ def edit():
         just_connected_slug=just_connected_slug,
         oauth_error_label=oauth_error_label,
         active_tab=request.args.get('tab'),
+        days=days,
+        doubles_feasible=doubles,
+        doubles_choices=DOUBLES_FEASIBLE_CHOICES,
+        long_session_available=bool(profile.get('long_session_available')),
+        long_session_days=long_days,
+        long_session_max_hr=profile.get('long_session_max_hr'),
+        long_session_max_hr_choices=LONG_SESSION_MAX_HR_CHOICES,
+        preferred_rest_days=rest_days,
+        day_tokens=DAY_TOKENS,
+        day_labels=DAY_LABELS,
         # Used by the template to render an "Expired" badge without
         # round-tripping the timestamp through a Jinja-only comparison.
         now_iso=_dt.utcnow().isoformat(timespec='seconds'),
     )
+
+
+@bp.route('/schedule', methods=['POST'])
+def save_schedule():
+    """Persist the v5 §G schedule form when submitted from the
+    `/profile?tab=schedule` surface. Identical write semantics to
+    `onboarding.schedule_save` — per-day windows replace existing rows,
+    athlete_profile carries the three orthogonal capacity toggles —
+    differing only in the redirect target (stays on the profile tab
+    instead of forwarding to the §A profile entry).
+
+    `_parse_schedule_form` is lazy-imported from `routes.onboarding`
+    because `onboarding` already imports from this module (load_connections
+    + CONNECTION_PROVIDERS); the cycle is broken at function-call time.
+    """
+    from routes.onboarding import _parse_schedule_form
+
+    db = get_db()
+    uid = current_user_id()
+
+    windows, profile_updates, errors = _parse_schedule_form(request.form)
+
+    upsert_daily_availability_windows(db, uid, windows)
+    upsert_athlete_profile(db, uid, **profile_updates)
+    db.commit()
+
+    for msg in errors:
+        flash(msg, 'warning')
+    if not errors:
+        flash('Schedule saved.', 'success')
+
+    return redirect(url_for('profile.edit', tab='schedule'))
 
 
 @bp.route('/connections/<provider>/disconnect', methods=['POST'])
