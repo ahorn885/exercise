@@ -4,13 +4,22 @@ How the data layer is shaped, how the app talks to it, and how each table
 participates in real user flows. Pair this with `HANDOFF.md` (which covers
 the broader product state) when onboarding a new session.
 
-> **Note (2026-05-16, PR13):** The app is now Postgres-only (Neon). The
-> Overview + Architecture sections below have been rewritten for the
-> PG-only posture, but several deeper sections still reference the
-> historical SQLite path (e.g., "watch out for these SQLite footguns,"
-> `_SQLITE_MIGRATIONS`, `INSERT OR IGNORE`). Those passages are stale
-> historical reference — ignore for new code. A full rewrite of the
-> deeper sections is owed but not blocking.
+> **Note (2026-05-16, PR13 + PR14):** The app is now Postgres-only (Neon).
+> The Overview + Architecture sections below were rewritten 2026-05-16
+> for the PG-only posture. Sections from `## Init and seed flow` onward
+> still reference the historical SQLite path (`_SQLITE_MIGRATIONS`,
+> `init_sqlite()`, `INSERT OR IGNORE`, `datetime('now')`, "SQLite
+> footguns," dual-type strategy). **Those passages are stale historical
+> reference and have been flagged inline with `[STALE — SQLite path
+> retired PR13]` markers.** Ignore for new code; the live source of
+> truth is `init_db.py`'s `PG_SCHEMA` + `_PG_MIGRATIONS` list. A full
+> rewrite of the deeper sections is owed but not blocking — captured as
+> a deferred cleanup item in `Project_Backlog_v27.md`.
+>
+> For any "what does the schema actually look like right now?" question,
+> read `init_db.py` directly. For any "why does this column exist?"
+> question, search this file for the column name + any feature handoff
+> in `aidstation-sources/handoffs/`.
 
 ---
 
@@ -154,6 +163,15 @@ double-query).
 
 ### Migration philosophy
 
+> **[STALE — SQLite path retired PR13 (2026-05-16).]** The
+> dual-`_SQLITE_MIGRATIONS` / `_PG_MIGRATIONS` framing below is
+> historical. Only `_PG_MIGRATIONS` and `PG_SCHEMA` remain in
+> `init_db.py`. The "new columns or tables go in both lists" rule and
+> the "don't write SQLite-only syntax" rule no longer apply — the
+> dual-syntax footguns are gone. Subsection retained as historical
+> reference; live truth is `init_db.py`'s `_PG_MIGRATIONS` list (one
+> list, PG-only).
+
 Two parallel migration lists exist in `init_db.py`:
 
 - `_SQLITE_MIGRATIONS` — list of SQL strings or callables. SQLite-specific
@@ -181,6 +199,12 @@ Two parallel migration lists exist in `init_db.py`:
   must use it (see `athlete.py:upsert_athlete_profile`).
 
 ### Init and seed flow
+
+> **[STALE — SQLite path retired PR13.]** `init_sqlite()` no longer
+> exists. `app.py` calls `init_postgres()` unconditionally; `get_db()`
+> raises `RuntimeError` if `DATABASE_URL` is unset. The five-phase
+> shape below still describes the PG path accurately if you read it as
+> "PG only."
 
 `app.py` import time → `init_postgres()` (if `DATABASE_URL`) or
 `init_sqlite()`. Each does the same five phases:
@@ -1023,9 +1047,21 @@ parked items in `HANDOFF.md`.
 
 Every SQL string uses `?` placeholders. The PG adapter rewrites them to
 `%s` on the way out. **Never write raw `%s` placeholders in route
-code** — they'll break the SQLite path.
+code** — the `?` → `%s` translation in `database.py` assumes the route
+side is `?`-only; mixed forms in one statement will misparse. (The
+"breaks the SQLite path" framing was true pre-PR13; today the
+requirement is purely about staying inside the compatibility layer's
+contract.)
 
 ### Backend-portable upserts
+
+> **[STALE — SQLite path retired PR13.]** The dual-syntax table below
+> is historical. Use the PG forms in every route: `ON CONFLICT(...)
+> DO NOTHING`, `ON CONFLICT(...) DO UPDATE SET ...`, `NOW()` or
+> `CURRENT_TIMESTAMP`. The SQLite-only forms (`INSERT OR IGNORE`,
+> `INSERT OR REPLACE`, `datetime('now')`) are gone from the codebase
+> and should not be reintroduced — there is no SQLite path for them
+> to support.
 
 | Operation | SQLite (≤3.23) | Both (3.24+ / PG) |
 |---|---|---|
@@ -1050,6 +1086,14 @@ SQLite's native `lastrowid` happily ignores the unread RETURNING row,
 so the same SQL works on both backends.
 
 ### Postgres datetime vs SQLite TEXT in templates
+
+> **[STALE — SQLite path retired PR13.]** This footgun was specifically
+> a dual-backend mismatch. Today every column comes back as a
+> `datetime` (PG), so the `|string` wrap is no longer "defensive
+> against SQLite returning TEXT" but a routine `datetime → ISO string`
+> conversion. Subsection retained because the three template sites
+> still need the same `|string` wrap to render the date prefix
+> correctly.
 
 `TIMESTAMP` columns in Postgres come back as Python `datetime` objects;
 the same columns are `TEXT` in SQLite. Templates that slice the date
