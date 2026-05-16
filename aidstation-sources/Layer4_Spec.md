@@ -1,6 +1,6 @@
 # Layer 4 — Plan Generation (LLM Synthesis + LLM Seam Review)
 
-**Status:** Draft v1, 2026-05-16. Session 2 of an expected 3–5 sessions to land the full 14-section spec. Session 1 covered §1 Purpose, §2 Boundaries, §3 Function signature (four entry points), and §7 Payload schema (including `RaceWeekBrief` + `RacePlan` for multi-day-event support). **Session 2 (this update) covers §4 Input validation, §5 Algorithm, §6 Periodization decomposition + seam-review semantics.** §§8–14 remain stubbed; sessions 3–5 land them. Mid-session refinements per Andy 2026-05-16 chat: added `race_week_brief` entry point (Decision 4), `RacePlan` multi-day schema (Decision 5), Layer 4.5 Joint Session Coordinator forward-pointer (Decision 6), tiered tight/loose horizon held (Decision 7), `session_index_in_day` + `time_of_day` on `PlanSession`. Session 2 lands seam-reviewer authority (Decision 8 — propose-patch / β).
+**Status:** Draft v1, 2026-05-16. Session 3 of an expected 3–5 sessions to land the full 14-section spec. Session 1 covered §§1–3 + §7 Payload schema (including `RaceWeekBrief` + `RacePlan`). Session 2 added §§4–6 + Decision 8 (seam-reviewer authority = β propose-patch). **Session 3 (this update) covers §8 Coaching flag rules and §9 Caching & determinism.** §§10–14 remain stubbed; sessions 4–5 land them. Mid-session refinements per Andy 2026-05-16 chat: added `race_week_brief` entry point (Decision 4), `RacePlan` multi-day schema (Decision 5), Layer 4.5 Joint Session Coordinator forward-pointer (Decision 6), tiered tight/loose horizon held (Decision 7), `session_index_in_day` + `time_of_day` on `PlanSession`. No new source decisions this session — §§8–9 are mechanical fleshing-out of session-1/2 contracts.
 
 **Type:** LLM. Two call patterns, picked per entry point + scope:
 - **Pattern A — per-phase synthesis + LLM seam reviewer.** Used by `llm_layer4_plan_create` and by `llm_layer4_plan_refresh` T3 when the refresh window spans a phase boundary. One LLM synthesizer call per phase (Base → Build → Peak → Taper, skipping per 3B `start_phase`); one LLM seam-reviewer call per adjacent-phase boundary; deterministic validator on top of all of it.
@@ -504,6 +504,7 @@ class Observation:
         'data_hygiene',
         'shape_override',
         'best_effort_plan',
+        'seam_unresolved',               # §6.2 — per-seam iteration cap exhausted or seam patch blocked by retry budget
         'intensity_modulated',           # D-63 §6.2 — synthesizer modulated athlete's picked intensity
         'sport_unavailable_at_locale',   # D-63 §6.3 — error case
         'off_plan_day_note',             # D-63 §6.4 — informational
@@ -953,25 +954,258 @@ When 3B sets `start_phase` to Build/Peak/Taper:
 
 Refresh-path implication: a T3 refresh whose scope predates the original `start_phase`'s start_date (e.g., athlete started at Build; refresh wants to cover dates before the Build start) raises `Layer4InputError('refresh_predates_start_phase')` — Layer 4 does not synthesize phases the athlete was supposed to have completed before plan_create.
 
-## 8. Coaching flag rules — to be drafted in a later session
+## 8. Coaching flag rules
 
-Auto-emit triggers for `notable_observations` + per-session `coaching_flags`. Required observations include `best_effort_plan` (validator hit cap), `shape_override` (Layer 4 overrode 3B), `intensity_modulated` (D-63 synthesizer modulated picked intensity per §6.2 of D-63), `sport_unavailable_at_locale` (D-63 §6.3 error case). Per-session `coaching_flags` like `race_rehearsal` (race-day fueling practice session), `fueling_practice` (2E target surfaced in session_notes), `weak_link_targeted` (strength session prescribes accessory work for a 3A `weak_links` entry), `first_introduction_to_<discipline>` (first session for a discipline newly in 2A inclusion).
+Two distinct surfaces:
 
-**Taper-phase auto-emit rules** (to be detailed in session 2 — committed direction per Andy 2026-05-16 race-prep handling):
+- **`PlanSession.coaching_flags`** — per-session string list per §7.2; consumed by the athlete-facing plan view (rendering chips/badges next to sessions) and by Layer 3A interpretation (driving "what was this session for" rationale on re-eval). Closed set per §§8.2–8.6.
+- **`Layer4Payload.notable_observations`** — call-level `Observation` rows per §7.10; consumed by Layer 3A re-eval (forward-pointer to next call's 3D gate via `elevates_to_hitl`) and by the athlete-facing plan-diff renderer. Closed set per §7.10 `Observation.category` enum + §8.7 trigger table.
 
-| Trigger | Auto-emitted on | Flag |
-|---|---|---|
-| Phase is Taper AND `days_to_event ≤ 14` AND session is a long session | One Taper session per week | `race_rehearsal` (full race-day fueling + pacing + kit practice) |
-| Phase is Taper AND session is a long-or-moderate cardio session | All Taper cardio sessions ≥ 60min | `fueling_practice` (use race-day fueling tier from 2E) |
-| `days_to_event == 7` | One Taper session (typically a light easy day) | `kit_check` (verify equipment per RaceWeekBrief.kit_manifest) |
-| `days_to_event ∈ [3, 5]` AND session is a moderate-or-easy run/ride | One Taper session | `pacing_lock` (rehearse race-day pacing for ≥30 min at race target zone) |
-| `days_to_event ≤ 2` AND session exists | All remaining Taper sessions | `pre_race_taper` (mobility, easy spinning, no novel stimulus) |
+### 8.1 Convention — LLM-emitted vs. spec-auto-emitted
 
-These flags apply on every Layer 4 invocation that touches Taper-phase sessions (`plan_create` covering Taper, `plan_refresh` T2/T3 that includes Taper days, `race_week_brief`). The `race_week_brief` entry point may modify already-existing Taper flags in `prior_plan_session_window` based on the brief's contents (e.g., kit_check date moves if the brief picks a different verification cadence).
+Each flag and observation is one of two kinds:
 
-## 9. Caching & determinism — to be drafted in a later session
+- **LLM-emitted.** The synthesizer prompt instructs the LLM to emit the flag when its coaching reasoning matches the trigger (e.g., "if you prescribe accessory work for a 3A `weak_links` entry, emit `weak_link_targeted`"). The flag travels in the synthesizer's structured output. The orchestrator does NOT add LLM-emitted flags post-hoc.
+- **Spec-auto-emitted.** The orchestrator computes the flag deterministically AFTER synthesis (with full session content + phase context + plan metadata in hand) and adds it to the relevant `coaching_flags` list or `notable_observations`. The synthesizer is NOT instructed to emit these; if it does (echoing visible session metadata), the orchestrator's merge is idempotent.
 
-Cache key per entry point. **Plan create:** `sha256(user_id || layer1_hash || all 5 layer2 hashes || layer3a_hash || layer3b_hash || plan_start_date || etl_version_set_json || model_synthesizer || model_seam_reviewer || str(temperature))`. **Plan refresh:** `sha256(user_id || tier || refresh_scope_start || refresh_scope_end || layer1_hash || layer2_bundle_hash || layer3a_hash || (layer3b_hash or '') || prior_plan_session_window_hash || (parsed_intent_hash or '') || etl_version_set_json || model_synthesizer || (model_seam_reviewer or '') || str(temperature))`. **Single session synthesize:** `sha256(user_id || request_canonical_json || layer1_hash || (layer2c_locale_hash or '') || layer2d_hash || layer3a_hash || etl_version_set_json || model || str(temperature))`. Per-phase cache for Pattern A so a partial re-prompt only re-synthesizes the affected phase + downstream phases that depend on its exit state. Invalidation triggers per Control_Spec §4 partial-update model. Note: `suggestion_id` is NOT in the single-session cache key — same (request, profile, state) should return the same session shape, and the orchestrator handles persisting to a new suggestion_id row.
+The taxonomy below tags every flag with its kind. A flag is never both — duplication would create ambiguity about which side owns correctness.
+
+**Enforcement.** The orchestrator post-synthesis pass:
+
+1. Computes the spec-auto-emitted flag set per the rules in §§8.2–8.6.
+2. Merges into `PlanSession.coaching_flags` (idempotent set-union; preserves LLM-emitted entries on the same session).
+3. Computes spec-auto-emitted `notable_observations` per §8.7; appends to `Layer4Payload.notable_observations`.
+
+The deterministic validator (§5.4) additionally checks: if a spec-auto-emit rule's trigger condition is met AND the orchestrator failed to add the flag, raise `coaching_flag_missing_<flag>` (`blocker`). This is a defensive check against orchestrator regressions; never fires in normal operation.
+
+**Closed-set rule.** The synthesizer may only emit flags from §§8.2–8.6 (LLM-emitted entries). Unknown flag names raise `unknown_coaching_flag_<name>` as a schema-violation per §5.5 (one schema retry; bail on second failure). New flags require a spec amendment.
+
+### 8.2 Base-phase per-session flags
+
+| Trigger | Auto-emitted on | Flag | Kind |
+|---|---|---|---|
+| Discipline newly in 2A `discipline_inclusion` vs. prior plan (or always on `plan_create`) | First session for that discipline in the plan | `first_introduction_to_<discipline>` | Spec-auto |
+| Phase is Base AND session is a cardio session | Every Base-phase cardio session | `aerobic_base_focus` | Spec-auto |
+| Synthesizer prescribes drill/skill work for a 3A `weak_links` entry of skill type (e.g., bike-handling, swim technique) | The session containing the drill block | `technique_emphasis` | LLM-emitted |
+| 3A `data_density` ∈ `{'sparse', 'very_sparse'}` AND week is a Base ramp week | Every cardio session in the ramp week | `volume_ramp_conservative` | Spec-auto |
+
+### 8.3 Build-phase per-session flags
+
+| Trigger | Auto-emitted on | Flag | Kind |
+|---|---|---|---|
+| Synthesizer prescribes strength accessory work for a 3A `weak_links` entry | The strength session | `weak_link_targeted` | LLM-emitted |
+| Synthesizer prescribes an intentional brief overreach week (typically last Build week before deload) | All sessions in the overreach week | `overreach_test` | LLM-emitted |
+| Synthesizer prescribes race-discipline-specific intensity work for the first time in the plan (e.g., race-pace intervals) | The first such session | `discipline_specific_intensity` | LLM-emitted |
+| ACWR forward projection for the week reaches the upper half of the safe band (≥ 1.15) AND is still inside the blocker threshold (≤ 1.4) | Every cardio session in the week | `volume_ramp_aggressive` | Spec-auto |
+
+### 8.4 Peak-phase per-session flags
+
+| Trigger | Auto-emitted on | Flag | Kind |
+|---|---|---|---|
+| Synthesizer prescribes a cardio session at exact race-target pace/power | The session | `race_pace_specific` | LLM-emitted |
+| §H.2 lists a tune-up event date falling inside Peak phase | The session nearest the tune-up date | `tune_up_race` | Spec-auto |
+| Week contains the highest planned weekly volume in the Peak phase | Every session in that week | `peak_volume_marker` | Spec-auto |
+
+### 8.5 Taper-phase per-session flags
+
+Committed direction per Andy 2026-05-16 race-prep handling (Decision 4). Preserved verbatim from session-1 draft; all five entries are **spec-auto-emitted** (computed from `days_to_event` + session shape post-synthesis).
+
+| Trigger | Auto-emitted on | Flag | Kind |
+|---|---|---|---|
+| Phase is Taper AND `days_to_event ≤ 14` AND session is a long session | One Taper session per week | `race_rehearsal` (full race-day fueling + pacing + kit practice) | Spec-auto |
+| Phase is Taper AND session is a long-or-moderate cardio session | All Taper cardio sessions ≥ 60min | `fueling_practice` (use race-day fueling tier from 2E) | Spec-auto |
+| `days_to_event == 7` | One Taper session (typically a light easy day) | `kit_check` (verify equipment per RaceWeekBrief.kit_manifest) | Spec-auto |
+| `days_to_event ∈ [3, 5]` AND session is a moderate-or-easy run/ride | One Taper session | `pacing_lock` (rehearse race-day pacing for ≥30 min at race target zone) | Spec-auto |
+| `days_to_event ≤ 2` AND session exists | All remaining Taper sessions | `pre_race_taper` (mobility, easy spinning, no novel stimulus) | Spec-auto |
+
+These flags apply on every Layer 4 invocation that touches Taper-phase sessions (`plan_create` covering Taper, `plan_refresh` T2/T3 that includes Taper days, `race_week_brief`). The `race_week_brief` entry point may modify already-existing Taper flags in `prior_plan_session_window` based on the brief's contents (e.g., `kit_check` date moves if the brief picks a different verification cadence).
+
+### 8.6 Cross-phase per-session flags
+
+| Trigger | Auto-emitted on | Flag | Kind |
+|---|---|---|---|
+| `PlanSession.date == event_date` (event-mode plans) | The race-day session | `race_day` | Spec-auto |
+| Synthesizer modulated athlete's picked D-63 intensity per §6.2 of D-63 | The synthesized single session | `intensity_modulated` | LLM-emitted |
+
+### 8.7 Call-level observations — auto-emit rules
+
+Maps the `Observation.category` enum per §7.10 to triggers. Unless noted, observations below are **spec-auto-emitted** (computed by the orchestrator from validator output + synthesis metadata + entry-point context); the synthesizer does not directly emit `Observation` rows.
+
+| Category | Trigger | `elevates_to_hitl` | Kind |
+|---|---|---|---|
+| `best_effort_plan` | Any `PhaseSpec.synthesis_metadata.cap_hit == True` in this call OR any cross-phase `RuleFailure` with `severity='blocker'` survives the final validator pass | True | Spec-auto |
+| `shape_override` | §6.4 `shape_override` path activated | True | Spec-auto |
+| `seam_unresolved` | A seam's per-seam iteration cap was exhausted with a non-`approved` final verdict OR a `flagged_major`/`patched` verdict's `re_prompt_*` direction could not be applied because the targeted phase's retry budget was exhausted | True | Spec-auto |
+| `intensity_modulated` | Synthesizer emitted the `intensity_modulated` session flag per §8.6 (D-63 path) | False | Spec-auto (triggered by LLM-emitted session flag) |
+| `sport_unavailable_at_locale` | D-63 §6.3 error case — picked sport not in any of the athlete's locale equipment views | False (error session carries the surface; observation is informational) | Spec-auto |
+| `off_plan_day_note` | D-63 single-session request fell on a day with a planned session AND athlete chose to do the ad-hoc session anyway | False | Spec-auto |
+| `warning` | Seam reviewer `flagged_minor` verdict | False | Spec-auto |
+| `warning` (with `elevates_to_hitl=True`) | Seam reviewer `flagged_major` + `accept_with_observation` direction per §6.2 authority table | True | Spec-auto |
+| `opportunity` | Synthesizer surfaces a coaching opportunity not tied to a rule (e.g., "athlete's MTB volume is climbing; consider adding a technical skill session") | False | **LLM-emitted exception**: synthesizer may emit `Observation(category='opportunity', text=...)` directly; orchestrator passes through. |
+| `data_gap` | Any §4 soft-fail (e.g., §4.5 `kit_manifest_inputs_incomplete`) OR 3A `data_density == 'very_sparse'` AND `plan_create` was invoked | False | Spec-auto |
+| `data_hygiene` | Validator detected an input-data hygiene issue worth surfacing to athlete (e.g., 3A `weak_links` references a discipline not in 2A inclusion — silently dropped during synthesis, but worth a note) | False | Spec-auto |
+
+The `opportunity` category is the single LLM-emitted exception. All other observation categories are orchestrator-computed.
+
+### 8.8 v1 scope caveats
+
+- Flag taxonomy is closed set (§§8.2–8.6) + observation taxonomy is closed set (§7.10 enum + §8.7 triggers). Adding a flag or observation category is a spec amendment requiring stop-and-ask trigger #5.
+- Spec-auto-emit thresholds are v1 defaults: ACWR aggressive-ramp threshold (§8.3 `volume_ramp_aggressive` at ≥ 1.15), the `volume_ramp_conservative` data_density trigger (§8.2), and the Peak-phase `peak_volume_marker` "highest-volume week" definition (§8.4) are evidence-grounded starting points. Tune post-launch with measured flag firing rates.
+- Joint-session coordination flags are out of v1 — Layer 4.5 owns that surface. Layer 4 produces solo sessions only; the joint-coordinator overlay (per §2 + §12 forward-pointer) adds its own flag set in the 4.5 spec.
+
+## 9. Caching & determinism
+
+The cache wraps Layer 4 at the orchestrator boundary — the orchestrator computes the cache key from Layer 4's input set, checks the cache, and invokes Layer 4 only on miss. Layer 4 spec defines the canonical key formula per entry point; orchestrator owns cache backend + storage shape + observability.
+
+### 9.1 Per-entry cache keys
+
+All payload hashes are SHA-256 of canonical-JSON encoding of the typed payload (sorted keys; stable serialization for sets/dates/Decimals). All cache keys are SHA-256 of the concatenation of the listed components separated by `||`.
+
+**`llm_layer4_plan_create`:**
+
+```
+key = sha256(
+    user_id ||
+    layer1_hash ||
+    layer2a_hash || layer2b_hash || layer2c_bundle_hash || layer2d_hash || layer2e_hash ||
+    layer3a_hash || layer3b_hash ||
+    plan_start_date.isoformat() ||
+    etl_version_set_canonical_json ||
+    model_synthesizer || model_seam_reviewer ||
+    str(temperature) ||
+    str(max_tokens_per_phase) || str(capped_retries_per_phase)
+)
+```
+
+`layer2c_bundle_hash` is `sha256` of the canonical-JSON encoding of `dict[locale_id → layer2c_hash]` (sorted by `locale_id`). `plan_version_id` is NOT in the key — it's allocated per call and would prevent any cache reuse; rebinding on hit is handled per §9.4.
+
+**`llm_layer4_plan_refresh`:**
+
+```
+key = sha256(
+    user_id ||
+    tier ||
+    refresh_scope_start.isoformat() || refresh_scope_end.isoformat() ||
+    layer1_hash ||
+    layer2_bundle_canonical_hash ||
+    layer3a_hash ||
+    layer3b_hash ||
+    prior_plan_session_window_hash ||
+    (parsed_intent_hash or '') ||
+    etl_version_set_canonical_json ||
+    model_synthesizer ||
+    (model_seam_reviewer or '') ||
+    str(temperature) ||
+    str(max_tokens) || str(capped_retries)
+)
+```
+
+`layer2_bundle_canonical_hash` is `sha256` of canonical-JSON encoding of `{attr → layer2x_hash or null}` for attr ∈ `{'a', 'b', 'c', 'd', 'e'}` (sorted; null entries preserved so the cache differentiates "T1 cascade with 2A re-run" from "T1 cascade with no Layer 2 re-run"). `prior_plan_session_window_hash` is `sha256` of canonical-JSON encoding of `prior_plan_session_window` (PlanSession list sorted by `(date, session_index_in_day)`); the ±7-day context window per §3.2 IS included in the hashed set. `model_seam_reviewer` only contributes to the key when the call actually routes to Pattern A (T3 cross-phase per §5.1) — otherwise it's `''` to prevent gratuitous cache misses on the model field for Pattern B refreshes.
+
+**`llm_layer4_single_session_synthesize`:**
+
+```
+key = sha256(
+    user_id ||
+    request_canonical_json ||
+    layer1_hash ||
+    (layer2c_locale_hash or '') ||
+    layer2d_hash ||
+    layer3a_hash ||
+    etl_version_set_canonical_json ||
+    model ||
+    str(temperature) ||
+    str(max_tokens) || str(capped_retries)
+)
+```
+
+`request_canonical_json` is canonical-JSON of the `SingleSessionRequest` dataclass per D-63 §4.3. `suggestion_id` is intentionally NOT in the key — the same `(request, athlete profile, current state)` should return the same session shape; the orchestrator persists the cached output to a new `suggestion_id` row on a fresh request (rebinding per §9.4).
+
+**`llm_layer4_race_week_brief`:**
+
+```
+key = sha256(
+    user_id ||
+    layer1_hash ||
+    layer2a_hash || layer2b_hash || layer2c_bundle_hash || layer2d_hash || layer2e_hash ||
+    layer3a_hash || layer3b_hash ||
+    prior_plan_session_window_hash ||
+    etl_version_set_canonical_json ||
+    model ||
+    str(temperature) ||
+    str(max_tokens) || str(capped_retries)
+)
+```
+
+`plan_version_id` excluded for the same reason as `plan_create`. The brief's date-anchored output (`days_to_event`, `kit_check_dates`) re-derives from `layer3b_payload.event_date` and `today()`; today's date is NOT in the key — the orchestrator instead invalidates `race_week_brief` caches at midnight UTC (`days_to_event` shifts daily). See §9.3.
+
+### 9.2 Per-phase cache for Pattern A
+
+Pattern A composes the plan from N sequential per-phase synthesis calls. Each per-phase call has its own derived key:
+
+```
+phase_key[i] = sha256(
+    call_cache_key ||
+    phases[i].phase_name ||
+    str(i) ||
+    (phases[i-1].accepted_output_hash if i > 0 else '')
+)
+```
+
+`phases[i-1].accepted_output_hash` is `sha256` of canonical-JSON of phase `i-1`'s accepted `list[PlanSession]` + the `PhaseSpec.synthesis_metadata` for that phase. This chains per-phase caches: any change in phase `i`'s prior-phase output invalidates phase `i`'s cache.
+
+**Per-phase cache hit semantics.** During Pattern A execution:
+
+1. Check `phase_key[0]`. If hit: skip synthesis, reuse the cached `(sessions, synthesis_metadata)` tuple; compute `phases[0].accepted_output_hash` from the cached output.
+2. Check `phase_key[1]`. If hit: skip; ...
+3. First miss along the chain: re-synthesize THAT phase and all downstream phases (downstream `phase_key[]` values depend on this phase's output and will miss).
+
+**Seam reviews are NOT cached.** Each seam review depends on both adjacent phase outputs + boundary state; re-runs on any phase re-synthesis. Seam-review LLM call cost is small relative to a per-phase synthesizer call; the bookkeeping overhead of a separate per-seam cache isn't justified for v1.
+
+**Practical usefulness.** Per-phase cache is primarily a within-call optimization: when a phase's validator-driven retry succeeds, downstream phases can hit if the orchestrator persists per-phase output between retries within the call. Across-call per-phase reuse (e.g., re-running `plan_create` with byte-identical upstreams) is rare in practice — `plan_create` typically only re-fires after an upstream invalidation, which changes the call cache key and invalidates the whole chain.
+
+**Pattern A T3 cross-phase refresh.** When the scope spans a phase boundary, Pattern A re-synthesizes only the phases overlapping the scope window (§6.3). Phases outside the scope keep their prior-plan sessions; their per-phase cache is irrelevant (no synthesizer call is made for them).
+
+### 9.3 Invalidation triggers
+
+Per Control_Spec §4 partial-update model. Layer 4 cache invalidation is triggered by:
+
+| Upstream change | Invalidates |
+|---|---|
+| `Layer1Payload` changes (any §A–§L field re-derived) | All Layer 4 caches for the affected user (all four entry points). |
+| `Layer2APayload` / `Layer2BPayload` / any `Layer2CPayload` / `Layer2DPayload` / `Layer2EPayload` changes | All Layer 4 caches for the affected user except `single_session_synthesize` keys that don't reference the changed Layer 2 payload (D-63 consumes 2A + 2C-for-locale + 2D only; a 2B/2E change does not invalidate D-63 caches). |
+| `Layer3APayload` changes (3A re-eval) | All Layer 4 caches for the affected user. |
+| `Layer3BPayload` changes (3B re-eval) | `plan_create`, `plan_refresh` T2/T3, `race_week_brief` caches. T1 `plan_refresh` keys still reference `layer3b_hash` per §9.1 (3B is read for the intensity-distribution validator even on T1 per §4.3); 3B re-eval invalidates T1 entries as well. `single_session_synthesize` keys do NOT reference 3B; not invalidated. |
+| `etl_version_set` bumps | Every Layer 4 cache (`etl_version_set` is in every key). |
+| Model version bump (`model_synthesizer`, `model_seam_reviewer`, `model`) | Cache entries whose key references the bumped model. |
+| Tunable change (`temperature`, `max_tokens*`, `capped_retries*`) | Cache entries whose key references the changed tunable. |
+| Date rollover (midnight UTC) | `race_week_brief` caches only — brief output is `days_to_event`-anchored and shifts daily. Plan/refresh/single-session caches survive date rollover; their date anchoring (e.g., `plan_create`'s `plan_start_date`) is in the key explicitly. |
+
+Invalidation is orchestrator-side: when an upstream layer's payload is re-derived (Control_Spec §4), the orchestrator MUST evict downstream Layer 4 cache entries before the next invocation. v1 implementation strategy: orchestrator tracks `(user_id, layer, version)` triples per upstream layer and constructs an eviction predicate over Layer 4 cache entries. Alternative strategies (event-driven eviction queues, TTL with input-version stamping) are orchestrator concerns outside this spec.
+
+### 9.4 Determinism guarantees
+
+- **Same inputs + same model + same temperature → same cache key → cache hit returns byte-identical Layer4Payload** (modulo per-call rebinding below).
+- On cache miss, the synthesizer is NOT deterministic even at `temperature=0.2`. The cache is an output cache, not a derivation guarantee.
+- When the Anthropic API exposes a `seed` parameter for hard determinism, add it to every entry-point cache key (next to `temperature`) and forward to the API call. v1 does not use `seed`.
+- **Per-call rebinding on cache hit.** `plan_version_id` is allocated per call by the orchestrator and is never in the cache key. A cache hit on any Pattern A or B plan/refresh/brief entry returns the cached `Layer4Payload` with `plan_version_id` overwritten to the call's allocated value; all `PlanSession.plan_version_id` fields are likewise overwritten. `suggestion_id` is rebound the same way for `single_session_synthesize`. Rebinding is byte-precise — no other fields change on a cache hit.
+
+### 9.5 Cache scope + lifetime
+
+- **Scope:** keyed by `(cache_key)` — `user_id` is in every cache_key, so cross-user contamination is impossible. Cache MAY be shared across processes/instances (no per-process state); backend is the orchestrator's choice (Redis, Postgres JSONB, in-memory LRU).
+- **Lifetime:** entries live as long as their inputs are valid per §9.3. No time-based TTL in v1 (except the `race_week_brief` midnight-UTC rollover). If a time-based TTL is added by the orchestrator, the spec recommends an upper bound aligned with typical 3A re-eval cadence (~7 days) so stale plans don't persist when no explicit invalidation event fires.
+- **Storage shape:** Layer 4 returns a complete `Layer4Payload` dataclass; orchestrator serializes (canonical-JSON or equivalent) for cache write and deserializes for cache hit. Per-phase cache (§9.2) stores `(list[PlanSession], PhaseSpec.synthesis_metadata)` tuples keyed by `phase_key[i]`.
+
+### 9.6 Observability
+
+The cache layer is observable via orchestrator-side metrics:
+
+- Hit rate per entry point.
+- Per-phase hit rate (Pattern A only).
+- Cache-driven latency savings per entry point (compare cache-hit return time to cache-miss synthesis time).
+- Invalidation event count per upstream-layer change, surfaced for cache-thrash detection.
+
+Layer 4 itself emits NO cache metrics — Layer 4 only runs on miss, so it cannot observe hits. `Layer4Payload.latency_ms_total` is synthesis-only; the orchestrator stamps cache-hit returns with a separate `cache_hit_ms` measurement if end-to-end latency surfacing is wanted.
 
 ## 10. Edge cases — to be drafted in a later session
 
@@ -1010,4 +1244,4 @@ End-of-spec retrospective per the 14-section template. Topics expected to land: 
 
 ---
 
-*End of Layer 4 spec draft v1 (session 2 of expected 3–5). Sections drafted after session 2: §1 Purpose, §2 What 4 does NOT do, §3 Function signature (4 entry points), §4 Input validation, §5 Algorithm (Pattern A + Pattern B + deterministic validator + capped-retry semantics), §6 Periodization decomposition + seam-review semantics (β propose-patch authority per Decision 8), §7 Payload schema. Sections §§8–14 remain stubbed for sessions 3+. Next session: §§8–9 (coaching flag rule set fleshed out + caching/determinism cache-key formulae) recommended as the next chunk; §§10–14 to follow.*
+*End of Layer 4 spec draft v1 (session 3 of expected 3–5). Sections drafted after session 3: §1 Purpose, §2 What 4 does NOT do, §3 Function signature (4 entry points), §4 Input validation, §5 Algorithm (Pattern A + Pattern B + deterministic validator + capped-retry semantics), §6 Periodization decomposition + seam-review semantics (β propose-patch authority per Decision 8), §7 Payload schema (with `seam_unresolved` added to Observation enum this session), §8 Coaching flag rules (per-phase + cross-phase tables + LLM-emitted vs spec-auto-emitted convention + call-level observation triggers), §9 Caching & determinism (per-entry cache keys + per-phase cache for Pattern A + invalidation triggers + determinism guarantees + scope/lifetime + observability). Sections §§10–14 remain stubbed for sessions 4+. Next session: §10 (edge cases) + §11 (performance budget) + §13 (test scenarios) recommended as the next chunk; §12 + §14 + end-of-arc CLAUDE.md/backlog bump in session 5.*
