@@ -1,6 +1,6 @@
 # Layer 4 — Plan Generation (LLM Synthesis + LLM Seam Review)
 
-**Status:** Draft v1, 2026-05-16. Session 1 of an expected 3–5 sessions to land the full 14-section spec. This session covers §1 Purpose, §2 Boundaries, §3 Function signature (four entry points), and §7 Payload schema (including `RaceWeekBrief` + `RacePlan` for multi-day-event support). §§4–6 + §§8–14 are stubbed at the bottom of the file with brief targets so the next session has a clear scope. Mid-session refinements per Andy 2026-05-16 chat: added `race_week_brief` entry point (Decision 4), `RacePlan` multi-day schema (Decision 5), Layer 4.5 Joint Session Coordinator forward-pointer (Decision 6), tiered tight/loose horizon held (Decision 7), `session_index_in_day` + `time_of_day` on `PlanSession`.
+**Status:** Draft v1, 2026-05-16. Session 2 of an expected 3–5 sessions to land the full 14-section spec. Session 1 covered §1 Purpose, §2 Boundaries, §3 Function signature (four entry points), and §7 Payload schema (including `RaceWeekBrief` + `RacePlan` for multi-day-event support). **Session 2 (this update) covers §4 Input validation, §5 Algorithm, §6 Periodization decomposition + seam-review semantics.** §§8–14 remain stubbed; sessions 3–5 land them. Mid-session refinements per Andy 2026-05-16 chat: added `race_week_brief` entry point (Decision 4), `RacePlan` multi-day schema (Decision 5), Layer 4.5 Joint Session Coordinator forward-pointer (Decision 6), tiered tight/loose horizon held (Decision 7), `session_index_in_day` + `time_of_day` on `PlanSession`. Session 2 lands seam-reviewer authority (Decision 8 — propose-patch / β).
 
 **Type:** LLM. Two call patterns, picked per entry point + scope:
 - **Pattern A — per-phase synthesis + LLM seam reviewer.** Used by `llm_layer4_plan_create` and by `llm_layer4_plan_refresh` T3 when the refresh window spans a phase boundary. One LLM synthesizer call per phase (Base → Build → Peak → Taper, skipping per 3B `start_phase`); one LLM seam-reviewer call per adjacent-phase boundary; deterministic validator on top of all of it.
@@ -17,6 +17,7 @@ Both patterns wrap the synthesis in a capped correction loop (cap=2 retries per 
 - **Decision 5 (race-day handling):** Andy picked the `RacePlan` entity for multi-day events. Single-day events: regular `PlanSession` with `coaching_flags=['race_day']` + 2E race-day fueling targets in `session_notes`. Multi-day events (expedition AR, stage races, multi-day ultras): `RacePlan` dataclass with segments + transitions + pacing + fueling + contingencies, produced by `race_week_brief`. v1 schema is intentionally lean (no per-segment athlete-checkin / actuals shape); session 2+ adds depth.
 - **Decision 6 (multi-athlete coordination):** Andy picked the post-pass approach. Each athlete gets a solo Layer 4 run; a new **Layer 4.5 — Joint Session Coordinator** runs after Layer 4 for linked athletes, harmonizing joint-session days (shared shape + per-athlete intensity adjustments). Layer 4.5 is its own spec; Layer 4 §2 + §7 schemas are 4.5-ready (joint coordinator can supersede solo PlanSessions via a future `joint_session_id` FK addition).
 - **Decision 7 (tiered tight/loose plan horizon — HELD):** Andy 2026-05-16: substantive direction held. Plan currently spec'd as uniform-quality across the full 3B periodization shape window. Proposed future direction (tight ~12 weeks + loose remainder + scheduled re-run as tight horizon decays) flagged as substantive open item in §12; revisit after Layer 4 v1 lands and cost/quality measured.
+- **Decision 8 (seam-reviewer authority — propose-patch / β):** Andy 2026-05-16 (session 2): the LLM seam reviewer carries propose-patch authority. On a `flagged_major`/`patched` verdict with a `re_prompt_*` direction, the orchestrator re-prompts the targeted phase with the reviewer's `seam_issues` merged into context as constraint statements, subject to the per-phase retry cap. Rejected alternatives: flag-only (loses reviewer value when seams are real); force-re-prompt (risks unbounded retry chains). Mixed verdict-tier authority was offered but Andy picked clean β rather than the multi-tier blend. See §6.2 for the full authority semantics + bounds.
 
 **Source decisions (predecessor specs):**
 
@@ -664,19 +665,295 @@ The `RacePlan` schema is intentionally lean for v1 — it captures the load-bear
 
 ---
 
-## 4. Input validation (preconditions) — to be drafted in session 2
+## 4. Input validation (preconditions)
 
-Per-entry-point precondition tables. `plan_create` requires all 8 upstream payloads non-None + 3B periodization shape valid (mode ∈ enum; `phase_weeks` populated when `mode == 'custom'`) + `etl_version_set` matches across all payloads. `plan_refresh` requires `tier` matches the scope-window length within tolerance (T1: 2 ± 1 days; T2: 7 ± 2; T3: 28 ± 4); `prior_plan_session_window` non-empty (refreshing an athlete who has no prior plan is a `plan_create` call, not a refresh); `parsed_intent` schema-valid when present. `single_session_synthesize` requires `request.duration_min ∈ [30, 360]`; `request.intensity` in enum; `request.locale_slug` xor `request.quick_equipment` populated; `layer2c_payload_for_locale` non-None iff `request.locale_slug` non-None. Typed `Layer4InputError(code)` raised on failure; orchestrator catches and routes per code.
+All four entry points validate inputs before any LLM call. Failures raise `Layer4InputError(code)`; orchestrator catches and routes per code (see §3.5). Validation is fail-fast — the first failing rule raises; no error accumulation across rules. Implementation lives in `_validate_<entry_point>_inputs()` helpers per entry point, with a shared `_validate_cross_entry_invariants()` helper for §4.1.
 
-## 5. Algorithm — to be drafted in session 2
+### 4.1 Cross-entry rules
 
-Three execution paths. **Pattern A (per-phase + LLM seam reviewer)** for `plan_create` and `plan_refresh` T3 with cross-phase scope: synthesizer prompt per phase invoked sequentially (Base → Build → Peak → Taper, skipping phases per 3B `start_phase`); each phase's accepted output fed as context to the next; LLM seam-reviewer call between each pair of adjacent phases reads both phase outputs + the intended boundary state (volume + intensity exit/entry per 3B + 2A) and either (a) approves, or (b) flags specific seam issues with a proposed patch direction (`re_prompt_prior` / `re_prompt_next` / `accept_with_observation`). Capped re-prompts per phase (counter increments on seam-reviewer-triggered re-prompts AND on deterministic-validator-triggered re-prompts; same cap). **Pattern B (single-call synthesis)** for `plan_refresh` T1/T2, `plan_refresh` T3 within a single phase, and `single_session_synthesize`: one synthesizer call with the tier-specific (or single-session) prompt; deterministic validator only (no LLM seam reviewer — no seams). Capped re-synthesis on validator failure. **Deterministic validator** common to both patterns: 2A volume-band check per week, ACWR forward-projection check across the scope window, rest-day-spacing check per discipline (no two consecutive hard sessions for the same discipline without explicit rationale), intensity-distribution check against the phase intent (Base ≈ 80/15/5 default; per-phase tunable). Validator failures trigger re-prompt at per-phase granularity (Pattern A) or whole-call granularity (Pattern B); persistent failure surfaces best-effort plan + `best_effort_plan` coaching observation.
+Apply to every entry point before per-entry rules run.
 
-## 6. Periodization decomposition + seam-review semantics — to be drafted in session 2
+| Rule | Code | Detail |
+|---|---|---|
+| Single user scope | `mixed_user_scope` | Every payload's `user_id` matches the call-site `user_id`. Implementation-level guard against accidental cross-account contamination. |
+| Consistent `etl_version_set` | `etl_version_set_mismatch` | All upstream payloads were generated under the same `etl_version_set` (one canonical dict; mismatch raises). Orchestrator must re-run prerequisite layers before invoking Layer 4 if versions drift mid-pipeline. |
+| Non-stale payloads | `stale_input_payload` | Each upstream payload's `created_at` is after the most-recent invalidation event for its (user, layer) pair per Control_Spec §4 partial-update model. Implementation calls `is_payload_stale()` per payload. |
+| Locale resolution | `locale_unresolved` | Every locale_id referenced in 2C bundle (and in `prior_plan_session_window` when present) resolves to a `locale_profiles` row scoped to the call-site user. |
+| Active injuries surfaced | `active_injury_data_gap` | `layer3a_payload.current_state.active_injuries` is a list (possibly empty); if non-empty, every entry has `body_part` + `severity` + `restriction_text` populated. Layer 4 reads these to compute the §5.4 injury-exclusion validator rule; missing fields would silently bypass exclusion. |
 
-Layer-4-specific design decisions. (a) Phase boundary identification — given 3B `periodization_shape.mode + start_phase + phase_weeks` and `plan_start_date`, compute per-phase date windows (standard proportions when `mode` ∈ `{standard, compressed, extended}`; `phase_weeks` dict when `mode == 'custom'`). (b) Seam-reviewer authority — flag-only vs. propose-patch vs. force-re-prompt. Recommendation in §6 draft: propose-patch (reviewer outputs verdict + direction; synthesizer-layer code decides whether to act on the direction, with the per-phase retry cap as the budget bound). (c) Single-phase T3 special case — when T3 refresh scope is entirely inside one phase, falls through to Pattern B (single-call); when it spans a boundary, Pattern A activates with the affected phases re-synthesized + the seam between them reviewed; other phases in `prior_plan_session_window` are not re-synthesized. (d) Override path when 3B periodization shape is structurally infeasible — Layer 4 may produce `shape_override` in the payload with explicit rationale; surfaces to athlete via the diff view; per 3B §6.3 the override propagates back to the user-facing rationale alongside 3B's `reasoning_text`. (e) `start_phase != 'Base'` handling — when 3B sets `start_phase` to Build/Peak/Taper (skipping Base for an already-fit athlete), `phase_structure.phases` begins at that phase; seam reviewer still runs at subsequent boundaries.
+### 4.2 `llm_layer4_plan_create`
 
-## 8. Coaching flag rules — to be drafted in session 2
+| Rule | Code | Detail |
+|---|---|---|
+| All upstream payloads non-None | `missing_upstream_payload` | `layer1_payload`, `layer2a_payload` through `layer2e_payload` (all 5), `layer3a_payload`, `layer3b_payload` each non-None. |
+| `plan_start_date` not in past | `plan_start_date_in_past` | `plan_start_date ≥ today` (orchestrator-supplied date; backdating not supported in v1). |
+| `plan_version_id` allocated | `plan_version_id_unset` | Caller pre-allocated a `plan_versions` row with `created_via='plan_create'`; row exists. |
+| 3B periodization shape valid | `periodization_shape_invalid` | `mode ∈ {'standard', 'compressed', 'extended', 'custom'}`; when `mode == 'custom'`, `phase_weeks` is a non-empty dict whose keys are a subset of `{Base, Build, Peak, Taper}` with positive integer values. |
+| 3B `start_phase` valid | `start_phase_invalid` | `start_phase ∈ {'Base', 'Build', 'Peak', 'Taper'}`. |
+| 3B `time_to_event_weeks` consistent | `time_to_event_weeks_mismatch` | When 3B `mode == 'event'`: `time_to_event_weeks > 0` and matches (within ±1 wk) the gap between `plan_start_date` and `event_date`. |
+| 3A state enum-valid | `layer3a_state_missing` | `layer3a_payload.current_state.aerobic_state` + `strength_state` are enum-valid. |
+| 2A discipline weights consistent | `discipline_weights_invalid` | 2A `discipline_weights` sum to ≈1.0 (±0.05 rounding tolerance); every weighted discipline appears in `phase_load_bands`. |
+
+### 4.3 `llm_layer4_plan_refresh`
+
+| Rule | Code | Detail |
+|---|---|---|
+| All upstream payloads non-None | `missing_upstream_payload` | Same set as plan_create. `layer3b_payload` required even on T1/T2 — Pattern B's validator still reads phase intent for the intensity-distribution check. |
+| `tier ∈ enum` | `tier_invalid` | `tier ∈ {'T1', 'T2', 'T3'}`. |
+| `refresh_scope_*` ordered | `refresh_scope_inverted` | `refresh_scope_start ≤ refresh_scope_end`. |
+| Tier matches scope length | `tier_scope_mismatch` | `T1`: scope ≤ 3 days; `T2`: scope ≤ 9 days; `T3`: scope ≤ 32 days. Tolerances absorb day-of-week + leap edges. |
+| `prior_plan_session_window` non-empty | `prior_plan_window_empty` | Refresh requires a prior plan covering the scope window (else orchestrator should route to `plan_create`). |
+| `plan_version_id_parent` exists | `plan_version_id_parent_missing` | FK check against `plan_versions`; the refresh writes a child version that supersedes parts of the parent via per-day pointer flips per §7.11. |
+| `parsed_intent` schema-valid | `parsed_intent_schema_invalid` | When non-None, conforms to D-64 §3 schema (mode, scope_directive, modifications list). |
+| `prior_plan_session_window` sessions resolve | `prior_session_orphaned` | Every session's `plan_version_id` exists; every `locale_id` resolves; every `discipline_id` is in current 2A `discipline_inclusion` (or has been retired with an `intensity_modulated` / `shape_override` rationale on the producing plan — that branch is allowed). |
+
+### 4.4 `llm_layer4_single_session_synthesize`
+
+| Rule | Code | Detail |
+|---|---|---|
+| Upstream payloads non-None | `missing_upstream_payload` | `layer1_payload`, `layer2a_payload`, `layer2d_payload`, `layer3a_payload` non-None. `layer3b_payload` optional — D-63 doesn't require periodization context. |
+| Duration in range | `duration_out_of_range` | `30 ≤ request.duration_min ≤ 360`. |
+| Intensity enum-valid | `intensity_invalid` | `request.intensity ∈ {'easy', 'moderate', 'hard'}`. |
+| Locale XOR quick_equipment | `locale_and_quick_equipment_both_set` / `locale_and_quick_equipment_both_unset` | Exactly one of `request.locale_slug` and `request.quick_equipment` is populated. |
+| 2C payload for picked locale present | `layer2c_payload_for_locale_missing` | When `request.locale_slug` non-None, `layer2c_payload_for_locale` non-None and its `locale_slug` matches the request. |
+| Sport in 2A inclusion | `sport_not_in_inclusion` | `request.sport ∈ layer2a_payload.discipline_inclusion`. |
+| Athlete owns the locale | `locale_not_athlete_scoped` | When `request.locale_slug` specified, the locale's `user_id` matches the call-site user. |
+
+### 4.5 `llm_layer4_race_week_brief`
+
+| Rule | Code | Detail |
+|---|---|---|
+| Event mode required | `race_week_brief_requires_event_mode` | `layer3b_payload.mode == 'event'`. Non-event-mode plans have no target race; brief is nonsensical. (Already declared in §3.4.) |
+| Event within window | `race_week_brief_too_early` | `days_to_event ≤ 14`. Orchestrator should not auto-fire outside this window; athlete-manual fires outside the window raise. |
+| Event date in future | `event_date_in_past` | `event_date > today`. Post-race briefs are not in scope. |
+| 2E payload required | `layer2e_payload_missing` | 2E race-day fueling tier is mandatory for `RaceWeekBrief.race_day_fueling_plan` + `RacePlan.fueling_strategy`. |
+| Event locale resolves | `event_locale_unresolved` | `layer3b_payload.event_locale` resolves to a `locale_profiles` row (athlete-scoped or platform-scoped). |
+| `race_format` set | `race_format_unset` | `layer3b_payload.race_format ∈ {'single_day', 'expedition_ar', 'stage_race', 'multi_day_ultra'}`. |
+| Kit data prerequisites (soft) | `kit_manifest_inputs_incomplete` | When `race_format != 'single_day'`: at least one locale (event_locale or any locale in the route) has `equipment_overrides` populated. **Soft warning** — does not raise; emits a `data_gap` notable_observation; kit_manifest synthesis degrades gracefully with free-text items. |
+
+## 5. Algorithm
+
+Three execution paths. Routing per `(mode, tier, scope)` is deterministic (§5.1). Per-pattern flow lives in §5.2 (Pattern A) and §5.3 (Pattern B). The deterministic validator wrapping both is in §5.4. The shared capped-retry mechanic is in §5.5.
+
+### 5.1 Pattern routing
+
+| Entry point | Tier / scope | Pattern |
+|---|---|---|
+| `plan_create` | — | A |
+| `plan_refresh` | T1 | B |
+| `plan_refresh` | T2 | B |
+| `plan_refresh` | T3, scope inside a single phase | B |
+| `plan_refresh` | T3, scope spans a phase boundary | A |
+| `single_session_synthesize` | — | B |
+| `race_week_brief` | single-day event | B |
+| `race_week_brief` | multi-day event | B |
+
+Pattern A is effectively `N × Pattern B` calls + seam reviews + a final cross-phase validator pass; the distinguishing feature is per-phase decomposition with LLM seam review between adjacent phases.
+
+`race_week_brief` is Pattern B in v1 even for multi-day events: the brief covers the Taper window only (≤ 14 days = ≤ 1 phase). Pattern A's per-phase machinery is unnecessary for a single phase.
+
+### 5.2 Pattern A — per-phase synthesis + LLM seam review
+
+Used by `plan_create` and by `plan_refresh` T3 with cross-phase scope.
+
+**Algorithm:**
+
+1. **Compute phase structure.** Call `phase_structure_from_3b(layer3b_payload, plan_start_date)` (§6.1). Output: ordered list of `PhaseSpec` starting from 3B `start_phase`. Phases earlier than `start_phase` are not in the list.
+2. **Determine phases to synthesize.**
+   - `plan_create`: every phase in `phase_structure.phases`.
+   - `plan_refresh` T3 cross-phase: the subset whose date window overlaps `[refresh_scope_start, refresh_scope_end]`. Phases outside the scope keep their prior-plan sessions and serve as boundary context.
+3. **Per-phase synthesis loop, sequential, in order.** For each phase `p` to synthesize:
+   1. Build context: 3A + 3B + all five 2x payloads + 1 + prior phase's accepted output (when `p` is not the first synthesized phase) + intended exit state of the prior phase + intended entry state of `p` (volume + intensity per `PhaseSpec.intended_*`) + any seam-driven `seam_issues` constraint deltas merged in (§6.2 propose-patch path).
+   2. Call synthesizer LLM (`model_synthesizer`, `temperature`) with the per-phase prompt. (Prompt body deferred per stop-and-ask trigger #2.)
+   3. Parse structured output into `list[PlanSession]` for `p` + per-phase `synthesis_metadata`.
+   4. Run deterministic validator (§5.4) scoped to phase `p`.
+   5. If validator fails: capped retry per §5.5 within `p`. Each retry re-prompts with the prior pass's `RuleFailure` list merged into context as constraint statements.
+   6. On accepted (or cap-hit best-effort): append `p`'s sessions to the cumulative plan; record `PhaseSpec.synthesis_metadata` with `retries_used` + `cap_hit`.
+4. **Seam review loop, after per-phase synthesis completes.** For each adjacent phase pair `(p_i, p_{i+1})` in `phases_synthesized`:
+   1. Call LLM seam reviewer (`model_seam_reviewer`, lower `temperature`) with: both phase outputs + intended boundary state (`p_i` exit volume/intensity per 2A `phase_load_bands`; `p_{i+1}` intended entry).
+   2. Reviewer emits a `SeamReview` row per §7.7: `reviewer_verdict ∈ {approved, flagged_minor, flagged_major, patched}`; on `flagged_major`/`patched`, emits `seam_issues` (free-text constraint statements) + `proposed_patch_direction ∈ {re_prompt_prior, re_prompt_next, accept_with_observation}`.
+   3. Apply per §6.2 authority semantics (β propose-patch). Summary: `approved` / `flagged_minor` are record-only; `flagged_major` / `patched` with a `re_prompt_*` direction trigger one re-synthesis of the targeted phase iff that phase's retry budget per §5.5 is not exhausted.
+   4. After a patch is applied: re-run §5.4 validator on the re-synthesized phase, then re-run THIS seam review exactly once. Per-seam total iterations capped at 2 (initial + 1 patched-re-review). If the second iteration still flags: accept the patched version + emit a `seam_unresolved` notable_observation (severity `warning`).
+5. **Final validator pass** over the union of all sessions across all synthesized phases + carried-over prior-plan sessions for non-synthesized phases. Catches cross-phase rules (ACWR forward projection across the full scope window). Failures here cannot be retried by re-prompting individual phases (the rule failures may span phases); they surface as `RuleFailure` rows; any `blocker`-severity cross-phase failure elevates to a `best_effort_plan` notable_observation.
+6. **Compose `Layer4Payload`** with `pattern='A'`, `phase_structure` populated, `seam_reviews` populated (one entry per adjacent pair reviewed; empty list when only one phase was synthesized), `validator_results` non-empty (last entry has `accepted=True`), `notable_observations` populated, `sessions` populated.
+
+**Concurrency.** Per-phase synthesis is sequential by design — each phase consumes the prior phase's exit state. Seam reviews COULD parallelize across non-overlapping pairs (with N synthesized phases, seams `0..N-2` are independent in their LLM-call inputs). v1 implementation is sequential for simplicity; parallelism is a §11 performance-budget optimization to revisit post-launch.
+
+**Latency expectation.** N synthesized phases × per-phase LLM ~5–8s + (N-1) seam reviews × ~3–5s + deterministic validator (~100ms) + retry headroom. For Andy's `plan_create` case (4 phases, 3 seams): p50 ~25s, p95 ~60s. Per Andy 2026-05-16: accepted ("plan-gen is being taken seriously").
+
+### 5.3 Pattern B — single-call synthesis + deterministic validator
+
+Used by `plan_refresh` T1/T2, `plan_refresh` T3 intra-phase, `single_session_synthesize`, `race_week_brief`.
+
+**Algorithm:**
+
+1. **Build context per entry point.** Mode/tier-specific prompt body + relevant payloads:
+   - `plan_refresh` T1: 3A + 2A/2D + 1 + `prior_plan_session_window` + `parsed_intent` (when present).
+   - `plan_refresh` T2: above + 2B/2C/2E.
+   - `plan_refresh` T3 intra-phase: above + 3B current periodization shape (read but not decomposed).
+   - `single_session_synthesize`: 3A + 2A/2D + 1 + `request` payload + `layer2c_payload_for_locale` (when locale-specified).
+   - `race_week_brief`: 3A + 3B + all five 2x payloads + 1 + Taper-phase sessions from `prior_plan_session_window` + event metadata (`event_date`, `event_locale`, `race_format`).
+2. **Single LLM call** (`model_synthesizer`, `temperature`) with the mode-specific prompt.
+3. **Parse structured output.** Shape varies by mode:
+   - Refresh: `list[PlanSession]` covering `[refresh_scope_start, refresh_scope_end]`.
+   - Single-session: exactly one `PlanSession` with `is_ad_hoc=True`.
+   - Race-week-brief: modified Taper-phase sessions (PlanSession overrides) + `RaceWeekBrief` + (multi-day only) `RacePlan`.
+4. **Deterministic validator** (§5.4) on the output. Scope varies:
+   - Refresh: validate the refreshed sessions against the intended phase intent (validator reads 3B periodization shape even on Pattern B); cross-validate continuity with non-refreshed prior-plan sessions adjacent to the scope window.
+   - Single-session: minimal validation — duration, intensity, locale equipment availability, injury exclusions; no weekly-volume or ACWR checks (one ad-hoc session doesn't carry periodization context).
+   - Race-week-brief: validate Taper-session overrides against Taper phase intent; validate `RaceWeekBrief.kit_manifest` items exist in layer0 equipment registry (or are flagged free-text); validate `RacePlan.segments` chronological ordering when multi-day; validate fueling-strategy macro ranges against 2E tier.
+5. **Capped retry** per §5.5 on validator failure. Re-prompt with `RuleFailure` context merged in.
+6. **Compose `Layer4Payload`** with `pattern='B'`, `phase_structure=None`, `seam_reviews=None`, mode-specific fields populated (`suggestion_id` for single-session; `race_week_brief` + `race_plan` for race-week-brief).
+
+**Latency expectation.** T1/T2 ~4–8s; T3 intra-phase ~6–10s; single-session ~3–6s; race-week-brief ~8–15s (larger output budget, more context).
+
+### 5.4 Deterministic validator
+
+Pure-function rule set; no LLM. Runs after every synthesis call in both patterns; runs once more as a final pass over the cumulative plan in Pattern A step 5.
+
+**Rule set:**
+
+| Rule | Code prefix | Scope | Detail |
+|---|---|---|---|
+| Weekly volume in 2A band | `volume_band_*` | (week, discipline, phase) | Per-(week, discipline) total volume (hours or km per 2A measure) inside `phase_load_bands[discipline][phase].(low, high)`. Severity: `blocker` if outside ±15%; `warning` if outside ±5%. |
+| ACWR forward projection | `acwr_*` | Cross-window | Acute-to-chronic workload ratio projected across the scope window stays inside 0.8–1.3 (per-phase tunable; Base/Build tighter, Peak slightly wider, Taper anchored low). `blocker` outside 0.7–1.4; `warning` outside 0.8–1.3. |
+| Rest-day spacing | `rest_spacing_*` | Per discipline per (date, date+1) | No two consecutive hard sessions for the same discipline without `coaching_flags` containing an explicit rationale (`overreach_test`, `race_rehearsal`). |
+| Intensity distribution match | `intensity_dist_*` | Per phase | Per-phase total hours by zone vs. intended distribution. **v1 defaults** (per-phase tunable; flagged in §12): Base ≈ 80/15/5 (Z1-Z2/Z3/Z4-Z5); Build ≈ 70/20/10; Peak ≈ 60/25/15; Taper ≈ 75/15/10. Tolerance ±10pp per zone. |
+| Two-sessions-per-day rules | `two_per_day_*` | Per date | Per §7.12: max 2 sessions per date; no strength+strength same day; no two `intensity_summary=='hard'` same day; at least one of two must be `kind=='cardio'`. |
+| Equipment availability | `equipment_unavailable_*` | Per session | Every prescribed exercise / cardio sport-equipment requirement resolves in the picked locale's effective equipment view (per 2C resolution tiers). Tier-3 proxy substitution is allowed; raw unavailable is a blocker. |
+| Injury exclusion | `injury_violation_*` | Per session | No exercise hits a body part in 3A `active_injuries` with `restriction_text` indicating exclusion. Wrist-extension-loaded check is the v1 motivating example. |
+| Schedule availability | `schedule_violation_*` | Per date | Sessions per date fit §K available-days + per-day window count; sessions for a date with `available=False` raise unless explicitly flagged `athlete_self_scheduled` (D-63 path). |
+| Discipline inclusion | `discipline_excluded_*` | Per session | `discipline_id` is in 2A `discipline_inclusion`. Catches stale prior-plan sessions referencing a retired discipline. |
+| Sport-locale compatibility | `sport_locale_incompatible_*` | Per session | `discipline_id` is supported at `locale_id` per 2C equipment view (e.g., no MTB session at a hotel gym locale). |
+
+Each failed rule emits a `RuleFailure` per §7.9 with `rule_name`, `phase_name` (when phase-scoped), `severity`, `detail`, `affected_session_ids`.
+
+**Output:** `ValidatorResult` per §7.9 — `pass_index`, `accepted: bool`, `rule_failures` (empty when accepted), `retried_phase_names` (empty when accepted or when called from Pattern B).
+
+**Tolerance defaults are v1; tune post-launch.** The ±15%/±5% volume thresholds and the ±10pp intensity-distribution tolerance are evidence-grounded starting points; measured retry rates in production should drive a follow-up tuning session.
+
+### 5.5 Capped retry semantics
+
+Shared budget across both patterns.
+
+- **Per-phase cap** (`capped_retries_per_phase`, default 2). Pattern A: applies per phase across BOTH validator-driven retries AND seam-reviewer-driven re-syntheses. Pattern B: applies to the whole single call (the call has only one "phase" conceptually).
+- **Counter increments on every re-synthesis** triggered by either validator failure or seam-reviewer patch direction. Once `retries_used >= cap`, no further re-synthesis on that phase; the latest output is accepted as best-effort.
+- **Best-effort acceptance.** When cap is hit: latest synthesis is accepted; `PhaseSpec.synthesis_metadata.cap_hit=True`; an `Observation(category='best_effort_plan')` is added to `notable_observations`; outstanding `RuleFailure` rows in the cap-hit pass are demoted to `severity='warning'` (visible in the diff view but do not block plan write).
+- **Cross-phase rule failures** (e.g., cumulative ACWR) cannot be retried — they surface in the final-pass `validator_result` only; severity stays as-emitted; persistent `blocker`-severity cross-phase failures elevate to a `best_effort_plan` observation.
+- **Schema-violation special case.** When the synthesizer returns malformed structured output (per output parser): one schema-validation retry (counter does NOT consume the per-phase budget — schema retries are separate); on second failure, raise `Layer4OutputError('schema_violation')` and bail out of the call.
+- **Latency tax.** Each retry adds one synthesizer-call latency (~5–8s Pattern A per-phase; ~4–6s Pattern B); cap of 2 retries adds at most ~16s worst case per phase. Surfaces in `latency_ms_total`.
+
+## 6. Periodization decomposition + seam-review semantics
+
+Layer-4-specific design decisions that don't live in §5's algorithm flow.
+
+### 6.1 Phase boundary computation
+
+Pure-function helper `phase_structure_from_3b(layer3b_payload, plan_start_date) -> PhaseStructure`.
+
+**Inputs read:**
+- `layer3b_payload.periodization_shape.mode`
+- `layer3b_payload.periodization_shape.start_phase`
+- `layer3b_payload.periodization_shape.phase_weeks` (when `mode == 'custom'`)
+- `layer3b_payload.time_to_event_weeks` (when event mode)
+- `layer3b_payload.mode` (event vs. open-ended)
+- `plan_start_date` (orchestrator-supplied)
+
+**Total horizon resolution.** Event mode: `total_weeks = layer3b_payload.time_to_event_weeks`. Open-ended mode: v1 defaults to 16 weeks rolling forward; revisit per D7-held tiered-horizon decision (§12).
+
+**Per-mode proportions** (applied to `total_weeks` for the phases that the athlete still needs to traverse from `start_phase` onward):
+
+| Mode | Base | Build | Peak | Taper |
+|---|---|---|---|---|
+| `standard` | 50% | 30% | 15% | 5% |
+| `compressed` | 30% | 35% | 25% | 10% |
+| `extended` | 60% | 25% | 10% | 5% |
+| `custom` | per `phase_weeks` dict (verbatim) | | | |
+
+Proportions round to whole weeks with the remainder allocated to Base (most flexible phase). Taper has a floor of 1 week and a ceiling of 4 weeks regardless of mode (race-prep evidence base; longer Taper produces detraining). When `start_phase != 'Base'`, the skipped earlier phases' percentages are simply dropped — the remaining phases keep their relative proportions and re-normalize to fit `total_weeks`.
+
+**`start_phase` handling.** When `start_phase != 'Base'`, earlier phases are excluded from `phase_structure.phases` (athlete is already past them); `phase_structure.phases[0].start_date = plan_start_date`; subsequent phases follow the proportional weeks. The synthesizer prompt for the starting phase receives an "athlete is starting at `<phase>`; prior phases assumed to have established `<intended exit state per 2A>`" context block — prompt body design deferred per stop-and-ask trigger #2.
+
+**Output:** `PhaseStructure` per §7.6 with `phases: list[PhaseSpec]` ordered Base → Build → Peak → Taper (subset starting from `start_phase`); each `PhaseSpec` has `start_date`, `end_date`, `weeks`, `intended_volume_band` (from 2A `phase_load_bands`), `intended_intensity_distribution` (per §5.4 v1 defaults; tunable per future cleanup).
+
+**`derived_from` provenance** tracks the shape source for downstream rationale rendering: `'3b_standard' | '3b_compressed' | '3b_extended' | '3b_custom' | 'layer4_override'`.
+
+### 6.2 Seam-reviewer authority — propose-patch (β)
+
+Per Andy 2026-05-16 (Decision 8 — recorded in header): the seam reviewer carries **propose-patch authority**. Verdicts of `flagged_major` or `patched` with a `re_prompt_*` direction cause the orchestrator to re-prompt the targeted phase with the reviewer's `seam_issues` merged into context as constraint statements. Flag-only and force-re-prompt were considered and rejected (flag-only loses reviewer value when seams are real; force-re-prompt risks unbounded retry chains).
+
+**Reviewer output recap (per §7.7):**
+
+- `reviewer_verdict: Literal['approved', 'flagged_minor', 'flagged_major', 'patched']`
+- `seam_issues: list[str]` — free-text constraint statements, one per identified seam problem (e.g., "Build week 4 ends at ~9 hr/wk Z2 volume; Peak week 1 starts at ~6 hr/wk Z3 — volume cliff and intensity jump on the same boundary; recommend Peak week 1 hold Z2 dominance with one Z3 introduction session"). Empty list on `approved`.
+- `proposed_patch_direction: Literal['re_prompt_prior', 're_prompt_next', 'accept_with_observation'] | None` — None on `approved` / `flagged_minor`; populated on `flagged_major` / `patched`.
+
+**Orchestrator authority semantics:**
+
+| Verdict | Direction | Action |
+|---|---|---|
+| `approved` | None | Record SeamReview; no observation; continue. |
+| `flagged_minor` | None | Record SeamReview; emit `Observation(category='warning', text=<seam_issues summary>, elevates_to_hitl=False)`; continue (no retry). |
+| `flagged_major` | `re_prompt_prior` / `re_prompt_next` | If targeted phase's `retries_used < cap`: re-synthesize that phase with `seam_issues` merged into context as constraint deltas; increment counter; re-validate; re-run THIS seam review once. If cap exhausted: accept current synthesis + emit `seam_unresolved` observation; `triggered_resynthesis=False`. |
+| `flagged_major` | `accept_with_observation` | Record SeamReview; emit `Observation(category='warning')` with `elevates_to_hitl=True` (the seam is notably bad but the reviewer judges re-synthesis won't help — escalate to next-run HITL gate). |
+| `patched` | `re_prompt_prior` / `re_prompt_next` | Same as `flagged_major` + `re_prompt_*`. The verdict-name distinction is informational — `patched` signals reviewer confidence that the patch direction will resolve; `flagged_major` signals reviewer is offering the patch but is less certain. |
+| `patched` | `accept_with_observation` | Not a valid combination — a `patched` verdict implies the reviewer is proposing a re-prompt. The output parser raises `Layer4OutputError('seam_reviewer_invalid_verdict_combination')`; orchestrator treats as schema-violation per §5.5 (one schema retry; bail on second failure). |
+
+**Per-seam iteration cap.** Each adjacent-phase seam is reviewed at most twice: initial review + at most one patched-re-review. If the second review still emits a `flagged_*` or `patched` verdict, accept the latest synthesis + emit a `seam_unresolved` notable_observation. This bounds total Pattern A latency.
+
+**Seam-driven retry interaction with validator-driven retry.** Both share the per-phase retry counter (`capped_retries_per_phase`, default 2). A phase that consumed 2 retries to pass its deterministic validator has zero remaining budget for seam-driven re-prompts; the seam reviewer's patch direction is recorded but not applied; `seam_unresolved` observation emitted.
+
+**Authority bounds — what the reviewer CANNOT do:**
+
+- Cannot request changes to phases more than one hop from the seam (reviewer reads only the two adjacent phases; cannot mutate distant phases).
+- Cannot force re-synthesis of a phase whose retry budget is exhausted.
+- Cannot insert or delete phases (`phase_structure` is fixed by §6.1 at the start of the call).
+- Cannot change `mode` or `start_phase` (those routes via `shape_override` per §6.4 only).
+- Cannot directly modify individual sessions outside the targeted phase's re-synthesis (the synthesizer LLM, not the reviewer, produces session content).
+
+### 6.3 Single-phase T3 special case
+
+When `plan_refresh` T3's `[refresh_scope_start, refresh_scope_end]` falls entirely within a single phase (no boundary crossing): routes to Pattern B per §5.1 — no seams to review means no Pattern A point. Validator-only.
+
+When the scope spans a phase boundary: Pattern A activates on the affected phases only. Concrete behavior:
+
+- Phases overlapping the scope window are re-synthesized.
+- Phases outside the scope window keep their prior-plan sessions (read from `prior_plan_session_window`).
+- Seam reviews run on adjacent-phase pairs WHERE AT LEAST ONE PHASE WAS RE-SYNTHESIZED. For a seam between an unaffected phase and a re-synthesized one: the unaffected phase's prior output serves as the boundary state (not re-synthesized); the seam reviewer evaluates whether the newly-synthesized phase fits cleanly against the prior context.
+- Seams between two unaffected phases are NOT re-reviewed (they were reviewed during the original `plan_create`).
+
+Minimizes per-refresh latency: a typical T3 cross-phase refresh hits 2 affected phases + 1 seam ≈ ~12s p50 vs. plan_create's ~25s p50.
+
+### 6.4 `shape_override` path
+
+When 3B's periodization shape is structurally infeasible given 3A current state — narrow rule set (v1 defaults; revisit only if production cases surface a fourth trigger):
+
+| Trigger | Override | Rationale |
+|---|---|---|
+| 3B `mode == 'standard'` + `time_to_event_weeks < 8` | `mode = 'compressed'` | Standard proportions require ≥8 weeks for meaningful Base; below that, Build dominance is mandatory. |
+| 3B `mode == 'compressed'` + `time_to_event_weeks < 4` | `mode = 'extended'`, `start_phase = 'Peak'` | Sub-4-week compressed is nonsense; Peak-only with Taper-floor of 1 week is the only viable shape. |
+| 3B `start_phase == 'Base'` + 3A `aerobic_state ∈ {'high', 'very_high'}` + `time_to_event_weeks < 12` | `start_phase = 'Build'` (keep `mode`) | Athlete is already aerobically prepared; Base would waste weeks. |
+
+**Constraints on override:**
+
+- Only fires at `plan_create` time (not refresh — overriding mid-plan would re-shuffle phase boundaries, breaking the per-day version-pointer revert UX).
+- Override produces `ShapeOverride` per §7.8 + `Observation(category='shape_override', elevates_to_hitl=True)`.
+- The override propagates to athlete-facing rationale via 3B `reasoning_text` + `ShapeOverride.rationale_text` (per 3B §6.3 contract).
+- Beyond the rule-set above, no override: Layer 4 synthesizes against the 3B-given shape even when suboptimal. Override is for structural infeasibility only, not preference.
+
+### 6.5 `start_phase != 'Base'` handling
+
+When 3B sets `start_phase` to Build/Peak/Taper:
+
+- `phase_structure.phases` begins at that phase (`phases[0].phase_name = start_phase`).
+- Earlier phases are skipped entirely — not in the output, not re-synthesizable on refresh.
+- The synthesizer prompt for the starting phase receives an "athlete is starting at `<start_phase>`; prior phases assumed to have established `<intended exit state per 2A>`" context block. Prompt body content deferred per stop-and-ask trigger #2.
+- Seam reviewer operates normally at subsequent boundaries (Build→Peak, Peak→Taper). If only one phase exists in `phase_structure.phases` (e.g., `start_phase == 'Taper'` + 4-week event window), `seam_reviews` is an empty list and no seam review runs.
+- `phases[0].synthesis_metadata` reflects the "starting phase" synthesis call; no prior-phase context blob exists in this call's input.
+
+Refresh-path implication: a T3 refresh whose scope predates the original `start_phase`'s start_date (e.g., athlete started at Build; refresh wants to cover dates before the Build start) raises `Layer4InputError('refresh_predates_start_phase')` — Layer 4 does not synthesize phases the athlete was supposed to have completed before plan_create.
+
+## 8. Coaching flag rules — to be drafted in a later session
 
 Auto-emit triggers for `notable_observations` + per-session `coaching_flags`. Required observations include `best_effort_plan` (validator hit cap), `shape_override` (Layer 4 overrode 3B), `intensity_modulated` (D-63 synthesizer modulated picked intensity per §6.2 of D-63), `sport_unavailable_at_locale` (D-63 §6.3 error case). Per-session `coaching_flags` like `race_rehearsal` (race-day fueling practice session), `fueling_practice` (2E target surfaced in session_notes), `weak_link_targeted` (strength session prescribes accessory work for a 3A `weak_links` entry), `first_introduction_to_<discipline>` (first session for a discipline newly in 2A inclusion).
 
@@ -692,21 +969,21 @@ Auto-emit triggers for `notable_observations` + per-session `coaching_flags`. Re
 
 These flags apply on every Layer 4 invocation that touches Taper-phase sessions (`plan_create` covering Taper, `plan_refresh` T2/T3 that includes Taper days, `race_week_brief`). The `race_week_brief` entry point may modify already-existing Taper flags in `prior_plan_session_window` based on the brief's contents (e.g., kit_check date moves if the brief picks a different verification cadence).
 
-## 9. Caching & determinism — to be drafted in session 2
+## 9. Caching & determinism — to be drafted in a later session
 
 Cache key per entry point. **Plan create:** `sha256(user_id || layer1_hash || all 5 layer2 hashes || layer3a_hash || layer3b_hash || plan_start_date || etl_version_set_json || model_synthesizer || model_seam_reviewer || str(temperature))`. **Plan refresh:** `sha256(user_id || tier || refresh_scope_start || refresh_scope_end || layer1_hash || layer2_bundle_hash || layer3a_hash || (layer3b_hash or '') || prior_plan_session_window_hash || (parsed_intent_hash or '') || etl_version_set_json || model_synthesizer || (model_seam_reviewer or '') || str(temperature))`. **Single session synthesize:** `sha256(user_id || request_canonical_json || layer1_hash || (layer2c_locale_hash or '') || layer2d_hash || layer3a_hash || etl_version_set_json || model || str(temperature))`. Per-phase cache for Pattern A so a partial re-prompt only re-synthesizes the affected phase + downstream phases that depend on its exit state. Invalidation triggers per Control_Spec §4 partial-update model. Note: `suggestion_id` is NOT in the single-session cache key — same (request, profile, state) should return the same session shape, and the orchestrator handles persisting to a new suggestion_id row.
 
-## 10. Edge cases — to be drafted in session 2
+## 10. Edge cases — to be drafted in a later session
 
 Degenerate timelines (4-week event-mode plan with `start_phase == 'Taper'` → effectively single-phase Pattern A with empty `seam_reviews`); athlete with all rest days available per §K → emit `shape_infeasible` observation + raise `Layer4ShapeInfeasibleError`; D-63 single-session against a sport not present in any of the athlete's locales' effective equipment view → `sport_unavailable_at_locale` observation + error session per D-63 §6.3; refresh in mid-phase when the prior plan was Pattern-B-generated → `phase_metadata` reconstruction from 3B's current shape; refresh that crosses a `start_phase` boundary that 3B just shifted → Pattern A activates even for T2; `prior_plan_session_window` empty for a refresh → precondition failure (refresh requires prior plan); seam reviewer disagrees with itself across retries → cap on re-prompt budget bounds the loop; LLM synthesizer returns malformed structured output → schema-validation retry (1) then `Layer4OutputError('schema_violation')`.
 
-## 11. Performance budget — to be drafted in session 2
+## 11. Performance budget — to be drafted in a later session
 
 Per-call-pattern targets. **Pattern A `plan_create` (4 phases + 3 seams + 1 deterministic-validator pass):** p50 ~25s, p95 ~60s end-to-end (per-phase ~5–8s × 4 sequential + ~3–5s × 3 seam reviews + ~100ms deterministic validator + small retry headroom). Andy 2026-05-16: accepted this latency as "plan-gen is being taken seriously." **Pattern B `plan_refresh` T1/T2:** p50 ~4s, p95 ~8s. **Pattern A `plan_refresh` T3 (cross-phase):** p50 ~12s (typically 2 phases + 1 seam), p95 ~25s. **Pattern B `plan_refresh` T3 (single-phase):** p50 ~6s, p95 ~10s. **`single_session_synthesize`:** p50 ~3s, p95 ~6s. Cost estimates at Sonnet 4.6 pricing: Pattern A `plan_create` ~$0.50–1.00 per invocation (sum across phases + seams + validator retries); Pattern B refresh T1/T2 ~$0.04–0.08; `single_session_synthesize` ~$0.02–0.04. Caching coverage assumption: refreshes hit ~30% cache (same (athlete, prior payloads) within day-granular `as_of`); plan_create is always a fresh run by definition.
 
-## 12. Open items / forward references — to be drafted in session 2
+## 12. Open items / forward references — to be drafted in a later session
 
-- LLM seam-reviewer authority semantics (decision point flagged in §6 stub above).
+- ~~LLM seam-reviewer authority semantics~~ — **Resolved 2026-05-16 (session 2, Decision 8): propose-patch / β.** See §6.2.
 - Per-phase synthesizer prompt body design (defer to its own session; stop-and-ask trigger #2 — this spec defines the contract).
 - Per-tier T1/T2 synthesizer prompt body design (same defer).
 - Single-session synthesizer prompt body design (same defer).
@@ -723,14 +1000,14 @@ Per-call-pattern targets. **Pattern A `plan_create` (4 phases + 3 seams + 1 dete
 - Seam-reviewer model downgrade (Haiku for cheaper reviewing) — measure post-launch.
 - `race_week_brief` trigger policy — orchestrator auto-fires when `days_to_event ≤ 14`, but exact firing cadence (daily? once at 14, again at 7, again at 1?) needs explicit policy. Currently flagged as "single fire at 14 + athlete-triggerable re-runs"; tune post-launch.
 
-## 13. Test scenarios — to be drafted in session 2
+## 13. Test scenarios — to be drafted in a later session
 
 Full coverage across all three entry points × periodization shapes × tier × validator pass/fail paths. Indicative scenarios: (a) Andy's actual case — Pocket Gopher Extreme, 9 weeks out, 15 disciplines, Pattern A `plan_create` with `start_phase='Build'` (3A says aerobic 'good' / strength 'moderate' → 3B picks `compressed` + `start_phase='Build'`); (b) Same athlete, T1 refresh "I'm tired" → Pattern B, single 3A re-eval, plan covers next 2 days only; (c) Same athlete, T3 refresh crossing Build→Peak boundary → Pattern A on the 2 affected phases; (d) D-63 single-session request for MTB at home gym (no bike) → `sport_unavailable_at_locale` observation + error session; (e) D-63 single-session for strength at hotel gym with wrist injury → no wrist-loaded exercises in output; (f) Validator-cap hit on Build phase due to athlete's §K leaving only 3 days/week available → best-effort plan + `best_effort_plan` observation + Build's `synthesis_metadata.cap_hit == True`; (g) Pattern A with `start_phase='Taper'` and `time_to_event_weeks == 1` → degenerate single-phase, `seam_reviews == []`, fast path.
 
-## 14. Gut check — to be drafted in session 2
+## 14. Gut check — to be drafted in a later session
 
 End-of-spec retrospective per the 14-section template. Topics expected to land: what this spec gets right (the discriminated-union session shape collapses 3 downstream consumer paths into 1; the per-phase + seam-reviewer architecture matches the coaching intuition that seams are where periodization actually goes wrong; three entry points keep the expensive Pattern A out of the cheap-call paths); risks (per-phase decomposition may exhibit the same dependency-on-prior-phase coupling that makes parallelism impossible; the seam reviewer's verdict authority is the single most likely place to over-spec or under-spec; cost is real and unmeasured; intensity-distribution defaults across phases are policy not data); what might be missing (joint sessions, Layer 5 consumption contract, the prompt bodies themselves); best argument against this spec's scope (the three-entry-point shape is a complexity multiplier; a unified entry point with a `mode` discriminator would be simpler if the per-mode prompts can be parameterized; counter — Andy explicitly picked separate functions per Decision 2, and the prompts ARE the per-mode complexity that separation makes inspectable).
 
 ---
 
-*End of Layer 4 spec draft v1 (session 1 of expected 3–5). Sections drafted: §1 Purpose, §2 What 4 does NOT do, §3 Function signature (3 entry points), §7 Payload schema. Sections §§4–6 + §§8–14 stubbed with brief targets so the next session has a clear scope. Next session: §§4–6 (input validation, algorithm including Pattern A per-phase + LLM seam reviewer details, periodization decomposition + seam-review semantics including the seam-reviewer authority decision).*
+*End of Layer 4 spec draft v1 (session 2 of expected 3–5). Sections drafted after session 2: §1 Purpose, §2 What 4 does NOT do, §3 Function signature (4 entry points), §4 Input validation, §5 Algorithm (Pattern A + Pattern B + deterministic validator + capped-retry semantics), §6 Periodization decomposition + seam-review semantics (β propose-patch authority per Decision 8), §7 Payload schema. Sections §§8–14 remain stubbed for sessions 3+. Next session: §§8–9 (coaching flag rule set fleshed out + caching/determinism cache-key formulae) recommended as the next chunk; §§10–14 to follow.*
