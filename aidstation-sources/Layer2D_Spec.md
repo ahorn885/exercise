@@ -10,7 +10,7 @@
 
 Given an athlete's injury records (current + history) and health condition records (current + history) plus the set of disciplines they're training, return:
 
-- A categorized view of which exercises in the discipline-relevant pool should be **excluded** (hard contraindication) versus **downgraded** (soft concern, Layer 4 may include with modification)
+- A categorized view of which exercises in the discipline-relevant pool should be **excluded** (hard contraindication) versus **accommodated** (Layer 4 may include with one or more evidence-based accommodation modalities applied — see §5.3.6)
 - A per-discipline **injury-risk profile** with body-part overlap evidence, suggested discipline-level substitutes from `discipline_substitutes`, and severity tier
 - **Coaching flags** for surfaces that aren't gates (history-based prevention focus, recurring patterns, multi-body-part load concerns)
 - **HITL items** for genuinely ambiguous cases that should block plan-gen until the athlete confirms (post-surgical without clearance, severity mismatch, no-substitute disciplines with elevated risk)
@@ -113,7 +113,7 @@ current_conditions  = [c for c in conditions if c.status == 'Current']
 history_conditions  = [c for c in conditions if c.status == 'History']
 ```
 
-`current_injuries` and `current_conditions` drive **filtering** (exclusion + downgrade).
+`current_injuries` and `current_conditions` drive **filtering** (exclusion + accommodation).
 `resolved_injuries` and `history_conditions` drive **prevention-focused coaching flags** but never exclude exercises.
 
 ### 5.2 Enumerate candidate exercises
@@ -153,7 +153,7 @@ Notes:
 
 ### 5.3 Exercise-level contraindication filter
 
-For each candidate exercise, evaluate three signals against the athlete's `current_injuries` and `current_conditions`. Each signal independently determines a verdict; the strongest verdict wins (`exclude` > `downgrade` > `clean`).
+For each candidate exercise, evaluate three signals against the athlete's `current_injuries` and `current_conditions`. Each signal independently determines a verdict; the strongest verdict wins (`exclude` > `accommodate` > `clean`).
 
 #### 5.3.1 Body-part contraindication
 
@@ -197,8 +197,8 @@ def condition_verdict(exercise, current_conditions) -> tuple[Verdict, list[Evide
                 matched_value=cond.system_category
             ))
             # Conditions are blanket - same verdict regardless of "severity" since conditions have no severity field
-            # Treat as Downgrade by default; Cardiac with high-intensity exercises is Exclude (see §5.3.4)
-            verdict = max(verdict, Verdict.DOWNGRADE)
+            # Treat as Accommodate by default; Cardiac with high-intensity exercises is Exclude (see §5.3.4)
+            verdict = max(verdict, Verdict.ACCOMMODATE)
     return verdict, evidence
 ```
 
@@ -256,11 +256,11 @@ MOVEMENT_CONSTRAINT_KEYWORDS = {
 def severity_to_verdict(severity: str) -> Verdict:
     return {
         'Acute':                 Verdict.EXCLUDE,
-        'Recovering':            Verdict.DOWNGRADE,
-        'Chronic-Managed':       Verdict.DOWNGRADE,
-        'Post-surgical':         Verdict.EXCLUDE,   # also triggers HITL clearance gate (§5.7)
-        'Structural-Permanent':  Verdict.DOWNGRADE,
-        'Resolved':              Verdict.CLEAN,     # current_injuries shouldn't have these, but defensive
+        'Recovering':            Verdict.ACCOMMODATE,
+        'Chronic-Managed':       Verdict.ACCOMMODATE,
+        'Post-surgical':         Verdict.EXCLUDE,     # also triggers HITL clearance gate (§5.7)
+        'Structural-Permanent':  Verdict.ACCOMMODATE,
+        'Resolved':              Verdict.CLEAN,       # current_injuries shouldn't have these, but defensive
     }[severity]
 ```
 
@@ -268,10 +268,12 @@ def severity_to_verdict(severity: str) -> Verdict:
 
 This is judgment-call territory. Defaults above are conservative but plausible. Alternatives Andy may want:
 - **More aggressive:** treat `Chronic-Managed` as Clean (athlete already manages it; programming-around-it is the athlete's job). Pro: less plan disruption. Con: misses load-spike risk.
-- **Less aggressive:** treat `Acute` as Downgrade. Pro: lets athlete train through. Con: counter to standard injury management.
-- **Per-injury-type override:** acute soft tissue stays Exclude; acute bone (stress fracture) is also Exclude; but inflammatory bursitis could be Downgrade. Tracked as 2D-3.
+- **Less aggressive:** treat `Acute` as Accommodate. Pro: lets athlete train through. Con: counter to standard injury management.
+- **Per-injury-type override:** acute soft tissue stays Exclude; acute bone (stress fracture) is also Exclude; but inflammatory bursitis could be Accommodate. Tracked as 2D-3.
 
 **Recommendation:** ship the conservative mapping above as v1. Revisit after first few athletes generate a-and-b feedback.
+
+**Verdict enum (post-amendment 2026-05-17):** `Verdict ∈ {EXCLUDE, ACCOMMODATE, CLEAN}`. The former `DOWNGRADE` value is renamed to `ACCOMMODATE` to align with the evidence-based modality framework introduced in §5.3.6 — `accommodate` means "exercise can be prescribed with one or more accommodation modalities applied" rather than the previous binary "reduce somehow" semantic.
 
 #### 5.3.5 Final verdict per exercise
 
@@ -281,14 +283,170 @@ def evaluate_exercise(exercise, current_injuries, current_conditions) -> Exercis
     cond_verdict, cond_ev      = condition_verdict(exercise, current_conditions)
     move_verdict, move_ev      = movement_constraint_verdict(exercise, current_injuries)
     overall = max(body_verdict, cond_verdict, move_verdict)
+    evidence = body_ev + cond_ev + move_ev
+    accommodations = (
+        recommend_accommodations(exercise, current_injuries, evidence)
+        if overall == Verdict.ACCOMMODATE
+        else []
+    )
     return ExerciseRisk(
         exercise_id=exercise.exercise_id,
         verdict=overall,
-        evidence=body_ev + cond_ev + move_ev,
+        accommodations=accommodations,
+        evidence=evidence,
     )
 ```
 
-Three independent signals; strongest verdict wins. Evidence preserved so Layer 3 can render "*Bench Press excluded because: contraindicated_part 'Wrist' matches your active wrist injury (Recovering, Pain with loading).*"
+Three independent signals; strongest verdict wins. Evidence preserved so Layer 3 can render "*Bench Press excluded because: contraindicated_part 'Wrist' matches your active wrist injury (Recovering, Pain with loading).*" Accommodation list populated only when verdict resolves to `ACCOMMODATE` (per §5.3.6).
+
+#### 5.3.6 Accommodation modality recommendation
+
+When `evaluate_exercise` resolves to `Verdict.ACCOMMODATE`, the exercise is prescribable BUT must carry one or more evidence-based accommodation modalities that scale how it gets prescribed. This section defines the v1 closed set of accommodation modalities, the per-modality parameter shapes, and the lookup logic that picks modalities for an (injury_type × severity × movement_constraint × exercise_attribute) combination.
+
+##### 5.3.6.1 v1 closed modality set
+
+Six modalities. v2 may extend; v1 callers receive a stable closed enum. Evidence basis cited inline. The substitution modality is included for unified-enum completeness — it formally represents the existing `Verdict.EXCLUDE` → 2C Tier 2/3 substitution path and is NOT emitted directly by 2D's `recommend_accommodations` function.
+
+| Modality | Parameter shape | Evidence basis (representative) | Use case |
+|---|---|---|---|
+| `volume_reduction` | `factor` ∈ [0.3, 1.0] + `applies_to` ∈ {sets, reps, duration} | Soligard 2016 IOC consensus (BJSM 50:1030); ACSM Guidelines 11ed FITT-VP framework; Gabbett 2016 ACWR | Universal first-line accommodation. Cuts total work while preserving load and movement pattern. |
+| `intensity_reduction` | `factor` ∈ [0.4, 1.0] + `target_metric` ∈ {percent_1rm, rpe, pace, power, hr_zone} | Silbernagel 2007 (AJSM 35:6) pain-monitoring model; Cook & Purdam 2014 (BJSM); ACSM Guidelines 11ed | Load-dependent pain; pain-monitored loading (VAS ≤ 5/10 cutoff). Cuts load magnitude while preserving volume and movement. |
+| `tempo_modification` | `tempo_pattern` ∈ {eccentric_focus, isometric_only, heavy_slow_resistance} + tempo tuple `(eccentric_s, isometric_bottom_s, concentric_s, isometric_top_s)` for tempo_pattern ∈ {eccentric_focus, heavy_slow_resistance}; isometric-only specifics `(hold_s, sets, rest_s, intensity_pct_mvc)` for `isometric_only` | Rio 2015 (BJSM) isometric analgesia 5×45s @ 70% MVC; Alfredson 1998 + Stevens & Tan 2014 (JOSPT 44:59-67) 3×15 eccentric heel drops; Beyer 2015 (AJSM) heavy slow resistance equivalent to eccentric with better compliance | Tendinopathy progression per Cook & Purdam (isometric → HSR → energy storage). Modulates time-component of contraction. |
+| `loading_type_change` | `from_type` ∈ {bilateral, barbell, free_weight, machine, cable, dumbbell} + `to_type` ∈ {bilateral, unilateral_contralateral, unilateral_ipsilateral, dumbbell, machine, cable, assisted} | Manca 2017 (Sports Med) Delphi consensus; Hendy & Lamon 2017 systematic review (12–22% strength gain in untrained limb via cross-education); Farthing & Zehr 2014 (BJSM) | Unilateral injury sparing via cross-education; implement swap to reduce stabilizer demand; post-surgical contralateral-only training. |
+| `frequency_reduction` | `factor` ∈ [0.0, 1.0] OR `sessions_per_week_cap` int + optional `discipline_id` (None = global cap) | ACSM Guidelines 11ed FITT-VP; Soligard 2016; Gabbett 2016 ACWR | Bone stress; chronic overuse; ACWR spike management. Reduces sessions-per-week for the affected modality. |
+| `exercise_substitution` | (no parameters in 2D — substitution is resolved at 2C via Tier 2/3 lookup) | n/a — formal representation of existing `Verdict.EXCLUDE` path | Included for unified-enum completeness; 2D's `recommend_accommodations` never emits this directly. When 2D returns `Verdict.EXCLUDE`, 2C's Tier 2/3 resolution handles the substitution. |
+
+##### 5.3.6.2 v1 default modality table
+
+Sparse mapping keyed on `(injury_type, severity)`. Per-exercise tailoring (e.g., per-`body_part`, per-`movement_constraint`) is v2 scope. Uncovered combinations fall back to the conservative default defined in §5.3.6.3.
+
+```python
+# All modality entries below carry rationale (str) + evidence_basis (list[str], free-text citations)
+# omitted for table brevity. Spec helpers `vol(...)`, `intn(...)`, `tempo_iso(...)`, `tempo_hsr(...)`,
+# `freq(...)`, `loading(...)` construct typed modality instances per §7 schema.
+
+V1_DEFAULT_ACCOMMODATIONS: dict[tuple[str, str], list[AccommodationModality]] = {
+
+    # ─── Tendinopathy / overuse (Cook & Purdam load-management framework) ───
+    ('Tendinopathy / overuse', 'Acute'): [
+        vol(factor=0.5, applies_to='sets'),                                     # acute reactive — drop volume
+        tempo_iso(hold_s=45, sets=5, rest_s=120, intensity_pct_mvc=70),         # Stage 1 isometric for in-season analgesia (Rio 2015)
+    ],
+    ('Tendinopathy / overuse', 'Recovering'): [
+        vol(factor=0.7, applies_to='sets'),
+        tempo_hsr(eccentric_s=3, concentric_s=3),                               # Stage 2 HSR per Beyer 2015 — equivalent outcome to Alfredson with better compliance
+    ],
+    ('Tendinopathy / overuse', 'Chronic-Managed'): [
+        tempo_hsr(eccentric_s=3, concentric_s=3),                               # HSR maintenance
+    ],
+
+    # ─── Muscle / tendon strain ───
+    ('Muscle / tendon strain', 'Acute'): [
+        vol(factor=0.5, applies_to='sets'),
+        intn(factor=0.6, target_metric='percent_1rm'),                          # sub-symptomatic load (Silbernagel pain-monitoring)
+    ],
+    ('Muscle / tendon strain', 'Recovering'): [
+        vol(factor=0.8, applies_to='sets'),
+        intn(factor=0.8, target_metric='percent_1rm'),                          # graded return
+    ],
+
+    # ─── Bone stress / stress fracture ───
+    # Critical: intensity_reduction alone is INSUFFICIENT. Affected loading mode requires
+    # frequency-to-zero OR exercise_substitution (handled via Verdict.EXCLUDE at the §5.3.4 level
+    # for direct-impact exercises; this row applies to indirect-load exercises that pass §5.3.4).
+    ('Stress fracture / bone stress', 'Acute'): [
+        freq(factor=0.0),                                                       # zero frequency on affected mode; non-impact alternative via 2C
+    ],
+    ('Stress fracture / bone stress', 'Recovering'): [
+        freq(factor=0.5),
+        vol(factor=0.6, applies_to='duration'),                                 # graded return per loading tolerance
+    ],
+
+    # ─── Joint sprain ───
+    ('Joint sprain', 'Acute'): [
+        vol(factor=0.5, applies_to='sets'),
+        intn(factor=0.6, target_metric='percent_1rm'),
+    ],
+    ('Joint sprain', 'Recovering'): [
+        vol(factor=0.8, applies_to='sets'),
+        intn(factor=0.8, target_metric='percent_1rm'),
+    ],
+
+    # ─── Post-surgical (only reachable for indirect-load exercises; direct-load goes EXCLUDE per §5.3.4) ───
+    # First-6-week prescription: cross-education sparing of immobilized limb (Manca/Hendy-Lamon).
+    ('Post-surgical', 'Post-surgical'): [
+        loading(from_type='bilateral', to_type='unilateral_contralateral'),     # train uninjured side; cross-education sparing
+    ],
+
+    # ─── Structural-Permanent ───
+    # No-op for most exercises (verdict='clean' typically applies). Exercises that expose the
+    # structural limitation route to EXCLUDE → 2C Tier 2/3 substitution. Indirect-load
+    # exercises that fall through to ACCOMMODATE pick up the conservative fallback.
+    # (No entry in V1_DEFAULT_ACCOMMODATIONS — fallback applies per §5.3.6.3.)
+}
+```
+
+##### 5.3.6.3 Fallback recommendation
+
+When `(injury_type, severity)` is not present in `V1_DEFAULT_ACCOMMODATIONS`, return the conservative fallback:
+
+```python
+V1_FALLBACK_ACCOMMODATIONS: list[AccommodationModality] = [
+    vol(factor=0.7, applies_to='sets'),
+    intn(factor=0.7, target_metric='percent_1rm'),
+]
+```
+
+Rationale: 0.7 / 0.7 is the IOC-consensus "moderate deload" position — drops both volume and intensity by 30%, broadly safe across injury types. Per Soligard 2016 + ACSM FITT-VP.
+
+##### 5.3.6.4 Phase-dependent contraindications (v1)
+
+Three known clinical contraindications enforce against the default table output. The `recommend_accommodations` function applies these filters after table lookup:
+
+1. **Acute reactive tendinopathy** (`injury_type == 'Tendinopathy / overuse'` AND `severity == 'Acute'`) — must use `tempo_modification.tempo_pattern == 'isometric_only'`. Eccentric or energy-storage loading patterns are CONTRAINDICATED in the acute reactive phase per Cook & Purdam 2014. If an exercise's `tempo_modification` recommendation drifts toward eccentric/HSR in acute phase, override to `isometric_only`.
+
+2. **Bone stress / stress fracture** (`injury_type == 'Stress fracture / bone stress'`) — `intensity_reduction` alone is INSUFFICIENT and must NOT be the only modality emitted. Must pair with `frequency_reduction(factor=0.0 or low)` OR signal `Verdict.EXCLUDE` to route through 2C substitution. The athlete cannot train through bone stress with merely lower load.
+
+3. **Post-surgical first 6 weeks** (`severity == 'Post-surgical'` AND `weeks_since_onset(injury) < 6`) — prefer `loading_type_change(to_type='unilateral_contralateral')` over any reduced-load bilateral prescription. Cross-education sparing maintains the immobilized limb's strength (~12–22% per Hendy & Lamon 2017 meta) without loading the surgical site.
+
+##### 5.3.6.5 v1 lookup function
+
+```python
+def recommend_accommodations(
+    exercise,
+    current_injuries: list[InjuryRecord],
+    evidence: list[Evidence],
+) -> list[AccommodationModality]:
+    # Identify the injury(ies) that drove the ACCOMMODATE verdict.
+    # `evidence` is populated by body_part_verdict / condition_verdict / movement_constraint_verdict;
+    # each Evidence record carries the source injury (when injury-derived). Multiple injuries may
+    # contribute — v1 picks the first injury whose severity is in {Recovering, Chronic-Managed,
+    # Structural-Permanent} (the ACCOMMODATE-mapped severities per §5.3.4).
+
+    driving_injuries = [
+        ev.injury for ev in evidence
+        if ev.injury is not None
+        and ev.injury.severity in {'Recovering', 'Chronic-Managed', 'Structural-Permanent', 'Post-surgical'}
+    ]
+    if not driving_injuries:
+        # Driven by a condition (no injury record). Use fallback.
+        return V1_FALLBACK_ACCOMMODATIONS
+
+    primary = driving_injuries[0]  # v1: first wins; v2 may union or pick by severity
+    key = (primary.injury_type, primary.severity)
+    base_recommendations = V1_DEFAULT_ACCOMMODATIONS.get(key, V1_FALLBACK_ACCOMMODATIONS)
+
+    # Apply phase-dependent contraindications (§5.3.6.4)
+    return apply_phase_contraindications(base_recommendations, primary, exercise)
+```
+
+##### 5.3.6.6 What v1 explicitly does NOT do (deferred to v2)
+
+- **Range-of-motion restriction modality.** Parameterization is condition-specific (e.g., "0–90° flexion post-ACL" vs "pain-free range" for shoulder impingement); no clean cross-condition shape in the literature. Tracked in `Project_Backlog` as D-70.
+- **Phase sequencing.** Cook & Purdam progression (isometric → HSR → energy-storage) is real clinical signal but encoding the temporal progression in 2D adds substantial complexity. v1 emits current-time recommendation only; T1 refresh fires when 3A re-assesses injury state (whether the athlete's recovery has moved to a new severity tier), and 2D re-runs against the updated severity to yield the next-phase modality picks. Tracked in `Project_Backlog` as D-71.
+- **Per-exercise tailoring.** v1 keys only on `(injury_type, severity)`. v2 may key additionally on `body_part`, `movement_constraint`, exercise-specific attributes (e.g., "exercise loads the affected joint AT the painful angle" might bump volume_reduction's factor more aggressively).
+- **Muscle-group-level interpretation.** v1 uses Layer 0 `body_parts` vocab (anatomical regions/joints) + `movement_constraints` vocab. Muscle groups (Quads, Hamstrings, Lats) are NOT a first-class concept. Andy's wrist case maps cleanly to `body_part='Wrist'` + `movement_constraint='Pain with wrist extension'`; v2 may add muscle-group granularity for cases like "quad isolation OK; deep knee flexion not" post-surgery. Tracked in `Project_Backlog` only if a second injury type forces the question.
+- **Discipline-specific modality tailoring.** v1 modality enum is sport-agnostic. Swim-specific shoulder-protection patterns, bike position adjustments, runner-specific gait modifications — v2 layering.
 
 ### 5.4 Discipline-level risk profiling
 
@@ -517,7 +675,7 @@ class Layer2DPayload:
 
     # Exercise-level filtering
     excluded_exercises: list[ExerciseRisk]      # verdict == EXCLUDE
-    downgraded_exercises: list[ExerciseRisk]    # verdict == DOWNGRADE
+    accommodated_exercises: list[ExerciseRisk]  # verdict == ACCOMMODATE (was 'downgraded_exercises'; renamed 2026-05-17 amendment)
     clean_exercise_ids: list[str]               # verdict == CLEAN (just IDs to keep payload small)
 
     # Discipline-level risk
@@ -537,7 +695,8 @@ class ExerciseRisk:
     exercise_id: str
     exercise_name: str
     discipline_ids: list[str]                    # Which included disciplines this exercise serves
-    verdict: str                                 # 'exclude' | 'downgrade' | 'clean'
+    verdict: str                                 # 'exclude' | 'accommodate' | 'clean' (post-2026-05-17 amendment; was 'exclude' | 'downgrade' | 'clean')
+    accommodations: list[AccommodationModality]  # Non-empty iff verdict == 'accommodate'; populated per §5.3.6
     evidence: list[Evidence]                     # Why — for Layer 3 / 4 rendering
 
 @dataclass
@@ -550,6 +709,87 @@ class Evidence:
     injury_severity: str | None                  # propagated for downstream UI
     condition_category: str | None               # which condition produced it (when source is condition-derived)
     constraint: str | None                       # movement constraint label, when source is movement_constraint
+
+# ─── AccommodationModality typed union (added 2026-05-17 amendment per §5.3.6) ───
+#
+# Discriminated union over six modality variants. The literal `modality_type` field
+# discriminates. Layer 4 synthesizer + validator consume these to apply / verify
+# accommodation prescriptions. Per-modality parameter shapes derive from the
+# evidence-based literature scan (Cook & Purdam; Alfredson; Beyer; Rio; Silbernagel;
+# Manca; Hendy & Lamon; ACSM Guidelines 11ed; Soligard 2016 IOC consensus; Gabbett
+# 2016 ACWR). See §5.3.6.1 for the canonical reference table + citations.
+
+@dataclass
+class VolumeReductionModality:
+    modality_type: str                           # Literal['volume_reduction']
+    factor: float                                # 0.3-1.0 — fraction of baseline prescribed volume to apply
+    applies_to: str                              # 'sets' | 'reps' | 'duration'
+    rationale: str                               # human-readable
+    evidence_basis: list[str]                    # free-text citations (e.g., ['soligard_2016_bjsm', 'acsm_guidelines_11ed'])
+
+@dataclass
+class IntensityReductionModality:
+    modality_type: str                           # Literal['intensity_reduction']
+    factor: float                                # 0.4-1.0 — fraction of baseline prescribed intensity
+    target_metric: str                           # 'percent_1rm' | 'rpe' | 'pace' | 'power' | 'hr_zone'
+    rationale: str
+    evidence_basis: list[str]
+
+@dataclass
+class TempoModificationModality:
+    modality_type: str                           # Literal['tempo_modification']
+    tempo_pattern: str                           # 'eccentric_focus' | 'isometric_only' | 'heavy_slow_resistance'
+    # Tempo tuple — populated for tempo_pattern ∈ {eccentric_focus, heavy_slow_resistance}
+    eccentric_s: int | None                      # seconds for eccentric phase
+    isometric_bottom_s: int | None               # seconds isometric at bottom of ROM
+    concentric_s: int | None                     # seconds for concentric phase
+    isometric_top_s: int | None                  # seconds isometric at top of ROM
+    # Isometric-only specifics — populated for tempo_pattern == 'isometric_only'
+    hold_s: int | None                           # 15-60s per Rio 2015 (45s typical)
+    sets: int | None                             # 5 per Rio 2015
+    rest_s: int | None                           # ~120s
+    intensity_pct_mvc: int | None                # 30-100; 70% MVC per Rio 2015
+    rationale: str
+    evidence_basis: list[str]
+
+@dataclass
+class LoadingTypeChangeModality:
+    modality_type: str                           # Literal['loading_type_change']
+    from_type: str                               # 'bilateral' | 'barbell' | 'free_weight' | 'machine' | 'cable' | 'dumbbell'
+    to_type: str                                 # 'bilateral' | 'unilateral_contralateral' | 'unilateral_ipsilateral' | 'dumbbell' | 'machine' | 'cable' | 'assisted'
+    rationale: str
+    evidence_basis: list[str]
+
+@dataclass
+class FrequencyReductionModality:
+    modality_type: str                           # Literal['frequency_reduction']
+    factor: float | None                         # 0.0-1.0 (relative); set when sessions_per_week_cap is None
+    sessions_per_week_cap: int | None            # absolute cap; when set, supersedes factor
+    discipline_id: str | None                    # which discipline this applies to (None = global cap across all disciplines)
+    rationale: str
+    evidence_basis: list[str]
+
+@dataclass
+class ExerciseSubstitutionModality:
+    modality_type: str                           # Literal['exercise_substitution']
+    # No parameters: substitution is resolved at 2C via Tier 2/3 lookup, not 2D.
+    # Included in the unified enum for completeness; 2D's recommend_accommodations
+    # function does NOT emit this directly — when 2D returns Verdict.EXCLUDE, 2C's
+    # Tier 2/3 resolution handles the substitution. Layer 4 may see this modality
+    # type in downstream pipelines (e.g., if a future amendment adds soft-substitution
+    # without full EXCLUDE), but in v1 it's not 2D-emitted.
+    rationale: str
+    evidence_basis: list[str]
+
+# Discriminated union — pydantic v2 smart-union dispatch on modality_type literal
+AccommodationModality = Union[
+    VolumeReductionModality,
+    IntensityReductionModality,
+    TempoModificationModality,
+    LoadingTypeChangeModality,
+    FrequencyReductionModality,
+    ExerciseSubstitutionModality,
+]
 
 @dataclass
 class DisciplineRisk:
@@ -774,7 +1014,7 @@ If the athlete has many active injuries (5+) or many included disciplines (20+),
 | 2D-1 | **Body-part keyword map location** (§5.5 decision point) — code-side hand-curated map vs. `disciplines.body_parts_at_risk TEXT[]` column | Andy / FC | Recommend ship (A) v1, design (B) for v2 |
 | 2D-2 | **Movement-constraint keyword map location** — code-side (B.3 enum mirror) vs. Layer 0 vocab table | Andy / FC | Same pattern as 2D-1; recommend code-side for v1 |
 | 2D-3 | **Severity → verdict mapping** (§5.3.4 decision point) — defaults are conservative; Andy may want per-injury-type override or different aggression | Andy | Recommend ship defaults; iterate after first athletes |
-| 2D-4 | **Per-injury-type filter aggressiveness** — same data (injury_type from B.1.1) could inform finer-grained verdict (e.g., tendinopathy = downgrade by default, stress fracture = exclude even when Recovering) | Future | Defer until v1 produces feedback |
+| 2D-4 | **Per-injury-type filter aggressiveness** — same data (injury_type from B.1.1) could inform finer-grained verdict (e.g., tendinopathy = accommodate by default, stress fracture = exclude even when Recovering). Note: post-2026-05-17 amendment §5.3.6 introduced per-(injury_type, severity) accommodation modality picks via `V1_DEFAULT_ACCOMMODATIONS` — this partially closes 2D-4 but doesn't override verdict-level picks (e.g., bone stress in Recovering still maps to ACCOMMODATE per §5.3.4, with frequency_reduction(0.0) modality per §5.3.6, rather than EXCLUDE). Full per-injury-type verdict override remains future. | Future | Partially mitigated by §5.3.6; full verdict override deferred |
 | 2D-5 | **`health_condition_categories` column name reconciliation** — spec v3 §4.14 references `category_name`; v3 §6.2 validation references `system_category`. Deployed name uncertain. | FC-1 | Backlog item D-21 |
 | 2D-6 | **`exercises.injury_flags_text` → structured `movement_components TEXT[]`** — referenced as cross-layer enhancement in `Athlete_Onboarding_Data_Spec_v2.md` §B.3 | Future Layer 0 batch | Backlog item D-22 |
 | 2D-7 | **Side-aware contraindication** — current `exercises.contraindicated_parts` has no side dimension. Future: `contraindicated_parts JSONB` with `{body_part, side}` shape. | Future | Defer |
@@ -794,8 +1034,8 @@ Inputs:
 - `included_discipline_ids = [D-001, D-002, D-003, D-005, D-006, D-007, D-008a, D-008b, D-010, D-011, D-013, D-014, D-015, D-016]` (AR's 14 base disciplines, no whitewater since chronic-managed wrist limits Class III)
 
 Expected:
-- **Excluded exercises:** any exercise with `'Wrist'` in `contraindicated_parts` OR `injury_flags_text` containing 'wrist extension' / 'palm-down' / 'palm-down' under load — including standard pushup, dips, plank-on-palms, bench press (the last is borderline — wrist supports load only at neutral). Verdict for Chronic-Managed = Downgrade default, so technically these would be downgrades not excludes per §5.3.4. **Wait**: §5.3.4 maps Chronic-Managed → DOWNGRADE. So most wrist-flagged exercises would be downgraded, not excluded. This is the right behavior — Andy's wrist is workable with modifications (fist pushups, etc.), not zero-loadable.
-- **Downgraded exercises:** pushups, planks-on-palms, bench press, dips, pike pushups — all wrist-loading exercises. Layer 4 then substitutes fist pushups, planks-on-fists, neutral-grip DB press.
+- **Excluded exercises:** any exercise with `'Wrist'` in `contraindicated_parts` OR `injury_flags_text` containing 'wrist extension' / 'palm-down' / 'palm-down' under load — including standard pushup, dips, plank-on-palms, bench press (the last is borderline — wrist supports load only at neutral). Verdict for Chronic-Managed = Accommodate default per §5.3.4, so technically these would be accommodated not excluded. **Wait**: §5.3.4 maps Chronic-Managed → ACCOMMODATE. So most wrist-flagged exercises would be accommodated (with `tempo_modification(heavy_slow_resistance)` per §5.3.6 default for Tendinopathy / overuse + Chronic-Managed), not excluded. This is the right behavior — Andy's wrist is workable with modifications (fist pushups, etc.), not zero-loadable.
+- **Accommodated exercises:** pushups, planks-on-palms, bench press, dips, pike pushups — all wrist-loading exercises. Each carries one or more accommodation modalities per §5.3.6 (typically `tempo_modification(heavy_slow_resistance)` for chronic tendinopathy). Layer 4 then prescribes per the modality parameters; substitution to fist pushups / neutral-grip DB press routes through 2C Tier 2 instead.
 - **Discipline risks:**
   - D-007 Packrafting: ELEVATED (matches 'wrist tendinitis' in patterns)
   - D-008a Kayaking — Flat-water: ELEVATED (matches 'wrist tendinopathy')
@@ -850,7 +1090,7 @@ Inputs:
 - 14 AR disciplines
 
 Expected:
-- Excluded/downgraded exercises: any with `'Respiratory'` in `contraindicated_conditions` — none expected by default in v19 (Cardiac is more commonly flagged), but if an exercise has it (e.g., max-effort altitude simulation), downgraded.
+- Excluded / accommodated exercises: any with `'Respiratory'` in `contraindicated_conditions` — none expected by default in v19 (Cardiac is more commonly flagged), but if an exercise has it (e.g., max-effort altitude simulation), accommodated with `intensity_reduction` + `frequency_reduction` per §5.3.6 fallback.
 - No discipline risk elevations from body parts (no injuries).
 - No HITL items (asthma current isn't in §5.7 list — Cardiac is the high-consequence current condition gate).
 - Coaching flag: none specific. Plan-gen handles intensity management via Layer 4 rules (out of 2D scope).
@@ -865,7 +1105,7 @@ Inputs:
 
 Expected:
 - All disciplines `RiskLevel.LOW`.
-- Empty `excluded_exercises`, `downgraded_exercises`, `coaching_flags`, `hitl_items`.
+- Empty `excluded_exercises`, `accommodated_exercises`, `coaching_flags`, `hitl_items`.
 - `hitl_required=False`.
 - Fast path through algorithm (§10 edge case 1).
 
@@ -879,7 +1119,7 @@ Inputs:
 Expected:
 - Multiple discipline elevations (D-007, D-008a, D-010 from wrist; D-001 from Achilles; multiple from lower back).
 - `multi_body_part_load_concern` coaching flag fires (3 active injuries).
-- Many downgraded exercises (wrist + Achilles overlap nearly all weight-bearing AR exercises).
+- Many accommodated exercises (wrist + Achilles overlap nearly all weight-bearing AR exercises). Wrist-loaded exercises carry `tempo_modification(heavy_slow_resistance)` per §5.3.6 Tendinopathy / Chronic-Managed default; Achilles wrap-around exercises carry `volume_reduction(0.7) + tempo_modification(heavy_slow_resistance)` per Recovering tendinopathy default.
 - `hitl_required=False` unless any single discipline hits HIGH without substitute. Conservative: doesn't auto-gate but produces a content-heavy plan with caveats.
 
 ### 13.7 D-018 Swimrun gap × high risk
