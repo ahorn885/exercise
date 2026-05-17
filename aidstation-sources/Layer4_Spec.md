@@ -141,7 +141,7 @@ def llm_layer4_plan_refresh(
     layer1_payload: Layer1Payload,
     layer2_bundle: Layer2Bundle,
     layer3a_payload: Layer3APayload,
-    layer3b_payload: Layer3BPayload | None,
+    layer3b_payload: Layer3BPayload,
     prior_plan_session_window: list[PlanSession],
     parsed_intent: ParsedIntent | None,
     plan_version_id: int,
@@ -167,7 +167,7 @@ def llm_layer4_plan_refresh(
 | `layer1_payload` | `Layer1Payload` | Per `q_layer1_payload` | Same as `plan_create`. |
 | `layer2_bundle` | `Layer2Bundle` | Bundle of conditionally-re-run 2A/2B/2C/2D/2E payloads | Typed wrapper that exposes each payload as an attribute (`bundle.a`, `bundle.b`, `bundle.c`, `bundle.d`, `bundle.e`) or `None` if that layer wasn't re-run for this refresh. T1 default cascade: only 3A re-runs, so all five attributes are None except as added by `parsed_intent`. T2 default: 3A + 3B (Layer 2 still None unless intent-triggered). T3 default: all five Layer 2 attributes populated. Per D-64 §3 cascade definitions. |
 | `layer3a_payload` | `Layer3APayload` | 3A re-run output | All three tiers re-run 3A. |
-| `layer3b_payload` | `Layer3BPayload \| None` | 3B re-run output (T2/T3) or None (T1) | T1 doesn't re-run 3B. T2 + T3 do. When None, Layer 4 falls back to the prior plan's periodization shape (read from `prior_plan_session_window[*].phase_metadata` — see §7). |
+| `layer3b_payload` | `Layer3BPayload` | 3B re-run output | All three tiers receive a non-None 3B payload. **Amended 2026-05-17 (§4.3-wins resolution).** The prior signature typed this as `Layer3BPayload \| None` with T1 falling back to prior sessions' phase_metadata; §4.3 row 1 simultaneously required 3B for T1/T2 (Pattern B's validator reads phase intent for the intensity-distribution check). The contradiction was resolved Andy 2026-05-17 in favor of §4.3 — 3B is required on every tier. D-64's T1 default cascade now includes 3B re-run (paired update in `Plan_Refresh_D64_Design_v1.md` §3). |
 | `prior_plan_session_window` | `list[PlanSession]` | Plan-gen orchestrator | The current plan's `PlanSession` records covering `[refresh_scope_start - 7, refresh_scope_end + 7]` (the refresh window plus 7 days of context on each side). Layer 4 reads for continuity (what intensity the athlete was already doing, what's coming after the refresh window). Sessions outside the refresh window are NOT modified; they remain pointed at their prior `plan_version_id`. |
 | `parsed_intent` | `ParsedIntent \| None` | D-64 NL parser output | When non-None, drives soft signals (fatigue / sickness / motivation enums) + the NL `raw_text` is passed through to the synthesizer prompt for context weighting. `None` when athlete refreshed without NL text or when the parser was unavailable (per D-64 §5.4 degraded path). |
 | `plan_version_id` | int | Plan-gen orchestrator | New version ID per D-64 §6.2. Layer 4 writes all session rows in the refresh window pointing to this ID; out-of-window sessions keep their prior ID (per-day version pointer per D-64 §6.3). |

@@ -1,0 +1,1302 @@
+"""Tests for `layer4/plan_refresh.py` + `plan_refresh_t1.py` + `plan_refresh_t2.py`
+— Step 4b/c integration: D-64 `llm_layer4_plan_refresh` per `Layer4_Spec.md` §3.2.
+
+Coverage:
+- `Layer2Bundle` + `ParsedIntent` construction (context.py additions)
+- Tool schema shape (T1 vs T2 `maxItems`, closed coaching-flag enum, 9-shape
+  IntensityTarget oneOf, intensity_zone enum)
+- §4.3 input validation preconditions (8 rows)
+- Entry-point happy path × T1 + T2 × cardio + strength + empty + mixed
+- Capped retry semantics (validator fail then pass; cap-hit best-effort)
+- `intensity_modulated` Observation emission (per-session + multi-session)
+- Layer4Payload composition invariants (mode=plan_refresh, pattern=B,
+  phase_structure=None, seam_reviews=None, suggestion_id=None, each
+  session.phase_metadata=None, sessions list)
+- Prompt rendering (parsed_intent + prior window + retry context)
+- T3 raises tier_t3_not_yet_implemented (queued for Step 4d)
+
+LLM calls are mocked via a stub `llm_caller` dependency. No real Anthropic
+SDK invocations.
+"""
+
+from __future__ import annotations
+
+from datetime import date, datetime, timedelta
+from typing import Any
+
+import pytest
+
+from layer4 import (
+    ACWREntry,
+    ACWRStatus,
+    Assessment,
+    CurrentState,
+    DataDensity,
+    DisciplineCoverage,
+    ExerciseRisk,
+    GoalViability,
+    Layer2ADiscipline,
+    Layer2APayload,
+    Layer2Bundle,
+    Layer2CPayload,
+    Layer2DPayload,
+    Layer3APayload,
+    Layer3BPayload,
+    Layer4InputError,
+    Layer4OutputError,
+    Layer4Payload,
+    ParsedIntent,
+    PeriodizationShape,
+    PhaseLoadBands,
+    PlanSession,
+    RationaleMetadata,
+    RecentTrajectory,
+    ResolvedExercise,
+    TrainingGapsSummary,
+    TrajectoryWindow,
+    WeightResult,
+    build_record_refresh_sessions_tool,
+    llm_layer4_plan_refresh,
+)
+from layer4.plan_refresh import _SynthesizerOutput
+
+
+# ─── Fixtures ────────────────────────────────────────────────────────────────
+
+
+_T1_START = date(2026, 6, 1)  # Mon
+_T1_END = date(2026, 6, 2)  # Tue
+_T2_START = date(2026, 6, 1)
+_T2_END = date(2026, 6, 7)  # Sun
+
+
+def _layer1() -> dict[str, Any]:
+    return {"experience_level": "advanced", "coaching_voice_preferences": None}
+
+
+def _layer2a() -> Layer2APayload:
+    return Layer2APayload(
+        framework_sport="multisport",
+        etl_version_set={"layer0": "v7"},
+        disciplines=[
+            Layer2ADiscipline(
+                discipline_id="D-run",
+                discipline_name="Running",
+                inclusion="included",
+                role="Primary",
+                is_conditional=False,
+                load_weight=WeightResult(
+                    value=1.0, source="system_default", system_default=1.0
+                ),
+                sleep_deprivation_relevant=False,
+                rationale="primary endurance discipline",
+                phase_load=PhaseLoadBands(
+                    base_low=5.0,
+                    base_high=8.0,
+                    build_low=6.0,
+                    build_high=10.0,
+                    peak_low=7.0,
+                    peak_high=11.0,
+                    taper_low=3.0,
+                    taper_high=5.0,
+                    default_inclusion="included",
+                ),
+            ),
+        ],
+        training_gaps_summary=TrainingGapsSummary(
+            flagged_count=0,
+            any_no_substitute=False,
+            any_multi_substitute_candidate=False,
+        ),
+        hitl_required=False,
+        unresolved_flags=[],
+        coaching_flags=[],
+        rationale_metadata=RationaleMetadata(
+            template_version="v1",
+            generated_at="2026-05-31T10:00:00",
+        ),
+    )
+
+
+def _layer2c(
+    locale_id: str = "home_gym",
+    exercise_ids: tuple[str, ...] = ("E-squat", "E-pushup"),
+    discipline_id: str = "D-run",
+) -> Layer2CPayload:
+    return Layer2CPayload(
+        locale_id=locale_id,
+        etl_version_set={"layer0": "v7"},
+        effective_pool=list(exercise_ids),
+        discipline_coverage=[
+            DisciplineCoverage(
+                discipline_id=discipline_id,
+                discipline_name=discipline_id,
+                exercise_db_sport="x",
+                total_exercises=len(exercise_ids),
+                tier_1_count=len(exercise_ids),
+                tier_2_count=0,
+                tier_3_count=0,
+                unavailable_count=0,
+                coverage_pct=1.0,
+            )
+        ],
+        exercises_resolved=[
+            ResolvedExercise(
+                exercise_id=ex,
+                exercise_name=ex,
+                exercise_type="strength",
+                discipline_ids=[discipline_id],
+                sport_relevance_notes={discipline_id: "x"},
+                priority_per_discipline={discipline_id: "Medium"},
+                tier=1,
+                terrain_required=[],
+                contraindicated_parts=[],
+                contraindicated_conditions=[],
+                accommodations=[],
+            )
+            for ex in exercise_ids
+        ],
+        coaching_flags=[],
+    )
+
+
+def _layer2d(excluded: tuple[str, ...] = ()) -> Layer2DPayload:
+    return Layer2DPayload(
+        etl_version_set={"layer0": "v7"},
+        excluded_exercises=[
+            ExerciseRisk(
+                exercise_id=ex,
+                exercise_name=ex,
+                discipline_ids=["D-run"],
+                verdict="exclude",
+                accommodations=[],
+                evidence=[],
+            )
+            for ex in excluded
+        ],
+        accommodated_exercises=[],
+        clean_exercise_ids=[],
+        discipline_risk_profiles=[],
+        coaching_flags=[],
+        hitl_required=False,
+        hitl_items=[],
+        body_part_vocab_misses=[],
+        condition_vocab_misses=[],
+    )
+
+
+def _layer3a(zone: str = "sweet_spot", ratio: float = 0.95) -> Layer3APayload:
+    return Layer3APayload(
+        user_id=42,
+        as_of=datetime(2026, 5, 31, 10, 0, 0),
+        model="claude-opus-4-7",
+        temperature=0.0,
+        prompt_hash="abc",
+        latency_ms=1000,
+        input_tokens=2000,
+        output_tokens=500,
+        etl_version_set={"layer0": "v7"},
+        current_state=CurrentState(
+            aerobic_capacity=Assessment(
+                level="good", confidence="high", reasoning_text="r", evidence_basis=["e"]
+            ),
+            strength=Assessment(
+                level="moderate",
+                confidence="medium",
+                reasoning_text="r",
+                evidence_basis=["e"],
+            ),
+            weak_links=[],
+            skill_assessments={},
+        ),
+        recent_trajectory=RecentTrajectory(
+            short_term=TrajectoryWindow(
+                direction="steady", reasoning_text="r", evidence_basis=["e"]
+            ),
+            medium_term=TrajectoryWindow(
+                direction="building", reasoning_text="r", evidence_basis=["e"]
+            ),
+            acwr_status=ACWRStatus(
+                per_discipline={
+                    "D-run": ACWREntry(
+                        acute_load=7.0,
+                        chronic_load=8.0,
+                        ratio=ratio,
+                        zone=zone,  # type: ignore[arg-type]
+                        units="hours",
+                    )
+                },
+                combined=None,
+            ),
+            confidence="medium",
+        ),
+        data_density=DataDensity(
+            connected_providers=["coros"],
+            integration_data_days=28,
+            recent_workouts_count=20,
+            recent_sleep_count=14,
+            recent_hrv_count=14,
+            self_report_freshness_days=2,
+            section_completeness={"C": 1.0},
+        ),
+        notable_observations=[],
+    )
+
+
+def _layer3b(mode: str = "no-event", start_phase: str = "Build") -> Layer3BPayload:
+    return Layer3BPayload(
+        user_id=42,
+        as_of=datetime(2026, 5, 31, 10, 0, 0),
+        model="claude-opus-4-7",
+        temperature=0.0,
+        prompt_hash="abc",
+        latency_ms=1500,
+        input_tokens=3000,
+        output_tokens=800,
+        etl_version_set={"layer0": "v7"},
+        mode=mode,  # type: ignore[arg-type]
+        goal_viability=GoalViability(
+            viability="achievable",
+            confidence="high",
+            reasoning_text="solid base",
+            evidence_basis=["e"],
+            suggested_adjustments=[],
+        ),
+        periodization_shape=PeriodizationShape(
+            mode="standard",
+            start_phase=start_phase,  # type: ignore[arg-type]
+            phase_weeks=None,
+            reasoning_text="r",
+            evidence_basis=["e"],
+        ),
+        hitl_surface=[],
+        notable_observations=[],
+    )
+
+
+def _layer2_bundle(
+    *,
+    with_2a: bool = True,
+    with_2c: bool = True,
+    with_2d: bool = True,
+) -> Layer2Bundle:
+    return Layer2Bundle(
+        a=_layer2a() if with_2a else None,
+        b=None,
+        c={"home_gym": _layer2c()} if with_2c else {},
+        d=_layer2d() if with_2d else None,
+        e=None,
+    )
+
+
+def _prior_session(d: date, *, idx: int = 0) -> PlanSession:
+    """Build a prior plan session for the window context. Uses rest kind to
+    avoid the cardio_blocks-non-empty / strength_exercises-non-empty
+    invariants — the prior window is context-only, not validated for shape."""
+    return PlanSession(
+        session_id=f"prior-{d.isoformat()}-{idx}",
+        plan_version_id=1,
+        date=d,
+        day_of_week=d.strftime("%a"),
+        session_index_in_day=idx,
+        time_of_day="morning",
+        kind="rest",
+        discipline_id=None,
+        discipline_name=None,
+        locale_id=None,
+        locale_name=None,
+        duration_min=0,
+        intensity_summary="rest",
+        cardio_blocks=None,
+        strength_exercises=None,
+        rest_reason="planned_recovery",
+        phase_metadata=None,
+        session_notes="prior rest",
+        coaching_intent="recovery placeholder for context",
+        coaching_flags=[],
+        is_ad_hoc=False,
+        ad_hoc_request_payload=None,
+    )
+
+
+def _prior_window(start: date, end: date, *, pre_days: int = 7, post_days: int = 7) -> list[PlanSession]:
+    """Build a list of prior sessions covering [start - pre_days, end + post_days].
+    Includes the to-be-replaced sessions in [start, end] so the validator's
+    'prior_plan_window_empty' check passes."""
+    sessions = []
+    for offset in range(-pre_days, (end - start).days + post_days + 1):
+        sessions.append(_prior_session(start + timedelta(days=offset)))
+    return sessions
+
+
+# ─── Tool output builders ────────────────────────────────────────────────────
+
+
+def _cardio_session(
+    *,
+    d: date,
+    idx: int = 0,
+    duration_min: int = 60,
+    intensity_summary: str = "easy",
+    coaching_flags: list[str] | None = None,
+    locale_id: str | None = "home_gym",
+) -> dict[str, Any]:
+    return {
+        "date": d.isoformat(),
+        "day_of_week": d.strftime("%a"),
+        "session_index_in_day": idx,
+        "time_of_day": "morning",
+        "kind": "cardio",
+        "discipline_id": "D-run",
+        "discipline_name": "Running",
+        "locale_id": locale_id,
+        "locale_name": locale_id,
+        "duration_min": duration_min,
+        "intensity_summary": intensity_summary,
+        "session_notes": "easy aerobic.",
+        "coaching_intent": "Z2 aerobic stimulus.",
+        "coaching_flags": coaching_flags or [],
+        "cardio_blocks": [
+            {
+                "block_kind": "warmup",
+                "duration_min": 10,
+                "intensity_zone": "Z1",
+                "intensity_target": {"hr_bpm_low": 110, "hr_bpm_high": 125},
+                "instructions": "easy warmup.",
+            },
+            {
+                "block_kind": "main_set",
+                "duration_min": duration_min - 20,
+                "intensity_zone": "Z2",
+                "intensity_target": {"hr_bpm_low": 130, "hr_bpm_high": 145},
+                "instructions": "steady aerobic.",
+            },
+            {
+                "block_kind": "cooldown",
+                "duration_min": 10,
+                "intensity_zone": "Z1",
+                "intensity_target": {"hr_bpm_low": 110, "hr_bpm_high": 125},
+                "instructions": "easy cooldown.",
+            },
+        ],
+    }
+
+
+def _strength_session(
+    *,
+    d: date,
+    idx: int = 0,
+    duration_min: int = 45,
+    exercise_ids: tuple[str, ...] = ("E-squat", "E-pushup"),
+    locale_id: str | None = "home_gym",
+) -> dict[str, Any]:
+    return {
+        "date": d.isoformat(),
+        "day_of_week": d.strftime("%a"),
+        "session_index_in_day": idx,
+        "time_of_day": "afternoon",
+        "kind": "strength",
+        "discipline_id": "D-run",
+        "discipline_name": "Running",
+        "locale_id": locale_id,
+        "locale_name": locale_id,
+        "duration_min": duration_min,
+        "intensity_summary": "moderate",
+        "session_notes": "lower body + push.",
+        "coaching_intent": "strength baseline.",
+        "coaching_flags": [],
+        "strength_exercises": [
+            {
+                "exercise_id": ex,
+                "exercise_name": ex,
+                "resolution_tier": 1,
+                "sets": 3,
+                "reps_per_set": 8,
+                "load_prescription": "70% 1RM",
+                "rest_between_sets_sec": 90,
+                "instructions": "neutral spine.",
+                "coaching_flags": [],
+            }
+            for ex in exercise_ids
+        ],
+    }
+
+
+def _stub_caller(tool_args: dict[str, Any]):
+    def _call(*_args, **_kwargs) -> _SynthesizerOutput:
+        return _SynthesizerOutput(
+            tool_args=tool_args, input_tokens=4500, output_tokens=1500, latency_ms=6800
+        )
+
+    return _call
+
+
+def _sequence_caller(outputs: list[dict[str, Any]]):
+    state = {"i": 0}
+
+    def _call(*_args, **_kwargs) -> _SynthesizerOutput:
+        i = state["i"]
+        state["i"] = i + 1
+        return _SynthesizerOutput(
+            tool_args=outputs[i], input_tokens=4500, output_tokens=1500, latency_ms=6800
+        )
+
+    return _call
+
+
+# ─── Layer2Bundle + ParsedIntent ─────────────────────────────────────────────
+
+
+class TestLayer2Bundle:
+    def test_empty_bundle_construction(self):
+        b = Layer2Bundle()
+        assert b.a is None and b.b is None and b.c == {} and b.d is None and b.e is None
+
+    def test_partial_bundle_construction(self):
+        b = Layer2Bundle(a=_layer2a(), d=_layer2d())
+        assert b.a is not None and b.d is not None and b.b is None
+
+    def test_full_bundle_construction(self):
+        b = _layer2_bundle()
+        assert b.a is not None and b.c and b.d is not None
+
+    def test_extra_field_forbidden(self):
+        with pytest.raises(Exception):
+            Layer2Bundle(unexpected_field="x")  # type: ignore[call-arg]
+
+
+class TestParsedIntent:
+    def test_default_construction(self):
+        pi = ParsedIntent()
+        assert pi.fatigue_signal == "normal"
+        assert pi.sickness_signal == "none"
+        assert pi.motivation_signal == "normal"
+        assert pi.raw_text == ""
+        assert pi.parser_confidence == "high"
+        assert pi.triggers_2c_equipment == []
+
+    def test_with_text_and_flags(self):
+        pi = ParsedIntent(
+            raw_text="I'm tired",
+            fatigue_signal="tired",
+            triggers_2d_injury=True,
+            parser_confidence="medium",
+        )
+        assert pi.raw_text == "I'm tired"
+        assert pi.fatigue_signal == "tired"
+        assert pi.triggers_2d_injury is True
+
+    def test_invalid_signal_rejected(self):
+        with pytest.raises(Exception):
+            ParsedIntent(fatigue_signal="exhausted")  # type: ignore[arg-type]
+
+
+# ─── Tool schema ─────────────────────────────────────────────────────────────
+
+
+class TestToolSchema:
+    def test_t1_maxitems_4(self):
+        t1 = build_record_refresh_sessions_tool("T1")
+        assert t1["input_schema"]["properties"]["sessions"]["maxItems"] == 4
+
+    def test_t2_maxitems_14(self):
+        t2 = build_record_refresh_sessions_tool("T2")
+        assert t2["input_schema"]["properties"]["sessions"]["maxItems"] == 14
+
+    def test_tool_name(self):
+        for tier in ("T1", "T2"):
+            assert build_record_refresh_sessions_tool(tier)["name"] == "record_refresh_sessions"  # type: ignore[arg-type]
+
+    def test_required_fields_cover_payload_invariants(self):
+        sess_schema = build_record_refresh_sessions_tool("T1")["input_schema"]["properties"]["sessions"]["items"]
+        required = set(sess_schema["required"])
+        # Mirror PlanSession contract — same required fields as single_session tool
+        for field in (
+            "date",
+            "day_of_week",
+            "session_index_in_day",
+            "time_of_day",
+            "kind",
+            "duration_min",
+            "intensity_summary",
+            "session_notes",
+            "coaching_intent",
+            "coaching_flags",
+        ):
+            assert field in required
+
+    def test_coaching_flags_closed_7_set(self):
+        sess_schema = build_record_refresh_sessions_tool("T1")["input_schema"]["properties"]["sessions"]["items"]
+        flags_enum = sess_schema["properties"]["coaching_flags"]["items"]["enum"]
+        assert set(flags_enum) == {
+            "technique_emphasis",
+            "long_slow_distance",
+            "weak_link_targeted",
+            "overreach_test",
+            "discipline_specific_intensity",
+            "race_pace_specific",
+            "intensity_modulated",
+        }
+
+    def test_intensity_target_oneof_nine_shapes(self):
+        sess_schema = build_record_refresh_sessions_tool("T1")["input_schema"]["properties"]["sessions"]["items"]
+        cardio_items = sess_schema["properties"]["cardio_blocks"]["items"]
+        one_of = cardio_items["properties"]["intensity_target"]["oneOf"]
+        assert len(one_of) == 9
+
+    def test_intensity_zone_closed_set(self):
+        sess_schema = build_record_refresh_sessions_tool("T2")["input_schema"]["properties"]["sessions"]["items"]
+        cardio_items = sess_schema["properties"]["cardio_blocks"]["items"]
+        zone_enum = cardio_items["properties"]["intensity_zone"]["enum"]
+        assert set(zone_enum) == {"Z1", "Z2", "Z3", "Z4", "Z5", "mixed"}
+
+
+# ─── Input validation (§4.3) ─────────────────────────────────────────────────
+
+
+def _call_t1(
+    *,
+    layer1=None,
+    bundle=None,
+    layer3a=None,
+    layer3b=None,
+    prior_window=None,
+    plan_version_id_parent: int = 1,
+    parsed_intent: ParsedIntent | None = None,
+    llm_caller=None,
+):
+    return llm_layer4_plan_refresh(
+        user_id=42,
+        tier="T1",
+        refresh_scope_start=_T1_START,
+        refresh_scope_end=_T1_END,
+        layer1_payload=layer1 if layer1 is not None else _layer1(),
+        layer2_bundle=bundle if bundle is not None else _layer2_bundle(),
+        layer3a_payload=layer3a if layer3a is not None else _layer3a(),
+        layer3b_payload=layer3b if layer3b is not None else _layer3b(),
+        prior_plan_session_window=prior_window
+        if prior_window is not None
+        else _prior_window(_T1_START, _T1_END),
+        parsed_intent=parsed_intent,
+        plan_version_id=2,
+        plan_version_id_parent=plan_version_id_parent,
+        etl_version_set={"layer0": "v7"},
+        llm_caller=llm_caller
+        or _stub_caller({"sessions": [_cardio_session(d=_T1_START)]}),
+    )
+
+
+class TestInputValidation:
+    def test_missing_layer1_payload_raises(self):
+        with pytest.raises(Layer4InputError) as exc:
+            llm_layer4_plan_refresh(
+                user_id=42,
+                tier="T1",
+                refresh_scope_start=_T1_START,
+                refresh_scope_end=_T1_END,
+                layer1_payload=None,  # type: ignore[arg-type]
+                layer2_bundle=_layer2_bundle(),
+                layer3a_payload=_layer3a(),
+                layer3b_payload=_layer3b(),
+                prior_plan_session_window=_prior_window(_T1_START, _T1_END),
+                parsed_intent=None,
+                plan_version_id=2,
+                plan_version_id_parent=1,
+                etl_version_set={"layer0": "v7"},
+                llm_caller=_stub_caller({"sessions": []}),
+            )
+        assert exc.value.code == "missing_upstream_payload"
+        assert "layer1_payload" in (exc.value.detail or "")
+
+    def test_missing_layer2_bundle_raises(self):
+        # Layer2Bundle is required (non-None)
+        with pytest.raises(Layer4InputError) as exc:
+            llm_layer4_plan_refresh(
+                user_id=42,
+                tier="T1",
+                refresh_scope_start=_T1_START,
+                refresh_scope_end=_T1_END,
+                layer1_payload=_layer1(),
+                layer2_bundle=None,  # type: ignore[arg-type]
+                layer3a_payload=_layer3a(),
+                layer3b_payload=_layer3b(),
+                prior_plan_session_window=_prior_window(_T1_START, _T1_END),
+                parsed_intent=None,
+                plan_version_id=2,
+                plan_version_id_parent=1,
+                etl_version_set={"layer0": "v7"},
+                llm_caller=_stub_caller({"sessions": []}),
+            )
+        assert exc.value.code == "missing_upstream_payload"
+        assert "layer2_bundle" in (exc.value.detail or "")
+
+    def test_missing_layer3a_raises(self):
+        with pytest.raises(Layer4InputError) as exc:
+            llm_layer4_plan_refresh(
+                user_id=42,
+                tier="T1",
+                refresh_scope_start=_T1_START,
+                refresh_scope_end=_T1_END,
+                layer1_payload=_layer1(),
+                layer2_bundle=_layer2_bundle(),
+                layer3a_payload=None,  # type: ignore[arg-type]
+                layer3b_payload=_layer3b(),
+                prior_plan_session_window=_prior_window(_T1_START, _T1_END),
+                parsed_intent=None,
+                plan_version_id=2,
+                plan_version_id_parent=1,
+                etl_version_set={"layer0": "v7"},
+                llm_caller=_stub_caller({"sessions": []}),
+            )
+        assert exc.value.code == "missing_upstream_payload"
+
+    def test_missing_layer3b_raises(self):
+        """§4.3 row 1 (Andy 2026-05-17 §4.3-wins pick): 3B required for
+        T1/T2."""
+        with pytest.raises(Layer4InputError) as exc:
+            llm_layer4_plan_refresh(
+                user_id=42,
+                tier="T1",
+                refresh_scope_start=_T1_START,
+                refresh_scope_end=_T1_END,
+                layer1_payload=_layer1(),
+                layer2_bundle=_layer2_bundle(),
+                layer3a_payload=_layer3a(),
+                layer3b_payload=None,  # type: ignore[arg-type]
+                prior_plan_session_window=_prior_window(_T1_START, _T1_END),
+                parsed_intent=None,
+                plan_version_id=2,
+                plan_version_id_parent=1,
+                etl_version_set={"layer0": "v7"},
+                llm_caller=_stub_caller({"sessions": []}),
+            )
+        assert exc.value.code == "missing_upstream_payload"
+        assert "layer3b_payload" in (exc.value.detail or "")
+
+    def test_invalid_tier_raises(self):
+        with pytest.raises(Layer4InputError) as exc:
+            llm_layer4_plan_refresh(
+                user_id=42,
+                tier="T9",  # type: ignore[arg-type]
+                refresh_scope_start=_T1_START,
+                refresh_scope_end=_T1_END,
+                layer1_payload=_layer1(),
+                layer2_bundle=_layer2_bundle(),
+                layer3a_payload=_layer3a(),
+                layer3b_payload=_layer3b(),
+                prior_plan_session_window=_prior_window(_T1_START, _T1_END),
+                parsed_intent=None,
+                plan_version_id=2,
+                plan_version_id_parent=1,
+                etl_version_set={"layer0": "v7"},
+                llm_caller=_stub_caller({"sessions": []}),
+            )
+        assert exc.value.code == "tier_invalid"
+
+    def test_scope_inverted_raises(self):
+        with pytest.raises(Layer4InputError) as exc:
+            llm_layer4_plan_refresh(
+                user_id=42,
+                tier="T1",
+                refresh_scope_start=_T1_END,  # reversed
+                refresh_scope_end=_T1_START,
+                layer1_payload=_layer1(),
+                layer2_bundle=_layer2_bundle(),
+                layer3a_payload=_layer3a(),
+                layer3b_payload=_layer3b(),
+                prior_plan_session_window=_prior_window(_T1_START, _T1_END),
+                parsed_intent=None,
+                plan_version_id=2,
+                plan_version_id_parent=1,
+                etl_version_set={"layer0": "v7"},
+                llm_caller=_stub_caller({"sessions": []}),
+            )
+        assert exc.value.code == "refresh_scope_inverted"
+
+    def test_t1_scope_too_long_raises(self):
+        with pytest.raises(Layer4InputError) as exc:
+            llm_layer4_plan_refresh(
+                user_id=42,
+                tier="T1",
+                refresh_scope_start=_T1_START,
+                refresh_scope_end=_T1_START + timedelta(days=4),  # 5 days > 3
+                layer1_payload=_layer1(),
+                layer2_bundle=_layer2_bundle(),
+                layer3a_payload=_layer3a(),
+                layer3b_payload=_layer3b(),
+                prior_plan_session_window=_prior_window(_T1_START, _T1_END),
+                parsed_intent=None,
+                plan_version_id=2,
+                plan_version_id_parent=1,
+                etl_version_set={"layer0": "v7"},
+                llm_caller=_stub_caller({"sessions": []}),
+            )
+        assert exc.value.code == "tier_scope_mismatch"
+
+    def test_t2_scope_too_long_raises(self):
+        with pytest.raises(Layer4InputError) as exc:
+            llm_layer4_plan_refresh(
+                user_id=42,
+                tier="T2",
+                refresh_scope_start=_T2_START,
+                refresh_scope_end=_T2_START + timedelta(days=10),  # 11 days > 9
+                layer1_payload=_layer1(),
+                layer2_bundle=_layer2_bundle(),
+                layer3a_payload=_layer3a(),
+                layer3b_payload=_layer3b(),
+                prior_plan_session_window=_prior_window(_T2_START, _T2_END),
+                parsed_intent=None,
+                plan_version_id=2,
+                plan_version_id_parent=1,
+                etl_version_set={"layer0": "v7"},
+                llm_caller=_stub_caller({"sessions": []}),
+            )
+        assert exc.value.code == "tier_scope_mismatch"
+
+    def test_empty_prior_window_raises(self):
+        with pytest.raises(Layer4InputError) as exc:
+            _call_t1(prior_window=[])
+        assert exc.value.code == "prior_plan_window_empty"
+
+    def test_plan_version_id_parent_zero_raises(self):
+        with pytest.raises(Layer4InputError) as exc:
+            _call_t1(plan_version_id_parent=0)
+        assert exc.value.code == "plan_version_id_parent_missing"
+
+    def test_t3_not_yet_implemented(self):
+        with pytest.raises(Layer4InputError) as exc:
+            llm_layer4_plan_refresh(
+                user_id=42,
+                tier="T3",
+                refresh_scope_start=_T2_START,
+                refresh_scope_end=_T2_START + timedelta(days=27),
+                layer1_payload=_layer1(),
+                layer2_bundle=_layer2_bundle(),
+                layer3a_payload=_layer3a(),
+                layer3b_payload=_layer3b(),
+                prior_plan_session_window=_prior_window(
+                    _T2_START, _T2_START + timedelta(days=27), pre_days=7, post_days=7
+                ),
+                parsed_intent=None,
+                plan_version_id=2,
+                plan_version_id_parent=1,
+                etl_version_set={"layer0": "v7"},
+                llm_caller=_stub_caller({"sessions": []}),
+            )
+        assert exc.value.code == "tier_t3_not_yet_implemented"
+
+
+# ─── Entry-point happy path ──────────────────────────────────────────────────
+
+
+class TestEntryPointHappyPath:
+    def test_t1_cardio_single_session(self):
+        result = _call_t1(
+            llm_caller=_stub_caller({"sessions": [_cardio_session(d=_T1_START)]})
+        )
+        assert isinstance(result, Layer4Payload)
+        assert result.mode == "plan_refresh"
+        assert result.pattern == "B"
+        assert len(result.sessions) == 1
+        assert result.sessions[0].kind == "cardio"
+
+    def test_t1_two_sessions_across_two_days(self):
+        result = _call_t1(
+            llm_caller=_stub_caller(
+                {
+                    "sessions": [
+                        _cardio_session(d=_T1_START),
+                        _cardio_session(d=_T1_END),
+                    ]
+                }
+            )
+        )
+        assert len(result.sessions) == 2
+        assert {s.date for s in result.sessions} == {_T1_START, _T1_END}
+
+    def test_t1_empty_sessions_allowed(self):
+        """0 sessions is valid output (entire window is rest)."""
+        result = _call_t1(llm_caller=_stub_caller({"sessions": []}))
+        assert result.sessions == []
+        assert result.mode == "plan_refresh"
+
+    def test_t2_cardio_full_week(self):
+        sessions = [
+            _cardio_session(d=_T2_START + timedelta(days=i))
+            for i in range(7)
+        ]
+        result = llm_layer4_plan_refresh(
+            user_id=42,
+            tier="T2",
+            refresh_scope_start=_T2_START,
+            refresh_scope_end=_T2_END,
+            layer1_payload=_layer1(),
+            layer2_bundle=_layer2_bundle(),
+            layer3a_payload=_layer3a(),
+            layer3b_payload=_layer3b(),
+            prior_plan_session_window=_prior_window(_T2_START, _T2_END),
+            parsed_intent=ParsedIntent(raw_text="standard week"),
+            plan_version_id=2,
+            plan_version_id_parent=1,
+            etl_version_set={"layer0": "v7"},
+            llm_caller=_stub_caller({"sessions": sessions}),
+        )
+        assert len(result.sessions) == 7
+        assert result.mode == "plan_refresh"
+        assert result.pattern == "B"
+
+    def test_t2_mixed_cardio_and_strength(self):
+        sessions = [
+            _cardio_session(d=_T2_START),
+            _strength_session(d=_T2_START + timedelta(days=1)),
+            _cardio_session(d=_T2_START + timedelta(days=2)),
+        ]
+        result = llm_layer4_plan_refresh(
+            user_id=42,
+            tier="T2",
+            refresh_scope_start=_T2_START,
+            refresh_scope_end=_T2_END,
+            layer1_payload=_layer1(),
+            layer2_bundle=_layer2_bundle(),
+            layer3a_payload=_layer3a(),
+            layer3b_payload=_layer3b(),
+            prior_plan_session_window=_prior_window(_T2_START, _T2_END),
+            parsed_intent=None,
+            plan_version_id=2,
+            plan_version_id_parent=1,
+            etl_version_set={"layer0": "v7"},
+            llm_caller=_stub_caller({"sessions": sessions}),
+        )
+        assert len(result.sessions) == 3
+        assert result.sessions[1].kind == "strength"
+
+    def test_telemetry_fields_aggregated(self):
+        result = _call_t1(
+            llm_caller=_stub_caller({"sessions": [_cardio_session(d=_T1_START)]})
+        )
+        assert result.llm_call_count == 1
+        assert result.input_tokens_total == 4500
+        assert result.output_tokens_total == 1500
+        assert result.latency_ms_total == 6800
+
+    def test_scope_dates_propagate(self):
+        result = _call_t1(
+            llm_caller=_stub_caller({"sessions": [_cardio_session(d=_T1_START)]})
+        )
+        assert result.scope_start_date == _T1_START
+        assert result.scope_end_date == _T1_END
+
+
+# ─── Observation emission (§8.6/§8.7) ────────────────────────────────────────
+
+
+class TestObservationEmission:
+    def test_intensity_modulated_flag_emits_observation(self):
+        result = _call_t1(
+            llm_caller=_stub_caller(
+                {
+                    "sessions": [
+                        _cardio_session(
+                            d=_T1_START, coaching_flags=["intensity_modulated"]
+                        )
+                    ]
+                }
+            )
+        )
+        categories = [o.category for o in result.notable_observations]
+        assert "intensity_modulated" in categories
+
+    def test_no_flag_no_observation(self):
+        result = _call_t1(
+            llm_caller=_stub_caller({"sessions": [_cardio_session(d=_T1_START)]})
+        )
+        categories = [o.category for o in result.notable_observations]
+        assert "intensity_modulated" not in categories
+
+    def test_multi_session_intensity_modulated_single_observation(self):
+        """Per §8.6 broadening: whole-week modulation emits the flag on every
+        affected session; orchestrator emits ONE paired Observation."""
+        result = _call_t1(
+            llm_caller=_stub_caller(
+                {
+                    "sessions": [
+                        _cardio_session(
+                            d=_T1_START, coaching_flags=["intensity_modulated"]
+                        ),
+                        _cardio_session(
+                            d=_T1_END,
+                            idx=0,
+                            coaching_flags=["intensity_modulated"],
+                        ),
+                    ]
+                }
+            )
+        )
+        intensity_obs = [
+            o for o in result.notable_observations if o.category == "intensity_modulated"
+        ]
+        assert len(intensity_obs) == 1
+        # Text references 2 sessions affected
+        assert "2" in intensity_obs[0].text
+
+
+# ─── Capped retry (§5.5) ─────────────────────────────────────────────────────
+
+
+def _injury_violating_session(d: date) -> dict[str, Any]:
+    """Strength session prescribing an excluded exercise — fires
+    `injury_violation_*` blocker."""
+    s = _strength_session(d=d, exercise_ids=("E-banned",))
+    return s
+
+
+class TestCappedRetry:
+    def test_validator_fail_then_pass_retries_once(self):
+        bundle_with_banned = Layer2Bundle(
+            a=_layer2a(),
+            c={"home_gym": _layer2c(exercise_ids=("E-banned",))},
+            d=_layer2d(excluded=("E-banned",)),
+        )
+        good = {"sessions": [_strength_session(d=_T1_START, exercise_ids=("E-squat",))]}
+        bad = {"sessions": [_injury_violating_session(_T1_START)]}
+        # First pass: bad (violator); second pass: good — accepted
+        bundle_with_both = Layer2Bundle(
+            a=_layer2a(),
+            c={"home_gym": _layer2c(exercise_ids=("E-squat", "E-banned"))},
+            d=_layer2d(excluded=("E-banned",)),
+        )
+        result = llm_layer4_plan_refresh(
+            user_id=42,
+            tier="T1",
+            refresh_scope_start=_T1_START,
+            refresh_scope_end=_T1_END,
+            layer1_payload=_layer1(),
+            layer2_bundle=bundle_with_both,
+            layer3a_payload=_layer3a(),
+            layer3b_payload=_layer3b(),
+            prior_plan_session_window=_prior_window(_T1_START, _T1_END),
+            parsed_intent=None,
+            plan_version_id=2,
+            plan_version_id_parent=1,
+            etl_version_set={"layer0": "v7"},
+            llm_caller=_sequence_caller([bad, good]),
+        )
+        assert result.llm_call_count == 2
+        # Validator results: first pass failed, second accepted
+        assert result.validator_results[-1].accepted is True
+
+    def test_cap_hit_emits_best_effort_observation(self):
+        """Repeated validator failures → cap-hit + best_effort_plan
+        observation."""
+        bundle = Layer2Bundle(
+            a=_layer2a(),
+            c={"home_gym": _layer2c(exercise_ids=("E-banned",))},
+            d=_layer2d(excluded=("E-banned",)),
+        )
+        bad = {"sessions": [_injury_violating_session(_T1_START)]}
+        result = llm_layer4_plan_refresh(
+            user_id=42,
+            tier="T1",
+            refresh_scope_start=_T1_START,
+            refresh_scope_end=_T1_END,
+            layer1_payload=_layer1(),
+            layer2_bundle=bundle,
+            layer3a_payload=_layer3a(),
+            layer3b_payload=_layer3b(),
+            prior_plan_session_window=_prior_window(_T1_START, _T1_END),
+            parsed_intent=None,
+            plan_version_id=2,
+            plan_version_id_parent=1,
+            etl_version_set={"layer0": "v7"},
+            llm_caller=_sequence_caller([bad, bad, bad]),
+        )
+        assert result.llm_call_count == 3  # initial + 2 retries
+        categories = [o.category for o in result.notable_observations]
+        assert "best_effort_plan" in categories
+        # validator_results[-1].accepted is True (best-effort demotion)
+        assert result.validator_results[-1].accepted is True
+        # Demoted: no blockers in the final validator pass
+        final_blockers = [
+            f for f in result.validator_results[-1].rule_failures if f.severity == "blocker"
+        ]
+        assert final_blockers == []
+
+    def test_first_pass_accept_skips_retries(self):
+        result = _call_t1(
+            llm_caller=_stub_caller({"sessions": [_cardio_session(d=_T1_START)]})
+        )
+        assert result.llm_call_count == 1
+        assert len(result.validator_results) == 1
+
+    def test_capped_retries_zero_no_retry_path(self):
+        bundle = Layer2Bundle(
+            a=_layer2a(),
+            c={"home_gym": _layer2c(exercise_ids=("E-banned",))},
+            d=_layer2d(excluded=("E-banned",)),
+        )
+        bad = {"sessions": [_injury_violating_session(_T1_START)]}
+        result = llm_layer4_plan_refresh(
+            user_id=42,
+            tier="T1",
+            refresh_scope_start=_T1_START,
+            refresh_scope_end=_T1_END,
+            layer1_payload=_layer1(),
+            layer2_bundle=bundle,
+            layer3a_payload=_layer3a(),
+            layer3b_payload=_layer3b(),
+            prior_plan_session_window=_prior_window(_T1_START, _T1_END),
+            parsed_intent=None,
+            plan_version_id=2,
+            plan_version_id_parent=1,
+            etl_version_set={"layer0": "v7"},
+            capped_retries=0,
+            llm_caller=_stub_caller(bad),
+        )
+        assert result.llm_call_count == 1
+        # cap=0 means single pass; if it fails, immediate best-effort
+        categories = [o.category for o in result.notable_observations]
+        assert "best_effort_plan" in categories
+
+
+# ─── Schema violation (§5.5 special case) ────────────────────────────────────
+
+
+class TestSchemaViolation:
+    def test_missing_sessions_key_raises(self):
+        with pytest.raises(Layer4OutputError) as exc:
+            _call_t1(llm_caller=_stub_caller({"not_sessions": []}))
+        assert exc.value.code == "schema_violation"
+
+    def test_malformed_session_retries_then_raises(self):
+        """All passes return malformed sessions → raises after schema-only
+        retries exhaust."""
+        bad = {"sessions": [{"date": "not-iso", "kind": "cardio"}]}
+        with pytest.raises(Layer4OutputError) as exc:
+            _call_t1(llm_caller=_sequence_caller([bad, bad, bad]))
+        assert exc.value.code == "schema_violation"
+
+    def test_malformed_then_valid_recovers(self):
+        bad = {"sessions": [{"date": "not-iso", "kind": "cardio"}]}
+        good = {"sessions": [_cardio_session(d=_T1_START)]}
+        result = _call_t1(llm_caller=_sequence_caller([bad, good]))
+        assert len(result.sessions) == 1
+
+
+# ─── Layer4Payload composition ───────────────────────────────────────────────
+
+
+class TestLayer4PayloadComposition:
+    def test_mode_plan_refresh(self):
+        result = _call_t1(
+            llm_caller=_stub_caller({"sessions": [_cardio_session(d=_T1_START)]})
+        )
+        assert result.mode == "plan_refresh"
+
+    def test_pattern_b(self):
+        result = _call_t1(
+            llm_caller=_stub_caller({"sessions": [_cardio_session(d=_T1_START)]})
+        )
+        assert result.pattern == "B"
+
+    def test_phase_structure_none(self):
+        result = _call_t1(
+            llm_caller=_stub_caller({"sessions": [_cardio_session(d=_T1_START)]})
+        )
+        assert result.phase_structure is None
+
+    def test_seam_reviews_none(self):
+        result = _call_t1(
+            llm_caller=_stub_caller({"sessions": [_cardio_session(d=_T1_START)]})
+        )
+        assert result.seam_reviews is None
+
+    def test_suggestion_id_none(self):
+        """Plan refresh doesn't carry a D-63 suggestion_id."""
+        result = _call_t1(
+            llm_caller=_stub_caller({"sessions": [_cardio_session(d=_T1_START)]})
+        )
+        assert result.suggestion_id is None
+
+    def test_session_phase_metadata_none(self):
+        """§7.12: mode=plan_refresh + pattern=B requires phase_metadata None."""
+        result = _call_t1(
+            llm_caller=_stub_caller({"sessions": [_cardio_session(d=_T1_START)]})
+        )
+        for s in result.sessions:
+            assert s.phase_metadata is None
+
+    def test_session_is_ad_hoc_false(self):
+        result = _call_t1(
+            llm_caller=_stub_caller({"sessions": [_cardio_session(d=_T1_START)]})
+        )
+        for s in result.sessions:
+            assert s.is_ad_hoc is False
+
+    def test_model_synthesizer_recorded(self):
+        result = _call_t1(
+            llm_caller=_stub_caller({"sessions": [_cardio_session(d=_T1_START)]})
+        )
+        assert result.model_synthesizer == "claude-sonnet-4-6"
+        assert result.model_seam_reviewer is None
+
+    def test_etl_version_set_propagated(self):
+        result = _call_t1(
+            llm_caller=_stub_caller({"sessions": [_cardio_session(d=_T1_START)]})
+        )
+        assert result.etl_version_set == {"layer0": "v7"}
+
+
+# ─── Prompt rendering ────────────────────────────────────────────────────────
+
+
+class TestPromptRendering:
+    def test_t1_prompt_includes_athletes_words(self):
+        from layer4.plan_refresh_t1 import render_user_prompt
+
+        prompt = render_user_prompt(
+            refresh_scope_start=_T1_START,
+            refresh_scope_end=_T1_END,
+            layer1_payload=_layer1(),
+            layer2_bundle=_layer2_bundle(),
+            layer3a_payload=_layer3a(),
+            layer3b_payload=_layer3b(),
+            prior_plan_session_window=_prior_window(_T1_START, _T1_END),
+            parsed_intent=ParsedIntent(raw_text="I'm tired", fatigue_signal="tired"),
+            retries_used=0,
+            rule_failures=[],
+        )
+        assert "I'm tired" in prompt
+        assert "tired" in prompt  # fatigue signal rendered
+
+    def test_t1_prompt_no_text_renders_placeholder(self):
+        from layer4.plan_refresh_t1 import render_user_prompt
+
+        prompt = render_user_prompt(
+            refresh_scope_start=_T1_START,
+            refresh_scope_end=_T1_END,
+            layer1_payload=_layer1(),
+            layer2_bundle=_layer2_bundle(),
+            layer3a_payload=_layer3a(),
+            layer3b_payload=_layer3b(),
+            prior_plan_session_window=_prior_window(_T1_START, _T1_END),
+            parsed_intent=ParsedIntent(),
+            retries_used=0,
+            rule_failures=[],
+        )
+        assert "refreshed without typing a note" in prompt
+
+    def test_t1_prompt_retry_context_conditional(self):
+        from layer4.payload import RuleFailure
+        from layer4.plan_refresh_t1 import render_user_prompt
+
+        rf = RuleFailure(
+            rule_name="injury_violation_strength",
+            phase_name=None,
+            severity="blocker",
+            detail="exercise E-banned violates injury exclusion",
+            affected_session_ids=["S-001"],
+        )
+        prompt_with = render_user_prompt(
+            refresh_scope_start=_T1_START,
+            refresh_scope_end=_T1_END,
+            layer1_payload=_layer1(),
+            layer2_bundle=_layer2_bundle(),
+            layer3a_payload=_layer3a(),
+            layer3b_payload=_layer3b(),
+            prior_plan_session_window=_prior_window(_T1_START, _T1_END),
+            parsed_intent=ParsedIntent(),
+            retries_used=1,
+            rule_failures=[rf],
+        )
+        assert "Retry context" in prompt_with
+        assert "injury_violation_strength" in prompt_with
+
+        prompt_without = render_user_prompt(
+            refresh_scope_start=_T1_START,
+            refresh_scope_end=_T1_END,
+            layer1_payload=_layer1(),
+            layer2_bundle=_layer2_bundle(),
+            layer3a_payload=_layer3a(),
+            layer3b_payload=_layer3b(),
+            prior_plan_session_window=_prior_window(_T1_START, _T1_END),
+            parsed_intent=ParsedIntent(),
+            retries_used=0,
+            rule_failures=[],
+        )
+        assert "Retry context" not in prompt_without
+
+    def test_t2_prompt_includes_weekly_aggregate(self):
+        from layer4.plan_refresh_t2 import render_user_prompt
+
+        prompt = render_user_prompt(
+            refresh_scope_start=_T2_START,
+            refresh_scope_end=_T2_END,
+            layer1_payload=_layer1(),
+            layer2_bundle=_layer2_bundle(),
+            layer3a_payload=_layer3a(),
+            layer3b_payload=_layer3b(),
+            prior_plan_session_window=_prior_window(_T2_START, _T2_END),
+            parsed_intent=ParsedIntent(),
+            retries_used=0,
+            rule_failures=[],
+        )
+        assert "Weekly aggregate" in prompt
+        assert "T2 (7-day rolling window)" in prompt
+
+    def test_t1_vs_t2_prompts_differ(self):
+        from layer4.plan_refresh_t1 import render_user_prompt as render_t1
+        from layer4.plan_refresh_t2 import render_user_prompt as render_t2
+
+        kwargs = dict(
+            layer1_payload=_layer1(),
+            layer2_bundle=_layer2_bundle(),
+            layer3a_payload=_layer3a(),
+            layer3b_payload=_layer3b(),
+            parsed_intent=ParsedIntent(),
+            retries_used=0,
+            rule_failures=[],
+        )
+        p1 = render_t1(
+            refresh_scope_start=_T1_START,
+            refresh_scope_end=_T1_END,
+            prior_plan_session_window=_prior_window(_T1_START, _T1_END),
+            **kwargs,
+        )
+        p2 = render_t2(
+            refresh_scope_start=_T2_START,
+            refresh_scope_end=_T2_END,
+            prior_plan_session_window=_prior_window(_T2_START, _T2_END),
+            **kwargs,
+        )
+        assert "T1 (2-day rolling window)" in p1
+        assert "T2 (7-day rolling window)" in p2
+        assert "Weekly aggregate" in p2 and "Weekly aggregate" not in p1
+
+    def test_active_injuries_rendered_when_present(self):
+        from layer4.plan_refresh_t1 import render_user_prompt
+
+        bundle = Layer2Bundle(a=_layer2a(), c={}, d=_layer2d(excluded=("E-wrist",)))
+        prompt = render_user_prompt(
+            refresh_scope_start=_T1_START,
+            refresh_scope_end=_T1_END,
+            layer1_payload=_layer1(),
+            layer2_bundle=bundle,
+            layer3a_payload=_layer3a(),
+            layer3b_payload=_layer3b(),
+            prior_plan_session_window=_prior_window(_T1_START, _T1_END),
+            parsed_intent=ParsedIntent(),
+            retries_used=0,
+            rule_failures=[],
+        )
+        assert "EXCLUDE E-wrist" in prompt
+
+    def test_default_parsed_intent_when_none_passed(self):
+        """When parsed_intent=None, the driver substitutes a degraded
+        ParsedIntent with parser_confidence='low'."""
+        result = _call_t1(
+            parsed_intent=None,
+            llm_caller=_stub_caller({"sessions": [_cardio_session(d=_T1_START)]}),
+        )
+        # The driver doesn't raise — the degraded ParsedIntent is rendered
+        # internally and the synthesis proceeds.
+        assert result.mode == "plan_refresh"
