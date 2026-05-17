@@ -372,13 +372,83 @@ class CardioBlock:
     block_kind: Literal['warmup', 'main_set', 'cooldown', 'interval_set', 'transition']
     duration_min: int
     intensity_zone: Literal['Z1', 'Z2', 'Z3', 'Z4', 'Z5', 'mixed']
-    intensity_target: dict                 # Free-shape per-discipline: e.g. {'pace_per_km': '5:30'} | {'power_w': 220} | {'hr_bpm_low': 140, 'hr_bpm_high': 155} | {'rpe': 6}
+    intensity_target: IntensityTarget      # §7.3.1 typed union (closed v1 set of 9 shapes)
     instructions: str                      # Athlete-facing block text
     # Interval-block-specific (None for non-interval blocks):
     repetitions: int | None
     rest_between_min: int | None
     rest_intensity_zone: Literal['Z1', 'Z2'] | None    # Active recovery between intervals
 ```
+
+#### 7.3.1 IntensityTarget v1 set (D1 amendment 2026-05-17)
+
+Original §7.3 left `intensity_target: dict` as "free-shape per-discipline" with four example shapes. D1 amendment narrows this to a closed v1 set of 9 typed shapes, dispatched by smart-union match on key + type — garbage rejects against all branches at construction so a synthesizer drift cannot push a malformed prescription downstream into the plan-view UI or Layer 3A interpretation. `pacing_target` on §7.14 `RaceSegment` uses the same union.
+
+Convention: always range-based (low + high). Fixed prescriptions use `low == high`.
+
+```python
+@dataclass
+class HRTarget:
+    hr_bpm_low: int                       # 30 ≤ value ≤ 230
+    hr_bpm_high: int
+
+@dataclass
+class PowerTarget:
+    power_w_low: int                      # 0 ≤ value ≤ 2000
+    power_w_high: int
+
+@dataclass
+class PaceTarget:
+    pace_per_km_low: str                  # "M:SS" e.g. "5:30"
+    pace_per_km_high: str
+
+@dataclass
+class SwimPaceTarget:
+    pace_per_100m_low: str                # "M:SS"
+    pace_per_100m_high: str
+
+@dataclass
+class RPETarget:
+    rpe_low: int                          # 1 ≤ value ≤ 10
+    rpe_high: int
+
+@dataclass
+class VerticalRateTarget:
+    vert_m_per_hr_low: int                # 0 ≤ value ≤ 3000
+    vert_m_per_hr_high: int
+
+@dataclass
+class StrokeRateTarget:
+    strokes_per_min_low: int              # 0 ≤ value ≤ 200
+    strokes_per_min_high: int
+
+@dataclass
+class CadenceTarget:
+    rpm_low: int                          # 0 ≤ value ≤ 250
+    rpm_high: int
+
+@dataclass
+class ClimbingGradeTarget:
+    grade_system: Literal['yosemite_decimal', 'french_sport', 'uiaa']
+    grade_min: str
+    grade_max: str
+
+IntensityTarget = HRTarget | PowerTarget | PaceTarget | SwimPaceTarget | RPETarget | VerticalRateTarget | StrokeRateTarget | CadenceTarget | ClimbingGradeTarget
+```
+
+Per-shape rules (all shapes share: each `*_low ≤ *_high`; pace strings match `^\d{1,2}:[0-5]\d$`):
+
+- **HRTarget** — road/trail/track running, hiking, road/MTB/gravel cycling, swim (open water), paddle (kayak/packraft/SUP/marathon canoe), skimo, climbing (endurance work), abseiling, modern pentathlon (laser-run leg), Ironman + triathlon (all legs), swimrun.
+- **PowerTarget** — road/MTB/gravel cycling, skimo (uphill power), run-power (Stryd), rowing.
+- **PaceTarget** — running (road/trail), hiking (linear pace where terrain admits), paddle (per-km), ski tour, marathon canoe.
+- **SwimPaceTarget** — swim (pool + open water; per-100m convention).
+- **RPETarget** — universal fallback for any discipline when no instrumented measure applies (climbing crux work; abseiling; ad-hoc field training; degraded-data fallback per 3A `data_density='thin'`).
+- **VerticalRateTarget** — skimo, ski mountaineering, hiking with elevation focus, vertical-running, scrambling.
+- **StrokeRateTarget** — swimming, paddle sports (kayak, packraft, SUP, marathon canoe), rowing.
+- **CadenceTarget** — road/MTB/gravel cycling.
+- **ClimbingGradeTarget** — outdoor rock (sport, trad, multi-pitch) using `yosemite_decimal` (US standard), `french_sport` (international standard), or `uiaa` (alpine multi-pitch standard). Bouldering V-grade deferred to v2.
+
+Shape combinations within a single block (e.g., "HR 140-155 AND cadence 90+") are NOT supported in v1 — each `CardioBlock.intensity_target` is exactly one shape. Multi-metric prescription goes in `CardioBlock.instructions: str` for v1; closing this seam is tracked in §12.4 as a tuning candidate.
 
 ### 7.4 StrengthExercise
 
@@ -550,7 +620,7 @@ Each `plan_session` row carries a `plan_version_id` FK; the per-day version poin
 - `PlanSession.kind == 'strength'` requires `strength_exercises` non-None and non-empty + `cardio_blocks is None` + `rest_reason is None`.
 - `PlanSession.kind == 'rest'` requires `cardio_blocks is None` + `strength_exercises is None` + `rest_reason` non-None + `duration_min == 0` + `discipline_id is None` + `locale_id is None`.
 - `PlanSession.is_ad_hoc == True` requires `ad_hoc_request_payload` non-None and that the producer was `single_session_synthesize` (the orchestrator must not create `is_ad_hoc=True` sessions through other entry points).
-- `PlanSession.phase_metadata` non-None when the producer was `plan_create` or Pattern-A `plan_refresh`; None for Pattern-B `plan_refresh` (T1, T2, T3 intra-phase — no phase decomposition) and for `single_session_synthesize`. **Race-week-brief override-pass-through** (C2 amendment 2026-05-17): when `race_week_brief` modifies pre-existing Taper-phase sessions from `prior_plan_session_window`, the modified session's `phase_metadata` is preserved verbatim from the prior-plan session (which carries the original `plan_create` or Pattern-A `plan_refresh` metadata). Race-week-brief does NOT produce new `PlanSession` rows in v1 (it only modifies existing ones); if it did, those new rows would follow the Pattern-B default of `phase_metadata=None`. This rule resolves the §14.1.3 C2 contract gap surfaced by the §14 retro — race-week-brief is Pattern B but legitimately preserves Pattern-A-produced metadata on its overrides.
+- `PlanSession.phase_metadata` non-None when the producer was `plan_create` or Pattern-A `plan_refresh`; None for Pattern-B `plan_refresh` (T1, T2, T3 intra-phase — no phase decomposition) and for `single_session_synthesize`. **Race-week-brief override-pass-through** (C2 amendment 2026-05-17): when `race_week_brief` modifies pre-existing Taper-phase sessions from `prior_plan_session_window`, the modified session's `phase_metadata` is preserved verbatim from the prior-plan session (which carries the original `plan_create` or Pattern-A `plan_refresh` metadata). Race-week-brief does NOT produce new `PlanSession` rows in v1 (it only modifies existing ones); if it did, those new rows would follow the Pattern-B default of `phase_metadata=None`. This rule resolves the §14.1.3 C2 contract gap surfaced by the §14 retro — race-week-brief is Pattern B but legitimately preserves Pattern-A-produced metadata on its overrides. **D1 amendment 2026-05-17 (v1 strict invariant):** schema enforcement requires every `PlanSession` in a `mode == 'race_week_brief'` payload to have `phase_metadata` non-None (the override-pass-through value). v2 will amend this clause when `race_week_brief` begins producing new (non-override) `PlanSession` rows.
 - `CardioBlock.block_kind == 'interval_set'` requires `repetitions`, `rest_between_min`, and `rest_intensity_zone` all non-None.
 - `CardioBlock.block_kind` ∈ `{'warmup', 'main_set', 'cooldown', 'transition'}` requires `repetitions is None` + `rest_between_min is None` + `rest_intensity_zone is None`.
 - `StrengthExercise.resolution_tier == 2` requires `substitute_text` non-None.
@@ -626,7 +696,7 @@ class RaceSegment:
     distance_km: float | None              # None when not applicable (e.g., a nav-puzzle segment)
     elevation_gain_m: float | None
     terrain_notes: str                     # Surface + technical features + key landmarks
-    pacing_target: dict                    # Same shape as CardioBlock.intensity_target (zone + measure)
+    pacing_target: IntensityTarget         # §7.3.1 typed union (per D1 amendment 2026-05-17)
     coaching_notes: str                    # Per-segment direct guidance
 
 @dataclass

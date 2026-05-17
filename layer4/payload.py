@@ -14,13 +14,127 @@ from __future__ import annotations
 
 from collections import defaultdict
 from datetime import date, datetime
-from typing import Any, Literal
+from typing import Annotated, Any, Literal, Union
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class _Base(BaseModel):
     model_config = ConfigDict(extra="forbid")
+
+
+# ─── §7.3 IntensityTarget union (also §7.14 RaceSegment.pacing_target) ─────
+#
+# Closed set of 9 typed target shapes — v1 amendment per spec §7.3 narrowed
+# "free-shape per-discipline" to "free across this enumerated set; tight
+# within each shape." Smart-union dispatch on key+type match; garbage
+# rejects against all branches.
+#
+# Convention: always range-based (low + high). Fixed prescriptions use
+# low == high. Range fields are bounds-checked for sane physical limits;
+# domain-level rules (e.g., "Z2 HR is 60-80% of athlete's HR_max") live
+# in the §5.4 validator harness, not here.
+
+
+_PACE_PATTERN = r"^\d{1,2}:[0-5]\d$"
+
+
+class HRTarget(_Base):
+    hr_bpm_low: int = Field(ge=30, le=230)
+    hr_bpm_high: int = Field(ge=30, le=230)
+
+    @model_validator(mode="after")
+    def _check_range(self) -> "HRTarget":
+        if self.hr_bpm_low > self.hr_bpm_high:
+            raise ValueError("hr_bpm_low must be <= hr_bpm_high")
+        return self
+
+
+class PowerTarget(_Base):
+    power_w_low: int = Field(ge=0, le=2000)
+    power_w_high: int = Field(ge=0, le=2000)
+
+    @model_validator(mode="after")
+    def _check_range(self) -> "PowerTarget":
+        if self.power_w_low > self.power_w_high:
+            raise ValueError("power_w_low must be <= power_w_high")
+        return self
+
+
+class PaceTarget(_Base):
+    pace_per_km_low: str = Field(pattern=_PACE_PATTERN)
+    pace_per_km_high: str = Field(pattern=_PACE_PATTERN)
+
+
+class SwimPaceTarget(_Base):
+    pace_per_100m_low: str = Field(pattern=_PACE_PATTERN)
+    pace_per_100m_high: str = Field(pattern=_PACE_PATTERN)
+
+
+class RPETarget(_Base):
+    rpe_low: int = Field(ge=1, le=10)
+    rpe_high: int = Field(ge=1, le=10)
+
+    @model_validator(mode="after")
+    def _check_range(self) -> "RPETarget":
+        if self.rpe_low > self.rpe_high:
+            raise ValueError("rpe_low must be <= rpe_high")
+        return self
+
+
+class VerticalRateTarget(_Base):
+    vert_m_per_hr_low: int = Field(ge=0, le=3000)
+    vert_m_per_hr_high: int = Field(ge=0, le=3000)
+
+    @model_validator(mode="after")
+    def _check_range(self) -> "VerticalRateTarget":
+        if self.vert_m_per_hr_low > self.vert_m_per_hr_high:
+            raise ValueError("vert_m_per_hr_low must be <= vert_m_per_hr_high")
+        return self
+
+
+class StrokeRateTarget(_Base):
+    strokes_per_min_low: int = Field(ge=0, le=200)
+    strokes_per_min_high: int = Field(ge=0, le=200)
+
+    @model_validator(mode="after")
+    def _check_range(self) -> "StrokeRateTarget":
+        if self.strokes_per_min_low > self.strokes_per_min_high:
+            raise ValueError("strokes_per_min_low must be <= strokes_per_min_high")
+        return self
+
+
+class CadenceTarget(_Base):
+    rpm_low: int = Field(ge=0, le=250)
+    rpm_high: int = Field(ge=0, le=250)
+
+    @model_validator(mode="after")
+    def _check_range(self) -> "CadenceTarget":
+        if self.rpm_low > self.rpm_high:
+            raise ValueError("rpm_low must be <= rpm_high")
+        return self
+
+
+class ClimbingGradeTarget(_Base):
+    grade_system: Literal["yosemite_decimal", "french_sport", "uiaa"]
+    grade_min: str
+    grade_max: str
+
+
+IntensityTarget = Annotated[
+    Union[
+        HRTarget,
+        PowerTarget,
+        PaceTarget,
+        SwimPaceTarget,
+        RPETarget,
+        VerticalRateTarget,
+        StrokeRateTarget,
+        CadenceTarget,
+        ClimbingGradeTarget,
+    ],
+    Field(union_mode="smart"),
+]
 
 
 # ─── §7.3 CardioBlock ──────────────────────────────────────────────────────
@@ -30,7 +144,7 @@ class CardioBlock(_Base):
     block_kind: Literal["warmup", "main_set", "cooldown", "interval_set", "transition"]
     duration_min: int
     intensity_zone: Literal["Z1", "Z2", "Z3", "Z4", "Z5", "mixed"]
-    intensity_target: dict[str, Any]
+    intensity_target: IntensityTarget
     instructions: str
     repetitions: int | None = None
     rest_between_min: int | None = None
@@ -333,7 +447,7 @@ class RaceSegment(_Base):
     distance_km: float | None = None
     elevation_gain_m: float | None = None
     terrain_notes: str
-    pacing_target: dict[str, Any]
+    pacing_target: IntensityTarget
     coaching_notes: str
 
 
@@ -555,5 +669,14 @@ class Layer4Payload(_Base):
                         f"session {s.session_id}: mode=='single_session_synthesize' "
                         "requires phase_metadata is None"
                     )
-        # race_week_brief: no enforcement — override-pass-through preserves prior metadata
+        elif self.mode == "race_week_brief":
+            # §7.12 C2 amendment + v1 strict invariant: race_week_brief only modifies
+            # existing Pattern-A-produced Taper sessions which carry phase_metadata
+            # verbatim; all sessions in race_week_brief output must have it non-None.
+            for s in self.sessions:
+                if s.phase_metadata is None:
+                    raise ValueError(
+                        f"session {s.session_id}: mode=='race_week_brief' requires "
+                        "phase_metadata non-None (v1: override-pass-through from prior plan)"
+                    )
         return self

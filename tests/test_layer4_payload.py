@@ -14,16 +14,22 @@ import pytest
 from pydantic import ValidationError
 
 from layer4.payload import (
+    CadenceTarget,
     CardioBlock,
+    ClimbingGradeTarget,
     Contingency,
     FuelingStrategy,
+    HRTarget,
     KitItem,
     Layer4Payload,
     Observation,
+    PaceTarget,
     PacingStrategy,
     PhaseSpec,
     PhaseStructure,
     PlanSession,
+    PowerTarget,
+    RPETarget,
     RacePlan,
     RaceSegment,
     RaceWeekBrief,
@@ -32,9 +38,12 @@ from layer4.payload import (
     SessionPhaseMetadata,
     ShapeOverride,
     StrengthExercise,
+    StrokeRateTarget,
+    SwimPaceTarget,
     SynthesisMetadata,
     TransitionSpec,
     ValidatorResult,
+    VerticalRateTarget,
 )
 
 
@@ -62,7 +71,7 @@ def _cardio_block(block_kind: str = "main_set") -> CardioBlock:
         "block_kind": block_kind,
         "duration_min": 30,
         "intensity_zone": "Z2",
-        "intensity_target": {"hr_bpm_low": 140, "hr_bpm_high": 155},
+        "intensity_target": HRTarget(hr_bpm_low=140, hr_bpm_high=155),
         "instructions": "Steady Z2 effort.",
     }
     if block_kind == "interval_set":
@@ -258,7 +267,7 @@ def _race_plan() -> RacePlan:
         distance_km=30.0,
         elevation_gain_m=500.0,
         terrain_notes="Mixed singletrack, mostly runnable.",
-        pacing_target={"hr_bpm_high": 150},
+        pacing_target=HRTarget(hr_bpm_low=130, hr_bpm_high=150),
         coaching_notes="Hold back; this is the easy leg.",
     )
     seg1 = RaceSegment(
@@ -270,7 +279,7 @@ def _race_plan() -> RacePlan:
         distance_km=60.0,
         elevation_gain_m=800.0,
         terrain_notes="Forest road + singletrack.",
-        pacing_target={"rpe": 5},
+        pacing_target=RPETarget(rpe_low=4, rpe_high=5),
         coaching_notes="Eat early; this is the longest leg.",
     )
     return RacePlan(
@@ -453,7 +462,7 @@ def test_interval_set_requires_interval_fields():
             block_kind="interval_set",
             duration_min=20,
             intensity_zone="Z4",
-            intensity_target={"rpe": 8},
+            intensity_target=RPETarget(rpe_low=8, rpe_high=8),
             instructions="6x3min hard",
         )
 
@@ -464,7 +473,7 @@ def test_non_interval_forbids_interval_fields():
             block_kind="main_set",
             duration_min=20,
             intensity_zone="Z2",
-            intensity_target={"rpe": 4},
+            intensity_target=RPETarget(rpe_low=4, rpe_high=4),
             instructions="Steady",
             repetitions=4,
         )
@@ -795,3 +804,217 @@ def test_race_plan_segments_unordered_rejected():
     raw["segments"][1]["segment_index"] = 1
     with pytest.raises(ValidationError, match="chronologically ordered"):
         RacePlan(**raw)
+
+
+# ─── §7.3 IntensityTarget union — happy paths per shape ────────────────────
+
+
+def _block_with_target(target: Any) -> CardioBlock:
+    return CardioBlock(
+        block_kind="main_set",
+        duration_min=30,
+        intensity_zone="Z2",
+        intensity_target=target,
+        instructions="x",
+    )
+
+
+def test_target_hr_happy_path():
+    b = _block_with_target(HRTarget(hr_bpm_low=140, hr_bpm_high=155))
+    assert isinstance(b.intensity_target, HRTarget)
+
+
+def test_target_power_happy_path():
+    b = _block_with_target(PowerTarget(power_w_low=200, power_w_high=240))
+    assert isinstance(b.intensity_target, PowerTarget)
+
+
+def test_target_pace_happy_path():
+    b = _block_with_target(PaceTarget(pace_per_km_low="5:30", pace_per_km_high="5:00"))
+    assert isinstance(b.intensity_target, PaceTarget)
+
+
+def test_target_swim_pace_happy_path():
+    b = _block_with_target(
+        SwimPaceTarget(pace_per_100m_low="1:50", pace_per_100m_high="1:35")
+    )
+    assert isinstance(b.intensity_target, SwimPaceTarget)
+
+
+def test_target_rpe_happy_path():
+    b = _block_with_target(RPETarget(rpe_low=4, rpe_high=6))
+    assert isinstance(b.intensity_target, RPETarget)
+
+
+def test_target_vertical_rate_happy_path():
+    b = _block_with_target(VerticalRateTarget(vert_m_per_hr_low=800, vert_m_per_hr_high=1200))
+    assert isinstance(b.intensity_target, VerticalRateTarget)
+
+
+def test_target_stroke_rate_happy_path():
+    b = _block_with_target(StrokeRateTarget(strokes_per_min_low=50, strokes_per_min_high=70))
+    assert isinstance(b.intensity_target, StrokeRateTarget)
+
+
+def test_target_cadence_happy_path():
+    b = _block_with_target(CadenceTarget(rpm_low=85, rpm_high=95))
+    assert isinstance(b.intensity_target, CadenceTarget)
+
+
+def test_target_climbing_grade_yosemite_happy_path():
+    b = _block_with_target(
+        ClimbingGradeTarget(grade_system="yosemite_decimal", grade_min="5.10a", grade_max="5.11b")
+    )
+    assert isinstance(b.intensity_target, ClimbingGradeTarget)
+
+
+def test_target_climbing_grade_french_sport_happy_path():
+    b = _block_with_target(
+        ClimbingGradeTarget(grade_system="french_sport", grade_min="6a", grade_max="7c")
+    )
+    assert b.intensity_target.grade_system == "french_sport"
+
+
+def test_target_climbing_grade_uiaa_happy_path():
+    b = _block_with_target(
+        ClimbingGradeTarget(grade_system="uiaa", grade_min="V", grade_max="VIII+")
+    )
+    assert b.intensity_target.grade_system == "uiaa"
+
+
+# ─── §7.3 IntensityTarget — type + bounds rejection ────────────────────────
+
+
+def test_target_hr_string_value_rejected():
+    with pytest.raises(ValidationError):
+        CardioBlock(
+            block_kind="main_set",
+            duration_min=30,
+            intensity_zone="Z2",
+            intensity_target={"hr_bpm_low": "easy", "hr_bpm_high": 155},
+            instructions="x",
+        )
+
+
+def test_target_rpe_out_of_bounds_rejected():
+    with pytest.raises(ValidationError):
+        RPETarget(rpe_low=1, rpe_high=99)
+
+
+def test_target_hr_low_above_high_rejected():
+    with pytest.raises(ValidationError, match="hr_bpm_low must be <= hr_bpm_high"):
+        HRTarget(hr_bpm_low=200, hr_bpm_high=140)
+
+
+def test_target_rpe_low_above_high_rejected():
+    with pytest.raises(ValidationError, match="rpe_low must be <= rpe_high"):
+        RPETarget(rpe_low=8, rpe_high=4)
+
+
+def test_target_pace_bad_format_rejected():
+    with pytest.raises(ValidationError):
+        PaceTarget(pace_per_km_low="5:75", pace_per_km_high="5:00")
+
+
+def test_target_pace_letters_rejected():
+    with pytest.raises(ValidationError):
+        PaceTarget(pace_per_km_low="fast", pace_per_km_high="slow")
+
+
+def test_target_climbing_grade_system_unknown_rejected():
+    with pytest.raises(ValidationError):
+        ClimbingGradeTarget(grade_system="v_grade", grade_min="V4", grade_max="V6")  # type: ignore[arg-type]
+
+
+def test_target_unknown_keys_rejected():
+    # A dict with keys that don't match any shape in the union must reject.
+    with pytest.raises(ValidationError):
+        CardioBlock(
+            block_kind="main_set",
+            duration_min=30,
+            intensity_zone="Z2",
+            intensity_target={"made_up_key": 42},
+            instructions="x",
+        )
+
+
+def test_target_mixed_keys_rejected():
+    # Mixing keys from two different shapes must reject (extra='forbid' on each shape).
+    with pytest.raises(ValidationError):
+        CardioBlock(
+            block_kind="main_set",
+            duration_min=30,
+            intensity_zone="Z2",
+            intensity_target={"hr_bpm_low": 140, "power_w_high": 220},
+            instructions="x",
+        )
+
+
+# ─── IntensityTarget JSON round-trip (LLM tool-use ingress shape) ──────────
+
+
+def test_target_round_trip_via_dict_hr():
+    # Simulates LLM emitting a dict (tool_use input arrives as JSON dict);
+    # smart union resolves to HRTarget.
+    block = CardioBlock(
+        block_kind="main_set",
+        duration_min=30,
+        intensity_zone="Z2",
+        intensity_target={"hr_bpm_low": 140, "hr_bpm_high": 155},  # type: ignore[arg-type]
+        instructions="x",
+    )
+    assert isinstance(block.intensity_target, HRTarget)
+
+
+def test_target_round_trip_via_dict_climbing():
+    block = CardioBlock(
+        block_kind="main_set",
+        duration_min=30,
+        intensity_zone="Z2",
+        intensity_target={  # type: ignore[arg-type]
+            "grade_system": "yosemite_decimal",
+            "grade_min": "5.10a",
+            "grade_max": "5.11b",
+        },
+        instructions="x",
+    )
+    assert isinstance(block.intensity_target, ClimbingGradeTarget)
+
+
+def test_payload_with_climbing_target_json_round_trip():
+    climbing_block = CardioBlock(
+        block_kind="main_set",
+        duration_min=60,
+        intensity_zone="mixed",
+        intensity_target=ClimbingGradeTarget(
+            grade_system="yosemite_decimal", grade_min="5.10a", grade_max="5.11b"
+        ),
+        instructions="6 routes; rest as needed between attempts.",
+    )
+    climbing_session = _cardio_session().model_copy(update={"cardio_blocks": [climbing_block]})
+    p = _plan_create_payload(
+        sessions=[climbing_session, _strength_session(), _rest_session()]
+    )
+    serialized = p.model_dump_json()
+    reconstructed = Layer4Payload.model_validate_json(serialized)
+    assert isinstance(reconstructed.sessions[0].cardio_blocks[0].intensity_target, ClimbingGradeTarget)
+
+
+# ─── §7.12 race_week_brief strict phase_metadata (v1 override-pass-through) ─
+
+
+def test_race_week_brief_requires_phase_metadata():
+    # Per the §7.12 C2 amendment + v1 strict invariant: race_week_brief only
+    # modifies existing Pattern-A-produced Taper sessions, so phase_metadata
+    # must be non-None on every session.
+    with pytest.raises(ValidationError, match="race_week_brief.*phase_metadata non-None"):
+        _plan_create_payload(
+            mode="race_week_brief",
+            pattern="B",
+            phase_structure=None,
+            seam_reviews=None,
+            model_seam_reviewer=None,
+            race_week_brief=_race_week_brief("single_day"),
+            race_plan=None,
+            sessions=[_cardio_session(with_phase_metadata=False)],
+        )
