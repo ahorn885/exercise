@@ -45,6 +45,7 @@ from layer4.context import (
     Layer2BCoachingFlag,
     Layer2BPayload,
     Layer2BSummaryBlock,
+    Layer2Bundle,
     Layer2CCoachingFlag,
     Layer2CPayload,
     Layer2DCoachingFlag,
@@ -60,6 +61,7 @@ from layer4.context import (
     LoadingTypeChangeModality,
     MacroTargets,
     MatchedBodyPart,
+    ParsedIntent,
     PerDateRestriction,
     PeriodizationShape,
     PhaseLoadBands,
@@ -98,6 +100,10 @@ from layer4.errors import (
     Layer4Error,
     Layer4InputError,
     Layer4OutputError,
+)
+from layer4.plan_refresh import (
+    build_record_refresh_sessions_tool,
+    llm_layer4_plan_refresh,
 )
 from layer4.single_session import (
     SingleSessionRequest,
@@ -207,6 +213,7 @@ __all__ = [
     "Layer2BCoachingFlag",
     "Layer2BPayload",
     "Layer2BSummaryBlock",
+    "Layer2Bundle",
     "RaceTerrainOutput",
     "TerrainGap",
     # Layer 2C
@@ -259,6 +266,8 @@ __all__ = [
     "DailyAvailabilityWindow",
     "PerDateRestriction",
     "RaceEventStub",
+    # Plan-refresh inputs (context.py)
+    "ParsedIntent",
     # Validator harness (validator.py)
     "ValidatorContext",
     "validate_layer4_payload",
@@ -266,6 +275,9 @@ __all__ = [
     "Layer4Error",
     "Layer4InputError",
     "Layer4OutputError",
+    # Plan-refresh synthesizer (plan_refresh.py + plan_refresh_t1.py + plan_refresh_t2.py)
+    "build_record_refresh_sessions_tool",
+    "llm_layer4_plan_refresh",
     # Single-session synthesizer (single_session.py)
     "SingleSessionRequest",
     "build_record_single_session_tool",

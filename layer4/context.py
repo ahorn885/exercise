@@ -862,3 +862,51 @@ class PerDateRestriction(_Base):
     discipline_exclusions: list[str] = Field(default_factory=list)
     indoor_only: bool = False
     max_total_minutes: int | None = Field(default=None, ge=0)
+
+
+# ─── Layer2Bundle (Layer4_Spec.md §3.2 plan_refresh signature) ───────────────
+#
+# Typed wrapper exposing the five Layer 2 sub-payloads. Each attribute is
+# None when that layer was not re-run for the current refresh (per the D-64
+# default cascade + parsed_intent triggers). T1 default cascade: all None
+# except as added by parsed_intent. T2 default: same (Layer 2 still not
+# re-run unless intent-triggered; 3B IS re-run on T2). T3 default: all five
+# populated.
+
+
+class Layer2Bundle(_Base):
+    a: Layer2APayload | None = None
+    b: Layer2BPayload | None = None
+    c: dict[str, Layer2CPayload] = Field(default_factory=dict)
+    d: Layer2DPayload | None = None
+    e: Layer2EPayload | None = None
+
+
+# ─── ParsedIntent (Plan_Refresh_D64_Design_v1.md §5.2) ───────────────────────
+#
+# NL parser output consumed by Layer 4 plan-refresh entry point. Carries the
+# 5 upstream-layer re-run flags, 3 soft signals (fatigue/sickness/motivation),
+# the raw_text pass-through, parser confidence, and optional ambiguity notes.
+# When the NL parser is unavailable, D-64 returns a degraded ParsedIntent with
+# all flags False, signals at default, parser_confidence='low'.
+
+
+class ParsedIntent(_Base):
+    # Upstream-layer re-run flags (added to tier's default cascade; never subtracted)
+    triggers_2a_discipline: bool = False
+    triggers_2b_terrain: bool = False
+    triggers_2c_equipment: list[str] = Field(default_factory=list)
+    triggers_2d_injury: bool = False
+    triggers_2e_nutrition: bool = False
+
+    # Soft signals (passed to Layer 4 as context, not full re-runs)
+    fatigue_signal: Literal["fresh", "normal", "tired", "wiped"] = "normal"
+    sickness_signal: Literal["none", "recovering", "active"] = "none"
+    motivation_signal: Literal["low", "normal", "high"] = "normal"
+
+    # Free-text passthrough (always included for Layer 4 context)
+    raw_text: str = ""
+
+    # Confidence + ambiguity
+    parser_confidence: Literal["high", "medium", "low"] = "high"
+    ambiguity_notes: str | None = None
