@@ -300,4 +300,61 @@ Final pass over each claimed file edit before composing this handoff:
 
 ---
 
-**End of handoff.** Layer 4 spec §14 retrospective shipped — `Layer4_Spec.md` §14 replaced (~190 lines) — closing the §12.6-deferred retrospective with combined audit + gut check + implementation readiness gate per Andy's three architectural picks (all three architect recommendations accepted). **The Layer 4 spec arc is now COMPLETE §§1–14.** 18 audit findings catalogued (5 cosmetic + 10 load-bearing + 3 contract-gap); 3 contract gaps (C1 + C2 + C3) flagged as stop-and-ask for the next amendment session. C1 (§5.4 validator rules) + C2 (§7.12 phase_metadata override-pass-through) are real gaps blocking implementation Step 3 + Step 4e; C3 (`Layer4ShapeInfeasibleError` routing) is orchestrator-side per §12.3. 4 files this session (under the 5-file ceiling). Implementation track fully unblocked; Steps 1 + 2 can proceed in parallel with the recommended C1 + C2 amendment session. Next forward move: C1 + C2 amendment session (architect-recommended) OR Layer 4 implementation Steps 1 + 2 (parallelizable).
+---
+
+## 9. Mid-session bundle — C1 + C2 + B2 + B9 + B10 amendments applied in-session
+
+Andy's mid-session question ("do we have room to knock out anything here") opened a Pick-2 reversal opportunity: the retro WROTE + classified the findings per Andy's earlier defer-fixes posture, but the retro authoring + bookkeeping landed at 4 files (one under the 5-file ceiling). Surfaced 4 bundle scopes via `AskUserQuestion`; Andy picked the most aggressive: **C1 + C2 + B2 + B9 + B10** — all inside `Layer4_Spec.md` (no prompt-body files touched; no new files added). Reverses Pick 2 for the 2 contract gaps + 3 load-bearing findings; the remaining cosmetic + load-bearing findings stay deferred to a future amendment session.
+
+### 9.1 Amendments applied
+
+**C1 — §5.4 validator rule table additions (7 new rows after the `sport_locale_incompatible_*` row):**
+
+- `taper_phase_intent_violation_*` — race-week-brief Taper-session overrides violating Taper phase intent per §8.5 (e.g., `intensity_summary='hard'` on `days_to_event ≤ 2` session; long-duration session within 48h of event). Per session (race-week-brief mode). Severity: `blocker`.
+- `kit_manifest_inputs_incomplete` — per §4.5 row 7 soft-warning: when `race_format != 'single_day'` AND no locale in the route has `equipment_overrides` populated. Per call (race-week-brief mode). Severity: `warning` (soft — does not raise; emits `data_gap` notable_observation; kit_manifest synthesis degrades gracefully).
+- `race_plan_segments_unordered_*` — `RacePlan.segments[]` not chronologically ordered (segment_index gaps OR `estimated_start_offset_hr` not monotonically increasing). Per call (race-week-brief multi-day). Severity: `blocker`.
+- `fueling_strategy_2e_tier_mismatch_*` — `RacePlan.fueling_strategy.cho_g_per_hr_low/high` outside the 2E race-day fueling tier band; `sodium_mg_per_hr` outside tier band; `fluid_ml_per_hr` outside tier band. Per call (race-week-brief multi-day). Severity: `blocker`.
+- `contingency_anchor_category_missing_*` — `RaceWeekBrief.contingencies` or `RacePlan.contingencies` missing a category required by the race-week-brief D6 mixed-contingency anchor table for the race_format. Per call (race-week-brief mode). Severity: `warning`.
+- `phase_date_out_of_range_*` — `PlanSession.date` outside `phase_start_date → phase_end_date` (inclusive) for the phase being synthesized. Per session (plan_create + Pattern-A T3). Severity: `blocker`. Promoted from `Layer4_PerPhase_v1.md` §11 row 14 prompt-only enforcement.
+- `daily_window_fit_*` — `PlanSession.duration_min` exceeds the available `daily_availability_windows` minutes for `PlanSession.date`. Per session (all entry points emitting `PlanSession`). Severity: `blocker`. Promoted from `Layer4_PerPhase_v1.md` §11 row 12 prompt-only enforcement.
+
+**C2 — §7.12 `PlanSession.phase_metadata` schema rule amended** with the race-week-brief override-pass-through clause: when race-week-brief modifies pre-existing Taper-phase sessions from `prior_plan_session_window`, the modified session's `phase_metadata` is preserved verbatim from the prior-plan session (which carries the original `plan_create` or Pattern-A `plan_refresh` metadata). Race-week-brief does NOT produce new `PlanSession` rows in v1 (it only modifies existing ones); if it did, those new rows would follow the Pattern-B default of `phase_metadata=None`. Resolves the §14.1.3 C2 contract gap surfaced by the §14 retro.
+
+**B2 — §13.3 plan_refresh test scenarios** TS-23 / TS-24 / TS-25 expected-output language updated to reference `intensity_modulated` emission per the broadened §8.6 trigger covering refresh-path modulation against `parsed_intent` direction or 3A signals. TS-22 + TS-32 already referenced the flag pre-broadening; TS-26 / TS-31 are 3B-shape-shift / no-intent cases where the flag doesn't naturally apply.
+
+**B9 — §11.5 cumulative ceilings** gains a race-event cumulative line item: race_week_brief daily regenerations across the race-week (midnight-UTC cache invalidation per §9.3 forces fresh synthesis each day) add a per-race-event burst pattern not captured by the daily/weekly/monthly ceilings. Typical multi-day race: ~$0.18/call × 14 daily fires ≈ ~$2.50 per race-event concentrated in the 2-week race-week window. ~$0.18/day of the $0.50 daily soft cap (well under) but ~30% of the $8 monthly soft cap from race-week-brief alone.
+
+**B10 — §11.2 token budget table** gains an extended_thinking budget per-prompt-body table: SeamReviewer ~2000; SingleSession ~3500; RefreshT1 ~3000; RefreshT2 ~4500; PerPhase ~5000 per phase; RaceWeekBrief ~5500 (highest in pipeline). Plus the note that Sonnet 4.6 bills extended thinking against output cost — a 4-phase plan_create no-retry case carries ~26000 extended-thinking output tokens on top of the ~14400 structured output ≈ ~40400 total output-billed tokens.
+
+### 9.2 What stays deferred
+
+The Pick 2 defer-fixes posture stays in effect for the remaining 13 audit findings (5 cosmetic + 5 load-bearing not bundled). Specifically:
+
+- **Cosmetic** (5 items): A1 (test scenario prefix inconsistency), A2 (handoff-narrative count miss — purely historical drift), A3 (opportunities maxItems variance), A4 (phase_synthesis_notes JSONB consumer unwired), A5 (§13 doesn't enumerate per-tier T1/T2 explicitly).
+- **Load-bearing not bundled** (5 items): B1 (StrengthExercise.coaching_flags open-vs-closed inconsistent across prompts), B3 (RacePlan.segments cap defined in prompt not spec), B4 (cache key naming variance), B5 (was equivalent to C1; already covered), B6 (`coaching_intent` cap inconsistency 200 vs 240), B7 (race-week-brief duration_min 240 cap implicit Taper ceiling), B8 (race-week-brief rest_reason subset enum).
+- **Contract gap not actionable as a Layer 4 amendment**: C3 (`Layer4ShapeInfeasibleError` orchestrator routing — explicitly orchestrator-side per §12.3).
+
+These remaining findings would touch prompt-body files (B1, B6, B7, B8) or be opportunistic cleanup (A1–A5, B3, B4). They land in a follow-on cleanup session if/when prompt-body revisions happen, or get knocked off opportunistically during implementation.
+
+### 9.3 Net impact on the implementation track
+
+- **Step 3 validator harness** is no longer blocked by C1 — the validator rule table is now complete for the 5 prompt bodies' contract surfaces.
+- **Step 4e race-week-brief integration** is no longer blocked by C2 — `phase_metadata` override-pass-through semantics are pinned.
+- **Steps 4d (plan_create) + 4f (T3)** benefit from the promoted `phase_date_out_of_range_*` + `daily_window_fit_*` rules (no longer prompt-only enforcement).
+- **§13.3 plan_refresh test scenarios** now correctly reflect the broadened §8.6 `intensity_modulated` trigger; per-prompt-body regression test suites can target the updated expected outputs without ambiguity.
+- **§11.5 cost-monitor implementation** has the race-event burst pattern explicitly called out — orchestrator-side cost projections should factor it.
+- **§11.2 token budget calculations** now include the extended_thinking line items per entry point — cost projections per §11.3 are more accurate; the existing §11.3 cost table remains accurate (the headline numbers already accounted for thinking via the per-prompt-body cost notes in each prompt body's §7).
+
+**The recommended next session changes:** previously the C1 + C2 amendment session was the architect-recommended next move (blocking implementation Step 3). With the bundle applied, the recommended next move is now **Layer 4 implementation Step 1 + 2** — `plan_versions` table SQL migration per §7.11 + payload schema scaffolding per §7. No remaining spec amendments block implementation.
+
+### 9.4 File count + ceiling
+
+Still 4 files (under the 5-file ceiling). The bundle added ~70 net lines to `Layer4_Spec.md` on top of the §14's ~190 net lines (total ~270 net new lines this session across §14 + retro-bundled amendments). The other 3 files (CLAUDE.md, Backlog v38, this handoff) gained narrative updates reflecting the bundle.
+
+### 9.5 Rule #11 — mechanically-applicable status
+
+The mechanically-applicable edit specs originally documented in §5.1 above (for the C1 + C2 amendment session that would have followed this retro) are now **APPLIED** in this session. §5.1 above describes the SAME edits that landed in §9.1 above. The drafted text from §5.1 was the source-of-truth for the actual amendment edits; both match. Future sessions can confirm by reading `Layer4_Spec.md` §5.4 (7 new rule rows after `sport_locale_incompatible_*`) + §7.12 (amended `phase_metadata` schema rule) + §13.3 (TS-23 / TS-24 / TS-25 updated expected outputs) + §11.5 (race-event paragraph appended) + §11.2 (extended_thinking budget table appended).
+
+---
+
+**End of handoff.** Layer 4 spec §14 retrospective shipped + retro-bundled C1+C2+B2+B9+B10 amendments applied in-session — `Layer4_Spec.md` §14 replaced (~190 lines) + ~70 lines of surgical amendments across §5.4 (7 new validator rule rows), §7.12 (phase_metadata override-pass-through clause), §13.3 (TS-23/TS-24/TS-25 intensity_modulated language updates), §11.5 (race-event cumulative line item), §11.2 (extended_thinking budget table) — closing the §12.6-deferred retrospective with combined audit + gut check + implementation readiness gate per Andy's three architectural picks (all three architect recommendations accepted) PLUS the mid-session aggressive-bundle pick reversing Pick 2's defer-fixes posture for the 2 contract gaps + 3 load-bearing findings. **The Layer 4 spec arc is now COMPLETE §§1–14 with all retro-flagged contract gaps resolved.** 18 audit findings catalogued (5 cosmetic + 10 load-bearing + 3 contract-gap); 5 fixed in-session (C1+C2+B2+B9+B10); 13 remain deferred (5 cosmetic + 5 load-bearing not bundled + C3 orchestrator-side). 4 files this session (under the 5-file ceiling — same envelope as the race-week-brief session). Implementation track fully unblocked + ready for Step 1 (no remaining spec amendments). Next forward move: Layer 4 implementation Steps 1 + 2 — `plan_versions` migration + payload schema scaffolding (architect-recommended).

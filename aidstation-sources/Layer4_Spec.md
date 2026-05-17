@@ -550,7 +550,7 @@ Each `plan_session` row carries a `plan_version_id` FK; the per-day version poin
 - `PlanSession.kind == 'strength'` requires `strength_exercises` non-None and non-empty + `cardio_blocks is None` + `rest_reason is None`.
 - `PlanSession.kind == 'rest'` requires `cardio_blocks is None` + `strength_exercises is None` + `rest_reason` non-None + `duration_min == 0` + `discipline_id is None` + `locale_id is None`.
 - `PlanSession.is_ad_hoc == True` requires `ad_hoc_request_payload` non-None and that the producer was `single_session_synthesize` (the orchestrator must not create `is_ad_hoc=True` sessions through other entry points).
-- `PlanSession.phase_metadata` non-None when the producer was `plan_create` or Pattern-A `plan_refresh`; None for Pattern-B refreshes (no phase decomposition) and for `single_session_synthesize`.
+- `PlanSession.phase_metadata` non-None when the producer was `plan_create` or Pattern-A `plan_refresh`; None for Pattern-B `plan_refresh` (T1, T2, T3 intra-phase — no phase decomposition) and for `single_session_synthesize`. **Race-week-brief override-pass-through** (C2 amendment 2026-05-17): when `race_week_brief` modifies pre-existing Taper-phase sessions from `prior_plan_session_window`, the modified session's `phase_metadata` is preserved verbatim from the prior-plan session (which carries the original `plan_create` or Pattern-A `plan_refresh` metadata). Race-week-brief does NOT produce new `PlanSession` rows in v1 (it only modifies existing ones); if it did, those new rows would follow the Pattern-B default of `phase_metadata=None`. This rule resolves the §14.1.3 C2 contract gap surfaced by the §14 retro — race-week-brief is Pattern B but legitimately preserves Pattern-A-produced metadata on its overrides.
 - `CardioBlock.block_kind == 'interval_set'` requires `repetitions`, `rest_between_min`, and `rest_intensity_zone` all non-None.
 - `CardioBlock.block_kind` ∈ `{'warmup', 'main_set', 'cooldown', 'transition'}` requires `repetitions is None` + `rest_between_min is None` + `rest_intensity_zone is None`.
 - `StrengthExercise.resolution_tier == 2` requires `substitute_text` non-None.
@@ -827,6 +827,13 @@ Pure-function rule set; no LLM. Runs after every synthesis call in both patterns
 | Schedule availability | `schedule_violation_*` | Per date | Sessions per date fit §K available-days + per-day window count; sessions for a date with `available=False` raise unless explicitly flagged `athlete_self_scheduled` (D-63 path). |
 | Discipline inclusion | `discipline_excluded_*` | Per session | `discipline_id` is in 2A `discipline_inclusion`. Catches stale prior-plan sessions referencing a retired discipline. |
 | Sport-locale compatibility | `sport_locale_incompatible_*` | Per session | `discipline_id` is supported at `locale_id` per 2C equipment view (e.g., no MTB session at a hotel gym locale). |
+| Taper-phase intent violation | `taper_phase_intent_violation_*` | Per session (race-week-brief mode) | Race-week-brief `taper_session_overrides[]` whose modified intensity / duration / kind violates Taper phase intent per §8.5 (e.g., `intensity_summary='hard'` on `days_to_event ≤ 2` session; long-duration session within 48h of event). Severity: `blocker`. |
+| Kit manifest inputs incomplete | `kit_manifest_inputs_incomplete` | Per call (race-week-brief mode) | Per §4.5 row 7 soft-warning: when `race_format != 'single_day'` AND no locale in the route has `equipment_overrides` populated. Severity: `warning` (soft — does not raise; emits `data_gap` notable_observation; kit_manifest synthesis degrades gracefully). |
+| Race plan segments unordered | `race_plan_segments_unordered_*` | Per call (race-week-brief multi-day) | `RacePlan.segments[]` not chronologically ordered (segment_index gaps OR `estimated_start_offset_hr` not monotonically increasing). Severity: `blocker`. |
+| Fueling strategy 2E tier mismatch | `fueling_strategy_2e_tier_mismatch_*` | Per call (race-week-brief multi-day) | `RacePlan.fueling_strategy.cho_g_per_hr_low/high` outside the 2E race-day fueling tier band; `sodium_mg_per_hr` outside tier band; `fluid_ml_per_hr` outside tier band. Severity: `blocker`. |
+| Contingency anchor category missing | `contingency_anchor_category_missing_*` | Per call (race-week-brief mode) | `RaceWeekBrief.contingencies` or `RacePlan.contingencies` missing a category required by the race-week-brief D6 mixed-contingency anchor table for the race_format (any race: GI / hydration / mechanical-or-gear-failure; AR + ultra: nav / sleep-dep / weather; stage races: between-stage recovery; multi-day: cumulative fatigue + crew-pacing-mismatch). Severity: `warning`. |
+| Phase date out of range | `phase_date_out_of_range_*` | Per session (plan_create + Pattern-A T3) | `PlanSession.date` outside `phase_start_date → phase_end_date` (inclusive) for the phase being synthesized. Severity: `blocker`. Promoted 2026-05-17 (C1 amendment) from `Layer4_PerPhase_v1.md` §11 row 14 prompt-only enforcement. |
+| Daily window fit | `daily_window_fit_*` | Per session (all entry points emitting `PlanSession`) | `PlanSession.duration_min` exceeds the available `daily_availability_windows` minutes for `PlanSession.date`. Severity: `blocker`. Promoted 2026-05-17 (C1 amendment) from `Layer4_PerPhase_v1.md` §11 row 12 prompt-only enforcement. |
 
 Each failed rule emits a `RuleFailure` per §7.9 with `rule_name`, `phase_name` (when phase-scoped), `severity`, `detail`, `affected_session_ids`.
 
@@ -1384,6 +1391,21 @@ Token estimates at Sonnet 4.6 (input + output budgets per LLM call). Per-phase s
 
 Retry tax on tokens: each retry duplicates the input (with added RuleFailure context, ~+200 tokens per failure) + generates fresh output. Worst case `plan_create` (every phase hits cap = 2 retries): ~150000 total input tokens + ~43200 total output tokens.
 
+**Extended thinking budget per entry point** (B10 amendment 2026-05-17): Sonnet 4.6 bills extended thinking against output token cost; the per-prompt-body budgets are not separately metered in the table above and add to the output-cost calculation in §11.3. Per-prompt-body budgets (from each prompt body's §7 sampling config):
+
+| Entry point | Prompt body | Extended thinking budget (tokens) |
+|---|---|---|
+| `plan_create` (per-phase synth) | `Layer4_PerPhase_v1.md` | ~5000 per phase call (max-defensive — combinatorial multi-week placement) |
+| `plan_create` (seam reviewer) | `Layer4_SeamReviewer_v1.md` | ~2000 per seam call (pure judgment task) |
+| `plan_refresh` T1 | `Layer4_RefreshT1_v1.md` | ~3000 per call (continuity + intent reasoning) |
+| `plan_refresh` T2 | `Layer4_RefreshT2_v1.md` | ~4500 per call (combinatorial weekly placement) |
+| `plan_refresh` T3 intra-phase | (routes through T2 prompt; budget pending T3-routing decision per §5.1 + `Layer4_RefreshT2_v1.md` §14.1) | ~4500 default |
+| `plan_refresh` T3 cross-phase | (Pattern A; same per-phase + seam budgets above) | ~5000 per phase + ~2000 per seam |
+| `single_session_synthesize` | `Layer4_SingleSession_v1.md` | ~3500 per call (intensity-modulation judgment) |
+| `race_week_brief` | `Layer4_RaceWeekBrief_v1.md` | ~5500 per call (highest in pipeline — multi-locale × multi-segment × multi-hour × athlete-specific reasoning surface) |
+
+Total extended thinking tokens per call adds to the output budget in §11.3 cost calculation. E.g., a 4-phase `plan_create` no-retry case carries ~20000 thinking + ~6000 seam thinking = ~26000 extended-thinking output tokens on top of the ~14400 structured output, totalling ~40400 output-billed tokens.
+
 ### 11.3 Cost per invocation
 
 At Sonnet 4.6 pricing ($3/MTok input + $15/MTok output as of 2026-05; subject to vendor pricing changes). Cost = `input_tokens × $3e-6 + output_tokens × $15e-6`.
@@ -1450,6 +1472,8 @@ Per-athlete-day and per-athlete-week soft ceilings. These are NOT enforced by La
 | Per athlete per month | ~$8.00/month | ~$30.00/month | Hard cap surfaces account-level support escalation. |
 
 Note: these ceilings interact with D-64 §6 frequency caps (which limit refreshes per-week, not cost). Frequency caps + cost ceilings are complementary: frequency caps prevent UX abuse; cost ceilings prevent runaway LLM spend. Concrete cost-monitor implementation deferred — not Layer 4's responsibility per §2.
+
+**Race-event cumulative line item** (B9 amendment 2026-05-17): `race_week_brief` daily regenerations across the race-week (midnight-UTC cache invalidation per §9.3 forces fresh synthesis each day) add a per-race-event burst pattern not captured by the daily/weekly/monthly ceilings above. Typical multi-day race: ~$0.18/call × 14 daily fires ≈ **~$2.50 per race-event** concentrated in the 2-week race-week window. That's ~$0.18/day of the $0.50 daily soft cap during the race week (well under) but consumes ~30% of the $8/month soft cap from race-week-brief alone. Athletes with multiple races per month would breach the monthly soft cap from race-week-brief alone; orchestrator cost monitor should factor this when computing per-athlete projections.
 
 ### 11.6 Frequency-cap interaction (D-64 §6)
 
@@ -1626,9 +1650,9 @@ Full Cartesian is impractical; the TS set below picks high-signal coverage (~50 
 | TS | Inputs | Expected outputs | Contracts exercised |
 |---|---|---|---|
 | **TS-22** | T1 refresh: Andy's plan day 14; `parsed_intent.mode='softer'` ("I'm tired today"); scope = next 2 days | Pattern B; single LLM call; 2 sessions output with intensity reduced one notch from prior plan; `intensity_modulated` LLM-flag on each modified session; corresponding observation | §3.2, §5.3, §8.6 |
-| **TS-23** | T2 refresh: athlete edited §K to drop Wednesday availability; scope = next 7 days; 3A re-eval shows no other changes | Pattern B; 1 LLM call; 7 sessions; Wednesday session removed/redistributed; remaining days adjusted to fit 2A bands | §3.2, §5.3, §5.4 `schedule_violation_*` |
-| **TS-24** | T3 refresh intra-phase: athlete mid-Build with 6 Build weeks remaining; T3 scope = next 28 days (all within Build); `parsed_intent.mode='harder'` | Pattern B (single-phase T3 per §5.1 routing); validator passes; ACWR forward projection nears but does not breach upper threshold | §3.2, §5.1 routing, §6.3 |
-| **TS-25** | T3 refresh cross-phase: athlete last week of Build; T3 scope crosses Build→Peak | Pattern A on affected phases (Build remainder + Peak start); 1 seam reviewed; out-of-scope prior sessions retain their `plan_version_id` per D-64 §6.3 | §3.2, §5.1, §6.3, §6.5 |
+| **TS-23** | T2 refresh: athlete edited §K to drop Wednesday availability; scope = next 7 days; 3A re-eval shows no other changes | Pattern B; 1 LLM call; 7 sessions; Wednesday session removed/redistributed; remaining days adjusted to fit 2A bands; if redistribution materially shifts session intensities from prior-plan natural shape, `intensity_modulated` emits per the broadened §8.6 trigger (otherwise schedule-only shift without intensity drift does not emit) | §3.2, §5.3, §5.4 `schedule_violation_*`, §8.6 |
+| **TS-24** | T3 refresh intra-phase: athlete mid-Build with 6 Build weeks remaining; T3 scope = next 28 days (all within Build); `parsed_intent.mode='harder'` | Pattern B (single-phase T3 per §5.1 routing); validator passes; ACWR forward projection nears but does not breach upper threshold; `intensity_modulated` emits on every session whose prescription deviates from natural Build-week placement due to the `parsed_intent.mode='harder'` direction (per the broadened §8.6 trigger covering refresh-path modulation against `parsed_intent` direction) | §3.2, §5.1 routing, §6.3, §8.6 |
+| **TS-25** | T3 refresh cross-phase: athlete last week of Build; T3 scope crosses Build→Peak | Pattern A on affected phases (Build remainder + Peak start); 1 seam reviewed; out-of-scope prior sessions retain their `plan_version_id` per D-64 §6.3; if `parsed_intent` drove the cross-phase refresh AND the synthesis deviates from natural phase-shape, `intensity_modulated` emits per §8.6 broadened trigger on the affected sessions | §3.2, §5.1, §6.3, §6.5, §8.6 |
 | **TS-26** | T2 refresh with 3B re-eval shifting `start_phase` from Build → Peak inside the refresh window | Pattern A activates on T2 (per §10.3 refresh-crosses-3B-shifted-start_phase); plan rebuilds against new phase structure | §10.3, §5.1 |
 | **TS-27** | T1 refresh with empty `prior_plan_session_window` (no prior plan covers the scope) | `Layer4InputError('prior_plan_window_empty')` | §4.3 |
 | **TS-28** | T3 refresh whose `refresh_scope_start` predates `phase_structure.phases[0].start_date` (e.g., athlete started at Build but T3 covers a date before Build started) | `Layer4InputError('refresh_predates_start_phase')` | §6.5, §10.3 |
