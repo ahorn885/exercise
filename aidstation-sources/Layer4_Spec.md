@@ -147,6 +147,7 @@ def llm_layer4_plan_refresh(
     plan_version_id: int,
     etl_version_set: dict[str, str],
     *,
+    plan_start_date: date | None = None,
     model_synthesizer: str = "claude-sonnet-4-6",
     model_seam_reviewer: str = "claude-sonnet-4-6",
     temperature: float = 0.2,
@@ -172,6 +173,7 @@ def llm_layer4_plan_refresh(
 | `parsed_intent` | `ParsedIntent \| None` | D-64 NL parser output | When non-None, drives soft signals (fatigue / sickness / motivation enums) + the NL `raw_text` is passed through to the synthesizer prompt for context weighting. `None` when athlete refreshed without NL text or when the parser was unavailable (per D-64 §5.4 degraded path). |
 | `plan_version_id` | int | Plan-gen orchestrator | New version ID per D-64 §6.2. Layer 4 writes all session rows in the refresh window pointing to this ID; out-of-window sessions keep their prior ID (per-day version pointer per D-64 §6.3). |
 | `etl_version_set` | dict[str, str] | Plan-gen pin | Per Control_Spec §6. |
+| `plan_start_date` | `date \| None` | Orchestrator-supplied (per `phase_structure_from_3b()` §6.1) | **Added 2026-05-17 (Step 4d amendment).** Required non-None when `tier == 'T3'`; ignored on T1/T2 (Pattern B refreshes within a single phase don't need phase-structure resolution). For T3, `phase_structure_from_3b(layer3b_payload, plan_start_date)` is called by the driver to (a) detect whether `[refresh_scope_start, refresh_scope_end]` spans a phase boundary (cross-phase → Pattern A routing, raises `tier_t3_cross_phase_requires_pattern_a` until Step 4f lands), (b) determine the dominant phase covering the refresh window for the T3 prompt body's §3.5 context block. Sourced from the parent plan's first-synthesis date (D-64 orchestrator reads `plan_versions[plan_version_id_parent].scope_start_date` or equivalent). Defaults to None on the signature for backwards compatibility with T1/T2 callers; the §4.3 `plan_start_date_missing` precondition fires for tier='T3' callers that omit it. |
 | `model_synthesizer` / `model_seam_reviewer` / `temperature` / `max_tokens` / `capped_retries` | various | Defaults per §3.1 framing | `model_seam_reviewer` only used when T3 + scope spans phase boundary (Pattern A). T1/T2/single-phase-T3 are Pattern B, no seam reviewer. |
 
 **Returns:** `Layer4Payload` with `mode='plan_refresh'`. `phase_structure` non-None only when Pattern A activated (T3 + scope spans phase boundary); `seam_reviews` non-None on the same condition.
@@ -775,6 +777,8 @@ Apply to every entry point before per-entry rules run.
 | Tier matches scope length | `tier_scope_mismatch` | `T1`: scope ≤ 3 days; `T2`: scope ≤ 9 days; `T3`: scope ≤ 32 days. Tolerances absorb day-of-week + leap edges. |
 | `prior_plan_session_window` non-empty | `prior_plan_window_empty` | Refresh requires a prior plan covering the scope window (else orchestrator should route to `plan_create`). |
 | `plan_version_id_parent` exists | `plan_version_id_parent_missing` | FK check against `plan_versions`; the refresh writes a child version that supersedes parts of the parent via per-day pointer flips per §7.11. |
+| `plan_start_date` non-None when `tier='T3'` | `plan_start_date_missing` | **Added 2026-05-17 (Step 4d amendment).** T3 dispatch needs `phase_structure_from_3b(layer3b_payload, plan_start_date)` for phase-boundary detection per §6.1; the helper requires the parent plan's start date as the phase-0 anchor. T1/T2 don't need it (Pattern B within a single phase, no boundary detection). The signature defaults to None for backwards compatibility with T1/T2; this precondition fires when tier='T3' and the parameter is omitted. |
+| T3 scope intra-phase (when tier='T3') | `tier_t3_cross_phase_requires_pattern_a` | **Added 2026-05-17 (Step 4d amendment).** Per §5.1 + §6.3: T3 scope inside a single phase routes to Pattern B (Step 4d intra-phase); cross-phase scope routes to Pattern A and requires Step 4f's per-phase orchestration + seam reviewer. Driver computes `phase_structure_from_3b()` + `scope_spans_phase_boundary()`; cross-phase raises this error until Step 4f lands. |
 | `parsed_intent` schema-valid | `parsed_intent_schema_invalid` | When non-None, conforms to D-64 §3 schema (mode, scope_directive, modifications list). |
 | `prior_plan_session_window` sessions resolve | `prior_session_orphaned` | Every session's `plan_version_id` exists; every `locale_id` resolves; every `discipline_id` is in current 2A `discipline_inclusion` (or has been retired with an `intensity_modulated` / `shape_override` rationale on the producing plan — that branch is allowed). |
 
