@@ -1083,6 +1083,25 @@ _PG_MIGRATIONS = [
     "ALTER TABLE athlete_profile ADD COLUMN IF NOT EXISTS long_session_max_hr SMALLINT",
     "ALTER TABLE athlete_profile ADD COLUMN IF NOT EXISTS doubles_feasible TEXT",
     "ALTER TABLE athlete_profile ADD COLUMN IF NOT EXISTS preferred_rest_days TEXT",
+    # Layer 4 §7.11 — plan_versions table (lifts D-64 §7.2 stub). Each
+    # plan_session carries a plan_version_id FK; the per-day version pointer
+    # per D-64 §6.3 picks the most-recent-version row per date when
+    # surfacing the plan. superseded_at + superseded_by_version_id are
+    # denormalized convenience for revert UX.
+    """CREATE TABLE IF NOT EXISTS plan_versions (
+        id BIGSERIAL PRIMARY KEY,
+        user_id INTEGER NOT NULL REFERENCES users(id),
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        created_via TEXT NOT NULL CHECK (created_via IN ('plan_create', 'plan_refresh_t1', 'plan_refresh_t2', 'plan_refresh_t3', 'single_session_synthesize')),
+        scope_start_date DATE NOT NULL,
+        scope_end_date DATE NOT NULL,
+        pattern CHAR(1) NOT NULL CHECK (pattern IN ('A', 'B')),
+        superseded_at TIMESTAMPTZ,
+        superseded_by_version_id BIGINT REFERENCES plan_versions(id),
+        notes JSONB
+    )""",
+    "CREATE INDEX IF NOT EXISTS plan_versions_user_created_idx ON plan_versions (user_id, created_at DESC)",
+    "CREATE INDEX IF NOT EXISTS plan_versions_user_scope_idx ON plan_versions (user_id, scope_start_date, scope_end_date)",
 ]
 
 _CLOTHING_SEEDS = [
