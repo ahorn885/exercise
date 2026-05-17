@@ -94,6 +94,16 @@ from layer4.hashing import (
     race_week_brief_key,
     single_session_synthesize_key,
 )
+from layer4.errors import (
+    Layer4Error,
+    Layer4InputError,
+    Layer4OutputError,
+)
+from layer4.single_session import (
+    SingleSessionRequest,
+    build_record_single_session_tool,
+    llm_layer4_single_session_synthesize,
+)
 from layer4.validator import (
     ValidatorContext,
     validate_layer4_payload,
@@ -252,4 +262,12 @@ __all__ = [
     # Validator harness (validator.py)
     "ValidatorContext",
     "validate_layer4_payload",
+    # Typed errors (errors.py)
+    "Layer4Error",
+    "Layer4InputError",
+    "Layer4OutputError",
+    # Single-session synthesizer (single_session.py)
+    "SingleSessionRequest",
+    "build_record_single_session_tool",
+    "llm_layer4_single_session_synthesize",
 ]
