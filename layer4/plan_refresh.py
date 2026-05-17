@@ -363,12 +363,13 @@ def _session_schema() -> dict[str, Any]:
     }
 
 
-def build_record_refresh_sessions_tool(tier: Literal["T1", "T2"]) -> dict[str, Any]:
+def build_record_refresh_sessions_tool(tier: Literal["T1", "T2", "T3"]) -> dict[str, Any]:
     """Anthropic tool definition for `record_refresh_sessions`. Sessions
     array `maxItems` is tier-specific: T1=4 (2-day window × max 2/day);
-    T2=14 (7-day window × max 2/day). Per-session shape is the full
-    PlanSession contract mirror per the Step 4a Option 2 precedent."""
-    max_items = 4 if tier == "T1" else 14
+    T2=14 (7-day window × max 2/day); T3=56 (28-day window × max 2/day).
+    Per-session shape is the full PlanSession contract mirror per the
+    Step 4a Option 2 precedent."""
+    max_items = {"T1": 4, "T2": 14, "T3": 56}[tier]
     description = (
         f"Record the synthesized {tier} refresh sessions covering "
         f"[refresh_scope_start, refresh_scope_end]. Output is a list of 0-"
@@ -400,6 +401,7 @@ def build_record_refresh_sessions_tool(tier: Literal["T1", "T2"]) -> dict[str, A
 
 _T1_MAX_SCOPE_DAYS = 3
 _T2_MAX_SCOPE_DAYS = 9
+_T3_MAX_SCOPE_DAYS = 32
 
 
 def _validate_inputs(
@@ -412,9 +414,14 @@ def _validate_inputs(
     layer3b_payload: Layer3BPayload | None,
     prior_plan_session_window: list[PlanSession],
     plan_version_id_parent: int,
+    plan_start_date: _date_type | None = None,
 ) -> None:
     """Apply §4.3 plan-refresh preconditions. Fail-fast — raises
-    `Layer4InputError` on first failing rule."""
+    `Layer4InputError` on first failing rule.
+
+    `plan_start_date` is required when `tier == 'T3'` per the Step 4d §3.2
+    amendment (orchestrator-supplied; used by `phase_structure_from_3b()`
+    for phase-boundary detection). T1/T2 ignore."""
     # Row 2: tier in enum
     if tier not in ("T1", "T2", "T3"):
         raise Layer4InputError("tier_invalid", detail=f"tier={tier!r}")
@@ -440,6 +447,23 @@ def _validate_inputs(
         raise Layer4InputError(
             "tier_scope_mismatch",
             detail=f"tier=T2 requires scope <= 9 days (got {scope_days})",
+        )
+    if tier == "T3" and scope_days > _T3_MAX_SCOPE_DAYS:
+        raise Layer4InputError(
+            "tier_scope_mismatch",
+            detail=f"tier=T3 requires scope <= 32 days (got {scope_days})",
+        )
+
+    # Step 4d amendment: plan_start_date required when tier=='T3' for
+    # phase-boundary detection via phase_structure_from_3b().
+    if tier == "T3" and plan_start_date is None:
+        raise Layer4InputError(
+            "plan_start_date_missing",
+            detail=(
+                "tier='T3' requires plan_start_date non-None per Layer4_Spec.md "
+                "§3.2 (Step 4d amendment) — phase_structure_from_3b() needs the "
+                "parent plan's start date to compute phase boundaries"
+            ),
         )
 
     # Row 1: upstream payloads non-None. Per Andy 2026-05-17 §4.3-wins pick,
@@ -770,6 +794,7 @@ def llm_layer4_plan_refresh(
     plan_version_id_parent: int,
     etl_version_set: dict[str, str],
     *,
+    plan_start_date: _date_type | None = None,
     model_synthesizer: str = "claude-sonnet-4-6",
     model_seam_reviewer: str | None = None,
     temperature: float = 0.4,
@@ -781,33 +806,39 @@ def llm_layer4_plan_refresh(
     """Pattern B plan-refresh entrypoint per `Layer4_Spec.md` §3.2.
 
     Dispatches on `tier` to the tier-specific synthesizer plumbing in
-    `plan_refresh_t1.py` (T1) or `plan_refresh_t2.py` (T2). T3 raises
-    `Layer4InputError('tier_t3_not_yet_implemented')` until Step 4d lands.
+    `plan_refresh_t1.py` (T1), `plan_refresh_t2.py` (T2), or
+    `plan_refresh_t3.py` (T3 intra-phase). T3 cross-phase raises
+    `Layer4InputError('tier_t3_cross_phase_requires_pattern_a')` until
+    Step 4f lands Pattern A orchestration for refresh.
 
     Algorithm (§5.3 Pattern B + §5.5 capped retry):
     1. Validate inputs per §4.3 — raises `Layer4InputError` on precondition
        fail. `layer3b_payload` required for all tiers (Andy 2026-05-17
-       §4.3-wins pick).
-    2. Build tier-specific user prompt + tool schema.
-    3. Invoke synthesizer; parse `record_refresh_sessions` tool output into
+       §4.3-wins pick). `plan_start_date` required when tier='T3' (Step 4d
+       amendment).
+    2. For T3: compute `phase_structure_from_3b()`; route intra-phase scope
+       to Pattern B; raise on cross-phase scope.
+    3. Build tier-specific user prompt + tool schema.
+    4. Invoke synthesizer; parse `record_refresh_sessions` tool output into
        `list[PlanSession]`; wrap into a Layer4Payload.
-    4. Run §5.4 deterministic validator harness with the 21-rule set;
+    5. Run §5.4 deterministic validator harness with the 21-rule set;
        weekly-aggregate rules (volume_band + intensity_dist) are
-       load-bearing at T2 scope.
-    5. On validator failure, retry up to `capped_retries` (default 2) with
+       load-bearing at T2 + T3 scope; ACWR forward projection is
+       load-bearing at T3 scope.
+    6. On validator failure, retry up to `capped_retries` (default 2) with
        `RuleFailure` context merged into the user prompt per D8.
-    6. On cap-hit with unresolved blockers: ship the latest synthesis as
+    7. On cap-hit with unresolved blockers: ship the latest synthesis as
        best-effort with an orchestrator-emitted
        `Observation(category='best_effort_plan', elevates_to_hitl=True)`;
        outstanding `blocker`-severity failures demote to `warning`.
-    7. Emit `Observation(category='intensity_modulated', elevates_to_hitl=
+    8. Emit `Observation(category='intensity_modulated', elevates_to_hitl=
        False)` per §8.6/§8.7 when any session carries the
        `intensity_modulated` coaching flag.
 
     `model_seam_reviewer` is reserved for T3 cross-phase Pattern A routing
-    (Step 4d/4f); ignored on T1/T2 Pattern B. `parsed_intent=None` is
-    permitted — D-64 degrades gracefully when the NL parser is unavailable
-    (per `Plan_Refresh_D64_Design_v1.md` §5.4).
+    (Step 4f); ignored on T1/T2/T3-intra-phase Pattern B. `parsed_intent=None`
+    is permitted — D-64 degrades gracefully when the NL parser is
+    unavailable (per `Plan_Refresh_D64_Design_v1.md` §5.4).
     """
     _validate_inputs(
         tier,
@@ -819,23 +850,48 @@ def llm_layer4_plan_refresh(
         layer3b_payload,
         prior_plan_session_window,
         plan_version_id_parent,
+        plan_start_date,
     )
 
+    # T3 dispatch: compute phase structure; route intra-phase to Pattern B;
+    # raise on cross-phase scope.
+    dominant_phase_name: str | None = None
+    dominant_phase_start_date: _date_type | None = None
+    dominant_phase_end_date: _date_type | None = None
     if tier == "T3":
-        raise Layer4InputError(
-            "tier_t3_not_yet_implemented",
-            detail=(
-                "T3 intra-phase (Pattern B) + cross-phase (Pattern A) are "
-                "queued for Step 4d/4f per Layer4_Spec.md §14.3.4"
-            ),
+        from layer4.phase_structure import (
+            phase_for_date,
+            phase_structure_from_3b,
+            scope_spans_phase_boundary,
         )
 
-    # Lazy-import the tier module to keep cross-imports clean; both modules
-    # depend on `plan_refresh.py` constants.
+        assert plan_start_date is not None  # _validate_inputs guards this
+        phase_structure = phase_structure_from_3b(layer3b_payload, plan_start_date)
+        if scope_spans_phase_boundary(
+            phase_structure, refresh_scope_start, refresh_scope_end
+        ):
+            raise Layer4InputError(
+                "tier_t3_cross_phase_requires_pattern_a",
+                detail=(
+                    "T3 refresh scope spans a phase boundary; Pattern A "
+                    "per-phase synthesis + seam reviewer required per "
+                    "Layer4_Spec.md §5.1 + §6.3. Pattern A is queued for "
+                    "Step 4f per §14.3.4 sequencing."
+                ),
+            )
+        phase_at_start = phase_for_date(phase_structure, refresh_scope_start)
+        assert phase_at_start is not None  # scope_spans_phase_boundary already verified
+        dominant_phase_name = phase_at_start.phase_name
+        dominant_phase_start_date = phase_at_start.start_date
+        dominant_phase_end_date = phase_at_start.end_date
+
+    # Lazy-import the tier module to keep cross-imports clean.
     if tier == "T1":
         from layer4 import plan_refresh_t1 as tier_module
-    else:
+    elif tier == "T2":
         from layer4 import plan_refresh_t2 as tier_module
+    else:
+        from layer4 import plan_refresh_t3 as tier_module
 
     effective_max_tokens = (
         max_tokens if max_tokens is not None else tier_module.DEFAULT_MAX_TOKENS
@@ -865,6 +921,16 @@ def llm_layer4_plan_refresh(
     latest_validator: ValidatorResult | None = None
 
     for retries_used in range(capped_retries + 1):
+        # T3 takes additional dominant-phase kwargs for the §3.5 prompt
+        # block; T1/T2 don't accept those — pass conditionally.
+        extra_kwargs: dict[str, Any] = {}
+        if tier == "T3":
+            extra_kwargs = {
+                "dominant_phase_name": dominant_phase_name,
+                "dominant_phase_start_date": dominant_phase_start_date,
+                "dominant_phase_end_date": dominant_phase_end_date,
+            }
+
         user_prompt = tier_module.render_user_prompt(
             refresh_scope_start=refresh_scope_start,
             refresh_scope_end=refresh_scope_end,
@@ -876,6 +942,7 @@ def llm_layer4_plan_refresh(
             parsed_intent=effective_intent,
             retries_used=retries_used,
             rule_failures=rule_failures,
+            **extra_kwargs,
         )
 
         llm_out = caller(

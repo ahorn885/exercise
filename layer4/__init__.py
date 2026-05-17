@@ -101,6 +101,11 @@ from layer4.errors import (
     Layer4InputError,
     Layer4OutputError,
 )
+from layer4.phase_structure import (
+    phase_for_date,
+    phase_structure_from_3b,
+    scope_spans_phase_boundary,
+)
 from layer4.plan_refresh import (
     build_record_refresh_sessions_tool,
     llm_layer4_plan_refresh,
@@ -275,9 +280,13 @@ __all__ = [
     "Layer4Error",
     "Layer4InputError",
     "Layer4OutputError",
-    # Plan-refresh synthesizer (plan_refresh.py + plan_refresh_t1.py + plan_refresh_t2.py)
+    # Plan-refresh synthesizer (plan_refresh.py + plan_refresh_t1.py + plan_refresh_t2.py + plan_refresh_t3.py)
     "build_record_refresh_sessions_tool",
     "llm_layer4_plan_refresh",
+    # Phase structure helper (phase_structure.py)
+    "phase_for_date",
+    "phase_structure_from_3b",
+    "scope_spans_phase_boundary",
     # Single-session synthesizer (single_session.py)
     "SingleSessionRequest",
     "build_record_single_session_tool",

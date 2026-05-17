@@ -13,7 +13,8 @@ Coverage:
   phase_structure=None, seam_reviews=None, suggestion_id=None, each
   session.phase_metadata=None, sessions list)
 - Prompt rendering (parsed_intent + prior window + retry context)
-- T3 raises tier_t3_not_yet_implemented (queued for Step 4d)
+- T3 intra-phase routes to Pattern B; cross-phase raises pattern_a
+- phase_structure_from_3b dispatch + plan_start_date validation
 
 LLM calls are mocked via a stub `llm_caller` dependency. No real Anthropic
 SDK invocations.
@@ -550,6 +551,10 @@ class TestToolSchema:
         zone_enum = cardio_items["properties"]["intensity_zone"]["enum"]
         assert set(zone_enum) == {"Z1", "Z2", "Z3", "Z4", "Z5", "mixed"}
 
+    def test_t3_maxitems_56(self):
+        schema = build_record_refresh_sessions_tool("T3")
+        assert schema["input_schema"]["properties"]["sessions"]["maxItems"] == 56
+
 
 # ─── Input validation (§4.3) ─────────────────────────────────────────────────
 
@@ -763,7 +768,8 @@ class TestInputValidation:
             _call_t1(plan_version_id_parent=0)
         assert exc.value.code == "plan_version_id_parent_missing"
 
-    def test_t3_not_yet_implemented(self):
+    def test_t3_plan_start_date_missing_raises(self):
+        """Step 4d amendment: tier=T3 requires plan_start_date non-None."""
         with pytest.raises(Layer4InputError) as exc:
             llm_layer4_plan_refresh(
                 user_id=42,
@@ -781,9 +787,179 @@ class TestInputValidation:
                 plan_version_id=2,
                 plan_version_id_parent=1,
                 etl_version_set={"layer0": "v7"},
+                # plan_start_date intentionally omitted
                 llm_caller=_stub_caller({"sessions": []}),
             )
-        assert exc.value.code == "tier_t3_not_yet_implemented"
+        assert exc.value.code == "plan_start_date_missing"
+
+    def test_t3_scope_too_long_raises(self):
+        with pytest.raises(Layer4InputError) as exc:
+            llm_layer4_plan_refresh(
+                user_id=42,
+                tier="T3",
+                refresh_scope_start=_T2_START,
+                refresh_scope_end=_T2_START + timedelta(days=33),  # 34 days > 32
+                layer1_payload=_layer1(),
+                layer2_bundle=_layer2_bundle(),
+                layer3a_payload=_layer3a(),
+                layer3b_payload=_layer3b(),
+                prior_plan_session_window=_prior_window(
+                    _T2_START, _T2_START + timedelta(days=33), pre_days=14, post_days=7
+                ),
+                parsed_intent=None,
+                plan_version_id=2,
+                plan_version_id_parent=1,
+                etl_version_set={"layer0": "v7"},
+                plan_start_date=_T2_START - timedelta(days=14),
+                llm_caller=_stub_caller({"sessions": []}),
+            )
+        assert exc.value.code == "tier_scope_mismatch"
+
+    def test_t3_cross_phase_raises_pattern_a(self):
+        """Per Layer4_Spec.md §5.1 + §6.3: T3 with scope spanning a phase
+        boundary routes to Pattern A; Step 4f surface, currently raises."""
+        # Athlete is mid-Base (12 weeks total, standard mode: Base=6 wks);
+        # plan_start_date 5 weeks ago. Refresh scope covers days 36-63 of
+        # the plan — which crosses Base→Build at ~week 6.
+        plan_start = _T2_START - timedelta(days=35)  # 5 weeks before refresh start
+        with pytest.raises(Layer4InputError) as exc:
+            llm_layer4_plan_refresh(
+                user_id=42,
+                tier="T3",
+                refresh_scope_start=_T2_START,  # day 35 of plan
+                refresh_scope_end=_T2_START + timedelta(days=27),  # day 62
+                layer1_payload=_layer1(),
+                layer2_bundle=_layer2_bundle(),
+                layer3a_payload=_layer3a(),
+                # Standard mode + Base start → Base allocation = 6 wks of 12;
+                # Build runs weeks 7-9; refresh spans week 5-9 = cross-phase.
+                layer3b_payload=_layer3b(start_phase="Base"),
+                prior_plan_session_window=_prior_window(
+                    _T2_START, _T2_START + timedelta(days=27), pre_days=14, post_days=7
+                ),
+                parsed_intent=None,
+                plan_version_id=2,
+                plan_version_id_parent=1,
+                etl_version_set={"layer0": "v7"},
+                plan_start_date=plan_start,
+                llm_caller=_stub_caller({"sessions": []}),
+            )
+        assert exc.value.code == "tier_t3_cross_phase_requires_pattern_a"
+
+
+# ─── T3 intra-phase Pattern B (Step 4d) ──────────────────────────────────────
+
+
+def _call_t3_intra_phase(
+    *,
+    layer3b=None,
+    plan_start_offset_days: int = -14,
+    llm_caller=None,
+    sessions_output: list[dict[str, Any]] | None = None,
+):
+    """Helper: T3 invocation with a plan_start_date positioned so the
+    refresh scope falls entirely inside one phase.
+
+    Defaults: plan_start_date = T2_START - 14 days (athlete is 2 weeks into
+    the plan). With standard mode + Base start + 12-week total, Base runs
+    weeks 1-6 (days 1-42); refresh days 15-42 → entirely inside Base.
+    """
+    plan_start = _T2_START + timedelta(days=plan_start_offset_days)
+    scope_end = _T2_START + timedelta(days=27)
+    if sessions_output is None:
+        sessions_output = [
+            _cardio_session(d=_T2_START + timedelta(days=offset))
+            for offset in (0, 2, 4, 7, 9, 11, 14, 16, 18, 21, 23, 25)
+        ]
+    return llm_layer4_plan_refresh(
+        user_id=42,
+        tier="T3",
+        refresh_scope_start=_T2_START,
+        refresh_scope_end=scope_end,
+        layer1_payload=_layer1(),
+        layer2_bundle=_layer2_bundle(),
+        layer3a_payload=_layer3a(),
+        layer3b_payload=layer3b if layer3b is not None else _layer3b(start_phase="Base"),
+        prior_plan_session_window=_prior_window(
+            _T2_START, scope_end, pre_days=14, post_days=7
+        ),
+        parsed_intent=None,
+        plan_version_id=2,
+        plan_version_id_parent=1,
+        etl_version_set={"layer0": "v7"},
+        plan_start_date=plan_start,
+        llm_caller=llm_caller or _stub_caller({"sessions": sessions_output}),
+    )
+
+
+class TestT3IntraPhase:
+    def test_intra_phase_routes_to_pattern_b(self):
+        """T3 inside Base phase: returns Pattern B payload with sessions."""
+        result = _call_t3_intra_phase()
+        assert isinstance(result, Layer4Payload)
+        assert result.mode == "plan_refresh"
+        assert result.pattern == "B"
+        assert result.phase_structure is None
+        assert result.seam_reviews is None
+        assert len(result.sessions) == 12
+
+    def test_intra_phase_sessions_inside_scope(self):
+        result = _call_t3_intra_phase()
+        for s in result.sessions:
+            assert _T2_START <= s.date <= _T2_START + timedelta(days=27)
+            assert s.phase_metadata is None
+            assert s.is_ad_hoc is False
+
+    def test_intra_phase_validator_results_accepted(self):
+        result = _call_t3_intra_phase()
+        assert result.validator_results
+        assert result.validator_results[-1].accepted is True
+
+    def test_intra_phase_empty_sessions_allowed(self):
+        result = _call_t3_intra_phase(sessions_output=[])
+        assert len(result.sessions) == 0
+        assert result.validator_results[-1].accepted is True
+
+    def test_intra_phase_t3_uses_t3_max_tokens_default(self):
+        """T3 default max_tokens=10000; verify via stub caller capture."""
+        captured: dict[str, Any] = {}
+
+        def _capturing_caller(
+            _sys, _user, _tool, _model, _temp, max_tokens, thinking
+        ) -> _SynthesizerOutput:
+            captured["max_tokens"] = max_tokens
+            captured["thinking"] = thinking
+            return _SynthesizerOutput(
+                tool_args={"sessions": []},
+                input_tokens=9000,
+                output_tokens=4000,
+                latency_ms=11000,
+            )
+
+        _call_t3_intra_phase(llm_caller=_capturing_caller)
+        assert captured["max_tokens"] == 10000
+        assert captured["thinking"] == 6500
+
+    def test_intra_phase_extended_mode_routes_correctly(self):
+        """Extended mode: Base = 60% of 12wks = 7-8 weeks. Days 15-42 stay
+        intra-Base."""
+        # Use extended mode 3B
+        l3b = _layer3b(start_phase="Base")
+        l3b = Layer3BPayload(
+            **{
+                **l3b.model_dump(),
+                "periodization_shape": PeriodizationShape(
+                    mode="extended",
+                    start_phase="Base",
+                    phase_weeks=None,
+                    reasoning_text="r",
+                    evidence_basis=["e"],
+                ).model_dump(),
+            }
+        )
+        result = _call_t3_intra_phase(layer3b=l3b)
+        assert result.mode == "plan_refresh"
+        assert result.pattern == "B"
 
 
 # ─── Entry-point happy path ──────────────────────────────────────────────────
