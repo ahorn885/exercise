@@ -1042,7 +1042,7 @@ These flags apply on every Layer 4 invocation that touches Taper-phase sessions 
 | Trigger | Auto-emitted on | Flag | Kind |
 |---|---|---|---|
 | `PlanSession.date == event_date` (event-mode plans) | The race-day session | `race_day` | Spec-auto |
-| Synthesizer modulated athlete's picked D-63 intensity per §6.2 of D-63 | The synthesized single session | `intensity_modulated` | LLM-emitted |
+| Synthesizer modulated session intensity from what natural periodization-shape + adjacent-session continuity would call for, due to athlete signal — covers (a) D-63 single-session modulation per §6.2 of D-63, AND (b) `plan_refresh` T1/T2 modulation against `parsed_intent` direction or 3A signals per `Layer4_RefreshT1_v1.md` §8 / `Layer4_RefreshT2_v1.md` §8 | The synthesized session(s); on a whole-week modulation (e.g., T2 pulled back due to sickness), every session in the refresh window | `intensity_modulated` | LLM-emitted (trigger broadened 2026-05-17 from D-63-only to also cover plan_refresh paths — paired amendment with `Layer4_RefreshT1_v1.md` / `Layer4_RefreshT2_v1.md`) |
 | Week is a periodic deload week per standard periodization (typically every 4th week in standard mode; cycle lengths per mode TBD in prompt body) | All sessions in the deload week | `recovery_week` | Spec-auto (per Andy 2026-05-16 session-3 calibration: canonical periodization concept; absence was a real gap) |
 
 ### 8.7 Call-level observations — auto-emit rules
@@ -1054,7 +1054,7 @@ Maps the `Observation.category` enum per §7.10 to triggers. Unless noted, obser
 | `best_effort_plan` | Any `PhaseSpec.synthesis_metadata.cap_hit == True` in this call OR any cross-phase `RuleFailure` with `severity='blocker'` survives the final validator pass | True | Spec-auto |
 | `shape_override` | §6.4 `shape_override` path activated | True | Spec-auto |
 | `seam_unresolved` | A seam's per-seam iteration cap was exhausted with a non-`approved` final verdict OR a `flagged_major`/`patched` verdict's `re_prompt_*` direction could not be applied because the targeted phase's retry budget was exhausted | True | Spec-auto |
-| `intensity_modulated` | Synthesizer emitted the `intensity_modulated` session flag per §8.6 (D-63 path) | False | Spec-auto (triggered by LLM-emitted session flag) |
+| `intensity_modulated` | Synthesizer emitted the `intensity_modulated` session flag per §8.6 — covers D-63 single-session path AND `plan_refresh` T1/T2 paths per the broadened §8.6 trigger (2026-05-17 amendment) | False | Spec-auto (triggered by LLM-emitted session flag) |
 | `sport_unavailable_at_locale` | D-63 §6.3 error case — picked sport not in any of the athlete's locale equipment views | False (error session carries the surface; observation is informational) | Spec-auto |
 | `off_plan_day_note` | D-63 single-session request fell on a day with a planned session AND athlete chose to do the ad-hoc session anyway | False | Spec-auto |
 | `warning` | Seam reviewer `flagged_minor` verdict | False | Spec-auto |
