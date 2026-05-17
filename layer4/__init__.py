@@ -6,6 +6,17 @@ training-load / ACWR / injury rules live in the §5.4 validator harness
 (Step 3 of §14.3.4), not here.
 """
 
+from layer4.hashing import (
+    canonical_json,
+    compute_layer2_bundle_canonical_hash,
+    compute_layer2c_bundle_hash,
+    compute_payload_hash,
+    compute_prior_plan_session_window_hash,
+    plan_create_key,
+    plan_refresh_key,
+    race_week_brief_key,
+    single_session_synthesize_key,
+)
 from layer4.payload import (
     CadenceTarget,
     CardioBlock,
@@ -72,4 +83,13 @@ __all__ = [
     "TransitionSpec",
     "ValidatorResult",
     "VerticalRateTarget",
+    "canonical_json",
+    "compute_layer2_bundle_canonical_hash",
+    "compute_layer2c_bundle_hash",
+    "compute_payload_hash",
+    "compute_prior_plan_session_window_hash",
+    "plan_create_key",
+    "plan_refresh_key",
+    "race_week_brief_key",
+    "single_session_synthesize_key",
 ]
