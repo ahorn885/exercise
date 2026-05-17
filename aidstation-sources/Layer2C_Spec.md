@@ -204,7 +204,21 @@ def tier_3(exercise, effective_pool, exercise_index):
 - The `exercise_index` is a dict built from the §5.2 query results (`{exercise_id: row}`). Proxies pointing to exercises not in the index for this discipline set are skipped silently — proxies can reference any exercise in Layer 0, not just discipline-relevant ones, but if a proxy isn't pre-loaded we don't fetch it on the fly. Performance.
 - Iteration order is array order. First proxy whose primary works wins.
 
-### 5.6 Per-discipline coverage aggregation
+### 5.6 Accommodation modality pass-through (added 2026-05-17 amendment)
+
+For every exercise resolved at Tier 1, 2, or 3 (i.e., prescribable; not unavailable), check the upstream `Layer2DPayload.accommodated_exercises` list for a matching `ExerciseRisk` keyed on `exercise_id`. If present, copy its `accommodations: list[AccommodationModality]` onto the `ResolvedExercise.accommodations` field. If the exercise is in 2D's `clean_exercise_ids` or `excluded_exercises`, leave `accommodations = []`. (Excluded exercises don't reach this point — they're filtered out before Tier resolution; 2C only sees the post-2D non-excluded set.)
+
+```python
+def resolve_accommodations(resolved, layer2d_payload) -> list[ResolvedExercise]:
+    accommodated_map = {er.exercise_id: er.accommodations for er in layer2d_payload.accommodated_exercises}
+    for r in resolved:
+        r.accommodations = accommodated_map.get(r.exercise_id, [])
+    return resolved
+```
+
+The pass-through is mechanical; 2C does not interpret modalities — that's Layer 4's job. The presence on `ResolvedExercise` gives Layer 4's synthesizer the modality recommendations alongside the substitution Tier so it can apply both layers of accommodation (e.g., Tier 2 substitute_text "DB row in place of barbell row" AND `loading_type_change(barbell → dumbbell)` modality reinforcing the same point; or Tier 1 unchanged exercise_id BUT `tempo_modification(heavy_slow_resistance)` modality applied).
+
+### 5.7 Per-discipline coverage aggregation
 
 After every exercise in the §5.2 query result is resolved to a tier (1, 2, 3, or unavailable), compute coverage per included discipline:
 
@@ -277,6 +291,8 @@ class ResolvedExercise:
     terrain_required: list[str]          # Pass-through for Layer 4 cross-ref with 2B
     contraindicated_parts: list[str]     # Pass-through for 2D
     contraindicated_conditions: list[str]  # Pass-through for 2D
+    # ─── Added 2026-05-17 amendment per Layer2D_Spec.md §5.3.6 (injury-accommodation modalities) ───
+    accommodations: list[AccommodationModality]  # Pass-through from 2D when 2D's ExerciseRisk.verdict == 'accommodate' for this exercise; else empty. Layer 4 synthesizer reads to apply modality-specific prescription adjustments; Layer 4 validator reads to enforce modality compliance. AccommodationModality typed union defined in Layer2D_Spec.md §7.
 
 @dataclass
 class ResolutionDetail:
