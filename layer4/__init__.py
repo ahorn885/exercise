@@ -1,11 +1,88 @@
-"""Layer 4 — Plan generation payload schemas.
+"""Layer 4 — Plan generation payload schemas + upstream context.
 
-See `aidstation-sources/Layer4_Spec.md` §7 for the contract; this package
-implements the typed schemas + §7.12 cross-field invariants. Domain-level
-training-load / ACWR / injury rules live in the §5.4 validator harness
-(Step 3 of §14.3.4), not here.
+See `aidstation-sources/Layer4_Spec.md` §7 for the output contract; this
+package implements:
+
+- `payload.py` — Layer 4's typed output schemas (Layer4Payload + PlanSession
+  discriminated-union + IntensityTarget union + RacePlan / RaceWeekBrief).
+- `hashing.py` — canonical-JSON encoder + 4 per-entry-point SHA-256
+  cache-key helpers per §9.1.
+- `context.py` — typed pydantic v2 mirrors of the upstream contracts Layer 4
+  consumes (Layer 2A / 2B / 2C / 2D / 2E / 3A / 3B / DailyAvailabilityWindow
+  / RaceEventStub / PerDateRestriction). Includes AccommodationModality
+  discriminated-union per the 2026-05-17 PR-C-followon amendment to
+  Layer 2D §5.3.6 + Layer 2C §5.6.
+
+Domain-level training-load / ACWR / injury rules live in the §5.4 validator
+harness (Step 3 PR-E of §14.3.4), not here.
 """
 
+from layer4.context import (
+    ACWREntry,
+    ACWRStatus,
+    AccommodationModality,
+    Assessment,
+    CaffeineRacedayPlan,
+    CurrentState,
+    DailyAvailabilityWindow,
+    DailyNutritionBaseline,
+    DailyPhaseTargets,
+    DataDensity,
+    DietaryPatternFlag,
+    DisciplineCoverage,
+    DisciplineRisk,
+    Evidence,
+    ExerciseRisk,
+    ExerciseSubstitutionModality,
+    FrequencyReductionModality,
+    GoalViability,
+    HeatAcclimEventAdjustment,
+    IntegratedSupplement,
+    IntensityReductionModality,
+    Layer2ACoachingFlag,
+    Layer2ADiscipline,
+    Layer2APayload,
+    Layer2BCoachingFlag,
+    Layer2BPayload,
+    Layer2BSummaryBlock,
+    Layer2CCoachingFlag,
+    Layer2CPayload,
+    Layer2DCoachingFlag,
+    Layer2DHitlItem,
+    Layer2DPayload,
+    Layer2ECoachingFlag,
+    Layer2EHitlItem,
+    Layer2EPayload,
+    Layer3APayload,
+    Layer3BHITLItem,
+    Layer3BPayload,
+    Layer3Observation,
+    LoadingTypeChangeModality,
+    MacroTargets,
+    MatchedBodyPart,
+    PerDateRestriction,
+    PeriodizationShape,
+    PhaseLoadBands,
+    RaceDayFueling,
+    RaceDaySupplementSuggestion,
+    RaceEventStub,
+    RaceTerrainOutput,
+    RationaleMetadata,
+    RecentTrajectory,
+    ResolutionDetail,
+    ResolvedExercise,
+    SleepDepFuelingOverlay,
+    SubstituteRecommendation,
+    SupplementIntegrationPayload,
+    TempoModificationModality,
+    TerrainGap,
+    TrainingGap,
+    TrainingGapsSummary,
+    TrajectoryWindow,
+    UnresolvedFlag,
+    VolumeReductionModality,
+    WeightResult,
+)
 from layer4.hashing import (
     canonical_json,
     compute_layer2_bundle_canonical_hash,
@@ -52,6 +129,7 @@ from layer4.payload import (
 )
 
 __all__ = [
+    # Layer 4 output schemas (payload.py)
     "CadenceTarget",
     "CardioBlock",
     "ClimbingGradeTarget",
@@ -83,6 +161,7 @@ __all__ = [
     "TransitionSpec",
     "ValidatorResult",
     "VerticalRateTarget",
+    # Hashing helpers (hashing.py)
     "canonical_json",
     "compute_layer2_bundle_canonical_hash",
     "compute_layer2c_bundle_hash",
@@ -92,4 +171,78 @@ __all__ = [
     "plan_refresh_key",
     "race_week_brief_key",
     "single_session_synthesize_key",
+    # AccommodationModality discriminated union (context.py)
+    "AccommodationModality",
+    "ExerciseSubstitutionModality",
+    "FrequencyReductionModality",
+    "IntensityReductionModality",
+    "LoadingTypeChangeModality",
+    "TempoModificationModality",
+    "VolumeReductionModality",
+    # Layer 2A
+    "Layer2ACoachingFlag",
+    "Layer2ADiscipline",
+    "Layer2APayload",
+    "PhaseLoadBands",
+    "RationaleMetadata",
+    "TrainingGap",
+    "TrainingGapsSummary",
+    "UnresolvedFlag",
+    "WeightResult",
+    # Layer 2B
+    "Layer2BCoachingFlag",
+    "Layer2BPayload",
+    "Layer2BSummaryBlock",
+    "RaceTerrainOutput",
+    "TerrainGap",
+    # Layer 2C
+    "DisciplineCoverage",
+    "Layer2CCoachingFlag",
+    "Layer2CPayload",
+    "ResolutionDetail",
+    "ResolvedExercise",
+    # Layer 2D
+    "DisciplineRisk",
+    "Evidence",
+    "ExerciseRisk",
+    "Layer2DCoachingFlag",
+    "Layer2DHitlItem",
+    "Layer2DPayload",
+    "MatchedBodyPart",
+    "SubstituteRecommendation",
+    # Layer 2E
+    "CaffeineRacedayPlan",
+    "DailyNutritionBaseline",
+    "DailyPhaseTargets",
+    "DietaryPatternFlag",
+    "HeatAcclimEventAdjustment",
+    "IntegratedSupplement",
+    "Layer2ECoachingFlag",
+    "Layer2EHitlItem",
+    "Layer2EPayload",
+    "MacroTargets",
+    "RaceDayFueling",
+    "RaceDaySupplementSuggestion",
+    "SleepDepFuelingOverlay",
+    "SupplementIntegrationPayload",
+    # Layer 3 (shared)
+    "Layer3Observation",
+    # Layer 3A
+    "ACWREntry",
+    "ACWRStatus",
+    "Assessment",
+    "CurrentState",
+    "DataDensity",
+    "Layer3APayload",
+    "RecentTrajectory",
+    "TrajectoryWindow",
+    # Layer 3B
+    "GoalViability",
+    "Layer3BHITLItem",
+    "Layer3BPayload",
+    "PeriodizationShape",
+    # Onboarding / forward-pointers
+    "DailyAvailabilityWindow",
+    "PerDateRestriction",
+    "RaceEventStub",
 ]
