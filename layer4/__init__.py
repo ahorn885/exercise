@@ -94,6 +94,10 @@ from layer4.hashing import (
     race_week_brief_key,
     single_session_synthesize_key,
 )
+from layer4.validator import (
+    ValidatorContext,
+    validate_layer4_payload,
+)
 from layer4.payload import (
     CadenceTarget,
     CardioBlock,
@@ -245,4 +249,7 @@ __all__ = [
     "DailyAvailabilityWindow",
     "PerDateRestriction",
     "RaceEventStub",
+    # Validator harness (validator.py)
+    "ValidatorContext",
+    "validate_layer4_payload",
 ]
