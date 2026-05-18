@@ -1102,6 +1102,30 @@ _PG_MIGRATIONS = [
     )""",
     "CREATE INDEX IF NOT EXISTS plan_versions_user_created_idx ON plan_versions (user_id, created_at DESC)",
     "CREATE INDEX IF NOT EXISTS plan_versions_user_scope_idx ON plan_versions (user_id, scope_start_date, scope_end_date)",
+    # Layer 4 Step 5 cache layer — `layer4_cache` table per `Layer4_Spec.md`
+    # §9. Stores per-entry-point cache rows (phase_idx = -1) and per-phase
+    # Pattern A rows (phase_idx >= 0). cache_key is a sha256 hex digest from
+    # the per-entry formula in §9.1 (or the chained phase-key formula in
+    # §9.2). plan_version_id + suggestion_id are NOT stored on the row;
+    # they're rebound from the calling orchestrator on hit per §9.4.
+    # Composite PK (cache_key, phase_idx) lets a single call cache its
+    # top-level entry alongside per-phase entries without collision.
+    """CREATE TABLE IF NOT EXISTS layer4_cache (
+        cache_key TEXT NOT NULL,
+        phase_idx INTEGER NOT NULL DEFAULT -1,
+        user_id INTEGER NOT NULL REFERENCES users(id),
+        entry_point TEXT NOT NULL CHECK (entry_point IN ('plan_create', 'plan_refresh', 'single_session_synthesize', 'race_week_brief')),
+        phase_name TEXT,
+        payload_json JSONB NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        last_hit_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        hit_count INTEGER NOT NULL DEFAULT 0,
+        PRIMARY KEY (cache_key, phase_idx),
+        CHECK ((phase_idx = -1 AND phase_name IS NULL) OR (phase_idx >= 0 AND phase_name IS NOT NULL))
+    )""",
+    "CREATE INDEX IF NOT EXISTS layer4_cache_user_entry_idx ON layer4_cache (user_id, entry_point)",
+    "CREATE INDEX IF NOT EXISTS layer4_cache_user_created_idx ON layer4_cache (user_id, created_at DESC)",
+    "CREATE INDEX IF NOT EXISTS layer4_cache_entry_point_idx ON layer4_cache (entry_point)",
 ]
 
 _CLOTHING_SEEDS = [

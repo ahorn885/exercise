@@ -90,11 +90,34 @@ from layer4.context import (
     VolumeReductionModality,
     WeightResult,
 )
+from layer4.cache import (
+    CacheBackend,
+    CacheEntry,
+    CacheMetrics,
+    InMemoryCacheBackend,
+    Layer4Cache,
+    PER_ENTRY_PHASE_IDX_SENTINEL,
+    VALID_ENTRY_POINTS,
+)
+from layer4.cache_invalidation import (
+    evict_on_layer_change,
+    evict_on_midnight_rollover,
+    policy_for_layer,
+)
+from layer4.cache_postgres import PostgresCacheBackend
+from layer4.cached_wrappers import (
+    llm_layer4_plan_create_cached,
+    llm_layer4_plan_refresh_cached,
+    llm_layer4_race_week_brief_cached,
+    llm_layer4_single_session_synthesize_cached,
+)
 from layer4.hashing import (
     canonical_json,
+    compute_accepted_output_hash,
     compute_layer2_bundle_canonical_hash,
     compute_layer2c_bundle_hash,
     compute_payload_hash,
+    compute_phase_cache_key,
     compute_prior_plan_session_window_hash,
     plan_create_key,
     plan_refresh_key,
@@ -209,14 +232,33 @@ __all__ = [
     "VerticalRateTarget",
     # Hashing helpers (hashing.py)
     "canonical_json",
+    "compute_accepted_output_hash",
     "compute_layer2_bundle_canonical_hash",
     "compute_layer2c_bundle_hash",
     "compute_payload_hash",
+    "compute_phase_cache_key",
     "compute_prior_plan_session_window_hash",
     "plan_create_key",
     "plan_refresh_key",
     "race_week_brief_key",
     "single_session_synthesize_key",
+    # Cache layer (cache.py + cache_postgres.py + cache_invalidation.py +
+    # cached_wrappers.py) — Layer 4 Step 5 per §9.
+    "CacheBackend",
+    "CacheEntry",
+    "CacheMetrics",
+    "InMemoryCacheBackend",
+    "Layer4Cache",
+    "PER_ENTRY_PHASE_IDX_SENTINEL",
+    "PostgresCacheBackend",
+    "VALID_ENTRY_POINTS",
+    "evict_on_layer_change",
+    "evict_on_midnight_rollover",
+    "llm_layer4_plan_create_cached",
+    "llm_layer4_plan_refresh_cached",
+    "llm_layer4_race_week_brief_cached",
+    "llm_layer4_single_session_synthesize_cached",
+    "policy_for_layer",
     # AccommodationModality discriminated union (context.py)
     "AccommodationModality",
     "ExerciseSubstitutionModality",
