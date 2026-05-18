@@ -106,14 +106,26 @@ from layer4.errors import (
     Layer4InputError,
     Layer4OutputError,
 )
+from layer4.per_phase import (
+    build_record_phase_sessions_tool,
+    synthesize_phase,
+)
 from layer4.phase_structure import (
     phase_for_date,
     phase_structure_from_3b,
     scope_spans_phase_boundary,
 )
+from layer4.plan_create import (
+    llm_layer4_plan_create,
+    synthesize_pattern_a_for_refresh,
+)
 from layer4.plan_refresh import (
     build_record_refresh_sessions_tool,
     llm_layer4_plan_refresh,
+)
+from layer4.seam_review import (
+    build_record_seam_review_tool,
+    review_seam,
 )
 from layer4.race_week_brief import (
     build_record_race_week_brief_tool,
@@ -301,6 +313,13 @@ __all__ = [
     "phase_for_date",
     "phase_structure_from_3b",
     "scope_spans_phase_boundary",
+    # Pattern A — per-phase synthesizer + seam reviewer + plan_create driver (Step 4f)
+    "build_record_phase_sessions_tool",
+    "build_record_seam_review_tool",
+    "llm_layer4_plan_create",
+    "review_seam",
+    "synthesize_pattern_a_for_refresh",
+    "synthesize_phase",
     # Single-session synthesizer (single_session.py)
     "SingleSessionRequest",
     "build_record_single_session_tool",

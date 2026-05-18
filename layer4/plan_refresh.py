@@ -802,6 +802,8 @@ def llm_layer4_plan_refresh(
     capped_retries: int = 2,
     extended_thinking_budget: int | None = None,
     llm_caller: LLMCaller | None = None,
+    phase_caller: Any | None = None,
+    seam_caller: Any | None = None,
 ) -> Layer4Payload:
     """Pattern B plan-refresh entrypoint per `Layer4_Spec.md` §3.2.
 
@@ -854,7 +856,8 @@ def llm_layer4_plan_refresh(
     )
 
     # T3 dispatch: compute phase structure; route intra-phase to Pattern B;
-    # raise on cross-phase scope.
+    # delegate cross-phase to Pattern A engine per §6.3 (Step 4f closed the
+    # `tier_t3_cross_phase_requires_pattern_a` raise path 2026-05-18).
     dominant_phase_name: str | None = None
     dominant_phase_start_date: _date_type | None = None
     dominant_phase_end_date: _date_type | None = None
@@ -870,14 +873,30 @@ def llm_layer4_plan_refresh(
         if scope_spans_phase_boundary(
             phase_structure, refresh_scope_start, refresh_scope_end
         ):
-            raise Layer4InputError(
-                "tier_t3_cross_phase_requires_pattern_a",
-                detail=(
-                    "T3 refresh scope spans a phase boundary; Pattern A "
-                    "per-phase synthesis + seam reviewer required per "
-                    "Layer4_Spec.md §5.1 + §6.3. Pattern A is queued for "
-                    "Step 4f per §14.3.4 sequencing."
+            # Cross-phase T3 routes to Pattern A engine in plan_create.py.
+            # Phases overlapping the refresh scope get re-synthesized; phases
+            # outside the scope carry their prior-plan sessions over as
+            # boundary context per §6.3.
+            return _route_t3_cross_phase_to_pattern_a(
+                user_id=user_id,
+                phase_structure=phase_structure,
+                refresh_scope_start=refresh_scope_start,
+                refresh_scope_end=refresh_scope_end,
+                layer1_payload=layer1_payload,
+                layer2_bundle=layer2_bundle,
+                layer3a_payload=layer3a_payload,
+                layer3b_payload=layer3b_payload,
+                prior_plan_session_window=prior_plan_session_window,
+                plan_version_id=plan_version_id,
+                etl_version_set=etl_version_set,
+                model_synthesizer=model_synthesizer,
+                model_seam_reviewer=(
+                    model_seam_reviewer or "claude-sonnet-4-6"
                 ),
+                temperature=temperature,
+                capped_retries=capped_retries,
+                phase_caller=phase_caller,
+                seam_caller=seam_caller,
             )
         phase_at_start = phase_for_date(phase_structure, refresh_scope_start)
         assert phase_at_start is not None  # scope_spans_phase_boundary already verified
@@ -1089,6 +1108,87 @@ def llm_layer4_plan_refresh(
         output_tokens_total=total_output_tokens,
         latency_ms_total=total_latency_ms,
         llm_call_count=llm_call_count,
+    )
+
+
+def _route_t3_cross_phase_to_pattern_a(
+    *,
+    user_id: int,
+    phase_structure: Any,
+    refresh_scope_start: _date_type,
+    refresh_scope_end: _date_type,
+    layer1_payload: dict[str, Any],
+    layer2_bundle: Layer2Bundle,
+    layer3a_payload: Layer3APayload,
+    layer3b_payload: Layer3BPayload,
+    prior_plan_session_window: list[PlanSession],
+    plan_version_id: int,
+    etl_version_set: dict[str, str],
+    model_synthesizer: str,
+    model_seam_reviewer: str,
+    temperature: float,
+    capped_retries: int,
+    phase_caller: Any | None,
+    seam_caller: Any | None,
+) -> Layer4Payload:
+    """Delegate T3 cross-phase refresh to the Pattern A engine in
+    plan_create.py per `Layer4_Spec.md` §6.3 (Step 4f).
+
+    Identifies which phase indices overlap [refresh_scope_start,
+    refresh_scope_end] and synthesizes those; phases outside the scope keep
+    their prior-plan sessions (read from `prior_plan_session_window`) as
+    boundary context for seam reviews.
+    """
+    from layer4.plan_create import synthesize_pattern_a_for_refresh
+
+    # Determine which phase indices overlap the refresh scope.
+    phase_indices_to_synthesize: list[int] = []
+    for i, phase in enumerate(phase_structure.phases):
+        # Phase overlaps refresh scope iff their date ranges intersect.
+        if (
+            phase.end_date >= refresh_scope_start
+            and phase.start_date <= refresh_scope_end
+        ):
+            phase_indices_to_synthesize.append(i)
+
+    # Bucket prior_plan_session_window sessions into the non-synthesized
+    # phases (carryover for seam-review boundary context).
+    carryover_sessions: dict[int, list[PlanSession]] = {}
+    for i, phase in enumerate(phase_structure.phases):
+        if i in phase_indices_to_synthesize:
+            continue
+        in_phase = [
+            s
+            for s in prior_plan_session_window
+            if phase.start_date <= s.date <= phase.end_date
+        ]
+        if in_phase:
+            carryover_sessions[i] = in_phase
+
+    return synthesize_pattern_a_for_refresh(
+        user_id=user_id,
+        layer1_payload=layer1_payload,
+        layer2a_payload=layer2_bundle.a,
+        layer2b_payload=layer2_bundle.b,
+        layer2c_payloads=dict(layer2_bundle.c),
+        layer2d_payload=layer2_bundle.d,
+        layer2e_payload=layer2_bundle.e,
+        layer3a_payload=layer3a_payload,
+        layer3b_payload=layer3b_payload,
+        race_event_payload=None,
+        phase_structure=phase_structure,
+        phase_indices_to_synthesize=phase_indices_to_synthesize,
+        carryover_sessions_by_phase_index=carryover_sessions,
+        refresh_scope_start=refresh_scope_start,
+        refresh_scope_end=refresh_scope_end,
+        plan_version_id=plan_version_id,
+        etl_version_set=etl_version_set,
+        model_synthesizer=model_synthesizer,
+        model_seam_reviewer=model_seam_reviewer,
+        temperature=temperature,
+        capped_retries_per_phase=capped_retries,
+        phase_caller=phase_caller,
+        seam_caller=seam_caller,
     )
 
 
