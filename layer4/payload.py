@@ -410,6 +410,7 @@ class KitItem(_Base):
     item: str
     purpose: str
     optional: bool
+    layer0_canonical: bool = False
 
 
 class RaceWeekBrief(_Base):
