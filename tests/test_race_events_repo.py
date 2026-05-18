@@ -31,10 +31,17 @@ from race_events_repo import (
     add_route_locale_equipment,
     create_race_event,
     delete_race_event,
+    delete_route_locale,
+    delete_route_locale_equipment,
+    get_race_event,
     list_athlete_race_events,
+    list_route_locale_equipment,
+    list_route_locales,
     load_race_event_payload,
     load_target_race_event_payload,
     set_target_event,
+    update_race_event,
+    update_route_locale,
 )
 
 
@@ -508,3 +515,224 @@ class TestModuleConstants:
             "finish",
             "other",
         }
+
+
+# ─── get_race_event ──────────────────────────────────────────────────────────
+
+
+class TestGetRaceEvent:
+    def test_returns_none_when_row_missing_or_wrong_user(self):
+        conn = _FakeConn()
+        conn.queue_response(row=None)
+        assert get_race_event(conn, user_id=1, race_event_id=999) is None
+        sql, params = conn.calls[0]
+        assert "FROM race_events" in sql
+        assert "user_id = ?" in sql
+        assert params == (999, 1)
+
+    def test_returns_dict_with_full_columns(self):
+        conn = _FakeConn()
+        conn.queue_response(row=_race_row())
+        result = get_race_event(conn, user_id=1, race_event_id=10)
+        assert result is not None
+        assert result["id"] == 10
+        assert result["user_id"] == 1
+        assert result["name"] == "Pocket Gopher Extreme 2026"
+        assert result["race_rules_summary"] == "Mandatory checkpoints; 56h cutoff."
+
+
+# ─── update_race_event ───────────────────────────────────────────────────────
+
+
+class TestUpdateRaceEvent:
+    def test_updates_with_user_scope(self):
+        conn = _FakeConn()
+        update_race_event(
+            conn,
+            user_id=1,
+            race_event_id=10,
+            name="Renamed Race",
+            event_date=date(2026, 8, 1),
+            race_format="multi_day_ultra",
+            distance_km=Decimal("200"),
+            notes="New notes",
+        )
+        assert conn.commits == 1
+        sql, params = conn.calls[0]
+        assert "UPDATE race_events" in sql
+        assert "WHERE id = ? AND user_id = ?" in sql
+        # name + event_date + race_format + distance_km + total_elevation_gain_m
+        # + race_rules_summary + mandatory_gear_text + event_locale_id + notes
+        # + race_event_id + user_id
+        assert params[0] == "Renamed Race"
+        assert params[1] == date(2026, 8, 1)
+        assert params[2] == "multi_day_ultra"
+        assert params[3] == Decimal("200")
+        assert params[-2] == 10  # race_event_id
+        assert params[-1] == 1   # user_id
+
+    def test_rejects_invalid_race_format(self):
+        conn = _FakeConn()
+        with pytest.raises(ValueError, match="race_format must be one of"):
+            update_race_event(
+                conn,
+                user_id=1,
+                race_event_id=10,
+                name="X",
+                event_date=date(2026, 8, 1),
+                race_format="ultra_megalong",  # not in closed enum
+            )
+        assert len(conn.calls) == 0
+
+
+# ─── list_route_locales ──────────────────────────────────────────────────────
+
+
+class TestListRouteLocales:
+    def test_returns_dicts_ordered_by_sequence_idx(self):
+        conn = _FakeConn()
+        conn.queue_response(rows=[
+            {
+                "id": 100,
+                "race_event_id": 10,
+                "role": "start",
+                "sequence_idx": 1,
+                "name": "Trailhead",
+                "mile_marker": Decimal("0"),
+                "lat": None,
+                "lng": None,
+                "mapbox_id": None,
+                "notes": None,
+                "created_at": None,
+                "updated_at": None,
+            },
+            {
+                "id": 101,
+                "race_event_id": 10,
+                "role": "finish",
+                "sequence_idx": 5,
+                "name": "Finish line",
+                "mile_marker": Decimal("100"),
+                "lat": None,
+                "lng": None,
+                "mapbox_id": None,
+                "notes": None,
+                "created_at": None,
+                "updated_at": None,
+            },
+        ])
+        result = list_route_locales(conn, race_event_id=10)
+        assert len(result) == 2
+        assert result[0]["role"] == "start"
+        assert result[1]["sequence_idx"] == 5
+        sql, params = conn.calls[0]
+        assert "ORDER BY sequence_idx ASC" in sql
+        assert params == (10,)
+
+
+# ─── update_route_locale ─────────────────────────────────────────────────────
+
+
+class TestUpdateRouteLocale:
+    def test_updates_with_race_event_scope(self):
+        conn = _FakeConn()
+        update_route_locale(
+            conn,
+            race_event_id=10,
+            route_locale_id=100,
+            role="aid_station",
+            sequence_idx=3,
+            name="Aid Station 1",
+            mile_marker=Decimal("12.5"),
+            notes="Water + Coke",
+        )
+        assert conn.commits == 1
+        sql, params = conn.calls[0]
+        assert "UPDATE race_route_locales" in sql
+        assert "WHERE id = ? AND race_event_id = ?" in sql
+        assert params[0] == "aid_station"
+        assert params[1] == 3
+        assert params[2] == "Aid Station 1"
+        assert params[-2] == 100  # route_locale_id
+        assert params[-1] == 10   # race_event_id
+
+    def test_rejects_invalid_role(self):
+        conn = _FakeConn()
+        with pytest.raises(ValueError, match="role must be one of"):
+            update_route_locale(
+                conn,
+                race_event_id=10,
+                route_locale_id=100,
+                role="midpoint",
+                sequence_idx=1,
+                name="X",
+            )
+        assert len(conn.calls) == 0
+
+    def test_rejects_sequence_idx_below_one(self):
+        conn = _FakeConn()
+        with pytest.raises(ValueError, match="sequence_idx must be >= 1"):
+            update_route_locale(
+                conn,
+                race_event_id=10,
+                route_locale_id=100,
+                role="start",
+                sequence_idx=0,
+                name="X",
+            )
+        assert len(conn.calls) == 0
+
+
+# ─── delete_route_locale ─────────────────────────────────────────────────────
+
+
+class TestDeleteRouteLocale:
+    def test_delete_scoped_to_race_event(self):
+        conn = _FakeConn()
+        delete_route_locale(conn, race_event_id=10, route_locale_id=100)
+        assert conn.commits == 1
+        sql, params = conn.calls[0]
+        assert "DELETE FROM race_route_locales" in sql
+        assert "race_event_id = ?" in sql
+        assert params == (100, 10)
+
+
+# ─── list_route_locale_equipment ─────────────────────────────────────────────
+
+
+class TestListRouteLocaleEquipment:
+    def test_returns_rows_ordered_by_id(self):
+        conn = _FakeConn()
+        conn.queue_response(rows=[
+            {
+                "id": 500,
+                "race_route_locale_id": 100,
+                "equipment_name": "6L water cache",
+                "quantity_text": "6 liters",
+                "notes": None,
+                "created_at": None,
+                "updated_at": None,
+            },
+        ])
+        result = list_route_locale_equipment(conn, race_route_locale_id=100)
+        assert len(result) == 1
+        assert result[0]["equipment_name"] == "6L water cache"
+        sql, params = conn.calls[0]
+        assert "ORDER BY id ASC" in sql
+        assert params == (100,)
+
+
+# ─── delete_route_locale_equipment ───────────────────────────────────────────
+
+
+class TestDeleteRouteLocaleEquipment:
+    def test_delete_scoped_to_route_locale(self):
+        conn = _FakeConn()
+        delete_route_locale_equipment(
+            conn, race_route_locale_id=100, equipment_id=500
+        )
+        assert conn.commits == 1
+        sql, params = conn.calls[0]
+        assert "DELETE FROM race_route_locale_equipment" in sql
+        assert "race_route_locale_id = ?" in sql
+        assert params == (500, 100)
