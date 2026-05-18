@@ -69,17 +69,12 @@
           </select>
         </div>
 
-        <div class="col-md-8">
-          <label class="form-label" for="target_event_name">Target event name</label>
-          <input type="text" class="form-control" id="target_event_name" name="target_event_name"
-                 placeholder="e.g. National Championships, Boston Marathon"
-                 value="{{ profile.target_event_name or '' }}">
-        </div>
-        <div class="col-md-4">
-          <label class="form-label" for="target_event_date">Target event date</label>
-          <input type="date" class="form-control" id="target_event_date" name="target_event_date"
-                 value="{{ profile.target_event_date or '' }}">
-        </div>
+        {# Target event name + date live in the Race events tab now
+           (D-66 §7 `race_events` table is the source of truth). The
+           prior `athlete_profile.target_event_*` columns are vestigial
+           pending column-drop in a follow-on session; existing rows
+           were one-time-migrated into `race_events` by
+           `init_db.py:1185`. #}
 
         {# v5 §A.2 prefill-eligible baselines (PR6 D-51). Manual entry today;
            connected providers (COROS / Polar / Wahoo) will auto-populate
