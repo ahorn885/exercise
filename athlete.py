@@ -18,8 +18,14 @@ PROFILE_FIELDS = (
     'sex',
     'height_cm',
     'primary_sport',
-    'target_event_name',
-    'target_event_date',
+    # `target_event_name` + `target_event_date` retired from the form per
+    # D-66 Layer 3B Scope A (race_events table is the source of truth via
+    # the profile Race events tab + onboarding §H.2). The columns remain
+    # on `athlete_profile` pending a Scope B drop migration; the one-time
+    # backfill in `init_db.py:1185` copied any pre-D-66 values into
+    # `race_events`. PROFILE_FIELDS drives the SELECT/UPDATE column list,
+    # so removing them here stops the upsert helper + reader from touching
+    # the vestigial columns even though they still exist on disk.
     'weekly_hours_target',
     'training_window',
     'notes',

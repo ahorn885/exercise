@@ -239,8 +239,6 @@ def edit():
             sex=_str('sex'),
             height_cm=_num('height_cm'),
             primary_sport=_str('primary_sport'),
-            target_event_name=_str('target_event_name'),
-            target_event_date=_str('target_event_date'),
             weekly_hours_target=_num('weekly_hours_target'),
             training_window=window,
             notes=_str('notes'),
