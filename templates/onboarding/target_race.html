@@ -1,0 +1,148 @@
+{% extends 'base.html' %}
+{% block title %}Target race — AIDSTATION{% endblock %}
+{% block content %}
+
+{# v5 onboarding Step 3c — "Target race" (D-66 §H.2).
+   Race name + event date + race_format (closed 4-enum) plus the
+   conditional distance/elevation/rules/gear fields for multi-day formats.
+   Single-day picks bounce to /profile?tab=athlete on Save; multi-day picks
+   advance to /onboarding/route-locales (Step 3d). The Skip-for-now link
+   POSTs to /onboarding/target-race/skip which writes an
+   'target_race_skipped' account_nudge and lands the athlete on the
+   profile form. #}
+
+<div class="mb-4">
+  <ol class="list-inline small text-muted mb-1">
+    <li class="list-inline-item"><span class="badge bg-success">✓</span> Step 1 — Account</li>
+    <li class="list-inline-item">›</li>
+    <li class="list-inline-item"><span class="badge bg-success">✓</span> Step 2 — Connect providers</li>
+    <li class="list-inline-item">›</li>
+    <li class="list-inline-item"><span class="badge bg-success">✓</span> Step 3 — Prefill review</li>
+    <li class="list-inline-item">›</li>
+    <li class="list-inline-item"><span class="badge bg-success">✓</span> Step 4 — Schedule</li>
+    <li class="list-inline-item">›</li>
+    <li class="list-inline-item"><strong class="text-body">Step 5 — Target race</strong></li>
+  </ol>
+  <h4 class="mb-0">What race are you training for?</h4>
+</div>
+
+<p class="text-muted">
+  Plans calibrate periodization to your target race. Pick the race
+  format first — multi-day events get extra fields for race-rules and
+  mandatory gear so the race-week brief can reason against them. If you
+  don't have a race picked yet, skip for now and come back any time
+  from Profile → Race events.
+</p>
+
+<form method="post" action="{{ url_for('onboarding.target_race_save') }}">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+  <div class="row g-3">
+    <div class="col-md-8">
+      <label class="form-label" for="name">Race name</label>
+      <input type="text" class="form-control" id="name" name="name" required
+             value="{{ target.name if target else '' }}">
+    </div>
+    <div class="col-md-4">
+      <label class="form-label" for="event_date">Race date</label>
+      <input type="date" class="form-control" id="event_date" name="event_date" required
+             value="{{ (target.event_date|string)[:10] if target and target.event_date else '' }}">
+    </div>
+
+    <div class="col-md-6">
+      <label class="form-label" for="race_format">Race format</label>
+      <select class="form-select" id="race_format" name="race_format" required>
+        <option value="">—</option>
+        {% for f in race_formats %}
+          <option value="{{ f }}" {% if target and target.race_format == f %}selected{% endif %}>
+            {{ f|replace('_', ' ')|title }}
+          </option>
+        {% endfor %}
+      </select>
+      <small class="text-muted">
+        Single-day covers marathons + single-day ultras up to ~24h.
+        Expedition AR, stage race, and multi-day ultra each surface the
+        extra rules / gear fields below.
+      </small>
+    </div>
+    <div class="col-md-6">
+      <label class="form-label" for="event_locale_id">Race finish locale (optional)</label>
+      <select class="form-select" id="event_locale_id" name="event_locale_id">
+        <option value="">—</option>
+        {% for loc in locale_choices %}
+          <option value="{{ loc.id }}"
+            {% if target and target.event_locale_id == loc.id %}selected{% endif %}>
+            {{ loc.label }}
+          </option>
+        {% endfor %}
+      </select>
+      <small class="text-muted">
+        Optional — link the race finish to a locale you've saved on
+        Profile → Locales for travel-aware coaching.
+      </small>
+    </div>
+
+    <div class="col-md-6">
+      <label class="form-label" for="distance_km">Distance (km)</label>
+      <input type="number" step="0.01" min="0" class="form-control"
+             id="distance_km" name="distance_km"
+             value="{{ target.distance_km if target and target.distance_km is not none else '' }}">
+      <small class="text-muted">
+        Optional — fill in when the race director publishes the route.
+      </small>
+    </div>
+    <div class="col-md-6">
+      <label class="form-label" for="total_elevation_gain_m">Elevation gain (m)</label>
+      <input type="number" step="1" min="0" class="form-control"
+             id="total_elevation_gain_m" name="total_elevation_gain_m"
+             value="{{ target.total_elevation_gain_m if target and target.total_elevation_gain_m is not none else '' }}">
+      <small class="text-muted">
+        Optional — total cumulative gain.
+      </small>
+    </div>
+
+    <div class="col-12">
+      <label class="form-label" for="race_rules_summary">Race rules summary</label>
+      <textarea class="form-control" id="race_rules_summary" name="race_rules_summary" rows="4"
+                placeholder="Paste or summarize the race rules from the race director's published guide. Time cuts, mandatory checkpoints, support rules, gear inspections."
+                >{{ target.race_rules_summary if target and target.race_rules_summary else '' }}</textarea>
+      <small class="text-muted">
+        Free-text. We'll consume this when building your race-week
+        brief. Most useful for multi-day events.
+      </small>
+    </div>
+
+    <div class="col-12">
+      <label class="form-label" for="mandatory_gear_text">Mandatory gear</label>
+      <textarea class="form-control" id="mandatory_gear_text" name="mandatory_gear_text" rows="4"
+                placeholder="Paste or summarize the mandatory gear list. We'll use this to build your race-week kit manifest closer to the event."
+                >{{ target.mandatory_gear_text if target and target.mandatory_gear_text else '' }}</textarea>
+      <small class="text-muted">
+        Free-text. Multi-day events typically have published gear
+        requirements; paste them verbatim and we'll reconcile against
+        what you have on hand.
+      </small>
+    </div>
+
+    <div class="col-12">
+      <label class="form-label" for="notes">Notes (optional)</label>
+      <textarea class="form-control" id="notes" name="notes" rows="2"
+                placeholder="Anything else worth noting — travel logistics, family attending, why this race matters.">{{ target.notes if target and target.notes else '' }}</textarea>
+    </div>
+  </div>
+
+  <div class="text-end mt-4 pt-3 border-top">
+    <button type="submit" class="btn btn-primary">
+      Save and continue
+    </button>
+  </div>
+</form>
+
+<form method="post" action="{{ url_for('onboarding.target_race_skip') }}" class="mt-2">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <button type="submit" class="btn btn-link text-muted ps-0">
+    Skip for now
+  </button>
+</form>
+
+{% endblock %}

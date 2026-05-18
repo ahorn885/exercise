@@ -1,4 +1,4 @@
-"""Onboarding flow blueprint (v5 Steps 2 + 3a).
+"""Onboarding flow blueprint (v5 Steps 2 + 3a + 3b + 3c + 3d).
 
 Step 2 — D-58 "connect step" — the post-signup screen that lists
 supported fitness providers, shows the v5 §A.1 Connected Service consent
@@ -16,6 +16,28 @@ path). The profile-form save handler in `routes/profile.py` now flips
 `'provider_*'` → `'manual_override'` when an athlete types over a
 provider-sourced value (v5 §A.2.3).
 
+Step 3b — D-61 Schedule & availability — the v5 §G per-day-windows form.
+Saves the athlete's training windows + capacity toggles (long-session,
+doubles, preferred rest days).
+
+Step 3c — D-66 §H.2 target-race — captures race name, event_date,
+race_format (closed 4-enum), and the multi-day-only extension fields
+(distance_km, total_elevation_gain_m, race_rules_summary,
+mandatory_gear_text). Writes a `race_events` row with `is_target_event=TRUE`
+(or UPDATEs the existing target row). Single-day picks redirect to
+`/profile?tab=athlete`; multi-day picks redirect to the §H.4
+route-locale step. Skip writes an `'target_race_skipped'` account_nudge
++ redirects to the profile form.
+
+Step 3d — D-66 §H.4 route-locales (multi-day only) — captures the
+athlete's route-locale graph (start + transition_areas + aid_stations +
+drop_bag_points + bivvies + finish) for the target race_event. Per
+design §6.3 the step is skippable; on skip OR continue-with-<2-locales
+an `'route_locales_incomplete'` account_nudge fires so the athlete sees
+a soft reminder later. Equipment-per-locale CRUD is intentionally
+deferred to the profile UI (`/profile/race-events/<id>/edit`) per the
+"profile UI handles later additions" framing in design §6.3.
+
 Step 1 (account-creation acknowledgment) fires at `auth.register`.
 Step 3 proper (§A profile-form entry) is the existing v1 surface at
 `/profile?tab=athlete`. Continue from `/onboarding/connect` lands on
@@ -29,6 +51,8 @@ callback bounces the athlete back to `/onboarding/connect` instead of
 `/profile?tab=connections`).
 """
 
+from datetime import datetime
+
 from flask import (
     Blueprint, render_template, request, redirect, url_for, flash, abort,
 )
@@ -38,6 +62,15 @@ from athlete import (
     DAY_TOKENS, DAY_LABELS, DOUBLES_FEASIBLE_CHOICES,
     LONG_SESSION_MAX_HR_CHOICES, get_athlete_profile, upsert_athlete_profile,
     get_daily_availability_windows, upsert_daily_availability_windows,
+)
+from race_events_repo import (
+    VALID_RACE_FORMATS,
+    VALID_ROUTE_LOCALE_ROLES,
+    add_route_locale,
+    create_race_event,
+    delete_route_locale,
+    list_route_locales,
+    update_race_event,
 )
 from routes.auth import current_user_id
 from routes.profile import CONNECTION_PROVIDERS, load_connections
@@ -52,11 +85,17 @@ bp = Blueprint('onboarding', __name__, url_prefix='/onboarding')
 # to the profile form since an athlete who skipped connecting providers
 # has nothing to compare against. PR12 (D-61) slots `/onboarding/schedule`
 # between Step 3a (prefill) and the §A profile entry — Step 3b owns the
-# per-day-windows §G surface.
+# per-day-windows §G surface. D-66 onboarding slots
+# `/onboarding/target-race` after schedule (Step 3c) so athletes write a
+# `race_events` row with `is_target_event=TRUE` before landing on the
+# profile form. Multi-day picks then flow through `/onboarding/route-locales`
+# (Step 3d) before profile.
 _POST_STEP2_CONTINUE_TARGET = '/onboarding/prefill'
 _POST_STEP2_SKIP_TARGET = '/profile?tab=athlete'
 _POST_STEP3_TARGET = '/onboarding/schedule'
-_POST_STEP3B_TARGET = '/profile?tab=athlete'
+_POST_STEP3B_TARGET = '/onboarding/target-race'
+_POST_STEP3C_TARGET = '/profile?tab=athlete'
+_POST_STEP3D_TARGET = '/profile?tab=athlete'
 
 # Back-compat alias for the connect template (passes the value through
 # to the Skip/Continue button copy via Jinja). Pre-PR7 callers expected
@@ -567,3 +606,369 @@ def schedule_save():
 
     flash('Schedule saved. You can edit per-day windows any time from your profile.', 'success')
     return redirect(_POST_STEP3B_TARGET)
+
+
+# ---------------------------------------------------------------------------
+# Step 3c — Target race (D-66 §H.2)
+# ---------------------------------------------------------------------------
+
+# Inline form parsers — mirror the patterns from `routes/race_events.py`
+# so the onboarding + profile-tab surfaces coerce form input identically.
+
+
+def _parse_str_field(form, key):
+    v = (form.get(key) or '').strip()
+    return v or None
+
+
+def _parse_decimal_field(form, key):
+    v = (form.get(key) or '').strip()
+    if not v:
+        return None
+    try:
+        return float(v)
+    except (ValueError, TypeError):
+        return None
+
+
+def _parse_date_field(form, key):
+    v = (form.get(key) or '').strip()
+    if not v:
+        return None
+    try:
+        return datetime.strptime(v, '%Y-%m-%d').date()
+    except ValueError:
+        return None
+
+
+def _parse_int_field(form, key):
+    v = (form.get(key) or '').strip()
+    if not v:
+        return None
+    try:
+        return int(v)
+    except (ValueError, TypeError):
+        return None
+
+
+def _athlete_locale_choices(db, uid):
+    """Return `{id, label}` dicts for the athlete's locale_profiles rows.
+
+    Mirrors the same-named helper in `routes/race_events.py` — kept inline
+    here to avoid a Flask-blueprint import cycle. `id` is the D-66
+    `BIGSERIAL` surrogate; label falls back to the slug.
+    """
+    cur = db.execute(
+        'SELECT id, locale, locale_name FROM locale_profiles '
+        'WHERE user_id = ? '
+        'ORDER BY COALESCE(locale_name, locale)',
+        (uid,),
+    )
+    return [
+        {'id': int(r['id']), 'label': (r['locale_name'] or r['locale'])}
+        for r in cur.fetchall()
+    ]
+
+
+def _get_target_race_row(db, uid):
+    """Return the athlete's current target race_events row as a dict, or
+    None when no target row exists. Used by Step 3c GET to pre-populate
+    the form when the athlete returns to onboarding mid-stream.
+    """
+    cur = db.execute(
+        'SELECT id, name, event_date, race_format, distance_km, '
+        '       total_elevation_gain_m, race_rules_summary, mandatory_gear_text, '
+        '       event_locale_id, notes '
+        '  FROM race_events '
+        ' WHERE user_id = ? AND is_target_event = TRUE '
+        ' LIMIT 1',
+        (uid,),
+    )
+    row = cur.fetchone()
+    return dict(row) if row else None
+
+
+def _write_account_nudge(db, uid, nudge_type):
+    """UPSERT an account_nudges row keyed on (user_id, nudge_type).
+
+    The `account_nudges` table carries `UNIQUE (user_id, nudge_type)`;
+    a repeat write (e.g., athlete re-skips after re-visiting the step)
+    silently no-ops via `ON CONFLICT DO NOTHING` rather than raising.
+    """
+    db.execute(
+        'INSERT INTO account_nudges (user_id, nudge_type) VALUES (?, ?) '
+        'ON CONFLICT (user_id, nudge_type) DO NOTHING',
+        (uid, nudge_type),
+    )
+
+
+@bp.route('/target-race', methods=['GET'])
+def target_race():
+    """Render the v5 §H.2 target-race form (Step 3c).
+
+    If the athlete already has a target race_events row (e.g., migrated
+    from legacy athlete_profile.target_event_*, or returning to onboarding
+    after a prior save), the form pre-populates from it and POST updates
+    the existing row. Otherwise POST creates a new row with
+    `is_target_event=TRUE`.
+    """
+    db = get_db()
+    uid = current_user_id()
+
+    target = _get_target_race_row(db, uid)
+    locale_choices = _athlete_locale_choices(db, uid)
+
+    return render_template(
+        'onboarding/target_race.html',
+        target=target,
+        locale_choices=locale_choices,
+        race_formats=VALID_RACE_FORMATS,
+        post_step3c_target=_POST_STEP3C_TARGET,
+    )
+
+
+@bp.route('/target-race', methods=['POST'])
+def target_race_save():
+    """Persist the §H.2 target-race form. Writes a `race_events` row with
+    `is_target_event=TRUE` (or UPDATEs the existing target row).
+
+    Multi-day race_format picks redirect to `/onboarding/route-locales`
+    so the athlete can immediately fill in the route graph; single_day
+    picks bounce to the profile form. Errors flash and re-render.
+    """
+    db = get_db()
+    uid = current_user_id()
+
+    name = _parse_str_field(request.form, 'name')
+    event_date = _parse_date_field(request.form, 'event_date')
+    race_format = (request.form.get('race_format') or '').strip()
+
+    errors = []
+    if not name:
+        errors.append('Race name is required.')
+    if not event_date:
+        errors.append('Race date is required (YYYY-MM-DD).')
+    if race_format not in VALID_RACE_FORMATS:
+        errors.append('Pick a race format.')
+
+    if errors:
+        for msg in errors:
+            flash(msg, 'danger')
+        return redirect(url_for('onboarding.target_race'))
+
+    target = _get_target_race_row(db, uid)
+    if target:
+        update_race_event(
+            db, uid, int(target['id']),
+            name=name,
+            event_date=event_date,
+            race_format=race_format,
+            distance_km=_parse_decimal_field(request.form, 'distance_km'),
+            total_elevation_gain_m=_parse_decimal_field(
+                request.form, 'total_elevation_gain_m'
+            ),
+            race_rules_summary=_parse_str_field(request.form, 'race_rules_summary'),
+            mandatory_gear_text=_parse_str_field(request.form, 'mandatory_gear_text'),
+            event_locale_id=_parse_int_field(request.form, 'event_locale_id'),
+            notes=_parse_str_field(request.form, 'notes'),
+        )
+        flash('Target race updated.', 'success')
+    else:
+        create_race_event(
+            db, uid,
+            name=name,
+            event_date=event_date,
+            race_format=race_format,
+            distance_km=_parse_decimal_field(request.form, 'distance_km'),
+            total_elevation_gain_m=_parse_decimal_field(
+                request.form, 'total_elevation_gain_m'
+            ),
+            race_rules_summary=_parse_str_field(request.form, 'race_rules_summary'),
+            mandatory_gear_text=_parse_str_field(request.form, 'mandatory_gear_text'),
+            event_locale_id=_parse_int_field(request.form, 'event_locale_id'),
+            is_target_event=True,
+            notes=_parse_str_field(request.form, 'notes'),
+        )
+        flash(f'Target race "{name}" saved.', 'success')
+
+    if race_format != 'single_day':
+        return redirect(url_for('onboarding.route_locales'))
+    return redirect(_POST_STEP3C_TARGET)
+
+
+@bp.route('/target-race/skip', methods=['POST'])
+def target_race_skip():
+    """Skip Step 3c with no target race set.
+
+    Writes an `'target_race_skipped'` account_nudge so the athlete sees
+    a soft reminder to come back and pick a target race later. Mirrors
+    the D-58 `/onboarding/skip` pattern, except a nudge IS recorded
+    here — race-week brief synthesis is gated on a target race existing,
+    so the absence is load-bearing for downstream coaching.
+    """
+    db = get_db()
+    uid = current_user_id()
+    _write_account_nudge(db, uid, 'target_race_skipped')
+    db.commit()
+    flash(
+        "You can add a target race any time from Profile → Race events.",
+        'info',
+    )
+    return redirect(_POST_STEP3C_TARGET)
+
+
+# ---------------------------------------------------------------------------
+# Step 3d — Route locales (D-66 §H.4, multi-day only)
+# ---------------------------------------------------------------------------
+
+
+@bp.route('/route-locales', methods=['GET'])
+def route_locales():
+    """Render the v5 §H.4 route-locale list (Step 3d).
+
+    Shown only when the athlete has a target race_events row with
+    `race_format != 'single_day'`. Empty state explains the value of
+    filling in route locales; populated state lists current rows with
+    per-row Delete buttons and a default sequence_idx pre-populated as
+    `len(existing)+1`. Equipment per locale is intentionally deferred to
+    the profile UI per design §6.3 — onboarding captures the route graph
+    only; equipment entry happens on the relaxed timeline.
+    """
+    db = get_db()
+    uid = current_user_id()
+
+    target = _get_target_race_row(db, uid)
+    if not target:
+        # Athlete reached Step 3d without a target race row — bounce back
+        # to Step 3c rather than render an empty form against no parent.
+        flash(
+            'Pick a target race first before adding route locales.',
+            'info',
+        )
+        return redirect(url_for('onboarding.target_race'))
+
+    if target['race_format'] == 'single_day':
+        # Single-day events don't need route locales per design §6.3;
+        # bounce straight to the profile form rather than render the step.
+        return redirect(_POST_STEP3D_TARGET)
+
+    race_event_id = int(target['id'])
+    race_locales = list_route_locales(db, race_event_id)
+
+    return render_template(
+        'onboarding/route_locales.html',
+        target=target,
+        race_locales=race_locales,
+        next_sequence_idx=len(race_locales) + 1,
+        route_locale_roles=VALID_ROUTE_LOCALE_ROLES,
+        post_step3d_target=_POST_STEP3D_TARGET,
+    )
+
+
+@bp.route('/route-locales/add', methods=['POST'])
+def route_locales_add():
+    """Add a single race_route_locales row + re-render the §H.4 list."""
+    db = get_db()
+    uid = current_user_id()
+
+    target = _get_target_race_row(db, uid)
+    if not target:
+        abort(404)
+    race_event_id = int(target['id'])
+
+    role = (request.form.get('role') or '').strip()
+    sequence_idx = _parse_int_field(request.form, 'sequence_idx')
+    name = _parse_str_field(request.form, 'name')
+
+    errors = []
+    if not name:
+        errors.append('Locale name is required.')
+    if role not in VALID_ROUTE_LOCALE_ROLES:
+        errors.append('Pick a route-locale role.')
+    if sequence_idx is None or sequence_idx < 1:
+        errors.append('Sequence number must be 1 or greater.')
+
+    if errors:
+        for msg in errors:
+            flash(msg, 'danger')
+        return redirect(url_for('onboarding.route_locales'))
+
+    try:
+        add_route_locale(
+            db, race_event_id,
+            role=role,
+            sequence_idx=sequence_idx,
+            name=name,
+            mile_marker=_parse_decimal_field(request.form, 'mile_marker'),
+            notes=_parse_str_field(request.form, 'notes'),
+        )
+        flash(f'Route locale "{name}" added.', 'success')
+    except Exception as e:
+        # Most likely UNIQUE (race_event_id, sequence_idx) collision.
+        flash(f'Could not add route locale: {e}', 'danger')
+
+    return redirect(url_for('onboarding.route_locales'))
+
+
+@bp.route('/route-locales/<int:route_locale_id>/delete', methods=['POST'])
+def route_locales_delete(route_locale_id):
+    """Delete a single race_route_locales row + re-render the §H.4 list."""
+    db = get_db()
+    uid = current_user_id()
+
+    target = _get_target_race_row(db, uid)
+    if not target:
+        abort(404)
+    race_event_id = int(target['id'])
+
+    delete_route_locale(db, race_event_id, route_locale_id)
+    flash('Route locale removed.', 'info')
+    return redirect(url_for('onboarding.route_locales'))
+
+
+@bp.route('/route-locales/continue', methods=['POST'])
+def route_locales_continue():
+    """Advance from Step 3d to the profile form.
+
+    Writes an `'route_locales_incomplete'` account_nudge when the athlete
+    continues with fewer than 2 route locales (recommended minimum is
+    start + finish per design §4.2 first/last-role-anchors invariant).
+    The nudge is the same shape as `target_race_skipped`; downstream
+    surfaces can show a soft reminder to flesh out the route later.
+    """
+    db = get_db()
+    uid = current_user_id()
+
+    target = _get_target_race_row(db, uid)
+    if not target:
+        abort(404)
+    race_event_id = int(target['id'])
+
+    race_locales = list_route_locales(db, race_event_id)
+    if len(race_locales) < 2:
+        _write_account_nudge(db, uid, 'route_locales_incomplete')
+        db.commit()
+        flash(
+            "Add more route locales any time from Profile → Race events.",
+            'info',
+        )
+    else:
+        flash('Route locales saved.', 'success')
+
+    return redirect(_POST_STEP3D_TARGET)
+
+
+@bp.route('/route-locales/skip', methods=['POST'])
+def route_locales_skip():
+    """Skip Step 3d entirely. Writes the `'route_locales_incomplete'`
+    nudge unconditionally so a return visit can surface the reminder.
+    """
+    db = get_db()
+    uid = current_user_id()
+    _write_account_nudge(db, uid, 'route_locales_incomplete')
+    db.commit()
+    flash(
+        "You can add route locales any time from Profile → Race events.",
+        'info',
+    )
+    return redirect(_POST_STEP3D_TARGET)
