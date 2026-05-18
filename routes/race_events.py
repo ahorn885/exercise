@@ -22,6 +22,11 @@ from datetime import date, datetime
 from flask import Blueprint, render_template, request, redirect, url_for, flash, abort
 
 from database import get_db
+from race_events_invalidation import (
+    evict_on_target_event_brief_field_change,
+    evict_on_target_event_locale_change,
+    evict_on_target_event_periodization_change,
+)
 from race_events_repo import (
     VALID_RACE_FORMATS,
     VALID_ROUTE_LOCALE_ROLES,
@@ -213,20 +218,54 @@ def update_race(race_event_id: int):
         flash('Pick a race format.', 'danger')
         return redirect(url_for('race_events.edit_race', race_event_id=race_event_id))
 
+    new_distance_km = _parse_decimal(request.form, 'distance_km')
+    new_total_elevation_gain_m = _parse_decimal(
+        request.form, 'total_elevation_gain_m'
+    )
+    new_race_rules_summary = _parse_str(request.form, 'race_rules_summary')
+    new_mandatory_gear_text = _parse_str(request.form, 'mandatory_gear_text')
+    new_event_locale_id = _parse_int(request.form, 'event_locale_id')
+    new_notes = _parse_str(request.form, 'notes')
+
     update_race_event(
         db, uid, race_event_id,
         name=name,
         event_date=event_date,
         race_format=race_format,
-        distance_km=_parse_decimal(request.form, 'distance_km'),
-        total_elevation_gain_m=_parse_decimal(
-            request.form, 'total_elevation_gain_m'
-        ),
-        race_rules_summary=_parse_str(request.form, 'race_rules_summary'),
-        mandatory_gear_text=_parse_str(request.form, 'mandatory_gear_text'),
-        event_locale_id=_parse_int(request.form, 'event_locale_id'),
-        notes=_parse_str(request.form, 'notes'),
+        distance_km=new_distance_km,
+        total_elevation_gain_m=new_total_elevation_gain_m,
+        race_rules_summary=new_race_rules_summary,
+        mandatory_gear_text=new_mandatory_gear_text,
+        event_locale_id=new_event_locale_id,
+        notes=new_notes,
     )
+
+    # Layer 4 cache invalidation per D-66 §9. Non-target edits leave the
+    # cache untouched (race not in scope of any plan); target edits route
+    # to the narrowest helper that covers the changed fields.
+    if race['is_target_event']:
+        periodization_changed = (
+            race['event_date'] != event_date
+            or race['race_format'] != race_format
+        )
+        locale_changed = race['event_locale_id'] != new_event_locale_id
+        brief_only_changed = (
+            race['distance_km'] != new_distance_km
+            or race['total_elevation_gain_m'] != new_total_elevation_gain_m
+            or race['race_rules_summary'] != new_race_rules_summary
+            or race['mandatory_gear_text'] != new_mandatory_gear_text
+            or race['notes'] != new_notes
+        )
+        if periodization_changed:
+            evict_on_target_event_periodization_change(db, uid)
+        if locale_changed:
+            evict_on_target_event_locale_change(db, uid)
+        if brief_only_changed and not periodization_changed and not locale_changed:
+            # Periodization + locale evictions are broader than brief-only;
+            # firing brief-only on top would only re-evict already-evicted
+            # race_week_brief rows.
+            evict_on_target_event_brief_field_change(db, uid)
+
     flash('Race updated.', 'success')
     return redirect(url_for('race_events.edit_race', race_event_id=race_event_id))
 
@@ -240,7 +279,10 @@ def delete_race(race_event_id: int):
     if not race:
         abort(404)
 
+    was_target = bool(race['is_target_event'])
     delete_race_event(db, uid, race_event_id)
+    if was_target:
+        evict_on_target_event_periodization_change(db, uid)
     flash(f'Race "{race["name"]}" deleted.', 'info')
     return _tab_redirect()
 
@@ -259,6 +301,9 @@ def set_target(race_event_id: int):
         abort(404)
 
     set_target_event(db, uid, race_event_id)
+    # Target flag flipped (UNSET old target + SET this row); fires
+    # periodization-grade eviction per D-66 §9.
+    evict_on_target_event_periodization_change(db, uid)
     flash(
         f'"{race["name"]}" is now your target race. '
         'A plan refresh will trigger on the next morning sync.',
@@ -274,7 +319,8 @@ def set_target(race_event_id: int):
 def add_locale(race_event_id: int):
     db = get_db()
     uid = current_user_id()
-    if not get_race_event(db, uid, race_event_id):
+    race = get_race_event(db, uid, race_event_id)
+    if not race:
         abort(404)
 
     role = (request.form.get('role') or '').strip()
@@ -303,6 +349,8 @@ def add_locale(race_event_id: int):
             mapbox_id=_parse_str(request.form, 'mapbox_id'),
             notes=_parse_str(request.form, 'notes'),
         )
+        if race['is_target_event']:
+            evict_on_target_event_brief_field_change(db, uid)
         flash(f'Route locale "{name}" added.', 'success')
     except Exception as e:
         # Most likely: UNIQUE (race_event_id, sequence_idx) violation on
@@ -317,7 +365,8 @@ def add_locale(race_event_id: int):
 def update_locale(race_event_id: int, route_locale_id: int):
     db = get_db()
     uid = current_user_id()
-    if not get_race_event(db, uid, race_event_id):
+    race = get_race_event(db, uid, race_event_id)
+    if not race:
         abort(404)
 
     role = (request.form.get('role') or '').strip()
@@ -346,6 +395,8 @@ def update_locale(race_event_id: int, route_locale_id: int):
             mapbox_id=_parse_str(request.form, 'mapbox_id'),
             notes=_parse_str(request.form, 'notes'),
         )
+        if race['is_target_event']:
+            evict_on_target_event_brief_field_change(db, uid)
         flash('Route locale updated.', 'success')
     except Exception as e:
         flash(f'Could not update route locale: {e}', 'danger')
@@ -357,10 +408,13 @@ def update_locale(race_event_id: int, route_locale_id: int):
 def delete_locale(race_event_id: int, route_locale_id: int):
     db = get_db()
     uid = current_user_id()
-    if not get_race_event(db, uid, race_event_id):
+    race = get_race_event(db, uid, race_event_id)
+    if not race:
         abort(404)
 
     delete_route_locale(db, race_event_id, route_locale_id)
+    if race['is_target_event']:
+        evict_on_target_event_brief_field_change(db, uid)
     flash('Route locale deleted.', 'info')
     return redirect(url_for('race_events.edit_race', race_event_id=race_event_id))
 
@@ -372,7 +426,8 @@ def delete_locale(race_event_id: int, route_locale_id: int):
 def add_equipment(race_event_id: int, route_locale_id: int):
     db = get_db()
     uid = current_user_id()
-    if not get_race_event(db, uid, race_event_id):
+    race = get_race_event(db, uid, race_event_id)
+    if not race:
         abort(404)
 
     equipment_name = _parse_str(request.form, 'equipment_name')
@@ -386,6 +441,8 @@ def add_equipment(race_event_id: int, route_locale_id: int):
         quantity_text=_parse_str(request.form, 'quantity_text'),
         notes=_parse_str(request.form, 'notes'),
     )
+    if race['is_target_event']:
+        evict_on_target_event_brief_field_change(db, uid)
     flash(f'Equipment "{equipment_name}" added.', 'success')
     return redirect(url_for('race_events.edit_race', race_event_id=race_event_id))
 
@@ -397,9 +454,12 @@ def add_equipment(race_event_id: int, route_locale_id: int):
 def delete_equipment(race_event_id: int, route_locale_id: int, equipment_id: int):
     db = get_db()
     uid = current_user_id()
-    if not get_race_event(db, uid, race_event_id):
+    race = get_race_event(db, uid, race_event_id)
+    if not race:
         abort(404)
 
     delete_route_locale_equipment(db, route_locale_id, equipment_id)
+    if race['is_target_event']:
+        evict_on_target_event_brief_field_change(db, uid)
     flash('Equipment removed.', 'info')
     return redirect(url_for('race_events.edit_race', race_event_id=race_event_id))

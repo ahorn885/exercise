@@ -63,6 +63,11 @@ from athlete import (
     LONG_SESSION_MAX_HR_CHOICES, get_athlete_profile, upsert_athlete_profile,
     get_daily_availability_windows, upsert_daily_availability_windows,
 )
+from race_events_invalidation import (
+    evict_on_target_event_brief_field_change,
+    evict_on_target_event_locale_change,
+    evict_on_target_event_periodization_change,
+)
 from race_events_repo import (
     VALID_RACE_FORMATS,
     VALID_ROUTE_LOCALE_ROLES,
@@ -756,6 +761,15 @@ def target_race_save():
             flash(msg, 'danger')
         return redirect(url_for('onboarding.target_race'))
 
+    new_distance_km = _parse_decimal_field(request.form, 'distance_km')
+    new_total_elevation_gain_m = _parse_decimal_field(
+        request.form, 'total_elevation_gain_m'
+    )
+    new_race_rules_summary = _parse_str_field(request.form, 'race_rules_summary')
+    new_mandatory_gear_text = _parse_str_field(request.form, 'mandatory_gear_text')
+    new_event_locale_id = _parse_int_field(request.form, 'event_locale_id')
+    new_notes = _parse_str_field(request.form, 'notes')
+
     target = _get_target_race_row(db, uid)
     if target:
         update_race_event(
@@ -763,15 +777,33 @@ def target_race_save():
             name=name,
             event_date=event_date,
             race_format=race_format,
-            distance_km=_parse_decimal_field(request.form, 'distance_km'),
-            total_elevation_gain_m=_parse_decimal_field(
-                request.form, 'total_elevation_gain_m'
-            ),
-            race_rules_summary=_parse_str_field(request.form, 'race_rules_summary'),
-            mandatory_gear_text=_parse_str_field(request.form, 'mandatory_gear_text'),
-            event_locale_id=_parse_int_field(request.form, 'event_locale_id'),
-            notes=_parse_str_field(request.form, 'notes'),
+            distance_km=new_distance_km,
+            total_elevation_gain_m=new_total_elevation_gain_m,
+            race_rules_summary=new_race_rules_summary,
+            mandatory_gear_text=new_mandatory_gear_text,
+            event_locale_id=new_event_locale_id,
+            notes=new_notes,
         )
+        # D-66 §9 invalidation — same diff logic as routes/race_events.py
+        # update_race; target row is already known.
+        periodization_changed = (
+            target['event_date'] != event_date
+            or target['race_format'] != race_format
+        )
+        locale_changed = target['event_locale_id'] != new_event_locale_id
+        brief_only_changed = (
+            target['distance_km'] != new_distance_km
+            or target['total_elevation_gain_m'] != new_total_elevation_gain_m
+            or target['race_rules_summary'] != new_race_rules_summary
+            or target['mandatory_gear_text'] != new_mandatory_gear_text
+            or target['notes'] != new_notes
+        )
+        if periodization_changed:
+            evict_on_target_event_periodization_change(db, uid)
+        if locale_changed:
+            evict_on_target_event_locale_change(db, uid)
+        if brief_only_changed and not periodization_changed and not locale_changed:
+            evict_on_target_event_brief_field_change(db, uid)
         flash('Target race updated.', 'success')
     else:
         create_race_event(
@@ -779,16 +811,18 @@ def target_race_save():
             name=name,
             event_date=event_date,
             race_format=race_format,
-            distance_km=_parse_decimal_field(request.form, 'distance_km'),
-            total_elevation_gain_m=_parse_decimal_field(
-                request.form, 'total_elevation_gain_m'
-            ),
-            race_rules_summary=_parse_str_field(request.form, 'race_rules_summary'),
-            mandatory_gear_text=_parse_str_field(request.form, 'mandatory_gear_text'),
-            event_locale_id=_parse_int_field(request.form, 'event_locale_id'),
+            distance_km=new_distance_km,
+            total_elevation_gain_m=new_total_elevation_gain_m,
+            race_rules_summary=new_race_rules_summary,
+            mandatory_gear_text=new_mandatory_gear_text,
+            event_locale_id=new_event_locale_id,
             is_target_event=True,
-            notes=_parse_str_field(request.form, 'notes'),
+            notes=new_notes,
         )
+        # A fresh target row was created. Layer 3B's mode flips from
+        # open_ended → event; periodization-grade eviction covers the
+        # plan_create + plan_refresh + race_week_brief entry points.
+        evict_on_target_event_periodization_change(db, uid)
         flash(f'Target race "{name}" saved.', 'success')
 
     if race_format != 'single_day':
@@ -902,6 +936,9 @@ def route_locales_add():
             mile_marker=_parse_decimal_field(request.form, 'mile_marker'),
             notes=_parse_str_field(request.form, 'notes'),
         )
+        # Parent race is the target by construction (`_get_target_race_row`
+        # filters on `is_target_event=TRUE`); brief-only eviction per §9.
+        evict_on_target_event_brief_field_change(db, uid)
         flash(f'Route locale "{name}" added.', 'success')
     except Exception as e:
         # Most likely UNIQUE (race_event_id, sequence_idx) collision.
@@ -922,6 +959,8 @@ def route_locales_delete(route_locale_id):
     race_event_id = int(target['id'])
 
     delete_route_locale(db, race_event_id, route_locale_id)
+    # Parent is the target by construction; brief-only eviction per §9.
+    evict_on_target_event_brief_field_change(db, uid)
     flash('Route locale removed.', 'info')
     return redirect(url_for('onboarding.route_locales'))
 
