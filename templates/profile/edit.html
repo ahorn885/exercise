@@ -8,6 +8,7 @@
 <ul class="nav nav-tabs mb-3" role="tablist">
   <li class="nav-item"><button class="nav-link active" data-bs-toggle="tab" data-bs-target="#tab-profile" type="button">Athlete</button></li>
   <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-schedule" type="button">Schedule</button></li>
+  <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-race-events" type="button">Race events <span class="badge bg-secondary">{{ race_events|length }}</span></button></li>
   <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-connections" type="button">Connections <span class="badge bg-secondary">{{ connection_count }}</span></button></li>
   <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-memory" type="button">Coach memory <span class="badge bg-secondary">{{ memory|length }}</span></button></li>
   <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-account" type="button">Account</button></li>
@@ -159,6 +160,11 @@
         <button type="submit" class="btn btn-primary">Save schedule</button>
       </div>
     </form>
+  </div>
+
+  {# ── Race events (D-66 §7) ────────────────────────────────────── #}
+  <div class="tab-pane fade" id="tab-race-events" role="tabpanel">
+    {% include 'profile/_race_events_tab.html' %}
   </div>
 
   {# ── Connections (Account Config 1) ───────────────────────────── #}

@@ -29,6 +29,7 @@ from athlete import (
     get_athlete_profile, upsert_athlete_profile,
     get_daily_availability_windows, upsert_daily_availability_windows,
 )
+from race_events_repo import list_athlete_race_events
 from routes import provider_auth as pa
 
 
@@ -274,6 +275,7 @@ def edit():
     from flask import session as flask_session
     new_token_plaintext = flask_session.pop('new_api_token_plaintext', None)
     connections = load_connections(db, uid)
+    race_events = list_athlete_race_events(db, uid)
     # Post-OAuth-callback flags. `<provider>.oauth_callback` redirects to
     # `return_to?<slug>_connected=1` on success (or `?<slug>_oauth_error=...`
     # / `?<slug>_register_error=1` on failure). Surface the connected
@@ -306,6 +308,7 @@ def edit():
         api_tokens=[dict(t) for t in api_tokens],
         new_api_token=new_token_plaintext,
         connections=connections,
+        race_events=race_events,
         just_connected_label=just_connected_label,
         just_connected_slug=just_connected_slug,
         oauth_error_label=oauth_error_label,

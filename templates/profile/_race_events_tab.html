@@ -1,0 +1,67 @@
+{# D-66 §7.1 — race-events tab listing. Included from templates/profile/edit.html.
+
+   Renders the athlete's race_events ordered by event_date ascending; each row
+   has a "Set as target" affordance, an Edit button (which jumps to
+   /profile/race-events/<id>/edit) and a Delete button. The "Add race" CTA
+   links to /profile/race-events/new. Per-race edit lives on a dedicated page
+   because the route-locale graph is too complex for inline expansion.
+#}
+<p class="text-muted small mb-3">
+  Races you're training for. The race flagged as your target drives Layer 3
+  periodization + the pre-race week brief. Set the target by clicking
+  <em>Set as target</em> on the row; the partial UNIQUE index guarantees
+  exactly one target per athlete.
+</p>
+
+{% if race_events %}
+<div class="list-group mb-3">
+  {% for r in race_events %}
+    <div class="list-group-item">
+      <div class="d-flex flex-wrap justify-content-between align-items-start gap-2">
+        <div>
+          <div class="d-flex align-items-center gap-2 mb-1 flex-wrap">
+            <h6 class="mb-0">{{ r.name }}</h6>
+            {% if r.is_target_event %}
+              <span class="badge bg-success">Target race</span>
+            {% endif %}
+            <span class="badge bg-secondary">{{ r.race_format|replace('_', ' ') }}</span>
+          </div>
+          <div class="text-muted small">
+            {{ (r.event_date|string)[:10] }}
+            {% if r.distance_km is not none %}
+              · {{ r.distance_km }} km
+            {% endif %}
+            {% if r.total_elevation_gain_m is not none %}
+              · {{ r.total_elevation_gain_m }} m gain
+            {% endif %}
+          </div>
+        </div>
+        <div class="d-flex flex-wrap gap-2">
+          {% if not r.is_target_event %}
+            <form method="post"
+                  action="{{ url_for('race_events.set_target', race_event_id=r.id) }}"
+                  class="d-inline"
+                  data-confirm="Setting &quot;{{ r.name }}&quot; as your target race will trigger a plan refresh on the next morning sync.">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <button type="submit" class="btn btn-sm btn-outline-success">Set as target</button>
+            </form>
+          {% endif %}
+          <a href="{{ url_for('race_events.edit_race', race_event_id=r.id) }}"
+             class="btn btn-sm btn-outline-secondary">Edit</a>
+          <form method="post"
+                action="{{ url_for('race_events.delete_race', race_event_id=r.id) }}"
+                class="d-inline"
+                data-confirm="Delete &quot;{{ r.name }}&quot;? Route locales and equipment items for this race will also be deleted.">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button type="submit" class="btn btn-sm btn-outline-danger">Delete</button>
+          </form>
+        </div>
+      </div>
+    </div>
+  {% endfor %}
+</div>
+{% else %}
+<p class="text-muted">No races yet. Add your target race to drive plan periodization.</p>
+{% endif %}
+
+<a href="{{ url_for('race_events.new_race') }}" class="btn btn-primary">Add race</a>

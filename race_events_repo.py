@@ -319,3 +319,194 @@ def add_route_locale_equipment(
     row = cur.fetchone()
     db.commit()
     return int(row["id"])
+
+
+# ─── Single-row reads + UPDATE/DELETE helpers (profile UI surface) ──────────
+
+
+def get_race_event(db, user_id: int, race_event_id: int) -> dict[str, Any] | None:
+    """Return one race_events row scoped to user_id, or None when the row
+    doesn't exist or belongs to another user. Used by the profile-tab edit
+    form to pre-populate fields before UPDATE.
+    """
+    cur = db.execute(
+        """
+        SELECT id, user_id, name, event_date, race_format,
+               distance_km, total_elevation_gain_m,
+               race_rules_summary, mandatory_gear_text,
+               event_locale_id, is_target_event, notes,
+               created_at, updated_at
+          FROM race_events
+         WHERE id = ? AND user_id = ?
+        """,
+        (race_event_id, user_id),
+    )
+    row = cur.fetchone()
+    return dict(row) if row else None
+
+
+def update_race_event(
+    db,
+    user_id: int,
+    race_event_id: int,
+    *,
+    name: str,
+    event_date,
+    race_format: str,
+    distance_km=None,
+    total_elevation_gain_m=None,
+    race_rules_summary: str | None = None,
+    mandatory_gear_text: str | None = None,
+    event_locale_id: int | None = None,
+    notes: str | None = None,
+) -> None:
+    """UPDATE a race_events row's editable fields. `is_target_event` flips
+    are handled separately via `set_target_event`. Caller is expected to
+    have verified ownership via `get_race_event` before issuing the
+    update.
+    """
+    if race_format not in VALID_RACE_FORMATS:
+        raise ValueError(f"race_format must be one of {VALID_RACE_FORMATS}; got {race_format!r}")
+
+    db.execute(
+        """
+        UPDATE race_events
+           SET name = ?,
+               event_date = ?,
+               race_format = ?,
+               distance_km = ?,
+               total_elevation_gain_m = ?,
+               race_rules_summary = ?,
+               mandatory_gear_text = ?,
+               event_locale_id = ?,
+               notes = ?,
+               updated_at = NOW()
+         WHERE id = ? AND user_id = ?
+        """,
+        (
+            name,
+            event_date,
+            race_format,
+            distance_km,
+            total_elevation_gain_m,
+            race_rules_summary,
+            mandatory_gear_text,
+            event_locale_id,
+            notes,
+            race_event_id,
+            user_id,
+        ),
+    )
+    db.commit()
+
+
+def list_route_locales(db, race_event_id: int) -> list[dict[str, Any]]:
+    """Return the race_route_locales rows for an event ordered by
+    sequence_idx ascending. Used by the edit page to render per-locale
+    inline forms.
+    """
+    cur = db.execute(
+        """
+        SELECT id, race_event_id, role, sequence_idx, name,
+               mile_marker, lat, lng, mapbox_id, notes,
+               created_at, updated_at
+          FROM race_route_locales
+         WHERE race_event_id = ?
+         ORDER BY sequence_idx ASC, id ASC
+        """,
+        (race_event_id,),
+    )
+    return [dict(row) for row in cur.fetchall()]
+
+
+def update_route_locale(
+    db,
+    race_event_id: int,
+    route_locale_id: int,
+    *,
+    role: str,
+    sequence_idx: int,
+    name: str,
+    mile_marker=None,
+    lat=None,
+    lng=None,
+    mapbox_id: str | None = None,
+    notes: str | None = None,
+) -> None:
+    """UPDATE a race_route_locales row's editable fields. Scoped to
+    race_event_id to defend against crafted POSTs targeting another
+    race's locales.
+    """
+    if role not in VALID_ROUTE_LOCALE_ROLES:
+        raise ValueError(f"role must be one of {VALID_ROUTE_LOCALE_ROLES}; got {role!r}")
+    if sequence_idx < 1:
+        raise ValueError(f"sequence_idx must be >= 1; got {sequence_idx}")
+
+    db.execute(
+        """
+        UPDATE race_route_locales
+           SET role = ?,
+               sequence_idx = ?,
+               name = ?,
+               mile_marker = ?,
+               lat = ?,
+               lng = ?,
+               mapbox_id = ?,
+               notes = ?,
+               updated_at = NOW()
+         WHERE id = ? AND race_event_id = ?
+        """,
+        (
+            role,
+            sequence_idx,
+            name,
+            mile_marker,
+            lat,
+            lng,
+            mapbox_id,
+            notes,
+            route_locale_id,
+            race_event_id,
+        ),
+    )
+    db.commit()
+
+
+def delete_route_locale(db, race_event_id: int, route_locale_id: int) -> None:
+    """DELETE a race_route_locales row scoped to race_event_id. CASCADE
+    clears the row's equipment items.
+    """
+    db.execute(
+        "DELETE FROM race_route_locales WHERE id = ? AND race_event_id = ?",
+        (route_locale_id, race_event_id),
+    )
+    db.commit()
+
+
+def list_route_locale_equipment(
+    db, race_route_locale_id: int
+) -> list[dict[str, Any]]:
+    """Return the equipment rows for a route locale ordered by id ascending."""
+    cur = db.execute(
+        """
+        SELECT id, race_route_locale_id, equipment_name, quantity_text, notes,
+               created_at, updated_at
+          FROM race_route_locale_equipment
+         WHERE race_route_locale_id = ?
+         ORDER BY id ASC
+        """,
+        (race_route_locale_id,),
+    )
+    return [dict(row) for row in cur.fetchall()]
+
+
+def delete_route_locale_equipment(
+    db, race_route_locale_id: int, equipment_id: int
+) -> None:
+    """DELETE a single equipment row scoped to its parent route_locale_id."""
+    db.execute(
+        "DELETE FROM race_route_locale_equipment "
+        "WHERE id = ? AND race_route_locale_id = ?",
+        (equipment_id, race_route_locale_id),
+    )
+    db.commit()
