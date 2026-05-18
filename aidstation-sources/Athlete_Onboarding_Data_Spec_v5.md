@@ -128,6 +128,7 @@ A.1 documents what the athlete is shown and asked to acknowledge during onboardi
 | **Mapbox geocoding consent** | First time the athlete uses §J place lookup (new in v5) | "We send your address to Mapbox to look up coordinates and find nearby gyms. AIDSTATION stores Mapbox's response (place name, coordinates, category). You can use manual address entry instead." Single acknowledgment per athlete; subsequent locale creations don't re-prompt |
 | **Gym-profile sharing consent** | First time the athlete creates or edits a shared gym profile (new in v5) | "Your equipment edits at commercial gyms, climbing gyms, and pools will be shared with other AIDSTATION athletes who train at the same locations. Your identity is never shared. Home gyms and private residences are never shared. You can opt out at any time" |
 | Linked-partner data-sharing disclosure | At §L Athlete Link creation when Linked Account FK is set | What the other party sees; what they don't; revocation flow (unchanged from v4) |
+| **Race-rules paste acknowledgment** | At §H.2 Race Rules Summary field when athlete enters text (D-66 amendment 2026-05-18) | Athlete confirms text is from the official race director's published guide; AIDSTATION uses these to generate the race-week brief and accepts no responsibility for AI-misinterpretation of pasted text. Single acknowledgment per athlete per race_events row; subsequent edits to the same row don't re-prompt |
 
 **Copy is product/legal-owned.** Specific wording for each disclosure is a separate design pass. A.1 specifies the **slots**; the actual text is filled in pre-launch.
 
@@ -407,11 +408,50 @@ Unchanged from v4.
 
 ### H.2 Event details (when H.1 = Yes)
 
-Unchanged from v4. Multiple event records supported; each contains Event Name, Event Date, Event URL, Target Sport / Format, Constituent Disciplines, Race Distance + Estimated Duration, Race Elevation Gain / Loss, Race Terrain Type, Race Pack Weight + Mandatory Kit, Navigation Requirement, Team Format, Goal Outcome, Previous Attempts, Known Event Complications, Number of Transition Areas, Number of Aid Stations, Race-Specific Nutrition Restrictions.
+Multiple event records supported; each contains Event Name, Event Date, Event URL, Target Sport / Format, Constituent Disciplines, Race Distance + Estimated Duration, Race Elevation Gain / Loss, Race Terrain Type, Race Pack Weight + Mandatory Kit, Navigation Requirement, Team Format, Goal Outcome, Previous Attempts, Known Event Complications, Race-Specific Nutrition Restrictions.
+
+**D-66 amendment 2026-05-18 — race_format + race_rules_summary + is_target_event added; "Number of Transition Areas" + "Number of Aid Stations" replaced by structured route-locale graph (§H.4).** Per `Race_Events_D66_Design_v1.md`:
+
+| Field | Type | Required | Drives | Notes |
+|---|---|---|---|---|
+| Race Format | Closed enum: `single_day` / `expedition_ar` / `stage_race` / `multi_day_ultra` | Yes | Layer 3B periodization mode; Layer 4 race-week brief Pattern B path (RacePlan emitted iff != 'single_day'); validator rule `kit_manifest_inputs_incomplete` D-66 active branch | Replaces the implicit format embedded in v4's "Target Sport / Format" free-text. Default radio in onboarding UI: `single_day`. When != 'single_day': §H.4 route-locale step presented; race-rules-summary + mandatory-gear-text encouraged. |
+| Race Rules Summary | TEXT (multi-line free-text, up to 8000 chars) | No (optional; encouraged when race_format != 'single_day') | Layer 4 race-week brief contingencies + DQ-avoidance reasoning; reconciled via race-week-brief prompt body D9 hybrid | Athlete pastes / summarizes the race-director-published rules guide (mandatory checkpoints, time cuts, support rules, gear inspections). LLM consumes verbatim. **Disclosure required:** §A.1 race-rules-paste-acknowledgment (athlete confirms text is from official guide; AIDSTATION accepts no responsibility for AI-misinterpretation of pasted text). |
+| Is Target Event | Boolean | Yes (exactly one of the athlete's events has TRUE at a time; enforced via DB partial UNIQUE index `race_events_user_target_uidx`) | Layer 3B reads the target row for `mode='event'` periodization decisions | Profile UI "set as target" affordance flips the flag. Switching target fires Layer 3B + Layer 4 invalidation per `Race_Events_D66_Design_v1.md` §9. |
+
+Storage: rows write to new `race_events` table (per D-66 §3.1) instead of the legacy `athlete.target_event_name` + `athlete.target_event_date` columns; legacy columns deprecated + migrated per D-66 §10. Race Pack Weight + Mandatory Kit field consolidates into `race_events.mandatory_gear_text` (free-text per D-66 Decision 3); existing v4 free-text shape is preserved.
 
 ### H.3 No-event mode (when H.1 = No)
 
 Unchanged from v4. Plan Duration enum (8 / 12 / 16 / 20 / 24 weeks) + Non-Event Goal Type enum (Endurance / General fitness / Strength / Mixed, default = General fitness).
+
+### H.4 Route locales (when H.2 Race Format != 'single_day')
+
+**Added 2026-05-18 (D-66 amendment).** Replaces the v4 free-text "Number of Transition Areas" + "Number of Aid Stations" counts with a structured route-locale graph captured during onboarding (or deferred to profile per the skip affordance below).
+
+Step presented after §H.2 completes and only when the athlete picked a multi-day race_format. Athletes book races 6+ months out; route details may not be published yet. The step is **skippable** ("I'll fill this in later") — race_events row is still created in §H.2; 0 race_route_locales rows are written until athlete completes §H.4 (either at onboarding time or via the profile UI per `Race_Events_D66_Design_v1.md` §7).
+
+| Field (per route locale) | Type | Required | Drives | Notes |
+|---|---|---|---|---|
+| Role | Closed enum: `start` / `transition_area` / `aid_station` / `drop_bag_point` / `bivvy` / `finish` / `other` | Yes | Layer 4 `RacePlan.segments` adjacent-pair derivation; race-week brief contingency reasoning per anchor table | Closed 7-element enum per `Race_Events_D66_Design_v1.md` Decision 8. `other` is the relief valve for race-format-specific edges (e.g., crew checkpoints in stage races). |
+| Name | Text (up to 160 chars) | Yes | Synthesizer prompt verbatim rendering | Athlete-friendly name ("Aid Station 3", "TA1 — Lake Mary Trailhead", "Drop bag at swim entry"). |
+| Sequence Index | Integer (1-indexed; UNIQUE per race; gaps allowed) | Yes (auto-assigned by UI on save) | Synthesizer iteration order; RacePlan.segments derivation | UI provides drag-handle reorder. Gaps allowed (1, 2, 5, 8 is valid) so athletes can insert forgotten locales without cascading rewrites. |
+| Mile Marker | Numeric (≥0; kilometers or miles per athlete preference) | No | Pacing strategy summary; segment ordering when distance_km on race_events is also known | NULL when athlete doesn't know yet OR race director hasn't published. |
+| Mapbox Anchor | Lat + Lng + mapbox_id (optional triple) | No | Forward-pointer for v2 GPX export / map rendering | Same Mapbox-anchored flow as §J locale_profiles per PR18; v1 doesn't consume coordinates in Layer 4 synthesis. |
+| Notes | Text (up to 800 chars) | No | Synthesizer prompt verbatim rendering | Free-text per-locale notes (terrain, crew-access rules, mandatory-gear-check-here flag, water-availability). |
+
+**Per-route-locale equipment** (nested 0..N entries per route locale):
+
+| Field (per equipment item) | Type | Required | Notes |
+|---|---|---|---|
+| Equipment Name | Text (1–160 chars) | Yes | Free-text per D-66 Decision 5; race-route equipment is ephemeral + doesn't reconcile against layer0 `exercise_inventory` (gym-oriented). Examples: "6L water cache", "spare batteries — 4× AAA", "dry socks + base layer", "first-aid kit". |
+| Quantity Text | Text (up to 80 chars) | No | Free-text not numeric since units vary. Examples: "6 liters", "2 pair", "1 charged". |
+| Notes | Text (up to 400 chars) | No | Free-text caveats. Examples: "for the 4pm leg only", "shared with team", "pre-position by crew Friday". |
+
+**Skip semantics.** Athlete may either fill in 2+ route locales (start + finish minimum recommended) or skip with a "fill in later" affordance. Skipping writes 0 race_route_locales rows; profile UI handles later additions. Validator rule `kit_manifest_inputs_incomplete` (per `Layer4_Spec.md` §4.5 + §5.4) emits `data_gap` observation when route_locale count < 2 OR all route_locale equipment lists empty on race-week-brief invocation. Account-nudge fires 14 days post-skip: "You picked a multi-day race. Add your race route locales when you have them to enable race-week brief generation."
+
+**Storage:** rows write to new `race_route_locales` table per D-66 §3.2 + per-equipment rows write to `race_route_locale_equipment` per D-66 §3.3. CASCADE delete on race_events removal.
+
+**Profile UI:** Full CRUD on race_events + route_locales + equipment via new `/profile?tab=race-events` tab per `Race_Events_D66_Design_v1.md` §7.
 
 ---
 
