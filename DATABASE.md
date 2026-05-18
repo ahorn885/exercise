@@ -308,8 +308,11 @@ Per-user stable facts surfaced to the coach (`get_coaching_context()`
 includes `ctx['athlete_profile']`).
 
 - Columns: `user_id` (PK + FK), `date_of_birth`, `sex`, `height_cm`,
-  `primary_sport`, `target_event_name`, `target_event_date`,
-  `weekly_hours_target`, `training_window`, `notes`, `updated_at`.
+  `primary_sport`, `weekly_hours_target`, `training_window`, `notes`,
+  `updated_at`. (The legacy `target_event_name` + `target_event_date`
+  columns were dropped in D-66 Layer 3B Scope B; target races now live
+  in `race_events` as their sole source of truth — see the
+  `race_events` section.)
 - Helpers: `athlete.py:get_athlete_profile(db, user_id)` and
   `upsert_athlete_profile(db, user_id, **fields)`. `PROFILE_FIELDS`
   allowlist — unknown keys silently dropped, so `request.form` can be
