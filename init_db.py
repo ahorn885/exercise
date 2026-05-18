@@ -1126,6 +1126,89 @@ _PG_MIGRATIONS = [
     "CREATE INDEX IF NOT EXISTS layer4_cache_user_entry_idx ON layer4_cache (user_id, entry_point)",
     "CREATE INDEX IF NOT EXISTS layer4_cache_user_created_idx ON layer4_cache (user_id, created_at DESC)",
     "CREATE INDEX IF NOT EXISTS layer4_cache_entry_point_idx ON layer4_cache (entry_point)",
+    # D-66 race-event data model (`Race_Events_D66_Design_v1.md` §3 + §10).
+    # locale_profiles gains a surrogate `id BIGSERIAL` column so race_events
+    # can FK against it (`event_locale_id BIGINT REFERENCES locale_profiles(id)
+    # ON DELETE SET NULL`). The composite PK (user_id, locale) stays — D-60's
+    # locale_equipment_overrides + locale_toggle_overrides keep using the
+    # composite FK pair. Adding the column on an existing table backfills
+    # each row with a unique nextval() automatically.
+    "ALTER TABLE locale_profiles ADD COLUMN IF NOT EXISTS id BIGSERIAL",
+    "CREATE UNIQUE INDEX IF NOT EXISTS locale_profiles_id_uidx ON locale_profiles (id)",
+    """CREATE TABLE IF NOT EXISTS race_events (
+        id BIGSERIAL PRIMARY KEY,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        name TEXT NOT NULL,
+        event_date DATE NOT NULL,
+        race_format TEXT NOT NULL CHECK (race_format IN ('single_day', 'expedition_ar', 'stage_race', 'multi_day_ultra')),
+        distance_km NUMERIC NULL,
+        total_elevation_gain_m NUMERIC NULL,
+        race_rules_summary TEXT NULL,
+        mandatory_gear_text TEXT NULL,
+        event_locale_id BIGINT NULL REFERENCES locale_profiles(id) ON DELETE SET NULL,
+        is_target_event BOOLEAN NOT NULL DEFAULT FALSE,
+        notes TEXT NULL,
+        etl_version_set JSONB NOT NULL DEFAULT '{}'::jsonb,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )""",
+    # Partial UNIQUE index enforces "at most one target race per athlete"
+    # per D-66 §3.1 + Decision 5; gaps allowed (no target = no row matches).
+    "CREATE UNIQUE INDEX IF NOT EXISTS race_events_user_target_uidx ON race_events (user_id) WHERE is_target_event = TRUE",
+    "CREATE INDEX IF NOT EXISTS race_events_user_date_idx ON race_events (user_id, event_date)",
+    """CREATE TABLE IF NOT EXISTS race_route_locales (
+        id BIGSERIAL PRIMARY KEY,
+        race_event_id BIGINT NOT NULL REFERENCES race_events(id) ON DELETE CASCADE,
+        role TEXT NOT NULL CHECK (role IN ('start', 'transition_area', 'aid_station', 'drop_bag_point', 'bivvy', 'finish', 'other')),
+        sequence_idx INTEGER NOT NULL,
+        name TEXT NOT NULL,
+        mile_marker NUMERIC NULL,
+        lat NUMERIC NULL,
+        lng NUMERIC NULL,
+        mapbox_id TEXT NULL,
+        notes TEXT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        UNIQUE (race_event_id, sequence_idx)
+    )""",
+    "CREATE INDEX IF NOT EXISTS race_route_locales_race_seq_idx ON race_route_locales (race_event_id, sequence_idx)",
+    """CREATE TABLE IF NOT EXISTS race_route_locale_equipment (
+        id BIGSERIAL PRIMARY KEY,
+        race_route_locale_id BIGINT NOT NULL REFERENCES race_route_locales(id) ON DELETE CASCADE,
+        equipment_name TEXT NOT NULL,
+        quantity_text TEXT NULL,
+        notes TEXT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )""",
+    "CREATE INDEX IF NOT EXISTS race_route_locale_equipment_locale_idx ON race_route_locale_equipment (race_route_locale_id)",
+    # D-66 §10 one-time migration of legacy athlete_profile.target_event_*
+    # rows into race_events. Idempotent via the NOT EXISTS guard. race_format
+    # defaults to 'single_day' — Andy will update his Pocket Gopher Extreme
+    # row to 'expedition_ar' via the profile UI when that ships. The athlete_profile
+    # columns are kept in place per §3.4 deprecation note; a future cleanup
+    # PR drops them once all rows have migrated cleanly. target_event_date
+    # is TEXT in the legacy schema; the empty-string + NULL guards skip rows
+    # where it was never set.
+    """INSERT INTO race_events
+        (user_id, name, event_date, race_format, is_target_event, etl_version_set)
+        SELECT
+            user_id,
+            target_event_name,
+            target_event_date::date,
+            'single_day',
+            TRUE,
+            '{"race_events_v1": "migration_from_athlete_profile_row"}'::jsonb
+        FROM athlete_profile
+        WHERE target_event_name IS NOT NULL
+          AND target_event_name <> ''
+          AND target_event_date IS NOT NULL
+          AND target_event_date <> ''
+          AND NOT EXISTS (
+              SELECT 1 FROM race_events
+              WHERE race_events.user_id = athlete_profile.user_id
+                AND race_events.is_target_event = TRUE
+          )""",
 ]
 
 _CLOTHING_SEEDS = [
