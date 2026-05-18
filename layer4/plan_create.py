@@ -21,10 +21,12 @@ shipped in Step 4d).
 from __future__ import annotations
 
 import uuid
+from concurrent.futures import Executor, ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import date as _date_type
 from typing import Any, Literal
 
+from layer4.cache import Layer4Cache
 from layer4.context import (
     Layer2APayload,
     Layer2BPayload,
@@ -36,6 +38,7 @@ from layer4.context import (
     RaceEventPayload,
 )
 from layer4.errors import Layer4InputError, Layer4OutputError
+from layer4.hashing import compute_accepted_output_hash, compute_phase_cache_key
 from layer4.payload import (
     Layer4Payload,
     Observation,
@@ -44,6 +47,7 @@ from layer4.payload import (
     PlanSession,
     RuleFailure,
     SeamReview,
+    SynthesisMetadata,
     ValidatorResult,
 )
 from layer4.per_phase import (
@@ -58,6 +62,7 @@ from layer4.phase_structure import phase_structure_from_3b
 from layer4.seam_review import (
     DEFAULT_EXTENDED_THINKING_BUDGET as _SEAM_THINKING_DEFAULT,
     DEFAULT_MAX_TOKENS as _SEAM_MAX_TOKENS_DEFAULT,
+    SeamReviewCallResult,
     SeamReviewerCaller,
     compose_seam_review_row,
     review_seam,
@@ -234,6 +239,59 @@ def _index_for_re_prompt(
     return seam_index + 1
 
 
+def _serialize_phase_result_with_meta(
+    result: PhaseSynthesisResult,
+    meta: SynthesisMetadata,
+) -> dict[str, Any]:
+    """Project a PhaseSynthesisResult + its SynthesisMetadata into a
+    JSON-serializable dict for the per-phase cache (`Layer4_Spec.md` §9.2).
+
+    The cached shape covers everything the engine needs to reconstruct a
+    PhaseSynthesisResult on a hit. Token / latency / llm_call_count fields
+    are NOT cached — those reflect the original LLM call, and per §9.6
+    cache hits stamp ZERO on `Layer4Payload.latency_ms_total` for the
+    skipped synthesis (synthesis-only metric)."""
+    return {
+        "phase_name": result.phase_name,
+        "sessions": [s.model_dump(mode="json") for s in result.sessions],
+        "synthesis_metadata": meta.model_dump(mode="json"),
+        "phase_synthesis_notes": result.phase_synthesis_notes,
+        "opportunities": list(result.opportunities),
+        "validator_results": [
+            vr.model_dump(mode="json") for vr in result.validator_results
+        ],
+        "cap_hit": result.cap_hit,
+        "retries_used": result.retries_used,
+    }
+
+
+def _hydrate_phase_result_with_meta(
+    cached: dict[str, Any],
+) -> tuple[PhaseSynthesisResult, SynthesisMetadata]:
+    """Reverse of `_serialize_phase_result_with_meta`. The returned
+    PhaseSynthesisResult carries ZERO token/latency/llm_call_count fields
+    because no LLM call fired on this code path; the cached
+    `synthesis_metadata` keeps the original call's accounting for
+    chain-hashing fidelity per §9.2."""
+    result = PhaseSynthesisResult(
+        phase_name=cached["phase_name"],
+        sessions=[PlanSession.model_validate(s) for s in cached["sessions"]],
+        phase_synthesis_notes=cached["phase_synthesis_notes"],
+        opportunities=list(cached["opportunities"]),
+        validator_results=[
+            ValidatorResult.model_validate(vr) for vr in cached["validator_results"]
+        ],
+        cap_hit=cached["cap_hit"],
+        retries_used=cached["retries_used"],
+        input_tokens=0,
+        output_tokens=0,
+        latency_ms=0,
+        llm_call_count=0,
+    )
+    meta = SynthesisMetadata.model_validate(cached["synthesis_metadata"])
+    return result, meta
+
+
 def _build_final_payload_for_validation(
     *,
     user_id: int,
@@ -288,19 +346,21 @@ def _build_final_payload_for_validation(
 
 def _build_phase_structure_with_metadata(
     phase_structure: PhaseStructure,
-    results_by_index: dict[int, PhaseSynthesisResult],
-    model_synthesizer: str,
-    temperature: float,
+    synthesis_metadata_by_index: dict[int, SynthesisMetadata],
 ) -> PhaseStructure:
     """Return a new PhaseStructure with synthesis_metadata overwritten for
-    each phase that was synthesized this call. Phases not in
-    `results_by_index` keep their (zero or carryover) metadata."""
+    each phase that was synthesized (or hit-from-cache) this call. Phases
+    not in `synthesis_metadata_by_index` keep their (zero or carryover)
+    metadata.
+
+    Note the per-phase metadata is supplied as a separate dict (vs derived
+    from the PhaseSynthesisResult) because cache hits return zeroed
+    PhaseSynthesisResult.input_tokens/etc but the canonical metadata for
+    the §9.2 chain hash + downstream observability is the cached one with
+    the original LLM-call accounting preserved."""
     new_phases: list[PhaseSpec] = []
     for i, phase in enumerate(phase_structure.phases):
-        if i in results_by_index:
-            meta = build_synthesis_metadata_from_result(
-                results_by_index[i], model=model_synthesizer, temperature=temperature
-            )
+        if i in synthesis_metadata_by_index:
             new_phases.append(
                 PhaseSpec(
                     phase_name=phase.phase_name,
@@ -309,7 +369,7 @@ def _build_phase_structure_with_metadata(
                     weeks=phase.weeks,
                     intended_volume_band=phase.intended_volume_band,
                     intended_intensity_distribution=phase.intended_intensity_distribution,
-                    synthesis_metadata=meta,
+                    synthesis_metadata=synthesis_metadata_by_index[i],
                 )
             )
         else:
@@ -370,6 +430,9 @@ def _run_pattern_a_engine(
     seam_thinking_budget: int,
     phase_caller: _PhaseLLMCaller | None,
     seam_caller: SeamReviewerCaller | None,
+    cache: Layer4Cache | None = None,
+    call_cache_key: str | None = None,
+    executor: Executor | None = None,
 ) -> _PatternAResult:
     """Run the Pattern A loop per `Layer4_Spec.md` §5.2.
 
@@ -383,6 +446,7 @@ def _run_pattern_a_engine(
     """
     session_id_prefix = uuid.uuid4().hex[:8]
     results_by_index: dict[int, PhaseSynthesisResult] = {}
+    synthesis_metadata_by_index: dict[int, SynthesisMetadata] = {}
     notable_observations: list[Observation] = []
     seam_reviews_by_index: dict[int, SeamReview] = {}
     validator_results: list[ValidatorResult] = []
@@ -391,6 +455,15 @@ def _run_pattern_a_engine(
     total_latency_ms = 0
     llm_call_count = 0
     retries_used_per_phase: dict[int, int] = {}
+
+    # §9.2 per-phase cache chain — `prev_accepted_output_hash` rolls forward
+    # through each accepted phase output (None for phase 0, collapsing to ''
+    # inside `compute_phase_cache_key`). Only used when `cache` +
+    # `call_cache_key` are both provided.
+    prev_accepted_output_hash: str | None = None
+    cache_entry_point: Literal["plan_create", "plan_refresh"] = (
+        "plan_create" if mode == "plan_create" else "plan_refresh"
+    )
 
     # --- Per-phase synthesis (sequential) ---------------------------------
     for i, phase in enumerate(phase_structure.phases):
@@ -408,40 +481,84 @@ def _run_pattern_a_engine(
             # else: synthetic prior (start_phase != 'Base' first-phase case);
             # per_phase.render_user_prompt handles None/empty gracefully.
 
-        result = synthesize_phase(
-            user_id=user_id,
-            phase_spec=phase,
-            phase_structure=phase_structure,
-            phase_index_in_plan=i,
-            layer1_payload=layer1_payload,
-            layer2a_payload=layer2a_payload,
-            layer2b_payload=layer2b_payload,
-            layer2c_payloads=layer2c_payloads,
-            layer2d_payload=layer2d_payload,
-            layer2e_payload=layer2e_payload,
-            layer3a_payload=layer3a_payload,
-            layer3b_payload=layer3b_payload,
-            race_event_payload=race_event_payload,
-            prior_phase_sessions=prior_phase_sessions,
-            plan_version_id=plan_version_id,
-            etl_version_set=etl_version_set,
-            mode=mode,
-            model=model_synthesizer,
-            temperature=temperature,
-            max_tokens=max_tokens_per_phase,
-            extended_thinking_budget=extended_thinking_budget,
-            capped_retries=capped_retries_per_phase,
-            retries_already_used=0,
-            llm_caller=phase_caller,
-            session_id_prefix=f"{session_id_prefix}-p{i}",
-        )
+        def _synth_this_phase(
+            _i: int = i,
+            _phase: PhaseSpec = phase,
+            _prior: list[PlanSession] = prior_phase_sessions,
+        ) -> PhaseSynthesisResult:
+            return synthesize_phase(
+                user_id=user_id,
+                phase_spec=_phase,
+                phase_structure=phase_structure,
+                phase_index_in_plan=_i,
+                layer1_payload=layer1_payload,
+                layer2a_payload=layer2a_payload,
+                layer2b_payload=layer2b_payload,
+                layer2c_payloads=layer2c_payloads,
+                layer2d_payload=layer2d_payload,
+                layer2e_payload=layer2e_payload,
+                layer3a_payload=layer3a_payload,
+                layer3b_payload=layer3b_payload,
+                race_event_payload=race_event_payload,
+                prior_phase_sessions=_prior,
+                plan_version_id=plan_version_id,
+                etl_version_set=etl_version_set,
+                mode=mode,
+                model=model_synthesizer,
+                temperature=temperature,
+                max_tokens=max_tokens_per_phase,
+                extended_thinking_budget=extended_thinking_budget,
+                capped_retries=capped_retries_per_phase,
+                retries_already_used=0,
+                llm_caller=phase_caller,
+                session_id_prefix=f"{session_id_prefix}-p{_i}",
+            )
+
+        if cache is not None and call_cache_key is not None:
+            # Per §9.2: cache key chains via prev_accepted_output_hash.
+            phase_key = compute_phase_cache_key(
+                call_cache_key=call_cache_key,
+                phase_name=phase.phase_name,
+                phase_index=i,
+                prev_accepted_output_hash=prev_accepted_output_hash,
+            )
+
+            def _serialize_synth(
+                _phase_name: str = phase.phase_name,
+            ) -> dict[str, Any]:
+                r = _synth_this_phase()
+                m = build_synthesis_metadata_from_result(
+                    r, model=model_synthesizer, temperature=temperature
+                )
+                return _serialize_phase_result_with_meta(r, m)
+
+            cached_dict = cache.get_phase_or_synthesize(
+                phase_key=phase_key,
+                phase_idx=i,
+                phase_name=phase.phase_name,
+                user_id=user_id,
+                entry_point=cache_entry_point,
+                synthesizer=_serialize_synth,
+            )
+            result, meta = _hydrate_phase_result_with_meta(cached_dict)
+        else:
+            result = _synth_this_phase()
+            meta = build_synthesis_metadata_from_result(
+                result, model=model_synthesizer, temperature=temperature
+            )
+
         results_by_index[i] = result
+        synthesis_metadata_by_index[i] = meta
         retries_used_per_phase[i] = result.retries_used
         validator_results.extend(result.validator_results)
         total_input_tokens += result.input_tokens
         total_output_tokens += result.output_tokens
         total_latency_ms += result.latency_ms
         llm_call_count += result.llm_call_count
+        # Roll the §9.2 chain hash forward for the next phase's key.
+        prev_accepted_output_hash = compute_accepted_output_hash(
+            result.sessions, meta
+        )
 
         if result.cap_hit:
             notable_observations.append(
@@ -464,8 +581,9 @@ def _run_pattern_a_engine(
                 )
             )
 
-    # --- Seam reviews (sequential per-pair; only review pairs WHERE AT
-    #     LEAST ONE phase was synthesized this call per §6.3) -------------
+    # --- Seam reviews (iter-1 parallel; iter-2 + re-synth sequential
+    #     per §6.2 + §6.3 per-seam cap + per §5.2 closing-note concurrency
+    #     framing) ---------------------------------------------------------
     discipline_mix = (
         [
             d.discipline_id
@@ -482,59 +600,86 @@ def _run_pattern_a_engine(
     )
     event_date = race_event_payload.event_date if race_event_payload else None
 
+    # Identify seams to review per §6.3: skip pairs where NEITHER side was
+    # synthesized this call (carryover-only boundaries were reviewed during
+    # the original plan_create + don't repeat here).
+    pairs_to_review: list[int] = []
     for seam_idx in range(len(phase_structure.phases) - 1):
-        prior_phase = phase_structure.phases[seam_idx]
-        next_phase = phase_structure.phases[seam_idx + 1]
-
-        # Per §6.3: only review seams where AT LEAST ONE side was
-        # re-synthesized this call. Seams between two unaffected phases are
-        # NOT re-reviewed (they were reviewed during the original plan_create).
         prior_synthesized = seam_idx in phase_indices_to_synthesize
         next_synthesized = (seam_idx + 1) in phase_indices_to_synthesize
         if not prior_synthesized and not next_synthesized:
             continue
+        pairs_to_review.append(seam_idx)
 
-        # Resolve session lists for both sides.
-        prior_sessions = (
+    # Iter-1 LLM calls fire in parallel (per `Layer4_Spec.md` §5.2 closing
+    # note: "Seam reviews COULD parallelize across non-overlapping pairs ...
+    # seams 0..N-2 are independent in their LLM-call inputs"). Semantic
+    # tradeoff: when seam i iter-1 triggers a re-synthesis of phase i+1,
+    # seam i+1's iter-1 — already fired in parallel against the ORIGINAL
+    # phase i+1 — does not re-fire. The §5.2 step-5 final cross-phase
+    # validator pass + seam i+1's iter-2 (if its iter-1 ALSO flagged) still
+    # catch downstream issues. Schema-violations from iter-1 raise via
+    # `Layer4OutputError` and propagate through the executor.
+    def _iter1_task(
+        seam_idx: int,
+    ) -> tuple[int, SeamReviewCallResult]:
+        prior_phase_local = phase_structure.phases[seam_idx]
+        next_phase_local = phase_structure.phases[seam_idx + 1]
+        prior_synthesized_local = seam_idx in phase_indices_to_synthesize
+        next_synthesized_local = (seam_idx + 1) in phase_indices_to_synthesize
+        prior_sessions_local = (
             results_by_index[seam_idx].sessions
-            if prior_synthesized
+            if prior_synthesized_local
             else carryover_sessions_by_phase_index.get(seam_idx, [])
         )
-        next_sessions = (
+        next_sessions_local = (
             results_by_index[seam_idx + 1].sessions
-            if next_synthesized
+            if next_synthesized_local
             else carryover_sessions_by_phase_index.get(seam_idx + 1, [])
         )
+        call_1_local = review_seam(
+            seam_index=seam_idx,
+            prior_phase_spec=prior_phase_local,
+            next_phase_spec=next_phase_local,
+            prior_phase_sessions=prior_sessions_local,
+            next_phase_sessions=next_sessions_local,
+            layer2a_payload=layer2a_payload,
+            layer2d_payload=layer2d_payload,
+            discipline_mix=discipline_mix,
+            mode=mode_str,
+            start_phase=start_phase_str,
+            race_format=race_format_str,
+            event_date=event_date,
+            seam_iteration=1,
+            prior_seam_issues=[],
+            model=model_seam_reviewer,
+            temperature=0.15,
+            max_tokens=seam_max_tokens,
+            extended_thinking_budget=seam_thinking_budget,
+            caller=seam_caller,
+        )
+        return (seam_idx, call_1_local)
 
-        try:
-            call_1 = review_seam(
-                seam_index=seam_idx,
-                prior_phase_spec=prior_phase,
-                next_phase_spec=next_phase,
-                prior_phase_sessions=prior_sessions,
-                next_phase_sessions=next_sessions,
-                layer2a_payload=layer2a_payload,
-                layer2d_payload=layer2d_payload,
-                discipline_mix=discipline_mix,
-                mode=mode_str,
-                start_phase=start_phase_str,
-                race_format=race_format_str,
-                event_date=event_date,
-                seam_iteration=1,
-                prior_seam_issues=[],
-                model=model_seam_reviewer,
-                temperature=0.15,
-                max_tokens=seam_max_tokens,
-                extended_thinking_budget=seam_thinking_budget,
-                caller=seam_caller,
-            )
-        except Layer4OutputError:
-            # Schema-violation on the seam-reviewer raises through to the
-            # caller per §5.5. v1 doesn't auto-retry seam schema violations
-            # at the orchestrator level — the call's already cost ~$0.06
-            # and re-runs may not resolve; surface to the caller.
-            raise
+    iter1_results: list[tuple[int, SeamReviewCallResult]] = []
+    if len(pairs_to_review) >= 2 and executor is not None:
+        iter1_results = list(executor.map(_iter1_task, pairs_to_review))
+    elif len(pairs_to_review) >= 2:
+        with ThreadPoolExecutor(
+            max_workers=min(4, len(pairs_to_review))
+        ) as _default_exe:
+            iter1_results = list(_default_exe.map(_iter1_task, pairs_to_review))
+    elif len(pairs_to_review) == 1:
+        iter1_results = [_iter1_task(pairs_to_review[0])]
+    # else: no seams to review (single-phase plan or all-carryover T3 edge).
 
+    # Process iter-1 results sequentially in seam_idx order — verdict
+    # semantics + per-seam iter-2 re-synthesis when triggered. Per-phase
+    # retry budget is shared with validator-driven retries (§5.5) and is
+    # consumed in seam_idx order, so a phase targeted by two seams may
+    # exhaust budget on the second.
+    for seam_idx, call_1 in iter1_results:
+        prior_phase = phase_structure.phases[seam_idx]
+        next_phase = phase_structure.phases[seam_idx + 1]
         total_input_tokens += call_1.input_tokens
         total_output_tokens += call_1.output_tokens
         total_latency_ms += call_1.latency_ms
@@ -673,6 +818,14 @@ def _run_pattern_a_engine(
             session_id_prefix=f"{session_id_prefix}-p{target_idx}-seamretry",
         )
         results_by_index[target_idx] = re_result
+        # Refresh the per-phase metadata so the final PhaseStructure carries
+        # the re-synthesis's token/latency/retries accounting rather than the
+        # initial synthesis's. Seam-driven re-synth is NOT cache-wired per
+        # §9.2 — the spec gap on chaining new context-with-seam-issues into
+        # phase_key is tracked as a Step 6 carry-forward.
+        synthesis_metadata_by_index[target_idx] = build_synthesis_metadata_from_result(
+            re_result, model=model_synthesizer, temperature=temperature
+        )
         retries_used_per_phase[target_idx] = re_result.retries_used
         validator_results.extend(re_result.validator_results)
         total_input_tokens += re_result.input_tokens
@@ -756,7 +909,7 @@ def _run_pattern_a_engine(
 
     # --- Update PhaseStructure with the per-phase synthesis metadata -----
     updated_phase_structure = _build_phase_structure_with_metadata(
-        phase_structure, results_by_index, model_synthesizer, temperature
+        phase_structure, synthesis_metadata_by_index
     )
 
     # --- Final cross-phase validator pass (§5.2 step 5) ------------------
@@ -977,6 +1130,9 @@ def llm_layer4_plan_create(
     seam_thinking_budget: int = _SEAM_THINKING_DEFAULT,
     phase_caller: _PhaseLLMCaller | None = None,
     seam_caller: SeamReviewerCaller | None = None,
+    cache: Layer4Cache | None = None,
+    call_cache_key: str | None = None,
+    executor: Executor | None = None,
 ) -> Layer4Payload:
     """Pattern A plan-create entry point per `Layer4_Spec.md` §3.1.
 
@@ -1048,6 +1204,9 @@ def llm_layer4_plan_create(
         seam_thinking_budget=seam_thinking_budget,
         phase_caller=phase_caller,
         seam_caller=seam_caller,
+        cache=cache,
+        call_cache_key=call_cache_key,
+        executor=executor,
     )
 
     return _build_plan_create_payload(
@@ -1093,6 +1252,9 @@ def synthesize_pattern_a_for_refresh(
     seam_thinking_budget: int = _SEAM_THINKING_DEFAULT,
     phase_caller: _PhaseLLMCaller | None = None,
     seam_caller: SeamReviewerCaller | None = None,
+    cache: Layer4Cache | None = None,
+    call_cache_key: str | None = None,
+    executor: Executor | None = None,
 ) -> Layer4Payload:
     """Pattern A engine for `plan_refresh` T3 cross-phase routing per §6.3.
 
@@ -1134,6 +1296,9 @@ def synthesize_pattern_a_for_refresh(
         seam_thinking_budget=seam_thinking_budget,
         phase_caller=phase_caller,
         seam_caller=seam_caller,
+        cache=cache,
+        call_cache_key=call_cache_key,
+        executor=executor,
     )
 
     return _build_plan_refresh_a_payload(

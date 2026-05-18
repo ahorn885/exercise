@@ -804,6 +804,9 @@ def llm_layer4_plan_refresh(
     llm_caller: LLMCaller | None = None,
     phase_caller: Any | None = None,
     seam_caller: Any | None = None,
+    cache: Any | None = None,
+    call_cache_key: str | None = None,
+    executor: Any | None = None,
 ) -> Layer4Payload:
     """Pattern B plan-refresh entrypoint per `Layer4_Spec.md` §3.2.
 
@@ -897,6 +900,9 @@ def llm_layer4_plan_refresh(
                 capped_retries=capped_retries,
                 phase_caller=phase_caller,
                 seam_caller=seam_caller,
+                cache=cache,
+                call_cache_key=call_cache_key,
+                executor=executor,
             )
         phase_at_start = phase_for_date(phase_structure, refresh_scope_start)
         assert phase_at_start is not None  # scope_spans_phase_boundary already verified
@@ -1130,6 +1136,9 @@ def _route_t3_cross_phase_to_pattern_a(
     capped_retries: int,
     phase_caller: Any | None,
     seam_caller: Any | None,
+    cache: Any | None = None,
+    call_cache_key: str | None = None,
+    executor: Any | None = None,
 ) -> Layer4Payload:
     """Delegate T3 cross-phase refresh to the Pattern A engine in
     plan_create.py per `Layer4_Spec.md` §6.3 (Step 4f).
@@ -1189,6 +1198,9 @@ def _route_t3_cross_phase_to_pattern_a(
         capped_retries_per_phase=capped_retries,
         phase_caller=phase_caller,
         seam_caller=seam_caller,
+        cache=cache,
+        call_cache_key=call_cache_key,
+        executor=executor,
     )
 
 

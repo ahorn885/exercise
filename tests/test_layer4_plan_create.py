@@ -71,6 +71,7 @@ from layer4 import (
     build_record_seam_review_tool,
     llm_layer4_plan_create,
 )
+from layer4 import InMemoryCacheBackend, Layer4Cache
 from layer4.per_phase import _SynthesizerOutput as _PhaseOut
 from layer4.seam_review import _SeamReviewerOutput as _SeamOut
 
@@ -1271,3 +1272,416 @@ class TestSeamReviewInvalidCombinations:
                 caller=bad_caller,
             )
         assert "seam_reviewer_invalid_verdict_combination" in str(exc.value)
+
+
+# ─── Step 6a: per-phase cache wiring (§9.2 chain) ────────────────────────────
+
+
+class _CountingPhaseStub:
+    """Stub that counts how many times it was invoked. Returns the same
+    output each time (one cardio session in the first week of the phase)."""
+
+    def __init__(self, output: dict[str, Any]):
+        self.output = output
+        self.calls = 0
+
+    def __call__(self, *_a, **_kw) -> _PhaseOut:
+        self.calls += 1
+        return _PhaseOut(
+            tool_args=self.output, input_tokens=6000, output_tokens=2000, latency_ms=8000
+        )
+
+
+class TestPerPhaseCacheWiring:
+    """Step 6a — `_run_pattern_a_engine` consumes `cache` + `call_cache_key`
+    kwargs and chains per-phase keys via `prev_accepted_output_hash`."""
+
+    def test_cache_none_retains_today_behavior(self):
+        """No `cache` arg → synthesizer called once per phase. Default
+        12-week open-ended standard mode yields 3 phases (Base/Build/Peak;
+        Taper rounds to 0 weeks under proportions 50/30/15/5 at this size)."""
+        stub = _CountingPhaseStub(_empty_phase_output())
+        result = llm_layer4_plan_create(
+            **_call_kwargs(),
+            phase_caller=stub,
+            seam_caller=_seam_stub_approved(),
+        )
+        assert isinstance(result, Layer4Payload)
+        assert result.phase_structure is not None
+        n_phases = len(result.phase_structure.phases)
+        assert stub.calls == n_phases
+
+    def test_cache_miss_then_store_per_phase(self):
+        """First call with cache: N synthesizer calls + N per-phase cache rows
+        (N = phase count)."""
+        cache = Layer4Cache(InMemoryCacheBackend())
+        stub = _CountingPhaseStub(_empty_phase_output())
+        result = llm_layer4_plan_create(
+            **_call_kwargs(),
+            cache=cache,
+            call_cache_key="call-abc",
+            phase_caller=stub,
+            seam_caller=_seam_stub_approved(),
+        )
+        assert isinstance(result, Layer4Payload)
+        assert result.phase_structure is not None
+        n_phases = len(result.phase_structure.phases)
+        assert stub.calls == n_phases
+        assert cache.metrics.phase_misses_total == n_phases
+        assert cache.metrics.phase_hits_total == 0
+        assert len(cache.backend) == n_phases  # per-phase rows only
+
+    def test_cache_hit_skips_synthesizer(self):
+        """Second call with same call_cache_key: 0 new synthesizer calls;
+        all phases hit."""
+        cache = Layer4Cache(InMemoryCacheBackend())
+        stub = _CountingPhaseStub(_empty_phase_output())
+
+        first = llm_layer4_plan_create(
+            **_call_kwargs(),
+            cache=cache,
+            call_cache_key="call-abc",
+            phase_caller=stub,
+            seam_caller=_seam_stub_approved(),
+        )
+        assert first.phase_structure is not None
+        n_phases = len(first.phase_structure.phases)
+        first_call_count = stub.calls
+
+        second = llm_layer4_plan_create(
+            **_call_kwargs(),
+            cache=cache,
+            call_cache_key="call-abc",
+            phase_caller=stub,
+            seam_caller=_seam_stub_approved(),
+        )
+        assert stub.calls == first_call_count
+        assert cache.metrics.phase_hits_total == n_phases
+        assert cache.metrics.phase_misses_total == n_phases
+        assert isinstance(second, Layer4Payload)
+        assert second.pattern == "A"
+
+    def test_cache_hit_preserves_synthesis_metadata(self):
+        """On per-phase cache hit, the SynthesisMetadata in PhaseStructure
+        keeps the original token counts from the cached pass (not zeros from
+        the hydrated PhaseSynthesisResult)."""
+        cache = Layer4Cache(InMemoryCacheBackend())
+        stub = _CountingPhaseStub(_empty_phase_output())
+
+        first = llm_layer4_plan_create(
+            **_call_kwargs(),
+            cache=cache,
+            call_cache_key="call-abc",
+            phase_caller=stub,
+            seam_caller=_seam_stub_approved(),
+        )
+        # Capture token counts from first call.
+        assert first.phase_structure is not None
+        first_phase_tokens = first.phase_structure.phases[0].synthesis_metadata.input_tokens
+        assert first_phase_tokens > 0  # synthesizer reported 6000
+
+        # Second call: cache hit; synthesis_metadata should match.
+        second = llm_layer4_plan_create(
+            **_call_kwargs(),
+            cache=cache,
+            call_cache_key="call-abc",
+            phase_caller=stub,
+            seam_caller=_seam_stub_approved(),
+        )
+        assert second.phase_structure is not None
+        second_phase_tokens = second.phase_structure.phases[
+            0
+        ].synthesis_metadata.input_tokens
+        assert second_phase_tokens == first_phase_tokens
+
+    def test_different_call_cache_key_misses(self):
+        """Different `call_cache_key` → fresh chain → all misses."""
+        cache = Layer4Cache(InMemoryCacheBackend())
+        stub = _CountingPhaseStub(_empty_phase_output())
+        first = llm_layer4_plan_create(
+            **_call_kwargs(),
+            cache=cache,
+            call_cache_key="call-A",
+            phase_caller=stub,
+            seam_caller=_seam_stub_approved(),
+        )
+        n_phases = len(first.phase_structure.phases)  # type: ignore[union-attr]
+        llm_layer4_plan_create(
+            **_call_kwargs(),
+            cache=cache,
+            call_cache_key="call-B",
+            phase_caller=stub,
+            seam_caller=_seam_stub_approved(),
+        )
+        assert stub.calls == 2 * n_phases
+        assert cache.metrics.phase_hits_total == 0
+        assert cache.metrics.phase_misses_total == 2 * n_phases
+
+    def test_cache_returns_byte_stable_output_across_callers(self):
+        """§9.2 cache key for phase 0 is `sha256(call_cache_key||'Base'||'0'||'')`
+        — deterministic against the call key. A second invocation with the
+        same call_cache_key but a DIFFERENT stub hits cache for phase 0 and
+        returns the original synthesized output, regardless of what the new
+        stub would have produced. Downstream phases also hit because the
+        chain hash is recomputed from the CACHED phase output."""
+        cache = Layer4Cache(InMemoryCacheBackend())
+        stub_a = _CountingPhaseStub(_empty_phase_output())
+        first = llm_layer4_plan_create(
+            **_call_kwargs(),
+            cache=cache,
+            call_cache_key="call-xyz",
+            phase_caller=stub_a,
+            seam_caller=_seam_stub_approved(),
+        )
+        n_phases = len(first.phase_structure.phases)  # type: ignore[union-attr]
+        assert stub_a.calls == n_phases
+
+        stub_b = _CountingPhaseStub(
+            _phase_output_with_sessions(phase_start=_PLAN_START, phase_weeks=1)
+        )
+        llm_layer4_plan_create(
+            **_call_kwargs(),
+            cache=cache,
+            call_cache_key="call-xyz",
+            phase_caller=stub_b,
+            seam_caller=_seam_stub_approved(),
+        )
+        assert stub_b.calls == 0  # all N phases hit cache; stub_b never invoked
+        assert cache.metrics.phase_hits_total == n_phases
+
+    def test_per_entry_point_label_routed_to_cache(self):
+        """plan_create routes phase rows to 'plan_create' entry_point label;
+        plan_refresh T3 cross-phase routes to 'plan_refresh'."""
+        cache = Layer4Cache(InMemoryCacheBackend())
+        stub = _CountingPhaseStub(_empty_phase_output())
+        llm_layer4_plan_create(
+            **_call_kwargs(),
+            cache=cache,
+            call_cache_key="call-abc",
+            phase_caller=stub,
+            seam_caller=_seam_stub_approved(),
+        )
+        # Inspect the backend's internal dict — all 4 entries should have
+        # entry_point='plan_create'.
+        backend: Any = cache.backend
+        entry_points = {e.entry_point for e in backend._rows.values()}
+        assert entry_points == {"plan_create"}
+
+
+# ─── Step 6b: ThreadPoolExecutor concurrency for iter-1 seam reviews ─────────
+
+
+class _RecordingExecutor:
+    """Drop-in for ThreadPoolExecutor.map that runs sequentially in-caller
+    thread but counts tasks submitted and tracks order. Tests use this to
+    verify the executor path is exercised."""
+
+    def __init__(self):
+        self.submitted_keys: list[Any] = []
+
+    def map(self, fn, iterable):
+        items = list(iterable)
+        self.submitted_keys.extend(items)
+        return [fn(item) for item in items]
+
+
+class TestSeamReviewConcurrency:
+    """Step 6b — iter-1 seam reviews fire in parallel via ThreadPoolExecutor
+    (or a caller-injected Executor). Iter-2 stays sequential per §6.2."""
+
+    def test_caller_injected_executor_used_for_multi_seam(self):
+        """Default 12-week open-ended plan has 3 phases (Base/Build/Peak),
+        2 seams → the caller-provided executor receives both iter-1 tasks
+        in seam_idx order."""
+        exe = _RecordingExecutor()
+        result = llm_layer4_plan_create(
+            **_call_kwargs(),
+            executor=exe,
+            phase_caller=_phase_stub(_empty_phase_output()),
+            seam_caller=_seam_stub_approved(),
+        )
+        assert isinstance(result, Layer4Payload)
+        # 2 seams (3 phases - 1).
+        assert exe.submitted_keys == [0, 1]
+
+    def test_single_seam_skips_executor_path(self):
+        """Single-seam plan (start_phase='Peak', 6wk horizon → 2 phases)
+        runs the one iter-1 task directly without the executor."""
+        exe = _RecordingExecutor()
+        result = llm_layer4_plan_create(
+            **{
+                **_call_kwargs(),
+                "layer3b_payload": _layer3b(
+                    start_phase="Peak", time_to_event_weeks=6
+                ),
+            },
+            race_event_payload=_race_event(weeks_out=6),
+            executor=exe,
+            phase_caller=_phase_stub(_empty_phase_output()),
+            seam_caller=_seam_stub_approved(),
+        )
+        assert isinstance(result, Layer4Payload)
+        # Single seam: caller-injected executor NOT used (executor only
+        # kicks in for >=2 seams).
+        assert exe.submitted_keys == []
+
+    def test_seam_reviews_returned_in_seam_idx_order(self):
+        """Even with parallel iter-1, SeamReview rows are sorted by
+        seam_index in the final Layer4Payload."""
+
+        def _seam_caller(*_a, **_kw) -> _SeamOut:
+            return _SeamOut(
+                tool_args={
+                    "reviewer_verdict": "approved",
+                    "seam_issues": [],
+                    "proposed_patch_direction": None,
+                },
+                input_tokens=2000,
+                output_tokens=100,
+                latency_ms=2500,
+            )
+
+        result = llm_layer4_plan_create(
+            **_call_kwargs(),
+            phase_caller=_phase_stub(_empty_phase_output()),
+            seam_caller=_seam_caller,
+        )
+        assert result.seam_reviews is not None
+        # Default 3-phase plan → 2 seams in index order.
+        assert [sr.seam_index for sr in result.seam_reviews] == [0, 1]
+
+    def test_default_executor_used_when_none_supplied(self):
+        """`executor=None` → internal ThreadPoolExecutor handles iter-1.
+        Verify the call completes (no missing-arg / thread-leak errors)."""
+        result = llm_layer4_plan_create(
+            **_call_kwargs(),
+            phase_caller=_phase_stub(_empty_phase_output()),
+            seam_caller=_seam_stub_approved(),
+        )
+        assert isinstance(result, Layer4Payload)
+        assert result.seam_reviews is not None
+        # 3 phases → 2 seams.
+        assert len(result.seam_reviews) == 2
+
+    def test_iter1_parallel_iter2_sequential_with_resynth(self):
+        """Iter-1 fires in parallel; iter-2 (post-resynth) is sequential.
+        Inject a sequential RecordingExecutor so stub call-order is
+        deterministic: call 1 = seam 0 iter-1 (flagged_major), call 2 =
+        seam 1 iter-1 (approved), call 3 = seam 0 iter-2 (approved after
+        re-synth)."""
+        state = {"count": 0}
+
+        def _seam_caller(*_a, **_kw) -> _SeamOut:
+            state["count"] += 1
+            if state["count"] == 1:
+                return _SeamOut(
+                    tool_args={
+                        "reviewer_verdict": "flagged_major",
+                        "seam_issues": ["Build entry mismatched"],
+                        "proposed_patch_direction": "re_prompt_next",
+                    },
+                    input_tokens=2000,
+                    output_tokens=100,
+                    latency_ms=2500,
+                )
+            return _SeamOut(
+                tool_args={
+                    "reviewer_verdict": "approved",
+                    "seam_issues": [],
+                    "proposed_patch_direction": None,
+                },
+                input_tokens=2000,
+                output_tokens=100,
+                latency_ms=2500,
+            )
+
+        result = llm_layer4_plan_create(
+            **_call_kwargs(),
+            executor=_RecordingExecutor(),  # sequential => deterministic order
+            phase_caller=_phase_stub(_empty_phase_output()),
+            seam_caller=_seam_caller,
+        )
+        assert isinstance(result, Layer4Payload)
+        # 2 iter-1 calls (parallel) + 1 iter-2 (only seam 0 flagged) = 3.
+        assert state["count"] == 3
+        assert result.seam_reviews is not None
+        assert result.seam_reviews[0].triggered_resynthesis is True
+        # Seam 1 iter-1 was approved → no re-synth on it.
+        assert result.seam_reviews[1].triggered_resynthesis is False
+
+
+# ─── Step 6a + 6b combined: cached_wrapper threads cache + executor ──────────
+
+
+class TestCachedWrapperThreadsCacheAndExecutor:
+    """The cached entry-point wrapper (plan_create) should thread `cache` +
+    `executor` down to `_run_pattern_a_engine`."""
+
+    def test_wrapper_engages_per_phase_cache(self):
+        from layer4 import llm_layer4_plan_create_cached
+
+        cache = Layer4Cache(InMemoryCacheBackend())
+        stub = _CountingPhaseStub(_empty_phase_output())
+        kwargs = _call_kwargs()
+        result = llm_layer4_plan_create_cached(
+            user_id=kwargs["user_id"],
+            layer1_payload=kwargs["layer1_payload"],
+            layer2a_payload=kwargs["layer2a_payload"],
+            layer2b_payload=kwargs["layer2b_payload"],
+            layer2c_payloads=kwargs["layer2c_payloads"],
+            layer2d_payload=kwargs["layer2d_payload"],
+            layer2e_payload=kwargs["layer2e_payload"],
+            layer3a_payload=kwargs["layer3a_payload"],
+            layer3b_payload=kwargs["layer3b_payload"],
+            plan_start_date=kwargs["plan_start_date"],
+            plan_version_id=kwargs["plan_version_id"],
+            etl_version_set=kwargs["etl_version_set"],
+            cache=cache,
+            phase_caller=stub,
+            seam_caller=_seam_stub_approved(),
+        )
+        assert isinstance(result, Layer4Payload)
+        assert result.phase_structure is not None
+        n_phases = len(result.phase_structure.phases)
+        # N per-phase misses + 1 per-entry miss.
+        assert cache.metrics.misses_total == 1
+        assert cache.metrics.phase_misses_total == n_phases
+        backend: Any = cache.backend
+        assert len(backend) == n_phases + 1  # per-entry row + N per-phase rows
+
+    def test_wrapper_full_hit_skips_all_llm_calls(self):
+        from layer4 import llm_layer4_plan_create_cached
+
+        cache = Layer4Cache(InMemoryCacheBackend())
+        stub = _CountingPhaseStub(_empty_phase_output())
+        kwargs = _call_kwargs()
+        kwargs_call = dict(
+            user_id=kwargs["user_id"],
+            layer1_payload=kwargs["layer1_payload"],
+            layer2a_payload=kwargs["layer2a_payload"],
+            layer2b_payload=kwargs["layer2b_payload"],
+            layer2c_payloads=kwargs["layer2c_payloads"],
+            layer2d_payload=kwargs["layer2d_payload"],
+            layer2e_payload=kwargs["layer2e_payload"],
+            layer3a_payload=kwargs["layer3a_payload"],
+            layer3b_payload=kwargs["layer3b_payload"],
+            plan_start_date=kwargs["plan_start_date"],
+            plan_version_id=kwargs["plan_version_id"],
+            etl_version_set=kwargs["etl_version_set"],
+            cache=cache,
+            phase_caller=stub,
+            seam_caller=_seam_stub_approved(),
+        )
+        first = llm_layer4_plan_create_cached(**kwargs_call)
+        assert first.phase_structure is not None
+        n_phases = len(first.phase_structure.phases)
+        first_calls = stub.calls
+        assert first_calls == n_phases
+
+        # Second call: per-entry cache hits → synthesizer never invoked
+        # (per-phase caches not even consulted; the top-level get_or_synthesize
+        # short-circuits before _run_pattern_a_engine fires).
+        llm_layer4_plan_create_cached(**kwargs_call)
+        assert stub.calls == first_calls
+        assert cache.metrics.hits_total == 1
+

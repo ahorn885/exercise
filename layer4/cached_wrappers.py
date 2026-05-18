@@ -22,6 +22,7 @@ here just handles the top-level per-entry cache.
 
 from __future__ import annotations
 
+from concurrent.futures import Executor
 from datetime import date as _date_type
 from typing import Any, Callable
 
@@ -202,6 +203,7 @@ def llm_layer4_plan_refresh_cached(
     llm_caller: Callable | None = None,
     phase_caller: Any | None = None,
     seam_caller: Any | None = None,
+    executor: Executor | None = None,
 ) -> Layer4Payload:
     """Per-entry cache wrapper around `llm_layer4_plan_refresh`.
 
@@ -272,6 +274,9 @@ def llm_layer4_plan_refresh_cached(
             llm_caller=llm_caller,
             phase_caller=phase_caller,
             seam_caller=seam_caller,
+            cache=cache,
+            call_cache_key=key,
+            executor=executor,
         )
 
     return cache.get_or_synthesize(
@@ -312,6 +317,7 @@ def llm_layer4_plan_create_cached(
     seam_thinking_budget: int | None = None,
     phase_caller: Any | None = None,
     seam_caller: Any | None = None,
+    executor: Executor | None = None,
 ) -> Layer4Payload:
     """Per-entry cache wrapper around `llm_layer4_plan_create`.
 
@@ -355,10 +361,11 @@ def llm_layer4_plan_create_cached(
     )
 
     # Build the synthesizer kwargs — pass None defaults through to let the
-    # entry point pick its module-level constants. We don't forward `cache`
-    # to the underlying entry point in v1; per-phase cache wiring is a
-    # follow-on PR (§9.2). The per-entry cache layer here is the
-    # load-bearing piece.
+    # entry point pick its module-level constants. Step 6a (this session)
+    # wires the §9.2 per-phase cache by passing `cache=cache, call_cache_key
+    # =key` through to `_run_pattern_a_engine`. The per-phase chain rolls
+    # forward inside the engine via `compute_phase_cache_key` + the
+    # `prev_accepted_output_hash` running variable.
     def _synthesize() -> Layer4Payload:
         kwargs: dict[str, Any] = {
             "race_event_payload": race_event_payload,
@@ -368,6 +375,9 @@ def llm_layer4_plan_create_cached(
             "capped_retries_per_phase": capped_retries_per_phase,
             "phase_caller": phase_caller,
             "seam_caller": seam_caller,
+            "cache": cache,
+            "call_cache_key": key,
+            "executor": executor,
         }
         if max_tokens_per_phase is not None:
             kwargs["max_tokens_per_phase"] = max_tokens_per_phase

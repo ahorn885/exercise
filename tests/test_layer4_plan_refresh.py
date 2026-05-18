@@ -877,6 +877,105 @@ class TestInputValidation:
         assert result.phase_structure is not None
         assert result.seam_reviews is not None
 
+    def test_t3_cross_phase_threads_cache_through_to_per_phase(self):
+        """Step 6a: cache + call_cache_key thread from plan_refresh entry
+        point through `_route_t3_cross_phase_to_pattern_a` →
+        `synthesize_pattern_a_for_refresh` → `_run_pattern_a_engine`. The
+        per-phase cache populates with `entry_point='plan_refresh'`."""
+        from layer4 import InMemoryCacheBackend, Layer4Cache
+        from layer4.per_phase import _SynthesizerOutput as _PhaseOut
+        from layer4.seam_review import _SeamReviewerOutput as _SeamOut
+
+        plan_start = _T2_START - timedelta(days=35)
+        call_count = {"phase": 0, "seam": 0}
+
+        def phase_stub(*_a, **_kw) -> _PhaseOut:
+            call_count["phase"] += 1
+            return _PhaseOut(
+                tool_args={
+                    "sessions": [],
+                    "phase_synthesis_notes": "rest week pull-back.",
+                    "opportunities": [],
+                },
+                input_tokens=4000,
+                output_tokens=200,
+                latency_ms=5000,
+            )
+
+        def seam_stub(*_a, **_kw) -> _SeamOut:
+            call_count["seam"] += 1
+            return _SeamOut(
+                tool_args={
+                    "reviewer_verdict": "approved",
+                    "seam_issues": [],
+                    "proposed_patch_direction": None,
+                },
+                input_tokens=2000,
+                output_tokens=100,
+                latency_ms=2500,
+            )
+
+        cache = Layer4Cache(InMemoryCacheBackend())
+        # First call populates the per-phase cache.
+        first = llm_layer4_plan_refresh(
+            user_id=42,
+            tier="T3",
+            refresh_scope_start=_T2_START,
+            refresh_scope_end=_T2_START + timedelta(days=27),
+            layer1_payload=_layer1(),
+            layer2_bundle=_layer2_bundle(),
+            layer3a_payload=_layer3a(),
+            layer3b_payload=_layer3b(start_phase="Base"),
+            prior_plan_session_window=_prior_window(
+                _T2_START, _T2_START + timedelta(days=27), pre_days=14, post_days=7
+            ),
+            parsed_intent=None,
+            plan_version_id=2,
+            plan_version_id_parent=1,
+            etl_version_set={"layer0": "v7"},
+            plan_start_date=plan_start,
+            phase_caller=phase_stub,
+            seam_caller=seam_stub,
+            cache=cache,
+            call_cache_key="t3-cross-phase-abc",
+        )
+        assert isinstance(first, Layer4Payload)
+        first_phase_calls = call_count["phase"]
+        assert first_phase_calls >= 1  # cross-phase synthesizes at least 1 phase
+        assert cache.metrics.phase_misses_total == first_phase_calls
+
+        # Verify per-phase rows are tagged 'plan_refresh' entry_point.
+        backend = cache.backend
+        entry_points = {e.entry_point for e in backend._rows.values()}  # type: ignore[attr-defined]
+        assert entry_points == {"plan_refresh"}
+
+        # Second call hits the per-phase cache.
+        llm_layer4_plan_refresh(
+            user_id=42,
+            tier="T3",
+            refresh_scope_start=_T2_START,
+            refresh_scope_end=_T2_START + timedelta(days=27),
+            layer1_payload=_layer1(),
+            layer2_bundle=_layer2_bundle(),
+            layer3a_payload=_layer3a(),
+            layer3b_payload=_layer3b(start_phase="Base"),
+            prior_plan_session_window=_prior_window(
+                _T2_START, _T2_START + timedelta(days=27), pre_days=14, post_days=7
+            ),
+            parsed_intent=None,
+            plan_version_id=3,
+            plan_version_id_parent=1,
+            etl_version_set={"layer0": "v7"},
+            plan_start_date=plan_start,
+            phase_caller=phase_stub,
+            seam_caller=seam_stub,
+            cache=cache,
+            call_cache_key="t3-cross-phase-abc",
+        )
+        # No new phase synthesizer calls (all hit).
+        assert call_count["phase"] == first_phase_calls
+        assert cache.metrics.phase_hits_total == first_phase_calls
+
 
 # ─── T3 intra-phase Pattern B (Step 4d) ──────────────────────────────────────
 
