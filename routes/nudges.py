@@ -1,14 +1,26 @@
-"""14-day connect-provider nudge + dismissable banner plumbing (v5 §A.2.4).
+"""Account-nudge banner plumbing (v5 §A.2.4 + D-66 onboarding skip nudges).
 
-PR9 / Option E of the v5 onboarding implementation arc. Closes the last
-unshipped v5 onboarding mechanic: athletes who skip provider connection
-at Step 2 (or just don't connect anything within 14 days) see a single
-passive in-app banner pointing them at `/onboarding/connect`. Dismissable;
-one-shot, no escalation. Stored as a row in `account_nudges` with
-`nudge_type='connect_provider_14d'`. UNIQUE on `(user_id, nudge_type)`
-makes the scanner idempotent — re-runs INSERT … ON CONFLICT DO NOTHING.
+Two writer patterns now feed `account_nudges`:
 
-Two surfaces:
+1. **Insert-delayed** (PR9 / `connect_provider_14d`): cron INSERTs the
+   row 14 days after account creation. Banner displays immediately on
+   the next page load. No display-delay applied on read.
+2. **Insert-immediate, display-delayed** (D-66 onboarding skip nudges
+   `target_race_skipped` + `route_locales_incomplete`): the skip
+   handler in `routes/onboarding.py` writes the row at skip-time
+   (synchronous with the athlete's click). The banner is suppressed by
+   `get_active_nudges` until `display_delay_days` have elapsed since
+   `created_at` — gives the athlete a grace window before nudging.
+
+The registry entry per-nudge_type declares which pattern applies via
+`display_delay_days` (default 0 — banner displays as soon as the row
+exists). Both patterns coexist because PR9's 14-day-after-account-age
+eligibility is a property of the candidate population (a wider-than-14d
+account that lacks any provider), whereas D-66's 14-day-after-skip
+delay is a property of the individual nudge event (gives the athlete
+time to come back on their own before reminding).
+
+Surfaces:
 
 1. `GET /cron/nudges/connect_provider_14d` — token-gated daily scanner.
    Vercel Cron hits this with `Authorization: Bearer $CRON_SECRET`.
@@ -27,6 +39,7 @@ context processor in `app.py`. PG-only — `account_nudges` is in
 
 import hmac
 import os
+from datetime import datetime, timezone
 
 from flask import (
     Blueprint, request, redirect, url_for, abort, jsonify,
@@ -42,6 +55,14 @@ bp = Blueprint('nudges', __name__)
 # Per-`nudge_type` UI metadata. The banner partial reads this overlay
 # from `get_active_nudges`; adding a new nudge_type means adding an
 # entry here (and a writer somewhere that inserts the row).
+#
+# `display_delay_days` (optional, default 0) suppresses the banner
+# until that many days have elapsed since `created_at`. Use a nonzero
+# value when the row is written synchronously with the trigger event
+# (e.g., D-66 onboarding skip nudges) and the athlete should get a
+# grace window before being reminded. Leave at 0 (default) when the
+# writer already gated insertion on a time condition (e.g., PR9's
+# cron that only inserts after 14 days of account age).
 NUDGE_REGISTRY = {
     'connect_provider_14d': {
         'message': (
@@ -52,7 +73,46 @@ NUDGE_REGISTRY = {
         'cta_endpoint': 'onboarding.connect',
         'category': 'info',
     },
+    'target_race_skipped': {
+        'message': (
+            "You skipped picking a target race during onboarding. "
+            "Adding one unlocks race-week brief generation."
+        ),
+        'cta_label': 'Set a target race',
+        'cta_endpoint': 'onboarding.target_race',
+        'category': 'info',
+        'display_delay_days': 14,
+    },
+    'route_locales_incomplete': {
+        'message': (
+            "Your target race is multi-day but the route locales aren't "
+            "filled in yet. Add start/finish + aid stations so your "
+            "race-week brief can include per-segment pacing + kit."
+        ),
+        'cta_label': 'Add route locales',
+        'cta_endpoint': 'onboarding.route_locales',
+        'category': 'info',
+        'display_delay_days': 14,
+    },
 }
+
+
+def _past_display_delay(created_at, delay_days):
+    """True iff `created_at` is at least `delay_days` days in the past.
+
+    Treats null `created_at` (legacy rows pre-dating the column default)
+    as "very old" so display proceeds — fail-open mirrors the cron-side
+    null handling. `delay_days` of 0 always returns True (no delay).
+    The `account_nudges.created_at` column is `TIMESTAMP` (naive) per
+    init_db.py; we attach UTC to compare safely against `datetime.now`.
+    """
+    if delay_days <= 0:
+        return True
+    if created_at is None:
+        return True
+    if isinstance(created_at, datetime) and created_at.tzinfo is None:
+        created_at = created_at.replace(tzinfo=timezone.utc)
+    return (datetime.now(timezone.utc) - created_at).days >= delay_days
 
 
 def get_active_nudges(db, uid):
@@ -64,6 +124,11 @@ def get_active_nudges(db, uid):
     message — a future writer that lands a new type before this
     registry catches up produces an ugly-but-visible banner rather
     than a silent miss.
+
+    Nudges with `display_delay_days` set in the registry are suppressed
+    until that many days after `created_at`. Unknown nudge_types
+    inherit the 0-delay default (display immediately) since we don't
+    know the writer pattern.
 
     Empty when `uid` is falsy so the context processor is safe to call
     on logged-out pages.
@@ -84,11 +149,13 @@ def get_active_nudges(db, uid):
             'cta_endpoint': None,
             'category': 'info',
         })
+        if not _past_display_delay(r['created_at'], entry.get('display_delay_days', 0)):
+            continue
         out.append({
             'id': r['id'],
             'nudge_type': r['nudge_type'],
             'created_at': r['created_at'],
-            **entry,
+            **{k: v for k, v in entry.items() if k != 'display_delay_days'},
         })
     return out
 
