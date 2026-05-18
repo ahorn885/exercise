@@ -9,9 +9,10 @@ package implements:
   cache-key helpers per §9.1.
 - `context.py` — typed pydantic v2 mirrors of the upstream contracts Layer 4
   consumes (Layer 2A / 2B / 2C / 2D / 2E / 3A / 3B / DailyAvailabilityWindow
-  / RaceEventStub / PerDateRestriction). Includes AccommodationModality
+  / RaceEventPayload / PerDateRestriction). Includes AccommodationModality
   discriminated-union per the 2026-05-17 PR-C-followon amendment to
-  Layer 2D §5.3.6 + Layer 2C §5.6.
+  Layer 2D §5.3.6 + Layer 2C §5.6 + the 2026-05-18 D-66 race-event data model
+  per `Race_Events_D66_Design_v1.md` §4.
 
 Domain-level training-load / ACWR / injury rules live in the §5.4 validator
 harness (Step 3 PR-E of §14.3.4), not here.
@@ -67,8 +68,12 @@ from layer4.context import (
     PhaseLoadBands,
     RaceDayFueling,
     RaceDaySupplementSuggestion,
-    RaceEventStub,
+    RaceEventPayload,
+    RaceFormat,
     RaceTerrainOutput,
+    RouteLocale,
+    RouteLocaleEquipment,
+    RouteLocaleRole,
     RationaleMetadata,
     RecentTrajectory,
     ResolutionDetail,
@@ -109,6 +114,10 @@ from layer4.phase_structure import (
 from layer4.plan_refresh import (
     build_record_refresh_sessions_tool,
     llm_layer4_plan_refresh,
+)
+from layer4.race_week_brief import (
+    build_record_race_week_brief_tool,
+    llm_layer4_race_week_brief,
 )
 from layer4.single_session import (
     SingleSessionRequest,
@@ -270,7 +279,12 @@ __all__ = [
     # Onboarding / forward-pointers
     "DailyAvailabilityWindow",
     "PerDateRestriction",
-    "RaceEventStub",
+    # Race events (D-66 design wave 2026-05-18)
+    "RaceEventPayload",
+    "RaceFormat",
+    "RouteLocale",
+    "RouteLocaleEquipment",
+    "RouteLocaleRole",
     # Plan-refresh inputs (context.py)
     "ParsedIntent",
     # Validator harness (validator.py)
@@ -291,4 +305,7 @@ __all__ = [
     "SingleSessionRequest",
     "build_record_single_session_tool",
     "llm_layer4_single_session_synthesize",
+    # Race-week brief synthesizer (race_week_brief.py)
+    "build_record_race_week_brief_tool",
+    "llm_layer4_race_week_brief",
 ]

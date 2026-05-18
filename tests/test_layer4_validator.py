@@ -47,7 +47,7 @@ from layer4 import (
     PhaseStructure,
     PlanSession,
     RPETarget,
-    RaceEventStub,
+    RaceEventPayload,
     RacePlan,
     RaceSegment,
     RaceWeekBrief,
@@ -1564,7 +1564,9 @@ def test_kit_manifest_inputs_incomplete_skipped_for_single_day():
     assert not any(f.rule_name == "kit_manifest_inputs_incomplete" for f in failures)
 
 
-def test_kit_manifest_inputs_incomplete_warns_on_multi_day():
+def test_kit_manifest_inputs_incomplete_skipped_when_race_event_none():
+    """D-66 active branch (Layer4_Spec.md §5.4 line 912): rule skips when
+    `ctx.race_event is None`. Replaces the pre-D-66 always-warn behavior."""
     event_date = _SCOPE_START + timedelta(days=5)
     payload = _minimal_layer4(
         mode="race_week_brief",
@@ -1580,7 +1582,45 @@ def test_kit_manifest_inputs_incomplete_warns_on_multi_day():
         race_plan=_race_plan_multi_day(),
     )
     failures = validate_layer4_payload(payload, ValidatorContext()).rule_failures
-    km = [f for f in failures if f.rule_name == "kit_manifest_inputs_incomplete"]
+    assert not any(
+        f.rule_name.startswith("kit_manifest_inputs_incomplete") for f in failures
+    )
+
+
+def test_kit_manifest_inputs_incomplete_no_route_locales_warns():
+    """D-66 active branch: emit `kit_manifest_inputs_incomplete_no_route_locales`
+    when route_locales empty."""
+    event_date = _SCOPE_START + timedelta(days=5)
+    payload = _minimal_layer4(
+        mode="race_week_brief",
+        pattern="B",
+        sessions=[
+            _cardio_session(phase_metadata=_phase_metadata(phase="Taper"))
+        ],
+        race_week_brief=_race_week_brief(
+            event_date=event_date,
+            race_format="expedition_ar",
+            contingencies=["gi", "hydration", "mechanical", "nav", "sleep_dep", "weather"],
+        ),
+        race_plan=_race_plan_multi_day(),
+    )
+    race_event = RaceEventPayload(
+        race_event_id=1,
+        user_id=1,
+        name="Test Race",
+        event_date=event_date,
+        race_format="expedition_ar",
+        is_target_event=True,
+        route_locales=[],
+    )
+    failures = validate_layer4_payload(
+        payload, ValidatorContext(race_event=race_event)
+    ).rule_failures
+    km = [
+        f
+        for f in failures
+        if f.rule_name == "kit_manifest_inputs_incomplete_no_route_locales"
+    ]
     assert km
     assert km[0].severity == "warning"
 

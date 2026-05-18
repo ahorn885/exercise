@@ -11,8 +11,11 @@ See:
 - `aidstation-sources/Layer3_3A_Spec.md` §7 → `Layer3APayload`
 - `aidstation-sources/Layer3_3B_Spec.md` §7 → `Layer3BPayload`
 - `aidstation-sources/Athlete_Onboarding_Data_Spec_v5.md` §G.1 → `DailyAvailabilityWindow`
-- `Layer4_Spec.md` §5.4 forward-pointers — `RaceEventStub` (pending D-66),
-  `PerDateRestriction` (pending D-67; always-empty in v1).
+- `aidstation-sources/Race_Events_D66_Design_v1.md` §4 → `RaceEventPayload`
+  + `RouteLocale` + `RouteLocaleEquipment` + `RaceFormat` + `RouteLocaleRole`
+  (D-66 design wave shipped 2026-05-18; replaces v1 RaceEventStub placeholder).
+- `Layer4_Spec.md` §5.4 forward-pointer — `PerDateRestriction` (pending D-67;
+  always-empty in v1).
 
 All models reject unknown keys (`extra='forbid'`) so untrusted upstream output
 that drifts from the schema raises at construction. Domain-level rules
@@ -22,7 +25,8 @@ in the Layer 4 §5.4 validator harness, not here.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
+from decimal import Decimal
 from typing import Annotated, Any, Literal, Union
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -780,12 +784,46 @@ class Layer3BPayload(_Base):
     hitl_surface: list[Layer3BHITLItem]
     notable_observations: list[Layer3Observation] = Field(max_length=6)
 
+    # ─── Event metadata (D-66 amendment 2026-05-18) ──────────────────────
+    # Sourced from `race_events WHERE user_id=? AND is_target_event=true`
+    # per `Race_Events_D66_Design_v1.md` §8 (Layer 3B reads the target row).
+    # All four fields are None when `mode == 'no-event'`. When `mode ==
+    # 'event'`, populated fields drive Layer 4 race-week-brief §4.5
+    # preconditions + Layer 3B's mode='event' periodization decisions.
+    # Paired `Layer3_3B_Spec.md` §7 amendment lands in the same session.
+    event_date: date | None = None
+    event_locale_id: str | None = None
+    race_format: (
+        Literal["single_day", "expedition_ar", "stage_race", "multi_day_ultra"] | None
+    ) = None
+    time_to_event_weeks: int | None = Field(default=None, ge=0)
+
     @model_validator(mode="after")
     def _check_hitl_unique_labels(self) -> "Layer3BPayload":
         # §7 schema rule: hitl_surface items have unique item_label.
         labels = [h.item_label for h in self.hitl_surface]
         if len(labels) != len(set(labels)):
             raise ValueError("hitl_surface item_labels must be unique")
+        return self
+
+    @model_validator(mode="after")
+    def _check_event_mode_consistency(self) -> "Layer3BPayload":
+        # D-66 schema rule: when mode == 'no-event', all 4 event-metadata
+        # fields are None. When mode == 'event', the orchestrator populates
+        # the fields from the target race_events row; None still tolerated
+        # for the partial-build case (race row exists but distance/locale
+        # not yet set by the athlete). Defensive consistency check only.
+        if self.mode == "no-event":
+            if (
+                self.event_date is not None
+                or self.event_locale_id is not None
+                or self.race_format is not None
+                or self.time_to_event_weeks is not None
+            ):
+                raise ValueError(
+                    "mode=='no-event' requires event_date / event_locale_id / "
+                    "race_format / time_to_event_weeks all None"
+                )
         return self
 
 
@@ -841,16 +879,93 @@ class DailyAvailabilityWindow(_Base):
         return self
 
 
-# ─── RaceEventStub (minimal v1; full schema pending D-66) ────────────────────
+# ─── RaceEventPayload (D-66 design wave 2026-05-18) ──────────────────────────
+#
+# Replaces the v1 RaceEventStub placeholder. Mirrors the new PG tables
+# `race_events` + `race_route_locales` + `race_route_locale_equipment` per
+# `Race_Events_D66_Design_v1.md` §3; consumed by `llm_layer4_race_week_brief`
+# per `Layer4_Spec.md` §3.4 amendment. Orchestrator-side join reads from
+# `race_events WHERE user_id=? AND is_target_event=true LIMIT 1` per design
+# doc §10.
 
 
-class RaceEventStub(_Base):
-    event_name: str
-    event_date: datetime
-    race_format: Literal[
-        "single_day", "expedition_ar", "stage_race", "multi_day_ultra"
-    ]
-    event_locale_id: str | None = None
+RaceFormat = Literal["single_day", "expedition_ar", "stage_race", "multi_day_ultra"]
+RouteLocaleRole = Literal[
+    "start",
+    "transition_area",
+    "aid_station",
+    "drop_bag_point",
+    "bivvy",
+    "finish",
+    "other",
+]
+
+
+class RouteLocaleEquipment(_Base):
+    equipment_name: str = Field(..., min_length=1, max_length=160)
+    quantity_text: str | None = Field(default=None, max_length=80)
+    notes: str | None = Field(default=None, max_length=400)
+
+
+class RouteLocale(_Base):
+    route_locale_id: int  # FK to race_route_locales(id)
+    role: RouteLocaleRole
+    sequence_idx: int = Field(..., ge=1)
+    name: str = Field(..., min_length=1, max_length=160)
+    mile_marker: Decimal | None = Field(default=None, ge=0)
+    lat: Decimal | None = None
+    lng: Decimal | None = None
+    mapbox_id: str | None = Field(default=None, max_length=200)
+    notes: str | None = Field(default=None, max_length=800)
+    equipment: list[RouteLocaleEquipment] = Field(default_factory=list)
+
+
+class RaceEventPayload(_Base):
+    race_event_id: int
+    user_id: int
+    name: str = Field(..., min_length=1, max_length=200)
+    event_date: date
+    race_format: RaceFormat
+    distance_km: Decimal | None = Field(default=None, ge=0)
+    total_elevation_gain_m: Decimal | None = Field(default=None, ge=0)
+    race_rules_summary: str | None = Field(default=None, max_length=8000)
+    mandatory_gear_text: str | None = Field(default=None, max_length=8000)
+    event_locale_id: int | None = None
+    is_target_event: bool
+    notes: str | None = Field(default=None, max_length=2000)
+    route_locales: list[RouteLocale] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _check_route_locales_invariants(self) -> "RaceEventPayload":
+        # §4.2 structural invariants from Race_Events_D66_Design_v1.md:
+        # (1) sequence_idx unique within the payload's route_locales list.
+        # (2) sorted ascending by sequence_idx (caller-side sort guaranteed
+        #     by the orchestrator-side ORDER BY clause; defensive here).
+        # (3) when non-empty: first role == 'start' AND last role == 'finish'
+        #     (caller-side check; empty route_locales legal and surfaces via
+        #     validator rule `kit_manifest_inputs_incomplete_no_route_locales`).
+        if not self.route_locales:
+            return self
+        seq_ids = [rl.sequence_idx for rl in self.route_locales]
+        if len(seq_ids) != len(set(seq_ids)):
+            raise ValueError(
+                "RaceEventPayload.route_locales sequence_idx values must be unique"
+            )
+        if seq_ids != sorted(seq_ids):
+            raise ValueError(
+                "RaceEventPayload.route_locales must be sorted ascending by sequence_idx"
+            )
+        if self.route_locales[0].role != "start":
+            raise ValueError(
+                "RaceEventPayload.route_locales first entry must have role=='start' "
+                "when route_locales non-empty"
+            )
+        if self.route_locales[-1].role != "finish":
+            raise ValueError(
+                "RaceEventPayload.route_locales last entry must have role=='finish' "
+                "when route_locales non-empty"
+            )
+        return self
 
 
 # ─── PerDateRestriction (placeholder pending D-67; always-empty in v1) ───────

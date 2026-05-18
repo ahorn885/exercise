@@ -57,7 +57,7 @@ from layer4.context import (
     Layer3BPayload,
     LoadingTypeChangeModality,
     PerDateRestriction,
-    RaceEventStub,
+    RaceEventPayload,
     TempoModificationModality,
     VolumeReductionModality,
 )
@@ -108,7 +108,7 @@ class ValidatorContext:
     layer3a_payload: Layer3APayload | None = None
     layer3b_payload: Layer3BPayload | None = None
     daily_availability_windows: tuple[DailyAvailabilityWindow, ...] = ()
-    race_event: RaceEventStub | None = None
+    race_event: RaceEventPayload | None = None
     per_date_restrictions: tuple[PerDateRestriction, ...] = ()
     prior_session_loads_by_date: dict[date, float] | None = None
 
@@ -1010,26 +1010,46 @@ def _rule_taper_phase_intent_violation(
 def _rule_kit_manifest_inputs_incomplete(
     payload: Layer4Payload, ctx: ValidatorContext
 ) -> list[RuleFailure]:
+    # D-66 active branch (Layer4_Spec.md §5.4 + Race_Events_D66_Design_v1.md §5.4):
+    # skip when ctx.race_event is None OR race_format == 'single_day';
+    # emit `kit_manifest_inputs_incomplete_no_route_locales` when route_locales
+    # empty; emit `kit_manifest_inputs_incomplete_no_route_locale_equipment` when
+    # route_locales populated but all `equipment` lists empty; pass when at least
+    # one route_locale has equipment populated.
     if payload.mode != "race_week_brief":
         return []
-    if payload.race_week_brief is None or payload.race_week_brief.race_format == "single_day":
+    if ctx.race_event is None:
         return []
-    # Pre-D-66: athletes have no UI to populate route-locale equipment_overrides
-    # for transition areas / aid stations / drop bags; the spec's intent is
-    # always-warn until D-66 ships. v1 implementation emits the warn directly
-    # (D-66 forward-compat: when route-locale data lands, this rule consults it).
-    return [
-        RuleFailure(
-            rule_name="kit_manifest_inputs_incomplete",
-            phase_name=None,
-            severity="warning",
-            detail=(
-                f"race_format=={payload.race_week_brief.race_format}: route-locale equipment_overrides "
-                "data not populated (pre-D-66: athletes have no UI; warn + data_gap is correct behavior)"
-            ),
-            affected_session_ids=[],
-        )
-    ]
+    if ctx.race_event.race_format == "single_day":
+        return []
+    if not ctx.race_event.route_locales:
+        return [
+            RuleFailure(
+                rule_name="kit_manifest_inputs_incomplete_no_route_locales",
+                phase_name=None,
+                severity="warning",
+                detail=(
+                    f"race_format=={ctx.race_event.race_format}: route_locales empty; "
+                    "kit_manifest synthesis degraded to free-text gear list only"
+                ),
+                affected_session_ids=[],
+            )
+        ]
+    if all(not rl.equipment for rl in ctx.race_event.route_locales):
+        return [
+            RuleFailure(
+                rule_name="kit_manifest_inputs_incomplete_no_route_locale_equipment",
+                phase_name=None,
+                severity="warning",
+                detail=(
+                    f"race_format=={ctx.race_event.race_format}: "
+                    f"{len(ctx.race_event.route_locales)} route_locales populated but "
+                    "no per-locale equipment items; kit_manifest synthesis degraded"
+                ),
+                affected_session_ids=[],
+            )
+        ]
+    return []
 
 
 # ─── Rule 16: race_plan_segments_unordered ─────────────────────────────────
@@ -1074,9 +1094,10 @@ def _rule_fueling_strategy_2e_tier_mismatch(
     rdfs = ctx.layer2e_payload.race_day_fueling
     if not rdfs:
         return []
-    # Match RaceDayFueling by event_name — v1 RaceEventStub doesn't carry an
-    # event_id reference into 2E; use the first entry as a defensive fallback
-    # when none match by name.
+    # Match RaceDayFueling by event_name — race_event_payload's name lives
+    # on ctx.race_event when populated; on this output-side rule the
+    # canonical match is against payload.race_plan.race_name; use the first
+    # entry as a defensive fallback when none match by name.
     rdf = next(
         (r for r in rdfs if r.event_name == payload.race_plan.race_name),
         rdfs[0],

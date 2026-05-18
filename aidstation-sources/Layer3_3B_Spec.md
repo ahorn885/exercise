@@ -278,6 +278,21 @@ class Layer3BPayload:
     # ─── Observations (downstream-actionable notes) ───────────────────
     notable_observations: list[Observation]
 
+    # ─── Event metadata (D-66 paired amendment 2026-05-18) ────────────
+    # Sourced from `race_events WHERE user_id=? AND is_target_event=true`
+    # per `Race_Events_D66_Design_v1.md` §8 (Layer 3B reads the target row).
+    # All four fields are None when `mode == 'no-event'`. When `mode ==
+    # 'event'`, populated fields drive Layer 4 race-week-brief §4.5
+    # preconditions + Layer 3B's own mode='event' periodization decisions.
+    # The fields are optional in v1 — the 3B implementation populates them
+    # when the orchestrator joins from the race_events row; legacy 3B
+    # outputs without the join leave them None and Layer 4 race-week-brief
+    # sources from race_event_payload exclusively.
+    event_date: date | None                # None iff mode == 'no-event'
+    event_locale_id: str | None
+    race_format: str | None                # enum: single_day / expedition_ar / stage_race / multi_day_ultra; None iff mode == 'no-event'
+    time_to_event_weeks: int | None        # ≥ 0; None iff mode == 'no-event'
+
 @dataclass
 class GoalViability:
     viability: str                     # enum: achievable / achievable-with-adjustment / unrealistic-as-stated
@@ -320,6 +335,7 @@ class Observation:
 - `periodization_shape.phase_weeks` is non-None iff `mode == 'custom'`.
 - `suggested_adjustments` is non-empty when `viability != 'achievable'`; empty when `viability == 'achievable'`.
 - `hitl_surface` items have unique `item_label` (no duplicates from the same condition firing twice).
+- **D-66 paired amendment 2026-05-18 (event-metadata fields):** `mode == 'no-event'` requires all 4 event-metadata fields (`event_date`, `event_locale_id`, `race_format`, `time_to_event_weeks`) to be `None`. `mode == 'event'` SHOULD populate them from the orchestrator-joined target `race_events` row (`is_target_event=true`); pre-amendment 3B implementations may leave them `None` and Layer 4 race-week-brief will source from `race_event_payload` exclusively per `Layer4_Spec.md` §4.5 source-pointer note.
 
 ## 8. Coaching flag rules
 
