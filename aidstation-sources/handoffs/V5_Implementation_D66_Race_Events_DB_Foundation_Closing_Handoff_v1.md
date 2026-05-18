@@ -115,9 +115,19 @@ D-66 DB foundation COMPLETE. Three follow-on candidates, ordered by visible-to-a
 3. **Layer 3B caller-side rewire** (closes the contract drift; ~3-4 files projected) — orchestrator currently reads `athlete_profile.target_event_*` for 3B's event-mode input; once profile UI ships, swap to `load_target_race_event_payload(db, user_id)` so the race-week-brief shares the same source of truth as 3B. Includes resolving the Layer3BPayload.event_locale_id `str` vs RaceEventPayload.event_locale_id `int` mismatch (3B's `str` is the legacy slug; once 3B reads from race_events the type can swap to `int` matching the new SERIAL id).
 4. **Layer 4 Step 7 live LLM integration** (orthogonal to D-66; architect-recommended from Step 6 handoff) — first end-to-end against real Anthropic API for `single_session_synthesize` at ~$0.075/call. Cache + telemetry now make this safe to iterate on. Needs `ANTHROPIC_API_KEY`.
 
-### 4.2 Carry-forward — Layer3BPayload.event_locale_id type mismatch
+### 4.2 Carry-forward — Locale-FK type alignment across typed payloads (D-72)
 
-Layer3BPayload.event_locale_id is typed `str | None` (line 795 of `layer4/context.py`) — matches the legacy locale-slug storage. RaceEventPayload.event_locale_id is typed `int | None` (line 933) — matches the new SERIAL id on locale_profiles. These two payload contracts within the same layer4/context.py file disagree on the type for a logically-identical field. v1 accepts the mismatch as documented; v2 reconciliation lands when Layer 3B's race-event read swaps from `athlete_profile.target_event_*` (slug-keyed) to `race_events` (id-keyed) — at that point Layer3BPayload.event_locale_id swaps to `int | None` with paired Layer3_3B_Spec.md §7 amendment + paired `layer4/validator.py` ValidatorContext update.
+Tracked as **D-72** in `Project_Backlog_v53.md` (new this session). After D-66 added the surrogate `BIGSERIAL id` to `locale_profiles`, three Layer 4 typed payloads in `layer4/context.py` reference the locale_profiles table with INCONSISTENT key types:
+
+- `Layer2CPayload.locale_id: str` (line 337) — TEXT slug; matches legacy composite PK
+- `Layer3BPayload.event_locale_id: str | None` (line 795) — TEXT slug; same
+- `RaceEventPayload.event_locale_id: int | None` (line 933) — INT id; matches the new SERIAL surrogate
+
+Same logical entity (FK to locale_profiles row), three payloads, two different key types. `RaceWeekBrief.event_locale: str` (`layer4/payload.py:420`) is correctly `str` because it's the RENDERED text-form name (display, not FK) — but the FK-vs-display split is undocumented.
+
+v1 accepts the mismatch — Layer 2C + Layer 3B were specced before the SERIAL id existed; D-66 added the SERIAL specifically for race_events. **Defer trigger:** lands when Layer 3B's caller-side rewires from `athlete_profile.target_event_*` to `race_events` (will force a type pick) OR D-66 profile-tab UI follow-on lands (will force legacy column retirement) OR any Layer 2C consumer trips over the ambiguity. Whichever triggers first should also close D-72.
+
+See D-72 row in `Project_Backlog_v53.md` for the three-path-scope (int everywhere / slug everywhere / per-payload split) + the full consumer surface (orchestrator pre-2C + pre-3B callers, paired Layer2C_Spec.md + Layer3_3B_Spec.md amendments, `routes/profile.py` + `templates/profile/edit.html` legacy column migration, `init_db.py` future cleanup migration).
 
 ### 4.3 Carry-forward — Profile UI for athlete to update Andy's migrated row
 
@@ -216,7 +226,7 @@ One commit (or multiple bundled) on `claude/pattern-a-polish-closing-fAOxb`:
 - **Step 7 live LLM integration** — architect-recommended orthogonal candidate per §4.1.
 - **Seam-driven re-synth cache-key formula per §9.2** — concrete carry-forward from Step 6.
 - **Anthropic SDK `seed` parameter per §9.4** — v2 forward-pointer; awaits API support.
-- **Layer3BPayload.event_locale_id type mismatch (`str` vs `int`)** — new carry-forward from this session per §4.2.
+- **D-72 Locale-FK type alignment across typed payloads** (`Layer2CPayload.locale_id: str` + `Layer3BPayload.event_locale_id: str` + `RaceEventPayload.event_locale_id: int`) — new D-row + carry-forward from this session per §4.2; defer trigger fires on first of: 3B caller rewire / D-66 profile-tab UI / Layer 2C consumer ambiguity.
 
 ---
 
