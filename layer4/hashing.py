@@ -245,6 +245,50 @@ def single_session_synthesize_key(
     return _sha256_hex("||".join(components))
 
 
+def compute_accepted_output_hash(
+    sessions: list[PlanSession],
+    synthesis_metadata: Any,
+) -> str:
+    """Per §9.2 — SHA-256 of canonical-JSON of a phase's accepted
+    `list[PlanSession]` + `PhaseSpec.synthesis_metadata`.
+
+    Used as the chaining hash for the next phase's `phase_cache_key`.
+    Phase i's accepted output is hashed once at end-of-phase and threaded
+    into phase i+1's key via `compute_phase_cache_key(prev_accepted=...)`.
+    """
+    payload = {
+        "sessions": [s.model_dump(mode="json") for s in sessions],
+        "synthesis_metadata": synthesis_metadata.model_dump(mode="json")
+        if hasattr(synthesis_metadata, "model_dump")
+        else synthesis_metadata,
+    }
+    return _sha256_hex(canonical_json(payload))
+
+
+def compute_phase_cache_key(
+    *,
+    call_cache_key: str,
+    phase_name: str,
+    phase_index: int,
+    prev_accepted_output_hash: str | None,
+) -> str:
+    """Per §9.2 — chained per-phase cache key.
+
+    Formula: `sha256(call_cache_key || phase_name || str(i) || prev_hash)`.
+
+    `prev_accepted_output_hash` is None for the first phase (i == 0);
+    None collapses to '' in the concatenation so the first phase's key is
+    deterministic against the call cache key alone.
+    """
+    components = [
+        call_cache_key,
+        phase_name,
+        str(phase_index),
+        prev_accepted_output_hash or "",
+    ]
+    return _sha256_hex("||".join(components))
+
+
 def race_week_brief_key(
     *,
     user_id: int,
