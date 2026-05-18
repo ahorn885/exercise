@@ -19,8 +19,6 @@ PG_SCHEMA = '''
         sex TEXT,
         height_cm REAL,
         primary_sport TEXT,
-        target_event_name TEXT,
-        target_event_date TEXT,
         weekly_hours_target REAL,
         training_window TEXT,
         notes TEXT,
@@ -663,7 +661,7 @@ _PG_MIGRATIONS = [
     """CREATE TABLE IF NOT EXISTS athlete_profile (
         user_id INTEGER PRIMARY KEY REFERENCES users(id),
         date_of_birth TEXT, sex TEXT, height_cm REAL,
-        primary_sport TEXT, target_event_name TEXT, target_event_date TEXT,
+        primary_sport TEXT,
         weekly_hours_target REAL, training_window TEXT, notes TEXT,
         body_weight_kg REAL, hrmax_bpm INTEGER,
         lactate_threshold_hr_bpm INTEGER, vo2max REAL, cycling_ftp_w INTEGER,
@@ -1182,33 +1180,15 @@ _PG_MIGRATIONS = [
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )""",
     "CREATE INDEX IF NOT EXISTS race_route_locale_equipment_locale_idx ON race_route_locale_equipment (race_route_locale_id)",
-    # D-66 §10 one-time migration of legacy athlete_profile.target_event_*
-    # rows into race_events. Idempotent via the NOT EXISTS guard. race_format
-    # defaults to 'single_day' — Andy will update his Pocket Gopher Extreme
-    # row to 'expedition_ar' via the profile UI when that ships. The athlete_profile
-    # columns are kept in place per §3.4 deprecation note; a future cleanup
-    # PR drops them once all rows have migrated cleanly. target_event_date
-    # is TEXT in the legacy schema; the empty-string + NULL guards skip rows
-    # where it was never set.
-    """INSERT INTO race_events
-        (user_id, name, event_date, race_format, is_target_event, etl_version_set)
-        SELECT
-            user_id,
-            target_event_name,
-            target_event_date::date,
-            'single_day',
-            TRUE,
-            '{"race_events_v1": "migration_from_athlete_profile_row"}'::jsonb
-        FROM athlete_profile
-        WHERE target_event_name IS NOT NULL
-          AND target_event_name <> ''
-          AND target_event_date IS NOT NULL
-          AND target_event_date <> ''
-          AND NOT EXISTS (
-              SELECT 1 FROM race_events
-              WHERE race_events.user_id = athlete_profile.user_id
-                AND race_events.is_target_event = TRUE
-          )""",
+    # D-66 Layer 3B Scope B — drop the legacy athlete_profile.target_event_*
+    # columns. The one-time backfill that lived here previously (INSERT INTO
+    # race_events SELECT FROM athlete_profile WHERE target_event_name IS NOT
+    # NULL ...) ran on every init since the D-66 DB foundation PR and is now
+    # retired: Scope A write-froze the columns from the athlete-facing surface
+    # so no row can arrive with a non-migrated value, and `DROP COLUMN IF
+    # EXISTS` is idempotent for the columns themselves.
+    "ALTER TABLE athlete_profile DROP COLUMN IF EXISTS target_event_name",
+    "ALTER TABLE athlete_profile DROP COLUMN IF EXISTS target_event_date",
 ]
 
 _CLOTHING_SEEDS = [
