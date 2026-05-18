@@ -815,36 +815,67 @@ class TestInputValidation:
             )
         assert exc.value.code == "tier_scope_mismatch"
 
-    def test_t3_cross_phase_raises_pattern_a(self):
+    def test_t3_cross_phase_routes_to_pattern_a(self):
         """Per Layer4_Spec.md §5.1 + §6.3: T3 with scope spanning a phase
-        boundary routes to Pattern A; Step 4f surface, currently raises."""
-        # Athlete is mid-Base (12 weeks total, standard mode: Base=6 wks);
-        # plan_start_date 5 weeks ago. Refresh scope covers days 36-63 of
-        # the plan — which crosses Base→Build at ~week 6.
-        plan_start = _T2_START - timedelta(days=35)  # 5 weeks before refresh start
-        with pytest.raises(Layer4InputError) as exc:
-            llm_layer4_plan_refresh(
-                user_id=42,
-                tier="T3",
-                refresh_scope_start=_T2_START,  # day 35 of plan
-                refresh_scope_end=_T2_START + timedelta(days=27),  # day 62
-                layer1_payload=_layer1(),
-                layer2_bundle=_layer2_bundle(),
-                layer3a_payload=_layer3a(),
-                # Standard mode + Base start → Base allocation = 6 wks of 12;
-                # Build runs weeks 7-9; refresh spans week 5-9 = cross-phase.
-                layer3b_payload=_layer3b(start_phase="Base"),
-                prior_plan_session_window=_prior_window(
-                    _T2_START, _T2_START + timedelta(days=27), pre_days=14, post_days=7
-                ),
-                parsed_intent=None,
-                plan_version_id=2,
-                plan_version_id_parent=1,
-                etl_version_set={"layer0": "v7"},
-                plan_start_date=plan_start,
-                llm_caller=_stub_caller({"sessions": []}),
+        boundary routes to Pattern A (Step 4f closes the raise path).
+
+        Verifies the delegate path runs to completion when stubbed callers
+        return parseable per-phase and seam outputs.
+        """
+        from layer4.per_phase import _SynthesizerOutput as _PhaseOut
+        from layer4.seam_review import _SeamReviewerOutput as _SeamOut
+
+        plan_start = _T2_START - timedelta(days=35)  # athlete is at day 35
+
+        def phase_stub(*_a, **_kw) -> _PhaseOut:
+            return _PhaseOut(
+                tool_args={
+                    "sessions": [],
+                    "phase_synthesis_notes": "rest week pull-back.",
+                    "opportunities": [],
+                },
+                input_tokens=4000,
+                output_tokens=200,
+                latency_ms=5000,
             )
-        assert exc.value.code == "tier_t3_cross_phase_requires_pattern_a"
+
+        def seam_stub(*_a, **_kw) -> _SeamOut:
+            return _SeamOut(
+                tool_args={
+                    "reviewer_verdict": "approved",
+                    "seam_issues": [],
+                    "proposed_patch_direction": None,
+                },
+                input_tokens=2000,
+                output_tokens=100,
+                latency_ms=2500,
+            )
+
+        result = llm_layer4_plan_refresh(
+            user_id=42,
+            tier="T3",
+            refresh_scope_start=_T2_START,
+            refresh_scope_end=_T2_START + timedelta(days=27),
+            layer1_payload=_layer1(),
+            layer2_bundle=_layer2_bundle(),
+            layer3a_payload=_layer3a(),
+            layer3b_payload=_layer3b(start_phase="Base"),
+            prior_plan_session_window=_prior_window(
+                _T2_START, _T2_START + timedelta(days=27), pre_days=14, post_days=7
+            ),
+            parsed_intent=None,
+            plan_version_id=2,
+            plan_version_id_parent=1,
+            etl_version_set={"layer0": "v7"},
+            plan_start_date=plan_start,
+            phase_caller=phase_stub,
+            seam_caller=seam_stub,
+        )
+        assert isinstance(result, Layer4Payload)
+        assert result.mode == "plan_refresh"
+        assert result.pattern == "A"
+        assert result.phase_structure is not None
+        assert result.seam_reviews is not None
 
 
 # ─── T3 intra-phase Pattern B (Step 4d) ──────────────────────────────────────

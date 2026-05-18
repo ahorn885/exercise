@@ -1,0 +1,1273 @@
+"""Tests for `layer4/plan_create.py` + `layer4/per_phase.py` + `layer4/seam_review.py`
+— Step 4f integration: `llm_layer4_plan_create` Pattern A per `Layer4_Spec.md` §3.1.
+
+Coverage:
+- Tool schemas (record_phase_sessions + record_seam_review) — shapes, enums, oneOf
+- §4.2 input validation preconditions (missing payloads + plan_start_date_in_past
+  + plan_version_id_unset + time_to_event_weeks_mismatch + discipline_weights_invalid)
+- Entry-point happy path × open-ended + event-mode + start_phase != Base
+- Per-phase synthesis loop (sessions filled with phase_metadata; phase_structure
+  with synthesis_metadata overwritten)
+- Seam review loop × approved + flagged_minor + flagged_major+re_prompt
+- Propose-patch authority — re-synthesizes target phase + re-runs seam (iter 2)
+- Per-seam cap — iter 2 still flagged emits seam_unresolved observation
+- Per-phase retry budget shared between validator-driven + seam-driven retries
+- Capped retry budget exhaustion → seam_unresolved when target budget hit
+- Layer4Payload composition invariants (mode='plan_create', pattern='A',
+  phase_structure non-None, seam_reviews non-None, suggestion_id None,
+  each session.phase_metadata non-None)
+- T3 cross-phase Pattern A delegation (via plan_refresh entry point) — already
+  covered in test_layer4_plan_refresh.py::test_t3_cross_phase_routes_to_pattern_a;
+  additional T3-specific Pattern A tests live there
+- Prompt rendering snippets — phase block, prior phase context, race_event_payload
+
+LLM calls are mocked via stub callers. No real Anthropic SDK invocations.
+"""
+
+from __future__ import annotations
+
+from datetime import date, datetime, timedelta
+from decimal import Decimal
+from typing import Any
+
+import pytest
+
+from layer4 import (
+    ACWREntry,
+    ACWRStatus,
+    Assessment,
+    CurrentState,
+    DailyNutritionBaseline,
+    DailyPhaseTargets,
+    DataDensity,
+    DisciplineCoverage,
+    GoalViability,
+    Layer2ADiscipline,
+    Layer2APayload,
+    Layer2BPayload,
+    Layer2BSummaryBlock,
+    Layer2CPayload,
+    Layer2DPayload,
+    Layer2EPayload,
+    Layer3APayload,
+    Layer3BPayload,
+    Layer4InputError,
+    Layer4Payload,
+    MacroTargets,
+    PeriodizationShape,
+    PhaseLoadBands,
+    PhaseStructure,
+    RaceDayFueling,
+    RaceEventPayload,
+    RationaleMetadata,
+    RecentTrajectory,
+    ResolvedExercise,
+    RouteLocale,
+    SupplementIntegrationPayload,
+    TrainingGapsSummary,
+    TrajectoryWindow,
+    WeightResult,
+    build_record_phase_sessions_tool,
+    build_record_seam_review_tool,
+    llm_layer4_plan_create,
+)
+from layer4.per_phase import _SynthesizerOutput as _PhaseOut
+from layer4.seam_review import _SeamReviewerOutput as _SeamOut
+
+
+# ─── Fixtures ────────────────────────────────────────────────────────────────
+
+
+_PLAN_START = date(2026, 6, 1)  # Mon
+
+
+def _layer1() -> dict[str, Any]:
+    return {
+        "experience_level": "advanced",
+        "coaching_voice_preferences": None,
+        "available_days_per_week": 5,
+    }
+
+
+def _layer2a() -> Layer2APayload:
+    return Layer2APayload(
+        framework_sport="multisport",
+        etl_version_set={"layer0": "v7"},
+        disciplines=[
+            Layer2ADiscipline(
+                discipline_id="D-run",
+                discipline_name="Running",
+                inclusion="included",
+                role="Primary",
+                is_conditional=False,
+                load_weight=WeightResult(
+                    value=1.0, source="system_default", system_default=1.0
+                ),
+                sleep_deprivation_relevant=False,
+                rationale="primary endurance discipline",
+                phase_load=PhaseLoadBands(
+                    base_low=5.0,
+                    base_high=8.0,
+                    build_low=6.0,
+                    build_high=10.0,
+                    peak_low=7.0,
+                    peak_high=11.0,
+                    taper_low=3.0,
+                    taper_high=5.0,
+                    default_inclusion="included",
+                ),
+            ),
+        ],
+        training_gaps_summary=TrainingGapsSummary(
+            flagged_count=0,
+            any_no_substitute=False,
+            any_multi_substitute_candidate=False,
+        ),
+        hitl_required=False,
+        unresolved_flags=[],
+        coaching_flags=[],
+        rationale_metadata=RationaleMetadata(
+            template_version="v1",
+            generated_at="2026-05-31T10:00:00",
+        ),
+    )
+
+
+def _layer2b() -> Layer2BPayload:
+    return Layer2BPayload(
+        etl_version_set={"layer0": "v7"},
+        race_terrain=[],
+        summary=Layer2BSummaryBlock(
+            total_race_terrain_count=0,
+            covered_count=0,
+            gap_count=0,
+            bridgeable_count=0,
+            unbridgeable_count=0,
+            min_adaptation_weeks_needed=0,
+            worst_fidelity=1.0,
+            pct_of_race_uncovered=0.0,
+            any_unbridgeable=False,
+            any_undefined=False,
+        ),
+        terrain_gaps=[],
+        coaching_flags=[],
+    )
+
+
+def _layer2c() -> dict[str, Layer2CPayload]:
+    return {
+        "home_gym": Layer2CPayload(
+            locale_id="home_gym",
+            etl_version_set={"layer0": "v7"},
+            effective_pool=["E-squat", "E-pushup"],
+            discipline_coverage=[
+                DisciplineCoverage(
+                    discipline_id="D-run",
+                    discipline_name="Running",
+                    exercise_db_sport="x",
+                    total_exercises=2,
+                    tier_1_count=2,
+                    tier_2_count=0,
+                    tier_3_count=0,
+                    unavailable_count=0,
+                    coverage_pct=1.0,
+                )
+            ],
+            exercises_resolved=[
+                ResolvedExercise(
+                    exercise_id=ex,
+                    exercise_name=ex,
+                    exercise_type="strength",
+                    discipline_ids=["D-run"],
+                    sport_relevance_notes={"D-run": "x"},
+                    priority_per_discipline={"D-run": "Medium"},
+                    tier=1,
+                    terrain_required=[],
+                    contraindicated_parts=[],
+                    contraindicated_conditions=[],
+                    accommodations=[],
+                )
+                for ex in ("E-squat", "E-pushup")
+            ],
+            coaching_flags=[],
+        )
+    }
+
+
+def _layer2d() -> Layer2DPayload:
+    return Layer2DPayload(
+        etl_version_set={"layer0": "v7"},
+        excluded_exercises=[],
+        accommodated_exercises=[],
+        clean_exercise_ids=[],
+        discipline_risk_profiles=[],
+        coaching_flags=[],
+        hitl_required=False,
+        hitl_items=[],
+        body_part_vocab_misses=[],
+        condition_vocab_misses=[],
+    )
+
+
+def _layer2e() -> Layer2EPayload:
+    targets = DailyPhaseTargets(
+        activity_multiplier=1.6,
+        activity_multiplier_source={"row": "base"},
+        daily_calorie_target_kcal=2800,
+        macros=MacroTargets(
+            cho_g=400,
+            cho_g_per_kg=5.7,
+            cho_kcal=1600,
+            protein_g=140,
+            protein_g_per_kg=2.0,
+            protein_kcal=560,
+            fat_g=70,
+            fat_kcal=630,
+            fat_floor_constrained=False,
+        ),
+    )
+    return Layer2EPayload(
+        athlete_id="A-1",
+        etl_version_set={"layer0": "v7"},
+        computed_at=datetime(2026, 5, 31, 10, 0, 0),
+        bmr_method="mifflin_st_jeor",
+        bmr_kcal=1750.0,
+        daily_nutrition_baseline=DailyNutritionBaseline(
+            per_phase={
+                "Base": targets,
+                "Build": targets,
+                "Peak": targets,
+                "Taper": targets,
+            }
+        ),
+        race_day_fueling=[],
+        supplement_integration=SupplementIntegrationPayload(
+            integrated=[],
+            race_day_suggestions=[],
+            contraindication_flags=[],
+            contraindication_hitl_items=[],
+        ),
+        dietary_pattern_adjustments=[],
+        sleep_dep_overlay=None,
+        heat_acclim_adjustments=[],
+        coaching_flags=[],
+        hitl_items=[],
+        hitl_required=False,
+    )
+
+
+def _layer3a(zone: str = "sweet_spot", ratio: float = 0.95) -> Layer3APayload:
+    return Layer3APayload(
+        user_id=42,
+        as_of=datetime(2026, 5, 31, 10, 0, 0),
+        model="claude-opus-4-7",
+        temperature=0.0,
+        prompt_hash="abc",
+        latency_ms=1000,
+        input_tokens=2000,
+        output_tokens=500,
+        etl_version_set={"layer0": "v7"},
+        current_state=CurrentState(
+            aerobic_capacity=Assessment(
+                level="good",
+                confidence="high",
+                reasoning_text="r",
+                evidence_basis=["e"],
+            ),
+            strength=Assessment(
+                level="moderate",
+                confidence="medium",
+                reasoning_text="r",
+                evidence_basis=["e"],
+            ),
+            weak_links=[],
+            skill_assessments={},
+        ),
+        recent_trajectory=RecentTrajectory(
+            short_term=TrajectoryWindow(
+                direction="steady", reasoning_text="r", evidence_basis=["e"]
+            ),
+            medium_term=TrajectoryWindow(
+                direction="building", reasoning_text="r", evidence_basis=["e"]
+            ),
+            acwr_status=ACWRStatus(
+                per_discipline={
+                    "D-run": ACWREntry(
+                        acute_load=7.0,
+                        chronic_load=8.0,
+                        ratio=ratio,
+                        zone=zone,  # type: ignore[arg-type]
+                        units="hours",
+                    )
+                },
+                combined=None,
+            ),
+            confidence="medium",
+        ),
+        data_density=DataDensity(
+            connected_providers=["coros"],
+            integration_data_days=28,
+            recent_workouts_count=20,
+            recent_sleep_count=14,
+            recent_hrv_count=14,
+            self_report_freshness_days=2,
+            section_completeness={"C": 1.0},
+        ),
+        notable_observations=[],
+    )
+
+
+def _layer3b(
+    mode: str = "standard",
+    start_phase: str = "Base",
+    time_to_event_weeks: int | None = None,
+) -> Layer3BPayload:
+    base_mode = "event" if time_to_event_weeks else "no-event"
+    fields: dict[str, Any] = {
+        "user_id": 42,
+        "as_of": datetime(2026, 5, 31, 10, 0, 0),
+        "model": "claude-opus-4-7",
+        "temperature": 0.0,
+        "prompt_hash": "abc",
+        "latency_ms": 1500,
+        "input_tokens": 3000,
+        "output_tokens": 800,
+        "etl_version_set": {"layer0": "v7"},
+        "mode": base_mode,
+        "goal_viability": GoalViability(
+            viability="achievable",
+            confidence="high",
+            reasoning_text="solid base",
+            evidence_basis=["e"],
+            suggested_adjustments=[],
+        ),
+        "periodization_shape": PeriodizationShape(
+            mode=mode,  # type: ignore[arg-type]
+            start_phase=start_phase,  # type: ignore[arg-type]
+            phase_weeks=None,
+            reasoning_text="r",
+            evidence_basis=["e"],
+        ),
+        "hitl_surface": [],
+        "notable_observations": [],
+    }
+    if time_to_event_weeks is not None:
+        fields["time_to_event_weeks"] = time_to_event_weeks
+        fields["event_date"] = _PLAN_START + timedelta(days=time_to_event_weeks * 7)
+        fields["race_format"] = "single_day"
+        fields["event_locale_id"] = "home_gym"
+    return Layer3BPayload(**fields)
+
+
+def _race_event(weeks_out: int = 8) -> RaceEventPayload:
+    return RaceEventPayload(
+        race_event_id=1,
+        user_id=42,
+        name="Test Race",
+        event_date=_PLAN_START + timedelta(days=weeks_out * 7),
+        race_format="single_day",
+        distance_km=Decimal("42.2"),
+        total_elevation_gain_m=None,
+        race_rules_summary=None,
+        mandatory_gear_text=None,
+        event_locale_id=None,
+        is_target_event=True,
+        notes=None,
+        route_locales=[],
+    )
+
+
+# ─── Tool output builders ────────────────────────────────────────────────────
+
+
+def _cardio_session(
+    *,
+    d: date,
+    idx: int = 0,
+    duration_min: int = 60,
+    intensity_summary: str = "easy",
+    coaching_flags: list[str] | None = None,
+    locale_id: str | None = "home_gym",
+) -> dict[str, Any]:
+    return {
+        "date": d.isoformat(),
+        "day_of_week": d.strftime("%a"),
+        "session_index_in_day": idx,
+        "time_of_day": "morning",
+        "kind": "cardio",
+        "discipline_id": "D-run",
+        "discipline_name": "Running",
+        "locale_id": locale_id,
+        "locale_name": locale_id,
+        "duration_min": duration_min,
+        "intensity_summary": intensity_summary,
+        "session_notes": "easy aerobic.",
+        "coaching_intent": "Z2 aerobic stimulus.",
+        "coaching_flags": coaching_flags or [],
+        "cardio_blocks": [
+            {
+                "block_kind": "warmup",
+                "duration_min": 10,
+                "intensity_zone": "Z1",
+                "intensity_target": {"hr_bpm_low": 110, "hr_bpm_high": 125},
+                "instructions": "easy warmup.",
+            },
+            {
+                "block_kind": "main_set",
+                "duration_min": max(1, duration_min - 20),
+                "intensity_zone": "Z2",
+                "intensity_target": {"hr_bpm_low": 130, "hr_bpm_high": 145},
+                "instructions": "steady aerobic.",
+            },
+            {
+                "block_kind": "cooldown",
+                "duration_min": 10,
+                "intensity_zone": "Z1",
+                "intensity_target": {"hr_bpm_low": 110, "hr_bpm_high": 125},
+                "instructions": "easy cooldown.",
+            },
+        ],
+    }
+
+
+def _empty_phase_output() -> dict[str, Any]:
+    return {
+        "sessions": [],
+        "phase_synthesis_notes": "deload taper.",
+        "opportunities": [],
+    }
+
+
+def _phase_output_with_sessions(
+    *,
+    phase_start: date,
+    phase_weeks: int,
+    flags: list[str] | None = None,
+) -> dict[str, Any]:
+    sessions: list[dict[str, Any]] = []
+    for w in range(phase_weeks):
+        wk_start = phase_start + timedelta(days=w * 7)
+        for day_offset in (0, 2, 4):
+            d = wk_start + timedelta(days=day_offset)
+            sessions.append(_cardio_session(d=d, coaching_flags=flags or []))
+    return {
+        "sessions": sessions,
+        "phase_synthesis_notes": f"{phase_weeks}wk phase.",
+        "opportunities": [],
+    }
+
+
+def _phase_stub(output: dict[str, Any]):
+    def _call(*_a, **_kw) -> _PhaseOut:
+        return _PhaseOut(
+            tool_args=output, input_tokens=6000, output_tokens=2000, latency_ms=8000
+        )
+
+    return _call
+
+
+def _phase_seq_stub(outputs: list[dict[str, Any]]):
+    state = {"i": 0}
+
+    def _call(*_a, **_kw) -> _PhaseOut:
+        i = state["i"]
+        state["i"] = i + 1
+        return _PhaseOut(
+            tool_args=outputs[min(i, len(outputs) - 1)],
+            input_tokens=6000,
+            output_tokens=2000,
+            latency_ms=8000,
+        )
+
+    return _call
+
+
+def _seam_stub_approved():
+    def _call(*_a, **_kw) -> _SeamOut:
+        return _SeamOut(
+            tool_args={
+                "reviewer_verdict": "approved",
+                "seam_issues": [],
+                "proposed_patch_direction": None,
+            },
+            input_tokens=2000,
+            output_tokens=100,
+            latency_ms=2500,
+        )
+
+    return _call
+
+
+def _seam_stub_flagged_minor(issue: str = "minor edge"):
+    def _call(*_a, **_kw) -> _SeamOut:
+        return _SeamOut(
+            tool_args={
+                "reviewer_verdict": "flagged_minor",
+                "seam_issues": [issue],
+                "proposed_patch_direction": None,
+            },
+            input_tokens=2000,
+            output_tokens=100,
+            latency_ms=2500,
+        )
+
+    return _call
+
+
+def _seam_stub_flagged_major_then_approved():
+    """First call: flagged_major + re_prompt_next; second call: approved."""
+    state = {"i": 0}
+
+    def _call(*_a, **_kw) -> _SeamOut:
+        i = state["i"]
+        state["i"] = i + 1
+        if i == 0:
+            return _SeamOut(
+                tool_args={
+                    "reviewer_verdict": "flagged_major",
+                    "seam_issues": ["Peak entry too aggressive"],
+                    "proposed_patch_direction": "re_prompt_next",
+                },
+                input_tokens=2000,
+                output_tokens=100,
+                latency_ms=2500,
+            )
+        return _SeamOut(
+            tool_args={
+                "reviewer_verdict": "approved",
+                "seam_issues": [],
+                "proposed_patch_direction": None,
+            },
+            input_tokens=2000,
+            output_tokens=100,
+            latency_ms=2500,
+        )
+
+    return _call
+
+
+# ─── Tool schema tests ───────────────────────────────────────────────────────
+
+
+class TestRecordPhaseSessionsTool:
+    def test_tool_name(self):
+        t = build_record_phase_sessions_tool()
+        assert t["name"] == "record_phase_sessions"
+
+    def test_required_top_level_fields(self):
+        t = build_record_phase_sessions_tool()
+        req = set(t["input_schema"]["required"])
+        assert "sessions" in req
+        assert "phase_synthesis_notes" in req
+
+    def test_max_sessions_configurable(self):
+        t = build_record_phase_sessions_tool(max_sessions=28)
+        assert t["input_schema"]["properties"]["sessions"]["maxItems"] == 28
+
+    def test_phase_synthesis_notes_maxlength(self):
+        t = build_record_phase_sessions_tool()
+        assert t["input_schema"]["properties"]["phase_synthesis_notes"]["maxLength"] == 600
+
+    def test_opportunities_optional_max_3(self):
+        t = build_record_phase_sessions_tool()
+        opp_schema = t["input_schema"]["properties"]["opportunities"]
+        assert opp_schema["maxItems"] == 3
+
+    def test_coaching_flags_6_LLM_emittable(self):
+        t = build_record_phase_sessions_tool()
+        sess_items = t["input_schema"]["properties"]["sessions"]["items"]
+        flags = sess_items["properties"]["coaching_flags"]["items"]["enum"]
+        assert set(flags) == {
+            "technique_emphasis",
+            "long_slow_distance",
+            "weak_link_targeted",
+            "overreach_test",
+            "discipline_specific_intensity",
+            "race_pace_specific",
+        }
+        # Pattern A per-phase does NOT emit intensity_modulated.
+        assert "intensity_modulated" not in flags
+
+    def test_session_kind_includes_rest(self):
+        t = build_record_phase_sessions_tool()
+        sess_items = t["input_schema"]["properties"]["sessions"]["items"]
+        assert set(sess_items["properties"]["kind"]["enum"]) == {
+            "cardio",
+            "strength",
+            "rest",
+        }
+
+    def test_intensity_target_oneof_nine_shapes(self):
+        t = build_record_phase_sessions_tool()
+        cb_items = (
+            t["input_schema"]["properties"]["sessions"]["items"][
+                "properties"
+            ]["cardio_blocks"]["items"]
+        )
+        assert len(cb_items["properties"]["intensity_target"]["oneOf"]) == 9
+
+
+class TestRecordSeamReviewTool:
+    def test_tool_name(self):
+        t = build_record_seam_review_tool()
+        assert t["name"] == "record_seam_review"
+
+    def test_verdict_enum(self):
+        t = build_record_seam_review_tool()
+        assert set(t["input_schema"]["properties"]["reviewer_verdict"]["enum"]) == {
+            "approved",
+            "flagged_minor",
+            "flagged_major",
+            "patched",
+        }
+
+    def test_seam_issues_maxitems_4(self):
+        t = build_record_seam_review_tool()
+        assert t["input_schema"]["properties"]["seam_issues"]["maxItems"] == 4
+
+    def test_direction_enum_with_null(self):
+        t = build_record_seam_review_tool()
+        enum = t["input_schema"]["properties"]["proposed_patch_direction"]["enum"]
+        assert None in enum
+        assert "re_prompt_prior" in enum
+        assert "re_prompt_next" in enum
+        assert "accept_with_observation" in enum
+
+
+# ─── §4.2 input validation ───────────────────────────────────────────────────
+
+
+def _call_kwargs() -> dict[str, Any]:
+    """Minimum kwargs to invoke llm_layer4_plan_create."""
+    return {
+        "user_id": 42,
+        "layer1_payload": _layer1(),
+        "layer2a_payload": _layer2a(),
+        "layer2b_payload": _layer2b(),
+        "layer2c_payloads": _layer2c(),
+        "layer2d_payload": _layer2d(),
+        "layer2e_payload": _layer2e(),
+        "layer3a_payload": _layer3a(),
+        "layer3b_payload": _layer3b(),
+        "plan_start_date": _PLAN_START,
+        "plan_version_id": 1,
+        "etl_version_set": {"layer0": "v7"},
+    }
+
+
+class TestInputValidation:
+    def test_missing_layer1(self):
+        with pytest.raises(Layer4InputError) as exc:
+            llm_layer4_plan_create(
+                **{**_call_kwargs(), "layer1_payload": None},
+                phase_caller=_phase_stub(_empty_phase_output()),
+                seam_caller=_seam_stub_approved(),
+            )
+        assert exc.value.code == "missing_upstream_payload"
+
+    def test_missing_layer2a(self):
+        with pytest.raises(Layer4InputError) as exc:
+            llm_layer4_plan_create(
+                **{**_call_kwargs(), "layer2a_payload": None},
+                phase_caller=_phase_stub(_empty_phase_output()),
+                seam_caller=_seam_stub_approved(),
+            )
+        assert exc.value.code == "missing_upstream_payload"
+
+    def test_missing_layer2c_empty(self):
+        with pytest.raises(Layer4InputError) as exc:
+            llm_layer4_plan_create(
+                **{**_call_kwargs(), "layer2c_payloads": {}},
+                phase_caller=_phase_stub(_empty_phase_output()),
+                seam_caller=_seam_stub_approved(),
+            )
+        assert exc.value.code == "missing_upstream_payload"
+
+    def test_missing_layer3b(self):
+        with pytest.raises(Layer4InputError) as exc:
+            llm_layer4_plan_create(
+                **{**_call_kwargs(), "layer3b_payload": None},
+                phase_caller=_phase_stub(_empty_phase_output()),
+                seam_caller=_seam_stub_approved(),
+            )
+        assert exc.value.code == "missing_upstream_payload"
+
+    def test_plan_start_date_in_past(self):
+        with pytest.raises(Layer4InputError) as exc:
+            llm_layer4_plan_create(
+                **{**_call_kwargs(), "plan_start_date": date(2020, 1, 1)},
+                phase_caller=_phase_stub(_empty_phase_output()),
+                seam_caller=_seam_stub_approved(),
+            )
+        assert exc.value.code == "plan_start_date_in_past"
+
+    def test_plan_version_id_unset(self):
+        with pytest.raises(Layer4InputError) as exc:
+            llm_layer4_plan_create(
+                **{**_call_kwargs(), "plan_version_id": 0},
+                phase_caller=_phase_stub(_empty_phase_output()),
+                seam_caller=_seam_stub_approved(),
+            )
+        assert exc.value.code == "plan_version_id_unset"
+
+    def test_time_to_event_weeks_mismatch(self):
+        """3B time_to_event_weeks=20 but race_event_payload at 8 weeks → mismatch."""
+        l3b = _layer3b(time_to_event_weeks=20)
+        re = _race_event(weeks_out=8)
+        with pytest.raises(Layer4InputError) as exc:
+            llm_layer4_plan_create(
+                **{**_call_kwargs(), "layer3b_payload": l3b},
+                race_event_payload=re,
+                phase_caller=_phase_stub(_empty_phase_output()),
+                seam_caller=_seam_stub_approved(),
+            )
+        assert exc.value.code == "time_to_event_weeks_mismatch"
+
+
+# ─── Entry-point happy path ──────────────────────────────────────────────────
+
+
+class TestEntryPointHappyPath:
+    def test_open_ended_plan_returns_layer4_payload(self):
+        """Open-ended plan (no race_event), Base start, standard mode →
+        12-week horizon; all 4 phases synthesized."""
+        result = llm_layer4_plan_create(
+            **_call_kwargs(),
+            phase_caller=_phase_stub(_empty_phase_output()),
+            seam_caller=_seam_stub_approved(),
+        )
+        assert isinstance(result, Layer4Payload)
+        assert result.mode == "plan_create"
+        assert result.pattern == "A"
+        assert result.phase_structure is not None
+        assert result.seam_reviews is not None
+
+    def test_phase_structure_populated(self):
+        result = llm_layer4_plan_create(
+            **_call_kwargs(),
+            phase_caller=_phase_stub(_empty_phase_output()),
+            seam_caller=_seam_stub_approved(),
+        )
+        assert isinstance(result.phase_structure, PhaseStructure)
+        assert len(result.phase_structure.phases) > 0
+
+    def test_synthesis_metadata_overwritten_per_phase(self):
+        result = llm_layer4_plan_create(
+            **_call_kwargs(),
+            phase_caller=_phase_stub(_empty_phase_output()),
+            seam_caller=_seam_stub_approved(),
+        )
+        assert result.phase_structure is not None
+        for phase in result.phase_structure.phases:
+            sm = phase.synthesis_metadata
+            # Default placeholder is model='(unsynthesized)'; after synth
+            # the orchestrator overwrites with the real model name.
+            assert sm.model != "(unsynthesized)"
+            assert sm.model == "claude-sonnet-4-6"
+
+    def test_seam_reviews_one_per_adjacent_pair(self):
+        """4 phases → 3 seams."""
+        result = llm_layer4_plan_create(
+            **_call_kwargs(),
+            phase_caller=_phase_stub(_empty_phase_output()),
+            seam_caller=_seam_stub_approved(),
+        )
+        assert result.phase_structure is not None
+        assert result.seam_reviews is not None
+        n_phases = len(result.phase_structure.phases)
+        assert len(result.seam_reviews) == n_phases - 1
+
+    def test_sessions_filled_with_phase_metadata(self):
+        """When per-phase synthesizer emits sessions, each PlanSession gets
+        `phase_metadata` populated from the PhaseSpec (per §7.12 + §7.5).
+        Tested directly against `_build_plan_session` to avoid validator-
+        driven retries on undersized test outputs."""
+        from layer4.per_phase import _build_plan_session
+        from layer4.phase_structure import phase_structure_from_3b
+
+        l3b = _layer3b()
+        ps = phase_structure_from_3b(l3b, _PLAN_START)
+        phase0 = ps.phases[0]
+        session_dict = _cardio_session(d=phase0.start_date)
+        s = _build_plan_session(
+            session_dict,
+            session_id="S-x",
+            plan_version_id=1,
+            phase_spec=phase0,
+        )
+        assert s.phase_metadata is not None
+        assert s.phase_metadata.phase_name == phase0.phase_name
+        assert s.phase_metadata.week_in_phase >= 1
+        assert s.phase_metadata.total_weeks_in_phase == phase0.weeks
+        assert (
+            s.phase_metadata.intended_intensity_distribution
+            == phase0.intended_intensity_distribution
+        )
+
+    def test_telemetry_aggregated(self):
+        result = llm_layer4_plan_create(
+            **_call_kwargs(),
+            phase_caller=_phase_stub(_empty_phase_output()),
+            seam_caller=_seam_stub_approved(),
+        )
+        assert result.input_tokens_total > 0
+        assert result.output_tokens_total > 0
+        assert result.latency_ms_total > 0
+        # n_phases (variable per mode/horizon) + (n_phases - 1) seam reviews.
+        assert result.phase_structure is not None
+        n_phases = len(result.phase_structure.phases)
+        assert result.llm_call_count == n_phases + max(0, n_phases - 1)
+
+    def test_validator_results_last_accepted(self):
+        result = llm_layer4_plan_create(
+            **_call_kwargs(),
+            phase_caller=_phase_stub(_empty_phase_output()),
+            seam_caller=_seam_stub_approved(),
+        )
+        assert result.validator_results
+        assert result.validator_results[-1].accepted is True
+
+    def test_start_phase_taper_only(self):
+        """start_phase='Taper' + standard mode = only Taper phase synthesized;
+        no seam reviews."""
+        l3b = _layer3b(mode="standard", start_phase="Taper")
+        result = llm_layer4_plan_create(
+            **{**_call_kwargs(), "layer3b_payload": l3b},
+            phase_caller=_phase_stub(_empty_phase_output()),
+            seam_caller=_seam_stub_approved(),
+        )
+        assert result.phase_structure is not None
+        assert len(result.phase_structure.phases) == 1
+        assert result.phase_structure.phases[0].phase_name == "Taper"
+        assert result.seam_reviews == []
+
+    def test_event_mode_with_race_event_payload(self):
+        l3b = _layer3b(time_to_event_weeks=8)
+        re = _race_event(weeks_out=8)
+        result = llm_layer4_plan_create(
+            **{**_call_kwargs(), "layer3b_payload": l3b},
+            race_event_payload=re,
+            phase_caller=_phase_stub(_empty_phase_output()),
+            seam_caller=_seam_stub_approved(),
+        )
+        assert result.mode == "plan_create"
+        assert result.phase_structure is not None
+        assert result.phase_structure.total_weeks == 8
+
+
+# ─── Seam review orchestration ───────────────────────────────────────────────
+
+
+class TestSeamReview:
+    def test_approved_seam_no_observation(self):
+        result = llm_layer4_plan_create(
+            **_call_kwargs(),
+            phase_caller=_phase_stub(_empty_phase_output()),
+            seam_caller=_seam_stub_approved(),
+        )
+        # No seam-related observations on approved seams.
+        for obs in result.notable_observations:
+            assert obs.category not in ("warning", "seam_unresolved")
+        for sr in result.seam_reviews or []:
+            assert sr.reviewer_verdict == "approved"
+            assert sr.triggered_resynthesis is False
+
+    def test_flagged_minor_emits_warning_observation(self):
+        result = llm_layer4_plan_create(
+            **_call_kwargs(),
+            phase_caller=_phase_stub(_empty_phase_output()),
+            seam_caller=_seam_stub_flagged_minor("seams a bit rough"),
+        )
+        warning_obs = [
+            o for o in result.notable_observations if o.category == "warning"
+        ]
+        assert len(warning_obs) >= 1
+        assert any("seams a bit rough" in o.text for o in warning_obs)
+        for sr in result.seam_reviews or []:
+            assert sr.reviewer_verdict == "flagged_minor"
+            assert sr.triggered_resynthesis is False
+
+    def test_flagged_major_re_prompt_next_triggers_resynthesis(self):
+        """First seam flagged_major+re_prompt_next → next phase re-synthesized →
+        iter-2 seam approves."""
+        result = llm_layer4_plan_create(
+            **_call_kwargs(),
+            phase_caller=_phase_stub(_empty_phase_output()),
+            seam_caller=_seam_stub_flagged_major_then_approved(),
+        )
+        # First seam should record triggered_resynthesis=True with re_prompted
+        # phase set to the next phase (Build, when we have Base→Build).
+        srs = result.seam_reviews or []
+        assert srs
+        first_seam = srs[0]
+        # After iter-2 approval, the recorded verdict is approved.
+        assert first_seam.reviewer_verdict == "approved"
+        assert first_seam.triggered_resynthesis is True
+
+
+# ─── Layer4Payload composition invariants ────────────────────────────────────
+
+
+class TestPayloadComposition:
+    def test_mode_plan_create(self):
+        result = llm_layer4_plan_create(
+            **_call_kwargs(),
+            phase_caller=_phase_stub(_empty_phase_output()),
+            seam_caller=_seam_stub_approved(),
+        )
+        assert result.mode == "plan_create"
+
+    def test_pattern_A(self):
+        result = llm_layer4_plan_create(
+            **_call_kwargs(),
+            phase_caller=_phase_stub(_empty_phase_output()),
+            seam_caller=_seam_stub_approved(),
+        )
+        assert result.pattern == "A"
+
+    def test_phase_structure_non_none(self):
+        result = llm_layer4_plan_create(
+            **_call_kwargs(),
+            phase_caller=_phase_stub(_empty_phase_output()),
+            seam_caller=_seam_stub_approved(),
+        )
+        assert result.phase_structure is not None
+
+    def test_seam_reviews_non_none(self):
+        result = llm_layer4_plan_create(
+            **_call_kwargs(),
+            phase_caller=_phase_stub(_empty_phase_output()),
+            seam_caller=_seam_stub_approved(),
+        )
+        assert result.seam_reviews is not None
+
+    def test_suggestion_id_none(self):
+        result = llm_layer4_plan_create(
+            **_call_kwargs(),
+            phase_caller=_phase_stub(_empty_phase_output()),
+            seam_caller=_seam_stub_approved(),
+        )
+        assert result.suggestion_id is None
+
+    def test_race_week_brief_none(self):
+        result = llm_layer4_plan_create(
+            **_call_kwargs(),
+            phase_caller=_phase_stub(_empty_phase_output()),
+            seam_caller=_seam_stub_approved(),
+        )
+        assert result.race_week_brief is None
+        assert result.race_plan is None
+
+    def test_model_seam_reviewer_recorded(self):
+        result = llm_layer4_plan_create(
+            **_call_kwargs(),
+            phase_caller=_phase_stub(_empty_phase_output()),
+            seam_caller=_seam_stub_approved(),
+        )
+        assert result.model_seam_reviewer == "claude-sonnet-4-6"
+
+    def test_etl_version_set_propagated(self):
+        result = llm_layer4_plan_create(
+            **_call_kwargs(),
+            phase_caller=_phase_stub(_empty_phase_output()),
+            seam_caller=_seam_stub_approved(),
+        )
+        assert result.etl_version_set == {"layer0": "v7"}
+
+
+# ─── per_phase rendering snippets ────────────────────────────────────────────
+
+
+class TestPerPhasePromptRendering:
+    def test_phase_block_includes_phase_name_and_weeks(self):
+        from layer4.per_phase import render_user_prompt
+        from layer4.phase_structure import phase_structure_from_3b
+
+        l3b = _layer3b()
+        ps = phase_structure_from_3b(l3b, _PLAN_START)
+        text = render_user_prompt(
+            phase_spec=ps.phases[0],
+            phase_structure=ps,
+            phase_index_in_plan=0,
+            is_first_phase_in_plan=True,
+            layer1_payload=_layer1(),
+            layer2a_payload=_layer2a(),
+            layer2b_payload=_layer2b(),
+            layer2c_payloads=_layer2c(),
+            layer2d_payload=_layer2d(),
+            layer2e_payload=_layer2e(),
+            layer3a_payload=_layer3a(),
+            layer3b_payload=l3b,
+            race_event_payload=None,
+            prior_phase_sessions=[],
+            retries_used=0,
+            rule_failures=[],
+            seam_issues=[],
+            seam_direction=None,
+        )
+        assert ps.phases[0].phase_name in text
+        assert f"{ps.phases[0].weeks} weeks" in text
+
+    def test_first_phase_no_prior_context(self):
+        from layer4.per_phase import render_user_prompt
+        from layer4.phase_structure import phase_structure_from_3b
+
+        l3b = _layer3b()
+        ps = phase_structure_from_3b(l3b, _PLAN_START)
+        text = render_user_prompt(
+            phase_spec=ps.phases[0],
+            phase_structure=ps,
+            phase_index_in_plan=0,
+            is_first_phase_in_plan=True,
+            layer1_payload=_layer1(),
+            layer2a_payload=_layer2a(),
+            layer2b_payload=_layer2b(),
+            layer2c_payloads=_layer2c(),
+            layer2d_payload=_layer2d(),
+            layer2e_payload=_layer2e(),
+            layer3a_payload=_layer3a(),
+            layer3b_payload=l3b,
+            race_event_payload=None,
+            prior_phase_sessions=[],
+            retries_used=0,
+            rule_failures=[],
+            seam_issues=[],
+            seam_direction=None,
+        )
+        assert "First phase of plan; no prior context." in text
+
+    def test_open_ended_mode_no_race_pace_specific(self):
+        """Open-ended mode prompt instructs no race_pace_specific."""
+        from layer4.per_phase import render_user_prompt
+        from layer4.phase_structure import phase_structure_from_3b
+
+        l3b = _layer3b()
+        ps = phase_structure_from_3b(l3b, _PLAN_START)
+        text = render_user_prompt(
+            phase_spec=ps.phases[0],
+            phase_structure=ps,
+            phase_index_in_plan=0,
+            is_first_phase_in_plan=True,
+            layer1_payload=_layer1(),
+            layer2a_payload=_layer2a(),
+            layer2b_payload=_layer2b(),
+            layer2c_payloads=_layer2c(),
+            layer2d_payload=_layer2d(),
+            layer2e_payload=_layer2e(),
+            layer3a_payload=_layer3a(),
+            layer3b_payload=l3b,
+            race_event_payload=None,
+            prior_phase_sessions=[],
+            retries_used=0,
+            rule_failures=[],
+            seam_issues=[],
+            seam_direction=None,
+        )
+        assert "Do NOT emit `race_pace_specific`" in text
+
+    def test_race_event_route_locales_rendered(self):
+        from layer4.per_phase import render_user_prompt
+        from layer4.phase_structure import phase_structure_from_3b
+
+        l3b = _layer3b(time_to_event_weeks=8)
+        ps = phase_structure_from_3b(l3b, _PLAN_START, total_weeks=8)
+        re = RaceEventPayload(
+            race_event_id=1,
+            user_id=42,
+            name="3-Day Stage",
+            event_date=_PLAN_START + timedelta(weeks=8),
+            race_format="stage_race",
+            distance_km=Decimal("100.0"),
+            total_elevation_gain_m=Decimal("2500"),
+            race_rules_summary=None,
+            mandatory_gear_text=None,
+            event_locale_id=None,
+            is_target_event=True,
+            notes=None,
+            route_locales=[
+                RouteLocale(
+                    route_locale_id=1,
+                    role="start",
+                    sequence_idx=1,
+                    name="Start Line",
+                ),
+                RouteLocale(
+                    route_locale_id=2,
+                    role="aid_station",
+                    sequence_idx=2,
+                    name="AS1",
+                ),
+                RouteLocale(
+                    route_locale_id=3,
+                    role="finish",
+                    sequence_idx=3,
+                    name="Finish",
+                ),
+            ],
+        )
+        text = render_user_prompt(
+            phase_spec=ps.phases[0],
+            phase_structure=ps,
+            phase_index_in_plan=0,
+            is_first_phase_in_plan=True,
+            layer1_payload=_layer1(),
+            layer2a_payload=_layer2a(),
+            layer2b_payload=_layer2b(),
+            layer2c_payloads=_layer2c(),
+            layer2d_payload=_layer2d(),
+            layer2e_payload=_layer2e(),
+            layer3a_payload=_layer3a(),
+            layer3b_payload=l3b,
+            race_event_payload=re,
+            prior_phase_sessions=[],
+            retries_used=0,
+            rule_failures=[],
+            seam_issues=[],
+            seam_direction=None,
+        )
+        assert "stage_race" in text
+        assert "Start Line" in text
+        assert "Finish" in text
+        assert "aid_station" in text
+
+    def test_retry_context_conditional(self):
+        from layer4.per_phase import render_user_prompt
+        from layer4.payload import RuleFailure
+        from layer4.phase_structure import phase_structure_from_3b
+
+        l3b = _layer3b()
+        ps = phase_structure_from_3b(l3b, _PLAN_START)
+        text = render_user_prompt(
+            phase_spec=ps.phases[0],
+            phase_structure=ps,
+            phase_index_in_plan=0,
+            is_first_phase_in_plan=True,
+            layer1_payload=_layer1(),
+            layer2a_payload=_layer2a(),
+            layer2b_payload=_layer2b(),
+            layer2c_payloads=_layer2c(),
+            layer2d_payload=_layer2d(),
+            layer2e_payload=_layer2e(),
+            layer3a_payload=_layer3a(),
+            layer3b_payload=l3b,
+            race_event_payload=None,
+            prior_phase_sessions=[],
+            retries_used=1,
+            rule_failures=[
+                RuleFailure(
+                    rule_name="volume_band_high",
+                    phase_name="Base",
+                    severity="blocker",
+                    detail="weekly volume exceeded band",
+                    affected_session_ids=["S-x"],
+                )
+            ],
+            seam_issues=[],
+            seam_direction=None,
+        )
+        assert "Retry context" in text
+        assert "volume_band_high" in text
+
+    def test_seam_driven_retry_context(self):
+        from layer4.per_phase import render_user_prompt
+        from layer4.phase_structure import phase_structure_from_3b
+
+        l3b = _layer3b()
+        ps = phase_structure_from_3b(l3b, _PLAN_START)
+        text = render_user_prompt(
+            phase_spec=ps.phases[0],
+            phase_structure=ps,
+            phase_index_in_plan=0,
+            is_first_phase_in_plan=True,
+            layer1_payload=_layer1(),
+            layer2a_payload=_layer2a(),
+            layer2b_payload=_layer2b(),
+            layer2c_payloads=_layer2c(),
+            layer2d_payload=_layer2d(),
+            layer2e_payload=_layer2e(),
+            layer3a_payload=_layer3a(),
+            layer3b_payload=l3b,
+            race_event_payload=None,
+            prior_phase_sessions=[],
+            retries_used=1,
+            rule_failures=[],
+            seam_issues=["Peak entry must hold ≥60% Z2."],
+            seam_direction="re_prompt_next",
+        )
+        assert "Seam-driven re-prompt" in text
+        assert "Peak entry must hold ≥60% Z2." in text
+
+
+# ─── seam_review module direct tests ─────────────────────────────────────────
+
+
+class TestSeamReviewInvalidCombinations:
+    def test_patched_with_accept_with_observation_raises(self):
+        from layer4.payload import PhaseSpec, SynthesisMetadata
+        from layer4.seam_review import review_seam
+
+        def bad_caller(*_a, **_kw):
+            return _SeamOut(
+                tool_args={
+                    "reviewer_verdict": "patched",
+                    "seam_issues": ["x"],
+                    "proposed_patch_direction": "accept_with_observation",
+                },
+                input_tokens=2000,
+                output_tokens=100,
+                latency_ms=2500,
+            )
+
+        prior = PhaseSpec(
+            phase_name="Base",
+            start_date=_PLAN_START,
+            end_date=_PLAN_START + timedelta(days=27),
+            weeks=4,
+            intended_volume_band=(5.0, 8.0),
+            intended_intensity_distribution={"Z1-Z2": 0.8, "Z3": 0.15, "Z4-Z5": 0.05},
+            synthesis_metadata=SynthesisMetadata(
+                model="x",
+                temperature=0.2,
+                input_tokens=0,
+                output_tokens=0,
+                latency_ms=0,
+                retries_used=0,
+                cap_hit=False,
+            ),
+        )
+        nxt = PhaseSpec(
+            phase_name="Build",
+            start_date=_PLAN_START + timedelta(days=28),
+            end_date=_PLAN_START + timedelta(days=55),
+            weeks=4,
+            intended_volume_band=(6.0, 10.0),
+            intended_intensity_distribution={"Z1-Z2": 0.7, "Z3": 0.2, "Z4-Z5": 0.1},
+            synthesis_metadata=SynthesisMetadata(
+                model="x",
+                temperature=0.2,
+                input_tokens=0,
+                output_tokens=0,
+                latency_ms=0,
+                retries_used=0,
+                cap_hit=False,
+            ),
+        )
+        with pytest.raises(Exception) as exc:
+            review_seam(
+                seam_index=0,
+                prior_phase_spec=prior,
+                next_phase_spec=nxt,
+                prior_phase_sessions=[],
+                next_phase_sessions=[],
+                layer2a_payload=_layer2a(),
+                layer2d_payload=_layer2d(),
+                discipline_mix=["D-run"],
+                mode="standard",
+                start_phase="Base",
+                race_format="open_ended",
+                event_date=None,
+                seam_iteration=1,
+                prior_seam_issues=[],
+                caller=bad_caller,
+            )
+        assert "seam_reviewer_invalid_verdict_combination" in str(exc.value)
