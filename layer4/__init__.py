@@ -159,6 +159,11 @@ from layer4.single_session import (
     build_record_single_session_tool,
     llm_layer4_single_session_synthesize,
 )
+from layer4.telemetry import (
+    CallMetrics,
+    MODEL_PRICING_USD_PER_M,
+    TelemetryAggregator,
+)
 from layer4.validator import (
     ValidatorContext,
     validate_layer4_payload,
@@ -369,4 +374,8 @@ __all__ = [
     # Race-week brief synthesizer (race_week_brief.py)
     "build_record_race_week_brief_tool",
     "llm_layer4_race_week_brief",
+    # Per-call telemetry (telemetry.py) — Step 6c per §9.6 + §14.3.5.
+    "CallMetrics",
+    "MODEL_PRICING_USD_PER_M",
+    "TelemetryAggregator",
 ]
