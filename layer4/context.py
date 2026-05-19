@@ -930,7 +930,16 @@ class RaceEventPayload(_Base):
     total_elevation_gain_m: Decimal | None = Field(default=None, ge=0)
     race_rules_summary: str | None = Field(default=None, max_length=8000)
     mandatory_gear_text: str | None = Field(default=None, max_length=8000)
-    event_locale_id: int | None = None
+    # D-72 resolved 2026-05-19 — slug everywhere across the typed pipeline.
+    # The DB column race_events.event_locale_id is BIGINT FK to
+    # locale_profiles(id); race_events_repo.load_race_event_payload JOINs
+    # locale_profiles to surface the slug here. Aligns with
+    # Layer2CPayload.locale_id + Layer3BPayload.event_locale_id + the dict
+    # key in layer2c_payloads + PlanSession.locale_id + the slug-based
+    # cache-key formulas in layer4/hashing.py. The DB surrogate id stays
+    # the right shape for ON DELETE SET NULL behavior; it just doesn't
+    # cross the typed-payload boundary.
+    event_locale_id: str | None = None
     is_target_event: bool
     notes: str | None = Field(default=None, max_length=2000)
     route_locales: list[RouteLocale] = Field(default_factory=list)

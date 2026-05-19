@@ -148,6 +148,10 @@ class TestListAthleteRaceEvents:
 
 
 def _race_row(**overrides):
+    # D-72 resolved 2026-05-19 — `load_race_event_payload` JOINs locale_profiles
+    # and surfaces the slug under `event_locale_slug`. The DB column itself is
+    # still BIGINT FK; tests for write-path helpers (create + update + listing)
+    # still seed `event_locale_id: int`.
     base = {
         "id": 10,
         "user_id": 1,
@@ -158,7 +162,7 @@ def _race_row(**overrides):
         "total_elevation_gain_m": Decimal("3000"),
         "race_rules_summary": "Mandatory checkpoints; 56h cutoff.",
         "mandatory_gear_text": "Headlamp; bivvy; 6L water cap.",
-        "event_locale_id": 5,
+        "event_locale_slug": "nerstrand_finish",
         "is_target_event": True,
         "notes": "Crew at TA2.",
     }
@@ -185,7 +189,7 @@ class TestLoadRaceEventPayload:
         assert payload.user_id == 1
         assert payload.name == "Pocket Gopher Extreme 2026"
         assert payload.race_format == "expedition_ar"
-        assert payload.event_locale_id == 5
+        assert payload.event_locale_id == "nerstrand_finish"
         assert payload.is_target_event is True
         assert payload.route_locales == []
         # 2 SELECTs (race_events + race_route_locales); no equipment SELECT
@@ -266,6 +270,30 @@ class TestLoadRaceEventPayload:
         conn.queue_response(rows=[])
         load_race_event_payload(conn, race_event_id=10)
         assert "ORDER BY sequence_idx ASC" in conn.calls[1][0]
+
+    def test_race_events_select_joins_locale_profiles_for_slug(self):
+        # D-72 resolved 2026-05-19 — the typed-payload load helper LEFT JOINs
+        # locale_profiles on the surrogate id to surface the locale slug so
+        # RaceEventPayload.event_locale_id stays str-shaped (slug) across the
+        # Layer 4 pipeline. The DB column event_locale_id remains BIGINT FK.
+        conn = _FakeConn()
+        conn.queue_response(row=_race_row())
+        conn.queue_response(rows=[])
+        load_race_event_payload(conn, race_event_id=10)
+        sql = conn.calls[0][0]
+        assert "LEFT JOIN locale_profiles" in sql
+        assert "lp.locale AS event_locale_slug" in sql
+
+    def test_payload_event_locale_id_is_none_when_fk_unresolved(self):
+        # ON DELETE SET NULL behavior on locale_profiles row deletion +
+        # races with no event_locale_id set both surface as None after
+        # the LEFT JOIN.
+        conn = _FakeConn()
+        conn.queue_response(row=_race_row(event_locale_slug=None))
+        conn.queue_response(rows=[])
+        payload = load_race_event_payload(conn, race_event_id=10)
+        assert payload is not None
+        assert payload.event_locale_id is None
 
 
 # ─── load_target_race_event_payload ──────────────────────────────────────────
