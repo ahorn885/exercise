@@ -2,6 +2,16 @@
 contracts Layer 4 consumes.
 
 See:
+- `aidstation-sources/Layer1_Spec.md` §7 → `Layer1Payload` (D-73 Phase 1.3
+  typed-payload promotion 2026-05-19; mirrors D-51 §3 storage shipped in
+  Phase 1.2A/B/C). Section-keyed sub-models (`Layer1Identity`,
+  `Layer1HealthStatus`, `Layer1TrainingHistory`, `Layer1DisciplineBaselines`,
+  `Layer1StrengthBenchmarks`, `Layer1Performance`, `Layer1Availability`,
+  `Layer1EventGoal`, `Layer1Lifestyle`, `Layer1Network`, `Layer1Disclosures`)
+  carry the full §A-§L view. Layer 4 entry points keep `dict[str, Any]`
+  per `Upstream_Implementation_Plan_v1.md` §6 item 3 + §8 mitigation
+  ("keep dict[str, Any] for v1; promote in v2"). The orchestrator
+  (Phase 5) calls `.model_dump()` before threading to Layer 4.
 - `aidstation-sources/Layer2A_Spec.md` §7 → `Layer2APayload`
 - `aidstation-sources/Layer2B_Spec.md` §7 → `Layer2BPayload`
 - `aidstation-sources/Layer2C_Spec.md` §7 (+ §5.6 amendment) → `Layer2CPayload`
@@ -1034,3 +1044,394 @@ class ParsedIntent(_Base):
     # Confidence + ambiguity
     parser_confidence: Literal["high", "medium", "low"] = "high"
     ambiguity_notes: str | None = None
+
+
+# ─── Layer 1 — athlete profile aggregation (Layer1_Spec.md §7) ───────────────
+#
+# Typed mirror of the D-51 §3 storage shipped in D-73 Phase 1.2A/B/C
+# (athlete_profile + 7 per-discipline 1:1 sub-tables + 8 multi-row tables +
+# strength_benchmarks + daily_availability_windows + body_metrics +
+# wellness_self_report joinpoints). Section-keyed sub-models follow the
+# v5 §A-§L spec structure. Top-level convenience fields surface the keys
+# Layer 4 entry points currently `.get(...)` from the opaque dict
+# (experience_level / coaching_voice_preferences / available_days_per_week
+# / travel_constraint / sleep_baseline / daily_availability_windows) so
+# `.model_dump()` produces a dict consumable by Layer 4 unchanged per
+# `Upstream_Implementation_Plan_v1.md` §6 item 3 mitigation.
+
+
+# §A — identity
+class Layer1Identity(_Base):
+    date_of_birth: date | None = None
+    sex: Literal["male", "female"] | None = None
+    height_cm: float | None = None
+    primary_sport: str | None = None
+    weekly_hours_target: float | None = None
+    notes: str | None = None
+
+
+# §B — health status sub-records
+class InjuryRecord(_Base):
+    injury_id: int
+    body_part: str
+    description: str | None = None
+    severity: int | None = Field(default=None, ge=1, le=5)
+    status: Literal["Active", "Resolved", "Inactive"]
+    start_date: date | None = None
+    resolved_date: date | None = None
+    modifications_needed: str | None = None
+
+
+class HealthConditionRecord(_Base):
+    condition_id: int
+    system_category: Literal[
+        "cardiac",
+        "respiratory",
+        "metabolic",
+        "neurological",
+        "gi_immune",
+        "musculoskeletal",
+        "endocrine",
+        "other",
+    ]
+    condition_name: str
+    severity: int | None = Field(default=None, ge=1, le=5)
+    notes: str | None = None
+    status: Literal["Active", "Resolved", "Inactive"]
+    start_date: date | None = None
+    resolved_date: date | None = None
+
+
+class MedicationRecord(_Base):
+    medication_id: int
+    medication_class: Literal[
+        "beta_blocker",
+        "diuretic",
+        "nsaid_chronic",
+        "hrt",
+        "ssri",
+        "stimulant_adhd",
+        "corticosteroid_chronic",
+        "anticoagulant",
+        "other",
+    ]
+    medication_name: str | None = None
+    started_at: date | None = None
+    stopped_at: date | None = None
+    notes: str | None = None
+
+
+class FoodAllergyRecord(_Base):
+    allergy_id: int
+    allergen_category: Literal[
+        "tree_nut",
+        "peanut",
+        "dairy",
+        "gluten",
+        "egg",
+        "shellfish",
+        "fish",
+        "soy",
+        "nightshade",
+        "fodmap",
+        "caffeine_sensitivity",
+        "other",
+    ]
+    severity: Literal["intolerance", "allergy", "anaphylaxis"]
+    notes: str | None = None
+
+
+class Layer1HealthStatus(_Base):
+    current_injuries: list[InjuryRecord] = Field(default_factory=list)
+    injury_history: list[InjuryRecord] = Field(default_factory=list)
+    health_conditions_active: list[HealthConditionRecord] = Field(default_factory=list)
+    health_conditions_history: list[HealthConditionRecord] = Field(default_factory=list)
+    medications_active: list[MedicationRecord] = Field(default_factory=list)
+    medications_history: list[MedicationRecord] = Field(default_factory=list)
+    food_allergies: list[FoodAllergyRecord] = Field(default_factory=list)
+    resting_hr_bpm: int | None = None
+
+
+# §C — training history sub-records
+class SecondarySportRecord(_Base):
+    sport_slug: str
+    experience_tier: Literal["under_1yr", "1_to_3yr", "3plus_yr"]
+
+
+class DisciplineWeightRecord(_Base):
+    discipline_slug: str
+    weight_pct: int = Field(ge=0, le=100)
+
+
+class RecentRaceResult(_Base):
+    event_name: str
+    event_date: date
+    distance_km: float | None = None
+    finish_time_seconds: int | None = Field(default=None, ge=0)
+    result_notes: str | None = None
+    source: str
+
+
+class PackLoadRecord(_Base):
+    pack_weight_kg: float = Field(ge=0)
+    session_count_4wk: int | None = Field(default=None, ge=0)
+    longest_session_hrs: float | None = Field(default=None, ge=0)
+    terrain_type: str | None = None
+    notes: str | None = None
+
+
+class Layer1TrainingHistory(_Base):
+    years_structured_training: int | None = Field(default=None, ge=0)
+    peak_weekly_volume_hrs: float | None = Field(default=None, ge=0)
+    peak_weekly_volume_year: int | None = None
+    longest_event_completed: str | None = None
+    training_consistency_disrupted_weeks: int | None = Field(default=None, ge=0, le=52)
+    training_consistency_cause: str | None = None
+    previous_coaching: Literal["self", "online_plan", "coach", "none"] | None = None
+    secondary_sports: list[SecondarySportRecord] = Field(default_factory=list)
+    discipline_weighting: list[DisciplineWeightRecord] = Field(default_factory=list)
+    recent_race_results: list[RecentRaceResult] = Field(default_factory=list)
+    pack_load_history: list[PackLoadRecord] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _check_weighting_sum(self) -> "Layer1TrainingHistory":
+        # §3.3 design wave invariant: per-user sum across rows = 100 when any
+        # weighting rows exist (intermediate edit states would surface here as
+        # builder-time mismatches, so the rule is application-validated; this
+        # check fires only when the builder assembles a complete row set).
+        if not self.discipline_weighting:
+            return self
+        total = sum(r.weight_pct for r in self.discipline_weighting)
+        if total != 100:
+            raise ValueError(
+                f"discipline_weighting weight_pct must sum to 100 when any rows exist "
+                f"(got {total} across {len(self.discipline_weighting)} rows)"
+            )
+        return self
+
+
+# §D — discipline baselines
+class RunningBaseline(_Base):
+    easy_run_pace_sec_per_km: int | None = Field(default=None, ge=0)
+    vertical_gain_weekly_m: float | None = Field(default=None, ge=0)
+    vertical_gain_peak_session_m: float | None = Field(default=None, ge=0)
+    trail_experience_terrain: list[
+        Literal["moderate", "technical", "mountain", "moorland"]
+    ] = Field(default_factory=list)
+    downhill_adaptation: bool | None = None
+    downhill_sessions_3mo: int | None = Field(default=None, ge=0)
+    night_running: bool | None = None
+    gut_training_g_per_hr_cho: int | None = Field(default=None, ge=0)
+    gut_training_issues: str | None = None
+
+
+class CyclingBaseline(_Base):
+    bike_types_available: list[str] = Field(default_factory=list)
+    mtb_skill: Literal["beginner", "intermediate", "advanced"] | None = None
+    longest_ride_distance_km: float | None = Field(default=None, ge=0)
+    longest_ride_hrs: float | None = Field(default=None, ge=0)
+    saddle_endurance_hrs: float | None = Field(default=None, ge=0)
+    aero_endurance_min: int | None = Field(default=None, ge=0)
+
+
+class SwimmingBaseline(_Base):
+    pool_100m_pace_sec: int | None = Field(default=None, ge=0)
+    ow_experience: Literal["none", "limited", "experienced"] | None = None
+    wetsuit_experience: bool | None = None
+    cold_water_experience: bool | None = None
+    ow_feeding_experience: bool | None = None
+    weekly_swim_volume_km: float | None = Field(default=None, ge=0)
+
+
+class PaddlingBaseline(_Base):
+    longest_paddle_km: float | None = Field(default=None, ge=0)
+    longest_paddle_hrs: float | None = Field(default=None, ge=0)
+    paddle_craft_types: list[Literal["kayak", "canoe", "packraft", "surfski"]] = Field(
+        default_factory=list
+    )
+
+
+class SkiingBaseline(_Base):
+    ski_disciplines: list[Literal["classic_xc", "skate_xc", "skimo"]] = Field(
+        default_factory=list
+    )
+    weekly_ski_volume_hrs: float | None = Field(default=None, ge=0)
+
+
+class NavigationBaseline(_Base):
+    experience_level: Literal["none", "map_only", "map_compass", "expert"] | None = None
+    night_nav_experience: bool | None = None
+
+
+class TechnicalBaseline(_Base):
+    # rock_climbing_*_grade are free-text multi-system (Yosemite Decimal /
+    # French Sport / UIAA) per Layer 4 Step 4a precedent — design wave §3.4
+    # intentionally left these unconstrained.
+    rock_climbing_outdoor_grade: str | None = None
+    rock_climbing_indoor_grade: str | None = None
+    abseiling_experience: bool | None = None
+
+
+class Layer1DisciplineBaselines(_Base):
+    running: RunningBaseline | None = None
+    cycling: CyclingBaseline | None = None
+    swimming: SwimmingBaseline | None = None
+    paddling: PaddlingBaseline | None = None
+    skiing: SkiingBaseline | None = None
+    navigation: NavigationBaseline | None = None
+    technical: TechnicalBaseline | None = None
+
+
+# §E — strength benchmarks (1:1 strength_benchmarks)
+class Layer1StrengthBenchmarks(_Base):
+    front_plank_sec: int | None = Field(default=None, ge=0)
+    dead_bug_max_reps: int | None = Field(default=None, ge=0)
+    side_plank_left_sec: int | None = Field(default=None, ge=0)
+    side_plank_right_sec: int | None = Field(default=None, ge=0)
+    pushup_max_reps: int | None = Field(default=None, ge=0)
+    bodyweight_squat_max_reps: int | None = Field(default=None, ge=0)
+    single_leg_squat_left_max_reps: int | None = Field(default=None, ge=0)
+    single_leg_squat_right_max_reps: int | None = Field(default=None, ge=0)
+    pullup_max_reps: int | None = Field(default=None, ge=0)
+    dead_hang_sec: int | None = Field(default=None, ge=0)
+    grip_strength_left_kg: float | None = Field(default=None, ge=0)
+    grip_strength_right_kg: float | None = Field(default=None, ge=0)
+    last_tested_at: date | None = None
+
+
+# §F — performance baselines
+class Layer1Performance(_Base):
+    body_weight_kg: float | None = Field(default=None, ge=0)
+    hrmax_bpm: int | None = Field(default=None, ge=0)
+    hrmax_source: str | None = None
+    lactate_threshold_hr_bpm: int | None = Field(default=None, ge=0)
+    lt_method: str | None = None
+    vo2max: float | None = Field(default=None, ge=0)
+    vo2max_source: str | None = None
+    cycling_ftp_w: int | None = Field(default=None, ge=0)
+    cycling_ftp_test_date: date | None = None
+    running_threshold_pace_sec_per_km: int | None = Field(default=None, ge=0)
+    running_threshold_test_date: date | None = None
+    css_swim_sec_per_100m: int | None = Field(default=None, ge=0)
+    css_test_date: date | None = None
+
+
+# §G — per-week capacity scalars (per-day windows are at top-level
+# `Layer1Payload.daily_availability_windows`).
+class Layer1Availability(_Base):
+    long_session_available: bool = False
+    long_session_days: list[str] = Field(default_factory=list)
+    long_session_max_hr: Literal[2, 3, 4, 5, 6, 8] | None = None
+    doubles_feasible: Literal["regularly", "occasionally", "no"] | None = None
+    preferred_rest_days: list[str] = Field(default_factory=list)
+
+
+# §H — event/goal
+class Layer1EventGoal(_Base):
+    target_race_event_id: int | None = None
+    plan_duration_weeks_no_event: Literal[8, 12, 16, 20, 24] | None = None
+    non_event_goal_type: Literal[
+        "endurance", "general_fitness", "strength", "mixed"
+    ] | None = None
+
+
+# §I — lifestyle
+class Layer1Lifestyle(_Base):
+    sleep_baseline_hours: float | None = Field(default=None, ge=0)
+    work_stress_level: Literal["low", "moderate", "high", "variable"] | None = None
+    dietary_pattern: list[str] = Field(default_factory=list)
+    supplement_protocol_notes: str | None = None
+    caffeine_tolerance: Literal["none", "low", "moderate", "high"] | None = None
+    caffeine_daily_mg_estimate: int | None = Field(default=None, ge=0)
+    caffeine_race_day_strategy: Literal[
+        "caffeine_loading", "taper", "maintain", "avoid"
+    ] | None = None
+    altitude_acclimatization_history: bool | None = None
+    altitude_max_exposure_m: int | None = Field(default=None, ge=0)
+    altitude_exposure_count: int | None = Field(default=None, ge=0)
+    fueling_format_preference: list[str] = Field(default_factory=list)
+    gi_triggers_known: str | None = None
+    salt_electrolyte_tolerance: Literal["low", "moderate", "high"] | None = None
+    sleep_deprivation_max_hrs_continuous_awake: int | None = Field(default=None, ge=0)
+    sleep_deprivation_strategy_notes: str | None = None
+
+
+# §L — network
+class AthleteNetworkLink(_Base):
+    link_id: int
+    partner_name: str
+    linked_account_user_id: int | None = None
+    relationship_types: list[
+        Literal[
+            "training_partner",
+            "race_teammate",
+            "coach",
+            "family",
+            "pacer",
+            "crew",
+        ]
+    ] = Field(default_factory=list)
+    partner_specific_rules: str | None = None
+    race_event_id: int | None = None
+    discipline_focus_on_team: str | None = None
+
+
+class LinkedPartnerConsent(_Base):
+    consent_id: int
+    link_id: int
+    consent_scope: Literal["none", "activity_summaries", "full_plan_access"]
+    granted_at: datetime
+    revoked_at: datetime | None = None
+
+
+class Layer1Network(_Base):
+    network_links: list[AthleteNetworkLink] = Field(default_factory=list)
+    linked_partner_consents: list[LinkedPartnerConsent] = Field(default_factory=list)
+
+
+# §A.1 — disclosures (latest-ack per disclosure_id)
+class DisclosureAck(_Base):
+    disclosure_id: str
+    version_id: str | None = None
+    scopes_granted: str | None = None
+    delivery_method: Literal["in_app", "email"]
+    acknowledged_at: datetime
+
+
+class Layer1Disclosures(_Base):
+    acknowledgments: list[DisclosureAck] = Field(default_factory=list)
+
+
+# ─── Layer1Payload (top-level) ───────────────────────────────────────────────
+
+
+class Layer1Payload(_Base):
+    user_id: int
+    as_of: datetime
+
+    # Layer-4-consumed convenience fields (top-level so `.model_dump()` produces
+    # a dict where Layer 4's `.get("experience_level")` etc. continue to work
+    # per `Upstream_Implementation_Plan_v1.md` §8 mitigation). `experience_level`
+    # / `coaching_voice_preferences` / `travel_constraint` carry no v1 storage —
+    # builder leaves them None; derivation is a future Layer 1 enhancement.
+    experience_level: Literal[
+        "novice", "developing", "intermediate", "advanced", "elite"
+    ] | None = None
+    coaching_voice_preferences: str | None = None
+    available_days_per_week: int | None = Field(default=None, ge=0, le=7)
+    travel_constraint: str | None = None
+    sleep_baseline: float | None = Field(default=None, ge=0)
+    daily_availability_windows: list[DailyAvailabilityWindow] = Field(default_factory=list)
+
+    # Full §A-§L mirror.
+    identity: Layer1Identity
+    health_status: Layer1HealthStatus
+    training_history: Layer1TrainingHistory
+    discipline_baselines: Layer1DisciplineBaselines
+    strength_benchmarks: Layer1StrengthBenchmarks | None = None
+    performance: Layer1Performance
+    availability: Layer1Availability
+    event_goal: Layer1EventGoal
+    lifestyle: Layer1Lifestyle
+    network: Layer1Network
+    disclosures: Layer1Disclosures
