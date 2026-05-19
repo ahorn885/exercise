@@ -244,6 +244,15 @@ class Layer2APayload(_Base):
 # ─── Layer 2B — terrain (Layer2B_Spec.md §7) ─────────────────────────────────
 
 
+class RaceTerrainEntry(_Base):
+    # Layer 2B input row. `terrain_id` must match the canonical TRN-\d{3}
+    # vocabulary in `layer0.terrain_types`; `pct_of_race` is in [0.0, 100.0]
+    # per `Layer2B_Spec.md` §3 + §4. The runtime validates the pattern + sum
+    # bounds; the typed schema constrains the per-row range.
+    terrain_id: str
+    pct_of_race: float = Field(ge=0.0, le=100.0)
+
+
 class TerrainGap(_Base):
     target_terrain_id: str
     target_terrain_name: str
@@ -261,8 +270,8 @@ class TerrainGap(_Base):
 
 class RaceTerrainOutput(_Base):
     terrain_id: str
-    terrain_name: str
-    pct_of_race: float = Field(ge=0.0, le=1.0)
+    terrain_name: str | None = None
+    pct_of_race: float = Field(ge=0.0, le=100.0)
     available_locally: bool
     gap: TerrainGap | None = None
 
@@ -275,7 +284,7 @@ class Layer2BSummaryBlock(_Base):
     unbridgeable_count: int = Field(ge=0)
     min_adaptation_weeks_needed: int = Field(ge=0)
     worst_fidelity: float = Field(ge=0.0, le=1.0)
-    pct_of_race_uncovered: float = Field(ge=0.0, le=1.0)
+    pct_of_race_uncovered: float = Field(ge=0.0, le=100.0)
     any_unbridgeable: bool
     any_undefined: bool
 

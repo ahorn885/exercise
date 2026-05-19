@@ -1506,6 +1506,31 @@ _PG_MIGRATIONS = [
     "ALTER TABLE injury_log ADD COLUMN IF NOT EXISTS injury_type TEXT",
     "ALTER TABLE injury_log ADD COLUMN IF NOT EXISTS side TEXT NOT NULL DEFAULT 'N/A'",
     "ALTER TABLE injury_log ADD COLUMN IF NOT EXISTS movement_constraints JSONB",
+    # D-73 Phase 2.3 (Layer2B_Spec.md §7) — reclassify deployed
+    # `layer0.terrain_gap_rules.gap_severity='partial'` rows to the
+    # spec-canonical 4-band enum {critical, high, medium, low} keyed on
+    # `proxy_fidelity` (>= 0.70 low; 0.50-0.69 medium; 0.40-0.49 high;
+    # < 0.40 critical). 11 deployed rows reclassified; the 1 unbridgeable
+    # row (TRN-013 → NULL) is left untouched. Idempotent: WHERE filter
+    # on `gap_severity = 'partial'` no-ops after first run. DO block
+    # guards on table existence so a fresh DB without the populate script
+    # (etl/sources/populate_terrain_gap_rules.sql) doesn't error here.
+    "DO $$ "
+    "BEGIN "
+    "  IF EXISTS ("
+    "    SELECT 1 FROM information_schema.tables "
+    "    WHERE table_schema='layer0' AND table_name='terrain_gap_rules'"
+    "  ) THEN "
+    "    UPDATE layer0.terrain_gap_rules "
+    "    SET gap_severity = CASE "
+    "      WHEN proxy_fidelity >= 0.70 THEN 'low' "
+    "      WHEN proxy_fidelity >= 0.50 THEN 'medium' "
+    "      WHEN proxy_fidelity >= 0.40 THEN 'high' "
+    "      ELSE 'critical' "
+    "    END "
+    "    WHERE gap_severity = 'partial' AND superseded_at IS NULL; "
+    "  END IF; "
+    "END $$;",
 ]
 
 _CLOTHING_SEEDS = [
