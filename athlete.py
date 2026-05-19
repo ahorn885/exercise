@@ -19,15 +19,10 @@ PROFILE_FIELDS = (
     'height_cm',
     'primary_sport',
     # `target_event_name` + `target_event_date` retired from the form per
-    # D-66 Layer 3B Scope A (race_events table is the source of truth via
-    # the profile Race events tab + onboarding §H.2). The columns remain
-    # on `athlete_profile` pending a Scope B drop migration; the one-time
-    # backfill in `init_db.py:1185` copied any pre-D-66 values into
-    # `race_events`. PROFILE_FIELDS drives the SELECT/UPDATE column list,
-    # so removing them here stops the upsert helper + reader from touching
-    # the vestigial columns even though they still exist on disk.
+    # D-66 Layer 3B Scope A; columns dropped from athlete_profile in Scope B
+    # (init_db.py migrations). `training_window` retired in D-73 Phase 1.2A
+    # — superseded by `daily_availability_windows` (D-61 / PR12).
     'weekly_hours_target',
-    'training_window',
     'notes',
     # v5 §A.2 prefill-eligible baselines (PR6 D-51 column foundation).
     # Self-report at onboarding today; provider extractors land in PR7
@@ -46,6 +41,58 @@ PROFILE_FIELDS = (
     'long_session_max_hr',
     'doubles_feasible',
     'preferred_rest_days',
+    # D-73 Phase 1.2A (D-51 §3.3) — §C training history scalars. All
+    # self-report at onboarding today; `previous_coaching` closed enum
+    # (`self` / `online_plan` / `coach` / `none`). Free-text columns
+    # (`longest_event_completed`, `training_consistency_cause`) tolerate
+    # any string and the Layer 1 builder parses at read time.
+    'years_structured_training',
+    'peak_weekly_volume_hrs',
+    'peak_weekly_volume_year',
+    'longest_event_completed',
+    'training_consistency_disrupted_weeks',
+    'training_consistency_cause',
+    'previous_coaching',
+    # D-73 Phase 1.2A (D-51 §3.6) — §F testing-baseline gap fields. The
+    # three `_source` companions encode how the existing prefill-eligible
+    # baseline was obtained (closed enum: `measured` / `estimated_tanaka`
+    # / `provider_<X>` for hrmax_source; analogous shapes for the others).
+    # Not prefill-eligible themselves (they describe prefill provenance).
+    'running_threshold_pace_sec_per_km',
+    'running_threshold_test_date',
+    'css_swim_sec_per_100m',
+    'css_test_date',
+    'cycling_ftp_test_date',
+    'hrmax_source',
+    'lt_method',
+    'vo2max_source',
+    # D-73 Phase 1.2A (D-51 §3.8) — §H no-event-mode plan parameters.
+    # `plan_duration_weeks_no_event` enum (8/12/16/20/24); NULL when the
+    # athlete has a target race_events row. `non_event_goal_type` closed
+    # enum (`endurance` / `general_fitness` / `strength` / `mixed`).
+    'plan_duration_weeks_no_event',
+    'non_event_goal_type',
+    # D-73 Phase 1.2A (D-51 §3.9) — §I lifestyle & recovery. Sleep-
+    # deprivation pair stored regardless of §H race duration (Andy
+    # 2026-05-19; athlete can edit any time, no write-path conditional).
+    # `dietary_pattern` + `fueling_format_preference` are comma-separated
+    # closed-enum tokens. `caffeine_race_day_strategy` is conditional in
+    # the UI (NULL when `caffeine_tolerance='none'`) but storage is
+    # unconstrained.
+    'work_stress_level',
+    'dietary_pattern',
+    'supplement_protocol_notes',
+    'caffeine_tolerance',
+    'caffeine_daily_mg_estimate',
+    'caffeine_race_day_strategy',
+    'altitude_acclimatization_history',
+    'altitude_max_exposure_m',
+    'altitude_exposure_count',
+    'fueling_format_preference',
+    'gi_triggers_known',
+    'salt_electrolyte_tolerance',
+    'sleep_deprivation_max_hrs_continuous_awake',
+    'sleep_deprivation_strategy_notes',
 )
 
 # Subset of PROFILE_FIELDS that v5 §A.2.1 marks as provider-prefill-eligible.
@@ -59,8 +106,6 @@ PREFILL_ELIGIBLE_FIELDS = (
     'vo2max',
     'cycling_ftp_w',
 )
-
-TRAINING_WINDOWS = ('morning', 'midday', 'evening', 'flexible')
 
 # v5 §G day tokens. Sunday=0 mirrors the daily_availability_windows
 # storage convention (matches §7.1 schema comment: 0=Sunday, 6=Saturday).

@@ -6,26 +6,24 @@ Single rolling-state pointer. Changes on every shipped session. Long-form sessio
 
 ## Last shipped session
 
-`handoffs/Process_Efficiency_Housekeeping_Closing_Handoff_v1.md` — 2026-05-19
+`handoffs/V5_Implementation_D73_Phase_1_2A_Closing_Handoff_v1.md` — 2026-05-19
 
-Process refactor. Split CLAUDE.md → CLAUDE + CURRENT_STATE + CARRY_FORWARD; consolidated 11 stop-and-ask triggers to 6; added `scripts/verify-handoff.sh`; added `handoffs/_template.md`; rewrote the `/handoff` slash command. Rule #12 now exempts the backlog from version-per-status-flip. Rule #13 names the new read order. No code, no specs, no tests.
+D-73 Phase 1.2A — D-51 implementation session 1 of 3. Schema migration: 31 new `athlete_profile` columns (§3.3 + §3.6 + §3.8 + §3.9) + new `strength_benchmarks` 1:1 sub-table (§3.5) + folded D-56 (`cardio_log.is_race` + `start_time`) + dropped legacy `athlete_profile.training_window` with paired UI retirement. 4 substantive code/template files (init_db.py, athlete.py, routes/profile.py, templates/profile/edit.html); under ceiling. 751 tests still green.
 
-**Predecessor:** `V5_Implementation_D51_Layer1_Design_Wave_Closing_Handoff_v1.md` (D-73 Phase 1.1 — D-51 design wave; 🟡 Deferred → 🟢 Design wave shipped 2026-05-19).
+**Predecessor:** `Process_Efficiency_Housekeeping_Closing_Handoff_v1.md` (process refactor; CLAUDE.md split, Rule #12 backlog exception, verify-handoff.sh).
 
 ## Current focus
 
-Andy's pick. Architect-recommended next: **D-73 Phase 1.2 Session 1.2A** — `athlete_profile` column extensions + bundled-scalar sub-tables (`strength_benchmarks`, `daily_availability_windows`) + drop legacy `training_window` per `Layer1_D51_Design_v1.md` §4.
+Andy's pick. Architect-recommended next: **D-73 Phase 1.2 Session 1.2B** — multi-row tables for §B (health_conditions_log + medications_log + food_allergies) + §C (athlete_secondary_sports + athlete_discipline_weighting + recent_race_results + pack_load_history) + §L (athlete_network_links) + §A.1 (disclosure_acknowledgments). Per `Layer1_D51_Design_v1.md` §4. ~5 files; ceiling-clean.
 
-This will be the first session to exercise the new process end-to-end (CLAUDE → CURRENT_STATE → CARRY_FORWARD → predecessor handoff → `verify-handoff.sh`).
-
-Orthogonal alternatives are tracked in `CARRY_FORWARD.md`.
+Orthogonal alternatives tracked in `CARRY_FORWARD.md`.
 
 ## Layer status
 
 | Layer | Status |
 |---|---|
 | **0** | DEPLOYED |
-| **1** | In progress — D-51 design wave shipped 2026-05-19; Phase 1.2 implementation queued |
+| **1** | In progress — D-51 design wave shipped + Phase 1.2A schema landed 2026-05-19; Phase 1.2B + 1.2C queued |
 | **2** | SPECS DONE (2A-2E) |
 | **3** | 3A SPEC DONE; 3B SPEC DONE |
 | **3.5** | Designed; not yet implemented |
@@ -40,6 +38,6 @@ Multi-session plan in `Upstream_Implementation_Plan_v1.md`. Phase 1.1 (D-51 desi
 
 ## Tests
 
-751 green (last measured 2026-05-18; Phase 1.1 was design-only, no test deltas).
+751 green (last measured 2026-05-19 after Phase 1.2A schema-only changes; no test deltas — migrations are not exercised by pytest, verified via §5.0 walkthrough on Neon).
 
 ---

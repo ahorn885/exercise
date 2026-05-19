@@ -23,7 +23,7 @@ from routes.auth import (
     generate_api_token,
 )
 from athlete import (
-    PROFILE_FIELDS, PREFILL_ELIGIBLE_FIELDS, TRAINING_WINDOWS,
+    PROFILE_FIELDS, PREFILL_ELIGIBLE_FIELDS,
     DAY_TOKENS, DAY_LABELS, DOUBLES_FEASIBLE_CHOICES,
     LONG_SESSION_MAX_HR_CHOICES,
     get_athlete_profile, upsert_athlete_profile,
@@ -222,10 +222,6 @@ def edit():
             except (ValueError, TypeError):
                 return None
 
-        window = _str('training_window')
-        if window not in (None,) + TRAINING_WINDOWS:
-            window = None
-
         prefill_values = {
             'body_weight_kg': _num('body_weight_kg'),
             'hrmax_bpm': _num('hrmax_bpm', cast=int),
@@ -240,7 +236,6 @@ def edit():
             height_cm=_num('height_cm'),
             primary_sport=_str('primary_sport'),
             weekly_hours_target=_num('weekly_hours_target'),
-            training_window=window,
             notes=_str('notes'),
             **prefill_values,
         )
@@ -301,7 +296,6 @@ def edit():
         profile=profile,
         memory=memory,
         preference_categories=PREFERENCE_CATEGORIES,
-        training_windows=TRAINING_WINDOWS,
         user_row=dict(user_row) if user_row else {},
         api_tokens=[dict(t) for t in api_tokens],
         new_api_token=new_token_plaintext,
