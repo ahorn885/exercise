@@ -1,6 +1,14 @@
+import json
+
 from flask import Blueprint, render_template, request, redirect, url_for, flash
 from database import get_db
 from routes.auth import current_user_id
+from athlete import (
+    KNOWN_INJURY_TYPES,
+    KNOWN_INJURY_SEVERITIES,
+    KNOWN_MOVEMENT_CONSTRAINTS,
+    KNOWN_INJURY_SIDES,
+)
 
 bp = Blueprint('injuries', __name__)
 
@@ -84,7 +92,12 @@ def new_entry():
         flash('Injury logged.', 'success')
         return redirect(url_for('injuries.list_entries'))
     return render_template('injuries/form.html', entry=None,
-                           statuses=STATUSES, body_parts=BODY_PARTS)
+                           statuses=STATUSES, body_parts=BODY_PARTS,
+                           injury_types=KNOWN_INJURY_TYPES,
+                           severities=KNOWN_INJURY_SEVERITIES,
+                           movement_constraints=KNOWN_MOVEMENT_CONSTRAINTS,
+                           sides=KNOWN_INJURY_SIDES,
+                           entry_movement_constraints=[])
 
 
 @bp.route('/injuries/<int:entry_id>/edit', methods=['GET', 'POST'])
@@ -101,8 +114,23 @@ def edit_entry(entry_id):
         _save(db, entry_id)
         flash('Entry updated.', 'success')
         return redirect(url_for('injuries.list_entries'))
+    # movement_constraints is JSONB on read — psycopg2 returns the parsed
+    # list, but SQLite (legacy compatibility layer) returns the raw JSON
+    # string. Normalize for the template's `in` membership checks.
+    raw_mc = entry['movement_constraints'] if entry and 'movement_constraints' in entry.keys() else None
+    if isinstance(raw_mc, str):
+        try:
+            raw_mc = json.loads(raw_mc)
+        except (json.JSONDecodeError, TypeError):
+            raw_mc = []
+    entry_mc = raw_mc or []
     return render_template('injuries/form.html', entry=entry,
-                           statuses=STATUSES, body_parts=BODY_PARTS)
+                           statuses=STATUSES, body_parts=BODY_PARTS,
+                           injury_types=KNOWN_INJURY_TYPES,
+                           severities=KNOWN_INJURY_SEVERITIES,
+                           movement_constraints=KNOWN_MOVEMENT_CONSTRAINTS,
+                           sides=KNOWN_INJURY_SIDES,
+                           entry_movement_constraints=entry_mc)
 
 
 @bp.route('/injuries/<int:entry_id>/delete', methods=['POST'])
@@ -177,20 +205,38 @@ def delete_modification(entry_id, mod_id):
 def _save(db, entry_id):
     f = request.form
     uid = current_user_id()
-    def num(v, cast=int):
-        try: return cast(v) if v else None
-        except: return None
+    # Closed-enum reads — silently coerce out-of-enum values to NULL rather
+    # than fail the save; the UI's <select> shapes guarantee in-enum input
+    # under normal use. Empty-string ("—" placeholder selection) also maps
+    # to NULL.
+    def enum_or_none(value, allowed):
+        return value if value in allowed else None
+    severity = enum_or_none(f.get('severity'), KNOWN_INJURY_SEVERITIES)
+    injury_type = enum_or_none(f.get('injury_type'), KNOWN_INJURY_TYPES)
+    side = enum_or_none(f.get('side'), KNOWN_INJURY_SIDES) or 'N/A'
+    mc_raw = f.getlist('movement_constraints')
+    mc = [c for c in mc_raw if c in KNOWN_MOVEMENT_CONSTRAINTS]
+    mc_json = json.dumps(mc)
     vals = (
         f.get('start_date'), f.get('body_part'), f.get('description'),
-        num(f.get('severity')), f.get('modifications_needed'),
-        f.get('status'), f.get('resolved_date') or None
+        severity, injury_type, side, mc_json, f.get('modifications_needed'),
+        f.get('status'), f.get('resolved_date') or None,
     )
     if entry_id:
-        db.execute('''UPDATE injury_log SET start_date=?,body_part=?,description=?,
-            severity=?,modifications_needed=?,status=?,resolved_date=? WHERE id=? AND user_id=?''',
-            vals + (entry_id, uid))
+        db.execute(
+            '''UPDATE injury_log SET start_date=?,body_part=?,description=?,
+               severity=?,injury_type=?,side=?,movement_constraints=?,
+               modifications_needed=?,status=?,resolved_date=?
+               WHERE id=? AND user_id=?''',
+            vals + (entry_id, uid),
+        )
     else:
-        db.execute('''INSERT INTO injury_log
-            (start_date,body_part,description,severity,modifications_needed,status,resolved_date,user_id)
-            VALUES (?,?,?,?,?,?,?,?)''', vals + (uid,))
+        db.execute(
+            '''INSERT INTO injury_log
+               (start_date,body_part,description,severity,injury_type,side,
+                movement_constraints,modifications_needed,status,resolved_date,
+                user_id)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?)''',
+            vals + (uid,),
+        )
     db.commit()

@@ -1480,6 +1480,32 @@ _PG_MIGRATIONS = [
         abseiling_experience BOOLEAN,
         updated_at TIMESTAMP DEFAULT NOW()
     )""",
+    # D-73 Phase 2.2 (Layer2D_Spec.md §3 / Athlete_Onboarding_Data_Spec_v5.md
+    # §B.1) — injury_log gains the §B.1.1 / §B.3 structured fields Layer 2D
+    # dispatches on. severity flips INTEGER (1-5) → TEXT (6-enum); injury_type,
+    # side, movement_constraints added. Existing rows are test data per
+    # Andy 2026-05-19 ("test only, can be lost") — wiped before the type
+    # change so the INTEGER→TEXT swap doesn't need a cast. Closed-enum
+    # constants in athlete.py (KNOWN_INJURY_TYPES, KNOWN_INJURY_SEVERITIES,
+    # KNOWN_MOVEMENT_CONSTRAINTS, KNOWN_INJURY_SIDES); pydantic mirrors in
+    # layer4/context.py InjuryRecord. Idempotent: the DELETE runs once
+    # (subsequent runs are no-op against the new TEXT column shape since
+    # only the new write path inserts rows after migration; the type-check
+    # guard prevents the DELETE+DROP+ADD cycle from re-firing).
+    lambda cur: (
+        cur.execute(
+            "SELECT data_type FROM information_schema.columns "
+            "WHERE table_name='injury_log' AND column_name='severity'"
+        ),
+        (lambda dt: (
+            cur.execute("DELETE FROM injury_log"),
+            cur.execute("ALTER TABLE injury_log DROP COLUMN severity"),
+            cur.execute("ALTER TABLE injury_log ADD COLUMN severity TEXT"),
+        ) if dt and dt[0] == 'integer' else None)(cur.fetchone()),
+    ),
+    "ALTER TABLE injury_log ADD COLUMN IF NOT EXISTS injury_type TEXT",
+    "ALTER TABLE injury_log ADD COLUMN IF NOT EXISTS side TEXT NOT NULL DEFAULT 'N/A'",
+    "ALTER TABLE injury_log ADD COLUMN IF NOT EXISTS movement_constraints JSONB",
 ]
 
 _CLOTHING_SEEDS = [

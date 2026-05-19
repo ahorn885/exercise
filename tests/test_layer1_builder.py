@@ -200,12 +200,21 @@ class TestFullyPopulated:
             {"day_of_week": 6, "window_index": 0, "enabled": True,
              "window_start": "05:30:00", "window_duration_min": 300},
         ])
-        # 5) injury_log — one active wrist, one resolved
+        # 5) injury_log — one active wrist, one resolved.
+        # Phase 2.2 schema: severity flips int→6-enum; new columns
+        # injury_type (11-enum), side (4-enum), movement_constraints (JSONB
+        # multi-select). Layer 1 builder returns Optional fields so legacy
+        # NULL rows still load.
         conn.queue_response(rows=[
             {"id": 1, "body_part": "left wrist", "description": "extension pain",
-             "severity": 3, "status": "Active", "start_date": date(2026, 3, 1),
+             "severity": "Chronic-Managed", "injury_type": "Tendinopathy / overuse",
+             "side": "Left",
+             "movement_constraints": ["Pain with wrist extension", "Pain with loading"],
+             "status": "Active", "start_date": date(2026, 3, 1),
              "resolved_date": None, "modifications_needed": "fist pushups only"},
-            {"id": 2, "body_part": "knee", "description": "patellar", "severity": 2,
+            {"id": 2, "body_part": "knee", "description": "patellar",
+             "severity": "Resolved", "injury_type": "Tendinopathy / overuse",
+             "side": "Right", "movement_constraints": [],
              "status": "Resolved", "start_date": date(2025, 9, 1),
              "resolved_date": date(2025, 12, 1), "modifications_needed": None},
         ])

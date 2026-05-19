@@ -1071,11 +1071,57 @@ class Layer1Identity(_Base):
 
 
 # §B — health status sub-records
+#
+# D-73 Phase 2.2 expanded InjuryRecord to mirror Athlete_Onboarding_Data_Spec_v5
+# §B.1: injury_type (§B.1.1 11-enum), severity (§B.1 6-enum — replaces legacy
+# 1-5 int), side (4-enum), movement_constraints (§B.3 11-enum multi-select).
+# Layer 2D dispatches on injury_type × severity (§5.3.6) and severity → verdict
+# (§5.3.4); movement_constraints drive §5.3.3 keyword matching against
+# layer0.exercises.injury_flags_text. severity / injury_type / movement_constraints
+# stay Optional because pre-Phase-2.2 rows may carry NULL during the migration
+# transition window — Layer 2D treats NULL injury_type as the V1_FALLBACK bucket
+# and NULL severity as a defensive fallthrough.
 class InjuryRecord(_Base):
     injury_id: int
     body_part: str
     description: str | None = None
-    severity: int | None = Field(default=None, ge=1, le=5)
+    severity: Literal[
+        "Acute",
+        "Recovering",
+        "Chronic-Managed",
+        "Post-surgical",
+        "Structural-Permanent",
+        "Resolved",
+    ] | None = None
+    injury_type: Literal[
+        "Acute soft tissue (strain / sprain / tear)",
+        "Tendinopathy / overuse",
+        "Joint (mechanical) — non-surgical",
+        "Joint (mechanical) — surgical",
+        "Bone (fracture / contusion) — non-stress",
+        "Bone — stress fracture",
+        "Skin / surface (burn / abrasion / laceration)",
+        "Nerve",
+        "Inflammatory (bursitis / fasciitis)",
+        "Post-surgical",
+        "Other / uncertain",
+    ] | None = None
+    side: Literal["Left", "Right", "Both", "N/A"] = "N/A"
+    movement_constraints: list[
+        Literal[
+            "Pain with loading",
+            "Pain with impact",
+            "Pain above specific joint angle",
+            "Pain on descent / eccentric",
+            "Pain on rotation",
+            "Pain with grip / sustained hold",
+            "Pain with wrist extension",
+            "Pain with overhead movement",
+            "Instability",
+            "Reduced ROM",
+            "Pain at high volume only",
+        ]
+    ] = Field(default_factory=list)
     status: Literal["Active", "Resolved", "Inactive"]
     start_date: date | None = None
     resolved_date: date | None = None
