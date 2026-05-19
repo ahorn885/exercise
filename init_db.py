@@ -20,7 +20,6 @@ PG_SCHEMA = '''
         height_cm REAL,
         primary_sport TEXT,
         weekly_hours_target REAL,
-        training_window TEXT,
         notes TEXT,
         body_weight_kg REAL,
         hrmax_bpm INTEGER,
@@ -662,7 +661,7 @@ _PG_MIGRATIONS = [
         user_id INTEGER PRIMARY KEY REFERENCES users(id),
         date_of_birth TEXT, sex TEXT, height_cm REAL,
         primary_sport TEXT,
-        weekly_hours_target REAL, training_window TEXT, notes TEXT,
+        weekly_hours_target REAL, notes TEXT,
         body_weight_kg REAL, hrmax_bpm INTEGER,
         lactate_threshold_hr_bpm INTEGER, vo2max REAL, cycling_ftp_w INTEGER,
         long_session_available BOOLEAN DEFAULT FALSE, long_session_days TEXT,
@@ -1189,6 +1188,80 @@ _PG_MIGRATIONS = [
     # EXISTS` is idempotent for the columns themselves.
     "ALTER TABLE athlete_profile DROP COLUMN IF EXISTS target_event_name",
     "ALTER TABLE athlete_profile DROP COLUMN IF EXISTS target_event_date",
+    # D-73 Phase 1.2A (D-51 §3.3) — §C training history scalars on athlete_profile.
+    # All nullable; existing rows survive without backfill. PROFILE_FIELDS in
+    # athlete.py gains matching entries so the upsert helper can write them.
+    "ALTER TABLE athlete_profile ADD COLUMN IF NOT EXISTS years_structured_training INTEGER",
+    "ALTER TABLE athlete_profile ADD COLUMN IF NOT EXISTS peak_weekly_volume_hrs REAL",
+    "ALTER TABLE athlete_profile ADD COLUMN IF NOT EXISTS peak_weekly_volume_year INTEGER",
+    "ALTER TABLE athlete_profile ADD COLUMN IF NOT EXISTS longest_event_completed TEXT",
+    "ALTER TABLE athlete_profile ADD COLUMN IF NOT EXISTS training_consistency_disrupted_weeks SMALLINT",
+    "ALTER TABLE athlete_profile ADD COLUMN IF NOT EXISTS training_consistency_cause TEXT",
+    "ALTER TABLE athlete_profile ADD COLUMN IF NOT EXISTS previous_coaching TEXT",
+    # D-73 Phase 1.2A (D-51 §3.6) — §F testing-baseline gap fields + source
+    # companions for the five existing prefill-eligible baselines.
+    "ALTER TABLE athlete_profile ADD COLUMN IF NOT EXISTS running_threshold_pace_sec_per_km INTEGER",
+    "ALTER TABLE athlete_profile ADD COLUMN IF NOT EXISTS running_threshold_test_date DATE",
+    "ALTER TABLE athlete_profile ADD COLUMN IF NOT EXISTS css_swim_sec_per_100m INTEGER",
+    "ALTER TABLE athlete_profile ADD COLUMN IF NOT EXISTS css_test_date DATE",
+    "ALTER TABLE athlete_profile ADD COLUMN IF NOT EXISTS cycling_ftp_test_date DATE",
+    "ALTER TABLE athlete_profile ADD COLUMN IF NOT EXISTS hrmax_source TEXT",
+    "ALTER TABLE athlete_profile ADD COLUMN IF NOT EXISTS lt_method TEXT",
+    "ALTER TABLE athlete_profile ADD COLUMN IF NOT EXISTS vo2max_source TEXT",
+    # D-73 Phase 1.2A (D-51 §3.8) — §H no-event-mode plan parameters. NULL
+    # when athlete is in event mode (race_events.is_target_event=TRUE exists).
+    "ALTER TABLE athlete_profile ADD COLUMN IF NOT EXISTS plan_duration_weeks_no_event SMALLINT",
+    "ALTER TABLE athlete_profile ADD COLUMN IF NOT EXISTS non_event_goal_type TEXT",
+    # D-73 Phase 1.2A (D-51 §3.9) — §I lifestyle & recovery. Andy 2026-05-19:
+    # sleep-deprivation fields store regardless of §H race duration (no
+    # write-path conditional gate; athlete edits any time).
+    "ALTER TABLE athlete_profile ADD COLUMN IF NOT EXISTS work_stress_level TEXT",
+    "ALTER TABLE athlete_profile ADD COLUMN IF NOT EXISTS dietary_pattern TEXT",
+    "ALTER TABLE athlete_profile ADD COLUMN IF NOT EXISTS supplement_protocol_notes TEXT",
+    "ALTER TABLE athlete_profile ADD COLUMN IF NOT EXISTS caffeine_tolerance TEXT",
+    "ALTER TABLE athlete_profile ADD COLUMN IF NOT EXISTS caffeine_daily_mg_estimate SMALLINT",
+    "ALTER TABLE athlete_profile ADD COLUMN IF NOT EXISTS caffeine_race_day_strategy TEXT",
+    "ALTER TABLE athlete_profile ADD COLUMN IF NOT EXISTS altitude_acclimatization_history BOOLEAN",
+    "ALTER TABLE athlete_profile ADD COLUMN IF NOT EXISTS altitude_max_exposure_m INTEGER",
+    "ALTER TABLE athlete_profile ADD COLUMN IF NOT EXISTS altitude_exposure_count SMALLINT",
+    "ALTER TABLE athlete_profile ADD COLUMN IF NOT EXISTS fueling_format_preference TEXT",
+    "ALTER TABLE athlete_profile ADD COLUMN IF NOT EXISTS gi_triggers_known TEXT",
+    "ALTER TABLE athlete_profile ADD COLUMN IF NOT EXISTS salt_electrolyte_tolerance TEXT",
+    "ALTER TABLE athlete_profile ADD COLUMN IF NOT EXISTS sleep_deprivation_max_hrs_continuous_awake SMALLINT",
+    "ALTER TABLE athlete_profile ADD COLUMN IF NOT EXISTS sleep_deprivation_strategy_notes TEXT",
+    # D-73 Phase 1.2A (D-51 §3.5) — strength_benchmarks 1:1 sub-table.
+    # PK = user_id so each athlete has at most one row; populated lazily when
+    # the athlete enters benchmarks. Right/left split on side-plank, single-leg
+    # squat, and grip strength per v5 §E asymmetry signal.
+    """CREATE TABLE IF NOT EXISTS strength_benchmarks (
+        user_id INTEGER PRIMARY KEY REFERENCES users(id),
+        front_plank_sec INTEGER,
+        dead_bug_max_reps INTEGER,
+        side_plank_left_sec INTEGER,
+        side_plank_right_sec INTEGER,
+        pushup_max_reps INTEGER,
+        bodyweight_squat_max_reps INTEGER,
+        single_leg_squat_left_max_reps INTEGER,
+        single_leg_squat_right_max_reps INTEGER,
+        pullup_max_reps INTEGER,
+        dead_hang_sec INTEGER,
+        grip_strength_left_kg REAL,
+        grip_strength_right_kg REAL,
+        last_tested_at DATE,
+        updated_at TIMESTAMP DEFAULT NOW()
+    )""",
+    # D-56 — cardio_log race + time-of-day fields. Folded into D-73 Phase 1.2A
+    # per Andy 2026-05-19; hard-blocker for Phase 3 Layer 3A (race-result filter
+    # per v5 §C row 7 + Night Running detection per §D.1). DEFAULT FALSE on
+    # is_race so existing rows are non-race by default; start_time is TEXT
+    # (HH:MM:SS) since cardio_log.date is TEXT and the pair is read together.
+    "ALTER TABLE cardio_log ADD COLUMN IF NOT EXISTS is_race BOOLEAN DEFAULT FALSE",
+    "ALTER TABLE cardio_log ADD COLUMN IF NOT EXISTS start_time TEXT",
+    # D-73 Phase 1.2A — drop legacy athlete_profile.training_window. Superseded
+    # by daily_availability_windows (D-61 / PR12). UI surface retired in the
+    # same session: routes/profile.py form handler + templates/profile/edit.html
+    # select field removed. D-66 Scope B DROP COLUMN IF EXISTS precedent.
+    "ALTER TABLE athlete_profile DROP COLUMN IF EXISTS training_window",
 ]
 
 _CLOTHING_SEEDS = [
