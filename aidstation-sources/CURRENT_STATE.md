@@ -6,15 +6,15 @@ Single rolling-state pointer. Changes on every shipped session. Long-form sessio
 
 ## Last shipped session
 
-`handoffs/V5_Implementation_D73_Phase_1_3_Closing_Handoff_v1.md` — 2026-05-19
+`handoffs/V5_Implementation_D73_Phase_2_1_Closing_Handoff_v1.md` — 2026-05-19
 
-D-73 Phase 1.3 — Layer 1 spec consolidation + typed `Layer1Payload` + runtime builder. Closes the consumer side of D-51. New `Layer1_Spec.md` (14-section spec per CLAUDE.md depth standard). `layer4/context.py` extended with `Layer1Payload` + 11 section sub-models (`Layer1Identity` / `Layer1HealthStatus` / `Layer1TrainingHistory` / `Layer1DisciplineBaselines` / `Layer1StrengthBenchmarks` / `Layer1Performance` / `Layer1Availability` / `Layer1EventGoal` / `Layer1Lifestyle` / `Layer1Network` / `Layer1Disclosures`) + 11 record sub-models. New `layer1/{__init__,builder}.py` — `build_layer1_payload(db, user_id) -> Layer1Payload` issues 24 SELECTs in fixed order against the D-51 storage (athlete_profile + body_metrics + wellness_self_report + daily_availability_windows + injury_log + 4 §B/§C/§L multi-row tables + 4 §C multi-row companions + strength_benchmarks + 7 discipline_baseline_* + race_events target + athlete_network_links + linked_partner_consents + disclosure_acknowledgments latest-per-id). New `tests/test_layer1_builder.py` with `_FakeConn` pattern — 19 tests covering empty user / fully-populated / sparse baselines / CSV splitting / weighting sum invariant / Layer-4-dict round-trip. Tests 751 → 770. Layer 4 entry-point signatures KEEP `dict[str, Any]` per `Upstream_Implementation_Plan_v1.md` §6 item 3 + §8 mitigation; top-level convenience fields (`experience_level` / `coaching_voice_preferences` / `available_days_per_week` / `travel_constraint` / `sleep_baseline` / `daily_availability_windows`) make `.model_dump()` produce a Layer-4-compatible dict. Day-of-week numbering: **Sunday=0** (Andy 2026-05-19; closes `Layer1_D51_Design_v1.md` §6 #1). 5 substantive files at the ceiling.
+D-73 Phase 2.1 — Layer 2A discipline classifier (first upstream Layer 2 runtime; Phase 2 of 5 kicked off). New `layer2a/__init__.py` + `layer2a/builder.py` — `q_layer2a_discipline_classifier_payload(db, framework_sport, *, athlete_discipline_overrides, estimated_race_duration_hours, navigation_required, team_format, etl_version_set) -> Layer2APayload` per `Layer2A_Spec.md` §3 verbatim. Pure query node, single SELECT with CTE + 2 LEFT JOINs against `layer0.sport_discipline_map` + `layer0.phase_load_allocation` + `layer0.discipline_training_gaps` (D-05 standing filter `discipline_name NOT LIKE '%WEEKLY TOTAL%'` applied per spec §6). Conditional resolution per spec §5.3 — D-008b (whitewater) auto-in iff `estimated_race_duration_hours >= 20`; D-013 (nav) auto-in iff `navigation_required=True`; both fall to `prompt_required` + HITL when signal is None; athlete-explicit overrides win. Weight computation per §5.4 (midpoint of `race_time_pct_low`/`high` is system default; override surfaces both `value` + `system_default`). Rationale templates v1 shipped Andy-quality (not deferred per Andy 2026-05-19) — direct, evidence-grounded, no platitudes per CLAUDE.md coaching voice; 4 role modifiers (core/supporting/minor/technical) × 3 inclusion states × conditional-resolution suffix; `sport_specific_context` appended verbatim when non-NULL. Coaching flags per §8 — `training_gap` per DTG entry; `conditional_auto_resolved` for race-rule auto-in/out (separate messages); `weight_override_divergence` when relative divergence > 50%. D-52 sub-decision **dissolved** — three Layer 2A catalog tables exist only under `layer0.*` (no `public.*` counterparts); spec §5.2 SQL targets `layer0.*` directly. D-17 sub-format strip via `_SUB_FORMAT_SPORTS` whitelist (Triathlon / Skimo / LDC / OWMS / Canoe-Kayak Marathon) per spec §14 gut-check; AR bypasses entirely. New `tests/test_layer2a.py` — 14 tests across input validation / AR baseline / override divergence / short AR / Triathlon strip / unknown sport / unmapped override / unresolved conditional. Tests 770 → 784. 3 substantive files; well under ceiling.
 
-**Predecessor:** `V5_Implementation_D73_Phase_1_2C_Closing_Handoff_v1.md` (§3.4 per-discipline §D baselines — Phase 1.2 schema arc closed).
+**Predecessor:** `V5_Implementation_D73_Phase_1_3_Closing_Handoff_v1.md` (Layer 1 spec + typed `Layer1Payload` + runtime builder — Phase 1 of upstream arc effectively complete).
 
 ## Current focus
 
-Andy's pick. Architect-recommended next: **D-73 Phase 2.1 — Layer 2A discipline classifier** per `Upstream_Implementation_Plan_v1.md` §4. Foundation for 2B/C/D/E (all four consume 2A's `included_discipline_ids`). Pure query node — reads Layer 1 §C inputs + `layer0.sport_discipline_map` + `layer0.phase_load_allocation`; emits `Layer2APayload`. ~4-5 files; under ceiling. Alternatively, Phase 1.4 (D-52 catalog migration sequencing) or an orthogonal track (Layer 4 Step 4f Pattern A orchestration, Layer 4 Step 7 env-gated scaffolding, manual §5.0 walkthrough batch).
+Andy's pick. Architect-recommended next: **D-73 Phase 2.2 — Layer 2D injury risk** per `Upstream_Implementation_Plan_v1.md` §4. Consumes 2D's already-typed `ExerciseRisk` + `AccommodationModality` discriminated union in `layer4/context.py` (shipped via PR-C-followon 2026-05-17 — no new design). Reads `conditions_log` (Layer 1 §B injuries; D-51 storage) + Layer 0 `injury_profiles` + `exercise_risk_assessments`. ~4-5 files; under ceiling. Alternatively: 2B (terrain classifier) reads target event terrain + Layer 0 taxonomy; 2C (equipment mapper) needs /plan-mode gate for §5 Decision Points; 2E (nutrition baseline) reads §B + §H + §I + 2A `framework_sport` + `discipline_ids`.
 
 Orthogonal alternatives tracked in `CARRY_FORWARD.md`.
 
@@ -24,7 +24,7 @@ Orthogonal alternatives tracked in `CARRY_FORWARD.md`.
 |---|---|
 | **0** | DEPLOYED |
 | **1** | 🟢 v1 spec + typed payload + runtime builder shipped 2026-05-19 (D-51 design wave + Phase 1.2 schema arc + Phase 1.3 builder) — Layer1_Spec.md canonical |
-| **2** | SPECS DONE (2A-2E); no runtime yet — Phase 2.1 (Layer 2A) is next |
+| **2** | 🟡 2A runtime shipped 2026-05-19 (Phase 2.1); 2B/2C/2D/2E specs done, runtime queued |
 | **3** | 3A SPEC DONE; 3B SPEC DONE |
 | **3.5** | Designed; not yet implemented |
 | **4** | SPEC COMPLETE §§1-14; Implementation Steps 2 + 3 + 4a-4e of 8 COMPLETE |
@@ -32,12 +32,12 @@ Orthogonal alternatives tracked in `CARRY_FORWARD.md`.
 
 ## D-73 upstream implementation arc
 
-Multi-session plan in `Upstream_Implementation_Plan_v1.md`. Phase 1.1 (D-51 design wave) + Phase 1.2A/B/C (schema arc) + Phase 1.3 (Layer 1 typed payload + builder + spec) all shipped 2026-05-19. **Phase 1 of 5 effectively complete** (Phase 1.4 D-52 sequencing decision deferred to Phase 2 kickoff; D-56 already shipped in 1.2A). Phases 2-5 queued (~8-12 sessions, ~50-70 files remaining).
+Multi-session plan in `Upstream_Implementation_Plan_v1.md`. Phase 1.1 (D-51 design wave) + Phase 1.2A/B/C (schema arc) + Phase 1.3 (Layer 1 typed payload + builder + spec) + Phase 2.1 (Layer 2A discipline classifier — first Layer 2 runtime) all shipped 2026-05-19. **Phase 1 complete + Phase 2 kicked off (1 of 5 nodes shipped).** 2B/2C/2D/2E builders queued (~4 sessions). Phases 3-5 (LLM drivers + orchestrator wiring) queued behind Phase 2.
 
 **Forcing function:** Andy's PGE 2026 (2026-07-17). `race_week_brief` auto-fires 2026-07-03 (days_to_event = 14). ~10 weeks of runway from 2026-05-19.
 
 ## Tests
 
-770 green (last measured 2026-05-19 after Phase 1.3 +19 Layer 1 builder tests; baseline 751 preserved).
+784 green (last measured 2026-05-19 after Phase 2.1 +14 Layer 2A builder tests; baseline 770 preserved).
 
 ---
