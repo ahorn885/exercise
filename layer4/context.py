@@ -483,7 +483,22 @@ class Layer2DPayload(_Base):
         return self
 
 
-# ─── Layer 2E — nutrition baseline (Layer2E_Spec.md §7) ──────────────────────
+# ─── Layer 2E — nutrition baseline (Layer2E_Spec.md §3 + §7) ─────────────────
+
+
+class Layer2ETargetEvent(_Base):
+    # Vertical-slice subset of the Layer2E_Spec.md §3 `TargetEvent` shape.
+    # Fields race_terrain_pct / race_pack_weight_kg / team_format /
+    # race_specific_nutrition_restrictions are deferred — they don't drive
+    # any §5.2-§5.7 path the v1 builder ships. `aid_stations` is retained
+    # because §5.9 gate 5 (anaphylaxis × aid-station-bound event) consumes
+    # it; left optional so callers without §H.2 wired pass `None`.
+    event_id: str
+    event_name: str
+    event_date: date
+    framework_sport: str
+    estimated_duration_hr: float = Field(gt=0)
+    aid_stations: int | None = None
 
 
 class MacroTargets(_Base):
