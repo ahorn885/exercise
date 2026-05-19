@@ -1262,6 +1262,152 @@ _PG_MIGRATIONS = [
     # same session: routes/profile.py form handler + templates/profile/edit.html
     # select field removed. D-66 Scope B DROP COLUMN IF EXISTS precedent.
     "ALTER TABLE athlete_profile DROP COLUMN IF EXISTS training_window",
+    # D-73 Phase 1.2B (D-51 §3.2a) — health_conditions_log multi-row table
+    # parallel to injury_log. system_category closed enum lives in
+    # athlete.KNOWN_SYSTEM_CATEGORIES; status enum (Active/Resolved/Inactive)
+    # mirrors injury_log precedent. severity 1-5 per v5 §B.4 substructure.
+    # §3.1 (disclosure_acknowledgments) intentionally NOT touched this
+    # session — D-58/PR1 already shipped the table with disclosure_id /
+    # version_id / scopes_granted columns (live readers per PR1 + PR10);
+    # design wave §3.1 was written ahead of state verification (same
+    # pattern as the §3.7 daily_availability_windows drift caught in 1.2A).
+    """CREATE TABLE IF NOT EXISTS health_conditions_log (
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER NOT NULL REFERENCES users(id),
+        system_category TEXT NOT NULL,
+        condition_name TEXT NOT NULL,
+        severity INTEGER,
+        notes TEXT,
+        status TEXT NOT NULL DEFAULT 'Active',
+        start_date DATE,
+        resolved_date DATE,
+        created_at TIMESTAMP DEFAULT NOW(),
+        updated_at TIMESTAMP DEFAULT NOW()
+    )""",
+    "CREATE INDEX IF NOT EXISTS health_conditions_log_user_status_idx ON health_conditions_log (user_id, status)",
+    "CREATE INDEX IF NOT EXISTS health_conditions_log_user_created_idx ON health_conditions_log (user_id, created_at DESC)",
+    # D-73 Phase 1.2B (D-51 §3.2b) — medications_log. medication_class closed
+    # enum lives in athlete.KNOWN_MEDICATION_CLASSES (training-relevant only
+    # per v5 §B; not a general pharmacy code). stopped_at IS NULL = currently
+    # taking; the partial index serves the active-medications Layer 3A query.
+    """CREATE TABLE IF NOT EXISTS medications_log (
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER NOT NULL REFERENCES users(id),
+        medication_class TEXT NOT NULL,
+        medication_name TEXT,
+        started_at DATE,
+        stopped_at DATE,
+        notes TEXT,
+        created_at TIMESTAMP DEFAULT NOW()
+    )""",
+    "CREATE INDEX IF NOT EXISTS medications_log_user_class_active_idx ON medications_log (user_id, medication_class) WHERE stopped_at IS NULL",
+    # D-73 Phase 1.2B (D-51 §3.2c) — food_allergies. Closed-enum allergen
+    # categories in athlete.KNOWN_ALLERGEN_CATEGORIES. severity 'anaphylaxis'
+    # tier triggers the v5 §B.4.2 auto-populate rule for health_conditions_log
+    # system_category='gi_immune' (Layer 1 builder responsibility; storage is
+    # independent of that derivation).
+    """CREATE TABLE IF NOT EXISTS food_allergies (
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER NOT NULL REFERENCES users(id),
+        allergen_category TEXT NOT NULL,
+        severity TEXT NOT NULL DEFAULT 'intolerance',
+        notes TEXT,
+        created_at TIMESTAMP DEFAULT NOW()
+    )""",
+    "CREATE INDEX IF NOT EXISTS food_allergies_user_idx ON food_allergies (user_id)",
+    # D-73 Phase 1.2B (D-51 §3.3) — §C multi-row companions. athlete_secondary
+    # _sports.sport_slug FK-validated in application code against the 18-sport
+    # Sports_Framework_v10.xlsx (no closed-enum DB constraint; the framework
+    # ships via Layer 0 catalog). athlete_discipline_weighting.weight_pct
+    # invariant (per-user sum across rows = 100) is application-enforced —
+    # intermediate states during multi-row edits are valid so no CHECK.
+    """CREATE TABLE IF NOT EXISTS athlete_secondary_sports (
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER NOT NULL REFERENCES users(id),
+        sport_slug TEXT NOT NULL,
+        experience_tier TEXT NOT NULL,
+        created_at TIMESTAMP DEFAULT NOW(),
+        UNIQUE (user_id, sport_slug)
+    )""",
+    """CREATE TABLE IF NOT EXISTS athlete_discipline_weighting (
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER NOT NULL REFERENCES users(id),
+        discipline_slug TEXT NOT NULL,
+        weight_pct SMALLINT NOT NULL,
+        updated_at TIMESTAMP DEFAULT NOW(),
+        UNIQUE (user_id, discipline_slug)
+    )""",
+    # D-73 Phase 1.2B (D-51 §3.3) — recent_race_results. source mirrors
+    # athlete_profile_field_provenance.source shape per-row (record-shaped
+    # data; not per-field). D-56 cardio_log.is_race=TRUE is the long-term
+    # source — Layer 1 builder cross-references both for §C row 7 reads.
+    """CREATE TABLE IF NOT EXISTS recent_race_results (
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER NOT NULL REFERENCES users(id),
+        event_name TEXT NOT NULL,
+        event_date DATE NOT NULL,
+        distance_km REAL,
+        finish_time_seconds INTEGER,
+        result_notes TEXT,
+        source TEXT NOT NULL DEFAULT 'self_report',
+        created_at TIMESTAMP DEFAULT NOW()
+    )""",
+    "CREATE INDEX IF NOT EXISTS recent_race_results_user_date_idx ON recent_race_results (user_id, event_date DESC)",
+    # D-73 Phase 1.2B (D-51 §3.3) — pack_load_history. One row per pack-weight
+    # tier the athlete currently trains at; session_count_4wk + longest_session
+    # _hrs are trailing-window summaries the athlete updates as training
+    # progresses. terrain_type is free-text (no closed enum; v5 §C.1 leaves
+    # this open-ended). Layer 3B Scope C consumer per the expedition-AR
+    # context-bundle precedent.
+    """CREATE TABLE IF NOT EXISTS pack_load_history (
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER NOT NULL REFERENCES users(id),
+        pack_weight_kg REAL NOT NULL,
+        session_count_4wk INTEGER,
+        longest_session_hrs REAL,
+        terrain_type TEXT,
+        notes TEXT,
+        created_at TIMESTAMP DEFAULT NOW()
+    )""",
+    # D-73 Phase 1.2B (D-51 §3.12) — athlete_network_links. linked_account
+    # _user_id NULL means external partner (not an AIDSTATION user); non-NULL
+    # triggers the §A.1 linked-partner-data-sharing disclosure (paired with
+    # the linked_partner_consents row below). relationship_types is a comma-
+    # separated subset of KNOWN_RELATIONSHIP_TYPES. race_event_id ON DELETE
+    # SET NULL preserves the link when the linked race is removed (per v5
+    # §L: Race Teammate conditional). race_events.id is BIGSERIAL so the FK
+    # column is BIGINT to match.
+    """CREATE TABLE IF NOT EXISTS athlete_network_links (
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER NOT NULL REFERENCES users(id),
+        partner_name TEXT NOT NULL,
+        linked_account_user_id INTEGER REFERENCES users(id),
+        relationship_types TEXT NOT NULL,
+        partner_specific_rules TEXT,
+        race_event_id BIGINT REFERENCES race_events(id) ON DELETE SET NULL,
+        discipline_focus_on_team TEXT,
+        created_at TIMESTAMP DEFAULT NOW(),
+        updated_at TIMESTAMP DEFAULT NOW()
+    )""",
+    "CREATE INDEX IF NOT EXISTS athlete_network_links_user_idx ON athlete_network_links (user_id)",
+    "CREATE INDEX IF NOT EXISTS athlete_network_links_linked_idx ON athlete_network_links (linked_account_user_id) WHERE linked_account_user_id IS NOT NULL",
+    # D-73 Phase 1.2B (D-51 §3.12) — linked_partner_consents (folded in per
+    # Andy 2026-05-19; design wave §6 Q5 default was defer). Athlete-owned
+    # consent grant tied to a specific athlete_network_links row; revoked_at
+    # IS NULL = currently granted. Per v5 §L Account Config 4 the scope is
+    # athlete-controlled (none / activity_summaries / full_plan_access);
+    # closed enum in athlete.LINKED_PARTNER_CONSENT_SCOPES. ON DELETE
+    # CASCADE on the link FK is intentional — removing the network link
+    # invalidates any consent granted against it.
+    """CREATE TABLE IF NOT EXISTS linked_partner_consents (
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER NOT NULL REFERENCES users(id),
+        link_id INTEGER NOT NULL REFERENCES athlete_network_links(id) ON DELETE CASCADE,
+        consent_scope TEXT NOT NULL,
+        granted_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        revoked_at TIMESTAMP
+    )""",
+    "CREATE INDEX IF NOT EXISTS linked_partner_consents_active_idx ON linked_partner_consents (user_id, link_id) WHERE revoked_at IS NULL",
 ]
 
 _CLOTHING_SEEDS = [
