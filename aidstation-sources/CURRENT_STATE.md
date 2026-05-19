@@ -6,15 +6,15 @@ Single rolling-state pointer. Changes on every shipped session. Long-form sessio
 
 ## Last shipped session
 
-`handoffs/V5_Implementation_D73_Phase_1_2B_Closing_Handoff_v1.md` — 2026-05-19
+`handoffs/V5_Implementation_D73_Phase_1_2C_Closing_Handoff_v1.md` — 2026-05-19
 
-D-73 Phase 1.2B — D-51 implementation session 2 of 3. Schema migration: 8 new multi-row tables (`health_conditions_log` + `medications_log` + `food_allergies` per §3.2; `athlete_secondary_sports` + `athlete_discipline_weighting` + `recent_race_results` + `pack_load_history` per §3.3; `athlete_network_links` per §3.12; `linked_partner_consents` per §3.12 — folded in per Andy 2026-05-19) + 9 supporting indexes + 9 new closed-enum constants in `athlete.py` (`KNOWN_SYSTEM_CATEGORIES`, `HEALTH_CONDITION_STATUSES`, `KNOWN_MEDICATION_CLASSES`, `KNOWN_ALLERGEN_CATEGORIES`, `ALLERGEN_SEVERITIES`, `EXPERIENCE_TIERS`, `RACE_RESULT_SOURCES`, `KNOWN_RELATIONSHIP_TYPES`, `LINKED_PARTNER_CONSENT_SCOPES`). §3.1 `disclosure_acknowledgments` intentionally skipped — table already shipped in D-58/PR1 with a different on-disk shape (design-wave-ahead-of-state drift, same pattern as 1.2A's §3.7). 2 substantive files (`init_db.py`, `athlete.py`); under ceiling. 751 tests still green.
+D-73 Phase 1.2C — D-51 implementation session 3 of 3 (Phase 1.2 schema arc closed). Schema migration: 7 new sparse 1:1 per-discipline §D baseline tables (`discipline_baseline_running` / `_cycling` / `_swimming` / `_paddling` / `_skiing` / `_navigation` / `_technical` per §3.4) + 6 new closed-enum constants in `athlete.py` (`TRAIL_EXPERIENCE_TERRAINS`, `MTB_SKILL_LEVELS`, `OW_EXPERIENCE_LEVELS`, `PADDLE_CRAFT_TYPES`, `SKI_DISCIPLINES`, `NAVIGATION_EXPERIENCE_LEVELS`). `bike_types_available` is application-validated against `EQUIPMENT_CATEGORIES['Cycling Equipment']` (design wave §3.4 left the closed-enum subset unspecified); `rock_climbing_outdoor_grade` / `_indoor_grade` are free-text multi-system per Layer 4 Step 4a precedent. 2 substantive files (`init_db.py`, `athlete.py`); under ceiling. 751 tests still green.
 
-**Predecessor:** `V5_Implementation_D73_Phase_1_2A_Closing_Handoff_v1.md` (athlete_profile columns + strength_benchmarks + D-56 + training_window drop).
+**Predecessor:** `V5_Implementation_D73_Phase_1_2B_Closing_Handoff_v1.md` (§3.2 + §3.3 + §3.12 multi-row tables).
 
 ## Current focus
 
-Andy's pick. Architect-recommended next: **D-73 Phase 1.2 Session 1.2C** — per-discipline §D tables (7 sparse 1:1 tables: `discipline_baseline_running` / `_cycling` / `_swimming` / `_paddling` / `_skiing` / `_navigation` / `_technical`). Per `Layer1_D51_Design_v1.md` §3.4 + §4. ~4-5 files; ceiling-clean. Closes Phase 1.2 of the D-73 arc.
+Andy's pick. Architect-recommended next: **D-73 Phase 1.3** — Layer 1 builder + `Layer1Payload` typed pydantic mirror in `layer4/context.py`. Closes the consumer side of D-51. ~6-8 files (ceiling break expected). Alternatively, an orthogonal track (Layer 4 Step 4f Pattern A orchestration, Layer 4 Step 7 env-gated scaffolding, manual §5.0 walkthrough batch).
 
 Orthogonal alternatives tracked in `CARRY_FORWARD.md`.
 
@@ -23,7 +23,7 @@ Orthogonal alternatives tracked in `CARRY_FORWARD.md`.
 | Layer | Status |
 |---|---|
 | **0** | DEPLOYED |
-| **1** | In progress — D-51 design wave shipped + Phase 1.2A + 1.2B schema landed 2026-05-19; Phase 1.2C queued |
+| **1** | In progress — D-51 design wave shipped + Phase 1.2 schema arc closed 2026-05-19 (1.2A + 1.2B + 1.2C); Phase 1.3 builder queued |
 | **2** | SPECS DONE (2A-2E) |
 | **3** | 3A SPEC DONE; 3B SPEC DONE |
 | **3.5** | Designed; not yet implemented |
@@ -38,6 +38,6 @@ Multi-session plan in `Upstream_Implementation_Plan_v1.md`. Phase 1.1 (D-51 desi
 
 ## Tests
 
-751 green (last measured 2026-05-19 after Phase 1.2B schema + closed-enum constants; no test deltas — migrations are not exercised by pytest, verified via §5.0 walkthrough on Neon).
+751 green (last measured 2026-05-19 after Phase 1.2C schema + closed-enum constants; no test deltas — migrations are not exercised by pytest, verified via §5.0 walkthrough on Neon).
 
 ---

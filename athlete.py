@@ -199,6 +199,33 @@ KNOWN_RELATIONSHIP_TYPES = (
 # (distinct from "row absent" which means no consent ever granted).
 LINKED_PARTNER_CONSENT_SCOPES = ('none', 'activity_summaries', 'full_plan_access')
 
+# D-73 Phase 1.2C (D-51 §3.4) — per-discipline §D closed-enum write-path
+# constants. Each is paired with a discipline_baseline_<discipline> column
+# in init_db.py _PG_MIGRATIONS. Multi-select fields (trail_experience_terrain,
+# paddle_craft_types, ski_disciplines) store comma-separated subsets validated
+# against the constant tuple. bike_types_available + rock_climbing_*_grade are
+# intentionally not enumerated here: design wave §3.4 left bike_types as a
+# subset-of-EQUIPMENT_CATEGORIES['Cycling Equipment'] (no separate constant),
+# and rock_climbing grades are free-text multi-system per Layer 4 Step 4a.
+
+# §D.1 — discipline_baseline_running.trail_experience_terrain (multi-select).
+TRAIL_EXPERIENCE_TERRAINS = ('moderate', 'technical', 'mountain', 'moorland')
+
+# §D.2 — discipline_baseline_cycling.mtb_skill.
+MTB_SKILL_LEVELS = ('beginner', 'intermediate', 'advanced')
+
+# §D.3 — discipline_baseline_swimming.ow_experience.
+OW_EXPERIENCE_LEVELS = ('none', 'limited', 'experienced')
+
+# §D.4 — discipline_baseline_paddling.paddle_craft_types (multi-select).
+PADDLE_CRAFT_TYPES = ('kayak', 'canoe', 'packraft', 'surfski')
+
+# §D.5 — discipline_baseline_skiing.ski_disciplines (multi-select).
+SKI_DISCIPLINES = ('classic_xc', 'skate_xc', 'skimo')
+
+# §D.6 — discipline_baseline_navigation.experience_level.
+NAVIGATION_EXPERIENCE_LEVELS = ('none', 'map_only', 'map_compass', 'expert')
+
 
 def get_daily_availability_windows(db, user_id):
     """Return per-day windows for `user_id` as a list of 7 dicts (Sun..Sat).

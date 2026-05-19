@@ -6,7 +6,7 @@ Rolling-state for items spanning multiple sessions. **Edit in place** — don't 
 
 ## Manual §5.0 walkthrough (Vercel)
 
-49 scenarios accumulated. Andy walks after PR merges.
+53 scenarios accumulated. Andy walks after PR merges.
 
 - 12 onboarding (D-66 §H.2 / §H.4)
 - 6 nudge UI
@@ -16,8 +16,9 @@ Rolling-state for items spanning multiple sessions. **Edit in place** — don't 
 - 1 D-72 (locale-FK alignment)
 - 7 D-73 Phase 1.2A (Neon schema spot-checks + profile-tab form regression + provenance regression)
 - 6 D-73 Phase 1.2B (Neon schema spot-checks for 8 new tables + idempotency + index existence + FK behavior + regression)
+- 4 D-73 Phase 1.2C (Neon schema spot-checks for 7 per-discipline §D tables + PK = user_id 1:1 shape + idempotency + regression)
 
-See `PR_Verification_Status.md` for the per-PR §5.0 step-by-step state (✅ done / ⏸ blocked / 🟡 owed / ⚪ N/A / 🔴 bug). D-73 Phase 1.2A + 1.2B steps are spelled out in §5 of their closing handoffs.
+See `PR_Verification_Status.md` for the per-PR §5.0 step-by-step state (✅ done / ⏸ blocked / 🟡 owed / ⚪ N/A / 🔴 bug). D-73 Phase 1.2A + 1.2B + 1.2C steps are spelled out in §5 of their closing handoffs.
 
 ## Doc-sweep nits
 

@@ -1408,6 +1408,78 @@ _PG_MIGRATIONS = [
         revoked_at TIMESTAMP
     )""",
     "CREATE INDEX IF NOT EXISTS linked_partner_consents_active_idx ON linked_partner_consents (user_id, link_id) WHERE revoked_at IS NULL",
+    # D-73 Phase 1.2C (D-51 §3.4) — per-discipline §D 1:1 baseline sub-tables.
+    # PK = user_id so each athlete has at most one row per discipline; rows
+    # exist for the disciplines the athlete trains and nullable columns for
+    # the fields not yet entered (per v5 §D "every field is nullable; null
+    # means 'not asked.'"). updated_at follows the 1.2A strength_benchmarks
+    # precedent for the 1:1 sub-table audit shape. Closed-enum write-path
+    # validation lives in athlete.py (TRAIL_EXPERIENCE_TERRAINS,
+    # MTB_SKILL_LEVELS, OW_EXPERIENCE_LEVELS, PADDLE_CRAFT_TYPES,
+    # SKI_DISCIPLINES, NAVIGATION_EXPERIENCE_LEVELS); rock_climbing_*_grade
+    # is free-text (multi-system: Yosemite Decimal / French Sport / UIAA per
+    # Layer 4 Step 4a precedent). bike_types_available is comma-separated
+    # against EQUIPMENT_CATEGORIES['Cycling Equipment'] slugs (no separate
+    # constant; design wave §3.4 left the closed-enum subset unspecified).
+    """CREATE TABLE IF NOT EXISTS discipline_baseline_running (
+        user_id INTEGER PRIMARY KEY REFERENCES users(id),
+        easy_run_pace_sec_per_km INTEGER,
+        vertical_gain_weekly_m REAL,
+        vertical_gain_peak_session_m REAL,
+        trail_experience_terrain TEXT,
+        downhill_adaptation BOOLEAN,
+        downhill_sessions_3mo INTEGER,
+        night_running BOOLEAN,
+        gut_training_g_per_hr_cho SMALLINT,
+        gut_training_issues TEXT,
+        updated_at TIMESTAMP DEFAULT NOW()
+    )""",
+    """CREATE TABLE IF NOT EXISTS discipline_baseline_cycling (
+        user_id INTEGER PRIMARY KEY REFERENCES users(id),
+        bike_types_available TEXT,
+        mtb_skill TEXT,
+        longest_ride_distance_km REAL,
+        longest_ride_hrs REAL,
+        saddle_endurance_hrs REAL,
+        aero_endurance_min INTEGER,
+        updated_at TIMESTAMP DEFAULT NOW()
+    )""",
+    """CREATE TABLE IF NOT EXISTS discipline_baseline_swimming (
+        user_id INTEGER PRIMARY KEY REFERENCES users(id),
+        pool_100m_pace_sec INTEGER,
+        ow_experience TEXT,
+        wetsuit_experience BOOLEAN,
+        cold_water_experience BOOLEAN,
+        ow_feeding_experience BOOLEAN,
+        weekly_swim_volume_km REAL,
+        updated_at TIMESTAMP DEFAULT NOW()
+    )""",
+    """CREATE TABLE IF NOT EXISTS discipline_baseline_paddling (
+        user_id INTEGER PRIMARY KEY REFERENCES users(id),
+        longest_paddle_km REAL,
+        longest_paddle_hrs REAL,
+        paddle_craft_types TEXT,
+        updated_at TIMESTAMP DEFAULT NOW()
+    )""",
+    """CREATE TABLE IF NOT EXISTS discipline_baseline_skiing (
+        user_id INTEGER PRIMARY KEY REFERENCES users(id),
+        ski_disciplines TEXT,
+        weekly_ski_volume_hrs REAL,
+        updated_at TIMESTAMP DEFAULT NOW()
+    )""",
+    """CREATE TABLE IF NOT EXISTS discipline_baseline_navigation (
+        user_id INTEGER PRIMARY KEY REFERENCES users(id),
+        experience_level TEXT,
+        night_nav_experience BOOLEAN,
+        updated_at TIMESTAMP DEFAULT NOW()
+    )""",
+    """CREATE TABLE IF NOT EXISTS discipline_baseline_technical (
+        user_id INTEGER PRIMARY KEY REFERENCES users(id),
+        rock_climbing_outdoor_grade TEXT,
+        rock_climbing_indoor_grade TEXT,
+        abseiling_experience BOOLEAN,
+        updated_at TIMESTAMP DEFAULT NOW()
+    )""",
 ]
 
 _CLOTHING_SEEDS = [
