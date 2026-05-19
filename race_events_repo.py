@@ -67,20 +67,26 @@ def load_race_event_payload(db, race_event_id: int) -> RaceEventPayload | None:
 
     Reads race_events + race_route_locales + race_route_locale_equipment in
     three SELECTs (one per table; the equipment SELECT is keyed on the set
-    of route_locale ids we found). Returns None when the race_event_id
-    doesn't exist.
+    of route_locale ids we found). The race_events SELECT LEFT JOINs
+    `locale_profiles` so the payload surfaces the locale slug (`str`) per
+    the D-72 type-alignment resolution (2026-05-19) — Layer 2C + Layer 3B
+    + dict-keys + cache keys all use slug; race_events keeps the BIGINT FK
+    in the DB column for ON DELETE SET NULL behavior, transparent to
+    consumers. Returns None when the race_event_id doesn't exist.
 
     Caller is responsible for authorizing the read (user_id is on the row;
     no access control here).
     """
     cur = db.execute(
         """
-        SELECT id, user_id, name, event_date, race_format,
-               distance_km, total_elevation_gain_m,
-               race_rules_summary, mandatory_gear_text,
-               event_locale_id, is_target_event, notes
-          FROM race_events
-         WHERE id = ?
+        SELECT re.id, re.user_id, re.name, re.event_date, re.race_format,
+               re.distance_km, re.total_elevation_gain_m,
+               re.race_rules_summary, re.mandatory_gear_text,
+               lp.locale AS event_locale_slug,
+               re.is_target_event, re.notes
+          FROM race_events re
+          LEFT JOIN locale_profiles lp ON lp.id = re.event_locale_id
+         WHERE re.id = ?
         """,
         (race_event_id,),
     )
@@ -152,7 +158,7 @@ def load_race_event_payload(db, race_event_id: int) -> RaceEventPayload | None:
         total_elevation_gain_m=race_row["total_elevation_gain_m"],
         race_rules_summary=race_row["race_rules_summary"],
         mandatory_gear_text=race_row["mandatory_gear_text"],
-        event_locale_id=race_row["event_locale_id"],
+        event_locale_id=race_row["event_locale_slug"],
         is_target_event=bool(race_row["is_target_event"]),
         notes=race_row["notes"],
         route_locales=route_locales,

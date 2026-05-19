@@ -240,7 +240,7 @@ class RaceEventPayload(BaseModel):
     total_elevation_gain_m: Decimal | None = Field(None, ge=0)
     race_rules_summary: str | None = Field(None, max_length=8000)
     mandatory_gear_text: str | None = Field(None, max_length=8000)
-    event_locale_id: int | None = None
+    event_locale_id: str | None = None    # slug per D-72 (2026-05-19)
     is_target_event: bool
     notes: str | None = Field(None, max_length=2000)
     route_locales: list[RouteLocale] = Field(default_factory=list)
@@ -254,6 +254,8 @@ Enforced via pydantic `model_validator(mode='after')`:
 2. **Route-locale sequence_idx sorted ascending.** payload's `route_locales` list is sorted by sequence_idx ascending; raises on out-of-order construction. Layer 4 synthesizer can iterate route_locales in order without re-sorting.
 3. **First/last role anchors when route_locales non-empty.** If route_locales is non-empty, the lowest-sequence_idx entry has role `start` and the highest-sequence_idx entry has role `finish`. Single-day events that fill in start + finish only meet this trivially. Multi-day events that haven't completed onboarding §H.4 may have route_locales empty; the validator rule `kit_manifest_inputs_incomplete` catches this case + emits `data_gap`. Defensive — caller-side check at Layer 4 §4.5 row 7.
 4. **Multi-day events require non-zero route_locales for validator-reconcilable kit_manifest.** Soft invariant — empty list is structurally legal (race-week-brief degrades with `data_gap`) but flagged via §4.5 row 7 precondition.
+
+**D-72 type-alignment resolution (2026-05-19):** `RaceEventPayload.event_locale_id` is `str | None` (the locale slug — i.e., the TEXT half of the `locale_profiles` composite PK `(user_id, locale)`), aligning with `Layer2CPayload.locale_id: str` + `Layer3BPayload.event_locale_id: str | None` + the `dict[str, Layer2CPayload]` key contract in `layer2c_payloads` + `PlanSession.locale_id: str` + the slug-based cache-key formulas in `layer4/hashing.py`. The DB column `race_events.event_locale_id` stays `BIGINT REFERENCES locale_profiles(id) ON DELETE SET NULL` — the surrogate `id BIGSERIAL` added to `locale_profiles` 2026-05-18 is correct for that FK shape and is a pure DB-internal surrogate. The repo helper `race_events_repo.load_race_event_payload` issues a `LEFT JOIN locale_profiles lp ON lp.id = re.event_locale_id` to surface the slug at the typed-payload boundary; the surrogate id never crosses the typed contract. `list_athlete_race_events` + `get_race_event` + `create_race_event` + `update_race_event` (write/listing surfaces consumed by `routes/race_events.py` + `routes/onboarding.py` + the profile-tab edit form) keep working with the int FK because their consumer is the form-input chain (dropdown values are `locale_profiles.id`). D-72 row → ✅ Resolved.
 
 ### 4.3 Replace `RaceEventStub` placeholder
 

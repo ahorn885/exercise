@@ -397,7 +397,7 @@ def _race_event_payload(
         total_elevation_gain_m=total_elevation_gain_m,
         race_rules_summary=race_rules_summary,
         mandatory_gear_text=mandatory_gear_text,
-        event_locale_id=1,
+        event_locale_id="L-finish",
         is_target_event=True,
         route_locales=route_locales or [],
     )
