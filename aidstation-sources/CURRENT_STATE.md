@@ -6,13 +6,17 @@ Single rolling-state pointer. Changes on every shipped session. Long-form sessio
 
 ## Last shipped session
 
-`handoffs/V5_Implementation_D51_Layer1_Design_Wave_Closing_Handoff_v1.md` — 2026-05-19
+`handoffs/Process_Efficiency_Housekeeping_Closing_Handoff_v1.md` — 2026-05-19
 
-D-73 Phase 1.1 — D-51 design wave. Output: `Layer1_D51_Design_v1.md` (~340 lines) + `Athlete_Data_Integration_Spec_v6.md` §7.6.1 annotation. Design + bookkeeping only; no code. D-51 status flipped 🟡 Deferred → 🟢 Design wave shipped 2026-05-19.
+Process refactor. Split CLAUDE.md → CLAUDE + CURRENT_STATE + CARRY_FORWARD; consolidated 11 stop-and-ask triggers to 6; added `scripts/verify-handoff.sh`; added `handoffs/_template.md`; rewrote the `/handoff` slash command. Rule #12 now exempts the backlog from version-per-status-flip. Rule #13 names the new read order. No code, no specs, no tests.
+
+**Predecessor:** `V5_Implementation_D51_Layer1_Design_Wave_Closing_Handoff_v1.md` (D-73 Phase 1.1 — D-51 design wave; 🟡 Deferred → 🟢 Design wave shipped 2026-05-19).
 
 ## Current focus
 
 Andy's pick. Architect-recommended next: **D-73 Phase 1.2 Session 1.2A** — `athlete_profile` column extensions + bundled-scalar sub-tables (`strength_benchmarks`, `daily_availability_windows`) + drop legacy `training_window` per `Layer1_D51_Design_v1.md` §4.
+
+This will be the first session to exercise the new process end-to-end (CLAUDE → CURRENT_STATE → CARRY_FORWARD → predecessor handoff → `verify-handoff.sh`).
 
 Orthogonal alternatives are tracked in `CARRY_FORWARD.md`.
 
