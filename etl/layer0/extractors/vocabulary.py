@@ -258,6 +258,26 @@ def _parse_terrain(text: str) -> list[dict[str, Any]]:
 # Section 4.1 — Sport-specific gear toggles
 # ---------------------------------------------------------------------------
 
+# D-73 Phase 2.4-Prep: code-side constants for `also_satisfies` +
+# `gated_discipline_ids` per Layer2C_Spec.md §5.1 + §6 + §8.3. The
+# Vocabulary_Audit_v2.md §4 source markdown doesn't carry these signals
+# as table columns (the relevant facts live in §4.2 notes + reverse
+# inference against `layer0.disciplines`). v1 ships them code-side so
+# next ETL re-run carries them forward; same pattern as Layer2D's
+# `_HIGH_CARDIAC_LOAD_DISCIPLINES` (per Phase 2.2 precedent). Promotion
+# to a Layer 0 reference table is a future option if non-AR sports add
+# enough cases to make curation pressure real.
+_TOGGLE_ALSO_SATISFIES: dict[str, list[str]] = {
+    "Climbing — roped": ["Rappelling / abseiling"],
+}
+
+_TOGGLE_GATED_DISCIPLINES: dict[str, list[str]] = {
+    "Climbing — roped": ["D-010"],
+    "Rappelling / abseiling": ["D-011"],
+    "Snowshoeing setup": ["D-015"],
+}
+
+
 def _parse_gear_toggles(text: str) -> list[dict[str, Any]]:
     sec_text = _slice_section(
         text,
@@ -278,6 +298,10 @@ def _parse_gear_toggles(text: str) -> list[dict[str, Any]]:
             # paired_equipment_categories is left empty — no clean source
             # signal in the markdown. Future: cross-reference §3 categories.
             "paired_equipment_categories": [],
+            "also_satisfies": list(_TOGGLE_ALSO_SATISFIES.get(toggle_clean, [])),
+            "gated_discipline_ids": list(
+                _TOGGLE_GATED_DISCIPLINES.get(toggle_clean, [])
+            ),
         })
     return rows
 

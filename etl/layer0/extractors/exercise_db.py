@@ -4,6 +4,7 @@ Reads Exercise Master + Sport-Exercise Map (header on R2 in both per spec).
 """
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 from typing import Any
@@ -14,6 +15,18 @@ from openpyxl.worksheet.worksheet import Worksheet
 from etl.layer0.vocabulary_transforms import (
     split_contraindicated_string,
     transform_equipment_string,
+)
+
+# D-73 Phase 2.4-Prep: structured substitutes source-of-truth lives in
+# `etl/sources/parsed_substitutes.json`. The legacy free-text substitutes
+# in col 11 of the workbook can't support Layer 2C §5.4 CNF Tier 2
+# resolution (no programmatic way to check whether a substitute's
+# equipment is in the athlete's pool); the parsed JSON is what the K-parser
+# produces from the same source text but emits structured records.
+# Shape per record: {ex_id, name, substitutes: [{substitute_text,
+# equipment_required: [[a,b],[c]], is_improvised}]}.
+_PARSED_SUBSTITUTES_JSON = (
+    Path(__file__).parent.parent.parent / "sources" / "parsed_substitutes.json"
 )
 
 # `EX### — Name` parser. The em-dash (—) is the canonical separator;
@@ -72,6 +85,43 @@ def parse_physical_proxies(text: str | None) -> list[dict[str, str | None]]:
     return out
 
 
+def load_parsed_substitutes_structured(
+    path: str | Path | None = None,
+) -> dict[str, list[dict[str, Any]]]:
+    """Load the K-parser output into an `exercise_id → substitutes[]` map.
+
+    D-73 Phase 2.4-Prep: returns a dict keyed on exercise_id (e.g., "EX001")
+    whose values are the structured substitute lists per Layer2C_Spec.md
+    §5.4 / `migrate_exercises_substitutes_structured.sql` contract:
+
+        [
+          {"substitute_text": str, "equipment_required": [[a,b],[c]], "is_improvised": bool},
+          ...
+        ]
+
+    Path defaults to `etl/sources/parsed_substitutes.json`. The file ships
+    with 154 exercises × 510 entries pre-parsed. Exercises absent from the
+    JSON get an empty list at the call site (extract_exercises).
+
+    Returns an empty dict if the file is missing — keeps ETL re-runnable
+    against a clean checkout, with `equipment_substitutes_structured`
+    landing as NULL on every row until the JSON ships. Same loud-fallback
+    pattern as Layer 2E's PLA missing-row handling.
+    """
+    json_path = Path(path) if path else _PARSED_SUBSTITUTES_JSON
+    if not json_path.exists():
+        return {}
+    with open(json_path, encoding="utf-8") as f:
+        parsed = json.load(f)
+    out: dict[str, list[dict[str, Any]]] = {}
+    for entry in parsed:
+        ex_id = entry.get("ex_id")
+        if not ex_id:
+            continue
+        out[ex_id] = entry.get("substitutes", []) or []
+    return out
+
+
 def parse_equipment_substitutes(text: str | None) -> dict[str, list[str]]:
     """Spec §4.10: split on `;`. Each entry is either a standard substitute
     or, with 🏠 prefix, an improvised option (the prefix is stripped)."""
@@ -101,7 +151,15 @@ def extract_exercises(ws: Worksheet) -> list[dict[str, Any]]:
 
     Applies vocabulary_transforms.transform_equipment_string() to col 7
     (Equipment) before storing — per spec §3.1, §4.10.
+
+    D-73 Phase 2.4-Prep: also attaches `equipment_substitutes_structured`
+    per exercise from `etl/sources/parsed_substitutes.json` for Layer 2C
+    §5.4 CNF Tier 2 resolution. Exercises absent from the JSON get an
+    empty list (Layer 2C tier_2 returns None for those, falling through
+    to tier_3 or tier_0).
     """
+    structured_by_ex_id = load_parsed_substitutes_structured()
+
     rows: list[dict[str, Any]] = []
     for r in range(3, ws.max_row + 1):
         ex_id = _t(ws.cell(row=r, column=1).value)
@@ -129,6 +187,7 @@ def extract_exercises(ws: Worksheet) -> list[dict[str, Any]]:
             "equipment_substitutes": parse_equipment_substitutes(
                 _t(ws.cell(row=r, column=11).value)
             ),
+            "equipment_substitutes_structured": structured_by_ex_id.get(ex_id, []),
             "physical_proxies": parse_physical_proxies(_t(ws.cell(row=r, column=12).value)),
             **dict(zip(
                 ("contraindicated_parts", "contraindicated_conditions"),
