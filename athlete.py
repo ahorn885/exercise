@@ -121,6 +121,84 @@ LONG_SESSION_MAX_HR_CHOICES = (2, 3, 4, 5, 6, 8)
 # treats them as discretionary per D-61 §3.3.
 DOUBLES_FEASIBLE_CHOICES = ('regularly', 'occasionally', 'no')
 
+# D-73 Phase 1.2B (D-51 §3.2a) — health_conditions_log.system_category closed
+# enum per v5 §B.4.1. Layer 1 builder auto-populates 'gi_immune' when
+# food_allergies has an anaphylaxis-tier row (per §B.4.2; storage independent).
+KNOWN_SYSTEM_CATEGORIES = (
+    'cardiac',
+    'respiratory',
+    'metabolic',
+    'neurological',
+    'gi_immune',
+    'musculoskeletal',
+    'endocrine',
+    'other',
+)
+
+# health_conditions_log.status — parallel to injury_log.status precedent.
+HEALTH_CONDITION_STATUSES = ('Active', 'Resolved', 'Inactive')
+
+# D-73 Phase 1.2B (D-51 §3.2b) — medications_log.medication_class closed enum
+# per v5 §B. Training-relevant only (not a general pharmacy code); 'other'
+# absorbs everything that doesn't move the training-impact needle.
+KNOWN_MEDICATION_CLASSES = (
+    'beta_blocker',
+    'diuretic',
+    'nsaid_chronic',
+    'hrt',
+    'ssri',
+    'stimulant_adhd',
+    'corticosteroid_chronic',
+    'anticoagulant',
+    'other',
+)
+
+# D-73 Phase 1.2B (D-51 §3.2c) — food_allergies enums per v5 §B.
+# 'anaphylaxis' is the trigger for the §B.4.2 auto-populate rule into
+# health_conditions_log (Layer 1 builder; not a write-path DB action).
+KNOWN_ALLERGEN_CATEGORIES = (
+    'tree_nut',
+    'peanut',
+    'dairy',
+    'gluten',
+    'egg',
+    'shellfish',
+    'fish',
+    'soy',
+    'nightshade',
+    'fodmap',
+    'caffeine_sensitivity',
+    'other',
+)
+ALLERGEN_SEVERITIES = ('intolerance', 'allergy', 'anaphylaxis')
+
+# D-73 Phase 1.2B (D-51 §3.3) — athlete_secondary_sports.experience_tier
+# closed enum per v5 §C row 2.
+EXPERIENCE_TIERS = ('under_1yr', '1_to_3yr', '3plus_yr')
+
+# D-73 Phase 1.2B (D-51 §3.3) — recent_race_results.source mirrors the
+# athlete_profile_field_provenance.source shape but per-row (record-shaped
+# data). 'provider_<X>' values are appended when provider race-data
+# extractors land (none today); the constant grows alongside them.
+RACE_RESULT_SOURCES = ('self_report',)
+
+# D-73 Phase 1.2B (D-51 §3.12) — athlete_network_links.relationship_types
+# is a comma-separated subset of this closed enum per v5 §L.
+KNOWN_RELATIONSHIP_TYPES = (
+    'training_partner',
+    'race_teammate',
+    'coach',
+    'family',
+    'pacer',
+    'crew',
+)
+
+# D-73 Phase 1.2B (D-51 §3.12) — linked_partner_consents.consent_scope
+# per v5 §L Account Config 4 (Privacy and Linked-Partner Sharing). Athlete-
+# controlled sharing granularity; 'none' is the explicit no-share state
+# (distinct from "row absent" which means no consent ever granted).
+LINKED_PARTNER_CONSENT_SCOPES = ('none', 'activity_summaries', 'full_plan_access')
+
 
 def get_daily_availability_windows(db, user_id):
     """Return per-day windows for `user_id` as a list of 7 dicts (Sun..Sat).
