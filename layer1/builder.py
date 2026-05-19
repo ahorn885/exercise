@@ -458,19 +458,27 @@ def _load_daily_windows(
 
 def _load_injuries(db, user_id: int) -> tuple[list[InjuryRecord], list[InjuryRecord]]:
     cur = db.execute(
-        "SELECT id, body_part, description, severity, status, start_date, "
-        "resolved_date, modifications_needed "
+        "SELECT id, body_part, description, severity, injury_type, side, "
+        "movement_constraints, status, start_date, resolved_date, "
+        "modifications_needed "
         "FROM injury_log WHERE user_id = ? ORDER BY start_date DESC, id DESC",
         (user_id,),
     )
     current: list[InjuryRecord] = []
     history: list[InjuryRecord] = []
     for r in cur.fetchall():
+        # movement_constraints is JSONB; psycopg2 returns it parsed (list[str])
+        # when populated, None when NULL. Defensive: coerce NULL to empty list
+        # so the pydantic default_factory is honoured.
+        mc = r["movement_constraints"] or []
         record = InjuryRecord(
             injury_id=int(r["id"]),
             body_part=r["body_part"],
             description=r["description"],
             severity=r["severity"],
+            injury_type=r["injury_type"],
+            side=r["side"] or "N/A",
+            movement_constraints=mc,
             status=r["status"],
             start_date=r["start_date"],
             resolved_date=r["resolved_date"],

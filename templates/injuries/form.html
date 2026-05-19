@@ -14,17 +14,44 @@
       <select name="body_part" class="form-select">
         {% for b in body_parts %}<option value="{{ b }}" {% if entry and entry.body_part == b %}selected{% endif %}>{{ b }}</option>{% endfor %}
       </select></div>
-    <div class="col-md-2"><label class="form-label">Severity (1–5)</label>
-      <select name="severity" class="form-select">
-        <option value="">—</option>
-        {% for i in range(1,6) %}<option value="{{ i }}" {% if entry and entry.severity == i %}selected{% endif %}>{{ i }} - {% if i==1%}Minor{% elif i==2%}Mild{% elif i==3%}Moderate{% elif i==4%}Significant{% else %}Severe{% endif %}</option>{% endfor %}
+    <div class="col-md-2"><label class="form-label">Side</label>
+      <select name="side" class="form-select">
+        {% for s in sides %}<option value="{{ s }}" {% if entry and entry.side == s %}selected{% endif %}>{{ s }}</option>{% endfor %}
       </select></div>
     <div class="col-md-2"><label class="form-label">Status</label>
       <select name="status" class="form-select">
         {% for s in statuses %}<option value="{{ s }}" {% if entry and entry.status == s %}selected{% endif %}>{{ s }}</option>{% endfor %}
       </select></div>
-    <div class="col-md-2"><label class="form-label">Resolved Date</label>
+    <div class="col-md-3"><label class="form-label">Resolved Date</label>
       <input type="date" name="resolved_date" class="form-control" value="{{ entry.resolved_date if entry and entry.resolved_date else '' }}"></div>
+  </div>
+  <div class="row g-3 mb-3">
+    <div class="col-md-6"><label class="form-label">Injury Type</label>
+      <select name="injury_type" class="form-select">
+        <option value="">—</option>
+        {% for t in injury_types %}<option value="{{ t }}" {% if entry and entry.injury_type == t %}selected{% endif %}>{{ t }}</option>{% endfor %}
+      </select>
+      <div class="form-text">Drives loading protocol (tendinopathy / strain / stress fracture / etc.).</div></div>
+    <div class="col-md-6"><label class="form-label">Severity Stage</label>
+      <select name="severity" class="form-select">
+        <option value="">—</option>
+        {% for s in severities %}<option value="{{ s }}" {% if entry and entry.severity == s %}selected{% endif %}>{{ s }}</option>{% endfor %}
+      </select>
+      <div class="form-text">Acute / Post-surgical → exclude; Recovering / Chronic-Managed / Structural-Permanent → accommodate; Resolved → clean.</div></div>
+  </div>
+  <div class="mb-3"><label class="form-label">Movement Constraints</label>
+    <div class="form-text mb-2">Select all that apply. Drives Layer 2D's exercise-level keyword filtering against the injury_flags_text.</div>
+    <div class="row">
+      {% for c in movement_constraints %}
+      <div class="col-md-4">
+        <div class="form-check">
+          <input class="form-check-input" type="checkbox" name="movement_constraints" value="{{ c }}" id="mc-{{ loop.index }}"
+                 {% if c in entry_movement_constraints %}checked{% endif %}>
+          <label class="form-check-label" for="mc-{{ loop.index }}">{{ c }}</label>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
   </div>
   <div class="mb-3"><label class="form-label">Description</label>
     <textarea name="description" class="form-control" rows="2">{{ entry.description if entry else '' }}</textarea></div>

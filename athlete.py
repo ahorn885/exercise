@@ -121,6 +121,65 @@ LONG_SESSION_MAX_HR_CHOICES = (2, 3, 4, 5, 6, 8)
 # treats them as discretionary per D-61 §3.3.
 DOUBLES_FEASIBLE_CHOICES = ('regularly', 'occasionally', 'no')
 
+# D-73 Phase 2.2 (Athlete_Onboarding_Data_Spec_v5.md §B.1.1) — injury_log
+# closed enums. injury_type drives Layer 2D §5.3.6 accommodation-modality
+# dispatch (V1_DEFAULT_ACCOMMODATIONS keyed on (injury_type, severity)).
+# 'Other / uncertain' is the conservative fallback per §B.1.1; rows entered
+# before this column landed default to NULL and Layer 2D treats NULL as
+# the fallback bucket.
+KNOWN_INJURY_TYPES = (
+    'Acute soft tissue (strain / sprain / tear)',
+    'Tendinopathy / overuse',
+    'Joint (mechanical) — non-surgical',
+    'Joint (mechanical) — surgical',
+    'Bone (fracture / contusion) — non-stress',
+    'Bone — stress fracture',
+    'Skin / surface (burn / abrasion / laceration)',
+    'Nerve',
+    'Inflammatory (bursitis / fasciitis)',
+    'Post-surgical',
+    'Other / uncertain',
+)
+
+# D-73 Phase 2.2 (Athlete_Onboarding_Data_Spec_v5.md §B.1) — injury_log.severity
+# 6-value enum per Layer2D_Spec.md §5.3.4 (severity → verdict mapping). Replaces
+# legacy INTEGER (1-5) numeric scale. Acute/Post-surgical map to EXCLUDE;
+# Recovering/Chronic-Managed/Structural-Permanent map to ACCOMMODATE;
+# Resolved maps to CLEAN (defensive — resolved injuries shouldn't reach
+# current_injuries partition).
+KNOWN_INJURY_SEVERITIES = (
+    'Acute',
+    'Recovering',
+    'Chronic-Managed',
+    'Post-surgical',
+    'Structural-Permanent',
+    'Resolved',
+)
+
+# D-73 Phase 2.2 (Athlete_Onboarding_Data_Spec_v5.md §B.3) — injury_log
+# movement_constraints multi-select. Maps to exercise DB col 9 keyword
+# patterns; Layer 2D §5.3.3 substring-matches the per-constraint keyword
+# bundle against layer0.exercises.injury_flags_text.
+KNOWN_MOVEMENT_CONSTRAINTS = (
+    'Pain with loading',
+    'Pain with impact',
+    'Pain above specific joint angle',
+    'Pain on descent / eccentric',
+    'Pain on rotation',
+    'Pain with grip / sustained hold',
+    'Pain with wrist extension',
+    'Pain with overhead movement',
+    'Instability',
+    'Reduced ROM',
+    'Pain at high volume only',
+)
+
+# D-73 Phase 2.2 (Athlete_Onboarding_Data_Spec_v5.md §B.1) — injury_log.side.
+# Layer 2D v1 doesn't filter on side (Layer2D_Spec.md §10 edge case;
+# contraindicated_parts has no side dimension — tracked as 2D-7 future).
+# Side is captured for downstream Layer 4 / UI rendering only.
+KNOWN_INJURY_SIDES = ('Left', 'Right', 'Both', 'N/A')
+
 # D-73 Phase 1.2B (D-51 §3.2a) — health_conditions_log.system_category closed
 # enum per v5 §B.4.1. Layer 1 builder auto-populates 'gi_immune' when
 # food_allergies has an anaphylaxis-tier row (per §B.4.2; storage independent).
