@@ -36,7 +36,9 @@ from routes.onboarding import (
     _parse_date_field,
     _parse_decimal_field,
     _parse_int_field,
+    _parse_race_terrain,
     _parse_str_field,
+    _terrain_choices,
     _write_account_nudge,
 )
 
@@ -166,6 +168,8 @@ class TestGetTargetRaceRow:
             'mandatory_gear_text': 'Helmet, headlamp, PFD',
             'event_locale_id': None,
             'notes': None,
+            'race_terrain': [],
+            'aid_stations': 0,
         })
 
         out = _get_target_race_row(conn, uid=42)
@@ -173,16 +177,211 @@ class TestGetTargetRaceRow:
         assert out['id'] == 5
         assert out['name'] == 'Pocket Gopher Extreme'
         assert out['race_format'] == 'expedition_ar'
+        assert out['race_terrain'] == []
+        assert out['aid_stations'] == 0
 
         # WHERE clause must scope by user_id AND is_target_event=TRUE.
+        # SELECT must include race_terrain + aid_stations so the edit
+        # form pre-populates on return-visits and the brief-only cache
+        # diff can compare prior values.
         sql, params = conn.calls[0]
         assert 'WHERE user_id = ? AND is_target_event = TRUE' in sql
+        assert 'race_terrain' in sql
+        assert 'aid_stations' in sql
         assert params == (42,)
 
     def test_returns_none_on_miss(self):
         conn = _FakeConn()
         conn.queue_response(row=None)
         assert _get_target_race_row(conn, uid=42) is None
+
+    def test_hydrates_race_terrain_from_jsonb_string(self):
+        """psycopg2 returns JSONB as native list, sqlite shim returns a
+        JSON-encoded string. `_get_target_race_row` tolerates both and
+        hydrates to a list of dicts in either case.
+        """
+        conn = _FakeConn()
+        conn.queue_response(row={
+            'id': 7,
+            'name': 'Race',
+            'event_date': date(2026, 7, 17),
+            'race_format': 'expedition_ar',
+            'distance_km': None,
+            'total_elevation_gain_m': None,
+            'race_rules_summary': None,
+            'mandatory_gear_text': None,
+            'event_locale_id': None,
+            'notes': None,
+            'race_terrain': '[{"terrain_id": "TRN-002", "pct_of_race": 35.0}]',
+            'aid_stations': None,
+        })
+
+        out = _get_target_race_row(conn, uid=42)
+        assert out['race_terrain'] == [{'terrain_id': 'TRN-002', 'pct_of_race': 35.0}]
+
+    def test_hydrates_race_terrain_from_native_list(self):
+        """psycopg2 default JSONB adapter returns a list directly — the
+        hydration should leave it untouched.
+        """
+        conn = _FakeConn()
+        terrain = [
+            {'terrain_id': 'TRN-002', 'pct_of_race': 35.0},
+            {'terrain_id': 'TRN-003', 'pct_of_race': 30.0},
+        ]
+        conn.queue_response(row={
+            'id': 7,
+            'name': 'Race',
+            'event_date': date(2026, 7, 17),
+            'race_format': 'expedition_ar',
+            'distance_km': None,
+            'total_elevation_gain_m': None,
+            'race_rules_summary': None,
+            'mandatory_gear_text': None,
+            'event_locale_id': None,
+            'notes': None,
+            'race_terrain': terrain,
+            'aid_stations': 4,
+        })
+
+        out = _get_target_race_row(conn, uid=42)
+        assert out['race_terrain'] == terrain
+        assert out['aid_stations'] == 4
+
+    def test_hydrates_none_race_terrain_to_empty_list(self):
+        """NULL race_terrain (no migration yet, or row pre-form-refresh)
+        falls back to empty list so the template iteration + diff
+        comparison never hit a NoneType.
+        """
+        conn = _FakeConn()
+        conn.queue_response(row={
+            'id': 7,
+            'name': 'Race',
+            'event_date': date(2026, 7, 17),
+            'race_format': 'expedition_ar',
+            'distance_km': None,
+            'total_elevation_gain_m': None,
+            'race_rules_summary': None,
+            'mandatory_gear_text': None,
+            'event_locale_id': None,
+            'notes': None,
+            'race_terrain': None,
+            'aid_stations': None,
+        })
+
+        out = _get_target_race_row(conn, uid=42)
+        assert out['race_terrain'] == []
+        assert out['aid_stations'] is None
+
+
+# ─── _parse_race_terrain ────────────────────────────────────────────────────
+
+
+class TestParseRaceTerrain:
+    def test_parses_repeating_rows(self):
+        form = {
+            'race_terrain[0][terrain_id]': 'TRN-002',
+            'race_terrain[0][pct_of_race]': '35',
+            'race_terrain[1][terrain_id]': 'TRN-003',
+            'race_terrain[1][pct_of_race]': '30.5',
+        }
+        out = _parse_race_terrain(form)
+        assert out == [
+            {'terrain_id': 'TRN-002', 'pct_of_race': 35.0},
+            {'terrain_id': 'TRN-003', 'pct_of_race': 30.5},
+        ]
+
+    def test_empty_form_returns_empty_list(self):
+        assert _parse_race_terrain({}) == []
+
+    def test_drops_empty_terrain_id(self):
+        form = {
+            'race_terrain[0][terrain_id]': '',
+            'race_terrain[0][pct_of_race]': '35',
+            'race_terrain[1][terrain_id]': 'TRN-002',
+            'race_terrain[1][pct_of_race]': '30',
+        }
+        out = _parse_race_terrain(form)
+        assert out == [{'terrain_id': 'TRN-002', 'pct_of_race': 30.0}]
+
+    def test_drops_empty_pct(self):
+        form = {
+            'race_terrain[0][terrain_id]': 'TRN-002',
+            'race_terrain[0][pct_of_race]': '',
+        }
+        assert _parse_race_terrain(form) == []
+
+    def test_drops_invalid_terrain_id_pattern(self):
+        # Wrong shape — not TRN-\d{3}.
+        form = {
+            'race_terrain[0][terrain_id]': 'TERRAIN-002',
+            'race_terrain[0][pct_of_race]': '35',
+            'race_terrain[1][terrain_id]': 'TRN-2',
+            'race_terrain[1][pct_of_race]': '30',
+        }
+        assert _parse_race_terrain(form) == []
+
+    def test_drops_non_numeric_pct(self):
+        form = {
+            'race_terrain[0][terrain_id]': 'TRN-002',
+            'race_terrain[0][pct_of_race]': 'thirty',
+        }
+        assert _parse_race_terrain(form) == []
+
+    def test_drops_out_of_range_pct(self):
+        form = {
+            'race_terrain[0][terrain_id]': 'TRN-002',
+            'race_terrain[0][pct_of_race]': '-5',
+            'race_terrain[1][terrain_id]': 'TRN-003',
+            'race_terrain[1][pct_of_race]': '120',
+        }
+        assert _parse_race_terrain(form) == []
+
+    def test_preserves_sorted_order_across_sparse_indices(self):
+        # Form rows can have gaps after a user removed a middle row in JS.
+        form = {
+            'race_terrain[5][terrain_id]': 'TRN-009',
+            'race_terrain[5][pct_of_race]': '15',
+            'race_terrain[0][terrain_id]': 'TRN-002',
+            'race_terrain[0][pct_of_race]': '35',
+            'race_terrain[2][terrain_id]': 'TRN-004',
+            'race_terrain[2][pct_of_race]': '20',
+        }
+        out = _parse_race_terrain(form)
+        assert out == [
+            {'terrain_id': 'TRN-002', 'pct_of_race': 35.0},
+            {'terrain_id': 'TRN-004', 'pct_of_race': 20.0},
+            {'terrain_id': 'TRN-009', 'pct_of_race': 15.0},
+        ]
+
+
+# ─── _terrain_choices ───────────────────────────────────────────────────────
+
+
+class TestTerrainChoices:
+    def test_returns_id_label_dicts_in_terrain_id_order(self):
+        conn = _FakeConn()
+        conn.queue_response(rows=[
+            {'terrain_id': 'TRN-002', 'canonical_name': 'Singletrack'},
+            {'terrain_id': 'TRN-003', 'canonical_name': 'Doubletrack'},
+            {'terrain_id': 'TRN-009', 'canonical_name': 'Flat water'},
+        ])
+
+        out = _terrain_choices(conn)
+        assert out == [
+            {'id': 'TRN-002', 'label': 'Singletrack'},
+            {'id': 'TRN-003', 'label': 'Doubletrack'},
+            {'id': 'TRN-009', 'label': 'Flat water'},
+        ]
+
+        sql, _params = conn.calls[0]
+        assert 'FROM layer0.terrain_types' in sql
+        assert 'superseded_at IS NULL' in sql
+        assert 'ORDER BY terrain_id' in sql
+
+    def test_empty_when_no_rows(self):
+        conn = _FakeConn()
+        conn.queue_response(rows=[])
+        assert _terrain_choices(conn) == []
 
 
 # ─── _athlete_locale_choices ────────────────────────────────────────────────

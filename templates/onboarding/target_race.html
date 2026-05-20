@@ -82,7 +82,7 @@
       </small>
     </div>
 
-    <div class="col-md-6">
+    <div class="col-md-4">
       <label class="form-label" for="distance_km">Distance (km)</label>
       <input type="number" step="0.01" min="0" class="form-control"
              id="distance_km" name="distance_km"
@@ -91,13 +91,22 @@
         Optional — fill in when the race director publishes the route.
       </small>
     </div>
-    <div class="col-md-6">
+    <div class="col-md-4">
       <label class="form-label" for="total_elevation_gain_m">Elevation gain (m)</label>
       <input type="number" step="1" min="0" class="form-control"
              id="total_elevation_gain_m" name="total_elevation_gain_m"
              value="{{ target.total_elevation_gain_m if target and target.total_elevation_gain_m is not none else '' }}">
       <small class="text-muted">
         Optional — total cumulative gain.
+      </small>
+    </div>
+    <div class="col-md-4">
+      <label class="form-label" for="aid_stations">Aid stations</label>
+      <input type="number" step="1" min="0" class="form-control"
+             id="aid_stations" name="aid_stations"
+             value="{{ target.aid_stations if target and target.aid_stations is not none else '' }}">
+      <small class="text-muted">
+        Total count along the course. Expedition AR + self-supported events are usually 0; aid-supported ultras typically 4–12.
       </small>
     </div>
 
@@ -123,6 +132,9 @@
         what you have on hand.
       </small>
     </div>
+
+    {% set existing_terrain = (target.race_terrain if target and target.race_terrain else []) %}
+    {% include '_race_terrain_editor.html' %}
 
     <div class="col-12">
       <label class="form-label" for="notes">Notes (optional)</label>
