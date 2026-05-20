@@ -81,16 +81,16 @@ for toggle_name, enabled in cluster_gear_toggle_states.items():
         effective_pool.update(toggle_def.also_satisfies)
 ```
 
-**[DECISION POINT — toggle definition lookup at runtime vs pre-resolved by Layer 1]**
+**[DECISION POINT — toggle definition lookup at runtime vs pre-resolved by Layer 1]** ✅ Resolved 2026-05-19 — DP1 = (A) Runtime lookup.
 
-Two paths:
+Two paths considered:
 
 - **(A) Runtime lookup** (drafted above). 2C queries `layer0.sport_specific_gear_toggles` at runtime for `paired_equipment_categories[]` and `also_satisfies[]` per active toggle. Simple, no extra Layer 1 storage. Adds 1 query per 2C call.
 - **(B) Pre-resolved by Layer 1.** `cluster_gear_toggle_states` becomes `dict[str, ToggleState]` where `ToggleState` has `enabled: bool` plus `implied_equipment: list[str]` already expanded. Layer 1 does the lookup once at toggle-state-change time. 2C doesn't query the toggles table at all.
 
-Prior session notes said `sport_specific_gear_toggles` is "NOT consumed at runtime" but didn't address the implied-equipment lookup specifically. Recommend (A) for simplicity — the extra query is cheap (11 rows, indexed) and (B) duplicates state. **Andy decision needed before implementation.**
+**Resolution (Andy 2026-05-19, D-73 Phase 2.4-Prep):** picked (A) Runtime lookup. The extra query is cheap (11 rows, indexed by `UNIQUE (toggle_name, etl_version)`); (B) duplicates state across Layer 1 and 2C, increasing the surface for stale-data drift. The Phase 2.4 builder (`layer2c.builder._load_toggle_defs`) issues one SELECT against `layer0.sport_specific_gear_toggles` per 2C call and reads `paired_equipment_categories`, `also_satisfies`, and `gated_discipline_ids` — display/description fields are not consumed at runtime.
 
-If (A), the consumer table in spec §8 gets a footnote: "2C consumes `sport_specific_gear_toggles.paired_equipment_categories` and `also_satisfies` only — not display/description fields." If (B), Layer 1 §J spec needs an `implied_equipment` field on the toggle state record.
+**§5.1 vs §6 reconciliation note:** the pseudo-code above adds `toggle_def.also_satisfies` directly to the equipment pool, but the deployed data shape (`also_satisfies TEXT[]`, populated per `Vocabulary_Audit_v2.md §4.2`) treats each entry as a TOGGLE NAME, not an equipment-canonical-name. §6 is the canonical reading: an `also_satisfies` entry expands to the referenced toggle's `paired_equipment_categories` (one hop, no cascade). The builder implements §6 semantics.
 
 ### 5.2 Discipline → exercise enumeration
 
@@ -358,9 +358,14 @@ One flag per critical-dropped exercise. May fire multiple times.
 
 Trigger: discipline in `included_discipline_ids` is gated by a sport-specific toggle, and that toggle is OFF in `cluster_gear_toggle_states`.
 
-Requires a mapping of discipline → gating toggle. This mapping isn't currently in any Layer 0 table — it lives in the Vocab Audit and the toggle docstrings. **[DECISION POINT — discipline-to-toggle mapping]**: either (a) hard-code in 2C code (`{'D-010': 'Climbing — roped', 'D-015': 'Snowshoeing', ...}`), or (b) add a column on `sport_specific_gear_toggles` (`gated_discipline_ids TEXT[]`) and load from there. Recommend (b) for traceability; would add to FC-1 work.
+Requires a mapping of discipline → gating toggle. This mapping isn't currently in any Layer 0 table — it lives in the Vocab Audit and the toggle docstrings. **[DECISION POINT — discipline-to-toggle mapping]** ✅ Resolved 2026-05-19 — DP2 = (b) Structured column.
 
-For first implementation, use (a) hard-coded mapping. Add (b) during FC-1 spec v4 work.
+Two paths considered:
+
+- **(a)** Hard-code in 2C code (`{'D-010': 'Climbing — roped', 'D-015': 'Snowshoeing', ...}`). Faster to ship; accumulates as tech debt across non-AR sports.
+- **(b)** Add a column on `sport_specific_gear_toggles` (`gated_discipline_ids TEXT[]`) and read from there. More work; structured carries traceability + survives spec evolution.
+
+**Resolution (Andy 2026-05-19, D-73 Phase 2.4-Prep):** picked (b) — diverged from the spec's "(a) for v1, defer (b) to FC-1" recommendation. The `gated_discipline_ids TEXT[]` column was added to `layer0.sport_specific_gear_toggles` via `migrate_toggles_v3_columns.sql` and populated for the 3 known cases (`Climbing — roped` → D-010; `Rappelling / abseiling` → D-011; `Snowshoeing setup` → D-015). The Phase 2.4 builder (`layer2c.builder._emit_coaching_flags`) reads the column directly when emitting the `toggle_off_for_discipline` flag — no hard-coded mapping in 2C code. Open Item 2C-2 closes in §12.
 
 ```python
 CoachingFlag(
@@ -406,6 +411,7 @@ No time-based expiration. Sticky until invalidated.
 | All `cluster_gear_toggle_states` keys OFF | Effective pool = `locale_equipment_pool` only. Toggle-gated disciplines surface `toggle_off_for_discipline` flags. |
 | Exercise has both legacy `equipment_substitutes` (JSONB) and new `equipment_substitutes_structured` | Use `equipment_substitutes_structured` exclusively. Legacy field is reference data only per Batch C decision. |
 | Exercise with NULL `equipment_substitutes_structured` | Tier 2 returns None. Skip to Tier 3. |
+| Exercise present in `layer0.exercises` but absent from `etl/sources/parsed_substitutes.json` (Tier 2 source for `equipment_substitutes_structured`) | ETL extractor attaches `[]` per `etl/layer0/extractors/exercise_db.py:load_parsed_substitutes_structured` loud-fallback. Tier 2 returns None; cascade falls to Tier 3. No error. Added 2026-05-19 (D-73 Phase 2.4-Prep) — implicit but worth pinning. |
 | Exercise with NULL `physical_proxies` | Tier 3 returns None. Exercise → Tier 0. |
 | Proxy references an `exercise_id` not in the per-discipline query result | Skip that proxy. Log at DEBUG. Not an error — proxies can point to any exercise in the DB. |
 | Exercise appears under multiple disciplines | Dedupe by `exercise_id`. `discipline_ids[]` lists all of them. Tier resolution happens once per exercise, not per discipline-pair. |
@@ -434,8 +440,8 @@ If a cluster has many locales (e.g., athlete travels regularly to 5+ places), th
 
 | # | Item | Owner | Status |
 |---|---|---|---|
-| 2C-1 | **Toggle definition lookup at runtime vs pre-resolved** (§5.1 decision point) | Andy | Awaiting decision |
-| 2C-2 | **Discipline-to-toggle mapping location** (§8.3 decision point) | Andy / FC-1 | Hard-code for v1; add structured column in FC-1 |
+| 2C-1 | **Toggle definition lookup at runtime vs pre-resolved** (§5.1 decision point) | Andy | ✅ Resolved 2026-05-19 — DP1 = (A) Runtime lookup (Phase 2.4-Prep) |
+| 2C-2 | **Discipline-to-toggle mapping location** (§8.3 decision point) | Andy / FC-1 | ✅ Resolved 2026-05-19 — DP2 = (b) Structured column (Phase 2.4-Prep; diverged from spec's "defer to FC-1" recommendation) |
 | 2C-3 | Layer 4 selection logic — how plan-gen picks Tier 2 vs Tier 3 when both resolve | Layer 4 design | Out of scope here; surfaced in payload |
 | 2C-4 | Foci selection (orthogonal to 2C) | Layer 4 design | Already tracked as Open Item P in Batch B handoff |
 | 2C-5 | D-08 follow-up: Long Distance / Endurance Cycling missing 2 disciplines from `sport_discipline_map` — when those sports come online, verify 2C still works | FC-1 | Not AR-blocking |
