@@ -56,30 +56,37 @@ Small drift items to fold into upcoming sessions rather than ship as their own P
 - ~~`Layer2C_Spec.md` §10 edge cases — missing parsed_substitutes entry~~ ✅ Added 2026-05-20 (Phase 2.4 builder session). New §10 row documents `equipment_substitutes_structured = []` loud-fallback path; Tier 2 returns None; cascade falls to Tier 3.
 - ~~`Upstream_Implementation_Plan_v1.md` §4 row 2.4 + §5.4 ceiling-break list + §6 plan-mode-gate list~~ ✅ Updated 2026-05-20 (Phase 2.4 builder session). Row 2.4 now reflects the Split (Prep 6 + Builder 3); §5.4 ceiling-break list strikes the 2.4 entry; §6 gate list flags item 4 as ✅ Resolved.
 
-## Phase 3.1-Driver carry-forwards (Layer 3A LLM driver — next session)
+## Phase 3.1-Driver follow-ons (Layer 3A LLM driver shipped 2026-05-20)
 
-Substrate landed 2026-05-20 (5 `q_layer3A_*` accessors + `Layer3AIntegrationBundle`). The driver session lands on top.
+Driver + cache wrapper + prompt body + tests landed. Five substantive files; 941 → 995 tests. ALL D1-D10 picks per `aidstation-sources/prompts/Layer3A_v1.md` source-decision table:
 
-- **Module layout:** `layer3a/builder.py` for the driver (matching `layer2c/builder.py` precedent — but the queries are in `integration.py`; the driver lives alongside). `layer3a/errors.py` for `Layer3AInputError` + `Layer3AOutputError` (or inline in builder.py — Layer 4 Step 4a inlined; Layer 2C inlined; precedent supports either).
-- **Prompt body design doc:** `aidstation-sources/prompts/Layer3A_v1.md` (mirrors `prompts/Layer4_SingleSession_v1.md` precedent). Captures system prompt body + user prompt template + tool schema rationale + voice rules + D1-D10 source decisions.
-- **D1-D10 decisions to gate at session start (open with `/plan-mode`):**
-  - D1: Tool-use forced (`tool_choice={"type": "tool", "name": ...}`) vs JSON schema enforcement — Step 4a precedent picked forced tool-use.
-  - D2: Extended thinking budget — Step 4a used 3500; 3A spec §3 max_tokens=4000 default suggests similar or higher.
-  - D3: Payload rendering — Step 4a picked inline Python over Mustache; recommend same for consistency.
-  - D4: Retry context shape — Step 4a passed `RuleFailure` items back into user prompt on retry. 3A has lighter retry semantics (§5.3 step 1 — one retry on schema violation only).
-  - D5: Tool-schema fidelity — full `Layer3APayload` mirror (deep nested: CurrentState + RecentTrajectory + ACWRStatus per-discipline dict + DataDensity + Observation list) vs sketch. Step 4a picked full.
-  - D6: `max_tokens` default — spec §3 says 4000. Confirm.
-  - D7: Default model — spec §3.3 names `claude-sonnet-4-5` but the project's canonical models are now Opus 4.7 / Sonnet 4.6 / Haiku 4.5 (per the runtime model-identity context). **Genuine drift** — recommend Sonnet 4.6 default; spec §6 open item 3A-6 already notes Haiku-vs-Sonnet investigation for cache-hit cost. Touch spec §3.3 to update the literal in the same session.
-  - D8: Confidence-floor enforcement timing — pre-LLM (informational, render in user prompt) vs post-LLM (clamp emitted confidences). Spec §5.3 step 3 says post-LLM clamp; spec §6.3 says auto-append `confidence_clamped_by_data_density` observation. Confirm both.
-  - D9: Evidence-basis cross-check — spec §5.3 step 2 says name-existence check only, no value validation; spec §12 item 3A-1 defers deeper validation to post-launch. Confirm light validation.
-  - D10: Voice — CLAUDE.md voice rules applied to system prompt (direct, evidence-grounded, no platitudes, no cheerleading). Spec §8.2 "Forbidden observations" already encodes this.
-- **Layer 1 payload threading:** spec §3.3 takes typed `Layer1Payload`. The Step 4a precedent (`layer4/single_session.py`) took `dict[str, Any]` as a v1 caveat (Layer 1 wasn't typed yet). Layer 1 IS typed now (`build_layer1_payload` shipped Phase 1.3) — pick typed `Layer1Payload` directly; no dict pass-through caveat needed.
-- **Spec §3.3 model-name drift:** `claude-sonnet-4-5` is stale. Touch the spec in the same session (~1-line edit) — pair the spec correction with the driver implementation.
-- **`Layer3AIntegrationBundle` substrate dependencies still queued:**
-  - `coros_hrv_samples` downsampling to nightly — Integration Spec §10 mentions it; v1 substrate skipped (nightly `coros_daily_summary.ppg_hrv` covers).
-  - Garmin wellness_log sleep — spec mentions but no Garmin sleep table deployed (D-55 paused). Skip until Garmin API reopens.
-  - `ProviderStatus.last_sync` derivation via `webhook_events.received_at` MAX — works but may miss provider-side pull events. Revisit if D-50 provider sync surfaces a dedicated last_sync column.
-- **Spec §13 fixture work:** the 10 §13 scenarios assume specific `IntegrationBundle` shapes. The Phase 3.1-Driver session ships builder + tests; the §13 fixture data lands as part of those tests. Reusable fixtures may want to live in `tests/fixtures/layer3a/` if they grow.
+- D1=forced tool-use (`tool_choice={"type":"tool","name":"record_athlete_state"}`)
+- D2=4000-token extended thinking budget
+- D3=inline-Python rendering via per-section helpers in `layer3a/builder.py`
+- D4=single capped retry on schema violation only (lighter than Step 4a per spec §5.3 step 1)
+- D5=full `Layer3APayload` mirror in tool schema
+- D6=4000 max_tokens
+- D7=`claude-sonnet-4-6` default (paired Layer3_3A_Spec.md §3.3 1-line correction shipped)
+- D8=post-LLM clamp + auto-append `confidence_clamped_by_data_density` observation
+- D9=name-existence evidence_basis check (warns via `Layer3AEvidenceBasisWarning`, no fail)
+- D10=CLAUDE.md voice rules + spec §8.2 forbidden observations inlined in system prompt
+
+**Remaining follow-ons for future sessions:**
+
+- **Real-LLM smoke test scaffolding** (Layer 4 Step 7 territory) — env-gated `ANTHROPIC_API_KEY` harness lands the first real call. Layer 3A driver is the first real production SDK call site. Pairs with `Layer3A_v1.md` §12 item L3A-P-1.
+- **§13 real-LLM regression** on the 10 spec scenarios — once Step 7 SDK scaffolding lands, run the 10 §13 fixtures against actual Sonnet 4.6 and verify the enum classifications. Currently stubbed in `tests/test_layer3a_builder.py::TestS13Scenarios` (6 of 10 covered via round-trip validation; the LLM-decision scenarios §13.1/§13.5/§13.8/§13.9 are deferred because they test reasoning quality, not contract). Per `Layer3A_v1.md` §12 item L3A-P-1.
+- **Per-field `evidence_basis` cardinality enforcement** (≥3 for `high` confidence) — currently a system-prompt rule + post-clamp via the high-gate check; per-Assessment validator-side enforcement requires re-prompt support that the v1 single-retry loop doesn't have. Per `Layer3A_v1.md` §12 item L3A-P-2 + spec §12 3A-1.
+- **Haiku-vs-Sonnet cost experiment** for cached-case dominant workloads — defer until cold-run rate is measured in production. Spec §12 3A-6 + `Layer3A_v1.md` §12 item L3A-P-3.
+- **`data_density.section_completeness` driver-side override** — currently the LLM self-reports its perceived per-section completeness; future: driver computes per-section field-population ratios and either compares (telemetry) or replaces (canonical). Per `Layer3A_v1.md` §12 item L3A-P-4 + spec §12 item 3A-1 family.
+- **Cache invalidation wiring for 3A** — `cache_invalidation.py` currently routes Layer 4 entry points only. When Layer 3 orchestrator lands, add a 3A-cache eviction policy module (analogue to Layer 4's §9.3 matrix) for spec §9.2 triggers (any Layer 1 §C/§D/§E/§F/§I change, 2A output change, new integration row, ETL bump, explicit 3D revise invalidation).
+- **Layer 3 orchestrator** — wires 3A driver into the upstream pipeline. Eventually 3A's `Layer3APayload` will be cached + passed to 3B/3C/3D/4. Lands as part of Phase 5.1 orchestrator vertical slice or earlier.
+- **§B health-context note text length** — the v1 driver passes a 2-sentence note per spec §5.2. If injuries grow >3 (current truncation), the rendering may run long. Trim policy: top-3-most-recent-active per `_render_health_context_note` heuristic. Revisit if athletes commonly carry >3 active injuries.
+
+**`Layer3AIntegrationBundle` substrate dependencies still queued (carries forward from substrate session):**
+
+- `coros_hrv_samples` downsampling to nightly — Integration Spec §10 mentions it; v1 substrate skipped (nightly `coros_daily_summary.ppg_hrv` covers).
+- Garmin wellness_log sleep — spec mentions but no Garmin sleep table deployed (D-55 paused). Skip until Garmin API reopens.
+- `ProviderStatus.last_sync` derivation via `webhook_events.received_at` MAX — works but may miss provider-side pull events. Revisit if D-50 provider sync surfaces a dedicated last_sync column.
 
 ## Orthogonal carry-forwards (Layer 4 implementation track)
 

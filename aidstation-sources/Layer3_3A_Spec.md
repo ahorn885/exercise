@@ -40,7 +40,7 @@ def llm_layer3a_athlete_state(
     as_of: datetime,
     etl_version_set: dict[str, str],
     *,
-    model: str = "claude-sonnet-4-5",      # plan-gen pin; overridable for cost or experiments
+    model: str = "claude-sonnet-4-6",      # plan-gen pin; overridable for cost or experiments (corrected 2026-05-20 from stale 'claude-sonnet-4-5' per Phase 3.1-Driver D7)
     temperature: float = 0.2,
     max_tokens: int = 4000,
     cache_key_override: str | None = None,  # for replay / determinism testing

@@ -38,6 +38,7 @@ from layer4 import (
     PER_ENTRY_PHASE_IDX_SENTINEL,
     PlanSession,
     PostgresCacheBackend,
+    LAYER4_ENTRY_POINTS,
     VALID_ENTRY_POINTS,
     canonical_json,
     compute_accepted_output_hash,
@@ -714,10 +715,10 @@ class TestLayer4CacheInvalidate:
 
 class TestEvictionPolicy:
     def test_policy_layer1_all_entry_points(self):
-        assert set(policy_for_layer("layer1")) == set(VALID_ENTRY_POINTS)
+        assert set(policy_for_layer("layer1")) == set(LAYER4_ENTRY_POINTS)
 
     def test_policy_layer2a_all_entry_points(self):
-        assert set(policy_for_layer("layer2a")) == set(VALID_ENTRY_POINTS)
+        assert set(policy_for_layer("layer2a")) == set(LAYER4_ENTRY_POINTS)
 
     def test_policy_layer2b_excludes_single_session(self):
         result = set(policy_for_layer("layer2b"))
@@ -725,22 +726,22 @@ class TestEvictionPolicy:
         assert "plan_create" in result and "plan_refresh" in result and "race_week_brief" in result
 
     def test_policy_layer2c_all_entry_points(self):
-        assert set(policy_for_layer("layer2c")) == set(VALID_ENTRY_POINTS)
+        assert set(policy_for_layer("layer2c")) == set(LAYER4_ENTRY_POINTS)
 
     def test_policy_layer2d_all_entry_points(self):
-        assert set(policy_for_layer("layer2d")) == set(VALID_ENTRY_POINTS)
+        assert set(policy_for_layer("layer2d")) == set(LAYER4_ENTRY_POINTS)
 
     def test_policy_layer2e_excludes_single_session(self):
         assert "single_session_synthesize" not in set(policy_for_layer("layer2e"))
 
     def test_policy_layer3a_all_entry_points(self):
-        assert set(policy_for_layer("layer3a")) == set(VALID_ENTRY_POINTS)
+        assert set(policy_for_layer("layer3a")) == set(LAYER4_ENTRY_POINTS)
 
     def test_policy_layer3b_excludes_single_session(self):
         assert "single_session_synthesize" not in set(policy_for_layer("layer3b"))
 
     def test_policy_etl_version_set_all_entry_points(self):
-        assert set(policy_for_layer("etl_version_set")) == set(VALID_ENTRY_POINTS)
+        assert set(policy_for_layer("etl_version_set")) == set(LAYER4_ENTRY_POINTS)
 
     def test_policy_unknown_layer_raises(self):
         with pytest.raises(ValueError, match="unknown upstream layer"):
