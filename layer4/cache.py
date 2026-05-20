@@ -66,6 +66,10 @@ VALID_ENTRY_POINTS = LAYER4_ENTRY_POINTS | frozenset(
         # is not used (Layer3APayload has no plan_version_id/suggestion_id
         # rebinding, so the wrapper hits the backend directly).
         "llm_layer3a_athlete_state",
+        # Layer 3B cache wrapper extension (Phase 4, 2026-05-20) —
+        # `layer3b/cached_wrapper.py`; same shape as 3A (Layer3BPayload is
+        # self-contained, no plan_version_id/suggestion_id rebinding).
+        "llm_layer3b_goal_timeline_viability",
     }
 )
 """Superset of allowable entry_point labels for `CacheBackend.put` validation.
