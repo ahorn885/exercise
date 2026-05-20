@@ -738,6 +738,100 @@ class Layer3APayload(_Base):
     notable_observations: list[Layer3Observation]
 
 
+# ─── Layer 3A integration substrate (Athlete_Data_Integration_Spec_v6.md §10) ─
+#
+# Five query-node accessors compose into a `Layer3AIntegrationBundle` consumed
+# by `llm_layer3a_athlete_state(integration_bundle=...)` per Layer3_3A_Spec.md
+# §3 + §5.1 step 7. Implementations live in `layer3a/integration.py`. Source-
+# tagging via `source` Literals supports the LLM's §6.1 weighting rules
+# (objective vs subjective vs hybrid metrics) without forcing the substrate to
+# resolve conflicts — the LLM is the arbiter.
+
+
+WorkoutSource = Literal["manual", "garmin", "polar", "wahoo", "coros"]
+
+
+class WorkoutRecord(_Base):
+    date: date
+    activity: str
+    duration_min: float | None = Field(default=None, ge=0.0)
+    moving_time_min: float | None = Field(default=None, ge=0.0)
+    distance_mi: float | None = Field(default=None, ge=0.0)
+    avg_hr: int | None = Field(default=None, ge=0, le=250)
+    max_hr: int | None = Field(default=None, ge=0, le=250)
+    avg_power: int | None = Field(default=None, ge=0)
+    elev_gain_ft: float | None = None
+    source: WorkoutSource
+
+
+SleepSource = Literal["wellness_self_report", "polar", "coros"]
+
+
+class SleepRecord(_Base):
+    date: date
+    total_sleep_hours: float | None = Field(default=None, ge=0.0, le=24.0)
+    # Self-report 1-10 only; provider rows leave None. Integration Spec §10
+    # says "LLM in 3A resolves conflicts" — no normalization here.
+    sleep_quality: int | None = Field(default=None, ge=1, le=10)
+    source: SleepSource
+
+
+HRVSource = Literal["polar", "coros"]
+
+
+class HRVRecord(_Base):
+    date: date
+    hrv_rmssd_ms: float | None = Field(default=None, ge=0.0)
+    source: HRVSource
+
+
+class PolarCardioLoadCrossRef(_Base):
+    """Latest `polar_cardio_load` row, exposed per Integration Spec §10 as a
+    cross-reference (NOT the primary ACWR number). Primary acute/chronic per
+    `CombinedLoadReport` is computed from `cardio_log` durations in hours."""
+
+    date: date
+    daily_load: float | None = None
+    acute_load: float | None = None
+    chronic_load: float | None = None
+    cardio_load_status: str | None = None
+    strain: float | None = None
+
+
+class CombinedLoadReport(_Base):
+    per_discipline: dict[str, ACWREntry]
+    combined: ACWREntry | None = None
+    units: Literal["hours"] = "hours"
+    polar_cross_ref: PolarCardioLoadCrossRef | None = None
+
+
+class ProviderStatus(_Base):
+    """One row per row in `provider_auth` for the user. `data_coverage` flags
+    which of the three Layer 3A data types are flowing for this provider in
+    the relevant recency window (workouts 28d / sleep 14d / hrv 14d)."""
+
+    provider: str
+    status: str | None = None  # 'active' / 'error' / 'pending_backfill' / NULL
+    last_sync: datetime | None = None
+    has_recent_workouts: bool = False
+    has_recent_sleep: bool = False
+    has_recent_hrv: bool = False
+
+
+class Layer3AIntegrationBundle(_Base):
+    """Composed input for `llm_layer3a_athlete_state` per Layer3_3A_Spec.md §3.
+    Built by `layer3a.integration.assemble_layer3a_integration_bundle(db,
+    user_id, as_of)`. May be empty (no providers connected, no manual log) —
+    the LLM treats empty fields per §6.2 confidence-floor rules."""
+
+    as_of: datetime
+    recent_workouts: list[WorkoutRecord]
+    recent_sleep: list[SleepRecord]
+    recent_hrv: list[HRVRecord]
+    combined_load: CombinedLoadReport
+    connected_providers: list[ProviderStatus]
+
+
 # ─── Layer 3B — viability + periodization (Layer3_3B_Spec.md §7) ─────────────
 
 

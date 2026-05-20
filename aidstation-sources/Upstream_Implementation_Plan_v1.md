@@ -152,13 +152,16 @@ All Layer 2 nodes are pure Postgres aggregation (no LLM). Each ships as one sess
 
 **Triggers expected:** #5 (during 2C Decision Point), #8 (during 2C), #2 (no — query nodes have no prompt bodies).
 
-### Phase 3 — Layer 3A LLM driver (1-2 sessions)
+### Phase 3 — Layer 3A LLM driver (2 sessions — Split decided 2026-05-20)
+
+Split following the Phase 2.4-Prep / 2.4 precedent: substrate first (query nodes, no LLM, no triggers), driver second (LLM + prompt body + plan-mode gate). The "6-8 files" estimate in the v1 plan assumed integration substrate was already in place; it wasn't. `Layer3AIntegrationBundle` + the 5 `q_layer3A_*` accessors per `Athlete_Data_Integration_Spec_v6.md` §10 needed their own session.
 
 | Step | Session scope | Files (est.) | Notes |
 |---|---|---|---|
-| **3.1** | **Layer 3A LLM integration** — `llm_layer3a_athlete_state_evaluation(...)` + paired `Layer3A_v1.md` prompt body | 6-8 (over ceiling — driver + prompt body + Anthropic SDK adapter + tests + bookkeeping; precedented by Layer 4 Step 4a) | First upstream LLM driver. Pattern: Layer 4 Step 4a single-session precedent — pydantic schema (done), capped retry, validator (lightweight; 3A has §4 validation rules), Anthropic SDK extended-thinking + tool-use, dependency-injectable `LLMCaller`. Prompt body source decisions D1-D10 (tool-use, extended thinking budget, payload rendering, retry context, schema length caps, voice). **Triggers #2 + #8 expected** (prompt body authoring + architectural alternatives). |
+| **3.1-Substrate** ✅ Shipped 2026-05-20 | **Layer 3A integration substrate** — `Layer3AIntegrationBundle` + 5 `q_layer3A_*` accessors (recent_workouts / recent_sleep / recent_hrv / combined_load / connected_providers) + `assemble_layer3a_integration_bundle` aggregator | 5 (layer4/context.py data shapes; layer3a/__init__.py + integration.py; tests/test_layer3a_integration.py; this row annotation) | Pure SQL query nodes, no LLM. Tests 901 → 941 (+40). ACWR computation uses `cardio_log.duration_min` as primary (per Integration Spec §10); `polar_cardio_load` exposed as cross-ref only. Source-tagging via `WorkoutSource` / `SleepSource` / `HRVSource` Literals supports the LLM's §6.1 weighting rules without resolving conflicts in the substrate. |
+| **3.1-Driver** | **Layer 3A LLM integration** — `llm_layer3a_athlete_state(...)` + paired `Layer3A_v1.md` prompt body + errors module | 5-6 (driver + prompt body + Anthropic SDK adapter + tests; over ceiling possible if confidence-floor validator lands here too — precedented by Layer 4 Step 4a) | First upstream LLM driver. Pattern: Layer 4 Step 4a single-session precedent — pydantic schema (done), capped retry, confidence-floor validator (§6.2 floor rules), Anthropic SDK extended-thinking + tool-use, dependency-injectable `LLMCaller`. Prompt body source decisions D1-D10 (tool-use, extended thinking budget, payload rendering, retry context, schema length caps, voice). **Triggers #2 + #5 expected** (prompt body authoring + architectural alternatives) — opens with a `/plan-mode` gate. |
 
-**Phase 3 total:** ~1-2 sessions, ~6-10 files (over ceiling expected).
+**Phase 3 total:** 2 sessions (substrate ✅ + driver), ~10-11 files combined.
 
 ### Phase 4 — Layer 3B LLM driver (1-2 sessions)
 

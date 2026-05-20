@@ -56,6 +56,31 @@ Small drift items to fold into upcoming sessions rather than ship as their own P
 - ~~`Layer2C_Spec.md` §10 edge cases — missing parsed_substitutes entry~~ ✅ Added 2026-05-20 (Phase 2.4 builder session). New §10 row documents `equipment_substitutes_structured = []` loud-fallback path; Tier 2 returns None; cascade falls to Tier 3.
 - ~~`Upstream_Implementation_Plan_v1.md` §4 row 2.4 + §5.4 ceiling-break list + §6 plan-mode-gate list~~ ✅ Updated 2026-05-20 (Phase 2.4 builder session). Row 2.4 now reflects the Split (Prep 6 + Builder 3); §5.4 ceiling-break list strikes the 2.4 entry; §6 gate list flags item 4 as ✅ Resolved.
 
+## Phase 3.1-Driver carry-forwards (Layer 3A LLM driver — next session)
+
+Substrate landed 2026-05-20 (5 `q_layer3A_*` accessors + `Layer3AIntegrationBundle`). The driver session lands on top.
+
+- **Module layout:** `layer3a/builder.py` for the driver (matching `layer2c/builder.py` precedent — but the queries are in `integration.py`; the driver lives alongside). `layer3a/errors.py` for `Layer3AInputError` + `Layer3AOutputError` (or inline in builder.py — Layer 4 Step 4a inlined; Layer 2C inlined; precedent supports either).
+- **Prompt body design doc:** `aidstation-sources/prompts/Layer3A_v1.md` (mirrors `prompts/Layer4_SingleSession_v1.md` precedent). Captures system prompt body + user prompt template + tool schema rationale + voice rules + D1-D10 source decisions.
+- **D1-D10 decisions to gate at session start (open with `/plan-mode`):**
+  - D1: Tool-use forced (`tool_choice={"type": "tool", "name": ...}`) vs JSON schema enforcement — Step 4a precedent picked forced tool-use.
+  - D2: Extended thinking budget — Step 4a used 3500; 3A spec §3 max_tokens=4000 default suggests similar or higher.
+  - D3: Payload rendering — Step 4a picked inline Python over Mustache; recommend same for consistency.
+  - D4: Retry context shape — Step 4a passed `RuleFailure` items back into user prompt on retry. 3A has lighter retry semantics (§5.3 step 1 — one retry on schema violation only).
+  - D5: Tool-schema fidelity — full `Layer3APayload` mirror (deep nested: CurrentState + RecentTrajectory + ACWRStatus per-discipline dict + DataDensity + Observation list) vs sketch. Step 4a picked full.
+  - D6: `max_tokens` default — spec §3 says 4000. Confirm.
+  - D7: Default model — spec §3.3 names `claude-sonnet-4-5` but the project's canonical models are now Opus 4.7 / Sonnet 4.6 / Haiku 4.5 (per the runtime model-identity context). **Genuine drift** — recommend Sonnet 4.6 default; spec §6 open item 3A-6 already notes Haiku-vs-Sonnet investigation for cache-hit cost. Touch spec §3.3 to update the literal in the same session.
+  - D8: Confidence-floor enforcement timing — pre-LLM (informational, render in user prompt) vs post-LLM (clamp emitted confidences). Spec §5.3 step 3 says post-LLM clamp; spec §6.3 says auto-append `confidence_clamped_by_data_density` observation. Confirm both.
+  - D9: Evidence-basis cross-check — spec §5.3 step 2 says name-existence check only, no value validation; spec §12 item 3A-1 defers deeper validation to post-launch. Confirm light validation.
+  - D10: Voice — CLAUDE.md voice rules applied to system prompt (direct, evidence-grounded, no platitudes, no cheerleading). Spec §8.2 "Forbidden observations" already encodes this.
+- **Layer 1 payload threading:** spec §3.3 takes typed `Layer1Payload`. The Step 4a precedent (`layer4/single_session.py`) took `dict[str, Any]` as a v1 caveat (Layer 1 wasn't typed yet). Layer 1 IS typed now (`build_layer1_payload` shipped Phase 1.3) — pick typed `Layer1Payload` directly; no dict pass-through caveat needed.
+- **Spec §3.3 model-name drift:** `claude-sonnet-4-5` is stale. Touch the spec in the same session (~1-line edit) — pair the spec correction with the driver implementation.
+- **`Layer3AIntegrationBundle` substrate dependencies still queued:**
+  - `coros_hrv_samples` downsampling to nightly — Integration Spec §10 mentions it; v1 substrate skipped (nightly `coros_daily_summary.ppg_hrv` covers).
+  - Garmin wellness_log sleep — spec mentions but no Garmin sleep table deployed (D-55 paused). Skip until Garmin API reopens.
+  - `ProviderStatus.last_sync` derivation via `webhook_events.received_at` MAX — works but may miss provider-side pull events. Revisit if D-50 provider sync surfaces a dedicated last_sync column.
+- **Spec §13 fixture work:** the 10 §13 scenarios assume specific `IntegrationBundle` shapes. The Phase 3.1-Driver session ships builder + tests; the §13 fixture data lands as part of those tests. Reusable fixtures may want to live in `tests/fixtures/layer3a/` if they grow.
+
 ## Orthogonal carry-forwards (Layer 4 implementation track)
 
 Layer 4 Steps 2 + 3 + 4a-4e of 8 COMPLETE. Remaining:
