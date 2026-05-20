@@ -178,6 +178,8 @@ python -m etl.layer0.run
 
 Note: step 3's migration uses NOTICE-fallback on missing active rows, so it's safe to run BEFORE step 4 even on a fresh DB. Steps 1 + 2 only add columns; existing rows have NULL until step 4 populates.
 
+Note: for any fresh Neon DB that started from an old `0A-v1.3.1`-era schema, apply `aidstation-sources/migrations/migrate_schema_reconcile_2026_05_19.sql` between step 3 and step 4 to rename legacy `hours_low` / `hours_high` columns on `layer0.phase_load_weekly_totals` to canonical `weekly_low_hours` / `weekly_high_hours` (otherwise step 4 fails with `UndefinedColumn: weekly_low_hours`).
+
 **Spot-check post-step-3** (independent of step 4):
 
 ```sql
