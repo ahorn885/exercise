@@ -145,7 +145,7 @@ All Layer 2 nodes are pure Postgres aggregation (no LLM). Each ships as one sess
 | **2.1** | **Layer 2A — discipline classifier** | 4-5 (new `layer2a.py` + new `tests/test_layer2a.py` + bookkeeping) | Foundation for 2B/C/D/E. Pure query — reads §C inputs + `layer0.sport_discipline_map` + `layer0.phase_load_allocation`; emits `Layer2APayload` with `included_discipline_ids` + per-discipline phase-load bands. |
 | **2.2** | **Layer 2D — injury risk** | 4-5 | Consumes 2D's typed `ExerciseRisk` + `AccommodationModality` (already in `layer4/context.py`). Reads conditions_log + Layer 0 `injury_profiles` + `exercise_risk_assessments`. **No new design** — 2D + accommodation modality framework already shipped 2026-05-17 (PR-C-followon). |
 | **2.3** | **Layer 2B — terrain classifier** | 4-5 | Reads target event terrain description (Layer 1 §H) + Layer 0 terrain taxonomy. |
-| **2.4** | **Layer 2C — equipment mapper** | 5-7 (over ceiling — Decision Point gate adds 1 file) | **/plan-mode gate** for the §5 Decision Point picks (runtime vs pre-resolved toggle lookup; discipline-to-toggle mapping). Triggers #5 + #8 expected. Largest of the 2X implementations (per-locale-per-discipline coverage matrix). |
+| **2.4** | **Layer 2C — equipment mapper** | Split into Prep (6 files, shipped 2026-05-19) + Builder (3 files, shipped 2026-05-20). Decision Points pre-resolved before Builder session — no /plan-mode gate remained. Prep landed schema + ETL substrate (`equipment_substitutes_structured` JSONB + `terrain_required` TEXT[] on `layer0.exercises`; `also_satisfies` TEXT[] + `gated_discipline_ids` TEXT[] on `layer0.sport_specific_gear_toggles`); Builder shipped `layer2c/{__init__,builder}.py` + `tests/test_layer2c.py` against the resolved Decision Points (DP1 (A) Runtime; DP2 (b) Structured column). |
 | **2.5** | **Layer 2E — nutrition baseline** | 4-5 | Reads §B health + §H event + §I lifestyle + 2A framework_sport + 2A discipline_ids + Layer 0 fueling-tier bands (read from `Layer2E_Spec.md` §3 constants until a DB table lands). |
 
 **Phase 2 total:** ~5 sessions, ~25 files.
@@ -215,7 +215,7 @@ Layer 4's per-entry-point cache (Step 5 shipped) already keys on upstream-payloa
 
 Per CLAUDE.md "5-file quality ceiling per session" rule — most Phase 2 sessions land at ceiling; Phase 3 + 4 LLM driver sessions break ceiling (~6-8 files) per the Layer 4 Step 4a precedent. Phase 1 design sessions land 4-6 files per the D-66 design wave precedent.
 
-**Ceiling breaks expected on:** 2.4 (Layer 2C Decision Point gate adds files), 3.1 (Layer 3A driver + prompt body), 4.2 (Layer 3B driver + prompt body), 5.1 (orchestrator vertical slice). All precedented across the D-66 / Layer 4 chains.
+**Ceiling breaks expected on:** ~~2.4 (Layer 2C Decision Point gate adds files)~~ — Phase 2.4 split into Prep + Builder per Andy 2026-05-19; Prep landed 6 files (over ceiling with explicit Andy stretch authorization on the `exercise_db.py` 6-vs-5 gate), Builder landed 3 files (well under ceiling), avoiding a single mega-session. Remaining expected ceiling breaks: 3.1 (Layer 3A driver + prompt body), 4.2 (Layer 3B driver + prompt body), 5.1 (orchestrator vertical slice). All precedented across the D-66 / Layer 4 chains.
 
 ### 5.5 Production data dependencies — Andy's athlete account
 
@@ -232,7 +232,7 @@ Sub-decisions that need /plan-mode AskUserQuestion gates when the corresponding 
 1. **D-51 scope** (Phase 1.1) — Triggers #5/#8/#11. Field inventory granularity: per-field migrations vs batched; new tables for peak-volume history + network-relationships vs JSONB columns on athlete_profile; onboarding-only fields vs Layer 1 payload fields.
 2. **D-52 sequencing** (Phase 1 or Phase 2 kickoff) — Trigger #8. Does Layer 2 land first reading `public.*` then refactor to `layer0.*`, or does D-52 land first?
 3. **Layer 1 typed payload promotion** (Phase 1.3) — Trigger #5. Does Layer 4 swap `dict[str, Any]` → `Layer1Payload` in the entry-point signatures, or stay opaque for v1 backwards compatibility?
-4. **Layer 2C §5 Decision Points** (Phase 2.4) — Triggers #5/#8. Runtime vs pre-resolved toggle lookup; discipline-to-toggle mapping location (code vs DB).
+4. **Layer 2C §5 Decision Points** (Phase 2.4) — ~~Triggers #5/#8.~~ ✅ Resolved 2026-05-19 (D-73 Phase 2.4-Prep). DP1 (A) Runtime toggle lookup; DP2 (b) Structured `gated_discipline_ids` column.
 5. **Layer 3A prompt body D-decisions** (Phase 3.1) — Trigger #2 + #8. Extended-thinking budget; input format; retry-context shape; coaching-flag enum closed-set scope.
 6. **Layer 3B prompt body D-decisions** (Phase 4.2) — Trigger #2 + #8. Same as 3A.
 7. **Orchestrator auto-fire policy** (Phase 5.2) — Trigger #8. Per Layer 4 §14.3.4 Step 8 — race_week_brief days_to_event ≤ 14 trigger granularity; D-64 plan_refresh tier dispatch heuristics.
