@@ -1164,6 +1164,15 @@ _PG_MIGRATIONS = [
     # preserve the prior row shape for existing data.
     "ALTER TABLE race_events ADD COLUMN IF NOT EXISTS race_terrain JSONB NOT NULL DEFAULT '[]'::jsonb",
     "ALTER TABLE race_events ADD COLUMN IF NOT EXISTS aid_stations INTEGER NULL CHECK (aid_stations IS NULL OR aid_stations >= 0)",
+    # Phase 5.1 form-refresh C (2026-05-20) — closes Layer2B_Spec.md §12
+    # Open Item 2B-2 (§J Locale terrain access controlled vocabulary) +
+    # the orchestrator's last `locale_terrain_ids=[]` forward-pointer
+    # from the Phase 5.1 vertical slice. TEXT[] of canonical TRN-xxx ids;
+    # whole-list read at orchestrator time via the home-locale row, no
+    # independent queries. Default `'{}'` preserves the prior row shape
+    # for existing data and lets athletes who haven't yet captured
+    # terrain still load their locale edit form.
+    "ALTER TABLE locale_profiles ADD COLUMN IF NOT EXISTS locale_terrain_ids TEXT[] NOT NULL DEFAULT '{}'",
     """CREATE TABLE IF NOT EXISTS race_route_locales (
         id BIGSERIAL PRIMARY KEY,
         race_event_id BIGINT NOT NULL REFERENCES race_events(id) ON DELETE CASCADE,

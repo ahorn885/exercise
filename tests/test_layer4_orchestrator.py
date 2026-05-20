@@ -922,8 +922,11 @@ class TestRaceTerrainAndAidStationsWireUp:
 
     def test_empty_race_terrain_still_passed_through_unchanged(self):
         """Athletes who haven't captured terrain yet get the empty list
-        threaded through verbatim. Layer 2B's own _validate_inputs is the
-        loud-fail gate for empty; this slice doesn't change that."""
+        threaded through verbatim. Form-refresh C (2026-05-20) paired the
+        loosen on Layer 2B `_validate_inputs` so the empty case now emits
+        a `race_terrain_unset` coaching flag instead of raising — that
+        downstream behavior is covered by `tests/test_layer2b.py`; this
+        test still asserts the orchestrator-side threading."""
         conn = _FakeConn()
         _queue_target_race_event(conn, race_terrain=[], aid_stations=None)
         _queue_etl_version_set(conn)
@@ -953,3 +956,160 @@ class TestRaceTerrainAndAidStationsWireUp:
         assert m_l2b.call_args.kwargs["race_terrain"] == []
         m_l2e = mocks[5]
         assert m_l2e.call_args.kwargs["target_events"][0].aid_stations is None
+
+
+class TestLocaleTerrainIdsWireUp:
+    """Phase 5.1 form-refresh C (2026-05-20) flips the orchestrator's last
+    `locale_terrain_ids=[]` forward-pointer so it reads from the home
+    `locale_profiles.locale_terrain_ids` TEXT[] column instead. These tests
+    assert the threading: home-locale terrain IDs make it into Layer 2B's
+    kwargs (and the empty / NULL paths surface as empty without raising).
+    """
+
+    def test_locale_terrain_ids_thread_into_layer2b_call(self):
+        conn = _FakeConn()
+        _queue_target_race_event(conn)
+        _queue_etl_version_set(conn)
+        _queue_primary_locale(conn)
+        # New: `_q_locale_terrain_ids` SELECT — psycopg2 returns TEXT[]
+        # as a native Python list.
+        conn.queue(
+            row={"locale_terrain_ids": ["TRN-002", "TRN-003", "TRN-016"]}
+        )
+        _queue_locale_equipment_pool(conn)
+        cache = Layer4Cache(InMemoryCacheBackend())
+
+        race_event_for_l4 = RaceEventPayload(
+            race_event_id=1,
+            user_id=_USER_ID,
+            name="Test Race 2026",
+            event_date=_EVENT_DATE,
+            race_format="single_day",
+            event_locale_id="home",
+            is_target_event=True,
+        )
+        stack = _patches(
+            layer4_return=_fake_layer4_payload(race_event_payload=race_event_for_l4)
+        )
+        mocks = _enter_all(stack)
+        try:
+            orchestrate_race_week_brief(conn, _USER_ID, cache=cache, today=_TODAY)
+        finally:
+            _exit_all(stack)
+
+        m_l2b = mocks[2]
+        l2b_kwargs = m_l2b.call_args.kwargs
+        assert l2b_kwargs["locale_terrain_ids"] == [
+            "TRN-002", "TRN-003", "TRN-016",
+        ]
+
+    def test_locale_terrain_ids_empty_when_column_null(self):
+        """Athletes who haven't captured locale terrain (default `'{}'`
+        post-migration → SQL NULL pre-migration) get an empty list. Layer
+        2B accepts the empty case per spec §4 condition 5 + §13.3."""
+        conn = _FakeConn()
+        _queue_target_race_event(
+            conn,
+            race_terrain=[{"terrain_id": "TRN-002", "pct_of_race": 100.0}],
+        )
+        _queue_etl_version_set(conn)
+        _queue_primary_locale(conn)
+        # NULL column — pre-migration row shape OR athlete hasn't yet
+        # checked any boxes.
+        conn.queue(row={"locale_terrain_ids": None})
+        _queue_locale_equipment_pool(conn)
+        cache = Layer4Cache(InMemoryCacheBackend())
+
+        race_event_for_l4 = RaceEventPayload(
+            race_event_id=1,
+            user_id=_USER_ID,
+            name="Test Race 2026",
+            event_date=_EVENT_DATE,
+            race_format="single_day",
+            event_locale_id="home",
+            is_target_event=True,
+        )
+        stack = _patches(
+            layer4_return=_fake_layer4_payload(race_event_payload=race_event_for_l4)
+        )
+        mocks = _enter_all(stack)
+        try:
+            orchestrate_race_week_brief(conn, _USER_ID, cache=cache, today=_TODAY)
+        finally:
+            _exit_all(stack)
+
+        m_l2b = mocks[2]
+        assert m_l2b.call_args.kwargs["locale_terrain_ids"] == []
+
+    def test_locale_terrain_ids_empty_when_row_missing(self):
+        """Defensive — if the home locale_profiles row somehow lacks the
+        column (pre-migration / racing init flow), `_q_locale_terrain_ids`
+        returns `[]` rather than crashing."""
+        conn = _FakeConn()
+        _queue_target_race_event(
+            conn,
+            race_terrain=[{"terrain_id": "TRN-002", "pct_of_race": 100.0}],
+        )
+        _queue_etl_version_set(conn)
+        _queue_primary_locale(conn)
+        # No row from the `_q_locale_terrain_ids` query at all.
+        conn.queue(row=None)
+        _queue_locale_equipment_pool(conn)
+        cache = Layer4Cache(InMemoryCacheBackend())
+
+        race_event_for_l4 = RaceEventPayload(
+            race_event_id=1,
+            user_id=_USER_ID,
+            name="Test Race 2026",
+            event_date=_EVENT_DATE,
+            race_format="single_day",
+            event_locale_id="home",
+            is_target_event=True,
+        )
+        stack = _patches(
+            layer4_return=_fake_layer4_payload(race_event_payload=race_event_for_l4)
+        )
+        mocks = _enter_all(stack)
+        try:
+            orchestrate_race_week_brief(conn, _USER_ID, cache=cache, today=_TODAY)
+        finally:
+            _exit_all(stack)
+
+        m_l2b = mocks[2]
+        assert m_l2b.call_args.kwargs["locale_terrain_ids"] == []
+
+    def test_locale_terrain_ids_tolerates_json_string_path(self):
+        """SQLite shim path — TEXT[] arrives as a JSON-text representation
+        instead of a native list."""
+        conn = _FakeConn()
+        _queue_target_race_event(conn)
+        _queue_etl_version_set(conn)
+        _queue_primary_locale(conn)
+        conn.queue(
+            row={"locale_terrain_ids": '["TRN-002", "TRN-004"]'}
+        )
+        _queue_locale_equipment_pool(conn)
+        cache = Layer4Cache(InMemoryCacheBackend())
+
+        race_event_for_l4 = RaceEventPayload(
+            race_event_id=1,
+            user_id=_USER_ID,
+            name="Test Race 2026",
+            event_date=_EVENT_DATE,
+            race_format="single_day",
+            event_locale_id="home",
+            is_target_event=True,
+        )
+        stack = _patches(
+            layer4_return=_fake_layer4_payload(race_event_payload=race_event_for_l4)
+        )
+        mocks = _enter_all(stack)
+        try:
+            orchestrate_race_week_brief(conn, _USER_ID, cache=cache, today=_TODAY)
+        finally:
+            _exit_all(stack)
+
+        m_l2b = mocks[2]
+        assert m_l2b.call_args.kwargs["locale_terrain_ids"] == [
+            "TRN-002", "TRN-004",
+        ]

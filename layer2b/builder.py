@@ -75,32 +75,38 @@ def _validate_inputs(
     included_discipline_ids: list[str],
     etl_version_set: dict[str, str],
 ) -> None:
-    if not isinstance(race_terrain, list) or not race_terrain:
+    # Phase 5.1 form-refresh C (2026-05-20) — empty race_terrain is now
+    # accepted; per-entry + pct-sum checks short-circuit. The orchestrator
+    # surfaces an `race_terrain_unset` coaching flag instead of failing,
+    # so athletes who skip §H.2 terrain capture still get a working brief.
+    # Spec §4 condition 1 amended in the paired Layer2B_Spec.md edit.
+    if not isinstance(race_terrain, list):
         raise Layer2BInputError(
-            "race_terrain must be a non-empty list of RaceTerrainEntry"
+            "race_terrain must be a list of RaceTerrainEntry (may be empty)"
         )
-    for idx, entry in enumerate(race_terrain):
-        if not isinstance(entry, RaceTerrainEntry):
-            raise Layer2BInputError(
-                f"race_terrain[{idx}] must be a RaceTerrainEntry instance"
-            )
-        if not _TRN_PATTERN.match(entry.terrain_id):
-            raise Layer2BInputError(
-                f"race_terrain[{idx}].terrain_id {entry.terrain_id!r} "
-                "must match pattern TRN-\\d{3}"
-            )
-        if not (0.0 <= entry.pct_of_race <= 100.0):
-            raise Layer2BInputError(
-                f"race_terrain[{idx}].pct_of_race {entry.pct_of_race} "
-                "must be in [0.0, 100.0]"
-            )
+    if race_terrain:
+        for idx, entry in enumerate(race_terrain):
+            if not isinstance(entry, RaceTerrainEntry):
+                raise Layer2BInputError(
+                    f"race_terrain[{idx}] must be a RaceTerrainEntry instance"
+                )
+            if not _TRN_PATTERN.match(entry.terrain_id):
+                raise Layer2BInputError(
+                    f"race_terrain[{idx}].terrain_id {entry.terrain_id!r} "
+                    "must match pattern TRN-\\d{3}"
+                )
+            if not (0.0 <= entry.pct_of_race <= 100.0):
+                raise Layer2BInputError(
+                    f"race_terrain[{idx}].pct_of_race {entry.pct_of_race} "
+                    "must be in [0.0, 100.0]"
+                )
 
-    pct_sum = sum(e.pct_of_race for e in race_terrain)
-    if not (_PCT_SUM_LOW <= pct_sum <= _PCT_SUM_HIGH):
-        raise Layer2BInputError(
-            f"sum of race_terrain pct_of_race ({pct_sum}) must be in "
-            f"[{_PCT_SUM_LOW}, {_PCT_SUM_HIGH}]"
-        )
+        pct_sum = sum(e.pct_of_race for e in race_terrain)
+        if not (_PCT_SUM_LOW <= pct_sum <= _PCT_SUM_HIGH):
+            raise Layer2BInputError(
+                f"sum of race_terrain pct_of_race ({pct_sum}) must be in "
+                f"[{_PCT_SUM_LOW}, {_PCT_SUM_HIGH}]"
+            )
 
     if not isinstance(locale_terrain_ids, list):
         raise Layer2BInputError(
@@ -248,8 +254,24 @@ def _mentions_coached_intro(prescription_note: str) -> bool:
 def _emit_coaching_flags(
     gaps_by_target: dict[str, TerrainGap],
     pct_by_target: dict[str, float],
+    race_terrain: list[RaceTerrainEntry],
 ) -> list[Layer2BCoachingFlag]:
     flags: list[Layer2BCoachingFlag] = []
+    # Phase 5.1 form-refresh C — empty race_terrain (athlete skipped §H.2
+    # terrain capture) surfaces as a single data-gap flag so plan-gen can
+    # mention the missing input without an upstream Layer2BInputError.
+    if not race_terrain:
+        flags.append(Layer2BCoachingFlag(
+            flag_type="race_terrain_unset",
+            target_terrain_id=None,
+            message=(
+                "Race terrain breakdown not captured — terrain gap analysis "
+                "skipped. Capture race terrain in onboarding §H.2 or the "
+                "race-event edit form."
+            ),
+            metadata={},
+        ))
+        return flags
     for target_id, gap in gaps_by_target.items():
         pct = pct_by_target.get(target_id, 0.0)
         if gap.gap_severity == "undefined":
@@ -409,7 +431,7 @@ def q_layer2b_terrain_classifier_payload(
             gap=gaps_by_target.get(entry.terrain_id),
         ))
 
-    coaching_flags = _emit_coaching_flags(gaps_by_target, pct_by_target)
+    coaching_flags = _emit_coaching_flags(gaps_by_target, pct_by_target, race_terrain)
     summary = _build_summary(
         race_terrain, covered_ids, gap_ids, gaps_by_target
     )

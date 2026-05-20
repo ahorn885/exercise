@@ -8,11 +8,110 @@ import mapbox_client
 from chain_registry import GYM_CHAINS, detect_chain
 from database import get_db
 from init_db import EQUIPMENT_CATEGORIES
+from layer4.cache import Layer4Cache
+from layer4.cache_invalidation import evict_on_layer_change
+from layer4.cache_postgres import PostgresCacheBackend
 from routes.auth import current_user_id
 
 bp = Blueprint('locales', __name__)
 
 LOCALES = ['home', 'hotel', 'partner', 'airport']
+
+
+# Phase 5.1 form-refresh C — canonical TRN-xxx slug pattern.
+# Route-local duplicate of `routes/race_events.py:_TRN_PATTERN` +
+# `routes/onboarding.py:_TRN_PATTERN`; mirrors the form-refresh A/B v1
+# duplicate-with-cross-ref strategy. Drift-mitigation: tests on all three
+# call sites exercise the same edge cases. Extract to a shared module if a
+# fourth call site appears.
+_TRN_PATTERN = re.compile(r"^TRN-\d{3}$")
+
+
+def _terrain_choices(db) -> list[dict]:
+    """Return `{id, label}` dicts for every active `layer0.terrain_types` row.
+
+    Used by the locale-edit template to populate the terrain checkbox grid.
+    `id` is the canonical TRN-xxx slug; `label` is the `canonical_name`.
+    ORDER BY terrain_id for stable rendering; ~16 rows so no caching.
+    Mirrors `routes/race_events.py:_terrain_choices` +
+    `routes/onboarding.py:_terrain_choices`.
+    """
+    cur = db.execute(
+        'SELECT terrain_id, canonical_name FROM layer0.terrain_types '
+        'WHERE superseded_at IS NULL '
+        'ORDER BY terrain_id'
+    )
+    return [
+        {'id': r['terrain_id'], 'label': r['canonical_name']}
+        for r in cur.fetchall()
+    ]
+
+
+def _parse_locale_terrain(form) -> list[str]:
+    """Parse the multi-checkbox `locale_terrain_ids` form field into a
+    sorted list of canonical TRN-xxx ids.
+
+    Empty / malformed / non-matching entries are silently dropped — the
+    template only renders valid TRN-xxx choices so any drift would be a
+    crafted POST. Output is sorted for deterministic storage + diff
+    detection.
+    """
+    raw = form.getlist('locale_terrain_ids')
+    seen: set[str] = set()
+    for value in raw:
+        v = (value or '').strip()
+        if v and _TRN_PATTERN.match(v) and v not in seen:
+            seen.add(v)
+    return sorted(seen)
+
+
+def _hydrate_locale_terrain_ids(profile_row) -> list[str]:
+    """Read the `locale_terrain_ids` column off a `locale_profiles` row,
+    tolerating the migration-vs-pre-migration row shape.
+
+    Returns `[]` when the column is absent (SQLite dev path that hasn't
+    seen the Form-refresh C migration) OR NULL OR empty array. Psycopg2
+    returns Postgres TEXT[] as a Python list; SQLite returns it as a
+    string or None.
+    """
+    if profile_row is None or not _row_has(profile_row, 'locale_terrain_ids'):
+        return []
+    raw = profile_row['locale_terrain_ids']
+    if raw is None:
+        return []
+    if isinstance(raw, list):
+        return [v for v in raw if isinstance(v, str) and _TRN_PATTERN.match(v)]
+    if isinstance(raw, str):
+        # SQLite shim path — stored as JSON-ish text. Try JSON; fall back
+        # to the literal-empty-array case.
+        s = raw.strip()
+        if not s or s in ('{}', '[]'):
+            return []
+        try:
+            parsed = json.loads(s)
+        except (ValueError, TypeError):
+            return []
+        if isinstance(parsed, list):
+            return [
+                v for v in parsed
+                if isinstance(v, str) and _TRN_PATTERN.match(v)
+            ]
+    return []
+
+
+def _evict_layer2b_on_terrain_change(db, user_id: int) -> None:
+    """Fire `evict_on_layer_change(cache, uid, 'layer2b')` so the next
+    plan_create / plan_refresh / race_week_brief invocation re-derives
+    Layer 2B with the new locale_terrain_ids set.
+
+    Per Phase 5.1 form-refresh C D10: evicts on edits to ANY locale (not
+    just home) for forward-compatibility with cluster-union; over-eviction
+    cost is one extra cache miss per non-home-locale save. Builds a
+    transient `Layer4Cache` per request (Vercel stateless model;
+    `race_events_invalidation._build_default_cache` precedent).
+    """
+    cache = Layer4Cache(PostgresCacheBackend(lambda: db))
+    evict_on_layer_change(cache, user_id, 'layer2b')
 
 # Flat set of all valid tag keys for input validation
 ALL_TAGS = {tag for _, items in EQUIPMENT_CATEGORIES for tag, _ in items}
@@ -422,10 +521,12 @@ def _edit_legacy_locale(db, uid: int, locale: str, profile):
     """Legacy per-athlete `locale_equipment` flow (pre-D-60). Used for
     legacy enums, manual-entry rows, and no-shared-profile categories
     (home_gym, outdoor_park, other_residence)."""
+    prior_terrain_ids = _hydrate_locale_terrain_ids(profile)
     if request.method == 'POST':
         selected_tags = [t for t in request.form.getlist('equipment') if t in ALL_TAGS]
         notes = request.form.get('notes', '').strip()
         city = request.form.get('city', '').strip()
+        new_terrain_ids = _parse_locale_terrain(request.form)
         # Resolve tags to equipment_ids (shared catalog)
         if selected_tags:
             placeholders = ','.join('?' * len(selected_tags))
@@ -437,15 +538,19 @@ def _edit_legacy_locale(db, uid: int, locale: str, profile):
         else:
             tag_to_id = {}
         # Upsert locale_profiles first — locale_equipment has an FK on this
-        # table. PK is composite (user_id, locale) since Session 3.
+        # table. PK is composite (user_id, locale) since Session 3. Phase
+        # 5.1 form-refresh C (2026-05-20) threads `locale_terrain_ids` so
+        # both the new-row INSERT and the existing-row UPDATE branch
+        # persist the athlete's terrain selection alongside notes + city.
         db.execute(
-            '''INSERT INTO locale_profiles (user_id, locale, notes, city, updated_at)
-               VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+            '''INSERT INTO locale_profiles (user_id, locale, notes, city, locale_terrain_ids, updated_at)
+               VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
                ON CONFLICT(user_id, locale) DO UPDATE SET
                  notes=excluded.notes,
                  city=excluded.city,
+                 locale_terrain_ids=excluded.locale_terrain_ids,
                  updated_at=excluded.updated_at''',
-            (uid, locale, notes, city)
+            (uid, locale, notes, city, new_terrain_ids)
         )
         # Replace locale_equipment rows atomically (scoped per-user)
         db.execute(
@@ -460,6 +565,11 @@ def _edit_legacy_locale(db, uid: int, locale: str, profile):
                     (uid, locale, eq_id)
                 )
         db.commit()
+        # Phase 5.1 form-refresh C — fire Layer 2B eviction when the
+        # locale's terrain selection materially changed. Per D10 we only
+        # fire on actual change (set inequality); no-op saves are silent.
+        if sorted(new_terrain_ids) != sorted(prior_terrain_ids):
+            _evict_layer2b_on_terrain_change(db, uid)
         flash(f'{locale.title()} profile saved ({len(selected_tags)} items).', 'success')
         return redirect(url_for('locales.list_profiles'))
     # GET — load active equipment from locale_equipment (parent-JOIN scoped)
@@ -482,7 +592,9 @@ def _edit_legacy_locale(db, uid: int, locale: str, profile):
                            is_manual=is_manual,
                            is_mapbox_anchored=is_mapbox_anchored,
                            is_deletable=is_deletable,
-                           display_address=_display_address(profile))
+                           display_address=_display_address(profile),
+                           terrain_choices=_terrain_choices(db),
+                           active_terrain_ids=set(prior_terrain_ids))
 
 
 def _edit_shared_locale(db, uid: int, locale: str, profile):
@@ -503,9 +615,11 @@ def _edit_shared_locale(db, uid: int, locale: str, profile):
         # case and link the FK on first save.
         shared = _find_gym_profile(db, mapbox_id)
     shared_tags = _shared_equipment_set(shared)
+    prior_terrain_ids = _hydrate_locale_terrain_ids(profile)
     if request.method == 'POST':
         submitted = {t for t in request.form.getlist('equipment') if t in ALL_TAGS}
         notes = request.form.get('notes', '').strip()
+        new_terrain_ids = _parse_locale_terrain(request.form)
         if not shared:
             # First athlete here — build the shared profile from this
             # athlete's submission. Athlete's effective view becomes the
@@ -515,11 +629,14 @@ def _edit_shared_locale(db, uid: int, locale: str, profile):
                 _link_gym_profile(db, uid, locale, new_id)
             db.execute(
                 '''UPDATE locale_profiles
-                   SET notes = ?, updated_at = CURRENT_TIMESTAMP
+                   SET notes = ?, locale_terrain_ids = ?,
+                       updated_at = CURRENT_TIMESTAMP
                    WHERE user_id = ? AND locale = ?''',
-                (notes, uid, locale),
+                (notes, new_terrain_ids, uid, locale),
             )
             db.commit()
+            if sorted(new_terrain_ids) != sorted(prior_terrain_ids):
+                _evict_layer2b_on_terrain_change(db, uid)
             flash(f'Built the equipment profile for {profile["locale_name"] or locale} ({len(submitted)} items).', 'success')
             return redirect(url_for('locales.list_profiles'))
         # Inherit case — link FK if not yet linked, then save deltas vs.
@@ -530,11 +647,14 @@ def _edit_shared_locale(db, uid: int, locale: str, profile):
         _save_overrides(db, uid, locale, shared_tags, submitted)
         db.execute(
             '''UPDATE locale_profiles
-               SET notes = ?, updated_at = CURRENT_TIMESTAMP
+               SET notes = ?, locale_terrain_ids = ?,
+                   updated_at = CURRENT_TIMESTAMP
                WHERE user_id = ? AND locale = ?''',
-            (notes, uid, locale),
+            (notes, new_terrain_ids, uid, locale),
         )
         db.commit()
+        if sorted(new_terrain_ids) != sorted(prior_terrain_ids):
+            _evict_layer2b_on_terrain_change(db, uid)
         flash(f'Saved your view of {profile["locale_name"] or locale} ({len(submitted)} items).', 'success')
         return redirect(url_for('locales.list_profiles'))
     # GET — render either the build-new form or the inherit-with-overrides
@@ -554,7 +674,9 @@ def _edit_shared_locale(db, uid: int, locale: str, profile):
                            is_manual=False,
                            is_mapbox_anchored=True,
                            is_deletable=locale not in LOCALES,
-                           display_address=_display_address(profile))
+                           display_address=_display_address(profile),
+                           terrain_choices=_terrain_choices(db),
+                           active_terrain_ids=set(prior_terrain_ids))
 
 
 # ── D-59 — Mapbox-anchored locale creation ──────────────────────────────
