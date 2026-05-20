@@ -78,7 +78,12 @@ for toggle_name, enabled in cluster_gear_toggle_states.items():
     if enabled:
         toggle_def = lookup_toggle(toggle_name, etl_version_set['0C'])
         effective_pool.update(toggle_def.paired_equipment_categories)
-        effective_pool.update(toggle_def.also_satisfies)
+        # also_satisfies carries TOGGLE NAMES (not equipment); one-hop expand
+        # to the referenced toggle's paired_equipment_categories. No cascade. See §6.
+        for other_name in toggle_def.also_satisfies:
+            other = lookup_toggle(other_name, etl_version_set['0C'])
+            if other:
+                effective_pool.update(other.paired_equipment_categories)
 ```
 
 **[DECISION POINT — toggle definition lookup at runtime vs pre-resolved by Layer 1]** ✅ Resolved 2026-05-19 — DP1 = (A) Runtime lookup.
@@ -90,7 +95,7 @@ Two paths considered:
 
 **Resolution (Andy 2026-05-19, D-73 Phase 2.4-Prep):** picked (A) Runtime lookup. The extra query is cheap (11 rows, indexed by `UNIQUE (toggle_name, etl_version)`); (B) duplicates state across Layer 1 and 2C, increasing the surface for stale-data drift. The Phase 2.4 builder (`layer2c.builder._load_toggle_defs`) issues one SELECT against `layer0.sport_specific_gear_toggles` per 2C call and reads `paired_equipment_categories`, `also_satisfies`, and `gated_discipline_ids` — display/description fields are not consumed at runtime.
 
-**§5.1 vs §6 reconciliation note:** the pseudo-code above adds `toggle_def.also_satisfies` directly to the equipment pool, but the deployed data shape (`also_satisfies TEXT[]`, populated per `Vocabulary_Audit_v2.md §4.2`) treats each entry as a TOGGLE NAME, not an equipment-canonical-name. §6 is the canonical reading: an `also_satisfies` entry expands to the referenced toggle's `paired_equipment_categories` (one hop, no cascade). The builder implements §6 semantics.
+**Audit trail (§5.1 vs §6 reconciliation):** the original §5.1 draft applied `also_satisfies` items directly to the equipment pool, which conflicted with the deployed data shape (`also_satisfies TEXT[]` carries TOGGLE NAMES per `Vocabulary_Audit_v2.md §4.2`, not equipment-canonical-names) and with §6's one-hop semantics. Pseudo-code above corrected 2026-05-20 (Phase 2.4 builder, follow-up cleanup) to match §6.
 
 ### 5.2 Discipline → exercise enumeration
 

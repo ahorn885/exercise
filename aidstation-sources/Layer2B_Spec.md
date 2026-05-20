@@ -341,7 +341,7 @@ PGE happens in Minnesota (Nerstrand, MN). Likely race terrain:
 - Groomed Trail (TRN-002): 35%
 - Technical Trail (TRN-003): 30%
 - Hill / Rolling (TRN-004): 15%
-- Flat Water (TRN-008): 15%
+- Flat Water (TRN-009): 15%
 - Indoor / Gym (TRN-016 — rappel anchor location): 5%
 
 Andy's locale terrain (estimated):
@@ -351,8 +351,8 @@ Andy's locale terrain (estimated):
 
 Expected:
 - Covered: TRN-002, TRN-003, TRN-004, TRN-016 ✓
-- Gap: TRN-008 Flat Water (15% of race)
-- TRN-008 gap → look up rule → proxy=Pool (TRN-009)? If Pool not in locale either, gap stays open. Likely Pool IS available somewhere → proxy resolves at high fidelity.
+- Gap: TRN-009 Flat Water (15% of race)
+- TRN-009 gap → look up rule → proxy=Pool (TRN-008)? If Pool not in locale either, gap stays open. Likely Pool IS available somewhere → proxy resolves at high fidelity.
 - `summary.gap_count = 1`, `bridgeable_count = 1`, `unbridgeable_count = 0`, `pct_of_race_uncovered = 15.0`
 - `coaching_flags = []` (no unbridgeable, no coached-intro)
 
