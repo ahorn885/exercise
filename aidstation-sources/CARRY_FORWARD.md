@@ -73,8 +73,8 @@ Driver + cache wrapper + prompt body + tests landed. Five substantive files; 941
 
 **Remaining follow-ons for future sessions:**
 
-- **Real-LLM smoke test scaffolding** (Layer 4 Step 7 territory) — env-gated `ANTHROPIC_API_KEY` harness lands the first real call. Layer 3A driver is the first real production SDK call site. Pairs with `Layer3A_v1.md` §12 item L3A-P-1.
-- **§13 real-LLM regression** on the 10 spec scenarios — once Step 7 SDK scaffolding lands, run the 10 §13 fixtures against actual Sonnet 4.6 and verify the enum classifications. Currently stubbed in `tests/test_layer3a_builder.py::TestS13Scenarios` (6 of 10 covered via round-trip validation; the LLM-decision scenarios §13.1/§13.5/§13.8/§13.9 are deferred because they test reasoning quality, not contract). Per `Layer3A_v1.md` §12 item L3A-P-1.
+- ~~**Real-LLM smoke test scaffolding** (Layer 4 Step 7 territory)~~ ✅ Resolved 2026-05-20 (Layer 4 Step 7 SDK smoke scaffolding session). `tests/conftest.py` `requires_anthropic_api_key` skipif marker + `tests/test_layer3a_smoke.py` 2 real-LLM tests (dense-data fit athlete + sparse-data returning athlete) landed; default `pytest tests/` runs unchanged (skipped when key unset). First production SDK call site exercised.
+- **§13 real-LLM regression** on the remaining 8 spec scenarios — Step 7 SDK scaffolding shipped 2 smoke tests (TS-1-equivalent dense + TS-4-equivalent sparse). Remaining 8 §13 scenarios deferred per ceiling discipline; landing them as a batch when production telemetry surfaces reasoning-quality regressions or when Sonnet 4.x minor version bumps justify expanded coverage. Per `Layer3A_v1.md` §12 item L3A-P-1 (partial-close).
 - **Per-field `evidence_basis` cardinality enforcement** (≥3 for `high` confidence) — currently a system-prompt rule + post-clamp via the high-gate check; per-Assessment validator-side enforcement requires re-prompt support that the v1 single-retry loop doesn't have. Per `Layer3A_v1.md` §12 item L3A-P-2 + spec §12 3A-1.
 - **Haiku-vs-Sonnet cost experiment** for cached-case dominant workloads — defer until cold-run rate is measured in production. Spec §12 3A-6 + `Layer3A_v1.md` §12 item L3A-P-3.
 - **`data_density.section_completeness` driver-side override** — currently the LLM self-reports its perceived per-section completeness; future: driver computes per-section field-population ratios and either compares (telemetry) or replaces (canonical). Per `Layer3A_v1.md` §12 item L3A-P-4 + spec §12 item 3A-1 family.
@@ -109,7 +109,7 @@ Driver + cache wrapper + prompt body + tests + paired §8.3 doc-fix landed. Five
 
 **Remaining follow-ons for future sessions:**
 
-- **L3B-P-1: Real-LLM regression on §13 TS-1..TS-8 scenarios** (Layer 4 Step 7 territory) — env-gated `ANTHROPIC_API_KEY` harness lands the first real call for 3B. Pairs with the 3A L3A-P-1 follow-on; the two share the SDK scaffolding.
+- ~~**L3B-P-1: Real-LLM regression on §13 TS-1..TS-8 scenarios** (Layer 4 Step 7 territory)~~ ✅ Partial-close 2026-05-20 (Layer 4 Step 7 SDK smoke scaffolding session). `tests/test_layer3b_smoke.py` 2 real-LLM tests (TS-1 AR finisher compressed event-mode — Andy's PGE 2026 baseline + TS-4 no-event endurance) landed; gated on `ANTHROPIC_API_KEY` via the shared `tests/conftest.py` skipif marker. Remaining TS-2/3/5/6/7/8 deferred per ceiling discipline; revisit if production telemetry surfaces reasoning-quality regressions or Sonnet 4.x version bumps warrant expanded coverage.
 - **L3B-P-2: §H.2 deployed-shape gap** — `goal_outcome`, `first_time_at_distance`, `previous_attempts`, `time_goal`, `race_pack_weight_kg`, `navigation_required`, `race_terrain`, `race_duration_hr` are accepted as None-tolerant kwargs in the v1 driver but don't exist on deployed `Layer1EventGoal` or `RaceEventPayload`. Folded into the `§H.2 / §J / §I.1 form-refresh PR` already tracked above in this file. When the form-refresh lands, the driver kwargs migrate to `RaceEventPayload` fields (or a new `RaceGoalContext` sub-payload) and the HITL auto-emit logic for `3B.first_time_competitive_goal` + `3B.dnf_recurrence_risk` becomes production-reachable.
 - **L3B-P-3: Mode-discriminator on evidence_basis paths as HARD fail** (not warn) — currently `Layer3BEvidenceBasisWarning` per D9. Tighten to `Layer3BOutputError("evidence_basis_mode_mismatch")` once L3B-P-2 closes.
 - **L3B-P-4: `dnf_recovery_window_weeks` calibration** — currently spec §6.1 reasoned defaults (quad_failure=12, nutrition_blowup=4, injury_during_event=16, weather/timeout=4, other=8). Iterate post-launch when DNF data accumulates.
@@ -120,15 +120,28 @@ Driver + cache wrapper + prompt body + tests + paired §8.3 doc-fix landed. Five
 - **3B cache invalidation wiring** — `cache_invalidation.py` currently routes Layer 4 entry points only; 3A + 3B caches participate via the shared `CacheBackend` but don't have invalidation policy modules yet. When Layer 3 orchestrator lands, add a 3B-cache eviction policy analogue to Layer 4's §9.3 matrix for the spec §9.2 triggers (any §H toggle/edit, §C change, 3A/2A re-run, current_date phase boundary cross, etl repin). Pair with the 3A equivalent.
 - **Phase 4.1 standalone helper (deferred)** — Upstream Plan §4 row 4.1 named `load_layer3b_event_metadata(db, user_id)` in `race_events_repo.py` returning the 5-tuple. Folded into the driver's D14 internal population this session — driver populates from `RaceEventPayload` directly. Re-add as a standalone helper if a future orchestrator wants the tuple without invoking the driver (e.g., for the Phase 5.1 orchestrator vertical slice — TBD if needed).
 
+## Layer 4 Step 7 follow-ons (SDK smoke scaffolding shipped 2026-05-20)
+
+Env-gated `ANTHROPIC_API_KEY` skipif marker + 4 real-LLM smoke tests (2 × 3A + 2 × 3B) shipped. Three substantive files; 1072 → 1076 tests (4 skipped when key unset). ALL D1-D9 picks per closing handoff §7 source-decision table.
+
+**Remaining follow-ons for future sessions:**
+
+- **Layer 4 Step 7 — `single_session.py` smoke parity** — the SDK adapter in `layer4/single_session.py:_default_llm_caller` (the precedent for 3A + 3B adapters) is not yet exercised by a real-LLM smoke test. Add 1-2 smoke tests modeled on the 3A + 3B pattern (e.g., D-63 on-demand workout against a single-session AR Build phase). Same `requires_anthropic_api_key` skipif marker; ~1 file. Pairs with the broader Step 7 expansion below.
+- **Layer 4 Step 7 — remaining 5 entry-point smoke parity** — `plan_create` Pattern A + `plan_refresh` T1/T2/T3 + `race_week_brief` each need 1-2 smoke tests against real Sonnet 4.6. Per `Layer4_Spec.md` §14.3.4 Step 7: "Test against the 98 PSS-prefix scenarios" — full coverage is the production-deploy gate. Likely splits into 2-3 follow-up sessions of ~2-3 files each.
+- **Layer 4 Step 8 — Telemetry tuning** — calibrate validator thresholds against measured retry rates once Step 7 smoke runs accumulate. Currently `intensity_modulated` under-emission monitoring + schema-violation rate per prompt body + `coaching_flag_missing_*` defensive-validator firing rate are tracked-but-not-tuned. Per `Layer4_Spec.md` §14.3.5 + §14.3.4 Step 8.
+- **Smoke test cost budget governance** — current 4 smoke tests × ~$0.03/call = ~$0.12/run. As Step 7 expands to 6-8 entry points × 2 tests each = ~16 tests, runs become ~$0.50. Consider a `pytest -m smoke_lite` subset for frequent runs vs `pytest -m smoke_full` for release gates. Revisit when test count crosses ~10.
+- **Real-LLM assertion calibration loop** — first 5-10 smoke runs against actual Sonnet 4.6 (when Andy runs them locally) will surface whether the loose-enum allowlists in `test_layer3a_smoke.py` + `test_layer3b_smoke.py` are too tight (false positives on model variance) or too loose (missed regression signal). Tighten or loosen per observed distribution. Track here so the next session that touches the smoke tests has the calibration history.
+- **CI gating policy** — currently no CI job runs the smoke tests; Andy runs them locally. When production deploys begin, decide: (a) GitHub Actions cron job with secret `ANTHROPIC_API_KEY`, daily/weekly cadence; (b) pre-deploy gate; (c) on-demand only. Per `Layer4_Spec.md` §14.3.3 the per-prompt-body regression suite "blocks production deploy"; smoke harness is the seed.
+
 ## Orthogonal carry-forwards (Layer 4 implementation track)
 
-Layer 4 Steps 2 + 3 + 4a-4e of 8 COMPLETE. Remaining:
+Layer 4 Steps 2 + 3 + 4a-4e + 7-partial (3A + 3B smoke scaffolding) of 8 COMPLETE. Remaining:
 
-- **Step 4f** `llm_layer4_plan_create` Pattern A orchestration. Closes Layer 4 §14.3.4 Step 4 sub-arc. ~6-8 files. T3 cross-phase Pattern A lands here as a same-shape consumer.
+- **Step 4f** `llm_layer4_plan_create` Pattern A orchestration. Closes Layer 4 §14.3.4 Step 4 sub-arc. ~6-8 files. T3 cross-phase Pattern A lands here as a same-shape consumer. **NOTE:** per `Layer4_Spec.md` §14.3.4 row "Step 4f" — Pattern A is currently shipped as `layer4/plan_create.py:llm_layer4_plan_create()` (Step 4f-equivalent shipped 2026-05-18 per `V5_Implementation_Layer4_Step4f_PlanCreate_Closing_Handoff_v1.md`); the bookkeeping carryover here predates that landing — strike when this carry-forward gets next touched.
 - **Step 5** Cache layer — ✅ Shipped 2026-05-18.
 - **Step 6** Pattern A orchestration polish — ✅ Shipped 2026-05-18.
-- **Step 7** Live LLM integration — needs `ANTHROPIC_API_KEY`. Env-gated smoke test scaffolding can ship without the key; real call lands later.
-- **Step 8** Telemetry tuning — calibrate validator thresholds against measured retry rates once Step 7 lands real data.
+- **Step 7** Live LLM integration — 🟡 Partial (3A + 3B SDK smoke scaffolding shipped 2026-05-20). Full coverage (Layer 4 `single_session.py` + plan_create + plan_refresh T1/T2/T3 + race_week_brief = 6 entry points × 2 tests each ≈ 12 more smoke tests) is the production-deploy gate.
+- **Step 8** Telemetry tuning — calibrate validator thresholds against measured retry rates once Step 7 full coverage lands real data.
 
 ## D-66 Layer 3B caller-side rewire (queued)
 
