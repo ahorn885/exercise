@@ -33,7 +33,7 @@ Small drift items to fold into upcoming sessions rather than ship as their own P
 
 - `routes/onboarding.py:710` — docstring tense (stale "legacy `athlete_profile.target_event_*`" reference after D-66 Scope B/C). Fold into upstream arc Phase 4 or 5.
 - `Layer4_Spec.md` §4.5 — source-pointer wording reflects D-72 obsolescence. Fold into Phase 5.1 orchestrator vertical slice.
-- `Race_Events_D66_Design_v1.md` §8.3 — `mode='open_ended'` drift vs canonical `mode='no-event'` (per `Layer3BPayload.mode: Literal["event","no-event"]`). Fold into Phase 4.2 Layer 3B prompt-body session.
+- ~~`Race_Events_D66_Design_v1.md` §8.3 — `mode='open_ended'` drift vs canonical `mode='no-event'`~~ ✅ Resolved 2026-05-20 (Phase 4 Layer 3B driver session paired fix). §8.3 narrative now reads `mode='no-event'` with an audit-trail note pointing to the D-66 paired amendment + Phase 4 fix.
 - ~~`Layer2A_Spec.md` §5.2 SQL — `pla.default_inclusion` reference~~ ✅ Resolved 2026-05-20 (doc-sweep batch). Column removed from the §5.2 SELECT; added a note clarifying that `default_inclusion` is code-derived from `notes_conditions` per §5.3 (`*CONDITIONAL`-prefixed → `prompt_required`; else `included`).
 - ~~`Layer2A_Spec.md` Open Item 2A-1~~ 🟡 Partial-close 2026-05-20 (doc-sweep batch). v1 templates shipped Andy-quality 2026-05-19 (Phase 2.1); §12 table row updated with the partial-close annotation + Phase 5.1 forward-pointer. Full athlete-facing content review surfaces with the orchestrator vertical slice.
 - ~~`Layer2D_Spec.md` §3 "9-value enum" wording~~ ✅ Resolved 2026-05-20 (doc-sweep batch). §3 `InjuryRecord.injury_type` comment + §4 validation rule both flipped to "11-value enum from B.1.1". Matches deployed `injury_log.injury_type` + `athlete.KNOWN_INJURY_TYPES` + `layer4/context.py:InjuryRecord`.
@@ -87,6 +87,38 @@ Driver + cache wrapper + prompt body + tests landed. Five substantive files; 941
 - `coros_hrv_samples` downsampling to nightly — Integration Spec §10 mentions it; v1 substrate skipped (nightly `coros_daily_summary.ppg_hrv` covers).
 - Garmin wellness_log sleep — spec mentions but no Garmin sleep table deployed (D-55 paused). Skip until Garmin API reopens.
 - `ProviderStatus.last_sync` derivation via `webhook_events.received_at` MAX — works but may miss provider-side pull events. Revisit if D-50 provider sync surfaces a dedicated last_sync column.
+
+## Phase 4 follow-ons (Layer 3B LLM driver shipped 2026-05-20)
+
+Driver + cache wrapper + prompt body + tests + paired §8.3 doc-fix landed. Five substantive files; 995 → 1072 tests. ALL D1-D14 picks per `aidstation-sources/prompts/Layer3B_v1.md` source-decision table:
+
+- D1=forced tool-use (`tool_choice={"type":"tool","name":"emit_layer3b_payload"}`)
+- D2=3000-token extended thinking budget (lighter than 3A's 4000 per spec §11 input budget)
+- D3=inline-Python rendering via 4 per-block helpers in `layer3b/builder.py`
+- D4=two independent capped retries — schema-violation retry (§5.5 step 1) + periodization-sanity retry (§5.5 step 4)
+- D5=full `Layer3BPayload` mirror in tool schema sans driver-stamped metadata + D-66 event-metadata fields
+- D6=2000 max_tokens per spec §5.4
+- D7=`claude-sonnet-4-6` default per spec §3 (no §3.3 stale literal to correct, unlike 3A)
+- D8=post-LLM clamp + auto-append `confidence_clamped_by_data_signal` observation (4 floor rules per §6.5)
+- D9=name-existence + mode-discriminator on path prefixes (h2.* event / h3.* no-event) — both warn-only per L3B-P-3 (v1 deployed-shape gap)
+- D10=CLAUDE.md voice rules + spec §6 guardrails inlined in system prompt
+- D11=raw `Layer1Payload + Layer3APayload + Layer2APayload + RaceEventPayload | None` input shape (no `SectionHGoalContext`/`SectionCContext` types) + None-tolerant kwargs for v1 §H.2 deployed-shape gap
+- D12=validator-enforced HITL auto-emit (4 §6.1 items appended when LLM omits + conditions hold)
+- D13=periodization-sanity loop with single retry + fallback-to-standard on persistent failure (`periodization_shape_fallback` observation)
+- D14=driver populates 4 D-66 event-metadata fields from `race_event_payload` (event-mode) or leaves None (no-event-mode)
+
+**Remaining follow-ons for future sessions:**
+
+- **L3B-P-1: Real-LLM regression on §13 TS-1..TS-8 scenarios** (Layer 4 Step 7 territory) — env-gated `ANTHROPIC_API_KEY` harness lands the first real call for 3B. Pairs with the 3A L3A-P-1 follow-on; the two share the SDK scaffolding.
+- **L3B-P-2: §H.2 deployed-shape gap** — `goal_outcome`, `first_time_at_distance`, `previous_attempts`, `time_goal`, `race_pack_weight_kg`, `navigation_required`, `race_terrain`, `race_duration_hr` are accepted as None-tolerant kwargs in the v1 driver but don't exist on deployed `Layer1EventGoal` or `RaceEventPayload`. Folded into the `§H.2 / §J / §I.1 form-refresh PR` already tracked above in this file. When the form-refresh lands, the driver kwargs migrate to `RaceEventPayload` fields (or a new `RaceGoalContext` sub-payload) and the HITL auto-emit logic for `3B.first_time_competitive_goal` + `3B.dnf_recurrence_risk` becomes production-reachable.
+- **L3B-P-3: Mode-discriminator on evidence_basis paths as HARD fail** (not warn) — currently `Layer3BEvidenceBasisWarning` per D9. Tighten to `Layer3BOutputError("evidence_basis_mode_mismatch")` once L3B-P-2 closes.
+- **L3B-P-4: `dnf_recovery_window_weeks` calibration** — currently spec §6.1 reasoned defaults (quad_failure=12, nutrition_blowup=4, injury_during_event=16, weather/timeout=4, other=8). Iterate post-launch when DNF data accumulates.
+- **L3B-P-5: Layer 4 plan-gen periodization contract** — spec §6.3 forward-pointer. Revisit when Layer 4 input contract for periodization solidifies (Phase 5.1 orchestrator vertical slice).
+- **L3B-P-6: Re-evaluation cadence in final 8 weeks pre-event** — spec §12. Not in v1; track as forward consideration.
+- **L3B-P-7: Multi-event athletes (v2)** — spec §12. v1 supports one A-race per plan.
+- **L3B-P-8: Plan duration cap (>24 weeks no-event)** — spec §H.3 hard cap. Revisit if athletes request >24-week no-event plans post-launch.
+- **3B cache invalidation wiring** — `cache_invalidation.py` currently routes Layer 4 entry points only; 3A + 3B caches participate via the shared `CacheBackend` but don't have invalidation policy modules yet. When Layer 3 orchestrator lands, add a 3B-cache eviction policy analogue to Layer 4's §9.3 matrix for the spec §9.2 triggers (any §H toggle/edit, §C change, 3A/2A re-run, current_date phase boundary cross, etl repin). Pair with the 3A equivalent.
+- **Phase 4.1 standalone helper (deferred)** — Upstream Plan §4 row 4.1 named `load_layer3b_event_metadata(db, user_id)` in `race_events_repo.py` returning the 5-tuple. Folded into the driver's D14 internal population this session — driver populates from `RaceEventPayload` directly. Re-add as a standalone helper if a future orchestrator wants the tuple without invoking the driver (e.g., for the Phase 5.1 orchestrator vertical slice — TBD if needed).
 
 ## Orthogonal carry-forwards (Layer 4 implementation track)
 

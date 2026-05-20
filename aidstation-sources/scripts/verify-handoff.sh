@@ -67,7 +67,7 @@ echo
 # templates/..., static/..., scripts/..., and a few top-level files we care about.
 # We strip surrounding backticks/quotes and dedupe.
 mapfile -t PATHS < <(
-  grep -oE '`?(aidstation-sources/[A-Za-z0-9_./-]+\.(md|py|sh|sql|json|html|js|css|txt)|layer4/[A-Za-z0-9_./-]+\.(py|md)|tests/[A-Za-z0-9_./-]+\.py|routes/[A-Za-z0-9_./-]+\.py|templates/[A-Za-z0-9_./-]+\.html|static/[A-Za-z0-9_./-]+\.(js|css)|scripts/[A-Za-z0-9_./-]+\.sh|(init_db|database|app|chain_registry|race_events_repo|race_events_invalidation|athlete|coaching|email_helper|mapbox_client|plan_match|rx_engine|garmin_connect|garmin_fit_parser|fit_workout_generator|calculations|seed_workouts)\.py)`?' "$HANDOFF" \
+  grep -oE '`?(aidstation-sources/[A-Za-z0-9_./-]+\.(md|py|sh|sql|json|html|js|css|txt)|layer[1-9][a-z]?/[A-Za-z0-9_./-]+\.(py|md)|tests/[A-Za-z0-9_./-]+\.py|routes/[A-Za-z0-9_./-]+\.py|templates/[A-Za-z0-9_./-]+\.html|static/[A-Za-z0-9_./-]+\.(js|css)|scripts/[A-Za-z0-9_./-]+\.sh|(init_db|database|app|chain_registry|race_events_repo|race_events_invalidation|athlete|coaching|email_helper|mapbox_client|plan_match|rx_engine|garmin_connect|garmin_fit_parser|fit_workout_generator|calculations|seed_workouts)\.py)`?' "$HANDOFF" \
   | tr -d '`' \
   | sort -u
 )

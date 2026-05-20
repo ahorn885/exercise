@@ -418,7 +418,7 @@ The fields 3B does NOT consume (left to Layer 4 via `race_event_payload`):
 
 ### 8.3 No-target case
 
-When no race_events row has is_target_event=true (no race scheduled): 3B emits `mode='open_ended'` per §6.1 v1 default. Plan generation proceeds in open-ended mode (12-week default horizon per `Layer4_Spec.md` §6.1).
+When no race_events row has is_target_event=true (no race scheduled): 3B emits `mode='no-event'` per `Layer3BPayload.mode: Literal["event","no-event"]` (D-66 paired amendment 2026-05-18 + Phase 4 doc-sweep fix 2026-05-20 — earlier draft of this section used the non-canonical `'open_ended'` label which never matched the deployed schema). Plan generation proceeds in no-event mode (12-week default horizon per `Layer4_Spec.md` §6.1).
 
 ---
 
