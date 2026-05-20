@@ -49,9 +49,28 @@ EntryPoint = str
 """One of 'plan_create' | 'plan_refresh' | 'single_session_synthesize' | 'race_week_brief'."""
 
 
-VALID_ENTRY_POINTS = frozenset(
+LAYER4_ENTRY_POINTS = frozenset(
     {"plan_create", "plan_refresh", "single_session_synthesize", "race_week_brief"}
 )
+"""Original Layer 4 per-entry-point set used by `Layer4Cache.get_or_synthesize`
++ `cache_invalidation.evict_on_layer_change` policy matrix (§9.3). The
+invalidation policies are Layer-4-scoped; non-Layer-4 entry points that
+reuse the generic `CacheBackend` storage do NOT participate."""
+
+
+VALID_ENTRY_POINTS = LAYER4_ENTRY_POINTS | frozenset(
+    {
+        # Layer 3A cache wrapper extension (Phase 3.1-Driver, 2026-05-20) —
+        # `layer3a/cached_wrapper.py` reuses the generic CacheBackend storage
+        # but is NOT a Layer4Payload entry point; Layer4Cache.get_or_synthesize
+        # is not used (Layer3APayload has no plan_version_id/suggestion_id
+        # rebinding, so the wrapper hits the backend directly).
+        "llm_layer3a_athlete_state",
+    }
+)
+"""Superset of allowable entry_point labels for `CacheBackend.put` validation.
+Includes both Layer 4 entry points + sibling layers (currently Layer 3A) that
+reuse the storage primitives."""
 
 
 # ─── Stored row shape ──────────────────────────────────────────────────────
