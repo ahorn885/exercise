@@ -1153,6 +1153,17 @@ _PG_MIGRATIONS = [
     # per D-66 §3.1 + Decision 5; gaps allowed (no target = no row matches).
     "CREATE UNIQUE INDEX IF NOT EXISTS race_events_user_target_uidx ON race_events (user_id) WHERE is_target_event = TRUE",
     "CREATE INDEX IF NOT EXISTS race_events_user_date_idx ON race_events (user_id, event_date)",
+    # Phase 5.1 form-refresh A (2026-05-20) — closes Layer2B_Spec.md §12
+    # Open Item 2B-3 for the race-event edit path + the orchestrator's
+    # race_terrain=[] / aid_stations=None forward-pointers from Phase 5.1
+    # vertical slice. race_terrain stores the athlete-entered breakdown
+    # as JSONB ([{terrain_id: 'TRN-xxx', pct_of_race: float}, ...]);
+    # whole-list read at orchestrator time, no independent queries.
+    # aid_stations is a non-negative integer (0 valid; e.g., Andy's PGE
+    # 2026 = 0). Both columns add idempotently; default empty array + NULL
+    # preserve the prior row shape for existing data.
+    "ALTER TABLE race_events ADD COLUMN IF NOT EXISTS race_terrain JSONB NOT NULL DEFAULT '[]'::jsonb",
+    "ALTER TABLE race_events ADD COLUMN IF NOT EXISTS aid_stations INTEGER NULL CHECK (aid_stations IS NULL OR aid_stations >= 0)",
     """CREATE TABLE IF NOT EXISTS race_route_locales (
         id BIGSERIAL PRIMARY KEY,
         race_event_id BIGINT NOT NULL REFERENCES race_events(id) ON DELETE CASCADE,

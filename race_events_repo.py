@@ -24,6 +24,7 @@ from typing import Any
 
 from layer4.context import (
     RaceEventPayload,
+    RaceTerrainEntry,
     RouteLocale,
     RouteLocaleEquipment,
 )
@@ -52,6 +53,7 @@ def list_athlete_race_events(db, user_id: int) -> list[dict[str, Any]]:
         """
         SELECT id, name, event_date, race_format, is_target_event,
                distance_km, total_elevation_gain_m, event_locale_id,
+               aid_stations,
                created_at, updated_at
           FROM race_events
          WHERE user_id = ?
@@ -83,7 +85,8 @@ def load_race_event_payload(db, race_event_id: int) -> RaceEventPayload | None:
                re.distance_km, re.total_elevation_gain_m,
                re.race_rules_summary, re.mandatory_gear_text,
                lp.locale AS event_locale_slug,
-               re.is_target_event, re.notes
+               re.is_target_event, re.notes,
+               re.race_terrain, re.aid_stations
           FROM race_events re
           LEFT JOIN locale_profiles lp ON lp.id = re.event_locale_id
          WHERE re.id = ?
@@ -148,6 +151,22 @@ def load_race_event_payload(db, race_event_id: int) -> RaceEventPayload | None:
         for r in locale_rows
     ]
 
+    # JSONB column surfaces as list/dict via psycopg2's default adapter, or
+    # as a str when the adapter routing isn't enabled (sqlite shim path).
+    # Tolerate both so the payload construction matches the deployed shape.
+    raw_terrain = race_row["race_terrain"]
+    if isinstance(raw_terrain, str):
+        raw_terrain = json.loads(raw_terrain) if raw_terrain else []
+    elif raw_terrain is None:
+        raw_terrain = []
+    race_terrain = [
+        RaceTerrainEntry(
+            terrain_id=entry["terrain_id"],
+            pct_of_race=float(entry["pct_of_race"]),
+        )
+        for entry in raw_terrain
+    ]
+
     return RaceEventPayload(
         race_event_id=int(race_row["id"]),
         user_id=int(race_row["user_id"]),
@@ -161,6 +180,12 @@ def load_race_event_payload(db, race_event_id: int) -> RaceEventPayload | None:
         event_locale_id=race_row["event_locale_slug"],
         is_target_event=bool(race_row["is_target_event"]),
         notes=race_row["notes"],
+        race_terrain=race_terrain,
+        aid_stations=(
+            int(race_row["aid_stations"])
+            if race_row["aid_stations"] is not None
+            else None
+        ),
         route_locales=route_locales,
     )
 
@@ -194,6 +219,8 @@ def create_race_event(
     event_locale_id: int | None = None,
     is_target_event: bool = False,
     notes: str | None = None,
+    race_terrain: list[dict[str, Any]] | None = None,
+    aid_stations: int | None = None,
     etl_version_set: dict[str, Any] | None = None,
 ) -> int:
     """INSERT a new race_event row. Returns the new id.
@@ -202,6 +229,11 @@ def create_race_event(
     a second target (use `set_target_event` for an atomic flip). Direct
     insertion of a second target_event=TRUE row will violate the partial
     UNIQUE index and raise.
+
+    `race_terrain` accepts a list of dicts shaped `{"terrain_id": str,
+    "pct_of_race": float}` (route-layer parser already normalizes from
+    form fields). Serialized to JSONB. Callers can also pass an empty list
+    or None for "not captured yet"; both round-trip as `[]` on load.
     """
     if race_format not in VALID_RACE_FORMATS:
         raise ValueError(f"race_format must be one of {VALID_RACE_FORMATS}; got {race_format!r}")
@@ -212,8 +244,9 @@ def create_race_event(
             (user_id, name, event_date, race_format,
              distance_km, total_elevation_gain_m,
              race_rules_summary, mandatory_gear_text,
-             event_locale_id, is_target_event, notes, etl_version_set)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb)
+             event_locale_id, is_target_event, notes,
+             race_terrain, aid_stations, etl_version_set)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?, ?::jsonb)
         RETURNING id
         """,
         (
@@ -228,6 +261,8 @@ def create_race_event(
             event_locale_id,
             is_target_event,
             notes,
+            json.dumps(race_terrain or []),
+            aid_stations,
             json.dumps(etl_version_set or {}),
         ),
     )
@@ -341,6 +376,7 @@ def get_race_event(db, user_id: int, race_event_id: int) -> dict[str, Any] | Non
                distance_km, total_elevation_gain_m,
                race_rules_summary, mandatory_gear_text,
                event_locale_id, is_target_event, notes,
+               race_terrain, aid_stations,
                created_at, updated_at
           FROM race_events
          WHERE id = ? AND user_id = ?
@@ -348,7 +384,18 @@ def get_race_event(db, user_id: int, race_event_id: int) -> dict[str, Any] | Non
         (race_event_id, user_id),
     )
     row = cur.fetchone()
-    return dict(row) if row else None
+    if row is None:
+        return None
+    # JSONB column surfaces as list/dict via psycopg2's default adapter;
+    # tolerate the sqlite shim path where it arrives as str (matching the
+    # load_race_event_payload hydration).
+    result = dict(row)
+    raw_terrain = result.get("race_terrain")
+    if isinstance(raw_terrain, str):
+        result["race_terrain"] = json.loads(raw_terrain) if raw_terrain else []
+    elif raw_terrain is None:
+        result["race_terrain"] = []
+    return result
 
 
 def update_race_event(
@@ -365,11 +412,17 @@ def update_race_event(
     mandatory_gear_text: str | None = None,
     event_locale_id: int | None = None,
     notes: str | None = None,
+    race_terrain: list[dict[str, Any]] | None = None,
+    aid_stations: int | None = None,
 ) -> None:
     """UPDATE a race_events row's editable fields. `is_target_event` flips
     are handled separately via `set_target_event`. Caller is expected to
     have verified ownership via `get_race_event` before issuing the
     update.
+
+    `race_terrain` accepts a list of dicts; serialized to JSONB. Pass an
+    empty list to clear; passing None coerces to empty list (the column
+    is NOT NULL DEFAULT '[]'::jsonb).
     """
     if race_format not in VALID_RACE_FORMATS:
         raise ValueError(f"race_format must be one of {VALID_RACE_FORMATS}; got {race_format!r}")
@@ -386,6 +439,8 @@ def update_race_event(
                mandatory_gear_text = ?,
                event_locale_id = ?,
                notes = ?,
+               race_terrain = ?::jsonb,
+               aid_stations = ?,
                updated_at = NOW()
          WHERE id = ? AND user_id = ?
         """,
@@ -399,6 +454,8 @@ def update_race_event(
             mandatory_gear_text,
             event_locale_id,
             notes,
+            json.dumps(race_terrain or []),
+            aid_stations,
             race_event_id,
             user_id,
         ),
