@@ -30,8 +30,11 @@ from layer4 import (
     InMemoryCacheBackend,
     Layer4Cache,
     OrchestrationError,
+    SingleSessionRequest,
     orchestrate_race_week_brief,
+    orchestrate_single_session_synthesize,
 )
+from layer2a.builder import Layer2AInputError
 from layer4.context import (
     ACWRStatus,
     Assessment,
@@ -72,7 +75,14 @@ from layer4.context import (
     TrajectoryWindow,
     WeightResult,
 )
-from layer4.payload import Layer4Payload, RaceWeekBrief, ValidatorResult
+from layer4.payload import (
+    CardioBlock,
+    HRTarget,
+    Layer4Payload,
+    PlanSession,
+    RaceWeekBrief,
+    ValidatorResult,
+)
 
 
 _TODAY = date(2026, 6, 1)
@@ -1113,3 +1123,481 @@ class TestLocaleTerrainIdsWireUp:
         assert m_l2b.call_args.kwargs["locale_terrain_ids"] == [
             "TRN-002", "TRN-004",
         ]
+
+
+# ─── Phase 5.2 slice 1 — orchestrate_single_session_synthesize ───────────────
+
+
+def _single_session_patches(*, layer4_return: Layer4Payload):
+    """Patch stack for `orchestrate_single_session_synthesize`. Narrower cone
+    than race_week_brief: Layer 1 → 2A → 2D → 2C (locale-only) → 3A; no 2B
+    / 2E / 3B / race_week_brief driver."""
+    return [
+        patch(
+            "layer4.orchestrator.build_layer1_payload",
+            return_value=_fake_layer1_payload(),
+        ),
+        patch(
+            "layer4.orchestrator.q_layer2a_discipline_classifier_payload",
+            return_value=_fake_layer2a_payload(),
+        ),
+        patch(
+            "layer4.orchestrator.q_layer2c_equipment_mapper_payload",
+            return_value=_fake_layer2c_payload(),
+        ),
+        patch(
+            "layer4.orchestrator.q_layer2d_injury_risk_profile_payload",
+            return_value=_fake_layer2d_payload(),
+        ),
+        patch(
+            "layer4.orchestrator.assemble_layer3a_integration_bundle",
+            return_value=object(),
+        ),
+        patch(
+            "layer4.orchestrator.llm_layer3a_athlete_state",
+            return_value=_fake_layer3a_payload(),
+        ),
+        patch(
+            "layer4.orchestrator.llm_layer4_single_session_synthesize_cached",
+            return_value=layer4_return,
+        ),
+    ]
+
+
+def _fake_single_session_layer4_payload(suggestion_id: int = 99) -> Layer4Payload:
+    """Minimal single-session-mode Layer4Payload return for the cached-wrapper
+    stub. `mode=single_session_synthesize` requires len(sessions)==1 + the
+    session marked `is_ad_hoc=True` + `suggestion_id` non-None per the §7.1
+    invariants."""
+    session = PlanSession(
+        session_id="S-orch",
+        plan_version_id=0,
+        date=_TODAY,
+        day_of_week="Mon",
+        session_index_in_day=0,
+        time_of_day="morning",
+        kind="cardio",
+        discipline_id="D-run",
+        discipline_name="Running",
+        locale_id="home",
+        locale_name="Home",
+        duration_min=60,
+        intensity_summary="moderate",
+        cardio_blocks=[
+            CardioBlock(
+                block_kind="main_set",
+                duration_min=60,
+                intensity_zone="Z2",
+                intensity_target=HRTarget(hr_bpm_low=130, hr_bpm_high=145),
+                instructions="Steady aerobic.",
+            )
+        ],
+        session_notes="Aerobic.",
+        coaching_intent="Aerobic stimulus.",
+        coaching_flags=[],
+        is_ad_hoc=True,
+        ad_hoc_request_payload={"source": "orchestrator_test"},
+    )
+    return Layer4Payload(
+        user_id=_USER_ID,
+        mode="single_session_synthesize",
+        plan_version_id=0,
+        suggestion_id=suggestion_id,
+        scope_start_date=_TODAY,
+        scope_end_date=_TODAY,
+        model_synthesizer="claude-sonnet-4-6",
+        temperature=0.3,
+        pattern="B",
+        latency_ms_total=3000,
+        input_tokens_total=3500,
+        output_tokens_total=800,
+        llm_call_count=1,
+        etl_version_set={"0A": "v7", "0B": "v7", "0C": "v7"},
+        sessions=[session],
+        validator_results=[
+            ValidatorResult(
+                pass_index=0,
+                accepted=True,
+                rule_failures=[],
+                retried_phase_names=[],
+            )
+        ],
+        notable_observations=[],
+    )
+
+
+def _request_with_locale() -> SingleSessionRequest:
+    return SingleSessionRequest(
+        sport="AR",
+        duration_min=60,
+        intensity="moderate",
+        locale_slug="home",
+    )
+
+
+def _request_with_quick_equipment() -> SingleSessionRequest:
+    return SingleSessionRequest(
+        sport="AR",
+        duration_min=45,
+        intensity="hard",
+        locale_slug=None,
+        quick_equipment=["Dumbbells", "Bench"],
+    )
+
+
+def _queue_locale_by_slug_hit(conn: _FakeConn) -> None:
+    """Queue `_q_locale_by_slug` SELECT — row present."""
+    conn.queue(row={"hit": 1})
+
+
+def _queue_locale_by_slug_miss(conn: _FakeConn) -> None:
+    """Queue `_q_locale_by_slug` SELECT — row missing."""
+    conn.queue(row=None)
+
+
+class TestOrchestrateSingleSessionSynthesizeHappyPath:
+    def test_locale_path_threads_payloads_in_dependency_order(self):
+        """Locale-slug path: orchestrator validates the slug, calls 2C with
+        the locale's equipment pool, threads everything to the cached
+        wrapper."""
+        conn = _FakeConn()
+        _queue_etl_version_set(conn)
+        _queue_locale_by_slug_hit(conn)
+        _queue_locale_equipment_pool(conn)
+        cache = Layer4Cache(InMemoryCacheBackend())
+
+        stack = _single_session_patches(
+            layer4_return=_fake_single_session_layer4_payload()
+        )
+        mocks = _enter_all(stack)
+        try:
+            result = orchestrate_single_session_synthesize(
+                conn,
+                _USER_ID,
+                _request_with_locale(),
+                suggestion_id=99,
+                cache=cache,
+                today=_TODAY,
+            )
+        finally:
+            _exit_all(stack)
+
+        assert isinstance(result, Layer4Payload)
+        assert result.mode == "single_session_synthesize"
+        assert result.suggestion_id == 99
+
+        (m_l1, m_l2a, m_l2c, m_l2d, m_bundle, m_l3a, m_l4) = mocks
+        for m in mocks:
+            assert m.call_count == 1
+
+        # Layer 2A gets request.sport, NOT layer1.identity.primary_sport (D2)
+        assert m_l2a.call_args.kwargs["framework_sport"] == "AR"
+        # Layer 2C gets the resolved locale + included disciplines
+        l2c_kwargs = m_l2c.call_args.kwargs
+        assert l2c_kwargs["locale_id"] == "home"
+        assert l2c_kwargs["cluster_locale_ids"] == ["home"]
+        assert l2c_kwargs["included_discipline_ids"] == ["D-trail"]
+        # Layer 4 cached wrapper receives everything threaded
+        l4_kwargs = m_l4.call_args.kwargs
+        assert l4_kwargs["user_id"] == _USER_ID
+        assert l4_kwargs["suggestion_id"] == 99
+        assert l4_kwargs["cache"] is cache
+        assert l4_kwargs["session_date"] == _TODAY
+        assert l4_kwargs["etl_version_set"] == {"0A": "v7", "0B": "v7", "0C": "v7"}
+        # layer1_payload threaded as dict (matches race_week_brief precedent)
+        assert isinstance(l4_kwargs["layer1_payload"], dict)
+        # 2C payload non-None on the locale path
+        assert l4_kwargs["layer2c_payload_for_locale"] is not None
+
+    def test_quick_equipment_path_skips_layer2c(self):
+        """Somewhere-else path: layer2c_payload_for_locale=None; no 2C call
+        fires; no locale-by-slug SELECT fires."""
+        conn = _FakeConn()
+        _queue_etl_version_set(conn)
+        cache = Layer4Cache(InMemoryCacheBackend())
+
+        stack = _single_session_patches(
+            layer4_return=_fake_single_session_layer4_payload()
+        )
+        mocks = _enter_all(stack)
+        try:
+            orchestrate_single_session_synthesize(
+                conn,
+                _USER_ID,
+                _request_with_quick_equipment(),
+                suggestion_id=42,
+                cache=cache,
+                today=_TODAY,
+            )
+        finally:
+            _exit_all(stack)
+
+        (m_l1, m_l2a, m_l2c, m_l2d, m_bundle, m_l3a, m_l4) = mocks
+        # Layer 2C is NOT called on the quick_equipment path
+        assert m_l2c.call_count == 0
+        # The other upstream stages still run
+        for m in (m_l1, m_l2a, m_l2d, m_bundle, m_l3a, m_l4):
+            assert m.call_count == 1
+        # Driver receives None for layer2c_payload_for_locale
+        l4_kwargs = m_l4.call_args.kwargs
+        assert l4_kwargs["layer2c_payload_for_locale"] is None
+        assert l4_kwargs["suggestion_id"] == 42
+
+
+class TestOrchestrateSingleSessionSynthesizePreflightGates:
+    def test_request_sport_unavailable_when_layer2a_raises(self):
+        """Layer 2A's `Layer2AInputError` on unknown framework_sport →
+        `OrchestrationError('request_sport_unavailable')`."""
+        conn = _FakeConn()
+        _queue_etl_version_set(conn)
+        cache = Layer4Cache(InMemoryCacheBackend())
+
+        # Patch 2A to raise; the orchestrator should catch + re-raise as
+        # OrchestrationError with code='request_sport_unavailable'.
+        with patch(
+            "layer4.orchestrator.build_layer1_payload",
+            return_value=_fake_layer1_payload(),
+        ), patch(
+            "layer4.orchestrator.q_layer2a_discipline_classifier_payload",
+            side_effect=Layer2AInputError("framework_sport=PingPong not found"),
+        ):
+            with pytest.raises(OrchestrationError) as exc:
+                orchestrate_single_session_synthesize(
+                    conn,
+                    _USER_ID,
+                    SingleSessionRequest(
+                        sport="PingPong",
+                        duration_min=30,
+                        intensity="easy",
+                        locale_slug="home",
+                    ),
+                    suggestion_id=1,
+                    cache=cache,
+                    today=_TODAY,
+                )
+        assert exc.value.code == "request_sport_unavailable"
+        assert "PingPong" in exc.value.detail
+
+    def test_locale_unknown_when_slug_not_in_locale_profiles(self):
+        """Athlete picked a locale_slug that doesn't exist as a
+        `locale_profiles` row → `OrchestrationError('locale_unknown')`
+        before 2C is called."""
+        conn = _FakeConn()
+        _queue_etl_version_set(conn)
+        # _q_locale_by_slug fires AFTER 2D in the orchestrator flow, but
+        # the SELECT order is: etl_version + locale_by_slug. 2D doesn't
+        # touch the db. So the locale_by_slug miss is the second SELECT.
+        _queue_locale_by_slug_miss(conn)
+        cache = Layer4Cache(InMemoryCacheBackend())
+
+        stack = _single_session_patches(
+            layer4_return=_fake_single_session_layer4_payload()
+        )
+        mocks = _enter_all(stack)
+        try:
+            with pytest.raises(OrchestrationError) as exc:
+                orchestrate_single_session_synthesize(
+                    conn,
+                    _USER_ID,
+                    SingleSessionRequest(
+                        sport="AR",
+                        duration_min=60,
+                        intensity="easy",
+                        locale_slug="hotel-london",
+                    ),
+                    suggestion_id=1,
+                    cache=cache,
+                    today=_TODAY,
+                )
+        finally:
+            _exit_all(stack)
+        assert exc.value.code == "locale_unknown"
+        assert "hotel-london" in exc.value.detail
+        # 2C + 3A + Layer 4 must not have been called
+        (m_l1, m_l2a, m_l2c, m_l2d, m_bundle, m_l3a, m_l4) = mocks
+        assert m_l2c.call_count == 0
+        assert m_l3a.call_count == 0
+        assert m_l4.call_count == 0
+
+
+class TestOrchestrateSingleSessionSynthesizeDiscoveryFailures:
+    def test_etl_version_set_undiscoverable(self):
+        """No non-superseded `layer0.sports` row → orchestrator raises before
+        any upstream call."""
+        conn = _FakeConn()
+        conn.queue(row={"v": None})  # etl_version_set lookup returns NULL
+        cache = Layer4Cache(InMemoryCacheBackend())
+
+        with pytest.raises(OrchestrationError) as exc:
+            orchestrate_single_session_synthesize(
+                conn,
+                _USER_ID,
+                _request_with_locale(),
+                suggestion_id=1,
+                cache=cache,
+                today=_TODAY,
+            )
+        assert exc.value.code == "etl_version_set_undiscoverable"
+
+
+class TestOrchestrateSingleSessionSynthesizeDefaults:
+    def test_today_defaults_to_date_today(self):
+        """When `today=None`, orchestrator defaults to `date.today()` and
+        passes it through as `session_date` to the cached wrapper."""
+        conn = _FakeConn()
+        _queue_etl_version_set(conn)
+        _queue_locale_by_slug_hit(conn)
+        _queue_locale_equipment_pool(conn)
+        cache = Layer4Cache(InMemoryCacheBackend())
+
+        stack = _single_session_patches(
+            layer4_return=_fake_single_session_layer4_payload()
+        )
+        mocks = _enter_all(stack)
+        try:
+            with patch("layer4.orchestrator.date") as m_date:
+                fixed_today = date(2026, 6, 10)
+                m_date.today.return_value = fixed_today
+                # `datetime.combine` reads `date.today()` indirectly via the
+                # `today` arg, but the orchestrator calls `date.today()` only
+                # at the kwarg default; once a value is bound, it threads
+                # through. Pass `today=None` to exercise the default path.
+                orchestrate_single_session_synthesize(
+                    conn,
+                    _USER_ID,
+                    _request_with_locale(),
+                    suggestion_id=7,
+                    cache=cache,
+                    today=None,
+                )
+        finally:
+            _exit_all(stack)
+        (m_l1, m_l2a, m_l2c, m_l2d, m_bundle, m_l3a, m_l4) = mocks
+        assert m_l4.call_args.kwargs["session_date"] == fixed_today
+
+    def test_layer2c_kwargs_include_layer2d_payload(self):
+        """2C must consume 2D's payload for accommodation modality
+        pass-through per Layer2C_Spec.md §5.6 — verifies the threading."""
+        conn = _FakeConn()
+        _queue_etl_version_set(conn)
+        _queue_locale_by_slug_hit(conn)
+        _queue_locale_equipment_pool(conn)
+        cache = Layer4Cache(InMemoryCacheBackend())
+
+        stack = _single_session_patches(
+            layer4_return=_fake_single_session_layer4_payload()
+        )
+        mocks = _enter_all(stack)
+        try:
+            orchestrate_single_session_synthesize(
+                conn,
+                _USER_ID,
+                _request_with_locale(),
+                suggestion_id=1,
+                cache=cache,
+                today=_TODAY,
+            )
+        finally:
+            _exit_all(stack)
+        (m_l1, m_l2a, m_l2c, m_l2d, m_bundle, m_l3a, m_l4) = mocks
+        l2c_kwargs = m_l2c.call_args.kwargs
+        # 2D payload threads into 2C (accommodation modality pass-through)
+        assert l2c_kwargs["layer2d_payload"] is m_l2d.return_value
+
+
+class TestOrchestrateSingleSessionSynthesizeSportSemantics:
+    def test_request_sport_overrides_layer1_primary_sport(self):
+        """D2 ratified — Layer 2A is called with `request.sport`, not
+        `layer1.identity.primary_sport`. Athlete picks Rowing for
+        cross-training even though their primary is AR."""
+        conn = _FakeConn()
+        _queue_etl_version_set(conn)
+        _queue_locale_by_slug_hit(conn)
+        _queue_locale_equipment_pool(conn)
+        cache = Layer4Cache(InMemoryCacheBackend())
+
+        cross_train_request = SingleSessionRequest(
+            sport="Rowing",
+            duration_min=60,
+            intensity="moderate",
+            locale_slug="home",
+        )
+
+        stack = _single_session_patches(
+            layer4_return=_fake_single_session_layer4_payload()
+        )
+        mocks = _enter_all(stack)
+        try:
+            orchestrate_single_session_synthesize(
+                conn,
+                _USER_ID,
+                cross_train_request,
+                suggestion_id=1,
+                cache=cache,
+                today=_TODAY,
+            )
+        finally:
+            _exit_all(stack)
+        (m_l1, m_l2a, m_l2c, m_l2d, m_bundle, m_l3a, m_l4) = mocks
+        # 2A receives request.sport ("Rowing"), NOT layer1.identity.primary_sport ("AR")
+        assert m_l2a.call_args.kwargs["framework_sport"] == "Rowing"
+
+    def test_quick_equipment_path_no_locale_by_slug_select(self):
+        """When locale_slug is None, _q_locale_by_slug must NOT fire — saves
+        an unnecessary SELECT. Queue only the etl_version_set row; if any
+        further SELECT was attempted, the FakeConn returns empty and the
+        flow would raise downstream. The assertion is that we successfully
+        complete with just the etl_version_set queued."""
+        conn = _FakeConn()
+        _queue_etl_version_set(conn)
+        # Intentionally NO locale_by_slug + NO locale_equipment_pool queued.
+        cache = Layer4Cache(InMemoryCacheBackend())
+
+        stack = _single_session_patches(
+            layer4_return=_fake_single_session_layer4_payload()
+        )
+        mocks = _enter_all(stack)
+        try:
+            orchestrate_single_session_synthesize(
+                conn,
+                _USER_ID,
+                _request_with_quick_equipment(),
+                suggestion_id=1,
+                cache=cache,
+                today=_TODAY,
+            )
+        finally:
+            _exit_all(stack)
+        # Only 1 SELECT (etl_version_set) — the orchestrator didn't query
+        # locale_profiles or locale_equipment on the quick_equipment path.
+        assert len(conn.calls) == 1
+
+
+class TestOrchestrateSingleSessionSynthesizeReturnValue:
+    def test_returns_cached_wrapper_output_verbatim(self):
+        """The orchestrator returns whatever
+        `llm_layer4_single_session_synthesize_cached` returns. It does NOT
+        wrap, modify, or validate the Layer4Payload — the cached wrapper
+        + driver already handle rebinding (suggestion_id, plan_version_id)
+        and validation."""
+        conn = _FakeConn()
+        _queue_etl_version_set(conn)
+        _queue_locale_by_slug_hit(conn)
+        _queue_locale_equipment_pool(conn)
+        cache = Layer4Cache(InMemoryCacheBackend())
+
+        sentinel = _fake_single_session_layer4_payload()
+        stack = _single_session_patches(layer4_return=sentinel)
+        mocks = _enter_all(stack)
+        try:
+            result = orchestrate_single_session_synthesize(
+                conn,
+                _USER_ID,
+                _request_with_locale(),
+                suggestion_id=99,
+                cache=cache,
+                today=_TODAY,
+            )
+        finally:
+            _exit_all(stack)
+        assert result is sentinel

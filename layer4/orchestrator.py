@@ -1,15 +1,22 @@
-"""Layer 4 orchestrator — Phase 5.1 race_week_brief vertical slice.
+"""Layer 4 orchestrator — Phase 5.1 race_week_brief + Phase 5.2 single_session.
 
-First end-to-end composition of the v2 upstream pipeline. Drives:
+End-to-end composition of the v2 upstream pipeline. Two entry points:
 
-    Layer 1 → Layer 2A/2B/2D/2C → Layer 3A → Layer 3B → Layer 2E →
-    llm_layer4_race_week_brief_cached
+    `orchestrate_race_week_brief` (Phase 5.1, 2026-05-20):
+        Layer 1 → 2A/2B/2D/2C → 3A → 3B → 2E → llm_layer4_race_week_brief_cached
 
-See `Upstream_Implementation_Plan_v1.md` §4 row 5.1 + `Layer4_Spec.md` §4.5
-for the entry-point contract; this module is the orchestrator-side composer
-that all five Layer 4 entry points will eventually share substrate with
-(Phase 5.2 extracts the shared upstream-pipeline helper once
-`single_session_synthesize` + `plan_refresh` tiers land).
+    `orchestrate_single_session_synthesize` (Phase 5.2, slice 1, 2026-05-20):
+        Layer 1 → 2A → 2D → 2C (locale-only) → 3A →
+        llm_layer4_single_session_synthesize_cached
+
+Single-session's cone is materially narrower than race-week-brief's (no
+2B / 2E / 3B); the two pipelines stay inline rather than share a flag-driven
+`_upstream_pipeline` helper. The Rule-of-Three trigger for refactor lands
+with the 3rd entry point (`plan_refresh`); module-level `_q_*` helpers are
+shared today (`_q_current_etl_version_set`, `_q_locale_equipment_pool`).
+
+See `Upstream_Implementation_Plan_v1.md` §4 row 5.1 + 5.2 + `Layer4_Spec.md`
+§3.3 / §3.4 / §4.5 for the entry-point contracts.
 
 Vertical-slice limitations carried as forward-pointers:
 - Layer 2B inputs now flow end-to-end per Phase 5.1 form-refresh A/B/C
@@ -39,7 +46,7 @@ from datetime import date, datetime, time
 from typing import Any
 
 from layer1.builder import build_layer1_payload
-from layer2a.builder import q_layer2a_discipline_classifier_payload
+from layer2a.builder import Layer2AInputError, q_layer2a_discipline_classifier_payload
 from layer2b.builder import q_layer2b_terrain_classifier_payload
 from layer2c.builder import q_layer2c_equipment_mapper_payload
 from layer2d.builder import q_layer2d_injury_risk_profile_payload
@@ -48,9 +55,13 @@ from layer3a.builder import llm_layer3a_athlete_state
 from layer3a.integration import assemble_layer3a_integration_bundle
 from layer3b.builder import llm_layer3b_goal_timeline_viability
 from layer4.cache import Layer4Cache
-from layer4.cached_wrappers import llm_layer4_race_week_brief_cached
+from layer4.cached_wrappers import (
+    llm_layer4_race_week_brief_cached,
+    llm_layer4_single_session_synthesize_cached,
+)
 from layer4.context import Layer2ETargetEvent
 from layer4.payload import Layer4Payload
+from layer4.single_session import SingleSessionRequest
 from race_events_repo import load_target_race_event_payload
 
 
@@ -255,6 +266,133 @@ def orchestrate_race_week_brief(
     )
 
 
+def orchestrate_single_session_synthesize(
+    db: Any,
+    user_id: int,
+    request: SingleSessionRequest,
+    suggestion_id: int,
+    *,
+    cache: Layer4Cache,
+    today: date | None = None,
+) -> Layer4Payload:
+    """End-to-end D-63 on-demand workout pipeline for `user_id`.
+
+    Algorithm:
+    1. Discover the active `etl_version_set` triplet from Layer 0.
+    2. Build Layer 1.
+    3. Call Layer 2A with `framework_sport=request.sport` — the athlete's
+       per-request sport pick overrides their primary discipline mix
+       (single-session is athlete-overriding behavior per D-63 §6.1; e.g.,
+       Andy can pick Rowing for cross-training even though his primary
+       sport is Adventure Racing). Layer2A's `Layer2AInputError` on an
+       unknown framework_sport surfaces as
+       `OrchestrationError('request_sport_unavailable')`.
+    4. Compute `included_discipline_ids` from 2A; call Layer 2D.
+    5. Locale branch (XOR per `SingleSessionRequest._check_locale_xor_quick_equipment`):
+       - When `request.locale_slug` is non-None: validate the slug exists
+         via `_q_locale_by_slug` (raise
+         `OrchestrationError('locale_unknown')` on miss); read the locale's
+         equipment pool; call Layer 2C against it; pass the resulting
+         payload as `layer2c_payload_for_locale`.
+       - When `request.locale_slug` is None ("Somewhere else"): skip Layer
+         2C entirely; pass `layer2c_payload_for_locale=None`. The driver
+         resolves equipment from `request.quick_equipment` directly per
+         spec §3.3 row 4.
+    6. Build the Layer 3A integration bundle + call `llm_layer3a_athlete_state`
+       (uncached at the orchestrator level — matches race_week_brief
+       precedent; Phase 5.2 will revisit 3A caching policy once multiple
+       Layer 4 entry points share user-scoped outputs).
+    7. Compose via `llm_layer4_single_session_synthesize_cached`.
+
+    No `no_target_event` / `race_week_brief_too_early` gates — single-session
+    is off-plan, off-race, and athlete-driven by definition. The driver's
+    own `_validate_inputs` (`layer4/single_session.py` §4.4) covers
+    locale-XOR-quick + 2C-payload-presence rules.
+
+    Failures from any upstream layer propagate verbatim; the orchestrator
+    does not try/except them (except for the targeted Layer2AInputError
+    catch documented above).
+    """
+    if today is None:
+        today = date.today()
+
+    etl_version_set = _q_current_etl_version_set(db)
+    as_of = datetime.combine(today, time.min)
+
+    layer1_payload = build_layer1_payload(db, user_id)
+
+    try:
+        layer2a_payload = q_layer2a_discipline_classifier_payload(
+            db,
+            framework_sport=request.sport,
+            etl_version_set=etl_version_set,
+        )
+    except Layer2AInputError as exc:
+        raise OrchestrationError(
+            "request_sport_unavailable",
+            f"request.sport={request.sport!r} is not a known framework_sport: {exc}",
+        ) from exc
+
+    included_discipline_ids = [
+        d.discipline_id
+        for d in layer2a_payload.disciplines
+        if d.inclusion == "included"
+    ]
+
+    layer2d_payload = q_layer2d_injury_risk_profile_payload(
+        db,
+        injuries=layer1_payload.health_status.current_injuries,
+        conditions=layer1_payload.health_status.health_conditions_active,
+        included_discipline_ids=included_discipline_ids,
+        etl_version_set=etl_version_set,
+    )
+
+    layer2c_payload_for_locale = None
+    if request.locale_slug is not None:
+        if not _q_locale_by_slug(db, user_id, request.locale_slug):
+            raise OrchestrationError(
+                "locale_unknown",
+                f"user_id={user_id} has no locale_profiles row with "
+                f"locale={request.locale_slug!r}",
+            )
+        locale_equipment_pool = _q_locale_equipment_pool(
+            db, user_id, request.locale_slug
+        )
+        layer2c_payload_for_locale = q_layer2c_equipment_mapper_payload(
+            db,
+            locale_id=request.locale_slug,
+            locale_equipment_pool=locale_equipment_pool,
+            cluster_locale_ids=[request.locale_slug],
+            cluster_gear_toggle_states={},
+            included_discipline_ids=included_discipline_ids,
+            layer2d_payload=layer2d_payload,
+            etl_version_set=etl_version_set,
+        )
+
+    integration_bundle = assemble_layer3a_integration_bundle(db, user_id, as_of)
+    layer3a_payload = llm_layer3a_athlete_state(
+        user_id=user_id,
+        layer1_payload=layer1_payload,
+        layer2a_payload=layer2a_payload,
+        integration_bundle=integration_bundle,
+        as_of=as_of,
+        etl_version_set=etl_version_set,
+    )
+
+    return llm_layer4_single_session_synthesize_cached(
+        user_id=user_id,
+        request=request,
+        layer1_payload=layer1_payload.model_dump(mode="json"),
+        layer2c_payload_for_locale=layer2c_payload_for_locale,
+        layer2d_payload=layer2d_payload,
+        layer3a_payload=layer3a_payload,
+        suggestion_id=suggestion_id,
+        etl_version_set=etl_version_set,
+        cache=cache,
+        session_date=today,
+    )
+
+
 def _q_current_etl_version_set(db: Any) -> dict[str, str]:
     """Discover the active Layer 0 ETL version triplet.
 
@@ -310,6 +448,21 @@ def _q_locale_equipment_pool(db: Any, user_id: int, locale: str) -> list[str]:
     return [row["tag"] for row in cur.fetchall()]
 
 
+def _q_locale_by_slug(db: Any, user_id: int, locale: str) -> bool:
+    """Return True when `(user_id, locale)` has a `locale_profiles` row.
+
+    Used by `orchestrate_single_session_synthesize` to validate the
+    athlete-picked `request.locale_slug` before composing the 2C call.
+    Distinct from `_q_primary_locale` (which is hard-coded to `'home'`):
+    single-session athletes pick any locale they've configured.
+    """
+    cur = db.execute(
+        "SELECT 1 AS hit FROM locale_profiles WHERE user_id = ? AND locale = ? LIMIT 1",
+        (user_id, locale),
+    )
+    return cur.fetchone() is not None
+
+
 def _q_locale_terrain_ids(db: Any, user_id: int, locale: str) -> list[str]:
     """Return canonical TRN-xxx terrain ids available at `locale`.
 
@@ -358,4 +511,5 @@ def _q_locale_terrain_ids(db: Any, user_id: int, locale: str) -> list[str]:
 __all__ = [
     "OrchestrationError",
     "orchestrate_race_week_brief",
+    "orchestrate_single_session_synthesize",
 ]

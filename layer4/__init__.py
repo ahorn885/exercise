@@ -115,6 +115,7 @@ from layer4.cache_invalidation import (
 from layer4.orchestrator import (
     OrchestrationError,
     orchestrate_race_week_brief,
+    orchestrate_single_session_synthesize,
 )
 from layer4.cache_postgres import PostgresCacheBackend
 from layer4.cached_wrappers import (
@@ -277,9 +278,10 @@ __all__ = [
     "llm_layer4_race_week_brief_cached",
     "llm_layer4_single_session_synthesize_cached",
     "policy_for_layer",
-    # Orchestrator (orchestrator.py) — Phase 5.1 vertical slice
+    # Orchestrator (orchestrator.py) — Phase 5.1 + Phase 5.2 vertical slices
     "OrchestrationError",
     "orchestrate_race_week_brief",
+    "orchestrate_single_session_synthesize",
     # AccommodationModality discriminated union (context.py)
     "AccommodationModality",
     "ExerciseSubstitutionModality",
