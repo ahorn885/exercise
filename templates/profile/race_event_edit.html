@@ -101,71 +101,8 @@
                   placeholder="Paste the race-director-published mandatory gear list.">{{ race.mandatory_gear_text if race and race.mandatory_gear_text else '' }}</textarea>
       </div>
 
-      <div class="col-12">
-        <label class="form-label">Race terrain breakdown</label>
-        <small class="text-muted d-block mb-2">
-          Estimated percentages of total race distance per terrain type. Used by the terrain classifier to plan locale-relevant training. Total should sum to roughly 100% (the planner tolerates ±20%); leave blank if not yet known.
-        </small>
-        <div id="race-terrain-rows">
-          {% set existing_terrain = (race.race_terrain if race and race.race_terrain else []) %}
-          {% for entry in existing_terrain %}
-            <div class="row g-2 mb-2 race-terrain-row" data-row-idx="{{ loop.index0 }}">
-              <div class="col-md-7">
-                <select class="form-select form-select-sm"
-                        name="race_terrain[{{ loop.index0 }}][terrain_id]">
-                  <option value="">— Pick terrain —</option>
-                  {% for tc in terrain_choices %}
-                    <option value="{{ tc.id }}" {% if tc.id == entry.terrain_id %}selected{% endif %}>
-                      {{ tc.id }} — {{ tc.label }}
-                    </option>
-                  {% endfor %}
-                </select>
-              </div>
-              <div class="col-md-3">
-                <div class="input-group input-group-sm">
-                  <input type="number" step="0.1" min="0" max="100" class="form-control"
-                         name="race_terrain[{{ loop.index0 }}][pct_of_race]"
-                         value="{{ entry.pct_of_race }}" placeholder="0.0">
-                  <span class="input-group-text">%</span>
-                </div>
-              </div>
-              <div class="col-md-2 d-flex align-items-center">
-                <button type="button" class="btn btn-sm btn-link text-danger p-0"
-                        data-action="remove-terrain-row">Remove</button>
-              </div>
-            </div>
-          {% endfor %}
-        </div>
-        <div class="mt-1">
-          <button type="button" class="btn btn-sm btn-outline-secondary" id="add-terrain-row">
-            + Add terrain
-          </button>
-        </div>
-        {# Hidden template row — JS clones this when the athlete clicks "Add terrain". #}
-        <template id="race-terrain-template">
-          <div class="row g-2 mb-2 race-terrain-row" data-row-idx="__IDX__">
-            <div class="col-md-7">
-              <select class="form-select form-select-sm" name="race_terrain[__IDX__][terrain_id]">
-                <option value="">— Pick terrain —</option>
-                {% for tc in terrain_choices %}
-                  <option value="{{ tc.id }}">{{ tc.id }} — {{ tc.label }}</option>
-                {% endfor %}
-              </select>
-            </div>
-            <div class="col-md-3">
-              <div class="input-group input-group-sm">
-                <input type="number" step="0.1" min="0" max="100" class="form-control"
-                       name="race_terrain[__IDX__][pct_of_race]" placeholder="0.0">
-                <span class="input-group-text">%</span>
-              </div>
-            </div>
-            <div class="col-md-2 d-flex align-items-center">
-              <button type="button" class="btn btn-sm btn-link text-danger p-0"
-                      data-action="remove-terrain-row">Remove</button>
-            </div>
-          </div>
-        </template>
-      </div>
+      {% set existing_terrain = (race.race_terrain if race and race.race_terrain else []) %}
+      {% include '_race_terrain_editor.html' %}
 
       <div class="col-12">
         <label class="form-label" for="notes">Notes</label>
@@ -389,41 +326,5 @@
     </form>
   </section>
 {% endif %}
-
-<script>
-  // Race terrain row management — vanilla JS to keep dependencies in line with
-  // the rest of the profile templates (no Alpine/HTMX in v1).
-  (function () {
-    const container = document.getElementById('race-terrain-rows');
-    const addBtn = document.getElementById('add-terrain-row');
-    const tpl = document.getElementById('race-terrain-template');
-    if (!container || !addBtn || !tpl) return;
-
-    function nextIdx() {
-      const rows = container.querySelectorAll('.race-terrain-row');
-      let max = -1;
-      rows.forEach((r) => {
-        const v = parseInt(r.dataset.rowIdx, 10);
-        if (!isNaN(v) && v > max) max = v;
-      });
-      return max + 1;
-    }
-
-    addBtn.addEventListener('click', function () {
-      const idx = nextIdx();
-      const html = tpl.innerHTML.replace(/__IDX__/g, String(idx));
-      const wrapper = document.createElement('div');
-      wrapper.innerHTML = html.trim();
-      container.appendChild(wrapper.firstChild);
-    });
-
-    container.addEventListener('click', function (ev) {
-      const btn = ev.target.closest('[data-action="remove-terrain-row"]');
-      if (!btn) return;
-      const row = btn.closest('.race-terrain-row');
-      if (row) row.remove();
-    });
-  })();
-</script>
 
 {% endblock %}

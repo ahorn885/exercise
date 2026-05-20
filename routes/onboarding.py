@@ -51,6 +51,8 @@ callback bounces the athlete back to `/onboarding/connect` instead of
 `/profile?tab=connections`).
 """
 
+import json
+import re
 from datetime import datetime
 
 from flask import (
@@ -656,6 +658,66 @@ def _parse_int_field(form, key):
         return None
 
 
+# Terrain-row form parser + vocabulary lookup — mirrors `_TRN_PATTERN` +
+# `_parse_race_terrain` + `_terrain_choices` in `routes/race_events.py`.
+# Duplicated route-local (rather than shared in `race_events_repo.py`) to
+# keep the repo layer free of form-parsing concerns; the helpers are tiny
+# and the duplication is explicitly cross-referenced. Drift is exercised
+# by tests on both sides.
+_TRN_PATTERN = re.compile(r"^TRN-\d{3}$")
+
+
+def _parse_race_terrain(form):
+    """Parse the repeating `race_terrain[N][...]` form fields into a list
+    of `{"terrain_id": str, "pct_of_race": float}` dicts.
+
+    Empty rows (no terrain_id selected OR no percent entered) are silently
+    dropped — athletes adding a row then leaving it blank shouldn't fail
+    the save. Invalid terrain_id (not matching TRN-\\d{3}) or invalid
+    percent (non-numeric / out of [0, 100]) drops the row and skips it.
+    Mirrors `routes/race_events.py:_parse_race_terrain`.
+    """
+    out = []
+    indices = set()
+    for key in form.keys():
+        m = re.match(r"^race_terrain\[(\d+)\]\[(terrain_id|pct_of_race)\]$", key)
+        if m:
+            indices.add(int(m.group(1)))
+    for idx in sorted(indices):
+        terrain_id = (form.get(f'race_terrain[{idx}][terrain_id]') or '').strip()
+        pct_raw = (form.get(f'race_terrain[{idx}][pct_of_race]') or '').strip()
+        if not terrain_id or not pct_raw:
+            continue
+        if not _TRN_PATTERN.match(terrain_id):
+            continue
+        try:
+            pct = float(pct_raw)
+        except (ValueError, TypeError):
+            continue
+        if not (0.0 <= pct <= 100.0):
+            continue
+        out.append({'terrain_id': terrain_id, 'pct_of_race': pct})
+    return out
+
+
+def _terrain_choices(db):
+    """Return `{id, label}` dicts for every active `layer0.terrain_types` row.
+
+    `id` is the canonical TRN-xxx slug; `label` is the `canonical_name`.
+    ORDER BY terrain_id for stable rendering; ~16 rows so no caching.
+    Mirrors `routes/race_events.py:_terrain_choices`.
+    """
+    cur = db.execute(
+        'SELECT terrain_id, canonical_name FROM layer0.terrain_types '
+        'WHERE superseded_at IS NULL '
+        'ORDER BY terrain_id'
+    )
+    return [
+        {'id': r['terrain_id'], 'label': r['canonical_name']}
+        for r in cur.fetchall()
+    ]
+
+
 def _athlete_locale_choices(db, uid):
     """Return `{id, label}` dicts for the athlete's locale_profiles rows.
 
@@ -679,18 +741,31 @@ def _get_target_race_row(db, uid):
     """Return the athlete's current target race_events row as a dict, or
     None when no target row exists. Used by Step 3c GET to pre-populate
     the form when the athlete returns to onboarding mid-stream.
+
+    `race_terrain` is hydrated to a list of dicts (list-or-string-tolerant
+    JSONB adapter, matching `race_events_repo.get_race_event`); `None`
+    falls back to `[]` so downstream comparison + template iteration
+    never hit a NoneType.
     """
     cur = db.execute(
         'SELECT id, name, event_date, race_format, distance_km, '
         '       total_elevation_gain_m, race_rules_summary, mandatory_gear_text, '
-        '       event_locale_id, notes '
+        '       event_locale_id, notes, race_terrain, aid_stations '
         '  FROM race_events '
         ' WHERE user_id = ? AND is_target_event = TRUE '
         ' LIMIT 1',
         (uid,),
     )
     row = cur.fetchone()
-    return dict(row) if row else None
+    if not row:
+        return None
+    result = dict(row)
+    raw_terrain = result.get('race_terrain')
+    if isinstance(raw_terrain, str):
+        result['race_terrain'] = json.loads(raw_terrain) if raw_terrain else []
+    elif raw_terrain is None:
+        result['race_terrain'] = []
+    return result
 
 
 def _write_account_nudge(db, uid, nudge_type):
@@ -722,11 +797,13 @@ def target_race():
 
     target = _get_target_race_row(db, uid)
     locale_choices = _athlete_locale_choices(db, uid)
+    terrain_choices = _terrain_choices(db)
 
     return render_template(
         'onboarding/target_race.html',
         target=target,
         locale_choices=locale_choices,
+        terrain_choices=terrain_choices,
         race_formats=VALID_RACE_FORMATS,
         post_step3c_target=_POST_STEP3C_TARGET,
     )
@@ -769,6 +846,8 @@ def target_race_save():
     new_mandatory_gear_text = _parse_str_field(request.form, 'mandatory_gear_text')
     new_event_locale_id = _parse_int_field(request.form, 'event_locale_id')
     new_notes = _parse_str_field(request.form, 'notes')
+    new_race_terrain = _parse_race_terrain(request.form)
+    new_aid_stations = _parse_int_field(request.form, 'aid_stations')
 
     target = _get_target_race_row(db, uid)
     if target:
@@ -783,20 +862,29 @@ def target_race_save():
             mandatory_gear_text=new_mandatory_gear_text,
             event_locale_id=new_event_locale_id,
             notes=new_notes,
+            race_terrain=new_race_terrain,
+            aid_stations=new_aid_stations,
         )
         # D-66 §9 invalidation — same diff logic as routes/race_events.py
-        # update_race; target row is already known.
+        # update_race; target row is already known. race_terrain +
+        # aid_stations route to brief-only (Layer 2B + 2E read them but are
+        # uncached at the orchestrator level; the Layer 4 brief is the
+        # cache-load-bearing artifact downstream).
         periodization_changed = (
             target['event_date'] != event_date
             or target['race_format'] != race_format
         )
         locale_changed = target['event_locale_id'] != new_event_locale_id
+        prior_terrain = target.get('race_terrain') or []
+        prior_aid = target.get('aid_stations')
         brief_only_changed = (
             target['distance_km'] != new_distance_km
             or target['total_elevation_gain_m'] != new_total_elevation_gain_m
             or target['race_rules_summary'] != new_race_rules_summary
             or target['mandatory_gear_text'] != new_mandatory_gear_text
             or target['notes'] != new_notes
+            or prior_terrain != new_race_terrain
+            or prior_aid != new_aid_stations
         )
         if periodization_changed:
             evict_on_target_event_periodization_change(db, uid)
@@ -818,6 +906,8 @@ def target_race_save():
             event_locale_id=new_event_locale_id,
             is_target_event=True,
             notes=new_notes,
+            race_terrain=new_race_terrain,
+            aid_stations=new_aid_stations,
         )
         # A fresh target row was created. Layer 3B's mode flips from
         # open_ended → event; periodization-grade eviction covers the
