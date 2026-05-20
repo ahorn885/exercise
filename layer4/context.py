@@ -35,11 +35,15 @@ in the Layer 4 §5.4 validator harness, not here.
 
 from __future__ import annotations
 
+import re
 from datetime import date, datetime
 from decimal import Decimal
 from typing import Annotated, Any, Literal, Union
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+
+_TRN_PATTERN = re.compile(r"^TRN-\d{3}$")
 
 
 class _Base(BaseModel):
@@ -1070,7 +1074,33 @@ class RaceEventPayload(_Base):
     event_locale_id: str | None = None
     is_target_event: bool
     notes: str | None = Field(default=None, max_length=2000)
+    # Phase 5.1 form-refresh A (2026-05-20) — closes Layer2B_Spec.md §12
+    # Open Item 2B-3 for the race-event edit path. `race_terrain` carries
+    # the athlete-entered terrain breakdown as canonical TRN-xxx IDs +
+    # percentages; orchestrator threads it into Layer 2B
+    # `q_layer2b_terrain_classifier_payload`. Empty list is legal (athletes
+    # may save partial rows mid-edit; Layer 2B's [80, 120] sum bound is the
+    # load-bearing gate at the runtime boundary, not this typed boundary).
+    # `aid_stations` carries the count for the Layer 2E `Layer2ETargetEvent`
+    # construction (drives sleep-dep + fueling-cadence reasoning).
+    race_terrain: list[RaceTerrainEntry] = Field(default_factory=list)
+    aid_stations: int | None = Field(default=None, ge=0)
     route_locales: list[RouteLocale] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _check_race_terrain_terrain_id_pattern(self) -> "RaceEventPayload":
+        # Per Layer2B_Spec.md §3 + §4: terrain_id must match TRN-\d{3}.
+        # Enforced here at the payload boundary so malformed rows fail
+        # loudly at load time rather than surfacing as a Layer2BInputError
+        # downstream. Sum bound is NOT enforced here — Layer 2B owns the
+        # [80, 120] tolerance, and partial-edit rows must round-trip.
+        for idx, entry in enumerate(self.race_terrain):
+            if not _TRN_PATTERN.match(entry.terrain_id):
+                raise ValueError(
+                    f"RaceEventPayload.race_terrain[{idx}].terrain_id "
+                    f"{entry.terrain_id!r} must match pattern TRN-\\d{{3}}"
+                )
+        return self
 
     @model_validator(mode="after")
     def _check_route_locales_invariants(self) -> "RaceEventPayload":

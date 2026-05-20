@@ -12,9 +12,13 @@ that all five Layer 4 entry points will eventually share substrate with
 `single_session_synthesize` + `plan_refresh` tiers land).
 
 Vertical-slice limitations carried as forward-pointers:
-- Layer 2B `race_terrain` + `locale_terrain_ids` are empty until §H.2
-  race-terrain capture form ships (L3B-P-2 deployed-shape gap). Brief
-  still ships; Layer 2B surfaces a coaching flag.
+- Layer 2B `locale_terrain_ids` is empty until the §J locale-terrain
+  capture surface ships (Open Item 2B-2). `race_terrain` now flows from
+  `RaceEventPayload.race_terrain` per the Phase 5.1 form-refresh A slice
+  (2026-05-20); athletes who haven't captured any terrain rows surface
+  here as `race_terrain=[]`, which Layer 2B's `_validate_inputs` still
+  rejects loudly — full tolerance lives in a separate follow-on that
+  loosens the validator to emit a coaching flag instead.
 - `prior_plan_session_window` is empty until v2 plan-gen lands (Phase 5.2
   will wire `plan_create`/`plan_refresh` into the same orchestrator).
 - `plan_version_id` is hardcoded `1` pending the plan-versioning surface.
@@ -148,7 +152,7 @@ def orchestrate_race_week_brief(
 
     layer2b_payload = q_layer2b_terrain_classifier_payload(
         db,
-        race_terrain=[],
+        race_terrain=race_event.race_terrain,
         locale_terrain_ids=[],
         included_discipline_ids=included_discipline_ids,
         etl_version_set=etl_version_set,
@@ -204,7 +208,7 @@ def orchestrate_race_week_brief(
             estimated_duration_hr=_DURATION_HR_BY_RACE_FORMAT.get(
                 race_event.race_format, 8.0
             ),
-            aid_stations=None,
+            aid_stations=race_event.aid_stations,
         )
     ]
     included_disciplines = [
