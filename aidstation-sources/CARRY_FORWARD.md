@@ -171,6 +171,28 @@ Slice A (race-event edit path) shipped. Closes Layer2B_Spec.md §12 Open Item 2B
 - **Layer 3B None-tolerant kwargs L3B-P-2** — `goal_outcome`, `first_time_at_distance`, `previous_attempts`, `race_distance_km`, `race_duration_hr`, `race_terrain`, `race_pack_weight_kg`, `navigation_required` accepted as None-tolerant kwargs in the Layer 3B driver. With form-refresh A/B's race_terrain landing on RaceEventPayload + form-refresh C closing the orchestrator's last 2B input forward-pointer, the race_terrain kwarg can now flip from None-tolerant to populated-from-payload at the orchestrator call site. Trim the driver's None branches once all 8 fields land in their canonical input shapes (RaceEventPayload + Layer1EventGoal + possibly a new `RaceGoalContext`).
 - ~~**Form-refresh A onboarding paired fix**~~ ✅ **Resolved 2026-05-20** (folded into form-refresh B). Onboarding step-3c terrain editor + aid_stations input landed via the shared partial; copy is now identical between the onboarding + post-onboarding edit surfaces.
 
+## Phase 5.2 orchestrator follow-ons (slice 1 — single_session shipped 2026-05-20)
+
+`orchestrate_single_session_synthesize` shipped (`layer4/orchestrator.py`). Second Layer 4 entry-point orchestrator (after race_week_brief 5.1). 2 substantive files; 1135 → 1145 tests; container subset 468 → 478. ALL D1-D9 picks per closing handoff §7:
+
+- D1=defer shared `_upstream_pipeline` extract until 3rd entry point (Rule of Three); module-level `_q_*` helpers shared inline
+- D2=`request.sport` for Layer 2A (athlete-overriding per D-63 §6.1)
+- D3=skip Layer 2C entirely on `quick_equipment` path
+- D4=`suggestion_id: int` as caller-supplied kwarg (`ad_hoc_workout_suggestions` table queued per D-63 §5.3)
+- D5=3 pre-flight gates: `request_sport_unavailable` + `locale_unknown` + `etl_version_set_undiscoverable`
+- D6=new `_q_locale_by_slug(db, uid, locale)` helper validates athlete-picked locale slug
+- D7=`today: date | None = None` kwarg mirroring race_week_brief signature
+- D8=10 tests at parity with race_week_brief precedent
+- D9=orchestrator calls `llm_layer4_single_session_synthesize_cached` (not the raw driver)
+
+**Remaining follow-on slices for future sessions:**
+
+- **Slice 2 — `plan_refresh` T1/T2/T3 orchestrator** — wires D-64 plan refresh tier dispatch. T1/T2 are Pattern B (single-call synthesizer); T3 is Pattern A when scope spans phase boundaries, Pattern B otherwise. Requires `parsed_intent` routing logic at the orchestrator level (`ParsedIntent` already in `layer4/context.py` per Phase 5.1 inputs). The shared `_upstream_pipeline(db, user_id, today)` helper extract folds naturally here — 3rd entry point reveals the full overlap shape (slice 1's narrower cone vs slice 2's full cone matches race_week_brief). ~4-6 files; `/plan` gate per Trigger #5 (tier dispatch policy + helper extract decision).
+- **Slice 3 — `plan_create` Pattern A orchestrator** — final orchestrator entry point. Pattern A heaviest: per-phase synthesis loop + seam reviews + cross-phase reconciliation. Layer 3A + 3B inputs already wired in race_week_brief precedent. `plan_version_id` allocation moves from hardcoded `1` to real D-64 versioning surface (forward-pointer flip at slice 3). ~6-8 files; `/plan` gate per Trigger #5.
+- **`ad_hoc_workout_suggestions` table + D-63 caller-side route** — slice 1's `suggestion_id: int` kwarg is caller-supplied; the table (D-63 §5.3) + the Flask route handler that allocates the row + redirects to the rendered session view aren't yet shipped. Slice 1 is structurally complete + tested in isolation but not E2E-reachable from the v1 UI until D-63 caller-side lands. ~3-4 files (init_db.py migration + new routes/ad_hoc_workouts.py + template + tests). Not a Phase 5.2 blocker — slice 2 + 3 can land first if Andy prioritizes orchestrator coverage.
+- **Shared `_upstream_pipeline(db, user_id, today) -> UpstreamPayloads` helper extract** — deferred per D1 (Rule of Three). Folds into slice 2; the helper signature needs to accept flags or take payload selectors to cover the cone-shape variance (race_week_brief = all layers, single_session = no 2B/2E/3B, plan_refresh = full, plan_create = full). A dataclass return shape with optional fields likely cleanest.
+- **Layer 3A + 3B caching policy at orchestrator level** — slice 1 calls `llm_layer3a_athlete_state` uncached (matches race_week_brief precedent). When 3+ entry points share user-scoped 3A outputs, the orchestrator-level cache becomes load-bearing. Phase 5.2 slice 2 should revisit per `Layer3_3A_Spec.md` §9.2 + the 3B equivalent. Pair with the cache-invalidation policy modules (analogue to Layer 4's §9.3 matrix).
+
 ## D-66 Layer 3B caller-side rewire (queued)
 
 Orchestrator currently reads `athlete_profile.target_event_*` for Layer 3B's event-mode input. Once the Layer 4 orchestrator is built (none exists yet — `layer4/` is the only runtime code), swap to `load_target_race_event_payload(db, user_id)`. ~3-4 files. Lands as Phase 5.1 of the upstream arc.
