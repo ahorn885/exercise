@@ -1,0 +1,835 @@
+"""Tests for `layer4/orchestrator.py` — Phase 5.1 race_week_brief vertical
+slice.
+
+Coverage:
+- Happy-path composition: all upstream builders + LLM drivers invoked in
+  dependency order; arguments threaded correctly; `Layer4Payload` returned.
+- Pre-flight gates: no target event, race-week-brief-too-early (cheap
+  optimization that skips the 3A + 3B LLM cost when out-of-window).
+- Discovery failures: etl_version_set undiscoverable, primary locale
+  missing, framework_sport empty.
+- `today` kwarg defaulting to `date.today()` for production callers.
+- `Layer2ETargetEvent` derivation from `RaceEventPayload`.
+
+Each upstream builder + LLM driver is stubbed at the module-level import
+on `layer4.orchestrator` via `unittest.mock.patch`. The fake `db` only
+needs to answer the orchestrator's direct queries
+(`_q_current_etl_version_set`, `_q_primary_locale`, `_q_locale_equipment_pool`,
+`load_target_race_event_payload`).
+"""
+
+from __future__ import annotations
+
+from datetime import date, datetime
+from typing import Any
+from unittest.mock import patch
+
+import pytest
+
+from layer4 import (
+    InMemoryCacheBackend,
+    Layer4Cache,
+    OrchestrationError,
+    orchestrate_race_week_brief,
+)
+from layer4.context import (
+    ACWRStatus,
+    Assessment,
+    CurrentState,
+    DataDensity,
+    GoalViability,
+    Layer1Disclosures,
+    Layer1DisciplineBaselines,
+    Layer1EventGoal,
+    Layer1Availability,
+    Layer1Identity,
+    Layer1HealthStatus,
+    Layer1Lifestyle,
+    Layer1Network,
+    Layer1Payload,
+    Layer1Performance,
+    Layer1TrainingHistory,
+    Layer2ADiscipline,
+    Layer2APayload,
+    Layer2BPayload,
+    Layer2BSummaryBlock,
+    Layer2CPayload,
+    Layer2DPayload,
+    Layer2EPayload,
+    Layer3APayload,
+    Layer3BPayload,
+    MacroTargets,
+    DailyNutritionBaseline,
+    DailyPhaseTargets,
+    PeriodizationShape,
+    PhaseLoadBands,
+    RaceDayFueling,
+    RaceEventPayload,
+    RationaleMetadata,
+    RecentTrajectory,
+    SupplementIntegrationPayload,
+    TrainingGapsSummary,
+    TrajectoryWindow,
+    WeightResult,
+)
+from layer4.payload import Layer4Payload, RaceWeekBrief, ValidatorResult
+
+
+_TODAY = date(2026, 6, 1)
+_EVENT_DATE = date(2026, 6, 8)  # 7 days out — within auto-fire window
+_USER_ID = 42
+
+
+# ─── _FakeConn — covers the orchestrator's direct queries + race_events_repo ─
+
+
+class _FakeRow(dict):
+    def __getitem__(self, key):
+        if isinstance(key, int):
+            return list(self.values())[key]
+        return super().__getitem__(key)
+
+
+class _FakeCursor:
+    def __init__(self, row=None, rows=None):
+        self._row = row
+        self._rows = rows or []
+
+    def fetchone(self):
+        return _FakeRow(self._row) if self._row else None
+
+    def fetchall(self):
+        return [_FakeRow(r) for r in self._rows]
+
+
+class _FakeConn:
+    def __init__(self):
+        self.calls: list[tuple[str, tuple]] = []
+        self.responses: list[tuple] = []
+
+    def queue(self, row=None, rows=None):
+        self.responses.append((row, rows or []))
+
+    def execute(self, sql, params=()):
+        self.calls.append((sql, params))
+        if self.responses:
+            row, rows = self.responses.pop(0)
+        else:
+            row, rows = None, []
+        return _FakeCursor(row=row, rows=rows)
+
+
+def _queue_target_race_event(
+    conn: _FakeConn,
+    *,
+    race_event_id: int = 1,
+    event_date: date = _EVENT_DATE,
+    race_format: str = "single_day",
+) -> None:
+    """Queue responses for `load_target_race_event_payload` (3 SELECTs when
+    route_locales empty: target_id lookup + main row + route_locales).
+    Equipment SELECT is skipped because route_locales is empty."""
+    conn.queue(row={"id": race_event_id})  # target lookup
+    conn.queue(  # main race_events row
+        row={
+            "id": race_event_id,
+            "user_id": _USER_ID,
+            "name": "Test Race 2026",
+            "event_date": event_date,
+            "race_format": race_format,
+            "distance_km": None,
+            "total_elevation_gain_m": None,
+            "race_rules_summary": None,
+            "mandatory_gear_text": None,
+            "event_locale_slug": "home",
+            "is_target_event": True,
+            "notes": None,
+        }
+    )
+    conn.queue(rows=[])  # route_locales (empty for single_day)
+
+
+def _queue_etl_version_set(conn: _FakeConn, *, v: str = "v7") -> None:
+    conn.queue(row={"v": v})
+
+
+def _queue_primary_locale(conn: _FakeConn, *, locale: str = "home") -> None:
+    conn.queue(row={"locale": locale})
+
+
+def _queue_locale_equipment_pool(conn: _FakeConn) -> None:
+    conn.queue(rows=[])  # empty pool — Layer 2C handles
+
+
+# ─── Stub upstream-payload factories ────────────────────────────────────────
+
+
+def _fake_layer1_payload() -> Layer1Payload:
+    return Layer1Payload(
+        user_id=_USER_ID,
+        as_of=datetime.combine(_TODAY, datetime.min.time()),
+        identity=Layer1Identity(primary_sport="AR"),
+        health_status=Layer1HealthStatus(),
+        training_history=Layer1TrainingHistory(),
+        discipline_baselines=Layer1DisciplineBaselines(),
+        performance=Layer1Performance(),
+        availability=Layer1Availability(),
+        event_goal=Layer1EventGoal(),
+        lifestyle=Layer1Lifestyle(),
+        network=Layer1Network(),
+        disclosures=Layer1Disclosures(),
+    )
+
+
+def _fake_layer2a_payload() -> Layer2APayload:
+    return Layer2APayload(
+        framework_sport="AR",
+        etl_version_set={"0A": "v7", "0B": "v7", "0C": "v7"},
+        disciplines=[
+            Layer2ADiscipline(
+                discipline_id="D-trail",
+                discipline_name="trail_running",
+                inclusion="included",
+                role="Primary",
+                is_conditional=False,
+                load_weight=WeightResult(
+                    value=0.5, source="system_default", system_default=0.5
+                ),
+                sleep_deprivation_relevant=False,
+                rationale="r",
+                phase_load=PhaseLoadBands(
+                    base_low=5.0,
+                    base_high=8.0,
+                    build_low=6.0,
+                    build_high=9.0,
+                    peak_low=6.5,
+                    peak_high=9.5,
+                    taper_low=3.0,
+                    taper_high=6.0,
+                    default_inclusion="included",
+                ),
+            )
+        ],
+        training_gaps_summary=TrainingGapsSummary(
+            flagged_count=0,
+            any_no_substitute=False,
+            any_multi_substitute_candidate=False,
+        ),
+        hitl_required=False,
+        unresolved_flags=[],
+        coaching_flags=[],
+        rationale_metadata=RationaleMetadata(
+            template_version="v1", generated_at="2026-06-01T10:00:00Z"
+        ),
+    )
+
+
+def _fake_layer2b_payload() -> Layer2BPayload:
+    return Layer2BPayload(
+        etl_version_set={"0A": "v7", "0B": "v7", "0C": "v7"},
+        race_terrain=[],
+        terrain_gaps=[],
+        coaching_flags=[],
+        summary=Layer2BSummaryBlock(
+            total_race_terrain_count=0,
+            covered_count=0,
+            gap_count=0,
+            bridgeable_count=0,
+            unbridgeable_count=0,
+            min_adaptation_weeks_needed=0,
+            worst_fidelity=1.0,
+            pct_of_race_uncovered=0.0,
+            any_unbridgeable=False,
+            any_undefined=False,
+        ),
+    )
+
+
+def _fake_layer2c_payload() -> Layer2CPayload:
+    return Layer2CPayload(
+        locale_id="home",
+        etl_version_set={"0A": "v7", "0B": "v7", "0C": "v7"},
+        effective_pool=[],
+        discipline_coverage=[],
+        exercises_resolved=[],
+        coaching_flags=[],
+    )
+
+
+def _fake_layer2d_payload() -> Layer2DPayload:
+    return Layer2DPayload(
+        etl_version_set={"0A": "v7", "0B": "v7", "0C": "v7"},
+        excluded_exercises=[],
+        accommodated_exercises=[],
+        clean_exercise_ids=[],
+        discipline_risk_profiles=[],
+        coaching_flags=[],
+        hitl_required=False,
+        hitl_items=[],
+        body_part_vocab_misses=[],
+        condition_vocab_misses=[],
+    )
+
+
+def _fake_layer2e_payload() -> Layer2EPayload:
+    macros = MacroTargets(
+        cho_g=400,
+        cho_g_per_kg=5.7,
+        cho_kcal=1600,
+        protein_g=140,
+        protein_g_per_kg=2.0,
+        protein_kcal=560,
+        fat_g=70,
+        fat_kcal=630,
+        fat_floor_constrained=False,
+    )
+    targets = DailyPhaseTargets(
+        activity_multiplier=1.6,
+        activity_multiplier_source={"row": "base"},
+        daily_calorie_target_kcal=2800,
+        macros=macros,
+    )
+    return Layer2EPayload(
+        athlete_id=str(_USER_ID),
+        etl_version_set={"0A": "v7", "0B": "v7", "0C": "v7"},
+        computed_at=datetime(2026, 6, 1, 10, 0, 0),
+        bmr_method="mifflin_st_jeor",
+        bmr_kcal=1750.0,
+        daily_nutrition_baseline=DailyNutritionBaseline(
+            per_phase={
+                "Base": targets,
+                "Build": targets,
+                "Peak": targets,
+                "Taper": targets,
+            }
+        ),
+        race_day_fueling=[
+            RaceDayFueling(
+                event_id="1",
+                event_name="Test Race 2026",
+                duration_tier="tier_long",
+                cho_g_per_hr_low=60.0,
+                cho_g_per_hr_high=90.0,
+                na_mg_per_hr_low=500.0,
+                na_mg_per_hr_high=700.0,
+                fluid_ml_per_hr_low=500.0,
+                fluid_ml_per_hr_high=700.0,
+                sport_modifier_applied=1.0,
+                salt_tolerance_modifier_applied=1.0,
+                heat_acclim_modifier_applied=1.0,
+                recommended_formats=[],
+                blocked_formats=[],
+                sleep_dep_overlay_applies=False,
+                notes=[],
+            )
+        ],
+        supplement_integration=SupplementIntegrationPayload(
+            integrated=[],
+            race_day_suggestions=[],
+            contraindication_flags=[],
+            contraindication_hitl_items=[],
+        ),
+        dietary_pattern_adjustments=[],
+        sleep_dep_overlay=None,
+        heat_acclim_adjustments=[],
+        coaching_flags=[],
+        hitl_items=[],
+        hitl_required=False,
+    )
+
+
+def _fake_layer3a_payload() -> Layer3APayload:
+    return Layer3APayload(
+        user_id=_USER_ID,
+        as_of=datetime.combine(_TODAY, datetime.min.time()),
+        model="claude-opus-4-7",
+        temperature=0.0,
+        prompt_hash="abc",
+        latency_ms=1000,
+        input_tokens=2000,
+        output_tokens=500,
+        etl_version_set={"0A": "v7", "0B": "v7", "0C": "v7"},
+        current_state=CurrentState(
+            aerobic_capacity=Assessment(
+                level="good", confidence="high", reasoning_text="r", evidence_basis=["e"]
+            ),
+            strength=Assessment(
+                level="moderate",
+                confidence="medium",
+                reasoning_text="r",
+                evidence_basis=["e"],
+            ),
+            weak_links=[],
+            skill_assessments={},
+        ),
+        recent_trajectory=RecentTrajectory(
+            short_term=TrajectoryWindow(
+                direction="steady", reasoning_text="r", evidence_basis=["e"]
+            ),
+            medium_term=TrajectoryWindow(
+                direction="building", reasoning_text="r", evidence_basis=["e"]
+            ),
+            acwr_status=ACWRStatus(per_discipline={}, combined=None),
+            confidence="medium",
+        ),
+        data_density=DataDensity(
+            connected_providers=["coros"],
+            integration_data_days=28,
+            recent_workouts_count=20,
+            recent_sleep_count=14,
+            recent_hrv_count=14,
+            self_report_freshness_days=2,
+            section_completeness={"C": 1.0},
+        ),
+        notable_observations=[],
+    )
+
+
+def _fake_layer3b_payload(
+    *,
+    event_date: date = _EVENT_DATE,
+    start_phase: str = "Taper",
+) -> Layer3BPayload:
+    return Layer3BPayload(
+        user_id=_USER_ID,
+        as_of=datetime.combine(_TODAY, datetime.min.time()),
+        mode="event",
+        model="claude-opus-4-7",
+        temperature=0.0,
+        prompt_hash="abc",
+        latency_ms=1000,
+        input_tokens=2000,
+        output_tokens=500,
+        etl_version_set={"0A": "v7", "0B": "v7", "0C": "v7"},
+        goal_viability=GoalViability(
+            viability="achievable",
+            confidence="high",
+            reasoning_text="r",
+            evidence_basis=["e"],
+            suggested_adjustments=[],
+        ),
+        periodization_shape=PeriodizationShape(
+            mode="standard",
+            start_phase=start_phase,  # type: ignore[arg-type]
+            reasoning_text="r",
+            evidence_basis=["e"],
+        ),
+        hitl_surface=[],
+        notable_observations=[],
+        event_date=event_date,
+        event_locale_id="home",
+        race_format="single_day",
+        time_to_event_weeks=1,
+    )
+
+
+def _fake_layer4_payload(
+    *,
+    race_event_payload: RaceEventPayload,
+) -> Layer4Payload:
+    return Layer4Payload(
+        user_id=_USER_ID,
+        mode="race_week_brief",
+        plan_version_id=1,
+        scope_start_date=_TODAY,
+        scope_end_date=race_event_payload.event_date,
+        model_synthesizer="claude-sonnet-4-6",
+        temperature=0.2,
+        pattern="B",
+        latency_ms_total=8000,
+        input_tokens_total=4500,
+        output_tokens_total=2500,
+        llm_call_count=1,
+        etl_version_set={"0A": "v7", "0B": "v7", "0C": "v7"},
+        sessions=[],
+        validator_results=[
+            ValidatorResult(
+                pass_index=0,
+                accepted=True,
+                rule_failures=[],
+                retried_phase_names=[],
+            )
+        ],
+        notable_observations=[],
+        # race_week_brief always uses single_day in the test fake to avoid
+        # needing a separate race_plan stub — the orchestrator doesn't
+        # validate the wrapper's return value, so the format inside the
+        # cached-wrapper return value is independent of the test's
+        # `race_format` axis.
+        race_week_brief=RaceWeekBrief(
+            days_to_event=(race_event_payload.event_date - _TODAY).days,
+            event_name=race_event_payload.name,
+            event_date=race_event_payload.event_date,
+            event_locale="home",
+            race_format="single_day",
+            goal_outcome="Finish",
+            pre_race_logistics="x",
+            kit_manifest=[],
+            kit_check_dates=[],
+            race_day_fueling_plan="x",
+            pre_race_meal_strategy="x",
+            pacing_strategy_summary="x",
+            contingencies=[],
+            mental_prep_cues=[],
+        ),
+    )
+
+
+# ─── happy path ─────────────────────────────────────────────────────────────
+
+
+def _patches(*, layer4_return: Layer4Payload):
+    """Stack of patches that swap upstream builders / LLM drivers for the
+    happy-path composition. Returns a list of `patch` context managers — the
+    caller enters all of them."""
+    return [
+        patch(
+            "layer4.orchestrator.build_layer1_payload",
+            return_value=_fake_layer1_payload(),
+        ),
+        patch(
+            "layer4.orchestrator.q_layer2a_discipline_classifier_payload",
+            return_value=_fake_layer2a_payload(),
+        ),
+        patch(
+            "layer4.orchestrator.q_layer2b_terrain_classifier_payload",
+            return_value=_fake_layer2b_payload(),
+        ),
+        patch(
+            "layer4.orchestrator.q_layer2c_equipment_mapper_payload",
+            return_value=_fake_layer2c_payload(),
+        ),
+        patch(
+            "layer4.orchestrator.q_layer2d_injury_risk_profile_payload",
+            return_value=_fake_layer2d_payload(),
+        ),
+        patch(
+            "layer4.orchestrator.q_layer2e_nutrition_baseline_payload",
+            return_value=_fake_layer2e_payload(),
+        ),
+        patch(
+            "layer4.orchestrator.assemble_layer3a_integration_bundle",
+            return_value=object(),  # opaque — only re-threaded into 3A
+        ),
+        patch(
+            "layer4.orchestrator.llm_layer3a_athlete_state",
+            return_value=_fake_layer3a_payload(),
+        ),
+        patch(
+            "layer4.orchestrator.llm_layer3b_goal_timeline_viability",
+            return_value=_fake_layer3b_payload(),
+        ),
+        patch(
+            "layer4.orchestrator.llm_layer4_race_week_brief_cached",
+            return_value=layer4_return,
+        ),
+    ]
+
+
+def _enter_all(stack: list) -> list[Any]:
+    """Enter a list of context managers; return the entered mocks in order.
+    The caller is responsible for `__exit__`-ing via a try/finally."""
+    return [cm.__enter__() for cm in stack]
+
+
+def _exit_all(stack: list) -> None:
+    for cm in stack:
+        cm.__exit__(None, None, None)
+
+
+class TestHappyPath:
+    def test_returns_layer4_payload_and_invokes_pipeline_in_order(self):
+        conn = _FakeConn()
+        _queue_target_race_event(conn)
+        _queue_etl_version_set(conn)
+        _queue_primary_locale(conn)
+        _queue_locale_equipment_pool(conn)
+        cache = Layer4Cache(InMemoryCacheBackend())
+
+        race_event_for_l4 = RaceEventPayload(
+            race_event_id=1,
+            user_id=_USER_ID,
+            name="Test Race 2026",
+            event_date=_EVENT_DATE,
+            race_format="single_day",
+            event_locale_id="home",
+            is_target_event=True,
+        )
+        layer4_out = _fake_layer4_payload(race_event_payload=race_event_for_l4)
+        stack = _patches(layer4_return=layer4_out)
+        mocks = _enter_all(stack)
+        try:
+            result = orchestrate_race_week_brief(
+                conn, _USER_ID, cache=cache, today=_TODAY
+            )
+        finally:
+            _exit_all(stack)
+
+        assert isinstance(result, Layer4Payload)
+        assert result.mode == "race_week_brief"
+        assert result.user_id == _USER_ID
+
+        # Pipeline ordering — Layer 1 first, Layer 4 last.
+        (
+            m_l1,
+            m_l2a,
+            m_l2b,
+            m_l2c,
+            m_l2d,
+            m_l2e,
+            m_bundle,
+            m_l3a,
+            m_l3b,
+            m_l4,
+        ) = mocks
+        for m in mocks:
+            assert m.call_count == 1
+
+        # Layer 2E receives `current_phase` from 3B's `start_phase` — verifies
+        # the 2A/2B/2D/2C → 3A → 3B → 2E ordering decision.
+        l2e_kwargs = m_l2e.call_args.kwargs
+        assert l2e_kwargs["current_phase"] == "Taper"
+        assert l2e_kwargs["framework_sport"] == "AR"
+        # target_events derives from RaceEventPayload (single Layer2ETargetEvent)
+        assert len(l2e_kwargs["target_events"]) == 1
+        te = l2e_kwargs["target_events"][0]
+        assert te.event_id == "1"
+        assert te.event_name == "Test Race 2026"
+        assert te.framework_sport == "AR"
+        # single_day → 8.0 hour estimate
+        assert te.estimated_duration_hr == 8.0
+
+        # Layer 4 cached wrapper receives composed payloads
+        l4_kwargs = m_l4.call_args.kwargs
+        assert l4_kwargs["user_id"] == _USER_ID
+        assert l4_kwargs["plan_version_id"] == 1
+        assert l4_kwargs["prior_plan_session_window"] == []
+        assert l4_kwargs["cache"] is cache
+        assert l4_kwargs["today"] == _TODAY
+        assert l4_kwargs["etl_version_set"] == {"0A": "v7", "0B": "v7", "0C": "v7"}
+        # layer1_payload threaded as dict (not pydantic model)
+        assert isinstance(l4_kwargs["layer1_payload"], dict)
+        # Per-locale dict keyed by primary locale slug
+        assert set(l4_kwargs["layer2c_payloads"].keys()) == {"home"}
+
+
+# ─── pre-flight gates ───────────────────────────────────────────────────────
+
+
+class TestPreflightGates:
+    def test_no_target_event_raises(self):
+        conn = _FakeConn()
+        # load_target_race_event_payload's first SELECT returns None
+        conn.queue(row=None)
+        cache = Layer4Cache(InMemoryCacheBackend())
+
+        with pytest.raises(OrchestrationError) as exc:
+            orchestrate_race_week_brief(conn, _USER_ID, cache=cache, today=_TODAY)
+        assert exc.value.code == "no_target_event"
+
+    def test_race_week_brief_too_early_raises_before_upstream_calls(self):
+        """Pre-flight check fires BEFORE Layer 1 / 2A / 3A LLM cost."""
+        conn = _FakeConn()
+        # Event 30 days out — outside auto-fire window
+        _queue_target_race_event(conn, event_date=_TODAY.replace(month=7, day=1))
+        cache = Layer4Cache(InMemoryCacheBackend())
+
+        stack = _patches(
+            layer4_return=_fake_layer4_payload(
+                race_event_payload=RaceEventPayload(
+                    race_event_id=1,
+                    user_id=_USER_ID,
+                    name="x",
+                    event_date=_EVENT_DATE,
+                    race_format="single_day",
+                    is_target_event=True,
+                )
+            )
+        )
+        mocks = _enter_all(stack)
+        try:
+            with pytest.raises(OrchestrationError) as exc:
+                orchestrate_race_week_brief(
+                    conn, _USER_ID, cache=cache, today=_TODAY
+                )
+        finally:
+            _exit_all(stack)
+
+        assert exc.value.code == "race_week_brief_too_early"
+        assert "days_to_event=30" in exc.value.detail
+        # None of the upstream stages were entered.
+        for m in mocks:
+            assert m.call_count == 0
+
+
+# ─── discovery failures ─────────────────────────────────────────────────────
+
+
+class TestDiscoveryFailures:
+    def test_etl_version_set_undiscoverable(self):
+        conn = _FakeConn()
+        _queue_target_race_event(conn)
+        conn.queue(row={"v": None})  # etl_version_set lookup returns NULL
+        cache = Layer4Cache(InMemoryCacheBackend())
+
+        with pytest.raises(OrchestrationError) as exc:
+            orchestrate_race_week_brief(conn, _USER_ID, cache=cache, today=_TODAY)
+        assert exc.value.code == "etl_version_set_undiscoverable"
+
+    def test_primary_locale_missing(self):
+        conn = _FakeConn()
+        _queue_target_race_event(conn)
+        _queue_etl_version_set(conn)
+        # build_layer1_payload is stubbed; orchestrator proceeds to
+        # _q_primary_locale next. Then _q_locale_equipment_pool.
+        conn.queue(row=None)  # locale_profiles lookup returns no row
+        cache = Layer4Cache(InMemoryCacheBackend())
+
+        with patch(
+            "layer4.orchestrator.build_layer1_payload",
+            return_value=_fake_layer1_payload(),
+        ), patch(
+            "layer4.orchestrator.q_layer2a_discipline_classifier_payload",
+            return_value=_fake_layer2a_payload(),
+        ), patch(
+            "layer4.orchestrator.q_layer2b_terrain_classifier_payload",
+            return_value=_fake_layer2b_payload(),
+        ), patch(
+            "layer4.orchestrator.q_layer2d_injury_risk_profile_payload",
+            return_value=_fake_layer2d_payload(),
+        ):
+            with pytest.raises(OrchestrationError) as exc:
+                orchestrate_race_week_brief(
+                    conn, _USER_ID, cache=cache, today=_TODAY
+                )
+        assert exc.value.code == "primary_locale_missing"
+
+    def test_framework_sport_missing(self):
+        conn = _FakeConn()
+        _queue_target_race_event(conn)
+        _queue_etl_version_set(conn)
+        cache = Layer4Cache(InMemoryCacheBackend())
+
+        # Layer1Payload with no primary_sport
+        l1_no_sport = Layer1Payload(
+            user_id=_USER_ID,
+            as_of=datetime.combine(_TODAY, datetime.min.time()),
+            identity=Layer1Identity(),  # primary_sport=None
+            health_status=Layer1HealthStatus(),
+            training_history=Layer1TrainingHistory(),
+            discipline_baselines=Layer1DisciplineBaselines(),
+            performance=Layer1Performance(),
+            availability=Layer1Availability(),
+            event_goal=Layer1EventGoal(),
+            lifestyle=Layer1Lifestyle(),
+            network=Layer1Network(),
+            disclosures=Layer1Disclosures(),
+        )
+        with patch(
+            "layer4.orchestrator.build_layer1_payload", return_value=l1_no_sport
+        ):
+            with pytest.raises(OrchestrationError) as exc:
+                orchestrate_race_week_brief(
+                    conn, _USER_ID, cache=cache, today=_TODAY
+                )
+        assert exc.value.code == "framework_sport_missing"
+
+
+# ─── defaults + multi-day duration ──────────────────────────────────────────
+
+
+class TestDefaults:
+    def test_today_kwarg_defaults_to_date_today(self):
+        """Production callers pass `today=None`; orchestrator anchors to
+        `date.today()`. We patch `date.today()` via the orchestrator module
+        and verify the resolved value propagates to the Layer 4 call."""
+        conn = _FakeConn()
+        # Race event one day from now — must satisfy `days_to_event <= 14`.
+        _queue_target_race_event(
+            conn, event_date=date.today().replace()  # placeholder; overwritten below
+        )
+        # Rebuild with a realistic date close to today.
+        conn.responses = []
+        _today_real = date.today()
+        _queue_target_race_event(conn, event_date=_today_real)
+        _queue_etl_version_set(conn)
+        _queue_primary_locale(conn)
+        _queue_locale_equipment_pool(conn)
+        cache = Layer4Cache(InMemoryCacheBackend())
+
+        race_event_for_l4 = RaceEventPayload(
+            race_event_id=1,
+            user_id=_USER_ID,
+            name="Test Race 2026",
+            event_date=_today_real,
+            race_format="single_day",
+            event_locale_id="home",
+            is_target_event=True,
+        )
+        stack = _patches(
+            layer4_return=_fake_layer4_payload(race_event_payload=race_event_for_l4)
+        )
+        # Layer3B fake must also report the same event_date so D-66 row 8
+        # would pass (defensive — the 3B driver in real code populates this).
+        stack[8] = patch(
+            "layer4.orchestrator.llm_layer3b_goal_timeline_viability",
+            return_value=_fake_layer3b_payload(event_date=_today_real),
+        )
+        mocks = _enter_all(stack)
+        try:
+            orchestrate_race_week_brief(conn, _USER_ID, cache=cache)
+        finally:
+            _exit_all(stack)
+
+        # `today` was None at call site → resolved via date.today() →
+        # threaded to the cached wrapper.
+        l4_kwargs = mocks[-1].call_args.kwargs
+        assert l4_kwargs["today"] == _today_real
+
+    def test_expedition_ar_format_uses_56h_duration_estimate(self):
+        conn = _FakeConn()
+        _queue_target_race_event(conn, race_format="expedition_ar")
+        _queue_etl_version_set(conn)
+        _queue_primary_locale(conn)
+        _queue_locale_equipment_pool(conn)
+        cache = Layer4Cache(InMemoryCacheBackend())
+
+        race_event_for_l4 = RaceEventPayload(
+            race_event_id=1,
+            user_id=_USER_ID,
+            name="Test Race 2026",
+            event_date=_EVENT_DATE,
+            race_format="expedition_ar",
+            event_locale_id="home",
+            is_target_event=True,
+        )
+        stack = _patches(
+            layer4_return=_fake_layer4_payload(race_event_payload=race_event_for_l4)
+        )
+        mocks = _enter_all(stack)
+        try:
+            orchestrate_race_week_brief(
+                conn, _USER_ID, cache=cache, today=_TODAY
+            )
+        finally:
+            _exit_all(stack)
+
+        m_l2e = mocks[5]
+        te = m_l2e.call_args.kwargs["target_events"][0]
+        assert te.estimated_duration_hr == 56.0
+
+
+# ─── OrchestrationError surface ─────────────────────────────────────────────
+
+
+class TestOrchestrationError:
+    def test_code_and_detail_round_trip(self):
+        err = OrchestrationError("x_y_z", detail="some detail")
+        assert err.code == "x_y_z"
+        assert err.detail == "some detail"
+        assert "x_y_z" in str(err)
+        assert "some detail" in str(err)
+
+    def test_no_detail(self):
+        err = OrchestrationError("bare")
+        assert str(err) == "bare"
