@@ -30,7 +30,9 @@ from layer4 import (
     InMemoryCacheBackend,
     Layer4Cache,
     OrchestrationError,
+    ParsedIntent,
     SingleSessionRequest,
+    orchestrate_plan_refresh,
     orchestrate_race_week_brief,
     orchestrate_single_session_synthesize,
 )
@@ -56,6 +58,7 @@ from layer4.context import (
     Layer2APayload,
     Layer2BPayload,
     Layer2BSummaryBlock,
+    Layer2Bundle,
     Layer2CPayload,
     Layer2DPayload,
     Layer2EPayload,
@@ -1595,6 +1598,561 @@ class TestOrchestrateSingleSessionSynthesizeReturnValue:
                 _USER_ID,
                 _request_with_locale(),
                 suggestion_id=99,
+                cache=cache,
+                today=_TODAY,
+            )
+        finally:
+            _exit_all(stack)
+        assert result is sentinel
+
+
+# ─── Phase 5.2 slice 2 — orchestrate_plan_refresh tests ─────────────────────
+
+
+def _plan_refresh_patches(*, layer4_return: Layer4Payload):
+    """Patch-stack for `orchestrate_plan_refresh`. Same 10 sites as
+    race_week_brief except the final cached wrapper is
+    `llm_layer4_plan_refresh_cached` (not `_race_week_brief_cached`). The
+    shared `_upstream_full_cone` helper calls these by their module-level
+    names so the patches apply transparently to both entry points."""
+    return [
+        patch(
+            "layer4.orchestrator.build_layer1_payload",
+            return_value=_fake_layer1_payload(),
+        ),
+        patch(
+            "layer4.orchestrator.q_layer2a_discipline_classifier_payload",
+            return_value=_fake_layer2a_payload(),
+        ),
+        patch(
+            "layer4.orchestrator.q_layer2b_terrain_classifier_payload",
+            return_value=_fake_layer2b_payload(),
+        ),
+        patch(
+            "layer4.orchestrator.q_layer2c_equipment_mapper_payload",
+            return_value=_fake_layer2c_payload(),
+        ),
+        patch(
+            "layer4.orchestrator.q_layer2d_injury_risk_profile_payload",
+            return_value=_fake_layer2d_payload(),
+        ),
+        patch(
+            "layer4.orchestrator.q_layer2e_nutrition_baseline_payload",
+            return_value=_fake_layer2e_payload(),
+        ),
+        patch(
+            "layer4.orchestrator.assemble_layer3a_integration_bundle",
+            return_value=object(),
+        ),
+        patch(
+            "layer4.orchestrator.llm_layer3a_athlete_state",
+            return_value=_fake_layer3a_payload(),
+        ),
+        patch(
+            "layer4.orchestrator.llm_layer3b_goal_timeline_viability",
+            return_value=_fake_layer3b_payload(),
+        ),
+        patch(
+            "layer4.orchestrator.llm_layer4_plan_refresh_cached",
+            return_value=layer4_return,
+        ),
+    ]
+
+
+def _fake_plan_refresh_layer4_payload(
+    *, plan_version_id: int = 2
+) -> Layer4Payload:
+    """Construct a valid Pattern B plan_refresh Layer4Payload. Mode invariants
+    (`payload.py:_check_mode_invariants` lines 553-565): mode='plan_refresh'
+    + pattern='B' requires phase_structure=None + seam_reviews=None."""
+    return Layer4Payload(
+        user_id=_USER_ID,
+        mode="plan_refresh",
+        plan_version_id=plan_version_id,
+        scope_start_date=_TODAY,
+        scope_end_date=date(2026, 6, 8),
+        model_synthesizer="claude-sonnet-4-6",
+        temperature=0.4,
+        pattern="B",
+        latency_ms_total=6000,
+        input_tokens_total=3500,
+        output_tokens_total=1800,
+        llm_call_count=1,
+        etl_version_set={"0A": "v7", "0B": "v7", "0C": "v7"},
+        sessions=[],
+        phase_structure=None,
+        seam_reviews=None,
+        validator_results=[
+            ValidatorResult(
+                pass_index=0,
+                accepted=True,
+                rule_failures=[],
+                retried_phase_names=[],
+            )
+        ],
+        notable_observations=[],
+    )
+
+
+def _default_prior_plan_session_window() -> list[PlanSession]:
+    """Single non-ad-hoc PlanSession for the prior-window kwarg. The driver
+    enforces non-empty; the orchestrator passes the list through verbatim
+    without inspecting its contents, so a single placeholder session is
+    enough for orchestrator-level tests."""
+    return [
+        PlanSession(
+            session_id="ps-prior-1",
+            plan_version_id=1,
+            date=date(2026, 5, 25),
+            day_of_week="Mon",
+            session_index_in_day=0,
+            time_of_day="morning",
+            kind="cardio",
+            discipline_id="D-run",
+            discipline_name="Running",
+            locale_id="home",
+            locale_name="Home",
+            duration_min=45,
+            intensity_summary="easy",
+            cardio_blocks=[
+                CardioBlock(
+                    block_kind="main_set",
+                    duration_min=45,
+                    intensity_zone="Z2",
+                    intensity_target=HRTarget(hr_bpm_low=125, hr_bpm_high=140),
+                    instructions="Steady easy.",
+                )
+            ],
+            session_notes="Easy aerobic.",
+            coaching_intent="Aerobic base.",
+            coaching_flags=[],
+            is_ad_hoc=False,
+        )
+    ]
+
+
+class TestOrchestratePlanRefreshHappyPath:
+    @pytest.mark.parametrize(
+        ("tier", "scope_days"),
+        [("T1", 2), ("T2", 7), ("T3", 28)],
+    )
+    def test_tier_dispatch_pipeline_in_order(self, tier, scope_days):
+        """T1/T2/T3 happy path: full upstream cone fires; tier kwarg threads
+        verbatim to the cached wrapper; refresh_scope dates thread."""
+        conn = _FakeConn()
+        _queue_target_race_event(conn)
+        _queue_etl_version_set(conn)
+        _queue_primary_locale(conn)
+        _queue_locale_equipment_pool(conn)
+        cache = Layer4Cache(InMemoryCacheBackend())
+
+        scope_start = _TODAY
+        scope_end = date(2026, 6, 1 + scope_days - 1)
+        sentinel = _fake_plan_refresh_layer4_payload(plan_version_id=2)
+        stack = _plan_refresh_patches(layer4_return=sentinel)
+        mocks = _enter_all(stack)
+        try:
+            result = orchestrate_plan_refresh(
+                conn,
+                _USER_ID,
+                tier=tier,
+                refresh_scope_start=scope_start,
+                refresh_scope_end=scope_end,
+                plan_version_id=2,
+                plan_version_id_parent=1,
+                prior_plan_session_window=_default_prior_plan_session_window(),
+                cache=cache,
+                plan_start_date=date(2026, 4, 1) if tier == "T3" else None,
+                today=_TODAY,
+            )
+        finally:
+            _exit_all(stack)
+
+        assert result is sentinel
+        # All 10 upstream + wrapper sites fire exactly once.
+        for m in mocks:
+            assert m.call_count == 1
+
+        # Cached wrapper kwargs reflect the orchestrator's composition.
+        (*_others, m_wrapper) = mocks
+        kw = m_wrapper.call_args.kwargs
+        assert kw["user_id"] == _USER_ID
+        assert kw["tier"] == tier
+        assert kw["refresh_scope_start"] == scope_start
+        assert kw["refresh_scope_end"] == scope_end
+        assert kw["plan_version_id"] == 2
+        assert kw["plan_version_id_parent"] == 1
+        assert kw["cache"] is cache
+        assert kw["parsed_intent"] is None  # default
+        if tier == "T3":
+            assert kw["plan_start_date"] == date(2026, 4, 1)
+        else:
+            assert kw["plan_start_date"] is None
+        # layer1_payload threaded as dict (matches single_session + race_week_brief)
+        assert isinstance(kw["layer1_payload"], dict)
+        # Layer2Bundle packs all 5 layer-2 payloads; c is dict keyed by locale.
+        bundle = kw["layer2_bundle"]
+        assert isinstance(bundle, Layer2Bundle)
+        assert bundle.a is not None
+        assert bundle.b is not None
+        assert set(bundle.c.keys()) == {"home"}
+        assert bundle.d is not None
+        assert bundle.e is not None
+
+    def test_parsed_intent_threads_to_wrapper(self):
+        """`parsed_intent` kwarg threads verbatim — orchestrator does not
+        construct a default ParsedIntent; None passes through per D-64 §5.4
+        graceful-degradation contract."""
+        conn = _FakeConn()
+        _queue_target_race_event(conn)
+        _queue_etl_version_set(conn)
+        _queue_primary_locale(conn)
+        _queue_locale_equipment_pool(conn)
+        cache = Layer4Cache(InMemoryCacheBackend())
+
+        pi = ParsedIntent(
+            triggers_2a_discipline=True,
+            fatigue_signal="tired",
+            raw_text="cut volume this week",
+        )
+        sentinel = _fake_plan_refresh_layer4_payload()
+        stack = _plan_refresh_patches(layer4_return=sentinel)
+        mocks = _enter_all(stack)
+        try:
+            orchestrate_plan_refresh(
+                conn,
+                _USER_ID,
+                tier="T2",
+                refresh_scope_start=_TODAY,
+                refresh_scope_end=date(2026, 6, 7),
+                plan_version_id=2,
+                plan_version_id_parent=1,
+                prior_plan_session_window=_default_prior_plan_session_window(),
+                cache=cache,
+                parsed_intent=pi,
+                today=_TODAY,
+            )
+        finally:
+            _exit_all(stack)
+
+        kw = mocks[-1].call_args.kwargs
+        assert kw["parsed_intent"] is pi
+
+
+class TestOrchestratePlanRefreshPreflightGates:
+    """3 gates shared with race_week_brief (raised by `_upstream_full_cone`).
+    No `no_target_event` gate (no-event mode is supported)."""
+
+    def test_etl_version_set_undiscoverable(self):
+        conn = _FakeConn()
+        _queue_target_race_event(conn)
+        conn.queue(row={"v": None})  # etl_version lookup returns NULL
+        cache = Layer4Cache(InMemoryCacheBackend())
+
+        with pytest.raises(OrchestrationError) as exc:
+            orchestrate_plan_refresh(
+                conn,
+                _USER_ID,
+                tier="T1",
+                refresh_scope_start=_TODAY,
+                refresh_scope_end=_TODAY,
+                plan_version_id=2,
+                plan_version_id_parent=1,
+                prior_plan_session_window=_default_prior_plan_session_window(),
+                cache=cache,
+                today=_TODAY,
+            )
+        assert exc.value.code == "etl_version_set_undiscoverable"
+
+    def test_primary_locale_missing(self):
+        conn = _FakeConn()
+        _queue_target_race_event(conn)
+        _queue_etl_version_set(conn)
+        conn.queue(row=None)  # locale_profiles 'home' lookup returns no row
+        cache = Layer4Cache(InMemoryCacheBackend())
+
+        with patch(
+            "layer4.orchestrator.build_layer1_payload",
+            return_value=_fake_layer1_payload(),
+        ), patch(
+            "layer4.orchestrator.q_layer2a_discipline_classifier_payload",
+            return_value=_fake_layer2a_payload(),
+        ):
+            with pytest.raises(OrchestrationError) as exc:
+                orchestrate_plan_refresh(
+                    conn,
+                    _USER_ID,
+                    tier="T2",
+                    refresh_scope_start=_TODAY,
+                    refresh_scope_end=date(2026, 6, 7),
+                    plan_version_id=2,
+                    plan_version_id_parent=1,
+                    prior_plan_session_window=_default_prior_plan_session_window(),
+                    cache=cache,
+                    today=_TODAY,
+                )
+        assert exc.value.code == "primary_locale_missing"
+
+    def test_framework_sport_missing(self):
+        conn = _FakeConn()
+        _queue_target_race_event(conn)
+        _queue_etl_version_set(conn)
+        cache = Layer4Cache(InMemoryCacheBackend())
+
+        l1_no_sport = Layer1Payload(
+            user_id=_USER_ID,
+            as_of=datetime.combine(_TODAY, datetime.min.time()),
+            identity=Layer1Identity(),  # primary_sport=None
+            health_status=Layer1HealthStatus(),
+            training_history=Layer1TrainingHistory(),
+            discipline_baselines=Layer1DisciplineBaselines(),
+            performance=Layer1Performance(),
+            availability=Layer1Availability(),
+            event_goal=Layer1EventGoal(),
+            lifestyle=Layer1Lifestyle(),
+            network=Layer1Network(),
+            disclosures=Layer1Disclosures(),
+        )
+        with patch(
+            "layer4.orchestrator.build_layer1_payload", return_value=l1_no_sport
+        ):
+            with pytest.raises(OrchestrationError) as exc:
+                orchestrate_plan_refresh(
+                    conn,
+                    _USER_ID,
+                    tier="T1",
+                    refresh_scope_start=_TODAY,
+                    refresh_scope_end=_TODAY,
+                    plan_version_id=2,
+                    plan_version_id_parent=1,
+                    prior_plan_session_window=_default_prior_plan_session_window(),
+                    cache=cache,
+                    today=_TODAY,
+                )
+        assert exc.value.code == "framework_sport_missing"
+
+
+class TestOrchestratePlanRefreshNoEventMode:
+    def test_no_target_race_threads_race_event_payload_none(self):
+        """When the athlete has no `is_target_event=true` race row,
+        plan_refresh proceeds (unlike race_week_brief, which raises
+        `no_target_event`). Layer 2B's `race_terrain` is `[]`, Layer 2E's
+        `target_events` is `[]`, Layer 3B's `race_event_payload` is `None`."""
+        conn = _FakeConn()
+        # load_target_race_event_payload's first SELECT returns None
+        conn.queue(row=None)
+        _queue_etl_version_set(conn)
+        _queue_primary_locale(conn)
+        _queue_locale_equipment_pool(conn)
+        cache = Layer4Cache(InMemoryCacheBackend())
+
+        sentinel = _fake_plan_refresh_layer4_payload()
+        stack = _plan_refresh_patches(layer4_return=sentinel)
+        mocks = _enter_all(stack)
+        try:
+            result = orchestrate_plan_refresh(
+                conn,
+                _USER_ID,
+                tier="T2",
+                refresh_scope_start=_TODAY,
+                refresh_scope_end=date(2026, 6, 7),
+                plan_version_id=2,
+                plan_version_id_parent=1,
+                prior_plan_session_window=_default_prior_plan_session_window(),
+                cache=cache,
+                today=_TODAY,
+            )
+        finally:
+            _exit_all(stack)
+
+        assert result is sentinel
+        # 2B receives race_terrain=[] (empty), 2E receives target_events=[],
+        # 3B receives race_event_payload=None.
+        (
+            _m_l1,
+            _m_l2a,
+            m_l2b,
+            _m_l2c,
+            _m_l2d,
+            m_l2e,
+            _m_bundle,
+            _m_l3a,
+            m_l3b,
+            _m_wrapper,
+        ) = mocks
+        assert m_l2b.call_args.kwargs["race_terrain"] == []
+        assert m_l2e.call_args.kwargs["target_events"] == []
+        assert m_l3b.call_args.kwargs["race_event_payload"] is None
+
+
+class TestOrchestratePlanRefreshDefaults:
+    def test_today_kwarg_defaults_to_date_today(self):
+        """Production callers pass `today=None`; orchestrator anchors to
+        `date.today()` and threads the resolved value into the upstream
+        pipeline (Layer 2E `today` kwarg + Layer 3B `current_date`)."""
+        conn = _FakeConn()
+        _queue_target_race_event(conn, event_date=date.today())
+        _queue_etl_version_set(conn)
+        _queue_primary_locale(conn)
+        _queue_locale_equipment_pool(conn)
+        cache = Layer4Cache(InMemoryCacheBackend())
+
+        sentinel = _fake_plan_refresh_layer4_payload()
+        stack = _plan_refresh_patches(layer4_return=sentinel)
+        # Layer3B fake reports event_date matching the queued race row so the
+        # D-66 model-validator row 8 (event_date consistency) passes.
+        stack[8] = patch(
+            "layer4.orchestrator.llm_layer3b_goal_timeline_viability",
+            return_value=_fake_layer3b_payload(event_date=date.today()),
+        )
+        mocks = _enter_all(stack)
+        try:
+            orchestrate_plan_refresh(
+                conn,
+                _USER_ID,
+                tier="T1",
+                refresh_scope_start=date.today(),
+                refresh_scope_end=date.today(),
+                plan_version_id=2,
+                plan_version_id_parent=1,
+                prior_plan_session_window=_default_prior_plan_session_window(),
+                cache=cache,
+                # today omitted → defaults to date.today()
+            )
+        finally:
+            _exit_all(stack)
+
+        # Layer 3B current_date = today (resolved).
+        m_l3b = mocks[8]
+        assert m_l3b.call_args.kwargs["current_date"] == date.today()
+
+    def test_parsed_intent_defaults_to_none(self):
+        """`parsed_intent` kwarg defaults to None when caller omits — matches
+        the D-64 §5.4 graceful-degradation contract."""
+        conn = _FakeConn()
+        _queue_target_race_event(conn)
+        _queue_etl_version_set(conn)
+        _queue_primary_locale(conn)
+        _queue_locale_equipment_pool(conn)
+        cache = Layer4Cache(InMemoryCacheBackend())
+
+        sentinel = _fake_plan_refresh_layer4_payload()
+        stack = _plan_refresh_patches(layer4_return=sentinel)
+        mocks = _enter_all(stack)
+        try:
+            orchestrate_plan_refresh(
+                conn,
+                _USER_ID,
+                tier="T2",
+                refresh_scope_start=_TODAY,
+                refresh_scope_end=date(2026, 6, 7),
+                plan_version_id=2,
+                plan_version_id_parent=1,
+                prior_plan_session_window=_default_prior_plan_session_window(),
+                cache=cache,
+                today=_TODAY,
+                # parsed_intent omitted
+            )
+        finally:
+            _exit_all(stack)
+
+        assert mocks[-1].call_args.kwargs["parsed_intent"] is None
+
+
+class TestOrchestratePlanRefreshTierPassThrough:
+    def test_t3_plan_start_date_threads_to_wrapper(self):
+        """T3 requires plan_start_date for the driver's
+        `phase_structure_from_3b()` boundary detection. Orchestrator threads
+        the caller-supplied value verbatim — does not derive."""
+        conn = _FakeConn()
+        _queue_target_race_event(conn)
+        _queue_etl_version_set(conn)
+        _queue_primary_locale(conn)
+        _queue_locale_equipment_pool(conn)
+        cache = Layer4Cache(InMemoryCacheBackend())
+
+        plan_start = date(2026, 4, 1)
+        sentinel = _fake_plan_refresh_layer4_payload()
+        stack = _plan_refresh_patches(layer4_return=sentinel)
+        mocks = _enter_all(stack)
+        try:
+            orchestrate_plan_refresh(
+                conn,
+                _USER_ID,
+                tier="T3",
+                refresh_scope_start=_TODAY,
+                refresh_scope_end=date(2026, 6, 28),
+                plan_version_id=2,
+                plan_version_id_parent=1,
+                prior_plan_session_window=_default_prior_plan_session_window(),
+                cache=cache,
+                plan_start_date=plan_start,
+                today=_TODAY,
+            )
+        finally:
+            _exit_all(stack)
+
+        assert mocks[-1].call_args.kwargs["plan_start_date"] == plan_start
+
+    def test_prior_plan_session_window_threads_verbatim(self):
+        """Orchestrator passes `prior_plan_session_window` through without
+        inspection or modification — driver enforces non-empty."""
+        conn = _FakeConn()
+        _queue_target_race_event(conn)
+        _queue_etl_version_set(conn)
+        _queue_primary_locale(conn)
+        _queue_locale_equipment_pool(conn)
+        cache = Layer4Cache(InMemoryCacheBackend())
+
+        prior_window = _default_prior_plan_session_window()
+        sentinel = _fake_plan_refresh_layer4_payload()
+        stack = _plan_refresh_patches(layer4_return=sentinel)
+        mocks = _enter_all(stack)
+        try:
+            orchestrate_plan_refresh(
+                conn,
+                _USER_ID,
+                tier="T1",
+                refresh_scope_start=_TODAY,
+                refresh_scope_end=_TODAY,
+                plan_version_id=2,
+                plan_version_id_parent=1,
+                prior_plan_session_window=prior_window,
+                cache=cache,
+                today=_TODAY,
+            )
+        finally:
+            _exit_all(stack)
+
+        # Same list object passes through (orchestrator does not copy).
+        assert mocks[-1].call_args.kwargs["prior_plan_session_window"] is prior_window
+
+
+class TestOrchestratePlanRefreshReturnValue:
+    def test_returns_cached_wrapper_output_verbatim(self):
+        """Orchestrator returns whatever `llm_layer4_plan_refresh_cached`
+        returns. Matches the single_session + race_week_brief precedents —
+        no wrap/modify/validate at orchestrator level."""
+        conn = _FakeConn()
+        _queue_target_race_event(conn)
+        _queue_etl_version_set(conn)
+        _queue_primary_locale(conn)
+        _queue_locale_equipment_pool(conn)
+        cache = Layer4Cache(InMemoryCacheBackend())
+
+        sentinel = _fake_plan_refresh_layer4_payload()
+        stack = _plan_refresh_patches(layer4_return=sentinel)
+        mocks = _enter_all(stack)
+        try:
+            result = orchestrate_plan_refresh(
+                conn,
+                _USER_ID,
+                tier="T1",
+                refresh_scope_start=_TODAY,
+                refresh_scope_end=_TODAY,
+                plan_version_id=2,
+                plan_version_id_parent=1,
+                prior_plan_session_window=_default_prior_plan_session_window(),
                 cache=cache,
                 today=_TODAY,
             )

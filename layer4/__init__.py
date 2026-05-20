@@ -114,6 +114,7 @@ from layer4.cache_invalidation import (
 )
 from layer4.orchestrator import (
     OrchestrationError,
+    orchestrate_plan_refresh,
     orchestrate_race_week_brief,
     orchestrate_single_session_synthesize,
 )
@@ -280,6 +281,7 @@ __all__ = [
     "policy_for_layer",
     # Orchestrator (orchestrator.py) — Phase 5.1 + Phase 5.2 vertical slices
     "OrchestrationError",
+    "orchestrate_plan_refresh",
     "orchestrate_race_week_brief",
     "orchestrate_single_session_synthesize",
     # AccommodationModality discriminated union (context.py)
