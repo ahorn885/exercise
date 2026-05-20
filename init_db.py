@@ -1551,6 +1551,31 @@ _PG_MIGRATIONS = [
     "    WHERE gap_severity = 'partial' AND superseded_at IS NULL; "
     "  END IF; "
     "END $$;",
+    # Phase 5.2 caller-side substrate (2026-05-20) — `plan_sessions` table
+    # per Layer 4 §7.11 natural-key reference + §7.12 schema-level rules.
+    # Each row stores one `PlanSession` from a `Layer4Payload.sessions` list
+    # as JSONB; the natural key `(plan_version_id, date, session_index_in_day)`
+    # is UNIQUE-constrained (no two sessions on the same slot under the same
+    # plan version). user_id is denormalized for fast (user_id, date) lookups
+    # bypassing the plan_versions join. Per-day version pointer per D-64 §6.3
+    # is implemented by DISTINCT ON (date, session_index_in_day) ORDER BY
+    # plan_version_id DESC at read time. payload_json carries the full
+    # PlanSession.model_dump(mode='json'); v1 stores the whole structure
+    # rather than denormalizing 17+ columns (denormalize when plan-view
+    # queries become load-bearing).
+    """CREATE TABLE IF NOT EXISTS plan_sessions (
+        id BIGSERIAL PRIMARY KEY,
+        plan_version_id BIGINT NOT NULL REFERENCES plan_versions(id) ON DELETE CASCADE,
+        user_id INTEGER NOT NULL REFERENCES users(id),
+        session_id TEXT NOT NULL,
+        date DATE NOT NULL,
+        session_index_in_day SMALLINT NOT NULL CHECK (session_index_in_day IN (0, 1)),
+        payload_json JSONB NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        UNIQUE (plan_version_id, date, session_index_in_day)
+    )""",
+    "CREATE INDEX IF NOT EXISTS plan_sessions_user_date_idx ON plan_sessions (user_id, date)",
+    "CREATE INDEX IF NOT EXISTS plan_sessions_user_version_idx ON plan_sessions (user_id, plan_version_id)",
 ]
 
 _CLOTHING_SEEDS = [
