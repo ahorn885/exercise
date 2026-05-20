@@ -99,7 +99,6 @@ SELECT
   pla.taper_pct_low,   pla.taper_pct_high,
   pla.role            AS pla_role,
   pla.notes_conditions,
-  pla.default_inclusion,
   dtg.gap_type,
   dtg.notes           AS gap_notes,
   dtg.multi_substitute_candidate
@@ -123,6 +122,7 @@ LEFT JOIN layer0.discipline_training_gaps dtg
 - **D-05 standing filter** applied on PLA: `AND discipline_name NOT LIKE '%WEEKLY TOTAL%'`. Mandatory per drift backlog.
 - `applicability = 'INCLUDED'` filter on SDM matches the spec §4.4 rule — EXCLUDED rows are loaded for documentation but not consumed at runtime.
 - LEFT JOINs on PLA and DTG — a discipline may legitimately have no phase-load row for a specific sub-format sport, and most disciplines don't have a training gap entry.
+- `default_inclusion` is **not** a column on `layer0.phase_load_allocation` (an earlier draft of this spec referenced `pla.default_inclusion`; the column was never added). 2A derives it code-side from `notes_conditions` text per §5.3 — rows whose `notes_conditions` starts with `*CONDITIONAL` map to `'prompt_required'`; otherwise `'included'`. The typed payload field (`SportDisciplineRow.default_inclusion`) is populated from this derivation.
 
 ### 5.3 Conditional resolution
 
@@ -371,7 +371,7 @@ For non-AR sports with sub-format mapping, add ~10ms for the regex strip. Neglig
 
 | # | Item | Owner | Status |
 |---|---|---|---|
-| 2A-1 | Rationale template quality bar — needs content review pass per athlete-facing UX | Product / content | Open Item B from locking session |
+| 2A-1 | Rationale template quality bar — needs content review pass per athlete-facing UX | Product / content | 🟡 Partial-close 2026-05-20. v1 templates shipped Andy-quality 2026-05-19 (Phase 2.1) per Andy's "don't defer" call. Full athlete-facing content review naturally falls out of Phase 5.1 orchestrator vertical slice when `race_week_brief` surfaces the strings to Andy in production. |
 | 2A-2 | Conditional rule encoding — currently code-side; candidate for `discipline_conditional_rules` table if rules proliferate | Future | Defer until rule count grows |
 | 2A-3 | D-17 resolution path for non-AR sports — sub-format selection in onboarding spec | Layer 1 race-goal capture | Tracked in `Project_Backlog.md` |
 | 2A-4 | D-05 ETL fix to filter aggregator rows from PLA — will allow removing the defensive `LIKE` filter | FC-1 | Tracked in `Project_Backlog.md` |

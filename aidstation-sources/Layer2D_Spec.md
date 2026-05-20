@@ -61,7 +61,7 @@ def q_layer2d_injury_risk_profile_payload(
 class InjuryRecord:
     body_part: str                       # Canonical from body_parts vocab (B.2)
     side: str                            # 'Left' | 'Right' | 'Both' | 'N/A'
-    injury_type: str                     # 9-value enum from B.1.1
+    injury_type: str                     # 11-value enum from B.1.1
     severity: str                        # 'Acute' | 'Recovering' | 'Chronic-Managed' | 'Post-surgical' | 'Structural-Permanent' | 'Resolved'
     movement_constraints: list[str]      # Multi-select from B.3 (e.g., 'Pain with wrist extension')
     date_of_onset: date
@@ -92,7 +92,7 @@ Fail-loud on bad inputs. Validation happens before any DB query.
 1. `injuries` and `conditions` are lists (may be empty).
 2. Each `InjuryRecord.body_part` is a string. Canonical-name validation against `layer0.body_parts.canonical_name` is **soft** — unknown body parts are logged at WARN and skipped from contraindication matching (but still attached to relevant `coaching_flags` so they aren't lost). Don't fail the call on a vocab miss.
 3. Each `InjuryRecord.severity` is in the 6-value enum.
-4. Each `InjuryRecord.injury_type` is in the 9-value enum (B.1.1) — fail-loud, since this is a closed enum collected at onboarding.
+4. Each `InjuryRecord.injury_type` is in the 11-value enum (B.1.1) — fail-loud, since this is a closed enum collected at onboarding.
 5. Each `HealthConditionRecord.system_category` is in the 11-value enum (B.4.1) — fail-loud, same reason.
 6. Each `HealthConditionRecord.status` is `'Current'` or `'History'`.
 7. `included_discipline_ids` is a non-empty list of strings.
