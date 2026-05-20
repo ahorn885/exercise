@@ -113,17 +113,6 @@ def _proxy_row(
 
 
 class TestInputValidation:
-    def test_empty_race_terrain_raises(self):
-        conn = _FakeConn()
-        with pytest.raises(Layer2BInputError, match="non-empty"):
-            q_layer2b_terrain_classifier_payload(
-                conn,
-                race_terrain=[],
-                locale_terrain_ids=["TRN-001"],
-                included_discipline_ids=["D-001"],
-                etl_version_set=_DEFAULT_ETL,
-            )
-
     def test_invalid_trn_pattern_raises(self):
         conn = _FakeConn()
         bad = RaceTerrainEntry(terrain_id="trail", pct_of_race=100.0)
@@ -531,3 +520,95 @@ class TestCleanBaseline:
         assert payload.summary.any_undefined is False
         assert payload.terrain_gaps == []
         assert payload.coaching_flags == []
+
+
+# ─── Phase 5.1 form-refresh C — empty race_terrain (loosen pair) ─────────────
+
+
+class TestEmptyRaceTerrainLoosen:
+    """Phase 5.1 form-refresh C — `_validate_inputs` loosened to accept
+    empty `race_terrain`. The Layer 2B payload returns with empty terrain
+    + a single `race_terrain_unset` coaching flag so plan-gen can surface
+    the missing input as a data-gap warning rather than failing.
+
+    Spec §4 condition 1 amended; §8.4 new flag definition.
+    """
+
+    def test_empty_race_terrain_returns_payload_with_race_terrain_unset_flag(self):
+        conn = _FakeConn()
+        # No SQL fired — empty terrain skips the per-gap proxy loop AND
+        # `_load_terrain_names` (passed an empty list, returns {} without
+        # execute() per the early-return branch).
+        payload = q_layer2b_terrain_classifier_payload(
+            conn,
+            race_terrain=[],
+            locale_terrain_ids=["TRN-002"],
+            included_discipline_ids=["D-001"],
+            etl_version_set=_DEFAULT_ETL,
+        )
+
+        assert payload.race_terrain == []
+        assert payload.terrain_gaps == []
+        assert payload.summary.total_race_terrain_count == 0
+        assert payload.summary.gap_count == 0
+        assert payload.summary.covered_count == 0
+        assert payload.summary.bridgeable_count == 0
+        assert payload.summary.unbridgeable_count == 0
+        assert payload.summary.min_adaptation_weeks_needed == 0
+        assert payload.summary.worst_fidelity == 1.0
+        assert payload.summary.pct_of_race_uncovered == 0.0
+        assert payload.summary.any_unbridgeable is False
+        assert payload.summary.any_undefined is False
+        assert len(payload.coaching_flags) == 1
+        flag = payload.coaching_flags[0]
+        assert flag.flag_type == "race_terrain_unset"
+        assert flag.target_terrain_id is None
+        assert "Race terrain breakdown not captured" in flag.message
+        assert flag.metadata == {}
+
+    def test_empty_race_terrain_with_empty_locale_still_emits_unset_flag(self):
+        """Both empty — race_terrain takes precedence; only one flag fires."""
+        conn = _FakeConn()
+        payload = q_layer2b_terrain_classifier_payload(
+            conn,
+            race_terrain=[],
+            locale_terrain_ids=[],
+            included_discipline_ids=["D-001"],
+            etl_version_set=_DEFAULT_ETL,
+        )
+        assert [f.flag_type for f in payload.coaching_flags] == [
+            "race_terrain_unset"
+        ]
+
+    def test_non_list_race_terrain_still_raises(self):
+        conn = _FakeConn()
+        with pytest.raises(Layer2BInputError, match="must be a list"):
+            q_layer2b_terrain_classifier_payload(
+                conn,
+                race_terrain="TRN-001",  # type: ignore[arg-type]
+                locale_terrain_ids=[],
+                included_discipline_ids=["D-001"],
+                etl_version_set=_DEFAULT_ETL,
+            )
+
+    def test_other_validation_still_fires_on_empty_terrain(self):
+        """Empty `race_terrain` doesn't bypass the rest of `_validate_inputs`
+        — included_discipline_ids must still be non-empty + etl_version_set
+        must still carry the required keys."""
+        conn = _FakeConn()
+        with pytest.raises(Layer2BInputError, match="included_discipline_ids"):
+            q_layer2b_terrain_classifier_payload(
+                conn,
+                race_terrain=[],
+                locale_terrain_ids=["TRN-001"],
+                included_discipline_ids=[],
+                etl_version_set=_DEFAULT_ETL,
+            )
+        with pytest.raises(Layer2BInputError, match="etl_version_set"):
+            q_layer2b_terrain_classifier_payload(
+                conn,
+                race_terrain=[],
+                locale_terrain_ids=["TRN-001"],
+                included_discipline_ids=["D-001"],
+                etl_version_set={"0A": "v1"},
+            )

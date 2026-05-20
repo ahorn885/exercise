@@ -55,10 +55,17 @@ See §7 below.
 
 ## 4. Input validation (preconditions)
 
-1. `race_terrain` non-empty list.
-2. Each entry's `terrain_id` matches the pattern `TRN-\d{3}`.
-3. Each entry's `pct_of_race` is in [0.0, 100.0].
-4. Sum of `pct_of_race` across entries is in [80.0, 120.0] (lenient — race breakdowns are estimates, perfect 100% is unrealistic).
+1. `race_terrain` is a list (may be empty — empty surfaces as a
+   `race_terrain_unset` coaching flag per §8.4 rather than failing).
+   Amended 2026-05-20 (Phase 5.1 form-refresh C) to loosen from the
+   prior "non-empty list" requirement: the §H.2 capture surface is now
+   optional + skippable; athletes who haven't captured terrain still get
+   a working orchestrator end-to-end with the missing input surfaced as
+   a data-gap flag.
+2. Each entry's `terrain_id` matches the pattern `TRN-\d{3}`. (Checked
+   only when `race_terrain` is non-empty.)
+3. Each entry's `pct_of_race` is in [0.0, 100.0]. (Non-empty only.)
+4. Sum of `pct_of_race` across entries is in [80.0, 120.0] (lenient — race breakdowns are estimates, perfect 100% is unrealistic). (Non-empty only.)
 5. `locale_terrain_ids` is a list (may be empty — extreme case is valid).
 6. Each `locale_terrain_id` matches `TRN-\d{3}` pattern.
 7. `included_discipline_ids` non-empty.
@@ -277,6 +284,33 @@ CoachingFlag(
 
 Surfaces as warning for spec maintainers — indicates terrain_gap_rules needs a new row.
 
+### 8.4 Race terrain unset (data gap)
+
+Added 2026-05-20 (Phase 5.1 form-refresh C — paired with the §4 condition 1
+loosen).
+
+Trigger: `race_terrain` is empty (athlete hasn't completed §H.2 capture).
+The payload returns with empty `race_terrain` + empty `terrain_gaps` and
+this single flag — Layer 4 / plan-gen consumes the flag as a data-gap
+warning rather than failing on the empty input.
+
+```python
+CoachingFlag(
+    flag_type='race_terrain_unset',
+    target_terrain_id=None,
+    message=(
+        "Race terrain breakdown not captured — terrain gap analysis "
+        "skipped. Capture race terrain in onboarding §H.2 or the "
+        "race-event edit form."
+    ),
+    metadata={},
+)
+```
+
+When this flag fires, the other §8 triggers (§8.1 / §8.2 / §8.3) cannot
+fire — no race terrain → no gaps → no proxy resolutions. The flag is
+mutually exclusive with the gap-driven flags.
+
 ## 9. Caching & determinism
 
 **Cache key:**
@@ -304,6 +338,7 @@ Surfaces as warning for spec maintainers — indicates terrain_gap_rules needs a
 |---|---|
 | All race terrain available locally | `gap_count=0`, `worst_fidelity=1.0`, no gaps in payload, `any_unbridgeable=False`. Empty `coaching_flags[]`. |
 | All race terrain UN-available | Many gaps. Athlete-side reality check needed; plan-gen decides. 2B reports honestly. |
+| Empty `race_terrain` (added 2026-05-20, Phase 5.1 form-refresh C) | Payload returns empty `race_terrain[]` + empty `terrain_gaps[]` + summary with all zero counts + `worst_fidelity=1.0` + `pct_of_race_uncovered=0.0` + a single `race_terrain_unset` coaching flag per §8.4. Validation accepts (loosened from §4 condition 1's prior "non-empty list" requirement); discipline + ETL checks still fire. |
 | Empty `locale_terrain_ids` | Everything in race terrain is a gap. Same as above, more aggressive. |
 | Race-terrain pct sums to 95% (slight under) | Validated as in [80, 120]. Pass through. |
 | Race-terrain pct sums to 60% (well under) | Validation failure. |
@@ -329,7 +364,7 @@ Surfaces as warning for spec maintainers — indicates terrain_gap_rules needs a
 | # | Item | Owner | Status |
 |---|---|---|---|
 | 2B-1 | Add `relevant_discipline_ids TEXT[]` column to `terrain_gap_rules` for structured discipline-relevance | FC-1 | Not blocking; current relevance check is loose |
-| 2B-2 | `§J Locale terrain access` field must use TRN-xxx IDs as controlled vocabulary | Layer 1 onboarding spec | Open Item A from 2B locking; blocks 2B runtime not design |
+| 2B-2 | `§J Locale terrain access` field must use TRN-xxx IDs as controlled vocabulary | Layer 1 onboarding spec | Open Item A from 2B locking; ✅ **Resolved 2026-05-20** (Phase 5.1 form-refresh C). `locale_profiles.locale_terrain_ids TEXT[] NOT NULL DEFAULT '{}'` migrated via `init_db.py` `_PG_MIGRATIONS`; `routes/locales.py` exposes a multi-checkbox widget keyed on canonical TRN-xxx (`_terrain_choices(db)` + `_parse_locale_terrain(form)` + `_hydrate_locale_terrain_ids(row)` + `_evict_layer2b_on_terrain_change(db, uid)`); `templates/locales/form.html` renders the checkbox grid on both legacy + shared-locale edit branches; orchestrator's `_q_locale_terrain_ids(db, uid, primary_locale)` reads the home-locale row and threads into `q_layer2b_terrain_classifier_payload`. Multi-locale cluster union (§3 spec text) remains v1 future work — home-only matches the existing `_q_locale_equipment_pool` pattern. Paired loosen on `_validate_inputs` empty-race_terrain landed in the same slice. |
 | 2B-3 | `§H.2 Race Terrain Type` field must use TRN-xxx IDs as controlled vocabulary | Layer 1 onboarding spec | Open Item E from 2B locking; ✅ **Resolved 2026-05-20** (Phase 5.1 form-refresh A + B). Form-refresh A 2026-05-20 captured terrain on the race-event edit path; Form-refresh B 2026-05-20 closed the §H.2 onboarding step-3c surface (`routes/onboarding.py:target_race_save()` threads `race_terrain` + `aid_stations` through to `create_race_event` / `update_race_event`; `templates/onboarding/target_race.html` renders the same TRN-xxx + percentage editor as the post-onboarding edit surface via the shared `templates/_race_terrain_editor.html` partial). Layer 2B `_validate_inputs` still rejects empty race_terrain loudly (separate loosen-for-empty follow-on; paired with form-refresh C). |
 | 2B-4 | Plan confirmation UI step — surface terrain gaps to athlete before Layer 4 runs | Product design | Open Item C from 2B locking |
 

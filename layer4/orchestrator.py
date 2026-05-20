@@ -12,13 +12,18 @@ that all five Layer 4 entry points will eventually share substrate with
 `single_session_synthesize` + `plan_refresh` tiers land).
 
 Vertical-slice limitations carried as forward-pointers:
-- Layer 2B `locale_terrain_ids` is empty until the §J locale-terrain
-  capture surface ships (Open Item 2B-2). `race_terrain` now flows from
-  `RaceEventPayload.race_terrain` per the Phase 5.1 form-refresh A slice
-  (2026-05-20); athletes who haven't captured any terrain rows surface
-  here as `race_terrain=[]`, which Layer 2B's `_validate_inputs` still
-  rejects loudly — full tolerance lives in a separate follow-on that
-  loosens the validator to emit a coaching flag instead.
+- Layer 2B inputs now flow end-to-end per Phase 5.1 form-refresh A/B/C
+  (2026-05-20): `race_terrain` from `RaceEventPayload.race_terrain`
+  (Form-refresh A + B, Open Item 2B-3 closed); `locale_terrain_ids` from
+  the home `locale_profiles.locale_terrain_ids` TEXT[] column (Form-refresh
+  C, Open Item 2B-2 closed). Athletes who haven't yet captured race
+  terrain surface as `race_terrain=[]`, which Layer 2B's loosened
+  `_validate_inputs` accepts and emits a `race_terrain_unset` coaching
+  flag instead of failing (paired loosen shipped with Form-refresh C).
+  Empty `locale_terrain_ids` was already a supported case per spec §4
+  condition 5 + §13.3. Multi-locale cluster union for `locale_terrain_ids`
+  remains spec §3 future work (v1 wires the home locale only — matches
+  the existing `_q_locale_equipment_pool` pattern).
 - `prior_plan_session_window` is empty until v2 plan-gen lands (Phase 5.2
   will wire `plan_create`/`plan_refresh` into the same orchestrator).
 - `plan_version_id` is hardcoded `1` pending the plan-versioning surface.
@@ -150,10 +155,13 @@ def orchestrate_race_week_brief(
         if d.inclusion == "included"
     ]
 
+    primary_locale = _q_primary_locale(db, user_id)
+    locale_terrain_ids = _q_locale_terrain_ids(db, user_id, primary_locale)
+
     layer2b_payload = q_layer2b_terrain_classifier_payload(
         db,
         race_terrain=race_event.race_terrain,
-        locale_terrain_ids=[],
+        locale_terrain_ids=locale_terrain_ids,
         included_discipline_ids=included_discipline_ids,
         etl_version_set=etl_version_set,
     )
@@ -166,7 +174,6 @@ def orchestrate_race_week_brief(
         etl_version_set=etl_version_set,
     )
 
-    primary_locale = _q_primary_locale(db, user_id)
     locale_equipment_pool = _q_locale_equipment_pool(db, user_id, primary_locale)
     layer2c_payload = q_layer2c_equipment_mapper_payload(
         db,
@@ -301,6 +308,51 @@ def _q_locale_equipment_pool(db: Any, user_id: int, locale: str) -> list[str]:
         (user_id, locale),
     )
     return [row["tag"] for row in cur.fetchall()]
+
+
+def _q_locale_terrain_ids(db: Any, user_id: int, locale: str) -> list[str]:
+    """Return canonical TRN-xxx terrain ids available at `locale`.
+
+    Reads `locale_profiles.locale_terrain_ids` (TEXT[]) for the
+    (user_id, locale) row. Returns `[]` when the row carries an empty
+    array or NULL (athlete hasn't yet captured terrain via Form-refresh C);
+    Layer 2B's `_validate_inputs` accepts the empty case (spec §4
+    condition 5 + §13.3). Psycopg2 hydrates TEXT[] to a Python list
+    directly; the SQLite shim path returns the JSON-ish text representation
+    that `_hydrate_locale_terrain_ids` already covers route-side, but the
+    orchestrator is PG-only so the list-path is the only live shape here.
+    Tolerates the JSON-string SQLite shim for completeness (mirrors
+    `race_events_repo.get_race_event` adapter tolerance for race_terrain).
+    """
+    cur = db.execute(
+        """SELECT locale_terrain_ids
+             FROM locale_profiles
+            WHERE user_id = ? AND locale = ?
+            LIMIT 1""",
+        (user_id, locale),
+    )
+    row = cur.fetchone()
+    if row is None:
+        return []
+    raw = row["locale_terrain_ids"]
+    if raw is None:
+        return []
+    if isinstance(raw, list):
+        return list(raw)
+    if isinstance(raw, str):
+        s = raw.strip()
+        if not s or s in ("{}", "[]"):
+            return []
+        # SQLite shim path — tolerate JSON-string array. Postgres TEXT[]
+        # arrives as a list already.
+        import json as _json
+        try:
+            parsed = _json.loads(s)
+        except (ValueError, TypeError):
+            return []
+        if isinstance(parsed, list):
+            return [v for v in parsed if isinstance(v, str)]
+    return []
 
 
 __all__ = [
