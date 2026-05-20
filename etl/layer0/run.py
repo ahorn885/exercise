@@ -124,13 +124,24 @@ def main(argv: list[str] | None = None) -> int:
 
         n = insert_versioned(
             conn, "layer0.sport_specific_gear_toggles",
-            ["toggle_name", "display_label", "description", "paired_equipment_categories"],
+            [
+                "toggle_name", "display_label", "description",
+                "paired_equipment_categories",
+                # D-73 Phase 2.4-Prep: Layer 2C §5.1 + §8.3 — also_satisfies
+                # carries transitive-implication chains; gated_discipline_ids
+                # carries the reverse-toggle-mapping for `toggle_off_for_discipline`
+                # coaching flag. Populated by vocabulary._parse_gear_toggles from
+                # code-side constants so re-runs preserve the data.
+                "also_satisfies", "gated_discipline_ids",
+            ],
             [
                 (
                     r["toggle_name"],
                     r["display_label"],
                     r["description"],
                     r["paired_equipment_categories"],
+                    r["also_satisfies"],
+                    r["gated_discipline_ids"],
                 )
                 for r in vocab["sport_specific_gear_toggles"]
             ],
@@ -423,7 +434,13 @@ def main(argv: list[str] | None = None) -> int:
                 "equipment_required", "terrain_required",
                 "injury_flags_text", "contraindicated_parts",
                 "contraindicated_conditions",
-                "equipment_substitutes", "physical_proxies",
+                # D-73 Phase 2.4-Prep: equipment_substitutes (legacy
+                # `{standard, improvised}` flat dict) stays as reference
+                # data per Batch C decision. equipment_substitutes_structured
+                # (CNF-shape from parsed_substitutes.json) is what Layer 2C
+                # §5.4 Tier 2 resolution reads.
+                "equipment_substitutes", "equipment_substitutes_structured",
+                "physical_proxies",
                 "progression_exercise_id", "progression_exercise_name",
                 "regression_exercise_id", "regression_exercise_name",
                 "sport_count", "coaching_cues",
@@ -434,7 +451,9 @@ def main(argv: list[str] | None = None) -> int:
                 r["equipment_required"], r["terrain_required"],
                 r["injury_flags_text"], r["contraindicated_parts"],
                 r["contraindicated_conditions"],
-                to_jsonb(r["equipment_substitutes"]), to_jsonb(r["physical_proxies"]),
+                to_jsonb(r["equipment_substitutes"]),
+                to_jsonb(r["equipment_substitutes_structured"]),
+                to_jsonb(r["physical_proxies"]),
                 r["progression_exercise_id"], r["progression_exercise_name"],
                 r["regression_exercise_id"], r["regression_exercise_name"],
                 r["sport_count"], r["coaching_cues"],

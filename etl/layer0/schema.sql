@@ -61,6 +61,16 @@ CREATE TABLE IF NOT EXISTS layer0.sport_specific_gear_toggles (
   display_label               TEXT,
   description                 TEXT,
   paired_equipment_categories TEXT[],
+  -- D-73 Phase 2.4-Prep: Layer 2C §5.1 transitive-implication chains.
+  -- Single known case: 'Climbing — roped' also_satisfies 'Rappelling /
+  -- abseiling' per Vocabulary_Audit_v2.md §4.2 note 1. No transitive
+  -- cascade beyond one hop (Layer2C_Spec.md §6).
+  also_satisfies              TEXT[],
+  -- D-73 Phase 2.4-Prep: Layer 2C §8.3 toggle-OFF-for-discipline flag.
+  -- Reverse mapping of disciplines whose exercise pool depends on this
+  -- toggle being ON. Andy 2026-05-19 picked (b) structured-column over
+  -- (a) hard-coded mapping. Empty for non-gating toggles.
+  gated_discipline_ids        TEXT[],
   etl_version                 TEXT NOT NULL,
   etl_run_at                  TIMESTAMPTZ NOT NULL,
   superseded_at               TIMESTAMPTZ,
@@ -234,10 +244,22 @@ CREATE TABLE IF NOT EXISTS layer0.exercises (
   primary_muscles             TEXT[],
   secondary_muscles           TEXT[],
   equipment_required          TEXT[],
+  -- D-73 Phase 2.4-Prep: terrain tokens routed from col 7 via
+  -- vocabulary_transforms.transform_equipment_string per
+  -- migrate_exercises_terrain_required.sql. Layer 2C annotates each
+  -- ResolvedExercise with this list; Layer 4 cross-references with 2B
+  -- terrain gap output (Layer2C_Spec.md §5.2 pass-through, §7).
+  terrain_required            TEXT[],
   injury_flags_text           TEXT,
   contraindicated_parts       TEXT[],
   contraindicated_conditions  TEXT[],
   equipment_substitutes       JSONB,
+  -- D-73 Phase 2.4-Prep: CNF-structured substitutes per
+  -- migrate_exercises_substitutes_structured.sql. Shape: [{substitute_text,
+  -- equipment_required: [[a,b],[c]], is_improvised}]. Layer 2C §5.4 Tier 2
+  -- resolution reads this column; legacy `equipment_substitutes` stays as
+  -- reference data per Batch C decision.
+  equipment_substitutes_structured JSONB,
   physical_proxies            JSONB,
   progression_exercise_id     TEXT,
   progression_exercise_name   TEXT,
