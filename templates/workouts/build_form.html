@@ -1,0 +1,72 @@
+{% extends 'base.html' %}
+{% block title %}Build a workout — AIDSTATION{% endblock %}
+{% block content %}
+
+<nav class="mb-3">
+  <a href="{{ url_for('dashboard.index') }}" class="text-muted small">&larr; Back to dashboard</a>
+</nav>
+
+<h4 class="mb-3">Build a workout</h4>
+<p class="text-muted">
+  Off-plan workout right now — sport, duration, intensity, location. Pulls
+  your active injuries + current state from your profile; equipment from
+  the picked location.
+</p>
+
+<form method="post" action="{{ url_for('ad_hoc_workouts.build_workout') }}">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <div class="row g-3">
+
+    <div class="col-md-6">
+      <label class="form-label" for="sport">Sport</label>
+      <select class="form-select" id="sport" name="sport" required>
+        <option value="">—</option>
+        {% for s in sport_choices %}
+          <option value="{{ s }}">{{ s }}</option>
+        {% endfor %}
+      </select>
+    </div>
+
+    <div class="col-md-3">
+      <label class="form-label" for="duration_min">Duration (min)</label>
+      <input type="number" class="form-control" id="duration_min" name="duration_min"
+             min="30" max="360" step="15" value="60" required>
+      <small class="text-muted">30–360 min, 15-min increments.</small>
+    </div>
+
+    <div class="col-md-3">
+      <label class="form-label" for="intensity">Intensity</label>
+      <select class="form-select" id="intensity" name="intensity" required>
+        <option value="">—</option>
+        {% for i in intensities %}
+          <option value="{{ i }}">{{ i|replace('_', ' ')|title }}</option>
+        {% endfor %}
+      </select>
+    </div>
+
+    <div class="col-md-6">
+      <label class="form-label" for="locale_slug">Location</label>
+      <select class="form-select" id="locale_slug" name="locale_slug" required>
+        <option value="">—</option>
+        {% for c in locale_choices %}
+          <option value="{{ c.slug }}">{{ c.label }}</option>
+        {% endfor %}
+      </select>
+      <small class="text-muted">
+        Equipment derives from the location. "Somewhere else" (quick-equipment) coming in a follow-on.
+      </small>
+    </div>
+
+    <div class="col-md-12">
+      <label class="form-label" for="notes_for_synthesizer">Notes (optional)</label>
+      <textarea class="form-control" id="notes_for_synthesizer" name="notes_for_synthesizer"
+                rows="2" placeholder="e.g. focus on hill climbs"></textarea>
+    </div>
+
+    <div class="col-12">
+      <button type="submit" class="btn btn-primary">Generate workout</button>
+    </div>
+  </div>
+</form>
+
+{% endblock %}

@@ -1,0 +1,55 @@
+{% extends 'base.html' %}
+{% block title %}Create a plan — AIDSTATION{% endblock %}
+{% block content %}
+
+<nav class="mb-3">
+  <a href="{{ url_for('dashboard.index') }}" class="text-muted small">&larr; Back to dashboard</a>
+</nav>
+
+<h4 class="mb-3">Create a training plan</h4>
+<p class="text-muted">
+  Generates a full plan from your profile + current state + target race (if set).
+  Pattern A synthesis — typically 3-4 phases (Base / Build / Peak / Taper)
+  with seam reviews between phases. Takes ~30-60 seconds.
+</p>
+
+<form method="post" action="{{ url_for('plan_create.new_plan') }}">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+  <div class="row g-3">
+    <div class="col-md-6">
+      <label class="form-label" for="plan_start_date">Plan start date</label>
+      <input type="date" class="form-control" id="plan_start_date" name="plan_start_date"
+             min="{{ today_iso }}" value="{{ today_iso }}" required>
+      <small class="text-muted">Today or any future date.</small>
+    </div>
+  </div>
+
+  {% if race_event %}
+    <div class="card mt-3">
+      <div class="card-body">
+        <h6 class="card-title">Target race</h6>
+        <p class="mb-1"><strong>{{ race_event.name }}</strong>
+          {% if race_event.event_date %}— {{ race_event.event_date }}{% endif %}
+        </p>
+        <small class="text-muted">
+          Plan ends on the race date. Change the target race on
+          <a href="{{ url_for('profile.edit', tab='race-events') }}">your race events</a>.
+        </small>
+      </div>
+    </div>
+  {% else %}
+    <div class="alert alert-light border mt-3">
+      <strong>No target race set.</strong> Generating an open-ended 24-week plan.
+      Set a target race on
+      <a href="{{ url_for('profile.edit', tab='race-events') }}">your race events</a>
+      to scope the plan to it.
+    </div>
+  {% endif %}
+
+  <div class="mt-3">
+    <button type="submit" class="btn btn-primary">Create plan</button>
+  </div>
+</form>
+
+{% endblock %}

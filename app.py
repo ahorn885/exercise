@@ -138,6 +138,8 @@ from routes.whoop import bp as whoop_bp
 from routes.trainingpeaks import bp as trainingpeaks_bp
 from routes.zwift import bp as zwift_bp
 from routes.nudges import bp as nudges_bp, get_active_nudges
+from routes.ad_hoc_workouts import bp as ad_hoc_workouts_bp
+from routes.plan_create import bp as plan_create_bp
 
 app.register_blueprint(dashboard_bp)
 app.register_blueprint(training_bp)
@@ -169,6 +171,8 @@ app.register_blueprint(whoop_bp)
 app.register_blueprint(trainingpeaks_bp)
 app.register_blueprint(zwift_bp)
 app.register_blueprint(nudges_bp)
+app.register_blueprint(ad_hoc_workouts_bp)
+app.register_blueprint(plan_create_bp)
 # COROS pushes workout-summary data to /coros/webhook from their servers,
 # not from a browser session, so the global CSRF protection doesn't apply
 # (and would 400 every push). Auth is via the `client` + `secret` request

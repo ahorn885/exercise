@@ -1,0 +1,97 @@
+{% extends 'base.html' %}
+{% block title %}Workout — AIDSTATION{% endblock %}
+{% block content %}
+
+{% set req = suggestion.request_payload %}
+{% set sess = suggestion.generated_session %}
+
+<nav class="mb-3">
+  <a href="{{ url_for('ad_hoc_workouts.build_workout') }}" class="text-muted small">&larr; Build another workout</a>
+</nav>
+
+<div class="d-flex align-items-center mb-3">
+  <h4 class="mb-0 me-2">
+    {{ req.sport }} — {{ req.duration_min }} min
+  </h4>
+  <span class="badge bg-primary me-2">{{ req.intensity|replace('_', ' ')|title }}</span>
+  {% if suggestion.status != 'suggested' %}
+    <span class="badge bg-secondary">{{ suggestion.status|title }}</span>
+  {% endif %}
+</div>
+
+{% if sess %}
+  <p class="text-muted mb-3">
+    Location: {{ sess.locale_name or sess.locale_id or req.locale_slug }}
+    {% if sess.intensity_summary %}
+      &middot; Intensity: {{ sess.intensity_summary|title }}
+    {% endif %}
+  </p>
+
+  {% if sess.coaching_intent %}
+    <div class="alert alert-light border mb-3">
+      <strong>Coaching intent.</strong> {{ sess.coaching_intent }}
+    </div>
+  {% endif %}
+
+  {% if sess.kind == 'cardio' and sess.cardio_blocks %}
+    {% for block in sess.cardio_blocks %}
+      <div class="card mb-2">
+        <div class="card-body">
+          <h6 class="card-title">
+            {{ block.block_type|replace('_', ' ')|title }} &middot; {{ block.duration_min }} min
+          </h6>
+          {% if block.description %}
+            <p class="card-text mb-1">{{ block.description }}</p>
+          {% endif %}
+          {% if block.hr_target %}
+            <small class="text-muted">HR target: {{ block.hr_target.hr_bpm_low }}–{{ block.hr_target.hr_bpm_high }} bpm</small>
+          {% endif %}
+        </div>
+      </div>
+    {% endfor %}
+  {% elif sess.kind == 'strength' and sess.strength_exercises %}
+    <ul class="list-group mb-3">
+      {% for ex in sess.strength_exercises %}
+        <li class="list-group-item">
+          <strong>{{ ex.exercise_name }}</strong> &mdash;
+          {{ ex.sets }} × {{ ex.reps }}
+          {% if ex.load_kg %}@ {{ ex.load_kg }} kg{% endif %}
+          {% if ex.notes %}<br><small class="text-muted">{{ ex.notes }}</small>{% endif %}
+        </li>
+      {% endfor %}
+    </ul>
+  {% endif %}
+
+  {% if sess.session_notes %}
+    <div class="card mb-3">
+      <div class="card-body">
+        <h6 class="card-title">Session notes</h6>
+        <p class="card-text mb-0">{{ sess.session_notes }}</p>
+      </div>
+    </div>
+  {% endif %}
+{% else %}
+  <p class="text-muted">Workout not yet generated.</p>
+{% endif %}
+
+{% if suggestion.status == 'suggested' %}
+  <div class="d-flex gap-2 mt-3">
+    <form method="post" action="{{ url_for('ad_hoc_workouts.regenerate_suggestion', suggestion_id=suggestion.id) }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <button type="submit" class="btn btn-outline-secondary">Regenerate</button>
+    </form>
+    <form method="post" action="{{ url_for('ad_hoc_workouts.discard_suggestion', suggestion_id=suggestion.id) }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <button type="submit" class="btn btn-outline-danger">Discard</button>
+    </form>
+  </div>
+  <p class="text-muted small mt-2">
+    [Log this workout] coming in a follow-on (paired with the D-64 T1 plan-check hook).
+  </p>
+{% elif suggestion.status == 'regenerated' and suggestion.regenerated_into_id %}
+  <p class="text-muted mt-3">
+    Superseded by <a href="{{ url_for('ad_hoc_workouts.view_suggestion', suggestion_id=suggestion.regenerated_into_id) }}">a regenerated workout</a>.
+  </p>
+{% endif %}
+
+{% endblock %}
