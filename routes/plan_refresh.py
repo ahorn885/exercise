@@ -32,6 +32,15 @@ with an auto-opening Bootstrap modal asking the athlete to confirm;
 [Refresh anyway] resubmits with hidden `cap_override=1` and the route
 stamps `cap_overridden=TRUE` on the resulting log row. Override is
 single-use — each subsequent refresh re-checks the cap independently.
+
+D-63 §5.4 attribution: when the T1 hook anchor lands the athlete here,
+the originating `ad_hoc_workout_suggestions.id` rides through as a
+URL/form param and is stamped on `plan_refresh_log.triggered_by_ad_hoc_id`.
+The ID is validated against the current user at both GET (prefill) and
+POST (pre-log) — mismatches silently collapse to NULL since attribution
+is best-effort telemetry. Override + failure-path log rows carry the FK
+through too: a successful override of the cap and a failed cascade are
+both still attributable to the ad-hoc workout that triggered them.
 """
 
 from __future__ import annotations
@@ -172,16 +181,42 @@ def _athlete_active_injury_summary(db, user_id: int) -> tuple[str, ...]:
     return tuple(summaries)
 
 
-def _resolve_prefill(args) -> tuple[str, str | None]:
-    """Resolve D-63 §3.5 T1-hook query-param prefill into
-    (nl_context, tier-or-None). nl_context is truncated at the soft cap
-    (defensive — textarea maxlength bounds visible input identically).
-    Unknown / blank tier strings collapse to None."""
+def _resolve_prefill(args) -> tuple[str, str | None, int | None]:
+    """Resolve D-63 §3.5 T1-hook query/form prefill into
+    `(nl_context, tier-or-None, triggered_by_ad_hoc_id-or-None)`.
+    nl_context is truncated at the soft cap (defensive — textarea
+    maxlength bounds visible input identically). Unknown / blank tier
+    strings collapse to None. `triggered_by_ad_hoc_id` is int-coerced;
+    non-numeric / blank values collapse to None. Ownership validation
+    happens separately via `_validate_ad_hoc_id_for_user` (this helper
+    stays pure for test isolation)."""
     raw_nl = args.get("nl_context", "") or ""
     nl_context = raw_nl[:_NL_TEXT_SOFT_CAP_CHARS]
     raw_tier = (args.get("tier") or "").strip().upper()
     tier = raw_tier if raw_tier in VALID_TIERS else None
-    return nl_context, tier
+    raw_id = args.get("triggered_by_ad_hoc_id")
+    try:
+        triggered_by_ad_hoc_id = int(raw_id) if raw_id else None
+    except (TypeError, ValueError):
+        triggered_by_ad_hoc_id = None
+    return nl_context, tier, triggered_by_ad_hoc_id
+
+
+def _validate_ad_hoc_id_for_user(
+    db, user_id: int, ad_hoc_id: int | None
+) -> int | None:
+    """Per D-63 §5.4 attribution: confirm the ad-hoc suggestion exists
+    and belongs to `user_id`. Returns the ID on match, None on miss or
+    None input. Mismatches silently collapse — telemetry is best-effort
+    and the refresh itself is still legitimate."""
+    if ad_hoc_id is None:
+        return None
+    row = db.execute(
+        "SELECT 1 AS ok FROM ad_hoc_workout_suggestions "
+        "WHERE id = ? AND user_id = ?",
+        (ad_hoc_id, user_id),
+    ).fetchone()
+    return ad_hoc_id if row is not None else None
 
 
 def _parse_tier(form) -> tuple[str | None, str | None]:
@@ -293,6 +328,7 @@ def _write_refresh_log(
     success: bool,
     failure_reason: str | None,
     cap_overridden: bool = False,
+    triggered_by_ad_hoc_id: int | None = None,
 ) -> None:
     """INSERT one plan_refresh_log row. Caller owns the transaction."""
     db.execute(
@@ -300,8 +336,9 @@ def _write_refresh_log(
                (user_id, tier, nl_text, parsed_intent, layers_run,
                 scope_start_date, scope_end_date, plan_version_id_before,
                 plan_version_id_after, duration_ms, sessions_changed,
-                success, failure_reason, cap_overridden)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                success, failure_reason, cap_overridden,
+                triggered_by_ad_hoc_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (
             user_id,
             tier,
@@ -317,6 +354,7 @@ def _write_refresh_log(
             success,
             failure_reason,
             cap_overridden,
+            triggered_by_ad_hoc_id,
         ),
     )
 
@@ -388,14 +426,23 @@ def refresh():
     if request.method == "GET":
         # D-63 §3.5 post-log T1 hook auto-fills nl_context + selects
         # tier=T1 via query params on the redirect from the suggestion
-        # modal's [Yes — refresh] anchor.
-        prefill_nl_context, prefill_tier = _resolve_prefill(request.args)
+        # modal's [Yes — refresh] anchor. The T1 hook also carries
+        # `triggered_by_ad_hoc_id` per D-63 §5.4 attribution; ownership
+        # is checked here so a cross-user / stale URL collapses to None
+        # before reaching the hidden form field.
+        prefill_nl_context, prefill_tier, raw_prefill_ad_hoc_id = (
+            _resolve_prefill(request.args)
+        )
+        prefill_triggered_by_ad_hoc_id = _validate_ad_hoc_id_for_user(
+            db, uid, raw_prefill_ad_hoc_id
+        )
         return render_template(
             "plans/v2/refresh.html",
             parent_plan=parent_plan,
             nl_text_cap=_NL_TEXT_SOFT_CAP_CHARS,
             prefill_nl_context=prefill_nl_context,
             prefill_tier=prefill_tier,
+            prefill_triggered_by_ad_hoc_id=prefill_triggered_by_ad_hoc_id,
         )
 
     if parent_plan is None:
@@ -413,6 +460,21 @@ def refresh():
     nl_text = (request.form.get("nl_context") or "").strip()
     cap_override = request.form.get("cap_override") == "1"
 
+    # D-63 §5.4 attribution — the ad-hoc-suggestion FK rides through
+    # as a hidden form field on both the main form + the cap-exceeded
+    # mini-form. Int-coerced + validated against the current user;
+    # tampering / staleness silently collapses to None.
+    raw_form_ad_hoc_id = request.form.get("triggered_by_ad_hoc_id")
+    try:
+        parsed_form_ad_hoc_id: int | None = (
+            int(raw_form_ad_hoc_id) if raw_form_ad_hoc_id else None
+        )
+    except (TypeError, ValueError):
+        parsed_form_ad_hoc_id = None
+    triggered_by_ad_hoc_id = _validate_ad_hoc_id_for_user(
+        db, uid, parsed_form_ad_hoc_id
+    )
+
     # D-64 §8 — frequency cap. Soft cap; over-cap submissions without
     # an explicit override re-render the form with an auto-opening
     # modal-confirm. Override is single-use per D3.
@@ -425,6 +487,7 @@ def refresh():
             nl_text_cap=_NL_TEXT_SOFT_CAP_CHARS,
             prefill_nl_context=nl_text,
             prefill_tier=tier,
+            prefill_triggered_by_ad_hoc_id=triggered_by_ad_hoc_id,
             cap_exceeded={
                 "tier": tier,
                 "count": current_count,
@@ -489,6 +552,7 @@ def refresh():
             sessions_changed=None,
             success=False,
             failure_reason=f"orchestration:{exc.code}",
+            triggered_by_ad_hoc_id=triggered_by_ad_hoc_id,
         )
         db.commit()
         flash(_orchestration_error_message(exc), "danger")
@@ -511,6 +575,7 @@ def refresh():
             sessions_changed=None,
             success=False,
             failure_reason=f"layer4:{exc.code}",
+            triggered_by_ad_hoc_id=triggered_by_ad_hoc_id,
         )
         db.commit()
         flash(
@@ -543,6 +608,7 @@ def refresh():
         success=True,
         failure_reason="parser_degraded" if used_degraded else None,
         cap_overridden=cap_overridden,
+        triggered_by_ad_hoc_id=triggered_by_ad_hoc_id,
     )
     db.commit()
 

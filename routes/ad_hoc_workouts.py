@@ -470,8 +470,11 @@ def view_suggestion(suggestion_id: int):
     t1_hook_nl_context = _render_nl_context(
         suggestion['request_payload'], suggestion['generated_session']
     )
+    # D-63 §5.4 — pass the suggestion FK through to plan_refresh so the
+    # resulting plan_refresh_log row attributes back to this ad-hoc log.
     t1_hook_refresh_query = urlencode({
         'nl_context': t1_hook_nl_context, 'tier': 'T1',
+        'triggered_by_ad_hoc_id': suggestion['id'],
     })
 
     return render_template(

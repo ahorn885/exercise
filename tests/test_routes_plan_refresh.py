@@ -37,6 +37,7 @@ from routes.plan_refresh import (
     _resolve_prefill,
     _resolve_scope_dates,
     _run_parser,
+    _validate_ad_hoc_id_for_user,
     _write_refresh_log,
 )
 
@@ -469,6 +470,50 @@ class TestWriteRefreshLog:
         _, params = db.calls[0]
         assert params[13] is True
 
+    def test_triggered_by_ad_hoc_id_defaults_to_none(self):
+        db = _FakeConn()
+        _write_refresh_log(
+            db,
+            user_id=1,
+            tier="T1",
+            nl_text="hi",
+            parsed_intent_json='{"x":1}',
+            layers_run=("3A", "3B", "Layer4"),
+            scope_start_date=date(2026, 5, 21),
+            scope_end_date=date(2026, 5, 22),
+            plan_version_id_before=1,
+            plan_version_id_after=2,
+            duration_ms=100,
+            sessions_changed=0,
+            success=True,
+            failure_reason=None,
+        )
+        sql, params = db.calls[0]
+        assert "triggered_by_ad_hoc_id" in sql
+        assert params[14] is None
+
+    def test_triggered_by_ad_hoc_id_passed_through(self):
+        db = _FakeConn()
+        _write_refresh_log(
+            db,
+            user_id=1,
+            tier="T1",
+            nl_text="hi",
+            parsed_intent_json='{"x":1}',
+            layers_run=("3A", "3B", "Layer4"),
+            scope_start_date=date(2026, 5, 21),
+            scope_end_date=date(2026, 5, 22),
+            plan_version_id_before=1,
+            plan_version_id_after=2,
+            duration_ms=100,
+            sessions_changed=0,
+            success=True,
+            failure_reason=None,
+            triggered_by_ad_hoc_id=987,
+        )
+        _, params = db.calls[0]
+        assert params[14] == 987
+
 
 # ─── _diff_sessions_against_parent ──────────────────────────────────────────
 
@@ -574,41 +619,85 @@ class TestLatestParentForRefresh:
 
 class TestResolvePrefill:
     def test_returns_empty_when_no_args(self):
-        nl, tier = _resolve_prefill({})
+        nl, tier, ad_hoc_id = _resolve_prefill({})
         assert nl == ""
         assert tier is None
+        assert ad_hoc_id is None
 
     def test_nl_context_passes_through(self):
-        nl, tier = _resolve_prefill({"nl_context": "Did an unscheduled 60min Running (hard) at home"})
+        nl, tier, _ = _resolve_prefill({"nl_context": "Did an unscheduled 60min Running (hard) at home"})
         assert nl == "Did an unscheduled 60min Running (hard) at home"
         assert tier is None
 
     def test_valid_tier_uppercased(self):
-        _, tier = _resolve_prefill({"tier": "t1"})
+        _, tier, _ = _resolve_prefill({"tier": "t1"})
         assert tier == "T1"
 
     def test_unknown_tier_collapses_to_none(self):
-        _, tier = _resolve_prefill({"tier": "T9"})
+        _, tier, _ = _resolve_prefill({"tier": "T9"})
         assert tier is None
 
     def test_blank_tier_collapses_to_none(self):
-        _, tier = _resolve_prefill({"tier": "   "})
+        _, tier, _ = _resolve_prefill({"tier": "   "})
         assert tier is None
 
     def test_nl_context_truncated_at_soft_cap(self):
         from routes.plan_refresh import _NL_TEXT_SOFT_CAP_CHARS
 
-        nl, _ = _resolve_prefill({"nl_context": "x" * (_NL_TEXT_SOFT_CAP_CHARS + 50)})
+        nl, _, _ = _resolve_prefill({"nl_context": "x" * (_NL_TEXT_SOFT_CAP_CHARS + 50)})
         assert len(nl) == _NL_TEXT_SOFT_CAP_CHARS
 
     def test_t1_hook_full_pattern(self):
-        # End-to-end pattern: T1 hook auto-fills nl_context + tier=T1.
-        nl, tier = _resolve_prefill({
+        # End-to-end pattern: T1 hook auto-fills nl_context + tier=T1
+        # + triggered_by_ad_hoc_id per D-63 §5.4.
+        nl, tier, ad_hoc_id = _resolve_prefill({
             "nl_context": "Did an unscheduled 45min MTB (moderate) at home",
             "tier": "T1",
+            "triggered_by_ad_hoc_id": "42",
         })
         assert nl == "Did an unscheduled 45min MTB (moderate) at home"
         assert tier == "T1"
+        assert ad_hoc_id == 42
+
+    def test_triggered_by_ad_hoc_id_int_coerced(self):
+        _, _, ad_hoc_id = _resolve_prefill({"triggered_by_ad_hoc_id": "123"})
+        assert ad_hoc_id == 123
+
+    def test_triggered_by_ad_hoc_id_blank_collapses_to_none(self):
+        _, _, ad_hoc_id = _resolve_prefill({"triggered_by_ad_hoc_id": ""})
+        assert ad_hoc_id is None
+
+    def test_triggered_by_ad_hoc_id_non_numeric_collapses_to_none(self):
+        _, _, ad_hoc_id = _resolve_prefill({"triggered_by_ad_hoc_id": "abc"})
+        assert ad_hoc_id is None
+
+
+# ─── D-63 §5.4 — _validate_ad_hoc_id_for_user ───────────────────────────────
+
+
+class TestValidateAdHocIdForUser:
+    def test_returns_none_for_none_input(self):
+        db = _FakeConn()
+        assert _validate_ad_hoc_id_for_user(db, user_id=1, ad_hoc_id=None) is None
+        # No DB roundtrip on None input — the helper short-circuits.
+        assert db.calls == []
+
+    def test_returns_id_when_owned_by_user(self):
+        db = _FakeConn()
+        db.queue_response(row={"ok": 1})
+        result = _validate_ad_hoc_id_for_user(db, user_id=42, ad_hoc_id=7)
+        assert result == 7
+        sql, params = db.calls[0]
+        assert "ad_hoc_workout_suggestions" in sql
+        assert "id = ?" in sql
+        assert "user_id = ?" in sql
+        assert params == (7, 42)
+
+    def test_returns_none_when_not_owned(self):
+        db = _FakeConn()
+        # No queued response → fetchone() returns None → cross-user / stale.
+        result = _validate_ad_hoc_id_for_user(db, user_id=42, ad_hoc_id=7)
+        assert result is None
 
 
 # ─── D-64 §8 — frequency caps ──────────────────────────────────────────────

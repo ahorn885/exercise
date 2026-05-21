@@ -40,6 +40,12 @@
 
   <form method="post" action="{{ url_for('plan_refresh.refresh') }}">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    {% if prefill_triggered_by_ad_hoc_id %}
+      {# D-63 §5.4 — round-trip the T1-hook ad-hoc FK so plan_refresh_log
+         attributes back to the originating suggestion. #}
+      <input type="hidden" name="triggered_by_ad_hoc_id"
+             value="{{ prefill_triggered_by_ad_hoc_id }}">
+    {% endif %}
 
     <div class="mb-3">
       <label class="form-label" for="nl_context">What changed? (optional)</label>
@@ -104,6 +110,11 @@
               <input type="hidden" name="nl_context"
                      value="{{ prefill_nl_context or '' }}">
               <input type="hidden" name="cap_override" value="1">
+              {% if prefill_triggered_by_ad_hoc_id %}
+                {# D-63 §5.4 — preserve attribution through the override. #}
+                <input type="hidden" name="triggered_by_ad_hoc_id"
+                       value="{{ prefill_triggered_by_ad_hoc_id }}">
+              {% endif %}
               <button type="submit" name="submit_{{ cap_exceeded.tier|lower }}"
                       value="1" class="btn btn-primary">Refresh anyway</button>
             </form>
