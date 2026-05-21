@@ -70,6 +70,12 @@ VALID_ENTRY_POINTS = LAYER4_ENTRY_POINTS | frozenset(
         # `layer3b/cached_wrapper.py`; same shape as 3A (Layer3BPayload is
         # self-contained, no plan_version_id/suggestion_id rebinding).
         "llm_layer3b_goal_timeline_viability",
+        # D-64 NL parser cache (Phase 5.2 caller-side D-64 runtime,
+        # 2026-05-21) — `nl_parser.parse_intent` per
+        # `aidstation-sources/prompts/NLParser_v1.md` §10. Athlete-scoped
+        # (not Layer-4-scoped) so it deliberately stays out of
+        # LAYER4_ENTRY_POINTS + the §9.3 Layer-4 invalidation matrix.
+        "nl_parser_parse_intent",
     }
 )
 """Superset of allowable entry_point labels for `CacheBackend.put` validation.
