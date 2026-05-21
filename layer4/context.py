@@ -1071,7 +1071,19 @@ class RaceEventPayload(_Base):
     # cache-key formulas in layer4/hashing.py. The DB surrogate id stays
     # the right shape for ON DELETE SET NULL behavior; it just doesn't
     # cross the typed-payload boundary.
+    #
+    # D-73 Phase 5.2 walkthrough #1 (2026-05-21) — the legacy "athlete's own
+    # saved locale" semantic was wrong for race events. New rows use the
+    # Mapbox-anchored fields below; `event_locale_id` stays nullable for
+    # pre-walkthrough rows. Layer 4 + Layer 3B treat the race as
+    # locale-resolved when EITHER the legacy slug OR the new
+    # event_locale_name is set.
     event_locale_id: str | None = None
+    event_locale_name: str | None = Field(default=None, max_length=200)
+    event_locale_mapbox_id: str | None = Field(default=None, max_length=200)
+    event_locale_place_name: str | None = Field(default=None, max_length=500)
+    event_locale_lat: float | None = Field(default=None, ge=-90.0, le=90.0)
+    event_locale_lng: float | None = Field(default=None, ge=-180.0, le=180.0)
     is_target_event: bool
     notes: str | None = Field(default=None, max_length=2000)
     # Phase 5.1 form-refresh A (2026-05-20) — closes Layer2B_Spec.md §12
@@ -1085,6 +1097,12 @@ class RaceEventPayload(_Base):
     # construction (drives sleep-dep + fueling-cadence reasoning).
     race_terrain: list[RaceTerrainEntry] = Field(default_factory=list)
     aid_stations: int | None = Field(default=None, ge=0)
+    # D-73 Phase 5.2 walkthrough #2a (2026-05-21) — athlete-typed
+    # race-director site URL. Currently stored verbatim; the Trigger #2 LLM
+    # site-parse slice will read this to pre-fill rules / equipment /
+    # terrain. Field is loose (str, not HttpUrl) since athletes paste
+    # whatever they have; runtime parse handles malformed input.
+    race_url: str | None = Field(default=None, max_length=1000)
     route_locales: list[RouteLocale] = Field(default_factory=list)
 
     @model_validator(mode="after")

@@ -31,7 +31,6 @@ from datetime import date
 import pytest
 
 from routes.onboarding import (
-    _athlete_locale_choices,
     _get_target_race_row,
     _parse_date_field,
     _parse_decimal_field,
@@ -384,33 +383,11 @@ class TestTerrainChoices:
         assert _terrain_choices(conn) == []
 
 
-# ─── _athlete_locale_choices ────────────────────────────────────────────────
-
-
-class TestAthleteLocaleChoices:
-    def test_returns_dicts_in_label_order(self):
-        conn = _FakeConn()
-        conn.queue_response(rows=[
-            {'id': 7, 'locale': 'home_gym_1', 'locale_name': 'Apartment'},
-            {'id': 9, 'locale': 'hotel_xyz', 'locale_name': None},
-        ])
-
-        out = _athlete_locale_choices(conn, uid=42)
-        assert out == [
-            {'id': 7, 'label': 'Apartment'},
-            {'id': 9, 'label': 'hotel_xyz'},  # falls back to slug
-        ]
-
-        sql, params = conn.calls[0]
-        assert 'FROM locale_profiles' in sql
-        assert 'WHERE user_id = ?' in sql
-        assert 'ORDER BY COALESCE(locale_name, locale)' in sql
-        assert params == (42,)
-
-    def test_empty_when_no_locales(self):
-        conn = _FakeConn()
-        conn.queue_response(rows=[])
-        assert _athlete_locale_choices(conn, uid=42) == []
+# ─── _athlete_locale_choices removed ────────────────────────────────────────
+# D-73 Phase 5.2 walkthrough #1 (2026-05-21) — the saved-locale dropdown on
+# the onboarding step 3c race form was replaced with the Mapbox-anchored
+# picker (shared partial `_race_locale_picker.html`); the helper was deleted
+# alongside the dropdown.
 
 
 # ─── _write_account_nudge ───────────────────────────────────────────────────

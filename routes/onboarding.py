@@ -67,7 +67,6 @@ from athlete import (
 )
 from race_events_invalidation import (
     evict_on_target_event_brief_field_change,
-    evict_on_target_event_locale_change,
     evict_on_target_event_periodization_change,
 )
 from race_events_repo import (
@@ -718,25 +717,6 @@ def _terrain_choices(db):
     ]
 
 
-def _athlete_locale_choices(db, uid):
-    """Return `{id, label}` dicts for the athlete's locale_profiles rows.
-
-    Mirrors the same-named helper in `routes/race_events.py` — kept inline
-    here to avoid a Flask-blueprint import cycle. `id` is the D-66
-    `BIGSERIAL` surrogate; label falls back to the slug.
-    """
-    cur = db.execute(
-        'SELECT id, locale, locale_name FROM locale_profiles '
-        'WHERE user_id = ? '
-        'ORDER BY COALESCE(locale_name, locale)',
-        (uid,),
-    )
-    return [
-        {'id': int(r['id']), 'label': (r['locale_name'] or r['locale'])}
-        for r in cur.fetchall()
-    ]
-
-
 def _get_target_race_row(db, uid):
     """Return the athlete's current target race_events row as a dict, or
     None when no target row exists. Used by Step 3c GET to pre-populate
@@ -750,7 +730,9 @@ def _get_target_race_row(db, uid):
     cur = db.execute(
         'SELECT id, name, event_date, race_format, distance_km, '
         '       total_elevation_gain_m, race_rules_summary, mandatory_gear_text, '
-        '       event_locale_id, notes, race_terrain, aid_stations '
+        '       event_locale_id, notes, race_terrain, aid_stations, '
+        '       event_locale_name, event_locale_mapbox_id, event_locale_place_name, '
+        '       event_locale_lat, event_locale_lng, race_url '
         '  FROM race_events '
         ' WHERE user_id = ? AND is_target_event = TRUE '
         ' LIMIT 1',
@@ -765,6 +747,13 @@ def _get_target_race_row(db, uid):
         result['race_terrain'] = json.loads(raw_terrain) if raw_terrain else []
     elif raw_terrain is None:
         result['race_terrain'] = []
+    # D-73 Phase 5.2 walkthrough #1 (2026-05-21) — NUMERIC(9,6) lat/lng
+    # round-trips as Decimal; coerce to float so template arithmetic stays
+    # simple. Mirrors `race_events_repo.get_race_event` precedent.
+    for k in ('event_locale_lat', 'event_locale_lng'):
+        v = result.get(k)
+        if v is not None and not isinstance(v, float):
+            result[k] = float(v)
     return result
 
 
@@ -796,16 +785,21 @@ def target_race():
     uid = current_user_id()
 
     target = _get_target_race_row(db, uid)
-    locale_choices = _athlete_locale_choices(db, uid)
     terrain_choices = _terrain_choices(db)
 
+    # D-73 Phase 5.2 walkthrough #1 (2026-05-21) — race-location picker
+    # imports the Mapbox disclosure ack helpers from `routes/locales`;
+    # disclosure version is shared across `/locales/new` and the race-event
+    # picker so a prior ack from either surface unblocks both.
+    from routes.locales import _disclosure_acked, MAPBOX_DISCLOSURE_VERSION
     return render_template(
         'onboarding/target_race.html',
         target=target,
-        locale_choices=locale_choices,
         terrain_choices=terrain_choices,
         race_formats=VALID_RACE_FORMATS,
         post_step3c_target=_POST_STEP3C_TARGET,
+        mapbox_acked=_disclosure_acked(db, uid),
+        mapbox_disclosure_version=MAPBOX_DISCLOSURE_VERSION,
     )
 
 
@@ -844,10 +838,18 @@ def target_race_save():
     )
     new_race_rules_summary = _parse_str_field(request.form, 'race_rules_summary')
     new_mandatory_gear_text = _parse_str_field(request.form, 'mandatory_gear_text')
-    new_event_locale_id = _parse_int_field(request.form, 'event_locale_id')
     new_notes = _parse_str_field(request.form, 'notes')
     new_race_terrain = _parse_race_terrain(request.form)
     new_aid_stations = _parse_int_field(request.form, 'aid_stations')
+    # D-73 Phase 5.2 walkthrough #1 + #2a (2026-05-21) — Mapbox-anchored race
+    # location hidden inputs ride alongside the rest of the form (populated
+    # client-side by the picker JS); race_url is a new athlete-typed input.
+    from routes.race_events import (
+        _extract_mapbox_locale_from_form,
+        _parse_race_url,
+    )
+    new_locale_fields = _extract_mapbox_locale_from_form(request.form)
+    new_race_url = _parse_race_url(request.form)
 
     target = _get_target_race_row(db, uid)
     if target:
@@ -860,10 +862,12 @@ def target_race_save():
             total_elevation_gain_m=new_total_elevation_gain_m,
             race_rules_summary=new_race_rules_summary,
             mandatory_gear_text=new_mandatory_gear_text,
-            event_locale_id=new_event_locale_id,
+            event_locale_id=None,
             notes=new_notes,
             race_terrain=new_race_terrain,
             aid_stations=new_aid_stations,
+            race_url=new_race_url,
+            **new_locale_fields,
         )
         # D-66 §9 invalidation — same diff logic as routes/race_events.py
         # update_race; target row is already known. race_terrain +
@@ -874,9 +878,10 @@ def target_race_save():
             target['event_date'] != event_date
             or target['race_format'] != race_format
         )
-        locale_changed = target['event_locale_id'] != new_event_locale_id
         prior_terrain = target.get('race_terrain') or []
         prior_aid = target.get('aid_stations')
+        prior_race_url = target.get('race_url')
+        prior_mapbox_id = target.get('event_locale_mapbox_id')
         brief_only_changed = (
             target['distance_km'] != new_distance_km
             or target['total_elevation_gain_m'] != new_total_elevation_gain_m
@@ -885,12 +890,12 @@ def target_race_save():
             or target['notes'] != new_notes
             or prior_terrain != new_race_terrain
             or prior_aid != new_aid_stations
+            or prior_race_url != new_race_url
+            or prior_mapbox_id != new_locale_fields['event_locale_mapbox_id']
         )
         if periodization_changed:
             evict_on_target_event_periodization_change(db, uid)
-        if locale_changed:
-            evict_on_target_event_locale_change(db, uid)
-        if brief_only_changed and not periodization_changed and not locale_changed:
+        if brief_only_changed and not periodization_changed:
             evict_on_target_event_brief_field_change(db, uid)
         flash('Target race updated.', 'success')
     else:
@@ -903,11 +908,12 @@ def target_race_save():
             total_elevation_gain_m=new_total_elevation_gain_m,
             race_rules_summary=new_race_rules_summary,
             mandatory_gear_text=new_mandatory_gear_text,
-            event_locale_id=new_event_locale_id,
             is_target_event=True,
             notes=new_notes,
             race_terrain=new_race_terrain,
             aid_stations=new_aid_stations,
+            race_url=new_race_url,
+            **new_locale_fields,
         )
         # A fresh target row was created. Layer 3B's mode flips from
         # open_ended → event; periodization-grade eviction covers the

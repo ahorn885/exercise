@@ -20,12 +20,12 @@ from __future__ import annotations
 import re
 from datetime import date, datetime
 
-from flask import Blueprint, render_template, request, redirect, url_for, flash, abort
+from flask import Blueprint, render_template, request, redirect, url_for, flash, abort, jsonify
 
+import mapbox_client
 from database import get_db
 from race_events_invalidation import (
     evict_on_target_event_brief_field_change,
-    evict_on_target_event_locale_change,
     evict_on_target_event_periodization_change,
 )
 from race_events_repo import (
@@ -42,9 +42,15 @@ from race_events_repo import (
     list_route_locales,
     set_target_event,
     update_race_event,
+    update_race_event_locale,
     update_route_locale,
 )
 from routes.auth import current_user_id
+from routes.locales import (
+    MAPBOX_DISCLOSURE_VERSION,
+    _disclosure_acked,
+    _record_disclosure_ack,
+)
 
 
 bp = Blueprint('race_events', __name__, url_prefix='/profile/race-events')
@@ -107,23 +113,74 @@ def _parse_race_terrain(form) -> list[dict]:
     return out
 
 
-def _athlete_locale_choices(db, uid: int) -> list[dict]:
-    """Return `{id, label}` dicts for every locale_profiles row the
-    athlete owns. Used to populate the event_locale_id dropdown on the
-    race edit form. `id` is the D-66 surrogate `BIGSERIAL` added to
-    locale_profiles alongside the composite PK; `label` falls back to
-    the slug when the athlete never set a `locale_name`.
+def _run_mapbox_search(query: str) -> tuple[list[dict], str | None]:
+    """Fire a Mapbox Search Box API forward call for the race-location picker.
+
+    Mirrors the `/locales/new` GET-side flow at `routes/locales.py:766-774`.
+    Returns `(results, error_text)` — error is human-readable copy ready
+    for inline display. Empty query short-circuits to ([], None) without
+    a Mapbox call.
     """
-    cur = db.execute(
-        'SELECT id, locale, locale_name FROM locale_profiles '
-        'WHERE user_id = ? '
-        'ORDER BY COALESCE(locale_name, locale)',
-        (uid,),
-    )
-    return [
-        {'id': int(r['id']), 'label': (r['locale_name'] or r['locale'])}
-        for r in cur.fetchall()
-    ]
+    if not query:
+        return [], None
+    try:
+        results = mapbox_client.search_places(query, limit=5)
+    except mapbox_client.MapboxTokenMissing:
+        return [], (
+            'Place lookup is not configured on the server. '
+            'Save the race without a location for now; an admin will need to '
+            'set MAPBOX_PUBLIC_TOKEN on the server.'
+        )
+    except mapbox_client.MapboxNoResults:
+        return [], f'No matches for {query!r}. Try a broader search.'
+    except mapbox_client.MapboxError as e:
+        return [], f'Place lookup unavailable ({e}). Try again.'
+    return results, None
+
+
+def _extract_mapbox_locale_from_form(form) -> dict:
+    """Extract the 5 Mapbox-anchored race-location hidden fields from a form.
+
+    Returns a dict keyed on the canonical column names. Blank strings coerce
+    to None; non-numeric lat/lng coerce to None so a malformed POST cannot
+    set NaN coords. Used by `new_race` POST + `update_race` POST so the
+    Mapbox fields ride alongside the rest of the race form per the
+    JS-result-click design — picking a search result populates the hidden
+    inputs, and the next form submit carries them through.
+    """
+    name = (form.get('event_locale_name') or '').strip() or None
+    mapbox_id = (form.get('event_locale_mapbox_id') or '').strip() or None
+    place_name = (form.get('event_locale_place_name') or '').strip() or None
+
+    def _coerce_coord(raw):
+        raw = (raw or '').strip()
+        if not raw:
+            return None
+        try:
+            return float(raw)
+        except (ValueError, TypeError):
+            return None
+
+    return {
+        'event_locale_name': name,
+        'event_locale_mapbox_id': mapbox_id,
+        'event_locale_place_name': place_name,
+        'event_locale_lat': _coerce_coord(form.get('event_locale_lat')),
+        'event_locale_lng': _coerce_coord(form.get('event_locale_lng')),
+    }
+
+
+def _parse_race_url(form) -> str | None:
+    """D-73 Phase 5.2 walkthrough #2a — parse the race-director site URL.
+
+    Trims whitespace; collapses empty to None. Athletes paste whatever they
+    have so the column is stored verbatim (no scheme normalization). 1000-char
+    cap matches `RaceEventPayload.race_url` Field max.
+    """
+    v = (form.get('race_url') or '').strip()
+    if not v:
+        return None
+    return v[:1000]
 
 
 def _parse_str(form, key: str) -> str | None:
@@ -186,6 +243,10 @@ def new_race():
             flash('Pick a race format.', 'danger')
             return redirect(url_for('race_events.new_race'))
 
+        # D-73 Phase 5.2 walkthrough #1 — Mapbox-anchored race location
+        # fields ride through as hidden inputs (populated by the
+        # search-result-click JS handler in the template).
+        locale_fields = _extract_mapbox_locale_from_form(request.form)
         race_event_id = create_race_event(
             db, uid,
             name=name,
@@ -197,10 +258,11 @@ def new_race():
             ),
             race_rules_summary=_parse_str(request.form, 'race_rules_summary'),
             mandatory_gear_text=_parse_str(request.form, 'mandatory_gear_text'),
-            event_locale_id=_parse_int(request.form, 'event_locale_id'),
             notes=_parse_str(request.form, 'notes'),
             race_terrain=_parse_race_terrain(request.form),
             aid_stations=_parse_int(request.form, 'aid_stations'),
+            race_url=_parse_race_url(request.form),
+            **locale_fields,
         )
         flash(f'Race "{name}" added.', 'success')
         # Multi-day races immediately go to the edit page so the athlete
@@ -212,18 +274,26 @@ def new_race():
             )
         return _tab_redirect()
 
-    locale_choices = _athlete_locale_choices(db, uid)
     terrain_choices = _terrain_choices(db)
+    # D-73 Phase 5.2 walkthrough #1 — Mapbox-anchored race-location picker.
+    # The search box + result list are rendered + driven by the inline
+    # `<script nonce="..."` block in `templates/_race_locale_picker.html`
+    # which fetches from the JSON `locale_search` endpoint and fills the
+    # 5 hidden inputs on result-click. This sidesteps the form-state
+    # preservation problem the GET round-trip would have introduced
+    # (mandatory_gear_text + race_rules_summary can be multi-KB and the
+    # URL line limit is 8KB).
     return render_template(
         'profile/race_event_edit.html',
         race=None,
         race_locales=[],
         equipment_by_locale={},
-        locale_choices=locale_choices,
         terrain_choices=terrain_choices,
         race_formats=VALID_RACE_FORMATS,
         route_locale_roles=VALID_ROUTE_LOCALE_ROLES,
         is_new=True,
+        mapbox_acked=_disclosure_acked(db, uid),
+        mapbox_disclosure_version=MAPBOX_DISCLOSURE_VERSION,
     )
 
 
@@ -231,6 +301,12 @@ def new_race():
 def edit_race(race_event_id: int):
     """Render the per-race edit page — race details form + route-locale
     list with per-row inline forms + nested equipment add/delete.
+
+    The race-location picker fires Mapbox via `?locale_q=...` (server-side
+    `mapbox_client.search_places`) and renders results inline. Result-click
+    POSTs to `race_events.set_locale` which updates the 5 Mapbox columns
+    standalone (decoupled from the main race-details form so the edit page
+    behaves like the existing inline route-locale + equipment forms).
     """
     db = get_db()
     uid = current_user_id()
@@ -244,18 +320,18 @@ def edit_race(race_event_id: int):
         rl['id']: list_route_locale_equipment(db, rl['id'])
         for rl in race_locales
     }
-    locale_choices = _athlete_locale_choices(db, uid)
     terrain_choices = _terrain_choices(db)
     return render_template(
         'profile/race_event_edit.html',
         race=race,
         race_locales=race_locales,
         equipment_by_locale=equipment_by_locale,
-        locale_choices=locale_choices,
         terrain_choices=terrain_choices,
         race_formats=VALID_RACE_FORMATS,
         route_locale_roles=VALID_ROUTE_LOCALE_ROLES,
         is_new=False,
+        mapbox_acked=_disclosure_acked(db, uid),
+        mapbox_disclosure_version=MAPBOX_DISCLOSURE_VERSION,
     )
 
 
@@ -288,11 +364,18 @@ def update_race(race_event_id: int):
     )
     new_race_rules_summary = _parse_str(request.form, 'race_rules_summary')
     new_mandatory_gear_text = _parse_str(request.form, 'mandatory_gear_text')
-    new_event_locale_id = _parse_int(request.form, 'event_locale_id')
     new_notes = _parse_str(request.form, 'notes')
     new_race_terrain = _parse_race_terrain(request.form)
     new_aid_stations = _parse_int(request.form, 'aid_stations')
+    new_race_url = _parse_race_url(request.form)
 
+    # D-73 Phase 5.2 walkthrough #1 — the race-details form no longer carries
+    # `event_locale_id` (legacy dropdown removed); the 5 Mapbox columns are
+    # owned by the standalone `/locales/update` flow on the edit page (POST
+    # to `race_events.set_locale`). For the new_race path the hidden fields
+    # ride through this same `update_race` POST handler when athlete picks
+    # a result on first creation, but for subsequent edits the picker is
+    # decoupled — there are no Mapbox hidden fields to read here.
     update_race_event(
         db, uid, race_event_id,
         name=name,
@@ -302,7 +385,13 @@ def update_race(race_event_id: int):
         total_elevation_gain_m=new_total_elevation_gain_m,
         race_rules_summary=new_race_rules_summary,
         mandatory_gear_text=new_mandatory_gear_text,
-        event_locale_id=new_event_locale_id,
+        event_locale_id=race['event_locale_id'],  # legacy FK preserved
+        event_locale_name=race.get('event_locale_name'),
+        event_locale_mapbox_id=race.get('event_locale_mapbox_id'),
+        event_locale_place_name=race.get('event_locale_place_name'),
+        event_locale_lat=race.get('event_locale_lat'),
+        event_locale_lng=race.get('event_locale_lng'),
+        race_url=new_race_url,
         notes=new_notes,
         race_terrain=new_race_terrain,
         aid_stations=new_aid_stations,
@@ -320,11 +409,11 @@ def update_race(race_event_id: int):
             race['event_date'] != event_date
             or race['race_format'] != race_format
         )
-        locale_changed = race['event_locale_id'] != new_event_locale_id
         # Existing race_terrain comes back from get_race_event as a list
         # of dicts (JSONB hydrated in the repo); compare as-is.
         prior_terrain = race.get('race_terrain') or []
         prior_aid = race.get('aid_stations')
+        prior_race_url = race.get('race_url')
         brief_only_changed = (
             race['distance_km'] != new_distance_km
             or race['total_elevation_gain_m'] != new_total_elevation_gain_m
@@ -333,19 +422,106 @@ def update_race(race_event_id: int):
             or race['notes'] != new_notes
             or prior_terrain != new_race_terrain
             or prior_aid != new_aid_stations
+            or prior_race_url != new_race_url
         )
         if periodization_changed:
             evict_on_target_event_periodization_change(db, uid)
-        if locale_changed:
-            evict_on_target_event_locale_change(db, uid)
-        if brief_only_changed and not periodization_changed and not locale_changed:
-            # Periodization + locale evictions are broader than brief-only;
-            # firing brief-only on top would only re-evict already-evicted
+        if brief_only_changed and not periodization_changed:
+            # Periodization eviction is broader than brief-only; firing
+            # brief-only on top would only re-evict already-evicted
             # race_week_brief rows.
             evict_on_target_event_brief_field_change(db, uid)
 
     flash('Race updated.', 'success')
     return redirect(url_for('race_events.edit_race', race_event_id=race_event_id))
+
+
+@bp.route('/<int:race_event_id>/locale/update', methods=['POST'])
+def set_locale(race_event_id: int):
+    """Standalone POST endpoint for picking a Mapbox-anchored race location.
+
+    Decoupled from the main `update_race` POST so the athlete can pick a
+    location on the edit page without re-submitting (and re-validating) the
+    rest of the race-details form. Mirrors the inline route-locale + nested
+    equipment forms already on the same page.
+    """
+    db = get_db()
+    uid = current_user_id()
+    race = get_race_event(db, uid, race_event_id)
+    if not race:
+        abort(404)
+
+    locale_fields = _extract_mapbox_locale_from_form(request.form)
+    if not locale_fields['event_locale_name'] and not locale_fields['event_locale_mapbox_id']:
+        flash('Place lookup result was malformed; try again.', 'danger')
+        return redirect(url_for('race_events.edit_race', race_event_id=race_event_id))
+
+    update_race_event_locale(db, uid, race_event_id, **locale_fields)
+
+    # Target-row Mapbox edit → race-week brief invalidates. The legacy
+    # `event_locale_id` Layer 2C eviction does NOT fire because the race
+    # finish anchor doesn't dictate which athlete locale's equipment is
+    # used for race-week prep (the athlete's primary training locale
+    # drives Layer 2C; race finish drives brief logistics text only).
+    if race['is_target_event']:
+        evict_on_target_event_brief_field_change(db, uid)
+    flash('Race location updated.', 'success')
+    return redirect(url_for('race_events.edit_race', race_event_id=race_event_id))
+
+
+@bp.route('/locale/search', methods=['GET'])
+def locale_search():
+    """JSON Mapbox forward-search endpoint for the inline race-location
+    picker (D-73 Phase 5.2 walkthrough #1).
+
+    Used by both the race-edit page + the onboarding step 3c form. Both
+    surfaces issue a same-origin `fetch()` from the inline picker script;
+    on result-click the JS fills the 5 Mapbox hidden inputs (event_locale_*)
+    in the parent form. Response shape:
+
+        {"results": [{"text", "place_name", "mapbox_id", "lat", "lng"}, ...]}
+        OR
+        {"error": "..."}    (human-readable; 200 OK)
+        OR
+        {"error": "disclosure_required"}    (400; UI must ack first)
+    """
+    db = get_db()
+    uid = current_user_id()
+    if not _disclosure_acked(db, uid):
+        return jsonify({'error': 'disclosure_required'}), 400
+    q = (request.args.get('q') or '').strip()
+    results, error = _run_mapbox_search(q)
+    if error:
+        return jsonify({'error': error})
+    return jsonify({
+        'results': [
+            {
+                'text': r.get('text', ''),
+                'place_name': r.get('place_name', ''),
+                'mapbox_id': r.get('mapbox_id', ''),
+                'lat': r.get('lat'),
+                'lng': r.get('lng'),
+            }
+            for r in results
+        ],
+    })
+
+
+@bp.route('/locale/acknowledge', methods=['POST'])
+def acknowledge_mapbox_disclosure():
+    """Records the Mapbox geocoding consent + redirects back to the
+    referrer race page. Shares `disclosure_acknowledgments` rows with
+    `/locales/new`; an ack from either surface unblocks both.
+    """
+    db = get_db()
+    uid = current_user_id()
+    _record_disclosure_ack(db, uid)
+    return_to = (request.form.get('return_to') or '').strip()
+    if return_to and return_to.startswith('/profile/race-events/'):
+        return redirect(return_to)
+    if return_to.startswith('/onboarding/'):
+        return redirect(return_to)
+    return _tab_redirect()
 
 
 @bp.route('/<int:race_event_id>/delete', methods=['POST'])

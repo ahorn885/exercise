@@ -53,6 +53,7 @@ def list_athlete_race_events(db, user_id: int) -> list[dict[str, Any]]:
         """
         SELECT id, name, event_date, race_format, is_target_event,
                distance_km, total_elevation_gain_m, event_locale_id,
+               event_locale_name, event_locale_place_name,
                aid_stations,
                created_at, updated_at
           FROM race_events
@@ -86,7 +87,10 @@ def load_race_event_payload(db, race_event_id: int) -> RaceEventPayload | None:
                re.race_rules_summary, re.mandatory_gear_text,
                lp.locale AS event_locale_slug,
                re.is_target_event, re.notes,
-               re.race_terrain, re.aid_stations
+               re.race_terrain, re.aid_stations,
+               re.event_locale_name, re.event_locale_mapbox_id,
+               re.event_locale_place_name, re.event_locale_lat, re.event_locale_lng,
+               re.race_url
           FROM race_events re
           LEFT JOIN locale_profiles lp ON lp.id = re.event_locale_id
          WHERE re.id = ?
@@ -167,6 +171,15 @@ def load_race_event_payload(db, race_event_id: int) -> RaceEventPayload | None:
         for entry in raw_terrain
     ]
 
+    # D-73 Phase 5.2 walkthrough #1 (2026-05-21) — race_events now carries
+    # Mapbox-anchored race-location columns alongside the legacy
+    # event_locale_id BIGINT FK. New rows populate the Mapbox columns; the
+    # legacy FK stays nullable for pre-walkthrough rows where the athlete
+    # picked a saved locale from the (now-removed) dropdown. Layer 4 +
+    # Layer 3B treat the row as "locale resolved" when EITHER the legacy
+    # FK slug OR the new event_locale_name is set.
+    event_locale_lat = race_row["event_locale_lat"]
+    event_locale_lng = race_row["event_locale_lng"]
     return RaceEventPayload(
         race_event_id=int(race_row["id"]),
         user_id=int(race_row["user_id"]),
@@ -178,6 +191,15 @@ def load_race_event_payload(db, race_event_id: int) -> RaceEventPayload | None:
         race_rules_summary=race_row["race_rules_summary"],
         mandatory_gear_text=race_row["mandatory_gear_text"],
         event_locale_id=race_row["event_locale_slug"],
+        event_locale_name=race_row["event_locale_name"],
+        event_locale_mapbox_id=race_row["event_locale_mapbox_id"],
+        event_locale_place_name=race_row["event_locale_place_name"],
+        event_locale_lat=(
+            float(event_locale_lat) if event_locale_lat is not None else None
+        ),
+        event_locale_lng=(
+            float(event_locale_lng) if event_locale_lng is not None else None
+        ),
         is_target_event=bool(race_row["is_target_event"]),
         notes=race_row["notes"],
         race_terrain=race_terrain,
@@ -186,6 +208,7 @@ def load_race_event_payload(db, race_event_id: int) -> RaceEventPayload | None:
             if race_row["aid_stations"] is not None
             else None
         ),
+        race_url=race_row["race_url"],
         route_locales=route_locales,
     )
 
@@ -217,6 +240,12 @@ def create_race_event(
     race_rules_summary: str | None = None,
     mandatory_gear_text: str | None = None,
     event_locale_id: int | None = None,
+    event_locale_name: str | None = None,
+    event_locale_mapbox_id: str | None = None,
+    event_locale_place_name: str | None = None,
+    event_locale_lat: float | None = None,
+    event_locale_lng: float | None = None,
+    race_url: str | None = None,
     is_target_event: bool = False,
     notes: str | None = None,
     race_terrain: list[dict[str, Any]] | None = None,
@@ -234,6 +263,13 @@ def create_race_event(
     "pct_of_race": float}` (route-layer parser already normalizes from
     form fields). Serialized to JSONB. Callers can also pass an empty list
     or None for "not captured yet"; both round-trip as `[]` on load.
+
+    `event_locale_name` / `event_locale_mapbox_id` / `event_locale_place_name`
+    / `event_locale_lat` / `event_locale_lng` carry the Mapbox-anchored
+    race location per D-73 Phase 5.2 walkthrough #1. New rows populate
+    these; the legacy `event_locale_id` BIGINT FK to locale_profiles stays
+    nullable for backward compat with pre-walkthrough rows that used the
+    saved-locale dropdown.
     """
     if race_format not in VALID_RACE_FORMATS:
         raise ValueError(f"race_format must be one of {VALID_RACE_FORMATS}; got {race_format!r}")
@@ -245,8 +281,12 @@ def create_race_event(
              distance_km, total_elevation_gain_m,
              race_rules_summary, mandatory_gear_text,
              event_locale_id, is_target_event, notes,
-             race_terrain, aid_stations, etl_version_set)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?, ?::jsonb)
+             race_terrain, aid_stations,
+             event_locale_name, event_locale_mapbox_id, event_locale_place_name,
+             event_locale_lat, event_locale_lng,
+             race_url,
+             etl_version_set)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?, ?, ?, ?, ?, ?, ?, ?::jsonb)
         RETURNING id
         """,
         (
@@ -263,6 +303,12 @@ def create_race_event(
             notes,
             json.dumps(race_terrain or []),
             aid_stations,
+            event_locale_name,
+            event_locale_mapbox_id,
+            event_locale_place_name,
+            event_locale_lat,
+            event_locale_lng,
+            race_url,
             json.dumps(etl_version_set or {}),
         ),
     )
@@ -377,6 +423,9 @@ def get_race_event(db, user_id: int, race_event_id: int) -> dict[str, Any] | Non
                race_rules_summary, mandatory_gear_text,
                event_locale_id, is_target_event, notes,
                race_terrain, aid_stations,
+               event_locale_name, event_locale_mapbox_id, event_locale_place_name,
+               event_locale_lat, event_locale_lng,
+               race_url,
                created_at, updated_at
           FROM race_events
          WHERE id = ? AND user_id = ?
@@ -395,6 +444,13 @@ def get_race_event(db, user_id: int, race_event_id: int) -> dict[str, Any] | Non
         result["race_terrain"] = json.loads(raw_terrain) if raw_terrain else []
     elif raw_terrain is None:
         result["race_terrain"] = []
+    # NUMERIC(9,6) round-trips as Decimal under psycopg2; coerce to float so
+    # template arithmetic + form-field rendering stay simple. None passes
+    # through.
+    for k in ("event_locale_lat", "event_locale_lng"):
+        v = result.get(k)
+        if v is not None and not isinstance(v, float):
+            result[k] = float(v)
     return result
 
 
@@ -411,6 +467,12 @@ def update_race_event(
     race_rules_summary: str | None = None,
     mandatory_gear_text: str | None = None,
     event_locale_id: int | None = None,
+    event_locale_name: str | None = None,
+    event_locale_mapbox_id: str | None = None,
+    event_locale_place_name: str | None = None,
+    event_locale_lat: float | None = None,
+    event_locale_lng: float | None = None,
+    race_url: str | None = None,
     notes: str | None = None,
     race_terrain: list[dict[str, Any]] | None = None,
     aid_stations: int | None = None,
@@ -438,6 +500,12 @@ def update_race_event(
                race_rules_summary = ?,
                mandatory_gear_text = ?,
                event_locale_id = ?,
+               event_locale_name = ?,
+               event_locale_mapbox_id = ?,
+               event_locale_place_name = ?,
+               event_locale_lat = ?,
+               event_locale_lng = ?,
+               race_url = ?,
                notes = ?,
                race_terrain = ?::jsonb,
                aid_stations = ?,
@@ -453,9 +521,58 @@ def update_race_event(
             race_rules_summary,
             mandatory_gear_text,
             event_locale_id,
+            event_locale_name,
+            event_locale_mapbox_id,
+            event_locale_place_name,
+            event_locale_lat,
+            event_locale_lng,
+            race_url,
             notes,
             json.dumps(race_terrain or []),
             aid_stations,
+            race_event_id,
+            user_id,
+        ),
+    )
+    db.commit()
+
+
+def update_race_event_locale(
+    db,
+    user_id: int,
+    race_event_id: int,
+    *,
+    event_locale_name: str | None,
+    event_locale_mapbox_id: str | None,
+    event_locale_place_name: str | None,
+    event_locale_lat: float | None,
+    event_locale_lng: float | None,
+) -> None:
+    """UPDATE just the 5 Mapbox-anchored race-location columns on a single
+    race_events row. Used by the race-edit page's "Set race location" inline
+    flow so the athlete can pick a Mapbox feature without re-submitting the
+    full race-details form. Also clears the legacy `event_locale_id` BIGINT
+    FK so a row that previously pointed at a saved athlete locale stops
+    surfacing the old slug downstream.
+    """
+    db.execute(
+        """
+        UPDATE race_events
+           SET event_locale_name = ?,
+               event_locale_mapbox_id = ?,
+               event_locale_place_name = ?,
+               event_locale_lat = ?,
+               event_locale_lng = ?,
+               event_locale_id = NULL,
+               updated_at = NOW()
+         WHERE id = ? AND user_id = ?
+        """,
+        (
+            event_locale_name,
+            event_locale_mapbox_id,
+            event_locale_place_name,
+            event_locale_lat,
+            event_locale_lng,
             race_event_id,
             user_id,
         ),
