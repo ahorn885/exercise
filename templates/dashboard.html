@@ -23,6 +23,50 @@
   </p>
 </header>
 
+{# ── Quick actions (Layer 4 v2 entry points) ── #}
+<div class="row g-3 mb-3">
+  <div class="col-md-4">
+    <div class="card h-100">
+      <div class="card-body d-flex flex-column">
+        <div class="fw-semibold mb-1">Build a workout</div>
+        <p class="text-muted small flex-grow-1 mb-3">
+          Need a one-off session? Generate a single workout tailored to your sport, duration, and locale.
+        </p>
+        <a href="{{ url_for('ad_hoc_workouts.build_workout') }}" class="btn btn-primary btn-sm align-self-start">Build a workout</a>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-4">
+    <div class="card h-100">
+      <div class="card-body d-flex flex-column">
+        <div class="fw-semibold mb-1">Create a training plan</div>
+        <p class="text-muted small flex-grow-1 mb-3">
+          Generate a full training plan from your current state through your target race.
+        </p>
+        <a href="{{ url_for('plan_create.new_plan') }}" class="btn btn-primary btn-sm align-self-start">Create a plan</a>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-4">
+    <div class="card h-100 {% if not has_plan_version %}opacity-50{% endif %}">
+      <div class="card-body d-flex flex-column">
+        <div class="fw-semibold mb-1">Refresh your plan</div>
+        {% if has_plan_version %}
+        <p class="text-muted small flex-grow-1 mb-3">
+          Update the next 2 days, week, or 4 weeks based on how training is actually going.
+        </p>
+        <a href="{{ url_for('plan_refresh.refresh') }}" class="btn btn-primary btn-sm align-self-start">Refresh your plan</a>
+        {% else %}
+        <p class="text-muted small flex-grow-1 mb-3">
+          Available once you have an active plan.
+        </p>
+        <a href="#" class="btn btn-secondary btn-sm align-self-start disabled" aria-disabled="true" tabindex="-1">Refresh your plan</a>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+</div>
+
 {# ── Today + Weather ── #}
 <div class="row g-3 mb-3">
   <div class="col-md-8">
