@@ -66,20 +66,30 @@
       </small>
     </div>
     <div class="col-md-6">
-      <label class="form-label" for="event_locale_id">Race finish locale (optional)</label>
-      <select class="form-select" id="event_locale_id" name="event_locale_id">
-        <option value="">—</option>
-        {% for loc in locale_choices %}
-          <option value="{{ loc.id }}"
-            {% if target and target.event_locale_id == loc.id %}selected{% endif %}>
-            {{ loc.label }}
-          </option>
-        {% endfor %}
-      </select>
+      <label class="form-label" for="race_url">Race website URL (optional)</label>
+      <input type="url" class="form-control" id="race_url" name="race_url"
+             placeholder="https://example.com/race"
+             value="{{ target.race_url if target and target.race_url else '' }}">
       <small class="text-muted">
-        Optional — link the race finish to a locale you've saved on
-        Profile → Locales for travel-aware coaching.
+        Link to the race director's site. Future site-parse pre-fill will
+        read this to populate the rules &amp; equipment fields below.
       </small>
+    </div>
+
+    <div class="col-12">
+      {# D-73 Phase 5.2 walkthrough #1 — race-location picker (shared partial).
+         Hidden inputs ride alongside the rest of the form; on Save the POST
+         carries them through `_extract_mapbox_locale_from_form`. #}
+      {% with selected_name=(target.event_locale_name if target else None),
+              selected_place_name=(target.event_locale_place_name if target else None),
+              selected_mapbox_id=(target.event_locale_mapbox_id if target else None),
+              selected_lat=(target.event_locale_lat if target else None),
+              selected_lng=(target.event_locale_lng if target else None),
+              search_endpoint_url=url_for('race_events.locale_search'),
+              acknowledge_endpoint_url=url_for('race_events.acknowledge_mapbox_disclosure'),
+              return_to_url=url_for('onboarding.target_race') %}
+        {% include '_race_locale_picker.html' %}
+      {% endwith %}
     </div>
 
     <div class="col-md-4">

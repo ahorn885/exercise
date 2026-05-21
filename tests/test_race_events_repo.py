@@ -152,6 +152,11 @@ def _race_row(**overrides):
     # and surfaces the slug under `event_locale_slug`. The DB column itself is
     # still BIGINT FK; tests for write-path helpers (create + update + listing)
     # still seed `event_locale_id: int`.
+    #
+    # D-73 Phase 5.2 walkthrough #1 + #2a (2026-05-21) — extended with
+    # Mapbox-anchored race-location columns + race_url. Default values None
+    # so existing tests that asserted "no Mapbox data" still pass; explicit
+    # overrides drive the new-shape tests.
     base = {
         "id": 10,
         "user_id": 1,
@@ -169,6 +174,16 @@ def _race_row(**overrides):
         # depending on adapter; tests seed list (the psycopg2 default).
         "race_terrain": [],
         "aid_stations": None,
+        # D-73 Phase 5.2 walkthrough #1 — Mapbox-anchored race-location
+        # columns. Default None so tests that don't care about the new
+        # shape still pass.
+        "event_locale_name": None,
+        "event_locale_mapbox_id": None,
+        "event_locale_place_name": None,
+        "event_locale_lat": None,
+        "event_locale_lng": None,
+        # D-73 Phase 5.2 walkthrough #2a — race-director site URL.
+        "race_url": None,
     }
     base.update(overrides)
     return base
@@ -853,13 +868,16 @@ class TestRaceTerrainAndAidStations:
         assert new_id == 99
         sql, params = conn.calls[0]
         # race_terrain JSON serialization + aid_stations integer position.
-        # Param layout: (..., notes, race_terrain_json, aid_stations,
-        # etl_version_set_json) → race_terrain at index -3, aid_stations -2.
-        terrain_json = params[-3]
-        assert isinstance(terrain_json, str)
+        # D-73 Phase 5.2 walkthrough #1 + #2a (2026-05-21) added 6 columns
+        # after aid_stations; race_terrain + aid_stations now at absolute
+        # positions 11 + 12 (0-indexed) in the param tuple. Locate via the
+        # JSONB string content to stay robust against future column adds.
+        terrain_params = [p for p in params if isinstance(p, str) and "TRN-002" in p]
+        assert len(terrain_params) == 1, f"expected exactly one TRN-* JSON param; got {params}"
+        terrain_json = terrain_params[0]
         assert "TRN-002" in terrain_json
         assert "TRN-009" in terrain_json
-        assert params[-2] == 0  # aid_stations
+        assert 0 in params  # aid_stations
 
     def test_create_empty_race_terrain_serializes_as_empty_array(self):
         conn = _FakeConn()
@@ -873,8 +891,13 @@ class TestRaceTerrainAndAidStations:
         )
         params = conn.calls[0][1]
         # Defaults: race_terrain=None → serialized as `[]`; aid_stations=None.
-        assert params[-3] == "[]"
-        assert params[-2] is None
+        # The JSONB-string `"[]"` appears twice in the param tuple
+        # (race_terrain default + etl_version_set default `"{}"`); assert
+        # presence rather than exact position to stay robust against future
+        # column adds.
+        assert "[]" in params
+        # etl_version_set serializes as `"{}"` (empty dict default).
+        assert "{}" in params
 
     def test_update_serializes_race_terrain_and_aid_stations(self):
         conn = _FakeConn()
@@ -951,3 +974,191 @@ class TestRaceTerrainAndAidStations:
         assert result[0]["aid_stations"] == 0
         # SELECT names the column.
         assert "aid_stations" in conn.calls[0][0]
+
+
+# ─── D-73 Phase 5.2 walkthrough #1 + #2a — Mapbox race-location columns ─────
+
+
+class TestMapboxRaceLocationColumns:
+    """Mapbox-anchored race-location columns + race_url (D-73 Phase 5.2
+    walkthrough #1 + #2a). The 5 race-location columns mirror the
+    locale_profiles' Mapbox shape (name + mapbox_id + place_name + lat + lng);
+    race_url is athlete-typed verbatim.
+    """
+
+    def test_load_payload_populates_mapbox_columns_when_present(self):
+        conn = _FakeConn()
+        conn.queue_response(row=_race_row(
+            event_locale_slug=None,  # new shape — legacy FK cleared
+            event_locale_name="Nerstrand State Park",
+            event_locale_mapbox_id="poi.abcdef123",
+            event_locale_place_name="Nerstrand State Park, Nerstrand, MN, US",
+            event_locale_lat=Decimal("44.345"),
+            event_locale_lng=Decimal("-93.106"),
+            race_url="https://example.com/pge2026",
+        ))
+        conn.queue_response(rows=[])
+        payload = load_race_event_payload(conn, race_event_id=10)
+        assert payload is not None
+        assert payload.event_locale_id is None
+        assert payload.event_locale_name == "Nerstrand State Park"
+        assert payload.event_locale_mapbox_id == "poi.abcdef123"
+        assert payload.event_locale_place_name == "Nerstrand State Park, Nerstrand, MN, US"
+        assert payload.event_locale_lat == 44.345
+        assert payload.event_locale_lng == -93.106
+        assert payload.race_url == "https://example.com/pge2026"
+
+    def test_load_payload_defaults_mapbox_columns_to_none(self):
+        conn = _FakeConn()
+        # Default `_race_row()` has Mapbox cols all None (pre-walkthrough
+        # shape: athlete used the saved-locale dropdown for `event_locale_slug`,
+        # never picked a Mapbox anchor).
+        conn.queue_response(row=_race_row())
+        conn.queue_response(rows=[])
+        payload = load_race_event_payload(conn, race_event_id=10)
+        assert payload is not None
+        assert payload.event_locale_id == "nerstrand_finish"  # legacy slug
+        assert payload.event_locale_name is None
+        assert payload.event_locale_mapbox_id is None
+        assert payload.event_locale_place_name is None
+        assert payload.event_locale_lat is None
+        assert payload.event_locale_lng is None
+        assert payload.race_url is None
+
+    def test_create_passes_mapbox_kwargs_in_insert(self):
+        conn = _FakeConn()
+        conn.queue_response(row={"id": 42})
+        new_id = create_race_event(
+            conn,
+            user_id=1,
+            name="Race",
+            event_date=date(2026, 7, 17),
+            race_format="expedition_ar",
+            event_locale_name="Nerstrand State Park",
+            event_locale_mapbox_id="poi.xyz",
+            event_locale_place_name="Nerstrand State Park, MN",
+            event_locale_lat=44.345,
+            event_locale_lng=-93.106,
+            race_url="https://example.com/pge2026",
+        )
+        assert new_id == 42
+        sql, params = conn.calls[0]
+        # SQL names all 6 new columns.
+        for col in ("event_locale_name", "event_locale_mapbox_id",
+                    "event_locale_place_name", "event_locale_lat",
+                    "event_locale_lng", "race_url"):
+            assert col in sql, f"SQL missing column {col!r}"
+        # Mapbox kwargs threaded into the params tuple.
+        assert "Nerstrand State Park" in params
+        assert "poi.xyz" in params
+        assert 44.345 in params
+        assert -93.106 in params
+        assert "https://example.com/pge2026" in params
+
+    def test_create_defaults_mapbox_kwargs_to_none(self):
+        conn = _FakeConn()
+        conn.queue_response(row={"id": 1})
+        create_race_event(
+            conn,
+            user_id=1,
+            name="Race",
+            event_date=date(2026, 7, 17),
+            race_format="single_day",
+        )
+        params = conn.calls[0][1]
+        # All Mapbox + race_url defaults are None (5 + 1 = 6 None values
+        # added by the walkthrough slice beyond the existing column set).
+        none_count = sum(1 for p in params if p is None)
+        assert none_count >= 6, f"expected ≥6 None params; got {none_count}: {params}"
+
+    def test_update_passes_mapbox_kwargs(self):
+        conn = _FakeConn()
+        update_race_event(
+            conn,
+            user_id=1,
+            race_event_id=10,
+            name="Race",
+            event_date=date(2026, 7, 17),
+            race_format="expedition_ar",
+            event_locale_name="Nerstrand State Park",
+            event_locale_mapbox_id="poi.xyz",
+            event_locale_place_name="Nerstrand State Park, MN",
+            event_locale_lat=44.345,
+            event_locale_lng=-93.106,
+            race_url="https://example.com/pge2026",
+        )
+        sql, params = conn.calls[0]
+        for col in ("event_locale_name = ?", "event_locale_mapbox_id = ?",
+                    "event_locale_place_name = ?", "event_locale_lat = ?",
+                    "event_locale_lng = ?", "race_url = ?"):
+            assert col in sql, f"UPDATE SQL missing {col!r}"
+        assert "Nerstrand State Park" in params
+        assert "poi.xyz" in params
+        assert "https://example.com/pge2026" in params
+
+    def test_update_locale_helper_clears_legacy_fk(self):
+        """`update_race_event_locale` updates only the 5 Mapbox columns and
+        clears the legacy `event_locale_id BIGINT FK` so post-update reads
+        no longer surface the prior slug from the JOIN."""
+        from race_events_repo import update_race_event_locale
+        conn = _FakeConn()
+        update_race_event_locale(
+            conn,
+            user_id=1,
+            race_event_id=10,
+            event_locale_name="Nerstrand State Park",
+            event_locale_mapbox_id="poi.xyz",
+            event_locale_place_name="Nerstrand State Park, MN",
+            event_locale_lat=44.345,
+            event_locale_lng=-93.106,
+        )
+        sql, params = conn.calls[0]
+        assert "event_locale_id = NULL" in sql
+        for col in ("event_locale_name = ?", "event_locale_mapbox_id = ?",
+                    "event_locale_place_name = ?", "event_locale_lat = ?",
+                    "event_locale_lng = ?"):
+            assert col in sql, f"UPDATE SQL missing {col!r}"
+        # 5 Mapbox params + race_event_id + user_id = 7 total
+        assert len(params) == 7
+        assert params[-1] == 1  # user_id
+        assert params[-2] == 10  # race_event_id
+        # No other columns mentioned (race_url, race_terrain, etc. untouched).
+        assert "race_url = ?" not in sql
+        assert "race_terrain = ?" not in sql
+        assert conn.commits == 1
+
+    def test_get_race_event_coerces_lat_lng_to_float(self):
+        """`get_race_event` round-trips NUMERIC(9,6) lat/lng as float for
+        template arithmetic + form-field rendering. Mirrors the
+        `load_race_event_payload` precedent."""
+        conn = _FakeConn()
+        conn.queue_response(row={
+            "id": 10,
+            "user_id": 1,
+            "name": "Race",
+            "event_date": date(2026, 7, 17),
+            "race_format": "expedition_ar",
+            "distance_km": None,
+            "total_elevation_gain_m": None,
+            "race_rules_summary": None,
+            "mandatory_gear_text": None,
+            "event_locale_id": None,
+            "is_target_event": True,
+            "notes": None,
+            "race_terrain": [],
+            "aid_stations": None,
+            "event_locale_name": "Nerstrand",
+            "event_locale_mapbox_id": "poi.xyz",
+            "event_locale_place_name": None,
+            "event_locale_lat": Decimal("44.345"),
+            "event_locale_lng": Decimal("-93.106"),
+            "race_url": None,
+            "created_at": None,
+            "updated_at": None,
+        })
+        result = get_race_event(conn, user_id=1, race_event_id=10)
+        assert result is not None
+        assert isinstance(result["event_locale_lat"], float)
+        assert isinstance(result["event_locale_lng"], float)
+        assert result["event_locale_lat"] == 44.345
+        assert result["event_locale_lng"] == -93.106

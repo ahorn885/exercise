@@ -17,12 +17,51 @@
   {% endif %}
 </h4>
 
+{% if not is_new %}
+  {# ── Race location picker (Mapbox-anchored, D-73 Phase 5.2 walkthrough #1) ────
+     Standalone form so picking a location doesn't require re-submitting the
+     race-details form below. Mirrors the inline route-locale + equipment
+     forms further down the page. #}
+  <section class="mb-4">
+    <h5 class="mb-3">Race location</h5>
+    <form method="post"
+          action="{{ url_for('race_events.set_locale', race_event_id=race.id) }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      {% with selected_name=race.event_locale_name,
+              selected_place_name=race.event_locale_place_name,
+              selected_mapbox_id=race.event_locale_mapbox_id,
+              selected_lat=race.event_locale_lat,
+              selected_lng=race.event_locale_lng,
+              search_endpoint_url=url_for('race_events.locale_search'),
+              acknowledge_endpoint_url=url_for('race_events.acknowledge_mapbox_disclosure'),
+              return_to_url=url_for('race_events.edit_race', race_event_id=race.id) %}
+        {% include '_race_locale_picker.html' %}
+      {% endwith %}
+      <div class="text-end">
+        <button type="submit" class="btn btn-sm btn-primary">Save race location</button>
+      </div>
+    </form>
+  </section>
+{% endif %}
+
 {# ── Race details form ────────────────────────────────────────────── #}
 <section class="mb-4">
   <h5 class="mb-3">Race details</h5>
   <form method="post"
         action="{% if is_new %}{{ url_for('race_events.new_race') }}{% else %}{{ url_for('race_events.update_race', race_event_id=race.id) }}{% endif %}">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    {% if is_new %}
+      {# For the create flow, the Mapbox hidden inputs ride inside the
+         race-details form so the POST writes the full row in a single
+         transaction. #}
+      {% with selected_name=None, selected_place_name=None,
+              selected_mapbox_id=None, selected_lat=None, selected_lng=None,
+              search_endpoint_url=url_for('race_events.locale_search'),
+              acknowledge_endpoint_url=url_for('race_events.acknowledge_mapbox_disclosure'),
+              return_to_url=url_for('race_events.new_race') %}
+        {% include '_race_locale_picker.html' %}
+      {% endwith %}
+    {% endif %}
     <div class="row g-3">
 
       <div class="col-md-8">
@@ -73,19 +112,14 @@
         </small>
       </div>
 
-      <div class="col-md-6">
-        <label class="form-label" for="event_locale_id">Event locale (optional)</label>
-        <select class="form-select" id="event_locale_id" name="event_locale_id">
-          <option value="">— None —</option>
-          {% for c in locale_choices %}
-            <option value="{{ c.id }}"
-                    {% if race and race.event_locale_id == c.id %}selected{% endif %}>
-              {{ c.label }}
-            </option>
-          {% endfor %}
-        </select>
+      <div class="col-md-12">
+        <label class="form-label" for="race_url">Race website URL (optional)</label>
+        <input type="url" class="form-control" id="race_url" name="race_url"
+               placeholder="https://example.com/race"
+               value="{{ race.race_url if race and race.race_url else '' }}">
         <small class="text-muted">
-          Pick a locale from your saved list if the race finish or HQ matches one — leave blank otherwise.
+          Link to the race director's site (rules, mandatory gear, course map).
+          Future site-parse pre-fill will read this to populate the rules &amp; equipment fields below.
         </small>
       </div>
 

@@ -1,0 +1,218 @@
+{# D-73 Phase 5.2 walkthrough #1 (2026-05-21) — shared race-location picker.
+   Renders inside the parent race-edit / target-race / new-race form. The
+   parent form owns the 5 hidden inputs (event_locale_name,
+   event_locale_mapbox_id, event_locale_place_name, event_locale_lat,
+   event_locale_lng); this partial renders the search UI + a small inline
+   nonce-protected script that drives the fetch + result-click handler.
+
+   Caller context required:
+   - `selected_name` (str | None) — currently anchored name (or None)
+   - `selected_place_name` (str | None) — currently anchored full address
+   - `selected_mapbox_id` (str | None)
+   - `selected_lat` / `selected_lng` (float | None)
+   - `mapbox_acked` (bool)
+   - `mapbox_disclosure_version` (str)
+   - `search_endpoint_url` (str) — route to POST searches against
+   - `acknowledge_endpoint_url` (str) — route to ack disclosure
+   - `return_to_url` (str) — where ack-POST should redirect back
+
+   Hidden-input names are intentionally fixed (`event_locale_*`) so the
+   parent form POST extracts them via `_extract_mapbox_locale_from_form`.
+#}
+
+<input type="hidden" name="event_locale_name" id="elp_name"
+       value="{{ selected_name or '' }}">
+<input type="hidden" name="event_locale_mapbox_id" id="elp_mapbox_id"
+       value="{{ selected_mapbox_id or '' }}">
+<input type="hidden" name="event_locale_place_name" id="elp_place_name"
+       value="{{ selected_place_name or '' }}">
+<input type="hidden" name="event_locale_lat" id="elp_lat"
+       value="{{ selected_lat if selected_lat is not none else '' }}">
+<input type="hidden" name="event_locale_lng" id="elp_lng"
+       value="{{ selected_lng if selected_lng is not none else '' }}">
+
+<div class="border rounded p-3 mb-3" id="elp_root">
+  <label class="form-label fw-semibold mb-2">Race location</label>
+
+  <div id="elp_selected" class="mb-2{% if not selected_name %} d-none{% endif %}">
+    <div class="small">
+      <span class="text-muted">Selected:</span>
+      <strong id="elp_selected_name">{{ selected_name or '' }}</strong>
+      {% if selected_place_name %}
+        <div class="text-muted small" id="elp_selected_place">{{ selected_place_name }}</div>
+      {% else %}
+        <div class="text-muted small d-none" id="elp_selected_place"></div>
+      {% endif %}
+    </div>
+    <button type="button" class="btn btn-sm btn-link p-0" id="elp_clear_btn">Change</button>
+  </div>
+
+  {% if not mapbox_acked %}
+    <div class="alert alert-info py-2 small mb-2">
+      <p class="mb-2">
+        Race-location lookup uses Mapbox (third-party geocoding) to convert your
+        search text into coordinates. Mapbox's privacy policy applies to data
+        they receive. AIDSTATION stores the response (place name, coordinates)
+        on this race; we don't share your race calendar with Mapbox.
+      </p>
+      <form method="post" action="{{ acknowledge_endpoint_url }}" class="d-inline">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <input type="hidden" name="return_to" value="{{ return_to_url }}">
+        <button type="submit" class="btn btn-primary btn-sm">Acknowledge &amp; enable lookup</button>
+      </form>
+      <small class="text-muted ms-2">Disclosure version {{ mapbox_disclosure_version }}.</small>
+    </div>
+  {% else %}
+    <div id="elp_searchbox" class="{% if selected_name %}d-none{% endif %}">
+      <div class="input-group input-group-sm">
+        <input type="text" class="form-control" id="elp_query"
+               placeholder="e.g. Nerstrand State Park, MN"
+               aria-label="Search for race location">
+        <button type="button" class="btn btn-outline-primary" id="elp_search_btn">Search</button>
+      </div>
+      <div class="form-text">
+        Type a city, state, address, or POI. We'll geocode it via Mapbox and
+        anchor the race for race-week brief logistics.
+      </div>
+      <div id="elp_results" class="mt-2"></div>
+      <div id="elp_error" class="alert alert-warning py-2 small mt-2 d-none"></div>
+    </div>
+  {% endif %}
+</div>
+
+{% if mapbox_acked %}
+<script nonce="{{ csp_nonce() }}">
+// D-73 Phase 5.2 walkthrough #1 — inline race-location picker. CSP nonce
+// covers this block; without the nonce the picker would silently fail
+// (same failure mode that bit punch-list #3 in PR #126).
+(function () {
+  var root = document.getElementById('elp_root');
+  if (!root) return;
+  var searchBtn = document.getElementById('elp_search_btn');
+  var queryEl = document.getElementById('elp_query');
+  var resultsEl = document.getElementById('elp_results');
+  var errorEl = document.getElementById('elp_error');
+  var selectedEl = document.getElementById('elp_selected');
+  var selectedNameEl = document.getElementById('elp_selected_name');
+  var selectedPlaceEl = document.getElementById('elp_selected_place');
+  var searchboxEl = document.getElementById('elp_searchbox');
+  var clearBtn = document.getElementById('elp_clear_btn');
+
+  var hidden = {
+    name: document.getElementById('elp_name'),
+    mapbox_id: document.getElementById('elp_mapbox_id'),
+    place_name: document.getElementById('elp_place_name'),
+    lat: document.getElementById('elp_lat'),
+    lng: document.getElementById('elp_lng')
+  };
+
+  function showError(msg) {
+    errorEl.textContent = msg;
+    errorEl.classList.remove('d-none');
+  }
+  function clearError() {
+    errorEl.textContent = '';
+    errorEl.classList.add('d-none');
+  }
+
+  function renderResults(results) {
+    resultsEl.innerHTML = '';
+    if (!results.length) {
+      resultsEl.textContent = 'No results.';
+      return;
+    }
+    results.forEach(function (r) {
+      var card = document.createElement('div');
+      card.className = 'border rounded p-2 mb-2';
+      var head = document.createElement('div');
+      head.className = 'fw-semibold';
+      head.textContent = r.text || '';
+      var sub = document.createElement('div');
+      sub.className = 'small text-muted mb-2';
+      sub.textContent = r.place_name || '';
+      var btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'btn btn-sm btn-primary';
+      btn.textContent = 'Use this location';
+      btn.addEventListener('click', function () {
+        hidden.name.value = r.text || '';
+        hidden.mapbox_id.value = r.mapbox_id || '';
+        hidden.place_name.value = r.place_name || '';
+        hidden.lat.value = (r.lat != null) ? String(r.lat) : '';
+        hidden.lng.value = (r.lng != null) ? String(r.lng) : '';
+        selectedNameEl.textContent = r.text || '';
+        if (r.place_name) {
+          selectedPlaceEl.textContent = r.place_name;
+          selectedPlaceEl.classList.remove('d-none');
+        } else {
+          selectedPlaceEl.textContent = '';
+          selectedPlaceEl.classList.add('d-none');
+        }
+        selectedEl.classList.remove('d-none');
+        searchboxEl.classList.add('d-none');
+        resultsEl.innerHTML = '';
+        if (queryEl) queryEl.value = '';
+      });
+      card.appendChild(head);
+      card.appendChild(sub);
+      card.appendChild(btn);
+      resultsEl.appendChild(card);
+    });
+  }
+
+  function runSearch() {
+    clearError();
+    var q = (queryEl.value || '').trim();
+    if (!q) { return; }
+    searchBtn.disabled = true;
+    fetch('{{ search_endpoint_url }}?q=' + encodeURIComponent(q), {
+      credentials: 'same-origin'
+    })
+      .then(function (resp) {
+        return resp.json().then(function (json) {
+          return {ok: resp.ok, status: resp.status, json: json};
+        });
+      })
+      .then(function (out) {
+        if (out.status === 400 && out.json && out.json.error === 'disclosure_required') {
+          showError('Disclosure not acknowledged. Refresh the page and acknowledge to enable lookup.');
+          return;
+        }
+        if (out.json && out.json.error) {
+          showError(out.json.error);
+          return;
+        }
+        renderResults((out.json && out.json.results) || []);
+      })
+      .catch(function () {
+        showError('Place lookup failed (network error). Try again.');
+      })
+      .then(function () { searchBtn.disabled = false; });
+  }
+
+  if (searchBtn) {
+    searchBtn.addEventListener('click', runSearch);
+  }
+  if (queryEl) {
+    queryEl.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        runSearch();
+      }
+    });
+  }
+  if (clearBtn) {
+    clearBtn.addEventListener('click', function () {
+      hidden.name.value = '';
+      hidden.mapbox_id.value = '';
+      hidden.place_name.value = '';
+      hidden.lat.value = '';
+      hidden.lng.value = '';
+      selectedEl.classList.add('d-none');
+      searchboxEl.classList.remove('d-none');
+      if (queryEl) queryEl.focus();
+    });
+  }
+})();
+</script>
+{% endif %}

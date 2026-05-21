@@ -163,6 +163,16 @@ def _queue_target_race_event(
             "notes": None,
             "race_terrain": race_terrain if race_terrain is not None else [],
             "aid_stations": aid_stations,
+            # D-73 Phase 5.2 walkthrough #1 + #2a (2026-05-21) — race-events
+            # rows now carry Mapbox-anchored race location + race_url. None
+            # values exercise the pre-walkthrough row shape (athlete hasn't
+            # yet picked a Mapbox anchor).
+            "event_locale_name": None,
+            "event_locale_mapbox_id": None,
+            "event_locale_place_name": None,
+            "event_locale_lat": None,
+            "event_locale_lng": None,
+            "race_url": None,
         }
     )
     conn.queue(rows=[])  # route_locales (empty for single_day)

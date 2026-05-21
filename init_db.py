@@ -1164,6 +1164,24 @@ _PG_MIGRATIONS = [
     # preserve the prior row shape for existing data.
     "ALTER TABLE race_events ADD COLUMN IF NOT EXISTS race_terrain JSONB NOT NULL DEFAULT '[]'::jsonb",
     "ALTER TABLE race_events ADD COLUMN IF NOT EXISTS aid_stations INTEGER NULL CHECK (aid_stations IS NULL OR aid_stations >= 0)",
+    # D-73 Phase 5.2 walkthrough #1 + #2a (2026-05-21) — Mapbox-anchored race
+    # location columns + race_url. The legacy `event_locale_id BIGINT FK to
+    # locale_profiles(id)` semantic (athlete's own saved travel locale slot)
+    # was wrong for race events — a race finish is at a specific real-world
+    # place (city/state/POI), not at one of the athlete's home/hotel/partner
+    # locales. The 5 new columns mirror the shape of `locale_profiles`'
+    # Mapbox-anchored row (mapbox_id + name + place_name + lat + lng). The
+    # legacy column stays nullable for backward-compat; new code uses the
+    # Mapbox columns and clears the legacy FK on update. `race_url` carries
+    # the race-director site URL — currently athlete-typed; future Trigger #2
+    # LLM site-parse slice will pre-fill rules/equipment/terrain from the
+    # URL.
+    "ALTER TABLE race_events ADD COLUMN IF NOT EXISTS event_locale_name TEXT NULL",
+    "ALTER TABLE race_events ADD COLUMN IF NOT EXISTS event_locale_mapbox_id TEXT NULL",
+    "ALTER TABLE race_events ADD COLUMN IF NOT EXISTS event_locale_place_name TEXT NULL",
+    "ALTER TABLE race_events ADD COLUMN IF NOT EXISTS event_locale_lat NUMERIC(9,6) NULL",
+    "ALTER TABLE race_events ADD COLUMN IF NOT EXISTS event_locale_lng NUMERIC(9,6) NULL",
+    "ALTER TABLE race_events ADD COLUMN IF NOT EXISTS race_url TEXT NULL",
     # Phase 5.1 form-refresh C (2026-05-20) — closes Layer2B_Spec.md §12
     # Open Item 2B-2 (§J Locale terrain access controlled vocabulary) +
     # the orchestrator's last `locale_terrain_ids=[]` forward-pointer

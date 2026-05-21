@@ -837,6 +837,18 @@ def _render_user_prompt(
         f"({race_event_payload.race_format})"
     )
     parts.append(f"**Days to event:** {days_to_event}")
+    # D-73 Phase 5.2 walkthrough #1 (2026-05-21) — surface the Mapbox-anchored
+    # race location to the LLM so `event_locale` in the brief output is
+    # grounded in the athlete-provided anchor instead of inferred from the
+    # event name. Legacy slug surfaces too when the Mapbox columns are unset
+    # (pre-walkthrough rows).
+    locale_name = (
+        race_event_payload.event_locale_place_name
+        or race_event_payload.event_locale_name
+        or race_event_payload.event_locale_id
+    )
+    if locale_name:
+        parts.append(f"**Race location:** {locale_name}")
     if race_event_payload.distance_km is not None:
         parts.append(f"**Race distance:** {race_event_payload.distance_km} km")
     if race_event_payload.total_elevation_gain_m is not None:
