@@ -31,6 +31,7 @@ from routes.plan_refresh import (
     _latest_plan_version,
     _orchestration_error_message,
     _parse_tier,
+    _resolve_prefill,
     _resolve_scope_dates,
     _run_parser,
     _write_refresh_log,
@@ -519,3 +520,45 @@ class TestLatestParentForRefresh:
         db.queue_response(row=None)
         db.queue_response(row=None)
         assert _latest_parent_for_refresh(db, user_id=1, plan_version_id=8) is None
+
+
+# ─── D-63 §3.5 — _resolve_prefill (T1 hook query-param prefill) ─────────────
+
+
+class TestResolvePrefill:
+    def test_returns_empty_when_no_args(self):
+        nl, tier = _resolve_prefill({})
+        assert nl == ""
+        assert tier is None
+
+    def test_nl_context_passes_through(self):
+        nl, tier = _resolve_prefill({"nl_context": "Did an unscheduled 60min Running (hard) at home"})
+        assert nl == "Did an unscheduled 60min Running (hard) at home"
+        assert tier is None
+
+    def test_valid_tier_uppercased(self):
+        _, tier = _resolve_prefill({"tier": "t1"})
+        assert tier == "T1"
+
+    def test_unknown_tier_collapses_to_none(self):
+        _, tier = _resolve_prefill({"tier": "T9"})
+        assert tier is None
+
+    def test_blank_tier_collapses_to_none(self):
+        _, tier = _resolve_prefill({"tier": "   "})
+        assert tier is None
+
+    def test_nl_context_truncated_at_soft_cap(self):
+        from routes.plan_refresh import _NL_TEXT_SOFT_CAP_CHARS
+
+        nl, _ = _resolve_prefill({"nl_context": "x" * (_NL_TEXT_SOFT_CAP_CHARS + 50)})
+        assert len(nl) == _NL_TEXT_SOFT_CAP_CHARS
+
+    def test_t1_hook_full_pattern(self):
+        # End-to-end pattern: T1 hook auto-fills nl_context + tier=T1.
+        nl, tier = _resolve_prefill({
+            "nl_context": "Did an unscheduled 45min MTB (moderate) at home",
+            "tier": "T1",
+        })
+        assert nl == "Did an unscheduled 45min MTB (moderate) at home"
+        assert tier == "T1"
