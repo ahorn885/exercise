@@ -1600,6 +1600,36 @@ _PG_MIGRATIONS = [
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )""",
     "CREATE INDEX IF NOT EXISTS ad_hoc_workout_suggestions_user_status_idx ON ad_hoc_workout_suggestions (user_id, status, requested_at DESC)",
+    # D-64 §7.1 — plan_refresh_log. One row per refresh attempt (success or
+    # failure). Written inside the same transaction as the orchestrator +
+    # persist_layer4_sessions per D-64 §6.2 atomic-write semantics; on
+    # parser/orchestrator failure the row still lands with success=FALSE +
+    # failure_reason populated. parsed_intent carries the full ParsedIntent
+    # JSONB (or the degraded `_default_parsed_intent()` payload when the
+    # parser errored). layers_run is a TEXT[] of layer labels actually
+    # executed downstream (orchestrator-side telemetry; v1 routes record
+    # the static tier default since the orchestrator does not currently
+    # expose per-cascade layer telemetry). Frequency-cap fields per D-64
+    # §8 deferred — caps are a follow-on per the runtime session scope.
+    """CREATE TABLE IF NOT EXISTS plan_refresh_log (
+        id BIGSERIAL PRIMARY KEY,
+        user_id INTEGER NOT NULL REFERENCES users(id),
+        triggered_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        tier TEXT NOT NULL CHECK (tier IN ('T1', 'T2', 'T3')),
+        nl_text TEXT,
+        parsed_intent JSONB,
+        layers_run TEXT[] NOT NULL DEFAULT '{}',
+        scope_start_date DATE NOT NULL,
+        scope_end_date DATE NOT NULL,
+        plan_version_id_before BIGINT REFERENCES plan_versions(id),
+        plan_version_id_after BIGINT REFERENCES plan_versions(id),
+        duration_ms INTEGER,
+        sessions_changed INTEGER,
+        success BOOLEAN NOT NULL,
+        failure_reason TEXT,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )""",
+    "CREATE INDEX IF NOT EXISTS plan_refresh_log_user_triggered_idx ON plan_refresh_log (user_id, triggered_at DESC)",
 ]
 
 _CLOTHING_SEEDS = [

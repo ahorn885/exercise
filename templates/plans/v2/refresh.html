@@ -1,0 +1,73 @@
+{% extends 'base.html' %}
+{% block title %}Refresh your plan — AIDSTATION{% endblock %}
+{% block content %}
+
+<nav class="mb-3">
+  <a href="{{ url_for('dashboard.index') }}" class="text-muted small">&larr; Back to dashboard</a>
+</nav>
+
+<h4 class="mb-3">Refresh your plan</h4>
+
+{% if parent_plan is none %}
+
+  <div class="alert alert-light border">
+    <strong>You don't have a plan yet.</strong>
+    Plan refresh re-runs the cascade against an existing plan version, so
+    you need to create one first.
+    <div class="mt-2">
+      <a href="{{ url_for('plan_create.new_plan') }}" class="btn btn-primary btn-sm">Create a plan</a>
+    </div>
+  </div>
+
+{% else %}
+
+  <p class="text-muted">
+    Pick a horizon and (optionally) tell us what changed. We'll re-run
+    the cascade that matters for that window and write a new plan version
+    you can compare against the current one.
+  </p>
+
+  <div class="card mb-3">
+    <div class="card-body">
+      <h6 class="card-title mb-1">Current plan version</h6>
+      <p class="mb-0 small text-muted">
+        v{{ parent_plan.id }} ({{ parent_plan.created_via|replace('_', ' ') }},
+        Pattern {{ parent_plan.pattern }})
+        &middot; {{ parent_plan.scope_start_date }} → {{ parent_plan.scope_end_date }}
+      </p>
+    </div>
+  </div>
+
+  <form method="post" action="{{ url_for('plan_refresh.refresh') }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+    <div class="mb-3">
+      <label class="form-label" for="nl_context">What changed? (optional)</label>
+      <textarea class="form-control" id="nl_context" name="nl_context"
+                rows="3" maxlength="{{ nl_text_cap }}"
+                placeholder="I'm tired   —OR—   I tweaked my ankle   —OR—   Travel Wed-Fri   —OR—   I just got a new MTB"></textarea>
+      <small class="text-muted">~{{ nl_text_cap }} char soft cap. Plain English; no structure required.</small>
+    </div>
+
+    <div class="d-flex flex-wrap gap-2">
+      <button type="submit" name="submit_t1" value="1" class="btn btn-primary">
+        Refresh next 2 days
+      </button>
+      <button type="submit" name="submit_t2" value="1" class="btn btn-primary">
+        Refresh week
+      </button>
+      <button type="submit" name="submit_t3" value="1" class="btn btn-primary">
+        Refresh next 4 weeks
+      </button>
+    </div>
+
+    <p class="text-muted small mt-3 mb-0">
+      <strong>Tip:</strong> 2 days = quick fix (energy / equipment-of-the-
+      moment). 7 days = weekly check-in. 28 days = big update
+      (fitness signal / race-block re-eval).
+    </p>
+  </form>
+
+{% endif %}
+
+{% endblock %}
