@@ -33,7 +33,13 @@
       <strong>{{ e.body_part }}</strong>
       <span class="text-muted small">{{ e.start_date }}{% if e.resolved_date %} → {{ e.resolved_date }}{% endif %}</span>
       {% if e.severity %}
-        <span class="badge {% if e.severity >= 4 %}bg-danger{% elif e.severity == 3 %}bg-warning text-dark{% else %}bg-secondary{% endif %}">{{ e.severity }}/5</span>
+        {% if e.severity in ['Acute', 'Post-surgical'] %}
+          <span class="badge bg-danger">{{ e.severity }}</span>
+        {% elif e.severity in ['Recovering', 'Chronic-Managed', 'Structural-Permanent'] %}
+          <span class="badge bg-warning text-dark">{{ e.severity }}</span>
+        {% else %}
+          <span class="badge bg-secondary">{{ e.severity }}</span>
+        {% endif %}
       {% endif %}
     </div>
     <div class="d-flex align-items-center gap-2">

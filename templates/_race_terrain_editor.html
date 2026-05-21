@@ -79,9 +79,10 @@
   </template>
 </div>
 
-<script>
-  // Race terrain row management — vanilla JS to keep dependencies in line with
-  // the rest of the profile templates (no Alpine/HTMX in v1).
+<script nonce="{{ csp_nonce() }}">
+  // CSP enforces script-src 'nonce-...' and drops 'unsafe-inline' — the nonce
+  // attribute is load-bearing; without it the browser silently blocks this
+  // block and the [+ Add terrain] button does nothing.
   (function () {
     const container = document.getElementById('race-terrain-rows');
     const addBtn = document.getElementById('add-terrain-row');

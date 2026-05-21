@@ -43,6 +43,15 @@
               </form>
             {% endif %}
             <a href="{{ url_for('locales.edit_profile', locale=locale) }}" class="btn btn-sm btn-outline-secondary">Edit</a>
+            {% if not is_legacy and p %}
+              <form method="post"
+                    action="{{ url_for('locales.delete_locale', locale=locale) }}"
+                    class="d-inline"
+                    data-confirm="Delete &quot;{{ p['locale_name'] if p['locale_name'] else locale }}&quot;? Equipment overrides for this location will be removed too. This cannot be undone.">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <button type="submit" class="btn btn-sm btn-outline-danger">Delete</button>
+              </form>
+            {% endif %}
           </div>
         </div>
         <div class="card-body">

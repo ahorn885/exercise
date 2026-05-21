@@ -140,9 +140,9 @@
   <hr class="my-4">
   <form method="post"
         action="{{ url_for('locales.delete_locale', locale=locale) }}"
-        onsubmit="return confirm('Delete this locale? Your equipment overrides for it will be removed too. This cannot be undone.');">
+        data-confirm="Delete this location? Your equipment overrides for it will be removed too. This cannot be undone.">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-    <button type="submit" class="btn btn-sm btn-outline-danger">Delete this locale</button>
+    <button type="submit" class="btn btn-sm btn-outline-danger">Delete this location</button>
   </form>
 {% endif %}
 {% endblock %}
