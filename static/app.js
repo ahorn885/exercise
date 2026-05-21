@@ -47,8 +47,12 @@
   document.addEventListener('click', function (e) {
     // Walk up to the nearest element with data-confirm so a click on a
     // child <span> inside a button/anchor still triggers the prompt.
+    // Stop at <form> — the submit handler above owns form-level
+    // data-confirm; walking through would double-prompt (once here on
+    // the submit-button click, again when the form's submit fires).
     var el = e.target;
     while (el && el !== document) {
+      if (el.tagName === 'FORM') return;
       if (el.dataset && el.dataset.confirm) {
         if (!window.confirm(el.dataset.confirm)) {
           e.preventDefault();
