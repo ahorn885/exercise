@@ -160,6 +160,18 @@ def _athlete_active_injury_summary(db, user_id: int) -> tuple[str, ...]:
     return tuple(summaries)
 
 
+def _resolve_prefill(args) -> tuple[str, str | None]:
+    """Resolve D-63 §3.5 T1-hook query-param prefill into
+    (nl_context, tier-or-None). nl_context is truncated at the soft cap
+    (defensive — textarea maxlength bounds visible input identically).
+    Unknown / blank tier strings collapse to None."""
+    raw_nl = args.get("nl_context", "") or ""
+    nl_context = raw_nl[:_NL_TEXT_SOFT_CAP_CHARS]
+    raw_tier = (args.get("tier") or "").strip().upper()
+    tier = raw_tier if raw_tier in VALID_TIERS else None
+    return nl_context, tier
+
+
 def _parse_tier(form) -> tuple[str | None, str | None]:
     """Tier may arrive as `tier=T2` or as one of three named submit
     buttons (`submit_t1`/`submit_t2`/`submit_t3`)."""
@@ -321,10 +333,16 @@ def refresh():
     parent_plan = _latest_plan_version(db, uid)
 
     if request.method == "GET":
+        # D-63 §3.5 post-log T1 hook auto-fills nl_context + selects
+        # tier=T1 via query params on the redirect from the suggestion
+        # modal's [Yes — refresh] anchor.
+        prefill_nl_context, prefill_tier = _resolve_prefill(request.args)
         return render_template(
             "plans/v2/refresh.html",
             parent_plan=parent_plan,
             nl_text_cap=_NL_TEXT_SOFT_CAP_CHARS,
+            prefill_nl_context=prefill_nl_context,
+            prefill_tier=prefill_tier,
         )
 
     if parent_plan is None:

@@ -21,10 +21,15 @@ commit fires (the connection's auto-rollback on close keeps the
 half-allocated row out of the table; `flash()` + redirect surfaces the
 failure to the athlete).
 
-D-63 §5.4 T1 plan-check hook + §5.1/§5.2 `is_ad_hoc` extensions on
-`cardio_log`/`training_log` defer to the log-this slice (paired with
-D-64 caller-side). v1 ships generate + view + discard + regenerate;
-[Log this workout] is not wired here.
+D-63 §5.1/§5.2/§3.5 log-this slice + T1 plan-check hook now wired:
+[Log this workout] persists the generated session into cardio_log or
+training_log (per `session.kind`) tagged with `is_ad_hoc=TRUE` +
+`ad_hoc_suggestion_id`; on success the route redirects back to
+`/workouts/suggestions/<id>?just_logged=1` so the post-log T1 hook
+modal auto-opens. The modal's [Yes — refresh] links to
+`/plans/v2/refresh?nl_context=<auto-filled>&tier=T1`; [No, thanks]
+POSTs to the dismiss endpoint that records a `t1_hook_telemetry` row
+per §3.5.
 
 "Somewhere else" quick-equipment path (D-63 §3.4) deferred to a form-
 refresh follow-on. v1 forces locale-only requests.
@@ -33,7 +38,9 @@ refresh follow-on. v1 forces locale-only requests.
 from __future__ import annotations
 
 import json
+from datetime import date
 from typing import Any
+from urllib.parse import urlencode
 
 from flask import Blueprint, render_template, request, redirect, url_for, flash, abort
 
@@ -106,13 +113,14 @@ def _get_suggestion(db, user_id: int, suggestion_id: int) -> dict | None:
     pass-through; SQLite-shim JSON-string parsed."""
     row = db.execute(
         "SELECT id, user_id, requested_at, request_payload, generated_session, "
-        "status, regenerated_into_id "
+        "status, regenerated_into_id, logged_into_table, logged_into_id "
         "FROM ad_hoc_workout_suggestions "
         "WHERE id = ? AND user_id = ?",
         (suggestion_id, user_id),
     ).fetchone()
     if row is None:
         return None
+    logged_into_id_raw = row.get('logged_into_id') if hasattr(row, 'get') else None
     return {
         'id': int(row['id']),
         'user_id': int(row['user_id']),
@@ -123,6 +131,8 @@ def _get_suggestion(db, user_id: int, suggestion_id: int) -> dict | None:
         'regenerated_into_id': (
             int(row['regenerated_into_id']) if row['regenerated_into_id'] else None
         ),
+        'logged_into_table': row.get('logged_into_table') if hasattr(row, 'get') else None,
+        'logged_into_id': int(logged_into_id_raw) if logged_into_id_raw else None,
     }
 
 
@@ -220,6 +230,173 @@ def _orchestration_error_message(err: OrchestrationError) -> str:
     )
 
 
+# ─── D-63 §5.1/§5.2/§3.5 — log-this slice helpers ───────────────────────────
+
+
+def _render_nl_context(request_payload: dict, generated_session: dict | None) -> str:
+    """Auto-fill NL context string for the post-log T1 hook per D-63 §3.5.
+
+    Template: 'Did an unscheduled {N}min {sport} ({intensity}) at {locale}'.
+    Intensity word renders verbatim from the request ('easy' / 'moderate'
+    / 'hard' / 'race pace'); the underscore in 'race_pace' renders as a
+    space. Locale prefers the generated session's `locale_name` (human-
+    readable) over `locale_id` over the request's `locale_slug`, matching
+    the precedence used in templates/workouts/suggestion_view.html.
+    """
+    sport = (request_payload.get('sport') or 'workout').strip()
+    duration_min = request_payload.get('duration_min') or 0
+    raw_intensity = (request_payload.get('intensity') or '').strip()
+    intensity_label = raw_intensity.replace('_', ' ') if raw_intensity else None
+
+    locale = None
+    if generated_session:
+        locale = generated_session.get('locale_name') or generated_session.get('locale_id')
+    locale = locale or (request_payload.get('locale_slug') or 'home')
+
+    if intensity_label:
+        return f"Did an unscheduled {duration_min}min {sport} ({intensity_label}) at {locale}"
+    return f"Did an unscheduled {duration_min}min {sport} at {locale}"
+
+
+def _log_cardio_session(
+    db,
+    user_id: int,
+    suggestion_id: int,
+    request_payload: dict,
+    session: dict,
+    *,
+    today: date,
+) -> int:
+    """INSERT one cardio_log row tagged is_ad_hoc=TRUE. Returns new row id.
+    Caller owns the transaction. Notes column concatenates the coaching
+    intent + session notes from the generated session so the log row
+    carries the synthesizer rationale alongside the duration/activity."""
+    sport = (request_payload.get('sport') or 'Workout').strip()
+    duration_min = float(session.get('duration_min') or 0)
+    notes_parts: list[str] = []
+    intent = (session.get('coaching_intent') or '').strip()
+    sess_notes = (session.get('session_notes') or '').strip()
+    if intent:
+        notes_parts.append(intent)
+    if sess_notes:
+        notes_parts.append(sess_notes)
+    notes = '\n\n'.join(notes_parts) or None
+
+    cur = db.execute(
+        "INSERT INTO cardio_log "
+        "(user_id, date, activity, duration_min, notes, "
+        "is_ad_hoc, ad_hoc_suggestion_id, ad_hoc_request_payload) "
+        "VALUES (?, ?, ?, ?, ?, TRUE, ?, ?) RETURNING id",
+        (
+            user_id,
+            today.isoformat(),
+            sport,
+            duration_min,
+            notes,
+            suggestion_id,
+            json.dumps(request_payload),
+        ),
+    )
+    row = cur.fetchone()
+    if row is None:
+        raise RuntimeError("INSERT INTO cardio_log RETURNING id returned no row")
+    return int(row['id'])
+
+
+def _log_strength_session(
+    db,
+    user_id: int,
+    suggestion_id: int,
+    request_payload: dict,
+    session: dict,
+    *,
+    today: date,
+) -> int:
+    """INSERT one training_log row per StrengthExercise. Returns the first
+    new row's id (used as the canonical logged_into_id on the suggestion
+    row — the FK identifies the entry point into the log set; downstream
+    queries find all rows in the set via ad_hoc_suggestion_id). Caller
+    owns the transaction.
+
+    reps_per_set is `int | str` on the model (e.g. '10-12' for ranges); the
+    legacy training_log.target_reps is INTEGER, so range-valued prescriptions
+    persist into notes only.
+    """
+    exercises = session.get('strength_exercises') or []
+    if not exercises:
+        raise ValueError("strength session has no strength_exercises to log")
+    first_row_id: int | None = None
+    request_payload_json = json.dumps(request_payload)
+    today_iso = today.isoformat()
+    for ex in exercises:
+        reps_raw = ex.get('reps_per_set')
+        target_reps = int(reps_raw) if isinstance(reps_raw, int) else None
+        notes_parts: list[str] = []
+        load = (ex.get('load_prescription') or '').strip()
+        tempo = (ex.get('tempo') or '').strip()
+        instructions = (ex.get('instructions') or '').strip()
+        if load:
+            notes_parts.append(f"Load: {load}")
+        if tempo:
+            notes_parts.append(f"Tempo: {tempo}")
+        if isinstance(reps_raw, str) and reps_raw:
+            notes_parts.append(f"Reps: {reps_raw}")
+        if instructions:
+            notes_parts.append(instructions)
+        notes = '\n'.join(notes_parts) or None
+        cur = db.execute(
+            "INSERT INTO training_log "
+            "(user_id, date, exercise, target_sets, target_reps, rest_sec, notes, "
+            "is_ad_hoc, ad_hoc_suggestion_id, ad_hoc_request_payload) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, TRUE, ?, ?) RETURNING id",
+            (
+                user_id,
+                today_iso,
+                ex.get('exercise_name') or 'Strength exercise',
+                ex.get('sets'),
+                target_reps,
+                ex.get('rest_between_sets_sec'),
+                notes,
+                suggestion_id,
+                request_payload_json,
+            ),
+        )
+        row = cur.fetchone()
+        if row is None:
+            raise RuntimeError("INSERT INTO training_log RETURNING id returned no row")
+        if first_row_id is None:
+            first_row_id = int(row['id'])
+    assert first_row_id is not None
+    return first_row_id
+
+
+def _mark_logged(
+    db,
+    suggestion_id: int,
+    user_id: int,
+    *,
+    logged_into_table: str,
+    logged_into_id: int,
+) -> None:
+    """Flip the suggestion's status to 'logged' + populate the logged_into_*
+    pointers per D-63 §5.5. Scoped to user_id. Caller owns the transaction."""
+    db.execute(
+        "UPDATE ad_hoc_workout_suggestions "
+        "SET status = 'logged', logged_into_table = ?, logged_into_id = ? "
+        "WHERE id = ? AND user_id = ?",
+        (logged_into_table, logged_into_id, suggestion_id, user_id),
+    )
+
+
+def _record_t1_dismiss(db, user_id: int, suggestion_id: int) -> None:
+    """INSERT one t1_hook_telemetry row recording a [No, thanks] dismissal
+    of the post-log T1 plan-check hook per D-63 §3.5. Caller commits."""
+    db.execute(
+        "INSERT INTO t1_hook_telemetry (user_id, suggestion_id) VALUES (?, ?)",
+        (user_id, suggestion_id),
+    )
+
+
 # ─── Routes ─────────────────────────────────────────────────────────────────
 
 
@@ -273,9 +450,15 @@ def build_workout():
 
 @bp.route('/suggestions/<int:suggestion_id>', methods=['GET'])
 def view_suggestion(suggestion_id: int):
-    """Render the generated session card with [Regenerate] + [Discard]
-    actions. 404 on miss + cross-user-defense via the user_id filter in
-    `_get_suggestion`."""
+    """Render the generated session card with [Log this workout] +
+    [Regenerate] + [Discard] actions. 404 on miss + cross-user-defense
+    via the user_id filter in `_get_suggestion`.
+
+    When `?just_logged=1` is on the query string the template renders the
+    post-log T1 plan-check hook modal and auto-opens it on page load per
+    D-63 §3.5. The auto-fill NL context for the [Yes — refresh] anchor
+    is computed server-side from the suggestion's request_payload +
+    generated_session so it stays deterministic across re-renders."""
     db = get_db()
     uid = current_user_id()
 
@@ -283,9 +466,98 @@ def view_suggestion(suggestion_id: int):
     if suggestion is None:
         abort(404)
 
+    just_logged = request.args.get('just_logged') == '1'
+    t1_hook_nl_context = _render_nl_context(
+        suggestion['request_payload'], suggestion['generated_session']
+    )
+    t1_hook_refresh_query = urlencode({
+        'nl_context': t1_hook_nl_context, 'tier': 'T1',
+    })
+
     return render_template(
         'workouts/suggestion_view.html',
         suggestion=suggestion,
+        just_logged=just_logged,
+        t1_hook_nl_context=t1_hook_nl_context,
+        t1_hook_refresh_query=t1_hook_refresh_query,
+    )
+
+
+@bp.route('/suggestions/<int:suggestion_id>/log', methods=['POST'])
+def log_suggestion(suggestion_id: int):
+    """Persist the suggestion's generated_session into cardio_log or
+    training_log (per session.kind), flip suggestion.status='logged' +
+    populate logged_into_table/id, commit atomically per D-64 §6.2.
+    Redirects back to the suggestion view with ?just_logged=1 so the
+    T1 hook modal auto-opens per D-63 §3.5."""
+    db = get_db()
+    uid = current_user_id()
+
+    suggestion = _get_suggestion(db, uid, suggestion_id)
+    if suggestion is None:
+        abort(404)
+
+    if suggestion['status'] != 'suggested':
+        flash("This workout has already been logged, discarded, or regenerated.", 'warning')
+        return redirect(url_for('ad_hoc_workouts.view_suggestion', suggestion_id=suggestion_id))
+
+    session = suggestion.get('generated_session')
+    if session is None:
+        flash("This workout was not generated; nothing to log.", 'danger')
+        return redirect(url_for('ad_hoc_workouts.view_suggestion', suggestion_id=suggestion_id))
+
+    kind = session.get('kind')
+    today = date.today()
+    try:
+        if kind == 'cardio':
+            log_id = _log_cardio_session(
+                db, uid, suggestion_id,
+                request_payload=suggestion['request_payload'],
+                session=session, today=today,
+            )
+            logged_into_table = 'cardio_log'
+        elif kind == 'strength':
+            log_id = _log_strength_session(
+                db, uid, suggestion_id,
+                request_payload=suggestion['request_payload'],
+                session=session, today=today,
+            )
+            logged_into_table = 'training_log'
+        else:
+            flash(f"Can't log sessions of kind {kind!r}.", 'danger')
+            return redirect(url_for('ad_hoc_workouts.view_suggestion', suggestion_id=suggestion_id))
+    except (ValueError, RuntimeError) as exc:
+        db.rollback()
+        flash(f"Could not log the workout: {exc}", 'danger')
+        return redirect(url_for('ad_hoc_workouts.view_suggestion', suggestion_id=suggestion_id))
+
+    _mark_logged(
+        db, suggestion_id, uid,
+        logged_into_table=logged_into_table, logged_into_id=log_id,
+    )
+    db.commit()
+    return redirect(
+        url_for('ad_hoc_workouts.view_suggestion', suggestion_id=suggestion_id)
+        + '?just_logged=1'
+    )
+
+
+@bp.route('/suggestions/<int:suggestion_id>/dismiss_t1_hook', methods=['POST'])
+def dismiss_t1_hook(suggestion_id: int):
+    """Record a [No, thanks] dismissal of the post-log T1 plan-check hook
+    per D-63 §3.5. Redirects back to the suggestion view (the modal
+    does NOT re-open since the redirect drops ?just_logged=1)."""
+    db = get_db()
+    uid = current_user_id()
+
+    suggestion = _get_suggestion(db, uid, suggestion_id)
+    if suggestion is None:
+        abort(404)
+
+    _record_t1_dismiss(db, uid, suggestion_id)
+    db.commit()
+    return redirect(
+        url_for('ad_hoc_workouts.view_suggestion', suggestion_id=suggestion_id)
     )
 
 

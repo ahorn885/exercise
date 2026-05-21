@@ -76,6 +76,10 @@
 
 {% if suggestion.status == 'suggested' %}
   <div class="d-flex gap-2 mt-3">
+    <form method="post" action="{{ url_for('ad_hoc_workouts.log_suggestion', suggestion_id=suggestion.id) }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <button type="submit" class="btn btn-primary">Log this workout</button>
+    </form>
     <form method="post" action="{{ url_for('ad_hoc_workouts.regenerate_suggestion', suggestion_id=suggestion.id) }}">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <button type="submit" class="btn btn-outline-secondary">Regenerate</button>
@@ -85,13 +89,57 @@
       <button type="submit" class="btn btn-outline-danger">Discard</button>
     </form>
   </div>
-  <p class="text-muted small mt-2">
-    [Log this workout] coming in a follow-on (paired with the D-64 T1 plan-check hook).
+{% elif suggestion.status == 'logged' %}
+  <p class="text-success mt-3 mb-0">
+    <strong>Logged &check;</strong>
+    {% if suggestion.logged_into_table == 'training_log' %}
+      Saved to your training log.
+    {% else %}
+      Saved to your cardio log.
+    {% endif %}
   </p>
 {% elif suggestion.status == 'regenerated' and suggestion.regenerated_into_id %}
   <p class="text-muted mt-3">
     Superseded by <a href="{{ url_for('ad_hoc_workouts.view_suggestion', suggestion_id=suggestion.regenerated_into_id) }}">a regenerated workout</a>.
   </p>
+{% endif %}
+
+{# ── D-63 §3.5 post-log T1 plan-check hook modal ─────────────────────── #}
+{% if suggestion.status == 'logged' %}
+<div class="modal fade" id="t1HookModal" tabindex="-1" aria-labelledby="t1HookModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="t1HookModalLabel">Logged &check;</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <p class="mb-2">Want to refresh the next 2 days based on this session?</p>
+        <p class="text-muted small mb-0">
+          We'll pre-fill: <em>{{ t1_hook_nl_context }}</em> (editable on the next screen).
+        </p>
+      </div>
+      <div class="modal-footer">
+        <form method="post" action="{{ url_for('ad_hoc_workouts.dismiss_t1_hook', suggestion_id=suggestion.id) }}" class="me-auto">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <button type="submit" class="btn btn-outline-secondary">No, thanks</button>
+        </form>
+        <a href="{{ url_for('plan_refresh.refresh') }}?{{ t1_hook_refresh_query }}"
+           class="btn btn-primary">Yes &mdash; refresh</a>
+      </div>
+    </div>
+  </div>
+</div>
+{% if just_logged %}
+<script>
+  (function() {
+    var modalEl = document.getElementById('t1HookModal');
+    if (modalEl && window.bootstrap && window.bootstrap.Modal) {
+      window.bootstrap.Modal.getOrCreateInstance(modalEl).show();
+    }
+  })();
+</script>
+{% endif %}
 {% endif %}
 
 {% endblock %}

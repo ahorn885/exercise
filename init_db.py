@@ -1630,6 +1630,38 @@ _PG_MIGRATIONS = [
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )""",
     "CREATE INDEX IF NOT EXISTS plan_refresh_log_user_triggered_idx ON plan_refresh_log (user_id, triggered_at DESC)",
+    # D-63 §5.1 — cardio_log ad-hoc workout extensions. Lets the [Log this
+    # workout] button on the on-demand workout result view persist the
+    # generated cardio session as a real log row tied back to the source
+    # ad_hoc_workout_suggestions row. Partial index on (user_id, is_ad_hoc)
+    # keeps the ad-hoc subset cheap to query while keeping the index small.
+    "ALTER TABLE cardio_log ADD COLUMN IF NOT EXISTS is_ad_hoc BOOLEAN NOT NULL DEFAULT FALSE",
+    "ALTER TABLE cardio_log ADD COLUMN IF NOT EXISTS ad_hoc_request_payload JSONB",
+    "ALTER TABLE cardio_log ADD COLUMN IF NOT EXISTS ad_hoc_suggestion_id BIGINT REFERENCES ad_hoc_workout_suggestions(id)",
+    "CREATE INDEX IF NOT EXISTS cardio_log_ad_hoc_idx ON cardio_log (user_id, is_ad_hoc) WHERE is_ad_hoc = TRUE",
+    # D-63 §5.2 — training_log ad-hoc workout extensions (mirror of §5.1).
+    "ALTER TABLE training_log ADD COLUMN IF NOT EXISTS is_ad_hoc BOOLEAN NOT NULL DEFAULT FALSE",
+    "ALTER TABLE training_log ADD COLUMN IF NOT EXISTS ad_hoc_request_payload JSONB",
+    "ALTER TABLE training_log ADD COLUMN IF NOT EXISTS ad_hoc_suggestion_id BIGINT REFERENCES ad_hoc_workout_suggestions(id)",
+    "CREATE INDEX IF NOT EXISTS training_log_ad_hoc_idx ON training_log (user_id, is_ad_hoc) WHERE is_ad_hoc = TRUE",
+    # D-63 §5.4 — plan_refresh_log linkage to the originating ad-hoc workout
+    # suggestion when a T1 refresh is triggered by the post-log T1 hook.
+    # Backfills as NULL for refreshes that did not flow through the
+    # log-this slice (existing rows + manual /plans/v2/refresh visits).
+    "ALTER TABLE plan_refresh_log ADD COLUMN IF NOT EXISTS triggered_by_ad_hoc_id BIGINT REFERENCES ad_hoc_workout_suggestions(id)",
+    # D-63 §3.5 — t1_hook_telemetry. One row per [No, thanks] dismissal of
+    # the post-log T1 plan-check hook. Decoupled from ad_hoc_workout_
+    # suggestions so we can extend with additional hook event types (e.g.,
+    # partial-dismiss, deferred-refresh) without schema churn on the
+    # suggestions table.
+    """CREATE TABLE IF NOT EXISTS t1_hook_telemetry (
+        id BIGSERIAL PRIMARY KEY,
+        user_id INTEGER NOT NULL REFERENCES users(id),
+        suggestion_id BIGINT NOT NULL REFERENCES ad_hoc_workout_suggestions(id),
+        dismissed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )""",
+    "CREATE INDEX IF NOT EXISTS t1_hook_telemetry_user_dismissed_idx ON t1_hook_telemetry (user_id, dismissed_at DESC)",
 ]
 
 _CLOTHING_SEEDS = [
