@@ -58,11 +58,15 @@ Vertical-slice limitations carried as forward-pointers:
   D-64 caller-side route + `plan_versions` table (matches the slice 1 D4
   precedent for D-63's `suggestion_id`). Race_week_brief continues to pass
   `prior_plan_session_window=[]` + `plan_version_id=1` placeholders.
-- Layer 3A + Layer 3B run uncached at the orchestrator level. The Layer 4
-  per-entry-point cache sits in front of the whole pipeline, so a cache
-  hit short-circuits both. Upstream caching becomes load-bearing only
-  when multiple Layer 4 entry points share user-scoped 3A/3B outputs;
-  slice 3 adds the 3rd full-cone consumer so this is closer to load-bearing.
+- Layer 3A + Layer 3B run through the cached wrappers
+  (`layer3a.cached_wrapper.llm_layer3a_athlete_state_cached` +
+  `layer3b.cached_wrapper.llm_layer3b_goal_timeline_viability_cached`)
+  as of Phase 5.2 Layer 3 caching slice (2026-05-21). The wrappers reuse
+  the shared `layer4_cache` table via `cache.backend` and per-layer
+  invalidation policy lives in `layer4.cache_invalidation` per the
+  extended §9.3 matrix. Wiring covers all 4 entry points (3A+3B in
+  `_upstream_full_cone`; 3A only in `orchestrate_single_session_synthesize`
+  since single_session doesn't consume 3B).
 """
 
 from __future__ import annotations
@@ -77,9 +81,9 @@ from layer2b.builder import q_layer2b_terrain_classifier_payload
 from layer2c.builder import q_layer2c_equipment_mapper_payload
 from layer2d.builder import q_layer2d_injury_risk_profile_payload
 from layer2e.builder import q_layer2e_nutrition_baseline_payload
-from layer3a.builder import llm_layer3a_athlete_state
+from layer3a.cached_wrapper import llm_layer3a_athlete_state_cached
 from layer3a.integration import assemble_layer3a_integration_bundle
-from layer3b.builder import llm_layer3b_goal_timeline_viability
+from layer3b.cached_wrapper import llm_layer3b_goal_timeline_viability_cached
 from layer4.cache import Layer4Cache
 from layer4.cached_wrappers import (
     llm_layer4_plan_create_cached,
@@ -172,17 +176,24 @@ def _upstream_full_cone(
     user_id: int,
     today: date,
     *,
+    cache: Layer4Cache,
     target_race_event: RaceEventPayload | None,
 ) -> _UpstreamFullCone:
     """Compose the full upstream cone (Layer 1 → 2A → 2B → 2D → 2C → 3A →
-    3B → 2E) shared by race_week_brief + plan_refresh.
+    3B → 2E) shared by race_week_brief + plan_refresh + plan_create.
 
     Pipeline ordering note: Layer 2E runs after Layer 3B because it
     consumes `start_phase` from 3B's `periodization_shape`. `primary_locale`
     + `locale_terrain_ids` are read before Layer 2B (terrain pipeline);
     `locale_equipment_pool` is read before Layer 2C.
 
-    Pre-flight gates raised here (3, shared across both consumers):
+    `cache` threads through to the Layer 3A + 3B cached wrappers
+    (`cache.backend` exposes the shared `layer4_cache` storage). The
+    wrappers compose per-spec cache keys + handle hit/miss directly; the
+    Layer 4 per-entry-point wrapper still wraps the whole pipeline so a
+    Layer-4 cache hit short-circuits 3A/3B entirely.
+
+    Pre-flight gates raised here (3, shared across all 3 consumers):
     `etl_version_set_undiscoverable`, `framework_sport_missing`,
     `primary_locale_missing`.
 
@@ -249,16 +260,17 @@ def _upstream_full_cone(
     )
 
     integration_bundle = assemble_layer3a_integration_bundle(db, user_id, as_of)
-    layer3a_payload = llm_layer3a_athlete_state(
+    layer3a_payload = llm_layer3a_athlete_state_cached(
         user_id=user_id,
         layer1_payload=layer1_payload,
         layer2a_payload=layer2a_payload,
         integration_bundle=integration_bundle,
         as_of=as_of,
         etl_version_set=etl_version_set,
+        cache_backend=cache.backend,
     )
 
-    layer3b_payload = llm_layer3b_goal_timeline_viability(
+    layer3b_payload = llm_layer3b_goal_timeline_viability_cached(
         user_id=user_id,
         layer1_payload=layer1_payload,
         layer3a_payload=layer3a_payload,
@@ -266,6 +278,7 @@ def _upstream_full_cone(
         race_event_payload=target_race_event,
         current_date=today,
         etl_version_set=etl_version_set,
+        cache_backend=cache.backend,
     )
 
     target_events: list[Layer2ETargetEvent] = []
@@ -358,7 +371,9 @@ def orchestrate_race_week_brief(
             f"days_to_event={days_to_event} > {_AUTO_FIRE_DAYS_TO_EVENT_MAX}",
         )
 
-    cone = _upstream_full_cone(db, user_id, today, target_race_event=race_event)
+    cone = _upstream_full_cone(
+        db, user_id, today, cache=cache, target_race_event=race_event
+    )
 
     return llm_layer4_race_week_brief_cached(
         user_id=user_id,
@@ -411,10 +426,10 @@ def orchestrate_single_session_synthesize(
          2C entirely; pass `layer2c_payload_for_locale=None`. The driver
          resolves equipment from `request.quick_equipment` directly per
          spec §3.3 row 4.
-    6. Build the Layer 3A integration bundle + call `llm_layer3a_athlete_state`
-       (uncached at the orchestrator level — matches race_week_brief
-       precedent; Phase 5.2 will revisit 3A caching policy once multiple
-       Layer 4 entry points share user-scoped outputs).
+    6. Build the Layer 3A integration bundle + call
+       `llm_layer3a_athlete_state_cached` (shares the Layer 4 cache backend
+       via `cache.backend` per Phase 5.2 Layer 3 caching slice 2026-05-21 —
+       same wrapper as the `_upstream_full_cone` call sites).
     7. Compose via `llm_layer4_single_session_synthesize_cached`.
 
     No `no_target_event` / `race_week_brief_too_early` gates — single-session
@@ -483,13 +498,14 @@ def orchestrate_single_session_synthesize(
         )
 
     integration_bundle = assemble_layer3a_integration_bundle(db, user_id, as_of)
-    layer3a_payload = llm_layer3a_athlete_state(
+    layer3a_payload = llm_layer3a_athlete_state_cached(
         user_id=user_id,
         layer1_payload=layer1_payload,
         layer2a_payload=layer2a_payload,
         integration_bundle=integration_bundle,
         as_of=as_of,
         etl_version_set=etl_version_set,
+        cache_backend=cache.backend,
     )
 
     return llm_layer4_single_session_synthesize_cached(
@@ -557,7 +573,9 @@ def orchestrate_plan_refresh(
         today = date.today()
 
     race_event = load_target_race_event_payload(db, user_id)
-    cone = _upstream_full_cone(db, user_id, today, target_race_event=race_event)
+    cone = _upstream_full_cone(
+        db, user_id, today, cache=cache, target_race_event=race_event
+    )
 
     layer2_bundle = Layer2Bundle(
         a=cone.layer2a_payload,
@@ -636,7 +654,9 @@ def orchestrate_plan_create(
         today = date.today()
 
     race_event = load_target_race_event_payload(db, user_id)
-    cone = _upstream_full_cone(db, user_id, today, target_race_event=race_event)
+    cone = _upstream_full_cone(
+        db, user_id, today, cache=cache, target_race_event=race_event
+    )
 
     return llm_layer4_plan_create_cached(
         user_id=user_id,
