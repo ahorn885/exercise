@@ -131,7 +131,7 @@
   </div>
 </div>
 {% if just_logged %}
-<script>
+<script nonce="{{ csp_nonce() }}">
   (function() {
     var modalEl = document.getElementById('t1HookModal');
     if (modalEl && window.bootstrap && window.bootstrap.Modal) {

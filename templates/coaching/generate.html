@@ -1,6 +1,11 @@
 {% extends 'base.html' %}
 {% block title %}Generate Training Plan{% endblock %}
 
+{# Defined at template scope so the {% block scripts %} reference at
+   the bottom can serialize it via tojson — block-scoped {% set %}
+   would be Undefined across blocks. #}
+{% set MULTISPORT_TYPES = ['Triathlon', 'Duathlon', 'Adventure Race', 'Multisport', 'Pentathlon / Decathlon', 'Other multi-sport'] %}
+
 {% block content %}
 <div class="d-flex justify-content-between align-items-center mb-4">
   <h2 class="mb-0">Generate Training Plan</h2>
@@ -27,7 +32,6 @@
 </div>
 {% endif %}
 
-{% set MULTISPORT_TYPES = ['Triathlon', 'Duathlon', 'Adventure Race', 'Multisport', 'Pentathlon / Decathlon', 'Other multi-sport'] %}
 {% set ALL_DISCIPLINES = [
   'Trail Running', 'Hiking', 'Orienteering / Navigation',
   'Road Running', 'Kayaking', 'Packrafting', 'Canoeing',
