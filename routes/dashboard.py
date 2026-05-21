@@ -12,6 +12,21 @@ bp = Blueprint('dashboard', __name__)
 _weather_cache = {}
 
 
+def _has_plan_version(db, user_id: int) -> bool:
+    """True when the athlete has at least one `plan_versions` row.
+
+    Drives the dashboard Refresh-CTA enable/disable state: with no prior plan,
+    `/plans/v2/refresh` only renders an empty-state pointing back to
+    `/plans/v2/new`, so we surface that signal up-front rather than bouncing
+    the athlete through the route.
+    """
+    row = db.execute(
+        "SELECT 1 FROM plan_versions WHERE user_id = ? LIMIT 1",
+        (user_id,),
+    ).fetchone()
+    return row is not None
+
+
 def _get_weather(db):
     today = date.today().isoformat()
     ts_now = time.time()
@@ -115,6 +130,8 @@ def index():
         (uid,)
     ).fetchall()
 
+    has_plan_version = _has_plan_version(db, uid)
+
     weather = _get_weather(db)
 
     # Cardio sessions in the last 7 days with no conditions log entry
@@ -165,4 +182,5 @@ def index():
                            weather=weather,
                            today=today,
                            clothing_recs=clothing_recs,
-                           unconditioned_cardio=unconditioned_cardio)
+                           unconditioned_cardio=unconditioned_cardio,
+                           has_plan_version=has_plan_version)
