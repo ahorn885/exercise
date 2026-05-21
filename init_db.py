@@ -1576,6 +1576,30 @@ _PG_MIGRATIONS = [
     )""",
     "CREATE INDEX IF NOT EXISTS plan_sessions_user_date_idx ON plan_sessions (user_id, date)",
     "CREATE INDEX IF NOT EXISTS plan_sessions_user_version_idx ON plan_sessions (user_id, plan_version_id)",
+    # D-63 §5.3 — ad_hoc_workout_suggestions. Holds generated-but-not-yet-
+    # logged single-session synthesizer outputs. request_payload carries the
+    # SingleSessionRequest; generated_session carries the single PlanSession
+    # from Layer4Payload.sessions[0]. status lifecycle: suggested → logged /
+    # discarded / regenerated (§5.5). regenerated_into_id chains successive
+    # regenerations; the original row stays for telemetry per D-63 §5.5.
+    # Logged-into-* columns + cardio_log/training_log is_ad_hoc extensions
+    # land with the log-this slice (paired with D-64 caller-side T1 hook).
+    """CREATE TABLE IF NOT EXISTS ad_hoc_workout_suggestions (
+        id BIGSERIAL PRIMARY KEY,
+        user_id INTEGER NOT NULL REFERENCES users(id),
+        requested_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        request_payload JSONB NOT NULL,
+        generated_session JSONB,
+        status TEXT NOT NULL DEFAULT 'suggested'
+            CHECK (status IN ('suggested', 'logged', 'discarded', 'regenerated')),
+        logged_into_table TEXT,
+        logged_into_id BIGINT,
+        discarded_at TIMESTAMPTZ,
+        regenerated_into_id BIGINT REFERENCES ad_hoc_workout_suggestions(id),
+        token_cost_estimate INTEGER,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )""",
+    "CREATE INDEX IF NOT EXISTS ad_hoc_workout_suggestions_user_status_idx ON ad_hoc_workout_suggestions (user_id, status, requested_at DESC)",
 ]
 
 _CLOTHING_SEEDS = [
