@@ -713,17 +713,24 @@ class TestLayer4CacheInvalidate:
 # ─── cache_invalidation policy ───────────────────────────────────────────────
 
 
-class TestEvictionPolicy:
-    def test_policy_layer1_all_entry_points(self):
-        assert set(policy_for_layer("layer1")) == set(LAYER4_ENTRY_POINTS)
+_LAYER3_BOTH_LABELS = frozenset(
+    {"llm_layer3a_athlete_state", "llm_layer3b_goal_timeline_viability"}
+)
 
-    def test_policy_layer2a_all_entry_points(self):
-        assert set(policy_for_layer("layer2a")) == set(LAYER4_ENTRY_POINTS)
+
+class TestEvictionPolicy:
+    def test_policy_layer1_covers_layer4_and_layer3(self):
+        assert set(policy_for_layer("layer1")) == set(LAYER4_ENTRY_POINTS) | _LAYER3_BOTH_LABELS
+
+    def test_policy_layer2a_covers_layer4_and_layer3(self):
+        assert set(policy_for_layer("layer2a")) == set(LAYER4_ENTRY_POINTS) | _LAYER3_BOTH_LABELS
 
     def test_policy_layer2b_excludes_single_session(self):
         result = set(policy_for_layer("layer2b"))
         assert "single_session_synthesize" not in result
         assert "plan_create" in result and "plan_refresh" in result and "race_week_brief" in result
+        # 3A/3B do not depend on Layer 2B → not in policy
+        assert result.isdisjoint(_LAYER3_BOTH_LABELS)
 
     def test_policy_layer2c_all_entry_points(self):
         assert set(policy_for_layer("layer2c")) == set(LAYER4_ENTRY_POINTS)
@@ -734,14 +741,25 @@ class TestEvictionPolicy:
     def test_policy_layer2e_excludes_single_session(self):
         assert "single_session_synthesize" not in set(policy_for_layer("layer2e"))
 
-    def test_policy_layer3a_all_entry_points(self):
-        assert set(policy_for_layer("layer3a")) == set(LAYER4_ENTRY_POINTS)
+    def test_policy_layer3a_includes_layer3b(self):
+        result = set(policy_for_layer("layer3a"))
+        assert result == set(LAYER4_ENTRY_POINTS) | {"llm_layer3b_goal_timeline_viability"}
+        # 3A re-running does not invalidate its own prior row through this
+        # policy (the new key naturally orphans the old row); cleanup is
+        # deferred.
+        assert "llm_layer3a_athlete_state" not in result
 
     def test_policy_layer3b_excludes_single_session(self):
-        assert "single_session_synthesize" not in set(policy_for_layer("layer3b"))
+        result = set(policy_for_layer("layer3b"))
+        assert "single_session_synthesize" not in result
+        # 3A does not depend on 3B
+        assert result.isdisjoint(_LAYER3_BOTH_LABELS)
 
-    def test_policy_etl_version_set_all_entry_points(self):
-        assert set(policy_for_layer("etl_version_set")) == set(LAYER4_ENTRY_POINTS)
+    def test_policy_etl_version_set_covers_layer4_and_layer3(self):
+        assert (
+            set(policy_for_layer("etl_version_set"))
+            == set(LAYER4_ENTRY_POINTS) | _LAYER3_BOTH_LABELS
+        )
 
     def test_policy_unknown_layer_raises(self):
         with pytest.raises(ValueError, match="unknown upstream layer"):
@@ -749,7 +767,10 @@ class TestEvictionPolicy:
 
 
 class TestEvictOnLayerChange:
-    def test_layer1_evicts_all_user_rows(self):
+    def test_layer1_evicts_layer4_and_layer3_preserves_nl_parser(self):
+        """Layer 1 change → evict 4 Layer 4 + both Layer 3 entry points;
+        leave NL parser cache alone (NL parser is athlete-scoped, not
+        Layer-1-dependent)."""
         cache = Layer4Cache(InMemoryCacheBackend())
         for ep in VALID_ENTRY_POINTS:
             cache.backend.put(
@@ -761,8 +782,32 @@ class TestEvictOnLayerChange:
                 payload_json="{}",
             )
         count = evict_on_layer_change(cache, _USER_ID, "layer1")
-        assert count == len(VALID_ENTRY_POINTS)
-        assert cache.metrics.evictions_per_layer == {"layer1": len(VALID_ENTRY_POINTS)}
+        # 4 Layer 4 + 2 Layer 3 = 6; NL parser preserved
+        assert count == 6
+        assert cache.backend.get("k-nl_parser_parse_intent") is not None
+        assert cache.backend.get("k-llm_layer3a_athlete_state") is None
+        assert cache.backend.get("k-llm_layer3b_goal_timeline_viability") is None
+        assert cache.metrics.evictions_per_layer == {"layer1": 6}
+
+    def test_layer3a_change_evicts_layer3b_preserves_layer3a(self):
+        """3A re-running invalidates 3B (3B depends on 3A); 3A's own prior
+        row stays (orphans naturally via key change — out of policy scope)."""
+        cache = Layer4Cache(InMemoryCacheBackend())
+        for ep in VALID_ENTRY_POINTS:
+            cache.backend.put(
+                cache_key=f"k-{ep}",
+                phase_idx=PER_ENTRY_PHASE_IDX_SENTINEL,
+                user_id=_USER_ID,
+                entry_point=ep,
+                phase_name=None,
+                payload_json="{}",
+            )
+        count = evict_on_layer_change(cache, _USER_ID, "layer3a")
+        # 4 Layer 4 + 3B = 5; 3A's own row + NL parser preserved
+        assert count == 5
+        assert cache.backend.get("k-llm_layer3a_athlete_state") is not None
+        assert cache.backend.get("k-llm_layer3b_goal_timeline_viability") is None
+        assert cache.backend.get("k-nl_parser_parse_intent") is not None
 
     def test_layer2b_preserves_single_session(self):
         cache = Layer4Cache(InMemoryCacheBackend())

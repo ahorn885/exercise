@@ -531,11 +531,11 @@ def _patches(*, layer4_return: Layer4Payload):
             return_value=object(),  # opaque — only re-threaded into 3A
         ),
         patch(
-            "layer4.orchestrator.llm_layer3a_athlete_state",
+            "layer4.orchestrator.llm_layer3a_athlete_state_cached",
             return_value=_fake_layer3a_payload(),
         ),
         patch(
-            "layer4.orchestrator.llm_layer3b_goal_timeline_viability",
+            "layer4.orchestrator.llm_layer3b_goal_timeline_viability_cached",
             return_value=_fake_layer3b_payload(),
         ),
         patch(
@@ -791,7 +791,7 @@ class TestDefaults:
         # Layer3B fake must also report the same event_date so D-66 row 8
         # would pass (defensive — the 3B driver in real code populates this).
         stack[8] = patch(
-            "layer4.orchestrator.llm_layer3b_goal_timeline_viability",
+            "layer4.orchestrator.llm_layer3b_goal_timeline_viability_cached",
             return_value=_fake_layer3b_payload(event_date=_today_real),
         )
         mocks = _enter_all(stack)
@@ -1159,7 +1159,7 @@ def _single_session_patches(*, layer4_return: Layer4Payload):
             return_value=object(),
         ),
         patch(
-            "layer4.orchestrator.llm_layer3a_athlete_state",
+            "layer4.orchestrator.llm_layer3a_athlete_state_cached",
             return_value=_fake_layer3a_payload(),
         ),
         patch(
@@ -1647,11 +1647,11 @@ def _plan_refresh_patches(*, layer4_return: Layer4Payload):
             return_value=object(),
         ),
         patch(
-            "layer4.orchestrator.llm_layer3a_athlete_state",
+            "layer4.orchestrator.llm_layer3a_athlete_state_cached",
             return_value=_fake_layer3a_payload(),
         ),
         patch(
-            "layer4.orchestrator.llm_layer3b_goal_timeline_viability",
+            "layer4.orchestrator.llm_layer3b_goal_timeline_viability_cached",
             return_value=_fake_layer3b_payload(),
         ),
         patch(
@@ -2004,7 +2004,7 @@ class TestOrchestratePlanRefreshDefaults:
         # Layer3B fake reports event_date matching the queued race row so the
         # D-66 model-validator row 8 (event_date consistency) passes.
         stack[8] = patch(
-            "layer4.orchestrator.llm_layer3b_goal_timeline_viability",
+            "layer4.orchestrator.llm_layer3b_goal_timeline_viability_cached",
             return_value=_fake_layer3b_payload(event_date=date.today()),
         )
         mocks = _enter_all(stack)
@@ -2202,11 +2202,11 @@ def _plan_create_patches(*, layer4_return: Layer4Payload):
             return_value=object(),
         ),
         patch(
-            "layer4.orchestrator.llm_layer3a_athlete_state",
+            "layer4.orchestrator.llm_layer3a_athlete_state_cached",
             return_value=_fake_layer3a_payload(),
         ),
         patch(
-            "layer4.orchestrator.llm_layer3b_goal_timeline_viability",
+            "layer4.orchestrator.llm_layer3b_goal_timeline_viability_cached",
             return_value=_fake_layer3b_payload(),
         ),
         patch(
@@ -2452,7 +2452,7 @@ class TestOrchestratePlanCreateDefaults:
         # 3B fake must report event_date matching the queued race row so
         # the D-66 model-validator row 8 (event_date consistency) passes.
         stack[8] = patch(
-            "layer4.orchestrator.llm_layer3b_goal_timeline_viability",
+            "layer4.orchestrator.llm_layer3b_goal_timeline_viability_cached",
             return_value=_fake_layer3b_payload(event_date=date.today()),
         )
         mocks = _enter_all(stack)

@@ -1,25 +1,39 @@
 """Layer 4 cache invalidation policy per `Layer4_Spec.md` §9.3.
 
 This module owns the routing: when upstream layer X re-derives for user Y,
-which Layer 4 cache entries get evicted? It does NOT own storage — that's
+which cache entries get evicted? It does NOT own storage — that's
 `CacheBackend`'s job — it composes the eviction primitives the
 `Layer4Cache` facade exposes.
 
-§9.3 invalidation matrix (verbatim from spec, normalized to entry_point
-tuples this module routes against):
+Eviction matrix (extends §9.3 with Layer 3A + 3B participation per
+Phase 5.2 Layer 3 caching slice 2026-05-21 — closes the §6.2 #3 forward
+move from the Layer2C_Telemetry handoff):
 
-| Upstream change           | Evicts (entry_points)                                                  |
-|---------------------------|------------------------------------------------------------------------|
-| Layer 1                   | all four entry points                                                  |
-| Layer 2A                  | all four (single_session consumes 2A)                                  |
-| Layer 2B                  | all EXCEPT single_session (D-63 doesn't consume 2B)                    |
-| Layer 2C                  | all four (single_session consumes 2C-for-locale)                       |
-| Layer 2D                  | all four (single_session consumes 2D)                                  |
-| Layer 2E                  | all EXCEPT single_session (D-63 doesn't consume 2E)                    |
-| Layer 3A                  | all four                                                                |
-| Layer 3B                  | all EXCEPT single_session (single_session doesn't consume 3B)          |
-| etl_version_set bump      | all four (etl_version_set is in every cache key)                       |
-| midnight-UTC rollover     | race_week_brief only (output is days_to_event-anchored)                |
+| Upstream change           | Layer 4 entry points evicted                                          | Layer 3A | Layer 3B |
+|---------------------------|------------------------------------------------------------------------|----------|----------|
+| Layer 1                   | all four entry points                                                  | yes      | yes      |
+| Layer 2A                  | all four (single_session consumes 2A)                                  | yes      | yes      |
+| Layer 2B                  | all EXCEPT single_session (D-63 doesn't consume 2B)                    | no       | no       |
+| Layer 2C                  | all four (single_session consumes 2C-for-locale)                       | no*      | no*      |
+| Layer 2D                  | all four (single_session consumes 2D)                                  | no*      | no*      |
+| Layer 2E                  | all EXCEPT single_session (D-63 doesn't consume 2E)                    | no       | no       |
+| Layer 3A                  | all four                                                                | no       | yes      |
+| Layer 3B                  | all EXCEPT single_session (single_session doesn't consume 3B)          | no       | no       |
+| etl_version_set bump      | all four (etl_version_set is in every cache key)                       | yes      | yes      |
+| midnight-UTC rollover     | race_week_brief only (output is days_to_event-anchored)                | no       | no       |
+
+Layer 3A's cache key includes layer1_hash + layer2a_hash + integration_bundle
++ as_of (day-anchored) + etl_version_set; Layer 3B's key adds layer3a_hash
++ race_event_id + current_date. Neither depends on Layer 2B/2C/2D/2E
+output, so those upstream changes leave 3A/3B caches alone (no orphans).
+
+* `no*` marks an over-eviction edge: when a policy tuple equals
+`_ALL_ENTRY_POINTS` (the 4 Layer 4 entries), the optimization at
+`evict_on_layer_change` collapses the IN-clause to a user-scoped wipe
+that incidentally also removes 3A/3B/NL_parser rows. This affects only
+layer2c + layer2d (layer1/2a/etl_version_set now use the wider 6-tuple
+which bypasses the optimization). Acceptable noise: equipment + injury
+edits are infrequent and the affected caches re-warm on the next call.
 
 Model + tunable changes ARE in cache keys → natural miss; this module
 doesn't route them (they invalidate themselves).
@@ -70,18 +84,32 @@ _NON_SINGLE_SESSION: tuple[EntryPoint, ...] = (
 )
 
 
-# §9.3 row → evicted entry_points. Layers not in this dict raise via
-# evict_on_layer_change's validation (caller bug).
+# Layer 3A + 3B cache entry_point labels (per `layer3a/cached_wrapper.py`
+# + `layer3b/cached_wrapper.py`). Participate in the policy as of Phase
+# 5.2 Layer 3 caching slice (2026-05-21) — see module docstring matrix.
+_LAYER3_BOTH: tuple[EntryPoint, ...] = (
+    "llm_layer3a_athlete_state",
+    "llm_layer3b_goal_timeline_viability",
+)
+
+
+_LAYER3_B_ONLY: tuple[EntryPoint, ...] = (
+    "llm_layer3b_goal_timeline_viability",
+)
+
+
+# Eviction matrix → evicted entry_points. Layers not in this dict raise
+# via evict_on_layer_change's validation (caller bug).
 _EVICTION_POLICY: dict[str, tuple[EntryPoint, ...]] = {
-    "layer1": _ALL_ENTRY_POINTS,
-    "layer2a": _ALL_ENTRY_POINTS,
+    "layer1": _ALL_ENTRY_POINTS + _LAYER3_BOTH,
+    "layer2a": _ALL_ENTRY_POINTS + _LAYER3_BOTH,
     "layer2b": _NON_SINGLE_SESSION,
     "layer2c": _ALL_ENTRY_POINTS,
     "layer2d": _ALL_ENTRY_POINTS,
     "layer2e": _NON_SINGLE_SESSION,
-    "layer3a": _ALL_ENTRY_POINTS,
+    "layer3a": _ALL_ENTRY_POINTS + _LAYER3_B_ONLY,
     "layer3b": _NON_SINGLE_SESSION,
-    "etl_version_set": _ALL_ENTRY_POINTS,
+    "etl_version_set": _ALL_ENTRY_POINTS + _LAYER3_BOTH,
 }
 
 
