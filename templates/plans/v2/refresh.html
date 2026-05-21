@@ -71,6 +71,56 @@
     </p>
   </form>
 
+  {% if cap_exceeded %}
+    {# D-64 §8 frequency-cap modal-confirm. Auto-opens via the inline
+       script below; [Refresh anyway] resubmits with hidden cap_override=1
+       preserving the submitted tier + nl_context. #}
+    <div class="modal fade" id="capExceededModal" tabindex="-1"
+         aria-labelledby="capExceededLabel" aria-hidden="true">
+      <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+          <div class="modal-header">
+            <h5 class="modal-title" id="capExceededLabel">Refresh again?</h5>
+            <button type="button" class="btn-close" data-bs-dismiss="modal"
+                    aria-label="Close"></button>
+          </div>
+          <div class="modal-body">
+            <p class="mb-2">
+              You've already refreshed <strong>{{ cap_exceeded.count }}</strong>
+              {{ cap_exceeded.tier }} {{ 'time' if cap_exceeded.count == 1 else 'times' }}
+              in the last {{ cap_exceeded.window_hours }} hours.
+            </p>
+            <p class="mb-0 text-muted small">
+              Each refresh re-runs the cascade and costs compute. Continue if
+              this signal is worth the cost.
+            </p>
+          </div>
+          <div class="modal-footer">
+            <button type="button" class="btn btn-outline-secondary"
+                    data-bs-dismiss="modal">Cancel</button>
+            <form method="post" action="{{ url_for('plan_refresh.refresh') }}"
+                  class="d-inline">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <input type="hidden" name="nl_context"
+                     value="{{ prefill_nl_context or '' }}">
+              <input type="hidden" name="cap_override" value="1">
+              <button type="submit" name="submit_{{ cap_exceeded.tier|lower }}"
+                      value="1" class="btn btn-primary">Refresh anyway</button>
+            </form>
+          </div>
+        </div>
+      </div>
+    </div>
+    <script>
+      (function() {
+        var modalEl = document.getElementById('capExceededModal');
+        if (modalEl && window.bootstrap && window.bootstrap.Modal) {
+          window.bootstrap.Modal.getOrCreateInstance(modalEl).show();
+        }
+      })();
+    </script>
+  {% endif %}
+
 {% endif %}
 
 {% endblock %}

@@ -14,7 +14,7 @@ test-double patterns for the in-memory `_FakeConn` substrate.
 
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
 import pytest
@@ -24,8 +24,11 @@ from layer4.context import ParsedIntent
 from layer4.payload import PlanSession
 from nl_parser import NLParserError
 from routes.plan_refresh import (
+    _TIER_CAP_LIMITS,
     _athlete_active_injury_summary,
     _athlete_locale_slugs,
+    _check_frequency_cap,
+    _count_recent_refreshes,
     _diff_sessions_against_parent,
     _latest_parent_for_refresh,
     _latest_plan_version,
@@ -422,6 +425,50 @@ class TestWriteRefreshLog:
         assert params[11] is False  # success
         assert params[12] == "layer4:periodization_invalid"
 
+    def test_cap_overridden_defaults_to_false(self):
+        db = _FakeConn()
+        _write_refresh_log(
+            db,
+            user_id=1,
+            tier="T1",
+            nl_text="hi",
+            parsed_intent_json='{"x":1}',
+            layers_run=("3A", "3B", "Layer4"),
+            scope_start_date=date(2026, 5, 21),
+            scope_end_date=date(2026, 5, 22),
+            plan_version_id_before=1,
+            plan_version_id_after=2,
+            duration_ms=100,
+            sessions_changed=0,
+            success=True,
+            failure_reason=None,
+        )
+        sql, params = db.calls[0]
+        assert "cap_overridden" in sql
+        assert params[13] is False
+
+    def test_cap_overridden_true_passed_through(self):
+        db = _FakeConn()
+        _write_refresh_log(
+            db,
+            user_id=1,
+            tier="T1",
+            nl_text="hi",
+            parsed_intent_json='{"x":1}',
+            layers_run=("3A", "3B", "Layer4"),
+            scope_start_date=date(2026, 5, 21),
+            scope_end_date=date(2026, 5, 22),
+            plan_version_id_before=1,
+            plan_version_id_after=2,
+            duration_ms=100,
+            sessions_changed=0,
+            success=True,
+            failure_reason=None,
+            cap_overridden=True,
+        )
+        _, params = db.calls[0]
+        assert params[13] is True
+
 
 # ─── _diff_sessions_against_parent ──────────────────────────────────────────
 
@@ -562,3 +609,108 @@ class TestResolvePrefill:
         })
         assert nl == "Did an unscheduled 45min MTB (moderate) at home"
         assert tier == "T1"
+
+
+# ─── D-64 §8 — frequency caps ──────────────────────────────────────────────
+
+
+class TestTierCapLimits:
+    def test_t1_three_per_twenty_four_hours(self):
+        assert _TIER_CAP_LIMITS["T1"] == (3, 24)
+
+    def test_t2_one_per_forty_eight_hours(self):
+        assert _TIER_CAP_LIMITS["T2"] == (1, 48)
+
+    def test_t3_one_per_seven_days(self):
+        assert _TIER_CAP_LIMITS["T3"] == (1, 24 * 7)
+
+
+class TestCountRecentRefreshes:
+    def test_returns_count_from_row(self):
+        db = _FakeConn()
+        db.queue_response(row={"n": 2})
+        now = datetime(2026, 5, 21, 12, 0, tzinfo=timezone.utc)
+        result = _count_recent_refreshes(
+            db, user_id=1, tier="T1", window_hours=24, now=now
+        )
+        assert result == 2
+
+    def test_zero_when_no_row(self):
+        db = _FakeConn()
+        db.queue_response(row={"n": 0})
+        now = datetime(2026, 5, 21, 12, 0, tzinfo=timezone.utc)
+        assert (
+            _count_recent_refreshes(
+                db, user_id=1, tier="T2", window_hours=48, now=now
+            )
+            == 0
+        )
+
+    def test_filters_user_tier_and_success(self):
+        db = _FakeConn()
+        db.queue_response(row={"n": 0})
+        now = datetime(2026, 5, 21, 12, 0, tzinfo=timezone.utc)
+        _count_recent_refreshes(
+            db, user_id=42, tier="T3", window_hours=168, now=now
+        )
+        sql, params = db.calls[0]
+        assert "FROM plan_refresh_log" in sql
+        assert "WHERE user_id = ?" in sql
+        assert "tier = ?" in sql
+        assert "success = TRUE" in sql
+        assert "triggered_at >= ?" in sql
+        assert params[0] == 42
+        assert params[1] == "T3"
+        assert params[2] == now - timedelta(hours=168)
+
+    def test_default_now_uses_utc(self, monkeypatch):
+        db = _FakeConn()
+        db.queue_response(row={"n": 0})
+        captured: dict[str, datetime] = {}
+
+        class _FrozenDatetime:
+            @staticmethod
+            def now(tz):
+                captured["tz"] = tz
+                return datetime(2026, 5, 21, 12, 0, tzinfo=tz)
+
+        monkeypatch.setattr("routes.plan_refresh.datetime", _FrozenDatetime)
+        _count_recent_refreshes(db, user_id=1, tier="T1", window_hours=24)
+        assert captured["tz"] == timezone.utc
+
+
+class TestCheckFrequencyCap:
+    def test_under_cap(self):
+        db = _FakeConn()
+        db.queue_response(row={"n": 2})  # T1 limit = 3
+        now = datetime(2026, 5, 21, 12, 0, tzinfo=timezone.utc)
+        exceeded, count = _check_frequency_cap(db, user_id=1, tier="T1", now=now)
+        assert exceeded is False
+        assert count == 2
+
+    def test_at_cap_is_exceeded(self):
+        # Cap is reached when count >= limit; the next attempt would be
+        # the (count+1)th in-window row.
+        db = _FakeConn()
+        db.queue_response(row={"n": 3})  # T1 limit = 3
+        now = datetime(2026, 5, 21, 12, 0, tzinfo=timezone.utc)
+        exceeded, count = _check_frequency_cap(db, user_id=1, tier="T1", now=now)
+        assert exceeded is True
+        assert count == 3
+
+    def test_t2_at_cap(self):
+        db = _FakeConn()
+        db.queue_response(row={"n": 1})  # T2 limit = 1
+        now = datetime(2026, 5, 21, 12, 0, tzinfo=timezone.utc)
+        exceeded, count = _check_frequency_cap(db, user_id=1, tier="T2", now=now)
+        assert exceeded is True
+        assert count == 1
+
+    def test_t3_window_hours_threaded(self):
+        db = _FakeConn()
+        db.queue_response(row={"n": 0})
+        now = datetime(2026, 5, 21, 12, 0, tzinfo=timezone.utc)
+        _check_frequency_cap(db, user_id=1, tier="T3", now=now)
+        _, params = db.calls[0]
+        # T3 window is 168h
+        assert params[2] == now - timedelta(hours=168)

@@ -1662,6 +1662,14 @@ _PG_MIGRATIONS = [
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )""",
     "CREATE INDEX IF NOT EXISTS t1_hook_telemetry_user_dismissed_idx ON t1_hook_telemetry (user_id, dismissed_at DESC)",
+    # D-64 §8 — frequency-cap override telemetry on plan_refresh_log. Set
+    # TRUE on the row when the route's own cap-check returned exceeded AND
+    # the form arrived with cap_override=1 (athlete clicked [Refresh
+    # anyway] in the modal-confirm). Stale forms / direct-curls with
+    # cap_override=1 against an under-cap window still land FALSE — the
+    # column reflects "athlete confirmed the cost gate," not "request
+    # contained an override field."
+    "ALTER TABLE plan_refresh_log ADD COLUMN IF NOT EXISTS cap_overridden BOOLEAN NOT NULL DEFAULT FALSE",
 ]
 
 _CLOTHING_SEEDS = [

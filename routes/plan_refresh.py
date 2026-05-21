@@ -25,16 +25,20 @@ nothing commits + the auto-rollback keeps the half-allocated row off the
 table; a failure-row plan_refresh_log INSERT is written in a fresh
 sub-transaction so the failure telemetry still lands.
 
-Frequency caps per D-64 §8 deferred — caps are anti-cohort guard and
-N=1 athlete doesn't warrant the modal-confirm UX yet. Tracked as a
-follow-on per the runtime session scope.
+Frequency caps per D-64 §8 enforced server-side via
+`_check_frequency_cap` — counts `success=TRUE` rows in the per-tier
+window against `plan_refresh_log`. Over-cap POSTs re-render the form
+with an auto-opening Bootstrap modal asking the athlete to confirm;
+[Refresh anyway] resubmits with hidden `cap_override=1` and the route
+stamps `cap_overridden=TRUE` on the resulting log row. Override is
+single-use — each subsequent refresh re-checks the cap independently.
 """
 
 from __future__ import annotations
 
 import json
 import time
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from typing import Any, Literal
 
 from flask import Blueprint, abort, flash, redirect, render_template, request, url_for
@@ -77,6 +81,14 @@ _TIER_DEFAULT_LAYERS_RUN: dict[str, tuple[str, ...]] = {
 }
 
 _NL_TEXT_SOFT_CAP_CHARS = 500
+
+# D-64 §8 — frequency caps. `(count_limit, window_hours)` per tier.
+# Soft caps; override allowed via the modal-confirm flow per §4.5.
+_TIER_CAP_LIMITS: dict[str, tuple[int, int]] = {
+    "T1": (3, 24),
+    "T2": (1, 48),
+    "T3": (1, 24 * 7),
+}
 
 
 # ─── Helpers ────────────────────────────────────────────────────────────────
@@ -204,6 +216,45 @@ def _orchestration_error_message(err: OrchestrationError) -> str:
     )
 
 
+def _count_recent_refreshes(
+    db,
+    user_id: int,
+    tier: str,
+    *,
+    window_hours: int,
+    now: datetime | None = None,
+) -> int:
+    """Count `plan_refresh_log` rows for this user+tier with
+    `success=TRUE` and `triggered_at >= now - window_hours`. Only
+    completed refreshes count toward the cap per D2; failed cascades let
+    athletes retry without burning their budget."""
+    if now is None:
+        now = datetime.now(timezone.utc)
+    threshold = now - timedelta(hours=window_hours)
+    row = db.execute(
+        "SELECT COUNT(*) AS n FROM plan_refresh_log "
+        "WHERE user_id = ? AND tier = ? AND success = TRUE "
+        "AND triggered_at >= ?",
+        (user_id, tier, threshold),
+    ).fetchone()
+    if row is None:
+        return 0
+    return int(row["n"])
+
+
+def _check_frequency_cap(
+    db, user_id: int, tier: str, *, now: datetime | None = None
+) -> tuple[bool, int]:
+    """Return `(exceeded, current_count)` for the tier's window. The
+    next refresh would land as the `(current_count + 1)`th in-window
+    row; exceeded := `current_count >= limit`."""
+    limit, window_hours = _TIER_CAP_LIMITS[tier]
+    count = _count_recent_refreshes(
+        db, user_id, tier, window_hours=window_hours, now=now
+    )
+    return count >= limit, count
+
+
 def _run_parser(
     db,
     user_id: int,
@@ -241,6 +292,7 @@ def _write_refresh_log(
     sessions_changed: int | None,
     success: bool,
     failure_reason: str | None,
+    cap_overridden: bool = False,
 ) -> None:
     """INSERT one plan_refresh_log row. Caller owns the transaction."""
     db.execute(
@@ -248,8 +300,8 @@ def _write_refresh_log(
                (user_id, tier, nl_text, parsed_intent, layers_run,
                 scope_start_date, scope_end_date, plan_version_id_before,
                 plan_version_id_after, duration_ms, sessions_changed,
-                success, failure_reason)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                success, failure_reason, cap_overridden)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (
             user_id,
             tier,
@@ -264,6 +316,7 @@ def _write_refresh_log(
             sessions_changed,
             success,
             failure_reason,
+            cap_overridden,
         ),
     )
 
@@ -358,6 +411,28 @@ def refresh():
         return redirect(url_for("plan_refresh.refresh"))
 
     nl_text = (request.form.get("nl_context") or "").strip()
+    cap_override = request.form.get("cap_override") == "1"
+
+    # D-64 §8 — frequency cap. Soft cap; over-cap submissions without
+    # an explicit override re-render the form with an auto-opening
+    # modal-confirm. Override is single-use per D3.
+    cap_exceeded_now, current_count = _check_frequency_cap(db, uid, tier)
+    if cap_exceeded_now and not cap_override:
+        _, window_hours = _TIER_CAP_LIMITS[tier]
+        return render_template(
+            "plans/v2/refresh.html",
+            parent_plan=parent_plan,
+            nl_text_cap=_NL_TEXT_SOFT_CAP_CHARS,
+            prefill_nl_context=nl_text,
+            prefill_tier=tier,
+            cap_exceeded={
+                "tier": tier,
+                "count": current_count,
+                "window_hours": window_hours,
+            },
+        )
+    cap_overridden = cap_exceeded_now and cap_override
+
     today = date.today()
     scope_start_date, scope_end_date = _resolve_scope_dates(tier, today)
 
@@ -467,6 +542,7 @@ def refresh():
         sessions_changed=sessions_changed,
         success=True,
         failure_reason="parser_degraded" if used_degraded else None,
+        cap_overridden=cap_overridden,
     )
     db.commit()
 
