@@ -31,6 +31,7 @@ from layer4.cache import (
 from routes.locales import (
     _TRN_PATTERN,
     _evict_layer2b_on_terrain_change,
+    _evict_layer2c_on_equipment_change,
     _hydrate_locale_terrain_ids,
     _parse_locale_terrain,
     _terrain_choices,
@@ -300,3 +301,97 @@ class TestEvictLayer2bOnTerrainChange:
         }
         # layer2b policy = _NON_SINGLE_SESSION → single_session preserved.
         assert remaining == {"single_session_synthesize"}
+
+
+# ─── _evict_layer2c_on_equipment_change ─────────────────────────────────────
+
+
+class TestEvictLayer2cOnEquipmentChange:
+    """Phase 5.2 doc-sweep — locale-equipment edit fires the
+    `evict_on_layer_change(cache, uid, 'layer2c')` primitive so the next
+    plan_create / plan_refresh / single_session_synthesize / race_week_brief
+    invocation re-derives Layer 2C. Mirrors the 2B test substrate but
+    expects ALL four entry points to be evicted (layer2c policy is
+    `_ALL_ENTRY_POINTS`, broader than 2B's `_NON_SINGLE_SESSION`).
+    """
+
+    _USER_ID = 42
+
+    def test_evicts_all_layer2c_consumers(self, monkeypatch):
+        backend = InMemoryCacheBackend()
+        # Seed every Layer 4 entry point — all four consume Layer 2C.
+        for ep in (
+            "plan_create",
+            "plan_refresh",
+            "single_session_synthesize",
+            "race_week_brief",
+        ):
+            backend.put(
+                cache_key=f"k-{self._USER_ID}-{ep}",
+                phase_idx=PER_ENTRY_PHASE_IDX_SENTINEL,
+                user_id=self._USER_ID,
+                entry_point=ep,
+                phase_name=None,
+                payload_json='{"seed": true}',
+            )
+
+        injected_cache = Layer4Cache(backend)
+        import routes.locales as locales_mod
+        monkeypatch.setattr(
+            locales_mod, "Layer4Cache",
+            lambda *_args, **_kwargs: injected_cache,
+        )
+        monkeypatch.setattr(
+            locales_mod, "PostgresCacheBackend",
+            lambda *_args, **_kwargs: backend,
+        )
+
+        _evict_layer2c_on_equipment_change(db=object(), user_id=self._USER_ID)
+
+        remaining = {
+            entry.entry_point
+            for (_k, _i), entry in backend._rows.items()  # noqa: SLF001
+            if entry.user_id == self._USER_ID
+        }
+        # layer2c policy = _ALL_ENTRY_POINTS → no entry point survives.
+        assert remaining == set()
+
+    def test_does_not_evict_other_users(self, monkeypatch):
+        backend = InMemoryCacheBackend()
+        other_user = 99
+        backend.put(
+            cache_key=f"k-{other_user}-plan_create",
+            phase_idx=PER_ENTRY_PHASE_IDX_SENTINEL,
+            user_id=other_user,
+            entry_point="plan_create",
+            phase_name=None,
+            payload_json='{"seed": true}',
+        )
+        backend.put(
+            cache_key=f"k-{self._USER_ID}-plan_create",
+            phase_idx=PER_ENTRY_PHASE_IDX_SENTINEL,
+            user_id=self._USER_ID,
+            entry_point="plan_create",
+            phase_name=None,
+            payload_json='{"seed": true}',
+        )
+
+        injected_cache = Layer4Cache(backend)
+        import routes.locales as locales_mod
+        monkeypatch.setattr(
+            locales_mod, "Layer4Cache",
+            lambda *_args, **_kwargs: injected_cache,
+        )
+        monkeypatch.setattr(
+            locales_mod, "PostgresCacheBackend",
+            lambda *_args, **_kwargs: backend,
+        )
+
+        _evict_layer2c_on_equipment_change(db=object(), user_id=self._USER_ID)
+
+        survivors = {
+            entry.user_id
+            for (_k, _i), entry in backend._rows.items()  # noqa: SLF001
+        }
+        # Only the other user's row should remain.
+        assert survivors == {other_user}

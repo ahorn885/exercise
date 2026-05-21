@@ -113,6 +113,21 @@ def _evict_layer2b_on_terrain_change(db, user_id: int) -> None:
     cache = Layer4Cache(PostgresCacheBackend(lambda: db))
     evict_on_layer_change(cache, user_id, 'layer2b')
 
+
+def _evict_layer2c_on_equipment_change(db, user_id: int) -> None:
+    """Fire `evict_on_layer_change(cache, uid, 'layer2c')` so the next
+    plan_create / plan_refresh / single_session_synthesize / race_week_brief
+    invocation re-derives Layer 2C with the new equipment pool.
+
+    Mirrors `_evict_layer2b_on_terrain_change` precedent — fires on edits
+    to ANY locale (not just home). Layer 2C policy is `_ALL_ENTRY_POINTS`
+    (broader than 2B's `_NON_SINGLE_SESSION`) because equipment changes
+    also invalidate on-demand single-session synthesis. Caller gates on
+    actual change so no-op saves don't burn the cache.
+    """
+    cache = Layer4Cache(PostgresCacheBackend(lambda: db))
+    evict_on_layer_change(cache, user_id, 'layer2c')
+
 # Flat set of all valid tag keys for input validation
 ALL_TAGS = {tag for _, items in EQUIPMENT_CATEGORIES for tag, _ in items}
 
@@ -522,6 +537,16 @@ def _edit_legacy_locale(db, uid: int, locale: str, profile):
     legacy enums, manual-entry rows, and no-shared-profile categories
     (home_gym, outdoor_park, other_residence)."""
     prior_terrain_ids = _hydrate_locale_terrain_ids(profile)
+    # Snapshot prior equipment tags before any mutation so the POST branch
+    # can fire Layer 2C eviction only on actual change (mirrors the
+    # terrain_ids no-op gate per form-refresh C D10).
+    prior_equipment_rows = db.execute(
+        '''SELECT ei.tag FROM locale_equipment le
+           JOIN equipment_items ei ON ei.id = le.equipment_id
+           WHERE le.user_id = ? AND le.locale = ?''',
+        (uid, locale)
+    ).fetchall()
+    prior_equipment_tags = {row['tag'] for row in prior_equipment_rows}
     if request.method == 'POST':
         selected_tags = [t for t in request.form.getlist('equipment') if t in ALL_TAGS]
         notes = request.form.get('notes', '').strip()
@@ -570,9 +595,17 @@ def _edit_legacy_locale(db, uid: int, locale: str, profile):
         # fire on actual change (set inequality); no-op saves are silent.
         if sorted(new_terrain_ids) != sorted(prior_terrain_ids):
             _evict_layer2b_on_terrain_change(db, uid)
+        # Same no-op gate for the Layer 2C equipment-pool eviction. Layer
+        # 2C policy is `_ALL_ENTRY_POINTS` so this also evicts cached
+        # single-session synthesis (on-demand workouts that picked
+        # equipment from the prior pool).
+        if set(selected_tags) != prior_equipment_tags:
+            _evict_layer2c_on_equipment_change(db, uid)
         flash(f'{locale.title()} profile saved ({len(selected_tags)} items).', 'success')
         return redirect(url_for('locales.list_profiles'))
-    # GET — load active equipment from locale_equipment (parent-JOIN scoped)
+    # GET — load active equipment from locale_equipment (parent-JOIN scoped).
+    # Same SELECT as the prior_equipment_tags snapshot above; kept separate
+    # so the snapshot stays close to the mutation it gates.
     active_rows = db.execute(
         '''SELECT ei.tag FROM locale_equipment le
            JOIN equipment_items ei ON ei.id = le.equipment_id
@@ -616,6 +649,17 @@ def _edit_shared_locale(db, uid: int, locale: str, profile):
         shared = _find_gym_profile(db, mapbox_id)
     shared_tags = _shared_equipment_set(shared)
     prior_terrain_ids = _hydrate_locale_terrain_ids(profile)
+    # Snapshot prior effective equipment view before mutation so the POST
+    # branch can fire Layer 2C eviction only on actual change. In the
+    # build-new case there's no shared profile yet so the prior effective
+    # set is empty; in the inherit case it's shared_tags ± overrides.
+    if shared:
+        prior_adds_tags, prior_removes_tags = _load_overrides(db, uid, locale)
+        prior_effective_equipment = _effective_equipment(
+            shared_tags, prior_adds_tags, prior_removes_tags
+        )
+    else:
+        prior_effective_equipment = set()
     if request.method == 'POST':
         submitted = {t for t in request.form.getlist('equipment') if t in ALL_TAGS}
         notes = request.form.get('notes', '').strip()
@@ -637,6 +681,8 @@ def _edit_shared_locale(db, uid: int, locale: str, profile):
             db.commit()
             if sorted(new_terrain_ids) != sorted(prior_terrain_ids):
                 _evict_layer2b_on_terrain_change(db, uid)
+            if submitted != prior_effective_equipment:
+                _evict_layer2c_on_equipment_change(db, uid)
             flash(f'Built the equipment profile for {profile["locale_name"] or locale} ({len(submitted)} items).', 'success')
             return redirect(url_for('locales.list_profiles'))
         # Inherit case — link FK if not yet linked, then save deltas vs.
@@ -655,6 +701,8 @@ def _edit_shared_locale(db, uid: int, locale: str, profile):
         db.commit()
         if sorted(new_terrain_ids) != sorted(prior_terrain_ids):
             _evict_layer2b_on_terrain_change(db, uid)
+        if submitted != prior_effective_equipment:
+            _evict_layer2c_on_equipment_change(db, uid)
         flash(f'Saved your view of {profile["locale_name"] or locale} ({len(submitted)} items).', 'success')
         return redirect(url_for('locales.list_profiles'))
     # GET — render either the build-new form or the inherit-with-overrides

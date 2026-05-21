@@ -4,6 +4,8 @@ Gated to user_id == 1 (the bootstrap user, conventionally the operator).
 Adding more admin views: build them inside this blueprint and keep the
 same `_require_admin()` gate at the top of every handler.
 """
+from datetime import datetime, timedelta, timezone
+
 from flask import Blueprint, render_template, redirect, url_for, flash, abort, request
 
 from database import get_db
@@ -12,6 +14,12 @@ from routes.auth import current_user_id
 bp = Blueprint('admin', __name__, url_prefix='/admin')
 
 ADMIN_USER_ID = 1
+
+# D-73 Phase 5.2 — refresh-flow telemetry surface. Fixed 30-day rolling
+# window per D4; aggregates only per D3; admin-only per D1; covers the
+# full D-63 → D-64 funnel per D2 (ad_hoc_workout_suggestions +
+# t1_hook_telemetry + plan_refresh_log).
+TELEMETRY_WINDOW_DAYS = 30
 
 
 def _require_admin():
@@ -164,4 +172,132 @@ def audit():
         rows=rows, actions=actions,
         selected_action=action, selected_actor=actor,
         limit=limit,
+    )
+
+
+# ─── Refresh-flow telemetry ────────────────────────────────────────────────
+
+
+def _telemetry_window_threshold(now: datetime | None = None) -> datetime:
+    """Return `now - TELEMETRY_WINDOW_DAYS` as a UTC datetime. `now`
+    parameterized for test isolation."""
+    if now is None:
+        now = datetime.now(timezone.utc)
+    return now - timedelta(days=TELEMETRY_WINDOW_DAYS)
+
+
+def _percentile(sorted_values: list[int], pct: float) -> int | None:
+    """Nearest-rank percentile on a pre-sorted ascending list. Returns
+    None on empty input. pct is in [0, 100]."""
+    if not sorted_values:
+        return None
+    if pct <= 0:
+        return sorted_values[0]
+    if pct >= 100:
+        return sorted_values[-1]
+    # Nearest-rank: ceil(pct/100 * N) - 1, clamped to [0, N-1].
+    idx = max(0, min(len(sorted_values) - 1, int((pct / 100.0) * len(sorted_values))))
+    return sorted_values[idx]
+
+
+def _aggregate_ad_hoc_suggestions(db, threshold: datetime) -> dict:
+    """D-63 ad-hoc workout generation aggregate. Returns total + per-status
+    counts + logged-conversion rate over the window."""
+    rows = db.execute(
+        'SELECT status, COUNT(*) AS n FROM ad_hoc_workout_suggestions '
+        'WHERE requested_at >= ? '
+        'GROUP BY status',
+        (threshold,),
+    ).fetchall()
+    by_status = {r['status']: int(r['n']) for r in rows}
+    total = sum(by_status.values())
+    logged = by_status.get('logged', 0)
+    return {
+        'total': total,
+        'suggested': by_status.get('suggested', 0),
+        'logged': logged,
+        'discarded': by_status.get('discarded', 0),
+        'regenerated': by_status.get('regenerated', 0),
+        'logged_rate': (logged / total) if total else 0.0,
+    }
+
+
+def _aggregate_t1_hook_dismissals(db, threshold: datetime) -> dict:
+    """D-63 §3.5 [No, thanks] dismissals on the post-log T1 plan-check
+    hook. One row per click; per-event semantics."""
+    row = db.execute(
+        'SELECT COUNT(*) AS n FROM t1_hook_telemetry WHERE dismissed_at >= ?',
+        (threshold,),
+    ).fetchone()
+    return {'total': int(row['n']) if row else 0}
+
+
+def _aggregate_plan_refresh_log(db, threshold: datetime) -> dict:
+    """D-64 per-tier refresh metrics. Returns a `{tier: {...}}` dict
+    keyed on T1/T2/T3. Per-tier signals: total, success_count + rate,
+    cap_override_count + rate, parser_degraded_count + rate, T1-hook
+    attribution count + rate, p50/p95 success duration_ms.
+
+    p50/p95 computed on success=TRUE rows only — failures don't carry
+    meaningful duration semantics (rollback short-circuits the timer).
+    """
+    rows = db.execute(
+        'SELECT tier, success, cap_overridden, triggered_by_ad_hoc_id, '
+        '       failure_reason, duration_ms '
+        'FROM plan_refresh_log '
+        'WHERE triggered_at >= ?',
+        (threshold,),
+    ).fetchall()
+    per_tier: dict[str, dict] = {}
+    for tier_label in ('T1', 'T2', 'T3'):
+        tier_rows = [r for r in rows if r['tier'] == tier_label]
+        total = len(tier_rows)
+        success_count = sum(1 for r in tier_rows if r['success'])
+        cap_count = sum(1 for r in tier_rows if r['cap_overridden'])
+        parser_degraded_count = sum(
+            1 for r in tier_rows if r['failure_reason'] == 'parser_degraded'
+        )
+        attributed_count = sum(
+            1 for r in tier_rows if r['triggered_by_ad_hoc_id'] is not None
+        )
+        success_durations = sorted(
+            int(r['duration_ms']) for r in tier_rows
+            if r['success'] and r['duration_ms'] is not None
+        )
+        per_tier[tier_label] = {
+            'total': total,
+            'success_count': success_count,
+            'success_rate': (success_count / total) if total else 0.0,
+            'cap_override_count': cap_count,
+            'cap_override_rate': (cap_count / total) if total else 0.0,
+            'parser_degraded_count': parser_degraded_count,
+            'parser_degraded_rate': (parser_degraded_count / total) if total else 0.0,
+            't1_hook_attributed_count': attributed_count,
+            't1_hook_attribution_rate': (attributed_count / total) if total else 0.0,
+            'p50_duration_ms': _percentile(success_durations, 50),
+            'p95_duration_ms': _percentile(success_durations, 95),
+        }
+    return per_tier
+
+
+@bp.route('/telemetry/refresh')
+def telemetry_refresh():
+    """D-73 Phase 5.2 refresh-flow telemetry dashboard.
+
+    Aggregates the D-63 → D-64 funnel across the last
+    `TELEMETRY_WINDOW_DAYS` (30d): generation via ad_hoc_workout_suggestions,
+    post-log T1 hook dismissals via t1_hook_telemetry, and per-tier
+    refresh metrics via plan_refresh_log. Admin-only behind
+    `_require_admin()`. Aggregates only — no row-level drill-down.
+    """
+    _require_admin()
+    db = get_db()
+    threshold = _telemetry_window_threshold()
+    return render_template(
+        'admin/telemetry_refresh.html',
+        window_days=TELEMETRY_WINDOW_DAYS,
+        threshold=threshold,
+        ad_hoc=_aggregate_ad_hoc_suggestions(db, threshold),
+        t1_hook=_aggregate_t1_hook_dismissals(db, threshold),
+        refresh_by_tier=_aggregate_plan_refresh_log(db, threshold),
     )
