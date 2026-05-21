@@ -1,7 +1,7 @@
 """Layer 4 orchestrator — Phase 5.1 race_week_brief + Phase 5.2 single_session +
-plan_refresh.
+plan_refresh + plan_create.
 
-End-to-end composition of the v2 upstream pipeline. Three entry points:
+End-to-end composition of the v2 upstream pipeline. Four entry points:
 
     `orchestrate_race_week_brief` (Phase 5.1, 2026-05-20):
         Layer 1 → 2A/2B/2D/2C → 3A → 3B → 2E → llm_layer4_race_week_brief_cached
@@ -15,14 +15,20 @@ End-to-end composition of the v2 upstream pipeline. Three entry points:
         (driver dispatches T1/T2/T3 internally; T3 cross-phase routes to
         Pattern A via `_route_t3_cross_phase_to_pattern_a`)
 
-Race_week_brief and plan_refresh share the full upstream cone via the
-private `_upstream_full_cone` helper extracted at slice 2 (D1). The helper
-covers the 3 shared pre-flight gates (`etl_version_set_undiscoverable`,
-`framework_sport_missing`, `primary_locale_missing`) plus the Layer 1 →
-2A → 2B → 2D → 2C → 3A → 3B → 2E composition. Race_week_brief retains its
-two brief-specific cheap pre-LLM gates inline (`no_target_event` +
-`race_week_brief_too_early`); plan_refresh skips both (no-event mode is
-supported; refresh fires on demand, not on a calendar window).
+    `orchestrate_plan_create` (Phase 5.2, slice 3, 2026-05-20):
+        Layer 1 → 2A/2B/2D/2C → 3A → 3B → 2E → llm_layer4_plan_create_cached
+        (Pattern A — per-phase synthesis loop + seam reviews internal to the
+        driver; cached wrapper composes the per-entry §9.1 cache key)
+
+Race_week_brief, plan_refresh, and plan_create share the full upstream cone
+via the private `_upstream_full_cone` helper extracted at slice 2 (D1). The
+helper covers the 3 shared pre-flight gates
+(`etl_version_set_undiscoverable`, `framework_sport_missing`,
+`primary_locale_missing`) plus the Layer 1 → 2A → 2B → 2D → 2C → 3A → 3B →
+2E composition. Race_week_brief retains its two brief-specific cheap pre-LLM
+gates inline (`no_target_event` + `race_week_brief_too_early`);
+plan_refresh and plan_create skip both (no-event mode is supported;
+refresh/create fire on demand, not on a calendar window).
 
 Single-session's cone is materially narrower (no 2B / 2E / 3B, uses
 `request.sport` not `primary_sport`, uses `request.locale_slug` not the
@@ -31,7 +37,7 @@ path) — too many points of divergence to share `_upstream_full_cone`, so
 it stays inline.
 
 See `Upstream_Implementation_Plan_v1.md` §4 rows 5.1 + 5.2 + `Layer4_Spec.md`
-§3.2 / §3.3 / §3.4 / §4.5 for the entry-point contracts.
+§3.1 / §3.2 / §3.3 / §3.4 / §4.5 for the entry-point contracts.
 
 Vertical-slice limitations carried as forward-pointers:
 - Layer 2B inputs now flow end-to-end per Phase 5.1 form-refresh A/B/C
@@ -42,20 +48,21 @@ Vertical-slice limitations carried as forward-pointers:
   terrain surface as `race_terrain=[]`, which Layer 2B's loosened
   `_validate_inputs` accepts and emits a `race_terrain_unset` coaching
   flag instead of failing (paired loosen shipped with Form-refresh C).
-  No-event-mode plan_refresh calls pass `race_terrain=[]` for the same
-  reason (no target race → empty terrain input). Multi-locale cluster
-  union for `locale_terrain_ids` remains spec §3 future work (v1 wires
-  the home locale only).
+  No-event-mode plan_refresh + plan_create calls pass `race_terrain=[]`
+  for the same reason (no target race → empty terrain input). Multi-locale
+  cluster union for `locale_terrain_ids` remains spec §3 future work (v1
+  wires the home locale only).
 - `prior_plan_session_window` + `plan_version_id` + `plan_version_id_parent`
   + `parsed_intent` + `plan_start_date` are caller-supplied kwargs on
-  `orchestrate_plan_refresh` pending the D-64 caller-side route +
-  `plan_versions` table (matches the slice 1 D4 precedent for D-63's
-  `suggestion_id`). Race_week_brief continues to pass
+  `orchestrate_plan_refresh` + `orchestrate_plan_create` pending the
+  D-64 caller-side route + `plan_versions` table (matches the slice 1 D4
+  precedent for D-63's `suggestion_id`). Race_week_brief continues to pass
   `prior_plan_session_window=[]` + `plan_version_id=1` placeholders.
 - Layer 3A + Layer 3B run uncached at the orchestrator level. The Layer 4
   per-entry-point cache sits in front of the whole pipeline, so a cache
   hit short-circuits both. Upstream caching becomes load-bearing only
-  when multiple Layer 4 entry points share user-scoped 3A/3B outputs.
+  when multiple Layer 4 entry points share user-scoped 3A/3B outputs;
+  slice 3 adds the 3rd full-cone consumer so this is closer to load-bearing.
 """
 
 from __future__ import annotations
@@ -75,6 +82,7 @@ from layer3a.integration import assemble_layer3a_integration_bundle
 from layer3b.builder import llm_layer3b_goal_timeline_viability
 from layer4.cache import Layer4Cache
 from layer4.cached_wrappers import (
+    llm_layer4_plan_create_cached,
     llm_layer4_plan_refresh_cached,
     llm_layer4_race_week_brief_cached,
     llm_layer4_single_session_synthesize_cached,
@@ -578,6 +586,76 @@ def orchestrate_plan_refresh(
     )
 
 
+def orchestrate_plan_create(
+    db: Any,
+    user_id: int,
+    *,
+    plan_start_date: date,
+    plan_version_id: int,
+    cache: Layer4Cache,
+    today: date | None = None,
+) -> Layer4Payload:
+    """End-to-end Pattern A plan-create pipeline for `user_id`.
+
+    Algorithm:
+    1. Load target race event (None OK — open-ended plans are first-class;
+       Layer 3B's `mode='no-event'` branch handles this downstream and the
+       driver accepts `race_event_payload=None` per `Layer4_Spec.md` §3.1).
+    2. Compose upstream cone via `_upstream_full_cone` (shared with
+       `orchestrate_race_week_brief` + `orchestrate_plan_refresh`).
+    3. Compose via `llm_layer4_plan_create_cached`. The driver runs the
+       per-phase synthesis loop (sequential, in order) + seam reviews +
+       final cross-phase validator pass internally per §5.2; the
+       orchestrator does not see per-phase internals.
+
+    Pre-flight gates (3, all emitted by `_upstream_full_cone`):
+    `etl_version_set_undiscoverable`, `primary_locale_missing`,
+    `framework_sport_missing`. The orchestrator does NOT raise
+    `no_target_event` (open-ended plans are supported) and does NOT
+    pre-flight `plan_start_date_in_past` / `plan_version_id_unset` /
+    `time_to_event_weeks_mismatch` / `discipline_weights_invalid` — the
+    driver's `_validate_plan_create_inputs` covers all four per §4.2;
+    `Layer4InputError` propagates verbatim, the orchestrator does not wrap
+    (matches the slice 1 + slice 2 + race_week_brief precedent of not
+    wrapping driver-level input errors).
+
+    `plan_start_date` + `plan_version_id` are caller-supplied kwargs
+    pending the D-64 caller-side route + `plan_versions` table (matches
+    the slice 1 D4 + slice 2 D3 precedent for D-63/D-64 caller-side
+    deferral). The route handler is the right place to resolve
+    "athlete picks future start" vs "today" + allocate the `plan_versions`
+    row.
+
+    Note: this is the heaviest entry point. Pattern A fires N per-phase
+    synthesizer calls (one per phase in `phase_structure_from_3b` output,
+    typically 3-4) + (N-1) seam reviewer calls. Real-LLM cost ~$0.30-$0.50
+    per cold synthesis; the per-entry §9.1 cache + per-phase §9.2 cache
+    inside the engine short-circuit most repeat invocations.
+    """
+    if today is None:
+        today = date.today()
+
+    race_event = load_target_race_event_payload(db, user_id)
+    cone = _upstream_full_cone(db, user_id, today, target_race_event=race_event)
+
+    return llm_layer4_plan_create_cached(
+        user_id=user_id,
+        layer1_payload=cone.layer1_payload.model_dump(mode="json"),
+        layer2a_payload=cone.layer2a_payload,
+        layer2b_payload=cone.layer2b_payload,
+        layer2c_payloads={cone.primary_locale: cone.layer2c_payload},
+        layer2d_payload=cone.layer2d_payload,
+        layer2e_payload=cone.layer2e_payload,
+        layer3a_payload=cone.layer3a_payload,
+        layer3b_payload=cone.layer3b_payload,
+        plan_start_date=plan_start_date,
+        plan_version_id=plan_version_id,
+        etl_version_set=cone.etl_version_set,
+        cache=cache,
+        race_event_payload=race_event,
+    )
+
+
 def _q_current_etl_version_set(db: Any) -> dict[str, str]:
     """Discover the active Layer 0 ETL version triplet.
 
@@ -695,6 +773,7 @@ def _q_locale_terrain_ids(db: Any, user_id: int, locale: str) -> list[str]:
 
 __all__ = [
     "OrchestrationError",
+    "orchestrate_plan_create",
     "orchestrate_plan_refresh",
     "orchestrate_race_week_brief",
     "orchestrate_single_session_synthesize",
