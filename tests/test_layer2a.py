@@ -20,6 +20,11 @@ from __future__ import annotations
 
 import pytest
 
+# Pre-load layer4 to break the layer4.orchestrator → layer2a.builder → layer4.context
+# circular import that otherwise blocks this module from collection. Mirrors
+# `tests/test_layer3_cached_wrappers.py:30` precedent.
+from layer4 import InMemoryCacheBackend  # noqa: F401
+
 from layer2a import Layer2AInputError, q_layer2a_discipline_classifier_payload
 from layer4.context import Layer2APayload
 
@@ -300,8 +305,9 @@ class TestARBaseline:
         assert "layer0.sport_discipline_map" in sql
         assert "layer0.phase_load_allocation" in sql
         assert "layer0.discipline_training_gaps" in sql
-        # D-05 standing filter present
-        assert "NOT LIKE '%WEEKLY TOTAL%'" in sql
+        # D-05 standing filter present (psycopg2 `%%` escape — see Bucket
+        # B #1, 2026-05-21 walkthrough)
+        assert "NOT LIKE '%%WEEKLY TOTAL%%'" in sql
         # Params: top_level=AR, version_0a, framework_sport=AR (same — no parens), version_0a, version_0a
         assert params == ("Adventure Racing", "v19", "Adventure Racing", "v19", "v19")
 
@@ -508,3 +514,35 @@ class TestEdgeCases:
         assert payload.hitl_required is True
         # Rationale prompts the athlete to confirm
         assert "Confirm whether" in by_id["D-008b"].rationale
+
+
+# ─── _load_disciplines psycopg2 %% escape (Bucket B #1 2026-05-21) ──────────
+
+
+class TestLoadDisciplinesPercentEscape:
+    """The PLA `discipline_name NOT LIKE '%WEEKLY TOTAL%'` clause must
+    use `%%` to survive psycopg2's parameter substitution. A bare `%`
+    inside the SQL collides with `%s` placeholder parsing and raises
+    `IndexError: tuple index out of range` on every plan-gen POST.
+    Production-only failure (test substrate mocks `db.execute` and never
+    hits the parser).
+    """
+
+    def test_sql_escapes_like_pattern_with_double_percent(self):
+        conn = _FakeConn()
+        conn.queue_response(rows=[])  # empty SDM → exits via §10 unknown-sport path
+
+        q_layer2a_discipline_classifier_payload(
+            conn,
+            "Adventure Racing",
+            etl_version_set=_DEFAULT_ETL,
+        )
+
+        assert conn.calls, "expected _load_disciplines to issue exactly one SELECT"
+        sql, _params = conn.calls[0]
+        assert "%%WEEKLY TOTAL%%" in sql, (
+            "LIKE pattern must use %% to survive psycopg2 substitution"
+        )
+        assert "'%WEEKLY TOTAL%'" not in sql, (
+            "bare '%' in the LIKE pattern triggers IndexError under psycopg2"
+        )
