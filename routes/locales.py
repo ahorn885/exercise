@@ -36,9 +36,11 @@ def _terrain_choices(db) -> list[dict]:
     Mirrors `routes/race_events.py:_terrain_choices` +
     `routes/onboarding.py:_terrain_choices`.
     """
+    # D-73 Phase 5.2 Bucket E.(a) — defensive `terrain_id IS NOT NULL`
+    # filter. See `routes/race_events.py:_terrain_choices` for rationale.
     cur = db.execute(
         'SELECT terrain_id, canonical_name FROM layer0.terrain_types '
-        'WHERE superseded_at IS NULL '
+        'WHERE superseded_at IS NULL AND terrain_id IS NOT NULL '
         'ORDER BY terrain_id'
     )
     return [

@@ -25,6 +25,7 @@ from layer4.cache import (
 from race_events_invalidation import (
     _build_default_cache,
     evict_on_target_event_brief_field_change,
+    evict_on_target_event_framework_sport_change,
     evict_on_target_event_locale_change,
     evict_on_target_event_periodization_change,
 )
@@ -232,6 +233,56 @@ class TestLocaleChange:
         )
 
         assert cache.metrics.evictions_per_layer.get("layer2c") == 4
+
+
+# ─── evict_on_target_event_framework_sport_change ───────────────────────────
+
+
+class TestFrameworkSportChange:
+    """D-73 Phase 5.2 Bucket E.(b) — framework_sport override change on
+    the target row routes through `layer2a` policy, the widest cut
+    (all 4 entry points + Layer 3A/3B caches).
+    """
+
+    def test_evicts_all_four_entry_points(self):
+        backend = InMemoryCacheBackend()
+        _seed_all_entry_points(backend, _USER_ID)
+        cache = Layer4Cache(backend)
+
+        count = evict_on_target_event_framework_sport_change(
+            db=None, user_id=_USER_ID, cache=cache
+        )
+
+        assert count == 4
+        assert _remaining_entry_points(backend, _USER_ID) == set()
+
+    def test_scoped_to_user(self):
+        backend = InMemoryCacheBackend()
+        _seed_all_entry_points(backend, _USER_ID)
+        _seed_all_entry_points(backend, _OTHER_USER_ID)
+        cache = Layer4Cache(backend)
+
+        evict_on_target_event_framework_sport_change(
+            db=None, user_id=_USER_ID, cache=cache
+        )
+
+        assert _remaining_entry_points(backend, _OTHER_USER_ID) == {
+            "plan_create",
+            "plan_refresh",
+            "single_session_synthesize",
+            "race_week_brief",
+        }
+
+    def test_metrics_tagged_with_layer2a(self):
+        backend = InMemoryCacheBackend()
+        _seed_all_entry_points(backend, _USER_ID)
+        cache = Layer4Cache(backend)
+
+        evict_on_target_event_framework_sport_change(
+            db=None, user_id=_USER_ID, cache=cache
+        )
+
+        assert cache.metrics.evictions_per_layer.get("layer2a") == 4
 
 
 # ─── Default-cache builder ──────────────────────────────────────────────────

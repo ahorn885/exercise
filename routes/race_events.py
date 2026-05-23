@@ -26,6 +26,7 @@ import mapbox_client
 from database import get_db
 from race_events_invalidation import (
     evict_on_target_event_brief_field_change,
+    evict_on_target_event_framework_sport_change,
     evict_on_target_event_periodization_change,
 )
 from race_events_repo import (
@@ -68,9 +69,18 @@ def _terrain_choices(db) -> list[dict]:
     no caching. Matches the `_athlete_locale_choices` precedent for
     request-time vocabulary lookups.
     """
+    # D-73 Phase 5.2 Bucket E.(a) — defensive `terrain_id IS NOT NULL`
+    # filter. The original pre-r2 `layer0.terrain_types` rows (canonical
+    # names only, no TRN-xxx ID) are superseded by `migrate_terrain_types.sql`,
+    # but production Neon DBs that haven't run the standalone migration
+    # script surface those rows here with `terrain_id IS NULL`. The
+    # template renders `{{ tc.id }}` for each row, so NULL ids show as
+    # literal "None" prepended to the canonical name in the dropdown.
+    # Filtering at the query keeps the dropdown clean regardless of the
+    # migration's run-state on each environment.
     cur = db.execute(
         'SELECT terrain_id, canonical_name FROM layer0.terrain_types '
-        'WHERE superseded_at IS NULL '
+        'WHERE superseded_at IS NULL AND terrain_id IS NOT NULL '
         'ORDER BY terrain_id'
     )
     return [
@@ -262,6 +272,7 @@ def new_race():
             race_terrain=_parse_race_terrain(request.form),
             aid_stations=_parse_int(request.form, 'aid_stations'),
             race_url=_parse_race_url(request.form),
+            framework_sport=_parse_str(request.form, 'framework_sport'),
             **locale_fields,
         )
         flash(f'Race "{name}" added.', 'success')
@@ -368,6 +379,7 @@ def update_race(race_event_id: int):
     new_race_terrain = _parse_race_terrain(request.form)
     new_aid_stations = _parse_int(request.form, 'aid_stations')
     new_race_url = _parse_race_url(request.form)
+    new_framework_sport = _parse_str(request.form, 'framework_sport')
 
     # D-73 Phase 5.2 walkthrough #1 — the race-details form no longer carries
     # `event_locale_id` (legacy dropdown removed); the 5 Mapbox columns are
@@ -392,6 +404,7 @@ def update_race(race_event_id: int):
         event_locale_lat=race.get('event_locale_lat'),
         event_locale_lng=race.get('event_locale_lng'),
         race_url=new_race_url,
+        framework_sport=new_framework_sport,
         notes=new_notes,
         race_terrain=new_race_terrain,
         aid_stations=new_aid_stations,
@@ -414,6 +427,13 @@ def update_race(race_event_id: int):
         prior_terrain = race.get('race_terrain') or []
         prior_aid = race.get('aid_stations')
         prior_race_url = race.get('race_url')
+        prior_framework_sport = race.get('framework_sport')
+        # D-73 Phase 5.2 Bucket E.(b) — framework_sport override change
+        # flips Layer 2A's discipline classification → wider eviction than
+        # periodization (`layer2a` policy = all 4 entry points + Layer
+        # 3A/3B vs periodization's `_NON_SINGLE_SESSION`). Fire it first;
+        # the layer2a policy supersets both periodization + brief-only.
+        framework_sport_changed = prior_framework_sport != new_framework_sport
         brief_only_changed = (
             race['distance_km'] != new_distance_km
             or race['total_elevation_gain_m'] != new_total_elevation_gain_m
@@ -424,12 +444,14 @@ def update_race(race_event_id: int):
             or prior_aid != new_aid_stations
             or prior_race_url != new_race_url
         )
-        if periodization_changed:
+        if framework_sport_changed:
+            evict_on_target_event_framework_sport_change(db, uid)
+        elif periodization_changed:
             evict_on_target_event_periodization_change(db, uid)
-        if brief_only_changed and not periodization_changed:
-            # Periodization eviction is broader than brief-only; firing
-            # brief-only on top would only re-evict already-evicted
-            # race_week_brief rows.
+        elif brief_only_changed:
+            # Periodization + framework_sport evictions are broader than
+            # brief-only; firing brief-only on top would only re-evict
+            # already-evicted race_week_brief rows.
             evict_on_target_event_brief_field_change(db, uid)
 
     flash('Race updated.', 'success')

@@ -1103,6 +1103,12 @@ class RaceEventPayload(_Base):
     # terrain. Field is loose (str, not HttpUrl) since athletes paste
     # whatever they have; runtime parse handles malformed input.
     race_url: str | None = Field(default=None, max_length=1000)
+    # D-73 Phase 5.2 Bucket E.(b) (2026-05-23) — per-race framework_sport
+    # override. When set, the orchestrator passes it to Layer 2A instead of
+    # `Layer1Identity.primary_sport`. Layer 2A's own
+    # `framework_sport_missing` / `unknown_sport` errors still apply if the
+    # value doesn't resolve against `layer0.sport_discipline_bridge`.
+    framework_sport: str | None = Field(default=None, max_length=100)
     route_locales: list[RouteLocale] = Field(default_factory=list)
 
     @model_validator(mode="after")

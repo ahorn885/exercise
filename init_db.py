@@ -1182,6 +1182,15 @@ _PG_MIGRATIONS = [
     "ALTER TABLE race_events ADD COLUMN IF NOT EXISTS event_locale_lat NUMERIC(9,6) NULL",
     "ALTER TABLE race_events ADD COLUMN IF NOT EXISTS event_locale_lng NUMERIC(9,6) NULL",
     "ALTER TABLE race_events ADD COLUMN IF NOT EXISTS race_url TEXT NULL",
+    # D-73 Phase 5.2 Bucket E.(b) (2026-05-23) — race-level framework_sport
+    # override. Layer 2A's discipline classifier keys on framework_sport
+    # via `layer0.sport_discipline_bridge`; pre-walkthrough the value was
+    # always sourced from `athlete_profile.primary_sport`. New column lets
+    # an athlete whose primary sport differs from the target race
+    # (e.g. trail runner doing one Adventure Racing race) classify the
+    # race correctly without churning their profile. Orchestrator falls
+    # back to primary_sport when this is NULL.
+    "ALTER TABLE race_events ADD COLUMN IF NOT EXISTS framework_sport TEXT NULL",
     # Phase 5.1 form-refresh C (2026-05-20) — closes Layer2B_Spec.md §12
     # Open Item 2B-2 (§J Locale terrain access controlled vocabulary) +
     # the orchestrator's last `locale_terrain_ids=[]` forward-pointer
