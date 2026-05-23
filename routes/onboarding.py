@@ -67,6 +67,7 @@ from athlete import (
 )
 from race_events_invalidation import (
     evict_on_target_event_brief_field_change,
+    evict_on_target_event_framework_sport_change,
     evict_on_target_event_periodization_change,
 )
 from race_events_repo import (
@@ -706,9 +707,11 @@ def _terrain_choices(db):
     ORDER BY terrain_id for stable rendering; ~16 rows so no caching.
     Mirrors `routes/race_events.py:_terrain_choices`.
     """
+    # D-73 Phase 5.2 Bucket E.(a) — defensive `terrain_id IS NOT NULL`
+    # filter. See `routes/race_events.py:_terrain_choices` for rationale.
     cur = db.execute(
         'SELECT terrain_id, canonical_name FROM layer0.terrain_types '
-        'WHERE superseded_at IS NULL '
+        'WHERE superseded_at IS NULL AND terrain_id IS NOT NULL '
         'ORDER BY terrain_id'
     )
     return [
@@ -732,7 +735,7 @@ def _get_target_race_row(db, uid):
         '       total_elevation_gain_m, race_rules_summary, mandatory_gear_text, '
         '       event_locale_id, notes, race_terrain, aid_stations, '
         '       event_locale_name, event_locale_mapbox_id, event_locale_place_name, '
-        '       event_locale_lat, event_locale_lng, race_url '
+        '       event_locale_lat, event_locale_lng, race_url, framework_sport '
         '  FROM race_events '
         ' WHERE user_id = ? AND is_target_event = TRUE '
         ' LIMIT 1',
@@ -850,6 +853,7 @@ def target_race_save():
     )
     new_locale_fields = _extract_mapbox_locale_from_form(request.form)
     new_race_url = _parse_race_url(request.form)
+    new_framework_sport = _parse_str_field(request.form, 'framework_sport')
 
     target = _get_target_race_row(db, uid)
     if target:
@@ -867,6 +871,7 @@ def target_race_save():
             race_terrain=new_race_terrain,
             aid_stations=new_aid_stations,
             race_url=new_race_url,
+            framework_sport=new_framework_sport,
             **new_locale_fields,
         )
         # D-66 §9 invalidation — same diff logic as routes/race_events.py
@@ -882,6 +887,11 @@ def target_race_save():
         prior_aid = target.get('aid_stations')
         prior_race_url = target.get('race_url')
         prior_mapbox_id = target.get('event_locale_mapbox_id')
+        prior_framework_sport = target.get('framework_sport')
+        # D-73 Phase 5.2 Bucket E.(b) — framework_sport override change on
+        # the target row → wider Layer 2A eviction (supersets periodization
+        # + brief-only). Mirrors `routes/race_events.py:update_race`.
+        framework_sport_changed = prior_framework_sport != new_framework_sport
         brief_only_changed = (
             target['distance_km'] != new_distance_km
             or target['total_elevation_gain_m'] != new_total_elevation_gain_m
@@ -893,9 +903,11 @@ def target_race_save():
             or prior_race_url != new_race_url
             or prior_mapbox_id != new_locale_fields['event_locale_mapbox_id']
         )
-        if periodization_changed:
+        if framework_sport_changed:
+            evict_on_target_event_framework_sport_change(db, uid)
+        elif periodization_changed:
             evict_on_target_event_periodization_change(db, uid)
-        if brief_only_changed and not periodization_changed:
+        elif brief_only_changed:
             evict_on_target_event_brief_field_change(db, uid)
         flash('Target race updated.', 'success')
     else:
@@ -913,6 +925,7 @@ def target_race_save():
             race_terrain=new_race_terrain,
             aid_stations=new_aid_stations,
             race_url=new_race_url,
+            framework_sport=new_framework_sport,
             **new_locale_fields,
         )
         # A fresh target row was created. Layer 3B's mode flips from

@@ -208,7 +208,16 @@ def _upstream_full_cone(
     as_of = datetime.combine(today, time.min)
 
     layer1_payload = build_layer1_payload(db, user_id)
-    framework_sport = layer1_payload.identity.primary_sport
+    # D-73 Phase 5.2 Bucket E.(b) — race-row override takes precedence over
+    # athlete-profile primary_sport. When set on the target race, Layer 2A
+    # classifies for the race's own sport (e.g. trail runner doing one AR
+    # race) without churning the athlete's profile. Falls back to
+    # primary_sport when the override is unset OR no target race exists.
+    framework_sport = (
+        target_race_event.framework_sport if target_race_event is not None else None
+    )
+    if not framework_sport:
+        framework_sport = layer1_payload.identity.primary_sport
     if not framework_sport:
         raise OrchestrationError(
             "framework_sport_missing",

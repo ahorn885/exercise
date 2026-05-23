@@ -184,6 +184,8 @@ def _race_row(**overrides):
         "event_locale_lng": None,
         # D-73 Phase 5.2 walkthrough #2a — race-director site URL.
         "race_url": None,
+        # D-73 Phase 5.2 Bucket E.(b) — per-race framework_sport override.
+        "framework_sport": None,
     }
     base.update(overrides)
     return base
@@ -1162,3 +1164,91 @@ class TestMapboxRaceLocationColumns:
         assert isinstance(result["event_locale_lng"], float)
         assert result["event_locale_lat"] == 44.345
         assert result["event_locale_lng"] == -93.106
+
+
+class TestFrameworkSportOverride:
+    """Per-race framework_sport override column (D-73 Phase 5.2 Bucket
+    E.(b)). Athlete-typed verbatim, replaces athlete-profile primary_sport
+    when set on the target race row.
+    """
+
+    def test_load_payload_populates_framework_sport_when_present(self):
+        conn = _FakeConn()
+        conn.queue_response(row=_race_row(framework_sport="Adventure Racing"))
+        conn.queue_response(rows=[])
+        payload = load_race_event_payload(conn, race_event_id=10)
+        assert payload is not None
+        assert payload.framework_sport == "Adventure Racing"
+
+    def test_load_payload_defaults_framework_sport_to_none(self):
+        conn = _FakeConn()
+        conn.queue_response(row=_race_row())
+        conn.queue_response(rows=[])
+        payload = load_race_event_payload(conn, race_event_id=10)
+        assert payload is not None
+        assert payload.framework_sport is None
+
+    def test_create_passes_framework_sport_kwarg(self):
+        conn = _FakeConn()
+        conn.queue_response(row={"id": 42})
+        create_race_event(
+            conn,
+            user_id=1,
+            name="Race",
+            event_date=date(2026, 7, 17),
+            race_format="expedition_ar",
+            framework_sport="Adventure Racing",
+        )
+        sql, params = conn.calls[0]
+        assert "framework_sport" in sql
+        assert "Adventure Racing" in params
+
+    def test_create_defaults_framework_sport_to_none(self):
+        conn = _FakeConn()
+        conn.queue_response(row={"id": 1})
+        create_race_event(
+            conn,
+            user_id=1,
+            name="Race",
+            event_date=date(2026, 7, 17),
+            race_format="single_day",
+        )
+        # framework_sport not passed → None in the params tuple, between
+        # race_url and etl_version_set. We don't pin the index (existing
+        # tests cover positional stability for the earlier columns); just
+        # confirm the new column is in the INSERT SQL.
+        assert "framework_sport" in conn.calls[0][0]
+
+    def test_update_passes_framework_sport_kwarg(self):
+        conn = _FakeConn()
+        update_race_event(
+            conn,
+            user_id=1,
+            race_event_id=10,
+            name="Race",
+            event_date=date(2026, 7, 17),
+            race_format="expedition_ar",
+            framework_sport="Adventure Racing",
+        )
+        sql, params = conn.calls[0]
+        assert "framework_sport = ?" in sql
+        assert "Adventure Racing" in params
+
+    def test_update_can_clear_framework_sport(self):
+        """Passing framework_sport=None on update clears the override (the
+        column is NULLable). UPDATE SQL still names the column so the row's
+        prior value gets overwritten."""
+        conn = _FakeConn()
+        update_race_event(
+            conn,
+            user_id=1,
+            race_event_id=10,
+            name="Race",
+            event_date=date(2026, 7, 17),
+            race_format="expedition_ar",
+            framework_sport=None,
+        )
+        sql, params = conn.calls[0]
+        assert "framework_sport = ?" in sql
+        # None appears in params for the framework_sport column slot.
+        assert None in params

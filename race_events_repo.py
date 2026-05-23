@@ -90,7 +90,7 @@ def load_race_event_payload(db, race_event_id: int) -> RaceEventPayload | None:
                re.race_terrain, re.aid_stations,
                re.event_locale_name, re.event_locale_mapbox_id,
                re.event_locale_place_name, re.event_locale_lat, re.event_locale_lng,
-               re.race_url
+               re.race_url, re.framework_sport
           FROM race_events re
           LEFT JOIN locale_profiles lp ON lp.id = re.event_locale_id
          WHERE re.id = ?
@@ -209,6 +209,7 @@ def load_race_event_payload(db, race_event_id: int) -> RaceEventPayload | None:
             else None
         ),
         race_url=race_row["race_url"],
+        framework_sport=race_row["framework_sport"],
         route_locales=route_locales,
     )
 
@@ -246,6 +247,7 @@ def create_race_event(
     event_locale_lat: float | None = None,
     event_locale_lng: float | None = None,
     race_url: str | None = None,
+    framework_sport: str | None = None,
     is_target_event: bool = False,
     notes: str | None = None,
     race_terrain: list[dict[str, Any]] | None = None,
@@ -284,9 +286,9 @@ def create_race_event(
              race_terrain, aid_stations,
              event_locale_name, event_locale_mapbox_id, event_locale_place_name,
              event_locale_lat, event_locale_lng,
-             race_url,
+             race_url, framework_sport,
              etl_version_set)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?, ?, ?, ?, ?, ?, ?, ?::jsonb)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb)
         RETURNING id
         """,
         (
@@ -309,6 +311,7 @@ def create_race_event(
             event_locale_lat,
             event_locale_lng,
             race_url,
+            framework_sport,
             json.dumps(etl_version_set or {}),
         ),
     )
@@ -425,7 +428,7 @@ def get_race_event(db, user_id: int, race_event_id: int) -> dict[str, Any] | Non
                race_terrain, aid_stations,
                event_locale_name, event_locale_mapbox_id, event_locale_place_name,
                event_locale_lat, event_locale_lng,
-               race_url,
+               race_url, framework_sport,
                created_at, updated_at
           FROM race_events
          WHERE id = ? AND user_id = ?
@@ -473,6 +476,7 @@ def update_race_event(
     event_locale_lat: float | None = None,
     event_locale_lng: float | None = None,
     race_url: str | None = None,
+    framework_sport: str | None = None,
     notes: str | None = None,
     race_terrain: list[dict[str, Any]] | None = None,
     aid_stations: int | None = None,
@@ -506,6 +510,7 @@ def update_race_event(
                event_locale_lat = ?,
                event_locale_lng = ?,
                race_url = ?,
+               framework_sport = ?,
                notes = ?,
                race_terrain = ?::jsonb,
                aid_stations = ?,
@@ -527,6 +532,7 @@ def update_race_event(
             event_locale_lat,
             event_locale_lng,
             race_url,
+            framework_sport,
             notes,
             json.dumps(race_terrain or []),
             aid_stations,

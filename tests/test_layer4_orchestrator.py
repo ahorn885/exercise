@@ -142,6 +142,7 @@ def _queue_target_race_event(
     race_format: str = "single_day",
     race_terrain: list | None = None,
     aid_stations: int | None = None,
+    framework_sport: str | None = None,
 ) -> None:
     """Queue responses for `load_target_race_event_payload` (3 SELECTs when
     route_locales empty: target_id lookup + main row + route_locales).
@@ -173,6 +174,10 @@ def _queue_target_race_event(
             "event_locale_lat": None,
             "event_locale_lng": None,
             "race_url": None,
+            # D-73 Phase 5.2 Bucket E.(b) (2026-05-23) — per-race
+            # framework_sport override. None exercises the fallback to
+            # athlete-profile primary_sport.
+            "framework_sport": framework_sport,
         }
     )
     conn.queue(rows=[])  # route_locales (empty for single_day)
@@ -981,6 +986,138 @@ class TestRaceTerrainAndAidStationsWireUp:
         assert m_l2b.call_args.kwargs["race_terrain"] == []
         m_l2e = mocks[5]
         assert m_l2e.call_args.kwargs["target_events"][0].aid_stations is None
+
+
+class TestFrameworkSportOverride:
+    """Per-race framework_sport override (D-73 Phase 5.2 Bucket E.(b)).
+    When set on the target race, orchestrator passes it to Layer 2A
+    instead of `Layer1Identity.primary_sport`. Falls back to primary_sport
+    when the override is unset or no target race exists.
+    """
+
+    def test_target_race_override_wins_over_primary_sport(self):
+        """Target race carries framework_sport="Trail Running"; athlete
+        profile primary_sport="AR" (the _fake_layer1_payload default).
+        Layer 2A should receive "Trail Running" — race override wins."""
+        conn = _FakeConn()
+        _queue_target_race_event(conn, framework_sport="Trail Running")
+        _queue_etl_version_set(conn)
+        _queue_primary_locale(conn)
+        _queue_locale_equipment_pool(conn)
+        cache = Layer4Cache(InMemoryCacheBackend())
+
+        race_event_for_l4 = RaceEventPayload(
+            race_event_id=1,
+            user_id=_USER_ID,
+            name="Test Race 2026",
+            event_date=_EVENT_DATE,
+            race_format="single_day",
+            event_locale_id="home",
+            is_target_event=True,
+            framework_sport="Trail Running",
+        )
+        stack = _patches(
+            layer4_return=_fake_layer4_payload(race_event_payload=race_event_for_l4)
+        )
+        mocks = _enter_all(stack)
+        try:
+            orchestrate_race_week_brief(conn, _USER_ID, cache=cache, today=_TODAY)
+        finally:
+            _exit_all(stack)
+
+        m_l2a = mocks[1]
+        assert m_l2a.call_args.kwargs["framework_sport"] == "Trail Running"
+        # Layer 2E gets it too (derived from same orchestrator-side var)
+        m_l2e = mocks[5]
+        assert m_l2e.call_args.kwargs["framework_sport"] == "Trail Running"
+
+    def test_falls_back_to_primary_sport_when_override_unset(self):
+        """Target race with framework_sport=None falls back to athlete's
+        Layer1Identity.primary_sport — the pre-walkthrough behavior."""
+        conn = _FakeConn()
+        _queue_target_race_event(conn, framework_sport=None)
+        _queue_etl_version_set(conn)
+        _queue_primary_locale(conn)
+        _queue_locale_equipment_pool(conn)
+        cache = Layer4Cache(InMemoryCacheBackend())
+
+        race_event_for_l4 = RaceEventPayload(
+            race_event_id=1,
+            user_id=_USER_ID,
+            name="Test Race 2026",
+            event_date=_EVENT_DATE,
+            race_format="single_day",
+            event_locale_id="home",
+            is_target_event=True,
+        )
+        stack = _patches(
+            layer4_return=_fake_layer4_payload(race_event_payload=race_event_for_l4)
+        )
+        mocks = _enter_all(stack)
+        try:
+            orchestrate_race_week_brief(conn, _USER_ID, cache=cache, today=_TODAY)
+        finally:
+            _exit_all(stack)
+
+        m_l2a = mocks[1]
+        # _fake_layer1_payload sets primary_sport="AR"; race override is
+        # None so primary_sport wins.
+        assert m_l2a.call_args.kwargs["framework_sport"] == "AR"
+
+    def test_override_when_primary_sport_missing_still_classifies(self):
+        """Athlete profile primary_sport is None BUT target race carries
+        a framework_sport override. The override resolves the chain — no
+        `framework_sport_missing` raised.
+        """
+        conn = _FakeConn()
+        _queue_target_race_event(conn, framework_sport="Adventure Racing")
+        _queue_etl_version_set(conn)
+        _queue_primary_locale(conn)
+        _queue_locale_equipment_pool(conn)
+        cache = Layer4Cache(InMemoryCacheBackend())
+
+        # Layer 1 payload with primary_sport=None — the override saves the day.
+        l1_no_sport = Layer1Payload(
+            user_id=_USER_ID,
+            as_of=datetime.combine(_TODAY, datetime.min.time()),
+            identity=Layer1Identity(),  # primary_sport=None
+            health_status=Layer1HealthStatus(),
+            training_history=Layer1TrainingHistory(),
+            discipline_baselines=Layer1DisciplineBaselines(),
+            performance=Layer1Performance(),
+            availability=Layer1Availability(),
+            event_goal=Layer1EventGoal(),
+            lifestyle=Layer1Lifestyle(),
+            network=Layer1Network(),
+            disclosures=Layer1Disclosures(),
+        )
+
+        race_event_for_l4 = RaceEventPayload(
+            race_event_id=1,
+            user_id=_USER_ID,
+            name="Test Race 2026",
+            event_date=_EVENT_DATE,
+            race_format="single_day",
+            event_locale_id="home",
+            is_target_event=True,
+            framework_sport="Adventure Racing",
+        )
+        stack = _patches(
+            layer4_return=_fake_layer4_payload(race_event_payload=race_event_for_l4)
+        )
+        # Replace the first patch (layer1) with the no-sport variant.
+        stack[0] = patch(
+            "layer4.orchestrator.build_layer1_payload",
+            return_value=l1_no_sport,
+        )
+        mocks = _enter_all(stack)
+        try:
+            orchestrate_race_week_brief(conn, _USER_ID, cache=cache, today=_TODAY)
+        finally:
+            _exit_all(stack)
+
+        m_l2a = mocks[1]
+        assert m_l2a.call_args.kwargs["framework_sport"] == "Adventure Racing"
 
 
 class TestLocaleTerrainIdsWireUp:

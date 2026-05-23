@@ -103,3 +103,19 @@ def evict_on_target_event_locale_change(
     if cache is None:
         cache = _build_default_cache(db)
     return evict_on_layer_change(cache, user_id, 'layer2c')
+
+
+def evict_on_target_event_framework_sport_change(
+    db,
+    user_id: int,
+    *,
+    cache: Layer4Cache | None = None,
+) -> int:
+    """`framework_sport` change on the target row (D-73 Phase 5.2 Bucket
+    E.(b)). Re-uses the `layer2a` policy — the override flips which
+    disciplines + classifier output Layer 2A returns, which cascades
+    through every downstream entry point + Layer 3A/3B.
+    """
+    if cache is None:
+        cache = _build_default_cache(db)
+    return evict_on_layer_change(cache, user_id, 'layer2a')

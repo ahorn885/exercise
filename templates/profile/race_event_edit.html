@@ -123,6 +123,23 @@
         </small>
       </div>
 
+      {# D-73 Phase 5.2 Bucket E.(b) — per-race framework_sport override.
+         Free-text matching the Profile primary-sport input precedent; no
+         vocabulary check at the form boundary. Layer 2A surfaces
+         framework_sport_missing / unresolved if the typed value doesn't
+         match `layer0.sport_discipline_bridge`. Blank = inherit primary
+         sport from athlete profile. #}
+      <div class="col-md-12">
+        <label class="form-label" for="framework_sport">Sport (override, optional)</label>
+        <input type="text" class="form-control" id="framework_sport" name="framework_sport"
+               placeholder="e.g. Adventure Racing, Trail Running, Triathlon"
+               maxlength="100"
+               value="{{ race.framework_sport if race and race.framework_sport else '' }}">
+        <small class="text-muted">
+          Leave blank to inherit your profile's primary sport. Set to a different sport when this specific race differs (e.g. a trail runner doing one AR race).
+        </small>
+      </div>
+
       <div class="col-12">
         <label class="form-label" for="race_rules_summary">Race rules summary</label>
         <textarea class="form-control" id="race_rules_summary" name="race_rules_summary" rows="3"
