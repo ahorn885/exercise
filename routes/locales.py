@@ -567,9 +567,13 @@ def _edit_legacy_locale(db, uid: int, locale: str, profile):
         # 5.1 form-refresh C (2026-05-20) threads `locale_terrain_ids` so
         # both the new-row INSERT and the existing-row UPDATE branch
         # persist the athlete's terrain selection alongside notes + city.
+        # Explicit `::text[]` cast on the array placeholder — psycopg2's
+        # default list adapter is shape-correct under direct testing but
+        # production rows landed empty without the cast (Bucket B #3,
+        # 2026-05-21 walkthrough).
         db.execute(
             '''INSERT INTO locale_profiles (user_id, locale, notes, city, locale_terrain_ids, updated_at)
-               VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+               VALUES (?, ?, ?, ?, ?::text[], CURRENT_TIMESTAMP)
                ON CONFLICT(user_id, locale) DO UPDATE SET
                  notes=excluded.notes,
                  city=excluded.city,
@@ -671,9 +675,11 @@ def _edit_shared_locale(db, uid: int, locale: str, profile):
             new_id = _create_gym_profile(db, uid, profile, submitted)
             if new_id:
                 _link_gym_profile(db, uid, locale, new_id)
+            # `?::text[]` cast — see legacy-path comment above; same Bucket
+            # B #3 defensive fix.
             db.execute(
                 '''UPDATE locale_profiles
-                   SET notes = ?, locale_terrain_ids = ?,
+                   SET notes = ?, locale_terrain_ids = ?::text[],
                        updated_at = CURRENT_TIMESTAMP
                    WHERE user_id = ? AND locale = ?''',
                 (notes, new_terrain_ids, uid, locale),
@@ -691,9 +697,11 @@ def _edit_shared_locale(db, uid: int, locale: str, profile):
             _link_gym_profile(db, uid, locale, shared['id'])
             _touch_gym_profile_confirmation(db, uid, shared['id'])
         _save_overrides(db, uid, locale, shared_tags, submitted)
+        # `?::text[]` cast — see shared_build branch comment; same Bucket
+        # B #3 defensive fix for the inherit path.
         db.execute(
             '''UPDATE locale_profiles
-               SET notes = ?, locale_terrain_ids = ?,
+               SET notes = ?, locale_terrain_ids = ?::text[],
                    updated_at = CURRENT_TIMESTAMP
                WHERE user_id = ? AND locale = ?''',
             (notes, new_terrain_ids, uid, locale),
@@ -1163,6 +1171,14 @@ def delete_locale(locale):
         profile['locale_name']
         if _row_has(profile, 'locale_name') and profile['locale_name']
         else locale
+    )
+    # locale_equipment has a FK on (user_id, locale) with no ON DELETE
+    # CASCADE (see init_db.py:653); clear it first or the parent DELETE
+    # below raises ForeignKeyViolation. locale_equipment_overrides and
+    # locale_toggle_overrides do cascade so they're handled implicitly.
+    db.execute(
+        'DELETE FROM locale_equipment WHERE user_id = ? AND locale = ?',
+        (uid, locale),
     )
     db.execute(
         'DELETE FROM locale_profiles WHERE user_id = ? AND locale = ?',

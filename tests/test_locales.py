@@ -30,11 +30,14 @@ from layer4.cache import (
 )
 from routes.locales import (
     _TRN_PATTERN,
+    _edit_legacy_locale,
+    _edit_shared_locale,
     _evict_layer2b_on_terrain_change,
     _evict_layer2c_on_equipment_change,
     _hydrate_locale_terrain_ids,
     _parse_locale_terrain,
     _terrain_choices,
+    delete_locale,
 )
 
 
@@ -395,3 +398,189 @@ class TestEvictLayer2cOnEquipmentChange:
         }
         # Only the other user's row should remain.
         assert survivors == {other_user}
+
+
+# ─── delete_locale FK ordering (Bucket B #2 2026-05-21) ─────────────────────
+
+
+def _make_app():
+    from flask import Flask
+    app = Flask(__name__)
+    app.config['SECRET_KEY'] = 'test'
+    app.config['TESTING'] = True
+    app.config['WTF_CSRF_ENABLED'] = False
+    from routes.locales import bp
+    app.register_blueprint(bp)
+    return app
+
+
+def _sql_indices(calls, fragment: str) -> list[int]:
+    """Return positions in `calls` whose SQL contains `fragment`."""
+    return [i for i, (sql, _params) in enumerate(calls) if fragment in sql]
+
+
+class TestDeleteLocaleClearsEquipmentFirst:
+    """Bucket B #2 (2026-05-21 walkthrough) — `/locales/<slug>/delete`
+    raised `ForeignKeyViolation` because `locale_equipment` has a FK on
+    `(user_id, locale)` with no `ON DELETE CASCADE`. Fix clears
+    `locale_equipment` before `locale_profiles`.
+    """
+
+    def test_locale_equipment_cleared_before_locale_profiles(self, monkeypatch):
+        app = _make_app()
+        conn = _FakeConn()
+        # delete_locale flow: (1) SELECT profile, (2) DELETE locale_equipment,
+        # (3) DELETE locale_profiles, (4) optional DELETE gym_profiles.
+        conn.queue_response(row={
+            'category': 'other_residence',
+            'gym_profile_id': None,
+            'locale_name': 'Horn\'s House',
+        })
+        import routes.locales as locales_mod
+        monkeypatch.setattr(locales_mod, 'get_db', lambda: conn)
+        monkeypatch.setattr(locales_mod, 'current_user_id', lambda: 1)
+
+        with app.test_request_context('/locales/horn_s_house/delete', method='POST'):
+            delete_locale('horn_s_house')
+
+        eq_idx = _sql_indices(conn.calls, 'DELETE FROM locale_equipment')
+        lp_idx = _sql_indices(conn.calls, 'DELETE FROM locale_profiles')
+        assert eq_idx, 'expected a DELETE FROM locale_equipment call'
+        assert lp_idx, 'expected a DELETE FROM locale_profiles call'
+        assert eq_idx[0] < lp_idx[0], (
+            f'locale_equipment must be cleared before locale_profiles to '
+            f'satisfy the FK (got positions {eq_idx[0]} vs {lp_idx[0]})'
+        )
+
+    def test_legacy_locale_short_circuits_without_delete(self, monkeypatch):
+        app = _make_app()
+        conn = _FakeConn()
+        import routes.locales as locales_mod
+        monkeypatch.setattr(locales_mod, 'get_db', lambda: conn)
+        monkeypatch.setattr(locales_mod, 'current_user_id', lambda: 1)
+
+        with app.test_request_context('/locales/home/delete', method='POST'):
+            delete_locale('home')
+
+        # Legacy enum slot → redirected to edit, no DELETEs issued.
+        assert not _sql_indices(conn.calls, 'DELETE FROM locale_equipment')
+        assert not _sql_indices(conn.calls, 'DELETE FROM locale_profiles')
+
+
+# ─── locale_terrain_ids round-trip (Bucket B #3 2026-05-21) ────────────────
+
+
+class TestEditLegacyLocaleTerrainPersists:
+    """Bucket B #3 — terrain checkboxes did not persist on save. This
+    test exercises the legacy-locale POST path with terrain checkboxes
+    and asserts the upsert SQL receives the parsed list at param index 4.
+    """
+
+    def test_upsert_includes_locale_terrain_ids(self, monkeypatch):
+        app = _make_app()
+        conn = _FakeConn()
+        # First call inside _edit_legacy_locale is the prior-equipment snapshot.
+        conn.queue_response(rows=[])
+        import routes.locales as locales_mod
+        monkeypatch.setattr(locales_mod, 'get_db', lambda: conn)
+        monkeypatch.setattr(locales_mod, 'current_user_id', lambda: 1)
+        monkeypatch.setattr(locales_mod, '_evict_layer2b_on_terrain_change',
+                            lambda *_a, **_k: None)
+        monkeypatch.setattr(locales_mod, '_evict_layer2c_on_equipment_change',
+                            lambda *_a, **_k: None)
+
+        profile = _FakeRow({'locale_terrain_ids': []})
+        with app.test_request_context(
+            '/locales/horn_s_house/edit',
+            method='POST',
+            data={
+                'equipment': [],
+                'notes': '',
+                'city': '',
+                'locale_terrain_ids': ['TRN-002', 'TRN-003', 'TRN-016'],
+            },
+        ):
+            _edit_legacy_locale(conn, 1, 'horn_s_house', profile)
+
+        upsert = [
+            (sql, params) for sql, params in conn.calls
+            if 'INSERT INTO locale_profiles' in sql
+            and 'locale_terrain_ids' in sql
+        ]
+        assert upsert, 'expected an INSERT ... ON CONFLICT for locale_profiles'
+        sql, params = upsert[0]
+        # Params: (uid, locale, notes, city, new_terrain_ids).
+        assert params[0] == 1
+        assert params[1] == 'horn_s_house'
+        assert params[4] == ['TRN-002', 'TRN-003', 'TRN-016']
+        # Defensive `::text[]` cast on the array placeholder forces explicit
+        # typing — production rows landed empty without it.
+        assert '::text[]' in sql
+
+
+class TestEditSharedLocaleTerrainPersists:
+    """Bucket B #3 — shared-profile path (outdoor_park, gym, etc.) must
+    also persist `locale_terrain_ids`. Andy's repro locale
+    `chisenhall_mtb_trailhead` is category `outdoor_park` (in
+    `SHARED_PROFILE_CATEGORIES`), so it routes through
+    `_edit_shared_locale`.
+    """
+
+    def test_inherit_path_updates_terrain_ids(self, monkeypatch):
+        app = _make_app()
+        conn = _FakeConn()
+        # _edit_shared_locale call order on inherit path:
+        # 1. SELECT gym_profiles WHERE id=? (shared lookup)
+        # 2. _load_overrides SELECT (prior overrides snapshot)
+        # 3. _save_overrides DELETE (then 0+ INSERTs)
+        # 4. UPDATE locale_profiles SET notes, locale_terrain_ids, ...
+        conn.queue_response(row={
+            'id': 42,
+            'equipment': '[]',
+            'last_confirmed_at': None,
+            'contribution_count': 1,
+        })
+        conn.queue_response(rows=[])  # _load_overrides
+        import routes.locales as locales_mod
+        monkeypatch.setattr(locales_mod, 'get_db', lambda: conn)
+        monkeypatch.setattr(locales_mod, 'current_user_id', lambda: 1)
+        monkeypatch.setattr(locales_mod, '_evict_layer2b_on_terrain_change',
+                            lambda *_a, **_k: None)
+        monkeypatch.setattr(locales_mod, '_evict_layer2c_on_equipment_change',
+                            lambda *_a, **_k: None)
+
+        profile = _FakeRow({
+            'mapbox_id': 'mb_chisenhall',
+            'gym_profile_id': 42,
+            'category': 'outdoor_park',
+            'manual_entry': False,
+            'locale_name': 'Chisenhall MTB Trailhead',
+            'locale_terrain_ids': [],
+            'notes': '',
+        })
+        with app.test_request_context(
+            '/locales/chisenhall_mtb_trailhead/edit',
+            method='POST',
+            data={
+                'equipment': [],
+                'notes': '',
+                'locale_terrain_ids': ['TRN-002', 'TRN-003'],
+            },
+        ):
+            _edit_shared_locale(conn, 1, 'chisenhall_mtb_trailhead', profile)
+
+        # Find the UPDATE locale_profiles statement carrying terrain ids.
+        update = [
+            (sql, params) for sql, params in conn.calls
+            if 'UPDATE locale_profiles' in sql
+            and 'locale_terrain_ids' in sql
+        ]
+        assert update, 'expected UPDATE locale_profiles SET ... locale_terrain_ids'
+        sql, params = update[0]
+        # Inherit-path params: (notes, new_terrain_ids, uid, locale).
+        assert params[0] == ''
+        assert params[1] == ['TRN-002', 'TRN-003']
+        assert params[2] == 1
+        assert params[3] == 'chisenhall_mtb_trailhead'
+        # Defensive `::text[]` cast — see legacy-path test.
+        assert '::text[]' in sql

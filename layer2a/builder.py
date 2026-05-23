@@ -11,8 +11,10 @@ D-52 sub-decision: these three tables exist only under `layer0.*` (no
 `public.*` counterparts in `init_db.py`), so the spec §5.2 SQL targets
 `layer0.*` directly — no migration coupling.
 
-D-05 standing filter: `discipline_name NOT LIKE '%WEEKLY TOTAL%'` applied
-on the PLA join (aggregator rows polluting the table per spec §6).
+D-05 standing filter: discipline_name LIKE pattern excluding "WEEKLY TOTAL"
+applied on the PLA join (aggregator rows polluting the table per spec §6).
+SQL uses `%%` to survive psycopg2's parameter-substitution scan when params
+are non-empty (see line 170; Bucket B #1, 2026-05-23 walkthrough).
 
 D-17 sub-format naming: `_SUB_FORMAT_SPORTS` whitelist drives the
 `top_level_sport` strip — only sports known to use sub-format naming
@@ -167,7 +169,7 @@ def _load_disciplines(
            AND pla.discipline_id = sd.discipline_id
            AND pla.etl_version = ?
            AND pla.superseded_at IS NULL
-           AND pla.discipline_name NOT LIKE '%WEEKLY TOTAL%'
+           AND pla.discipline_name NOT LIKE '%%WEEKLY TOTAL%%'
         LEFT JOIN layer0.discipline_training_gaps dtg
             ON dtg.discipline_id = sd.discipline_id
            AND dtg.etl_version = ?
