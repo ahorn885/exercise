@@ -46,7 +46,12 @@ from typing import Any, Callable, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
-from layer4.context import Layer2CPayload, Layer2DPayload, Layer3APayload
+from layer4.context import (
+    Layer2CPayload,
+    Layer2DPayload,
+    Layer2ModalityPayload,
+    Layer3APayload,
+)
 from layer4.errors import Layer4InputError, Layer4OutputError
 from layer4.payload import (
     CardioBlock,
@@ -857,6 +862,13 @@ def llm_layer4_single_session_synthesize(
     plan_version_id: int = 0,
     session_date: _date_type | None = None,
     llm_caller: LLMCaller | None = None,
+    # D-73 Phase 5.2 Walkthrough BestFitModality_Impl 2026-05-24 —
+    # pass-through hook for the resolver payload computed in
+    # `orchestrate_single_session_synthesize`. Default None preserves
+    # all existing call sites + cache keys; the driver does NOT
+    # consume the payload in the prompt yet (BM-3 follow-on plugs in
+    # here when prompt-body integration ships).
+    layer2_modality_payload_for_locale: Layer2ModalityPayload | None = None,
 ) -> Layer4Payload:
     """Pattern B single-call synthesizer for D-63 on-demand workouts per
     `Layer4_Spec.md` §3.3.
