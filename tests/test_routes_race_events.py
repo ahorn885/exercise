@@ -409,3 +409,267 @@ class TestResolveEffectiveFrameworkSport:
             lambda db, uid: {'primary_sport': None},
         )
         assert _resolve_effective_framework_sport(None, 1, None) is None
+
+
+# ─── Bucket C (i) — Mapbox-required gates ───────────────────────────────────
+
+
+class _RouteFakeRow(dict):
+    """`request.form`-shaped dict for the route-level tests below."""
+
+    def __getitem__(self, key):
+        if isinstance(key, int):
+            return list(self.values())[key]
+        return super().__getitem__(key)
+
+
+class _RouteFakeCursor:
+    def __init__(self, row=None, rows=None):
+        self._row = row
+        self._rows = rows or []
+
+    def fetchone(self):
+        return _RouteFakeRow(self._row) if self._row else None
+
+    def fetchall(self):
+        return [_RouteFakeRow(r) for r in self._rows]
+
+
+class _RouteFakeConn:
+    """Tracks SQL calls + serves queued responses. Mirrors
+    `tests/test_locales.py::_FakeConn` so the route-level tests can assert
+    that NO create/update SQL fires when the Mapbox gate rejects the POST.
+    """
+
+    def __init__(self):
+        self.calls: list[tuple[str, tuple]] = []
+        self.responses: list[tuple] = []
+
+    def queue_response(self, row=None, rows=None):
+        self.responses.append((row, rows or []))
+
+    def execute(self, sql, params=()):
+        self.calls.append((sql, params))
+        if self.responses:
+            row, rows = self.responses.pop(0)
+        else:
+            row, rows = None, []
+        return _RouteFakeCursor(row=row, rows=rows)
+
+    def commit(self):
+        pass
+
+
+def _make_app():
+    from flask import Flask
+    from routes.race_events import bp
+    app = Flask(__name__)
+    app.config['SECRET_KEY'] = 'test'
+    app.config['TESTING'] = True
+    app.config['WTF_CSRF_ENABLED'] = False
+    app.register_blueprint(bp)
+    return app
+
+
+def _sql_fragment_count(conn, fragment: str) -> int:
+    return sum(1 for sql, _params in conn.calls if fragment in sql)
+
+
+class TestNewRaceMapboxRequired:
+    """Bucket C (i) — `new_race` POST blocks when athlete submits without a
+    Mapbox-anchored race location. Mirrors the existing race-name + race-format
+    required-field gates.
+    """
+
+    def test_post_without_mapbox_id_flashes_and_redirects(self, monkeypatch):
+        app = _make_app()
+        conn = _RouteFakeConn()
+        import routes.race_events as re_mod
+        monkeypatch.setattr(re_mod, 'get_db', lambda: conn)
+        monkeypatch.setattr(re_mod, 'current_user_id', lambda: 1)
+
+        with app.test_request_context(
+            '/profile/race-events/new',
+            method='POST',
+            data={
+                'name': 'Test Race',
+                'event_date': '2026-07-17',
+                'race_format': 'expedition_ar',
+                # `event_locale_mapbox_id` deliberately absent.
+            },
+        ):
+            response = re_mod.new_race()
+
+        # No create SQL should fire when the gate rejects.
+        assert _sql_fragment_count(conn, 'INSERT INTO race_events') == 0
+        # 302 redirect back to /profile/race-events/new.
+        assert response.status_code == 302
+        assert '/new' in response.location
+
+    def test_post_with_mapbox_id_proceeds(self, monkeypatch):
+        app = _make_app()
+        conn = _RouteFakeConn()
+        # Stub `create_race_event` so the test doesn't depend on the repo's
+        # transaction shape; we're asserting the gate passes, not the SQL.
+        import routes.race_events as re_mod
+        monkeypatch.setattr(re_mod, 'get_db', lambda: conn)
+        monkeypatch.setattr(re_mod, 'current_user_id', lambda: 1)
+        called = {}
+        def fake_create(db, user_id, **kwargs):
+            called['mapbox_id'] = kwargs.get('event_locale_mapbox_id')
+            return 42
+        monkeypatch.setattr(re_mod, 'create_race_event', fake_create)
+
+        with app.test_request_context(
+            '/profile/race-events/new',
+            method='POST',
+            data={
+                'name': 'Test Race',
+                'event_date': '2026-07-17',
+                # Multi-day path redirects to race_events.edit_race which is
+                # in the registered blueprint; single_day goes to
+                # profile.edit which isn't registered in this test app.
+                'race_format': 'multi_day_ultra',
+                'event_locale_name': 'Test Race Location',
+                'event_locale_mapbox_id': 'poi.test_anchor',
+                'event_locale_place_name': 'Test Race Location, TS',
+            },
+        ):
+            response = re_mod.new_race()
+
+        assert response.status_code == 302
+        assert called['mapbox_id'] == 'poi.test_anchor'
+
+
+class TestUpdateRaceMapboxRequired:
+    """Bucket C (i) — `update_race` POST blocks when the LOADED race row
+    lacks `event_locale_mapbox_id`. The race-details form doesn't carry the
+    Mapbox fields (the standalone `set_locale` POST owns those); the gate
+    forces legacy un-anchored rows through the picker before any other edits
+    can land.
+    """
+
+    def test_post_on_unanchored_row_flashes_and_redirects(self, monkeypatch):
+        app = _make_app()
+        conn = _RouteFakeConn()
+        import routes.race_events as re_mod
+        monkeypatch.setattr(re_mod, 'get_db', lambda: conn)
+        monkeypatch.setattr(re_mod, 'current_user_id', lambda: 1)
+        # Stub `get_race_event` to return a legacy un-anchored row.
+        monkeypatch.setattr(
+            re_mod, 'get_race_event',
+            lambda db, uid, race_event_id: {
+                'id': 10,
+                'name': 'Legacy Race',
+                'event_date': None,
+                'race_format': 'single_day',
+                'event_locale_mapbox_id': None,
+                'is_target_event': False,
+            },
+        )
+
+        with app.test_request_context(
+            '/profile/race-events/10/update',
+            method='POST',
+            data={
+                'name': 'Legacy Race',
+                'event_date': '2026-07-17',
+                'race_format': 'single_day',
+            },
+        ):
+            response = re_mod.update_race(10)
+
+        # No UPDATE SQL should fire when the gate rejects.
+        assert _sql_fragment_count(conn, 'UPDATE race_events') == 0
+        assert response.status_code == 302
+
+    def test_post_on_anchored_row_proceeds(self, monkeypatch):
+        app = _make_app()
+        conn = _RouteFakeConn()
+        import routes.race_events as re_mod
+        monkeypatch.setattr(re_mod, 'get_db', lambda: conn)
+        monkeypatch.setattr(re_mod, 'current_user_id', lambda: 1)
+        monkeypatch.setattr(
+            re_mod, 'get_race_event',
+            lambda db, uid, race_event_id: {
+                'id': 10,
+                'name': 'Anchored Race',
+                'event_date': None,
+                'race_format': 'single_day',
+                'distance_km': None,
+                'total_elevation_gain_m': None,
+                'race_rules_summary': None,
+                'mandatory_gear_text': None,
+                'event_locale_id': None,  # legacy FK; load path preserves
+                'notes': None,
+                'race_terrain': [],
+                'aid_stations': None,
+                'race_url': None,
+                'framework_sport': None,
+                'included_discipline_ids': None,
+                'event_locale_mapbox_id': 'poi.test_anchor',
+                'is_target_event': False,
+            },
+        )
+        # Stub the eviction helpers + update so the call sequence doesn't
+        # depend on cache wiring.
+        monkeypatch.setattr(re_mod, 'update_race_event', lambda *a, **k: None)
+        for helper in (
+            'evict_on_target_event_framework_sport_change',
+            'evict_on_target_event_included_discipline_ids_change',
+            'evict_on_target_event_periodization_change',
+            'evict_on_target_event_brief_field_change',
+        ):
+            monkeypatch.setattr(re_mod, helper, lambda *a, **k: None)
+
+        with app.test_request_context(
+            '/profile/race-events/10/update',
+            method='POST',
+            data={
+                'name': 'Anchored Race',
+                'event_date': '2026-07-17',
+                'race_format': 'single_day',
+            },
+        ):
+            response = re_mod.update_race(10)
+
+        assert response.status_code == 302
+        # Update flow proceeds past the gate (no flash 'pick a race location').
+
+
+class TestSetLocaleMapboxRequired:
+    """Bucket C (i) — `set_locale` POST is now strict: empty mapbox_id is
+    rejected (was previously loose — accepted name-without-mapbox_id).
+    """
+
+    def test_post_without_mapbox_id_flashes_and_redirects(self, monkeypatch):
+        app = _make_app()
+        conn = _RouteFakeConn()
+        import routes.race_events as re_mod
+        monkeypatch.setattr(re_mod, 'get_db', lambda: conn)
+        monkeypatch.setattr(re_mod, 'current_user_id', lambda: 1)
+        monkeypatch.setattr(
+            re_mod, 'get_race_event',
+            lambda db, uid, race_event_id: {
+                'id': 10,
+                'is_target_event': False,
+                'event_locale_mapbox_id': None,
+            },
+        )
+        monkeypatch.setattr(
+            re_mod, 'update_race_event_locale', lambda *a, **k: None
+        )
+
+        with app.test_request_context(
+            '/profile/race-events/10/locale/update',
+            method='POST',
+            data={
+                # Only `event_locale_name` set (mimics the old loose-fallback
+                # path that was previously accepted).
+                'event_locale_name': 'Hand-typed location',
+            },
+        ):
+            response = re_mod.set_locale(10)
+
+        assert response.status_code == 302
+        # No update_race_event_locale should fire when the gate rejects.

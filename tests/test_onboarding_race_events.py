@@ -421,3 +421,77 @@ class TestWriteAccountNudge:
         _write_account_nudge(conn, uid=42, nudge_type='route_locales_incomplete')
         _, params = conn.calls[0]
         assert params == (42, 'route_locales_incomplete')
+
+
+# ─── Bucket C (i) — target_race_save Mapbox-required gate ───────────────────
+
+
+def _make_onboarding_app():
+    from flask import Flask
+    from routes.onboarding import bp
+    app = Flask(__name__)
+    app.config['SECRET_KEY'] = 'test'
+    app.config['TESTING'] = True
+    app.config['WTF_CSRF_ENABLED'] = False
+    app.register_blueprint(bp)
+    return app
+
+
+class TestTargetRaceSaveMapboxRequired:
+    """Bucket C (i) — `target_race_save` POST blocks when the athlete
+    submits without a Mapbox-anchored race location. The `[Skip]` button
+    (`target_race_skip`) remains as the escape valve for athletes who can't
+    find their race in Mapbox.
+    """
+
+    def test_post_without_mapbox_id_flashes_and_redirects(self, monkeypatch):
+        app = _make_onboarding_app()
+        conn = _FakeConn()
+        import routes.onboarding as ob_mod
+        monkeypatch.setattr(ob_mod, 'get_db', lambda: conn)
+        monkeypatch.setattr(ob_mod, 'current_user_id', lambda: 1)
+        # Stub the create/update repo helpers so a stale call would be loud.
+        monkeypatch.setattr(ob_mod, 'create_race_event',
+                            lambda *a, **k: pytest.fail(
+                                'create_race_event called past gate'))
+        monkeypatch.setattr(ob_mod, 'update_race_event',
+                            lambda *a, **k: pytest.fail(
+                                'update_race_event called past gate'))
+
+        with app.test_request_context(
+            '/onboarding/target-race',
+            method='POST',
+            data={
+                'name': 'Test Race',
+                'event_date': '2026-07-17',
+                'race_format': 'expedition_ar',
+                # `event_locale_mapbox_id` deliberately absent.
+            },
+        ):
+            response = ob_mod.target_race_save()
+
+        assert response.status_code == 302
+        # Redirects back to /onboarding/target-race (the GET form).
+        assert '/target-race' in response.location
+
+    def test_skip_path_still_works(self, monkeypatch):
+        # The [Skip] button bypasses the Mapbox gate entirely. Athletes
+        # who can't find their race in Mapbox still have an escape valve.
+        app = _make_onboarding_app()
+        conn = _FakeConn()
+        import routes.onboarding as ob_mod
+        monkeypatch.setattr(ob_mod, 'get_db', lambda: conn)
+        monkeypatch.setattr(ob_mod, 'current_user_id', lambda: 1)
+
+        with app.test_request_context(
+            '/onboarding/target-race/skip', method='POST'
+        ):
+            response = ob_mod.target_race_skip()
+
+        # Skip writes a nudge + redirects forward; no race row touched.
+        assert response.status_code == 302
+        assert conn.commits == 1
+        # Asserts the INSERT account_nudges fired (the only DB call in
+        # target_race_skip), which is what the existing
+        # TestWriteAccountNudge::test_target_race_skipped_nudge_type pins.
+        assert any('account_nudges' in sql for sql, _ in conn.calls)

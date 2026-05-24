@@ -78,6 +78,7 @@ def _make_race_event(*, race_event_id: int = 7) -> RaceEventPayload:
         event_date=date(2026, 7, 18),
         race_format="expedition_ar",
         event_locale_id="home",
+        event_locale_mapbox_id="poi.test_anchor",
         is_target_event=True,
     )
 

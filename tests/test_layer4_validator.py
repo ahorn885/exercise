@@ -1610,6 +1610,7 @@ def test_kit_manifest_inputs_incomplete_no_route_locales_warns():
         name="Test Race",
         event_date=event_date,
         race_format="expedition_ar",
+        event_locale_mapbox_id="poi.test_anchor",
         is_target_event=True,
         route_locales=[],
     )

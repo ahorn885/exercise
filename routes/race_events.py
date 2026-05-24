@@ -347,6 +347,12 @@ def new_race():
         # fields ride through as hidden inputs (populated by the
         # search-result-click JS handler in the template).
         locale_fields = _extract_mapbox_locale_from_form(request.form)
+        # D-73 Phase 5.2 Bucket C (i) — race location is required. Pydantic
+        # backstops this at RaceEventPayload construction; the flash here is
+        # the athlete-facing UX.
+        if not locale_fields['event_locale_mapbox_id']:
+            flash('Pick a race location before saving.', 'danger')
+            return redirect(url_for('race_events.new_race'))
         race_event_id = create_race_event(
             db, uid,
             name=name,
@@ -472,6 +478,18 @@ def update_race(race_event_id: int):
         return redirect(url_for('race_events.edit_race', race_event_id=race_event_id))
     if race_format not in VALID_RACE_FORMATS:
         flash('Pick a race format.', 'danger')
+        return redirect(url_for('race_events.edit_race', race_event_id=race_event_id))
+    # D-73 Phase 5.2 Bucket C (i) — block the update when the row isn't
+    # Mapbox-anchored. The race-details form doesn't carry the Mapbox hidden
+    # inputs (the standalone `set_locale` POST owns those); check the loaded
+    # row directly so legacy un-anchored rows force the athlete through the
+    # picker before any further edits land.
+    if not race.get('event_locale_mapbox_id'):
+        flash(
+            'Pick a race location before saving other changes — use the '
+            'Race location picker above.',
+            'danger',
+        )
         return redirect(url_for('race_events.edit_race', race_event_id=race_event_id))
 
     new_distance_km = _parse_decimal(request.form, 'distance_km')
@@ -612,8 +630,12 @@ def set_locale(race_event_id: int):
         abort(404)
 
     locale_fields = _extract_mapbox_locale_from_form(request.form)
-    if not locale_fields['event_locale_name'] and not locale_fields['event_locale_mapbox_id']:
-        flash('Place lookup result was malformed; try again.', 'danger')
+    # D-73 Phase 5.2 Bucket C (i) — strict Mapbox requirement. The picker JS
+    # always sets mapbox_id alongside name on result-click, so empty mapbox_id
+    # means either a malformed POST OR the athlete cleared the picker without
+    # picking a new location. Both are rejected.
+    if not locale_fields['event_locale_mapbox_id']:
+        flash('Pick a race location.', 'danger')
         return redirect(url_for('race_events.edit_race', race_event_id=race_event_id))
 
     update_race_event_locale(db, uid, race_event_id, **locale_fields)

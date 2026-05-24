@@ -402,6 +402,7 @@ def _race_event_payload(
         race_rules_summary=race_rules_summary,
         mandatory_gear_text=mandatory_gear_text,
         event_locale_id="L-finish",
+        event_locale_mapbox_id="poi.test_anchor",
         is_target_event=True,
         route_locales=route_locales or [],
     )
@@ -716,6 +717,7 @@ class TestRaceEventPayload:
                 name="X",
                 event_date=_EVENT_DATE,
                 race_format="single_day",
+                event_locale_mapbox_id="poi.test_anchor",
                 is_target_event=True,
                 bogus=True,  # type: ignore[call-arg]
             )
@@ -763,6 +765,7 @@ class TestRaceEventPayload:
                 name="X",
                 event_date=_EVENT_DATE,
                 race_format="expedition_ar",
+                event_locale_mapbox_id="poi.test_anchor",
                 is_target_event=True,
                 route_locales=[
                     _route_locale(sequence_idx=3, role="start"),
@@ -809,6 +812,80 @@ class TestRaceEventPayload:
     def test_negative_distance_rejected(self):
         with pytest.raises(ValueError):
             _race_event_payload(distance_km=Decimal("-1"))
+
+
+class TestEventLocaleMapboxIdRequired:
+    """D-73 Phase 5.2 Bucket C (i) — RaceEventPayload requires
+    `event_locale_mapbox_id` non-null on every construction. Defense-in-depth
+    backstop for the route-layer flash + redirect; catches any non-route
+    writer (admin scripts, integration tests, future API surfaces) that
+    would construct an un-anchored payload."""
+
+    def test_missing_mapbox_id_raises(self):
+        with pytest.raises(ValueError, match="event_locale_mapbox_id is required"):
+            RaceEventPayload(
+                race_event_id=1,
+                user_id=42,
+                name="X",
+                event_date=_EVENT_DATE,
+                race_format="single_day",
+                is_target_event=True,
+            )
+
+    def test_explicit_none_mapbox_id_raises(self):
+        with pytest.raises(ValueError, match="event_locale_mapbox_id is required"):
+            RaceEventPayload(
+                race_event_id=1,
+                user_id=42,
+                name="X",
+                event_date=_EVENT_DATE,
+                race_format="single_day",
+                event_locale_mapbox_id=None,
+                is_target_event=True,
+            )
+
+    def test_present_mapbox_id_accepted(self):
+        re = RaceEventPayload(
+            race_event_id=1,
+            user_id=42,
+            name="X",
+            event_date=_EVENT_DATE,
+            race_format="single_day",
+            event_locale_mapbox_id="poi.nerstrand_finish",
+            is_target_event=True,
+        )
+        assert re.event_locale_mapbox_id == "poi.nerstrand_finish"
+
+    def test_validator_fires_even_when_legacy_slug_present(self):
+        # Legacy event_locale_id slug is NOT a substitute for the Mapbox
+        # anchor — the legacy column stays nullable for pre-walkthrough rows
+        # but new constructions still require mapbox_id. Pins the contract:
+        # athletes must re-anchor legacy rows via the picker before saves.
+        with pytest.raises(ValueError, match="event_locale_mapbox_id is required"):
+            RaceEventPayload(
+                race_event_id=1,
+                user_id=42,
+                name="X",
+                event_date=_EVENT_DATE,
+                race_format="single_day",
+                event_locale_id="legacy_home",
+                is_target_event=True,
+            )
+
+    def test_validator_applies_to_non_target_races_too(self):
+        # D1 ratified all-races scope (not target-only). Calendar-placeholder
+        # races (is_target_event=False) also require the Mapbox anchor at
+        # write time; this keeps the data contract uniform across the table
+        # and the route enforcement uniform across the form surfaces.
+        with pytest.raises(ValueError, match="event_locale_mapbox_id is required"):
+            RaceEventPayload(
+                race_event_id=2,
+                user_id=42,
+                name="Calendar placeholder race",
+                event_date=_EVENT_DATE,
+                race_format="single_day",
+                is_target_event=False,
+            )
 
 
 # ─── Tool schema ─────────────────────────────────────────────────────────────
