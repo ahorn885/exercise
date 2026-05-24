@@ -1191,6 +1191,14 @@ _PG_MIGRATIONS = [
     # race correctly without churning their profile. Orchestrator falls
     # back to primary_sport when this is NULL.
     "ALTER TABLE race_events ADD COLUMN IF NOT EXISTS framework_sport TEXT NULL",
+    # D-73 Phase 5.2 Bucket E.(b)-B2 + E.(c)-C1 (2026-05-24) — per-race
+    # discipline filter override. When set, Layer 2A's classifier post-
+    # filters the bridge-derived discipline list to just these IDs
+    # (preserves bridge SELECT for inclusion-reason rationale; just narrows
+    # the output). NULL = use full bridge defaults (pre-B2 behavior).
+    # Auto-cleared on framework_sport change (orphan cleanup) so the
+    # selection always reflects the current sport's valid set.
+    "ALTER TABLE race_events ADD COLUMN IF NOT EXISTS included_discipline_ids TEXT[] NULL",
     # Phase 5.1 form-refresh C (2026-05-20) — closes Layer2B_Spec.md §12
     # Open Item 2B-2 (§J Locale terrain access controlled vocabulary) +
     # the orchestrator's last `locale_terrain_ids=[]` forward-pointer

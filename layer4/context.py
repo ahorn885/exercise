@@ -253,8 +253,15 @@ class RaceTerrainEntry(_Base):
     # vocabulary in `layer0.terrain_types`; `pct_of_race` is in [0.0, 100.0]
     # per `Layer2B_Spec.md` §3 + §4. The runtime validates the pattern + sum
     # bounds; the typed schema constrains the per-row range.
+    # `discipline_id` (D-73 Phase 5.2 Bucket E.(c)-C1) optionally couples
+    # the terrain row to one discipline from the race's included set. None
+    # (default) means race-wide — the terrain percentage counts against
+    # every included discipline. Layer 2B currently passes the field
+    # through without behavior change; per-discipline gap reasoning is a
+    # Trigger #1 prompt-body update for a future slice.
     terrain_id: str
     pct_of_race: float = Field(ge=0.0, le=100.0)
+    discipline_id: str | None = None
 
 
 class TerrainGap(_Base):
@@ -1109,6 +1116,14 @@ class RaceEventPayload(_Base):
     # `framework_sport_missing` / `unknown_sport` errors still apply if the
     # value doesn't resolve against `layer0.sport_discipline_bridge`.
     framework_sport: str | None = Field(default=None, max_length=100)
+    # D-73 Phase 5.2 Bucket E.(b)-B2 (2026-05-24) — per-race discipline
+    # filter override. When non-None, Layer 2A's classifier post-filters
+    # the bridge-derived discipline list to just these canonical IDs
+    # (e.g. ["D-001","D-008b","D-013"]). None = use full bridge defaults
+    # (pre-B2 behavior, same as missing column on legacy rows). Auto-
+    # cleared by the route layer on framework_sport change (orphan
+    # cleanup); empty list is treated as None at the form-parse boundary.
+    included_discipline_ids: list[str] | None = None
     route_locales: list[RouteLocale] = Field(default_factory=list)
 
     @model_validator(mode="after")

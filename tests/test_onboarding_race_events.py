@@ -284,9 +284,11 @@ class TestParseRaceTerrain:
             'race_terrain[1][pct_of_race]': '30.5',
         }
         out = _parse_race_terrain(form)
+        # D-73 Phase 5.2 Bucket E.(c)-C1 — every row now carries
+        # `discipline_id` (None default when the form field is absent).
         assert out == [
-            {'terrain_id': 'TRN-002', 'pct_of_race': 35.0},
-            {'terrain_id': 'TRN-003', 'pct_of_race': 30.5},
+            {'terrain_id': 'TRN-002', 'pct_of_race': 35.0, 'discipline_id': None},
+            {'terrain_id': 'TRN-003', 'pct_of_race': 30.5, 'discipline_id': None},
         ]
 
     def test_empty_form_returns_empty_list(self):
@@ -300,7 +302,9 @@ class TestParseRaceTerrain:
             'race_terrain[1][pct_of_race]': '30',
         }
         out = _parse_race_terrain(form)
-        assert out == [{'terrain_id': 'TRN-002', 'pct_of_race': 30.0}]
+        assert out == [
+            {'terrain_id': 'TRN-002', 'pct_of_race': 30.0, 'discipline_id': None},
+        ]
 
     def test_drops_empty_pct(self):
         form = {
@@ -347,9 +351,9 @@ class TestParseRaceTerrain:
         }
         out = _parse_race_terrain(form)
         assert out == [
-            {'terrain_id': 'TRN-002', 'pct_of_race': 35.0},
-            {'terrain_id': 'TRN-004', 'pct_of_race': 20.0},
-            {'terrain_id': 'TRN-009', 'pct_of_race': 15.0},
+            {'terrain_id': 'TRN-002', 'pct_of_race': 35.0, 'discipline_id': None},
+            {'terrain_id': 'TRN-004', 'pct_of_race': 20.0, 'discipline_id': None},
+            {'terrain_id': 'TRN-009', 'pct_of_race': 15.0, 'discipline_id': None},
         ]
 
 

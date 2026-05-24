@@ -21,8 +21,12 @@ from __future__ import annotations
 import pytest
 
 from routes.race_events import (
+    _disciplines_for_framework_sport,
     _extract_mapbox_locale_from_form,
+    _parse_discipline_id_filter,
+    _parse_race_terrain,
     _parse_race_url,
+    _resolve_effective_framework_sport,
     _run_mapbox_search,
 )
 
@@ -34,6 +38,39 @@ class _FakeFormMapping(dict):
 
     def get(self, key, default=None):
         return super().get(key, default)
+
+
+class _FakeMultiDict(dict):
+    """Stand-in for `request.form` with `.getlist()` (Flask MultiDict
+    semantics). Used for `_parse_discipline_id_filter` which calls
+    `.getlist('included_discipline_ids')` to read repeated checkbox values.
+    """
+
+    def __init__(self, base=None, lists=None):
+        super().__init__(base or {})
+        self._lists = lists or {}
+
+    def getlist(self, key):
+        return list(self._lists.get(key, []))
+
+    def get(self, key, default=None):
+        return super().get(key, default)
+
+
+class _FakeCursor:
+    def __init__(self, rows):
+        self._rows = rows
+
+    def fetchall(self):
+        return list(self._rows)
+
+
+class _FakeConn:
+    def __init__(self, rows=None):
+        self._rows = rows or []
+
+    def execute(self, _sql, _params=()):
+        return _FakeCursor(self._rows)
 
 
 # ─── _extract_mapbox_locale_from_form ───────────────────────────────────────
@@ -228,3 +265,147 @@ class TestRunMapboxSearch:
         assert error is None
         assert len(results) == 1
         assert results[0]['text'] == 'Nerstrand State Park'
+
+
+# ─── _parse_discipline_id_filter (D-73 Phase 5.2 Bucket E.(b)-B2) ────────────
+
+
+class TestParseDisciplineIdFilter:
+    """Parses the repeating `included_discipline_ids` form fields into a
+    canonical-id list, or None when no boxes are checked."""
+
+    def test_empty_form_returns_none(self):
+        assert _parse_discipline_id_filter(_FakeMultiDict()) is None
+
+    def test_returns_checked_subset(self):
+        form = _FakeMultiDict(
+            lists={'included_discipline_ids': ['D-001', 'D-008b', 'D-013']}
+        )
+        assert _parse_discipline_id_filter(form) == ['D-001', 'D-008b', 'D-013']
+
+    def test_strips_whitespace_and_drops_blanks(self):
+        form = _FakeMultiDict(
+            lists={'included_discipline_ids': [' D-001 ', '', '  ', 'D-013']}
+        )
+        assert _parse_discipline_id_filter(form) == ['D-001', 'D-013']
+
+    def test_missing_getlist_method_returns_none(self):
+        """Form mapping without `.getlist` (plain dict) falls through to
+        None — defensive against test substrates that haven't loaded a
+        MultiDict."""
+        plain = {'included_discipline_ids': 'D-001'}
+        assert _parse_discipline_id_filter(plain) is None
+
+
+# ─── _parse_race_terrain — C1 discipline_id passthrough ─────────────────────
+
+
+class TestParseRaceTerrainDisciplineId:
+    """D-73 Phase 5.2 Bucket E.(c)-C1 — per-row optional discipline_id."""
+
+    def test_row_with_discipline_id_threaded(self):
+        form = _FakeFormMapping({
+            'race_terrain[0][terrain_id]': 'TRN-017',
+            'race_terrain[0][pct_of_race]': '15',
+            'race_terrain[0][discipline_id]': 'D-006',
+        })
+        out = _parse_race_terrain(form)
+        assert out == [
+            {'terrain_id': 'TRN-017', 'pct_of_race': 15.0, 'discipline_id': 'D-006'},
+        ]
+
+    def test_blank_discipline_id_collapses_to_none(self):
+        form = _FakeFormMapping({
+            'race_terrain[0][terrain_id]': 'TRN-002',
+            'race_terrain[0][pct_of_race]': '35',
+            'race_terrain[0][discipline_id]': '',
+        })
+        out = _parse_race_terrain(form)
+        assert out == [
+            {'terrain_id': 'TRN-002', 'pct_of_race': 35.0, 'discipline_id': None},
+        ]
+
+    def test_missing_discipline_id_field_defaults_to_none(self):
+        # Pre-C1 form shape — no discipline_id field at all. Backward-compat:
+        # parses identically to a row with discipline_id=None.
+        form = _FakeFormMapping({
+            'race_terrain[0][terrain_id]': 'TRN-002',
+            'race_terrain[0][pct_of_race]': '35',
+        })
+        out = _parse_race_terrain(form)
+        assert out == [
+            {'terrain_id': 'TRN-002', 'pct_of_race': 35.0, 'discipline_id': None},
+        ]
+
+
+# ─── _disciplines_for_framework_sport ───────────────────────────────────────
+
+
+class TestDisciplinesForFrameworkSport:
+    """Bridge-keyed lookup helper used to render the B2 checkbox grid +
+    the C1 per-row terrain `<select>`."""
+
+    def test_returns_id_label_dicts_from_bridge(self):
+        conn = _FakeConn(rows=[
+            {'discipline_id': 'D-001', 'discipline_name': 'Trail run'},
+            {'discipline_id': 'D-008b', 'discipline_name': 'Whitewater paddle'},
+        ])
+        out = _disciplines_for_framework_sport(conn, 'Adventure Racing')
+        assert out == [
+            {'id': 'D-001', 'label': 'Trail run'},
+            {'id': 'D-008b', 'label': 'Whitewater paddle'},
+        ]
+
+    def test_empty_framework_sport_short_circuits(self):
+        # Avoids a wasted SELECT when the athlete hasn't yet typed
+        # anything in the framework_sport input.
+        conn = _FakeConn(rows=[])
+        assert _disciplines_for_framework_sport(conn, '') == []
+        assert _disciplines_for_framework_sport(conn, None) == []
+
+
+# ─── _resolve_effective_framework_sport ─────────────────────────────────────
+
+
+class TestResolveEffectiveFrameworkSport:
+    """Mirrors orchestrator resolution order: race-row override wins;
+    otherwise fall back to athlete profile `primary_sport`."""
+
+    def test_race_override_wins(self, monkeypatch):
+        # Profile primary_sport irrelevant when race has an override.
+        monkeypatch.setattr(
+            'routes.race_events.get_athlete_profile',
+            lambda db, uid: {'primary_sport': 'Adventure Racing'},
+        )
+        race = {'framework_sport': 'Trail Running'}
+        assert _resolve_effective_framework_sport(None, 1, race) == 'Trail Running'
+
+    def test_falls_back_to_primary_sport_when_race_blank(self, monkeypatch):
+        monkeypatch.setattr(
+            'routes.race_events.get_athlete_profile',
+            lambda db, uid: {'primary_sport': 'Adventure Racing'},
+        )
+        # Race row exists but framework_sport is None
+        assert (
+            _resolve_effective_framework_sport(None, 1, {'framework_sport': None})
+            == 'Adventure Racing'
+        )
+
+    def test_no_race_row_uses_profile(self, monkeypatch):
+        # New-race GET path — no race row exists yet.
+        monkeypatch.setattr(
+            'routes.race_events.get_athlete_profile',
+            lambda db, uid: {'primary_sport': 'Trail Running'},
+        )
+        assert (
+            _resolve_effective_framework_sport(None, 1, None) == 'Trail Running'
+        )
+
+    def test_returns_none_when_both_unset(self, monkeypatch):
+        # Athlete has no primary_sport AND no race row — template renders
+        # the empty discipline grid + helper copy.
+        monkeypatch.setattr(
+            'routes.race_events.get_athlete_profile',
+            lambda db, uid: {'primary_sport': None},
+        )
+        assert _resolve_effective_framework_sport(None, 1, None) is None

@@ -614,6 +614,7 @@ def q_layer2a_discipline_classifier_payload(
     estimated_race_duration_hours: float | None = None,
     navigation_required: bool | None = None,
     team_format: str | None = None,
+    discipline_id_filter: list[str] | None = None,
     etl_version_set: dict[str, str],
 ) -> Layer2APayload:
     """Resolve canonical disciplines for a framework sport. Spec §3.
@@ -651,6 +652,18 @@ def q_layer2a_discipline_classifier_payload(
     version_0a = etl_version_set["0A"]
 
     raw_rows = _load_disciplines(db, top_level_sport, framework_sport, version_0a)
+
+    # D-73 Phase 5.2 Bucket E.(b)-B2 (2026-05-24) — when a race-level
+    # `discipline_id_filter` is supplied, prune the bridge-derived rows to
+    # only the explicit IDs. Preserves the bridge SELECT (rationale +
+    # phase_load + training_gap stay intact for surviving rows) but narrows
+    # the output set. None = use full bridge defaults (pre-B2 behavior).
+    # Empty list = explicit "no disciplines" (matches None semantically —
+    # the route layer treats an empty form selection as None, so this path
+    # is only reached from direct caller use, e.g. tests).
+    if discipline_id_filter is not None:
+        allowed = set(discipline_id_filter)
+        raw_rows = [r for r in raw_rows if r["discipline_id"] in allowed]
 
     disciplines: list[Layer2ADiscipline] = []
     for row in raw_rows:

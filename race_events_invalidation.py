@@ -119,3 +119,20 @@ def evict_on_target_event_framework_sport_change(
     if cache is None:
         cache = _build_default_cache(db)
     return evict_on_layer_change(cache, user_id, 'layer2a')
+
+
+def evict_on_target_event_included_discipline_ids_change(
+    db,
+    user_id: int,
+    *,
+    cache: Layer4Cache | None = None,
+) -> int:
+    """`included_discipline_ids` change on the target row (D-73 Phase 5.2
+    Bucket E.(b)-B2). Re-uses the `layer2a` policy — the filter narrows
+    which disciplines Layer 2A returns, which cascades through every
+    downstream entry point + Layer 3A/3B. Same policy as framework_sport
+    since both reshape the discipline input to the same layer.
+    """
+    if cache is None:
+        cache = _build_default_cache(db)
+    return evict_on_layer_change(cache, user_id, 'layer2a')
