@@ -28,7 +28,7 @@
             <option value="">— Pick terrain —</option>
             {% for tc in terrain_choices %}
               <option value="{{ tc.id }}" {% if tc.id == entry.terrain_id %}selected{% endif %}>
-                {{ tc.id }} — {{ tc.label }}
+                {{ tc.label }}
               </option>
             {% endfor %}
           </select>
@@ -60,7 +60,7 @@
         <select class="form-select form-select-sm" name="race_terrain[__IDX__][terrain_id]">
           <option value="">— Pick terrain —</option>
           {% for tc in terrain_choices %}
-            <option value="{{ tc.id }}">{{ tc.id }} — {{ tc.label }}</option>
+            <option value="{{ tc.id }}">{{ tc.label }}</option>
           {% endfor %}
         </select>
       </div>
