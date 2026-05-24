@@ -941,6 +941,13 @@ def llm_layer4_single_session_synthesize(
     # None preserves quick-equipment mode (athlete is "Somewhere else")
     # + legacy call sites that pre-date BM-3.
     layer2_modality_payload_for_locale: Layer2ModalityPayload | None = None,
+    # BestFitModality_Spec_v2.md §A — race-craft hint dict accepted by the
+    # driver only so the cached wrapper's `_synthesize` closure can pass
+    # it through transparently. Driver itself does not consume the dict
+    # (resolver already scored against it upstream; the menu is in
+    # `layer2_modality_payload_for_locale`). Kwarg exists for signature
+    # symmetry with the cached wrapper.
+    race_modality_hints: dict[str, list[str]] | None = None,
 ) -> Layer4Payload:
     """Pattern B single-call synthesizer for D-63 on-demand workouts per
     `Layer4_Spec.md` §3.3.

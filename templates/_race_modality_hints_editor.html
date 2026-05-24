@@ -1,0 +1,124 @@
+{# Race-modality-hints add-row builder partial.
+
+   Per BestFitModality_Spec_v2.md §C — per-discipline race-craft hints.
+   Andy picks (discipline, equipment) pairs for the target race; the
+   resolver bumps modality options whose equipment matches per spec §B.
+
+   Context inputs:
+   - existing_modality_hints: list of {discipline_id: str, equipment_name: str}
+                              dicts (flattened from the stored
+                              `{<d_id>: [<equip>, ...]}` dict shape).
+   - discipline_choices: list of {id: str (D-xxx), label: str} dicts from
+                         layer0.sport_discipline_bridge (shared with the
+                         race-terrain partial; safe to render even when
+                         empty — per-row select shows fallback option).
+   - equipment_choices:  list of equipment canonical_name strings from
+                         layer0.equipment_items (request-time lookup).
+
+   The JS hooks (#race-modality-hints-rows, #add-modality-hint-row,
+   #race-modality-hint-template) assume single-render-per-page. Do not
+   include this partial twice in one template — the IDs would collide. #}
+
+<div class="col-12">
+  <label class="form-label">Race craft (per-discipline equipment hints)</label>
+  <small class="text-muted d-block mb-2">
+    For each equipment-split discipline this race uses, pick the craft. The planner bumps modality options matching the listed equipment when scoring training sessions. Leave blank if any craft is acceptable for a given discipline.
+  </small>
+  <div id="race-modality-hints-rows">
+    {% for entry in existing_modality_hints %}
+      <div class="row g-2 mb-2 race-modality-hint-row" data-row-idx="{{ loop.index0 }}">
+        <div class="col-md-5">
+          <select class="form-select form-select-sm"
+                  name="race_modality_hints[{{ loop.index0 }}][discipline_id]">
+            <option value="">&mdash; Pick discipline &mdash;</option>
+            {% for dc in discipline_choices %}
+              <option value="{{ dc.id }}" {% if dc.id == entry.discipline_id %}selected{% endif %}>
+                {{ dc.id }} &mdash; {{ dc.label }}
+              </option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="col-md-5">
+          <select class="form-select form-select-sm"
+                  name="race_modality_hints[{{ loop.index0 }}][equipment_name]">
+            <option value="">&mdash; Pick equipment &mdash;</option>
+            {% for eq in equipment_choices %}
+              <option value="{{ eq }}" {% if eq == entry.equipment_name %}selected{% endif %}>
+                {{ eq }}
+              </option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="col-md-2 d-flex align-items-center">
+          <button type="button" class="btn btn-sm btn-link text-danger p-0"
+                  data-action="remove-modality-hint-row">Remove</button>
+        </div>
+      </div>
+    {% endfor %}
+  </div>
+  <div class="mt-1">
+    <button type="button" class="btn btn-sm btn-outline-secondary" id="add-modality-hint-row">
+      + Add craft
+    </button>
+  </div>
+  {# Hidden template row — JS clones this when athlete clicks "Add craft". #}
+  <template id="race-modality-hint-template">
+    <div class="row g-2 mb-2 race-modality-hint-row" data-row-idx="__IDX__">
+      <div class="col-md-5">
+        <select class="form-select form-select-sm" name="race_modality_hints[__IDX__][discipline_id]">
+          <option value="">&mdash; Pick discipline &mdash;</option>
+          {% for dc in discipline_choices %}
+            <option value="{{ dc.id }}">{{ dc.id }} &mdash; {{ dc.label }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-md-5">
+        <select class="form-select form-select-sm" name="race_modality_hints[__IDX__][equipment_name]">
+          <option value="">&mdash; Pick equipment &mdash;</option>
+          {% for eq in equipment_choices %}
+            <option value="{{ eq }}">{{ eq }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-md-2 d-flex align-items-center">
+        <button type="button" class="btn btn-sm btn-link text-danger p-0"
+                data-action="remove-modality-hint-row">Remove</button>
+      </div>
+    </div>
+  </template>
+</div>
+
+<script nonce="{{ csp_nonce() }}">
+  // Same CSP nonce convention as _race_terrain_editor.html.
+  (function () {
+    const container = document.getElementById('race-modality-hints-rows');
+    const addBtn = document.getElementById('add-modality-hint-row');
+    const tpl = document.getElementById('race-modality-hint-template');
+    if (!container || !addBtn || !tpl) return;
+
+    function nextIdx() {
+      const rows = container.querySelectorAll('.race-modality-hint-row');
+      let max = -1;
+      rows.forEach((r) => {
+        const v = parseInt(r.dataset.rowIdx, 10);
+        if (!isNaN(v) && v > max) max = v;
+      });
+      return max + 1;
+    }
+
+    addBtn.addEventListener('click', function () {
+      const idx = nextIdx();
+      const html = tpl.innerHTML.replace(/__IDX__/g, String(idx));
+      const wrapper = document.createElement('div');
+      wrapper.innerHTML = html.trim();
+      container.appendChild(wrapper.firstChild);
+    });
+
+    container.addEventListener('click', function (ev) {
+      const btn = ev.target.closest('[data-action="remove-modality-hint-row"]');
+      if (!btn) return;
+      const row = btn.closest('.race-modality-hint-row');
+      if (row) row.remove();
+    });
+  })();
+</script>

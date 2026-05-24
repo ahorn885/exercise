@@ -295,6 +295,29 @@ def test_plan_create_key_modality_hash_set_distinguishes() -> None:
     assert bare != with_hash
 
 
+def test_plan_create_key_race_modality_hints_hash_none_equals_empty_string() -> None:
+    """Spec v2 §E: race_modality_hints_hash=None must equal ='' (forward-
+    compat with pre-v2 cache entries written without the hash component)."""
+    none_variant = plan_create_key(
+        **{**_PLAN_CREATE_BASE, "race_modality_hints_hash": None}
+    )
+    empty_variant = plan_create_key(
+        **{**_PLAN_CREATE_BASE, "race_modality_hints_hash": ""}
+    )
+    default_variant = plan_create_key(**_PLAN_CREATE_BASE)
+    assert none_variant == empty_variant == default_variant
+
+
+def test_plan_create_key_race_modality_hints_hash_set_distinguishes() -> None:
+    """Spec v2 §E: populated race_modality_hints_hash flips the cache key
+    vs the unset (None) baseline."""
+    bare = plan_create_key(**_PLAN_CREATE_BASE)
+    with_hash = plan_create_key(
+        **{**_PLAN_CREATE_BASE, "race_modality_hints_hash": "hints_x"}
+    )
+    assert bare != with_hash
+
+
 @pytest.mark.parametrize(
     "field, mutated",
     [
@@ -315,6 +338,7 @@ def test_plan_create_key_modality_hash_set_distinguishes() -> None:
         ("max_tokens_per_phase", 8001),
         ("capped_retries_per_phase", 1),
         ("layer2_modality_hash", "mod_x"),
+        ("race_modality_hints_hash", "hints_x"),
     ],
 )
 def test_plan_create_key_depends_on_each_component(field: str, mutated: object) -> None:
@@ -467,6 +491,27 @@ def test_single_session_key_modality_locale_hash_set_distinguishes() -> None:
     assert bare != with_hash
 
 
+def test_single_session_key_race_modality_hints_hash_none_equals_empty_string() -> None:
+    """Spec v2 §E: None and '' collapse for the single-session key."""
+    none_variant = single_session_synthesize_key(
+        **{**_SINGLE_SESSION_BASE, "race_modality_hints_hash": None}
+    )
+    empty_variant = single_session_synthesize_key(
+        **{**_SINGLE_SESSION_BASE, "race_modality_hints_hash": ""}
+    )
+    default_variant = single_session_synthesize_key(**_SINGLE_SESSION_BASE)
+    assert none_variant == empty_variant == default_variant
+
+
+def test_single_session_key_race_modality_hints_hash_set_distinguishes() -> None:
+    """Spec v2 §E: populated race_modality_hints_hash flips the key."""
+    bare = single_session_synthesize_key(**_SINGLE_SESSION_BASE)
+    with_hash = single_session_synthesize_key(
+        **{**_SINGLE_SESSION_BASE, "race_modality_hints_hash": "hints_x"}
+    )
+    assert bare != with_hash
+
+
 @pytest.mark.parametrize(
     "field, mutated",
     [
@@ -482,6 +527,7 @@ def test_single_session_key_modality_locale_hash_set_distinguishes() -> None:
         ("max_tokens", 1501),
         ("capped_retries", 1),
         ("layer2_modality_locale_hash", "mod_locale_x"),
+        ("race_modality_hints_hash", "hints_x"),
     ],
 )
 def test_single_session_key_depends_on_each_component(field: str, mutated: object) -> None:
@@ -537,6 +583,27 @@ def test_race_week_brief_key_modality_hash_set_distinguishes() -> None:
     assert bare != with_hash
 
 
+def test_race_week_brief_key_race_modality_hints_hash_none_equals_empty_string() -> None:
+    """Spec v2 §E: None and '' collapse for the race_week_brief key."""
+    none_variant = race_week_brief_key(
+        **{**_RACE_WEEK_BASE, "race_modality_hints_hash": None}
+    )
+    empty_variant = race_week_brief_key(
+        **{**_RACE_WEEK_BASE, "race_modality_hints_hash": ""}
+    )
+    default_variant = race_week_brief_key(**_RACE_WEEK_BASE)
+    assert none_variant == empty_variant == default_variant
+
+
+def test_race_week_brief_key_race_modality_hints_hash_set_distinguishes() -> None:
+    """Spec v2 §E: populated race_modality_hints_hash flips the key."""
+    bare = race_week_brief_key(**_RACE_WEEK_BASE)
+    with_hash = race_week_brief_key(
+        **{**_RACE_WEEK_BASE, "race_modality_hints_hash": "hints_x"}
+    )
+    assert bare != with_hash
+
+
 @pytest.mark.parametrize(
     "field, mutated",
     [
@@ -556,6 +623,7 @@ def test_race_week_brief_key_modality_hash_set_distinguishes() -> None:
         ("max_tokens", 6001),
         ("capped_retries", 1),
         ("layer2_modality_hash", "mod_x"),
+        ("race_modality_hints_hash", "hints_x"),
     ],
 )
 def test_race_week_brief_key_depends_on_each_component(field: str, mutated: object) -> None:

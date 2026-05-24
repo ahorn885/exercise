@@ -468,6 +468,47 @@ _KNOWN_SKILL_TOGGLES = {
     "whitewater_handling",
 }
 
+# BestFitModality_Spec_v2.md §I — canonical equipment names referenced
+# by `_MODALITY_OPTIONS_PER_DISCIPLINE`. Mirror of canonical 0B
+# `equipment_items.canonical_name` after the K2 + K3 ETL additions land.
+# Lint test `test_every_required_equipment_is_canonical` fails CI when
+# the resolver dict references a name not in this set; the matching ETL
+# slice (`populate_equipment_items_K3_additions.sql`) keeps the canonical
+# 0B vocab in sync with this set.
+_KNOWN_EQUIPMENT = {
+    # K2 file (pre-v2)
+    "Climbing gear",
+    "XC ski kit",
+    "Touring ski kit",
+    "SUP",
+    "Mountaineering kit",
+    "Climbing Wall",
+    "TT Bike",
+    "Gravel bike",
+    "Cable machine",
+    "Plyo box",
+    "Weighted vest",
+    "Resistance band",
+    "Bike trainer",
+    "Pull buoy",
+    "Rice bucket",
+    "Pinch Block",
+    "Wrist Roller",
+    "Trekking Poles",
+    "Packraft",
+    # K3 file (this slice — Spec v2 §I)
+    "Treadmill",
+    "Road bike",
+    "Rope",
+    "Quickdraws",
+    "Harness",
+    "Crash pad",
+    "Hangboard",
+    "Climbing gym membership",
+    "Kayak",
+    "Canoe",
+}
+
 
 class TestStaticLint:
     def test_every_modality_option_def_has_required_fields(self):
@@ -498,6 +539,21 @@ class TestStaticLint:
                     f"{opt.requires_skill_toggle!r}"
                 )
 
+    def test_every_required_equipment_is_canonical(self):
+        # Spec v2 §I + §J §13.11. Every `requires_equipment_all_of` entry
+        # in the resolver dict must appear in the test file's
+        # `_KNOWN_EQUIPMENT` set (which mirrors canonical 0B after the K2
+        # + K3 ETL additions). Catches resolver-vs-canonical drift at CI
+        # time before runtime.
+        for d_id, opt_defs in _MODALITY_OPTIONS_PER_DISCIPLINE.items():
+            for opt in opt_defs:
+                for equip in opt.requires_equipment_all_of:
+                    assert equip in _KNOWN_EQUIPMENT, (
+                        f"{d_id}/{opt.modality_id} references non-canonical "
+                        f"equipment {equip!r} (add to populate_equipment_items "
+                        f"ETL + the test's _KNOWN_EQUIPMENT set)"
+                    )
+
     def test_modality_ids_unique_per_discipline(self):
         for d_id, opt_defs in _MODALITY_OPTIONS_PER_DISCIPLINE.items():
             ids = [opt.modality_id for opt in opt_defs]
@@ -506,8 +562,9 @@ class TestStaticLint:
             )
 
     def test_spec_representative_disciplines_present(self):
-        # Spec ships D-001, D-006, D-010 verbatim. Lock the floor.
-        for d_id in ("D-001", "D-006", "D-010"):
+        # Spec v1 ships D-001, D-006, D-010 verbatim.
+        # Spec v2 §H adds D-008b. Lock the floor.
+        for d_id in ("D-001", "D-006", "D-008b", "D-010"):
             assert d_id in _MODALITY_OPTIONS_PER_DISCIPLINE
 
 
@@ -687,6 +744,289 @@ def _empty_payload() -> Layer2ModalityPayload:
     return Layer2ModalityPayload(
         etl_version_set=_DEFAULT_ETL, recommendations=[], coaching_flags=[]
     )
+
+
+# ─── Spec v2 §J — race-craft hint + D-008b paddling scenarios ────────────────
+
+
+class TestScenario13_7_RaceCraftBumpAtAndysPGE:
+    """Spec v2 §J §13.7 — race-craft bump fires for D-008b with
+    `race_modality_hints={'D-008b': ['Packraft']}` at Andy's home locale.
+    """
+
+    def _setup(self, hints):
+        conn = _FakeConn()
+        conn.queue(_sdb_row("D-008b", "Outdoor Paddling"))
+        return resolve_best_fit_modality(
+            conn,
+            cluster_locale_inputs=[
+                _locale(
+                    terrain=[
+                        "TRN-001", "TRN-002", "TRN-003", "TRN-004",
+                        "TRN-008", "TRN-009", "TRN-016",
+                    ],
+                    pool=["Packraft", "Kayak", "SUP"],
+                )
+            ],
+            included_discipline_ids=["D-008b"],
+            skill_toggle_states={},
+            race_modality_hints=hints,
+            etl_version_set=_DEFAULT_ETL,
+        )
+
+    def test_packraft_top_pick_with_hint(self):
+        payload = self._setup({"D-008b": ["Packraft"]})
+        rec = payload.recommendations[0]
+        assert rec.top_pick_modality_id == "outdoor_paddle_packraft"
+        # Spec v2 §B: 75 × 1.2 = 90 (int-rounded; cap at 100).
+        top = rec.menu[0]
+        assert top.modality_id == "outdoor_paddle_packraft"
+        assert top.preference_score == 90
+        assert top.race_craft_match is True
+
+    def test_kayak_and_sup_unchanged_without_hint(self):
+        payload = self._setup({"D-008b": ["Packraft"]})
+        rec = payload.recommendations[0]
+        by_id = {opt.modality_id: opt for opt in rec.menu}
+        assert by_id["outdoor_paddle_kayak"].preference_score == 75
+        assert by_id["outdoor_paddle_kayak"].race_craft_match is False
+        assert by_id["outdoor_paddle_sup"].preference_score == 65
+        assert by_id["outdoor_paddle_sup"].race_craft_match is False
+
+    def test_no_hint_packraft_and_kayak_tied(self):
+        # Without race-craft hint, packraft + kayak tie at 75 → menu sort
+        # is `(-score, modality_id)` so kayak sorts before packraft
+        # alphabetically.
+        payload = self._setup(None)
+        rec = payload.recommendations[0]
+        assert rec.top_pick_modality_id == "outdoor_paddle_kayak"
+        for opt in rec.menu:
+            assert opt.race_craft_match is False
+
+
+class TestScenario13_8_HintWithUnknownEquipment:
+    """Spec v2 §J §13.8 — hint with non-matching equipment name silently
+    ignores (no bump, no error).
+    """
+
+    def test_silent_ignore(self):
+        conn = _FakeConn()
+        conn.queue(_sdb_row("D-008b", "Outdoor Paddling"))
+        payload = resolve_best_fit_modality(
+            conn,
+            cluster_locale_inputs=[
+                _locale(
+                    terrain=["TRN-009"],
+                    pool=["Packraft", "Kayak"],
+                )
+            ],
+            included_discipline_ids=["D-008b"],
+            race_modality_hints={"D-008b": ["NonexistentCraft"]},
+            etl_version_set=_DEFAULT_ETL,
+        )
+        # No bump applied.
+        for opt in payload.recommendations[0].menu:
+            assert opt.race_craft_match is False
+            assert opt.preference_score in {75, 65}  # base scores untouched
+
+
+class TestScenario13_9_HintForAbsentDiscipline:
+    """Spec v2 §J §13.9 — hint for discipline not in
+    `_MODALITY_OPTIONS_PER_DISCIPLINE` silently ignores.
+    """
+
+    def test_silent_ignore(self):
+        conn = _FakeConn()
+        conn.queue(
+            _sdb_row("D-001", "Trail Running"),
+            _sdb_row("D-008b", "Outdoor Paddling"),
+        )
+        payload = resolve_best_fit_modality(
+            conn,
+            cluster_locale_inputs=[
+                _locale(
+                    terrain=["TRN-002", "TRN-009"],
+                    pool=["Packraft"],
+                )
+            ],
+            included_discipline_ids=["D-001", "D-008b"],
+            race_modality_hints={"D-099": ["Packraft"]},  # absent discipline
+            etl_version_set=_DEFAULT_ETL,
+        )
+        # No bump for D-008b's packraft.
+        d008b_rec = next(r for r in payload.recommendations if r.discipline_id == "D-008b")
+        for opt in d008b_rec.menu:
+            assert opt.race_craft_match is False
+            assert opt.preference_score == 75
+
+
+class TestScenario13_10_WhitewaterHintWithToggleOn:
+    """Spec v2 §J §13.10 — whitewater_handling=True + Packraft hint at a
+    moving-water locale bumps `outdoor_whitewater_packraft` to 96.
+    """
+
+    def test_whitewater_packraft_top_at_96(self):
+        conn = _FakeConn()
+        conn.queue(_sdb_row("D-008b", "Outdoor Paddling"))
+        payload = resolve_best_fit_modality(
+            conn,
+            cluster_locale_inputs=[
+                _locale(
+                    locale_id="river",
+                    locale_name="River put-in",
+                    terrain=["TRN-011", "TRN-017"],
+                    pool=["Packraft", "Kayak"],
+                )
+            ],
+            included_discipline_ids=["D-008b"],
+            skill_toggle_states={"whitewater_handling": True},
+            race_modality_hints={"D-008b": ["Packraft"]},
+            etl_version_set=_DEFAULT_ETL,
+        )
+        rec = payload.recommendations[0]
+        # 80 × 1.2 = 96 (int-rounded).
+        top = rec.menu[0]
+        assert top.modality_id == "outdoor_whitewater_packraft"
+        assert top.preference_score == 96
+        assert top.race_craft_match is True
+        # Kayak option stays at base 80 (no bump; hint only mentions Packraft).
+        kayak = next(opt for opt in rec.menu if opt.modality_id == "outdoor_whitewater_kayak")
+        assert kayak.preference_score == 80
+        assert kayak.race_craft_match is False
+
+
+class TestScenarioD008b_BaseShape:
+    """Lock the v2 §H D-008b vocab shape: 6 options, expected base scores,
+    correct skill-gate on whitewater options. Mirror of `TestScenario13_1`
+    for the D-008b row."""
+
+    def test_six_options_in_dict(self):
+        opt_defs = _MODALITY_OPTIONS_PER_DISCIPLINE["D-008b"]
+        assert len(opt_defs) == 6
+        ids = {opt.modality_id for opt in opt_defs}
+        assert ids == {
+            "outdoor_paddle_packraft",
+            "outdoor_paddle_kayak",
+            "outdoor_paddle_sup",
+            "outdoor_whitewater_packraft",
+            "outdoor_whitewater_kayak",
+            "pool_paddle_drill",
+        }
+
+    def test_whitewater_options_skill_gated(self):
+        for opt in _MODALITY_OPTIONS_PER_DISCIPLINE["D-008b"]:
+            if "whitewater" in opt.modality_id:
+                assert opt.requires_skill_toggle == "whitewater_handling"
+            else:
+                assert opt.requires_skill_toggle is None
+
+
+class TestScenarioD008bScoreCap:
+    """Spec v2 §L — score cap edge case. Score of 84+ multiplied by 1.2
+    caps at 100.
+    """
+
+    def test_score_cap_at_100(self):
+        # Manufactured scenario: synthesize a payload where a *1.2 bump
+        # would otherwise blow past 100. The cap path uses min(100, ...),
+        # so the test asserts the cap. None of the v2 vocab hits the cap
+        # today (highest base is 90 for D-001/D-006/D-010; 90 * 1.2 = 108
+        # → 100). Andy's PGE 2026 D-008b vocab tops out at 80 (whitewater)
+        # which bumps to 96 < 100. We exercise the cap via D-010 climbing
+        # at a hint-matched 90-base option.
+        conn = _FakeConn()
+        conn.queue(_sdb_row("D-010", "Outdoor Rock Climbing"))
+        payload = resolve_best_fit_modality(
+            conn,
+            cluster_locale_inputs=[
+                _locale(
+                    terrain=["TRN-013"],
+                    pool=["Rope", "Quickdraws", "Harness"],
+                )
+            ],
+            included_discipline_ids=["D-010"],
+            skill_toggle_states={"climbing_roped": True},
+            race_modality_hints={"D-010": ["Rope"]},  # bumps lead + top_rope
+            etl_version_set=_DEFAULT_ETL,
+        )
+        rec = payload.recommendations[0]
+        lead = next(opt for opt in rec.menu if opt.modality_id == "outdoor_lead_climb")
+        # Base 90 * 1.2 = 108 → capped at 100.
+        assert lead.preference_score == 100
+        assert lead.race_craft_match is True
+
+
+class TestRaceCraftHintBackwardCompat:
+    """Spec v2 §N — default-None / empty-dict / empty-list hints all
+    produce v1-identical resolver behavior.
+    """
+
+    def test_none_hint_no_bump(self):
+        conn = _FakeConn()
+        conn.queue(_sdb_row("D-008b", "Outdoor Paddling"))
+        payload = resolve_best_fit_modality(
+            conn,
+            cluster_locale_inputs=[
+                _locale(terrain=["TRN-009"], pool=["Packraft", "Kayak"])
+            ],
+            included_discipline_ids=["D-008b"],
+            race_modality_hints=None,
+            etl_version_set=_DEFAULT_ETL,
+        )
+        for opt in payload.recommendations[0].menu:
+            assert opt.race_craft_match is False
+
+    def test_empty_dict_no_bump(self):
+        conn = _FakeConn()
+        conn.queue(_sdb_row("D-008b", "Outdoor Paddling"))
+        payload = resolve_best_fit_modality(
+            conn,
+            cluster_locale_inputs=[
+                _locale(terrain=["TRN-009"], pool=["Packraft", "Kayak"])
+            ],
+            included_discipline_ids=["D-008b"],
+            race_modality_hints={},
+            etl_version_set=_DEFAULT_ETL,
+        )
+        for opt in payload.recommendations[0].menu:
+            assert opt.race_craft_match is False
+
+    def test_empty_list_per_discipline_no_bump(self):
+        conn = _FakeConn()
+        conn.queue(_sdb_row("D-008b", "Outdoor Paddling"))
+        payload = resolve_best_fit_modality(
+            conn,
+            cluster_locale_inputs=[
+                _locale(terrain=["TRN-009"], pool=["Packraft", "Kayak"])
+            ],
+            included_discipline_ids=["D-008b"],
+            race_modality_hints={"D-008b": []},
+            etl_version_set=_DEFAULT_ETL,
+        )
+        for opt in payload.recommendations[0].menu:
+            assert opt.race_craft_match is False
+
+    def test_pool_paddle_drill_no_equipment_never_bumped(self):
+        # Spec v2 §L: option with empty `requires_equipment_all_of` is
+        # exempt from race-craft bump (no equipment to match against).
+        # `pool_paddle_drill` has no equipment requirement.
+        conn = _FakeConn()
+        conn.queue(_sdb_row("D-008b", "Outdoor Paddling"))
+        payload = resolve_best_fit_modality(
+            conn,
+            cluster_locale_inputs=[
+                _locale(terrain=["TRN-008"], pool=[])
+            ],
+            included_discipline_ids=["D-008b"],
+            # Even an empty list as the hint shouldn't bump pool_paddle_drill.
+            # Add a hint and confirm the no-equip option stays unbumped.
+            race_modality_hints={"D-008b": ["Packraft"]},
+            etl_version_set=_DEFAULT_ETL,
+        )
+        rec = payload.recommendations[0]
+        pool = next(opt for opt in rec.menu if opt.modality_id == "pool_paddle_drill")
+        assert pool.race_craft_match is False
+        assert pool.preference_score == 30
 
 
 class TestSingleSessionRenderer:

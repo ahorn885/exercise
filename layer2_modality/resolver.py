@@ -246,6 +246,81 @@ _MODALITY_OPTIONS_PER_DISCIPLINE: dict[str, list[ModalityOptionDef]] = {
             rationale_template="finger-strength substitute when climbing terrain unavailable",
         ),
     ],
+    # D-008b Outdoor Paddling (BM-1 D-008b slice per
+    # BestFitModality_Spec_v2.md §H — 6-option pragmatic set S2). Base
+    # scores neutral between craft (packraft / kayak at 75; SUP at 65;
+    # whitewater at 80 with skill gate); race-craft awareness via
+    # `race_modality_hints` does per-race differentiation per §B.
+    # Whitewater options gate on `whitewater_handling` toggle per
+    # populate_skill_capability_toggles.sql §22.
+    "D-008b": [
+        ModalityOptionDef(
+            modality_id="outdoor_paddle_packraft",
+            modality_name="Outdoor packraft (flat / lake)",
+            requires_terrain_any_of=["TRN-009", "TRN-010"],
+            requires_equipment_all_of=["Packraft"],
+            requires_skill_toggle=None,
+            is_outdoor=True,
+            is_specific=True,
+            base_preference_score=75,
+            rationale_template="flat or open water accessible from {locale_name}, packraft on hand",
+        ),
+        ModalityOptionDef(
+            modality_id="outdoor_paddle_kayak",
+            modality_name="Outdoor kayak (flat / lake)",
+            requires_terrain_any_of=["TRN-009", "TRN-010"],
+            requires_equipment_all_of=["Kayak"],
+            requires_skill_toggle=None,
+            is_outdoor=True,
+            is_specific=True,
+            base_preference_score=75,
+            rationale_template="flat or open water accessible from {locale_name}, kayak on hand",
+        ),
+        ModalityOptionDef(
+            modality_id="outdoor_paddle_sup",
+            modality_name="Outdoor SUP (flat / lake)",
+            requires_terrain_any_of=["TRN-009", "TRN-010"],
+            requires_equipment_all_of=["SUP"],
+            requires_skill_toggle=None,
+            is_outdoor=True,
+            is_specific=True,
+            base_preference_score=65,
+            rationale_template="flat or open water accessible from {locale_name}, SUP on hand",
+        ),
+        ModalityOptionDef(
+            modality_id="outdoor_whitewater_packraft",
+            modality_name="Outdoor packraft (whitewater / moving)",
+            requires_terrain_any_of=["TRN-011", "TRN-017"],
+            requires_equipment_all_of=["Packraft"],
+            requires_skill_toggle="whitewater_handling",
+            is_outdoor=True,
+            is_specific=True,
+            base_preference_score=80,
+            rationale_template="moving water accessible from {locale_name}, packraft + whitewater capability enabled",
+        ),
+        ModalityOptionDef(
+            modality_id="outdoor_whitewater_kayak",
+            modality_name="Outdoor kayak (whitewater / moving)",
+            requires_terrain_any_of=["TRN-011", "TRN-017"],
+            requires_equipment_all_of=["Kayak"],
+            requires_skill_toggle="whitewater_handling",
+            is_outdoor=True,
+            is_specific=True,
+            base_preference_score=80,
+            rationale_template="moving water accessible from {locale_name}, kayak + whitewater capability enabled",
+        ),
+        ModalityOptionDef(
+            modality_id="pool_paddle_drill",
+            modality_name="Pool paddle drill (indoor substitute)",
+            requires_terrain_any_of=["TRN-008"],
+            requires_equipment_all_of=[],
+            requires_skill_toggle=None,
+            is_outdoor=False,
+            is_specific=False,
+            base_preference_score=30,
+            rationale_template="pool drill substitute when outdoor water unavailable",
+        ),
+    ],
 }
 
 
@@ -382,10 +457,19 @@ def _resolve_menu_for_pair(
     opt_defs: list[ModalityOptionDef],
     locale: ClusterLocaleInput,
     skill_toggle_states: dict[str, bool],
+    race_craft_equipment: set[str],
 ) -> list[ModalityOption]:
-    """Per spec §5.2. Return the satisfied modality options for one
-    `(discipline, locale)` pair, sorted by `(-preference_score,
+    """Per spec §5.2 + v2 §B. Return the satisfied modality options for
+    one `(discipline, locale)` pair, sorted by `(-preference_score,
     modality_id)` for deterministic ordering.
+
+    `race_craft_equipment` is the set of canonical equipment names the
+    target race specifies for this option's discipline (per spec v2 §B).
+    Empty set → no race-craft bumps applied (v1-identical behavior). Set
+    non-empty → any option whose `requires_equipment_all_of` intersects
+    the set gets its score multiplied by 1.2 (capped at 100, int-rounded)
+    and `race_craft_match=True` on the rendered ModalityOption. Options
+    with empty `requires_equipment_all_of` never match (exempt).
     """
     terrain_set = set(locale.locale_terrain_ids)
     pool_set = set(locale.effective_pool)
@@ -407,6 +491,16 @@ def _resolve_menu_for_pair(
             skill_ok = skill_toggle_states.get(opt.requires_skill_toggle) is True
         if not (terrain_ok and equip_ok and skill_ok):
             continue
+        race_craft_match = bool(
+            opt.requires_equipment_all_of
+            and race_craft_equipment
+            and set(opt.requires_equipment_all_of) & race_craft_equipment
+        )
+        effective_score = (
+            min(100, int(round(opt.base_preference_score * 1.2)))
+            if race_craft_match
+            else opt.base_preference_score
+        )
         rationale = opt.rationale_template.format(
             locale_name=locale.locale_name or locale.locale_id
         )
@@ -414,13 +508,14 @@ def _resolve_menu_for_pair(
             ModalityOption(
                 modality_id=opt.modality_id,
                 modality_name=opt.modality_name,
-                preference_score=opt.base_preference_score,
+                preference_score=effective_score,
                 is_outdoor=opt.is_outdoor,
                 is_specific=opt.is_specific,
                 rationale_hint=rationale,
                 satisfied_terrain=sorted(terrain_match),
                 satisfied_equipment=list(opt.requires_equipment_all_of),
                 satisfied_skill=opt.requires_skill_toggle,
+                race_craft_match=race_craft_match,
             )
         )
     menu.sort(key=lambda m: (-m.preference_score, m.modality_id))
@@ -601,9 +696,10 @@ def resolve_best_fit_modality(
     cluster_locale_inputs: list[ClusterLocaleInput],
     included_discipline_ids: list[str],
     skill_toggle_states: dict[str, bool] | None = None,
+    race_modality_hints: dict[str, list[str]] | None = None,
     etl_version_set: dict[str, str],
 ) -> Layer2ModalityPayload:
-    """Per `BestFitModality_Spec_v1.md` §3.
+    """Per `BestFitModality_Spec_v1.md` §3 + v2 §A.
 
     Returns a `Layer2ModalityPayload` carrying one
     `ModalityRecommendation` per `(discipline, locale)` pair plus any
@@ -615,6 +711,14 @@ def resolve_best_fit_modality(
     with no meaningful modality split — e.g. D-013 Wilderness
     Navigation) silently produce no recommendation rows; Layer 4
     falls back to its current freeform reasoning for those.
+
+    `race_modality_hints` per v2 §B/§C is an optional per-discipline
+    map of canonical equipment names sourced from
+    `race_events.race_modality_hints`. Options whose
+    `requires_equipment_all_of` intersects the hint's equipment list
+    for the option's discipline get a *1.2 score bump (capped at 100)
+    and `race_craft_match=True` on the rendered ModalityOption. None or
+    empty dict → v1-identical behavior.
     """
     _validate_inputs(
         cluster_locale_inputs,
@@ -623,6 +727,7 @@ def resolve_best_fit_modality(
         etl_version_set,
     )
     skill_states = dict(skill_toggle_states) if skill_toggle_states else {}
+    hints = race_modality_hints or {}
 
     version_0a = etl_version_set["0A"]
     discipline_info = _load_discipline_info(
@@ -636,8 +741,11 @@ def resolve_best_fit_modality(
             # Discipline carries no meaningful modality split — silent
             # pass-through per spec §5.1.
             continue
+        race_craft_equipment = set(hints.get(d_id, []) or [])
         for locale in cluster_locale_inputs:
-            menu = _resolve_menu_for_pair(opt_defs, locale, skill_states)
+            menu = _resolve_menu_for_pair(
+                opt_defs, locale, skill_states, race_craft_equipment
+            )
             top_pick_modality_id = menu[0].modality_id if menu else None
             rationale_hint = menu[0].rationale_hint if menu else None
             recommendations.append(

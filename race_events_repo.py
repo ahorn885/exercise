@@ -90,7 +90,8 @@ def load_race_event_payload(db, race_event_id: int) -> RaceEventPayload | None:
                re.race_terrain, re.aid_stations,
                re.event_locale_name, re.event_locale_mapbox_id,
                re.event_locale_place_name, re.event_locale_lat, re.event_locale_lng,
-               re.race_url, re.framework_sport, re.included_discipline_ids
+               re.race_url, re.framework_sport, re.included_discipline_ids,
+               re.race_modality_hints
           FROM race_events re
           LEFT JOIN locale_profiles lp ON lp.id = re.event_locale_id
          WHERE re.id = ?
@@ -181,6 +182,24 @@ def load_race_event_payload(db, race_event_id: int) -> RaceEventPayload | None:
     if raw_disc_filter is not None and not isinstance(raw_disc_filter, list):
         raw_disc_filter = list(raw_disc_filter)
 
+    # BestFitModality_Spec_v2.md §C — race_modality_hints JSONB column;
+    # same dual-shape tolerance as race_terrain (dict for psycopg2 adapter,
+    # str for the sqlite shim path). Column default is '{}'::jsonb so pre-v2
+    # rows surface as an empty dict (v1-identical resolver behavior).
+    raw_hints = race_row["race_modality_hints"]
+    if isinstance(raw_hints, str):
+        raw_hints = json.loads(raw_hints) if raw_hints else {}
+    elif raw_hints is None:
+        raw_hints = {}
+    race_modality_hints: dict[str, list[str]] = {}
+    if isinstance(raw_hints, dict):
+        for d_id, equip_list in raw_hints.items():
+            if not isinstance(d_id, str) or not isinstance(equip_list, list):
+                continue
+            race_modality_hints[d_id] = [
+                e for e in equip_list if isinstance(e, str) and e
+            ]
+
     # D-73 Phase 5.2 walkthrough #1 (2026-05-21) — race_events now carries
     # Mapbox-anchored race-location columns alongside the legacy
     # event_locale_id BIGINT FK. New rows populate the Mapbox columns; the
@@ -221,6 +240,7 @@ def load_race_event_payload(db, race_event_id: int) -> RaceEventPayload | None:
         race_url=race_row["race_url"],
         framework_sport=race_row["framework_sport"],
         included_discipline_ids=raw_disc_filter,
+        race_modality_hints=race_modality_hints,
         route_locales=route_locales,
     )
 
@@ -500,6 +520,7 @@ def update_race_event(
     notes: str | None = None,
     race_terrain: list[dict[str, Any]] | None = None,
     aid_stations: int | None = None,
+    race_modality_hints: dict[str, list[str]] | None = None,
 ) -> None:
     """UPDATE a race_events row's editable fields. `is_target_event` flips
     are handled separately via `set_target_event`. Caller is expected to
@@ -509,6 +530,10 @@ def update_race_event(
     `race_terrain` accepts a list of dicts; serialized to JSONB. Pass an
     empty list to clear; passing None coerces to empty list (the column
     is NOT NULL DEFAULT '[]'::jsonb).
+
+    `race_modality_hints` per BestFitModality_Spec_v2.md §C accepts a dict
+    shaped `{discipline_id: [equipment_canonical_name, ...], ...}`;
+    serialized to JSONB. None coerces to empty dict ('{}'::jsonb default).
     """
     if race_format not in VALID_RACE_FORMATS:
         raise ValueError(f"race_format must be one of {VALID_RACE_FORMATS}; got {race_format!r}")
@@ -535,6 +560,7 @@ def update_race_event(
                notes = ?,
                race_terrain = ?::jsonb,
                aid_stations = ?,
+               race_modality_hints = ?::jsonb,
                updated_at = NOW()
          WHERE id = ? AND user_id = ?
         """,
@@ -558,6 +584,7 @@ def update_race_event(
             notes,
             json.dumps(race_terrain or []),
             aid_stations,
+            json.dumps(race_modality_hints or {}),
             race_event_id,
             user_id,
         ),
