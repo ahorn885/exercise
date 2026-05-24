@@ -73,7 +73,11 @@ from layer4 import (
     build_record_race_week_brief_tool,
     llm_layer4_race_week_brief,
 )
-from layer4.race_week_brief import _SynthesizerOutput, _render_user_prompt
+from layer4.race_week_brief import (
+    _SynthesizerOutput,
+    _emit_route_locales_anchor_observations,
+    _render_user_prompt,
+)
 
 
 _TODAY = date(2026, 6, 1)
@@ -1120,6 +1124,124 @@ class TestObservationEmission:
         assert data_gaps
         assert "kit_manifest_inputs_incomplete" in data_gaps[0].text
 
+    def test_route_locales_missing_start_anchor_emits_observation(self):
+        # Companion to PR #131. Andy's PGE 2026 case — route_locales
+        # captured with no entry at role='start'.
+        kwargs = self._kwargs()
+        kwargs["race_event_payload"] = _race_event_payload(
+            race_format="expedition_ar",
+            route_locales=[
+                _route_locale(sequence_idx=1, role="transition_area"),
+                _route_locale(sequence_idx=2, role="finish"),
+            ],
+        )
+        kwargs["layer3b_payload"] = _layer3b(
+            event_date=_EVENT_DATE, race_format="expedition_ar"
+        )
+        kwargs["llm_caller"] = _stub_caller(_tool_args(race_format="expedition_ar"))
+        payload = llm_layer4_race_week_brief(**kwargs)
+        data_gaps = [
+            o for o in payload.notable_observations if o.category == "data_gap"
+        ]
+        anchor_gaps = [
+            o for o in data_gaps if "route_locales_missing_start_anchor" in o.text
+        ]
+        assert len(anchor_gaps) == 1
+        finish_gaps = [
+            o for o in data_gaps if "route_locales_missing_finish_anchor" in o.text
+        ]
+        assert finish_gaps == []
+
+
+# ─── Route-locales anchor observation helper (PR #131 companion) ────────────
+
+
+class TestRouteLocalesAnchorObservations:
+    def test_empty_route_locales_emits_nothing(self):
+        # Empty list already covered by kit_manifest_inputs_incomplete_no_route_locales;
+        # missing-anchor helper short-circuits.
+        re = _race_event_payload(race_format="expedition_ar", route_locales=[])
+        assert _emit_route_locales_anchor_observations(re) == []
+
+    def test_both_anchors_present_emits_nothing(self):
+        re = _race_event_payload(
+            race_format="expedition_ar",
+            route_locales=[
+                _route_locale(sequence_idx=1, role="start"),
+                _route_locale(sequence_idx=2, role="aid_station"),
+                _route_locale(sequence_idx=3, role="finish"),
+            ],
+        )
+        assert _emit_route_locales_anchor_observations(re) == []
+
+    def test_start_missing_finish_present_emits_one(self):
+        re = _race_event_payload(
+            race_format="expedition_ar",
+            route_locales=[
+                _route_locale(sequence_idx=1, role="transition_area"),
+                _route_locale(sequence_idx=2, role="finish"),
+            ],
+        )
+        obs = _emit_route_locales_anchor_observations(re)
+        assert len(obs) == 1
+        assert obs[0].category == "data_gap"
+        assert "route_locales_missing_start_anchor" in obs[0].text
+        assert obs[0].elevates_to_hitl is False
+        assert "PR #131 validator loosen 2026-05-23" in obs[0].evidence_basis
+
+    def test_finish_missing_start_present_emits_one(self):
+        re = _race_event_payload(
+            race_format="expedition_ar",
+            route_locales=[
+                _route_locale(sequence_idx=1, role="start"),
+                _route_locale(sequence_idx=2, role="aid_station"),
+            ],
+        )
+        obs = _emit_route_locales_anchor_observations(re)
+        assert len(obs) == 1
+        assert "route_locales_missing_finish_anchor" in obs[0].text
+
+    def test_both_anchors_missing_emits_two(self):
+        re = _race_event_payload(
+            race_format="expedition_ar",
+            route_locales=[
+                _route_locale(sequence_idx=1, role="aid_station"),
+                _route_locale(sequence_idx=2, role="transition_area"),
+            ],
+        )
+        obs = _emit_route_locales_anchor_observations(re)
+        assert len(obs) == 2
+        texts = [o.text for o in obs]
+        assert any("route_locales_missing_start_anchor" in t for t in texts)
+        assert any("route_locales_missing_finish_anchor" in t for t in texts)
+
+    def test_start_anywhere_in_list_counts(self):
+        # Anchor presence is by role anywhere — not by first/last position.
+        # A list where start is somewhere in the middle still satisfies.
+        re = _race_event_payload(
+            race_format="expedition_ar",
+            route_locales=[
+                _route_locale(sequence_idx=1, role="transition_area"),
+                _route_locale(sequence_idx=2, role="start"),
+                _route_locale(sequence_idx=3, role="finish"),
+            ],
+        )
+        obs = _emit_route_locales_anchor_observations(re)
+        assert obs == []
+
+    def test_observation_text_under_240_chars(self):
+        # Observation.text Field(max_length=240) — the helper must trim.
+        re = _race_event_payload(
+            race_format="expedition_ar",
+            route_locales=[
+                _route_locale(sequence_idx=1, role="aid_station"),
+                _route_locale(sequence_idx=2, role="transition_area"),
+            ],
+        )
+        obs = _emit_route_locales_anchor_observations(re)
+        for o in obs:
+            assert len(o.text) <= 240
+
 
 # ─── Capped retry semantics ─────────────────────────────────────────────────
 
@@ -1417,6 +1539,67 @@ class TestPromptRendering:
         assert "Start Line" in prompt
         assert "AS Lake Mary" in prompt
         assert "6L water cache" in prompt
+        # PR #131 companion: anchors-present path has NO missing-anchor note
+        assert "no entry has role=" not in prompt
+
+    def test_route_locales_missing_anchors_note_rendered(self):
+        # PR #131 companion: when start + finish anchors are missing, the
+        # prompt section emits an explicit "do not infer" note so the LLM
+        # treats them as unknown instead of inferring from first/last
+        # sequence_idx.
+        re = _race_event_payload(
+            race_format="expedition_ar",
+            route_locales=[
+                _route_locale(sequence_idx=1, role="aid_station", name="AS1"),
+                _route_locale(sequence_idx=2, role="transition_area", name="TA1"),
+            ],
+        )
+        prompt = _render_user_prompt(
+            layer1_payload=_layer1(),
+            layer2a_payload=_layer2a(),
+            layer2b_payload=_layer2b(),
+            layer2c_payloads={"home_gym": _layer2c()},
+            layer2d_payload=_layer2d(),
+            layer2e_payload=_layer2e(),
+            layer3a_payload=_layer3a(),
+            layer3b_payload=_layer3b(event_date=_EVENT_DATE),
+            race_event_payload=re,
+            prior_plan_session_window=[_prior_taper_session()],
+            days_to_event=7,
+            today=_TODAY,
+            retries_used=0,
+            rule_failures=[],
+        )
+        assert "role='start'" in prompt
+        assert "role='finish'" in prompt
+        assert "first/last sequence_idx" in prompt
+
+    def test_route_locales_missing_start_only_note_rendered(self):
+        re = _race_event_payload(
+            race_format="expedition_ar",
+            route_locales=[
+                _route_locale(sequence_idx=1, role="transition_area"),
+                _route_locale(sequence_idx=2, role="finish"),
+            ],
+        )
+        prompt = _render_user_prompt(
+            layer1_payload=_layer1(),
+            layer2a_payload=_layer2a(),
+            layer2b_payload=_layer2b(),
+            layer2c_payloads={"home_gym": _layer2c()},
+            layer2d_payload=_layer2d(),
+            layer2e_payload=_layer2e(),
+            layer3a_payload=_layer3a(),
+            layer3b_payload=_layer3b(event_date=_EVENT_DATE),
+            race_event_payload=re,
+            prior_plan_session_window=[_prior_taper_session()],
+            days_to_event=7,
+            today=_TODAY,
+            retries_used=0,
+            rule_failures=[],
+        )
+        assert "role='start'" in prompt
+        assert "role='finish'" not in prompt
 
     def test_retry_context_only_on_retries_used_gt_zero(self):
         from layer4 import RuleFailure
