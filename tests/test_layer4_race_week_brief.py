@@ -766,25 +766,34 @@ class TestRaceEventPayload:
                 ],
             )
 
-    def test_first_role_not_start_rejected(self):
-        with pytest.raises(ValueError, match="role=='start'"):
-            _race_event_payload(
-                race_format="expedition_ar",
-                route_locales=[
-                    _route_locale(sequence_idx=1, role="aid_station"),
-                    _route_locale(sequence_idx=2, role="finish"),
-                ],
-            )
+    def test_first_role_non_start_accepted(self):
+        # D-73 Phase 5.2 walkthrough hot-fix (2026-05-23) — start/finish
+        # role-anchor invariant LOOSENED to silent accept. Production
+        # data (Andy's PGE 2026) lacked explicit start at sequence_idx=1
+        # and blocked the entire /plans/v2/new GET pipeline. Missing
+        # anchors are now a content/data-quality concern for a future
+        # downstream coaching-flag emission, not a payload-construction
+        # error. Validator MUST accept whatever role appears first.
+        re = _race_event_payload(
+            race_format="expedition_ar",
+            route_locales=[
+                _route_locale(sequence_idx=1, role="aid_station"),
+                _route_locale(sequence_idx=2, role="finish"),
+            ],
+        )
+        assert re.route_locales[0].role == "aid_station"
 
-    def test_last_role_not_finish_rejected(self):
-        with pytest.raises(ValueError, match="role=='finish'"):
-            _race_event_payload(
-                race_format="expedition_ar",
-                route_locales=[
-                    _route_locale(sequence_idx=1, role="start"),
-                    _route_locale(sequence_idx=2, role="aid_station"),
-                ],
-            )
+    def test_last_role_non_finish_accepted(self):
+        # Companion to test_first_role_non_start_accepted — last entry's
+        # role is also no longer constrained.
+        re = _race_event_payload(
+            race_format="expedition_ar",
+            route_locales=[
+                _route_locale(sequence_idx=1, role="start"),
+                _route_locale(sequence_idx=2, role="aid_station"),
+            ],
+        )
+        assert re.route_locales[-1].role == "aid_station"
 
     def test_empty_route_locales_legal(self):
         # §4.2 invariant: empty route_locales is structurally legal;
