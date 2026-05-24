@@ -306,6 +306,26 @@ _TERRAIN_STRUCTURED_ROWS: list[dict[str, Any]] = [
         "simulation_note": "Balance drills develop general stability but rock-specific proprioceptive adaptation requires actual boulder/scree terrain.",
         "notes": "Loose boulder fields, scree slopes, rock gardens. Distinct from rock climbing — locomotive movement over unstable rock.",
     },
+    # Bucket C sub-item (g) 2026-05-24 — Gravel added as the unambiguous surface
+    # gap in the terrain vocab (TRN-001 is paved, TRN-002 is dirt singletrack,
+    # TRN-004 is elevation-keyed not surface-keyed). Terrain rows describe
+    # SURFACE only; modality (foot/bike/etc.) is captured discipline-side +
+    # equipment-side. A "best-fit" cross-reference (future slice) lets a planner
+    # reason {locale_terrain_ids + equipment + included_disciplines} → which
+    # modality fits a given session (e.g., gravel_bike + TRN-020 + gravel
+    # cycling discipline → recommend gravel ride). Same TRN-020 also serves
+    # gravel-running stimulus.
+    {
+        "terrain_id": "TRN-020",
+        "canonical_name": "Gravel",
+        "category": "Foot",
+        "requires_elevation": False,
+        "technical_surface": False,
+        "environment": "Outdoor",
+        "simulatable": "partial",
+        "simulation_note": "Treadmill covers aerobic load and gait pattern; loses gravel-specific surface inconsistency (slip, micro-instability, occasional embedded rocks). Indoor cycling trainer covers cadence/power but loses bike-handling on loose surface for cycling use.",
+        "notes": "Compacted unpaved gravel road or path. Distinct from paved road (TRN-001) and dirt singletrack (TRN-002). Serves both gravel-running and gravel-cycling stimuli; modality captured by discipline + equipment.",
+    },
     # Water terrains
     {
         "terrain_id": "TRN-008",
@@ -425,7 +445,7 @@ _TERRAIN_STRUCTURED_ROWS: list[dict[str, Any]] = [
 
 
 def _parse_terrain(text: str) -> list[dict[str, Any]]:
-    """Returns the 16 TRN-xxx structured terrain rows.
+    """Returns the 18 TRN-xxx structured terrain rows.
 
     `text` is accepted for parser-signature parity with the other section
     parsers but is unused — terrain vocab is code-side per the module-level

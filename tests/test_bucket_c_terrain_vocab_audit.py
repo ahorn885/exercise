@@ -39,16 +39,35 @@ Sub-item closure (added by the WaterVocabExpansion slice 2026-05-24):
       'Open Water / Ocean', retightened to saltwater/tidal only) +
       Whitewater (TRN-011, unchanged). `TestWaterRowExpansion`.
 
+Sub-item closure (added by the BucketC_g_TerrainEquipmentMerge slice
+2026-05-24):
+
+  (g) Locale-terrain vs Outdoor-Terrain merge — locale form's
+      'Outdoor & Terrain' equipment fieldset (9 display-only venue tags)
+      retired in favour of the canonical terrain grid as the single
+      'what's accessible from this location' surface. NEW TRN-020 Gravel
+      added as the unambiguous surface gap (TRN-001 paved + TRN-002
+      singletrack didn't cover compacted-gravel). Terrain rows describe
+      SURFACE only; modality (foot/bike/etc.) is captured discipline-side
+      + equipment-side via a future best-fit cross-reference. Equipment
+      rows for cycling and paddling gear (road_bike / mountain_bike /
+      gravel_bike / kayak / packraft / canoe) UNCHANGED — those are real
+      equipment, not venue markers. `TestGravelTerrainAdd`.
+
 Sub-items remaining open (forward-pointers, not in scope here):
 
-  (g) Locale-terrain vs Outdoor-Terrain merge — Trigger #3 cross-layer
-      schema. Plan-mode gate.
-  (i) Mapbox-anchored race location required (remove free-text fallback)
-      — Trigger #5.
   (l) Skill-capability toggles — replace the §8.2 `requires_coached_introduction`
       derivation with athlete-side toggles (default OFF/opt-in, mirror
       `sport_specific_gear_toggles` pattern). Narrow scope: climbing,
       whitewater, swim ability. Trigger #3 + #5 — plan-mode gate.
+
+Sub-items recently closed (forward-pointer audit trail):
+
+  (i) Mapbox-anchored race location required — closed end-to-end by the
+      BucketC_i_MapboxRequired slice 2026-05-24 via NEW
+      `_check_event_locale_mapbox_id_required` validator + route flash on
+      4 POST handlers (race_events new/edit + set_locale + onboarding
+      target_race_save).
 
 (k) ETL drift fix already closed by the
 `V5_Implementation_D73_Phase_5_2_Walkthrough_ETLTerrainVocabDriftFix_2026_05_24_...`
@@ -79,15 +98,20 @@ _CANONICAL_NAMES_LOWER: frozenset[str] = frozenset(
 
 
 class TestCanonicalTerrainVocab:
-    """Locks in the 17-row TRN-001..TRN-017 canonical shape so accidental
-    additions, removals, or ID-pattern drift surface loudly.
+    """Locks in the 18-row TRN-001..TRN-017 + TRN-020 canonical shape so
+    accidental additions, removals, or ID-pattern drift surface loudly.
 
     Row count bumped from 16 to 17 by the Bucket C (f) water-vocab
     expansion 2026-05-24 — NEW TRN-017 Moving Water added; TRN-009 and
-    TRN-010 retightened in place (no count change for those two)."""
+    TRN-010 retightened in place (no count change for those two). Bumped
+    from 17 to 18 by the Bucket C (g) terrain↔equipment merge 2026-05-24
+    — NEW TRN-020 Gravel added as the unambiguous surface gap. TRN-018
+    and TRN-019 are intentionally reserved (gap in the sequence) — if
+    Andy later ratifies the S3 cycling-vocab expansion, the cycling
+    rows would land at TRN-018/019."""
 
-    def test_canonical_row_count_is_17(self):
-        assert len(_TERRAIN_STRUCTURED_ROWS) == 17
+    def test_canonical_row_count_is_18(self):
+        assert len(_TERRAIN_STRUCTURED_ROWS) == 18
 
     def test_every_canonical_row_has_TRN_pattern_id(self):
         for row in _TERRAIN_STRUCTURED_ROWS:
@@ -103,9 +127,12 @@ class TestCanonicalTerrainVocab:
         names = [row["canonical_name"] for row in _TERRAIN_STRUCTURED_ROWS]
         assert len(names) == len(set(names))
 
-    def test_canonical_ids_are_sequential_TRN_001_through_TRN_017(self):
+    def test_canonical_ids_are_TRN_001_through_017_plus_020(self):
         ids = sorted(row["terrain_id"] for row in _TERRAIN_STRUCTURED_ROWS)
-        assert ids == [f"TRN-{i:03d}" for i in range(1, 18)]
+        # TRN-018 and TRN-019 intentionally reserved per the Bucket C (g)
+        # design pass — see class docstring.
+        expected = sorted([f"TRN-{i:03d}" for i in range(1, 18)] + ["TRN-020"])
+        assert ids == expected
 
 
 # ─── Sub-items (a)/(b)/(c): situational tokens are not terrain ───────────────
@@ -309,3 +336,99 @@ class TestWaterRowExpansion:
             "TRN-011": "Outdoor",
             "TRN-017": "Outdoor",
         }
+
+
+# ─── Sub-item (g): TRN-020 Gravel + Outdoor-Terrain fieldset retirement ──────
+
+
+def _terrain_row(terrain_id: str) -> dict[str, object] | None:
+    return next(
+        (r for r in _TERRAIN_STRUCTURED_ROWS if r["terrain_id"] == terrain_id),
+        None,
+    )
+
+
+class TestGravelTerrainAdd:
+    """Bucket C (g): the locale form's 9-tag 'Outdoor & Terrain' equipment
+    fieldset was redundant with the locale-terrain canonical grid; merge
+    landed by retiring the equipment fieldset (init_db.py + _PG_MIGRATIONS
+    translation) and adding TRN-020 Gravel as the one unambiguous surface
+    gap that no existing TRN row covered. Pins the row exists, the row
+    sits in the Foot category as a SURFACE-only entry (modality captured
+    discipline-side + equipment-side), and the simulation_note doesn't
+    leak any modality-specific language."""
+
+    def test_gravel_row_exists(self):
+        row = _terrain_row("TRN-020")
+        assert row is not None
+        assert row["canonical_name"] == "Gravel"
+
+    def test_gravel_row_is_foot_category_surface_only(self):
+        # SURFACE-only: Foot category matches the existing surface-typing
+        # convention (TRN-001 Road/Paved, TRN-002 Groomed Trail, etc. are
+        # all Foot category even though the surfaces are usable by both
+        # running and cycling). Modality is captured by discipline +
+        # equipment, not by the terrain row.
+        row = _terrain_row("TRN-020")
+        assert row is not None
+        assert row["category"] == "Foot"
+        assert row["environment"] == "Outdoor"
+        assert row["simulatable"] == "partial"
+        assert row["technical_surface"] is False
+        assert row["requires_elevation"] is False
+
+    def test_gravel_notes_describe_surface_not_modality(self):
+        # Pins the SURFACE-only principle: the notes string must distinguish
+        # gravel from paved + singletrack on surface terms; must not name a
+        # specific modality (e.g. cycling-only or running-only) since the
+        # row is meant to serve both.
+        row = _terrain_row("TRN-020")
+        assert row is not None
+        notes_lower = row["notes"].lower()
+        assert "compacted" in notes_lower or "unpaved" in notes_lower
+        # Acknowledges both running and cycling use without scoping to
+        # either exclusively.
+        assert "gravel-running" in notes_lower or "gravel running" in notes_lower
+        assert "gravel-cycling" in notes_lower or "gravel cycling" in notes_lower
+
+    def test_gravel_simulation_note_does_not_request_coaching(self):
+        # Same forward-compat pattern as the WaterVocab slice — Bucket C
+        # (l) skill-toggle pivot means the §8.2 coached-intro flag stays
+        # only on TRN-011 whitewater; new rows must not leak that language.
+        row = _terrain_row("TRN-020")
+        assert row is not None
+        haystack = (row["simulation_note"] + " " + row["notes"]).lower()
+        for kw in ("coached intro", "supervised instruction", "requires coached"):
+            assert kw not in haystack
+
+    def test_outdoor_terrain_equipment_tags_retired_from_init_db(self):
+        # Bucket C (g) retired the 9 display-only 'Outdoor & Terrain'
+        # equipment tags from init_db.EQUIPMENT_CATEGORIES. The locale form
+        # now uses the locale-terrain canonical grid as the single
+        # 'what's accessible from this location' surface.
+        from init_db import EQUIPMENT_CATEGORIES
+
+        category_names = {cat_name for cat_name, _ in EQUIPMENT_CATEGORIES}
+        assert "Outdoor & Terrain" not in category_names, (
+            "Bucket C (g) retired the 'Outdoor & Terrain' equipment fieldset; "
+            "a re-introduction would re-create the locale-form dup."
+        )
+        # And the 9 individual tags must not have migrated into any other
+        # equipment category by accident.
+        all_tags = {tag for _, items in EQUIPMENT_CATEGORIES for tag, _ in items}
+        retired_tags = {
+            "trail_running",
+            "road_running",
+            "road_cycling",
+            "mtb_trails",
+            "gravel_routes",
+            "open_water_paddle",
+            "open_water_swim",
+            "pool_swim",
+            "hills",
+        }
+        overlap = all_tags & retired_tags
+        assert overlap == set(), (
+            f"Bucket C (g) retired tags reappeared in equipment vocab: "
+            f"{sorted(overlap)}"
+        )

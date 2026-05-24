@@ -134,18 +134,24 @@ def test_equipment_dedupe_foam_roller(parsed):
 
 def test_terrain_count(parsed):
     # D-73 Phase 5.2 Walkthrough — Bucket C sub-item (k): the 15 Section-K
-    # audit rows were retired; terrain_types now ships 17 structured TRN-xxx
+    # audit rows were retired; terrain_types now ships 18 structured TRN-xxx
     # rows code-side per etl/layer0/extractors/vocabulary.py:_TERRAIN_STRUCTURED_ROWS
     # (mirrors migrate_terrain_types.sql which is now a retired tombstone).
     # Row count bumped 16 → 17 by the Bucket C (f) water-vocab expansion
-    # 2026-05-24 (NEW TRN-017 Moving Water).
-    assert len(parsed["terrain_types"]) == 17
+    # 2026-05-24 (NEW TRN-017 Moving Water); bumped 17 → 18 by the Bucket C
+    # (g) terrain↔equipment merge 2026-05-24 (NEW TRN-020 Gravel — surface
+    # gap; modality cross-reference future-slice).
+    assert len(parsed["terrain_types"]) == 18
 
 
 def test_terrain_ids_unique_and_sequential(parsed):
     ids = sorted(t["terrain_id"] for t in parsed["terrain_types"])
     assert len(ids) == len(set(ids))
-    assert ids == [f"TRN-{i:03d}" for i in range(1, 18)]
+    # TRN-018/TRN-019 reserved (intentional gap) — Bucket C (g) added TRN-020
+    # Gravel without back-filling the gap; future cycling-specific terrain
+    # rows would land at TRN-018/019 if Andy ratifies expansion (S3) later.
+    expected_ids = [f"TRN-{i:03d}" for i in range(1, 18)] + ["TRN-020"]
+    assert ids == sorted(expected_ids)
 
 
 def test_terrain_known_canonical_names_present(parsed):
@@ -155,6 +161,7 @@ def test_terrain_known_canonical_names_present(parsed):
         "Pool", "Flat Water", "Moving Water", "Ocean / Tidal", "Whitewater",
         "Snow / Winter Alpine",
         "Climbing Gym", "Pump Track / Skills Course", "Indoor / Gym",
+        "Gravel",
     ]:
         assert required in names
 
