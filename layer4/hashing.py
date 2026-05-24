@@ -134,6 +134,7 @@ def plan_create_key(
     max_tokens_per_phase: int,
     capped_retries_per_phase: int,
     layer2_modality_hash: str | None = None,
+    race_modality_hints_hash: str | None = None,
 ) -> str:
     """Per §9.1 — cache key for `llm_layer4_plan_create`.
 
@@ -144,6 +145,12 @@ def plan_create_key(
     `layer2_modality_hash` collapses None → '' so callers that don't supply
     a modality payload retain stable keys (cache forward-compat with
     pre-BM-3 entries).
+
+    `race_modality_hints_hash` per BestFitModality_Spec_v2.md §E carries
+    the hash of the target race's `race_modality_hints` dict so cache
+    entries invalidate cleanly when the race-craft hints change. Also
+    collapses None → '' so pre-v2 entries continue to hit on default-None
+    callers.
     """
     components = [
         str(user_id),
@@ -163,6 +170,7 @@ def plan_create_key(
         str(max_tokens_per_phase),
         str(capped_retries_per_phase),
         layer2_modality_hash or "",
+        race_modality_hints_hash or "",
     ]
     return _sha256_hex("||".join(components))
 
@@ -228,6 +236,7 @@ def single_session_synthesize_key(
     max_tokens: int,
     capped_retries: int,
     layer2_modality_locale_hash: str | None = None,
+    race_modality_hints_hash: str | None = None,
 ) -> str:
     """Per §9.1 — cache key for `llm_layer4_single_session_synthesize`.
 
@@ -239,6 +248,10 @@ def single_session_synthesize_key(
     `layer2_modality_locale_hash` collapses None → '' so callers that
     don't supply a modality payload retain stable keys (cache forward-compat
     with pre-BM-3 entries + quick-equipment mode which skips the resolver).
+
+    `race_modality_hints_hash` per BestFitModality_Spec_v2.md §E carries
+    the hash of the target race's `race_modality_hints` dict; None → ''
+    collapse keeps pre-v2 keys identical for default-None callers.
     """
     components = [
         str(user_id),
@@ -253,6 +266,7 @@ def single_session_synthesize_key(
         str(max_tokens),
         str(capped_retries),
         layer2_modality_locale_hash or "",
+        race_modality_hints_hash or "",
     ]
     return _sha256_hex("||".join(components))
 
@@ -319,6 +333,7 @@ def race_week_brief_key(
     max_tokens: int,
     capped_retries: int,
     layer2_modality_hash: str | None = None,
+    race_modality_hints_hash: str | None = None,
 ) -> str:
     """Per §9.1 — cache key for `llm_layer4_race_week_brief`.
 
@@ -329,6 +344,10 @@ def race_week_brief_key(
     `layer2_modality_hash` collapses None → '' so callers that don't supply
     a modality payload retain stable keys (cache forward-compat with
     pre-BM-3 entries).
+
+    `race_modality_hints_hash` per BestFitModality_Spec_v2.md §E carries
+    the hash of the target race's `race_modality_hints` dict; None → ''
+    collapse keeps pre-v2 keys identical for default-None callers.
     """
     components = [
         str(user_id),
@@ -347,5 +366,6 @@ def race_week_brief_key(
         str(max_tokens),
         str(capped_retries),
         layer2_modality_hash or "",
+        race_modality_hints_hash or "",
     ]
     return _sha256_hex("||".join(components))

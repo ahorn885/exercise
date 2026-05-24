@@ -222,17 +222,17 @@ Read order (Rule #13):
 | `layer4/single_session.py` defines `_render_modality_section_single_session` | ✅ `grep -n "^def _render_modality_section_single_session" layer4/single_session.py` returns 1 |
 | `layer4/per_phase.py` defines `_format_modality_recommendations_per_phase` | ✅ `grep -n "^def _format_modality_recommendations_per_phase" layer4/per_phase.py` returns 1 |
 | `layer4/race_week_brief.py` defines `_render_modality_section_race_week_brief` | ✅ `grep -n "^def _render_modality_section_race_week_brief" layer4/race_week_brief.py` returns 1 |
-| `single_session_synthesize_key` carries `layer2_modality_locale_hash` kwarg | ✅ `grep "layer2_modality_locale_hash" layer4/hashing.py` returns 5 |
-| `plan_create_key` carries `layer2_modality_hash` kwarg | ✅ `grep -E "layer2_modality_hash" layer4/hashing.py` returns 5 (3 in race_week_brief_key + plan_create_key + their docstrings) |
+| `single_session_synthesize_key` carries `layer2_modality_locale_hash` kwarg | ✅ `grep "layer2_modality_locale_hash" layer4/hashing.py` returns 3 (kwarg @ L230 + docstring @ L239 + components-tuple use @ L255) |
+| `plan_create_key` carries `layer2_modality_hash` kwarg | ✅ `grep -E "layer2_modality_hash" layer4/hashing.py` returns 6 (3 in plan_create_key @ L136/L144/L165 + 3 in race_week_brief_key @ L321/L329/L349; substring does NOT match `layer2_modality_locale_hash` because of the intervening `_locale_`) |
 | `race_week_brief_key` carries `layer2_modality_hash` kwarg | ✅ (same grep above; the helper appears in both functions) |
-| `llm_layer4_plan_create_cached` carries `layer2_modality_payload` kwarg + hashes it | ✅ `grep "layer2_modality_payload" layer4/cached_wrappers.py` returns 8 |
+| `llm_layer4_plan_create_cached` carries `layer2_modality_payload` kwarg + hashes it | ✅ `grep "layer2_modality_payload" layer4/cached_wrappers.py` returns 12 (single_session 5 incl. `*_for_locale` variant + plan_create 4 + race_week_brief 3) |
 | `llm_layer4_race_week_brief_cached` carries `layer2_modality_payload` kwarg + hashes it | ✅ (same grep above) |
-| `llm_layer4_single_session_synthesize_cached` hashes `layer2_modality_payload_for_locale` into the key | ✅ `grep "layer2_modality_locale_hash" layer4/cached_wrappers.py` returns 2 |
+| `llm_layer4_single_session_synthesize_cached` hashes `layer2_modality_payload_for_locale` into the key | ✅ `grep "layer2_modality_locale_hash" layer4/cached_wrappers.py` returns 3 (computed-hash assignment @ L142 + key kwarg thread @ L160 + local variable name in the conditional expression) |
 | `orchestrate_race_week_brief` threads `cone.layer2_modality_payload` to the cached wrapper | ✅ `grep "layer2_modality_payload=cone.layer2_modality_payload" layer4/orchestrator.py` returns 2 |
 | `orchestrate_plan_create` threads `cone.layer2_modality_payload` to the cached wrapper | ✅ (same grep above; 2 = race_week_brief + plan_create) |
 | `llm_layer4_plan_create` carries `layer2_modality_payload` kwarg | ✅ `grep "layer2_modality_payload" layer4/plan_create.py` returns 5 |
 | `_run_pattern_a_engine` carries + threads `layer2_modality_payload` | ✅ (same grep above; engine signature + 2 synthesize_phase forwards) |
-| `synthesize_phase` carries `layer2_modality_payload` kwarg | ✅ `grep "layer2_modality_payload" layer4/per_phase.py` returns 6 |
+| `synthesize_phase` carries `layer2_modality_payload` kwarg | ✅ `grep "layer2_modality_payload" layer4/per_phase.py` returns 5 (render kwarg @ L727 + render splice @ L869-870 + synthesize_phase kwarg @ L1194 + thread @ L1284) |
 | `tests/test_layer2_modality.py` ships 42 tests (30 from impl slice + 12 NEW BM-3 render tests) | ✅ `PYTHONPATH=. pytest tests/test_layer2_modality.py --collect-only -q 2>&1 \| tail -1` shows "42 tests collected" |
 | `tests/test_layer4_hashing.py` ships 103 tests (94 prior + 9 NEW BM-3 cache-key tests) | ✅ `PYTHONPATH=. pytest tests/test_layer4_hashing.py --collect-only -q 2>&1 \| tail -1` shows "103 tests collected" |
 | Reproducer subset 1580 → 1601 + 16 skipped (+21 net) | ✅ `PYTHONPATH=. pytest tests/ --ignore=tests/test_layer1_builder.py --no-header -q 2>&1 \| tail -1` shows "1601 passed, 16 skipped" |

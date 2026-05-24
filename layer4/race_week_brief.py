@@ -1540,6 +1540,11 @@ def llm_layer4_race_week_brief(
     # `_render_modality_section_race_week_brief`. Default None preserves
     # existing call sites (notably the test fixtures) that pre-date BM-3.
     layer2_modality_payload: Layer2ModalityPayload | None = None,
+    # BestFitModality_Spec_v2.md §A — race-craft hint dict accepted for
+    # signature symmetry with the cached wrapper. Resolver-side scoring
+    # already applied upstream; the bumped scores ride inside
+    # `layer2_modality_payload`.
+    race_modality_hints: dict[str, list[str]] | None = None,
 ) -> Layer4Payload:
     """Pattern B race-week-brief synthesizer per `Layer4_Spec.md` §3.4
     (D-66 amendment 2026-05-18 — new `race_event_payload` positional arg).

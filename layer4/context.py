@@ -402,6 +402,12 @@ class ModalityOption(_Base):
     satisfied_terrain: list[str]
     satisfied_equipment: list[str]
     satisfied_skill: str | None = None
+    # BestFitModality_Spec_v2.md §F — True when `race_modality_hints`
+    # for this option's discipline included one of this option's
+    # required equipment names + the *1.2 score bump applied. Default
+    # False preserves v1 payload shape; renderer wiring deferred to
+    # BM-7-Render follow-on.
+    race_craft_match: bool = False
 
 
 class ModalityRecommendation(_Base):
@@ -1186,6 +1192,13 @@ class RaceEventPayload(_Base):
     # cleared by the route layer on framework_sport change (orphan
     # cleanup); empty list is treated as None at the form-parse boundary.
     included_discipline_ids: list[str] | None = None
+    # BestFitModality_Spec_v2.md §C/§D — per-discipline race-craft hints
+    # shaped {<discipline_id>: [<equipment_canonical_name>, ...], ...}.
+    # Athlete-edited via the race-event edit form's add-row builder.
+    # Empty dict = no hints (v1-identical resolver behavior). Threaded
+    # by the orchestrator to `resolve_best_fit_modality(...)` in all 3
+    # plan-gen entry points.
+    race_modality_hints: dict[str, list[str]] = Field(default_factory=dict)
     route_locales: list[RouteLocale] = Field(default_factory=list)
 
     @model_validator(mode="after")
