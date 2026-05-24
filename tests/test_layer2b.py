@@ -20,6 +20,11 @@ from __future__ import annotations
 
 import pytest
 
+# Force `layer4` to initialize before `layer2b` to dodge the pre-existing
+# circular import that otherwise blocks this module from collection. Mirrors
+# tests/test_layer2a.py:26 + tests/test_layer3_cached_wrappers.py:30.
+from layer4 import InMemoryCacheBackend  # noqa: F401
+
 from layer2b import Layer2BInputError, q_layer2b_terrain_classifier_payload
 from layer4.context import Layer2BPayload, RaceTerrainEntry
 
