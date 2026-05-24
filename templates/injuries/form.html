@@ -30,14 +30,12 @@
       <select name="injury_type" class="form-select">
         <option value="">—</option>
         {% for t in injury_types %}<option value="{{ t }}" {% if entry and entry.injury_type == t %}selected{% endif %}>{{ t }}</option>{% endfor %}
-      </select>
-      <div class="form-text">Drives loading protocol (tendinopathy / strain / stress fracture / etc.).</div></div>
+      </select></div>
     <div class="col-md-6"><label class="form-label">Severity Stage</label>
       <select name="severity" class="form-select">
         <option value="">—</option>
         {% for s in severities %}<option value="{{ s }}" {% if entry and entry.severity == s %}selected{% endif %}>{{ s }}</option>{% endfor %}
-      </select>
-      <div class="form-text">Acute / Post-surgical → exclude; Recovering / Chronic-Managed / Structural-Permanent → accommodate; Resolved → clean.</div></div>
+      </select></div>
   </div>
   <div class="mb-3"><label class="form-label">Movement Constraints</label>
     <div class="form-text mb-2">Select all that apply. Drives Layer 2D's exercise-level keyword filtering against the injury_flags_text.</div>
