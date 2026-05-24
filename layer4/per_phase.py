@@ -42,6 +42,7 @@ from layer4.context import (
     Layer2CPayload,
     Layer2DPayload,
     Layer2EPayload,
+    Layer2ModalityPayload,
     Layer3APayload,
     Layer3BPayload,
     RaceEventPayload,
@@ -636,6 +637,73 @@ def _format_route_locales(race_event: RaceEventPayload | None) -> list[str]:
     return out
 
 
+def _format_modality_recommendations_per_phase(
+    payload: Layer2ModalityPayload,
+) -> list[str]:
+    """Render BM-3 modality recommendations for the per-phase prompt.
+
+    Convention: `=== Section ===` header + tight one-line-per-recommendation
+    bullet format to match per_phase.py's compressed `=== Race + locale +
+    equipment ===` idiom. Each recommendation collapses to one line per
+    `(discipline, locale)`: `D-001 ... @ home: top=outdoor_trail_run (90);
+    alts=...; rationale=...`. Empty payload renders an explanatory line so
+    the LLM doesn't infer a silent omission.
+    """
+    lines: list[str] = ["=== Best-fit modality menu (per discipline, per locale) ==="]
+    lines.append(
+        "Surfaced from Layer 2 modality resolver. Use as a menu when "
+        "synthesizing each session — pick the modality that fits the phase "
+        "intent (Peak biases outdoor + sport-specific; Taper biases "
+        "lower-stimulus options). Outdoor + specific options score higher in "
+        "the base preference; generic / indoor substitutes surface as "
+        "lower-ranked alternates for travel days or recovery work."
+    )
+    if not payload.recommendations and not payload.coaching_flags:
+        lines.append("(No recommendations or coaching flags emitted by resolver.)")
+        lines.append("")
+        return lines
+    if payload.recommendations:
+        for rec in payload.recommendations:
+            label = (
+                f"{rec.discipline_id} {rec.discipline_name} @ "
+                f"{rec.locale_name or rec.locale_id}"
+            )
+            if rec.top_pick_modality_id is None or not rec.menu:
+                lines.append(f"{label}: (no satisfying modality at this locale)")
+                continue
+            top = rec.menu[0]
+            alternates = rec.menu[1:]
+            alt_str = (
+                "; alts=" + ", ".join(
+                    f"{m.modality_id} ({m.preference_score})" for m in alternates
+                )
+                if alternates
+                else ""
+            )
+            lines.append(
+                f"{label}: top={top.modality_id} ({top.preference_score})"
+                f"{alt_str}; rationale={top.rationale_hint}"
+            )
+    if payload.coaching_flags:
+        lines.append("")
+        lines.append("Modality coaching flags:")
+        for fl in payload.coaching_flags:
+            scope = (
+                f"{fl.discipline_id}, {fl.locale_name or fl.locale_id}"
+                if fl.locale_id
+                else fl.discipline_id
+            )
+            lines.append(f"- {fl.flag_type} ({scope}): {fl.message}")
+    lines.append("")
+    lines.append(
+        "Cite modalities in `coaching_intent` / `session_notes` using natural "
+        "names (e.g. \"trail run\", \"indoor trainer\") — never the internal "
+        "`modality_id` string."
+    )
+    lines.append("")
+    return lines
+
+
 def render_user_prompt(
     *,
     phase_spec: PhaseSpec,
@@ -656,6 +724,7 @@ def render_user_prompt(
     rule_failures: list[RuleFailure],
     seam_issues: list[str],
     seam_direction: Literal["re_prompt_prior", "re_prompt_next"] | None,
+    layer2_modality_payload: Layer2ModalityPayload | None = None,
 ) -> str:
     """Render the §6 user prompt for one phase. Inline Python rendering
     replaces Mustache; the structure matches `Layer4_PerPhase_v2.md` §6.
@@ -795,6 +864,10 @@ def render_user_prompt(
                 f"discipline_coverage={[d.discipline_id for d in l2c.discipline_coverage]}"
             )
     parts.append("")
+
+    # === Best-fit modality menu (BM-3 surface) ===
+    if layer2_modality_payload is not None:
+        parts.extend(_format_modality_recommendations_per_phase(layer2_modality_payload))
 
     # === Schedule ===
     parts.append("=== Schedule ===")
@@ -1114,6 +1187,11 @@ def synthesize_phase(
     retries_already_used: int = 0,
     llm_caller: LLMCaller | None = None,
     session_id_prefix: str | None = None,
+    # D-73 Phase 5.2 BM3 2026-05-24 — Layer 2 modality resolver payload
+    # rendered into the per-phase prompt via
+    # `_format_modality_recommendations_per_phase`. Default None preserves
+    # legacy call sites + plan_refresh paths that don't surface the cone.
+    layer2_modality_payload: Layer2ModalityPayload | None = None,
 ) -> PhaseSynthesisResult:
     """Synthesize one phase's PlanSession list per `Layer4_Spec.md` §5.2
     step 3.
@@ -1203,6 +1281,7 @@ def synthesize_phase(
             rule_failures=rule_failures,
             seam_issues=seam_issues or [],
             seam_direction=seam_direction,
+            layer2_modality_payload=layer2_modality_payload,
         )
 
         llm_out = caller(

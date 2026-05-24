@@ -102,11 +102,11 @@ def llm_layer4_single_session_synthesize_cached(
     etl_version_set: dict[str, str],
     *,
     cache: Layer4Cache,
-    # D-73 Phase 5.2 Walkthrough BestFitModality_Impl 2026-05-24 —
-    # optional pass-through; default None preserves existing call
-    # sites + cache keys. Cache key intentionally NOT extended this
-    # slice (driver doesn't consume in the prompt yet; BM-3 adds the
-    # hash component when prompt-body integration lands).
+    # D-73 Phase 5.2 Walkthrough BM3 2026-05-24 — resolver payload
+    # threaded through to the driver's prompt-body renderer +
+    # hashed into the cache key via `layer2_modality_locale_hash`.
+    # Default None preserves quick-equipment mode + legacy call sites
+    # (None collapses to '' inside the key helper for stability).
     layer2_modality_payload_for_locale: Layer2ModalityPayload | None = None,
     model: str = "claude-sonnet-4-6",
     temperature: float = 0.3,
@@ -136,6 +136,14 @@ def llm_layer4_single_session_synthesize_cached(
     )
     layer2d_hash = compute_payload_hash(layer2d_payload)
     layer3a_hash = compute_payload_hash(layer3a_payload)
+    # BM-3: hash the resolver payload so cache invalidates on terrain /
+    # equipment / skill-toggle changes AND on `_MODALITY_OPTIONS_PER_DISCIPLINE`
+    # code-deploy shape changes (which existing transitive eviction misses).
+    layer2_modality_locale_hash = (
+        compute_payload_hash(layer2_modality_payload_for_locale)
+        if layer2_modality_payload_for_locale is not None
+        else None
+    )
 
     key = single_session_synthesize_key(
         user_id=user_id,
@@ -149,6 +157,7 @@ def llm_layer4_single_session_synthesize_cached(
         temperature=temperature,
         max_tokens=max_tokens,
         capped_retries=capped_retries,
+        layer2_modality_locale_hash=layer2_modality_locale_hash,
     )
 
     def _synthesize() -> Layer4Payload:
@@ -315,6 +324,10 @@ def llm_layer4_plan_create_cached(
     *,
     cache: Layer4Cache,
     race_event_payload: RaceEventPayload | None = None,
+    # D-73 Phase 5.2 BM3 — full-cone modality payload (primary-locale today
+    # per impl-slice scope). Hashed into the cache key + threaded into the
+    # per-phase render. Default None preserves existing call sites.
+    layer2_modality_payload: Layer2ModalityPayload | None = None,
     model_synthesizer: str = "claude-sonnet-4-6",
     model_seam_reviewer: str = "claude-sonnet-4-6",
     temperature: float = 0.2,
@@ -348,6 +361,14 @@ def llm_layer4_plan_create_cached(
     layer2e_hash = compute_payload_hash(layer2e_payload)
     layer3a_hash = compute_payload_hash(layer3a_payload)
     layer3b_hash = compute_payload_hash(layer3b_payload)
+    # BM-3: hash the resolver payload so cache invalidates on terrain /
+    # equipment / skill-toggle changes AND on `_MODALITY_OPTIONS_PER_DISCIPLINE`
+    # code-deploy shape changes.
+    layer2_modality_hash = (
+        compute_payload_hash(layer2_modality_payload)
+        if layer2_modality_payload is not None
+        else None
+    )
 
     key = plan_create_key(
         user_id=user_id,
@@ -366,6 +387,7 @@ def llm_layer4_plan_create_cached(
         temperature=temperature,
         max_tokens_per_phase=max_tokens_per_phase if max_tokens_per_phase is not None else 0,
         capped_retries_per_phase=capped_retries_per_phase,
+        layer2_modality_hash=layer2_modality_hash,
     )
 
     # Build the synthesizer kwargs — pass None defaults through to let the
@@ -377,6 +399,7 @@ def llm_layer4_plan_create_cached(
     def _synthesize() -> Layer4Payload:
         kwargs: dict[str, Any] = {
             "race_event_payload": race_event_payload,
+            "layer2_modality_payload": layer2_modality_payload,
             "model_synthesizer": model_synthesizer,
             "model_seam_reviewer": model_seam_reviewer,
             "temperature": temperature,
@@ -440,6 +463,10 @@ def llm_layer4_race_week_brief_cached(
     etl_version_set: dict[str, str],
     *,
     cache: Layer4Cache,
+    # D-73 Phase 5.2 BM3 — full-cone modality payload. Hashed into the
+    # cache key + threaded into the brief prompt. Default None preserves
+    # existing call sites (notably test fixtures pre-BM-3).
+    layer2_modality_payload: Layer2ModalityPayload | None = None,
     model: str = "claude-sonnet-4-6",
     temperature: float = 0.2,
     max_tokens: int = 6000,
@@ -466,6 +493,14 @@ def llm_layer4_race_week_brief_cached(
     layer3a_hash = compute_payload_hash(layer3a_payload)
     layer3b_hash = compute_payload_hash(layer3b_payload)
     prior_window_hash = compute_prior_plan_session_window_hash(prior_plan_session_window)
+    # BM-3: hash the resolver payload so cache invalidates on terrain /
+    # equipment / skill-toggle changes AND on `_MODALITY_OPTIONS_PER_DISCIPLINE`
+    # code-deploy shape changes.
+    layer2_modality_hash = (
+        compute_payload_hash(layer2_modality_payload)
+        if layer2_modality_payload is not None
+        else None
+    )
 
     key = race_week_brief_key(
         user_id=user_id,
@@ -483,6 +518,7 @@ def llm_layer4_race_week_brief_cached(
         temperature=temperature,
         max_tokens=max_tokens,
         capped_retries=capped_retries,
+        layer2_modality_hash=layer2_modality_hash,
     )
 
     def _synthesize() -> Layer4Payload:
@@ -507,6 +543,7 @@ def llm_layer4_race_week_brief_cached(
             extended_thinking_budget=extended_thinking_budget,
             today=today,
             llm_caller=llm_caller,
+            layer2_modality_payload=layer2_modality_payload,
         )
 
     return cache.get_or_synthesize(

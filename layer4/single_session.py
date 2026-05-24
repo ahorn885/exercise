@@ -483,6 +483,73 @@ When `request.quick_equipment` is non-empty (athlete is "Somewhere else"): presc
 """
 
 
+def _render_modality_section_single_session(
+    payload: Layer2ModalityPayload,
+) -> list[str]:
+    """Render BM-3 modality recommendations for the single_session prompt.
+
+    Convention: `#` / `##` markdown headers + plain bullets to match the
+    existing single_session.py renderer idiom (Equipment / Athlete request /
+    Athlete context sections). Empty payload (no recommendations + no flags)
+    is rendered as a single explanatory line so the LLM doesn't infer a
+    missing section.
+    """
+    lines: list[str] = ["# Best-fit modality recommendations", ""]
+    lines.append(
+        "Layer 2 modality resolver narrows session modality options per "
+        "`(discipline, locale)` based on the athlete's accessible terrain + "
+        "equipment + skill capabilities. Use this as a menu — pick the modality "
+        "that fits the session intent. Outdoor + sport-specific options score "
+        "higher in the base preference; generic / indoor substitutes surface as "
+        "lower-ranked alternates for travel days or recovery sessions."
+    )
+    lines.append("")
+    if not payload.recommendations and not payload.coaching_flags:
+        lines.append(
+            "_No modality recommendations available for this athlete's discipline "
+            "set at this locale._"
+        )
+        lines.append("")
+        return lines
+    if payload.recommendations:
+        lines.append("## Recommendations")
+        lines.append("")
+        for rec in payload.recommendations:
+            header = f"### {rec.discipline_id} {rec.discipline_name} at {rec.locale_name or rec.locale_id}"
+            lines.append(header)
+            if rec.top_pick_modality_id is None or not rec.menu:
+                lines.append("- No modality option satisfies this locale's terrain / equipment / skill constraints.")
+            else:
+                top = rec.menu[0]
+                lines.append(
+                    f"- Top pick: {top.modality_id} (score {top.preference_score}) "
+                    f"— {top.rationale_hint}"
+                )
+                alternates = rec.menu[1:]
+                if alternates:
+                    alt_pieces = [f"{m.modality_id} ({m.preference_score})" for m in alternates]
+                    lines.append(f"- Alternates: {'; '.join(alt_pieces)}")
+            lines.append("")
+    if payload.coaching_flags:
+        lines.append("## Coaching flags")
+        lines.append("")
+        for fl in payload.coaching_flags:
+            scope = (
+                f"{fl.discipline_id} at {fl.locale_name or fl.locale_id}"
+                if fl.locale_id
+                else fl.discipline_id
+            )
+            lines.append(f"- `{fl.flag_type}` ({scope}): {fl.message}")
+        lines.append("")
+    lines.append(
+        "When citing a modality in athlete-facing copy (`session_notes`, "
+        "`coaching_intent`), use the natural modality name (e.g. \"trail run\", "
+        "\"indoor trainer\") — never the internal `modality_id` string."
+    )
+    lines.append("")
+    return lines
+
+
 def _render_user_prompt(
     request: SingleSessionRequest,
     layer1_payload: dict[str, Any],
@@ -492,6 +559,7 @@ def _render_user_prompt(
     session_date: _date_type,
     retries_used: int,
     rule_failures: list[RuleFailure],
+    layer2_modality_payload_for_locale: Layer2ModalityPayload | None = None,
 ) -> str:
     """Render the user prompt per `Layer4_SingleSession_v2.md` §6. Inline
     Python rendering instead of Mustache to avoid the dependency."""
@@ -582,6 +650,11 @@ def _render_user_prompt(
             "and state the constraint in `session_notes`."
         )
     parts.append("")
+
+    # § Best-fit modality recommendations (BM-3; surfaces Layer 2 modality
+    # resolver output as a per-(discipline, locale) menu)
+    if layer2_modality_payload_for_locale is not None:
+        parts.extend(_render_modality_section_single_session(layer2_modality_payload_for_locale))
 
     # § Recent training context
     parts.append("# Recent training context (drives intensity-modulation policy)")
@@ -862,12 +935,11 @@ def llm_layer4_single_session_synthesize(
     plan_version_id: int = 0,
     session_date: _date_type | None = None,
     llm_caller: LLMCaller | None = None,
-    # D-73 Phase 5.2 Walkthrough BestFitModality_Impl 2026-05-24 —
-    # pass-through hook for the resolver payload computed in
-    # `orchestrate_single_session_synthesize`. Default None preserves
-    # all existing call sites + cache keys; the driver does NOT
-    # consume the payload in the prompt yet (BM-3 follow-on plugs in
-    # here when prompt-body integration ships).
+    # D-73 Phase 5.2 Walkthrough BM3 2026-05-24 — resolver payload
+    # rendered into the user prompt via
+    # `_render_modality_section_single_session` when supplied. Default
+    # None preserves quick-equipment mode (athlete is "Somewhere else")
+    # + legacy call sites that pre-date BM-3.
     layer2_modality_payload_for_locale: Layer2ModalityPayload | None = None,
 ) -> Layer4Payload:
     """Pattern B single-call synthesizer for D-63 on-demand workouts per
@@ -930,6 +1002,7 @@ def llm_layer4_single_session_synthesize(
             session_date=session_date,
             retries_used=retries_used,
             rule_failures=rule_failures,
+            layer2_modality_payload_for_locale=layer2_modality_payload_for_locale,
         )
 
         try:

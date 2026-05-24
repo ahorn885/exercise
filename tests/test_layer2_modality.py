@@ -620,3 +620,316 @@ class TestEdgeCases:
         )
         rec = payload.recommendations[0]
         assert rec.discipline_name == "D-001"  # fallback
+
+
+# ─── BM-3 render helpers (per-renderer-native copy per F2) ───────────────────
+
+
+def _populated_payload() -> Layer2ModalityPayload:
+    """Build a representative payload covering the three §8 flag triggers
+    for use across the per-renderer render tests below."""
+    rec = ModalityRecommendation(
+        discipline_id="D-001",
+        discipline_name="Trail Running",
+        locale_id="home",
+        locale_name="Home (Nerstrand MN)",
+        menu=[
+            ModalityOption(
+                modality_id="outdoor_trail_run",
+                modality_name="Outdoor trail run",
+                preference_score=90,
+                is_outdoor=True,
+                is_specific=True,
+                rationale_hint="trail terrain accessible from Home (Nerstrand MN)",
+                satisfied_terrain=["TRN-002"],
+                satisfied_equipment=[],
+                satisfied_skill=None,
+            ),
+            ModalityOption(
+                modality_id="outdoor_road_run",
+                modality_name="Outdoor road run",
+                preference_score=60,
+                is_outdoor=True,
+                is_specific=False,
+                rationale_hint="paved surface accessible",
+                satisfied_terrain=["TRN-001"],
+                satisfied_equipment=[],
+                satisfied_skill=None,
+            ),
+        ],
+        top_pick_modality_id="outdoor_trail_run",
+        rationale_hint="trail terrain accessible from Home (Nerstrand MN)",
+    )
+    flag = ModalityCoachingFlag(
+        flag_type="skill_capability_blocks_specific_modality",
+        discipline_id="D-010",
+        discipline_name="Outdoor Rock Climbing",
+        locale_id="home",
+        locale_name="Home (Nerstrand MN)",
+        message=(
+            "Outdoor lead climbing is the best-fit modality at Home but "
+            "requires the 'climbing_roped' skill toggle, which is currently OFF."
+        ),
+        metadata={
+            "blocked_modality_id": "outdoor_lead_climb",
+            "blocking_skill_toggle": "climbing_roped",
+            "currently_resolves_to": "outdoor_boulder",
+        },
+    )
+    return Layer2ModalityPayload(
+        etl_version_set=_DEFAULT_ETL,
+        recommendations=[rec],
+        coaching_flags=[flag],
+    )
+
+
+def _empty_payload() -> Layer2ModalityPayload:
+    return Layer2ModalityPayload(
+        etl_version_set=_DEFAULT_ETL, recommendations=[], coaching_flags=[]
+    )
+
+
+class TestSingleSessionRenderer:
+    """`_render_modality_section_single_session` — markdown convention with
+    `#` / `##` headers + `### Discipline at locale` per-recommendation
+    subsection blocks."""
+
+    def test_top_pick_and_alternates_render(self):
+        from layer4.single_session import _render_modality_section_single_session
+
+        lines = _render_modality_section_single_session(_populated_payload())
+        text = "\n".join(lines)
+        # Section header convention
+        assert "# Best-fit modality recommendations" in text
+        # Per-recommendation subsection
+        assert "### D-001 Trail Running at Home (Nerstrand MN)" in text
+        # Top pick line + rationale
+        assert "Top pick: outdoor_trail_run (score 90)" in text
+        assert "trail terrain accessible from Home (Nerstrand MN)" in text
+        # Alternates rendered with preference score in parens
+        assert "Alternates: outdoor_road_run (60)" in text
+        # Guidance line on modality_id citation
+        assert "natural modality name" in text
+        assert "modality_id" in text
+
+    def test_coaching_flag_renders_with_scope(self):
+        from layer4.single_session import _render_modality_section_single_session
+
+        lines = _render_modality_section_single_session(_populated_payload())
+        text = "\n".join(lines)
+        assert "## Coaching flags" in text
+        assert "`skill_capability_blocks_specific_modality`" in text
+        assert "D-010 at Home (Nerstrand MN)" in text
+
+    def test_empty_payload_renders_placeholder_line(self):
+        from layer4.single_session import _render_modality_section_single_session
+
+        lines = _render_modality_section_single_session(_empty_payload())
+        text = "\n".join(lines)
+        assert "No modality recommendations available" in text
+        # Section header still present so LLM knows the section was checked
+        assert "# Best-fit modality recommendations" in text
+
+
+class TestPerPhaseRenderer:
+    """`_format_modality_recommendations_per_phase` — `=== Section ===`
+    convention + tight one-line-per-recommendation format."""
+
+    def test_top_pick_and_alternates_render(self):
+        from layer4.per_phase import _format_modality_recommendations_per_phase
+
+        lines = _format_modality_recommendations_per_phase(_populated_payload())
+        text = "\n".join(lines)
+        assert "=== Best-fit modality menu (per discipline, per locale) ===" in text
+        # Compressed one-line rec
+        assert "D-001 Trail Running @ Home (Nerstrand MN)" in text
+        assert "top=outdoor_trail_run (90)" in text
+        assert "alts=outdoor_road_run (60)" in text
+        assert "rationale=trail terrain accessible" in text
+
+    def test_coaching_flag_renders_inline(self):
+        from layer4.per_phase import _format_modality_recommendations_per_phase
+
+        lines = _format_modality_recommendations_per_phase(_populated_payload())
+        text = "\n".join(lines)
+        assert "Modality coaching flags:" in text
+        assert "skill_capability_blocks_specific_modality" in text
+
+    def test_empty_payload_renders_placeholder_line(self):
+        from layer4.per_phase import _format_modality_recommendations_per_phase
+
+        lines = _format_modality_recommendations_per_phase(_empty_payload())
+        text = "\n".join(lines)
+        assert "No recommendations or coaching flags" in text
+        assert "=== Best-fit modality menu" in text
+
+    def test_phase_aware_guidance_present(self):
+        # per_phase is the prompt where phase-aware modality picking matters
+        # (Peak / Taper biases). The guidance line should mention phase
+        # intent so the LLM knows to apply phase context.
+        from layer4.per_phase import _format_modality_recommendations_per_phase
+
+        lines = _format_modality_recommendations_per_phase(_populated_payload())
+        text = "\n".join(lines)
+        assert "phase intent" in text
+        assert "Peak" in text
+        assert "Taper" in text
+
+
+class TestRaceWeekBriefRenderer:
+    """`_render_modality_section_race_week_brief` — `#` heading + `**bold:**`
+    convention to match the brief's mixed markdown idiom."""
+
+    def test_top_pick_and_alternates_render(self):
+        from layer4.race_week_brief import _render_modality_section_race_week_brief
+
+        lines = _render_modality_section_race_week_brief(_populated_payload())
+        text = "\n".join(lines)
+        assert "# Best-fit modality (Layer 2 modality resolver)" in text
+        # **Bold:** convention for sub-labels
+        assert "**Purpose:**" in text
+        assert "**Recommendations:**" in text
+        assert "**Modality coaching flags:**" in text
+        # Per-rec one-line entry
+        assert "D-001 Trail Running @ Home (Nerstrand MN)" in text
+        assert "top: outdoor_trail_run" in text
+        assert "alts: outdoor_road_run" in text
+
+    def test_coaching_flag_renders_with_bold_scope(self):
+        from layer4.race_week_brief import _render_modality_section_race_week_brief
+
+        lines = _render_modality_section_race_week_brief(_populated_payload())
+        text = "\n".join(lines)
+        assert "`skill_capability_blocks_specific_modality`" in text
+        # Verify the scope tag uses "at locale" phrasing per renderer style
+        assert "D-010 at Home (Nerstrand MN)" in text
+
+    def test_empty_payload_renders_placeholder_line(self):
+        from layer4.race_week_brief import _render_modality_section_race_week_brief
+
+        lines = _render_modality_section_race_week_brief(_empty_payload())
+        text = "\n".join(lines)
+        assert "No modality recommendations available" in text
+        assert "# Best-fit modality (Layer 2 modality resolver)" in text
+
+
+class TestRendererSpliceIntoFullPrompts:
+    """The per-renderer modality section must actually appear in the full
+    rendered prompt strings when the payload is threaded through. Catches
+    the splice site (not just helper output)."""
+
+    def _build_minimal_payloads(self):
+        """Build the typed payloads single_session._render_user_prompt
+        reads — using model_construct to bypass pydantic field-presence
+        validation (the renderer only touches a small subset of fields)."""
+        from layer4.context import (
+            Layer2CPayload,
+            Layer2DPayload,
+            Layer3APayload,
+        )
+
+        l2c = Layer2CPayload.model_construct(
+            locale_id="home",
+            etl_version_set=_DEFAULT_ETL,
+            effective_pool=["Treadmill"],
+            exercises_resolved=[],
+            discipline_coverage=[],
+            coaching_flags=[],
+        )
+        l2d = Layer2DPayload.model_construct(
+            etl_version_set=_DEFAULT_ETL,
+            excluded_exercises=[],
+            accommodated_exercises=[],
+            coaching_flags=[],
+            hitl_required=False,
+        )
+
+        class _Confidence:
+            def __init__(self, level, confidence):
+                self.level = level
+                self.confidence = confidence
+
+        class _Direction:
+            def __init__(self, direction):
+                self.direction = direction
+
+        class _ACWR:
+            combined = None
+            per_discipline: dict = {}
+
+        class _CS:
+            aerobic_capacity = _Confidence("moderate", "high")
+            strength = _Confidence("moderate", "high")
+            weak_links: list = []
+
+        class _RT:
+            short_term = _Direction("stable")
+            medium_term = _Direction("stable")
+            acwr_status = _ACWR()
+
+        class _DD:
+            recent_workouts_count = 5
+            integration_data_days = 30
+
+        l3a = Layer3APayload.model_construct(
+            user_id=1,
+            current_state=_CS(),
+            recent_trajectory=_RT(),
+            data_density=_DD(),
+        )
+        return l2c, l2d, l3a
+
+    def test_single_session_full_prompt_includes_modality_section(self):
+        from datetime import date as _date_type
+
+        from layer4.single_session import SingleSessionRequest, _render_user_prompt
+
+        req = SingleSessionRequest(
+            sport="Trail Running",
+            duration_min=60,
+            intensity="moderate",
+            locale_slug="home",
+            quick_equipment=[],
+            notes_for_synthesizer=None,
+        )
+        l2c, l2d, l3a = self._build_minimal_payloads()
+        text = _render_user_prompt(
+            request=req,
+            layer1_payload={"experience_level": "intermediate"},
+            layer2c_payload_for_locale=l2c,
+            layer2d_payload=l2d,
+            layer3a_payload=l3a,
+            session_date=_date_type(2026, 5, 24),
+            retries_used=0,
+            rule_failures=[],
+            layer2_modality_payload_for_locale=_populated_payload(),
+        )
+        assert "# Best-fit modality recommendations" in text
+        assert "outdoor_trail_run" in text
+
+    def test_single_session_full_prompt_omits_section_when_payload_none(self):
+        from datetime import date as _date_type
+
+        from layer4.single_session import SingleSessionRequest, _render_user_prompt
+
+        req = SingleSessionRequest(
+            sport="Trail Running",
+            duration_min=60,
+            intensity="moderate",
+            locale_slug=None,
+            quick_equipment=["Treadmill"],
+            notes_for_synthesizer=None,
+        )
+        _, l2d, l3a = self._build_minimal_payloads()
+        text = _render_user_prompt(
+            request=req,
+            layer1_payload={"experience_level": "intermediate"},
+            layer2c_payload_for_locale=None,
+            layer2d_payload=l2d,
+            layer3a_payload=l3a,
+            session_date=_date_type(2026, 5, 24),
+            retries_used=0,
+            rule_failures=[],
+            # No modality payload — must NOT render the section
+        )
+        assert "Best-fit modality" not in text
