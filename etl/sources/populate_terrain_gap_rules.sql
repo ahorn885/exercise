@@ -6,10 +6,17 @@
 -- to get gap severity, adaptation windows, proxy methods, and prescription
 -- notes — no LLM needed for terrain gap classification.
 --
--- gap_severity enum: bridgeable / partial / unbridgeable
---   bridgeable  — full adaptation achievable via proxy within normal training window
---   partial     — meaningful adaptation possible; some stimulus permanently uncovered
---   unbridgeable — proxy exists for fitness only; skill/technique gap cannot close off-terrain
+-- gap_severity enum (post-Phase-2.3 reclassification per Andy 2026-05-19):
+--   low          — proxy_fidelity ≥ 0.70  (high transfer; minimal real-terrain practice needed)
+--   medium       — proxy_fidelity 0.50–0.69
+--   high         — proxy_fidelity 0.40–0.49
+--   critical     — proxy_fidelity < 0.40   (large gap; significant real-terrain block required)
+--   unbridgeable — proxy_terrain_id IS NULL  (skill/technique cannot close off-terrain at all)
+--
+-- Existing rows in this file still carry the pre-Phase-2.3 'partial' tag
+-- and are reclassified at deploy time by the idempotent _PG_MIGRATIONS
+-- UPDATE keyed on the bands above. NEW rows added after 2026-05-19 should
+-- use the post-reclassification value directly (see TRN-017 rules below).
 --
 -- proxy_fidelity: 0.0–1.0, consistent with discipline_substitutes.fidelity convention
 --
@@ -167,9 +174,9 @@ INSERT INTO layer0.terrain_gap_rules (
     'Proxy fidelity 0.45 — aerobic load transfers; navigation and footing stimuli substantially uncovered.',
   '0C-v2.0-r2', NOW() ),
 
--- ── Water: Open Water / Ocean gap ──────────────────────────────────────────
+-- ── Water: Ocean / Tidal gap ───────────────────────────────────────────────
 
-( 'TRN-010', 'Open Water / Ocean',
+( 'TRN-010', 'Ocean / Tidal',
   'TRN-008', 'Pool',
   'partial', 4, 6, 0.65,
   ARRAY[
@@ -204,6 +211,51 @@ INSERT INTO layer0.terrain_gap_rules (
     '2–4 open water sessions confirm conditions handling and pacing. '
     'For paddle disciplines specifically, ergometer is preferred over pool.',
   'Proxy fidelity 0.75 — flat water imposes minimal conditions variables beyond basic OW exposure.',
+  '0C-v2.0-r2', NOW() ),
+
+-- ── Water: Moving Water gaps ───────────────────────────────────────────────
+--
+-- TRN-017 was added when the Water vocab split into 5 rows (Pool / Flat /
+-- Moving / Ocean-Tidal / Whitewater) per Bucket C (f) closure 2026-05-24.
+-- Two proxies registered: TRN-009 (lake — common case) and TRN-011
+-- (whitewater — over-covered). Classifier ORDER BY proxy_fidelity DESC
+-- picks whichever proxy the athlete actually has access to.
+
+( 'TRN-017', 'Moving Water',
+  'TRN-009', 'Flat Water',
+  'medium', 2, 4, 0.65,
+  ARRAY[
+    'Flat water aerobic and stroke volume (high transfer for paddle base)',
+    'Dry-land bracing and hip-snap drills on a balance pad or wobble board',
+    'Video study of moving-water technique (ferry angles, eddy reads, current vectors)',
+    '2–4 supervised moving-water sessions before race for current reading and eddy turn timing'
+  ],
+  ARRAY['balance_dynamic'],
+  'Flat water builds the paddle aerobic base and stroke mechanics — high transfer for fitness. '
+    'Current reading, ferry angles, and eddy use require real moving water. '
+    'For packraft and river-touring contexts, plan 2–4 sessions on any river-current water '
+    'in the final 4 weeks before race; dry-land bracing drills are a useful adjunct.',
+  'Proxy fidelity 0.65 — flat-water paddle aerobic transfers directly; current-handling skill '
+    'requires real moving-water practice. Severity classified ''medium'' per the post-Phase-2.3 '
+    'fidelity-banded enum (0.50–0.69 = medium).',
+  '0C-v2.0-r2', NOW() ),
+
+( 'TRN-017', 'Moving Water',
+  'TRN-011', 'Whitewater',
+  'low', 1, 2, 0.85,
+  ARRAY[
+    'Whitewater paddling sessions (over-covers Class-II-and-below current handling)',
+    'Periodic flat-water sessions for sustained aerobic volume if whitewater sessions are short'
+  ],
+  ARRAY[]::TEXT[],
+  'Whitewater terrain access fully covers moving-water skill demand and provides more '
+    'than sufficient current-reading practice. The only stimulus partially uncovered is '
+    'sustained aerobic paddling volume — whitewater sessions tend to be shorter than '
+    'flat or moving-water training sessions; supplement with longer flat-water work if '
+    'race demands extended duration.',
+  'Proxy fidelity 0.85 — whitewater over-covers the current-handling stimulus; small '
+    'shortfall on sustained aerobic volume only. Severity classified ''low'' per the '
+    'post-Phase-2.3 fidelity-banded enum (≥0.70 = low).',
   '0C-v2.0-r2', NOW() ),
 
 -- ── Water: Whitewater gap ──────────────────────────────────────────────────
