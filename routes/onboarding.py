@@ -81,8 +81,17 @@ from race_events_repo import (
     update_race_event,
 )
 from routes.auth import current_user_id
+from routes.locales import LOCALES as LEGACY_LOCALES
 from routes.profile import CONNECTION_PROVIDERS, load_connections
 from routes.profile_fields import KNOWN_PROFILE_FIELDS, provider_label
+
+from athlete_skill_toggles_repo import (
+    evict_layer1_on_skill_toggle_change,
+    get_athlete_skill_toggles,
+    load_active_skill_capability_toggle_vocab,
+    parse_skill_form,
+    upsert_athlete_skill_toggles,
+)
 
 
 bp = Blueprint('onboarding', __name__, url_prefix='/onboarding')
@@ -100,7 +109,12 @@ bp = Blueprint('onboarding', __name__, url_prefix='/onboarding')
 # (Step 3d) before profile.
 _POST_STEP2_CONTINUE_TARGET = '/onboarding/prefill'
 _POST_STEP2_SKIP_TARGET = '/profile?tab=athlete'
-_POST_STEP3_TARGET = '/onboarding/schedule'
+# Bucket C (l) capture-surface follow-on (2026-05-24): inserts the
+# Locations review + Skills capture steps between prefill and schedule.
+# Old: prefill → schedule. New: prefill → locales → skills → schedule.
+_POST_STEP3_TARGET = '/onboarding/locales'
+_POST_STEP_LOCALES_TARGET = '/onboarding/skills'
+_POST_STEP_SKILLS_TARGET = '/onboarding/schedule'
 _POST_STEP3B_TARGET = '/onboarding/target-race'
 _POST_STEP3C_TARGET = '/profile?tab=athlete'
 _POST_STEP3D_TARGET = '/profile?tab=athlete'
@@ -376,6 +390,126 @@ def keep_current(field):
         'info',
     )
     return redirect(url_for('onboarding.prefill'))
+
+
+# ---------------------------------------------------------------------------
+# Step 4 — Locations review (Bucket C (l) capture-surface follow-on)
+# ---------------------------------------------------------------------------
+
+
+def _athlete_locales_for_review(db, uid: int) -> list:
+    """Return the per-athlete locale rows for the onboarding-Step-4
+    review template. Shape:
+      {slug, label, is_custom, configured, category}
+
+    Includes every legacy slot (home / hotel / partner / airport) with
+    `is_custom=False` so athletes always see the four default slots
+    even when zero rows exist. Custom rows (locale_profiles where slug
+    is not in LEGACY_LOCALES) carry `is_custom=True`. `configured`
+    reflects whether locale_profiles has a row for the slug — drives
+    the "(not configured)" small print in the legacy-slot list.
+    """
+    rows = db.execute(
+        'SELECT locale, locale_name, category FROM locale_profiles '
+        'WHERE user_id = ?',
+        (uid,),
+    ).fetchall()
+    by_slug = {r['locale']: r for r in rows}
+    out = []
+    for slug in LEGACY_LOCALES:
+        row = by_slug.get(slug)
+        out.append({
+            'slug': slug,
+            'label': (row['locale_name'] if row and row['locale_name'] else slug),
+            'is_custom': False,
+            'configured': row is not None,
+            'category': (row['category'] if row else None),
+        })
+    for slug in sorted(s for s in by_slug if s not in LEGACY_LOCALES):
+        row = by_slug[slug]
+        out.append({
+            'slug': slug,
+            'label': row['locale_name'] or slug,
+            'is_custom': True,
+            'configured': True,
+            'category': row['category'],
+        })
+    return out
+
+
+@bp.route('/locales', methods=['GET'])
+def locales():
+    """Render the Step 4 locations review screen.
+
+    Read-only summary of the athlete's locale_profiles rows + the four
+    legacy slots, with edit links pointing at the existing /locales
+    blueprint (which owns the Mapbox picker, terrain grid, equipment
+    editor). Continue advances to /onboarding/skills regardless of
+    locale count — the step educates and provides a CTA, not a gate.
+    """
+    db = get_db()
+    uid = current_user_id()
+    return render_template(
+        'onboarding/locales.html',
+        athlete_locales=_athlete_locales_for_review(db, uid),
+        post_step_locales_target=_POST_STEP_LOCALES_TARGET,
+    )
+
+
+@bp.route('/locales/continue', methods=['POST'])
+def locales_continue():
+    """Advance from Step 4 (locations review) to Step 5 (skills).
+
+    No DB write — the review step doesn't mutate locale_profiles; that
+    happens through the /locales blueprint's own POST handlers.
+    """
+    return redirect(_POST_STEP_LOCALES_TARGET)
+
+
+# ---------------------------------------------------------------------------
+# Step 5 — Skills capture (Bucket C (l) capture-surface follow-on)
+# ---------------------------------------------------------------------------
+
+
+@bp.route('/skills', methods=['GET'])
+def skills():
+    """Render the Step 5 skill-capability toggle grid.
+
+    Loads the active vocab from layer0.skill_capability_toggles + the
+    athlete's current per-toggle state from athlete_skill_toggles, and
+    renders the shared `_skills_form.html` partial.
+    """
+    db = get_db()
+    uid = current_user_id()
+    return render_template(
+        'onboarding/skills.html',
+        toggle_defs=load_active_skill_capability_toggle_vocab(db),
+        current_states=get_athlete_skill_toggles(db, uid),
+        post_step_skills_target=_POST_STEP_SKILLS_TARGET,
+    )
+
+
+@bp.route('/skills', methods=['POST'])
+def skills_save():
+    """Persist the Step 5 skill-capability state + advance to Step 6.
+
+    UPSERTs one athlete_skill_toggles row per canonical toggle (every
+    vocab entry produces either an explicit-True or explicit-False
+    row). Fires the Layer 1 cache eviction so the next plan / brief /
+    ad-hoc workout / Layer 3 evaluation recomputes against the new
+    skill_toggle_states. Empty vocab (populate script not yet applied)
+    no-ops the upsert + still advances.
+    """
+    db = get_db()
+    uid = current_user_id()
+    vocab = load_active_skill_capability_toggle_vocab(db)
+    states = parse_skill_form(request.form, vocab)
+    if states:
+        upsert_athlete_skill_toggles(db, uid, states)
+        db.commit()
+        evict_layer1_on_skill_toggle_change(db, uid)
+        flash('Skills saved.', 'success')
+    return redirect(_POST_STEP_SKILLS_TARGET)
 
 
 # ---------------------------------------------------------------------------

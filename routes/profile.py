@@ -29,6 +29,13 @@ from athlete import (
     get_athlete_profile, upsert_athlete_profile,
     get_daily_availability_windows, upsert_daily_availability_windows,
 )
+from athlete_skill_toggles_repo import (
+    evict_layer1_on_skill_toggle_change,
+    get_athlete_skill_toggles,
+    load_active_skill_capability_toggle_vocab,
+    parse_skill_form,
+    upsert_athlete_skill_toggles,
+)
 from race_events_repo import list_athlete_race_events
 from routes import provider_auth as pa
 
@@ -290,6 +297,12 @@ def edit():
         if request.args.get(f'{slug}_oauth_error') or request.args.get(f'{slug}_register_error'):
             oauth_error_label = label
             break
+    # Bucket C (l) capture-surface follow-on (2026-05-24) — Skills tab.
+    # Loads the canonical vocab + athlete state for the same shared
+    # `_skills_form.html` partial used by /onboarding/skills.
+    skill_toggle_defs = load_active_skill_capability_toggle_vocab(db)
+    skill_toggle_states = get_athlete_skill_toggles(db, uid)
+
     from datetime import datetime as _dt
     return render_template(
         'profile/edit.html',
@@ -315,6 +328,8 @@ def edit():
         preferred_rest_days=rest_days,
         day_tokens=DAY_TOKENS,
         day_labels=DAY_LABELS,
+        skill_toggle_defs=skill_toggle_defs,
+        skill_toggle_states=skill_toggle_states,
         # Used by the template to render an "Expired" badge without
         # round-tripping the timestamp through a Jinja-only comparison.
         now_iso=_dt.utcnow().isoformat(timespec='seconds'),
@@ -351,6 +366,26 @@ def save_schedule():
         flash('Schedule saved.', 'success')
 
     return redirect(url_for('profile.edit', tab='schedule'))
+
+
+@bp.route('/skills', methods=['POST'])
+def save_skills():
+    """Persist the Skills-tab form submitted from `/profile?tab=skills`.
+
+    Mirrors the onboarding-step write path: parse the form against the
+    canonical vocab, UPSERT one row per toggle, evict Layer 1 caches.
+    Lands the athlete back on the Skills tab.
+    """
+    db = get_db()
+    uid = current_user_id()
+    vocab = load_active_skill_capability_toggle_vocab(db)
+    states = parse_skill_form(request.form, vocab)
+    if states:
+        upsert_athlete_skill_toggles(db, uid, states)
+        db.commit()
+        evict_layer1_on_skill_toggle_change(db, uid)
+        flash('Skills saved.', 'success')
+    return redirect(url_for('profile.edit', tab='skills'))
 
 
 @bp.route('/connections/<provider>/disconnect', methods=['POST'])

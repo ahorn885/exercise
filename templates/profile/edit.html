@@ -8,6 +8,7 @@
 <ul class="nav nav-tabs mb-3" role="tablist">
   <li class="nav-item"><button class="nav-link active" data-bs-toggle="tab" data-bs-target="#tab-profile" type="button">Athlete</button></li>
   <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-schedule" type="button">Schedule</button></li>
+  <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-skills" type="button">Skills</button></li>
   <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-race-events" type="button">Race events <span class="badge bg-secondary">{{ race_events|length }}</span></button></li>
   <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-connections" type="button">Connections <span class="badge bg-secondary">{{ connection_count }}</span></button></li>
   <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-memory" type="button">Coach memory <span class="badge bg-secondary">{{ memory|length }}</span></button></li>
@@ -143,6 +144,28 @@
 
       <div class="d-flex justify-content-end align-items-center mt-3 pt-3 border-top">
         <button type="submit" class="btn btn-primary">Save schedule</button>
+      </div>
+    </form>
+  </div>
+
+  {# ── Skills (Bucket C (l) capture-surface follow-on, 2026-05-24) ─ #}
+  <div class="tab-pane fade" id="tab-skills" role="tabpanel">
+    <p class="text-muted small mb-3">
+      Check the technical skills you've trained enough to apply on race
+      day. Default is OFF (assume-not-skilled). Each unchecked skill
+      that matches your race terrain or included disciplines surfaces
+      a coaching flag so the LLM addresses the capability gap in your
+      plan.
+    </p>
+    <form method="post" action="{{ url_for('profile.save_skills') }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+      {% with toggle_defs=skill_toggle_defs, current_states=skill_toggle_states %}
+        {% include 'onboarding/_skills_form.html' %}
+      {% endwith %}
+
+      <div class="d-flex justify-content-end align-items-center mt-3 pt-3 border-top">
+        <button type="submit" class="btn btn-primary">Save skills</button>
       </div>
     </form>
   </div>

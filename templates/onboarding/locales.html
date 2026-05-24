@@ -1,0 +1,86 @@
+{% extends 'base.html' %}
+{% block title %}Locations — AIDSTATION{% endblock %}
+{% block content %}
+
+{# v5 onboarding Step 4 — Locations review (Bucket C (l) capture-surface
+   follow-on, 2026-05-24). Surfaces the locale_profiles list inline so
+   the athlete sees the locations AIDSTATION has on file before continuing
+   to skills. Add / edit affordances link out to the existing /locales
+   blueprint (which owns the Mapbox picker, terrain grid, equipment
+   editor) — duplicating those flows in the onboarding template would
+   be redundant. Continue is always available; locales are not gated. #}
+
+<div class="mb-4">
+  <ol class="list-inline small text-muted mb-1">
+    <li class="list-inline-item"><span class="badge bg-success">✓</span> Step 1 — Account</li>
+    <li class="list-inline-item">›</li>
+    <li class="list-inline-item"><span class="badge bg-success">✓</span> Step 2 — Connect providers</li>
+    <li class="list-inline-item">›</li>
+    <li class="list-inline-item"><span class="badge bg-success">✓</span> Step 3 — Prefill review</li>
+    <li class="list-inline-item">›</li>
+    <li class="list-inline-item"><strong class="text-body">Step 4 — Locations</strong></li>
+  </ol>
+  <h4 class="mb-0">Where do you train?</h4>
+</div>
+
+<p class="text-muted">
+  AIDSTATION reasons about plans against the locations you can actually
+  reach — your real gym, your home trails, the pool you swim at. Each
+  location carries its own terrain and equipment. The four legacy slots
+  below (Home / Hotel / Partner / Airport) are always available; add
+  custom locations (e.g. a specific trailhead or climbing gym) from the
+  Locations page.
+</p>
+
+{% set custom = athlete_locales|selectattr('is_custom')|list %}
+{% set legacy = athlete_locales|rejectattr('is_custom')|list %}
+
+{% if custom %}
+  <div class="card mb-3">
+    <div class="card-header small text-muted">Your custom locations</div>
+    <ul class="list-group list-group-flush">
+      {% for loc in custom %}
+        <li class="list-group-item d-flex justify-content-between align-items-center">
+          <div>
+            <span class="fw-semibold">{{ loc.label }}</span>
+            {% if loc.category %}
+              <span class="badge bg-secondary ms-1">{{ loc.category|replace('_', ' ') }}</span>
+            {% endif %}
+          </div>
+          <a href="{{ url_for('locales.edit_profile', locale=loc.slug) }}"
+             class="btn btn-sm btn-outline-secondary">Edit</a>
+        </li>
+      {% endfor %}
+    </ul>
+  </div>
+{% endif %}
+
+<div class="card mb-3">
+  <div class="card-header small text-muted">Legacy slots</div>
+  <ul class="list-group list-group-flush">
+    {% for loc in legacy %}
+      <li class="list-group-item d-flex justify-content-between align-items-center">
+        <div>
+          <span class="fw-semibold text-capitalize">{{ loc.label }}</span>
+          {% if not loc.configured %}
+            <span class="text-muted small ms-2">(not configured)</span>
+          {% endif %}
+        </div>
+        <a href="{{ url_for('locales.edit_profile', locale=loc.slug) }}"
+           class="btn btn-sm btn-outline-secondary">Edit</a>
+      </li>
+    {% endfor %}
+  </ul>
+</div>
+
+<div class="d-flex justify-content-between align-items-center pt-3 border-top">
+  <a href="{{ url_for('locales.list_profiles') }}" class="btn btn-outline-secondary">
+    + Add or manage locations
+  </a>
+  <form method="post" action="{{ url_for('onboarding.locales_continue') }}" class="d-inline">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <button type="submit" class="btn btn-primary">Continue</button>
+  </form>
+</div>
+
+{% endblock %}
