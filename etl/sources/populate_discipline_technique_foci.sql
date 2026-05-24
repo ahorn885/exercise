@@ -213,7 +213,7 @@ INSERT INTO layer0.discipline_technique_foci (
 ( 'TF-015', 'Moving-water paddle technique (brace, ferry, eddy turn)',
   'Brace: keep elbow below wrist in high brace; low brace preferred when possible — most paddling shoulder injuries come from poor brace mechanics. Ferry: cross current at upstream angle to move laterally without losing ground. Eddy turn: hit eddy line at speed, lean and look into eddy, let current pivot the bow — upriver lean on the eddy line is a flip risk; downriver lean is correct.',
   ARRAY['D-007','D-008b','D-009','D-017'], NULL,
-  ARRAY['TRN-011'],
+  ARRAY['TRN-011','TRN-017'],
   NULL, NULL,
   'intermediate', 'Critical',
   'Before any whitewater session; gates progression to moving-water work.',
