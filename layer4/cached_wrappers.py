@@ -34,6 +34,7 @@ from layer4.context import (
     Layer2CPayload,
     Layer2DPayload,
     Layer2EPayload,
+    Layer2ModalityPayload,
     Layer3APayload,
     Layer3BPayload,
     ParsedIntent,
@@ -101,6 +102,12 @@ def llm_layer4_single_session_synthesize_cached(
     etl_version_set: dict[str, str],
     *,
     cache: Layer4Cache,
+    # D-73 Phase 5.2 Walkthrough BestFitModality_Impl 2026-05-24 —
+    # optional pass-through; default None preserves existing call
+    # sites + cache keys. Cache key intentionally NOT extended this
+    # slice (driver doesn't consume in the prompt yet; BM-3 adds the
+    # hash component when prompt-body integration lands).
+    layer2_modality_payload_for_locale: Layer2ModalityPayload | None = None,
     model: str = "claude-sonnet-4-6",
     temperature: float = 0.3,
     max_tokens: int = 1500,
@@ -162,6 +169,7 @@ def llm_layer4_single_session_synthesize_cached(
             plan_version_id=plan_version_id,
             session_date=session_date,
             llm_caller=llm_caller,
+            layer2_modality_payload_for_locale=layer2_modality_payload_for_locale,
         )
 
     return cache.get_or_synthesize(

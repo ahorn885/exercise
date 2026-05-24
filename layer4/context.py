@@ -382,6 +382,58 @@ class Layer2CPayload(_Base):
     coaching_flags: list[Layer2CCoachingFlag]
 
 
+# ─── Best-Fit Modality Resolver payload (BestFitModality_Spec_v1.md §7) ──────
+#
+# Output schema for the pure-Python deterministic resolver in
+# `layer2_modality/`. Lives alongside `Layer2CPayload` because it's a
+# Layer-4-consumed payload contract (mirrors the existing convention
+# of placing all "what Layer 4 reads" payloads in this module).
+# Input dataclass (`ClusterLocaleInput`) + vocab + resolver live in
+# `layer2_modality/` since they're internal to the resolver.
+
+
+class ModalityOption(_Base):
+    modality_id: str
+    modality_name: str
+    preference_score: int
+    is_outdoor: bool
+    is_specific: bool
+    rationale_hint: str
+    satisfied_terrain: list[str]
+    satisfied_equipment: list[str]
+    satisfied_skill: str | None = None
+
+
+class ModalityRecommendation(_Base):
+    discipline_id: str
+    discipline_name: str
+    locale_id: str
+    locale_name: str | None = None
+    menu: list[ModalityOption]
+    top_pick_modality_id: str | None = None
+    rationale_hint: str | None = None
+
+
+class ModalityCoachingFlag(_Base):
+    flag_type: Literal[
+        "no_modality_recommendation",
+        "only_generic_modality_available",
+        "skill_capability_blocks_specific_modality",
+    ]
+    discipline_id: str
+    discipline_name: str
+    locale_id: str | None = None
+    locale_name: str | None = None
+    message: str
+    metadata: dict[str, Any]
+
+
+class Layer2ModalityPayload(_Base):
+    etl_version_set: dict[str, str]
+    recommendations: list[ModalityRecommendation]
+    coaching_flags: list[ModalityCoachingFlag]
+
+
 # ─── Layer 2D — injury risk (Layer2D_Spec.md §7 + §5.3.6 amendment) ──────────
 
 

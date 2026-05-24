@@ -76,6 +76,7 @@ from datetime import date, datetime, time
 from typing import Any, Literal
 
 from layer1.builder import build_layer1_payload
+from layer2_modality import ClusterLocaleInput, resolve_best_fit_modality
 from layer2a.builder import Layer2AInputError, q_layer2a_discipline_classifier_payload
 from layer2b.builder import q_layer2b_terrain_classifier_payload
 from layer2c.builder import q_layer2c_equipment_mapper_payload
@@ -100,6 +101,7 @@ from layer4.context import (
     Layer2DPayload,
     Layer2EPayload,
     Layer2ETargetEvent,
+    Layer2ModalityPayload,
     Layer3APayload,
     Layer3BPayload,
     ParsedIntent,
@@ -167,6 +169,12 @@ class _UpstreamFullCone:
     layer2c_payload: Layer2CPayload
     layer2d_payload: Layer2DPayload
     layer2e_payload: Layer2EPayload
+    # D-73 Phase 5.2 Walkthrough BestFitModality_Impl 2026-05-24 —
+    # pure-Python resolver output, added to the shared cone so
+    # race_week_brief + plan_refresh + plan_create all see it (BM-3
+    # prompt-body integration deferred — the payload is on the cone
+    # but Layer 4 LLM prompts don't consume it yet).
+    layer2_modality_payload: Layer2ModalityPayload
     layer3a_payload: Layer3APayload
     layer3b_payload: Layer3BPayload
 
@@ -288,6 +296,28 @@ def _upstream_full_cone(
         skill_toggle_states=layer1_payload.lifestyle.skill_toggle_states,
     )
 
+    # D-73 Phase 5.2 Walkthrough BestFitModality_Impl 2026-05-24 —
+    # pure-Python resolver runs after Layer 2C (consumes its
+    # effective_pool). Single-locale cluster today; multi-locale
+    # ingestion is a future slice that pairs with the broader
+    # cluster_locale_ids expansion already noted on Layer 2C. BM-3
+    # (prompt-body integration) is the natural follow-on that wires
+    # the payload into Layer 4's plan-gen prompt body.
+    layer2_modality_payload = resolve_best_fit_modality(
+        db,
+        cluster_locale_inputs=[
+            ClusterLocaleInput(
+                locale_id=primary_locale,
+                locale_name=primary_locale,
+                locale_terrain_ids=list(locale_terrain_ids),
+                effective_pool=list(layer2c_payload.effective_pool),
+            )
+        ],
+        included_discipline_ids=included_discipline_ids,
+        skill_toggle_states=layer1_payload.lifestyle.skill_toggle_states,
+        etl_version_set=etl_version_set,
+    )
+
     integration_bundle = assemble_layer3a_integration_bundle(db, user_id, as_of)
     layer3a_payload = llm_layer3a_athlete_state_cached(
         user_id=user_id,
@@ -352,6 +382,7 @@ def _upstream_full_cone(
         layer2c_payload=layer2c_payload,
         layer2d_payload=layer2d_payload,
         layer2e_payload=layer2e_payload,
+        layer2_modality_payload=layer2_modality_payload,
         layer3a_payload=layer3a_payload,
         layer3b_payload=layer3b_payload,
     )
@@ -505,6 +536,7 @@ def orchestrate_single_session_synthesize(
     )
 
     layer2c_payload_for_locale = None
+    layer2_modality_payload_for_locale: Layer2ModalityPayload | None = None
     if request.locale_slug is not None:
         if not _q_locale_by_slug(db, user_id, request.locale_slug):
             raise OrchestrationError(
@@ -527,6 +559,27 @@ def orchestrate_single_session_synthesize(
             # D-73 Phase 5.2 Bucket C (l) — same wire as full-cone path.
             skill_toggle_states=layer1_payload.lifestyle.skill_toggle_states,
         )
+        # D-73 Phase 5.2 Walkthrough BestFitModality_Impl 2026-05-24 —
+        # mirror of the full-cone resolver wire. Single-session
+        # threading per the W2 scope ratified at AskUserQuestion gate
+        # (BM-3 prompt-body integration deferred — the driver receives
+        # the payload but doesn't consume it in the prompt yet).
+        layer2_modality_payload_for_locale = resolve_best_fit_modality(
+            db,
+            cluster_locale_inputs=[
+                ClusterLocaleInput(
+                    locale_id=request.locale_slug,
+                    locale_name=request.locale_slug,
+                    locale_terrain_ids=list(
+                        _q_locale_terrain_ids(db, user_id, request.locale_slug)
+                    ),
+                    effective_pool=list(layer2c_payload_for_locale.effective_pool),
+                )
+            ],
+            included_discipline_ids=included_discipline_ids,
+            skill_toggle_states=layer1_payload.lifestyle.skill_toggle_states,
+            etl_version_set=etl_version_set,
+        )
 
     integration_bundle = assemble_layer3a_integration_bundle(db, user_id, as_of)
     layer3a_payload = llm_layer3a_athlete_state_cached(
@@ -544,6 +597,7 @@ def orchestrate_single_session_synthesize(
         request=request,
         layer1_payload=layer1_payload.model_dump(mode="json"),
         layer2c_payload_for_locale=layer2c_payload_for_locale,
+        layer2_modality_payload_for_locale=layer2_modality_payload_for_locale,
         layer2d_payload=layer2d_payload,
         layer3a_payload=layer3a_payload,
         suggestion_id=suggestion_id,
