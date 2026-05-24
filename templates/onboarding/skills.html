@@ -1,0 +1,45 @@
+{% extends 'base.html' %}
+{% block title %}Skills — AIDSTATION{% endblock %}
+{% block content %}
+
+{# v5 onboarding Step 5 — Skills capture surface (Bucket C sub-item (l)
+   capture-surface follow-on, 2026-05-24). 5-checkbox grid for the
+   skill-capability toggles seeded by populate_skill_capability_toggles.sql.
+   Default-OFF semantics; athletes opt in. Same form partial included by
+   profile/edit.html tab=skills. #}
+
+<div class="mb-4">
+  <ol class="list-inline small text-muted mb-1">
+    <li class="list-inline-item"><span class="badge bg-success">✓</span> Step 1 — Account</li>
+    <li class="list-inline-item">›</li>
+    <li class="list-inline-item"><span class="badge bg-success">✓</span> Step 2 — Connect providers</li>
+    <li class="list-inline-item">›</li>
+    <li class="list-inline-item"><span class="badge bg-success">✓</span> Step 3 — Prefill review</li>
+    <li class="list-inline-item">›</li>
+    <li class="list-inline-item"><span class="badge bg-success">✓</span> Step 4 — Locations</li>
+    <li class="list-inline-item">›</li>
+    <li class="list-inline-item"><strong class="text-body">Step 5 — Skills</strong></li>
+  </ol>
+  <h4 class="mb-0">What technical skills have you trained?</h4>
+</div>
+
+<p class="text-muted">
+  Check the skills you've practiced enough to apply on race day. Each
+  unchecked skill that matches your race terrain or included disciplines
+  surfaces a coaching flag asking the LLM to address the capability gap
+  in your plan. Leave OFF if you'd need coaching to do it safely; ON if
+  you can self-direct. Editable any time from Profile → Skills.
+</p>
+
+<form method="post" action="{{ url_for('onboarding.skills_save') }}">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+  {% include 'onboarding/_skills_form.html' %}
+
+  <div class="d-flex justify-content-between align-items-center mt-3 pt-3 border-top">
+    <a href="{{ post_step_skills_target }}" class="btn btn-link text-muted">Skip for now</a>
+    <button type="submit" class="btn btn-primary">Save & continue</button>
+  </div>
+</form>
+
+{% endblock %}

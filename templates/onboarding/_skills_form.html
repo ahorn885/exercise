@@ -1,0 +1,49 @@
+{# Shared skill-capability toggle form fields.
+
+   Used by both `onboarding/skills.html` (Step 5 — Skills) and
+   `profile/edit.html` tab=skills via Jinja `include`. Keeps the
+   checkbox layout authoritative in one place so label / help-text
+   edits don't drift between the two surfaces (mirrors the
+   `_schedule_form.html` precedent).
+
+   Inputs:
+     toggle_defs (list[dict]) — vocab rows from
+       layer0.skill_capability_toggles. Each carries `toggle_name`
+       (snake_case identifier used as the form key), `display_label`
+       (athlete-facing checkbox label), `description` (2-3 sentence
+       help text).
+     current_states (dict[str, bool]) — current per-toggle state from
+       athlete_skill_toggles. Missing keys are treated as False
+       (default-OFF semantics per the Bucket C (l) ratification).
+
+   Each checkbox emits as `skill__<toggle_name>` so the POST handler
+   can pick skill-toggle fields out of a mixed form payload.
+#}
+
+{% if toggle_defs %}
+  <div class="row g-3">
+    {% for td in toggle_defs %}
+      <div class="col-12">
+        <div class="form-check border rounded p-3">
+          <input class="form-check-input"
+                 type="checkbox"
+                 id="skill__{{ td.toggle_name }}"
+                 name="skill__{{ td.toggle_name }}"
+                 value="1"
+                 {% if current_states.get(td.toggle_name) %}checked{% endif %}>
+          <label class="form-check-label w-100" for="skill__{{ td.toggle_name }}">
+            <strong>{{ td.display_label }}</strong>
+            <div class="text-muted small mt-1">{{ td.description }}</div>
+          </label>
+        </div>
+      </div>
+    {% endfor %}
+  </div>
+{% else %}
+  <div class="alert alert-warning small mb-0" role="alert">
+    No skill-capability toggles are configured in the canonical vocab.
+    This usually means the ETL populate script
+    (<code>populate_skill_capability_toggles.sql</code>) has not been
+    applied to this database yet.
+  </div>
+{% endif %}
