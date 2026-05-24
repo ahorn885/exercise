@@ -23,10 +23,12 @@ from datetime import date, datetime
 from flask import Blueprint, render_template, request, redirect, url_for, flash, abort, jsonify
 
 import mapbox_client
+from athlete import get_athlete_profile
 from database import get_db
 from race_events_invalidation import (
     evict_on_target_event_brief_field_change,
     evict_on_target_event_framework_sport_change,
+    evict_on_target_event_included_discipline_ids_change,
     evict_on_target_event_periodization_change,
 )
 from race_events_repo import (
@@ -91,19 +93,31 @@ def _terrain_choices(db) -> list[dict]:
 
 def _parse_race_terrain(form) -> list[dict]:
     """Parse the repeating `race_terrain[N][...]` form fields into a list
-    of `{"terrain_id": str, "pct_of_race": float}` dicts.
+    of `{"terrain_id": str, "pct_of_race": float, "discipline_id": str|None}`
+    dicts.
 
     Empty rows (no terrain_id selected OR no percent entered) are silently
     dropped — athletes adding a row then leaving it blank shouldn't fail
     the save. Invalid terrain_id (not matching TRN-\\d{3}) or invalid
     percent (non-numeric / out of [0, 100]) drops the row and skips it.
+
+    D-73 Phase 5.2 Bucket E.(c)-C1 — optional per-row `discipline_id`
+    coupling. Blank string parses as None (race-wide terrain); any
+    non-empty value is stored verbatim (validation against the race's
+    `included_discipline_ids` is enforced by Layer 2A's bridge — invalid
+    IDs simply produce no match and the terrain row falls through as
+    race-wide for downstream consumers).
     """
     out: list[dict] = []
     # Discover the row indices used by the template (form names like
-    # `race_terrain[0][terrain_id]`, `race_terrain[1][pct_of_race]`).
+    # `race_terrain[0][terrain_id]`, `race_terrain[1][pct_of_race]`,
+    # `race_terrain[1][discipline_id]`).
     indices: set[int] = set()
     for key in form.keys():
-        m = re.match(r"^race_terrain\[(\d+)\]\[(terrain_id|pct_of_race)\]$", key)
+        m = re.match(
+            r"^race_terrain\[(\d+)\]\[(terrain_id|pct_of_race|discipline_id)\]$",
+            key,
+        )
         if m:
             indices.add(int(m.group(1)))
     for idx in sorted(indices):
@@ -119,8 +133,84 @@ def _parse_race_terrain(form) -> list[dict]:
             continue
         if not (0.0 <= pct <= 100.0):
             continue
-        out.append({'terrain_id': terrain_id, 'pct_of_race': pct})
+        discipline_id = (
+            form.get(f'race_terrain[{idx}][discipline_id]') or ''
+        ).strip() or None
+        out.append({
+            'terrain_id': terrain_id,
+            'pct_of_race': pct,
+            'discipline_id': discipline_id,
+        })
     return out
+
+
+def _parse_discipline_id_filter(form) -> list[str] | None:
+    """Parse the repeating `included_discipline_ids` form fields into a
+    canonical-id list, or None when no boxes are checked.
+
+    Form renders as a Bootstrap checkbox grid keyed on
+    `included_discipline_ids` (same name for every checkbox; Flask's
+    `request.form.getlist` returns the checked subset). Empty selection
+    returns None so Layer 2A reverts to bridge defaults (pre-B2 behavior);
+    a non-empty subset narrows the classifier output. Whitespace stripped
+    + empty strings filtered defensively.
+    """
+    if hasattr(form, 'getlist'):
+        raw = form.getlist('included_discipline_ids')
+    else:
+        raw = []
+    values = [v.strip() for v in raw if isinstance(v, str) and v and v.strip()]
+    return values or None
+
+
+def _disciplines_for_framework_sport(db, framework_sport: str) -> list[dict]:
+    """Return `{id, label}` dicts for disciplines mapped to a
+    `framework_sport` via `layer0.sport_discipline_bridge`.
+
+    Mirrors `_terrain_choices` shape. Used by the B2 checkbox grid (and
+    the C1 per-row terrain `<select>`) to render the discipline set for
+    the race's chosen sport. Empty list when the framework_sport doesn't
+    resolve in the bridge — the template renders a "Discipline filtering
+    not available for this sport" empty state rather than failing.
+
+    The bridge directly answers "for this framework_sport, what
+    canonical disciplines are in scope," which is the same set Layer 2A's
+    classifier surfaces post-filter. Filters `superseded_at IS NULL` to
+    use the current canonical mapping; runtime pinning is handled
+    separately by Layer 2A's `etl_version_set`.
+    """
+    if not framework_sport:
+        return []
+    cur = db.execute(
+        """
+        SELECT discipline_id, discipline_name
+          FROM layer0.sport_discipline_bridge
+         WHERE framework_sport = ?
+           AND superseded_at IS NULL
+         ORDER BY discipline_id
+        """,
+        (framework_sport,),
+    )
+    return [
+        {'id': r['discipline_id'], 'label': r['discipline_name']}
+        for r in cur.fetchall()
+    ]
+
+
+def _resolve_effective_framework_sport(db, user_id: int, race: dict | None) -> str | None:
+    """Resolve the framework_sport to use for initial discipline-grid render.
+
+    Mirrors the orchestrator's resolution order (`layer4/orchestrator.py`
+    `_upstream_full_cone`): race-row override wins; otherwise fall back to
+    athlete-profile `primary_sport`. Returns None when neither is set —
+    the template then renders an empty discipline grid with helper copy
+    pointing the athlete at the framework_sport field.
+    """
+    race_override = (race or {}).get('framework_sport') if race else None
+    if race_override:
+        return race_override
+    profile = get_athlete_profile(db, user_id) or {}
+    return profile.get('primary_sport') or None
 
 
 def _run_mapbox_search(query: str) -> tuple[list[dict], str | None]:
@@ -273,6 +363,7 @@ def new_race():
             aid_stations=_parse_int(request.form, 'aid_stations'),
             race_url=_parse_race_url(request.form),
             framework_sport=_parse_str(request.form, 'framework_sport'),
+            included_discipline_ids=_parse_discipline_id_filter(request.form),
             **locale_fields,
         )
         flash(f'Race "{name}" added.', 'success')
@@ -286,6 +377,14 @@ def new_race():
         return _tab_redirect()
 
     terrain_choices = _terrain_choices(db)
+    # D-73 Phase 5.2 Bucket E.(b)-B2 + E.(c)-C1 — discipline grid for the
+    # B2 `<select multiple>` rendered as checkboxes + the per-row terrain
+    # discipline_id `<select>`. Initial render uses the athlete's
+    # primary_sport (no race exists yet for the new-race path); client-
+    # side JS rebinds when athlete edits the framework_sport input via the
+    # `/profile/race-events/disciplines/search` endpoint.
+    initial_framework_sport = _resolve_effective_framework_sport(db, uid, None)
+    discipline_choices = _disciplines_for_framework_sport(db, initial_framework_sport)
     # D-73 Phase 5.2 walkthrough #1 — Mapbox-anchored race-location picker.
     # The search box + result list are rendered + driven by the inline
     # `<script nonce="..."` block in `templates/_race_locale_picker.html`
@@ -300,6 +399,8 @@ def new_race():
         race_locales=[],
         equipment_by_locale={},
         terrain_choices=terrain_choices,
+        discipline_choices=discipline_choices,
+        initial_framework_sport=initial_framework_sport,
         race_formats=VALID_RACE_FORMATS,
         route_locale_roles=VALID_ROUTE_LOCALE_ROLES,
         is_new=True,
@@ -332,12 +433,16 @@ def edit_race(race_event_id: int):
         for rl in race_locales
     }
     terrain_choices = _terrain_choices(db)
+    initial_framework_sport = _resolve_effective_framework_sport(db, uid, race)
+    discipline_choices = _disciplines_for_framework_sport(db, initial_framework_sport)
     return render_template(
         'profile/race_event_edit.html',
         race=race,
         race_locales=race_locales,
         equipment_by_locale=equipment_by_locale,
         terrain_choices=terrain_choices,
+        discipline_choices=discipline_choices,
+        initial_framework_sport=initial_framework_sport,
         race_formats=VALID_RACE_FORMATS,
         route_locale_roles=VALID_ROUTE_LOCALE_ROLES,
         is_new=False,
@@ -380,6 +485,28 @@ def update_race(race_event_id: int):
     new_aid_stations = _parse_int(request.form, 'aid_stations')
     new_race_url = _parse_race_url(request.form)
     new_framework_sport = _parse_str(request.form, 'framework_sport')
+    parsed_discipline_filter = _parse_discipline_id_filter(request.form)
+
+    # D-73 Phase 5.2 Bucket E.(b)-B2 — auto-clear on framework_sport
+    # change. Previously-selected discipline IDs reference the old sport's
+    # bridge set and are invalid for the new sport; silently dropping them
+    # at Layer 2A would create a UI/runtime mismatch (form shows old
+    # selection; classifier ignores). Clear to None + flash a hint so the
+    # athlete knows to re-pick. Only fires when framework_sport actually
+    # changed AND there was a prior non-NULL selection (no flash on
+    # already-empty rows).
+    prior_framework_sport = race.get('framework_sport')
+    prior_discipline_filter = race.get('included_discipline_ids')
+    framework_sport_will_change = prior_framework_sport != new_framework_sport
+    if framework_sport_will_change and prior_discipline_filter:
+        new_discipline_filter = None
+        flash(
+            'Sport override changed — your discipline picks were cleared. '
+            'Re-select them for the new sport.',
+            'info',
+        )
+    else:
+        new_discipline_filter = parsed_discipline_filter
 
     # D-73 Phase 5.2 walkthrough #1 — the race-details form no longer carries
     # `event_locale_id` (legacy dropdown removed); the 5 Mapbox columns are
@@ -405,6 +532,7 @@ def update_race(race_event_id: int):
         event_locale_lng=race.get('event_locale_lng'),
         race_url=new_race_url,
         framework_sport=new_framework_sport,
+        included_discipline_ids=new_discipline_filter,
         notes=new_notes,
         race_terrain=new_race_terrain,
         aid_stations=new_aid_stations,
@@ -427,13 +555,21 @@ def update_race(race_event_id: int):
         prior_terrain = race.get('race_terrain') or []
         prior_aid = race.get('aid_stations')
         prior_race_url = race.get('race_url')
-        prior_framework_sport = race.get('framework_sport')
         # D-73 Phase 5.2 Bucket E.(b) — framework_sport override change
         # flips Layer 2A's discipline classification → wider eviction than
         # periodization (`layer2a` policy = all 4 entry points + Layer
         # 3A/3B vs periodization's `_NON_SINGLE_SESSION`). Fire it first;
         # the layer2a policy supersets both periodization + brief-only.
         framework_sport_changed = prior_framework_sport != new_framework_sport
+        # D-73 Phase 5.2 Bucket E.(b)-B2 — included_discipline_ids override
+        # change uses the same `layer2a` policy as framework_sport (both
+        # reshape Layer 2A's discipline output). Subsumed by the
+        # framework_sport branch when the override is what's driving the
+        # auto-clear; only fires on its own when athlete edits the
+        # discipline grid without touching framework_sport.
+        discipline_filter_changed = (
+            prior_discipline_filter != new_discipline_filter
+        )
         brief_only_changed = (
             race['distance_km'] != new_distance_km
             or race['total_elevation_gain_m'] != new_total_elevation_gain_m
@@ -446,12 +582,14 @@ def update_race(race_event_id: int):
         )
         if framework_sport_changed:
             evict_on_target_event_framework_sport_change(db, uid)
+        elif discipline_filter_changed:
+            evict_on_target_event_included_discipline_ids_change(db, uid)
         elif periodization_changed:
             evict_on_target_event_periodization_change(db, uid)
         elif brief_only_changed:
-            # Periodization + framework_sport evictions are broader than
-            # brief-only; firing brief-only on top would only re-evict
-            # already-evicted race_week_brief rows.
+            # Periodization + framework_sport / discipline-filter evictions
+            # are broader than brief-only; firing brief-only on top would
+            # only re-evict already-evicted race_week_brief rows.
             evict_on_target_event_brief_field_change(db, uid)
 
     flash('Race updated.', 'success')
@@ -526,6 +664,32 @@ def locale_search():
             }
             for r in results
         ],
+    })
+
+
+@bp.route('/disciplines/search', methods=['GET'])
+def disciplines_search():
+    """JSON endpoint that returns the discipline list for a framework_sport.
+
+    D-73 Phase 5.2 Bucket E.(b)-B2 — backs the inline picker that rebinds
+    the discipline checkbox grid + the per-row terrain discipline `<select>`
+    when athlete edits the framework_sport input. Mirrors `locale_search`
+    shape (auth scoped via `current_user_id`; result list keyed by
+    `framework_sport` query param).
+
+    Response: `{"framework_sport": "...", "results": [{"id", "label"}, ...]}`
+    Empty results when the sport doesn't resolve in the bridge — the JS
+    swaps to a "Discipline filtering not available for this sport" hint.
+    """
+    db = get_db()
+    # Force auth — the bridge data is non-sensitive but keeping the route
+    # behind the session preserves the "authed surfaces only" invariant.
+    _ = current_user_id()
+    framework_sport = (request.args.get('framework_sport') or '').strip()
+    choices = _disciplines_for_framework_sport(db, framework_sport)
+    return jsonify({
+        'framework_sport': framework_sport,
+        'results': choices,
     })
 
 

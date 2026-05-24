@@ -546,3 +546,105 @@ class TestLoadDisciplinesPercentEscape:
         assert "'%WEEKLY TOTAL%'" not in sql, (
             "bare '%' in the LIKE pattern triggers IndexError under psycopg2"
         )
+
+
+class TestDisciplineIdFilter:
+    """D-73 Phase 5.2 Bucket E.(b)-B2 — race-level `discipline_id_filter`
+    narrows the bridge-derived discipline list to an explicit subset
+    while preserving rationale + phase_load + training_gap on the
+    surviving rows. None = full bridge defaults (pre-B2 behavior).
+    """
+
+    def test_none_filter_returns_full_bridge_list(self):
+        """`discipline_id_filter=None` (default) reproduces pre-B2 output:
+        all bridge rows survive."""
+        conn = _FakeConn()
+        conn.queue_response(rows=_ar_rows())
+        payload = q_layer2a_discipline_classifier_payload(
+            conn,
+            "Adventure Racing",
+            estimated_race_duration_hours=56.0,
+            navigation_required=True,
+            etl_version_set=_DEFAULT_ETL,
+        )
+        ids = {d.discipline_id for d in payload.disciplines}
+        # _ar_rows seeds 7 disciplines; full set surfaces.
+        assert len(payload.disciplines) == 7
+        assert "D-001" in ids and "D-008b" in ids and "D-013" in ids
+
+    def test_subset_filter_narrows_disciplines(self):
+        """`discipline_id_filter=["D-001","D-013"]` keeps only those two
+        from the bridge-derived 7. Surviving rows retain their rationale,
+        phase_load, conditional_resolution."""
+        conn = _FakeConn()
+        conn.queue_response(rows=_ar_rows())
+        payload = q_layer2a_discipline_classifier_payload(
+            conn,
+            "Adventure Racing",
+            estimated_race_duration_hours=56.0,
+            navigation_required=True,
+            discipline_id_filter=["D-001", "D-013"],
+            etl_version_set=_DEFAULT_ETL,
+        )
+        ids = [d.discipline_id for d in payload.disciplines]
+        assert ids == ["D-001", "D-013"]
+        # Phase load preserved on surviving rows
+        by_id = {d.discipline_id: d for d in payload.disciplines}
+        assert by_id["D-001"].phase_load is not None
+        assert by_id["D-001"].phase_load.base_low == 30
+        # Conditional resolution preserved
+        assert by_id["D-013"].conditional_resolution == "race_rule_auto_in"
+
+    def test_empty_filter_returns_no_disciplines(self):
+        """`discipline_id_filter=[]` is the explicit "no disciplines"
+        case (callers that supply an empty list — distinct from None).
+        Hits the same unresolved-sport edge case as an unknown sport."""
+        conn = _FakeConn()
+        conn.queue_response(rows=_ar_rows())
+        payload = q_layer2a_discipline_classifier_payload(
+            conn,
+            "Adventure Racing",
+            estimated_race_duration_hours=56.0,
+            navigation_required=True,
+            discipline_id_filter=[],
+            etl_version_set=_DEFAULT_ETL,
+        )
+        assert payload.disciplines == []
+        # Layer 2A's existing unresolved-sport behavior surfaces:
+        assert payload.hitl_required is True
+        assert len(payload.unresolved_flags) == 1
+        assert payload.unresolved_flags[0].raw_input == "Adventure Racing"
+
+    def test_filter_with_nonexistent_ids_silently_drops(self):
+        """`discipline_id_filter=["D-999"]` — IDs not in the bridge are
+        silently dropped (no crash). Defensive against stale UI state."""
+        conn = _FakeConn()
+        conn.queue_response(rows=_ar_rows())
+        payload = q_layer2a_discipline_classifier_payload(
+            conn,
+            "Adventure Racing",
+            estimated_race_duration_hours=56.0,
+            navigation_required=True,
+            discipline_id_filter=["D-999"],
+            etl_version_set=_DEFAULT_ETL,
+        )
+        assert payload.disciplines == []
+
+    def test_filter_preserves_phase_load_and_training_gap(self):
+        """Surviving rows keep their PLA + DTG columns intact. The filter
+        is a post-prune over the existing SELECT result — it doesn't
+        re-query or strip metadata."""
+        conn = _FakeConn()
+        conn.queue_response(rows=_ar_rows())
+        payload = q_layer2a_discipline_classifier_payload(
+            conn,
+            "Adventure Racing",
+            estimated_race_duration_hours=56.0,
+            navigation_required=True,
+            discipline_id_filter=["D-016"],  # the row with a training_gap
+            etl_version_set=_DEFAULT_ETL,
+        )
+        assert len(payload.disciplines) == 1
+        d = payload.disciplines[0]
+        assert d.discipline_id == "D-016"
+        assert d.training_gap is not None

@@ -90,7 +90,7 @@ def load_race_event_payload(db, race_event_id: int) -> RaceEventPayload | None:
                re.race_terrain, re.aid_stations,
                re.event_locale_name, re.event_locale_mapbox_id,
                re.event_locale_place_name, re.event_locale_lat, re.event_locale_lng,
-               re.race_url, re.framework_sport
+               re.race_url, re.framework_sport, re.included_discipline_ids
           FROM race_events re
           LEFT JOIN locale_profiles lp ON lp.id = re.event_locale_id
          WHERE re.id = ?
@@ -167,9 +167,19 @@ def load_race_event_payload(db, race_event_id: int) -> RaceEventPayload | None:
         RaceTerrainEntry(
             terrain_id=entry["terrain_id"],
             pct_of_race=float(entry["pct_of_race"]),
+            discipline_id=entry.get("discipline_id"),
         )
         for entry in raw_terrain
     ]
+
+    # included_discipline_ids: psycopg2's TEXT[] adapter returns list[str],
+    # or None for NULL. The sqlite shim path stringifies as PG array literal
+    # ('{D-001,D-008b}') which we don't tolerate here — sqlite path is only
+    # used by the _FakeConn substrate in tests, which sets the field directly
+    # as list[str] | None.
+    raw_disc_filter = race_row["included_discipline_ids"]
+    if raw_disc_filter is not None and not isinstance(raw_disc_filter, list):
+        raw_disc_filter = list(raw_disc_filter)
 
     # D-73 Phase 5.2 walkthrough #1 (2026-05-21) — race_events now carries
     # Mapbox-anchored race-location columns alongside the legacy
@@ -210,6 +220,7 @@ def load_race_event_payload(db, race_event_id: int) -> RaceEventPayload | None:
         ),
         race_url=race_row["race_url"],
         framework_sport=race_row["framework_sport"],
+        included_discipline_ids=raw_disc_filter,
         route_locales=route_locales,
     )
 
@@ -248,6 +259,7 @@ def create_race_event(
     event_locale_lng: float | None = None,
     race_url: str | None = None,
     framework_sport: str | None = None,
+    included_discipline_ids: list[str] | None = None,
     is_target_event: bool = False,
     notes: str | None = None,
     race_terrain: list[dict[str, Any]] | None = None,
@@ -286,9 +298,9 @@ def create_race_event(
              race_terrain, aid_stations,
              event_locale_name, event_locale_mapbox_id, event_locale_place_name,
              event_locale_lat, event_locale_lng,
-             race_url, framework_sport,
+             race_url, framework_sport, included_discipline_ids,
              etl_version_set)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?, ?, ?, ?, ?, ?, ?, ?, ?::text[], ?::jsonb)
         RETURNING id
         """,
         (
@@ -312,6 +324,7 @@ def create_race_event(
             event_locale_lng,
             race_url,
             framework_sport,
+            included_discipline_ids,
             json.dumps(etl_version_set or {}),
         ),
     )
@@ -428,7 +441,7 @@ def get_race_event(db, user_id: int, race_event_id: int) -> dict[str, Any] | Non
                race_terrain, aid_stations,
                event_locale_name, event_locale_mapbox_id, event_locale_place_name,
                event_locale_lat, event_locale_lng,
-               race_url, framework_sport,
+               race_url, framework_sport, included_discipline_ids,
                created_at, updated_at
           FROM race_events
          WHERE id = ? AND user_id = ?
@@ -454,6 +467,12 @@ def get_race_event(db, user_id: int, race_event_id: int) -> dict[str, Any] | Non
         v = result.get(k)
         if v is not None and not isinstance(v, float):
             result[k] = float(v)
+    # TEXT[] column surfaces as list[str] via psycopg2's array adapter, or
+    # None for NULL. Coerce any non-list iterable (test substrates) to list
+    # so callers can compare against list literals cleanly.
+    raw_disc_filter = result.get("included_discipline_ids")
+    if raw_disc_filter is not None and not isinstance(raw_disc_filter, list):
+        result["included_discipline_ids"] = list(raw_disc_filter)
     return result
 
 
@@ -477,6 +496,7 @@ def update_race_event(
     event_locale_lng: float | None = None,
     race_url: str | None = None,
     framework_sport: str | None = None,
+    included_discipline_ids: list[str] | None = None,
     notes: str | None = None,
     race_terrain: list[dict[str, Any]] | None = None,
     aid_stations: int | None = None,
@@ -511,6 +531,7 @@ def update_race_event(
                event_locale_lng = ?,
                race_url = ?,
                framework_sport = ?,
+               included_discipline_ids = ?::text[],
                notes = ?,
                race_terrain = ?::jsonb,
                aid_stations = ?,
@@ -533,6 +554,7 @@ def update_race_event(
             event_locale_lng,
             race_url,
             framework_sport,
+            included_discipline_ids,
             notes,
             json.dumps(race_terrain or []),
             aid_stations,

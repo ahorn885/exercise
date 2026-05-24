@@ -186,6 +186,9 @@ def _race_row(**overrides):
         "race_url": None,
         # D-73 Phase 5.2 Bucket E.(b) — per-race framework_sport override.
         "framework_sport": None,
+        # D-73 Phase 5.2 Bucket E.(b)-B2 — per-race discipline filter
+        # override. None = use full bridge defaults (pre-B2 behavior).
+        "included_discipline_ids": None,
     }
     base.update(overrides)
     return base
@@ -1251,4 +1254,107 @@ class TestFrameworkSportOverride:
         sql, params = conn.calls[0]
         assert "framework_sport = ?" in sql
         # None appears in params for the framework_sport column slot.
+        assert None in params
+
+
+class TestIncludedDisciplineIdsOverride:
+    """Per-race `included_discipline_ids` filter column (D-73 Phase 5.2
+    Bucket E.(b)-B2). TEXT[] of canonical discipline IDs; narrows Layer
+    2A's bridge-derived discipline list when supplied. None = use full
+    bridge defaults (pre-B2 behavior).
+    """
+
+    def test_load_payload_populates_included_discipline_ids_when_present(self):
+        conn = _FakeConn()
+        conn.queue_response(
+            row=_race_row(included_discipline_ids=["D-001", "D-008b", "D-013"])
+        )
+        conn.queue_response(rows=[])
+        payload = load_race_event_payload(conn, race_event_id=10)
+        assert payload is not None
+        assert payload.included_discipline_ids == ["D-001", "D-008b", "D-013"]
+
+    def test_load_payload_defaults_included_discipline_ids_to_none(self):
+        conn = _FakeConn()
+        conn.queue_response(row=_race_row())
+        conn.queue_response(rows=[])
+        payload = load_race_event_payload(conn, race_event_id=10)
+        assert payload is not None
+        assert payload.included_discipline_ids is None
+
+    def test_load_payload_coerces_non_list_iterable_to_list(self):
+        # psycopg2 may surface TEXT[] as a tuple under some adapter shapes;
+        # the repo coerces to list[str] for downstream equality.
+        conn = _FakeConn()
+        conn.queue_response(
+            row=_race_row(included_discipline_ids=("D-001", "D-013"))
+        )
+        conn.queue_response(rows=[])
+        payload = load_race_event_payload(conn, race_event_id=10)
+        assert payload is not None
+        assert payload.included_discipline_ids == ["D-001", "D-013"]
+
+    def test_create_passes_included_discipline_ids_kwarg(self):
+        conn = _FakeConn()
+        conn.queue_response(row={"id": 42})
+        create_race_event(
+            conn,
+            user_id=1,
+            name="Race",
+            event_date=date(2026, 7, 17),
+            race_format="expedition_ar",
+            included_discipline_ids=["D-001", "D-013"],
+        )
+        sql, params = conn.calls[0]
+        assert "included_discipline_ids" in sql
+        assert "?::text[]" in sql
+        assert ["D-001", "D-013"] in params
+
+    def test_create_defaults_included_discipline_ids_to_none(self):
+        conn = _FakeConn()
+        conn.queue_response(row={"id": 1})
+        create_race_event(
+            conn,
+            user_id=1,
+            name="Race",
+            event_date=date(2026, 7, 17),
+            race_format="single_day",
+        )
+        # Default kwarg → None in the params tuple; column appears in SQL
+        # so the row's value gets explicitly set rather than relying on
+        # DDL default (which is NULL anyway, but explicit is safer).
+        assert "included_discipline_ids" in conn.calls[0][0]
+
+    def test_update_passes_included_discipline_ids_kwarg(self):
+        conn = _FakeConn()
+        update_race_event(
+            conn,
+            user_id=1,
+            race_event_id=10,
+            name="Race",
+            event_date=date(2026, 7, 17),
+            race_format="expedition_ar",
+            included_discipline_ids=["D-008b", "D-013"],
+        )
+        sql, params = conn.calls[0]
+        assert "included_discipline_ids = ?::text[]" in sql
+        assert ["D-008b", "D-013"] in params
+
+    def test_update_can_clear_included_discipline_ids(self):
+        """Passing included_discipline_ids=None clears the column to NULL
+        (the column is NULLable). UPDATE SQL still names the column so the
+        prior value gets overwritten."""
+        conn = _FakeConn()
+        update_race_event(
+            conn,
+            user_id=1,
+            race_event_id=10,
+            name="Race",
+            event_date=date(2026, 7, 17),
+            race_format="expedition_ar",
+            included_discipline_ids=None,
+        )
+        sql, params = conn.calls[0]
+        assert "included_discipline_ids = ?::text[]" in sql
+        # None appears in params for the discipline_ids slot.
         assert None in params

@@ -68,6 +68,7 @@ from athlete import (
 from race_events_invalidation import (
     evict_on_target_event_brief_field_change,
     evict_on_target_event_framework_sport_change,
+    evict_on_target_event_included_discipline_ids_change,
     evict_on_target_event_periodization_change,
 )
 from race_events_repo import (
@@ -669,18 +670,23 @@ _TRN_PATTERN = re.compile(r"^TRN-\d{3}$")
 
 def _parse_race_terrain(form):
     """Parse the repeating `race_terrain[N][...]` form fields into a list
-    of `{"terrain_id": str, "pct_of_race": float}` dicts.
+    of `{"terrain_id": str, "pct_of_race": float, "discipline_id": str|None}`
+    dicts.
 
     Empty rows (no terrain_id selected OR no percent entered) are silently
     dropped — athletes adding a row then leaving it blank shouldn't fail
     the save. Invalid terrain_id (not matching TRN-\\d{3}) or invalid
     percent (non-numeric / out of [0, 100]) drops the row and skips it.
-    Mirrors `routes/race_events.py:_parse_race_terrain`.
+    Mirrors `routes/race_events.py:_parse_race_terrain` (D-73 Phase 5.2
+    Bucket E.(c)-C1 — per-row discipline_id added on both sides).
     """
     out = []
     indices = set()
     for key in form.keys():
-        m = re.match(r"^race_terrain\[(\d+)\]\[(terrain_id|pct_of_race)\]$", key)
+        m = re.match(
+            r"^race_terrain\[(\d+)\]\[(terrain_id|pct_of_race|discipline_id)\]$",
+            key,
+        )
         if m:
             indices.add(int(m.group(1)))
     for idx in sorted(indices):
@@ -696,8 +702,28 @@ def _parse_race_terrain(form):
             continue
         if not (0.0 <= pct <= 100.0):
             continue
-        out.append({'terrain_id': terrain_id, 'pct_of_race': pct})
+        discipline_id = (
+            form.get(f'race_terrain[{idx}][discipline_id]') or ''
+        ).strip() or None
+        out.append({
+            'terrain_id': terrain_id,
+            'pct_of_race': pct,
+            'discipline_id': discipline_id,
+        })
     return out
+
+
+def _parse_discipline_id_filter(form):
+    """Parse `included_discipline_ids` checkbox values into a canonical-id
+    list, or None when no boxes are checked. Mirrors
+    `routes/race_events.py:_parse_discipline_id_filter` exactly.
+    """
+    if hasattr(form, 'getlist'):
+        raw = form.getlist('included_discipline_ids')
+    else:
+        raw = []
+    values = [v.strip() for v in raw if isinstance(v, str) and v and v.strip()]
+    return values or None
 
 
 def _terrain_choices(db):
@@ -735,7 +761,8 @@ def _get_target_race_row(db, uid):
         '       total_elevation_gain_m, race_rules_summary, mandatory_gear_text, '
         '       event_locale_id, notes, race_terrain, aid_stations, '
         '       event_locale_name, event_locale_mapbox_id, event_locale_place_name, '
-        '       event_locale_lat, event_locale_lng, race_url, framework_sport '
+        '       event_locale_lat, event_locale_lng, race_url, framework_sport, '
+        '       included_discipline_ids '
         '  FROM race_events '
         ' WHERE user_id = ? AND is_target_event = TRUE '
         ' LIMIT 1',
@@ -757,6 +784,12 @@ def _get_target_race_row(db, uid):
         v = result.get(k)
         if v is not None and not isinstance(v, float):
             result[k] = float(v)
+    # D-73 Phase 5.2 Bucket E.(b)-B2 — TEXT[] adapter surfaces as list[str]
+    # under psycopg2; coerce any non-list iterable to list for clean equals
+    # comparisons in the eviction-diff path below.
+    raw_disc_filter = result.get('included_discipline_ids')
+    if raw_disc_filter is not None and not isinstance(raw_disc_filter, list):
+        result['included_discipline_ids'] = list(raw_disc_filter)
     return result
 
 
@@ -790,6 +823,21 @@ def target_race():
     target = _get_target_race_row(db, uid)
     terrain_choices = _terrain_choices(db)
 
+    # D-73 Phase 5.2 Bucket E.(b)-B2 + E.(c)-C1 — discipline grid for the
+    # B2 `<select multiple>` rendered as checkboxes + the per-row terrain
+    # discipline_id `<select>`. Initial render resolves
+    # `target.framework_sport ?? athlete_profile.primary_sport` so the
+    # checkbox grid populates from page load; the inline JS picker rebinds
+    # when the athlete edits the framework_sport input. Mirrors the
+    # `_resolve_effective_framework_sport` + `_disciplines_for_framework_sport`
+    # helpers from `routes/race_events.py`.
+    from routes.race_events import (
+        _resolve_effective_framework_sport,
+        _disciplines_for_framework_sport,
+    )
+    initial_framework_sport = _resolve_effective_framework_sport(db, uid, target)
+    discipline_choices = _disciplines_for_framework_sport(db, initial_framework_sport)
+
     # D-73 Phase 5.2 walkthrough #1 (2026-05-21) — race-location picker
     # imports the Mapbox disclosure ack helpers from `routes/locales`;
     # disclosure version is shared across `/locales/new` and the race-event
@@ -799,6 +847,8 @@ def target_race():
         'onboarding/target_race.html',
         target=target,
         terrain_choices=terrain_choices,
+        discipline_choices=discipline_choices,
+        initial_framework_sport=initial_framework_sport,
         race_formats=VALID_RACE_FORMATS,
         post_step3c_target=_POST_STEP3C_TARGET,
         mapbox_acked=_disclosure_acked(db, uid),
@@ -854,8 +904,30 @@ def target_race_save():
     new_locale_fields = _extract_mapbox_locale_from_form(request.form)
     new_race_url = _parse_race_url(request.form)
     new_framework_sport = _parse_str_field(request.form, 'framework_sport')
+    parsed_discipline_filter = _parse_discipline_id_filter(request.form)
 
     target = _get_target_race_row(db, uid)
+    # D-73 Phase 5.2 Bucket E.(b)-B2 — auto-clear discipline picks when
+    # framework_sport changes (orphan cleanup; same semantic as
+    # `routes/race_events.py:update_race`). Only fires on the UPDATE branch
+    # (the new-target branch has no prior selection to invalidate).
+    if target:
+        prior_framework_sport = target.get('framework_sport')
+        prior_discipline_filter = target.get('included_discipline_ids')
+        if prior_framework_sport != new_framework_sport and prior_discipline_filter:
+            new_discipline_filter = None
+            flash(
+                'Sport override changed — your discipline picks were cleared. '
+                'Re-select them for the new sport.',
+                'info',
+            )
+        else:
+            new_discipline_filter = parsed_discipline_filter
+    else:
+        prior_framework_sport = None
+        prior_discipline_filter = None
+        new_discipline_filter = parsed_discipline_filter
+
     if target:
         update_race_event(
             db, uid, int(target['id']),
@@ -872,6 +944,7 @@ def target_race_save():
             aid_stations=new_aid_stations,
             race_url=new_race_url,
             framework_sport=new_framework_sport,
+            included_discipline_ids=new_discipline_filter,
             **new_locale_fields,
         )
         # D-66 §9 invalidation — same diff logic as routes/race_events.py
@@ -887,11 +960,17 @@ def target_race_save():
         prior_aid = target.get('aid_stations')
         prior_race_url = target.get('race_url')
         prior_mapbox_id = target.get('event_locale_mapbox_id')
-        prior_framework_sport = target.get('framework_sport')
         # D-73 Phase 5.2 Bucket E.(b) — framework_sport override change on
         # the target row → wider Layer 2A eviction (supersets periodization
         # + brief-only). Mirrors `routes/race_events.py:update_race`.
         framework_sport_changed = prior_framework_sport != new_framework_sport
+        # D-73 Phase 5.2 Bucket E.(b)-B2 — included_discipline_ids change
+        # uses same `layer2a` policy as framework_sport (both reshape Layer
+        # 2A's discipline output). Subsumed when framework_sport drives
+        # the auto-clear; fires standalone when athlete edits picks alone.
+        discipline_filter_changed = (
+            prior_discipline_filter != new_discipline_filter
+        )
         brief_only_changed = (
             target['distance_km'] != new_distance_km
             or target['total_elevation_gain_m'] != new_total_elevation_gain_m
@@ -905,6 +984,8 @@ def target_race_save():
         )
         if framework_sport_changed:
             evict_on_target_event_framework_sport_change(db, uid)
+        elif discipline_filter_changed:
+            evict_on_target_event_included_discipline_ids_change(db, uid)
         elif periodization_changed:
             evict_on_target_event_periodization_change(db, uid)
         elif brief_only_changed:
@@ -926,6 +1007,7 @@ def target_race_save():
             aid_stations=new_aid_stations,
             race_url=new_race_url,
             framework_sport=new_framework_sport,
+            included_discipline_ids=new_discipline_filter,
             **new_locale_fields,
         )
         # A fresh target row was created. Layer 3B's mode flips from

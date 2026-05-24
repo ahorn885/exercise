@@ -89,6 +89,39 @@
       </small>
     </div>
 
+    {# D-73 Phase 5.2 Bucket E.(b)-B2 — discipline filter checkbox grid.
+       Mirrors `templates/profile/race_event_edit.html` precedent. The
+       inline JS picker at the bottom of this template rebinds the grid
+       (and every per-row discipline `<select>` in the terrain editor)
+       when athlete edits the framework_sport input. #}
+    <div class="col-12">
+      <label class="form-label">Included disciplines (optional)</label>
+      <small class="text-muted d-block mb-2">
+        Leave all unchecked to let the classifier auto-include disciplines based on race format + duration. Check a subset to narrow Layer 2A's output (e.g. opt out of climbing for a no-rock-section AR race).
+      </small>
+      <div id="discipline-grid" data-empty-text="No disciplines available for this sport.">
+        {% if discipline_choices %}
+          <div class="row g-2">
+            {% for dc in discipline_choices %}
+              <div class="col-md-6 col-lg-4">
+                <div class="form-check">
+                  <input class="form-check-input" type="checkbox"
+                         name="included_discipline_ids" value="{{ dc.id }}"
+                         id="discipline-{{ dc.id }}"
+                         {% if target and target.included_discipline_ids and dc.id in target.included_discipline_ids %}checked{% endif %}>
+                  <label class="form-check-label" for="discipline-{{ dc.id }}">
+                    <strong>{{ dc.id }}</strong> {{ dc.label }}
+                  </label>
+                </div>
+              </div>
+            {% endfor %}
+          </div>
+        {% else %}
+          <p class="text-muted small mb-0">No disciplines available for this sport.</p>
+        {% endif %}
+      </div>
+    </div>
+
     <div class="col-12">
       {# D-73 Phase 5.2 walkthrough #1 — race-location picker (shared partial).
          Hidden inputs ride alongside the rest of the form; on Save the POST
@@ -179,5 +212,92 @@
     Skip for now
   </button>
 </form>
+
+{# D-73 Phase 5.2 Bucket E.(b)-B2 — discipline-grid + per-row discipline
+   `<select>` rebind on framework_sport input change. Mirrors
+   `templates/profile/race_event_edit.html` script block exactly. #}
+<script nonce="{{ csp_nonce() }}">
+  (function () {
+    const fsInput = document.getElementById('framework_sport');
+    const grid = document.getElementById('discipline-grid');
+    if (!fsInput || !grid) return;
+
+    const ENDPOINT = "{{ url_for('race_events.disciplines_search') }}";
+    let debounceTimer = null;
+
+    function htmlEscape(s) {
+      return String(s == null ? '' : s)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+    }
+
+    function refreshGrid(results) {
+      const prevChecked = new Set(
+        Array.from(grid.querySelectorAll('input[name="included_discipline_ids"]:checked'))
+          .map((el) => el.value)
+      );
+      if (!results || results.length === 0) {
+        const emptyText = grid.dataset.emptyText || 'No disciplines available for this sport.';
+        grid.innerHTML = '<p class="text-muted small mb-0">' + htmlEscape(emptyText) + '</p>';
+        return;
+      }
+      const cells = results.map((r) => {
+        const checked = prevChecked.has(r.id) ? ' checked' : '';
+        const safeId = htmlEscape(r.id);
+        const safeLabel = htmlEscape(r.label);
+        return (
+          '<div class="col-md-6 col-lg-4">' +
+            '<div class="form-check">' +
+              '<input class="form-check-input" type="checkbox" ' +
+                     'name="included_discipline_ids" value="' + safeId + '" ' +
+                     'id="discipline-' + safeId + '"' + checked + '>' +
+              '<label class="form-check-label" for="discipline-' + safeId + '">' +
+                '<strong>' + safeId + '</strong> ' + safeLabel +
+              '</label>' +
+            '</div>' +
+          '</div>'
+        );
+      });
+      grid.innerHTML = '<div class="row g-2">' + cells.join('') + '</div>';
+    }
+
+    function refreshTerrainDisciplineSelects(results) {
+      const selects = document.querySelectorAll('select[data-discipline-select="1"]');
+      const knownIds = new Set((results || []).map((r) => r.id));
+      selects.forEach((sel) => {
+        const prior = sel.value;
+        const preserved = knownIds.has(prior) ? prior : '';
+        let html = '<option value="">Race-wide</option>';
+        (results || []).forEach((r) => {
+          const safeId = htmlEscape(r.id);
+          const safeLabel = htmlEscape(r.label);
+          const selected = r.id === preserved ? ' selected' : '';
+          html += '<option value="' + safeId + '"' + selected + '>' +
+                    safeId + ' &mdash; ' + safeLabel + '</option>';
+        });
+        sel.innerHTML = html;
+      });
+    }
+
+    async function fetchDisciplinesAndRebind(frameworkSport) {
+      try {
+        const url = ENDPOINT + '?framework_sport=' + encodeURIComponent(frameworkSport);
+        const resp = await fetch(url, { credentials: 'same-origin' });
+        if (!resp.ok) return;
+        const data = await resp.json();
+        const results = (data && data.results) || [];
+        refreshGrid(results);
+        refreshTerrainDisciplineSelects(results);
+      } catch (_e) { /* network/parse error — leave existing grid alone */ }
+    }
+
+    fsInput.addEventListener('input', function () {
+      clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(function () {
+        fetchDisciplinesAndRebind(fsInput.value.trim());
+      }, 350);
+    });
+  })();
+</script>
 
 {% endblock %}

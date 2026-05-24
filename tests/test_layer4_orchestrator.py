@@ -143,6 +143,7 @@ def _queue_target_race_event(
     race_terrain: list | None = None,
     aid_stations: int | None = None,
     framework_sport: str | None = None,
+    included_discipline_ids: list[str] | None = None,
 ) -> None:
     """Queue responses for `load_target_race_event_payload` (3 SELECTs when
     route_locales empty: target_id lookup + main row + route_locales).
@@ -178,6 +179,10 @@ def _queue_target_race_event(
             # framework_sport override. None exercises the fallback to
             # athlete-profile primary_sport.
             "framework_sport": framework_sport,
+            # D-73 Phase 5.2 Bucket E.(b)-B2 (2026-05-24) — per-race
+            # discipline filter override. None = use full bridge defaults
+            # (pre-B2 behavior).
+            "included_discipline_ids": included_discipline_ids,
         }
     )
     conn.queue(rows=[])  # route_locales (empty for single_day)
@@ -1118,6 +1123,87 @@ class TestFrameworkSportOverride:
 
         m_l2a = mocks[1]
         assert m_l2a.call_args.kwargs["framework_sport"] == "Adventure Racing"
+
+
+class TestIncludedDisciplineIdsOverride:
+    """Per-race `included_discipline_ids` filter (D-73 Phase 5.2 Bucket
+    E.(b)-B2). When set on the target race, orchestrator threads it as
+    `discipline_id_filter` into Layer 2A; Layer 2A then post-filters the
+    bridge-derived discipline list. None = use full bridge defaults
+    (pre-B2 behavior).
+    """
+
+    def test_filter_threads_to_layer2a_when_set(self):
+        conn = _FakeConn()
+        _queue_target_race_event(
+            conn,
+            framework_sport="Adventure Racing",
+            included_discipline_ids=["D-001", "D-008b", "D-013"],
+        )
+        _queue_etl_version_set(conn)
+        _queue_primary_locale(conn)
+        _queue_locale_equipment_pool(conn)
+        cache = Layer4Cache(InMemoryCacheBackend())
+
+        race_event_for_l4 = RaceEventPayload(
+            race_event_id=1,
+            user_id=_USER_ID,
+            name="Test Race 2026",
+            event_date=_EVENT_DATE,
+            race_format="single_day",
+            event_locale_id="home",
+            is_target_event=True,
+            framework_sport="Adventure Racing",
+            included_discipline_ids=["D-001", "D-008b", "D-013"],
+        )
+        stack = _patches(
+            layer4_return=_fake_layer4_payload(race_event_payload=race_event_for_l4)
+        )
+        mocks = _enter_all(stack)
+        try:
+            orchestrate_race_week_brief(conn, _USER_ID, cache=cache, today=_TODAY)
+        finally:
+            _exit_all(stack)
+
+        m_l2a = mocks[1]
+        assert m_l2a.call_args.kwargs["discipline_id_filter"] == [
+            "D-001",
+            "D-008b",
+            "D-013",
+        ]
+
+    def test_filter_defaults_to_none_when_unset(self):
+        """Target race carries `included_discipline_ids=None`; orchestrator
+        passes `discipline_id_filter=None` to Layer 2A so the bridge SELECT
+        returns its full defaults (pre-B2 behavior)."""
+        conn = _FakeConn()
+        _queue_target_race_event(conn, framework_sport="Adventure Racing")
+        _queue_etl_version_set(conn)
+        _queue_primary_locale(conn)
+        _queue_locale_equipment_pool(conn)
+        cache = Layer4Cache(InMemoryCacheBackend())
+
+        race_event_for_l4 = RaceEventPayload(
+            race_event_id=1,
+            user_id=_USER_ID,
+            name="Test Race 2026",
+            event_date=_EVENT_DATE,
+            race_format="single_day",
+            event_locale_id="home",
+            is_target_event=True,
+            framework_sport="Adventure Racing",
+        )
+        stack = _patches(
+            layer4_return=_fake_layer4_payload(race_event_payload=race_event_for_l4)
+        )
+        mocks = _enter_all(stack)
+        try:
+            orchestrate_race_week_brief(conn, _USER_ID, cache=cache, today=_TODAY)
+        finally:
+            _exit_all(stack)
+
+        m_l2a = mocks[1]
+        assert m_l2a.call_args.kwargs["discipline_id_filter"] is None
 
 
 class TestLocaleTerrainIdsWireUp:

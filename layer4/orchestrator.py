@@ -224,9 +224,21 @@ def _upstream_full_cone(
             f"layer1.identity.primary_sport is empty for user_id={user_id}",
         )
 
+    # D-73 Phase 5.2 Bucket E.(b)-B2 — race-row `included_discipline_ids`
+    # narrows the bridge-derived discipline list when supplied. Layer 2A
+    # post-filters and the rest of the cone (2B/2C/2D/3A/3B) reads the
+    # narrowed list naturally via `included_discipline_ids` below. The
+    # route layer auto-clears `included_discipline_ids` on framework_sport
+    # change so the filter never references stale IDs.
+    discipline_id_filter = (
+        target_race_event.included_discipline_ids
+        if target_race_event is not None
+        else None
+    )
     layer2a_payload = q_layer2a_discipline_classifier_payload(
         db,
         framework_sport=framework_sport,
+        discipline_id_filter=discipline_id_filter,
         etl_version_set=etl_version_set,
     )
     included_discipline_ids = [
