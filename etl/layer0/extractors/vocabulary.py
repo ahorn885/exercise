@@ -214,44 +214,213 @@ def _parse_equipment(text: str) -> list[dict[str, Any]]:
     return rows
 
 
+# D-73 Phase 5.2 Walkthrough — ETL terrain-vocab drift fix (Bucket C sub-item k).
+# The audit markdown carries terrain only as a 'col-7 phrases → Section K
+# canonical' alias table (15 minimal-shape rows, no terrain_id / category /
+# fidelity / environment / simulation_note). The structured 9-column shape
+# shipped via etl/sources/migrate_terrain_types.sql 2026-05-09 as a one-shot
+# corrective; subsequent `python -m etl.layer0.run` invocations then
+# re-introduced the minimal-shape audit rows under a fresh 0C-vN and
+# superseded the TRN-xxx rows (insert_versioned's supersede sweep matches
+# LIKE '0C-v%' — see etl/layer0/db.py:122-130). To stop that drift the
+# structured rows now live code-side here, mirroring the Phase 2.4-Prep
+# precedent (`_TOGGLE_ALSO_SATISFIES` / `_TOGGLE_GATED_DISCIPLINES` below
+# at vocabulary.py:270-278). The audit terrain block becomes a dead source
+# for terrain_types population (still referenced by Section K narrative).
+_TERRAIN_STRUCTURED_ROWS: list[dict[str, Any]] = [
+    # Foot terrains
+    {
+        "terrain_id": "TRN-001",
+        "canonical_name": "Road / Paved",
+        "category": "Foot",
+        "requires_elevation": False,
+        "technical_surface": False,
+        "environment": "Outdoor",
+        "simulatable": "full",
+        "simulation_note": "Treadmill is full-fidelity substitute for road running.",
+        "notes": "Standard road and paved path running surface.",
+    },
+    {
+        "terrain_id": "TRN-002",
+        "canonical_name": "Groomed Trail",
+        "category": "Foot",
+        "requires_elevation": False,
+        "technical_surface": False,
+        "environment": "Outdoor",
+        "simulatable": "partial",
+        "simulation_note": "Treadmill covers aerobic load; loses surface variation and proprioceptive demand.",
+        "notes": "Compacted, maintained singletrack or dirt trail. Low surface variability.",
+    },
+    {
+        "terrain_id": "TRN-003",
+        "canonical_name": "Technical Trail",
+        "category": "Foot",
+        "requires_elevation": False,
+        "technical_surface": True,
+        "environment": "Outdoor",
+        "simulatable": "partial",
+        "simulation_note": "Agility and balance drills are partial proxy; proprioceptive adaptation to variable surface requires real terrain.",
+        "notes": "Rocky, root-crossed, or otherwise unpredictable trail surface. High ankle demand.",
+    },
+    {
+        "terrain_id": "TRN-004",
+        "canonical_name": "Hill / Rolling",
+        "category": "Foot",
+        "requires_elevation": True,
+        "technical_surface": False,
+        "environment": "Outdoor",
+        "simulatable": "partial",
+        "simulation_note": "Max-incline treadmill simulates uphill aerobic load; descent EIMD adaptation requires actual downhill terrain.",
+        "notes": "Moderate sustained elevation. Rolling hills with recoverable grades.",
+    },
+    {
+        "terrain_id": "TRN-005",
+        "canonical_name": "Mountain / Alpine",
+        "category": "Foot",
+        "requires_elevation": True,
+        "technical_surface": True,
+        "environment": "Outdoor",
+        "simulatable": "partial",
+        "simulation_note": "Stair climber and weighted vest simulate vertical load; descent skill and alpine balance cannot be replicated indoors.",
+        "notes": "High sustained elevation with exposed, technical, or multi-hour vertical gain. Includes above-treeline terrain.",
+    },
+    {
+        "terrain_id": "TRN-006",
+        "canonical_name": "Fell / Moorland",
+        "category": "Foot",
+        "requires_elevation": True,
+        "technical_surface": True,
+        "environment": "Outdoor",
+        "simulatable": "none",
+        "simulation_note": "No meaningful indoor substitute. Navigation on unmarked terrain and variable footing on heather/bog cannot be simulated.",
+        "notes": "Open, pathless, navigationally demanding terrain. Steep grass, heather, bog, moorland. Fell running specific.",
+    },
+    {
+        "terrain_id": "TRN-007",
+        "canonical_name": "Technical Rock",
+        "category": "Foot",
+        "requires_elevation": False,
+        "technical_surface": True,
+        "environment": "Outdoor",
+        "simulatable": "none",
+        "simulation_note": "Balance drills develop general stability but rock-specific proprioceptive adaptation requires actual boulder/scree terrain.",
+        "notes": "Loose boulder fields, scree slopes, rock gardens. Distinct from rock climbing — locomotive movement over unstable rock.",
+    },
+    # Water terrains
+    {
+        "terrain_id": "TRN-008",
+        "canonical_name": "Pool",
+        "category": "Water",
+        "requires_elevation": False,
+        "technical_surface": False,
+        "environment": "Indoor",
+        "simulatable": "full",
+        "simulation_note": "Full fidelity for stroke mechanics and aerobic base. Standard pool environment.",
+        "notes": "Controlled lane swimming. Flip turns, lane lines, consistent conditions.",
+    },
+    {
+        "terrain_id": "TRN-009",
+        "canonical_name": "Flat Water",
+        "category": "Water",
+        "requires_elevation": False,
+        "technical_surface": False,
+        "environment": "Outdoor",
+        "simulatable": "partial",
+        "simulation_note": "Pool covers aerobic base and stroke mechanics; loses mild current navigation, open-water pacing, and environmental variables.",
+        "notes": "Calm lake, reservoir, or slow river. Low technical demand. Standard kayak/packraft training environment.",
+    },
+    {
+        "terrain_id": "TRN-010",
+        "canonical_name": "Open Water / Ocean",
+        "category": "Water",
+        "requires_elevation": False,
+        "technical_surface": False,
+        "environment": "Outdoor",
+        "simulatable": "partial",
+        "simulation_note": "Pool maintains aerobic base; loses sighting, wave/current navigation, cold exposure, and mass-start dynamics.",
+        "notes": "Ocean, large lake, or tidal water with meaningful chop, current, or swell. OW swimming and ocean paddling territory.",
+    },
+    {
+        "terrain_id": "TRN-011",
+        "canonical_name": "Whitewater",
+        "category": "Water",
+        "requires_elevation": False,
+        "technical_surface": True,
+        "environment": "Outdoor",
+        "simulatable": "none",
+        "simulation_note": "Flat water maintains paddling fitness only. Whitewater skill (eddy catches, reading water, bracing, rolling) requires moving water.",
+        "notes": "Class II+ moving water with rapids, eddies, hydraulics. Technical paddling terrain.",
+    },
+    # Snow terrain
+    {
+        "terrain_id": "TRN-012",
+        "canonical_name": "Snow / Winter Alpine",
+        "category": "Snow",
+        "requires_elevation": True,
+        "technical_surface": True,
+        "environment": "Outdoor",
+        "simulatable": "partial",
+        "simulation_note": "Stair climber with poles approximates uphill skinning aerobic load. Descent skill on snow cannot be simulated off-snow.",
+        "notes": "Snow-covered mountain terrain requiring skis, snowshoes, or crampons. Includes groomed tracks, off-piste, and alpine descent.",
+    },
+    # Climbing terrains
+    {
+        "terrain_id": "TRN-013",
+        "canonical_name": "Rock Wall (Outdoor)",
+        "category": "Climbing",
+        "requires_elevation": False,
+        "technical_surface": True,
+        "environment": "Outdoor",
+        "simulatable": "partial",
+        "simulation_note": "Climbing gym transfers movement patterns and strength well; loses natural rock reading, exposure confidence, and protection placement.",
+        "notes": "Natural rock climbing terrain. Sport routes, trad, or scrambling on real rock.",
+    },
+    {
+        "terrain_id": "TRN-014",
+        "canonical_name": "Climbing Gym",
+        "category": "Climbing",
+        "requires_elevation": False,
+        "technical_surface": True,
+        "environment": "Indoor",
+        "simulatable": "full",
+        "simulation_note": "Full fidelity for movement pattern development, finger strength, and route reading on plastic holds.",
+        "notes": "Indoor climbing wall. Bouldering or roped. Standard AR climbing prep environment.",
+    },
+    # MTB terrain
+    {
+        "terrain_id": "TRN-015",
+        "canonical_name": "Pump Track / Skills Course",
+        "category": "MTB",
+        "requires_elevation": False,
+        "technical_surface": True,
+        "environment": "Outdoor",
+        "simulatable": "none",
+        "simulation_note": "No indoor substitute for pump track or MTB skills course. Balance and cornering drills are poor proxies.",
+        "notes": "MTB-specific terrain. Berms, jumps, pump sections, technical flow. Skills training focused.",
+    },
+    # Gym / indoor
+    {
+        "terrain_id": "TRN-016",
+        "canonical_name": "Indoor / Gym",
+        "category": "Gym",
+        "requires_elevation": False,
+        "technical_surface": False,
+        "environment": "Indoor",
+        "simulatable": "full",
+        "simulation_note": "By definition this is the simulation environment. Full fidelity for any exercise it hosts.",
+        "notes": "Treadmill, stair climber, erg, gym equipment. The indoor training environment itself.",
+    },
+]
+
+
 def _parse_terrain(text: str) -> list[dict[str, Any]]:
-    """Audit's terrain table is a 'col-7 phrases → Section K canonical'
-    mapping. Use the right-hand Section K label as canonical (one row per
-    distinct label). The left-hand col-7 aliases go into `notes` for
-    traceability."""
-    sec_text = _slice_section(
-        text,
-        "# Section 3 — Equipment Canonical List",
-        "# Section 4 — Sport-Specific Gear Readiness Toggles",
-    )
-    block = _slice_block(
-        sec_text,
-        f"## {_TERRAIN_HEADER}",
-        _next_h2_marker(sec_text, f"## {_TERRAIN_HEADER}"),
-    )
-    if not block:
-        return []
-    grouped: dict[str, list[str]] = {}
-    order: list[str] = []
-    for record in _parse_md_table(block):
-        col7 = record.get("Terrain in col 7")
-        locale = record.get("Belongs in Section K (Locale Terrain)")
-        if not locale:
-            continue
-        canonical = locale.strip()
-        if canonical not in grouped:
-            grouped[canonical] = []
-            order.append(canonical)
-        if col7:
-            grouped[canonical].append(col7.strip())
-    rows: list[dict[str, Any]] = []
-    for canonical in order:
-        aliases = grouped[canonical]
-        rows.append({
-            "canonical_name": canonical,
-            "notes": "; ".join(aliases) if aliases else None,
-        })
-    return rows
+    """Returns the 16 TRN-xxx structured terrain rows.
+
+    `text` is accepted for parser-signature parity with the other section
+    parsers but is unused — terrain vocab is code-side per the module-level
+    `_TERRAIN_STRUCTURED_ROWS` rationale comment.
+    """
+    return [dict(row) for row in _TERRAIN_STRUCTURED_ROWS]
 
 
 # ---------------------------------------------------------------------------

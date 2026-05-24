@@ -115,8 +115,19 @@ def main(argv: list[str] | None = None) -> int:
 
         n = insert_versioned(
             conn, "layer0.terrain_types",
-            ["canonical_name", "notes"],
-            [(r["canonical_name"], r["notes"]) for r in vocab["terrain_types"]],
+            [
+                "terrain_id", "canonical_name", "category",
+                "requires_elevation", "technical_surface", "environment",
+                "simulatable", "simulation_note", "notes",
+            ],
+            [
+                (
+                    r["terrain_id"], r["canonical_name"], r["category"],
+                    r["requires_elevation"], r["technical_surface"], r["environment"],
+                    r["simulatable"], r["simulation_note"], r["notes"],
+                )
+                for r in vocab["terrain_types"]
+            ],
             v_0c, run_at, source_family="0C",
         )
         _print(f"layer0.terrain_types: inserted {n} rows")
