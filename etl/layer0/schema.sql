@@ -77,6 +77,36 @@ CREATE TABLE IF NOT EXISTS layer0.sport_specific_gear_toggles (
   UNIQUE (toggle_name, etl_version)
 );
 
+-- D-73 Phase 5.2 Bucket C sub-item (l) skill-capability toggles
+-- (2026-05-24). Athlete-centric counterpart to
+-- sport_specific_gear_toggles — captures whether the athlete has
+-- acquired the skill needed to safely access a terrain or train a
+-- discipline. Default OFF (assume-not-skilled) per the
+-- equipment-availability mirror pattern Andy ratified at the
+-- WaterVocabExpansion gate. Replaces the prior Layer 2B
+-- prescription_note keyword-substring `requires_coached_introduction`
+-- emission, which treated coach-need as a derived terrain property
+-- when it is actually an athlete-capability property.
+--
+-- `gated_terrain_ids`     — Layer 2B reads when a race terrain entry
+--                           sits in this set and the athlete toggle is
+--                           OFF, it emits `requires_skill_capability`.
+-- `gated_discipline_ids`  — Layer 2C reads same, scoped to included
+--                           disciplines. Mirror of the gear-toggle
+--                           `gated_discipline_ids` precedent.
+CREATE TABLE IF NOT EXISTS layer0.skill_capability_toggles (
+  id                     SERIAL PRIMARY KEY,
+  toggle_name            TEXT NOT NULL,
+  display_label          TEXT,
+  description            TEXT,
+  gated_terrain_ids      TEXT[],
+  gated_discipline_ids   TEXT[],
+  etl_version            TEXT NOT NULL,
+  etl_run_at             TIMESTAMPTZ NOT NULL,
+  superseded_at          TIMESTAMPTZ,
+  UNIQUE (toggle_name, etl_version)
+);
+
 ----------------------------------------------------------------------
 -- PHASE 2 — Sports framework core (§4.2–§4.8)
 ----------------------------------------------------------------------

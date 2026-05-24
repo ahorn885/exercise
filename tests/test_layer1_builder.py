@@ -22,6 +22,11 @@ from datetime import date, datetime
 
 import pytest
 
+# Force `layer4` to initialize before `layer1` to dodge the pre-existing
+# circular import that otherwise blocks this module from collection.
+# Mirrors tests/test_layer2a.py:26 + tests/test_layer2b.py:26.
+from layer4 import InMemoryCacheBackend  # noqa: F401
+
 from layer1 import build_layer1_payload
 from layer4.context import (
     DailyAvailabilityWindow,
@@ -71,8 +76,11 @@ class _FakeConn:
 
 
 def _queue_empty_athlete(conn: _FakeConn) -> None:
-    """Queue 24 empty responses — every SELECT returns no rows."""
-    for _ in range(24):
+    """Queue 25 empty responses — every SELECT returns no rows.
+    (Bumped from 24 to 25 by D-73 Phase 5.2 Bucket C (l) — Layer 1
+    builder gained `_load_skill_toggle_states` query for the athlete's
+    skill-capability toggle picks.)"""
+    for _ in range(25):
         conn.queue_response()
 
 
@@ -122,11 +130,13 @@ class TestEmptyUser:
         assert payload.network.network_links == []
         assert payload.disclosures.acknowledgments == []
 
-    def test_24_selects_issued(self):
+    def test_25_selects_issued(self):
         conn = _FakeConn()
         _queue_empty_athlete(conn)
         build_layer1_payload(conn, user_id=1)
-        assert len(conn.calls) == 24
+        # 24 → 25 after D-73 Phase 5.2 Bucket C (l) added the skill-toggle
+        # state SELECT.
+        assert len(conn.calls) == 25
 
     def test_user_id_required(self):
         conn = _FakeConn()
@@ -326,6 +336,14 @@ class TestFullyPopulated:
              "scopes_granted": None, "delivery_method": "in_app",
              "acknowledged_at": datetime(2026, 4, 1, 9, 0, 0)},
         ])
+        # 25) athlete_skill_toggles — D-73 Phase 5.2 Bucket C (l). Andy
+        # has the climbing_roped + whitewater_handling toggles enabled
+        # (PGE 2026 athlete with real AR experience), the rest implicit
+        # OFF since they're not in the athlete_skill_toggles table.
+        conn.queue_response(rows=[
+            {"toggle_name": "climbing_roped", "enabled": True},
+            {"toggle_name": "whitewater_handling", "enabled": True},
+        ])
 
     def test_identity_populated(self):
         conn = _FakeConn()
@@ -462,6 +480,51 @@ class TestFullyPopulated:
         assert payload.performance.body_weight_kg == 78.5
         assert payload.performance.cycling_ftp_w == 280
         assert payload.performance.running_threshold_pace_sec_per_km == 250
+
+
+# ─── D-73 Phase 5.2 Bucket C (l) — athlete_skill_toggles loader ──────────────
+
+
+class TestSkillToggleStates:
+    """`_load_skill_toggle_states` reads athlete_skill_toggles and threads
+    the per-toggle bool dict into Layer1Lifestyle.skill_toggle_states.
+    Absent rows mean OFF (the table only stores explicit picks)."""
+
+    def test_empty_athlete_yields_empty_dict(self):
+        conn = _FakeConn()
+        _queue_empty_athlete(conn)
+        payload = build_layer1_payload(conn, user_id=42)
+        assert payload.lifestyle.skill_toggle_states == {}
+
+    def test_populated_toggles_thread_through(self):
+        """Andy's _queue_andy populates climbing_roped + whitewater_handling
+        as True; the rest stay absent (= OFF)."""
+        conn = _FakeConn()
+        TestFullyPopulated()._queue_andy(conn)
+        payload = build_layer1_payload(conn, user_id=1)
+        assert payload.lifestyle.skill_toggle_states == {
+            "climbing_roped": True,
+            "whitewater_handling": True,
+        }
+
+    def test_explicit_off_rows_preserved(self):
+        """An athlete who toggled ON then toggled OFF surfaces as
+        {toggle_name: False} — distinguishable from never-touched
+        (absent from dict) at the consumer if it cares. Layer 2B/2C
+        currently treat both as OFF so the semantics collapse."""
+        conn = _FakeConn()
+        # Queue 24 empty + 1 populated for the new toggle SELECT.
+        for _ in range(24):
+            conn.queue_response()
+        conn.queue_response(rows=[
+            {"toggle_name": "climbing_roped", "enabled": False},
+            {"toggle_name": "via_ferrata", "enabled": False},
+        ])
+        payload = build_layer1_payload(conn, user_id=7)
+        assert payload.lifestyle.skill_toggle_states == {
+            "climbing_roped": False,
+            "via_ferrata": False,
+        }
 
 
 # ─── csv splitting edge cases ────────────────────────────────────────────────

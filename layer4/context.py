@@ -355,7 +355,17 @@ class ResolvedExercise(_Base):
 
 
 class Layer2CCoachingFlag(_Base):
-    flag_type: Literal["low_coverage", "critical_dropped", "toggle_off_for_discipline"]
+    flag_type: Literal[
+        "low_coverage",
+        "critical_dropped",
+        "toggle_off_for_discipline",
+        # D-73 Phase 5.2 Bucket C sub-item (l) — included discipline
+        # depends on an athlete-skill capability that the athlete has not
+        # enabled (default OFF). Parallel surface to the gear-toggle
+        # `toggle_off_for_discipline` flag — same payload shape, distinct
+        # flag_type so the brief LLM can render appropriate guidance.
+        "requires_skill_capability",
+    ]
     discipline_id: str | None = None
     discipline_name: str | None = None
     affected_exercise_ids: list[str]
@@ -1602,6 +1612,13 @@ class Layer1Lifestyle(_Base):
     salt_electrolyte_tolerance: Literal["low", "moderate", "high"] | None = None
     sleep_deprivation_max_hrs_continuous_awake: int | None = Field(default=None, ge=0)
     sleep_deprivation_strategy_notes: str | None = None
+    # D-73 Phase 5.2 Bucket C sub-item (l) — athlete-acquired skill
+    # capabilities (default-OFF opt-in pattern mirrors the gear-toggle
+    # precedent). Keys are canonical toggle_name strings from
+    # `layer0.skill_capability_toggles`; values are bool. Absent key
+    # means OFF (assume-not-skilled). Layer 2B + 2C consult to decide
+    # whether to emit `requires_skill_capability` flags.
+    skill_toggle_states: dict[str, bool] = Field(default_factory=dict)
 
 
 # §L — network

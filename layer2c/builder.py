@@ -179,6 +179,36 @@ def _load_toggle_defs(
     }
 
 
+def _load_skill_capability_toggle_defs(
+    db,
+    version_0c: str,
+) -> dict[str, dict[str, list[str]]]:
+    """D-73 Phase 5.2 Bucket C (l) — read the skill-capability toggle
+    vocab from `layer0.skill_capability_toggles` (5 active rows at
+    canonical 0C version per
+    `etl/sources/populate_skill_capability_toggles.sql`). Returns a
+    dict keyed by toggle_name carrying `gated_discipline_ids` (2C reads
+    the discipline side; 2B has its own copy that reads the terrain
+    side). Empty dict when the table has no active rows.
+    """
+    cur = db.execute(
+        """
+        SELECT toggle_name, gated_terrain_ids, gated_discipline_ids
+          FROM layer0.skill_capability_toggles
+         WHERE etl_version = ?
+           AND superseded_at IS NULL
+        """,
+        (version_0c,),
+    )
+    return {
+        r["toggle_name"]: {
+            "gated_terrain_ids": list(r.get("gated_terrain_ids") or []),
+            "gated_discipline_ids": list(r.get("gated_discipline_ids") or []),
+        }
+        for r in cur.fetchall()
+    }
+
+
 def _load_discipline_info(
     db,
     discipline_ids: list[str],
@@ -519,6 +549,8 @@ def _emit_coaching_flags(
     toggle_defs: dict[str, dict[str, Any]],
     cluster_gear_toggle_states: dict[str, bool],
     included_discipline_ids: list[str],
+    skill_toggle_defs: dict[str, dict[str, list[str]]],
+    skill_toggle_states: dict[str, bool],
 ) -> list[Layer2CCoachingFlag]:
     flags: list[Layer2CCoachingFlag] = []
 
@@ -551,6 +583,41 @@ def _emit_coaching_flags(
                     message=(
                         f"You included {d_name} but '{toggle_name}' is off. "
                         "No gear means no equipment-based exercises for this discipline."
+                    ),
+                    metadata={"toggle_name": toggle_name},
+                )
+            )
+
+    # D-73 Phase 5.2 Bucket C (l) skill-capability flag — parallel to
+    # the §8.3 toggle-OFF-for-discipline gate above but keyed off the
+    # athlete's skill capability state rather than gear availability.
+    # Same default-OFF semantics: missing keys in `skill_toggle_states`
+    # are treated as OFF so the flag fires for every included gated
+    # discipline until the athlete enables the matching skill toggle.
+    # Affected_exercise_ids stays empty — capability gating is about
+    # whether to include the discipline at all in race-relevant work,
+    # not about which exercises in the discipline are blocked.
+    for toggle_name, td in skill_toggle_defs.items():
+        gated_ids = td["gated_discipline_ids"]
+        if not gated_ids:
+            continue
+        if skill_toggle_states.get(toggle_name, False):
+            continue
+        for d_id in gated_ids:
+            if d_id not in included_set:
+                continue
+            d_info = discipline_info.get(d_id)
+            d_name = d_info["discipline_name"] if d_info else d_id
+            flags.append(
+                Layer2CCoachingFlag(
+                    flag_type="requires_skill_capability",
+                    discipline_id=d_id,
+                    discipline_name=d_name,
+                    affected_exercise_ids=[],
+                    message=(
+                        f"You included {d_name} but the '{toggle_name}' "
+                        "skill capability is not enabled. Treat as a "
+                        "capability gap until the skill is acquired."
                     ),
                     metadata={"toggle_name": toggle_name},
                 )
@@ -633,6 +700,7 @@ def q_layer2c_equipment_mapper_payload(
     *,
     layer2d_payload: Layer2DPayload | None = None,
     etl_version_set: dict[str, str],
+    skill_toggle_states: dict[str, bool] | None = None,
 ) -> Layer2CPayload:
     """Resolve which Layer 0 exercises are available for a single
     locale, at what tier, with what substitute or proxy detail. Pure
@@ -654,6 +722,7 @@ def q_layer2c_equipment_mapper_payload(
         included_discipline_ids,
         etl_version_set,
     )
+    skill_toggle_states = skill_toggle_states or {}
 
     version_0a = etl_version_set["0A"]
     version_0b = etl_version_set["0B"]
@@ -665,6 +734,7 @@ def q_layer2c_equipment_mapper_payload(
     versions_0b = [version_0b]
 
     toggle_defs = _load_toggle_defs(db, version_0c)
+    skill_toggle_defs = _load_skill_capability_toggle_defs(db, version_0c)
     discipline_info = _load_discipline_info(
         db, included_discipline_ids, version_0a
     )
@@ -710,6 +780,8 @@ def q_layer2c_equipment_mapper_payload(
         toggle_defs,
         cluster_gear_toggle_states,
         included_discipline_ids,
+        skill_toggle_defs,
+        skill_toggle_states,
     )
 
     return Layer2CPayload(

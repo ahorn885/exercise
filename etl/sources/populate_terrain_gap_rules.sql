@@ -321,9 +321,11 @@ INSERT INTO layer0.terrain_gap_rules (
   ARRAY['technical_handwork', 'balance_dynamic'],
   'Flat water maintains paddling fitness but provides no whitewater skill transfer. '
     'Whitewater technique (eddy catches, reading water, bracing, rolling in current) '
-    'requires supervised instruction in moving water. '
-    'Cannot self-teach safely — flag as requiring coached introduction to moving water '
-    'before race. Pool rolling is a useful foundation but does not substitute for real whitewater.',
+    'cannot be acquired from flat-water training alone. Pool rolling is a useful '
+    'foundation but does not substitute for real whitewater. Capability gating for '
+    'this skill is now surfaced via the `whitewater_handling` skill toggle '
+    '(Bucket C (l) 2026-05-24); the v1 prescription_note keyword-match flag '
+    'has been retired.',
   'Whitewater skill acquisition: Crespo & Balagué (2023) on technical sport skill transfer — '
     'moving water reading is non-transferable from flat water. '
     'Pool rolling fidelity is high for technique only (not current management). '

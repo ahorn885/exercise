@@ -258,6 +258,12 @@ def _upstream_full_cone(
         locale_terrain_ids=locale_terrain_ids,
         included_discipline_ids=included_discipline_ids,
         etl_version_set=etl_version_set,
+        # D-73 Phase 5.2 Bucket C (l) — thread athlete skill-capability
+        # state into 2B so `requires_skill_capability` flags can fire
+        # for terrains the athlete hasn't acquired the matching skill
+        # for. Capture surface deferred; default state is the empty
+        # dict (every toggle OFF), mirroring the gear-toggle precedent.
+        skill_toggle_states=layer1_payload.lifestyle.skill_toggle_states,
     )
 
     layer2d_payload = q_layer2d_injury_risk_profile_payload(
@@ -278,6 +284,8 @@ def _upstream_full_cone(
         included_discipline_ids=included_discipline_ids,
         layer2d_payload=layer2d_payload,
         etl_version_set=etl_version_set,
+        # D-73 Phase 5.2 Bucket C (l) — mirror of the 2B wire above.
+        skill_toggle_states=layer1_payload.lifestyle.skill_toggle_states,
     )
 
     integration_bundle = assemble_layer3a_integration_bundle(db, user_id, as_of)
@@ -516,6 +524,8 @@ def orchestrate_single_session_synthesize(
             included_discipline_ids=included_discipline_ids,
             layer2d_payload=layer2d_payload,
             etl_version_set=etl_version_set,
+            # D-73 Phase 5.2 Bucket C (l) — same wire as full-cone path.
+            skill_toggle_states=layer1_payload.lifestyle.skill_toggle_states,
         )
 
     integration_bundle = assemble_layer3a_integration_bundle(db, user_id, as_of)

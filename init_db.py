@@ -1833,6 +1833,23 @@ _PG_MIGRATIONS = [
     # delete in 5 SQL steps. Fully idempotent across re-runs and clean
     # deploys.
     _retire_outdoor_terrain_equipment_tags,
+    # D-73 Phase 5.2 Bucket C sub-item (l) — athlete-side skill-capability
+    # toggle states. Mirror of locale_toggle_overrides shape minus the
+    # locale axis (skills are athlete-grain not athlete-locale-grain).
+    # Default state of every toggle is OFF; an athlete row is inserted
+    # only when they explicitly enable a skill (athlete-side capture
+    # surface deferred to a follow-on slice — mirrors the gear-toggle
+    # status quo where the orchestrator passes cluster_gear_toggle_states={}).
+    """CREATE TABLE IF NOT EXISTS athlete_skill_toggles (
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        toggle_name TEXT NOT NULL,
+        enabled BOOLEAN NOT NULL DEFAULT FALSE,
+        created_at TIMESTAMP DEFAULT NOW(),
+        updated_at TIMESTAMP DEFAULT NOW(),
+        UNIQUE (user_id, toggle_name)
+    )""",
+    "CREATE INDEX IF NOT EXISTS ast_user_idx ON athlete_skill_toggles (user_id)",
 ]
 
 _CLOTHING_SEEDS = [
