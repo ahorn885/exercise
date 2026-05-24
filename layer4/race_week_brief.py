@@ -879,6 +879,20 @@ def _render_user_prompt(
             "onboarding §H.4 or the profile race-events tab. Synthesize kit_manifest "
             "items + RacePlan.segments references from this graph."
         )
+        # Companion to PR #131 (RaceLocalesValidatorHotfix). When start
+        # or finish role is missing, instruct the LLM not to infer the
+        # anchor from first/last sequence_idx position.
+        roles_present = {rl.role for rl in race_event_payload.route_locales}
+        missing_anchors = [
+            anchor for anchor in ("start", "finish") if anchor not in roles_present
+        ]
+        if missing_anchors:
+            parts.append("")
+            parts.append(
+                f"**Note:** no entry has role={' or role='.join(repr(a) for a in missing_anchors)}. "
+                "Treat the corresponding anchor(s) as unknown — do not infer from "
+                "first/last sequence_idx position."
+            )
         parts.append("")
         for rl in race_event_payload.route_locales:
             line = f"- [{rl.sequence_idx}] {rl.role}: {rl.name}"
@@ -1377,6 +1391,54 @@ def _emit_data_gap_observations(
     return out
 
 
+def _emit_route_locales_anchor_observations(
+    race_event_payload: RaceEventPayload,
+) -> list[Observation]:
+    """Companion to PR #131 (RaceLocalesValidatorHotfix). When the athlete
+    captured route_locales but didn't mark an explicit `start` and/or
+    `finish` role anywhere in the list, surface a `data_gap` observation
+    so the LLM has explicit signal rather than fabricating an anchor
+    from first/last position inference. Skipped when route_locales is
+    empty (already covered by `kit_manifest_inputs_incomplete_no_route_locales`)."""
+    out: list[Observation] = []
+    if not race_event_payload.route_locales:
+        return out
+    roles = {rl.role for rl in race_event_payload.route_locales}
+    if "start" not in roles:
+        out.append(
+            Observation(
+                category="data_gap",
+                text=(
+                    "route_locales_missing_start_anchor: no entry has role='start'. "
+                    "Do not infer a start anchor from the first sequence_idx; treat "
+                    "the start as unknown for pacing + logistics narration."
+                )[:240],
+                evidence_basis=[
+                    "Race_Events_D66_Design_v1.md §4.2",
+                    "PR #131 validator loosen 2026-05-23",
+                ],
+                elevates_to_hitl=False,
+            )
+        )
+    if "finish" not in roles:
+        out.append(
+            Observation(
+                category="data_gap",
+                text=(
+                    "route_locales_missing_finish_anchor: no entry has role='finish'. "
+                    "Do not infer a finish anchor from the last sequence_idx; treat "
+                    "the finish as unknown for pacing + logistics narration."
+                )[:240],
+                evidence_basis=[
+                    "Race_Events_D66_Design_v1.md §4.2",
+                    "PR #131 validator loosen 2026-05-23",
+                ],
+                elevates_to_hitl=False,
+            )
+        )
+    return out
+
+
 # ─── Entry point ─────────────────────────────────────────────────────────────
 
 
@@ -1658,6 +1720,13 @@ def llm_layer4_race_week_brief(
     # §8.7 — data_gap orchestrator-emitted from soft-warning rules
     notable_observations.extend(
         _emit_data_gap_observations(validator_results[-1])
+    )
+
+    # Route-locales missing-anchor data_gap (companion to PR #131
+    # validator loosen 2026-05-23). Emitted whenever route_locales is
+    # captured but explicit start / finish role anchors are missing.
+    notable_observations.extend(
+        _emit_route_locales_anchor_observations(race_event_payload)
     )
 
     # Final composition
