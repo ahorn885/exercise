@@ -906,6 +906,13 @@ def target_race_save():
     new_framework_sport = _parse_str_field(request.form, 'framework_sport')
     parsed_discipline_filter = _parse_discipline_id_filter(request.form)
 
+    # D-73 Phase 5.2 Bucket C (i) — Mapbox-anchored race location is required
+    # on save. The `[Skip]` button (target_race_skip) remains as the escape
+    # valve for athletes who can't find their race in Mapbox.
+    if not new_locale_fields['event_locale_mapbox_id']:
+        flash('Pick a race location before saving.', 'danger')
+        return redirect(url_for('onboarding.target_race'))
+
     target = _get_target_race_row(db, uid)
     # D-73 Phase 5.2 Bucket E.(b)-B2 — auto-clear discipline picks when
     # framework_sport changes (orphan cleanup; same semantic as

@@ -252,6 +252,7 @@ def _make_race_event(
         event_date=event_date,
         race_format=race_format,
         distance_km=Decimal(str(distance_km)) if distance_km is not None else None,
+        event_locale_mapbox_id="poi.test_anchor",
         is_target_event=True,
         event_locale_id=event_locale_id,
         route_locales=[],

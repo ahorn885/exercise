@@ -372,6 +372,7 @@ def _race_event(weeks_out: int = 8) -> RaceEventPayload:
         race_rules_summary=None,
         mandatory_gear_text=None,
         event_locale_id=None,
+        event_locale_mapbox_id="poi.test_anchor",
         is_target_event=True,
         notes=None,
         route_locales=[],
@@ -1083,6 +1084,7 @@ class TestPerPhasePromptRendering:
             race_rules_summary=None,
             mandatory_gear_text=None,
             event_locale_id=None,
+            event_locale_mapbox_id="poi.test_anchor",
             is_target_event=True,
             notes=None,
             route_locales=[

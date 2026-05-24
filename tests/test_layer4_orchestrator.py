@@ -166,12 +166,13 @@ def _queue_target_race_event(
             "race_terrain": race_terrain if race_terrain is not None else [],
             "aid_stations": aid_stations,
             # D-73 Phase 5.2 walkthrough #1 + #2a (2026-05-21) — race-events
-            # rows now carry Mapbox-anchored race location + race_url. None
-            # values exercise the pre-walkthrough row shape (athlete hasn't
-            # yet picked a Mapbox anchor).
-            "event_locale_name": None,
-            "event_locale_mapbox_id": None,
-            "event_locale_place_name": None,
+            # rows now carry Mapbox-anchored race location + race_url. Bucket
+            # C (i) (2026-05-24) requires mapbox_id non-null on every
+            # RaceEventPayload construction; helper seeds a placeholder so the
+            # load_race_event_payload pydantic validator passes by default.
+            "event_locale_name": "Test Race Location",
+            "event_locale_mapbox_id": "poi.test_anchor",
+            "event_locale_place_name": "Test Race Location, Test State",
             "event_locale_lat": None,
             "event_locale_lng": None,
             "race_url": None,
@@ -592,6 +593,7 @@ class TestHappyPath:
             event_date=_EVENT_DATE,
             race_format="single_day",
             event_locale_id="home",
+            event_locale_mapbox_id="poi.test_anchor",
             is_target_event=True,
         )
         layer4_out = _fake_layer4_payload(race_event_payload=race_event_for_l4)
@@ -681,6 +683,7 @@ class TestPreflightGates:
                     name="x",
                     event_date=_EVENT_DATE,
                     race_format="single_day",
+                    event_locale_mapbox_id="poi.test_anchor",
                     is_target_event=True,
                 )
             )
@@ -803,6 +806,7 @@ class TestDefaults:
             event_date=_today_real,
             race_format="single_day",
             event_locale_id="home",
+            event_locale_mapbox_id="poi.test_anchor",
             is_target_event=True,
         )
         stack = _patches(
@@ -840,6 +844,7 @@ class TestDefaults:
             event_date=_EVENT_DATE,
             race_format="expedition_ar",
             event_locale_id="home",
+            event_locale_mapbox_id="poi.test_anchor",
             is_target_event=True,
         )
         stack = _patches(
@@ -906,6 +911,7 @@ class TestRaceTerrainAndAidStationsWireUp:
             event_date=_EVENT_DATE,
             race_format="single_day",
             event_locale_id="home",
+            event_locale_mapbox_id="poi.test_anchor",
             is_target_event=True,
         )
         stack = _patches(
@@ -940,6 +946,7 @@ class TestRaceTerrainAndAidStationsWireUp:
             event_date=_EVENT_DATE,
             race_format="single_day",
             event_locale_id="home",
+            event_locale_mapbox_id="poi.test_anchor",
             is_target_event=True,
         )
         stack = _patches(
@@ -976,6 +983,7 @@ class TestRaceTerrainAndAidStationsWireUp:
             event_date=_EVENT_DATE,
             race_format="single_day",
             event_locale_id="home",
+            event_locale_mapbox_id="poi.test_anchor",
             is_target_event=True,
         )
         stack = _patches(
@@ -1018,6 +1026,7 @@ class TestFrameworkSportOverride:
             event_date=_EVENT_DATE,
             race_format="single_day",
             event_locale_id="home",
+            event_locale_mapbox_id="poi.test_anchor",
             is_target_event=True,
             framework_sport="Trail Running",
         )
@@ -1053,6 +1062,7 @@ class TestFrameworkSportOverride:
             event_date=_EVENT_DATE,
             race_format="single_day",
             event_locale_id="home",
+            event_locale_mapbox_id="poi.test_anchor",
             is_target_event=True,
         )
         stack = _patches(
@@ -1104,6 +1114,7 @@ class TestFrameworkSportOverride:
             event_date=_EVENT_DATE,
             race_format="single_day",
             event_locale_id="home",
+            event_locale_mapbox_id="poi.test_anchor",
             is_target_event=True,
             framework_sport="Adventure Racing",
         )
@@ -1152,6 +1163,7 @@ class TestIncludedDisciplineIdsOverride:
             event_date=_EVENT_DATE,
             race_format="single_day",
             event_locale_id="home",
+            event_locale_mapbox_id="poi.test_anchor",
             is_target_event=True,
             framework_sport="Adventure Racing",
             included_discipline_ids=["D-001", "D-008b", "D-013"],
@@ -1190,6 +1202,7 @@ class TestIncludedDisciplineIdsOverride:
             event_date=_EVENT_DATE,
             race_format="single_day",
             event_locale_id="home",
+            event_locale_mapbox_id="poi.test_anchor",
             is_target_event=True,
             framework_sport="Adventure Racing",
         )
@@ -1234,6 +1247,7 @@ class TestLocaleTerrainIdsWireUp:
             event_date=_EVENT_DATE,
             race_format="single_day",
             event_locale_id="home",
+            event_locale_mapbox_id="poi.test_anchor",
             is_target_event=True,
         )
         stack = _patches(
@@ -1275,6 +1289,7 @@ class TestLocaleTerrainIdsWireUp:
             event_date=_EVENT_DATE,
             race_format="single_day",
             event_locale_id="home",
+            event_locale_mapbox_id="poi.test_anchor",
             is_target_event=True,
         )
         stack = _patches(
@@ -1312,6 +1327,7 @@ class TestLocaleTerrainIdsWireUp:
             event_date=_EVENT_DATE,
             race_format="single_day",
             event_locale_id="home",
+            event_locale_mapbox_id="poi.test_anchor",
             is_target_event=True,
         )
         stack = _patches(
@@ -1346,6 +1362,7 @@ class TestLocaleTerrainIdsWireUp:
             event_date=_EVENT_DATE,
             race_format="single_day",
             event_locale_id="home",
+            event_locale_mapbox_id="poi.test_anchor",
             is_target_event=True,
         )
         stack = _patches(

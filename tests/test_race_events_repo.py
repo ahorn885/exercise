@@ -175,11 +175,14 @@ def _race_row(**overrides):
         "race_terrain": [],
         "aid_stations": None,
         # D-73 Phase 5.2 walkthrough #1 — Mapbox-anchored race-location
-        # columns. Default None so tests that don't care about the new
-        # shape still pass.
-        "event_locale_name": None,
-        "event_locale_mapbox_id": None,
-        "event_locale_place_name": None,
+        # columns. Bucket C (i) (2026-05-24) flipped the default from None
+        # to a placeholder mapbox_id so the load_race_event_payload pydantic
+        # validator (which now requires event_locale_mapbox_id non-null on
+        # every RaceEventPayload construction) passes. Tests that want to
+        # exercise the un-anchored path override the field directly.
+        "event_locale_name": "Test Race Location",
+        "event_locale_mapbox_id": "poi.test_anchor",
+        "event_locale_place_name": "Test Race Location, Test State",
         "event_locale_lat": None,
         "event_locale_lng": None,
         # D-73 Phase 5.2 walkthrough #2a — race-director site URL.
@@ -1013,22 +1016,23 @@ class TestMapboxRaceLocationColumns:
         assert payload.event_locale_lng == -93.106
         assert payload.race_url == "https://example.com/pge2026"
 
-    def test_load_payload_defaults_mapbox_columns_to_none(self):
+    def test_load_payload_rejects_unanchored_row(self):
+        # D-73 Phase 5.2 Bucket C (i) — RaceEventPayload's validator now
+        # requires event_locale_mapbox_id non-null on every construction.
+        # Legacy pre-walkthrough rows that only had `event_locale_slug` (no
+        # Mapbox anchor) raise at load time so the un-anchored shape is loud
+        # rather than silently propagating through the orchestrator. The route
+        # layer prevents new un-anchored writes; this test pins the load-side
+        # backstop for legacy rows still sitting in the DB.
+        row = _race_row()
+        row["event_locale_name"] = None
+        row["event_locale_mapbox_id"] = None
+        row["event_locale_place_name"] = None
         conn = _FakeConn()
-        # Default `_race_row()` has Mapbox cols all None (pre-walkthrough
-        # shape: athlete used the saved-locale dropdown for `event_locale_slug`,
-        # never picked a Mapbox anchor).
-        conn.queue_response(row=_race_row())
+        conn.queue_response(row=row)
         conn.queue_response(rows=[])
-        payload = load_race_event_payload(conn, race_event_id=10)
-        assert payload is not None
-        assert payload.event_locale_id == "nerstrand_finish"  # legacy slug
-        assert payload.event_locale_name is None
-        assert payload.event_locale_mapbox_id is None
-        assert payload.event_locale_place_name is None
-        assert payload.event_locale_lat is None
-        assert payload.event_locale_lng is None
-        assert payload.race_url is None
+        with pytest.raises(ValueError, match="event_locale_mapbox_id is required"):
+            load_race_event_payload(conn, race_event_id=10)
 
     def test_create_passes_mapbox_kwargs_in_insert(self):
         conn = _FakeConn()

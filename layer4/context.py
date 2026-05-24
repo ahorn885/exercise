@@ -1169,6 +1169,25 @@ class RaceEventPayload(_Base):
             )
         return self
 
+    @model_validator(mode="after")
+    def _check_event_locale_mapbox_id_required(self) -> "RaceEventPayload":
+        # D-73 Phase 5.2 Bucket C sub-item (i) — Mapbox-anchored race location
+        # is REQUIRED on every race row (athlete-input requirement, not
+        # external-data-quality). Routes flash + redirect on form submit when
+        # the hidden input is empty; this pydantic check is the defense-in-
+        # depth backstop catching any non-route writer (admin scripts,
+        # integration tests, future API surfaces) that would construct an
+        # un-anchored payload. Unlike the route_locales loosen of 2026-05-23
+        # (PR #131 — content-quality, external data) this requirement is
+        # owned by the athlete at form-submit time and has no external
+        # source to be loose about.
+        if self.event_locale_mapbox_id is None:
+            raise ValueError(
+                "RaceEventPayload.event_locale_mapbox_id is required "
+                "(every race must be Mapbox-anchored per Bucket C (i))"
+            )
+        return self
+
 
 # ─── PerDateRestriction (placeholder pending D-67; always-empty in v1) ───────
 
