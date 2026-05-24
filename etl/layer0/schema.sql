@@ -395,3 +395,29 @@ ALTER TABLE layer0.cross_sport_properties
 -- pre-migration rows.
 ALTER TABLE layer0.phase_load_weekly_totals
   ADD COLUMN IF NOT EXISTS weekly_unit TEXT;
+
+-- D-73 Phase 5.2 Walkthrough — Bucket C sub-item (k): terrain_types 7-column
+-- enrichment + secondary UNIQUE. Was migrate_terrain_types.sql §1 (one-shot);
+-- folded here so apply_schema() is the canonical setup path and re-runs of
+-- etl.layer0.run carry the structured rows code-side from
+-- etl/layer0/extractors/vocabulary.py:_TERRAIN_STRUCTURED_ROWS.
+ALTER TABLE layer0.terrain_types
+  ADD COLUMN IF NOT EXISTS terrain_id          TEXT,
+  ADD COLUMN IF NOT EXISTS category            TEXT,
+  ADD COLUMN IF NOT EXISTS requires_elevation  BOOLEAN,
+  ADD COLUMN IF NOT EXISTS technical_surface   BOOLEAN,
+  ADD COLUMN IF NOT EXISTS environment         TEXT,
+  ADD COLUMN IF NOT EXISTS simulatable         TEXT,
+  ADD COLUMN IF NOT EXISTS simulation_note     TEXT;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'terrain_types_terrain_id_etl_version_key'
+  ) THEN
+    ALTER TABLE layer0.terrain_types
+      ADD CONSTRAINT terrain_types_terrain_id_etl_version_key
+      UNIQUE (terrain_id, etl_version);
+  END IF;
+END $$;

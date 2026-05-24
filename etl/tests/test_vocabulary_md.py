@@ -133,16 +133,42 @@ def test_equipment_dedupe_foam_roller(parsed):
 # ---------------------------------------------------------------------------
 
 def test_terrain_count(parsed):
-    # 15 distinct Section K labels per spec §4.12.4
-    assert len(parsed["terrain_types"]) == 15
+    # D-73 Phase 5.2 Walkthrough — Bucket C sub-item (k): the 15 Section-K
+    # audit rows were retired; terrain_types now ships 16 structured TRN-xxx
+    # rows code-side per etl/layer0/extractors/vocabulary.py:_TERRAIN_STRUCTURED_ROWS
+    # (mirrors migrate_terrain_types.sql which is now a retired tombstone).
+    assert len(parsed["terrain_types"]) == 16
 
 
-def test_terrain_canonical_uses_section_k_labels(parsed):
+def test_terrain_ids_unique_and_sequential(parsed):
+    ids = [t["terrain_id"] for t in parsed["terrain_types"]]
+    assert len(ids) == len(set(ids))
+    assert ids == [f"TRN-{i:03d}" for i in range(1, 17)]
+
+
+def test_terrain_known_canonical_names_present(parsed):
     names = {t["canonical_name"] for t in parsed["terrain_types"]}
-    # Section K labels are the right column of the audit terrain table
-    for required in ["Hill / mountain access", "Trail access",
-                     "Whitewater access", "Snow terrain"]:
+    for required in [
+        "Road / Paved", "Technical Trail", "Mountain / Alpine",
+        "Pool", "Whitewater", "Snow / Winter Alpine",
+        "Climbing Gym", "Pump Track / Skills Course", "Indoor / Gym",
+    ]:
         assert required in names
+
+
+def test_terrain_structured_fields_populated(parsed):
+    expected_keys = {
+        "terrain_id", "canonical_name", "category",
+        "requires_elevation", "technical_surface", "environment",
+        "simulatable", "simulation_note", "notes",
+    }
+    for row in parsed["terrain_types"]:
+        assert set(row.keys()) >= expected_keys
+        assert isinstance(row["requires_elevation"], bool)
+        assert isinstance(row["technical_surface"], bool)
+        assert row["environment"] in {"Outdoor", "Indoor"}
+        assert row["simulatable"] in {"full", "partial", "none"}
+        assert row["category"] in {"Foot", "Water", "Snow", "Climbing", "MTB", "Gym"}
 
 
 # ---------------------------------------------------------------------------

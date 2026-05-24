@@ -1,4 +1,25 @@
--- migrate_terrain_types.sql
+-- migrate_terrain_types.sql — RETIRED 2026-05-24 (D-73 Phase 5.2 Walkthrough,
+-- Bucket C sub-item (k) ETL drift fix). Do not run; kept as audit trail only.
+--
+-- This script was a one-shot corrective that ran 2026-05-09 against production
+-- Neon to add 7 enrichment columns + 16 hand-curated TRN-xxx structured rows.
+-- Subsequent `python -m etl.layer0.run` invocations on 2026-05-10 + 2026-05-20
+-- supersededed those rows because `insert_versioned`'s supersede sweep
+-- matches `etl_version LIKE '0C-v%'` (etl/layer0/db.py:122-130) and the
+-- audit-md parser only emitted minimal-shape (canonical_name, notes) rows.
+--
+-- Replacement: the 16 TRN-xxx structured rows now live code-side in
+--   etl/layer0/extractors/vocabulary.py :: _TERRAIN_STRUCTURED_ROWS
+-- and the 7 enrichment columns + secondary UNIQUE constraint were folded
+-- into etl/layer0/schema.sql so apply_schema() is the canonical setup path.
+-- Mirrors the Phase 2.4-Prep `_TOGGLE_ALSO_SATISFIES` precedent.
+--
+-- Re-runs of `python -m etl.layer0.run` are now idempotent for terrain_types;
+-- the structured rows are written under the current 0C-vN and prior versions
+-- (including this script's 0C-v2.0-r2) supersede cleanly.
+--
+-- ── Original header preserved below for context ────────────────────────────
+--
 -- Extends layer0.terrain_types with structured attributes and replaces
 -- the original 15 minimal-name rows with 16 properly structured rows.
 --
