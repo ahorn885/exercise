@@ -1,5 +1,7 @@
 -- populate_terrain_gap_rules.sql
--- Creates layer0.terrain_gap_rules and inserts 12 canonical gap rows.
+-- Creates layer0.terrain_gap_rules and inserts 16 canonical gap rows.
+-- (12 original + 2 from Bucket C (f) WaterVocab 2026-05-24 + 2 from Bucket C
+-- (g) Terrain↔Equipment merge 2026-05-24.)
 --
 -- Purpose: enables 2B (Terrain Classifier) to operate as a pure query node.
 -- Given race terrain IDs and locale terrain IDs, plan-gen calls this table
@@ -55,7 +57,7 @@ CREATE TABLE IF NOT EXISTS layer0.terrain_gap_rules (
   UNIQUE (target_terrain_id, proxy_terrain_id, etl_version)
 );
 
--- ── 2. Insert 12 gap rules ─────────────────────────────────────────────────
+-- ── 2. Insert 16 gap rules ─────────────────────────────────────────────────
 
 INSERT INTO layer0.terrain_gap_rules (
   target_terrain_id, target_terrain_name,
@@ -172,6 +174,53 @@ INSERT INTO layer0.terrain_gap_rules (
   'Cognitive navigation under fatigue: Dyer et al. (2016) on sleep deprivation and spatial navigation — '
     'fell racing demands real-terrain navigation practice; no marked-course substitute. '
     'Proxy fidelity 0.45 — aerobic load transfers; navigation and footing stimuli substantially uncovered.',
+  '0C-v2.0-r2', NOW() ),
+
+-- ── Foot: Gravel gaps ──────────────────────────────────────────────────────
+--
+-- TRN-020 added by Bucket C sub-item (g) terrain↔equipment merge 2026-05-24
+-- as the unambiguous surface gap (TRN-001 paved + TRN-002 dirt singletrack
+-- bracket gravel but neither captures the compacted-loose-aggregate surface).
+-- TRN serves both gravel-running and gravel-cycling stimuli; modality is
+-- captured discipline-side + equipment-side per the surface-only terrain
+-- principle. Two proxies registered: TRN-002 (singletrack — closer surface,
+-- low band) and TRN-001 (paved — gait/aerobic only, medium band). Classifier
+-- ORDER BY proxy_fidelity DESC picks whichever the athlete has access to.
+
+( 'TRN-020', 'Gravel',
+  'TRN-002', 'Groomed Trail',
+  'low', 1, 2, 0.70,
+  ARRAY[
+    'Groomed singletrack sessions (high transfer for unpaved-surface gait and aerobic load)',
+    'Periodic paved runs for sustained pace work if singletrack volume is variable'
+  ],
+  ARRAY[]::TEXT[],
+  'Groomed singletrack covers unpaved-surface gait adaptation and aerobic load at high fidelity. '
+    'The only gravel-specific stimulus partially uncovered is the loose-aggregate slip behaviour '
+    '(micro-foot-placement adjustments + occasional embedded rocks); 1–2 gravel-specific sessions '
+    'before race close the gap. For gravel-cycling use, MTB-trail riding similarly over-covers the '
+    'bike-handling stimulus.',
+  'Proxy fidelity 0.70 — singletrack and gravel share the unpaved-surface adaptation; only the loose '
+    'aggregate stimulus is gravel-specific. Severity classified ''low'' per the post-Phase-2.3 '
+    'fidelity-banded enum (≥0.70 = low).',
+  '0C-v2.0-r2', NOW() ),
+
+( 'TRN-020', 'Gravel',
+  'TRN-001', 'Road / Paved',
+  'medium', 2, 4, 0.65,
+  ARRAY[
+    'Paved runs for sustained aerobic and cadence work (full fidelity for gait and pace)',
+    '2–4 gravel-specific sessions on any unpaved compacted surface before race for surface adaptation',
+    'Trail running on any singletrack as a secondary proxy if available'
+  ],
+  ARRAY['balance_dynamic'],
+  'Paved running covers gait, aerobic base, and pace control at full fidelity. The gravel-specific '
+    'surface adaptation (slip behaviour, micro-instability, occasional embedded rocks) requires real '
+    'gravel exposure. Plan 2–4 gravel sessions in the final 4 weeks before race; for gravel-cycling '
+    'use, the same applies via gravel-bike or MTB on any compacted-aggregate surface.',
+  'Proxy fidelity 0.65 — paved running keeps full gait/aerobic transfer; the unpaved-surface stimulus '
+    'requires real gravel practice. Severity classified ''medium'' per the post-Phase-2.3 fidelity-'
+    'banded enum (0.50–0.69 = medium).',
   '0C-v2.0-r2', NOW() ),
 
 -- ── Water: Ocean / Tidal gap ───────────────────────────────────────────────
@@ -360,15 +409,15 @@ BEGIN
   WHERE superseded_at IS NULL
     AND (proxy_methods IS NULL OR array_length(proxy_methods, 1) = 0);
 
-  IF row_count <> 12 THEN
-    RAISE EXCEPTION 'populate_terrain_gap_rules: expected 12 rows, found %', row_count;
+  IF row_count <> 16 THEN
+    RAISE EXCEPTION 'populate_terrain_gap_rules: expected 16 rows, found %', row_count;
   END IF;
 
   IF null_methods > 0 THEN
     RAISE EXCEPTION 'populate_terrain_gap_rules: % rows have empty proxy_methods', null_methods;
   END IF;
 
-  RAISE NOTICE 'populate_terrain_gap_rules: OK — 12 gap rules active, all proxy_methods populated';
+  RAISE NOTICE 'populate_terrain_gap_rules: OK — 16 gap rules active, all proxy_methods populated';
 END $$;
 
 COMMIT;

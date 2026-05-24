@@ -462,6 +462,127 @@ def _seed_purchase_recommendations(executor, tag_to_id):
         executor.execute(sql, (slug, label, eq_id, lo, hi, prio, rationale, sort))
 
 
+# Bucket C sub-item (g) — see _PG_MIGRATIONS tail entry for the rationale.
+# SURFACE-only mapping: terrain rows describe the physical surface;
+# modality (foot/bike/paddle) is captured discipline-side + equipment-side.
+# open_water_paddle uses the conservative {TRN-009} mapping (Flat Water);
+# athlete can add Moving/Whitewater/Ocean explicitly on next edit.
+_OUTDOOR_TERRAIN_TAG_TO_TRN_IDS: dict[str, list[str]] = {
+    "trail_running":     ["TRN-002", "TRN-003"],   # Groomed + Technical singletrack
+    "road_running":      ["TRN-001"],              # Road / Paved
+    "road_cycling":      ["TRN-001"],              # same paved surface (modality discipline-side)
+    "mtb_trails":        ["TRN-002", "TRN-003"],   # same dirt singletrack (modality discipline-side)
+    "gravel_routes":     ["TRN-020"],              # NEW gravel row (Bucket C (g))
+    "pool_swim":         ["TRN-008"],              # Pool
+    "open_water_swim":   ["TRN-009", "TRN-010"],   # Flat Water + Ocean / Tidal
+    "open_water_paddle": ["TRN-009"],              # conservative: Flat Water only
+    "hills":             ["TRN-004"],              # Hill / Rolling (not Mountain/Alpine)
+}
+
+
+def _retire_outdoor_terrain_equipment_tags(cur):
+    """Bucket C (g) — translate locale_equipment + locale_equipment_overrides
+    picks for the 9 retired "Outdoor & Terrain" equipment tags into
+    locale_profiles.locale_terrain_ids, then delete the source rows and the
+    equipment_items rows themselves.
+
+    Fully idempotent: re-running after a successful pass is a no-op (the
+    retired tag rows no longer exist in equipment_items, so the JOIN
+    filters everything out; the UPDATE matches zero locales and the
+    DELETEs are also no-ops). Safe on fresh deploys where the tags never
+    existed in the first place.
+    """
+    retired_tags = list(_OUTDOOR_TERRAIN_TAG_TO_TRN_IDS.keys())
+
+    # Build a SQL VALUES clause mapping tag → TRN-xxx array so the
+    # translation can happen in a single set-based UPDATE rather than
+    # row-by-row. Quoting is safe — keys are fixed constants in this module.
+    mapping_rows = ",\n        ".join(
+        "('{tag}', ARRAY[{trns}]::TEXT[])".format(
+            tag=tag,
+            trns=", ".join(f"'{tid}'" for tid in trns),
+        )
+        for tag, trns in _OUTDOOR_TERRAIN_TAG_TO_TRN_IDS.items()
+    )
+
+    # Step 1a — translate locale_equipment (private locales): for each
+    # (user_id, locale) with at least one retired tag, UNION the mapped
+    # TRN-xxx ids into locale_terrain_ids, deduped, preserving existing.
+    cur.execute(f"""
+        WITH tag_mapping(tag, trns) AS (
+            VALUES {mapping_rows}
+        ),
+        translated AS (
+            SELECT
+                le.user_id,
+                le.locale,
+                ARRAY_AGG(DISTINCT trn) AS mapped_trns
+            FROM locale_equipment le
+            JOIN equipment_items ei ON ei.id = le.equipment_id
+            JOIN tag_mapping tm ON tm.tag = ei.tag
+            CROSS JOIN LATERAL unnest(tm.trns) AS trn
+            GROUP BY le.user_id, le.locale
+        )
+        UPDATE locale_profiles lp
+        SET locale_terrain_ids = ARRAY(
+            SELECT DISTINCT t
+            FROM unnest(lp.locale_terrain_ids || tr.mapped_trns) AS t
+        )
+        FROM translated tr
+        WHERE lp.user_id = tr.user_id AND lp.locale = tr.locale
+    """)
+
+    # Step 1b — translate locale_equipment_overrides (shared-profile
+    # locales): only action='add' overrides translate to terrain picks
+    # (action='remove' was a no-op against shared baseline which is also
+    # being retired). equipment_tag is the direct string, no JOIN needed.
+    cur.execute(f"""
+        WITH tag_mapping(tag, trns) AS (
+            VALUES {mapping_rows}
+        ),
+        translated AS (
+            SELECT
+                leo.user_id,
+                leo.locale,
+                ARRAY_AGG(DISTINCT trn) AS mapped_trns
+            FROM locale_equipment_overrides leo
+            JOIN tag_mapping tm ON tm.tag = leo.equipment_tag
+            CROSS JOIN LATERAL unnest(tm.trns) AS trn
+            WHERE leo.action = 'add'
+            GROUP BY leo.user_id, leo.locale
+        )
+        UPDATE locale_profiles lp
+        SET locale_terrain_ids = ARRAY(
+            SELECT DISTINCT t
+            FROM unnest(lp.locale_terrain_ids || tr.mapped_trns) AS t
+        )
+        FROM translated tr
+        WHERE lp.user_id = tr.user_id AND lp.locale = tr.locale
+    """)
+
+    # Step 2a — drop the per-locale picks pointing at the retired tags.
+    cur.execute("""
+        DELETE FROM locale_equipment
+        WHERE equipment_id IN (
+            SELECT id FROM equipment_items WHERE tag = ANY(%s)
+        )
+    """, (retired_tags,))
+
+    # Step 2b — drop both add and remove overrides for the retired tags
+    # (remove against a non-existent baseline is moot).
+    cur.execute("""
+        DELETE FROM locale_equipment_overrides
+        WHERE equipment_tag = ANY(%s)
+    """, (retired_tags,))
+
+    # Step 3 — drop the 9 equipment_items rows themselves. No
+    # exercise_equipment FK risk: none of the EXERCISE_EQUIPMENT seed
+    # entries reference any of these 9 tags (verified at slice scoping).
+    cur.execute("""
+        DELETE FROM equipment_items
+        WHERE tag = ANY(%s)
+    """, (retired_tags,))
+
 
 _PG_MIGRATIONS = [
     "ALTER TABLE cardio_log ADD COLUMN IF NOT EXISTS stride_length_m REAL",
@@ -1705,6 +1826,13 @@ _PG_MIGRATIONS = [
     # column reflects "athlete confirmed the cost gate," not "request
     # contained an override field."
     "ALTER TABLE plan_refresh_log ADD COLUMN IF NOT EXISTS cap_overridden BOOLEAN NOT NULL DEFAULT FALSE",
+    # D-73 Phase 5.2 Bucket C sub-item (g) — retire the 9 display-only
+    # "Outdoor & Terrain" equipment tags in favour of the canonical
+    # locale_terrain_ids grid as the single "what's accessible from this
+    # location" surface. Callable defined above; performs translation +
+    # delete in 5 SQL steps. Fully idempotent across re-runs and clean
+    # deploys.
+    _retire_outdoor_terrain_equipment_tags,
 ]
 
 _CLOTHING_SEEDS = [
@@ -1823,17 +1951,17 @@ EQUIPMENT_CATEGORIES = [
         ('packraft', 'Packraft'),
         ('canoe',    'Canoe'),
     ]),
-    ('Outdoor & Terrain', [
-        ('trail_running',       'Trail Running (singletrack / dirt)'),
-        ('road_running',        'Road Running (pavement)'),
-        ('road_cycling',        'Road Cycling'),
-        ('mtb_trails',          'Mountain Bike Trails (MTB)'),
-        ('gravel_routes',       'Gravel / Mixed-Terrain Cycling'),
-        ('open_water_paddle',   'Open Water Paddling (lake / river)'),
-        ('open_water_swim',     'Open Water Swimming'),
-        ('pool_swim',           'Pool Swimming'),
-        ('hills',               'Hills / Significant Elevation Gain'),
-    ]),
+    # D-73 Phase 5.2 Bucket C sub-item (g) 2026-05-24 — the "Outdoor &
+    # Terrain" equipment category retired here in favour of the
+    # `locale_terrain_ids` canonical grid as the single "what's accessible
+    # from this location" surface on the locale-edit form. The 9 retired
+    # tags (trail_running / road_running / road_cycling / mtb_trails /
+    # gravel_routes / open_water_paddle / open_water_swim / pool_swim /
+    # hills) translate to TRN-xxx picks via _OUTDOOR_TERRAIN_TAG_TO_TRN_IDS
+    # at boot via the _retire_outdoor_terrain_equipment_tags migration.
+    # Cycling / paddling GEAR (road_bike / mountain_bike / gravel_bike /
+    # kayak / packraft / canoe) UNCHANGED — those are real equipment, not
+    # venue markers.
 ]
 
 # Volume rationale for endurance athletes (cyclists, trail runners, kayakers):
