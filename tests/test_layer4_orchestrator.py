@@ -184,6 +184,9 @@ def _queue_target_race_event(
             # discipline filter override. None = use full bridge defaults
             # (pre-B2 behavior).
             "included_discipline_ids": included_discipline_ids,
+            # BestFitModality_Spec_v2.md §C — per-race modality hints JSONB
+            # (NOT NULL DEFAULT '{}'::jsonb). psycopg2 surfaces a dict.
+            "race_modality_hints": {},
         }
     )
     conn.queue(rows=[])  # route_locales (empty for single_day)
@@ -1517,6 +1520,7 @@ class TestOrchestrateSingleSessionSynthesizeHappyPath:
         wrapper."""
         conn = _FakeConn()
         _queue_etl_version_set(conn)
+        conn.queue(row=None)  # load_target_race_event_payload: no target event
         _queue_locale_by_slug_hit(conn)
         _queue_locale_equipment_pool(conn)
         cache = Layer4Cache(InMemoryCacheBackend())
@@ -1701,6 +1705,7 @@ class TestOrchestrateSingleSessionSynthesizeDefaults:
         passes it through as `session_date` to the cached wrapper."""
         conn = _FakeConn()
         _queue_etl_version_set(conn)
+        conn.queue(row=None)  # load_target_race_event_payload: no target event
         _queue_locale_by_slug_hit(conn)
         _queue_locale_equipment_pool(conn)
         cache = Layer4Cache(InMemoryCacheBackend())
@@ -1735,6 +1740,7 @@ class TestOrchestrateSingleSessionSynthesizeDefaults:
         pass-through per Layer2C_Spec.md §5.6 — verifies the threading."""
         conn = _FakeConn()
         _queue_etl_version_set(conn)
+        conn.queue(row=None)  # load_target_race_event_payload: no target event
         _queue_locale_by_slug_hit(conn)
         _queue_locale_equipment_pool(conn)
         cache = Layer4Cache(InMemoryCacheBackend())
@@ -1767,6 +1773,7 @@ class TestOrchestrateSingleSessionSynthesizeSportSemantics:
         cross-training even though their primary is AR."""
         conn = _FakeConn()
         _queue_etl_version_set(conn)
+        conn.queue(row=None)  # load_target_race_event_payload: no target event
         _queue_locale_by_slug_hit(conn)
         _queue_locale_equipment_pool(conn)
         cache = Layer4Cache(InMemoryCacheBackend())
@@ -1799,13 +1806,15 @@ class TestOrchestrateSingleSessionSynthesizeSportSemantics:
 
     def test_quick_equipment_path_no_locale_by_slug_select(self):
         """When locale_slug is None, _q_locale_by_slug must NOT fire — saves
-        an unnecessary SELECT. Queue only the etl_version_set row; if any
-        further SELECT was attempted, the FakeConn returns empty and the
-        flow would raise downstream. The assertion is that we successfully
-        complete with just the etl_version_set queued."""
+        an unnecessary SELECT. The only DB reads are the etl_version_set row
+        and the target-race-event lookup (BestFitModality_Spec_v2 §A; the
+        empty queue makes it return None → no race-craft hints). Any locale
+        SELECT would add a third call, so asserting exactly 2 proves the
+        locale path stayed dark on the quick_equipment route."""
         conn = _FakeConn()
         _queue_etl_version_set(conn)
         # Intentionally NO locale_by_slug + NO locale_equipment_pool queued.
+        # The target-event lookup falls through to the empty-queue None.
         cache = Layer4Cache(InMemoryCacheBackend())
 
         stack = _single_session_patches(
@@ -1823,9 +1832,10 @@ class TestOrchestrateSingleSessionSynthesizeSportSemantics:
             )
         finally:
             _exit_all(stack)
-        # Only 1 SELECT (etl_version_set) — the orchestrator didn't query
-        # locale_profiles or locale_equipment on the quick_equipment path.
-        assert len(conn.calls) == 1
+        # 2 SELECTs: etl_version_set + the target-race-event lookup. The
+        # orchestrator did NOT query locale_profiles or locale_equipment on
+        # the quick_equipment path (that would have been a third call).
+        assert len(conn.calls) == 2
 
 
 class TestOrchestrateSingleSessionSynthesizeReturnValue:
@@ -1837,6 +1847,7 @@ class TestOrchestrateSingleSessionSynthesizeReturnValue:
         and validation."""
         conn = _FakeConn()
         _queue_etl_version_set(conn)
+        conn.queue(row=None)  # load_target_race_event_payload: no target event
         _queue_locale_by_slug_hit(conn)
         _queue_locale_equipment_pool(conn)
         cache = Layer4Cache(InMemoryCacheBackend())

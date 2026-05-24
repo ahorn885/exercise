@@ -26,15 +26,26 @@ def load_active_skill_capability_toggle_vocab(db):
     `toggle_name` for stable checkbox layout across renders.
 
     Returns a list of dicts with `toggle_name`, `display_label`,
-    `description`. Empty list when the populate script has not yet run.
+    `description`. Empty list when the populate script has not yet run
+    or the `layer0.skill_capability_toggles` vocab table is absent (e.g.
+    a DB whose layer0 schema predates the Bucket C sub-item (l) slice).
     """
-    rows = db.execute(
-        'SELECT toggle_name, display_label, description '
-        'FROM layer0.skill_capability_toggles '
-        'WHERE superseded_at IS NULL '
-        'ORDER BY toggle_name'
-    ).fetchall()
-    return [dict(r) for r in rows]
+    try:
+        rows = db.execute(
+            'SELECT toggle_name, display_label, description '
+            'FROM layer0.skill_capability_toggles '
+            'WHERE superseded_at IS NULL '
+            'ORDER BY toggle_name'
+        ).fetchall()
+        return [dict(r) for r in rows]
+    except Exception:
+        # Missing vocab table aborts the transaction on Postgres; roll
+        # back so the caller's next query on the shared connection isn't
+        # poisoned, and degrade to an empty list so the capture surface
+        # renders its "no toggles configured" state instead of 500ing
+        # the whole profile / onboarding page.
+        db.rollback()
+        return []
 
 
 def get_athlete_skill_toggles(db, user_id: int) -> dict:
