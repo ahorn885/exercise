@@ -216,10 +216,13 @@ def _equipment_choices(db) -> list[str]:
         return [row['canonical_name'] for row in cur.fetchall()]
     except Exception:
         # Schema not present (e.g., bootstrap or test fixtures without
-        # layer0 populated) — empty list lets the template render the
-        # picker without choices; the athlete can still submit existing
-        # rows (which preserve previously-saved values from the form
-        # value attribute) but can't add new ones until layer0 lands.
+        # layer0 populated) — roll back so the aborted transaction doesn't
+        # poison later queries on the shared connection, then return an
+        # empty list so the template renders the picker without choices;
+        # the athlete can still submit existing rows (which preserve
+        # previously-saved values from the form value attribute) but can't
+        # add new ones until layer0 lands.
+        db.rollback()
         return []
 
 
