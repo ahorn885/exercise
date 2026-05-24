@@ -1128,13 +1128,19 @@ class RaceEventPayload(_Base):
 
     @model_validator(mode="after")
     def _check_route_locales_invariants(self) -> "RaceEventPayload":
-        # §4.2 structural invariants from Race_Events_D66_Design_v1.md:
-        # (1) sequence_idx unique within the payload's route_locales list.
-        # (2) sorted ascending by sequence_idx (caller-side sort guaranteed
-        #     by the orchestrator-side ORDER BY clause; defensive here).
-        # (3) when non-empty: first role == 'start' AND last role == 'finish'
-        #     (caller-side check; empty route_locales legal and surfaces via
-        #     validator rule `kit_manifest_inputs_incomplete_no_route_locales`).
+        # §4.2 structural invariants from Race_Events_D66_Design_v1.md.
+        # (1) + (2) are STRUCTURAL — uniqueness + sort order. Caller code
+        # depends on these as preconditions; raising at the payload
+        # boundary keeps the failure loud + local.
+        # (3) start/finish role anchors LOOSENED 2026-05-23 (D-73 Phase
+        # 5.2 walkthrough hot-fix) from hard raise to silent accept.
+        # Production data (Andy's PGE 2026) has route_locales captured
+        # without an explicit start row at sequence_idx 1, which blocks
+        # the entire /plans/v2/new GET pipeline. Whether start/finish
+        # anchors are present is a content/data-quality concern, not a
+        # structural one — moved to a coaching-flag emission downstream
+        # (forward-pointer; not yet wired). Validator now accepts any
+        # role at first/last position.
         if not self.route_locales:
             return self
         seq_ids = [rl.sequence_idx for rl in self.route_locales]
@@ -1145,16 +1151,6 @@ class RaceEventPayload(_Base):
         if seq_ids != sorted(seq_ids):
             raise ValueError(
                 "RaceEventPayload.route_locales must be sorted ascending by sequence_idx"
-            )
-        if self.route_locales[0].role != "start":
-            raise ValueError(
-                "RaceEventPayload.route_locales first entry must have role=='start' "
-                "when route_locales non-empty"
-            )
-        if self.route_locales[-1].role != "finish":
-            raise ValueError(
-                "RaceEventPayload.route_locales last entry must have role=='finish' "
-                "when route_locales non-empty"
             )
         return self
 
