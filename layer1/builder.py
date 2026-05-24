@@ -112,6 +112,7 @@ def build_layer1_payload(db, user_id: int) -> Layer1Payload:
     network_links = _load_network_links(db, user_id)
     linked_partner_consents = _load_linked_partner_consents(db, user_id)
     disclosures = _load_disclosures(db, user_id)
+    skill_toggle_states = _load_skill_toggle_states(db, user_id)
 
     health_status = Layer1HealthStatus(
         current_injuries=current_injuries,
@@ -136,6 +137,7 @@ def build_layer1_payload(db, user_id: int) -> Layer1Payload:
     )
     lifestyle_model = Layer1Lifestyle(
         sleep_baseline_hours=sleep_baseline_hours,
+        skill_toggle_states=skill_toggle_states,
         **lifestyle,
     )
     availability = Layer1Availability(**availability_scalars)
@@ -374,6 +376,23 @@ def _load_resting_hr(db, user_id: int) -> int | None:
     )
     row = cur.fetchone()
     return row["resting_hr"] if row else None
+
+
+# ─── athlete_skill_toggles — D-73 Phase 5.2 Bucket C (l) ─────────────────────
+
+
+def _load_skill_toggle_states(db, user_id: int) -> dict[str, bool]:
+    """Read the athlete's per-toggle ON/OFF state from
+    `athlete_skill_toggles`. Absent rows mean OFF (the table only stores
+    explicit picks). Returns {toggle_name: enabled_bool}. Empty dict on
+    fresh athletes who have never edited their skill capabilities.
+    """
+    cur = db.execute(
+        "SELECT toggle_name, enabled FROM athlete_skill_toggles "
+        "WHERE user_id = ?",
+        (user_id,),
+    )
+    return {r["toggle_name"]: bool(r["enabled"]) for r in cur.fetchall()}
 
 
 # ─── wellness_self_report — latest sleep_hours ───────────────────────────────

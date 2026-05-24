@@ -424,61 +424,54 @@ class TestUnknownTerrainId:
 # ─── §8.2 requires_coached_introduction ──────────────────────────────────────
 
 
-class TestCoachedIntroFlag:
-    def test_whitewater_coached_intro_flag(self):
+class TestSkillCapabilityFlag:
+    """D-73 Phase 5.2 Bucket C sub-item (l) — replaced the prior
+    `_COACHED_INTRO_KEYWORDS` substring-match against `prescription_note`
+    (`TestCoachedIntroFlag` removed). The new `requires_skill_capability`
+    flag is emitted when a race-terrain entry sits in some skill toggle's
+    `gated_terrain_ids` AND the athlete's toggle state is not True
+    (default OFF means flag fires — mirrors the gear-toggle precedent at
+    `layer2c/builder.py::_emit_coaching_flags` §8.3 gate).
+    """
+
+    def _skill_cap_row(
+        self,
+        toggle_name: str,
+        *,
+        gated_terrain_ids: list[str],
+        gated_discipline_ids: list[str] | None = None,
+    ) -> dict:
+        return {
+            "toggle_name": toggle_name,
+            "gated_terrain_ids": list(gated_terrain_ids),
+            "gated_discipline_ids": list(gated_discipline_ids or []),
+        }
+
+    def test_whitewater_skill_capability_flag_fires_when_toggle_off(self):
+        """TRN-011 in race_terrain + whitewater_handling toggle OFF →
+        emits `requires_skill_capability` flag with the toggle name in
+        metadata. Default-OFF (toggle absent from state dict) fires too.
+        """
         conn = _FakeConn()
-        entries = [
-            RaceTerrainEntry(terrain_id="TRN-011", pct_of_race=100.0),
-        ]
-        locale = ["TRN-009"]
+        entries = [RaceTerrainEntry(terrain_id="TRN-011", pct_of_race=100.0)]
         conn.queue_name_rows([_name_row("TRN-011", "Whitewater")])
         conn.queue_proxy_row(_proxy_row(
             "TRN-011", "Whitewater",
             proxy_terrain_id="TRN-009",
             proxy_terrain_name="Flat Water",
             gap_severity="critical",
-            proxy_fidelity=0.55,  # >= 0.5 threshold
+            proxy_fidelity=0.30,
             adaptation_weeks_low=8,
             adaptation_weeks_high=12,
-            prescription_note=(
-                "Whitewater technique requires coached introduction "
-                "before race. Pool rolling is a useful foundation."
-            ),
         ))
-
-        payload = q_layer2b_terrain_classifier_payload(
-            conn,
-            race_terrain=entries,
-            locale_terrain_ids=locale,
-            included_discipline_ids=["D-008b"],
-            etl_version_set=_DEFAULT_ETL,
-        )
-
-        flag_types = [f.flag_type for f in payload.coaching_flags]
-        assert "requires_coached_introduction" in flag_types
-        coached = next(
-            f for f in payload.coaching_flags
-            if f.flag_type == "requires_coached_introduction"
-        )
-        assert coached.metadata["fidelity"] == 0.55
-        assert coached.target_terrain_id == "TRN-011"
-
-    def test_coached_intro_does_not_fire_below_fidelity_threshold(self):
-        conn = _FakeConn()
-        entries = [
-            RaceTerrainEntry(terrain_id="TRN-011", pct_of_race=100.0),
-        ]
-        conn.queue_name_rows([_name_row("TRN-011", "Whitewater")])
-        conn.queue_proxy_row(_proxy_row(
-            "TRN-011", "Whitewater",
-            proxy_terrain_id="TRN-009",
-            proxy_terrain_name="Flat Water",
-            gap_severity="critical",
-            proxy_fidelity=0.30,  # < 0.5 threshold — no coached flag
-            prescription_note=(
-                "Whitewater technique requires coached introduction."
+        # Skill-capability toggle SELECT fires AFTER the proxy lookup.
+        conn.responses.append((None, [
+            self._skill_cap_row(
+                "whitewater_handling",
+                gated_terrain_ids=["TRN-011", "TRN-017"],
+                gated_discipline_ids=["D-008b"],
             ),
-        ))
+        ]))
 
         payload = q_layer2b_terrain_classifier_payload(
             conn,
@@ -488,8 +481,149 @@ class TestCoachedIntroFlag:
             etl_version_set=_DEFAULT_ETL,
         )
 
+        flag = next(
+            f for f in payload.coaching_flags
+            if f.flag_type == "requires_skill_capability"
+        )
+        assert flag.target_terrain_id == "TRN-011"
+        assert flag.metadata["toggle_name"] == "whitewater_handling"
+        assert flag.metadata["pct_of_race"] == 100.0
+        assert "whitewater_handling" in flag.message
+
+    def test_skill_capability_flag_suppressed_when_toggle_on(self):
+        """Athlete with whitewater_handling=True does NOT trigger the
+        flag for TRN-011. The toggle is the explicit opt-in.
+        """
+        conn = _FakeConn()
+        entries = [RaceTerrainEntry(terrain_id="TRN-011", pct_of_race=100.0)]
+        conn.queue_name_rows([_name_row("TRN-011", "Whitewater")])
+        conn.queue_proxy_row(_proxy_row(
+            "TRN-011", "Whitewater",
+            proxy_terrain_id="TRN-009",
+            proxy_terrain_name="Flat Water",
+            gap_severity="critical",
+            proxy_fidelity=0.30,
+        ))
+        conn.responses.append((None, [
+            self._skill_cap_row(
+                "whitewater_handling",
+                gated_terrain_ids=["TRN-011", "TRN-017"],
+            ),
+        ]))
+
+        payload = q_layer2b_terrain_classifier_payload(
+            conn,
+            race_terrain=entries,
+            locale_terrain_ids=["TRN-009"],
+            included_discipline_ids=["D-008b"],
+            etl_version_set=_DEFAULT_ETL,
+            skill_toggle_states={"whitewater_handling": True},
+        )
+
         flag_types = [f.flag_type for f in payload.coaching_flags]
-        assert "requires_coached_introduction" not in flag_types
+        assert "requires_skill_capability" not in flag_types
+
+    def test_skill_capability_flag_not_fired_for_ungated_terrain(self):
+        """TRN-001 (paved) does not appear in any skill toggle's
+        gated_terrain_ids, so the flag does not fire even with empty
+        toggle state. Locally covered terrain follows the same rule.
+        """
+        conn = _FakeConn()
+        entries = [RaceTerrainEntry(terrain_id="TRN-001", pct_of_race=100.0)]
+        conn.queue_name_rows([_name_row("TRN-001", "Road / Paved")])
+        # No gap-rule lookup needed — terrain is covered locally.
+        conn.responses.append((None, [
+            self._skill_cap_row(
+                "whitewater_handling",
+                gated_terrain_ids=["TRN-011", "TRN-017"],
+            ),
+        ]))
+
+        payload = q_layer2b_terrain_classifier_payload(
+            conn,
+            race_terrain=entries,
+            locale_terrain_ids=["TRN-001"],
+            included_discipline_ids=["D-001"],
+            etl_version_set=_DEFAULT_ETL,
+        )
+
+        flag_types = [f.flag_type for f in payload.coaching_flags]
+        assert "requires_skill_capability" not in flag_types
+
+    def test_skill_toggle_loader_skipped_when_race_terrain_empty(self):
+        """Empty race_terrain short-circuits at the `race_terrain_unset`
+        emission; no SQL roundtrip for skill-capability toggle defs.
+        """
+        conn = _FakeConn()
+        payload = q_layer2b_terrain_classifier_payload(
+            conn,
+            race_terrain=[],
+            locale_terrain_ids=["TRN-009"],
+            included_discipline_ids=["D-008b"],
+            etl_version_set=_DEFAULT_ETL,
+            skill_toggle_states={},
+        )
+        # The skill_capability_toggles SQL must NOT have been called.
+        assert not any(
+            "skill_capability_toggles" in call[0]
+            for call in conn.calls
+        )
+        flag_types = [f.flag_type for f in payload.coaching_flags]
+        assert flag_types == ["race_terrain_unset"]
+
+    def test_multiple_gated_terrains_emit_one_flag_each(self):
+        """Race with TRN-011 + TRN-017 (both gated by
+        `whitewater_handling`) emits two skill-capability flags when
+        the toggle is OFF.
+        """
+        conn = _FakeConn()
+        entries = [
+            RaceTerrainEntry(terrain_id="TRN-011", pct_of_race=60.0),
+            RaceTerrainEntry(terrain_id="TRN-017", pct_of_race=40.0),
+        ]
+        conn.queue_name_rows([
+            _name_row("TRN-011", "Whitewater"),
+            _name_row("TRN-017", "Moving Water"),
+        ])
+        # Two gap rows since both terrains are not locally covered.
+        conn.queue_proxy_row(_proxy_row(
+            "TRN-011", "Whitewater",
+            proxy_terrain_id="TRN-009",
+            proxy_terrain_name="Flat Water",
+            gap_severity="critical",
+            proxy_fidelity=0.30,
+        ))
+        conn.queue_proxy_row(_proxy_row(
+            "TRN-017", "Moving Water",
+            proxy_terrain_id="TRN-009",
+            proxy_terrain_name="Flat Water",
+            gap_severity="medium",
+            proxy_fidelity=0.65,
+        ))
+        conn.responses.append((None, [
+            self._skill_cap_row(
+                "whitewater_handling",
+                gated_terrain_ids=["TRN-011", "TRN-017"],
+            ),
+        ]))
+
+        payload = q_layer2b_terrain_classifier_payload(
+            conn,
+            race_terrain=entries,
+            locale_terrain_ids=["TRN-009"],
+            included_discipline_ids=["D-008b"],
+            etl_version_set=_DEFAULT_ETL,
+        )
+
+        skill_flags = [
+            f for f in payload.coaching_flags
+            if f.flag_type == "requires_skill_capability"
+        ]
+        assert len(skill_flags) == 2
+        targets = sorted(f.target_terrain_id for f in skill_flags)
+        assert targets == ["TRN-011", "TRN-017"]
+        pcts = {f.target_terrain_id: f.metadata["pct_of_race"] for f in skill_flags}
+        assert pcts == {"TRN-011": 60.0, "TRN-017": 40.0}
 
 
 # ─── Smoke / clean baseline ──────────────────────────────────────────────────

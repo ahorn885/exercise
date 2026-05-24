@@ -44,18 +44,15 @@ _TRN_PATTERN = re.compile(r"^TRN-\d{3}$")
 _PCT_SUM_LOW: float = 80.0
 _PCT_SUM_HIGH: float = 120.0
 
-# §8.2 coached-intro trigger — fidelity threshold + keyword substring match
-# against `prescription_note`. The deployed whitewater rule (TRN-011 →
-# TRN-009) is the only current consumer; tokens chosen to match its note
-# verbatim plus near-paraphrases the populate script may use.
-_COACHED_INTRO_FIDELITY_MIN: float = 0.5
-_COACHED_INTRO_KEYWORDS: tuple[str, ...] = (
-    "coached introduction",
-    "supervised instruction",
-    "requires coached",
-    "requiring coached",
-    "coached intro",
-)
+# D-73 Phase 5.2 Bucket C sub-item (l) 2026-05-24 — the prior
+# `_COACHED_INTRO_KEYWORDS` substring match against `prescription_note`
+# was ripped in favour of an explicit athlete-side skill-toggle gate.
+# Coach-need is an athlete-capability property, not a derived terrain
+# property; new `requires_skill_capability` flag is emitted when a race
+# terrain entry sits in some skill toggle's `gated_terrain_ids` AND the
+# athlete's `skill_toggle_states[toggle_name]` is not True. Toggle defs
+# live in `layer0.skill_capability_toggles` (5 canonical rows ratified
+# at the Bucket C (l) plan-mode gate).
 
 
 # ─── Errors ──────────────────────────────────────────────────────────────────
@@ -246,15 +243,42 @@ def _build_undefined_gap(
     )
 
 
-def _mentions_coached_intro(prescription_note: str) -> bool:
-    lower = prescription_note.lower()
-    return any(kw in lower for kw in _COACHED_INTRO_KEYWORDS)
+def _load_skill_capability_toggle_defs(
+    db,
+    version_0c: str,
+) -> dict[str, dict[str, list[str]]]:
+    """D-73 Phase 5.2 Bucket C (l) — read the skill-capability toggle
+    vocab (5 active rows at canonical 0C version per
+    `populate_skill_capability_toggles.sql`). Returns a dict keyed by
+    toggle_name carrying `gated_terrain_ids` + `gated_discipline_ids`
+    (Layer 2B reads the terrain side; Layer 2C reads the discipline
+    side via its own copy of this loader). Empty dict when the table
+    has no active rows at the requested version.
+    """
+    cur = db.execute(
+        """
+        SELECT toggle_name, gated_terrain_ids, gated_discipline_ids
+          FROM layer0.skill_capability_toggles
+         WHERE etl_version = ?
+           AND superseded_at IS NULL
+        """,
+        (version_0c,),
+    )
+    return {
+        r["toggle_name"]: {
+            "gated_terrain_ids": list(r.get("gated_terrain_ids") or []),
+            "gated_discipline_ids": list(r.get("gated_discipline_ids") or []),
+        }
+        for r in cur.fetchall()
+    }
 
 
 def _emit_coaching_flags(
     gaps_by_target: dict[str, TerrainGap],
     pct_by_target: dict[str, float],
     race_terrain: list[RaceTerrainEntry],
+    skill_toggle_defs: dict[str, dict[str, list[str]]],
+    skill_toggle_states: dict[str, bool],
 ) -> list[Layer2BCoachingFlag]:
     flags: list[Layer2BCoachingFlag] = []
     # Phase 5.1 form-refresh C — empty race_terrain (athlete skipped §H.2
@@ -299,18 +323,41 @@ def _emit_coaching_flags(
                 },
             ))
             continue
-        if (
-            gap.proxy_fidelity is not None
-            and gap.proxy_fidelity >= _COACHED_INTRO_FIDELITY_MIN
-            and _mentions_coached_intro(gap.prescription_note)
-        ):
+    # D-73 Phase 5.2 Bucket C (l) — skill-capability emission. One flag
+    # per (race_terrain entry × matching toggle) where the athlete has
+    # not enabled the skill. Fires regardless of gap-rule fidelity since
+    # skill is athlete-side, not derived from terrain proxy quality —
+    # the athlete needs the skill to safely race on the terrain whether
+    # or not their locale terrain set covers the proxy. Pct is from the
+    # race-terrain entry, not the gap (the flag exists for every gated
+    # race terrain row including ones that are locally covered).
+    pct_by_race = {e.terrain_id: e.pct_of_race for e in race_terrain}
+    for toggle_name, td in skill_toggle_defs.items():
+        if skill_toggle_states.get(toggle_name, False):
+            continue
+        gated = set(td["gated_terrain_ids"])
+        if not gated:
+            continue
+        for entry in race_terrain:
+            if entry.terrain_id not in gated:
+                continue
+            terrain_name = (
+                gaps_by_target[entry.terrain_id].target_terrain_name
+                if entry.terrain_id in gaps_by_target
+                else None
+            )
             flags.append(Layer2BCoachingFlag(
-                flag_type="requires_coached_introduction",
-                target_terrain_id=target_id,
-                message=gap.prescription_note,
+                flag_type="requires_skill_capability",
+                target_terrain_id=entry.terrain_id,
+                message=(
+                    f"Race terrain '{terrain_name or entry.terrain_id}' "
+                    f"requires the '{toggle_name}' skill capability, which "
+                    "the athlete has not enabled. Treat as a capability "
+                    "gap until acquired."
+                ),
                 metadata={
-                    "fidelity": gap.proxy_fidelity,
-                    "adaptation_weeks_high": gap.adaptation_weeks_high,
+                    "toggle_name": toggle_name,
+                    "pct_of_race": pct_by_race.get(entry.terrain_id, 0.0),
                 },
             ))
     return flags
@@ -374,6 +421,7 @@ def q_layer2b_terrain_classifier_payload(
     included_discipline_ids: list[str],
     *,
     etl_version_set: dict[str, str],
+    skill_toggle_states: dict[str, bool] | None = None,
 ) -> Layer2BPayload:
     """Resolve race-vs-locale terrain coverage for the athlete's training plan.
 
@@ -386,6 +434,12 @@ def q_layer2b_terrain_classifier_payload(
     used for relevance scoping (v1 ships with `discipline_relevance_assessed=False`
     per §5.3 — full structured relevance is queued as open item 2B-1).
 
+    `skill_toggle_states` (D-73 Phase 5.2 Bucket C (l)) carries the
+    athlete's ON/OFF state per `layer0.skill_capability_toggles.toggle_name`.
+    When None or empty, no skill toggles are queried and no
+    `requires_skill_capability` flags fire. Threaded from
+    `Layer1Lifestyle.skill_toggle_states` at orchestrator call sites.
+
     Validation per §4 raises `Layer2BInputError`.
     """
     _validate_inputs(
@@ -394,6 +448,7 @@ def q_layer2b_terrain_classifier_payload(
         included_discipline_ids,
         etl_version_set,
     )
+    skill_toggle_states = skill_toggle_states or {}
 
     version_0c = etl_version_set["0C"]
     race_id_set = {e.terrain_id for e in race_terrain}
@@ -431,7 +486,27 @@ def q_layer2b_terrain_classifier_payload(
             gap=gaps_by_target.get(entry.terrain_id),
         ))
 
-    coaching_flags = _emit_coaching_flags(gaps_by_target, pct_by_target, race_terrain)
+    # D-73 Phase 5.2 Bucket C (l) — load skill-capability toggle defs
+    # whenever race_terrain is non-empty (skip the SQL roundtrip on the
+    # empty-race-terrain path; the flag emitter short-circuits on empty
+    # race_terrain anyway via the race_terrain_unset branch). Missing
+    # toggle keys in `skill_toggle_states` default to OFF (mirrors the
+    # gear-toggle precedent at layer2c/builder.py:538), so an athlete
+    # with no athlete_skill_toggles rows still gets flags fired for
+    # every gated race terrain — the intended default-OFF nuisance until
+    # the athlete-side capture surface ships.
+    if race_terrain:
+        skill_toggle_defs = _load_skill_capability_toggle_defs(db, version_0c)
+    else:
+        skill_toggle_defs = {}
+
+    coaching_flags = _emit_coaching_flags(
+        gaps_by_target,
+        pct_by_target,
+        race_terrain,
+        skill_toggle_defs,
+        skill_toggle_states,
+    )
     summary = _build_summary(
         race_terrain, covered_ids, gap_ids, gaps_by_target
     )

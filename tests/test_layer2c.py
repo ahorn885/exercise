@@ -53,17 +53,38 @@ class _FakeConn:
     """Queues three response batches matching the three SELECTs the
     builder issues per call: toggle defs, discipline info, exercise
     rows. Tests append batches via `queue(*rows)` in call order.
+
+    The D-73 Phase 5.2 Bucket C (l) skill-capability-toggles loader
+    fires a 4th SELECT between gear-toggle defs and discipline info,
+    but tests that don't exercise skill capabilities shouldn't have to
+    queue an extra empty batch for each call. The fake detects the
+    `skill_capability_toggles` SQL signature and returns an empty
+    cursor without consuming the queued batches. Tests that DO want to
+    queue skill-capability rows call `queue_skill_capability_toggles(...)`
+    explicitly; the next `skill_capability_toggles` SELECT will consume
+    those rows instead of returning empty.
     """
 
     def __init__(self):
         self.calls: list[tuple[str, tuple]] = []
         self.batches: list[list[dict[str, Any]]] = []
+        self._skill_cap_batches: list[list[dict[str, Any]]] = []
 
     def queue(self, *rows: dict[str, Any]) -> None:
         self.batches.append(list(rows))
 
+    def queue_skill_capability_toggles(self, *rows: dict[str, Any]) -> None:
+        self._skill_cap_batches.append(list(rows))
+
     def execute(self, sql, params=()):
         self.calls.append((sql, params))
+        if "skill_capability_toggles" in sql:
+            rows = (
+                self._skill_cap_batches.pop(0)
+                if self._skill_cap_batches
+                else []
+            )
+            return _FakeCursor(rows)
         rows = self.batches.pop(0) if self.batches else []
         return _FakeCursor(rows)
 
@@ -1082,3 +1103,171 @@ def test_payload_round_trip_typed():
     assert payload.etl_version_set == _DEFAULT_ETL
     # Model round-trips through pydantic dump → validate.
     Layer2CPayload.model_validate(payload.model_dump())
+
+
+# ─── D-73 Phase 5.2 Bucket C (l) — skill-capability flag emission ────────────
+
+
+def _skill_cap_row(
+    toggle_name: str,
+    *,
+    gated_terrain_ids: list[str] | None = None,
+    gated_discipline_ids: list[str] | None = None,
+) -> dict[str, Any]:
+    return {
+        "toggle_name": toggle_name,
+        "gated_terrain_ids": list(gated_terrain_ids or []),
+        "gated_discipline_ids": list(gated_discipline_ids or []),
+    }
+
+
+class TestSkillCapabilityFlag:
+    """Parallel to TestCoachingFlags.test_toggle_off_for_discipline — same
+    default-OFF emission shape, distinct flag_type so the brief LLM can
+    render appropriate guidance. Capture surface is deferred; in this
+    slice the flag fires for every included gated discipline when the
+    athlete has no athlete_skill_toggles rows.
+    """
+
+    def test_requires_skill_capability_fires_when_toggle_off(self):
+        conn = _FakeConn()
+        conn.queue()  # no gear toggles
+        conn.queue_skill_capability_toggles(
+            _skill_cap_row("climbing_roped", gated_discipline_ids=["D-010"])
+        )
+        conn.queue(_sdb_row("D-010", "Rock Climbing", "Climbing"))
+        conn.queue()  # no exercises
+        payload = q_layer2c_equipment_mapper_payload(
+            conn,
+            locale_id="home",
+            locale_equipment_pool=["Barbell"],
+            cluster_locale_ids=["home"],
+            cluster_gear_toggle_states={},
+            included_discipline_ids=["D-010"],
+            etl_version_set=_DEFAULT_ETL,
+        )
+        flags = [
+            f for f in payload.coaching_flags
+            if f.flag_type == "requires_skill_capability"
+        ]
+        assert len(flags) == 1
+        f = flags[0]
+        assert f.discipline_id == "D-010"
+        assert f.discipline_name == "Rock Climbing"
+        assert f.metadata == {"toggle_name": "climbing_roped"}
+        assert "climbing_roped" in f.message
+        assert f.affected_exercise_ids == []
+
+    def test_skill_capability_flag_suppressed_when_toggle_on(self):
+        conn = _FakeConn()
+        conn.queue()
+        conn.queue_skill_capability_toggles(
+            _skill_cap_row("climbing_roped", gated_discipline_ids=["D-010"])
+        )
+        conn.queue(_sdb_row("D-010", "Rock Climbing", "Climbing"))
+        conn.queue()
+        payload = q_layer2c_equipment_mapper_payload(
+            conn,
+            locale_id="home",
+            locale_equipment_pool=["Barbell"],
+            cluster_locale_ids=["home"],
+            cluster_gear_toggle_states={},
+            included_discipline_ids=["D-010"],
+            etl_version_set=_DEFAULT_ETL,
+            skill_toggle_states={"climbing_roped": True},
+        )
+        assert not any(
+            f.flag_type == "requires_skill_capability"
+            for f in payload.coaching_flags
+        )
+
+    def test_skill_capability_flag_skipped_when_discipline_not_included(self):
+        conn = _FakeConn()
+        conn.queue()
+        conn.queue_skill_capability_toggles(
+            _skill_cap_row(
+                "mountaineering",
+                gated_discipline_ids=["D-016", "D-020"],
+            )
+        )
+        # Included disciplines do not overlap the toggle's gated set.
+        conn.queue(_sdb_row("D-001", "Trail Running", "Running"))
+        conn.queue()
+        payload = q_layer2c_equipment_mapper_payload(
+            conn,
+            locale_id="home",
+            locale_equipment_pool=[],
+            cluster_locale_ids=["home"],
+            cluster_gear_toggle_states={},
+            included_discipline_ids=["D-001"],
+            etl_version_set=_DEFAULT_ETL,
+        )
+        assert not any(
+            f.flag_type == "requires_skill_capability"
+            for f in payload.coaching_flags
+        )
+
+    def test_mountaineering_toggle_fires_for_two_included_disciplines(self):
+        """`mountaineering` gates {D-016, D-020}; including both with
+        the toggle OFF fires two flags."""
+        conn = _FakeConn()
+        conn.queue()
+        conn.queue_skill_capability_toggles(
+            _skill_cap_row(
+                "mountaineering",
+                gated_discipline_ids=["D-016", "D-020"],
+            )
+        )
+        conn.queue(
+            _sdb_row("D-016", "Mountaineering", "Mountaineering"),
+            _sdb_row("D-020", "Alpine Descent", "Skiing"),
+        )
+        conn.queue()
+        payload = q_layer2c_equipment_mapper_payload(
+            conn,
+            locale_id="home",
+            locale_equipment_pool=[],
+            cluster_locale_ids=["home"],
+            cluster_gear_toggle_states={},
+            included_discipline_ids=["D-016", "D-020"],
+            etl_version_set=_DEFAULT_ETL,
+        )
+        flags = sorted(
+            (
+                f for f in payload.coaching_flags
+                if f.flag_type == "requires_skill_capability"
+            ),
+            key=lambda f: f.discipline_id,
+        )
+        assert [f.discipline_id for f in flags] == ["D-016", "D-020"]
+        assert all(f.metadata["toggle_name"] == "mountaineering" for f in flags)
+
+    def test_default_empty_skill_states_treats_every_toggle_off(self):
+        """Mirror of gear-toggle precedent — missing keys in
+        `skill_toggle_states` are read as False, so even an athlete with
+        no captured picks gets the flag.
+        """
+        conn = _FakeConn()
+        conn.queue()
+        conn.queue_skill_capability_toggles(
+            _skill_cap_row(
+                "swim_open_water", gated_discipline_ids=["D-004"]
+            )
+        )
+        conn.queue(_sdb_row("D-004", "Open Water Swimming", "Swimming"))
+        conn.queue()
+        payload = q_layer2c_equipment_mapper_payload(
+            conn,
+            locale_id="home",
+            locale_equipment_pool=[],
+            cluster_locale_ids=["home"],
+            cluster_gear_toggle_states={},
+            included_discipline_ids=["D-004"],
+            etl_version_set=_DEFAULT_ETL,
+            # skill_toggle_states omitted entirely.
+        )
+        assert any(
+            f.flag_type == "requires_skill_capability"
+            and f.metadata["toggle_name"] == "swim_open_water"
+            for f in payload.coaching_flags
+        )
