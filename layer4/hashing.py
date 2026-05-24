@@ -133,12 +133,17 @@ def plan_create_key(
     temperature: float,
     max_tokens_per_phase: int,
     capped_retries_per_phase: int,
+    layer2_modality_hash: str | None = None,
 ) -> str:
     """Per §9.1 — cache key for `llm_layer4_plan_create`.
 
     `plan_version_id` is intentionally absent (allocated per call; rebinding
     on hit per §9.4). `layer2c_bundle_hash` is the bundle hash from
     `compute_layer2c_bundle_hash`.
+
+    `layer2_modality_hash` collapses None → '' so callers that don't supply
+    a modality payload retain stable keys (cache forward-compat with
+    pre-BM-3 entries).
     """
     components = [
         str(user_id),
@@ -157,6 +162,7 @@ def plan_create_key(
         str(temperature),
         str(max_tokens_per_phase),
         str(capped_retries_per_phase),
+        layer2_modality_hash or "",
     ]
     return _sha256_hex("||".join(components))
 
@@ -221,6 +227,7 @@ def single_session_synthesize_key(
     temperature: float,
     max_tokens: int,
     capped_retries: int,
+    layer2_modality_locale_hash: str | None = None,
 ) -> str:
     """Per §9.1 — cache key for `llm_layer4_single_session_synthesize`.
 
@@ -228,6 +235,10 @@ def single_session_synthesize_key(
     through `canonical_json` so dicts / pydantic models / dataclasses all
     encode stably. `suggestion_id` is intentionally absent — rebinding
     on hit per §9.4.
+
+    `layer2_modality_locale_hash` collapses None → '' so callers that
+    don't supply a modality payload retain stable keys (cache forward-compat
+    with pre-BM-3 entries + quick-equipment mode which skips the resolver).
     """
     components = [
         str(user_id),
@@ -241,6 +252,7 @@ def single_session_synthesize_key(
         str(temperature),
         str(max_tokens),
         str(capped_retries),
+        layer2_modality_locale_hash or "",
     ]
     return _sha256_hex("||".join(components))
 
@@ -306,12 +318,17 @@ def race_week_brief_key(
     temperature: float,
     max_tokens: int,
     capped_retries: int,
+    layer2_modality_hash: str | None = None,
 ) -> str:
     """Per §9.1 — cache key for `llm_layer4_race_week_brief`.
 
     `today()` is intentionally absent — `days_to_event` shifts daily so the
     orchestrator invalidates `race_week_brief` caches at midnight UTC (per
     §9.3) rather than baking today's date into the key.
+
+    `layer2_modality_hash` collapses None → '' so callers that don't supply
+    a modality payload retain stable keys (cache forward-compat with
+    pre-BM-3 entries).
     """
     components = [
         str(user_id),
@@ -329,5 +346,6 @@ def race_week_brief_key(
         str(temperature),
         str(max_tokens),
         str(capped_retries),
+        layer2_modality_hash or "",
     ]
     return _sha256_hex("||".join(components))

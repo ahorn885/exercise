@@ -450,6 +450,9 @@ def orchestrate_race_week_brief(
         plan_version_id=_RACE_WEEK_BRIEF_PLAN_VERSION_ID_PLACEHOLDER,
         etl_version_set=cone.etl_version_set,
         cache=cache,
+        # BM-3: thread Layer 2 modality resolver payload from the cone
+        # into the brief's prompt body + cache key.
+        layer2_modality_payload=cone.layer2_modality_payload,
         today=today,
     )
 
@@ -758,6 +761,9 @@ def orchestrate_plan_create(
         etl_version_set=cone.etl_version_set,
         cache=cache,
         race_event_payload=race_event,
+        # BM-3: thread Layer 2 modality resolver payload from the cone
+        # into the per-phase prompt bodies + cache key.
+        layer2_modality_payload=cone.layer2_modality_payload,
     )
 
 
