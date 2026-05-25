@@ -434,6 +434,10 @@ def extract_disciplines(ws: Worksheet) -> list[dict[str, Any]]:
             "discipline_id": did,
             "discipline_name": _t(ws.cell(row=r, column=2).value) or did,
             "discipline_category": _t(ws.cell(row=r, column=3).value),
+            # No source column on the v11 sheet; populated post-hoc via
+            # migrate_disciplines_add_primary_movement_v1.sql (like
+            # stimulus_components). Value ∈ ENUM_MOVEMENTS when set.
+            "primary_movement": None,
             "min_base_phase_text": min_base_text,
             "min_base_phase_weeks_low": weeks_low,
             "min_base_phase_weeks_high": weeks_high,
