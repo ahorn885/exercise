@@ -753,7 +753,6 @@ def test_daily_availability_window_happy_path():
         window_start="06:00",
         window_duration=60,
         doubles_feasible="no",
-        preferred_rest_day=False,
     )
     assert w.day_of_week == "Mon"
     assert w.window_duration == 60
@@ -852,7 +851,6 @@ def test_daily_availability_window_forbids_extra():
                 "window_start": "06:00",
                 "window_duration": 60,
                 "doubles_feasible": "no",
-                "preferred_rest_day": False,
                 "extra": "junk",
             }
         )

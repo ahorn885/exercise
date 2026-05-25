@@ -97,7 +97,7 @@ No silent fallbacks. The builder surfaces storage drift as a hard error so the f
 
 Per `Layer1_D51_Design_v1.md` §3.x, several columns store comma-separated subsets of a closed enum or framework slug set:
 
-- `athlete_profile.long_session_days`, `preferred_rest_days`, `dietary_pattern`, `fueling_format_preference`
+- `athlete_profile.dietary_pattern`, `fueling_format_preference`
 - `discipline_baseline_running.trail_experience_terrain`
 - `discipline_baseline_cycling.bike_types_available`
 - `discipline_baseline_paddling.paddle_craft_types`
@@ -110,14 +110,13 @@ Per `Layer1_D51_Design_v1.md` §3.x, several columns store comma-separated subse
 
 **Sunday = 0** per `Layer1_D51_Design_v1.md` §6 #1 (Andy 2026-05-19). Matches `athlete.DAY_TOKENS` (`'sun', 'mon', ..., 'sat'`) + the v5 §G.1 schema comment + the `daily_availability_windows.day_of_week` SMALLINT storage. The builder maps `0..6` → `"Sun".."Sat"` (Title-case three-letter tokens per the existing `DailyAvailabilityWindow.day_of_week` Literal in `layer4/context.py`).
 
-### 5.4 Per-week capacity denormalization onto `DailyAvailabilityWindow`
+### 5.4 `doubles_feasible` denormalization onto `DailyAvailabilityWindow`
 
-`DailyAvailabilityWindow` (existing in `layer4/context.py`; D-61 design wave shape) carries both per-day window times AND per-week capacity flags (`long_session_available`, `long_session_max_duration`, `doubles_feasible`, `preferred_rest_day`). The builder denormalizes `athlete_profile.long_session_*` + `doubles_feasible` + `preferred_rest_days` onto each of the 7 day rows so the typed model carries everything Layer 4 expects.
+`DailyAvailabilityWindow` (in `layer4/context.py`) carries per-day window times plus the `doubles_feasible` capacity flag. The builder denormalizes `athlete_profile.doubles_feasible` onto each of the 7 day rows.
 
-- `long_session_available`: `True` on every day when `athlete_profile.long_session_available = TRUE`; `None` otherwise (typed model accepts None as "not configured").
-- `long_session_max_duration`: from `athlete_profile.long_session_max_hr` (Literal `2 | 3 | 4 | 5 | 6 | 8`).
 - `doubles_feasible`: from `athlete_profile.doubles_feasible`; **default `"no"` when the column is NULL** (typed model requires non-null Literal; interpretation: "no doubles when not configured").
-- `preferred_rest_day`: `True` only when the day's token is in `athlete_profile.preferred_rest_days`.
+
+**FormRefresh Slice C (2026-05-25):** the standalone long-session (`long_session_available` / `long_session_max_duration`) and `preferred_rest_day` per-day fields were dropped from `DailyAvailabilityWindow`, along with the `athlete_profile.long_session_*` + `preferred_rest_days` columns. The weekly long session is now the longest enabled primary window (`window_duration` ceiling raised 360→720 min) and rest days are the disabled days — both derived from the windows by the consumer (plan-gen), not denormalized scalars. `Layer1Availability` reduces to `doubles_feasible`.
 
 ### 5.5 `available_days_per_week` derivation
 
@@ -183,9 +182,8 @@ Layer1Payload
 │
 ├── performance: Layer1Performance  (§F scalars + sources + test_dates)
 │
-├── availability: Layer1Availability  (per-week capacity; daily windows at top level)
-│   ├── long_session_available, long_session_days, long_session_max_hr
-│   ├── doubles_feasible, preferred_rest_days
+├── availability: Layer1Availability  (doubles_feasible; daily windows at top level)
+│   ├── doubles_feasible
 │
 ├── event_goal: Layer1EventGoal
 │   ├── target_race_event_id: int | None
@@ -292,7 +290,7 @@ Coverage shipped in `tests/test_layer1_builder.py` (19 tests, all green at 2026-
 | Identity scalars wire through | `TestFullyPopulated.test_identity_populated` |
 | Injuries / medications split by status / stopped_at | `TestFullyPopulated.test_health_status_split_by_status` |
 | `discipline_weighting` sum-to-100 invariant | `TestFullyPopulated.test_training_history_weighting_sum_validates` |
-| Per-day windows + denormalized per-week capacity + Sunday=0 mapping + preferred-rest-day | `TestFullyPopulated.test_daily_windows_denormalize_per_week_capacity` |
+| Per-day windows + denormalized `doubles_feasible` + Sunday=0 mapping + inferred rest (disabled days) | `TestFullyPopulated.test_daily_windows_denormalize_doubles_and_infer_rest` |
 | Sparse discipline baselines (some present, some None) | `TestFullyPopulated.test_discipline_baselines_partial` |
 | Event-mode target wired | `TestFullyPopulated.test_event_goal_event_mode` |
 | Multi-select CSV columns split (dietary_pattern, fueling_format_preference) | `TestFullyPopulated.test_lifestyle_multi_select_split` |

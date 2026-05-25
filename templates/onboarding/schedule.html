@@ -3,10 +3,11 @@
 {% block content %}
 
 {# v5 onboarding Step 3b — "Schedule & availability" (D-61 §G).
-   Per-day windows + three orthogonal capacity toggles (Long Session,
-   Doubles Feasible, Preferred Rest Days). Replaces v4's weekly-totals
-   §G shape. JIT session-card swap UI explicitly out of this PR; gates
-   on Layer 4 spec.
+   Per-day windows + the Doubles Feasible toggle. The long-session day +
+   rest days are inferred from the windows (longest enabled window = long
+   session; unchecked days = rest), not asked (FormRefresh Slice C
+   2026-05-25). Replaces v4's weekly-totals §G shape. JIT session-card
+   swap UI explicitly out of this PR; gates on Layer 4 spec.
 
    PR14-followup: the form fields live in `_schedule_form.html` so the
    profile-tab edit surface can include the same partial without

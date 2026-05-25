@@ -32,15 +32,12 @@ PROFILE_FIELDS = (
     'lactate_threshold_hr_bpm',
     'vo2max',
     'cycling_ftp_w',
-    # v5 §G orthogonal capacity toggles (PR12 D-61). Per-day windows live
-    # in the `daily_availability_windows` table; these three flags carry
-    # the per-week capacity that doesn't fit a daily-windows shape. Day-
-    # set fields are comma-separated tokens drawn from DAY_TOKENS below.
-    'long_session_available',
-    'long_session_days',
-    'long_session_max_hr',
+    # v5 §G capacity toggle (PR12 D-61; trimmed FormRefresh Slice C
+    # 2026-05-25). Per-day windows live in the `daily_availability_windows`
+    # table. `doubles_feasible` gates second-window entry. The long-session
+    # day + rest days are no longer stored — they're inferred from the
+    # windows (longest enabled window = long session; disabled days = rest).
     'doubles_feasible',
-    'preferred_rest_days',
     # D-73 Phase 1.2A (D-51 §3.3) — §C training history scalars. All
     # self-report at onboarding today; `previous_coaching` closed enum
     # (`self` / `online_plan` / `coach` / `none`). Free-text columns
@@ -111,10 +108,6 @@ PREFILL_ELIGIBLE_FIELDS = (
 # storage convention (matches §7.1 schema comment: 0=Sunday, 6=Saturday).
 DAY_TOKENS = ('sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat')
 DAY_LABELS = ('Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday')
-
-# §G Long Session max-duration options. 8 represents "8+ hr" per D-61
-# decision #1 (the picker enumerates 2 / 3 / 4 / 5 / 6 / 8+).
-LONG_SESSION_MAX_HR_CHOICES = (2, 3, 4, 5, 6, 8)
 
 # §G Doubles Feasible enum. The third value ('no') disables second-window
 # entry in the form; 'occasionally' surfaces second windows but plan-gen

@@ -7,7 +7,9 @@
 <p class="text-muted small mb-2">
   <strong>Start time</strong> is the earliest you can begin, not a fixed
   start. <strong>Duration</strong> is the length of the window in
-  minutes (between 30 and 360).
+  minutes (between 30 and 720). Leave a day unchecked to keep it clear —
+  unchecked days are your rest days, and your longest enabled window is
+  treated as your weekly long session.
 </p>
 
 <div class="table-responsive">
@@ -47,7 +49,7 @@
             <input type="number"
                    class="form-control form-control-sm day-duration-input"
                    name="duration_{{ day.day_token }}"
-                   min="30" max="360" step="5"
+                   min="30" max="720" step="5"
                    value="{{ day.primary.window_duration_min or '' }}"
                    data-day="{{ day.day_token }}"
                    data-window="primary">
@@ -107,79 +109,6 @@
              {% if doubles_feasible == choice %}checked{% endif %}>
       <label class="form-check-label" for="doubles_{{ choice }}">
         {{ choice|capitalize }}
-      </label>
-    </div>
-  {% endfor %}
-</div>
-
-<h5 class="mt-4">Long session</h5>
-<p class="text-muted small mb-2">
-  Saturday-long-run shape: one or more days a week with a longer ceiling
-  than your normal window. The picked days replace those days' window
-  duration when plans schedule a long session.
-</p>
-<div class="form-check mb-2">
-  <input class="form-check-input"
-         type="checkbox"
-         id="long_session_available"
-         name="long_session_available"
-         {% if long_session_available %}checked{% endif %}>
-  <label class="form-check-label" for="long_session_available">
-    I have at least one long-session day per week
-  </label>
-</div>
-<div class="row g-2 mb-3 ms-3">
-  <div class="col-md-7">
-    <label class="form-label small text-muted mb-1">Day(s) — must be enabled training days</label>
-    <div>
-      {% for token in day_tokens %}
-        <div class="form-check form-check-inline">
-          <input class="form-check-input"
-                 type="checkbox"
-                 name="long_session_days"
-                 id="long_day_{{ token }}"
-                 value="{{ token }}"
-                 {% if token in long_session_days %}checked{% endif %}>
-          <label class="form-check-label small" for="long_day_{{ token }}">
-            {{ day_labels[loop.index0][:3] }}
-          </label>
-        </div>
-      {% endfor %}
-    </div>
-  </div>
-  <div class="col-md-5">
-    <label class="form-label small text-muted mb-1" for="long_session_max_hr">
-      Max duration
-    </label>
-    <select class="form-select form-select-sm" name="long_session_max_hr" id="long_session_max_hr">
-      <option value="">—</option>
-      {% for choice in long_session_max_hr_choices %}
-        <option value="{{ choice }}"
-                {% if long_session_max_hr == choice %}selected{% endif %}>
-          {% if choice == 8 %}8+ hours{% else %}{{ choice }} hours{% endif %}
-        </option>
-      {% endfor %}
-    </select>
-  </div>
-</div>
-
-<h5 class="mt-4">Preferred rest day(s) <span class="text-muted small">(optional)</span></h5>
-<p class="text-muted small mb-2">
-  A soft preference for which days to keep clear of training. Plans
-  treat this as a hint, not a hard rule — and disabled days are already
-  treated as rest.
-</p>
-<div class="mb-4">
-  {% for token in day_tokens %}
-    <div class="form-check form-check-inline">
-      <input class="form-check-input"
-             type="checkbox"
-             name="preferred_rest_days"
-             id="rest_day_{{ token }}"
-             value="{{ token }}"
-             {% if token in preferred_rest_days %}checked{% endif %}>
-      <label class="form-check-label small" for="rest_day_{{ token }}">
-        {{ day_labels[loop.index0][:3] }}
       </label>
     </div>
   {% endfor %}

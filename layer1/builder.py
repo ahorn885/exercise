@@ -56,7 +56,6 @@ from layer4.context import (
 
 # Sunday=0 per Layer1_D51_Design_v1.md §6 #1 (Andy 2026-05-19 — matches v5 §G.1
 # storage convention + athlete.DAY_TOKENS).
-_DAY_TOKENS = ("sun", "mon", "tue", "wed", "thu", "fri", "sat")
 _DAY_LABELS = ("Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat")
 
 
@@ -189,11 +188,7 @@ _PROFILE_COLS = (
     "lactate_threshold_hr_bpm",
     "vo2max",
     "cycling_ftp_w",
-    "long_session_available",
-    "long_session_days",
-    "long_session_max_hr",
     "doubles_feasible",
-    "preferred_rest_days",
     "years_structured_training",
     "peak_weekly_volume_hrs",
     "peak_weekly_volume_year",
@@ -307,11 +302,7 @@ def _load_athlete_profile(db, user_id: int):
         "sleep_deprivation_strategy_notes": row["sleep_deprivation_strategy_notes"],
     }
     availability_scalars = {
-        "long_session_available": bool(row["long_session_available"]),
-        "long_session_days": _split_csv(row["long_session_days"]),
-        "long_session_max_hr": row["long_session_max_hr"],
         "doubles_feasible": row["doubles_feasible"],
-        "preferred_rest_days": _split_csv(row["preferred_rest_days"]),
     }
     return identity, performance, training_scalars, event_scalars, lifestyle, availability_scalars
 
@@ -356,11 +347,7 @@ def _empty_lifestyle() -> dict[str, Any]:
 
 def _empty_availability_scalars() -> dict[str, Any]:
     return {
-        "long_session_available": False,
-        "long_session_days": [],
-        "long_session_max_hr": None,
         "doubles_feasible": None,
-        "preferred_rest_days": [],
     }
 
 
@@ -415,11 +402,14 @@ def _load_sleep_baseline(db, user_id: int) -> float | None:
 def _load_daily_windows(
     db, user_id: int, availability_scalars: dict[str, Any]
 ) -> list[DailyAvailabilityWindow]:
-    """Read daily_availability_windows + denormalize per-week capacity onto
-    each of the 7 days the typed `DailyAvailabilityWindow` model expects.
+    """Read daily_availability_windows + denormalize the doubles_feasible
+    capacity flag onto each of the 7 days the typed `DailyAvailabilityWindow`
+    model expects.
 
     Returns 7 entries Sunday..Saturday regardless of how many rows exist in
-    the table — missing days surface as enabled=False.
+    the table — missing days surface as enabled=False. The weekly long
+    session is the longest enabled window and the rest days are the disabled
+    days (FormRefresh Slice C 2026-05-25 — inferred, not stored).
     """
     cur = db.execute(
         "SELECT day_of_week, window_index, enabled, window_start, window_duration_min "
@@ -429,14 +419,11 @@ def _load_daily_windows(
     rows = list(cur.fetchall())
     by_day_idx: dict[tuple[int, int], Any] = {(r["day_of_week"], r["window_index"]): r for r in rows}
 
-    long_session_available = availability_scalars["long_session_available"]
-    long_session_max_hr = availability_scalars["long_session_max_hr"]
     doubles_feasible_raw = availability_scalars["doubles_feasible"]
     # DailyAvailabilityWindow requires non-null doubles_feasible; default "no"
     # when athlete_profile.doubles_feasible is NULL (interpretation: no doubles
     # when not configured).
     doubles_feasible = doubles_feasible_raw if doubles_feasible_raw is not None else "no"
-    preferred_rest_days_set = set(availability_scalars["preferred_rest_days"])
 
     out: list[DailyAvailabilityWindow] = []
     for dow in range(7):
@@ -463,10 +450,7 @@ def _load_daily_windows(
                 window_duration=window_duration,
                 second_window_start=second_start,
                 second_window_duration=second_duration,
-                long_session_available=long_session_available if long_session_available else None,
-                long_session_max_duration=long_session_max_hr,
                 doubles_feasible=doubles_feasible,
-                preferred_rest_day=_DAY_TOKENS[dow] in preferred_rest_days_set,
             )
         )
     return out
