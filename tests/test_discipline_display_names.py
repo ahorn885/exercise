@@ -11,6 +11,13 @@ _ID_RE = re.compile(r"^D-\d{3}[a-z]?$")
 
 
 class TestDisciplineDisplayNameMap:
+    def test_map_covers_every_current_bridge_discipline(self):
+        # 31 = D-001..D-029 (D-027 intentionally skipped during the framework
+        # build) with D-008 split into D-008a/D-008b in the v10 ETL and
+        # D-030/D-031 removed. Pins the count so an accidental add/drop is loud
+        # rather than silent (the predecessor handoff miscounted this as 30).
+        assert len(DISCIPLINE_DISPLAY_NAMES) == 31
+
     def test_all_keys_are_valid_discipline_ids(self):
         for did in DISCIPLINE_DISPLAY_NAMES:
             assert _ID_RE.match(did), f"bad id format: {did}"
