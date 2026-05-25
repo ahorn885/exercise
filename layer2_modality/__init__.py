@@ -23,10 +23,12 @@ from layer2_modality.resolver import (
     ModalityOptionDef,
     resolve_best_fit_modality,
 )
+from layer2_modality.substitution import resolve_training_substitution
 
 __all__ = [
     "ClusterLocaleInput",
     "Layer2ModalityInputError",
     "ModalityOptionDef",
     "resolve_best_fit_modality",
+    "resolve_training_substitution",
 ]

@@ -39,6 +39,7 @@ from layer4.context import (
     Layer3BPayload,
     ParsedIntent,
     RaceEventPayload,
+    TrainingSubstitutionPayload,
 )
 from layer4.hashing import (
     compute_layer2_bundle_canonical_hash,
@@ -467,6 +468,10 @@ def llm_layer4_race_week_brief_cached(
     # cache key + threaded into the brief prompt. Default None preserves
     # existing call sites (notably test fixtures pre-BM-3).
     layer2_modality_payload: Layer2ModalityPayload | None = None,
+    # Best-fit re-model Slice 5 — training-substitution payload. Hashed into
+    # the cache key + threaded into the brief prompt. Default None preserves
+    # existing call sites (additive, alongside the modality payload).
+    training_substitution_payload: TrainingSubstitutionPayload | None = None,
     model: str = "claude-sonnet-4-6",
     temperature: float = 0.2,
     max_tokens: int = 6000,
@@ -501,6 +506,14 @@ def llm_layer4_race_week_brief_cached(
         if layer2_modality_payload is not None
         else None
     )
+    # Slice 5: hash the substitution payload so the cache invalidates on
+    # terrain / craft-inventory changes (deterministic half rides the existing
+    # Layer 1 + 2B eviction cone; the hash slot is belt-and-braces).
+    training_substitution_hash = (
+        compute_payload_hash(training_substitution_payload)
+        if training_substitution_payload is not None
+        else None
+    )
 
     key = race_week_brief_key(
         user_id=user_id,
@@ -519,6 +532,7 @@ def llm_layer4_race_week_brief_cached(
         max_tokens=max_tokens,
         capped_retries=capped_retries,
         layer2_modality_hash=layer2_modality_hash,
+        training_substitution_hash=training_substitution_hash,
     )
 
     def _synthesize() -> Layer4Payload:
@@ -544,6 +558,7 @@ def llm_layer4_race_week_brief_cached(
             today=today,
             llm_caller=llm_caller,
             layer2_modality_payload=layer2_modality_payload,
+            training_substitution_payload=training_substitution_payload,
         )
 
     return cache.get_or_synthesize(

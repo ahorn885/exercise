@@ -57,6 +57,7 @@ from layer4.context import (
     Layer1TrainingHistory,
     Layer2ADiscipline,
     Layer2APayload,
+    Layer2BDisciplineBlock,
     Layer2BPayload,
     Layer2BSummaryBlock,
     Layer2Bundle,
@@ -72,10 +73,12 @@ from layer4.context import (
     PhaseLoadBands,
     RaceDayFueling,
     RaceEventPayload,
+    RaceTerrainOutput,
     RationaleMetadata,
     RecentTrajectory,
     SupplementIntegrationPayload,
     TrainingGapsSummary,
+    TrainingSubstitutionPayload,
     TrajectoryWindow,
     WeightResult,
 )
@@ -1508,6 +1511,102 @@ def _queue_locale_by_slug_hit(conn: _FakeConn) -> None:
 def _queue_locale_by_slug_miss(conn: _FakeConn) -> None:
     """Queue `_q_locale_by_slug` SELECT — row missing."""
     conn.queue(row=None)
+
+
+class TestTrainingSubstitutionWireUp:
+    """Best-fit re-model Slice 5 — the cone computes the training-substitution
+    payload from Layer 2B's `terrain_by_discipline` + threads it to the brief
+    cached wrapper (resolver runs for real; only upstream builders are mocked)."""
+
+    def test_substitution_payload_threads_to_brief_wrapper(self):
+        conn = _FakeConn()
+        _queue_target_race_event(conn)
+        _queue_etl_version_set(conn)
+        _queue_primary_locale(conn)
+        _queue_locale_equipment_pool(conn)
+        cache = Layer4Cache(InMemoryCacheBackend())
+
+        race_event_for_l4 = RaceEventPayload(
+            race_event_id=1,
+            user_id=_USER_ID,
+            name="Test Race 2026",
+            event_date=_EVENT_DATE,
+            race_format="single_day",
+            event_locale_id="home",
+            event_locale_mapbox_id="poi.test_anchor",
+            is_target_event=True,
+        )
+        stack = _patches(
+            layer4_return=_fake_layer4_payload(race_event_payload=race_event_for_l4)
+        )
+        mocks = _enter_all(stack)
+        try:
+            orchestrate_race_week_brief(conn, _USER_ID, cache=cache, today=_TODAY)
+        finally:
+            _exit_all(stack)
+
+        payload = mocks[-1].call_args.kwargs["training_substitution_payload"]
+        assert isinstance(payload, TrainingSubstitutionPayload)
+        # Default fake 2B has no terrain_by_discipline → empty recommendations.
+        assert payload.recommendations == []
+
+    def test_substitution_consumes_terrain_by_discipline_block(self):
+        conn = _FakeConn()
+        _queue_target_race_event(conn)
+        _queue_etl_version_set(conn)
+        _queue_primary_locale(conn)
+        _queue_locale_equipment_pool(conn)
+        cache = Layer4Cache(InMemoryCacheBackend())
+
+        block = Layer2BDisciplineBlock(
+            discipline_id="D-007",
+            race_terrain=[
+                RaceTerrainOutput(
+                    terrain_id="TRN-river",
+                    terrain_name="River",
+                    pct_of_race=100.0,
+                    available_locally=True,
+                    gap=None,
+                    discipline_id="D-007",
+                )
+            ],
+            terrain_gaps=[],
+            summary=_fake_layer2b_payload().summary,
+        )
+        l2b_with_block = _fake_layer2b_payload().model_copy(
+            update={"terrain_by_discipline": [block]}
+        )
+
+        race_event_for_l4 = RaceEventPayload(
+            race_event_id=1,
+            user_id=_USER_ID,
+            name="Test Race 2026",
+            event_date=_EVENT_DATE,
+            race_format="single_day",
+            event_locale_id="home",
+            event_locale_mapbox_id="poi.test_anchor",
+            is_target_event=True,
+        )
+        stack = _patches(
+            layer4_return=_fake_layer4_payload(race_event_payload=race_event_for_l4)
+        )
+        # Override the Layer 2B mock with a payload carrying one discipline block.
+        stack[2] = patch(
+            "layer4.orchestrator.q_layer2b_terrain_classifier_payload",
+            return_value=l2b_with_block,
+        )
+        mocks = _enter_all(stack)
+        try:
+            orchestrate_race_week_brief(conn, _USER_ID, cache=cache, today=_TODAY)
+        finally:
+            _exit_all(stack)
+
+        payload = mocks[-1].call_args.kwargs["training_substitution_payload"]
+        assert [r.discipline_id for r in payload.recommendations] == ["D-007"]
+        assert payload.recommendations[0].race_craft == "Packrafting"
+        emphasis = payload.recommendations[0].terrain_emphasis
+        assert emphasis and emphasis[0].race_terrain_id == "TRN-river"
+        assert emphasis[0].fidelity == 1.0
 
 
 class TestOrchestrateSingleSessionSynthesizeHappyPath:

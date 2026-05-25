@@ -458,6 +458,76 @@ class Layer2ModalityPayload(_Base):
     coaching_flags: list[ModalityCoachingFlag]
 
 
+# ─── Training-substitution resolver payload (BestFitModality_Spec_v4.md §7) ──
+#
+# Best-fit re-model Slice 5 (2026-05-25). Additive alongside the v2
+# Layer2ModalityPayload above (Slice 6 migrates renderers off the v2 payload).
+# Consumes Layer 2B `terrain_by_discipline` (Slice 4) for terrain emphasis;
+# the craft candidate set is handed to the Layer 4 LLM, which reasons about
+# craft closeness (R1 — craft similarity is LLM-side).
+
+
+class TerrainEmphasis(_Base):
+    # A trainable race terrain for a leg, ranked by `emphasis_score` (pct ×
+    # fidelity). `proxy_terrain_id == race_terrain_id` + `fidelity == 1.0`
+    # when the terrain is available locally (no gap); otherwise the best
+    # Layer 2B proxy + its fidelity.
+    race_terrain_id: str
+    terrain_name: str | None = None
+    pct: float = Field(ge=0.0, le=100.0)
+    proxy_terrain_id: str | None = None
+    proxy_terrain_name: str | None = None
+    fidelity: float = Field(ge=0.0, le=1.0)
+    gap_severity: str  # "none" when available locally, else the 2B gap severity
+    proxy_methods: list[str] = Field(default_factory=list)
+    uncoverable_stimulus: list[str] = Field(default_factory=list)
+    emphasis_score: float = Field(ge=0.0)  # pct × fidelity; ranking transparency
+
+
+class TerrainGapRef(_Base):
+    # A race terrain with no usable local proxy (unbridgeable / no proxy /
+    # below the fidelity floor) — carries its `pct` so Layer 4 can size the
+    # compensation narrative.
+    race_terrain_id: str
+    terrain_name: str | None = None
+    pct: float = Field(ge=0.0, le=100.0)
+    gap_severity: str
+    reason: str
+
+
+class TrainingSubstitution(_Base):
+    discipline_id: str
+    discipline_name: str
+    race_craft: str  # pure-craft label of the race discipline (R3)
+    candidate_training_crafts: list[str] = Field(default_factory=list)
+    terrain_emphasis: list[TerrainEmphasis] = Field(default_factory=list)
+    untrainable_terrain: list[TerrainGapRef] = Field(default_factory=list)
+
+
+class TrainingSubstitutionFlag(_Base):
+    # Disjoint from ModalityCoachingFlag's Literal (§8 of Spec v4 defines a
+    # new flag set), so this is a dedicated type rather than a reuse. The
+    # spec §7 names `ModalityCoachingFlag` but its flag-type Literal predates
+    # the re-model — the §8 set is the authority.
+    flag_type: Literal[
+        "craft_unavailable",
+        "craft_substitution",
+        "terrain_untrainable",
+        "terrain_low_fidelity",
+    ]
+    discipline_id: str | None = None
+    discipline_name: str | None = None
+    race_terrain_id: str | None = None
+    message: str
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class TrainingSubstitutionPayload(_Base):
+    etl_version_set: dict[str, str]
+    recommendations: list[TrainingSubstitution] = Field(default_factory=list)
+    coaching_flags: list[TrainingSubstitutionFlag] = Field(default_factory=list)
+
+
 # ─── Layer 2D — injury risk (Layer2D_Spec.md §7 + §5.3.6 amendment) ──────────
 
 
