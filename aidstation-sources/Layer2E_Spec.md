@@ -1,6 +1,6 @@
 # Layer 2E — Nutrition Baseline (Query Node)
 
-**Status:** Consolidated spec, first draft 2026-05-11. Designed from scratch per `2D_Done_2E_Kickoff_Handoff.md` agenda.
+**Status:** Consolidated spec, first draft 2026-05-11. Designed from scratch per `2D_Done_2E_Kickoff_Handoff.md` agenda. **Amended in place 2026-05-25** (upstream-sourced discipline classification, PR #156): §3 `IncludedDiscipline` + §5.3.3 endurance/protein band + §5.4.3 sport profile now describe deriving the classification from upstream `discipline_category` / `primary_movement` (no hand-maintained per-discipline dicts); §6.1 / §12 (2E-6) / §14 corrected to reflect that D-26 `supplement_vocabulary` shipped FC-1 (the §5.5 stub is an input-shape gap, not a vocab blocker).
 **Type:** Query node. Pure read, deterministic given inputs, no LLM involvement.
 **Supersedes:** the v3 stub `q_layer2e_nutrition_baseline_payload(...)` placeholder. Like 2D, the original signature was incomplete — 2E requires direct access to the athlete's §A demographics, §B health records, §H target events, and §I lifestyle/recovery data. v4 spec rewrite (FC-2) folds in the full signature.
 
@@ -59,7 +59,7 @@ def q_layer2e_nutrition_baseline_payload(
 | `health_records` | HealthRecords | Layer 1 §B | conditions[], allergies[], medications[]. Status (Current / History) is on each record. |
 | `target_events` | list[TargetEvent] | Layer 1 §H.2 | Empty list when §H.1 = No (athlete in time-based mode). Race-day fueling sub-payload only populates for events. |
 | `lifestyle_recovery` | LifestyleRecovery | Layer 1 §I (structured form per handoff) | dietary_pattern[], supplements[] (record set), caffeine_*, fueling_format_pref[], fueling_shift_triggers[], gi_triggers[], salt_tolerance, sleep_dep, altitude_acclim |
-| `included_disciplines` | list[IncludedDiscipline] | 2A `Layer2APayload.disciplines` | Subset: discipline_id, weight, role. Drives activity multiplier and race-day sport modifier. |
+| `included_disciplines` | list[IncludedDiscipline] | 2A `Layer2APayload.disciplines` | Subset: discipline_id, weight, role, plus the upstream `discipline_category` + `primary_movement` classification (plumbed by 2A from `layer0.disciplines`; see §5.3.3 / §5.4.3 — added 2026-05-25, upstream-sourced classification). Drives activity multiplier, the §5.3.3 endurance/protein band positions, and the race-day sport modifier. |
 | `framework_sport` | str | 2A input, post-strip | Sub-format-named where applicable ("Triathlon (Standard / Olympic)", "Adventure Racing"). Used for phase_load_allocation lookup. |
 | `plan_management_state` | PlanManagementState | Plan Management subsystem | current_phase (Base/Build/Peak/Taper), heat_acclim_state, expected_race_temp_c per event |
 | `etl_version_set` | dict[str, str] | Plan-gen pin | Per ETL spec v3 §5.1 Decision 2. Locks Layer 0 version for the plan. |
@@ -137,6 +137,8 @@ class IncludedDiscipline:
     weight: float                             # 2A's load weight, 0-1
     role: str                                 # Primary / Secondary / Conditional
     phase_load: PhaseLoadBands | None         # 2A pass-through from phase_load_allocation
+    discipline_category: str | None           # Upstream terrain axis (layer0.disciplines), plumbed via 2A. Drives §5.3.3 endurance band. None → 'Mixed'.
+    primary_movement: str | None              # Upstream movement axis (layer0.disciplines), plumbed via 2A. Drives §5.4.3 sport profile + §5.3.3 protein band. None → 'multi_sport'.
 
 @dataclass
 class PlanManagementState:
@@ -349,12 +351,14 @@ def compute_macros_for_phase(
 
 #### 5.3.3 Discipline-mix-driven band position
 
+**Endurance profile is sourced from upstream (2026-05-25, upstream-sourced classification).** Each discipline's endurance band comes from its `discipline_category` (the terrain axis on `layer0.disciplines`, plumbed via 2A onto `IncludedDiscipline.discipline_category`) — mapped by category-prefix to an endurance label `{Pure endurance | Mixed | Technical-dominant}` (aligned with Layer 0 `ENUM_ENDURANCE`), which the share-weighting below consumes. There is **no** hand-maintained `discipline_id → endurance_profile` dict (the prior v1 design did; it duplicated authoritative Layer 0 data it never read and drifted off the post-R6 taxonomy — the finding that drove this change). Missing/unknown category defaults to `Mixed`; a present-but-unrecognised value is logged.
+
 ```python
 def _cho_band_position(disciplines: list[IncludedDiscipline]) -> float:
     """Higher CHO for endurance-heavy mixes; mid for mixed; lower for technical-dominant."""
-    # Use weighted average of cross_sport_properties LIT_RATIO_001 or sport endurance_profile.
-    # For v1: hard-coded by endurance_profile lookup.
-    profiles = [_lookup_sport_endurance_profile(d) for d in disciplines]
+    # Endurance profile derived per-discipline from upstream `discipline_category`
+    # (category-prefix → {Pure endurance | Mixed | Technical-dominant}).
+    profiles = [_endurance_profile(d) for d in disciplines]   # reads d.discipline_category
     weights = [d.weight for d in disciplines]
     pure_endurance_share = _weighted_share(profiles, weights, 'Pure endurance')
     mixed_share          = _weighted_share(profiles, weights, 'Mixed')
@@ -362,16 +366,16 @@ def _cho_band_position(disciplines: list[IncludedDiscipline]) -> float:
     return min(1.0, max(0.0, 0.5 + 0.4 * pure_endurance_share - 0.2 * (1 - pure_endurance_share - mixed_share)))
 ```
 
-Endurance-heavy mix (e.g., pure ultrarunning) lands near CHO high; technical-dominant mix (e.g., skimo with substantial mountaineering load) lands closer to CHO low. AR's 14-discipline mix is "Mixed" overall and lands near the band midpoint.
+Endurance-heavy mix (e.g., pure ultrarunning) lands near CHO high; technical-dominant mix (e.g., skimo with substantial mountaineering load) lands closer to CHO low. AR's multi-discipline mix is "Mixed" overall and lands near the band midpoint.
 
-Protein band position is simpler:
+Protein band position is simpler — strength-biased movements push protein higher, detected from the upstream **movement** axis (`primary_movement`; `climbing` is the strength-biased movement in the Layer 0 vocabulary), not a hand-maintained strength-discipline id set:
 
 ```python
 def _protein_band_position(disciplines: list[IncludedDiscipline]) -> float:
     """Strength-weighted disciplines push protein higher."""
     strength_share = sum(
         d.weight for d in disciplines
-        if _is_strength_dominant(d.discipline_id)
+        if (d.primary_movement or '').lower() in _STRENGTH_MOVEMENTS   # {'climbing'}
     )
     return min(1.0, 0.4 + 0.6 * strength_share)
 ```
@@ -416,7 +420,7 @@ def _classify_duration_tier(hours: float) -> str:
 | Multi-sport (AR / triathlon) | ×0.95 | Real-food bias; transitions enable variety |
 | Skimo-dominant | ×0.9 | Cold-thermoregulation increases need; pocket access limits |
 
-Sport profile resolved from weighted discipline mix.
+**Sport profile derivation (2026-05-25, upstream-sourced classification).** The sport-profile vote is sourced from each discipline's upstream `primary_movement` (the movement axis on `layer0.disciplines`, plumbed via 2A onto `IncludedDiscipline.primary_movement`) — **not** a hand-maintained `discipline_id → profile` dict. Each movement maps to a profile (`running`/`hiking` → Running-dominant; `cycling` → Cycling-dominant; `swimming` → Swimming-dominant; `paddling` → Paddling-dominant; `skiing` → Skimo-dominant; `climbing`/`navigation`/`other_skill` → Multi-sport). The weighted vote picks the profile with the largest load share; any mix where no single profile claims >50% (AR / triathlon) resolves to Multi-sport. The **movement** axis is required because the terrain `discipline_category` cannot distinguish swimming from paddling (both share a 'Water / *' category) — the original motivation for adding `primary_movement` to Layer 0. Missing/unrecognised `primary_movement` defaults to Multi-sport (a present-but-unknown value is logged).
 
 #### 5.4.4 Athlete tolerance modifiers
 
@@ -833,14 +837,14 @@ Layer 3.5 renders these to the athlete with the resolution options as picker but
 | D-07 | 4 sports missing rows in `phase_load_weekly_totals` (Off-Road / Adventure Multisport (Non-Nav), 2× Open Water Marathon Swimming sub-formats, Swimrun) | Activity multiplier falls back to phase default with `pla_missing_for_sport_phase` coaching flag. AR is safe ✓. FC-1 fix. |
 | D-17 | Non-AR sport naming mismatch between `sport_discipline_map` and `phase_load_allocation` (top-level vs sub-format) | 2E's `framework_sport` parameter is in the sub-format-resolved form (same as 2A consumes). Layer 1 §H must capture sub-format at race-goal setup. Design owner: Layer 1 race-goal capture spec. Tracked in §12. |
 | D-21 | `health_condition_categories` column name reconciliation (deferred) | 2E's `current_conditions` matching against supplement contraindications is symbol-based (string match on system_category values, not column names). Reconciliation is FC-1 / FC-2 housekeeping; doesn't affect 2E correctness. |
-| D-26 | `supplement_vocabulary` Layer 0 table not yet implemented | **Hard blocker for 2E implementation.** Spec'd in `Supplement_Vocabulary_Spec.md`; 25 seed entries drafted. FC-1 must land before 2E ships. |
+| D-26 | `supplement_vocabulary` Layer 0 table | ✅ **Resolved (FC-1, 2026-05-11)** — table + 25 seed entries shipped via `etl/sources/migrate_supplement_vocabulary.sql`. No longer a blocker. The §5.5 supplement-integration stub roots in an **input-shape gap** (Layer 1 `Layer1Lifestyle.supplement_protocol_notes` is free text vs the spec's structured `list[AthleteSupplementRecord]`), not vocab availability — closed by the §I.1 structured-supplement form refresh (§12 2E-6, CARRY_FORWARD). |
 
 ### 6.2 Future Layer 0 promotion candidates (post-v1)
 
 | Candidate | What lives in spec/code today | Why promote |
 |---|---|---|
 | `race_fueling_bands` table | §5.4.2 base bands (5×7 matrix) | Curated bands deserve auditable Layer 0 history. Splits curation from algorithm code. Pattern mirrors D-22 (`movement_components`) and D-23 (`body_parts_at_risk`) promotions. |
-| `sport_endurance_modifier` table | §5.4.3 sport modifier (6×3 matrix) | Same rationale. Currently keyed on a derived "sport profile" classification that itself is hand-coded; promoting both formalizes the pipeline. |
+| `sport_endurance_modifier` table | §5.4.3 sport modifier (6×3 matrix) | Same rationale. Keyed on a derived "sport profile" classification now sourced from upstream `primary_movement` (2026-05-25); promoting the modifier matrix itself formalizes the band curation. |
 | `dietary_pattern_adjustments` table | §5.6 logic (vegan B12/iron/EPA, low-FODMAP race adj, etc.) | Hand-curated rules with research citations; auditable in Layer 0 form. |
 | `sport_mets_table` (Compendium-based) | None today (multiplier-based fallback used instead in §5.2.2) | Enables v3 MET-based activity multiplier path that's more precise than phase × volume lookup. |
 | Per-discipline GI-risk classification | §5.4.3 sport modifier captures this indirectly | Tighter discipline-level (not sport-level) signal for race fueling format choice. |
@@ -1132,7 +1136,7 @@ If athlete has 5+ target events, scaling is linear in event count. Per-event bud
 | 2E-3 | **Plan Management `expected_race_temp_c` derivation** (location + date + weather API) | Plan Management spec | Same |
 | 2E-4 | **Plan Management `current_phase` source-of-truth** (athlete is in a plan; phase is derived) | Plan Management spec | Same |
 | 2E-5 | **D-17 sub-format selection in §H** — for non-AR sports, athlete's race goal must drive sub-format ("Triathlon (Standard / Olympic)" vs "Triathlon (Half Ironman)" etc.). 2E inherits the contract from 2A. | Layer 1 race-goal capture | Tracked in `Project_Backlog.md`; not 2E-blocking but a Layer 1 design gap |
-| 2E-6 | **D-26 supplement_vocabulary table implementation** — 25 seed entries; FC-1 work. Hard blocker for 2E implementation. | FC-1 | Spec'd in `Supplement_Vocabulary_Spec.md` |
+| 2E-6 | **D-26 supplement_vocabulary table** — 25 seed entries. ~~Hard blocker.~~ ✅ Table shipped (FC-1, 2026-05-11). Remaining 2E-6 work is the §I.1 structured-supplement form refresh that de-stubs §5.5 (input-shape gap: free-text `supplement_protocol_notes` → structured `AthleteSupplementRecord` records), NOT the vocab table. | Onboarding §I.1 form refresh | Table ✅ Resolved; §5.5 de-stub awaiting structured-supplement capture |
 | 2E-7 | **Race-day fueling band promotion to Layer 0** — §5.4.2 bands ship in code v1; promote to `race_fueling_bands` table when curation pressure rises | Future FC | Tracked in §6.2 |
 | 2E-8 | **Sport endurance modifier table promotion** — §5.4.3 same pattern | Future FC | §6.2 |
 | 2E-9 | **HRT × BMR research** — current spec produces miscalibrated BMR for HRT athletes (coaching flag surfaces the limitation; doesn't fix it) | Research | v2 candidate |
@@ -1304,7 +1308,7 @@ Expected:
 - **Activity multiplier band table is opinionated.** Same issue. Multipliers for elite endurance athletes can exceed 2.5 in peak; current cap at 2.3 underfuels the elite cohort by ~5–10%. Acceptable for v1; revisit when elite-cohort data lands.
 - **The fat floor at 1.0 g/kg can produce a fat-floor-constrained CHO target** in low-calorie scenarios (small athlete, low volume). 5.3.2 handles this by shrinking CHO band position; coaching flag fires. Edge case but real.
 - **Plan Management contract dependencies (2E-2, 2E-3, 2E-4)** mean 2E can't ship in isolation — Plan Management must land first or 2E ships with stubbed state. This is a real coupling between layers that the parallel-classifier architecture otherwise avoids.
-- **D-26 (supplement_vocabulary)** is a hard implementation blocker. Until FC-1 lands the table, 2E can't compute contraindication flags or HITL items. Spec ready; implementation pending.
+- **D-26 (supplement_vocabulary)** ~~is a hard implementation blocker~~ shipped (FC-1, 2026-05-11) — contraindication flags + HITL items can compute against the table. The residual §5.5 supplement-integration stub is an input-shape gap (free-text `supplement_protocol_notes` vs structured `AthleteSupplementRecord`), closed by the §I.1 form refresh — not a vocab blocker.
 - **2E doesn't audit caloric intent.** If an athlete is under-eating relative to phase requirements (energy availability concern), 2E flags only the soft `low_calorie_target_relative_to_rmr` — and only when the *target* is low, not when the actual intake is. Actual intake tracking is Layer 4 / Plan Management. The gap is intentional but worth acknowledging.
 
 **What might be missing:**
@@ -1321,4 +1325,4 @@ Counter: every band is anchored on cited research. Disagreement is auditable. Fu
 
 ---
 
-*End of spec. Open items 2E-1 through 2E-16 need Andy's decisions before implementation. Drift items D-05, D-07, D-17, D-21, D-26 confirmed as 2E-relevant; D-26 is a hard blocker.*
+*End of spec. Open items 2E-1 through 2E-16 need Andy's decisions before implementation. Drift items D-05, D-07, D-17, D-21 confirmed as 2E-relevant; D-26 (supplement_vocabulary) resolved FC-1 2026-05-11 (its residual §5.5 stub is an input-shape gap, not a vocab blocker). §5.3.3 / §5.4.3 amended 2026-05-25 to the upstream-sourced discipline classification (see PR #156 closing handoff).*
