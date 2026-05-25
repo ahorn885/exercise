@@ -23,8 +23,7 @@ from layer4.context import (
     RaceTerrainOutput,
     TerrainGap,
 )
-from layer2_modality import resolve_training_substitution
-from layer2_modality.resolver import Layer2ModalityInputError
+from layer2_modality import Layer2ModalityInputError, resolve_training_substitution
 
 _ETL = {"0A": "0A-v1", "0B": "0B-v1", "0C": "0C-v2.0-r2"}
 

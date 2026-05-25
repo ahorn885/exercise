@@ -56,6 +56,7 @@ from layer4.context import (
     Layer3APayload,
     Layer3BPayload,
     ParsedIntent,
+    TrainingSubstitutionPayload,
 )
 from layer4.errors import Layer4InputError, Layer4OutputError
 from layer4.payload import (
@@ -795,6 +796,7 @@ def llm_layer4_plan_refresh(
     etl_version_set: dict[str, str],
     *,
     plan_start_date: _date_type | None = None,
+    training_substitution_payload: TrainingSubstitutionPayload | None = None,
     model_synthesizer: str = "claude-sonnet-4-6",
     model_seam_reviewer: str | None = None,
     temperature: float = 0.4,
@@ -967,6 +969,7 @@ def llm_layer4_plan_refresh(
             parsed_intent=effective_intent,
             retries_used=retries_used,
             rule_failures=rule_failures,
+            training_substitution_payload=training_substitution_payload,
             **extra_kwargs,
         )
 

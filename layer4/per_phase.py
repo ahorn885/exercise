@@ -42,10 +42,10 @@ from layer4.context import (
     Layer2CPayload,
     Layer2DPayload,
     Layer2EPayload,
-    Layer2ModalityPayload,
     Layer3APayload,
     Layer3BPayload,
     RaceEventPayload,
+    TrainingSubstitutionPayload,
 )
 from layer4.errors import Layer4OutputError
 from layer4.payload import (
@@ -637,68 +637,62 @@ def _format_route_locales(race_event: RaceEventPayload | None) -> list[str]:
     return out
 
 
-def _format_modality_recommendations_per_phase(
-    payload: Layer2ModalityPayload,
+def _format_training_substitution_per_phase(
+    payload: TrainingSubstitutionPayload,
 ) -> list[str]:
-    """Render BM-3 modality recommendations for the per-phase prompt.
+    """Render the training-substitution brief for the per-phase prompt.
 
-    Convention: `=== Section ===` header + tight one-line-per-recommendation
-    bullet format to match per_phase.py's compressed `=== Race + locale +
-    equipment ===` idiom. Each recommendation collapses to one line per
-    `(discipline, locale)`: `D-001 ... @ home: top=outdoor_trail_run (90);
-    alts=...; rationale=...`. Empty payload renders an explanatory line so
-    the LLM doesn't infer a silent omission.
+    Convention: `=== Section ===` header + one compact line per discipline to
+    match per_phase.py's `=== Race + locale + equipment ===` idiom. Per
+    discipline: the race craft + the craft candidate set (the LLM picks the
+    closest trainable craft), the terrain training emphasis ranked by
+    `pct × fidelity`, and the terrain that can't be trained locally. Empty
+    payload renders an explanatory line so the LLM doesn't infer a silent
+    omission.
     """
-    lines: list[str] = ["=== Best-fit modality menu (per discipline, per locale) ==="]
+    lines: list[str] = ["=== Best-fit training substitution (per discipline) ==="]
     lines.append(
-        "Surfaced from Layer 2 modality resolver. Use as a menu when "
-        "synthesizing each session — pick the modality that fits the phase "
-        "intent (Peak biases outdoor + sport-specific; Taper biases "
-        "lower-stimulus options). Outdoor + specific options score higher in "
-        "the base preference; generic / indoor substitutes surface as "
-        "lower-ranked alternates for travel days or recovery work."
+        "Surfaced from the Layer 2 training-substitution resolver (race terrain "
+        "× local trainability). Bias each phase's sessions toward the "
+        "highest-emphasis trainable terrain; name compensation work for terrain "
+        "that can't be trained locally. Peak biases the highest-fidelity proxies "
+        "+ race-craft specificity; Taper biases lower-stimulus trainable terrain."
     )
     if not payload.recommendations and not payload.coaching_flags:
-        lines.append("(No recommendations or coaching flags emitted by resolver.)")
+        lines.append("(No training-substitution recommendations for this discipline set.)")
         lines.append("")
         return lines
-    if payload.recommendations:
-        for rec in payload.recommendations:
-            label = (
-                f"{rec.discipline_id} {rec.discipline_name} @ "
-                f"{rec.locale_name or rec.locale_id}"
-            )
-            if rec.top_pick_modality_id is None or not rec.menu:
-                lines.append(f"{label}: (no satisfying modality at this locale)")
-                continue
-            top = rec.menu[0]
-            alternates = rec.menu[1:]
-            alt_str = (
-                "; alts=" + ", ".join(
-                    f"{m.modality_id} ({m.preference_score})" for m in alternates
-                )
-                if alternates
-                else ""
-            )
-            lines.append(
-                f"{label}: top={top.modality_id} ({top.preference_score})"
-                f"{alt_str}; rationale={top.rationale_hint}"
-            )
+    for rec in payload.recommendations:
+        crafts = ", ".join(rec.candidate_training_crafts) or "(none logged)"
+        label = (
+            f"{rec.discipline_id} {rec.discipline_name} (race craft: "
+            f"{rec.race_craft}; candidate crafts: {crafts})"
+        )
+        emph = "; ".join(
+            f"{e.terrain_name or e.race_terrain_id} {e.pct:g}% "
+            f"(proxy {e.proxy_terrain_name or e.proxy_terrain_id} @{e.fidelity:.2f})"
+            for e in rec.terrain_emphasis
+        ) or "(none)"
+        untr = "; ".join(
+            f"{g.terrain_name or g.race_terrain_id} {g.pct:g}% ({g.reason})"
+            for g in rec.untrainable_terrain
+        )
+        line = f"{label}: emphasis={emph}"
+        if untr:
+            line += f"; untrainable={untr}"
+        lines.append(line)
     if payload.coaching_flags:
         lines.append("")
-        lines.append("Modality coaching flags:")
+        lines.append("Substitution coaching flags:")
         for fl in payload.coaching_flags:
-            scope = (
-                f"{fl.discipline_id}, {fl.locale_name or fl.locale_id}"
-                if fl.locale_id
-                else fl.discipline_id
-            )
-            lines.append(f"- {fl.flag_type} ({scope}): {fl.message}")
+            scope_bits = [b for b in (fl.discipline_id, fl.race_terrain_id) if b]
+            scope = f" ({' / '.join(scope_bits)})" if scope_bits else ""
+            lines.append(f"- {fl.flag_type}{scope}: {fl.message}")
     lines.append("")
     lines.append(
-        "Cite modalities in `coaching_intent` / `session_notes` using natural "
-        "names (e.g. \"trail run\", \"indoor trainer\") — never the internal "
-        "`modality_id` string."
+        "Cite crafts + terrain in `coaching_intent` / `session_notes` using "
+        "natural language — never the internal `discipline_id` / `TRN-xxx` "
+        "strings."
     )
     lines.append("")
     return lines
@@ -724,7 +718,7 @@ def render_user_prompt(
     rule_failures: list[RuleFailure],
     seam_issues: list[str],
     seam_direction: Literal["re_prompt_prior", "re_prompt_next"] | None,
-    layer2_modality_payload: Layer2ModalityPayload | None = None,
+    training_substitution_payload: TrainingSubstitutionPayload | None = None,
 ) -> str:
     """Render the §6 user prompt for one phase. Inline Python rendering
     replaces Mustache; the structure matches `Layer4_PerPhase_v2.md` §6.
@@ -865,9 +859,9 @@ def render_user_prompt(
             )
     parts.append("")
 
-    # === Best-fit modality menu (BM-3 surface) ===
-    if layer2_modality_payload is not None:
-        parts.extend(_format_modality_recommendations_per_phase(layer2_modality_payload))
+    # === Best-fit training substitution ===
+    if training_substitution_payload is not None:
+        parts.extend(_format_training_substitution_per_phase(training_substitution_payload))
 
     # === Schedule ===
     parts.append("=== Schedule ===")
@@ -1187,11 +1181,10 @@ def synthesize_phase(
     retries_already_used: int = 0,
     llm_caller: LLMCaller | None = None,
     session_id_prefix: str | None = None,
-    # D-73 Phase 5.2 BM3 2026-05-24 — Layer 2 modality resolver payload
-    # rendered into the per-phase prompt via
-    # `_format_modality_recommendations_per_phase`. Default None preserves
-    # legacy call sites + plan_refresh paths that don't surface the cone.
-    layer2_modality_payload: Layer2ModalityPayload | None = None,
+    # Training-substitution resolver payload rendered into the per-phase
+    # prompt via `_format_training_substitution_per_phase`. Default None
+    # preserves legacy call sites that don't surface the cone.
+    training_substitution_payload: TrainingSubstitutionPayload | None = None,
 ) -> PhaseSynthesisResult:
     """Synthesize one phase's PlanSession list per `Layer4_Spec.md` §5.2
     step 3.
@@ -1281,7 +1274,7 @@ def synthesize_phase(
             rule_failures=rule_failures,
             seam_issues=seam_issues or [],
             seam_direction=seam_direction,
-            layer2_modality_payload=layer2_modality_payload,
+            training_substitution_payload=training_substitution_payload,
         )
 
         llm_out = caller(

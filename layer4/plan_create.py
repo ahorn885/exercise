@@ -33,10 +33,10 @@ from layer4.context import (
     Layer2CPayload,
     Layer2DPayload,
     Layer2EPayload,
-    Layer2ModalityPayload,
     Layer3APayload,
     Layer3BPayload,
     RaceEventPayload,
+    TrainingSubstitutionPayload,
 )
 from layer4.errors import Layer4InputError, Layer4OutputError
 from layer4.hashing import compute_accepted_output_hash, compute_phase_cache_key
@@ -434,7 +434,7 @@ def _run_pattern_a_engine(
     cache: Layer4Cache | None = None,
     call_cache_key: str | None = None,
     executor: Executor | None = None,
-    layer2_modality_payload: Layer2ModalityPayload | None = None,
+    training_substitution_payload: TrainingSubstitutionPayload | None = None,
 ) -> _PatternAResult:
     """Run the Pattern A loop per `Layer4_Spec.md` §5.2.
 
@@ -514,7 +514,7 @@ def _run_pattern_a_engine(
                 retries_already_used=0,
                 llm_caller=phase_caller,
                 session_id_prefix=f"{session_id_prefix}-p{_i}",
-                layer2_modality_payload=layer2_modality_payload,
+                training_substitution_payload=training_substitution_payload,
             )
 
         if cache is not None and call_cache_key is not None:
@@ -819,7 +819,7 @@ def _run_pattern_a_engine(
             retries_already_used=retries_used_per_phase[target_idx] + 1,
             llm_caller=phase_caller,
             session_id_prefix=f"{session_id_prefix}-p{target_idx}-seamretry",
-            layer2_modality_payload=layer2_modality_payload,
+            training_substitution_payload=training_substitution_payload,
         )
         results_by_index[target_idx] = re_result
         # Refresh the per-phase metadata so the final PhaseStructure carries
@@ -1137,10 +1137,10 @@ def llm_layer4_plan_create(
     cache: Layer4Cache | None = None,
     call_cache_key: str | None = None,
     executor: Executor | None = None,
-    # D-73 Phase 5.2 BM3 2026-05-24 — Layer 2 modality resolver payload
-    # threaded through `_run_pattern_a_engine` → `synthesize_phase` →
-    # `render_user_prompt`. Default None preserves existing call sites.
-    layer2_modality_payload: Layer2ModalityPayload | None = None,
+    # Training-substitution resolver payload threaded through
+    # `_run_pattern_a_engine` → `synthesize_phase` → `render_user_prompt`.
+    # Default None preserves existing call sites.
+    training_substitution_payload: TrainingSubstitutionPayload | None = None,
 ) -> Layer4Payload:
     """Pattern A plan-create entry point per `Layer4_Spec.md` §3.1.
 
@@ -1215,7 +1215,7 @@ def llm_layer4_plan_create(
         cache=cache,
         call_cache_key=call_cache_key,
         executor=executor,
-        layer2_modality_payload=layer2_modality_payload,
+        training_substitution_payload=training_substitution_payload,
     )
 
     return _build_plan_create_payload(

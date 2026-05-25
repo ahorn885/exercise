@@ -62,7 +62,6 @@ from layer4.context import (
     Layer2CPayload,
     Layer2DPayload,
     Layer2EPayload,
-    Layer2ModalityPayload,
     Layer3APayload,
     Layer3BPayload,
     RaceEventPayload,
@@ -808,71 +807,6 @@ On retry, the orchestrator passes `rule_failures` describing what the validator 
 # ─── Prompt rendering (Layer4_RaceWeekBrief_v2.md §6) ────────────────────────
 
 
-def _render_modality_section_race_week_brief(
-    payload: Layer2ModalityPayload,
-) -> list[str]:
-    """Render BM-3 modality recommendations for the race-week brief prompt.
-
-    Convention: `# Heading` + `**bold:**` to match race_week_brief.py's
-    mixed-markdown idiom (`# Race-week brief request`, `**Event:**`, etc.).
-    Used by the LLM when surfacing race-week training cite material —
-    particularly for taper-week sessions that should bias toward sport-specific
-    outdoor work when terrain + equipment allow.
-    """
-    lines: list[str] = ["# Best-fit modality (Layer 2 modality resolver)", ""]
-    lines.append(
-        "**Purpose:** the resolver narrows modality options per "
-        "`(discipline, locale)` based on the athlete's accessible terrain + "
-        "equipment + skill capabilities. Use as a menu when describing race-week "
-        "training sessions; particularly when the brief surfaces taper-week "
-        "intent or race-week-only test sessions."
-    )
-    lines.append("")
-    if not payload.recommendations and not payload.coaching_flags:
-        lines.append("_No modality recommendations available for this athlete's discipline set._")
-        lines.append("")
-        return lines
-    if payload.recommendations:
-        lines.append("**Recommendations:**")
-        for rec in payload.recommendations:
-            label = (
-                f"{rec.discipline_id} {rec.discipline_name} @ "
-                f"{rec.locale_name or rec.locale_id}"
-            )
-            if rec.top_pick_modality_id is None or not rec.menu:
-                lines.append(f"- {label}: no satisfying modality at this locale")
-                continue
-            top = rec.menu[0]
-            alternates = rec.menu[1:]
-            alt_str = (
-                "; alts: " + ", ".join(m.modality_id for m in alternates)
-                if alternates
-                else ""
-            )
-            lines.append(
-                f"- {label} — top: {top.modality_id} (rationale: {top.rationale_hint})"
-                f"{alt_str}"
-            )
-        lines.append("")
-    if payload.coaching_flags:
-        lines.append("**Modality coaching flags:**")
-        for fl in payload.coaching_flags:
-            scope = (
-                f"{fl.discipline_id} at {fl.locale_name or fl.locale_id}"
-                if fl.locale_id
-                else fl.discipline_id
-            )
-            lines.append(f"- `{fl.flag_type}` ({scope}): {fl.message}")
-        lines.append("")
-    lines.append(
-        "When citing a modality in brief copy, prefer natural names (e.g. "
-        "\"trail run\", \"indoor trainer\") over the internal `modality_id` "
-        "strings."
-    )
-    lines.append("")
-    return lines
-
-
 def _render_training_substitution_section(
     payload: TrainingSubstitutionPayload,
 ) -> list[str]:
@@ -943,7 +877,6 @@ def _render_user_prompt(
     today: _date_type,
     retries_used: int,
     rule_failures: list[RuleFailure],
-    layer2_modality_payload: Layer2ModalityPayload | None = None,
     training_substitution_payload: TrainingSubstitutionPayload | None = None,
 ) -> str:
     """Render the §6 user prompt template against the typed payloads.
@@ -1111,11 +1044,7 @@ def _render_user_prompt(
     )
     parts.append("")
 
-    # § Best-fit modality (BM-3 surface — Layer 2 modality resolver)
-    if layer2_modality_payload is not None:
-        parts.extend(_render_modality_section_race_week_brief(layer2_modality_payload))
-
-    # § Best-fit training substitution (re-model Slice 5 — Layer 2 substitution resolver)
+    # § Best-fit training substitution (Layer 2 substitution resolver)
     if training_substitution_payload is not None:
         parts.extend(
             _render_training_substitution_section(training_substitution_payload)
@@ -1598,14 +1527,9 @@ def llm_layer4_race_week_brief(
     extended_thinking_budget: int = 5500,
     today: _date_type | None = None,
     llm_caller: LLMCaller | None = None,
-    # D-73 Phase 5.2 BM3 2026-05-24 — Layer 2 modality resolver payload
-    # rendered into the brief prompt via
-    # `_render_modality_section_race_week_brief`. Default None preserves
-    # existing call sites (notably the test fixtures) that pre-date BM-3.
-    layer2_modality_payload: Layer2ModalityPayload | None = None,
-    # Best-fit re-model Slice 5 — training-substitution payload rendered via
+    # Training-substitution payload rendered into the brief prompt via
     # `_render_training_substitution_section`. Default None preserves existing
-    # call sites (additive, alongside the modality payload).
+    # call sites (notably the test fixtures).
     training_substitution_payload: TrainingSubstitutionPayload | None = None,
 ) -> Layer4Payload:
     """Pattern B race-week-brief synthesizer per `Layer4_Spec.md` §3.4
@@ -1680,7 +1604,6 @@ def llm_layer4_race_week_brief(
             today=today,
             retries_used=retries_used,
             rule_failures=rule_failures,
-            layer2_modality_payload=layer2_modality_payload,
             training_substitution_payload=training_substitution_payload,
         )
 

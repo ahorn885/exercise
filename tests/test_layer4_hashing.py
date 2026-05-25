@@ -279,19 +279,19 @@ def test_plan_create_key_etl_version_set_dict_order_irrelevant() -> None:
     assert plan_create_key(**a) == plan_create_key(**b)
 
 
-def test_plan_create_key_modality_hash_none_equals_empty_string() -> None:
-    """BM-3: modality_hash=None must equal modality_hash='' (forward-compat
-    with pre-BM-3 cache entries written without the hash component)."""
-    none_variant = plan_create_key(**{**_PLAN_CREATE_BASE, "layer2_modality_hash": None})
-    empty_variant = plan_create_key(**{**_PLAN_CREATE_BASE, "layer2_modality_hash": ""})
+def test_plan_create_key_training_substitution_hash_none_equals_empty_string() -> None:
+    """training_substitution_hash=None must equal '' (forward-compat with cache
+    entries written without the hash component)."""
+    none_variant = plan_create_key(**{**_PLAN_CREATE_BASE, "training_substitution_hash": None})
+    empty_variant = plan_create_key(**{**_PLAN_CREATE_BASE, "training_substitution_hash": ""})
     default_variant = plan_create_key(**_PLAN_CREATE_BASE)
     assert none_variant == empty_variant == default_variant
 
 
-def test_plan_create_key_modality_hash_set_distinguishes() -> None:
-    """BM-3: a populated modality_hash flips the cache key vs the unset (None) baseline."""
+def test_plan_create_key_training_substitution_hash_set_distinguishes() -> None:
+    """A populated training_substitution_hash flips the cache key vs the unset (None) baseline."""
     bare = plan_create_key(**_PLAN_CREATE_BASE)
-    with_hash = plan_create_key(**{**_PLAN_CREATE_BASE, "layer2_modality_hash": "mod_x"})
+    with_hash = plan_create_key(**{**_PLAN_CREATE_BASE, "training_substitution_hash": "sub_x"})
     assert bare != with_hash
 
 
@@ -314,7 +314,7 @@ def test_plan_create_key_modality_hash_set_distinguishes() -> None:
         ("temperature", 0.3),
         ("max_tokens_per_phase", 8001),
         ("capped_retries_per_phase", 1),
-        ("layer2_modality_hash", "mod_x"),
+        ("training_substitution_hash", "sub_x"),
     ],
 )
 def test_plan_create_key_depends_on_each_component(field: str, mutated: object) -> None:
@@ -379,6 +379,20 @@ def test_plan_refresh_key_parsed_intent_set_distinguishes() -> None:
     assert bare != with_intent
 
 
+def test_plan_refresh_key_training_substitution_hash_none_equals_empty_string() -> None:
+    """training_substitution_hash=None must equal '' (forward-compat)."""
+    none_variant = plan_refresh_key(**{**_PLAN_REFRESH_BASE, "training_substitution_hash": None})
+    empty_variant = plan_refresh_key(**{**_PLAN_REFRESH_BASE, "training_substitution_hash": ""})
+    default_variant = plan_refresh_key(**_PLAN_REFRESH_BASE)
+    assert none_variant == empty_variant == default_variant
+
+
+def test_plan_refresh_key_training_substitution_hash_set_distinguishes() -> None:
+    bare = plan_refresh_key(**_PLAN_REFRESH_BASE)
+    with_hash = plan_refresh_key(**{**_PLAN_REFRESH_BASE, "training_substitution_hash": "sub_x"})
+    assert bare != with_hash
+
+
 @pytest.mark.parametrize(
     "field, mutated",
     [
@@ -396,6 +410,7 @@ def test_plan_refresh_key_parsed_intent_set_distinguishes() -> None:
         ("temperature", 0.3),
         ("max_tokens", 4001),
         ("capped_retries", 1),
+        ("training_substitution_hash", "sub_x"),
     ],
 )
 def test_plan_refresh_key_depends_on_each_component(field: str, mutated: object) -> None:
@@ -445,28 +460,6 @@ def test_single_session_key_none_layer2c_locale_equals_empty_string() -> None:
     assert none_variant == empty_variant
 
 
-def test_single_session_key_modality_locale_hash_none_equals_empty_string() -> None:
-    """BM-3: quick-equipment mode + pre-BM-3 callers don't supply the modality hash;
-    None and '' must collapse identically."""
-    none_variant = single_session_synthesize_key(
-        **{**_SINGLE_SESSION_BASE, "layer2_modality_locale_hash": None}
-    )
-    empty_variant = single_session_synthesize_key(
-        **{**_SINGLE_SESSION_BASE, "layer2_modality_locale_hash": ""}
-    )
-    default_variant = single_session_synthesize_key(**_SINGLE_SESSION_BASE)
-    assert none_variant == empty_variant == default_variant
-
-
-def test_single_session_key_modality_locale_hash_set_distinguishes() -> None:
-    """BM-3: populated modality_locale_hash flips the cache key vs unset baseline."""
-    bare = single_session_synthesize_key(**_SINGLE_SESSION_BASE)
-    with_hash = single_session_synthesize_key(
-        **{**_SINGLE_SESSION_BASE, "layer2_modality_locale_hash": "mod_locale_x"}
-    )
-    assert bare != with_hash
-
-
 @pytest.mark.parametrize(
     "field, mutated",
     [
@@ -481,7 +474,6 @@ def test_single_session_key_modality_locale_hash_set_distinguishes() -> None:
         ("temperature", 0.3),
         ("max_tokens", 1501),
         ("capped_retries", 1),
-        ("layer2_modality_locale_hash", "mod_locale_x"),
     ],
 )
 def test_single_session_key_depends_on_each_component(field: str, mutated: object) -> None:
@@ -515,28 +507,6 @@ def test_race_week_brief_key_deterministic() -> None:
     assert race_week_brief_key(**_RACE_WEEK_BASE) == race_week_brief_key(**_RACE_WEEK_BASE)
 
 
-def test_race_week_brief_key_modality_hash_none_equals_empty_string() -> None:
-    """BM-3: pre-BM-3 callers don't supply the modality hash; None and ''
-    must collapse identically."""
-    none_variant = race_week_brief_key(
-        **{**_RACE_WEEK_BASE, "layer2_modality_hash": None}
-    )
-    empty_variant = race_week_brief_key(
-        **{**_RACE_WEEK_BASE, "layer2_modality_hash": ""}
-    )
-    default_variant = race_week_brief_key(**_RACE_WEEK_BASE)
-    assert none_variant == empty_variant == default_variant
-
-
-def test_race_week_brief_key_modality_hash_set_distinguishes() -> None:
-    """BM-3: populated modality_hash flips the cache key vs unset baseline."""
-    bare = race_week_brief_key(**_RACE_WEEK_BASE)
-    with_hash = race_week_brief_key(
-        **{**_RACE_WEEK_BASE, "layer2_modality_hash": "mod_x"}
-    )
-    assert bare != with_hash
-
-
 def test_race_week_brief_key_training_substitution_hash_none_equals_empty_string() -> None:
     """Slice 5: callers that don't supply the substitution hash (None) must
     collapse to '' so keys stay stable for non-substitution call sites."""
@@ -560,18 +530,6 @@ def test_race_week_brief_key_training_substitution_hash_set_distinguishes() -> N
     assert bare != with_hash
 
 
-def test_race_week_brief_key_substitution_and_modality_hashes_are_independent() -> None:
-    """Slice 5: the two payload hashes occupy distinct key slots — flipping one
-    doesn't alias the other."""
-    only_modality = race_week_brief_key(
-        **{**_RACE_WEEK_BASE, "layer2_modality_hash": "x"}
-    )
-    only_substitution = race_week_brief_key(
-        **{**_RACE_WEEK_BASE, "training_substitution_hash": "x"}
-    )
-    assert only_modality != only_substitution
-
-
 @pytest.mark.parametrize(
     "field, mutated",
     [
@@ -590,7 +548,6 @@ def test_race_week_brief_key_substitution_and_modality_hashes_are_independent() 
         ("temperature", 0.3),
         ("max_tokens", 6001),
         ("capped_retries", 1),
-        ("layer2_modality_hash", "mod_x"),
         ("training_substitution_hash", "sub_x"),
     ],
 )

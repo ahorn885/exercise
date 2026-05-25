@@ -21,8 +21,10 @@ from layer4.context import (
     Layer3APayload,
     Layer3BPayload,
     ParsedIntent,
+    TrainingSubstitutionPayload,
 )
 from layer4.payload import PlanSession, RuleFailure
+from layer4.per_phase import _format_training_substitution_per_phase
 
 
 DEFAULT_MAX_TOKENS = 2000
@@ -143,6 +145,7 @@ def render_user_prompt(
     parsed_intent: ParsedIntent,
     retries_used: int,
     rule_failures: list[RuleFailure],
+    training_substitution_payload: TrainingSubstitutionPayload | None = None,
 ) -> str:
     """Render the §6 user prompt for T1. Inline Python rendering replaces
     Mustache from the prompt body MD."""
@@ -284,6 +287,10 @@ def render_user_prompt(
         "weak-link strength), the refresh must not compromise it."
     )
     parts.append("")
+
+    # === Best-fit training substitution ===
+    if training_substitution_payload is not None:
+        parts.extend(_format_training_substitution_per_phase(training_substitution_payload))
 
     # === Retry context (only on retry) ===
     if retries_used > 0:

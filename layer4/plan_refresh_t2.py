@@ -26,8 +26,10 @@ from layer4.context import (
     Layer3APayload,
     Layer3BPayload,
     ParsedIntent,
+    TrainingSubstitutionPayload,
 )
 from layer4.payload import PlanSession, RuleFailure
+from layer4.per_phase import _format_training_substitution_per_phase
 from layer4.plan_refresh_t1 import (
     _format_active_injuries,
     _format_prior_window_summary,
@@ -117,6 +119,7 @@ def render_user_prompt(
     parsed_intent: ParsedIntent,
     retries_used: int,
     rule_failures: list[RuleFailure],
+    training_substitution_payload: TrainingSubstitutionPayload | None = None,
 ) -> str:
     """Render the §6 user prompt for T2. Inline Python rendering replaces
     Mustache from the prompt body MD."""
@@ -271,6 +274,10 @@ def render_user_prompt(
         "into / preparation for it. Do not undermine the planned post-refresh week."
     )
     parts.append("")
+
+    # === Best-fit training substitution ===
+    if training_substitution_payload is not None:
+        parts.extend(_format_training_substitution_per_phase(training_substitution_payload))
 
     # === Retry context (only on retry) ===
     if retries_used > 0:
