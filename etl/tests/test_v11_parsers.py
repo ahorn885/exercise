@@ -12,16 +12,59 @@ from pathlib import Path
 import pytest
 from openpyxl import load_workbook
 
+from openpyxl import Workbook
+
 from etl.layer0.extractors.sports_framework import (
     _parse_bool,
     _parse_constituent_movements,
     _parse_weekly_total_text,
     _split_phase_load_notes,
     extract_cross_sport_properties,
+    extract_discipline_pairing_matrix,
     extract_discipline_substitutes,
     extract_discipline_training_gaps,
     extract_phase_load_weekly_totals,
 )
+
+
+# ---------------------------------------------------------------------------
+# extract_discipline_pairing_matrix — R6 collapse dedup
+# ---------------------------------------------------------------------------
+
+def _pairing_ws_with_collapse_dup():
+    """Matrix where one survivor id (D-010) appears in two header columns and
+    two from-rows — simulating the R6 craft collapse (D-008a/b → D-010)."""
+    wb = Workbook()
+    ws = wb.active
+    # Header on R10: col1 label, then destination ids (D-010 twice).
+    ws.cell(row=10, column=1, value="FROM \\ TO")
+    ws.cell(row=10, column=2, value="D-001")
+    ws.cell(row=10, column=3, value="D-010")
+    ws.cell(row=10, column=4, value="D-010")  # duplicate survivor column
+    # Data R11+: D-001 row, then two D-010 from-rows (the collapse).
+    ws.cell(row=11, column=1, value="D-001")
+    ws.cell(row=11, column=3, value="ACC")
+    ws.cell(row=11, column=4, value="ACC")    # same (D-001, D-010) again
+    ws.cell(row=12, column=1, value="D-010")
+    ws.cell(row=12, column=2, value="PRE")
+    ws.cell(row=12, column=3, value="N/A")    # self-pair (D-010, D-010)
+    ws.cell(row=13, column=1, value="D-010")  # duplicate from-row
+    ws.cell(row=13, column=2, value="ACC")    # same (D-010, D-001) again
+    return ws
+
+
+def test_pairing_matrix_dedupes_collapse_and_skips_self_pairs():
+    rows = extract_discipline_pairing_matrix(_pairing_ws_with_collapse_dup())
+    pairs = [(r["discipline_id_a"], r["discipline_id_b"]) for r in rows]
+    # No duplicate (a, b) pairs survive the collapse.
+    assert len(pairs) == len(set(pairs)), pairs
+    # No self-pair from the collapsed diagonal.
+    assert ("D-010", "D-010") not in pairs
+    # First-seen-wins: (D-001, D-010) once = ACCEPTABLE; (D-010, D-001) = PREFERRED.
+    by_pair = {(r["discipline_id_a"], r["discipline_id_b"]): r["pairing_rating"] for r in rows}
+    assert by_pair[("D-001", "D-010")] == "ACCEPTABLE"
+    assert by_pair[("D-010", "D-001")] == "PREFERRED"
+    assert pairs.count(("D-001", "D-010")) == 1
 
 V11_PATH = Path(__file__).parent.parent / "sources" / "Sports_Framework_v11.xlsx"
 

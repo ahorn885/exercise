@@ -553,6 +553,13 @@ def extract_discipline_pairing_matrix(
             break
         last_data_row = r
 
+    # Dedupe by (from_id, to_id), first-seen-wins, and skip self-pairs. The
+    # R6 craft collapse maps two former ids onto one survivor (D-008a/b →
+    # D-010, D-022/3 → D-024), so the survivor appears in two header columns
+    # and two from-rows — without this the scanner emits the same canonical
+    # pair twice (UniqueViolation on the discipline_pairing load) and turns the
+    # old off-diagonal cell into a meaningless self-pair (D-010, D-010).
+    seen: set[tuple[str, str]] = set()
     for r in range(11, last_data_row + 1):
         first = _t(ws.cell(row=r, column=1).value)
         if not first:
@@ -565,10 +572,15 @@ def extract_discipline_pairing_matrix(
             to_id = header_ids[c - 1]
             if not to_id:
                 continue
+            if from_id == to_id:
+                continue
+            if (from_id, to_id) in seen:
+                continue
             cell = _t(ws.cell(row=r, column=c).value)
             if not cell:
                 continue
             rating = rating_map.get(cell.upper(), cell.upper())
+            seen.add((from_id, to_id))
             rows.append({
                 "discipline_id_a": from_id,
                 "discipline_id_b": to_id,
