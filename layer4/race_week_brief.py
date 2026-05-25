@@ -86,6 +86,7 @@ from layer4.payload import (
     ValidatorResult,
 )
 from layer4.validator import ValidatorContext, validate_layer4_payload
+from weather_client import ExpectedConditions, Fetcher, get_expected_conditions
 
 
 # ─── Tool-use schema (Layer4_RaceWeekBrief_v2 §4.1) ──────────────────────────
@@ -781,7 +782,9 @@ When 3A signals (fatigue markers, ACWR elevated, sleep deficit, lingering illnes
 
 # Race-week brief synthesis
 
-The `race_week_brief` is athlete-facing and consumed by the brief UI surface + Layer 5's clothing/conditions advisor. Coverage requirements: `kit_check_dates` MUST include `event.date - 7` at minimum; `contingencies` MUST cover D6 anchor categories applicable to the race format (any race: GI / hydration / mechanical-or-gear-failure; AR + ultra: nav / sleep-dep / weather; stage races: between-stage recovery; multi-day: cumulative fatigue + crew-pacing-mismatch); `mental_prep_cues` must be evidence-grounded.
+The `race_week_brief` is athlete-facing and consumed by the brief UI surface + Layer 5's clothing/conditions advisor. Coverage requirements: `kit_check_dates` MUST include `event.date - 7` at minimum; `contingencies` MUST cover D6 anchor categories applicable to the race format (any race: GI / hydration / mechanical-or-gear-failure / weather; ultra + multi-day: sleep-dep; stage races: between-stage recovery; multi-day: cumulative fatigue + crew-pacing-mismatch); `mental_prep_cues` must be evidence-grounded.
+
+Weather contingency: every race happens outdoors at a known location on a known date, so a weather contingency is always required. When an `## Expected conditions` block is present in the request, anchor the weather contingency to those climate normals (e.g. heat + electrolyte protocol when typical highs are hot; a lightning/exposure bail plan for storm-prone windows; a layering/hypothermia plan when typical lows are cold or precipitation likelihood is high). When that block is absent, reason from the race location + date yourself (regional seasonal climate) — do not omit the weather contingency.
 
 Kit-manifest synthesis (D-66 active): the athlete's race_event_payload now carries structured route-locale equipment per the D-66 amendment. Render mandatory_gear_text + per-route-locale equipment items into the flat kit_manifest list. Prefer canonical layer0 names (`layer0_canonical=True`); free-text fallback (`layer0_canonical=False`) when no canonical exists.
 
@@ -877,6 +880,7 @@ def _render_user_prompt(
     retries_used: int,
     rule_failures: list[RuleFailure],
     training_substitution_payload: TrainingSubstitutionPayload | None = None,
+    expected_conditions: ExpectedConditions | None = None,
 ) -> str:
     """Render the §6 user prompt template against the typed payloads.
     Inline Python rendering (no Mustache dependency) per the
@@ -933,6 +937,21 @@ def _render_user_prompt(
         parts.append(race_event_payload.mandatory_gear_text)
         parts.append("```")
     parts.append("")
+
+    # § Expected conditions — climate normals at the race location + date
+    # (weather_client). Anchors the required weather contingency. Absent when
+    # the race has no coordinates or the climate lookup failed; the synthesizer
+    # then reasons about expected weather from the location + date itself.
+    if expected_conditions is not None:
+        parts.append("## Expected conditions")
+        parts.append("")
+        parts.append(expected_conditions.summary_line())
+        parts.append(
+            "Anchor the weather contingency to these normals. They are "
+            "historical climate, not a forecast — frame guidance as typical "
+            "conditions to prepare for."
+        )
+        parts.append("")
 
     # § Route locales (D-66 amendment 2026-05-18 — only for multi-day events
     # OR when route_locales populated for a single-day event)
@@ -1539,6 +1558,9 @@ def llm_layer4_race_week_brief(
     # `_render_training_substitution_section`. Default None preserves existing
     # call sites (notably the test fixtures).
     training_substitution_payload: TrainingSubstitutionPayload | None = None,
+    # Injectable climate-normals fetcher (tests pass a fake). Default None
+    # uses the live Open-Meteo lookup; a no-op when the race has no coords.
+    weather_fetcher: Fetcher | None = None,
 ) -> Layer4Payload:
     """Pattern B race-week-brief synthesizer per `Layer4_Spec.md` §3.4
     (D-66 amendment 2026-05-18 — new `race_event_payload` positional arg).
@@ -1579,6 +1601,17 @@ def llm_layer4_race_week_brief(
     caller: LLMCaller = llm_caller or _default_llm_caller
     tool_schema = build_record_race_week_brief_tool()
 
+    # Climate normals for the weather contingency (best-effort; None when the
+    # race has no coordinates or the lookup fails — the prompt then degrades to
+    # intrinsic climate reasoning). Fetched once, reused across retries.
+    expected_conditions = get_expected_conditions(
+        race_event_payload.event_locale_lat,
+        race_event_payload.event_locale_lng,
+        race_event_payload.event_date,
+        today=today,
+        fetcher=weather_fetcher,
+    )
+
     prior_by_id = {s.session_id: s for s in prior_plan_session_window}
     is_multi_day = race_event_payload.race_format != "single_day"
 
@@ -1613,6 +1646,7 @@ def llm_layer4_race_week_brief(
             retries_used=retries_used,
             rule_failures=rule_failures,
             training_substitution_payload=training_substitution_payload,
+            expected_conditions=expected_conditions,
         )
 
         llm_out = caller(

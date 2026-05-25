@@ -227,9 +227,7 @@ class Layer2ADiscipline(_Base):
     discipline_category: str | None = None
     primary_movement: str | None = None
     is_conditional: bool
-    conditional_resolution: (
-        Literal["race_rule_auto_in", "race_rule_auto_out", "athlete_opt_in"] | None
-    ) = None
+    conditional_resolution: Literal["athlete_opt_in"] | None = None
     load_weight: WeightResult
     race_time_pct_low: float | None = None
     race_time_pct_high: float | None = None

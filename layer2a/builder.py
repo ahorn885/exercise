@@ -271,7 +271,6 @@ def _build_training_gap(row: dict[str, Any]) -> TrainingGap | None:
 def _resolve_conditional(
     row: dict[str, Any],
     race_duration_hours: float | None,
-    navigation_required: bool | None,
     team_format: str | None,
     overrides: dict[str, dict] | None,
 ) -> tuple[str, str | None]:
@@ -279,9 +278,7 @@ def _resolve_conditional(
     `(inclusion, conditional_resolution)`.
 
     - Unconditional → `('included', None)`.
-    - Conditional D-015 (nav): in if `navigation_required=True`; out if
-      False; prompt_required if None.
-    - Other conditional: prompt_required (athlete opt-in) unless overrides
+    - Conditional: prompt_required (athlete opt-in) unless overrides
       explicitly include/exclude.
     """
     discipline_id = row["discipline_id"]
@@ -294,14 +291,6 @@ def _resolve_conditional(
     ov = (overrides or {}).get(discipline_id) or {}
     if "included" in ov:
         return ("included" if ov["included"] else "excluded", "athlete_opt_in")
-
-    # Race-rule driven resolution.
-    if discipline_id == _NAV_DISCIPLINE_ID:
-        if navigation_required is None:
-            return ("prompt_required", "athlete_opt_in")
-        if navigation_required:
-            return ("included", "race_rule_auto_in")
-        return ("excluded", "race_rule_auto_out")
 
     # v1 scope: relay-leg filtering deferred (no current consumer sport).
     # Fall through: unresolved conditional → prompt athlete.
@@ -347,7 +336,6 @@ def _render_rationale(
     inclusion: str,
     conditional_resolution: str | None,
     race_duration_hours: float | None,
-    navigation_required: bool | None,
 ) -> str:
     """Render the athlete-facing rationale string. Composed from a small
     template library keyed on role + inclusion + conditional resolution.
@@ -362,20 +350,9 @@ def _render_rationale(
     high = row.get("race_time_pct_high")
     has_pct = low is not None and high is not None
 
-    discipline_id = row["discipline_id"]
-
-    # Excluded by race rule → explain the gate that kept it out.
+    # Excluded → athlete preference (race-rule auto-resolution retired).
     if inclusion == "excluded":
-        if (
-            conditional_resolution == "race_rule_auto_out"
-            and discipline_id == _NAV_DISCIPLINE_ID
-        ):
-            text = (
-                f"{name} is not included for this event. Navigation is not "
-                f"flagged as required."
-            )
-        else:
-            text = f"{name} is not included for this event based on athlete preference."
+        text = f"{name} is not included for this event based on athlete preference."
         return _append_sport_context(text, row)
 
     # Prompt-required → ask the athlete.
@@ -417,11 +394,6 @@ def _render_rationale(
 
     text = f"{name} is a {modifier} discipline of {framework_sport}. {body}".strip()
 
-    # Conditional auto-in → explain why it's in.
-    if conditional_resolution == "race_rule_auto_in":
-        if discipline_id == _NAV_DISCIPLINE_ID and navigation_required:
-            text += " Included because navigation is required for this event."
-
     return _append_sport_context(text, row)
 
 
@@ -456,9 +428,8 @@ def _emit_coaching_flags(
     disciplines: list[Layer2ADiscipline],
     raw_rows: list[dict[str, Any]],
     race_duration_hours: float | None,
-    navigation_required: bool | None,
 ) -> list[Layer2ACoachingFlag]:
-    """Emit the three flag types per spec §8."""
+    """Emit the spec §8 flag types (training_gap + weight_override_divergence)."""
     flags: list[Layer2ACoachingFlag] = []
     rows_by_id = {r["discipline_id"]: r for r in raw_rows}
 
@@ -478,34 +449,6 @@ def _emit_coaching_flags(
                         "gap_type": d.training_gap.gap_type,
                         "multi_substitute_candidate": d.training_gap.multi_substitute_candidate,
                     },
-                )
-            )
-
-        # §8.2 — conditional auto-resolved (in or out)
-        if d.conditional_resolution in ("race_rule_auto_in", "race_rule_auto_out"):
-            if d.discipline_id == _NAV_DISCIPLINE_ID:
-                if d.conditional_resolution == "race_rule_auto_in":
-                    msg = (
-                        f"{d.discipline_name} included because navigation is "
-                        f"required for this event."
-                    )
-                else:
-                    msg = (
-                        f"{d.discipline_name} excluded because navigation is "
-                        f"not required for this event."
-                    )
-                meta = {
-                    "rule": "navigation_required",
-                    "value": navigation_required,
-                }
-            else:
-                continue
-            flags.append(
-                Layer2ACoachingFlag(
-                    flag_type="conditional_auto_resolved",
-                    discipline_id=d.discipline_id,
-                    message=msg,
-                    metadata=meta,
                 )
             )
 
@@ -571,7 +514,6 @@ def q_layer2a_discipline_classifier_payload(
     *,
     athlete_discipline_overrides: dict[str, dict] | None = None,
     estimated_race_duration_hours: float | None = None,
-    navigation_required: bool | None = None,
     team_format: str | None = None,
     discipline_id_filter: list[str] | None = None,
     etl_version_set: dict[str, str],
@@ -629,7 +571,6 @@ def q_layer2a_discipline_classifier_payload(
         inclusion, conditional_resolution = _resolve_conditional(
             row,
             estimated_race_duration_hours,
-            navigation_required,
             team_format,
             athlete_discipline_overrides,
         )
@@ -640,7 +581,6 @@ def q_layer2a_discipline_classifier_payload(
             inclusion,
             conditional_resolution,
             estimated_race_duration_hours,
-            navigation_required,
         )
         # Sleep-deprivation relevance: D-015 (nav) always. Spec §8 doesn't
         # enumerate a closed list, so v1 keeps the surface narrow — the
@@ -697,7 +637,6 @@ def q_layer2a_discipline_classifier_payload(
         disciplines,
         raw_rows,
         estimated_race_duration_hours,
-        navigation_required,
     )
     training_gaps_summary = _build_training_gaps_summary(disciplines)
 

@@ -1754,13 +1754,14 @@ def test_contingency_anchors_covered_no_fire():
         race_week_brief=_race_week_brief(
             event_date=event_date,
             race_format="continuous_multi_day",
-            # FormRefresh A1 — continuous_multi_day requires the structural
-            # anchors gi / hydration / mechanical / cumulative_fatigue +
-            # sleep_dep (nav / weather are no longer format-keyed).
+            # continuous_multi_day requires gi / hydration / mechanical /
+            # weather (universal) / cumulative_fatigue + sleep_dep. The nav
+            # anchor was retired 2026-05-25.
             contingencies=[
                 "gi distress",
                 "hydration shortfall",
                 "mechanical failure",
+                "weather window + storm bail plan",
                 "cumulative_fatigue",
                 "sleep dep management",
             ],
@@ -1771,6 +1772,37 @@ def test_contingency_anchors_covered_no_fire():
     assert not any(
         f.rule_name.startswith("contingency_anchor_category_missing") for f in failures
     )
+
+
+def test_contingency_anchor_weather_universal_warns_when_missing():
+    """`weather` is a universal anchor — even a single-day race warns when
+    the brief omits it (2026-05-25)."""
+    event_date = _SCOPE_START + timedelta(days=5)
+    payload = _minimal_layer4(
+        mode="race_week_brief",
+        pattern="B",
+        sessions=[
+            _cardio_session(phase_metadata=_phase_metadata(phase="Taper"))
+        ],
+        race_week_brief=_race_week_brief(
+            event_date=event_date,
+            race_format="single_day",
+            # gi / hydration / mechanical present; weather deliberately absent.
+            contingencies=[
+                "gi distress",
+                "hydration shortfall",
+                "mechanical failure",
+            ],
+        ),
+    )
+    failures = validate_layer4_payload(payload, ValidatorContext()).rule_failures
+    weather = [
+        f
+        for f in failures
+        if f.rule_name == "contingency_anchor_category_missing_weather"
+    ]
+    assert len(weather) == 1
+    assert weather[0].severity == "warning"
 
 
 def test_contingency_anchor_missing_warns():

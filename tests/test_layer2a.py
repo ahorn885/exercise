@@ -2,13 +2,12 @@
 
 Coverage matches `Layer2A_Spec.md` §13 test scenarios + §10 edge cases:
 - §4 input validation
-- §13.1 AR baseline — D-010 + D-015 both auto-in (56h duration, nav True)
+- §13.1 AR baseline — disciplines + conditional D-015 → prompt_required
 - §13.2 AR with override — `weight_override_divergence` flag fires
-- §13.3 Short AR — D-010 auto-out (8h duration < 20h threshold)
 - §13.4 Triathlon — §5.1 D-17 strip logic (top_level=Triathlon, framework=sub-format)
 - §10 unknown sport → empty disciplines + HITL + unresolved flag
 - §10 override targeting non-sport-set discipline → silently ignored
-- §5.3 unresolved conditional (duration None) → prompt_required + HITL
+- §5.3 conditional discipline (no override) → prompt_required + HITL
 
 All tests use the `_FakeConn` / `_FakeCursor` pattern matching
 `tests/test_race_events_repo.py` + `tests/test_layer1_builder.py`. The
@@ -229,14 +228,13 @@ def _ar_rows() -> list[dict]:
 
 
 class TestARBaseline:
-    def test_56h_nav_true_auto_includes_conditionals(self):
+    def test_56h_ar_baseline_disciplines(self):
         conn = _FakeConn()
         conn.queue_response(rows=_ar_rows())
         payload = q_layer2a_discipline_classifier_payload(
             conn,
             "Adventure Racing",
             estimated_race_duration_hours=56.0,
-            navigation_required=True,
             etl_version_set=_DEFAULT_ETL,
         )
 
@@ -253,10 +251,10 @@ class TestARBaseline:
         assert kayak.is_conditional is False
         assert kayak.conditional_resolution is None
 
-        # D-015 nav: auto-in by navigation_required
+        # D-015 nav: conditional → prompt_required (race-rule auto-resolution retired)
         nav = by_id["D-015"]
-        assert nav.inclusion == "included"
-        assert nav.conditional_resolution == "race_rule_auto_in"
+        assert nav.inclusion == "prompt_required"
+        assert nav.conditional_resolution == "athlete_opt_in"
         assert nav.is_conditional is True
         assert nav.sleep_deprivation_relevant is True
 
@@ -284,15 +282,15 @@ class TestARBaseline:
         trek = by_id["D-009"]
         assert "minor discipline" in trek.rationale
 
-        # HITL gate: nothing prompt_required → False
-        assert payload.hitl_required is False
+        # HITL gate: D-015 nav is conditional → prompt_required → True
+        assert payload.hitl_required is True
         assert payload.unresolved_flags == []
 
-        # Coaching flags: 1 training_gap (D-018) + 1 conditional_auto_resolved
-        # (D-015 nav; D-010 Kayaking is no longer conditional post-R6 collapse)
+        # Coaching flags: 1 training_gap (D-018). Race-rule auto-resolution
+        # retired, so no conditional_auto_resolved flag fires.
         flag_types = [f.flag_type for f in payload.coaching_flags]
         assert flag_types.count("training_gap") == 1
-        assert flag_types.count("conditional_auto_resolved") == 1
+        assert "conditional_auto_resolved" not in flag_types
 
         # Training gaps summary
         assert payload.training_gaps_summary.flagged_count == 1
@@ -335,7 +333,6 @@ class TestARBaseline:
             conn,
             "Adventure Racing",
             estimated_race_duration_hours=56.0,
-            navigation_required=True,
             etl_version_set=_DEFAULT_ETL,
         )
         by_id = {d.discipline_id: d for d in payload.disciplines}
@@ -357,7 +354,6 @@ class TestAROverride:
             conn,
             "Adventure Racing",
             estimated_race_duration_hours=56.0,
-            navigation_required=True,
             athlete_discipline_overrides={"D-008": {"weight": 25.0}},
             etl_version_set=_DEFAULT_ETL,
         )
@@ -470,7 +466,6 @@ class TestEdgeCases:
             conn,
             "Adventure Racing",
             estimated_race_duration_hours=56.0,
-            navigation_required=True,
             athlete_discipline_overrides={"D-999": {"weight": 99.0}},  # not in AR
             etl_version_set=_DEFAULT_ETL,
         )
@@ -485,23 +480,22 @@ class TestEdgeCases:
             for f in payload.coaching_flags
         )
 
-    def test_prompt_required_when_conditional_cannot_auto_resolve(self):
-        """§10: nav signal None + the nav-conditional discipline → that
-        discipline is `prompt_required` and `hitl_required=True`."""
+    def test_conditional_discipline_is_prompt_required(self):
+        """§10: a conditional discipline with no athlete override resolves to
+        `prompt_required` and sets `hitl_required=True`."""
         conn = _FakeConn()
         conn.queue_response(rows=_ar_rows())
         payload = q_layer2a_discipline_classifier_payload(
             conn,
             "Adventure Racing",
             estimated_race_duration_hours=None,
-            navigation_required=None,  # nav signal missing
             etl_version_set=_DEFAULT_ETL,
         )
 
         by_id = {d.discipline_id: d for d in payload.disciplines}
         # D-010 Kayaking: ordinary discipline → included regardless of signals.
         assert by_id["D-010"].inclusion == "included"
-        # D-015: nav is None → prompt_required, athlete_opt_in
+        # D-015: conditional with no override → prompt_required, athlete_opt_in
         assert by_id["D-015"].inclusion == "prompt_required"
         assert by_id["D-015"].conditional_resolution == "athlete_opt_in"
         # HITL fires
@@ -558,7 +552,6 @@ class TestDisciplineIdFilter:
             conn,
             "Adventure Racing",
             estimated_race_duration_hours=56.0,
-            navigation_required=True,
             etl_version_set=_DEFAULT_ETL,
         )
         ids = {d.discipline_id for d in payload.disciplines}
@@ -576,7 +569,6 @@ class TestDisciplineIdFilter:
             conn,
             "Adventure Racing",
             estimated_race_duration_hours=56.0,
-            navigation_required=True,
             discipline_id_filter=["D-001", "D-015"],
             etl_version_set=_DEFAULT_ETL,
         )
@@ -587,7 +579,7 @@ class TestDisciplineIdFilter:
         assert by_id["D-001"].phase_load is not None
         assert by_id["D-001"].phase_load.base_low == 30
         # Conditional resolution preserved
-        assert by_id["D-015"].conditional_resolution == "race_rule_auto_in"
+        assert by_id["D-015"].conditional_resolution == "athlete_opt_in"
 
     def test_empty_filter_returns_no_disciplines(self):
         """`discipline_id_filter=[]` is the explicit "no disciplines"
@@ -599,7 +591,6 @@ class TestDisciplineIdFilter:
             conn,
             "Adventure Racing",
             estimated_race_duration_hours=56.0,
-            navigation_required=True,
             discipline_id_filter=[],
             etl_version_set=_DEFAULT_ETL,
         )
@@ -618,7 +609,6 @@ class TestDisciplineIdFilter:
             conn,
             "Adventure Racing",
             estimated_race_duration_hours=56.0,
-            navigation_required=True,
             discipline_id_filter=["D-999"],
             etl_version_set=_DEFAULT_ETL,
         )
@@ -634,7 +624,6 @@ class TestDisciplineIdFilter:
             conn,
             "Adventure Racing",
             estimated_race_duration_hours=56.0,
-            navigation_required=True,
             discipline_id_filter=["D-018"],  # the row with a training_gap
             etl_version_set=_DEFAULT_ETL,
         )

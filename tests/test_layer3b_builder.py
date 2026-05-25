@@ -1549,7 +1549,6 @@ class TestPrepDict:
             race_duration_hr=None,
             race_terrain=None,
             race_pack_weight_kg=None,
-            navigation_required=None,
         )
         assert "h2.event_date" in d
         assert "h2.goal_outcome" in d
@@ -1575,7 +1574,6 @@ class TestPrepDict:
             race_duration_hr=None,
             race_terrain=None,
             race_pack_weight_kg=None,
-            navigation_required=None,
         )
         assert "h3.plan_duration_weeks" in d
         assert "h3.non_event_goal_type" in d
@@ -1599,7 +1597,6 @@ class TestPrepDict:
             race_duration_hr=None,
             race_terrain=None,
             race_pack_weight_kg=None,
-            navigation_required=False,
         )
         assert "mode: event" in rendered
         assert "Today is 2026-05-20" in rendered
@@ -1623,7 +1620,6 @@ class TestPrepDict:
             race_duration_hr=None,
             race_terrain=None,
             race_pack_weight_kg=None,
-            navigation_required=None,
         )
         assert "mode: no-event" in rendered
         assert "non_event_goal_type: endurance" in rendered
@@ -1647,7 +1643,6 @@ class TestPrepDict:
             race_duration_hr=None,
             race_terrain=None,
             race_pack_weight_kg=None,
-            navigation_required=False,
             retry_error="some pydantic error",
         )
         assert "Previous attempt failed schema validation: some pydantic error" in rendered

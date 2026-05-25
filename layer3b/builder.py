@@ -554,7 +554,6 @@ def _render_block_2_goal_context(
     race_duration_hr: float | None,
     race_terrain: list[str] | None,
     race_pack_weight_kg: float | None,
-    navigation_required: bool | None,
 ) -> str:
     """Spec §5.1 Block 2 — Goal context. Event-mode reads §H.2 fields (driver
     kwargs for v1 deployed-shape gap per D11); no-event-mode reads §C from
@@ -592,10 +591,6 @@ def _render_block_2_goal_context(
             lines.append(f"- race_terrain: {', '.join(race_terrain)}")
         if race_pack_weight_kg is not None:
             lines.append(f"- race_pack_weight_kg: {race_pack_weight_kg:.1f}")
-        lines.append(
-            f"- navigation_required: "
-            f"{navigation_required if navigation_required is not None else 'unknown'}"
-        )
         return "\n".join(lines)
 
     # No-event mode
@@ -687,7 +682,6 @@ def _build_prep_dict(
     race_duration_hr: float | None,
     race_terrain: list[str] | None,
     race_pack_weight_kg: float | None,
-    navigation_required: bool | None,
 ) -> dict[str, Any]:
     """Flat dict keyed by `section.field` paths. Used by the evidence-basis
     cross-check to verify the LLM cites real field names. Per spec §7 +
@@ -745,7 +739,6 @@ def _build_prep_dict(
         d["h2.race_duration_hr"] = race_duration_hr
         d["h2.race_terrain"] = race_terrain or []
         d["h2.race_pack_weight_kg"] = race_pack_weight_kg
-        d["h2.navigation_required"] = navigation_required
     else:
         d["h3.plan_duration_weeks"] = plan_duration_weeks
         d["h3.non_event_goal_type"] = non_event_goal_type
@@ -905,7 +898,6 @@ def _render_user_prompt(
     race_duration_hr: float | None,
     race_terrain: list[str] | None,
     race_pack_weight_kg: float | None,
-    navigation_required: bool | None,
     retry_error: str | None = None,
     periodization_error: str | None = None,
 ) -> str:
@@ -933,7 +925,6 @@ def _render_user_prompt(
             race_duration_hr=race_duration_hr,
             race_terrain=race_terrain,
             race_pack_weight_kg=race_pack_weight_kg,
-            navigation_required=navigation_required,
         ),
         "",
         "Current state (from Layer 3A):",
@@ -1457,7 +1448,6 @@ def llm_layer3b_goal_timeline_viability(
     race_duration_hr: float | None = None,
     race_terrain: list[str] | None = None,
     race_pack_weight_kg: float | None = None,
-    navigation_required: bool | None = None,
     # §H.3 (no-event-mode) — caller override; else from Layer1EventGoal
     plan_duration_weeks: int | None = None,
     non_event_goal_type: str | None = None,
@@ -1527,7 +1517,6 @@ def llm_layer3b_goal_timeline_viability(
         race_duration_hr=race_duration_hr,
         race_terrain=race_terrain,
         race_pack_weight_kg=race_pack_weight_kg,
-        navigation_required=navigation_required,
     )
 
     last_validation_error: str | None = None
@@ -1551,7 +1540,6 @@ def llm_layer3b_goal_timeline_viability(
         race_duration_hr=race_duration_hr,
         race_terrain=race_terrain,
         race_pack_weight_kg=race_pack_weight_kg,
-        navigation_required=navigation_required,
     )
 
     # §5.5 step 1: single capped retry on schema violation (max 2 attempts)

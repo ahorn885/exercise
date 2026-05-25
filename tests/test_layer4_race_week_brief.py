@@ -1585,6 +1585,56 @@ class TestPromptRendering:
         )
         assert gear in prompt
 
+    def test_expected_conditions_section_rendered_when_present(self):
+        from weather_client import ExpectedConditions
+
+        ec = ExpectedConditions(
+            temp_max_c=30.0,
+            temp_min_c=18.0,
+            wet_day_probability_pct=40,
+            sample_days=35,
+            sample_years=5,
+        )
+        prompt = _render_user_prompt(
+            layer1_payload=_layer1(),
+            layer2a_payload=_layer2a(),
+            layer2b_payload=_layer2b(),
+            layer2c_payloads={"home_gym": _layer2c()},
+            layer2d_payload=_layer2d(),
+            layer2e_payload=_layer2e(),
+            layer3a_payload=_layer3a(),
+            layer3b_payload=_layer3b(event_date=_EVENT_DATE),
+            race_event_payload=_race_event_payload(),
+            prior_plan_session_window=[_prior_taper_session()],
+            days_to_event=7,
+            today=_TODAY,
+            retries_used=0,
+            rule_failures=[],
+            expected_conditions=ec,
+        )
+        assert "## Expected conditions" in prompt
+        assert "~30°C" in prompt
+        assert "40%" in prompt
+
+    def test_expected_conditions_section_absent_when_none(self):
+        prompt = _render_user_prompt(
+            layer1_payload=_layer1(),
+            layer2a_payload=_layer2a(),
+            layer2b_payload=_layer2b(),
+            layer2c_payloads={"home_gym": _layer2c()},
+            layer2d_payload=_layer2d(),
+            layer2e_payload=_layer2e(),
+            layer3a_payload=_layer3a(),
+            layer3b_payload=_layer3b(event_date=_EVENT_DATE),
+            race_event_payload=_race_event_payload(),
+            prior_plan_session_window=[_prior_taper_session()],
+            days_to_event=7,
+            today=_TODAY,
+            retries_used=0,
+            rule_failures=[],
+        )
+        assert "## Expected conditions" not in prompt
+
     def test_route_locales_rendered_structured(self):
         re = _race_event_payload(
             race_format="continuous_multi_day",
