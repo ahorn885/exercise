@@ -2,7 +2,8 @@
 {% block title %}Route locales — AIDSTATION{% endblock %}
 {% block content %}
 
-{# v5 onboarding Step 3d — "Route locales" (D-66 §H.4, multi-day only).
+{# v5 onboarding Step 3d — "Route locales" (D-66 §H.4). Offered on every
+   event type; always optional (Skip/Continue pass through cleanly).
    Captures the route graph (start + transition areas + aid stations +
    drop bag points + bivvy + finish) for the athlete's target race.
    Athletes can fill in 0..N route locales; Continue with <2 writes an
@@ -37,8 +38,10 @@
   add the start, transition areas, aid stations, drop-bag points,
   bivvy points, and finish — in race order, with optional mile markers.
   This is what powers per-segment pacing + kit decisions in the
-  race-week brief. Equipment per locale lives on the Profile → Race
-  events edit page; you can flesh that in any time after onboarding.
+  race-week brief. It's optional for any race — skip it if your event
+  doesn't need a route graph. Equipment per locale lives on the
+  Profile → Race events edit page; you can flesh that in any time
+  after onboarding.
 </p>
 
 {% if race_locales %}

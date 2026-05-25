@@ -99,7 +99,6 @@ class TargetEvent:
     race_pack_weight_kg: float                # §H.2
     team_format: str                          # Individual / Unified / Relay / Doubles
     race_specific_nutrition_restrictions: str | None
-    aid_stations: int | None                  # §H.2 aid station count
     event_id: str                             # Internal ID for downstream cross-ref
 
 @dataclass
@@ -805,7 +804,8 @@ Conservative gates per Andy's 2026-05-11 scoping decision. Each gate listed prod
 | 2 | Race-day caffeine × current Cardiac | Caffeine race-day strategy ∈ {Loaded, Variable} AND current Cardiac condition AND condition name suggests arrhythmia subtype (free-text match on athlete's condition name field for 'arrhythmia', 'tachycardia', 'fibrillation', 'WPW', 'palpitation'). Conservative: any Current Cardiac × Loaded strategy gates regardless of subtype | block |
 | 3 | Pregnancy × race-day stimulant | `is_pregnant` (resolved from §B medications HRT class + free text) AND any supplement with `'pregnancy'` in contraindications. Examples: caffeine high-dose, ashwagandha, beetroot nitrate | block |
 | 4 | Pregnancy × race-day supplement contraindicated | Pregnancy AND any non-stimulant supplement flagged `'pregnancy'` (e.g., high-dose iron without OB clearance, vitamin A excess) | block |
-| 5 | Anaphylaxis × unavoidable race aid | Any `FoodAllergyRecord.severity == 'Anaphylaxis'` AND athlete has a target event AND `aid_stations` > 0 AND athlete hasn't acknowledged race-allergen exposure plan | block |
+
+**Removed gate (FormRefresh A2, 2026-05-25):** the former gate 5 (Anaphylaxis × race aid) was dropped together with the `aid_stations` column. The project does not capture or plan for the anaphylaxis-aid-exposure scenario; race-day aid logistics are carried structurally by the `race_route_locales` graph, not a count.
 
 **T1 Diabetes × long events:** explicitly NOT a HITL gate (Andy decision 2026-05-11). Treated as a coaching flag: surface that T1D athletes self-managing long events benefit from endocrinologist coordination, but do not block plan-gen.
 
@@ -813,7 +813,7 @@ Conservative gates per Andy's 2026-05-11 scoping decision. Each gate listed prod
 @dataclass
 class Layer2EHitlItem:
     item_id: str
-    gate_number: int                    # 1–5 per table above
+    gate_number: int                    # 1–4 per table above
     block_level: str                    # 'block' (others may be added in v2)
     affected_supplement_id: str | None
     affected_event_id: str | None
@@ -1236,15 +1236,11 @@ Expected:
 - Daily baseline computes.
 - Coaching flag `hrt_bmr_limitation` fires.
 
-### 13.6 Anaphylaxis × race aid HITL block
+### 13.6 Anaphylaxis × race aid HITL block — REMOVED (FormRefresh A2, 2026-05-25)
 
-Inputs:
-- `health_records.allergies`: [FoodAllergyRecord(name='Tree nuts', severity='Anaphylaxis')]
-- `target_events`: [Adventure race with aid_stations=8]
-
-Expected:
-- HITL gate 5 fires. Resolution options: ['athlete_self_pack_acknowledged', 'race_director_confirmed_nut_free', 'medical_consultation_documented'].
-- `hitl_required=True`.
+Gate 5 and the `aid_stations` column were removed; this scenario no
+longer applies (see §5.9). Retained as a numbered placeholder so the
+following scenario numbers stay stable.
 
 ### 13.7 Time-based mode — no events
 

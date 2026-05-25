@@ -1275,16 +1275,21 @@ _PG_MIGRATIONS = [
     "CREATE UNIQUE INDEX IF NOT EXISTS race_events_user_target_uidx ON race_events (user_id) WHERE is_target_event = TRUE",
     "CREATE INDEX IF NOT EXISTS race_events_user_date_idx ON race_events (user_id, event_date)",
     # Phase 5.1 form-refresh A (2026-05-20) — closes Layer2B_Spec.md §12
-    # Open Item 2B-3 for the race-event edit path + the orchestrator's
-    # race_terrain=[] / aid_stations=None forward-pointers from Phase 5.1
-    # vertical slice. race_terrain stores the athlete-entered breakdown
-    # as JSONB ([{terrain_id: 'TRN-xxx', pct_of_race: float}, ...]);
-    # whole-list read at orchestrator time, no independent queries.
-    # aid_stations is a non-negative integer (0 valid; e.g., Andy's PGE
-    # 2026 = 0). Both columns add idempotently; default empty array + NULL
-    # preserve the prior row shape for existing data.
+    # Open Item 2B-3 for the race-event edit path. race_terrain stores the
+    # athlete-entered breakdown as JSONB ([{terrain_id: 'TRN-xxx',
+    # pct_of_race: float}, ...]); whole-list read at orchestrator time, no
+    # independent queries. Adds idempotently; default empty array preserves
+    # the prior row shape for existing data.
     "ALTER TABLE race_events ADD COLUMN IF NOT EXISTS race_terrain JSONB NOT NULL DEFAULT '[]'::jsonb",
-    "ALTER TABLE race_events ADD COLUMN IF NOT EXISTS aid_stations INTEGER NULL CHECK (aid_stations IS NULL OR aid_stations >= 0)",
+    # FormRefresh A2 (2026-05-25) — drop the `aid_stations` count column.
+    # Race-day aid logistics are carried structurally by the
+    # `race_route_locales` graph (role='aid_station' anchors); the integer
+    # count had a single consumer — Layer 2E HITL gate 5 (anaphylaxis ×
+    # aid exposure) — which was removed in the same slice (the project
+    # never intended to capture/plan for that scenario). DROP IF EXISTS is
+    # idempotent + no-op on a fresh DB (the column only ever existed via
+    # the prior ALTER add, never in CREATE TABLE).
+    "ALTER TABLE race_events DROP COLUMN IF EXISTS aid_stations",
     # D-73 Phase 5.2 walkthrough #1 + #2a (2026-05-21) — Mapbox-anchored race
     # location columns + race_url. The legacy `event_locale_id BIGINT FK to
     # locale_profiles(id)` semantic (athlete's own saved travel locale slot)

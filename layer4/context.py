@@ -607,15 +607,12 @@ class Layer2ETargetEvent(_Base):
     # Vertical-slice subset of the Layer2E_Spec.md §3 `TargetEvent` shape.
     # Fields race_terrain_pct / race_pack_weight_kg / team_format /
     # race_specific_nutrition_restrictions are deferred — they don't drive
-    # any §5.2-§5.7 path the v1 builder ships. `aid_stations` is retained
-    # because §5.9 gate 5 (anaphylaxis × aid-station-bound event) consumes
-    # it; left optional so callers without §H.2 wired pass `None`.
+    # any §5.2-§5.7 path the v1 builder ships.
     event_id: str
     event_name: str
     event_date: date
     framework_sport: str
     estimated_duration_hr: float = Field(gt=0)
-    aid_stations: int | None = None
 
 
 class MacroTargets(_Base):
@@ -1217,10 +1214,7 @@ class RaceEventPayload(_Base):
     # `q_layer2b_terrain_classifier_payload`. Empty list is legal (athletes
     # may save partial rows mid-edit; Layer 2B's [80, 120] sum bound is the
     # load-bearing gate at the runtime boundary, not this typed boundary).
-    # `aid_stations` carries the count for the Layer 2E `Layer2ETargetEvent`
-    # construction (drives sleep-dep + fueling-cadence reasoning).
     race_terrain: list[RaceTerrainEntry] = Field(default_factory=list)
-    aid_stations: int | None = Field(default=None, ge=0)
     # D-73 Phase 5.2 walkthrough #2a (2026-05-21) — athlete-typed
     # race-director site URL. Currently stored verbatim; the Trigger #2 LLM
     # site-parse slice will read this to pre-fill rules / equipment /

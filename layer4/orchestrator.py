@@ -353,7 +353,6 @@ def _upstream_full_cone(
                         target_race_event.race_format, 8.0
                     )
                 ),
-                aid_stations=target_race_event.aid_stations,
             )
         )
     included_disciplines = [

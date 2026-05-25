@@ -184,16 +184,6 @@
         Optional — total cumulative gain.
       </small>
     </div>
-    <div class="col-md-4">
-      <label class="form-label" for="aid_stations">Aid stations</label>
-      <input type="number" step="1" min="0" class="form-control"
-             id="aid_stations" name="aid_stations"
-             value="{{ target.aid_stations if target and target.aid_stations is not none else '' }}">
-      <small class="text-muted">
-        Total count along the course. Expedition AR + self-supported events are usually 0; aid-supported ultras typically 4–12.
-      </small>
-    </div>
-
     <div class="col-12">
       <label class="form-label" for="race_rules_summary">Race rules summary</label>
       <textarea class="form-control" id="race_rules_summary" name="race_rules_summary" rows="4"
@@ -224,6 +214,9 @@
       <label class="form-label" for="notes">Notes (optional)</label>
       <textarea class="form-control" id="notes" name="notes" rows="2"
                 placeholder="Anything else worth noting — travel logistics, family attending, why this race matters.">{{ target.notes if target and target.notes else '' }}</textarea>
+      <small class="text-muted">
+        Carrying a boat, packraft, or other gear between legs (portage)? Note the load and where it's carried here.
+      </small>
     </div>
   </div>
 

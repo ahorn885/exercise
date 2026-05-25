@@ -15,7 +15,7 @@ scope picked 2026-05-19 (Phase 2.5):
 - §5.7 sleep-dep overlay (§13.1 PGE 56hr; sleep_dep_data_missing flag)
 - §5.5 supplement integration stub (always empty integrated + flag)
 - §5.8 heat acclim stub (always temp_signal='unknown' + flag per event)
-- §5.9 HITL gate 5 (anaphylaxis × aid_stations)
+- §5.9 HITL gates (none active; gate 5 removed FormRefresh A2)
 - §8 coaching flags (pla_missing, hrt_bmr_limitation,
   low_calorie_target_relative_to_rmr)
 - §10 edge case: target_events = [] (time-based mode, §13.7)
@@ -215,7 +215,6 @@ def _pge_event() -> Layer2ETargetEvent:
         event_date=date(2026, 7, 17),
         framework_sport="Adventure Racing",
         estimated_duration_hr=56.0,
-        aid_stations=0,
     )
 
 
@@ -580,7 +579,6 @@ class TestRaceDayFueling:
             event_date=date(2026, 8, 1),
             framework_sport="Marathon",
             estimated_duration_hr=4.0,
-            aid_stations=8,
         )
         # Running-dominant: D-001 trail run, D-002 road run
         running_only = [
@@ -607,7 +605,7 @@ class TestRaceDayFueling:
             event_id="e1", event_name="E1",
             event_date=date(2026, 8, 1),
             framework_sport="Adventure Racing",
-            estimated_duration_hr=8.0, aid_stations=2,
+            estimated_duration_hr=8.0,
         )
         ls = _andy_lifestyle().model_copy(update={"salt_electrolyte_tolerance": "low"})
         payload = _andy_baseline_call(
@@ -627,7 +625,7 @@ class TestRaceDayFueling:
             event_id="e1", event_name="E1",
             event_date=date(2026, 8, 1),
             framework_sport="Adventure Racing",
-            estimated_duration_hr=8.0, aid_stations=2,
+            estimated_duration_hr=8.0,
         )
         ls = _andy_lifestyle().model_copy(
             update={"caffeine_race_day_strategy": "caffeine_loading"}
@@ -646,7 +644,7 @@ class TestRaceDayFueling:
             event_id="e1", event_name="E1",
             event_date=date(2026, 8, 1),
             framework_sport="Adventure Racing",
-            estimated_duration_hr=8.0, aid_stations=2,
+            estimated_duration_hr=8.0,
         )
         ls = _andy_lifestyle().model_copy(update={"caffeine_race_day_strategy": "avoid"})
         payload = _andy_baseline_call(db, target_events=[event], lifestyle=ls)
@@ -664,7 +662,7 @@ class TestSleepDepOverlay:
             event_id="long-1", event_name="L1",
             event_date=date(2026, 8, 1),
             framework_sport="Adventure Racing",
-            estimated_duration_hr=27.0, aid_stations=3,
+            estimated_duration_hr=27.0,
         )
         payload = _andy_baseline_call(db, target_events=[long_event])
         assert payload.sleep_dep_overlay is not None
@@ -677,7 +675,7 @@ class TestSleepDepOverlay:
             event_id="short-1", event_name="S1",
             event_date=date(2026, 8, 1),
             framework_sport="Adventure Racing",
-            estimated_duration_hr=4.5, aid_stations=2,
+            estimated_duration_hr=4.5,
         )
         payload = _andy_baseline_call(db, target_events=[short_event])
         assert payload.sleep_dep_overlay is None
@@ -689,7 +687,7 @@ class TestSleepDepOverlay:
             event_id="long-1", event_name="L1",
             event_date=date(2026, 8, 1),
             framework_sport="Adventure Racing",
-            estimated_duration_hr=27.0, aid_stations=3,
+            estimated_duration_hr=27.0,
         )
         ls = _andy_lifestyle().model_copy(update={
             "sleep_deprivation_max_hrs_continuous_awake": None,
@@ -712,13 +710,13 @@ class TestHeatAcclimStub:
                 event_id="e1", event_name="E1",
                 event_date=date(2026, 8, 1),
                 framework_sport="Adventure Racing",
-                estimated_duration_hr=8.0, aid_stations=2,
+                estimated_duration_hr=8.0,
             ),
             Layer2ETargetEvent(
                 event_id="e2", event_name="E2",
                 event_date=date(2026, 9, 1),
                 framework_sport="Adventure Racing",
-                estimated_duration_hr=12.0, aid_stations=4,
+                estimated_duration_hr=12.0,
             ),
         ]
         payload = _andy_baseline_call(db, target_events=events)
@@ -733,11 +731,16 @@ class TestHeatAcclimStub:
         assert len(race_temp_flags) == 2
 
 
-# ─── §5.9 HITL gate 5 ───────────────────────────────────────────────────────
+# ─── §5.9 HITL gates ────────────────────────────────────────────────────────
 
 
-class TestHITLGate5:
-    def test_anaphylaxis_x_aid_stations_blocks(self):
+class TestHITLGatesNoneActive:
+    # Gate 5 (anaphylaxis × aid stations) was removed with the
+    # `aid_stations` column in FormRefresh A2 (2026-05-25); gates 1-4 are
+    # deferred (need structured supplements + a pregnancy field). No active
+    # gate should fire — this locks the removal so it isn't reintroduced
+    # accidentally.
+    def test_anaphylaxis_with_event_no_longer_gates(self):
         db = _FakeConn()
         db.queue_pla_for_all_phases((4, 6), (6, 10), (8, 12), (3, 6))
         health = Layer1HealthStatus(
@@ -754,53 +757,11 @@ class TestHITLGate5:
             event_id="ar-x", event_name="AR X",
             event_date=date(2026, 8, 1),
             framework_sport="Adventure Racing",
-            estimated_duration_hr=24.0, aid_stations=8,
+            estimated_duration_hr=24.0,
         )
         payload = _andy_baseline_call(db, target_events=[event], health=health)
-        assert payload.hitl_required is True
-        assert len(payload.hitl_items) == 1
-        item = payload.hitl_items[0]
-        assert item.gate_number == 5
-        assert item.block_level == "block"
-        assert item.affected_event_id == "ar-x"
-        assert "athlete_self_pack_acknowledged" in item.resolution_options
-
-    def test_no_aid_stations_no_hitl(self):
-        # Andy's PGE has 0 aid stations — anaphylaxis allergy alone
-        # doesn't gate plan-gen
-        db = _FakeConn()
-        db.queue_pla_for_all_phases((4, 6), (6, 10), (8, 12), (3, 6))
-        health = Layer1HealthStatus(
-            food_allergies=[
-                FoodAllergyRecord(
-                    allergy_id=1, allergen_category="peanut",
-                    severity="anaphylaxis", notes=None,
-                )
-            ]
-        )
-        payload = _andy_baseline_call(db, health=health)  # default PGE has aid_stations=0
         assert payload.hitl_items == []
         assert payload.hitl_required is False
-
-    def test_non_anaphylaxis_allergy_no_hitl(self):
-        db = _FakeConn()
-        db.queue_pla_for_all_phases((4, 6), (6, 10), (8, 12), (3, 6))
-        health = Layer1HealthStatus(
-            food_allergies=[
-                FoodAllergyRecord(
-                    allergy_id=1, allergen_category="dairy",
-                    severity="allergy", notes=None,
-                )
-            ]
-        )
-        event = Layer2ETargetEvent(
-            event_id="ar-x", event_name="AR X",
-            event_date=date(2026, 8, 1),
-            framework_sport="Adventure Racing",
-            estimated_duration_hr=24.0, aid_stations=8,
-        )
-        payload = _andy_baseline_call(db, target_events=[event], health=health)
-        assert payload.hitl_items == []
 
 
 # ─── §8 coaching flags ──────────────────────────────────────────────────────
@@ -872,19 +833,19 @@ class TestMultipleEvents:
                 event_id="boston", event_name="Boston Marathon",
                 event_date=date(2026, 4, 20),
                 framework_sport="Marathon",
-                estimated_duration_hr=3.5, aid_stations=15,
+                estimated_duration_hr=3.5,
             ),
             Layer2ETargetEvent(
                 event_id="wtm", event_name="World's Toughest Mudder",
                 event_date=date(2026, 11, 14),
                 framework_sport="OCR",
-                estimated_duration_hr=24.0, aid_stations=10,
+                estimated_duration_hr=24.0,
             ),
             Layer2ETargetEvent(
                 event_id="pge", event_name="PGE 2026",
                 event_date=date(2026, 7, 17),
                 framework_sport="Adventure Racing",
-                estimated_duration_hr=56.0, aid_stations=0,
+                estimated_duration_hr=56.0,
             ),
         ]
         payload = _andy_baseline_call(db, target_events=events)

@@ -24,13 +24,13 @@ Step 3c — D-66 §H.2 target-race — captures race name, event_date,
 race_format (closed 4-enum), and the multi-day-only extension fields
 (distance_km, total_elevation_gain_m, race_rules_summary,
 mandatory_gear_text). Writes a `race_events` row with `is_target_event=TRUE`
-(or UPDATEs the existing target row). Single-day picks redirect to
-`/profile?tab=athlete`; multi-day picks redirect to the §H.4
-route-locale step. Skip writes an `'target_race_skipped'` account_nudge
-+ redirects to the profile form.
+(or UPDATEs the existing target row). All picks redirect to the §H.4
+route-locale step (optional on every event type). Skip writes an
+`'target_race_skipped'` account_nudge + redirects to the profile form.
 
-Step 3d — D-66 §H.4 route-locales (multi-day only) — captures the
-athlete's route-locale graph (start + transition_areas + aid_stations +
+Step 3d — D-66 §H.4 route-locales (offered on every event type, optional)
+— captures the athlete's route-locale graph (start + transition_areas +
+aid_stations +
 drop_bag_points + bivvies + finish) for the target race_event. Per
 design §6.3 the step is skippable; on skip OR continue-with-<2-locales
 an `'route_locales_incomplete'` account_nudge fires so the athlete sees
@@ -893,7 +893,7 @@ def _get_target_race_row(db, uid):
     cur = db.execute(
         'SELECT id, name, event_date, race_format, distance_km, '
         '       total_elevation_gain_m, race_rules_summary, mandatory_gear_text, '
-        '       event_locale_id, notes, race_terrain, aid_stations, '
+        '       event_locale_id, notes, race_terrain, '
         '       event_locale_name, event_locale_mapbox_id, event_locale_place_name, '
         '       event_locale_lat, event_locale_lng, race_url, framework_sport, '
         '       included_discipline_ids '
@@ -995,9 +995,9 @@ def target_race_save():
     """Persist the §H.2 target-race form. Writes a `race_events` row with
     `is_target_event=TRUE` (or UPDATEs the existing target row).
 
-    Multi-day race_format picks redirect to `/onboarding/route-locales`
-    so the athlete can immediately fill in the route graph; single_day
-    picks bounce to the profile form. Errors flash and re-render.
+    All race_format picks redirect to `/onboarding/route-locales` so the
+    athlete can fill in the route graph if they want; the step is optional
+    on every event type. Errors flash and re-render.
     """
     db = get_db()
     uid = current_user_id()
@@ -1027,7 +1027,6 @@ def target_race_save():
     new_mandatory_gear_text = _parse_str_field(request.form, 'mandatory_gear_text')
     new_notes = _parse_str_field(request.form, 'notes')
     new_race_terrain = _parse_race_terrain(request.form)
-    new_aid_stations = _parse_int_field(request.form, 'aid_stations')
     # D-73 Phase 5.2 walkthrough #1 + #2a (2026-05-21) — Mapbox-anchored race
     # location hidden inputs ride alongside the rest of the form (populated
     # client-side by the picker JS); race_url is a new athlete-typed input.
@@ -1088,17 +1087,16 @@ def target_race_save():
             event_locale_id=None,
             notes=new_notes,
             race_terrain=new_race_terrain,
-            aid_stations=new_aid_stations,
             race_url=new_race_url,
             framework_sport=new_framework_sport,
             included_discipline_ids=new_discipline_filter,
             **new_locale_fields,
         )
         # D-66 §9 invalidation — same diff logic as routes/race_events.py
-        # update_race; target row is already known. race_terrain +
-        # aid_stations route to brief-only (Layer 2B + 2E read them but are
-        # uncached at the orchestrator level; the Layer 4 brief is the
-        # cache-load-bearing artifact downstream).
+        # update_race; target row is already known. race_terrain routes to
+        # brief-only (Layer 2B reads it but is uncached at the orchestrator
+        # level; the Layer 4 brief is the cache-load-bearing artifact
+        # downstream).
         # estimated_duration_hr feeds Layer 2E → fueling tiers consumed by
         # the brief + plan synthesis; rides the periodization-grade eviction
         # alongside event_date / race_format. Mirrors routes/race_events.py.
@@ -1108,7 +1106,6 @@ def target_race_save():
             or target['estimated_duration_hr'] != new_estimated_duration_hr
         )
         prior_terrain = target.get('race_terrain') or []
-        prior_aid = target.get('aid_stations')
         prior_race_url = target.get('race_url')
         prior_mapbox_id = target.get('event_locale_mapbox_id')
         # D-73 Phase 5.2 Bucket E.(b) — framework_sport override change on
@@ -1129,7 +1126,6 @@ def target_race_save():
             or target['mandatory_gear_text'] != new_mandatory_gear_text
             or target['notes'] != new_notes
             or prior_terrain != new_race_terrain
-            or prior_aid != new_aid_stations
             or prior_race_url != new_race_url
             or prior_mapbox_id != new_locale_fields['event_locale_mapbox_id']
             or target['primary_metric'] != new_primary_metric
@@ -1158,7 +1154,6 @@ def target_race_save():
             is_target_event=True,
             notes=new_notes,
             race_terrain=new_race_terrain,
-            aid_stations=new_aid_stations,
             race_url=new_race_url,
             framework_sport=new_framework_sport,
             included_discipline_ids=new_discipline_filter,
@@ -1170,9 +1165,10 @@ def target_race_save():
         evict_on_target_event_periodization_change(db, uid)
         flash(f'Target race "{name}" saved.', 'success')
 
-    if race_format != 'single_day':
-        return redirect(url_for('onboarding.route_locales'))
-    return redirect(_POST_STEP3C_TARGET)
+    # Route locales are offered on every event type (optional). The step
+    # has its own skip/continue, so single-day athletes can pass through
+    # without entering any — but the option is no longer hidden from them.
+    return redirect(url_for('onboarding.route_locales'))
 
 
 @bp.route('/target-race/skip', methods=['POST'])
@@ -1197,7 +1193,7 @@ def target_race_skip():
 
 
 # ---------------------------------------------------------------------------
-# Step 3d — Route locales (D-66 §H.4, multi-day only)
+# Step 3d — Route locales (D-66 §H.4) — offered on every event type, optional
 # ---------------------------------------------------------------------------
 
 
@@ -1205,8 +1201,9 @@ def target_race_skip():
 def route_locales():
     """Render the v5 §H.4 route-locale list (Step 3d).
 
-    Shown only when the athlete has a target race_events row with
-    `race_format != 'single_day'`. Empty state explains the value of
+    Offered for any target race_events row regardless of `race_format`;
+    always optional (the Skip/Continue controls let the athlete pass
+    through without entering any). Empty state explains the value of
     filling in route locales; populated state lists current rows with
     per-row Delete buttons and a default sequence_idx pre-populated as
     `len(existing)+1`. Equipment per locale is intentionally deferred to
@@ -1225,11 +1222,6 @@ def route_locales():
             'info',
         )
         return redirect(url_for('onboarding.target_race'))
-
-    if target['race_format'] == 'single_day':
-        # Single-day events don't need route locales per design §6.3;
-        # bounce straight to the profile form rather than render the step.
-        return redirect(_POST_STEP3D_TARGET)
 
     race_event_id = int(target['id'])
     race_locales = list_route_locales(db, race_event_id)

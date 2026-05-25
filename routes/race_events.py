@@ -396,7 +396,6 @@ def new_race():
             mandatory_gear_text=_parse_str(request.form, 'mandatory_gear_text'),
             notes=_parse_str(request.form, 'notes'),
             race_terrain=_parse_race_terrain(request.form),
-            aid_stations=_parse_int(request.form, 'aid_stations'),
             race_url=_parse_race_url(request.form),
             framework_sport=_parse_str(request.form, 'framework_sport'),
             included_discipline_ids=_parse_discipline_id_filter(request.form),
@@ -532,7 +531,6 @@ def update_race(race_event_id: int):
     new_mandatory_gear_text = _parse_str(request.form, 'mandatory_gear_text')
     new_notes = _parse_str(request.form, 'notes')
     new_race_terrain = _parse_race_terrain(request.form)
-    new_aid_stations = _parse_int(request.form, 'aid_stations')
     new_race_url = _parse_race_url(request.form)
     new_framework_sport = _parse_str(request.form, 'framework_sport')
     parsed_discipline_filter = _parse_discipline_id_filter(request.form)
@@ -587,16 +585,15 @@ def update_race(race_event_id: int):
         included_discipline_ids=new_discipline_filter,
         notes=new_notes,
         race_terrain=new_race_terrain,
-        aid_stations=new_aid_stations,
     )
 
     # Layer 4 cache invalidation per D-66 §9. Non-target edits leave the
     # cache untouched (race not in scope of any plan); target edits route
     # to the narrowest helper that covers the changed fields. race_terrain
-    # + aid_stations route to brief-only — they affect Layer 2B + Layer 2E
-    # outputs, but both layers are recomputed on every orchestrator call
-    # (uncached at the orchestrator level); the Layer 4 brief is the
-    # cache-load-bearing artifact downstream of both.
+    # routes to brief-only — it affects Layer 2B output, but Layer 2B is
+    # recomputed on every orchestrator call (uncached at the orchestrator
+    # level); the Layer 4 brief is the cache-load-bearing artifact
+    # downstream.
     if race['is_target_event']:
         # estimated_duration_hr feeds Layer 2E's TargetEvent duration →
         # fueling tiers consumed by the brief + plan synthesis, so it rides
@@ -610,7 +607,6 @@ def update_race(race_event_id: int):
         # Existing race_terrain comes back from get_race_event as a list
         # of dicts (JSONB hydrated in the repo); compare as-is.
         prior_terrain = race.get('race_terrain') or []
-        prior_aid = race.get('aid_stations')
         prior_race_url = race.get('race_url')
         # D-73 Phase 5.2 Bucket E.(b) — framework_sport override change
         # flips Layer 2A's discipline classification → wider eviction than
@@ -634,7 +630,6 @@ def update_race(race_event_id: int):
             or race['mandatory_gear_text'] != new_mandatory_gear_text
             or race['notes'] != new_notes
             or prior_terrain != new_race_terrain
-            or prior_aid != new_aid_stations
             or prior_race_url != new_race_url
             or race['primary_metric'] != new_primary_metric
         )
