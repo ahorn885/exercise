@@ -16,9 +16,6 @@ Design (ratified at the Slice 5 gate, 2026-05-25):
   family-filter them. Craft closeness ("kayak ≈ packraft") is reasoned LLM-side
   in Layer 4. No new craft-family vocab (the §14 escape hatch — add a
   deterministic family table later only if the LLM over-substitutes).
-- **Additive** alongside the v2 `Layer2ModalityPayload` (Slice 6 migrates
-  renderers off the v2 payload).
-
 Pure-Python assembly; no LLM call here (§11 — the craft reasoning rides inside
 the existing Layer 4 synthesis call).
 """
@@ -36,7 +33,14 @@ from layer4.context import (
 
 from discipline_display_names import discipline_display_name
 
-from .resolver import Layer2ModalityInputError
+
+class Layer2ModalityInputError(ValueError):
+    """Raised when `resolve_training_substitution` preconditions fail.
+
+    Fail-loud at the resolver boundary rather than propagating malformed
+    inputs into the substitution logic.
+    """
+
 
 # Terrains whose best local proxy is unbridgeable, undefined, or below this
 # fidelity are emitted as untrainable-terrain gaps rather than emphasis

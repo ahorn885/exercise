@@ -133,7 +133,7 @@ def plan_create_key(
     temperature: float,
     max_tokens_per_phase: int,
     capped_retries_per_phase: int,
-    layer2_modality_hash: str | None = None,
+    training_substitution_hash: str | None = None,
 ) -> str:
     """Per §9.1 — cache key for `llm_layer4_plan_create`.
 
@@ -141,9 +141,8 @@ def plan_create_key(
     on hit per §9.4). `layer2c_bundle_hash` is the bundle hash from
     `compute_layer2c_bundle_hash`.
 
-    `layer2_modality_hash` collapses None → '' so callers that don't supply
-    a modality payload retain stable keys (cache forward-compat with
-    pre-BM-3 entries).
+    `training_substitution_hash` collapses None → '' so callers that don't
+    supply a substitution payload retain stable keys.
     """
     components = [
         str(user_id),
@@ -162,7 +161,7 @@ def plan_create_key(
         str(temperature),
         str(max_tokens_per_phase),
         str(capped_retries_per_phase),
-        layer2_modality_hash or "",
+        training_substitution_hash or "",
     ]
     return _sha256_hex("||".join(components))
 
@@ -185,6 +184,7 @@ def plan_refresh_key(
     temperature: float,
     max_tokens: int,
     capped_retries: int,
+    training_substitution_hash: str | None = None,
 ) -> str:
     """Per §9.1 — cache key for `llm_layer4_plan_refresh`.
 
@@ -192,6 +192,9 @@ def plan_refresh_key(
     intra-phase); only T3 cross-phase routes to Pattern A and contributes
     the seam-reviewer model to the key. None → '' in the key to prevent
     gratuitous cache misses on the model field for Pattern B refreshes.
+
+    `training_substitution_hash` collapses None → '' so callers that don't
+    supply a substitution payload retain stable keys.
     """
     components = [
         str(user_id),
@@ -210,6 +213,7 @@ def plan_refresh_key(
         str(temperature),
         str(max_tokens),
         str(capped_retries),
+        training_substitution_hash or "",
     ]
     return _sha256_hex("||".join(components))
 
@@ -227,7 +231,6 @@ def single_session_synthesize_key(
     temperature: float,
     max_tokens: int,
     capped_retries: int,
-    layer2_modality_locale_hash: str | None = None,
 ) -> str:
     """Per §9.1 — cache key for `llm_layer4_single_session_synthesize`.
 
@@ -235,10 +238,6 @@ def single_session_synthesize_key(
     through `canonical_json` so dicts / pydantic models / dataclasses all
     encode stably. `suggestion_id` is intentionally absent — rebinding
     on hit per §9.4.
-
-    `layer2_modality_locale_hash` collapses None → '' so callers that
-    don't supply a modality payload retain stable keys (cache forward-compat
-    with pre-BM-3 entries + quick-equipment mode which skips the resolver).
     """
     components = [
         str(user_id),
@@ -252,7 +251,6 @@ def single_session_synthesize_key(
         str(temperature),
         str(max_tokens),
         str(capped_retries),
-        layer2_modality_locale_hash or "",
     ]
     return _sha256_hex("||".join(components))
 
@@ -318,7 +316,6 @@ def race_week_brief_key(
     temperature: float,
     max_tokens: int,
     capped_retries: int,
-    layer2_modality_hash: str | None = None,
     training_substitution_hash: str | None = None,
 ) -> str:
     """Per §9.1 — cache key for `llm_layer4_race_week_brief`.
@@ -327,11 +324,8 @@ def race_week_brief_key(
     orchestrator invalidates `race_week_brief` caches at midnight UTC (per
     §9.3) rather than baking today's date into the key.
 
-    `layer2_modality_hash` and `training_substitution_hash` collapse None → ''
-    so callers that don't supply those payloads retain stable keys (cache
-    forward-compat). Adding the training-substitution slot shifts the key once
-    on first deploy — the expected one-time invalidation per BestFitModality
-    Spec v4 §9.
+    `training_substitution_hash` collapses None → '' so callers that don't
+    supply the payload retain stable keys.
     """
     components = [
         str(user_id),
@@ -349,7 +343,6 @@ def race_week_brief_key(
         str(temperature),
         str(max_tokens),
         str(capped_retries),
-        layer2_modality_hash or "",
         training_substitution_hash or "",
     ]
     return _sha256_hex("||".join(components))
