@@ -26,7 +26,11 @@ import pytest
 from layer4 import InMemoryCacheBackend  # noqa: F401
 
 from layer2b import Layer2BInputError, q_layer2b_terrain_classifier_payload
-from layer4.context import Layer2BPayload, RaceTerrainEntry
+from layer4.context import (
+    Layer2BDisciplineBlock,
+    Layer2BPayload,
+    RaceTerrainEntry,
+)
 
 
 # ─── Fakes (mirror tests/test_layer2a.py) ────────────────────────────────────
@@ -751,3 +755,274 @@ class TestEmptyRaceTerrainLoosen:
                 included_discipline_ids=["D-001"],
                 etl_version_set={"0A": "v1"},
             )
+
+
+# ─── Best-fit re-model Slice 4 — per-discipline terrain blocks ────────────────
+
+
+class TestPerDisciplineBlocks:
+    """`terrain_by_discipline` keys the coverage/gap analysis by the captured
+    `RaceTerrainEntry.discipline_id`. Race-wide (None) entries fold into every
+    included discipline; a tagged entry wins over a race-wide entry for the
+    same terrain_id; the flat top-level aggregate is unchanged."""
+
+    def _block(self, payload: Layer2BPayload, discipline_id: str) -> Layer2BDisciplineBlock:
+        return next(
+            b for b in payload.terrain_by_discipline if b.discipline_id == discipline_id
+        )
+
+    def test_race_wide_folds_into_every_discipline(self):
+        conn = _FakeConn()
+        entries = [
+            RaceTerrainEntry(terrain_id="TRN-001", pct_of_race=50.0),
+            RaceTerrainEntry(terrain_id="TRN-002", pct_of_race=50.0),
+        ]
+        conn.queue_name_rows([
+            _name_row("TRN-001", "Road / Paved"),
+            _name_row("TRN-002", "Groomed Trail"),
+        ])
+        payload = q_layer2b_terrain_classifier_payload(
+            conn,
+            race_terrain=entries,
+            locale_terrain_ids=["TRN-001", "TRN-002"],
+            included_discipline_ids=["D-001", "D-005"],
+            etl_version_set=_DEFAULT_ETL,
+        )
+
+        assert [b.discipline_id for b in payload.terrain_by_discipline] == [
+            "D-001", "D-005"
+        ]
+        for did in ("D-001", "D-005"):
+            block = self._block(payload, did)
+            assert {r.terrain_id for r in block.race_terrain} == {"TRN-001", "TRN-002"}
+            # Folded-in race-wide rows are stamped with the block discipline.
+            assert all(r.discipline_id == did for r in block.race_terrain)
+            assert block.summary.total_race_terrain_count == 2
+            assert block.summary.covered_count == 2
+            assert block.summary.gap_count == 0
+
+    def test_tagged_entries_route_to_their_discipline(self):
+        conn = _FakeConn()
+        entries = [
+            RaceTerrainEntry(terrain_id="TRN-001", pct_of_race=50.0, discipline_id="D-001"),
+            RaceTerrainEntry(terrain_id="TRN-002", pct_of_race=50.0, discipline_id="D-005"),
+        ]
+        conn.queue_name_rows([
+            _name_row("TRN-001", "Road / Paved"),
+            _name_row("TRN-002", "Groomed Trail"),
+        ])
+        payload = q_layer2b_terrain_classifier_payload(
+            conn,
+            race_terrain=entries,
+            locale_terrain_ids=["TRN-001", "TRN-002"],
+            included_discipline_ids=["D-001", "D-005"],
+            etl_version_set=_DEFAULT_ETL,
+        )
+        assert {r.terrain_id for r in self._block(payload, "D-001").race_terrain} == {"TRN-001"}
+        assert {r.terrain_id for r in self._block(payload, "D-005").race_terrain} == {"TRN-002"}
+
+    def test_same_terrain_two_disciplines_keeps_distinct_pct(self):
+        """The collapse the flat `pct_by_target` dict masks: TRN-003 appears in
+        two legs at different percentages; each block keeps its own pct."""
+        conn = _FakeConn()
+        entries = [
+            RaceTerrainEntry(terrain_id="TRN-003", pct_of_race=40.0, discipline_id="D-001"),
+            RaceTerrainEntry(terrain_id="TRN-003", pct_of_race=60.0, discipline_id="D-005"),
+        ]
+        conn.queue_name_rows([_name_row("TRN-003", "Technical Trail")])
+        payload = q_layer2b_terrain_classifier_payload(
+            conn,
+            race_terrain=entries,
+            locale_terrain_ids=["TRN-003"],
+            included_discipline_ids=["D-001", "D-005"],
+            etl_version_set=_DEFAULT_ETL,
+        )
+        a = self._block(payload, "D-001").race_terrain
+        b = self._block(payload, "D-005").race_terrain
+        assert [(r.terrain_id, r.pct_of_race) for r in a] == [("TRN-003", 40.0)]
+        assert [(r.terrain_id, r.pct_of_race) for r in b] == [("TRN-003", 60.0)]
+        # Flat aggregate still collapses by terrain_id (unchanged behavior).
+        assert payload.summary.total_race_terrain_count == 2
+        assert payload.summary.covered_count == 1
+
+    def test_tagged_wins_over_race_wide_in_block(self):
+        conn = _FakeConn()
+        entries = [
+            RaceTerrainEntry(terrain_id="TRN-001", pct_of_race=70.0, discipline_id="D-001"),
+            RaceTerrainEntry(terrain_id="TRN-001", pct_of_race=30.0),  # race-wide
+        ]
+        conn.queue_name_rows([_name_row("TRN-001", "Road / Paved")])
+        payload = q_layer2b_terrain_classifier_payload(
+            conn,
+            race_terrain=entries,
+            locale_terrain_ids=["TRN-001"],
+            included_discipline_ids=["D-001", "D-005"],
+            etl_version_set=_DEFAULT_ETL,
+        )
+        # D-001 uses its tagged row (70), not the race-wide (30).
+        assert [(r.terrain_id, r.pct_of_race) for r in self._block(payload, "D-001").race_terrain] == [
+            ("TRN-001", 70.0)
+        ]
+        # D-005 has no tag → folds in the race-wide row (30).
+        assert [(r.terrain_id, r.pct_of_race) for r in self._block(payload, "D-005").race_terrain] == [
+            ("TRN-001", 30.0)
+        ]
+
+    def test_single_discipline_untagged_block_matches_aggregate(self):
+        conn = _FakeConn()
+        entries = [
+            RaceTerrainEntry(terrain_id="TRN-001", pct_of_race=60.0),
+            RaceTerrainEntry(terrain_id="TRN-009", pct_of_race=40.0),  # gap
+        ]
+        conn.queue_name_rows([
+            _name_row("TRN-001", "Road / Paved"),
+            _name_row("TRN-009", "Flat Water"),
+        ])
+        conn.queue_proxy_row(_proxy_row(
+            "TRN-009", "Flat Water",
+            proxy_terrain_id="TRN-008", proxy_terrain_name="Pool",
+            gap_severity="low", proxy_fidelity=0.75,
+        ))
+        payload = q_layer2b_terrain_classifier_payload(
+            conn,
+            race_terrain=entries,
+            locale_terrain_ids=["TRN-001"],
+            included_discipline_ids=["D-001"],
+            etl_version_set=_DEFAULT_ETL,
+        )
+        assert len(payload.terrain_by_discipline) == 1
+        block = self._block(payload, "D-001")
+        assert block.summary.total_race_terrain_count == payload.summary.total_race_terrain_count
+        assert block.summary.covered_count == payload.summary.covered_count
+        assert block.summary.gap_count == payload.summary.gap_count
+        assert {g.target_terrain_id for g in block.terrain_gaps} == {"TRN-009"}
+
+    def test_orphan_tagged_discipline_excluded_from_blocks(self):
+        """An entry tagged to a discipline outside `included_discipline_ids`
+        gets no block but stays in the flat aggregate."""
+        conn = _FakeConn()
+        entries = [
+            RaceTerrainEntry(terrain_id="TRN-001", pct_of_race=50.0, discipline_id="D-001"),
+            RaceTerrainEntry(terrain_id="TRN-002", pct_of_race=50.0, discipline_id="D-999"),
+        ]
+        conn.queue_name_rows([
+            _name_row("TRN-001", "Road / Paved"),
+            _name_row("TRN-002", "Groomed Trail"),
+        ])
+        payload = q_layer2b_terrain_classifier_payload(
+            conn,
+            race_terrain=entries,
+            locale_terrain_ids=["TRN-001", "TRN-002"],
+            included_discipline_ids=["D-001"],
+            etl_version_set=_DEFAULT_ETL,
+        )
+        assert [b.discipline_id for b in payload.terrain_by_discipline] == ["D-001"]
+        assert {r.terrain_id for r in self._block(payload, "D-001").race_terrain} == {"TRN-001"}
+        # Flat aggregate keeps the orphan-tagged row.
+        assert len(payload.race_terrain) == 2
+        assert {r.terrain_id for r in payload.race_terrain} == {"TRN-001", "TRN-002"}
+
+    def test_discipline_with_no_terrain_emits_no_block(self):
+        conn = _FakeConn()
+        entries = [
+            RaceTerrainEntry(terrain_id="TRN-001", pct_of_race=100.0, discipline_id="D-001"),
+        ]
+        conn.queue_name_rows([_name_row("TRN-001", "Road / Paved")])
+        payload = q_layer2b_terrain_classifier_payload(
+            conn,
+            race_terrain=entries,
+            locale_terrain_ids=["TRN-001"],
+            included_discipline_ids=["D-001", "D-005"],
+            etl_version_set=_DEFAULT_ETL,
+        )
+        # D-005 has nothing tagged and no race-wide rows → skipped.
+        assert [b.discipline_id for b in payload.terrain_by_discipline] == ["D-001"]
+
+    def test_empty_race_terrain_no_discipline_blocks(self):
+        conn = _FakeConn()
+        payload = q_layer2b_terrain_classifier_payload(
+            conn,
+            race_terrain=[],
+            locale_terrain_ids=["TRN-001"],
+            included_discipline_ids=["D-001", "D-005"],
+            etl_version_set=_DEFAULT_ETL,
+        )
+        assert payload.terrain_by_discipline == []
+
+    def test_block_carries_race_wide_gap_for_every_discipline(self):
+        conn = _FakeConn()
+        entries = [
+            RaceTerrainEntry(terrain_id="TRN-001", pct_of_race=60.0),  # covered
+            RaceTerrainEntry(terrain_id="TRN-009", pct_of_race=40.0),  # gap, race-wide
+        ]
+        conn.queue_name_rows([
+            _name_row("TRN-001", "Road / Paved"),
+            _name_row("TRN-009", "Flat Water"),
+        ])
+        conn.queue_proxy_row(_proxy_row(
+            "TRN-009", "Flat Water",
+            proxy_terrain_id="TRN-008", proxy_terrain_name="Pool",
+            gap_severity="medium", proxy_fidelity=0.6,
+        ))
+        payload = q_layer2b_terrain_classifier_payload(
+            conn,
+            race_terrain=entries,
+            locale_terrain_ids=["TRN-001"],
+            included_discipline_ids=["D-001", "D-005"],
+            etl_version_set=_DEFAULT_ETL,
+        )
+        for did in ("D-001", "D-005"):
+            block = self._block(payload, did)
+            assert block.summary.total_race_terrain_count == 2
+            assert block.summary.covered_count == 1
+            assert block.summary.gap_count == 1
+            assert {g.target_terrain_id for g in block.terrain_gaps} == {"TRN-009"}
+            gap_row = next(r for r in block.race_terrain if r.terrain_id == "TRN-009")
+            assert gap_row.gap is not None
+            assert gap_row.gap.proxy_terrain_id == "TRN-008"
+            assert gap_row.available_locally is False
+
+    def test_tags_do_not_change_flat_aggregate(self):
+        """Same entries, once untagged + once tagged: the discipline-agnostic
+        flat summary + terrain_gaps are identical (additive contract)."""
+        base = [
+            ("TRN-001", 60.0),
+            ("TRN-009", 40.0),  # gap
+        ]
+        names = [
+            _name_row("TRN-001", "Road / Paved"),
+            _name_row("TRN-009", "Flat Water"),
+        ]
+        proxy = _proxy_row(
+            "TRN-009", "Flat Water",
+            proxy_terrain_id="TRN-008", proxy_terrain_name="Pool",
+            gap_severity="low", proxy_fidelity=0.75,
+        )
+
+        conn_a = _FakeConn()
+        conn_a.queue_name_rows(names)
+        conn_a.queue_proxy_row(proxy)
+        payload_a = q_layer2b_terrain_classifier_payload(
+            conn_a,
+            race_terrain=[RaceTerrainEntry(terrain_id=t, pct_of_race=p) for t, p in base],
+            locale_terrain_ids=["TRN-001"],
+            included_discipline_ids=["D-001"],
+            etl_version_set=_DEFAULT_ETL,
+        )
+
+        conn_b = _FakeConn()
+        conn_b.queue_name_rows(names)
+        conn_b.queue_proxy_row(proxy)
+        payload_b = q_layer2b_terrain_classifier_payload(
+            conn_b,
+            race_terrain=[
+                RaceTerrainEntry(terrain_id="TRN-001", pct_of_race=60.0, discipline_id="D-001"),
+                RaceTerrainEntry(terrain_id="TRN-009", pct_of_race=40.0, discipline_id="D-005"),
+            ],
+            locale_terrain_ids=["TRN-001"],
+            included_discipline_ids=["D-001", "D-005"],
+            etl_version_set=_DEFAULT_ETL,
+        )
+
+        assert payload_a.summary == payload_b.summary
+        assert payload_a.terrain_gaps == payload_b.terrain_gaps

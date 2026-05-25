@@ -285,6 +285,10 @@ class RaceTerrainOutput(_Base):
     pct_of_race: float = Field(ge=0.0, le=100.0)
     available_locally: bool
     gap: TerrainGap | None = None
+    # Best-fit re-model Slice 4 (2026-05-25) — pass-through of the
+    # captured `RaceTerrainEntry.discipline_id`. None = race-wide (counts
+    # against every included discipline).
+    discipline_id: str | None = None
 
 
 class Layer2BSummaryBlock(_Base):
@@ -307,12 +311,32 @@ class Layer2BCoachingFlag(_Base):
     metadata: dict[str, Any]
 
 
+class Layer2BDisciplineBlock(_Base):
+    # Best-fit re-model Slice 4 (2026-05-25) — per-discipline view of the
+    # terrain coverage/gap analysis. One block per included discipline; its
+    # `race_terrain` carries that discipline's tagged entries plus any
+    # race-wide (discipline_id=None) entries folded in. `summary` is
+    # recomputed over the block's subset. The flat top-level fields on
+    # `Layer2BPayload` remain the deduped race-wide aggregate (no
+    # double-counting); these blocks are the first consumer of the captured
+    # `discipline_id` and feed Slice 5's per-discipline resolver.
+    discipline_id: str
+    race_terrain: list[RaceTerrainOutput]
+    terrain_gaps: list[TerrainGap]
+    summary: Layer2BSummaryBlock
+
+
 class Layer2BPayload(_Base):
     race_terrain: list[RaceTerrainOutput]
     terrain_gaps: list[TerrainGap]
     coaching_flags: list[Layer2BCoachingFlag]
     summary: Layer2BSummaryBlock
     etl_version_set: dict[str, str]
+    # Best-fit re-model Slice 4 (2026-05-25) — additive per-discipline
+    # breakdown. Empty for the empty-race_terrain path. Default [] keeps
+    # old cached payloads + existing consumers valid (Slice 6 migrates
+    # renderers to consume this).
+    terrain_by_discipline: list[Layer2BDisciplineBlock] = []
 
 
 # ─── Layer 2C — equipment / modality (Layer2C_Spec.md §7 + §5.6 amendment) ───

@@ -38,7 +38,16 @@ def q_layer2b_terrain_classifier_payload(
 class RaceTerrainEntry:
     terrain_id: str       # Canonical TRN-xxx ID
     pct_of_race: float    # 0.0 – 100.0; estimated percentage of race time on this terrain
+    discipline_id: str | None = None  # Captured 2026-05-24 (Bucket E); CONSUMED 2026-05-25 (re-model Slice 4). None = race-wide.
 ```
+
+**Discipline tagging (re-model Slice 4, 2026-05-25).** `discipline_id` is
+**optional** — `None` means race-wide (the terrain row counts against every
+included discipline). It is *not* required per row: a single-discipline race's
+"race-wide" terrain is exactly that one discipline's terrain, so a global
+requirement would be wrong, and existing captured rows are all `None`. Layer 2B
+keys an additive per-discipline view off this tag (§5.6 + §7 `terrain_by_discipline`);
+the flat top-level `race_terrain`/`terrain_gaps`/`summary` are unchanged.
 
 ### Parameters
 
@@ -169,6 +178,38 @@ summary = SummaryBlock(
 
 `min_adaptation_weeks_needed` uses MAX of adaptation_weeks_high across gaps — because the athlete needs enough time to adapt to the worst-case gap. Plan-gen uses this against training window for timeline viability and feeds it into 2E for nutrition periodization.
 
+### 5.6 Per-discipline grouping (re-model Slice 4, 2026-05-25)
+
+Additive to §5.4/§5.5: after the flat aggregate is built, emit one
+`Layer2BDisciplineBlock` per `included_discipline_id`. A discipline's terrain
+subset = entries tagged with that `discipline_id` PLUS race-wide (`None`)
+entries folded in; a tagged entry wins over a race-wide entry for the same
+`terrain_id`. Coverage / gaps / summary are recomputed over the subset via the
+same §5.4/§5.5 logic. **No extra SQL:** proxy resolution (§5.2) is keyed by
+`(terrain_id, locale set)` and is discipline-independent, so the per-block gaps
+are sliced from the already-computed gap records. Block rows stamp the block's
+`discipline_id` (folded-in race-wide rows are attributed to the discipline);
+the flat top-level `race_terrain` preserves the captured tag verbatim.
+
+```python
+for did in included_discipline_ids:
+    subset = dedup_by_terrain(tagged_to(did) + race_wide_entries)  # tagged wins
+    if not subset:
+        continue                                                   # no block
+    block = Layer2BDisciplineBlock(
+        discipline_id=did,
+        race_terrain=[RaceTerrainOutput(..., discipline_id=did) for e in subset],
+        terrain_gaps=[gap_records[t] for t in subset_gap_ids],
+        summary=build_summary(subset, ...),
+    )
+```
+
+A discipline with no tagged rows AND no race-wide rows emits no block. Entries
+tagged to a discipline outside `included_discipline_ids` are excluded from the
+blocks but remain in the flat aggregate. This is the first slice to *consume*
+`discipline_id`; the per-discipline resolver + Layer-4 craft reasoning that
+read these blocks are re-model Slice 5 (see `BestFitModality_Spec_v4.md` §12).
+
 ## 6. Drift items affecting 2B
 
 | ID | Description | Status |
@@ -187,6 +228,14 @@ class Layer2BPayload:
     coaching_flags: list[CoachingFlag]
     summary: SummaryBlock
     etl_version_set: dict[str, str]
+    terrain_by_discipline: list[Layer2BDisciplineBlock] = []  # re-model Slice 4 (2026-05-25); additive, [] for empty race_terrain
+
+@dataclass
+class Layer2BDisciplineBlock:                # re-model Slice 4 (2026-05-25) — per §5.6
+    discipline_id: str
+    race_terrain: list[RaceTerrainOutput]    # subset rows, stamped with discipline_id
+    terrain_gaps: list[TerrainGap]           # sliced from the flat gap records
+    summary: SummaryBlock                    # recomputed over the subset
 
 @dataclass
 class RaceTerrainOutput:
@@ -195,6 +244,7 @@ class RaceTerrainOutput:
     pct_of_race: float
     available_locally: bool
     gap: TerrainGap | None              # Populated if not available locally
+    discipline_id: str | None = None    # re-model Slice 4; pass-through on flat list (None=race-wide), block discipline on blocks
 
 @dataclass
 class TerrainGap:
@@ -319,10 +369,18 @@ mutually exclusive with the gap-driven flags.
 ```
 
 **Invalidation triggers:**
-- `§H.2 Race Terrain Type` changes (any terrain or pct_of_race change)
+- `§H.2 Race Terrain Type` changes (any terrain or pct_of_race change — includes the per-row `discipline_id` tag, re-model Slice 4)
 - `§J Locale terrain access` changes (any locale in cluster adds/removes terrain)
 - ETL version set changes
-- `included_discipline_ids` from 2A changes (affects relevance scoping)
+- `included_discipline_ids` from 2A changes (affects relevance scoping AND the per-discipline block set, re-model Slice 4)
+
+**Re-model Slice 4 note (2026-05-25):** adding `terrain_by_discipline` (and
+`RaceTerrainOutput.discipline_id`) is an *additive* payload-shape change. The
+default `[]` keeps old cached payloads deserializable; the one-time payload-hash
+change naturally invalidates downstream Layer 3B/4 cone entries on first deploy
+(anticipated by `BestFitModality_Spec_v4.md` §9). No new eviction helper — the
+per-discipline grouping derives from inputs already covered by the triggers
+above.
 
 **Does NOT re-run when:**
 - Equipment changes (§J equipment) — that's 2C
@@ -348,6 +406,10 @@ mutually exclusive with the gap-driven flags.
 | Gap rule with `proxy_terrain_id` that's NOT in any active `terrain_types` row | Log ERROR (data integrity); skip that rule. |
 | `adaptation_weeks_high` is NULL for an unbridgeable gap | Summary `min_adaptation_weeks_needed` ignores NULLs in the MAX. |
 | Race terrain doesn't include any water but athlete includes D-007 Packrafting | Discipline-relevance check might fire as warning. Currently v1 spec is permissive — gap is reported anyway, relevance flagged false. |
+| All terrain race-wide (`discipline_id=None`), N included disciplines (re-model Slice 4) | Each discipline block folds in the full race-wide terrain set; flat aggregate stays deduped (no double-count). The common case for existing captured rows. |
+| Same `terrain_id` tagged to two disciplines at different `pct_of_race` (re-model Slice 4) | Each block keeps its own pct (the flat `pct_by_target` collapse no longer loses the per-leg value). Flat `total_race_terrain_count` still counts both rows; `covered_count` counts the unique terrain id. |
+| Discipline in `included_discipline_ids` with no tagged + no race-wide rows (re-model Slice 4) | No block emitted for it (Slice 5 treats as craft-only / no terrain emphasis). |
+| Entry tagged to a discipline NOT in `included_discipline_ids` (re-model Slice 4) | Excluded from `terrain_by_discipline`; still present in the flat aggregate. Forms source the tag `<select>` from the included set, so this is a defensive case. |
 
 ## 11. Performance budget
 

@@ -25,6 +25,7 @@ from typing import Any
 
 from layer4.context import (
     Layer2BCoachingFlag,
+    Layer2BDisciplineBlock,
     Layer2BPayload,
     Layer2BSummaryBlock,
     RaceTerrainEntry,
@@ -411,6 +412,84 @@ def _build_summary(
     )
 
 
+def _build_discipline_blocks(
+    race_terrain: list[RaceTerrainEntry],
+    included_discipline_ids: list[str],
+    name_map: dict[str, str],
+    locale_id_set: set[str],
+    gaps_by_target: dict[str, TerrainGap],
+) -> list[Layer2BDisciplineBlock]:
+    """Best-fit re-model Slice 4 (2026-05-25) — additive per-discipline view.
+
+    One block per included discipline. The discipline's terrain subset =
+    entries tagged with that `discipline_id` PLUS race-wide (`discipline_id
+    is None`) entries folded in (a tagged entry wins over a race-wide entry
+    for the same `terrain_id` — it's the more specific signal). Coverage,
+    gaps, and the summary are recomputed over the subset; proxy resolution
+    is reused verbatim from the already-computed `gaps_by_target` (the
+    proxy lookup is per terrain_id + locale set, independent of discipline,
+    so no extra SQL). Disciplines with no terrain (nothing tagged and no
+    race-wide rows) emit no block. Entries tagged to a discipline outside
+    `included_discipline_ids` are excluded here but remain in the flat
+    top-level aggregate.
+    """
+    if not race_terrain:
+        return []
+
+    blocks: list[Layer2BDisciplineBlock] = []
+    for discipline_id in included_discipline_ids:
+        subset: list[RaceTerrainEntry] = []
+        seen: set[str] = set()
+        # Tagged entries first (more specific).
+        for entry in race_terrain:
+            if entry.discipline_id == discipline_id and entry.terrain_id not in seen:
+                subset.append(entry)
+                seen.add(entry.terrain_id)
+        # Then race-wide entries not already covered by a tagged row.
+        for entry in race_terrain:
+            if entry.discipline_id is None and entry.terrain_id not in seen:
+                subset.append(entry)
+                seen.add(entry.terrain_id)
+
+        if not subset:
+            continue
+
+        subset_ids = {e.terrain_id for e in subset}
+        block_covered_ids = subset_ids & locale_id_set
+        block_gap_ids = subset_ids - locale_id_set
+        block_gaps_by_target = {
+            tid: gaps_by_target[tid]
+            for tid in block_gap_ids
+            if tid in gaps_by_target
+        }
+
+        block_outputs = [
+            RaceTerrainOutput(
+                terrain_id=entry.terrain_id,
+                terrain_name=name_map.get(entry.terrain_id),
+                pct_of_race=entry.pct_of_race,
+                available_locally=entry.terrain_id in block_covered_ids,
+                gap=block_gaps_by_target.get(entry.terrain_id),
+                # Stamp the block discipline so each block is self-describing
+                # ("discipline D trains on these terrains") — folded-in
+                # race-wide rows are attributed to this discipline here.
+                discipline_id=discipline_id,
+            )
+            for entry in subset
+        ]
+
+        blocks.append(Layer2BDisciplineBlock(
+            discipline_id=discipline_id,
+            race_terrain=block_outputs,
+            terrain_gaps=list(block_gaps_by_target.values()),
+            summary=_build_summary(
+                subset, block_covered_ids, block_gap_ids, block_gaps_by_target
+            ),
+        ))
+
+    return blocks
+
+
 # ─── Public entry point ──────────────────────────────────────────────────────
 
 
@@ -484,6 +563,10 @@ def q_layer2b_terrain_classifier_payload(
             pct_of_race=entry.pct_of_race,
             available_locally=entry.terrain_id in covered_ids,
             gap=gaps_by_target.get(entry.terrain_id),
+            # Top-level flat list preserves the captured tag verbatim
+            # (None = race-wide); the per-discipline blocks below stamp the
+            # block's discipline onto folded-in race-wide rows.
+            discipline_id=entry.discipline_id,
         ))
 
     # D-73 Phase 5.2 Bucket C (l) — load skill-capability toggle defs
@@ -510,6 +593,13 @@ def q_layer2b_terrain_classifier_payload(
     summary = _build_summary(
         race_terrain, covered_ids, gap_ids, gaps_by_target
     )
+    terrain_by_discipline = _build_discipline_blocks(
+        race_terrain,
+        included_discipline_ids,
+        name_map,
+        locale_id_set,
+        gaps_by_target,
+    )
 
     return Layer2BPayload(
         race_terrain=race_outputs,
@@ -517,4 +607,5 @@ def q_layer2b_terrain_classifier_payload(
         coaching_flags=coaching_flags,
         summary=summary,
         etl_version_set=dict(etl_version_set),
+        terrain_by_discipline=terrain_by_discipline,
     )
