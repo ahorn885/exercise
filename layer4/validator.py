@@ -157,22 +157,31 @@ _OUTDOOR_ONLY_DISCIPLINES = frozenset(
 # `continuous_multi_day` collapses the old `expedition_ar` + `multi_day_ultra`
 # values. The merge keeps the anchors STRUCTURALLY implied by going
 # continuously for >24h (cumulative_fatigue + sleep_dep) on top of the
-# universal gi/hydration/mechanical set. The old `expedition_ar`-only
-# `nav` + `weather` anchors were discipline/environment concerns riding
-# on the format axis — exactly the conflation the taxonomy collapse
-# untangles. They move off the format-keyed requirement (a navigation-
-# discipline / exposed-terrain-driven anchor is a future slice keyed on
-# `navigation_required` + Layer 2B terrain, not on structural format).
+# universal gi/hydration/mechanical set.
+#
+# `weather` is a UNIVERSAL anchor (2026-05-25): every race happens outdoors at
+# a known location on a known date, so a weather contingency is always
+# required. The synthesizer anchors it to the climate normals surfaced in the
+# brief prompt (`weather_client`). The old `expedition_ar`-only `nav` anchor
+# was removed entirely — the `navigation_required` concept it keyed on was
+# retired end-to-end.
 _CONTINGENCY_ANCHORS_PER_FORMAT: dict[str, tuple[str, ...]] = {
-    "single_day": ("gi", "hydration", "mechanical"),
+    "single_day": ("gi", "hydration", "mechanical", "weather"),
     "continuous_multi_day": (
         "gi",
         "hydration",
         "mechanical",
+        "weather",
         "cumulative_fatigue",
         "sleep_dep",
     ),
-    "stage_race": ("gi", "hydration", "mechanical", "between_stage_recovery"),
+    "stage_race": (
+        "gi",
+        "hydration",
+        "mechanical",
+        "weather",
+        "between_stage_recovery",
+    ),
 }
 
 # Conservative v1 baselines for `injury_accommodation_violation_*` (rule 10).

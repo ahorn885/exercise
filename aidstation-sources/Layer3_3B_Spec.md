@@ -101,7 +101,7 @@ Strip the inputs down to what the LLM needs. Avoid passing data the LLM doesn't 
 - If no-event: `plan_duration_weeks`, `non_event_goal_type`
 
 **Block 2 — Goal context.**
-- Event-mode: `goal_outcome` (Finish / Compete mid-pack / Podium), `time_goal` (optional, string), `first_time_at_distance` (bool), `previous_attempts` (list of {outcome, dnf_cause_text}), `race_distance_km`, `race_duration_hr`, `race_terrain` (multi-select), `race_pack_weight_kg`, `navigation_required` enum
+- Event-mode: `goal_outcome` (Finish / Compete mid-pack / Podium), `time_goal` (optional, string), `first_time_at_distance` (bool), `previous_attempts` (list of {outcome, dnf_cause_text}), `race_distance_km`, `race_duration_hr`, `race_terrain` (multi-select), `race_pack_weight_kg` (the `navigation_required` input was retired 2026-05-25)
 - No-event-mode: `non_event_goal_type` enum + `§C` primary sport name + secondary sports list
 
 **Block 3 — Current state (from 3A).**

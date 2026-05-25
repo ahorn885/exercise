@@ -95,11 +95,11 @@ def layer3b_goal_timeline_viability_key(
     `section_h2_kwargs` is a forward-compatibility hash slot per D11 —
     a dict of the v1 §H.2 deployed-shape-gap kwargs (goal_outcome,
     first_time_at_distance, previous_attempts, time_goal,
-    race_distance_km, race_duration_hr, race_terrain, race_pack_weight_kg,
-    navigation_required). When the form-refresh PR lands these on the
-    deployed schema, they'll fold into layer1_hash and this slot can be
-    deprecated. v1 callers pass whatever they have; canonical_json on
-    None/empty produces a stable empty representation."""
+    race_distance_km, race_duration_hr, race_terrain, race_pack_weight_kg).
+    When the form-refresh PR lands these on the deployed schema, they'll
+    fold into layer1_hash and this slot can be deprecated. v1 callers pass
+    whatever they have; canonical_json on None/empty produces a stable empty
+    representation."""
     race_id_component = (
         str(race_event_id) if race_event_id is not None else "no-event"
     )
@@ -151,7 +151,6 @@ def llm_layer3b_goal_timeline_viability_cached(
     race_duration_hr: float | None = None,
     race_terrain: list[str] | None = None,
     race_pack_weight_kg: float | None = None,
-    navigation_required: bool | None = None,
     # §H.3 — no-event-mode caller override
     plan_duration_weeks: int | None = None,
     non_event_goal_type: str | None = None,
@@ -196,7 +195,6 @@ def llm_layer3b_goal_timeline_viability_cached(
             "race_duration_hr": race_duration_hr,
             "race_terrain": race_terrain,
             "race_pack_weight_kg": race_pack_weight_kg,
-            "navigation_required": navigation_required,
         }
 
     cache_key = layer3b_goal_timeline_viability_key(
@@ -235,7 +233,6 @@ def llm_layer3b_goal_timeline_viability_cached(
         race_duration_hr=race_duration_hr,
         race_terrain=race_terrain,
         race_pack_weight_kg=race_pack_weight_kg,
-        navigation_required=navigation_required,
         plan_duration_weeks=plan_duration_weeks,
         non_event_goal_type=non_event_goal_type,
         model=model,

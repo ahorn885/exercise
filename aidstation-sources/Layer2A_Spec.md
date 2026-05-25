@@ -31,7 +31,6 @@ def q_layer2a_discipline_classifier_payload(
     framework_sport: str,
     athlete_discipline_overrides: dict[str, dict] | None,
     estimated_race_duration_hours: float | None,
-    navigation_required: bool | None,
     team_format: str | None,
     etl_version_set: dict[str, str]
 ) -> Layer2APayload:
@@ -44,8 +43,7 @@ def q_layer2a_discipline_classifier_payload(
 |---|---|---|---|
 | `framework_sport` | str | `§H.2 Target Sport / Format` | Canonical name. For AR: `"Adventure Racing"`. For other sports, see **§5.1 sport naming caveat (D-17)**. |
 | `athlete_discipline_overrides` | dict\|None | `§C Discipline Weighting` (athlete overrides) | Optional. Athletes can override system-default weights or exclude `*Conditional` disciplines. Shape: `{discipline_id: {weight: float, included: bool}}`. |
-| `estimated_race_duration_hours` | float\|None | `§H.2 Estimated Duration` | Used to evaluate conditional rules — e.g., AR >20hr enables D-008b Whitewater Kayaking and certain sleep-deprivation flags. |
-| `navigation_required` | bool\|None | `§H.2 Navigation Requirement` | Used to evaluate conditional inclusion of nav-related disciplines (D-013). |
+| `estimated_race_duration_hours` | float\|None | `§H.2 Estimated Duration` | Used for certain sleep-deprivation flags. |
 | `team_format` | str\|None | `§H.2 Team Format` | Affects relay-leg discipline selection for relay sports. AR is not a relay sport — typically None for AR. |
 | `etl_version_set` | dict[str,str] | Plan-gen pin | Per ETL spec v3 §5.1 Decision 2. Locks Layer 0 version for the plan. |
 
@@ -129,11 +127,10 @@ LEFT JOIN layer0.discipline_training_gaps dtg
 After the query, each discipline is one of:
 
 - **Unconditionally included** — `role` does not contain `(*Conditional)` and `notes_conditions` doesn't start with `*CONDITIONAL`. Discipline is in.
-- **Conditional — race-rule-driven** — flagged conditional; inclusion determined by parameters:
-  - **D-008b Whitewater Kayaking (AR)** — included if `estimated_race_duration_hours >= 20` OR athlete explicitly opts in via `athlete_discipline_overrides`.
-  - **D-013 Orienteering/Nav** — included if `navigation_required = True`. (For AR, almost always TRUE.)
-  - **Relay-only legs** — depend on `team_format`. Not applicable to AR.
-- **Conditional — athlete-opt-in** — `default_inclusion = 'prompt_required'`. Plan-gen prompts the athlete; 2A surfaces this in `hitl_required` (see §8).
+- **Conditional — athlete-opt-in** — `default_inclusion = 'prompt_required'`. Plan-gen prompts the athlete; 2A surfaces this in `hitl_required` (see §8). An explicit `athlete_discipline_overrides` entry resolves it to `included`/`excluded` (`conditional_resolution = 'athlete_opt_in'`).
+  - **Relay-only legs** — depend on `team_format`. Not applicable to AR; relay-leg filtering deferred (no current consumer sport).
+
+> **Race-rule auto-resolution retired (2026-05-25).** Earlier revisions auto-included/excluded the navigation discipline (D-015) from a `navigation_required` input. That input was removed end-to-end; the navigation discipline is now a plain `*Conditional` (athlete opt-in like any other), and the `race_rule_auto_in`/`race_rule_auto_out` resolutions + the `conditional_auto_resolved` flag no longer exist.
 
 The detailed conditional rule table per sport lives in code, not the data model. Reasoning: rules are tightly coupled to race-specific business logic and easier to maintain in versioned code than in a normalized table. (If this gets unwieldy, candidate for a future `discipline_conditional_rules` table — tracked as future open item.)
 
@@ -213,7 +210,7 @@ class Layer2ADiscipline:
     inclusion: str                       # 'included' | 'excluded' | 'prompt_required'
     role: str                            # 'Primary' | 'Secondary' | 'Minor' | 'Technical' (with *Conditional suffix preserved)
     is_conditional: bool
-    conditional_resolution: str | None   # 'race_rule_auto_in' | 'race_rule_auto_out' | 'athlete_opt_in' | None
+    conditional_resolution: str | None   # 'athlete_opt_in' | None
     load_weight: WeightResult
     race_time_pct_low: float | None
     race_time_pct_high: float | None
@@ -295,18 +292,9 @@ CoachingFlag(
 
 For AR specifically: D-016 Mountaineering does not currently have a `training_gaps` entry, but D-020 Alpine Descent and D-024 Épée Fencing do (not AR-relevant). For AR-relevant sports later, this flag is the primary signal.
 
-### 8.2 Conditional discipline auto-resolved
+### 8.2 Conditional discipline auto-resolved — RETIRED (2026-05-25)
 
-When a `*Conditional` discipline gets resolved by race rule (not athlete prompt), surface a flag so the athlete sees what the system decided and why.
-
-```python
-CoachingFlag(
-    flag_type='conditional_auto_resolved',
-    discipline_id=d.discipline_id,
-    message=f"{d.discipline_name} included because race duration {hours}hr exceeds the 20hr threshold.",
-    metadata={'rule': 'duration_threshold', 'threshold': 20, 'value': hours}
-)
-```
+This flag fired when a `*Conditional` discipline was resolved by race rule (the `navigation_required`-driven D-015 auto-in/out). That input was removed end-to-end; conditionals now resolve only via athlete prompt or explicit override, so this flag type is no longer emitted.
 
 ### 8.3 Override divergence
 
@@ -325,7 +313,7 @@ CoachingFlag(
 
 **Cache key:**
 ```
-(athlete_id, framework_sport, hash(athlete_discipline_overrides), estimated_race_duration_hours, navigation_required, team_format, hash(etl_version_set))
+(athlete_id, framework_sport, hash(athlete_discipline_overrides), estimated_race_duration_hours, team_format, hash(etl_version_set))
 ```
 
 **Invalidation triggers** (mirror the "re-run conditions" in §10):
@@ -384,17 +372,14 @@ For non-AR sports with sub-format mapping, add ~10ms for the regex strip. Neglig
 Inputs:
 - `framework_sport = "Adventure Racing"`
 - `estimated_race_duration_hours = 56` (PGE 2026 duration estimate)
-- `navigation_required = True`
 - No overrides
 
 Expected:
 - 15 disciplines returned
-- D-008b Whitewater Kayaking auto-included (56hr > 20hr threshold)
-- D-013 Orienteering/Nav auto-included (navigation True)
 - D-001, D-003, D-005, D-006, D-007 marked Primary
-- `hitl_required = False`
+- The navigation discipline (D-015) is `*Conditional` → `prompt_required` (no override) → `hitl_required = True`
 - `training_gaps_summary.flagged_count = 0`
-- Conditional auto-resolved flags fire for D-008b and D-013
+- No `conditional_auto_resolved` flags (race-rule auto-resolution retired)
 
 ### 13.2 AR with override
 
@@ -404,14 +389,9 @@ Expected:
 - D-006 entry shows `load_weight.value=25.0`, `source='athlete_override'`, `system_default=15.0`
 - A `weight_override_divergence` flag fires (divergence > 50% relative)
 
-### 13.3 Short AR — no whitewater
+### 13.3 Short AR — RETIRED (2026-05-25)
 
-Inputs: `framework_sport = "Adventure Racing"`, `estimated_race_duration_hours = 8`, `navigation_required = True`.
-
-Expected:
-- D-008b Whitewater Kayaking NOT included (8hr < 20hr threshold)
-- A `conditional_auto_resolved` flag explaining D-008b was excluded
-- Otherwise same as 13.1
+This scenario exercised the duration/nav race-rule auto-resolution path, which no longer exists. Conditional disciplines resolve to `prompt_required` regardless of duration; see §13.1.
 
 ### 13.4 Triathlon (non-AR, exercises D-17 path)
 
