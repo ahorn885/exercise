@@ -25,6 +25,7 @@ from flask import Blueprint, render_template, request, redirect, url_for, flash,
 import mapbox_client
 from athlete import get_athlete_profile
 from database import get_db
+from discipline_display_names import discipline_display_name
 from race_events_invalidation import (
     evict_on_target_event_brief_field_change,
     evict_on_target_event_framework_sport_change,
@@ -178,6 +179,10 @@ def _disciplines_for_framework_sport(db, framework_sport: str) -> list[dict]:
     classifier surfaces post-filter. Filters `superseded_at IS NULL` to
     use the current canonical mapping; runtime pinning is handled
     separately by Layer 2A's `etl_version_set`.
+
+    The label is the curated pure-craft `discipline_display_name`; the
+    bridge's own `discipline_name` (the sport-variant Sheet-3 label) is
+    the fallback for ids not yet curated.
     """
     if not framework_sport:
         return []
@@ -192,7 +197,8 @@ def _disciplines_for_framework_sport(db, framework_sport: str) -> list[dict]:
         (framework_sport,),
     )
     return [
-        {'id': r['discipline_id'], 'label': r['discipline_name']}
+        {'id': r['discipline_id'],
+         'label': discipline_display_name(r['discipline_id'], r['discipline_name'])}
         for r in cur.fetchall()
     ]
 

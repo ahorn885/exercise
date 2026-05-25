@@ -346,14 +346,25 @@ class TestDisciplinesForFrameworkSport:
     the C1 per-row terrain `<select>`."""
 
     def test_returns_id_label_dicts_from_bridge(self):
+        # Labels come from the curated pure-craft overlay (keyed by id),
+        # not the sport-variant bridge `discipline_name`.
         conn = _FakeConn(rows=[
             {'discipline_id': 'D-001', 'discipline_name': 'Trail run'},
             {'discipline_id': 'D-008b', 'discipline_name': 'Whitewater paddle'},
         ])
         out = _disciplines_for_framework_sport(conn, 'Adventure Racing')
         assert out == [
-            {'id': 'D-001', 'label': 'Trail run'},
-            {'id': 'D-008b', 'label': 'Whitewater paddle'},
+            {'id': 'D-001', 'label': 'Trail Running'},
+            {'id': 'D-008b', 'label': 'Whitewater Kayaking'},
+        ]
+
+    def test_uncurated_id_falls_back_to_bridge_name(self):
+        conn = _FakeConn(rows=[
+            {'discipline_id': 'D-005 + D-005a', 'discipline_name': 'Road Cycling (+ TT/Tri Bike)'},
+        ])
+        out = _disciplines_for_framework_sport(conn, 'Triathlon')
+        assert out == [
+            {'id': 'D-005 + D-005a', 'label': 'Road Cycling (+ TT/Tri Bike)'},
         ]
 
     def test_empty_framework_sport_short_circuits(self):
