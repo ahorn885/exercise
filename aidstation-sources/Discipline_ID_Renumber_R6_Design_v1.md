@@ -93,15 +93,24 @@ After the script renumbers, D-010 and D-024 each have **two** source rows/statem
 6. Install test deps; run `python -m pytest tests/`; green any fallout.
 7. Grep sweep: zero live references to `D-004b|D-005a|D-008a|D-008b|D-022|D-023` outside this doc + history; old base-id meanings reconciled.
 
-## 6. Verification
+## 6. Verification (as-built)
 
-- **Test suite:** full `python -m pytest tests/` green (baseline 1631 passed / 16 skipped; collapse removes some whitewater-conditional tests → expect a small net delta, fully accounted for).
-- **Grep-clean:** no live (non-historical) file references a retired id form.
-- **ETL pairing-count guard (silent name-coupling):** `extract_pairing_b2b_fallback` does name→id lookup on workbook Sheet "Sport × Discipline Map" col 7; renaming D-008a/b/D-022/3 risks silently dropping pairings. Mitigation: after the workbook edit, the next ETL run on Neon must assert `discipline_pairing` row-count is non-decreasing vs the v10 baseline. (Owed to Andy — see §7.)
+- **Test suite:** full `python -m pytest tests/` = **1630 passed / 16 skipped** (−1 vs 1631 = deleted whitewater auto-out test); `etl/tests/` 140 passed. Zero unexplained regressions.
+- **Grep-clean:** no live (non-historical) file references a retired suffix id form outside explanatory comments.
+- **Collapse dedup now handled in-code (NOT owed to Andy).** The collapse maps two former ids onto one survivor, which duplicates rows in two extractors; both now dedupe first-seen-wins + skip self-pairs (verified against the real v11 workbook — pairing 272 / substitutes 89 / training-gaps 3 / cross-sport 1, all load clean):
+  - `extract_discipline_pairing_matrix` — UNIQUE(a, b): the survivor appears in two header columns + two from-rows.
+  - `extract_discipline_substitutes` — UNIQUE(target, substitute, name): e.g. `(D-010, D-011, 'Canoeing')` collapsed from both kayak ids.
+  - `discipline_training_gaps` (UNIQUE discipline_id) + `cross_sport_properties` (UNIQUE property_id) carry no collapse-member rows → unaffected.
+- **body_parts verify block scoped to active rows.** `migrate_disciplines_add_body_parts_at_risk_v1.sql` checks 4a–4f + its 29 UPDATEs were version-naive (counted superseded rows too → tripped on a multi-version Neon DB); all scoped to `superseded_at IS NULL`.
+- **ETL re-run is idempotent.** `insert_versioned` (db.py) does `DELETE FROM {table} WHERE etl_version=%s` before inserting, so a partial/failed run self-heals on re-run with the same tag.
 
 ## 7. Owed to Andy (cannot run in the ephemeral container — no DATABASE_URL)
 
-- **Neon re-extract:** `python -m etl.layer0.run` against the v11 workbook → lands `0A-v11.0` rows in `layer0.disciplines` / `sport_discipline_bridge` / `discipline_pairing` / etc.; confirm `discipline_pairing` count non-decreasing (name-coupling guard).
-- **Apply the renumbered populate scripts** (`populate_stimulus_components.sql`, `migrate_disciplines_add_body_parts_at_risk_v1.sql`, `populate_discipline_technique_foci.sql`, `populate_skill_capability_toggles.sql`, terrain-gap rules) against the new etl_version rows.
+- **Neon re-extract:** `python -m etl.layer0.run --version-tag 1.3` (the `1.3` tag selects the pinned `SOURCE_VERSION_*` constants, now `0A-v11.0`) → lands `0A-v11.0` rows.
+- **Apply the renumbered populate scripts** (`populate_stimulus_components.sql`, `migrate_disciplines_add_body_parts_at_risk_v1.sql`, `populate_discipline_technique_foci.sql`, `populate_skill_capability_toggles.sql`, `populate_terrain_gap_rules.sql`) against the new rows.
 - **Re-pin** any deployed `etl_version_set` to `0A-v11.0`.
+- **Validate:** active discipline count = 29; `discipline_pairing` count vs v10 = a *small expected* drop from the collapse (a large drop = silent name-coupling in `extract_pairing_b2b_fallback`); no duplicate active discipline ids.
 - This must ship together with the code change — runtime reads `layer0.*` by pinned etl_version; mismatched code (new ids) against un-re-extracted Neon (old ids) breaks every discipline lookup.
+
+### 7.1 Non-R6 deploy snag (logged for the record)
+`populate_terrain_gap_rules.sql` (0C family, **not** touched by R6 except rationale text) failed its `<> 16` verify with "found 17" on Andy's Neon. Root cause: the file is correct (16 canonical pairs, verify expects 16), but the table uses `ON CONFLICT DO NOTHING` with no `DELETE`, so a row removed from the file in a prior terrain session lingered as an orphan 17th active row at `0C-v2.0-r2`. Fix is a one-row DB cleanup (identify the active pair not in the file's 16, delete it), not a code change.
