@@ -101,7 +101,7 @@ WHERE discipline_id = 'D-028' AND superseded_at IS NULL;
 UPDATE layer0.disciplines SET stimulus_components = ARRAY['aerobic_high','muscular_endurance_legs','cold_exposure']
 WHERE discipline_id = 'D-029' AND superseded_at IS NULL;
 
--- Verify: all 32 active disciplines now have stimulus_components populated
+-- Verify: all 29 active disciplines now have stimulus_components populated
 DO $$
 DECLARE
   null_count INT;
