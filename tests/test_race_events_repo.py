@@ -177,7 +177,6 @@ def _race_row(**overrides):
         # Phase 5.1 form-refresh A — JSONB list surfaces as list or str
         # depending on adapter; tests seed list (the psycopg2 default).
         "race_terrain": [],
-        "aid_stations": None,
         # D-73 Phase 5.2 walkthrough #1 — Mapbox-anchored race-location
         # columns. Bucket C (i) (2026-05-24) flipped the default from None
         # to a placeholder mapbox_id so the load_race_event_payload pydantic
@@ -805,14 +804,15 @@ class TestDeleteRouteLocaleEquipment:
         assert params == (500, 100)
 
 
-# ─── race_terrain + aid_stations (Phase 5.1 form-refresh A) ──────────────────
+# ─── race_terrain (Phase 5.1 form-refresh A) ─────────────────────────────────
 
 
-class TestRaceTerrainAndAidStations:
+class TestRaceTerrain:
     """Phase 5.1 form-refresh A — closes the race_event_payload.race_terrain
-    + aid_stations forward-pointers carried by the orchestrator's vertical
-    slice. Validates CRUD round-trip + JSONB adapter tolerance + payload
-    construction including the TRN-xxx pattern validator."""
+    forward-pointer carried by the orchestrator's vertical slice. Validates
+    CRUD round-trip + JSONB adapter tolerance + payload construction
+    including the TRN-xxx pattern validator. (The `aid_stations` count was
+    removed in FormRefresh A2, 2026-05-25.)"""
 
     def test_load_payload_hydrates_race_terrain_from_list(self):
         # psycopg2 default surfaces JSONB as a Python list/dict directly.
@@ -822,7 +822,6 @@ class TestRaceTerrainAndAidStations:
                 {"terrain_id": "TRN-002", "pct_of_race": 35.0},
                 {"terrain_id": "TRN-009", "pct_of_race": 15.0},
             ],
-            aid_stations=4,
         ))
         conn.queue_response(rows=[])
         payload = load_race_event_payload(conn, race_event_id=10)
@@ -831,32 +830,28 @@ class TestRaceTerrainAndAidStations:
         assert payload.race_terrain[0].terrain_id == "TRN-002"
         assert payload.race_terrain[0].pct_of_race == 35.0
         assert payload.race_terrain[1].terrain_id == "TRN-009"
-        assert payload.aid_stations == 4
 
     def test_load_payload_hydrates_race_terrain_from_jsonb_string(self):
         # Sqlite shim path surfaces JSONB as a JSON string; tolerant hydrate.
         conn = _FakeConn()
         conn.queue_response(row=_race_row(
             race_terrain='[{"terrain_id":"TRN-003","pct_of_race":40.0}]',
-            aid_stations=0,
         ))
         conn.queue_response(rows=[])
         payload = load_race_event_payload(conn, race_event_id=10)
         assert payload is not None
         assert len(payload.race_terrain) == 1
         assert payload.race_terrain[0].terrain_id == "TRN-003"
-        assert payload.aid_stations == 0
 
     def test_load_payload_defaults_empty_when_jsonb_missing(self):
         conn = _FakeConn()
         # `race_terrain` absent (None) — older row pre-migration; should
         # surface as empty list, not raise.
-        conn.queue_response(row=_race_row(race_terrain=None, aid_stations=None))
+        conn.queue_response(row=_race_row(race_terrain=None))
         conn.queue_response(rows=[])
         payload = load_race_event_payload(conn, race_event_id=10)
         assert payload is not None
         assert payload.race_terrain == []
-        assert payload.aid_stations is None
 
     def test_load_payload_rejects_malformed_terrain_id(self):
         # The payload-level model_validator catches non-TRN-xxx ids loudly
@@ -870,7 +865,7 @@ class TestRaceTerrainAndAidStations:
             load_race_event_payload(conn, race_event_id=10)
         assert "TRN-\\d{3}" in str(exc.value) or "TRN-" in str(exc.value)
 
-    def test_create_serializes_race_terrain_as_json_and_passes_aid_stations(self):
+    def test_create_serializes_race_terrain_as_json(self):
         conn = _FakeConn()
         conn.queue_response(row={"id": 99})
         new_id = create_race_event(
@@ -883,21 +878,16 @@ class TestRaceTerrainAndAidStations:
                 {"terrain_id": "TRN-002", "pct_of_race": 35.0},
                 {"terrain_id": "TRN-009", "pct_of_race": 15.0},
             ],
-            aid_stations=0,
         )
         assert new_id == 99
         sql, params = conn.calls[0]
-        # race_terrain JSON serialization + aid_stations integer position.
-        # D-73 Phase 5.2 walkthrough #1 + #2a (2026-05-21) added 6 columns
-        # after aid_stations; race_terrain + aid_stations now at absolute
-        # positions 11 + 12 (0-indexed) in the param tuple. Locate via the
-        # JSONB string content to stay robust against future column adds.
+        # Locate the race_terrain param via its JSONB string content to stay
+        # robust against future column adds rather than asserting position.
         terrain_params = [p for p in params if isinstance(p, str) and "TRN-002" in p]
         assert len(terrain_params) == 1, f"expected exactly one TRN-* JSON param; got {params}"
         terrain_json = terrain_params[0]
         assert "TRN-002" in terrain_json
         assert "TRN-009" in terrain_json
-        assert 0 in params  # aid_stations
 
     def test_create_empty_race_terrain_serializes_as_empty_array(self):
         conn = _FakeConn()
@@ -910,7 +900,7 @@ class TestRaceTerrainAndAidStations:
             race_format="single_day",
         )
         params = conn.calls[0][1]
-        # Defaults: race_terrain=None → serialized as `[]`; aid_stations=None.
+        # Defaults: race_terrain=None → serialized as `[]`.
         # The JSONB-string `"[]"` appears twice in the param tuple
         # (race_terrain default + etl_version_set default `"{}"`); assert
         # presence rather than exact position to stay robust against future
@@ -919,7 +909,7 @@ class TestRaceTerrainAndAidStations:
         # etl_version_set serializes as `"{}"` (empty dict default).
         assert "{}" in params
 
-    def test_update_serializes_race_terrain_and_aid_stations(self):
+    def test_update_serializes_race_terrain(self):
         conn = _FakeConn()
         update_race_event(
             conn,
@@ -929,20 +919,15 @@ class TestRaceTerrainAndAidStations:
             event_date=date(2026, 7, 17),
             race_format="continuous_multi_day",
             race_terrain=[{"terrain_id": "TRN-016", "pct_of_race": 100.0}],
-            aid_stations=12,
         )
         assert conn.commits == 1
         sql, params = conn.calls[0]
         assert "race_terrain = ?::jsonb" in sql
-        assert "aid_stations = ?" in sql
-        # Layout of params in UPDATE: name, event_date, race_format,
-        # distance_km, total_elevation_gain_m, race_rules_summary,
-        # mandatory_gear_text, event_locale_id, notes, race_terrain_json,
-        # aid_stations, race_event_id, user_id  (13 total)
+        # `race_terrain = ?::jsonb` is the last SET clause, so the param
+        # tuple tail is: ..., race_terrain_json, race_event_id, user_id.
         assert params[-1] == 1   # user_id
         assert params[-2] == 10  # race_event_id
-        assert params[-3] == 12  # aid_stations
-        terrain_json = params[-4]
+        terrain_json = params[-3]
         assert isinstance(terrain_json, str)
         assert "TRN-016" in terrain_json
 
@@ -963,7 +948,6 @@ class TestRaceTerrainAndAidStations:
             "is_target_event": True,
             "notes": None,
             "race_terrain": '[{"terrain_id":"TRN-002","pct_of_race":50.0}]',
-            "aid_stations": 4,
             "created_at": None,
             "updated_at": None,
         })
@@ -972,28 +956,6 @@ class TestRaceTerrainAndAidStations:
         assert result["race_terrain"] == [
             {"terrain_id": "TRN-002", "pct_of_race": 50.0}
         ]
-        assert result["aid_stations"] == 4
-
-    def test_list_athlete_includes_aid_stations(self):
-        conn = _FakeConn()
-        conn.queue_response(rows=[{
-            "id": 1,
-            "name": "PGE 2026",
-            "event_date": date(2026, 7, 17),
-            "race_format": "continuous_multi_day",
-            "is_target_event": True,
-            "distance_km": Decimal("160"),
-            "total_elevation_gain_m": Decimal("3000"),
-            "event_locale_id": None,
-            "aid_stations": 0,
-            "created_at": None,
-            "updated_at": None,
-        }])
-        result = list_athlete_race_events(conn, user_id=1)
-        assert len(result) == 1
-        assert result[0]["aid_stations"] == 0
-        # SELECT names the column.
-        assert "aid_stations" in conn.calls[0][0]
 
 
 # ─── D-73 Phase 5.2 walkthrough #1 + #2a — Mapbox race-location columns ─────
@@ -1167,7 +1129,6 @@ class TestMapboxRaceLocationColumns:
             "is_target_event": True,
             "notes": None,
             "race_terrain": [],
-            "aid_stations": None,
             "event_locale_name": "Nerstrand",
             "event_locale_mapbox_id": "poi.xyz",
             "event_locale_place_name": None,

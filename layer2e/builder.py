@@ -28,11 +28,10 @@ This is the **vertical-slice** ship per Andy 2026-05-19 scope pick:
                                       + open items 2E-2/3/4 — every event
                                       surfaces `temp_signal='unknown'`
                                       with a `race_temp_unknown` flag)
-  §5.9 HITL triggers                — partial (gate 5 anaphylaxis × aid
-                                      stations fires from deployed
-                                      `FoodAllergyRecord` + the new
-                                      `Layer2ETargetEvent.aid_stations`;
-                                      gates 1-4 require structured
+  §5.9 HITL triggers                — none active (gate 5 anaphylaxis ×
+                                      aid stations was removed with the
+                                      `aid_stations` column in FormRefresh
+                                      A2; gates 1-4 require structured
                                       supplements + a pregnancy field
                                       that aren't deployed yet)
 
@@ -947,44 +946,13 @@ def _emit_hitl_items(
     health_status: Layer1HealthStatus,
     target_events: list[Layer2ETargetEvent],
 ) -> list[Layer2EHitlItem]:
-    # Gate 5: anaphylaxis allergy × event with aid_stations > 0.
-    # Gates 1-4 require structured supplements + a pregnancy field;
-    # deferred to post-§I.1-refresh.
-    items: list[Layer2EHitlItem] = []
-    anaphylaxis = [
-        a for a in health_status.food_allergies
-        if a.severity == "anaphylaxis"
-    ]
-    if not anaphylaxis:
-        return items
-    for ev in target_events:
-        if ev.aid_stations is None or ev.aid_stations <= 0:
-            continue
-        for allergy in anaphylaxis:
-            items.append(Layer2EHitlItem(
-                item_id=f"l2e-gate5-{ev.event_id}-{allergy.allergen_category}",
-                gate_number=5,
-                block_level="block",
-                affected_supplement_id=None,
-                affected_event_id=ev.event_id,
-                affected_condition_category=None,
-                rationale_for_athlete=(
-                    f"You've recorded anaphylaxis-level {allergy.allergen_category} "
-                    f"allergy and {ev.event_name} has aid stations on course. "
-                    "Confirm your race-day allergen exposure plan before plan "
-                    "generation continues."
-                ),
-                rationale_for_layer3=(
-                    f"anaphylaxis_x_aid_stations|allergen={allergy.allergen_category}"
-                    f"|event_id={ev.event_id}|aid_stations={ev.aid_stations}"
-                ),
-                resolution_options=[
-                    "athlete_self_pack_acknowledged",
-                    "race_director_confirmed_allergen_free",
-                    "medical_consultation_documented",
-                ],
-            ))
-    return items
+    # Gates 1-4 require structured supplements + a pregnancy field; deferred
+    # to post-§I.1-refresh. Gate 5 (anaphylaxis × aid-station-bound event)
+    # was removed with the `aid_stations` column in FormRefresh A2
+    # (2026-05-25) — the project does not capture or plan for that scenario.
+    # No active gates remain; this stays as the emission point for the
+    # deferred gates.
+    return []
 
 
 # ─── §8 coaching flags assembly ─────────────────────────────────────────────

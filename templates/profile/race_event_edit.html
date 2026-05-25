@@ -132,16 +132,6 @@
                value="{{ race.total_elevation_gain_m if race and race.total_elevation_gain_m is not none else '' }}">
       </div>
 
-      <div class="col-md-4">
-        <label class="form-label" for="aid_stations">Aid stations</label>
-        <input type="number" step="1" min="0" class="form-control"
-               id="aid_stations" name="aid_stations"
-               value="{{ race.aid_stations if race and race.aid_stations is not none else '' }}">
-        <small class="text-muted">
-          Total count along the course. Expedition AR + self-supported events are usually 0; aid-supported ultras typically 4–12.
-        </small>
-      </div>
-
       <div class="col-md-12">
         <label class="form-label" for="race_url">Race website URL (optional)</label>
         <input type="url" class="form-control" id="race_url" name="race_url"
@@ -225,6 +215,9 @@
         <label class="form-label" for="notes">Notes</label>
         <textarea class="form-control" id="notes" name="notes" rows="2"
                   placeholder="Training context, travel logistics, family attending, etc.">{{ race.notes if race and race.notes else '' }}</textarea>
+        <small class="text-muted">
+          Carrying a boat, packraft, or other gear between legs (portage)? Note the load and where it's carried here.
+        </small>
       </div>
 
       <div class="col-12 d-flex justify-content-between align-items-center">
@@ -256,21 +249,14 @@
   {# ── Route details ────────────────────────────────────────────── #}
   <section class="mb-4">
     <h5 class="mb-3">Route details</h5>
-    {% if race.race_format == 'single_day' %}
-      <p class="text-muted small">
-        Single-day races typically don't need route details — the race-week
-        brief composes a single-segment pacing strategy from race details
-        above. Add a start + finish here if you'd like the brief to anchor
-        on them; otherwise leave empty.
-      </p>
-    {% else %}
-      <p class="text-muted small">
-        Order matters: <code>sequence_idx</code> 1 is the start, the highest
-        is the finish. Gaps are OK (1, 2, 5, 8 valid) — leave room to insert
-        a forgotten aid station later. Multi-day races need at least a start
-        + finish for the kit-manifest to reconcile without a data gap.
-      </p>
-    {% endif %}
+    <p class="text-muted small">
+      Optional on any race — most useful for point-to-point, multi-leg, or
+      aid-supported events where the brief should anchor on specific stops.
+      Order matters: <code>sequence_idx</code> 1 is the start, the highest
+      is the finish. Gaps are OK (1, 2, 5, 8 valid) — leave room to insert
+      a forgotten aid station later. If you add any, include at least a
+      start + finish so the kit-manifest reconciles without a data gap.
+    </p>
 
     {% if race_locales %}
       {% for rl in race_locales %}

@@ -168,7 +168,6 @@ class TestGetTargetRaceRow:
             'event_locale_id': None,
             'notes': None,
             'race_terrain': [],
-            'aid_stations': 0,
         })
 
         out = _get_target_race_row(conn, uid=42)
@@ -177,16 +176,14 @@ class TestGetTargetRaceRow:
         assert out['name'] == 'Pocket Gopher Extreme'
         assert out['race_format'] == 'continuous_multi_day'
         assert out['race_terrain'] == []
-        assert out['aid_stations'] == 0
 
         # WHERE clause must scope by user_id AND is_target_event=TRUE.
-        # SELECT must include race_terrain + aid_stations so the edit
-        # form pre-populates on return-visits and the brief-only cache
-        # diff can compare prior values.
+        # SELECT must include race_terrain so the edit form pre-populates
+        # on return-visits and the brief-only cache diff can compare prior
+        # values.
         sql, params = conn.calls[0]
         assert 'WHERE user_id = ? AND is_target_event = TRUE' in sql
         assert 'race_terrain' in sql
-        assert 'aid_stations' in sql
         assert params == (42,)
 
     def test_returns_none_on_miss(self):
@@ -212,7 +209,6 @@ class TestGetTargetRaceRow:
             'event_locale_id': None,
             'notes': None,
             'race_terrain': '[{"terrain_id": "TRN-002", "pct_of_race": 35.0}]',
-            'aid_stations': None,
         })
 
         out = _get_target_race_row(conn, uid=42)
@@ -239,12 +235,10 @@ class TestGetTargetRaceRow:
             'event_locale_id': None,
             'notes': None,
             'race_terrain': terrain,
-            'aid_stations': 4,
         })
 
         out = _get_target_race_row(conn, uid=42)
         assert out['race_terrain'] == terrain
-        assert out['aid_stations'] == 4
 
     def test_hydrates_none_race_terrain_to_empty_list(self):
         """NULL race_terrain (no migration yet, or row pre-form-refresh)
@@ -264,12 +258,10 @@ class TestGetTargetRaceRow:
             'event_locale_id': None,
             'notes': None,
             'race_terrain': None,
-            'aid_stations': None,
         })
 
         out = _get_target_race_row(conn, uid=42)
         assert out['race_terrain'] == []
-        assert out['aid_stations'] is None
 
 
 # ─── _parse_race_terrain ────────────────────────────────────────────────────

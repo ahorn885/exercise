@@ -614,7 +614,6 @@ class TestUpdateRaceMapboxRequired:
                 'event_locale_id': None,  # legacy FK; load path preserves
                 'notes': None,
                 'race_terrain': [],
-                'aid_stations': None,
                 'race_url': None,
                 'framework_sport': None,
                 'included_discipline_ids': None,

@@ -145,7 +145,6 @@ def _queue_target_race_event(
     event_date: date = _EVENT_DATE,
     race_format: str = "single_day",
     race_terrain: list | None = None,
-    aid_stations: int | None = None,
     framework_sport: str | None = None,
     included_discipline_ids: list[str] | None = None,
     estimated_duration_hr=None,
@@ -175,7 +174,6 @@ def _queue_target_race_event(
             "is_target_event": True,
             "notes": None,
             "race_terrain": race_terrain if race_terrain is not None else [],
-            "aid_stations": aid_stations,
             # D-73 Phase 5.2 walkthrough #1 + #2a (2026-05-21) — race-events
             # rows now carry Mapbox-anchored race location + race_url. Bucket
             # C (i) (2026-05-24) requires mapbox_id non-null on every
@@ -934,14 +932,14 @@ class TestOrchestrationError:
         assert str(err) == "bare"
 
 
-# ─── Phase 5.1 form-refresh A — race_terrain + aid_stations wire-up ─────────
+# ─── Phase 5.1 form-refresh A — race_terrain wire-up ────────────────────────
 
 
-class TestRaceTerrainAndAidStationsWireUp:
+class TestRaceTerrainWireUp:
     """The Phase 5.1 form-refresh A slice (2026-05-20) flips the orchestrator's
-    `race_terrain=[]` + `Layer2ETargetEvent.aid_stations=None` forward-pointers
-    so they thread the actual RaceEventPayload fields. These tests assert the
-    threading; downstream behavior is owned by the Layer 2B + Layer 2E specs.
+    `race_terrain=[]` forward-pointer so it threads the actual RaceEventPayload
+    field. These tests assert the threading; downstream behavior is owned by
+    the Layer 2B spec.
     """
 
     def test_race_terrain_threads_into_layer2b_call(self):
@@ -952,7 +950,6 @@ class TestRaceTerrainAndAidStationsWireUp:
                 {"terrain_id": "TRN-002", "pct_of_race": 35.0},
                 {"terrain_id": "TRN-009", "pct_of_race": 15.0},
             ],
-            aid_stations=4,
         )
         _queue_etl_version_set(conn)
         _queue_primary_locale(conn)
@@ -986,37 +983,6 @@ class TestRaceTerrainAndAidStationsWireUp:
         assert l2b_kwargs["race_terrain"][0].pct_of_race == 35.0
         assert l2b_kwargs["race_terrain"][1].terrain_id == "TRN-009"
 
-    def test_aid_stations_threads_into_layer2e_target_event(self):
-        conn = _FakeConn()
-        _queue_target_race_event(conn, aid_stations=12)
-        _queue_etl_version_set(conn)
-        _queue_primary_locale(conn)
-        _queue_locale_equipment_pool(conn)
-        cache = Layer4Cache(InMemoryCacheBackend())
-
-        race_event_for_l4 = RaceEventPayload(
-            race_event_id=1,
-            user_id=_USER_ID,
-            name="Test Race 2026",
-            event_date=_EVENT_DATE,
-            race_format="single_day",
-            event_locale_id="home",
-            event_locale_mapbox_id="poi.test_anchor",
-            is_target_event=True,
-        )
-        stack = _patches(
-            layer4_return=_fake_layer4_payload(race_event_payload=race_event_for_l4)
-        )
-        mocks = _enter_all(stack)
-        try:
-            orchestrate_race_week_brief(conn, _USER_ID, cache=cache, today=_TODAY)
-        finally:
-            _exit_all(stack)
-
-        m_l2e = mocks[5]
-        te = m_l2e.call_args.kwargs["target_events"][0]
-        assert te.aid_stations == 12
-
     def test_empty_race_terrain_still_passed_through_unchanged(self):
         """Athletes who haven't captured terrain yet get the empty list
         threaded through verbatim. Form-refresh C (2026-05-20) paired the
@@ -1025,7 +991,7 @@ class TestRaceTerrainAndAidStationsWireUp:
         downstream behavior is covered by `tests/test_layer2b.py`; this
         test still asserts the orchestrator-side threading."""
         conn = _FakeConn()
-        _queue_target_race_event(conn, race_terrain=[], aid_stations=None)
+        _queue_target_race_event(conn, race_terrain=[])
         _queue_etl_version_set(conn)
         _queue_primary_locale(conn)
         _queue_locale_equipment_pool(conn)
@@ -1052,8 +1018,6 @@ class TestRaceTerrainAndAidStationsWireUp:
 
         m_l2b = mocks[2]
         assert m_l2b.call_args.kwargs["race_terrain"] == []
-        m_l2e = mocks[5]
-        assert m_l2e.call_args.kwargs["target_events"][0].aid_stations is None
 
 
 class TestFrameworkSportOverride:

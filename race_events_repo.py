@@ -55,7 +55,6 @@ def list_athlete_race_events(db, user_id: int) -> list[dict[str, Any]]:
         SELECT id, name, event_date, race_format, is_target_event,
                distance_km, total_elevation_gain_m, event_locale_id,
                event_locale_name, event_locale_place_name,
-               aid_stations,
                created_at, updated_at
           FROM race_events
          WHERE user_id = ?
@@ -89,7 +88,7 @@ def load_race_event_payload(db, race_event_id: int) -> RaceEventPayload | None:
                re.estimated_duration_hr, re.primary_metric,
                lp.locale AS event_locale_slug,
                re.is_target_event, re.notes,
-               re.race_terrain, re.aid_stations,
+               re.race_terrain,
                re.event_locale_name, re.event_locale_mapbox_id,
                re.event_locale_place_name, re.event_locale_lat, re.event_locale_lng,
                re.race_url, re.framework_sport, re.included_discipline_ids
@@ -217,11 +216,6 @@ def load_race_event_payload(db, race_event_id: int) -> RaceEventPayload | None:
         is_target_event=bool(race_row["is_target_event"]),
         notes=race_row["notes"],
         race_terrain=race_terrain,
-        aid_stations=(
-            int(race_row["aid_stations"])
-            if race_row["aid_stations"] is not None
-            else None
-        ),
         race_url=race_row["race_url"],
         framework_sport=race_row["framework_sport"],
         included_discipline_ids=raw_disc_filter,
@@ -269,7 +263,6 @@ def create_race_event(
     is_target_event: bool = False,
     notes: str | None = None,
     race_terrain: list[dict[str, Any]] | None = None,
-    aid_stations: int | None = None,
     etl_version_set: dict[str, Any] | None = None,
 ) -> int:
     """INSERT a new race_event row. Returns the new id.
@@ -306,12 +299,12 @@ def create_race_event(
              estimated_duration_hr, primary_metric,
              race_rules_summary, mandatory_gear_text,
              event_locale_id, is_target_event, notes,
-             race_terrain, aid_stations,
+             race_terrain,
              event_locale_name, event_locale_mapbox_id, event_locale_place_name,
              event_locale_lat, event_locale_lng,
              race_url, framework_sport, included_discipline_ids,
              etl_version_set)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?, ?, ?, ?, ?, ?, ?, ?, ?::text[], ?::jsonb)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?, ?, ?, ?, ?, ?, ?, ?::text[], ?::jsonb)
         RETURNING id
         """,
         (
@@ -329,7 +322,6 @@ def create_race_event(
             is_target_event,
             notes,
             json.dumps(race_terrain or []),
-            aid_stations,
             event_locale_name,
             event_locale_mapbox_id,
             event_locale_place_name,
@@ -452,7 +444,7 @@ def get_race_event(db, user_id: int, race_event_id: int) -> dict[str, Any] | Non
                estimated_duration_hr, primary_metric,
                race_rules_summary, mandatory_gear_text,
                event_locale_id, is_target_event, notes,
-               race_terrain, aid_stations,
+               race_terrain,
                event_locale_name, event_locale_mapbox_id, event_locale_place_name,
                event_locale_lat, event_locale_lng,
                race_url, framework_sport, included_discipline_ids,
@@ -515,7 +507,6 @@ def update_race_event(
     included_discipline_ids: list[str] | None = None,
     notes: str | None = None,
     race_terrain: list[dict[str, Any]] | None = None,
-    aid_stations: int | None = None,
 ) -> None:
     """UPDATE a race_events row's editable fields. `is_target_event` flips
     are handled separately via `set_target_event`. Caller is expected to
@@ -556,7 +547,6 @@ def update_race_event(
                included_discipline_ids = ?::text[],
                notes = ?,
                race_terrain = ?::jsonb,
-               aid_stations = ?,
                updated_at = NOW()
          WHERE id = ? AND user_id = ?
         """,
@@ -581,7 +571,6 @@ def update_race_event(
             included_discipline_ids,
             notes,
             json.dumps(race_terrain or []),
-            aid_stations,
             race_event_id,
             user_id,
         ),
