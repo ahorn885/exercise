@@ -216,7 +216,7 @@ def _make_race_event() -> RaceEventPayload:
         user_id=1,
         name="Pocket Gopher Extreme 2026",
         event_date=date(2026, 7, 22),
-        race_format="expedition_ar",
+        race_format="continuous_multi_day",
         distance_km=Decimal("250"),
         is_target_event=True,
         event_locale_id="nerstrand-mn",
@@ -260,7 +260,7 @@ class TestLayer3BSmoke:
         assert payload.mode == "event"
         assert payload.event_date == date(2026, 7, 22)
         assert payload.event_locale_id == "nerstrand-mn"
-        assert payload.race_format == "expedition_ar"
+        assert payload.race_format == "continuous_multi_day"
         assert payload.time_to_event_weeks is not None
         assert 8 <= payload.time_to_event_weeks <= 10
 

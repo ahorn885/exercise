@@ -492,7 +492,7 @@ def _race_plan_multi_day(
         race_name="Test Event",
         race_start_datetime=datetime(2026, 7, 17, 6, 0, 0),
         race_end_estimate_datetime=datetime(2026, 7, 18, 12, 0, 0),
-        race_format="multi_day_ultra",
+        race_format="continuous_multi_day",
         locales=["L-home"],
         segments=segs,
         transitions=[],
@@ -1576,7 +1576,7 @@ def test_kit_manifest_inputs_incomplete_skipped_when_race_event_none():
         ],
         race_week_brief=_race_week_brief(
             event_date=event_date,
-            race_format="expedition_ar",
+            race_format="continuous_multi_day",
             contingencies=["gi", "hydration", "mechanical", "nav", "sleep_dep", "weather"],
         ),
         race_plan=_race_plan_multi_day(),
@@ -1599,7 +1599,7 @@ def test_kit_manifest_inputs_incomplete_no_route_locales_warns():
         ],
         race_week_brief=_race_week_brief(
             event_date=event_date,
-            race_format="expedition_ar",
+            race_format="continuous_multi_day",
             contingencies=["gi", "hydration", "mechanical", "nav", "sleep_dep", "weather"],
         ),
         race_plan=_race_plan_multi_day(),
@@ -1609,7 +1609,7 @@ def test_kit_manifest_inputs_incomplete_no_route_locales_warns():
         user_id=1,
         name="Test Race",
         event_date=event_date,
-        race_format="expedition_ar",
+        race_format="continuous_multi_day",
         event_locale_mapbox_id="poi.test_anchor",
         is_target_event=True,
         route_locales=[],
@@ -1639,7 +1639,7 @@ def test_race_plan_segments_ordered_no_fire():
         ],
         race_week_brief=_race_week_brief(
             event_date=event_date,
-            race_format="multi_day_ultra",
+            race_format="continuous_multi_day",
             contingencies=["gi", "hydration", "mechanical", "cumulative_fatigue"],
         ),
         race_plan=_race_plan_multi_day(segments_offsets=[0.0, 6.0, 12.0]),
@@ -1659,7 +1659,7 @@ def test_race_plan_segments_offsets_decreasing_blocker():
         ],
         race_week_brief=_race_week_brief(
             event_date=event_date,
-            race_format="multi_day_ultra",
+            race_format="continuous_multi_day",
             contingencies=["gi", "hydration", "mechanical", "cumulative_fatigue"],
         ),
         race_plan=_race_plan_multi_day(segments_offsets=[0.0, 12.0, 6.0]),
@@ -1683,7 +1683,7 @@ def test_fueling_strategy_within_tier_no_fire():
         ],
         race_week_brief=_race_week_brief(
             event_date=event_date,
-            race_format="multi_day_ultra",
+            race_format="continuous_multi_day",
             contingencies=["gi", "hydration", "mechanical", "cumulative_fatigue"],
         ),
         race_plan=_race_plan_multi_day(cho_low=70, cho_high=80, sodium=600, fluid=600),
@@ -1705,7 +1705,7 @@ def test_fueling_strategy_cho_high_outside_blocker():
         ],
         race_week_brief=_race_week_brief(
             event_date=event_date,
-            race_format="multi_day_ultra",
+            race_format="continuous_multi_day",
             contingencies=["gi", "hydration", "mechanical", "cumulative_fatigue"],
         ),
         race_plan=_race_plan_multi_day(cho_low=70, cho_high=150),  # 150 > 90 tier high
@@ -1727,7 +1727,7 @@ def test_fueling_strategy_sodium_below_blocker():
         ],
         race_week_brief=_race_week_brief(
             event_date=event_date,
-            race_format="multi_day_ultra",
+            race_format="continuous_multi_day",
             contingencies=["gi", "hydration", "mechanical", "cumulative_fatigue"],
         ),
         race_plan=_race_plan_multi_day(sodium=100),  # below 500 tier low
@@ -1755,8 +1755,17 @@ def test_contingency_anchors_covered_no_fire():
         ],
         race_week_brief=_race_week_brief(
             event_date=event_date,
-            race_format="multi_day_ultra",
-            contingencies=["gi distress", "hydration shortfall", "mechanical failure", "cumulative_fatigue"],
+            race_format="continuous_multi_day",
+            # FormRefresh A1 — continuous_multi_day requires the structural
+            # anchors gi / hydration / mechanical / cumulative_fatigue +
+            # sleep_dep (nav / weather are no longer format-keyed).
+            contingencies=[
+                "gi distress",
+                "hydration shortfall",
+                "mechanical failure",
+                "cumulative_fatigue",
+                "sleep dep management",
+            ],
         ),
         race_plan=_race_plan_multi_day(),
     )
@@ -1776,8 +1785,8 @@ def test_contingency_anchor_missing_warns():
         ],
         race_week_brief=_race_week_brief(
             event_date=event_date,
-            race_format="expedition_ar",
-            contingencies=["gi"],  # missing hydration / mechanical / nav / sleep_dep / weather
+            race_format="continuous_multi_day",
+            contingencies=["gi"],  # missing hydration / mechanical / cumulative_fatigue / sleep_dep
         ),
         race_plan=_race_plan_multi_day(),
     )

@@ -418,7 +418,7 @@ class RaceWeekBrief(_Base):
     event_name: str
     event_date: date
     event_locale: str
-    race_format: Literal["single_day", "expedition_ar", "stage_race", "multi_day_ultra"]
+    race_format: Literal["single_day", "continuous_multi_day", "stage_race"]
     goal_outcome: str
 
     pre_race_logistics: str
@@ -488,7 +488,7 @@ class RacePlan(_Base):
     race_name: str
     race_start_datetime: datetime
     race_end_estimate_datetime: datetime
-    race_format: Literal["expedition_ar", "stage_race", "multi_day_ultra"]
+    race_format: Literal["continuous_multi_day", "stage_race"]
     locales: list[str]
     segments: list[RaceSegment]
     transitions: list[TransitionSpec]

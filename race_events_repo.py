@@ -30,7 +30,8 @@ from layer4.context import (
 )
 
 
-VALID_RACE_FORMATS = ("single_day", "expedition_ar", "stage_race", "multi_day_ultra")
+VALID_RACE_FORMATS = ("single_day", "continuous_multi_day", "stage_race")
+VALID_PRIMARY_METRICS = ("distance", "duration")
 VALID_ROUTE_LOCALE_ROLES = (
     "start",
     "transition_area",
@@ -85,6 +86,7 @@ def load_race_event_payload(db, race_event_id: int) -> RaceEventPayload | None:
         SELECT re.id, re.user_id, re.name, re.event_date, re.race_format,
                re.distance_km, re.total_elevation_gain_m,
                re.race_rules_summary, re.mandatory_gear_text,
+               re.estimated_duration_hr, re.primary_metric,
                lp.locale AS event_locale_slug,
                re.is_target_event, re.notes,
                re.race_terrain, re.aid_stations,
@@ -200,6 +202,8 @@ def load_race_event_payload(db, race_event_id: int) -> RaceEventPayload | None:
         total_elevation_gain_m=race_row["total_elevation_gain_m"],
         race_rules_summary=race_row["race_rules_summary"],
         mandatory_gear_text=race_row["mandatory_gear_text"],
+        estimated_duration_hr=race_row["estimated_duration_hr"],
+        primary_metric=race_row["primary_metric"],
         event_locale_id=race_row["event_locale_slug"],
         event_locale_name=race_row["event_locale_name"],
         event_locale_mapbox_id=race_row["event_locale_mapbox_id"],
@@ -249,6 +253,8 @@ def create_race_event(
     *,
     distance_km=None,
     total_elevation_gain_m=None,
+    estimated_duration_hr=None,
+    primary_metric: str | None = None,
     race_rules_summary: str | None = None,
     mandatory_gear_text: str | None = None,
     event_locale_id: int | None = None,
@@ -287,12 +293,17 @@ def create_race_event(
     """
     if race_format not in VALID_RACE_FORMATS:
         raise ValueError(f"race_format must be one of {VALID_RACE_FORMATS}; got {race_format!r}")
+    if primary_metric is not None and primary_metric not in VALID_PRIMARY_METRICS:
+        raise ValueError(
+            f"primary_metric must be one of {VALID_PRIMARY_METRICS} or None; got {primary_metric!r}"
+        )
 
     cur = db.execute(
         """
         INSERT INTO race_events
             (user_id, name, event_date, race_format,
              distance_km, total_elevation_gain_m,
+             estimated_duration_hr, primary_metric,
              race_rules_summary, mandatory_gear_text,
              event_locale_id, is_target_event, notes,
              race_terrain, aid_stations,
@@ -300,7 +311,7 @@ def create_race_event(
              event_locale_lat, event_locale_lng,
              race_url, framework_sport, included_discipline_ids,
              etl_version_set)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?, ?, ?, ?, ?, ?, ?, ?, ?::text[], ?::jsonb)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?, ?, ?, ?, ?, ?, ?, ?, ?::text[], ?::jsonb)
         RETURNING id
         """,
         (
@@ -310,6 +321,8 @@ def create_race_event(
             race_format,
             distance_km,
             total_elevation_gain_m,
+            estimated_duration_hr,
+            primary_metric,
             race_rules_summary,
             mandatory_gear_text,
             event_locale_id,
@@ -436,6 +449,7 @@ def get_race_event(db, user_id: int, race_event_id: int) -> dict[str, Any] | Non
         """
         SELECT id, user_id, name, event_date, race_format,
                distance_km, total_elevation_gain_m,
+               estimated_duration_hr, primary_metric,
                race_rules_summary, mandatory_gear_text,
                event_locale_id, is_target_event, notes,
                race_terrain, aid_stations,
@@ -486,6 +500,8 @@ def update_race_event(
     race_format: str,
     distance_km=None,
     total_elevation_gain_m=None,
+    estimated_duration_hr=None,
+    primary_metric: str | None = None,
     race_rules_summary: str | None = None,
     mandatory_gear_text: str | None = None,
     event_locale_id: int | None = None,
@@ -512,6 +528,10 @@ def update_race_event(
     """
     if race_format not in VALID_RACE_FORMATS:
         raise ValueError(f"race_format must be one of {VALID_RACE_FORMATS}; got {race_format!r}")
+    if primary_metric is not None and primary_metric not in VALID_PRIMARY_METRICS:
+        raise ValueError(
+            f"primary_metric must be one of {VALID_PRIMARY_METRICS} or None; got {primary_metric!r}"
+        )
 
     db.execute(
         """
@@ -521,6 +541,8 @@ def update_race_event(
                race_format = ?,
                distance_km = ?,
                total_elevation_gain_m = ?,
+               estimated_duration_hr = ?,
+               primary_metric = ?,
                race_rules_summary = ?,
                mandatory_gear_text = ?,
                event_locale_id = ?,
@@ -544,6 +566,8 @@ def update_race_event(
             race_format,
             distance_km,
             total_elevation_gain_m,
+            estimated_duration_hr,
+            primary_metric,
             race_rules_summary,
             mandatory_gear_text,
             event_locale_id,

@@ -505,7 +505,7 @@ class TestNewRaceMapboxRequired:
             data={
                 'name': 'Test Race',
                 'event_date': '2026-07-17',
-                'race_format': 'expedition_ar',
+                'race_format': 'continuous_multi_day',
                 # `event_locale_mapbox_id` deliberately absent.
             },
         ):
@@ -540,7 +540,7 @@ class TestNewRaceMapboxRequired:
                 # Multi-day path redirects to race_events.edit_race which is
                 # in the registered blueprint; single_day goes to
                 # profile.edit which isn't registered in this test app.
-                'race_format': 'multi_day_ultra',
+                'race_format': 'continuous_multi_day',
                 'event_locale_name': 'Test Race Location',
                 'event_locale_mapbox_id': 'poi.test_anchor',
                 'event_locale_place_name': 'Test Race Location, TS',

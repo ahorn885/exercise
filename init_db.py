@@ -1258,7 +1258,7 @@ _PG_MIGRATIONS = [
         user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
         name TEXT NOT NULL,
         event_date DATE NOT NULL,
-        race_format TEXT NOT NULL CHECK (race_format IN ('single_day', 'expedition_ar', 'stage_race', 'multi_day_ultra')),
+        race_format TEXT NOT NULL CHECK (race_format IN ('single_day', 'continuous_multi_day', 'stage_race')),
         distance_km NUMERIC NULL,
         total_elevation_gain_m NUMERIC NULL,
         race_rules_summary TEXT NULL,
@@ -1320,6 +1320,39 @@ _PG_MIGRATIONS = [
     # Auto-cleared on framework_sport change (orphan cleanup) so the
     # selection always reflects the current sport's valid set.
     "ALTER TABLE race_events ADD COLUMN IF NOT EXISTS included_discipline_ids TEXT[] NULL",
+    # FormRefresh A1 (2026-05-25) — magnitude axis. `estimated_duration_hr`
+    # is the athlete-entered expected finish/cutoff time in hours; the
+    # orchestrator prefers it over the coarse `_DURATION_HR_BY_RACE_FORMAT`
+    # fallback when building Layer 2E's TargetEvent (which requires
+    # estimated_duration_hr > 0). `primary_metric` records whether the
+    # athlete defines this race by distance (e.g. 100km ultra) or duration
+    # (e.g. 24h rogaine, multi-day expedition) — drives which input the
+    # form emphasizes + lets the race-week brief phrase the event
+    # correctly. Both nullable so legacy rows survive without backfill;
+    # the duration CHECK rejects non-positive values (payload Field(gt=0)
+    # is the typed backstop).
+    "ALTER TABLE race_events ADD COLUMN IF NOT EXISTS estimated_duration_hr NUMERIC NULL CHECK (estimated_duration_hr IS NULL OR estimated_duration_hr > 0)",
+    "ALTER TABLE race_events ADD COLUMN IF NOT EXISTS primary_metric TEXT NULL CHECK (primary_metric IS NULL OR primary_metric IN ('distance', 'duration'))",
+    # FormRefresh A1 (2026-05-25) — race_format taxonomy collapse. The
+    # original 4-value enum conflated structure with sport/discipline
+    # (`expedition_ar` = AR sport; `multi_day_ultra` = ultrarunning sport).
+    # The reconciled axis is purely STRUCTURAL: single_day /
+    # continuous_multi_day / stage_race. Sport lives on `framework_sport`,
+    # disciplines on Layer 2A, terrain on `race_terrain` — none of which
+    # ever sourced from race_format (the orchestrator derives
+    # framework_sport from the column or primary_sport, never the format),
+    # so the collapse is information-preserving and needs no framework_sport
+    # backfill. `expedition_ar` + `multi_day_ultra` both fold into
+    # `continuous_multi_day`. Order is load-bearing + idempotent on re-run:
+    # (1) DROP the old inline CHECK (auto-named `race_events_race_format_check`
+    # on the deployed table) so the remap UPDATE can write the new value;
+    # (2) remap rows (no-op after first run — no old values remain);
+    # (3) re-ADD the named CHECK with the 3-value set. DROP IF EXISTS each
+    # run keeps the ADD collision-free (Postgres has no ADD CONSTRAINT IF
+    # NOT EXISTS).
+    "ALTER TABLE race_events DROP CONSTRAINT IF EXISTS race_events_race_format_check",
+    "UPDATE race_events SET race_format = 'continuous_multi_day' WHERE race_format IN ('expedition_ar', 'multi_day_ultra')",
+    "ALTER TABLE race_events ADD CONSTRAINT race_events_race_format_check CHECK (race_format IN ('single_day', 'continuous_multi_day', 'stage_race'))",
     # Phase 5.1 form-refresh C (2026-05-20) — closes Layer2B_Spec.md §12
     # Open Item 2B-2 (§J Locale terrain access controlled vocabulary) +
     # the orchestrator's last `locale_terrain_ids=[]` forward-pointer

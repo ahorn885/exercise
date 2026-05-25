@@ -286,7 +286,7 @@ def _race_plan() -> RacePlan:
         race_name="Pocket Gopher Extreme",
         race_start_datetime=datetime(2026, 7, 17, 8, 0, tzinfo=timezone.utc),
         race_end_estimate_datetime=datetime(2026, 7, 19, 16, 0, tzinfo=timezone.utc),
-        race_format="expedition_ar",
+        race_format="continuous_multi_day",
         locales=["loc-pge"],
         segments=[seg0, seg1],
         transitions=[
@@ -384,11 +384,11 @@ def test_race_week_brief_multi_day_happy_path():
         phase_structure=None,
         seam_reviews=None,
         model_seam_reviewer=None,
-        race_week_brief=_race_week_brief("expedition_ar"),
+        race_week_brief=_race_week_brief("continuous_multi_day"),
         race_plan=_race_plan(),
     )
     assert p.race_plan is not None
-    assert p.race_plan.race_format == "expedition_ar"
+    assert p.race_plan.race_format == "continuous_multi_day"
 
 
 # ─── §7.2 + §7.12 PlanSession kind invariants ───────────────────────────────
@@ -589,7 +589,7 @@ def test_race_week_brief_multi_day_requires_race_plan():
             pattern="B",
             phase_structure=None,
             seam_reviews=None,
-            race_week_brief=_race_week_brief("expedition_ar"),
+            race_week_brief=_race_week_brief("continuous_multi_day"),
             race_plan=None,
         )
 
@@ -786,7 +786,7 @@ def test_json_round_trip_race_week_brief_multi_day():
         phase_structure=None,
         seam_reviews=None,
         model_seam_reviewer=None,
-        race_week_brief=_race_week_brief("expedition_ar"),
+        race_week_brief=_race_week_brief("continuous_multi_day"),
         race_plan=_race_plan(),
     )
     serialized = p.model_dump_json()

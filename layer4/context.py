@@ -1039,7 +1039,7 @@ class Layer3BPayload(_Base):
     event_date: date | None = None
     event_locale_id: str | None = None
     race_format: (
-        Literal["single_day", "expedition_ar", "stage_race", "multi_day_ultra"] | None
+        Literal["single_day", "continuous_multi_day", "stage_race"] | None
     ) = None
     time_to_event_weeks: int | None = Field(default=None, ge=0)
 
@@ -1134,7 +1134,7 @@ class DailyAvailabilityWindow(_Base):
 # doc §10.
 
 
-RaceFormat = Literal["single_day", "expedition_ar", "stage_race", "multi_day_ultra"]
+RaceFormat = Literal["single_day", "continuous_multi_day", "stage_race"]
 RouteLocaleRole = Literal[
     "start",
     "transition_area",
@@ -1175,6 +1175,17 @@ class RaceEventPayload(_Base):
     total_elevation_gain_m: Decimal | None = Field(default=None, ge=0)
     race_rules_summary: str | None = Field(default=None, max_length=8000)
     mandatory_gear_text: str | None = Field(default=None, max_length=8000)
+    # FormRefresh A1 (2026-05-25) — magnitude axis. `estimated_duration_hr`
+    # is the athlete-entered expected finish/cutoff time in hours; the
+    # orchestrator prefers it over the coarse `_DURATION_HR_BY_RACE_FORMAT`
+    # fallback when constructing Layer 2E's `Layer2ETargetEvent`
+    # (estimated_duration_hr > 0 there). `primary_metric` records whether
+    # the athlete frames this race by distance or duration — drives form
+    # emphasis + race-week-brief phrasing. Both optional; legacy rows
+    # (None) fall back to the format-keyed duration estimate + distance
+    # framing.
+    estimated_duration_hr: Decimal | None = Field(default=None, gt=0)
+    primary_metric: Literal["distance", "duration"] | None = None
     # D-72 resolved 2026-05-19 — slug everywhere across the typed pipeline.
     # The DB column race_events.event_locale_id is BIGINT FK to
     # locale_profiles(id); race_events_repo.load_race_event_payload JOINs
