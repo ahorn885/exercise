@@ -217,6 +217,7 @@ def normalize_named_rows(
     name_field: str = "discipline_name",
     keep_non_discipline: bool = False,
     category_field: str = "row_category",
+    share_fields: tuple[str, ...] = (),
     dropped: list[dict] | None = None,
 ) -> list[dict]:
     """Canonicalize a list of (id, name)-bearing rows.
@@ -227,18 +228,28 @@ def normalize_named_rows(
       and the name classifies as a kept non-discipline (strength / mobility /
       weekly total), in which case the row is kept with id=NULL + category.
 
+    `share_fields` are race-time / load-share columns (e.g. race_time_pct_*,
+    *_pct_*). When a composite splits into multiple legs they are kept on the
+    primary (first) leg only and zeroed on the rest: the legs are one physical
+    race segment, so duplicating the share would double-count the sport's load
+    (e.g. Triathlon's bike share landing on both Road Cycling and TT Cycling).
+
     De-duplicated by `unique_fields` (first-seen wins).
     """
     out: list[dict] = []
     seen: set[tuple] = set()
     for row in rows:
         produced: list[dict] = []
-        for cid in resolve_ids(row.get(id_field)):
+        for leg_index, cid in enumerate(resolve_ids(row.get(id_field))):
             nr = dict(row)
             nr[id_field] = cid
             nr[name_field] = CANONICAL_NAMES[cid]
             if keep_non_discipline:
                 nr[category_field] = None
+            if leg_index > 0:  # secondary leg of a composite split
+                for f in share_fields:
+                    if f in nr:
+                        nr[f] = None if f.endswith("_text") else 0.0
             produced.append(nr)
 
         if not produced and keep_non_discipline:
