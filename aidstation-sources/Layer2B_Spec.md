@@ -405,7 +405,7 @@ above.
 | Multiple gap rules for same target_terrain_id with different proxies | §5.2 ORDER BY picks best (highest fidelity); other rows ignored for this call. |
 | Gap rule with `proxy_terrain_id` that's NOT in any active `terrain_types` row | Log ERROR (data integrity); skip that rule. |
 | `adaptation_weeks_high` is NULL for an unbridgeable gap | Summary `min_adaptation_weeks_needed` ignores NULLs in the MAX. |
-| Race terrain doesn't include any water but athlete includes D-007 Packrafting | Discipline-relevance check might fire as warning. Currently v1 spec is permissive — gap is reported anyway, relevance flagged false. |
+| Race terrain doesn't include any water but athlete includes D-009 Packrafting | Discipline-relevance check might fire as warning. Currently v1 spec is permissive — gap is reported anyway, relevance flagged false. |
 | All terrain race-wide (`discipline_id=None`), N included disciplines (re-model Slice 4) | Each discipline block folds in the full race-wide terrain set; flat aggregate stays deduped (no double-count). The common case for existing captured rows. |
 | Same `terrain_id` tagged to two disciplines at different `pct_of_race` (re-model Slice 4) | Each block keeps its own pct (the flat `pct_by_target` collapse no longer loses the per-leg value). Flat `total_race_terrain_count` still counts both rows; `covered_count` counts the unique terrain id. |
 | Discipline in `included_discipline_ids` with no tagged + no race-wide rows (re-model Slice 4) | No block emitted for it (Slice 5 treats as craft-only / no terrain emphasis). |

@@ -367,10 +367,10 @@ Requires a mapping of discipline → gating toggle. This mapping isn't currently
 
 Two paths considered:
 
-- **(a)** Hard-code in 2C code (`{'D-010': 'Climbing — roped', 'D-015': 'Snowshoeing', ...}`). Faster to ship; accumulates as tech debt across non-AR sports.
+- **(a)** Hard-code in 2C code (`{'D-012': 'Climbing — roped', 'D-017': 'Snowshoeing', ...}`). Faster to ship; accumulates as tech debt across non-AR sports.
 - **(b)** Add a column on `sport_specific_gear_toggles` (`gated_discipline_ids TEXT[]`) and read from there. More work; structured carries traceability + survives spec evolution.
 
-**Resolution (Andy 2026-05-19, D-73 Phase 2.4-Prep):** picked (b) — diverged from the spec's "(a) for v1, defer (b) to FC-1" recommendation. The `gated_discipline_ids TEXT[]` column was added to `layer0.sport_specific_gear_toggles` via `migrate_toggles_v3_columns.sql` and populated for the 3 known cases (`Climbing — roped` → D-010; `Rappelling / abseiling` → D-011; `Snowshoeing setup` → D-015). The Phase 2.4 builder (`layer2c.builder._emit_coaching_flags`) reads the column directly when emitting the `toggle_off_for_discipline` flag — no hard-coded mapping in 2C code. Open Item 2C-2 closes in §12.
+**Resolution (Andy 2026-05-19, D-73 Phase 2.4-Prep):** picked (b) — diverged from the spec's "(a) for v1, defer (b) to FC-1" recommendation. The `gated_discipline_ids TEXT[]` column was added to `layer0.sport_specific_gear_toggles` via `migrate_toggles_v3_columns.sql` and populated for the 3 known cases (`Climbing — roped` → D-012; `Rappelling / abseiling` → D-013; `Snowshoeing setup` → D-017). The Phase 2.4 builder (`layer2c.builder._emit_coaching_flags`) reads the column directly when emitting the `toggle_off_for_discipline` flag — no hard-coded mapping in 2C code. Open Item 2C-2 closes in §12.
 
 ```python
 CoachingFlag(
@@ -477,7 +477,7 @@ Inputs:
 - Same cluster toggles + disciplines as 13.1
 
 Expected:
-- Coverage <50% on all bike disciplines → low_coverage flag for D-005 and D-006 (no bike at hotel)
+- Coverage <50% on all bike disciplines → low_coverage flag for D-006 and D-008 (no bike at hotel)
 - EX229 Bench Press resolves via Tier 1 (Barbell+Bench+Squat rack at the hotel from Andy's Nashville note) or Tier 2 to DB Bench Press
 - Bodyweight + DB exercises resolve cleanly Tier 1
 

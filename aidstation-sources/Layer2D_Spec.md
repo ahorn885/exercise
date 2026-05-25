@@ -616,7 +616,7 @@ Returns substitutes ordered by fidelity descending. 2D attaches the top 3 (or al
 
 #### 5.6.1 Substitute back-check
 
-A naive substitute recommendation can recommend a discipline that *also* lists the athlete's at-risk body part in its `common_injury_patterns`. Example: athlete with wrist injury; D-010 Rock Climbing is elevated; D-008a Kayaking is a substitute candidate but also has "Wrist tendinopathy" in its patterns. Surfacing this matters.
+A naive substitute recommendation can recommend a discipline that *also* lists the athlete's at-risk body part in its `common_injury_patterns`. Example: athlete with wrist injury; D-012 Rock Climbing is elevated; D-010 Kayaking is a substitute candidate but also has "Wrist tendinopathy" in its patterns. Surfacing this matters.
 
 For each suggested substitute, re-run §5.4's body-part matching against the substitute's own `common_injury_patterns`. Tag the recommendation with `still_at_risk: bool` and the matched body parts:
 
@@ -639,10 +639,10 @@ Layer 4 uses `still_at_risk` to deprioritize self-defeating substitutes. 2D does
 `hitl_required = True` if any of:
 
 1. **Post-surgical injury without clearance date.** `InjuryRecord.severity == 'Post-surgical'` AND `notes` does not contain a parseable clearance date or the notes are empty. Plan-gen must not auto-prescribe under post-surgical state without affirmed clearance.
-2. **Cardiac condition × high-load disciplines.** `current_conditions` includes `system_category == 'Cardiac'` AND `included_discipline_ids` intersects high-cardiac-load disciplines (D-001 Trail Running, D-002 Road Running, D-005 Road Cycling, D-006 Mountain Biking, D-022 Uphill Mountain Running, D-023 Downhill Mountain Running, D-028 XC Skiing — anything with sustained Z3+). Surface for athlete confirmation before plan-gen proceeds.
+2. **Cardiac condition × high-load disciplines.** `current_conditions` includes `system_category == 'Cardiac'` AND `included_discipline_ids` intersects high-cardiac-load disciplines (D-001 Trail Running, D-002 Road Running, D-006 Road Cycling, D-008 Mountain Biking, D-024 Mountain Running, D-028 XC Skiing — anything with sustained Z3+). Surface for athlete confirmation before plan-gen proceeds.
 3. **Concussion (current).** `current_conditions` includes `system_category == 'Neurological'` AND `name` contains 'concussion' (case-insensitive). Concussion in current status requires per-stage return-to-load gating that 2D can't auto-resolve.
 4. **High-risk discipline with no available substitute.** Any discipline at `RiskLevel.HIGH` whose `discipline_substitutes` lookup returns zero rows. The athlete needs to decide: drop the discipline, accept elevated risk, or wait until injury resolves.
-5. **Discipline training gap × injury overlap.** Discipline has a `discipline_training_gaps` row (D-018 Swimrun, D-020 Alpine Descent, D-024 Épée Fencing currently) AND 2D flags it `HIGH` risk. Both gates concurrent → athlete decision.
+5. **Discipline training gap × injury overlap.** Discipline has a `discipline_training_gaps` row (D-020 Swimrun, D-022 Alpine Descent, D-025 Épée Fencing currently) AND 2D flags it `HIGH` risk. Both gates concurrent → athlete decision.
 
 Items surface as `HitlItem` records (§7). Plan-gen consumes them via Layer 3.
 
@@ -653,7 +653,7 @@ Items surface as `HitlItem` records (§7). Plan-gen consumes them via Layer 3.
 Examples that are **coaching flags only**, not HITL:
 - Recurring pattern: athlete had IT band history; D-001 includes ITBS → informational flag
 - Multi-body-part load concern: 3+ active injuries → "high cumulative load risk" flag
-- Discipline elevation without HIGH: D-006 elevated due to lower-back history → coaching flag, plan-gen handles
+- Discipline elevation without HIGH: D-008 elevated due to lower-back history → coaching flag, plan-gen handles
 
 ## 6. Drift items affecting 2D
 
@@ -1030,29 +1030,28 @@ These aren't unit tests yet — they're integration scenarios 2D must handle cor
 Inputs:
 - `injuries = [InjuryRecord(body_part='Wrist', side='Left', injury_type='Tendinopathy / overuse', severity='Chronic-Managed', movement_constraints=['Pain above specific joint angle', 'Pain with loading'], date_of_onset=..., notes='Painful and weak with wrist extension; pushups require fist position.')]`
 - `conditions = []`
-- `included_discipline_ids = [D-001, D-002, D-003, D-005, D-006, D-007, D-008a, D-008b, D-010, D-011, D-013, D-014, D-015, D-016]` (AR's 14 base disciplines, no whitewater since chronic-managed wrist limits Class III)
+- `included_discipline_ids = [D-001, D-002, D-003, D-006, D-008, D-009, D-010, D-012, D-013, D-015, D-016, D-017, D-018]` (AR's 13 base disciplines; the former flat/whitewater kayak split is now the single D-010 Kayaking post-R6, and chronic-managed wrist limits Class III whitewater)
 
 Expected:
 - **Excluded exercises:** any exercise with `'Wrist'` in `contraindicated_parts` OR `injury_flags_text` containing 'wrist extension' / 'palm-down' / 'palm-down' under load — including standard pushup, dips, plank-on-palms, bench press (the last is borderline — wrist supports load only at neutral). Verdict for Chronic-Managed = Accommodate default per §5.3.4, so technically these would be accommodated not excluded. **Wait**: §5.3.4 maps Chronic-Managed → ACCOMMODATE. So most wrist-flagged exercises would be accommodated (with `tempo_modification(heavy_slow_resistance)` per §5.3.6 default for Tendinopathy / overuse + Chronic-Managed), not excluded. This is the right behavior — Andy's wrist is workable with modifications (fist pushups, etc.), not zero-loadable.
 - **Accommodated exercises:** pushups, planks-on-palms, bench press, dips, pike pushups — all wrist-loading exercises. Each carries one or more accommodation modalities per §5.3.6 (typically `tempo_modification(heavy_slow_resistance)` for chronic tendinopathy). Layer 4 then prescribes per the modality parameters; substitution to fist pushups / neutral-grip DB press routes through 2C Tier 2 instead.
 - **Discipline risks:**
-  - D-007 Packrafting: ELEVATED (matches 'wrist tendinitis' in patterns)
-  - D-008a Kayaking — Flat-water: ELEVATED (matches 'wrist tendinopathy')
-  - D-008b Kayaking — Whitewater: ELEVATED (D-008a patterns inherited + wrist injury risk under bracing)
-  - D-010 Rock Climbing: ELEVATED (matches 'wrist flexor/extensor strain')
+  - D-009 Packrafting: ELEVATED (matches 'wrist tendinitis' in patterns)
+  - D-010 Kayaking: ELEVATED (matches 'wrist tendinopathy'; whitewater bracing adds forearm/wrist load — the former flat/whitewater split is now one discipline)
+  - D-012 Rock Climbing: ELEVATED (matches 'wrist flexor/extensor strain')
   - D-001 Trail Running: LOW (no wrist patterns)
   - D-002 Road Running: LOW
   - D-003 Hiking: LOW (shoulder/trap fatigue from pack but not wrist-specific)
-  - D-005 Road Cycling: LOW (numbness in hands listed but not wrist-specific)
-  - D-006 Mountain Biking: ELEVATED — wait, MTB patterns are "Hand/wrist numbness" which substring-matches both 'hand' and 'wrist'. Reasonable elevation.
-  - D-011 Abseiling: LOW (rope burns on brake hand, not wrist-specific)
-  - D-013 Orienteering: LOW
-  - D-014 Swimming: LOW (shoulder-specific patterns)
-  - D-015 Snowshoeing: LOW
-  - D-016 Mountaineering: LOW
-- **Substitutes:** for the 5 elevated disciplines, queries `discipline_substitutes`. e.g., D-010 might return D-007 / D-011 / strength variants. Several substitutes will likely back-check as `still_at_risk=True` (paddle disciplines all hit wrist). Layer 4 handles the gap.
+  - D-006 Road Cycling: LOW (numbness in hands listed but not wrist-specific)
+  - D-008 Mountain Biking: ELEVATED — wait, MTB patterns are "Hand/wrist numbness" which substring-matches both 'hand' and 'wrist'. Reasonable elevation.
+  - D-013 Abseiling: LOW (rope burns on brake hand, not wrist-specific)
+  - D-015 Orienteering: LOW
+  - D-016 Swimming: LOW (shoulder-specific patterns)
+  - D-017 Snowshoeing: LOW
+  - D-018 Mountaineering: LOW
+- **Substitutes:** for the 4 elevated disciplines, queries `discipline_substitutes`. e.g., D-012 might return D-009 / D-013 / strength variants. Several substitutes will likely back-check as `still_at_risk=True` (paddle disciplines all hit wrist). Layer 4 handles the gap.
 - **HITL:** False — no post-surgical, no Cardiac, no current concussion, no HIGH-without-substitute.
-- **Coaching flags:** elevated_discipline_risk × 5 (one per elevated), discipline_substitution_suggested × 5, possibly multi_body_part_load_concern=False (only 1 injury).
+- **Coaching flags:** elevated_discipline_risk × 4 (one per elevated), discipline_substitution_suggested × 4, possibly multi_body_part_load_concern=False (only 1 injury).
 
 ### 13.2 Post-surgical scenario
 
@@ -1060,12 +1059,12 @@ Inputs:
 - `injuries = [InjuryRecord(body_part='Knee', side='Right', injury_type='Post-surgical', severity='Post-surgical', movement_constraints=['Pain above specific joint angle', 'Pain with impact'], date_of_onset=2026-03-15, notes='ACL reconstruction')]`
 - (No clearance date in notes)
 - `conditions = []`
-- 14 AR disciplines included
+- 13 AR disciplines included
 
 Expected:
 - HITL item `post_surgical_clearance` with `severity='block'`. Layer 4 will not run.
 - Until clearance: excluded exercises = all knee-contraindicated exercises (lots — squats, lunges, jumps).
-- Discipline risks all D-XXX with knee in patterns elevated to HIGH (D-001, D-002, D-003, D-006, D-022, D-023 — most foot/cycling disciplines).
+- Discipline risks all D-XXX with knee in patterns elevated to HIGH (D-001, D-002, D-003, D-008, D-024 — most foot/cycling disciplines).
 - Multiple substitutes for many; HITL takes precedence.
 
 ### 13.3 Concussion history
@@ -1073,7 +1072,7 @@ Expected:
 Inputs:
 - `injuries = []`
 - `conditions = [HealthConditionRecord(name='Concussion (2024)', system_category='Neurological', status='History')]`
-- 14 AR disciplines
+- 13 AR disciplines
 
 Expected:
 - No exclusions (no current contraindications).
@@ -1086,7 +1085,7 @@ Expected:
 Inputs:
 - `injuries = []`
 - `conditions = [HealthConditionRecord(name='Mild EIB', system_category='Respiratory', status='Current')]`
-- 14 AR disciplines
+- 13 AR disciplines
 
 Expected:
 - Excluded / accommodated exercises: any with `'Respiratory'` in `contraindicated_conditions` — none expected by default in v19 (Cardiac is more commonly flagged), but if an exercise has it (e.g., max-effort altitude simulation), accommodated with `intensity_reduction` + `frequency_reduction` per §5.3.6 fallback.
@@ -1100,7 +1099,7 @@ Expected:
 Inputs:
 - `injuries = []`
 - `conditions = []`
-- 14 AR disciplines
+- 13 AR disciplines
 
 Expected:
 - All disciplines `RiskLevel.LOW`.
@@ -1113,26 +1112,26 @@ Expected:
 Inputs:
 - `injuries = [Wrist (Recovering), Lower back (Chronic-Managed), Achilles (Recovering)]`
 - `conditions = []`
-- 14 AR disciplines
+- 13 AR disciplines
 
 Expected:
-- Multiple discipline elevations (D-007, D-008a, D-010 from wrist; D-001 from Achilles; multiple from lower back).
+- Multiple discipline elevations (D-009, D-010, D-012 from wrist; D-001 from Achilles; multiple from lower back).
 - `multi_body_part_load_concern` coaching flag fires (3 active injuries).
 - Many accommodated exercises (wrist + Achilles overlap nearly all weight-bearing AR exercises). Wrist-loaded exercises carry `tempo_modification(heavy_slow_resistance)` per §5.3.6 Tendinopathy / Chronic-Managed default; Achilles wrap-around exercises carry `volume_reduction(0.7) + tempo_modification(heavy_slow_resistance)` per Recovering tendinopathy default.
 - `hitl_required=False` unless any single discipline hits HIGH without substitute. Conservative: doesn't auto-gate but produces a content-heavy plan with caveats.
 
-### 13.7 D-018 Swimrun gap × high risk
+### 13.7 D-020 Swimrun gap × high risk
 
 Inputs:
 - `injuries = [Shoulder (Acute)]`
 - `conditions = []`
-- `included_discipline_ids = [D-001, D-004, D-018, ...]`
+- `included_discipline_ids = [D-001, D-004, D-020, ...]`
 
 Expected:
-- D-018 Swimrun: HIGH (shoulder patterns include shoulder overuse, paddle-required compensation).
-- D-018 has `discipline_training_gaps` entry — no clean single substitute.
+- D-020 Swimrun: HIGH (shoulder patterns include shoulder overuse, paddle-required compensation).
+- D-020 has `discipline_training_gaps` entry — no clean single substitute.
 - HITL item `gap_x_high_risk_concurrent` per §5.7 rule 5.
-- Layer 4 doesn't run until athlete decides: drop D-018, multi-substitute composition, or wait for shoulder resolution.
+- Layer 4 doesn't run until athlete decides: drop D-020, multi-substitute composition, or wait for shoulder resolution.
 
 ## 14. Gut check
 
@@ -1156,7 +1155,7 @@ Expected:
 - **Cumulative-load HITL trigger.** §5.7 doesn't gate on multi-injury load count, only on individual injury severity. 5+ active injuries with multiple HIGH disciplines = a plan-gen problem 2D currently surfaces as a coaching flag, not HITL. Defensible — Layer 3 may decide to escalate to HITL based on aggregate.
 - **Medication interactions.** §B Current Medications (per Onboarding Spec) includes beta blockers, NSAIDs, etc. Drug-side effects on plan design (RPE-not-HR for beta blockers, injury-masking for NSAIDs) aren't currently in 2D. They probably belong in 2D or a sibling Layer 2 node — TBD with Layer 3 / Layer 4 design.
 - **Sex-specific injury risk.** Some patterns (ACL tear rate, stress fracture in low-energy-availability athletes) are sex-modulated. Not in 2D currently; tracked as a future enhancement when discipline patterns get structured.
-- **Sport-context modulation.** The current `discipline_substitutes` lookup is sport-agnostic. A wrist-injured AR athlete might substitute D-008a Kayaking with strength work; a non-AR athlete might substitute with cycling. Currently 2D returns fidelity-ordered candidates regardless of athlete sport. Layer 4 has the context to filter further.
+- **Sport-context modulation.** The current `discipline_substitutes` lookup is sport-agnostic. A wrist-injured AR athlete might substitute D-010 Kayaking with strength work; a non-AR athlete might substitute with cycling. Currently 2D returns fidelity-ordered candidates regardless of athlete sport. Layer 4 has the context to filter further.
 
 **Best argument against this spec as drafted:**
 The body-part keyword map is essentially "data masquerading as code." Hand-curated lookup tables in code are common but they pollute the deterministic-data / deterministic-code boundary the system otherwise maintains. The Project_Backlog backlog item D-23 (promoting to `disciplines.body_parts_at_risk`) addresses this, but until then the spec is shipping a hand-curated thing pretending to be an algorithm.
