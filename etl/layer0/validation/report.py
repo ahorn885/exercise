@@ -291,7 +291,7 @@ def build_report(
             "`(sport_name, discipline_id)` key were dropped (first-seen "
             "wins) to satisfy the spec's UNIQUE constraint. The Triathlon "
             "D-002 case is a true duplicate; the Long Distance / Endurance "
-            "Cycling D-005/D-006 cases are sub-format splits the spec's "
+            "Cycling D-006/D-008 cases are sub-format splits the spec's "
             "schema doesn't model."
         )
         lines.append("")

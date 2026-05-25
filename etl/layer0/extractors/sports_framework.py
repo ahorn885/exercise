@@ -1,4 +1,4 @@
-"""Layer 0 ETL — extractor for Sports_Framework_v10.xlsx (source 0A).
+"""Layer 0 ETL — extractor for Sports_Framework_v11.xlsx (source 0A).
 
 One function per sheet. Each returns a list of dicts ready for INSERT.
 Parsing rules per spec §4.2–§4.15 (Layer0_ETL_Spec_v3.md).
@@ -466,7 +466,7 @@ def extract_sport_discipline_map(
     keys as of v6 — one true duplicate (Triathlon D-002 listed twice
     identically) and two genuine sub-format splits where multiple
     disciplines share a `discipline_id` (Long Distance / Endurance
-    Cycling D-005 and D-006). Dropped rows are appended to
+    Cycling D-006 and D-008). Dropped rows are appended to
     `dropped_dupes` if provided, for surfacing in the report.
     """
     rows: list[dict[str, Any]] = []
@@ -514,14 +514,14 @@ def extract_discipline_pairing_matrix(
 ) -> list[dict[str, Any]]:
     """Sheet 4 — primary matrix. Header on R10; data R11+.
 
-    The matrix can extend beyond R27 in v10 (D-008 split into D-008a/D-008b),
-    so the last data row is detected dynamically: scan downward until the
+    The last data row is detected dynamically: scan downward until the
     first row whose col 1 doesn't start with `D-`. Rows after the matrix
     (KEY PAIRING RATIONALE etc.) are commentary, not pairing rows.
 
     Header cells starting with "D-" yield a destination column. Cells whose
     first token doesn't match `D-\\d+[a-z]?` are non-discipline columns and
-    are ignored. This handles `D-008a` / `D-008b` IDs introduced in v10.
+    are ignored. (The `[a-z]?` suffix support is retained for robustness
+    though the v11 R6 renumber removed all suffix ids.)
     """
     rows: list[dict[str, Any]] = []
     rating_map = {
@@ -553,6 +553,13 @@ def extract_discipline_pairing_matrix(
             break
         last_data_row = r
 
+    # Dedupe by (from_id, to_id), first-seen-wins, and skip self-pairs. The
+    # R6 craft collapse maps two former ids onto one survivor (D-008a/b →
+    # D-010, D-022/3 → D-024), so the survivor appears in two header columns
+    # and two from-rows — without this the scanner emits the same canonical
+    # pair twice (UniqueViolation on the discipline_pairing load) and turns the
+    # old off-diagonal cell into a meaningless self-pair (D-010, D-010).
+    seen: set[tuple[str, str]] = set()
     for r in range(11, last_data_row + 1):
         first = _t(ws.cell(row=r, column=1).value)
         if not first:
@@ -565,10 +572,15 @@ def extract_discipline_pairing_matrix(
             to_id = header_ids[c - 1]
             if not to_id:
                 continue
+            if from_id == to_id:
+                continue
+            if (from_id, to_id) in seen:
+                continue
             cell = _t(ws.cell(row=r, column=c).value)
             if not cell:
                 continue
             rating = rating_map.get(cell.upper(), cell.upper())
+            seen.add((from_id, to_id))
             rows.append({
                 "discipline_id_a": from_id,
                 "discipline_id_b": to_id,
@@ -834,12 +846,20 @@ def extract_discipline_substitutes(
         return []
     ws = wb["Discipline Substitution Map"]
     rows: list[dict[str, Any]] = []
+    # Dedupe by (target_id, substitute_id, substitute_name), first-seen-wins,
+    # and skip self-substitutes. The R6 craft collapse maps two former ids onto
+    # one survivor (D-008a/b → D-010), so two source rows can collapse to the
+    # same key (e.g. (D-010, D-011, 'Canoeing')) — without this the load trips
+    # the UNIQUE(target_id, substitute_id, substitute_name, etl_version).
+    seen: set[tuple[str, str, str]] = set()
     for r in range(2, ws.max_row + 1):
         target_id = _t(ws.cell(row=r, column=1).value)
         if not target_id:
             continue
         substitute_id = _t(ws.cell(row=r, column=3).value)
         if not substitute_id:
+            continue
+        if target_id == substitute_id:
             continue
         fidelity = _f(ws.cell(row=r, column=5).value)
         if fidelity is None:
@@ -851,11 +871,16 @@ def extract_discipline_substitutes(
                     "reason": "missing or non-numeric fidelity",
                 })
             continue
+        substitute_name = _t(ws.cell(row=r, column=4).value) or substitute_id
+        key = (target_id, substitute_id, substitute_name)
+        if key in seen:
+            continue
+        seen.add(key)
         rows.append({
             "target_id": target_id,
             "target_name": _t(ws.cell(row=r, column=2).value) or target_id,
             "substitute_id": substitute_id,
-            "substitute_name": _t(ws.cell(row=r, column=4).value) or substitute_id,
+            "substitute_name": substitute_name,
             "fidelity": fidelity,
             "constraints": _t_raw(ws.cell(row=r, column=6).value),
             "category": _t(ws.cell(row=r, column=7).value),

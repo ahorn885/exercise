@@ -133,13 +133,13 @@ def _andy_disciplines() -> list[Layer2ADiscipline]:
     # running + hiking + MTB + packrafting + climbing.
     return [
         _ar_discipline("D-001", weight=0.25),  # Trail Running
-        _ar_discipline("D-011", weight=0.20),  # Hiking
-        _ar_discipline("D-006", weight=0.15),  # MTB
-        _ar_discipline("D-008b", weight=0.15),  # Packrafting (whitewater)
-        _ar_discipline("D-010", weight=0.10),  # Rock Climbing
-        _ar_discipline("D-013", weight=0.05),  # Abseiling
-        _ar_discipline("D-014", weight=0.05, role="Secondary"),  # Strength
-        _ar_discipline("D-005", weight=0.05),  # Long Distance Cycling
+        _ar_discipline("D-013", weight=0.20),  # Hiking
+        _ar_discipline("D-008", weight=0.15),  # MTB
+        _ar_discipline("D-010", weight=0.15),  # Packrafting (whitewater)
+        _ar_discipline("D-012", weight=0.10),  # Rock Climbing
+        _ar_discipline("D-015", weight=0.05),  # Abseiling
+        _ar_discipline("D-016", weight=0.05, role="Secondary"),  # Strength
+        _ar_discipline("D-006", weight=0.05),  # Long Distance Cycling
     ]
 
 

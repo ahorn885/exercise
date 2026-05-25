@@ -165,26 +165,26 @@ _SPORT_PROFILE_CHO_MOD: dict[str, float] = {
 
 # Discipline → endurance profile (§5.3.3) and dominance signal
 # (§5.4.3). v1 ships as code-side data per spec §6.2 promotion
-# candidate. Covers the D-001..D-016 AR set + common D-0xx ids; unknown
+# candidate. Covers the D-001..D-018 AR set + common D-0xx ids; unknown
 # ids default to 'Mixed' for endurance, no contribution to dominance.
 _ENDURANCE_PROFILE: dict[str, str] = {
     "D-001": "Pure endurance",  # Trail Running
     "D-002": "Pure endurance",  # Road Running
     "D-003": "Pure endurance",  # Open Water Swimming
     "D-004": "Pure endurance",  # Distance Cycling
-    "D-005": "Pure endurance",  # Long Distance Cycling
-    "D-006": "Mixed",            # MTB
-    "D-007": "Pure endurance",  # Pool Swimming
-    "D-008a": "Mixed",           # Packrafting (flatwater)
-    "D-008b": "Mixed",           # Packrafting (whitewater)
-    "D-009": "Mixed",            # Skimo
-    "D-010": "Technical",        # Rock Climbing
-    "D-011": "Pure endurance",  # Hiking
-    "D-012": "Pure endurance",  # Ski touring
-    "D-013": "Technical",        # Abseiling
-    "D-014": "Strength",         # Strength
-    "D-015": "Mixed",            # Yoga / Mobility
-    "D-016": "Pure endurance",  # Indoor Cardio
+    "D-006": "Pure endurance",  # Long Distance Cycling
+    "D-008": "Mixed",            # MTB
+    "D-009": "Pure endurance",  # Pool Swimming
+    "D-010": "Mixed",           # Packrafting (flatwater)
+    "D-010": "Mixed",           # Packrafting (whitewater)
+    "D-011": "Mixed",            # Skimo
+    "D-012": "Technical",        # Rock Climbing
+    "D-013": "Pure endurance",  # Hiking
+    "D-014": "Pure endurance",  # Ski touring
+    "D-015": "Technical",        # Abseiling
+    "D-016": "Strength",         # Strength
+    "D-017": "Mixed",            # Yoga / Mobility
+    "D-018": "Pure endurance",  # Indoor Cardio
 }
 
 # Discipline → sport-profile dominance signal (§5.4.3). Used by
@@ -194,22 +194,22 @@ _DISCIPLINE_PROFILE_VOTE: dict[str, str] = {
     "D-002": "running",
     "D-003": "swimming",
     "D-004": "cycling",
-    "D-005": "cycling",
     "D-006": "cycling",
-    "D-007": "swimming",
-    "D-008a": "paddling",
-    "D-008b": "paddling",
-    "D-009": "skimo",
-    "D-010": "multi_sport",      # rock climbing contributes to multi-sport bias
-    "D-011": "running",           # hiking — running-profile metabolic load
-    "D-012": "skimo",
-    "D-013": "multi_sport",
-    "D-014": "multi_sport",       # strength → no single endurance discipline
+    "D-008": "cycling",
+    "D-009": "swimming",
+    "D-010": "paddling",
+    "D-010": "paddling",
+    "D-011": "skimo",
+    "D-012": "multi_sport",      # rock climbing contributes to multi-sport bias
+    "D-013": "running",           # hiking — running-profile metabolic load
+    "D-014": "skimo",
     "D-015": "multi_sport",
-    "D-016": "cycling",           # indoor cardio default to cycling-like GI profile
+    "D-016": "multi_sport",       # strength → no single endurance discipline
+    "D-017": "multi_sport",
+    "D-018": "cycling",           # indoor cardio default to cycling-like GI profile
 }
 
-_STRENGTH_DOMINANT_IDS: frozenset[str] = frozenset({"D-014"})
+_STRENGTH_DOMINANT_IDS: frozenset[str] = frozenset({"D-016"})
 
 # §5.4.4 deployed → spec salt_tolerance translation.
 _SALT_TOLERANCE_NORM: dict[str | None, str | None] = {

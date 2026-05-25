@@ -174,7 +174,7 @@ def load_race_event_payload(db, race_event_id: int) -> RaceEventPayload | None:
 
     # included_discipline_ids: psycopg2's TEXT[] adapter returns list[str],
     # or None for NULL. The sqlite shim path stringifies as PG array literal
-    # ('{D-001,D-008b}') which we don't tolerate here — sqlite path is only
+    # ('{D-001,D-010}') which we don't tolerate here — sqlite path is only
     # used by the _FakeConn substrate in tests, which sets the field directly
     # as list[str] | None.
     raw_disc_filter = race_row["included_discipline_ids"]

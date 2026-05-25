@@ -42,7 +42,7 @@ CREATE TABLE IF NOT EXISTS layer0.discipline_technique_foci (
   description                 TEXT        NOT NULL,
 
   -- Selection criteria — Layer 4 filters foci by these
-  discipline_ids              TEXT[]      NOT NULL,                    -- e.g. {'D-007','D-008a'}
+  discipline_ids              TEXT[]      NOT NULL,                    -- e.g. {'D-009','D-010'}
   applicable_session_types    TEXT[],                                  -- NULL = all session types
   applicable_terrain_ids      TEXT[],                                  -- NULL = all terrains for the discipline
   required_equipment          TEXT[],                                  -- canonical_name in equipment_items; NULL = none beyond what discipline implies

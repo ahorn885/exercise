@@ -57,10 +57,10 @@ _SUB_FORMAT_SPORTS: frozenset[str] = frozenset({
 
 _REQUIRED_ETL_KEYS: frozenset[str] = frozenset({"0A", "0B", "0C"})
 
-# Conditional-rule constants per spec §5.3.
-_AR_DURATION_THRESHOLD_HOURS: float = 20.0
-_WHITEWATER_DISCIPLINE_ID: str = "D-008b"
-_NAV_DISCIPLINE_ID: str = "D-013"
+# Conditional-rule constants per spec §5.3. (The R6 collapse retired the
+# whitewater-kayak conditional — D-008a/b merged into the ordinary D-010
+# Kayaking discipline; only the navigation conditional remains.)
+_NAV_DISCIPLINE_ID: str = "D-015"
 
 # §8.3 override-divergence flag fires when |ov - default| / default > 0.5
 # (relative divergence; matches the spec example where 25 vs default 15
@@ -272,10 +272,7 @@ def _resolve_conditional(
     `(inclusion, conditional_resolution)`.
 
     - Unconditional → `('included', None)`.
-    - Conditional D-008b (whitewater): in if duration >= 20h OR athlete
-      opt-in via overrides[discipline_id]['included'] is True; out if
-      duration is known and < 20h; otherwise prompt_required.
-    - Conditional D-013 (nav): in if `navigation_required=True`; out if
+    - Conditional D-015 (nav): in if `navigation_required=True`; out if
       False; prompt_required if None.
     - Other conditional: prompt_required (athlete opt-in) unless overrides
       explicitly include/exclude.
@@ -292,13 +289,6 @@ def _resolve_conditional(
         return ("included" if ov["included"] else "excluded", "athlete_opt_in")
 
     # Race-rule driven resolution.
-    if discipline_id == _WHITEWATER_DISCIPLINE_ID:
-        if race_duration_hours is None:
-            return ("prompt_required", "athlete_opt_in")
-        if race_duration_hours >= _AR_DURATION_THRESHOLD_HOURS:
-            return ("included", "race_rule_auto_in")
-        return ("excluded", "race_rule_auto_out")
-
     if discipline_id == _NAV_DISCIPLINE_ID:
         if navigation_required is None:
             return ("prompt_required", "athlete_opt_in")
@@ -371,16 +361,6 @@ def _render_rationale(
     if inclusion == "excluded":
         if (
             conditional_resolution == "race_rule_auto_out"
-            and discipline_id == _WHITEWATER_DISCIPLINE_ID
-            and race_duration_hours is not None
-        ):
-            text = (
-                f"{name} is not included for this event. Race duration "
-                f"({_fmt_hours(race_duration_hours)}h) is below the "
-                f"{int(_AR_DURATION_THRESHOLD_HOURS)}h threshold that brings this discipline in."
-            )
-        elif (
-            conditional_resolution == "race_rule_auto_out"
             and discipline_id == _NAV_DISCIPLINE_ID
         ):
             text = (
@@ -432,12 +412,7 @@ def _render_rationale(
 
     # Conditional auto-in → explain why it's in.
     if conditional_resolution == "race_rule_auto_in":
-        if discipline_id == _WHITEWATER_DISCIPLINE_ID and race_duration_hours is not None:
-            text += (
-                f" Included because race duration ({_fmt_hours(race_duration_hours)}h) "
-                f"meets the {int(_AR_DURATION_THRESHOLD_HOURS)}h threshold."
-            )
-        elif discipline_id == _NAV_DISCIPLINE_ID and navigation_required:
+        if discipline_id == _NAV_DISCIPLINE_ID and navigation_required:
             text += " Included because navigation is required for this event."
 
     return _append_sport_context(text, row)
@@ -501,30 +476,7 @@ def _emit_coaching_flags(
 
         # §8.2 — conditional auto-resolved (in or out)
         if d.conditional_resolution in ("race_rule_auto_in", "race_rule_auto_out"):
-            if d.discipline_id == _WHITEWATER_DISCIPLINE_ID:
-                hours_display = (
-                    _fmt_hours(race_duration_hours)
-                    if race_duration_hours is not None
-                    else "unknown"
-                )
-                if d.conditional_resolution == "race_rule_auto_in":
-                    msg = (
-                        f"{d.discipline_name} included because race duration "
-                        f"{hours_display}h meets the "
-                        f"{int(_AR_DURATION_THRESHOLD_HOURS)}h threshold."
-                    )
-                else:
-                    msg = (
-                        f"{d.discipline_name} excluded because race duration "
-                        f"{hours_display}h is below the "
-                        f"{int(_AR_DURATION_THRESHOLD_HOURS)}h threshold."
-                    )
-                meta = {
-                    "rule": "duration_threshold",
-                    "threshold": _AR_DURATION_THRESHOLD_HOURS,
-                    "value": race_duration_hours,
-                }
-            elif d.discipline_id == _NAV_DISCIPLINE_ID:
+            if d.discipline_id == _NAV_DISCIPLINE_ID:
                 if d.conditional_resolution == "race_rule_auto_in":
                     msg = (
                         f"{d.discipline_name} included because navigation is "
@@ -683,19 +635,11 @@ def q_layer2a_discipline_classifier_payload(
             estimated_race_duration_hours,
             navigation_required,
         )
-        # Sleep-deprivation relevance: D-013 (nav) always; D-008b only when
-        # included via long-duration race rule (multi-day events). Spec
-        # §8 doesn't enumerate a closed list, so v1 keeps the surface
-        # narrow — the rationale text covers the athlete-facing message
-        # and downstream layers can read the flag.
-        sleep_dep_relevant = (
-            row["discipline_id"] == _NAV_DISCIPLINE_ID
-            or (
-                row["discipline_id"] == _WHITEWATER_DISCIPLINE_ID
-                and inclusion == "included"
-                and conditional_resolution == "race_rule_auto_in"
-            )
-        )
+        # Sleep-deprivation relevance: D-015 (nav) always. Spec §8 doesn't
+        # enumerate a closed list, so v1 keeps the surface narrow — the
+        # rationale text covers the athlete-facing message and downstream
+        # layers can read the flag.
+        sleep_dep_relevant = row["discipline_id"] == _NAV_DISCIPLINE_ID
         disciplines.append(
             Layer2ADiscipline(
                 discipline_id=row["discipline_id"],

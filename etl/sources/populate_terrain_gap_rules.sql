@@ -350,7 +350,7 @@ INSERT INTO layer0.terrain_gap_rules (
     'Alpine descent is flagged separately as an unbridgeable gap — see note. '
     'Single-leg strength work partially compensates for descent quad demand.',
   'Uphill skinning proxy: stair climber with poles replicates ~70% of skinning metabolic load '
-    '(Fabre et al. 2012, Eur J Appl Physiol). Descent skill: D-020 training gap explicitly documented '
+    '(Fabre et al. 2012, Eur J Appl Physiol). Descent skill: D-022 training gap explicitly documented '
     'in discipline_training_gaps — no off-snow substitute validated. '
     'Proxy fidelity 0.30 reflects uphill-only coverage.',
   '0C-v2.0-r2', NOW() ),
@@ -387,9 +387,9 @@ INSERT INTO layer0.terrain_gap_rules (
   'No climbing access — general pulling strength is the only available prep. '
     'This does not constitute climbing preparation. '
     'If race includes a climbing leg, strongly recommend sourcing at minimum a climbing gym '
-    'membership before the race. Reference discipline_training_gaps for D-010.',
+    'membership before the race. Reference discipline_training_gaps for D-012.',
   'No discipline-level substitute for climbing skill exists without actual climbing surface. '
-    'See discipline_training_gaps D-010 (Rock Climbing outdoor). '
+    'See discipline_training_gaps D-012 (Rock Climbing outdoor). '
     'Proxy fidelity 0.00 — general strength is not climbing preparation.',
   '0C-v2.0-r2', NOW() )
 

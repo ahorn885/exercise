@@ -48,7 +48,7 @@ INSERT INTO layer0.discipline_technique_foci (
 
 ( 'TF-001', 'Navigation under movement',
   'Run-navigate or walk-navigate simultaneously: fold map to the current section, thumb on position; when on bearing, pick an attack point ~200m ahead and travel to it without looking down repeatedly. Start slow to build the dual-task habit; speed comes after error rate drops.',
-  ARRAY['D-013','D-001'], NULL, NULL,
+  ARRAY['D-015','D-001'], NULL, NULL,
   NULL, NULL,
   'any', 'Critical',
   'Early in plan and reinforced before navigation-critical sessions and races.',
@@ -60,7 +60,7 @@ INSERT INTO layer0.discipline_technique_foci (
 
 ( 'TF-002', 'MTB cornering technique',
   'Outside pedal down and weighted; lean the bike, not the body; look through the corner to the exit. Start slow on known corners until the line is automatic before adding speed.',
-  ARRAY['D-006'], NULL,
+  ARRAY['D-008'], NULL,
   ARRAY['TRN-002','TRN-003','TRN-015'],
   ARRAY['Mountain bike'], NULL,
   'any', 'Standard',
@@ -71,7 +71,7 @@ INSERT INTO layer0.discipline_technique_foci (
 
 ( 'TF-003', 'MTB pump track / trail-feature technique',
   'Generate speed from terrain without pedaling, using body-weight shift to pump rolls and absorb features. Builds rhythm for efficient riding on natural trail.',
-  ARRAY['D-006'], NULL,
+  ARRAY['D-008'], NULL,
   ARRAY['TRN-015','TRN-003'],
   ARRAY['Mountain bike'], NULL,
   'any', 'Standard',
@@ -84,7 +84,7 @@ INSERT INTO layer0.discipline_technique_foci (
 
 ( 'TF-004', 'Climbing movement (footwork, body position, flagging, mantling, rest)',
   'Footwork and body position are the highest-return skills — climbing is mostly legs, not arms. Look before placing each foot. Flag inside or outside leg to counter barn-door swing. Mantle by pushing down on the ledge and locking off to stand. Find the most straight-arm rest position possible, shift weight onto feet, and shake from the shoulder for 30–60s before crux moves. (Mantling cue: monitor wrist extension flag — relevant to Andy''s active wrist injury.)',
-  ARRAY['D-010'], NULL,
+  ARRAY['D-012'], NULL,
   ARRAY['TRN-013','TRN-014'],
   NULL, NULL,
   'any', 'Critical',
@@ -95,7 +95,7 @@ INSERT INTO layer0.discipline_technique_foci (
 
 ( 'TF-005', 'Climbing rope-and-device handling (belay, rappel, descent)',
   'Practice PBUS belay (pull, brake, under, slide) to automaticity — belaying under fatigue is a safety issue. Rappel: practice slow controlled lowering in brake mode before committing; GriGri rappel mode differs from belay mode — practice explicitly; brake hand stays below the device at all times. Wall-walk descent: feet flat on wall (not tiptoes), hips square, slight lean back against harness tension; the instinct to lean in must be overridden.',
-  ARRAY['D-010','D-011','D-012'], NULL,
+  ARRAY['D-012','D-013','D-014'], NULL,
   ARRAY['TRN-013','TRN-014'],
   ARRAY['Climbing gear'], 'Climbing — roped',
   'any', 'Critical',
@@ -108,7 +108,7 @@ INSERT INTO layer0.discipline_technique_foci (
 
 ( 'TF-006', 'Trekking pole uphill push',
   'Drive poles behind the hip for propulsion; don''t reach forward. Doubles per-pole output. Trains the active plant that most hikers skip.',
-  ARRAY['D-001','D-003','D-022'], NULL,
+  ARRAY['D-001','D-003','D-024'], NULL,
   ARRAY['TRN-004','TRN-005'],
   ARRAY['Trekking Poles'], NULL,
   'any', 'Standard',
@@ -119,7 +119,7 @@ INSERT INTO layer0.discipline_technique_foci (
 
 ( 'TF-007', 'Trekking pole descent braking',
   'On descents, plant poles ahead to transfer load from knees to arms; shorten poles for descent. Measurably reduces knee fatigue under pack on long descents.',
-  ARRAY['D-001','D-003','D-023'], NULL,
+  ARRAY['D-001','D-003','D-024'], NULL,
   ARRAY['TRN-004','TRN-005'],
   ARRAY['Trekking Poles'], NULL,
   'any', 'Standard',
@@ -142,7 +142,7 @@ INSERT INTO layer0.discipline_technique_foci (
 
 ( 'TF-009', 'Pack fit optimization',
   '80% of load on the hip belt; 20% on the shoulders; sternum strap for stability, not load. Adjust every 30–60 min in race conditions as the body and pack settle.',
-  ARRAY['D-001','D-003','D-013','D-015','D-016','D-019'], NULL, NULL,
+  ARRAY['D-001','D-003','D-015','D-017','D-018','D-021'], NULL, NULL,
   ARRAY['Backpack'], NULL,
   'any', 'Critical',
   'Race week and any session > 3h with pack; revisit when pack contents change.',
@@ -152,7 +152,7 @@ INSERT INTO layer0.discipline_technique_foci (
 
 ( 'TF-010', 'Hike-a-bike carry',
   'Carry the bike on the shoulder (top tube) or push-drag depending on terrain angle. Practice the clip-out and dismount sequence to automatic — in AR, hike-a-bike sections often decide races; the athlete who transitions cleanly gains minutes.',
-  ARRAY['D-006'], NULL, NULL,
+  ARRAY['D-008'], NULL, NULL,
   ARRAY['Mountain bike','Backpack'], NULL,
   'any', 'Standard',
   'Build and Peak phases when course profile includes hike-a-bike sections.',
@@ -164,18 +164,18 @@ INSERT INTO layer0.discipline_technique_foci (
 
 ( 'TF-011', 'Crampon walking technique',
   'French technique (flat-foot) on moderate angles — all points contact simultaneously. Front-pointing on steep ice — front two points only; calf demand increases sharply. Kick each step deliberately on hard surfaces.',
-  ARRAY['D-016','D-019'], NULL,
+  ARRAY['D-018','D-021'], NULL,
   ARRAY['TRN-005','TRN-012'],
   ARRAY['Mountaineering kit'], NULL,
   'intermediate', 'Critical',
   'Before any glacier or crampon-travel session; refresh whenever there''s a layoff > season.',
   ARRAY['EX148'],
-  'Skill prerequisite for D-016 sessions.',
+  'Skill prerequisite for D-018 sessions.',
   '0B-v19.B', NOW() ),
 
 ( 'TF-012', 'Ice axe self-arrest',
   'Safety-critical. Practice from multiple starting positions (head-up face-down, head-down face-up, face-up). Arrest position: pick into the slope, adze near the cheek, weight on toes and pick. Build to automaticity.',
-  ARRAY['D-016'], NULL,
+  ARRAY['D-018'], NULL,
   ARRAY['TRN-012'],
   ARRAY['Mountaineering kit'], NULL,
   'intermediate', 'Critical',
@@ -188,7 +188,7 @@ INSERT INTO layer0.discipline_technique_foci (
 
 ( 'TF-013', 'Snowshoe gait technique (multi-cue)',
   'Slightly wider stance than normal walking; lift each snowshoe clear of the other rather than dragging; poles provide rhythm and reduce leg load 20–30% on ascent. Plunge step on descent: heel-first strike, drive heel into slope, poles planted slightly ahead. Sidehill: edge the uphill frame into the slope; kickturn (180° reversal) requires removing the uphill snowshoe — practice before steep terrain. Post-hole recovery: high knee lift to clear hole, minimize knee twisting on extract; pace down immediately — post-holing is 4–6× the energy cost of hard-pack walking.',
-  ARRAY['D-015'], NULL,
+  ARRAY['D-017'], NULL,
   ARRAY['TRN-012'],
   ARRAY['Snowshoes'], NULL,
   'any', 'Standard',
@@ -201,7 +201,7 @@ INSERT INTO layer0.discipline_technique_foci (
 
 ( 'TF-014', 'Flatwater paddle stroke technique (forward, sweep, draw/pry)',
   'Forward stroke: rotate torso to plant the paddle near the feet; unwind torso to drive — not arms; exit at the hip. Highest-return technical improvement in paddling. Sweep stroke: full arc bow-to-stern (kayak) or bow-to-mid-ship (canoe); torso rotation drives arc, not arm reach. Draw: plant blade parallel to boat, pull water under hull toward the paddle. Pry: lever blade off gunwale to push boat away. Both draw and pry are lateral boat control — essential for docking, eddying, and avoiding obstacles.',
-  ARRAY['D-007','D-008a','D-009'], NULL,
+  ARRAY['D-009','D-010','D-011'], NULL,
   ARRAY['TRN-008','TRN-009'],
   NULL, NULL,
   'any', 'Critical',
@@ -212,7 +212,7 @@ INSERT INTO layer0.discipline_technique_foci (
 
 ( 'TF-015', 'Moving-water paddle technique (brace, ferry, eddy turn)',
   'Brace: keep elbow below wrist in high brace; low brace preferred when possible — most paddling shoulder injuries come from poor brace mechanics. Ferry: cross current at upstream angle to move laterally without losing ground. Eddy turn: hit eddy line at speed, lean and look into eddy, let current pivot the bow — upriver lean on the eddy line is a flip risk; downriver lean is correct.',
-  ARRAY['D-007','D-008b','D-009','D-017'], NULL,
+  ARRAY['D-009','D-010','D-011','D-019'], NULL,
   ARRAY['TRN-011','TRN-017'],
   NULL, NULL,
   'intermediate', 'Critical',
@@ -223,7 +223,7 @@ INSERT INTO layer0.discipline_technique_foci (
 
 ( 'TF-016', 'Eskimo roll',
   'Hip snap drives the roll, not the arms; C-to-C or sweep roll. Not required for packraft but valuable for rescue confidence in any decked craft.',
-  ARRAY['D-008a','D-008b'], NULL,
+  ARRAY['D-010'], NULL,
   ARRAY['TRN-008','TRN-009'],
   ARRAY['Kayak'], NULL,
   'intermediate', 'Standard',
@@ -234,7 +234,7 @@ INSERT INTO layer0.discipline_technique_foci (
 
 ( 'TF-017', 'Packraft inflation / deflation drill',
   'Timed practice for transition efficiency: oral inflation vs pump bag; deflation, fold, and pack. Time is lost at packraft transitions — train this until it''s automatic.',
-  ARRAY['D-007'], NULL, NULL,
+  ARRAY['D-009'], NULL, NULL,
   ARRAY['Packraft'], NULL,
   'any', 'Standard',
   'Early in plan and again in race week; reinforces transition efficiency.',
@@ -246,7 +246,7 @@ INSERT INTO layer0.discipline_technique_foci (
 
 ( 'TF-018', 'Whitewater line reading',
   'Scout from high ground if possible. Identify entry point, line through rapid, and exit eddy. Read water-surface features: V-shapes point downstream-safe lines; pillows indicate submerged rocks; pour-overs show as horizon lines.',
-  ARRAY['D-007','D-008b','D-017'], NULL,
+  ARRAY['D-009','D-010','D-019'], NULL,
   ARRAY['TRN-011'],
   NULL, NULL,
   'intermediate', 'Critical',
@@ -257,7 +257,7 @@ INSERT INTO layer0.discipline_technique_foci (
 
 ( 'TF-019', 'Multi-person raft coordination (high-side + paddle sync)',
   'Safety-critical. High-side: move body weight immediately to the downstream tube when the raft is wrapping — a delayed response lets the current pin the raft. Paddle sync: guide calls stroke rate; all blades enter simultaneously; power phase is short and vertical, not a long sweep. Synchronisation at 70% effort outperforms individual 100% effort at different timing.',
-  ARRAY['D-017'], NULL,
+  ARRAY['D-019'], NULL,
   ARRAY['TRN-011'],
   NULL, NULL,
   'intermediate', 'Critical',
@@ -268,7 +268,7 @@ INSERT INTO layer0.discipline_technique_foci (
 
 ( 'TF-020', 'Surf zone entry / exit (sea kayak)',
   'Time entry to paddle out between sets; punch through waves bow-first with forward momentum. On exit: surf the wave straight, exit on the beach before the wave recedes. In AR ocean legs, surf-zone entry and exit are decisive — most capsizes happen here.',
-  ARRAY['D-008a'], NULL,
+  ARRAY['D-010'], NULL,
   ARRAY['TRN-010'],
   ARRAY['Kayak'], NULL,
   'intermediate', 'Standard',
@@ -281,7 +281,7 @@ INSERT INTO layer0.discipline_technique_foci (
 
 ( 'TF-021', 'Canoe tandem coordination',
   'Bow sets the pace; stern matches and steers. Call stroke changes before executing; practice side switches on command (hut-hut call). Synchronised power is 15–20% more efficient than asynchronous paddling.',
-  ARRAY['D-009'], NULL, NULL,
+  ARRAY['D-011'], NULL, NULL,
   ARRAY['Canoe'], NULL,
   'any', 'Standard',
   'In any tandem-canoe block; race week for events with mandatory tandem segments.',
@@ -291,7 +291,7 @@ INSERT INTO layer0.discipline_technique_foci (
 
 ( 'TF-022', 'Canoe portage yoke carry',
   'Centre the yoke precisely on the cervical vertebrae — off-centre causes neck muscle strain. Solo tipping technique requires a gunwale flick from a low position. Vision is obstructed under the canoe — short steps, scan ground before moving.',
-  ARRAY['D-009'], NULL, NULL,
+  ARRAY['D-011'], NULL, NULL,
   ARRAY['Canoe'], NULL,
   'any', 'Standard',
   'Pre-race for events with mandatory portage; reinforce in canoeing Base if portages are part of the discipline profile.',
@@ -303,7 +303,7 @@ INSERT INTO layer0.discipline_technique_foci (
 
 ( 'TF-023', 'Open-water swim technique (sighting + bilateral breathing)',
   'Sighting: lift eyes just above the water surface (crocodile eyes, not chin) every 6–10 strokes; sight on inhale side; pick a large target, not a buoy. Bilateral breathing: every 3 strokes alternating sides; builds symmetrical stroke and allows sighting from either side. Mandatory if current or wind pushes from one direction.',
-  ARRAY['D-004','D-014','D-018'], NULL,
+  ARRAY['D-004','D-016','D-020'], NULL,
   ARRAY['TRN-008','TRN-009','TRN-010'],
   NULL, NULL,
   'any', 'Critical',
@@ -314,7 +314,7 @@ INSERT INTO layer0.discipline_technique_foci (
 
 ( 'TF-024', 'SwimRun water entry / exit technique',
   'Entry: run to water''s edge at pace, assess depth quickly, transition to dolphin dive or high-step wade depending on depth — never dive without knowing the bottom; SwimRun venues often have rocky shallow entries. Exit: time exit to incoming wave, plant feet, drive forward into the run, transition gear (if any) on the move.',
-  ARRAY['D-018'], NULL,
+  ARRAY['D-020'], NULL,
   ARRAY['TRN-010','TRN-009'],
   NULL, NULL,
   'any', 'Critical',
@@ -327,7 +327,7 @@ INSERT INTO layer0.discipline_technique_foci (
 
 ( 'TF-025', 'Ski uphill technique & race transition (kick-turn + skin-mode change)',
   'Kick-turn: plant uphill pole; lift and swing uphill ski 180° first — place it pointed opposite direction; transfer weight; swing downhill ski to match. Common error is rushing and catching a ski tip — causes falls. Race transition sequence: skin removal (fold glue-to-glue to preserve adhesive), ski crampon attach or remove, boot buckle mode change (walk to ski or reverse), pole basket swap if required. Time the full sequence repeatedly.',
-  ARRAY['D-019','D-021'], NULL,
+  ARRAY['D-021','D-023'], NULL,
   ARRAY['TRN-012'],
   ARRAY['Touring ski kit'], NULL,
   'intermediate', 'Critical',
@@ -338,7 +338,7 @@ INSERT INTO layer0.discipline_technique_foci (
 
 ( 'TF-026', 'Ski descent technique & lateral edge control',
   'Touring skis are lighter and less damp than resort skis — they react faster to terrain changes. Lean forward into the boot cuff; weight on downhill ski; short-radius turns on steep terrain. Edge control: traverse on uphill edges; practice lateral weight shift edge-to-edge without skidding. SkiMo edging demand is more about secure footing on traverses than about carved turns.',
-  ARRAY['D-020','D-021'], NULL,
+  ARRAY['D-022','D-023'], NULL,
   ARRAY['TRN-012'],
   ARRAY['Touring ski kit'], NULL,
   'intermediate', 'Critical',
@@ -351,7 +351,7 @@ INSERT INTO layer0.discipline_technique_foci (
 
 ( 'TF-027', 'Brick-run pacing adaptation (bike-to-run)',
   'Ride 20–60 min then immediately run 10–20 min without rest. The first 3–8 min of the run feel like running with concrete legs — this is normal and trainable. Shorten stride initially, increase cadence; let HR and biomechanics catch up before pushing pace.',
-  ARRAY['D-001','D-002','D-005'], NULL, NULL,
+  ARRAY['D-001','D-002','D-006'], NULL, NULL,
   NULL, NULL,
   'any', 'Standard',
   'Build and Peak phases for any bike-to-run race format; race-week dress rehearsal.',
@@ -361,7 +361,7 @@ INSERT INTO layer0.discipline_technique_foci (
 
 ( 'TF-028', 'Triathlon transition practice (T1 & T2)',
   'T1 sequence: exit water, wetsuit strip (pull cord at neck, peel to waist, step out), run to bike, helmet on and buckled before touching bike, shoes on (or run in socks to mount), mount line. T2 sequence: dismount line, rack bike, helmet off, run shoes on, exit. Time the full sequence repeatedly until the order is automatic.',
-  ARRAY['D-002','D-005','D-014'], NULL, NULL,
+  ARRAY['D-002','D-006','D-016'], NULL, NULL,
   NULL, NULL,
   'any', 'Standard',
   'Race week; reinforce when transition layout changes.',
@@ -371,7 +371,7 @@ INSERT INTO layer0.discipline_technique_foci (
 
 ( 'TF-029', 'Laser-Run transition (run-to-shoot)',
   'Run 800m–1km at race effort (RPE 8–9), then immediately attempt 5 shots on target. The format requires managing HR recovery at the firing line — not resting until precise, but shooting while elevated. Practice the breath-and-trigger rhythm under load.',
-  ARRAY['D-001','D-025'], NULL, NULL,
+  ARRAY['D-001','D-026'], NULL, NULL,
   NULL, NULL,
   'intermediate', 'Critical',
   'Throughout Modern Pentathlon prep; race-week refresh.',
@@ -383,7 +383,7 @@ INSERT INTO layer0.discipline_technique_foci (
 
 ( 'TF-030', 'Running with poles (trail / ultra)',
   'Distinct from hiking pole technique (TF-006/007) which is at walking pace — running with poles requires faster plant rhythm, shorter swing arc, and higher cadence coordination with stride. Plant beside foot, not ahead.',
-  ARRAY['D-001','D-022','D-023'], NULL,
+  ARRAY['D-001','D-024'], NULL,
   ARRAY['TRN-002','TRN-003','TRN-004','TRN-005'],
   ARRAY['Trekking Poles'], NULL,
   'intermediate', 'Standard',
@@ -394,7 +394,7 @@ INSERT INTO layer0.discipline_technique_foci (
 
 ( 'TF-031', 'Road cycling descending technique',
   'Distinct from MTB descending — road descending is higher speed, no suspension, smooth surface. Tuck low with elbows bent, weight back behind saddle, look well ahead. Brake before corners, not in them.',
-  ARRAY['D-005','D-005a'], NULL,
+  ARRAY['D-006','D-007'], NULL,
   ARRAY['TRN-001','TRN-004','TRN-005'],
   ARRAY['Road bike'], NULL,
   'any', 'Standard',
@@ -405,7 +405,7 @@ INSERT INTO layer0.discipline_technique_foci (
 
 ( 'TF-032', 'Obstacle vault & wall traversal',
   'Speed vault (lazy vault): lead hand on obstacle, swing both legs to the same side. Safety vault: both hands, both legs together over. Wall: jump to grab the top, press body up using triceps and hip-flexor pull-up, swing legs over.',
-  ARRAY['D-026'], NULL, NULL,
+  ARRAY['D-027'], NULL, NULL,
   ARRAY['Plyo box'], NULL,
   'intermediate', 'Standard',
   'OCR / Modern Pentathlon prep blocks.',
@@ -425,7 +425,7 @@ INSERT INTO layer0.discipline_technique_foci (
 
 ( 'TF-034', 'Scrambling technique (moving over rocky terrain)',
   'Scrambling bridges trail running and rock climbing: moving through steep terrain using hands for balance and upward progress, not ascending a single route. Distinct from hiking by the hand contact; distinct from climbing by the locomotive intent. Three points of contact at all times in committing terrain. Plan two moves ahead — find the next hand and foot before moving the current one.',
-  ARRAY['D-001','D-003','D-016','D-022'], NULL,
+  ARRAY['D-001','D-003','D-018','D-024'], NULL,
   ARRAY['TRN-005','TRN-007'],
   NULL, NULL,
   'intermediate', 'Standard',
@@ -436,7 +436,7 @@ INSERT INTO layer0.discipline_technique_foci (
 
 ( 'TF-035', 'Technical descent on loose / uneven terrain (scree + fell)',
   'Scree running requires committing to movement the brain resists — the surface moves under you, and that''s the technique, not the enemy; lean slightly back, weight on heels, let feet sink and slide with each stride. Fell descent (steep grass, bog, heather) is categorically different — heel-planting rather than forefoot striking; the heel digs in for grip; lean forward slightly more than instinct says. Both share: short controlled strides, wide arms for balance, scan terrain 3–5 strides ahead.',
-  ARRAY['D-001','D-023'], NULL,
+  ARRAY['D-001','D-024'], NULL,
   ARRAY['TRN-005','TRN-006','TRN-007'],
   NULL, NULL,
   'intermediate', 'Standard',

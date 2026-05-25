@@ -33,13 +33,13 @@
 -- Data population (this script):
 --   Three active toggle rows updated. Mapping per Vocabulary_Audit_v2.md
 --   §4.2 + §6 (Vocab Audit Section 1 + Section 4) + Layer2A spec discipline
---   IDs (D-010 Rock Climbing, D-011 Abseiling, D-015 Snowshoeing):
+--   IDs (D-012 Rock Climbing, D-013 Abseiling, D-017 Snowshoeing):
 --
 --     toggle_name              | also_satisfies                | gated_discipline_ids
 --     -------------------------|-------------------------------|---------------------
---     Climbing — roped         | {'Rappelling / abseiling'}    | {'D-010'}
---     Rappelling / abseiling   | {}                            | {'D-011'}
---     Snowshoeing setup        | {}                            | {'D-015'}
+--     Climbing — roped         | {'Rappelling / abseiling'}    | {'D-012'}
+--     Rappelling / abseiling   | {}                            | {'D-013'}
+--     Snowshoeing setup        | {}                            | {'D-017'}
 --
 --   Other toggles (ski setups, paddle, MTB, etc.) ship with empty lists
 --   for both fields. Populate further as new sports come online.
@@ -66,19 +66,19 @@ ALTER TABLE layer0.sport_specific_gear_toggles
 
 UPDATE layer0.sport_specific_gear_toggles
    SET also_satisfies       = ARRAY['Rappelling / abseiling'],
-       gated_discipline_ids = ARRAY['D-010']
+       gated_discipline_ids = ARRAY['D-012']
  WHERE toggle_name  = 'Climbing — roped'
    AND superseded_at IS NULL;
 
 UPDATE layer0.sport_specific_gear_toggles
    SET also_satisfies       = ARRAY[]::TEXT[],
-       gated_discipline_ids = ARRAY['D-011']
+       gated_discipline_ids = ARRAY['D-013']
  WHERE toggle_name  = 'Rappelling / abseiling'
    AND superseded_at IS NULL;
 
 UPDATE layer0.sport_specific_gear_toggles
    SET also_satisfies       = ARRAY[]::TEXT[],
-       gated_discipline_ids = ARRAY['D-015']
+       gated_discipline_ids = ARRAY['D-017']
  WHERE toggle_name  = 'Snowshoeing setup'
    AND superseded_at IS NULL;
 

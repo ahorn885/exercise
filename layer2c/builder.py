@@ -557,8 +557,8 @@ def _emit_coaching_flags(
     # §8.3 first — emit BEFORE 5.2 query semantically per spec
     # (deterministic regardless of resolution outcome). DP2 = (b): we
     # read `gated_discipline_ids` from the toggle row directly. A
-    # toggle whose row carries gated_discipline_ids = ['D-010'] fires
-    # this flag for D-010 whenever the toggle is OFF in the cluster
+    # toggle whose row carries gated_discipline_ids = ['D-012'] fires
+    # this flag for D-012 whenever the toggle is OFF in the cluster
     # state. Toggles absent from `cluster_gear_toggle_states` are
     # treated as OFF (matches the spec semantics — UI carries 12
     # canonical toggles).

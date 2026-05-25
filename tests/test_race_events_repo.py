@@ -1271,12 +1271,12 @@ class TestIncludedDisciplineIdsOverride:
     def test_load_payload_populates_included_discipline_ids_when_present(self):
         conn = _FakeConn()
         conn.queue_response(
-            row=_race_row(included_discipline_ids=["D-001", "D-008b", "D-013"])
+            row=_race_row(included_discipline_ids=["D-001", "D-010", "D-015"])
         )
         conn.queue_response(rows=[])
         payload = load_race_event_payload(conn, race_event_id=10)
         assert payload is not None
-        assert payload.included_discipline_ids == ["D-001", "D-008b", "D-013"]
+        assert payload.included_discipline_ids == ["D-001", "D-010", "D-015"]
 
     def test_load_payload_defaults_included_discipline_ids_to_none(self):
         conn = _FakeConn()
@@ -1291,12 +1291,12 @@ class TestIncludedDisciplineIdsOverride:
         # the repo coerces to list[str] for downstream equality.
         conn = _FakeConn()
         conn.queue_response(
-            row=_race_row(included_discipline_ids=("D-001", "D-013"))
+            row=_race_row(included_discipline_ids=("D-001", "D-015"))
         )
         conn.queue_response(rows=[])
         payload = load_race_event_payload(conn, race_event_id=10)
         assert payload is not None
-        assert payload.included_discipline_ids == ["D-001", "D-013"]
+        assert payload.included_discipline_ids == ["D-001", "D-015"]
 
     def test_create_passes_included_discipline_ids_kwarg(self):
         conn = _FakeConn()
@@ -1307,12 +1307,12 @@ class TestIncludedDisciplineIdsOverride:
             name="Race",
             event_date=date(2026, 7, 17),
             race_format="expedition_ar",
-            included_discipline_ids=["D-001", "D-013"],
+            included_discipline_ids=["D-001", "D-015"],
         )
         sql, params = conn.calls[0]
         assert "included_discipline_ids" in sql
         assert "?::text[]" in sql
-        assert ["D-001", "D-013"] in params
+        assert ["D-001", "D-015"] in params
 
     def test_create_defaults_included_discipline_ids_to_none(self):
         conn = _FakeConn()
@@ -1338,11 +1338,11 @@ class TestIncludedDisciplineIdsOverride:
             name="Race",
             event_date=date(2026, 7, 17),
             race_format="expedition_ar",
-            included_discipline_ids=["D-008b", "D-013"],
+            included_discipline_ids=["D-010", "D-015"],
         )
         sql, params = conn.calls[0]
         assert "included_discipline_ids = ?::text[]" in sql
-        assert ["D-008b", "D-013"] in params
+        assert ["D-010", "D-015"] in params
 
     def test_update_can_clear_included_discipline_ids(self):
         """Passing included_discipline_ids=None clears the column to NULL

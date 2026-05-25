@@ -1,9 +1,9 @@
-"""Tests for the v10-specific parsers in sports_framework.
+"""Tests for the sports_framework parsers against the live v11 workbook.
 
 Covers `_parse_constituent_movements`, `_parse_bool`,
 `_split_phase_load_notes`, `_parse_weekly_total_text`,
 plus the discipline substitutes / training gaps / cross-sport
-properties extractors against the in-repo v10 workbook.
+properties extractors against the in-repo v11 workbook (post-R6 renumber).
 """
 from __future__ import annotations
 
@@ -12,18 +12,61 @@ from pathlib import Path
 import pytest
 from openpyxl import load_workbook
 
+from openpyxl import Workbook
+
 from etl.layer0.extractors.sports_framework import (
     _parse_bool,
     _parse_constituent_movements,
     _parse_weekly_total_text,
     _split_phase_load_notes,
     extract_cross_sport_properties,
+    extract_discipline_pairing_matrix,
     extract_discipline_substitutes,
     extract_discipline_training_gaps,
     extract_phase_load_weekly_totals,
 )
 
-V10_PATH = Path(__file__).parent.parent / "sources" / "Sports_Framework_v10.xlsx"
+
+# ---------------------------------------------------------------------------
+# extract_discipline_pairing_matrix — R6 collapse dedup
+# ---------------------------------------------------------------------------
+
+def _pairing_ws_with_collapse_dup():
+    """Matrix where one survivor id (D-010) appears in two header columns and
+    two from-rows — simulating the R6 craft collapse (D-008a/b → D-010)."""
+    wb = Workbook()
+    ws = wb.active
+    # Header on R10: col1 label, then destination ids (D-010 twice).
+    ws.cell(row=10, column=1, value="FROM \\ TO")
+    ws.cell(row=10, column=2, value="D-001")
+    ws.cell(row=10, column=3, value="D-010")
+    ws.cell(row=10, column=4, value="D-010")  # duplicate survivor column
+    # Data R11+: D-001 row, then two D-010 from-rows (the collapse).
+    ws.cell(row=11, column=1, value="D-001")
+    ws.cell(row=11, column=3, value="ACC")
+    ws.cell(row=11, column=4, value="ACC")    # same (D-001, D-010) again
+    ws.cell(row=12, column=1, value="D-010")
+    ws.cell(row=12, column=2, value="PRE")
+    ws.cell(row=12, column=3, value="N/A")    # self-pair (D-010, D-010)
+    ws.cell(row=13, column=1, value="D-010")  # duplicate from-row
+    ws.cell(row=13, column=2, value="ACC")    # same (D-010, D-001) again
+    return ws
+
+
+def test_pairing_matrix_dedupes_collapse_and_skips_self_pairs():
+    rows = extract_discipline_pairing_matrix(_pairing_ws_with_collapse_dup())
+    pairs = [(r["discipline_id_a"], r["discipline_id_b"]) for r in rows]
+    # No duplicate (a, b) pairs survive the collapse.
+    assert len(pairs) == len(set(pairs)), pairs
+    # No self-pair from the collapsed diagonal.
+    assert ("D-010", "D-010") not in pairs
+    # First-seen-wins: (D-001, D-010) once = ACCEPTABLE; (D-010, D-001) = PREFERRED.
+    by_pair = {(r["discipline_id_a"], r["discipline_id_b"]): r["pairing_rating"] for r in rows}
+    assert by_pair[("D-001", "D-010")] == "ACCEPTABLE"
+    assert by_pair[("D-010", "D-001")] == "PREFERRED"
+    assert pairs.count(("D-001", "D-010")) == 1
+
+V11_PATH = Path(__file__).parent.parent / "sources" / "Sports_Framework_v11.xlsx"
 
 
 # ---------------------------------------------------------------------------
@@ -222,37 +265,43 @@ def test_weekly_totals_mixed_units_within_phase_rejects_phase():
 # ---------------------------------------------------------------------------
 
 @pytest.fixture(scope="module")
-def v10_wb():
-    return load_workbook(str(V10_PATH), read_only=False, data_only=True)
+def v11_wb():
+    return load_workbook(str(V11_PATH), read_only=False, data_only=True)
 
 
-def test_extract_discipline_substitutes_count_91(v10_wb):
+def test_extract_discipline_substitutes_count_89(v11_wb):
+    # 89 = 91 source rows − 2 dropped by the R6 collapse dedup (one duplicate
+    # (D-010, D-011, 'Canoeing') key + one self-substitute the merge created).
     warns: list = []
-    rows = extract_discipline_substitutes(v10_wb, parse_warnings=warns)
-    assert len(rows) == 91
+    rows = extract_discipline_substitutes(v11_wb, parse_warnings=warns)
+    assert len(rows) == 89
     assert warns == []
+    # No duplicate UNIQUE keys + no self-substitutes survive the dedup.
+    keys = [(r["target_id"], r["substitute_id"], r["substitute_name"]) for r in rows]
+    assert len(keys) == len(set(keys))
+    assert not any(r["target_id"] == r["substitute_id"] for r in rows)
     # Spot check one known row
     first = rows[0]
     assert first["target_id"] == "D-001"
     assert 0.0 <= first["fidelity"] <= 1.0
 
 
-def test_extract_discipline_training_gaps_count_3(v10_wb):
-    rows = extract_discipline_training_gaps(v10_wb)
+def test_extract_discipline_training_gaps_count_3(v11_wb):
+    rows = extract_discipline_training_gaps(v11_wb)
     assert len(rows) == 3
     by_id = {r["discipline_id"]: r for r in rows}
-    assert "D-018" in by_id
     assert "D-020" in by_id
-    assert "D-024" in by_id
+    assert "D-022" in by_id
+    assert "D-025" in by_id
     # Swimrun → multi-substitute candidate
-    assert by_id["D-018"]["multi_substitute_candidate"] is True
-    assert by_id["D-018"]["gap_type"] == "no_single_substitute"
+    assert by_id["D-020"]["multi_substitute_candidate"] is True
+    assert by_id["D-020"]["gap_type"] == "no_single_substitute"
     # Alpine Descent → off-snow
-    assert by_id["D-020"]["gap_type"] == "no_off_environment_substitute"
+    assert by_id["D-022"]["gap_type"] == "no_off_environment_substitute"
 
 
-def test_extract_cross_sport_properties_filters_commentary(v10_wb):
-    rows = extract_cross_sport_properties(v10_wb["Cross-Sport Properties"])
+def test_extract_cross_sport_properties_filters_commentary(v11_wb):
+    rows = extract_cross_sport_properties(v11_wb["Cross-Sport Properties"])
     assert len(rows) == 1
     r = rows[0]
     assert r["property_id"] == "LIT_RATIO_001"
@@ -261,10 +310,10 @@ def test_extract_cross_sport_properties_filters_commentary(v10_wb):
     assert r["notes"] is not None
 
 
-def test_extract_phase_load_weekly_totals_emits_4_rows_per_sport(v10_wb):
+def test_extract_phase_load_weekly_totals_emits_4_rows_per_sport(v11_wb):
     failures: list = []
     rows = extract_phase_load_weekly_totals(
-        v10_wb["Phase Load Allocation"], parse_failures=failures,
+        v11_wb["Phase Load Allocation"], parse_failures=failures,
     )
     # Group by sport — every parsed sport should yield exactly 4 phase rows.
     by_sport: dict[str, set[str]] = {}

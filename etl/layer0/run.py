@@ -29,14 +29,16 @@ from etl.layer0.validation.sum_to_100 import run_sum_to_100
 from etl.layer0.validation.vocab_alignment import run_vocab_alignment
 
 SOURCES = Path(__file__).parent.parent / "sources"
-SPORTS_XLSX = SOURCES / "Sports_Framework_v10.xlsx"
+SPORTS_XLSX = SOURCES / "Sports_Framework_v11.xlsx"
 EXERCISES_XLSX = SOURCES / "AR_Exercise_Database_v19.xlsx"
 VOCAB_MD = SOURCES / "Vocabulary_Audit_v2.md"
 
-# 0A source unchanged from v10. 0B bumped from v17 → v19 after the Pass 1+2
-# Equipment-column cleanup that normalized tokens to canonical vocabulary
-# (211 exercises, 105 equipment tokens). 0C unchanged.
-SOURCE_VERSION_0A = "0A-v10.0"
+# 0A bumped v10 → v11 for the R6 discipline-ID renumber + two collapses
+# (kayak D-008a/b → D-010 "Kayaking"; mountain-running D-022/3 → D-024
+# "Mountain Running"; suffix ids absorbed, gaps closed → D-001..D-029).
+# See aidstation-sources/Discipline_ID_Renumber_R6_Design_v1.md.
+# 0B bumped from v17 → v19 after the Pass 1+2 Equipment-column cleanup. 0C unchanged.
+SOURCE_VERSION_0A = "0A-v11.0"
 SOURCE_VERSION_0B = "0B-v19.0-r1"
 SOURCE_VERSION_0C = "0C-v2.0-r1"
 

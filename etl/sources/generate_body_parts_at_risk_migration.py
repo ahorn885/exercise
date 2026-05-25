@@ -296,25 +296,25 @@ def main():
             assert p in CANONICAL_SET, f"{r['disc_id']}: non-canonical {p}"
 
     # Spot-checks for Andy's edits
-    d016 = next(r for r in rows if r["disc_id"] == "D-016")
-    assert "Finger pulley" in d016["parts"], "D-016 should have Finger pulley (climbing inherit)"
-    assert "Trapezius" in d016["parts"], "D-016 should have Trapezius (hiking inherit)"
+    d016 = next(r for r in rows if r["disc_id"] == "D-018")
+    assert "Finger pulley" in d016["parts"], "D-018 should have Finger pulley (climbing inherit)"
+    assert "Trapezius" in d016["parts"], "D-018 should have Trapezius (hiking inherit)"
 
-    d022 = next(r for r in rows if r["disc_id"] == "D-022")
+    d022 = next(r for r in rows if r["disc_id"] == "D-024")
     assert "Foot" in d022["parts"] and "Ankle" in d022["parts"], \
-        "D-022 should have Foot + Ankle (tarsal/metatarsal stress reactions)"
+        "D-024 should have Foot + Ankle (tarsal/metatarsal stress reactions)"
 
-    d021 = next(r for r in rows if r["disc_id"] == "D-021")
+    d021 = next(r for r in rows if r["disc_id"] == "D-023")
     assert all(p in d021["parts"] for p in ["Calf", "Shin", "Foot"]), \
-        "D-021 should have Calf + Shin + Foot (lower leg + foot)"
+        "D-023 should have Calf + Shin + Foot (lower leg + foot)"
 
-    d006 = next(r for r in rows if r["disc_id"] == "D-006")
-    assert "Collarbone" in d006["parts"], "D-006 should have Collarbone (canonical amendment)"
+    d006 = next(r for r in rows if r["disc_id"] == "D-008")
+    assert "Collarbone" in d006["parts"], "D-008 should have Collarbone (canonical amendment)"
 
-    d005a = next(r for r in rows if r["disc_id"] == "D-005a")
-    d005 = next(r for r in rows if r["disc_id"] == "D-005")
+    d005a = next(r for r in rows if r["disc_id"] == "D-007")
+    d005 = next(r for r in rows if r["disc_id"] == "D-006")
     assert set(d005a["parts"]) == set(d005["parts"]), \
-        "D-005a should equal D-005 baseline (per Andy expansion)"
+        "D-007 should equal D-006 baseline (per Andy expansion)"
 
     # All 51 canonical tokens present? Probably not — check coverage
     all_used = set()
@@ -329,10 +329,10 @@ def main():
     print(f"Wrote: {OUTPUT_SQL}")
     print(f"  Disciplines: {len(rows)}")
     print(f"  Total token references: {sum(len(r['parts']) for r in rows)}")
-    print(f"  D-016 spot-check: {sorted(d016['parts'])}")
-    print(f"  D-022 spot-check: {sorted(d022['parts'])}")
-    print(f"  D-006 spot-check: {sorted(d006['parts'])}")
-    print(f"  D-005 = D-005a: {set(d005['parts']) == set(d005a['parts'])}")
+    print(f"  D-018 spot-check: {sorted(d016['parts'])}")
+    print(f"  D-024 spot-check: {sorted(d022['parts'])}")
+    print(f"  D-008 spot-check: {sorted(d006['parts'])}")
+    print(f"  D-006 = D-007: {set(d005['parts']) == set(d005a['parts'])}")
     print(f"  SQL size: {len(sql):,} chars, {sql.count(chr(10))+1} lines")
 
 

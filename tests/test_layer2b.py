@@ -244,7 +244,7 @@ class TestPGEBaseline:
             conn,
             race_terrain=entries,
             locale_terrain_ids=locale,
-            included_discipline_ids=["D-001", "D-005", "D-006"],
+            included_discipline_ids=["D-001", "D-006", "D-008"],
             etl_version_set=_DEFAULT_ETL,
         )
 
@@ -473,7 +473,7 @@ class TestSkillCapabilityFlag:
             self._skill_cap_row(
                 "whitewater_handling",
                 gated_terrain_ids=["TRN-011", "TRN-017"],
-                gated_discipline_ids=["D-008b"],
+                gated_discipline_ids=["D-010"],
             ),
         ]))
 
@@ -481,7 +481,7 @@ class TestSkillCapabilityFlag:
             conn,
             race_terrain=entries,
             locale_terrain_ids=["TRN-009"],
-            included_discipline_ids=["D-008b"],
+            included_discipline_ids=["D-010"],
             etl_version_set=_DEFAULT_ETL,
         )
 
@@ -519,7 +519,7 @@ class TestSkillCapabilityFlag:
             conn,
             race_terrain=entries,
             locale_terrain_ids=["TRN-009"],
-            included_discipline_ids=["D-008b"],
+            included_discipline_ids=["D-010"],
             etl_version_set=_DEFAULT_ETL,
             skill_toggle_states={"whitewater_handling": True},
         )
@@ -563,7 +563,7 @@ class TestSkillCapabilityFlag:
             conn,
             race_terrain=[],
             locale_terrain_ids=["TRN-009"],
-            included_discipline_ids=["D-008b"],
+            included_discipline_ids=["D-010"],
             etl_version_set=_DEFAULT_ETL,
             skill_toggle_states={},
         )
@@ -615,7 +615,7 @@ class TestSkillCapabilityFlag:
             conn,
             race_terrain=entries,
             locale_terrain_ids=["TRN-009"],
-            included_discipline_ids=["D-008b"],
+            included_discipline_ids=["D-010"],
             etl_version_set=_DEFAULT_ETL,
         )
 
@@ -785,14 +785,14 @@ class TestPerDisciplineBlocks:
             conn,
             race_terrain=entries,
             locale_terrain_ids=["TRN-001", "TRN-002"],
-            included_discipline_ids=["D-001", "D-005"],
+            included_discipline_ids=["D-001", "D-006"],
             etl_version_set=_DEFAULT_ETL,
         )
 
         assert [b.discipline_id for b in payload.terrain_by_discipline] == [
-            "D-001", "D-005"
+            "D-001", "D-006"
         ]
-        for did in ("D-001", "D-005"):
+        for did in ("D-001", "D-006"):
             block = self._block(payload, did)
             assert {r.terrain_id for r in block.race_terrain} == {"TRN-001", "TRN-002"}
             # Folded-in race-wide rows are stamped with the block discipline.
@@ -805,7 +805,7 @@ class TestPerDisciplineBlocks:
         conn = _FakeConn()
         entries = [
             RaceTerrainEntry(terrain_id="TRN-001", pct_of_race=50.0, discipline_id="D-001"),
-            RaceTerrainEntry(terrain_id="TRN-002", pct_of_race=50.0, discipline_id="D-005"),
+            RaceTerrainEntry(terrain_id="TRN-002", pct_of_race=50.0, discipline_id="D-006"),
         ]
         conn.queue_name_rows([
             _name_row("TRN-001", "Road / Paved"),
@@ -815,11 +815,11 @@ class TestPerDisciplineBlocks:
             conn,
             race_terrain=entries,
             locale_terrain_ids=["TRN-001", "TRN-002"],
-            included_discipline_ids=["D-001", "D-005"],
+            included_discipline_ids=["D-001", "D-006"],
             etl_version_set=_DEFAULT_ETL,
         )
         assert {r.terrain_id for r in self._block(payload, "D-001").race_terrain} == {"TRN-001"}
-        assert {r.terrain_id for r in self._block(payload, "D-005").race_terrain} == {"TRN-002"}
+        assert {r.terrain_id for r in self._block(payload, "D-006").race_terrain} == {"TRN-002"}
 
     def test_same_terrain_two_disciplines_keeps_distinct_pct(self):
         """The collapse the flat `pct_by_target` dict masks: TRN-003 appears in
@@ -827,18 +827,18 @@ class TestPerDisciplineBlocks:
         conn = _FakeConn()
         entries = [
             RaceTerrainEntry(terrain_id="TRN-003", pct_of_race=40.0, discipline_id="D-001"),
-            RaceTerrainEntry(terrain_id="TRN-003", pct_of_race=60.0, discipline_id="D-005"),
+            RaceTerrainEntry(terrain_id="TRN-003", pct_of_race=60.0, discipline_id="D-006"),
         ]
         conn.queue_name_rows([_name_row("TRN-003", "Technical Trail")])
         payload = q_layer2b_terrain_classifier_payload(
             conn,
             race_terrain=entries,
             locale_terrain_ids=["TRN-003"],
-            included_discipline_ids=["D-001", "D-005"],
+            included_discipline_ids=["D-001", "D-006"],
             etl_version_set=_DEFAULT_ETL,
         )
         a = self._block(payload, "D-001").race_terrain
-        b = self._block(payload, "D-005").race_terrain
+        b = self._block(payload, "D-006").race_terrain
         assert [(r.terrain_id, r.pct_of_race) for r in a] == [("TRN-003", 40.0)]
         assert [(r.terrain_id, r.pct_of_race) for r in b] == [("TRN-003", 60.0)]
         # Flat aggregate still collapses by terrain_id (unchanged behavior).
@@ -856,15 +856,15 @@ class TestPerDisciplineBlocks:
             conn,
             race_terrain=entries,
             locale_terrain_ids=["TRN-001"],
-            included_discipline_ids=["D-001", "D-005"],
+            included_discipline_ids=["D-001", "D-006"],
             etl_version_set=_DEFAULT_ETL,
         )
         # D-001 uses its tagged row (70), not the race-wide (30).
         assert [(r.terrain_id, r.pct_of_race) for r in self._block(payload, "D-001").race_terrain] == [
             ("TRN-001", 70.0)
         ]
-        # D-005 has no tag → folds in the race-wide row (30).
-        assert [(r.terrain_id, r.pct_of_race) for r in self._block(payload, "D-005").race_terrain] == [
+        # D-006 has no tag → folds in the race-wide row (30).
+        assert [(r.terrain_id, r.pct_of_race) for r in self._block(payload, "D-006").race_terrain] == [
             ("TRN-001", 30.0)
         ]
 
@@ -932,10 +932,10 @@ class TestPerDisciplineBlocks:
             conn,
             race_terrain=entries,
             locale_terrain_ids=["TRN-001"],
-            included_discipline_ids=["D-001", "D-005"],
+            included_discipline_ids=["D-001", "D-006"],
             etl_version_set=_DEFAULT_ETL,
         )
-        # D-005 has nothing tagged and no race-wide rows → skipped.
+        # D-006 has nothing tagged and no race-wide rows → skipped.
         assert [b.discipline_id for b in payload.terrain_by_discipline] == ["D-001"]
 
     def test_empty_race_terrain_no_discipline_blocks(self):
@@ -944,7 +944,7 @@ class TestPerDisciplineBlocks:
             conn,
             race_terrain=[],
             locale_terrain_ids=["TRN-001"],
-            included_discipline_ids=["D-001", "D-005"],
+            included_discipline_ids=["D-001", "D-006"],
             etl_version_set=_DEFAULT_ETL,
         )
         assert payload.terrain_by_discipline == []
@@ -968,10 +968,10 @@ class TestPerDisciplineBlocks:
             conn,
             race_terrain=entries,
             locale_terrain_ids=["TRN-001"],
-            included_discipline_ids=["D-001", "D-005"],
+            included_discipline_ids=["D-001", "D-006"],
             etl_version_set=_DEFAULT_ETL,
         )
-        for did in ("D-001", "D-005"):
+        for did in ("D-001", "D-006"):
             block = self._block(payload, did)
             assert block.summary.total_race_terrain_count == 2
             assert block.summary.covered_count == 1
@@ -1017,10 +1017,10 @@ class TestPerDisciplineBlocks:
             conn_b,
             race_terrain=[
                 RaceTerrainEntry(terrain_id="TRN-001", pct_of_race=60.0, discipline_id="D-001"),
-                RaceTerrainEntry(terrain_id="TRN-009", pct_of_race=40.0, discipline_id="D-005"),
+                RaceTerrainEntry(terrain_id="TRN-009", pct_of_race=40.0, discipline_id="D-006"),
             ],
             locale_terrain_ids=["TRN-001"],
-            included_discipline_ids=["D-001", "D-005"],
+            included_discipline_ids=["D-001", "D-006"],
             etl_version_set=_DEFAULT_ETL,
         )
 

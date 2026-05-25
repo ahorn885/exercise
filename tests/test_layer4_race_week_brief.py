@@ -1783,7 +1783,7 @@ def _substitution_payload() -> TrainingSubstitutionPayload:
         etl_version_set={"0A": "v7", "0B": "v7", "0C": "v7"},
         recommendations=[
             TrainingSubstitution(
-                discipline_id="D-007",
+                discipline_id="D-009",
                 discipline_name="Packrafting",
                 race_craft="Packrafting",
                 candidate_training_crafts=["canoe", "kayak"],
@@ -1813,7 +1813,7 @@ def _substitution_payload() -> TrainingSubstitutionPayload:
         coaching_flags=[
             TrainingSubstitutionFlag(
                 flag_type="terrain_untrainable",
-                discipline_id="D-007",
+                discipline_id="D-009",
                 discipline_name="Packrafting",
                 race_terrain_id="TRN-ww",
                 message="10% of the Packrafting leg has no local proxy — compensate.",
@@ -1842,7 +1842,7 @@ class TestTrainingSubstitutionSection:
             training_substitution_payload=_substitution_payload(),
         )
         assert "Best-fit training substitution" in prompt
-        assert "D-007 Packrafting" in prompt
+        assert "D-009 Packrafting" in prompt
         assert "candidate training crafts: canoe, kayak" in prompt
 
     def test_section_absent_when_payload_none(self):
@@ -1869,7 +1869,7 @@ class TestTrainingSubstitutionSection:
         text = "\n".join(lines)
         assert "Terrain emphasis: River (80%, proxy River @ fidelity 1.00)" in text
         assert "Untrainable terrain: Whitewater (10%, unbridgeable)" in text
-        assert "`terrain_untrainable` (D-007 / TRN-ww)" in text
+        assert "`terrain_untrainable` (D-009 / TRN-ww)" in text
 
     def test_empty_payload_renders_explanatory_line(self):
         payload = TrainingSubstitutionPayload(
@@ -1884,7 +1884,7 @@ class TestTrainingSubstitutionSection:
             etl_version_set={"0A": "v7"},
             recommendations=[
                 TrainingSubstitution(
-                    discipline_id="D-007",
+                    discipline_id="D-009",
                     discipline_name="Packrafting",
                     race_craft="Packrafting",
                     candidate_training_crafts=[],

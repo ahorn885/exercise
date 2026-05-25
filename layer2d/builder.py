@@ -65,24 +65,24 @@ from layer4.context import (
 _REQUIRED_ETL_KEYS: frozenset[str] = frozenset({"0A", "0B", "0C"})
 
 # §5.7 rule 2 — cardiac × high-cardiac-load disciplines triggers HITL.
-# Spec lists D-001, D-002, D-005, D-006, D-022, D-023, D-028 (anything with
+# Spec lists D-001, D-002, D-006, D-008, D-024, D-024, D-028 (anything with
 # sustained Z3+). Constant lives code-side per the spec recommendation
 # (open item 2D-1 pattern — code-side curation for v1).
 _HIGH_CARDIAC_LOAD_DISCIPLINES: frozenset[str] = frozenset({
     "D-001",  # Trail Running
     "D-002",  # Road Running
-    "D-005",  # Road Cycling
-    "D-006",  # Mountain Biking
-    "D-022",  # Uphill Mountain Running
-    "D-023",  # Downhill Mountain Running
+    "D-006",  # Road Cycling
+    "D-008",  # Mountain Biking
+    "D-024",  # Uphill Mountain Running
+    "D-024",  # Downhill Mountain Running
     "D-028",  # XC Skiing
 })
 
 # §5.7 rule 5 — discipline_training_gaps rows. Defensive: the spec
-# enumerates D-018/D-020/D-024 explicitly; the DTG join below builds the
+# enumerates D-020/D-022/D-025 explicitly; the DTG join below builds the
 # live set from `layer0.discipline_training_gaps`, but this constant
 # documents the spec's intent for reviewers.
-_KNOWN_GAP_DISCIPLINES: frozenset[str] = frozenset({"D-018", "D-020", "D-024"})
+_KNOWN_GAP_DISCIPLINES: frozenset[str] = frozenset({"D-020", "D-022", "D-025"})
 
 # §5.3.6.4 rule 3 — post-surgical first-6-weeks loading-type-change preference.
 _POST_SURGICAL_RECENT_DAYS: int = 42

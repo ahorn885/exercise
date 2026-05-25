@@ -279,15 +279,15 @@ class TestParseDisciplineIdFilter:
 
     def test_returns_checked_subset(self):
         form = _FakeMultiDict(
-            lists={'included_discipline_ids': ['D-001', 'D-008b', 'D-013']}
+            lists={'included_discipline_ids': ['D-001', 'D-010', 'D-015']}
         )
-        assert _parse_discipline_id_filter(form) == ['D-001', 'D-008b', 'D-013']
+        assert _parse_discipline_id_filter(form) == ['D-001', 'D-010', 'D-015']
 
     def test_strips_whitespace_and_drops_blanks(self):
         form = _FakeMultiDict(
-            lists={'included_discipline_ids': [' D-001 ', '', '  ', 'D-013']}
+            lists={'included_discipline_ids': [' D-001 ', '', '  ', 'D-015']}
         )
-        assert _parse_discipline_id_filter(form) == ['D-001', 'D-013']
+        assert _parse_discipline_id_filter(form) == ['D-001', 'D-015']
 
     def test_missing_getlist_method_returns_none(self):
         """Form mapping without `.getlist` (plain dict) falls through to
@@ -307,11 +307,11 @@ class TestParseRaceTerrainDisciplineId:
         form = _FakeFormMapping({
             'race_terrain[0][terrain_id]': 'TRN-017',
             'race_terrain[0][pct_of_race]': '15',
-            'race_terrain[0][discipline_id]': 'D-006',
+            'race_terrain[0][discipline_id]': 'D-008',
         })
         out = _parse_race_terrain(form)
         assert out == [
-            {'terrain_id': 'TRN-017', 'pct_of_race': 15.0, 'discipline_id': 'D-006'},
+            {'terrain_id': 'TRN-017', 'pct_of_race': 15.0, 'discipline_id': 'D-008'},
         ]
 
     def test_blank_discipline_id_collapses_to_none(self):
@@ -350,21 +350,21 @@ class TestDisciplinesForFrameworkSport:
         # not the sport-variant bridge `discipline_name`.
         conn = _FakeConn(rows=[
             {'discipline_id': 'D-001', 'discipline_name': 'Trail run'},
-            {'discipline_id': 'D-008b', 'discipline_name': 'Whitewater paddle'},
+            {'discipline_id': 'D-010', 'discipline_name': 'Whitewater paddle'},
         ])
         out = _disciplines_for_framework_sport(conn, 'Adventure Racing')
         assert out == [
             {'id': 'D-001', 'label': 'Trail Running'},
-            {'id': 'D-008b', 'label': 'Whitewater Kayaking'},
+            {'id': 'D-010', 'label': 'Kayaking'},
         ]
 
     def test_uncurated_id_falls_back_to_bridge_name(self):
         conn = _FakeConn(rows=[
-            {'discipline_id': 'D-005 + D-005a', 'discipline_name': 'Road Cycling (+ TT/Tri Bike)'},
+            {'discipline_id': 'D-006 + D-007', 'discipline_name': 'Road Cycling (+ TT/Tri Bike)'},
         ])
         out = _disciplines_for_framework_sport(conn, 'Triathlon')
         assert out == [
-            {'id': 'D-005 + D-005a', 'label': 'Road Cycling (+ TT/Tri Bike)'},
+            {'id': 'D-006 + D-007', 'label': 'Road Cycling (+ TT/Tri Bike)'},
         ]
 
     def test_empty_framework_sport_short_circuits(self):

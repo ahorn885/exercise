@@ -28,8 +28,8 @@ from psycopg2.extras import RealDictCursor
 # Remove 'grip_strength' from substitute_covers when a paddle sport is used
 # as substitute for a climbing/mountaineering discipline.
 # ---------------------------------------------------------------------------
-GRIP_OVERCLAIM_TARGETS = {'D-010', 'D-011', 'D-012', 'D-016'}
-GRIP_OVERCLAIM_SOURCES = {'D-007', 'D-008a', 'D-008b', 'D-009', 'D-017'}
+GRIP_OVERCLAIM_TARGETS = {'D-012', 'D-013', 'D-014', 'D-018'}
+GRIP_OVERCLAIM_SOURCES = {'D-009', 'D-010', 'D-011', 'D-019'}
 
 
 def apply_overrides(target_id: str, substitute_id: str, intersection: set) -> list:
