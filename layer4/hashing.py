@@ -319,6 +319,7 @@ def race_week_brief_key(
     max_tokens: int,
     capped_retries: int,
     layer2_modality_hash: str | None = None,
+    training_substitution_hash: str | None = None,
 ) -> str:
     """Per §9.1 — cache key for `llm_layer4_race_week_brief`.
 
@@ -326,9 +327,11 @@ def race_week_brief_key(
     orchestrator invalidates `race_week_brief` caches at midnight UTC (per
     §9.3) rather than baking today's date into the key.
 
-    `layer2_modality_hash` collapses None → '' so callers that don't supply
-    a modality payload retain stable keys (cache forward-compat with
-    pre-BM-3 entries).
+    `layer2_modality_hash` and `training_substitution_hash` collapse None → ''
+    so callers that don't supply those payloads retain stable keys (cache
+    forward-compat). Adding the training-substitution slot shifts the key once
+    on first deploy — the expected one-time invalidation per BestFitModality
+    Spec v4 §9.
     """
     components = [
         str(user_id),
@@ -347,5 +350,6 @@ def race_week_brief_key(
         str(max_tokens),
         str(capped_retries),
         layer2_modality_hash or "",
+        training_substitution_hash or "",
     ]
     return _sha256_hex("||".join(components))

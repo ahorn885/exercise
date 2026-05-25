@@ -76,7 +76,11 @@ from datetime import date, datetime, time
 from typing import Any, Literal
 
 from layer1.builder import build_layer1_payload
-from layer2_modality import ClusterLocaleInput, resolve_best_fit_modality
+from layer2_modality import (
+    ClusterLocaleInput,
+    resolve_best_fit_modality,
+    resolve_training_substitution,
+)
 from layer2a.builder import Layer2AInputError, q_layer2a_discipline_classifier_payload
 from layer2b.builder import q_layer2b_terrain_classifier_payload
 from layer2c.builder import q_layer2c_equipment_mapper_payload
@@ -106,6 +110,7 @@ from layer4.context import (
     Layer3BPayload,
     ParsedIntent,
     RaceEventPayload,
+    TrainingSubstitutionPayload,
 )
 from layer4.payload import Layer4Payload, PlanSession
 from layer4.single_session import SingleSessionRequest
@@ -175,8 +180,31 @@ class _UpstreamFullCone:
     # prompt-body integration deferred — the payload is on the cone
     # but Layer 4 LLM prompts don't consume it yet).
     layer2_modality_payload: Layer2ModalityPayload
+    # Best-fit re-model Slice 5 (2026-05-25) — training-substitution resolver
+    # output (terrain emphasis + craft candidate set per discipline), consuming
+    # the Slice-4 `layer2b_payload.terrain_by_discipline` blocks. Threaded into
+    # the race_week_brief prompt + cache key this slice; plan_create /
+    # plan_refresh threading is a follow-on (matches the v2 modality deferral).
+    training_substitution_payload: TrainingSubstitutionPayload
     layer3a_payload: Layer3APayload
     layer3b_payload: Layer3BPayload
+
+
+def _collect_athlete_crafts(layer1_payload: Layer1Payload) -> list[str]:
+    """Flatten the athlete's owned crafts across discipline baselines.
+
+    Today only paddle + bike baselines carry craft inventories; the
+    training-substitution resolver hands the union to the Layer 4 LLM as the
+    candidate set (gate Q2 — no family filtering here). Deduped + sorted for a
+    stable cache hash.
+    """
+    crafts: list[str] = []
+    baselines = layer1_payload.discipline_baselines
+    if baselines.paddling and baselines.paddling.paddle_craft_types:
+        crafts.extend(baselines.paddling.paddle_craft_types)
+    if baselines.cycling and baselines.cycling.bike_types_available:
+        crafts.extend(baselines.cycling.bike_types_available)
+    return sorted(set(crafts))
 
 
 def _upstream_full_cone(
@@ -372,6 +400,19 @@ def _upstream_full_cone(
         today=today,
     )
 
+    # Best-fit re-model Slice 5 (2026-05-25) — training-substitution resolver.
+    # Consumes the Slice-4 per-discipline terrain blocks (no extra SQL) + the
+    # athlete's owned crafts (handed verbatim; the LLM picks — gate Q2). Pure
+    # Python; safe to run unconditionally (empty terrain → empty recommendations).
+    training_substitution_payload = resolve_training_substitution(
+        terrain_by_discipline=layer2b_payload.terrain_by_discipline,
+        athlete_crafts=_collect_athlete_crafts(layer1_payload),
+        etl_version_set=etl_version_set,
+        discipline_names={
+            d.discipline_id: d.discipline_name for d in layer2a_payload.disciplines
+        },
+    )
+
     return _UpstreamFullCone(
         etl_version_set=etl_version_set,
         framework_sport=framework_sport,
@@ -383,6 +424,7 @@ def _upstream_full_cone(
         layer2d_payload=layer2d_payload,
         layer2e_payload=layer2e_payload,
         layer2_modality_payload=layer2_modality_payload,
+        training_substitution_payload=training_substitution_payload,
         layer3a_payload=layer3a_payload,
         layer3b_payload=layer3b_payload,
     )
@@ -453,6 +495,10 @@ def orchestrate_race_week_brief(
         # BM-3: thread Layer 2 modality resolver payload from the cone
         # into the brief's prompt body + cache key.
         layer2_modality_payload=cone.layer2_modality_payload,
+        # Slice 5: thread the training-substitution payload from the cone
+        # into the brief's prompt body + cache key (additive — alongside the
+        # v2 modality payload until Slice 6 migrates renderers).
+        training_substitution_payload=cone.training_substitution_payload,
         today=today,
     )
 

@@ -537,6 +537,41 @@ def test_race_week_brief_key_modality_hash_set_distinguishes() -> None:
     assert bare != with_hash
 
 
+def test_race_week_brief_key_training_substitution_hash_none_equals_empty_string() -> None:
+    """Slice 5: callers that don't supply the substitution hash (None) must
+    collapse to '' so keys stay stable for non-substitution call sites."""
+    none_variant = race_week_brief_key(
+        **{**_RACE_WEEK_BASE, "training_substitution_hash": None}
+    )
+    empty_variant = race_week_brief_key(
+        **{**_RACE_WEEK_BASE, "training_substitution_hash": ""}
+    )
+    default_variant = race_week_brief_key(**_RACE_WEEK_BASE)
+    assert none_variant == empty_variant == default_variant
+
+
+def test_race_week_brief_key_training_substitution_hash_set_distinguishes() -> None:
+    """Slice 5: a populated substitution hash flips the cache key (terrain /
+    craft-inventory change re-synthesizes)."""
+    bare = race_week_brief_key(**_RACE_WEEK_BASE)
+    with_hash = race_week_brief_key(
+        **{**_RACE_WEEK_BASE, "training_substitution_hash": "sub_x"}
+    )
+    assert bare != with_hash
+
+
+def test_race_week_brief_key_substitution_and_modality_hashes_are_independent() -> None:
+    """Slice 5: the two payload hashes occupy distinct key slots — flipping one
+    doesn't alias the other."""
+    only_modality = race_week_brief_key(
+        **{**_RACE_WEEK_BASE, "layer2_modality_hash": "x"}
+    )
+    only_substitution = race_week_brief_key(
+        **{**_RACE_WEEK_BASE, "training_substitution_hash": "x"}
+    )
+    assert only_modality != only_substitution
+
+
 @pytest.mark.parametrize(
     "field, mutated",
     [
@@ -556,6 +591,7 @@ def test_race_week_brief_key_modality_hash_set_distinguishes() -> None:
         ("max_tokens", 6001),
         ("capped_retries", 1),
         ("layer2_modality_hash", "mod_x"),
+        ("training_substitution_hash", "sub_x"),
     ],
 )
 def test_race_week_brief_key_depends_on_each_component(field: str, mutated: object) -> None:

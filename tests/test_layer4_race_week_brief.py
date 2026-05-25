@@ -76,7 +76,15 @@ from layer4 import (
 from layer4.race_week_brief import (
     _SynthesizerOutput,
     _emit_route_locales_anchor_observations,
+    _render_training_substitution_section,
     _render_user_prompt,
+)
+from layer4.context import (
+    TerrainEmphasis,
+    TerrainGapRef,
+    TrainingSubstitution,
+    TrainingSubstitutionFlag,
+    TrainingSubstitutionPayload,
 )
 
 
@@ -1765,3 +1773,124 @@ class TestLayer3BPayloadEventMetadata:
                 notable_observations=[],
                 event_date=_EVENT_DATE,
             )
+
+
+# ─── Best-fit re-model Slice 5 — training-substitution prompt section ─────────
+
+
+def _substitution_payload() -> TrainingSubstitutionPayload:
+    return TrainingSubstitutionPayload(
+        etl_version_set={"0A": "v7", "0B": "v7", "0C": "v7"},
+        recommendations=[
+            TrainingSubstitution(
+                discipline_id="D-007",
+                discipline_name="Packrafting",
+                race_craft="Packrafting",
+                candidate_training_crafts=["canoe", "kayak"],
+                terrain_emphasis=[
+                    TerrainEmphasis(
+                        race_terrain_id="TRN-river",
+                        terrain_name="River",
+                        pct=80.0,
+                        proxy_terrain_id="TRN-river",
+                        proxy_terrain_name="River",
+                        fidelity=1.0,
+                        gap_severity="none",
+                        emphasis_score=80.0,
+                    ),
+                ],
+                untrainable_terrain=[
+                    TerrainGapRef(
+                        race_terrain_id="TRN-ww",
+                        terrain_name="Whitewater",
+                        pct=10.0,
+                        gap_severity="unbridgeable",
+                        reason="unbridgeable",
+                    ),
+                ],
+            )
+        ],
+        coaching_flags=[
+            TrainingSubstitutionFlag(
+                flag_type="terrain_untrainable",
+                discipline_id="D-007",
+                discipline_name="Packrafting",
+                race_terrain_id="TRN-ww",
+                message="10% of the Packrafting leg has no local proxy — compensate.",
+            )
+        ],
+    )
+
+
+class TestTrainingSubstitutionSection:
+    def test_section_threads_into_user_prompt(self):
+        prompt = _render_user_prompt(
+            layer1_payload=_layer1(),
+            layer2a_payload=_layer2a(),
+            layer2b_payload=_layer2b(),
+            layer2c_payloads={"home_gym": _layer2c()},
+            layer2d_payload=_layer2d(),
+            layer2e_payload=_layer2e(),
+            layer3a_payload=_layer3a(),
+            layer3b_payload=_layer3b(event_date=_EVENT_DATE),
+            race_event_payload=_race_event_payload(),
+            prior_plan_session_window=[_prior_taper_session()],
+            days_to_event=7,
+            today=_TODAY,
+            retries_used=0,
+            rule_failures=[],
+            training_substitution_payload=_substitution_payload(),
+        )
+        assert "Best-fit training substitution" in prompt
+        assert "D-007 Packrafting" in prompt
+        assert "candidate training crafts: canoe, kayak" in prompt
+
+    def test_section_absent_when_payload_none(self):
+        prompt = _render_user_prompt(
+            layer1_payload=_layer1(),
+            layer2a_payload=_layer2a(),
+            layer2b_payload=_layer2b(),
+            layer2c_payloads={"home_gym": _layer2c()},
+            layer2d_payload=_layer2d(),
+            layer2e_payload=_layer2e(),
+            layer3a_payload=_layer3a(),
+            layer3b_payload=_layer3b(event_date=_EVENT_DATE),
+            race_event_payload=_race_event_payload(),
+            prior_plan_session_window=[_prior_taper_session()],
+            days_to_event=7,
+            today=_TODAY,
+            retries_used=0,
+            rule_failures=[],
+        )
+        assert "Best-fit training substitution" not in prompt
+
+    def test_renders_emphasis_untrainable_and_flags(self):
+        lines = _render_training_substitution_section(_substitution_payload())
+        text = "\n".join(lines)
+        assert "Terrain emphasis: River (80%, proxy River @ fidelity 1.00)" in text
+        assert "Untrainable terrain: Whitewater (10%, unbridgeable)" in text
+        assert "`terrain_untrainable` (D-007 / TRN-ww)" in text
+
+    def test_empty_payload_renders_explanatory_line(self):
+        payload = TrainingSubstitutionPayload(
+            etl_version_set={"0A": "v7"}, recommendations=[], coaching_flags=[]
+        )
+        lines = _render_training_substitution_section(payload)
+        text = "\n".join(lines)
+        assert "No training-substitution recommendations" in text
+
+    def test_no_crafts_renders_none_logged(self):
+        payload = TrainingSubstitutionPayload(
+            etl_version_set={"0A": "v7"},
+            recommendations=[
+                TrainingSubstitution(
+                    discipline_id="D-007",
+                    discipline_name="Packrafting",
+                    race_craft="Packrafting",
+                    candidate_training_crafts=[],
+                )
+            ],
+            coaching_flags=[],
+        )
+        text = "\n".join(_render_training_substitution_section(payload))
+        assert "candidate training crafts: (none logged)" in text

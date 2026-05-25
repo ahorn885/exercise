@@ -66,6 +66,7 @@ from layer4.context import (
     Layer3APayload,
     Layer3BPayload,
     RaceEventPayload,
+    TrainingSubstitutionPayload,
 )
 from layer4.errors import Layer4InputError, Layer4OutputError
 from layer4.payload import (
@@ -872,6 +873,61 @@ def _render_modality_section_race_week_brief(
     return lines
 
 
+def _render_training_substitution_section(
+    payload: TrainingSubstitutionPayload,
+) -> list[str]:
+    """Render the Slice-5 training-substitution brief for the race-week prompt.
+
+    Per discipline: the race craft + the craft candidate set (the LLM picks the
+    closest), the terrain training emphasis ranked by `pct × fidelity`, and the
+    terrain that can't be trained locally (so the brief can name compensation
+    work). `# Heading` + `**bold:**` matches the race_week_brief markdown idiom.
+    """
+    lines: list[str] = ["# Best-fit training substitution (Layer 2 substitution resolver)", ""]
+    lines.append(
+        "**Purpose:** per race discipline, the closest trainable terrain "
+        "emphasis (ranked by how much of that leg is on each terrain × how "
+        "well the athlete can reproduce it locally), the craft candidate set to "
+        "pick the closest trainable craft from, and the terrain that can't be "
+        "trained directly. Bias race-week sessions toward the highest-emphasis "
+        "trainable terrain; name compensation work for untrainable terrain."
+    )
+    lines.append("")
+    if not payload.recommendations and not payload.coaching_flags:
+        lines.append("_No training-substitution recommendations for this discipline set._")
+        lines.append("")
+        return lines
+    for rec in payload.recommendations:
+        crafts = ", ".join(rec.candidate_training_crafts) or "(none logged)"
+        lines.append(
+            f"- **{rec.discipline_id} {rec.discipline_name}** (race craft: "
+            f"{rec.race_craft}) — candidate training crafts: {crafts}"
+        )
+        if rec.terrain_emphasis:
+            emph = "; ".join(
+                f"{e.terrain_name or e.race_terrain_id} ({e.pct:g}%, proxy "
+                f"{e.proxy_terrain_name or e.proxy_terrain_id} @ fidelity "
+                f"{e.fidelity:.2f})"
+                for e in rec.terrain_emphasis
+            )
+            lines.append(f"  - Terrain emphasis: {emph}")
+        if rec.untrainable_terrain:
+            untr = "; ".join(
+                f"{g.terrain_name or g.race_terrain_id} ({g.pct:g}%, {g.reason})"
+                for g in rec.untrainable_terrain
+            )
+            lines.append(f"  - Untrainable terrain: {untr}")
+    if payload.coaching_flags:
+        lines.append("")
+        lines.append("**Substitution coaching flags:**")
+        for fl in payload.coaching_flags:
+            scope_bits = [b for b in (fl.discipline_id, fl.race_terrain_id) if b]
+            scope = f" ({' / '.join(scope_bits)})" if scope_bits else ""
+            lines.append(f"- `{fl.flag_type}`{scope}: {fl.message}")
+    lines.append("")
+    return lines
+
+
 def _render_user_prompt(
     layer1_payload: dict[str, Any],
     layer2a_payload: Layer2APayload,
@@ -888,6 +944,7 @@ def _render_user_prompt(
     retries_used: int,
     rule_failures: list[RuleFailure],
     layer2_modality_payload: Layer2ModalityPayload | None = None,
+    training_substitution_payload: TrainingSubstitutionPayload | None = None,
 ) -> str:
     """Render the §6 user prompt template against the typed payloads.
     Inline Python rendering (no Mustache dependency) per the
@@ -1057,6 +1114,12 @@ def _render_user_prompt(
     # § Best-fit modality (BM-3 surface — Layer 2 modality resolver)
     if layer2_modality_payload is not None:
         parts.extend(_render_modality_section_race_week_brief(layer2_modality_payload))
+
+    # § Best-fit training substitution (re-model Slice 5 — Layer 2 substitution resolver)
+    if training_substitution_payload is not None:
+        parts.extend(
+            _render_training_substitution_section(training_substitution_payload)
+        )
 
     # § Race-day fueling tier (2E)
     parts.append("# Race-day fueling tier (2E)")
@@ -1540,6 +1603,10 @@ def llm_layer4_race_week_brief(
     # `_render_modality_section_race_week_brief`. Default None preserves
     # existing call sites (notably the test fixtures) that pre-date BM-3.
     layer2_modality_payload: Layer2ModalityPayload | None = None,
+    # Best-fit re-model Slice 5 — training-substitution payload rendered via
+    # `_render_training_substitution_section`. Default None preserves existing
+    # call sites (additive, alongside the modality payload).
+    training_substitution_payload: TrainingSubstitutionPayload | None = None,
 ) -> Layer4Payload:
     """Pattern B race-week-brief synthesizer per `Layer4_Spec.md` §3.4
     (D-66 amendment 2026-05-18 — new `race_event_payload` positional arg).
@@ -1614,6 +1681,7 @@ def llm_layer4_race_week_brief(
             retries_used=retries_used,
             rule_failures=rule_failures,
             layer2_modality_payload=layer2_modality_payload,
+            training_substitution_payload=training_substitution_payload,
         )
 
         llm_out = caller(
