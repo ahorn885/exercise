@@ -1,62 +1,38 @@
-"""Curated pure-craft display names for race disciplines.
+"""Pure-craft display names for race disciplines.
 
-Overlay on `layer0.sport_discipline_bridge.discipline_name`, whose labels
-are the sport-specific variants from `Sports_Framework_v11.xlsx`
-(e.g. "XC Cycling (Road/Gravel)", "Hiking (Weighted)"). This map gives one
-pure-craft label per craft, sport-independent — and callers fall back to
-the bridge name for ids absent here.
+Thin app-layer re-export of the discipline canon defined in
+`etl/layer0/discipline_canon.py` — the single source of truth for discipline
+ids and names. This module used to maintain its own hand-curated dict, which
+drifted out of sync with the ETL (e.g. "Alpine Skiing" for the skimo descent
+leg). It now derives from the canon so there is exactly one place names live.
 
-Terrain/condition qualifiers are intentionally dropped: terrain is a
-separate per-discipline axis (BestFitModality_Spec_v4). The R6 renumber
-(2026-05-25) re-sequenced ids to D-001..D-029 (no suffixes, no gaps) and
-collapsed two pairs: kayak flat/whitewater -> D-010 "Kayaking"; mountain-
-running uphill/downhill -> D-024 "Mountain Running". The terrain axis now
-carries the flat-vs-whitewater / uphill-vs-downhill split.
-See `Discipline_ID_Renumber_R6_Design_v1.md` for the old->new map.
+Callers pass a `discipline_id` and an optional `fallback` (typically a raw
+`discipline_name` from a denorm row). Merged ids (former D-005 / D-016 → D-004
+"Swimming") resolve to the survivor's name; composite, removed, or unknown ids
+fall back to `fallback` (then to the id itself).
 """
-
 from __future__ import annotations
 
-DISCIPLINE_DISPLAY_NAMES: dict[str, str] = {
-    "D-001": "Trail Running",
-    "D-002": "Road Running",
-    "D-003": "Hiking",
-    "D-004": "Open Water Swimming",
-    "D-005": "Pool Swimming",
-    "D-006": "Road Cycling",
-    "D-007": "Time-Trial Cycling",
-    "D-008": "Mountain Biking",
-    "D-009": "Packrafting",
-    "D-010": "Kayaking",
-    "D-011": "Canoeing",
-    "D-012": "Rock Climbing",
-    "D-013": "Abseiling",
-    "D-014": "Via Ferrata",
-    "D-015": "Orienteering",
-    "D-016": "Swimming",
-    "D-017": "Snowshoeing",
-    "D-018": "Mountaineering",
-    "D-019": "Paddle Rafting",
-    "D-020": "Swimrun",
-    "D-021": "Ski Touring",
-    "D-022": "Alpine Skiing",
-    "D-023": "Ski Transitions",
-    "D-024": "Mountain Running",
-    "D-025": "Fencing",
-    "D-026": "Laser Run",
-    "D-027": "Obstacle Racing",
-    "D-028": "Cross-Country Skiing",
-    "D-029": "Rifle Shooting",
-}
+from etl.layer0.discipline_canon import (
+    CANONICAL_NAMES as DISCIPLINE_DISPLAY_NAMES,
+    canonical_id,
+    canonical_name,
+)
+
+__all__ = ["DISCIPLINE_DISPLAY_NAMES", "discipline_display_name"]
 
 
 def discipline_display_name(discipline_id: str, fallback: str | None = None) -> str:
     """Pure-craft label for a discipline id.
 
-    Falls back to `fallback` (typically the bridge `discipline_name`) when
-    the id isn't curated, and to the id itself when no fallback is given.
+    Resolves merges (D-005 / D-016 → D-004) to the canonical survivor name.
+    Falls back to `fallback` (typically the denorm `discipline_name`) when the
+    id is composite / removed / unknown, and to the id itself when no fallback
+    is given.
     """
-    label = DISCIPLINE_DISPLAY_NAMES.get(discipline_id)
-    if label:
-        return label
+    cid = canonical_id(discipline_id)
+    if cid:
+        name = canonical_name(cid)
+        if name:
+            return name
     return fallback or discipline_id

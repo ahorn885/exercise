@@ -12,7 +12,7 @@ import argparse
 import sys
 from pathlib import Path
 
-from etl.layer0 import db
+from etl.layer0 import db, discipline_canon
 from etl.layer0.db import insert_versioned, now_utc, to_jsonb
 from etl.layer0.extractors import exercise_db, sports_framework, vocabulary
 from etl.layer0.sport_name_aliases import SPORT_NAME_ALIASES, _ALL
@@ -20,6 +20,9 @@ from etl.layer0.validation.contraindicated_conditions import (
     run_contraindicated_conditions,
 )
 from etl.layer0.validation.default_inclusion import run_default_inclusion
+from etl.layer0.validation.discipline_canon_check import (
+    run_discipline_canon_conformance,
+)
 from etl.layer0.validation.fk_checks import (
     run_substitution_fks,
     run_training_gap_fks,
@@ -221,6 +224,9 @@ def main(argv: list[str] | None = None) -> int:
         summaries.append(f"layer0.sports: {n}")
 
         disc_rows = sports_framework.extract_disciplines(wb["Discipline Library"])
+        # Apply discipline canon: collapse to the 25 surviving disciplines,
+        # renamed to canonical labels (merges/removals dropped).
+        disc_rows = discipline_canon.normalize_dimension_rows(disc_rows)
         disciplines_columns = [
             "discipline_id", "discipline_name", "discipline_category",
             "primary_movement",
@@ -248,6 +254,16 @@ def main(argv: list[str] | None = None) -> int:
             _print(
                 f"  [warn] sport_discipline_map: dropped {len(dropped_sd_dupes)} duplicate "
                 f"(sport, discipline_id) rows — see report"
+            )
+        canon_dropped_sd: list = []
+        sd_rows = discipline_canon.normalize_named_rows(
+            sd_rows, unique_fields=("sport_name", "discipline_id"),
+            dropped=canon_dropped_sd,
+        )
+        if canon_dropped_sd:
+            _print(
+                f"  [canon] sport_discipline_map: {len(canon_dropped_sd)} rows dropped/"
+                f"collapsed (removed disciplines, orphans, post-merge dupes)"
             )
         n = insert_versioned(
             conn, "layer0.sport_discipline_map",
@@ -280,7 +296,7 @@ def main(argv: list[str] | None = None) -> int:
         fallback_rows = sports_framework.extract_pairing_b2b_fallback(
             sd_rows, name_to_id, matrix_pairs
         )
-        all_pair_rows = matrix_rows + fallback_rows
+        all_pair_rows = discipline_canon.normalize_pairing_rows(matrix_rows + fallback_rows)
         n = insert_versioned(
             conn, "layer0.discipline_pairing",
             ["discipline_id_a", "discipline_id_b", "pairing_rating", "rationale", "source"],
@@ -299,12 +315,25 @@ def main(argv: list[str] | None = None) -> int:
         pl_rows = sports_framework.extract_phase_load_allocation(
             wb["Phase Load Allocation"], split_stats=pl_split_stats,
         )
+        # Canon: canonicalize discipline rows; keep strength/mobility/weekly-total
+        # as non-discipline rows (discipline_id NULL + row_category); drop orphans.
+        canon_dropped_pl: list = []
+        pl_rows = discipline_canon.normalize_named_rows(
+            pl_rows, unique_fields=("sport_name", "discipline_name"),
+            keep_non_discipline=True, dropped=canon_dropped_pl,
+        )
+        if canon_dropped_pl:
+            _print(
+                f"  [canon] phase_load_allocation: {len(canon_dropped_pl)} rows dropped/"
+                f"collapsed (removed disciplines, orphans, post-merge dupes)"
+            )
         pl_columns = [
             "sport_name", "discipline_id", "discipline_name", "role",
             "base_pct_low", "base_pct_high", "build_pct_low", "build_pct_high",
             "peak_pct_low", "peak_pct_high", "taper_pct_low", "taper_pct_high",
             "notes_conditions", "default_inclusion",
             "prescription_note", "audit_log", "raw_notes",
+            "row_category",
         ]
         n = insert_versioned(
             conn, "layer0.phase_load_allocation",
@@ -387,6 +416,15 @@ def main(argv: list[str] | None = None) -> int:
         ds_rows = sports_framework.extract_discipline_substitutes(
             wb, parse_warnings=substitute_warnings,
         )
+        canon_dropped_ds: list = []
+        ds_rows = discipline_canon.normalize_substitute_rows(
+            ds_rows, dropped=canon_dropped_ds,
+        )
+        if canon_dropped_ds:
+            _print(
+                f"  [canon] discipline_substitutes: {len(canon_dropped_ds)} rows dropped "
+                f"(removed disciplines, self-substitutes, post-merge dupes)"
+            )
         ds_columns = [
             "target_id", "target_name", "substitute_id", "substitute_name",
             "fidelity", "constraints", "category", "substitute_covers",
@@ -407,6 +445,9 @@ def main(argv: list[str] | None = None) -> int:
 
         # v10 — Discipline Training Gaps
         dtg_rows = sports_framework.extract_discipline_training_gaps(wb)
+        dtg_rows = discipline_canon.normalize_named_rows(
+            dtg_rows, unique_fields=("discipline_id",),
+        )
         dtg_columns = [
             "discipline_id", "discipline_name", "gap_type",
             "notes", "multi_substitute_candidate",
@@ -537,6 +578,11 @@ def main(argv: list[str] | None = None) -> int:
             f"default_inclusion: {di_result['rows_checked']} rows, "
             f"{di_result['pass_count']} PASS, {di_result['error_count']} ERROR"
         )
+        canon_result = run_discipline_canon_conformance(conn)
+        _print(
+            f"discipline_canon: {canon_result['rows_checked']} rows, "
+            f"{canon_result['pass_count']} PASS, {canon_result['error_count']} ERROR"
+        )
 
         report_path = build_report(
             tag, run_at, summaries, sum_to_100_result, vocab_result,
@@ -552,6 +598,7 @@ def main(argv: list[str] | None = None) -> int:
                 "training_gap_fks": gap_fk_result,
                 "contraindicated_conditions": contra_result,
                 "default_inclusion": di_result,
+                "discipline_canon": canon_result,
             },
         )
         _print(f"[layer0 ETL] Report written to {report_path}")
