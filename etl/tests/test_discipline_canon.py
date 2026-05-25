@@ -184,6 +184,85 @@ def test_substitutes_drop_removed_and_self(wb):
     assert "D-020" not in touched and "D-023" not in touched
 
 
+def test_composite_split_attributes_share_to_primary_leg_only():
+    # A composite cycling leg with a 50% race-time share must not duplicate
+    # that share onto both legs (would double-count the sport's load).
+    rows = [{
+        "sport_name": "Triathlon", "discipline_id": "D-006 + D-007",
+        "discipline_name": "Road Cycling (+ TT/Tri Bike)", "role": "PRIMARY",
+        "race_time_pct_low": 45.0, "race_time_pct_high": 55.0,
+        "race_time_pct_text": "Bike: 45-55%",
+    }]
+    out = dc.normalize_named_rows(
+        rows, unique_fields=("sport_name", "discipline_id"),
+        share_fields=("race_time_pct_low", "race_time_pct_high", "race_time_pct_text"),
+    )
+    by_id = {r["discipline_id"]: r for r in out}
+    assert set(by_id) == {"D-006", "D-007"}
+    # Primary leg keeps the share; secondary leg is zeroed.
+    assert (by_id["D-006"]["race_time_pct_low"], by_id["D-006"]["race_time_pct_high"]) == (45.0, 55.0)
+    assert by_id["D-006"]["race_time_pct_text"] == "Bike: 45-55%"
+    assert (by_id["D-007"]["race_time_pct_low"], by_id["D-007"]["race_time_pct_high"]) == (0.0, 0.0)
+    assert by_id["D-007"]["race_time_pct_text"] is None
+
+
+def test_composite_split_preserves_sport_race_share_total(wb):
+    # Real data: Triathlon's total race-time share must be unchanged by the
+    # canon (the D-006+D-007 split must not inflate cycling).
+    raw = sf.extract_sport_discipline_map(wb["Sport × Discipline Map"])
+    canon = dc.normalize_named_rows(
+        raw, unique_fields=("sport_name", "discipline_id"),
+        share_fields=("race_time_pct_low", "race_time_pct_high", "race_time_pct_text"),
+    )
+
+    def mid(r):
+        lo, hi = r.get("race_time_pct_low"), r.get("race_time_pct_high")
+        if lo is not None and hi is not None:
+            return (float(lo) + float(hi)) / 2.0
+        return float(lo) if lo is not None else 0.0
+
+    def total(rows, sport):
+        return sum(mid(r) for r in rows if r["sport_name"] == sport
+                   and not (r.get("applicability") or "").upper().startswith("EXCLUD"))
+
+    for sport in ("Triathlon", "Off-Road / Adventure Multisport (Non-Nav)"):
+        assert abs(total(raw, sport) - total(canon, sport)) < 0.01, sport
+
+
+def test_swimrun_run_leg_is_road_not_trail(wb):
+    # Swimrun is modelled as swim + ROAD run (D-002), not the source's trail
+    # (D-001); the override is scoped to Swimrun only.
+    for sheet, ufields, sport_f in [
+        (sf.extract_sport_discipline_map(wb["Sport × Discipline Map"]),
+         ("sport_name", "discipline_id"), "sport_name"),
+        (sf.extract_phase_load_allocation(wb["Phase Load Allocation"]),
+         ("sport_name", "discipline_name"), "sport_name"),
+    ]:
+        rows = dc.normalize_named_rows(
+            sheet, unique_fields=ufields, sport_field=sport_f,
+            keep_non_discipline=True,
+        )
+        swimrun = {r["discipline_id"] for r in rows if r["sport_name"] == "Swimrun"}
+        assert "D-002" in swimrun, swimrun        # road running present
+        assert "D-001" not in swimrun             # trail running gone
+        assert "D-004" in swimrun                 # swimming (from merged D-016)
+        assert "D-020" not in swimrun             # combined leg removed
+
+
+def test_sport_override_is_scoped_to_swimrun():
+    # The same raw D-001 row stays Trail Running for a non-Swimrun sport.
+    rows = [
+        {"sport_name": "Swimrun", "discipline_id": "D-001", "discipline_name": "Trail Running"},
+        {"sport_name": "Fell Running", "discipline_id": "D-001", "discipline_name": "Trail Running"},
+    ]
+    out = dc.normalize_named_rows(
+        rows, unique_fields=("sport_name", "discipline_id"), sport_field="sport_name",
+    )
+    by_sport = {r["sport_name"]: r["discipline_id"] for r in out}
+    assert by_sport["Swimrun"] == "D-002"
+    assert by_sport["Fell Running"] == "D-001"
+
+
 def test_training_gaps_drops_swimrun(wb):
     raw = sf.extract_discipline_training_gaps(wb)
     rows = dc.normalize_named_rows(raw, unique_fields=("discipline_id",))
