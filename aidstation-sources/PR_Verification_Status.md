@@ -293,4 +293,19 @@ Schema-only PR. No §5.0 distinct verification owed. Tables/columns (`daily_avai
 
 ---
 
+## #166 + #167 — Discipline canon (merge `5ddc0ac` + `ee0756f`)
+
+ETL/layer0 track (not a numbered v5 onboarding PR). Full record:
+`handoffs/V5_Implementation_DisciplineCanon_2026_05_25_Closing_Handoff_v1.md`.
+
+| # | Step | Status | Last update | Notes |
+|---|------|--------|-------------|-------|
+| 1 | Run `migrations/migrate_discipline_canon_2026_05_25.sql` on Neon (ADD COLUMN `row_category` + optional retire) | ✅ Done | 2026-05-25 | Run by Andy post-#166. |
+| 2 | First loader pass `python -m etl.layer0.run --version-tag 1.3.1` (loaded the #166 canon) | ✅ Done | 2026-05-25 | Reported `discipline_canon` PASS; `sum_to_100` 5 WARN (cosmetic). |
+| 3 | **Re-run loader to apply #167** (composite-share fix + Swimrun road leg) | 🟡 owed | 2026-05-25 | Code-only; no new migration. Commands in `CARRY_FORWARD.md`. |
+| 4 | Spot-check (Neon SQL, after step 3): Triathlon `sport_discipline_map` D-006 carries the bike `race_time_pct`, D-007 = 0; `layer0.disciplines` non-superseded = 25 rows | 🟡 owed | 2026-05-25 | — |
+| 5 | Spot-check (Neon SQL, after step 3): Swimrun maps to D-004 + D-002, no D-001/D-020 | 🟡 owed | 2026-05-25 | — |
+
+---
+
 *End of PR Verification Status.*
