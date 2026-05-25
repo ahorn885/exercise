@@ -248,7 +248,7 @@ class TestEffectivePool:
             "Climbing — roped",
             paired_equipment_categories=["Harness", "Belay device"],
         ))
-        conn.queue(_sdb_row("D-010", "Rock Climbing", "Climbing"))
+        conn.queue(_sdb_row("D-012", "Rock Climbing", "Climbing"))
         conn.queue()
         payload = q_layer2c_equipment_mapper_payload(
             conn,
@@ -256,7 +256,7 @@ class TestEffectivePool:
             locale_equipment_pool=["Barbell"],
             cluster_locale_ids=["home"],
             cluster_gear_toggle_states={"Climbing — roped": True},
-            included_discipline_ids=["D-010"],
+            included_discipline_ids=["D-012"],
             etl_version_set=_DEFAULT_ETL,
         )
         assert set(payload.effective_pool) == {"Barbell", "Harness", "Belay device"}
@@ -272,15 +272,15 @@ class TestEffectivePool:
                 "Climbing — roped",
                 paired_equipment_categories=["Climbing rope"],
                 also_satisfies=["Rappelling / abseiling"],
-                gated_discipline_ids=["D-010"],
+                gated_discipline_ids=["D-012"],
             ),
             _toggle_row(
                 "Rappelling / abseiling",
                 paired_equipment_categories=["Rappel device"],
-                gated_discipline_ids=["D-011"],
+                gated_discipline_ids=["D-013"],
             ),
         )
-        conn.queue(_sdb_row("D-010", "Rock Climbing", "Climbing"))
+        conn.queue(_sdb_row("D-012", "Rock Climbing", "Climbing"))
         conn.queue()
         payload = q_layer2c_equipment_mapper_payload(
             conn,
@@ -288,7 +288,7 @@ class TestEffectivePool:
             locale_equipment_pool=[],
             cluster_locale_ids=["home"],
             cluster_gear_toggle_states={"Climbing — roped": True},
-            included_discipline_ids=["D-010"],
+            included_discipline_ids=["D-012"],
             etl_version_set=_DEFAULT_ETL,
         )
         assert set(payload.effective_pool) == {"Climbing rope", "Rappel device"}
@@ -742,12 +742,12 @@ class TestCoachingFlags:
         not fire."""
         conn = _FakeConn()
         conn.queue()
-        conn.queue(_sdb_row("D-005", "Mountain Biking", "Cycling"))
+        conn.queue(_sdb_row("D-006", "Mountain Biking", "Cycling"))
         conn.queue(
             _ex_row(
                 exercise_id="EX080",
                 exercise_name="MTB threshold intervals",
-                discipline_id="D-005",
+                discipline_id="D-006",
                 discipline_name="Mountain Biking",
                 exercise_db_sport="Cycling",
                 equipment_required=["Mountain bike"],
@@ -756,7 +756,7 @@ class TestCoachingFlags:
             _ex_row(
                 exercise_id="EX081",
                 exercise_name="Cycling stretch",
-                discipline_id="D-005",
+                discipline_id="D-006",
                 discipline_name="Mountain Biking",
                 exercise_db_sport="Cycling",
                 equipment_required=["Mountain bike"],
@@ -769,7 +769,7 @@ class TestCoachingFlags:
             locale_equipment_pool=[],
             cluster_locale_ids=["hotel"],
             cluster_gear_toggle_states={},
-            included_discipline_ids=["D-005"],
+            included_discipline_ids=["D-006"],
             etl_version_set=_DEFAULT_ETL,
         )
         flags = [f for f in payload.coaching_flags if f.flag_type == "critical_dropped"]
@@ -779,17 +779,17 @@ class TestCoachingFlags:
 
     def test_toggle_off_for_discipline_fires_from_gated_column(self):
         """§8.3 + DP2 (b) — when a toggle's `gated_discipline_ids` row
-        carries D-010 and the cluster state has the toggle OFF, the
-        flag fires for D-010 IFF D-010 is in `included_discipline_ids`."""
+        carries D-012 and the cluster state has the toggle OFF, the
+        flag fires for D-012 IFF D-012 is in `included_discipline_ids`."""
         conn = _FakeConn()
         conn.queue(
             _toggle_row(
                 "Climbing — roped",
                 paired_equipment_categories=["Harness"],
-                gated_discipline_ids=["D-010"],
+                gated_discipline_ids=["D-012"],
             ),
         )
-        conn.queue(_sdb_row("D-010", "Rock Climbing", "Climbing"))
+        conn.queue(_sdb_row("D-012", "Rock Climbing", "Climbing"))
         conn.queue()
         payload = q_layer2c_equipment_mapper_payload(
             conn,
@@ -797,7 +797,7 @@ class TestCoachingFlags:
             locale_equipment_pool=["Barbell"],
             cluster_locale_ids=["home"],
             cluster_gear_toggle_states={"Climbing — roped": False},
-            included_discipline_ids=["D-010"],
+            included_discipline_ids=["D-012"],
             etl_version_set=_DEFAULT_ETL,
         )
         flags = [
@@ -806,7 +806,7 @@ class TestCoachingFlags:
         ]
         assert len(flags) == 1
         f = flags[0]
-        assert f.discipline_id == "D-010"
+        assert f.discipline_id == "D-012"
         assert f.discipline_name == "Rock Climbing"
         assert f.metadata == {"toggle_name": "Climbing — roped"}
         assert "Climbing — roped" in f.message
@@ -819,7 +819,7 @@ class TestCoachingFlags:
             _toggle_row(
                 "Snowshoeing setup",
                 paired_equipment_categories=["Snowshoes"],
-                gated_discipline_ids=["D-015"],
+                gated_discipline_ids=["D-017"],
             ),
         )
         conn.queue(_sdb_row("D-001", "Trail Running", "Running"))
@@ -1010,7 +1010,7 @@ class TestEdgeCases:
         flag fires."""
         conn = _FakeConn()
         conn.queue()
-        conn.queue(_sdb_row("D-008b", "Whitewater Paddling", "Paddling"))
+        conn.queue(_sdb_row("D-010", "Whitewater Paddling", "Paddling"))
         conn.queue()  # zero exercise rows
         payload = q_layer2c_equipment_mapper_payload(
             conn,
@@ -1018,7 +1018,7 @@ class TestEdgeCases:
             locale_equipment_pool=[],
             cluster_locale_ids=["home"],
             cluster_gear_toggle_states={},
-            included_discipline_ids=["D-008b"],
+            included_discipline_ids=["D-010"],
             etl_version_set=_DEFAULT_ETL,
         )
         cov = payload.discipline_coverage[0]
@@ -1026,7 +1026,7 @@ class TestEdgeCases:
         assert cov.coverage_pct == 0.0
         flags = [f for f in payload.coaching_flags if f.flag_type == "low_coverage"]
         assert len(flags) == 1
-        assert flags[0].discipline_id == "D-008b"
+        assert flags[0].discipline_id == "D-010"
 
     def test_discipline_missing_from_sdb_is_skipped(self):
         """§10 — discipline with no sdb row for the active 0A version.
@@ -1133,9 +1133,9 @@ class TestSkillCapabilityFlag:
         conn = _FakeConn()
         conn.queue()  # no gear toggles
         conn.queue_skill_capability_toggles(
-            _skill_cap_row("climbing_roped", gated_discipline_ids=["D-010"])
+            _skill_cap_row("climbing_roped", gated_discipline_ids=["D-012"])
         )
-        conn.queue(_sdb_row("D-010", "Rock Climbing", "Climbing"))
+        conn.queue(_sdb_row("D-012", "Rock Climbing", "Climbing"))
         conn.queue()  # no exercises
         payload = q_layer2c_equipment_mapper_payload(
             conn,
@@ -1143,7 +1143,7 @@ class TestSkillCapabilityFlag:
             locale_equipment_pool=["Barbell"],
             cluster_locale_ids=["home"],
             cluster_gear_toggle_states={},
-            included_discipline_ids=["D-010"],
+            included_discipline_ids=["D-012"],
             etl_version_set=_DEFAULT_ETL,
         )
         flags = [
@@ -1152,7 +1152,7 @@ class TestSkillCapabilityFlag:
         ]
         assert len(flags) == 1
         f = flags[0]
-        assert f.discipline_id == "D-010"
+        assert f.discipline_id == "D-012"
         assert f.discipline_name == "Rock Climbing"
         assert f.metadata == {"toggle_name": "climbing_roped"}
         assert "climbing_roped" in f.message
@@ -1162,9 +1162,9 @@ class TestSkillCapabilityFlag:
         conn = _FakeConn()
         conn.queue()
         conn.queue_skill_capability_toggles(
-            _skill_cap_row("climbing_roped", gated_discipline_ids=["D-010"])
+            _skill_cap_row("climbing_roped", gated_discipline_ids=["D-012"])
         )
-        conn.queue(_sdb_row("D-010", "Rock Climbing", "Climbing"))
+        conn.queue(_sdb_row("D-012", "Rock Climbing", "Climbing"))
         conn.queue()
         payload = q_layer2c_equipment_mapper_payload(
             conn,
@@ -1172,7 +1172,7 @@ class TestSkillCapabilityFlag:
             locale_equipment_pool=["Barbell"],
             cluster_locale_ids=["home"],
             cluster_gear_toggle_states={},
-            included_discipline_ids=["D-010"],
+            included_discipline_ids=["D-012"],
             etl_version_set=_DEFAULT_ETL,
             skill_toggle_states={"climbing_roped": True},
         )
@@ -1187,7 +1187,7 @@ class TestSkillCapabilityFlag:
         conn.queue_skill_capability_toggles(
             _skill_cap_row(
                 "mountaineering",
-                gated_discipline_ids=["D-016", "D-020"],
+                gated_discipline_ids=["D-018", "D-022"],
             )
         )
         # Included disciplines do not overlap the toggle's gated set.
@@ -1208,19 +1208,19 @@ class TestSkillCapabilityFlag:
         )
 
     def test_mountaineering_toggle_fires_for_two_included_disciplines(self):
-        """`mountaineering` gates {D-016, D-020}; including both with
+        """`mountaineering` gates {D-018, D-022}; including both with
         the toggle OFF fires two flags."""
         conn = _FakeConn()
         conn.queue()
         conn.queue_skill_capability_toggles(
             _skill_cap_row(
                 "mountaineering",
-                gated_discipline_ids=["D-016", "D-020"],
+                gated_discipline_ids=["D-018", "D-022"],
             )
         )
         conn.queue(
-            _sdb_row("D-016", "Mountaineering", "Mountaineering"),
-            _sdb_row("D-020", "Alpine Descent", "Skiing"),
+            _sdb_row("D-018", "Mountaineering", "Mountaineering"),
+            _sdb_row("D-022", "Alpine Descent", "Skiing"),
         )
         conn.queue()
         payload = q_layer2c_equipment_mapper_payload(
@@ -1229,7 +1229,7 @@ class TestSkillCapabilityFlag:
             locale_equipment_pool=[],
             cluster_locale_ids=["home"],
             cluster_gear_toggle_states={},
-            included_discipline_ids=["D-016", "D-020"],
+            included_discipline_ids=["D-018", "D-022"],
             etl_version_set=_DEFAULT_ETL,
         )
         flags = sorted(
@@ -1239,7 +1239,7 @@ class TestSkillCapabilityFlag:
             ),
             key=lambda f: f.discipline_id,
         )
-        assert [f.discipline_id for f in flags] == ["D-016", "D-020"]
+        assert [f.discipline_id for f in flags] == ["D-018", "D-022"]
         assert all(f.metadata["toggle_name"] == "mountaineering" for f in flags)
 
     def test_default_empty_skill_states_treats_every_toggle_off(self):

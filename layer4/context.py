@@ -1219,7 +1219,7 @@ class RaceEventPayload(_Base):
     # D-73 Phase 5.2 Bucket E.(b)-B2 (2026-05-24) — per-race discipline
     # filter override. When non-None, Layer 2A's classifier post-filters
     # the bridge-derived discipline list to just these canonical IDs
-    # (e.g. ["D-001","D-008b","D-013"]). None = use full bridge defaults
+    # (e.g. ["D-001","D-010","D-015"]). None = use full bridge defaults
     # (pre-B2 behavior, same as missing column on legacy rows). Auto-
     # cleared by the route layer on framework_sport change (orphan
     # cleanup); empty list is treated as None at the form-parse boundary.

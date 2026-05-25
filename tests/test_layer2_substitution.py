@@ -8,7 +8,7 @@ so there's no deterministic craft-substitution assertion — only that the
 candidate set is surfaced verbatim.
 
 `§13.6` skill-gated terrain and `§13.7` pure-craft collapse are out of scope
-for this build (no skill→terrain map; the D-008a/b collapse is the deferred R6
+for this build (no skill→terrain map; the D-010/b collapse is the deferred R6
 id-change session).
 """
 
@@ -79,7 +79,7 @@ def _terrain(
     name: str | None = None,
     available: bool = False,
     gap: TerrainGap | None = None,
-    discipline_id: str = "D-007",
+    discipline_id: str = "D-009",
 ) -> RaceTerrainOutput:
     return RaceTerrainOutput(
         terrain_id=terrain_id,
@@ -104,7 +104,7 @@ def _packraft_block() -> Layer2BDisciplineBlock:
     """§13.1 — Packrafting leg: 80% river (local), 10% lake (low-fid proxy),
     10% whitewater (unbridgeable)."""
     return _block(
-        "D-007",
+        "D-009",
         [
             _terrain("TRN-river", 80.0, name="River", available=True),
             _terrain(
@@ -131,7 +131,7 @@ class TestPackraftScenario:
             etl_version_set=_ETL,
         )
         rec = p.recommendations[0]
-        assert rec.discipline_id == "D-007"
+        assert rec.discipline_id == "D-009"
         assert rec.race_craft == "Packrafting"
 
     def test_candidate_crafts_surfaced_verbatim_sorted(self):
@@ -194,7 +194,7 @@ class TestCraftCandidates:
         unavail = [f for f in p.coaching_flags if f.flag_type == "craft_unavailable"]
         assert len(unavail) == 1
         assert p.recommendations[0].candidate_training_crafts == []
-        assert unavail[0].metadata["included_discipline_ids"] == ["D-007"]
+        assert unavail[0].metadata["included_discipline_ids"] == ["D-009"]
 
     def test_owned_crafts_deduped(self):
         p = resolve_training_substitution(
@@ -218,10 +218,10 @@ class TestTerrainEmphasis:
 
     def test_proxy_at_floor_is_trainable_below_floor_is_not(self):
         block = _block(
-            "D-006",
+            "D-008",
             [
-                _terrain("TRN-at", 50.0, gap=_gap("TRN-at", proxy="TRN-x", fidelity=0.25, severity="critical"), discipline_id="D-006"),
-                _terrain("TRN-below", 50.0, gap=_gap("TRN-below", proxy="TRN-y", fidelity=0.20, severity="critical"), discipline_id="D-006"),
+                _terrain("TRN-at", 50.0, gap=_gap("TRN-at", proxy="TRN-x", fidelity=0.25, severity="critical"), discipline_id="D-008"),
+                _terrain("TRN-below", 50.0, gap=_gap("TRN-below", proxy="TRN-y", fidelity=0.20, severity="critical"), discipline_id="D-008"),
             ],
         )
         p = resolve_training_substitution(
@@ -233,8 +233,8 @@ class TestTerrainEmphasis:
 
     def test_low_fidelity_flag_carries_adaptation_weeks(self):
         block = _block(
-            "D-006",
-            [_terrain("TRN-x", 100.0, gap=_gap("TRN-x", proxy="TRN-y", fidelity=0.45, severity="high", weeks=(3, 6)), discipline_id="D-006")],
+            "D-008",
+            [_terrain("TRN-x", 100.0, gap=_gap("TRN-x", proxy="TRN-y", fidelity=0.45, severity="high", weeks=(3, 6)), discipline_id="D-008")],
         )
         p = resolve_training_substitution(
             terrain_by_discipline=[block], athlete_crafts=[], etl_version_set=_ETL
@@ -245,8 +245,8 @@ class TestTerrainEmphasis:
 
     def test_good_proxy_does_not_flag_low_fidelity(self):
         block = _block(
-            "D-006",
-            [_terrain("TRN-x", 100.0, gap=_gap("TRN-x", proxy="TRN-y", fidelity=0.85, severity="low"), discipline_id="D-006")],
+            "D-008",
+            [_terrain("TRN-x", 100.0, gap=_gap("TRN-x", proxy="TRN-y", fidelity=0.85, severity="low"), discipline_id="D-008")],
         )
         p = resolve_training_substitution(
             terrain_by_discipline=[block], athlete_crafts=[], etl_version_set=_ETL
@@ -256,7 +256,7 @@ class TestTerrainEmphasis:
 
     def test_missing_gap_data_is_untrainable(self):
         # available_locally False but no gap record → data hole → untrainable.
-        block = _block("D-006", [_terrain("TRN-x", 100.0, available=False, gap=None, discipline_id="D-006")])
+        block = _block("D-008", [_terrain("TRN-x", 100.0, available=False, gap=None, discipline_id="D-008")])
         p = resolve_training_substitution(
             terrain_by_discipline=[block], athlete_crafts=[], etl_version_set=_ETL
         )
@@ -266,7 +266,7 @@ class TestTerrainEmphasis:
 
 class TestEdgeCases:
     def test_empty_terrain_block_is_craft_only(self):
-        block = _block("D-009", [])
+        block = _block("D-011", [])
         p = resolve_training_substitution(
             terrain_by_discipline=[block], athlete_crafts=["canoe"], etl_version_set=_ETL
         )
@@ -278,7 +278,7 @@ class TestEdgeCases:
 
     def test_all_terrain_untrainable(self):
         block = _block(
-            "D-007",
+            "D-009",
             [
                 _terrain("TRN-a", 60.0, gap=_gap("TRN-a", proxy=None, fidelity=None, severity="unbridgeable")),
                 _terrain("TRN-b", 40.0, gap=_gap("TRN-b", proxy=None, fidelity=None, severity="unbridgeable")),
@@ -307,7 +307,7 @@ class TestEdgeCases:
             athlete_crafts=["kayak"],
             etl_version_set=_ETL,
         )
-        assert [r.discipline_id for r in p.recommendations] == ["D-001", "D-007"]
+        assert [r.discipline_id for r in p.recommendations] == ["D-001", "D-009"]
 
     def test_deterministic(self):
         args = dict(

@@ -12,11 +12,10 @@ _ID_RE = re.compile(r"^D-\d{3}[a-z]?$")
 
 class TestDisciplineDisplayNameMap:
     def test_map_covers_every_current_bridge_discipline(self):
-        # 31 = D-001..D-029 (D-027 intentionally skipped during the framework
-        # build) with D-008 split into D-008a/D-008b in the v10 ETL and
-        # D-030/D-031 removed. Pins the count so an accidental add/drop is loud
-        # rather than silent (the predecessor handoff miscounted this as 30).
-        assert len(DISCIPLINE_DISPLAY_NAMES) == 31
+        # 29 = D-001..D-029, contiguous (no suffixes, no gaps) after the R6
+        # renumber + the two collapses (kayak -> D-010, mtn-running -> D-024).
+        # Pins the count so an accidental add/drop is loud rather than silent.
+        assert len(DISCIPLINE_DISPLAY_NAMES) == 29
 
     def test_all_keys_are_valid_discipline_ids(self):
         for did in DISCIPLINE_DISPLAY_NAMES:
@@ -32,29 +31,29 @@ class TestDisciplineDisplayNameMap:
             assert "(" not in label, f"{did} label still bundles a qualifier: {label!r}"
 
     def test_known_mislabel_is_fixed(self):
-        # D-005 surfaced as "XC Cycling (Road/Gravel)" via the bridge.
-        assert DISCIPLINE_DISPLAY_NAMES["D-005"] == "Road Cycling"
+        # D-006 surfaced as "XC Cycling (Road/Gravel)" via the bridge.
+        assert DISCIPLINE_DISPLAY_NAMES["D-006"] == "Road Cycling"
 
-    def test_kayak_pair_kept_distinct_this_slice(self):
-        # Collapse to one "Kayaking" is deferred to Slice 3.
-        assert DISCIPLINE_DISPLAY_NAMES["D-008a"] != DISCIPLINE_DISPLAY_NAMES["D-008b"]
+    def test_kayak_pair_collapsed_to_single_label(self):
+        # R6: flat-water + whitewater kayak collapsed to one D-010 "Kayaking".
+        assert DISCIPLINE_DISPLAY_NAMES["D-010"] == "Kayaking"
 
-    def test_mountain_running_pair_kept_distinct_this_slice(self):
-        # Collapse to "Mountain Running" is deferred to Slice 3.
-        assert DISCIPLINE_DISPLAY_NAMES["D-022"] != DISCIPLINE_DISPLAY_NAMES["D-023"]
+    def test_mountain_running_pair_collapsed_to_single_label(self):
+        # R6: uphill + downhill mountain-running collapsed to one D-024.
+        assert DISCIPLINE_DISPLAY_NAMES["D-024"] == "Mountain Running"
 
 
 class TestDisciplineDisplayName:
     def test_curated_id_returns_pure_craft_label(self):
-        assert discipline_display_name("D-005", "XC Cycling (Road/Gravel)") == "Road Cycling"
+        assert discipline_display_name("D-006", "XC Cycling (Road/Gravel)") == "Road Cycling"
 
     def test_curated_label_overrides_bridge_name(self):
         # Even when the bridge passes a different name, the overlay wins.
         assert discipline_display_name("D-001", "Trail run") == "Trail Running"
 
     def test_uncurated_id_falls_back_to_bridge_name(self):
-        # e.g. the combined "D-005 + D-005a" bridge rows.
-        assert discipline_display_name("D-005 + D-005a", "Road Cycling (+ TT/Tri Bike)") == \
+        # e.g. the combined "D-006 + D-007" bridge rows.
+        assert discipline_display_name("D-006 + D-007", "Road Cycling (+ TT/Tri Bike)") == \
             "Road Cycling (+ TT/Tri Bike)"
 
     def test_uncurated_id_with_no_fallback_returns_id(self):

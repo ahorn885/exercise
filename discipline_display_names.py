@@ -1,17 +1,18 @@
 """Curated pure-craft display names for race disciplines.
 
 Overlay on `layer0.sport_discipline_bridge.discipline_name`, whose labels
-are the sport-specific Sheet-3 variants from `Sports_Framework_v10.xlsx`
+are the sport-specific variants from `Sports_Framework_v11.xlsx`
 (e.g. "XC Cycling (Road/Gravel)", "Hiking (Weighted)"). This map gives one
 pure-craft label per craft, sport-independent — and callers fall back to
-the bridge name for ids absent here (future disciplines, or the combined
-"D-005 + D-005a" bridge rows that never match a single id).
+the bridge name for ids absent here.
 
-Terrain/condition qualifiers are intentionally dropped: terrain becomes a
-separate per-discipline axis in the best-fit re-model (BestFitModality_Spec_v3).
-IDs are left untouched this slice (kayak D-008a/b and mountain-running
-D-022/D-023 keep distinct labels; their collapse lands with the Slice-3
-terrain axis that absorbs the flat-vs-whitewater / uphill-vs-downhill split).
+Terrain/condition qualifiers are intentionally dropped: terrain is a
+separate per-discipline axis (BestFitModality_Spec_v4). The R6 renumber
+(2026-05-25) re-sequenced ids to D-001..D-029 (no suffixes, no gaps) and
+collapsed two pairs: kayak flat/whitewater -> D-010 "Kayaking"; mountain-
+running uphill/downhill -> D-024 "Mountain Running". The terrain axis now
+carries the flat-vs-whitewater / uphill-vs-downhill split.
+See `Discipline_ID_Renumber_R6_Design_v1.md` for the old->new map.
 """
 
 from __future__ import annotations
@@ -21,31 +22,29 @@ DISCIPLINE_DISPLAY_NAMES: dict[str, str] = {
     "D-002": "Road Running",
     "D-003": "Hiking",
     "D-004": "Open Water Swimming",
-    "D-004b": "Pool Swimming",
-    "D-005": "Road Cycling",
-    "D-005a": "Time-Trial Cycling",
-    "D-006": "Mountain Biking",
-    "D-007": "Packrafting",
-    "D-008a": "Flat-water Kayaking",
-    "D-008b": "Whitewater Kayaking",
-    "D-009": "Canoeing",
-    "D-010": "Rock Climbing",
-    "D-011": "Abseiling",
-    "D-012": "Via Ferrata",
-    "D-013": "Orienteering",
-    "D-014": "Swimming",
-    "D-015": "Snowshoeing",
-    "D-016": "Mountaineering",
-    "D-017": "Paddle Rafting",
-    "D-018": "Swimrun",
-    "D-019": "Ski Touring",
-    "D-020": "Alpine Skiing",
-    "D-021": "Ski Transitions",
-    "D-022": "Uphill Running",
-    "D-023": "Downhill Running",
-    "D-024": "Fencing",
-    "D-025": "Laser Run",
-    "D-026": "Obstacle Racing",
+    "D-005": "Pool Swimming",
+    "D-006": "Road Cycling",
+    "D-007": "Time-Trial Cycling",
+    "D-008": "Mountain Biking",
+    "D-009": "Packrafting",
+    "D-010": "Kayaking",
+    "D-011": "Canoeing",
+    "D-012": "Rock Climbing",
+    "D-013": "Abseiling",
+    "D-014": "Via Ferrata",
+    "D-015": "Orienteering",
+    "D-016": "Swimming",
+    "D-017": "Snowshoeing",
+    "D-018": "Mountaineering",
+    "D-019": "Paddle Rafting",
+    "D-020": "Swimrun",
+    "D-021": "Ski Touring",
+    "D-022": "Alpine Skiing",
+    "D-023": "Ski Transitions",
+    "D-024": "Mountain Running",
+    "D-025": "Fencing",
+    "D-026": "Laser Run",
+    "D-027": "Obstacle Racing",
     "D-028": "Cross-Country Skiing",
     "D-029": "Rifle Shooting",
 }

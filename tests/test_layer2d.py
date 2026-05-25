@@ -9,7 +9,7 @@ Coverage maps to `Layer2D_Spec.md` §13 test scenarios + §10 edge cases:
 - §13.4 Current asthma (Respiratory, Active) — accommodation via condition match
 - §13.5 Clean baseline — no injuries, no conditions, fast path
 - §13.6 Multi-injury cumulative load — `multi_body_part_load_concern` fires
-- §13.7 D-018 Swimrun gap × HIGH risk — `gap_x_high_risk_concurrent` HITL
+- §13.7 D-020 Swimrun gap × HIGH risk — `gap_x_high_risk_concurrent` HITL
 - §5.3.4 severity → verdict mapping (Acute → exclude; Recovering → accommodate)
 - §5.3.6 modality dispatch (Tendinopathy / Chronic-Managed → HSR tempo)
 - §5.3.6.4 phase contraindication (acute tendinopathy forces isometric)
@@ -261,19 +261,19 @@ class TestAndyBaseline:
         # Pushup contraindicates Wrist; bench press too
         conn.queue_response(rows=[
             _exercise(
-                "E-PUSHUP", "Standard Pushup", "D-010",
+                "E-PUSHUP", "Standard Pushup", "D-012",
                 contraindicated_parts=["Wrist"],
                 injury_flags_text="palm-down loading at end-range wrist extension",
             ),
             _exercise(
-                "E-PULLUP", "Pullup", "D-010",
+                "E-PULLUP", "Pullup", "D-012",
                 contraindicated_parts=[],
                 injury_flags_text=None,
             ),
         ])
         conn.queue_response(rows=[
             _discipline(
-                "D-010", "Rock Climbing",
+                "D-012", "Rock Climbing",
                 common_injury_patterns=[
                     "Wrist flexor / extensor strain",
                     "Finger pulley tear",
@@ -283,7 +283,7 @@ class TestAndyBaseline:
         conn.queue_response(rows=[])  # training_gaps
         conn.queue_response(rows=[
             _substitute(
-                "D-010", "D-007", "Packrafting", fidelity=0.6,
+                "D-012", "D-009", "Packrafting", fidelity=0.6,
                 substitute_patterns=["Wrist tendinitis (paddle bracing)"],
             ),
         ])
@@ -295,7 +295,7 @@ class TestAndyBaseline:
             modifications_needed="fist pushups only",
         )]
         payload = q_layer2d_injury_risk_profile_payload(
-            conn, injuries, [], ["D-010"], etl_version_set=_PIN,
+            conn, injuries, [], ["D-012"], etl_version_set=_PIN,
         )
         # Pushup is accommodated (Chronic-Managed → ACCOMMODATE per §5.3.4)
         assert len(payload.accommodated_exercises) == 1
@@ -309,7 +309,7 @@ class TestAndyBaseline:
         )
         # Pullup with no contraindication = CLEAN
         assert payload.clean_exercise_ids == ["E-PULLUP"]
-        # Discipline-level: D-010 elevated; substitute back-check flags
+        # Discipline-level: D-012 elevated; substitute back-check flags
         # Packrafting as still_at_risk for Wrist
         dr = payload.discipline_risk_profiles[0]
         assert dr.risk_level == "elevated"
@@ -587,23 +587,23 @@ class TestMultiInjuryCumulativeLoad:
         assert "multi_body_part_load_concern" in flag_types
 
 
-# ─── §13.7 D-018 gap × HIGH risk → HITL ──────────────────────────────────────
+# ─── §13.7 D-020 gap × HIGH risk → HITL ──────────────────────────────────────
 
 
 class TestGapTimesHighRisk:
     def test_gap_discipline_with_high_risk_blocks(self):
         conn = _FakeConn()
-        conn.queue_response(rows=[_exercise("E-001", "Stroke", "D-018")])
+        conn.queue_response(rows=[_exercise("E-001", "Stroke", "D-020")])
         conn.queue_response(rows=[
             _discipline(
-                "D-018", "Swimrun",
+                "D-020", "Swimrun",
                 common_injury_patterns=[
                     "Shoulder overuse",
                     "Rotator cuff impingement",
                 ],
             ),
         ])
-        conn.queue_response(rows=[{"discipline_id": "D-018"}])  # gap row
+        conn.queue_response(rows=[{"discipline_id": "D-020"}])  # gap row
         conn.queue_response(rows=[])  # no substitutes
         injuries = [_injury(
             "Left Shoulder",
@@ -612,9 +612,9 @@ class TestGapTimesHighRisk:
             movement_constraints=["Pain with overhead movement"],
         )]
         payload = q_layer2d_injury_risk_profile_payload(
-            conn, injuries, [], ["D-018"], etl_version_set=_PIN,
+            conn, injuries, [], ["D-020"], etl_version_set=_PIN,
         )
-        # D-018 risk = HIGH (Acute shoulder + patterns match)
+        # D-020 risk = HIGH (Acute shoulder + patterns match)
         assert payload.discipline_risk_profiles[0].risk_level == "high"
         # HITL: rule 4 (HIGH + no substitutes) + rule 5 (gap × HIGH)
         hitl_types = {i.hitl_type for i in payload.hitl_items}

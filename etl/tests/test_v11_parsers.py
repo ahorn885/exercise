@@ -1,9 +1,9 @@
-"""Tests for the v10-specific parsers in sports_framework.
+"""Tests for the sports_framework parsers against the live v11 workbook.
 
 Covers `_parse_constituent_movements`, `_parse_bool`,
 `_split_phase_load_notes`, `_parse_weekly_total_text`,
 plus the discipline substitutes / training gaps / cross-sport
-properties extractors against the in-repo v10 workbook.
+properties extractors against the in-repo v11 workbook (post-R6 renumber).
 """
 from __future__ import annotations
 
@@ -23,7 +23,7 @@ from etl.layer0.extractors.sports_framework import (
     extract_phase_load_weekly_totals,
 )
 
-V10_PATH = Path(__file__).parent.parent / "sources" / "Sports_Framework_v10.xlsx"
+V11_PATH = Path(__file__).parent.parent / "sources" / "Sports_Framework_v11.xlsx"
 
 
 # ---------------------------------------------------------------------------
@@ -222,13 +222,13 @@ def test_weekly_totals_mixed_units_within_phase_rejects_phase():
 # ---------------------------------------------------------------------------
 
 @pytest.fixture(scope="module")
-def v10_wb():
-    return load_workbook(str(V10_PATH), read_only=False, data_only=True)
+def v11_wb():
+    return load_workbook(str(V11_PATH), read_only=False, data_only=True)
 
 
-def test_extract_discipline_substitutes_count_91(v10_wb):
+def test_extract_discipline_substitutes_count_91(v11_wb):
     warns: list = []
-    rows = extract_discipline_substitutes(v10_wb, parse_warnings=warns)
+    rows = extract_discipline_substitutes(v11_wb, parse_warnings=warns)
     assert len(rows) == 91
     assert warns == []
     # Spot check one known row
@@ -237,22 +237,22 @@ def test_extract_discipline_substitutes_count_91(v10_wb):
     assert 0.0 <= first["fidelity"] <= 1.0
 
 
-def test_extract_discipline_training_gaps_count_3(v10_wb):
-    rows = extract_discipline_training_gaps(v10_wb)
+def test_extract_discipline_training_gaps_count_3(v11_wb):
+    rows = extract_discipline_training_gaps(v11_wb)
     assert len(rows) == 3
     by_id = {r["discipline_id"]: r for r in rows}
-    assert "D-018" in by_id
     assert "D-020" in by_id
-    assert "D-024" in by_id
+    assert "D-022" in by_id
+    assert "D-025" in by_id
     # Swimrun → multi-substitute candidate
-    assert by_id["D-018"]["multi_substitute_candidate"] is True
-    assert by_id["D-018"]["gap_type"] == "no_single_substitute"
+    assert by_id["D-020"]["multi_substitute_candidate"] is True
+    assert by_id["D-020"]["gap_type"] == "no_single_substitute"
     # Alpine Descent → off-snow
-    assert by_id["D-020"]["gap_type"] == "no_off_environment_substitute"
+    assert by_id["D-022"]["gap_type"] == "no_off_environment_substitute"
 
 
-def test_extract_cross_sport_properties_filters_commentary(v10_wb):
-    rows = extract_cross_sport_properties(v10_wb["Cross-Sport Properties"])
+def test_extract_cross_sport_properties_filters_commentary(v11_wb):
+    rows = extract_cross_sport_properties(v11_wb["Cross-Sport Properties"])
     assert len(rows) == 1
     r = rows[0]
     assert r["property_id"] == "LIT_RATIO_001"
@@ -261,10 +261,10 @@ def test_extract_cross_sport_properties_filters_commentary(v10_wb):
     assert r["notes"] is not None
 
 
-def test_extract_phase_load_weekly_totals_emits_4_rows_per_sport(v10_wb):
+def test_extract_phase_load_weekly_totals_emits_4_rows_per_sport(v11_wb):
     failures: list = []
     rows = extract_phase_load_weekly_totals(
-        v10_wb["Phase Load Allocation"], parse_failures=failures,
+        v11_wb["Phase Load Allocation"], parse_failures=failures,
     )
     # Group by sport — every parsed sport should yield exactly 4 phase rows.
     by_sport: dict[str, set[str]] = {}

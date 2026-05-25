@@ -1,4 +1,4 @@
-"""Layer 0 ETL — extractor for Sports_Framework_v10.xlsx (source 0A).
+"""Layer 0 ETL — extractor for Sports_Framework_v11.xlsx (source 0A).
 
 One function per sheet. Each returns a list of dicts ready for INSERT.
 Parsing rules per spec §4.2–§4.15 (Layer0_ETL_Spec_v3.md).
@@ -466,7 +466,7 @@ def extract_sport_discipline_map(
     keys as of v6 — one true duplicate (Triathlon D-002 listed twice
     identically) and two genuine sub-format splits where multiple
     disciplines share a `discipline_id` (Long Distance / Endurance
-    Cycling D-005 and D-006). Dropped rows are appended to
+    Cycling D-006 and D-008). Dropped rows are appended to
     `dropped_dupes` if provided, for surfacing in the report.
     """
     rows: list[dict[str, Any]] = []
@@ -514,14 +514,14 @@ def extract_discipline_pairing_matrix(
 ) -> list[dict[str, Any]]:
     """Sheet 4 — primary matrix. Header on R10; data R11+.
 
-    The matrix can extend beyond R27 in v10 (D-008 split into D-008a/D-008b),
-    so the last data row is detected dynamically: scan downward until the
+    The last data row is detected dynamically: scan downward until the
     first row whose col 1 doesn't start with `D-`. Rows after the matrix
     (KEY PAIRING RATIONALE etc.) are commentary, not pairing rows.
 
     Header cells starting with "D-" yield a destination column. Cells whose
     first token doesn't match `D-\\d+[a-z]?` are non-discipline columns and
-    are ignored. This handles `D-008a` / `D-008b` IDs introduced in v10.
+    are ignored. (The `[a-z]?` suffix support is retained for robustness
+    though the v11 R6 renumber removed all suffix ids.)
     """
     rows: list[dict[str, Any]] = []
     rating_map = {

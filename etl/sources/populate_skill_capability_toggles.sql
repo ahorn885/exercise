@@ -17,11 +17,11 @@
 -- discipline requires a capability the athlete hasn't enabled.
 --
 -- Ratified mappings (Andy 2026-05-24, tightened from initial proposal):
---   climbing_roped      → {TRN-013}                  | {D-010}
---   via_ferrata         → {}  (no canonical terrain row) | {D-012}
---   whitewater_handling → {TRN-011, TRN-017}         | {D-008b}
+--   climbing_roped      → {TRN-013}                  | {D-012}
+--   via_ferrata         → {}  (no canonical terrain row) | {D-014}
+--   whitewater_handling → {TRN-011, TRN-017}         | {D-010}
 --   swim_open_water     → {TRN-009, TRN-010}         | {D-004}
---   mountaineering      → {TRN-005, TRN-012}         | {D-016, D-020}
+--   mountaineering      → {TRN-005, TRN-012}         | {D-018, D-022}
 --
 -- Naming convention: snake_case (not the em-dash display strings the
 -- gear-toggle precedent uses) to dodge the populate-script-fragility
@@ -46,7 +46,7 @@ VALUES
       'rock adds protection-placement, route-finding, and real-fall '
       'exposure judgement.',
     ARRAY['TRN-013'],
-    ARRAY['D-010'],
+    ARRAY['D-012'],
     '0C-v2.0-r2', NOW() ),
 
   ( 'via_ferrata',
@@ -57,7 +57,7 @@ VALUES
       'no rope-protection skill needed but cable-clipping discipline + '
       'continuous-exposure tolerance is required.',
     ARRAY[]::TEXT[],
-    ARRAY['D-012'],
+    ARRAY['D-014'],
     '0C-v2.0-r2', NOW() ),
 
   ( 'whitewater_handling',
@@ -68,7 +68,7 @@ VALUES
       'progression. Distinct from flat-water paddling, where current '
       'reading and brace skills are not exercised.',
     ARRAY['TRN-011', 'TRN-017'],
-    ARRAY['D-008b'],
+    ARRAY['D-010'],
     '0C-v2.0-r2', NOW() ),
 
   ( 'swim_open_water',
@@ -90,7 +90,7 @@ VALUES
       'hill / rolling terrain (no technical surface) and from rock '
       'climbing (different skill mix; some overlap with via ferrata).',
     ARRAY['TRN-005', 'TRN-012'],
-    ARRAY['D-016', 'D-020'],
+    ARRAY['D-018', 'D-022'],
     '0C-v2.0-r2', NOW() )
 ON CONFLICT (toggle_name, etl_version) DO NOTHING;
 

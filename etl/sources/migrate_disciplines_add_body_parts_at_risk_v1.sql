@@ -6,7 +6,7 @@
 -- vocabulary from Vocabulary_Audit_v2 + Collarbone amendment), replacing
 -- the heuristic BODY_PART_KEYWORDS map currently in Layer 2D §5.5.
 --
--- Population: 31 active discipline rows.
+-- Population: 29 active discipline rows (post-R6 collapse).
 -- Source of truth: D23_Curation_Reference_v1.md row tables.
 -- Generator: etl/sources/generate_body_parts_at_risk_migration.py
 --
@@ -31,7 +31,7 @@ ALTER TABLE layer0.disciplines
 COMMENT ON COLUMN layer0.disciplines.body_parts_at_risk IS
   'Canonical body parts at risk per discipline (subset of Vocabulary_Audit Section 1 + Collarbone). Populated by migrate_disciplines_add_body_parts_at_risk_v1.sql from D23_Curation_Reference_v1.md. Curated 2026-05-12.';
 
--- ── 2. Populate — 31 UPDATE statements grouped by sport family ──────────
+-- ── 2. Populate — 29 UPDATE statements grouped by sport family ──────────
 
 -- Running family
 UPDATE layer0.disciplines
@@ -40,16 +40,14 @@ UPDATE layer0.disciplines
 UPDATE layer0.disciplines
    SET body_parts_at_risk = ARRAY['Plantar fascia', 'IT band', 'Knee', 'Kneecap', 'Achilles', 'Shin', 'Hamstring', 'Foot']::TEXT[]
  WHERE discipline_id = 'D-002';
-UPDATE layer0.disciplines SET body_parts_at_risk = ARRAY['Ankle']::TEXT[] WHERE discipline_id = 'D-013';
+UPDATE layer0.disciplines SET body_parts_at_risk = ARRAY['Ankle']::TEXT[] WHERE discipline_id = 'D-015';
+-- D-024 Mountain Running: R6 collapse union of uphill + downhill injury profiles.
 UPDATE layer0.disciplines
-   SET body_parts_at_risk = ARRAY['Hip flexor', 'Calf', 'Achilles', 'Knee', 'Kneecap', 'Shin', 'Foot', 'Ankle']::TEXT[]
- WHERE discipline_id = 'D-022';
-UPDATE layer0.disciplines
-   SET body_parts_at_risk = ARRAY['Quad', 'Knee', 'Kneecap', 'IT band', 'Ankle', 'Shin']::TEXT[]
- WHERE discipline_id = 'D-023';
+   SET body_parts_at_risk = ARRAY['Hip flexor', 'Calf', 'Achilles', 'Knee', 'Kneecap', 'Shin', 'Foot', 'Ankle', 'Quad', 'IT band']::TEXT[]
+ WHERE discipline_id = 'D-024';
 UPDATE layer0.disciplines
    SET body_parts_at_risk = ARRAY['Knee', 'Kneecap', 'Achilles', 'Plantar fascia', 'IT band', 'Wrist', 'Forearm']::TEXT[]
- WHERE discipline_id = 'D-025';
+ WHERE discipline_id = 'D-026';
 
 -- Swimming family
 UPDATE layer0.disciplines
@@ -57,63 +55,61 @@ UPDATE layer0.disciplines
  WHERE discipline_id = 'D-004';
 UPDATE layer0.disciplines
    SET body_parts_at_risk = ARRAY['Rotator cuff', 'Shoulder', 'Knee', 'Ankle', 'Foot']::TEXT[]
- WHERE discipline_id = 'D-004b';
+ WHERE discipline_id = 'D-005';
 UPDATE layer0.disciplines
    SET body_parts_at_risk = ARRAY['Rotator cuff', 'Shoulder']::TEXT[]
- WHERE discipline_id = 'D-014';
+ WHERE discipline_id = 'D-016';
 
 -- Cycling family
 UPDATE layer0.disciplines
    SET body_parts_at_risk = ARRAY['Knee', 'Kneecap', 'IT band', 'Lower back', 'Neck', 'Shoulder', 'Achilles', 'Hand', 'Foot', 'Hip flexor']::TEXT[]
- WHERE discipline_id = 'D-005';
+ WHERE discipline_id = 'D-006';
 UPDATE layer0.disciplines
    SET body_parts_at_risk = ARRAY['Knee', 'Kneecap', 'IT band', 'Lower back', 'Neck', 'Shoulder', 'Achilles', 'Hand', 'Foot', 'Hip flexor']::TEXT[]
- WHERE discipline_id = 'D-005a';
+ WHERE discipline_id = 'D-007';
 UPDATE layer0.disciplines
    SET body_parts_at_risk = ARRAY['Lower back', 'Knee', 'Hand', 'Wrist', 'Shoulder', 'Rotator cuff', 'Collarbone']::TEXT[]
- WHERE discipline_id = 'D-006';
+ WHERE discipline_id = 'D-008';
 
 -- Paddle family
 UPDATE layer0.disciplines
    SET body_parts_at_risk = ARRAY['Rotator cuff', 'Elbow', 'Lower back', 'Wrist', 'Bicep']::TEXT[]
- WHERE discipline_id = 'D-007';
-UPDATE layer0.disciplines
-   SET body_parts_at_risk = ARRAY['Shoulder', 'Rotator cuff', 'Wrist', 'Lower back', 'Hand']::TEXT[]
- WHERE discipline_id = 'D-008a';
+ WHERE discipline_id = 'D-009';
+-- D-010 Kayaking: R6 collapse union of flat-water + whitewater injury profiles.
 UPDATE layer0.disciplines
    SET body_parts_at_risk = ARRAY['Shoulder', 'Rotator cuff', 'Wrist', 'Lower back', 'Hand', 'Forearm']::TEXT[]
- WHERE discipline_id = 'D-008b';
+ WHERE discipline_id = 'D-010';
 UPDATE layer0.disciplines
    SET body_parts_at_risk = ARRAY['Shoulder', 'Rotator cuff', 'Wrist', 'Elbow', 'Lower back']::TEXT[]
- WHERE discipline_id = 'D-009';
+ WHERE discipline_id = 'D-011';
 UPDATE layer0.disciplines
    SET body_parts_at_risk = ARRAY['Shoulder', 'Lower back']::TEXT[]
- WHERE discipline_id = 'D-017';
+ WHERE discipline_id = 'D-019';
 
 -- Climbing / vertical / obstacles
 UPDATE layer0.disciplines
    SET body_parts_at_risk = ARRAY['Finger pulley', 'Rotator cuff', 'Elbow', 'Wrist']::TEXT[]
- WHERE discipline_id = 'D-010';
-UPDATE layer0.disciplines
-   SET body_parts_at_risk = ARRAY['Hand', 'Shoulder', 'Ankle', 'Shin', 'Lower back']::TEXT[]
- WHERE discipline_id = 'D-011';
-UPDATE layer0.disciplines
-   SET body_parts_at_risk = ARRAY['Finger pulley', 'Shoulder']::TEXT[]
  WHERE discipline_id = 'D-012';
 UPDATE layer0.disciplines
+   SET body_parts_at_risk = ARRAY['Hand', 'Shoulder', 'Ankle', 'Shin', 'Lower back']::TEXT[]
+ WHERE discipline_id = 'D-013';
+UPDATE layer0.disciplines
+   SET body_parts_at_risk = ARRAY['Finger pulley', 'Shoulder']::TEXT[]
+ WHERE discipline_id = 'D-014';
+UPDATE layer0.disciplines
    SET body_parts_at_risk = ARRAY['Fingers', 'Forearm', 'Shoulder', 'Rotator cuff', 'Ankle', 'Knee', 'Elbow']::TEXT[]
- WHERE discipline_id = 'D-026';
+ WHERE discipline_id = 'D-027';
 
 -- Skimo / skiing family
 UPDATE layer0.disciplines
    SET body_parts_at_risk = ARRAY['Hip flexor', 'Knee', 'Kneecap', 'IT band', 'Achilles', 'Lower back', 'Plantar fascia']::TEXT[]
- WHERE discipline_id = 'D-019';
+ WHERE discipline_id = 'D-021';
 UPDATE layer0.disciplines
    SET body_parts_at_risk = ARRAY['ACL', 'Knee', 'Shoulder', 'Wrist', 'Hip']::TEXT[]
- WHERE discipline_id = 'D-020';
+ WHERE discipline_id = 'D-022';
 UPDATE layer0.disciplines
    SET body_parts_at_risk = ARRAY['Shoulder', 'Wrist', 'Calf', 'Shin', 'Foot']::TEXT[]
- WHERE discipline_id = 'D-021';
+ WHERE discipline_id = 'D-023';
 UPDATE layer0.disciplines
    SET body_parts_at_risk = ARRAY['Shoulder', 'Rotator cuff', 'Knee', 'Lower back', 'Shin']::TEXT[]
  WHERE discipline_id = 'D-028';
@@ -124,18 +120,18 @@ UPDATE layer0.disciplines
  WHERE discipline_id = 'D-003';
 UPDATE layer0.disciplines
    SET body_parts_at_risk = ARRAY['Hip flexor', 'Hip', 'IT band', 'Ankle']::TEXT[]
- WHERE discipline_id = 'D-015';
+ WHERE discipline_id = 'D-017';
 UPDATE layer0.disciplines
    SET body_parts_at_risk = ARRAY['Ankle', 'Hip flexor', 'Lower back', 'Knee', 'Shoulder', 'Trapezius', 'Finger pulley', 'Rotator cuff', 'Elbow', 'Wrist']::TEXT[]
- WHERE discipline_id = 'D-016';
+ WHERE discipline_id = 'D-018';
 
 -- Combined / specialty
 UPDATE layer0.disciplines
    SET body_parts_at_risk = ARRAY['Achilles', 'Foot', 'Shoulder', 'Hip flexor']::TEXT[]
- WHERE discipline_id = 'D-018';
+ WHERE discipline_id = 'D-020';
 UPDATE layer0.disciplines
    SET body_parts_at_risk = ARRAY['Knee', 'Ankle', 'Hip flexor', 'Shoulder', 'Rotator cuff', 'Elbow', 'Lower back']::TEXT[]
- WHERE discipline_id = 'D-024';
+ WHERE discipline_id = 'D-025';
 UPDATE layer0.disciplines
    SET body_parts_at_risk = ARRAY['Shoulder', 'Neck']::TEXT[]
  WHERE discipline_id = 'D-029';
@@ -211,42 +207,40 @@ DECLARE
   v_baseline      TEXT[] := ARRAY[
     'D-001',
     'D-002',
-    'D-013',
-    'D-022',
-    'D-023',
-    'D-025',
+    'D-015',
+    'D-024',
+    'D-026',
     'D-004',
-    'D-004b',
-    'D-014',
     'D-005',
-    'D-005a',
+    'D-016',
     'D-006',
     'D-007',
-    'D-008a',
-    'D-008b',
+    'D-008',
     'D-009',
-    'D-017',
     'D-010',
     'D-011',
-    'D-012',
-    'D-026',
     'D-019',
-    'D-020',
+    'D-012',
+    'D-013',
+    'D-014',
+    'D-027',
     'D-021',
+    'D-022',
+    'D-023',
     'D-028',
     'D-003',
-    'D-015',
-    'D-016',
+    'D-017',
     'D-018',
-    'D-024',
+    'D-020',
+    'D-025',
     'D-029'
   ]::TEXT[];
 BEGIN
   -- 4a: total discipline row count should equal baseline size
   SELECT COUNT(*) INTO v_total_rows FROM layer0.disciplines;
-  IF v_total_rows <> 31 THEN
+  IF v_total_rows <> 29 THEN
     RAISE EXCEPTION 'migrate_disciplines_add_body_parts_at_risk: expected % rows, found %',
-      31, v_total_rows;
+      29, v_total_rows;
   END IF;
 
   -- 4b: every baseline discipline_id must exist as a row
@@ -301,7 +295,7 @@ BEGIN
       v_off_baseline;
   END IF;
 
-  RAISE NOTICE 'migrate_disciplines_add_body_parts_at_risk: OK — 31 rows populated, % canonical body parts, GIN index in place',
+  RAISE NOTICE 'migrate_disciplines_add_body_parts_at_risk: OK — 29 rows populated, % canonical body parts, GIN index in place',
     array_length(v_canonical, 1);
 END $$;
 

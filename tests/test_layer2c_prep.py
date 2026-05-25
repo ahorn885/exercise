@@ -66,7 +66,7 @@ class TestGearToggleParser:
         rows = _parse_gear_toggles(_TOGGLES_MD_FIXTURE)
         climbing = next(r for r in rows if r["toggle_name"] == "Climbing — roped")
         assert climbing["also_satisfies"] == ["Rappelling / abseiling"]
-        assert climbing["gated_discipline_ids"] == ["D-010"]
+        assert climbing["gated_discipline_ids"] == ["D-012"]
 
     def test_rappelling_gates_d011_no_also_satisfies(self):
         rows = _parse_gear_toggles(_TOGGLES_MD_FIXTURE)
@@ -74,13 +74,13 @@ class TestGearToggleParser:
             r for r in rows if r["toggle_name"] == "Rappelling / abseiling"
         )
         assert rappel["also_satisfies"] == []
-        assert rappel["gated_discipline_ids"] == ["D-011"]
+        assert rappel["gated_discipline_ids"] == ["D-013"]
 
     def test_snowshoeing_setup_emphasis_stripped_and_gates_d015(self):
         rows = _parse_gear_toggles(_TOGGLES_MD_FIXTURE)
         snow = next(r for r in rows if r["toggle_name"] == "Snowshoeing setup")
         assert snow["also_satisfies"] == []
-        assert snow["gated_discipline_ids"] == ["D-015"]
+        assert snow["gated_discipline_ids"] == ["D-017"]
 
     def test_unknown_toggle_gets_empty_lists(self):
         # An imaginary toggle not in either code-side dict should land with
@@ -251,10 +251,10 @@ class TestSchemaSubstrate:
         assert "'Snowshoeing setup'" in text
         # CNF shape for Climbing also_satisfies — single rappelling entry.
         assert "ARRAY['Rappelling / abseiling']" in text
-        # D-010 / D-011 / D-015 gated_discipline_ids.
-        assert "'D-010'" in text
-        assert "'D-011'" in text
-        assert "'D-015'" in text
+        # D-012 / D-013 / D-017 gated_discipline_ids.
+        assert "'D-012'" in text
+        assert "'D-013'" in text
+        assert "'D-017'" in text
 
     def test_layer2c_payload_still_constructs(self):
         # Layer2CPayload + sub-types shipped 2026-05-17 (§5.6 amendment).
@@ -316,7 +316,7 @@ class TestSchemaSubstrate:
         # Coaching-flag enum is enforced.
         flag = Layer2CCoachingFlag(
             flag_type="low_coverage",
-            discipline_id="D-015",
+            discipline_id="D-017",
             discipline_name="Snowshoeing",
             affected_exercise_ids=[],
             message="Low coverage",

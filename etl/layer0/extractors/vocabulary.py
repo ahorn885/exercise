@@ -472,9 +472,9 @@ _TOGGLE_ALSO_SATISFIES: dict[str, list[str]] = {
 }
 
 _TOGGLE_GATED_DISCIPLINES: dict[str, list[str]] = {
-    "Climbing — roped": ["D-010"],
-    "Rappelling / abseiling": ["D-011"],
-    "Snowshoeing setup": ["D-015"],
+    "Climbing — roped": ["D-012"],
+    "Rappelling / abseiling": ["D-013"],
+    "Snowshoeing setup": ["D-017"],
 }
 
 

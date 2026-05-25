@@ -1152,7 +1152,7 @@ class TestIncludedDisciplineIdsOverride:
         _queue_target_race_event(
             conn,
             framework_sport="Adventure Racing",
-            included_discipline_ids=["D-001", "D-008b", "D-013"],
+            included_discipline_ids=["D-001", "D-010", "D-015"],
         )
         _queue_etl_version_set(conn)
         _queue_primary_locale(conn)
@@ -1169,7 +1169,7 @@ class TestIncludedDisciplineIdsOverride:
             event_locale_mapbox_id="poi.test_anchor",
             is_target_event=True,
             framework_sport="Adventure Racing",
-            included_discipline_ids=["D-001", "D-008b", "D-013"],
+            included_discipline_ids=["D-001", "D-010", "D-015"],
         )
         stack = _patches(
             layer4_return=_fake_layer4_payload(race_event_payload=race_event_for_l4)
@@ -1183,8 +1183,8 @@ class TestIncludedDisciplineIdsOverride:
         m_l2a = mocks[1]
         assert m_l2a.call_args.kwargs["discipline_id_filter"] == [
             "D-001",
-            "D-008b",
-            "D-013",
+            "D-010",
+            "D-015",
         ]
 
     def test_filter_defaults_to_none_when_unset(self):
@@ -1559,7 +1559,7 @@ class TestTrainingSubstitutionWireUp:
         cache = Layer4Cache(InMemoryCacheBackend())
 
         block = Layer2BDisciplineBlock(
-            discipline_id="D-007",
+            discipline_id="D-009",
             race_terrain=[
                 RaceTerrainOutput(
                     terrain_id="TRN-river",
@@ -1567,7 +1567,7 @@ class TestTrainingSubstitutionWireUp:
                     pct_of_race=100.0,
                     available_locally=True,
                     gap=None,
-                    discipline_id="D-007",
+                    discipline_id="D-009",
                 )
             ],
             terrain_gaps=[],
@@ -1602,7 +1602,7 @@ class TestTrainingSubstitutionWireUp:
             _exit_all(stack)
 
         payload = mocks[-1].call_args.kwargs["training_substitution_payload"]
-        assert [r.discipline_id for r in payload.recommendations] == ["D-007"]
+        assert [r.discipline_id for r in payload.recommendations] == ["D-009"]
         assert payload.recommendations[0].race_craft == "Packrafting"
         emphasis = payload.recommendations[0].terrain_emphasis
         assert emphasis and emphasis[0].race_terrain_id == "TRN-river"
