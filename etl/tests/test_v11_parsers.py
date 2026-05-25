@@ -269,11 +269,17 @@ def v11_wb():
     return load_workbook(str(V11_PATH), read_only=False, data_only=True)
 
 
-def test_extract_discipline_substitutes_count_91(v11_wb):
+def test_extract_discipline_substitutes_count_89(v11_wb):
+    # 89 = 91 source rows − 2 dropped by the R6 collapse dedup (one duplicate
+    # (D-010, D-011, 'Canoeing') key + one self-substitute the merge created).
     warns: list = []
     rows = extract_discipline_substitutes(v11_wb, parse_warnings=warns)
-    assert len(rows) == 91
+    assert len(rows) == 89
     assert warns == []
+    # No duplicate UNIQUE keys + no self-substitutes survive the dedup.
+    keys = [(r["target_id"], r["substitute_id"], r["substitute_name"]) for r in rows]
+    assert len(keys) == len(set(keys))
+    assert not any(r["target_id"] == r["substitute_id"] for r in rows)
     # Spot check one known row
     first = rows[0]
     assert first["target_id"] == "D-001"

@@ -846,12 +846,20 @@ def extract_discipline_substitutes(
         return []
     ws = wb["Discipline Substitution Map"]
     rows: list[dict[str, Any]] = []
+    # Dedupe by (target_id, substitute_id, substitute_name), first-seen-wins,
+    # and skip self-substitutes. The R6 craft collapse maps two former ids onto
+    # one survivor (D-008a/b → D-010), so two source rows can collapse to the
+    # same key (e.g. (D-010, D-011, 'Canoeing')) — without this the load trips
+    # the UNIQUE(target_id, substitute_id, substitute_name, etl_version).
+    seen: set[tuple[str, str, str]] = set()
     for r in range(2, ws.max_row + 1):
         target_id = _t(ws.cell(row=r, column=1).value)
         if not target_id:
             continue
         substitute_id = _t(ws.cell(row=r, column=3).value)
         if not substitute_id:
+            continue
+        if target_id == substitute_id:
             continue
         fidelity = _f(ws.cell(row=r, column=5).value)
         if fidelity is None:
@@ -863,11 +871,16 @@ def extract_discipline_substitutes(
                     "reason": "missing or non-numeric fidelity",
                 })
             continue
+        substitute_name = _t(ws.cell(row=r, column=4).value) or substitute_id
+        key = (target_id, substitute_id, substitute_name)
+        if key in seen:
+            continue
+        seen.add(key)
         rows.append({
             "target_id": target_id,
             "target_name": _t(ws.cell(row=r, column=2).value) or target_id,
             "substitute_id": substitute_id,
-            "substitute_name": _t(ws.cell(row=r, column=4).value) or substitute_id,
+            "substitute_name": substitute_name,
             "fidelity": fidelity,
             "constraints": _t_raw(ws.cell(row=r, column=6).value),
             "category": _t(ws.cell(row=r, column=7).value),
