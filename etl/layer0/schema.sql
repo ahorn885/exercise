@@ -209,6 +209,9 @@ CREATE TABLE IF NOT EXISTS layer0.phase_load_allocation (
   taper_pct_low       NUMERIC,
   taper_pct_high      NUMERIC,
   notes_conditions    TEXT,
+  -- Discipline canon: non-discipline rows (strength / mobility / weekly total)
+  -- carry discipline_id = NULL and a category here instead of a placeholder id.
+  row_category        TEXT,
   etl_version         TEXT NOT NULL,
   etl_run_at          TIMESTAMPTZ NOT NULL,
   superseded_at       TIMESTAMPTZ,
