@@ -10,7 +10,7 @@
 
 Given an athlete's stated target sport (e.g., "Adventure Racing", "Triathlon (Standard / Olympic)"), resolve to the canonical set of disciplines that sport involves, with role assignments, load weights, conditional flags, training gaps, and athlete-facing rationale. This is the **first node** of every plan-generation pipeline — its output drives which exercise pool, terrain set, phase load, and substitution map every downstream node operates against.
 
-For AR specifically: input "Adventure Racing" → output 15 disciplines (D-001 Trail Running through D-016 Mountaineering) with their AR-specific roles (Primary / Secondary / Minor / *Conditional).
+For AR specifically: input "Adventure Racing" → output the AR discipline set (D-001 Trail Running through D-018 Mountaineering) with their AR-specific roles (Primary / Secondary / Minor / *Conditional).
 
 ## 2. What 2A does NOT do
 
@@ -290,7 +290,7 @@ CoachingFlag(
 )
 ```
 
-For AR specifically: D-016 Mountaineering does not currently have a `training_gaps` entry, but D-020 Alpine Descent and D-024 Épée Fencing do (not AR-relevant). For AR-relevant sports later, this flag is the primary signal.
+For AR specifically: D-018 Mountaineering does not currently have a `training_gaps` entry, but D-022 Alpine Descent and D-025 Épée Fencing do (not AR-relevant). For AR-relevant sports later, this flag is the primary signal.
 
 ### 8.2 Conditional discipline auto-resolved — RETIRED (2026-05-25)
 
@@ -340,7 +340,7 @@ CoachingFlag(
 | Sport has no disciplines in SDM (extreme — shouldn't happen for a launched sport) | Return empty `disciplines[]`, set `hitl_required=True`, surface a `no_disciplines_for_sport` flag. |
 | `estimated_race_duration_hours` is None and a duration-conditional discipline is in the set | Mark that discipline `conditional_resolution='athlete_opt_in'`. Set `hitl_required=True`. |
 | Athlete override targets a discipline not in the sport's set | Log warning; ignore the override; do not fail the call. |
-| Discipline has SDM row but no PLA row (legitimate gap, e.g., D-008b for some sub-format sports) | `phase_load` is None on that discipline entry. Layer 4 uses defaults or surfaces a flag. |
+| Discipline has SDM row but no PLA row (legitimate gap, e.g., D-010 for some sub-format sports) | `phase_load` is None on that discipline entry. Layer 4 uses defaults or surfaces a flag. |
 | Sport name matches in PLA but not SDM (D-08 carries this risk for LDC/Triathlon) | LEFT JOIN returns nothing from SDM side; discipline doesn't appear in payload. Log INFO. Not a 2A failure. |
 
 ## 11. Performance budget
@@ -375,18 +375,18 @@ Inputs:
 - No overrides
 
 Expected:
-- 15 disciplines returned
-- D-001, D-003, D-005, D-006, D-007 marked Primary
+- The full AR discipline set returned (the R6 kayak collapse merged the two former kayak rows into D-010, so the count is one lower than the pre-R6 15)
+- D-001, D-003, D-006, D-008, D-009 marked Primary
 - The navigation discipline (D-015) is `*Conditional` → `prompt_required` (no override) → `hitl_required = True`
 - `training_gaps_summary.flagged_count = 0`
 - No `conditional_auto_resolved` flags (race-rule auto-resolution retired)
 
 ### 13.2 AR with override
 
-Same as 13.1 but with `athlete_discipline_overrides = {'D-006': {'weight': 25.0}}` and the system default for D-006 was 15%.
+Same as 13.1 but with `athlete_discipline_overrides = {'D-008': {'weight': 25.0}}` and the system default for D-008 was 15%.
 
 Expected:
-- D-006 entry shows `load_weight.value=25.0`, `source='athlete_override'`, `system_default=15.0`
+- D-008 entry shows `load_weight.value=25.0`, `source='athlete_override'`, `system_default=15.0`
 - A `weight_override_divergence` flag fires (divergence > 50% relative)
 
 ### 13.3 Short AR — RETIRED (2026-05-25)

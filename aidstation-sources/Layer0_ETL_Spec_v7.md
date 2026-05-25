@@ -1201,7 +1201,6 @@ q_layer2a_discipline_classifier_payload(
     framework_sport: str,
     athlete_discipline_overrides: dict[str, dict] | None,
     estimated_race_duration_hours: float | None,
-    navigation_required: bool | None,
     team_format: str | None,
     etl_version_set: dict[str, str]
 ) -> Layer2APayload
