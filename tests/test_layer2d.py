@@ -291,7 +291,7 @@ class TestAndyBaseline:
             "Left Wrist",
             severity="Chronic-Managed",
             injury_type="Tendinopathy / overuse",
-            movement_constraints=["Pain with wrist extension", "Pain with loading"],
+            movement_constraints=["Pain above specific joint angle", "Pain with loading"],
             modifications_needed="fist pushups only",
         )]
         payload = q_layer2d_injury_risk_profile_payload(

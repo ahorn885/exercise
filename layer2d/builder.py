@@ -148,11 +148,10 @@ def _severity_to_verdict(severity: str | None) -> str:
 MOVEMENT_CONSTRAINT_KEYWORDS: dict[str, list[str]] = {
     "Pain with loading": ["under load", "heavy load", "weighted"],
     "Pain with impact": ["landing", "impact", "reactive load"],
-    "Pain above specific joint angle": ["above 90", "full extension", "at depth"],
+    "Pain above specific joint angle": ["above 90", "full extension", "at depth", "wrist extension", "palm-down"],
     "Pain on descent / eccentric": ["eccentric", "descent", "downhill", "braking"],
     "Pain on rotation": ["rotation", "torque", "twisting"],
     "Pain with grip / sustained hold": ["grip", "sustained hold", "forearm fatigue"],
-    "Pain with wrist extension": ["wrist extension", "palm-down"],
     "Pain with overhead movement": ["overhead", "above shoulder", "impingement"],
     "Instability": ["instability", "subluxation", "gives way"],
     "Reduced ROM": ["rom restriction", "dorsiflexion limited"],

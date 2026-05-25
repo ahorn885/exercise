@@ -7,7 +7,7 @@ from athlete import (
     KNOWN_INJURY_TYPES,
     KNOWN_INJURY_SEVERITIES,
     KNOWN_MOVEMENT_CONSTRAINTS,
-    KNOWN_INJURY_SIDES,
+    BODY_PART_CONSTRAINTS,
 )
 
 bp = Blueprint('injuries', __name__)
@@ -96,7 +96,7 @@ def new_entry():
                            injury_types=KNOWN_INJURY_TYPES,
                            severities=KNOWN_INJURY_SEVERITIES,
                            movement_constraints=KNOWN_MOVEMENT_CONSTRAINTS,
-                           sides=KNOWN_INJURY_SIDES,
+                           body_part_constraints=BODY_PART_CONSTRAINTS,
                            entry_movement_constraints=[])
 
 
@@ -129,7 +129,7 @@ def edit_entry(entry_id):
                            injury_types=KNOWN_INJURY_TYPES,
                            severities=KNOWN_INJURY_SEVERITIES,
                            movement_constraints=KNOWN_MOVEMENT_CONSTRAINTS,
-                           sides=KNOWN_INJURY_SIDES,
+                           body_part_constraints=BODY_PART_CONSTRAINTS,
                            entry_movement_constraints=entry_mc)
 
 
@@ -213,7 +213,15 @@ def _save(db, entry_id):
         return value if value in allowed else None
     severity = enum_or_none(f.get('severity'), KNOWN_INJURY_SEVERITIES)
     injury_type = enum_or_none(f.get('injury_type'), KNOWN_INJURY_TYPES)
-    side = enum_or_none(f.get('side'), KNOWN_INJURY_SIDES) or 'N/A'
+    # Side is derived from the body_part prefix ('Left Wrist' → 'Left')
+    # rather than a dedicated form field; side-less parts default to 'N/A'.
+    body_part = f.get('body_part') or ''
+    if body_part.startswith('Left '):
+        side = 'Left'
+    elif body_part.startswith('Right '):
+        side = 'Right'
+    else:
+        side = 'N/A'
     mc_raw = f.getlist('movement_constraints')
     mc = [c for c in mc_raw if c in KNOWN_MOVEMENT_CONSTRAINTS]
     mc_json = json.dumps(mc)

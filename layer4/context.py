@@ -1423,7 +1423,6 @@ class InjuryRecord(_Base):
             "Pain on descent / eccentric",
             "Pain on rotation",
             "Pain with grip / sustained hold",
-            "Pain with wrist extension",
             "Pain with overhead movement",
             "Instability",
             "Reduced ROM",

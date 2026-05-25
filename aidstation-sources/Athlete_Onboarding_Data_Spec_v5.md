@@ -235,7 +235,7 @@ Unchanged from v4. 41 canonical body parts per `Vocabulary_Audit_v2.md` §1.
 
 ### B.3 Movement Constraint enumeration
 
-Unchanged from v4. Multi-select per injury; maps to exercise DB col 9 keyword patterns.
+Multi-select per injury; maps to exercise DB col 9 keyword patterns. **Amended 2026-05-25:** `Pain with wrist extension` folded into `Pain above specific joint angle` (enumeration 11 → 10); the former entry's `wrist extension` / `palm-down` keyword bundle now rides on `Pain above specific joint angle` (see `Layer2D_Spec.md` §5.3.3). The injury form narrows the visible constraints to those relevant for the selected body part (`athlete.BODY_PART_CONSTRAINTS`). Otherwise unchanged from v4.
 
 ### B.4 Health Condition Record substructure
 
