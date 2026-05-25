@@ -167,7 +167,6 @@ KNOWN_MOVEMENT_CONSTRAINTS = (
     'Pain on descent / eccentric',
     'Pain on rotation',
     'Pain with grip / sustained hold',
-    'Pain with wrist extension',
     'Pain with overhead movement',
     'Instability',
     'Reduced ROM',
@@ -177,8 +176,36 @@ KNOWN_MOVEMENT_CONSTRAINTS = (
 # D-73 Phase 2.2 (Athlete_Onboarding_Data_Spec_v5.md §B.1) — injury_log.side.
 # Layer 2D v1 doesn't filter on side (Layer2D_Spec.md §10 edge case;
 # contraindicated_parts has no side dimension — tracked as 2D-7 future).
-# Side is captured for downstream Layer 4 / UI rendering only.
+# Side is no longer captured by a dedicated form field; it's derived from
+# the body_part prefix ('Left Wrist' → 'Left') at save time. Layer 2D still
+# reads InjuryRecord.side for downstream Layer 4 / UI rendering.
 KNOWN_INJURY_SIDES = ('Left', 'Right', 'Both', 'N/A')
+
+# Which movement constraints plausibly apply to each body part. Keyed on the
+# side-less canonical body part (the injury form's body_part values double
+# Left/Right — strip the prefix before lookup). Drives the injury form's
+# swap-on-change filtering so only relevant constraints render. Values MUST
+# be a subset of KNOWN_MOVEMENT_CONSTRAINTS; 'Other' is the catch-all.
+_MC = {c: c for c in KNOWN_MOVEMENT_CONSTRAINTS}
+BODY_PART_CONSTRAINTS = {
+    'Hand':       [_MC['Pain with loading'], _MC['Pain above specific joint angle'], _MC['Pain with grip / sustained hold'], _MC['Instability'], _MC['Reduced ROM'], _MC['Pain at high volume only']],
+    'Wrist':      [_MC['Pain with loading'], _MC['Pain above specific joint angle'], _MC['Pain with grip / sustained hold'], _MC['Instability'], _MC['Reduced ROM'], _MC['Pain at high volume only']],
+    'Elbow':      [_MC['Pain with loading'], _MC['Pain above specific joint angle'], _MC['Pain with grip / sustained hold'], _MC['Pain with overhead movement'], _MC['Instability'], _MC['Reduced ROM'], _MC['Pain at high volume only']],
+    'Shoulder':   [_MC['Pain with loading'], _MC['Pain above specific joint angle'], _MC['Pain on rotation'], _MC['Pain with overhead movement'], _MC['Instability'], _MC['Reduced ROM'], _MC['Pain at high volume only']],
+    'Knee':       [_MC['Pain with loading'], _MC['Pain with impact'], _MC['Pain above specific joint angle'], _MC['Pain on descent / eccentric'], _MC['Instability'], _MC['Reduced ROM'], _MC['Pain at high volume only']],
+    'Ankle':      [_MC['Pain with loading'], _MC['Pain with impact'], _MC['Pain above specific joint angle'], _MC['Pain on descent / eccentric'], _MC['Pain on rotation'], _MC['Instability'], _MC['Reduced ROM'], _MC['Pain at high volume only']],
+    'Foot':       [_MC['Pain with loading'], _MC['Pain with impact'], _MC['Pain above specific joint angle'], _MC['Reduced ROM'], _MC['Pain at high volume only']],
+    'Hip':        [_MC['Pain with loading'], _MC['Pain with impact'], _MC['Pain above specific joint angle'], _MC['Pain on descent / eccentric'], _MC['Pain on rotation'], _MC['Instability'], _MC['Reduced ROM'], _MC['Pain at high volume only']],
+    'Hamstring':  [_MC['Pain with loading'], _MC['Pain above specific joint angle'], _MC['Pain on descent / eccentric'], _MC['Pain at high volume only']],
+    'Quad':       [_MC['Pain with loading'], _MC['Pain above specific joint angle'], _MC['Pain on descent / eccentric'], _MC['Pain at high volume only']],
+    'Groin':      [_MC['Pain with loading'], _MC['Pain above specific joint angle'], _MC['Pain on rotation'], _MC['Pain at high volume only']],
+    'Abdomen':    [_MC['Pain with loading'], _MC['Pain on rotation'], _MC['Pain at high volume only']],
+    'Lower Back': [_MC['Pain with loading'], _MC['Pain with impact'], _MC['Pain above specific joint angle'], _MC['Pain on rotation'], _MC['Pain at high volume only']],
+    'Upper Back': [_MC['Pain with loading'], _MC['Pain above specific joint angle'], _MC['Pain on rotation'], _MC['Pain with overhead movement'], _MC['Pain at high volume only']],
+    'Neck':       [_MC['Pain above specific joint angle'], _MC['Pain on rotation'], _MC['Pain with overhead movement'], _MC['Reduced ROM'], _MC['Pain at high volume only']],
+    'Other':      list(KNOWN_MOVEMENT_CONSTRAINTS),
+}
+del _MC
 
 # D-73 Phase 1.2B (D-51 §3.2a) — health_conditions_log.system_category closed
 # enum per v5 §B.4.1. Layer 1 builder auto-populates 'gi_immune' when

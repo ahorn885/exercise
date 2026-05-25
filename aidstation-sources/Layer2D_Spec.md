@@ -60,10 +60,10 @@ def q_layer2d_injury_risk_profile_payload(
 @dataclass
 class InjuryRecord:
     body_part: str                       # Canonical from body_parts vocab (B.2)
-    side: str                            # 'Left' | 'Right' | 'Both' | 'N/A'
+    side: str                            # 'Left' | 'Right' | 'Both' | 'N/A' (derived from body_part prefix at capture)
     injury_type: str                     # 11-value enum from B.1.1
     severity: str                        # 'Acute' | 'Recovering' | 'Chronic-Managed' | 'Post-surgical' | 'Structural-Permanent' | 'Resolved'
-    movement_constraints: list[str]      # Multi-select from B.3 (e.g., 'Pain with wrist extension')
+    movement_constraints: list[str]      # Multi-select from B.3 (e.g., 'Pain above specific joint angle')
     date_of_onset: date
     status_history: list[dict] | None    # Not consumed by 2D
     notes: str | None                    # Not consumed by 2D
@@ -238,11 +238,10 @@ The `MOVEMENT_CONSTRAINT_KEYWORDS` table is the B.3 enumeration. Reproduced inli
 MOVEMENT_CONSTRAINT_KEYWORDS = {
     'Pain with loading':            ['under load', 'heavy load', 'weighted'],
     'Pain with impact':             ['landing', 'impact', 'reactive load'],
-    'Pain above specific joint angle': ['above 90', 'full extension', 'at depth'],
+    'Pain above specific joint angle': ['above 90', 'full extension', 'at depth', 'wrist extension', 'palm-down'],
     'Pain on descent / eccentric':  ['eccentric', 'descent', 'downhill', 'braking'],
     'Pain on rotation':             ['rotation', 'torque', 'twisting'],
     'Pain with grip / sustained hold': ['grip', 'sustained hold', 'forearm fatigue'],
-    'Pain with wrist extension':    ['wrist extension', 'palm-down'],
     'Pain with overhead movement':  ['overhead', 'above shoulder', 'impingement'],
     'Instability':                  ['instability', 'subluxation', 'gives way'],
     'Reduced ROM':                  ['ROM restriction', 'dorsiflexion limited'],
@@ -445,7 +444,7 @@ def recommend_accommodations(
 - **Range-of-motion restriction modality.** Parameterization is condition-specific (e.g., "0–90° flexion post-ACL" vs "pain-free range" for shoulder impingement); no clean cross-condition shape in the literature. Tracked in `Project_Backlog` as D-70.
 - **Phase sequencing.** Cook & Purdam progression (isometric → HSR → energy-storage) is real clinical signal but encoding the temporal progression in 2D adds substantial complexity. v1 emits current-time recommendation only; T1 refresh fires when 3A re-assesses injury state (whether the athlete's recovery has moved to a new severity tier), and 2D re-runs against the updated severity to yield the next-phase modality picks. Tracked in `Project_Backlog` as D-71.
 - **Per-exercise tailoring.** v1 keys only on `(injury_type, severity)`. v2 may key additionally on `body_part`, `movement_constraint`, exercise-specific attributes (e.g., "exercise loads the affected joint AT the painful angle" might bump volume_reduction's factor more aggressively).
-- **Muscle-group-level interpretation.** v1 uses Layer 0 `body_parts` vocab (anatomical regions/joints) + `movement_constraints` vocab. Muscle groups (Quads, Hamstrings, Lats) are NOT a first-class concept. Andy's wrist case maps cleanly to `body_part='Wrist'` + `movement_constraint='Pain with wrist extension'`; v2 may add muscle-group granularity for cases like "quad isolation OK; deep knee flexion not" post-surgery. Tracked in `Project_Backlog` only if a second injury type forces the question.
+- **Muscle-group-level interpretation.** v1 uses Layer 0 `body_parts` vocab (anatomical regions/joints) + `movement_constraints` vocab. Muscle groups (Quads, Hamstrings, Lats) are NOT a first-class concept. Andy's wrist case maps cleanly to `body_part='Wrist'` + `movement_constraint='Pain above specific joint angle'` (the former wrist-specific entry folded here 2026-05-25; its `wrist extension` / `palm-down` keywords ride on this bundle); v2 may add muscle-group granularity for cases like "quad isolation OK; deep knee flexion not" post-surgery. Tracked in `Project_Backlog` only if a second injury type forces the question.
 - **Discipline-specific modality tailoring.** v1 modality enum is sport-agnostic. Swim-specific shoulder-protection patterns, bike position adjustments, runner-specific gait modifications — v2 layering.
 
 ### 5.4 Discipline-level risk profiling
@@ -1029,7 +1028,7 @@ These aren't unit tests yet — they're integration scenarios 2D must handle cor
 ### 13.1 Andy's baseline — left wrist injury, no conditions
 
 Inputs:
-- `injuries = [InjuryRecord(body_part='Wrist', side='Left', injury_type='Tendinopathy / overuse', severity='Chronic-Managed', movement_constraints=['Pain with wrist extension', 'Pain with loading'], date_of_onset=..., notes='Painful and weak with wrist extension; pushups require fist position.')]`
+- `injuries = [InjuryRecord(body_part='Wrist', side='Left', injury_type='Tendinopathy / overuse', severity='Chronic-Managed', movement_constraints=['Pain above specific joint angle', 'Pain with loading'], date_of_onset=..., notes='Painful and weak with wrist extension; pushups require fist position.')]`
 - `conditions = []`
 - `included_discipline_ids = [D-001, D-002, D-003, D-005, D-006, D-007, D-008a, D-008b, D-010, D-011, D-013, D-014, D-015, D-016]` (AR's 14 base disciplines, no whitewater since chronic-managed wrist limits Class III)
 

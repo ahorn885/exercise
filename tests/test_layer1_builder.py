@@ -219,7 +219,7 @@ class TestFullyPopulated:
             {"id": 1, "body_part": "left wrist", "description": "extension pain",
              "severity": "Chronic-Managed", "injury_type": "Tendinopathy / overuse",
              "side": "Left",
-             "movement_constraints": ["Pain with wrist extension", "Pain with loading"],
+             "movement_constraints": ["Pain above specific joint angle", "Pain with loading"],
              "status": "Active", "start_date": date(2026, 3, 1),
              "resolved_date": None, "modifications_needed": "fist pushups only"},
             {"id": 2, "body_part": "knee", "description": "patellar",

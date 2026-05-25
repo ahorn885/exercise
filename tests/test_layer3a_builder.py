@@ -95,7 +95,7 @@ def _make_layer1(
                 severity="Chronic-Managed",
                 injury_type="Tendinopathy / overuse",
                 movement_constraints=[
-                    "Pain with wrist extension",
+                    "Pain above specific joint angle",
                     "Pain with loading",
                 ],
                 status="Active",
@@ -1035,7 +1035,7 @@ class TestPrepDict:
             datetime(2026, 5, 20, 0, 0),
         )
         assert "Wrist" in prompt
-        assert "Pain with wrist extension" in prompt
+        assert "Pain above specific joint angle" in prompt
 
     def test_prompt_renders_no_injury_block_when_none(self):
         prompt = _render_user_prompt(
