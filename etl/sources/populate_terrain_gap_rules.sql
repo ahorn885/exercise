@@ -29,7 +29,11 @@
 --   cognitive_navigation | explosive_power
 --
 -- etl_version: '0C-v2.0-r2' — paired with terrain_types migration
--- Safe to re-run: CREATE TABLE IF NOT EXISTS + ON CONFLICT DO NOTHING on INSERTs
+-- Safe to re-run: CREATE TABLE IF NOT EXISTS + a DELETE-by-version prefix that
+-- rebuilds this version's rows from this file on every run, so a row removed
+-- from the file can't linger as an active orphan (D-74) — matching
+-- etl/layer0/db.py:insert_versioned. The ON CONFLICT DO NOTHING on the INSERT
+-- is retained as belt-and-suspenders.
 
 BEGIN;
 
@@ -58,6 +62,11 @@ CREATE TABLE IF NOT EXISTS layer0.terrain_gap_rules (
 );
 
 -- ── 2. Insert 16 gap rules ─────────────────────────────────────────────────
+
+-- D-74: clear this version's rows first so re-running rebuilds them from this
+-- file (a row removed from the file can't survive as an active orphan; this is
+-- what tripped the <> 16 verify on 2026-05-25 — a TRN-013/NULL orphan).
+DELETE FROM layer0.terrain_gap_rules WHERE etl_version = '0C-v2.0-r2';
 
 INSERT INTO layer0.terrain_gap_rules (
   target_terrain_id, target_terrain_name,

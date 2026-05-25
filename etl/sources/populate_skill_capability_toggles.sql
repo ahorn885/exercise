@@ -27,11 +27,18 @@
 -- gear-toggle precedent uses) to dodge the populate-script-fragility
 -- trap documented in populate_gear_toggles_batch_a.sql.
 --
--- Idempotent: ON CONFLICT (toggle_name, etl_version) DO NOTHING guards
--- re-runs cleanly. Verify block at file end asserts the active row
+-- Idempotent: a DELETE-by-version prefix rebuilds this version's rows from
+-- this file on every run, so a row removed from the file can't linger as an
+-- active orphan (D-74) — matching etl/layer0/db.py:insert_versioned. The
+-- ON CONFLICT (toggle_name, etl_version) DO NOTHING guard is retained as
+-- belt-and-suspenders. Verify block at file end asserts the active row
 -- count = 5; a clean re-deploy must trip this if any row was missed.
 
 BEGIN;
+
+-- D-74: clear this version's rows first so re-running rebuilds them from this
+-- file (a row removed from the file can't survive as an active orphan).
+DELETE FROM layer0.skill_capability_toggles WHERE etl_version = '0C-v2.0-r2';
 
 INSERT INTO layer0.skill_capability_toggles
   (toggle_name, display_label, description,
