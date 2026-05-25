@@ -64,9 +64,9 @@
         {% endfor %}
       </select>
       <small class="text-muted">
-        Single-day covers marathons + single-day ultras up to ~24h.
-        Expedition AR, stage race, and multi-day ultra each surface the
-        extra rules / gear fields below.
+        The race's <em>structure</em>, not its sport: <strong>Single day</strong> (one push under ~24h),
+        <strong>Continuous multi day</strong> (one continuous effort over 24h+ — expedition AR, multi-day ultras),
+        or <strong>Stage race</strong> (discrete daily stages). Set the sport separately below.
       </small>
     </div>
     <div class="col-md-6">
@@ -142,13 +142,37 @@
       {% endwith %}
     </div>
 
+    {# FormRefresh A1 — primary-metric selector (magnitude axis). Mirrors
+       templates/profile/race_event_edit.html: toggles distance vs duration
+       input; both persist independently. #}
+    {% set pm = target.primary_metric if target and target.primary_metric
+                else ('duration' if target and target.estimated_duration_hr is not none and target.distance_km is none else 'distance') %}
     <div class="col-md-4">
+      <label class="form-label" for="primary_metric">Primary metric</label>
+      <select class="form-select" id="primary_metric" name="primary_metric">
+        <option value="distance" {% if pm == 'distance' %}selected{% endif %}>Distance</option>
+        <option value="duration" {% if pm == 'duration' %}selected{% endif %}>Duration</option>
+      </select>
+      <small class="text-muted">
+        Fixed distance (e.g. 100&nbsp;km ultra) or fixed duration (e.g. 24&nbsp;h rogaine, multi-day expedition)?
+      </small>
+    </div>
+    <div class="col-md-4" data-metric-field="distance">
       <label class="form-label" for="distance_km">Distance (km)</label>
       <input type="number" step="0.01" min="0" class="form-control"
              id="distance_km" name="distance_km"
              value="{{ target.distance_km if target and target.distance_km is not none else '' }}">
       <small class="text-muted">
         Optional — fill in when the race director publishes the route.
+      </small>
+    </div>
+    <div class="col-md-4" data-metric-field="duration">
+      <label class="form-label" for="estimated_duration_hr">Estimated duration (hours)</label>
+      <input type="number" step="0.5" min="0" class="form-control"
+             id="estimated_duration_hr" name="estimated_duration_hr"
+             value="{{ target.estimated_duration_hr if target and target.estimated_duration_hr is not none else '' }}">
+      <small class="text-muted">
+        Expected finish or cutoff time. Sizes race-week fueling tiers when set.
       </small>
     </div>
     <div class="col-md-4">
@@ -301,6 +325,23 @@
         fetchDisciplinesAndRebind(fsInput.value.trim());
       }, 350);
     });
+  })();
+</script>
+
+{# FormRefresh A1 — primary-metric toggle (mirrors the profile edit form). #}
+<script nonce="{{ csp_nonce() }}">
+  (function () {
+    const sel = document.getElementById('primary_metric');
+    if (!sel) return;
+    const blocks = document.querySelectorAll('[data-metric-field]');
+    function sync() {
+      blocks.forEach(function (el) {
+        el.style.display =
+          el.getAttribute('data-metric-field') === sel.value ? '' : 'none';
+      });
+    }
+    sel.addEventListener('change', sync);
+    sync();
   })();
 </script>
 

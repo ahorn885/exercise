@@ -324,6 +324,28 @@ def _parse_int(form, key: str) -> int | None:
         return None
 
 
+def _parse_estimated_duration_hr(form):
+    """Parse `estimated_duration_hr` (hours). Non-positive / non-numeric
+    coerce to None so a stray 0 can't trip the DB CHECK (> 0) or the
+    `RaceEventPayload` Field(gt=0) backstop. Blank = None (athlete left it
+    unset; orchestrator falls back to the format-keyed estimate).
+    """
+    v = _parse_decimal(form, 'estimated_duration_hr')
+    if v is None or v <= 0:
+        return None
+    return v
+
+
+def _parse_primary_metric(form) -> str | None:
+    """Parse the `primary_metric` selector ('distance' | 'duration').
+    Anything outside the closed set (incl. blank) coerces to None — the
+    repo layer validates again, and a None round-trips as "no explicit
+    framing" (form defaults to distance).
+    """
+    v = (form.get('primary_metric') or '').strip()
+    return v if v in ('distance', 'duration') else None
+
+
 def _tab_redirect():
     return redirect(url_for('profile.edit', tab='race-events'))
 
@@ -368,6 +390,8 @@ def new_race():
             total_elevation_gain_m=_parse_decimal(
                 request.form, 'total_elevation_gain_m'
             ),
+            estimated_duration_hr=_parse_estimated_duration_hr(request.form),
+            primary_metric=_parse_primary_metric(request.form),
             race_rules_summary=_parse_str(request.form, 'race_rules_summary'),
             mandatory_gear_text=_parse_str(request.form, 'mandatory_gear_text'),
             notes=_parse_str(request.form, 'notes'),
@@ -502,6 +526,8 @@ def update_race(race_event_id: int):
     new_total_elevation_gain_m = _parse_decimal(
         request.form, 'total_elevation_gain_m'
     )
+    new_estimated_duration_hr = _parse_estimated_duration_hr(request.form)
+    new_primary_metric = _parse_primary_metric(request.form)
     new_race_rules_summary = _parse_str(request.form, 'race_rules_summary')
     new_mandatory_gear_text = _parse_str(request.form, 'mandatory_gear_text')
     new_notes = _parse_str(request.form, 'notes')
@@ -546,6 +572,8 @@ def update_race(race_event_id: int):
         race_format=race_format,
         distance_km=new_distance_km,
         total_elevation_gain_m=new_total_elevation_gain_m,
+        estimated_duration_hr=new_estimated_duration_hr,
+        primary_metric=new_primary_metric,
         race_rules_summary=new_race_rules_summary,
         mandatory_gear_text=new_mandatory_gear_text,
         event_locale_id=race['event_locale_id'],  # legacy FK preserved
@@ -570,9 +598,14 @@ def update_race(race_event_id: int):
     # (uncached at the orchestrator level); the Layer 4 brief is the
     # cache-load-bearing artifact downstream of both.
     if race['is_target_event']:
+        # estimated_duration_hr feeds Layer 2E's TargetEvent duration →
+        # fueling tiers consumed by the brief + plan synthesis, so it rides
+        # the periodization-grade (_NON_SINGLE_SESSION) eviction alongside
+        # event_date / race_format.
         periodization_changed = (
             race['event_date'] != event_date
             or race['race_format'] != race_format
+            or race['estimated_duration_hr'] != new_estimated_duration_hr
         )
         # Existing race_terrain comes back from get_race_event as a list
         # of dicts (JSONB hydrated in the repo); compare as-is.
@@ -603,6 +636,7 @@ def update_race(race_event_id: int):
             or prior_terrain != new_race_terrain
             or prior_aid != new_aid_stations
             or prior_race_url != new_race_url
+            or race['primary_metric'] != new_primary_metric
         )
         if framework_sport_changed:
             evict_on_target_event_framework_sport_change(db, uid)

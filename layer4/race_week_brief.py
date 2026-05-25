@@ -22,7 +22,7 @@ single `record_race_week_brief` tool call:
    (orchestrator post-stamps the 5 spec-auto Taper flags per §8.5).
 2. `race_week_brief` — structured RaceWeekBrief per §7.13 (always emitted).
 3. `race_plan` — structured RacePlan per §7.14 (multi-day events only:
-   expedition_ar / stage_race / multi_day_ultra).
+   continuous_multi_day / stage_race).
 
 **D-66 contract (2026-05-18):** The `race_event_payload: RaceEventPayload`
 arg carries the route-locale graph + mandatory_gear_text + race_rules_summary
@@ -385,9 +385,8 @@ def _race_week_brief_schema() -> dict[str, Any]:
                 "type": "string",
                 "enum": [
                     "single_day",
-                    "expedition_ar",
+                    "continuous_multi_day",
                     "stage_race",
-                    "multi_day_ultra",
                 ],
             },
             "goal_outcome": {"type": "string", "maxLength": 120},
@@ -461,7 +460,7 @@ def _race_plan_schema() -> dict[str, Any]:
             "race_end_estimate_datetime": {"type": "string", "format": "date-time"},
             "race_format": {
                 "type": "string",
-                "enum": ["expedition_ar", "stage_race", "multi_day_ultra"],
+                "enum": ["continuous_multi_day", "stage_race"],
             },
             "locales": {
                 "type": "array",
@@ -668,7 +667,7 @@ def build_record_race_week_brief_tool() -> dict[str, Any]:
 
 _MAX_DAYS_TO_EVENT = 14
 _MULTI_DAY_FORMATS = frozenset(
-    {"expedition_ar", "stage_race", "multi_day_ultra"}
+    {"continuous_multi_day", "stage_race"}
 )
 
 
@@ -705,7 +704,7 @@ def _validate_inputs(
         )
 
     # Row 6: race_format set (sourced from race_event_payload — D-66)
-    valid_formats = {"single_day", "expedition_ar", "stage_race", "multi_day_ultra"}
+    valid_formats = {"single_day", "continuous_multi_day", "stage_race"}
     if race_event_payload.race_format not in valid_formats:
         raise Layer4InputError(
             "race_format_unset",
@@ -908,6 +907,15 @@ def _render_user_prompt(
         parts.append(f"**Race location:** {locale_name}")
     if race_event_payload.distance_km is not None:
         parts.append(f"**Race distance:** {race_event_payload.distance_km} km")
+    if race_event_payload.estimated_duration_hr is not None:
+        parts.append(
+            f"**Estimated duration:** {race_event_payload.estimated_duration_hr} hr"
+        )
+    if race_event_payload.primary_metric is not None:
+        parts.append(
+            f"**Primary metric:** {race_event_payload.primary_metric} "
+            "(how the athlete frames this race — pace/segment language should lead with it)"
+        )
     if race_event_payload.total_elevation_gain_m is not None:
         parts.append(
             f"**Elevation gain:** {race_event_payload.total_elevation_gain_m} m"

@@ -1033,10 +1033,14 @@ def target_race_save():
     # client-side by the picker JS); race_url is a new athlete-typed input.
     from routes.race_events import (
         _extract_mapbox_locale_from_form,
+        _parse_estimated_duration_hr,
+        _parse_primary_metric,
         _parse_race_url,
     )
     new_locale_fields = _extract_mapbox_locale_from_form(request.form)
     new_race_url = _parse_race_url(request.form)
+    new_estimated_duration_hr = _parse_estimated_duration_hr(request.form)
+    new_primary_metric = _parse_primary_metric(request.form)
     new_framework_sport = _parse_str_field(request.form, 'framework_sport')
     parsed_discipline_filter = _parse_discipline_id_filter(request.form)
 
@@ -1077,6 +1081,8 @@ def target_race_save():
             race_format=race_format,
             distance_km=new_distance_km,
             total_elevation_gain_m=new_total_elevation_gain_m,
+            estimated_duration_hr=new_estimated_duration_hr,
+            primary_metric=new_primary_metric,
             race_rules_summary=new_race_rules_summary,
             mandatory_gear_text=new_mandatory_gear_text,
             event_locale_id=None,
@@ -1093,9 +1099,13 @@ def target_race_save():
         # aid_stations route to brief-only (Layer 2B + 2E read them but are
         # uncached at the orchestrator level; the Layer 4 brief is the
         # cache-load-bearing artifact downstream).
+        # estimated_duration_hr feeds Layer 2E → fueling tiers consumed by
+        # the brief + plan synthesis; rides the periodization-grade eviction
+        # alongside event_date / race_format. Mirrors routes/race_events.py.
         periodization_changed = (
             target['event_date'] != event_date
             or target['race_format'] != race_format
+            or target['estimated_duration_hr'] != new_estimated_duration_hr
         )
         prior_terrain = target.get('race_terrain') or []
         prior_aid = target.get('aid_stations')
@@ -1122,6 +1132,7 @@ def target_race_save():
             or prior_aid != new_aid_stations
             or prior_race_url != new_race_url
             or prior_mapbox_id != new_locale_fields['event_locale_mapbox_id']
+            or target['primary_metric'] != new_primary_metric
         )
         if framework_sport_changed:
             evict_on_target_event_framework_sport_change(db, uid)
@@ -1140,6 +1151,8 @@ def target_race_save():
             race_format=race_format,
             distance_km=new_distance_km,
             total_elevation_gain_m=new_total_elevation_gain_m,
+            estimated_duration_hr=new_estimated_duration_hr,
+            primary_metric=new_primary_metric,
             race_rules_summary=new_race_rules_summary,
             mandatory_gear_text=new_mandatory_gear_text,
             is_target_event=True,

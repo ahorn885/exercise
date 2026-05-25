@@ -240,7 +240,7 @@ def _make_layer2a(
 def _make_race_event(
     *,
     event_date: date = date(2026, 7, 17),
-    race_format: str = "expedition_ar",
+    race_format: str = "continuous_multi_day",
     name: str = "Pocket Gopher Extreme 2026",
     distance_km: float | None = None,
     event_locale_id: str | None = "nerstrand-mn",
@@ -637,7 +637,7 @@ class TestEntryPointHappyPath:
         # D14 event-metadata population
         assert result.event_date == date(2026, 7, 17)
         assert result.event_locale_id == "nerstrand-mn"
-        assert result.race_format == "expedition_ar"
+        assert result.race_format == "continuous_multi_day"
         # (2026-07-17 - 2026-05-20) = 58 days / 7 = 8 (floor)
         assert result.time_to_event_weeks == 8
         # Metadata stamping
@@ -1474,7 +1474,7 @@ class TestS13Scenarios:
             layer2a_payload=_make_layer2a(),
             race_event_payload=_make_race_event(
                 event_date=date(2026, 8, 5),  # ~11 weeks
-                race_format="multi_day_ultra",
+                race_format="continuous_multi_day",
             ),
             current_date=date(2026, 5, 20),
             etl_version_set=_DEFAULT_ETL,

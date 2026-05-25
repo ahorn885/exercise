@@ -120,13 +120,16 @@ _AUTO_FIRE_DAYS_TO_EVENT_MAX = 14
 _RACE_WEEK_BRIEF_PLAN_VERSION_ID_PLACEHOLDER = 1
 
 # Coarse race-format-based duration estimate for Layer 2E's TargetEvent
-# (estimated_duration_hr > 0 is required). When the §H.2 race-terrain
-# capture form ships with a per-race duration field, source from there.
+# (estimated_duration_hr > 0 is required). FALLBACK ONLY — the per-race
+# `estimated_duration_hr` column (FormRefresh A1) is now the primary
+# source; this map fires only when the athlete left duration blank.
+# continuous_multi_day spans ~24h (continuous ultra) to 100h+ (expedition
+# AR), so 48 is a deliberately mid-range placeholder pending the explicit
+# value.
 _DURATION_HR_BY_RACE_FORMAT: dict[str, float] = {
     "single_day": 8.0,
     "stage_race": 24.0,
-    "multi_day_ultra": 24.0,
-    "expedition_ar": 56.0,
+    "continuous_multi_day": 48.0,
 }
 
 
@@ -343,8 +346,12 @@ def _upstream_full_cone(
                 event_name=target_race_event.name,
                 event_date=target_race_event.event_date,
                 framework_sport=framework_sport,
-                estimated_duration_hr=_DURATION_HR_BY_RACE_FORMAT.get(
-                    target_race_event.race_format, 8.0
+                estimated_duration_hr=(
+                    float(target_race_event.estimated_duration_hr)
+                    if target_race_event.estimated_duration_hr is not None
+                    else _DURATION_HR_BY_RACE_FORMAT.get(
+                        target_race_event.race_format, 8.0
+                    )
                 ),
                 aid_stations=target_race_event.aid_stations,
             )

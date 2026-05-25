@@ -160,7 +160,7 @@ class TestGetTargetRaceRow:
             'id': 5,
             'name': 'Pocket Gopher Extreme',
             'event_date': date(2026, 7, 17),
-            'race_format': 'expedition_ar',
+            'race_format': 'continuous_multi_day',
             'distance_km': 320.5,
             'total_elevation_gain_m': 4800,
             'race_rules_summary': 'Time cut 56h',
@@ -175,7 +175,7 @@ class TestGetTargetRaceRow:
         assert out is not None
         assert out['id'] == 5
         assert out['name'] == 'Pocket Gopher Extreme'
-        assert out['race_format'] == 'expedition_ar'
+        assert out['race_format'] == 'continuous_multi_day'
         assert out['race_terrain'] == []
         assert out['aid_stations'] == 0
 
@@ -204,7 +204,7 @@ class TestGetTargetRaceRow:
             'id': 7,
             'name': 'Race',
             'event_date': date(2026, 7, 17),
-            'race_format': 'expedition_ar',
+            'race_format': 'continuous_multi_day',
             'distance_km': None,
             'total_elevation_gain_m': None,
             'race_rules_summary': None,
@@ -231,7 +231,7 @@ class TestGetTargetRaceRow:
             'id': 7,
             'name': 'Race',
             'event_date': date(2026, 7, 17),
-            'race_format': 'expedition_ar',
+            'race_format': 'continuous_multi_day',
             'distance_km': None,
             'total_elevation_gain_m': None,
             'race_rules_summary': None,
@@ -256,7 +256,7 @@ class TestGetTargetRaceRow:
             'id': 7,
             'name': 'Race',
             'event_date': date(2026, 7, 17),
-            'race_format': 'expedition_ar',
+            'race_format': 'continuous_multi_day',
             'distance_km': None,
             'total_elevation_gain_m': None,
             'race_rules_summary': None,
@@ -464,7 +464,7 @@ class TestTargetRaceSaveMapboxRequired:
             data={
                 'name': 'Test Race',
                 'event_date': '2026-07-17',
-                'race_format': 'expedition_ar',
+                'race_format': 'continuous_multi_day',
                 # `event_locale_mapbox_id` deliberately absent.
             },
         ):

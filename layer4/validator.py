@@ -153,10 +153,25 @@ _OUTDOOR_ONLY_DISCIPLINES = frozenset(
 
 # Contingency anchor categories per race_format (rule 18 — D6 mixed
 # contingency anchor table from `Layer4_RaceWeekBrief_v1.md`).
+# FormRefresh A1 (2026-05-25) — keyed on the structural race_format axis.
+# `continuous_multi_day` collapses the old `expedition_ar` + `multi_day_ultra`
+# values. The merge keeps the anchors STRUCTURALLY implied by going
+# continuously for >24h (cumulative_fatigue + sleep_dep) on top of the
+# universal gi/hydration/mechanical set. The old `expedition_ar`-only
+# `nav` + `weather` anchors were discipline/environment concerns riding
+# on the format axis — exactly the conflation the taxonomy collapse
+# untangles. They move off the format-keyed requirement (a navigation-
+# discipline / exposed-terrain-driven anchor is a future slice keyed on
+# `navigation_required` + Layer 2B terrain, not on structural format).
 _CONTINGENCY_ANCHORS_PER_FORMAT: dict[str, tuple[str, ...]] = {
     "single_day": ("gi", "hydration", "mechanical"),
-    "multi_day_ultra": ("gi", "hydration", "mechanical", "cumulative_fatigue"),
-    "expedition_ar": ("gi", "hydration", "mechanical", "nav", "sleep_dep", "weather"),
+    "continuous_multi_day": (
+        "gi",
+        "hydration",
+        "mechanical",
+        "cumulative_fatigue",
+        "sleep_dep",
+    ),
     "stage_race": ("gi", "hydration", "mechanical", "between_stage_recovery"),
 }
 

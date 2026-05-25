@@ -148,6 +148,8 @@ def _queue_target_race_event(
     aid_stations: int | None = None,
     framework_sport: str | None = None,
     included_discipline_ids: list[str] | None = None,
+    estimated_duration_hr=None,
+    primary_metric: str | None = None,
 ) -> None:
     """Queue responses for `load_target_race_event_payload` (3 SELECTs when
     route_locales empty: target_id lookup + main row + route_locales).
@@ -164,6 +166,11 @@ def _queue_target_race_event(
             "total_elevation_gain_m": None,
             "race_rules_summary": None,
             "mandatory_gear_text": None,
+            # FormRefresh A1 (2026-05-25) — magnitude axis. Default None
+            # exercises the format-keyed duration fallback; tests override
+            # to assert the explicit-value precedence path.
+            "estimated_duration_hr": estimated_duration_hr,
+            "primary_metric": primary_metric,
             "event_locale_slug": "home",
             "is_target_event": True,
             "notes": None,
@@ -833,9 +840,13 @@ class TestDefaults:
         l4_kwargs = mocks[-1].call_args.kwargs
         assert l4_kwargs["today"] == _today_real
 
-    def test_expedition_ar_format_uses_56h_duration_estimate(self):
+    def test_continuous_multi_day_format_uses_48h_duration_fallback(self):
+        # FormRefresh A1 — with no explicit estimated_duration_hr on the
+        # row, continuous_multi_day falls back to the coarse format-keyed
+        # estimate (48.0). The old per-value 56h/24h expedition_ar /
+        # multi_day_ultra split collapsed with the taxonomy.
         conn = _FakeConn()
-        _queue_target_race_event(conn, race_format="expedition_ar")
+        _queue_target_race_event(conn, race_format="continuous_multi_day")
         _queue_etl_version_set(conn)
         _queue_primary_locale(conn)
         _queue_locale_equipment_pool(conn)
@@ -846,7 +857,47 @@ class TestDefaults:
             user_id=_USER_ID,
             name="Test Race 2026",
             event_date=_EVENT_DATE,
-            race_format="expedition_ar",
+            race_format="continuous_multi_day",
+            event_locale_id="home",
+            event_locale_mapbox_id="poi.test_anchor",
+            is_target_event=True,
+        )
+        stack = _patches(
+            layer4_return=_fake_layer4_payload(race_event_payload=race_event_for_l4)
+        )
+        mocks = _enter_all(stack)
+        try:
+            orchestrate_race_week_brief(
+                conn, _USER_ID, cache=cache, today=_TODAY
+            )
+        finally:
+            _exit_all(stack)
+
+        m_l2e = mocks[5]
+        te = m_l2e.call_args.kwargs["target_events"][0]
+        assert te.estimated_duration_hr == 48.0
+
+    def test_explicit_estimated_duration_hr_overrides_format_fallback(self):
+        # FormRefresh A1 — the per-race estimated_duration_hr column is the
+        # primary source; when set it overrides the format-keyed fallback.
+        conn = _FakeConn()
+        _queue_target_race_event(
+            conn,
+            race_format="continuous_multi_day",
+            estimated_duration_hr=56,
+        )
+        _queue_etl_version_set(conn)
+        _queue_primary_locale(conn)
+        _queue_locale_equipment_pool(conn)
+        cache = Layer4Cache(InMemoryCacheBackend())
+
+        race_event_for_l4 = RaceEventPayload(
+            race_event_id=1,
+            user_id=_USER_ID,
+            name="Test Race 2026",
+            event_date=_EVENT_DATE,
+            race_format="continuous_multi_day",
+            estimated_duration_hr=56,
             event_locale_id="home",
             event_locale_mapbox_id="poi.test_anchor",
             is_target_event=True,

@@ -108,9 +108,8 @@ _TAPER_ANCHOR_BY_FORMAT: dict[str, str] = {
     "marathon": "2–3 weeks (marathon / Olympic-distance)",
     "ironman_70_3": "2–3 weeks (IM 70.3)",
     "ironman_full": "3 weeks (full IM)",
-    "expedition_ar": "3 weeks (expedition AR 48–72h)",
+    "continuous_multi_day": "3 weeks (continuous multi-day: expedition AR / multi-day ultra, 24–72h+)",
     "stage_race": "3 weeks (stage race)",
-    "multi_day_ultra": "3 weeks (multi-day ultra)",
 }
 
 
@@ -165,7 +164,7 @@ Layer 1 §K `daily_availability_windows` per-day windows: prescribe on `availabl
 # Race-event context (D-66)
 
 When `race_event_payload` is non-None, the plan is targeting a real race event:
-- `race_format`: drives Taper anchor (single_day ≈ 1–2 wks; marathon-IM-class ≈ 2–3 wks; expedition AR / multi-day ultra / full IM ≈ 3+ wks).
+- `race_format`: structural axis driving the Taper anchor (single_day ≈ 1–2 wks; marathon-IM-class ≈ 2–3 wks; continuous_multi_day / stage_race ≈ 3+ wks). Sport/discipline specifics live on `framework_sport` + the discipline set, not here.
 - `route_locales[]` (multi-day): D-66 structured graph — sequenced anchor locales (start / transition_area / aid_station / drop_bag_point / bivvy / finish). The synthesizer reads but is not the primary consumer (that's the race-week brief).
 - Open-ended mode (race_event_payload is None): use the open-ended 12-week horizon default; do not emit `race_pace_specific`.
 
@@ -621,6 +620,8 @@ def _format_route_locales(race_event: RaceEventPayload | None) -> list[str]:
     out.append(f"Event name: {race_event.name}")
     if race_event.distance_km is not None:
         out.append(f"Distance: {race_event.distance_km} km")
+    if race_event.estimated_duration_hr is not None:
+        out.append(f"Estimated duration: {race_event.estimated_duration_hr} hr")
     if race_event.total_elevation_gain_m is not None:
         out.append(f"Elevation gain: {race_event.total_elevation_gain_m} m")
     if race_event.route_locales:

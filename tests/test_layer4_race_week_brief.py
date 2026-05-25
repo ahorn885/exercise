@@ -522,7 +522,7 @@ def _race_week_brief_obj(
 
 def _race_plan_obj(
     *,
-    race_format: str = "multi_day_ultra",
+    race_format: str = "continuous_multi_day",
     cho_low: int = 60,
     cho_high: int = 90,
     segment_offsets: list[float] | None = None,
@@ -706,7 +706,7 @@ class TestRaceEventPayload:
 
     def test_happy_multi_day_with_route_locales(self):
         re = _race_event_payload(
-            race_format="expedition_ar",
+            race_format="continuous_multi_day",
             route_locales=[
                 _route_locale(sequence_idx=1, role="start", name="Start"),
                 _route_locale(sequence_idx=2, role="aid_station", name="AS1"),
@@ -732,7 +732,7 @@ class TestRaceEventPayload:
 
     def test_json_round_trip(self):
         re = _race_event_payload(
-            race_format="multi_day_ultra",
+            race_format="continuous_multi_day",
             route_locales=[
                 _route_locale(sequence_idx=1, role="start", name="S"),
                 _route_locale(
@@ -758,7 +758,7 @@ class TestRaceEventPayload:
     def test_duplicate_sequence_idx_rejected(self):
         with pytest.raises(ValueError, match="sequence_idx values must be unique"):
             _race_event_payload(
-                race_format="expedition_ar",
+                race_format="continuous_multi_day",
                 route_locales=[
                     _route_locale(sequence_idx=1, role="start"),
                     _route_locale(sequence_idx=1, role="finish"),
@@ -772,7 +772,7 @@ class TestRaceEventPayload:
                 user_id=42,
                 name="X",
                 event_date=_EVENT_DATE,
-                race_format="expedition_ar",
+                race_format="continuous_multi_day",
                 event_locale_mapbox_id="poi.test_anchor",
                 is_target_event=True,
                 route_locales=[
@@ -790,7 +790,7 @@ class TestRaceEventPayload:
         # downstream coaching-flag emission, not a payload-construction
         # error. Validator MUST accept whatever role appears first.
         re = _race_event_payload(
-            race_format="expedition_ar",
+            race_format="continuous_multi_day",
             route_locales=[
                 _route_locale(sequence_idx=1, role="aid_station"),
                 _route_locale(sequence_idx=2, role="finish"),
@@ -802,7 +802,7 @@ class TestRaceEventPayload:
         # Companion to test_first_role_non_start_accepted — last entry's
         # role is also no longer constrained.
         re = _race_event_payload(
-            race_format="expedition_ar",
+            race_format="continuous_multi_day",
             route_locales=[
                 _route_locale(sequence_idx=1, role="start"),
                 _route_locale(sequence_idx=2, role="aid_station"),
@@ -814,7 +814,7 @@ class TestRaceEventPayload:
         # §4.2 invariant: empty route_locales is structurally legal;
         # validator rule kit_manifest_inputs_incomplete_no_route_locales
         # surfaces the soft-warning.
-        re = _race_event_payload(race_format="expedition_ar", route_locales=[])
+        re = _race_event_payload(race_format="continuous_multi_day", route_locales=[])
         assert re.route_locales == []
 
     def test_negative_distance_rejected(self):
@@ -1076,7 +1076,7 @@ class TestHappyPath:
     def test_multi_day_race_plan_populated(self):
         kwargs = self._kwargs()
         kwargs["race_event_payload"] = _race_event_payload(
-            race_format="multi_day_ultra",
+            race_format="continuous_multi_day",
             route_locales=[
                 _route_locale(
                     sequence_idx=1,
@@ -1088,12 +1088,12 @@ class TestHappyPath:
             ],
         )
         kwargs["layer3b_payload"] = _layer3b(
-            event_date=_EVENT_DATE, race_format="multi_day_ultra"
+            event_date=_EVENT_DATE, race_format="continuous_multi_day"
         )
-        kwargs["llm_caller"] = _stub_caller(_tool_args(race_format="multi_day_ultra"))
+        kwargs["llm_caller"] = _stub_caller(_tool_args(race_format="continuous_multi_day"))
         payload = llm_layer4_race_week_brief(**kwargs)
         assert payload.race_plan is not None
-        assert payload.race_plan.race_format == "multi_day_ultra"
+        assert payload.race_plan.race_format == "continuous_multi_day"
         assert len(payload.race_plan.segments) == 3
 
     def test_session_overrides_returned(self):
@@ -1196,12 +1196,12 @@ class TestObservationEmission:
         # data_gap observation orchestrator-side
         kwargs = self._kwargs()
         kwargs["race_event_payload"] = _race_event_payload(
-            race_format="expedition_ar", route_locales=[]
+            race_format="continuous_multi_day", route_locales=[]
         )
         kwargs["layer3b_payload"] = _layer3b(
-            event_date=_EVENT_DATE, race_format="expedition_ar"
+            event_date=_EVENT_DATE, race_format="continuous_multi_day"
         )
-        kwargs["llm_caller"] = _stub_caller(_tool_args(race_format="expedition_ar"))
+        kwargs["llm_caller"] = _stub_caller(_tool_args(race_format="continuous_multi_day"))
         payload = llm_layer4_race_week_brief(**kwargs)
         data_gaps = [
             o for o in payload.notable_observations if o.category == "data_gap"
@@ -1214,16 +1214,16 @@ class TestObservationEmission:
         # captured with no entry at role='start'.
         kwargs = self._kwargs()
         kwargs["race_event_payload"] = _race_event_payload(
-            race_format="expedition_ar",
+            race_format="continuous_multi_day",
             route_locales=[
                 _route_locale(sequence_idx=1, role="transition_area"),
                 _route_locale(sequence_idx=2, role="finish"),
             ],
         )
         kwargs["layer3b_payload"] = _layer3b(
-            event_date=_EVENT_DATE, race_format="expedition_ar"
+            event_date=_EVENT_DATE, race_format="continuous_multi_day"
         )
-        kwargs["llm_caller"] = _stub_caller(_tool_args(race_format="expedition_ar"))
+        kwargs["llm_caller"] = _stub_caller(_tool_args(race_format="continuous_multi_day"))
         payload = llm_layer4_race_week_brief(**kwargs)
         data_gaps = [
             o for o in payload.notable_observations if o.category == "data_gap"
@@ -1245,12 +1245,12 @@ class TestRouteLocalesAnchorObservations:
     def test_empty_route_locales_emits_nothing(self):
         # Empty list already covered by kit_manifest_inputs_incomplete_no_route_locales;
         # missing-anchor helper short-circuits.
-        re = _race_event_payload(race_format="expedition_ar", route_locales=[])
+        re = _race_event_payload(race_format="continuous_multi_day", route_locales=[])
         assert _emit_route_locales_anchor_observations(re) == []
 
     def test_both_anchors_present_emits_nothing(self):
         re = _race_event_payload(
-            race_format="expedition_ar",
+            race_format="continuous_multi_day",
             route_locales=[
                 _route_locale(sequence_idx=1, role="start"),
                 _route_locale(sequence_idx=2, role="aid_station"),
@@ -1261,7 +1261,7 @@ class TestRouteLocalesAnchorObservations:
 
     def test_start_missing_finish_present_emits_one(self):
         re = _race_event_payload(
-            race_format="expedition_ar",
+            race_format="continuous_multi_day",
             route_locales=[
                 _route_locale(sequence_idx=1, role="transition_area"),
                 _route_locale(sequence_idx=2, role="finish"),
@@ -1276,7 +1276,7 @@ class TestRouteLocalesAnchorObservations:
 
     def test_finish_missing_start_present_emits_one(self):
         re = _race_event_payload(
-            race_format="expedition_ar",
+            race_format="continuous_multi_day",
             route_locales=[
                 _route_locale(sequence_idx=1, role="start"),
                 _route_locale(sequence_idx=2, role="aid_station"),
@@ -1288,7 +1288,7 @@ class TestRouteLocalesAnchorObservations:
 
     def test_both_anchors_missing_emits_two(self):
         re = _race_event_payload(
-            race_format="expedition_ar",
+            race_format="continuous_multi_day",
             route_locales=[
                 _route_locale(sequence_idx=1, role="aid_station"),
                 _route_locale(sequence_idx=2, role="transition_area"),
@@ -1304,7 +1304,7 @@ class TestRouteLocalesAnchorObservations:
         # Anchor presence is by role anywhere — not by first/last position.
         # A list where start is somewhere in the middle still satisfies.
         re = _race_event_payload(
-            race_format="expedition_ar",
+            race_format="continuous_multi_day",
             route_locales=[
                 _route_locale(sequence_idx=1, role="transition_area"),
                 _route_locale(sequence_idx=2, role="start"),
@@ -1317,7 +1317,7 @@ class TestRouteLocalesAnchorObservations:
     def test_observation_text_under_240_chars(self):
         # Observation.text Field(max_length=240) — the helper must trim.
         re = _race_event_payload(
-            race_format="expedition_ar",
+            race_format="continuous_multi_day",
             route_locales=[
                 _route_locale(sequence_idx=1, role="aid_station"),
                 _route_locale(sequence_idx=2, role="transition_area"),
@@ -1344,7 +1344,7 @@ class TestCappedRetry:
             "layer3a_payload": _layer3a(),
             "layer3b_payload": _layer3b(event_date=_EVENT_DATE),
             "race_event_payload": _race_event_payload(
-                race_format="multi_day_ultra",
+                race_format="continuous_multi_day",
                 route_locales=[
                     _route_locale(
                         sequence_idx=1,
@@ -1363,9 +1363,9 @@ class TestCappedRetry:
     def test_first_pass_accept_skips_retries(self):
         kwargs = self._kwargs()
         kwargs["layer3b_payload"] = _layer3b(
-            event_date=_EVENT_DATE, race_format="multi_day_ultra"
+            event_date=_EVENT_DATE, race_format="continuous_multi_day"
         )
-        kwargs["llm_caller"] = _stub_caller(_tool_args(race_format="multi_day_ultra"))
+        kwargs["llm_caller"] = _stub_caller(_tool_args(race_format="continuous_multi_day"))
         payload = llm_layer4_race_week_brief(**kwargs)
         assert payload.llm_call_count == 1
         assert payload.validator_results[-1].accepted is True
@@ -1373,14 +1373,14 @@ class TestCappedRetry:
     def test_validator_fail_then_pass_retries_once(self):
         kwargs = self._kwargs()
         kwargs["layer3b_payload"] = _layer3b(
-            event_date=_EVENT_DATE, race_format="multi_day_ultra"
+            event_date=_EVENT_DATE, race_format="continuous_multi_day"
         )
         # First call: race_plan.fueling_strategy cho_low=10 (outside 2E
         # band 60-90). Second call: in-band.
-        bad = _tool_args(race_format="multi_day_ultra")
+        bad = _tool_args(race_format="continuous_multi_day")
         bad["race_plan"]["fueling_strategy"]["cho_g_per_hr_low"] = 10
         bad["race_plan"]["fueling_strategy"]["cho_g_per_hr_high"] = 20
-        good = _tool_args(race_format="multi_day_ultra")
+        good = _tool_args(race_format="continuous_multi_day")
         kwargs["llm_caller"] = _sequence_caller([bad, good])
         payload = llm_layer4_race_week_brief(**kwargs)
         assert payload.llm_call_count == 2
@@ -1389,10 +1389,10 @@ class TestCappedRetry:
     def test_cap_hit_emits_best_effort_observation(self):
         kwargs = self._kwargs()
         kwargs["layer3b_payload"] = _layer3b(
-            event_date=_EVENT_DATE, race_format="multi_day_ultra"
+            event_date=_EVENT_DATE, race_format="continuous_multi_day"
         )
         # All passes fail validator (cho outside band)
-        bad = _tool_args(race_format="multi_day_ultra")
+        bad = _tool_args(race_format="continuous_multi_day")
         bad["race_plan"]["fueling_strategy"]["cho_g_per_hr_low"] = 10
         bad["race_plan"]["fueling_strategy"]["cho_g_per_hr_high"] = 20
         kwargs["llm_caller"] = _sequence_caller([bad, bad, bad])
@@ -1406,9 +1406,9 @@ class TestCappedRetry:
     def test_capped_retries_zero_no_retry(self):
         kwargs = self._kwargs()
         kwargs["layer3b_payload"] = _layer3b(
-            event_date=_EVENT_DATE, race_format="multi_day_ultra"
+            event_date=_EVENT_DATE, race_format="continuous_multi_day"
         )
-        bad = _tool_args(race_format="multi_day_ultra")
+        bad = _tool_args(race_format="continuous_multi_day")
         bad["race_plan"]["fueling_strategy"]["cho_g_per_hr_low"] = 10
         bad["race_plan"]["fueling_strategy"]["cho_g_per_hr_high"] = 20
         kwargs["llm_caller"] = _stub_caller(bad)
@@ -1449,12 +1449,12 @@ class TestSchemaViolation:
 
     def test_multi_day_without_race_plan_raises(self):
         kwargs = self._kwargs()
-        kwargs["race_event_payload"] = _race_event_payload(race_format="expedition_ar")
+        kwargs["race_event_payload"] = _race_event_payload(race_format="continuous_multi_day")
         kwargs["layer3b_payload"] = _layer3b(
-            event_date=_EVENT_DATE, race_format="expedition_ar"
+            event_date=_EVENT_DATE, race_format="continuous_multi_day"
         )
         # Multi-day event but tool output has no race_plan → schema violation
-        bad = _tool_args(race_format="expedition_ar", include_race_plan=False)
+        bad = _tool_args(race_format="continuous_multi_day", include_race_plan=False)
         kwargs["llm_caller"] = _sequence_caller([bad, bad, bad])
         with pytest.raises(Layer4OutputError) as exc:
             llm_layer4_race_week_brief(**kwargs)
@@ -1532,7 +1532,7 @@ class TestPromptRendering:
     def test_race_rules_summary_rendered_verbatim(self):
         rules = "Mandatory checkpoint at TA2 by hour 18 or DQ."
         re = _race_event_payload(
-            race_format="expedition_ar",
+            race_format="continuous_multi_day",
             race_rules_summary=rules,
             route_locales=[
                 _route_locale(sequence_idx=1, role="start"),
@@ -1560,7 +1560,7 @@ class TestPromptRendering:
     def test_mandatory_gear_text_rendered_verbatim(self):
         gear = "Headlamp w/ backup batteries; emergency bivvy; full medical kit."
         re = _race_event_payload(
-            race_format="expedition_ar",
+            race_format="continuous_multi_day",
             mandatory_gear_text=gear,
             route_locales=[
                 _route_locale(sequence_idx=1, role="start"),
@@ -1587,7 +1587,7 @@ class TestPromptRendering:
 
     def test_route_locales_rendered_structured(self):
         re = _race_event_payload(
-            race_format="expedition_ar",
+            race_format="continuous_multi_day",
             route_locales=[
                 _route_locale(sequence_idx=1, role="start", name="Start Line"),
                 _route_locale(
@@ -1633,7 +1633,7 @@ class TestPromptRendering:
         # treats them as unknown instead of inferring from first/last
         # sequence_idx.
         re = _race_event_payload(
-            race_format="expedition_ar",
+            race_format="continuous_multi_day",
             route_locales=[
                 _route_locale(sequence_idx=1, role="aid_station", name="AS1"),
                 _route_locale(sequence_idx=2, role="transition_area", name="TA1"),
@@ -1661,7 +1661,7 @@ class TestPromptRendering:
 
     def test_route_locales_missing_start_only_note_rendered(self):
         re = _race_event_payload(
-            race_format="expedition_ar",
+            race_format="continuous_multi_day",
             route_locales=[
                 _route_locale(sequence_idx=1, role="transition_area"),
                 _route_locale(sequence_idx=2, role="finish"),
@@ -1739,9 +1739,9 @@ class TestPromptRendering:
 
 class TestLayer3BPayloadEventMetadata:
     def test_event_mode_allows_event_date(self):
-        b = _layer3b(event_date=_EVENT_DATE, race_format="expedition_ar")
+        b = _layer3b(event_date=_EVENT_DATE, race_format="continuous_multi_day")
         assert b.event_date == _EVENT_DATE
-        assert b.race_format == "expedition_ar"
+        assert b.race_format == "continuous_multi_day"
 
     def test_no_event_mode_rejects_event_date(self):
         with pytest.raises(ValueError, match="mode=='no-event'"):

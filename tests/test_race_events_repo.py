@@ -110,7 +110,7 @@ class TestListAthleteRaceEvents:
                 "id": 1,
                 "name": "Pocket Gopher Extreme 2026",
                 "event_date": date(2026, 7, 17),
-                "race_format": "expedition_ar",
+                "race_format": "continuous_multi_day",
                 "is_target_event": True,
                 "distance_km": Decimal("160"),
                 "total_elevation_gain_m": Decimal("3000"),
@@ -162,9 +162,13 @@ def _race_row(**overrides):
         "user_id": 1,
         "name": "Pocket Gopher Extreme 2026",
         "event_date": date(2026, 7, 17),
-        "race_format": "expedition_ar",
+        "race_format": "continuous_multi_day",
         "distance_km": Decimal("160"),
         "total_elevation_gain_m": Decimal("3000"),
+        # FormRefresh A1 (2026-05-25) — magnitude axis columns. Default None
+        # so existing tests see "not captured"; new-shape tests override.
+        "estimated_duration_hr": None,
+        "primary_metric": None,
         "race_rules_summary": "Mandatory checkpoints; 56h cutoff.",
         "mandatory_gear_text": "Headlamp; bivvy; 6L water cap.",
         "event_locale_slug": "nerstrand_finish",
@@ -215,7 +219,7 @@ class TestLoadRaceEventPayload:
         assert payload.race_event_id == 10
         assert payload.user_id == 1
         assert payload.name == "Pocket Gopher Extreme 2026"
-        assert payload.race_format == "expedition_ar"
+        assert payload.race_format == "continuous_multi_day"
         assert payload.event_locale_id == "nerstrand_finish"
         assert payload.is_target_event is True
         assert payload.route_locales == []
@@ -392,9 +396,11 @@ class TestCreateRaceEvent:
             user_id=1,
             name="Pocket Gopher Extreme 2026",
             event_date=date(2026, 7, 17),
-            race_format="expedition_ar",
+            race_format="continuous_multi_day",
             distance_km=Decimal("160"),
             total_elevation_gain_m=Decimal("3000"),
+            estimated_duration_hr=Decimal("56"),
+            primary_metric="duration",
             race_rules_summary="rules text",
             mandatory_gear_text="gear text",
             event_locale_id=5,
@@ -402,13 +408,17 @@ class TestCreateRaceEvent:
             notes="crew notes",
         )
         params = conn.calls[0][1]
+        # FormRefresh A1 inserted estimated_duration_hr + primary_metric
+        # after total_elevation_gain_m, shifting the trailing fields by 2.
         assert params[4] == Decimal("160")  # distance_km
         assert params[5] == Decimal("3000")  # total_elevation_gain_m
-        assert params[6] == "rules text"
-        assert params[7] == "gear text"
-        assert params[8] == 5  # event_locale_id
-        assert params[9] is True  # is_target_event
-        assert params[10] == "crew notes"
+        assert params[6] == Decimal("56")  # estimated_duration_hr
+        assert params[7] == "duration"  # primary_metric
+        assert params[8] == "rules text"
+        assert params[9] == "gear text"
+        assert params[10] == 5  # event_locale_id
+        assert params[11] is True  # is_target_event
+        assert params[12] == "crew notes"
 
     def test_serializes_etl_version_set_as_json(self):
         conn = _FakeConn()
@@ -552,12 +562,14 @@ class TestAddRouteLocaleEquipment:
 
 
 class TestModuleConstants:
-    def test_valid_race_formats_closed_4_set(self):
+    def test_valid_race_formats_closed_3_set(self):
+        # FormRefresh A1 (2026-05-25) — structural taxonomy collapse.
+        # expedition_ar + multi_day_ultra folded into continuous_multi_day;
+        # sport now lives on framework_sport, not the format axis.
         assert set(VALID_RACE_FORMATS) == {
             "single_day",
-            "expedition_ar",
+            "continuous_multi_day",
             "stage_race",
-            "multi_day_ultra",
         }
 
     def test_valid_route_locale_roles_closed_7_set(self):
@@ -608,7 +620,7 @@ class TestUpdateRaceEvent:
             race_event_id=10,
             name="Renamed Race",
             event_date=date(2026, 8, 1),
-            race_format="multi_day_ultra",
+            race_format="continuous_multi_day",
             distance_km=Decimal("200"),
             notes="New notes",
         )
@@ -621,7 +633,7 @@ class TestUpdateRaceEvent:
         # + race_event_id + user_id
         assert params[0] == "Renamed Race"
         assert params[1] == date(2026, 8, 1)
-        assert params[2] == "multi_day_ultra"
+        assert params[2] == "continuous_multi_day"
         assert params[3] == Decimal("200")
         assert params[-2] == 10  # race_event_id
         assert params[-1] == 1   # user_id
@@ -866,7 +878,7 @@ class TestRaceTerrainAndAidStations:
             user_id=1,
             name="Pocket Gopher Extreme 2026",
             event_date=date(2026, 7, 17),
-            race_format="expedition_ar",
+            race_format="continuous_multi_day",
             race_terrain=[
                 {"terrain_id": "TRN-002", "pct_of_race": 35.0},
                 {"terrain_id": "TRN-009", "pct_of_race": 15.0},
@@ -915,7 +927,7 @@ class TestRaceTerrainAndAidStations:
             race_event_id=10,
             name="Race",
             event_date=date(2026, 7, 17),
-            race_format="expedition_ar",
+            race_format="continuous_multi_day",
             race_terrain=[{"terrain_id": "TRN-016", "pct_of_race": 100.0}],
             aid_stations=12,
         )
@@ -942,7 +954,7 @@ class TestRaceTerrainAndAidStations:
             "user_id": 1,
             "name": "Race",
             "event_date": date(2026, 7, 17),
-            "race_format": "expedition_ar",
+            "race_format": "continuous_multi_day",
             "distance_km": None,
             "total_elevation_gain_m": None,
             "race_rules_summary": None,
@@ -968,7 +980,7 @@ class TestRaceTerrainAndAidStations:
             "id": 1,
             "name": "PGE 2026",
             "event_date": date(2026, 7, 17),
-            "race_format": "expedition_ar",
+            "race_format": "continuous_multi_day",
             "is_target_event": True,
             "distance_km": Decimal("160"),
             "total_elevation_gain_m": Decimal("3000"),
@@ -1042,7 +1054,7 @@ class TestMapboxRaceLocationColumns:
             user_id=1,
             name="Race",
             event_date=date(2026, 7, 17),
-            race_format="expedition_ar",
+            race_format="continuous_multi_day",
             event_locale_name="Nerstrand State Park",
             event_locale_mapbox_id="poi.xyz",
             event_locale_place_name="Nerstrand State Park, MN",
@@ -1088,7 +1100,7 @@ class TestMapboxRaceLocationColumns:
             race_event_id=10,
             name="Race",
             event_date=date(2026, 7, 17),
-            race_format="expedition_ar",
+            race_format="continuous_multi_day",
             event_locale_name="Nerstrand State Park",
             event_locale_mapbox_id="poi.xyz",
             event_locale_place_name="Nerstrand State Park, MN",
@@ -1146,7 +1158,7 @@ class TestMapboxRaceLocationColumns:
             "user_id": 1,
             "name": "Race",
             "event_date": date(2026, 7, 17),
-            "race_format": "expedition_ar",
+            "race_format": "continuous_multi_day",
             "distance_km": None,
             "total_elevation_gain_m": None,
             "race_rules_summary": None,
@@ -1203,7 +1215,7 @@ class TestFrameworkSportOverride:
             user_id=1,
             name="Race",
             event_date=date(2026, 7, 17),
-            race_format="expedition_ar",
+            race_format="continuous_multi_day",
             framework_sport="Adventure Racing",
         )
         sql, params = conn.calls[0]
@@ -1234,7 +1246,7 @@ class TestFrameworkSportOverride:
             race_event_id=10,
             name="Race",
             event_date=date(2026, 7, 17),
-            race_format="expedition_ar",
+            race_format="continuous_multi_day",
             framework_sport="Adventure Racing",
         )
         sql, params = conn.calls[0]
@@ -1252,7 +1264,7 @@ class TestFrameworkSportOverride:
             race_event_id=10,
             name="Race",
             event_date=date(2026, 7, 17),
-            race_format="expedition_ar",
+            race_format="continuous_multi_day",
             framework_sport=None,
         )
         sql, params = conn.calls[0]
@@ -1306,7 +1318,7 @@ class TestIncludedDisciplineIdsOverride:
             user_id=1,
             name="Race",
             event_date=date(2026, 7, 17),
-            race_format="expedition_ar",
+            race_format="continuous_multi_day",
             included_discipline_ids=["D-001", "D-015"],
         )
         sql, params = conn.calls[0]
@@ -1337,7 +1349,7 @@ class TestIncludedDisciplineIdsOverride:
             race_event_id=10,
             name="Race",
             event_date=date(2026, 7, 17),
-            race_format="expedition_ar",
+            race_format="continuous_multi_day",
             included_discipline_ids=["D-010", "D-015"],
         )
         sql, params = conn.calls[0]
@@ -1355,7 +1367,7 @@ class TestIncludedDisciplineIdsOverride:
             race_event_id=10,
             name="Race",
             event_date=date(2026, 7, 17),
-            race_format="expedition_ar",
+            race_format="continuous_multi_day",
             included_discipline_ids=None,
         )
         sql, params = conn.calls[0]
