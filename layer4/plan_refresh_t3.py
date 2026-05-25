@@ -36,7 +36,10 @@ from layer4.context import (
     TrainingSubstitutionPayload,
 )
 from layer4.payload import PlanSession, RuleFailure
-from layer4.per_phase import _format_training_substitution_per_phase
+from layer4.per_phase import (
+    _format_daily_windows_schedule,
+    _format_training_substitution_per_phase,
+)
 from layer4.plan_refresh_t1 import (
     _format_active_injuries,
     _format_prior_window_summary,
@@ -94,7 +97,7 @@ INTENSITY-MODULATION POLICY:
 WEEKLY-AGGREGATE GUARDRAILS (per-week, x 4):
 - Each week's volume inside dominant phase's `volume_band` per 2A `phase_load_bands` (validator: `volume_band_*` per-week).
 - Mesocycle-wide intensity distribution inside dominant phase's target +/-10pp (validator: `intensity_dist_*` per-phase).
-- Base + Build weeks: include exactly one long-session anchor per discipline per week with weekly LSD cornerstone (flagged `long_slow_distance`).
+- Base + Build weeks: include exactly one long-session anchor per discipline per week with weekly LSD cornerstone (flagged `long_slow_distance`). Anchor the primary discipline's LSD on the athlete's long-session day — the longest enabled window, named in the `=== Schedule ===` block; secondary-discipline LSDs fit their own longest available day.
 - Deload week (cadence-anchor aligned): reduce volume to lower edge of band; bias intensity toward Z1-Z2. Orchestrator emits `recovery_week` spec-auto.
 
 ACWR FORWARD PROJECTION:
@@ -216,6 +219,9 @@ def render_user_prompt(
     if voice:
         parts.append(f"Voice notes: {voice}")
     parts.append("")
+
+    # === Schedule ===
+    parts.extend(_format_daily_windows_schedule(layer1_payload))
 
     # === Periodization shape (3B — re-run as part of T3 cascade) ===
     parts.append(

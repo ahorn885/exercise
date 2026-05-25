@@ -1201,6 +1201,87 @@ class TestPerPhasePromptRendering:
         assert "Peak entry must hold ≥60% Z2." in text
 
 
+# ─── FormRefresh Slice C: long-session day = longest enabled window ──────────
+
+
+class TestDailyWindowsSchedule:
+    """`per_phase._format_daily_windows_schedule` derives the athlete's
+    long-session day as the longest enabled window (FormRefresh Slice C);
+    shared into plan_refresh T2/T3."""
+
+    @staticmethod
+    def _w(dow, enabled, dur=None, second=None, doubles=None):
+        return {
+            "day_of_week": dow,
+            "enabled": enabled,
+            "window_start": "06:00" if enabled else None,
+            "window_duration": dur,
+            "second_window_start": "17:00" if second else None,
+            "second_window_duration": second,
+            "doubles_feasible": doubles,
+        }
+
+    def test_longest_enabled_window_named_long_session_day(self):
+        from layer4.per_phase import _format_daily_windows_schedule
+
+        windows = [
+            self._w("Mon", True, 90),
+            self._w("Wed", True, 120),
+            self._w("Sat", True, 480),
+            self._w("Sun", False),
+        ]
+        text = "\n".join(
+            _format_daily_windows_schedule(
+                {"available_days_per_week": 3, "daily_availability_windows": windows}
+            )
+        )
+        assert "Long-session day = Sat (480 min" in text
+        assert "- Sat: available, 480 min  ← longest enabled window" in text
+        assert "- Mon: available, 90 min" in text
+        assert "- Mon: available, 90 min  ← longest enabled window" not in text
+        assert "- Sun: rest (unavailable)" in text
+
+    def test_tie_resolves_to_earliest_listed_day(self):
+        from layer4.per_phase import _format_daily_windows_schedule
+
+        windows = [self._w("Tue", True, 240), self._w("Thu", True, 240)]
+        text = "\n".join(
+            _format_daily_windows_schedule({"daily_availability_windows": windows})
+        )
+        assert "Long-session day = Tue" in text
+        assert "- Tue: available, 240 min  ← longest enabled window" in text
+        assert "- Thu: available, 240 min  ← longest enabled window" not in text
+
+    def test_all_disabled_no_long_session_day(self):
+        from layer4.per_phase import _format_daily_windows_schedule
+
+        windows = [self._w("Mon", False), self._w("Tue", False)]
+        text = "\n".join(
+            _format_daily_windows_schedule({"daily_availability_windows": windows})
+        )
+        assert "Long-session day" not in text
+        assert "No enabled windows" in text
+
+    def test_missing_windows_renders_gracefully(self):
+        from layer4.per_phase import _format_daily_windows_schedule
+
+        text = "\n".join(
+            _format_daily_windows_schedule({"available_days_per_week": 0})
+        )
+        assert "=== Schedule ===" in text
+        assert "No per-day availability windows on file." in text
+
+    def test_second_window_and_doubles_surface(self):
+        from layer4.per_phase import _format_daily_windows_schedule
+
+        windows = [self._w("Mon", True, 120, second=60, doubles="occasionally")]
+        text = "\n".join(
+            _format_daily_windows_schedule({"daily_availability_windows": windows})
+        )
+        assert "- Mon: available, 120 min (+ 60 min second window)" in text
+        assert "Doubles feasible: occasionally" in text
+
+
 # ─── seam_review module direct tests ─────────────────────────────────────────
 
 
