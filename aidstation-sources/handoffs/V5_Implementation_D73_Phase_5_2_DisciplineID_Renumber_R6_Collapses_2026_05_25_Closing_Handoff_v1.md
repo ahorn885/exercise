@@ -119,4 +119,19 @@ Runtime reads `layer0.*` by pinned `etl_version_set`; new-id code against an un-
 - **R6 SHIPPED — discipline ids are now clean sequential D-001..D-029; kayak + mountain-running collapsed.** The best-fit re-model + R6 are both complete.
 - **Neon re-extract is the gating owed step** (§6.1) — code/SQL/workbook are internally consistent and ready; the live ETL + the pairing-count + per-sheet-dedup validation are Andy's (no DB in the build container).
 
+## 11. Deploy addendum (same session — Neon re-extract completed)
+
+The §6.1 "owed to Andy" Neon step was executed this session (Andy ran it against Neon; this agent drove the fixes). **Deploy complete + validated.**
+
+- **Sequence run:** pulled PR #154 → `python -m etl.layer0.run --version-tag 1.3` (lands `0A-v11.0`, 29 disciplines) → 5 populate scripts → validate. Re-pin was a no-op: runtime auto-discovers the active version via `_q_current_etl_version_set` (orchestrator.py:757 = `MAX(etl_version) FROM layer0.sports WHERE superseded_at IS NULL`); `race_events.etl_version_set` is row provenance, not the Layer-0 pin.
+- **Validations:** active disciplines = 29 ✅; no duplicate active discipline ids ✅; `discipline_pairing` 325 → 273 (−52, fully explained by the collapse: 18→16 matrix header ids + the dedup of double-counted survivor pairs; matches this agent's local v11-workbook extraction of 272 matrix + 1 b2b fallback) ✅.
+- **3 latent bugs surfaced by the first clean re-extract — all fixed on PR #154:**
+  1. `migrate_disciplines_add_body_parts_at_risk_v1.sql` verify block (4a–4f + the 29 UPDATEs) was version-naive (counted superseded rows → "expected 31, found 124"); scoped all to `superseded_at IS NULL` (commit `093fb74`).
+  2. `extract_discipline_pairing_matrix` + `extract_discipline_substitutes` emitted collapse-duplicate keys (UniqueViolation) + self-pairs; deduped first-seen-wins + skip self-pairs, with regression tests (commits `3ab4c18`, `a86804d`).
+  3. The "re-pin etl_version_set" instruction was wrong (no such deployed pin); design doc §7 corrected (commit `35132a6`).
+- **One non-R6 Neon-data snag (logged, not a code bug):** `populate_terrain_gap_rules.sql` (0C family) tripped its `<> 16` verify with "found 17" — a `(TRN-013, NULL)` orphan from a prior terrain session, left because the populate scripts use `ON CONFLICT DO NOTHING` with no `DELETE`. Superseded the orphan by hand; the script then verified 16.
+- **Two Cleanup follow-ons opened:** backlog **D-74** (give the standalone `populate_*.sql` scripts `DELETE`-by-version idempotency like `insert_versioned`) + **D-75** (`_q_current_etl_version_set` string-`MAX` sort breaks at a digit-width boundary).
+
+**R6 is fully shipped and deployed. PR #154 merged.**
+
 **End of handoff.**
