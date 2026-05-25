@@ -31,9 +31,17 @@
 --   re-tagged. Flagged for framework v11.
 --
 -- etl_version: '0B-v19.B'
--- Safe to re-run: ON CONFLICT (focus_id, etl_version) DO NOTHING.
+-- Safe to re-run: a DELETE-by-version prefix rebuilds this version's rows from
+-- this file on every run, so a row removed from the file can't linger as an
+-- active orphan (D-74) — matching etl/layer0/db.py:insert_versioned. The
+-- ON CONFLICT (focus_id, etl_version) DO NOTHING guard is retained as
+-- belt-and-suspenders.
 
 BEGIN;
+
+-- D-74: clear this version's rows first so re-running rebuilds them from this
+-- file (a row removed from the file can't survive as an active orphan).
+DELETE FROM layer0.discipline_technique_foci WHERE etl_version = '0B-v19.B';
 
 INSERT INTO layer0.discipline_technique_foci (
   focus_id, focus_name, description,

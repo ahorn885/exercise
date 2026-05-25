@@ -71,6 +71,7 @@ Vertical-slice limitations carried as forward-pointers:
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from datetime import date, datetime, time
 from typing import Any, Literal
@@ -754,25 +755,40 @@ def orchestrate_plan_create(
     )
 
 
+def _max_etl_version(versions: list[str]) -> str:
+    """Return the highest ETL version by numeric ordering.
+
+    Versions look like `0A-v11.0` / `0A-v9.0` / `0C-v2.0-r2`. A lexical MAX
+    mis-sorts at a digit-width boundary (`'0A-v9.0' > '0A-v11.0'`), so compare
+    the integer components as a tuple instead: `0A-v11.0` → `(0, 11, 0)`. A
+    revision suffix (`-r2`) extends the tuple, so it correctly outranks the
+    un-revised base of the same version.
+    """
+    return max(versions, key=lambda v: tuple(int(n) for n in re.findall(r"\d+", v)))
+
+
 def _q_current_etl_version_set(db: Any) -> dict[str, str]:
     """Discover the active Layer 0 ETL version triplet.
 
-    v1 approximation: query `MAX(etl_version)` from `layer0.sports` (a
-    representative table) and apply the same version to all three sub-arc
-    keys. Coordinated Layer 0 rollouts ship aligned versions, so the v1
-    approximation matches production. Promote to per-sub-arc when
-    independent versioning ships.
+    v1 approximation: take the highest `etl_version` from `layer0.sports` (a
+    representative table) and apply it to all three sub-arc keys. Coordinated
+    Layer 0 rollouts ship aligned versions, so the v1 approximation matches
+    production. Promote to per-sub-arc when independent versioning ships.
+
+    The max is computed by numeric component (see `_max_etl_version`), not a
+    lexical SQL `MAX` — the latter ranks `0A-v11.0` below `0A-v9.0` at a
+    digit-width boundary.
     """
     cur = db.execute(
-        "SELECT MAX(etl_version) AS v FROM layer0.sports WHERE superseded_at IS NULL"
+        "SELECT DISTINCT etl_version AS v FROM layer0.sports WHERE superseded_at IS NULL"
     )
-    row = cur.fetchone()
-    if row is None or row["v"] is None:
+    versions = [row["v"] for row in cur.fetchall() if row["v"]]
+    if not versions:
         raise OrchestrationError(
             "etl_version_set_undiscoverable",
             "layer0.sports has no non-superseded rows",
         )
-    v = row["v"]
+    v = _max_etl_version(versions)
     return {"0A": v, "0B": v, "0C": v}
 
 

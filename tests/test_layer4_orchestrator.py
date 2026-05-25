@@ -37,6 +37,7 @@ from layer4 import (
     orchestrate_race_week_brief,
     orchestrate_single_session_synthesize,
 )
+from layer4.orchestrator import _max_etl_version
 from layer2a.builder import Layer2AInputError
 from layer4.context import (
     ACWRStatus,
@@ -193,7 +194,7 @@ def _queue_target_race_event(
 
 
 def _queue_etl_version_set(conn: _FakeConn, *, v: str = "v7") -> None:
-    conn.queue(row={"v": v})
+    conn.queue(rows=[{"v": v}])
 
 
 def _queue_primary_locale(conn: _FakeConn, *, locale: str = "home") -> None:
@@ -1774,12 +1775,36 @@ class TestOrchestrateSingleSessionSynthesizePreflightGates:
         assert m_l4.call_count == 0
 
 
+class TestMaxEtlVersion:
+    """`_max_etl_version` orders by numeric component, not lexical string MAX
+    (D-75) — lexical MAX mis-ranks at a digit-width boundary."""
+
+    def test_double_digit_beats_single_digit(self):
+        # The bug case: lexical MAX would pick '0A-v9.0'.
+        assert _max_etl_version(["0A-v9.0", "0A-v11.0"]) == "0A-v11.0"
+
+    def test_low_double_digit_beats_low_single_digit(self):
+        assert _max_etl_version(["0A-v2.0", "0A-v11.0"]) == "0A-v11.0"
+
+    def test_revision_suffix_outranks_unrevised_base(self):
+        assert _max_etl_version(["0A-v11.0", "0A-v11.0-r1"]) == "0A-v11.0-r1"
+
+    def test_higher_revision_wins(self):
+        assert _max_etl_version(["0C-v2.0-r1", "0C-v2.0-r2"]) == "0C-v2.0-r2"
+
+    def test_single_version_passthrough(self):
+        assert _max_etl_version(["0A-v11.0"]) == "0A-v11.0"
+
+    def test_minor_version_compared(self):
+        assert _max_etl_version(["0A-v11.0", "0A-v11.2"]) == "0A-v11.2"
+
+
 class TestOrchestrateSingleSessionSynthesizeDiscoveryFailures:
     def test_etl_version_set_undiscoverable(self):
         """No non-superseded `layer0.sports` row → orchestrator raises before
         any upstream call."""
         conn = _FakeConn()
-        conn.queue(row={"v": None})  # etl_version_set lookup returns NULL
+        conn.queue(rows=[])  # no non-superseded layer0.sports rows
         cache = Layer4Cache(InMemoryCacheBackend())
 
         with pytest.raises(OrchestrationError) as exc:
