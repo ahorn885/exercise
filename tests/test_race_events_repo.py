@@ -192,10 +192,6 @@ def _race_row(**overrides):
         # D-73 Phase 5.2 Bucket E.(b)-B2 — per-race discipline filter
         # override. None = use full bridge defaults (pre-B2 behavior).
         "included_discipline_ids": None,
-        # BestFitModality_Spec_v2.md §C — per-race modality hints JSONB.
-        # Column default is '{}'::jsonb; psycopg2 surfaces a dict, so the
-        # fixture mirrors that. Hint-specific tests override this directly.
-        "race_modality_hints": {},
     }
     base.update(overrides)
     return base
@@ -927,15 +923,14 @@ class TestRaceTerrainAndAidStations:
         sql, params = conn.calls[0]
         assert "race_terrain = ?::jsonb" in sql
         assert "aid_stations = ?" in sql
-        assert "race_modality_hints = ?::jsonb" in sql
-        # Tail of the UPDATE param tuple (negative indices, robust to
-        # front-additions): ..., race_terrain_json, aid_stations,
-        # race_modality_hints_json, race_event_id, user_id.
-        assert params[-1] == 1     # user_id
-        assert params[-2] == 10    # race_event_id
-        assert params[-3] == "{}"  # race_modality_hints default (empty dict)
-        assert params[-4] == 12    # aid_stations
-        terrain_json = params[-5]
+        # Layout of params in UPDATE: name, event_date, race_format,
+        # distance_km, total_elevation_gain_m, race_rules_summary,
+        # mandatory_gear_text, event_locale_id, notes, race_terrain_json,
+        # aid_stations, race_event_id, user_id  (13 total)
+        assert params[-1] == 1   # user_id
+        assert params[-2] == 10  # race_event_id
+        assert params[-3] == 12  # aid_stations
+        terrain_json = params[-4]
         assert isinstance(terrain_json, str)
         assert "TRN-016" in terrain_json
 
@@ -1367,83 +1362,3 @@ class TestIncludedDisciplineIdsOverride:
         assert "included_discipline_ids = ?::text[]" in sql
         # None appears in params for the discipline_ids slot.
         assert None in params
-
-
-class TestRaceModalityHints:
-    """Per-race `race_modality_hints` JSONB column (BestFitModality_Spec_v2
-    §C). Shaped `{discipline_id: [equipment_canonical_name, ...]}`. Same
-    dual-shape tolerance as race_terrain: psycopg2 surfaces a dict, the
-    sqlite shim path a JSON string. Column default `'{}'::jsonb` so pre-v2
-    rows surface as an empty dict (v1-identical resolver behavior).
-    """
-
-    def test_load_payload_populates_hints_from_dict(self):
-        conn = _FakeConn()
-        conn.queue_response(row=_race_row(
-            race_modality_hints={"D-008b": ["Kayak", "Canoe"], "D-010": ["Quickdraws"]}
-        ))
-        conn.queue_response(rows=[])
-        payload = load_race_event_payload(conn, race_event_id=10)
-        assert payload is not None
-        assert payload.race_modality_hints == {
-            "D-008b": ["Kayak", "Canoe"],
-            "D-010": ["Quickdraws"],
-        }
-
-    def test_load_payload_defaults_empty_dict_when_none(self):
-        conn = _FakeConn()
-        conn.queue_response(row=_race_row(race_modality_hints=None))
-        conn.queue_response(rows=[])
-        payload = load_race_event_payload(conn, race_event_id=10)
-        assert payload is not None
-        assert payload.race_modality_hints == {}
-
-    def test_load_payload_hydrates_hints_from_jsonb_string(self):
-        # Sqlite shim path — JSONB surfaces as a string; repo json.loads it.
-        conn = _FakeConn()
-        conn.queue_response(row=_race_row(
-            race_modality_hints='{"D-008b": ["Kayak"]}'
-        ))
-        conn.queue_response(rows=[])
-        payload = load_race_event_payload(conn, race_event_id=10)
-        assert payload is not None
-        assert payload.race_modality_hints == {"D-008b": ["Kayak"]}
-
-    def test_load_payload_empty_string_surfaces_empty_dict(self):
-        conn = _FakeConn()
-        conn.queue_response(row=_race_row(race_modality_hints=""))
-        conn.queue_response(rows=[])
-        payload = load_race_event_payload(conn, race_event_id=10)
-        assert payload is not None
-        assert payload.race_modality_hints == {}
-
-    def test_load_payload_filters_malformed_entries(self):
-        # Non-list values are dropped; within a list, non-str / empty
-        # equipment names are filtered so downstream resolver code never
-        # sees junk from a hand-edited or partially-migrated JSONB blob.
-        conn = _FakeConn()
-        conn.queue_response(row=_race_row(race_modality_hints={
-            "D-008b": ["Kayak", "", 7, "Canoe"],
-            "D-010": "not-a-list",
-        }))
-        conn.queue_response(rows=[])
-        payload = load_race_event_payload(conn, race_event_id=10)
-        assert payload is not None
-        assert payload.race_modality_hints == {"D-008b": ["Kayak", "Canoe"]}
-
-    def test_update_serializes_hints_to_jsonb(self):
-        conn = _FakeConn()
-        update_race_event(
-            conn,
-            user_id=1,
-            race_event_id=10,
-            name="Race",
-            event_date=date(2026, 7, 17),
-            race_format="expedition_ar",
-            race_modality_hints={"D-008b": ["Kayak"]},
-        )
-        sql, params = conn.calls[0]
-        assert "race_modality_hints = ?::jsonb" in sql
-        # Serialized JSON string sits at params[-3] (before race_event_id,
-        # user_id); see test_update_serializes_race_terrain_and_aid_stations.
-        assert params[-3] == '{"D-008b": ["Kayak"]}'

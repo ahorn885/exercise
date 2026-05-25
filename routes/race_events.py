@@ -29,7 +29,6 @@ from race_events_invalidation import (
     evict_on_target_event_brief_field_change,
     evict_on_target_event_framework_sport_change,
     evict_on_target_event_included_discipline_ids_change,
-    evict_on_target_event_modality_hints_change,
     evict_on_target_event_periodization_change,
 )
 from race_events_repo import (
@@ -61,7 +60,6 @@ bp = Blueprint('race_events', __name__, url_prefix='/profile/race-events')
 
 
 _TRN_PATTERN = re.compile(r"^TRN-\d{3}$")
-_DISCIPLINE_ID_PATTERN = re.compile(r"^D-\d{3}[a-z]?$")
 
 
 def _terrain_choices(db) -> list[dict]:
@@ -144,86 +142,6 @@ def _parse_race_terrain(form) -> list[dict]:
             'discipline_id': discipline_id,
         })
     return out
-
-
-def _parse_race_modality_hints(form) -> dict[str, list[str]]:
-    """Parse the repeating `race_modality_hints[N][...]` form fields into
-    a dict shaped `{<discipline_id>: [<equipment_canonical_name>, ...]}`
-    per BestFitModality_Spec_v2.md §C.
-
-    Row format: `race_modality_hints[N][discipline_id]` +
-    `race_modality_hints[N][equipment_name]`. Empty rows silently drop.
-    Invalid discipline_id (not matching D-\\d{3}[a-z]?) or empty
-    equipment name drops the row. Duplicate (discipline, equipment) pairs
-    silently de-dup. Multiple rows for the same discipline collapse to
-    extend the equipment list per discipline.
-
-    No equipment-name canonical validation here — the form-side dropdown
-    sources from `layer0.equipment_items.canonical_name` so well-behaved
-    submissions can't carry a non-canonical string. A tampered submission
-    with an unknown equipment name silently drops at the resolver
-    boundary (spec v2 §L unknown-equipment edge case → no bump).
-    """
-    out: dict[str, list[str]] = {}
-    indices: set[int] = set()
-    for key in form.keys():
-        m = re.match(
-            r"^race_modality_hints\[(\d+)\]\[(discipline_id|equipment_name)\]$",
-            key,
-        )
-        if m:
-            indices.add(int(m.group(1)))
-    for idx in sorted(indices):
-        d_id = (
-            form.get(f'race_modality_hints[{idx}][discipline_id]') or ''
-        ).strip()
-        equip_name = (
-            form.get(f'race_modality_hints[{idx}][equipment_name]') or ''
-        ).strip()
-        if not d_id or not equip_name:
-            continue
-        if not _DISCIPLINE_ID_PATTERN.match(d_id):
-            continue
-        bucket = out.setdefault(d_id, [])
-        if equip_name not in bucket:
-            bucket.append(equip_name)
-    return out
-
-
-def _equipment_choices(db) -> list[str]:
-    """Return canonical equipment names from `layer0.equipment_items` for
-    the race_modality_hints add-row builder's per-row equipment dropdown.
-
-    Filters `superseded_at IS NULL` to use the current canonical vocab.
-    Sorted alphabetically for stable rendering. ~30-40 rows expected
-    post-K2 + K3 additions; no caching needed.
-
-    Per BestFitModality_Spec_v2.md §I — the ETL `populate_equipment_items`
-    sources are extended in this slice to cover the resolver's full
-    equipment vocab (Treadmill / Road bike / Quickdraws / Crash pad /
-    Hangboard / Climbing gym membership / Kayak / Canoe / etc.) so the
-    dropdown surfaces every option the resolver might bump on.
-    """
-    try:
-        cur = db.execute(
-            """
-            SELECT DISTINCT canonical_name
-              FROM layer0.equipment_items
-             WHERE superseded_at IS NULL
-             ORDER BY canonical_name ASC
-            """
-        )
-        return [row['canonical_name'] for row in cur.fetchall()]
-    except Exception:
-        # Schema not present (e.g., bootstrap or test fixtures without
-        # layer0 populated) — roll back so the aborted transaction doesn't
-        # poison later queries on the shared connection, then return an
-        # empty list so the template renders the picker without choices;
-        # the athlete can still submit existing rows (which preserve
-        # previously-saved values from the form value attribute) but can't
-        # add new ones until layer0 lands.
-        db.rollback()
-        return []
 
 
 def _parse_discipline_id_filter(form) -> list[str] | None:
@@ -488,8 +406,6 @@ def new_race():
         equipment_by_locale={},
         terrain_choices=terrain_choices,
         discipline_choices=discipline_choices,
-        equipment_choices=_equipment_choices(db),
-        existing_modality_hints=[],
         initial_framework_sport=initial_framework_sport,
         race_formats=VALID_RACE_FORMATS,
         route_locale_roles=VALID_ROUTE_LOCALE_ROLES,
@@ -525,17 +441,6 @@ def edit_race(race_event_id: int):
     terrain_choices = _terrain_choices(db)
     initial_framework_sport = _resolve_effective_framework_sport(db, uid, race)
     discipline_choices = _disciplines_for_framework_sport(db, initial_framework_sport)
-    # Spec v2 §C — equipment canonical names for the race_modality_hints
-    # add-row builder's per-row equipment <select>.
-    equipment_choices = _equipment_choices(db)
-    # Flatten the stored dict into list-of-rows for the partial. Empty
-    # dict (pre-v2 or no hints) → empty list → renders no existing rows.
-    existing_modality_hints = []
-    for d_id, equip_list in (race.get('race_modality_hints') or {}).items():
-        for equip in equip_list:
-            existing_modality_hints.append(
-                {'discipline_id': d_id, 'equipment_name': equip}
-            )
     return render_template(
         'profile/race_event_edit.html',
         race=race,
@@ -543,8 +448,6 @@ def edit_race(race_event_id: int):
         equipment_by_locale=equipment_by_locale,
         terrain_choices=terrain_choices,
         discipline_choices=discipline_choices,
-        equipment_choices=equipment_choices,
-        existing_modality_hints=existing_modality_hints,
         initial_framework_sport=initial_framework_sport,
         race_formats=VALID_RACE_FORMATS,
         route_locale_roles=VALID_ROUTE_LOCALE_ROLES,
@@ -601,8 +504,6 @@ def update_race(race_event_id: int):
     new_race_url = _parse_race_url(request.form)
     new_framework_sport = _parse_str(request.form, 'framework_sport')
     parsed_discipline_filter = _parse_discipline_id_filter(request.form)
-    # Spec v2 §C — per-discipline race-craft equipment hints.
-    new_race_modality_hints = _parse_race_modality_hints(request.form)
 
     # D-73 Phase 5.2 Bucket E.(b)-B2 — auto-clear on framework_sport
     # change. Previously-selected discipline IDs reference the old sport's
@@ -653,7 +554,6 @@ def update_race(race_event_id: int):
         notes=new_notes,
         race_terrain=new_race_terrain,
         aid_stations=new_aid_stations,
-        race_modality_hints=new_race_modality_hints,
     )
 
     # Layer 4 cache invalidation per D-66 §9. Non-target edits leave the
@@ -698,28 +598,16 @@ def update_race(race_event_id: int):
             or prior_aid != new_aid_stations
             or prior_race_url != new_race_url
         )
-        # Spec v2 §G — race_modality_hints change evicts the 3 resolver-
-        # consuming entry points (plan_create + single_session +
-        # race_week_brief; plan_refresh excluded per BM-3 G1=A3).
-        prior_modality_hints = race.get('race_modality_hints') or {}
-        modality_hints_changed = prior_modality_hints != new_race_modality_hints
         if framework_sport_changed:
             evict_on_target_event_framework_sport_change(db, uid)
         elif discipline_filter_changed:
             evict_on_target_event_included_discipline_ids_change(db, uid)
         elif periodization_changed:
             evict_on_target_event_periodization_change(db, uid)
-        elif modality_hints_changed:
-            # Strictly broader than brief-only (3 entry points vs 1) but
-            # strictly narrower than periodization (3 vs 3+1) — sits at
-            # this rung in the elif chain so a periodization edit's wider
-            # eviction supersedes when both change in one save.
-            evict_on_target_event_modality_hints_change(db, uid)
         elif brief_only_changed:
-            # Periodization + framework_sport / discipline-filter / modality-
-            # hints evictions are all broader than brief-only on the
-            # race_week_brief axis; firing brief-only on top would only
-            # re-evict already-evicted rows.
+            # Periodization + framework_sport / discipline-filter evictions
+            # are broader than brief-only; firing brief-only on top would
+            # only re-evict already-evicted race_week_brief rows.
             evict_on_target_event_brief_field_change(db, uid)
 
     flash('Race updated.', 'success')

@@ -108,12 +108,6 @@ def llm_layer4_single_session_synthesize_cached(
     # Default None preserves quick-equipment mode + legacy call sites
     # (None collapses to '' inside the key helper for stability).
     layer2_modality_payload_for_locale: Layer2ModalityPayload | None = None,
-    # BestFitModality_Spec_v2.md §C/§E — per-discipline race-craft hint
-    # dict sourced from `target_event.race_modality_hints`. Hashed into
-    # the cache key + threaded through the synthesizer call so the
-    # resolver re-runs on hint changes. Default None preserves pre-v2
-    # callers (None collapses to '' in the key helper).
-    race_modality_hints: dict[str, list[str]] | None = None,
     model: str = "claude-sonnet-4-6",
     temperature: float = 0.3,
     max_tokens: int = 1500,
@@ -150,13 +144,6 @@ def llm_layer4_single_session_synthesize_cached(
         if layer2_modality_payload_for_locale is not None
         else None
     )
-    # Spec v2 §E: hint dict hashed into the key so race-craft edits on
-    # race_events fire fresh cache keys for this entry point.
-    race_modality_hints_hash = (
-        compute_payload_hash(race_modality_hints)
-        if race_modality_hints
-        else None
-    )
 
     key = single_session_synthesize_key(
         user_id=user_id,
@@ -171,7 +158,6 @@ def llm_layer4_single_session_synthesize_cached(
         max_tokens=max_tokens,
         capped_retries=capped_retries,
         layer2_modality_locale_hash=layer2_modality_locale_hash,
-        race_modality_hints_hash=race_modality_hints_hash,
     )
 
     def _synthesize() -> Layer4Payload:
@@ -193,7 +179,6 @@ def llm_layer4_single_session_synthesize_cached(
             session_date=session_date,
             llm_caller=llm_caller,
             layer2_modality_payload_for_locale=layer2_modality_payload_for_locale,
-            race_modality_hints=race_modality_hints,
         )
 
     return cache.get_or_synthesize(
@@ -343,10 +328,6 @@ def llm_layer4_plan_create_cached(
     # per impl-slice scope). Hashed into the cache key + threaded into the
     # per-phase render. Default None preserves existing call sites.
     layer2_modality_payload: Layer2ModalityPayload | None = None,
-    # BestFitModality_Spec_v2.md §C/§E — per-discipline race-craft hint
-    # dict sourced from `race_event_payload.race_modality_hints`. Hashed
-    # into the key + threaded through `llm_layer4_plan_create`.
-    race_modality_hints: dict[str, list[str]] | None = None,
     model_synthesizer: str = "claude-sonnet-4-6",
     model_seam_reviewer: str = "claude-sonnet-4-6",
     temperature: float = 0.2,
@@ -388,12 +369,6 @@ def llm_layer4_plan_create_cached(
         if layer2_modality_payload is not None
         else None
     )
-    # Spec v2 §E.
-    race_modality_hints_hash = (
-        compute_payload_hash(race_modality_hints)
-        if race_modality_hints
-        else None
-    )
 
     key = plan_create_key(
         user_id=user_id,
@@ -413,7 +388,6 @@ def llm_layer4_plan_create_cached(
         max_tokens_per_phase=max_tokens_per_phase if max_tokens_per_phase is not None else 0,
         capped_retries_per_phase=capped_retries_per_phase,
         layer2_modality_hash=layer2_modality_hash,
-        race_modality_hints_hash=race_modality_hints_hash,
     )
 
     # Build the synthesizer kwargs — pass None defaults through to let the
@@ -426,7 +400,6 @@ def llm_layer4_plan_create_cached(
         kwargs: dict[str, Any] = {
             "race_event_payload": race_event_payload,
             "layer2_modality_payload": layer2_modality_payload,
-            "race_modality_hints": race_modality_hints,
             "model_synthesizer": model_synthesizer,
             "model_seam_reviewer": model_seam_reviewer,
             "temperature": temperature,
@@ -494,11 +467,6 @@ def llm_layer4_race_week_brief_cached(
     # cache key + threaded into the brief prompt. Default None preserves
     # existing call sites (notably test fixtures pre-BM-3).
     layer2_modality_payload: Layer2ModalityPayload | None = None,
-    # BestFitModality_Spec_v2.md §C/§E — race-craft hint dict threaded
-    # through to the resolver via the brief synthesizer (which calls the
-    # resolver internally). Hashed into the key for cache invalidation
-    # on hint edits.
-    race_modality_hints: dict[str, list[str]] | None = None,
     model: str = "claude-sonnet-4-6",
     temperature: float = 0.2,
     max_tokens: int = 6000,
@@ -533,12 +501,6 @@ def llm_layer4_race_week_brief_cached(
         if layer2_modality_payload is not None
         else None
     )
-    # Spec v2 §E.
-    race_modality_hints_hash = (
-        compute_payload_hash(race_modality_hints)
-        if race_modality_hints
-        else None
-    )
 
     key = race_week_brief_key(
         user_id=user_id,
@@ -557,7 +519,6 @@ def llm_layer4_race_week_brief_cached(
         max_tokens=max_tokens,
         capped_retries=capped_retries,
         layer2_modality_hash=layer2_modality_hash,
-        race_modality_hints_hash=race_modality_hints_hash,
     )
 
     def _synthesize() -> Layer4Payload:
@@ -583,7 +544,6 @@ def llm_layer4_race_week_brief_cached(
             today=today,
             llm_caller=llm_caller,
             layer2_modality_payload=layer2_modality_payload,
-            race_modality_hints=race_modality_hints,
         )
 
     return cache.get_or_synthesize(
