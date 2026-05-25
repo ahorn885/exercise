@@ -229,6 +229,40 @@ def test_composite_split_preserves_sport_race_share_total(wb):
         assert abs(total(raw, sport) - total(canon, sport)) < 0.01, sport
 
 
+def test_swimrun_run_leg_is_road_not_trail(wb):
+    # Swimrun is modelled as swim + ROAD run (D-002), not the source's trail
+    # (D-001); the override is scoped to Swimrun only.
+    for sheet, ufields, sport_f in [
+        (sf.extract_sport_discipline_map(wb["Sport × Discipline Map"]),
+         ("sport_name", "discipline_id"), "sport_name"),
+        (sf.extract_phase_load_allocation(wb["Phase Load Allocation"]),
+         ("sport_name", "discipline_name"), "sport_name"),
+    ]:
+        rows = dc.normalize_named_rows(
+            sheet, unique_fields=ufields, sport_field=sport_f,
+            keep_non_discipline=True,
+        )
+        swimrun = {r["discipline_id"] for r in rows if r["sport_name"] == "Swimrun"}
+        assert "D-002" in swimrun, swimrun        # road running present
+        assert "D-001" not in swimrun             # trail running gone
+        assert "D-004" in swimrun                 # swimming (from merged D-016)
+        assert "D-020" not in swimrun             # combined leg removed
+
+
+def test_sport_override_is_scoped_to_swimrun():
+    # The same raw D-001 row stays Trail Running for a non-Swimrun sport.
+    rows = [
+        {"sport_name": "Swimrun", "discipline_id": "D-001", "discipline_name": "Trail Running"},
+        {"sport_name": "Fell Running", "discipline_id": "D-001", "discipline_name": "Trail Running"},
+    ]
+    out = dc.normalize_named_rows(
+        rows, unique_fields=("sport_name", "discipline_id"), sport_field="sport_name",
+    )
+    by_sport = {r["sport_name"]: r["discipline_id"] for r in out}
+    assert by_sport["Swimrun"] == "D-002"
+    assert by_sport["Fell Running"] == "D-001"
+
+
 def test_training_gaps_drops_swimrun(wb):
     raw = sf.extract_discipline_training_gaps(wb)
     rows = dc.normalize_named_rows(raw, unique_fields=("discipline_id",))

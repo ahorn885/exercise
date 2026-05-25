@@ -67,6 +67,18 @@ ID_REMAP: dict[str, str] = {
 #   D-023 Ski Transitions / Boot-packing -> not tracked as a discipline.
 REMOVED_IDS: frozenset[str] = frozenset({"D-020", "D-023"})
 
+# Sport-specific discipline overrides — a sport *composition* decision, distinct
+# from the global canon above. Keyed (sport_name, raw_discipline_id) -> new id,
+# applied (only on sport-keyed tables) BEFORE canon resolution.
+#
+#   Swimrun: D-020 (the "combined" leg) is removed and the sport is modelled as
+#   swim + run. Its run leg is ROAD running (D-002), not the source's trail
+#   running (D-001) — Andy, May 2026. This is scoped to Swimrun; D-001 stays
+#   trail running everywhere else.
+SPORT_DISCIPLINE_OVERRIDES: dict[tuple[str, str], str] = {
+    ("Swimrun", "D-001"): "D-002",
+}
+
 # Non-discipline rows that legitimately appear in phase_load_allocation under a
 # placeholder id ("-" / "—"). They are kept, but keyed with discipline_id = NULL
 # and tagged with a category, rather than masquerading as disciplines.
@@ -218,6 +230,7 @@ def normalize_named_rows(
     keep_non_discipline: bool = False,
     category_field: str = "row_category",
     share_fields: tuple[str, ...] = (),
+    sport_field: str | None = None,
     dropped: list[dict] | None = None,
 ) -> list[dict]:
     """Canonicalize a list of (id, name)-bearing rows.
@@ -234,13 +247,24 @@ def normalize_named_rows(
     race segment, so duplicating the share would double-count the sport's load
     (e.g. Triathlon's bike share landing on both Road Cycling and TT Cycling).
 
+    `sport_field`, when given, enables SPORT_DISCIPLINE_OVERRIDES (sport-scoped
+    composition fixes, e.g. Swimrun's run leg -> road) applied before canon
+    resolution. Only meaningful on sport-keyed tables.
+
     De-duplicated by `unique_fields` (first-seen wins).
     """
     out: list[dict] = []
     seen: set[tuple] = set()
     for row in rows:
+        raw_id = row.get(id_field)
+        if sport_field is not None:
+            override = SPORT_DISCIPLINE_OVERRIDES.get(
+                (row.get(sport_field), (raw_id or "").strip())
+            )
+            if override is not None:
+                raw_id = override
         produced: list[dict] = []
-        for leg_index, cid in enumerate(resolve_ids(row.get(id_field))):
+        for leg_index, cid in enumerate(resolve_ids(raw_id)):
             nr = dict(row)
             nr[id_field] = cid
             nr[name_field] = CANONICAL_NAMES[cid]

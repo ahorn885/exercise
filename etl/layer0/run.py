@@ -259,6 +259,7 @@ def main(argv: list[str] | None = None) -> int:
         sd_rows = discipline_canon.normalize_named_rows(
             sd_rows, unique_fields=("sport_name", "discipline_id"),
             share_fields=("race_time_pct_low", "race_time_pct_high", "race_time_pct_text"),
+            sport_field="sport_name",
             dropped=canon_dropped_sd,
         )
         if canon_dropped_sd:
@@ -326,6 +327,7 @@ def main(argv: list[str] | None = None) -> int:
                 "base_pct_low", "base_pct_high", "build_pct_low", "build_pct_high",
                 "peak_pct_low", "peak_pct_high", "taper_pct_low", "taper_pct_high",
             ),
+            sport_field="sport_name",
             dropped=canon_dropped_pl,
         )
         if canon_dropped_pl:
