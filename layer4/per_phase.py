@@ -1032,13 +1032,24 @@ def _default_llm_caller(
         "tool_choice": {"type": "tool", "name": tool_schema["name"]},
     }
     if extended_thinking_budget > 0:
+        # Extended thinking is incompatible with a forced tool_choice and with
+        # temperature != 1 — the API 400s on either. Relax both when thinking
+        # is on; the tool is still offered via `tools` and required by prompt.
         request_kwargs["thinking"] = {
             "type": "enabled",
             "budget_tokens": extended_thinking_budget,
         }
+        request_kwargs["tool_choice"] = {"type": "auto"}
+        request_kwargs["temperature"] = 1.0
 
     start = time.monotonic()
-    msg = client.messages.create(**request_kwargs)
+    try:
+        msg = client.messages.create(**request_kwargs)
+    except anthropic.APIError as exc:
+        raise Layer4OutputError(
+            "anthropic_api_error",
+            detail=f"{type(exc).__name__}: {exc}",
+        ) from exc
     latency_ms = int((time.monotonic() - start) * 1000)
 
     tool_args: dict[str, Any] | None = None
