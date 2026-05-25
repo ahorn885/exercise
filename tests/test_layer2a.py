@@ -96,14 +96,19 @@ def _row(
     gap_type: str | None = None,
     gap_notes: str | None = None,
     multi_substitute_candidate: bool | None = None,
+    discipline_category: str | None = None,
+    primary_movement: str | None = None,
 ) -> dict:
     """Build a query-result row dict mirroring `_load_disciplines`'s
-    SELECT list. PLA + DTG columns default to None (LEFT JOIN miss)."""
+    SELECT list. PLA + DTG + disciplines columns default to None (LEFT
+    JOIN miss)."""
     return {
         "discipline_id": discipline_id,
         "discipline_name": discipline_name,
         "applicability": "INCLUDED",
         "role": role,
+        "discipline_category": discipline_category,
+        "primary_movement": primary_movement,
         "race_time_pct_low": race_time_pct_low,
         "race_time_pct_high": race_time_pct_high,
         "sport_specific_context": sport_specific_context,
@@ -306,11 +311,39 @@ class TestARBaseline:
         assert "layer0.sport_discipline_map" in sql
         assert "layer0.phase_load_allocation" in sql
         assert "layer0.discipline_training_gaps" in sql
+        # disciplines join carries discipline_category + primary_movement
+        assert "layer0.disciplines" in sql
         # D-05 standing filter present (psycopg2 `%%` escape — see Bucket
         # B #1, 2026-05-21 walkthrough)
         assert "NOT LIKE '%%WEEKLY TOTAL%%'" in sql
-        # Params: top_level=AR, version_0a, framework_sport=AR (same — no parens), version_0a, version_0a
-        assert params == ("Adventure Racing", "v19", "Adventure Racing", "v19", "v19")
+        # Params: top_level=AR, version_0a, framework_sport=AR (same — no
+        # parens), then version_0a × 3 for the PLA / DTG / disciplines joins.
+        assert params == ("Adventure Racing", "v19", "Adventure Racing", "v19", "v19", "v19")
+
+    def test_discipline_category_and_primary_movement_plumb_through(self):
+        # The layer0.disciplines join surfaces the terrain + movement axes
+        # onto Layer2ADiscipline for downstream consumers (Layer 2E fueling).
+        conn = _FakeConn()
+        conn.queue_response(rows=[
+            _row(
+                "D-001", "Trail Running", "Primary",
+                discipline_category="Foot / Running", primary_movement="running",
+            ),
+            _row("D-099", "Legacy Row", "Primary"),  # LEFT JOIN miss → NULLs
+        ])
+        payload = q_layer2a_discipline_classifier_payload(
+            conn,
+            "Adventure Racing",
+            estimated_race_duration_hours=56.0,
+            navigation_required=True,
+            etl_version_set=_DEFAULT_ETL,
+        )
+        by_id = {d.discipline_id: d for d in payload.disciplines}
+        assert by_id["D-001"].discipline_category == "Foot / Running"
+        assert by_id["D-001"].primary_movement == "running"
+        # Missing join row tolerated as NULL (legacy / unpopulated).
+        assert by_id["D-099"].discipline_category is None
+        assert by_id["D-099"].primary_movement is None
 
 
 # ─── §13.2 AR override divergence ────────────────────────────────────────────

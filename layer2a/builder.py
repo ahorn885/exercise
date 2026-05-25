@@ -117,11 +117,12 @@ def _load_disciplines(
     version_0a: str,
 ) -> list[dict[str, Any]]:
     """Issue the spec §5.2 query. Returns one row per included discipline
-    in SDM for the sport, with PLA + DTG joined LEFT (may be NULL).
+    in SDM for the sport, with PLA + DTG + discipline-library rows joined
+    LEFT (may be NULL).
 
-    Five positional params: top_level_sport, version_0a, framework_sport,
-    version_0a, version_0a. Trailing two version_0a params are for the
-    PLA and DTG joins respectively.
+    Six positional params: top_level_sport, version_0a, framework_sport,
+    version_0a, version_0a, version_0a. Trailing three version_0a params
+    are for the PLA, DTG, and disciplines joins respectively.
     """
     cur = db.execute(
         """
@@ -162,7 +163,9 @@ def _load_disciplines(
             pla.notes_conditions,
             dtg.gap_type,
             dtg.notes AS gap_notes,
-            dtg.multi_substitute_candidate
+            dtg.multi_substitute_candidate,
+            dl.discipline_category,
+            dl.primary_movement
         FROM sport_disciplines sd
         LEFT JOIN layer0.phase_load_allocation pla
             ON pla.sport_name = ?
@@ -174,8 +177,12 @@ def _load_disciplines(
             ON dtg.discipline_id = sd.discipline_id
            AND dtg.etl_version = ?
            AND dtg.superseded_at IS NULL
+        LEFT JOIN layer0.disciplines dl
+            ON dl.discipline_id = sd.discipline_id
+           AND dl.etl_version = ?
+           AND dl.superseded_at IS NULL
         """,
-        (top_level_sport, version_0a, framework_sport, version_0a, version_0a),
+        (top_level_sport, version_0a, framework_sport, version_0a, version_0a, version_0a),
     )
     return [dict(r) for r in cur.fetchall()]
 
@@ -644,6 +651,8 @@ def q_layer2a_discipline_classifier_payload(
             Layer2ADiscipline(
                 discipline_id=row["discipline_id"],
                 discipline_name=row["discipline_name"],
+                discipline_category=row.get("discipline_category"),
+                primary_movement=row.get("primary_movement"),
                 inclusion=inclusion,
                 role=row["role"],
                 is_conditional=_is_conditional(row["role"], row.get("notes_conditions")),

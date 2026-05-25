@@ -59,6 +59,7 @@ the periodization, not only the active phase.
 
 from __future__ import annotations
 
+import logging
 from datetime import date, datetime, timezone
 from typing import Any, Literal
 
@@ -82,6 +83,8 @@ from layer4.context import (
     SleepDepFuelingOverlay,
     SupplementIntegrationPayload,
 )
+
+logger = logging.getLogger(__name__)
 
 
 # ─── Constants ───────────────────────────────────────────────────────────────
@@ -163,53 +166,73 @@ _SPORT_PROFILE_CHO_MOD: dict[str, float] = {
     "default": 1.0,
 }
 
-# Discipline → endurance profile (§5.3.3) and dominance signal
-# (§5.4.3). v1 ships as code-side data per spec §6.2 promotion
-# candidate. Covers the D-001..D-018 AR set + common D-0xx ids; unknown
-# ids default to 'Mixed' for endurance, no contribution to dominance.
-_ENDURANCE_PROFILE: dict[str, str] = {
-    "D-001": "Pure endurance",  # Trail Running
-    "D-002": "Pure endurance",  # Road Running
-    "D-003": "Pure endurance",  # Open Water Swimming
-    "D-004": "Pure endurance",  # Distance Cycling
-    "D-006": "Pure endurance",  # Long Distance Cycling
-    "D-008": "Mixed",            # MTB
-    "D-009": "Pure endurance",  # Pool Swimming
-    "D-010": "Mixed",           # Packrafting (flatwater)
-    "D-010": "Mixed",           # Packrafting (whitewater)
-    "D-011": "Mixed",            # Skimo
-    "D-012": "Technical",        # Rock Climbing
-    "D-013": "Pure endurance",  # Hiking
-    "D-014": "Pure endurance",  # Ski touring
-    "D-015": "Technical",        # Abseiling
-    "D-016": "Strength",         # Strength
-    "D-017": "Mixed",            # Yoga / Mobility
-    "D-018": "Pure endurance",  # Indoor Cardio
+# §5.3.3 endurance profile, derived from the upstream terrain axis
+# `layer0.disciplines.discipline_category` (plumbed via Layer 2A onto
+# `Layer2ADiscipline.discipline_category`). Keyed on the category prefix
+# (token before '/'). Values align with Layer 0 `ENUM_ENDURANCE`
+# {Pure endurance, Mixed, Technical-dominant}. Missing/unknown category
+# defaults to 'Mixed' (an unrecognised-but-present value is logged).
+_CATEGORY_ENDURANCE: dict[str, str] = {
+    "foot": "Pure endurance",
+    "snow": "Pure endurance",
+    "cycle": "Pure endurance",
+    "water": "Mixed",
+    "vertical": "Technical-dominant",
+    "mixed": "Technical-dominant",
 }
 
-# Discipline → sport-profile dominance signal (§5.4.3). Used by
-# `_resolve_sport_profile` weighted vote.
-_DISCIPLINE_PROFILE_VOTE: dict[str, str] = {
-    "D-001": "running",
-    "D-002": "running",
-    "D-003": "swimming",
-    "D-004": "cycling",
-    "D-006": "cycling",
-    "D-008": "cycling",
-    "D-009": "swimming",
-    "D-010": "paddling",
-    "D-010": "paddling",
-    "D-011": "skimo",
-    "D-012": "multi_sport",      # rock climbing contributes to multi-sport bias
-    "D-013": "running",           # hiking — running-profile metabolic load
-    "D-014": "skimo",
-    "D-015": "multi_sport",
-    "D-016": "multi_sport",       # strength → no single endurance discipline
-    "D-017": "multi_sport",
-    "D-018": "cycling",           # indoor cardio default to cycling-like GI profile
+# §5.4.3 sport-profile vote, derived from the upstream movement axis
+# `layer0.disciplines.primary_movement` (∈ Layer 0 `ENUM_MOVEMENTS`),
+# plumbed onto `Layer2ADiscipline.primary_movement`. This is the
+# movement-faithful source the terrain category cannot provide
+# (e.g. swimming vs paddling both share a 'Water / *' category).
+# Missing/unknown movement defaults to 'multi_sport'.
+_MOVEMENT_SPORT_PROFILE: dict[str, str] = {
+    "running": "running",
+    "hiking": "running",
+    "cycling": "cycling",
+    "swimming": "swimming",
+    "paddling": "paddling",
+    "skiing": "skimo",
+    "climbing": "multi_sport",
+    "navigation": "multi_sport",
+    "other_skill": "multi_sport",
 }
 
-_STRENGTH_DOMINANT_IDS: frozenset[str] = frozenset({"D-016"})
+# §5.3.3 protein band — movements whose force demand pushes dietary
+# protein higher. 'climbing' is the strength-biased movement in the
+# Layer 0 vocabulary.
+_STRENGTH_MOVEMENTS: frozenset[str] = frozenset({"climbing"})
+
+
+def _endurance_profile(discipline: Layer2ADiscipline) -> str:
+    category = discipline.discipline_category
+    if not category:
+        return "Mixed"
+    prefix = category.split("/")[0].strip().lower()
+    profile = _CATEGORY_ENDURANCE.get(prefix)
+    if profile is None:
+        logger.warning(
+            "unknown discipline_category %r for %s; defaulting endurance to 'Mixed'",
+            category, discipline.discipline_id,
+        )
+        return "Mixed"
+    return profile
+
+
+def _movement_sport_profile(discipline: Layer2ADiscipline) -> str:
+    movement = discipline.primary_movement
+    if not movement:
+        return "multi_sport"
+    profile = _MOVEMENT_SPORT_PROFILE.get(movement.strip().lower())
+    if profile is None:
+        logger.warning(
+            "unknown primary_movement %r for %s; defaulting profile to 'multi_sport'",
+            movement, discipline.discipline_id,
+        )
+        return "multi_sport"
+    return profile
+
 
 # §5.4.4 deployed → spec salt_tolerance translation.
 _SALT_TOLERANCE_NORM: dict[str | None, str | None] = {
@@ -446,7 +469,7 @@ def _cho_band_position(disciplines: list[Layer2ADiscipline]) -> float:
     pure = 0.0
     mixed = 0.0
     for d in disciplines:
-        profile = _ENDURANCE_PROFILE.get(d.discipline_id, "Mixed")
+        profile = _endurance_profile(d)
         share = _discipline_weight(d) / weight_sum
         if profile == "Pure endurance":
             pure += share
@@ -461,7 +484,7 @@ def _protein_band_position(disciplines: list[Layer2ADiscipline]) -> float:
     weight_sum = sum(_discipline_weight(d) for d in disciplines) or 1.0
     strength = sum(
         _discipline_weight(d) for d in disciplines
-        if d.discipline_id in _STRENGTH_DOMINANT_IDS
+        if (d.primary_movement or "").strip().lower() in _STRENGTH_MOVEMENTS
     ) / weight_sum
     return min(1.0, 0.4 + 0.6 * strength)
 
@@ -532,7 +555,7 @@ def _resolve_sport_profile(disciplines: list[Layer2ADiscipline]) -> str:
     weight_sum = sum(_discipline_weight(d) for d in disciplines) or 1.0
     tallies: dict[str, float] = {}
     for d in disciplines:
-        profile = _DISCIPLINE_PROFILE_VOTE.get(d.discipline_id, "multi_sport")
+        profile = _movement_sport_profile(d)
         tallies[profile] = tallies.get(profile, 0.0) + _discipline_weight(d) / weight_sum
     top_profile, top_share = max(tallies.items(), key=lambda kv: kv[1])
     if top_share < 0.5:

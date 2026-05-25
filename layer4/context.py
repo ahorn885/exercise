@@ -220,6 +220,12 @@ class Layer2ADiscipline(_Base):
     discipline_name: str
     inclusion: Literal["included", "excluded", "prompt_required"]
     role: str  # 'Primary' | 'Secondary' | 'Minor' | 'Technical' (with *Conditional suffix)
+    # Upstream layer0.disciplines classifications, plumbed for downstream
+    # consumers (e.g. Layer 2E nutrition). `discipline_category` is the
+    # terrain axis ('Foot / Running'); `primary_movement` is the movement
+    # axis (layer0 ENUM_MOVEMENTS). Both may be NULL for legacy rows.
+    discipline_category: str | None = None
+    primary_movement: str | None = None
     is_conditional: bool
     conditional_resolution: (
         Literal["race_rule_auto_in", "race_rule_auto_out", "athlete_opt_in"] | None

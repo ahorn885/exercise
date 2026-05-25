@@ -140,6 +140,7 @@ CREATE TABLE IF NOT EXISTS layer0.disciplines (
   discipline_id               TEXT NOT NULL,
   discipline_name             TEXT NOT NULL,
   discipline_category         TEXT,
+  primary_movement            TEXT,
   min_base_phase_text         TEXT,
   min_base_phase_weeks_low    INTEGER,
   min_base_phase_weeks_high   INTEGER,

@@ -223,6 +223,7 @@ def main(argv: list[str] | None = None) -> int:
         disc_rows = sports_framework.extract_disciplines(wb["Discipline Library"])
         disciplines_columns = [
             "discipline_id", "discipline_name", "discipline_category",
+            "primary_movement",
             "min_base_phase_text", "min_base_phase_weeks_low", "min_base_phase_weeks_high",
             "periodization_text", "ramp_text", "age_adjusted_ramp_text",
             "age_ramp_40_44_pct", "age_ramp_45_54_pct", "age_ramp_55_plus_pct",
