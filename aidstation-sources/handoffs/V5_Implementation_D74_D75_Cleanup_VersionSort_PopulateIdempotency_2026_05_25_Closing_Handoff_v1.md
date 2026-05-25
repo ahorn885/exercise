@@ -4,8 +4,8 @@
 
 **Date:** 2026-05-25
 **Predecessor handoff:** `V5_Implementation_D73_Phase_5_2_DisciplineID_Renumber_R6_Collapses_2026_05_25_Closing_Handoff_v1.md`
-**Branch:** `claude/beautiful-ptolemy-7wnHU` (PR draft)
-**Status:** Shipped. D-75 fixed + 6 unit tests; D-74 DELETE prefix on 3 `etl/sources/` scripts (owed-deploy on next Neon run — no DATABASE_URL in the build container). New **D-76** opened (divergent terrain_gap_rules migrations copy). Tests **1630 → 1636**.
+**Branch:** `claude/beautiful-ptolemy-7wnHU` → **PR #155 (merged to main 2026-05-25)**
+**Status:** Shipped + merged. D-75 fixed + 6 unit tests; D-74 DELETE prefix on 3 `etl/sources/` scripts (owed-deploy on next Neon run — no DATABASE_URL in the build container). **D-76 opened + resolved same session** (deleted the divergent terrain_gap_rules migrations copy — see §11). Tests **1630 → 1636**.
 
 ---
 
