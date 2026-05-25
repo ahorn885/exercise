@@ -159,7 +159,7 @@ Layer 2C per-locale `effective_pool` + `exercises_resolved` (Tier 1 direct / Tie
 
 # Schedule respect
 
-Layer 1 §K `daily_availability_windows` per-day windows: prescribe on `available=True` days only; session `duration_min` must fit within the day's window minutes (validator: `daily_window_fit_*`). Sessions on `available=False` days raise unless explicitly flagged `athlete_self_scheduled` (not in this flag enum — orchestrator path only).
+Layer 1 §K `daily_availability_windows` per-day windows: prescribe on `available=True` days only; session `duration_min` must fit within the day's window minutes (validator: `daily_window_fit_*`). Sessions on `available=False` days raise unless explicitly flagged `athlete_self_scheduled` (not in this flag enum — orchestrator path only). The athlete's **long-session day** is the day carrying the longest enabled window — FormRefresh Slice C retired the standalone long-session input, so the longest window now *is* the long-session capacity. Anchor the primary discipline's weekly `long_slow_distance` cornerstone (flag list above) on that day; secondary-discipline LSDs fit their own longest available day. The `=== Schedule ===` block names the computed long-session day.
 
 # Race-event context (D-66)
 
@@ -699,6 +699,76 @@ def _format_training_substitution_per_phase(
     return lines
 
 
+def _format_daily_windows_schedule(layer1_payload: dict[str, Any]) -> list[str]:
+    """Render the `=== Schedule ===` section: per-day availability windows +
+    the derived long-session day. Shared by per_phase + plan_refresh T2/T3.
+
+    `layer1_payload` is `Layer1Payload.model_dump()`; `daily_availability_windows`
+    is a list of dicts (day_of_week / enabled / window_start / window_duration /
+    second_window_* / doubles_feasible). FormRefresh Slice C (2026-05-25) retired
+    the standalone long-session picker: the weekly long session IS the longest
+    enabled primary window and rest days ARE the disabled days — derived here by
+    the consumer, not denormalized (Layer1_Spec §5.4). Ties among equal-duration
+    enabled windows resolve to the earliest listed day.
+    """
+    lines: list[str] = ["=== Schedule ==="]
+    avail = layer1_payload.get("available_days_per_week")
+    if avail is not None:
+        lines.append(f"Available days per week (Layer 1 §K): {avail}")
+
+    windows = layer1_payload.get("daily_availability_windows") or []
+    if not windows:
+        lines.append("(No per-day availability windows on file.)")
+        lines.append("")
+        return lines
+
+    longest_idx: int | None = None
+    longest_dur = 0
+    for i, w in enumerate(windows):
+        if not w.get("enabled"):
+            continue
+        dur = w.get("window_duration") or 0
+        if dur > longest_dur:
+            longest_dur = dur
+            longest_idx = i
+
+    for i, w in enumerate(windows):
+        dow = w.get("day_of_week", "?")
+        if not w.get("enabled"):
+            lines.append(f"- {dow}: rest (unavailable)")
+            continue
+        seg = f"- {dow}: available, {w.get('window_duration')} min"
+        sec = w.get("second_window_duration")
+        if sec:
+            seg += f" (+ {sec} min second window)"
+        if i == longest_idx:
+            seg += "  ← longest enabled window"
+        lines.append(seg)
+
+    doubles = windows[0].get("doubles_feasible")
+    if doubles:
+        lines.append(f"Doubles feasible: {doubles}")
+
+    if longest_idx is not None:
+        long_dow = windows[longest_idx].get("day_of_week", "?")
+        lines.append(
+            f"Long-session day = {long_dow} ({longest_dur} min, the longest enabled "
+            "window). Anchor the primary discipline's weekly `long_slow_distance` "
+            "cornerstone here; secondary-discipline LSDs fit their own longest "
+            "available day."
+        )
+    else:
+        lines.append(
+            "No enabled windows — the whole period is rest; prescribe no sessions."
+        )
+    lines.append(
+        "Disabled days are rest days. Do not exceed any day's window minutes "
+        "(validator: `daily_window_fit`)."
+    )
+    lines.append("")
+    return lines
+
+
 def render_user_prompt(
     *,
     phase_spec: PhaseSpec,
@@ -865,16 +935,7 @@ def render_user_prompt(
         parts.extend(_format_training_substitution_per_phase(training_substitution_payload))
 
     # === Schedule ===
-    parts.append("=== Schedule ===")
-    avail = layer1_payload.get("available_days_per_week")
-    if avail:
-        parts.append(f"Available days per week (Layer 1 §K): {avail}")
-    windows = layer1_payload.get("daily_availability_windows")
-    if windows:
-        parts.append(
-            f"Daily availability windows: {windows} (do not exceed per-day window minutes)"
-        )
-    parts.append("")
+    parts.extend(_format_daily_windows_schedule(layer1_payload))
 
     # === Retry context ===
     if retries_used > 0 and rule_failures:
