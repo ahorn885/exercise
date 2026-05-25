@@ -97,6 +97,12 @@ Spec narrative sweep (per-layer specs still cite old discipline ids in prose); s
 ## 10. Carry-forward updates
 
 - **D-74 + D-75 SHIPPED.** D-75 fully in production-ready code (suite green); D-74 SQL is owed-deploy on the next Neon run (idempotent, no behavior change).
-- **D-76 opened** — divergent terrain_gap_rules migrations copy at a shared etl_version; needs a canonical-source decision before that copy is ever deployed.
+- **D-76 opened** — divergent terrain_gap_rules migrations copy at a shared etl_version; needs a canonical-source decision before that copy is ever deployed. **(Resolved same session — see §11.)**
+
+## 11. Addendum (same session) — D-76 resolved by deletion
+
+Andy's call on the §4 canonical-source decision: **delete the duplicate.** Removed `aidstation-sources/migrations/populate_terrain_gap_rules.sql` (`git rm`). Verified safe first: nothing in the repo applies the `aidstation-sources/migrations/` dir as a deploy source (grep across `.py`/`.sh`/`.json`), and `init_db.py` + the R6 deploy both use the `etl/sources/` copy — the sole canonical path. The 16-row `etl/sources/` version stands as the single definition of `0C-v2.0-r2` for `layer0.terrain_gap_rules`.
+
+The other `aidstation-sources/migrations/populate_*.sql` copies (equipment K/K2, stimulus) were **left in place** — out of D-76's scope. They may be similarly stale; a follow-up could assess/remove them if `etl/sources/` is confirmed the sole path for those too.
 
 **End of handoff.**
