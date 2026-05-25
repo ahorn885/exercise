@@ -302,9 +302,9 @@ ETL/layer0 track (not a numbered v5 onboarding PR). Full record:
 |---|------|--------|-------------|-------|
 | 1 | Run `migrations/migrate_discipline_canon_2026_05_25.sql` on Neon (ADD COLUMN `row_category` + optional retire) | ✅ Done | 2026-05-25 | Run by Andy post-#166. |
 | 2 | First loader pass `python -m etl.layer0.run --version-tag 1.3.1` (loaded the #166 canon) | ✅ Done | 2026-05-25 | Reported `discipline_canon` PASS; `sum_to_100` 5 WARN (cosmetic). |
-| 3 | **Re-run loader to apply #167** (composite-share fix + Swimrun road leg) | 🟡 owed | 2026-05-25 | Code-only; no new migration. Commands in `CARRY_FORWARD.md`. |
-| 4 | Spot-check (Neon SQL, after step 3): Triathlon `sport_discipline_map` D-006 carries the bike `race_time_pct`, D-007 = 0; `layer0.disciplines` non-superseded = 25 rows | 🟡 owed | 2026-05-25 | — |
-| 5 | Spot-check (Neon SQL, after step 3): Swimrun maps to D-004 + D-002, no D-001/D-020 | 🟡 owed | 2026-05-25 | — |
+| 3 | **Re-run loader to apply #167** (composite-share fix + Swimrun road leg) | ✅ Done | 2026-05-25 | Re-run by Andy. `discipline_canon: 385/385 PASS, 0 ERROR`; `sum_to_100: 28 checked, 5 WARN` (cosmetic). Report `etl/reports/run-1.3.1-20260525-215420.md`. Code-only; no new migration. |
+| 4 | Spot-check (Neon SQL, after step 3): Triathlon `sport_discipline_map` D-006 carries the bike `race_time_pct`, D-007 = 0; `layer0.disciplines` non-superseded = 25 rows | ✅ Done | 2026-05-25 | Triathlon: D-006 (Road Cycling) carries the bike share, **D-007 (Time-Trial Cycling) = 0-0%** (share on the primary leg only). `disciplines` non-superseded = **25**; gaps at D-005/D-016/D-020/D-023 as expected. |
+| 5 | Spot-check (Neon SQL, after step 3): Swimrun maps to D-004 + D-002, no D-001/D-020 | ✅ Done | 2026-05-25 | Swimrun: **D-004 (Swimming) + D-002 (Road Running)** only; no D-001/D-020. D-002 road leg is the intentional `SPORT_DISCIPLINE_OVERRIDES` call (handoff §7 #5), not drift. |
 
 ---
 
