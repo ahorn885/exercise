@@ -44,6 +44,7 @@ from layer4.context import (
     Layer2ADiscipline,
     Layer2APayload,
     Layer2BCoachingFlag,
+    Layer2BDisciplineBlock,
     Layer2BPayload,
     Layer2BSummaryBlock,
     Layer2Bundle,
@@ -306,6 +307,7 @@ __all__ = [
     "WeightResult",
     # Layer 2B
     "Layer2BCoachingFlag",
+    "Layer2BDisciplineBlock",
     "Layer2BPayload",
     "Layer2BSummaryBlock",
     "Layer2Bundle",
