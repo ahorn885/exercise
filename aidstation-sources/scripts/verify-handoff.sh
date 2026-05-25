@@ -63,11 +63,12 @@ echo
 echo "[1] Files referenced in the handoff (existence check)"
 echo
 
-# Regex covers: aidstation-sources/..., layer4/..., tests/..., routes/...,
-# templates/..., static/..., scripts/..., and a few top-level files we care about.
-# We strip surrounding backticks/quotes and dedupe.
+# Regex covers: etl/..., aidstation-sources/..., layer0-9/..., tests/...,
+# routes/..., templates/..., static/..., scripts/..., and a few top-level files.
+# `etl/` is listed first so leftmost-longest captures the full `etl/tests/x.py`
+# path rather than the bare `tests/x.py` tail. We strip backticks and dedupe.
 mapfile -t PATHS < <(
-  grep -oE '`?(aidstation-sources/[A-Za-z0-9_./-]+\.(md|py|sh|sql|json|html|js|css|txt)|layer[1-9][a-z]?/[A-Za-z0-9_./-]+\.(py|md)|tests/[A-Za-z0-9_./-]+\.py|routes/[A-Za-z0-9_./-]+\.py|templates/[A-Za-z0-9_./-]+\.html|static/[A-Za-z0-9_./-]+\.(js|css)|scripts/[A-Za-z0-9_./-]+\.sh|(init_db|database|app|chain_registry|race_events_repo|race_events_invalidation|athlete|coaching|email_helper|mapbox_client|plan_match|rx_engine|garmin_connect|garmin_fit_parser|fit_workout_generator|calculations|seed_workouts)\.py)`?' "$HANDOFF" \
+  grep -oE '`?(etl/[A-Za-z0-9_./-]+\.(py|md|sh|sql)|aidstation-sources/[A-Za-z0-9_./-]+\.(md|py|sh|sql|json|html|js|css|txt)|layer[0-9][a-z]?/[A-Za-z0-9_./-]+\.(py|md)|tests/[A-Za-z0-9_./-]+\.py|routes/[A-Za-z0-9_./-]+\.py|templates/[A-Za-z0-9_./-]+\.html|static/[A-Za-z0-9_./-]+\.(js|css)|scripts/[A-Za-z0-9_./-]+\.sh|(init_db|database|app|chain_registry|race_events_repo|race_events_invalidation|athlete|coaching|email_helper|mapbox_client|plan_match|rx_engine|garmin_connect|garmin_fit_parser|fit_workout_generator|calculations|seed_workouts)\.py)`?' "$HANDOFF" \
   | tr -d '`' \
   | sort -u
 )
