@@ -108,7 +108,6 @@ class TestEmptyUser:
         for w in payload.daily_availability_windows:
             assert w.enabled is False
             assert w.doubles_feasible == "no"
-            assert w.preferred_rest_day is False
         # Section sub-models.
         assert payload.identity.date_of_birth is None
         assert payload.identity.primary_sport is None
@@ -124,7 +123,7 @@ class TestEmptyUser:
         assert payload.discipline_baselines.technical is None
         assert payload.strength_benchmarks is None
         assert payload.performance.hrmax_bpm is None
-        assert payload.availability.long_session_available is False
+        assert payload.availability.doubles_feasible is None
         assert payload.event_goal.target_race_event_id is None
         assert payload.lifestyle.sleep_baseline_hours is None
         assert payload.network.network_links == []
@@ -162,11 +161,7 @@ class TestFullyPopulated:
             "lactate_threshold_hr_bpm": 168,
             "vo2max": 55.0,
             "cycling_ftp_w": 280,
-            "long_session_available": True,
-            "long_session_days": "sat,sun",
-            "long_session_max_hr": 8,
             "doubles_feasible": "occasionally",
-            "preferred_rest_days": "mon",
             "years_structured_training": 8,
             "peak_weekly_volume_hrs": 18.0,
             "peak_weekly_volume_year": 2024,
@@ -376,7 +371,7 @@ class TestFullyPopulated:
         assert len(payload.training_history.secondary_sports) == 2
         assert payload.training_history.previous_coaching == "self"
 
-    def test_daily_windows_denormalize_per_week_capacity(self):
+    def test_daily_windows_denormalize_doubles_and_infer_rest(self):
         conn = _FakeConn()
         self._queue_andy(conn)
         payload = build_layer1_payload(conn, user_id=1)
@@ -390,15 +385,14 @@ class TestFullyPopulated:
         assert sun.window_duration == 240
         assert sat.day_of_week == "Sat"
         assert sat.enabled is True
-        # Per-week capacity denormalized.
+        # doubles_feasible denormalized onto every day.
         for w in payload.daily_availability_windows:
             assert w.doubles_feasible == "occasionally"
-            assert w.long_session_max_duration == 8
-        # Preferred-rest-day on Monday only.
+        # Rest days are inferred from the disabled days (FormRefresh Slice C):
+        # Monday is not in the enabled set, so it's a rest day.
         mon = payload.daily_availability_windows[1]
         assert mon.day_of_week == "Mon"
-        assert mon.preferred_rest_day is True
-        assert sun.preferred_rest_day is False
+        assert mon.enabled is False
         # available_days_per_week derived count.
         assert payload.available_days_per_week == 2
 
@@ -537,8 +531,6 @@ class TestCsvSplitting:
         empty_profile = {col: None for col in _PROFILE_COL_NAMES}
         empty_profile["dietary_pattern"] = ""
         empty_profile["fueling_format_preference"] = "   "
-        empty_profile["long_session_days"] = None
-        empty_profile["preferred_rest_days"] = ",,,"
         conn.queue_response(row=empty_profile)
         for _ in range(23):
             conn.queue_response()
@@ -546,8 +538,6 @@ class TestCsvSplitting:
         payload = build_layer1_payload(conn, user_id=1)
         assert payload.lifestyle.dietary_pattern == []
         assert payload.lifestyle.fueling_format_preference == []
-        assert payload.availability.long_session_days == []
-        assert payload.availability.preferred_rest_days == []
 
     def test_csv_whitespace_stripped(self):
         conn = _FakeConn()
@@ -592,8 +582,7 @@ _PROFILE_COL_NAMES = (
     "date_of_birth", "sex", "height_cm", "primary_sport",
     "weekly_hours_target", "notes", "body_weight_kg", "hrmax_bpm",
     "lactate_threshold_hr_bpm", "vo2max", "cycling_ftp_w",
-    "long_session_available", "long_session_days", "long_session_max_hr",
-    "doubles_feasible", "preferred_rest_days", "years_structured_training",
+    "doubles_feasible", "years_structured_training",
     "peak_weekly_volume_hrs", "peak_weekly_volume_year",
     "longest_event_completed", "training_consistency_disrupted_weeks",
     "training_consistency_cause", "previous_coaching",

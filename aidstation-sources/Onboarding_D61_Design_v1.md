@@ -3,6 +3,8 @@
 **Version:** 1.0
 **Date:** 2026-05-14
 **Status:** Design decisions locked; spec rewrite pending (`Athlete_Onboarding_Data_Spec_v5.md` lands after all four design tracks settle).
+
+> **Superseded in part (FormRefresh Slice C, 2026-05-25):** §3.1's "Long Session Available + Doubles Feasible stay as orthogonal capacity flags" and §7.3's "`Long Session Available`, `Doubles Feasible`, `Preferred Rest Day(s)` continue to live on the athlete-profile row" no longer hold. The standalone Long Session inputs + Preferred Rest Day(s) were dropped — the weekly long session is the longest enabled daily window (primary-window cap raised 360→720 min) and rest days are the disabled days, both inferred. `doubles_feasible` is the only surviving §G `athlete_profile` scalar. Canonical current shape: `Athlete_Onboarding_Data_Spec_v6.md` §G + `Layer1_Spec.md` §5.4.
 **Backlog row:** D-61
 **Track:** Third of the four-track Onboarding Design Wave (D-58–D-61). Sequence: D-59 ✅ → D-60 ✅ → **D-61 (this doc)** → D-58.
 **Affects:** `Athlete_Onboarding_Data_Spec` §G (Schedule & Availability), §J.5 (Locale Capacity Metrics — field removed); new `daily_availability_windows` table; `locale_profiles.preferred` column; Layer 4 plan-gen consumer contract for session→locale assignment; session-card UX in the eventual plan-execution UI.

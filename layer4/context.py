@@ -1075,14 +1075,16 @@ class Layer3BPayload(_Base):
 class DailyAvailabilityWindow(_Base):
     day_of_week: Literal["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
     enabled: bool
+    # FormRefresh Slice C (2026-05-25) — the weekly long session is the longest
+    # enabled primary window (cap raised 360→720 min / 6→12 h so an expedition
+    # long day fits); rest days are the disabled days. The standalone
+    # long_session_available / long_session_max_duration / preferred_rest_day
+    # fields were dropped — derived from the windows, not stored.
     window_start: str | None = None  # time-of-day "HH:MM"; None when enabled=False
-    window_duration: int | None = Field(default=None, ge=30, le=360)
+    window_duration: int | None = Field(default=None, ge=30, le=720)
     second_window_start: str | None = None
     second_window_duration: int | None = Field(default=None, ge=30, le=360)
-    long_session_available: bool | None = None
-    long_session_max_duration: Literal[2, 3, 4, 5, 6, 8] | None = None  # hours
     doubles_feasible: Literal["regularly", "occasionally", "no"]
-    preferred_rest_day: bool
 
     @model_validator(mode="after")
     def _check_enabled_invariants(self) -> "DailyAvailabilityWindow":
@@ -1674,14 +1676,12 @@ class Layer1Performance(_Base):
     css_test_date: date | None = None
 
 
-# §G — per-week capacity scalars (per-day windows are at top-level
-# `Layer1Payload.daily_availability_windows`).
+# §G — per-week capacity (per-day windows are at top-level
+# `Layer1Payload.daily_availability_windows`). FormRefresh Slice C
+# (2026-05-25) reduced this to `doubles_feasible` — the long-session day +
+# rest days are inferred from the windows, not stored.
 class Layer1Availability(_Base):
-    long_session_available: bool = False
-    long_session_days: list[str] = Field(default_factory=list)
-    long_session_max_hr: Literal[2, 3, 4, 5, 6, 8] | None = None
     doubles_feasible: Literal["regularly", "occasionally", "no"] | None = None
-    preferred_rest_days: list[str] = Field(default_factory=list)
 
 
 # §H — event/goal

@@ -62,7 +62,7 @@ from flask import (
 from database import get_db
 from athlete import (
     DAY_TOKENS, DAY_LABELS, DOUBLES_FEASIBLE_CHOICES,
-    LONG_SESSION_MAX_HR_CHOICES, get_athlete_profile, upsert_athlete_profile,
+    get_athlete_profile, upsert_athlete_profile,
     get_daily_availability_windows, upsert_daily_availability_windows,
 )
 from race_events_invalidation import (
@@ -555,15 +555,6 @@ def _parse_time(value):
     return f'{h:02d}:{m:02d}'
 
 
-def _filter_day_tokens(values):
-    """Return the subset of `values` that are valid day tokens, ordered
-    by DAY_TOKENS (Sunday..Saturday). Empty list when nothing valid."""
-    if not values:
-        return []
-    s = set(values)
-    return [t for t in DAY_TOKENS if t in s]
-
-
 def _parse_schedule_form(form):
     """Parse the §G form payload into ({windows, profile_updates}, errors).
 
@@ -577,7 +568,6 @@ def _parse_schedule_form(form):
     """
     errors = []
     windows = []
-    enabled_day_tokens = []
 
     doubles = form.get('doubles_feasible', '').strip().lower()
     if doubles not in DOUBLES_FEASIBLE_CHOICES:
@@ -588,11 +578,11 @@ def _parse_schedule_form(form):
         primary_enabled = bool(form.get(f'enabled_{token}'))
         primary_start = _parse_time(form.get(f'start_{token}'))
         primary_dur = _parse_int(
-            form.get(f'duration_{token}'), min_=30, max_=360,
+            form.get(f'duration_{token}'), min_=30, max_=720,
         )
         if primary_enabled and (primary_start is None or primary_dur is None):
             errors.append(
-                f'{DAY_LABELS[dow]}: start time and duration (30–360 min) '
+                f'{DAY_LABELS[dow]}: start time and duration (30–720 min) '
                 'are required when the day is enabled. The day was left '
                 'disabled.'
             )
@@ -627,9 +617,6 @@ def _parse_schedule_form(form):
                         'window_duration_min': second_dur,
                     }
 
-        if primary_enabled:
-            enabled_day_tokens.append(token)
-
         windows.append({
             'day_of_week': dow,
             'day_token': token,
@@ -642,48 +629,14 @@ def _parse_schedule_form(form):
             'secondary': secondary,
         })
 
-    # Long Session Available — Y/N + day-set (subset of enabled) + max hr.
-    long_available = bool(form.get('long_session_available'))
-    raw_long_days = _filter_day_tokens(form.getlist('long_session_days'))
-    long_days = [t for t in raw_long_days if t in enabled_day_tokens]
-    if long_available and raw_long_days and not long_days:
-        errors.append(
-            'Long-session days must be a subset of your enabled training '
-            'days. Long-session selection cleared.'
-        )
-    long_max_hr = _parse_int(form.get('long_session_max_hr'))
-    if long_max_hr is not None and long_max_hr not in LONG_SESSION_MAX_HR_CHOICES:
-        long_max_hr = None
-    if long_available and (not long_days or long_max_hr is None):
-        errors.append(
-            'Long Session Available was selected but day(s) and max '
-            'duration are required — long-session capacity not saved.'
-        )
-        long_available = False
-        long_days = []
-        long_max_hr = None
-    if not long_available:
-        long_days = []
-        long_max_hr = None
-
-    # Preferred Rest Day(s) — soft signal; no strict-subset enforcement.
-    rest_days = _filter_day_tokens(form.getlist('preferred_rest_days'))
-
+    # FormRefresh Slice C (2026-05-25) — the long-session day + rest days are
+    # no longer asked: the longest enabled window is the weekly long session
+    # and disabled days are the rest days, both derived downstream from the
+    # per-day windows. `doubles_feasible` is the sole surviving §G scalar.
     profile_updates = {
-        'long_session_available': long_available,
-        'long_session_days': ','.join(long_days) if long_days else None,
-        'long_session_max_hr': long_max_hr,
         'doubles_feasible': doubles,
-        'preferred_rest_days': ','.join(rest_days) if rest_days else None,
     }
     return windows, profile_updates, errors
-
-
-def _split_csv_days(value):
-    """Comma-separated day tokens -> list, defensively filtering invalid."""
-    if not value:
-        return []
-    return _filter_day_tokens([t.strip().lower() for t in value.split(',')])
 
 
 @bp.route('/schedule', methods=['GET'])
@@ -700,8 +653,6 @@ def schedule():
     profile = get_athlete_profile(db, uid) or {}
     days = get_daily_availability_windows(db, uid)
 
-    long_days = _split_csv_days(profile.get('long_session_days'))
-    rest_days = _split_csv_days(profile.get('preferred_rest_days'))
     doubles = (profile.get('doubles_feasible') or 'no').lower()
     if doubles not in DOUBLES_FEASIBLE_CHOICES:
         doubles = 'no'
@@ -711,13 +662,6 @@ def schedule():
         days=days,
         doubles_feasible=doubles,
         doubles_choices=DOUBLES_FEASIBLE_CHOICES,
-        long_session_available=bool(profile.get('long_session_available')),
-        long_session_days=long_days,
-        long_session_max_hr=profile.get('long_session_max_hr'),
-        long_session_max_hr_choices=LONG_SESSION_MAX_HR_CHOICES,
-        preferred_rest_days=rest_days,
-        day_tokens=DAY_TOKENS,
-        day_labels=DAY_LABELS,
         post_step3b_target=_POST_STEP3B_TARGET,
     )
 
@@ -725,9 +669,9 @@ def schedule():
 @bp.route('/schedule', methods=['POST'])
 def schedule_save():
     """Persist the §G form. Per-day windows replace existing rows for
-    this user; athlete_profile carries the three orthogonal capacity
-    toggles. Errors flash and re-render; partial saves are allowed —
-    any field that parsed cleanly persists.
+    this user; athlete_profile carries the `doubles_feasible` toggle.
+    Errors flash and re-render; partial saves are allowed — any field
+    that parsed cleanly persists.
     """
     db = get_db()
     uid = current_user_id()

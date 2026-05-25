@@ -422,7 +422,6 @@ def _daily_window(
             day_of_week=dow,  # type: ignore[arg-type]
             enabled=False,
             doubles_feasible=doubles,  # type: ignore[arg-type]
-            preferred_rest_day=False,
         )
     return DailyAvailabilityWindow(
         day_of_week=dow,  # type: ignore[arg-type]
@@ -430,7 +429,6 @@ def _daily_window(
         window_start="06:00",
         window_duration=duration,
         doubles_feasible=doubles,  # type: ignore[arg-type]
-        preferred_rest_day=False,
     )
 
 

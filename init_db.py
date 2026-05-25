@@ -26,11 +26,7 @@ PG_SCHEMA = '''
         lactate_threshold_hr_bpm INTEGER,
         vo2max REAL,
         cycling_ftp_w INTEGER,
-        long_session_available BOOLEAN DEFAULT FALSE,
-        long_session_days TEXT,
-        long_session_max_hr SMALLINT,
         doubles_feasible TEXT,
-        preferred_rest_days TEXT,
         updated_at TIMESTAMP DEFAULT NOW()
     );
     CREATE TABLE IF NOT EXISTS exercise_inventory (
@@ -785,9 +781,7 @@ _PG_MIGRATIONS = [
         weekly_hours_target REAL, notes TEXT,
         body_weight_kg REAL, hrmax_bpm INTEGER,
         lactate_threshold_hr_bpm INTEGER, vo2max REAL, cycling_ftp_w INTEGER,
-        long_session_available BOOLEAN DEFAULT FALSE, long_session_days TEXT,
-        long_session_max_hr SMALLINT, doubles_feasible TEXT,
-        preferred_rest_days TEXT,
+        doubles_feasible TEXT,
         updated_at TIMESTAMP DEFAULT NOW()
     )""",
     # Session 5 — recommended-purchases rebuild.
@@ -1169,7 +1163,8 @@ _PG_MIGRATIONS = [
             (enabled = FALSE AND window_start IS NULL AND window_duration_min IS NULL)
             OR (enabled = TRUE AND window_start IS NOT NULL AND window_duration_min IS NOT NULL)
         ),
-        CHECK (window_duration_min IS NULL OR window_duration_min BETWEEN 30 AND 360)
+        CONSTRAINT daily_availability_windows_duration_bound
+            CHECK (window_duration_min IS NULL OR window_duration_min BETWEEN 30 AND 720)
     )""",
     "CREATE INDEX IF NOT EXISTS daw_user_day_idx ON daily_availability_windows (user_id, day_of_week)",
     "ALTER TABLE locale_profiles ADD COLUMN IF NOT EXISTS preferred BOOLEAN DEFAULT FALSE",
@@ -1189,18 +1184,51 @@ _PG_MIGRATIONS = [
     "ALTER TABLE athlete_profile ADD COLUMN IF NOT EXISTS lactate_threshold_hr_bpm INTEGER",
     "ALTER TABLE athlete_profile ADD COLUMN IF NOT EXISTS vo2max REAL",
     "ALTER TABLE athlete_profile ADD COLUMN IF NOT EXISTS cycling_ftp_w INTEGER",
-    # PR12 (D-61) — §G orthogonal capacity toggles. Per-day windows live in
-    # `daily_availability_windows`; these are the three remaining v5 §G fields
-    # (Long Session Available + Doubles Feasible + Preferred Rest Day) that
-    # capture per-week orthogonal capacity. `long_session_days` and
-    # `preferred_rest_days` are comma-separated day tokens (sun..sat) because
-    # day-set membership is small and the storage shape matches §G form
-    # checkboxes. `long_session_max_hr` is 2/3/4/5/6/8 — 8 represents "8+".
-    "ALTER TABLE athlete_profile ADD COLUMN IF NOT EXISTS long_session_available BOOLEAN DEFAULT FALSE",
-    "ALTER TABLE athlete_profile ADD COLUMN IF NOT EXISTS long_session_days TEXT",
-    "ALTER TABLE athlete_profile ADD COLUMN IF NOT EXISTS long_session_max_hr SMALLINT",
+    # PR12 (D-61) — §G capacity. Per-day windows live in
+    # `daily_availability_windows`; `doubles_feasible` ('regularly'/
+    # 'occasionally'/'no') gates second-window entry.
     "ALTER TABLE athlete_profile ADD COLUMN IF NOT EXISTS doubles_feasible TEXT",
-    "ALTER TABLE athlete_profile ADD COLUMN IF NOT EXISTS preferred_rest_days TEXT",
+    # FormRefresh Slice C (2026-05-25) — drop the standalone Long Session
+    # (available / days / max_hr) + Preferred Rest Day inputs. The long
+    # session is now the longest enabled daily window (window cap raised
+    # 360→720 min, below) and rest days are the disabled days — both derived
+    # from `daily_availability_windows`, not asked. DROP IF EXISTS is
+    # idempotent + no-op on a fresh DB (these are no longer created above);
+    # reversible via re-add in git.
+    "ALTER TABLE athlete_profile DROP COLUMN IF EXISTS long_session_available",
+    "ALTER TABLE athlete_profile DROP COLUMN IF EXISTS long_session_days",
+    "ALTER TABLE athlete_profile DROP COLUMN IF EXISTS long_session_max_hr",
+    "ALTER TABLE athlete_profile DROP COLUMN IF EXISTS preferred_rest_days",
+    # FormRefresh Slice C — raise the daily-window duration ceiling 360→720
+    # min (6→12 h) so the longest enabled window can carry an expedition-
+    # length long session (the dropped long_session_max_hr enum topped out at
+    # "8+"). Fresh DBs get the named 720 bound from the CREATE above; this
+    # migrates a deployed table whose inline CHECK still pins 360. The
+    # enabled/window-pairing CHECK also references window_duration_min, so the
+    # old bound is matched by its "360" literal (which that pairing CHECK does
+    # not contain) to avoid dropping it. Idempotent: after the bump no
+    # constraint matches "360" and the named 720 bound already exists.
+    """DO $$
+    DECLARE c text;
+    BEGIN
+        FOR c IN
+            SELECT conname FROM pg_constraint
+            WHERE conrelid = 'daily_availability_windows'::regclass
+              AND contype = 'c'
+              AND pg_get_constraintdef(oid) LIKE '%360%'
+        LOOP
+            EXECUTE format('ALTER TABLE daily_availability_windows DROP CONSTRAINT %I', c);
+        END LOOP;
+        IF NOT EXISTS (
+            SELECT 1 FROM pg_constraint
+            WHERE conrelid = 'daily_availability_windows'::regclass
+              AND conname = 'daily_availability_windows_duration_bound'
+        ) THEN
+            ALTER TABLE daily_availability_windows
+                ADD CONSTRAINT daily_availability_windows_duration_bound
+                CHECK (window_duration_min IS NULL OR window_duration_min BETWEEN 30 AND 720);
+        END IF;
+    END $$;""",
     # Layer 4 §7.11 — plan_versions table (lifts D-64 §7.2 stub). Each
     # plan_session carries a plan_version_id FK; the per-day version pointer
     # per D-64 §6.3 picks the most-recent-version row per date when
