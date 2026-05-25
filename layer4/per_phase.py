@@ -1032,15 +1032,19 @@ def _default_llm_caller(
         "tool_choice": {"type": "tool", "name": tool_schema["name"]},
     }
     if extended_thinking_budget > 0:
-        # Extended thinking is incompatible with a forced tool_choice and with
-        # temperature != 1 — the API 400s on either. Relax both when thinking
-        # is on; the tool is still offered via `tools` and required by prompt.
+        # Extended thinking constrains the request: tool_choice must be `auto`
+        # (not forced), temperature must be 1, and max_tokens must exceed
+        # budget_tokens (max_tokens is the combined thinking + visible-output
+        # budget). Adding the thinking budget on top of the intended output
+        # budget preserves the output allowance. The tool is still offered via
+        # `tools` and required by the prompt body.
         request_kwargs["thinking"] = {
             "type": "enabled",
             "budget_tokens": extended_thinking_budget,
         }
         request_kwargs["tool_choice"] = {"type": "auto"}
         request_kwargs["temperature"] = 1.0
+        request_kwargs["max_tokens"] = max_tokens + extended_thinking_budget
 
     start = time.monotonic()
     try:

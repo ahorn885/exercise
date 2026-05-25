@@ -7,11 +7,14 @@ the API with a 400) shipped to production undetected. These tests mock
 the SDK client and assert the request the production callers actually
 build.
 
-Invariant: extended thinking is incompatible with a forced `tool_choice`
-and with `temperature != 1`. When thinking is enabled the callers must
-relax `tool_choice` to `auto` and `temperature` to `1.0`; when it's off
-they keep the forced tool + the requested temperature. SDK errors must
-surface as `Layer4OutputError`, not bubble as a 500.
+Invariant: extended thinking is incompatible with a forced `tool_choice`,
+with `temperature != 1`, and with `max_tokens <= budget_tokens` (max_tokens
+is the combined thinking + visible-output budget, so it must exceed the
+thinking budget). When thinking is enabled the callers must relax
+`tool_choice` to `auto`, `temperature` to `1.0`, and raise `max_tokens`
+above `budget_tokens`; when it's off they keep the forced tool + the
+requested temperature + the requested max_tokens. SDK errors must surface
+as `Layer4OutputError`, not bubble as a 500.
 """
 
 import anthropic
@@ -88,6 +91,10 @@ def test_thinking_on_relaxes_tool_choice_and_temperature(caller, monkeypatch):
     assert rec["temperature"] == 1.0
     assert rec["thinking"]["type"] == "enabled"
     assert rec["thinking"]["budget_tokens"] == 5000
+    # max_tokens is the combined thinking + output budget; it must exceed the
+    # thinking budget or the API 400s. Output allowance (4000) preserved on top.
+    assert rec["max_tokens"] == 9000
+    assert rec["max_tokens"] > rec["thinking"]["budget_tokens"]
 
 
 @pytest.mark.parametrize("caller", CALLERS)
@@ -99,6 +106,7 @@ def test_thinking_off_keeps_forced_tool(caller, monkeypatch):
 
     assert rec["tool_choice"] == {"type": "tool", "name": "emit"}
     assert rec["temperature"] == 0.2
+    assert rec["max_tokens"] == 4000
     assert "thinking" not in rec
 
 
