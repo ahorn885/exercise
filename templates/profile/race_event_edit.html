@@ -191,11 +191,6 @@
       {% set existing_terrain = (race.race_terrain if race and race.race_terrain else []) %}
       {% include '_race_terrain_editor.html' %}
 
-      {# BestFitModality_Spec_v2.md §C — per-discipline race-craft hints
-         add-row builder. Renders below the terrain section since both
-         scope race-context and share the discipline_choices vocab. #}
-      {% include '_race_modality_hints_editor.html' %}
-
       <div class="col-12">
         <label class="form-label" for="notes">Notes</label>
         <textarea class="form-control" id="notes" name="notes" rows="2"

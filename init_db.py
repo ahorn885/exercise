@@ -1285,15 +1285,6 @@ _PG_MIGRATIONS = [
     # preserve the prior row shape for existing data.
     "ALTER TABLE race_events ADD COLUMN IF NOT EXISTS race_terrain JSONB NOT NULL DEFAULT '[]'::jsonb",
     "ALTER TABLE race_events ADD COLUMN IF NOT EXISTS aid_stations INTEGER NULL CHECK (aid_stations IS NULL OR aid_stations >= 0)",
-    # BestFitModality_Spec_v2.md §C (2026-05-24) — per-discipline race-craft
-    # hints. Shape stored: {<discipline_id>: [<equipment_canonical_name>, ...]}.
-    # Default '{}' = no hints (v1-identical resolver behavior). Read by
-    # `race_events_repo.load_race_event_payload` + threaded by the Layer 4
-    # orchestrator into `resolve_best_fit_modality(...)` for all 3 plan-gen
-    # entry points (single_session + plan_create + race_week_brief). Cache
-    # eviction policy: `evict_on_target_event_modality_hints_change` (full
-    # cone modulo plan_refresh).
-    "ALTER TABLE race_events ADD COLUMN IF NOT EXISTS race_modality_hints JSONB NOT NULL DEFAULT '{}'::jsonb",
     # D-73 Phase 5.2 walkthrough #1 + #2a (2026-05-21) — Mapbox-anchored race
     # location columns + race_url. The legacy `event_locale_id BIGINT FK to
     # locale_profiles(id)` semantic (athlete's own saved travel locale slot)
@@ -1859,6 +1850,10 @@ _PG_MIGRATIONS = [
         UNIQUE (user_id, toggle_name)
     )""",
     "CREATE INDEX IF NOT EXISTS ast_user_idx ON athlete_skill_toggles (user_id)",
+    # Un-ship the race-craft-aware scoring slice — drop the column so
+    # deployed DBs shed it cleanly. Approved destructive drop (no users;
+    # backward-compat not needed).
+    "ALTER TABLE race_events DROP COLUMN IF EXISTS race_modality_hints",
 ]
 
 _CLOTHING_SEEDS = [

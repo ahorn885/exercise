@@ -1141,12 +1141,6 @@ def llm_layer4_plan_create(
     # threaded through `_run_pattern_a_engine` → `synthesize_phase` →
     # `render_user_prompt`. Default None preserves existing call sites.
     layer2_modality_payload: Layer2ModalityPayload | None = None,
-    # BestFitModality_Spec_v2.md §A — race-craft hint dict accepted for
-    # signature symmetry with the cached wrapper. Resolver-side scoring
-    # already applied upstream of this driver (the bumped scores ride
-    # inside `layer2_modality_payload`); plan_create itself doesn't
-    # consume the dict beyond passing it through if needed.
-    race_modality_hints: dict[str, list[str]] | None = None,
 ) -> Layer4Payload:
     """Pattern A plan-create entry point per `Layer4_Spec.md` §3.1.
 

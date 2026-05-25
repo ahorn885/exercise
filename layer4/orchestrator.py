@@ -303,14 +303,6 @@ def _upstream_full_cone(
     # cluster_locale_ids expansion already noted on Layer 2C. BM-3
     # (prompt-body integration) is the natural follow-on that wires
     # the payload into Layer 4's plan-gen prompt body.
-    # BestFitModality_Spec_v2.md §C/§D — race-craft hints sourced from
-    # the target race event row. None-safe: no target event → empty dict
-    # → resolver behaves v1-identical.
-    race_modality_hints = (
-        dict(target_race_event.race_modality_hints)
-        if target_race_event is not None
-        else {}
-    )
     layer2_modality_payload = resolve_best_fit_modality(
         db,
         cluster_locale_inputs=[
@@ -323,7 +315,6 @@ def _upstream_full_cone(
         ],
         included_discipline_ids=included_discipline_ids,
         skill_toggle_states=layer1_payload.lifestyle.skill_toggle_states,
-        race_modality_hints=race_modality_hints or None,
         etl_version_set=etl_version_set,
     )
 
@@ -462,11 +453,6 @@ def orchestrate_race_week_brief(
         # BM-3: thread Layer 2 modality resolver payload from the cone
         # into the brief's prompt body + cache key.
         layer2_modality_payload=cone.layer2_modality_payload,
-        # Spec v2 §C/§E — race-craft hints from the target race row;
-        # cache key + resolver-side scoring both consume.
-        race_modality_hints=(
-            dict(race_event.race_modality_hints) or None
-        ),
         today=today,
     )
 
@@ -525,19 +511,6 @@ def orchestrate_single_session_synthesize(
     as_of = datetime.combine(today, time.min)
 
     layer1_payload = build_layer1_payload(db, user_id)
-
-    # BestFitModality_Spec_v2.md §A — pull race-craft hints from the
-    # athlete's target race when one exists. Single-session is off-plan
-    # but the athlete is typically training toward something; the bump
-    # keeps the LLM's modality citation consistent with the plan-gen
-    # entry points. No target event → empty hints → v1-identical resolver
-    # behavior (no bump).
-    target_race_event = load_target_race_event_payload(db, user_id)
-    race_modality_hints = (
-        dict(target_race_event.race_modality_hints)
-        if target_race_event is not None
-        else {}
-    )
 
     try:
         layer2a_payload = q_layer2a_discipline_classifier_payload(
@@ -608,9 +581,6 @@ def orchestrate_single_session_synthesize(
             ],
             included_discipline_ids=included_discipline_ids,
             skill_toggle_states=layer1_payload.lifestyle.skill_toggle_states,
-            # Spec v2 §C — same hints as the cached_wrapper's key uses;
-            # resolver-side scoring + cache key stay in lockstep.
-            race_modality_hints=race_modality_hints or None,
             etl_version_set=etl_version_set,
         )
 
@@ -636,8 +606,6 @@ def orchestrate_single_session_synthesize(
         suggestion_id=suggestion_id,
         etl_version_set=etl_version_set,
         cache=cache,
-        # Spec v2 §E — hints into the cache key.
-        race_modality_hints=race_modality_hints or None,
         session_date=today,
     )
 
@@ -796,12 +764,6 @@ def orchestrate_plan_create(
         # BM-3: thread Layer 2 modality resolver payload from the cone
         # into the per-phase prompt bodies + cache key.
         layer2_modality_payload=cone.layer2_modality_payload,
-        # Spec v2 §C/§E — race-craft hints from the target race row.
-        race_modality_hints=(
-            dict(race_event.race_modality_hints) or None
-            if race_event is not None
-            else None
-        ),
     )
 
 
