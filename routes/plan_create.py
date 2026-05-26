@@ -228,6 +228,19 @@ def _advance_plan_generation(db, uid: int, plan_version_id: int) -> dict:
             db, plan_version_id, uid,
             f"Athlete evaluation failed ({exc.code}). Try again or contact support.",
         )
+    except Exception as exc:
+        # Anything not in the typed-error contract (e.g. a DB error mid-cone)
+        # must still flip the row to a terminal state — otherwise it escapes as
+        # a raw 500 AND the row stays 'generating', so the every-minute cron
+        # re-picks it and 500-loops forever, burning a real cone each fire.
+        print(
+            f"_advance_plan_generation: unexpected {type(exc).__name__} for "
+            f"plan_version_id={plan_version_id}: {exc}"
+        )
+        return _mark_plan_failed(
+            db, plan_version_id, uid,
+            "Plan generation failed unexpectedly. Please try again or contact support.",
+        )
 
     # Success. DELETE-before-insert keeps the persist idempotent: if a prior
     # pass committed sessions then died before flipping the status, the
