@@ -1,0 +1,126 @@
+{% extends 'base.html' %}
+{% block title %}Generating your plan — AIDSTATION{% endblock %}
+{% block content %}
+
+<nav class="mb-3">
+  <a href="{{ url_for('dashboard.index') }}" class="text-muted small">&larr; Back to dashboard</a>
+</nav>
+
+<div class="text-center py-5" id="planProgress"
+     data-generate-url="{{ generate_url }}">
+
+  <div id="progressWorking">
+    <div class="spinner-border text-primary mb-3" role="status">
+      <span class="visually-hidden">Working…</span>
+    </div>
+    <h4 class="mb-2">Building your training plan</h4>
+    <p class="text-muted mb-1" id="progressMessage">Evaluating your current state&hellip;</p>
+    <p class="text-muted small mb-0">
+      This runs your profile through the full coaching cascade and can take a
+      few minutes. Keep this tab open &mdash; your plan opens automatically when
+      it&rsquo;s ready.
+    </p>
+    <p class="text-muted small mt-3 mb-0"><span id="progressElapsed">0</span>s elapsed</p>
+  </div>
+
+  <div id="progressFailed" class="d-none">
+    <h4 class="mb-2">Plan generation didn&rsquo;t finish</h4>
+    <p class="text-muted" id="progressError"></p>
+    <a href="{{ new_url }}" class="btn btn-primary">Back to create a plan</a>
+  </div>
+</div>
+
+<script nonce="{{ csp_nonce() }}">
+(function () {
+  var root = document.getElementById('planProgress');
+  if (!root) return;
+  var generateUrl = root.getAttribute('data-generate-url');
+  var workingEl = document.getElementById('progressWorking');
+  var failedEl = document.getElementById('progressFailed');
+  var errorEl = document.getElementById('progressError');
+  var msgEl = document.getElementById('progressMessage');
+  var elapsedEl = document.getElementById('progressElapsed');
+
+  // Indicative status copy — cycles client-side; the steps run server-side
+  // and aren't individually reported back.
+  var MESSAGES = [
+    'Evaluating your current state…',
+    'Checking goal + timeline viability…',
+    'Shaping your periodization…',
+    'Synthesizing your training phases…',
+    'Reviewing the transitions between phases…',
+    'Finishing up…'
+  ];
+  var msgIdx = 0;
+  var started = Date.now();
+  // Bounded so a step that can't fit the function timeout can't loop forever.
+  var MAX_ATTEMPTS = 20;
+  var attempts = 0;
+  var stopped = false;
+
+  // Read the CSRF token directly rather than relying on the app.js fetch
+  // wrapper — this inline script runs during body parse, before app.js
+  // (loaded at the end of the body) has wrapped window.fetch.
+  var csrfMeta = document.querySelector('meta[name="csrf-token"]');
+  var csrfToken = csrfMeta ? (csrfMeta.getAttribute('content') || '') : '';
+
+  setInterval(function () {
+    if (stopped) return;
+    elapsedEl.textContent = String(Math.floor((Date.now() - started) / 1000));
+  }, 1000);
+
+  setInterval(function () {
+    if (stopped) return;
+    msgIdx = (msgIdx + 1) % MESSAGES.length;
+    msgEl.textContent = MESSAGES[msgIdx];
+  }, 6000);
+
+  function showFailure(message) {
+    stopped = true;
+    workingEl.classList.add('d-none');
+    errorEl.textContent = message || 'Plan generation failed. Please try again.';
+    failedEl.classList.remove('d-none');
+  }
+
+  function retryOrGiveUp(delayMs) {
+    if (attempts >= MAX_ATTEMPTS) {
+      showFailure('This is taking longer than expected. Please try again.');
+    } else {
+      setTimeout(step, delayMs);
+    }
+  }
+
+  function step() {
+    if (stopped) return;
+    attempts += 1;
+    fetch(generateUrl, {
+      method: 'POST',
+      headers: { 'Accept': 'application/json', 'X-CSRFToken': csrfToken }
+    })
+      .then(function (resp) {
+        // A 5xx / function timeout means this pass was cut short; completed
+        // layers were cached, so resume on the next pass.
+        if (!resp.ok) throw new Error('http ' + resp.status);
+        return resp.json();
+      })
+      .then(function (data) {
+        if (data && data.status === 'ready' && data.redirect) {
+          stopped = true;
+          window.location.href = data.redirect;
+        } else if (data && data.status === 'failed') {
+          showFailure(data.error);
+        } else {
+          retryOrGiveUp(1000);
+        }
+      })
+      .catch(function () {
+        // Network drop or the function hit its timeout mid-pass — resume.
+        retryOrGiveUp(2000);
+      });
+  }
+
+  step();
+})();
+</script>
+
+{% endblock %}

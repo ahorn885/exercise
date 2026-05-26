@@ -1,20 +1,32 @@
 """Plan-create caller-side route (Phase 5.2 caller-side).
 
-Composes `orchestrate_plan_create` end-to-end:
+Generation is asynchronous + resumable so it survives the serverless
+function timeout — the full Layer 3A → 3B → per-phase Layer 4 cone is many
+sequential extended-thinking LLM calls (minutes of wall-clock), far past
+any single request budget. The flow:
+
 1. GET `/plans/v2/new` renders the create form (plan_start_date + a
    read-only summary of the athlete's existing target race, if any).
 2. POST `/plans/v2/new` allocates a `plan_versions` row via
    `allocate_plan_version_row(created_via='plan_create', pattern='A')`,
-   invokes `orchestrate_plan_create(...)`, persists the returned
-   `Layer4Payload.sessions` via `persist_layer4_sessions`, commits the
-   transaction atomically per D-64 §6.2, redirects to the plan view.
-3. GET `/plans/v2/<plan_version_id>` renders the plan: scope dates +
-   pattern + per-session list grouped by date.
+   marks it `generation_status='generating'`, commits, and redirects to
+   the progress screen. No LLM work runs in this request.
+3. GET `/plans/v2/<id>/progress` renders a progress screen whose JS polls
+   POST `/plans/v2/<id>/generate`.
+4. POST `/plans/v2/<id>/generate` runs one `orchestrate_plan_create` pass.
+   Each upstream layer + per-phase synthesis is individually cached +
+   committed in `layer4_cache`, so a pass cut short by the function
+   timeout resumes from the cache on the next poll. On completion the
+   sessions persist atomically + the row flips to `ready`; a typed
+   upstream error flips it to `failed`.
+5. GET `/plans/v2/<id>` renders the plan once `ready` (scope dates +
+   pattern + per-session list grouped by date); `generating` redirects to
+   the progress screen, `failed` flashes the error.
 
-Caller owns transaction per substrate D-64 §6.2 — `commit()` fires only
-after both allocate + orchestrate + persist succeed. On any raised
-exception in the chain no commit fires, the connection's auto-rollback
-on close keeps the half-allocated `plan_versions` row off the table.
+Caller owns the transaction per substrate D-64 §6.2 — `generate_plan`'s
+final `commit()` fires only after orchestrate + persist succeed. On any
+raised exception no commit fires; the connection's auto-rollback on close
+keeps partial sessions off the table (re-persist is also DELETE-guarded).
 
 `notes=None` for v1; phase-synthesis-notes population from
 `payload.phase_structure.phases[*].phase_synthesis_notes` requires an
@@ -32,7 +44,16 @@ from __future__ import annotations
 
 from datetime import date, timedelta
 
-from flask import Blueprint, render_template, request, redirect, url_for, flash, abort
+from flask import (
+    Blueprint,
+    render_template,
+    request,
+    redirect,
+    url_for,
+    flash,
+    abort,
+    jsonify,
+)
 
 from database import get_db
 from layer4 import (
@@ -73,7 +94,7 @@ def _load_plan_version(db, user_id: int, plan_version_id: int) -> dict | None:
     """Fetch a plan_versions row scoped to user_id. Returns dict or None."""
     row = db.execute(
         "SELECT id, user_id, created_at, created_via, scope_start_date, "
-        "scope_end_date, pattern "
+        "scope_end_date, pattern, generation_status, generation_error "
         "FROM plan_versions WHERE id = ? AND user_id = ?",
         (plan_version_id, user_id),
     ).fetchone()
@@ -87,6 +108,8 @@ def _load_plan_version(db, user_id: int, plan_version_id: int) -> dict | None:
         'scope_start_date': row['scope_start_date'],
         'scope_end_date': row['scope_end_date'],
         'pattern': row['pattern'],
+        'generation_status': row['generation_status'],
+        'generation_error': row['generation_error'],
     }
 
 
@@ -123,13 +146,51 @@ def _resolve_plan_scope_end_date(start_date: date, race_event_payload) -> date:
     return start_date + timedelta(days=168)
 
 
+def _view_plan_url(plan_version_id: int) -> str:
+    return url_for('plan_create.view_plan', plan_version_id=plan_version_id)
+
+
+def _terminal_status_response(plan_version: dict, view_url: str) -> dict | None:
+    """Map a loaded plan_version's `generation_status` to the JSON the
+    `/generate` poller returns WITHOUT re-running the cone, or None when
+    generation should proceed (status == 'generating')."""
+    status = plan_version['generation_status']
+    if status == 'ready':
+        return {"status": "ready", "redirect": view_url}
+    if status == 'failed':
+        return {
+            "status": "failed",
+            "error": plan_version['generation_error']
+            or "Plan generation failed. Please try again.",
+        }
+    return None
+
+
+def _mark_plan_failed(
+    db, plan_version_id: int, user_id: int, message: str
+) -> dict:
+    """Persist a terminal failure on the plan_versions row + return the
+    poller JSON. Rolls back first so the write lands on a clean transaction
+    even if an upstream layer left the connection mid-statement."""
+    db.rollback()
+    db.execute(
+        "UPDATE plan_versions SET generation_status = 'failed', "
+        "generation_error = ? WHERE id = ? AND user_id = ?",
+        (message, plan_version_id, user_id),
+    )
+    db.commit()
+    return {"status": "failed", "error": message}
+
+
 # ─── Routes ─────────────────────────────────────────────────────────────────
 
 
 @bp.route('/new', methods=['GET', 'POST'])
 def new_plan():
-    """Render the create form on GET. On POST: parse + allocate +
-    orchestrate + persist + commit atomically per D-64 §6.2."""
+    """Render the create form on GET. On POST: parse + allocate the
+    plan_versions row, mark it 'generating', commit, and redirect to the
+    progress screen. The cone runs asynchronously via `generate_plan` —
+    the POST itself does no LLM work so it can't blow the function timeout."""
     db = get_db()
     uid = current_user_id()
 
@@ -155,33 +216,20 @@ def new_plan():
             notes=None,
         )
 
-        try:
-            result = orchestrate_plan_create(
-                db, uid,
-                plan_start_date=plan_start_date,
-                plan_version_id=plan_version_id,
-                cache=_build_layer4_cache(),
-            )
-        except OrchestrationError as exc:
-            flash(_orchestration_error_message(exc), 'danger')
-            return redirect(url_for('plan_create.new_plan'))
-        except (Layer4InputError, Layer4OutputError) as exc:
-            flash(
-                f"Plan synthesis failed ({exc.code}). Adjust your inputs and try again.",
-                'danger',
-            )
-            return redirect(url_for('plan_create.new_plan'))
-        except (Layer3AOutputError, Layer3BOutputError) as exc:
-            flash(
-                f"Athlete evaluation failed ({exc.code}). Try again or contact support.",
-                'danger',
-            )
-            return redirect(url_for('plan_create.new_plan'))
-
-        persist_layer4_sessions(db, result)
+        # Don't run the cone here. The full Layer 3A → 3B → per-phase Layer 4
+        # cascade is many sequential extended-thinking LLM calls — minutes of
+        # wall-clock that blows the serverless function timeout. Mark the row
+        # 'generating', commit, and hand off to the progress screen, which
+        # drives generation step-by-step via POST /<id>/generate (each pass
+        # resumes from the layer4_cache).
+        db.execute(
+            "UPDATE plan_versions SET generation_status = 'generating' "
+            "WHERE id = ? AND user_id = ?",
+            (plan_version_id, uid),
+        )
         db.commit()
         return redirect(
-            url_for('plan_create.view_plan', plan_version_id=plan_version_id)
+            url_for('plan_create.plan_progress', plan_version_id=plan_version_id)
         )
 
     race_event = load_target_race_event_payload(db, uid)
@@ -204,6 +252,19 @@ def view_plan(plan_version_id: int):
     if plan_version is None:
         abort(404)
 
+    status = plan_version['generation_status']
+    if status == 'generating':
+        return redirect(
+            url_for('plan_create.plan_progress', plan_version_id=plan_version_id)
+        )
+    if status == 'failed':
+        flash(
+            plan_version['generation_error']
+            or "Plan generation failed. Please try again.",
+            'danger',
+        )
+        return redirect(url_for('plan_create.new_plan'))
+
     sessions = load_plan_sessions_by_version(db, plan_version_id)
     sessions_by_date: dict = {}
     for session in sessions:
@@ -215,3 +276,100 @@ def view_plan(plan_version_id: int):
         sessions_by_date=sorted(sessions_by_date.items()),
         session_count=len(sessions),
     )
+
+
+@bp.route('/<int:plan_version_id>/progress', methods=['GET'])
+def plan_progress(plan_version_id: int):
+    """Render the generation progress screen. Its JS polls
+    `generate_plan` until the plan is ready (then redirects to the view)
+    or fails (then surfaces the error). A ready plan skips straight to the
+    view; a missing/cross-user id 404s via `_load_plan_version`."""
+    db = get_db()
+    uid = current_user_id()
+
+    plan_version = _load_plan_version(db, uid, plan_version_id)
+    if plan_version is None:
+        abort(404)
+
+    if plan_version['generation_status'] == 'ready':
+        return redirect(_view_plan_url(plan_version_id))
+
+    return render_template(
+        'plan_create/progress.html',
+        plan_version=plan_version,
+        generate_url=url_for(
+            'plan_create.generate_plan', plan_version_id=plan_version_id
+        ),
+        view_url=_view_plan_url(plan_version_id),
+        new_url=url_for('plan_create.new_plan'),
+    )
+
+
+@bp.route('/<int:plan_version_id>/generate', methods=['POST'])
+def generate_plan(plan_version_id: int):
+    """Resumable generation step for the progress poller. Returns JSON.
+
+    When the row is already terminal (`ready`/`failed`) the status is
+    returned without re-running the cone. Otherwise one full
+    `orchestrate_plan_create` pass runs: completed upstream layers + each
+    per-phase synthesis are individually cached + committed
+    (`layer4_cache`), so a pass cut short by the function timeout (the
+    request drops, the poller re-fires) resumes from the cache rather than
+    restarting. On completion the sessions are persisted atomically and the
+    row flips to `ready`; a typed upstream error flips it to `failed`.
+    """
+    db = get_db()
+    uid = current_user_id()
+
+    plan_version = _load_plan_version(db, uid, plan_version_id)
+    if plan_version is None:
+        abort(404)
+
+    view_url = _view_plan_url(plan_version_id)
+    terminal = _terminal_status_response(plan_version, view_url)
+    if terminal is not None:
+        return jsonify(terminal)
+
+    try:
+        result = orchestrate_plan_create(
+            db, uid,
+            plan_start_date=plan_version['scope_start_date'],
+            plan_version_id=plan_version_id,
+            cache=_build_layer4_cache(),
+        )
+    except OrchestrationError as exc:
+        return jsonify(
+            _mark_plan_failed(
+                db, plan_version_id, uid, _orchestration_error_message(exc)
+            )
+        )
+    except (Layer4InputError, Layer4OutputError) as exc:
+        return jsonify(
+            _mark_plan_failed(
+                db, plan_version_id, uid,
+                f"Plan synthesis failed ({exc.code}). Adjust your inputs and try again.",
+            )
+        )
+    except (Layer3AOutputError, Layer3BOutputError) as exc:
+        return jsonify(
+            _mark_plan_failed(
+                db, plan_version_id, uid,
+                f"Athlete evaluation failed ({exc.code}). Try again or contact support.",
+            )
+        )
+
+    # Success. DELETE-before-insert keeps the persist idempotent: if a prior
+    # pass committed sessions then died before flipping the status, the
+    # cache-hit replay would otherwise collide on the natural-key UNIQUE.
+    db.execute(
+        "DELETE FROM plan_sessions WHERE plan_version_id = ?",
+        (plan_version_id,),
+    )
+    persist_layer4_sessions(db, result)
+    db.execute(
+        "UPDATE plan_versions SET generation_status = 'ready', "
+        "generation_error = NULL WHERE id = ? AND user_id = ?",
+        (plan_version_id, uid),
+    )
+    db.commit()
+    return jsonify({"status": "ready", "redirect": view_url})

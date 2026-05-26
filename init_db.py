@@ -1920,6 +1920,25 @@ _PG_MIGRATIONS = [
     # deployed DBs shed it cleanly. Approved destructive drop (no users;
     # backward-compat not needed).
     "ALTER TABLE race_events DROP COLUMN IF EXISTS race_modality_hints",
+    # Async plan-create (2026-05-26) — plan generation runs step-by-step,
+    # resuming from the layer4_cache, so a generating row needs a lifecycle
+    # flag the progress screen polls. Existing rows default to 'ready' (their
+    # sessions already landed); only plan_create's async path sets
+    # 'generating'. generation_error carries the user-facing failure copy.
+    "ALTER TABLE plan_versions ADD COLUMN IF NOT EXISTS generation_status TEXT NOT NULL DEFAULT 'ready'",
+    "ALTER TABLE plan_versions ADD COLUMN IF NOT EXISTS generation_error TEXT",
+    """DO $$
+    BEGIN
+        IF NOT EXISTS (
+            SELECT 1 FROM pg_constraint
+            WHERE conrelid = 'plan_versions'::regclass
+              AND conname = 'plan_versions_generation_status_chk'
+        ) THEN
+            ALTER TABLE plan_versions
+                ADD CONSTRAINT plan_versions_generation_status_chk
+                CHECK (generation_status IN ('generating', 'ready', 'failed'));
+        END IF;
+    END $$;""",
 ]
 
 _CLOTHING_SEEDS = [
