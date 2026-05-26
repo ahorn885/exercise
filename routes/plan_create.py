@@ -42,6 +42,8 @@ from layer4 import (
     orchestrate_plan_create,
 )
 from layer4.errors import Layer4InputError, Layer4OutputError
+from layer3a.builder import Layer3AOutputError
+from layer3b.builder import Layer3BOutputError
 from plan_sessions_repo import (
     allocate_plan_version_row,
     load_plan_sessions_by_version,
@@ -166,6 +168,12 @@ def new_plan():
         except (Layer4InputError, Layer4OutputError) as exc:
             flash(
                 f"Plan synthesis failed ({exc.code}). Adjust your inputs and try again.",
+                'danger',
+            )
+            return redirect(url_for('plan_create.new_plan'))
+        except (Layer3AOutputError, Layer3BOutputError) as exc:
+            flash(
+                f"Athlete evaluation failed ({exc.code}). Try again or contact support.",
                 'danger',
             )
             return redirect(url_for('plan_create.new_plan'))
