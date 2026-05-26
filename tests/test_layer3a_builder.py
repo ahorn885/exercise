@@ -785,6 +785,58 @@ class TestSchemaViolation:
         assert payload.current_state.aerobic_capacity.level == "strong"
 
 
+class TestWeakLinksClamp:
+    def test_over_cap_weak_links_clamped_not_schema_violation(self):
+        # Reproduces the prod Layer3AOutputError(schema_violation) on
+        # current_state.weak_links: a multi-discipline athlete draws >5 weak
+        # links and the Anthropic API treats the tool-schema maxItems as a
+        # hint, so the model over-emits and the capped retry can't pull it
+        # back. The driver clamps to the Layer3APayload cap (5) before
+        # validation instead of walling generation.
+        args = _good_tool_args()
+        args["current_state"]["weak_links"] = [
+            "single-leg balance",
+            "wrist extension load tolerance",
+            "downhill eccentric control",
+            "packraft paddle power",
+            "overhead shoulder stability",
+            "grip endurance",
+            "ankle mobility",
+        ]
+        payload = llm_layer3a_athlete_state(
+            user_id=1,
+            layer1_payload=_make_layer1(),
+            layer2a_payload=_make_layer2a(),
+            integration_bundle=_make_bundle(),
+            as_of=datetime(2026, 5, 20, 0, 0),
+            etl_version_set=_DEFAULT_ETL,
+            llm_caller=_stub_caller(args),
+        )
+        # First 5 kept in the model's own order; cone does not raise.
+        assert payload.current_state.weak_links == [
+            "single-leg balance",
+            "wrist extension load tolerance",
+            "downhill eccentric control",
+            "packraft paddle power",
+            "overhead shoulder stability",
+        ]
+
+    def test_at_cap_weak_links_unchanged(self):
+        args = _good_tool_args()
+        five = ["balance", "grip", "eccentric", "mobility", "power"]
+        args["current_state"]["weak_links"] = list(five)
+        payload = llm_layer3a_athlete_state(
+            user_id=1,
+            layer1_payload=_make_layer1(),
+            layer2a_payload=_make_layer2a(),
+            integration_bundle=_make_bundle(),
+            as_of=datetime(2026, 5, 20, 0, 0),
+            etl_version_set=_DEFAULT_ETL,
+            llm_caller=_stub_caller(args),
+        )
+        assert payload.current_state.weak_links == five
+
+
 # ─── §5.3 step 2 evidence-basis cross-check ──────────────────────────────────
 
 
