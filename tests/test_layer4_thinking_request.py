@@ -7,14 +7,23 @@ the API with a 400) shipped to production undetected. These tests mock
 the SDK client and assert the request the production callers actually
 build.
 
+The request shape now lives in one place — `llm_invocation.invoke_tool_call`
+— which every Layer 4 caller delegates to (the same shared helper Layer 3A/3B
+use). These tests therefore assert each caller *routes through* that helper
+correctly: the relaxed shape under thinking, the forced shape with thinking
+off, the SDK-error → `Layer4OutputError` mapping, and that the helper's
+forced-tool retry (added for the 3A/3B reliability fix) is now distributed to
+the Layer 4 callers too.
+
 Invariant: extended thinking is incompatible with a forced `tool_choice`,
 with `temperature != 1`, and with `max_tokens <= budget_tokens` (max_tokens
 is the combined thinking + visible-output budget, so it must exceed the
 thinking budget). When thinking is enabled the callers must relax
 `tool_choice` to `auto`, `temperature` to `1.0`, and raise `max_tokens`
 above `budget_tokens`; when it's off they keep the forced tool + the
-requested temperature + the requested max_tokens. SDK errors must surface
-as `Layer4OutputError`, not bubble as a 500.
+requested temperature + the requested max_tokens. When a thinking attempt
+returns no tool_use block the helper retries once with the forced tool.
+SDK errors must surface as `Layer4OutputError`, not bubble as a 500.
 """
 
 import anthropic
@@ -60,6 +69,12 @@ class _Msg:
     usage = _Usage()
 
 
+class _NoToolMsg:
+    content: list = []
+    usage = _Usage()
+    stop_reason = "end_turn"
+
+
 def _fake_anthropic(recorder, *, raise_exc=None):
     class _Messages:
         def create(self, **kwargs):
@@ -67,6 +82,28 @@ def _fake_anthropic(recorder, *, raise_exc=None):
             if raise_exc is not None:
                 raise raise_exc
             return _Msg()
+
+    class _Client:
+        def __init__(self, *args, **kwargs):
+            self.messages = _Messages()
+
+    return _Client
+
+
+def _fake_anthropic_sequence(recorder, msgs):
+    """Returns successive `msgs` on successive `create` calls (records the
+    LATEST call's kwargs + bumps `recorder['n']`). Drives the thinking-miss →
+    forced-retry path through a Layer 4 caller."""
+    state = {"i": 0}
+
+    class _Messages:
+        def create(self, **kwargs):
+            recorder.clear()
+            recorder.update(kwargs)
+            i = state["i"]
+            state["i"] += 1
+            recorder["n"] = state["i"]
+            return msgs[min(i, len(msgs) - 1)]
 
     class _Client:
         def __init__(self, *args, **kwargs):
@@ -121,3 +158,22 @@ def test_anthropic_error_becomes_output_error(caller, monkeypatch):
 
     with pytest.raises(Layer4OutputError):
         caller("sys", "user", _TOOL, "claude-sonnet-4-6", 0.2, 4000, 5000)
+
+
+@pytest.mark.parametrize("caller", CALLERS)
+def test_thinking_miss_falls_back_to_forced(caller, monkeypatch):
+    """The shared helper's forced-tool retry reaches the Layer 4 callers: a
+    thinking attempt that returns no tool_use block triggers one forced
+    (thinking-off) retry, whose result the caller returns."""
+    rec: dict = {}
+    monkeypatch.setattr(
+        anthropic, "Anthropic", _fake_anthropic_sequence(rec, [_NoToolMsg(), _Msg()])
+    )
+
+    out = caller("sys", "user", _TOOL, "claude-sonnet-4-6", 0.2, 4000, 5000)
+
+    assert rec["n"] == 2  # thinking attempt + forced-tool retry
+    assert out.tool_args == {"ok": True}
+    # The recorded (final) request is the forced-tool fallback: no thinking.
+    assert rec["tool_choice"] == {"type": "tool", "name": "emit"}
+    assert "thinking" not in rec

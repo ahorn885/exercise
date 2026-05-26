@@ -60,6 +60,8 @@ from layer4 import (
     PostgresCacheBackend,
     orchestrate_plan_refresh,
 )
+from layer3a.builder import Layer3AOutputError
+from layer3b.builder import Layer3BOutputError
 from layer4.errors import Layer4InputError, Layer4OutputError
 from layer4.plan_refresh import _default_parsed_intent
 from nl_parser import IntentParserInput, NLParserError
@@ -557,9 +559,22 @@ def refresh():
         db.commit()
         flash(_orchestration_error_message(exc), "danger")
         return redirect(url_for("plan_refresh.refresh"))
-    except (Layer4InputError, Layer4OutputError) as exc:
+    except (
+        Layer3AOutputError,
+        Layer3BOutputError,
+        Layer4InputError,
+        Layer4OutputError,
+    ) as exc:
+        # 3A/3B run upstream of Layer 4 in the same cone, so a Layer3*OutputError
+        # (e.g. a `schema_violation` from the synthesizer) reaches here too;
+        # without this catch it bubbles as an unhandled 500.
         duration_ms = int((time.monotonic() - started) * 1000)
         db.rollback()
+        layer_tag = (
+            "layer3"
+            if isinstance(exc, (Layer3AOutputError, Layer3BOutputError))
+            else "layer4"
+        )
         _write_refresh_log(
             db,
             user_id=uid,
@@ -574,7 +589,7 @@ def refresh():
             duration_ms=duration_ms,
             sessions_changed=None,
             success=False,
-            failure_reason=f"layer4:{exc.code}",
+            failure_reason=f"{layer_tag}:{exc.code}",
             triggered_by_ad_hoc_id=triggered_by_ad_hoc_id,
         )
         db.commit()
