@@ -10,6 +10,7 @@ bootstrap path is unconditional: when no users exist in the DB, the next
 request lands on the register page regardless.
 """
 import hashlib
+import hmac
 import os
 import secrets
 from datetime import datetime, timedelta
@@ -81,6 +82,25 @@ def _check_password(password: str, hashed: str) -> bool:
         return bcrypt.checkpw(password.encode('utf-8'), hashed.encode('utf-8'))
     except (ValueError, TypeError):
         return False
+
+
+def cron_authorized() -> bool:
+    """True iff the request carries `Authorization: Bearer $CRON_SECRET`.
+
+    Vercel Cron sends this header automatically once `CRON_SECRET` is set
+    in the project env. Constant-time compare via `hmac.compare_digest`
+    guards against timing side-channels. Returns False when `CRON_SECRET`
+    isn't set so a misconfigured production deploy fails closed rather than
+    running token-gated cron endpoints unauthenticated.
+    """
+    expected = os.environ.get('CRON_SECRET') or ''
+    if not expected:
+        return False
+    header = request.headers.get('Authorization') or ''
+    prefix = 'Bearer '
+    if not header.startswith(prefix):
+        return False
+    return hmac.compare_digest(header[len(prefix):], expected)
 
 
 def current_user_id():

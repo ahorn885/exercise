@@ -222,10 +222,11 @@ _AUTH_EXEMPT_ENDPOINTS = {
     'whoop.webhook',
     'trainingpeaks.webhook',
     'zwift.webhook',
-    # Vercel Cron hits the daily nudge scanner with no session cookie;
-    # auth is via the `Authorization: Bearer $CRON_SECRET` header
-    # verified inside the route.
+    # Vercel Cron hits these scanners with no session cookie; auth is via
+    # the `Authorization: Bearer $CRON_SECRET` header verified inside the
+    # route (`routes.auth.cron_authorized`).
     'nudges.scan_connect_provider_14d',
+    'plan_create.cron_generate_pending',
 }
 
 
