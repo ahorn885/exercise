@@ -107,6 +107,24 @@ _COMPETITIVE_GOAL_OUTCOMES = frozenset({"Compete mid-pack", "Podium"})
 _VALID_NON_EVENT_GOAL_TYPES = frozenset({"endurance", "general_fitness", "strength", "mixed"})
 _VALID_PLAN_DURATION_WEEKS = frozenset({8, 12, 16, 20, 24})
 
+# `notable_observations` budget cap (Layer3_3B_Spec §8.2). Lock-step with
+# `Layer3BPayload.notable_observations` `max_length` in `layer4/context.py`:
+# used as the tool-schema `maxItems` hint, the `_trim_observations_to_budget`
+# default, and the pre-validation `_clamp_notable_observations` cap.
+_NOTABLE_OBSERVATIONS_MAX = 10
+# §8.2 drop order when over budget: warning > opportunity > data_gap >
+# data_hygiene. Lower rank = higher priority = kept first.
+_OBSERVATION_CATEGORY_PRIORITY = {
+    "warning": 0,
+    "opportunity": 1,
+    "data_gap": 2,
+    "data_hygiene": 3,
+}
+# Canonical periodization phase order (matches the Literal in
+# `PeriodizationShape.phase_weeks`); used by `_check_periodization_sanity` to
+# test the allocation at/after `start_phase`.
+_PERIODIZATION_PHASE_ORDER = ("Base", "Build", "Peak", "Taper")
+
 # §6.1 DNF recovery window (weeks) per dnf_cause label.
 _DNF_RECOVERY_WINDOW_WEEKS = {
     "quad_failure": 12,
@@ -310,7 +328,7 @@ def build_emit_layer3b_payload_tool() -> dict[str, Any]:
                 },
                 "notable_observations": {
                     "type": "array",
-                    "maxItems": 6,
+                    "maxItems": _NOTABLE_OBSERVATIONS_MAX,
                     "items": {
                         "type": "object",
                         "additionalProperties": False,
@@ -1262,20 +1280,52 @@ def _apply_confidence_floors(
 
 
 def _trim_observations_to_budget(
-    observations: list[Layer3Observation], max_items: int = 6
+    observations: list[Layer3Observation], max_items: int = _NOTABLE_OBSERVATIONS_MAX
 ) -> list[Layer3Observation]:
     """Per §8.2 — bound notable_observations to max_items via priority:
     warning > opportunity > data_gap > data_hygiene. Preserves order within
-    category."""
+    category. Runs POST-validation (auto-emit additions); the pre-validation
+    `_clamp_notable_observations` guards the raw-over-emit path."""
     if len(observations) <= max_items:
         return observations
-    priority = {"warning": 0, "opportunity": 1, "data_gap": 2, "data_hygiene": 3}
     sorted_obs = sorted(
         enumerate(observations),
-        key=lambda x: (priority.get(x[1].category, 9), x[0]),
+        key=lambda x: (_OBSERVATION_CATEGORY_PRIORITY.get(x[1].category, 9), x[0]),
     )
     kept = sorted([item[0] for item in sorted_obs[:max_items]])
     return [observations[i] for i in kept]
+
+
+def _clamp_notable_observations(
+    candidate: dict[str, Any], max_items: int = _NOTABLE_OBSERVATIONS_MAX
+) -> None:
+    """Trim `notable_observations` to the §8.2 budget in place BEFORE schema
+    validation. The model field is `max_length`-bounded and the tool schema
+    carries the matching `maxItems`, but the Anthropic API treats array bounds
+    as guidance — an over-emit fails `Layer3BPayload` validation on both capped
+    attempts and walls the cone (the twin of the 3A weak_links wall). The
+    post-validation `_trim_observations_to_budget` cannot help — it never runs.
+    Drop lowest-priority items (warning > opportunity > data_gap >
+    data_hygiene; ties by emission order) so the surface degrades to the
+    budget instead of walling."""
+    obs = candidate.get("notable_observations")
+    if not isinstance(obs, list) or len(obs) <= max_items:
+        return
+    ranked = sorted(
+        enumerate(obs),
+        key=lambda x: (
+            _OBSERVATION_CATEGORY_PRIORITY.get(
+                (x[1] or {}).get("category") if isinstance(x[1], dict) else None, 9
+            ),
+            x[0],
+        ),
+    )
+    kept_idx = sorted(i for i, _ in ranked[:max_items])
+    print(
+        f"llm_layer3b_goal_timeline_viability: clamping notable_observations "
+        f"from {len(obs)} to {max_items} (Layer3BPayload §8.2 budget)"
+    )
+    candidate["notable_observations"] = [obs[i] for i in kept_idx]
 
 
 # ─── Periodization-sanity loop (§5.5 step 4 + D13) ───────────────────────────
@@ -1308,6 +1358,18 @@ def _check_periodization_sanity(
     if ps.phase_weeks is None:
         # Defense in depth — pydantic catches this earlier
         return False, 0, None
+    # Custom weeks must put something in the phases at/after start_phase.
+    # Layer 4's `_allocate_weeks_custom` drops earlier phases and raises if
+    # nothing positive remains — and the total-sum check below can pass while
+    # the post-start allocation is empty (weeks parked only in skipped
+    # phases). Catch it here so the existing retry+fallback machinery rescues
+    # it to a standard shape instead of letting it 500 in Layer 4.
+    start_idx = _PERIODIZATION_PHASE_ORDER.index(ps.start_phase)
+    weeks_at_or_after_start = sum(
+        ps.phase_weeks.get(p, 0) for p in _PERIODIZATION_PHASE_ORDER[start_idx:]
+    )
+    if weeks_at_or_after_start <= 0:
+        return False, weeks_at_or_after_start, None
     actual = sum(ps.phase_weeks.values())
     if target_weeks is None:
         return False, actual, None
@@ -1542,6 +1604,9 @@ def llm_layer3b_goal_timeline_viability(
             etl_version_set=etl_version_set,
             race_event_payload=race_event_payload,
         )
+        # Honor the §8.2 budget deterministically before validation so an
+        # over-emit degrades gracefully instead of walling on schema_violation.
+        _clamp_notable_observations(candidate)
         try:
             Layer3BPayload.model_validate(candidate)
             validated_candidate = candidate
@@ -1636,6 +1701,7 @@ def llm_layer3b_goal_timeline_viability(
                 etl_version_set=etl_version_set,
                 race_event_payload=race_event_payload,
             )
+            _clamp_notable_observations(retry_candidate)
             retry_payload = Layer3BPayload.model_validate(retry_candidate)
         except (ValidationError, Layer3BOutputError):
             retry_payload = None

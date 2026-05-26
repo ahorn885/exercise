@@ -923,9 +923,11 @@ Hard rules:
    elevates_to_hitl=true, (c) warning + elevates_to_hitl=false,
    (d) data_hygiene + elevates_to_hitl=true, (e) everything else.
 
-9. `weak_links` is bounded to 5 items max. Short phrases (e.g.,
-   "single-leg balance", "shoulder press strength"). Layer 4 consumes
-   these for accessory programming.
+9. `weak_links` is bounded to 5 items max, ordered MOST-LIMITING FIRST —
+   the list is truncated to the first 5, so lead with the weaknesses that
+   most constrain training. Short phrases (e.g., "single-leg balance",
+   "shoulder press strength"). Layer 4 consumes these for accessory
+   programming.
 
 10. `body_composition_notes` is optional. Emit ONLY when a relevant
     signal exists. Do not pad.
@@ -1208,9 +1210,10 @@ def _clamp_weak_links(
     schema array bounds as guidance — not a hard limit. A multi-discipline
     athlete legitimately surfaces >5 weak links, and the model holds that line
     even with the schema-violation retry feedback, so the cone walls on
-    `schema_violation` (Layer3AOutputError). The over-emit is real content the
-    model produced in its own order; keep the first `max_items` rather than
-    failing generation. The cap itself is the Layer3_3A_Spec §7 contract."""
+    `schema_violation` (Layer3AOutputError). The prompt instructs the model to
+    order weak_links most-limiting first, so keeping the first `max_items` is a
+    principled top-N rather than an arbitrary cut. The cap itself is the
+    Layer3_3A_Spec §7 contract."""
     current_state = candidate.get("current_state")
     if not isinstance(current_state, dict):
         return

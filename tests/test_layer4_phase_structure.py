@@ -9,6 +9,7 @@ from datetime import date, datetime, timedelta
 import pytest
 
 from layer4.context import GoalViability, Layer3BPayload, PeriodizationShape
+from layer4.errors import Layer4InputError
 from layer4.phase_structure import (
     phase_for_date,
     phase_structure_from_3b,
@@ -178,8 +179,12 @@ class TestPhaseStructureCustomMode:
             start_phase="Base",
             phase_weeks={"Base": 0, "Build": 0, "Peak": 0, "Taper": 0},
         )
-        with pytest.raises(ValueError):
+        # Typed backstop (was a bare ValueError → raw 500). 3B's sanity loop
+        # now catches this upstream and falls back to standard; this is the
+        # defense-in-depth path for any other caller.
+        with pytest.raises(Layer4InputError) as exc:
             phase_structure_from_3b(l3b, _PLAN_START)
+        assert exc.value.code == "periodization_shape_unusable"
 
 
 class TestPhaseStructureDefaults:
@@ -190,10 +195,11 @@ class TestPhaseStructureDefaults:
         assert ps.total_weeks == 12
 
     def test_negative_total_weeks_raises(self):
-        with pytest.raises(ValueError):
+        with pytest.raises(Layer4InputError) as exc:
             phase_structure_from_3b(
                 _layer3b(mode="standard"), _PLAN_START, total_weeks=0
             )
+        assert exc.value.code == "periodization_shape_unusable"
 
 
 # ─── phase_for_date ──────────────────────────────────────────────────────────
