@@ -299,6 +299,40 @@ def compute_phase_cache_key(
     return _sha256_hex("||".join(components))
 
 
+def compute_seam_review_cache_key(
+    *,
+    call_cache_key: str,
+    seam_index: int,
+    prior_phase_sessions: list[PlanSession],
+    next_phase_sessions: list[PlanSession],
+    model: str,
+    max_tokens: int,
+    extended_thinking_budget: int,
+) -> str:
+    """Per §9.2 — cache key for an iteration-1 seam review.
+
+    The iter-1 review is a pure function of the two phases' synthesized
+    session outputs plus the upstream inputs already folded into
+    `call_cache_key` (layer2a/2d, discipline mix, periodization mode +
+    start_phase, race format, event date) plus the reviewer model + token
+    config. Only the per-call-variable session lists are hashed here;
+    everything else rides on `call_cache_key`. Iteration-2 (re-synthesis-
+    driven) reviews are NOT cached — they mutate phase state and are the
+    rare flagged path.
+    """
+    components = [
+        call_cache_key,
+        "seam",
+        str(seam_index),
+        _sha256_hex(canonical_json([s.model_dump(mode="json") for s in prior_phase_sessions])),
+        _sha256_hex(canonical_json([s.model_dump(mode="json") for s in next_phase_sessions])),
+        model,
+        str(max_tokens),
+        str(extended_thinking_budget),
+    ]
+    return _sha256_hex("||".join(components))
+
+
 def race_week_brief_key(
     *,
     user_id: int,

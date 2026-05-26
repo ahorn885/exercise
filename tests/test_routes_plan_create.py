@@ -497,6 +497,44 @@ class TestCronGeneratePending:
         assert resp.status_code == 200
         assert resp.get_json() == {'advanced': 0, 'ready': 0, 'failed': 0}
 
+    def test_stops_starting_passes_once_wall_clock_budget_spent(self, monkeypatch):
+        # The cron must not start a pass it can't finish before the function
+        # cap: once the wall-clock budget is spent, the remaining rows are left
+        # 'generating' for the next fire instead of being started + 504'd.
+        monkeypatch.setattr(plan_create, 'cron_authorized', lambda: True)
+        conn = _FakeConn()
+        conn.queue_response(rows=[
+            {'id': 11, 'user_id': 2},
+            {'id': 12, 'user_id': 5},
+            {'id': 13, 'user_id': 8},
+        ])
+        monkeypatch.setattr(plan_create, 'get_db', lambda: conn)
+
+        # Simulate the clock: start at 0, then each pass burns most of the
+        # budget so the second deadline check trips before row 3 is started.
+        ticks = iter([
+            0.0,                                            # deadline anchor
+            0.0,                                            # check before row 11
+            plan_create._CRON_WALL_CLOCK_BUDGET_S - 1,      # check before row 12
+            plan_create._CRON_WALL_CLOCK_BUDGET_S + 1,      # check before row 13 → break
+        ])
+        monkeypatch.setattr(plan_create.time, 'monotonic', lambda: next(ticks))
+
+        seen = []
+
+        def _fake_advance(db, uid, pvid):
+            seen.append((uid, pvid))
+            return {'status': 'ready'}
+
+        monkeypatch.setattr(plan_create, '_advance_plan_generation', _fake_advance)
+
+        app = _cron_app()
+        resp = app.test_client().get(self.URL)
+        assert resp.status_code == 200
+        # Rows 11 + 12 ran; row 13 was left for the next fire.
+        assert seen == [(2, 11), (5, 12)]
+        assert resp.get_json() == {'advanced': 2, 'ready': 2, 'failed': 0}
+
 
 # ─── _mark_plan_failed ───────────────────────────────────────────────────────
 
