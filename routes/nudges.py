@@ -37,8 +37,6 @@ context processor in `app.py`. PG-only — `account_nudges` is in
 `_PG_MIGRATIONS` only; SQLite dev returns [] and renders nothing.
 """
 
-import hmac
-import os
 from datetime import datetime, timezone
 
 from flask import (
@@ -46,7 +44,7 @@ from flask import (
 )
 
 from database import get_db
-from routes.auth import current_user_id
+from routes.auth import cron_authorized, current_user_id
 
 
 bp = Blueprint('nudges', __name__)
@@ -160,25 +158,6 @@ def get_active_nudges(db, uid):
     return out
 
 
-def _cron_authorized():
-    """True iff the request carries `Authorization: Bearer $CRON_SECRET`.
-
-    Vercel Cron sends this header automatically once `CRON_SECRET` is
-    set in the project env. Constant-time compare via `hmac.compare_digest`
-    guards against timing side-channels. Returns False when CRON_SECRET
-    isn't set so a misconfigured production deploy fails closed.
-    """
-    expected = os.environ.get('CRON_SECRET') or ''
-    if not expected:
-        return False
-    header = request.headers.get('Authorization') or ''
-    prefix = 'Bearer '
-    if not header.startswith(prefix):
-        return False
-    received = header[len(prefix):]
-    return hmac.compare_digest(received, expected)
-
-
 @bp.route('/cron/nudges/connect_provider_14d', methods=['GET'])
 def scan_connect_provider_14d():
     """Daily scan: insert one nudge row per eligible user.
@@ -198,7 +177,7 @@ def scan_connect_provider_14d():
 
     Returns JSON `{inserted: N}`.
     """
-    if not _cron_authorized():
+    if not cron_authorized():
         abort(401)
     db = get_db()
     cur = db.execute(
