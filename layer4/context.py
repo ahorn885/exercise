@@ -1022,7 +1022,10 @@ class Layer3BPayload(_Base):
     goal_viability: GoalViability
     periodization_shape: PeriodizationShape
     hitl_surface: list[Layer3BHITLItem]
-    notable_observations: list[Layer3Observation] = Field(max_length=6)
+    # Budget cap (Layer3_3B_Spec §8.2). Kept in lock-step with
+    # layer3b.builder._NOTABLE_OBSERVATIONS_MAX (tool-schema maxItems + the
+    # pre-validation priority clamp).
+    notable_observations: list[Layer3Observation] = Field(max_length=10)
 
     # ─── Event metadata (D-66 amendment 2026-05-18) ──────────────────────
     # Sourced from `race_events WHERE user_id=? AND is_target_event=true`

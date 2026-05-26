@@ -160,6 +160,12 @@ def _default_llm_caller(
 # ─── Tool schema (full Layer3APayload mirror per D5) ─────────────────────────
 
 
+# Mirrors `Layer3APayload.current_state.weak_links` `Field(max_length=5)` in
+# `layer4/context.py`. Used both as the tool-schema `maxItems` hint and as the
+# pre-validation clamp cap (`_clamp_weak_links`) — keep the three in lock-step.
+_WEAK_LINKS_MAX_ITEMS = 5
+
+
 _ASSESSMENT_SCHEMA = {
     "type": "object",
     "additionalProperties": False,
@@ -259,7 +265,7 @@ def build_record_athlete_state_tool() -> dict[str, Any]:
                         "strength": _ASSESSMENT_SCHEMA,
                         "weak_links": {
                             "type": "array",
-                            "maxItems": 5,
+                            "maxItems": _WEAK_LINKS_MAX_ITEMS,
                             "items": {"type": "string"},
                         },
                         "skill_assessments": {
@@ -917,9 +923,11 @@ Hard rules:
    elevates_to_hitl=true, (c) warning + elevates_to_hitl=false,
    (d) data_hygiene + elevates_to_hitl=true, (e) everything else.
 
-9. `weak_links` is bounded to 5 items max. Short phrases (e.g.,
-   "single-leg balance", "shoulder press strength"). Layer 4 consumes
-   these for accessory programming.
+9. `weak_links` is bounded to 5 items max, ordered MOST-LIMITING FIRST —
+   the list is truncated to the first 5, so lead with the weaknesses that
+   most constrain training. Short phrases (e.g., "single-leg balance",
+   "shoulder press strength"). Layer 4 consumes these for accessory
+   programming.
 
 10. `body_composition_notes` is optional. Emit ONLY when a relevant
     signal exists. Do not pad.
@@ -1193,6 +1201,31 @@ def _apply_confidence_floors(
 # ─── Prompt hash + driver entry point ────────────────────────────────────────
 
 
+def _clamp_weak_links(
+    candidate: dict[str, Any], max_items: int = _WEAK_LINKS_MAX_ITEMS
+) -> None:
+    """Trim `current_state.weak_links` to the schema cap in place before
+    validation. The field is `max_length=5` on `Layer3APayload`, and the tool
+    schema carries the matching `maxItems`, but the Anthropic API treats tool-
+    schema array bounds as guidance — not a hard limit. A multi-discipline
+    athlete legitimately surfaces >5 weak links, and the model holds that line
+    even with the schema-violation retry feedback, so the cone walls on
+    `schema_violation` (Layer3AOutputError). The prompt instructs the model to
+    order weak_links most-limiting first, so keeping the first `max_items` is a
+    principled top-N rather than an arbitrary cut. The cap itself is the
+    Layer3_3A_Spec §7 contract."""
+    current_state = candidate.get("current_state")
+    if not isinstance(current_state, dict):
+        return
+    weak_links = current_state.get("weak_links")
+    if isinstance(weak_links, list) and len(weak_links) > max_items:
+        print(
+            f"llm_layer3a_athlete_state: clamping weak_links from "
+            f"{len(weak_links)} to {max_items} (Layer3APayload schema cap)"
+        )
+        current_state["weak_links"] = weak_links[:max_items]
+
+
 def _prompt_hash(system_prompt: str, user_prompt: str) -> str:
     return hashlib.sha256(
         (system_prompt + "||" + user_prompt).encode("utf-8")
@@ -1282,6 +1315,9 @@ def llm_layer3a_athlete_state(
             "output_tokens": llm_out.output_tokens,
             "etl_version_set": etl_version_set,
         }
+        # Honor the bounded-collection cap deterministically before validation
+        # so an over-emit degrades gracefully instead of walling the cone.
+        _clamp_weak_links(candidate)
         try:
             Layer3APayload.model_validate(candidate)
             validated_args = candidate

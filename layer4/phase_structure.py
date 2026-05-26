@@ -38,6 +38,7 @@ from datetime import date as _date_type, timedelta
 from typing import Literal
 
 from layer4.context import Layer3BPayload
+from layer4.errors import Layer4InputError
 from layer4.payload import PhaseSpec, PhaseStructure, SynthesisMetadata
 
 
@@ -102,8 +103,9 @@ def _allocate_weeks_standard(
     remaining = _PHASE_ORDER[start_idx:]
     remaining_sum = sum(proportions[p] for p in remaining)
     if remaining_sum <= 0:
-        raise ValueError(
-            f"degenerate remaining proportions for start_phase={start_phase}"
+        raise Layer4InputError(
+            "periodization_shape_unusable",
+            detail=f"degenerate remaining proportions for start_phase={start_phase}",
         )
 
     raw = {p: total_weeks * proportions[p] / remaining_sum for p in remaining}
@@ -135,9 +137,12 @@ def _allocate_weeks_custom(
         if weeks > 0:
             out[p] = weeks
     if not out:
-        raise ValueError(
-            f"custom phase_weeks has no positive entries at or after "
-            f"start_phase={start_phase}: {phase_weeks!r}"
+        raise Layer4InputError(
+            "periodization_shape_unusable",
+            detail=(
+                f"custom phase_weeks has no positive entries at or after "
+                f"start_phase={start_phase}: {phase_weeks!r}"
+            ),
         )
     return out
 
@@ -193,7 +198,10 @@ def phase_structure_from_3b(
         if total_weeks is None:
             total_weeks = _OPEN_ENDED_DEFAULT_TOTAL_WEEKS
         if total_weeks <= 0:
-            raise ValueError(f"total_weeks must be positive (got {total_weeks})")
+            raise Layer4InputError(
+                "periodization_shape_unusable",
+                detail=f"total_weeks must be positive (got {total_weeks})",
+            )
         allocation = _allocate_weeks_standard(mode, total_weeks, start_phase)
 
     actual_total_weeks = sum(allocation.values())

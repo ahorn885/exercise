@@ -66,6 +66,12 @@ from layer4 import (
 from layer4.errors import Layer4InputError, Layer4OutputError
 from layer3a.builder import Layer3AInputError, Layer3AOutputError
 from layer3b.builder import Layer3BInputError, Layer3BOutputError
+from layer2_modality import Layer2ModalityInputError
+from layer2a.builder import Layer2AInputError
+from layer2b.builder import Layer2BInputError
+from layer2c.builder import Layer2CInputError
+from layer2d.builder import Layer2DInputError
+from layer2e.builder import Layer2EInputError
 from plan_sessions_repo import (
     allocate_plan_version_row,
     load_plan_sessions_by_version,
@@ -262,6 +268,29 @@ def _advance_plan_generation(db, uid: int, plan_version_id: int) -> dict:
         return _mark_plan_failed(
             db, plan_version_id, uid,
             f"Athlete evaluation failed ({exc.code}). Try again or contact support.",
+        )
+    except (
+        Layer2AInputError,
+        Layer2BInputError,
+        Layer2CInputError,
+        Layer2DInputError,
+        Layer2EInputError,
+        Layer2ModalityInputError,
+    ) as exc:
+        # Layer 1/2 upstream-input failures (e.g. a profile missing
+        # body_weight_kg / height_cm for Layer 2E) are bare ValueError
+        # subclasses outside the Layer3/Layer4 typed contract. Without this
+        # they fall to the catch-all below and surface as the opaque "failed
+        # unexpectedly" — same diagnostic dead-end the Layer3 catch closed.
+        # Log the message + flip the row to a named, diagnosable failure.
+        print(
+            f"_advance_plan_generation: {type(exc).__name__} for "
+            f"plan_version_id={plan_version_id}: {exc}"
+        )
+        return _mark_plan_failed(
+            db, plan_version_id, uid,
+            f"Plan setup failed ({type(exc).__name__}). "
+            "Check your profile data and try again.",
         )
     except Exception as exc:
         # Anything not in the typed-error contract (e.g. a DB error mid-cone)

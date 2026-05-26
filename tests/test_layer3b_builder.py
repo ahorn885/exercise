@@ -601,7 +601,7 @@ class TestToolSchema:
 
     def test_observation_max_items(self):
         schema = build_emit_layer3b_payload_tool()["input_schema"]
-        assert schema["properties"]["notable_observations"]["maxItems"] == 6
+        assert schema["properties"]["notable_observations"]["maxItems"] == 10
 
     def test_additional_properties_false_throughout(self):
         schema = build_emit_layer3b_payload_tool()["input_schema"]
@@ -1173,6 +1173,116 @@ class TestPeriodizationSanity:
         )
         passed, actual, _ = _check_periodization_sanity(payload, 9)
         assert passed is True and actual == 9
+
+    def test_check_periodization_sanity_rejects_weeks_before_start_phase(self):
+        # Total sum (12) matches target, but all weeks sit BEFORE
+        # start_phase=Peak. The old check (total-sum only) passed this; the
+        # tightened check rejects it so it can't 500 in Layer 4's
+        # _allocate_weeks_custom.
+        from layer4.context import GoalViability, PeriodizationShape, Layer3BPayload
+
+        payload = Layer3BPayload(
+            user_id=1,
+            as_of=datetime(2026, 5, 20, 0, 0),
+            mode="event",
+            model="claude-sonnet-4-6",
+            temperature=0.0,
+            prompt_hash="x" * 64,
+            latency_ms=2000,
+            input_tokens=2800,
+            output_tokens=600,
+            etl_version_set=_DEFAULT_ETL,
+            goal_viability=GoalViability(
+                viability="achievable",
+                confidence="medium",
+                reasoning_text="r",
+                evidence_basis=["h2.goal_outcome"],
+                suggested_adjustments=[],
+            ),
+            periodization_shape=PeriodizationShape(
+                mode="custom",
+                start_phase="Peak",
+                phase_weeks={"Base": 8, "Build": 4, "Peak": 0, "Taper": 0},
+                reasoning_text="r",
+                evidence_basis=["x"],
+            ),
+            hitl_surface=[],
+            notable_observations=[],
+            event_date=date(2026, 8, 12),
+            event_locale_id="x",
+            race_format="single_day",
+            time_to_event_weeks=12,
+        )
+        passed, _, _ = _check_periodization_sanity(payload, 12)
+        assert passed is False
+
+    def test_custom_weeks_parked_before_start_phase_falls_back(self):
+        # End-to-end: a custom shape whose weeks all sit before start_phase
+        # routes through the existing retry+fallback to a standard plan rather
+        # than walling Layer 4.
+        bad = _good_tool_args(
+            periodization_mode="custom",
+            start_phase="Peak",
+            phase_weeks={"Base": 8, "Build": 4, "Peak": 0, "Taper": 0},
+        )
+        result = llm_layer3b_goal_timeline_viability(
+            user_id=1,
+            layer1_payload=_make_layer1(),
+            layer3a_payload=_make_layer3a(),
+            layer2a_payload=_make_layer2a(),
+            race_event_payload=_make_race_event(event_date=date(2026, 8, 12)),  # 12wk
+            current_date=date(2026, 5, 20),
+            etl_version_set=_DEFAULT_ETL,
+            goal_outcome="Finish",
+            llm_caller=_stub_caller(bad),
+        )
+        assert result.periodization_shape.mode == "standard"
+        assert result.periodization_shape.phase_weeks is None
+
+
+# ─── §8.2 notable_observations budget (pre-validation clamp) ──────────────────
+
+
+class TestNotableObservationsBudget:
+    def test_over_budget_observations_clamped_not_schema_violation(self):
+        # 12 observations (> the 10 cap). max_length=10 + the API not hard-
+        # enforcing maxItems means without the pre-validation clamp this walls
+        # on schema_violation (the 3A weak_links twin). Lowest-priority
+        # data_hygiene items drop; the 4 warnings survive.
+        obs = (
+            [
+                {
+                    "category": "data_hygiene",
+                    "text": f"hygiene note {i}",
+                    "evidence_basis": ["x"],
+                    "elevates_to_hitl": False,
+                }
+                for i in range(8)
+            ]
+            + [
+                {
+                    "category": "warning",
+                    "text": f"warning note {i}",
+                    "evidence_basis": ["x"],
+                    "elevates_to_hitl": False,
+                }
+                for i in range(4)
+            ]
+        )
+        result = llm_layer3b_goal_timeline_viability(
+            user_id=1,
+            layer1_payload=_make_layer1(),
+            layer3a_payload=_make_layer3a(),
+            layer2a_payload=_make_layer2a(),
+            race_event_payload=_make_race_event(event_date=date(2026, 7, 22)),
+            current_date=date(2026, 5, 20),
+            etl_version_set=_DEFAULT_ETL,
+            goal_outcome="Finish",
+            llm_caller=_stub_caller(_good_tool_args(observations=obs)),
+        )
+        assert len(result.notable_observations) <= 10
+        warns = [o for o in result.notable_observations if o.category == "warning"]
+        assert len(warns) == 4
 
 
 # ─── §5.5 step 1 schema violation retry ──────────────────────────────────────

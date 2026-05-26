@@ -31,6 +31,7 @@ from routes.plan_create import (
 )
 from layer3a.builder import Layer3AOutputError
 from layer3b.builder import Layer3BOutputError
+from layer2e.builder import Layer2EInputError
 from layer4 import OrchestrationError
 from layer4.errors import Layer4OutputError
 
@@ -357,6 +358,26 @@ class TestAdvancePlanGeneration:
         out = _advance_plan_generation(conn, 3, 7)
         assert out['status'] == 'failed'
         assert 'evaluation failed' in out['error'].lower()
+
+    def test_generating_layer2_input_error_marks_failed_not_unexpected(self, monkeypatch):
+        # Layer 1/2 upstream-input failures (e.g. 2E missing body_weight_kg)
+        # are bare ValueError subclasses; they used to fall through to the
+        # catch-all and surface as the opaque "failed unexpectedly". Now they
+        # flip the row to a NAMED, diagnosable failure.
+        conn = _FakeConn()
+        _queue_plan_version(conn, status='generating')
+        monkeypatch.setattr(plan_create, '_build_layer4_cache', lambda: 'CACHE')
+        monkeypatch.setattr(
+            plan_create, 'orchestrate_plan_create',
+            lambda *a, **k: (_ for _ in ()).throw(
+                Layer2EInputError(
+                    "performance.body_weight_kg must be > 30 kg; got None")),
+        )
+        out = _advance_plan_generation(conn, 3, 7)
+        assert out['status'] == 'failed'
+        assert 'Layer2EInputError' in out['error']
+        assert 'unexpectedly' not in out['error'].lower()
+        assert any("generation_status = 'failed'" in c[0] for c in conn.calls)
 
 
 # ─── cron_authorized (shared CRON_SECRET gate) ───────────────────────────────
