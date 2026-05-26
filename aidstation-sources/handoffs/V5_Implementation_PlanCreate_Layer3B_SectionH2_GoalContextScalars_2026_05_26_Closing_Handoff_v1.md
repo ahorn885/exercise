@@ -61,7 +61,7 @@ Full suite **1746 passed / 16 skipped** in `/tmp/venv` (+13 over 1733: +2 orches
 
 ## 5. Owed action (Andy's hands)
 
-**`python init_db.py` against Neon, then redeploy.** The 4 `ADD COLUMN IF NOT EXISTS` are idempotent (safe to re-run; stacks onto any prior owed init_db runs). Until applied, the live `race_events` lacks the columns → the form submit + payload load would error / the new behavior is inert (legacy NULL → "Finish" fallback). No data backfill needed. **No new env var.** After deploy: the form captures goal_outcome etc.; 3B reads them; `3B.first_time_competitive_goal` is reachable.
+**✅ Neon migration applied + verified 2026-05-26.** Andy ran the migration against production Neon; `information_schema.columns` confirms all 4 columns on `race_events` (`goal_outcome` text, `first_time_at_distance` boolean, `time_goal` text, `race_pack_weight_kg` numeric — all nullable) and `pg_constraint` confirms `race_events_goal_outcome_check` = `CHECK ((goal_outcome IS NULL) OR (goal_outcome = ANY (ARRAY['Finish','Compete mid-pack','Podium'])))` — lock-step with `layer3b.builder._VALID_GOAL_OUTCOMES`. No backfill needed (existing rows NULL → 3B "Finish" fallback). **Remaining: prod redeploy** — triggered by merging PR #184 to `main`. After deploy: smoke-check the race-event form's new "Goal" section (onboarding + profile edit), save a goal, confirm persistence + that a fresh plan-gen reflects it; `first_time_at_distance=True` + a competitive `goal_outcome` should surface `3B.first_time_competitive_goal`.
 
 ## 6. Next session pointers
 
