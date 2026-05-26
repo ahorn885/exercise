@@ -327,6 +327,29 @@ def _compute_load_weight(
     )
 
 
+def _normalize_load_weights(disciplines: list["Layer2ADiscipline"]) -> None:
+    """Rescale `load_weight` in place so the included disciplines' `value`s
+    sum to ≈1.0 (Layer4_Spec §4.2). `value` is the midpoint of the 0–100
+    `race_time_pct` band (or an athlete override on the same scale); dividing
+    every discipline's `value` and `system_default` by the included-set total
+    yields a normalized distribution while preserving each discipline's
+    value/system_default ratio. No-op when the included total is non-positive
+    (degenerate data — e.g. no included disciplines, or all bands unset)."""
+    total = sum(
+        d.load_weight.value
+        for d in disciplines
+        if d.inclusion == "included" and d.load_weight.value is not None
+    )
+    if total <= 0:
+        return
+    for d in disciplines:
+        lw = d.load_weight
+        if lw.value is not None:
+            lw.value = lw.value / total
+        if lw.system_default is not None:
+            lw.system_default = lw.system_default / total
+
+
 # ─── Rationale templates (athlete-facing, per spec §5.5 + Open Item 2A-1) ────
 
 
@@ -639,6 +662,16 @@ def q_layer2a_discipline_classifier_payload(
         estimated_race_duration_hours,
     )
     training_gaps_summary = _build_training_gaps_summary(disciplines)
+
+    # Normalize load_weight onto a 0–1 distribution over the included set so
+    # the Layer 4 plan_create precondition holds (Layer4_Spec §4.2:
+    # `discipline_weights` sum to ≈1.0). The raw value is the midpoint of the
+    # 0–100 `race_time_pct` band; dividing every discipline's `value` AND
+    # `system_default` by the included-set total makes the included weights
+    # sum to 1.0 while preserving each discipline's value/system_default ratio.
+    # Run AFTER `_emit_coaching_flags` so the athlete-override divergence flag
+    # still reads the raw 0–100 override percent (its `override_pct` metadata).
+    _normalize_load_weights(disciplines)
 
     return Layer2APayload(
         framework_sport=framework_sport,

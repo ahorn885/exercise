@@ -294,6 +294,28 @@ class TestAdvancePlanGeneration:
         assert any("generation_status = 'ready'" in c[0] for c in conn.calls)
         assert conn.commits == 1
 
+    def test_generating_persist_failure_marks_failed(self, monkeypatch):
+        # Regression: persist + ready-flip now run INSIDE the try, so a
+        # plan_sessions write failure marks the row failed (catch-all) rather
+        # than escaping as a raw 500 that leaves the row 'generating' for the
+        # every-minute cron to re-pick.
+        conn = _FakeConn()
+        _queue_plan_version(conn, status='generating')
+        monkeypatch.setattr(plan_create, '_build_layer4_cache', lambda: 'CACHE')
+        monkeypatch.setattr(
+            plan_create, 'orchestrate_plan_create',
+            lambda *a, **k: 'RESULT_SENTINEL',
+        )
+        monkeypatch.setattr(
+            plan_create, 'persist_layer4_sessions',
+            lambda db, result: (_ for _ in ()).throw(RuntimeError("db boom")),
+        )
+        out = _advance_plan_generation(conn, 3, 7)
+        assert out['status'] == 'failed'
+        assert out['error']  # generic "unexpected" message
+        assert any("generation_status = 'failed'" in c[0] for c in conn.calls)
+        assert not any("generation_status = 'ready'" in c[0] for c in conn.calls)
+
     def test_generating_orchestration_error_marks_failed(self, monkeypatch):
         conn = _FakeConn()
         _queue_plan_version(conn, status='generating')

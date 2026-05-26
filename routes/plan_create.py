@@ -215,6 +215,25 @@ def _advance_plan_generation(db, uid: int, plan_version_id: int) -> dict:
             plan_version_id=plan_version_id,
             cache=_build_layer4_cache(),
         )
+        # Success path runs INSIDE the try so a persist/commit failure (e.g. a
+        # plan_sessions schema or natural-key surprise) is caught below and
+        # marks the row terminal — not a raw 500 that leaves it 'generating'
+        # for the every-minute cron to re-pick. DELETE-before-insert keeps the
+        # persist idempotent: if a prior pass committed sessions then died
+        # before flipping the status, the cache-hit replay would otherwise
+        # collide on the natural-key UNIQUE.
+        db.execute(
+            "DELETE FROM plan_sessions WHERE plan_version_id = ?",
+            (plan_version_id,),
+        )
+        persist_layer4_sessions(db, result)
+        db.execute(
+            "UPDATE plan_versions SET generation_status = 'ready', "
+            "generation_error = NULL WHERE id = ? AND user_id = ?",
+            (plan_version_id, uid),
+        )
+        db.commit()
+        return {"status": "ready"}
     except OrchestrationError as exc:
         return _mark_plan_failed(
             db, plan_version_id, uid, _orchestration_error_message(exc)
@@ -260,22 +279,6 @@ def _advance_plan_generation(db, uid: int, plan_version_id: int) -> dict:
             db, plan_version_id, uid,
             "Plan generation failed unexpectedly. Please try again or contact support.",
         )
-
-    # Success. DELETE-before-insert keeps the persist idempotent: if a prior
-    # pass committed sessions then died before flipping the status, the
-    # cache-hit replay would otherwise collide on the natural-key UNIQUE.
-    db.execute(
-        "DELETE FROM plan_sessions WHERE plan_version_id = ?",
-        (plan_version_id,),
-    )
-    persist_layer4_sessions(db, result)
-    db.execute(
-        "UPDATE plan_versions SET generation_status = 'ready', "
-        "generation_error = NULL WHERE id = ? AND user_id = ?",
-        (plan_version_id, uid),
-    )
-    db.commit()
-    return {"status": "ready"}
 
 
 # ─── Routes ─────────────────────────────────────────────────────────────────
