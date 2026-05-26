@@ -245,6 +245,16 @@ def _advance_plan_generation(db, uid: int, plan_version_id: int) -> dict:
             db, plan_version_id, uid, _orchestration_error_message(exc)
         )
     except (Layer4InputError, Layer4OutputError) as exc:
+        # exc.detail carries the failing field/invariant (e.g. the pydantic
+        # ValidationError for a session the synthesizer mis-emitted); the
+        # user-facing message only carries exc.code. Log the detail — same as
+        # the Layer3 catch below — else a Layer 4 schema_violation is
+        # undiagnosable from the runtime log.
+        print(
+            f"_advance_plan_generation: Layer4 {type(exc).__name__} "
+            f"({exc.code}) for plan_version_id={plan_version_id}: "
+            f"{getattr(exc, 'detail', None)}"
+        )
         return _mark_plan_failed(
             db, plan_version_id, uid,
             f"Plan synthesis failed ({exc.code}). Adjust your inputs and try again.",

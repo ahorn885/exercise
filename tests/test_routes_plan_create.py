@@ -346,6 +346,33 @@ class TestAdvancePlanGeneration:
         assert 'schema_violation' in out['error']
         assert 'synthesis failed' in out['error'].lower()
 
+    def test_generating_layer4_error_logs_detail(self, monkeypatch, capsys):
+        # The user-facing message only carries exc.code; the failing
+        # field/invariant lives in exc.detail (e.g. the pydantic
+        # ValidationError for a mis-emitted session). Log it so a Layer 4
+        # schema_violation is diagnosable from the runtime log — the detail
+        # must NOT be swallowed the way it was before.
+        conn = _FakeConn()
+        _queue_plan_version(conn, status='generating')
+        monkeypatch.setattr(plan_create, '_build_layer4_cache', lambda: 'CACHE')
+        monkeypatch.setattr(
+            plan_create, 'orchestrate_plan_create',
+            lambda *a, **k: (_ for _ in ()).throw(
+                Layer4OutputError(
+                    'schema_violation',
+                    detail="tool output did not parse as PlanSession list: "
+                    "CardioBlock.rest_intensity_zone required for interval_set")),
+        )
+        out = _advance_plan_generation(conn, 3, 7)
+        assert out['status'] == 'failed'
+        # detail is NOT leaked to the athlete-facing message ...
+        assert 'rest_intensity_zone' not in out['error']
+        # ... but IS captured in the runtime log for diagnosis.
+        logged = capsys.readouterr().out
+        assert 'Layer4OutputError' in logged
+        assert 'schema_violation' in logged
+        assert 'rest_intensity_zone' in logged
+
     def test_generating_layer3_error_marks_failed(self, monkeypatch):
         conn = _FakeConn()
         _queue_plan_version(conn, status='generating')
