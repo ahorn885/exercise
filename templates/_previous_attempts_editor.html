@@ -1,0 +1,126 @@
+{# Shared previous-attempts editor partial (§H.2 goal-context Slice 2).
+
+   Used by:
+   - templates/profile/race_event_edit.html (post-onboarding race-event edit)
+   - templates/onboarding/target_race.html (onboarding Step 3c)
+
+   Context inputs:
+   - existing_previous_attempts: list of {outcome: str, dnf_cause: str|None}
+     dicts (empty list for new races / none captured yet).
+
+   Outcome + cause are hardcoded closed sets (stable vocab) — no request-time
+   lookup needed. `dnf_cause` only matters when outcome is DNF (it keys Layer
+   3B's recovery-window mapping); it's harmless on other rows.
+
+   The JS hooks (#previous-attempts-rows, #add-previous-attempt-row,
+   #previous-attempts-template, `[data-action="remove-previous-attempt-row"]`)
+   are distinct from the terrain editor's so both partials can render on the
+   same page. Do not include this partial twice in one template. #}
+
+<div class="col-12">
+  <label class="form-label">Previous attempts at this event / distance</label>
+  <small class="text-muted d-block mb-2">
+    Past tries at this race or distance. A DNF whose typical recovery window still overlaps your timeline gets flagged for review. Pick a cause for DNF rows; leave it blank for finishes.
+  </small>
+  <div id="previous-attempts-rows">
+    {% for entry in existing_previous_attempts %}
+      <div class="row g-2 mb-2 previous-attempt-row" data-row-idx="{{ loop.index0 }}">
+        <div class="col-md-5">
+          <select class="form-select form-select-sm"
+                  name="previous_attempts[{{ loop.index0 }}][outcome]">
+            <option value="">— Outcome —</option>
+            <option value="Finished" {% if entry.outcome == 'Finished' %}selected{% endif %}>Finished</option>
+            <option value="DNF" {% if entry.outcome == 'DNF' %}selected{% endif %}>DNF (did not finish)</option>
+            <option value="DNS" {% if entry.outcome == 'DNS' %}selected{% endif %}>DNS (did not start)</option>
+          </select>
+        </div>
+        <div class="col-md-5">
+          <select class="form-select form-select-sm"
+                  name="previous_attempts[{{ loop.index0 }}][dnf_cause]">
+            <option value="">DNF cause (if applicable)</option>
+            <option value="quad_failure" {% if entry.dnf_cause == 'quad_failure' %}selected{% endif %}>Quad failure / blowup</option>
+            <option value="nutrition_blowup" {% if entry.dnf_cause == 'nutrition_blowup' %}selected{% endif %}>Nutrition / GI</option>
+            <option value="injury_during_event" {% if entry.dnf_cause == 'injury_during_event' %}selected{% endif %}>Injury during event</option>
+            <option value="weather" {% if entry.dnf_cause == 'weather' %}selected{% endif %}>Weather</option>
+            <option value="timeout" {% if entry.dnf_cause == 'timeout' %}selected{% endif %}>Missed cutoff / timeout</option>
+            <option value="other" {% if entry.dnf_cause == 'other' %}selected{% endif %}>Other</option>
+          </select>
+        </div>
+        <div class="col-md-2 d-flex align-items-center">
+          <button type="button" class="btn btn-sm btn-link text-danger p-0"
+                  data-action="remove-previous-attempt-row">Remove</button>
+        </div>
+      </div>
+    {% endfor %}
+  </div>
+  <div class="mt-1">
+    <button type="button" class="btn btn-sm btn-outline-secondary" id="add-previous-attempt-row">
+      + Add attempt
+    </button>
+  </div>
+  {# Hidden template row — JS clones this when the athlete clicks "Add attempt". #}
+  <template id="previous-attempts-template">
+    <div class="row g-2 mb-2 previous-attempt-row" data-row-idx="__IDX__">
+      <div class="col-md-5">
+        <select class="form-select form-select-sm" name="previous_attempts[__IDX__][outcome]">
+          <option value="">— Outcome —</option>
+          <option value="Finished">Finished</option>
+          <option value="DNF">DNF (did not finish)</option>
+          <option value="DNS">DNS (did not start)</option>
+        </select>
+      </div>
+      <div class="col-md-5">
+        <select class="form-select form-select-sm" name="previous_attempts[__IDX__][dnf_cause]">
+          <option value="">DNF cause (if applicable)</option>
+          <option value="quad_failure">Quad failure / blowup</option>
+          <option value="nutrition_blowup">Nutrition / GI</option>
+          <option value="injury_during_event">Injury during event</option>
+          <option value="weather">Weather</option>
+          <option value="timeout">Missed cutoff / timeout</option>
+          <option value="other">Other</option>
+        </select>
+      </div>
+      <div class="col-md-2 d-flex align-items-center">
+        <button type="button" class="btn btn-sm btn-link text-danger p-0"
+                data-action="remove-previous-attempt-row">Remove</button>
+      </div>
+    </div>
+  </template>
+</div>
+
+<script nonce="{{ csp_nonce() }}">
+  // CSP enforces script-src 'nonce-...' and drops 'unsafe-inline' — the nonce
+  // attribute is load-bearing; without it the browser silently blocks this
+  // block and the [+ Add attempt] button does nothing.
+  (function () {
+    const container = document.getElementById('previous-attempts-rows');
+    const addBtn = document.getElementById('add-previous-attempt-row');
+    const tpl = document.getElementById('previous-attempts-template');
+    if (!container || !addBtn || !tpl) return;
+
+    function nextIdx() {
+      const rows = container.querySelectorAll('.previous-attempt-row');
+      let max = -1;
+      rows.forEach((r) => {
+        const v = parseInt(r.dataset.rowIdx, 10);
+        if (!isNaN(v) && v > max) max = v;
+      });
+      return max + 1;
+    }
+
+    addBtn.addEventListener('click', function () {
+      const idx = nextIdx();
+      const html = tpl.innerHTML.replace(/__IDX__/g, String(idx));
+      const wrapper = document.createElement('div');
+      wrapper.innerHTML = html.trim();
+      container.appendChild(wrapper.firstChild);
+    });
+
+    container.addEventListener('click', function (ev) {
+      const btn = ev.target.closest('[data-action="remove-previous-attempt-row"]');
+      if (!btn) return;
+      const row = btn.closest('.previous-attempt-row');
+      if (row) row.remove();
+    });
+  })();
+</script>

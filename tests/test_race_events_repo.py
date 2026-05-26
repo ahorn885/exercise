@@ -18,6 +18,7 @@ All tests use the `_FakeConn` / `_FakeCursor` pattern from
 
 from __future__ import annotations
 
+import json
 from datetime import date
 from decimal import Decimal
 
@@ -200,6 +201,9 @@ def _race_row(**overrides):
         "first_time_at_distance": None,
         "time_goal": None,
         "race_pack_weight_kg": None,
+        # §H.2 Slice 2 — previous_attempts JSONB. Default [] (empty) matches
+        # the column default; new-shape tests override with a list of dicts.
+        "previous_attempts": [],
     }
     base.update(overrides)
     return base
@@ -928,11 +932,12 @@ class TestRaceTerrain:
         assert conn.commits == 1
         sql, params = conn.calls[0]
         assert "race_terrain = ?::jsonb" in sql
-        # `race_terrain = ?::jsonb` is the last SET clause, so the param
-        # tuple tail is: ..., race_terrain_json, race_event_id, user_id.
+        # `race_terrain = ?::jsonb` then `previous_attempts = ?::jsonb` (§H.2
+        # Slice 2) are the last two SET clauses, so the param tuple tail is:
+        # ..., race_terrain_json, previous_attempts_json, race_event_id, user_id.
         assert params[-1] == 1   # user_id
         assert params[-2] == 10  # race_event_id
-        terrain_json = params[-3]
+        terrain_json = params[-4]
         assert isinstance(terrain_json, str)
         assert "TRN-016" in terrain_json
 
@@ -1456,3 +1461,96 @@ class TestSectionH2GoalContext:
         assert result["race_pack_weight_kg"] == 8.5
         assert isinstance(result["race_pack_weight_kg"], float)
         assert result["goal_outcome"] is None
+
+
+class TestSectionH2PreviousAttempts:
+    """§H.2 goal-context Slice 2 (2026-05-26) — structured `previous_attempts`
+    JSONB round-trips through create + update + load + get. Unblocks the
+    `3B.dnf_recurrence_risk` HITL flag."""
+
+    _ATTEMPTS = [
+        {"outcome": "DNF", "dnf_cause": "quad_failure"},
+        {"outcome": "Finished", "dnf_cause": None},
+    ]
+
+    def test_create_serializes_previous_attempts_to_jsonb(self):
+        conn = _FakeConn()
+        conn.queue_response(row={"id": 7})
+        create_race_event(
+            conn,
+            user_id=1,
+            name="PGE 2026",
+            event_date=date(2026, 7, 17),
+            race_format="continuous_multi_day",
+            previous_attempts=self._ATTEMPTS,
+        )
+        sql, params = conn.calls[0]
+        assert "previous_attempts" in sql
+        # JSONB column is serialized via json.dumps (mirrors race_terrain).
+        assert json.dumps(self._ATTEMPTS) in params
+
+    def test_create_defaults_previous_attempts_to_empty_array(self):
+        conn = _FakeConn()
+        conn.queue_response(row={"id": 7})
+        create_race_event(
+            conn,
+            user_id=1,
+            name="No attempts",
+            event_date=date(2026, 7, 17),
+            race_format="single_day",
+        )
+        _sql, params = conn.calls[0]
+        assert "[]" in params  # None → "[]" JSONB serialization
+
+    def test_update_serializes_previous_attempts_to_jsonb(self):
+        conn = _FakeConn()
+        update_race_event(
+            conn,
+            user_id=1,
+            race_event_id=10,
+            name="Race",
+            event_date=date(2026, 7, 17),
+            race_format="single_day",
+            previous_attempts=self._ATTEMPTS,
+        )
+        sql, params = conn.calls[0]
+        assert "previous_attempts = ?" in sql
+        assert json.dumps(self._ATTEMPTS) in params
+
+    def test_load_payload_hydrates_previous_attempts(self):
+        conn = _FakeConn()
+        conn.queue_response(row=_race_row(previous_attempts=self._ATTEMPTS))
+        conn.queue_response(rows=[])
+        payload = load_race_event_payload(conn, race_event_id=10)
+        assert payload is not None
+        assert len(payload.previous_attempts) == 2
+        assert payload.previous_attempts[0].outcome == "DNF"
+        assert payload.previous_attempts[0].dnf_cause == "quad_failure"
+        assert payload.previous_attempts[1].outcome == "Finished"
+        assert payload.previous_attempts[1].dnf_cause is None
+
+    def test_load_payload_tolerates_jsonb_as_str(self):
+        # sqlite shim path surfaces JSONB as a str; repo json.loads it.
+        conn = _FakeConn()
+        conn.queue_response(
+            row=_race_row(previous_attempts=json.dumps(self._ATTEMPTS))
+        )
+        conn.queue_response(rows=[])
+        payload = load_race_event_payload(conn, race_event_id=10)
+        assert payload is not None
+        assert payload.previous_attempts[0].outcome == "DNF"
+
+    def test_load_payload_defaults_previous_attempts_to_empty(self):
+        conn = _FakeConn()
+        conn.queue_response(row=_race_row())  # previous_attempts=[]
+        conn.queue_response(rows=[])
+        payload = load_race_event_payload(conn, race_event_id=10)
+        assert payload is not None
+        assert payload.previous_attempts == []
+
+    def test_get_race_event_hydrates_previous_attempts(self):
+        conn = _FakeConn()
+        conn.queue_response(row=_race_row(previous_attempts=self._ATTEMPTS))
+        result = get_race_event(conn, user_id=1, race_event_id=10)
+        assert result is not None
+        assert result["previous_attempts"] == self._ATTEMPTS

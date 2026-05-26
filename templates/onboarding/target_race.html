@@ -227,6 +227,11 @@
              value="{{ target.time_goal if target and target.time_goal else '' }}">
     </div>
 
+    {# §H.2 Slice 2 — structured previous attempts; feeds Layer 3B's
+       dnf_recurrence_risk HITL flag. #}
+    {% set existing_previous_attempts = (target.previous_attempts if target and target.previous_attempts else []) %}
+    {% include '_previous_attempts_editor.html' %}
+
     <div class="col-12">
       <label class="form-label" for="race_rules_summary">Race rules summary</label>
       <textarea class="form-control" id="race_rules_summary" name="race_rules_summary" rows="4"

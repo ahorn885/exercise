@@ -27,6 +27,7 @@ from routes.race_events import (
     _parse_first_time_at_distance,
     _parse_goal_outcome,
     _parse_pack_weight_kg,
+    _parse_previous_attempts,
     _parse_race_terrain,
     _parse_race_url,
     _resolve_effective_framework_sport,
@@ -344,6 +345,71 @@ class TestParseGoalContextHelpers:
         assert _parse_pack_weight_kg(
             _FakeFormMapping({'race_pack_weight_kg': '-3'})
         ) is None
+
+
+# ─── §H.2 Slice 2 — _parse_previous_attempts ────────────────────────────────
+
+
+class TestParsePreviousAttempts:
+    """`previous_attempts[N][...]` repeating-row parse helper. Mirrors
+    `_parse_race_terrain`'s indexed-field discovery + drop-on-empty."""
+
+    def test_dnf_row_with_cause_threads(self):
+        form = _FakeFormMapping({
+            'previous_attempts[0][outcome]': 'DNF',
+            'previous_attempts[0][dnf_cause]': 'quad_failure',
+        })
+        assert _parse_previous_attempts(form) == [
+            {'outcome': 'DNF', 'dnf_cause': 'quad_failure'},
+        ]
+
+    def test_finished_row_collapses_cause_to_none(self):
+        form = _FakeFormMapping({
+            'previous_attempts[0][outcome]': 'Finished',
+            'previous_attempts[0][dnf_cause]': '',
+        })
+        assert _parse_previous_attempts(form) == [
+            {'outcome': 'Finished', 'dnf_cause': None},
+        ]
+
+    def test_invalid_outcome_drops_row(self):
+        form = _FakeFormMapping({
+            'previous_attempts[0][outcome]': 'WonByMiles',
+            'previous_attempts[0][dnf_cause]': 'quad_failure',
+        })
+        assert _parse_previous_attempts(form) == []
+
+    def test_blank_outcome_drops_row(self):
+        form = _FakeFormMapping({
+            'previous_attempts[0][outcome]': '',
+            'previous_attempts[0][dnf_cause]': 'weather',
+        })
+        assert _parse_previous_attempts(form) == []
+
+    def test_invalid_dnf_cause_collapses_to_none(self):
+        form = _FakeFormMapping({
+            'previous_attempts[0][outcome]': 'DNF',
+            'previous_attempts[0][dnf_cause]': 'bad_knee_vibes',
+        })
+        assert _parse_previous_attempts(form) == [
+            {'outcome': 'DNF', 'dnf_cause': None},
+        ]
+
+    def test_multiple_rows_preserve_order(self):
+        form = _FakeFormMapping({
+            'previous_attempts[0][outcome]': 'DNF',
+            'previous_attempts[0][dnf_cause]': 'nutrition_blowup',
+            'previous_attempts[1][outcome]': 'Finished',
+            'previous_attempts[2][outcome]': 'DNS',
+        })
+        assert _parse_previous_attempts(form) == [
+            {'outcome': 'DNF', 'dnf_cause': 'nutrition_blowup'},
+            {'outcome': 'Finished', 'dnf_cause': None},
+            {'outcome': 'DNS', 'dnf_cause': None},
+        ]
+
+    def test_empty_form_returns_empty_list(self):
+        assert _parse_previous_attempts(_FakeFormMapping()) == []
 
 
 # ─── _parse_race_terrain — C1 discipline_id passthrough ─────────────────────

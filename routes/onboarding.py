@@ -837,7 +837,8 @@ def _get_target_race_row(db, uid):
     cur = db.execute(
         'SELECT id, name, event_date, race_format, distance_km, '
         '       total_elevation_gain_m, race_rules_summary, mandatory_gear_text, '
-        '       event_locale_id, notes, race_terrain, '
+        '       event_locale_id, notes, race_terrain, previous_attempts, '
+        '       goal_outcome, first_time_at_distance, time_goal, race_pack_weight_kg, '
         '       event_locale_name, event_locale_mapbox_id, event_locale_place_name, '
         '       event_locale_lat, event_locale_lng, race_url, framework_sport, '
         '       included_discipline_ids '
@@ -855,6 +856,12 @@ def _get_target_race_row(db, uid):
         result['race_terrain'] = json.loads(raw_terrain) if raw_terrain else []
     elif raw_terrain is None:
         result['race_terrain'] = []
+    # previous_attempts JSONB hydration mirrors race_terrain (§H.2 Slice 2).
+    raw_attempts = result.get('previous_attempts')
+    if isinstance(raw_attempts, str):
+        result['previous_attempts'] = json.loads(raw_attempts) if raw_attempts else []
+    elif raw_attempts is None:
+        result['previous_attempts'] = []
     # D-73 Phase 5.2 walkthrough #1 (2026-05-21) — NUMERIC(9,6) lat/lng
     # round-trips as Decimal; coerce to float so template arithmetic stays
     # simple. Mirrors `race_events_repo.get_race_event` precedent.
@@ -980,6 +987,7 @@ def target_race_save():
         _parse_first_time_at_distance,
         _parse_goal_outcome,
         _parse_pack_weight_kg,
+        _parse_previous_attempts,
         _parse_primary_metric,
         _parse_race_url,
     )
@@ -994,6 +1002,7 @@ def target_race_save():
     new_first_time_at_distance = _parse_first_time_at_distance(request.form)
     new_time_goal = _parse_str_field(request.form, 'time_goal')
     new_race_pack_weight_kg = _parse_pack_weight_kg(request.form)
+    new_previous_attempts = _parse_previous_attempts(request.form)
 
     # D-73 Phase 5.2 Bucket C (i) — Mapbox-anchored race location is required
     # on save. The `[Skip]` button (target_race_skip) remains as the escape
@@ -1039,6 +1048,7 @@ def target_race_save():
             event_locale_id=None,
             notes=new_notes,
             race_terrain=new_race_terrain,
+            previous_attempts=new_previous_attempts,
             race_url=new_race_url,
             framework_sport=new_framework_sport,
             included_discipline_ids=new_discipline_filter,
@@ -1062,11 +1072,14 @@ def target_race_save():
             or target['estimated_duration_hr'] != new_estimated_duration_hr
             # §H.2 goal fields feed Layer 3B goal-viability + periodization-
             # shape selection; a change re-runs 3B and can shift the shape.
-            # Mirrors routes/race_events.py:update_race.
+            # previous_attempts (Slice 2) drives 3B.dnf_recurrence_risk — same
+            # grade, compared as-is (hydrated JSONB list of dicts). Mirrors
+            # routes/race_events.py:update_race.
             or target.get('goal_outcome') != new_goal_outcome
             or target.get('first_time_at_distance') != new_first_time_at_distance
             or target.get('time_goal') != new_time_goal
             or target.get('race_pack_weight_kg') != new_race_pack_weight_kg
+            or (target.get('previous_attempts') or []) != new_previous_attempts
         )
         prior_terrain = target.get('race_terrain') or []
         prior_race_url = target.get('race_url')
@@ -1117,6 +1130,7 @@ def target_race_save():
             is_target_event=True,
             notes=new_notes,
             race_terrain=new_race_terrain,
+            previous_attempts=new_previous_attempts,
             race_url=new_race_url,
             framework_sport=new_framework_sport,
             included_discipline_ids=new_discipline_filter,

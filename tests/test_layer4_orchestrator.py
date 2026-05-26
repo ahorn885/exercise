@@ -153,6 +153,7 @@ def _queue_target_race_event(
     first_time_at_distance: bool | None = None,
     time_goal: str | None = None,
     race_pack_weight_kg=None,
+    previous_attempts: list | None = None,
 ) -> None:
     """Queue responses for `load_target_race_event_payload` (3 SELECTs when
     route_locales empty: target_id lookup + main row + route_locales).
@@ -203,6 +204,11 @@ def _queue_target_race_event(
             "first_time_at_distance": first_time_at_distance,
             "time_goal": time_goal,
             "race_pack_weight_kg": race_pack_weight_kg,
+            # §H.2 Slice 2 — previous_attempts JSONB (list of dicts). Default
+            # [] exercises the "no DNF history" path.
+            "previous_attempts": (
+                previous_attempts if previous_attempts is not None else []
+            ),
         }
     )
     conn.queue(rows=[])  # route_locales (empty for single_day)
@@ -2753,6 +2759,7 @@ class TestOrchestratePlanCreateHappyPath:
             race_pack_weight_kg=8.5,
             estimated_duration_hr=50.0,
             race_terrain=[{"terrain_id": "TRN-001", "pct_of_race": 100.0}],
+            previous_attempts=[{"outcome": "DNF", "dnf_cause": "quad_failure"}],
         )
         _queue_etl_version_set(conn)
         _queue_primary_locale(conn)
@@ -2782,6 +2789,11 @@ class TestOrchestratePlanCreateHappyPath:
         assert kw["race_pack_weight_kg"] == 8.5
         assert kw["race_duration_hr"] == 50.0
         assert kw["race_terrain"] == ["TRN-001"]
+        # §H.2 Slice 2 — previous_attempts threads as plain dicts the 3B
+        # builder consumes via .get("outcome") / .get("dnf_cause").
+        assert kw["previous_attempts"] == [
+            {"outcome": "DNF", "dnf_cause": "quad_failure"}
+        ]
 
     def test_section_h2_goal_fields_absent_in_no_event_mode(self):
         """No-event mode: no target row → no §H.2 goal kwargs are passed, so

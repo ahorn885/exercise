@@ -344,9 +344,11 @@ def _upstream_full_cone(
     # the payload (so the cache key already varies on them) but never reached
     # 3B's prompt — the builder reads them from kwargs — so thread them too.
     # `race_distance_km` is left out: the builder already falls back to
-    # `RaceEventPayload.distance_km`. All None in no-event mode (the cached
-    # wrapper then falls back to the conservative "Finish" tier for legacy /
-    # uncaptured rows).
+    # `RaceEventPayload.distance_km`. `previous_attempts` (Slice 2) threads as
+    # plain dicts the builder consumes via `.get("outcome")` / `.get("dnf_cause")`
+    # — it unblocks the `3B.dnf_recurrence_risk` HITL flag. All None / empty in
+    # no-event mode (the cached wrapper then falls back to the conservative
+    # "Finish" tier for legacy / uncaptured rows).
     section_h2_kwargs: dict[str, Any] = {}
     if target_race_event is not None:
         section_h2_kwargs = {
@@ -365,6 +367,13 @@ def _upstream_full_cone(
             ),
             "race_terrain": (
                 [e.terrain_id for e in target_race_event.race_terrain] or None
+            ),
+            "previous_attempts": (
+                [
+                    {"outcome": a.outcome, "dnf_cause": a.dnf_cause or ""}
+                    for a in target_race_event.previous_attempts
+                ]
+                or None
             ),
         }
     layer3b_payload = llm_layer3b_goal_timeline_viability_cached(
