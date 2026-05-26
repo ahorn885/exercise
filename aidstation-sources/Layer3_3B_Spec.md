@@ -354,7 +354,7 @@ class Observation:
 
 ### 8.2 Observation budget
 
-`notable_observations` is bounded by `max_items=6`. The validator drops lowest-priority items past the budget: priority order is `warning > opportunity > data_gap > data_hygiene`. Within category, items emitted by required triggers (§8.1) outrank LLM-discretionary observations.
+`notable_observations` is bounded by `max_items=10`. The validator drops lowest-priority items past the budget: priority order is `warning > opportunity > data_gap > data_hygiene`. Within category, items emitted by required triggers (§8.1) outrank LLM-discretionary observations. The budget is enforced **pre-validation** by a deterministic clamp (`layer3b.builder._clamp_notable_observations`) — the Anthropic API treats the tool-schema `maxItems` as guidance, not a hard cap, so an over-emit is trimmed to the budget rather than walling on `schema_violation`. Each item's `text` is independently bounded to ≤240 chars (§7) and likewise truncated pre-validation (`_clamp_observation_text`) if the model over-runs it.
 
 ## 9. Caching & determinism
 

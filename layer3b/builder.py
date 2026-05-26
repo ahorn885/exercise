@@ -857,7 +857,7 @@ Hard rules:
    - no-event mode AND Goal Type vs §C primary_sport mismatch →
      category=data_hygiene; elevates_to_hitl=False.
 
-9. Observation budget: notable_observations is capped at 6 items.
+9. Observation budget: notable_observations is capped at 10 items.
    Priority: warning > opportunity > data_gap > data_hygiene. Keep each
    observation's `text` under 240 characters — one concise flag, not a
    paragraph (it is hard-capped at 240 and truncated past that).
