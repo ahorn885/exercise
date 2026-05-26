@@ -977,6 +977,9 @@ def target_race_save():
     from routes.race_events import (
         _extract_mapbox_locale_from_form,
         _parse_estimated_duration_hr,
+        _parse_first_time_at_distance,
+        _parse_goal_outcome,
+        _parse_pack_weight_kg,
         _parse_primary_metric,
         _parse_race_url,
     )
@@ -986,6 +989,11 @@ def target_race_save():
     new_primary_metric = _parse_primary_metric(request.form)
     new_framework_sport = _parse_str_field(request.form, 'framework_sport')
     parsed_discipline_filter = _parse_discipline_id_filter(request.form)
+    # §H.2 goal context
+    new_goal_outcome = _parse_goal_outcome(request.form)
+    new_first_time_at_distance = _parse_first_time_at_distance(request.form)
+    new_time_goal = _parse_str_field(request.form, 'time_goal')
+    new_race_pack_weight_kg = _parse_pack_weight_kg(request.form)
 
     # D-73 Phase 5.2 Bucket C (i) — Mapbox-anchored race location is required
     # on save. The `[Skip]` button (target_race_skip) remains as the escape
@@ -1034,6 +1042,10 @@ def target_race_save():
             race_url=new_race_url,
             framework_sport=new_framework_sport,
             included_discipline_ids=new_discipline_filter,
+            goal_outcome=new_goal_outcome,
+            first_time_at_distance=new_first_time_at_distance,
+            time_goal=new_time_goal,
+            race_pack_weight_kg=new_race_pack_weight_kg,
             **new_locale_fields,
         )
         # D-66 §9 invalidation — same diff logic as routes/race_events.py
@@ -1048,6 +1060,13 @@ def target_race_save():
             target['event_date'] != event_date
             or target['race_format'] != race_format
             or target['estimated_duration_hr'] != new_estimated_duration_hr
+            # §H.2 goal fields feed Layer 3B goal-viability + periodization-
+            # shape selection; a change re-runs 3B and can shift the shape.
+            # Mirrors routes/race_events.py:update_race.
+            or target.get('goal_outcome') != new_goal_outcome
+            or target.get('first_time_at_distance') != new_first_time_at_distance
+            or target.get('time_goal') != new_time_goal
+            or target.get('race_pack_weight_kg') != new_race_pack_weight_kg
         )
         prior_terrain = target.get('race_terrain') or []
         prior_race_url = target.get('race_url')
@@ -1101,6 +1120,10 @@ def target_race_save():
             race_url=new_race_url,
             framework_sport=new_framework_sport,
             included_discipline_ids=new_discipline_filter,
+            goal_outcome=new_goal_outcome,
+            first_time_at_distance=new_first_time_at_distance,
+            time_goal=new_time_goal,
+            race_pack_weight_kg=new_race_pack_weight_kg,
             **new_locale_fields,
         )
         # A fresh target row was created. Layer 3B's mode flips from

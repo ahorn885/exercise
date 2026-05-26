@@ -184,6 +184,49 @@
         Optional — total cumulative gain.
       </small>
     </div>
+
+    {# §H.2 goal context — feeds Layer 3B goal-viability + the
+       first_time_competitive_goal HITL flag. All optional; a blank
+       goal_outcome defaults to the conservative "Finish" tier downstream. #}
+    <div class="col-12">
+      <h6 class="mt-2 mb-0 text-uppercase text-muted small">Goal</h6>
+      <small class="text-muted">
+        What you're chasing at this race. Feeds your goal-viability check and what we flag for review.
+      </small>
+    </div>
+    <div class="col-md-4">
+      <label class="form-label" for="goal_outcome">Goal outcome</label>
+      <select class="form-select" id="goal_outcome" name="goal_outcome">
+        <option value="">—</option>
+        <option value="Finish" {% if target and target.goal_outcome == 'Finish' %}selected{% endif %}>Finish</option>
+        <option value="Compete mid-pack" {% if target and target.goal_outcome == 'Compete mid-pack' %}selected{% endif %}>Compete mid-pack</option>
+        <option value="Podium" {% if target and target.goal_outcome == 'Podium' %}selected{% endif %}>Podium</option>
+      </select>
+      <small class="text-muted">Leave blank to default to finishing.</small>
+    </div>
+    <div class="col-md-4">
+      <label class="form-label" for="first_time_at_distance">First time at this distance?</label>
+      <select class="form-select" id="first_time_at_distance" name="first_time_at_distance">
+        <option value="" {% if not target or target.first_time_at_distance is none %}selected{% endif %}>—</option>
+        <option value="yes" {% if target and target.first_time_at_distance == true %}selected{% endif %}>Yes</option>
+        <option value="no" {% if target and target.first_time_at_distance == false %}selected{% endif %}>No</option>
+      </select>
+      <small class="text-muted">Pairs with a competitive goal to flag pacing risk.</small>
+    </div>
+    <div class="col-md-4">
+      <label class="form-label" for="race_pack_weight_kg">Pack weight (kg)</label>
+      <input type="number" step="0.1" min="0" class="form-control"
+             id="race_pack_weight_kg" name="race_pack_weight_kg"
+             value="{{ target.race_pack_weight_kg if target and target.race_pack_weight_kg is not none else '' }}">
+      <small class="text-muted">Mandatory-kit / pack load you'll carry, if known.</small>
+    </div>
+    <div class="col-md-6">
+      <label class="form-label" for="time_goal">Time goal (optional)</label>
+      <input type="text" class="form-control" id="time_goal" name="time_goal"
+             maxlength="200" placeholder="e.g. sub-24h, under 12:30"
+             value="{{ target.time_goal if target and target.time_goal else '' }}">
+    </div>
+
     <div class="col-12">
       <label class="form-label" for="race_rules_summary">Race rules summary</label>
       <textarea class="form-control" id="race_rules_summary" name="race_rules_summary" rows="4"

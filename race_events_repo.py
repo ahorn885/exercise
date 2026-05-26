@@ -32,6 +32,9 @@ from layer4.context import (
 
 VALID_RACE_FORMATS = ("single_day", "continuous_multi_day", "stage_race")
 VALID_PRIMARY_METRICS = ("distance", "duration")
+# §H.2 goal-context (2026-05-26) — lock-step with layer3b.builder._VALID_GOAL_OUTCOMES
+# and the race_events.goal_outcome CHECK.
+VALID_GOAL_OUTCOMES = ("Finish", "Compete mid-pack", "Podium")
 VALID_ROUTE_LOCALE_ROLES = (
     "start",
     "transition_area",
@@ -91,7 +94,9 @@ def load_race_event_payload(db, race_event_id: int) -> RaceEventPayload | None:
                re.race_terrain,
                re.event_locale_name, re.event_locale_mapbox_id,
                re.event_locale_place_name, re.event_locale_lat, re.event_locale_lng,
-               re.race_url, re.framework_sport, re.included_discipline_ids
+               re.race_url, re.framework_sport, re.included_discipline_ids,
+               re.goal_outcome, re.first_time_at_distance,
+               re.time_goal, re.race_pack_weight_kg
           FROM race_events re
           LEFT JOIN locale_profiles lp ON lp.id = re.event_locale_id
          WHERE re.id = ?
@@ -219,6 +224,14 @@ def load_race_event_payload(db, race_event_id: int) -> RaceEventPayload | None:
         race_url=race_row["race_url"],
         framework_sport=race_row["framework_sport"],
         included_discipline_ids=raw_disc_filter,
+        goal_outcome=race_row["goal_outcome"],
+        first_time_at_distance=(
+            bool(race_row["first_time_at_distance"])
+            if race_row["first_time_at_distance"] is not None
+            else None
+        ),
+        time_goal=race_row["time_goal"],
+        race_pack_weight_kg=race_row["race_pack_weight_kg"],
         route_locales=route_locales,
     )
 
@@ -260,6 +273,10 @@ def create_race_event(
     race_url: str | None = None,
     framework_sport: str | None = None,
     included_discipline_ids: list[str] | None = None,
+    goal_outcome: str | None = None,
+    first_time_at_distance: bool | None = None,
+    time_goal: str | None = None,
+    race_pack_weight_kg=None,
     is_target_event: bool = False,
     notes: str | None = None,
     race_terrain: list[dict[str, Any]] | None = None,
@@ -290,6 +307,10 @@ def create_race_event(
         raise ValueError(
             f"primary_metric must be one of {VALID_PRIMARY_METRICS} or None; got {primary_metric!r}"
         )
+    if goal_outcome is not None and goal_outcome not in VALID_GOAL_OUTCOMES:
+        raise ValueError(
+            f"goal_outcome must be one of {VALID_GOAL_OUTCOMES} or None; got {goal_outcome!r}"
+        )
 
     cur = db.execute(
         """
@@ -303,8 +324,9 @@ def create_race_event(
              event_locale_name, event_locale_mapbox_id, event_locale_place_name,
              event_locale_lat, event_locale_lng,
              race_url, framework_sport, included_discipline_ids,
+             goal_outcome, first_time_at_distance, time_goal, race_pack_weight_kg,
              etl_version_set)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?, ?, ?, ?, ?, ?, ?, ?::text[], ?::jsonb)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?, ?, ?, ?, ?, ?, ?, ?::text[], ?, ?, ?, ?, ?::jsonb)
         RETURNING id
         """,
         (
@@ -330,6 +352,10 @@ def create_race_event(
             race_url,
             framework_sport,
             included_discipline_ids,
+            goal_outcome,
+            first_time_at_distance,
+            time_goal,
+            race_pack_weight_kg,
             json.dumps(etl_version_set or {}),
         ),
     )
@@ -448,6 +474,7 @@ def get_race_event(db, user_id: int, race_event_id: int) -> dict[str, Any] | Non
                event_locale_name, event_locale_mapbox_id, event_locale_place_name,
                event_locale_lat, event_locale_lng,
                race_url, framework_sport, included_discipline_ids,
+               goal_outcome, first_time_at_distance, time_goal, race_pack_weight_kg,
                created_at, updated_at
           FROM race_events
          WHERE id = ? AND user_id = ?
@@ -469,7 +496,7 @@ def get_race_event(db, user_id: int, race_event_id: int) -> dict[str, Any] | Non
     # NUMERIC(9,6) round-trips as Decimal under psycopg2; coerce to float so
     # template arithmetic + form-field rendering stay simple. None passes
     # through.
-    for k in ("event_locale_lat", "event_locale_lng"):
+    for k in ("event_locale_lat", "event_locale_lng", "race_pack_weight_kg"):
         v = result.get(k)
         if v is not None and not isinstance(v, float):
             result[k] = float(v)
@@ -505,6 +532,10 @@ def update_race_event(
     race_url: str | None = None,
     framework_sport: str | None = None,
     included_discipline_ids: list[str] | None = None,
+    goal_outcome: str | None = None,
+    first_time_at_distance: bool | None = None,
+    time_goal: str | None = None,
+    race_pack_weight_kg=None,
     notes: str | None = None,
     race_terrain: list[dict[str, Any]] | None = None,
 ) -> None:
@@ -522,6 +553,10 @@ def update_race_event(
     if primary_metric is not None and primary_metric not in VALID_PRIMARY_METRICS:
         raise ValueError(
             f"primary_metric must be one of {VALID_PRIMARY_METRICS} or None; got {primary_metric!r}"
+        )
+    if goal_outcome is not None and goal_outcome not in VALID_GOAL_OUTCOMES:
+        raise ValueError(
+            f"goal_outcome must be one of {VALID_GOAL_OUTCOMES} or None; got {goal_outcome!r}"
         )
 
     db.execute(
@@ -545,6 +580,10 @@ def update_race_event(
                race_url = ?,
                framework_sport = ?,
                included_discipline_ids = ?::text[],
+               goal_outcome = ?,
+               first_time_at_distance = ?,
+               time_goal = ?,
+               race_pack_weight_kg = ?,
                notes = ?,
                race_terrain = ?::jsonb,
                updated_at = NOW()
@@ -569,6 +608,10 @@ def update_race_event(
             race_url,
             framework_sport,
             included_discipline_ids,
+            goal_outcome,
+            first_time_at_distance,
+            time_goal,
+            race_pack_weight_kg,
             notes,
             json.dumps(race_terrain or []),
             race_event_id,

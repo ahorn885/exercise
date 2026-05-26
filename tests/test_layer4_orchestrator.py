@@ -149,6 +149,10 @@ def _queue_target_race_event(
     included_discipline_ids: list[str] | None = None,
     estimated_duration_hr=None,
     primary_metric: str | None = None,
+    goal_outcome: str | None = None,
+    first_time_at_distance: bool | None = None,
+    time_goal: str | None = None,
+    race_pack_weight_kg=None,
 ) -> None:
     """Queue responses for `load_target_race_event_payload` (3 SELECTs when
     route_locales empty: target_id lookup + main row + route_locales).
@@ -193,6 +197,12 @@ def _queue_target_race_event(
             # discipline filter override. None = use full bridge defaults
             # (pre-B2 behavior).
             "included_discipline_ids": included_discipline_ids,
+            # §H.2 goal context (2026-05-26) — None exercises the cached
+            # wrapper's "Finish" fallback for legacy/uncaptured rows.
+            "goal_outcome": goal_outcome,
+            "first_time_at_distance": first_time_at_distance,
+            "time_goal": time_goal,
+            "race_pack_weight_kg": race_pack_weight_kg,
         }
     )
     conn.queue(rows=[])  # route_locales (empty for single_day)
@@ -2727,6 +2737,81 @@ class TestOrchestratePlanCreateHappyPath:
         m_l3a, m_l3b = mocks[7], mocks[8]
         assert m_l3b.call_args.kwargs["current_date"] == future_start
         assert m_l3a.call_args.kwargs["as_of"].date() == _TODAY
+
+    def test_section_h2_goal_fields_thread_to_3b(self):
+        """§H.2 goal context (2026-05-26): the captured goal fields on the
+        target race row thread into the Layer 3B call, closing the
+        deployed-shape gap (3B previously saw only a hardcoded 'Finish').
+        `estimated_duration_hr` + `race_terrain` are already on the payload
+        but were never reaching 3B's prompt — they thread too."""
+        conn = _FakeConn()
+        _queue_target_race_event(
+            conn,
+            goal_outcome="Podium",
+            first_time_at_distance=True,
+            time_goal="sub-48h",
+            race_pack_weight_kg=8.5,
+            estimated_duration_hr=50.0,
+            race_terrain=[{"terrain_id": "TRN-001", "pct_of_race": 100.0}],
+        )
+        _queue_etl_version_set(conn)
+        _queue_primary_locale(conn)
+        _queue_locale_equipment_pool(conn)
+        cache = Layer4Cache(InMemoryCacheBackend())
+
+        stack = _plan_create_patches(
+            layer4_return=_fake_plan_create_layer4_payload(plan_version_id=3)
+        )
+        mocks = _enter_all(stack)
+        try:
+            orchestrate_plan_create(
+                conn,
+                _USER_ID,
+                plan_start_date=date(2026, 6, 1),
+                plan_version_id=3,
+                cache=cache,
+                today=_TODAY,
+            )
+        finally:
+            _exit_all(stack)
+
+        kw = mocks[8].call_args.kwargs
+        assert kw["goal_outcome"] == "Podium"
+        assert kw["first_time_at_distance"] is True
+        assert kw["time_goal"] == "sub-48h"
+        assert kw["race_pack_weight_kg"] == 8.5
+        assert kw["race_duration_hr"] == 50.0
+        assert kw["race_terrain"] == ["TRN-001"]
+
+    def test_section_h2_goal_fields_absent_in_no_event_mode(self):
+        """No-event mode: no target row → no §H.2 goal kwargs are passed, so
+        the cached wrapper falls back to its no-event resolution."""
+        conn = _FakeConn()
+        conn.queue(row=None)  # no target race row
+        _queue_etl_version_set(conn)
+        _queue_primary_locale(conn)
+        _queue_locale_equipment_pool(conn)
+        cache = Layer4Cache(InMemoryCacheBackend())
+
+        stack = _plan_create_patches(
+            layer4_return=_fake_plan_create_layer4_payload(plan_version_id=3)
+        )
+        mocks = _enter_all(stack)
+        try:
+            orchestrate_plan_create(
+                conn,
+                _USER_ID,
+                plan_start_date=date(2026, 6, 1),
+                plan_version_id=3,
+                cache=cache,
+                today=_TODAY,
+            )
+        finally:
+            _exit_all(stack)
+
+        kw = mocks[8].call_args.kwargs
+        assert kw["race_event_payload"] is None
+        assert "goal_outcome" not in kw
 
     def test_pipeline_in_order_no_event_mode(self):
         """No-event-mode happy path: open-ended plan_create proceeds without

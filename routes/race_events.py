@@ -33,6 +33,7 @@ from race_events_invalidation import (
     evict_on_target_event_periodization_change,
 )
 from race_events_repo import (
+    VALID_GOAL_OUTCOMES,
     VALID_RACE_FORMATS,
     VALID_ROUTE_LOCALE_ROLES,
     add_route_locale,
@@ -346,6 +347,35 @@ def _parse_primary_metric(form) -> str | None:
     return v if v in ('distance', 'duration') else None
 
 
+def _parse_goal_outcome(form) -> str | None:
+    """Parse the §H.2 `goal_outcome` selector. Anything outside the closed set
+    (incl. blank) coerces to None — the cached Layer 3B wrapper then falls
+    back to the conservative "Finish" tier. Repo + DB CHECK validate again."""
+    v = (form.get('goal_outcome') or '').strip()
+    return v if v in VALID_GOAL_OUTCOMES else None
+
+
+def _parse_first_time_at_distance(form) -> bool | None:
+    """Parse the §H.2 `first_time_at_distance` tri-state selector:
+    'yes' → True, 'no' → False, blank/anything else → None (not answered)."""
+    v = (form.get('first_time_at_distance') or '').strip().lower()
+    if v == 'yes':
+        return True
+    if v == 'no':
+        return False
+    return None
+
+
+def _parse_pack_weight_kg(form):
+    """Parse the §H.2 `race_pack_weight_kg` number input. Negative / non-numeric
+    coerce to None (the DB CHECK is >= 0; the payload Field is ge=0). Blank =
+    None (not captured)."""
+    v = _parse_decimal(form, 'race_pack_weight_kg')
+    if v is None or v < 0:
+        return None
+    return v
+
+
 def _tab_redirect():
     return redirect(url_for('profile.edit', tab='race-events'))
 
@@ -399,6 +429,10 @@ def new_race():
             race_url=_parse_race_url(request.form),
             framework_sport=_parse_str(request.form, 'framework_sport'),
             included_discipline_ids=_parse_discipline_id_filter(request.form),
+            goal_outcome=_parse_goal_outcome(request.form),
+            first_time_at_distance=_parse_first_time_at_distance(request.form),
+            time_goal=_parse_str(request.form, 'time_goal'),
+            race_pack_weight_kg=_parse_pack_weight_kg(request.form),
             **locale_fields,
         )
         flash(f'Race "{name}" added.', 'success')
@@ -534,6 +568,10 @@ def update_race(race_event_id: int):
     new_race_url = _parse_race_url(request.form)
     new_framework_sport = _parse_str(request.form, 'framework_sport')
     parsed_discipline_filter = _parse_discipline_id_filter(request.form)
+    new_goal_outcome = _parse_goal_outcome(request.form)
+    new_first_time_at_distance = _parse_first_time_at_distance(request.form)
+    new_time_goal = _parse_str(request.form, 'time_goal')
+    new_race_pack_weight_kg = _parse_pack_weight_kg(request.form)
 
     # D-73 Phase 5.2 Bucket E.(b)-B2 — auto-clear on framework_sport
     # change. Previously-selected discipline IDs reference the old sport's
@@ -583,6 +621,10 @@ def update_race(race_event_id: int):
         race_url=new_race_url,
         framework_sport=new_framework_sport,
         included_discipline_ids=new_discipline_filter,
+        goal_outcome=new_goal_outcome,
+        first_time_at_distance=new_first_time_at_distance,
+        time_goal=new_time_goal,
+        race_pack_weight_kg=new_race_pack_weight_kg,
         notes=new_notes,
         race_terrain=new_race_terrain,
     )
@@ -603,6 +645,15 @@ def update_race(race_event_id: int):
             race['event_date'] != event_date
             or race['race_format'] != race_format
             or race['estimated_duration_hr'] != new_estimated_duration_hr
+            # §H.2 goal fields feed Layer 3B's goal-viability + periodization-
+            # shape selection (Compete/Podium warrant more Build/Peak; a DNF
+            # history or first-time-at-distance shift viability). A change
+            # flips the 3B cache key → 3B re-runs and the shape can move, so
+            # evict periodization-grade alongside event_date / race_format.
+            or race.get('goal_outcome') != new_goal_outcome
+            or race.get('first_time_at_distance') != new_first_time_at_distance
+            or race.get('time_goal') != new_time_goal
+            or race.get('race_pack_weight_kg') != new_race_pack_weight_kg
         )
         # Existing race_terrain comes back from get_race_event as a list
         # of dicts (JSONB hydrated in the repo); compare as-is.

@@ -1366,6 +1366,21 @@ _PG_MIGRATIONS = [
     # is the typed backstop).
     "ALTER TABLE race_events ADD COLUMN IF NOT EXISTS estimated_duration_hr NUMERIC NULL CHECK (estimated_duration_hr IS NULL OR estimated_duration_hr > 0)",
     "ALTER TABLE race_events ADD COLUMN IF NOT EXISTS primary_metric TEXT NULL CHECK (primary_metric IS NULL OR primary_metric IN ('distance', 'duration'))",
+    # §H.2 goal-context capture (2026-05-26) — close the Layer 3B deployed-shape
+    # gap. 3B's event-mode viability reasoning + HITL triggers
+    # (3B.first_time_competitive_goal) read the athlete's goal fields, but the
+    # deployed race_events row never stored them — the cached wrapper hardcoded
+    # goal_outcome='Finish', so every athlete was treated as a finisher
+    # regardless of ambition. These 4 scalar columns let the athlete state
+    # their actual goal; the orchestrator threads them into the Layer 3B call.
+    # `previous_attempts` (structured) is the follow-on slice. All nullable so
+    # legacy rows survive without backfill; the goal_outcome CHECK mirrors
+    # layer3b.builder._VALID_GOAL_OUTCOMES, and pack-weight is a numeric kg
+    # alongside the free-text mandatory_gear_text.
+    "ALTER TABLE race_events ADD COLUMN IF NOT EXISTS goal_outcome TEXT NULL CHECK (goal_outcome IS NULL OR goal_outcome IN ('Finish', 'Compete mid-pack', 'Podium'))",
+    "ALTER TABLE race_events ADD COLUMN IF NOT EXISTS first_time_at_distance BOOLEAN NULL",
+    "ALTER TABLE race_events ADD COLUMN IF NOT EXISTS time_goal TEXT NULL",
+    "ALTER TABLE race_events ADD COLUMN IF NOT EXISTS race_pack_weight_kg NUMERIC NULL CHECK (race_pack_weight_kg IS NULL OR race_pack_weight_kg >= 0)",
     # FormRefresh A1 (2026-05-25) — race_format taxonomy collapse. The
     # original 4-value enum conflated structure with sport/discipline
     # (`expedition_ar` = AR sport; `multi_day_ultra` = ultrarunning sport).

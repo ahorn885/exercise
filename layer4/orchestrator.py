@@ -336,6 +336,37 @@ def _upstream_full_cone(
     # `(event_date - plan_start_date) // 7`. race_week_brief / plan_refresh
     # leave it None and anchor on `today`. 3A's `as_of` + 2E stay on `today`
     # (athlete state + nutrition baseline are "now", not the plan start).
+    # §H.2 goal context (2026-05-26) — thread the athlete's captured goal
+    # fields off the target race row into Layer 3B's event-mode goal block +
+    # HITL triggers (3B.first_time_competitive_goal). Closes the deployed-shape
+    # gap: 3B previously saw only the cached wrapper's hardcoded
+    # goal_outcome="Finish". `race_duration_hr` / `race_terrain` are already on
+    # the payload (so the cache key already varies on them) but never reached
+    # 3B's prompt — the builder reads them from kwargs — so thread them too.
+    # `race_distance_km` is left out: the builder already falls back to
+    # `RaceEventPayload.distance_km`. All None in no-event mode (the cached
+    # wrapper then falls back to the conservative "Finish" tier for legacy /
+    # uncaptured rows).
+    section_h2_kwargs: dict[str, Any] = {}
+    if target_race_event is not None:
+        section_h2_kwargs = {
+            "goal_outcome": target_race_event.goal_outcome,
+            "first_time_at_distance": target_race_event.first_time_at_distance,
+            "time_goal": target_race_event.time_goal,
+            "race_pack_weight_kg": (
+                float(target_race_event.race_pack_weight_kg)
+                if target_race_event.race_pack_weight_kg is not None
+                else None
+            ),
+            "race_duration_hr": (
+                float(target_race_event.estimated_duration_hr)
+                if target_race_event.estimated_duration_hr is not None
+                else None
+            ),
+            "race_terrain": (
+                [e.terrain_id for e in target_race_event.race_terrain] or None
+            ),
+        }
     layer3b_payload = llm_layer3b_goal_timeline_viability_cached(
         user_id=user_id,
         layer1_payload=layer1_payload,
@@ -347,6 +378,7 @@ def _upstream_full_cone(
         ),
         etl_version_set=etl_version_set,
         cache_backend=cache.backend,
+        **section_h2_kwargs,
     )
 
     target_events: list[Layer2ETargetEvent] = []

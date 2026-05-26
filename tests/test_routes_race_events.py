@@ -24,6 +24,9 @@ from routes.race_events import (
     _disciplines_for_framework_sport,
     _extract_mapbox_locale_from_form,
     _parse_discipline_id_filter,
+    _parse_first_time_at_distance,
+    _parse_goal_outcome,
+    _parse_pack_weight_kg,
     _parse_race_terrain,
     _parse_race_url,
     _resolve_effective_framework_sport,
@@ -295,6 +298,52 @@ class TestParseDisciplineIdFilter:
         MultiDict."""
         plain = {'included_discipline_ids': 'D-001'}
         assert _parse_discipline_id_filter(plain) is None
+
+
+# ─── §H.2 goal-context parse helpers (2026-05-26) ───────────────────────────
+
+
+class TestParseGoalContextHelpers:
+    """`goal_outcome` / `first_time_at_distance` / `race_pack_weight_kg`
+    form-parse helpers for the §H.2 deployed-shape-gap slice."""
+
+    def test_goal_outcome_valid_values_pass(self):
+        for v in ('Finish', 'Compete mid-pack', 'Podium'):
+            assert _parse_goal_outcome(_FakeFormMapping({'goal_outcome': v})) == v
+
+    def test_goal_outcome_blank_or_invalid_coerces_none(self):
+        assert _parse_goal_outcome(_FakeFormMapping({'goal_outcome': ''})) is None
+        assert _parse_goal_outcome(_FakeFormMapping()) is None
+        assert _parse_goal_outcome(
+            _FakeFormMapping({'goal_outcome': 'World Record'})
+        ) is None
+
+    def test_first_time_tri_state(self):
+        assert _parse_first_time_at_distance(
+            _FakeFormMapping({'first_time_at_distance': 'yes'})
+        ) is True
+        assert _parse_first_time_at_distance(
+            _FakeFormMapping({'first_time_at_distance': 'no'})
+        ) is False
+        assert _parse_first_time_at_distance(
+            _FakeFormMapping({'first_time_at_distance': ''})
+        ) is None
+        assert _parse_first_time_at_distance(_FakeFormMapping()) is None
+
+    def test_pack_weight_parsing(self):
+        assert _parse_pack_weight_kg(
+            _FakeFormMapping({'race_pack_weight_kg': '8.5'})
+        ) == 8.5
+        # Blank / non-numeric / negative → None (DB CHECK is >= 0).
+        assert _parse_pack_weight_kg(
+            _FakeFormMapping({'race_pack_weight_kg': ''})
+        ) is None
+        assert _parse_pack_weight_kg(
+            _FakeFormMapping({'race_pack_weight_kg': 'heavy'})
+        ) is None
+        assert _parse_pack_weight_kg(
+            _FakeFormMapping({'race_pack_weight_kg': '-3'})
+        ) is None
 
 
 # ─── _parse_race_terrain — C1 discipline_id passthrough ─────────────────────
