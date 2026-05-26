@@ -16,9 +16,11 @@ import pytest
 
 from routes.plan_create import (
     _load_plan_version,
+    _mark_plan_failed,
     _orchestration_error_message,
     _parse_plan_start_date,
     _resolve_plan_scope_end_date,
+    _terminal_status_response,
 )
 from layer4 import OrchestrationError
 
@@ -46,6 +48,7 @@ class _FakeConn:
     def __init__(self):
         self.calls: list[tuple[str, tuple]] = []
         self.commits: int = 0
+        self.rollbacks: int = 0
         self.responses: list[tuple] = []
 
     def queue_response(self, row=None, rows=None):
@@ -61,6 +64,9 @@ class _FakeConn:
 
     def commit(self):
         self.commits += 1
+
+    def rollback(self):
+        self.rollbacks += 1
 
 
 # ─── _parse_plan_start_date ─────────────────────────────────────────────────
@@ -112,6 +118,8 @@ class TestLoadPlanVersion:
             'scope_start_date': date(2026, 6, 1),
             'scope_end_date': date(2026, 7, 17),
             'pattern': 'A',
+            'generation_status': 'ready',
+            'generation_error': None,
         })
         result = _load_plan_version(conn, user_id=3, plan_version_id=7)
         assert result is not None
@@ -119,8 +127,11 @@ class TestLoadPlanVersion:
         assert result['user_id'] == 3
         assert result['created_via'] == 'plan_create'
         assert result['pattern'] == 'A'
+        assert result['generation_status'] == 'ready'
+        assert result['generation_error'] is None
         sql, params = conn.calls[0]
         assert 'WHERE id = ? AND user_id = ?' in sql
+        assert 'generation_status' in sql
         assert params == (7, 3)
 
     def test_returns_none_on_miss(self):
@@ -194,3 +205,46 @@ class TestOrchestrationErrorMessage:
         msg = _orchestration_error_message(OrchestrationError('some_new_code'))
         assert 'some_new_code' in msg
         assert 'plan creation failed' in msg.lower()
+
+
+# ─── _terminal_status_response (async-generation poller) ─────────────────────
+
+
+class TestTerminalStatusResponse:
+    def test_ready_returns_redirect(self):
+        pv = {'generation_status': 'ready', 'generation_error': None}
+        out = _terminal_status_response(pv, '/plans/v2/7')
+        assert out == {'status': 'ready', 'redirect': '/plans/v2/7'}
+
+    def test_failed_returns_stored_error(self):
+        pv = {'generation_status': 'failed', 'generation_error': 'boom (x)'}
+        out = _terminal_status_response(pv, '/plans/v2/7')
+        assert out['status'] == 'failed'
+        assert out['error'] == 'boom (x)'
+
+    def test_failed_without_stored_error_falls_back(self):
+        pv = {'generation_status': 'failed', 'generation_error': None}
+        out = _terminal_status_response(pv, '/plans/v2/7')
+        assert out['status'] == 'failed'
+        assert out['error']  # non-empty fallback copy
+
+    def test_generating_returns_none_to_proceed(self):
+        pv = {'generation_status': 'generating', 'generation_error': None}
+        assert _terminal_status_response(pv, '/plans/v2/7') is None
+
+
+# ─── _mark_plan_failed ───────────────────────────────────────────────────────
+
+
+class TestMarkPlanFailed:
+    def test_persists_failure_and_returns_json(self):
+        conn = _FakeConn()
+        out = _mark_plan_failed(conn, plan_version_id=7, user_id=3, message='nope')
+        assert out == {'status': 'failed', 'error': 'nope'}
+        # Rolls back to clear any aborted/pending txn, then writes + commits.
+        assert conn.rollbacks == 1
+        assert conn.commits == 1
+        sql, params = conn.calls[0]
+        assert "generation_status = 'failed'" in sql
+        assert "WHERE id = ? AND user_id = ?" in sql
+        assert params == ('nope', 7, 3)

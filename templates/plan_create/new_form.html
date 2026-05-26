@@ -10,7 +10,8 @@
 <p class="text-muted">
   Generates a full plan from your profile + current state + target race (if set).
   Pattern A synthesis — typically 3-4 phases (Base / Build / Peak / Taper)
-  with seam reviews between phases. Takes ~30-60 seconds.
+  with seam reviews between phases. This runs the full coaching cascade and can
+  take a few minutes; you'll see a progress screen while it works.
 </p>
 
 <form method="post" action="{{ url_for('plan_create.new_plan') }}">
