@@ -51,6 +51,8 @@ from layer4 import (
     PostgresCacheBackend,
     orchestrate_single_session_synthesize,
 )
+from layer3a.builder import Layer3AOutputError
+from layer3b.builder import Layer3BOutputError
 from layer4.errors import Layer4InputError, Layer4OutputError
 from layer4.single_session import SingleSessionRequest
 from pydantic import ValidationError
@@ -426,7 +428,13 @@ def build_workout():
         except OrchestrationError as exc:
             flash(_orchestration_error_message(exc), 'danger')
             return redirect(url_for('ad_hoc_workouts.build_workout'))
-        except (Layer4InputError, Layer4OutputError) as exc:
+        except (
+            Layer3AOutputError, Layer3BOutputError,
+            Layer4InputError, Layer4OutputError,
+        ) as exc:
+            # 3A/3B run upstream of single-session synthesis in the same cone, so
+            # a Layer3*OutputError surfaces here too; catch it alongside the
+            # Layer 4 errors rather than letting it 500.
             flash(f"Workout synthesis failed ({exc.code}). Pick different inputs and retry.", 'danger')
             return redirect(url_for('ad_hoc_workouts.build_workout'))
 
@@ -610,7 +618,13 @@ def regenerate_suggestion(suggestion_id: int):
         return redirect(
             url_for('ad_hoc_workouts.view_suggestion', suggestion_id=suggestion_id)
         )
-    except (Layer4InputError, Layer4OutputError) as exc:
+    except (
+        Layer3AOutputError, Layer3BOutputError,
+        Layer4InputError, Layer4OutputError,
+    ) as exc:
+        # 3A/3B run upstream of single-session synthesis in the same cone, so a
+        # Layer3*OutputError surfaces here too; catch it alongside the Layer 4
+        # errors rather than letting it 500.
         flash(f"Workout synthesis failed ({exc.code}).", 'danger')
         return redirect(
             url_for('ad_hoc_workouts.view_suggestion', suggestion_id=suggestion_id)

@@ -37,8 +37,6 @@ field including `intensity_zone` per cardio block and the discriminated
 from __future__ import annotations
 
 import json
-import os
-import time
 import uuid
 from dataclasses import dataclass
 from datetime import date as _date_type, datetime
@@ -46,6 +44,7 @@ from typing import Any, Callable, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
+from llm_invocation import ThinkingToolCallError, invoke_tool_call
 from layer4.context import (
     Layer2CPayload,
     Layer2DPayload,
@@ -671,68 +670,30 @@ def _default_llm_caller(
     max_tokens: int,
     extended_thinking_budget: int,
 ) -> _SynthesizerOutput:
-    """Production LLM caller — invokes Anthropic SDK with extended thinking +
-    forced tool-use. Tests inject a stub instead."""
-    import anthropic
-
-    api_key = os.environ.get("ANTHROPIC_API_KEY")
-    if not api_key:
-        raise Layer4OutputError(
-            "anthropic_api_key_missing",
-            detail="ANTHROPIC_API_KEY environment variable is not set",
-        )
-    client = anthropic.Anthropic(api_key=api_key)
-
-    request_kwargs: dict[str, Any] = {
-        "model": model,
-        "max_tokens": max_tokens,
-        "temperature": temperature,
-        "system": system_prompt,
-        "messages": [{"role": "user", "content": user_prompt}],
-        "tools": [tool_schema],
-        "tool_choice": {"type": "tool", "name": tool_schema["name"]},
-    }
-    if extended_thinking_budget > 0:
-        # Extended thinking constrains the request: tool_choice must be `auto`
-        # (not forced), temperature must be 1, and max_tokens must exceed
-        # budget_tokens (max_tokens is the combined thinking + visible-output
-        # budget). Adding the thinking budget on top of the intended output
-        # budget preserves the output allowance. The tool is still offered via
-        # `tools` and required by the prompt body.
-        request_kwargs["thinking"] = {
-            "type": "enabled",
-            "budget_tokens": extended_thinking_budget,
-        }
-        request_kwargs["tool_choice"] = {"type": "auto"}
-        request_kwargs["temperature"] = 1.0
-        request_kwargs["max_tokens"] = max_tokens + extended_thinking_budget
-
-    start = time.monotonic()
+    """Production LLM caller — delegates to the shared thinking-aware
+    invocation (`llm_invocation.invoke_tool_call`), which holds the one correct
+    extended-thinking request shape (tool_choice `auto` + temperature 1 +
+    max_tokens > budget_tokens) AND the forced-tool retry that fires when a
+    thinking attempt declines the tool. Failures map to `Layer4OutputError` so
+    the existing error contract is preserved. Tests inject a stub instead."""
     try:
-        msg = client.messages.create(**request_kwargs)
-    except anthropic.APIError as exc:
-        raise Layer4OutputError(
-            "anthropic_api_error",
-            detail=f"{type(exc).__name__}: {exc}",
-        ) from exc
-    latency_ms = int((time.monotonic() - start) * 1000)
-
-    tool_args: dict[str, Any] | None = None
-    for block in msg.content:
-        if getattr(block, "type", None) == "tool_use" and block.name == tool_schema["name"]:
-            tool_args = dict(block.input)
-            break
-    if tool_args is None:
-        raise Layer4OutputError(
-            "schema_violation",
-            detail=f"synthesizer did not emit a {tool_schema['name']} tool_use block",
+        result = invoke_tool_call(
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            tool_schema=tool_schema,
+            model=model,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            extended_thinking_budget=extended_thinking_budget,
         )
+    except ThinkingToolCallError as exc:
+        raise Layer4OutputError(exc.code, detail=exc.detail) from exc
 
     return _SynthesizerOutput(
-        tool_args=tool_args,
-        input_tokens=msg.usage.input_tokens,
-        output_tokens=msg.usage.output_tokens,
-        latency_ms=latency_ms,
+        tool_args=result.tool_args,
+        input_tokens=result.input_tokens,
+        output_tokens=result.output_tokens,
+        latency_ms=result.latency_ms,
     )
 
 
