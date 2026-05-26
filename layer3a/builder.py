@@ -23,8 +23,6 @@ Integration substrate: `layer3a/integration.py` (5 `q_layer3A_*` accessors
 from __future__ import annotations
 
 import hashlib
-import os
-import time
 import warnings
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
@@ -32,6 +30,7 @@ from typing import Any, Callable
 
 from pydantic import ValidationError
 
+from llm_invocation import ThinkingToolCallError, invoke_tool_call
 from layer4.context import (
     ACWREntry,
     ACWRStatus,
@@ -132,53 +131,29 @@ def _default_llm_caller(
     max_tokens: int,
     extended_thinking_budget: int,
 ) -> _LLMOutput:
-    """Production LLM caller — invokes Anthropic SDK with extended thinking +
-    forced tool-use per D1 + D2. Tests inject a stub instead."""
-    import anthropic
-
-    api_key = os.environ.get("ANTHROPIC_API_KEY")
-    if not api_key:
-        raise Layer3AOutputError(
-            "anthropic_api_key_missing",
-            detail="ANTHROPIC_API_KEY environment variable is not set",
+    """Production LLM caller — delegates to the shared thinking-aware
+    invocation (`llm_invocation.invoke_tool_call`), which holds the one
+    correct extended-thinking request shape (tool_choice `auto` + temperature 1
+    + max_tokens > budget_tokens). Failures map to `Layer3AOutputError` so the
+    §5.3 error contract is preserved. Tests inject a stub instead."""
+    try:
+        result = invoke_tool_call(
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            tool_schema=tool_schema,
+            model=model,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            extended_thinking_budget=extended_thinking_budget,
         )
-    client = anthropic.Anthropic(api_key=api_key)
-
-    request_kwargs: dict[str, Any] = {
-        "model": model,
-        "max_tokens": max_tokens,
-        "temperature": temperature,
-        "system": system_prompt,
-        "messages": [{"role": "user", "content": user_prompt}],
-        "tools": [tool_schema],
-        "tool_choice": {"type": "tool", "name": tool_schema["name"]},
-    }
-    if extended_thinking_budget > 0:
-        request_kwargs["thinking"] = {
-            "type": "enabled",
-            "budget_tokens": extended_thinking_budget,
-        }
-
-    start = time.monotonic()
-    msg = client.messages.create(**request_kwargs)
-    latency_ms = int((time.monotonic() - start) * 1000)
-
-    tool_args: dict[str, Any] | None = None
-    for block in msg.content:
-        if getattr(block, "type", None) == "tool_use" and block.name == tool_schema["name"]:
-            tool_args = dict(block.input)
-            break
-    if tool_args is None:
-        raise Layer3AOutputError(
-            "schema_violation",
-            detail=f"synthesizer did not emit a {tool_schema['name']} tool_use block",
-        )
+    except ThinkingToolCallError as exc:
+        raise Layer3AOutputError(exc.code, detail=exc.detail) from exc
 
     return _LLMOutput(
-        tool_args=tool_args,
-        input_tokens=msg.usage.input_tokens,
-        output_tokens=msg.usage.output_tokens,
-        latency_ms=latency_ms,
+        tool_args=result.tool_args,
+        input_tokens=result.input_tokens,
+        output_tokens=result.output_tokens,
+        latency_ms=result.latency_ms,
     )
 
 
