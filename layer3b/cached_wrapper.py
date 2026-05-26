@@ -61,6 +61,15 @@ from layer4.hashing import canonical_json, compute_payload_hash
 
 _LAYER3B_ENTRY_POINT_LABEL = "llm_layer3b_goal_timeline_viability"
 
+# Deployed-shape-gap default (§H.2 / D11). 3B's event-mode `_validate_inputs`
+# hard-requires a `goal_outcome` (Finish / Compete mid-pack / Podium), but the
+# athlete-facing capture form does not exist yet — no column stores it and the
+# orchestrator's shared full cone does not supply it. Until the capture form
+# lands, event-mode callers that omit `goal_outcome` fall back to the
+# conservative "Finish" tier so generation proceeds (mirrors the no-event-mode
+# back-fill from layer1.event_goal below).
+_DEFAULT_EVENT_GOAL_OUTCOME = "Finish"
+
 
 def _sha256_hex(s: str) -> str:
     return hashlib.sha256(s.encode("utf-8")).hexdigest()
@@ -183,6 +192,12 @@ def llm_layer3b_goal_timeline_viability_cached(
             plan_duration_weeks = layer1_payload.event_goal.plan_duration_weeks_no_event
         if non_event_goal_type is None:
             non_event_goal_type = layer1_payload.event_goal.non_event_goal_type
+    # Effective event-mode resolution: default the not-yet-captured
+    # goal_outcome to the conservative "Finish" tier (see
+    # _DEFAULT_EVENT_GOAL_OUTCOME). Feeds both _validate_inputs and the
+    # deterministic section_h2_kwargs / cache key below.
+    elif goal_outcome is None:
+        goal_outcome = _DEFAULT_EVENT_GOAL_OUTCOME
 
     section_h2_kwargs: dict[str, Any] = {}
     if race_event_payload is not None:

@@ -2694,6 +2694,40 @@ class TestOrchestratePlanCreateHappyPath:
         assert kw["race_event_payload"] is not None
         assert kw["race_event_payload"].race_event_id == 1
 
+    def test_3b_current_date_anchored_on_plan_start_date(self):
+        """Regression: 3B's `current_date` (the goal/timeline viability
+        anchor) is the plan_start_date, not today — so 3B's
+        `time_to_event_weeks` matches Layer 4's
+        `(event_date - plan_start_date)//7` check even when the athlete picks
+        a future start. 3A's `as_of` stays on today (athlete state is now)."""
+        conn = _FakeConn()
+        _queue_target_race_event(conn)
+        _queue_etl_version_set(conn)
+        _queue_primary_locale(conn)
+        _queue_locale_equipment_pool(conn)
+        cache = Layer4Cache(InMemoryCacheBackend())
+        future_start = date(2026, 6, 4)  # after _TODAY (2026-06-01)
+
+        stack = _plan_create_patches(
+            layer4_return=_fake_plan_create_layer4_payload(plan_version_id=3)
+        )
+        mocks = _enter_all(stack)
+        try:
+            orchestrate_plan_create(
+                conn,
+                _USER_ID,
+                plan_start_date=future_start,
+                plan_version_id=3,
+                cache=cache,
+                today=_TODAY,
+            )
+        finally:
+            _exit_all(stack)
+
+        m_l3a, m_l3b = mocks[7], mocks[8]
+        assert m_l3b.call_args.kwargs["current_date"] == future_start
+        assert m_l3a.call_args.kwargs["as_of"].date() == _TODAY
+
     def test_pipeline_in_order_no_event_mode(self):
         """No-event-mode happy path: open-ended plan_create proceeds without
         a target race row. Layer 2B's race_terrain=[], Layer 2E's

@@ -263,7 +263,12 @@ class TestARBaseline:
         assert trail.inclusion == "included"
         assert trail.is_conditional is False
         assert trail.conditional_resolution is None
-        assert trail.load_weight.value == 32.5  # midpoint of 25-40
+        # load_weight is normalized to a 0–1 distribution over the included
+        # set (Layer4_Spec §4.2). Trail's raw 25–40 midpoint (32.5) is the
+        # largest included band, so it carries the largest normalized share.
+        included = [d for d in payload.disciplines if d.inclusion == "included"]
+        assert sum(d.load_weight.value for d in included) == pytest.approx(1.0)
+        assert trail.load_weight.value == max(d.load_weight.value for d in included)
         assert trail.load_weight.source == "system_default"
         assert "core discipline" in trail.rationale
         assert "25–40%" in trail.rationale
@@ -360,9 +365,13 @@ class TestAROverride:
 
         by_id = {d.discipline_id: d for d in payload.disciplines}
         packraft = by_id["D-008"]
-        assert packraft.load_weight.value == 25.0
         assert packraft.load_weight.source == "athlete_override"
-        assert packraft.load_weight.system_default == 15.0  # midpoint of 10-20
+        # value + system_default are normalized (÷ included total) but their
+        # ratio is preserved: raw override 25 vs raw default 15 (midpoint 10-20).
+        assert (
+            packraft.load_weight.value / packraft.load_weight.system_default
+            == pytest.approx(25.0 / 15.0)
+        )
 
         # Divergence: |25-15|/15 = 0.67 > 0.5 → flag fires
         divergence_flags = [

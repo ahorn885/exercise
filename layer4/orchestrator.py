@@ -206,6 +206,7 @@ def _upstream_full_cone(
     *,
     cache: Layer4Cache,
     target_race_event: RaceEventPayload | None,
+    viability_current_date: date | None = None,
 ) -> _UpstreamFullCone:
     """Compose the full upstream cone (Layer 1 → 2A → 2B → 2D → 2C → 3A →
     3B → 2E) shared by race_week_brief + plan_refresh + plan_create.
@@ -327,13 +328,23 @@ def _upstream_full_cone(
         cache_backend=cache.backend,
     )
 
+    # 3B reasons about goal/timeline viability, so its `current_date` anchors
+    # the training timeline. plan_create passes the (possibly future)
+    # `plan_start_date` via `viability_current_date` so 3B's
+    # `time_to_event_weeks` is measured from when training actually begins —
+    # matching Layer 4's `_validate_plan_create_inputs` check
+    # `(event_date - plan_start_date) // 7`. race_week_brief / plan_refresh
+    # leave it None and anchor on `today`. 3A's `as_of` + 2E stay on `today`
+    # (athlete state + nutrition baseline are "now", not the plan start).
     layer3b_payload = llm_layer3b_goal_timeline_viability_cached(
         user_id=user_id,
         layer1_payload=layer1_payload,
         layer3a_payload=layer3a_payload,
         layer2a_payload=layer2a_payload,
         race_event_payload=target_race_event,
-        current_date=today,
+        current_date=(
+            viability_current_date if viability_current_date is not None else today
+        ),
         etl_version_set=etl_version_set,
         cache_backend=cache.backend,
     )
@@ -737,7 +748,8 @@ def orchestrate_plan_create(
 
     race_event = load_target_race_event_payload(db, user_id)
     cone = _upstream_full_cone(
-        db, user_id, today, cache=cache, target_race_event=race_event
+        db, user_id, today, cache=cache, target_race_event=race_event,
+        viability_current_date=plan_start_date,
     )
 
     return llm_layer4_plan_create_cached(

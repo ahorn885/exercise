@@ -42,6 +42,7 @@ class per slice 3 D4 — `race_event_payload=None` flows cleanly.
 
 from __future__ import annotations
 
+import traceback
 from datetime import date, timedelta
 
 from flask import (
@@ -63,8 +64,8 @@ from layer4 import (
     orchestrate_plan_create,
 )
 from layer4.errors import Layer4InputError, Layer4OutputError
-from layer3a.builder import Layer3AOutputError
-from layer3b.builder import Layer3BOutputError
+from layer3a.builder import Layer3AInputError, Layer3AOutputError
+from layer3b.builder import Layer3BInputError, Layer3BOutputError
 from plan_sessions_repo import (
     allocate_plan_version_row,
     load_plan_sessions_by_version,
@@ -214,6 +215,25 @@ def _advance_plan_generation(db, uid: int, plan_version_id: int) -> dict:
             plan_version_id=plan_version_id,
             cache=_build_layer4_cache(),
         )
+        # Success path runs INSIDE the try so a persist/commit failure (e.g. a
+        # plan_sessions schema or natural-key surprise) is caught below and
+        # marks the row terminal — not a raw 500 that leaves it 'generating'
+        # for the every-minute cron to re-pick. DELETE-before-insert keeps the
+        # persist idempotent: if a prior pass committed sessions then died
+        # before flipping the status, the cache-hit replay would otherwise
+        # collide on the natural-key UNIQUE.
+        db.execute(
+            "DELETE FROM plan_sessions WHERE plan_version_id = ?",
+            (plan_version_id,),
+        )
+        persist_layer4_sessions(db, result)
+        db.execute(
+            "UPDATE plan_versions SET generation_status = 'ready', "
+            "generation_error = NULL WHERE id = ? AND user_id = ?",
+            (plan_version_id, uid),
+        )
+        db.commit()
+        return {"status": "ready"}
     except OrchestrationError as exc:
         return _mark_plan_failed(
             db, plan_version_id, uid, _orchestration_error_message(exc)
@@ -223,7 +243,22 @@ def _advance_plan_generation(db, uid: int, plan_version_id: int) -> dict:
             db, plan_version_id, uid,
             f"Plan synthesis failed ({exc.code}). Adjust your inputs and try again.",
         )
-    except (Layer3AOutputError, Layer3BOutputError) as exc:
+    except (
+        Layer3AInputError,
+        Layer3BInputError,
+        Layer3AOutputError,
+        Layer3BOutputError,
+    ) as exc:
+        # Input-validation failures (Layer3*InputError) escaped here as a raw
+        # "unexpected" 500 before — they are ValueError subclasses, not in the
+        # *OutputError contract. Catch them alongside the output errors so an
+        # upstream-contract gap degrades to a coded message instead of an
+        # opaque one. Log the detail so the cause is visible in the runtime log.
+        print(
+            f"_advance_plan_generation: Layer3 {type(exc).__name__} "
+            f"({exc.code}) for plan_version_id={plan_version_id}: "
+            f"{getattr(exc, 'detail', None)}"
+        )
         return _mark_plan_failed(
             db, plan_version_id, uid,
             f"Athlete evaluation failed ({exc.code}). Try again or contact support.",
@@ -233,6 +268,9 @@ def _advance_plan_generation(db, uid: int, plan_version_id: int) -> dict:
         # must still flip the row to a terminal state — otherwise it escapes as
         # a raw 500 AND the row stays 'generating', so the every-minute cron
         # re-picks it and 500-loops forever, burning a real cone each fire.
+        # Log a full traceback (not just the repr) so an unexpected fault is
+        # diagnosable from the runtime log without another instrumentation pass.
+        traceback.print_exc()
         print(
             f"_advance_plan_generation: unexpected {type(exc).__name__} for "
             f"plan_version_id={plan_version_id}: {exc}"
@@ -241,22 +279,6 @@ def _advance_plan_generation(db, uid: int, plan_version_id: int) -> dict:
             db, plan_version_id, uid,
             "Plan generation failed unexpectedly. Please try again or contact support.",
         )
-
-    # Success. DELETE-before-insert keeps the persist idempotent: if a prior
-    # pass committed sessions then died before flipping the status, the
-    # cache-hit replay would otherwise collide on the natural-key UNIQUE.
-    db.execute(
-        "DELETE FROM plan_sessions WHERE plan_version_id = ?",
-        (plan_version_id,),
-    )
-    persist_layer4_sessions(db, result)
-    db.execute(
-        "UPDATE plan_versions SET generation_status = 'ready', "
-        "generation_error = NULL WHERE id = ? AND user_id = ?",
-        (plan_version_id, uid),
-    )
-    db.commit()
-    return {"status": "ready"}
 
 
 # ─── Routes ─────────────────────────────────────────────────────────────────
