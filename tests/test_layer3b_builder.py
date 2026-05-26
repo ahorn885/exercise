@@ -1284,6 +1284,47 @@ class TestNotableObservationsBudget:
         warns = [o for o in result.notable_observations if o.category == "warning"]
         assert len(warns) == 4
 
+    def test_over_length_observation_text_truncated_not_schema_violation(self):
+        # Per-string twin of the budget clamp: Layer3Observation.text is
+        # max_length=240 and the tool-schema maxLength is only an API hint, so a
+        # long observation walls the cone on schema_violation. The driver
+        # truncates to the cap before validation instead of failing.
+        long_text = (
+            "The requested finish target sits well outside the band the current "
+            "fitness trajectory supports given the compressed runway to race day, "
+            "and the volume ramp required to close that gap would push acute load "
+            "into the non-functional-overreach zone, so the timeline needs an "
+            "explicit viability conversation before the plan is generated."
+        )
+        assert len(long_text) > 240
+        result = llm_layer3b_goal_timeline_viability(
+            user_id=1,
+            layer1_payload=_make_layer1(),
+            layer3a_payload=_make_layer3a(),
+            layer2a_payload=_make_layer2a(),
+            race_event_payload=_make_race_event(event_date=date(2026, 7, 22)),
+            current_date=date(2026, 5, 20),
+            etl_version_set=_DEFAULT_ETL,
+            goal_outcome="Finish",
+            llm_caller=_stub_caller(
+                _good_tool_args(
+                    observations=[
+                        {
+                            "category": "warning",
+                            "text": long_text,
+                            "evidence_basis": ["x"],
+                            "elevates_to_hitl": True,
+                        }
+                    ]
+                )
+            ),
+        )
+        emitted = [o for o in result.notable_observations if o.text.endswith("…")]
+        assert len(emitted) == 1
+        assert len(emitted[0].text) <= 240
+        assert emitted[0].category == "warning"
+        assert emitted[0].elevates_to_hitl is True
+
 
 # ─── §5.5 step 1 schema violation retry ──────────────────────────────────────
 

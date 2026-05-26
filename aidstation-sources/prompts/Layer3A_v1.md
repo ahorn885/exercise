@@ -408,7 +408,9 @@ Hard rules:
    gates fail — be conservative.
 
 6. Emit `notable_observations` only when they would change a downstream
-   decision. Do not narrate. Required observation triggers (must emit
+   decision. Do not narrate. Keep each observation's `text` under 240
+   characters — one concise flag, not a paragraph (it is hard-capped at
+   240 and truncated past that). Required observation triggers (must emit
    when conditions met):
    - ACWR ratio >1.5 in any discipline OR combined → category=warning,
      elevates_to_hitl=true.
@@ -443,9 +445,11 @@ Hard rules:
    (c) warning + elevates_to_hitl=false, (d) data_hygiene + elevates_to_hitl=true,
    (e) everything else.
 
-9. `weak_links` is bounded to 5 items max. Short phrases (e.g., "single-leg
-   balance", "shoulder press strength"). Layer 4 consumes these for
-   accessory programming; longer lists dilute usefulness.
+9. `weak_links` is bounded to 5 items max, ordered MOST-LIMITING FIRST —
+   the list is truncated to the first 5, so lead with the weaknesses that
+   most constrain training. Short phrases (e.g., "single-leg balance",
+   "shoulder press strength"). Layer 4 consumes these for accessory
+   programming; longer lists dilute usefulness.
 
 10. `body_composition_notes` is optional. Emit ONLY when a relevant signal
     exists in §A (recent weight + height producing meaningful BMI

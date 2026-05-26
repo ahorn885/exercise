@@ -327,7 +327,8 @@ class Observation:
 - `Assessment.level == 'insufficient_data'` is valid for any assessment. When emitted, `reasoning_text` must explain what was missing.
 - `RecentTrajectory.short_term.direction` and `medium_term.direction` can differ — e.g., "fatigued (short-term)" with "building (medium-term)" indicates a hard training block.
 - `ACWRStatus.combined` is None when no integration data exists AND `cardio_log` is empty. Per-discipline may still populate from self-reported §C.
-- `weak_links` is bounded by `max_items=5`. Plan-gen consumes these for accessory programming; longer lists dilute usefulness.
+- `weak_links` is bounded by `max_items=5`, **ordered most-limiting first** — the prompt instructs the model to lead with the weaknesses that most constrain training, and the driver (`layer3a.builder._clamp_weak_links`) truncates to the first 5 pre-validation (the Anthropic API treats the tool-schema `maxItems` as guidance, not a hard cap). Plan-gen consumes these for accessory programming; longer lists dilute usefulness.
+- `notable_observations[].text` is bounded to ≤240 chars. The model is prompted to keep each observation concise, and the driver (`layer3a.builder._clamp_observation_text`) truncates any over-length `text` to the cap pre-validation (word-boundary + ellipsis) so an over-run degrades gracefully instead of walling on `schema_violation`. Only `text` is trimmed; `category` / `evidence_basis` / `elevates_to_hitl` are untouched, so HITL gating is unaffected.
 
 ## 8. Coaching flag rules
 

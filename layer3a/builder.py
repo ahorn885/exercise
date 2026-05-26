@@ -165,6 +165,13 @@ def _default_llm_caller(
 # pre-validation clamp cap (`_clamp_weak_links`) — keep the three in lock-step.
 _WEAK_LINKS_MAX_ITEMS = 5
 
+# Mirrors `Layer3Observation.text` `Field(max_length=240)` in `layer4/context.py`
+# and the tool-schema `maxLength` on `notable_observations[].text`. The Anthropic
+# API treats string bounds as guidance, so a long observation walls the cone on
+# `schema_violation` (the per-string twin of the weak_links over-emit); the
+# pre-validation clamp (`_clamp_observation_text`) truncates to the cap instead.
+_OBSERVATION_TEXT_MAX_CHARS = 240
+
 
 _ASSESSMENT_SCHEMA = {
     "type": "object",
@@ -890,7 +897,9 @@ Hard rules:
    gates fail — be conservative.
 
 6. Emit `notable_observations` only when they would change a downstream
-   decision. Do not narrate. Required observation triggers:
+   decision. Do not narrate. Keep each observation's `text` under 240
+   characters — one concise flag, not a paragraph (it is hard-capped at
+   240 and truncated past that). Required observation triggers:
    - ACWR ratio >1.5 in any discipline OR combined → warning,
      elevates_to_hitl=true.
    - ACWR ratio <0.5 in any discipline AND athlete in build/peak phase
@@ -1226,6 +1235,44 @@ def _clamp_weak_links(
         current_state["weak_links"] = weak_links[:max_items]
 
 
+def _truncate_to_word_boundary(text: str, max_chars: int) -> str:
+    """Cut `text` to <= `max_chars`, snapping to the last word boundary near the
+    limit and appending a single-char ellipsis so it does not break mid-word."""
+    cut = text[: max_chars - 1].rstrip()
+    space = cut.rfind(" ")
+    if space >= max_chars - 40:
+        cut = cut[:space].rstrip()
+    return cut + "…"
+
+
+def _clamp_observation_text(
+    candidate: dict[str, Any], max_chars: int = _OBSERVATION_TEXT_MAX_CHARS
+) -> None:
+    """Truncate each `notable_observations[i].text` to the schema cap in place
+    before validation. `Layer3Observation.text` is `max_length=240` and the tool
+    schema carries the matching `maxLength`, but the Anthropic API treats string
+    bounds as guidance — a long observation fails `Layer3APayload` validation on
+    both attempts and walls the cone (the per-string twin of the weak_links
+    over-emit). Only the human-readable `text` is trimmed; the structured fields
+    (category, evidence_basis, elevates_to_hitl) are untouched, so HITL gating is
+    unaffected."""
+    obs = candidate.get("notable_observations")
+    if not isinstance(obs, list):
+        return
+    for item in obs:
+        if not isinstance(item, dict):
+            continue
+        text = item.get("text")
+        if isinstance(text, str) and len(text) > max_chars:
+            truncated = _truncate_to_word_boundary(text, max_chars)
+            print(
+                f"llm_layer3a_athlete_state: truncating a notable_observations "
+                f"text from {len(text)} to {len(truncated)} chars "
+                f"(Layer3Observation max_length={max_chars})"
+            )
+            item["text"] = truncated
+
+
 def _prompt_hash(system_prompt: str, user_prompt: str) -> str:
     return hashlib.sha256(
         (system_prompt + "||" + user_prompt).encode("utf-8")
@@ -1315,9 +1362,10 @@ def llm_layer3a_athlete_state(
             "output_tokens": llm_out.output_tokens,
             "etl_version_set": etl_version_set,
         }
-        # Honor the bounded-collection cap deterministically before validation
+        # Honor the bounded-collection caps deterministically before validation
         # so an over-emit degrades gracefully instead of walling the cone.
         _clamp_weak_links(candidate)
+        _clamp_observation_text(candidate)
         try:
             Layer3APayload.model_validate(candidate)
             validated_args = candidate

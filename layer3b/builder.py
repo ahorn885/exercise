@@ -112,6 +112,12 @@ _VALID_PLAN_DURATION_WEEKS = frozenset({8, 12, 16, 20, 24})
 # used as the tool-schema `maxItems` hint, the `_trim_observations_to_budget`
 # default, and the pre-validation `_clamp_notable_observations` cap.
 _NOTABLE_OBSERVATIONS_MAX = 10
+# Mirrors `Layer3Observation.text` `Field(max_length=240)` in `layer4/context.py`
+# and the tool-schema `maxLength` on `notable_observations[].text`. The Anthropic
+# API treats string bounds as guidance, so a long observation walls the cone on
+# `schema_violation`; the pre-validation `_clamp_observation_text` truncates to
+# the cap instead.
+_OBSERVATION_TEXT_MAX_CHARS = 240
 # §8.2 drop order when over budget: warning > opportunity > data_gap >
 # data_hygiene. Lower rank = higher priority = kept first.
 _OBSERVATION_CATEGORY_PRIORITY = {
@@ -851,8 +857,10 @@ Hard rules:
    - no-event mode AND Goal Type vs §C primary_sport mismatch →
      category=data_hygiene; elevates_to_hitl=False.
 
-9. Observation budget: notable_observations is capped at 6 items.
-   Priority: warning > opportunity > data_gap > data_hygiene.
+9. Observation budget: notable_observations is capped at 10 items.
+   Priority: warning > opportunity > data_gap > data_hygiene. Keep each
+   observation's `text` under 240 characters — one concise flag, not a
+   paragraph (it is hard-capped at 240 and truncated past that).
 
 10. Forbidden observations (never emit):
     - Generic encouragement.
@@ -1328,6 +1336,43 @@ def _clamp_notable_observations(
     candidate["notable_observations"] = [obs[i] for i in kept_idx]
 
 
+def _truncate_to_word_boundary(text: str, max_chars: int) -> str:
+    """Cut `text` to <= `max_chars`, snapping to the last word boundary near the
+    limit and appending a single-char ellipsis so it does not break mid-word."""
+    cut = text[: max_chars - 1].rstrip()
+    space = cut.rfind(" ")
+    if space >= max_chars - 40:
+        cut = cut[:space].rstrip()
+    return cut + "…"
+
+
+def _clamp_observation_text(
+    candidate: dict[str, Any], max_chars: int = _OBSERVATION_TEXT_MAX_CHARS
+) -> None:
+    """Truncate each `notable_observations[i].text` to the schema cap in place
+    before validation. `Layer3Observation.text` is `max_length=240` and the tool
+    schema carries the matching `maxLength`, but the Anthropic API treats string
+    bounds as guidance — a long observation fails `Layer3BPayload` validation and
+    walls the cone (same per-string class as the 3A fix). Only the human-readable
+    `text` is trimmed; category/evidence_basis/elevates_to_hitl are untouched, so
+    HITL gating is unaffected."""
+    obs = candidate.get("notable_observations")
+    if not isinstance(obs, list):
+        return
+    for item in obs:
+        if not isinstance(item, dict):
+            continue
+        text = item.get("text")
+        if isinstance(text, str) and len(text) > max_chars:
+            truncated = _truncate_to_word_boundary(text, max_chars)
+            print(
+                f"llm_layer3b_goal_timeline_viability: truncating a "
+                f"notable_observations text from {len(text)} to "
+                f"{len(truncated)} chars (Layer3Observation max_length={max_chars})"
+            )
+            item["text"] = truncated
+
+
 # ─── Periodization-sanity loop (§5.5 step 4 + D13) ───────────────────────────
 
 
@@ -1604,9 +1649,11 @@ def llm_layer3b_goal_timeline_viability(
             etl_version_set=etl_version_set,
             race_event_payload=race_event_payload,
         )
-        # Honor the §8.2 budget deterministically before validation so an
-        # over-emit degrades gracefully instead of walling on schema_violation.
+        # Honor the §8.2 budget + per-string cap deterministically before
+        # validation so an over-emit degrades gracefully instead of walling on
+        # schema_violation.
         _clamp_notable_observations(candidate)
+        _clamp_observation_text(candidate)
         try:
             Layer3BPayload.model_validate(candidate)
             validated_candidate = candidate
@@ -1702,6 +1749,7 @@ def llm_layer3b_goal_timeline_viability(
                 race_event_payload=race_event_payload,
             )
             _clamp_notable_observations(retry_candidate)
+            _clamp_observation_text(retry_candidate)
             retry_payload = Layer3BPayload.model_validate(retry_candidate)
         except (ValidationError, Layer3BOutputError):
             retry_payload = None

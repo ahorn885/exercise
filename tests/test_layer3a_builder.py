@@ -837,6 +837,71 @@ class TestWeakLinksClamp:
         assert payload.current_state.weak_links == five
 
 
+class TestObservationTextClamp:
+    def test_over_length_observation_text_truncated_not_schema_violation(self):
+        # Reproduces the prod Layer3AOutputError(schema_violation) on
+        # notable_observations[].text: the tool-schema maxLength=240 is only an
+        # API hint, so the model emits a longer observation and the cone walls.
+        # The driver truncates to the Layer3Observation cap (240) before
+        # validation instead of failing generation.
+        long_text = (
+            "Self-reported weekly volume diverges sharply from the integration "
+            "record across the last four weeks, with logged cardio hours running "
+            "well above what the connected provider captured, which undermines "
+            "confidence in the load picture and warrants a data-hygiene review "
+            "before any peak-phase prescription is locked in for this athlete."
+        )
+        assert len(long_text) > 240
+        args = _good_tool_args(
+            observations=[
+                {
+                    "category": "data_hygiene",
+                    "text": long_text,
+                    "evidence_basis": ["integration.recent_workouts"],
+                    "elevates_to_hitl": True,
+                }
+            ]
+        )
+        payload = llm_layer3a_athlete_state(
+            user_id=1,
+            layer1_payload=_make_layer1(),
+            layer2a_payload=_make_layer2a(),
+            integration_bundle=_make_bundle(),
+            as_of=datetime(2026, 5, 20, 0, 0),
+            etl_version_set=_DEFAULT_ETL,
+            llm_caller=_stub_caller(args),
+        )
+        obs = payload.notable_observations[0]
+        assert len(obs.text) <= 240
+        assert obs.text.endswith("…")
+        # structured fields untouched — HITL gating preserved
+        assert obs.category == "data_hygiene"
+        assert obs.elevates_to_hitl is True
+
+    def test_at_cap_observation_text_unchanged(self):
+        exact = "x" * 240
+        args = _good_tool_args(
+            observations=[
+                {
+                    "category": "warning",
+                    "text": exact,
+                    "evidence_basis": ["integration.recent_hrv"],
+                    "elevates_to_hitl": False,
+                }
+            ]
+        )
+        payload = llm_layer3a_athlete_state(
+            user_id=1,
+            layer1_payload=_make_layer1(),
+            layer2a_payload=_make_layer2a(),
+            integration_bundle=_make_bundle(),
+            as_of=datetime(2026, 5, 20, 0, 0),
+            etl_version_set=_DEFAULT_ETL,
+            llm_caller=_stub_caller(args),
+        )
+        assert payload.notable_observations[0].text == exact
+
+
 # ─── §5.3 step 2 evidence-basis cross-check ──────────────────────────────────
 
 

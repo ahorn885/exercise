@@ -44,7 +44,7 @@ A single `Layer3BPayload` per spec §7. The payload carries:
 - `goal_viability` — viability enum (`achievable` / `achievable-with-adjustment` / `unrealistic-as-stated`) + confidence + reasoning_text + evidence_basis + suggested_adjustments.
 - `periodization_shape` — mode (`standard` / `compressed` / `extended` / `custom`) + start_phase (`Base` / `Build` / `Peak` / `Taper`) + optional `phase_weeks` (custom-mode only) + reasoning_text + evidence_basis.
 - `hitl_surface` — list of `Layer3BHITLItem` (the LLM's proposed items + validator-auto-emitted §6.1 items, deduplicated by `item_label`).
-- `notable_observations` — downstream-actionable notes only, bounded to 6 items per §8.2 priority ordering.
+- `notable_observations` — downstream-actionable notes only, bounded to 10 items per §8.2 priority ordering.
 
 Metadata fields (model, temperature, prompt_hash, latency_ms, token counts, etl_version_set) are stamped by the driver post-hoc — NOT emitted by the LLM. The D-66 event-metadata fields (event_date, event_locale_id, race_format, time_to_event_weeks) are populated by the driver from `race_event_payload` per D14 — NOT emitted by the LLM (the LLM doesn't have date-arithmetic-against-current_date as a job).
 
@@ -435,10 +435,12 @@ Hard rules:
      category=data_gap; elevates_to_hitl=False. (The validator
      auto-appends this one; you don't need to emit it.)
 
-9. Observation budget (§8.2): `notable_observations` is capped at 6
+9. Observation budget (§8.2): `notable_observations` is capped at 10
    items. Priority order if you exceed: warning > opportunity >
    data_gap > data_hygiene. Within category, required-trigger items
-   outrank discretionary observations.
+   outrank discretionary observations. Keep each observation's `text`
+   under 240 characters — one concise flag, not a paragraph (it is
+   hard-capped at 240 and truncated past that).
 
 10. Forbidden observations (never emit):
     - Generic encouragement.
