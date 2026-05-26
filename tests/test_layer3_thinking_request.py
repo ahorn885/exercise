@@ -54,6 +54,12 @@ class _Msg:
     usage = _Usage()
 
 
+class _NoToolMsg:
+    content: list = []
+    usage = _Usage()
+    stop_reason = "end_turn"
+
+
 def _fake_anthropic(recorder, *, raise_exc=None, msg=None):
     class _Messages:
         def create(self, **kwargs):
@@ -61,6 +67,28 @@ def _fake_anthropic(recorder, *, raise_exc=None, msg=None):
             if raise_exc is not None:
                 raise raise_exc
             return msg if msg is not None else _Msg()
+
+    class _Client:
+        def __init__(self, *args, **kwargs):
+            self.messages = _Messages()
+
+    return _Client
+
+
+def _fake_anthropic_sequence(recorder, msgs):
+    """Returns successive `msgs` on successive `create` calls (records the
+    LATEST call's kwargs + bumps `recorder['n']`). Used to drive the
+    thinking-miss → forced-retry path."""
+    state = {"i": 0}
+
+    class _Messages:
+        def create(self, **kwargs):
+            recorder.clear()
+            recorder.update(kwargs)
+            i = state["i"]
+            state["i"] += 1
+            recorder["n"] = state["i"]
+            return msgs[min(i, len(msgs) - 1)]
 
     class _Client:
         def __init__(self, *args, **kwargs):
@@ -159,6 +187,55 @@ def test_helper_missing_tool_block_raises(monkeypatch):
             extended_thinking_budget=5000,
         )
     assert exc_info.value.code == "schema_violation"
+
+
+def test_helper_thinking_miss_falls_back_to_forced(monkeypatch):
+    """When the thinking attempt returns no tool_use block, the helper retries
+    once with thinking off + the forced tool and returns that result."""
+    rec: dict = {}
+    monkeypatch.setattr(
+        anthropic, "Anthropic", _fake_anthropic_sequence(rec, [_NoToolMsg(), _Msg()])
+    )
+
+    result = invoke_tool_call(
+        system_prompt="sys",
+        user_prompt="user",
+        tool_schema=_TOOL,
+        model="claude-sonnet-4-6",
+        temperature=0.2,
+        max_tokens=4000,
+        extended_thinking_budget=5000,
+    )
+
+    assert rec["n"] == 2  # thinking attempt + forced-tool retry
+    assert result.tool_args == {"ok": True}
+    # The recorded (final) request is the forced-tool fallback: no thinking.
+    assert rec["tool_choice"] == {"type": "tool", "name": "emit"}
+    assert "thinking" not in rec
+    assert rec["temperature"] == 0.2
+    assert rec["max_tokens"] == 4000
+
+
+def test_helper_thinking_off_does_not_retry_on_miss(monkeypatch):
+    """A forced (thinking-off) call that still yields no tool block raises
+    immediately — no retry (the request was already forced)."""
+    rec: dict = {}
+    monkeypatch.setattr(
+        anthropic, "Anthropic", _fake_anthropic_sequence(rec, [_NoToolMsg()])
+    )
+
+    with pytest.raises(ThinkingToolCallError) as exc_info:
+        invoke_tool_call(
+            system_prompt="sys",
+            user_prompt="user",
+            tool_schema=_TOOL,
+            model="claude-sonnet-4-6",
+            temperature=0.2,
+            max_tokens=4000,
+            extended_thinking_budget=0,
+        )
+    assert exc_info.value.code == "schema_violation"
+    assert rec["n"] == 1  # no retry
 
 
 def test_helper_missing_api_key_raises(monkeypatch):
