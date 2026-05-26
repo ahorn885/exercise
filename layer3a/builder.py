@@ -897,7 +897,9 @@ Hard rules:
    gates fail — be conservative.
 
 6. Emit `notable_observations` only when they would change a downstream
-   decision. Do not narrate. Required observation triggers:
+   decision. Do not narrate. Keep each observation's `text` under 240
+   characters — one concise flag, not a paragraph (it is hard-capped at
+   240 and truncated past that). Required observation triggers:
    - ACWR ratio >1.5 in any discipline OR combined → warning,
      elevates_to_hitl=true.
    - ACWR ratio <0.5 in any discipline AND athlete in build/peak phase

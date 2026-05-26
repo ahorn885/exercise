@@ -858,7 +858,9 @@ Hard rules:
      category=data_hygiene; elevates_to_hitl=False.
 
 9. Observation budget: notable_observations is capped at 6 items.
-   Priority: warning > opportunity > data_gap > data_hygiene.
+   Priority: warning > opportunity > data_gap > data_hygiene. Keep each
+   observation's `text` under 240 characters — one concise flag, not a
+   paragraph (it is hard-capped at 240 and truncated past that).
 
 10. Forbidden observations (never emit):
     - Generic encouragement.
