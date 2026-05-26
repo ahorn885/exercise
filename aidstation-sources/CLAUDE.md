@@ -146,6 +146,23 @@ For each, the expected output before stopping is: options considered, tradeoffs,
 
 ---
 
+## Environment quick-reference (stable infra + per-session lookups)
+
+These are stable across sessions — look them up here, don't re-derive them each thread.
+
+**Vercel (for the MCP tools — `list_teams`/`list_projects` return these every time):**
+- Team: slug `andy-horns-projects` — id `team_rkZGxltBw2ykWtrIPCYy16JZ`
+- Project: name `exercise` — id `prj_MRcYT23wGVekzavrrfWYUOTYlUPO`
+- Prod domain `aidstation-pro.vercel.app` (git-main alias `exercise-git-main-andy-horns-projects.vercel.app`); the current prod deployment is whichever `target: production` row is newest in `list_deployments`.
+- **Function Max Duration = 300s** (Pro plan; active since 2026-05-26). `vercel.json` can't set it (legacy `builds` array can't coexist with the `functions` key) — it's a dashboard setting.
+- **Runtime-log gotcha:** a `query timed out before all pages were fetched` warning makes a NEGATIVE log result UNRELIABLE (the search aborted mid-scan). Only clean negatives + any positive match are trustworthy. Narrow the time window or filter by `deploymentId` to get a clean query.
+
+**Container env (true every web session):**
+- DB egress to **Neon is blocked** from the container — can't run `init_db.py` / `psql` against Neon here, so schema migrations stay owed-Andy's-hands actions. PyPI egress works.
+- `pytest` is **not** in `requirements.txt`: `python -m venv /tmp/venv && /tmp/venv/bin/pip install -r requirements.txt pytest`. Isolated single-file collection hits a circular-import quirk → run the full `tests/` (or front-load a `tests/test_layer4_*.py`).
+
+---
+
 ## Operating context (v1 + v2, selective rebuild)
 
 This repo holds **two parallel work tracks**:

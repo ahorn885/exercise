@@ -20,6 +20,7 @@ shipped in Step 4d).
 
 from __future__ import annotations
 
+import json
 import uuid
 from concurrent.futures import Executor, ThreadPoolExecutor
 from dataclasses import dataclass
@@ -39,7 +40,11 @@ from layer4.context import (
     TrainingSubstitutionPayload,
 )
 from layer4.errors import Layer4InputError, Layer4OutputError
-from layer4.hashing import compute_accepted_output_hash, compute_phase_cache_key
+from layer4.hashing import (
+    compute_accepted_output_hash,
+    compute_phase_cache_key,
+    compute_seam_review_cache_key,
+)
 from layer4.payload import (
     Layer4Payload,
     Observation,
@@ -291,6 +296,37 @@ def _hydrate_phase_result_with_meta(
     )
     meta = SynthesisMetadata.model_validate(cached["synthesis_metadata"])
     return result, meta
+
+
+# Per-phase Pattern A rows use phase_idx 0..N-1; iter-1 seam-review cache rows
+# (§9.2) reuse the same entry_point storage with a disjoint phase_idx namespace
+# (base + seam_idx) so they never collide with a real phase row.
+_SEAM_CACHE_PHASE_IDX_BASE = 1000
+
+
+def _serialize_seam_call_result(result: SeamReviewCallResult) -> dict[str, Any]:
+    """Project the verdict-bearing fields of an iter-1 `SeamReviewCallResult`
+    for the seam-review cache. Token / latency accounting is NOT stored —
+    mirroring the per-phase cache, a cache hit contributes ZERO to the
+    synthesis-only token/latency totals (§9.6), so there is nothing to keep."""
+    return {
+        "verdict": result.verdict,
+        "seam_issues": list(result.seam_issues),
+        "proposed_patch_direction": result.proposed_patch_direction,
+    }
+
+
+def _hydrate_seam_call_result(cached: dict[str, Any]) -> SeamReviewCallResult:
+    """Reverse of `_serialize_seam_call_result`; zeros token/latency because
+    no LLM call fired on a cache hit (§9.6)."""
+    return SeamReviewCallResult(
+        verdict=cached["verdict"],
+        seam_issues=list(cached["seam_issues"]),
+        proposed_patch_direction=cached["proposed_patch_direction"],
+        input_tokens=0,
+        output_tokens=0,
+        latency_ms=0,
+    )
 
 
 def _build_final_payload_for_validation(
@@ -623,29 +659,25 @@ def _run_pattern_a_engine(
     # validator pass + seam i+1's iter-2 (if its iter-1 ALSO flagged) still
     # catch downstream issues. Schema-violations from iter-1 raise via
     # `Layer4OutputError` and propagate through the executor.
+    def _seam_prior_sessions(seam_idx: int) -> list[PlanSession]:
+        if seam_idx in phase_indices_to_synthesize:
+            return results_by_index[seam_idx].sessions
+        return carryover_sessions_by_phase_index.get(seam_idx, [])
+
+    def _seam_next_sessions(seam_idx: int) -> list[PlanSession]:
+        if (seam_idx + 1) in phase_indices_to_synthesize:
+            return results_by_index[seam_idx + 1].sessions
+        return carryover_sessions_by_phase_index.get(seam_idx + 1, [])
+
     def _iter1_task(
         seam_idx: int,
     ) -> tuple[int, SeamReviewCallResult]:
-        prior_phase_local = phase_structure.phases[seam_idx]
-        next_phase_local = phase_structure.phases[seam_idx + 1]
-        prior_synthesized_local = seam_idx in phase_indices_to_synthesize
-        next_synthesized_local = (seam_idx + 1) in phase_indices_to_synthesize
-        prior_sessions_local = (
-            results_by_index[seam_idx].sessions
-            if prior_synthesized_local
-            else carryover_sessions_by_phase_index.get(seam_idx, [])
-        )
-        next_sessions_local = (
-            results_by_index[seam_idx + 1].sessions
-            if next_synthesized_local
-            else carryover_sessions_by_phase_index.get(seam_idx + 1, [])
-        )
         call_1_local = review_seam(
             seam_index=seam_idx,
-            prior_phase_spec=prior_phase_local,
-            next_phase_spec=next_phase_local,
-            prior_phase_sessions=prior_sessions_local,
-            next_phase_sessions=next_sessions_local,
+            prior_phase_spec=phase_structure.phases[seam_idx],
+            next_phase_spec=phase_structure.phases[seam_idx + 1],
+            prior_phase_sessions=_seam_prior_sessions(seam_idx),
+            next_phase_sessions=_seam_next_sessions(seam_idx),
             layer2a_payload=layer2a_payload,
             layer2d_payload=layer2d_payload,
             discipline_mix=discipline_mix,
@@ -663,17 +695,77 @@ def _run_pattern_a_engine(
         )
         return (seam_idx, call_1_local)
 
+    # §9.2 iter-1 seam cache: each iteration-1 review is a pure function of the
+    # two phases' (per-phase-cached, stable-across-resumes) session outputs +
+    # the inputs already folded into `call_cache_key`. Cache them individually
+    # so a resumed pass replays the iter-1 LLM calls from cache and only the
+    # rare iter-2 re-synth path (intentionally uncached — it mutates phase
+    # state) recomputes. Closes the §9.2 Step-6 gap where the whole uncached
+    # seam tail re-ran on every resume. Reads are sequential + cheap; only the
+    # uncached seams fire the parallel LLM calls, so a cold run keeps the §5.2
+    # cross-seam parallelism. All cache get/put happen here, BEFORE the
+    # processing loop runs any iter-2 re-synth, so the key always hashes the
+    # original (per-phase-cached) sessions on both cold + resume.
+    seam_cache_enabled = cache is not None and call_cache_key is not None
+    cached_seam_indices: set[int] = set()
+
+    def _seam_cache_key(seam_idx: int) -> str:
+        return compute_seam_review_cache_key(
+            call_cache_key=call_cache_key,  # type: ignore[arg-type]
+            seam_index=seam_idx,
+            prior_phase_sessions=_seam_prior_sessions(seam_idx),
+            next_phase_sessions=_seam_next_sessions(seam_idx),
+            model=model_seam_reviewer,
+            max_tokens=seam_max_tokens,
+            extended_thinking_budget=seam_thinking_budget,
+        )
+
     iter1_results: list[tuple[int, SeamReviewCallResult]] = []
-    if len(pairs_to_review) >= 2 and executor is not None:
-        iter1_results = list(executor.map(_iter1_task, pairs_to_review))
-    elif len(pairs_to_review) >= 2:
+    uncached_pairs: list[int] = list(pairs_to_review)
+    if seam_cache_enabled:
+        uncached_pairs = []
+        for seam_idx in pairs_to_review:
+            entry = cache.backend.get(
+                _seam_cache_key(seam_idx), _SEAM_CACHE_PHASE_IDX_BASE + seam_idx
+            )
+            if entry is not None:
+                cache.metrics.record_hit(cache_entry_point, is_phase=True)
+                cached_seam_indices.add(seam_idx)
+                iter1_results.append(
+                    (seam_idx, _hydrate_seam_call_result(json.loads(entry.payload_json)))
+                )
+            else:
+                cache.metrics.record_miss(cache_entry_point, is_phase=True)
+                uncached_pairs.append(seam_idx)
+
+    fresh_results: list[tuple[int, SeamReviewCallResult]] = []
+    if len(uncached_pairs) >= 2 and executor is not None:
+        fresh_results = list(executor.map(_iter1_task, uncached_pairs))
+    elif len(uncached_pairs) >= 2:
         with ThreadPoolExecutor(
-            max_workers=min(4, len(pairs_to_review))
+            max_workers=min(4, len(uncached_pairs))
         ) as _default_exe:
-            iter1_results = list(_default_exe.map(_iter1_task, pairs_to_review))
-    elif len(pairs_to_review) == 1:
-        iter1_results = [_iter1_task(pairs_to_review[0])]
-    # else: no seams to review (single-phase plan or all-carryover T3 edge).
+            fresh_results = list(_default_exe.map(_iter1_task, uncached_pairs))
+    elif len(uncached_pairs) == 1:
+        fresh_results = [_iter1_task(uncached_pairs[0])]
+    # else: no uncached seams (all cached on resume, or none to review).
+
+    if seam_cache_enabled:
+        for seam_idx, res in fresh_results:
+            cache.backend.put(
+                cache_key=_seam_cache_key(seam_idx),
+                phase_idx=_SEAM_CACHE_PHASE_IDX_BASE + seam_idx,
+                user_id=user_id,
+                entry_point=cache_entry_point,
+                phase_name=f"__seam_{seam_idx}__",
+                payload_json=json.dumps(
+                    _serialize_seam_call_result(res),
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ),
+            )
+    iter1_results.extend(fresh_results)
+    iter1_results.sort(key=lambda t: t[0])
 
     # Process iter-1 results sequentially in seam_idx order — verdict
     # semantics + per-seam iter-2 re-synthesis when triggered. Per-phase
@@ -686,7 +778,10 @@ def _run_pattern_a_engine(
         total_input_tokens += call_1.input_tokens
         total_output_tokens += call_1.output_tokens
         total_latency_ms += call_1.latency_ms
-        llm_call_count += 1
+        # A cache hit contributes ZERO (no LLM call fired) per §9.6, mirroring
+        # the per-phase cache; only a fresh iter-1 call counts.
+        if seam_idx not in cached_seam_indices:
+            llm_call_count += 1
 
         verdict = call_1.verdict
         direction = call_1.proposed_patch_direction

@@ -941,8 +941,11 @@ class TestInputValidation:
         )
         assert isinstance(first, Layer4Payload)
         first_phase_calls = call_count["phase"]
+        first_seam_calls = call_count["seam"]
         assert first_phase_calls >= 1  # cross-phase synthesizes at least 1 phase
-        assert cache.metrics.phase_misses_total == first_phase_calls
+        # phase_* counter covers per-phase + iter-1 seam sub-call rows; each
+        # approved seam review is one fresh miss.
+        assert cache.metrics.phase_misses_total == first_phase_calls + first_seam_calls
 
         # Verify per-phase rows are tagged 'plan_refresh' entry_point.
         backend = cache.backend
@@ -972,9 +975,11 @@ class TestInputValidation:
             cache=cache,
             call_cache_key="t3-cross-phase-abc",
         )
-        # No new phase synthesizer calls (all hit).
+        # No new phase synthesizer calls (all hit); the iter-1 seam reviews
+        # also replay from cache, so the seam reviewer doesn't re-fire.
         assert call_count["phase"] == first_phase_calls
-        assert cache.metrics.phase_hits_total == first_phase_calls
+        assert call_count["seam"] == first_seam_calls
+        assert cache.metrics.phase_hits_total == first_phase_calls + first_seam_calls
 
 
 # ─── T3 intra-phase Pattern B (Step 4d) ──────────────────────────────────────

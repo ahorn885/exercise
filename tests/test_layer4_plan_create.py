@@ -73,6 +73,7 @@ from layer4 import (
     llm_layer4_plan_create,
 )
 from layer4 import InMemoryCacheBackend, Layer4Cache
+from layer4.plan_create import _SEAM_CACHE_PHASE_IDX_BASE
 from layer4.per_phase import _SynthesizerOutput as _PhaseOut
 from layer4.seam_review import _SeamReviewerOutput as _SeamOut
 
@@ -547,6 +548,27 @@ def _seam_stub_flagged_major_then_approved():
         )
 
     return _call
+
+
+class _CountingSeamStub:
+    """Approved-verdict seam reviewer that counts invocations — proves the
+    iter-1 seam cache skips the LLM call on a resume."""
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def __call__(self, *_a, **_kw) -> _SeamOut:
+        self.calls += 1
+        return _SeamOut(
+            tool_args={
+                "reviewer_verdict": "approved",
+                "seam_issues": [],
+                "proposed_patch_direction": None,
+            },
+            input_tokens=2000,
+            output_tokens=100,
+            latency_ms=2500,
+        )
 
 
 # ─── Tool schema tests ───────────────────────────────────────────────────────
@@ -1410,10 +1432,12 @@ class TestPerPhaseCacheWiring:
         assert isinstance(result, Layer4Payload)
         assert result.phase_structure is not None
         n_phases = len(result.phase_structure.phases)
+        n_seams = n_phases - 1  # all phases synthesized → every seam reviewed
         assert stub.calls == n_phases
-        assert cache.metrics.phase_misses_total == n_phases
+        # phase_* counters cover both per-phase + iter-1 seam sub-call rows.
+        assert cache.metrics.phase_misses_total == n_phases + n_seams
         assert cache.metrics.phase_hits_total == 0
-        assert len(cache.backend) == n_phases  # per-phase rows only
+        assert len(cache.backend) == n_phases + n_seams
 
     def test_cache_hit_skips_synthesizer(self):
         """Second call with same call_cache_key: 0 new synthesizer calls;
@@ -1439,9 +1463,10 @@ class TestPerPhaseCacheWiring:
             phase_caller=stub,
             seam_caller=_seam_stub_approved(),
         )
+        n_seams = n_phases - 1
         assert stub.calls == first_call_count
-        assert cache.metrics.phase_hits_total == n_phases
-        assert cache.metrics.phase_misses_total == n_phases
+        assert cache.metrics.phase_hits_total == n_phases + n_seams
+        assert cache.metrics.phase_misses_total == n_phases + n_seams
         assert isinstance(second, Layer4Payload)
         assert second.pattern == "A"
 
@@ -1497,9 +1522,11 @@ class TestPerPhaseCacheWiring:
             phase_caller=stub,
             seam_caller=_seam_stub_approved(),
         )
+        n_seams = n_phases - 1
         assert stub.calls == 2 * n_phases
         assert cache.metrics.phase_hits_total == 0
-        assert cache.metrics.phase_misses_total == 2 * n_phases
+        # Two distinct call_cache_keys → both phase + seam chains miss twice.
+        assert cache.metrics.phase_misses_total == 2 * (n_phases + n_seams)
 
     def test_cache_returns_byte_stable_output_across_callers(self):
         """§9.2 cache key for phase 0 is `sha256(call_cache_key||'Base'||'0'||'')`
@@ -1531,7 +1558,7 @@ class TestPerPhaseCacheWiring:
             seam_caller=_seam_stub_approved(),
         )
         assert stub_b.calls == 0  # all N phases hit cache; stub_b never invoked
-        assert cache.metrics.phase_hits_total == n_phases
+        assert cache.metrics.phase_hits_total == n_phases + (n_phases - 1)
 
     def test_per_entry_point_label_routed_to_cache(self):
         """plan_create routes phase rows to 'plan_create' entry_point label;
@@ -1550,6 +1577,79 @@ class TestPerPhaseCacheWiring:
         backend: Any = cache.backend
         entry_points = {e.entry_point for e in backend._rows.values()}
         assert entry_points == {"plan_create"}
+
+
+class TestIter1SeamReviewCache:
+    """§9.2 iter-1 seam-review cache — each iteration-1 review caches under the
+    same entry_point as the per-phase rows (disjoint phase_idx namespace), so a
+    resumed pass replays the seam LLM calls from cache instead of re-running the
+    whole uncached seam tail (the §9.2 Step-6 gap)."""
+
+    def test_cold_run_stores_one_row_per_seam(self):
+        cache = Layer4Cache(InMemoryCacheBackend())
+        phase_stub = _CountingPhaseStub(_empty_phase_output())
+        seam_stub = _CountingSeamStub()
+        result = llm_layer4_plan_create(
+            **_call_kwargs(),
+            cache=cache,
+            call_cache_key="call-seam",
+            phase_caller=phase_stub,
+            seam_caller=seam_stub,
+        )
+        assert result.phase_structure is not None
+        n_phases = len(result.phase_structure.phases)
+        n_seams = n_phases - 1
+        assert n_seams >= 1
+        # Seam reviewer fired once per seam; backend holds phase + seam rows.
+        assert seam_stub.calls == n_seams
+        assert len(cache.backend) == n_phases + n_seams
+        # Seam rows route to the same entry_point (no new CHECK label → no
+        # migration); they sit in a disjoint phase_idx namespace.
+        backend: Any = cache.backend
+        seam_rows = [
+            e for (_k, idx), e in backend._rows.items()
+            if idx >= _SEAM_CACHE_PHASE_IDX_BASE
+        ]
+        assert len(seam_rows) == n_seams
+        assert {e.entry_point for e in seam_rows} == {"plan_create"}
+
+    def test_resume_replays_seams_from_cache(self):
+        cache = Layer4Cache(InMemoryCacheBackend())
+        first_seam = _CountingSeamStub()
+        first = llm_layer4_plan_create(
+            **_call_kwargs(),
+            cache=cache,
+            call_cache_key="call-seam",
+            phase_caller=_CountingPhaseStub(_empty_phase_output()),
+            seam_caller=first_seam,
+        )
+        assert first.phase_structure is not None
+        n_phases = len(first.phase_structure.phases)
+        n_seams = n_phases - 1
+        assert first_seam.calls == n_seams
+
+        second_seam = _CountingSeamStub()
+        second = llm_layer4_plan_create(
+            **_call_kwargs(),
+            cache=cache,
+            call_cache_key="call-seam",
+            phase_caller=_CountingPhaseStub(_empty_phase_output()),
+            seam_caller=second_seam,
+        )
+        # The resumed pass made NO new seam LLM calls — all replayed from cache.
+        assert second_seam.calls == 0
+        assert cache.metrics.phase_hits_total == n_phases + n_seams
+        assert isinstance(second, Layer4Payload)
+
+    def test_no_cache_args_still_runs_seam_reviews_uncached(self):
+        seam_stub = _CountingSeamStub()
+        result = llm_layer4_plan_create(
+            **_call_kwargs(),
+            phase_caller=_CountingPhaseStub(_empty_phase_output()),
+            seam_caller=seam_stub,
+        )
+        assert result.phase_structure is not None
+        assert seam_stub.calls == len(result.phase_structure.phases) - 1
 
 
 # ─── Step 6b: ThreadPoolExecutor concurrency for iter-1 seam reviews ─────────
@@ -1727,11 +1827,13 @@ class TestCachedWrapperThreadsCacheAndExecutor:
         assert isinstance(result, Layer4Payload)
         assert result.phase_structure is not None
         n_phases = len(result.phase_structure.phases)
-        # N per-phase misses + 1 per-entry miss.
+        n_seams = n_phases - 1
+        # 1 per-entry miss; the phase_* counter covers per-phase + iter-1 seam.
         assert cache.metrics.misses_total == 1
-        assert cache.metrics.phase_misses_total == n_phases
+        assert cache.metrics.phase_misses_total == n_phases + n_seams
         backend: Any = cache.backend
-        assert len(backend) == n_phases + 1  # per-entry row + N per-phase rows
+        # per-entry row + N per-phase rows + (N-1) iter-1 seam rows
+        assert len(backend) == n_phases + n_seams + 1
 
     def test_wrapper_full_hit_skips_all_llm_calls(self):
         from layer4 import llm_layer4_plan_create_cached

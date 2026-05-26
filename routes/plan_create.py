@@ -42,6 +42,7 @@ class per slice 3 D4 — `race_event_payload=None` flows cleanly.
 
 from __future__ import annotations
 
+import time
 import traceback
 from datetime import date, timedelta
 
@@ -83,10 +84,20 @@ from routes.auth import cron_authorized, current_user_id
 
 bp = Blueprint('plan_create', __name__, url_prefix='/plans/v2')
 
-# Max `generating` rows the cron advances per fire. Bounds one invocation's
-# wall-clock (each pass is up to the function-duration cap) so the scanner
-# can't run unboundedly; remaining rows are picked up on the next fire.
+# Hard cap on `generating` rows the cron scans per fire. The real guard is
+# `_CRON_WALL_CLOCK_BUDGET_S` below — this just bounds the SELECT.
 _CRON_ADVANCE_BATCH = 5
+
+# Wall-clock budget for one cron fire. Each `_advance_plan_generation` pass is
+# a full resumable cone pass that can run up to the function-duration cap
+# (300s on Pro), so advancing several cold rows back-to-back in one request
+# would blow that cap and 504 — wasting every row after the one that hit the
+# wall. The cron stops starting NEW passes once this budget is spent; the
+# in-flight pass it already started still commits its per-phase progress, and
+# the unstarted rows resume on the next minute's fire. Set below the function
+# cap so a final pass started just under the budget still has headroom to
+# finish + commit.
+_CRON_WALL_CLOCK_BUDGET_S = 240
 
 
 # ─── Helpers ────────────────────────────────────────────────────────────────
@@ -492,7 +503,13 @@ def cron_generate_pending():
     ).fetchall()
 
     advanced = ready = failed = 0
+    deadline = time.monotonic() + _CRON_WALL_CLOCK_BUDGET_S
     for row in rows:
+        # Don't start a pass we can't finish before the function-duration cap.
+        # Whatever we've already advanced is committed per row; the rest resume
+        # on the next fire.
+        if time.monotonic() >= deadline:
+            break
         outcome = _advance_plan_generation(db, int(row['user_id']), int(row['id']))
         advanced += 1
         if outcome['status'] == 'ready':
