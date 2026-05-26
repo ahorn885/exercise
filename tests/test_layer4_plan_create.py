@@ -52,6 +52,7 @@ from layer4 import (
     Layer3APayload,
     Layer3BPayload,
     Layer4InputError,
+    Layer4OutputError,
     Layer4Payload,
     MacroTargets,
     PeriodizationShape,
@@ -1767,4 +1768,83 @@ class TestCachedWrapperThreadsCacheAndExecutor:
         llm_layer4_plan_create_cached(**kwargs_call)
         assert stub.calls == first_calls
         assert cache.metrics.hits_total == 1
+
+
+class TestMissingSessionsRetry:
+    """A per-phase tool_use block with no 'sessions' array (observed in
+    production under extended-thinking `tool_choice: auto`, where the model can
+    emit a thin/partial tool call) is retried within the cap rather than
+    hard-failing the whole plan on the first miss."""
+
+    def test_missing_sessions_then_valid_retries_and_succeeds(self):
+        # Pass 0: tool args with no 'sessions' key. Pass 1 (retry): valid.
+        seq = _phase_seq_stub(
+            [
+                {"phase_synthesis_notes": "thinking out loud", "opportunities": []},
+                _empty_phase_output(),
+            ]
+        )
+        result = llm_layer4_plan_create(
+            **_call_kwargs(),
+            phase_caller=seq,
+            seam_caller=_seam_stub_approved(),
+        )
+        assert isinstance(result, Layer4Payload)
+        assert result.phase_structure is not None
+
+    def test_null_sessions_treated_as_missing_and_retried(self):
+        seq = _phase_seq_stub(
+            [
+                {"sessions": None, "phase_synthesis_notes": "x", "opportunities": []},
+                _empty_phase_output(),
+            ]
+        )
+        result = llm_layer4_plan_create(
+            **_call_kwargs(),
+            phase_caller=seq,
+            seam_caller=_seam_stub_approved(),
+        )
+        assert isinstance(result, Layer4Payload)
+
+    def test_missing_sessions_all_passes_raises_schema_violation(self):
+        # Every pass omits 'sessions' → terminal Layer4OutputError after the
+        # cap, NOT a first-miss hard fail.
+        always_missing = _phase_stub(
+            {"phase_synthesis_notes": "never emits sessions", "opportunities": []}
+        )
+        with pytest.raises(Layer4OutputError) as exc:
+            llm_layer4_plan_create(
+                **_call_kwargs(),
+                phase_caller=always_missing,
+                seam_caller=_seam_stub_approved(),
+            )
+        assert exc.value.code == "schema_violation"
+        assert "sessions" in (exc.value.detail or "")
+
+
+class TestSessionsOverEmitClamp:
+    """The bounded `sessions` array is clamped to the schema ceiling
+    pre-validation — the `maxItems` hint is not API-enforced."""
+
+    def test_clamp_trims_over_emit(self):
+        from layer4.per_phase import (
+            _MAX_SESSIONS_PER_PHASE,
+            _clamp_sessions_over_emit,
+        )
+
+        over = [{"i": i} for i in range(_MAX_SESSIONS_PER_PHASE + 17)]
+        out = _clamp_sessions_over_emit(over, "Build")
+        assert len(out) == _MAX_SESSIONS_PER_PHASE
+
+    def test_clamp_passthrough_at_or_under_ceiling(self):
+        from layer4.per_phase import (
+            _MAX_SESSIONS_PER_PHASE,
+            _clamp_sessions_over_emit,
+        )
+
+        under = [{"i": i} for i in range(5)]
+        assert _clamp_sessions_over_emit(under, "Build") == under
+        at_cap = [{"i": i} for i in range(_MAX_SESSIONS_PER_PHASE)]
+        out = _clamp_sessions_over_emit(at_cap, "Build")
+        assert len(out) == _MAX_SESSIONS_PER_PHASE
 

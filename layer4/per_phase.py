@@ -73,6 +73,12 @@ DEFAULT_EXTENDED_THINKING_BUDGET = 5000
 """Per `Layer4_PerPhase_v1.md` D2 (max-defensive — synthesizer is judgment-heavy
 AND combinatorial)."""
 
+_MAX_SESSIONS_PER_PHASE = 56
+"""Bounded-collection ceiling for the `sessions` array. Kept lock-step with the
+`maxItems` passed to `build_record_phase_sessions_tool` (the tool default); the
+schema bound is only an Anthropic API hint, so the driver clamps over-emit
+pre-validation (same over-emit-vs-cap guard applied to Layer 3A/3B)."""
+
 
 # Per `Layer4_PerPhase_v1.md` D5: closed set of 6 LLM-emitted coaching flags.
 # Spec-auto flags (`recovery_week`, `peak_volume_marker`, `race_rehearsal`,
@@ -1044,6 +1050,24 @@ def _parse_date(s: str) -> _date_type:
     return datetime.fromisoformat(s).date() if "T" in s else _date_type.fromisoformat(s)
 
 
+def _clamp_sessions_over_emit(
+    raw_sessions: list[Any], phase_name: str
+) -> list[Any]:
+    """Trim an over-emitted `sessions` array to `_MAX_SESSIONS_PER_PHASE`.
+
+    The tool-schema `maxItems` is only an Anthropic API hint, so the model can
+    over-run it; this is the driver-side backstop (the Layer 4 twin of the
+    Layer 3A/3B bounded-collection clamps). Passes through unchanged at or under
+    the ceiling; logs when it fires."""
+    if len(raw_sessions) > _MAX_SESSIONS_PER_PHASE:
+        print(
+            f"synthesize_phase: {phase_name} clamping sessions "
+            f"from {len(raw_sessions)} to {_MAX_SESSIONS_PER_PHASE}"
+        )
+        return raw_sessions[:_MAX_SESSIONS_PER_PHASE]
+    return raw_sessions
+
+
 def _build_session_phase_metadata(
     phase_spec: PhaseSpec, session_date: _date_type
 ) -> SessionPhaseMetadata:
@@ -1250,7 +1274,7 @@ def synthesize_phase(
         session_id_prefix = uuid.uuid4().hex[:8]
 
     caller: LLMCaller = llm_caller or _default_llm_caller
-    tool_schema = build_record_phase_sessions_tool()
+    tool_schema = build_record_phase_sessions_tool(_MAX_SESSIONS_PER_PHASE)
 
     rule_failures: list[RuleFailure] = []
     validator_results: list[ValidatorResult] = []
@@ -1332,10 +1356,47 @@ def synthesize_phase(
         opportunities = llm_out.tool_args.get("opportunities") or []
 
         if not isinstance(raw_sessions, list):
-            raise Layer4OutputError(
-                "schema_violation",
-                detail="tool args missing 'sessions' array",
+            # The synthesizer returned a tool_use block whose args carried no
+            # 'sessions' array — observed in production under extended-thinking
+            # `tool_choice: auto`, where the model can emit a thin/partial tool
+            # call. Treat it like the parse-failure path below: retry within the
+            # cap with the miss fed back into the next prompt, raising terminal
+            # only after the cap is exhausted — rather than hard-failing the
+            # whole plan on the first miss while retries were still available.
+            # Log the keys the model DID emit so a recurrence is diagnosable
+            # from the runtime log (is the dict empty, partial, or wrong-keyed?).
+            present_keys = sorted(llm_out.tool_args.keys())
+            print(
+                f"synthesize_phase: {phase_spec.phase_name} pass {current_pass} "
+                f"returned no 'sessions' array (tool_args keys={present_keys})"
             )
+            if current_pass >= capped_retries:
+                raise Layer4OutputError(
+                    "schema_violation",
+                    detail=(
+                        "tool args missing 'sessions' array after "
+                        f"{current_pass + 1} attempt(s) (keys={present_keys})"
+                    ),
+                )
+            rule_failures = [
+                RuleFailure(
+                    rule_name="schema_violation",
+                    phase_name=phase_spec.phase_name,
+                    severity="blocker",
+                    detail="tool output omitted the required 'sessions' array",
+                    affected_session_ids=[],
+                )
+            ]
+            final_retries_used = current_pass + 1
+            continue
+
+        # Pre-validation clamp on the bounded `sessions` collection: the tool
+        # schema's `maxItems` is only an Anthropic API hint, so the model can
+        # over-emit past it. Trim to the declared ceiling before parsing — the
+        # same over-emit-vs-cap guard applied to Layer 3A/3B bounded fields.
+        raw_sessions = _clamp_sessions_over_emit(
+            raw_sessions, phase_spec.phase_name
+        )
 
         try:
             sessions = [
