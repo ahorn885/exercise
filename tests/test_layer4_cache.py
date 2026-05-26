@@ -1293,3 +1293,39 @@ class TestSingleSessionCachedWrapper:
         assert calls["n"] == 2
         assert cache.metrics.misses_total == 2
         assert cache.metrics.hits_total == 0
+
+
+class TestLayer4CacheEntryPointConstraint:
+    """Guards the 2026-05-26 drift fix: the layer4_cache `entry_point` CHECK
+    constraint in init_db must list exactly `cache.VALID_ENTRY_POINTS`. The
+    3A/3B + NL-parser cached wrappers reuse this table; when their entry_point
+    labels were added to VALID_ENTRY_POINTS but not the DB constraint, every
+    such cache write raised CheckViolation — an uncaught 500 in plan
+    generation. The suite uses the in-memory backend (no constraint), so only
+    this static check catches the mismatch."""
+
+    @staticmethod
+    def _entry_points_in(sql: str) -> set[str]:
+        import re
+        m = re.search(r"entry_point\s+IN\s*\(([^)]*)\)", sql)
+        assert m is not None, f"no `entry_point IN (...)` clause in: {sql[:80]!r}"
+        return set(re.findall(r"'([^']+)'", m.group(1)))
+
+    def _constraint_sqls(self) -> list[str]:
+        import init_db
+        return [
+            s
+            for s in init_db._PG_MIGRATIONS
+            if isinstance(s, str) and "layer4_cache" in s and "entry_point IN" in s
+        ]
+
+    def test_ddl_and_repair_migration_cover_valid_entry_points(self):
+        sqls = self._constraint_sqls()
+        # Both the CREATE TABLE DDL and the constraint-repair migration must be
+        # present + must each match VALID_ENTRY_POINTS exactly.
+        assert len(sqls) >= 2, (
+            "expected the layer4_cache CREATE TABLE DDL + the constraint-repair "
+            f"migration to both pin entry_point; found {len(sqls)}"
+        )
+        for sql in sqls:
+            assert self._entry_points_in(sql) == set(VALID_ENTRY_POINTS)

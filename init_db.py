@@ -1260,7 +1260,7 @@ _PG_MIGRATIONS = [
         cache_key TEXT NOT NULL,
         phase_idx INTEGER NOT NULL DEFAULT -1,
         user_id INTEGER NOT NULL REFERENCES users(id),
-        entry_point TEXT NOT NULL CHECK (entry_point IN ('plan_create', 'plan_refresh', 'single_session_synthesize', 'race_week_brief')),
+        entry_point TEXT NOT NULL CHECK (entry_point IN ('plan_create', 'plan_refresh', 'single_session_synthesize', 'race_week_brief', 'llm_layer3a_athlete_state', 'llm_layer3b_goal_timeline_viability', 'nl_parser_parse_intent')),
         phase_name TEXT,
         payload_json JSONB NOT NULL,
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -1938,6 +1938,20 @@ _PG_MIGRATIONS = [
                 ADD CONSTRAINT plan_versions_generation_status_chk
                 CHECK (generation_status IN ('generating', 'ready', 'failed'));
         END IF;
+    END $$;""",
+    # layer4_cache entry_point drift fix (2026-05-26) — the Layer 3A/3B
+    # cached wrappers (2026-05-20) + the NL-parser cache (2026-05-21) write
+    # entry_point values the original 4-value CHECK rejected, so every 3A/3B
+    # cache write raised CheckViolation, surfacing as an uncaught 500 in plan
+    # generation (the cached wrappers reuse the generic CacheBackend storage
+    # but were never added to the table constraint). Realign the deployed
+    # constraint with cache.VALID_ENTRY_POINTS. Drop-then-add is idempotent;
+    # the new set is a superset so existing rows still satisfy it.
+    """DO $$
+    BEGIN
+        ALTER TABLE layer4_cache DROP CONSTRAINT IF EXISTS layer4_cache_entry_point_check;
+        ALTER TABLE layer4_cache ADD CONSTRAINT layer4_cache_entry_point_check
+            CHECK (entry_point IN ('plan_create', 'plan_refresh', 'single_session_synthesize', 'race_week_brief', 'llm_layer3a_athlete_state', 'llm_layer3b_goal_timeline_viability', 'nl_parser_parse_intent'));
     END $$;""",
 ]
 
