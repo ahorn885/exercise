@@ -235,6 +235,52 @@ class TestLayer3BCachedWrapper:
         assert r1.user_id == r2.user_id == _USER_ID
         assert r1.periodization_shape.start_phase == r2.periodization_shape.start_phase
 
+    def test_event_mode_defaults_goal_outcome_to_finish_when_omitted(self):
+        # Regression: the orchestrator's shared full cone (race_week_brief /
+        # plan_refresh / plan_create) calls this wrapper in event-mode WITHOUT
+        # goal_outcome. 3B's event-mode _validate_inputs hard-requires one, so
+        # the omission raised Layer3BInputError("event_mode_missing_goal_outcome")
+        # — which escaped the route's *OutputError-only catch and surfaced to
+        # the athlete as "Plan generation failed unexpectedly". The wrapper now
+        # back-fills the conservative "Finish" tier.
+        backend = InMemoryCacheBackend()
+        with patch(
+            "layer3b.cached_wrapper.llm_layer3b_goal_timeline_viability",
+            return_value=_fake_layer3b_payload(),
+        ) as driver:
+            llm_layer3b_goal_timeline_viability_cached(
+                user_id=_USER_ID,
+                layer1_payload=_fake_layer1_payload(),
+                layer3a_payload=_fake_layer3a_payload(),
+                layer2a_payload=_fake_layer2a_payload(),
+                race_event_payload=_make_race_event(),
+                current_date=_TODAY,
+                etl_version_set=_ETL,
+                cache_backend=backend,
+            )
+        assert driver.call_args.kwargs["goal_outcome"] == "Finish"
+
+    def test_event_mode_preserves_explicit_goal_outcome(self):
+        # An explicitly supplied goal_outcome must NOT be clobbered by the
+        # deployed-shape-gap default.
+        backend = InMemoryCacheBackend()
+        with patch(
+            "layer3b.cached_wrapper.llm_layer3b_goal_timeline_viability",
+            return_value=_fake_layer3b_payload(),
+        ) as driver:
+            llm_layer3b_goal_timeline_viability_cached(
+                user_id=_USER_ID,
+                layer1_payload=_fake_layer1_payload(),
+                layer3a_payload=_fake_layer3a_payload(),
+                layer2a_payload=_fake_layer2a_payload(),
+                race_event_payload=_make_race_event(),
+                current_date=_TODAY,
+                etl_version_set=_ETL,
+                cache_backend=backend,
+                goal_outcome="Podium",
+            )
+        assert driver.call_args.kwargs["goal_outcome"] == "Podium"
+
     def test_event_vs_no_event_distinct_keys(self):
         common = dict(
             user_id=_USER_ID,
