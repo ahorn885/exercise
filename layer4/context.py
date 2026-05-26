@@ -268,6 +268,22 @@ class RaceTerrainEntry(_Base):
     discipline_id: str | None = None
 
 
+class PreviousAttempt(_Base):
+    # §H.2 goal-context Slice 2 (2026-05-26). One prior attempt at this event
+    # (or the same distance). Feeds Layer 3B's event-mode goal block + the
+    # `3B.dnf_recurrence_risk` HITL flag. `outcome` drives DNF detection
+    # (the builder upper-cases + compares to "DNF"); `dnf_cause` keys the
+    # recovery-window mapping in `layer3b.builder._DNF_RECOVERY_WINDOW_WEEKS`
+    # (quad_failure / nutrition_blowup / injury_during_event / weather /
+    # timeout / other → weeks; unknown/None → 8wk default). `dnf_cause` is a
+    # loose bounded str rather than an enum so an out-of-vocab value still
+    # resolves to the default window instead of failing the row at load —
+    # the form offers the closed vocab and is the practical gate. Meaningful
+    # only for DNF rows (None for Finished / DNS).
+    outcome: Literal["Finished", "DNF", "DNS"]
+    dnf_cause: str | None = Field(default=None, max_length=50)
+
+
 class TerrainGap(_Base):
     target_terrain_id: str
     target_terrain_name: str
@@ -1243,12 +1259,17 @@ class RaceEventPayload(_Base):
     # block + HITL triggers (3B.first_time_competitive_goal). All optional:
     # legacy rows (NULL) leave the cached wrapper to fall back to the
     # conservative "Finish" tier. `goal_outcome` mirrors
-    # layer3b.builder._VALID_GOAL_OUTCOMES. `previous_attempts` (structured)
-    # is a follow-on slice and is not yet carried here.
+    # layer3b.builder._VALID_GOAL_OUTCOMES.
     goal_outcome: Literal["Finish", "Compete mid-pack", "Podium"] | None = None
     first_time_at_distance: bool | None = None
     time_goal: str | None = Field(default=None, max_length=200)
     race_pack_weight_kg: Decimal | None = Field(default=None, ge=0)
+    # §H.2 goal-context Slice 2 (2026-05-26) — structured prior-attempt
+    # records. Orchestrator threads these (as plain dicts) into Layer 3B's
+    # `previous_attempts` kwarg → the `3B.dnf_recurrence_risk` HITL flag.
+    # Empty list is legal (partial-edit rows round-trip; the column defaults
+    # to '[]'::jsonb).
+    previous_attempts: list[PreviousAttempt] = Field(default_factory=list)
     route_locales: list[RouteLocale] = Field(default_factory=list)
 
     @model_validator(mode="after")

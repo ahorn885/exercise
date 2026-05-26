@@ -1373,14 +1373,22 @@ _PG_MIGRATIONS = [
     # goal_outcome='Finish', so every athlete was treated as a finisher
     # regardless of ambition. These 4 scalar columns let the athlete state
     # their actual goal; the orchestrator threads them into the Layer 3B call.
-    # `previous_attempts` (structured) is the follow-on slice. All nullable so
-    # legacy rows survive without backfill; the goal_outcome CHECK mirrors
-    # layer3b.builder._VALID_GOAL_OUTCOMES, and pack-weight is a numeric kg
-    # alongside the free-text mandatory_gear_text.
+    # All nullable so legacy rows survive without backfill; the goal_outcome
+    # CHECK mirrors layer3b.builder._VALID_GOAL_OUTCOMES, and pack-weight is a
+    # numeric kg alongside the free-text mandatory_gear_text.
     "ALTER TABLE race_events ADD COLUMN IF NOT EXISTS goal_outcome TEXT NULL CHECK (goal_outcome IS NULL OR goal_outcome IN ('Finish', 'Compete mid-pack', 'Podium'))",
     "ALTER TABLE race_events ADD COLUMN IF NOT EXISTS first_time_at_distance BOOLEAN NULL",
     "ALTER TABLE race_events ADD COLUMN IF NOT EXISTS time_goal TEXT NULL",
     "ALTER TABLE race_events ADD COLUMN IF NOT EXISTS race_pack_weight_kg NUMERIC NULL CHECK (race_pack_weight_kg IS NULL OR race_pack_weight_kg >= 0)",
+    # §H.2 goal-context Slice 2 (2026-05-26) — structured `previous_attempts`,
+    # the remaining half of the §H.2 capture. JSONB list of
+    # `[{outcome, dnf_cause}, ...]` (shape mirrors `race_terrain`); whole-list
+    # read at orchestrator time, no independent queries. Feeds Layer 3B's
+    # event-mode goal block + unblocks the `3B.dnf_recurrence_risk` HITL flag
+    # (fires when a DNF entry's recovery window — keyed on `dnf_cause` via
+    # layer3b.builder._DNF_RECOVERY_WINDOW_WEEKS — exceeds time_to_event_weeks).
+    # Idempotent add; default empty array preserves the prior row shape.
+    "ALTER TABLE race_events ADD COLUMN IF NOT EXISTS previous_attempts JSONB NOT NULL DEFAULT '[]'::jsonb",
     # FormRefresh A1 (2026-05-25) — race_format taxonomy collapse. The
     # original 4-value enum conflated structure with sport/discipline
     # (`expedition_ar` = AR sport; `multi_day_ultra` = ultrarunning sport).

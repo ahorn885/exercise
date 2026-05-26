@@ -23,6 +23,7 @@ import json
 from typing import Any
 
 from layer4.context import (
+    PreviousAttempt,
     RaceEventPayload,
     RaceTerrainEntry,
     RouteLocale,
@@ -35,6 +36,21 @@ VALID_PRIMARY_METRICS = ("distance", "duration")
 # §H.2 goal-context (2026-05-26) — lock-step with layer3b.builder._VALID_GOAL_OUTCOMES
 # and the race_events.goal_outcome CHECK.
 VALID_GOAL_OUTCOMES = ("Finish", "Compete mid-pack", "Podium")
+# §H.2 goal-context Slice 2 (2026-05-26) — `previous_attempts` vocab.
+# `VALID_DNF_CAUSES` is lock-step with the keys of
+# layer3b.builder._DNF_RECOVERY_WINDOW_WEEKS (the recovery-window mapping).
+# Stored as free-form JSONB (no DB CHECK, like race_terrain); the route-layer
+# parser is the practical gate + the RaceEventPayload.PreviousAttempt model is
+# the typed backstop on load.
+VALID_PREVIOUS_ATTEMPT_OUTCOMES = ("Finished", "DNF", "DNS")
+VALID_DNF_CAUSES = (
+    "quad_failure",
+    "nutrition_blowup",
+    "injury_during_event",
+    "weather",
+    "timeout",
+    "other",
+)
 VALID_ROUTE_LOCALE_ROLES = (
     "start",
     "transition_area",
@@ -96,7 +112,8 @@ def load_race_event_payload(db, race_event_id: int) -> RaceEventPayload | None:
                re.event_locale_place_name, re.event_locale_lat, re.event_locale_lng,
                re.race_url, re.framework_sport, re.included_discipline_ids,
                re.goal_outcome, re.first_time_at_distance,
-               re.time_goal, re.race_pack_weight_kg
+               re.time_goal, re.race_pack_weight_kg,
+               re.previous_attempts
           FROM race_events re
           LEFT JOIN locale_profiles lp ON lp.id = re.event_locale_id
          WHERE re.id = ?
@@ -178,6 +195,21 @@ def load_race_event_payload(db, race_event_id: int) -> RaceEventPayload | None:
         for entry in raw_terrain
     ]
 
+    # previous_attempts mirrors the race_terrain JSONB hydration (list via
+    # psycopg2's adapter, or str on the sqlite shim path). §H.2 Slice 2.
+    raw_attempts = race_row["previous_attempts"]
+    if isinstance(raw_attempts, str):
+        raw_attempts = json.loads(raw_attempts) if raw_attempts else []
+    elif raw_attempts is None:
+        raw_attempts = []
+    previous_attempts = [
+        PreviousAttempt(
+            outcome=entry["outcome"],
+            dnf_cause=entry.get("dnf_cause"),
+        )
+        for entry in raw_attempts
+    ]
+
     # included_discipline_ids: psycopg2's TEXT[] adapter returns list[str],
     # or None for NULL. The sqlite shim path stringifies as PG array literal
     # ('{D-001,D-010}') which we don't tolerate here — sqlite path is only
@@ -232,6 +264,7 @@ def load_race_event_payload(db, race_event_id: int) -> RaceEventPayload | None:
         ),
         time_goal=race_row["time_goal"],
         race_pack_weight_kg=race_row["race_pack_weight_kg"],
+        previous_attempts=previous_attempts,
         route_locales=route_locales,
     )
 
@@ -280,6 +313,7 @@ def create_race_event(
     is_target_event: bool = False,
     notes: str | None = None,
     race_terrain: list[dict[str, Any]] | None = None,
+    previous_attempts: list[dict[str, Any]] | None = None,
     etl_version_set: dict[str, Any] | None = None,
 ) -> int:
     """INSERT a new race_event row. Returns the new id.
@@ -293,6 +327,10 @@ def create_race_event(
     "pct_of_race": float}` (route-layer parser already normalizes from
     form fields). Serialized to JSONB. Callers can also pass an empty list
     or None for "not captured yet"; both round-trip as `[]` on load.
+
+    `previous_attempts` accepts a list of dicts shaped `{"outcome": str,
+    "dnf_cause": str|None}` (§H.2 Slice 2). Serialized to JSONB the same way
+    as `race_terrain`; empty list / None round-trip as `[]`.
 
     `event_locale_name` / `event_locale_mapbox_id` / `event_locale_place_name`
     / `event_locale_lat` / `event_locale_lng` carry the Mapbox-anchored
@@ -325,8 +363,9 @@ def create_race_event(
              event_locale_lat, event_locale_lng,
              race_url, framework_sport, included_discipline_ids,
              goal_outcome, first_time_at_distance, time_goal, race_pack_weight_kg,
+             previous_attempts,
              etl_version_set)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?, ?, ?, ?, ?, ?, ?, ?::text[], ?, ?, ?, ?, ?::jsonb)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?, ?, ?, ?, ?, ?, ?, ?::text[], ?, ?, ?, ?, ?::jsonb, ?::jsonb)
         RETURNING id
         """,
         (
@@ -356,6 +395,7 @@ def create_race_event(
             first_time_at_distance,
             time_goal,
             race_pack_weight_kg,
+            json.dumps(previous_attempts or []),
             json.dumps(etl_version_set or {}),
         ),
     )
@@ -475,6 +515,7 @@ def get_race_event(db, user_id: int, race_event_id: int) -> dict[str, Any] | Non
                event_locale_lat, event_locale_lng,
                race_url, framework_sport, included_discipline_ids,
                goal_outcome, first_time_at_distance, time_goal, race_pack_weight_kg,
+               previous_attempts,
                created_at, updated_at
           FROM race_events
          WHERE id = ? AND user_id = ?
@@ -493,6 +534,12 @@ def get_race_event(db, user_id: int, race_event_id: int) -> dict[str, Any] | Non
         result["race_terrain"] = json.loads(raw_terrain) if raw_terrain else []
     elif raw_terrain is None:
         result["race_terrain"] = []
+    # previous_attempts JSONB hydration mirrors race_terrain (§H.2 Slice 2).
+    raw_attempts = result.get("previous_attempts")
+    if isinstance(raw_attempts, str):
+        result["previous_attempts"] = json.loads(raw_attempts) if raw_attempts else []
+    elif raw_attempts is None:
+        result["previous_attempts"] = []
     # NUMERIC(9,6) round-trips as Decimal under psycopg2; coerce to float so
     # template arithmetic + form-field rendering stay simple. None passes
     # through.
@@ -538,15 +585,16 @@ def update_race_event(
     race_pack_weight_kg=None,
     notes: str | None = None,
     race_terrain: list[dict[str, Any]] | None = None,
+    previous_attempts: list[dict[str, Any]] | None = None,
 ) -> None:
     """UPDATE a race_events row's editable fields. `is_target_event` flips
     are handled separately via `set_target_event`. Caller is expected to
     have verified ownership via `get_race_event` before issuing the
     update.
 
-    `race_terrain` accepts a list of dicts; serialized to JSONB. Pass an
-    empty list to clear; passing None coerces to empty list (the column
-    is NOT NULL DEFAULT '[]'::jsonb).
+    `race_terrain` + `previous_attempts` accept a list of dicts; serialized
+    to JSONB. Pass an empty list to clear; passing None coerces to empty list
+    (both columns are NOT NULL DEFAULT '[]'::jsonb).
     """
     if race_format not in VALID_RACE_FORMATS:
         raise ValueError(f"race_format must be one of {VALID_RACE_FORMATS}; got {race_format!r}")
@@ -586,6 +634,7 @@ def update_race_event(
                race_pack_weight_kg = ?,
                notes = ?,
                race_terrain = ?::jsonb,
+               previous_attempts = ?::jsonb,
                updated_at = NOW()
          WHERE id = ? AND user_id = ?
         """,
@@ -614,6 +663,7 @@ def update_race_event(
             race_pack_weight_kg,
             notes,
             json.dumps(race_terrain or []),
+            json.dumps(previous_attempts or []),
             race_event_id,
             user_id,
         ),

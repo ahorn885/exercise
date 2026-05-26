@@ -33,7 +33,9 @@ from race_events_invalidation import (
     evict_on_target_event_periodization_change,
 )
 from race_events_repo import (
+    VALID_DNF_CAUSES,
     VALID_GOAL_OUTCOMES,
+    VALID_PREVIOUS_ATTEMPT_OUTCOMES,
     VALID_RACE_FORMATS,
     VALID_ROUTE_LOCALE_ROLES,
     add_route_locale,
@@ -376,6 +378,36 @@ def _parse_pack_weight_kg(form):
     return v
 
 
+def _parse_previous_attempts(form) -> list[dict]:
+    """Parse the repeating `previous_attempts[N][...]` form fields into a list
+    of `{"outcome": str, "dnf_cause": str|None}` dicts (§H.2 Slice 2).
+
+    Mirrors `_parse_race_terrain`'s indexed-field discovery + drop-on-empty
+    semantics. A row with no (or out-of-vocab) `outcome` is dropped — an
+    empty attempt row shouldn't fail the save. `dnf_cause` outside
+    `VALID_DNF_CAUSES` (incl. blank) collapses to None; it only matters for
+    DNF rows (it keys Layer 3B's recovery-window mapping, which defaults
+    unknown/None to 8 weeks).
+    """
+    out: list[dict] = []
+    indices: set[int] = set()
+    for key in form.keys():
+        m = re.match(
+            r"^previous_attempts\[(\d+)\]\[(outcome|dnf_cause)\]$",
+            key,
+        )
+        if m:
+            indices.add(int(m.group(1)))
+    for idx in sorted(indices):
+        outcome = (form.get(f'previous_attempts[{idx}][outcome]') or '').strip()
+        if outcome not in VALID_PREVIOUS_ATTEMPT_OUTCOMES:
+            continue
+        cause = (form.get(f'previous_attempts[{idx}][dnf_cause]') or '').strip()
+        dnf_cause = cause if cause in VALID_DNF_CAUSES else None
+        out.append({'outcome': outcome, 'dnf_cause': dnf_cause})
+    return out
+
+
 def _tab_redirect():
     return redirect(url_for('profile.edit', tab='race-events'))
 
@@ -426,6 +458,7 @@ def new_race():
             mandatory_gear_text=_parse_str(request.form, 'mandatory_gear_text'),
             notes=_parse_str(request.form, 'notes'),
             race_terrain=_parse_race_terrain(request.form),
+            previous_attempts=_parse_previous_attempts(request.form),
             race_url=_parse_race_url(request.form),
             framework_sport=_parse_str(request.form, 'framework_sport'),
             included_discipline_ids=_parse_discipline_id_filter(request.form),
@@ -565,6 +598,7 @@ def update_race(race_event_id: int):
     new_mandatory_gear_text = _parse_str(request.form, 'mandatory_gear_text')
     new_notes = _parse_str(request.form, 'notes')
     new_race_terrain = _parse_race_terrain(request.form)
+    new_previous_attempts = _parse_previous_attempts(request.form)
     new_race_url = _parse_race_url(request.form)
     new_framework_sport = _parse_str(request.form, 'framework_sport')
     parsed_discipline_filter = _parse_discipline_id_filter(request.form)
@@ -627,6 +661,7 @@ def update_race(race_event_id: int):
         race_pack_weight_kg=new_race_pack_weight_kg,
         notes=new_notes,
         race_terrain=new_race_terrain,
+        previous_attempts=new_previous_attempts,
     )
 
     # Layer 4 cache invalidation per D-66 §9. Non-target edits leave the
@@ -650,10 +685,14 @@ def update_race(race_event_id: int):
             # history or first-time-at-distance shift viability). A change
             # flips the 3B cache key → 3B re-runs and the shape can move, so
             # evict periodization-grade alongside event_date / race_format.
+            # previous_attempts (Slice 2) drives the 3B.dnf_recurrence_risk
+            # HITL flag + confidence floor — same periodization grade. Hydrated
+            # as a list of dicts (JSONB), compared as-is like race_terrain.
             or race.get('goal_outcome') != new_goal_outcome
             or race.get('first_time_at_distance') != new_first_time_at_distance
             or race.get('time_goal') != new_time_goal
             or race.get('race_pack_weight_kg') != new_race_pack_weight_kg
+            or (race.get('previous_attempts') or []) != new_previous_attempts
         )
         # Existing race_terrain comes back from get_race_event as a list
         # of dicts (JSONB hydrated in the repo); compare as-is.
