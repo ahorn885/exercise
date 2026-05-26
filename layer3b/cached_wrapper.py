@@ -61,13 +61,13 @@ from layer4.hashing import canonical_json, compute_payload_hash
 
 _LAYER3B_ENTRY_POINT_LABEL = "llm_layer3b_goal_timeline_viability"
 
-# Deployed-shape-gap default (§H.2 / D11). 3B's event-mode `_validate_inputs`
-# hard-requires a `goal_outcome` (Finish / Compete mid-pack / Podium), but the
-# athlete-facing capture form does not exist yet — no column stores it and the
-# orchestrator's shared full cone does not supply it. Until the capture form
-# lands, event-mode callers that omit `goal_outcome` fall back to the
-# conservative "Finish" tier so generation proceeds (mirrors the no-event-mode
-# back-fill from layer1.event_goal below).
+# Legacy / uncaptured-row default (§H.2 / D11). 3B's event-mode
+# `_validate_inputs` hard-requires a `goal_outcome` (Finish / Compete mid-pack
+# / Podium). The capture form + `race_events.goal_outcome` column shipped
+# 2026-05-26, and the orchestrator now threads the stored value through — but
+# rows created before that (or saved without a goal pick) carry NULL. Those
+# event-mode callers fall back to the conservative "Finish" tier so generation
+# proceeds (mirrors the no-event-mode back-fill from layer1.event_goal below).
 _DEFAULT_EVENT_GOAL_OUTCOME = "Finish"
 
 

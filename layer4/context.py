@@ -1238,6 +1238,17 @@ class RaceEventPayload(_Base):
     # cleared by the route layer on framework_sport change (orphan
     # cleanup); empty list is treated as None at the form-parse boundary.
     included_discipline_ids: list[str] | None = None
+    # §H.2 goal-context capture (2026-05-26) — close the Layer 3B deployed-shape
+    # gap. These feed `llm_layer3b_goal_timeline_viability`'s event-mode goal
+    # block + HITL triggers (3B.first_time_competitive_goal). All optional:
+    # legacy rows (NULL) leave the cached wrapper to fall back to the
+    # conservative "Finish" tier. `goal_outcome` mirrors
+    # layer3b.builder._VALID_GOAL_OUTCOMES. `previous_attempts` (structured)
+    # is a follow-on slice and is not yet carried here.
+    goal_outcome: Literal["Finish", "Compete mid-pack", "Podium"] | None = None
+    first_time_at_distance: bool | None = None
+    time_goal: str | None = Field(default=None, max_length=200)
+    race_pack_weight_kg: Decimal | None = Field(default=None, ge=0)
     route_locales: list[RouteLocale] = Field(default_factory=list)
 
     @model_validator(mode="after")

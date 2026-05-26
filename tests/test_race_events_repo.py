@@ -195,6 +195,11 @@ def _race_row(**overrides):
         # D-73 Phase 5.2 Bucket E.(b)-B2 — per-race discipline filter
         # override. None = use full bridge defaults (pre-B2 behavior).
         "included_discipline_ids": None,
+        # §H.2 goal context (2026-05-26) — None is the legacy/uncaptured shape.
+        "goal_outcome": None,
+        "first_time_at_distance": None,
+        "time_goal": None,
+        "race_pack_weight_kg": None,
     }
     base.update(overrides)
     return base
@@ -1335,3 +1340,119 @@ class TestIncludedDisciplineIdsOverride:
         assert "included_discipline_ids = ?::text[]" in sql
         # None appears in params for the discipline_ids slot.
         assert None in params
+
+
+class TestSectionH2GoalContext:
+    """§H.2 goal-context columns (2026-05-26) — goal_outcome / first_time /
+    time_goal / pack_weight round-trip through create + update + load + get.
+    Closes the Layer 3B deployed-shape gap (3B previously saw a hardcoded
+    goal_outcome='Finish')."""
+
+    def test_create_passes_goal_fields_through(self):
+        conn = _FakeConn()
+        conn.queue_response(row={"id": 7})
+        create_race_event(
+            conn,
+            user_id=1,
+            name="PGE 2026",
+            event_date=date(2026, 7, 17),
+            race_format="continuous_multi_day",
+            goal_outcome="Podium",
+            first_time_at_distance=True,
+            time_goal="sub-48h",
+            race_pack_weight_kg=Decimal("8.5"),
+        )
+        sql, params = conn.calls[0]
+        assert "goal_outcome" in sql
+        assert "first_time_at_distance" in sql
+        assert "time_goal" in sql
+        assert "race_pack_weight_kg" in sql
+        assert "Podium" in params
+        assert "sub-48h" in params
+        assert Decimal("8.5") in params
+
+    def test_create_rejects_invalid_goal_outcome(self):
+        conn = _FakeConn()
+        with pytest.raises(ValueError, match="goal_outcome must be one of"):
+            create_race_event(
+                conn,
+                user_id=1,
+                name="Bogus",
+                event_date=date(2026, 1, 1),
+                race_format="single_day",
+                goal_outcome="World Record",  # not in the closed set
+            )
+        assert len(conn.calls) == 0
+
+    def test_update_passes_goal_fields_through(self):
+        conn = _FakeConn()
+        update_race_event(
+            conn,
+            user_id=1,
+            race_event_id=10,
+            name="Race",
+            event_date=date(2026, 7, 17),
+            race_format="single_day",
+            goal_outcome="Compete mid-pack",
+            first_time_at_distance=False,
+            time_goal="12:30",
+            race_pack_weight_kg=Decimal("3"),
+        )
+        sql, params = conn.calls[0]
+        assert "goal_outcome = ?" in sql
+        assert "first_time_at_distance = ?" in sql
+        assert "Compete mid-pack" in params
+        assert "12:30" in params
+        assert False in params
+
+    def test_update_rejects_invalid_goal_outcome(self):
+        conn = _FakeConn()
+        with pytest.raises(ValueError, match="goal_outcome must be one of"):
+            update_race_event(
+                conn,
+                user_id=1,
+                race_event_id=10,
+                name="Race",
+                event_date=date(2026, 1, 1),
+                race_format="single_day",
+                goal_outcome="bogus",
+            )
+        assert len(conn.calls) == 0
+
+    def test_load_payload_populates_goal_fields(self):
+        conn = _FakeConn()
+        conn.queue_response(
+            row=_race_row(
+                goal_outcome="Podium",
+                first_time_at_distance=True,
+                time_goal="sub-48h",
+                race_pack_weight_kg=Decimal("8.5"),
+            )
+        )
+        conn.queue_response(rows=[])
+        payload = load_race_event_payload(conn, race_event_id=10)
+        assert payload is not None
+        assert payload.goal_outcome == "Podium"
+        assert payload.first_time_at_distance is True
+        assert payload.time_goal == "sub-48h"
+        assert payload.race_pack_weight_kg == Decimal("8.5")
+
+    def test_load_payload_defaults_goal_fields_to_none(self):
+        conn = _FakeConn()
+        conn.queue_response(row=_race_row())  # all goal fields None
+        conn.queue_response(rows=[])
+        payload = load_race_event_payload(conn, race_event_id=10)
+        assert payload is not None
+        assert payload.goal_outcome is None
+        assert payload.first_time_at_distance is None
+        assert payload.time_goal is None
+        assert payload.race_pack_weight_kg is None
+
+    def test_get_race_event_coerces_pack_weight_to_float(self):
+        conn = _FakeConn()
+        conn.queue_response(row=_race_row(race_pack_weight_kg=Decimal("8.5")))
+        result = get_race_event(conn, user_id=1, race_event_id=10)
+        assert result is not None
+        assert result["race_pack_weight_kg"] == 8.5
+        assert isinstance(result["race_pack_weight_kg"], float)
+        assert result["goal_outcome"] is None
