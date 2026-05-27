@@ -424,17 +424,20 @@ class TestCountCachedBlocks:
     def test_counts_plan_create_block_rows(self):
         conn = _FakeConn()
         conn.queue_response(row={'n': 12})
-        assert _count_cached_blocks(conn, 3) == 12
+        assert _count_cached_blocks(conn, 3, 7) == 12
         sql, params = conn.calls[0]
         assert 'COUNT(*)' in sql
         assert "entry_point = 'plan_create'" in sql
         # Block rows only: phase_idx in [0, _SEAM_CACHE_PHASE_IDX_BASE).
         assert 'phase_idx >= 0' in sql and 'phase_idx < ?' in sql
-        assert params == (3, plan_create._SEAM_CACHE_PHASE_IDX_BASE)
+        # Bounded to THIS plan's generation — orphan rows from a prior failed
+        # plan (created before pv.created_at) must not inflate the count.
+        assert 'c.created_at >= pv.created_at' in sql
+        assert params == (7, 3, 3, plan_create._SEAM_CACHE_PHASE_IDX_BASE)
 
     def test_zero_when_no_rows(self):
         conn = _FakeConn()  # no queued response → fetchone None
-        assert _count_cached_blocks(conn, 3) == 0
+        assert _count_cached_blocks(conn, 3, 7) == 0
 
 
 class TestStallBackstop:
@@ -510,6 +513,10 @@ class TestGenerationStalled:
         assert "entry_point = 'plan_create'" in sql
         assert 'phase_idx >= 0' in sql and 'phase_idx < ?' in sql
         assert "INTERVAL '1 second'" in sql
+        # Bound to this plan's own progress: orphan blocks from a prior failed
+        # plan (created before pv.created_at) must not anchor the window in the
+        # past and false-trip a brand-new plan (the pv=29 → pv=30+ incident).
+        assert 'created_at >= pv.created_at' in sql
         assert params == (
             3, plan_create._SEAM_CACHE_PHASE_IDX_BASE,
             plan_create._STALL_WALLCLOCK_S, 7, 3,
