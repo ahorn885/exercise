@@ -1412,9 +1412,11 @@ def synthesize_phase(
             _MAX_SESSIONS_PER_WEEK * block_weeks, _MAX_SESSIONS_PER_PHASE
         )
         unit_scope_start, unit_scope_end = _block_date_window(phase_spec, week_range)
+        unit_tag = f"{phase_spec.phase_name}:w{ws}" + (f"-{we}" if we != ws else "")
     else:
         max_sessions_this_unit = _MAX_SESSIONS_PER_PHASE
         unit_scope_start, unit_scope_end = phase_spec.start_date, phase_spec.end_date
+        unit_tag = f"{phase_spec.phase_name}:full-phase"
     tool_schema = build_record_phase_sessions_tool(max_sessions_this_unit)
 
     rule_failures: list[RuleFailure] = []
@@ -1493,6 +1495,17 @@ def synthesize_phase(
         total_output_tokens += llm_out.output_tokens
         total_latency_ms += llm_out.latency_ms
 
+        # D-77 §6 diagnostics — per-attempt LLM latency so a 504-looping block
+        # reveals whether a SINGLE call is near the 300s function cap or whether
+        # the capped-retry stack (multiple extended-thinking calls in one
+        # non-resumable function invocation) is what blows the budget. Diagnostic
+        # only; trim once the per-block cost driver is identified.
+        print(
+            f"synthesize_phase: {unit_tag} attempt {current_pass + 1}/"
+            f"{capped_retries + 1} llm call {llm_out.latency_ms}ms "
+            f"(in={llm_out.input_tokens} out={llm_out.output_tokens})"
+        )
+
         raw_sessions = llm_out.tool_args.get("sessions")
         notes_str = llm_out.tool_args.get("phase_synthesis_notes", "")
         opportunities = llm_out.tool_args.get("opportunities") or []
@@ -1509,7 +1522,7 @@ def synthesize_phase(
             # from the runtime log (is the dict empty, partial, or wrong-keyed?).
             present_keys = sorted(llm_out.tool_args.keys())
             print(
-                f"synthesize_phase: {phase_spec.phase_name} pass {current_pass} "
+                f"synthesize_phase: {unit_tag} attempt {current_pass + 1} "
                 f"returned no 'sessions' array (tool_args keys={present_keys})"
             )
             if current_pass >= capped_retries:
@@ -1561,6 +1574,10 @@ def synthesize_phase(
                 for i, s in enumerate(raw_sessions)
             ]
         except (ValidationError, KeyError, ValueError, TypeError) as e:
+            print(
+                f"synthesize_phase: {unit_tag} attempt {current_pass + 1} "
+                f"sessions did not parse ({type(e).__name__}): {str(e)[:240]}"
+            )
             if current_pass >= capped_retries:
                 raise Layer4OutputError(
                     "schema_violation",
@@ -1627,6 +1644,17 @@ def synthesize_phase(
             break
 
         rule_failures = list(validator_result.rule_failures)
+        # D-77 §6 diagnostics — the per-block validator rejection was previously
+        # silent, so a block that 504-loops by exhausting its retry stack gave no
+        # signal as to WHY each attempt was rejected (a fixable rule bug vs. a
+        # genuinely-unsatisfiable plan). Log the failing rule_name(severity) set.
+        _failed = "; ".join(
+            f"{f.rule_name}({f.severity})" for f in validator_result.rule_failures
+        )[:240]
+        print(
+            f"synthesize_phase: {unit_tag} attempt {current_pass + 1} validator "
+            f"rejected ({len(validator_result.rule_failures)} failure(s)): {_failed}"
+        )
         if current_pass >= capped_retries:
             cap_hit = True
             final_retries_used = current_pass
@@ -1641,6 +1669,18 @@ def synthesize_phase(
             detail="no synthesizer pass produced parseable sessions",
         )
     assert latest_validator is not None
+
+    # D-77 §6 diagnostics — per-block synthesis summary: call count + total
+    # latency expose how close a block runs to the 300s function cap, and
+    # cap_hit/retries_used show whether it converged or was best-effort accepted.
+    # (Fires only when the block RETURNS — a block 504-killed mid-loop is traced
+    # via the per-attempt lines above instead.) Diagnostic only; trim later.
+    print(
+        f"synthesize_phase: {unit_tag} done — {llm_call_count} llm call(s), "
+        f"{total_latency_ms}ms total, accepted={latest_validator.accepted}, "
+        f"cap_hit={cap_hit}, retries_used={final_retries_used}, "
+        f"sessions={len(latest_sessions)}"
+    )
 
     return PhaseSynthesisResult(
         phase_name=phase_spec.phase_name,
