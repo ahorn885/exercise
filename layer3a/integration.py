@@ -468,7 +468,15 @@ def q_layer3A_connected_providers(
     (no dedicated column in `provider_auth`). Coverage flags use the same
     recency windows as the per-data accessors so the LLM's view of "is data
     actively flowing" stays consistent."""
-    anchor = as_of or datetime.now()
+    # Day-anchored fallback (not full-precision `datetime.now()`): this anchor
+    # feeds the date cutoffs behind the day-granular provider-coverage flags,
+    # which ride in the Layer3AIntegrationBundle whose hash folds into the 3A
+    # cache key (`layer3a_athlete_state_key`) — a sub-day fallback would drift
+    # that key every resumable pass. The sole production caller always passes a
+    # day-anchored `as_of`, so this path is purely defensive.
+    anchor = as_of or datetime.utcnow().replace(
+        hour=0, minute=0, second=0, microsecond=0
+    )
     workout_cutoff = _window_cutoff(anchor, workout_window_days).isoformat()
     sleep_cutoff = _window_cutoff(anchor, sleep_window_days).isoformat()
     hrv_cutoff = _window_cutoff(anchor, hrv_window_days).isoformat()
