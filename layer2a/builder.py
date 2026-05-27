@@ -683,6 +683,14 @@ def q_layer2a_discipline_classifier_payload(
         coaching_flags=coaching_flags,
         rationale_metadata=RationaleMetadata(
             template_version=_TEMPLATE_VERSION,
-            generated_at=datetime.utcnow().isoformat(),
+            # Day-anchored: `generated_at` is hashed into `layer2a_hash`, which
+            # keys plan_create / per-block / race_week_brief cache entries. A
+            # full-precision timestamp made those keys vary on every invocation
+            # (the cone never cached → D-77 non-convergence). Pure build
+            # provenance — no consumer reads it; day-granular keeps it stable
+            # within a calendar day.
+            generated_at=datetime.utcnow()
+            .replace(hour=0, minute=0, second=0, microsecond=0)
+            .isoformat(),
         ),
     )

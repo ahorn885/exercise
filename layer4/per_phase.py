@@ -84,6 +84,18 @@ _MAX_SESSIONS_PER_WEEK = 14
 disciplines + strength with occasional doubles. The per-block `maxItems` +
 over-emit clamp scale from this × the block's week count."""
 
+_PER_BLOCK_BUDGET_MS = 120_000
+"""D-77 §6 per-block synthesis budget (accumulated LLM latency). A block's
+capped-retry stack runs multiple sequential extended-thinking calls in ONE
+non-resumable function invocation; if the stack exceeds the immovable 300s
+Vercel cap it 504-kills mid-loop, caches nothing, and the next pass restarts it
+from attempt 1 — an infinite loop the wall-clock backstop only converts into a
+loud failure after ~900s. This bound stops the loop from STARTING another
+attempt once the block has spent its LLM-time budget, so a block always RETURNS
+within the function cap: it caches the best parseable attempt as best-effort
+(§5.5 cap-hit) or fails terminally fast. 120s leaves headroom for one more
+in-flight attempt under the 300s cap. The first attempt is never gated."""
+
 
 # Per `Layer4_PerPhase_v1.md` D5: closed set of 6 LLM-emitted coaching flags.
 # Spec-auto flags (`recovery_week`, `peak_volume_marker`, `race_rehearsal`,
@@ -1402,9 +1414,16 @@ def synthesize_phase(
 
     # D-77: scope the unit to a week-block when `week_range` is set, else the
     # whole phase. The per-unit session ceiling scales from the per-week cap;
-    # `max_tokens` is left at the per-phase value — a block needs fewer output
-    # tokens, so the per-phase cap is ample headroom (scaling it DOWN would
-    # risk truncating output and could dip below `extended_thinking_budget`).
+    # `max_tokens` is left at the per-phase value. NOTE: under extended thinking
+    # the request ceiling is `max_tokens + extended_thinking_budget`, and a block
+    # WAS observed truncating against it (prod: out pinned at the ceiling, empty
+    # tool args) — the model spent the budget thinking and left no room for the
+    # `sessions` output. That truncation is now mitigated in `invoke_tool_call`:
+    # an empty tool call triggers the forced-tool retry (thinking off → the full
+    # `max_tokens` is available for output). If a forced retry ever truncates a
+    # dense week against `max_tokens` alone, raising the block-mode budget is the
+    # follow-on (the per-block budget guard below keeps it failing fast, not
+    # 504-looping, in the meantime).
     if week_range is not None:
         ws, we = week_range
         block_weeks = max(1, we - ws + 1)
@@ -1458,6 +1477,38 @@ def synthesize_phase(
 
     for pass_offset in range(remaining_budget + 1):
         current_pass = retries_already_used + pass_offset
+        # D-77 §6 per-block budget guard: don't START another extended-thinking
+        # attempt once the block has spent its LLM-time budget — the block must
+        # RETURN within the 300s function cap so it caches (or fails terminally
+        # fast) rather than 504-looping forever. The first attempt always runs;
+        # later retries are gated on accumulated latency.
+        if pass_offset > 0 and total_latency_ms >= _PER_BLOCK_BUDGET_MS:
+            if latest_sessions is not None:
+                # Accept the best parseable attempt so far as best-effort
+                # (§5.5 cap-hit) so the block caches and the plan makes
+                # monotonic progress instead of re-synthesizing it next pass.
+                print(
+                    f"synthesize_phase: {unit_tag} per-block budget spent "
+                    f"({total_latency_ms}ms over {llm_call_count} call(s)) — "
+                    f"accepting best-effort attempt (cap_hit)"
+                )
+                cap_hit = True
+                break
+            # No parseable attempt within budget — the block can't be salvaged;
+            # fail terminally fast (the row flips to a coded failure) instead of
+            # starting another attempt that would 504.
+            print(
+                f"synthesize_phase: {unit_tag} per-block budget spent "
+                f"({total_latency_ms}ms over {llm_call_count} call(s)) with no "
+                f"parseable attempt — terminal"
+            )
+            raise Layer4OutputError(
+                "synthesis_budget_exhausted",
+                detail=(
+                    f"{unit_tag}: no parseable attempt within "
+                    f"{_PER_BLOCK_BUDGET_MS}ms ({llm_call_count} call(s))"
+                ),
+            )
         user_prompt = render_user_prompt(
             phase_spec=phase_spec,
             phase_structure=phase_structure,

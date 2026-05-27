@@ -84,6 +84,48 @@ def _queue_empty_athlete(conn: _FakeConn) -> None:
         conn.queue_response()
 
 
+class _FixedClock(datetime):
+    """datetime subclass with a controllable utcnow() — only utcnow is
+    overridden, so combine/fromisoformat/etc. behave normally."""
+    _now = datetime(2026, 5, 27, 6, 11, 31, 123456)
+
+    @classmethod
+    def utcnow(cls):
+        return cls._now
+
+
+class TestCacheKeyDeterminism:
+    def test_as_of_day_anchored_so_layer1_hash_is_stable(self, monkeypatch):
+        """Regression (D-77): `Layer1Payload.as_of` is hashed into
+        `layer1_hash`, which keys EVERY Layer 4 cache entry. It must be
+        day-granular so re-builds within a calendar day hash identically —
+        else the cone re-runs cold on every resumable pass and a multi-pass
+        plan can never converge. A microsecond `utcnow()` was the bug."""
+        from layer4.hashing import compute_payload_hash
+
+        monkeypatch.setattr("layer1.builder.datetime", _FixedClock)
+
+        _FixedClock._now = datetime(2026, 5, 27, 6, 11, 31, 123456)
+        conn1 = _FakeConn()
+        _queue_empty_athlete(conn1)
+        p1 = build_layer1_payload(conn1, user_id=42)
+        # No sub-day precision survives into the hashed field.
+        assert (
+            p1.as_of.hour,
+            p1.as_of.minute,
+            p1.as_of.second,
+            p1.as_of.microsecond,
+        ) == (0, 0, 0, 0)
+        h1 = compute_payload_hash(p1)
+
+        # Same calendar day, very different wall-clock time → identical hash.
+        _FixedClock._now = datetime(2026, 5, 27, 18, 45, 9, 987654)
+        conn2 = _FakeConn()
+        _queue_empty_athlete(conn2)
+        p2 = build_layer1_payload(conn2, user_id=42)
+        assert compute_payload_hash(p2) == h1
+
+
 # ─── empty user ──────────────────────────────────────────────────────────────
 
 
