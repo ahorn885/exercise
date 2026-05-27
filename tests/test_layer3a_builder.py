@@ -902,6 +902,50 @@ class TestObservationTextClamp:
         assert payload.notable_observations[0].text == exact
 
 
+class TestUnknownCurrentStateKeyStrip:
+    def test_unknown_current_state_key_stripped_not_schema_violation(self):
+        # Reproduces the prod Layer3AOutputError(schema_violation) on
+        # current_state.weak_links_note_internal: the model invents a null
+        # "internal note" sibling beside weak_links and holds it through the
+        # capped retry, so `extra='forbid'` walls the cone. The driver strips
+        # undeclared current_state keys before validation instead of failing.
+        args = _good_tool_args()
+        args["current_state"]["weak_links_note_internal"] = None
+        payload = llm_layer3a_athlete_state(
+            user_id=1,
+            layer1_payload=_make_layer1(),
+            layer2a_payload=_make_layer2a(),
+            integration_bundle=_make_bundle(),
+            as_of=datetime(2026, 5, 20, 0, 0),
+            etl_version_set=_DEFAULT_ETL,
+            llm_caller=_stub_caller(args),
+        )
+        # Cone does not raise; declared fields intact and the stray key gone
+        # (strip runs in place on the candidate, which shares the current_state
+        # ref with tool_args).
+        assert payload.current_state.aerobic_capacity.level == "strong"
+        assert payload.current_state.weak_links == ["single-leg balance"]
+        assert "weak_links_note_internal" not in args["current_state"]
+
+    def test_typod_required_field_still_raises_schema_violation(self):
+        # Stripping undeclared keys must not mask a genuinely missing required
+        # field: a typo'd `weak_links` leaves the real slot unfilled, so the
+        # cone still walls on schema_violation rather than silently degrading.
+        bad = _good_tool_args()
+        bad["current_state"]["weak_linkz"] = bad["current_state"].pop("weak_links")
+        with pytest.raises(Layer3AOutputError) as exc:
+            llm_layer3a_athlete_state(
+                user_id=1,
+                layer1_payload=_make_layer1(),
+                layer2a_payload=_make_layer2a(),
+                integration_bundle=_make_bundle(),
+                as_of=datetime(2026, 5, 20, 0, 0),
+                etl_version_set=_DEFAULT_ETL,
+                llm_caller=_sequence_caller([bad, bad]),
+            )
+        assert exc.value.code == "schema_violation"
+
+
 # ─── §5.3 step 2 evidence-basis cross-check ──────────────────────────────────
 
 
