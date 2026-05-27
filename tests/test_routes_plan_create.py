@@ -23,6 +23,7 @@ from routes.auth import cron_authorized
 from routes.plan_create import (
     _advance_plan_generation,
     _count_cached_blocks,
+    _generation_stalled,
     _load_plan_version,
     _mark_plan_failed,
     _orchestration_error_message,
@@ -437,13 +438,11 @@ class TestCountCachedBlocks:
 
 
 class TestStallBackstop:
-    def test_stall_trips_after_limit_without_running_cone(self, monkeypatch):
+    def test_stall_trips_when_no_block_cached_within_window(self, monkeypatch):
         conn = _FakeConn()
-        # A prior pass already recorded 1 no-progress pass at 4 cached blocks.
-        _queue_plan_version(
-            conn, status='generating', units_cached=4, stall_passes=1
-        )
-        conn.queue_response(row={'n': 4})  # still 4 → second no-progress pass
+        _queue_plan_version(conn, status='generating', units_cached=0)
+        conn.queue_response(row={'n': 0})            # _count_cached_blocks
+        conn.queue_response(row={'stalled': True})   # over the wall-clock window
 
         def _boom(*a, **k):
             raise AssertionError("cone must not run once the backstop trips")
@@ -452,16 +451,16 @@ class TestStallBackstop:
         out = _advance_plan_generation(conn, 3, 7)
         assert out['status'] == 'failed'
         assert 'stalled' in out['error'].lower()
-        # The counter persisted, then the row flipped to a terminal failure.
-        assert any('generation_stall_passes' in c[0] for c in conn.calls)
         assert any("generation_status = 'failed'" in c[0] for c in conn.calls)
+        # The stall signal is wall-clock now — the per-call counter is never
+        # written (it's still SELECTed by _load_plan_version, hence "= ?").
+        assert not any('generation_stall_passes = ?' in c[0] for c in conn.calls)
 
-    def test_progress_resets_stall_and_runs_cone(self, monkeypatch):
+    def test_recent_progress_runs_cone_and_records_count(self, monkeypatch):
         conn = _FakeConn()
-        _queue_plan_version(
-            conn, status='generating', units_cached=2, stall_passes=1
-        )
-        conn.queue_response(row={'n': 5})  # 5 > 2 → progress → stall resets
+        _queue_plan_version(conn, status='generating', units_cached=2)
+        conn.queue_response(row={'n': 5})            # 5 blocks cached so far
+        conn.queue_response(row={'stalled': False})  # a block cached recently
         monkeypatch.setattr(plan_create, '_build_layer4_cache', lambda: 'CACHE')
         monkeypatch.setattr(
             plan_create, 'orchestrate_plan_create', lambda *a, **k: 'RESULT'
@@ -471,16 +470,20 @@ class TestStallBackstop:
         )
         out = _advance_plan_generation(conn, 3, 7)
         assert out['status'] == 'ready'
-        # Counter persisted units_cached=5, stall_passes=0 (progress).
+        # Progress count persisted (telemetry); the stall_passes column is gone.
         upd = [c for c in conn.calls if 'generation_units_cached = ?' in c[0]]
-        assert upd and upd[0][1] == (5, 0, 7, 3)
+        assert upd and upd[0][1] == (5, 7, 3)
 
-    def test_first_pass_does_not_false_trip(self, monkeypatch):
+    def test_in_flight_first_block_does_not_false_trip(self, monkeypatch):
+        # Regression for the plan_version_id=24 incident: a brand-new generation
+        # has zero cached blocks while the first ~300s block is still in flight.
+        # The every-minute cron fires during that window; the wall-clock gate
+        # reports NOT stalled (generation just started), so the cone runs rather
+        # than the plan being failed ~46s in (the old per-call counter's bug).
         conn = _FakeConn()
-        _queue_plan_version(
-            conn, status='generating', units_cached=0, stall_passes=0
-        )
-        conn.queue_response(row={'n': 0})  # nothing cached yet on pass 1
+        _queue_plan_version(conn, status='generating', units_cached=0)
+        conn.queue_response(row={'n': 0})            # nothing cached yet
+        conn.queue_response(row={'stalled': False})  # within the wall-clock window
         ran = {}
         monkeypatch.setattr(plan_create, '_build_layer4_cache', lambda: 'CACHE')
         monkeypatch.setattr(
@@ -491,9 +494,35 @@ class TestStallBackstop:
             plan_create, 'persist_layer4_sessions', lambda db, r: None
         )
         out = _advance_plan_generation(conn, 3, 7)
-        # stall 0→1 (< limit 2) → the cone still runs; no false trip on pass 1.
         assert ran.get('ran') is True
         assert out['status'] == 'ready'
+
+
+class TestGenerationStalled:
+    def test_true_when_db_reports_over_window(self):
+        conn = _FakeConn()
+        conn.queue_response(row={'stalled': True})
+        assert _generation_stalled(conn, 3, 7) is True
+        sql, params = conn.calls[0]
+        # Wall-clock gate on the DB clock, anchored on the most-recent block
+        # (or generation start when no block has cached yet).
+        assert 'NOW()' in sql and 'MAX(created_at)' in sql
+        assert "entry_point = 'plan_create'" in sql
+        assert 'phase_idx >= 0' in sql and 'phase_idx < ?' in sql
+        assert "INTERVAL '1 second'" in sql
+        assert params == (
+            3, plan_create._SEAM_CACHE_PHASE_IDX_BASE,
+            plan_create._STALL_WALLCLOCK_S, 7, 3,
+        )
+
+    def test_false_when_db_reports_within_window(self):
+        conn = _FakeConn()
+        conn.queue_response(row={'stalled': False})
+        assert _generation_stalled(conn, 3, 7) is False
+
+    def test_false_when_row_missing(self):
+        conn = _FakeConn()  # no queued response → fetchone None → not stalled
+        assert _generation_stalled(conn, 3, 7) is False
 
 
 # ─── cron_authorized (shared CRON_SECRET gate) ───────────────────────────────

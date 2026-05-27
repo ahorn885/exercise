@@ -1963,12 +1963,16 @@ _PG_MIGRATIONS = [
         END IF;
     END $$;""",
     # D-77 progress-based backstop (2026-05-27) — the per-week-block decomposition
-    # (Layer4_Spec §5.2/§9.2) guarantees each resumable pass caches ≥1 new block,
-    # so a pass that caches ZERO new blocks signals a genuinely over-budget unit.
-    # `generation_units_cached` records the block count observed at the start of
-    # the most-recent pass; `generation_stall_passes` counts consecutive
-    # no-progress passes. At `_STALL_PASS_LIMIT` the row fails loudly instead of
-    # 504-looping forever. Both default 0 (correct for in-flight + legacy rows).
+    # (Layer4_Spec §5.2/§9.2) makes each unit fit the 300s ceiling; a generation
+    # that caches ZERO new blocks for too long has a unit that genuinely can't
+    # fit. `generation_units_cached` records the latest observed block count
+    # (telemetry: how far generation has gotten). The stall TRIP is wall-clock
+    # (`_generation_stalled` in routes/plan_create.py: no block cached within
+    # `_STALL_WALLCLOCK_S`, on the DB clock) rather than a per-call counter — the
+    # cron + poller both advance the row and a call-count trip false-killed plans
+    # before the first block could cache. `generation_stall_passes` is retained
+    # (now unused) to avoid a drop migration. Both default 0 (correct for
+    # in-flight + legacy rows).
     "ALTER TABLE plan_versions ADD COLUMN IF NOT EXISTS generation_units_cached INTEGER NOT NULL DEFAULT 0",
     "ALTER TABLE plan_versions ADD COLUMN IF NOT EXISTS generation_stall_passes INTEGER NOT NULL DEFAULT 0",
     # layer4_cache entry_point drift fix (2026-05-26) — the Layer 3A/3B

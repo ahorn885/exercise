@@ -100,15 +100,23 @@ _CRON_ADVANCE_BATCH = 5
 # finish + commit.
 _CRON_WALL_CLOCK_BUDGET_S = 240
 
-# D-77 §6 progress-based backstop. The per-week-block decomposition guarantees
-# each resumable pass caches ≥1 new block, so a pass that caches ZERO new blocks
-# signals a genuinely over-budget unit (a bug / mis-sized block). After this many
-# consecutive no-progress passes the row fails loudly rather than 504-looping
-# forever — converting the silent infinite loop into a diagnosable terminal
-# failure. Detection at next-pass start is robust to the prior pass being
-# 504-killed mid-flight (the count reads persisted layer4_cache state, not the
-# prior pass's return value).
-_STALL_PASS_LIMIT = 2
+# D-77 §6 progress-based backstop. The per-week-block decomposition makes each
+# unit fit the 300s function ceiling, so a healthy generation caches ≥1 new block
+# within each pass; a generation that caches ZERO new blocks for longer than a
+# couple of function budgets has a unit that genuinely can't fit, and the row
+# fails loudly rather than 504-looping forever.
+#
+# The signal is WALL-CLOCK, not a per-call counter. Both the every-minute cron
+# AND the progress-screen poller call `_advance_plan_generation` on the same
+# `generating` row, and a single pass may legitimately spend its whole ~300s
+# budget synthesizing the first block before caching anything. The original
+# per-call counter (`_STALL_PASS_LIMIT` consecutive no-progress *calls*) raced
+# that window: poller-start incremented to 1, the cron one minute later
+# incremented to 2, and the plan was failed in ~1 min — before the first block
+# could ever cache. `_generation_stalled` instead measures elapsed time since the
+# most-recent block cached (or generation start if none yet) on the DB clock, so
+# it is robust to a 504-killed pass and to concurrent cron/poller calls.
+_STALL_WALLCLOCK_S = 900
 
 
 # ─── Helpers ────────────────────────────────────────────────────────────────
@@ -173,6 +181,31 @@ def _count_cached_blocks(db, user_id: int) -> int:
         (user_id, _SEAM_CACHE_PHASE_IDX_BASE),
     ).fetchone()
     return int(row['n']) if row else 0
+
+
+def _generation_stalled(db, user_id: int, plan_version_id: int) -> bool:
+    """D-77 §6 — True iff no plan_create week-block has cached within
+    `_STALL_WALLCLOCK_S` seconds, measured on the DB clock against the
+    most-recent block's cache time (or the plan_versions row's start time if no
+    block has cached yet).
+
+    This replaces the original per-call no-progress counter, which raced the
+    every-minute cron + the progress poller and tripped before the first ~300s
+    block could cache. A wall-clock gate never false-trips a block that is
+    legitimately in flight, and concurrent cron/poller calls can't double-count
+    it — yet a unit that genuinely can't fit the budget still trips once the
+    elapsed window is exceeded."""
+    row = db.execute(
+        "SELECT (NOW() - COALESCE("
+        "  (SELECT MAX(created_at) FROM layer4_cache "
+        "     WHERE user_id = ? AND entry_point = 'plan_create' "
+        "       AND phase_idx >= 0 AND phase_idx < ?), "
+        "  pv.created_at)) > (? * INTERVAL '1 second') AS stalled "
+        "FROM plan_versions pv WHERE pv.id = ? AND pv.user_id = ?",
+        (user_id, _SEAM_CACHE_PHASE_IDX_BASE, _STALL_WALLCLOCK_S,
+         plan_version_id, user_id),
+    ).fetchone()
+    return bool(row['stalled']) if row else False
 
 
 _ORCH_ERROR_MESSAGES = {
@@ -261,43 +294,34 @@ def _advance_plan_generation(db, uid: int, plan_version_id: int) -> dict:
         }
 
     # D-77 §6 progress-based backstop (runs BEFORE the cone so it survives the
-    # prior pass being 504-killed mid-flight). Compare the block count now to
-    # the count recorded at the previous pass's start: a strictly higher count
-    # means the previous pass cached ≥1 new block (progress → reset); an equal
-    # count means it cached none (a no-progress pass → increment); a lower count
-    # means the cache shrank externally (eviction → re-baseline, not a stall).
-    # Persist the new baseline + counter immediately so the signal is durable.
-    # A complex plan may take many passes — only consecutive zero-progress
-    # passes trip the guard, never length alone.
+    # prior pass being 504-killed mid-flight). Trip only when no week-block has
+    # cached for `_STALL_WALLCLOCK_S` (wall-clock on the DB clock), NOT on a
+    # per-call counter — see the `_STALL_WALLCLOCK_S` rationale: the cron + the
+    # poller both call this, and the first block legitimately takes a full pass
+    # to cache, so a call-count trip killed plans before they could start.
     now_cached = _count_cached_blocks(db, uid)
-    prev_cached = plan_version['generation_units_cached']
-    stall_passes = plan_version['generation_stall_passes']
-    if now_cached > prev_cached:
-        stall_passes = 0
-    elif now_cached == prev_cached:
-        stall_passes += 1
-    else:
-        stall_passes = 0
-    db.execute(
-        "UPDATE plan_versions SET generation_units_cached = ?, "
-        "generation_stall_passes = ? WHERE id = ? AND user_id = ?",
-        (now_cached, stall_passes, plan_version_id, uid),
-    )
-    db.commit()
-    if stall_passes >= _STALL_PASS_LIMIT:
+    if _generation_stalled(db, uid, plan_version_id):
         # Convert the silent infinite 504 loop into a loud terminal failure.
         print(
             f"_advance_plan_generation: D-77 stall backstop tripped for "
-            f"plan_version_id={plan_version_id} — {stall_passes} consecutive "
-            f"no-progress pass(es) at {now_cached} cached block(s); a synthesis "
-            f"unit (next block index {now_cached}) likely exceeds the function "
-            f"budget."
+            f"plan_version_id={plan_version_id} — no new week-block cached in "
+            f"{_STALL_WALLCLOCK_S}s at {now_cached} cached block(s); a synthesis "
+            f"unit (next block index {now_cached}) exceeds the function budget."
         )
         return _mark_plan_failed(
             db, plan_version_id, uid,
             "Plan generation stalled and was stopped — a step couldn't complete "
             "within the time budget. This is unexpected; please contact support.",
         )
+    # Not stalled — persist the latest progress count (telemetry: the progress
+    # screen and a later pass can see how far generation has gotten) before
+    # running one more resumable pass.
+    db.execute(
+        "UPDATE plan_versions SET generation_units_cached = ? "
+        "WHERE id = ? AND user_id = ?",
+        (now_cached, plan_version_id, uid),
+    )
+    db.commit()
 
     try:
         result = orchestrate_plan_create(
