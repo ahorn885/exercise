@@ -42,6 +42,7 @@ from layer4 import (
     VALID_ENTRY_POINTS,
     canonical_json,
     compute_accepted_output_hash,
+    compute_block_cache_key,
     compute_payload_hash,
     compute_phase_cache_key,
     evict_on_layer_change,
@@ -958,6 +959,68 @@ class TestPerPhaseHelpers:
             prev_accepted_output_hash=None,
         )
         assert k_a != k_b
+
+    def test_compute_block_cache_key_deterministic(self):
+        k1 = compute_block_cache_key(
+            call_cache_key="callkey", phase_name="Base", phase_index=0,
+            week_in_phase=1, prev_accepted_output_hash=None,
+        )
+        k2 = compute_block_cache_key(
+            call_cache_key="callkey", phase_name="Base", phase_index=0,
+            week_in_phase=1, prev_accepted_output_hash=None,
+        )
+        assert k1 == k2
+
+    def test_compute_block_cache_key_differs_by_week(self):
+        """D-77: two blocks of the same phase differ only by week_in_phase."""
+        k_w1 = compute_block_cache_key(
+            call_cache_key="c", phase_name="Base", phase_index=0,
+            week_in_phase=1, prev_accepted_output_hash=None,
+        )
+        k_w2 = compute_block_cache_key(
+            call_cache_key="c", phase_name="Base", phase_index=0,
+            week_in_phase=2, prev_accepted_output_hash=None,
+        )
+        assert k_w1 != k_w2
+
+    def test_compute_block_cache_key_chains(self):
+        """Different prev_accepted_output_hash → different block key (the
+        per-block chain: a change at week k invalidates k+1)."""
+        k1 = compute_block_cache_key(
+            call_cache_key="c", phase_name="Build", phase_index=1,
+            week_in_phase=2, prev_accepted_output_hash="aaa",
+        )
+        k2 = compute_block_cache_key(
+            call_cache_key="c", phase_name="Build", phase_index=1,
+            week_in_phase=2, prev_accepted_output_hash="bbb",
+        )
+        assert k1 != k2
+
+    def test_compute_block_cache_key_first_block_none_prev(self):
+        """First block of the plan passes None; collapses to '' (deterministic
+        against the call key alone)."""
+        k1 = compute_block_cache_key(
+            call_cache_key="c", phase_name="Base", phase_index=0,
+            week_in_phase=1, prev_accepted_output_hash=None,
+        )
+        k2 = compute_block_cache_key(
+            call_cache_key="c", phase_name="Base", phase_index=0,
+            week_in_phase=1, prev_accepted_output_hash="",
+        )
+        assert k1 == k2
+
+    def test_compute_block_cache_key_differs_from_phase_key(self):
+        """A block key (with week_in_phase) is distinct from the legacy
+        whole-phase key, so the two namespaces never collide on a cache row."""
+        block = compute_block_cache_key(
+            call_cache_key="c", phase_name="Base", phase_index=0,
+            week_in_phase=1, prev_accepted_output_hash=None,
+        )
+        phase = compute_phase_cache_key(
+            call_cache_key="c", phase_name="Base", phase_index=0,
+            prev_accepted_output_hash=None,
+        )
+        assert block != phase
 
     def test_compute_accepted_output_hash_deterministic(self):
         session = _minimal_session()

@@ -42,7 +42,7 @@ from layer4.context import (
 from layer4.errors import Layer4InputError, Layer4OutputError
 from layer4.hashing import (
     compute_accepted_output_hash,
-    compute_phase_cache_key,
+    compute_block_cache_key,
     compute_seam_review_cache_key,
 )
 from layer4.payload import (
@@ -74,6 +74,15 @@ from layer4.seam_review import (
     review_seam,
 )
 from layer4.validator import ValidatorContext, validate_layer4_payload
+
+
+# D-77 §4.1 (decision D4): the per-phase synthesis loop decomposes into
+# per-week-block units so every unit fits the 300s Vercel function ceiling and
+# each resumable pass caches ≥1 new block (monotonic convergence). `_BLOCK_WEEKS`
+# is the tunable block size — 1 week is the smallest safe unit / max convergence
+# margin (Andy's gate); raise to 2+ if per-block call-count overhead proves high
+# after the §5.0 real-LLM latency walk.
+_BLOCK_WEEKS = 1
 
 
 # ─── Input validation (Layer4_Spec.md §4.2) ──────────────────────────────────
@@ -298,6 +307,101 @@ def _hydrate_phase_result_with_meta(
     return result, meta
 
 
+def _aggregate_block_results(
+    phase_name: str,
+    block_results: list[tuple[PhaseSynthesisResult, SynthesisMetadata]],
+) -> tuple[PhaseSynthesisResult, SynthesisMetadata]:
+    """Concatenate a phase's per-week-block synthesis results (D-77 §4) into
+    the single PhaseSynthesisResult + SynthesisMetadata the rest of the engine
+    consumes (seam review, composition, phase_structure metadata).
+
+    Token/latency accounting mirrors the per-unit cache contract (§9.6): the
+    RESULT sums the per-block result totals (cache-zeroed on the cache-wired
+    path, real otherwise), while the META sums the per-block metadata (which
+    retains the original call's real accounting even on a cache hit) so the
+    phase_structure row keeps a faithful per-phase cost."""
+    if not block_results:
+        empty_meta = SynthesisMetadata(
+            model="",
+            temperature=0.0,
+            input_tokens=0,
+            output_tokens=0,
+            latency_ms=0,
+            retries_used=0,
+            cap_hit=False,
+        )
+        return (
+            PhaseSynthesisResult(
+                phase_name=phase_name,
+                sessions=[],
+                phase_synthesis_notes="",
+                opportunities=[],
+                validator_results=[],
+                cap_hit=False,
+                retries_used=0,
+                input_tokens=0,
+                output_tokens=0,
+                latency_ms=0,
+                llm_call_count=0,
+            ),
+            empty_meta,
+        )
+
+    sessions: list[PlanSession] = []
+    notes: list[str] = []
+    opportunities: list[str] = []
+    validator_results: list[ValidatorResult] = []
+    cap_hit = False
+    retries_used = 0
+    r_in = r_out = r_lat = r_calls = 0
+    m_in = m_out = m_lat = m_retries = 0
+    m_cap = False
+    model = block_results[0][1].model
+    temperature = block_results[0][1].temperature
+    for r, m in block_results:
+        sessions.extend(r.sessions)
+        if r.phase_synthesis_notes:
+            notes.append(r.phase_synthesis_notes)
+        opportunities.extend(r.opportunities)
+        validator_results.extend(r.validator_results)
+        cap_hit = cap_hit or r.cap_hit
+        retries_used = max(retries_used, r.retries_used)
+        r_in += r.input_tokens
+        r_out += r.output_tokens
+        r_lat += r.latency_ms
+        r_calls += r.llm_call_count
+        m_in += m.input_tokens
+        m_out += m.output_tokens
+        m_lat += m.latency_ms
+        m_retries = max(m_retries, m.retries_used)
+        m_cap = m_cap or m.cap_hit
+
+    sessions.sort(key=lambda s: (s.date, s.session_index_in_day))
+    result = PhaseSynthesisResult(
+        phase_name=phase_name,
+        sessions=sessions,
+        phase_synthesis_notes=" | ".join(notes),
+        opportunities=opportunities[:3],
+        validator_results=validator_results,
+        cap_hit=cap_hit,
+        retries_used=retries_used,
+        input_tokens=r_in,
+        output_tokens=r_out,
+        latency_ms=r_lat,
+        llm_call_count=r_calls,
+    )
+    meta = SynthesisMetadata(
+        model=model,
+        temperature=temperature,
+        input_tokens=m_in,
+        output_tokens=m_out,
+        latency_ms=m_lat,
+        retries_used=m_retries,
+        cap_hit=m_cap,
+    )
+    return result, meta
+
+
 # Per-phase Pattern A rows use phase_idx 0..N-1; iter-1 seam-review cache rows
 # (§9.2) reuse the same entry_point storage with a disjoint phase_idx namespace
 # (base + seam_idx) so they never collide with a real phase row.
@@ -494,98 +598,126 @@ def _run_pattern_a_engine(
     llm_call_count = 0
     retries_used_per_phase: dict[int, int] = {}
 
-    # §9.2 per-phase cache chain — `prev_accepted_output_hash` rolls forward
-    # through each accepted phase output (None for phase 0, collapsing to ''
-    # inside `compute_phase_cache_key`). Only used when `cache` +
-    # `call_cache_key` are both provided.
+    # §9.2 (D-77) per-block cache chain — `prev_accepted_output_hash` rolls
+    # forward through each accepted week-block output (None for the first block,
+    # collapsing to '' inside `compute_block_cache_key`). Only used when `cache`
+    # + `call_cache_key` are both provided.
     prev_accepted_output_hash: str | None = None
     cache_entry_point: Literal["plan_create", "plan_refresh"] = (
         "plan_create" if mode == "plan_create" else "plan_refresh"
     )
 
-    # --- Per-phase synthesis (sequential) ---------------------------------
+    # --- Per-(phase, week-block) synthesis (sequential) — D-77 §4 ---------
+    # The synthesis unit is one week-block (`_BLOCK_WEEKS` weeks) so it always
+    # fits the 300s function ceiling. A global, monotonic block index `u` is the
+    # cache `phase_idx` (0..W-1, W = total synthesized weeks; well below the seam
+    # namespace base of 1000). The §9.2 chain hash rolls forward PER BLOCK across
+    # the whole plan (spanning phase boundaries), so a change at week k
+    # invalidates k+1..end only. Threading passes the immediately-preceding
+    # block's accepted sessions as the prompt's continuity context.
+    u = 0
+    prior_block_sessions: list[PlanSession] = []
     for i, phase in enumerate(phase_structure.phases):
         if i not in phase_indices_to_synthesize:
+            # Carryover phase (T3 cross-phase): not synthesized this call, but
+            # seed the threading context so the next synthesized phase's first
+            # block threads off this phase's last week. The §9.2 chain hash is
+            # NOT rolled for carryover (mirrors the prior per-phase contract).
+            if i in carryover_sessions_by_phase_index:
+                prior_block_sessions = carryover_sessions_by_phase_index[i]
             continue
 
-        # Determine prior-phase sessions for the prompt's continuity context.
-        prior_phase_sessions: list[PlanSession] = []
-        if i > 0:
-            prev_idx = i - 1
-            if prev_idx in results_by_index:
-                prior_phase_sessions = results_by_index[prev_idx].sessions
-            elif prev_idx in carryover_sessions_by_phase_index:
-                prior_phase_sessions = carryover_sessions_by_phase_index[prev_idx]
-            # else: synthetic prior (start_phase != 'Base' first-phase case);
-            # per_phase.render_user_prompt handles None/empty gracefully.
+        block_results: list[tuple[PhaseSynthesisResult, SynthesisMetadata]] = []
+        week = 1
+        while week <= phase.weeks:
+            week_end = min(week + _BLOCK_WEEKS - 1, phase.weeks)
+            week_range = (week, week_end)
 
-        def _synth_this_phase(
-            _i: int = i,
-            _phase: PhaseSpec = phase,
-            _prior: list[PlanSession] = prior_phase_sessions,
-        ) -> PhaseSynthesisResult:
-            return synthesize_phase(
-                user_id=user_id,
-                phase_spec=_phase,
-                phase_structure=phase_structure,
-                phase_index_in_plan=_i,
-                layer1_payload=layer1_payload,
-                layer2a_payload=layer2a_payload,
-                layer2b_payload=layer2b_payload,
-                layer2c_payloads=layer2c_payloads,
-                layer2d_payload=layer2d_payload,
-                layer2e_payload=layer2e_payload,
-                layer3a_payload=layer3a_payload,
-                layer3b_payload=layer3b_payload,
-                race_event_payload=race_event_payload,
-                prior_phase_sessions=_prior,
-                plan_version_id=plan_version_id,
-                etl_version_set=etl_version_set,
-                mode=mode,
-                model=model_synthesizer,
-                temperature=temperature,
-                max_tokens=max_tokens_per_phase,
-                extended_thinking_budget=extended_thinking_budget,
-                capped_retries=capped_retries_per_phase,
-                retries_already_used=0,
-                llm_caller=phase_caller,
-                session_id_prefix=f"{session_id_prefix}-p{_i}",
-                training_substitution_payload=training_substitution_payload,
-            )
-
-        if cache is not None and call_cache_key is not None:
-            # Per §9.2: cache key chains via prev_accepted_output_hash.
-            phase_key = compute_phase_cache_key(
-                call_cache_key=call_cache_key,
-                phase_name=phase.phase_name,
-                phase_index=i,
-                prev_accepted_output_hash=prev_accepted_output_hash,
-            )
-
-            def _serialize_synth(
-                _phase_name: str = phase.phase_name,
-            ) -> dict[str, Any]:
-                r = _synth_this_phase()
-                m = build_synthesis_metadata_from_result(
-                    r, model=model_synthesizer, temperature=temperature
+            def _synth_this_block(
+                _i: int = i,
+                _phase: PhaseSpec = phase,
+                _prior: list[PlanSession] = prior_block_sessions,
+                _wr: tuple[int, int] = week_range,
+            ) -> PhaseSynthesisResult:
+                return synthesize_phase(
+                    user_id=user_id,
+                    phase_spec=_phase,
+                    phase_structure=phase_structure,
+                    phase_index_in_plan=_i,
+                    layer1_payload=layer1_payload,
+                    layer2a_payload=layer2a_payload,
+                    layer2b_payload=layer2b_payload,
+                    layer2c_payloads=layer2c_payloads,
+                    layer2d_payload=layer2d_payload,
+                    layer2e_payload=layer2e_payload,
+                    layer3a_payload=layer3a_payload,
+                    layer3b_payload=layer3b_payload,
+                    race_event_payload=race_event_payload,
+                    prior_block_sessions=_prior,
+                    plan_version_id=plan_version_id,
+                    etl_version_set=etl_version_set,
+                    mode=mode,
+                    model=model_synthesizer,
+                    temperature=temperature,
+                    max_tokens=max_tokens_per_phase,
+                    extended_thinking_budget=extended_thinking_budget,
+                    capped_retries=capped_retries_per_phase,
+                    retries_already_used=0,
+                    llm_caller=phase_caller,
+                    session_id_prefix=f"{session_id_prefix}-p{_i}-w{_wr[0]}",
+                    training_substitution_payload=training_substitution_payload,
+                    week_range=_wr,
                 )
-                return _serialize_phase_result_with_meta(r, m)
 
-            cached_dict = cache.get_phase_or_synthesize(
-                phase_key=phase_key,
-                phase_idx=i,
-                phase_name=phase.phase_name,
-                user_id=user_id,
-                entry_point=cache_entry_point,
-                synthesizer=_serialize_synth,
-            )
-            result, meta = _hydrate_phase_result_with_meta(cached_dict)
-        else:
-            result = _synth_this_phase()
-            meta = build_synthesis_metadata_from_result(
-                result, model=model_synthesizer, temperature=temperature
-            )
+            if cache is not None and call_cache_key is not None:
+                # §9.2 (D-77): per-block cache key chains via the running
+                # prev_accepted_output_hash; phase_idx = the global block index.
+                block_key = compute_block_cache_key(
+                    call_cache_key=call_cache_key,
+                    phase_name=phase.phase_name,
+                    phase_index=i,
+                    week_in_phase=week,
+                    prev_accepted_output_hash=prev_accepted_output_hash,
+                )
 
+                def _serialize_block(
+                    _synth=_synth_this_block,
+                ) -> dict[str, Any]:
+                    r = _synth()
+                    m = build_synthesis_metadata_from_result(
+                        r, model=model_synthesizer, temperature=temperature
+                    )
+                    return _serialize_phase_result_with_meta(r, m)
+
+                cached_dict = cache.get_phase_or_synthesize(
+                    phase_key=block_key,
+                    phase_idx=u,
+                    phase_name=f"{phase.phase_name}:w{week}",
+                    user_id=user_id,
+                    entry_point=cache_entry_point,
+                    synthesizer=_serialize_block,
+                )
+                block_result, block_meta = _hydrate_phase_result_with_meta(
+                    cached_dict
+                )
+            else:
+                block_result = _synth_this_block()
+                block_meta = build_synthesis_metadata_from_result(
+                    block_result, model=model_synthesizer, temperature=temperature
+                )
+
+            block_results.append((block_result, block_meta))
+            # Roll the §9.2 chain hash forward PER BLOCK + thread this block's
+            # accepted sessions into the next block's continuity context.
+            prev_accepted_output_hash = compute_accepted_output_hash(
+                block_result.sessions, block_meta
+            )
+            prior_block_sessions = block_result.sessions
+            u += 1
+            week = week_end + 1
+
+        # Aggregate the phase's week-blocks into one PhaseSynthesisResult + meta.
+        result, meta = _aggregate_block_results(phase.phase_name, block_results)
         results_by_index[i] = result
         synthesis_metadata_by_index[i] = meta
         retries_used_per_phase[i] = result.retries_used
@@ -594,10 +726,6 @@ def _run_pattern_a_engine(
         total_output_tokens += result.output_tokens
         total_latency_ms += result.latency_ms
         llm_call_count += result.llm_call_count
-        # Roll the §9.2 chain hash forward for the next phase's key.
-        prev_accepted_output_hash = compute_accepted_output_hash(
-            result.sessions, meta
-        )
 
         if result.cap_hit:
             notable_observations.append(
@@ -900,7 +1028,11 @@ def _run_pattern_a_engine(
             layer3a_payload=layer3a_payload,
             layer3b_payload=layer3b_payload,
             race_event_payload=race_event_payload,
-            prior_phase_sessions=target_prior_phase_sessions,
+            # Phase-level seam re-synth stays whole-phase in this arc (no
+            # week_range) — the week-seam stitcher (D-77 Slice 3) generalizes
+            # this to week-blocks. The prior phase's full sessions are the
+            # whole-phase continuity context.
+            prior_block_sessions=target_prior_phase_sessions,
             plan_version_id=plan_version_id,
             etl_version_set=etl_version_set,
             mode=mode,
