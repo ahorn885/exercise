@@ -23,17 +23,19 @@ bp = Blueprint('garmin', __name__, url_prefix='/garmin')
 
 @bp.route('/debug-fit', methods=['GET', 'POST'])
 def debug_fit():
-    dump = None
+    dumps = None
     if request.method == 'POST':
         f = request.files.get('fit_file')
         if not f or not f.filename:
             flash('No file selected.', 'warning')
             return redirect(url_for('garmin.debug_fit'))
         try:
+            from garmin_fit_parser import _dump_fit
             raw = f.read()
             # secure_filename strips path components and unsafe characters
             # before we look at the suffix or echo the name anywhere.
             fname = secure_filename(f.filename or '').lower()
+            dumps = []
             if fname.endswith('.zip'):
                 import zipfile, io
                 with zipfile.ZipFile(io.BytesIO(raw)) as zf:
@@ -41,12 +43,18 @@ def debug_fit():
                     if not fit_names:
                         flash('No .fit file found inside the zip.', 'danger')
                         return redirect(url_for('garmin.debug_fit'))
-                    raw = zf.read(fit_names[0])
-            from garmin_fit_parser import _dump_fit
-            dump = _dump_fit(raw)
+                    # Dump every entry (capped) so a single zip upload surfaces
+                    # all file types — activity, wellness, and metrics.
+                    for n in fit_names[:60]:
+                        try:
+                            dumps.append({'name': n, 'dump': _dump_fit(zf.read(n))})
+                        except Exception as e:
+                            dumps.append({'name': n, 'error': str(e)})
+            else:
+                dumps.append({'name': f.filename, 'dump': _dump_fit(raw)})
         except Exception as e:
             flash(f'Error: {e}', 'danger')
-    return render_template('garmin/debug_fit.html', dump=dump)
+    return render_template('garmin/debug_fit.html', dumps=dumps)
 
 
 @bp.route('/')
