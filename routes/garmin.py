@@ -617,6 +617,8 @@ def import_bulk():
     if not files:
         return jsonify({'ok': False, 'error': 'No files in request.'}), 400
 
+    from garmin_fit_parser import parse_fit
+
     match_plan = request.form.get('match_plan', '1') not in ('0', 'false', 'no', 'off', '')
 
     results = []
@@ -1293,6 +1295,8 @@ def import_wellness_bulk():
     files = request.files.getlist('files')
     if not files:
         return jsonify({'ok': False, 'error': 'No files in request.'}), 400
+
+    from garmin_fit_parser import parse_wellness_fit
 
     results = []
     summary = {'imported': 0, 'duplicates': 0, 'skipped': 0, 'errors': 0, 'files': 0}
