@@ -1,12 +1,18 @@
 # AIDSTATION — Current State
 
-Single rolling-state pointer. Changes on every shipped session. Long-form session narrative lives in `handoffs/`; rolling cross-session items live in `CARRY_FORWARD.md`.
+Single rolling-state pointer. Changes on every shipped session. Long-form session narrative lives in `handoffs/`; rolling cross-session items live in `CARRY_FORWARD.md`. **Backlog / features / bugs are tracked in GitHub issues (`ahorn885/exercise`) as of 2026-05-27** — the `Project_Backlog_vN.md` chain is frozen under `archive/backlog/`.
 
 > **Pointer hygiene (2026-05-25):** this file is the *current* pointer, not a narrative archive. The per-session predecessor chain below is a **dated index only** — open the named handoff in `handoffs/` for the full record. Don't paste session narrative back into this file; that's what `handoffs/` is for.
 
 ---
 
 ## Last shipped session
+
+`handoffs/V5_BacklogMigration_DocToGitHubIssues_2026_05_27_Closing_Handoff_v1.md` — 2026-05-27 (**backlog migrated to GitHub issues — froze the `Project_Backlog_vN` chain under `archive/backlog/`, repointed CLAUDE.md/CURRENT_STATE/CARRY_FORWARD/verify-handoff.sh at issues; branch `claude/backlog-stub-discovery-RdtlW`, PR #292 merged**)
+
+Migrated the entire doc-tracked backlog into **~90 GitHub issues across 12 epics** in `ahorn885/exercise` (every open `D-NN` → its own sub-issue, `[D-NN]` preserved in titles; labelled `layer:*`/`area:*`/`type:*`/`status:*`/`priority:*` + `v1`/`v2`/`icebox`). The 62-version `Project_Backlog_vN.md` chain is frozen under `aidstation-sources/archive/backlog/`. **Backlog / features / bugs are now tracked as issues, not docs.** No app code changed. **Next session starts on epic #201 (D-77 plan-gen convergence); the live-fire first move is #202 — the cone cache-key determinism audit (2 un-audited instances: `layer2d/builder.py:567`, the `layer3a` `as_of` fallback) + the still-owed PGE 2026 re-run verification.** The 12 epics: #201, #210, #211, #212, #225, #228, #241, #246, #259, #261, #262, #286.
+
+### Predecessor — D-77 Layer 2E cache-key determinism + stall-backstop orphan-scoping (full record in `handoffs/`)
 
 `handoffs/V5_Implementation_PlanGen_D77_Layer2ECacheKeyDeterminism_StallBackstopOrphanScoping_2026_05_27_Closing_Handoff_v1.md` — 2026-05-27 (**D-77 non-convergence REAL ROOT CAUSE found in the prod logs + fixed — Layer 2E `computed_at` cache-key non-determinism (PR #199, merged `9012430`) + stall-backstop orphan-scoping (PR #200); branch `claude/review-run-logs-A4JVs`**)
 

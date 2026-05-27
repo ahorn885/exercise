@@ -95,28 +95,20 @@ else
 fi
 echo
 
-# --- 2. Backlog version pointer check ---
-echo "[2] Project_Backlog version pointers"
+# --- 2. Backlog tracking pointer check ---
+echo "[2] Backlog tracking (GitHub issues since 2026-05-27)"
 echo
 
-LATEST_BACKLOG="$(ls "$SOURCES_DIR"/Project_Backlog_v*.md 2>/dev/null | sed 's/.*_v\([0-9]\+\)\.md/\1 &/' | sort -n | tail -1 | awk '{print $2}')"
-if [[ -n "$LATEST_BACKLOG" ]]; then
-  echo "  Latest backlog on disk: $(basename "$LATEST_BACKLOG")"
+ARCHIVED_BACKLOG="$(ls "$SOURCES_DIR"/archive/backlog/Project_Backlog_v*.md 2>/dev/null | wc -l | tr -d ' ')"
+if [[ "$ARCHIVED_BACKLOG" -gt 0 ]]; then
+  echo "  Backlog is tracked in GitHub issues (ahorn885/exercise); $ARCHIVED_BACKLOG frozen version(s) under archive/backlog/."
 else
-  echo "  ⚠️  No Project_Backlog_v*.md files found in $SOURCES_DIR"
+  echo "  ⚠️  archive/backlog/ has no Project_Backlog_v*.md — expected the frozen chain there."
 fi
 
-for ref_file in "$SOURCES_DIR/CLAUDE.md" "$SOURCES_DIR/CURRENT_STATE.md"; do
-  if [[ -f "$ref_file" ]]; then
-    refs=$(grep -oE 'Project_Backlog_v[0-9]+' "$ref_file" | sort -u | tr '\n' ' ')
-    name=$(basename "$ref_file")
-    if [[ -z "$refs" ]]; then
-      echo "  $name: (no backlog refs)"
-    else
-      echo "  $name refs: $refs"
-    fi
-  fi
-done
+if ls "$SOURCES_DIR"/Project_Backlog*.md >/dev/null 2>&1; then
+  echo "  ⚠️  A Project_Backlog*.md reappeared in $SOURCES_DIR — backlog lives in GitHub issues now; move it back to archive/backlog/."
+fi
 echo
 
 # --- 3. Handoff §8 anchor table (printed for manual sweep) ---

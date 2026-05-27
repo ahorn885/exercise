@@ -1,5 +1,12 @@
 # AIDSTATION — Carry Forward
 
+> **Tracking moved to GitHub issues (2026-05-27).** Backlog, feature, and bug
+> tracking now lives in `ahorn885/exercise` issues (epics + sub-issues). This
+> file is no longer the place for deferred *work items* — file those as issues.
+> It retains only **live operational carry-state**: owed Andy's-hands deploys,
+> the manual §5.0 walkthrough ledger, and in-flight cross-session notes. The
+> frozen `Project_Backlog_vN.md` chain is under `archive/backlog/`.
+
 Rolling-state for items spanning multiple sessions. **Edit in place** — don't duplicate this content in handoff narratives. The handoff references this file; doesn't restate it.
 
 ---
