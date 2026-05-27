@@ -247,6 +247,15 @@ class Layer2APayload(_Base):
     unresolved_flags: list[UnresolvedFlag]
     coaching_flags: list[Layer2ACoachingFlag]
     rationale_metadata: RationaleMetadata
+    # Per-phase whole-sport weekly HOUR totals from `layer0.phase_load_weekly_totals`
+    # (the spreadsheet's `WEEKLY TOTAL TARGET` row), keyed "Base"/"Build"/"Peak"/
+    # "Taper" → (low_hours, high_hours). The per-discipline `phase_load` bands are
+    # PERCENTAGES of this total; the volume-band consumers multiply the two (see
+    # `validator.phase_volume_bands_hours`). Empty when the sport has no weekly-
+    # total row → consumers fall back to open-ended bands.
+    weekly_total_hours_by_phase: dict[str, tuple[float, float]] = Field(
+        default_factory=dict
+    )
 
 
 # ─── Layer 2B — terrain (Layer2B_Spec.md §7) ─────────────────────────────────

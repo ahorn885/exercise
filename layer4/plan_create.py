@@ -73,7 +73,11 @@ from layer4.seam_review import (
     compose_seam_review_row,
     review_seam,
 )
-from layer4.validator import ValidatorContext, validate_layer4_payload
+from layer4.validator import (
+    ValidatorContext,
+    validate_layer4_payload,
+    weekly_capacity_hours,
+)
 
 
 # D-77 §4.1 (decision D4): the per-phase synthesis loop decomposes into
@@ -1178,6 +1182,7 @@ def _run_pattern_a_engine(
         layer3a_payload=layer3a_payload,
         layer3b_payload=layer3b_payload,
         race_event=race_event_payload,
+        capacity_hours=weekly_capacity_hours(layer1_payload),
     )
     final_validator = validate_layer4_payload(
         final_payload, ctx, pass_index=len(validator_results)

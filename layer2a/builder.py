@@ -187,6 +187,36 @@ def _load_disciplines(
     return [dict(r) for r in cur.fetchall()]
 
 
+def _load_weekly_total_hours(
+    db, framework_sport: str, version_0a: str
+) -> dict[str, tuple[float, float]]:
+    """Per-phase whole-sport weekly HOUR totals from the spreadsheet's
+    `WEEKLY TOTAL TARGET` row (extracted to `layer0.phase_load_weekly_totals`).
+
+    Keyed "Base"/"Build"/"Peak"/"Taper" → (low_hours, high_hours). The
+    per-discipline `phase_load` percentages are shares of this total. Phases
+    with NULL bounds are omitted (consumer falls back to open-ended bands).
+    Keyed on `framework_sport` (the sub-format) like `phase_load_allocation`.
+    """
+    cur = db.execute(
+        """
+        SELECT phase, weekly_low_hours, weekly_high_hours
+          FROM layer0.phase_load_weekly_totals
+         WHERE sport_name = ?
+           AND etl_version = ?
+           AND superseded_at IS NULL
+        """,
+        (framework_sport, version_0a),
+    )
+    out: dict[str, tuple[float, float]] = {}
+    for r in cur.fetchall():
+        row = dict(r)
+        low, high = row.get("weekly_low_hours"), row.get("weekly_high_hours")
+        if low is not None and high is not None:
+            out[row["phase"]] = (float(low), float(high))
+    return out
+
+
 def _role_modifier(role: str) -> str:
     """Map SDM role (possibly with `(*Conditional)` suffix) to the
     rationale-template modifier per spec §5.5.
@@ -544,10 +574,12 @@ def q_layer2a_discipline_classifier_payload(
     """Resolve canonical disciplines for a framework sport. Spec §3.
 
     Pure query node. One SELECT against `layer0.{sport_discipline_map,
-    phase_load_allocation,discipline_training_gaps}` joined by spec §5.2.
-    No JOIN to per-athlete tables — `athlete_discipline_overrides` is
-    supplied by the caller (Phase 5 orchestrator unpacks it from
-    `Layer1Payload.training_history.discipline_weighting`).
+    phase_load_allocation,discipline_training_gaps}` joined by spec §5.2,
+    plus a second SELECT against `layer0.phase_load_weekly_totals` for the
+    per-phase whole-sport weekly HOUR totals (the percentage `phase_load`
+    bands are shares of these). No JOIN to per-athlete tables —
+    `athlete_discipline_overrides` is supplied by the caller (Phase 5
+    orchestrator unpacks it from `Layer1Payload.training_history.discipline_weighting`).
 
     Validation per §4 raises `Layer2AInputError`. Empty sport (no SDM
     rows) returns an empty discipline list with `hitl_required=True` and
@@ -677,6 +709,9 @@ def q_layer2a_discipline_classifier_payload(
         framework_sport=framework_sport,
         etl_version_set=dict(etl_version_set),
         disciplines=disciplines,
+        weekly_total_hours_by_phase=_load_weekly_total_hours(
+            db, framework_sport, version_0a
+        ),
         training_gaps_summary=training_gaps_summary,
         hitl_required=hitl_required,
         unresolved_flags=unresolved_flags,

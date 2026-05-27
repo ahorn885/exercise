@@ -65,6 +65,7 @@ from layer4 import (
     validate_layer4_payload,
 )
 from layer4.payload import RuleFailure
+from layer4.validator import phase_volume_bands_hours
 from layer4.context import (
     DailyNutritionBaseline,
     DailyPhaseTargets,
@@ -298,10 +299,21 @@ def _layer2a_with_band(
             default_inclusion="included",
         ),
     )
+    # phase_load values are PERCENTAGES; the weekly totals convert them to
+    # hours. Sized at the per-phase band midpoint so the single included
+    # discipline (renormalized to 100% of capacity) yields an hour band equal
+    # to the raw (low, high) — keeping these boundary tests' numbers intact.
+    _base_mid = (base_low + base_high) / 2
     return Layer2APayload(
         framework_sport="AR",
         etl_version_set={"layer0": "v7"},
         disciplines=[disc],
+        weekly_total_hours_by_phase={
+            "Base": (_base_mid, _base_mid),
+            "Build": (_base_mid + 1, _base_mid + 1),
+            "Peak": (_base_mid + 1.5, _base_mid + 1.5),
+            "Taper": (_base_mid - 2, _base_mid - 2),
+        },
         training_gaps_summary=TrainingGapsSummary(
             flagged_count=0, any_no_substitute=False, any_multi_substitute_candidate=False
         ),
@@ -706,7 +718,9 @@ def test_volume_band_in_band_no_fire():
         for i in range(6)
     ]
     payload = _minimal_layer4(sessions=sessions)
-    ctx = ValidatorContext(layer2a_payload=_layer2a_with_band())
+    ctx = ValidatorContext(
+        layer2a_payload=_layer2a_with_band(), capacity_hours=999.0
+    )
     failures = validate_layer4_payload(payload, ctx).rule_failures
     assert not any(f.rule_name.startswith("volume_band") for f in failures)
 
@@ -719,7 +733,9 @@ def test_volume_band_above_warning():
         for i in range(6)
     ]  # 9h: above 8 × 1.1=8.8 but ≤ 8 × 1.2=9.6 → warning
     payload = _minimal_layer4(sessions=sessions)
-    ctx = ValidatorContext(layer2a_payload=_layer2a_with_band())
+    ctx = ValidatorContext(
+        layer2a_payload=_layer2a_with_band(), capacity_hours=999.0
+    )
     failures = validate_layer4_payload(payload, ctx).rule_failures
     vb = [f for f in failures if f.rule_name.startswith("volume_band")]
     assert vb
@@ -734,7 +750,9 @@ def test_volume_band_above_blocker():
         for i in range(6)
     ]  # 12h: above 8 × 1.2=9.6 → blocker
     payload = _minimal_layer4(sessions=sessions)
-    ctx = ValidatorContext(layer2a_payload=_layer2a_with_band())
+    ctx = ValidatorContext(
+        layer2a_payload=_layer2a_with_band(), capacity_hours=999.0
+    )
     failures = validate_layer4_payload(payload, ctx).rule_failures
     vb = [f for f in failures if f.rule_name.startswith("volume_band")]
     assert vb
@@ -2025,7 +2043,9 @@ def test_volume_band_boundaries(actual_hours: float, expected_severity: str | No
         )
     ]
     payload = _minimal_layer4(sessions=sessions)
-    ctx = ValidatorContext(layer2a_payload=_layer2a_with_band())
+    ctx = ValidatorContext(
+        layer2a_payload=_layer2a_with_band(), capacity_hours=999.0
+    )
     failures = validate_layer4_payload(payload, ctx).rule_failures
     vb = [f for f in failures if f.rule_name.startswith("volume_band")]
     if expected_severity is None:
@@ -2033,6 +2053,132 @@ def test_volume_band_boundaries(actual_hours: float, expected_severity: str | No
     else:
         assert vb, f"expected volume_band {expected_severity} for {actual_hours}h"
         assert vb[0].severity == expected_severity
+
+
+# ─── Rule 1: volume_band — pct→hours conversion (unit-bug regression) ─────────
+
+
+def _layer2a_multi(
+    disc_pcts: dict[str, tuple[float, float]],
+    weekly_total: tuple[float, float],
+) -> Layer2APayload:
+    """Layer2APayload with several INCLUDED disciplines carrying identical
+    Base/Build/Peak/Taper PERCENTAGE bands + a per-phase weekly-total hour
+    range. Mirrors the real catalog shape (phase_load is %, hours are separate)."""
+    disciplines = [
+        Layer2ADiscipline(
+            discipline_id=did,
+            discipline_name=did,
+            inclusion="included",
+            role="Primary",
+            is_conditional=False,
+            load_weight=WeightResult(
+                value=None, source="system_default", system_default=None
+            ),
+            sleep_deprivation_relevant=False,
+            rationale="r",
+            phase_load=PhaseLoadBands(
+                base_low=lo, base_high=hi,
+                build_low=lo, build_high=hi,
+                peak_low=lo, peak_high=hi,
+                taper_low=lo, taper_high=hi,
+                default_inclusion="included",
+            ),
+        )
+        for did, (lo, hi) in disc_pcts.items()
+    ]
+    return Layer2APayload(
+        framework_sport="AR",
+        etl_version_set={"layer0": "v7"},
+        disciplines=disciplines,
+        weekly_total_hours_by_phase={
+            p: weekly_total for p in ("Base", "Build", "Peak", "Taper")
+        },
+        training_gaps_summary=TrainingGapsSummary(
+            flagged_count=0,
+            any_no_substitute=False,
+            any_multi_substitute_candidate=False,
+        ),
+        hitl_required=False,
+        unresolved_flags=[],
+        coaching_flags=[],
+        rationale_metadata=RationaleMetadata(
+            template_version="v1", generated_at="2026-05-17T10:00:00Z"
+        ),
+    )
+
+
+def test_volume_band_uses_hours_not_raw_percentages():
+    """`phase_load` values are PERCENTAGES. Compared raw against actual hours
+    they flagged `volume_band_below` on every discipline (the real bug). The
+    band must be the capacity-bounded HOUR conversion instead."""
+    disc_pcts = {
+        "D-trail": (10.0, 20.0),  # mid 15
+        "D-bike": (30.0, 50.0),   # mid 40
+        "D-hike": (40.0, 50.0),   # mid 45  → Σ mids = 100 (renorm factor 1)
+    }
+    layer2a = _layer2a_multi(disc_pcts, weekly_total=(16.0, 18.0))
+    capacity = 10.0  # athlete has 10h/wk (< 18h framework) → effective 10h
+
+    bands = phase_volume_bands_hours(layer2a, "Base", capacity)
+    # Converted to HOURS (pct/100 × 10h), NOT the raw percentages.
+    assert bands["D-trail"] == pytest.approx((1.0, 2.0))
+    assert bands["D-bike"] == pytest.approx((3.0, 5.0))
+    assert bands["D-trail"][0] < 5.0  # hours, not the raw "10"
+
+    # Realistic trail (1.5h) + bike (4h) week — inside the hour bands. The old
+    # raw-% comparison would have flagged both below (1.5 < 10×0.8).
+    sessions = [
+        _cardio_session(
+            session_id="S-t", d=_SCOPE_START, duration_min=90, discipline_id="D-trail"
+        ),
+        _cardio_session(
+            session_id="S-b",
+            d=_SCOPE_START + timedelta(days=1),
+            duration_min=240,
+            discipline_id="D-bike",
+        ),
+    ]
+    payload = _minimal_layer4(sessions=sessions)
+    ctx = ValidatorContext(layer2a_payload=layer2a, capacity_hours=capacity)
+    failures = validate_layer4_payload(payload, ctx).rule_failures
+    assert not [f for f in failures if f.rule_name.startswith("volume_band")]
+
+
+def test_volume_band_below_fires_on_genuine_hour_shortfall():
+    """The rule still catches a real shortfall once the band is in hours."""
+    disc_pcts = {
+        "D-trail": (10.0, 20.0),
+        "D-bike": (30.0, 50.0),
+        "D-hike": (40.0, 50.0),
+    }
+    layer2a = _layer2a_multi(disc_pcts, weekly_total=(16.0, 18.0))
+    # trail band 1.0–2.0h; 0.5h is below blocker_low (0.8h).
+    sessions = [
+        _cardio_session(
+            session_id="S-t", d=_SCOPE_START, duration_min=30, discipline_id="D-trail"
+        ),
+    ]
+    payload = _minimal_layer4(sessions=sessions)
+    ctx = ValidatorContext(layer2a_payload=layer2a, capacity_hours=10.0)
+    failures = validate_layer4_payload(payload, ctx).rule_failures
+    vb = [f for f in failures if f.rule_name.startswith("volume_band_below")]
+    assert vb and vb[0].severity == "blocker"
+
+
+def test_volume_band_open_ended_without_capacity():
+    """No capacity → open-ended band (rule no-ops), preserving behavior for
+    entry points that don't supply the athlete's hours."""
+    layer2a = _layer2a_multi({"D-trail": (10.0, 20.0)}, weekly_total=(16.0, 18.0))
+    sessions = [
+        _cardio_session(
+            session_id="S-t", d=_SCOPE_START, duration_min=30, discipline_id="D-trail"
+        ),
+    ]
+    payload = _minimal_layer4(sessions=sessions)
+    ctx = ValidatorContext(layer2a_payload=layer2a, capacity_hours=None)
+    failures = validate_layer4_payload(payload, ctx).rule_failures
+    assert not [f for f in failures if f.rule_name.startswith("volume_band")]
 
 
 @pytest.mark.parametrize(

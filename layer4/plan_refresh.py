@@ -67,7 +67,11 @@ from layer4.payload import (
     StrengthExercise,
     ValidatorResult,
 )
-from layer4.validator import ValidatorContext, validate_layer4_payload
+from layer4.validator import (
+    ValidatorContext,
+    validate_layer4_payload,
+    weekly_capacity_hours,
+)
 
 
 # ─── Shared types ────────────────────────────────────────────────────────────
@@ -733,12 +737,15 @@ def _build_validator_context(
     layer2_bundle: Layer2Bundle,
     layer3a_payload: Layer3APayload,
     layer3b_payload: Layer3BPayload,
+    capacity_hours: float | None = None,
 ) -> ValidatorContext:
     """Bundle Layer2Bundle + 3A + 3B into a ValidatorContext for the §5.4
     rule harness. Per `Layer4_RefreshT1_v1.md` §6 + `Layer4_RefreshT2_v1.md`
     §6: the validator reads 2A (volume bands), 2C (locale equipment views),
     2D (injury exclusions + accommodations), 3A (ACWR / recent load), 3B
-    (periodization shape + intensity-distribution targets)."""
+    (periodization shape + intensity-distribution targets). `capacity_hours`
+    (the athlete's bounded weekly hours) converts 2A's percentage bands into
+    the hour targets `volume_band` checks against."""
     return ValidatorContext(
         layer2a_payload=layer2_bundle.a,
         layer2b_payload=layer2_bundle.b,
@@ -747,6 +754,7 @@ def _build_validator_context(
         layer2e_payload=layer2_bundle.e,
         layer3a_payload=layer3a_payload,
         layer3b_payload=layer3b_payload,
+        capacity_hours=capacity_hours,
     )
 
 
@@ -1023,7 +1031,12 @@ def llm_layer4_plan_refresh(
             temperature=temperature,
             etl_version_set=etl_version_set,
         )
-        ctx = _build_validator_context(layer2_bundle, layer3a_payload, layer3b_payload)
+        ctx = _build_validator_context(
+            layer2_bundle,
+            layer3a_payload,
+            layer3b_payload,
+            capacity_hours=weekly_capacity_hours(layer1_payload),
+        )
         validator_result = validate_layer4_payload(
             payload_attempt, ctx, pass_index=retries_used
         )

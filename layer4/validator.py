@@ -111,6 +111,10 @@ class ValidatorContext:
     race_event: RaceEventPayload | None = None
     per_date_restrictions: tuple[PerDateRestriction, ...] = ()
     prior_session_loads_by_date: dict[date, float] | None = None
+    # Athlete's bounded weekly training hours `min(available, goal)` — the
+    # scalar the per-discipline percentage bands are multiplied against to get
+    # HOUR targets (rule 1, `volume_band`). None → that rule no-ops (open-ended).
+    capacity_hours: float | None = None
 
 
 # ─── Constants + classifiers ────────────────────────────────────────────────
@@ -252,34 +256,6 @@ def _intensity_target_rpe_midpoint(target: object) -> float | None:
     return None
 
 
-def _phase_band_for_discipline(
-    layer2a: Layer2APayload, discipline_id: str, phase_name: str
-) -> tuple[float, float] | None:
-    """Look up (low, high) load band from 2A `phase_load` for a discipline
-    in a phase. Returns None if discipline missing, phase_load missing, or
-    bounds incomplete."""
-    for d in layer2a.disciplines:
-        if d.discipline_id != discipline_id:
-            continue
-        pl = d.phase_load
-        if pl is None:
-            return None
-        if phase_name == "Base":
-            low, high = pl.base_low, pl.base_high
-        elif phase_name == "Build":
-            low, high = pl.build_low, pl.build_high
-        elif phase_name == "Peak":
-            low, high = pl.peak_low, pl.peak_high
-        elif phase_name == "Taper":
-            low, high = pl.taper_low, pl.taper_high
-        else:
-            return None
-        if low is None or high is None:
-            return None
-        return (low, high)
-    return None
-
-
 def _zone_bucket(zone: str) -> str:
     """Map CardioBlock.intensity_zone to the spec's intensity-distribution
     bucket keys (`Z1-Z2`, `Z3`, `Z4-Z5`). `mixed` collapses to Z3."""
@@ -288,6 +264,81 @@ def _zone_bucket(zone: str) -> str:
     if zone in ("Z4", "Z5"):
         return "Z4-Z5"
     return "Z3"  # Z3 + mixed
+
+
+_PHASE_BAND_ATTRS: dict[str, tuple[str, str]] = {
+    "Base": ("base_low", "base_high"),
+    "Build": ("build_low", "build_high"),
+    "Peak": ("peak_low", "peak_high"),
+    "Taper": ("taper_low", "taper_high"),
+}
+
+
+def phase_volume_bands_hours(
+    layer2a: Layer2APayload | None,
+    phase_name: str,
+    capacity_hours: float | None,
+) -> dict[str, tuple[float, float]]:
+    """Per-discipline weekly-HOUR volume band for `phase_name`, keyed by
+    `discipline_id`.
+
+    The per-discipline `phase_load` values are PERCENTAGES (0–100, summing to
+    ~100 across the sport). This renormalizes them over the athlete's INCLUDED
+    set and multiplies by the capacity-bounded weekly total
+    (`min(capacity, framework_total_high)`), yielding hours — the single source
+    of truth shared by the validator (rule 1) and the synthesizer prompt.
+
+    Returns `{}` when any input the conversion needs is absent (no 2A payload,
+    no capacity, no weekly-total row, no banded included disciplines) so callers
+    fall back to open-ended bands rather than fabricating a target.
+    """
+    if layer2a is None or capacity_hours is None or capacity_hours <= 0:
+        return {}
+    total = (layer2a.weekly_total_hours_by_phase or {}).get(phase_name)
+    if not total:
+        return {}
+    effective = min(float(capacity_hours), float(total[1]))
+    attrs = _PHASE_BAND_ATTRS.get(phase_name)
+    if attrs is None:
+        return {}
+    raw: dict[str, tuple[float, float]] = {}
+    for d in layer2a.disciplines:
+        if d.inclusion != "included" or d.phase_load is None:
+            continue
+        low, high = getattr(d.phase_load, attrs[0]), getattr(d.phase_load, attrs[1])
+        if low is None or high is None:
+            continue
+        raw[d.discipline_id] = (float(low), float(high))
+    if not raw:
+        return {}
+    mid_sum = sum((lo + hi) / 2.0 for lo, hi in raw.values())
+    factor = (100.0 / mid_sum) if mid_sum > 0 else 1.0
+    return {
+        did: (lo * factor / 100.0 * effective, hi * factor / 100.0 * effective)
+        for did, (lo, hi) in raw.items()
+    }
+
+
+def weekly_capacity_hours(layer1_payload: dict | None) -> float | None:
+    """Athlete's bounded weekly training hours = `min(available, goal)`.
+
+    `available` = Σ enabled daily windows (primary + second) in minutes / 60;
+    `goal` = `identity.weekly_hours_target`. The lesser when both are present,
+    else whichever is set, else None (→ `volume_band` open-ended). Operates on
+    `Layer1Payload.model_dump()` — the shape Layer 4 entry points carry."""
+    if not layer1_payload:
+        return None
+    avail_min = 0
+    for w in layer1_payload.get("daily_availability_windows") or []:
+        if not w.get("enabled"):
+            continue
+        avail_min += (w.get("window_duration") or 0) + (
+            w.get("second_window_duration") or 0
+        )
+    available = (avail_min / 60.0) if avail_min > 0 else None
+    goal = (layer1_payload.get("identity") or {}).get("weekly_hours_target")
+    candidates = [x for x in (available, goal) if x is not None and x > 0]
+    return min(candidates) if candidates else None
 
 
 # ─── Rule 1: volume_band ────────────────────────────────────────────────────
@@ -310,8 +361,13 @@ def _rule_volume_band(payload: Layer4Payload, ctx: ValidatorContext) -> list[Rul
         wk = _iso_week(s.date)
         key = (wk, s.discipline_id, s.phase_metadata.phase_name)
         by_week_disc.setdefault(key, []).append(s)
+    bands_by_phase: dict[str, dict[str, tuple[float, float]]] = {}
     for (wk, disc, phase), sessions in by_week_disc.items():
-        band = _phase_band_for_discipline(ctx.layer2a_payload, disc, phase)
+        if phase not in bands_by_phase:
+            bands_by_phase[phase] = phase_volume_bands_hours(
+                ctx.layer2a_payload, phase, ctx.capacity_hours
+            )
+        band = bands_by_phase[phase].get(disc)
         if band is None:
             continue
         low, high = band
