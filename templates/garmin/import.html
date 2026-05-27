@@ -10,7 +10,7 @@
     <div class="card mb-4">
       <div class="card-header fw-semibold">Bulk import — many activities at once</div>
       <div class="card-body">
-        <p class="text-muted small mb-3">Select or drag a folder full of <code>.fit</code> files (or <code>.zip</code> exports). Each is parsed and logged to your cardio or training log. Re-importing the same file is skipped automatically, and these are logged as-is — no plan matching.</p>
+        <p class="text-muted small mb-3">Select or drag a folder full of <code>.fit</code> files (or <code>.zip</code> exports). Each is parsed and logged to your cardio or training log. Re-importing the same file is skipped automatically.</p>
 
         <div data-bulk-upload data-endpoint="{{ url_for('garmin.import_bulk') }}" data-accept=".fit,.zip">
           <div data-bulk-drop class="border border-2 rounded u-border-dashed p-4 text-center mb-3">
@@ -25,6 +25,13 @@
                 <input data-bulk-folder type="file" accept=".fit,.zip" webkitdirectory hidden>
               </label>
             </div>
+          </div>
+
+          <div class="form-check mb-2">
+            <input class="form-check-input" type="checkbox" value="1" id="bulk-match" name="match_plan" data-bulk-field checked>
+            <label class="form-check-label" for="bulk-match">
+              Match to scheduled plan workouts <span class="text-muted">— links each activity to a same-week planned workout and marks it complete. Uncheck to log raw.</span>
+            </label>
           </div>
 
           <div data-bulk-selection class="small text-muted mb-2"></div>

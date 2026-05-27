@@ -432,7 +432,8 @@ def _iter_fit_blobs(files):
             yield (name, None, 'not a .fit or .zip file')
 
 
-def _bulk_insert_cardio(db, data: dict, uid: int, gid: str) -> int:
+def _bulk_insert_cardio(db, data: dict, uid: int, gid: str,
+                        plan_item_id=None, notes=None) -> int:
     """Insert one parsed cardio activity. Returns the new cardio_log id."""
     cur = db.execute(
         '''INSERT INTO cardio_log
@@ -442,8 +443,8 @@ def _bulk_insert_cardio(db, data: dict, uid: int, gid: str) -> int:
             avg_power, max_power, norm_power, aerobic_te, anaerobic_te,
             swolf, active_lengths,
             stride_length_m, vert_oscillation_cm, vert_ratio_pct,
-            gct_ms, gct_balance, garmin_activity_id, notes, user_id)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) RETURNING id''',
+            gct_ms, gct_balance, garmin_activity_id, plan_item_id, notes, user_id)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) RETURNING id''',
         (data.get('date'), data.get('activity'), data.get('activity_name'),
          data.get('duration_min'), data.get('moving_time_min'),
          data.get('distance_mi'), data.get('avg_pace'), data.get('avg_speed'),
@@ -455,25 +456,29 @@ def _bulk_insert_cardio(db, data: dict, uid: int, gid: str) -> int:
          data.get('swolf'), data.get('active_lengths'),
          data.get('stride_length_m'), data.get('vert_oscillation_cm'),
          data.get('vert_ratio_pct'), data.get('gct_ms'), data.get('gct_balance'),
-         gid, (data.get('notes') or None), uid)
+         gid, plan_item_id,
+         (notes if notes is not None else (data.get('notes') or None)), uid)
     )
     return cur.lastrowid
 
 
-def _bulk_insert_strength(db, rows: list, uid: int, gid: str) -> int:
+def _bulk_insert_strength(db, rows: list, uid: int, gid: str,
+                          plan_item_id=None, notes=None) -> tuple:
     """Insert a parsed strength FIT session (one training_log row per
-    exercise, plus per-set rows). Returns the number of exercises inserted.
+    exercise, plus per-set rows). Returns (n_exercises, first_log_id); the
+    first log id is the canonical anchor for a plan-item disposition.
 
     Mirrors the single-file confirm path: rx_engine seeds/advances progression
     in bootstrap mode since manual FITs carry no plan targets."""
     if not rows:
-        return 0
+        return 0, None
     session_date = rows[0].get('date') or date.today().isoformat()
     sess_cur = db.execute(
         'INSERT INTO training_sessions (date, notes, plan_item_id, user_id) VALUES (?,?,?,?) RETURNING id',
-        (session_date, None, None, uid)
+        (session_date, notes, plan_item_id, uid)
     )
     session_id = sess_cur.lastrowid
+    first_log_id = None
 
     body_wt_row = db.execute(
         'SELECT weight_lbs FROM body_metrics WHERE user_id = ? ORDER BY date DESC LIMIT 1',
@@ -517,16 +522,18 @@ def _bulk_insert_strength(db, rows: list, uid: int, gid: str) -> int:
              actual_sets, last_reps, max_weight, last_duration,
              rx['outcome'], est_1rm, volume, body_weight,
              rx['next_weight'], rx['next_sets'], rx['next_reps'], rx['next_duration'],
-             gid, None, None, uid)
+             gid, plan_item_id, notes, uid)
         )
         log_id = log_cur.lastrowid
+        if first_log_id is None:
+            first_log_id = log_id
         for i, s in enumerate(sets, 1):
             db.execute(
                 'INSERT INTO training_log_sets (training_log_id, set_number, reps, weight_lbs, duration_sec, user_id) VALUES (?,?,?,?,?,?)',
                 (log_id, i, s.get('reps'), s.get('weight_lbs'), s.get('duration_sec'), uid)
             )
         inserted += 1
-    return inserted
+    return inserted, first_log_id
 
 
 def _cardio_detail(data: dict) -> str:
@@ -552,19 +559,68 @@ def _activity_repr_date(result) -> str:
     return (rows[0].get('date') or '') if rows else ''
 
 
+def _match_notes(plan_item, compliance: dict) -> str:
+    """Build the auto-match note string (parity with the Garmin sync path)."""
+    parts = [f'Auto-matched: "{plan_item["workout_name"]}"']
+    if compliance.get('duration_pct') is not None:
+        parts.append(f"Duration {compliance['duration_pct']}% of target")
+    if compliance.get('distance_pct') is not None:
+        parts.append(f"Distance {compliance['distance_pct']}% of target")
+    return '. '.join(parts)
+
+
+def _bulk_log_one(db, uid: int, gid: str, result: dict, match_plan: bool) -> dict:
+    """Insert one parsed activity, optionally auto-matching it to a scheduled
+    plan item (and marking that item complete). Caller owns commit/rollback.
+
+    Returns a per-file result dict, or None for an unknown activity type.
+    Matching mirrors the Garmin sync: best same-day-first match at/above the
+    auto-match threshold links the log, records a 'completed' disposition, and
+    annotates the log with compliance vs the plan target."""
+    log_type = result.get('log_type')
+    match_repr = _activity_match_repr(result) if match_plan else None
+    m = find_best_match(db, match_repr, user_id=uid) if match_repr else None
+    plan_item = m['plan_item'] if m else None
+    plan_item_id = plan_item['id'] if plan_item else None
+
+    notes = None
+    match_detail = ''
+    if plan_item:
+        compliance = compute_compliance(match_repr, plan_item)
+        notes = _match_notes(plan_item, compliance)
+        match_detail = f' → "{plan_item["workout_name"]}" ({compliance["label"]})'
+
+    if log_type == 'cardio':
+        log_id = _bulk_insert_cardio(db, result['data'], uid, gid, plan_item_id, notes)
+        if plan_item_id:
+            record_disposition(db, plan_item_id, 'cardio', log_id, 'completed', user_id=uid)
+        return {'status': 'imported', 'log_type': 'cardio', 'matched': bool(plan_item_id),
+                'detail': _cardio_detail(result['data']) + match_detail}
+    if log_type == 'strength':
+        n, first_log_id = _bulk_insert_strength(db, result['data'], uid, gid, plan_item_id, notes)
+        if plan_item_id and first_log_id:
+            record_disposition(db, plan_item_id, 'strength', first_log_id, 'completed', user_id=uid)
+        return {'status': 'imported', 'log_type': 'strength', 'matched': bool(plan_item_id),
+                'detail': (f'{n} exercise' + ('' if n == 1 else 's')) + match_detail}
+    return None
+
+
 @bp.route('/import/bulk', methods=['POST'])
 def import_bulk():
-    """Parse many activity FITs and log each one (cardio or strength) with no
-    plan matching. Idempotent via a content-hash dedup key. Returns JSON for
-    the drag-and-drop UI to render progressively."""
+    """Parse many activity FITs and log each one (cardio or strength). By
+    default each is auto-matched to a scheduled plan workout (mirroring the
+    Garmin sync); pass match_plan=0 to log them raw. Idempotent via a
+    content-hash dedup key. Returns JSON for the drag-and-drop UI."""
     db = get_db()
     uid = current_user_id()
     files = request.files.getlist('files')
     if not files:
         return jsonify({'ok': False, 'error': 'No files in request.'}), 400
 
+    match_plan = request.form.get('match_plan', '1') not in ('0', 'false', 'no', 'off', '')
+
     results = []
-    summary = {'imported': 0, 'duplicates': 0, 'skipped': 0, 'errors': 0}
+    summary = {'imported': 0, 'matched': 0, 'duplicates': 0, 'skipped': 0, 'errors': 0}
 
     # Phase 1 — expand zips, hash, dedup, parse. Inserts are deferred so
     # strength sessions can be applied oldest-first (rx_engine is order-aware).
@@ -601,26 +657,23 @@ def import_bulk():
 
     to_insert.sort(key=lambda it: _activity_repr_date(it[2]))
 
-    # Phase 2 — insert. Each file is its own transaction so one bad file can't
-    # roll back the rest of the batch.
+    # Phase 2 — insert + match. Each file is its own transaction so one bad
+    # file can't roll back the rest of the batch. Matching runs here (not in
+    # phase 1) so each completed plan item is claimed once, in date order.
     for name, gid, result in to_insert:
         try:
-            if result.get('log_type') == 'cardio':
-                _bulk_insert_cardio(db, result['data'], uid, gid)
-                db.commit()
-                results.append({'name': name, 'status': 'imported', 'log_type': 'cardio',
-                                'detail': _cardio_detail(result['data'])})
-                summary['imported'] += 1
-            elif result.get('log_type') == 'strength':
-                n = _bulk_insert_strength(db, result['data'], uid, gid)
-                db.commit()
-                results.append({'name': name, 'status': 'imported', 'log_type': 'strength',
-                                'detail': f'{n} exercise' + ('' if n == 1 else 's')})
-                summary['imported'] += 1
-            else:
+            r = _bulk_log_one(db, uid, gid, result, match_plan)
+            if r is None:
                 db.rollback()
                 results.append({'name': name, 'status': 'skipped', 'detail': 'unknown activity type'})
                 summary['skipped'] += 1
+                continue
+            db.commit()
+            if r.pop('matched', False):
+                summary['matched'] += 1
+            r['name'] = name
+            results.append(r)
+            summary['imported'] += 1
         except Exception as e:
             db.rollback()
             results.append({'name': name, 'status': 'error', 'detail': str(e)})
