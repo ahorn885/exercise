@@ -76,6 +76,232 @@
   });
 })();
 
+// Bulk FIT uploader. Activated on any [data-bulk-upload] container: collects
+// many files (multi-select, folder pick, or drag-and-drop), filters to the
+// accepted extensions, then POSTs them to data-endpoint in size-bounded
+// batches (Vercel caps request bodies ~4.5 MB), rendering a running summary.
+// The CSRF header is added by the fetch wrapper above. Server returns
+// {summary:{...counts}, results:[{name,status,detail}]}.
+(function () {
+  var MAX_BYTES = 3.5 * 1024 * 1024;   // per-request payload ceiling
+  var MAX_FILES = 40;                  // per-request file ceiling
+  var MAX_ROWS = 400;                  // cap rendered per-file lines
+
+  function fmtBytes(n) {
+    if (n < 1024) return n + ' B';
+    if (n < 1048576) return (n / 1024).toFixed(0) + ' KB';
+    return (n / 1048576).toFixed(1) + ' MB';
+  }
+
+  function badge(status) {
+    var map = {
+      imported: 'bg-success', duplicate: 'bg-secondary',
+      skipped: 'bg-warning text-dark', error: 'bg-danger'
+    };
+    var span = document.createElement('span');
+    span.className = 'badge ' + (map[status] || 'bg-secondary') + ' me-2 flex-shrink-0';
+    span.textContent = status;
+    return span;
+  }
+
+  function initOne(root) {
+    var endpoint = root.getAttribute('data-endpoint');
+    if (!endpoint) return;
+    var accept = (root.getAttribute('data-accept') || '.fit,.zip')
+      .split(',').map(function (s) { return s.trim().toLowerCase(); })
+      .filter(Boolean);
+
+    var q = function (sel) { return root.querySelector(sel); };
+    var drop = q('[data-bulk-drop]');
+    var selectionEl = q('[data-bulk-selection]');
+    var startBtn = q('[data-bulk-start]');
+    var progressWrap = q('[data-bulk-progress]');
+    var bar = q('[data-bulk-bar]');
+    var progressText = q('[data-bulk-progress-text]');
+    var summaryEl = q('[data-bulk-summary]');
+    var resultsEl = q('[data-bulk-results]');
+    var inputs = Array.prototype.slice.call(
+      root.querySelectorAll('[data-bulk-files], [data-bulk-folder]'));
+
+    var selected = [];
+    var rendered = 0;
+
+    function accepted(name) {
+      name = (name || '').toLowerCase();
+      return accept.some(function (ext) { return name.endsWith(ext); });
+    }
+
+    function setSelection(fileList) {
+      selected = Array.prototype.slice.call(fileList).filter(function (f) {
+        return accepted(f.name);
+      });
+      var bytes = selected.reduce(function (a, f) { return a + f.size; }, 0);
+      if (selectionEl) {
+        selectionEl.textContent = selected.length
+          ? selected.length + ' file' + (selected.length === 1 ? '' : 's')
+            + ' ready (' + fmtBytes(bytes) + ')'
+          : 'No matching files selected.';
+      }
+      if (startBtn) {
+        startBtn.disabled = selected.length === 0;
+        startBtn.textContent = 'Import ' + selected.length + ' file'
+          + (selected.length === 1 ? '' : 's');
+      }
+    }
+
+    function makeBatches() {
+      var batches = [], cur = [], curBytes = 0;
+      selected.forEach(function (f) {
+        if (cur.length && (cur.length >= MAX_FILES || curBytes + f.size > MAX_BYTES)) {
+          batches.push(cur); cur = []; curBytes = 0;
+        }
+        cur.push(f); curBytes += f.size;
+      });
+      if (cur.length) batches.push(cur);
+      return batches;
+    }
+
+    function renderResults(rows) {
+      if (!resultsEl) return;
+      rows.forEach(function (r) {
+        if (rendered >= MAX_ROWS) return;
+        var line = document.createElement('div');
+        line.className = 'd-flex align-items-start mb-1';
+        line.appendChild(badge(r.status));
+        var txt = document.createElement('span');
+        txt.className = 'text-break';
+        txt.textContent = (r.name || '') + (r.detail ? ' — ' + r.detail : '');
+        line.appendChild(txt);
+        resultsEl.appendChild(line);
+        rendered += 1;
+        if (rendered === MAX_ROWS) {
+          var more = document.createElement('div');
+          more.className = 'text-muted fst-italic mt-1';
+          more.textContent = '(further per-file lines hidden — totals above are complete)';
+          resultsEl.appendChild(more);
+        }
+      });
+    }
+
+    function renderSummary(s) {
+      if (!summaryEl) return;
+      var order = [
+        ['imported', 'Imported', 'text-bg-success'],
+        ['duplicates', 'Duplicates', 'text-bg-secondary'],
+        ['skipped', 'Skipped', 'text-bg-warning'],
+        ['errors', 'Errors', 'text-bg-danger'],
+        ['files', 'Files', 'text-bg-info']
+      ];
+      summaryEl.textContent = '';
+      var wrap = document.createElement('div');
+      wrap.className = 'd-flex flex-wrap gap-2';
+      order.forEach(function (o) {
+        if (!(o[0] in s)) return;
+        var b = document.createElement('span');
+        b.className = 'badge ' + o[2];
+        b.textContent = o[1] + ': ' + (s[o[0]] || 0);
+        wrap.appendChild(b);
+      });
+      summaryEl.appendChild(wrap);
+    }
+
+    function setProgress(done, total) {
+      if (bar) bar.style.width = (total ? Math.round(done / total * 100) : 0) + '%';
+      if (progressText) progressText.textContent = done + ' / ' + total + ' files processed';
+    }
+
+    function run() {
+      if (!selected.length) return;
+      var total = selected.length;
+      var batches = makeBatches();
+      var running = {};
+      var done = 0;
+      if (resultsEl) resultsEl.textContent = '';
+      rendered = 0;
+      if (summaryEl) summaryEl.textContent = '';
+      if (progressWrap) progressWrap.classList.remove('d-none');
+      setProgress(0, total);
+      if (startBtn) startBtn.disabled = true;
+      inputs.forEach(function (inp) { inp.disabled = true; });
+
+      var i = 0;
+      function finish() {
+        if (startBtn) {
+          startBtn.disabled = false;
+          startBtn.textContent = 'Import more';
+        }
+        inputs.forEach(function (inp) { inp.disabled = false; });
+        selected = [];
+      }
+      function next() {
+        if (i >= batches.length) { finish(); return; }
+        var batch = batches[i++];
+        var fd = new FormData();
+        batch.forEach(function (f) { fd.append('files', f, f.name); });
+        fetch(endpoint, { method: 'POST', body: fd })
+          .then(function (resp) {
+            if (!resp.ok) throw new Error('HTTP ' + resp.status);
+            return resp.json();
+          })
+          .then(function (data) {
+            var s = (data && data.summary) || {};
+            Object.keys(s).forEach(function (k) {
+              running[k] = (running[k] || 0) + (s[k] || 0);
+            });
+            renderSummary(running);
+            renderResults((data && data.results) || []);
+          })
+          .catch(function (e) {
+            running.errors = (running.errors || 0) + batch.length;
+            renderSummary(running);
+            renderResults(batch.map(function (f) {
+              return { name: f.name, status: 'error', detail: String(e.message || e) };
+            }));
+          })
+          .then(function () {
+            done += batch.length;
+            setProgress(done, total);
+            next();
+          });
+      }
+      next();
+    }
+
+    inputs.forEach(function (inp) {
+      inp.addEventListener('change', function () { setSelection(inp.files); });
+    });
+    if (startBtn) startBtn.addEventListener('click', run);
+    if (drop) {
+      ['dragenter', 'dragover'].forEach(function (ev) {
+        drop.addEventListener(ev, function (e) {
+          e.preventDefault(); e.stopPropagation();
+          drop.classList.add('u-drop-active');
+        });
+      });
+      ['dragleave', 'drop'].forEach(function (ev) {
+        drop.addEventListener(ev, function (e) {
+          e.preventDefault(); e.stopPropagation();
+          drop.classList.remove('u-drop-active');
+        });
+      });
+      drop.addEventListener('drop', function (e) {
+        if (e.dataTransfer && e.dataTransfer.files) setSelection(e.dataTransfer.files);
+      });
+    }
+
+    setSelection([]);
+  }
+
+  function initAll() {
+    document.querySelectorAll('[data-bulk-upload]').forEach(initOne);
+  }
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', initAll);
+  } else {
+    initAll();
+  }
+})();
+
 // data-progress="N": set element.style.width to N% on DOM-ready. Used by
 // progress bars whose width is computed in Jinja — CSP style-src forbids
 // parser-set inline style attributes, so the width is carried in a data-
