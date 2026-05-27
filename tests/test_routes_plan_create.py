@@ -22,6 +22,7 @@ import routes.plan_create as plan_create
 from routes.auth import cron_authorized
 from routes.plan_create import (
     _advance_plan_generation,
+    _count_cached_blocks,
     _load_plan_version,
     _mark_plan_failed,
     _orchestration_error_message,
@@ -131,6 +132,8 @@ class TestLoadPlanVersion:
             'pattern': 'A',
             'generation_status': 'ready',
             'generation_error': None,
+            'generation_units_cached': 0,
+            'generation_stall_passes': 0,
         })
         result = _load_plan_version(conn, user_id=3, plan_version_id=7)
         assert result is not None
@@ -221,7 +224,9 @@ class TestOrchestrationErrorMessage:
 # ─── _advance_plan_generation (shared poller + cron engine) ──────────────────
 
 
-def _queue_plan_version(conn, *, status, error=None, pvid=7, uid=3):
+def _queue_plan_version(
+    conn, *, status, error=None, pvid=7, uid=3, units_cached=0, stall_passes=0
+):
     """Queue the `_load_plan_version` SELECT response for a plan row."""
     conn.queue_response(row={
         'id': pvid, 'user_id': uid, 'created_at': 'ts',
@@ -231,6 +236,8 @@ def _queue_plan_version(conn, *, status, error=None, pvid=7, uid=3):
         'pattern': 'A',
         'generation_status': status,
         'generation_error': error,
+        'generation_units_cached': units_cached,
+        'generation_stall_passes': stall_passes,
     })
 
 
@@ -293,7 +300,9 @@ class TestAdvancePlanGeneration:
         # DELETE-guard + status flip + commit on the success path.
         assert any('DELETE FROM plan_sessions' in c[0] for c in conn.calls)
         assert any("generation_status = 'ready'" in c[0] for c in conn.calls)
-        assert conn.commits == 1
+        # 2 commits: the D-77 progress-backstop counter persist (pass start) +
+        # the success status flip.
+        assert conn.commits == 2
 
     def test_generating_persist_failure_marks_failed(self, monkeypatch):
         # Regression: persist + ready-flip now run INSIDE the try, so a
@@ -405,6 +414,86 @@ class TestAdvancePlanGeneration:
         assert 'Layer2EInputError' in out['error']
         assert 'unexpectedly' not in out['error'].lower()
         assert any("generation_status = 'failed'" in c[0] for c in conn.calls)
+
+
+# ─── D-77 §6 progress-based stall backstop ───────────────────────────────────
+
+
+class TestCountCachedBlocks:
+    def test_counts_plan_create_block_rows(self):
+        conn = _FakeConn()
+        conn.queue_response(row={'n': 12})
+        assert _count_cached_blocks(conn, 3) == 12
+        sql, params = conn.calls[0]
+        assert 'COUNT(*)' in sql
+        assert "entry_point = 'plan_create'" in sql
+        # Block rows only: phase_idx in [0, _SEAM_CACHE_PHASE_IDX_BASE).
+        assert 'phase_idx >= 0' in sql and 'phase_idx < ?' in sql
+        assert params == (3, plan_create._SEAM_CACHE_PHASE_IDX_BASE)
+
+    def test_zero_when_no_rows(self):
+        conn = _FakeConn()  # no queued response → fetchone None
+        assert _count_cached_blocks(conn, 3) == 0
+
+
+class TestStallBackstop:
+    def test_stall_trips_after_limit_without_running_cone(self, monkeypatch):
+        conn = _FakeConn()
+        # A prior pass already recorded 1 no-progress pass at 4 cached blocks.
+        _queue_plan_version(
+            conn, status='generating', units_cached=4, stall_passes=1
+        )
+        conn.queue_response(row={'n': 4})  # still 4 → second no-progress pass
+
+        def _boom(*a, **k):
+            raise AssertionError("cone must not run once the backstop trips")
+
+        monkeypatch.setattr(plan_create, 'orchestrate_plan_create', _boom)
+        out = _advance_plan_generation(conn, 3, 7)
+        assert out['status'] == 'failed'
+        assert 'stalled' in out['error'].lower()
+        # The counter persisted, then the row flipped to a terminal failure.
+        assert any('generation_stall_passes' in c[0] for c in conn.calls)
+        assert any("generation_status = 'failed'" in c[0] for c in conn.calls)
+
+    def test_progress_resets_stall_and_runs_cone(self, monkeypatch):
+        conn = _FakeConn()
+        _queue_plan_version(
+            conn, status='generating', units_cached=2, stall_passes=1
+        )
+        conn.queue_response(row={'n': 5})  # 5 > 2 → progress → stall resets
+        monkeypatch.setattr(plan_create, '_build_layer4_cache', lambda: 'CACHE')
+        monkeypatch.setattr(
+            plan_create, 'orchestrate_plan_create', lambda *a, **k: 'RESULT'
+        )
+        monkeypatch.setattr(
+            plan_create, 'persist_layer4_sessions', lambda db, r: None
+        )
+        out = _advance_plan_generation(conn, 3, 7)
+        assert out['status'] == 'ready'
+        # Counter persisted units_cached=5, stall_passes=0 (progress).
+        upd = [c for c in conn.calls if 'generation_units_cached = ?' in c[0]]
+        assert upd and upd[0][1] == (5, 0, 7, 3)
+
+    def test_first_pass_does_not_false_trip(self, monkeypatch):
+        conn = _FakeConn()
+        _queue_plan_version(
+            conn, status='generating', units_cached=0, stall_passes=0
+        )
+        conn.queue_response(row={'n': 0})  # nothing cached yet on pass 1
+        ran = {}
+        monkeypatch.setattr(plan_create, '_build_layer4_cache', lambda: 'CACHE')
+        monkeypatch.setattr(
+            plan_create, 'orchestrate_plan_create',
+            lambda *a, **k: ran.setdefault('ran', True) or 'RESULT',
+        )
+        monkeypatch.setattr(
+            plan_create, 'persist_layer4_sessions', lambda db, r: None
+        )
+        out = _advance_plan_generation(conn, 3, 7)
+        # stall 0→1 (< limit 2) → the cone still runs; no false trip on pass 1.
+        assert ran.get('ran') is True
+        assert out['status'] == 'ready'
 
 
 # ─── cron_authorized (shared CRON_SECRET gate) ───────────────────────────────
