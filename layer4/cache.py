@@ -485,9 +485,22 @@ class Layer4Cache:
         entry = self._backend.get(phase_key, phase_idx)
         if entry is not None:
             self.metrics.record_hit(entry_point, is_phase=True)
+            # D-77 diagnostic: a HIT means this block was reused from a prior
+            # resumable pass (convergence working). Diagnostic only.
+            print(
+                f"layer4 cache: block idx={phase_idx} {phase_name} HIT "
+                f"key={phase_key[:12]}"
+            )
             return _deserialize_payload(entry.payload_json)
 
         self.metrics.record_miss(entry_point, is_phase=True)
+        # D-77 diagnostic: a MISS for a block that a prior pass already
+        # synthesized signals cache-key churn (the non-convergence loop) — pair
+        # with the call_cache_key line to confirm. Diagnostic only.
+        print(
+            f"layer4 cache: block idx={phase_idx} {phase_name} MISS — "
+            f"synthesizing key={phase_key[:12]}"
+        )
         import json as _json
 
         result = synthesizer()

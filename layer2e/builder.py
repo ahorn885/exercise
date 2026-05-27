@@ -1153,7 +1153,13 @@ def q_layer2e_nutrition_baseline_payload(
     return Layer2EPayload(
         athlete_id=athlete_id or "",
         etl_version_set=dict(etl_version_set),
-        computed_at=datetime.now(timezone.utc),
+        # D-77: day-anchor to the cone's logical `today`, NOT wall-clock now().
+        # `computed_at` folds into `layer2e_hash` → `plan_create_key` → every
+        # Layer 4 per-block cache key. A sub-day timestamp differs on each
+        # resumable cron/poller pass, orphaning every cached block → plan-gen
+        # never converges (the same bug class day-anchored for layer1.as_of /
+        # layer2a.generated_at).
+        computed_at=datetime(today.year, today.month, today.day, tzinfo=timezone.utc),
         bmr_method=bmr_method,  # type: ignore[arg-type]
         bmr_kcal=round(bmr_kcal, 1),
         daily_nutrition_baseline=daily_baseline,

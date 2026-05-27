@@ -27,7 +27,7 @@ scope picked 2026-05-19 (Phase 2.5):
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime, timezone
 
 import pytest
 
@@ -45,6 +45,7 @@ from layer4.context import (
     PhaseLoadBands,
     WeightResult,
 )
+from layer4.hashing import compute_payload_hash
 
 
 # ─── Fakes (mirror tests/test_layer2b.py) ────────────────────────────────────
@@ -432,6 +433,24 @@ class TestPGEBaseline:
         # No HITL on Andy's empty health record
         assert payload.hitl_required is False
         assert payload.hitl_items == []
+
+    def test_computed_at_day_anchored_for_stable_cache_keys(self):
+        # D-77 regression guard. `computed_at` folds into layer2e_hash →
+        # plan_create_key → every Layer 4 per-block cache key. A sub-day
+        # (wall-clock) timestamp differs on each resumable cron/poller pass,
+        # orphaning every cached block → plan-gen non-convergence loop. It must
+        # be day-anchored to the cone's `today`, so two builds on the same day
+        # produce an identical payload hash. Mirrors the layer1/layer2a fix.
+        db = _FakeConn()
+        db.queue_pla_for_all_phases((8, 12), (10, 14), (12, 16), (6, 10))
+        p1 = _andy_baseline_call(db)
+        assert p1.computed_at == datetime(2026, 5, 19, tzinfo=timezone.utc)
+
+        db2 = _FakeConn()
+        db2.queue_pla_for_all_phases((8, 12), (10, 14), (12, 16), (6, 10))
+        p2 = _andy_baseline_call(db2)
+        assert p1.computed_at == p2.computed_at
+        assert compute_payload_hash(p1) == compute_payload_hash(p2)
 
     def test_pge_supplement_integration_stub(self):
         db = _FakeConn()
