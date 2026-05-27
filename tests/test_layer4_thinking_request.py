@@ -75,6 +75,18 @@ class _NoToolMsg:
     stop_reason = "end_turn"
 
 
+class _EmptyToolBlock:
+    type = "tool_use"
+    name = "emit"
+    input: dict = {}  # contentless tool call (the prod truncation failure)
+
+
+class _EmptyToolMsg:
+    content = [_EmptyToolBlock()]
+    usage = _Usage()
+    stop_reason = "max_tokens"
+
+
 def _fake_anthropic(recorder, *, raise_exc=None):
     class _Messages:
         def create(self, **kwargs):
@@ -177,3 +189,41 @@ def test_thinking_miss_falls_back_to_forced(caller, monkeypatch):
     # The recorded (final) request is the forced-tool fallback: no thinking.
     assert rec["tool_choice"] == {"type": "tool", "name": "emit"}
     assert "thinking" not in rec
+
+
+@pytest.mark.parametrize("caller", CALLERS)
+def test_empty_tool_call_falls_back_to_forced(caller, monkeypatch):
+    """A thinking attempt that returns a CONTENTLESS tool call (tool_use block
+    present, args == {}) — the prod synthesizer truncation — is treated like a
+    miss and triggers the forced (thinking-off) retry, not a re-rolled thinking
+    attempt. Regression for the D-77 per-block stall."""
+    rec: dict = {}
+    monkeypatch.setattr(
+        anthropic,
+        "Anthropic",
+        _fake_anthropic_sequence(rec, [_EmptyToolMsg(), _Msg()]),
+    )
+
+    out = caller("sys", "user", _TOOL, "claude-sonnet-4-6", 0.2, 4000, 5000)
+
+    assert rec["n"] == 2  # empty thinking attempt + forced-tool retry
+    assert out.tool_args == {"ok": True}
+    assert rec["tool_choice"] == {"type": "tool", "name": "emit"}
+    assert "thinking" not in rec
+
+
+@pytest.mark.parametrize("caller", CALLERS)
+def test_empty_tool_call_both_attempts_raises(caller, monkeypatch):
+    """If BOTH the thinking attempt and the forced retry return a contentless
+    tool call, the caller raises a typed Layer4OutputError (no silent empty
+    result, no infinite re-roll)."""
+    rec: dict = {}
+    monkeypatch.setattr(
+        anthropic,
+        "Anthropic",
+        _fake_anthropic_sequence(rec, [_EmptyToolMsg(), _EmptyToolMsg()]),
+    )
+
+    with pytest.raises(Layer4OutputError):
+        caller("sys", "user", _TOOL, "claude-sonnet-4-6", 0.2, 4000, 5000)
+    assert rec["n"] == 2  # both attempts fired, then raised

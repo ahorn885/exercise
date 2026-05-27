@@ -509,6 +509,59 @@ def _plan_session_on(d: date):
     )
 
 
+class TestPerBlockBudgetGuard:
+    """D-77 §6: a block must RETURN within the function cap (caching a
+    best-effort attempt or failing fast) rather than stacking extended-thinking
+    retries until the 300s cap 504-kills the loop and nothing caches."""
+
+    def test_budget_guard_terminal_when_no_parseable_attempt(self):
+        from layer4 import per_phase
+        from layer4.errors import Layer4OutputError
+        from layer4.phase_structure import phase_structure_from_3b
+
+        ps = phase_structure_from_3b(_layer3b(), _PLAN_START)
+        calls = {"n": 0}
+
+        # The model keeps returning a sessions-less tool call, and a single
+        # call already spends the whole per-block budget. The first attempt
+        # runs; the guard must then refuse to start a second and raise.
+        def _caller(*_a, **_kw):
+            calls["n"] += 1
+            return _PhaseOut(
+                tool_args={"phase_synthesis_notes": "x"},
+                input_tokens=6000,
+                output_tokens=9000,
+                latency_ms=per_phase._PER_BLOCK_BUDGET_MS,
+            )
+
+        with pytest.raises(Layer4OutputError) as exc:
+            per_phase.synthesize_phase(
+                user_id=1,
+                phase_spec=ps.phases[0],
+                phase_structure=ps,
+                phase_index_in_plan=0,
+                layer1_payload=_layer1(),
+                layer2a_payload=_layer2a(),
+                layer2b_payload=_layer2b(),
+                layer2c_payloads=_layer2c(),
+                layer2d_payload=_layer2d(),
+                layer2e_payload=_layer2e(),
+                layer3a_payload=_layer3a(),
+                layer3b_payload=_layer3b(),
+                race_event_payload=_race_event(),
+                prior_block_sessions=[],
+                plan_version_id=1,
+                etl_version_set={"layer0": "v7"},
+                mode="plan_create",
+                week_range=(1, 1),
+                llm_caller=_caller,
+            )
+
+        assert exc.value.code == "synthesis_budget_exhausted"
+        # Only ONE attempt fired — the guard blocked the 2nd/3rd retries.
+        assert calls["n"] == 1
+
+
 def _seam_stub_approved():
     def _call(*_a, **_kw) -> _SeamOut:
         return _SeamOut(

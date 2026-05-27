@@ -150,7 +150,15 @@ def build_layer1_payload(db, user_id: int) -> Layer1Payload:
 
     return Layer1Payload(
         user_id=user_id,
-        as_of=datetime.utcnow(),
+        # Day-anchored, NOT full-precision: `as_of` is hashed into `layer1_hash`,
+        # which keys EVERY Layer 4 cache entry (3A/3B + every per-block synthesis
+        # row, across plan_create / plan_refresh / single_session / brief). A
+        # microsecond `utcnow()` made those keys non-deterministic across
+        # function invocations, so the cone re-ran cold on every resumable pass
+        # and a multi-pass plan could never converge (D-77 stall). Day-granular
+        # matches the Layer 3A `as_of` cache semantics (re-runs the same calendar
+        # day hit the same entry).
+        as_of=datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0),
         # Layer-4-consumed convenience fields.
         experience_level=None,
         coaching_voice_preferences=None,

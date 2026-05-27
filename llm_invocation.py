@@ -130,9 +130,21 @@ def invoke_tool_call(
                 getattr(block, "type", None) == "tool_use"
                 and block.name == tool_name
             ):
+                tool_args = dict(block.input)
+                # A tool_use block with EMPTY args is a non-answer: under
+                # extended thinking the model can spend its whole token budget
+                # on the thinking block and emit a contentless tool call
+                # (observed in prod for the Layer 4 synthesizer: output pinned
+                # at the max_tokens+budget ceiling, `tool_args={}`). Treat it
+                # like a missing block so the forced-tool retry below (thinking
+                # off → the full output budget, and a forced tool_choice the
+                # model cannot decline) fires — instead of the caller re-rolling
+                # another expensive thinking attempt that truncates the same way.
+                if not tool_args:
+                    return None, stop_reason
                 return (
                     ToolCallResult(
-                        tool_args=dict(block.input),
+                        tool_args=tool_args,
                         input_tokens=msg.usage.input_tokens,
                         output_tokens=msg.usage.output_tokens,
                         latency_ms=latency_ms,
@@ -145,14 +157,16 @@ def invoke_tool_call(
     if result is not None:
         return result
 
-    # No tool_use block. Under extended thinking the tool is merely offered
-    # (`auto`), so the model can legally skip it — the recurring failure mode.
-    # Retry once with thinking off + the forced tool, which cannot be declined.
+    # No usable tool_use block (absent, or present-but-empty). Under extended
+    # thinking the tool is merely offered (`auto`), so the model can skip it OR
+    # exhaust its token budget thinking and emit a contentless tool call — both
+    # recurring failure modes. Retry once with thinking off + the forced tool,
+    # which cannot be declined and gets the full output budget.
     if extended_thinking_budget > 0:
         print(
-            f"invoke_tool_call: {tool_name} returned no tool_use block on the "
-            f"thinking attempt (stop_reason={stop_reason}); retrying with "
-            f"thinking off + forced tool_choice"
+            f"invoke_tool_call: {tool_name} returned no usable tool_use block on "
+            f"the thinking attempt (stop_reason={stop_reason}; absent or empty); "
+            f"retrying with thinking off + forced tool_choice"
         )
         result, stop_reason = _attempt(0)
         if result is not None:

@@ -17,6 +17,8 @@ response.
 
 from __future__ import annotations
 
+from datetime import datetime
+
 import pytest
 
 # Pre-load layer4 to break the layer4.orchestrator → layer2a.builder → layer4.context
@@ -225,6 +227,50 @@ def _ar_rows() -> list[dict]:
             multi_substitute_candidate=False,
         ),
     ]
+
+
+class _FixedClock(datetime):
+    """datetime subclass with a controllable utcnow() (only utcnow overridden)."""
+    _now = datetime(2026, 5, 27, 6, 11, 31, 123456)
+
+    @classmethod
+    def utcnow(cls):
+        return cls._now
+
+
+class TestCacheKeyDeterminism:
+    def test_generated_at_day_anchored_so_layer2a_hash_is_stable(self, monkeypatch):
+        """Regression (D-77): `rationale_metadata.generated_at` is hashed into
+        `layer2a_hash` (plan_create / per-block / race_week_brief keys). It must
+        be day-granular so re-builds within a calendar day hash identically —
+        a microsecond `utcnow()` made the cone re-run cold every pass."""
+        from layer4.hashing import compute_payload_hash
+
+        monkeypatch.setattr("layer2a.builder.datetime", _FixedClock)
+
+        _FixedClock._now = datetime(2026, 5, 27, 6, 11, 31, 123456)
+        conn1 = _FakeConn()
+        conn1.queue_response(rows=_ar_rows())
+        p1 = q_layer2a_discipline_classifier_payload(
+            conn1,
+            "Adventure Racing",
+            estimated_race_duration_hours=56.0,
+            etl_version_set=_DEFAULT_ETL,
+        )
+        assert p1.rationale_metadata.generated_at == "2026-05-27T00:00:00"
+        h1 = compute_payload_hash(p1)
+
+        # Same calendar day, different wall-clock time → identical hash.
+        _FixedClock._now = datetime(2026, 5, 27, 18, 45, 9, 987654)
+        conn2 = _FakeConn()
+        conn2.queue_response(rows=_ar_rows())
+        p2 = q_layer2a_discipline_classifier_payload(
+            conn2,
+            "Adventure Racing",
+            estimated_race_duration_hours=56.0,
+            etl_version_set=_DEFAULT_ETL,
+        )
+        assert compute_payload_hash(p2) == h1
 
 
 class TestARBaseline:
