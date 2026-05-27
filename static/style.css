@@ -660,5 +660,7 @@ pre code { background: none; border: 0; padding: 0; }
 
 .u-logo-thumb     { height: 60px; width: auto; }
 .u-scrollbox-200  { max-height: 200px; overflow: auto; }
+.u-border-dashed  { border-style: dashed !important; }
+.u-drop-active    { background-color: var(--bs-light); border-color: var(--bs-primary) !important; }
 .u-chat-scroll    { min-height: 160px; max-height: 380px; overflow-y: auto; padding: 1rem; }
 .u-chat-scroll-light { height: 280px; overflow-y: auto; padding: 1rem; background: #f8f9fa; }

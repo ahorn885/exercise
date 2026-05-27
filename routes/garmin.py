@@ -1,3 +1,4 @@
+import hashlib
 import json
 import os
 import tempfile
@@ -375,6 +376,257 @@ def import_confirm():
 
     flash('Unknown activity type.', 'danger')
     return redirect(url_for('garmin.import_fit'))
+
+
+# ── Bulk import (multi-file drag-and-drop) ──────────────────────────────────
+# The single-file flow above runs an interactive preview + plan-match step.
+# Bulk import skips all of that: every file is parsed and logged as-is (no
+# plan-item link, no disposition), which is what a historical backfill of many
+# files wants. The browser uploads files in size-bounded batches to the JSON
+# endpoints below (see static/app.js `data-bulk-upload`).
+
+def _fit_dedup_id(raw: bytes) -> str:
+    """Stable per-file dedup key for manually uploaded activity FITs.
+
+    Garmin Connect activity IDs only exist for API-synced activities; a raw
+    uploaded .fit has none. Hashing the bytes gives an idempotent key so
+    re-dropping the same folder skips files already imported. Stored in
+    garmin_activity_id with a 'fit:' prefix so it never collides with a numeric
+    Connect ID."""
+    return 'fit:' + hashlib.sha256(raw).hexdigest()
+
+
+def _iter_fit_blobs(files):
+    """Expand an uploaded file list into (name, fit_bytes, error) tuples.
+
+    Each upload is a .fit (one blob) or a .zip (every .fit entry inside, so a
+    whole exported folder zipped up imports in one shot). Exactly one of
+    fit_bytes / error is set per yielded tuple."""
+    import zipfile
+    import io
+    for f in files:
+        if not f or not f.filename:
+            continue
+        name = secure_filename(f.filename or '') or '(unnamed)'
+        low = name.lower()
+        try:
+            raw = f.read()
+        except Exception as e:
+            yield (name, None, f'could not read upload: {e}')
+            continue
+        if low.endswith('.zip'):
+            try:
+                with zipfile.ZipFile(io.BytesIO(raw)) as zf:
+                    fit_names = [n for n in zf.namelist() if n.lower().endswith('.fit')]
+                if not fit_names:
+                    yield (name, None, 'no .fit files inside zip')
+                    continue
+                with zipfile.ZipFile(io.BytesIO(raw)) as zf:
+                    for n in fit_names:
+                        yield (f'{name}:{n}', zf.read(n), None)
+            except zipfile.BadZipFile:
+                yield (name, None, 'not a valid zip file')
+        elif low.endswith('.fit'):
+            yield (name, raw, None)
+        else:
+            yield (name, None, 'not a .fit or .zip file')
+
+
+def _bulk_insert_cardio(db, data: dict, uid: int, gid: str) -> int:
+    """Insert one parsed cardio activity. Returns the new cardio_log id."""
+    cur = db.execute(
+        '''INSERT INTO cardio_log
+           (date, activity, activity_name, duration_min, moving_time_min,
+            distance_mi, avg_pace, avg_speed, avg_hr, max_hr, calories,
+            elev_gain_ft, elev_loss_ft, avg_cadence, max_cadence,
+            avg_power, max_power, norm_power, aerobic_te, anaerobic_te,
+            swolf, active_lengths,
+            stride_length_m, vert_oscillation_cm, vert_ratio_pct,
+            gct_ms, gct_balance, garmin_activity_id, notes, user_id)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) RETURNING id''',
+        (data.get('date'), data.get('activity'), data.get('activity_name'),
+         data.get('duration_min'), data.get('moving_time_min'),
+         data.get('distance_mi'), data.get('avg_pace'), data.get('avg_speed'),
+         data.get('avg_hr'), data.get('max_hr'), data.get('calories'),
+         data.get('elev_gain_ft'), data.get('elev_loss_ft'),
+         data.get('avg_cadence'), data.get('max_cadence'),
+         data.get('avg_power'), data.get('max_power'), data.get('norm_power'),
+         data.get('aerobic_te'), data.get('anaerobic_te'),
+         data.get('swolf'), data.get('active_lengths'),
+         data.get('stride_length_m'), data.get('vert_oscillation_cm'),
+         data.get('vert_ratio_pct'), data.get('gct_ms'), data.get('gct_balance'),
+         gid, (data.get('notes') or None), uid)
+    )
+    return cur.lastrowid
+
+
+def _bulk_insert_strength(db, rows: list, uid: int, gid: str) -> int:
+    """Insert a parsed strength FIT session (one training_log row per
+    exercise, plus per-set rows). Returns the number of exercises inserted.
+
+    Mirrors the single-file confirm path: rx_engine seeds/advances progression
+    in bootstrap mode since manual FITs carry no plan targets."""
+    if not rows:
+        return 0
+    session_date = rows[0].get('date') or date.today().isoformat()
+    sess_cur = db.execute(
+        'INSERT INTO training_sessions (date, notes, plan_item_id, user_id) VALUES (?,?,?,?) RETURNING id',
+        (session_date, None, None, uid)
+    )
+    session_id = sess_cur.lastrowid
+
+    body_wt_row = db.execute(
+        'SELECT weight_lbs FROM body_metrics WHERE user_id = ? ORDER BY date DESC LIMIT 1',
+        (uid,)
+    ).fetchone()
+    body_weight = body_wt_row['weight_lbs'] if body_wt_row else None
+
+    inserted = 0
+    for row in rows:
+        exercise = row.get('exercise', '')
+        sets = row.get('sets', [])
+        actual_sets = len(sets)
+        last_reps = sets[-1].get('reps') if sets else None
+        all_weights = [s.get('weight_lbs') or 0 for s in sets]
+        max_weight = max(all_weights) if all_weights else None
+        if max_weight == 0:
+            max_weight = None
+        last_duration = sets[-1].get('duration_sec') if sets else None
+        volume = sum((s.get('reps') or 0) * (s.get('weight_lbs') or 0) for s in sets) or None
+        if volume == 0:
+            volume = None
+        all_1rms = [calculate_1rm(s.get('weight_lbs'), s.get('reps')) or 0 for s in sets]
+        est_1rm = max(all_1rms) if all_1rms else None
+        if est_1rm == 0:
+            est_1rm = None
+
+        rx = apply_session_outcome(
+            db, exercise, row.get('date'), sets,
+            rx_source='From FIT Import', user_id=uid,
+        )
+
+        log_cur = db.execute(
+            '''INSERT INTO training_log
+               (date, exercise, exercise_id, sub_group, session_id,
+                actual_sets, actual_reps, actual_weight, actual_duration,
+                outcome, est_1rm, volume, body_weight,
+                next_weight, next_sets, next_reps, next_duration,
+                garmin_activity_id, plan_item_id, notes, user_id)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) RETURNING id''',
+            (row.get('date'), exercise, rx['exercise_id'], rx['movement_pattern'], session_id,
+             actual_sets, last_reps, max_weight, last_duration,
+             rx['outcome'], est_1rm, volume, body_weight,
+             rx['next_weight'], rx['next_sets'], rx['next_reps'], rx['next_duration'],
+             gid, None, None, uid)
+        )
+        log_id = log_cur.lastrowid
+        for i, s in enumerate(sets, 1):
+            db.execute(
+                'INSERT INTO training_log_sets (training_log_id, set_number, reps, weight_lbs, duration_sec, user_id) VALUES (?,?,?,?,?,?)',
+                (log_id, i, s.get('reps'), s.get('weight_lbs'), s.get('duration_sec'), uid)
+            )
+        inserted += 1
+    return inserted
+
+
+def _cardio_detail(data: dict) -> str:
+    """Short one-line description of an imported cardio activity for the UI."""
+    bits = [data.get('activity') or 'Activity']
+    if data.get('date'):
+        bits.append(data['date'])
+    if data.get('distance_mi'):
+        bits.append(f"{data['distance_mi']} mi")
+    elif data.get('duration_min'):
+        bits.append(f"{round(data['duration_min'])} min")
+    return ' · '.join(bits)
+
+
+def _activity_repr_date(result) -> str:
+    """Best-effort activity date, used to order inserts chronologically so the
+    rx_engine progression sees strength sessions oldest-first."""
+    if not result:
+        return ''
+    if result.get('log_type') == 'cardio':
+        return (result.get('data') or {}).get('date') or ''
+    rows = result.get('data') or []
+    return (rows[0].get('date') or '') if rows else ''
+
+
+@bp.route('/import/bulk', methods=['POST'])
+def import_bulk():
+    """Parse many activity FITs and log each one (cardio or strength) with no
+    plan matching. Idempotent via a content-hash dedup key. Returns JSON for
+    the drag-and-drop UI to render progressively."""
+    db = get_db()
+    uid = current_user_id()
+    files = request.files.getlist('files')
+    if not files:
+        return jsonify({'ok': False, 'error': 'No files in request.'}), 400
+
+    results = []
+    summary = {'imported': 0, 'duplicates': 0, 'skipped': 0, 'errors': 0}
+
+    # Phase 1 — expand zips, hash, dedup, parse. Inserts are deferred so
+    # strength sessions can be applied oldest-first (rx_engine is order-aware).
+    to_insert = []   # (name, gid, result)
+    seen = set()
+    for name, raw, err in _iter_fit_blobs(files):
+        if err:
+            results.append({'name': name, 'status': 'skipped', 'detail': err})
+            summary['skipped'] += 1
+            continue
+        gid = _fit_dedup_id(raw)
+        if gid in seen or _already_imported(db, gid):
+            results.append({'name': name, 'status': 'duplicate', 'detail': 'already imported'})
+            summary['duplicates'] += 1
+            continue
+        try:
+            result = parse_fit(raw)
+        except ValueError as e:
+            msg = str(e)
+            if 'session' in msg.lower():
+                results.append({'name': name, 'status': 'skipped',
+                                'detail': 'no activity session (looks like a wellness file)'})
+                summary['skipped'] += 1
+            else:
+                results.append({'name': name, 'status': 'error', 'detail': msg})
+                summary['errors'] += 1
+            continue
+        except Exception as e:
+            results.append({'name': name, 'status': 'error', 'detail': str(e)})
+            summary['errors'] += 1
+            continue
+        seen.add(gid)
+        to_insert.append((name, gid, result))
+
+    to_insert.sort(key=lambda it: _activity_repr_date(it[2]))
+
+    # Phase 2 — insert. Each file is its own transaction so one bad file can't
+    # roll back the rest of the batch.
+    for name, gid, result in to_insert:
+        try:
+            if result.get('log_type') == 'cardio':
+                _bulk_insert_cardio(db, result['data'], uid, gid)
+                db.commit()
+                results.append({'name': name, 'status': 'imported', 'log_type': 'cardio',
+                                'detail': _cardio_detail(result['data'])})
+                summary['imported'] += 1
+            elif result.get('log_type') == 'strength':
+                n = _bulk_insert_strength(db, result['data'], uid, gid)
+                db.commit()
+                results.append({'name': name, 'status': 'imported', 'log_type': 'strength',
+                                'detail': f'{n} exercise' + ('' if n == 1 else 's')})
+                summary['imported'] += 1
+            else:
+                db.rollback()
+                results.append({'name': name, 'status': 'skipped', 'detail': 'unknown activity type'})
+                summary['skipped'] += 1
+        except Exception as e:
+            db.rollback()
+            results.append({'name': name, 'status': 'error', 'detail': str(e)})
+            summary['errors'] += 1
+
+    return jsonify({'ok': True, 'summary': summary, 'results': results})
 
 
 def _already_imported(db, gid: str) -> bool:
@@ -917,14 +1169,16 @@ def import_wellness_confirm():
                     respiration_rate, steps, active_calories, active_time_s,
                     distance_m, activity_type, user_id)
                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
-                   ON CONFLICT(user_id, timestamp_ms) DO NOTHING''',
+                   ON CONFLICT(user_id, timestamp_ms) DO NOTHING RETURNING id''',
                 (row.get('date'), row.get('timestamp_ms'), row.get('heart_rate'),
                  row.get('stress_level'), row.get('body_battery'),
                  row.get('respiration_rate'), row.get('steps'),
                  row.get('active_calories'), row.get('active_time_s'),
                  row.get('distance_m'), row.get('activity_type'), uid)
             )
-            if cur.rowcount:
+            # _CompatCursor exposes no .rowcount; RETURNING yields a row only
+            # when a row was actually inserted (none on ON CONFLICT DO NOTHING).
+            if cur.fetchone():
                 inserted += 1
             else:
                 skipped += 1
@@ -938,6 +1192,93 @@ def import_wellness_confirm():
         msg += f', {skipped} already existed (skipped)'
     flash(msg + '.', 'success')
     return redirect(url_for('garmin.wellness_log'))
+
+
+def _bulk_insert_wellness(db, rows: list, uid: int, chunk: int = 500) -> tuple:
+    """Insert wellness rows in chunked multi-row INSERTs.
+
+    Returns (inserted, duplicates). ON CONFLICT (user_id, timestamp_ms) DO
+    NOTHING + RETURNING makes re-imports skip seconds already stored, and the
+    count reflects only genuinely new rows. Chunking keeps each statement small
+    enough for thousands of per-second readings without a round-trip per row."""
+    cols_sql = ('date, timestamp_ms, heart_rate, stress_level, body_battery, '
+                'respiration_rate, steps, active_calories, active_time_s, '
+                'distance_m, activity_type, user_id')
+    ncol = 12  # the columns above, including user_id
+    inserted = 0
+    total = 0
+    for start in range(0, len(rows), chunk):
+        batch = rows[start:start + chunk]
+        if not batch:
+            continue
+        total += len(batch)
+        one = '(' + ','.join(['?'] * ncol) + ')'
+        placeholders = ','.join([one] * len(batch))
+        params = []
+        for r in batch:
+            params.extend([
+                r.get('date'), r.get('timestamp_ms'), r.get('heart_rate'),
+                r.get('stress_level'), r.get('body_battery'),
+                r.get('respiration_rate'), r.get('steps'),
+                r.get('active_calories'), r.get('active_time_s'),
+                r.get('distance_m'), r.get('activity_type'), uid,
+            ])
+        sql = (f'INSERT INTO wellness_log ({cols_sql}) VALUES {placeholders} '
+               'ON CONFLICT (user_id, timestamp_ms) DO NOTHING RETURNING id')
+        cur = db.execute(sql, params)
+        inserted += len(cur.fetchall())
+    return inserted, total - inserted
+
+
+@bp.route('/import-wellness/bulk', methods=['POST'])
+def import_wellness_bulk():
+    """Parse many wellness/monitoring FITs and merge their per-second readings
+    into wellness_log. Duplicate seconds are skipped. Returns JSON for the
+    drag-and-drop UI."""
+    db = get_db()
+    uid = current_user_id()
+    files = request.files.getlist('files')
+    if not files:
+        return jsonify({'ok': False, 'error': 'No files in request.'}), 400
+
+    results = []
+    summary = {'imported': 0, 'duplicates': 0, 'skipped': 0, 'errors': 0, 'files': 0}
+
+    for name, raw, err in _iter_fit_blobs(files):
+        if err:
+            results.append({'name': name, 'status': 'skipped', 'detail': err})
+            summary['skipped'] += 1
+            continue
+        try:
+            rows = parse_wellness_fit(raw)
+        except Exception as e:
+            db.rollback()
+            results.append({'name': name, 'status': 'error', 'detail': str(e)})
+            summary['errors'] += 1
+            continue
+        if not rows:
+            results.append({'name': name, 'status': 'skipped',
+                            'detail': 'no wellness data (looks like an activity file)'})
+            summary['skipped'] += 1
+            continue
+        try:
+            ins, dup = _bulk_insert_wellness(db, rows, uid)
+            db.commit()
+            dates = sorted({r['date'] for r in rows if r.get('date')})
+            drange = dates[0] if dates else '?'
+            if len(dates) > 1:
+                drange += f' → {dates[-1]}'
+            results.append({'name': name, 'status': 'imported',
+                            'detail': f'{ins} new, {dup} dup · {drange}'})
+            summary['imported'] += ins
+            summary['duplicates'] += dup
+            summary['files'] += 1
+        except Exception as e:
+            db.rollback()
+            results.append({'name': name, 'status': 'error', 'detail': str(e)})
+            summary['errors'] += 1
+
+    return jsonify({'ok': True, 'summary': summary, 'results': results})
 
 
 @bp.route('/wellness')
