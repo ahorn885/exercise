@@ -84,7 +84,11 @@ from layer4.payload import (
     TransitionSpec,
     ValidatorResult,
 )
-from layer4.validator import ValidatorContext, validate_layer4_payload
+from layer4.validator import (
+    ValidatorContext,
+    validate_layer4_payload,
+    weekly_capacity_hours,
+)
 from weather_client import ExpectedConditions, Fetcher, get_expected_conditions
 
 
@@ -1740,6 +1744,7 @@ def llm_layer4_race_week_brief(
             layer3a_payload=layer3a_payload,
             layer3b_payload=layer3b_payload,
             race_event=race_event_payload,
+            capacity_hours=weekly_capacity_hours(layer1_payload),
         )
         validator_result = validate_layer4_payload(
             payload_attempt, ctx, pass_index=retries_used

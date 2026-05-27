@@ -60,7 +60,12 @@ from layer4.payload import (
     SynthesisMetadata,
     ValidatorResult,
 )
-from layer4.validator import ValidatorContext, validate_layer4_payload
+from layer4.validator import (
+    ValidatorContext,
+    phase_volume_bands_hours,
+    validate_layer4_payload,
+    weekly_capacity_hours,
+)
 
 
 # ─── Constants per Layer4_PerPhase_v2.md §7 + §3.4 ───────────────────────────
@@ -533,31 +538,32 @@ def _format_active_injuries(layer2d: Layer2DPayload | None) -> list[str]:
 
 
 def _format_phase_load_bands(
-    layer2a: Layer2APayload | None, phase_name: str
+    layer2a: Layer2APayload | None,
+    phase_name: str,
+    capacity_hours: float | None,
 ) -> list[str]:
-    """Per-discipline volume bands for the phase per 2A `phase_load_bands`."""
+    """Per-discipline weekly-HOUR volume bands for the phase.
+
+    The 2A `phase_load` values are percentages; `phase_volume_bands_hours`
+    converts them to the athlete's capacity-bounded hours (shared with the
+    validator). Falls back to open-ended bands when the conversion can't run
+    (no 2A payload, no capacity, or no weekly-total row on file)."""
     if layer2a is None:
         return ["- (Layer 2A payload not supplied; using open-ended bands.)"]
+    bands = phase_volume_bands_hours(layer2a, phase_name, capacity_hours)
     out: list[str] = []
     for d in layer2a.disciplines:
         if d.inclusion != "included":
             continue
-        pl = d.phase_load
-        if phase_name == "Base":
-            low, high = pl.base_low, pl.base_high
-        elif phase_name == "Build":
-            low, high = pl.build_low, pl.build_high
-        elif phase_name == "Peak":
-            low, high = pl.peak_low, pl.peak_high
-        elif phase_name == "Taper":
-            low, high = pl.taper_low, pl.taper_high
-        else:
+        band = bands.get(d.discipline_id)
+        if band is None:
             continue
+        low, high = band
         out.append(
             f"- {d.discipline_name} ({d.discipline_id}): {low:.1f}–{high:.1f} hr/wk"
         )
     if not out:
-        out.append("- (No included disciplines on file.)")
+        out.append("- (No phase-load hours on file; using open-ended bands.)")
     return out
 
 
@@ -878,8 +884,14 @@ def render_user_prompt(
         f" (mode={mode})"
     )
     parts.append("")
-    parts.append("Phase volume bands per discipline (per 2A `phase_load_bands`):")
-    parts.extend(_format_phase_load_bands(layer2a_payload, phase_spec.phase_name))
+    parts.append("Phase volume bands per discipline (weekly hours):")
+    parts.extend(
+        _format_phase_load_bands(
+            layer2a_payload,
+            phase_spec.phase_name,
+            weekly_capacity_hours(layer1_payload),
+        )
+    )
     parts.append("")
     parts.append(
         "Intended intensity distribution (Z1-Z2 / Z3 / Z4-Z5) — within ±10pp tolerance:"
@@ -1715,6 +1727,7 @@ def synthesize_phase(
             layer3a_payload=layer3a_payload,
             layer3b_payload=layer3b_payload,
             race_event=race_event_payload,
+            capacity_hours=weekly_capacity_hours(layer1_payload),
         )
         validator_result = validate_layer4_payload(
             payload_attempt, ctx, pass_index=current_pass
