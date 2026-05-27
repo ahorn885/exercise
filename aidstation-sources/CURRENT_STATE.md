@@ -1,6 +1,6 @@
 # AIDSTATION — Current State
 
-Single rolling-state pointer. Changes on every shipped session. Long-form session narrative lives in `handoffs/`; rolling cross-session items live in `CARRY_FORWARD.md`.
+Single rolling-state pointer. Changes on every shipped session. Long-form session narrative lives in `handoffs/`; rolling cross-session items live in `CARRY_FORWARD.md`. **Backlog / features / bugs are tracked in GitHub issues (`ahorn885/exercise`) as of 2026-05-27** — the `Project_Backlog_vN.md` chain is frozen under `archive/backlog/`.
 
 > **Pointer hygiene (2026-05-25):** this file is the *current* pointer, not a narrative archive. The per-session predecessor chain below is a **dated index only** — open the named handoff in `handoffs/` for the full record. Don't paste session narrative back into this file; that's what `handoffs/` is for.
 
