@@ -1273,6 +1273,33 @@ def _clamp_observation_text(
             item["text"] = truncated
 
 
+def _strip_unknown_current_state_keys(candidate: dict[str, Any]) -> None:
+    """Drop keys the model invents under `current_state` but `CurrentState` does
+    not declare, in place before validation. `_Base` sets `extra='forbid'`
+    (`layer4/context.py` §7 guardrail), so a stray key walls the cone on
+    `schema_violation`. Observed in prod: the model emits a null
+    `weak_links_note_internal` sibling beside `weak_links` and holds it through
+    the capped schema-violation retry — the weak_links over-emit failure mode,
+    normalized the same deterministic way. Only undeclared keys are removed, so
+    a misplaced *required* field (e.g. a typo'd `weak_links`) still surfaces as
+    `schema_violation` with its real slot unfilled rather than being masked."""
+    current_state = candidate.get("current_state")
+    if not isinstance(current_state, dict):
+        return
+    unknown = {
+        key: type(value).__name__
+        for key, value in current_state.items()
+        if key not in CurrentState.model_fields
+    }
+    if unknown:
+        print(
+            f"llm_layer3a_athlete_state: stripping unknown current_state keys "
+            f"{unknown} (not in CurrentState schema; extra='forbid')"
+        )
+        for key in unknown:
+            del current_state[key]
+
+
 def _prompt_hash(system_prompt: str, user_prompt: str) -> str:
     return hashlib.sha256(
         (system_prompt + "||" + user_prompt).encode("utf-8")
@@ -1362,10 +1389,12 @@ def llm_layer3a_athlete_state(
             "output_tokens": llm_out.output_tokens,
             "etl_version_set": etl_version_set,
         }
-        # Honor the bounded-collection caps deterministically before validation
-        # so an over-emit degrades gracefully instead of walling the cone.
+        # Honor the bounded-collection caps and strip model-invented keys
+        # deterministically before validation so an over-emit or embellishment
+        # degrades gracefully instead of walling the cone.
         _clamp_weak_links(candidate)
         _clamp_observation_text(candidate)
+        _strip_unknown_current_state_keys(candidate)
         try:
             Layer3APayload.model_validate(candidate)
             validated_args = candidate
