@@ -130,6 +130,7 @@ from layer4.cached_wrappers import (
 from layer4.hashing import (
     canonical_json,
     compute_accepted_output_hash,
+    compute_block_cache_key,
     compute_layer2_bundle_canonical_hash,
     compute_layer2c_bundle_hash,
     compute_payload_hash,
@@ -254,6 +255,7 @@ __all__ = [
     # Hashing helpers (hashing.py)
     "canonical_json",
     "compute_accepted_output_hash",
+    "compute_block_cache_key",
     "compute_layer2_bundle_canonical_hash",
     "compute_layer2c_bundle_hash",
     "compute_payload_hash",

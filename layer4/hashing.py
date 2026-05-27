@@ -299,6 +299,33 @@ def compute_phase_cache_key(
     return _sha256_hex("||".join(components))
 
 
+def compute_block_cache_key(
+    *,
+    call_cache_key: str,
+    phase_name: str,
+    phase_index: int,
+    week_in_phase: int,
+    prev_accepted_output_hash: str | None,
+) -> str:
+    """Per §9.2 (D-77) — chained per-week-block cache key.
+
+    Same shape as `compute_phase_cache_key` plus `week_in_phase`, so the
+    per-block chain rolls at week granularity: block `u`'s key folds in
+    block `u-1`'s accepted-output hash, and a change at week `k` invalidates
+    `k+1..end` only. `prev_accepted_output_hash` is None for the very first
+    block of the plan (collapses to '' so its key is deterministic against
+    the call cache key alone).
+    """
+    components = [
+        call_cache_key,
+        phase_name,
+        str(phase_index),
+        str(week_in_phase),
+        prev_accepted_output_hash or "",
+    ]
+    return _sha256_hex("||".join(components))
+
+
 def compute_seam_review_cache_key(
     *,
     call_cache_key: str,

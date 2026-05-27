@@ -1962,6 +1962,15 @@ _PG_MIGRATIONS = [
                 CHECK (generation_status IN ('generating', 'ready', 'failed'));
         END IF;
     END $$;""",
+    # D-77 progress-based backstop (2026-05-27) — the per-week-block decomposition
+    # (Layer4_Spec §5.2/§9.2) guarantees each resumable pass caches ≥1 new block,
+    # so a pass that caches ZERO new blocks signals a genuinely over-budget unit.
+    # `generation_units_cached` records the block count observed at the start of
+    # the most-recent pass; `generation_stall_passes` counts consecutive
+    # no-progress passes. At `_STALL_PASS_LIMIT` the row fails loudly instead of
+    # 504-looping forever. Both default 0 (correct for in-flight + legacy rows).
+    "ALTER TABLE plan_versions ADD COLUMN IF NOT EXISTS generation_units_cached INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE plan_versions ADD COLUMN IF NOT EXISTS generation_stall_passes INTEGER NOT NULL DEFAULT 0",
     # layer4_cache entry_point drift fix (2026-05-26) — the Layer 3A/3B
     # cached wrappers (2026-05-20) + the NL-parser cache (2026-05-21) write
     # entry_point values the original 4-value CHECK rejected, so every 3A/3B

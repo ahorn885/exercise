@@ -486,6 +486,29 @@ def _phase_seq_stub(outputs: list[dict[str, Any]]):
     return _call
 
 
+def _total_blocks(phase_structure) -> int:
+    """D-77: the engine synthesizes one unit per week-block, so the synthesizer
+    call count + the per-block cache-row count equal the number of blocks (not
+    phases). A phase contributes ceil(weeks / _BLOCK_WEEKS) blocks."""
+    from layer4.plan_create import _BLOCK_WEEKS
+
+    return sum(-(-p.weeks // _BLOCK_WEEKS) for p in phase_structure.phases)
+
+
+def _plan_session_on(d: date):
+    """Build one valid PlanSession dated `d` (for prompt-continuity tests)."""
+    from layer4.per_phase import _build_plan_session
+    from layer4.phase_structure import phase_structure_from_3b
+
+    ps = phase_structure_from_3b(_layer3b(), _PLAN_START)
+    return _build_plan_session(
+        _cardio_session(d=d),
+        session_id=f"S-prior-{d.isoformat()}",
+        plan_version_id=1,
+        phase_spec=ps.phases[0],
+    )
+
+
 def _seam_stub_approved():
     def _call(*_a, **_kw) -> _SeamOut:
         return _SeamOut(
@@ -838,10 +861,11 @@ class TestEntryPointHappyPath:
         assert result.input_tokens_total > 0
         assert result.output_tokens_total > 0
         assert result.latency_ms_total > 0
-        # n_phases (variable per mode/horizon) + (n_phases - 1) seam reviews.
+        # D-77: one synthesis call per week-block + (n_phases - 1) seam reviews.
         assert result.phase_structure is not None
         n_phases = len(result.phase_structure.phases)
-        assert result.llm_call_count == n_phases + max(0, n_phases - 1)
+        total_blocks = _total_blocks(result.phase_structure)
+        assert result.llm_call_count == total_blocks + max(0, n_phases - 1)
 
     def test_validator_results_last_accepted(self):
         result = llm_layer4_plan_create(
@@ -1024,7 +1048,7 @@ class TestPerPhasePromptRendering:
             layer3a_payload=_layer3a(),
             layer3b_payload=l3b,
             race_event_payload=None,
-            prior_phase_sessions=[],
+            prior_block_sessions=[],
             retries_used=0,
             rule_failures=[],
             seam_issues=[],
@@ -1053,7 +1077,7 @@ class TestPerPhasePromptRendering:
             layer3a_payload=_layer3a(),
             layer3b_payload=l3b,
             race_event_payload=None,
-            prior_phase_sessions=[],
+            prior_block_sessions=[],
             retries_used=0,
             rule_failures=[],
             seam_issues=[],
@@ -1082,7 +1106,7 @@ class TestPerPhasePromptRendering:
             layer3a_payload=_layer3a(),
             layer3b_payload=l3b,
             race_event_payload=None,
-            prior_phase_sessions=[],
+            prior_block_sessions=[],
             retries_used=0,
             rule_failures=[],
             seam_issues=[],
@@ -1145,7 +1169,7 @@ class TestPerPhasePromptRendering:
             layer3a_payload=_layer3a(),
             layer3b_payload=l3b,
             race_event_payload=re,
-            prior_phase_sessions=[],
+            prior_block_sessions=[],
             retries_used=0,
             rule_failures=[],
             seam_issues=[],
@@ -1177,7 +1201,7 @@ class TestPerPhasePromptRendering:
             layer3a_payload=_layer3a(),
             layer3b_payload=l3b,
             race_event_payload=None,
-            prior_phase_sessions=[],
+            prior_block_sessions=[],
             retries_used=1,
             rule_failures=[
                 RuleFailure(
@@ -1214,7 +1238,7 @@ class TestPerPhasePromptRendering:
             layer3a_payload=_layer3a(),
             layer3b_payload=l3b,
             race_event_payload=None,
-            prior_phase_sessions=[],
+            prior_block_sessions=[],
             retries_used=1,
             rule_failures=[],
             seam_issues=["Peak entry must hold ≥60% Z2."],
@@ -1403,9 +1427,10 @@ class TestPerPhaseCacheWiring:
     kwargs and chains per-phase keys via `prev_accepted_output_hash`."""
 
     def test_cache_none_retains_today_behavior(self):
-        """No `cache` arg → synthesizer called once per phase. Default
-        12-week open-ended standard mode yields 3 phases (Base/Build/Peak;
-        Taper rounds to 0 weeks under proportions 50/30/15/5 at this size)."""
+        """No `cache` arg → synthesizer called once per week-block (D-77).
+        Default 12-week open-ended standard mode yields 3 phases
+        (Base/Build/Peak; Taper rounds to 0 weeks under proportions
+        50/30/15/5 at this size), decomposed into one block per week."""
         stub = _CountingPhaseStub(_empty_phase_output())
         result = llm_layer4_plan_create(
             **_call_kwargs(),
@@ -1414,12 +1439,11 @@ class TestPerPhaseCacheWiring:
         )
         assert isinstance(result, Layer4Payload)
         assert result.phase_structure is not None
-        n_phases = len(result.phase_structure.phases)
-        assert stub.calls == n_phases
+        assert stub.calls == _total_blocks(result.phase_structure)
 
     def test_cache_miss_then_store_per_phase(self):
-        """First call with cache: N synthesizer calls + N per-phase cache rows
-        (N = phase count)."""
+        """First call with cache: B synthesizer calls + B per-block cache rows
+        (B = total week-blocks, D-77) + (n_phases - 1) iter-1 seam rows."""
         cache = Layer4Cache(InMemoryCacheBackend())
         stub = _CountingPhaseStub(_empty_phase_output())
         result = llm_layer4_plan_create(
@@ -1433,11 +1457,12 @@ class TestPerPhaseCacheWiring:
         assert result.phase_structure is not None
         n_phases = len(result.phase_structure.phases)
         n_seams = n_phases - 1  # all phases synthesized → every seam reviewed
-        assert stub.calls == n_phases
-        # phase_* counters cover both per-phase + iter-1 seam sub-call rows.
-        assert cache.metrics.phase_misses_total == n_phases + n_seams
+        total_blocks = _total_blocks(result.phase_structure)
+        assert stub.calls == total_blocks
+        # phase_* counters cover both per-block + iter-1 seam sub-call rows.
+        assert cache.metrics.phase_misses_total == total_blocks + n_seams
         assert cache.metrics.phase_hits_total == 0
-        assert len(cache.backend) == n_phases + n_seams
+        assert len(cache.backend) == total_blocks + n_seams
 
     def test_cache_hit_skips_synthesizer(self):
         """Second call with same call_cache_key: 0 new synthesizer calls;
@@ -1454,6 +1479,7 @@ class TestPerPhaseCacheWiring:
         )
         assert first.phase_structure is not None
         n_phases = len(first.phase_structure.phases)
+        total_blocks = _total_blocks(first.phase_structure)
         first_call_count = stub.calls
 
         second = llm_layer4_plan_create(
@@ -1465,8 +1491,8 @@ class TestPerPhaseCacheWiring:
         )
         n_seams = n_phases - 1
         assert stub.calls == first_call_count
-        assert cache.metrics.phase_hits_total == n_phases + n_seams
-        assert cache.metrics.phase_misses_total == n_phases + n_seams
+        assert cache.metrics.phase_hits_total == total_blocks + n_seams
+        assert cache.metrics.phase_misses_total == total_blocks + n_seams
         assert isinstance(second, Layer4Payload)
         assert second.pattern == "A"
 
@@ -1515,6 +1541,7 @@ class TestPerPhaseCacheWiring:
             seam_caller=_seam_stub_approved(),
         )
         n_phases = len(first.phase_structure.phases)  # type: ignore[union-attr]
+        total_blocks = _total_blocks(first.phase_structure)  # type: ignore[arg-type]
         llm_layer4_plan_create(
             **_call_kwargs(),
             cache=cache,
@@ -1523,10 +1550,10 @@ class TestPerPhaseCacheWiring:
             seam_caller=_seam_stub_approved(),
         )
         n_seams = n_phases - 1
-        assert stub.calls == 2 * n_phases
+        assert stub.calls == 2 * total_blocks
         assert cache.metrics.phase_hits_total == 0
-        # Two distinct call_cache_keys → both phase + seam chains miss twice.
-        assert cache.metrics.phase_misses_total == 2 * (n_phases + n_seams)
+        # Two distinct call_cache_keys → both block + seam chains miss twice.
+        assert cache.metrics.phase_misses_total == 2 * (total_blocks + n_seams)
 
     def test_cache_returns_byte_stable_output_across_callers(self):
         """§9.2 cache key for phase 0 is `sha256(call_cache_key||'Base'||'0'||'')`
@@ -1545,7 +1572,8 @@ class TestPerPhaseCacheWiring:
             seam_caller=_seam_stub_approved(),
         )
         n_phases = len(first.phase_structure.phases)  # type: ignore[union-attr]
-        assert stub_a.calls == n_phases
+        total_blocks = _total_blocks(first.phase_structure)  # type: ignore[arg-type]
+        assert stub_a.calls == total_blocks
 
         stub_b = _CountingPhaseStub(
             _phase_output_with_sessions(phase_start=_PLAN_START, phase_weeks=1)
@@ -1557,8 +1585,8 @@ class TestPerPhaseCacheWiring:
             phase_caller=stub_b,
             seam_caller=_seam_stub_approved(),
         )
-        assert stub_b.calls == 0  # all N phases hit cache; stub_b never invoked
-        assert cache.metrics.phase_hits_total == n_phases + (n_phases - 1)
+        assert stub_b.calls == 0  # all blocks hit cache; stub_b never invoked
+        assert cache.metrics.phase_hits_total == total_blocks + (n_phases - 1)
 
     def test_per_entry_point_label_routed_to_cache(self):
         """plan_create routes phase rows to 'plan_create' entry_point label;
@@ -1577,6 +1605,152 @@ class TestPerPhaseCacheWiring:
         backend: Any = cache.backend
         entry_points = {e.entry_point for e in backend._rows.values()}
         assert entry_points == {"plan_create"}
+
+
+class TestPerWeekDecomposition:
+    """D-77 §4 — the Pattern A engine synthesizes one unit per week-block; the
+    block boundary is enforced by the window filter so blocks stay disjoint."""
+
+    def test_one_block_row_per_week_with_global_index(self):
+        """Each week-block caches under a contiguous global phase_idx (0..B-1,
+        below the seam namespace base) with phase_name 'PhaseName:wN'."""
+        cache = Layer4Cache(InMemoryCacheBackend())
+        result = llm_layer4_plan_create(
+            **_call_kwargs(),
+            cache=cache,
+            call_cache_key="call-blocks",
+            phase_caller=_phase_stub(_empty_phase_output()),
+            seam_caller=_seam_stub_approved(),
+        )
+        assert result.phase_structure is not None
+        total_blocks = _total_blocks(result.phase_structure)
+        backend: Any = cache.backend
+        block_rows = [
+            (idx, e)
+            for (_k, idx), e in backend._rows.items()
+            if idx < _SEAM_CACHE_PHASE_IDX_BASE
+        ]
+        # Contiguous global block index 0..B-1, one row per week-block.
+        assert sorted(idx for idx, _ in block_rows) == list(range(total_blocks))
+        # Each block row's phase_name carries the week tag.
+        assert all(":w" in e.phase_name for _, e in block_rows)
+
+    def test_blocks_filtered_to_window_no_cross_block_duplication(self):
+        """A synthesizer that emits the whole plan's sessions on every block
+        call has each block trimmed to its own week, so the composed plan has
+        no duplicate (date, session_index_in_day) and exactly one week's worth
+        of sessions per synthesized week (proving the block-window filter)."""
+        wide = {
+            "sessions": [
+                _cardio_session(d=_PLAN_START + timedelta(days=w * 7 + off))
+                for w in range(20)
+                for off in (0, 2, 4)
+            ],
+            "phase_synthesis_notes": "wide",
+            "opportunities": [],
+        }
+        result = llm_layer4_plan_create(
+            **_call_kwargs(),
+            phase_caller=_phase_stub(wide),
+            seam_caller=_seam_stub_approved(),
+        )
+        assert result.phase_structure is not None
+        total_weeks = sum(p.weeks for p in result.phase_structure.phases)
+        keys = [(s.date, s.session_index_in_day) for s in result.sessions]
+        assert len(keys) == len(set(keys))  # no cross-block duplication
+        # 3 sessions/week × synthesized weeks (each block kept only its week).
+        assert len(result.sessions) == 3 * total_weeks
+
+    def test_render_block_mode_first_week_no_prior(self):
+        from layer4.per_phase import render_user_prompt
+        from layer4.phase_structure import phase_structure_from_3b
+
+        l3b = _layer3b()
+        ps = phase_structure_from_3b(l3b, _PLAN_START)
+        text = render_user_prompt(
+            phase_spec=ps.phases[0],
+            phase_structure=ps,
+            phase_index_in_plan=0,
+            is_first_phase_in_plan=True,
+            layer1_payload=_layer1(),
+            layer2a_payload=_layer2a(),
+            layer2b_payload=_layer2b(),
+            layer2c_payloads=_layer2c(),
+            layer2d_payload=_layer2d(),
+            layer2e_payload=_layer2e(),
+            layer3a_payload=_layer3a(),
+            layer3b_payload=l3b,
+            race_event_payload=None,
+            prior_block_sessions=[],
+            retries_used=0,
+            rule_failures=[],
+            seam_issues=[],
+            seam_direction=None,
+            week_range=(1, 1),
+        )
+        assert "THIS CALL synthesizes ONLY week 1" in text
+        assert "First week of plan; no prior context." in text
+
+    def test_render_block_mode_mid_phase_continuity(self):
+        from layer4.per_phase import render_user_prompt
+        from layer4.phase_structure import phase_structure_from_3b
+
+        l3b = _layer3b()
+        ps = phase_structure_from_3b(l3b, _PLAN_START)
+        text = render_user_prompt(
+            phase_spec=ps.phases[0],
+            phase_structure=ps,
+            phase_index_in_plan=0,
+            is_first_phase_in_plan=True,
+            layer1_payload=_layer1(),
+            layer2a_payload=_layer2a(),
+            layer2b_payload=_layer2b(),
+            layer2c_payloads=_layer2c(),
+            layer2d_payload=_layer2d(),
+            layer2e_payload=_layer2e(),
+            layer3a_payload=_layer3a(),
+            layer3b_payload=l3b,
+            race_event_payload=None,
+            prior_block_sessions=[_plan_session_on(_PLAN_START)],
+            retries_used=0,
+            rule_failures=[],
+            seam_issues=[],
+            seam_direction=None,
+            week_range=(2, 2),
+        )
+        assert "Prior-week continuity" in text
+        assert "Progress GENTLY" in text
+        assert "THIS CALL synthesizes ONLY week 2" in text
+
+    def test_render_block_mode_phase_transition(self):
+        from layer4.per_phase import render_user_prompt
+        from layer4.phase_structure import phase_structure_from_3b
+
+        l3b = _layer3b()
+        ps = phase_structure_from_3b(l3b, _PLAN_START)
+        # First block (week 1) of a NON-first phase = a deliberate phase step.
+        text = render_user_prompt(
+            phase_spec=ps.phases[1],
+            phase_structure=ps,
+            phase_index_in_plan=1,
+            is_first_phase_in_plan=False,
+            layer1_payload=_layer1(),
+            layer2a_payload=_layer2a(),
+            layer2b_payload=_layer2b(),
+            layer2c_payloads=_layer2c(),
+            layer2d_payload=_layer2d(),
+            layer2e_payload=_layer2e(),
+            layer3a_payload=_layer3a(),
+            layer3b_payload=l3b,
+            race_event_payload=None,
+            prior_block_sessions=[_plan_session_on(_PLAN_START)],
+            retries_used=0,
+            rule_failures=[],
+            seam_issues=[],
+            seam_direction=None,
+            week_range=(1, 1),
+        )
+        assert "DELIBERATE phase transition" in text
 
 
 class TestIter1SeamReviewCache:
@@ -1599,10 +1773,11 @@ class TestIter1SeamReviewCache:
         assert result.phase_structure is not None
         n_phases = len(result.phase_structure.phases)
         n_seams = n_phases - 1
+        total_blocks = _total_blocks(result.phase_structure)
         assert n_seams >= 1
-        # Seam reviewer fired once per seam; backend holds phase + seam rows.
+        # Seam reviewer fired once per seam; backend holds block + seam rows.
         assert seam_stub.calls == n_seams
-        assert len(cache.backend) == n_phases + n_seams
+        assert len(cache.backend) == total_blocks + n_seams
         # Seam rows route to the same entry_point (no new CHECK label → no
         # migration); they sit in a disjoint phase_idx namespace.
         backend: Any = cache.backend
@@ -1626,6 +1801,7 @@ class TestIter1SeamReviewCache:
         assert first.phase_structure is not None
         n_phases = len(first.phase_structure.phases)
         n_seams = n_phases - 1
+        total_blocks = _total_blocks(first.phase_structure)
         assert first_seam.calls == n_seams
 
         second_seam = _CountingSeamStub()
@@ -1638,7 +1814,7 @@ class TestIter1SeamReviewCache:
         )
         # The resumed pass made NO new seam LLM calls — all replayed from cache.
         assert second_seam.calls == 0
-        assert cache.metrics.phase_hits_total == n_phases + n_seams
+        assert cache.metrics.phase_hits_total == total_blocks + n_seams
         assert isinstance(second, Layer4Payload)
 
     def test_no_cache_args_still_runs_seam_reviews_uncached(self):
@@ -1828,12 +2004,13 @@ class TestCachedWrapperThreadsCacheAndExecutor:
         assert result.phase_structure is not None
         n_phases = len(result.phase_structure.phases)
         n_seams = n_phases - 1
-        # 1 per-entry miss; the phase_* counter covers per-phase + iter-1 seam.
+        total_blocks = _total_blocks(result.phase_structure)
+        # 1 per-entry miss; the phase_* counter covers per-block + iter-1 seam.
         assert cache.metrics.misses_total == 1
-        assert cache.metrics.phase_misses_total == n_phases + n_seams
+        assert cache.metrics.phase_misses_total == total_blocks + n_seams
         backend: Any = cache.backend
-        # per-entry row + N per-phase rows + (N-1) iter-1 seam rows
-        assert len(backend) == n_phases + n_seams + 1
+        # per-entry row + B per-block rows + (N-1) iter-1 seam rows
+        assert len(backend) == total_blocks + n_seams + 1
 
     def test_wrapper_full_hit_skips_all_llm_calls(self):
         from layer4 import llm_layer4_plan_create_cached
@@ -1860,9 +2037,9 @@ class TestCachedWrapperThreadsCacheAndExecutor:
         )
         first = llm_layer4_plan_create_cached(**kwargs_call)
         assert first.phase_structure is not None
-        n_phases = len(first.phase_structure.phases)
+        total_blocks = _total_blocks(first.phase_structure)
         first_calls = stub.calls
-        assert first_calls == n_phases
+        assert first_calls == total_blocks
 
         # Second call: per-entry cache hits → synthesizer never invoked
         # (per-phase caches not even consulted; the top-level get_or_synthesize

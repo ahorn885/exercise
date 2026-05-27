@@ -64,6 +64,7 @@ from layer4 import (
     PostgresCacheBackend,
     orchestrate_plan_create,
 )
+from layer4.plan_create import _SEAM_CACHE_PHASE_IDX_BASE
 from layer4.errors import Layer4InputError, Layer4OutputError
 from layer3a.builder import Layer3AInputError, Layer3AOutputError
 from layer3b.builder import Layer3BInputError, Layer3BOutputError
@@ -99,6 +100,16 @@ _CRON_ADVANCE_BATCH = 5
 # finish + commit.
 _CRON_WALL_CLOCK_BUDGET_S = 240
 
+# D-77 §6 progress-based backstop. The per-week-block decomposition guarantees
+# each resumable pass caches ≥1 new block, so a pass that caches ZERO new blocks
+# signals a genuinely over-budget unit (a bug / mis-sized block). After this many
+# consecutive no-progress passes the row fails loudly rather than 504-looping
+# forever — converting the silent infinite loop into a diagnosable terminal
+# failure. Detection at next-pass start is robust to the prior pass being
+# 504-killed mid-flight (the count reads persisted layer4_cache state, not the
+# prior pass's return value).
+_STALL_PASS_LIMIT = 2
+
 
 # ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -117,7 +128,8 @@ def _load_plan_version(db, user_id: int, plan_version_id: int) -> dict | None:
     """Fetch a plan_versions row scoped to user_id. Returns dict or None."""
     row = db.execute(
         "SELECT id, user_id, created_at, created_via, scope_start_date, "
-        "scope_end_date, pattern, generation_status, generation_error "
+        "scope_end_date, pattern, generation_status, generation_error, "
+        "generation_units_cached, generation_stall_passes "
         "FROM plan_versions WHERE id = ? AND user_id = ?",
         (plan_version_id, user_id),
     ).fetchone()
@@ -133,11 +145,34 @@ def _load_plan_version(db, user_id: int, plan_version_id: int) -> dict | None:
         'pattern': row['pattern'],
         'generation_status': row['generation_status'],
         'generation_error': row['generation_error'],
+        'generation_units_cached': int(row['generation_units_cached'] or 0),
+        'generation_stall_passes': int(row['generation_stall_passes'] or 0),
     }
 
 
 def _build_layer4_cache() -> Layer4Cache:
     return Layer4Cache(PostgresCacheBackend(lambda: get_db()))
+
+
+def _count_cached_blocks(db, user_id: int) -> int:
+    """D-77 §6 — count the per-week-block cache rows for this user's plan_create
+    chain (the progress signal for the stall backstop). Block rows carry
+    `phase_idx` in `[0, _SEAM_CACHE_PHASE_IDX_BASE)`; the per-entry row
+    (`phase_idx = -1`), the upstream-layer rows (other `entry_point`s), and the
+    seam-review rows (`phase_idx >= _SEAM_CACHE_PHASE_IDX_BASE`) are excluded.
+
+    Scoped to `entry_point='plan_create'` for the user rather than this plan's
+    exact `call_cache_key` (which the route doesn't hold — the orchestrator
+    derives it internally). For a single active generation this is exact; stale
+    rows from a prior plan with different upstreams can only DELAY detection by a
+    pass (the count plateaus → stall still trips), never mask a real stall."""
+    row = db.execute(
+        "SELECT COUNT(*) AS n FROM layer4_cache "
+        "WHERE user_id = ? AND entry_point = 'plan_create' "
+        "AND phase_idx >= 0 AND phase_idx < ?",
+        (user_id, _SEAM_CACHE_PHASE_IDX_BASE),
+    ).fetchone()
+    return int(row['n']) if row else 0
 
 
 _ORCH_ERROR_MESSAGES = {
@@ -224,6 +259,45 @@ def _advance_plan_generation(db, uid: int, plan_version_id: int) -> dict:
             "error": plan_version['generation_error']
             or "Plan generation failed. Please try again.",
         }
+
+    # D-77 §6 progress-based backstop (runs BEFORE the cone so it survives the
+    # prior pass being 504-killed mid-flight). Compare the block count now to
+    # the count recorded at the previous pass's start: a strictly higher count
+    # means the previous pass cached ≥1 new block (progress → reset); an equal
+    # count means it cached none (a no-progress pass → increment); a lower count
+    # means the cache shrank externally (eviction → re-baseline, not a stall).
+    # Persist the new baseline + counter immediately so the signal is durable.
+    # A complex plan may take many passes — only consecutive zero-progress
+    # passes trip the guard, never length alone.
+    now_cached = _count_cached_blocks(db, uid)
+    prev_cached = plan_version['generation_units_cached']
+    stall_passes = plan_version['generation_stall_passes']
+    if now_cached > prev_cached:
+        stall_passes = 0
+    elif now_cached == prev_cached:
+        stall_passes += 1
+    else:
+        stall_passes = 0
+    db.execute(
+        "UPDATE plan_versions SET generation_units_cached = ?, "
+        "generation_stall_passes = ? WHERE id = ? AND user_id = ?",
+        (now_cached, stall_passes, plan_version_id, uid),
+    )
+    db.commit()
+    if stall_passes >= _STALL_PASS_LIMIT:
+        # Convert the silent infinite 504 loop into a loud terminal failure.
+        print(
+            f"_advance_plan_generation: D-77 stall backstop tripped for "
+            f"plan_version_id={plan_version_id} — {stall_passes} consecutive "
+            f"no-progress pass(es) at {now_cached} cached block(s); a synthesis "
+            f"unit (next block index {now_cached}) likely exceeds the function "
+            f"budget."
+        )
+        return _mark_plan_failed(
+            db, plan_version_id, uid,
+            "Plan generation stalled and was stopped — a step couldn't complete "
+            "within the time budget. This is unexpected; please contact support.",
+        )
 
     try:
         result = orchestrate_plan_create(

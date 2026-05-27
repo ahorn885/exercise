@@ -79,6 +79,11 @@ _MAX_SESSIONS_PER_PHASE = 56
 schema bound is only an Anthropic API hint, so the driver clamps over-emit
 pre-validation (same over-emit-vs-cap guard applied to Layer 3A/3B)."""
 
+_MAX_SESSIONS_PER_WEEK = 14
+"""Per-week session ceiling (D-77 §4.2): a worst-case high-frequency week — 6
+disciplines + strength with occasional doubles. The per-block `maxItems` +
+over-emit clamp scale from this × the block's week count."""
+
 
 # Per `Layer4_PerPhase_v1.md` D5: closed set of 6 LLM-emitted coaching flags.
 # Spec-auto flags (`recovery_week`, `peak_volume_marker`, `race_rehearsal`,
@@ -789,23 +794,33 @@ def render_user_prompt(
     layer3a_payload: Layer3APayload,
     layer3b_payload: Layer3BPayload,
     race_event_payload: RaceEventPayload | None,
-    prior_phase_sessions: list[PlanSession],
+    prior_block_sessions: list[PlanSession],
     retries_used: int,
     rule_failures: list[RuleFailure],
     seam_issues: list[str],
     seam_direction: Literal["re_prompt_prior", "re_prompt_next"] | None,
     training_substitution_payload: TrainingSubstitutionPayload | None = None,
+    week_range: tuple[int, int] | None = None,
 ) -> str:
-    """Render the §6 user prompt for one phase. Inline Python rendering
-    replaces Mustache; the structure matches `Layer4_PerPhase_v2.md` §6.
+    """Render the §6 user prompt for one synthesis unit. Inline Python
+    rendering replaces Mustache; the structure matches `Layer4_PerPhase_v2.md`
+    §6.
 
-    `prior_phase_sessions` is the full accepted output of the immediately
-    prior synthesized phase; empty when `is_first_phase_in_plan=True` AND
-    `start_phase == 'Base'` (or for synthetic-prior when start_phase != Base
-    and no real prior exists)."""
+    `week_range` (D-77) scopes the unit to an inclusive `week_in_phase` range
+    when set — the prompt then asks the model to fill only those weeks. When
+    None the unit is the whole phase (legacy / seam-driven re-synthesis path).
+
+    `prior_block_sessions` is the accepted output of the immediately-preceding
+    synthesis unit (the prior week-block in block mode, same phase or the prior
+    phase's last block at a phase boundary; the whole prior phase in whole-phase
+    mode). Empty for the very first unit of the plan (or synthetic-prior when
+    `start_phase != 'Base'` and no real prior exists)."""
     parts: list[str] = []
     mode = layer3b_payload.periodization_shape.mode
     start_phase = layer3b_payload.periodization_shape.start_phase
+    block_mode = week_range is not None
+    is_first_block_of_phase = (week_range is None) or (week_range[0] == 1)
+    is_first_unit_of_plan = is_first_phase_in_plan and is_first_block_of_phase
 
     # === Phase + plan context ===
     parts.append("=== Phase + plan context ===")
@@ -814,6 +829,17 @@ def render_user_prompt(
         f"{phase_spec.start_date.isoformat()} through "
         f"{phase_spec.end_date.isoformat()})"
     )
+    if block_mode:
+        ws, we = week_range  # type: ignore[misc]
+        block_start, block_end = _block_date_window(phase_spec, week_range)  # type: ignore[arg-type]
+        wk_label = f"week {ws}" if ws == we else f"weeks {ws}–{we}"
+        parts.append(
+            f"THIS CALL synthesizes ONLY {wk_label} of {phase_spec.weeks} in "
+            f"this phase ({block_start.isoformat()} through "
+            f"{block_end.isoformat()}, inclusive). Do NOT emit sessions for any "
+            "other week — later weeks are generated in their own calls and "
+            "stitched at the seams."
+        )
     parts.append(
         f"Phase index in plan: {phase_index_in_plan} of "
         f"{len(phase_structure.phases)}"
@@ -843,30 +869,65 @@ def render_user_prompt(
     )
     parts.append("")
 
-    # === Prior-phase continuity ===
-    parts.append("=== Prior-phase continuity ===")
-    if is_first_phase_in_plan and start_phase == "Base":
-        parts.append("(First phase of plan; no prior context.)")
-    elif is_first_phase_in_plan and start_phase != "Base":
-        parts.append(
-            f"(Athlete starts at {start_phase}; no real prior sessions. "
-            "Assume the immediately-prior skipped phase landed at its 2A "
-            "exit state. Do NOT flag missing earlier-phase preparation.)"
-        )
-    elif phase_index_in_plan > 0 and prior_phase_sessions:
-        prior = phase_structure.phases[phase_index_in_plan - 1]
-        parts.append(
-            f"Prior phase: {prior.phase_name} ({prior.weeks} wks, "
-            f"{prior.start_date.isoformat()} → {prior.end_date.isoformat()})"
-        )
-        parts.append("")
-        parts.append("Prior phase weekly rollup:")
-        parts.extend(_format_weekly_rollup_for_prior_phase(prior_phase_sessions))
-        parts.append("")
-        parts.append("Prior phase last week (verbatim — the seam-in):")
-        parts.extend(_format_prior_phase_last_week(prior_phase_sessions))
+    # === Prior continuity ===
+    if not block_mode:
+        parts.append("=== Prior-phase continuity ===")
+        if is_first_phase_in_plan and start_phase == "Base":
+            parts.append("(First phase of plan; no prior context.)")
+        elif is_first_phase_in_plan and start_phase != "Base":
+            parts.append(
+                f"(Athlete starts at {start_phase}; no real prior sessions. "
+                "Assume the immediately-prior skipped phase landed at its 2A "
+                "exit state. Do NOT flag missing earlier-phase preparation.)"
+            )
+        elif phase_index_in_plan > 0 and prior_block_sessions:
+            prior = phase_structure.phases[phase_index_in_plan - 1]
+            parts.append(
+                f"Prior phase: {prior.phase_name} ({prior.weeks} wks, "
+                f"{prior.start_date.isoformat()} → {prior.end_date.isoformat()})"
+            )
+            parts.append("")
+            parts.append("Prior phase weekly rollup:")
+            parts.extend(_format_weekly_rollup_for_prior_phase(prior_block_sessions))
+            parts.append("")
+            parts.append("Prior phase last week (verbatim — the seam-in):")
+            parts.extend(_format_prior_phase_last_week(prior_block_sessions))
+        else:
+            parts.append("(No prior-phase sessions supplied.)")
     else:
-        parts.append("(No prior-phase sessions supplied.)")
+        # D-77 block mode: continuity threads the immediately-preceding week.
+        parts.append("=== Prior-week continuity ===")
+        if is_first_unit_of_plan and start_phase == "Base":
+            parts.append("(First week of plan; no prior context.)")
+        elif is_first_unit_of_plan and start_phase != "Base":
+            parts.append(
+                f"(Athlete starts at {start_phase}; no real prior sessions. "
+                "Assume the immediately-prior skipped phase landed at its 2A "
+                "exit state. Do NOT flag missing earlier-phase preparation.)"
+            )
+        elif prior_block_sessions:
+            if is_first_block_of_phase:
+                parts.append(
+                    "This is the FIRST week of a NEW phase — a DELIBERATE phase "
+                    "transition. Expect a planned step in emphasis/volume vs. the "
+                    "prior phase's close, NOT a smooth ramp. Continue from where "
+                    "the prior phase ended (below)."
+                )
+            else:
+                parts.append(
+                    f"Preceding week(s) of this same {phase_spec.phase_name} phase "
+                    "below. Progress GENTLY and continuously from here — no abrupt "
+                    "week-over-week jump; honor any planned recovery/down week in "
+                    "the phase's intended progression."
+                )
+            parts.append("")
+            parts.append("Preceding week rollup:")
+            parts.extend(_format_weekly_rollup_for_prior_phase(prior_block_sessions))
+            parts.append("")
+            parts.append("Preceding week (verbatim — the seam-in):")
+            parts.extend(_format_prior_phase_last_week(prior_block_sessions))
+        else:
+            parts.append("(No preceding-week sessions supplied.)")
     parts.append("")
 
     # === Athlete context (Layer 1 + 3A) ===
@@ -974,10 +1035,14 @@ def render_user_prompt(
 
     # === Output instruction ===
     parts.append("=== Output ===")
+    if block_mode:
+        out_start, out_end = _block_date_window(phase_spec, week_range)  # type: ignore[arg-type]
+    else:
+        out_start, out_end = phase_spec.start_date, phase_spec.end_date
     parts.append(
         f"Emit one tool call to `record_phase_sessions` with your list of "
-        f"PlanSession records covering {phase_spec.start_date.isoformat()} "
-        f"through {phase_spec.end_date.isoformat()} (inclusive) plus a "
+        f"PlanSession records covering {out_start.isoformat()} "
+        f"through {out_end.isoformat()} (inclusive) plus a "
         "phase_synthesis_notes rationale (≤600 chars) and optional "
         "opportunities (up to 3 entries)."
     )
@@ -1051,21 +1116,77 @@ def _parse_date(s: str) -> _date_type:
 
 
 def _clamp_sessions_over_emit(
-    raw_sessions: list[Any], phase_name: str
+    raw_sessions: list[Any],
+    phase_name: str,
+    max_sessions: int = _MAX_SESSIONS_PER_PHASE,
 ) -> list[Any]:
-    """Trim an over-emitted `sessions` array to `_MAX_SESSIONS_PER_PHASE`.
+    """Trim an over-emitted `sessions` array to `max_sessions` (default
+    `_MAX_SESSIONS_PER_PHASE`; the per-block ceiling in D-77 block mode).
 
     The tool-schema `maxItems` is only an Anthropic API hint, so the model can
     over-run it; this is the driver-side backstop (the Layer 4 twin of the
     Layer 3A/3B bounded-collection clamps). Passes through unchanged at or under
     the ceiling; logs when it fires."""
-    if len(raw_sessions) > _MAX_SESSIONS_PER_PHASE:
+    if len(raw_sessions) > max_sessions:
         print(
             f"synthesize_phase: {phase_name} clamping sessions "
-            f"from {len(raw_sessions)} to {_MAX_SESSIONS_PER_PHASE}"
+            f"from {len(raw_sessions)} to {max_sessions}"
         )
-        return raw_sessions[:_MAX_SESSIONS_PER_PHASE]
+        return raw_sessions[:max_sessions]
     return raw_sessions
+
+
+def _block_date_window(
+    phase_spec: PhaseSpec, week_range: tuple[int, int]
+) -> tuple[_date_type, _date_type]:
+    """Map an inclusive `week_in_phase` range (1-indexed) to its date window.
+
+    Week 1 = the first 7 days of the phase. The window end is clamped to the
+    phase's `end_date` so a final short block (phase weeks not a multiple of
+    `_BLOCK_WEEKS`) doesn't run past the phase."""
+    week_start, week_end = week_range
+    block_start = phase_spec.start_date + timedelta(days=(week_start - 1) * 7)
+    block_end = phase_spec.start_date + timedelta(days=week_end * 7 - 1)
+    if block_end > phase_spec.end_date:
+        block_end = phase_spec.end_date
+    return block_start, block_end
+
+
+def _filter_raw_sessions_to_window(
+    raw_sessions: list[Any],
+    window_start: _date_type,
+    window_end: _date_type,
+    phase_name: str,
+) -> list[Any]:
+    """Drop raw session dicts whose date falls outside the block's window
+    (D-77 §4.2). A deterministic block-boundary enforcement: the prompt asks
+    the model to fill only this block's weeks, but `tool_choice: auto` can let
+    it spill into adjacent weeks — trimming here keeps each cached block
+    disjoint so concatenation across blocks never double-counts a date. Rows
+    with an unparseable/absent date are kept (the PlanSession parse step below
+    surfaces them as a schema_violation rather than silently dropping)."""
+    kept: list[Any] = []
+    dropped = 0
+    for s in raw_sessions:
+        raw_date = s.get("date") if isinstance(s, dict) else None
+        if raw_date is None:
+            kept.append(s)
+            continue
+        try:
+            d = _parse_date(raw_date)
+        except (ValueError, TypeError):
+            kept.append(s)
+            continue
+        if window_start <= d <= window_end:
+            kept.append(s)
+        else:
+            dropped += 1
+    if dropped:
+        print(
+            f"synthesize_phase: {phase_name} dropped {dropped} session(s) "
+            f"outside block window [{window_start}, {window_end}]"
+        )
+    return kept
 
 
 def _build_session_phase_metadata(
@@ -1227,7 +1348,7 @@ def synthesize_phase(
     layer3a_payload: Layer3APayload,
     layer3b_payload: Layer3BPayload,
     race_event_payload: RaceEventPayload | None,
-    prior_phase_sessions: list[PlanSession],
+    prior_block_sessions: list[PlanSession],
     plan_version_id: int,
     etl_version_set: dict[str, str],
     mode: Literal["plan_create", "plan_refresh"],
@@ -1245,9 +1366,13 @@ def synthesize_phase(
     # prompt via `_format_training_substitution_per_phase`. Default None
     # preserves legacy call sites that don't surface the cone.
     training_substitution_payload: TrainingSubstitutionPayload | None = None,
+    # D-77: when set, scope this call to an inclusive `week_in_phase` range
+    # (the per-week synthesis unit). None = whole phase (seam re-synth path).
+    week_range: tuple[int, int] | None = None,
 ) -> PhaseSynthesisResult:
-    """Synthesize one phase's PlanSession list per `Layer4_Spec.md` §5.2
-    step 3.
+    """Synthesize one synthesis unit's PlanSession list per `Layer4_Spec.md`
+    §5.2 step 3. The unit is one week-block (D-77 `week_range`) or, when
+    `week_range` is None, a whole phase (the seam-driven re-synthesis path).
 
     Algorithm:
     1. Render `Layer4_PerPhase_v2.md` §6 user prompt against the full upstream
@@ -1274,7 +1399,23 @@ def synthesize_phase(
         session_id_prefix = uuid.uuid4().hex[:8]
 
     caller: LLMCaller = llm_caller or _default_llm_caller
-    tool_schema = build_record_phase_sessions_tool(_MAX_SESSIONS_PER_PHASE)
+
+    # D-77: scope the unit to a week-block when `week_range` is set, else the
+    # whole phase. The per-unit session ceiling scales from the per-week cap;
+    # `max_tokens` is left at the per-phase value — a block needs fewer output
+    # tokens, so the per-phase cap is ample headroom (scaling it DOWN would
+    # risk truncating output and could dip below `extended_thinking_budget`).
+    if week_range is not None:
+        ws, we = week_range
+        block_weeks = max(1, we - ws + 1)
+        max_sessions_this_unit = min(
+            _MAX_SESSIONS_PER_WEEK * block_weeks, _MAX_SESSIONS_PER_PHASE
+        )
+        unit_scope_start, unit_scope_end = _block_date_window(phase_spec, week_range)
+    else:
+        max_sessions_this_unit = _MAX_SESSIONS_PER_PHASE
+        unit_scope_start, unit_scope_end = phase_spec.start_date, phase_spec.end_date
+    tool_schema = build_record_phase_sessions_tool(max_sessions_this_unit)
 
     rule_failures: list[RuleFailure] = []
     validator_results: list[ValidatorResult] = []
@@ -1329,12 +1470,13 @@ def synthesize_phase(
             layer3a_payload=layer3a_payload,
             layer3b_payload=layer3b_payload,
             race_event_payload=race_event_payload,
-            prior_phase_sessions=prior_phase_sessions,
+            prior_block_sessions=prior_block_sessions,
             retries_used=current_pass,
             rule_failures=rule_failures,
             seam_issues=seam_issues or [],
             seam_direction=seam_direction,
             training_substitution_payload=training_substitution_payload,
+            week_range=week_range,
         )
 
         llm_out = caller(
@@ -1390,12 +1532,22 @@ def synthesize_phase(
             final_retries_used = current_pass + 1
             continue
 
+        # D-77: in block mode, drop any session the model placed outside the
+        # block's week window FIRST so each cached block stays disjoint
+        # (concatenation across blocks never double-counts a date). The window
+        # filter is the block boundary; the ceiling clamp below caps what
+        # remains in-window.
+        if week_range is not None:
+            raw_sessions = _filter_raw_sessions_to_window(
+                raw_sessions, unit_scope_start, unit_scope_end, phase_spec.phase_name
+            )
+
         # Pre-validation clamp on the bounded `sessions` collection: the tool
         # schema's `maxItems` is only an Anthropic API hint, so the model can
         # over-emit past it. Trim to the declared ceiling before parsing — the
         # same over-emit-vs-cap guard applied to Layer 3A/3B bounded fields.
         raw_sessions = _clamp_sessions_over_emit(
-            raw_sessions, phase_spec.phase_name
+            raw_sessions, phase_spec.phase_name, max_sessions_this_unit
         )
 
         try:
@@ -1446,8 +1598,8 @@ def synthesize_phase(
             user_id=user_id,
             sessions=sessions,
             plan_version_id=plan_version_id,
-            scope_start=phase_spec.start_date,
-            scope_end=phase_spec.end_date,
+            scope_start=unit_scope_start,
+            scope_end=unit_scope_end,
             model=model,
             temperature=temperature,
             etl_version_set=etl_version_set,
