@@ -379,6 +379,19 @@ def llm_layer4_plan_create_cached(
         training_substitution_hash=training_substitution_hash,
     )
 
+    # D-77 diagnostic: the call cache key + its component layer-hashes. Logged
+    # once per resumable pass so a NON-CONVERGENCE loop is diagnosable in one
+    # read — if `call_cache_key` differs between two passes of the same plan,
+    # the per-layer prefixes name the layer whose hash drifted (the cache-key
+    # non-determinism that orphans every cached block). Diagnostic only.
+    print(
+        f"llm_layer4_plan_create_cached: user={user_id} "
+        f"call_cache_key={key[:12]} ["
+        f"l1={layer1_hash[:8]} l2a={layer2a_hash[:8]} l2b={layer2b_hash[:8]} "
+        f"l2c={layer2c_bundle_hash_val[:8]} l2d={layer2d_hash[:8]} "
+        f"l2e={layer2e_hash[:8]} l3a={layer3a_hash[:8]} l3b={layer3b_hash[:8]}]"
+    )
+
     # Build the synthesizer kwargs — pass None defaults through to let the
     # entry point pick its module-level constants. Step 6a (this session)
     # wires the §9.2 per-phase cache by passing `cache=cache, call_cache_key
