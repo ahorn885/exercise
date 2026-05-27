@@ -468,15 +468,23 @@ def _dump_fit(fit_bytes: bytes) -> dict:
         return out
 
     def _generic_fields(m):
-        """Extract fields from a GenericMessage by iterating its typed field list."""
+        """Extract fields from a GenericMessage by iterating its typed field list.
+
+        Key every field by its field_id. fit_tool usually names generic fields
+        just "field", so keying by name alone collides — every field but the
+        last is lost. Keying by field_id keeps them all and surfaces the id,
+        which is exactly what's needed to reverse-engineer unmapped Garmin
+        message types (HRV, sleep, training readiness, SpO2, …)."""
         gid = getattr(m, 'global_id', '?')
         out = {'global_id': str(gid)}
         for field in getattr(m, 'fields', []):
             try:
-                name = getattr(field, 'name', None) or f'field_{getattr(field, "field_id", "?")}'
+                fid = getattr(field, 'field_id', '?')
+                name = getattr(field, 'name', None)
+                key = f'field_{fid}' if (not name or name == 'field') else f'{name}_{fid}'
                 val = field.get_value(0)
                 if val is not None:
-                    out[name] = str(val)
+                    out[key] = str(val)
             except Exception:
                 pass
         return out
