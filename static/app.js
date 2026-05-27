@@ -187,6 +187,7 @@
       if (!summaryEl) return;
       var order = [
         ['imported', 'Imported', 'text-bg-success'],
+        ['matched', 'Matched to plan', 'text-bg-primary'],
         ['duplicates', 'Duplicates', 'text-bg-secondary'],
         ['skipped', 'Skipped', 'text-bg-warning'],
         ['errors', 'Errors', 'text-bg-danger'],
@@ -210,8 +211,24 @@
       if (progressText) progressText.textContent = done + ' / ' + total + ' files processed';
     }
 
+    function appendFields(fd) {
+      // Include any [data-bulk-field] inputs (e.g. the match-to-plan toggle)
+      // with every batch. Checkboxes send '1' when checked, '0' otherwise.
+      root.querySelectorAll('[data-bulk-field]').forEach(function (el) {
+        if (!el.name) return;
+        var val = el.type === 'checkbox' ? (el.checked ? '1' : '0') : el.value;
+        fd.append(el.name, val);
+      });
+    }
+
     function run() {
       if (!selected.length) return;
+      // Best-effort chronological order across batches: Garmin export
+      // filenames are date-prefixed, so a name sort approximates it. Keeps
+      // plan-matching and rx progression sane when many files span batches.
+      selected.sort(function (a, b) {
+        return a.name < b.name ? -1 : (a.name > b.name ? 1 : 0);
+      });
       var total = selected.length;
       var batches = makeBatches();
       var running = {};
@@ -238,6 +255,7 @@
         var batch = batches[i++];
         var fd = new FormData();
         batch.forEach(function (f) { fd.append('files', f, f.name); });
+        appendFields(fd);
         fetch(endpoint, { method: 'POST', body: fd })
           .then(function (resp) {
             if (!resp.ok) throw new Error('HTTP ' + resp.status);
