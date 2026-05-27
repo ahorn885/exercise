@@ -562,6 +562,76 @@ class TestPerBlockBudgetGuard:
         assert calls["n"] == 1
 
 
+class TestBlockOutputBudget:
+    """D-77 §6 follow-on: block-mode `max_tokens` scales to the unit's session
+    ceiling. The per-phase 4000 default truncated a dense week's `sessions`
+    array on the forced-tool retry (thinking off → `max_tokens` IS the whole
+    output budget) → empty/partial tool args → schema_violation."""
+
+    def _capture_max_tokens(self, week_range):
+        from layer4 import per_phase
+        from layer4.phase_structure import phase_structure_from_3b
+
+        ps = phase_structure_from_3b(_layer3b(), _PLAN_START)
+        captured: dict[str, int] = {}
+
+        def _caller(_sys, _user, _tool, _model, _temp, max_tokens, _thinking):
+            captured["max_tokens"] = max_tokens
+            # Empty sessions → accepted immediately so the loop runs exactly
+            # once and we capture the budget passed to the LLM caller.
+            return _PhaseOut(
+                tool_args={"sessions": [], "phase_synthesis_notes": "x"},
+                input_tokens=1000,
+                output_tokens=50,
+                latency_ms=1000,
+            )
+
+        per_phase.synthesize_phase(
+            user_id=1,
+            phase_spec=ps.phases[0],
+            phase_structure=ps,
+            phase_index_in_plan=0,
+            layer1_payload=_layer1(),
+            layer2a_payload=_layer2a(),
+            layer2b_payload=_layer2b(),
+            layer2c_payloads=_layer2c(),
+            layer2d_payload=_layer2d(),
+            layer2e_payload=_layer2e(),
+            layer3a_payload=_layer3a(),
+            layer3b_payload=_layer3b(),
+            race_event_payload=_race_event(),
+            prior_block_sessions=[],
+            plan_version_id=1,
+            etl_version_set={"layer0": "v7"},
+            mode="plan_create",
+            week_range=week_range,
+            llm_caller=_caller,
+        )
+        return captured["max_tokens"]
+
+    def test_block_mode_scales_max_tokens_to_session_ceiling(self):
+        from layer4 import per_phase
+
+        mt = self._capture_max_tokens((1, 1))
+        expected = (
+            per_phase._MAX_SESSIONS_PER_WEEK
+            * per_phase._BLOCK_OUTPUT_TOKENS_PER_SESSION
+            + per_phase._BLOCK_OUTPUT_TOKENS_OVERHEAD
+        )
+        assert mt == expected
+        # The whole point: the dense-week budget exceeds the per-phase default
+        # that truncated the forced-tool retry.
+        assert mt > per_phase.DEFAULT_MAX_TOKENS
+
+    def test_full_phase_mode_keeps_caller_max_tokens(self):
+        from layer4 import per_phase
+
+        # Whole-phase (seam-driven re-synth) is intentionally NOT scaled — a
+        # 56-session single call is the unit decomposition replaced.
+        mt = self._capture_max_tokens(None)
+        assert mt == per_phase.DEFAULT_MAX_TOKENS
+
+
 def _seam_stub_approved():
     def _call(*_a, **_kw) -> _SeamOut:
         return _SeamOut(

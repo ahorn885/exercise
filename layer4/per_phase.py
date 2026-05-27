@@ -96,6 +96,17 @@ within the function cap: it caches the best parseable attempt as best-effort
 (§5.5 cap-hit) or fails terminally fast. 120s leaves headroom for one more
 in-flight attempt under the 300s cap. The first attempt is never gated."""
 
+_BLOCK_OUTPUT_TOKENS_PER_SESSION = 600
+"""D-77 §6 follow-on. A dense PlanSession (cardio_blocks with per-block intensity
+targets + strength_exercises arrays + 240-char notes/instructions) serializes to
+~400-600 output tokens; budget the worst case so a full high-frequency week-block
+fits its `max_tokens` without truncating mid-`sessions`."""
+
+_BLOCK_OUTPUT_TOKENS_OVERHEAD = 800
+"""Fixed block output budget on top of the per-session estimate: covers
+`phase_synthesis_notes` (≤600 chars), `opportunities` (3×≤240 chars), and the
+JSON envelope/scaffolding."""
+
 
 # Per `Layer4_PerPhase_v1.md` D5: closed set of 6 LLM-emitted coaching flags.
 # Spec-auto flags (`recovery_week`, `peak_volume_marker`, `race_rehearsal`,
@@ -1413,17 +1424,16 @@ def synthesize_phase(
     caller: LLMCaller = llm_caller or _default_llm_caller
 
     # D-77: scope the unit to a week-block when `week_range` is set, else the
-    # whole phase. The per-unit session ceiling scales from the per-week cap;
-    # `max_tokens` is left at the per-phase value. NOTE: under extended thinking
-    # the request ceiling is `max_tokens + extended_thinking_budget`, and a block
-    # WAS observed truncating against it (prod: out pinned at the ceiling, empty
-    # tool args) — the model spent the budget thinking and left no room for the
-    # `sessions` output. That truncation is now mitigated in `invoke_tool_call`:
-    # an empty tool call triggers the forced-tool retry (thinking off → the full
-    # `max_tokens` is available for output). If a forced retry ever truncates a
-    # dense week against `max_tokens` alone, raising the block-mode budget is the
-    # follow-on (the per-block budget guard below keeps it failing fast, not
-    # 504-looping, in the meantime).
+    # whole phase. The per-unit session ceiling scales from the per-week cap, and
+    # the block's output budget (`effective_max_tokens`) scales with it. NOTE:
+    # under extended thinking the request ceiling is `max_tokens +
+    # extended_thinking_budget`; the thinking attempt that exhausts the budget on
+    # reasoning and emits an empty tool call is caught in `invoke_tool_call` (the
+    # forced-tool retry fires with thinking off → all of `max_tokens` is output
+    # room). The forced retry then needs `max_tokens` itself to be large enough
+    # for a dense week's `sessions` — the original per-phase 4000 was not, which
+    # truncated the retry mid-output → `schema_violation` — so block mode sizes
+    # the budget to its session ceiling below.
     if week_range is not None:
         ws, we = week_range
         block_weeks = max(1, we - ws + 1)
@@ -1432,10 +1442,31 @@ def synthesize_phase(
         )
         unit_scope_start, unit_scope_end = _block_date_window(phase_spec, week_range)
         unit_tag = f"{phase_spec.phase_name}:w{ws}" + (f"-{we}" if we != ws else "")
+        # D-77 §6 follow-on: size the block output budget to its session ceiling.
+        # The per-phase default `max_tokens` (4000) predates the dense session
+        # schema, so a full high-frequency week serialized well past it: the
+        # forced-tool retry (thinking off → `max_tokens` IS the entire output
+        # budget) truncated mid-`sessions` → empty/partial tool args →
+        # `schema_violation`. That is the bounded terminal failure the post-fix
+        # re-run surfaced in place of the prior 504-loop (the per-block budget
+        # guard + empty-tool escalation stopped the loop but left the unit too
+        # small). Raise it to fit a worst-case dense block; never below the
+        # caller's value. Higher `max_tokens` is only a ceiling — billed/latency
+        # cost tracks tokens actually emitted, and the per-block budget guard
+        # still bounds total synthesis time.
+        effective_max_tokens = max(
+            max_tokens,
+            max_sessions_this_unit * _BLOCK_OUTPUT_TOKENS_PER_SESSION
+            + _BLOCK_OUTPUT_TOKENS_OVERHEAD,
+        )
     else:
         max_sessions_this_unit = _MAX_SESSIONS_PER_PHASE
         unit_scope_start, unit_scope_end = phase_spec.start_date, phase_spec.end_date
         unit_tag = f"{phase_spec.phase_name}:full-phase"
+        # Whole-phase mode (seam-driven re-synth) keeps the caller's budget — a
+        # 56-session single call is the unit D-77 decomposition replaced; the
+        # week-seam stitcher (Slice 3), not a token bump, is its scaling path.
+        effective_max_tokens = max_tokens
     tool_schema = build_record_phase_sessions_tool(max_sessions_this_unit)
 
     rule_failures: list[RuleFailure] = []
@@ -1538,7 +1569,7 @@ def synthesize_phase(
             tool_schema,
             model,
             temperature,
-            max_tokens,
+            effective_max_tokens,
             extended_thinking_budget,
         )
         llm_call_count += 1
@@ -1554,7 +1585,8 @@ def synthesize_phase(
         print(
             f"synthesize_phase: {unit_tag} attempt {current_pass + 1}/"
             f"{capped_retries + 1} llm call {llm_out.latency_ms}ms "
-            f"(in={llm_out.input_tokens} out={llm_out.output_tokens})"
+            f"(in={llm_out.input_tokens} out={llm_out.output_tokens} "
+            f"max_tokens={effective_max_tokens})"
         )
 
         raw_sessions = llm_out.tool_args.get("sessions")
