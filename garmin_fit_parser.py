@@ -450,6 +450,7 @@ def _dump_fit(fit_bytes: bytes) -> dict:
     developer_field_defs = []
     sample_records = []          # first 3 RecordMessage entries with non-None fields
     all_message_samples = {}     # one sample per message type
+    generic_samples = {}         # global_id -> up to 5 distinct field dicts
 
     def _fields(m):
         """Collect non-None, non-internal attributes as str-converted values."""
@@ -498,6 +499,12 @@ def _dump_fit(fit_bytes: bytes) -> dict:
             sample_key = f'GenericMessage[{gid}]'
             msg_counts[sample_key] = msg_counts.get(sample_key, 0) + 1
             fields = _generic_fields(msg)
+            # Keep a few distinct samples per global_id so real values are
+            # visible even when one message carries a sentinel — needed to
+            # tell e.g. a valid body-battery from the -200 "invalid" marker.
+            _bucket = generic_samples.setdefault(str(gid), [])
+            if len(_bucket) < 5 and fields not in _bucket:
+                _bucket.append(fields)
         else:
             sample_key = msg_type
             msg_counts[msg_type] = msg_counts.get(msg_type, 0) + 1
@@ -542,6 +549,7 @@ def _dump_fit(fit_bytes: bytes) -> dict:
         'developer_data_samples': dev_data_samples,
         'sample_records': sample_records,
         'all_message_samples': all_message_samples,
+        'generic_samples': dict(sorted(generic_samples.items())),
     }
 
 
