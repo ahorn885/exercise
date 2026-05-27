@@ -1285,6 +1285,23 @@ def _bulk_insert_wellness(db, rows: list, uid: int, chunk: int = 500) -> tuple:
     return inserted, total - inserted
 
 
+def _wellness_skip_detail(name: str) -> str:
+    """Accurate skip reason for a file that yielded no wellness readings.
+
+    parse_wellness_fit only extracts the five per-second streams (heart rate,
+    stress, body battery, respiration, steps). Garmin _METRICS files hold daily
+    summary metrics instead, so they legitimately yield nothing here. Use the
+    Garmin filename convention as a hint so the message isn't misleading."""
+    upper = (name or '').upper()
+    if 'METRICS' in upper:
+        return ('Garmin metrics file — daily metrics (HRV, sleep, training '
+                'readiness, VO2max) are not imported by the wellness importer')
+    if 'ACTIVITY' in upper:
+        return 'activity file — import it on the Garmin → Import FIT page instead'
+    return ('no supported wellness readings found '
+            '(heart rate, stress, body battery, respiration, steps)')
+
+
 @bp.route('/import-wellness/bulk', methods=['POST'])
 def import_wellness_bulk():
     """Parse many wellness/monitoring FITs and merge their per-second readings
@@ -1315,7 +1332,7 @@ def import_wellness_bulk():
             continue
         if not rows:
             results.append({'name': name, 'status': 'skipped',
-                            'detail': 'no wellness data (looks like an activity file)'})
+                            'detail': _wellness_skip_detail(name)})
             summary['skipped'] += 1
             continue
         try:
