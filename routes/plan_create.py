@@ -162,23 +162,25 @@ def _build_layer4_cache() -> Layer4Cache:
     return Layer4Cache(PostgresCacheBackend(lambda: get_db()))
 
 
-def _count_cached_blocks(db, user_id: int) -> int:
-    """D-77 §6 — count the per-week-block cache rows for this user's plan_create
-    chain (the progress signal for the stall backstop). Block rows carry
-    `phase_idx` in `[0, _SEAM_CACHE_PHASE_IDX_BASE)`; the per-entry row
-    (`phase_idx = -1`), the upstream-layer rows (other `entry_point`s), and the
-    seam-review rows (`phase_idx >= _SEAM_CACHE_PHASE_IDX_BASE`) are excluded.
+def _count_cached_blocks(db, user_id: int, plan_version_id: int) -> int:
+    """D-77 §6 — count the per-week-block cache rows for THIS plan's generation
+    (the progress signal for the stall backstop). Block rows carry `phase_idx`
+    in `[0, _SEAM_CACHE_PHASE_IDX_BASE)`; the per-entry row (`phase_idx = -1`),
+    the upstream-layer rows (other `entry_point`s), and the seam-review rows
+    (`phase_idx >= _SEAM_CACHE_PHASE_IDX_BASE`) are excluded.
 
-    Scoped to `entry_point='plan_create'` for the user rather than this plan's
-    exact `call_cache_key` (which the route doesn't hold — the orchestrator
-    derives it internally). For a single active generation this is exact; stale
-    rows from a prior plan with different upstreams can only DELAY detection by a
-    pass (the count plateaus → stall still trips), never mask a real stall."""
+    The route doesn't hold this plan's exact `call_cache_key` (the orchestrator
+    derives it), so the query is user-scoped — but orphaned block rows from a
+    PRIOR failed plan would otherwise inflate the count. Bounding to rows created
+    at/after the plan_versions row's own `created_at` keeps it to this
+    generation's progress."""
     row = db.execute(
-        "SELECT COUNT(*) AS n FROM layer4_cache "
-        "WHERE user_id = ? AND entry_point = 'plan_create' "
-        "AND phase_idx >= 0 AND phase_idx < ?",
-        (user_id, _SEAM_CACHE_PHASE_IDX_BASE),
+        "SELECT COUNT(*) AS n FROM layer4_cache c, plan_versions pv "
+        "WHERE pv.id = ? AND pv.user_id = ? "
+        "AND c.user_id = ? AND c.entry_point = 'plan_create' "
+        "AND c.phase_idx >= 0 AND c.phase_idx < ? "
+        "AND c.created_at >= pv.created_at",
+        (plan_version_id, user_id, user_id, _SEAM_CACHE_PHASE_IDX_BASE),
     ).fetchone()
     return int(row['n']) if row else 0
 
@@ -194,12 +196,18 @@ def _generation_stalled(db, user_id: int, plan_version_id: int) -> bool:
     block could cache. A wall-clock gate never false-trips a block that is
     legitimately in flight, and concurrent cron/poller calls can't double-count
     it — yet a unit that genuinely can't fit the budget still trips once the
-    elapsed window is exceeded."""
+    elapsed window is exceeded.
+
+    The block subquery is bounded to `created_at >= pv.created_at` so orphaned
+    block rows from a PRIOR failed plan (this query is user-scoped, not keyed to
+    this plan's call_cache_key) can't anchor the elapsed-time window in the
+    past and false-trip every NEW plan on its first pass."""
     row = db.execute(
         "SELECT (NOW() - COALESCE("
         "  (SELECT MAX(created_at) FROM layer4_cache "
         "     WHERE user_id = ? AND entry_point = 'plan_create' "
-        "       AND phase_idx >= 0 AND phase_idx < ?), "
+        "       AND phase_idx >= 0 AND phase_idx < ? "
+        "       AND created_at >= pv.created_at), "
         "  pv.created_at)) > (? * INTERVAL '1 second') AS stalled "
         "FROM plan_versions pv WHERE pv.id = ? AND pv.user_id = ?",
         (user_id, _SEAM_CACHE_PHASE_IDX_BASE, _STALL_WALLCLOCK_S,
@@ -299,7 +307,7 @@ def _advance_plan_generation(db, uid: int, plan_version_id: int) -> dict:
     # per-call counter — see the `_STALL_WALLCLOCK_S` rationale: the cron + the
     # poller both call this, and the first block legitimately takes a full pass
     # to cache, so a call-count trip killed plans before they could start.
-    now_cached = _count_cached_blocks(db, uid)
+    now_cached = _count_cached_blocks(db, uid, plan_version_id)
     if _generation_stalled(db, uid, plan_version_id):
         # Convert the silent infinite 504 loop into a loud terminal failure.
         print(
