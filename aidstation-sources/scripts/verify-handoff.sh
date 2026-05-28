@@ -9,8 +9,9 @@
 #   1. Names the latest handoff (or the one you passed).
 #   2. Extracts file paths the handoff mentions (.md / .py / .sh / .sql) and
 #      checks each one exists on disk. Catches "claimed shipped, actually missing."
-#   3. Reports the latest Project_Backlog version on disk vs. what CLAUDE.md /
-#      CURRENT_STATE.md reference. Catches stale pointers.
+#   3. Confirms the backlog is frozen under archive/backlog/ (tracking now lives
+#      in GitHub issues) and warns if a Project_Backlog*.md reappears in the
+#      source root. Catches a backlog-doc regression.
 #   4. Prints `git status --short` for working-tree state.
 #
 # Does NOT:
