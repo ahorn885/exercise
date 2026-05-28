@@ -1,10 +1,10 @@
 # Housekeeping — Docs→GitHub-Issues Repoint + 4-Tier Next-Steps Framework — Closing Handoff
 
-**Session:** Bookkeeping / process only. Repointed every housekeeping doc at GitHub-issues tracking (removing the old `Project_Backlog_vN.md` workflow references), pruned the deferred-work sections that migrated to issues, consolidated the owed Andy's-hands deploys into one ledger, and recast "next moves" as a 4-tier priority framework. **No app code or specs touched.**
+**Session:** Bookkeeping / process only. Repointed every housekeeping doc at GitHub-issues tracking (removing the old `Project_Backlog_vN.md` workflow references), pruned the deferred-work sections that migrated to issues, consolidated the owed Andy's-hands deploys into one ledger, and recast "next moves" as a 4-tier priority framework. A follow-on pass then professionally reorganized the GitHub issue tracker (label hygiene, backfill, native sub-issue hierarchy, milestones) — applied via `scripts/issue-cleanup.sh`; see §11. **No app code or specs touched.**
 **Date:** 2026-05-28
 **Predecessor handoff:** `V5_Implementation_PlanGen_D77_CacheKeyDeterminismAudit_2026_05_27_Closing_Handoff_v1.md`
 **Branch:** `claude/friendly-darwin-tEKUp`
-**Status:** 0 substantive / 6 bookkeeping files. Docs-only; the live code state is unchanged from PR #294 (D-77 convergence re-run still owed — Andy's hands).
+**Status:** 0 substantive / 7 bookkeeping files (incl. `scripts/issue-cleanup.sh`) + the GitHub issue-tracker reorganization (§11). Docs + tracker only; the live code state is unchanged from PR #294 (D-77 convergence re-run still owed — Andy's hands).
 
 ---
 
@@ -92,7 +92,9 @@ None new this session. The ledger (115 scenarios + the D-77 plan-gen entry) is u
 
 ### 6.1 Architect-recommended next forward move
 
-**Tier 1 — the D-77 PGE convergence re-run (#201 / #202).** It's owed (Andy's hands) and is the #1 go-live blocker (plan-gen 504-loops without it). Redeploy `main`, create one fresh PGE 2026 plan, and confirm in the Vercel log: `llm_layer3a_athlete_state: … HIT … ibundle=<X>` **identical across passes**, per-block `HIT` on later passes, blocks `cap_hit`-cache, plan reaches `ready`. Then the §14 coherence read — do the independently-generated weeks blend within a phase? If `ibundle` still drifts, the diagnostic names the remaining volatile field.
+**Housekeeping is done — get back on the path to live.** The 2026-05-28 housekeeping arc — the docs→issues repoint AND the full issue-tracker reorganization (§11) — is complete; no bookkeeping is owed. The next session returns to the work that actually ships AIDSTATION: the D-77 go-live blocker, then the two other owed deploys.
+
+**Tier 1 — the D-77 PGE convergence re-run (#201 / #202).** It's owed (Andy's hands) and is the #1 go-live blocker (plan-gen 504-loops without it). Redeploy `main`, create one fresh PGE 2026 plan, and confirm in the Vercel log: `llm_layer3a_athlete_state: … HIT … ibundle=<X>` **identical across passes**, per-block `HIT` on later passes, blocks `cap_hit`-cache, plan reaches `ready`. Then the §14 coherence read — do the independently-generated weeks blend within a phase? If `ibundle` still drifts, the diagnostic names the remaining volatile field. **The concrete path to live = the three owed Andy's-hands deploys in §6.3:** (1) this D-77 re-run, (2) the #211/#228 `previous_attempts` `init_db.py`, (3) the K3 equipment ETL — run, confirm, then the §5.0 walkthrough.
 
 ### 6.2 The 4-tier next-steps framework (ask #3) — live issue map
 
@@ -188,6 +190,8 @@ Everything below is here so a new session does **not** re-derive it.
 | No app code / spec / migration touched | ✅ `git status` — only the 6 bookkeeping files |
 | Suite baseline inherited 1802 / 16 (not re-run — no code change) | ✅ inherited |
 | `./scripts/verify-handoff.sh` anchor sweep clean | ✅ run pre-commit |
+| `scripts/issue-cleanup.sh` committed (the applied cleanup) | ✅ ls |
+| Issue-tracker reorg live (labels recolored, #296–#308 backfilled, sub-issues linked under epics, 2 milestones) | ✅ connector reads + milestones page |
 
 ---
 
@@ -202,6 +206,7 @@ Everything below is here so a new session does **not** re-derive it.
 4. `scripts/verify-handoff.sh` — §[2] header comment refresh.
 5. `CLAUDE.md` — 4-tier prioritization working principle.
 6. `handoffs/V5_Housekeeping_DocsToGitHubIssues_NextStepsFramework_2026_05_28_Closing_Handoff_v1.md` — this handoff.
+7. `scripts/issue-cleanup.sh` — the idempotent `gh` cleanup applied to the tracker (§11); kept as the record.
 
 The 5-file ceiling applies to substantive files only; bookkeeping is outside the count.
 
@@ -210,6 +215,20 @@ The 5-file ceiling applies to substantive files only; bookkeeping is outside the
 ## 10. Carry-forward updates
 
 In `CARRY_FORWARD.md`: added the `Owed Andy's-hands deploys (consolidated)` section (3 deploys, two harvested from the about-to-be-pruned narrative); pruned the migrated deferred-work sections; appended the `Deferred work → GitHub issues` 13-epic table. The §5.0 walkthrough ledger and the live D-77 plan-gen entry were left untouched.
+
+---
+
+## 11. GitHub issue-tracker reorganization (2026-05-28 follow-on)
+
+After the doc repoint, the 104 open issues got a professional pass. The approved cleanup was applied to `ahorn885/exercise` via `scripts/issue-cleanup.sh` (committed this session — idempotent `gh` script, kept as the record). Verified live this session via connector reads + the public milestones page:
+
+- **Label hygiene.** Deleted the 8 unused stock labels (`bug`, `documentation`, `duplicate`, `enhancement`, `good first issue`, `help wanted`, `invalid`, `question`) + the duplicate `priority:medium`. Created `layer:2b` / `layer:2c` (were missing). Recolored + described every custom label — one hue per dimension (priority = red, layer = blue, area = green, type = purple, status = amber, meta = grey).
+- **Backfill.** `priority:` + `status:` on the orphaned-code cluster (#296–#308); `layer:2b` / `layer:2c` onto #297 / #298; full label set on the previously-bare #196; `status:in-progress` on epic #201; `status:deferred` on epic #295.
+- **Title fix.** #256 renamed (no longer opens with a link-breaking `#2b`).
+- **Sub-issue hierarchy.** Non-epic issues linked as native GitHub sub-issues under their epics (progress bars + real trees). #234 ("[D-73] Layer 1–3 arc") nested under epic #228 rather than closed — keeps the `[D-NN]` traceability.
+- **Milestones.** `Go-live: PGE 2026` (due 2026-07-17; 5 issues — #201 / #202 / #205 / #206 / #303) + `Post-launch` (7 issues) — the tracker now mirrors the 4-tier framework directly.
+
+**Net:** backlog discipline lives entirely in GitHub now (labelled, hierarchical, milestoned); no doc re-derivation needed.
 
 ---
 
