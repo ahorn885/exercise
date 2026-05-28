@@ -147,6 +147,15 @@ def llm_layer3a_athlete_state_cached(
     )
 
     entry = cache_backend.get(cache_key, PER_ENTRY_PHASE_IDX_SENTINEL)
+    # D-77 diagnostic: log the integration-bundle hash + HIT/MISS so a re-run
+    # confirms the bundle hash is stable across resumable passes (a drifting
+    # `ibundle=` names a remaining volatile bundle field; a MISS on a later
+    # pass means 3A is still re-running and poisoning the Layer 4 block keys).
+    print(
+        f"{_LAYER3A_ENTRY_POINT_LABEL}: user={user_id} "
+        f"{'HIT' if entry is not None else 'MISS'} key={cache_key[:12]} "
+        f"ibundle={integration_bundle_hash[:8]}"
+    )
     if entry is not None:
         return _hydrate_layer3a_payload(entry.payload_json)
 

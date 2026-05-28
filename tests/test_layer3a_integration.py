@@ -30,6 +30,7 @@ from layer4.context import (
     SleepRecord,
     WorkoutRecord,
 )
+from layer4.hashing import compute_payload_hash
 
 
 # ─── Fakes (mirror tests/test_layer2c.py) ────────────────────────────────────
@@ -474,7 +475,8 @@ class TestConnectedProviders:
         assert p.has_recent_workouts is True
         assert p.has_recent_sleep is True
         assert p.has_recent_hrv is True
-        assert p.last_sync == datetime(2026, 5, 20, 8, 0)
+        # last_sync is day-anchored (cache-key determinism) — 08:00 → midnight.
+        assert p.last_sync == datetime(2026, 5, 20, 0, 0)
 
     def test_coros_workouts_but_no_sleep_or_hrv(self):
         conn = _FakeConn()
@@ -492,6 +494,47 @@ class TestConnectedProviders:
         assert p.has_recent_sleep is False
         assert p.has_recent_hrv is False
         assert p.last_sync is None
+
+    def test_none_as_of_fallback_uses_day_anchored_cutoffs(self):
+        """`as_of=None` falls back to a day-anchored anchor (not full-precision
+        `datetime.now()`), so the date cutoffs sent to SQL are stable within a
+        calendar day. Those cutoffs drive the provider-coverage flags that ride
+        in the integration bundle whose hash folds into the 3A cache key, so a
+        sub-day fallback would drift that key across resumable passes."""
+        def _cutoffs() -> list[Any]:
+            conn = _FakeConn()
+            for _ in range(7):
+                conn.queue()
+            q_layer3A_connected_providers(conn, 1)  # as_of omitted → fallback
+            # Queries 3-5 (cardio_log / polar_sleep / polar_hrv) carry the
+            # workout/sleep/hrv date cutoffs as their second bound param.
+            return [conn.calls[i][1][1] for i in (2, 3, 5)]
+
+        cutoffs = _cutoffs()
+        # Each cutoff is a pure ISO date (YYYY-MM-DD), never a timestamp.
+        assert all(len(c) == 10 and c.count("-") == 2 for c in cutoffs)
+        # Stable across calls — the fallback is day-granular, not wall-clock.
+        assert _cutoffs() == cutoffs
+
+    def test_last_sync_is_day_anchored(self):
+        """last_sync = MAX(received_at) folds (via the integration-bundle hash)
+        into the 3A cache key; a sub-day value drifts that key when a provider
+        checks in mid-generation, so 3A re-runs every resumable pass and every
+        Layer 4 block is orphaned (the D-77 non-convergence reproduced on the
+        prod re-run). MAX(received_at) values on the same calendar day at
+        different times must collapse to one day-anchored last_sync."""
+        def _last_sync(received_at: datetime):
+            conn = _FakeConn()
+            conn.queue({"provider": "polar", "status": "active", "updated_at": None})
+            conn.queue({"provider": "polar", "last_received": received_at})
+            conn.queue({"garmin_n": 0, "polar_n": 1, "wahoo_n": 0, "coros_n": 0})
+            conn.queue({"n": 0}); conn.queue({"n": 0})
+            conn.queue({"n": 0}); conn.queue({"n": 0})
+            return q_layer3A_connected_providers(conn, 1, as_of=_AS_OF)[0].last_sync
+
+        morning = _last_sync(datetime(2026, 5, 20, 8, 15, 30))
+        night = _last_sync(datetime(2026, 5, 20, 23, 59, 59))
+        assert morning == night == datetime(2026, 5, 20, 0, 0, 0)
 
 
 # ─── assemble_layer3a_integration_bundle ─────────────────────────────────────
@@ -548,3 +591,18 @@ class TestAssembleBundle:
         assert bundle.combined_load.combined is None
         assert bundle.combined_load.polar_cross_ref is None
         assert bundle.connected_providers == []
+
+    def test_bundle_hash_is_deterministic_across_passes(self):
+        """The integration-bundle hash folds into the 3A cache key
+        (`layer3a_athlete_state_key`); a fresh full-precision timestamp
+        anywhere in the bundle or its accessors would drift that key on every
+        resumable pass and re-run 3A cold — the c4f9160 / D-77 non-convergence
+        class. Two assembles with the same day-anchored `as_of` and identical
+        DB responses must hash identically."""
+        def _assemble() -> Layer3AIntegrationBundle:
+            conn = _FakeConn()
+            for _ in range(15):  # 1 + 3 + 2 + 2 + 7
+                conn.queue()
+            return assemble_layer3a_integration_bundle(conn, 1, _AS_OF)
+
+        assert compute_payload_hash(_assemble()) == compute_payload_hash(_assemble())

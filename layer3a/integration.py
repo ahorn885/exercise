@@ -468,7 +468,15 @@ def q_layer3A_connected_providers(
     (no dedicated column in `provider_auth`). Coverage flags use the same
     recency windows as the per-data accessors so the LLM's view of "is data
     actively flowing" stays consistent."""
-    anchor = as_of or datetime.now()
+    # Day-anchored fallback (not full-precision `datetime.now()`): this anchor
+    # feeds the date cutoffs behind the day-granular provider-coverage flags,
+    # which ride in the Layer3AIntegrationBundle whose hash folds into the 3A
+    # cache key (`layer3a_athlete_state_key`) — a sub-day fallback would drift
+    # that key every resumable pass. The sole production caller always passes a
+    # day-anchored `as_of`, so this path is purely defensive.
+    anchor = as_of or datetime.utcnow().replace(
+        hour=0, minute=0, second=0, microsecond=0
+    )
     workout_cutoff = _window_cutoff(anchor, workout_window_days).isoformat()
     sleep_cutoff = _window_cutoff(anchor, sleep_window_days).isoformat()
     hrv_cutoff = _window_cutoff(anchor, hrv_window_days).isoformat()
@@ -567,11 +575,24 @@ def q_layer3A_connected_providers(
     out: list[ProviderStatus] = []
     for row in auth_rows:
         provider = row["provider"]
+        # Day-anchor last_sync: it's a raw MAX(received_at) timestamp that folds
+        # (via the Layer3AIntegrationBundle hash → integration_bundle_hash) into
+        # the 3A cache key. A sub-day value drifts that key whenever a provider
+        # checks in mid-generation, so 3A re-runs every resumable pass and every
+        # Layer 4 block is orphaned (D-77 non-convergence). Day-granular is
+        # sufficient for the LLM's "is data flowing" view; genuine new training
+        # data still invalidates via the day-keyed recent_workouts/sleep/hrv.
+        raw_last_sync = last_sync_by_provider.get(provider)
+        last_sync = (
+            raw_last_sync.replace(hour=0, minute=0, second=0, microsecond=0)
+            if isinstance(raw_last_sync, datetime)
+            else raw_last_sync
+        )
         out.append(
             ProviderStatus(
                 provider=provider,
                 status=row["status"],
-                last_sync=last_sync_by_provider.get(provider),
+                last_sync=last_sync,
                 has_recent_workouts=workouts_by_provider.get(provider, False),
                 has_recent_sleep=sleep_by_provider.get(provider, False),
                 has_recent_hrv=hrv_by_provider.get(provider, False),

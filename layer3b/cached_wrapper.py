@@ -229,6 +229,14 @@ def llm_layer3b_goal_timeline_viability_cached(
     )
 
     entry = cache_backend.get(cache_key, PER_ENTRY_PHASE_IDX_SENTINEL)
+    # D-77 diagnostic: HIT/MISS + the 3A-output hash 3B keys on. 3B's key folds
+    # in layer3a_hash, so a drifting l3a (e.g. the last_sync churn) cascades to
+    # a 3B MISS every pass; this line confirms 3B caches once l3a is stable.
+    print(
+        f"{_LAYER3B_ENTRY_POINT_LABEL}: user={user_id} "
+        f"{'HIT' if entry is not None else 'MISS'} key={cache_key[:12]} "
+        f"l3a={layer3a_hash[:8]}"
+    )
     if entry is not None:
         return _hydrate_layer3b_payload(entry.payload_json)
 
