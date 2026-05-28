@@ -1,6 +1,6 @@
 # Plan-Gen D-77 — Cone Cache-Key Determinism Audit (#202) — Closing Handoff
 
-**Session:** Live-fire move #202 off epic #201 — audit the two un-checked wall-clock reads for the cache-key non-determinism class that caused the D-77 convergence money-loop (c4f9160 + PR #199). **Conclusion: the cone's cache-key determinism is sound — no third money-loop exists.** Both flagged instances are day-granular, not the per-pass full-precision class. Shipped one defensive hardening (day-anchored an unreachable but full-precision fallback) + two determinism guard tests. Also reconciled a CURRENT_STATE drift (the #293 volume-band fix was never recorded as last-shipped).
+**Session:** Live-fire move #202 off epic #201 — audit the two un-checked wall-clock reads for the cache-key non-determinism class that caused the D-77 convergence money-loop (c4f9160 + PR #199). The audit concluded "no third money-loop" — **but the prod re-run (Andy, same session) DISPROVED that conclusion: a third drift exists in `ProviderStatus.last_sync`. See §9 — fixed in this same PR.** The audit's per-instance verdicts (§1) still stand for the two reads it examined; the miss was scope — it never scrutinized `last_sync`, an output field, and its guard test used fixed DB rows.
 **Date:** 2026-05-27
 **Predecessor handoff:** `V5_Implementation_PlanGen_D77_VolumeBandPctToHours_UnitFix_2026_05_27_Closing_Handoff_v1.md`
 **Branch:** `claude/zealous-pasteur-LYRuG`
@@ -90,3 +90,21 @@ The cone cache-key determinism model: every wall-clock read on a key-feeding pat
 | Full suite 1801 / 16 | ✅ `pytest tests/` |
 | No migration / no schema change | ✅ code-only |
 | Working tree clean after commit | ✅ git status |
+
+---
+
+## 9. ⚠ CORRECTION — the prod re-run found a third drift (`last_sync`); fixed
+
+The audit's headline ("no third money-loop") was **wrong**. Andy ran the PGE plan (`pv=35`) on prod (main, with #293). It did NOT money-loop in the old way, but it 504-looped ~6 min then failed `synthesis_budget_exhausted`. The runtime logs (`synthesize_phase:` diagnostics) showed the real state:
+
+- **Two passes had different `call_cache_key`, differing ONLY in `l3a` + `l3b`** (`l1`/`l2a`–`l2e` byte-identical). So 3A + 3B re-ran every pass → every Layer 4 block orphaned (`Build:w1 MISS` in both passes, re-burning a ~150s synthesis call each time). Still a non-convergence money-loop, just one the audit missed.
+- **Root cause:** `ProviderStatus.last_sync` (`layer4/context.py:952`) is a raw `MAX(webhook_events.received_at)` timestamp. It rides in the `Layer3AIntegrationBundle`, whose hash (`compute_payload_hash`) folds into the 3A cache key (`layer3a_athlete_state_key`). When a connected provider (Andy's COROS/RWGPS) checks in mid-generation, `last_sync` advances sub-day → bundle hash drifts → 3A misses → re-runs at temp=1 → new `l3a` → 3B keys on `layer3a_hash` so `l3b` drifts too → `call_cache_key` drifts → blocks never reuse. The exact c4f9160/#199 pattern, in the one bundle field the audit didn't scrutinize (its guard test used fixed DB rows, so it never exercised a volatile field).
+
+**Fix (this PR):** day-anchor `last_sync` in `q_layer3A_connected_providers` (`layer3a/integration.py`) — `MAX(received_at).replace(hour=0,…)`. Day-granular is sufficient for the LLM's "is data flowing" view; genuine new training data still invalidates via the day-keyed `recent_workouts/sleep/hrv` records. Plus HIT/MISS + `integration_bundle_hash` diagnostics in the 3A + 3B cached wrappers so the next re-run *proves* the bundle hash is stable (a drifting `ibundle=` would name a remaining field; a later-pass `HIT` means 3A finally caches). New guard test `test_last_sync_is_day_anchored` (same-day, different times → one anchored value). Suite **1802/16**. No migration.
+
+**Owed (Andy's hands): redeploy + re-run.** Expected logs: `llm_layer3a_athlete_state: … HIT … ibundle=<X>` with `ibundle` IDENTICAL across passes, `call_cache_key` stable, per-block `HIT` on later passes, plan grinds to `ready` over the cron passes (each block best-effort-accepts, so it caches + progresses even while `volume_band` is still flagged — see below). **If `ibundle` STILL drifts**, the diagnostic names it: most likely genuinely-new workout data arriving mid-generation (a harder, separate problem) rather than `last_sync`.
+
+**Still open (NOT convergence blockers, separate follow-ups):**
+- **B — `volume_band_below` still fires** after #293 (D-001, D-015 in the logs). Does NOT block convergence (the per-block budget guard best-effort-accepts, 12-13 sessions cache), but the accepted weeks are flagged under-volume. Likely the hours-band is being applied to **D-015 Navigation** (a skill/conditional discipline, not a standalone-hours discipline — note the `unknown discipline_category 'Navigation'` warning) and/or the primary is under-prescribed. Needs a modeling decision before changing the band logic.
+- **C — per-block latency ~150s** (`out`≈10k tokens). ~1.5 blocks per 300s invocation, so convergence takes several cron passes (tolerable now that blocks cache). Watch; the lever is block thinking-budget / size if it regresses.
+- **D — data hygiene:** `unknown discipline_category` for D-015 (Navigation) + D-008 (Cycling), and `sport_locale_incompatible_D-008_home`. Layer 0/2 discipline-category + locale-compat data.

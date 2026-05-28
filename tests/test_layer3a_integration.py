@@ -475,7 +475,8 @@ class TestConnectedProviders:
         assert p.has_recent_workouts is True
         assert p.has_recent_sleep is True
         assert p.has_recent_hrv is True
-        assert p.last_sync == datetime(2026, 5, 20, 8, 0)
+        # last_sync is day-anchored (cache-key determinism) — 08:00 → midnight.
+        assert p.last_sync == datetime(2026, 5, 20, 0, 0)
 
     def test_coros_workouts_but_no_sleep_or_hrv(self):
         conn = _FakeConn()
@@ -514,6 +515,26 @@ class TestConnectedProviders:
         assert all(len(c) == 10 and c.count("-") == 2 for c in cutoffs)
         # Stable across calls — the fallback is day-granular, not wall-clock.
         assert _cutoffs() == cutoffs
+
+    def test_last_sync_is_day_anchored(self):
+        """last_sync = MAX(received_at) folds (via the integration-bundle hash)
+        into the 3A cache key; a sub-day value drifts that key when a provider
+        checks in mid-generation, so 3A re-runs every resumable pass and every
+        Layer 4 block is orphaned (the D-77 non-convergence reproduced on the
+        prod re-run). MAX(received_at) values on the same calendar day at
+        different times must collapse to one day-anchored last_sync."""
+        def _last_sync(received_at: datetime):
+            conn = _FakeConn()
+            conn.queue({"provider": "polar", "status": "active", "updated_at": None})
+            conn.queue({"provider": "polar", "last_received": received_at})
+            conn.queue({"garmin_n": 0, "polar_n": 1, "wahoo_n": 0, "coros_n": 0})
+            conn.queue({"n": 0}); conn.queue({"n": 0})
+            conn.queue({"n": 0}); conn.queue({"n": 0})
+            return q_layer3A_connected_providers(conn, 1, as_of=_AS_OF)[0].last_sync
+
+        morning = _last_sync(datetime(2026, 5, 20, 8, 15, 30))
+        night = _last_sync(datetime(2026, 5, 20, 23, 59, 59))
+        assert morning == night == datetime(2026, 5, 20, 0, 0, 0)
 
 
 # ─── assemble_layer3a_integration_bundle ─────────────────────────────────────
