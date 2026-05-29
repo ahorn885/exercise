@@ -2213,6 +2213,81 @@ def test_volume_band_below_fires_on_genuine_hour_shortfall():
     assert vb and vb[0].severity == "blocker"
 
 
+# ─── Rule 1: volume_band — D-77 interim reduced-volume demotion ───────────────
+# A flat per-phase band + a synthesizer told to taper/deload within a phase means
+# a correctly-reduced Peak/Taper week (or a flagged recovery_week deload) reads
+# `below` band. Demote that `below` blocker to a warning so it stops forcing
+# wasteful best-effort retries; `above` stays a blocker. Pending the per-week grid.
+
+
+def _below_band_session(*, phase: str, coaching_flags=None):
+    """A D-trail session ~0.5h against a 1.0–2.0h band — the genuine-shortfall
+    fixture from `test_volume_band_below_fires_on_genuine_hour_shortfall`, with
+    the phase + flags parameterized."""
+    return _cardio_session(
+        session_id="S-t",
+        d=_SCOPE_START,
+        duration_min=30,
+        discipline_id="D-trail",
+        phase_metadata=_phase_metadata(phase),
+        coaching_flags=coaching_flags or [],
+    )
+
+
+def _below_band_ctx():
+    layer2a = _layer2a_multi(
+        {"D-trail": (10.0, 20.0), "D-bike": (30.0, 50.0), "D-hike": (40.0, 50.0)},
+        weekly_total=(16.0, 18.0),
+    )
+    return ValidatorContext(layer2a_payload=layer2a, capacity_hours=10.0)
+
+
+@pytest.mark.parametrize("phase", ["Peak", "Taper"])
+def test_volume_band_below_demoted_to_warning_in_peak_taper(phase):
+    payload = _minimal_layer4(sessions=[_below_band_session(phase=phase)])
+    failures = validate_layer4_payload(payload, _below_band_ctx()).rule_failures
+    vb = [f for f in failures if f.rule_name.startswith("volume_band_below")]
+    assert vb, f"expected a volume_band_below failure in {phase}"
+    assert all(f.severity == "warning" for f in vb), (
+        f"{phase} below-band should be demoted to warning, got "
+        f"{[(f.rule_name, f.severity) for f in vb]}"
+    )
+
+
+def test_volume_band_below_stays_blocker_in_base():
+    # Base (not a reduced-volume phase, no recovery flag) keeps the hard blocker.
+    payload = _minimal_layer4(sessions=[_below_band_session(phase="Base")])
+    failures = validate_layer4_payload(payload, _below_band_ctx()).rule_failures
+    vb = [f for f in failures if f.rule_name.startswith("volume_band_below")]
+    assert vb and all(f.severity == "blocker" for f in vb)
+
+
+def test_volume_band_below_demoted_on_recovery_week_flag():
+    # A flagged deload week in a normally-strict phase (Base) is demoted by the
+    # recovery_week coaching flag, independent of phase.
+    payload = _minimal_layer4(
+        sessions=[_below_band_session(phase="Base", coaching_flags=["recovery_week"])]
+    )
+    failures = validate_layer4_payload(payload, _below_band_ctx()).rule_failures
+    vb = [f for f in failures if f.rule_name.startswith("volume_band_below")]
+    assert vb and all(f.severity == "warning" for f in vb)
+
+
+def test_volume_band_above_stays_blocker_in_taper():
+    # Over-prescription in a reduced-volume phase is NOT demoted — only `below` is.
+    over = _cardio_session(
+        session_id="S-t",
+        d=_SCOPE_START,
+        duration_min=600,  # 10h trail vs a 1–2h band → above blocker_high
+        discipline_id="D-trail",
+        phase_metadata=_phase_metadata("Taper"),
+    )
+    payload = _minimal_layer4(sessions=[over])
+    failures = validate_layer4_payload(payload, _below_band_ctx()).rule_failures
+    vb = [f for f in failures if f.rule_name.startswith("volume_band_above")]
+    assert vb and all(f.severity == "blocker" for f in vb)
+
+
 def test_volume_band_open_ended_without_capacity():
     """No capacity → open-ended band (rule no-ops), preserving behavior for
     entry points that don't supply the athlete's hours."""

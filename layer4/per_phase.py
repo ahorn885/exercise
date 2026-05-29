@@ -101,16 +101,24 @@ within the function cap: it caches the best parseable attempt as best-effort
 (§5.5 cap-hit) or fails terminally fast. 120s leaves headroom for one more
 in-flight attempt under the 300s cap. The first attempt is never gated."""
 
-_BLOCK_OUTPUT_TOKENS_PER_SESSION = 600
-"""D-77 §6 follow-on. A dense PlanSession (cardio_blocks with per-block intensity
-targets + strength_exercises arrays + 240-char notes/instructions) serializes to
-~400-600 output tokens; budget the worst case so a full high-frequency week-block
-fits its `max_tokens` without truncating mid-`sessions`."""
+_BLOCK_OUTPUT_TOKENS_PER_SESSION = 900
+"""D-77 §6 follow-on (raised 600→900 after prod pv=38, lever A). A dense
+PlanSession (cardio_blocks with per-block intensity targets + strength_exercises
+arrays + 240-char notes/instructions) serializes to ~400-600 output tokens when
+written compactly — but the *thinking* attempt renders more verbosely, and pv=38
+`Peak:w1` truncated its tool call against the 600×14+800=9200 ceiling
+(`stop_reason=max_tokens`, no usable tool_use block) → the wasted ~106s
+empty-tool retry. Budget ~1.5× the measured compact size so even a verbose
+thinking attempt emits the whole `sessions` array in one call. `max_tokens` is
+only a ceiling — billed/latency cost tracks tokens actually emitted, and the
+per-block budget guard still bounds total synthesis time — so the headroom is
+effectively free and removes the truncation→retry round-trip."""
 
-_BLOCK_OUTPUT_TOKENS_OVERHEAD = 800
+_BLOCK_OUTPUT_TOKENS_OVERHEAD = 1200
 """Fixed block output budget on top of the per-session estimate: covers
 `phase_synthesis_notes` (≤600 chars), `opportunities` (3×≤240 chars), and the
-JSON envelope/scaffolding."""
+JSON envelope/scaffolding. Raised 800→1200 alongside the per-session bump for
+the same anti-truncation headroom."""
 
 
 # Per `Layer4_PerPhase_v1.md` D5: closed set of 6 LLM-emitted coaching flags.
