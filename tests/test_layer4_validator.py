@@ -65,7 +65,7 @@ from layer4 import (
     validate_layer4_payload,
 )
 from layer4.payload import RuleFailure
-from layer4.validator import phase_volume_bands_hours
+from layer4.validator import _iso_week, phase_volume_bands_hours
 from layer4.context import (
     DailyNutritionBaseline,
     DailyPhaseTargets,
@@ -778,6 +778,53 @@ def test_volume_band_mode_gated_single_session():
     ctx = ValidatorContext(layer2a_payload=_layer2a_with_band())
     failures = validate_layer4_payload(payload, ctx).rule_failures
     assert not any(f.rule_name.startswith("volume_band") for f in failures)
+
+
+def test_volume_band_non_monday_compliant_week_no_false_blocker():
+    # D-77 regression: blocks are date-anchored to the phase start (any weekday),
+    # so a 7-day training week on a non-Monday start straddles two ISO calendar
+    # weeks. The rule must bucket by `week_in_phase`, not ISO week — otherwise a
+    # compliant week's volume splits across two partial ISO buckets and each is
+    # graded against the FULL band, firing false `volume_band_below`. This is the
+    # exact prod pv=36 failure (start 2026-04-01 = Wed). The whole suite's other
+    # volume_band tests use a Monday `_SCOPE_START`, which masked this.
+    start = date(2026, 4, 1)
+    assert start.strftime("%a") == "Wed"  # the pv=36 start day
+    sessions = [
+        _cardio_session(
+            session_id=f"S-{i}", d=start + timedelta(days=i), duration_min=60
+        )
+        for i in range(6)  # 6 × 1h = 6h, squarely inside the 5–8h band
+    ]
+    # All six fall in the phase's first 7 days → one training week.
+    assert {s.phase_metadata.week_in_phase for s in sessions} == {1}
+    assert len({_iso_week(s.date) for s in sessions}) == 2  # but two ISO weeks
+    payload = _minimal_layer4(sessions=sessions)
+    ctx = ValidatorContext(layer2a_payload=_layer2a_with_band(), capacity_hours=999.0)
+    failures = validate_layer4_payload(payload, ctx).rule_failures
+    assert not any(f.rule_name.startswith("volume_band") for f in failures)
+
+
+def test_volume_band_non_monday_genuine_undershoot_still_blocks():
+    # The week_in_phase fix must NOT mask a real undershoot: a non-Monday week
+    # that straddles two ISO weeks AND is genuinely under-volumed still fires —
+    # once (one training week), not once-per-ISO-week.
+    start = date(2026, 4, 1)  # Wed
+    sessions = [
+        _cardio_session(session_id="S-a", d=start, duration_min=60),          # ISO wk N
+        _cardio_session(session_id="S-b", d=start + timedelta(days=5), duration_min=60),  # ISO wk N+1
+    ]  # 2h total, well below the 5–8h band (blocker_low = 4.0h)
+    assert {s.phase_metadata.week_in_phase for s in sessions} == {1}
+    assert len({_iso_week(s.date) for s in sessions}) == 2
+    payload = _minimal_layer4(sessions=sessions)
+    ctx = ValidatorContext(layer2a_payload=_layer2a_with_band(), capacity_hours=999.0)
+    vb = [
+        f for f in validate_layer4_payload(payload, ctx).rule_failures
+        if f.rule_name.startswith("volume_band")
+    ]
+    assert vb, "a genuinely under-volumed week must still fail"
+    assert all(f.severity == "blocker" and "below" in f.rule_name for f in vb)
+    assert len({f.rule_name for f in vb}) == 1  # one training-week bucket, not two ISO
 
 
 # ─── Rule 2: acwr ───────────────────────────────────────────────────────────

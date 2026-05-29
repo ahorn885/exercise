@@ -350,15 +350,26 @@ def _rule_volume_band(payload: Layer4Payload, ctx: ValidatorContext) -> list[Rul
     if ctx.layer2a_payload is None:
         return []
     out: list[RuleFailure] = []
+    # D-77: bucket by the synthesis unit's TRAINING week (`week_in_phase`), NOT
+    # the ISO calendar week. Blocks are date-anchored to the phase start
+    # (`per_phase._block_date_window`: phase_start + (week-1)*7), which is rarely
+    # a Monday — so a 7-day training week straddles two Mon–Sun ISO weeks.
+    # Bucketing by `_iso_week(s.date)` split each discipline's weekly volume into
+    # two partial ISO buckets and graded EACH partial against the FULL weekly
+    # band, so a perfectly compliant non-Monday-aligned week flagged
+    # `volume_band_below` on both halves (the prod pv=36 `week_25`+`week_26`
+    # pairs). The prompt prescribes full-week bands (`per_phase._format_phase_load_bands`),
+    # so the validator must grade the same full training week. `week_in_phase`
+    # is exactly that unit and is already carried on every Pattern-A session.
     by_week_disc: dict[
-        tuple[tuple[int, int], str, str], list[PlanSession]
+        tuple[int, str, str], list[PlanSession]
     ] = {}
     for s in payload.sessions:
         if s.kind == "rest":
             continue
         if s.discipline_id is None or s.phase_metadata is None:
             continue
-        wk = _iso_week(s.date)
+        wk = s.phase_metadata.week_in_phase
         key = (wk, s.discipline_id, s.phase_metadata.phase_name)
         by_week_disc.setdefault(key, []).append(s)
     bands_by_phase: dict[str, dict[str, tuple[float, float]]] = {}
@@ -383,11 +394,11 @@ def _rule_volume_band(payload: Layer4Payload, ctx: ValidatorContext) -> list[Rul
         direction = "below" if actual < low else "above"
         out.append(
             RuleFailure(
-                rule_name=f"volume_band_{direction}_week_{wk[1]}_{disc}_{phase.lower()}",
+                rule_name=f"volume_band_{direction}_week_{wk}_{disc}_{phase.lower()}",
                 phase_name=phase,
                 severity=severity,
                 detail=(
-                    f"week {wk[1]} ({disc}, {phase}): actual {actual:.1f}h vs "
+                    f"week {wk} ({disc}, {phase}): actual {actual:.1f}h vs "
                     f"band ({low:.1f}-{high:.1f}h)"
                 ),
                 affected_session_ids=[s.session_id for s in sessions],
