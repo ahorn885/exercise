@@ -42,6 +42,7 @@ class per slice 3 D4 — `race_event_payload=None` flows cleanly.
 
 from __future__ import annotations
 
+import os
 import time
 import traceback
 from datetime import date, timedelta
@@ -117,6 +118,55 @@ _CRON_WALL_CLOCK_BUDGET_S = 240
 # most-recent block cached (or generation start if none yet) on the DB clock, so
 # it is robust to a 504-killed pass and to concurrent cron/poller calls.
 _STALL_WALLCLOCK_S = 900
+
+
+# D-77 concurrency guard. Vercel's every-minute cron re-fires while a prior
+# pass is still running (each can run up to the function-duration cap) and the
+# progress poller hits the same row -- so without a guard up to ~5 invocations
+# advance ONE plan at once. They all replay the cached blocks, all MISS the
+# same frontier week, and all synthesize it concurrently: N duplicate
+# extended-thinking calls, one wins the cache put, the rest are burned. (This,
+# not single-pass cost, is the dominant money-loop once cache keys are
+# deterministic.) A Postgres session advisory lock keyed on the plan lets
+# exactly one invocation advance it; the rest no-op. Session locks auto-release
+# when the connection closes (request teardown OR a 504 dropping the conn), so
+# a killed pass never strands the lock -- the next fire re-acquires and resumes
+# from the cache.
+_ADVANCE_LOCK_NS = 0x504C414E  # ascii 'PLAN' -- advisory-lock namespace
+
+# D-77 per-invocation budget. Sized off the Vercel function Max Duration
+# (PLAN_GEN_FUNCTION_CAP_S, a dashboard setting: 300s default, up to 800s on
+# Pro). Once a pass has spent (cap - reserve) seconds it stops STARTING a new
+# week-block synthesis (~150-250s each) and returns 'generating', so it never
+# 504s mid-synthesis and burns that block's in-flight Anthropic call. Bump
+# PLAN_GEN_FUNCTION_CAP_S the moment you raise the dashboard Max Duration.
+_FUNCTION_CAP_S = float(os.environ.get("PLAN_GEN_FUNCTION_CAP_S", "300"))
+_INVOCATION_RESERVE_S = float(os.environ.get("PLAN_GEN_INVOCATION_RESERVE_S", "255"))
+_INVOCATION_BUDGET_S = max(_FUNCTION_CAP_S - _INVOCATION_RESERVE_S, 30.0)
+
+from layer4.generation_budget import (  # noqa: E402 (grouped with its config)
+    Layer4GenerationIncomplete,
+    generation_deadline,
+)
+
+
+def _try_acquire_advance_lock(db, plan_version_id: int) -> bool:
+    """Non-blocking `pg_try_advisory_lock(ns, plan_version_id)`. True => this
+    invocation holds the advance lock for the plan; False => another already
+    does (skip, don't duplicate-synthesize). A null/absent result (the
+    non-Postgres FakeDb in unit tests) reads as acquired, so the guard is inert
+    there unless contention is explicitly simulated."""
+    row = db.execute(
+        "SELECT pg_try_advisory_lock(?, ?) AS locked",
+        (_ADVANCE_LOCK_NS, plan_version_id),
+    ).fetchone()
+    if row is None:
+        return True  # non-Postgres FakeDb (no canned row) → fail-open, guard inert
+    try:
+        locked = row["locked"]
+    except (KeyError, TypeError, IndexError):
+        return True  # row that isn't a lock result → fail-open
+    return bool(locked)
 
 
 # ─── Helpers ────────────────────────────────────────────────────────────────
@@ -301,6 +351,14 @@ def _advance_plan_generation(db, uid: int, plan_version_id: int) -> dict:
             or "Plan generation failed. Please try again.",
         }
 
+    # D-77 concurrency guard -- see `_ADVANCE_LOCK_NS`. Acquire the per-plan
+    # advance lock; if another invocation (a concurrent cron fire or the
+    # poller) already holds it, no-op now rather than duplicate-synthesizing the
+    # same frontier week. The session lock auto-releases when this request's
+    # connection closes, so the next pass resumes from the cache.
+    if not _try_acquire_advance_lock(db, plan_version_id):
+        return {"status": "generating", "note": "advance_in_progress_elsewhere"}
+
     # D-77 §6 progress-based backstop (runs BEFORE the cone so it survives the
     # prior pass being 504-killed mid-flight). Trip only when no week-block has
     # cached for `_STALL_WALLCLOCK_S` (wall-clock on the DB clock), NOT on a
@@ -332,12 +390,17 @@ def _advance_plan_generation(db, uid: int, plan_version_id: int) -> dict:
     db.commit()
 
     try:
-        result = orchestrate_plan_create(
-            db, uid,
-            plan_start_date=plan_version['scope_start_date'],
-            plan_version_id=plan_version_id,
-            cache=_build_layer4_cache(),
-        )
+        with generation_deadline(_INVOCATION_BUDGET_S):
+            # D-77 per-invocation budget -- stop synthesizing new blocks before
+            # the function-duration cap so the pass returns cleanly (cached
+            # blocks persist; next pass resumes) instead of 504-ing
+            # mid-synthesis and wasting that block's Anthropic call.
+            result = orchestrate_plan_create(
+                db, uid,
+                plan_start_date=plan_version['scope_start_date'],
+                plan_version_id=plan_version_id,
+                cache=_build_layer4_cache(),
+            )
         # Success path runs INSIDE the try so a persist/commit failure (e.g. a
         # plan_sessions schema or natural-key surprise) is caught below and
         # marks the row terminal — not a raw 500 that leaves it 'generating'
@@ -357,6 +420,18 @@ def _advance_plan_generation(db, uid: int, plan_version_id: int) -> dict:
         )
         db.commit()
         return {"status": "ready"}
+    except Layer4GenerationIncomplete as exc:
+        # D-77 budget spent mid-pass -- NOT a failure. Blocks synthesized this
+        # pass are already cached (per-block cache commits independently), so
+        # keep the row 'generating'; the next pass resumes from the cache.
+        # (Layer4GenerationIncomplete is a BaseException, so the broad handlers
+        # below never catch it.)
+        print(
+            f"_advance_plan_generation: budget partial progress for "
+            f"plan_version_id={plan_version_id} -- {exc.blocks_cached} "
+            f"block(s) cached this pass; resuming next pass"
+        )
+        return {"status": "generating", "note": "budget_partial_progress"}
     except OrchestrationError as exc:
         return _mark_plan_failed(
             db, plan_version_id, uid, _orchestration_error_message(exc)
