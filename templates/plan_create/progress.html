@@ -53,9 +53,16 @@
   ];
   var msgIdx = 0;
   var started = Date.now();
-  // Bounded so a step that can't fit the function timeout can't loop forever.
-  var MAX_ATTEMPTS = 20;
-  var attempts = 0;
+  // A healthy generation advances ~1 week-block per pass (the per-invocation
+  // budget caps each pass below the function timeout), so a real plan needs
+  // MANY passes — the client must NOT cap total polls or it kills a plan that
+  // is making steady progress. The server's wall-clock stall backstop fails a
+  // genuinely-stuck unit loudly, so the only thing worth bounding here is a run
+  // of CONSECUTIVE transport failures (5xx / network drops): a pass cut short
+  // by the function timeout is normal and resumes from cache, but a long
+  // unbroken run of them means the endpoint is unreachable.
+  var MAX_CONSECUTIVE_FAILURES = 20;
+  var consecutiveFailures = 0;
   var stopped = false;
 
   // Read the CSRF token directly rather than relying on the app.js fetch
@@ -82,8 +89,8 @@
     failedEl.classList.remove('d-none');
   }
 
-  function retryOrGiveUp(delayMs) {
-    if (attempts >= MAX_ATTEMPTS) {
+  function giveUpAfterFailures(delayMs) {
+    if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
       showFailure('This is taking longer than expected. Please try again.');
     } else {
       setTimeout(step, delayMs);
@@ -92,7 +99,6 @@
 
   function step() {
     if (stopped) return;
-    attempts += 1;
     fetch(generateUrl, {
       method: 'POST',
       headers: { 'Accept': 'application/json', 'X-CSRFToken': csrfToken }
@@ -104,18 +110,26 @@
         return resp.json();
       })
       .then(function (data) {
+        // Reached the endpoint cleanly — not a transport failure.
+        consecutiveFailures = 0;
         if (data && data.status === 'ready' && data.redirect) {
           stopped = true;
           window.location.href = data.redirect;
         } else if (data && data.status === 'failed') {
           showFailure(data.error);
         } else {
-          retryOrGiveUp(1000);
+          // Still generating (partial-progress / advance-in-progress). The
+          // server is making progress pass-by-pass; keep polling — the
+          // server-side stall backstop is the terminal guard, not the client.
+          setTimeout(step, 1000);
         }
       })
       .catch(function () {
         // Network drop or the function hit its timeout mid-pass — resume.
-        retryOrGiveUp(2000);
+        // Only an unbroken run of these gives up (a clean response above
+        // resets the counter).
+        consecutiveFailures += 1;
+        giveUpAfterFailures(2000);
       });
   }
 

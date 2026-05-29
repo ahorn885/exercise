@@ -648,13 +648,27 @@ def generate_plan(plan_version_id: int):
     uid = current_user_id()
 
     outcome = _advance_plan_generation(db, uid, plan_version_id)
-    if outcome['status'] == 'not_found':
+    status = outcome['status']
+    if status == 'not_found':
         abort(404)
-    if outcome['status'] == 'ready':
+    if status == 'ready':
         return jsonify(
             {"status": "ready", "redirect": _view_plan_url(plan_version_id)}
         )
-    return jsonify({"status": "failed", "error": outcome['error']})
+    if status == 'failed':
+        return jsonify({"status": "failed", "error": outcome['error']})
+    # 'generating' — this pass made partial progress and the row is still
+    # generating: either the D-77 per-invocation budget stopped before the
+    # function cap (`budget_partial_progress`) or the D-77 concurrency guard
+    # found another invocation already advancing this plan
+    # (`advance_in_progress_elsewhere`). Both are the NORMAL multi-block path —
+    # tell the poller to keep polling (it resumes from the cache on the next
+    # pass). The old code fell through to the `failed` branch and KeyError'd on
+    # the missing 'error' key, 500-ing every intermediate poll; the poller
+    # counted each 500 as a transport failure and, after its retry cap, showed
+    # "This is taking longer than expected. Please try again." — the reported
+    # symptom for any plan needing more than one pass.
+    return jsonify({"status": "generating"})
 
 
 @bp.route('/cron/generate-pending', methods=['GET'])

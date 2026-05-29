@@ -568,6 +568,74 @@ class TestCronAuthorized:
             assert cron_authorized() is False
 
 
+# ─── generate_plan (progress-screen poller route) ────────────────────────────
+
+
+def _poller_app():
+    app = Flask(__name__)
+    app.register_blueprint(plan_create_bp)
+    return app
+
+
+class TestGeneratePlanRoute:
+    """The poller route maps every `_advance_plan_generation` outcome to poller
+    JSON. Regression guard for the D-77 bug where the 'generating' outcomes
+    (per-invocation budget partial progress + concurrency guard) fell through to
+    the `failed` branch and KeyError'd on the missing 'error' key — 500-ing
+    every intermediate poll, so any multi-pass plan tripped the client's
+    give-up cap ("taking longer than expected")."""
+
+    URL = '/plans/v2/7/generate'
+
+    def _client(self, monkeypatch, outcome):
+        monkeypatch.setattr(plan_create, 'get_db', lambda: _FakeConn())
+        monkeypatch.setattr(plan_create, 'current_user_id', lambda: 3)
+        monkeypatch.setattr(
+            plan_create, '_advance_plan_generation',
+            lambda db, uid, pvid: outcome,
+        )
+        return _poller_app().test_client()
+
+    def test_budget_partial_progress_returns_keep_polling(self, monkeypatch):
+        client = self._client(
+            monkeypatch,
+            {'status': 'generating', 'note': 'budget_partial_progress'},
+        )
+        resp = client.post(self.URL)
+        assert resp.status_code == 200  # NOT a 500 KeyError
+        assert resp.get_json() == {'status': 'generating'}
+
+    def test_advance_in_progress_elsewhere_returns_keep_polling(self, monkeypatch):
+        client = self._client(
+            monkeypatch,
+            {'status': 'generating', 'note': 'advance_in_progress_elsewhere'},
+        )
+        resp = client.post(self.URL)
+        assert resp.status_code == 200
+        assert resp.get_json() == {'status': 'generating'}
+
+    def test_ready_returns_redirect(self, monkeypatch):
+        client = self._client(monkeypatch, {'status': 'ready'})
+        resp = client.post(self.URL)
+        assert resp.status_code == 200
+        body = resp.get_json()
+        assert body['status'] == 'ready'
+        assert body['redirect'].endswith('/plans/v2/7')
+
+    def test_failed_carries_stored_error(self, monkeypatch):
+        client = self._client(
+            monkeypatch, {'status': 'failed', 'error': 'boom (x)'}
+        )
+        resp = client.post(self.URL)
+        assert resp.status_code == 200
+        assert resp.get_json() == {'status': 'failed', 'error': 'boom (x)'}
+
+    def test_not_found_404s(self, monkeypatch):
+        client = self._client(monkeypatch, {'status': 'not_found'})
+        resp = client.post(self.URL)
+        assert resp.status_code == 404
+
+
 # ─── cron_generate_pending (background scanner) ──────────────────────────────
 
 
