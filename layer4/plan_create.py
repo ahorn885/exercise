@@ -621,6 +621,16 @@ def _run_pattern_a_engine(
     # block's accepted sessions as the prompt's continuity context.
     u = 0
     prior_block_sessions: list[PlanSession] = []
+    # D-77 per-invocation budget: count blocks THIS pass synthesizes (cache
+    # misses route through `_serialize_block` below; HITs don't). Gates only
+    # NEW syntheses, never the cheap HIT replay, and never the first synthesis
+    # of a pass -- so every pass makes >=1 block of progress and the function
+    # returns cleanly before the duration cap instead of 504-ing mid-synthesis.
+    from .generation_budget import (
+        Layer4GenerationIncomplete,
+        generation_deadline_passed,
+    )
+    synth_count = [0]
     for i, phase in enumerate(phase_structure.phases):
         if i not in phase_indices_to_synthesize:
             # Carryover phase (T3 cross-phase): not synthesized this call, but
@@ -687,7 +697,16 @@ def _run_pattern_a_engine(
                 def _serialize_block(
                     _synth=_synth_this_block,
                 ) -> dict[str, Any]:
+                    # D-77 budget gate -- runs only on a cache MISS (this
+                    # closure IS the synthesizer). Never gates the first
+                    # synthesis of a pass (synth_count==0), so each pass caches
+                    # >=1 new block; past that, stop before starting one we
+                    # can't finish within the function budget -- the blocks
+                    # cached so far persist and the next pass resumes from them.
+                    if synth_count[0] >= 1 and generation_deadline_passed():
+                        raise Layer4GenerationIncomplete(blocks_cached=u)
                     r = _synth()
+                    synth_count[0] += 1
                     m = build_synthesis_metadata_from_result(
                         r, model=model_synthesizer, temperature=temperature
                     )
