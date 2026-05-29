@@ -304,7 +304,11 @@ def _mark_plan_failed(
 ) -> dict:
     """Persist a terminal failure on the plan_versions row + return the
     poller JSON. Rolls back first so the write lands on a clean transaction
-    even if an upstream layer left the connection mid-statement."""
+    even if an upstream layer left the connection mid-statement — and the
+    rollback is reconnect-safe (`database._PgConn.rollback`), so a fault raised
+    *because the connection itself dropped* (Neon closing an idle SSL link
+    during a multi-minute synthesis) can't turn this failure path into a 500
+    with the row stuck 'generating'."""
     db.rollback()
     db.execute(
         "UPDATE plan_versions SET generation_status = 'failed', "
