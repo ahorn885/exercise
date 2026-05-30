@@ -4,6 +4,27 @@ from flask import g
 
 DATABASE_URL = os.environ.get('DATABASE_URL')
 
+# libpq TCP keepalives. A Layer 4 block synthesis runs for minutes with no DB
+# traffic while the Anthropic call is in flight, so the request's connection
+# sits idle long enough for Neon's proxy to drop the SSL connection; the next
+# statement (the per-block cache `put`) then raises
+# `OperationalError: SSL connection has been closed unexpectedly`. Keepalives
+# keep the idle connection alive; the reconnect-retry in `_PgConn` heals any
+# drop that still slips through. (Defense-in-depth — D-77 plan-gen.)
+_KEEPALIVE_ARGS = dict(
+    keepalives=1,
+    keepalives_idle=30,
+    keepalives_interval=10,
+    keepalives_count=5,
+)
+
+
+def _connect():
+    """Open a raw psycopg2 connection with keepalives. Single place so the
+    initial connect and the reconnect-on-drop path use identical settings."""
+    import psycopg2
+    return psycopg2.connect(DATABASE_URL, **_KEEPALIVE_ARGS)
+
 
 class _PgRow(dict):
     """Dict that also supports integer indexing, matching sqlite3.Row behaviour."""
@@ -34,28 +55,79 @@ class _CompatCursor:
 
 class _PgConn:
     """Thin wrapper around a psycopg2 connection that accepts ? placeholders
-    so callers can keep the historical SQLite-flavoured placeholder syntax."""
+    so callers can keep the historical SQLite-flavoured placeholder syntax.
+
+    Survives Neon dropping an idle connection mid-request (see `_KEEPALIVE_ARGS`):
+    a statement that fails because the connection is gone reopens a fresh
+    connection and retries once. The dropped statement never reached the server,
+    so the retry is safe; the app's writes are idempotent regardless (the cache
+    `put` is an ON CONFLICT upsert; the plan_versions status flips are
+    by-id UPDATEs)."""
     def __init__(self, conn):
+        import psycopg2
         import psycopg2.extras
         self._conn = conn
+        self._psycopg2 = psycopg2
         self._extras = psycopg2.extras
+
+    def _connection_dropped(self, exc) -> bool:
+        # OperationalError ("SSL connection has been closed unexpectedly",
+        # "server closed the connection unexpectedly") and InterfaceError
+        # ("connection already closed") are the lost-connection signals. A
+        # genuinely-bad statement re-raises on the single retry below.
+        return isinstance(
+            exc, (self._psycopg2.OperationalError, self._psycopg2.InterfaceError)
+        )
+
+    def _reopen(self):
+        try:
+            self._conn.close()
+        except Exception:
+            pass
+        self._conn = _connect()
 
     def execute(self, sql, params=()):
         sql = sql.replace('?', '%s')
-        cur = self._conn.cursor(cursor_factory=self._extras.RealDictCursor)
-        cur.execute(sql, params)
+        try:
+            cur = self._conn.cursor(cursor_factory=self._extras.RealDictCursor)
+            cur.execute(sql, params)
+        except Exception as exc:
+            if not self._connection_dropped(exc):
+                raise
+            self._reopen()
+            cur = self._conn.cursor(cursor_factory=self._extras.RealDictCursor)
+            cur.execute(sql, params)
         return _CompatCursor(cur)
 
     def executemany(self, sql, param_list):
         sql = sql.replace('?', '%s')
-        cur = self._conn.cursor()
-        cur.executemany(sql, param_list)
+        try:
+            cur = self._conn.cursor()
+            cur.executemany(sql, param_list)
+        except Exception as exc:
+            if not self._connection_dropped(exc):
+                raise
+            self._reopen()
+            cur = self._conn.cursor()
+            cur.executemany(sql, param_list)
 
     def commit(self):
         self._conn.commit()
 
     def rollback(self):
-        self._conn.rollback()
+        try:
+            self._conn.rollback()
+        except Exception as exc:
+            # A rollback on a dropped connection raised
+            # `InterfaceError: connection already closed`, which escaped the
+            # route's failure handler (`_mark_plan_failed` rolls back first) and
+            # turned a recoverable fault into a 500 with the plan_versions row
+            # stuck 'generating'. There's nothing to roll back on a dead
+            # connection — reopen a clean one so the caller's next statement
+            # (the failure UPDATE) runs instead of re-raising.
+            if not self._connection_dropped(exc):
+                raise
+            self._reopen()
 
     def close(self):
         self._conn.close()
@@ -69,9 +141,7 @@ def get_db():
                 'your Neon (or other PostgreSQL) connection string before '
                 'starting the app.'
             )
-        import psycopg2
-        raw = psycopg2.connect(DATABASE_URL)
-        g.db = _PgConn(raw)
+        g.db = _PgConn(_connect())
     return g.db
 
 
