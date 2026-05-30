@@ -138,12 +138,27 @@ _ADVANCE_LOCK_NS = 0x504C414E  # ascii 'PLAN' -- advisory-lock namespace
 # D-77 per-invocation budget. Sized off the Vercel function Max Duration
 # (PLAN_GEN_FUNCTION_CAP_S, a dashboard setting: 300s default, up to 800s on
 # Pro). Once a pass has spent (cap - reserve) seconds it stops STARTING a new
-# week-block synthesis (~150-250s each) and returns 'generating', so it never
-# 504s mid-synthesis and burns that block's in-flight Anthropic call. Bump
-# PLAN_GEN_FUNCTION_CAP_S the moment you raise the dashboard Max Duration.
+# week-block synthesis and returns 'generating', so it never 504s mid-synthesis
+# and burns that block's in-flight Anthropic call. Bump PLAN_GEN_FUNCTION_CAP_S
+# the moment you raise the dashboard Max Duration.
+#
+# RESERVE must exceed the worst-case single-block wall time + cleanup, because a
+# block STARTED just before the deadline runs to completion AFTER it. Prod pv=39
+# (#324) showed blocks up to ~250s (one a 249s Peak week), and the old 255s
+# reserve left only ~6s of headroom over a 249s block on the 800s cap — so a
+# block started near the deadline ran into the 800s wall and 504'd, losing its
+# work. Raised to 330s (≈250s worst block + ~80s for persist/seam/overhead) so a
+# started block always finishes and caches before the cap. Env-overridable.
 _FUNCTION_CAP_S = float(os.environ.get("PLAN_GEN_FUNCTION_CAP_S", "300"))
-_INVOCATION_RESERVE_S = float(os.environ.get("PLAN_GEN_INVOCATION_RESERVE_S", "255"))
+_INVOCATION_RESERVE_S = float(os.environ.get("PLAN_GEN_INVOCATION_RESERVE_S", "330"))
 _INVOCATION_BUDGET_S = max(_FUNCTION_CAP_S - _INVOCATION_RESERVE_S, 30.0)
+
+# #324 resilience — Layer4OutputError codes that mean "the synthesizer fumbled
+# ONE block's output" (unparseable sessions), as opposed to a genuine
+# input/contract fault. These are usually transient (temp=0.2 stochastic), so a
+# single one should NOT discard a near-complete plan — it's retried on the next
+# resumable pass instead (see the handler in `_advance_plan_generation`).
+_RETRYABLE_BLOCK_CODES = frozenset({"schema_violation", "synthesis_budget_exhausted"})
 
 from layer4.generation_budget import (  # noqa: E402 (grouped with its config)
     Layer4GenerationIncomplete,
@@ -467,6 +482,27 @@ def _advance_plan_generation(db, uid: int, plan_version_id: int) -> dict:
             f"({exc.code}) for plan_version_id={plan_version_id}: "
             f"{getattr(exc, 'detail', None)}"
         )
+        # #324 resilience — a single block the synthesizer fumbles (unparseable
+        # output) used to call _mark_plan_failed and DISCARD the entire
+        # near-complete plan (prod pv=39 lost 7 good weeks to one bad 8th block).
+        # These fumbles are usually transient, so instead keep the row
+        # 'generating' and let the next resumable pass re-attempt that block with
+        # a fresh call — the already-cached blocks replay as HITs, so it picks up
+        # right where it left off. We NEVER ship a best-effort broken block: the
+        # block either parses + caches, or is retried. A block that fails
+        # PERSISTENTLY is bounded by the existing 15-min stall backstop
+        # (`_generation_stalled`, checked at the top of this function): with no
+        # new block caching, the next pass flips the plan to a clean `failed`.
+        # Only the block-fumble codes resume; a genuine input/contract fault
+        # (any other code, or Layer4InputError) still fails fast.
+        if isinstance(exc, Layer4OutputError) and exc.code in _RETRYABLE_BLOCK_CODES:
+            db.rollback()  # clear the aborted synthesis txn before resuming
+            print(
+                f"_advance_plan_generation: block-fumble ({exc.code}) for "
+                f"plan_version_id={plan_version_id} — keeping 'generating' to "
+                f"retry the block next pass (bounded by the stall backstop)"
+            )
+            return {"status": "generating", "note": "block_retry_resume"}
         return _mark_plan_failed(
             db, plan_version_id, uid,
             f"Plan synthesis failed ({exc.code}). Adjust your inputs and try again.",
