@@ -1683,6 +1683,45 @@ class TestPerPhaseCacheWiring:
         assert isinstance(second, Layer4Payload)
         assert second.pattern == "A"
 
+    def test_cache_hit_rebinds_plan_version_id_on_sessions(self):
+        """Regression (prod pv=45 UniqueViolation): the per-block cache key folds
+        in only the athlete inputs (call_cache_key), so the SAME cached block is
+        shared across plan versions — but the cached payload stamps each session
+        with the SYNTHESIZING run's plan_version_id. A later plan replaying an
+        older plan's cached block must REBIND every session to its own id, else
+        the stale id reaches persist and collides on the plan_sessions
+        natural-key UNIQUE. Synthesize under pv=1, hit the cache under pv=2, and
+        assert every session carries 2 — not the cached 1."""
+        cache = Layer4Cache(InMemoryCacheBackend())
+        sessions_stub = _phase_stub(
+            _phase_output_with_sessions(phase_start=_PLAN_START, phase_weeks=1)
+        )
+
+        first = llm_layer4_plan_create(
+            **{**_call_kwargs(), "plan_version_id": 1},
+            cache=cache,
+            call_cache_key="call-shared",
+            phase_caller=sessions_stub,
+            seam_caller=_seam_stub_approved(),
+        )
+        assert first.sessions
+        assert all(s.plan_version_id == 1 for s in first.sessions)
+
+        # Same call_cache_key (same athlete inputs) → every block is a cache HIT,
+        # but the plan being built is pv=2.
+        second = llm_layer4_plan_create(
+            **{**_call_kwargs(), "plan_version_id": 2},
+            cache=cache,
+            call_cache_key="call-shared",
+            phase_caller=sessions_stub,
+            seam_caller=_seam_stub_approved(),
+        )
+        assert second.sessions
+        # Every hydrated-from-cache session is rebound to the NEW plan version.
+        assert all(s.plan_version_id == 2 for s in second.sessions), [
+            s.plan_version_id for s in second.sessions
+        ]
+
     def test_cache_hit_preserves_synthesis_metadata(self):
         """On per-phase cache hit, the SynthesisMetadata in PhaseStructure
         keeps the original token counts from the cached pass (not zeros from

@@ -287,15 +287,35 @@ def _serialize_phase_result_with_meta(
 
 def _hydrate_phase_result_with_meta(
     cached: dict[str, Any],
+    *,
+    plan_version_id: int,
 ) -> tuple[PhaseSynthesisResult, SynthesisMetadata]:
     """Reverse of `_serialize_phase_result_with_meta`. The returned
     PhaseSynthesisResult carries ZERO token/latency/llm_call_count fields
     because no LLM call fired on this code path; the cached
     `synthesis_metadata` keeps the original call's accounting for
-    chain-hashing fidelity per §9.2."""
+    chain-hashing fidelity per §9.2.
+
+    REBINDS `plan_version_id` on every hydrated session (§9.4). The per-block
+    cache key folds in only the athlete's INPUTS (via `call_cache_key`), not the
+    plan_version_id, so the SAME cached block is shared across every plan version
+    for an athlete — but the cached payload has each session stamped with the
+    plan_version_id of the run that first synthesized it. Without this rebind a
+    later plan replaying an older plan's cached block (e.g. pv=45 hitting a block
+    first cached under pv=39) persists sessions stamped with the STALE id, which
+    collides with the original plan's rows on the `plan_sessions` natural-key
+    UNIQUE `(plan_version_id, date, session_index_in_day)` -> UniqueViolation at
+    persist. The whole-payload cache path already rebinds (`_rebind_payload_dict`,
+    §9.4); the per-block hydrate path did not — this closes that gap for BOTH the
+    primary block loop and the D-77 Slice 3 seam-resynth loop."""
     result = PhaseSynthesisResult(
         phase_name=cached["phase_name"],
-        sessions=[PlanSession.model_validate(s) for s in cached["sessions"]],
+        sessions=[
+            PlanSession.model_validate(s).model_copy(
+                update={"plan_version_id": plan_version_id}
+            )
+            for s in cached["sessions"]
+        ],
         phase_synthesis_notes=cached["phase_synthesis_notes"],
         opportunities=list(cached["opportunities"]),
         validator_results=[
@@ -751,7 +771,7 @@ def _run_pattern_a_engine(
                     synthesizer=_serialize_block,
                 )
                 block_result, block_meta = _hydrate_phase_result_with_meta(
-                    cached_dict
+                    cached_dict, plan_version_id=plan_version_id
                 )
             else:
                 block_result = _synth_this_block()
@@ -1167,7 +1187,7 @@ def _run_pattern_a_engine(
                     synthesizer=_serialize_seam_block,
                 )
                 rs_block_result, rs_block_meta = _hydrate_phase_result_with_meta(
-                    rs_cached_dict
+                    rs_cached_dict, plan_version_id=plan_version_id
                 )
             else:
                 rs_block_result = _synth_seam_block()

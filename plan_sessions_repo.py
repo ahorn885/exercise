@@ -114,18 +114,38 @@ def persist_layer4_sessions(db: Any, payload: Layer4Payload) -> None:
 
     `payload.sessions` may be empty (e.g., a no-op Pattern B refresh in
     edge cases); the helper is a no-op in that case.
+
+    DEFENSIVE INVARIANT: every row is written under `payload.plan_version_id`,
+    NOT the per-session `session.plan_version_id`. The two should already match
+    (the orchestrator stamps sessions; the cache rebinders re-stamp on a hit),
+    but a per-block cached payload that escaped rebinding once leaked an OLDER
+    plan's id into a NEWER plan's sessions, colliding with the older plan's rows
+    on the natural-key UNIQUE `(plan_version_id, date, session_index_in_day)` ->
+    a UniqueViolation that failed the whole generation at persist. Writing under
+    the payload's id (the plan actually being persisted) makes a stale
+    per-session id physically unable to reach the table from ANY path; a
+    mismatch is logged so an upstream stamping gap stays visible, not masked.
     """
     for session in payload.sessions:
-        # session.plan_version_id is stamped by the orchestrator (or the
-        # cache rebinder on hit per §9.4); the natural-key UNIQUE
-        # constraint will reject duplicates within a single plan_version_id.
+        if session.plan_version_id != payload.plan_version_id:
+            print(
+                "persist_layer4_sessions: rebinding stale session "
+                f"plan_version_id={session.plan_version_id} -> "
+                f"{payload.plan_version_id} (session_id={session.session_id}, "
+                f"date={session.date}); upstream cache rebind was missed"
+            )
+            # Re-stamp the object too, so the stored payload_json blob is
+            # consistent with the natural-key columns (not just the columns).
+            session = session.model_copy(
+                update={"plan_version_id": payload.plan_version_id}
+            )
         db.execute(
             """INSERT INTO plan_sessions
                    (plan_version_id, user_id, session_id, date,
                     session_index_in_day, payload_json)
                 VALUES (?, ?, ?, ?, ?, ?)""",
             (
-                session.plan_version_id,
+                payload.plan_version_id,
                 payload.user_id,
                 session.session_id,
                 session.date,
