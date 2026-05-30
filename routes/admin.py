@@ -9,6 +9,7 @@ from datetime import datetime, timedelta, timezone
 from flask import Blueprint, render_template, redirect, url_for, flash, abort, request
 
 from database import get_db
+from plan_sessions_repo import load_progress_blocks
 from routes.auth import current_user_id
 
 bp = Blueprint('admin', __name__, url_prefix='/admin')
@@ -300,4 +301,34 @@ def telemetry_refresh():
         ad_hoc=_aggregate_ad_hoc_suggestions(db, threshold),
         t1_hook=_aggregate_t1_hook_dismissals(db, threshold),
         refresh_by_tier=_aggregate_plan_refresh_log(db, threshold),
+    )
+
+
+@bp.route('/plan/<int:plan_version_id>/inspect')
+def plan_inspect(plan_version_id):
+    """#321 plan-gen observability — per-block inspect view for an in-flight,
+    failed, or completed plan generation. Renders the `plan_versions` control
+    row (status / error / blocks-cached) plus the durable per-block progress
+    snapshot (`plan_progress_blocks`): each accepted week-block's sessions +
+    validator flags, so a stalled/failed generation is diagnosable block-by-
+    block instead of from sparse runtime logs. Admin-only; reads any user's
+    plan (operator debug surface), so NOT user-scoped like the athlete routes.
+    """
+    _require_admin()
+    db = get_db()
+    pv = db.execute(
+        "SELECT id, user_id, created_at, created_via, scope_start_date, "
+        "scope_end_date, pattern, generation_status, generation_error, "
+        "generation_units_cached FROM plan_versions WHERE id = ?",
+        (plan_version_id,),
+    ).fetchone()
+    if pv is None:
+        abort(404)
+    blocks = load_progress_blocks(db, plan_version_id)
+    total_sessions = sum(len(b['sessions'] or []) for b in blocks)
+    return render_template(
+        'admin/plan_inspect.html',
+        pv=pv,
+        blocks=blocks,
+        total_sessions=total_sessions,
     )

@@ -159,6 +159,88 @@ def load_plan_sessions_by_version(
     ]
 
 
+def snapshot_progress_blocks(
+    db: Any,
+    user_id: int,
+    plan_version_id: int,
+    *,
+    seam_phase_idx_base: int,
+) -> int:
+    """#321 — snapshot this plan's accepted week-blocks from `layer4_cache`
+    into the durable `plan_progress_blocks` table (idempotent upsert by
+    `(plan_version_id, phase_idx)`). Returns the number of blocks snapshotted.
+
+    Reads the same per-week-block cache rows the stall backstop counts
+    (`entry_point='plan_create'`, `0 <= phase_idx < seam_phase_idx_base`,
+    `created_at >= pv.created_at`, user-scoped). The cached block payload is
+    `{"sessions": [...], "synthesis_metadata": {...}}` (plan_create
+    `_serialize_phase_result_with_meta`); each part is copied verbatim to JSONB.
+
+    WRITE-ONLY observability side effect — `plan_progress_blocks` is NEVER an
+    input to any Layer 4 cache key (the #199/#202/#294 determinism rule). Caller
+    owns the transaction boundary; this helper does NOT commit.
+    """
+    rows = db.execute(
+        """SELECT c.phase_idx, c.phase_name, c.payload_json
+             FROM layer4_cache c, plan_versions pv
+            WHERE pv.id = ? AND pv.user_id = ?
+              AND c.user_id = ? AND c.entry_point = 'plan_create'
+              AND c.phase_idx >= 0 AND c.phase_idx < ?
+              AND c.created_at >= pv.created_at""",
+        (plan_version_id, user_id, user_id, seam_phase_idx_base),
+    ).fetchall()
+    n = 0
+    for row in rows:
+        payload = _decode_payload(row["payload_json"])
+        sessions = payload.get("sessions", [])
+        meta = payload.get("synthesis_metadata")
+        db.execute(
+            """INSERT INTO plan_progress_blocks
+                   (plan_version_id, user_id, phase_idx, phase_name,
+                    sessions_json, synthesis_metadata_json)
+                VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT (plan_version_id, phase_idx) DO UPDATE SET
+                    phase_name = EXCLUDED.phase_name,
+                    sessions_json = EXCLUDED.sessions_json,
+                    synthesis_metadata_json = EXCLUDED.synthesis_metadata_json,
+                    snapshot_at = NOW()""",
+            (
+                plan_version_id, user_id, int(row["phase_idx"]),
+                row["phase_name"],
+                json.dumps(sessions),
+                json.dumps(meta) if meta is not None else None,
+            ),
+        )
+        n += 1
+    return n
+
+
+def load_progress_blocks(db: Any, plan_version_id: int) -> list[dict[str, Any]]:
+    """#321 — load the durable per-block progress snapshot for `plan_version_id`,
+    ordered by `phase_idx`. Returns lightweight dicts (admin inspect view), NOT
+    `PlanSession`-typed, so a partial/malformed block can still be surfaced for
+    debugging rather than raising on hydration."""
+    cur = db.execute(
+        """SELECT phase_idx, phase_name, sessions_json,
+                  synthesis_metadata_json, snapshot_at
+             FROM plan_progress_blocks
+            WHERE plan_version_id = ?
+            ORDER BY phase_idx""",
+        (plan_version_id,),
+    )
+    out: list[dict[str, Any]] = []
+    for row in cur.fetchall():
+        meta_raw = row["synthesis_metadata_json"]
+        out.append({
+            "phase_idx": int(row["phase_idx"]),
+            "phase_name": row["phase_name"],
+            "sessions": _decode_json(row["sessions_json"]),
+            "synthesis_metadata": _decode_json(meta_raw) if meta_raw is not None else None,
+            "snapshot_at": row["snapshot_at"],
+        })
+    return out
+
+
 def load_prior_plan_session_window(
     db: Any,
     user_id: int,
@@ -215,6 +297,15 @@ def load_prior_plan_session_window(
         PlanSession.model_validate(_decode_payload(row["payload_json"]))
         for row in cur.fetchall()
     ]
+
+
+def _decode_json(raw: Any) -> Any:
+    """Type-agnostic JSONB normalizer (dict, list, or JSON string). Unlike
+    `_decode_payload`, tolerates a JSON *array* column (e.g. the
+    `plan_progress_blocks.sessions_json` session list)."""
+    if isinstance(raw, str):
+        return json.loads(raw)
+    return raw
 
 
 def _decode_payload(raw: Any) -> dict[str, Any]:
