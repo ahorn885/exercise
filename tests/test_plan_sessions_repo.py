@@ -316,6 +316,36 @@ class TestPersistLayer4Sessions:
         # Caller owns the transaction — repo does not commit.
         assert conn.committed is False
 
+    def test_stale_session_plan_version_id_forced_to_payload_id(self):
+        """Regression (prod pv=45): a per-block cached payload that escaped the
+        §9.4 cache rebind leaked an OLDER plan's id (pv=39) into a NEWER plan's
+        sessions, colliding with the older plan's rows on the natural-key UNIQUE
+        -> UniqueViolation that failed generation at persist. The persist
+        boundary must force the natural-key column AND the stored payload_json
+        to the payload's plan_version_id, so a stale per-session id can never
+        reach the table."""
+        conn = _FakeConn()
+        # Sessions still carry the STALE id 39; the plan being persisted is 45.
+        sessions = [
+            _make_plan_session(
+                session_id="ps-stale",
+                plan_version_id=39,
+                d=date(2026, 6, 27),
+                session_index_in_day=0,
+                day_of_week="Sat",
+            ),
+        ]
+        payload = _make_layer4_payload(plan_version_id=45, sessions=sessions)
+
+        persist_layer4_sessions(conn, payload)
+
+        sql, params = conn.calls[0]
+        # Natural-key column is the PAYLOAD's id, not the session's stale 39.
+        assert params[0] == 45
+        # ...and the stored JSON blob is re-stamped consistently.
+        parsed = json.loads(params[5])
+        assert parsed["plan_version_id"] == 45
+
     def test_empty_sessions_is_noop(self):
         conn = _FakeConn()
         payload = _make_layer4_payload(plan_version_id=7, sessions=[])

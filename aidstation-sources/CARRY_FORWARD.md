@@ -18,33 +18,42 @@ Rolling-state for items spanning multiple sessions. **Edit in place** — don't 
 > are **Andy's-hands** actions. Tick each off (and note it on the linked issue)
 > once run.
 
-1. ✅ **D-77 PGE convergence (pv=39) + #325-verify (pv=40) — BOTH RUN. Truncation now fixed (PR #327); re-verify owed.**
-   - **pv=39 (convergence) — PROVEN 2026-05-30.** Deterministic cone (`ibundle`
-     stable / benign 3A HITs; PR #294 holds), per-block HITs on replay, **7 clean
-     week-blocks**; failed on the 8th (`schema_violation`) → shifted the blocker
-     from convergence to COMPLETION (issue #324). Fragility fixed by **PR #325**
-     (block-fumble retries instead of failing; reserve 255→330).
-   - **pv=40 (#325 verify) — FAILED 2026-05-30, root-caused + fixed (PR #327).**
-     Did NOT reach `ready`; cached **0 blocks**, tripped the 900s stall at ~15.5 min.
-     Root cause (prod `detail`, identical every pass): `model did not emit a
-     record_phase_sessions tool_use block (stop_reason=max_tokens)` — the **first**
-     block truncated against its output ceiling → `schema_violation` → #325 retried
-     the *deterministic* failure into the stall. The forced-tool retry's ceiling is
-     `effective_max_tokens` ALONE (no `+thinking_budget`); block-mode sizing was
-     `14×900+1200=13,800`, below the 10–16k tokens prod blocks emit. pv=39 dodged it
-     via its stochastic thinking attempt; pv=40 fell through to the undersized floor.
-     **Fixed (PR #327):** `_BLOCK_OUTPUT_TOKENS_PER_SESSION` 900→1400 +
-     `_BLOCK_OUTPUT_TOKENS_OVERHEAD` 1200→2000 → 21,600 (~35% over 16k). No migration.
-   - **NEW owed (Andy's hands): re-verify #327 — generate one PGE plan and confirm
-     it reaches `ready`** (or at least caches blocks past the first). Watch via
-     `/admin/plan/<id>/inspect`. If it gets further but stalls again → that's the
-     **latency** wall (#316 pre-compute grid), not truncation. If it stalls at 0
-     blocks with a *different* `detail` → send that line back.
-   - **Deferred (Andy's call, exposed by pv=40):** (a) harden #325 so a
-     *deterministic* `schema_violation` fails fast + surfaces the real code instead
-     of a 15-min generic stall; (b) cap-drift guard — `_INVOCATION_BUDGET_S =
-     max(300−330,30)=30s` floors silently (reserve 330 was sized vs an 800s cap; live
-     cap is 300s; NOT what failed pv=40 — the budget gate never fired). Latency half = **#316**.
+1. ⏳ **D-77 PGE completion — six-link chain fixed (pv=41→45); merge #332 + ONE proof run owed.**
+   - **pv=39 (convergence) — PROVEN.** 7 clean week-blocks; shifted the blocker from
+     convergence to COMPLETION (#324).
+   - **pv=40 (truncation) — FIXED (PR #327).** Block ceiling 13,800→**21,600**.
+   - **pv=41→45 (this session's six-link arc) — four further blockers excavated + fixed:**
+     - **#329 (merged)** — pv=41's opaque stall: failed-attempt diagnostics
+       (`output_tokens/ceiling/thinking/kind` in the `schema_violation` detail; env
+       `PLAN_GEN_LOG_FAILED_ATTEMPT=1`) + persist the real `generation_error` live +
+       **fail fast** on a deterministic fumble with 0 cached blocks (the #325 flaw).
+     - **#330 (merged, D-77 Slice 3)** — pv=42 diagnosed via #329 showed `ceiling=4000`:
+       the **seam-driven re-synthesis** (`week_range=None`) re-synthesized a whole phase
+       in one undersized call (why #327 "did nothing" — it sized block mode only).
+       Decomposed seam re-synth into resumable, cache-wired, budget-gated **week-blocks**
+       (21,600 + seam constraints; disjoint `phase_idx` band `[500,1000)` so the stall
+       counter sees them as progress — no route SQL).
+     - **#331 (merged)** — pv=43/44's untyped `ValueError: Streaming is required`: the
+       Anthropic SDK refuses a non-streaming call at `max_tokens>21,333`; the thinking
+       attempt sends `21,600+5,000=26,600`. Latent landmine #330 first crossed. Fix:
+       pin an explicit `timeout` (client + per-request); env `LLM_REQUEST_TIMEOUT_S`.
+     - **#332 (OPEN/CI-green)** — pv=45 synthesized 5 blocks + ran the seam re-synth
+       clean through Build w1–w4, then crashed at **persist** on a `UniqueViolation`
+       (a pv=39-stamped session in pv=45's plan). The per-block cache is shared across
+       plan versions but the per-block hydrate path never rebound `plan_version_id`
+       like the §9.4 whole-payload path. Fix: rebind on hydrate (self-heals the
+       poisoned cache on next read) + force the payload's id at persist (safety net).
+   - **NEW owed (Andy's hands): merge #332, redeploy, run ONE PGE plan — the proof run
+     for the whole chain.** Expect: primary blocks cache (0..N), seam fires → blocks in
+     `[500,1000)`, no `ValueError`, no `UniqueViolation`, plan → `ready`. Watch via
+     `/admin/plan/<id>/inspect`. If it stalls on the 120s per-block budget → that's
+     **#316 latency**, not a crash. If a NEW failure → it's now diagnosable (real
+     `generation_error` persisted; catch-all logs a full traceback) — send it back.
+   - **Deferred (Andy's call):** (a) cap-drift guard — `_INVOCATION_BUDGET_S =
+     max(300−330,30)=30s` floors silently (reserve 330 sized vs an 800s cap; live cap
+     300s; never fired this session); (b) per-block budget tightness — every pv=45 seam
+     block was `cap_hit` + one hit the 120s budget (non-fatal, resumes; watch vs #316).
+     The #325 deterministic-retry flaw is addressed by #329's fast-fail.
 2. **L3B-P-2 Slice 2 — `previous_attempts` JSONB column (#211 / #228).**
    `python init_db.py` on Neon (idempotent, nullable-default, no backfill) +
    redeploy. Unlocks the `3B.dnf_recurrence_risk` HITL flag (Slice 1 scalars
