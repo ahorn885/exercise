@@ -36,18 +36,27 @@ SPORTS_XLSX = SOURCES / "Sports_Framework_v11.xlsx"
 EXERCISES_XLSX = SOURCES / "AR_Exercise_Database_v19.xlsx"
 VOCAB_MD = SOURCES / "Vocabulary_Audit_v2.md"
 
-# 0A bumped v10 → v11 for the R6 discipline-ID renumber + two collapses
-# (kayak D-008a/b → D-010 "Kayaking"; mountain-running D-022/3 → D-024
-# "Mountain Running"; suffix ids absorbed, gaps closed → D-001..D-029).
+# Source-file provenance (NOT the per-run etl_version — that comes from
+# --version-tag, see main()): 0A = Sports_Framework_v11.xlsx (R6 discipline-ID
+# renumber + kayak/mountain-running collapses → D-001..D-029); 0B =
+# AR_Exercise_Database_v19.xlsx (Pass 1+2 Equipment-column cleanup); 0C
+# unchanged. The live etl_version line is `0A-v1.3.1` (tag `1.3.1`).
 # See aidstation-sources/Discipline_ID_Renumber_R6_Design_v1.md.
-# 0B bumped from v17 → v19 after the Pass 1+2 Equipment-column cleanup. 0C unchanged.
-SOURCE_VERSION_0A = "0A-v11.0"
-SOURCE_VERSION_0B = "0B-v19.0-r1"
-SOURCE_VERSION_0C = "0C-v2.0-r1"
 
 
 def _v(family: str, tag: str) -> str:
     return f"{family}-v{tag}"
+
+
+def _version_strings(tag: str) -> tuple[str, str, str]:
+    """Map a --version-tag to the (0A, 0B, 0C) etl_version strings.
+
+    Uniform: `tag` → `0A-v{tag}` / `0B-v{tag}` / `0C-v{tag}`. The live line is
+    `1.3.1` → `0A-v1.3.1`. (A legacy `tag == "1.3"` special-case that pinned the
+    retired `0A-v11.0` R6 lineage was removed 2026-05-30 — it silently
+    reintroduced a superseded version line on any ad-hoc rerun.)
+    """
+    return _v("0A", tag), _v("0B", tag), _v("0C", tag)
 
 
 def _print(line: str) -> None:
@@ -63,15 +72,12 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
     tag = args.version_tag.strip()
-    # When the tag is "1.3" we use the explicit v10 / r3 / r1 strings;
-    # otherwise fall back to family-vTAG so older version strings keep
-    # working (regression guard for ad-hoc reruns).
-    if tag == "1.3":
-        v_0a, v_0b, v_0c = SOURCE_VERSION_0A, SOURCE_VERSION_0B, SOURCE_VERSION_0C
-    else:
-        v_0a = _v("0A", tag)
-        v_0b = _v("0B", tag)
-        v_0c = _v("0C", tag)
+    # Tag maps uniformly to one etl_version per source family (`0A-v{tag}` …).
+    # Pass the live tag — currently `1.3.1` → `0A-v1.3.1` (see DEV_SETUP.md).
+    # The runtime pins the active Layer-0 version via MAX-by-numeric-component
+    # over `layer0.sports.etl_version`, so a re-run under the same tag refreshes
+    # in place.
+    v_0a, v_0b, v_0c = _version_strings(tag)
     run_at = now_utc()
 
     _print("[layer0 ETL] Connecting to Neon...")
