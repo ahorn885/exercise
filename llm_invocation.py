@@ -86,6 +86,16 @@ def invoke_tool_call(
     client = anthropic.Anthropic(api_key=api_key)
     tool_name = tool_schema["name"]
 
+    # Diagnostics captured from the most recent _attempt that produced NO usable
+    # tool_use block — so the terminal `schema_violation` can report what the
+    # model actually emitted (how many output tokens, against which ceiling, and
+    # — env-gated — a prefix of the raw text) rather than just `stop_reason`. A
+    # forced retry pinned at `stop_reason=max_tokens` with a large output_tokens
+    # count means genuine runaway/dense output; a small count means the model
+    # stopped early for another reason. Without this the cause is unfalsifiable
+    # from the logs (the failing attempt's usage was discarded).
+    last_miss: dict[str, Any] = {}
+
     def _attempt(thinking_budget: int) -> tuple[ToolCallResult | None, str | None]:
         """One `messages.create` call. Returns `(result, stop_reason)`;
         `result` is None when the response carried no matching tool_use
@@ -125,6 +135,8 @@ def invoke_tool_call(
         latency_ms = int((time.monotonic() - start) * 1000)
 
         stop_reason = getattr(msg, "stop_reason", None)
+        out_tokens = getattr(getattr(msg, "usage", None), "output_tokens", None)
+        ceiling = request_kwargs["max_tokens"]
         for block in msg.content:
             if (
                 getattr(block, "type", None) == "tool_use"
@@ -141,6 +153,10 @@ def invoke_tool_call(
                 # model cannot decline) fires — instead of the caller re-rolling
                 # another expensive thinking attempt that truncates the same way.
                 if not tool_args:
+                    last_miss.update(
+                        out_tokens=out_tokens, ceiling=ceiling,
+                        thinking=thinking_budget, kind="empty_tool_args",
+                    )
                     return None, stop_reason
                 return (
                     ToolCallResult(
@@ -151,6 +167,22 @@ def invoke_tool_call(
                     ),
                     stop_reason,
                 )
+        # No matching tool_use block at all. Capture usage + (env-gated) a prefix
+        # of any text/partial content the model emitted instead, so the terminal
+        # error can distinguish runaway output (large out_tokens at the ceiling)
+        # from an early stop, and show what it produced in place of the call.
+        miss: dict[str, Any] = dict(
+            out_tokens=out_tokens, ceiling=ceiling,
+            thinking=thinking_budget, kind="no_tool_use_block",
+        )
+        if os.environ.get("PLAN_GEN_LOG_FAILED_ATTEMPT") == "1":
+            text_prefix = "".join(
+                getattr(b, "text", "") for b in msg.content
+                if getattr(b, "type", None) == "text"
+            )[:600]
+            if text_prefix:
+                miss["text_prefix"] = text_prefix
+        last_miss.update(miss)
         return None, stop_reason
 
     result, stop_reason = _attempt(extended_thinking_budget)
@@ -172,11 +204,25 @@ def invoke_tool_call(
         if result is not None:
             return result
 
+    # The forced retry (thinking off) is the reliable floor: its `max_tokens` is
+    # the entire output budget. `last_miss` reports what that attempt actually
+    # produced so a `stop_reason=max_tokens` failure is diagnosable — a large
+    # out_tokens at the ceiling is genuine runaway/dense output (no ceiling bump
+    # cures it); a small one stopped early for another reason.
+    miss_detail = ""
+    if last_miss:
+        miss_detail = (
+            f"; last_attempt_output_tokens={last_miss.get('out_tokens')}"
+            f"/ceiling={last_miss.get('ceiling')}"
+            f" thinking={last_miss.get('thinking')} kind={last_miss.get('kind')}"
+        )
+        if last_miss.get("text_prefix"):
+            miss_detail += f" text_prefix={last_miss['text_prefix']!r}"
     raise ThinkingToolCallError(
         "schema_violation",
         detail=(
             f"model did not emit a {tool_name} tool_use block "
-            f"(stop_reason={stop_reason})"
+            f"(stop_reason={stop_reason}){miss_detail}"
         ),
     )
 

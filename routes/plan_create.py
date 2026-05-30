@@ -497,10 +497,41 @@ def _advance_plan_generation(db, uid: int, plan_version_id: int) -> dict:
         # (any other code, or Layer4InputError) still fails fast.
         if isinstance(exc, Layer4OutputError) and exc.code in _RETRYABLE_BLOCK_CODES:
             db.rollback()  # clear the aborted synthesis txn before resuming
+            fumble_detail = f"{exc.code}: {getattr(exc, 'detail', None)}"
+            # Bound the deterministic retry. A *transient* fumble (temp=1.0 thinking
+            # coin-flip) varies pass-to-pass and is worth re-attempting. A
+            # *deterministic* one repeats the identical detail every pass and used
+            # to burn the full 15-min stall backstop before failing — a silent
+            # mystery (the #325 flaw). So: stash this pass's detail on the row; if
+            # the prior pass already stored the IDENTICAL detail and no new block
+            # cached since (now_cached unchanged), it's deterministic — fail fast
+            # with the real code+detail surfaced, instead of looping to the wall.
+            prior_err = plan_version['generation_error']
+            if prior_err == fumble_detail and now_cached == 0:
+                print(
+                    f"_advance_plan_generation: block-fumble ({exc.code}) for "
+                    f"plan_version_id={plan_version_id} REPEATED identically with "
+                    f"0 cached blocks — deterministic; failing fast: {fumble_detail}"
+                )
+                return _mark_plan_failed(
+                    db, plan_version_id, uid,
+                    f"Plan synthesis failed ({exc.code}): {getattr(exc, 'detail', None)}",
+                )
+            # First sighting (or progress was made) — keep 'generating', stash the
+            # detail so the next pass can detect a deterministic repeat AND so the
+            # admin inspect view shows the real cause live (not just the generic
+            # stall message the backstop would later write).
+            db.execute(
+                "UPDATE plan_versions SET generation_error = ? "
+                "WHERE id = ? AND user_id = ?",
+                (fumble_detail, plan_version_id, uid),
+            )
+            db.commit()
             print(
                 f"_advance_plan_generation: block-fumble ({exc.code}) for "
                 f"plan_version_id={plan_version_id} — keeping 'generating' to "
-                f"retry the block next pass (bounded by the stall backstop)"
+                f"retry the block next pass (bounded by the stall backstop): "
+                f"{fumble_detail}"
             )
             return {"status": "generating", "note": "block_retry_resume"}
         return _mark_plan_failed(
