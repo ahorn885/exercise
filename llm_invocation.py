@@ -83,7 +83,24 @@ def invoke_tool_call(
             "anthropic_api_key_missing",
             detail="ANTHROPIC_API_KEY environment variable is not set",
         )
-    client = anthropic.Anthropic(api_key=api_key)
+    # Construct with an explicit `timeout`. WITHOUT it the SDK auto-derives a
+    # non-streaming timeout and REFUSES any call that could exceed 10 min:
+    # `_calculate_nonstreaming_timeout` raises `ValueError("Streaming is
+    # required ...")` once `(3600 * max_tokens) / 128000 > 600`, i.e. max_tokens
+    # > 21,333. The guard runs only when the request timeout is unset AND the
+    # client timeout is the SDK default, so a concrete client timeout disables it
+    # for EVERY caller. The block-mode synthesizer ceiling (21,600) plus the
+    # +thinking stack (21,600 + 5,000 = 26,600) clears that threshold, so the
+    # guard fired as an UNTYPED ValueError that escaped the layer's typed-error
+    # contract and surfaced as the route's generic "failed unexpectedly" (prod
+    # pv=43/44 — the first run whose seam re-synth used the block ceiling; the
+    # forced-retry path at 21,600 trips it too, so primary blocks were equally
+    # exposed). The Vercel function caps at 300s, so a 10-min request is
+    # impossible here and the guard is a pure false positive. Also pass `timeout`
+    # per-request below, since an older SDK keys the guard off the per-request
+    # arg rather than the client. Overridable via env for non-serverless use.
+    request_timeout_s = float(os.environ.get("LLM_REQUEST_TIMEOUT_S", "600"))
+    client = anthropic.Anthropic(api_key=api_key, timeout=request_timeout_s)
     tool_name = tool_schema["name"]
 
     # Diagnostics captured from the most recent _attempt that produced NO usable
@@ -108,6 +125,10 @@ def invoke_tool_call(
             "messages": [{"role": "user", "content": user_prompt}],
             "tools": [tool_schema],
             "tool_choice": {"type": "tool", "name": tool_name},
+            # Per-request timeout too — see the client-construction note above.
+            # The client timeout suppresses the installed SDK's guard; this also
+            # covers an older SDK whose guard keys off the per-request arg.
+            "timeout": request_timeout_s,
         }
         if thinking_budget > 0:
             # Extended thinking constrains the request: tool_choice must be
