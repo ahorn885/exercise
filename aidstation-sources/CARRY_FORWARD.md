@@ -18,20 +18,17 @@ Rolling-state for items spanning multiple sessions. **Edit in place** — don't 
 > are **Andy's-hands** actions. Tick each off (and note it on the linked issue)
 > once run.
 
-1. **D-77 PGE convergence re-run — THE gating proof (#201 / #202).** Redeploy
-   `main`, then create **one fresh PGE 2026 plan**. Expect the Vercel log
-   `llm_layer3a_athlete_state: … HIT … ibundle=<X>` with `ibundle` **identical
-   across passes** (was drifting), per-block `HIT` on later passes, blocks
-   best-effort-accept + cache (`cap_hit`), and the plan reaching `ready` over
-   the cron passes. Confirms PR #294 (`last_sync` day-anchor — the 3rd
-   cache-key drift). Full diagnostics in the §5.0 entry below. **If `ibundle`
-   still drifts**, the diagnostic names the remaining volatile field.
-   **⚠ Requires PR #312 (poller `'generating'`-mapping fix, 2026-05-29) in the
-   deploy** — before it the progress screen 500'd on every per-invocation-budget
-   pass and showed "taking longer than expected", so this proof could never go
-   green at the client regardless of cone convergence. Confirm
-   `POST /plans/v2/<id>/generate` returns `200 {"status":"generating"}`
-   mid-flight, not 500.
+1. ✅ **D-77 PGE convergence re-run — DONE 2026-05-30 (pv=39). Convergence PROVEN.**
+   The fresh PGE plan ran on the post-cleanup deploy: deterministic cone (`ibundle`
+   stable / benign 3A HITs — no drift; PR #294 holds), per-block HITs on replay,
+   and it generated **7 clean week-blocks**. It did NOT reach `ready` — it failed
+   on the 8th block (`schema_violation`), which **shifted the blocker from
+   convergence to COMPLETION** (issue #324): too fragile (one bad block discarded
+   the plan; two passes 504'd at the 800s cap) + too slow (150–250s/block). The
+   fragility is fixed by **PR #325** (block-fumble retries instead of failing the
+   plan; reserve 255→330). **NEW owed (Andy's hands): verify #325 — generate one
+   PGE plan and confirm it reaches `ready`.** Watch via `/admin/plan/<id>/inspect`
+   (the #323 observability). Latency half = **#316** (pre-compute grid).
 2. **L3B-P-2 Slice 2 — `previous_attempts` JSONB column (#211 / #228).**
    `python init_db.py` on Neon (idempotent, nullable-default, no backfill) +
    redeploy. Unlocks the `3B.dnf_recurrence_risk` HITL flag (Slice 1 scalars
