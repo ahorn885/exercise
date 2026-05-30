@@ -414,6 +414,59 @@ class TestAdvancePlanGeneration:
         assert 'schema_violation' in logged
         assert 'rest_intensity_zone' in logged
 
+    def test_generating_block_fumble_persists_detail_to_error(self, monkeypatch):
+        # First sighting of a fumble: the detail is stashed on generation_error
+        # (so the admin inspect view shows the real cause live) while the row
+        # stays 'generating'. The persisted string is `code: detail`.
+        conn = _FakeConn()
+        _queue_plan_version(conn, status='generating')
+        monkeypatch.setattr(plan_create, '_build_layer4_cache', lambda: 'CACHE')
+        monkeypatch.setattr(
+            plan_create, 'orchestrate_plan_create',
+            lambda *a, **k: (_ for _ in ()).throw(
+                Layer4OutputError(
+                    'schema_violation',
+                    detail="model did not emit a record_phase_sessions tool_use "
+                    "block (stop_reason=max_tokens); last_attempt_output_tokens="
+                    "21600/ceiling=21600 thinking=0 kind=no_tool_use_block")),
+        )
+        out = _advance_plan_generation(conn, 3, 7)
+        assert out['status'] == 'generating'
+        # generation_error UPDATE carried the code:detail, NOT a 'failed' flip.
+        err_writes = [
+            c for c in conn.calls
+            if 'generation_error = ?' in c[0]
+            and "generation_status = 'failed'" not in c[0]
+        ]
+        assert err_writes, "expected a generation_error stash on the resume path"
+        stashed = err_writes[-1][1][0]
+        assert stashed.startswith('schema_violation: ')
+        assert 'stop_reason=max_tokens' in stashed
+        assert 'last_attempt_output_tokens=21600' in stashed
+
+    def test_generating_block_fumble_deterministic_repeat_fails_fast(self, monkeypatch):
+        # #325 flaw fix: a fumble that repeats the IDENTICAL detail with 0 cached
+        # blocks is deterministic — fail fast and surface the real code+detail,
+        # instead of burning the 15-min stall backstop on a generic message. The
+        # prior pass's detail is replayed via generation_error on the loaded row.
+        detail = ("model did not emit a record_phase_sessions tool_use block "
+                  "(stop_reason=max_tokens)")
+        conn = _FakeConn()
+        _queue_plan_version(
+            conn, status='generating', error=f"schema_violation: {detail}")
+        monkeypatch.setattr(plan_create, '_build_layer4_cache', lambda: 'CACHE')
+        monkeypatch.setattr(
+            plan_create, 'orchestrate_plan_create',
+            lambda *a, **k: (_ for _ in ()).throw(
+                Layer4OutputError('schema_violation', detail=detail)),
+        )
+        out = _advance_plan_generation(conn, 3, 7)
+        assert out['status'] == 'failed'
+        # The real code AND detail surface — not the generic stall message.
+        assert 'schema_violation' in out['error']
+        assert 'stop_reason=max_tokens' in out['error']
+        assert any("generation_status = 'failed'" in c[0] for c in conn.calls)
+
     def test_generating_layer3_error_marks_failed(self, monkeypatch):
         conn = _FakeConn()
         _queue_plan_version(conn, status='generating')
