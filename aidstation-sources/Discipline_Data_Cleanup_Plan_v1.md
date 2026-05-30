@@ -240,6 +240,38 @@ Everything downstream of the label is unchanged. The race-day path
 consumers** (orchestrator, plan_create, per_phase prompt, race_week_brief, validator, cache
 wrappers, both refresh tiers) need no changes — only the *numbers* shift, intentionally.
 
+### 3.5 Per-discipline column architecture — no redundancy after cleanup (Andy Q, 2026-05-30)
+
+**Concern:** "doesn't this imply several extra columns again? why not resolve all nutrition
+from discipline + endurance_profile alone? why ALSO a sport_profile?"
+
+**Answer: not redundant — two orthogonal axes, both load-bearing.** After this cleanup a
+discipline carries exactly two classification columns (down from three; the junk one goes):
+
+| Column | Axis | Feeds | Verdict |
+|------|------|------|------|
+| ~~`discipline_category`~~ | terrain (free text) | nothing but the endurance prefix-parse | **REMOVE (junk)** |
+| `endurance_profile` (new) | aerobic dependency | **daily** macro CHO band (`_cho_band_position`) | keep — *how carb-dependent is the load* |
+| `primary_movement` | movement modality | **race-day** CHO-rate modifier (`_resolve_sport_profile` → `_SPORT_PROFILE_CHO_MOD`) + protein/strength flag (climbing) | keep — *how much fuel absorbable while doing it* |
+
+`endurance_profile` and `sport_profile` answer **different physiological questions**: a
+pure-endurance **swim** and a pure-endurance **bike** share an `endurance_profile` but have
+opposite race-day fueling ceilings (swim ×0.6 vs bike ×1.0). `endurance_profile` cannot
+express absorption-rate; the movement axis can — and it's the only axis that splits swim
+from paddle (both "Water / *"), which is why it was added (PR #156 handoff). So we are
+netting **down** to two real axes, not re-accumulating.
+
+**`primary_movement` consumers (verified grep, 2026-05-30):** only Layer 2E —
+`_movement_sport_profile` (`builder.py:223`) and the protein band (`builder.py:486`). It is
+**NOT** used for exercise substitution. The substitution/strength engine uses a *different*
+column, per-exercise `movement_pattern` (`coaching.py:343`, `rx_engine.py`, `current_rx`) —
+a separate concept on the exercise tables, unaffected by this cleanup. (Easy to conflate;
+they live in different layers.) **`primary_movement` stays.**
+
+**Option noted, not taken:** the `movement → profile → modifier` indirection could be
+collapsed into a per-discipline race-day-fuel factor, but that's a behavior-changing
+redesign, not a cleanup. Out of scope; `_resolve_sport_profile` stays as-is.
+
 ---
 
 ## 4. Blast-radius summary
@@ -338,3 +370,39 @@ Independent of this cleanup. Both PR #314 and #315 explicitly defer it:
 
 It does **not** exist yet. Tracked here so it isn't lost; it should be its own branch/PR and
 does not gate (nor is gated by) the discipline cleanup.
+
+---
+
+## 10. Retiring the xlsx as source-of-record (tracked concern — Andy, 2026-05-30)
+
+**Andy's worry:** "a future ETL will fuck us up by drawing from that stale xlsx." Valid —
+`Sports_Framework_v11.xlsx` still physically contains Fencing, Modern Pentathlon, Biathlon,
+Hiking, Orienteering rows. They don't reach the DB only because the ETL transforms them.
+
+**Why this cleanup is *safe* against re-drift (the canon is the guardrail):**
+- The discipline canon (and the new `sport_canon.py`) is applied on **every** ETL run, so a
+  re-run re-removes / re-renames / re-merges the stale rows deterministically. This is the
+  whole reason we chose code-side canon over editing the xlsx — the curation is durable and
+  diff-reviewable, not a one-time spreadsheet edit that the next export could undo.
+- The load-time validators (`discipline_canon_check.py` + the new sport validator) **fail
+  the ETL loudly** if any removed id/sport survives into an id/sport-keyed table. A stale
+  xlsx row that slips the canon is caught, not silently shipped.
+
+**Residual risk (what the canon does NOT protect):** the xlsx remains authoritative for
+everything the canon doesn't override — durations, phase-load values, injury text, evidence
+notes, sport flags. Re-authoring the xlsx, or adding a discipline/sport there without a
+corresponding canon decision, reintroduces drift. The binary format also means changes
+aren't diff-reviewable.
+
+**The real fix (separate future project — FILE AS GITHUB ISSUE):** retire the xlsx as the
+Layer 0 source-of-record. Migrate the authoritative framework data into version-controlled,
+diff-reviewable code/SQL seeds (the canon modules are already the curation half; this is the
+*data* half). Until then:
+- **Near-term doc guard (cheap, do with this cleanup):** add a header banner to
+  `Sports_Framework_v11.xlsx`'s provenance note / the ETL `run.py` and `etl/sources/README`
+  stating the xlsx is a **frozen source** — disciplines/sports are curated in
+  `discipline_canon.py` / `sport_canon.py`, and any add/remove/rename MUST go through the
+  canon, never the spreadsheet alone.
+- **Issue to file:** "Retire Sports_Framework xlsx as Layer 0 source-of-record → curated
+  code/SQL seeds" (v2 track, `area:etl`). Names the long-term elimination Andy wants so a
+  future ETL can't draw from a stale blob.
