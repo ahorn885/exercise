@@ -97,7 +97,7 @@ def _row(
     gap_type: str | None = None,
     gap_notes: str | None = None,
     multi_substitute_candidate: bool | None = None,
-    discipline_category: str | None = None,
+    endurance_profile: str | None = None,
     primary_movement: str | None = None,
 ) -> dict:
     """Build a query-result row dict mirroring `_load_disciplines`'s
@@ -108,7 +108,7 @@ def _row(
         "discipline_name": discipline_name,
         "applicability": "INCLUDED",
         "role": role,
-        "discipline_category": discipline_category,
+        "endurance_profile": endurance_profile,
         "primary_movement": primary_movement,
         "race_time_pct_low": race_time_pct_low,
         "race_time_pct_high": race_time_pct_high,
@@ -297,12 +297,15 @@ class TestARBaseline:
         assert kayak.is_conditional is False
         assert kayak.conditional_resolution is None
 
-        # D-015 nav: conditional → prompt_required (race-rule auto-resolution retired)
+        # Synthetic conditional discipline (role "(*Conditional)") → prompt_required.
+        # (Uses the legacy D-015 id as a generic conditional fixture; the
+        # navigation/sleep-dep conditional itself was retired with the Trekking
+        # fold, so sleep_deprivation_relevant is now always False.)
         nav = by_id["D-015"]
         assert nav.inclusion == "prompt_required"
         assert nav.conditional_resolution == "athlete_opt_in"
         assert nav.is_conditional is True
-        assert nav.sleep_deprivation_relevant is True
+        assert nav.sleep_deprivation_relevant is False
 
         # Primaries unconditional + included
         trail = by_id["D-001"]
@@ -362,7 +365,7 @@ class TestARBaseline:
         assert "layer0.sport_discipline_map" in sql
         assert "layer0.phase_load_allocation" in sql
         assert "layer0.discipline_training_gaps" in sql
-        # disciplines join carries discipline_category + primary_movement
+        # disciplines join carries endurance_profile + primary_movement
         assert "layer0.disciplines" in sql
         # D-05 standing filter present (psycopg2 `%%` escape — see Bucket
         # B #1, 2026-05-21 walkthrough)
@@ -372,14 +375,14 @@ class TestARBaseline:
         # parens), then version_0a × 3 for the PLA / DTG / disciplines joins.
         assert params == ("Adventure Racing", "v19", "Adventure Racing", "v19", "v19", "v19")
 
-    def test_discipline_category_and_primary_movement_plumb_through(self):
-        # The layer0.disciplines join surfaces the terrain + movement axes
+    def test_endurance_profile_and_primary_movement_plumb_through(self):
+        # The layer0.disciplines join surfaces the endurance + movement axes
         # onto Layer2ADiscipline for downstream consumers (Layer 2E fueling).
         conn = _FakeConn()
         conn.queue_response(rows=[
             _row(
                 "D-001", "Trail Running", "Primary",
-                discipline_category="Foot / Running", primary_movement="running",
+                endurance_profile="Pure endurance", primary_movement="running",
             ),
             _row("D-099", "Legacy Row", "Primary"),  # LEFT JOIN miss → NULLs
         ])
@@ -390,10 +393,10 @@ class TestARBaseline:
             etl_version_set=_DEFAULT_ETL,
         )
         by_id = {d.discipline_id: d for d in payload.disciplines}
-        assert by_id["D-001"].discipline_category == "Foot / Running"
+        assert by_id["D-001"].endurance_profile == "Pure endurance"
         assert by_id["D-001"].primary_movement == "running"
         # Missing join row tolerated as NULL (legacy / unpopulated).
-        assert by_id["D-099"].discipline_category is None
+        assert by_id["D-099"].endurance_profile is None
         assert by_id["D-099"].primary_movement is None
 
 

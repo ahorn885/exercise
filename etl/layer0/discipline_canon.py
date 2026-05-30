@@ -25,13 +25,13 @@ from __future__ import annotations
 import re
 
 # ---------------------------------------------------------------------------
-# The canon — 25 surviving disciplines, one clean craft name each.
+# The canon — 21 surviving disciplines, one clean craft name each.
 # ---------------------------------------------------------------------------
 
 CANONICAL_NAMES: dict[str, str] = {
     "D-001": "Trail Running",
     "D-002": "Road Running",
-    "D-003": "Hiking",
+    "D-003": "Trekking",            # renamed from "Hiking"; absorbs former D-015 (Orienteering)
     "D-004": "Swimming",            # absorbs former D-005 (pool sprint) + D-016 (generic)
     "D-006": "Road Cycling",
     "D-007": "Time-Trial Cycling",
@@ -42,30 +42,71 @@ CANONICAL_NAMES: dict[str, str] = {
     "D-012": "Rock Climbing",
     "D-013": "Abseiling",
     "D-014": "Via Ferrata",
-    "D-015": "Orienteering",
     "D-017": "Snowshoeing",
     "D-018": "Mountaineering",
     "D-019": "Paddle Rafting",
     "D-021": "Uphill Skinning",     # was mislabelled "Ski Touring" in the overlay
     "D-022": "Alpine Descent",      # was mislabelled "Alpine Skiing" in the overlay
     "D-024": "Mountain Running",
-    "D-025": "Fencing",
-    "D-026": "Laser Run",
     "D-027": "Obstacle Course Racing",
     "D-028": "Cross-Country Skiing",
-    "D-029": "Rifle Shooting",
 }
 
-# Merged-away ids -> survivor. Both former swim variants collapse onto D-004.
+# Merged-away ids -> survivor. Swim variants collapse onto D-004; Orienteering
+# folds into Trekking (D-003) — Andy, May 2026 (navigation conditional retired).
 ID_REMAP: dict[str, str] = {
     "D-005": "D-004",   # Pool Sprint Swimming -> Swimming
     "D-016": "D-004",   # generic Swimming      -> Swimming
+    "D-015": "D-003",   # Orienteering          -> Trekking (renamed D-003)
 }
 
 # Disciplines removed from the canon entirely.
 #   D-020 Swimrun  -> reclassified as a *sport* (swim + run), not a discipline.
 #   D-023 Ski Transitions / Boot-packing -> not tracked as a discipline.
-REMOVED_IDS: frozenset[str] = frozenset({"D-020", "D-023"})
+#   D-025 Fencing / D-026 Laser Run / D-029 Rifle Shooting -> Modern Pentathlon
+#     & Biathlon dropped as sports (see sport_canon.REMOVED_SPORTS); these
+#     pentathlon/biathlon-only disciplines go with them — Andy, May 2026.
+REMOVED_IDS: frozenset[str] = frozenset(
+    {"D-020", "D-023", "D-025", "D-026", "D-029"}
+)
+
+# Per-discipline endurance profile (∈ ENUM_ENDURANCE {Pure endurance | Mixed |
+# Technical-dominant}), the curated source for the Layer 2E §5.3.3 daily-carb
+# band. Replaces the removed free-text `discipline_category` prefix-parse: this
+# is the authoritative, code-reviewed classification applied at ETL onto
+# `layer0.disciplines.endurance_profile`. Values confirmed by Andy 2026-05-30.
+# Keyed by canonical (post-merge) discipline id; every CANONICAL_NAMES id must
+# appear here (guarded at module load below + by an ETL validator).
+DISCIPLINE_ENDURANCE_PROFILE: dict[str, str] = {
+    "D-001": "Pure endurance",       # Trail Running
+    "D-002": "Pure endurance",       # Road Running
+    "D-003": "Pure endurance",       # Trekking
+    "D-004": "Pure endurance",       # Swimming  (was Mixed under terrain-prefix)
+    "D-006": "Pure endurance",       # Road Cycling
+    "D-007": "Pure endurance",       # Time-Trial Cycling
+    "D-008": "Mixed",                # Mountain Biking  (was Pure endurance)
+    "D-009": "Mixed",                # Packrafting
+    "D-010": "Pure endurance",       # Kayaking  (was Mixed)
+    "D-011": "Pure endurance",       # Canoeing  (was Mixed)
+    "D-012": "Technical-dominant",   # Rock Climbing
+    "D-013": "Technical-dominant",   # Abseiling
+    "D-014": "Technical-dominant",   # Via Ferrata
+    "D-017": "Pure endurance",       # Snowshoeing
+    "D-018": "Mixed",                # Mountaineering  (was Technical-dominant)
+    "D-019": "Mixed",                # Paddle Rafting
+    "D-021": "Pure endurance",       # Uphill Skinning
+    "D-022": "Technical-dominant",   # Alpine Descent  (was Pure endurance)
+    "D-024": "Pure endurance",       # Mountain Running
+    "D-027": "Mixed",                # Obstacle Course Racing
+    "D-028": "Pure endurance",       # Cross-Country Skiing
+}
+
+# Invariant: every surviving discipline has a curated endurance profile.
+assert set(DISCIPLINE_ENDURANCE_PROFILE) == set(CANONICAL_NAMES), (
+    "DISCIPLINE_ENDURANCE_PROFILE must cover exactly the canonical disciplines; "
+    f"missing={set(CANONICAL_NAMES) - set(DISCIPLINE_ENDURANCE_PROFILE)}, "
+    f"extra={set(DISCIPLINE_ENDURANCE_PROFILE) - set(CANONICAL_NAMES)}"
+)
 
 # Sport-specific discipline overrides — a sport *composition* decision, distinct
 # from the global canon above. Keyed (sport_name, raw_discipline_id) -> new id,
@@ -204,9 +245,11 @@ def normalize_dimension_rows(
     name_field: str = "discipline_name",
 ) -> list[dict]:
     """For `layer0.disciplines`: keep one row per surviving canonical id,
-    renamed to canon. Merged-away ids (D-005/D-016) and removed ids
-    (D-020/D-023) are dropped — the native survivor row (D-004) carries the
-    merged disciplines' dimension attributes.
+    renamed to canon, with the curated `endurance_profile` stamped on. Merged-
+    away ids (D-005/D-016 -> D-004, D-015 -> D-003) and removed ids
+    (D-020/D-023/D-025/D-026/D-029) are dropped — the survivor row carries its
+    own dimension attributes. The legacy free-text `discipline_category` column
+    is dropped here (superseded by `endurance_profile`).
     """
     out: list[dict] = []
     seen: set[str] = set()
@@ -217,6 +260,8 @@ def normalize_dimension_rows(
         seen.add(rid)
         nr = dict(row)
         nr[name_field] = CANONICAL_NAMES[rid]
+        nr["endurance_profile"] = DISCIPLINE_ENDURANCE_PROFILE[rid]
+        nr.pop("discipline_category", None)
         out.append(nr)
     return out
 

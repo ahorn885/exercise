@@ -221,10 +221,12 @@ class Layer2ADiscipline(_Base):
     inclusion: Literal["included", "excluded", "prompt_required"]
     role: str  # 'Primary' | 'Secondary' | 'Minor' | 'Technical' (with *Conditional suffix)
     # Upstream layer0.disciplines classifications, plumbed for downstream
-    # consumers (e.g. Layer 2E nutrition). `discipline_category` is the
-    # terrain axis ('Foot / Running'); `primary_movement` is the movement
-    # axis (layer0 ENUM_MOVEMENTS). Both may be NULL for legacy rows.
-    discipline_category: str | None = None
+    # consumers (e.g. Layer 2E nutrition). `endurance_profile` is the curated
+    # aerobic-dependency axis (ENUM_ENDURANCE: Pure endurance | Mixed |
+    # Technical-dominant), driving the §5.3.3 daily-carb band; `primary_movement`
+    # is the movement axis (layer0 ENUM_MOVEMENTS), driving the race-day sport
+    # profile + protein band. Both may be NULL for legacy rows.
+    endurance_profile: str | None = None
     primary_movement: str | None = None
     is_conditional: bool
     conditional_resolution: Literal["athlete_opt_in"] | None = None

@@ -139,7 +139,7 @@ CREATE TABLE IF NOT EXISTS layer0.disciplines (
   id                          SERIAL PRIMARY KEY,
   discipline_id               TEXT NOT NULL,
   discipline_name             TEXT NOT NULL,
-  discipline_category         TEXT,
+  endurance_profile           TEXT,   -- enum: Pure endurance | Mixed | Technical-dominant (curated in discipline_canon)
   primary_movement            TEXT,
   min_base_phase_text         TEXT,
   min_base_phase_weeks_low    INTEGER,
