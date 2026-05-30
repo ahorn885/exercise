@@ -702,7 +702,7 @@ When the filtered `discipline_id` exists in multiple framework sports that share
 
 **Consumer dedup requirement.** Any query that joins `sport_exercise_map` × `sport_discipline_bridge` × `exercises` and surfaces `exercise_id` to a downstream consumer must dedup post-query by `exercise_id` (or `(exercise_id, discipline_id)` when discipline attribution is tracked). This is **not** an indexing or DB-level fix — it's a contract on every consumer of the bridge.
 
-**Known compliant consumer:** Layer 2D §5.2 dedups by `exercise_id` post-query (rationale comment cites multi-discipline path; D-47 will expand the comment to cite this framework-mapping path as a co-cause).
+**Known compliant consumer:** Layer 2D §5.2 dedups by `exercise_id` post-query; its rationale comment cites **both** the multi-discipline path and this framework-mapping path as co-causes (D-47 resolved 2026-05-30 — `layer2d/builder.py` §5.2 docstring expanded).
 
 **Pattern for new consumers:**
 ```sql

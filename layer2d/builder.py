@@ -824,6 +824,23 @@ def _load_candidates(
 
     Returns one dict per (exercise_id) deduplicated post-fetch; each dict
     carries `_discipline_ids: set[str]` to track multi-discipline attribution.
+
+    Dedup rationale (D-47) — the join below can surface the same `exercise_id`
+    on more than one row via **two independent bridge-multiplication paths**,
+    both of which the post-fetch `by_id` collapse handles:
+
+    1. Multi-discipline path: an exercise reachable from several of the
+       `included_discipline_ids` returns once per matching `sdb.discipline_id`.
+    2. Framework-mapping path (co-cause): `layer0.sport_name_aliases` is
+       intentionally one-to-many — a single `exercise_db_sport` may map to
+       multiple `framework_sport` values (sub-format splitting). The bridge
+       therefore holds one row per `(framework_sport, discipline_id)` pair, so
+       even a *single* included discipline can match multiple bridge rows that
+       share the same `exercise_db_sport`, returning the same exercise once per
+       framework sport (see Layer0_ETL_Spec §4.11 multiplication property).
+
+    Deduping by `exercise_id` is a contract on this consumer, not a DB-level
+    fix; `_discipline_ids` accumulates attribution across every matched row.
     """
     cur = db.execute(
         """

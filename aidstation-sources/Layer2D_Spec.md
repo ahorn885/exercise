@@ -148,7 +148,7 @@ WHERE sdb.discipline_id = ANY(%(included_discipline_ids)s)
 
 Notes:
 - Same `etl_version = ANY` semantics as 2C — exercises may be at multiple active 0B versions concurrently (`0B-v1.3.1`, `0B-v19.B`, `0B-v19.C`).
-- An exercise may appear under multiple included disciplines. Deduplicate by `exercise_id` after the query; track `discipline_ids[]` per exercise for risk attribution.
+- The query can return the same `exercise_id` on multiple rows via **two independent bridge-multiplication paths** (D-47): (1) the *multi-discipline* path — an exercise mapped to more than one included discipline returns once per matching `discipline_id`; and (2) the *framework-mapping* path — because `sport_name_aliases` is one-to-many, a single `exercise_db_sport` can map to multiple `framework_sport` values, so `sport_discipline_bridge` holds one row per `(framework_sport, discipline_id)` pair and even a single discipline can match multiple bridge rows sharing one `exercise_db_sport` (see `Layer0_ETL_Spec` §4.11). Deduplicate by `exercise_id` after the query; track `discipline_ids[]` per exercise for risk attribution.
 - D-05 aggregator filter not needed here — 2D doesn't touch `phase_load_allocation`.
 
 ### 5.3 Exercise-level contraindication filter
