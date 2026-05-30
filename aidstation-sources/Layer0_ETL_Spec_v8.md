@@ -1,7 +1,7 @@
 # Layer 0 ETL Specification — v8
 
 **Version:** 8.0 (file revision); schema version v3 (unchanged — v8 corrects the §4.3 `disciplines` block against a live Neon `information_schema` dump)
-**Status:** Revised 2026-05-30. v8 closes **D-02 (#264)**: the v7 §4.3 `disciplines` block had drifted from deployed — it listed invented columns `weekly_ramp_pct_text` / `weekly_ramp_pct_low` / `weekly_ramp_pct_high` and omitted seven deployed columns (`min_base_phase_weeks_low/high`, `periodization_text`, `ramp_text`, `age_adjusted_ramp_text`, `recovery_priority_text`, `primary_movement`). §4.3 is now rewritten to the live 25-column shape verified via `information_schema.columns` (`etl_version` set `{0A-v1.3.1, 0A-v2.4, 0A-v2.4-prep, 0A-v10.0, 0A-v11.0}`, 25 active rows). **All other enumerated tables (§4.11/§4.12/§4.14/§4.17) were re-confirmed matching deployed Neon in the same sweep.** D-47 resolved separately (Layer 2D §5.2 comment).
+**Status:** Revised 2026-05-30. v8 closes **D-02 (#264)**: the v7 §4.3 `disciplines` block had drifted from deployed — it listed invented columns `weekly_ramp_pct_text` / `weekly_ramp_pct_low` / `weekly_ramp_pct_high` and omitted seven deployed columns (`min_base_phase_weeks_low/high`, `periodization_text`, `ramp_text`, `age_adjusted_ramp_text`, `recovery_priority_text`, `primary_movement`). §4.3 is now rewritten to the live 25-column shape verified via `information_schema.columns` (`etl_version` set `{0A-v1.3.1, 0A-v2.4, 0A-v2.4-prep, 0A-v10.0, 0A-v11.0}`, 25 active rows). **All other enumerated tables (§4.11/§4.12/§4.14/§4.17) were re-confirmed matching deployed Neon in the same sweep** — column sets, types and PK/UNIQUE constraints all match. One value-vocabulary correction folded in: §4.17 `gap_severity` example values were stale (`Minor/Moderate/Severe/Uncoverable`); replaced with the deployed enum `low | medium | high | critical | unbridgeable` (post-Phase-2.3 reclassification, sourced from `populate_terrain_gap_rules.sql` + `migrate_terrain_gap_rules_severity.sql`). D-47 resolved separately (Layer 2D §5.2 comment).
 **Supersedes:** `Layer0_ETL_Spec_v7.md` (FC-4b, 2026-05-13).
 **Sources:**
 - `Sports_Framework_v10.xlsx` (0A) — schema reference for sport/discipline/phase data
@@ -1047,7 +1047,7 @@ CREATE TABLE layer0.terrain_gap_rules (
   proxy_terrain_name       TEXT,
 
   -- Severity classification
-  gap_severity             TEXT        NOT NULL,        -- e.g. 'Minor', 'Moderate', 'Severe', 'Uncoverable'
+  gap_severity             TEXT        NOT NULL,        -- low | medium | high | critical (bridgeable, by proxy_fidelity band) | unbridgeable (proxy_terrain_id IS NULL). Post-Phase-2.3 reclassification (Andy 2026-05-19); legacy 'partial'/'undefined' retired.
 
   -- Time to adapt when proxy is used (band; nullable when gap is uncoverable)
   adaptation_weeks_low     INTEGER,
@@ -1078,7 +1078,7 @@ CREATE TABLE layer0.terrain_gap_rules (
 **ETL parsing rules:**
 - Direct extraction from Sheet 7. Schema mirrors sheet columns 1:1.
 - Validate `target_terrain_id` and (when non-NULL) `proxy_terrain_id` exist in `layer0.terrain_types`. Fail row + warn on broken FK.
-- When `proxy_terrain_id IS NULL`: `gap_severity` should be 'Uncoverable' (or comparable); `uncoverable_stimulus` MUST be non-empty; `proxy_methods` should be empty array (or single placeholder).
+- When `proxy_terrain_id IS NULL`: `gap_severity` MUST be `unbridgeable`; `uncoverable_stimulus` MUST be non-empty; `proxy_methods` should be empty array (or single placeholder).
 - When `proxy_terrain_id IS NOT NULL`: `proxy_fidelity` should be in [0.0, 1.0]; `adaptation_weeks_low/high` should both be populated or both NULL.
 
 **Population:** 12 active rows in v10 baseline (per drift report §2.12). Investigate provenance of `terrain_types` 16 superseded rows alongside next curation pass — likely tied to ETL re-runs of this table's curation logic.
