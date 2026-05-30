@@ -1,7 +1,24 @@
 # Plan-Gen Observability (#321) — Plan & Blast-Radius (v1)
 
-**Status:** DRAFT for Andy's review — 2026-05-30. No code changed. Scoping issue #321
+**Status:** IMPLEMENTED 2026-05-30 (Andy chose **T1 + T2, admin-only**). Scoping issue #321
 (block-content logging + partial-plan view + incremental persist), deferred by #314/#315/#319.
+
+## As-built (T1 + T2, admin surface)
+- **Durable table `plan_progress_blocks`** (`init_db.py` `_PG_MIGRATIONS`) — keyed
+  `(plan_version_id, phase_idx)`, holds each accepted week-block's `sessions_json` +
+  `synthesis_metadata_json`. Auto-creates on the next deploy (`init_postgres()` runs on every
+  cold start with `IF NOT EXISTS`) — **no manual Neon step**.
+- **Snapshot** (`plan_sessions_repo.snapshot_progress_blocks`) — copies the cached blocks into
+  the durable table once per generation pass, called from `_advance_plan_generation`
+  **defensively** (its own try/except — a snapshot fault never breaks generation).
+- **Admin inspect view** — `GET /admin/plan/<id>/inspect` (`routes/admin.py`,
+  `templates/admin/plan_inspect.html`): plan status/error/progress + per-block sessions &
+  validator flags. Admin-only (`_require_admin`), reads any user's plan.
+- **Block-content logging** (`layer4/per_phase.py`) — accepted-path validator flags on the
+  per-block summary line + an env-gated (`PLAN_GEN_LOG_BLOCK_CONTENT=1`) per-session dump.
+- **Guardrail honored** — `plan_progress_blocks` is a write-only side effect; a test asserts
+  it never appears in `layer4/hashing.py` (the cache-key module).
+- Tests: `tests/test_plan_progress_blocks.py` (+5). Full suite green.
 
 **Headline finding:** most of the substrate already exists. Accepted blocks are *already*
 persisted per-pass (in `layer4_cache`), the loop *already* logs rich diagnostics, and the

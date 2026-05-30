@@ -1821,6 +1821,30 @@ _PG_MIGRATIONS = [
     )""",
     "CREATE INDEX IF NOT EXISTS plan_sessions_user_date_idx ON plan_sessions (user_id, date)",
     "CREATE INDEX IF NOT EXISTS plan_sessions_user_version_idx ON plan_sessions (user_id, plan_version_id)",
+    # #321 plan-gen observability — durable per-block progress snapshot. Layer 4
+    # synthesizes plans block-by-block across multiple resumable passes; accepted
+    # blocks live in `layer4_cache` (TTL-managed), but nothing is queryable as
+    # first-class plan data until the whole plan flips `ready` (all-at-once
+    # `plan_sessions` write). This table is snapshotted from the cache once per
+    # pass (`plan_sessions_repo.snapshot_progress_blocks`, called from
+    # `_advance_plan_generation`) so an in-flight/failed plan's partial progress
+    # is durable + inspectable (admin view). Keyed by (plan_version_id, phase_idx)
+    # — phase_idx is the global week-block index. WRITE-ONLY side effect: this
+    # table is NEVER an input to any Layer 4 cache key (the #199/#202/#294
+    # determinism rule). sessions_json / synthesis_metadata_json are copied
+    # verbatim from the cached block payload.
+    """CREATE TABLE IF NOT EXISTS plan_progress_blocks (
+        id BIGSERIAL PRIMARY KEY,
+        plan_version_id BIGINT NOT NULL REFERENCES plan_versions(id) ON DELETE CASCADE,
+        user_id INTEGER NOT NULL REFERENCES users(id),
+        phase_idx INTEGER NOT NULL,
+        phase_name TEXT NOT NULL,
+        sessions_json JSONB NOT NULL,
+        synthesis_metadata_json JSONB,
+        snapshot_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        UNIQUE (plan_version_id, phase_idx)
+    )""",
+    "CREATE INDEX IF NOT EXISTS plan_progress_blocks_user_version_idx ON plan_progress_blocks (user_id, plan_version_id)",
     # D-63 §5.3 — ad_hoc_workout_suggestions. Holds generated-but-not-yet-
     # logged single-session synthesizer outputs. request_payload carries the
     # SingleSessionRequest; generated_session carries the single PlanSession

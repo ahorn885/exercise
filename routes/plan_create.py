@@ -79,6 +79,7 @@ from plan_sessions_repo import (
     allocate_plan_version_row,
     load_plan_sessions_by_version,
     persist_layer4_sessions,
+    snapshot_progress_blocks,
 )
 from race_events_repo import load_target_race_event_payload
 from routes.auth import cron_authorized, current_user_id
@@ -391,6 +392,21 @@ def _advance_plan_generation(db, uid: int, plan_version_id: int) -> dict:
         "WHERE id = ? AND user_id = ?",
         (now_cached, plan_version_id, uid),
     )
+    # #321 observability — snapshot the accepted blocks cached so far into the
+    # durable `plan_progress_blocks` table so an in-flight/failed plan's partial
+    # progress survives cache eviction and is inspectable (admin view). Best-
+    # effort: a snapshot fault must NEVER break generation, so it's isolated in
+    # its own try and never propagates. WRITE-ONLY — never feeds a cache key.
+    try:
+        snapshot_progress_blocks(
+            db, uid, plan_version_id,
+            seam_phase_idx_base=_SEAM_CACHE_PHASE_IDX_BASE,
+        )
+    except Exception as _snap_exc:  # noqa: BLE001 — observability must not break gen
+        print(
+            f"_advance_plan_generation: progress-block snapshot failed for "
+            f"plan_version_id={plan_version_id} (non-fatal): {_snap_exc}"
+        )
     db.commit()
 
     try:

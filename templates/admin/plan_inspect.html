@@ -1,0 +1,94 @@
+{% extends 'base.html' %}
+{% block title %}Admin · Plan inspect{% endblock %}
+{% block content %}
+
+{% set status = pv['generation_status'] %}
+{% set status_class = {'ready': 'success', 'failed': 'danger', 'generating': 'warning', 'pending': 'secondary'}.get(status, 'secondary') %}
+
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h4 class="mb-0">Plan #{{ pv['id'] }} · block inspect</h4>
+  <a href="{{ url_for('admin.dashboard') }}" class="btn btn-sm btn-outline-secondary">← Admin</a>
+</div>
+
+<div class="card mb-3">
+  <div class="card-body">
+    <div class="d-flex flex-wrap gap-3 align-items-center">
+      <span class="badge bg-{{ status_class }}">{{ status }}</span>
+      <span class="text-muted small">user {{ pv['user_id'] }}</span>
+      <span class="text-muted small">via {{ pv['created_via'] }}</span>
+      <span class="text-muted small">pattern {{ pv['pattern'] }}</span>
+      <span class="text-muted small">scope {{ pv['scope_start_date'] }} → {{ pv['scope_end_date'] }}</span>
+      <span class="text-muted small">blocks cached: {{ pv['generation_units_cached'] or 0 }}</span>
+      <span class="text-muted small">snapshotted blocks: {{ blocks|length }}</span>
+      <span class="text-muted small">total sessions: {{ total_sessions }}</span>
+    </div>
+    {% if pv['generation_error'] %}
+    <div class="alert alert-danger mt-3 mb-0 small">
+      <strong>generation_error:</strong> {{ pv['generation_error'] }}
+    </div>
+    {% endif %}
+  </div>
+</div>
+
+{% if not blocks %}
+  <p class="text-muted">
+    No per-block snapshot yet. Blocks are snapshotted once per generation pass;
+    a plan that hasn't completed its first pass (or a `ready` plan generated
+    before this feature shipped) will show none — the finished plan's sessions
+    live in <code>plan_sessions</code>.
+  </p>
+{% else %}
+  {% for b in blocks %}
+  {% set meta = b['synthesis_metadata'] or {} %}
+  <div class="card mb-3">
+    <div class="card-header d-flex flex-wrap gap-3 align-items-center">
+      <strong>block {{ b['phase_idx'] }}</strong>
+      <span>{{ b['phase_name'] }}</span>
+      <span class="text-muted small">{{ b['sessions']|length }} session(s)</span>
+      {% if meta.get('accepted') is not none %}
+        <span class="badge bg-{{ 'success' if meta.get('accepted') else 'danger' }}">
+          {{ 'accepted' if meta.get('accepted') else 'rejected' }}
+        </span>
+      {% endif %}
+      {% if meta.get('cap_hit') %}<span class="badge bg-warning text-dark">cap_hit</span>{% endif %}
+      <span class="text-muted small ms-auto">snapshot {{ b['snapshot_at'] }}</span>
+    </div>
+    <div class="card-body">
+      {% if meta %}
+      <details class="mb-2">
+        <summary class="small text-muted">synthesis_metadata</summary>
+        <dl class="row small mb-0 mt-2">
+          {% for k, v in meta.items() %}
+            <dt class="col-sm-3 text-truncate">{{ k }}</dt>
+            <dd class="col-sm-9"><code>{{ v }}</code></dd>
+          {% endfor %}
+        </dl>
+      </details>
+      {% endif %}
+
+      {% if b['sessions'] %}
+      <table class="table table-sm mb-0">
+        <thead><tr>
+          <th>date</th><th>discipline / kind</th><th>min</th><th>intensity</th><th>intent</th>
+        </tr></thead>
+        <tbody>
+          {% for s in b['sessions'] %}
+          <tr>
+            <td class="small">{{ s.get('date') }}</td>
+            <td class="small">{{ s.get('discipline_name') or s.get('kind') }}</td>
+            <td class="small">{{ s.get('duration_min') }}</td>
+            <td class="small">{{ s.get('intensity_summary') }}</td>
+            <td class="small text-muted">{{ (s.get('coaching_intent') or '')|truncate(80) }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      {% else %}
+        <p class="text-muted small mb-0">No sessions in this block's snapshot.</p>
+      {% endif %}
+    </div>
+  </div>
+  {% endfor %}
+{% endif %}
+
+{% endblock %}

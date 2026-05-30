@@ -27,6 +27,7 @@ flags (which the orchestrator stamps post-synthesis per §8.1).
 
 from __future__ import annotations
 
+import os
 import uuid
 from dataclasses import dataclass, field
 from datetime import date as _date_type, datetime, timedelta
@@ -1779,12 +1780,33 @@ def synthesize_phase(
     # cap_hit/retries_used show whether it converged or was best-effort accepted.
     # (Fires only when the block RETURNS — a block 504-killed mid-loop is traced
     # via the per-attempt lines above instead.) Diagnostic only; trim later.
+    # #321 observability — the ACCEPTED path was previously silent on which
+    # rules the block still trips (warnings, or blockers demoted on a best-effort
+    # cap_hit accept). Surface them on the summary line so an accepted-but-flagged
+    # block (e.g. a taper week riding `volume_band_below` as a warning) is visible
+    # without re-deriving it from the validator.
+    _accepted_flags = "; ".join(
+        f"{f.rule_name}({f.severity})" for f in latest_validator.rule_failures
+    )[:240]
     print(
         f"synthesize_phase: {unit_tag} done — {llm_call_count} llm call(s), "
         f"{total_latency_ms}ms total, accepted={latest_validator.accepted}, "
         f"cap_hit={cap_hit}, retries_used={final_retries_used}, "
         f"sessions={len(latest_sessions)}"
+        + (f", flags: {_accepted_flags}" if latest_validator.rule_failures else "")
     )
+
+    # #321 observability — opt-in per-session content dump
+    # (`PLAN_GEN_LOG_BLOCK_CONTENT=1`). Off by default so prod logs aren't
+    # flooded; on, it dumps one compact line per session in the accepted block —
+    # the synthesized content, which is otherwise never logged (only the count).
+    if os.getenv("PLAN_GEN_LOG_BLOCK_CONTENT") == "1":
+        for s in latest_sessions:
+            print(
+                f"  block-content {unit_tag}: {s.date} "
+                f"{s.discipline_name or s.kind} {s.duration_min}min "
+                f"{s.intensity_summary}"
+            )
 
     return PhaseSynthesisResult(
         phase_name=phase_spec.phase_name,
