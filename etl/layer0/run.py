@@ -12,7 +12,7 @@ import argparse
 import sys
 from pathlib import Path
 
-from etl.layer0 import db, discipline_canon
+from etl.layer0 import db, discipline_canon, sport_canon
 from etl.layer0.db import insert_versioned, now_utc, to_jsonb
 from etl.layer0.extractors import exercise_db, sports_framework, vocabulary
 from etl.layer0.sport_name_aliases import SPORT_NAME_ALIASES, _ALL
@@ -179,6 +179,8 @@ def main(argv: list[str] | None = None) -> int:
         for ex_sport, targets in SPORT_NAME_ALIASES.items():
             fw_list = _all_fw if targets == _ALL else targets
             for fw in fw_list:
+                if sport_canon.is_removed_sport(fw):  # sport canon cascade
+                    continue
                 alias_rows.append((ex_sport, fw))
         n = insert_versioned(
             conn, "layer0.sport_name_aliases",
@@ -202,6 +204,15 @@ def main(argv: list[str] | None = None) -> int:
                 f"  [warn] sports: {len(movement_warnings)} row(s) had unknown "
                 f"movement / endurance / format tokens — see report"
             )
+        # Sport canon: drop sports removed from the canon (Modern Pentathlon,
+        # Biathlon). Cascaded to every sport-keyed table below.
+        dropped_sports: list = []
+        sports_rows = sport_canon.filter_sport_rows(sports_rows, dropped=dropped_sports)
+        if dropped_sports:
+            _print(
+                f"  [canon] sports: dropped {len(dropped_sports)} removed sport(s) "
+                f"({', '.join(sorted(r.get('sport_name', '?') for r in dropped_sports))})"
+            )
         sports_columns = [
             "sport_name", "typical_duration_range", "team_vs_solo",
             "flag_navigation", "navigation_notes",
@@ -224,11 +235,13 @@ def main(argv: list[str] | None = None) -> int:
         summaries.append(f"layer0.sports: {n}")
 
         disc_rows = sports_framework.extract_disciplines(wb["Discipline Library"])
-        # Apply discipline canon: collapse to the 25 surviving disciplines,
-        # renamed to canonical labels (merges/removals dropped).
+        # Apply discipline canon: collapse to the 21 surviving disciplines,
+        # renamed to canonical labels (merges/removals dropped), with the
+        # curated `endurance_profile` stamped on and `discipline_category`
+        # dropped (superseded by endurance_profile).
         disc_rows = discipline_canon.normalize_dimension_rows(disc_rows)
         disciplines_columns = [
-            "discipline_id", "discipline_name", "discipline_category",
+            "discipline_id", "discipline_name", "endurance_profile",
             "primary_movement",
             "min_base_phase_text", "min_base_phase_weeks_low", "min_base_phase_weeks_high",
             "periodization_text", "ramp_text", "age_adjusted_ramp_text",
@@ -255,6 +268,10 @@ def main(argv: list[str] | None = None) -> int:
                 f"  [warn] sport_discipline_map: dropped {len(dropped_sd_dupes)} duplicate "
                 f"(sport, discipline_id) rows — see report"
             )
+        # Sport canon (cascade): drop removed-sport rows before discipline canon
+        # — also keeps them out of the pairing fallback + sport_discipline_bridge
+        # (both derive from sd_rows below).
+        sd_rows = sport_canon.filter_sport_rows(sd_rows)
         canon_dropped_sd: list = []
         sd_rows = discipline_canon.normalize_named_rows(
             sd_rows, unique_fields=("sport_name", "discipline_id"),
@@ -317,6 +334,7 @@ def main(argv: list[str] | None = None) -> int:
         pl_rows = sports_framework.extract_phase_load_allocation(
             wb["Phase Load Allocation"], split_stats=pl_split_stats,
         )
+        pl_rows = sport_canon.filter_sport_rows(pl_rows)  # sport canon cascade
         # Canon: canonicalize discipline rows; keep strength/mobility/weekly-total
         # as non-discipline rows (discipline_id NULL + row_category); drop orphans.
         canon_dropped_pl: list = []
@@ -364,6 +382,7 @@ def main(argv: list[str] | None = None) -> int:
         wt_rows = sports_framework.extract_phase_load_weekly_totals(
             wb["Phase Load Allocation"], parse_failures=weekly_failures,
         )
+        wt_rows = sport_canon.filter_sport_rows(wt_rows)  # sport canon cascade
         wt_columns = [
             "sport_name", "phase",
             "weekly_low_hours", "weekly_high_hours",
@@ -385,6 +404,7 @@ def main(argv: list[str] | None = None) -> int:
         summaries.append(f"layer0.phase_load_weekly_totals: {n}")
 
         tf_rows = sports_framework.extract_team_formats(wb["Team Format Cross-Reference"])
+        tf_rows = sport_canon.filter_sport_rows(tf_rows)  # sport canon cascade
         n = insert_versioned(
             conn, "layer0.team_formats",
             [
@@ -535,6 +555,7 @@ def main(argv: list[str] | None = None) -> int:
                 f"  [warn] sport_exercise_map: dropped {len(dropped_sxm_dupes)} duplicate "
                 f"(exercise_id, sport_name) rows — see report"
             )
+        sxm_rows = sport_canon.filter_sport_rows(sxm_rows)  # sport canon cascade
         n = insert_versioned(
             conn, "layer0.sport_exercise_map",
             [

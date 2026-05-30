@@ -433,7 +433,9 @@ def extract_disciplines(ws: Worksheet) -> list[dict[str, Any]]:
         rows.append({
             "discipline_id": did,
             "discipline_name": _t(ws.cell(row=r, column=2).value) or did,
-            "discipline_category": _t(ws.cell(row=r, column=3).value),
+            # Source col 3 was the free-text terrain `discipline_category`,
+            # removed (superseded by the curated `endurance_profile` the
+            # discipline canon stamps on in normalize_dimension_rows).
             # No source column on the v11 sheet; populated post-hoc via
             # migrate_disciplines_add_primary_movement_v1.sql (like
             # stimulus_components). Value ∈ ENUM_MOVEMENTS when set.

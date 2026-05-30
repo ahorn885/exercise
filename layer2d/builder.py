@@ -80,10 +80,10 @@ _HIGH_CARDIAC_LOAD_DISCIPLINES: frozenset[str] = frozenset({
 
 # §5.7 rule 5 — discipline_training_gaps rows. Defensive: the DTG join below
 # builds the live set from `layer0.discipline_training_gaps`; this constant
-# documents the intent for reviewers. D-020 (Swimrun) was dropped by the
-# discipline canon (reclassified as a sport = swim + run), leaving D-022
-# (Alpine Descent) and D-025 (Fencing).
-_KNOWN_GAP_DISCIPLINES: frozenset[str] = frozenset({"D-022", "D-025"})
+# documents the intent for reviewers. D-020 (Swimrun) and D-025 (Fencing) were
+# dropped by the discipline canon (Swimrun reclassified as a sport; Fencing
+# removed with Modern Pentathlon), leaving D-022 (Alpine Descent).
+_KNOWN_GAP_DISCIPLINES: frozenset[str] = frozenset({"D-022"})
 
 # §5.3.6.4 rule 3 — post-surgical first-6-weeks loading-type-change preference.
 _POST_SURGICAL_RECENT_DAYS: int = 42

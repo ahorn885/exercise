@@ -59,7 +59,7 @@ def q_layer2e_nutrition_baseline_payload(
 | `health_records` | HealthRecords | Layer 1 §B | conditions[], allergies[], medications[]. Status (Current / History) is on each record. |
 | `target_events` | list[TargetEvent] | Layer 1 §H.2 | Empty list when §H.1 = No (athlete in time-based mode). Race-day fueling sub-payload only populates for events. |
 | `lifestyle_recovery` | LifestyleRecovery | Layer 1 §I (structured form per handoff) | dietary_pattern[], supplements[] (record set), caffeine_*, fueling_format_pref[], fueling_shift_triggers[], gi_triggers[], salt_tolerance, sleep_dep, altitude_acclim |
-| `included_disciplines` | list[IncludedDiscipline] | 2A `Layer2APayload.disciplines` | Subset: discipline_id, weight, role, plus the upstream `discipline_category` + `primary_movement` classification (plumbed by 2A from `layer0.disciplines`; see §5.3.3 / §5.4.3 — added 2026-05-25, upstream-sourced classification). Drives activity multiplier, the §5.3.3 endurance/protein band positions, and the race-day sport modifier. |
+| `included_disciplines` | list[IncludedDiscipline] | 2A `Layer2APayload.disciplines` | Subset: discipline_id, weight, role, plus the upstream `endurance_profile` + `primary_movement` classification (plumbed by 2A from `layer0.disciplines`; see §5.3.3 / §5.4.3 — `endurance_profile` curated 2026-05-30, replacing the removed free-text `discipline_category`). Drives activity multiplier, the §5.3.3 endurance/protein band positions, and the race-day sport modifier. |
 | `framework_sport` | str | 2A input, post-strip | Sub-format-named where applicable ("Triathlon (Standard / Olympic)", "Adventure Racing"). Used for phase_load_allocation lookup. |
 | `plan_management_state` | PlanManagementState | Plan Management subsystem | current_phase (Base/Build/Peak/Taper), heat_acclim_state, expected_race_temp_c per event |
 | `etl_version_set` | dict[str, str] | Plan-gen pin | Per ETL spec v3 §5.1 Decision 2. Locks Layer 0 version for the plan. |
@@ -136,7 +136,7 @@ class IncludedDiscipline:
     weight: float                             # 2A's load weight, 0-1
     role: str                                 # Primary / Secondary / Conditional
     phase_load: PhaseLoadBands | None         # 2A pass-through from phase_load_allocation
-    discipline_category: str | None           # Upstream terrain axis (layer0.disciplines), plumbed via 2A. Drives §5.3.3 endurance band. None → 'Mixed'.
+    endurance_profile: str | None             # Upstream curated aerobic-dependency axis (layer0.disciplines), plumbed via 2A. Drives §5.3.3 endurance band. None → 'Mixed'.
     primary_movement: str | None              # Upstream movement axis (layer0.disciplines), plumbed via 2A. Drives §5.4.3 sport profile + §5.3.3 protein band. None → 'multi_sport'.
 
 @dataclass
@@ -350,14 +350,14 @@ def compute_macros_for_phase(
 
 #### 5.3.3 Discipline-mix-driven band position
 
-**Endurance profile is sourced from upstream (2026-05-25, upstream-sourced classification).** Each discipline's endurance band comes from its `discipline_category` (the terrain axis on `layer0.disciplines`, plumbed via 2A onto `IncludedDiscipline.discipline_category`) — mapped by category-prefix to an endurance label `{Pure endurance | Mixed | Technical-dominant}` (aligned with Layer 0 `ENUM_ENDURANCE`), which the share-weighting below consumes. There is **no** hand-maintained `discipline_id → endurance_profile` dict (the prior v1 design did; it duplicated authoritative Layer 0 data it never read and drifted off the post-R6 taxonomy — the finding that drove this change). Missing/unknown category defaults to `Mixed`; a present-but-unrecognised value is logged.
+**Endurance profile is sourced from upstream (amended 2026-05-30 — curated `endurance_profile` column).** Each discipline's endurance band is read **directly** from its `endurance_profile` (the aerobic-dependency axis on `layer0.disciplines`, plumbed via 2A onto `IncludedDiscipline.endurance_profile`) — one of `{Pure endurance | Mixed | Technical-dominant}` (Layer 0 `ENUM_ENDURANCE`), which the share-weighting below consumes. The values are **curated** in `etl/layer0/discipline_canon.DISCIPLINE_ENDURANCE_PROFILE` (code-reviewed, applied at ETL). This replaced the previous (2026-05-25) approach of prefix-parsing the free-text terrain column `discipline_category` — that column was junk (mis-classified ~6 disciplines: swimming, MTB, kayaking, canoeing, mountaineering, alpine descent) and has been removed. There is **no** hand-maintained code-side dict in Layer 2E. Missing/unknown profile defaults to `Mixed`; a present-but-unrecognised value is logged.
 
 ```python
 def _cho_band_position(disciplines: list[IncludedDiscipline]) -> float:
     """Higher CHO for endurance-heavy mixes; mid for mixed; lower for technical-dominant."""
-    # Endurance profile derived per-discipline from upstream `discipline_category`
-    # (category-prefix → {Pure endurance | Mixed | Technical-dominant}).
-    profiles = [_endurance_profile(d) for d in disciplines]   # reads d.discipline_category
+    # Endurance profile read directly from the curated upstream
+    # `endurance_profile` column ({Pure endurance | Mixed | Technical-dominant}).
+    profiles = [_endurance_profile(d) for d in disciplines]   # reads d.endurance_profile
     weights = [d.weight for d in disciplines]
     pure_endurance_share = _weighted_share(profiles, weights, 'Pure endurance')
     mixed_share          = _weighted_share(profiles, weights, 'Mixed')
@@ -419,7 +419,7 @@ def _classify_duration_tier(hours: float) -> str:
 | Multi-sport (AR / triathlon) | ×0.95 | Real-food bias; transitions enable variety |
 | Skimo-dominant | ×0.9 | Cold-thermoregulation increases need; pocket access limits |
 
-**Sport profile derivation (2026-05-25, upstream-sourced classification).** The sport-profile vote is sourced from each discipline's upstream `primary_movement` (the movement axis on `layer0.disciplines`, plumbed via 2A onto `IncludedDiscipline.primary_movement`) — **not** a hand-maintained `discipline_id → profile` dict. Each movement maps to a profile (`running`/`hiking` → Running-dominant; `cycling` → Cycling-dominant; `swimming` → Swimming-dominant; `paddling` → Paddling-dominant; `skiing` → Skimo-dominant; `climbing`/`navigation`/`other_skill` → Multi-sport). The weighted vote picks the profile with the largest load share; any mix where no single profile claims >50% (AR / triathlon) resolves to Multi-sport. The **movement** axis is required because the terrain `discipline_category` cannot distinguish swimming from paddling (both share a 'Water / *' category) — the original motivation for adding `primary_movement` to Layer 0. Missing/unrecognised `primary_movement` defaults to Multi-sport (a present-but-unknown value is logged).
+**Sport profile derivation (2026-05-25, upstream-sourced classification).** The sport-profile vote is sourced from each discipline's upstream `primary_movement` (the movement axis on `layer0.disciplines`, plumbed via 2A onto `IncludedDiscipline.primary_movement`) — **not** a hand-maintained `discipline_id → profile` dict. Each movement maps to a profile (`running`/`hiking` → Running-dominant; `cycling` → Cycling-dominant; `swimming` → Swimming-dominant; `paddling` → Paddling-dominant; `skiing` → Skimo-dominant; `climbing`/`navigation`/`other_skill` → Multi-sport). The weighted vote picks the profile with the largest load share; any mix where no single profile claims >50% (AR / triathlon) resolves to Multi-sport. The **movement** axis is required because an endurance/terrain axis alone cannot distinguish swimming from paddling (both are aerobic 'Water' activities) — the original motivation for adding `primary_movement` to Layer 0, and why it remains a separate axis from `endurance_profile`. Missing/unrecognised `primary_movement` defaults to Multi-sport (a present-but-unknown value is logged).
 
 #### 5.4.4 Athlete tolerance modifiers
 

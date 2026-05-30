@@ -165,20 +165,16 @@ _SPORT_PROFILE_CHO_MOD: dict[str, float] = {
     "default": 1.0,
 }
 
-# §5.3.3 endurance profile, derived from the upstream terrain axis
-# `layer0.disciplines.discipline_category` (plumbed via Layer 2A onto
-# `Layer2ADiscipline.discipline_category`). Keyed on the category prefix
-# (token before '/'). Values align with Layer 0 `ENUM_ENDURANCE`
-# {Pure endurance, Mixed, Technical-dominant}. Missing/unknown category
-# defaults to 'Mixed' (an unrecognised-but-present value is logged).
-_CATEGORY_ENDURANCE: dict[str, str] = {
-    "foot": "Pure endurance",
-    "snow": "Pure endurance",
-    "cycle": "Pure endurance",
-    "water": "Mixed",
-    "vertical": "Technical-dominant",
-    "mixed": "Technical-dominant",
-}
+# §5.3.3 endurance profile — read directly from the curated upstream
+# `layer0.disciplines.endurance_profile` (plumbed via Layer 2A onto
+# `Layer2ADiscipline.endurance_profile`; values curated in
+# `etl/layer0/discipline_canon.DISCIPLINE_ENDURANCE_PROFILE`). This replaced the
+# old terrain-prefix parse of the free-text `discipline_category` (removed May
+# 2026 — it mis-classified ~6 disciplines). Values ∈ Layer 0 `ENUM_ENDURANCE`.
+# Missing/unknown defaults to 'Mixed' (an unrecognised-but-present value logs).
+_ENUM_ENDURANCE: frozenset[str] = frozenset(
+    {"Pure endurance", "Mixed", "Technical-dominant"}
+)
 
 # §5.4.3 sport-profile vote, derived from the upstream movement axis
 # `layer0.disciplines.primary_movement` (∈ Layer 0 `ENUM_MOVEMENTS`),
@@ -205,15 +201,13 @@ _STRENGTH_MOVEMENTS: frozenset[str] = frozenset({"climbing"})
 
 
 def _endurance_profile(discipline: Layer2ADiscipline) -> str:
-    category = discipline.discipline_category
-    if not category:
+    profile = (discipline.endurance_profile or "").strip()
+    if not profile:
         return "Mixed"
-    prefix = category.split("/")[0].strip().lower()
-    profile = _CATEGORY_ENDURANCE.get(prefix)
-    if profile is None:
+    if profile not in _ENUM_ENDURANCE:
         logger.warning(
-            "unknown discipline_category %r for %s; defaulting endurance to 'Mixed'",
-            category, discipline.discipline_id,
+            "unknown endurance_profile %r for %s; defaulting endurance to 'Mixed'",
+            profile, discipline.discipline_id,
         )
         return "Mixed"
     return profile

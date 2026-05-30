@@ -32,8 +32,8 @@ def wb():
 # Static canon shape
 # ---------------------------------------------------------------------------
 
-def test_canon_has_25_disciplines():
-    assert len(dc.CANONICAL_NAMES) == 25
+def test_canon_has_21_disciplines():
+    assert len(dc.CANONICAL_NAMES) == 21
 
 
 def test_merges_and_removals():
@@ -44,13 +44,35 @@ def test_merges_and_removals():
     assert dc.resolve_ids("D-023") == []          # Ski Transitions -> dropped
     assert "D-005" not in dc.CANONICAL_NAMES
     assert "D-016" not in dc.CANONICAL_NAMES
+    # Pentathlon/Biathlon-only disciplines removed (sports dropped, May 2026).
+    assert dc.resolve_ids("D-025") == []          # Fencing
+    assert dc.resolve_ids("D-026") == []          # Laser Run
+    assert dc.resolve_ids("D-029") == []          # Rifle Shooting
+    for rid in ("D-025", "D-026", "D-029"):
+        assert rid in dc.REMOVED_IDS
+        assert rid not in dc.CANONICAL_NAMES
+
+
+def test_trekking_fold():
+    # D-003 Hiking renamed to Trekking; D-015 Orienteering folds into it.
+    assert dc.canonical_name("D-003") == "Trekking"
+    assert dc.resolve_ids("D-015") == ["D-003"]
+    assert "D-015" not in dc.CANONICAL_NAMES
+    assert dc.ID_REMAP["D-015"] == "D-003"
 
 
 def test_overlay_corrections():
     assert dc.canonical_name("D-021") == "Uphill Skinning"   # not "Ski Touring"
     assert dc.canonical_name("D-022") == "Alpine Descent"    # not "Alpine Skiing"
-    assert dc.canonical_name("D-025") == "Fencing"           # not "Epee Fencing"
-    assert dc.canonical_name("D-029") == "Rifle Shooting"    # not "Biathlon Shooting"
+
+
+def test_every_discipline_has_endurance_profile():
+    # The curated endurance map must cover exactly the canonical set
+    # (also asserted at module load in discipline_canon).
+    assert set(dc.DISCIPLINE_ENDURANCE_PROFILE) == set(dc.CANONICAL_NAMES)
+    assert set(dc.DISCIPLINE_ENDURANCE_PROFILE.values()) <= {
+        "Pure endurance", "Mixed", "Technical-dominant"
+    }
 
 
 def test_composite_split():
@@ -127,13 +149,16 @@ def test_every_resolved_id_has_a_canonical_name(wb):
 # Row-level normalization against the live source workbook
 # ---------------------------------------------------------------------------
 
-def test_dimension_collapses_to_25_canonical_rows(wb):
+def test_dimension_collapses_to_21_canonical_rows(wb):
     rows = dc.normalize_dimension_rows(sf.extract_disciplines(wb["Discipline Library"]))
     ids = [r["discipline_id"] for r in rows]
-    assert sorted(ids) == sorted(dc.CANONICAL_NAMES)        # exactly the 25
+    assert sorted(ids) == sorted(dc.CANONICAL_NAMES)        # exactly the 21
     assert len(ids) == len(set(ids))                        # no dup dims
     for r in rows:
         assert r["discipline_name"] == dc.CANONICAL_NAMES[r["discipline_id"]]
+        # endurance_profile stamped on; discipline_category dropped
+        assert r["endurance_profile"] == dc.DISCIPLINE_ENDURANCE_PROFILE[r["discipline_id"]]
+        assert "discipline_category" not in r
 
 
 def test_sport_discipline_map_normalized(wb):

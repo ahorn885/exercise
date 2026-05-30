@@ -59,8 +59,10 @@ _REQUIRED_ETL_KEYS: frozenset[str] = frozenset({"0A", "0B", "0C"})
 
 # Conditional-rule constants per spec §5.3. (The R6 collapse retired the
 # whitewater-kayak conditional — D-008a/b merged into the ordinary D-010
-# Kayaking discipline; only the navigation conditional remains.)
-_NAV_DISCIPLINE_ID: str = "D-015"
+# Kayaking discipline. The navigation conditional was retired May 2026 when
+# D-015 Orienteering folded into D-003 Trekking — Trekking carries no
+# navigation/sleep-dep conditional. No discipline-level sleep-dep trigger
+# remains; the Layer 2E sleep-dep fueling overlay is event-duration-driven.)
 
 # §8.3 override-divergence flag fires when |ov - default| / default > 0.5
 # (relative divergence; matches the spec example where 25 vs default 15
@@ -164,7 +166,7 @@ def _load_disciplines(
             dtg.gap_type,
             dtg.notes AS gap_notes,
             dtg.multi_substitute_candidate,
-            dl.discipline_category,
+            dl.endurance_profile,
             dl.primary_movement
         FROM sport_disciplines sd
         LEFT JOIN layer0.phase_load_allocation pla
@@ -637,16 +639,17 @@ def q_layer2a_discipline_classifier_payload(
             conditional_resolution,
             estimated_race_duration_hours,
         )
-        # Sleep-deprivation relevance: D-015 (nav) always. Spec §8 doesn't
-        # enumerate a closed list, so v1 keeps the surface narrow — the
-        # rationale text covers the athlete-facing message and downstream
-        # layers can read the flag.
-        sleep_dep_relevant = row["discipline_id"] == _NAV_DISCIPLINE_ID
+        # Sleep-deprivation relevance: the navigation conditional (D-015) was
+        # retired with the Trekking fold (May 2026). No discipline-level
+        # sleep-dep trigger remains — the field stays on the contract but is
+        # always False; the real sleep-dep overlay lives in Layer 2E (driven by
+        # event duration > 20 h).
+        sleep_dep_relevant = False
         disciplines.append(
             Layer2ADiscipline(
                 discipline_id=row["discipline_id"],
                 discipline_name=row["discipline_name"],
-                discipline_category=row.get("discipline_category"),
+                endurance_profile=row.get("endurance_profile"),
                 primary_movement=row.get("primary_movement"),
                 inclusion=inclusion,
                 role=row["role"],

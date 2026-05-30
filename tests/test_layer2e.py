@@ -110,18 +110,20 @@ _DEFAULT_ETL = {"0A": "0A-v1.3.1", "0B": "0B-v2.0", "0C": "0C-v2.0-r2"}
 
 # Canonical upstream classifications for the disciplines exercised in
 # these fixtures, mirroring migrate_disciplines_add_primary_movement_v1
-# (primary_movement) and the layer0 discipline_category terrain axis.
+# (primary_movement) and the curated layer0 endurance_profile axis
+# (discipline_canon.DISCIPLINE_ENDURANCE_PROFILE; D-015 folds to D-003,
+# D-016 to D-004 — values taken from their survivors).
 _CANON_MOVEMENT: dict[str, str] = {
     "D-001": "running", "D-002": "running", "D-003": "hiking",
     "D-006": "cycling", "D-008": "cycling", "D-010": "paddling",
     "D-012": "climbing", "D-013": "climbing", "D-015": "running",
     "D-016": "swimming",
 }
-_CANON_CATEGORY: dict[str, str] = {
-    "D-001": "Foot / Running", "D-002": "Foot / Running", "D-003": "Foot / Trail",
-    "D-006": "Cycle / Road", "D-008": "Cycle / Trail", "D-010": "Water / River",
-    "D-012": "Vertical / Rock", "D-013": "Vertical / Rock", "D-015": "Foot / Running",
-    "D-016": "Water / Open",
+_CANON_ENDURANCE: dict[str, str] = {
+    "D-001": "Pure endurance", "D-002": "Pure endurance", "D-003": "Pure endurance",
+    "D-006": "Pure endurance", "D-008": "Mixed", "D-010": "Pure endurance",
+    "D-012": "Technical-dominant", "D-013": "Technical-dominant",
+    "D-015": "Pure endurance", "D-016": "Pure endurance",
 }
 
 
@@ -131,12 +133,12 @@ def _ar_discipline(
     weight: float,
     role: str = "Primary",
     primary_movement: str | None = None,
-    discipline_category: str | None = None,
+    endurance_profile: str | None = None,
 ) -> Layer2ADiscipline:
     return Layer2ADiscipline(
         discipline_id=discipline_id,
         discipline_name=f"{discipline_id}-name",
-        discipline_category=discipline_category or _CANON_CATEGORY.get(discipline_id),
+        endurance_profile=endurance_profile or _CANON_ENDURANCE.get(discipline_id),
         primary_movement=primary_movement or _CANON_MOVEMENT.get(discipline_id),
         inclusion="included",
         role=role,

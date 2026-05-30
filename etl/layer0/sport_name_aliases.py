@@ -30,7 +30,7 @@ SPORT_NAME_ALIASES: dict[str, list[str] | str] = {
                             "Skimo (Long Distance / Grand Traverse)",
                             "Skimo (Sprint)", "Skimo (Vertical / VK)"],
     "Fell Running":        ["Fell Running"],
-    "Modern Pentathlon":   ["Modern Pentathlon"],
+    # "Modern Pentathlon" removed as a sport (sport_canon.REMOVED_SPORTS) — alias dropped.
     "SwimRun":             ["Swimrun"],
 
     # ── AR core disciplines ──
@@ -54,7 +54,7 @@ SPORT_NAME_ALIASES: dict[str, list[str] | str] = {
                             "Canoe / Kayak Marathon (ICF Competition)",
                             "Canoe / Kayak Marathon (Ultra-Distance)"],
     "Bikepacking":         ["Long Distance / Endurance Cycling"],
-    "XC Skiing":           ["Cross-Country / Nordic Skiing", "Biathlon",
+    "XC Skiing":           ["Cross-Country / Nordic Skiing",  # "Biathlon" removed (sport_canon)
                             "Skimo", "Skimo (Individual / Team)"],
     "Road Cycling":        ["Long Distance / Endurance Cycling (Road / Gran Fondo)",
                             "Long Distance / Endurance Cycling (Time Trial)"],
@@ -104,8 +104,7 @@ SPORT_NAME_ALIASES: dict[str, list[str] | str] = {
                                  "Off-Road / Adventure Multisport (Non-Nav)",
                                  "Skimo"],
 
-    # Fencing: Modern Pentathlon only
-    "Fencing":             ["Modern Pentathlon"],
+    # Fencing: was Modern Pentathlon only — sport + D-025 discipline removed; alias dropped.
 
     # Rowing: AR + Multisport + all endurance paddle sports
     "Rowing":              ["Adventure Racing",
@@ -114,8 +113,10 @@ SPORT_NAME_ALIASES: dict[str, list[str] | str] = {
                             "Canoe / Kayak Marathon (ICF Competition)",
                             "Canoe / Kayak Marathon (Ultra-Distance)"],
 
-    # Obstacle Course Racing: Modern Pentathlon
-    "Obstacle Course Racing": ["Modern Pentathlon"],
+    # Obstacle Course Racing: re-homed to Off-Road / Adventure Multisport after
+    # Modern Pentathlon was removed as a sport (Andy, 2026-05-30). OCR (D-027)
+    # is kept; this keeps OCR-tagged exercises mapped to a surviving sport.
+    "Obstacle Course Racing": ["Off-Road / Adventure Multisport (Non-Nav)"],
 
     # SUP: AR + Multisport
     "SUP":                 ["Adventure Racing",
