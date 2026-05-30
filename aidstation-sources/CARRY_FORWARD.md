@@ -18,17 +18,33 @@ Rolling-state for items spanning multiple sessions. **Edit in place** — don't 
 > are **Andy's-hands** actions. Tick each off (and note it on the linked issue)
 > once run.
 
-1. ✅ **D-77 PGE convergence re-run — DONE 2026-05-30 (pv=39). Convergence PROVEN.**
-   The fresh PGE plan ran on the post-cleanup deploy: deterministic cone (`ibundle`
-   stable / benign 3A HITs — no drift; PR #294 holds), per-block HITs on replay,
-   and it generated **7 clean week-blocks**. It did NOT reach `ready` — it failed
-   on the 8th block (`schema_violation`), which **shifted the blocker from
-   convergence to COMPLETION** (issue #324): too fragile (one bad block discarded
-   the plan; two passes 504'd at the 800s cap) + too slow (150–250s/block). The
-   fragility is fixed by **PR #325** (block-fumble retries instead of failing the
-   plan; reserve 255→330). **NEW owed (Andy's hands): verify #325 — generate one
-   PGE plan and confirm it reaches `ready`.** Watch via `/admin/plan/<id>/inspect`
-   (the #323 observability). Latency half = **#316** (pre-compute grid).
+1. ✅ **D-77 PGE convergence (pv=39) + #325-verify (pv=40) — BOTH RUN. Truncation now fixed (PR #327); re-verify owed.**
+   - **pv=39 (convergence) — PROVEN 2026-05-30.** Deterministic cone (`ibundle`
+     stable / benign 3A HITs; PR #294 holds), per-block HITs on replay, **7 clean
+     week-blocks**; failed on the 8th (`schema_violation`) → shifted the blocker
+     from convergence to COMPLETION (issue #324). Fragility fixed by **PR #325**
+     (block-fumble retries instead of failing; reserve 255→330).
+   - **pv=40 (#325 verify) — FAILED 2026-05-30, root-caused + fixed (PR #327).**
+     Did NOT reach `ready`; cached **0 blocks**, tripped the 900s stall at ~15.5 min.
+     Root cause (prod `detail`, identical every pass): `model did not emit a
+     record_phase_sessions tool_use block (stop_reason=max_tokens)` — the **first**
+     block truncated against its output ceiling → `schema_violation` → #325 retried
+     the *deterministic* failure into the stall. The forced-tool retry's ceiling is
+     `effective_max_tokens` ALONE (no `+thinking_budget`); block-mode sizing was
+     `14×900+1200=13,800`, below the 10–16k tokens prod blocks emit. pv=39 dodged it
+     via its stochastic thinking attempt; pv=40 fell through to the undersized floor.
+     **Fixed (PR #327):** `_BLOCK_OUTPUT_TOKENS_PER_SESSION` 900→1400 +
+     `_BLOCK_OUTPUT_TOKENS_OVERHEAD` 1200→2000 → 21,600 (~35% over 16k). No migration.
+   - **NEW owed (Andy's hands): re-verify #327 — generate one PGE plan and confirm
+     it reaches `ready`** (or at least caches blocks past the first). Watch via
+     `/admin/plan/<id>/inspect`. If it gets further but stalls again → that's the
+     **latency** wall (#316 pre-compute grid), not truncation. If it stalls at 0
+     blocks with a *different* `detail` → send that line back.
+   - **Deferred (Andy's call, exposed by pv=40):** (a) harden #325 so a
+     *deterministic* `schema_violation` fails fast + surfaces the real code instead
+     of a 15-min generic stall; (b) cap-drift guard — `_INVOCATION_BUDGET_S =
+     max(300−330,30)=30s` floors silently (reserve 330 was sized vs an 800s cap; live
+     cap is 300s; NOT what failed pv=40 — the budget gate never fired). Latency half = **#316**.
 2. **L3B-P-2 Slice 2 — `previous_attempts` JSONB column (#211 / #228).**
    `python init_db.py` on Neon (idempotent, nullable-default, no backfill) +
    redeploy. Unlocks the `3B.dnf_recurrence_risk` HITL flag (Slice 1 scalars
