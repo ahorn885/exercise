@@ -18,42 +18,21 @@ Rolling-state for items spanning multiple sessions. **Edit in place** — don't 
 > are **Andy's-hands** actions. Tick each off (and note it on the linked issue)
 > once run.
 
-1. ⏳ **D-77 PGE completion — six-link chain fixed (pv=41→45); merge #332 + ONE proof run owed.**
-   - **pv=39 (convergence) — PROVEN.** 7 clean week-blocks; shifted the blocker from
-     convergence to COMPLETION (#324).
-   - **pv=40 (truncation) — FIXED (PR #327).** Block ceiling 13,800→**21,600**.
-   - **pv=41→45 (this session's six-link arc) — four further blockers excavated + fixed:**
-     - **#329 (merged)** — pv=41's opaque stall: failed-attempt diagnostics
-       (`output_tokens/ceiling/thinking/kind` in the `schema_violation` detail; env
-       `PLAN_GEN_LOG_FAILED_ATTEMPT=1`) + persist the real `generation_error` live +
-       **fail fast** on a deterministic fumble with 0 cached blocks (the #325 flaw).
-     - **#330 (merged, D-77 Slice 3)** — pv=42 diagnosed via #329 showed `ceiling=4000`:
-       the **seam-driven re-synthesis** (`week_range=None`) re-synthesized a whole phase
-       in one undersized call (why #327 "did nothing" — it sized block mode only).
-       Decomposed seam re-synth into resumable, cache-wired, budget-gated **week-blocks**
-       (21,600 + seam constraints; disjoint `phase_idx` band `[500,1000)` so the stall
-       counter sees them as progress — no route SQL).
-     - **#331 (merged)** — pv=43/44's untyped `ValueError: Streaming is required`: the
-       Anthropic SDK refuses a non-streaming call at `max_tokens>21,333`; the thinking
-       attempt sends `21,600+5,000=26,600`. Latent landmine #330 first crossed. Fix:
-       pin an explicit `timeout` (client + per-request); env `LLM_REQUEST_TIMEOUT_S`.
-     - **#332 (OPEN/CI-green)** — pv=45 synthesized 5 blocks + ran the seam re-synth
-       clean through Build w1–w4, then crashed at **persist** on a `UniqueViolation`
-       (a pv=39-stamped session in pv=45's plan). The per-block cache is shared across
-       plan versions but the per-block hydrate path never rebound `plan_version_id`
-       like the §9.4 whole-payload path. Fix: rebind on hydrate (self-heals the
-       poisoned cache on next read) + force the payload's id at persist (safety net).
-   - **NEW owed (Andy's hands): merge #332, redeploy, run ONE PGE plan — the proof run
-     for the whole chain.** Expect: primary blocks cache (0..N), seam fires → blocks in
-     `[500,1000)`, no `ValueError`, no `UniqueViolation`, plan → `ready`. Watch via
-     `/admin/plan/<id>/inspect`. If it stalls on the 120s per-block budget → that's
-     **#316 latency**, not a crash. If a NEW failure → it's now diagnosable (real
-     `generation_error` persisted; catch-all logs a full traceback) — send it back.
-   - **Deferred (Andy's call):** (a) cap-drift guard — `_INVOCATION_BUDGET_S =
-     max(300−330,30)=30s` floors silently (reserve 330 sized vs an 800s cap; live cap
-     300s; never fired this session); (b) per-block budget tightness — every pv=45 seam
-     block was `cap_hit` + one hit the 120s budget (non-fatal, resumes; watch vs #316).
-     The #325 deterministic-retry flaw is addressed by #329's fast-fail.
+1. ✅ **DONE — D-77 PGE completion: six-link chain proven by pv=46 (2026-05-30).**
+   #332 merged (19:21 UTC) + deployed (`dpl_95uU2…`/`50bd3c7`), so all six fixes
+   (#325/#327/#329/#330/#331/#332) were live. **pv=46 generated end-to-end and reached
+   `ready`** — the first PGE plan to complete in ~15 sessions: cone HIT, Layer 4 blocks
+   mostly cache HITs replayed from pv=45 (rebound to pv=46 by #332's hydrate fix), clean
+   persist, zero errors, ~7 min. **#324 closed `completed`.** The completion blocker is
+   cleared; the blocker has moved to plan **usability/fidelity** (the `ready` plan isn't
+   yet usable — see the new go-live board #333–#336 in the §3 handoff + milestone 1).
+   - **Latency (Part B) lives on as #316** (pre-compute periodization grid; Andy's call).
+   - **Coherence (§14) still owed** — gated on **#333** (no phase labels = can't read
+     whether weeks blend within a phase).
+   - **Deferred watch-items (Andy's call, never fired):** (a) cap-drift guard —
+     `_INVOCATION_BUDGET_S = max(300−330,30)=30s` floors silently (reserve 330 vs live
+     cap 300s); (b) per-block budget tightness — pv=45 seam blocks were `cap_hit` /
+     one hit the 120s budget (non-fatal, resumes; watch vs #316).
 2. **L3B-P-2 Slice 2 — `previous_attempts` JSONB column (#211 / #228).**
    `python init_db.py` on Neon (idempotent, nullable-default, no backfill) +
    redeploy. Unlocks the `3B.dnf_recurrence_risk` HITL flag (Slice 1 scalars
