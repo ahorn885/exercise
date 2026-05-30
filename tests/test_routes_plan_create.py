@@ -342,7 +342,11 @@ class TestAdvancePlanGeneration:
         assert out['error']  # mapped orchestration message
         assert any("generation_status = 'failed'" in c[0] for c in conn.calls)
 
-    def test_generating_layer4_error_marks_failed(self, monkeypatch):
+    def test_generating_block_fumble_resumes_not_fails(self, monkeypatch):
+        # #324 — a single unparseable block (schema_violation) must NOT discard
+        # the near-complete plan (prod pv=39 lost 7 good weeks this way). Keep it
+        # 'generating' so the next pass retries that block; the already-cached
+        # blocks replay as HITs and the stall backstop bounds a persistent fail.
         conn = _FakeConn()
         _queue_plan_version(conn, status='generating')
         monkeypatch.setattr(plan_create, '_build_layer4_cache', lambda: 'CACHE')
@@ -352,16 +356,46 @@ class TestAdvancePlanGeneration:
                 Layer4OutputError('schema_violation')),
         )
         out = _advance_plan_generation(conn, 3, 7)
-        assert out['status'] == 'failed'
-        assert 'schema_violation' in out['error']
-        assert 'synthesis failed' in out['error'].lower()
+        assert out['status'] == 'generating'
+        assert out.get('note') == 'block_retry_resume'
+        # The plan is NOT marked failed — progress is preserved.
+        assert not any("generation_status = 'failed'" in c[0] for c in conn.calls)
 
-    def test_generating_layer4_error_logs_detail(self, monkeypatch, capsys):
-        # The user-facing message only carries exc.code; the failing
-        # field/invariant lives in exc.detail (e.g. the pydantic
-        # ValidationError for a mis-emitted session). Log it so a Layer 4
-        # schema_violation is diagnosable from the runtime log — the detail
-        # must NOT be swallowed the way it was before.
+    def test_generating_synthesis_budget_exhausted_resumes(self, monkeypatch):
+        # The other block-fumble code (no parseable attempt within the per-block
+        # budget) is also retried, not fatal.
+        conn = _FakeConn()
+        _queue_plan_version(conn, status='generating')
+        monkeypatch.setattr(plan_create, '_build_layer4_cache', lambda: 'CACHE')
+        monkeypatch.setattr(
+            plan_create, 'orchestrate_plan_create',
+            lambda *a, **k: (_ for _ in ()).throw(
+                Layer4OutputError('synthesis_budget_exhausted')),
+        )
+        out = _advance_plan_generation(conn, 3, 7)
+        assert out['status'] == 'generating'
+        assert not any("generation_status = 'failed'" in c[0] for c in conn.calls)
+
+    def test_generating_non_retryable_layer4_code_still_fails(self, monkeypatch):
+        # A genuine contract fault (not a block fumble) still fails fast — only
+        # the block-fumble codes in _RETRYABLE_BLOCK_CODES resume.
+        conn = _FakeConn()
+        _queue_plan_version(conn, status='generating')
+        monkeypatch.setattr(plan_create, '_build_layer4_cache', lambda: 'CACHE')
+        monkeypatch.setattr(
+            plan_create, 'orchestrate_plan_create',
+            lambda *a, **k: (_ for _ in ()).throw(
+                Layer4OutputError('contract_violation')),
+        )
+        out = _advance_plan_generation(conn, 3, 7)
+        assert out['status'] == 'failed'
+        assert 'contract_violation' in out['error']
+        assert any("generation_status = 'failed'" in c[0] for c in conn.calls)
+
+    def test_generating_block_fumble_logs_detail(self, monkeypatch, capsys):
+        # The failing field (exc.detail) is still logged for diagnosis even
+        # though the block now resumes instead of failing the plan — the detail
+        # must NOT be swallowed.
         conn = _FakeConn()
         _queue_plan_version(conn, status='generating')
         monkeypatch.setattr(plan_create, '_build_layer4_cache', lambda: 'CACHE')
@@ -374,10 +408,7 @@ class TestAdvancePlanGeneration:
                     "CardioBlock.rest_intensity_zone required for interval_set")),
         )
         out = _advance_plan_generation(conn, 3, 7)
-        assert out['status'] == 'failed'
-        # detail is NOT leaked to the athlete-facing message ...
-        assert 'rest_intensity_zone' not in out['error']
-        # ... but IS captured in the runtime log for diagnosis.
+        assert out['status'] == 'generating'
         logged = capsys.readouterr().out
         assert 'Layer4OutputError' in logged
         assert 'schema_violation' in logged
