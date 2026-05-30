@@ -1076,6 +1076,70 @@ class TestSeamReview:
         assert first_seam.reviewer_verdict == "approved"
         assert first_seam.triggered_resynthesis is True
 
+    def test_seam_resynthesis_runs_week_by_week_not_whole_phase(self):
+        """D-77 Slice 3: a seam-driven re-synthesis is decomposed into week-blocks
+        (each sized to the block-mode session ceiling, ~21.6k) instead of one
+        whole-phase call at the raw 4000 default that truncated → schema_violation.
+        Assert EVERY synthesizer call in the run — primary AND seam re-synth —
+        used the block-mode ceiling, i.e. none fell back to the 4000 whole-phase
+        budget the seam path used to take."""
+        from layer4 import per_phase
+
+        block_ceiling = (
+            per_phase._MAX_SESSIONS_PER_WEEK
+            * per_phase._BLOCK_OUTPUT_TOKENS_PER_SESSION
+            + per_phase._BLOCK_OUTPUT_TOKENS_OVERHEAD
+        )
+        seen_max_tokens: list[int] = []
+
+        def _recording_phase_caller(
+            _sys, _user, _tool, _model, _temp, max_tokens, _thinking
+        ) -> _PhaseOut:
+            seen_max_tokens.append(max_tokens)
+            return _PhaseOut(
+                tool_args=_empty_phase_output(),
+                input_tokens=6000,
+                output_tokens=2000,
+                latency_ms=8000,
+            )
+
+        result = llm_layer4_plan_create(
+            **_call_kwargs(),
+            phase_caller=_recording_phase_caller,
+            seam_caller=_seam_stub_flagged_major_then_approved(),
+        )
+
+        # The re-synth fired...
+        assert (result.seam_reviews or [])[0].triggered_resynthesis is True
+        # ...and no call used the whole-phase 4000 default — every synthesizer
+        # call (primary blocks + the seam re-synth's blocks) was block-mode sized.
+        assert seen_max_tokens, "expected synthesizer calls"
+        assert all(mt == block_ceiling for mt in seen_max_tokens), seen_max_tokens
+        assert per_phase.DEFAULT_MAX_TOKENS not in seen_max_tokens
+
+    def test_seam_resynth_phase_idx_stays_in_disjoint_band(self):
+        """Seam-resynth cache rows must land in [500, 1000): above the primary
+        block index (< 500, far above any real plan's week count) and below the
+        seam-review base (1000), so they never alias either row class."""
+        from layer4.plan_create import (
+            _SEAM_CACHE_PHASE_IDX_BASE,
+            _SEAM_RESYNTH_BLOCK_IDX_BASE,
+            _seam_resynth_block_phase_idx,
+        )
+
+        # Realistic worst case: several seams, many weeks per phase.
+        for seam_idx in range(5):
+            for week in range(1, 21):
+                idx = _seam_resynth_block_phase_idx(seam_idx, week)
+                assert _SEAM_RESYNTH_BLOCK_IDX_BASE <= idx < _SEAM_CACHE_PHASE_IDX_BASE
+        # Distinct (seam, week) pairs never collide.
+        seen = {
+            _seam_resynth_block_phase_idx(s, w)
+            for s in range(5)
+            for w in range(1, 21)
+        }
+        assert len(seen) == 5 * 20
+
 
 # ─── Layer4Payload composition invariants ────────────────────────────────────
 

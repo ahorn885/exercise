@@ -1022,6 +1022,65 @@ class TestPerPhaseHelpers:
         )
         assert block != phase
 
+    def test_seam_resynth_block_key_distinct_from_primary_block(self):
+        """D-77 Slice 3: a seam-driven re-synth block for (phase, week) must NOT
+        share a key with the ORIGINAL primary block at the same (phase, week) —
+        else the re-synth would false-HIT the un-fixed cached sessions. The two
+        rows are also stored under disjoint phase_idx, but the key itself must
+        differ so a seam-constraint change invalidates the re-synth content."""
+        from layer4.hashing import compute_seam_resynth_block_cache_key
+
+        primary = compute_block_cache_key(
+            call_cache_key="c", phase_name="Build", phase_index=1,
+            week_in_phase=1, prev_accepted_output_hash=None,
+        )
+        resynth = compute_seam_resynth_block_cache_key(
+            call_cache_key="c", phase_name="Build", phase_index=1,
+            week_in_phase=1, prev_accepted_output_hash=None,
+            seam_index=0, seam_issues=["tighten the taper"],
+            seam_direction="re_prompt_next",
+        )
+        assert primary != resynth
+
+    def test_seam_resynth_block_key_differs_by_seam_and_issues(self):
+        """Two seams targeting the same phase (re_prompt_next from seam i,
+        re_prompt_prior from seam i+1), and the same seam with different issue
+        text, must key distinctly so neither false-HITs the other."""
+        from layer4.hashing import compute_seam_resynth_block_cache_key
+
+        base = dict(
+            call_cache_key="c", phase_name="Build", phase_index=1,
+            week_in_phase=1, prev_accepted_output_hash=None,
+            seam_issues=["a"], seam_direction="re_prompt_next",
+        )
+        k_seam0 = compute_seam_resynth_block_cache_key(seam_index=0, **base)
+        k_seam1 = compute_seam_resynth_block_cache_key(seam_index=1, **base)
+        assert k_seam0 != k_seam1
+
+        diff_issues = {**base, "seam_issues": ["b"]}
+        k_issue_b = compute_seam_resynth_block_cache_key(seam_index=0, **diff_issues)
+        assert k_seam0 != k_issue_b
+
+    def test_seam_resynth_block_key_deterministic_and_chains(self):
+        from layer4.hashing import compute_seam_resynth_block_cache_key
+
+        kw = dict(
+            call_cache_key="c", phase_name="Build", phase_index=1,
+            week_in_phase=2, seam_index=0, seam_issues=["a"],
+            seam_direction="re_prompt_next",
+        )
+        assert compute_seam_resynth_block_cache_key(
+            prev_accepted_output_hash="aaa", **kw
+        ) == compute_seam_resynth_block_cache_key(
+            prev_accepted_output_hash="aaa", **kw
+        )
+        # The re-synth's own blocks chain week-to-week.
+        assert compute_seam_resynth_block_cache_key(
+            prev_accepted_output_hash="aaa", **kw
+        ) != compute_seam_resynth_block_cache_key(
+            prev_accepted_output_hash="bbb", **kw
+        )
+
     def test_compute_accepted_output_hash_deterministic(self):
         session = _minimal_session()
         from layer4 import SynthesisMetadata

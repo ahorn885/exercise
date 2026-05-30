@@ -43,6 +43,7 @@ from layer4.errors import Layer4InputError, Layer4OutputError
 from layer4.hashing import (
     compute_accepted_output_hash,
     compute_block_cache_key,
+    compute_seam_resynth_block_cache_key,
     compute_seam_review_cache_key,
 )
 from layer4.payload import (
@@ -406,10 +407,39 @@ def _aggregate_block_results(
     return result, meta
 
 
-# Per-phase Pattern A rows use phase_idx 0..N-1; iter-1 seam-review cache rows
-# (§9.2) reuse the same entry_point storage with a disjoint phase_idx namespace
-# (base + seam_idx) so they never collide with a real phase row.
+# Cache `phase_idx` namespaces (all share the `plan_create`/`plan_refresh`
+# entry_point storage; disjoint ranges keep the row classes from colliding):
+#   [0, 500)     — primary per-week-block synthesis (the global block index `u`,
+#                  0..W-1; W = total synthesized weeks, far below 500).
+#   [500, 1000)  — D-77 Slice 3 SEAM-DRIVEN re-synthesis blocks, sub-keyed by
+#                  the triggering seam (base + seam_idx*stride + week-1). Kept
+#                  BELOW the seam-review base (i.e. still < _SEAM_CACHE_PHASE_IDX_BASE)
+#                  ON PURPOSE: the stall-backstop progress counter
+#                  (`routes._count_cached_blocks` / `_generation_stalled`) counts
+#                  rows in [0, _SEAM_CACHE_PHASE_IDX_BASE), so a long seam
+#                  re-synth registers as progress and resumes instead of stalling
+#                  — no route SQL change needed.
+#   [1000, ...)  — iter-1 seam-review cache rows (base + seam_idx).
+_SEAM_RESYNTH_BLOCK_IDX_BASE = 500
+_SEAM_RESYNTH_BLOCK_IDX_STRIDE = 100
 _SEAM_CACHE_PHASE_IDX_BASE = 1000
+
+
+def _seam_resynth_block_phase_idx(seam_idx: int, week_in_phase: int) -> int:
+    """Disjoint per-(seam, week) cache `phase_idx` for a seam-driven re-synth
+    block, in [500, 1000). `week_in_phase` is 1-based. Asserts the result stays
+    inside the seam-resynth band so it can never alias a primary block (< 500)
+    or a seam-review row (>= 1000) under realistic phase counts/lengths."""
+    idx = (
+        _SEAM_RESYNTH_BLOCK_IDX_BASE
+        + seam_idx * _SEAM_RESYNTH_BLOCK_IDX_STRIDE
+        + (week_in_phase - 1)
+    )
+    assert _SEAM_RESYNTH_BLOCK_IDX_BASE <= idx < _SEAM_CACHE_PHASE_IDX_BASE, (
+        f"seam-resynth phase_idx {idx} (seam={seam_idx}, week={week_in_phase}) "
+        "escaped the [500, 1000) band"
+    )
+    return idx
 
 
 def _serialize_seam_call_result(result: SeamReviewCallResult) -> dict[str, Any]:
@@ -1037,49 +1067,129 @@ def _run_pattern_a_engine(
             elif prev_idx in carryover_sessions_by_phase_index:
                 target_prior_phase_sessions = carryover_sessions_by_phase_index[prev_idx]
 
-        re_result = synthesize_phase(
-            user_id=user_id,
-            phase_spec=target_phase,
-            phase_structure=phase_structure,
-            phase_index_in_plan=target_idx,
-            layer1_payload=layer1_payload,
-            layer2a_payload=layer2a_payload,
-            layer2b_payload=layer2b_payload,
-            layer2c_payloads=layer2c_payloads,
-            layer2d_payload=layer2d_payload,
-            layer2e_payload=layer2e_payload,
-            layer3a_payload=layer3a_payload,
-            layer3b_payload=layer3b_payload,
-            race_event_payload=race_event_payload,
-            # Phase-level seam re-synth stays whole-phase in this arc (no
-            # week_range) — the week-seam stitcher (D-77 Slice 3) generalizes
-            # this to week-blocks. The prior phase's full sessions are the
-            # whole-phase continuity context.
-            prior_block_sessions=target_prior_phase_sessions,
-            plan_version_id=plan_version_id,
-            etl_version_set=etl_version_set,
-            mode=mode,
-            model=model_synthesizer,
-            temperature=temperature,
-            max_tokens=max_tokens_per_phase,
-            extended_thinking_budget=extended_thinking_budget,
-            capped_retries=capped_retries_per_phase,
-            seam_issues=call_1.seam_issues,
-            seam_direction=direction,
-            retries_already_used=retries_used_per_phase[target_idx] + 1,
-            llm_caller=phase_caller,
-            session_id_prefix=f"{session_id_prefix}-p{target_idx}-seamretry",
-            training_substitution_payload=training_substitution_payload,
+        # D-77 Slice 3: re-synthesize the targeted phase WEEK-BY-WEEK, mirroring
+        # the primary per-block loop — each block gets `week_range` (so its output
+        # budget is sized to one week's session ceiling, ~21.6k, not the raw 4000
+        # whole-phase default that truncated the seam re-synth) plus the seam
+        # constraints. The blocks are cache-wired (disjoint seam-resynth phase_idx
+        # namespace + a seam-aware key) and budget-gated exactly like the primary
+        # loop, so a multi-week phase resumes across passes instead of blowing the
+        # function duration cap on one oversized call. Threading seeds from the
+        # prior phase's sessions, then rolls per re-synth block.
+        retries_already_used_seam = retries_used_per_phase[target_idx] + 1
+        seam_block_results: list[tuple[PhaseSynthesisResult, SynthesisMetadata]] = []
+        resynth_prior_sessions = target_prior_phase_sessions
+        resynth_prev_hash: str | None = None
+        rs_week = 1
+        while rs_week <= target_phase.weeks:
+            rs_week_end = min(rs_week + _BLOCK_WEEKS - 1, target_phase.weeks)
+            rs_week_range = (rs_week, rs_week_end)
+
+            def _synth_seam_block(
+                _phase: PhaseSpec = target_phase,
+                _idx: int = target_idx,
+                _prior: list[PlanSession] = resynth_prior_sessions,
+                _wr: tuple[int, int] = rs_week_range,
+                _issues: list[str] = call_1.seam_issues,
+                _dir: str = direction,
+                _retries_used: int = retries_already_used_seam,
+            ) -> PhaseSynthesisResult:
+                return synthesize_phase(
+                    user_id=user_id,
+                    phase_spec=_phase,
+                    phase_structure=phase_structure,
+                    phase_index_in_plan=_idx,
+                    layer1_payload=layer1_payload,
+                    layer2a_payload=layer2a_payload,
+                    layer2b_payload=layer2b_payload,
+                    layer2c_payloads=layer2c_payloads,
+                    layer2d_payload=layer2d_payload,
+                    layer2e_payload=layer2e_payload,
+                    layer3a_payload=layer3a_payload,
+                    layer3b_payload=layer3b_payload,
+                    race_event_payload=race_event_payload,
+                    prior_block_sessions=_prior,
+                    plan_version_id=plan_version_id,
+                    etl_version_set=etl_version_set,
+                    mode=mode,
+                    model=model_synthesizer,
+                    temperature=temperature,
+                    max_tokens=max_tokens_per_phase,
+                    extended_thinking_budget=extended_thinking_budget,
+                    capped_retries=capped_retries_per_phase,
+                    seam_issues=_issues,
+                    seam_direction=_dir,  # type: ignore[arg-type]
+                    retries_already_used=_retries_used,
+                    llm_caller=phase_caller,
+                    session_id_prefix=(
+                        f"{session_id_prefix}-p{_idx}-seamretry"
+                        f"-s{seam_idx}-w{_wr[0]}"
+                    ),
+                    training_substitution_payload=training_substitution_payload,
+                    week_range=_wr,
+                )
+
+            if cache is not None and call_cache_key is not None:
+                rs_block_key = compute_seam_resynth_block_cache_key(
+                    call_cache_key=call_cache_key,
+                    phase_name=target_phase.phase_name,
+                    phase_index=target_idx,
+                    week_in_phase=rs_week,
+                    prev_accepted_output_hash=resynth_prev_hash,
+                    seam_index=seam_idx,
+                    seam_issues=call_1.seam_issues,
+                    seam_direction=direction,
+                )
+
+                def _serialize_seam_block(
+                    _synth=_synth_seam_block,
+                ) -> dict[str, Any]:
+                    # Same budget gate as the primary loop: never gates the first
+                    # synthesis of a pass (so each pass caches >=1 new block), then
+                    # stops before starting one that can't finish in the function
+                    # budget — the seam-resynth blocks cached so far persist and the
+                    # next pass resumes from them.
+                    if synth_count[0] >= 1 and generation_deadline_passed():
+                        raise Layer4GenerationIncomplete(blocks_cached=u)
+                    r = _synth()
+                    synth_count[0] += 1
+                    m = build_synthesis_metadata_from_result(
+                        r, model=model_synthesizer, temperature=temperature
+                    )
+                    return _serialize_phase_result_with_meta(r, m)
+
+                rs_cached_dict = cache.get_phase_or_synthesize(
+                    phase_key=rs_block_key,
+                    phase_idx=_seam_resynth_block_phase_idx(seam_idx, rs_week),
+                    phase_name=f"{target_phase.phase_name}:seam{seam_idx}:w{rs_week}",
+                    user_id=user_id,
+                    entry_point=cache_entry_point,
+                    synthesizer=_serialize_seam_block,
+                )
+                rs_block_result, rs_block_meta = _hydrate_phase_result_with_meta(
+                    rs_cached_dict
+                )
+            else:
+                rs_block_result = _synth_seam_block()
+                rs_block_meta = build_synthesis_metadata_from_result(
+                    rs_block_result, model=model_synthesizer, temperature=temperature
+                )
+
+            seam_block_results.append((rs_block_result, rs_block_meta))
+            resynth_prev_hash = compute_accepted_output_hash(
+                rs_block_result.sessions, rs_block_meta
+            )
+            resynth_prior_sessions = rs_block_result.sessions
+            rs_week = rs_week_end + 1
+
+        re_result, re_meta = _aggregate_block_results(
+            target_phase.phase_name, seam_block_results
         )
         results_by_index[target_idx] = re_result
-        # Refresh the per-phase metadata so the final PhaseStructure carries
-        # the re-synthesis's token/latency/retries accounting rather than the
-        # initial synthesis's. Seam-driven re-synth is NOT cache-wired per
-        # §9.2 — the spec gap on chaining new context-with-seam-issues into
-        # phase_key is tracked as a Step 6 carry-forward.
-        synthesis_metadata_by_index[target_idx] = build_synthesis_metadata_from_result(
-            re_result, model=model_synthesizer, temperature=temperature
-        )
+        # The aggregated meta carries the re-synthesis's token/latency/retries
+        # accounting so the final PhaseStructure row reflects the re-synth rather
+        # than the initial synthesis.
+        synthesis_metadata_by_index[target_idx] = re_meta
         retries_used_per_phase[target_idx] = re_result.retries_used
         validator_results.extend(re_result.validator_results)
         total_input_tokens += re_result.input_tokens
