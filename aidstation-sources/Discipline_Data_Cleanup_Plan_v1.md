@@ -161,9 +161,10 @@ curates what the ETL pulls from it, exactly as the discipline canon does.
 
 **Consistency:** D-029 Rifle Shooting (removed in A) is exclusive to these two sports, and
 D-025 Fencing / D-026 Laser Run are pentathlon-only — so removing the sports and these
-disciplines aligns with **no orphans left behind**. D-027 OCR and D-028 XC Skiing are kept
-and are used by other sports (OCR standalone; XC Skiing shared with Skimo/Nordic), so they
-survive cleanly.
+disciplines aligns with **no orphans left behind**. D-027 OCR and D-028 XC Skiing are kept;
+XC Skiing is shared with Skimo/Nordic, and the OCR exercise-DB alias was **re-homed to
+Off-Road / Adventure Multisport** (Andy, 2026-05-30) so OCR-tagged exercises stay mapped to a
+surviving sport. So they survive cleanly.
 
 **App-layer hazard (low real risk, must note):** an athlete whose `primary_sport` or
 `race_events.framework_sport` equals a removed sport hits `framework_sport_missing`

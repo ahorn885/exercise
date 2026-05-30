@@ -113,10 +113,10 @@ SPORT_NAME_ALIASES: dict[str, list[str] | str] = {
                             "Canoe / Kayak Marathon (ICF Competition)",
                             "Canoe / Kayak Marathon (Ultra-Distance)"],
 
-    # Obstacle Course Racing: was Modern Pentathlon only. Pentathlon removed as a
-    # sport; the OCR *discipline* (D-027) is kept but is now sport-orphaned. Alias
-    # dropped pending a decision on which surviving sport (AR / Multisport?) the
-    # OCR exercise tag should map to — see Discipline_Data_Cleanup_Plan open items.
+    # Obstacle Course Racing: re-homed to Off-Road / Adventure Multisport after
+    # Modern Pentathlon was removed as a sport (Andy, 2026-05-30). OCR (D-027)
+    # is kept; this keeps OCR-tagged exercises mapped to a surviving sport.
+    "Obstacle Course Racing": ["Off-Road / Adventure Multisport (Non-Nav)"],
 
     # SUP: AR + Multisport
     "SUP":                 ["Adventure Racing",
