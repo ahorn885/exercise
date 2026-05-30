@@ -392,6 +392,34 @@ def _rule_volume_band(payload: Layer4Payload, ctx: ValidatorContext) -> list[Rul
         else:
             continue
         direction = "below" if actual < low else "above"
+        # D-77 interim (pending the per-week periodization grid): the band is a
+        # flat per-PHASE constant (`phase_volume_bands_hours` has no intra-phase
+        # taper), but the synthesizer is told to ramp + deload + taper volume
+        # within a phase. So a *correctly* reduced Peak/Taper week, or a flagged
+        # `recovery_week` deload in any phase, reads `below` the flat band and a
+        # `blocker` forces wasteful best-effort retries (prod pv=38: Peak:w1 spent
+        # ~8.5min retrying volume_band_below that the taper made unavoidable).
+        # Demote `below` to a warning in those reduced-volume contexts — it still
+        # surfaces for review, just doesn't hard-block. `above` stays a blocker
+        # (genuine over-prescription in a taper is still worth catching). The
+        # periodization grid will restore real per-week enforcement.
+        #
+        # The Peak/Taper *phase* check is the live path (it covers the pv=38
+        # incident). The `recovery_week` check is forward-looking: that flag is a
+        # spec-auto deload marker (`per_phase` §8.1/§8.5) that the orchestrator is
+        # documented to stamp onto `coaching_flags` but does not yet write — so
+        # for now the clause only fires once that stamping lands. Reading it from
+        # `coaching_flags` (the real field; there is no `flags` attribute) means
+        # it lights up automatically when stamping ships, with no validator edit.
+        is_recovery_week = any(
+            "recovery_week" in s.coaching_flags for s in sessions
+        )
+        if (
+            severity == "blocker"
+            and direction == "below"
+            and (phase in ("Peak", "Taper") or is_recovery_week)
+        ):
+            severity = "warning"
         out.append(
             RuleFailure(
                 rule_name=f"volume_band_{direction}_week_{wk}_{disc}_{phase.lower()}",
