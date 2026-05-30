@@ -360,6 +360,46 @@ def compute_seam_review_cache_key(
     return _sha256_hex("||".join(components))
 
 
+def compute_seam_resynth_block_cache_key(
+    *,
+    call_cache_key: str,
+    phase_name: str,
+    phase_index: int,
+    week_in_phase: int,
+    prev_accepted_output_hash: str | None,
+    seam_index: int,
+    seam_issues: list[str],
+    seam_direction: str | None,
+) -> str:
+    """Per §9.2 (D-77 Slice 3) — chained per-week-block cache key for a
+    SEAM-DRIVEN re-synthesis block.
+
+    Same chained shape as `compute_block_cache_key` (so the re-synth's own
+    blocks roll a week-granular chain), but additionally folds in the seam
+    that triggered the re-synthesis (`seam_index`) and its constraint payload
+    (`seam_issues` + `seam_direction`). This closes the §9.2 gap the prior
+    whole-phase seam re-synth carried: a seam-fix block for (phase, week) must
+    NOT collide with — or false-HIT — the ORIGINAL primary block at the same
+    (phase, week), and two different seams targeting the same phase (e.g.
+    re_prompt_next from seam i and re_prompt_prior from seam i+1) must key
+    distinctly. The block is also stored under a disjoint `phase_idx`
+    namespace; this key makes the content hash itself unambiguous so a change
+    in the seam constraints invalidates the cached re-synth.
+    """
+    components = [
+        call_cache_key,
+        "seam_resynth",
+        phase_name,
+        str(phase_index),
+        str(week_in_phase),
+        prev_accepted_output_hash or "",
+        str(seam_index),
+        seam_direction or "",
+        _sha256_hex("␟".join(seam_issues)),
+    ]
+    return _sha256_hex("||".join(components))
+
+
 def race_week_brief_key(
     *,
     user_id: int,
