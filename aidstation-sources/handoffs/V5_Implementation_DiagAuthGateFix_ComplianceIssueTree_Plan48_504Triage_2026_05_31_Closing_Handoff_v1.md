@@ -123,3 +123,66 @@ Turned `docs/redesign/00_OVERVIEW.md` (8 controls) + `Privacy_Program_Backlog_v1
 **Spec / bookkeeping:** `aidstation-sources/CLAUDE.md` (redesign-work pointer), `aidstation-sources/CURRENT_STATE.md` (pointer), `aidstation-sources/CARRY_FORWARD.md` (owed-deploy #4 update + plan-#48 504 note), this handoff.
 
 **GitHub:** PR #352 (this work); compliance issue tree #353–#395; plan-#48 504 evidence to be added to #350/#316.
+
+---
+
+# ADDENDUM — plan-gen live watch (#50 credit-exhaustion + #52 re-run) + the "300s cap" investigation (2026-05-31, evening)
+
+> Appended to the live handoff (not a new closing doc) at Andy's request so the next agent keeps full context. This is a **watch/diagnose session, no code shipped.** It supersedes parts of the §2/§3 #48 triage narrative (see "Correction" below). Branch in use: `claude/beautiful-fermat-EmrCL`.
+
+## A1. Session-start reconciliation (Rule #9) — drift found
+
+`verify-handoff.sh` is green, but **four commits landed on `main`/this branch AFTER this handoff was written, and `CURRENT_STATE.md` was never bumped for them.** Next session should update `CURRENT_STATE.md` to point past #352. The four:
+
+- **#396 — plan-gen advance-lock leak fix + the 800s correction (the important one).**
+  - Fixes a leaked **session-scoped Postgres advisory lock** that could silently starve generation: once held, every later advance no-op'd with **no log line** until the 900s stall backstop reaped the plan (diagnosed on a **plan #49 stall, 2026-05-31**). Now releases in a `finally` around the locked pass (extracted to `_advance_plan_generation_locked`) and **logs the previously-silent lock-contention no-op**. That log line is the truncated `_advance_plan_generation: a…` you now see on every backed-off cron — it is the **benign `advance_in_progress_elsewhere` no-op**, NOT an error.
+  - **Corrected the Vercel function Max Duration to 800s** (prior docs/CLAUDE.md said 300s). This is now reflected in `CLAUDE.md`'s env quick-reference.
+- **#397 / #398 / #399 — redesign Phase 0** (`docs/redesign/*`, `static/tokens.css`, `static/style.css` polish layer, `templates/_shell/icons.svg` sprite, `base.html` links). All `.app`-scoped and **inert** — changes no live screen. Not relevant to plan-gen.
+
+## A2. THE "300s" INVESTIGATION (Andy's direct question: "are there any places where WE limited the function duration to 300?")
+
+**Answer: exactly one, and it is INERT in prod.**
+
+`routes/plan_create.py:152-154`:
+```
+_FUNCTION_CAP_S       = float(os.environ.get("PLAN_GEN_FUNCTION_CAP_S", "300"))   # default 300
+_INVOCATION_RESERVE_S = float(os.environ.get("PLAN_GEN_INVOCATION_RESERVE_S", "330"))
+_INVOCATION_BUDGET_S  = max(_FUNCTION_CAP_S - _INVOCATION_RESERVE_S, 30.0)
+```
+- **Andy confirmed BOTH** the Vercel dashboard Max Duration **AND** the `PLAN_GEN_FUNCTION_CAP_S` **env var are 800.** So `_FUNCTION_CAP_S = 800` → `_INVOCATION_BUDGET_S = max(800−330, 30) = **470s**`. The `"300"` literal is only a fallback default and **never applies in prod**.
+- All other `300`s in the grep are unrelated (schema `maxLength` / `duration_min` maxima). `_CRON_WALL_CLOCK_BUDGET_S = 240` is a separate cron-batch guard. So `_FUNCTION_CAP_S`'s default is THE only "300 = duration" in the code.
+- **The deadline mechanism is COOPERATIVE** (`layer4/generation_budget.py`): a `ContextVar` deadline checked by `generation_deadline_passed()` only **between Layer-4 week-blocks**. It **cannot interrupt an in-flight LLM call**, and it is **never consulted during the cone** (3A/3B/2x run before the Pattern-A block loop). `Layer4GenerationIncomplete` is a `BaseException` (control-flow, not error) so broad `except Exception` can't swallow it; only the route's explicit handler keeps the row `generating`.
+- **Latent footgun (the CARRY_FORWARD "cap-drift" watch-item), still unfixed:** if `PLAN_GEN_FUNCTION_CAP_S` is ever dropped from the env (new environment, Vercel migration), the code falls back to 300 → reserve 330 > cap 300 → budget **floors to 30s**, silently crippling Layer-4 throughput (≈no blocks per pass) with no error. **Optional 2-line hardening (Andy's call, NOT yet done):** change the default `"300"`→`"800"` at `routes/plan_create.py:152` (+ its comment at :138-143) so the env var isn't load-bearing. Andy was asked, hasn't decided. Low risk; do only with his ok.
+
+## A3. CORRECTION to the §2/§3 #48 (and #50) triage — it was NOT a 300s wall-clock cap
+
+The original #48 triage (this handoff §2 Thread 3 / §7 Decision 3) read the ~300s 504 as "a single LLM call exceeding the function cap, hard-killed before any except." **With the cap confirmed at 800s, that mechanism is wrong.** A ~300s death is an **earlier limit**: the Vercel **gateway 504** (client-facing, ~300s) and/or SDK retry/timeout behavior — the function itself keeps running past it to the 800s wall (or the 470s invocation budget). The note in CLAUDE.md's env quick-reference already flags this; #350/#316 should be re-validated against real timings, not the 300s assumption.
+
+## A4. PLAN #50 — FAILED, root cause = OUT OF ANTHROPIC CREDITS (not an outage, not our code)
+
+Watched #50 live (`created_via plan_create`, scope `2026-05-31 → 2026-07-17` ✅ reaches race day, pattern A). It **stalled in the cone at Layer 3A** for ~15 min (every pass re-entered `llm_layer3a_athlete_state`, 0 blocks, 0 units), then **failed** with the user-facing: *"Plan synthesis failed (anthropic_api_error). Adjust your inputs and try again."*
+
+- **Root cause (Andy confirmed): the Anthropic account was OUT OF CREDITS.** A credit-exhausted key returns an API error the SDK surfaces as `anthropic_api_error`; the cold 3A call retried against it for ~300s, then raised → caught → `_mark_plan_failed` persisted the error → plan terminal. **Andy added credits.**
+- During the incident I also hit **three Cloudflare 502s directly from `api.anthropic.com`** (the `web_fetch_vercel_url` MCP transport routes through Anthropic infra) — same exhausted-account symptom on my read path. I initially mis-read this as a transient Anthropic *outage*; it was billing.
+- **System behaved correctly under the upstream failure** — it persisted a clean `generation_error` (better than the #48 silent hard-kill). #50 is terminal; it needed a fresh plan version (→ #52).
+- **Rule #14 note that held up well:** the runtime-log MCP **truncates** the message column (`…`) and **groups by request showing only the first line**, so I could read *which* stage each pass was in but never the latency/token tail of `llm_layer3a_athlete_state:`. That tail (ms / in-out / HIT-MISS) is still **owed-from-Andy** if we ever need to distinguish slow-vs-hang-vs-retry at 3A. The `synthesize_phase` full-text negative is only reliable when there's NO "query timed out" warning AND you account for request-grouping by start-time windowing (a request that started before `since` won't return even if it logged the term later).
+
+## A5. PLAN #52 — IN PROGRESS at handoff write-time (credits added; this is the real re-run to finish watching)
+
+- **22:32:25** `POST /plans/v2/52/generate` started (scope `2026-05-31 → 2026-07-17` ✅, pattern A). (Andy also created a #51 around 22:29 — NOT being watched; ignore unless he says otherwise.)
+- **Cone completed by ~22:36** — the `synthesize_phase` full-text query matched the 22:32:25 POST request, i.e. it reached **Layer 4 block synthesis** (the exact milestone #50 never reached). This proves credits fixed it.
+- **BUT at 22:36:32 and 22:39:33 the diag still showed `blocks_snapshotted: 0`, `generation_units_cached: 0`** (no error, no traceback), and **every cron 22:34:00→22:40:00 logged the `a…` contention no-op** — i.e. the **single 22:32:25 POST invocation held the advisory lock for the whole ~7.5 min.**
+- **KEY FINDING — that 0 is almost certainly STALE, not a stall.** `routes/plan_create.py:810-813`: `generation_units_cached` (UPSERT `= … + EXCLUDED…`) and the `blocks_snapshotted` progress snapshot are **persisted per-pass on `db.commit()`, NOT per-block.** While the long first invocation is still in flight (never committed), the diag columns read 0 even though per-block `layer4_cache` rows may be committing independently. The **per-invocation budget is 470s → the POST should yield `Layer4GenerationIncomplete` ~22:40:15**, release the lock, and the **next cron (~22:41) acquires the now-warm-cone lock and commits** — at which point the diag counters should jump.
+- **THE NEXT READ (≈22:42+, after the first pass commits) IS THE REAL TELL:**
+  - **Healthy:** `blocks_snapshotted` / `generation_units_cached` jump to N>0 and climb each subsequent cron pass (warm cone = fast 3A/3B HITs, full 470s budget spent on blocks), `generation_status` eventually → `ready`. `total_sessions` stays 0 until the final `ready` flip (sessions persist on completion, per pv=46 behavior — not a bug).
+  - **Genuine stall (escalate):** counters still 0 after a pass has demonstrably committed (a cron that did NOT hit `a…` contention) → then a block truly isn't caching within the budget; that's #316/#350 latency territory (NOT credits, NOT the cone). Pull the per-block `synthesize_phase: <phase>:w<n> …` lines (latency/`accepted`) and, if truncated, have Andy paste them (Rule #14).
+
+## A6. EXACTLY WHERE TO PICK UP (next agent, do this first)
+
+1. **Re-read plan #52 diag immediately:**
+   `GET https://aidstation-pro.vercel.app/admin/plan/52/diag?token=0dKHoR2Ub5laemc-_Gmu7nHjErZzxyIevy8plBUAyWc`
+   (via the Vercel `web_fetch_vercel_url` MCP — container egress can't reach prod directly). Token is the live DIAG_TOKEN from §6.1.1.
+2. **Interpret per A5:** counters >0 and climbing, or `ready` = success (pv=52 is the 2nd-ever PGE plan to complete; if so, do the §14 coherence read gated on #333). Counters still 0 after a non-contended cron pass = real Layer-4 caching stall → diagnose per A5 bullet.
+3. **Vercel MCP coordinates** (also in CLAUDE.md): projectId `prj_MRcYT23wGVekzavrrfWYUOTYlUPO`, teamId `team_rkZGxltBw2ykWtrIPCYy16JZ`, prod `aidstation-pro.vercel.app`, current deploy `dpl_5DZwESAyhomX7duMqjdDzCk47hm6`. `get_runtime_logs` truncates messages + groups by request (Rule #14 gotchas above).
+4. **Owed bookkeeping when watch closes:** bump `CURRENT_STATE.md` past #352 (note #396/#397-399 + this watch); decide the A2 optional hardening; if pv=52 completed, close out the latency/coherence follow-ups.
+5. **DIAG_TOKEN rotation** remains owed once the plan-gen arc closes (per §6.1.1) — still knowingly committed.
