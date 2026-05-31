@@ -25,6 +25,22 @@ How to get the app and the Layer 0 ETL running on a fresh machine.
    flask --app app run
    ```
 
+## Redesign migration — CSP report-only mode
+
+While porting screens to the redesign shell, set `CSP_REPORT_ONLY=1` in
+`.env` so Content-Security-Policy violations are **logged, not enforced**
+(the header flips to `Content-Security-Policy-Report-Only`). This lets you
+iterate without the browser blocking not-yet-cleaned inline styles/handlers.
+
+```
+CSP_REPORT_ONLY=1
+```
+
+**Flip it back off (unset, enforced) before marking any screen done** — zero
+console violations under the enforced header is part of the per-screen
+Definition of Done (`docs/redesign/CONVENTIONS.md` §G). The flag is read in
+`app.py` and already documented in `.env.example`.
+
 ## Vercel link (optional, for prod env-var pull)
 
 ```
