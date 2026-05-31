@@ -30,6 +30,11 @@
 {# Capture the rendered <title> so the mobile appbar can echo it (an include
    can't reach the parent's blocks via self). #}
 {% set page_title %}{{ self.title() }}{% endset %}
+{# Blocks must be defined in the inheritance chain (here), not in the included
+   topbar partial — block overrides don't cross an {% include %}. Capture them
+   and hand the rendered HTML to the topbar via context. #}
+{% set crumbs_html %}{% block crumbs %}{% endblock %}{% endset %}
+{% set topbar_actions_html %}{% block topbar_actions %}{% endblock %}{% endset %}
 {# Inline icon sprite (invisible host) — feeds every <use href="#i-…">. #}
 {% include '_shell/icons.svg' %}
 
