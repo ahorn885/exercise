@@ -664,3 +664,112 @@ pre code { background: none; border: 0; padding: 0; }
 .u-drop-active    { background-color: var(--bs-light); border-color: var(--bs-primary) !important; }
 .u-chat-scroll    { min-height: 160px; max-height: 380px; overflow-y: auto; padding: 1rem; }
 .u-chat-scroll-light { height: 280px; overflow-y: auto; padding: 1rem; background: #f8f9fa; }
+
+/* ── Redesign polish layer (ported from docs/redesign/polish.css) ──────
+   Focus-visible rings · reduced-motion · forced-colors · print · skip-link.
+   Scoped under `.app` so legacy screens are untouched (see static/tokens.css
+   header for the rationale). Inert until Phase 1 applies `.app` to the shell.
+   The mockup-canvas-only chrome (#theme-toggle, .dc-artboard, .focus-demo)
+   is intentionally dropped — it has no place in the real app. */
+
+/* Focus-visible — brand-accent ring on the redesign's controls */
+.app :focus-visible,
+.app .btn:focus-visible,
+.app .chip:focus-visible,
+.app .sidebar-item:focus-visible,
+.app .tabbar .tab:focus-visible,
+.app .topbar .search:focus-visible,
+.app [tabindex]:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: var(--r-sm);
+}
+/* On accent-filled surfaces, the ring needs contrast against the orange */
+.app .btn-primary:focus-visible,
+.app .stat-card.hi:focus-visible,
+.app .tabbar .tab.fab .fab-btn:focus-visible {
+  outline-color: var(--ink);
+  outline-offset: 2px;
+}
+
+/* Reduced motion — kill the plan-gen tumble + flatten transitions */
+@media (prefers-reduced-motion: reduce) {
+  .app *,
+  .app *::before,
+  .app *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+  .app .letter-tumble {
+    animation: none !important;
+    opacity: 1 !important;
+  }
+}
+
+/* Forced-colors (Windows high-contrast) — keep hairlines + accent visible */
+@media (forced-colors: active) {
+  .app .card, .app .card-flush, .app .stat-card, .app .sidebar,
+  .app .topbar, .app .appbar, .app .tabbar, .app .statusbar {
+    border-color: CanvasText;
+  }
+  .app .btn { border: 1px solid CanvasText; }
+  .app .btn-primary { forced-color-adjust: none; }
+}
+
+/* Skip link (the link itself ships in Phase 1's shell) */
+.app .skip-link {
+  position: absolute;
+  left: 12px;
+  top: -48px;
+  z-index: 50;
+  padding: 8px 14px;
+  border-radius: var(--r-sm);
+  background: var(--accent);
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  font-weight: 600;
+  text-decoration: none;
+  transition: top 0.12s ease;
+}
+.app .skip-link:focus,
+.app .skip-link:focus-visible {
+  top: 12px;
+  outline: 2px solid var(--ink);
+  outline-offset: 2px;
+}
+.app .page-body:focus { outline: none; }
+
+/* Sprite host — invisible container for the inline <symbol> icon sprite.
+   Replaces the mockup's inline style="position:absolute" (CSP-clean). */
+.sprite-host { position: absolute; width: 0; height: 0; overflow: hidden; }
+
+/* Print — a single .app screen prints ink-on-paper */
+@media print {
+  @page { margin: 14mm; }
+  .app {
+    background: #fff !important;
+    color: #111 !important;
+    overflow: visible !important;
+    height: auto !important;
+    break-inside: avoid;
+    /* Re-map tokens to the light scale for print */
+    --bg: var(--paper);
+    --bg-2: var(--paper-2);
+    --bg-3: var(--paper-3);
+    --fg: var(--ink);
+    --fg-2: var(--ink-2);
+    --fg-3: var(--ink-3);
+    --fg-4: var(--ink-4);
+    --hairline: color-mix(in oklab, var(--ink) 14%, transparent);
+    --hairline-2: color-mix(in oklab, var(--ink) 8%, transparent);
+  }
+  .app * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
+  .app .statusbar { display: none !important; }
+  .app .page-title, .app .eyebrow { break-after: avoid; }
+  .app tr, .app .card, .app .stat-card { break-inside: avoid; }
+}
