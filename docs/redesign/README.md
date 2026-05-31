@@ -11,4 +11,6 @@ Planning package for porting the AIDSTATION PRO redesign mockup into the live Fl
 | **PHASE0.md** | The first PR spec — foundation groundwork (token CSS, polish, icon sprite, CSP dev flag). Inert by design. |
 | **HANDOFF.md** | Original design rationale from the redesign engagement (reference). |
 
-**Start here:** read `CONVENTIONS.md`, then execute `PHASE0.md`. Track progress in `BUILD_TASKS.md`.
+**Start here:** read `PLAN_REVIEW_AND_CORRECTIONS.md` (code-verified corrections to the docs below — token collision, §22 backend gap, endpoint drift, two plan models), then `CONVENTIONS.md`, then execute `PHASE0.md`. Track progress in `BUILD_TASKS.md`.
+
+| **PLAN_REVIEW_AND_CORRECTIONS.md** | Pre-build evaluation. What in these docs is wrong/incomplete for the live repo, with fixes. **Read before building.** |
