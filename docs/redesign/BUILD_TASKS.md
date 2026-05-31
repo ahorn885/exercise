@@ -7,11 +7,11 @@ Work top-to-bottom **within a phase** (phases defined in `BUILD_PLAN.md` §3). C
 
 ---
 
-## Phase 0 — Foundation
-- [ ] Port `redesign/tokens.css` → `static/tokens.css`; link in shell.
-- [ ] Fold `redesign/polish.css` into `static/style.css` (focus rings, reduced-motion, print, forced-colors, light override, skip-link).
-- [ ] Build SVG icon sprite (`templates/_shell/icons.svg`) from `shell.jsx` `I` set → `<symbol id="i-home">…`.
-- [ ] Set `CSP_REPORT_ONLY=1` in dev env. Document the flag in README.
+## Phase 0 — Foundation  ✅ DONE (PR #398, merged 2026-05-31)
+- [x] Port `redesign/tokens.css` → `static/tokens.css`; link in shell. *(Ported **`.app`-scoped**, not verbatim — see Build status below. Linked in `base.html` after Bootstrap, before `style.css`.)*
+- [x] Fold `redesign/polish.css` into `static/style.css` (focus rings, reduced-motion, print, forced-colors, light override, skip-link). *(All `.app`-scoped; `board-light`→`body.theme-light`; canvas-only `#theme-toggle`/`.dc-artboard`/`.focus-demo` dropped.)*
+- [x] Build SVG icon sprite (`templates/_shell/icons.svg`) from `shell.jsx` `I` set → `<symbol id="i-home">…`. *(34 icons; included invisibly via `.sprite-host` — CSP-clean.)*
+- [x] Set `CSP_REPORT_ONLY=1` in dev env. Document the flag in README. *(Documented in `DEV_SETUP.md`; entry already in `.env.example`.)*
 
 ## Phase 1 — App shell  ◀ FIRST SLICE
 | § | Section | DM | Blueprint / route | Current template | Migration note |
@@ -86,3 +86,34 @@ The redesign covers every *user-facing* surface but a few blueprints have no red
 - Both shells render identical context (`current_user`, `active_nudges`, flashes, csrf, csp_nonce).
 - One responsive template per screen — no separate mobile files.
 - Token classes only; light mode is a free token-swap if you stay disciplined.
+
+---
+
+## Build status / handoff (live)
+
+**Last updated:** 2026-05-31
+
+### Done
+- **Pre-build review** — `PLAN_REVIEW_AND_CORRECTIONS.md` (PR #397, merged). Code-verified
+  corrections to these docs: the token-collision reality, the §22 backend gap, endpoint-name
+  drift, the two parallel plan models (`training_plans` vs `plan_versions`), and the resolved
+  `references`/`ad_hoc_workouts` coverage questions.
+- **Phase 0 — Foundation** (PR #398, merged). `static/tokens.css` + polish layer + 34-icon
+  sprite, **all namespaced under `.app`** so legacy screens render unchanged. Verified
+  statically (Jinja compiles, CSS braces balanced, zero unscoped selectors, no inline
+  `style=`/`onclick=`). The token system goes live only where a screen adds `class="app"` —
+  which begins in Phase 1.
+
+### Known blocker (infra, not code) — Vercel **Preview** deploys 500
+Preview deployments crash with `FUNCTION_INVOCATION_FAILED`: `app.py` raises at **import** when
+`SECRET_KEY` is unset, and the Preview environment scope is missing it (runtime logs confirm
+`could not import "app.py": …SECRET_KEY…`). **Fix (owner):** add `SECRET_KEY` and a
+**Neon dev/preview-branch** `DATABASE_URL` to the Vercel project's **Preview** env scope.
+Until then, PR previews can't render — verify locally or via static checks. This is unrelated
+to any redesign PR (Production is unaffected).
+
+### Next
+- **Phase 1 — App shell** (first slice): new `base.html` shell (grouped sidebar + top bar +
+  mobile 5-tab bar), legacy copied to `base_legacy.html`, dashboard rendered on the new shell
+  as the proof screen. Apply `class="app"` to the shell `<body>`. Nav map = `BUILD_PLAN.md` §5
+  (use the corrected endpoint names from `PLAN_REVIEW_AND_CORRECTIONS.md` §3a).
