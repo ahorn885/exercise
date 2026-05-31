@@ -116,6 +116,15 @@ The redesign covers every *user-facing* surface but a few blueprints have no red
   (today/tomorrow/missed plan items with complete/skip/.FIT, live weather + hourly, clothing
   recs, conditions-to-log, stats strip, recent strength/cardio, plan CTAs). Layout in token
   classes under `.app` (no inline style — CSP-clean).
+- **Phase 2 · §06 Plan · week** (`plans.view_plan(plan_id)` — legacy model per §3b). `plans/view.html`
+  migrated to the new shell as a **7-day Mon–Sun calendar grid** (one grid per plan week). Added a
+  unit-tested `_build_week_grid()` helper in `routes/plans.py` that buckets `plan_items` into 7
+  weekday cells (note: the day-cell key is `workouts`, **not** `items` — `day.items` resolves to
+  the dict method in Jinja). Per-workout deep detail (nutrition macros, description steps) moves to
+  the workout-detail screen (§07); every plan-level function is preserved here: complete/skip/.FIT,
+  bulk-edit bar, AI review, FIT-files, archive/restore/delete, plan health, daily supplements,
+  injury mods, gear recs, progress, and coach chat (both nonce'd inline scripts kept; the static
+  bulk-mode `<style>` moved into `style.css`).
 
 ### Known blocker (infra, not code) — Vercel **Preview** deploys 500
 Preview deployments crash with `FUNCTION_INVOCATION_FAILED`: `app.py` raises at **import** when
@@ -126,7 +135,7 @@ Until then, PR previews can't render — verify locally or via static checks. Th
 to any redesign PR (Production is unaffected).
 
 ### Next
-- **Phase 2 (continue):** §06 Plan · week (`plans.view_plan(plan_id)` — legacy model per §3b),
-  §07 Workout detail (`training.session_form` + `.FIT` upload), §08 Logging adaptive form
-  (one landing, type picker over the six `.new_entry` routes), §09 Wellness. Migrate one
+- **Phase 2 (continue):** §07 Workout detail (`training.session_form` + plan workout + `.FIT`
+  upload; per-workout nutrition/steps detail that §06 deferred lands here), §08 Logging adaptive
+  form (one landing, type picker over the six `.new_entry` routes), §09 Wellness. Migrate one
   template per slice, flipping each from `base_legacy.html` → `base.html` as it lands.
