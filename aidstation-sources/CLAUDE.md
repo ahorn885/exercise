@@ -165,7 +165,7 @@ These are stable across sessions — look them up here, don't re-derive them eac
 - Team: slug `andy-horns-projects` — id `team_rkZGxltBw2ykWtrIPCYy16JZ`
 - Project: name `exercise` — id `prj_MRcYT23wGVekzavrrfWYUOTYlUPO`
 - Prod domain `aidstation-pro.vercel.app` (git-main alias `exercise-git-main-andy-horns-projects.vercel.app`); the current prod deployment is whichever `target: production` row is newest in `list_deployments`.
-- **Function Max Duration = 300s** (Pro plan; active since 2026-05-26). `vercel.json` can't set it (legacy `builds` array can't coexist with the `functions` key) — it's a dashboard setting.
+- **Function Max Duration = 800s** (Pro plan max available; Andy 2026-05-31). `vercel.json` can't set it (legacy `builds` array can't coexist with the `functions` key) — it's a dashboard setting. **Correction:** prior handoffs/this file said `300s`; that was wrong. It skewed the #48 504 triage ("a single LLM call exceeding the 300s cap, hard-killed before any `except`") — with an 800s cap a ~300s 504 is **not** the function ceiling but an earlier limit (Vercel gateway, or the SDK non-streaming guard #331 pinned). Re-validate that triage against real timings.
 - **Runtime-log gotcha:** a `query timed out before all pages were fetched` warning makes a NEGATIVE log result UNRELIABLE (the search aborted mid-scan). Only clean negatives + any positive match are trustworthy. Narrow the time window or filter by `deploymentId` to get a clean query.
 
 **Container env (true every web session):**
