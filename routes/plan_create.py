@@ -185,6 +185,33 @@ def _try_acquire_advance_lock(db, plan_version_id: int) -> bool:
     return bool(locked)
 
 
+def _release_advance_lock(db, plan_version_id: int) -> None:
+    """Explicitly release the session-scoped advance lock from
+    `_try_acquire_advance_lock`, in a `finally` around the locked pass.
+
+    The lock is SESSION-scoped on purpose (it must survive the per-block
+    commits inside a pass — a `pg_advisory_xact_lock` would drop at the first
+    `db.commit()` and defeat the guard). But a session lock only auto-releases
+    when the CONNECTION closes — which never happens for a clean return whose
+    connection returns alive to a pooler (Neon transaction pooling). The lock
+    then leaks and EVERY later advance of this plan no-ops on it, silently
+    starving the plan until the holding backend is recycled (the 2026-05-31
+    plan-49 stall). Releasing here makes that deterministic. Best-effort: a
+    release fault must not mask the pass's real outcome, and the connection
+    close remains the backstop. (A hard 504 SIGKILL still skips this — that
+    hung-call window is the separately-tracked synthesis-timeout work.)"""
+    try:
+        db.execute(
+            "SELECT pg_advisory_unlock(?, ?)",
+            (_ADVANCE_LOCK_NS, plan_version_id),
+        )
+    except Exception as exc:  # noqa: BLE001 — release must not mask the outcome
+        print(
+            f"_advance_plan_generation: advance-lock release failed for "
+            f"plan_version_id={plan_version_id} (non-fatal): {exc}"
+        )
+
+
 # ─── Helpers ────────────────────────────────────────────────────────────────
 
 
@@ -401,7 +428,32 @@ def _advance_plan_generation(db, uid: int, plan_version_id: int) -> dict:
     # same frontier week. The session lock auto-releases when this request's
     # connection closes, so the next pass resumes from the cache.
     if not _try_acquire_advance_lock(db, plan_version_id):
+        # #350 observability — this no-op was SILENT: a pass blocked on the
+        # per-plan advance lock logged nothing, so a leaked/long-held lock that
+        # starves every advance was invisible (had to be inferred on the
+        # 2026-05-31 plan-49 stall). Log it so repeated contention is readable.
+        print(
+            f"_advance_plan_generation: advance lock held elsewhere for "
+            f"plan_version_id={plan_version_id} — another pass in progress; "
+            f"skipping (keep-polling)"
+        )
         return {"status": "generating", "note": "advance_in_progress_elsewhere"}
+    # Lock acquired. Run the locked body under try/finally so the SESSION
+    # advisory lock is released on EVERY exit (return or raise), not left to
+    # connection-close — which never fires when the connection returns alive to
+    # a pooler, leaking the lock and silently starving this plan's advances.
+    try:
+        return _advance_plan_generation_locked(db, uid, plan_version_id, plan_version)
+    finally:
+        _release_advance_lock(db, plan_version_id)
+
+
+def _advance_plan_generation_locked(db, uid: int, plan_version_id: int,
+                                    plan_version: dict) -> dict:
+    """The body of one advance pass, run while holding the per-plan advance
+    lock. Extracted from `_advance_plan_generation` so the caller can release
+    the lock in a `finally` regardless of which exit path (return or raise)
+    this body takes. All commits/short-circuits are unchanged."""
 
     # D-77 §6 progress-based backstop (runs BEFORE the cone so it survives the
     # prior pass being 504-killed mid-flight). Trip only when no week-block has
