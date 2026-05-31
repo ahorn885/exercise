@@ -227,6 +227,14 @@ _AUTH_EXEMPT_ENDPOINTS = {
     # route (`routes.auth.cron_authorized`).
     'nudges.scan_connect_provider_14d',
     'plan_create.cron_generate_pending',
+    # Plan-gen diag endpoint: deliberately readable WITHOUT the app login so
+    # an operator/agent debugging from outside a browser session can fetch the
+    # real fault. Auth is verified INSIDE the route (`admin._diag_authorized`:
+    # admin session OR constant-time DIAG_TOKEN match; no bypass when the token
+    # is unset). Same in-route-auth pattern as the cron/webhook endpoints above
+    # — it must be exempt from this global session wall or the wall shadows the
+    # token check and the endpoint is unreachable except by a logged-in admin.
+    'admin.plan_diag',
 }
 
 
