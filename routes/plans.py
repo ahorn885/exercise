@@ -1,6 +1,6 @@
 import json
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 from itertools import groupby
 from datetime import date as date_type
 
@@ -549,6 +549,46 @@ def delete_plan(plan_id):
     return redirect(url_for('plans.list_plans'))
 
 
+def _build_week_grid(items):
+    """Group plan_items into Mon–Sun week grids for the week-view calendar.
+
+    Returns a chronological list of weeks; each week is {label, range, days}
+    where `days` is exactly 7 cells (Mon..Sun), each
+    {dow, date, iso, is_today, items}. Original Row objects are preserved.
+    Items with an unparseable date are skipped (matching the legacy (0,0)
+    sentinel behavior)."""
+    buckets = {}
+    for it in items:
+        try:
+            d = date_type.fromisoformat(it['item_date'])
+        except Exception:
+            continue
+        buckets.setdefault(d.isocalendar()[:2], []).append((d, it))
+    today = date_type.today()
+    grid = []
+    for idx, key in enumerate(sorted(buckets), start=1):
+        pairs = buckets[key]
+        monday = pairs[0][0] - timedelta(days=pairs[0][0].weekday())
+        days = []
+        for off in range(7):
+            dd = monday + timedelta(days=off)
+            days.append({
+                'dow': dd.strftime('%a'),
+                'date': dd.strftime('%b ') + str(dd.day),
+                'iso': dd.isoformat(),
+                'is_today': dd == today,
+                'workouts': [it for (d, it) in pairs if d == dd],
+            })
+        sunday = monday + timedelta(days=6)
+        grid.append({
+            'label': 'Week %d' % idx,
+            'range': '%s %d – %s %d' % (monday.strftime('%b'), monday.day,
+                                        sunday.strftime('%b'), sunday.day),
+            'days': days,
+        })
+    return grid
+
+
 @bp.route('/<int:plan_id>')
 def view_plan(plan_id):
     db = get_db()
@@ -565,17 +605,7 @@ def view_plan(plan_id):
         (plan_id, uid)
     ).fetchall()
 
-    def week_key(item):
-        try:
-            d = date_type.fromisoformat(item['item_date'])
-            return d.isocalendar()[:2]
-        except Exception:
-            return (0, 0)
-
-    weeks = {}
-    for item in items:
-        key = week_key(item)
-        weeks.setdefault(key, []).append(item)
+    weeks_view = _build_week_grid(items)
 
     total = len(items)
     completed = sum(1 for i in items if i['status'] == 'completed')
@@ -630,7 +660,7 @@ def view_plan(plan_id):
     except Exception:
         pass
 
-    return render_template('plans/view.html', plan=plan, weeks=weeks,
+    return render_template('plans/view.html', plan=plan, weeks_view=weeks_view,
                            total=total, completed=completed,
                            active_mods=active_mods,
                            affected_exercises=affected_exercises,

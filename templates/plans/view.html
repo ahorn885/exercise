@@ -1,328 +1,211 @@
-{% extends 'base_legacy.html' %}
+{% extends 'base.html' %}
+{% set nav_active = 'plan' %}
 {% block title %}{{ plan.name }}{% endblock %}
+{% block crumbs %}<span>Plan</span> <span class="sep">/</span> <b>{{ plan.name }}</b>{% endblock %}
+{% block topbar_actions %}
+  {% if plan.status != 'archived' %}
+  <a class="btn btn-primary" href="{{ url_for('coaching.review', plan_id=plan.id) }}">
+    <svg class="icon" width="12" height="12" aria-hidden="true"><use href="#i-bolt"></use></svg> AI Review
+  </a>
+  {% endif %}
+{% endblock %}
 
 {% block content %}
-{# Desktop header #}
-<div class="d-none d-md-flex justify-content-between align-items-start mb-3">
+{# ── Header ── #}
+<div class="dash-head">
   <div>
-    <h2 class="mb-0">{{ plan.name }}</h2>
-    {% if plan.description %}<p class="text-muted mb-1">{{ plan.description }}</p>{% endif %}
-    <small class="text-muted">
-      {% if plan.sport_focus %}<span class="badge bg-secondary me-1">{{ plan.sport_focus }}</span>{% endif %}
-      {% if plan.start_date %}{{ plan.start_date }}{% endif %}
-      {% if plan.end_date %} → {{ plan.end_date }}{% endif %}
-      {% if days_to_race is not none %}
-        <span class="badge {% if days_to_race < 14 %}bg-danger{% elif days_to_race < 30 %}bg-warning text-dark{% else %}bg-info text-dark{% endif %} ms-2">{{ days_to_race }} days to race</span>
-      {% endif %}
-    </small>
+    <p class="eyebrow accent">●
+      {% if plan.sport_focus %}{{ plan.sport_focus }} · {% endif %}
+      {% if plan.start_date %}{{ plan.start_date }}{% endif %}{% if plan.end_date %} → {{ plan.end_date }}{% endif %}
+      {% if days_to_race is not none %} · {{ days_to_race }} days to race{% endif %}
+    </p>
+    <h1 class="page-title">{{ plan.name }}</h1>
+    {% if plan.description %}<p class="page-sub">{{ plan.description }}</p>{% endif %}
   </div>
-  <div class="d-flex align-items-center gap-2 flex-wrap">
+  <div class="head-pills">
     {% if health %}
-      {% if health.tier3_due %}
-        <span class="badge bg-danger" title="{{ health.scheduled_remaining }} sessions remaining — generate next 4-week block">🔴 Next block due</span>
-      {% elif health.tier2_due %}
-        <span class="badge bg-warning text-dark" title="{{ health.days_since_tier2 }} days since weekly review">🟠 Weekly review due</span>
-      {% elif health.tier1_due %}
-        <span class="badge bg-info text-dark" title="{{ health.sessions_since_tier1 }} session(s) since last check">🟡 Session check due</span>
-      {% else %}
-        <span class="badge bg-success">✅ Up to date</span>
-      {% endif %}
+      {% if health.tier3_due %}<span class="chip bad" title="{{ health.scheduled_remaining }} sessions remaining">Next block due</span>
+      {% elif health.tier2_due %}<span class="chip warn" title="{{ health.days_since_tier2 }} days since weekly review">Weekly review due</span>
+      {% elif health.tier1_due %}<span class="chip accent" title="{{ health.sessions_since_tier1 }} session(s) since last check">Session check due</span>
+      {% else %}<span class="chip good">Up to date</span>{% endif %}
     {% endif %}
-    {% if plan.status != 'archived' %}
-    <a href="{{ url_for('coaching.review', plan_id=plan.id) }}" class="btn btn-outline-primary btn-sm">AI Review</a>
-    <button type="button" class="btn btn-outline-secondary btn-sm" id="bulk-toggle-btn"
-            title="Select multiple scheduled items and apply mechanical changes (shift dates, intensity, duration scale, mark skipped)">Bulk edit</button>
-    <a href="{{ url_for('plans.download_plan_fits', plan_id=plan.id) }}" class="btn btn-outline-secondary btn-sm" title="Download all scheduled workouts as Garmin FIT files">⬇ FIT Files</a>
-    {% endif %}
-    <a href="{{ url_for('plans.list_plans') }}" class="btn btn-outline-secondary btn-sm">← Plans</a>
-    {% if plan.status == 'archived' %}
-    <form method="post" action="{{ url_for('plans.unarchive_plan', plan_id=plan.id) }}">
-      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-      <button type="submit" class="btn btn-success btn-sm">Restore</button>
-    </form>
-    {% else %}
-    <form method="post" action="{{ url_for('plans.archive_plan', plan_id=plan.id) }}">
-      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-      <button type="submit" class="btn btn-outline-secondary btn-sm">Archive</button>
-    </form>
-    {% endif %}
-    <form method="post" action="{{ url_for('plans.delete_plan', plan_id=plan.id) }}"
-          data-confirm="Delete this plan? This cannot be undone.">
-      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-      <button type="submit" class="btn btn-outline-danger btn-sm">Delete</button>
-    </form>
   </div>
 </div>
 
-{# Mobile header #}
-<div class="d-md-none mb-3">
-  <div class="d-flex justify-content-between align-items-start mb-2">
-    <div>
-      <h4 class="mb-0">{{ plan.name }}</h4>
-      <small class="text-muted">
-        {% if plan.start_date %}{{ plan.start_date }}{% endif %}{% if plan.end_date %} → {{ plan.end_date }}{% endif %}
-        {% if days_to_race is not none %}<span class="badge bg-info text-dark ms-1">{{ days_to_race }}d to race</span>{% endif %}
-      </small>
-    </div>
-    {% if health %}
-      {% if health.tier3_due %}<span class="badge bg-danger">🔴</span>
-      {% elif health.tier2_due %}<span class="badge bg-warning text-dark">🟠</span>
-      {% elif health.tier1_due %}<span class="badge bg-info text-dark">🟡</span>
-      {% else %}<span class="badge bg-success">✅</span>{% endif %}
-    {% endif %}
-  </div>
+{# ── Plan actions ── #}
+<div class="plan-actions">
   {% if plan.status != 'archived' %}
-  <div class="d-flex gap-2 mb-2">
-    <a href="{{ url_for('coaching.review', plan_id=plan.id) }}" class="btn btn-outline-primary btn-sm flex-fill">AI Review</a>
-    <a href="{{ url_for('plans.download_plan_fits', plan_id=plan.id) }}" class="btn btn-outline-secondary btn-sm flex-fill">⬇ FIT Files</a>
-  </div>
-  <div class="d-flex gap-2">
-    <a href="{{ url_for('plans.list_plans') }}" class="btn btn-outline-secondary btn-sm flex-fill">← Plans</a>
-    <form method="post" action="{{ url_for('plans.archive_plan', plan_id=plan.id) }}" class="flex-fill">
+    <button type="button" class="btn btn-ghost btn-sm" id="bulk-toggle-btn"
+            title="Select scheduled items and apply mechanical changes (shift dates, intensity, duration scale, mark skipped)">Bulk edit</button>
+    <a class="btn btn-ghost btn-sm" href="{{ url_for('plans.download_plan_fits', plan_id=plan.id) }}"
+       title="Download all scheduled workouts as FIT files">
+      <svg class="icon" width="12" height="12" aria-hidden="true"><use href="#i-download"></use></svg> FIT files
+    </a>
+    <form method="post" action="{{ url_for('plans.archive_plan', plan_id=plan.id) }}">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-      <button type="submit" class="btn btn-outline-secondary btn-sm w-100">Archive</button>
+      <button type="submit" class="btn btn-ghost btn-sm">Archive</button>
     </form>
-    <form method="post" action="{{ url_for('plans.delete_plan', plan_id=plan.id) }}"
-          data-confirm="Delete this plan?" class="flex-fill">
-      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-      <button type="submit" class="btn btn-outline-danger btn-sm w-100">Delete</button>
-    </form>
-  </div>
   {% else %}
-  <a href="{{ url_for('plans.list_plans') }}" class="btn btn-outline-secondary btn-sm me-2">← Plans</a>
+    <form method="post" action="{{ url_for('plans.unarchive_plan', plan_id=plan.id) }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <button type="submit" class="btn btn-ghost btn-sm">Restore</button>
+    </form>
   {% endif %}
+  <a class="btn btn-ghost btn-sm" href="{{ url_for('plans.list_plans') }}">← Plans</a>
+  <form method="post" action="{{ url_for('plans.delete_plan', plan_id=plan.id) }}"
+        data-confirm="Delete this plan? This cannot be undone.">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <button type="submit" class="btn btn-ghost btn-sm">Delete</button>
+  </form>
 </div>
 
 {% if plan.status == 'archived' %}
-<div class="alert alert-secondary py-2 px-3 mb-3 small">
-  📦 <strong>Archived plan</strong> — read-only. Completed workouts from this plan are still used as training history for new plan generation.
-  <form method="post" action="{{ url_for('plans.unarchive_plan', plan_id=plan.id) }}" class="d-inline ms-2">
-    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-    <button type="submit" class="btn btn-sm btn-success py-0 px-2">Restore</button>
-  </form>
+<div class="card attn card-pad">
+  <strong>📦 Archived plan</strong> — read-only. Completed workouts still feed training history for new plan generation.
 </div>
 {% endif %}
 
+{# ── Active injury modifications ── #}
 {% if active_mods %}
-<div class="alert alert-warning py-2 px-3 mb-3 small">
-  <strong>⚠️ Active injury modifications</strong> — the following exercises have restrictions while you train:
-  <ul class="mb-0 mt-1">
-  {% for m in active_mods %}
-    <li>
-      <strong>{{ m.exercise_name }}</strong>
-      <span class="badge {% if m.modification_type == 'avoid' %}bg-danger{% elif m.modification_type == 'substitute' %}bg-warning text-dark{% elif m.modification_type == 'reduce_load' %}bg-info text-dark{% else %}bg-secondary{% endif %} ms-1">
-        {{ m.modification_type | replace('_', ' ') | title }}
-      </span>
-      <span class="text-muted ms-1">({{ m.body_part }} — {{ m.status }})</span>
-      {% if m.substitute_name %} → <strong>{{ m.substitute_name }}</strong>{% endif %}
-      {% if m.modification_notes %} — {{ m.modification_notes }}{% endif %}
+<div class="card attn attn-warn card-pad">
+  <p class="eyebrow">⚠ Active injury modifications</p>
+  <ul class="stack">
+    {% for m in active_mods %}
+    <li class="wk-meta">
+      <span class="wk-name">{{ m.exercise_name }}</span>
+      <span class="chip {% if m.modification_type == 'avoid' %}bad{% elif m.modification_type == 'substitute' %}warn{% else %}accent{% endif %}">{{ m.modification_type | replace('_', ' ') | title }}</span>
+      <span class="dim">{{ m.body_part }} — {{ m.status }}</span>
+      {% if m.substitute_name %}<span class="dim">→ {{ m.substitute_name }}</span>{% endif %}
+      {% if m.modification_notes %}<span class="dim">{{ m.modification_notes }}</span>{% endif %}
     </li>
-  {% endfor %}
+    {% endfor %}
   </ul>
-  <a href="{{ url_for('injuries.list_entries') }}" class="ms-1">Manage injuries →</a>
+  <a class="accent" href="{{ url_for('injuries.list_entries') }}">Manage injuries →</a>
 </div>
 {% endif %}
 
+{# ── Gear recommendations ── #}
 {% if clothing_recs %}
-<div class="card mb-3">
-  <div class="card-header fw-semibold d-flex justify-content-between align-items-center">
-    <span>Gear Recommendations — Next 7 Days</span>
-    <button class="btn btn-sm btn-outline-secondary" data-bs-toggle="collapse" data-bs-target="#clothingRecsplan">Show/Hide</button>
+<div class="card">
+  <div class="card-head"><span class="eyebrow">Gear · next 7 days</span></div>
+  {% for rec in clothing_recs %}
+  {%- set best = rec.similar_past_conditions[0] if rec.similar_past_conditions else None -%}
+  <div class="wk-row">
+    <div class="col">
+      <div class="wk-meta">
+        <span class="wk-name">{{ rec.workout_name }}</span>
+        <span class="mono">{{ rec.date }}</span>
+        <span class="chip">{{ rec.sport_type }}</span>
+        {% if rec.forecast %}<span class="dim">{{ rec.forecast.avg_temp_f }}° · {{ rec.forecast.description }}</span>{% endif %}
+      </div>
+      {% if best %}
+      <div class="gear-chips">
+        {% for field, label in [
+          ('upper_base_layer','Base'),('upper_mid_layer','Mid'),('upper_shell','Shell'),
+          ('lower_outer','Bottoms'),('headwear','Head'),('gloves','Gloves'),
+          ('footwear','Footwear'),('socks','Socks')] %}
+          {% if best[field] %}<span class="chip">{{ label }}: {{ best[field] }}</span>{% endif %}
+        {% endfor %}
+      </div>
+      {% elif rec.forecast %}
+      <div class="wk-meta"><span class="dim">No past conditions for {{ rec.forecast.avg_temp_f }}° — log conditions to seed this.</span></div>
+      {% endif %}
+    </div>
   </div>
-  <div id="clothingRecsplan" class="collapse show">
-    <ul class="list-group list-group-flush">
-      {% for rec in clothing_recs %}
-      {% set past = rec.similar_past_conditions %}
-      {% set best = past[0] if past else none %}
-      <li class="list-group-item">
-        <div class="d-flex justify-content-between align-items-start">
-          <div>
-            <span class="fw-semibold">{{ rec.date }}</span>
-            <span class="text-muted ms-2">{{ rec.workout_name }}</span>
-            <span class="badge bg-secondary ms-1">{{ rec.sport_type }}</span>
+  {% endfor %}
+</div>
+{% endif %}
+
+{# ── Progress + supplements ── #}
+{% if total > 0 %}
+{%- set pct = (completed / total * 100) | round | int -%}
+<div class="card card-pad supp-card">
+  <div class="kv"><span class="k">Progress</span><span class="v num">{{ completed }}/{{ total }} · {{ pct }}%</span></div>
+  <div class="pbar"><span data-progress="{{ pct }}"></span></div>
+</div>
+{% endif %}
+
+<div class="card card-pad supp-card">
+  <span class="eyebrow">💊 Daily supplements</span>
+  <div class="gear-chips">
+    {% for s in daily_supplements %}<span class="chip">{{ s }}</span>{% endfor %}
+  </div>
+</div>
+
+{# ── Week calendar ── #}
+{% if weeks_view %}
+  {% for w in weeks_view %}
+  {%- set wk_id = 'w' ~ loop.index0 -%}
+  <div class="card week-card">
+    <div class="card-head">
+      <span class="eyebrow">{{ w.label }} · {{ w.range }}</span>
+      <label class="bulk-sel week-toggle-wrap">
+        <input type="checkbox" class="bulk-week-toggle" data-week="{{ wk_id }}"> Select week
+      </label>
+    </div>
+    <div class="week-grid">
+      {% for day in w.days %}
+      <div class="week-day{{ ' today' if day.is_today else '' }}{{ ' empty' if not day.workouts else '' }}">
+        <div class="week-day-head">
+          <span class="d">{{ day.dow }} {{ day.date }}</span>
+          {% if day.is_today %}<span class="pulse-dot" aria-hidden="true"></span>{% endif %}
+        </div>
+        {% for item in day.workouts %}
+        <div class="wk-card {{ 'done' if item.status == 'completed' else ('skipped' if item.status == 'skipped' else '') }}">
+          {% if item.status == 'scheduled' %}
+          <label class="bulk-sel" title="Select for bulk edit">
+            <input type="checkbox" class="bulk-item-checkbox" data-item-id="{{ item.id }}" data-week="{{ wk_id }}">
+          </label>
+          {% endif %}
+          <div class="tag">
+            {{ item.sport_type }}{% if item.intensity %} · {{ item.intensity }}{% endif %}{% if item.status == 'completed' %} · ✓ done{% elif item.status == 'skipped' %} · skipped{% endif %}
           </div>
-          {% if rec.forecast %}
-          <div class="text-muted small text-end">
-            {{ rec.forecast.avg_temp_f }}°F · {{ rec.forecast.description }}
+          <a class="nm" href="{{ url_for('plans.view_item', plan_id=plan.id, item_id=item.id) }}">{{ item.workout_name }}</a>
+          {% if affected_exercises %}
+            {% set ns = namespace(flagged=false) %}
+            {% for ex in affected_exercises %}
+              {% if not ns.flagged and (ex in (item.description or '') or ex in item.workout_name) %}{% set ns.flagged = true %}{% endif %}
+            {% endfor %}
+            {% if ns.flagged %}<span class="chip warn" title="Injury modification applies">⚠</span>{% endif %}
+          {% endif %}
+          {% if item.target_duration_min %}<div class="du num">{{ item.target_duration_min|int }} min</div>{% endif %}
+          {% if item.status == 'scheduled' %}
+          <div class="wk-mini">
+            <form method="post" action="{{ url_for('plans.complete_item', plan_id=plan.id, item_id=item.id) }}">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <button type="submit" class="btn btn-mini" title="Mark complete">
+                <svg class="icon" width="12" height="12" aria-hidden="true"><use href="#i-check"></use></svg>
+              </button>
+            </form>
+            <form method="post" action="{{ url_for('plans.skip_item', plan_id=plan.id, item_id=item.id) }}">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <button type="submit" class="btn btn-mini" title="Skip">
+                <svg class="icon" width="12" height="12" aria-hidden="true"><use href="#i-x"></use></svg>
+              </button>
+            </form>
+            <a class="btn btn-mini" href="{{ url_for('plans.download_item_fit', plan_id=plan.id, item_id=item.id) }}" title="Download .FIT">
+              <svg class="icon" width="12" height="12" aria-hidden="true"><use href="#i-download"></use></svg>
+            </a>
           </div>
           {% endif %}
         </div>
-        {% if best %}
-        <div class="mt-2 d-flex flex-wrap gap-1">
-          {% for field, label in [
-            ('upper_base_layer','Base'),('upper_mid_layer','Mid'),('upper_shell','Shell'),
-            ('lower_outer','Bottoms'),('headwear','Head'),('gloves','Gloves'),
-            ('footwear','Footwear'),('socks','Socks')
-          ] %}
-            {% if best[field] %}
-            <span class="badge bg-light text-dark border"><small class="text-muted">{{ label }}:</small> {{ best[field] }}</span>
-            {% endif %}
-          {% endfor %}
-        </div>
-        <div class="text-muted small mt-1">Based on {{ past|length }} similar past session{% if past|length != 1 %}s{% endif %}
-          {% if best.comfort %} · Past comfort {{ best.comfort }}/5{% endif %}
-          {% if best.comfort_notes %} · {{ best.comfort_notes }}{% endif %}
-        </div>
-        {% elif rec.forecast %}
-        <div class="text-muted small mt-1">No past conditions data for {{ rec.forecast.avg_temp_f }}°F — check your conditions log.</div>
-        {% endif %}
-      </li>
-      {% endfor %}
-    </ul>
-  </div>
-</div>
-{% endif %}
-
-{% if total > 0 %}
-<div class="mb-4">
-  <div class="d-flex justify-content-between mb-1">
-    <small class="text-muted">Progress: {{ completed }}/{{ total }} workouts completed</small>
-    <small class="text-muted">{{ (completed/total*100)|round|int }}%</small>
-  </div>
-  <div class="progress u-h-10">
-    <div class="progress-bar bg-success" data-progress="{{ (completed/total*100)|round|int }}"></div>
-  </div>
-</div>
-{% endif %}
-
-{% set status_colors = {'completed': 'success', 'skipped': 'secondary', 'scheduled': 'primary'} %}
-
-<div class="card mb-3 border-0 bg-light">
-  <div class="card-body py-2">
-    <div class="d-flex align-items-start gap-2 flex-wrap">
-      <span class="fw-semibold small text-muted me-1">💊 Daily:</span>
-      {% for s in daily_supplements %}
-        <span class="badge bg-secondary fw-normal">{{ s }}</span>
-      {% endfor %}
-    </div>
-  </div>
-</div>
-
-{% for (year, week), items in weeks.items() %}
-<div class="card mb-3">
-  <div class="card-header fw-semibold d-flex justify-content-between align-items-center u-clickable"
-       role="button" data-bs-toggle="collapse" data-bs-target="#week-{{ year }}-{{ week }}">
-    <span>Week {{ loop.index }}</span>
-    <span class="text-muted small">▾</span>
-  </div>
-  <div class="collapse {% if loop.first %}show{% endif %}" id="week-{{ year }}-{{ week }}">
-    <div class="card-body p-0">
-      <div class="table-responsive">
-      <table class="table table-sm table-hover mb-0 align-middle">
-        <thead class="table-light">
-          <tr>
-            <th class="bulk-only u-w-30">
-              <input type="checkbox" class="form-check-input bulk-week-toggle"
-                     data-week="{{ year }}-{{ week }}" title="Select all scheduled items in this week">
-            </th>
-            <th class="u-w-90">Date</th>
-            <th>Workout</th>
-            <th class="d-none d-md-table-cell">Sport</th>
-            <th class="d-none d-md-table-cell text-nowrap">Duration</th>
-            <th class="d-none d-md-table-cell">Intensity</th>
-            <th class="d-none d-md-table-cell">Nutrition</th>
-            <th></th>
-          </tr>
-        </thead>
-        <tbody>
-          {% for item in items %}
-          <tr>
-            <td class="bulk-only">
-              {% if item.status == 'scheduled' %}
-              <input type="checkbox" class="form-check-input bulk-item-checkbox"
-                     data-item-id="{{ item.id }}" data-week="{{ year }}-{{ week }}">
-              {% endif %}
-            </td>
-            <td class="text-muted small text-nowrap">{{ item.item_date }}
-              {% if item.target_duration_min %}<br class="d-md-none"><small class="d-md-none text-muted">{{ item.target_duration_min|int }} min</small>{% endif %}
-            </td>
-            <td>
-              <a href="{{ url_for('plans.view_item', plan_id=plan.id, item_id=item.id) }}"
-                 class="text-decoration-none fw-semibold">{{ item.workout_name }}</a>
-              {% if affected_exercises %}
-                {% set ns = namespace(flagged=false) %}
-                {% for ex in affected_exercises %}
-                  {% if not ns.flagged and (ex in (item.description or '') or ex in item.workout_name) %}
-                    <span class="badge bg-warning text-dark ms-1" title="Injury modification applies">⚠️</span>
-                    {% set ns.flagged = true %}
-                  {% endif %}
-                {% endfor %}
-              {% endif %}
-              {% if item.description %}
-              {% set steps = item.description | workout_steps %}
-              {% if steps %}
-              <ul class="mb-0 mt-1 ps-3 u-bullet">
-                {% for step in steps %}
-                  {% if loop.index <= 6 %}
-                  <li class="small text-muted">{{ step }}</li>
-                  {% elif loop.index == 7 %}
-                  <li class="small text-muted text-secondary">… {{ steps|length - 6 }} more</li>
-                  {% endif %}
-                {% endfor %}
-              </ul>
-              {% endif %}
-              {% endif %}
-            </td>
-            <td class="d-none d-md-table-cell"><small>{{ item.sport_type }}</small></td>
-            <td class="d-none d-md-table-cell text-nowrap"><small>{% if item.target_duration_min %}{{ item.target_duration_min|int }} min{% else %}—{% endif %}</small></td>
-            <td class="d-none d-md-table-cell"><small>{{ item.intensity or '—' }}</small></td>
-            <td class="d-none d-md-table-cell">
-              {% if item.calorie_target %}
-                <small class="fw-semibold">{{ item.calorie_target }} kcal</small><br>
-                <small class="text-muted">C{{ item.macro_carb_pct }}% P{{ item.macro_protein_pct }}% F{{ item.macro_fat_pct }}%</small>
-                {% if item.session_fueling %}
-                <br><small class="text-muted fst-italic u-fs-70">{{ item.session_fueling }}</small>
-                {% endif %}
-              {% else %}
-                {% set nx = workout_nutrition(item.sport_type, item.intensity, item.target_duration_min) %}
-                <small class="fw-semibold">{{ nx.cal }} kcal</small><br>
-                <small class="text-muted">C{{ nx.carb }}% P{{ nx.protein }}% F{{ nx.fat }}%</small>
-                {% if nx.fueling %}
-                <br><small class="text-muted fst-italic u-fs-70">{{ nx.fueling }}</small>
-                {% endif %}
-              {% endif %}
-            </td>
-            <td>
-              <div class="d-flex flex-column align-items-start gap-1">
-                <span class="badge bg-{{ status_colors.get(item.status, 'secondary') }}">{{ item.status }}</span>
-                <div class="d-flex gap-1">
-                  {% if item.status == 'scheduled' %}
-                  <form method="post" action="{{ url_for('plans.complete_item', plan_id=plan.id, item_id=item.id) }}" class="d-inline">
-                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                    <button type="submit" class="btn btn-xs btn-success py-0 px-1 u-fs-75" title="Mark complete">✓</button>
-                  </form>
-                  <form method="post" action="{{ url_for('plans.skip_item', plan_id=plan.id, item_id=item.id) }}" class="d-inline">
-                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                    <button type="submit" class="btn btn-xs btn-outline-secondary py-0 px-1 u-fs-75" title="Skip">✕</button>
-                  </form>
-                  {% endif %}
-                  <a href="{{ url_for('plans.download_item_fit', plan_id=plan.id, item_id=item.id) }}"
-                     class="btn btn-xs btn-outline-secondary py-0 px-1 u-fs-75" title="Download Garmin FIT file">⬇</a>
-                </div>
-              </div>
-            </td>
-          </tr>
-          {% endfor %}
-        </tbody>
-      </table>
+        {% endfor %}
       </div>
+      {% endfor %}
     </div>
   </div>
-</div>
+  {% endfor %}
 {% else %}
-<p class="text-muted">No workouts in this plan yet.</p>
-{% endfor %}
+<p class="empty-line">No workouts in this plan yet.</p>
+{% endif %}
 
-{# Bulk-edit floating action bar — only shown when ≥1 item is selected #}
-<div id="bulk-action-bar"
-     class="d-none position-fixed bottom-0 start-0 end-0 bg-white border-top shadow-lg p-3 u-z-overlay">
+{# ── Bulk-edit floating action bar (shown when ≥1 item selected) ── #}
+<div id="bulk-action-bar" class="d-none position-fixed bottom-0 start-0 end-0 p-3">
   <div class="container-fluid d-flex align-items-center gap-2 flex-wrap">
     <span class="fw-semibold me-2"><span id="bulk-count">0</span> selected</span>
 
     <div class="dropdown">
-      <button class="btn btn-sm btn-outline-secondary dropdown-toggle" data-bs-toggle="dropdown">
-        Shift dates
-      </button>
+      <button class="btn btn-ghost btn-sm dropdown-toggle" data-bs-toggle="dropdown">Shift dates</button>
       <ul class="dropdown-menu">
         <li><a class="dropdown-item bulk-action" href="#" data-action="shift_date" data-value="-2">−2 days</a></li>
         <li><a class="dropdown-item bulk-action" href="#" data-action="shift_date" data-value="-1">−1 day</a></li>
@@ -333,9 +216,7 @@
     </div>
 
     <div class="dropdown">
-      <button class="btn btn-sm btn-outline-secondary dropdown-toggle" data-bs-toggle="dropdown">
-        Intensity
-      </button>
+      <button class="btn btn-ghost btn-sm dropdown-toggle" data-bs-toggle="dropdown">Intensity</button>
       <ul class="dropdown-menu">
         <li><a class="dropdown-item bulk-action" href="#" data-action="intensity_step" data-value="down">Drop one notch</a></li>
         <li><a class="dropdown-item bulk-action" href="#" data-action="intensity_step" data-value="up">Raise one notch</a></li>
@@ -343,24 +224,21 @@
     </div>
 
     <div class="dropdown">
-      <button class="btn btn-sm btn-outline-secondary dropdown-toggle" data-bs-toggle="dropdown">
-        Scale load
-      </button>
+      <button class="btn btn-ghost btn-sm dropdown-toggle" data-bs-toggle="dropdown">Scale load</button>
       <ul class="dropdown-menu">
         <li><a class="dropdown-item bulk-action" href="#" data-action="duration_scale" data-value="0.7">×0.70 (cut 30%)</a></li>
         <li><a class="dropdown-item bulk-action" href="#" data-action="duration_scale" data-value="0.85">×0.85 (cut 15%)</a></li>
         <li><a class="dropdown-item bulk-action" href="#" data-action="duration_scale" data-value="1.15">×1.15 (+15%)</a></li>
         <li><a class="dropdown-item bulk-action" href="#" data-action="duration_scale" data-value="1.3">×1.30 (+30%)</a></li>
         <li><hr class="dropdown-divider"></li>
-        <li><span class="dropdown-item-text small text-muted">Cardio: scales target duration. Strength: appends a load-scale note to the description (athlete adjusts weights manually).</span></li>
+        <li><span class="dropdown-item-text small text-muted">Cardio scales target duration. Strength appends a load-scale note (athlete adjusts weights manually).</span></li>
       </ul>
     </div>
 
-    <button type="button" class="btn btn-sm btn-outline-warning bulk-action"
-            data-action="mark_skipped" data-value="">Mark skipped</button>
+    <button type="button" class="btn btn-ghost btn-sm bulk-action" data-action="mark_skipped" data-value="">Mark skipped</button>
 
     <div class="ms-auto d-flex gap-2">
-      <button type="button" id="bulk-cancel-btn" class="btn btn-sm btn-outline-secondary">Cancel</button>
+      <button type="button" id="bulk-cancel-btn" class="btn btn-ghost btn-sm">Cancel</button>
     </div>
   </div>
   <div id="bulk-status" class="container-fluid small mt-1"></div>
@@ -375,8 +253,8 @@
   const toggleBtn = document.getElementById('bulk-toggle-btn');
   const cancelBtn = document.getElementById('bulk-cancel-btn');
 
-  // Bulk-mode visibility — gated by .bulk-mode on <body>; checkbox columns
-  // and headers are .bulk-only and hidden by default.
+  // Bulk-mode visibility is gated by .bulk-mode on <body>; selection controls
+  // (.bulk-sel) are hidden by default (static/style.css).
   function setBulkMode(on) {
     document.body.classList.toggle('bulk-mode', on);
     if (!on) {
@@ -385,8 +263,8 @@
       updateSelection();
       bulkBar.classList.add('d-none');
       if (toggleBtn) toggleBtn.classList.remove('active');
-    } else {
-      if (toggleBtn) toggleBtn.classList.add('active');
+    } else if (toggleBtn) {
+      toggleBtn.classList.add('active');
     }
   }
 
@@ -472,24 +350,16 @@
 })();
 </script>
 
-<style nonce="{{ csp_nonce() }}">
-  .bulk-only { display: none; }
-  body.bulk-mode .bulk-only { display: table-cell; }
-  body.bulk-mode { padding-bottom: 80px; }  /* room for the floating bar */
-  #bulk-toggle-btn.active { background-color: var(--bs-secondary-bg, #e9ecef); }
-</style>
-
-<div class="card mt-4" id="coach-chat-card">
-  <div class="card-header d-flex justify-content-between align-items-center">
-    <span class="fw-semibold">💬 Coach Chat</span>
-    <small class="text-muted">Ask anything — preferences and plan changes are applied automatically</small>
+{# ── Coach chat ── #}
+<div class="card week-card" id="coach-chat-card">
+  <div class="card-head">
+    <span class="eyebrow">💬 Coach chat</span>
+    <span class="link">Preferences &amp; plan changes apply automatically</span>
   </div>
-  <div class="card-body p-0">
-    <div id="chat-history" class="u-chat-scroll-light">
-      <div class="text-muted small text-center" id="chat-empty">Loading history…</div>
-    </div>
+  <div id="chat-history">
+    <div class="empty-line" id="chat-empty">Loading history…</div>
   </div>
-  <div class="card-footer">
+  <div class="card-pad hairline">
     <div class="input-group">
       <input type="text" id="chat-input" class="form-control"
              placeholder="e.g. 'That ride felt too easy' or 'Never include burpees again'"
@@ -517,7 +387,7 @@ function renderMessage(role, content, meta) {
   bubble.textContent = content;
   if (meta && (meta.preferences_saved > 0 || meta.patches_applied > 0)) {
     const note = document.createElement('div');
-    note.className = 'mt-1 text-success' + (role === 'user' ? '' : '');
+    note.className = 'mt-1 text-success';
     note.style.fontSize = '.7rem';
     const parts = [];
     if (meta.preferences_saved > 0) parts.push(`✓ ${meta.preferences_saved} preference${meta.preferences_saved > 1 ? 's' : ''} saved`);
@@ -534,7 +404,7 @@ async function loadHistory() {
   const rows = await res.json();
   chatHistory.innerHTML = '';
   if (rows.length === 0) {
-    chatHistory.innerHTML = '<div class="text-muted small text-center">No messages yet. Ask your coach anything.</div>';
+    chatHistory.innerHTML = '<div class="empty-line">No messages yet. Ask your coach anything.</div>';
   } else {
     rows.forEach(r => {
       const meta = r.actions_json ? JSON.parse(r.actions_json) : null;
