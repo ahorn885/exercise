@@ -300,3 +300,29 @@ class TestAggregatePlanRefreshLog:
         result = _aggregate_plan_refresh_log(db, self._T)
         assert result['T1']['p50_duration_ms'] == 200
         assert result['T1']['p95_duration_ms'] == 200
+
+
+# ─── /admin/plan/<id>/diag token auth (Rule #14 log-visibility) ──────────────
+# Route smoke is deferred to manual §5.0 per the module precedent; the pure
+# token-comparison helper is unit-tested here.
+
+
+class TestDiagTokenOk:
+    """`_diag_token_ok(supplied, configured)` — the constant-time token gate
+    for the token-readable diag endpoint."""
+
+    def test_no_token_configured_denies_even_with_supplied(self):
+        from routes.admin import _diag_token_ok
+        # DIAG_TOKEN unset -> no token bypass; only the admin session authorizes.
+        assert _diag_token_ok("anything", None) is False
+        assert _diag_token_ok("anything", "") is False
+
+    def test_missing_or_wrong_supplied_denied(self):
+        from routes.admin import _diag_token_ok
+        assert _diag_token_ok(None, "secret") is False
+        assert _diag_token_ok("", "secret") is False
+        assert _diag_token_ok("wrong", "secret") is False
+
+    def test_exact_match_authorizes(self):
+        from routes.admin import _diag_token_ok
+        assert _diag_token_ok("secret", "secret") is True

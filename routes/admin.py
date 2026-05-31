@@ -4,9 +4,13 @@ Gated to user_id == 1 (the bootstrap user, conventionally the operator).
 Adding more admin views: build them inside this blueprint and keep the
 same `_require_admin()` gate at the top of every handler.
 """
+import hmac
+import os
 from datetime import datetime, timedelta, timezone
 
-from flask import Blueprint, render_template, redirect, url_for, flash, abort, request
+from flask import (
+    Blueprint, render_template, redirect, url_for, flash, abort, request, jsonify,
+)
 
 from database import get_db
 from plan_sessions_repo import load_progress_blocks
@@ -332,3 +336,72 @@ def plan_inspect(plan_version_id):
         blocks=blocks,
         total_sessions=total_sessions,
     )
+
+
+def _diag_token_ok(supplied: str | None, configured: str | None) -> bool:
+    """Constant-time check for the diag service token. When no token is
+    configured (DIAG_TOKEN unset) there is NO token bypass — returns False so
+    only the admin session can authorize. Pure (no Flask/env) so it's unit-
+    testable per the §5.0 admin-route-smoke deferral precedent."""
+    if not configured:
+        return False
+    return hmac.compare_digest(supplied or "", configured)
+
+
+def _diag_authorized() -> bool:
+    """Authorize the diag endpoint via EITHER the admin session OR the
+    DIAG_TOKEN service secret (header `X-Diag-Token` or `?token=`)."""
+    if current_user_id() == ADMIN_USER_ID:
+        return True
+    supplied = request.headers.get('X-Diag-Token') or request.args.get('token')
+    return _diag_token_ok(supplied, os.environ.get('DIAG_TOKEN'))
+
+
+@bp.route('/plan/<int:plan_version_id>/diag')
+def plan_diag(plan_version_id):
+    """Rule #14 log-visibility — JSON diagnostics for a plan generation,
+    readable WITHOUT the app login so an operator/agent debugging from outside
+    the session can fetch the real fault (the FULL stored traceback that the
+    Vercel runtime-log MCP truncates). Returns the `plan_versions` control row
+    + the durable `generation_traceback` + a block-snapshot summary.
+
+    Auth: admin session OR a constant-time match against the `DIAG_TOKEN` env
+    secret (`X-Diag-Token` header or `?token=`). When `DIAG_TOKEN` is unset,
+    only the admin session is accepted — no token bypass exists by default."""
+    if not _diag_authorized():
+        abort(403)
+    db = get_db()
+    pv = db.execute(
+        "SELECT id, user_id, created_at, created_via, scope_start_date, "
+        "scope_end_date, pattern, generation_status, generation_error, "
+        "generation_units_cached FROM plan_versions WHERE id = ?",
+        (plan_version_id,),
+    ).fetchone()
+    if pv is None:
+        abort(404)
+    # generation_traceback is read separately + best-effort so the endpoint
+    # still works before the column migration lands (Neon egress is blocked
+    # from the web container, so the migration is an Andy's-hands action).
+    traceback_text = None
+    try:
+        tb_row = db.execute(
+            "SELECT generation_traceback FROM plan_versions WHERE id = ?",
+            (plan_version_id,),
+        ).fetchone()
+        traceback_text = tb_row['generation_traceback'] if tb_row else None
+    except Exception:  # noqa: BLE001 — column may be pre-migration
+        db.rollback()
+    blocks = load_progress_blocks(db, plan_version_id)
+    return jsonify({
+        'plan_version_id': pv['id'],
+        'user_id': pv['user_id'],
+        'created_via': pv['created_via'],
+        'scope': [str(pv['scope_start_date']), str(pv['scope_end_date'])],
+        'pattern': pv['pattern'],
+        'generation_status': pv['generation_status'],
+        'generation_error': pv['generation_error'],
+        'generation_units_cached': pv['generation_units_cached'],
+        'generation_traceback': traceback_text,
+        'blocks_snapshotted': len(blocks),
+        'total_sessions': sum(len(b['sessions'] or []) for b in blocks),
+    })

@@ -1999,6 +1999,14 @@ _PG_MIGRATIONS = [
     # in-flight + legacy rows).
     "ALTER TABLE plan_versions ADD COLUMN IF NOT EXISTS generation_units_cached INTEGER NOT NULL DEFAULT 0",
     "ALTER TABLE plan_versions ADD COLUMN IF NOT EXISTS generation_stall_passes INTEGER NOT NULL DEFAULT 0",
+    # Log-visibility (#47 follow-up, 2026-05-31): the full Python traceback on a
+    # terminal `failed`, surfaced by the token-gated `/admin/plan/<id>/diag`
+    # JSON endpoint so an operator/agent can read the real fault WITHOUT the app
+    # login — `generation_error` only carries the user-facing copy, and the
+    # Vercel runtime-log MCP truncates the traceback (see CLAUDE.md Rule #14).
+    # Nullable; the persist (routes/plan_create.py::_mark_plan_failed) is
+    # best-effort so the code is deploy-safe even before this column lands.
+    "ALTER TABLE plan_versions ADD COLUMN IF NOT EXISTS generation_traceback TEXT",
     # layer4_cache entry_point drift fix (2026-05-26) — the Layer 3A/3B
     # cached wrappers (2026-05-20) + the NL-parser cache (2026-05-21) write
     # entry_point values the original 4-value CHECK rejected, so every 3A/3B
