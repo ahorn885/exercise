@@ -43,8 +43,17 @@ Rolling-state for items spanning multiple sessions. **Edit in place** — don't 
    bike / Rope / Quickdraws / Harness / Crash pad / Hangboard / Climbing gym
    membership / Kayak / Canoe). Also confirm
    `etl/sources/populate_skill_capability_toggles.sql` is applied.
-4. **Log-visibility diag endpoint (2026-05-31, PR #349).** Two Andy's-hands
-   steps to activate the token-readable `/admin/plan/<id>/diag` traceback
+4. **Log-visibility diag endpoint (2026-05-31, PR #349; auth-gate fixed PR #352).**
+   ✅ **NOW LIVE PAST THE LOGIN WALL (PR #352, squash-merged to `main`).** The
+   #349 endpoint was unreachable in prod — the global `_require_login`
+   `before_request` shadowed its token auth — until `admin.plan_diag` was added
+   to `_AUTH_EXEMPT_ENDPOINTS`. `…/diag?token=…` now returns JSON (verify after
+   the #352 prod deploy). **Note for 504 hard-kills (e.g. plan #48):** a gateway
+   504 kills the function before any `except` runs, so `generation_traceback`
+   stays null — the diag endpoint shows `generation_status` + `blocks_snapshotted`
+   only (localizes how far synthesis got, no traceback). That class is **#350**
+   (log-drain backstop) / **#316** (latency). The two original activation
+   steps (still relevant for the traceback contents on soft failures):
    surface (Rule #14). Both are optional — the app is deploy-safe without them
    (the traceback persist + the endpoint's traceback read are best-effort):
    - **(a) `python init_db.py` on Neon** — lands the idempotent

@@ -120,6 +120,7 @@ For each, the expected output before stopping is: options considered, tradeoffs,
 ## Working principles
 
 - **Spec-first sequencing.** Architecture → prompts → implementation. Resist shortcuts. Resist producing testable output before the spec is correct and complete.
+- **Redesign work.** For redesign work, follow `docs/redesign/CONVENTIONS.md` and the phase specs alongside it.
 - **Layer specs follow a depth standard.** 14 sections matching `Layer2C_Spec.md`: purpose, boundaries, function signature, validation, algorithm, payload schema, coaching flags, caching, edge cases, performance budget, open items, test scenarios, gut check. Do not skip per-node specs; do not let design decisions live only in handoff docs.
 - **5-file ceiling = substantive files only.** "Substantive" means new/modified code, specs, designs, prompt bodies. Bookkeeping files (`CURRENT_STATE.md` edits, backlog in-file edits, `CARRY_FORWARD.md` edits, the closing handoff, `CLAUDE.md` rule edits) do not count against the ceiling. Quality degrades past ~5 substantive files. If a session needs more, propose splitting before starting.
 - **`CURRENT_STATE.md` is the rolling pointer.** Update it on every shipped session (last-handoff name + focus + layer status). The closing handoff is the long-form record. Don't accumulate session narrative in `CLAUDE.md` — that file is for stable rules.
