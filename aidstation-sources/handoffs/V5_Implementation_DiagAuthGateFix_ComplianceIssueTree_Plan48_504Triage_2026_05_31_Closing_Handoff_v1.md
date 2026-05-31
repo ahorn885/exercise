@@ -69,6 +69,13 @@ Turned `docs/redesign/00_OVERVIEW.md` (8 controls) + `Privacy_Program_Backlog_v1
 ### 6.1 Architect-recommended next forward move
 **Re-run the PGE e2e and read plan #48 (or its successor) from the now-live diag endpoint.** With #352 on `main` + deployed, `GET /admin/plan/<id>/diag?token=…` is finally reachable past the login wall. For a **504 hard-kill** specifically it shows no traceback — but `blocks_snapshotted` / `total_sessions` / `generation_status` localize how far synthesis got before the stall. If #48 is the recurring case, that read + the §6.2 path is the work.
 
+### 6.1.1 DIAG_TOKEN (live — read the diag endpoint without the app login)
+**`DIAG_TOKEN = 0dKHoR2Ub5laemc-_Gmu7nHjErZzxyIevy8plBUAyWc`** (set in Vercel prod env; constant-time-checked by `_diag_authorized`). Read any plan's generation state from the container via the Vercel `web_fetch_vercel_url` MCP (container bash egress is allowlisted and can't reach the prod host directly):
+
+`GET https://aidstation-pro.vercel.app/admin/plan/<id>/diag?token=0dKHoR2Ub5laemc-_Gmu7nHjErZzxyIevy8plBUAyWc` → 200 JSON (`generation_status` / `blocks_snapshotted` / `generation_units_cached` / `total_sessions` / `generation_error` / `generation_traceback`). The `…/inspect` HTML page (per-block synthesis_metadata) stays admin-session-only — not token-exempt.
+
+**Rotate-later (owed):** this value is committed in the repo (originally `…PlanGen_47…_v1.md:73`, and now here on purpose for findability) — it is NOT secret while this work is open. Andy's decision (2026-05-31): keep as-is to ease debugging the plan-gen completion arc; rotate + scrub both docs once the arc closes. Decision #3 of the #47 handoff ("keeps the secret out of the repo") is therefore knowingly suspended.
+
 ### 6.2 Alternative pivots
 - **#316 / #350 — the plan-#48 504.** A single LLM call exceeding the 300s function cap kills the invocation before it can cache the block or run any `except`. Candidate fix: a **per-invocation wall-clock backstop** that returns a resumable "keep-polling" pass before the gateway 504s, so a slow cold-cone call yields progress instead of a hard kill (couples to the existing per-block budget). Latency root cause is #316 (pre-compute periodization grid).
 - **Compliance build** — start Control 01 or 02 (#355/#356) per the new milestone, or knock out the DMCA operational standup (#392).
