@@ -1,0 +1,176 @@
+/* AIDSTATION redesign — polish layer
+   Focus-visible states · reduced-motion · print · forced-colors.
+   Loaded after tokens.css so these rules win where they overlap. */
+
+/* ── A11y · focus-visible ────────────────────────────────────────
+   Mockup atoms render with cursor:default and aren't real controls,
+   but the handoff ships these rings so the built components inherit
+   a consistent, brand-accent focus treatment. */
+.screen :focus-visible,
+.btn:focus-visible,
+.chip:focus-visible,
+.sidebar-item:focus-visible,
+.tabbar .tab:focus-visible,
+.topbar .search:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible,
+[tabindex]:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: var(--r-sm);
+}
+/* On accent-filled surfaces, ring needs contrast against the orange */
+.btn-primary:focus-visible,
+.stat-card.hi:focus-visible,
+.tabbar .tab.fab .fab-btn:focus-visible {
+  outline-color: var(--ink);
+  outline-offset: 2px;
+}
+/* Demo helper: force the ring on so the Accessibility artboard can
+   show the real treatment without a live tab-stop. */
+.focus-demo {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: var(--r-sm);
+}
+.focus-demo.on-accent { outline-color: var(--ink); }
+
+/* ── Reduced motion ──────────────────────────────────────────────
+   Kill the plan-generation letter-tumble + cup-tipping and flatten
+   every transition/animation for users who ask for less movement. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+  /* Letters settle legibly in the cup instead of tumbling/spilling */
+  .letter-tumble,
+  [style*="letterTumble"] {
+    animation: none !important;
+    opacity: 1 !important;
+  }
+}
+
+/* ── Forced-colors (Windows high-contrast) ───────────────────────
+   Keep hairlines + accent visible when the OS overrides our palette. */
+@media (forced-colors: active) {
+  .card, .card-flush, .stat-card, .sidebar, .topbar,
+  .appbar, .tabbar, .statusbar {
+    border-color: CanvasText;
+  }
+  .btn { border: 1px solid CanvasText; }
+  .btn-primary { forced-color-adjust: none; }
+}
+
+/* ── Board-level light theme (global toggle) ─────────────────────
+   The #theme-toggle button adds .board-light to <body>; these token
+   overrides cascade into every .screen so the whole board flips to
+   the paper palette without per-artboard wrapping. §28's explicitly
+   .light-wrapped artboards already match, so there's no conflict. */
+body.board-light {
+  --bg:       var(--paper);
+  --bg-2:     var(--paper-2);
+  --bg-3:     var(--paper-3);
+  --fg:       var(--ink);
+  --fg-2:     var(--ink-2);
+  --fg-3:     var(--ink-3);
+  --fg-4:     var(--ink-4);
+  --hairline: color-mix(in oklab, var(--ink) 12%, transparent);
+  --hairline-2: color-mix(in oklab, var(--ink) 6%, transparent);
+  --grid:     color-mix(in oklab, var(--ink) 4%, transparent);
+}
+/* Flip the artboard frame fill too so rounded corners don't show dark */
+body.board-light .dc-artboard { background: var(--paper-2); }
+
+#theme-toggle {
+  position: fixed;
+  top: 14px; right: 14px;
+  z-index: 9999;
+  font-family: var(--mono);
+  font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; font-weight: 600;
+  padding: 8px 14px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in oklab, currentColor 30%, transparent);
+  background: var(--ink);
+  color: var(--paper);
+  cursor: pointer;
+  box-shadow: 0 4px 14px -4px rgba(0,0,0,0.4);
+}
+body.board-light #theme-toggle { background: var(--paper); color: var(--ink); }
+#theme-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* ── Skip link (injected by a11y-wire.js) ────────────────────────
+   Visually hidden until focused, then pinned top-left of the screen. */
+.skip-link {
+  position: absolute;
+  left: 12px;
+  top: -48px;
+  z-index: 50;
+  padding: 8px 14px;
+  border-radius: var(--r-sm);
+  background: var(--accent);
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  font-weight: 600;
+  text-decoration: none;
+  transition: top 0.12s ease;
+}
+.skip-link:focus,
+.skip-link:focus-visible {
+  top: 12px;
+  outline: 2px solid var(--ink);
+  outline-offset: 2px;
+}
+.page-body:focus { outline: none; }
+
+
+   A single .screen prints as a clean, ink-on-paper page: force the
+   light palette, preserve intentional fills, drop fixed chrome,
+   never clip scroll regions. */
+@media print {
+  @page { margin: 14mm; }
+
+  html, body { background: #fff !important; }
+
+  /* Print every screen on paper, not dark mode */
+  .screen {
+    background: #fff !important;
+    color: #111 !important;
+    overflow: visible !important;
+    height: auto !important;
+    break-inside: avoid;
+  }
+  /* Re-map tokens to the light scale for print */
+  .screen, .light, :root {
+    --bg: var(--paper);
+    --bg-2: var(--paper-2);
+    --bg-3: var(--paper-3);
+    --fg: var(--ink);
+    --fg-2: var(--ink-2);
+    --fg-3: var(--ink-3);
+    --fg-4: var(--ink-4);
+    --hairline: color-mix(in oklab, var(--ink) 14%, transparent);
+    --hairline-2: color-mix(in oklab, var(--ink) 8%, transparent);
+  }
+
+  /* Make backgrounds (accent buttons, hi cards, charts) actually print */
+  * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
+
+  /* Don't print transient app chrome */
+  .statusbar { display: none !important; }
+
+  /* Avoid orphaned headings/rows */
+  .page-title, .eyebrow { break-after: avoid; }
+  tr, .card, .stat-card { break-inside: avoid; }
+
+  /* The design-canvas grid/scaler is irrelevant on paper */
+  [data-dc-section] { break-inside: avoid; }
+}

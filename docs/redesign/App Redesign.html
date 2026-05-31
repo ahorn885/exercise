@@ -1,0 +1,393 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>AIDSTATION PRO — App Redesign</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<link rel="icon" type="image/svg+xml" href="../scraps/.thumbnail" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="tokens.css" />
+<link rel="stylesheet" href="polish.css" />
+<style>
+  html, body { margin: 0; padding: 0; background: #f0eee9; }
+  .dc-artboard { background: #1a1d24; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+
+<script type="text/babel" src="../design-canvas.jsx"></script>
+<script type="text/babel" src="shell.jsx"></script>
+<script type="text/babel" src="screens-desktop-a.jsx"></script>
+<script type="text/babel" src="screens-desktop-b.jsx"></script>
+<script type="text/babel" src="screens-desktop-c.jsx"></script>
+<script type="text/babel" src="screens-desktop-d.jsx"></script>
+<script type="text/babel" src="screens-desktop-e.jsx"></script>
+<script type="text/babel" src="screens-mobile.jsx"></script>
+<script type="text/babel" src="screens-mobile-b.jsx"></script>
+<script type="text/babel" src="screens-mobile-c.jsx"></script>
+<script type="text/babel" src="screens-mobile-d.jsx"></script>
+<script type="text/babel" src="screens-states.jsx"></script>
+<script type="text/babel" src="screens-states-b.jsx"></script>
+<script type="text/babel" src="screens-notifications.jsx"></script>
+<script type="text/babel" src="screens-gaps.jsx"></script>
+<script type="text/babel" src="screens-gaps-mobile.jsx"></script>
+<script type="text/babel" src="screens-mobile-onb.jsx"></script>
+<script type="text/babel" src="screens-mobile-aux.jsx"></script>
+<script type="text/babel" src="screens-connections-v2.jsx"></script>
+<script type="text/babel" src="screens-admin.jsx"></script>
+<script type="text/babel" src="screens-account.jsx"></script>
+<script type="text/babel" src="screens-coach-memory.jsx"></script>
+<script type="text/babel" src="screens-races-routes.jsx"></script>
+<script type="text/babel" src="screens-empty-shared.jsx"></script>
+<script type="text/babel" src="screens-polish.jsx"></script>
+<script type="text/babel" src="screens-a11y.jsx"></script>
+
+<script type="text/babel">
+const D_W = 1440, D_H = 900;
+const D_TALL = 1080;
+const M_W = 390,  M_H = 844;
+
+function App() {
+  return (
+    <DesignCanvas>
+
+      <DCSection id="intro" title="01 · System & read-me" subtitle="Foundation · brand-aligned redesign of the entire AIDSTATION app. Dark-mode primary. Click any artboard to focus fullscreen.">
+        <DCArtboard id="intro-note" label="Notes · read me" width={560} height={620}>
+          <div style={{ background: "var(--ink)", color: "var(--paper)", width: "100%", height: "100%", padding: 28, fontFamily: "'Inter', system-ui, sans-serif", fontSize: 13, lineHeight: 1.55, display: "flex", flexDirection: "column", gap: 14, boxSizing: "border-box", overflow: "auto" }}>
+            <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 10, letterSpacing: "0.22em", textTransform: "uppercase", color: "rgba(255,255,255,0.55)" }}>● V14 · REORGANIZED · 31 SECTIONS</span>
+            <div style={{ fontSize: 24, fontWeight: 700, letterSpacing: "-0.02em", lineHeight: 1.1 }}>Every screen, every state — in order.</div>
+            <div style={{ color: "rgba(255,255,255,0.78)", fontSize: 12.5 }}>
+              <div style={{ marginBottom: 7 }}><b>Foundation</b> — 01 System</div>
+              <div style={{ marginBottom: 7 }}><b>Entry</b> — 02 Sign in · 03 Onboarding (7 steps) · 04 Plan generation</div>
+              <div style={{ marginBottom: 7 }}><b>Daily loop</b> — 05 Dashboard · 06 Plan · 07 Workout · 08 Logging · 09 Wellness</div>
+              <div style={{ marginBottom: 7 }}><b>Plan lifecycle</b> — 10 Races · 11 Plans history · 12 Compare · 13 Refresh · 14 Import</div>
+              <div style={{ marginBottom: 7 }}><b>Library &amp; setup</b> — 15 Exercises · 16 Locations · 17 Connections</div>
+              <div style={{ marginBottom: 7 }}><b>Account</b> — 18 Profile · 19 Account · 20 Coach memory</div>
+              <div style={{ marginBottom: 7 }}><b>System</b> — 21 Notifications · 22 Notif settings · 23 ⌘K palette · 24 Shortcuts</div>
+              <div style={{ marginBottom: 7 }}><b>Admin</b> — 25 Users · audit · system</div>
+              <div style={{ marginBottom: 7 }}><b>States</b> — 26 Empty · 27 Error</div>
+              <div style={{ marginBottom: 7 }}><b>Polish</b> — 28 Light mode · 29 Accessibility &amp; motion</div>
+              <div style={{ marginBottom: 7 }}><b>Housekeeping</b> — 30 Cleanup note · 31 Roadmap</div>
+            </div>
+            <div style={{ marginTop: "auto", fontSize: 11, color: "rgba(255,255,255,0.55)", borderTop: "1px solid rgba(255,255,255,0.1)", paddingTop: 12 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", padding: "2px 0" }}><span>Theme</span><span className="mono">Dark primary · light in §28</span></div>
+              <div style={{ display: "flex", justifyContent: "space-between", padding: "2px 0" }}><span>Parity</span><span className="mono">Desktop + mobile throughout</span></div>
+              <div style={{ display: "flex", justifyContent: "space-between", padding: "2px 0" }}><span>Sections</span><span className="mono">31 · grouped by product flow</span></div>
+            </div>
+          </div>
+        </DCArtboard>
+        <DCPostIt top={130} left={620} width={230}>
+          <b>v14:</b> Reorganized into a clean flow — Foundation → Entry → Daily loop → Plan lifecycle → Library → Account → System → Admin → States → Polish → Housekeeping.
+        </DCPostIt>
+        <DCPostIt top={420} left={620} width={230} rotate={3}>
+          IDs are stable — any reordering / renaming you do on the board persists.
+        </DCPostIt>
+      </DCSection>
+
+      <DCSection id="auth" title="02 · Sign in" subtitle="Entry · returning athlete. Email + password (auth.login) with a forgot-password path.">
+        <DCArtboard id="login-desktop" label="Desktop · Sign in" width={D_W} height={D_H}><ScreenLogin /></DCArtboard>
+        <DCArtboard id="login-mobile" label="Mobile · Sign in" width={M_W} height={M_H}><MobileLogin /></DCArtboard>
+      </DCSection>
+
+      <DCSection id="onboarding" title="03 · Onboarding · 7 steps" subtitle="Entry · first run, steps 01 → 07. One focused decision per step. Desktop + mobile parity throughout.">
+        <DCArtboard id="onb-1-account" label="Desktop · Step 01 · Create account" width={D_W} height={D_TALL}><OnbAccount /></DCArtboard>
+        <DCArtboard id="onb-1-account-mobile" label="Mobile · Step 01 · Create account" width={M_W} height={M_H}><MobileOnbAccount /></DCArtboard>
+        <DCArtboard id="onb-2-connect" label="Desktop · Step 02 · Connect providers" width={D_W} height={D_TALL}><OnbConnect /></DCArtboard>
+        <DCArtboard id="onb-2-connect-mobile" label="Mobile · Step 02 · Connect" width={M_W} height={M_H}><MobileOnbConnect /></DCArtboard>
+        <DCArtboard id="onb-3-prefill" label="Desktop · Step 03 · Prefill review" width={D_W} height={D_TALL}><OnbPrefill /></DCArtboard>
+        <DCArtboard id="onb-3-prefill-mobile" label="Mobile · Step 03 · Prefill" width={M_W} height={M_H}><MobileOnbPrefill /></DCArtboard>
+        <DCArtboard id="onb-4-schedule" label="Desktop · Step 04 · Schedule & availability" width={D_W} height={D_H}><OnbSchedule /></DCArtboard>
+        <DCArtboard id="onb-4-schedule-mobile" label="Mobile · Step 04 · Schedule" width={M_W} height={M_H}><MobileOnbSchedule /></DCArtboard>
+        <DCArtboard id="onb-5-skills" label="Desktop · Step 05 · Skills" width={D_W} height={D_TALL}><OnbSkills /></DCArtboard>
+        <DCArtboard id="onb-5-skills-mobile" label="Mobile · Step 05 · Skills" width={M_W} height={M_H}><MobileOnbSkills /></DCArtboard>
+        <DCArtboard id="onb-6-locations" label="Desktop · Step 06 · Locations" width={D_W} height={D_TALL}><OnbLocations /></DCArtboard>
+        <DCArtboard id="onb-6-locations-mobile" label="Mobile · Step 06 · Locations" width={M_W} height={M_H}><MobileOnbLocations /></DCArtboard>
+        <DCArtboard id="onb-7-race" label="Desktop · Step 07 · Target race · full" width={D_W} height={1180}><OnbRace /></DCArtboard>
+        <DCArtboard id="onb-7-race-mobile" label="Mobile · Step 07 · Target race" width={M_W} height={M_H}><MobileOnbRace /></DCArtboard>
+      </DCSection>
+
+      <DCSection id="plangen" title="04 · Plan generation" subtitle="Entry · the payoff — target race in, periodized plan out. Start screen + the cup-pour progress animation.">
+        <DCArtboard id="plan-gen-start" label="Desktop · Generate plan · start" width={D_W} height={D_TALL}><ScreenPlanGenerate /></DCArtboard>
+        <DCArtboard id="plan-gen-start-mobile" label="Mobile · Generate plan · start" width={M_W} height={M_H}><MobilePlanGenerate /></DCArtboard>
+        <DCArtboard id="plan-gen-progress" label="Desktop · Pouring you a plan…" width={D_W} height={D_H}><ScreenPlanProgress /></DCArtboard>
+        <DCArtboard id="plan-gen-progress-mobile" label="Mobile · Pouring you a plan…" width={M_W} height={M_H}><MobilePlanProgress /></DCArtboard>
+      </DCSection>
+
+      <DCSection id="dashboard" title="05 · Dashboard · Today" subtitle="Daily loop · the hero is the next workout, not a card grid.">
+        <DCArtboard id="dash-desktop" label="Desktop" width={D_W} height={D_H}><ScreenDashboard /></DCArtboard>
+        <DCArtboard id="dash-mobile" label="Mobile" width={M_W} height={M_H}><MobileDashboard /></DCArtboard>
+      </DCSection>
+
+      <DCSection id="plan" title="06 · Training plan" subtitle="Daily loop · week-at-a-glance, phase context, key sessions. Includes the no-active-plan state.">
+        <DCArtboard id="plan-desktop" label="Desktop · Plan week view" width={D_W} height={D_H}><ScreenPlan /></DCArtboard>
+        <DCArtboard id="plan-mobile" label="Mobile · Plan day list" width={M_W} height={M_H}><MobilePlan /></DCArtboard>
+        <DCArtboard id="plan-empty" label="Desktop · Plan · no active plan" width={D_W} height={D_H}><ScreenPlanEmpty /></DCArtboard>
+        <DCArtboard id="plan-empty-mobile" label="Mobile · Plan · no active plan" width={M_W} height={M_H}><MobilePlanEmpty /></DCArtboard>
+      </DCSection>
+
+      <DCSection id="workout" title="07 · Workout detail" subtitle="Daily loop · push-to-watch → upload completed .FIT. Rest-day variant included.">
+        <DCArtboard id="workout-desktop" label="Desktop · Workout detail" width={D_W} height={D_TALL}><ScreenWorkout /></DCArtboard>
+        <DCArtboard id="workout-mobile" label="Mobile · Workout detail" width={M_W} height={M_H}><MobileWorkout /></DCArtboard>
+        <DCArtboard id="workout-empty" label="Desktop · Rest day" width={D_W} height={D_H}><ScreenWorkoutEmpty /></DCArtboard>
+        <DCArtboard id="workout-empty-mobile" label="Mobile · Rest day" width={M_W} height={M_H}><MobileWorkoutEmpty /></DCArtboard>
+      </DCSection>
+
+      <DCSection id="logging" title="08 · Logging" subtitle="Daily loop · one landing, adaptive form — all 6 log types share the same shell.">
+        <DCArtboard id="log-cardio" label="Desktop · Log Cardio" width={D_W} height={D_TALL}><ScreenLog type="cardio" /></DCArtboard>
+        <DCArtboard id="log-strength" label="Desktop · Log Strength" width={D_W} height={D_TALL}><ScreenLog type="strength" /></DCArtboard>
+        <DCArtboard id="log-body" label="Desktop · Log Body metrics" width={D_W} height={D_H}><ScreenLog type="body" /></DCArtboard>
+        <DCArtboard id="log-wellness" label="Desktop · Log Wellness" width={D_W} height={D_H}><ScreenLog type="wellness" /></DCArtboard>
+        <DCArtboard id="log-conditions" label="Desktop · Log Conditions" width={D_W} height={D_TALL}><ScreenLog type="conditions" /></DCArtboard>
+        <DCArtboard id="log-injury" label="Desktop · Log Injury" width={D_W} height={D_TALL}><ScreenLog type="injury" /></DCArtboard>
+        <DCArtboard id="log-mobile" label="Mobile · Quick-log sheet" width={M_W} height={M_H}><MobileQuickLog /></DCArtboard>
+      </DCSection>
+
+      <DCSection id="wellness" title="09 · Wellness" subtitle="Daily loop · 30-day readiness — sleep, HRV, resting HR.">
+        <DCArtboard id="wellness-desktop" label="Desktop · Wellness · 30d" width={D_W} height={D_TALL}><ScreenWellness /></DCArtboard>
+        <DCArtboard id="wellness-mobile" label="Mobile · Wellness" width={M_W} height={M_H}><MobileWellness /></DCArtboard>
+      </DCSection>
+
+      <DCSection id="races" title="10 · Races · event manager" subtitle="Plan lifecycle · the dates everything periodizes back from. A/B/C priority; editing a date re-cascades the plan.">
+        <DCArtboard id="races-desktop" label="Desktop · Races" width={D_W} height={D_TALL}><ScreenRaceEvents /></DCArtboard>
+        <DCArtboard id="races-mobile" label="Mobile · Races" width={M_W} height={M_H}><MobileRaceEvents /></DCArtboard>
+      </DCSection>
+
+      <DCSection id="planlist" title="11 · Plans · history & versions" subtitle="Plan lifecycle · every plan and version, active and archived. Includes the zero-plans state.">
+        <DCArtboard id="plan-list-desktop" label="Desktop · Plans · all" width={D_W} height={D_TALL}><ScreenPlanList /></DCArtboard>
+        <DCArtboard id="plan-list-mobile" label="Mobile · Plans · all" width={M_W} height={M_H}><MobilePlanList /></DCArtboard>
+        <DCArtboard id="plan-list-empty" label="Desktop · Plans · zero plans" width={D_W} height={D_H}><ScreenPlanListEmpty /></DCArtboard>
+        <DCArtboard id="plan-list-empty-mobile" label="Mobile · Plans · zero plans" width={M_W} height={M_H}><MobilePlanListEmpty /></DCArtboard>
+      </DCSection>
+
+      <DCSection id="plancompare" title="12 · Plan compare · diff" subtitle="Plan lifecycle · version A ↔ B, session-by-session changes.">
+        <DCArtboard id="plan-compare" label="Desktop · Plan compare · diff" width={D_W} height={D_H}><ScreenPlanCompare /></DCArtboard>
+        <DCArtboard id="plan-compare-mobile" label="Mobile · Plan compare" width={M_W} height={M_H}><MobilePlanCompare /></DCArtboard>
+      </DCSection>
+
+      <DCSection id="refresh" title="13 · Plan refresh" subtitle="Plan lifecycle · adapt the plan to new context — injury, travel, a missed week.">
+        <DCArtboard id="refresh-desktop" label="Desktop · Plan refresh" width={D_W} height={D_TALL}><ScreenPlanRefresh /></DCArtboard>
+        <DCArtboard id="refresh-mobile" label="Mobile · Plan refresh" width={M_W} height={M_H}><MobilePlanRefresh /></DCArtboard>
+      </DCSection>
+
+      <DCSection id="planimport" title="14 · Plan import" subtitle="Plan lifecycle · paste JSON from a coach or another tool.">
+        <DCArtboard id="plan-import" label="Desktop · Plan import" width={D_W} height={D_H}><ScreenPlanImport /></DCArtboard>
+        <DCArtboard id="plan-import-mobile" label="Mobile · Plan import" width={M_W} height={M_H}><MobilePlanImport /></DCArtboard>
+      </DCSection>
+
+      <DCSection id="exercises" title="15 · Exercises library" subtitle="Library · Rx movements, filters, substitutions. Includes the no-Rx state.">
+        <DCArtboard id="exercises-desktop" label="Desktop · Exercises" width={D_W} height={D_H}><ScreenExercises /></DCArtboard>
+        <DCArtboard id="exercises-mobile" label="Mobile · Exercises" width={M_W} height={M_H}><MobileExercises /></DCArtboard>
+        <DCArtboard id="exercises-empty" label="Desktop · Exercises · no Rx" width={D_W} height={D_H}><ScreenExercisesEmpty /></DCArtboard>
+        <DCArtboard id="exercises-empty-mobile" label="Mobile · Exercises · no Rx" width={M_W} height={M_H}><MobileExercisesEmpty /></DCArtboard>
+      </DCSection>
+
+      <DCSection id="locations" title="16 · Locations" subtitle="Library · where you train + equipment per location. Includes the empty state.">
+        <DCArtboard id="locations-desktop" label="Desktop · Locations" width={D_W} height={D_H}><ScreenLocations /></DCArtboard>
+        <DCArtboard id="locations-mobile" label="Mobile · Locations" width={M_W} height={M_H}><MobileLocations /></DCArtboard>
+        <DCArtboard id="locations-empty" label="Desktop · Locations · no locations" width={D_W} height={D_H}><ScreenLocationsEmpty /></DCArtboard>
+        <DCArtboard id="locations-empty-mobile" label="Mobile · Locations · no locations" width={M_W} height={M_H}><MobileLocationsEmpty /></DCArtboard>
+      </DCSection>
+
+      <DCSection id="connections-hub" title="17 · Connections · hub" subtitle="Setup · one hub for providers, .FIT files + inspector, and sync rules — Sources · Files · Preferences, plus empty state.">
+        <DCArtboard id="conn-hub-sources" label="Desktop · Sources tab (default)" width={D_W} height={D_TALL}><ScreenConnHubSources /></DCArtboard>
+        <DCArtboard id="conn-hub-files" label="Desktop · Files tab · file selected → inspector" width={D_W} height={D_TALL}><ScreenConnHubFiles /></DCArtboard>
+        <DCArtboard id="conn-hub-prefs" label="Desktop · Preferences tab (from Profile)" width={D_W} height={D_TALL}><ScreenConnHubPrefs /></DCArtboard>
+        <DCArtboard id="conn-hub-sources-m" label="Mobile · Sources" width={M_W} height={M_H}><MobileConnHubSources /></DCArtboard>
+        <DCArtboard id="conn-hub-files-m" label="Mobile · Files + inspector" width={M_W} height={M_H}><MobileConnHubFiles /></DCArtboard>
+        <DCArtboard id="conn-hub-prefs-m" label="Mobile · Preferences" width={M_W} height={M_H}><MobileConnHubPrefs /></DCArtboard>
+        <DCArtboard id="conn-hub-empty" label="Desktop · Empty · zero providers, zero files" width={D_W} height={D_TALL}><ScreenConnHubEmpty /></DCArtboard>
+        <DCArtboard id="conn-hub-empty-m" label="Mobile · Empty · zero providers" width={M_W} height={M_H}><MobileConnHubEmpty /></DCArtboard>
+      </DCSection>
+
+      <DCSection id="profile" title="18 · Athlete profile" subtitle="Account · identity, baselines, plans. Includes the day-1 first-run state.">
+        <DCArtboard id="profile-desktop" label="Desktop · Athlete profile" width={D_W} height={D_TALL}><ScreenProfile /></DCArtboard>
+        <DCArtboard id="profile-mobile" label="Mobile · Athlete profile" width={M_W} height={M_H}><MobileProfile /></DCArtboard>
+        <DCArtboard id="profile-empty-desktop" label="Desktop · Profile · day 1" width={D_W} height={D_TALL}><ScreenProfileEmpty /></DCArtboard>
+        <DCArtboard id="profile-empty-mobile" label="Mobile · Profile · day 1" width={M_W} height={M_H}><MobileProfileEmpty /></DCArtboard>
+      </DCSection>
+
+      <DCSection id="account" title="19 · Account settings" subtitle="Account · identity + change password + sign out. Code-accurate — no billing / 2FA.">
+        <DCArtboard id="account-desktop" label="Desktop · Account settings" width={D_W} height={D_H}><ScreenAccount /></DCArtboard>
+        <DCArtboard id="account-mobile" label="Mobile · Account settings" width={M_W} height={M_H}><MobileAccount /></DCArtboard>
+      </DCSection>
+
+      <DCSection id="coach-memory" title="20 · Coach memory" subtitle="Account · durable AI-coach preferences, auto-captured + manual.">
+        <DCArtboard id="coach-memory-desktop" label="Desktop · Coach memory" width={D_W} height={D_TALL}><ScreenCoachMemory /></DCArtboard>
+        <DCArtboard id="coach-memory-mobile" label="Mobile · Coach memory" width={M_W} height={M_H}><MobileCoachMemory /></DCArtboard>
+      </DCSection>
+
+      <DCSection id="notifications" title="21 · Notifications & feed" subtitle="System · plan updates, syncs, reminders, achievements. Full feed + top-bar dropdown + deep-link routing map.">
+        <DCArtboard id="notifs-desktop" label="Desktop · Full activity feed" width={D_W} height={D_TALL}><ScreenNotifications /></DCArtboard>
+        <DCArtboard id="notifs-panel" label="Desktop · Top-bar dropdown" width={D_W} height={D_H}><ScreenNotificationsPanel /></DCArtboard>
+        <DCArtboard id="notifs-mobile" label="Mobile · Notifications" width={M_W} height={M_H}><MobileNotifications /></DCArtboard>
+        <DCArtboard id="notif-routes" label="Desktop · Deep-link routing map" width={D_W} height={D_TALL}><ScreenNotifRoutes /></DCArtboard>
+      </DCSection>
+
+      <DCSection id="notif-settings" title="22 · Notification settings" subtitle="System · per-channel × per-category matrix, quiet hours, digest cadence.">
+        <DCArtboard id="notif-settings-desktop" label="Desktop · Notification settings" width={D_W} height={D_TALL}><ScreenNotifSettings /></DCArtboard>
+        <DCArtboard id="notif-settings-mobile" label="Mobile · Notification settings" width={M_W} height={M_H}><MobileNotifSettings /></DCArtboard>
+      </DCSection>
+
+      <DCSection id="palette" title="23 · Command palette · ⌘ K" subtitle="System · jump-to-anything search.">
+        <DCArtboard id="palette-desktop" label="Desktop · Palette · query 'refresh'" width={D_W} height={D_H}><ScreenSearchOverlay /></DCArtboard>
+        <DCArtboard id="palette-mobile" label="Mobile · Search sheet" width={M_W} height={M_H}><MobileSearchOverlay /></DCArtboard>
+      </DCSection>
+
+      <DCSection id="shortcuts" title="24 · Keyboard shortcuts" subtitle="System · cheat sheet for power users.">
+        <DCArtboard id="shortcuts-desktop" label="Desktop · Shortcuts" width={D_W} height={D_TALL}><ScreenShortcuts /></DCArtboard>
+      </DCSection>
+
+      <DCSection id="admin" title="25 · Admin · users · audit · system" subtitle="Internal · desktop-only. Users drill-in, delete confirm, audit log, telemetry.">
+        <DCArtboard id="admin-dash" label="Desktop · Admin · Users" width={D_W} height={D_H}><ScreenAdmin /></DCArtboard>
+        <DCArtboard id="admin-user" label="Desktop · Admin · User detail (drill-in)" width={D_W} height={D_TALL}><ScreenAdminUser /></DCArtboard>
+        <DCArtboard id="admin-user-delete" label="Desktop · Admin · Delete user (confirm)" width={D_W} height={D_H}><ScreenAdminUserDelete /></DCArtboard>
+        <DCArtboard id="admin-audit" label="Desktop · Admin · Audit log" width={D_W} height={D_H}><ScreenAdminAudit /></DCArtboard>
+        <DCArtboard id="admin-system" label="Desktop · Admin · System / telemetry" width={D_W} height={D_H}><ScreenAdminSystem /></DCArtboard>
+      </DCSection>
+
+      <DCSection id="empty-states" title="26 · Empty / first-run states" subtitle="Cross-cutting · the no-data views collected for reference.">
+        <DCArtboard id="empty-dashboard" label="Desktop · Dashboard · no plan" width={D_W} height={D_TALL}><ScreenDashboardEmpty /></DCArtboard>
+        <DCArtboard id="empty-dashboard-mobile" label="Mobile · Dashboard · no plan" width={M_W} height={M_H}><MobileDashboardEmpty /></DCArtboard>
+        <DCArtboard id="empty-wellness" label="Desktop · Wellness · no data" width={D_W} height={D_H}><ScreenWellnessEmpty /></DCArtboard>
+        <DCArtboard id="empty-wellness-mobile" label="Mobile · Wellness · no data" width={M_W} height={M_H}><MobileWellnessEmpty /></DCArtboard>
+      </DCSection>
+
+      <DCSection id="error-states" title="27 · Error states" subtitle="Cross-cutting · 404, plan-gen failure, 500 — written in trail voice.">
+        <DCArtboard id="err-404" label="Desktop · 404 · not found" width={D_W} height={D_H}><Screen404v2 /></DCArtboard>
+        <DCArtboard id="err-404-mobile" label="Mobile · 404" width={M_W} height={M_H}><Mobile404v2 /></DCArtboard>
+        <DCArtboard id="err-gen" label="Desktop · Plan generation failed" width={D_W} height={D_TALL}><ScreenPlanGenFailedV2 /></DCArtboard>
+        <DCArtboard id="err-gen-mobile" label="Mobile · Plan generation failed" width={M_W} height={M_H}><MobilePlanGenFailedV2 /></DCArtboard>
+        <DCArtboard id="err-generic" label="Desktop · Something seized up (500)" width={D_W} height={D_H}><ScreenErrorGeneric /></DCArtboard>
+        <DCArtboard id="err-generic-mobile" label="Mobile · Something seized up (500)" width={M_W} height={M_H}><MobileErrorGeneric /></DCArtboard>
+      </DCSection>
+
+      <DCSection id="light-mode" title="28 · Light mode" subtitle="Polish · same components, wrapped in .light — the token swap does everything. Or flip the whole board with the Theme toggle (top-right). Proof the palette is theme-ready, not a reskin.">
+        <DCArtboard id="light-dash" label="Desktop · Dashboard · light" width={D_W} height={D_H}><LightDashboard /></DCArtboard>
+        <DCArtboard id="light-plan" label="Desktop · Training plan · light" width={D_W} height={D_H}><LightPlan /></DCArtboard>
+        <DCArtboard id="light-workout" label="Desktop · Workout · light" width={D_W} height={D_TALL}><LightWorkout /></DCArtboard>
+        <DCArtboard id="light-logging" label="Desktop · Logging form · light" width={D_W} height={D_TALL}><LightLogging /></DCArtboard>
+        <DCArtboard id="light-exercises" label="Desktop · Exercises (table) · light" width={D_W} height={D_H}><LightExercises /></DCArtboard>
+        <DCArtboard id="light-wellness" label="Desktop · Wellness · light" width={D_W} height={D_TALL}><LightWellness /></DCArtboard>
+        <DCArtboard id="light-conn" label="Desktop · Connections · light" width={D_W} height={D_TALL}><LightConnections /></DCArtboard>
+        <DCArtboard id="light-races" label="Desktop · Races · light" width={D_W} height={D_TALL}><LightRaces /></DCArtboard>
+        <DCArtboard id="light-profile" label="Desktop · Profile · light" width={D_W} height={D_TALL}><LightProfile /></DCArtboard>
+        <DCArtboard id="light-account" label="Desktop · Account · light" width={D_W} height={D_H}><LightAccount /></DCArtboard>
+        <DCArtboard id="light-notifs" label="Desktop · Notifications (feed) · light" width={D_W} height={D_TALL}><LightNotifs /></DCArtboard>
+        <DCArtboard id="light-admin" label="Desktop · Admin (table) · light" width={D_W} height={D_H}><LightAdmin /></DCArtboard>
+        <DCArtboard id="light-dash-m" label="Mobile · Dashboard · light" width={M_W} height={M_H}><LightMobileDash /></DCArtboard>
+        <DCArtboard id="light-plan-m" label="Mobile · Plan · light" width={M_W} height={M_H}><LightMobilePlan /></DCArtboard>
+        <DCArtboard id="light-log-m" label="Mobile · Quick-log · light" width={M_W} height={M_H}><LightMobileLog /></DCArtboard>
+        <DCArtboard id="light-conn-m" label="Mobile · Connections · light" width={M_W} height={M_H}><LightMobileConn /></DCArtboard>
+      </DCSection>
+
+      <DCSection id="a11y" title="29 · Accessibility, keyboard & motion" subtitle="Polish · the visual rules (focus, contrast, hit targets, motion, print — polish.css) PLUS the behavioral layer now WIRED LIVE via a11y-wire.js: landmarks, roving tab-order, aria-current, skip-link, dialog semantics, and the ARIA contract per component. Tab through any screen — focus rings follow this spec.">
+        <DCArtboard id="a11y-spec" label="Desktop · Visual rules · focus / motion / print" width={D_W} height={D_TALL}><ScreenA11ySpec /></DCArtboard>
+        <DCArtboard id="a11y-tab-desktop" label="Desktop · Landmarks & tab-order" width={D_W} height={D_TALL}><ScreenTabDesktop /></DCArtboard>
+        <DCArtboard id="a11y-tab-form" label="Desktop · Forms · labels & errors" width={D_W} height={D_TALL}><ScreenTabForm /></DCArtboard>
+        <DCArtboard id="a11y-tab-modal" label="Desktop · Modal focus trap" width={D_W} height={D_TALL}><ScreenTabModal /></DCArtboard>
+        <DCArtboard id="a11y-tab-mobile" label="Desktop · Mobile tab-order & touch" width={D_W} height={D_TALL}><ScreenTabMobile /></DCArtboard>
+        <DCArtboard id="a11y-aria-ref" label="Desktop · ARIA component reference" width={D_W} height={D_TALL}><ScreenAriaRef /></DCArtboard>
+      </DCSection>
+
+      <DCSection id="coaching" title="30 · Code cleanup callout" subtitle="Housekeeping · dev note — plan_refresh + coaching/review consolidation.">
+        <DCArtboard id="coaching-cleanup" label="Code cleanup note" width={680} height={520}>
+          <div style={{ background: "var(--ink)", color: "var(--paper)", width: "100%", height: "100%", padding: 32, fontFamily: "'Inter', system-ui, sans-serif", fontSize: 14, lineHeight: 1.6, boxSizing: "border-box", display: "flex", flexDirection: "column", gap: 14 }}>
+            <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 10, letterSpacing: "0.22em", textTransform: "uppercase", color: "rgba(255,255,255,0.55)" }}>● CODE CLEANUP · BLOCKING THE REDESIGN</span>
+            <div style={{ fontSize: 24, fontWeight: 700, letterSpacing: "-0.02em", lineHeight: 1.1 }}>Two routes, same job.</div>
+            <div style={{ color: "rgba(255,255,255,0.78)" }}>
+              The backend has both <span style={{ fontFamily: "'JetBrains Mono', monospace" }}>plan_refresh_bp</span> (<code style={{ fontFamily: "'JetBrains Mono', monospace" }}>/plans/v2/refresh</code>) and <span style={{ fontFamily: "'JetBrains Mono', monospace" }}>coaching_bp</span> (<code style={{ fontFamily: "'JetBrains Mono', monospace" }}>/coaching/review</code>). Both:
+            </div>
+            <ul style={{ margin: "0 0 0 18px", padding: 0, color: "rgba(255,255,255,0.78)" }}>
+              <li>Re-run the coaching cascade against an existing plan</li>
+              <li>Have a 3-tier scope picker (session / weekly / block)</li>
+              <li>Take a natural-language "what changed" textarea</li>
+              <li>Write a new plan version on success</li>
+            </ul>
+            <div style={{ marginTop: "auto", fontSize: 11, color: "rgba(255,255,255,0.55)", borderTop: "1px solid rgba(255,255,255,0.1)", paddingTop: 12 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", padding: "2px 0" }}><span>Recommendation</span><span className="mono">KEEP plan_refresh · RETIRE coaching/review</span></div>
+              <div style={{ display: "flex", justifyContent: "space-between", padding: "2px 0" }}><span>Files to update</span><span className="mono">routes/coaching.py · templates/coaching/</span></div>
+              <div style={{ display: "flex", justifyContent: "space-between", padding: "2px 0" }}><span>Field union now in</span><span className="mono">section 13 · Plan refresh</span></div>
+            </div>
+          </div>
+        </DCArtboard>
+      </DCSection>
+
+      <DCSection id="next" title="31 · Roadmap · not yet" subtitle="Housekeeping · what is left.">
+        <DCArtboard id="next-note" label="Coverage gaps" width={560} height={520}>
+          <div style={{ background: "var(--ink)", color: "var(--paper)", width: "100%", height: "100%", padding: 28, fontFamily: "'Inter', system-ui, sans-serif", fontSize: 13, lineHeight: 1.55, boxSizing: "border-box", overflow: "auto" }}>
+            <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 10, letterSpacing: "0.22em", textTransform: "uppercase", color: "rgba(255,255,255,0.55)" }}>● STILL NOT DESIGNED · v14</span>
+            <ul style={{ margin: "10px 0 0", paddingLeft: 18 }}>
+              <li>Nothing structural or behavioral left to <i>design</i> — every screen, theme, and a11y contract is drawn AND wired.</li>
+              <li><b>Light-mode coverage</b>: §28 shows 16 screens; the <b>Theme toggle</b> (top-right) flips the entire board live.</li>
+              <li><b>Tab-order &amp; ARIA</b>: specced in §29 and <b>wired live</b> by <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 11 }}>a11y-wire.js</span> — landmarks, roving nav, skip-link, dialog, roles + labels on every rendered screen. Tab through any artboard to see it.</li>
+            </ul>
+            <div style={{ marginTop: 14, paddingTop: 12, borderTop: "1px solid rgba(255,255,255,0.1)", fontSize: 11, color: "rgba(255,255,255,0.6)" }}>
+              <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 9, letterSpacing: "0.2em", textTransform: "uppercase", color: "rgba(120,220,150,0.85)", marginBottom: 6 }}>✓ DONE SINCE v11</div>
+              <div>· Board reorganized into a clean product flow — 31 sections renumbered 01–31, grouped Foundation → Entry → Daily loop → Plan lifecycle → Library → Account → System → Admin → States → Housekeeping.</div>
+              <div style={{ marginTop: 4 }}>· Connections unified into one hub; FIT debug, Wellness FIT import &amp; Profile→Connections folded in.</div>
+              <div style={{ marginTop: 4 }}>· "No plan" empty state consolidated to one shared design.</div>
+              <div style={{ marginTop: 4 }}>· Error copy rewritten in trail voice (off trail · build stalled · seized up).</div>
+              <div style={{ marginTop: 4 }}>· Admin: users drill-in, type-to-confirm delete, audit log, system/telemetry.</div>
+              <div style={{ marginTop: 4 }}>· Account settings + Coach memory + Race events manager + notification deep-links.</div>
+              <div style={{ marginTop: 4 }}>· Polish: light mode (§28), focus rings + reduced-motion + print + forced-colors (§29, polish.css).</div>
+              <div style={{ marginTop: 4 }}>· A11y wired live (a11y-wire.js): landmarks, roving tab-order, aria-current, skip-link, dialog semantics, tablist roles, button/stat/table labels — applied to every rendered screen.</div>
+            </div>
+            <div style={{ marginTop: 12, paddingTop: 10, borderTop: "1px solid rgba(255,255,255,0.1)", fontSize: 10, color: "rgba(255,255,255,0.45)", fontFamily: "'JetBrains Mono', monospace", letterSpacing: "0.04em", lineHeight: 1.6 }}>
+              NOT BUILDING (no code yet, per direction): billing / subscriptions · human-coach surface · self-serve delete-account · 2FA · multi-session management.
+            </div>
+          </div>
+        </DCArtboard>
+        <DCPostIt top={180} left={620} width={240}>
+          Tell me which to batch next.
+        </DCPostIt>
+      </DCSection>
+
+    </DesignCanvas>
+  );
+}
+
+const root = ReactDOM.createRoot(document.getElementById('root'));
+// Defensive boot: the many in-browser Babel <script> files transpile
+// asynchronously, so on a cold/cache-busted load this inline script can
+// run a tick before every screen component is defined. Wait for a few
+// sentinels (last-loaded files' exports) before first render to avoid a
+// transient ReferenceError crashing <App>.
+(function boot(tries) {
+  var ready = typeof OnbAccount !== 'undefined'
+    && typeof ScreenAriaRef !== 'undefined'
+    && typeof LightAdmin !== 'undefined'
+    && typeof ScreenRaceEvents !== 'undefined';
+  if (ready || tries > 120) { root.render(<App />); return; }
+  setTimeout(function () { boot(tries + 1); }, 25);
+})(0);
+</script>
+
+<!-- Board-level theme toggle — flips every .screen to light via token override -->
+<button id="theme-toggle" type="button" aria-pressed="false" aria-label="Toggle board theme">◐ Dark</button>
+<script>
+(function () {
+  var btn = document.getElementById('theme-toggle');
+  var KEY = 'aidstation-board-theme';
+  function apply(light) {
+    document.body.classList.toggle('board-light', light);
+    btn.setAttribute('aria-pressed', light ? 'true' : 'false');
+    btn.textContent = light ? '☀ Light' : '◐ Dark';
+  }
+  apply(localStorage.getItem(KEY) === 'light');
+  btn.addEventListener('click', function () {
+    var now = !document.body.classList.contains('board-light');
+    localStorage.setItem(KEY, now ? 'light' : 'dark');
+    apply(now);
+  });
+})();
+</script>
+<script src="a11y-wire.js"></script>
+</body>
+</html>
