@@ -1,0 +1,14 @@
+{#- _shell/mobile_appbar.html — top bar for the mobile shell. The menu
+    button opens the overflow drawer (Bootstrap offcanvas, CSP-clean).
+    Shown only < the shell breakpoint. -#}
+<header class="appbar">
+  <button class="btn btn-icon" type="button"
+          data-bs-toggle="offcanvas" data-bs-target="#nav-drawer"
+          aria-controls="nav-drawer" aria-label="Open navigation menu">
+    <svg class="icon" width="22" height="22" aria-hidden="true"><use href="#i-menu"></use></svg>
+  </button>
+  <span class="title">{{ page_title | default('AIDSTATION') }}</span>
+  <button class="btn btn-icon" type="button" data-action="notifications" aria-label="Notifications">
+    <svg class="icon" width="20" height="20" aria-hidden="true"><use href="#i-bell"></use></svg>
+  </button>
+</header>

@@ -1,0 +1,22 @@
+{#- _shell/_nav_macros.html — shared nav-item renderers for the desktop
+    sidebar and the mobile overflow drawer, so the IA is defined once. -#}
+
+{%- macro sidebar_item(key, label, icon, href, active) -%}
+  <li>
+    <a class="sidebar-item{{ ' active' if key == active else '' }}" href="{{ href }}"
+       {% if key == active %}aria-current="page"{% endif %}>
+      <svg class="icon" width="16" height="16" aria-hidden="true"><use href="#{{ icon }}"></use></svg>
+      <span>{{ label }}</span>
+    </a>
+  </li>
+{%- endmacro -%}
+
+{%- macro drawer_item(key, label, icon, href, active) -%}
+  <li>
+    <a class="drawer-item{{ ' active' if key == active else '' }}" href="{{ href }}"
+       {% if key == active %}aria-current="page"{% endif %}>
+      <svg class="icon" width="18" height="18" aria-hidden="true"><use href="#{{ icon }}"></use></svg>
+      <span>{{ label }}</span>
+    </a>
+  </li>
+{%- endmacro -%}

@@ -1,5 +1,7 @@
 {% extends 'base.html' %}
+{% set nav_active = 'home' %}
 {% block title %}Dashboard{% endblock %}
+{% block crumbs %}<span>Today</span> <span class="sep">/</span> <b>{{ today }}</b>{% endblock %}
 {% block content %}
 
 {# ── Brand header ── #}
