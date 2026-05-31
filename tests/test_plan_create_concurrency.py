@@ -81,6 +81,104 @@ def test_advance_skips_when_lock_held(monkeypatch):
     assert out.get("note") == "advance_in_progress_elsewhere"
 
 
+def _generating_pv(*a, **k):
+    return {
+        "generation_status": "generating",
+        "generation_error": None,
+        "scope_start_date": None,
+    }
+
+
+def test_advance_in_progress_noop_is_logged(monkeypatch, capsys):
+    """The contention no-op used to be SILENT, which is why the plan-49
+    lock-starvation had to be inferred. It must now log — and still do no cone
+    work (short-circuits before any synthesis)."""
+    monkeypatch.setattr(pc, "_load_plan_version", _generating_pv)
+
+    def _must_not_run(*a, **k):
+        raise AssertionError("cone ran while the lock was held elsewhere")
+
+    monkeypatch.setattr(pc, "orchestrate_plan_create", _must_not_run)
+
+    class _Db:
+        def execute(self, sql, params=()):
+            return _Cur({"locked": False} if "pg_try_advisory_lock" in sql else None)
+
+        def commit(self):
+            pass
+
+    out = pc._advance_plan_generation(_Db(), 1, 7)
+    assert out == {"status": "generating", "note": "advance_in_progress_elsewhere"}
+    assert "advance lock held elsewhere" in capsys.readouterr().out
+
+
+def test_release_advance_lock_keyed_and_best_effort(capsys):
+    """`_release_advance_lock` issues `pg_advisory_unlock` keyed to the plan,
+    and a release fault is swallowed (it must never mask the pass outcome)."""
+    calls = []
+
+    class _Db:
+        def execute(self, sql, params=()):
+            calls.append((sql, params))
+            return _Cur(None)
+
+    pc._release_advance_lock(_Db(), 55)
+    assert "pg_advisory_unlock" in calls[-1][0]
+    assert calls[-1][1] == (pc._ADVANCE_LOCK_NS, 55)
+
+    class _Boom:
+        def execute(self, *a, **k):
+            raise RuntimeError("connection down")
+
+    pc._release_advance_lock(_Boom(), 1)  # must not raise
+    assert "release failed" in capsys.readouterr().out
+
+
+class _RecordingDb:
+    """Lock acquired (True); records every SQL so a test can assert the
+    advance lock is released. Tolerates any other query."""
+
+    def __init__(self):
+        self.sql = []
+
+    def execute(self, sql, params=()):
+        self.sql.append(sql)
+        return _Cur({"locked": True} if "pg_try_advisory_lock" in sql else None)
+
+    def commit(self):
+        pass
+
+    def rollback(self):
+        pass
+
+
+def test_advance_releases_lock_on_clean_return(monkeypatch):
+    """A pass that ACQUIRES the lock releases it on the way out — otherwise a
+    clean return on a pooled connection leaks it and starves the plan."""
+    monkeypatch.setattr(pc, "_load_plan_version", _generating_pv)
+    monkeypatch.setattr(
+        pc, "_advance_plan_generation_locked", lambda *a, **k: {"status": "ready"}
+    )
+    db = _RecordingDb()
+    assert pc._advance_plan_generation(db, 1, 7) == {"status": "ready"}
+    assert any("pg_advisory_unlock" in s for s in db.sql)
+
+
+def test_advance_releases_lock_even_when_body_raises(monkeypatch):
+    """The release is in a `finally`, so it fires even if the locked body
+    raises — the lock must not survive a crashing pass on a pooled conn."""
+    monkeypatch.setattr(pc, "_load_plan_version", _generating_pv)
+
+    def _boom(*a, **k):
+        raise RuntimeError("kaboom mid-cone")
+
+    monkeypatch.setattr(pc, "_advance_plan_generation_locked", _boom)
+    db = _RecordingDb()
+    with pytest.raises(RuntimeError):
+        pc._advance_plan_generation(db, 1, 7)
+    assert any("pg_advisory_unlock" in s for s in db.sql)
+
+
 # ─── per-invocation budget ───────────────────────────────────────────────────
 
 
