@@ -28,7 +28,13 @@ def _layer3b(
     mode: str = "standard",
     start_phase: str = "Base",
     phase_weeks: dict[str, int] | None = None,
+    time_to_event_weeks: int | None = None,
 ) -> Layer3BPayload:
+    # #334: an event-mode payload carries time_to_event_weeks (top-level
+    # mode='event'); that field is what phase_structure_from_3b keys off to
+    # apply the >=2-week terminal-phase (Taper) floor. Open-ended payloads
+    # leave it None (mode='no-event') and get no floor.
+    top_mode = "event" if time_to_event_weeks is not None else "no-event"
     return Layer3BPayload(
         user_id=42,
         as_of=datetime(2026, 1, 1, 10, 0, 0),
@@ -39,7 +45,8 @@ def _layer3b(
         input_tokens=3000,
         output_tokens=800,
         etl_version_set={"layer0": "v7"},
-        mode="no-event",
+        mode=top_mode,  # type: ignore[arg-type]
+        time_to_event_weeks=time_to_event_weeks,
         goal_viability=GoalViability(
             viability="achievable",
             confidence="high",
@@ -200,6 +207,87 @@ class TestPhaseStructureDefaults:
                 _layer3b(mode="standard"), _PLAN_START, total_weeks=0
             )
         assert exc.value.code == "periodization_shape_unusable"
+
+
+class TestPhaseStructureEventModeTerminalFloor:
+    """#334: in event mode the terminal phase (Taper) is floored at 2 weeks
+    (a taper week + the race week) so the race-week brief + Taper coaching_flags
+    have a phase to attach to. Shortfall reclaimed from non-terminal phases
+    (Base first, else largest) without driving any below 1 week."""
+
+    def test_pge_7_weeks_taper_survives(self):
+        """The canonical #334 case: 7-week standard plan from Base. Pre-fix the
+        0.05*7=0.35 Taper floored to 0 and the plan ended on Peak, a week short
+        of the event. Now Taper >= 2; sum preserved at 7."""
+        ps = phase_structure_from_3b(
+            _layer3b(mode="standard", time_to_event_weeks=7),
+            _PLAN_START,
+            total_weeks=7,
+        )
+        weeks_by_phase = {p.phase_name: p.weeks for p in ps.phases}
+        assert weeks_by_phase.get("Taper", 0) >= 2
+        assert sum(weeks_by_phase.values()) == 7
+        # terminal phase ends on the plan's last day
+        assert ps.phases[-1].phase_name == "Taper"
+
+    def test_open_ended_7_weeks_taper_still_dropped(self):
+        """Same horizon, but open-ended (no time_to_event_weeks) → no floor;
+        Taper stays dropped per the unchanged proportional rounding."""
+        ps = phase_structure_from_3b(
+            _layer3b(mode="standard"), _PLAN_START, total_weeks=7
+        )
+        weeks_by_phase = {p.phase_name: p.weeks for p in ps.phases}
+        assert weeks_by_phase.get("Taper", 0) == 0
+        assert sum(weeks_by_phase.values()) == 7
+
+    def test_build_start_6_weeks_reclaims_without_starving(self):
+        """Documented bug case: 6-week standard from Build gave Build5/Peak1/
+        Taper0. Now Taper>=2, reclaimed from Build (largest), Peak stays >=1."""
+        ps = phase_structure_from_3b(
+            _layer3b(mode="standard", start_phase="Build", time_to_event_weeks=6),
+            _PLAN_START,
+            total_weeks=6,
+        )
+        weeks_by_phase = {p.phase_name: p.weeks for p in ps.phases}
+        assert "Base" not in weeks_by_phase
+        assert weeks_by_phase["Taper"] >= 2
+        assert weeks_by_phase["Peak"] >= 1
+        assert sum(weeks_by_phase.values()) == 6
+
+    def test_no_non_terminal_phase_driven_below_one_week(self):
+        ps = phase_structure_from_3b(
+            _layer3b(mode="standard", time_to_event_weeks=7),
+            _PLAN_START,
+            total_weeks=7,
+        )
+        for p in ps.phases:
+            if p.phase_name != "Taper":
+                assert p.weeks >= 1
+
+    def test_degenerate_horizon_target_not_invariant(self):
+        """A 2-week plan from Peak can't give Taper 2 without starving Peak
+        below 1 week — Taper keeps what remains (Peak1/Taper1), floor is a
+        target not an invariant."""
+        ps = phase_structure_from_3b(
+            _layer3b(mode="standard", start_phase="Peak", time_to_event_weeks=2),
+            _PLAN_START,
+            total_weeks=2,
+        )
+        weeks_by_phase = {p.phase_name: p.weeks for p in ps.phases}
+        assert weeks_by_phase == {"Peak": 1, "Taper": 1}
+
+    def test_taper_already_above_floor_unchanged(self):
+        """20-week event plan: Taper already 1 from proportions... actually
+        floored to 2; but a longer horizon where Taper >= 2 naturally is a
+        no-op. Use 40 weeks: 0.05*40 = 2 exactly."""
+        ps = phase_structure_from_3b(
+            _layer3b(mode="standard", time_to_event_weeks=40),
+            _PLAN_START,
+            total_weeks=40,
+        )
+        weeks_by_phase = {p.phase_name: p.weeks for p in ps.phases}
+        assert weeks_by_phase["Taper"] == 2
+        assert sum(weeks_by_phase.values()) == 40
 
 
 # ─── phase_for_date ──────────────────────────────────────────────────────────
