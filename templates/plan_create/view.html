@@ -25,7 +25,7 @@
       <div class="d-flex align-items-baseline mt-4 mb-2 pb-1 border-bottom">
         <span class="badge bg-dark me-2">{{ pm.phase_name }} phase</span>
         <small class="text-muted me-2">Week {{ pm.week_in_phase }} of {{ pm.total_weeks_in_phase }}</small>
-        {% if pm.intended_volume_band %}
+        {% if pm.intended_volume_band and (pm.intended_volume_band[0] or pm.intended_volume_band[1]) %}
           <small class="text-muted">target {{ '%g'|format(pm.intended_volume_band[0]) }}–{{ '%g'|format(pm.intended_volume_band[1]) }} h</small>
         {% endif %}
       </div>
