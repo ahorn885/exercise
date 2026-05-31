@@ -638,8 +638,8 @@ class TestEntryPointHappyPath:
         assert result.event_date == date(2026, 7, 17)
         assert result.event_locale_id == "nerstrand-mn"
         assert result.race_format == "continuous_multi_day"
-        # (2026-07-17 - 2026-05-20) = 58 days / 7 = 8 (floor)
-        assert result.time_to_event_weeks == 8
+        # #334: (2026-07-17 - 2026-05-20) = 58 days → ceil((58+1)/7) = 9
+        assert result.time_to_event_weeks == 9
         # Metadata stamping
         assert result.model == "claude-sonnet-4-6"
         assert len(result.prompt_hash) == 64  # sha256 hex
@@ -1658,7 +1658,8 @@ class TestS13Scenarios:
                 )
             ),
         )
-        assert result.time_to_event_weeks == 1
+        # #334: 7-day gap (2026-05-27 - 2026-05-20) → ceil((7+1)/7) = 2
+        assert result.time_to_event_weeks == 2
         assert result.periodization_shape.mode == "compressed"
 
     def test_ts8_race_date_in_past_fatal_no_llm(self):
@@ -1799,10 +1800,18 @@ class TestPrepDict:
         assert "Previous attempt failed schema validation: some pydantic error" in rendered
 
     def test_time_to_event_weeks_helper(self):
-        assert _time_to_event_weeks(date(2026, 7, 17), date(2026, 5, 20)) == 8
-        assert _time_to_event_weeks(date(2026, 5, 20), date(2026, 5, 20)) == 0
-        # Same-day floor
-        assert _time_to_event_weeks(date(2026, 5, 27), date(2026, 5, 20)) == 1
+        # #334: race-day-inclusive ceil = ceil((days + 1) / 7), clamped to 0.
+        # 58-day gap → ceil(59/7) = 9 (a full week covers the partial remainder
+        # so the plan spans through race day).
+        assert _time_to_event_weeks(date(2026, 7, 17), date(2026, 5, 20)) == 9
+        # Same-day event: 0-day gap → ceil(1/7) = 1 (any today-or-future event
+        # gets at least a 1-week plan; a 0-week horizon is degenerate).
+        assert _time_to_event_weeks(date(2026, 5, 20), date(2026, 5, 20)) == 1
+        # 7-day gap (race = first day of week 2) → ceil(8/7) = 2; the +1 pulls
+        # in the week that contains race day.
+        assert _time_to_event_weeks(date(2026, 5, 27), date(2026, 5, 20)) == 2
+        # Past event clamps to 0.
+        assert _time_to_event_weeks(date(2026, 5, 19), date(2026, 5, 20)) == 0
 
     def test_time_to_event_phase_band_guidance(self):
         assert "compressed" in _time_to_event_phase_band(2)

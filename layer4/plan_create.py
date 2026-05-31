@@ -243,7 +243,10 @@ def _compute_total_weeks(
     if layer3b_payload.time_to_event_weeks is not None:
         return layer3b_payload.time_to_event_weeks
     if race_event_payload is not None:
-        return max(1, (race_event_payload.event_date - plan_start_date).days // 7)
+        # Fallback only (3B field absent): mirror 3B's #334 race-day-inclusive
+        # ceil so this path agrees with the primary one above.
+        days = (race_event_payload.event_date - plan_start_date).days
+        return max(1, -(-(days + 1) // 7))  # ceil((days + 1) / 7)
     return None  # phase_structure_from_3b defaults to 12
 
 

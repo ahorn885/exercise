@@ -474,8 +474,17 @@ def _validate_inputs(
 
 
 def _time_to_event_weeks(event_date: date, current_date: date) -> int:
-    """Per spec §5.1 Block 1. Floor-divides days by 7; clamps to 0."""
-    return max(0, (event_date - current_date).days // 7)
+    """Per spec §5.1 Block 1 (#334 amendment 2026-05-31). Race-day-inclusive
+    ceil: `ceil((days + 1) / 7)`, clamped to 0. The `+1` counts race day itself
+    so an exact-multiple gap (race day = first day of the next week) still pulls
+    in the week that contains race day; `ceil` gives the partial final week a
+    full training week so the downstream Layer 4 plan spans *through* race day
+    rather than ending mid-final-week. (Pre-amendment: floor `days // 7`, which
+    dropped the final partial week and, via §6.1 rounding, the Taper phase.)"""
+    days = (event_date - current_date).days
+    if days < 0:
+        return 0
+    return -(-(days + 1) // 7)  # ceil((days + 1) / 7)
 
 
 def _time_to_event_phase_band(weeks: int) -> str:
@@ -1124,11 +1133,18 @@ def _enforce_hitl_auto_emit(
         and race_event_payload is not None
         and _has_dnf_attempt(previous_attempts)
     ):
-        weeks_to_event = _time_to_event_weeks(
-            race_event_payload.event_date, current_date
+        # #334: the recovery-window check asks "how much actual recovery time
+        # is available," which is the conservative *floor* of full weeks — NOT
+        # the plan-horizon `_time_to_event_weeks` (race-day-inclusive ceil).
+        # Using the ceil here would inflate the count by up to a week and
+        # suppress the warning at the window boundary (e.g. a 77-day gap is
+        # genuinely inside the 12-week quad_failure window, but ceil reads 12
+        # and the `< window` guard would go silent — a safety false-negative).
+        full_weeks_to_event = max(
+            0, (race_event_payload.event_date - current_date).days // 7
         )
         window = _dnf_recovery_window(previous_attempts)
-        if weeks_to_event < window:
+        if full_weeks_to_event < window:
             if "3B.dnf_recurrence_risk" not in existing_labels:
                 new_items.append(
                     Layer3BHITLItem(
@@ -1137,7 +1153,7 @@ def _enforce_hitl_auto_emit(
                         severity="warning",
                         description=(
                             f"Prior DNF recovery window ({window}wk) exceeds "
-                            f"time to event ({weeks_to_event}wk). DNF cause "
+                            f"time to event ({full_weeks_to_event}wk). DNF cause "
                             "may recur without targeted preparation."
                         ),
                         recommended_action=(

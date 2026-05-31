@@ -92,12 +92,24 @@ def _allocate_weeks_standard(
     mode: Literal["standard", "compressed", "extended"],
     total_weeks: int,
     start_phase: PhaseName,
+    terminal_phase_min_weeks: int = 0,
 ) -> dict[PhaseName, int]:
     """Per `Layer4_Spec.md` §6.1: when `start_phase != 'Base'`, the skipped
     earlier phases' percentages are dropped; remaining phases keep their
     relative proportions and re-normalize to fit `total_weeks`. Proportions
     round to whole weeks; remainder allocated to Base if Base is in the set,
-    otherwise to the earliest remaining phase."""
+    otherwise to the earliest remaining phase.
+
+    `terminal_phase_min_weeks` (#334 amendment 2026-05-31, event mode = 2):
+    the terminal phase (the one ending on `scope_end_date` — last in the
+    remaining set, Taper for a Base-start plan) is rounded *up* to this
+    minimum so the §6.1-budgeted Taper survives proportional rounding to drive
+    the Decision-4 race-week machinery (it's a taper week + the race week). The
+    shortfall is reclaimed one week at a time from a non-terminal phase (Base
+    first when present, else the largest remaining), never driving a preceding
+    phase below 1 week — so `sum == total_weeks` holds. On a horizon too small
+    to reach the minimum without starving a preceding phase, the terminal phase
+    keeps whatever remains (the floor is a target, not an invariant)."""
     proportions = _MODE_PROPORTIONS[mode]
     start_idx = _PHASE_ORDER.index(start_phase)
     remaining = _PHASE_ORDER[start_idx:]
@@ -118,6 +130,22 @@ def _allocate_weeks_standard(
         # remaining set; otherwise to the earliest remaining phase.
         target = "Base" if "Base" in remaining else remaining[0]
         rounded[target] += remainder
+
+    # #334: float the terminal phase up to its minimum, reclaiming from
+    # non-terminal phases one week at a time (Base first, else largest) without
+    # driving any preceding phase below 1 week.
+    terminal = remaining[-1]
+    while rounded[terminal] < terminal_phase_min_weeks:
+        donors = [p for p in remaining if p != terminal and rounded[p] > 1]
+        if not donors:
+            break  # horizon too small — terminal keeps what it has
+        if "Base" in donors:
+            donor = "Base"
+        else:
+            # largest remaining; tie-break to the earlier (more flexible) phase
+            donor = max(donors, key=lambda p: (rounded[p], -remaining.index(p)))
+        rounded[donor] -= 1
+        rounded[terminal] += 1
 
     return rounded
 
@@ -202,7 +230,16 @@ def phase_structure_from_3b(
                 "periodization_shape_unusable",
                 detail=f"total_weeks must be positive (got {total_weeks})",
             )
-        allocation = _allocate_weeks_standard(mode, total_weeks, start_phase)
+        # #334: event mode (time_to_event_weeks present) floors the terminal
+        # phase at 2 weeks (taper week + race week) so the race-week brief +
+        # Taper coaching_flags have a phase to attach to. Open-ended mode has
+        # no race-day boundary, so no floor.
+        terminal_phase_min_weeks = (
+            2 if layer3b_payload.time_to_event_weeks is not None else 0
+        )
+        allocation = _allocate_weeks_standard(
+            mode, total_weeks, start_phase, terminal_phase_min_weeks
+        )
 
     actual_total_weeks = sum(allocation.values())
 
