@@ -97,8 +97,10 @@ Strip the inputs down to what the LLM needs. Avoid passing data the LLM doesn't 
 
 **Block 1 — Mode + timeline.**
 - `has_event` boolean
-- If event: `event_date`, `time_to_event_weeks = (event_date - current_date).days / 7`, `time_to_event_phase_band` derived from time_to_event_weeks (see §5.3)
+- If event: `event_date`, `time_to_event_weeks = ceil((event_date - current_date).days / 7)`, `time_to_event_phase_band` derived from time_to_event_weeks (see §5.3)
 - If no-event: `plan_duration_weeks`, `non_event_goal_type`
+
+> **#334 amendment 2026-05-31 (ceil, not floor — race-week coverage).** The horizon formula uses `ceil`, not floor. A gap that is not a whole number of weeks still gets a full training week for the remainder, so the downstream Layer 4 plan spans **through** race day rather than ending mid-final-week. The pre-amendment implementation (`layer3b/builder.py::_time_to_event_weeks`) floored (`(event_date - current_date).days // 7`) — a 48-day gap (e.g. PGE 2026 from a 2026-05-30 plan start) resolved to 6 weeks instead of 7, dropping the final partial week and (via §6.1 proportional rounding) the Taper phase entirely, so the plan stopped ~7 days before the event. With `ceil`, a 48-day gap → 7 weeks; an exact-multiple gap (e.g. 42 days → 6) is unchanged. The `±1 week` tolerance on the Layer 4 `time_to_event_weeks_mismatch` precondition (`Layer4_Spec.md` §4.x) absorbs the ceil-vs-floor delta against the validator's own day-count check, so this change does not trip that guard.
 
 **Block 2 — Goal context.**
 - Event-mode: `goal_outcome` (Finish / Compete mid-pack / Podium), `time_goal` (optional, string), `first_time_at_distance` (bool), `previous_attempts` (list of {outcome, dnf_cause_text}), `race_distance_km`, `race_duration_hr`, `race_terrain` (multi-select), `race_pack_weight_kg` (the `navigation_required` input was retired 2026-05-25)
