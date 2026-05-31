@@ -562,6 +562,83 @@ class TestPerBlockBudgetGuard:
         assert calls["n"] == 1
 
 
+class TestTopLevelPayloadValidationRetryable:
+    """#47 (2026-05-31): a top-level `Layer4Payload` @model_validator failure
+    (here `_check_two_per_day` — the synthesizer over-emitted 3 sessions on one
+    day) raises at `_build_payload_for_validation` construction, OUTSIDE the
+    per-row parse try/except. It used to escape as a raw pydantic
+    ValidationError → the route catch-all marked the WHOLE plan 'failed
+    unexpectedly' and discarded it (prod plan #47: "max 2 sessions per day (got
+    3)"). It must instead surface as a RETRYABLE
+    `Layer4OutputError(schema_violation)` so the block re-synthesizes."""
+
+    def _run(self, caller):
+        from layer4 import per_phase
+        from layer4.phase_structure import phase_structure_from_3b
+
+        ps = phase_structure_from_3b(_layer3b(), _PLAN_START)
+        return per_phase.synthesize_phase(
+            user_id=1,
+            phase_spec=ps.phases[0],
+            phase_structure=ps,
+            phase_index_in_plan=0,
+            layer1_payload=_layer1(),
+            layer2a_payload=_layer2a(),
+            layer2b_payload=_layer2b(),
+            layer2c_payloads=_layer2c(),
+            layer2d_payload=_layer2d(),
+            layer2e_payload=_layer2e(),
+            layer3a_payload=_layer3a(),
+            layer3b_payload=_layer3b(),
+            race_event_payload=_race_event(),
+            prior_block_sessions=[],
+            plan_version_id=1,
+            etl_version_set={"layer0": "v7"},
+            mode="plan_create",
+            week_range=(1, 1),
+            llm_caller=caller,
+        )
+
+    def test_three_sessions_one_day_is_retryable_not_fatal(self):
+        from layer4.errors import Layer4OutputError
+
+        calls = {"n": 0}
+        # Three cardio sessions all dated 2026-06-02 (inside the week-1 block
+        # window). Each parses fine on its own — `session_index_in_day` stays
+        # ∈{0,1} (the per-row `<= 1` validator), so the parse step accepts them
+        # — but the cross-session `_check_two_per_day` invariant, which only
+        # fires at payload construction, rejects 3-on-a-day. This is exactly the
+        # boundary #47 fell through.
+        bad = {
+            "sessions": [
+                _cardio_session(d=date(2026, 6, 2), idx=0),
+                _cardio_session(d=date(2026, 6, 2), idx=1),
+                _cardio_session(d=date(2026, 6, 2), idx=1),
+            ],
+            "phase_synthesis_notes": "over-emitted a 3rd session on 06-02",
+        }
+
+        def _caller(*_a, **_kw):
+            calls["n"] += 1
+            return _PhaseOut(
+                tool_args=bad,
+                input_tokens=6000,
+                output_tokens=2000,
+                latency_ms=8000,
+            )
+
+        with pytest.raises(Layer4OutputError) as exc:
+            self._run(_caller)
+
+        # Surfaced as the RETRYABLE typed code — not a raw ValidationError that
+        # the route would treat as a fatal "unexpected" and discard the plan.
+        assert exc.value.code == "schema_violation"
+        assert "2 sessions per day" in str(exc.value.detail)
+        # Retried across the full cap (capped_retries=2 → 3 attempts) before
+        # giving up, rather than failing fatally on the first bad attempt.
+        assert calls["n"] == 3
+
+
 class TestBlockOutputBudget:
     """D-77 §6 follow-on: block-mode `max_tokens` scales to the unit's session
     ceiling. The per-phase 4000 default truncated a dense week's `sessions`

@@ -316,7 +316,8 @@ def _view_plan_url(plan_version_id: int) -> str:
 
 
 def _mark_plan_failed(
-    db, plan_version_id: int, user_id: int, message: str
+    db, plan_version_id: int, user_id: int, message: str,
+    traceback_text: str | None = None,
 ) -> dict:
     """Persist a terminal failure on the plan_versions row + return the
     poller JSON. Rolls back first so the write lands on a clean transaction
@@ -324,7 +325,15 @@ def _mark_plan_failed(
     rollback is reconnect-safe (`database._PgConn.rollback`), so a fault raised
     *because the connection itself dropped* (Neon closing an idle SSL link
     during a multi-minute synthesis) can't turn this failure path into a 500
-    with the row stuck 'generating'."""
+    with the row stuck 'generating'.
+
+    `traceback_text` (optional) persists the full Python traceback to
+    `plan_versions.generation_traceback` for the token-gated
+    `/admin/plan/<id>/diag` endpoint (CLAUDE.md Rule #14 — read the real fault
+    without the login wall / the truncating runtime-log MCP). It's written in
+    its OWN isolated, best-effort statement so a missing column (pre-migration)
+    or any write fault can NEVER turn the failure path back into a 500 — the
+    user-facing failure is already committed above."""
     db.rollback()
     db.execute(
         "UPDATE plan_versions SET generation_status = 'failed', "
@@ -332,6 +341,21 @@ def _mark_plan_failed(
         (message, plan_version_id, user_id),
     )
     db.commit()
+    if traceback_text:
+        try:
+            db.execute(
+                "UPDATE plan_versions SET generation_traceback = ? "
+                "WHERE id = ? AND user_id = ?",
+                (traceback_text[:20000], plan_version_id, user_id),
+            )
+            db.commit()
+        except Exception as _tb_exc:  # noqa: BLE001 — diag write must not break the failure path
+            db.rollback()
+            print(
+                f"_mark_plan_failed: generation_traceback persist failed for "
+                f"plan_version_id={plan_version_id} (non-fatal; column may be "
+                f"pre-migration): {_tb_exc}"
+            )
     return {"status": "failed", "error": message}
 
 
@@ -593,9 +617,13 @@ def _advance_plan_generation(db, uid: int, plan_version_id: int) -> dict:
             f"_advance_plan_generation: unexpected {type(exc).__name__} for "
             f"plan_version_id={plan_version_id}: {exc}"
         )
+        # Persist the full traceback (best-effort) so the token-gated diag
+        # endpoint surfaces the real fault without the login wall / the
+        # truncating runtime-log MCP (CLAUDE.md Rule #14).
         return _mark_plan_failed(
             db, plan_version_id, uid,
             "Plan generation failed unexpectedly. Please try again or contact support.",
+            traceback_text=traceback.format_exc(),
         )
 
 
