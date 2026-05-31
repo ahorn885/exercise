@@ -135,7 +135,7 @@ Until then, PR previews can't render — verify locally or via static checks. Th
 to any redesign PR (Production is unaffected).
 
 ### Next
-- **Phase 2 (continue):** §06 Plan · week (`plans.view_plan(plan_id)` — legacy model per §3b),
-  §07 Workout detail (`training.session_form` + `.FIT` upload), §08 Logging adaptive form
-  (one landing, type picker over the six `.new_entry` routes), §09 Wellness. Migrate one
+- **Phase 2 (continue):** §07 Workout detail (`training.session_form` + plan workout + `.FIT`
+  upload; per-workout nutrition/steps detail that §06 deferred lands here), §08 Logging adaptive
+  form (one landing, type picker over the six `.new_entry` routes), §09 Wellness. Migrate one
   template per slice, flipping each from `base_legacy.html` → `base.html` as it lands.
