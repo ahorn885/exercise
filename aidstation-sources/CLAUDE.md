@@ -87,6 +87,15 @@ Every closing handoff's §6.3 (Operating notes for next session) begins with the
 
 CLAUDE.md changes rarely now (it's stable rules only — see A2 process refactor 2026-05-19). When operating rules or framing change, the handoff that changes them flags it explicitly.
 
+### Rule #14 — Log access: ask, don't infer (Andy 2026-05-31)
+
+When diagnosing, treat logs as the source of truth — and never substitute a guess for a log you could have.
+
+1. **Signal not yet logged → ask to add it.** If the fact you need isn't being captured anywhere (no log line, no persisted field, no instrumentation), do **not** infer it from surrounding behavior. Surface the gap and propose the specific instrumentation (the exact log line / persisted field), then ask Andy to add it — or ask permission to add it. We track it better rather than assume. Padding-style probing (guessing exception types by trial) is not a substitute for the missing signal.
+2. **Log exists but you can't reach it → ask Andy to pull it.** If the signal *is* being logged but it's outside your reach (the Vercel runtime-log MCP truncates the message column / groups by request / has unreliable-negative full-text search; an admin page sits behind the app login wall), do **not** guess or reason around it. Tell Andy exactly which line/panel you need (e.g. "the line after `_advance_plan_generation: unexpected`", or the `/admin/plan/<id>/inspect` traceback panel) and have him paste it. A negative from a tool with a documented reliability gotcha is **not** evidence of absence.
+
+Rationale: on the #47 triage (2026-05-31) the truncated MCP made log-probe negatives *look* like they excluded a `ValueError`, when the real fault was a pydantic `ValidationError` — invisible until Andy pasted the raw traceback. Inference around an unreadable log burns turns and lands wrong. (The log-visibility build that closes this gap natively is tracked in CARRY_FORWARD / GitHub issues.)
+
 ---
 
 ## Stop-and-ask triggers
