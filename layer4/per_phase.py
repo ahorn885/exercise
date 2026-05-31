@@ -1722,18 +1722,52 @@ def synthesize_phase(
             final_retries_used = current_pass
             break
 
-        payload_attempt = _build_payload_for_validation(
-            user_id=user_id,
-            sessions=sessions,
-            plan_version_id=plan_version_id,
-            scope_start=unit_scope_start,
-            scope_end=unit_scope_end,
-            model=model,
-            temperature=temperature,
-            etl_version_set=etl_version_set,
-            phase_structure=phase_structure,
-            mode=mode,
-        )
+        try:
+            payload_attempt = _build_payload_for_validation(
+                user_id=user_id,
+                sessions=sessions,
+                plan_version_id=plan_version_id,
+                scope_start=unit_scope_start,
+                scope_end=unit_scope_end,
+                model=model,
+                temperature=temperature,
+                etl_version_set=etl_version_set,
+                phase_structure=phase_structure,
+                mode=mode,
+            )
+        except ValidationError as e:
+            # The per-row parse above only catches PlanSession-level faults. The
+            # top-level Layer4Payload @model_validators (e.g. `_check_two_per_day`:
+            # >2 sessions/day, strength+strength, two-hard, neither-cardio,
+            # session_index ordering) fire only HERE, at payload construction. A
+            # raw pydantic ValidationError used to escape the layer's typed-error
+            # contract -> the route catch-all marked the WHOLE plan 'failed
+            # unexpectedly' over one bad block (prod plan #47, 2026-05-31: "max 2
+            # sessions per day (got 3)"). Convert it to a retryable
+            # `schema_violation` -- same treatment as the parse step above -- so
+            # the block re-synthesizes next pass (schema_violation is in the
+            # route's `_RETRYABLE_BLOCK_CODES`) instead of discarding the plan.
+            print(
+                f"synthesize_phase: {unit_tag} attempt {current_pass + 1} "
+                f"payload validation failed ({type(e).__name__}): {str(e)[:240]}"
+            )
+            if current_pass >= capped_retries:
+                raise Layer4OutputError(
+                    "schema_violation",
+                    detail=f"Layer4Payload invariant violated: {e}",
+                )
+            rule_failures = [
+                RuleFailure(
+                    rule_name="schema_violation",
+                    phase_name=phase_spec.phase_name,
+                    severity="blocker",
+                    detail=str(e)[:240],
+                    affected_session_ids=[],
+                )
+            ]
+            final_retries_used = current_pass + 1
+            continue
+
         ctx = ValidatorContext(
             layer2a_payload=layer2a_payload,
             layer2b_payload=layer2b_payload,
