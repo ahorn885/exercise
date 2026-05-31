@@ -43,6 +43,21 @@ Rolling-state for items spanning multiple sessions. **Edit in place** — don't 
    bike / Rope / Quickdraws / Harness / Crash pad / Hangboard / Climbing gym
    membership / Kayak / Canoe). Also confirm
    `etl/sources/populate_skill_capability_toggles.sql` is applied.
+4. **Log-visibility diag endpoint (2026-05-31, PR #349).** Two Andy's-hands
+   steps to activate the token-readable `/admin/plan/<id>/diag` traceback
+   surface (Rule #14). Both are optional — the app is deploy-safe without them
+   (the traceback persist + the endpoint's traceback read are best-effort):
+   - **(a) `python init_db.py` on Neon** — lands the idempotent
+     `plan_versions.generation_traceback TEXT` column (container egress to Neon
+     is blocked, so this can't run from a web session). Until then, failures
+     log the traceback to Vercel only and the diag endpoint returns
+     `generation_traceback: null`.
+   - **(b) Set `DIAG_TOKEN` in Vercel env + share the value** — enables
+     Claude to fetch `/admin/plan/<id>/diag?token=…` past the app login wall
+     (via `web_fetch_vercel_url`). With `DIAG_TOKEN` unset, only the admin
+     session can read it (no token bypass). The secret never lives in the repo.
+   - Hard-kill backstop (log drain, for 504/OOM before the except runs) is the
+     deferred completeness layer — **#350**.
 
 ---
 
