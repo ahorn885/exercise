@@ -18,7 +18,20 @@
 </p>
 
 {% if sessions_by_date %}
+  {% set ns = namespace(phase=None, week=None) %}
   {% for d, sessions in sessions_by_date %}
+    {% set pm = sessions | selectattr('phase_metadata') | map(attribute='phase_metadata') | first %}
+    {% if pm and (pm.phase_name != ns.phase or pm.week_in_phase != ns.week) %}
+      <div class="d-flex align-items-baseline mt-4 mb-2 pb-1 border-bottom">
+        <span class="badge bg-dark me-2">{{ pm.phase_name }} phase</span>
+        <small class="text-muted me-2">Week {{ pm.week_in_phase }} of {{ pm.total_weeks_in_phase }}</small>
+        {% if pm.intended_volume_band %}
+          <small class="text-muted">target {{ '%g'|format(pm.intended_volume_band[0]) }}–{{ '%g'|format(pm.intended_volume_band[1]) }} h</small>
+        {% endif %}
+      </div>
+      {% set ns.phase = pm.phase_name %}
+      {% set ns.week = pm.week_in_phase %}
+    {% endif %}
     <div class="mb-2">
       <h6 class="mb-2">{{ d }} <small class="text-muted">{{ sessions[0].day_of_week }}</small></h6>
       {% for sess in sessions %}
