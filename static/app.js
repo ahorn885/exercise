@@ -320,6 +320,23 @@
   }
 })();
 
+// App-shell affordances (Phase 1). The command palette (⌘K) is a no-op stub
+// this phase: the keybinding is captured so it doesn't trigger the browser
+// default, and focus lands on the search affordance. The full palette (§23)
+// and notifications feed (§21) wire up in Phase 5.
+(function () {
+  document.addEventListener('keydown', function (e) {
+    var k = e.key && e.key.toLowerCase();
+    if ((e.metaKey || e.ctrlKey) && k === 'k') {
+      var search = document.querySelector('[data-action="cmdk"]');
+      if (search) {
+        e.preventDefault();
+        search.focus();
+      }
+    }
+  });
+})();
+
 // data-progress="N": set element.style.width to N% on DOM-ready. Used by
 // progress bars whose width is computed in Jinja — CSP style-src forbids
 // parser-set inline style attributes, so the width is carried in a data-

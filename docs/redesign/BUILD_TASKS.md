@@ -103,6 +103,19 @@ The redesign covers every *user-facing* surface but a few blueprints have no red
   statically (Jinja compiles, CSS braces balanced, zero unscoped selectors, no inline
   `style=`/`onclick=`). The token system goes live only where a screen adds `class="app"` —
   which begins in Phase 1.
+- **Phase 1 — App shell** (PR #400). New `base.html` shell (`<body class="app">`): grouped
+  desktop sidebar (Train/Log/Account) + top bar (breadcrumb slot, ⌘K stub, bell) + mobile
+  5-tab bottom bar + offcanvas overflow drawer. Old shell copied verbatim to `base_legacy.html`
+  and all 58 legacy screens re-pointed to it; both shells render the identical Flask context.
+  Nav wired with the corrected endpoint names (`PLAN_REVIEW_AND_CORRECTIONS.md` §3a). Note: a
+  Jinja `{% block %}` does **not** cross an `{% include %}` — `crumbs`/`topbar_actions` are
+  defined in `base.html` and handed to the topbar partial via captured `{% set %}` vars.
+- **Phase 2 · §05 Dashboard · Today** (PR #400). Full redesign onto the new shell, wired to the
+  real `dashboard.index` context only. Mock-only artboard widgets without backing data
+  (readiness HRV/RHR, interval SVG, 4-week TSS ramp) were **not** ported; every real surface is
+  (today/tomorrow/missed plan items with complete/skip/.FIT, live weather + hourly, clothing
+  recs, conditions-to-log, stats strip, recent strength/cardio, plan CTAs). Layout in token
+  classes under `.app` (no inline style — CSP-clean).
 
 ### Known blocker (infra, not code) — Vercel **Preview** deploys 500
 Preview deployments crash with `FUNCTION_INVOCATION_FAILED`: `app.py` raises at **import** when
@@ -113,7 +126,7 @@ Until then, PR previews can't render — verify locally or via static checks. Th
 to any redesign PR (Production is unaffected).
 
 ### Next
-- **Phase 1 — App shell** (first slice): new `base.html` shell (grouped sidebar + top bar +
-  mobile 5-tab bar), legacy copied to `base_legacy.html`, dashboard rendered on the new shell
-  as the proof screen. Apply `class="app"` to the shell `<body>`. Nav map = `BUILD_PLAN.md` §5
-  (use the corrected endpoint names from `PLAN_REVIEW_AND_CORRECTIONS.md` §3a).
+- **Phase 2 (continue):** §06 Plan · week (`plans.view_plan(plan_id)` — legacy model per §3b),
+  §07 Workout detail (`training.session_form` + `.FIT` upload), §08 Logging adaptive form
+  (one landing, type picker over the six `.new_entry` routes), §09 Wellness. Migrate one
+  template per slice, flipping each from `base_legacy.html` → `base.html` as it lands.

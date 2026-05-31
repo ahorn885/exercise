@@ -1,0 +1,31 @@
+{#- _shell/mobile_tabbar.html — fixed bottom tab bar for the mobile shell
+    (Today · Plan · Log[FAB] · Stats · Athlete). Overflow lives in the drawer
+    (the appbar menu button). Shown only < the shell breakpoint. -#}
+{%- set active = nav_active | default('') -%}
+<nav class="tabbar" aria-label="Primary">
+  <a class="tab{{ ' active' if active == 'home' else '' }}" href="{{ url_for('dashboard.index') }}"
+     {% if active == 'home' %}aria-current="page"{% endif %}>
+    <svg class="icon" aria-hidden="true"><use href="#i-home"></use></svg>
+    <span>Today</span>
+  </a>
+  <a class="tab{{ ' active' if active == 'plan' else '' }}" href="{{ url_for('plans.list_plans') }}"
+     {% if active == 'plan' %}aria-current="page"{% endif %}>
+    <svg class="icon" aria-hidden="true"><use href="#i-plan"></use></svg>
+    <span>Plan</span>
+  </a>
+  <a class="tab fab{{ ' active' if active == 'log' else '' }}" href="{{ url_for('natural_log.index') }}"
+     {% if active == 'log' %}aria-current="page"{% endif %} aria-label="Quick log">
+    <span class="fab-btn"><svg class="icon" aria-hidden="true"><use href="#i-plus"></use></svg></span>
+    <span>Log</span>
+  </a>
+  <a class="tab{{ ' active' if active == 'insights' else '' }}" href="{{ url_for('wellness.index') }}"
+     {% if active == 'insights' %}aria-current="page"{% endif %}>
+    <svg class="icon" aria-hidden="true"><use href="#i-insights"></use></svg>
+    <span>Stats</span>
+  </a>
+  <a class="tab{{ ' active' if active == 'athlete' else '' }}" href="{{ url_for('profile.edit') }}"
+     {% if active == 'athlete' %}aria-current="page"{% endif %}>
+    <svg class="icon" aria-hidden="true"><use href="#i-athlete"></use></svg>
+    <span>Athlete</span>
+  </a>
+</nav>

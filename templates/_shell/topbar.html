@@ -1,0 +1,18 @@
+{#- _shell/topbar.html — desktop top bar: breadcrumbs slot, ⌘K search
+    affordance (no-op stub this phase), notifications, page actions.
+    Hidden < the shell breakpoint (the mobile appbar replaces it). -#}
+<header class="topbar">
+  <nav class="crumbs" aria-label="Breadcrumb">
+    {{ crumbs_html | safe }}
+  </nav>
+  <div class="spacer"></div>
+  <button class="search" type="button" data-action="cmdk" aria-label="Search (Command-K)">
+    <svg class="icon" width="13" height="13" aria-hidden="true"><use href="#i-search"></use></svg>
+    <span>Search workouts, exercises…</span>
+    <kbd>⌘K</kbd>
+  </button>
+  <button class="btn btn-icon" type="button" data-action="notifications" aria-label="Notifications">
+    <svg class="icon" width="14" height="14" aria-hidden="true"><use href="#i-bell"></use></svg>
+  </button>
+  {{ topbar_actions_html | safe }}
+</header>

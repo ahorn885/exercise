@@ -773,3 +773,143 @@ pre code { background: none; border: 0; padding: 0; }
   .app .page-title, .app .eyebrow { break-after: avoid; }
   .app tr, .app .card, .app .stat-card { break-inside: avoid; }
 }
+
+/* ══ Phase 1 — App shell layout ════════════════════════════════════════
+   The token atoms (.sidebar/.topbar/.tabbar/.appbar) live in tokens.css;
+   this layer supplies the real-document layout the mockup's fixed-size
+   artboards never needed: a sticky full-height sidebar, normal page scroll
+   (tokens.css's artboard `overflow:hidden`/`auto` are overridden here), and
+   the desktop⇄mobile chrome swap at the shell breakpoint. Loaded after
+   tokens.css, so these win on shared properties. */
+
+body.app { margin: 0; min-height: 100vh; }
+
+.app .app-shell { display: flex; align-items: stretch; min-height: 100vh; }
+
+.app .sidebar { position: sticky; top: 0; height: 100vh; overflow-y: auto; }
+
+/* Page column scrolls with the document (not its own clipped box). */
+.app .page { flex: 1; min-width: 0; min-height: 100vh; display: flex; flex-direction: column; overflow: visible; }
+.app .topbar { position: sticky; top: 0; z-index: 20; background: var(--bg); }
+.app .page-body { overflow: visible; }
+
+/* User chip (sidebar foot is a real <button> driving a dropdown) */
+.app .sidebar-foot-wrap { margin-top: auto; }
+.app .sidebar-foot {
+  width: 100%; text-align: left; cursor: pointer;
+  background: transparent; border: 0; border-top: 1px solid var(--hairline-2);
+  color: inherit; font: inherit;
+}
+.app .sidebar-foot-id { min-width: 0; flex: 1; display: flex; flex-direction: column; line-height: 1.25; }
+.app .sidebar-foot-id .name { font-size: 12px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.app .sidebar-foot-id .sub { font-size: 9px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--fg-3); }
+
+/* Search affordance is a <button> — keep it looking like the input chip */
+.app .topbar .search { cursor: pointer; text-align: left; }
+.app .crumbs .sep { opacity: 0.5; }
+
+/* Themed Bootstrap dropdown (user chip menu) under the token system */
+.app .dropdown-menu { background: var(--bg-2); border: 1px solid var(--hairline); border-radius: var(--r-md); padding: 6px; }
+.app .dropdown-item { color: var(--fg-2); border-radius: var(--r-sm); padding: 7px 10px; font-size: 13px; }
+.app .dropdown-item:hover, .app .dropdown-item:focus { background: color-mix(in oklab, var(--accent) 12%, transparent); color: var(--fg); }
+.app .dropdown-divider { border-color: var(--hairline); }
+
+/* Mobile overflow drawer (Bootstrap offcanvas, themed) */
+.app .nav-drawer.offcanvas { background: var(--bg); color: var(--fg); width: 282px; border-right: 1px solid var(--hairline-2); }
+.app .offcanvas-header { border-bottom: 1px solid var(--hairline-2); padding: 16px; }
+.app .offcanvas-header .wordmark { font-size: 14px; }
+.app .offcanvas-body { padding: 8px 12px; }
+.app .offcanvas-footer { padding: 16px; border-top: 1px solid var(--hairline-2); }
+.app .drawer-item {
+  display: flex; align-items: center; gap: 12px;
+  padding: 10px 10px; color: var(--fg-2); border-radius: var(--r-sm); font-weight: 500;
+}
+.app .drawer-item .icon { width: 18px; height: 18px; opacity: 0.75; flex-shrink: 0; }
+.app .drawer-item.active { color: var(--fg); background: color-mix(in oklab, var(--accent) 10%, transparent); }
+.app .drawer-item.active .icon { opacity: 1; color: var(--accent); }
+
+/* Desktop is the default; the mobile chrome is hidden until the breakpoint. */
+.app .appbar, .app .tabbar { display: none; }
+
+/* ── Mobile shell (< 860px): sidebar/topbar → appbar + bottom tab bar ── */
+@media (max-width: 859.98px) {
+  .app .app-shell { display: block; }
+  .app .sidebar, .app .topbar { display: none; }
+  .app .page { min-height: auto; display: block; }
+
+  .app .appbar {
+    display: flex; position: sticky; top: 0; z-index: 20;
+    background: var(--bg);
+  }
+  .app .tabbar {
+    display: grid; position: fixed; left: 0; right: 0; bottom: 0; z-index: 30;
+  }
+  .app .tabbar .tab { justify-content: center; text-decoration: none; }
+  /* Clear the fixed tab bar so content isn't hidden behind it. */
+  .app .page-body { padding: 20px 16px calc(78px + 20px); }
+}
+
+/* ══ Dashboard · Today (§05) ═══════════════════════════════════════════
+   Token-class layout for the redesigned dashboard. All widths/grids live
+   here (no inline style — CSP). Mock-only artboard widgets without backing
+   data (readiness HRV, interval SVG, TSS ramp chart) are intentionally not
+   ported; every real surface is. */
+.app .dash-head { display: flex; justify-content: space-between; align-items: flex-end; gap: 16px; flex-wrap: wrap; margin-bottom: 24px; }
+.app .dash-head .page-title { font-size: 32px; margin-top: 8px; }
+.app .page-title .dim { color: var(--fg-3); font-weight: 400; }
+.app .head-pills { display: flex; gap: 10px; flex-wrap: wrap; }
+
+.app .card-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 14px 18px; border-bottom: 1px solid var(--hairline-2); }
+.app .card-head .link { font-family: var(--mono); font-size: 10px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--fg-3); }
+.app .card-pad { padding: 18px; }
+.app .col-side { width: 320px; flex-shrink: 0; }
+
+/* Today's session hero */
+.app .hero-top { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
+.app .hero-title { font-size: 22px; font-weight: 700; letter-spacing: -0.015em; margin-top: 6px; }
+.app .hero-sub { color: var(--fg-3); margin-top: 4px; font-size: 13px; }
+
+/* Workout rows (today extras, tomorrow, missed) */
+.app .wk-row { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; padding: 14px 18px; }
+.app .wk-row + .wk-row { border-top: 1px solid var(--hairline-2); }
+.app .hero-rows { margin-top: 16px; border-top: 1px solid var(--hairline); }
+.app .wk-name { font-weight: 600; }
+.app .wk-meta { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; color: var(--fg-3); font-size: 12px; margin-top: 5px; }
+.app .wk-actions { display: flex; gap: 6px; flex-shrink: 0; flex-wrap: wrap; justify-content: flex-end; }
+.app .wk-actions form { margin: 0; }
+
+/* Weather */
+.app .wx-temp { font-size: 38px; font-weight: 700; letter-spacing: -0.02em; line-height: 1; }
+.app .wx-hours { display: grid; gap: 6px; margin-top: 16px; grid-template-columns: repeat(auto-fit, minmax(0, 1fr)); }
+.app .wx-hour { text-align: center; }
+.app .wx-hour .h { font-family: var(--mono); font-size: 9px; color: var(--fg-4); }
+.app .wx-hour .t { font-size: 13px; font-weight: 600; margin-top: 4px; font-variant-numeric: tabular-nums; }
+
+/* Quick actions */
+.app .qa-actions { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; }
+.app .qa-actions .btn { justify-content: center; }
+.app .btn:disabled, .app .btn[disabled] { opacity: 0.45; cursor: not-allowed; }
+
+/* Stats strip */
+.app .dash-stats { display: grid; grid-template-columns: repeat(5, 1fr); gap: 16px; margin-bottom: 16px; }
+
+/* Data tables */
+.app .table-scroll { overflow-x: auto; }
+.app table.data { width: 100%; border-collapse: collapse; font-size: 12px; }
+.app .data th { text-align: left; padding: 10px 18px; font-family: var(--mono); font-size: 9px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--fg-3); font-weight: 500; border-bottom: 1px solid var(--hairline-2); white-space: nowrap; }
+.app .data td { padding: 10px 18px; border-bottom: 1px solid var(--hairline-2); }
+.app .data tbody tr:last-child td { border-bottom: 0; }
+.app .data td.dim { color: var(--fg-3); }
+
+/* Attention cards + empty lines */
+.app .attn { border-left: 2px solid var(--hairline); }
+.app .attn-warn { border-left-color: var(--warn); }
+.app .attn-info { border-left-color: var(--info); }
+.app .gear-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.app .empty-line { padding: 16px 18px; color: var(--fg-3); font-size: 13px; }
+
+@media (max-width: 859.98px) {
+  .app .dash-head .page-title { font-size: 26px; }
+  .app .col-side { width: auto; }
+  .app .dash-stats { grid-template-columns: repeat(2, 1fr); }
+}

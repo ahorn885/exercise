@@ -1,0 +1,70 @@
+{#- _shell/sidebar.html — desktop grouped navigation.
+    Replaces the legacy flat navbar + dropdowns (BUILD_PLAN.md §5 nav map).
+    Active state from the page-set `nav_active` (see §3 "active state from
+    request.endpoint / nav_active"). Icons from the sprite (_shell/icons.svg).
+    Hidden < the shell breakpoint; the mobile tabbar + drawer take over. -#}
+{%- from '_shell/_nav_macros.html' import sidebar_item -%}
+{%- set active = nav_active | default('') -%}
+<aside class="sidebar" aria-label="Primary">
+  <a class="sidebar-brand" href="{{ url_for('dashboard.index') }}" aria-label="AIDSTATION home">
+    <svg viewBox="0 0 100 100" aria-hidden="true" focusable="false">
+      <path d="M26 30 L74 30 L67 84 Q 50 92, 33 84 Z" fill="none" stroke="currentColor" stroke-width="6" stroke-linejoin="round"/>
+      <line x1="26" y1="30" x2="74" y2="30" stroke="currentColor" stroke-width="6" stroke-linecap="round"/>
+      <path d="M40 54 L48 60 L40 66" stroke="currentColor" stroke-width="5" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+      <rect x="53" y="55" width="9" height="10" fill="#E8893A"/>
+    </svg>
+    <span class="wordmark"><span class="b">AID</span><span class="r">STATION</span></span>
+  </a>
+
+  <nav class="sidebar-nav">
+    <div class="sidebar-section" id="nav-train">Train</div>
+    <ul aria-labelledby="nav-train">
+      {{ sidebar_item('home',    'Today',     'i-home',    url_for('dashboard.index'),     active) }}
+      {{ sidebar_item('plan',    'Plan',      'i-plan',    url_for('plans.list_plans'),    active) }}
+      {{ sidebar_item('workout', 'Workouts',  'i-workout', url_for('training.list_entries'), active) }}
+      {{ sidebar_item('library', 'Exercises', 'i-library', url_for('rx.list_entries'),     active) }}
+    </ul>
+
+    <div class="sidebar-section" id="nav-log">Log</div>
+    <ul aria-labelledby="nav-log">
+      {{ sidebar_item('log',      'Quick log', 'i-log',   url_for('natural_log.index'), active) }}
+      {{ sidebar_item('insights', 'Wellness',  'i-pulse', url_for('wellness.index'),    active) }}
+    </ul>
+
+    <div class="sidebar-section" id="nav-account">Account</div>
+    <ul aria-labelledby="nav-account">
+      {{ sidebar_item('athlete',   'Athlete',     'i-athlete', url_for('profile.edit'),          active) }}
+      {{ sidebar_item('locations', 'Locations',   'i-pin',     url_for('locales.list_profiles'), active) }}
+      {{ sidebar_item('link',      'Connections', 'i-link',    url_for('garmin.dashboard'),      active) }}
+    </ul>
+  </nav>
+
+  {% if current_user %}
+  <div class="dropdown sidebar-foot-wrap">
+    <button class="sidebar-foot" type="button" id="user-chip"
+            data-bs-toggle="dropdown" aria-expanded="false"
+            aria-label="Account menu for {{ current_user.display_name or current_user.username }}">
+      <span class="avatar" aria-hidden="true">{{ (current_user.display_name or current_user.username)[:2] | upper }}</span>
+      <span class="sidebar-foot-id">
+        <span class="name">{{ current_user.display_name or current_user.username }}</span>
+        <span class="mono sub">Account</span>
+      </span>
+      <svg class="icon" width="16" height="16" aria-hidden="true"><use href="#i-more"></use></svg>
+    </button>
+    <ul class="dropdown-menu" aria-labelledby="user-chip">
+      <li><a class="dropdown-item" href="{{ url_for('profile.edit') }}">Athlete profile</a></li>
+      <li><a class="dropdown-item" href="{{ url_for('profile.change_password') }}">Account settings</a></li>
+      {% if current_user.id == 1 %}
+      <li><a class="dropdown-item" href="{{ url_for('admin.dashboard') }}">Admin</a></li>
+      {% endif %}
+      <li><hr class="dropdown-divider"></li>
+      <li>
+        <form method="post" action="{{ url_for('auth.logout') }}" class="m-0">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <button type="submit" class="dropdown-item">Sign out</button>
+        </form>
+      </li>
+    </ul>
+  </div>
+  {% endif %}
+</aside>
