@@ -638,6 +638,48 @@ class TestTopLevelPayloadValidationRetryable:
         # giving up, rather than failing fatally on the first bad attempt.
         assert calls["n"] == 3
 
+    def test_budget_break_with_no_validator_is_retryable(self):
+        # prod plan #52 (2026-05-31), sibling of #47. When EVERY completed pass
+        # raises a top-level Layer4Payload ValidationError, its handler assigns
+        # `latest_sessions` at parse time but `continue`s WITHOUT running the
+        # validator, so `latest_validator` stays None. The per-block budget guard
+        # then trips on the next pass and takes the best-effort-accept `break`
+        # (latest_sessions is set). The post-loop check USED to be a bare
+        # `assert latest_validator is not None`, raising a raw AssertionError that
+        # escaped the typed-error contract → the route discarded the whole plan.
+        # It must now raise a RETRYABLE coded error instead.
+        import pydantic
+
+        from layer4 import per_phase
+        from layer4.errors import Layer4OutputError
+
+        # Each call returns parseable sessions (sets latest_sessions) and spends
+        # the entire per-block budget, so pass 2's guard trips immediately.
+        def _caller(*_a, **_kw):
+            return _PhaseOut(
+                tool_args={
+                    "sessions": [_cardio_session(d=date(2026, 6, 2), idx=0)],
+                    "phase_synthesis_notes": "n",
+                },
+                input_tokens=6000,
+                output_tokens=2000,
+                latency_ms=per_phase._PER_BLOCK_BUDGET_MS,
+            )
+
+        def _raise_validation(*_a, **_kw):
+            raise pydantic.ValidationError.from_exception_data("Layer4Payload", [])
+
+        orig = per_phase._build_payload_for_validation
+        per_phase._build_payload_for_validation = _raise_validation
+        try:
+            with pytest.raises(Layer4OutputError) as exc:
+                self._run(_caller)
+            # synthesis_budget_exhausted ∈ the route's _RETRYABLE_BLOCK_CODES, so
+            # the block re-synthesizes next pass instead of killing the plan.
+            assert exc.value.code == "synthesis_budget_exhausted"
+        finally:
+            per_phase._build_payload_for_validation = orig
+
 
 class TestBlockOutputBudget:
     """D-77 §6 follow-on: block-mode `max_tokens` scales to the unit's session
