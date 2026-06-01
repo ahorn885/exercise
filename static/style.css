@@ -1065,6 +1065,46 @@ body.bulk-mode { padding-bottom: 80px; }
 .app .rd-row { display: flex; flex-wrap: wrap; gap: 6px 18px; margin-top: 10px; font-size: 13px; color: var(--fg-2); }
 .app .rd-row b { color: var(--fg); font-weight: 600; }
 
+/* Strength session — set log + per-exercise summaries.
+   .set-log-head also captions the wellness self-report card (§09), so it is
+   not nested under .set-log. */
+.app .set-log-head {
+  display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between;
+  gap: 8px 14px;
+}
+.app .set-log .set-log-head { padding: 14px 18px; border-bottom: 1px solid var(--hairline-2); }
+.app .set-log .set-log-foot { padding: 12px 18px; border-top: 1px solid var(--hairline-2); }
+.app .set-log .data th { padding: 8px 10px; }
+.app .set-log .data td { padding: 6px 10px; }
+.app .set-log .data td:last-child { text-align: center; }
+
+.app .ex-summary { padding: 14px 16px; }
+.app .ex-summary-head {
+  display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between;
+  gap: 10px; margin-bottom: 10px;
+}
+.app .ex-summary .ex-name { font-weight: 600; }
+.app .ex-summary .ex-target { font-size: 12px; color: var(--fg-3); margin-left: 8px; }
+.app .ex-summary-controls { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.app .ex-summary-controls .lbl-inline { font-size: 12px; color: var(--fg-3); }
+.app .set-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+
+.app .fit-card-row {
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px;
+}
+.app .fit-card-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+
 @media (max-width: 859.98px) {
   .app .log-form .field-wide { grid-column: auto; }
 }
+
+/* ══ Wellness · 30-day readiness (§09) ═════════════════════════════════ */
+.app .wl-range { margin: 0; }
+.app .wl-range .field { margin-bottom: 0; }
+.app .chart-grid {
+  display: grid; gap: 16px; margin-top: 14px;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+}
+.app .chart-box { position: relative; height: 180px; }
+.app .chart-box.wide { height: 150px; }
+.app .chart-box canvas { max-width: 100%; }

@@ -6,7 +6,7 @@
   {'key': 'cardio',     'label': 'Cardio',     'sub': 'Run · bike · swim · row',      'icon': 'i-workout', 'endpoint': 'cardio.new_entry'},
   {'key': 'strength',   'label': 'Strength',   'sub': 'Set-by-set logging',           'icon': 'i-weight',  'endpoint': 'training.new_entry'},
   {'key': 'body',       'label': 'Body',       'sub': 'Weight · BF% · RHR · VO₂',     'icon': 'i-body',    'endpoint': 'body.new_entry'},
-  {'key': 'wellness',   'label': 'Wellness',   'sub': 'Sleep · energy · mood',        'icon': 'i-pulse',   'endpoint': 'wellness.index'},
+  {'key': 'wellness',   'label': 'Wellness',   'sub': 'Sleep · energy · mood',        'icon': 'i-pulse',   'endpoint': 'wellness.index', 'anchor': 'self-report'},
   {'key': 'conditions', 'label': 'Conditions', 'sub': 'Weather · clothing · comfort', 'icon': 'i-cloud',   'endpoint': 'conditions.new_entry'},
   {'key': 'injury',     'label': 'Injury',     'sub': 'Body part · severity',         'icon': 'i-bandage', 'endpoint': 'injuries.new_entry'},
 ] -%}
@@ -14,7 +14,7 @@
   <span class="eyebrow">Log type</span>
   <div class="log-types">
     {% for t in log_types %}
-    <a class="log-type{{ ' active' if t.key == log_type else '' }}" href="{{ url_for(t.endpoint) }}"
+    <a class="log-type{{ ' active' if t.key == log_type else '' }}" href="{{ url_for(t.endpoint, _anchor=t.anchor) if t.anchor else url_for(t.endpoint) }}"
        {% if t.key == log_type %}aria-current="page"{% endif %}>
       <span class="lt-icon"><svg class="icon" width="16" height="16" aria-hidden="true"><use href="#{{ t.icon }}"></use></svg></span>
       <span class="lt-text">
