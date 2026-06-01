@@ -13,7 +13,7 @@
     <svg class="icon" aria-hidden="true"><use href="#i-plan"></use></svg>
     <span>Plan</span>
   </a>
-  <a class="tab fab{{ ' active' if active == 'log' else '' }}" href="{{ url_for('natural_log.index') }}"
+  <a class="tab fab{{ ' active' if active == 'log' else '' }}" href="{{ url_for('log.index') }}"
      {% if active == 'log' %}aria-current="page"{% endif %} aria-label="Quick log">
     <span class="fab-btn"><svg class="icon" aria-hidden="true"><use href="#i-plus"></use></svg></span>
     <span>Log</span>

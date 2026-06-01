@@ -1,0 +1,21 @@
+{#- log/_shell.html — shared layout for the unified Log screen (§08).
+    Entry-form templates extend this, set `log_type` + `log_label`, and fill
+    {% block log_pane %}. The type picker (left rail) is always present.
+    Page JS goes in {% block log_scripts %}. -#}
+{% extends 'base.html' %}
+{% set nav_active = 'log' %}
+{% block title %}Log · {{ log_label }}{% endblock %}
+{% block crumbs %}<a href="{{ url_for('log.index') }}">Log</a> <span class="sep">/</span> <b>{{ log_label }}</b>{% endblock %}
+
+{% block content %}
+<div class="row log-layout">
+  <div class="col-side">
+    {% include 'log/_picker.html' %}
+  </div>
+  <div class="col log-pane">
+    {% block log_pane %}{% endblock %}
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}{% block log_scripts %}{% endblock %}{% endblock %}

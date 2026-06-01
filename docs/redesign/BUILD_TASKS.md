@@ -93,9 +93,10 @@ The redesign covers every *user-facing* surface but a few blueprints have no red
 
 **Last updated:** 2026-06-01
 
-**Progress:** Phase 0 ✅ · Phase 1 shell ✅ · Phase 2 §05 ✅ §06 ✅ §07 ✅ — **next: §08 logging**.
+**Progress:** Phase 0 ✅ · Phase 1 shell ✅ · Phase 2 §05 ✅ §06 ✅ §07 ✅ §08 ◑ (4 of 6 panes) — **next: finish §08 (Strength + Wellness panes), then §09**.
 Merged to `main`: PR #397 (review), #398 (Phase 0), #399 (docs), #400 (Phase 1 + §05),
-#401 (§06), #403 (§07). In flight: PR #404 (§07 follow-up — nutrition card + upload-not-push).
+#401 (§06), #403 (§07), #404 (§07 follow-up), #406 (redesign card/grid Bootstrap-leak fix).
+In flight: PR for §08 (unified Log landing + picker + Cardio/Body/Conditions/Injury panes).
 
 ### Done
 - **Pre-build review** — `PLAN_REVIEW_AND_CORRECTIONS.md` (PR #397, merged). Code-verified
@@ -145,6 +146,25 @@ Merged to `main`: PR #397 (review), #398 (Phase 0), #399 (docs), #400 (Phase 1 +
   (`garmin.import_fit`, was `garmin.dashboard`), and the on-screen **Garmin push card + workout-JSON
   dump are removed** (the `push_to_garmin` *route* is left intact for §17). `view_item` no longer
   fetches `garmin_workouts`/auth status. Reuses #403's class vocabulary; CSP-clean (no inline style).
+- **Phase 2 · §06/§07 polish** (PR #406). Fixed a Bootstrap-leak that affected every `.app` screen:
+  `.app .card` never reset `color` (inherited Bootstrap's dark `--bs-body-color`) and `.app .row`
+  kept Bootstrap's gutter (negative margins + `.row > *` padding). Re-asserted `color: var(--fg)`,
+  zeroed `--bs-gutter-x`, and made mobile column stacking explicit (`flex-basis: 100%`).
+- **Phase 2 · §08 Logging — unified landing (partial: 4 of 6 panes).** New `log` blueprint
+  (`/log` → `log.index`, redirects to the default cardio pane) + shared `log/_shell.html`
+  (type-picker left rail via `log/_picker.html`, form pane right) + `log/_picker.html` (6 type
+  tiles + "log via text" CTA → `natural_log.index`). The six entry **routes are unchanged**; the
+  picker just navigates between them (server-rendered panes — CSP-clean, no SPA) and each form
+  renders inside the shell so the picker is always present. Migrated to the shell + token CSS:
+  **Cardio, Body, Conditions, Injury** (every input `name`, POST action, and field-toggle JS
+  preserved; cardio bike/paddle/run toggles + injury constraint-narrowing + conditions
+  indoor/session-link all intact). Nav "Quick log" (sidebar/drawer/mobile-FAB) now points at
+  `log.index`. **Deferred:** the **Strength** tile links to `training.new_entry` (the 325-line
+  JSON/JS session form — migrate next) and the **Wellness** tile links to `wellness.index` (the
+  dashboard, owned by §09); both still land on legacy-styled pages until then. Also fixed a latent
+  redesign bug surfaced here: legacy base CSS colours bare `h1–h6` with `--ink` (dark), invisible
+  on the dark app theme — added `.app h1–h6 { color: var(--fg) }`, which also un-hides the §07
+  workout title and the dashboard greeting.
 
 ### Known blocker (infra, not code) — Vercel **Preview** deploys 500
 Preview deployments crash with `FUNCTION_INVOCATION_FAILED`: `app.py` raises at **import** when
@@ -155,7 +175,10 @@ Until then, PR previews can't render — verify locally or via static checks. Th
 to any redesign PR (Production is unaffected).
 
 ### Next
-- **Phase 2 (finish):** §08 Logging adaptive form (one landing, type picker over the six
-  `.new_entry` routes — `natural_log` + cardio/training/body/conditions/injuries), then §09
-  Wellness (`wellness.index`, 30-day readiness). Migrate one
-  template per slice, flipping each from `base_legacy.html` → `base.html` as it lands.
+- **Finish §08:** migrate the **Strength** session form (`training/session_form.html`,
+  `training.new_entry` — 325 lines of dynamic-row/RX-fetch JS) into `log/_shell.html` so the
+  Strength pane joins the picker. Decide the **Wellness** pane: either extract the self-report
+  entry form into the log shell, or fold it into §09 and have the picker's Wellness tile deep-link
+  to the entry card on `wellness.index`.
+- **§09 Wellness** (`wellness.index`, 30-day readiness; absorbs the old Wellness→.FIT import,
+  now Connections §17). Migrate one template per slice, flipping `base_legacy.html` → `base.html`.

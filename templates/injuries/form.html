@@ -1,62 +1,72 @@
-{% extends 'base_legacy.html' %}
-{% block title %}Log Injury{% endblock %}
-{% block content %}
-<div class="d-flex justify-content-between align-items-center mb-3">
-  <h4 class="mb-0">{{ 'Edit' if entry else 'Log' }} Injury</h4>
-  <a href="{{ url_for('injuries.list_entries') }}" class="btn btn-sm btn-outline-secondary">← Back</a>
-</div>
-<form method="post">
-  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-  <div class="row g-3 mb-3">
-    <div class="col-md-3"><label class="form-label">Start Date</label>
-      <input type="date" name="start_date" class="form-control" required value="{{ entry.start_date if entry else '' }}"></div>
-    <div class="col-md-3"><label class="form-label">Body Part</label>
-      <select name="body_part" id="body_part" class="form-select">
-        {% for b in body_parts %}<option value="{{ b }}" {% if entry and entry.body_part == b %}selected{% endif %}>{{ b }}</option>{% endfor %}
-      </select></div>
-    <div class="col-md-3"><label class="form-label">Status</label>
-      <select name="status" class="form-select">
-        {% for s in statuses %}<option value="{{ s }}" {% if entry and entry.status == s %}selected{% endif %}>{{ s }}</option>{% endfor %}
-      </select></div>
-    <div class="col-md-3"><label class="form-label">Resolved Date</label>
-      <input type="date" name="resolved_date" class="form-control" value="{{ entry.resolved_date if entry and entry.resolved_date else '' }}"></div>
-  </div>
-  <div class="row g-3 mb-3">
-    <div class="col-md-6"><label class="form-label">Injury Type</label>
-      <select name="injury_type" class="form-select">
-        <option value="">—</option>
-        {% for t in injury_types %}<option value="{{ t }}" {% if entry and entry.injury_type == t %}selected{% endif %}>{{ t }}</option>{% endfor %}
-      </select></div>
-    <div class="col-md-6"><label class="form-label">Severity Stage</label>
-      <select name="severity" class="form-select">
-        <option value="">—</option>
-        {% for s in severities %}<option value="{{ s }}" {% if entry and entry.severity == s %}selected{% endif %}>{{ s }}</option>{% endfor %}
-      </select></div>
-  </div>
-  <div class="mb-3"><label class="form-label">Movement Constraints</label>
-    <div class="form-text mb-2">Select all that apply — these refine which exercises we adjust around this injury. Options narrow to the body part you pick above.</div>
-    <div class="row" id="movement-constraints">
-      {% for c in movement_constraints %}
-      <div class="col-md-4 mc-cell" data-constraint="{{ c }}">
-        <div class="form-check">
-          <input class="form-check-input" type="checkbox" name="movement_constraints" value="{{ c }}" id="mc-{{ loop.index }}"
-                 {% if c in entry_movement_constraints %}checked{% endif %}>
-          <label class="form-check-label" for="mc-{{ loop.index }}">{{ c }}</label>
-        </div>
-      </div>
-      {% endfor %}
-    </div>
-  </div>
-  <div class="mb-3"><label class="form-label">Description</label>
-    <textarea name="description" class="form-control" rows="2">{{ entry.description if entry else '' }}</textarea></div>
-  <div class="mb-3"><label class="form-label">Modifications Needed</label>
-    <textarea name="modifications_needed" class="form-control" rows="2">{{ entry.modifications_needed if entry else '' }}</textarea></div>
-  <div class="d-flex gap-2">
-    <button type="submit" class="btn btn-primary">{{ 'Update' if entry else 'Save' }}</button>
-    <a href="{{ url_for('injuries.list_entries') }}" class="btn btn-outline-secondary">Cancel</a>
-  </div>
-</form>
+{% extends 'log/_shell.html' %}
+{% set log_type = 'injury' %}
+{% set log_label = 'Injury' %}
+{% block title %}{{ 'Edit' if entry else 'Log' }} injury{% endblock %}
 
+{% block log_pane %}
+<p class="eyebrow accent">● {{ 'Edit entry' if entry else 'New entry' }} · Injury</p>
+<h1 class="wo-title">{{ 'Edit injury' if entry else 'Log injury' }}</h1>
+
+<div class="card card-pad sec">
+  <form method="post" class="log-form">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <div class="row">
+      <label class="field col"><span class="lbl">Start date</span>
+        <input type="date" name="start_date" class="form-control form-control-sm" required value="{{ entry.start_date if entry else '' }}"></label>
+      <label class="field col"><span class="lbl">Body part</span>
+        <select name="body_part" id="body_part" class="form-select form-select-sm">
+          {% for b in body_parts %}<option value="{{ b }}" {% if entry and entry.body_part == b %}selected{% endif %}>{{ b }}</option>{% endfor %}
+        </select></label>
+    </div>
+    <div class="row">
+      <label class="field col"><span class="lbl">Status</span>
+        <select name="status" class="form-select form-select-sm">
+          {% for s in statuses %}<option value="{{ s }}" {% if entry and entry.status == s %}selected{% endif %}>{{ s }}</option>{% endfor %}
+        </select></label>
+      <label class="field col"><span class="lbl">Resolved date</span>
+        <input type="date" name="resolved_date" class="form-control form-control-sm" value="{{ entry.resolved_date if entry and entry.resolved_date else '' }}"></label>
+    </div>
+    <div class="row">
+      <label class="field col"><span class="lbl">Injury type</span>
+        <select name="injury_type" class="form-select form-select-sm">
+          <option value="">—</option>
+          {% for t in injury_types %}<option value="{{ t }}" {% if entry and entry.injury_type == t %}selected{% endif %}>{{ t }}</option>{% endfor %}
+        </select></label>
+      <label class="field col"><span class="lbl">Severity stage</span>
+        <select name="severity" class="form-select form-select-sm">
+          <option value="">—</option>
+          {% for s in severities %}<option value="{{ s }}" {% if entry and entry.severity == s %}selected{% endif %}>{{ s }}</option>{% endfor %}
+        </select></label>
+    </div>
+
+    <div class="field">
+      <span class="lbl">Movement constraints</span>
+      <p class="rail-note">Select all that apply — these refine which exercises we adjust around this injury. Options narrow to the body part you pick above.</p>
+      <div class="check-grid" id="movement-constraints">
+        {% for c in movement_constraints %}
+        <label class="check-cell mc-cell" data-constraint="{{ c }}">
+          <input type="checkbox" name="movement_constraints" value="{{ c }}" id="mc-{{ loop.index }}"
+                 {% if c in entry_movement_constraints %}checked{% endif %}>
+          <span>{{ c }}</span>
+        </label>
+        {% endfor %}
+      </div>
+    </div>
+
+    <label class="field"><span class="lbl">Description</span>
+      <textarea name="description" class="form-control form-control-sm" rows="2">{{ entry.description if entry else '' }}</textarea></label>
+    <label class="field"><span class="lbl">Modifications needed</span>
+      <textarea name="modifications_needed" class="form-control form-control-sm" rows="2">{{ entry.modifications_needed if entry else '' }}</textarea></label>
+
+    <div class="form-actions">
+      <button type="submit" class="btn btn-primary btn-sm">{{ 'Update entry' if entry else 'Save entry' }}</button>
+      <a href="{{ url_for('injuries.list_entries') }}" class="btn btn-ghost btn-sm">Cancel</a>
+    </div>
+  </form>
+</div>
+{% endblock %}
+
+{% block log_scripts %}
 {# Narrow the movement-constraint checkboxes to those relevant for the
    selected body part. body_part values double Left/Right, so strip the
    prefix before lookup. Already-checked constraints stay visible so an

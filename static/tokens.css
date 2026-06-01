@@ -98,6 +98,11 @@ body.theme-light .app {
 .app * { box-sizing: border-box; }
 .app a { color: inherit; text-decoration: none; }
 .app ul, .app ol { margin: 0; padding: 0; list-style: none; }
+/* Legacy base.css colours bare h1–h6 with --ink (a dark token), which is
+   invisible on the dark app theme. Re-assert the app foreground so headings
+   that don't set their own colour (.wo-title, .page-title, form headings…)
+   are legible. */
+.app h1, .app h2, .app h3, .app h4, .app h5, .app h6 { color: var(--fg); }
 
 /* ── Reusable atoms ──────────────────────────────────────────────── */
 .app .eyebrow {

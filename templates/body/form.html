@@ -1,38 +1,44 @@
-{% extends 'base_legacy.html' %}
-{% block title %}{{ 'Edit' if entry else 'Log' }} Body Metrics{% endblock %}
-{% block content %}
-<div class="d-flex justify-content-between align-items-center mb-3">
-  <h4 class="mb-0">{{ 'Edit' if entry else 'Log' }} Body Metrics</h4>
-  <a href="{{ url_for('body.list_entries') }}" class="btn btn-sm btn-outline-secondary">← Back</a>
-</div>
-<form method="post">
-  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-  <div class="row g-3 mb-3">
-    <div class="col-md-2"><label class="form-label">Date</label>
-      <input type="date" name="date" class="form-control" required value="{{ entry.date if entry else '' }}"></div>
-    <div class="col-md-2"><label class="form-label">Weight (lb)</label>
-      <input type="number" name="weight_lbs" class="form-control" step="0.1" value="{{ entry.weight_lbs if entry else '' }}"></div>
-    <div class="col-md-2"><label class="form-label">Body Fat %</label>
-      <input type="number" name="body_fat_pct" class="form-control" step="0.1" value="{{ entry.body_fat_pct if entry else '' }}"></div>
-    <div class="col-md-2"><label class="form-label">VO2 Max</label>
-      <input type="number" name="vo2_max" class="form-control" step="0.1" value="{{ entry.vo2_max if entry else '' }}"></div>
-    <div class="col-md-2"><label class="form-label">Resting HR</label>
-      <input type="number" name="resting_hr" class="form-control" value="{{ entry.resting_hr if entry else '' }}"></div>
-    <div class="col-md-4"><label class="form-label">Notes</label>
-      <input type="text" name="notes" class="form-control" value="{{ entry.notes if entry else '' }}"></div>
-  </div>
-  <div class="d-flex gap-2 justify-content-between">
-    <div class="d-flex gap-2">
-      <button type="submit" class="btn btn-primary">{{ 'Update' if entry else 'Save' }}</button>
-      <a href="{{ url_for('body.list_entries') }}" class="btn btn-outline-secondary">Cancel</a>
+{% extends 'log/_shell.html' %}
+{% set log_type = 'body' %}
+{% set log_label = 'Body' %}
+{% block title %}{{ 'Edit' if entry else 'Log' }} body metrics{% endblock %}
+
+{% block log_pane %}
+<p class="eyebrow accent">● {{ 'Edit entry' if entry else 'New entry' }} · Body metrics</p>
+<h1 class="wo-title">{{ 'Edit body metrics' if entry else 'Log body metrics' }}</h1>
+
+<div class="card card-pad sec">
+  <form method="post" class="log-form">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <div class="row">
+      <label class="field col"><span class="lbl">Date</span>
+        <input type="date" name="date" class="form-control form-control-sm" required value="{{ entry.date if entry else '' }}"></label>
+      <label class="field col"><span class="lbl">Weight (lb)</span>
+        <input type="number" name="weight_lbs" step="0.1" class="form-control form-control-sm" value="{{ entry.weight_lbs if entry else '' }}"></label>
     </div>
-    {% if entry %}
-    <form method="post" action="{{ url_for('body.delete_entry', entry_id=entry.id) }}"
-          data-confirm="Delete this entry? This cannot be undone.">
-      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-      <button class="btn btn-outline-danger btn-sm">Delete</button>
-    </form>
-    {% endif %}
-  </div>
+    <div class="row">
+      <label class="field col"><span class="lbl">Body fat %</span>
+        <input type="number" name="body_fat_pct" step="0.1" class="form-control form-control-sm" value="{{ entry.body_fat_pct if entry else '' }}"></label>
+      <label class="field col"><span class="lbl">VO₂ max</span>
+        <input type="number" name="vo2_max" step="0.1" class="form-control form-control-sm" value="{{ entry.vo2_max if entry else '' }}"></label>
+      <label class="field col"><span class="lbl">Resting HR</span>
+        <input type="number" name="resting_hr" class="form-control form-control-sm" value="{{ entry.resting_hr if entry else '' }}"></label>
+    </div>
+    <label class="field"><span class="lbl">Notes</span>
+      <input type="text" name="notes" class="form-control form-control-sm" value="{{ entry.notes if entry else '' }}"></label>
+
+    <div class="form-actions">
+      <button type="submit" class="btn btn-primary btn-sm">{{ 'Update entry' if entry else 'Save entry' }}</button>
+      <a href="{{ url_for('body.list_entries') }}" class="btn btn-ghost btn-sm">Cancel</a>
+    </div>
+  </form>
+</div>
+
+{% if entry %}
+<form method="post" action="{{ url_for('body.delete_entry', entry_id=entry.id) }}"
+      data-confirm="Delete this entry? This cannot be undone." class="sec">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <button class="btn btn-ghost btn-sm btn-danger">Delete entry</button>
 </form>
+{% endif %}
 {% endblock %}
