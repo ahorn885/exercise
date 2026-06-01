@@ -27,6 +27,10 @@ The response header (`app.py` `_set_security_headers`) nonces all scripts/styles
 - **No new hex.** Derive colors via `color-mix(in oklab, var(--accent) X%, transparent)`. Statuses map to `--good/--warn/--bad/--info`. This keeps light mode a free token-swap.
 - **Type:** Inter (body) + JetBrains Mono (eyebrows/numerics/labels) — already loaded in `base.html`.
 - **Icons:** the `_shell/icons.svg` `<symbol>` sprite. `<svg class="icon"><use href="#i-<name>"></use></svg>`. No icon font.
+- **Vertical rhythm:** wrap a page's stacked sections in `.stack` (flex column, `gap: 16px`) rather than hanging per-block `margin-top`/`margin-bottom` — bare sibling cards under `.page-body` otherwise touch with no spacing. Use `.row`/`.col`/`.col-side` for horizontal splits (they collapse to a stacked column under the 859px breakpoint).
+- **Bootstrap-override gotchas** (it loads *before* the token CSS, so its base rules leak unless overridden — all handled in `tokens.css`, don't reintroduce):
+  - Don't rely on inherited text colour inside a `.card` — Bootstrap's `.card`/`body` set a dark `--bs-body-color`. Bare `h1–h6` are likewise re-asserted to `var(--fg)`; component headings shouldn't need their own colour.
+  - `.app .row` zeroes Bootstrap's `--bs-gutter-x` (its negative margins + `.row > *` padding); don't add Bootstrap grid classes (`.g-3`, `.col-md-*`) on redesign rows.
 
 ## D · JSX → Jinja translation
 | Redesign (JSX) | Live app |

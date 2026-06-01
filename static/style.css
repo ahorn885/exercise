@@ -891,7 +891,7 @@ body.app { margin: 0; min-height: 100vh; }
 .app .btn:disabled, .app .btn[disabled] { opacity: 0.45; cursor: not-allowed; }
 
 /* Stats strip */
-.app .dash-stats { display: grid; grid-template-columns: repeat(5, 1fr); gap: 16px; margin-bottom: 16px; }
+.app .dash-stats { display: grid; grid-template-columns: repeat(5, 1fr); gap: 16px; }
 
 /* Data tables */
 .app .table-scroll { overflow-x: auto; }
@@ -1008,4 +1008,63 @@ body.bulk-mode { padding-bottom: 80px; }
 @media (max-width: 859.98px) {
   .app .wo-title { font-size: 28px; }
   .app .rail-sticky { position: static; }
+}
+
+/* ══ Log · adaptive entry (§08) ════════════════════════════════════════ */
+/* Type picker (left rail) */
+.app .log-picker .log-types { display: flex; flex-direction: column; gap: 6px; margin-top: 12px; }
+.app .log-type {
+  display: flex; align-items: center; gap: 12px;
+  padding: 13px 15px; border: 1px solid var(--hairline); border-radius: var(--r-md);
+  background: transparent; color: var(--fg); position: relative; text-decoration: none;
+}
+.app .log-type:hover { border-color: var(--hairline-2); background: var(--bg-2); }
+.app .log-type.active {
+  border-color: var(--accent);
+  background: color-mix(in oklab, var(--accent) 10%, transparent);
+}
+.app .log-type.active::before {
+  content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 2px;
+  background: var(--accent); border-radius: var(--r-md) 0 0 var(--r-md);
+}
+.app .log-type .lt-icon {
+  width: 32px; height: 32px; border-radius: var(--r-sm); flex-shrink: 0;
+  display: grid; place-items: center; background: var(--bg-3); color: var(--fg-2);
+}
+.app .log-type.active .lt-icon { background: var(--accent); color: var(--ink); }
+.app .log-type .lt-text { min-width: 0; flex: 1; }
+.app .log-type .lt-label { display: block; font-size: 14px; font-weight: 600; }
+.app .log-type .lt-sub { display: block; font-size: 9px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--fg-3); margin-top: 2px; }
+.app .log-type .lt-chev { color: var(--accent); flex-shrink: 0; }
+
+.app .log-text-cta {
+  display: block; margin-top: 20px; padding: 14px 16px;
+  border: 1px dashed var(--hairline); border-radius: var(--r-md);
+  text-decoration: none; color: var(--fg);
+}
+.app .log-text-cta:hover { border-color: var(--accent); }
+.app .log-text-cta .ltc-ex { display: block; font-size: 12px; color: var(--fg-3); margin-top: 6px; }
+.app .log-text-cta .ltc-tag { display: block; font-size: 10px; color: var(--fg-4); margin-top: 8px; letter-spacing: 0.14em; text-transform: uppercase; }
+
+/* Form pane */
+.app .log-pane { max-width: 760px; }
+.app .log-form .field-grid {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 14px;
+}
+.app .log-form .field-grid .field { margin-bottom: 0; }
+.app .log-form .field-wide { grid-column: span 2; }
+.app .log-form .form-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 22px; }
+
+/* Checkbox cells (injury constraints, indoor toggle) */
+.app .check-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 8px; margin-top: 10px; }
+.app .check-cell { display: flex; align-items: center; gap: 8px; font-size: 13px; cursor: pointer; }
+.app .check-cell input { flex-shrink: 0; }
+.app .field-inline { align-self: end; padding-bottom: 8px; }
+
+/* Cardio running-dynamics read-only row */
+.app .rd-row { display: flex; flex-wrap: wrap; gap: 6px 18px; margin-top: 10px; font-size: 13px; color: var(--fg-2); }
+.app .rd-row b { color: var(--fg); font-weight: 600; }
+
+@media (max-width: 859.98px) {
+  .app .log-form .field-wide { grid-column: auto; }
 }
