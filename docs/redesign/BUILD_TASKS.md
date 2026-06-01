@@ -164,7 +164,10 @@ In flight: PR for §08 (unified Log landing + picker + Cardio/Body/Conditions/In
   dashboard, owned by §09); both still land on legacy-styled pages until then. Also fixed a latent
   redesign bug surfaced here: legacy base CSS colours bare `h1–h6` with `--ink` (dark), invisible
   on the dark app theme — added `.app h1–h6 { color: var(--fg) }`, which also un-hides the §07
-  workout title and the dashboard greeting.
+  workout title and the dashboard greeting. Also spaced the **dashboard's stacked blocks** (they
+  were bare siblings under `.page-body` and touched with no gap) by wrapping the content in
+  `.stack`. Codified both lessons in `CONVENTIONS.md §C` (vertical rhythm via `.stack`;
+  Bootstrap-override gotchas for card colour / row gutter).
 
 ### Known blocker (infra, not code) — Vercel **Preview** deploys 500
 Preview deployments crash with `FUNCTION_INVOCATION_FAILED`: `app.py` raises at **import** when
