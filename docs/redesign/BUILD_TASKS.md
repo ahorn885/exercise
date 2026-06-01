@@ -3,7 +3,7 @@
 Per-section map: each redesign section (01–31) → the real Flask blueprint(s) + template(s) it migrates into, with notes.
 Work top-to-bottom **within a phase** (phases defined in `BUILD_PLAN.md` §3). Check the box when the PR lands and the screen meets the Definition of Done (`BUILD_PLAN.md` §8).
 
-**Legend:** `D` = desktop artboard exists · `M` = mobile artboard exists · ★ = new surface (no current template) · ⟳ = route/IA change, not just a reskin.
+**Legend:** `D` = desktop artboard exists · `M` = mobile artboard exists · ★ = new surface (no current template) · ⟳ = route/IA change, not just a reskin · ✅ = shipped to `main`.
 
 ---
 
@@ -16,17 +16,17 @@ Work top-to-bottom **within a phase** (phases defined in `BUILD_PLAN.md` §3). C
 ## Phase 1 — App shell  ◀ FIRST SLICE
 | § | Section | DM | Blueprint / route | Current template | Migration note |
 |---|---|---|---|---|---|
-| — | **Desktop shell** | D | (all) | `base.html` | New grouped **sidebar** + **top bar**. Copy current `base.html`→`base_legacy.html`. Nav map = `BUILD_PLAN.md` §5. Active state from `request.endpoint`/`nav_active`. |
-| — | **Mobile shell** | M | (all) | `base.html` | 5-tab bottom bar (Today·Plan·Log[FAB]·Stats·Athlete) + overflow drawer. Same template, responsive. |
-| — | **User chip / sign-out** | DM | `auth.logout`, `profile.edit`, `admin.dashboard` | base nav | Keep POST+csrf sign-out. Admin link gated `current_user.id == 1`. |
-| 05 | Dashboard (proof screen) | DM | `dashboard.index` | `dashboard.html` | Render on new shell as the Phase-1 proof; full redesign in Phase 2. |
+| — | ✅ **Desktop shell** | D | (all) | `base.html` | New grouped **sidebar** + **top bar**. Copy current `base.html`→`base_legacy.html`. Nav map = `BUILD_PLAN.md` §5. Active state from `request.endpoint`/`nav_active`. *(PR #400)* |
+| — | ✅ **Mobile shell** | M | (all) | `base.html` | 5-tab bottom bar (Today·Plan·Log[FAB]·Stats·Athlete) + overflow drawer. Same template, responsive. *(PR #400)* |
+| — | ✅ **User chip / sign-out** | DM | `auth.logout`, `profile.edit`, `admin.dashboard` | base nav | Keep POST+csrf sign-out. Admin link gated `current_user.id == 1`. *(PR #400)* |
+| 05 | ✅ Dashboard (proof screen) | DM | `dashboard.index` | `dashboard.html` | Render on new shell as the Phase-1 proof; full redesign in Phase 2. *(PR #400)* |
 
 ## Phase 2 — Daily loop
 | § | Section | DM | Blueprint / route | Current template | Migration note |
 |---|---|---|---|---|---|
-| 05 | Dashboard · Today | DM | `dashboard.index` | `dashboard.html` | Hero = next workout. Skeleton/loading state TBD (HANDOFF §8 — confirm if wanted). |
-| 06 | Training plan · week | DM | `plans.list_plans` / plan view | `plans/v2/*` | Week grid. No-plan → shared empty (§26). |
-| 07 | Workout detail | DM | `training.session_form` / plan workout + `garmin` upload | `training/session_form.html` | "Upload completed .FIT" (not push). Rest-day variant. |
+| 05 | ✅ Dashboard · Today | DM | `dashboard.index` | `dashboard.html` | Hero = next workout. Live weather + hourly, plan CTAs, stats, recents. Mock-only widgets (readiness/interval/TSS) not ported. *(PR #400)* |
+| 06 | ✅ Training plan · week | DM | `plans.view_plan(plan_id)` (legacy model, §3b) | `plans/view.html` | 7-day Mon–Sun calendar grid (`_build_week_grid`). Bulk-edit, coach chat, gear, supplements preserved. *(PR #401)* |
+| 07 | ✅ Workout detail | DM | `plans.view_item` (+ `.FIT` up/download, garmin push) | `plans/item.html` | Targets + block-by-block + rest-day variant + context rail. "Upload completed .FIT"; inline edit/complete/skip preserved. *(PR #403)* |
 | 08 | Logging · adaptive form ⟳ | DM | `natural_log` + `cardio`/`training`/`body`/`conditions`/`injuries`/`wellness` `.new_entry` | `cardio/form.html`, `training/form.html`, `body/form.html`, `conditions/form.html`, `injuries/form.html` | **One landing, type picker swaps pane.** Six routes stay; UX is unified. Shared `onboarding/_skills_form.html` partial stays shared. |
 | 09 | Wellness | DM | `wellness.index` | `wellness/index.html` | 30-day readiness. Absorbs the old Wellness→.FIT import (now in Connections §17). |
 
@@ -91,7 +91,11 @@ The redesign covers every *user-facing* surface but a few blueprints have no red
 
 ## Build status / handoff (live)
 
-**Last updated:** 2026-05-31
+**Last updated:** 2026-06-01
+
+**Progress:** Phase 0 ✅ · Phase 1 shell ✅ · Phase 2 §05 ✅ §06 ✅ §07 ✅ — **next: §08 logging**.
+Merged to `main`: PR #397 (review), #398 (Phase 0), #399 (docs), #400 (Phase 1 + §05),
+#401 (§06). In flight: PR #403 (§07).
 
 ### Done
 - **Pre-build review** — `PLAN_REVIEW_AND_CORRECTIONS.md` (PR #397, merged). Code-verified
@@ -125,6 +129,14 @@ The redesign covers every *user-facing* surface but a few blueprints have no red
   bulk-edit bar, AI review, FIT-files, archive/restore/delete, plan health, daily supplements,
   injury mods, gear recs, progress, and coach chat (both nonce'd inline scripts kept; the static
   bulk-mode `<style>` moved into `style.css`).
+- **Phase 2 · §07 Workout detail** (`plans.view_item` → `plans/item.html`). The plan-workout
+  detail the dashboard hero and §06 week grid link to (this is the artboard's "Today's Workout";
+  the §07 note's `training.session_form` is the strength-logging form, deferred to §08). Two-column
+  layout: workout body (targets strip, block-by-block step list from `description | workout_steps`,
+  notes callout, **rest-day variant**) + sticky context rail. Preserves every function — inline
+  edit (PATCH `api_patch_plan_item`), complete/skip with optional notes, download .FIT, Garmin
+  push (auth-gated → shows **paused** when not authed) + workout-JSON details. Applies HANDOFF §4:
+  adds **"Upload completed .FIT"** alongside download; per-workout detail §06 deferred now lives here.
 
 ### Known blocker (infra, not code) — Vercel **Preview** deploys 500
 Preview deployments crash with `FUNCTION_INVOCATION_FAILED`: `app.py` raises at **import** when
@@ -135,7 +147,7 @@ Until then, PR previews can't render — verify locally or via static checks. Th
 to any redesign PR (Production is unaffected).
 
 ### Next
-- **Phase 2 (continue):** §07 Workout detail (`training.session_form` + plan workout + `.FIT`
-  upload; per-workout nutrition/steps detail that §06 deferred lands here), §08 Logging adaptive
-  form (one landing, type picker over the six `.new_entry` routes), §09 Wellness. Migrate one
+- **Phase 2 (finish):** §08 Logging adaptive form (one landing, type picker over the six
+  `.new_entry` routes — `natural_log` + cardio/training/body/conditions/injuries), then §09
+  Wellness (`wellness.index`, 30-day readiness). Migrate one
   template per slice, flipping each from `base_legacy.html` → `base.html` as it lands.
