@@ -118,33 +118,23 @@
         <a class="btn btn-ghost" href="{{ url_for('plans.download_item_fit', plan_id=plan_id, item_id=item.id) }}">
           <svg class="icon" width="12" height="12" aria-hidden="true"><use href="#i-download"></use></svg> Download .FIT
         </a>
-        <a class="btn btn-ghost" href="{{ url_for('garmin.dashboard') }}">
+        <a class="btn btn-ghost" href="{{ url_for('garmin.import_fit') }}">
           <svg class="icon" width="12" height="12" aria-hidden="true"><use href="#i-upload"></use></svg> Upload completed .FIT
         </a>
       </div>
       <p class="rail-note">Load the .FIT via Garmin Express or copy to <code>GARMIN/NEWFILES</code>. After the session, upload your completed .FIT to import it.</p>
     </div>
 
-    {% if item.garmin_workout_json %}
+    {% if nutrition and not is_rest %}
     <div class="card card-pad">
-      <span class="eyebrow">Garmin workout</span>
-      {% if gw %}
-        <p class="rail-note">Pushed to Garmin Connect · ID <code>{{ gw.garmin_workout_id }}</code>{% if gw.scheduled_date %} · scheduled {{ gw.scheduled_date }}{% endif %}</p>
-      {% elif auth_status.authenticated %}
-        <form class="rail-actions" method="post" action="{{ url_for('plans.push_to_garmin', plan_id=plan_id, item_id=item.id) }}">
-          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-          <button type="submit" class="btn btn-ghost">Push to Garmin Connect</button>
-        </form>
-      {% else %}
-        <div class="rail-actions">
-          <button type="button" class="btn btn-ghost" disabled aria-disabled="true">Push to Garmin · paused</button>
-        </div>
-        <p class="rail-note"><a class="accent" href="{{ url_for('garmin.auth') }}">Set up Garmin auth</a> to re-enable direct push.</p>
-      {% endif %}
-      <details>
-        <summary class="rail-note">View workout JSON</summary>
-        <pre class="json-box">{{ garmin_workout | tojson(indent=2) }}</pre>
-      </details>
+      <span class="eyebrow">Fuel &amp; nutrition</span>
+      <div class="macros sec-sm">
+        <div class="macro"><div class="eyebrow">Carbs</div><div class="v num">{{ nutrition.carb }}<span class="u">%</span></div></div>
+        <div class="macro"><div class="eyebrow">Protein</div><div class="v num">{{ nutrition.protein }}<span class="u">%</span></div></div>
+        <div class="macro"><div class="eyebrow">Fat</div><div class="v num">{{ nutrition.fat }}<span class="u">%</span></div></div>
+      </div>
+      <div class="kv cal-row"><span class="k">Daily energy</span><span class="num">{{ nutrition.cal }}<span class="u"> kcal</span></span></div>
+      {% if nutrition.fueling %}<p class="rail-note">{{ nutrition.fueling }}</p>{% endif %}
     </div>
     {% endif %}
   </div>

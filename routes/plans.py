@@ -683,24 +683,10 @@ def view_item(plan_id, item_id):
     if not item:
         flash('Item not found.', 'danger')
         return redirect(url_for('plans.view_plan', plan_id=plan_id))
-    garmin_workout = None
-    if item['garmin_workout_json']:
-        try:
-            garmin_workout = json.loads(item['garmin_workout_json'])
-        except Exception:
-            pass
-    gw = db.execute(
-        'SELECT * FROM garmin_workouts WHERE plan_item_id = ? AND user_id = ? AND status = "active"',
-        (item_id, uid)
-    ).fetchone()
-    try:
-        from garmin_connect import get_auth_status
-        auth_status = get_auth_status(db)
-    except Exception:
-        auth_status = {'authenticated': False, 'username': None}
+    nutrition = _workout_nutrition(item['sport_type'], item['intensity'],
+                                   item['target_duration_min'])
     return render_template('plans/item.html', plan_id=plan_id, item=item,
-                           garmin_workout=garmin_workout, gw=gw,
-                           auth_status=auth_status)
+                           nutrition=nutrition)
 
 
 @bp.route('/<int:plan_id>/item/<int:item_id>/complete', methods=['POST'])

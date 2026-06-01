@@ -95,7 +95,7 @@ The redesign covers every *user-facing* surface but a few blueprints have no red
 
 **Progress:** Phase 0 ✅ · Phase 1 shell ✅ · Phase 2 §05 ✅ §06 ✅ §07 ✅ — **next: §08 logging**.
 Merged to `main`: PR #397 (review), #398 (Phase 0), #399 (docs), #400 (Phase 1 + §05),
-#401 (§06). In flight: PR #403 (§07).
+#401 (§06), #403 (§07). In flight: PR #404 (§07 follow-up — nutrition card + upload-not-push).
 
 ### Done
 - **Pre-build review** — `PLAN_REVIEW_AND_CORRECTIONS.md` (PR #397, merged). Code-verified
@@ -137,6 +137,14 @@ Merged to `main`: PR #397 (review), #398 (Phase 0), #399 (docs), #400 (Phase 1 +
   edit (PATCH `api_patch_plan_item`), complete/skip with optional notes, download .FIT, Garmin
   push (auth-gated → shows **paused** when not authed) + workout-JSON details. Applies HANDOFF §4:
   adds **"Upload completed .FIT"** alongside download; per-workout detail §06 deferred now lives here.
+- **Phase 2 · §07 follow-up** (PR #404, on top of #403). Closes the two gaps #403 left vs the
+  §07 spec: (1) the **nutrition macros** §06 explicitly deferred to this screen — `view_item` now
+  passes `_workout_nutrition(...)` and the rail gains a **Fuel & nutrition** card (carb/protein/fat
+  %, daily energy, session fueling); (2) honors the **"Upload completed .FIT" (not push)** directive
+  + §17 Garmin = PAUSED — the rail's "Upload completed .FIT" now targets the real importer
+  (`garmin.import_fit`, was `garmin.dashboard`), and the on-screen **Garmin push card + workout-JSON
+  dump are removed** (the `push_to_garmin` *route* is left intact for §17). `view_item` no longer
+  fetches `garmin_workouts`/auth status. Reuses #403's class vocabulary; CSP-clean (no inline style).
 
 ### Known blocker (infra, not code) — Vercel **Preview** deploys 500
 Preview deployments crash with `FUNCTION_INVOCATION_FAILED`: `app.py` raises at **import** when
