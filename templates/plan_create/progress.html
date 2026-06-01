@@ -1,32 +1,45 @@
-{% extends 'base_legacy.html' %}
-{% block title %}Generating your plan — AIDSTATION{% endblock %}
+{% extends 'base.html' %}
+{% set nav_active = 'plan' %}
+{% block title %}Pouring your plan · AIDSTATION{% endblock %}
+{% block crumbs %}<a href="{{ url_for('dashboard.index') }}">Plan</a> <span class="sep">/</span> <b>Generating</b>{% endblock %}
+
 {% block content %}
+<div class="gen-wrap" id="planProgress" data-generate-url="{{ generate_url }}" data-new-url="{{ new_url }}">
 
-<nav class="mb-3">
-  <a href="{{ url_for('dashboard.index') }}" class="text-muted small">&larr; Back to dashboard</a>
-</nav>
-
-<div class="text-center py-5" id="planProgress"
-     data-generate-url="{{ generate_url }}">
-
+  {# ── Working state (cup-pour) ── #}
   <div id="progressWorking">
-    <div class="spinner-border text-primary mb-3" role="status">
-      <span class="visually-hidden">Working…</span>
+    <p class="eyebrow accent">● Building your plan</p>
+    <h1 class="gen-title">Pouring you a plan.</h1>
+    <p class="gen-lede">Takes 3–5 minutes. We're training your plan as hard as it'll train you —
+      every session shaped by your full profile.</p>
+
+    {# Cup outline + tumbling letters. Letters are injected and positioned by
+       the script below (custom props set via element.style — CSP-clean). #}
+    <div class="gen-cup">
+      <div class="gen-cup-inner" id="genCup">
+        <svg width="260" height="260" viewBox="0 0 300 300" aria-hidden="true">
+          <path d="M78 90 L222 90 L201 252 Q 150 277, 99 252 Z" fill="color-mix(in oklab, var(--ink) 60%, transparent)"/>
+          <path d="M78 90 L222 90 L201 252 Q 150 277, 99 252 Z" fill="none" stroke="var(--fg)" stroke-width="6" stroke-linejoin="round"/>
+          <line x1="78" y1="90" x2="222" y2="90" stroke="var(--fg)" stroke-width="6" stroke-linecap="round"/>
+        </svg>
+      </div>
     </div>
-    <h4 class="mb-2">Building your training plan</h4>
-    <p class="text-muted mb-1" id="progressMessage">Evaluating your current state&hellip;</p>
-    <p class="text-muted small mb-0">
-      This runs your profile through the full coaching cascade and can take a
-      few minutes. Keep this tab open &mdash; your plan opens automatically when
-      it&rsquo;s ready.
-    </p>
-    <p class="text-muted small mt-3 mb-0"><span id="progressElapsed">0</span>s elapsed</p>
+
+    <p class="gen-sub">You can close this tab — we'll email you when it's ready.</p>
+    <p class="gen-meta"><span id="progressElapsed">0s</span> elapsed · typical 3–5 min</p>
   </div>
 
-  <div id="progressFailed" class="d-none">
-    <h4 class="mb-2">Plan generation didn&rsquo;t finish</h4>
-    <p class="text-muted" id="progressError"></p>
-    <a href="{{ new_url }}" class="btn btn-primary">Back to create a plan</a>
+  {# ── Failed state ── #}
+  <div id="progressFailed" class="gen-failed d-none">
+    <p class="eyebrow bad">● Plan-gen failed</p>
+    <h1 class="gen-title">The build stalled.</h1>
+    <p class="gen-lede" id="progressError"></p>
+    <p class="gen-sub">Your inputs are saved — tweak one thing and run it again.</p>
+    <div class="gen-actions center">
+      <a href="{{ new_url }}" class="btn btn-primary">
+        <svg class="icon" width="13" height="13" aria-hidden="true"><use href="#i-bolt"></use></svg> Retry generation
+      </a>
+    </div>
   </div>
 </div>
 
@@ -34,24 +47,62 @@
 (function () {
   var root = document.getElementById('planProgress');
   if (!root) return;
+
+  // ── Cup-pour letters ──────────────────────────────────────────────────
+  // Time-bucket, not server sub-steps (BUILD_PLAN §9): the steps below are
+  // indicative phrasing that tumbles into the cup on a fixed 300s loop. The
+  // keyframes (letterTumble / cupTipping) live in tokens.css; here we only
+  // build the per-letter elements and set their scatter slot + delay. Styles
+  // are set via element.style (DOM API) so nothing trips the CSP nonce gate.
+  var cup = document.getElementById('genCup');
+  if (cup) {
+    var PLAN_STEPS = [
+      'Reading your training history', 'Mapping your goal viability', 'Sketching the phase shape',
+      'Choosing your periodization', 'Sequencing the build phase', 'Placing key sessions',
+      'Balancing weekly load', 'Distributing intensity', 'Slotting long sessions',
+      'Honoring your schedule', 'Filtering for skills', 'Adjusting for injuries',
+      'Calibrating recovery', 'Tuning week-to-week ramp', 'Designing the taper',
+      'Writing session details', 'Adding fueling notes', 'Cross-checking constraints',
+      'Pacing the peak block', 'Routing through your locations', 'Anchoring to race day',
+      'Drafting the first cut', 'Polishing transitions', 'Reviewing the whole plan', 'Finalizing'
+    ];
+    // Cup interior slots — bottom-up stack; widths narrow toward the base so
+    // letters never cross the cup edge.
+    var SLOTS = [];
+    [ [202, [-32,-16,0,16,32]], [186, [-35,-18,0,18,35]], [170, [-38,-23,-8,8,23,38]],
+      [154, [-40,-24,-8,8,24,40]], [138, [-44,-29,-14,0,14,29,44]], [122, [-44,-29,-14,0,14,29,44]]
+    ].forEach(function (row) { row[1].forEach(function (x) { SLOTS.push({ x: x, y: row[0] }); }); });
+
+    var frag = document.createDocumentFragment();
+    PLAN_STEPS.forEach(function (step, si) {
+      var chars = step.toUpperCase().split('');
+      var slotIdx = 0;
+      chars.forEach(function (ch, ci) {
+        if (ch === ' ' || slotIdx >= SLOTS.length) return;
+        var slot = SLOTS[slotIdx];
+        var seed = (si * 11 + ci * 13 + ch.charCodeAt(0)) % 23;
+        var el = document.createElement('div');
+        el.className = 'gen-letter letter-tumble';
+        el.textContent = ch;
+        el.style.setProperty('--x', (slot.x + ((seed % 7) - 3) * 1.2) + 'px');
+        el.style.setProperty('--y', (slot.y + ((seed % 5) - 2) * 1.5) + 'px');
+        el.style.setProperty('--r', (((seed % 13) - 6) * 5) + 'deg');
+        // ~25 ms stagger per char → left-to-right reveal, not a sync drop.
+        el.style.animation = 'letterTumble 300s linear ' + (si * 12 + ci * 0.025) + 's infinite';
+        frag.appendChild(el);
+        slotIdx++;
+      });
+    });
+    cup.appendChild(frag);
+  }
+
+  // ── Generation poller (logic unchanged from the legacy screen) ─────────
   var generateUrl = root.getAttribute('data-generate-url');
   var workingEl = document.getElementById('progressWorking');
   var failedEl = document.getElementById('progressFailed');
   var errorEl = document.getElementById('progressError');
-  var msgEl = document.getElementById('progressMessage');
   var elapsedEl = document.getElementById('progressElapsed');
 
-  // Indicative status copy — cycles client-side; the steps run server-side
-  // and aren't individually reported back.
-  var MESSAGES = [
-    'Evaluating your current state…',
-    'Checking goal + timeline viability…',
-    'Shaping your periodization…',
-    'Synthesizing your training phases…',
-    'Reviewing the transitions between phases…',
-    'Finishing up…'
-  ];
-  var msgIdx = 0;
   var started = Date.now();
   // A healthy generation advances ~1 week-block per pass (the per-invocation
   // budget caps each pass below the function timeout), so a real plan needs
@@ -71,16 +122,15 @@
   var csrfMeta = document.querySelector('meta[name="csrf-token"]');
   var csrfToken = csrfMeta ? (csrfMeta.getAttribute('content') || '') : '';
 
-  setInterval(function () {
-    if (stopped) return;
-    elapsedEl.textContent = String(Math.floor((Date.now() - started) / 1000));
-  }, 1000);
+  function fmtElapsed(totalSec) {
+    if (totalSec < 60) return totalSec + 's';
+    return Math.floor(totalSec / 60) + 'm ' + (totalSec % 60) + 's';
+  }
 
   setInterval(function () {
     if (stopped) return;
-    msgIdx = (msgIdx + 1) % MESSAGES.length;
-    msgEl.textContent = MESSAGES[msgIdx];
-  }, 6000);
+    elapsedEl.textContent = fmtElapsed(Math.floor((Date.now() - started) / 1000));
+  }, 1000);
 
   function showFailure(message) {
     stopped = true;
@@ -136,5 +186,4 @@
   step();
 })();
 </script>
-
 {% endblock %}

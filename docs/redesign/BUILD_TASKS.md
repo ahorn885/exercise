@@ -33,7 +33,7 @@ Work top-to-bottom **within a phase** (phases defined in `BUILD_PLAN.md` §3). C
 ## Phase 3 — Plan lifecycle
 | § | Section | DM | Blueprint / route | Current template | Migration note |
 |---|---|---|---|---|---|
-| 04 | Plan generation | DM | `plan_create.new_plan` / `.progress` / `.view` | `plan_create/{new_form,progress,view}.html` | Cup-pour progress = time bucket, **not** server sub-steps. Keyframes in `tokens.css`. |
+| 04 | ✅ Plan generation | DM | `plan_create.new_plan` / `.progress` / `.view` | `plan_create/{new_form,progress,view}.html` | Cup-pour progress = time bucket, **not** server sub-steps. Keyframes in `tokens.css`; letters injected + positioned via JS (`element.style`, CSP-clean). Failed state uses §27 "The build stalled." copy. *(in-flight PR)* |
 | 10 | Races · event manager ★ | DM | `race_events.*` | — (no template) | A/B/C priority; editing a date re-cascades the plan. New templates. |
 | 11 | Plans · history & versions | DM | `plans.list_plans` | `plans/v2/*` | Zero-plans → shared empty (§26). |
 | 12 | Plan compare · diff | DM | `plans.*` (version compare) | `plans/v2/*` | Version A ↔ B diff. |
@@ -93,11 +93,12 @@ The redesign covers every *user-facing* surface but a few blueprints have no red
 
 **Last updated:** 2026-06-01
 
-**Progress:** Phase 0 ✅ · Phase 1 shell ✅ · **Phase 2 COMPLETE** (§05 ✅ §06 ✅ §07 ✅ §08 ✅ §09 ✅) — **next: Phase 3 (§04 plan-gen, §10 races, §11–14 plan lifecycle)**.
+**Progress:** Phase 0 ✅ · Phase 1 shell ✅ · **Phase 2 COMPLETE** (§05–§09 ✅) · Phase 3 ◑ (§04 ✅) — **next: §10 races, §11–14 plan lifecycle**.
 Merged to `main`: PR #397 (review), #398 (Phase 0), #399 (docs), #400 (Phase 1 + §05),
 #401 (§06), #403 (§07), #404 (§07 follow-up), #406 (redesign card/grid Bootstrap-leak fix),
 #407 (§08 unified Log landing + 4 panes).
-In flight: PR for §08 Strength pane + §09 Wellness (completes Phase 2).
+In flight: PR for §08 Strength pane + §09 Wellness (completes Phase 2) **and** Phase 3 §04
+(plan-gen start form + cup-pour progress + plan view).
 
 ### Done
 - **Pre-build review** — `PLAN_REVIEW_AND_CORRECTIONS.md` (PR #397, merged). Code-verified
@@ -192,6 +193,28 @@ In flight: PR for §08 Strength pane + §09 Wellness (completes Phase 2).
     strength tile active, `#self-report` anchor, self-report field names, picker deep-link,
     and no inline `style=`/`onclick=`. Full suite green (1867 passed, 16 skipped); CSS braces
     balanced.
+- **Phase 3 · §04 Plan generation** — all three `plan_create` templates onto the new shell.
+  - **Start form** (`new_form.html`, `plan_create.new_plan`). "Build me a plan." — real start-date
+    picker + target-race **anchor card** (or the open-plan branch when no race), an illustrative
+    Base→Build→Peak→Taper phase band (clearly framed as the *typical* shape, not the generated
+    plan — the mock pre-flight checklist from the artboard was **not** ported, no backing data),
+    Generate / Import-JSON / Cancel actions.
+  - **Progress** (`progress.html`, `plan_create.plan_progress`). The signature **cup-pour**:
+    "Pouring you a plan." Honors BUILD_PLAN §9 — **time-bucket, not server sub-steps**, so the
+    legacy 6-message client cycle is gone. The cup outline is inline SVG; the tumbling letters are
+    **built and positioned in JS** (`element.style.setProperty('--x/--y/--r')` + per-letter
+    `animation` delay) so nothing trips the CSP nonce gate — the `letterTumble`/`cupTipping`
+    keyframes already shipped in `tokens.css` (Phase 0). Letters carry `.letter-tumble` so the
+    existing reduced-motion rule settles them statically in the cup. **The resumable poll loop is
+    preserved verbatim** (consecutive-failure cap, cache-resume on 5xx, CSRF from the meta tag).
+    Failed state adopts the §27 **"The build stalled."** headline + Retry.
+  - **View** (`view.html`, `plan_create.view_plan`). Generated plan grouped by date with phase-seam
+    headers (phase · week-in-phase · volume band) and per-session cards (discipline · duration ·
+    intensity chip · coaching intent · notes), rest-day variant kept.
+  - New `.app` CSS under a **§04** block (`.plan-gen*`, `.phase-band`, `.gen-cup*`, `.gen-letter`,
+    plan-view atoms). **Verified:** render tests extended to cover all three screens (start form,
+    cup-pour wired + no message-cycle + stalled copy, plan view with a phase-seam session). Full
+    suite green (1870 passed, 16 skipped); CSS braces balanced; zero inline `style=`/handlers.
 
 ### Known blocker (infra, not code) — Vercel **Preview** deploys 500
 Preview deployments crash with `FUNCTION_INVOCATION_FAILED`: `app.py` raises at **import** when
@@ -202,9 +225,7 @@ Until then, PR previews can't render — verify locally or via static checks. Th
 to any redesign PR (Production is unaffected).
 
 ### Next — Phase 3 (Plan lifecycle)
-Phase 2 (daily loop) is fully shipped. Start Phase 3 top-to-bottom:
-- **§04 Plan generation** (`plan_create.new_plan`/`.progress`/`.view`). Cup-pour progress is a
-  **time-bucket**, not server sub-steps — keyframes live in `tokens.css`.
+Phase 2 done; Phase 3 §04 (plan generation) done. Continue Phase 3 top-to-bottom:
 - **§10 Races · event manager** ★ (`race_events.*`, no current template) — A/B/C priority;
   editing a date re-cascades the plan. New templates.
 - **§11–14** Plans history/versions, compare diff, plan refresh (⟳ — see §30 consolidation

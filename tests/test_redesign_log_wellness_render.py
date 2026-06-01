@@ -108,3 +108,62 @@ def test_log_picker_wellness_tile_targets_self_report_anchor(client):
     assert resp.status_code == 200
     html = resp.get_data(as_text=True)
     assert '/wellness#self-report' in html
+
+
+# ── §04 Plan generation (start form · cup-pour progress · plan view) ──────────
+
+def test_plan_gen_start_form_renders(client, monkeypatch):
+    import routes.plan_create as pc
+    # No-target-race branch — keeps the form off the race_events DB shape.
+    monkeypatch.setattr(pc, 'load_target_race_event_payload', lambda *a, **k: None)
+    resp = client.get('/plans/v2/new')
+    assert resp.status_code == 200
+    html = resp.get_data(as_text=True)
+    assert 'app-shell' in html
+    assert 'Build me a plan.' in html
+    assert 'phase-band' in html          # illustrative typical-shape band
+    assert 'i-bolt' in html              # Generate plan button icon
+    assert 'style="' not in html
+
+
+def test_plan_gen_progress_is_cup_pour(client, monkeypatch):
+    import routes.plan_create as pc
+    monkeypatch.setattr(pc, '_load_plan_version',
+                        lambda db, uid, pid: {'generation_status': 'generating'})
+    resp = client.get('/plans/v2/1/progress')
+    assert resp.status_code == 200
+    html = resp.get_data(as_text=True)
+    assert 'Pouring you a plan.' in html
+    assert 'id="genCup"' in html
+    assert 'letterTumble' in html            # cup-pour animation wired
+    assert 'data-generate-url' in html       # poller target preserved
+    assert 'The build stalled.' in html      # §27 failed-state copy present
+    # Cup-pour is time-bucket, not server sub-steps: no per-step message cycle.
+    assert 'progressMessage' not in html
+    assert 'style="' not in html
+
+
+def test_plan_gen_view_renders_sessions(client, monkeypatch):
+    import types
+    import routes.plan_create as pc
+    monkeypatch.setattr(pc, '_load_plan_version', lambda db, uid, pid: {
+        'generation_status': 'ready', 'pattern': 'A', 'created_via': 'plan_create',
+        'scope_start_date': '2026-06-01', 'scope_end_date': '2026-11-01',
+    })
+    pm = types.SimpleNamespace(phase_name='Base', week_in_phase=1,
+                               total_weeks_in_phase=4, intended_volume_band=(6, 8))
+    sess = types.SimpleNamespace(date='2026-06-01', day_of_week='Mon', kind='run',
+                                 discipline_name='Easy run', discipline_id='run',
+                                 duration_min=45, intensity_summary='easy',
+                                 time_of_day='am', coaching_intent='Aerobic base.',
+                                 session_notes='Keep it conversational.',
+                                 phase_metadata=pm)
+    monkeypatch.setattr(pc, 'load_plan_sessions_by_version', lambda db, pid: [sess])
+    resp = client.get('/plans/v2/1')
+    assert resp.status_code == 200
+    html = resp.get_data(as_text=True)
+    assert 'Training plan' in html
+    assert 'Pattern A' in html
+    assert 'Base phase' in html
+    assert 'Easy run' in html
+    assert 'style="' not in html
