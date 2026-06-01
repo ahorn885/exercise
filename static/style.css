@@ -891,7 +891,7 @@ body.app { margin: 0; min-height: 100vh; }
 .app .btn:disabled, .app .btn[disabled] { opacity: 0.45; cursor: not-allowed; }
 
 /* Stats strip */
-.app .dash-stats { display: grid; grid-template-columns: repeat(5, 1fr); gap: 16px; margin-bottom: 16px; }
+.app .dash-stats { display: grid; grid-template-columns: repeat(5, 1fr); gap: 16px; }
 
 /* Data tables */
 .app .table-scroll { overflow-x: auto; }
