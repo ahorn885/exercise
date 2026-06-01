@@ -157,6 +157,9 @@ body.theme-light .app {
   background: var(--bg-2);
   border: 1px solid var(--hairline-2);
   border-radius: var(--r-md);
+  /* Bootstrap's .card sets a dark --bs-body-color; re-assert the redesign fg
+     so card text relying on inheritance isn't dark-on-dark (invisible). */
+  color: var(--fg);
 }
 .app .card-flush { background: transparent; border: 1px solid var(--hairline); border-radius: var(--r-md); }
 
@@ -264,10 +267,23 @@ body.theme-light .app {
 .app .page-title { font-size: 28px; font-weight: 700; letter-spacing: -0.02em; margin: 0; }
 .app .page-sub { font-size: 14px; color: var(--fg-3); margin: 4px 0 0; }
 
-/* Grids */
-.app .row { display: flex; gap: 16px; }
+/* Grids.
+   Zero Bootstrap's grid gutter on our flex rows: its .row sets negative side
+   margins and its `.row > *` adds horizontal padding (both via --bs-gutter-x),
+   which leak into these redesign rows and throw spacing off / overhang the
+   container. Neutralising the variable kills both at once while preserving the
+   `flex-wrap: wrap` the layout relies on for mobile column stacking. */
+.app .row { display: flex; gap: 16px; --bs-gutter-x: 0; }
 .app .col { flex: 1; min-width: 0; }
 .app .stack { display: flex; flex-direction: column; gap: 16px; }
+
+/* Below the shell breakpoint, every row collapses to a single stacked column.
+   Made explicit (flex-basis: 100%) rather than leaning on flex-wrap heuristics,
+   so main+rail layouts stack cleanly instead of cramming side by side. */
+@media (max-width: 859.98px) {
+  .app .row { flex-wrap: wrap; }
+  .app .row > * { flex-basis: 100%; }
+}
 
 /* ── Mobile chrome ───────────────────────────────────────────────── */
 .app .statusbar {
