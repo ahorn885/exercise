@@ -1814,7 +1814,28 @@ def synthesize_phase(
             "schema_violation",
             detail="no synthesizer pass produced parseable sessions",
         )
-    assert latest_validator is not None
+    if latest_validator is None:
+        # The per-block budget guard's best-effort-accept path (line ~1544) can
+        # `break` with parseable `latest_sessions` set but `latest_validator`
+        # still None: every completed pass raised a top-level Layer4Payload
+        # ValidationError, whose handler assigns `latest_sessions` at parse time
+        # (line ~1709) but `continue`s WITHOUT ever running the validator (so
+        # `latest_validator` is never set), and the budget guard then accepts the
+        # last parseable attempt. A bare `assert latest_validator is not None`
+        # here raised a raw AssertionError that escaped the layer's typed-error
+        # contract -> the route catch-all discarded the WHOLE plan over one
+        # unconverged block (prod plan #52, 2026-05-31 — a sibling of #47). Raise
+        # a RETRYABLE coded error instead (synthesis_budget_exhausted is in the
+        # route's `_RETRYABLE_BLOCK_CODES`) so the block re-synthesizes on the
+        # next resumable pass like any other unconverged block, rather than
+        # killing a near-complete plan.
+        raise Layer4OutputError(
+            "synthesis_budget_exhausted",
+            detail=(
+                f"{unit_tag}: per-block budget spent before any validation pass "
+                "completed (every attempt raised a payload invariant violation)"
+            ),
+        )
 
     # D-77 §6 diagnostics — per-block synthesis summary: call count + total
     # latency expose how close a block runs to the 300s function cap, and
