@@ -125,6 +125,14 @@ The redesign covers every *user-facing* surface but a few blueprints have no red
   bulk-edit bar, AI review, FIT-files, archive/restore/delete, plan health, daily supplements,
   injury mods, gear recs, progress, and coach chat (both nonce'd inline scripts kept; the static
   bulk-mode `<style>` moved into `style.css`).
+- **Phase 2 · §07 Workout detail** (`plans.view_item` → `plans/item.html`). The plan-workout
+  detail the dashboard hero and §06 week grid link to (this is the artboard's "Today's Workout";
+  the §07 note's `training.session_form` is the strength-logging form, deferred to §08). Two-column
+  layout: workout body (targets strip, block-by-block step list from `description | workout_steps`,
+  notes callout, **rest-day variant**) + sticky context rail. Preserves every function — inline
+  edit (PATCH `api_patch_plan_item`), complete/skip with optional notes, download .FIT, Garmin
+  push (auth-gated → shows **paused** when not authed) + workout-JSON details. Applies HANDOFF §4:
+  adds **"Upload completed .FIT"** alongside download; per-workout detail §06 deferred now lives here.
 
 ### Known blocker (infra, not code) — Vercel **Preview** deploys 500
 Preview deployments crash with `FUNCTION_INVOCATION_FAILED`: `app.py` raises at **import** when
@@ -135,7 +143,7 @@ Until then, PR previews can't render — verify locally or via static checks. Th
 to any redesign PR (Production is unaffected).
 
 ### Next
-- **Phase 2 (continue):** §07 Workout detail (`training.session_form` + plan workout + `.FIT`
-  upload; per-workout nutrition/steps detail that §06 deferred lands here), §08 Logging adaptive
-  form (one landing, type picker over the six `.new_entry` routes), §09 Wellness. Migrate one
+- **Phase 2 (finish):** §08 Logging adaptive form (one landing, type picker over the six
+  `.new_entry` routes — `natural_log` + cardio/training/body/conditions/injuries), then §09
+  Wellness (`wellness.index`, 30-day readiness). Migrate one
   template per slice, flipping each from `base_legacy.html` → `base.html` as it lands.
