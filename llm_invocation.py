@@ -178,7 +178,25 @@ def invoke_tool_call(
                         out_tokens=out_tokens, ceiling=ceiling,
                         thinking=thinking_budget, kind="empty_tool_args",
                     )
+                    # #316 Slice 0 diagnostic — measure the per-attempt cost +
+                    # outcome so the wasted-thinking-attempt latency (otherwise
+                    # discarded; the returned latency_ms is only the WINNING
+                    # attempt's) is visible. Lets us quantify what fraction of a
+                    # block's wall time is the thinking-then-forced-retry double
+                    # call vs. validator retries, before committing to a fix.
+                    print(
+                        f"invoke_tool_call: {tool_name} attempt "
+                        f"(thinking={thinking_budget}) {latency_ms}ms "
+                        f"outcome=empty_tool_args out_tokens={out_tokens}/"
+                        f"{ceiling} stop_reason={stop_reason}"
+                    )
                     return None, stop_reason
+                print(
+                    f"invoke_tool_call: {tool_name} attempt "
+                    f"(thinking={thinking_budget}) {latency_ms}ms "
+                    f"outcome=tool_use_ok out_tokens={out_tokens}/{ceiling} "
+                    f"stop_reason={stop_reason}"
+                )
                 return (
                     ToolCallResult(
                         tool_args=tool_args,
@@ -204,6 +222,13 @@ def invoke_tool_call(
             if text_prefix:
                 miss["text_prefix"] = text_prefix
         last_miss.update(miss)
+        # #316 Slice 0 diagnostic — see the empty_tool_args branch above.
+        print(
+            f"invoke_tool_call: {tool_name} attempt "
+            f"(thinking={thinking_budget}) {latency_ms}ms "
+            f"outcome=no_tool_use_block out_tokens={out_tokens}/{ceiling} "
+            f"stop_reason={stop_reason}"
+        )
         return None, stop_reason
 
     result, stop_reason = _attempt(extended_thinking_budget)
