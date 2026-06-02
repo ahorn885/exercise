@@ -1706,3 +1706,32 @@ body.bulk-mode { padding-bottom: 80px; }
 @media (max-width: 859.98px) {
   .app .loc-result { flex-direction: column; align-items: stretch; }
 }
+
+/* ════════════════════════════════════════════════════════════════════
+   §27 · Error states — standalone trail-voice page (_error.html)
+   404 "You're off trail." · 500 "Something seized up." Centered card,
+   tone glyph, diagnostic block, mailto + retry. No shell dependency.
+   ════════════════════════════════════════════════════════════════════ */
+.app.error-page { min-height: 100vh; display: grid; place-items: center; padding: 32px 28px; }
+.app .error-card { max-width: 560px; width: 100%; text-align: center; }
+.app .error-glyph { width: 80px; height: 80px; margin: 0 auto 18px; border-radius: 50%; display: grid; place-items: center; }
+.app .error-glyph--bad  { background: color-mix(in oklab, var(--bad) 15%, transparent);  color: var(--bad);  border: 1px solid color-mix(in oklab, var(--bad) 35%, transparent); }
+.app .error-glyph--warn { background: color-mix(in oklab, var(--warn) 15%, transparent); color: var(--warn); border: 1px solid color-mix(in oklab, var(--warn) 35%, transparent); }
+.app .error-eyebrow--bad  { color: var(--bad); }
+.app .error-eyebrow--warn { color: var(--warn); }
+.app .error-title { font-size: 32px; font-weight: 700; letter-spacing: -0.02em; margin: 10px 0 12px; }
+.app .error-msg { color: var(--fg-3); font-size: 14px; line-height: 1.55; max-width: 460px; margin: 0 auto 22px; }
+.app .error-quicklinks { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; max-width: 440px; margin: 0 auto; }
+.app .error-ql { padding: 14px 12px; display: flex; flex-direction: column; align-items: center; gap: 8px; color: var(--fg); text-decoration: none; font-size: 12px; font-weight: 600; }
+.app .error-ql .icon { color: var(--fg-2); }
+.app .error-ql:hover { border-color: color-mix(in oklab, var(--accent) 40%, var(--hairline-2)); }
+.app .error-diag { border: 1px solid var(--hairline-2); border-radius: var(--r-md); background: var(--bg-2); padding: 12px 16px; text-align: left; margin: 18px 0 22px; font-family: var(--mono); font-size: 11px; color: var(--fg-2); line-height: 1.7; }
+.app .error-diag-head { font-size: 9px; color: var(--fg-3); letter-spacing: 0.22em; text-transform: uppercase; margin: 0 0 6px; }
+.app .error-diag-row { word-break: break-all; }
+.app .error-diag-hl { color: var(--accent); }
+.app .error-actions { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
+.app .error-foot { margin-top: 16px; font-family: var(--mono); font-size: 10px; letter-spacing: 0.18em; color: var(--fg-4); }
+
+@media (max-width: 519.98px) {
+  .app .error-quicklinks { grid-template-columns: 1fr; }
+}

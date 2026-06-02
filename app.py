@@ -1,7 +1,9 @@
 import os
 import re as _re
 import secrets as _secrets
-from flask import Flask, request, redirect, url_for, session, g
+from datetime import datetime, timezone
+from urllib.parse import quote as _urlquote
+from flask import Flask, request, redirect, url_for, session, g, render_template
 from flask_wtf.csrf import CSRFProtect, CSRFError
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
@@ -71,6 +73,77 @@ def _handle_csrf_error(e):
     # uniform regardless of whether the caller is a browser form or a JS
     # fetch. 400 (not 403) matches Flask-WTF's default.
     return (f'CSRF validation failed: {e.description}', 400)
+
+
+# ── Trail-voice error pages (redesign §27) ───────────────────────────────────
+# Shared `_error.html` rendered by the 404 + 500 handlers. The page is
+# standalone (no shell includes) so a 500 can't cascade while rendering its own
+# error page. Each carries a per-request diagnostic block; the "Email help"
+# button is a mailto: with that diagnostic pre-filled (the user copies nothing).
+def _error_request_id() -> str:
+    return 'req_' + _secrets.token_hex(5)
+
+
+def _error_mailto(code: str, diag: list[tuple[str, str]]) -> str:
+    subject = f'AIDSTATION error · {code}'
+    body = '\n'.join(
+        ['Hi — I hit an error in AIDSTATION. The diagnostic below was pre-filled:', '']
+        + [f'{k}: {v}' for k, v in diag]
+    )
+    return (
+        f'mailto:help@aidstation.pro'
+        f'?subject={_urlquote(subject)}&body={_urlquote(body)}'
+    )
+
+
+@app.errorhandler(404)
+def _handle_404(e):
+    code = '404 · NO SUCH ROUTE'
+    diag = [
+        ('request_id', _error_request_id()),
+        ('attempted_path', request.path),
+        ('method', request.method),
+        ('status', '404 not_found'),
+    ]
+    return render_template(
+        '_error.html', tone='bad', glyph='x', code=code,
+        title="You're off trail.",
+        message="This route isn't on the map — maybe an old link, or a plan "
+                "version that's since been archived. No harm done. Here's the "
+                "way back.",
+        diag=diag, quicklinks=True, show_retry=False,
+        mailto_href=_error_mailto(code, diag),
+    ), 404
+
+
+@app.errorhandler(500)
+def _handle_500(e):
+    code = '500 · SOMETHING BROKE'
+    orig = getattr(e, 'original_exception', None) or e
+    diag = [
+        ('request_id', _error_request_id()),
+        ('action', f'{request.method} {request.path}'),
+        ('status', '500 internal_error'),
+        ('timestamp', datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')),
+    ]
+    # The user only ever sees the request_id; the real exception goes to the
+    # server log so a support email's request_id can be traced back to it.
+    app.logger.error(
+        '[error:%s] 500 on %s %s: %r',
+        diag[0][1], request.method, request.path, orig,
+    )
+    # A failed POST can't be safely re-driven by a GET, so "Try again" only
+    # reloads the path for GETs; otherwise it routes home.
+    retry_href = request.path if request.method == 'GET' else url_for('dashboard.index')
+    return render_template(
+        '_error.html', tone='bad', glyph='x', code=code,
+        title='Something seized up.',
+        message="Whatever you just tried cramped up on our end. Your data's "
+                "safe — nothing was committed. Catch your breath and try again.",
+        diag=diag, quicklinks=False, show_retry=True,
+        retry_label='Try again', retry_href=retry_href,
+        mailto_href=_error_mailto(code, diag),
+    ), 500
 
 
 # Rate limiting. Defaults are intentionally absent — only the auth blueprint
