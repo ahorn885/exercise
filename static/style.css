@@ -1363,3 +1363,57 @@ body.bulk-mode { padding-bottom: 80px; }
   .app .rx-filter-actions { margin-left: 0; }
   .app .rx-empty-title { font-size: 28px; }
 }
+
+/* ════════════════════════════════════════════════════════════════════
+   §16 · Locations
+   ════════════════════════════════════════════════════════════════════ */
+.app .loc-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+
+/* Location card */
+.app .loc-card { padding: 0; overflow: hidden; display: flex; flex-direction: column; }
+.app .loc-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; padding: 16px 18px; border-bottom: 1px solid var(--hairline-2); }
+.app .loc-id { min-width: 0; flex: 1; }
+.app .loc-title { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.app .loc-name { font-size: 16px; font-weight: 700; letter-spacing: -0.01em; }
+.app .loc-addr { font-size: 10px; color: var(--fg-3); margin: 6px 0 0; letter-spacing: 0.12em; text-transform: uppercase; }
+.app .loc-actions { display: flex; gap: 6px; flex-shrink: 0; flex-wrap: wrap; justify-content: flex-end; }
+.app .loc-actions form { margin: 0; }
+.app .loc-del { color: var(--bad); border-color: color-mix(in oklab, var(--bad) 35%, transparent); }
+
+.app .loc-body { padding: 16px 18px; flex: 1; }
+.app .loc-tags { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+.app .loc-more { font-size: 11px; color: var(--fg-3); letter-spacing: 0.08em; padding: 0 4px; }
+.app .loc-notes { margin: 12px 0 0; padding: 10px 12px; background: var(--bg); border-radius: var(--r-sm); font-size: 12px; color: var(--fg-3); font-style: italic; line-height: 1.45; }
+.app .loc-empty-body { font-size: 12px; color: var(--fg-3); margin: 0; }
+
+.app .loc-foot { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 10px 18px; border-top: 1px solid var(--hairline-2); background: var(--bg); }
+.app .loc-foot .meta { font-size: 10px; color: var(--fg-3); letter-spacing: 0.12em; text-transform: uppercase; }
+.app .loc-foot .edit { font-size: 10px; color: var(--accent); letter-spacing: 0.16em; text-transform: uppercase; text-decoration: none; flex-shrink: 0; }
+.app .loc-foot .edit:hover { text-decoration: underline; }
+
+/* Add-another dashed tile */
+.app .loc-add { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; min-height: 200px; text-align: center; color: var(--fg-3); text-decoration: none; border-style: dashed; }
+.app .loc-add:hover { border-color: var(--accent); color: var(--fg-2); }
+.app .loc-add-title { font-size: 14px; font-weight: 500; }
+.app .loc-add-sub { font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase; }
+
+/* "Where do you train?" empty hero */
+.app .loc-empty { max-width: 620px; margin: 24px auto; text-align: center; }
+.app .loc-empty-title { font-size: 36px; font-weight: 800; letter-spacing: -0.02em; line-height: 1.05; margin: 10px 0 12px; }
+.app .loc-empty-sub { color: var(--fg-3); font-size: 14px; line-height: 1.55; max-width: 480px; margin: 0 auto 24px; }
+.app .loc-types { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; text-align: left; }
+.app .loc-type-card { display: flex; flex-direction: column; gap: 8px; padding: 16px; text-decoration: none; color: var(--fg); }
+.app .loc-type-card:hover { border-color: color-mix(in oklab, var(--accent) 40%, var(--hairline-2)); }
+.app .loc-type-title { font-size: 14px; font-weight: 700; }
+.app .loc-type-card .btn { width: 100%; justify-content: center; }
+.app .loc-search { display: block; padding: 14px 16px; text-align: left; margin-top: 12px; text-decoration: none; color: var(--fg); }
+.app .loc-search-row { display: flex; gap: 10px; align-items: center; margin-top: 10px; }
+.app .loc-search-hint { flex: 1; color: var(--fg-3); font-size: 13px; }
+
+@media (max-width: 859.98px) {
+  .app .loc-grid { grid-template-columns: 1fr; }
+  .app .loc-head { flex-direction: column; }
+  .app .loc-actions { justify-content: flex-start; }
+  .app .loc-types { grid-template-columns: 1fr 1fr; }
+  .app .loc-empty-title { font-size: 28px; }
+}

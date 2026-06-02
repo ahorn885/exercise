@@ -44,7 +44,7 @@ Work top-to-bottom **within a phase** (phases defined in `BUILD_PLAN.md` §3). C
 | § | Section | DM | Blueprint / route | Current template | Migration note |
 |---|---|---|---|---|---|
 | 15 | ✅ Exercises library | DM | `rx.list_entries` | `rx/list.html` | "Exercises" = `rx`. Current Rx data-table + plateau/deload watch + real GET filters; catalog (inventory w/ no current Rx) below; No-Rx "No Rx yet." hero. *(this PR)* |
-| 16 | Locations | DM | `locales.list_profiles` / `.form` | `locales/{list,form}.html` | UX copy "Locations"; route stays `locales`. Empty state. |
+| 16 | ✅ Locations | DM | `locales.list_profiles` / `.form` | `locales/{list,form}.html` | UX copy "Locations"; route stays `locales`. Card grid (legacy enums + custom) w/ equipment chips, refresh/edit/delete; "Where do you train?" hero when nothing configured. `form.html`/`new.html` left on legacy. *(this PR)* |
 | 17 | **Connections · hub** ★⟳ | DM | `garmin.dashboard` + `garmin.debug_fit` + provider bps (`strava`/`coros`/`polar`/`whoop`/`zwift`/`trainingpeaks`/`ride_with_gps`/`oauth_callbacks`) | `garmin/{dashboard,debug_fit}.html` | **4 surfaces → 1 hub.** Tabs: Sources / Files (FIT inspector = inline panel) / Preferences + empty. Garmin = PAUSED. **Hard-cut old URLs** (single user, no redirects). Kill "Garmin dashboard" phrasing. |
 | 18 | Athlete profile | DM | `profile.edit` | `profile/edit.html` | Day-1 first-run state. Connections/dedupe prefs **move out** to §17. |
 | 19 | **Account settings** ★ | DM | `profile.change_password`, `auth.logout` | (part of `profile/edit.html`) | Identity + change password + sign out. **No** billing/2FA/export/delete. |
@@ -93,7 +93,7 @@ The redesign covers every *user-facing* surface but a few blueprints have no red
 
 **Last updated:** 2026-06-02
 
-**Progress:** Phase 0 ✅ · Phase 1 shell ✅ · **Phase 2 COMPLETE** (§05–§09 ✅) · **Phase 3 COMPLETE\*** (§04 ✅ · §10 ✅ · §11 ✅ · §12 ◑ diff-via-refresh · §13 ✅ · §14 ✅) · **Phase 4 underway** (§15 ✅) — **next: §16 Locations**. *\*§12 standalone A↔B compare deferred (no backend route); §13 still owes the §30/Phase-7 `coaching_bp` consolidation.*
+**Progress:** Phase 0 ✅ · Phase 1 shell ✅ · **Phase 2 COMPLETE** (§05–§09 ✅) · **Phase 3 COMPLETE\*** (§04 ✅ · §10 ✅ · §11 ✅ · §12 ◑ diff-via-refresh · §13 ✅ · §14 ✅) · **Phase 4 underway** (§15 ✅ · §16 ✅) — **next: §17 Connections hub**. *\*§12 standalone A↔B compare deferred (no backend route); §13 still owes the §30/Phase-7 `coaching_bp` consolidation.*
 Merged to `main`: PR #397 (review), #398 (Phase 0), #399 (docs), #400 (Phase 1 + §05),
 #401 (§06), #403 (§07), #404 (§07 follow-up), #406 (redesign card/grid Bootstrap-leak fix),
 #407 (§08 unified Log landing + 4 panes).
@@ -278,6 +278,25 @@ In flight: PR for §08 Strength pane + §09 Wellness (completes Phase 2) **and**
   `style=`/`onclick=`. (Suite-wide, the only reds remain the pre-existing date-sensitive
   `test_layer4_plan_create.py` cases — unrelated.)
 
+- **Phase 4 · §16 Locations** — `templates/locales/list.html` onto the new shell
+  (`nav_active='locations'`). UX copy is "Locations"; the route/blueprint stays `locales`
+  (CONVENTIONS §E.6). Two-column **card grid**: the four legacy enums (home/hotel/partner/
+  airport) plus athlete-created rows, each card showing the equipment chips (first 8 + "+N
+  more"), the notes callout, the chain/category/manual chips, and a footer with the item
+  count · city · `updated_at` (str-coerced for both backends). Real actions only — per-card
+  **Edit** (`locales.edit_profile`), **Refresh** (custom + mapbox-anchored →
+  `locales.refresh_from_mapbox`), **Delete** (custom → `locales.delete_locale`,
+  `data-confirm`), and a dashed **Add-another** tile + top-bar **Add location** →
+  `locales.new_locale`. The artboard's **★ primary** badge and global **Find nearby** action
+  were **not** ported (no primary flag in the schema; `nearby_instances` is per-locale, not a
+  global search). When nothing is configured (no `locale_profiles` rows and no saved
+  equipment), a **"Where do you train?"** hero replaces the four blank enum cards — each enum
+  offers a set-up shortcut (`edit_profile`) plus a search-by-address card → `new_locale`.
+  `locales/form.html` + `new.html` + `nearby.html` left on `base_legacy.html` for now (still
+  reachable). New §16 CSS block + `tests/test_redesign_locales_list_render.py` (2: populated
+  grid, empty hero). Existing `test_locales.py` (142) still green; redesign suite green (20);
+  CSS braces balanced (570/570); zero inline `style=`/`onclick=`.
+
 ### Known blocker (infra, not code) — Vercel **Preview** deploys 500
 Preview deployments crash with `FUNCTION_INVOCATION_FAILED`: `app.py` raises at **import** when
 `SECRET_KEY` is unset, and the Preview environment scope is missing it (runtime logs confirm
@@ -287,9 +306,10 @@ Until then, PR previews can't render — verify locally or via static checks. Th
 to any redesign PR (Production is unaffected).
 
 ### Next — Phase 4 (Library + Account)
-Phase 4 underway — **§15 Exercises library ✅**. Continue top-to-bottom:
-- **§16** Locations (`locales.*`, empty state) · **§17** Connections hub (4 surfaces → 1) ·
-  **§18** Athlete profile · **§19** Account settings · **§20** Coach memory.
+Phase 4 underway — **§15 Exercises library ✅ · §16 Locations ✅**. Continue top-to-bottom:
+- **§17** Connections hub (4 surfaces → 1: `garmin.dashboard` + `garmin.debug_fit` + provider
+  bps; tabs Sources/Files/Preferences; Garmin = PAUSED; hard-cut old URLs) · **§18** Athlete
+  profile · **§19** Account settings · **§20** Coach memory.
 Carry the established slice discipline: one responsive template, token classes only, CSP
 enforced (nonce'd scripts, no inline `style=`/`onclick=`), flip `base_legacy.html` → `base.html`,
 and add a render smoke test per the §08/§09 precedent.
