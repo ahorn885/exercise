@@ -1735,3 +1735,14 @@ body.bulk-mode { padding-bottom: 80px; }
 @media (max-width: 519.98px) {
   .app .error-quicklinks { grid-template-columns: 1fr; }
 }
+
+/* ════════════════════════════════════════════════════════════════════
+   §28 · Light mode — toggle controls (token swap lives in tokens.css)
+   The theme itself is a free token-swap (.theme-light on <html>); these
+   rules only style the two toggle controls (topbar icon + drawer row).
+   ════════════════════════════════════════════════════════════════════ */
+.app .theme-toggle[aria-pressed="true"] .icon { color: var(--accent); }
+/* The drawer toggle is a <button> wearing .drawer-item — reset native
+   button chrome so it lines up with the anchor rows around it. */
+.app button.drawer-item { width: 100%; background: none; border: 0; font: inherit; text-align: left; cursor: pointer; }
+.app button.drawer-item[aria-pressed="true"] .icon { color: var(--accent); opacity: 1; }

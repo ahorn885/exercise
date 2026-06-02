@@ -526,3 +526,40 @@
   }
 })();
 
+// Theme toggle (§28). The <head> bootstrap (base.html) has already applied the
+// saved theme to <html.theme-light> before paint; here we (a) keep every
+// [data-theme-toggle] control's pressed-state in sync with the live theme and
+// (b) flip + persist on click via event delegation. Toggling a class on
+// documentElement is a script-set DOM mutation, not a parser-set inline style,
+// so it's CSP-clean.
+(function () {
+  var KEY = 'aidstation-theme';
+  var root = document.documentElement;
+
+  function isLight() { return root.classList.contains('theme-light'); }
+
+  function sync() {
+    var light = isLight();
+    document.querySelectorAll('[data-theme-toggle]').forEach(function (btn) {
+      btn.setAttribute('aria-pressed', light ? 'true' : 'false');
+      btn.setAttribute('aria-label', light ? 'Switch to dark mode' : 'Switch to light mode');
+    });
+  }
+
+  document.addEventListener('click', function (e) {
+    var btn = e.target.closest('[data-theme-toggle]');
+    if (!btn) return;
+    e.preventDefault();
+    var light = !isLight();
+    root.classList.toggle('theme-light', light);
+    try { localStorage.setItem(KEY, light ? 'light' : 'dark'); } catch (_) {}
+    sync();
+  });
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', sync);
+  } else {
+    sync();
+  }
+})();
+

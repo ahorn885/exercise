@@ -69,11 +69,15 @@
 }
 
 /* Light variant — per-subtree (wrap a region in .light) and the global
-   toggle (body.theme-light, wired in Phase 6 — renamed from the mockup's
-   board-light). Inert until both .app and the toggle class exist. */
+   toggle (§28). The toggle class `theme-light` is applied to <html> (the
+   documentElement) by a pre-paint bootstrap in base.html's <head>, so the
+   theme is correct before first paint (no flash). `.theme-light .app` then
+   matches the shell <body class="app"> as a descendant of <html.theme-light>
+   and repaints every token; `.app.light` / `.app .light` keep the per-subtree
+   wrap (§28 showcase). Inert until both .app and the toggle class exist. */
 .app.light,
 .app .light,
-body.theme-light .app {
+.theme-light .app {
   --bg:       var(--paper);
   --bg-2:     var(--paper-2);
   --bg-3:     var(--paper-3);

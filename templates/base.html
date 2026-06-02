@@ -25,6 +25,18 @@
      extend base_legacy.html) are unaffected. #}
   <link href="{{ url_for('static', filename='tokens.css') }}" rel="stylesheet">
   <link href="{{ url_for('static', filename='style.css') }}" rel="stylesheet">
+  {# Light-mode bootstrap (§28). Applies the saved theme to <html> before
+     first paint so there's no dark→light flash. Nonced — CSP-clean. The
+     toggle control + persistence live in static/app.js. #}
+  <script nonce="{{ csp_nonce() }}">
+    (function () {
+      try {
+        if (localStorage.getItem('aidstation-theme') === 'light') {
+          document.documentElement.classList.add('theme-light');
+        }
+      } catch (e) {}
+    })();
+  </script>
 </head>
 <body class="app">
 {# Capture the rendered <title> so the mobile appbar can echo it (an include
