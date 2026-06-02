@@ -14,7 +14,7 @@
 
 The design canvas is done (everything below). **The redesign is now being built into the live Flask app**, phase by phase. Per-section status + the granular handoff lives in **`BUILD_TASKS.md`** (the live tracker) and the build rules in **`CONVENTIONS.md`**; this section is the top-line summary.
 
-**Shipped to `main`:** Phase 0 (token CSS + polish + icon sprite, `.app`-scoped) · Phase 1 (app shell — grouped sidebar + mobile tab bar) · **Phase 2 daily-loop COMPLETE** (§05 Dashboard · §06 Plan week · §07 Workout detail · §08 unified Logging w/ all 6 panes · §09 Wellness) · **Phase 3 plan-lifecycle COMPLETE\*** (§04 Plan generation · §10 Races manager · §11 Plans history · §12 diff-via-refresh · §13 Plan refresh · §14 Import). *\*§12 standalone version A↔B compare deferred — no backend route yet; §13 still owes the §30 `coaching_bp` consolidation (Phase 7).*
+**Shipped to `main`:** Phase 0 (token CSS + polish + icon sprite, `.app`-scoped) · Phase 1 (app shell — grouped sidebar + mobile tab bar) · **Phase 2 daily-loop COMPLETE** (§05 Dashboard · §06 Plan week · §07 Workout detail · §08 unified Logging w/ all 6 panes · §09 Wellness) · **Phase 3 plan-lifecycle COMPLETE\*** (§04 Plan generation · §10 Races manager · §11 Plans history · §12 diff-via-refresh · §13 Plan refresh · §14 Import) · **Phase 4 library + account COMPLETE** (§15 Exercises · §16 Locations · §17 Connections hub · §18 Athlete profile · §19 Account settings · §20 Coach memory) · **Phase 5 system COMPLETE** (§21 Notifications feed + bell dropdown · §22 Notification settings (read-only) · §23 ⌘K command palette · §24 keyboard-shortcuts overlay · §25 Admin: users / drill-in / focus-trapped delete / audit / telemetry) · **Phase 6 polish — in progress** (secondary `base_legacy.html` forms migrated onto the new shell: Edit Rx + the entire `locales/` dir). *\*§12 standalone version A↔B compare deferred — no backend route yet; §13 still owes the §30 `coaching_bp` consolidation (Phase 7).*
 
 **Build mechanics that turned out to matter** (carry these forward):
 - **CSP is enforced** — no inline `style=`/`onclick=`; every inline `<script>` is nonced. Dynamic positioning (e.g. the cup-pour letters, progress-bar widths) is set via the **DOM API** (`element.style.setProperty`) or `data-*` + `app.js`, never inline attributes.
@@ -22,7 +22,7 @@ The design canvas is done (everything below). **The redesign is now being built 
 - **Cup-pour keyframes** (`letterTumble`/`cupTipping`) shipped inert in `tokens.css` at Phase 0 and went live with §04; letters carry `.letter-tumble` so the reduced-motion rule settles them statically.
 - **Verification is render-test-based**: each slice adds a smoke test that boots the real app (DB stubbed — no local Postgres) and renders the route, asserting structure + CSP cleanliness. (Vercel **Preview** deploys were blocked on a missing `SECRET_KEY` env scope — an owner-side infra gap, not a code issue.)
 
-**Next:** Phase 4 — Library + Account (§15 Exercises · §16 Locations · §17 Connections hub · §18 Profile · §19 Account settings · §20 Coach memory).
+**Next:** Phase 6+ polish — §29 a11y sweep (port `a11y-wire.js` onto the real elements, flip CSP `REPORT_ONLY` **off** and clear violations) · §28 light-mode toggle in code · §30/Phase-7 `coaching_bp` consolidation (still owed from §13) · the remaining `base_legacy.html` surfaces (garmin import/sync/wellness pages + admin `plan_inspect`/`plan_diag`). §12 standalone A↔B compare stays deferred pending a backend route.
 
 ---
 
@@ -225,7 +225,7 @@ What it applies:
 
 ## 8 · Outstanding work (§31)
 
-Everything code-backed is now designed. What remains is **build-time implementation** (now underway — see §0 for live status; Phases 0–2 + §04 shipped) and optional polish — no missing screens.
+Everything code-backed is now designed. What remains is **build-time implementation** (well underway — see §0 for live status; **Phases 0–5 shipped**, Phase 6 polish in progress) and optional polish — no missing screens.
 
 - **Implement the a11y wiring in real components** — `a11y-wire.js` is the spec; move roles/labels/tab-order onto real elements, add focus trap/restore on the dialog.
 - **Light mode in code** — extend the `.light` / token-swap to the production stylesheet (design is done).
@@ -288,6 +288,9 @@ Everything code-backed is now designed. What remains is **build-time implementat
 **Last touched:** v15. Canvas loads clean — no console errors as of last `done` call. Verifier-confirmed: landmarks, roving tab-order, tablists, dialog semantics, light toggle, and §29 all render and behave per spec.
 
 ### Implementation log (live app build — see §0 + `BUILD_TASKS.md`)
+- **Phase 6 · secondary forms** — the remaining reachable `base_legacy.html` forms moved onto the new shell: **Edit Rx** (`rx/form.html`) + the **entire `locales/` dir** (the all-3-modes equipment editor, add-location, nearby-same-chain, and the Mapbox refresh-confirm diff). Render-tested; the Mapbox save/upgrade/refresh + shared-profile save + nearby-add POST paths weren't manually exercised (worth a smoke).
+- **Phase 5 · §21–25 COMPLETE** — §21 Notifications feed (`nudges.feed` over `account_nudges`) + topbar bell dropdown (unread badge, recent 5, "See all"); §22 Notification settings (read-only — no preference backend exists, honest delivery-model page, no fabricated toggles); §23 ⌘K command palette (server-rendered destinations, JS only filters/navigates); §24 keyboard-shortcuts overlay (`?`, shares the §23 partial); §25 Admin (dashboard/audit/telemetry off `base_legacy` + new `admin.user_detail` drill-in with data-footprint cards + **focus-trapped type-to-confirm Delete user**).
+- **Phase 4 · §15–20 COMPLETE** — §15 Exercises library (`rx.list_entries`: current-Rx table + plateau/deload watch + catalog + No-Rx hero), §16 Locations (`locales` card grid, route name unchanged), §17 **Connections hub** (new `connections_bp` — four surfaces → one Sources/Files/Prefs hub; `garmin.dashboard`+`debug_fit` hard-cut, pipeline kept), §18 Athlete profile (Athlete/Schedule/Skills sub-tabs), §19 **Account settings** (new `profile.account_settings`; fixes the GET→POST `change_password` 405), §20 **Coach memory** (new `profile.coach_memory` with `fb_source` provenance).
 - **Phase 3 · §11–14** — Plans history list (active spotlight + archived + "start line" empty), Plan refresh (T1/T2/T3 horizons + freq-cap modal), refresh diff view (updated/new badges — the real compare surface; arbitrary A↔B compare deferred, no backend route), Plan import (JSON paste).
 - **Phase 3 · §10** — Races · event manager: standalone page under Plan (`race_events.index`), target-race spotlight + upcoming/past lists, reuses the existing set-target/edit/delete handlers. A/B/C priority not ported (schema has only `is_target_event`). New Train-group nav item.
 - **Phase 3 · §04** — Plan generation: start form, cup-pour progress (time-bucket, CSP-clean letters), plan view.
