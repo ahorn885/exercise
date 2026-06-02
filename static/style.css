@@ -1289,3 +1289,22 @@ body.bulk-mode { padding-bottom: 80px; }
   .app .noplan-title { font-size: 32px; }
   .app .noplan-ways { grid-template-columns: 1fr; }
 }
+
+/* ════════════════════════════════════════════════════════════════════
+   §12/§13 · Plan refresh + diff · §14 · Import
+   ════════════════════════════════════════════════════════════════════ */
+.app .refresh-wrap, .app .import-wrap { max-width: 760px; }
+.app .current-version .cv-line { font-size: 11px; letter-spacing: 0.12em; color: var(--fg-3); margin: 8px 0 0; text-transform: uppercase; }
+.app .refresh-tiers { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 4px; }
+.app .refresh-tip { margin-top: 14px; }
+
+/* Diff badges on refreshed-plan session cards */
+.app .diff-card.updated { border-left: 2px solid var(--warn); }
+.app .diff-card.new { border-left: 2px solid var(--good); }
+
+/* Import */
+.app .import-json { font-family: var(--mono); font-size: 13px; }
+.app .import-actions { display: flex; gap: 8px; margin-top: 4px; }
+.app .import-ref > summary { cursor: pointer; font-family: var(--mono); font-size: 10px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--fg-3); }
+.app .import-ref[open] > summary { margin-bottom: 12px; }
+.app .import-pre { font-family: var(--mono); font-size: 12px; color: var(--fg-2); background: var(--bg-2); border-radius: var(--r-sm); padding: 14px; overflow-x: auto; margin: 0; }
