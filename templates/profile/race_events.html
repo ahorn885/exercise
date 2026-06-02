@@ -1,0 +1,137 @@
+{# Redesign §10 — Races · event manager.
+   Standalone page under Plan (replaces the buried profile ?tab=race-events
+   listing). Target race spotlight + upcoming/past lists. Create / edit /
+   set-target / delete reuse the existing race_events POST handlers. #}
+{% extends 'base.html' %}
+{% set nav_active = 'races' %}
+{% block title %}Races{% endblock %}
+{% block crumbs %}<a href="{{ url_for('plans.list_plans') }}">Plan</a> <span class="sep">/</span> <b>Races</b>{% endblock %}
+{% block topbar_actions %}
+<a class="btn btn-primary btn-sm" href="{{ url_for('race_events.new_race') }}">
+  <svg class="icon" width="12" height="12" aria-hidden="true"><use href="#i-plus"></use></svg> Add a race
+</a>
+{% endblock %}
+
+{% macro race_meta(r) -%}
+  {{ (r.event_date_d.strftime('%b %d, %Y')) if r.event_date_d else 'Date TBD' }}
+  · {{ r.race_format|replace('_', ' ') }}
+  {%- if r.distance_km is not none %} · {{ r.distance_km }} km{% endif %}
+  {%- if r.total_elevation_gain_m is not none %} · {{ r.total_elevation_gain_m }} m gain{% endif %}
+  {%- set loc = r.event_locale_place_name or r.event_locale_name %}
+  {%- if loc %} · {{ loc }}{% endif %}
+  {%- if r.weeks_out is not none %} · {{ r.weeks_out }} wk out{% endif %}
+{%- endmacro %}
+
+{% macro race_row(r, is_past=False) -%}
+<div class="card race-row{{ ' is-past' if is_past else '' }}">
+  <div class="rr-main">
+    <div class="rr-title">
+      <span class="rr-name">{{ r.name }}</span>
+      <span class="chip solid">{{ r.race_format|replace('_', ' ') }}</span>
+    </div>
+    <p class="rr-meta mono">{{ race_meta(r) }}</p>
+    {% if r.notes %}<p class="rr-note">{{ r.notes }}</p>{% endif %}
+  </div>
+  <div class="rr-actions">
+    {% if not is_past %}
+    <form method="post" action="{{ url_for('race_events.set_target', race_event_id=r.id) }}"
+          data-confirm="Set &quot;{{ r.name }}&quot; as your target race? A plan refresh will trigger on the next morning sync.">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <button type="submit" class="btn btn-ghost btn-sm">Set as target</button>
+    </form>
+    {% endif %}
+    <a class="btn btn-ghost btn-sm" href="{{ url_for('race_events.edit_race', race_event_id=r.id) }}">Edit</a>
+    <form method="post" action="{{ url_for('race_events.delete_race', race_event_id=r.id) }}"
+          data-confirm="Delete &quot;{{ r.name }}&quot;? Route locales and equipment for this race are deleted too.">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <button type="submit" class="btn btn-ghost btn-sm rr-del">Delete</button>
+    </form>
+  </div>
+</div>
+{%- endmacro %}
+
+{% block content %}
+<div class="dash-head">
+  <div class="races-intro">
+    <p class="eyebrow accent">● Plan · the dates everything points at</p>
+    <h1 class="page-title">Races</h1>
+    <p class="page-sub">Your target race anchors the whole plan — we periodize backward from it
+      through Base, Build, Peak, and Taper. Other races slot in as tune-ups. Change a target's
+      date or distance and the plan re-cascades.</p>
+  </div>
+  <div class="races-stats">
+    <div class="stat-card"><div class="k">Upcoming</div><div class="v num">{{ upcoming_count }}</div></div>
+    <div class="stat-card"><div class="k">Target set</div><div class="v num">{{ 'Yes' if target else 'No' }}</div></div>
+    {% if target and target.weeks_out is not none %}
+    <div class="stat-card"><div class="k">Weeks to target</div><div class="v num">{{ target.weeks_out }}</div></div>
+    {% endif %}
+  </div>
+</div>
+
+<div class="stack">
+
+  {% if target %}
+  {# ── Target race spotlight ── #}
+  <div class="card race-spotlight">
+    <div class="spot-head">
+      <div class="spot-id">
+        <p class="eyebrow accent">● Target race · drives periodization</p>
+        <div class="spot-name">{{ target.name }}</div>
+        <p class="spot-meta mono">{{ race_meta(target) }}</p>
+      </div>
+      {% if target.weeks_out is not none %}
+      <div class="spot-count">
+        <div class="num spot-weeks">{{ target.weeks_out }}</div>
+        <div class="mono spot-weeks-lbl">Weeks out</div>
+      </div>
+      {% endif %}
+    </div>
+
+    <div class="phase-band" aria-hidden="true">
+      <div class="seg base">Base</div>
+      <div class="seg build">Build</div>
+      <div class="seg peak">Peak</div>
+      <div class="seg taper">Taper</div>
+    </div>
+    <p class="spot-band-note mono">Typical periodization — your plan is built backward from race day.</p>
+
+    <div class="spot-actions">
+      <a class="btn btn-ghost btn-sm" href="{{ url_for('race_events.edit_race', race_event_id=target.id) }}">Edit race</a>
+      <a class="btn btn-ghost btn-sm" href="{{ url_for('plans.list_plans') }}">View plan</a>
+    </div>
+  </div>
+  {% endif %}
+
+  {% if upcoming %}
+  <section class="race-section">
+    <p class="eyebrow">Upcoming · {{ upcoming|length }}</p>
+    <div class="race-list">
+      {% for r in upcoming %}{{ race_row(r) }}{% endfor %}
+    </div>
+  </section>
+  {% endif %}
+
+  {% if past %}
+  <section class="race-section">
+    <p class="eyebrow">Past · {{ past|length }}</p>
+    <div class="race-list">
+      {% for r in past %}{{ race_row(r, is_past=True) }}{% endfor %}
+    </div>
+  </section>
+  {% endif %}
+
+  {% if not target and not upcoming and not past %}
+  {# ── Empty state ── #}
+  <div class="card card-pad race-empty">
+    <p class="eyebrow accent">● No races yet</p>
+    <h2 class="race-empty-title">Add the race you're training for.</h2>
+    <p class="page-sub">Your target race is the anchor every plan periodizes back from. Add it and
+      set it as your target to drive the plan and the pre-race-week brief.</p>
+    <a class="btn btn-primary" href="{{ url_for('race_events.new_race') }}">
+      <svg class="icon" width="13" height="13" aria-hidden="true"><use href="#i-plus"></use></svg> Add a race
+    </a>
+  </div>
+  {% endif %}
+
+</div>
+{% endblock %}

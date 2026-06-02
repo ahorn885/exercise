@@ -1192,3 +1192,53 @@ body.bulk-mode { padding-bottom: 80px; }
   .app .preflight-row { grid-template-columns: 1fr auto; }
   .app .preflight-row .pf-label { grid-column: 1 / -1; }
 }
+
+/* ════════════════════════════════════════════════════════════════════
+   §10 · Races — event manager
+   ════════════════════════════════════════════════════════════════════ */
+.app .races-intro { max-width: 620px; }
+.app .races-stats { display: flex; gap: 14px; flex-wrap: wrap; }
+.app .races-stats .stat-card { min-width: 104px; }
+
+/* Section heading rhythm */
+.app .race-section .eyebrow { display: block; margin-bottom: 12px; }
+.app .race-list { display: flex; flex-direction: column; gap: 10px; }
+
+/* Race row */
+.app .race-row { display: flex; gap: 16px; align-items: center; padding: 16px; }
+.app .race-row.is-past { opacity: 0.72; }
+.app .rr-main { flex: 1; min-width: 0; }
+.app .rr-title { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.app .rr-name { font-weight: 700; font-size: 16px; }
+.app .rr-meta { font-size: 10px; letter-spacing: 0.14em; color: var(--fg-3); margin: 6px 0 0; text-transform: uppercase; }
+.app .rr-note { font-size: 12px; color: var(--fg-3); margin: 6px 0 0; line-height: 1.4; }
+.app .rr-actions { display: flex; gap: 6px; flex-shrink: 0; flex-wrap: wrap; justify-content: flex-end; }
+.app .rr-actions form { margin: 0; }
+.app .rr-del { color: var(--bad); border-color: color-mix(in oklab, var(--bad) 35%, transparent); }
+
+/* Target race spotlight */
+.app .race-spotlight {
+  padding: 20px;
+  border-color: color-mix(in oklab, var(--accent) 35%, var(--hairline-2));
+  border-left: 3px solid var(--accent);
+}
+.app .spot-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; }
+.app .spot-id { min-width: 0; }
+.app .spot-name { font-size: 26px; font-weight: 800; letter-spacing: -0.02em; margin-top: 8px; }
+.app .spot-meta { font-size: 11px; letter-spacing: 0.14em; color: var(--fg-3); margin: 6px 0 0; text-transform: uppercase; }
+.app .spot-count { text-align: right; flex-shrink: 0; }
+.app .spot-weeks { font-size: 40px; font-weight: 800; line-height: 1; color: var(--accent); }
+.app .spot-weeks-lbl { font-size: 9px; letter-spacing: 0.18em; color: var(--fg-3); margin-top: 2px; text-transform: uppercase; }
+.app .race-spotlight .phase-band { margin-top: 18px; margin-bottom: 6px; }
+.app .spot-band-note { font-size: 10px; letter-spacing: 0.1em; color: var(--fg-4); text-transform: uppercase; }
+.app .spot-actions { display: flex; gap: 8px; margin-top: 16px; flex-wrap: wrap; }
+
+/* Empty state */
+.app .race-empty-title { font-size: 22px; font-weight: 700; margin: 8px 0; }
+
+@media (max-width: 859.98px) {
+  .app .race-row { flex-direction: column; align-items: stretch; }
+  .app .rr-actions { justify-content: flex-start; }
+  .app .spot-name { font-size: 22px; }
+  .app .spot-weeks { font-size: 32px; }
+}

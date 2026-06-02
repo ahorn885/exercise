@@ -18,6 +18,7 @@
       <ul aria-labelledby="dnav-train">
         {{ drawer_item('home',    'Today',     'i-home',    url_for('dashboard.index'),       active) }}
         {{ drawer_item('plan',    'Plan',      'i-plan',    url_for('plans.list_plans'),      active) }}
+        {{ drawer_item('races',   'Races',     'i-shoe',    url_for('race_events.index'),     active) }}
         {{ drawer_item('workout', 'Workouts',  'i-workout', url_for('training.list_entries'), active) }}
         {{ drawer_item('library', 'Exercises', 'i-library', url_for('rx.list_entries'),       active) }}
       </ul>
