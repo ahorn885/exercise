@@ -32,6 +32,9 @@
         {{ drawer_item('athlete',   'Athlete',     'i-athlete', url_for('profile.edit'),          active) }}
         {{ drawer_item('locations', 'Locations',   'i-pin',     url_for('locales.list_profiles'), active) }}
         {{ drawer_item('link',      'Connections', 'i-link',    url_for('connections.hub'),       active) }}
+        <li><a class="drawer-item" href="{{ url_for('nudges.feed') }}">
+          <svg class="icon" width="18" height="18" aria-hidden="true"><use href="#i-bell"></use></svg>
+          <span>Notifications{% if active_nudges %} <span class="chip solid">{{ active_nudges|length }}</span>{% endif %}</span></a></li>
         <li><a class="drawer-item" href="{{ url_for('profile.coach_memory') }}">
           <svg class="icon" width="18" height="18" aria-hidden="true"><use href="#i-heart"></use></svg>
           <span>Coach memory</span></a></li>

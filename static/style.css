@@ -1549,3 +1549,40 @@ body.bulk-mode { padding-bottom: 80px; }
   .app .cm-add { grid-template-columns: 1fr; }
   .app .cm-row { flex-direction: column; }
 }
+
+/* ════════════════════════════════════════════════════════════════════
+   §21 · Notifications — topbar bell dropdown + feed page
+   ════════════════════════════════════════════════════════════════════ */
+/* Bell + unread badge (desktop topbar) */
+.topbar .notif-wrap { position: relative; display: inline-flex; }
+.app .notif-bell { position: relative; }
+.app .notif-badge { position: absolute; top: -3px; right: -3px; min-width: 15px; height: 15px; padding: 0 4px; border-radius: 8px; background: var(--accent); color: #fff; font-size: 10px; line-height: 15px; text-align: center; font-weight: 700; }
+.notif-menu { min-width: 300px; max-width: 340px; padding: 6px; }
+.notif-menu-head { font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--fg-3); padding: 6px 10px 8px; }
+.notif-item { white-space: normal; }
+.notif-item-msg { font-size: 13px; line-height: 1.4; }
+.notif-empty { font-size: 13px; color: var(--fg-3); padding: 4px 10px 10px; }
+.notif-all { font-weight: 600; }
+
+/* Feed page */
+.app .nf-wrap { max-width: 760px; }
+.app .nf-list { padding: 0; }
+.app .nf-row { display: flex; align-items: flex-start; gap: 12px; padding: 14px 18px; }
+.app .nf-row + .nf-row { border-top: 1px solid var(--hairline-2); }
+.app .nf-dot { flex-shrink: 0; width: 8px; height: 8px; margin-top: 6px; border-radius: 50%; background: var(--accent); }
+.app .nf-dot-read { background: var(--hairline-2); }
+.app .nf-body { flex: 1; min-width: 0; }
+.app .nf-msg { font-size: 14px; font-weight: 600; margin: 0; line-height: 1.45; }
+.app .nf-meta { font-size: 10px; letter-spacing: 0.1em; color: var(--fg-3); margin: 6px 0 0; text-transform: uppercase; display: flex; align-items: center; gap: 6px; }
+.app .nf-cta { display: inline-block; margin-top: 8px; font-size: 13px; font-weight: 600; color: var(--accent); }
+.app .nf-dismiss { margin: 0; flex-shrink: 0; }
+.app .nf-list-muted .nf-msg { font-weight: 500; color: var(--fg-2); }
+.app .nf-earlier { margin-top: 6px; }
+.app .nf-earlier .eyebrow { margin-bottom: 8px; }
+.app .nf-empty { padding: 22px; text-align: center; }
+.app .nf-empty-txt { font-size: 13px; color: var(--fg-3); margin: 8px 0 0; line-height: 1.5; }
+
+@media (max-width: 859.98px) {
+  .app .nf-row { flex-wrap: wrap; }
+  .app .nf-dismiss { width: 100%; margin-top: 8px; }
+}

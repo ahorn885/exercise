@@ -1,0 +1,80 @@
+{# Redesign §21 — Notifications feed.
+   Full-page companion to the passive banner (_account_nudges.html) and the
+   topbar bell dropdown. Backed by account_nudges via
+   routes.nudges.get_feed_nudges: `new` = undismissed / banner-visible (each
+   with its registry CTA deep-link + an inline dismiss form), `earlier` =
+   previously dismissed (read-only). No JS — dismiss is a real POST to
+   nudges.dismiss that redirects back here via the referrer. #}
+{% extends 'base.html' %}
+{% set nav_active = '' %}
+{% block title %}Notifications — AIDSTATION{% endblock %}
+{% block crumbs %}<b>Notifications</b>{% endblock %}
+
+{% block content %}
+<div class="dash-head">
+  <div class="races-intro">
+    <p class="eyebrow accent">● Notifications · {{ new|length }} new</p>
+    <h1 class="page-title">What needs your attention.</h1>
+    <p class="page-sub">Account nudges and reminders. New items link straight to the place that
+      resolves them; once dismissed they move to Earlier for reference.</p>
+  </div>
+</div>
+
+<div class="stack nf-wrap">
+
+  {# New — undismissed, banner-visible. Each has a dismiss form. #}
+  {% if new %}
+  <div class="card nf-list">
+    {% for n in new %}
+    <div class="nf-row nf-{{ n.category }}">
+      <span class="nf-dot" aria-hidden="true"></span>
+      <div class="nf-body">
+        <p class="nf-msg">{{ n.message }}</p>
+        <p class="nf-meta mono">
+          <span class="chip {{ 'warn' if n.category == 'warning' else 'solid' }}">{{ n.category }}</span>
+          {% if n.created_at %}<span>· {{ (n.created_at|string)[:10] }}</span>{% endif %}
+        </p>
+        {% if n.cta_label and n.cta_endpoint %}
+        <a class="nf-cta" href="{{ url_for(n.cta_endpoint) }}">{{ n.cta_label }} →</a>
+        {% endif %}
+      </div>
+      <form method="post" action="{{ url_for('nudges.dismiss', nudge_id=n.id) }}" class="nf-dismiss">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button type="submit" class="btn btn-ghost btn-sm" aria-label="Dismiss notification">Dismiss</button>
+      </form>
+    </div>
+    {% endfor %}
+  </div>
+  {% else %}
+  <div class="card nf-empty">
+    <p class="eyebrow">● All caught up</p>
+    <p class="nf-empty-txt">No new notifications. Reminders about connecting a provider, picking a
+      target race, or finishing your route locales will show up here.</p>
+  </div>
+  {% endif %}
+
+  {# Earlier — previously dismissed, read-only. #}
+  {% if earlier %}
+  <div class="nf-earlier">
+    <p class="eyebrow">● Earlier</p>
+    <div class="card nf-list nf-list-muted">
+      {% for n in earlier %}
+      <div class="nf-row">
+        <span class="nf-dot nf-dot-read" aria-hidden="true"></span>
+        <div class="nf-body">
+          <p class="nf-msg">{{ n.message }}</p>
+          <p class="nf-meta mono">
+            Dismissed{% if n.dismissed_at %} · {{ (n.dismissed_at|string)[:10] }}{% endif %}
+          </p>
+          {% if n.cta_label and n.cta_endpoint %}
+          <a class="nf-cta" href="{{ url_for(n.cta_endpoint) }}">{{ n.cta_label }} →</a>
+          {% endif %}
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+  {% endif %}
+
+</div>
+{% endblock %}

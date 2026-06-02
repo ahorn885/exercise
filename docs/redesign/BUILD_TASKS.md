@@ -53,7 +53,7 @@ Work top-to-bottom **within a phase** (phases defined in `BUILD_PLAN.md` §3). C
 ## Phase 5 — System
 | § | Section | DM | Blueprint / route | Current template | Migration note |
 |---|---|---|---|---|---|
-| 21 | Notifications & feed ★ | DM | `nudges.*` | `_account_nudges.html` (partial) | Full feed + dropdown + deep-link route map. Backed by `account_nudges`. |
+| 21 | ✅ Notifications & feed ★ | DM | `nudges.feed` (NEW `/notifications`) | `nudges/feed.html` + bell dropdown | **DONE.** New `nudges.feed` over `account_nudges` (`get_feed_nudges` → New/Earlier, registry CTA deep-links, inline dismiss). Topbar bell → Bootstrap dropdown (unread badge, recent 5, "See all"); mobile drawer link. Fail-open to empty on SQLite. 2 render tests. *(PR after #410)* |
 | 22 | Notification settings ★ | DM | `nudges.*` / `profile` | — | Channel × category matrix. |
 | 23 | Command palette · ⌘K | DM | client-only | `static/app.js` | Jump-to-anything. No route; nonced JS + `data-*`. |
 | 24 | Keyboard shortcuts | D | client-only | `static/app.js` | Cheat sheet overlay. |

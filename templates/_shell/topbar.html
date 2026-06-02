@@ -11,8 +11,28 @@
     <span>Search workouts, exercises…</span>
     <kbd>⌘K</kbd>
   </button>
-  <button class="btn btn-icon" type="button" data-action="notifications" aria-label="Notifications">
-    <svg class="icon" width="14" height="14" aria-hidden="true"><use href="#i-bell"></use></svg>
-  </button>
+  <div class="dropdown notif-wrap">
+    <button class="btn btn-icon notif-bell" type="button" id="notif-bell"
+            data-bs-toggle="dropdown" data-action="notifications" aria-expanded="false"
+            aria-label="Notifications{% if active_nudges %} ({{ active_nudges|length }} new){% endif %}">
+      <svg class="icon" width="14" height="14" aria-hidden="true"><use href="#i-bell"></use></svg>
+      {% if active_nudges %}<span class="notif-badge" aria-hidden="true">{{ active_nudges|length }}</span>{% endif %}
+    </button>
+    <div class="dropdown-menu dropdown-menu-end notif-menu" aria-labelledby="notif-bell">
+      <div class="notif-menu-head">Notifications</div>
+      {% if active_nudges %}
+        {% for n in active_nudges[:5] %}
+        <a class="dropdown-item notif-item"
+           href="{% if n.cta_endpoint %}{{ url_for(n.cta_endpoint) }}{% else %}{{ url_for('nudges.feed') }}{% endif %}">
+          <span class="notif-item-msg">{{ n.message }}</span>
+        </a>
+        {% endfor %}
+      {% else %}
+        <div class="notif-empty">You're all caught up.</div>
+      {% endif %}
+      <div class="dropdown-divider"></div>
+      <a class="dropdown-item notif-all" href="{{ url_for('nudges.feed') }}">See all notifications</a>
+    </div>
+  </div>
   {{ topbar_actions_html | safe }}
 </header>
