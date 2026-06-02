@@ -1491,3 +1491,61 @@ body.bulk-mode { padding-bottom: 80px; }
   .app .provider-row { flex-wrap: wrap; }
   .app .pv-actions { justify-content: flex-start; width: 100%; }
 }
+
+/* ════════════════════════════════════════════════════════════════════
+   §18 · Athlete profile  ·  §19 · Account  ·  §20 · Coach memory
+   ════════════════════════════════════════════════════════════════════ */
+/* First-run banner */
+.app .pf-firstrun { padding: 16px 18px; border-color: color-mix(in oklab, var(--accent) 30%, var(--hairline-2)); border-left: 3px solid var(--accent); margin-bottom: 16px; }
+.app .pf-firstrun-txt { font-size: 13px; color: var(--fg-2); margin: 6px 0 0; line-height: 1.5; }
+
+/* Shared schedule-form table column width (used by §18 + legacy onboarding;
+   replaces inline style="width:18%" so the partial is CSP-clean everywhere). */
+.sched-col { width: 18%; }
+
+/* Profile form */
+.app .pf-form { display: flex; flex-direction: column; gap: 16px; }
+.app .pf-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 14px; }
+.app .pf-grid .field { margin-bottom: 0; }
+.app .pf-grid .field-wide { grid-column: span 2; }
+.app .pf-grid textarea.form-control { min-height: 84px; }
+.app .pf-hint { font-size: 12px; color: var(--fg-3); margin: 5px 0 0; line-height: 1.5; }
+.app .pf-save { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+.app .pf-saved { font-size: 10px; letter-spacing: 0.14em; color: var(--fg-3); text-transform: uppercase; }
+
+/* §19 Account */
+.app .acct-wrap { max-width: 720px; }
+.app .acct-id { display: grid; grid-template-columns: 160px 1fr; gap: 8px 16px; margin: 10px 0 0; }
+.app .acct-id dt { font-size: 12px; color: var(--fg-3); text-transform: uppercase; letter-spacing: 0.12em; }
+.app .acct-id dd { font-size: 14px; margin: 0; }
+.app .acct-pw { margin-top: 12px; display: flex; flex-direction: column; gap: 14px; }
+.app .acct-signout { display: flex; justify-content: space-between; align-items: center; gap: 16px; }
+.app .acct-hint { font-size: 12px; color: var(--fg-3); margin: 5px 0 0; line-height: 1.45; }
+
+/* §20 Coach memory */
+.app .cm-wrap { max-width: 760px; }
+.app .cm-add { display: grid; grid-template-columns: minmax(140px, 1fr) 2fr auto auto; gap: 12px; align-items: end; margin-top: 12px; }
+.app .cm-add .field { margin-bottom: 0; }
+.app .cm-add .cm-perm { align-items: flex-start; }
+.app .cm-add .cm-submit { display: flex; align-items: flex-end; }
+.app .cm-list { padding: 0; }
+.app .cm-row { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; padding: 14px 18px; }
+.app .cm-row + .cm-row { border-top: 1px solid var(--hairline-2); }
+.app .cm-id { flex: 1; min-width: 0; }
+.app .cm-tags { display: flex; gap: 6px; flex-wrap: wrap; }
+.app .cm-content-txt { font-size: 14px; font-weight: 600; margin: 8px 0 0; line-height: 1.4; }
+.app .cm-prov { font-size: 10px; letter-spacing: 0.1em; color: var(--fg-3); margin: 6px 0 0; text-transform: uppercase; }
+.app .cm-prov a { color: var(--accent); }
+.app .cm-row form { margin: 0; flex-shrink: 0; }
+.app .cm-del { color: var(--bad); border-color: color-mix(in oklab, var(--bad) 35%, transparent); }
+.app .cm-empty { padding: 22px; text-align: center; }
+.app .cm-empty-txt { font-size: 13px; color: var(--fg-3); margin: 8px 0 0; line-height: 1.5; }
+
+@media (max-width: 859.98px) {
+  .app .pf-grid .field-wide { grid-column: auto; }
+  .app .acct-id { grid-template-columns: 1fr; gap: 2px 0; }
+  .app .acct-id dt { margin-top: 8px; }
+  .app .acct-signout { flex-direction: column; align-items: stretch; }
+  .app .cm-add { grid-template-columns: 1fr; }
+  .app .cm-row { flex-direction: column; }
+}

@@ -1,0 +1,67 @@
+{# Redesign §19 — Account settings.
+   Identity (read-only, from `users`) + change password (posts to
+   profile.change_password) + sign out (posts to auth.logout). No billing /
+   2FA / data-export / delete-account — cut for lack of backend
+   (CONVENTIONS §E.1). Carved out of the old profile/edit.html Account tab. #}
+{% extends 'base.html' %}
+{% set nav_active = 'athlete' %}
+{% block title %}Account — AIDSTATION{% endblock %}
+{% block crumbs %}<a href="{{ url_for('profile.edit') }}">Athlete</a> · <b>Account</b>{% endblock %}
+
+{% block content %}
+<div class="dash-head">
+  <div class="races-intro">
+    <p class="eyebrow accent">● Account · sign-in &amp; security</p>
+    <h1 class="page-title">Account settings.</h1>
+    <p class="page-sub">Your identity and password. Training data, preferences, and connections live
+      on their own pages.</p>
+  </div>
+</div>
+
+<div class="stack acct-wrap">
+
+  <div class="card card-pad">
+    <p class="eyebrow">● Identity</p>
+    <dl class="acct-id">
+      <dt>Username</dt><dd>{{ user_row.username or '—' }}</dd>
+      <dt>Display name</dt><dd>{{ user_row.display_name or '—' }}</dd>
+      <dt>Email</dt><dd>{{ user_row.email or '—' }}</dd>
+      <dt>Last login</dt><dd class="mono dim">{{ user_row.last_login or '—' }}</dd>
+    </dl>
+  </div>
+
+  <div class="card card-pad">
+    <p class="eyebrow">● Change password</p>
+    <form method="post" action="{{ url_for('profile.change_password') }}" class="acct-pw">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <div class="pf-grid">
+        <label class="field"><span class="lbl">Current password</span>
+          <input type="password" name="current_password" autocomplete="current-password"
+                 class="form-control form-control-sm" required></label>
+        <label class="field"><span class="lbl">New password</span>
+          <input type="password" name="new_password" autocomplete="new-password" minlength="8"
+                 class="form-control form-control-sm" required></label>
+        <label class="field"><span class="lbl">Confirm new password</span>
+          <input type="password" name="confirm_password" autocomplete="new-password" minlength="8"
+                 class="form-control form-control-sm" required></label>
+      </div>
+      <div class="pf-save">
+        <span class="pf-saved mono">At least 8 characters · checked for strength</span>
+        <button type="submit" class="btn btn-primary">Change password</button>
+      </div>
+    </form>
+  </div>
+
+  <div class="card card-pad acct-signout">
+    <div class="acct-signout-txt">
+      <p class="eyebrow">● Session</p>
+      <p class="acct-hint">Sign out of this device. You'll need your password to get back in.</p>
+    </div>
+    <form method="post" action="{{ url_for('auth.logout') }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <button type="submit" class="btn btn-ghost">Sign out</button>
+    </form>
+  </div>
+
+</div>
+{% endblock %}

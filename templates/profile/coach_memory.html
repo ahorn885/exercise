@@ -1,0 +1,88 @@
+{# Redesign §20 — Coach memory.
+   Durable AI-coach preferences with fb_source provenance (chat / plan_review
+   / natural_log / workout_note / manual). The coach reads these on every plan
+   generation, review, and chat. List + manual add (profile.add_preference) +
+   delete (profile.delete_preference). Carved out of the old profile/edit.html
+   Coach-memory tab. #}
+{% extends 'base.html' %}
+{% set nav_active = 'athlete' %}
+{% block title %}Coach memory — AIDSTATION{% endblock %}
+{% block crumbs %}<a href="{{ url_for('profile.edit') }}">Athlete</a> · <b>Coach memory</b>{% endblock %}
+
+{% block content %}
+<div class="dash-head">
+  <div class="races-intro">
+    <p class="eyebrow accent">● Coach memory · {{ memory|length }} preference{{ 's' if memory|length != 1 else '' }}</p>
+    <h1 class="page-title">What the coach remembers.</h1>
+    <p class="page-sub">Durable preferences captured from chat, plan reviews, natural-log entries, and
+      workout notes — plus anything you add by hand. The coach reads these on every plan, review, and
+      chat.</p>
+  </div>
+</div>
+
+<div class="stack cm-wrap">
+
+  {# Add a preference manually #}
+  <div class="card card-pad">
+    <p class="eyebrow">● Add a preference</p>
+    <form method="post" action="{{ url_for('profile.add_preference') }}" class="cm-add">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <label class="field cm-cat"><span class="lbl">Category</span>
+        <select name="category" class="form-select form-select-sm" required>
+          {% for c in preference_categories %}
+            <option value="{{ c }}">{{ c|replace('_', ' ') }}</option>
+          {% endfor %}
+        </select></label>
+      <label class="field cm-content"><span class="lbl">Preference</span>
+        <input type="text" name="content" class="form-control form-control-sm"
+               placeholder="e.g. Burpees excluded at user request" required></label>
+      <label class="field cm-perm check-cell">
+        <span class="lbl">Permanent</span>
+        <input type="checkbox" name="permanent" checked></label>
+      <div class="field cm-submit">
+        <button type="submit" class="btn btn-primary btn-sm">Add</button>
+      </div>
+    </form>
+  </div>
+
+  {# Existing memory #}
+  {% if memory %}
+  <div class="card cm-list">
+    {% for p in memory %}
+    <div class="cm-row">
+      <div class="cm-id">
+        <div class="cm-tags">
+          <span class="chip solid">{{ p.category|replace('_', ' ') }}</span>
+          {% if p.permanent %}<span class="chip warn" title="Treated as a permanent rule">permanent</span>{% endif %}
+        </div>
+        <p class="cm-content-txt">{{ p.content }}</p>
+        <p class="cm-prov mono">
+          {% if p.fb_source %}
+            Captured from {{ p.fb_source|replace('_', ' ') }}
+            {% if p.fb_captured_at %} · {{ (p.fb_captured_at|string)[:10] }}{% endif %}
+            {% if p.source_feedback_id %}
+              · <a href="{{ url_for('profile.view_feedback', fb_id=p.source_feedback_id) }}">view original</a>
+            {% endif %}
+          {% else %}
+            Added manually{% if p.created_at %} · {{ (p.created_at|string)[:10] }}{% endif %}
+          {% endif %}
+        </p>
+      </div>
+      <form method="post" action="{{ url_for('profile.delete_preference', pref_id=p.id) }}"
+            data-confirm="Delete this preference?">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button type="submit" class="btn btn-ghost btn-sm cm-del">Delete</button>
+      </form>
+    </div>
+    {% endfor %}
+  </div>
+  {% else %}
+  <div class="card cm-empty">
+    <p class="eyebrow">● Nothing yet</p>
+    <p class="cm-empty-txt">No coaching preferences yet. They accumulate as you chat with the coach,
+      give plan-review feedback, or add them manually above.</p>
+  </div>
+  {% endif %}
+
+</div>
+{% endblock %}
