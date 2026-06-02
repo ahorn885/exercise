@@ -1192,3 +1192,119 @@ body.bulk-mode { padding-bottom: 80px; }
   .app .preflight-row { grid-template-columns: 1fr auto; }
   .app .preflight-row .pf-label { grid-column: 1 / -1; }
 }
+
+/* ════════════════════════════════════════════════════════════════════
+   §10 · Races — event manager
+   ════════════════════════════════════════════════════════════════════ */
+.app .races-intro { max-width: 620px; }
+.app .races-stats { display: flex; gap: 14px; flex-wrap: wrap; }
+.app .races-stats .stat-card { min-width: 104px; }
+
+/* Section heading rhythm */
+.app .race-section .eyebrow { display: block; margin-bottom: 12px; }
+.app .race-list { display: flex; flex-direction: column; gap: 10px; }
+
+/* Race row */
+.app .race-row { display: flex; gap: 16px; align-items: center; padding: 16px; }
+.app .race-row.is-past { opacity: 0.72; }
+.app .rr-main { flex: 1; min-width: 0; }
+.app .rr-title { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.app .rr-name { font-weight: 700; font-size: 16px; }
+.app .rr-meta { font-size: 10px; letter-spacing: 0.14em; color: var(--fg-3); margin: 6px 0 0; text-transform: uppercase; }
+.app .rr-note { font-size: 12px; color: var(--fg-3); margin: 6px 0 0; line-height: 1.4; }
+.app .rr-actions { display: flex; gap: 6px; flex-shrink: 0; flex-wrap: wrap; justify-content: flex-end; }
+.app .rr-actions form { margin: 0; }
+.app .rr-del { color: var(--bad); border-color: color-mix(in oklab, var(--bad) 35%, transparent); }
+
+/* Target race spotlight */
+.app .race-spotlight {
+  padding: 20px;
+  border-color: color-mix(in oklab, var(--accent) 35%, var(--hairline-2));
+  border-left: 3px solid var(--accent);
+}
+.app .spot-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; }
+.app .spot-id { min-width: 0; }
+.app .spot-name { font-size: 26px; font-weight: 800; letter-spacing: -0.02em; margin-top: 8px; }
+.app .spot-meta { font-size: 11px; letter-spacing: 0.14em; color: var(--fg-3); margin: 6px 0 0; text-transform: uppercase; }
+.app .spot-count { text-align: right; flex-shrink: 0; }
+.app .spot-weeks { font-size: 40px; font-weight: 800; line-height: 1; color: var(--accent); }
+.app .spot-weeks-lbl { font-size: 9px; letter-spacing: 0.18em; color: var(--fg-3); margin-top: 2px; text-transform: uppercase; }
+.app .race-spotlight .phase-band { margin-top: 18px; margin-bottom: 6px; }
+.app .spot-band-note { font-size: 10px; letter-spacing: 0.1em; color: var(--fg-4); text-transform: uppercase; }
+.app .spot-actions { display: flex; gap: 8px; margin-top: 16px; flex-wrap: wrap; }
+
+/* Empty state */
+.app .race-empty-title { font-size: 22px; font-weight: 700; margin: 8px 0; }
+
+@media (max-width: 859.98px) {
+  .app .race-row { flex-direction: column; align-items: stretch; }
+  .app .rr-actions { justify-content: flex-start; }
+  .app .spot-name { font-size: 22px; }
+  .app .spot-weeks { font-size: 32px; }
+}
+
+/* ════════════════════════════════════════════════════════════════════
+   §11 · Plans — history
+   ════════════════════════════════════════════════════════════════════ */
+.app .plan-section .eyebrow { display: block; margin-bottom: 12px; }
+.app .plan-cards { display: flex; flex-direction: column; gap: 10px; }
+.app .plan-card { padding: 16px 18px; }
+.app .plan-card.spot { border-left: 3px solid var(--accent); }
+.app .plan-card-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; }
+.app .pl-id { min-width: 0; }
+.app .pl-title { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.app .pl-name { font-weight: 700; font-size: 16px; color: var(--fg); text-decoration: none; }
+.app .pl-name:hover { color: var(--accent); }
+.app .pl-meta { font-size: 10px; letter-spacing: 0.14em; color: var(--fg-3); margin: 6px 0 0; text-transform: uppercase; }
+.app .pl-actions { display: flex; gap: 6px; flex-shrink: 0; flex-wrap: wrap; justify-content: flex-end; }
+.app .pl-actions form { margin: 0; }
+.app .pl-del { color: var(--bad); border-color: color-mix(in oklab, var(--bad) 35%, transparent); }
+.app .plan-card .pbar { margin-top: 14px; }
+
+/* Archived rows */
+.app .plan-archived { padding: 0; }
+.app .pa-row { display: flex; justify-content: space-between; align-items: center; gap: 16px; padding: 14px 18px; opacity: 0.78; }
+.app .pa-row + .pa-row { border-top: 1px solid var(--hairline-2); }
+.app .pa-name { font-weight: 600; color: var(--fg); text-decoration: none; }
+.app .pa-name:hover { color: var(--accent); }
+.app .pa-meta { font-size: 10px; letter-spacing: 0.14em; color: var(--fg-3); margin: 4px 0 0; text-transform: uppercase; }
+.app .pa-actions { display: flex; gap: 6px; flex-shrink: 0; }
+.app .pa-actions form { margin: 0; }
+
+/* No-plan empty state (§26 copy) */
+.app .noplan { max-width: 600px; margin: 32px auto; text-align: center; }
+.app .noplan-title { font-size: 44px; font-weight: 800; letter-spacing: -0.025em; line-height: 1.04; margin: 12px 0 14px; }
+.app .noplan-sub { color: var(--fg-3); font-size: 15px; line-height: 1.55; max-width: 470px; margin: 0 auto 26px; }
+.app .noplan-ways { display: grid; grid-template-columns: 1.4fr 1fr; gap: 12px; text-align: left; }
+.app .noplan-card { padding: 18px; }
+.app .noplan-card.start { border: 1px solid color-mix(in oklab, var(--accent) 35%, var(--hairline-2)); }
+.app .noplan-card-title { font-size: 17px; font-weight: 700; margin-top: 6px; }
+.app .noplan-card-sub { font-size: 12px; color: var(--fg-3); margin: 5px 0 13px; line-height: 1.5; }
+.app .noplan-card .btn { width: 100%; justify-content: center; }
+
+@media (max-width: 859.98px) {
+  .app .plan-card-head { flex-direction: column; align-items: stretch; }
+  .app .pl-actions { justify-content: flex-start; }
+  .app .pa-row { flex-direction: column; align-items: stretch; }
+  .app .noplan-title { font-size: 32px; }
+  .app .noplan-ways { grid-template-columns: 1fr; }
+}
+
+/* ════════════════════════════════════════════════════════════════════
+   §12/§13 · Plan refresh + diff · §14 · Import
+   ════════════════════════════════════════════════════════════════════ */
+.app .refresh-wrap, .app .import-wrap { max-width: 760px; }
+.app .current-version .cv-line { font-size: 11px; letter-spacing: 0.12em; color: var(--fg-3); margin: 8px 0 0; text-transform: uppercase; }
+.app .refresh-tiers { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 4px; }
+.app .refresh-tip { margin-top: 14px; }
+
+/* Diff badges on refreshed-plan session cards */
+.app .diff-card.updated { border-left: 2px solid var(--warn); }
+.app .diff-card.new { border-left: 2px solid var(--good); }
+
+/* Import */
+.app .import-json { font-family: var(--mono); font-size: 13px; }
+.app .import-actions { display: flex; gap: 8px; margin-top: 4px; }
+.app .import-ref > summary { cursor: pointer; font-family: var(--mono); font-size: 10px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--fg-3); }
+.app .import-ref[open] > summary { margin-bottom: 12px; }
+.app .import-pre { font-family: var(--mono); font-size: 12px; color: var(--fg-2); background: var(--bg-2); border-radius: var(--r-sm); padding: 14px; overflow-x: auto; margin: 0; }

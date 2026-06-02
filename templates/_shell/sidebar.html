@@ -21,6 +21,7 @@
     <ul aria-labelledby="nav-train">
       {{ sidebar_item('home',    'Today',     'i-home',    url_for('dashboard.index'),     active) }}
       {{ sidebar_item('plan',    'Plan',      'i-plan',    url_for('plans.list_plans'),    active) }}
+      {{ sidebar_item('races',   'Races',     'i-shoe',    url_for('race_events.index'),   active) }}
       {{ sidebar_item('workout', 'Workouts',  'i-workout', url_for('training.list_entries'), active) }}
       {{ sidebar_item('library', 'Exercises', 'i-library', url_for('rx.list_entries'),     active) }}
     </ul>

@@ -14,7 +14,7 @@
 
 The design canvas is done (everything below). **The redesign is now being built into the live Flask app**, phase by phase. Per-section status + the granular handoff lives in **`BUILD_TASKS.md`** (the live tracker) and the build rules in **`CONVENTIONS.md`**; this section is the top-line summary.
 
-**Shipped to `main`:** Phase 0 (token CSS + polish + icon sprite, `.app`-scoped) · Phase 1 (app shell — grouped sidebar + mobile tab bar) · **Phase 2 daily-loop COMPLETE** (§05 Dashboard · §06 Plan week · §07 Workout detail · §08 unified Logging w/ all 6 panes · §09 Wellness) · **Phase 3 §04 Plan generation** (start form + cup-pour progress + plan view).
+**Shipped to `main`:** Phase 0 (token CSS + polish + icon sprite, `.app`-scoped) · Phase 1 (app shell — grouped sidebar + mobile tab bar) · **Phase 2 daily-loop COMPLETE** (§05 Dashboard · §06 Plan week · §07 Workout detail · §08 unified Logging w/ all 6 panes · §09 Wellness) · **Phase 3 plan-lifecycle COMPLETE\*** (§04 Plan generation · §10 Races manager · §11 Plans history · §12 diff-via-refresh · §13 Plan refresh · §14 Import). *\*§12 standalone version A↔B compare deferred — no backend route yet; §13 still owes the §30 `coaching_bp` consolidation (Phase 7).*
 
 **Build mechanics that turned out to matter** (carry these forward):
 - **CSP is enforced** — no inline `style=`/`onclick=`; every inline `<script>` is nonced. Dynamic positioning (e.g. the cup-pour letters, progress-bar widths) is set via the **DOM API** (`element.style.setProperty`) or `data-*` + `app.js`, never inline attributes.
@@ -22,7 +22,7 @@ The design canvas is done (everything below). **The redesign is now being built 
 - **Cup-pour keyframes** (`letterTumble`/`cupTipping`) shipped inert in `tokens.css` at Phase 0 and went live with §04; letters carry `.letter-tumble` so the reduced-motion rule settles them statically.
 - **Verification is render-test-based**: each slice adds a smoke test that boots the real app (DB stubbed — no local Postgres) and renders the route, asserting structure + CSP cleanliness. (Vercel **Preview** deploys were blocked on a missing `SECRET_KEY` env scope — an owner-side infra gap, not a code issue.)
 
-**Next:** Phase 3 continues — §10 Races · event manager, then §11–14 (plan history/versions · compare diff · refresh · import).
+**Next:** Phase 4 — Library + Account (§15 Exercises · §16 Locations · §17 Connections hub · §18 Profile · §19 Account settings · §20 Coach memory).
 
 ---
 
@@ -288,6 +288,8 @@ Everything code-backed is now designed. What remains is **build-time implementat
 **Last touched:** v15. Canvas loads clean — no console errors as of last `done` call. Verifier-confirmed: landmarks, roving tab-order, tablists, dialog semantics, light toggle, and §29 all render and behave per spec.
 
 ### Implementation log (live app build — see §0 + `BUILD_TASKS.md`)
+- **Phase 3 · §11–14** — Plans history list (active spotlight + archived + "start line" empty), Plan refresh (T1/T2/T3 horizons + freq-cap modal), refresh diff view (updated/new badges — the real compare surface; arbitrary A↔B compare deferred, no backend route), Plan import (JSON paste).
+- **Phase 3 · §10** — Races · event manager: standalone page under Plan (`race_events.index`), target-race spotlight + upcoming/past lists, reuses the existing set-target/edit/delete handlers. A/B/C priority not ported (schema has only `is_target_event`). New Train-group nav item.
 - **Phase 3 · §04** — Plan generation: start form, cup-pour progress (time-bucket, CSP-clean letters), plan view.
 - **Phase 2 COMPLETE** — §05 Dashboard · §06 Plan week · §07 Workout detail (+nutrition/upload-.FIT) · §08 unified Logging (6 panes) · §09 Wellness.
 - **Phase 1** — app shell (grouped sidebar + top bar + mobile tab bar + drawer); legacy screens re-pointed to `base_legacy.html`.

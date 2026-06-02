@@ -1,71 +1,71 @@
-{% extends 'base_legacy.html' %}
-{% block title %}Refreshed plan — AIDSTATION{% endblock %}
+{# Redesign §12/§13 — Refreshed-plan diff view. Shows a freshly-written plan
+   version's sessions grouped by date, with per-session diff badges
+   (updated / new) vs the parent version. This is the app's real "compare"
+   surface (refresh-vs-parent); arbitrary version A↔B compare has no backend
+   route yet (see BUILD_TASKS §12). Migrated onto the new shell. #}
+{% extends 'base.html' %}
+{% set nav_active = 'plan' %}
+{% block title %}Refreshed plan{% endblock %}
+{% block crumbs %}<a href="{{ url_for('plan_refresh.refresh') }}">Plan</a> <span class="sep">/</span> <b>Refreshed</b>{% endblock %}
+
 {% block content %}
-
-<nav class="mb-3">
-  <a href="{{ url_for('plan_refresh.refresh') }}" class="text-muted small">&larr; Back to refresh</a>
-</nav>
-
-<div class="d-flex align-items-center mb-3">
-  <h4 class="mb-0 me-2">Refreshed plan</h4>
-  <span class="badge bg-primary me-2">Pattern {{ plan_version.pattern }}</span>
-  <span class="badge bg-secondary">{{ plan_version.created_via|replace('_', ' ') }}</span>
+<div class="dash-head">
+  <div class="races-intro">
+    <p class="eyebrow accent">● Plan · refresh result</p>
+    <h1 class="page-title plan-view-head">
+      Refreshed plan.
+      <span class="chip accent">Pattern {{ plan_version.pattern }}</span>
+      <span class="chip solid">{{ plan_version.created_via|replace('_', ' ') }}</span>
+    </h1>
+    <p class="page-sub">
+      {{ plan_version.scope_start_date }} → {{ plan_version.scope_end_date }}
+      · {{ session_count }} session{{ '' if session_count == 1 else 's' }}
+      ·
+      {% if sessions_changed > 0 %}
+        <b>{{ sessions_changed }}</b> session{{ '' if sessions_changed == 1 else 's' }} changed
+      {% else %}
+        no changes from prior version
+      {% endif %}
+      {% if parent_plan_version_id %} · vs v{{ parent_plan_version_id }}{% endif %}
+    </p>
+  </div>
 </div>
 
-<p class="text-muted mb-3">
-  {{ plan_version.scope_start_date }} → {{ plan_version.scope_end_date }}
-  &middot; {{ session_count }} session{{ '' if session_count == 1 else 's' }}
-  &middot;
-  {% if sessions_changed > 0 %}
-    <strong>{{ sessions_changed }}</strong> session{{ '' if sessions_changed == 1 else 's' }} changed
-  {% else %}
-    no changes from prior version
-  {% endif %}
-  {% if parent_plan_version_id %}
-    &middot; vs v{{ parent_plan_version_id }}
-  {% endif %}
-</p>
-
-{% if sessions_by_date %}
-  {% for d, entries in sessions_by_date %}
-    <div class="mb-2">
-      <h6 class="mb-2">{{ d }} <small class="text-muted">{{ entries[0].session.day_of_week }}</small></h6>
+<div class="stack">
+  {% if sessions_by_date %}
+    {% for d, entries in sessions_by_date %}
+    <div class="day-group">
+      <div class="day-label">
+        <span class="sess-name">{{ d }}</span>
+        <span class="dow">{{ entries[0].session.day_of_week }}</span>
+      </div>
       {% for entry in entries %}
         {% set sess = entry.session %}
         {% set badge = entry.badge %}
-        <div class="card mb-2 {% if badge == 'updated' %}border-warning{% elif badge == 'new' %}border-success{% endif %}">
-          <div class="card-body">
-            <div class="d-flex align-items-center mb-1">
-              <strong class="me-2">
-                {% if sess.kind == 'rest' %}
-                  Rest
-                {% else %}
-                  {{ sess.discipline_name or sess.discipline_id or sess.kind|title }} — {{ sess.duration_min }} min
-                {% endif %}
-              </strong>
-              <span class="badge bg-light text-dark me-2">{{ sess.intensity_summary|title }}</span>
-              {% if badge == 'updated' %}
-                <span class="badge bg-warning text-dark" title="Differs from the prior version">updated</span>
-              {% elif badge == 'new' %}
-                <span class="badge bg-success" title="No equivalent in the prior version">new</span>
-              {% endif %}
-              {% if sess.time_of_day != 'unspecified' %}
-                <small class="text-muted ms-2">{{ sess.time_of_day }}</small>
-              {% endif %}
-            </div>
-            {% if sess.coaching_intent %}
-              <p class="mb-1 small">{{ sess.coaching_intent }}</p>
+        <div class="card sess-card diff-card{% if badge == 'updated' %} updated{% elif badge == 'new' %} new{% endif %}">
+          <div class="sess-head">
+            <span class="sess-name">
+              {% if sess.kind == 'rest' %}Rest
+              {% else %}{{ sess.discipline_name or sess.discipline_id or sess.kind|title }} — {{ sess.duration_min }} min{% endif %}
+            </span>
+            <span class="chip solid">{{ sess.intensity_summary|title }}</span>
+            {% if badge == 'updated' %}
+              <span class="chip warn" title="Differs from the prior version">updated</span>
+            {% elif badge == 'new' %}
+              <span class="chip good" title="No equivalent in the prior version">new</span>
             {% endif %}
-            {% if sess.session_notes %}
-              <p class="mb-0 small text-muted">{{ sess.session_notes }}</p>
+            {% if sess.time_of_day != 'unspecified' %}
+              <span class="dow">{{ sess.time_of_day }}</span>
             {% endif %}
           </div>
+          {% if sess.coaching_intent %}<p class="sess-intent">{{ sess.coaching_intent }}</p>{% endif %}
+          {% if sess.session_notes %}<p class="sess-notes">{{ sess.session_notes }}</p>{% endif %}
         </div>
       {% endfor %}
     </div>
-  {% endfor %}
-{% else %}
-  <p class="text-muted">No sessions persisted for this plan version.</p>
-{% endif %}
-
+    {% endfor %}
+  {% else %}
+    <div class="card card-pad"><p class="empty-line">No sessions persisted for this plan version.</p></div>
+  {% endif %}
+</div>
 {% endblock %}
