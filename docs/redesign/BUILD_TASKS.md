@@ -35,10 +35,10 @@ Work top-to-bottom **within a phase** (phases defined in `BUILD_PLAN.md` §3). C
 |---|---|---|---|---|---|
 | 04 | ✅ Plan generation | DM | `plan_create.new_plan` / `.progress` / `.view` | `plan_create/{new_form,progress,view}.html` | Cup-pour progress = time bucket, **not** server sub-steps. Keyframes in `tokens.css`; letters injected + positioned via JS (`element.style`, CSP-clean). Failed state uses §27 "The build stalled." copy. *(in-flight PR)* |
 | 10 | ✅ Races · event manager ★ | DM | `race_events.*` | — (no template) | Standalone page under Plan: target-race spotlight + upcoming/past lists. Editing a target's date re-cascades the plan (existing eviction in `update_race`). A/B/C priority **not ported** — the schema has a single `is_target_event` boolean, not a priority column. *(this PR)* |
-| 11 | Plans · history & versions | DM | `plans.list_plans` | `plans/v2/*` | Zero-plans → shared empty (§26). |
-| 12 | Plan compare · diff | DM | `plans.*` (version compare) | `plans/v2/*` | Version A ↔ B diff. |
-| 13 | Plan refresh ⟳ | DM | `plan_refresh.*` | — | Adapt to new context. **See §30 — consolidate with `coaching_bp`.** |
-| 14 | Plan import | DM | `plans.import_plan` | `plans/import.html` | JSON paste. |
+| 11 | ✅ Plans · history | DM | `plans.list_plans` | `plans/list.html` | Active cards (status='active' spotlight) + archived rows on the new shell; real progress via `data-progress`. Grounded in the legacy `training_plans` model — the artboard's version-history table belongs to `plan_versions`, not rendered. Zero-plans → "You're at the start line." (§26 copy). *(this PR)* |
+| 12 | ◑ Plan compare · diff | DM | `plan_refresh.view_refresh` | `plans/v2/refresh_view.html` | **Diff via refresh** (refresh-vs-parent, updated/new badges) migrated. Standalone arbitrary version **A↔B compare has no backend route** — deferred to a future backend slice (don't fabricate). *(this PR)* |
+| 13 | ✅ Plan refresh ⟳ | DM | `plan_refresh.refresh` | `plans/v2/refresh.html` | Horizon picker (T1/T2/T3) + current-version card + no-plan empty; Bootstrap freq-cap modal kept (nonce'd). **Still see §30 — consolidate with `coaching_bp`** (Phase 7). *(this PR)* |
+| 14 | ✅ Plan import | DM | `plans.import_plan` | `plans/import.html` | JSON-paste form + token-styled schema reference. *(this PR)* |
 
 ## Phase 4 — Library + Account
 | § | Section | DM | Blueprint / route | Current template | Migration note |
@@ -93,7 +93,7 @@ The redesign covers every *user-facing* surface but a few blueprints have no red
 
 **Last updated:** 2026-06-02
 
-**Progress:** Phase 0 ✅ · Phase 1 shell ✅ · **Phase 2 COMPLETE** (§05–§09 ✅) · Phase 3 ◑ (§04 ✅ · §10 ✅) — **next: §11–14 plan lifecycle**.
+**Progress:** Phase 0 ✅ · Phase 1 shell ✅ · **Phase 2 COMPLETE** (§05–§09 ✅) · **Phase 3 COMPLETE\*** (§04 ✅ · §10 ✅ · §11 ✅ · §12 ◑ diff-via-refresh · §13 ✅ · §14 ✅) — **next: Phase 4 (§15–20 library + account)**. *\*§12 standalone A↔B compare deferred (no backend route); §13 still owes the §30/Phase-7 `coaching_bp` consolidation.*
 Merged to `main`: PR #397 (review), #398 (Phase 0), #399 (docs), #400 (Phase 1 + §05),
 #401 (§06), #403 (§07), #404 (§07 follow-up), #406 (redesign card/grid Bootstrap-leak fix),
 #407 (§08 unified Log landing + 4 panes).
@@ -238,6 +238,25 @@ In flight: PR for §08 Strength pane + §09 Wellness (completes Phase 2) **and**
     `style=`/`onclick=`. (Suite-wide, the only reds are the date-sensitive
     `test_layer4_plan_create.py::TestMissingSessionsRetry` cases — their hardcoded
     `plan_start_date=2026-06-01` is now in the past; pre-existing, unrelated to this slice.)
+- **Phase 3 · §11 Plans · history** — `templates/plans/list.html` onto the new shell
+  (`nav_active='plan'`). Active plans as cards (`status='active'` gets an accent spotlight)
+  with real progress (`item_count`/`completed_count` via `data-progress`, CSP-clean), archived
+  plans as dimmed view/restore rows, and a shared **"You're at the start line."** empty state
+  (§26 copy) with Generate + Import paths. Grounded in the legacy `training_plans` model — the
+  artboard's version-history table belongs to the separate `plan_versions` model and is
+  intentionally not rendered. New §11 CSS + `tests/test_redesign_plans_list_render.py` (2).
+- **Phase 3 · §13/§14 + §12-diff** — remaining plan-lifecycle surfaces onto the new shell.
+  - **§14 Import** (`plans/import.html`): JSON-paste form + token-styled schema reference (the
+    real `garmin_workout_json` column + sport-type IDs kept as a developer reference).
+  - **§13 Refresh** (`plans/v2/refresh.html`): horizon picker (T1/T2/T3) with active-tier
+    highlighting, current-version card, no-plan empty state; the Bootstrap frequency-cap modal
+    (nonce'd) preserved. Still owes the §30/Phase-7 `coaching_bp` consolidation.
+  - **§12 diff** (`plans/v2/refresh_view.html`): refreshed-plan sessions grouped by date with
+    updated/new diff badges + left-border accents — the app's **real** compare surface
+    (refresh-vs-parent). Standalone arbitrary version A↔B compare has **no backend route**; not
+    fabricated, deferred to a future backend slice.
+  - New §12/§13/§14 CSS + `tests/test_redesign_plan_refresh_import_render.py` (5). Existing
+    `test_routes_plan_refresh.py` (64) still green; CSS braces balanced; CSP-clean.
 
 ### Known blocker (infra, not code) — Vercel **Preview** deploys 500
 Preview deployments crash with `FUNCTION_INVOCATION_FAILED`: `app.py` raises at **import** when
@@ -247,11 +266,12 @@ Preview deployments crash with `FUNCTION_INVOCATION_FAILED`: `app.py` raises at 
 Until then, PR previews can't render — verify locally or via static checks. This is unrelated
 to any redesign PR (Production is unaffected).
 
-### Next — Phase 3 (Plan lifecycle)
-Phase 2 done; Phase 3 §04 (plan generation) + §10 (races manager) done. Continue Phase 3
-top-to-bottom:
-- **§11–14** Plans history/versions, compare diff, plan refresh (⟳ — see §30 consolidation
-  with `coaching_bp`), and plan import.
+### Next — Phase 4 (Library + Account)
+Phase 3 plan-lifecycle done (§12 standalone A↔B compare deferred — needs a backend route;
+§13 still owes the §30/Phase-7 `coaching_bp` consolidation). Continue Phase 4 top-to-bottom:
+- **§15** Exercises library (`rx.list_entries`) · **§16** Locations (`locales.*`) · **§17**
+  Connections hub (4 surfaces → 1) · **§18** Athlete profile · **§19** Account settings ·
+  **§20** Coach memory.
 Carry the established slice discipline: one responsive template, token classes only, CSP
 enforced (nonce'd scripts, no inline `style=`/`onclick=`), flip `base_legacy.html` → `base.html`,
 and add a render smoke test per the §08/§09 precedent.
