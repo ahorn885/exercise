@@ -105,30 +105,8 @@
 </div>
 
 {% else %}
-{# ── Shared "no plan" empty state (§26 copy) ── #}
-<div class="noplan">
-  <p class="eyebrow accent">● No active plan</p>
-  <h1 class="noplan-title">You're at the start line.</h1>
-  <p class="noplan-sub">Every session you'll run anchors to a race. Generate your first plan in a few
-    minutes — built from your profile, your schedule, and your target — or import one you already have.</p>
-  <div class="noplan-ways">
-    <div class="card noplan-card start">
-      <p class="eyebrow accent">● Start here</p>
-      <div class="noplan-card-title">Generate from your profile</div>
-      <p class="noplan-card-sub">We periodize back from your race date — Base → Build → Peak → Taper.</p>
-      <a class="btn btn-primary" href="{{ url_for('plan_create.new_plan') }}">
-        <svg class="icon" width="13" height="13" aria-hidden="true"><use href="#i-bolt"></use></svg> Set race &amp; generate
-      </a>
-    </div>
-    <div class="card noplan-card">
-      <p class="eyebrow">● Power user</p>
-      <div class="noplan-card-title">Import a plan</div>
-      <p class="noplan-card-sub">Paste JSON from a coach, another tool, or hand-built.</p>
-      <a class="btn btn-ghost" href="{{ url_for('plans.import_plan') }}">
-        <svg class="icon" width="13" height="13" aria-hidden="true"><use href="#i-upload"></use></svg> Import
-      </a>
-    </div>
-  </div>
-</div>
+{# Shared "You're at the start line." empty state (§26) — single source in
+   templates/_no_plan.html so the headline/copy/ways-in live in one place. #}
+{% include '_no_plan.html' %}
 {% endif %}
 {% endblock %}
