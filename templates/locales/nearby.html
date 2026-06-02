@@ -1,35 +1,45 @@
-{% extends 'base_legacy.html' %}
-{% block title %}Nearby {{ canonical }} locations{% endblock %}
-{% block content %}
-<div class="d-flex justify-content-between align-items-center mb-3">
-  <h4 class="mb-0">Nearby {{ canonical }} locations</h4>
-  <a href="{{ url_for('locales.list_profiles') }}" class="btn btn-sm btn-outline-secondary">Skip</a>
-</div>
-<p class="text-muted small mb-3">
-  We found {{ candidates|length }} other {{ canonical }} location{{ 's' if candidates|length != 1 }}
-  within 42 km of <span class="fw-semibold">{{ anchor.locale_name or anchor.locale }}</span>.
-  Add any you also use? Each opt-in creates a new locale row inheriting the chain
-  category — equipment is set per-locale via Edit.
-</p>
+{# Redesign (Phase 6 secondary form) — nearby same-chain locations. Companion
+   to §16; migrated off base_legacy. POST checkbox field name="mapbox_id"
+   preserved (one row added per opt-in, inheriting the chain category). #}
+{% extends 'base.html' %}
+{% set nav_active = 'locations' %}
+{% block title %}Nearby {{ canonical }} locations — AIDSTATION{% endblock %}
+{% block crumbs %}<a href="{{ url_for('locales.list_profiles') }}">Locations</a> · <b>Nearby</b>{% endblock %}
 
+{% block content %}
+<div class="dash-head">
+  <div class="races-intro">
+    <p class="eyebrow accent">● Nearby {{ canonical }}</p>
+    <h1 class="page-title">More {{ canonical }} nearby.</h1>
+    <p class="page-sub">{{ candidates|length }} other {{ canonical }} location{{ 's' if candidates|length != 1 }}
+      within 42 km of <b>{{ anchor.locale_name or anchor.locale }}</b>. Add any you also use — each
+      opt-in creates a new locale row inheriting the chain category; set equipment per-locale via Edit.</p>
+  </div>
+</div>
+
+<div class="stack loc-new-wrap">
 {% if not candidates %}
-  <p>No same-chain matches in the area. <a href="{{ url_for('locales.list_profiles') }}">Back to locales</a>.</p>
+  <div class="note-card">No same-chain matches in the area.
+    <a href="{{ url_for('locales.list_profiles') }}">Back to locations</a>.</div>
 {% else %}
-  <form method="post" class="u-mw-720">
+  <form method="post" class="card card-pad loc-form">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-    {% for f in candidates %}
-      <div class="form-check mb-2 p-3 border rounded">
+    <div class="loc-nearby-list">
+      {% for f in candidates %}
+      <label class="loc-nearby-row" for="mb_{{ loop.index }}">
         <input class="form-check-input" type="checkbox" name="mapbox_id" value="{{ f.mapbox_id }}" id="mb_{{ loop.index }}">
-        <label class="form-check-label" for="mb_{{ loop.index }}">
-          <span class="fw-semibold">{{ f.text }}</span>
-          <span class="d-block small text-muted">{{ f.place_name }}</span>
-        </label>
-      </div>
-    {% endfor %}
-    <div class="d-flex gap-2 mt-3">
-      <button type="submit" class="btn btn-primary">Add selected</button>
-      <a href="{{ url_for('locales.list_profiles') }}" class="btn btn-outline-secondary">Skip — done</a>
+        <span class="loc-nearby-id">
+          <span class="loc-result-name">{{ f.text }}</span>
+          <span class="loc-result-addr">{{ f.place_name }}</span>
+        </span>
+      </label>
+      {% endfor %}
+    </div>
+    <div class="pf-save">
+      <a href="{{ url_for('locales.list_profiles') }}" class="btn btn-ghost btn-sm">Skip — done</a>
+      <button type="submit" class="btn btn-primary btn-sm">Add selected</button>
     </div>
   </form>
 {% endif %}
+</div>
 {% endblock %}

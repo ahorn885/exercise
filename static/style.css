@@ -1693,6 +1693,16 @@ body.bulk-mode { padding-bottom: 80px; }
 .app .loc-result-addr { font-size: 12px; color: var(--fg-3); margin-top: 2px; }
 .app .loc-result-form { margin: 0; flex-shrink: 0; }
 
+.app .loc-nearby-list { display: flex; flex-direction: column; gap: 10px; }
+.app .loc-nearby-row { display: flex; align-items: flex-start; gap: 10px; border: 1px solid var(--hairline-2); border-radius: var(--r-sm); padding: 12px 14px; margin: 0; cursor: pointer; }
+.app .loc-nearby-id { display: block; }
+.app .loc-diff { margin: 0; display: grid; grid-template-columns: 120px 1fr; gap: 6px 16px; }
+.app .loc-diff-row { display: contents; }
+.app .loc-diff-row dt { font-size: 12px; color: var(--fg-3); margin: 0; }
+.app .loc-diff-row dd { font-size: 13px; margin: 0; }
+.app .loc-diff-new { font-weight: 600; }
+.app .loc-confirm-actions { display: flex; gap: 8px; align-items: center; }
+
 @media (max-width: 859.98px) {
   .app .loc-result { flex-direction: column; align-items: stretch; }
 }

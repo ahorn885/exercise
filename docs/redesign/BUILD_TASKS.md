@@ -370,12 +370,11 @@ Remaining work, lower priority:
   of the shell (skip links, modal/offcanvas focus, reduced-motion) against it.
 - **§30 / Phase 7** — `coaching_bp` consolidation (still owed from §13).
 - **§12** standalone A↔B plan compare (needs a backend route; deferred).
-- **Secondary `base_legacy.html` forms still reachable:** ✅ `rx/form.html` (Edit Rx) · ✅
-  `locales/form.html` (equipment editor, all 3 modes) · ✅ `locales/new.html` (add-location:
-  manual / Mapbox-disclosure / search) — all migrated. Remaining — `locales/nearby.html` +
-  `locales/refresh_confirm.html` (lower-traffic), the garmin import/sync/wellness pages, and admin
-  `plan_inspect.html`/`plan_diag` (operator deep-debug). The Mapbox **save/upgrade** + shared-profile
-  **save** POST paths weren't manually exercised here (render-tested only) — worth a manual smoke.
+- **Secondary `base_legacy.html` forms still reachable:** ✅ `rx/form.html` (Edit Rx) · ✅ **entire
+  `locales/` dir** (`form` editor all-3-modes · `new` add-location · `nearby` same-chain · `refresh_confirm`
+  Mapbox diff) — all migrated. Remaining — the garmin import/sync/wellness pages and admin
+  `plan_inspect.html`/`plan_diag` (operator deep-debug). The Mapbox **save/upgrade/refresh** + shared-profile
+  **save** + nearby-**add** POST paths weren't manually exercised here (render-tested only) — worth a manual smoke.
 
 Carry the established slice discipline: one responsive template, token classes only, CSP enforced
 (nonce'd scripts, no inline `style=`/`onclick=`), flip `base_legacy.html` → `base.html`, and add a

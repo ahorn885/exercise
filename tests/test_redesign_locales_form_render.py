@@ -125,3 +125,35 @@ def test_new_search_results_render():
     assert 'name="mapbox_id"' in html          # per-result save form
     assert 'Save this' in html
     assert 'style="' not in html and 'onclick=' not in html
+
+
+# ─── locales/nearby.html + refresh_confirm.html ─────────────────────────
+
+def test_nearby_renders_candidates():
+    candidates = [{'mapbox_id': 'poi.1', 'text': 'Planet Fitness Uptown',
+                   'place_name': '99 Lake St'}]
+    html = _render('locales/nearby.html', canonical='Planet Fitness',
+                   anchor={'locale_name': 'PF Downtown', 'locale': 'pf-dt'},
+                   candidates=candidates)
+    assert 'app-shell' in html
+    assert 'name="mapbox_id"' in html
+    assert 'Planet Fitness Uptown' in html
+    assert 'Add selected' in html
+    assert 'style="' not in html and 'onclick=' not in html
+
+
+def test_refresh_confirm_renders_diff():
+    html = _render('locales/refresh_confirm.html', locale='pf-dt',
+                   profile={'locale_name': 'PF Downtown'},
+                   refreshed={'text': 'Planet Fitness — Downtown', 'raw_payload': '{}'},
+                   old_text='Planet Fitness', old_chain_name='Planet Fitness',
+                   new_chain_id='pf', new_chain_name='Planet Fitness',
+                   new_category='gym', name_changed=True, chain_changed=False)
+    assert 'app-shell' in html
+    # All hidden POST fields preserved for the confirm roundtrip.
+    for name in ('confirm', 'refresh_text', 'refresh_chain_id',
+                 'refresh_chain_name', 'refresh_category', 'refresh_payload'):
+        assert 'name="%s"' % name in html
+    assert 'Yes, update' in html
+    assert 'Planet Fitness — Downtown' in html
+    assert 'style="' not in html
