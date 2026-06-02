@@ -1,397 +1,155 @@
-{% extends 'base_legacy.html' %}
-{% block title %}Profile — AIDSTATION{% endblock %}
+{# Redesign §18 — Athlete profile.
+   profile.edit reskinned onto the new shell. The 7-tab legacy monolith is
+   decomposed: Race events → §10, Connections → §17, Account → §19
+   (profile.account_settings), Coach memory → §20 (profile.coach_memory).
+   What's left here is the athlete proper — Athlete / Schedule / Skills —
+   as server-rendered sub-tabs (?tab=, CSP-clean). Every field name + POST
+   action is preserved; Schedule/Skills reuse the shared onboarding partials
+   so those flows stay in lockstep. #}
+{% extends 'base.html' %}
+{% set nav_active = 'athlete' %}
+{% set sub = active_tab if active_tab in ['athlete', 'schedule', 'skills'] else 'athlete' %}
+{% set is_first_run = not (profile.date_of_birth or profile.primary_sport or profile.height_cm
+   or profile.weekly_hours_target or profile.body_weight_kg or profile.notes) %}
+{% block title %}Athlete — AIDSTATION{% endblock %}
+{% block crumbs %}<b>Athlete</b>{% endblock %}
+
 {% block content %}
-
-<h4 class="mb-3">Profile</h4>
-
-{% set connection_count = connections|selectattr('is_connected')|list|length %}
-<ul class="nav nav-tabs mb-3" role="tablist">
-  <li class="nav-item"><button class="nav-link active" data-bs-toggle="tab" data-bs-target="#tab-profile" type="button">Athlete</button></li>
-  <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-schedule" type="button">Schedule</button></li>
-  <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-skills" type="button">Skills</button></li>
-  <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-race-events" type="button">Race events <span class="badge bg-secondary">{{ race_events|length }}</span></button></li>
-  <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-connections" type="button">Connections <span class="badge bg-secondary">{{ connection_count }}</span></button></li>
-  <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-memory" type="button">Coach memory <span class="badge bg-secondary">{{ memory|length }}</span></button></li>
-  <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-account" type="button">Account</button></li>
-</ul>
-
-<div class="tab-content">
-
-  {# ── Athlete profile ────────────────────────────────────────────── #}
-  <div class="tab-pane fade show active" id="tab-profile" role="tabpanel">
-    <p class="text-muted small mb-3">
-      These fields feed into the AI coach context so it doesn't have to
-      ask each time it generates or reviews a plan. All optional —
-      anything left blank is just absent from the prompt.
-    </p>
-    <form method="post" action="{{ url_for('profile.edit') }}">
-      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-      <div class="row g-3">
-
-        <div class="col-md-4">
-          <label class="form-label" for="date_of_birth">Date of birth</label>
-          <input type="date" class="form-control" id="date_of_birth" name="date_of_birth"
-                 value="{{ profile.date_of_birth or '' }}">
-        </div>
-        <div class="col-md-4">
-          <label class="form-label" for="sex">Sex</label>
-          <select class="form-select" id="sex" name="sex">
-            <option value="" {% if not profile.sex %}selected{% endif %}>—</option>
-            {% for s in ['male', 'female', 'other', 'prefer_not_to_say'] %}
-              <option value="{{ s }}" {% if profile.sex == s %}selected{% endif %}>{{ s|replace('_', ' ')|title }}</option>
-            {% endfor %}
-          </select>
-        </div>
-        <div class="col-md-4">
-          <label class="form-label" for="height_cm">Height (cm)</label>
-          <input type="number" step="0.1" class="form-control" id="height_cm" name="height_cm"
-                 value="{{ profile.height_cm if profile.height_cm is not none else '' }}">
-        </div>
-
-        <div class="col-md-6">
-          <label class="form-label" for="primary_sport">Primary sport</label>
-          <input type="text" class="form-control" id="primary_sport" name="primary_sport"
-                 placeholder="e.g. adventure_racing, triathlon, marathon"
-                 value="{{ profile.primary_sport or '' }}">
-        </div>
-        <div class="col-md-3">
-          <label class="form-label" for="weekly_hours_target">Weekly hours target</label>
-          <input type="number" step="0.5" class="form-control" id="weekly_hours_target" name="weekly_hours_target"
-                 value="{{ profile.weekly_hours_target if profile.weekly_hours_target is not none else '' }}">
-        </div>
-        {# Target event name + date live in the Race events tab now
-           (D-66 §7 `race_events` table is the source of truth). The
-           prior `athlete_profile.target_event_*` columns are vestigial
-           pending column-drop in a follow-on session; existing rows
-           were one-time-migrated into `race_events` by
-           `init_db.py:1185`. #}
-
-        {# v5 §A.2 prefill-eligible baselines (PR6 D-51). Manual entry today;
-           connected providers (COROS / Polar / Wahoo) will auto-populate
-           these in a future release with the per-field comparison UI. #}
-        <div class="col-12">
-          <hr class="my-2">
-          <h6 class="text-muted small text-uppercase mb-1">Performance baselines</h6>
-          <p class="text-muted small mb-2">
-            Optional. Feeds Layer 3 athlete-evaluation calculations. Connected
-            providers will auto-populate these in a future release; for now
-            self-report is the only path.
-          </p>
-        </div>
-        <div class="col-md-4">
-          <label class="form-label" for="body_weight_kg">Body weight (kg)</label>
-          <input type="number" step="0.1" min="20" max="300"
-                 class="form-control" id="body_weight_kg" name="body_weight_kg"
-                 value="{{ profile.body_weight_kg if profile.body_weight_kg is not none else '' }}">
-        </div>
-        <div class="col-md-4">
-          <label class="form-label" for="hrmax_bpm">HRmax (bpm)</label>
-          <input type="number" step="1" min="100" max="240"
-                 class="form-control" id="hrmax_bpm" name="hrmax_bpm"
-                 value="{{ profile.hrmax_bpm if profile.hrmax_bpm is not none else '' }}">
-        </div>
-        <div class="col-md-4">
-          <label class="form-label" for="lactate_threshold_hr_bpm">Lactate threshold HR (bpm)</label>
-          <input type="number" step="1" min="100" max="220"
-                 class="form-control" id="lactate_threshold_hr_bpm" name="lactate_threshold_hr_bpm"
-                 value="{{ profile.lactate_threshold_hr_bpm if profile.lactate_threshold_hr_bpm is not none else '' }}">
-        </div>
-        <div class="col-md-4">
-          <label class="form-label" for="vo2max">VO2max (ml/kg/min)</label>
-          <input type="number" step="0.1" min="20" max="100"
-                 class="form-control" id="vo2max" name="vo2max"
-                 value="{{ profile.vo2max if profile.vo2max is not none else '' }}">
-        </div>
-        <div class="col-md-4">
-          <label class="form-label" for="cycling_ftp_w">Cycling FTP (watts)</label>
-          <input type="number" step="1" min="50" max="500"
-                 class="form-control" id="cycling_ftp_w" name="cycling_ftp_w"
-                 value="{{ profile.cycling_ftp_w if profile.cycling_ftp_w is not none else '' }}">
-        </div>
-
-        <div class="col-12">
-          <label class="form-label" for="notes">Notes for the coach</label>
-          <textarea class="form-control" id="notes" name="notes" rows="3"
-                    placeholder="Anything the coach should know up front (injuries, life constraints, equipment limitations, etc.)">{{ profile.notes or '' }}</textarea>
-        </div>
-
-        <div class="col-12 d-flex justify-content-between align-items-center">
-          {% if profile.updated_at %}
-            <small class="text-muted">Last saved {{ profile.updated_at }}</small>
-          {% else %}
-            <small class="text-muted">Not yet saved.</small>
-          {% endif %}
-          <button type="submit" class="btn btn-primary">Save profile</button>
-        </div>
-      </div>
-    </form>
+<div class="dash-head">
+  <div class="races-intro">
+    <p class="eyebrow accent">● Athlete · coach context</p>
+    <h1 class="page-title">Your profile.</h1>
+    <p class="page-sub">These feed the AI coach so it doesn't have to ask each time it builds or
+      reviews a plan. All optional — anything blank is just absent from the prompt.</p>
   </div>
-
-  {# ── Schedule & availability (v5 §G, D-61) ─────────────────────── #}
-  <div class="tab-pane fade" id="tab-schedule" role="tabpanel">
-    <p class="text-muted small mb-3">
-      Mark the days you typically have a training window, the earliest
-      you can start, and how long the window is. Plans schedule sessions
-      inside these windows; sessions never run past
-      <em>start + duration</em>. Same form as the onboarding step — edits
-      here override your last save.
-    </p>
-    <form method="post" action="{{ url_for('profile.save_schedule') }}">
-      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-
-      {% include 'onboarding/_schedule_form.html' %}
-
-      <div class="d-flex justify-content-end align-items-center mt-3 pt-3 border-top">
-        <button type="submit" class="btn btn-primary">Save schedule</button>
-      </div>
-    </form>
-  </div>
-
-  {# ── Skills (Bucket C (l) capture-surface follow-on, 2026-05-24) ─ #}
-  <div class="tab-pane fade" id="tab-skills" role="tabpanel">
-    <p class="text-muted small mb-3">
-      Check the technical skills you've trained enough to apply on race
-      day. Default is OFF (assume-not-skilled). Each unchecked skill
-      that matches your race terrain or included disciplines surfaces
-      a coaching flag so the LLM addresses the capability gap in your
-      plan.
-    </p>
-    <form method="post" action="{{ url_for('profile.save_skills') }}">
-      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-
-      {% with toggle_defs=skill_toggle_defs, current_states=skill_toggle_states %}
-        {% include 'onboarding/_skills_form.html' %}
-      {% endwith %}
-
-      <div class="d-flex justify-content-end align-items-center mt-3 pt-3 border-top">
-        <button type="submit" class="btn btn-primary">Save skills</button>
-      </div>
-    </form>
-  </div>
-
-  {# ── Race events (D-66 §7) ────────────────────────────────────── #}
-  <div class="tab-pane fade" id="tab-race-events" role="tabpanel">
-    {% include 'profile/_race_events_tab.html' %}
-  </div>
-
-  {# ── Connections (Account Config 1) ───────────────────────────── #}
-  <div class="tab-pane fade" id="tab-connections" role="tabpanel">
-    <p class="text-muted small mb-3">
-      Connect your training services so AIDSTATION can pull activity,
-      sleep, and HR data automatically. Disconnect or re-authorise any
-      time. Provider data is used to prefill your profile fields where
-      the source signal is reliable — you can override any prefilled
-      value, and manual values are kept until you clear them.
-    </p>
-
-    {% if just_connected_label %}
-      <div class="alert alert-success d-flex justify-content-between align-items-start" role="alert">
-        <div>
-          <strong>{{ just_connected_label }} connected.</strong>
-          We'll start pulling your activity, sleep, and heart-rate data
-          on the next provider sync. The per-field prefill walkthrough
-          (which {{ just_connected_label }} values to pull into your
-          profile) ships in the next release.
-        </div>
-        <a href="{{ url_for('profile.edit', tab='connections') }}" class="btn-close" aria-label="Dismiss"></a>
-      </div>
-    {% endif %}
-
-    {% if oauth_error_label %}
-      <div class="alert alert-danger d-flex justify-content-between align-items-start" role="alert">
-        <div>
-          <strong>{{ oauth_error_label }} did not connect.</strong>
-          The OAuth handshake or partner-user registration failed. Try
-          the Connect button again; if it keeps failing, the provider's
-          auth surface may be down.
-        </div>
-        <a href="{{ url_for('profile.edit', tab='connections') }}" class="btn-close" aria-label="Dismiss"></a>
-      </div>
-    {% endif %}
-
-    <div class="list-group">
-      {% for c in connections %}
-        <div class="list-group-item">
-          <div class="d-flex flex-wrap justify-content-between align-items-start gap-2">
-            <div>
-              <div class="d-flex align-items-center gap-2 mb-1">
-                <h6 class="mb-0">{{ c.label }}</h6>
-                <span class="badge {{ c.badge_class }}">{{ c.status_label }}</span>
-              </div>
-              <div class="text-muted small">
-                {% if c.row and c.row.registered_at %}
-                  Connected since {{ (c.row.registered_at|string)[:10] }}.
-                {% elif c.row and c.row.created_at %}
-                  First authorised {{ (c.row.created_at|string)[:10] }}.
-                {% else %}
-                  Not yet connected.
-                {% endif %}
-                {% if c.row and c.row.scopes %}
-                  <span class="d-block">Scopes: <code class="small">{{ c.row.scopes }}</code></span>
-                {% endif %}
-                {% if c.row and c.row.updated_at %}
-                  <span class="d-block">Last activity {{ (c.row.updated_at|string)[:19] }}.</span>
-                {% endif %}
-              </div>
-            </div>
-            <div class="d-flex flex-wrap gap-2">
-              {% if c.is_connected %}
-                <a href="{{ c.connect_url }}" class="btn btn-sm btn-outline-secondary"
-                   title="Run the OAuth handshake again to refresh tokens or scope grants.">Re-authorise</a>
-                <form method="post"
-                      action="{{ url_for('profile.disconnect_provider', provider=c.slug) }}"
-                      class="d-inline"
-                      data-confirm="Disconnect {{ c.label }}? Your existing data stays, but no new syncs will run until you re-connect.">
-                  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                  <button class="btn btn-sm btn-outline-danger" type="submit">Disconnect</button>
-                </form>
-              {% else %}
-                <a href="{{ c.connect_url }}" class="btn btn-sm btn-primary">Connect</a>
-              {% endif %}
-            </div>
-          </div>
-        </div>
-      {% endfor %}
-    </div>
-
-    <p class="text-muted small mt-3 mb-0">
-      More providers (Wahoo, Strava, Whoop, TrainingPeaks, Zwift, Ride
-      With GPS) ship as their OAuth blueprints come online. Garmin is
-      paused while Garmin's API access is closed.
-    </p>
-  </div>
-
-  {# ── Coach memory ──────────────────────────────────────────────── #}
-  <div class="tab-pane fade" id="tab-memory" role="tabpanel">
-    <p class="text-muted small mb-3">
-      Durable preferences captured from chat / plan reviews / natural-log
-      entries / workout notes, plus anything you add manually. The coach
-      reads these on every plan generation, review, and chat.
-    </p>
-
-    {% if memory %}
-    <ul class="list-group mb-4">
-      {% for p in memory %}
-      <li class="list-group-item">
-        <div class="d-flex justify-content-between align-items-start gap-2">
-          <div class="flex-grow-1">
-            <span class="badge bg-secondary me-1">{{ p.category|replace('_', ' ') }}</span>
-            {% if p.permanent %}
-              <span class="badge bg-warning text-dark me-1" title="Treated as a permanent rule">permanent</span>
-            {% endif %}
-            <strong>{{ p.content }}</strong>
-            <div class="small text-muted mt-1">
-              {% if p.fb_source %}
-                Captured from <em>{{ p.fb_source|replace('_', ' ') }}</em>
-                {% if p.fb_captured_at %}on {{ (p.fb_captured_at|string)[:10] }}{% endif %}
-                {% if p.source_feedback_id %}
-                  · <a href="{{ url_for('profile.view_feedback', fb_id=p.source_feedback_id) }}">view original</a>
-                {% endif %}
-              {% else %}
-                Added manually{% if p.created_at %} on {{ (p.created_at|string)[:10] }}{% endif %}
-              {% endif %}
-            </div>
-          </div>
-          <form method="post" action="{{ url_for('profile.delete_preference', pref_id=p.id) }}"
-                data-confirm="Delete this preference?">
-            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-            <button class="btn btn-sm btn-outline-danger py-0 px-1">Delete</button>
-          </form>
-        </div>
-      </li>
-      {% endfor %}
-    </ul>
-    {% else %}
-    <p class="text-muted">No coaching preferences yet. They'll accumulate as you chat with the coach, give plan-review feedback, or add them manually below.</p>
-    {% endif %}
-
-    <h6 class="mb-2">Add a preference manually</h6>
-    <form method="post" action="{{ url_for('profile.add_preference') }}" class="row g-2">
-      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-      <div class="col-md-3">
-        <select class="form-select form-select-sm" name="category" required>
-          {% for c in preference_categories %}
-            <option value="{{ c }}">{{ c|replace('_', ' ') }}</option>
-          {% endfor %}
-        </select>
-      </div>
-      <div class="col-md-7">
-        <input type="text" class="form-control form-control-sm" name="content"
-               placeholder="e.g. Burpees excluded at user request" required>
-      </div>
-      <div class="col-md-2">
-        <div class="form-check d-inline-block me-2">
-          <input class="form-check-input" type="checkbox" id="permanent" name="permanent" checked>
-          <label class="form-check-label small" for="permanent">Permanent</label>
-        </div>
-        <button class="btn btn-sm btn-primary">Add</button>
-      </div>
-    </form>
-  </div>
-
-  {# ── Account ──────────────────────────────────────────────────── #}
-  <div class="tab-pane fade" id="tab-account" role="tabpanel">
-    <dl class="row mb-4">
-      <dt class="col-sm-3">Username</dt>
-      <dd class="col-sm-9">{{ user_row.username or '—' }}</dd>
-      <dt class="col-sm-3">Display name</dt>
-      <dd class="col-sm-9">{{ user_row.display_name or '—' }}</dd>
-      <dt class="col-sm-3">Email</dt>
-      <dd class="col-sm-9">{{ user_row.email or '—' }}</dd>
-      <dt class="col-sm-3">Last login</dt>
-      <dd class="col-sm-9 text-muted small">{{ user_row.last_login or '—' }}</dd>
-    </dl>
-
-    <h6 class="mb-2">Change password</h6>
-    <form method="post" action="{{ url_for('profile.change_password') }}" class="row g-2">
-      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-      <div class="col-md-4">
-        <label class="form-label small" for="current_password">Current password</label>
-        <input type="password" class="form-control form-control-sm" id="current_password" name="current_password" autocomplete="current-password" required>
-      </div>
-      <div class="col-md-4">
-        <label class="form-label small" for="new_password">New password</label>
-        <input type="password" class="form-control form-control-sm" id="new_password" name="new_password" autocomplete="new-password" minlength="8" required>
-      </div>
-      <div class="col-md-4">
-        <label class="form-label small" for="confirm_password">Confirm</label>
-        <input type="password" class="form-control form-control-sm" id="confirm_password" name="confirm_password" autocomplete="new-password" minlength="8" required>
-      </div>
-      <div class="col-12">
-        <button class="btn btn-sm btn-primary">Change password</button>
-      </div>
-    </form>
-  </div>
-
 </div>
 
-{# Activate the right tab from the URL. Triggered by:
-   - `?tab=connections` (post-disconnect redirect, manual deep link)
-   - `?<provider>_connected=1` (post-OAuth success callback)
-   - `?<provider>_oauth_error=…` / `?<provider>_register_error=1` (failure)
-   so a returning OAuth callback lands on the Connections tab with the
-   passive prompt visible, rather than the Athlete tab where the user
-   started. Active tab passed in from the route handler when available;
-   otherwise we read it from the URL directly. #}
-<script nonce="{{ csp_nonce() }}">
-(function() {
-  var params = new URLSearchParams(window.location.search);
-  var requested = {{ (active_tab or '')|tojson }};
-  if (!requested) requested = params.get('tab');
-  if (!requested) {
-    {% for c in connections %}
-      if (params.get('{{ c.slug }}_connected') === '1' ||
-          params.get('{{ c.slug }}_oauth_error') ||
-          params.get('{{ c.slug }}_register_error')) {
-        requested = 'connections';
-      }
-    {% endfor %}
-  }
-  if (!requested) return;
-  var target = document.querySelector('[data-bs-target="#tab-' + requested + '"]');
-  if (target && window.bootstrap && window.bootstrap.Tab) {
-    window.bootstrap.Tab.getOrCreateInstance(target).show();
-  }
-})();
-</script>
+{% if is_first_run %}
+<div class="card pf-firstrun">
+  <p class="eyebrow accent">● First run</p>
+  <p class="pf-firstrun-txt">Nothing saved yet. Fill in what you know — age, sport, weekly hours, and
+    any baselines — then set your training windows on <b>Schedule</b>. You can always come back and refine.</p>
+</div>
+{% endif %}
+
+{# Sub-tabs (reuses §17 .conn-tabs styling) #}
+<div class="conn-tabs" role="tablist" aria-label="Profile sections">
+  {% for key, label, hint in [
+       ('athlete', 'Athlete', 'baselines + notes'),
+       ('schedule', 'Schedule', 'training windows'),
+       ('skills', 'Skills', 'race-day capabilities')] %}
+  <a class="conn-tab{{ ' is-on' if sub == key else '' }}" role="tab"
+     aria-selected="{{ 'true' if sub == key else 'false' }}"
+     href="{{ url_for('profile.edit', tab=key) }}">
+    <span class="conn-tab-label">{{ label }}</span>
+    <span class="conn-tab-sub mono">{{ hint }}</span>
+  </a>
+  {% endfor %}
+</div>
+
+{# ════════════════════ ATHLETE ════════════════════ #}
+{% if sub == 'athlete' %}
+<form method="post" action="{{ url_for('profile.edit') }}" class="pf-form">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+  <div class="card card-pad stack">
+    <p class="eyebrow">● Basics</p>
+    <div class="pf-grid">
+      <label class="field"><span class="lbl">Date of birth</span>
+        <input type="date" name="date_of_birth" class="form-control form-control-sm"
+               value="{{ profile.date_of_birth or '' }}"></label>
+      <label class="field"><span class="lbl">Sex</span>
+        <select name="sex" class="form-select form-select-sm">
+          <option value="" {% if not profile.sex %}selected{% endif %}>—</option>
+          {% for s in ['male', 'female', 'other', 'prefer_not_to_say'] %}
+            <option value="{{ s }}" {% if profile.sex == s %}selected{% endif %}>{{ s|replace('_', ' ')|title }}</option>
+          {% endfor %}
+        </select></label>
+      <label class="field"><span class="lbl">Height (cm)</span>
+        <input type="number" step="0.1" name="height_cm" class="form-control form-control-sm"
+               value="{{ profile.height_cm if profile.height_cm is not none else '' }}"></label>
+      <label class="field field-wide"><span class="lbl">Primary sport</span>
+        <input type="text" name="primary_sport" class="form-control form-control-sm"
+               placeholder="e.g. adventure_racing, triathlon, marathon"
+               value="{{ profile.primary_sport or '' }}"></label>
+      <label class="field"><span class="lbl">Weekly hours target</span>
+        <input type="number" step="0.5" name="weekly_hours_target" class="form-control form-control-sm"
+               value="{{ profile.weekly_hours_target if profile.weekly_hours_target is not none else '' }}"></label>
+    </div>
+  </div>
+
+  <div class="card card-pad stack">
+    <div>
+      <p class="eyebrow">● Performance baselines</p>
+      <p class="pf-hint">Optional — feeds Layer 3 athlete evaluation. Connected providers will
+        auto-populate these in a future release; self-report is the only path for now.</p>
+    </div>
+    <div class="pf-grid">
+      <label class="field"><span class="lbl">Body weight (kg)</span>
+        <input type="number" step="0.1" min="20" max="300" name="body_weight_kg" class="form-control form-control-sm"
+               value="{{ profile.body_weight_kg if profile.body_weight_kg is not none else '' }}"></label>
+      <label class="field"><span class="lbl">HRmax (bpm)</span>
+        <input type="number" step="1" min="100" max="240" name="hrmax_bpm" class="form-control form-control-sm"
+               value="{{ profile.hrmax_bpm if profile.hrmax_bpm is not none else '' }}"></label>
+      <label class="field"><span class="lbl">Lactate threshold HR (bpm)</span>
+        <input type="number" step="1" min="100" max="220" name="lactate_threshold_hr_bpm" class="form-control form-control-sm"
+               value="{{ profile.lactate_threshold_hr_bpm if profile.lactate_threshold_hr_bpm is not none else '' }}"></label>
+      <label class="field"><span class="lbl">VO2max (ml/kg/min)</span>
+        <input type="number" step="0.1" min="20" max="100" name="vo2max" class="form-control form-control-sm"
+               value="{{ profile.vo2max if profile.vo2max is not none else '' }}"></label>
+      <label class="field"><span class="lbl">Cycling FTP (watts)</span>
+        <input type="number" step="1" min="50" max="500" name="cycling_ftp_w" class="form-control form-control-sm"
+               value="{{ profile.cycling_ftp_w if profile.cycling_ftp_w is not none else '' }}"></label>
+    </div>
+  </div>
+
+  <div class="card card-pad stack">
+    <p class="eyebrow">● Notes for the coach</p>
+    <label class="field">
+      <textarea name="notes" rows="3" class="form-control form-control-sm"
+                placeholder="Anything the coach should know up front (injuries, life constraints, equipment limitations, etc.)">{{ profile.notes or '' }}</textarea>
+    </label>
+  </div>
+
+  <div class="pf-save">
+    <span class="pf-saved mono">{% if profile.updated_at %}Last saved {{ (profile.updated_at|string)[:19] }}{% else %}Not yet saved{% endif %}</span>
+    <button type="submit" class="btn btn-primary">Save profile</button>
+  </div>
+</form>
+
+{# ════════════════════ SCHEDULE ════════════════════ #}
+{% elif sub == 'schedule' %}
+<form method="post" action="{{ url_for('profile.save_schedule') }}" class="pf-form">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <div class="card card-pad">
+    <p class="eyebrow">● Training windows</p>
+    <p class="pf-hint">Mark the days you have a window, the earliest you can start, and how long it
+      runs. Plans schedule sessions inside these windows — never past <em>start + duration</em>.</p>
+    {% include 'onboarding/_schedule_form.html' %}
+  </div>
+  <div class="pf-save">
+    <span></span>
+    <button type="submit" class="btn btn-primary">Save schedule</button>
+  </div>
+</form>
+
+{# ════════════════════ SKILLS ════════════════════ #}
+{% else %}
+<form method="post" action="{{ url_for('profile.save_skills') }}" class="pf-form">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <div class="card card-pad">
+    <p class="eyebrow">● Race-day skills</p>
+    <p class="pf-hint">Check the technical skills you've trained enough to apply on race day. Default
+      is OFF. Each unchecked skill that matches your race terrain surfaces a coaching flag so the
+      plan addresses the gap.</p>
+    {% with toggle_defs=skill_toggle_defs, current_states=skill_toggle_states %}
+      {% include 'onboarding/_skills_form.html' %}
+    {% endwith %}
+  </div>
+  <div class="pf-save">
+    <span></span>
+    <button type="submit" class="btn btn-primary">Save skills</button>
+  </div>
+</form>
+{% endif %}
 {% endblock %}

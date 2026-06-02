@@ -21,56 +21,13 @@ from plan_match import (
 bp = Blueprint('garmin', __name__, url_prefix='/garmin')
 
 
-@bp.route('/debug-fit', methods=['GET', 'POST'])
-def debug_fit():
-    dumps = None
-    if request.method == 'POST':
-        f = request.files.get('fit_file')
-        if not f or not f.filename:
-            flash('No file selected.', 'warning')
-            return redirect(url_for('garmin.debug_fit'))
-        try:
-            from garmin_fit_parser import _dump_fit
-            raw = f.read()
-            # secure_filename strips path components and unsafe characters
-            # before we look at the suffix or echo the name anywhere.
-            fname = secure_filename(f.filename or '').lower()
-            dumps = []
-            if fname.endswith('.zip'):
-                import zipfile, io
-                with zipfile.ZipFile(io.BytesIO(raw)) as zf:
-                    fit_names = [n for n in zf.namelist() if n.lower().endswith('.fit')]
-                    if not fit_names:
-                        flash('No .fit file found inside the zip.', 'danger')
-                        return redirect(url_for('garmin.debug_fit'))
-                    # Dump every entry (capped) so a single zip upload surfaces
-                    # all file types — activity, wellness, and metrics.
-                    for n in fit_names[:60]:
-                        try:
-                            dumps.append({'name': n, 'dump': _dump_fit(zf.read(n))})
-                        except Exception as e:
-                            dumps.append({'name': n, 'error': str(e)})
-            else:
-                dumps.append({'name': f.filename, 'dump': _dump_fit(raw)})
-        except Exception as e:
-            flash(f'Error: {e}', 'danger')
-    return render_template('garmin/debug_fit.html', dumps=dumps)
-
-
-@bp.route('/')
-def dashboard():
-    db = get_db()
-    recent_cardio = db.execute(
-        "SELECT * FROM cardio_log WHERE user_id = ? ORDER BY date DESC LIMIT 10",
-        (current_user_id(),)
-    ).fetchall()
-    try:
-        from garmin_connect import get_auth_status
-        auth_status = get_auth_status(db)
-    except Exception:
-        auth_status = {'authenticated': False, 'username': None}
-    return render_template('garmin/dashboard.html', recent_cardio=recent_cardio,
-                           auth_status=auth_status)
+# Redesign §17 — the `garmin.dashboard` (GET /garmin/) and `garmin.debug_fit`
+# (/garmin/debug-fit) surfaces were folded into the unified Connections hub
+# (`connections.hub`): the dashboard's recent-activity view is the Files tab,
+# and the FIT inspector is `connections.inspect`. Old URLs were hard-cut
+# (single-user app, no redirect shims — CONVENTIONS §A). The .FIT import +
+# sync + wellness + auth pipeline below stays; the hub's drop zone posts to
+# `garmin.import_fit`.
 
 
 @bp.route('/import', methods=['GET', 'POST'])
@@ -1023,7 +980,7 @@ def sync_confirm():
     if errors:
         msg += f', {errors} error(s)'
     flash(msg + '.', 'success')
-    return redirect(url_for('garmin.dashboard'))
+    return redirect(url_for('connections.hub', tab='files'))
 
 
 @bp.route('/api/sync', methods=['POST'])

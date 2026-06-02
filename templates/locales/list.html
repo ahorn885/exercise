@@ -1,86 +1,140 @@
-{% extends 'base_legacy.html' %}
-{% block title %}Location Equipment Profiles{% endblock %}
+{# Redesign §16 — Locations.
+   Migrates locales/list.html onto the new shell. UX copy is "Locations"; the
+   route/blueprint stays `locales` (CONVENTIONS §E.6). Each card is an
+   equipment profile that filters the exercise library to what's on hand.
+   Grounded in real routes only: Add → locales.new_locale; per-card Edit →
+   locales.edit_profile; Refresh (custom + mapbox-anchored) →
+   locales.refresh_from_mapbox; Delete (custom) → locales.delete_locale. The
+   artboard's "★ primary" badge + global "Find nearby" action are NOT ported —
+   the schema has no primary flag and `nearby_instances` is per-locale, not a
+   global search. The four legacy enums (home/hotel/partner/airport) always
+   render; the "Where do you train?" hero shows only when nothing is
+   configured yet (no locale_profiles rows and no saved equipment). #}
+{% extends 'base.html' %}
+{% set nav_active = 'locations' %}
+{% block title %}Locations{% endblock %}
+{% block crumbs %}<b>Locations</b>{% endblock %}
+{% block topbar_actions %}
+<a class="btn btn-primary btn-sm" href="{{ url_for('locales.new_locale') }}">
+  <svg class="icon" width="12" height="12" aria-hidden="true"><use href="#i-plus"></use></svg> Add location
+</a>
+{% endblock %}
+
 {% block content %}
-<div class="d-flex justify-content-between align-items-center mb-3">
-  <div>
-    <h4 class="mb-0">Location Equipment Profiles</h4>
-    <span class="text-muted small">Saved profiles filter the exercise list when you select a location.</span>
+<div class="dash-head">
+  <div class="races-intro">
+    <p class="eyebrow accent">● Locations · equipment profiles</p>
+    <h1 class="page-title">Where you train.</h1>
+    <p class="page-sub">Each location has an equipment profile. Selecting one filters exercises so
+      you only see what's actually available — barbell at home, cable stack at the gym, treadmill
+      at the hotel.</p>
   </div>
-  <a href="{{ url_for('locales.new_locale') }}" class="btn btn-sm btn-primary">+ New locale</a>
 </div>
-<div class="row g-3">
+
+{% if profiles or tags_by_locale %}
+<div class="loc-grid">
   {% for locale in locales %}
     {% set p = profiles.get(locale) %}
     {% set tag_count = counts.get(locale, 0) %}
     {% set is_legacy = locale in legacy_locales %}
-    <div class="col-12 col-md-6">
-      <div class="card h-100">
-        <div class="card-header d-flex justify-content-between align-items-center">
-          <span class="fw-semibold">
+    {% set locale_tags = tags_by_locale.get(locale, []) %}
+    {% set display_name = (p['locale_name'] if p and p['locale_name'] else locale) %}
+    <div class="card loc-card">
+      <div class="loc-head">
+        <div class="loc-id">
+          <div class="loc-title">
             {% if is_legacy %}
-              <span class="text-capitalize">{{ locale }}</span>
+              <span class="loc-name text-capitalize">{{ locale }}</span>
             {% else %}
-              {{ p['locale_name'] if p and p['locale_name'] else locale }}
-              {% if p and p['chain_name'] %}
-                <span class="badge bg-info text-dark ms-1">{{ p['chain_name'] }}</span>
-              {% elif p and p['category'] %}
-                <span class="badge bg-secondary ms-1">{{ p['category'].replace('_', ' ') }}</span>
-              {% endif %}
-              {% if p and p['manual_entry'] %}
-                <span class="badge bg-light text-dark ms-1">manual</span>
-              {% endif %}
-              {% set addr = display_addresses.get(locale) %}
-              {% if addr %}
-                <div class="text-muted small fw-normal mt-1">{{ addr }}</div>
-              {% endif %}
-            {% endif %}
-          </span>
-          <div class="d-flex gap-1">
-            {% if not is_legacy and p and p['mapbox_id'] %}
-              <form method="post" action="{{ url_for('locales.refresh_from_mapbox', locale=locale) }}" class="d-inline">
-                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                <button type="submit" class="btn btn-sm btn-outline-secondary" title="Refresh from Mapbox">⟳</button>
-              </form>
-            {% endif %}
-            <a href="{{ url_for('locales.edit_profile', locale=locale) }}" class="btn btn-sm btn-outline-secondary">Edit</a>
-            {% if not is_legacy and p %}
-              <form method="post"
-                    action="{{ url_for('locales.delete_locale', locale=locale) }}"
-                    class="d-inline"
-                    data-confirm="Delete &quot;{{ p['locale_name'] if p['locale_name'] else locale }}&quot;? Equipment overrides for this location will be removed too. This cannot be undone.">
-                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                <button type="submit" class="btn btn-sm btn-outline-danger">Delete</button>
-              </form>
+              <span class="loc-name">{{ display_name }}</span>
+              {% if p and p['chain_name'] %}<span class="chip accent">{{ p['chain_name'] }}</span>{% endif %}
+              {% if p and p['category'] %}<span class="chip solid">{{ p['category'].replace('_', ' ') }}</span>{% endif %}
+              {% if p and p['manual_entry'] %}<span class="chip">manual</span>{% endif %}
             {% endif %}
           </div>
+          {% set addr = display_addresses.get(locale) %}
+          {% if addr %}<p class="loc-addr mono">▽ {{ addr }}</p>{% endif %}
         </div>
-        <div class="card-body">
-          {% if tag_count > 0 %}
-            <p class="text-muted small mb-2">
-              {{ tag_count }} item{{ 's' if tag_count != 1 }}
-              {% if p and p['city'] %} &nbsp;·&nbsp; 📍 {{ p['city'] }}{% endif %}
-              {# str() so this works on both backends — SQLite stores updated_at as TEXT,
-                 Postgres returns it as a datetime.datetime that isn't subscriptable. #}
-              &nbsp;·&nbsp; updated {{ (p['updated_at']|string)[:10] if p and p['updated_at'] else '—' }}
-            </p>
-            {% if p and p['notes'] %}
-              <p class="text-muted small fst-italic mb-2">{{ p['notes'] }}</p>
-            {% endif %}
-            <div>
-              {% set locale_tags = tags_by_locale.get(locale, []) %}
-              {% for item in locale_tags[:8] %}
-                <span class="badge bg-secondary me-1 mb-1">{{ item['label'] }}</span>
-              {% endfor %}
-              {% if locale_tags|length > 8 %}
-                <span class="text-muted small">+{{ locale_tags|length - 8 }} more</span>
-              {% endif %}
-            </div>
-          {% else %}
-            <p class="text-muted small mb-0">No profile set — exercise filter uses static location tags only.</p>
+        <div class="loc-actions">
+          {% if not is_legacy and p and p['mapbox_id'] %}
+          <form method="post" action="{{ url_for('locales.refresh_from_mapbox', locale=locale) }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button type="submit" class="btn btn-ghost btn-sm" title="Refresh from Mapbox">⟳</button>
+          </form>
+          {% endif %}
+          <a class="btn btn-ghost btn-sm" href="{{ url_for('locales.edit_profile', locale=locale) }}">Edit</a>
+          {% if not is_legacy and p %}
+          <form method="post" action="{{ url_for('locales.delete_locale', locale=locale) }}"
+                data-confirm="Delete &quot;{{ display_name }}&quot;? Equipment overrides for this location will be removed too. This cannot be undone.">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button type="submit" class="btn btn-ghost btn-sm loc-del">Delete</button>
+          </form>
           {% endif %}
         </div>
       </div>
+
+      <div class="loc-body">
+        {% if tag_count > 0 %}
+          <div class="loc-tags">
+            {% for item in locale_tags[:8] %}
+              <span class="chip solid">{{ item['label'] }}</span>
+            {% endfor %}
+            {% if locale_tags|length > 8 %}
+              <span class="loc-more mono">+{{ locale_tags|length - 8 }} more</span>
+            {% endif %}
+          </div>
+          {% if p and p['notes'] %}<p class="loc-notes">{{ p['notes'] }}</p>{% endif %}
+        {% else %}
+          <p class="loc-empty-body">No profile set — exercise filter uses static location tags only.</p>
+        {% endif %}
+      </div>
+
+      <div class="loc-foot">
+        <span class="meta mono">
+          {{ tag_count }} item{{ 's' if tag_count != 1 else '' }}
+          {% if p and p['city'] %} · {{ p['city'] }}{% endif %}
+          · updated {{ (p['updated_at']|string)[:10] if p and p['updated_at'] else '—' }}
+        </span>
+        <a class="edit mono" href="{{ url_for('locales.edit_profile', locale=locale) }}">Edit →</a>
+      </div>
     </div>
   {% endfor %}
+
+  <a class="card card-flush loc-add" href="{{ url_for('locales.new_locale') }}">
+    <svg class="icon" width="20" height="20" aria-hidden="true"><use href="#i-plus"></use></svg>
+    <span class="loc-add-title">Add another location</span>
+    <span class="loc-add-sub mono">Home · Gym · Route · Hotel</span>
+  </a>
 </div>
+
+{% else %}
+{# ── No locations configured yet → "Where do you train?" hero ── #}
+<div class="stack">
+  <div class="loc-empty">
+    <p class="eyebrow accent">● No locations saved</p>
+    <h1 class="loc-empty-title">Where do you train?</h1>
+    <p class="loc-empty-sub">Each location has its own equipment profile. We filter exercises to
+      what's actually available. Set up one of your default spots, or search by address.</p>
+    <div class="loc-types">
+      {% for loc in legacy_locales %}
+      <a class="card loc-type-card" href="{{ url_for('locales.edit_profile', locale=loc) }}">
+        <span class="eyebrow accent">● {{ loc }}</span>
+        <span class="loc-type-title text-capitalize">Set up {{ loc }}</span>
+        <span class="btn btn-ghost btn-sm">
+          <svg class="icon" width="10" height="10" aria-hidden="true"><use href="#i-plus"></use></svg> Set up
+        </span>
+      </a>
+      {% endfor %}
+    </div>
+    <a class="card card-flush loc-search" href="{{ url_for('locales.new_locale') }}">
+      <span class="eyebrow">Or search by address</span>
+      <span class="loc-search-row">
+        <svg class="icon" width="14" height="14" aria-hidden="true"><use href="#i-search"></use></svg>
+        <span class="loc-search-hint">Equinox, Planet Fitness, an address…</span>
+        <span class="btn btn-primary btn-sm">Search</span>
+      </span>
+    </a>
+  </div>
+</div>
+{% endif %}
 {% endblock %}

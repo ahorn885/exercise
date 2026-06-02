@@ -118,6 +118,7 @@ from routes.injuries import bp as injuries_bp
 from routes.references import bp as references_bp
 from routes.locales import bp as locales_bp
 from routes.garmin import bp as garmin_bp
+from routes.connections import bp as connections_bp
 from routes.plans import bp as plans_bp
 from routes.coaching import bp as coaching_bp
 from routes.natural_log import bp as natural_log_bp
@@ -153,6 +154,7 @@ app.register_blueprint(injuries_bp)
 app.register_blueprint(references_bp)
 app.register_blueprint(locales_bp)
 app.register_blueprint(garmin_bp)
+app.register_blueprint(connections_bp)
 app.register_blueprint(plans_bp)
 app.register_blueprint(coaching_bp)
 app.register_blueprint(natural_log_bp)

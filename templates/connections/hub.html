@@ -1,0 +1,259 @@
+{# Redesign §17 — Connections hub (Sources / Files / Preferences).
+   One page consolidating the old garmin.dashboard, garmin.debug_fit, the
+   .FIT import entry, and the Profile › Connections tab. Tabs are
+   server-rendered via ?tab= (CSP-clean, no SPA). Everything here is grounded
+   in real routes/data: providers from provider_auth (load_connections),
+   Garmin PAUSED per policy, the drop zone posts to garmin.import_fit, the
+   Files list reads cardio_log, and the inspector reuses the FIT parser.
+   The artboard's configurable sync rules (trust order / pull windows /
+   retention) have no backend and are intentionally not fabricated. #}
+{% extends 'base.html' %}
+{% set nav_active = 'link' %}
+{% block title %}Connections{% endblock %}
+{% block crumbs %}<b>Connections</b>{% endblock %}
+{% block topbar_actions %}
+<a class="btn btn-primary btn-sm" href="{{ url_for('garmin.import_fit') }}">
+  <svg class="icon" width="12" height="12" aria-hidden="true"><use href="#i-upload"></use></svg> Upload .FIT
+</a>
+{% endblock %}
+
+{% block content %}
+<div class="dash-head">
+  <div class="races-intro">
+    <p class="eyebrow accent">● Connections · everything that feeds the app</p>
+    <h1 class="page-title">Bring data in.</h1>
+    <p class="page-sub">One place for every source — auto-sync providers, manual .FIT uploads, and
+      how we handle the overlap. Both paths feed the same engine; your plan adapts either way.</p>
+  </div>
+</div>
+
+{# ── Tabs ── #}
+<div class="conn-tabs" role="tablist" aria-label="Connections sections">
+  {% for key, label, sub in [
+       ('sources', 'Sources', 'providers + upload'),
+       ('files', 'Files', 'import history'),
+       ('prefs', 'Preferences', 'how ingestion works')] %}
+  <a class="conn-tab{{ ' is-on' if tab == key else '' }}" role="tab"
+     aria-selected="{{ 'true' if tab == key else 'false' }}"
+     href="{{ url_for('connections.hub', tab=key) }}">
+    <span class="conn-tab-label">{{ label }}</span>
+    <span class="conn-tab-sub mono">{{ sub }}</span>
+  </a>
+  {% endfor %}
+</div>
+
+{# ════════════════════════ SOURCES ════════════════════════ #}
+{% if tab == 'sources' %}
+<div class="stack">
+
+  {# .FIT drop zone — real import pipeline #}
+  <form class="conn-drop" method="post" action="{{ url_for('garmin.import_fit') }}"
+        enctype="multipart/form-data">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <div class="drop-ic">
+      <svg class="icon" width="18" height="18" aria-hidden="true"><use href="#i-upload"></use></svg>
+    </div>
+    <div class="drop-title">Upload a .FIT file</div>
+    <p class="drop-sub">Any device that exports .FIT — Garmin, Wahoo, COROS, Polar, Suunto, Apple
+      Watch. We sniff sport &amp; type automatically; nothing else to pick.</p>
+    <label class="field drop-file">
+      <span class="lbl">Choose .fit or .zip</span>
+      <input type="file" name="fit_file" accept=".fit,.zip" class="form-control form-control-sm">
+    </label>
+    <button type="submit" class="btn btn-primary btn-sm">
+      <svg class="icon" width="11" height="11" aria-hidden="true"><use href="#i-upload"></use></svg> Upload &amp; preview
+    </button>
+  </form>
+
+  <section>
+    <p class="eyebrow conn-sec-label">Auto-sync providers · {{ connected_count }} of {{ provider_total }} connected</p>
+    <div class="provider-list">
+
+      {# Real OAuth providers (COROS / Polar) #}
+      {% for p in oauth_providers %}
+      <div class="card provider-row{{ ' is-on' if p.is_connected else '' }}">
+        <div class="pv-avatar{{ ' on' if p.is_connected else '' }}">{{ p.label[0] }}</div>
+        <div class="pv-id">
+          <div class="pv-title">
+            <span class="pv-name">{{ p.label }}</span>
+            {% if p.is_connected %}
+              <span class="chip good">✓ Connected</span>
+            {% else %}
+              <span class="chip">{{ p.status_label }}</span>
+            {% endif %}
+          </div>
+          {% if p.is_connected %}
+            <p class="pv-meta mono">
+              {% if p.row and p.row.scopes %}{{ p.row.scopes }} · {% endif %}
+              {% if p.row and p.row.registered_at %}since {{ (p.row.registered_at|string)[:10] }}{% endif %}
+            </p>
+          {% else %}
+            <p class="pv-meta mono">Connect to auto-sync activities into your log.</p>
+          {% endif %}
+        </div>
+        <div class="pv-actions">
+          {% if p.is_connected %}
+            <a class="btn btn-ghost btn-sm" href="{{ p.connect_url }}">Re-authorise</a>
+            <form method="post" action="{{ url_for('profile.disconnect_provider', provider=p.slug) }}"
+                  data-confirm="Disconnect {{ p.label }}? Your existing data stays, but no new syncs will run until you reconnect.">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <button type="submit" class="btn btn-ghost btn-sm pv-revoke">Revoke</button>
+            </form>
+          {% else %}
+            <a class="btn btn-primary btn-sm" href="{{ p.connect_url }}">Connect</a>
+          {% endif %}
+        </div>
+      </div>
+      {% endfor %}
+
+      {# Garmin — PAUSED (API access closed; upload .FIT manually) #}
+      <div class="card provider-row is-paused">
+        <div class="pv-avatar">G</div>
+        <div class="pv-id">
+          <div class="pv-title">
+            <span class="pv-name">Garmin</span>
+            <span class="chip warn">Paused</span>
+          </div>
+          <p class="pv-reason">Garmin Connect API access is closed — upload completed .FIT files
+            manually instead.</p>
+        </div>
+        <div class="pv-actions">
+          <a class="btn btn-ghost btn-sm" href="{{ url_for('garmin.import_fit') }}">Upload .FIT</a>
+        </div>
+      </div>
+
+      {# Webhook-only stubs — no OAuth start route yet #}
+      {% for s in stub_providers %}
+      <div class="card provider-row is-stub">
+        <div class="pv-avatar">{{ s.label[0] }}</div>
+        <div class="pv-id">
+          <div class="pv-title">
+            <span class="pv-name">{{ s.label }}</span>
+            <span class="chip">Not available yet</span>
+          </div>
+          <p class="pv-meta mono">Scopes · {{ s.scopes }}</p>
+        </div>
+        <div class="pv-actions">
+          <span class="pv-soon mono">Coming soon</span>
+        </div>
+      </div>
+      {% endfor %}
+
+    </div>
+  </section>
+</div>
+
+{# ════════════════════════ FILES ════════════════════════ #}
+{% elif tab == 'files' %}
+<div class="conn-files">
+
+  <div class="cf-list">
+    <p class="eyebrow conn-sec-label">Imported activities · newest first</p>
+    {% if recent_activities %}
+    <div class="card cf-card">
+      {% for a in recent_activities %}
+      {% set is_manual = a.garmin_activity_id and a.garmin_activity_id.startswith('fit:') %}
+      <div class="file-row">
+        <div class="sport-glyph">{{ (a.activity or '·')[0]|upper }}</div>
+        <div class="fr-id">
+          <div class="fr-title">
+            <span class="fr-name">{{ a.activity_name or a.activity or 'Activity' }}</span>
+            {% if is_manual %}<span class="chip accent">Manual .FIT</span>
+            {% else %}<span class="chip solid">Synced</span>{% endif %}
+          </div>
+          <p class="fr-meta mono">
+            {{ (a.date|string)[:10] }} · {{ a.activity }}
+            {% if a.duration_min %} · {{ a.duration_min|round|int }} min{% endif %}
+            {% if a.distance_mi %} · {{ a.distance_mi }} mi{% endif %}
+            {% if a.avg_hr %} · {{ a.avg_hr }}{% if a.max_hr %}/{{ a.max_hr }}{% endif %} bpm{% endif %}
+          </p>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+    <p class="cf-foot mono">Showing {{ recent_activities|length }} of {{ activity_count }}</p>
+    {% else %}
+    <div class="card cf-empty">
+      <p class="eyebrow">● No files yet</p>
+      <p class="cf-empty-txt">Nothing imported yet. Upload a .FIT on the Sources tab, or inspect one
+        on the right before it lands in your log.</p>
+      <a class="btn btn-ghost btn-sm" href="{{ url_for('connections.hub', tab='sources') }}">Go to Sources</a>
+    </div>
+    {% endif %}
+  </div>
+
+  <aside class="cf-inspector">
+    <div class="card card-pad">
+      <p class="eyebrow accent">● Inspector</p>
+      <p class="insp-sub">Parse any .FIT to see exactly what we read — sport, records, and device
+        metadata — before it touches your log.</p>
+      <form method="post" action="{{ url_for('connections.inspect') }}" enctype="multipart/form-data">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <label class="field">
+          <span class="lbl">.fit or .zip</span>
+          <input type="file" name="fit_file" accept=".fit,.zip" class="form-control form-control-sm" required>
+        </label>
+        <button type="submit" class="btn btn-primary btn-sm">Inspect</button>
+      </form>
+
+      {% if inspect_dumps %}
+      <div class="insp-results">
+        {% for d in inspect_dumps %}
+        <div class="insp-file">
+          <p class="insp-name mono">{{ d.name }}</p>
+          {% if d.error %}
+            <p class="insp-err">Error: {{ d.error }}</p>
+          {% else %}
+            <pre class="insp-pre">{{ d.dump|tojson(indent=2) }}</pre>
+          {% endif %}
+        </div>
+        {% endfor %}
+      </div>
+      {% endif %}
+    </div>
+  </aside>
+
+</div>
+
+{# ════════════════════════ PREFERENCES ════════════════════════ #}
+{% else %}
+<div class="stack conn-prefs">
+  <p class="page-sub conn-prefs-lede">How ingestion behaves today. These are the live rules — there's
+    no toggles to set yet; the configurable trust-order, pull-window, and retention controls arrive
+    with a settings backend.</p>
+
+  <div class="row">
+    <div class="col">
+      <div class="card card-pad">
+        <p class="eyebrow">● Duplicates &amp; matching</p>
+        <dl class="pref-facts">
+          <dt>Duplicate detection</dt>
+          <dd>Exact file-content match (SHA-256). Re-uploading the same .FIT — or re-syncing an
+            activity we've already pulled — is skipped automatically.</dd>
+          <dt>Plan matching</dt>
+          <dd>Imports are matched to a planned workout when the date and sport line up, so completing
+            a session updates the plan.</dd>
+          <dt>Sport detection</dt>
+          <dd>Read from the .FIT sport field when present; we fall back to the file naming otherwise.</dd>
+        </dl>
+      </div>
+    </div>
+    <div class="col">
+      <div class="card card-pad">
+        <p class="eyebrow">● Sources &amp; providers</p>
+        <dl class="pref-facts">
+          <dt>Manual + auto, one log</dt>
+          <dd>Manual .FIT uploads and provider syncs land in the same activity log — nothing is
+            siloed by source.</dd>
+          <dt>Garmin</dt>
+          <dd>Paused — Garmin Connect API access is closed. Export a .FIT and upload it manually.</dd>
+          <dt>Provider connections</dt>
+          <dd>Connect, re-authorise, or revoke a provider on the
+            <a href="{{ url_for('connections.hub', tab='sources') }}">Sources</a> tab.</dd>
+        </dl>
+      </div>
+    </div>
+  </div>
+</div>
+{% endif %}
+{% endblock %}

@@ -1,152 +1,223 @@
-{% extends 'base_legacy.html' %}
+{# Redesign §15 — Exercises library.
+   Migrates rx/list.html onto the new shell. "Exercises" = the `rx` blueprint:
+   current_rx (your prescribed lifts/intervals) joined to exercise_inventory.
+   Current Rx renders as a token data-table with the plateau/deload watch and
+   the real GET filters (discipline · status · location); the catalog
+   (inventory with no current Rx) lists below. Zero prescribed Rx → a "No Rx
+   yet." hero whose CTAs stay grounded in real routes (Generate plan →
+   plan_create.new_plan; "browse the catalog" anchors to the inline catalog
+   list, not an invented route — there is no add/import endpoint for rx). #}
+{% extends 'base.html' %}
+{% set nav_active = 'library' %}
+{% set has_filter = discipline or status or locale_filter %}
 {% block title %}Exercises{% endblock %}
+{% block crumbs %}<b>Exercises</b>{% endblock %}
+
 {% block content %}
-<div class="d-flex justify-content-between align-items-center mb-3">
-  <h4 class="mb-0">Exercises</h4>
-</div>
-
-{% if deload_pending %}
-<div class="alert alert-warning mb-3">
-  <div class="d-flex justify-content-between align-items-start gap-3">
-    <div>
-      <strong>Plateau check.</strong>
-      {{ deload_pending|length }} exercise{{ 's' if deload_pending|length != 1 else '' }}
-      ha{{ 've' if deload_pending|length != 1 else 's' }} stalled
-      ≥{{ deload_threshold }} sessions without PROGRESS. Consider a deload —
-      drop 10% to break the plateau and rebuild. The button on each row
-      drops the primary dimension, re-derives next, and resets both
-      plateau and failure counters.
-    </div>
+<div class="dash-head">
+  <div class="races-intro">
+    <p class="eyebrow accent">● Library · current Rx</p>
+    <h1 class="page-title">Exercises.</h1>
+    <p class="page-sub">Your prescribed lifts and intervals. Outcomes flow back from your set
+      logs to set the next target.</p>
   </div>
 </div>
-{% endif %}
 
-<form class="row g-2 mb-3" method="get">
-  <div class="col-auto">
-    <select name="discipline" class="form-select form-select-sm">
-      <option value="">All disciplines</option>
-      {% for d in ['Bike','Foot','Water','Cross'] %}
-        <option value="{{ d }}" {% if discipline == d %}selected{% endif %}>{{ d }}</option>
-      {% endfor %}
-    </select>
+{# Reusable filter bar (real GET form: discipline · status · location). #}
+{% macro filter_bar() %}
+<form class="card rx-filters" method="get">
+  <span class="eyebrow">Filter</span>
+  <div class="rx-filter-controls">
+    <label class="field">
+      <span class="lbl">Discipline</span>
+      <select name="discipline" class="form-select form-select-sm">
+        <option value="">All disciplines</option>
+        {% for d in ['Bike','Foot','Water','Cross'] %}
+          <option value="{{ d }}" {% if discipline == d %}selected{% endif %}>{{ d }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label class="field">
+      <span class="lbl">Status</span>
+      <select name="status" class="form-select form-select-sm">
+        <option value="">All statuses</option>
+        <option value="↑" {% if status == '↑' %}selected{% endif %}>Progress</option>
+        <option value="→" {% if status == '→' %}selected{% endif %}>Repeat</option>
+        <option value="↓" {% if status == '↓' %}selected{% endif %}>Reduce</option>
+      </select>
+    </label>
+    <label class="field">
+      <span class="lbl">Location</span>
+      <select name="locale" class="form-select form-select-sm">
+        <option value="">All locations</option>
+        {% for l in locales %}
+          <option value="{{ l.locale }}" {% if locale_filter == l.locale %}selected{% endif %}>{{ l.locale }}</option>
+        {% endfor %}
+      </select>
+    </label>
   </div>
-  <div class="col-auto">
-    <select name="status" class="form-select form-select-sm">
-      <option value="">All statuses</option>
-      <option value="↑" {% if status == '↑' %}selected{% endif %}>PROGRESS</option>
-      <option value="→" {% if status == '→' %}selected{% endif %}>REPEAT</option>
-      <option value="↓" {% if status == '↓' %}selected{% endif %}>REDUCE</option>
-    </select>
-  </div>
-  <div class="col-auto">
-    <select name="locale" class="form-select form-select-sm">
-      <option value="">All locations</option>
-      {% for l in locales %}
-        <option value="{{ l.locale }}" {% if locale_filter == l.locale %}selected{% endif %}>{{ l.locale }}</option>
-      {% endfor %}
-    </select>
-  </div>
-  <div class="col-auto">
-    <button class="btn btn-sm btn-outline-secondary">Filter</button>
-    <a href="{{ url_for('rx.list_entries') }}" class="btn btn-sm btn-outline-secondary">Clear</a>
+  <div class="rx-filter-actions">
+    <button type="submit" class="btn btn-primary btn-sm">Filter</button>
+    <a class="btn btn-ghost btn-sm" href="{{ url_for('rx.list_entries') }}">Clear</a>
   </div>
 </form>
+{% endmacro %}
+
+{# Catalog: inventory exercises with no current Rx for this user. #}
+{% macro catalog_table() %}
+<section id="catalog">
+  <p class="eyebrow rx-sec-label">Catalog · no current Rx · {{ inventory_only|length }}</p>
+  <div class="card rx-table-card">
+    <table class="data rx-table rx-catalog">
+      <thead>
+        <tr>
+          <th>Exercise</th><th>Disc.</th><th>Type</th><th>Pattern</th>
+          <th>Sugg. vol</th><th>Where</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for e in inventory_only %}
+        <tr class="is-catalog">
+          <td class="rx-ex">
+            {% if e.video_reference %}
+              <a href="{{ e.video_reference }}" target="_blank" rel="noopener">{{ e.exercise }} ↗</a>
+            {% else %}{{ e.exercise }}{% endif %}
+          </td>
+          <td><span class="chip solid">{{ e.discipline }}</span></td>
+          <td class="dim">{{ e.type }}</td>
+          <td class="dim">{{ e.movement_pattern }}</td>
+          <td class="dim">{{ e.suggested_volume or '—' }}</td>
+          <td class="dim">{{ e.where_available or '—' }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endmacro %}
 
 {% if entries %}
-<h6 class="text-muted mb-2">Current Rx ({{ entries|length }})</h6>
-<div class="table-responsive mb-4">
-  <table class="table table-sm table-hover table-striped">
-    <thead class="table-dark">
-      <tr>
-        <th>Exercise</th><th>Disc.</th><th>Type</th><th>Pattern</th><th>Sugg. Vol</th>
-        <th>Sets</th><th>Reps</th><th>Weight</th><th>Last Done</th><th>Outcome</th><th></th>
-      </tr>
-    </thead>
-    <tbody>
-    {% for e in entries %}
-    <tr>
-      <td>
-        {% if e.video_reference %}
-          <a href="{{ e.video_reference }}" target="_blank" rel="noopener" class="text-decoration-none">{{ e.exercise }} ↗</a>
-        {% else %}
-          {{ e.exercise }}
-        {% endif %}
-      </td>
-      <td class="text-nowrap"><span class="badge bg-secondary">{{ e.discipline }}</span></td>
-      <td class="text-muted small text-nowrap">{{ e.type }}</td>
-      <td class="text-muted small text-nowrap">{{ e.movement_pattern }}</td>
-      <td class="text-muted small text-nowrap">{{ e.inventory_sugg_volume or e.ei_suggested_volume or '—' }}</td>
-      <td>{{ e.current_sets or '—' }}</td>
-      <td>{{ e.current_reps or '—' }}</td>
-      <td>{{ e.current_weight or '—' }}{% if e.current_weight %} lb{% endif %}</td>
-      <td class="text-muted small text-nowrap">{{ e.last_performed or '—' }}</td>
-      <td class="text-nowrap">
-        {% if e.last_outcome %}
-          <span class="badge {% if '↑' in e.last_outcome %}bg-success{% elif '→' in e.last_outcome %}bg-warning text-dark{% elif '↓' in e.last_outcome %}bg-danger{% else %}bg-secondary{% endif %}">
-            {{ e.last_outcome }}
-          </span>
-          {% if e.consecutive_failures and e.consecutive_failures > 0 %}
-            <span class="badge {% if e.consecutive_failures >= 3 %}bg-danger{% elif e.consecutive_failures >= 2 %}bg-warning text-dark{% else %}bg-secondary{% endif %} ms-1"
-                  title="{{ e.consecutive_failures }} consecutive failure(s) — regression fires at 3">
-              {{ e.consecutive_failures }}/3
-            </span>
-          {% endif %}
-          {% if e.sessions_since_progress and e.sessions_since_progress >= deload_threshold %}
-            <span class="badge bg-warning text-dark ms-1"
-                  title="{{ e.sessions_since_progress }} sessions without PROGRESS — consider a deload week (drop 10–20%, rebuild)">
-              deload
-            </span>
-          {% endif %}
-        {% else %}
-          <span class="text-muted small">needs setup</span>
-        {% endif %}
-      </td>
-      <td class="text-nowrap">
-        {% if e.sessions_since_progress and e.sessions_since_progress >= deload_threshold %}
-          <form method="post" action="{{ url_for('rx.deload_entry', entry_id=e.id) }}" class="d-inline"
-                data-confirm="Drop {{ e.exercise }} by 10% and reset the plateau counter?">
-            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-            <button class="btn btn-sm btn-warning py-0 px-1"
-                    title="Drop primary dimension 10%, re-derive next, reset plateau + failure counters">
-              Deload −10%
-            </button>
-          </form>
-        {% endif %}
-        <a href="{{ url_for('rx.edit_entry', entry_id=e.id) }}" class="btn btn-sm btn-outline-secondary py-0 px-1">Edit</a>
-      </td>
-    </tr>
-    {% endfor %}
-    </tbody>
-  </table>
-</div>
-{% endif %}
+<div class="stack">
 
-{% if inventory_only %}
-<h6 class="text-muted mb-2">All Exercises — No Current Rx ({{ inventory_only|length }})</h6>
-<div class="table-responsive">
-  <table class="table table-sm table-hover">
-    <thead class="table-light">
-      <tr><th>Exercise</th><th>Disc.</th><th>Type</th><th>Pattern</th><th>Sugg. Vol</th><th>Where</th></tr>
-    </thead>
-    <tbody>
-    {% for e in inventory_only %}
-    <tr class="text-muted">
-      <td>
-        {% if e.video_reference %}
-          <a href="{{ e.video_reference }}" target="_blank" rel="noopener" class="text-decoration-none text-muted">{{ e.exercise }} ↗</a>
-        {% else %}
-          {{ e.exercise }}
+  {% if deload_pending %}
+  <div class="card rx-alert">
+    <span class="chip warn">! Plateau check</span>
+    <span class="rx-alert-txt">
+      <b>{{ deload_pending|length }} exercise{{ 's' if deload_pending|length != 1 else '' }}</b>
+      ha{{ 've' if deload_pending|length != 1 else 's' }} stalled
+      ≥{{ deload_threshold }} sessions without progress — drop 10% to break the
+      plateau and rebuild. The button on each flagged row re-derives the next
+      target and resets the plateau + failure counters.
+    </span>
+  </div>
+  {% endif %}
+
+  {{ filter_bar() }}
+
+  <section>
+    <p class="eyebrow rx-sec-label">Current Rx · {{ entries|length }}</p>
+    <div class="card rx-table-card">
+      <table class="data rx-table">
+        <thead>
+          <tr>
+            <th>Exercise</th><th>Disc.</th><th>Type</th><th>Pattern</th>
+            <th>Sets</th><th>Reps</th><th>Weight</th><th>Last done</th>
+            <th>Outcome</th><th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for e in entries %}
+          {% set flagged = e.sessions_since_progress and e.sessions_since_progress >= deload_threshold %}
+          <tr>
+            <td class="rx-ex">
+              {% if e.video_reference %}
+                <a href="{{ e.video_reference }}" target="_blank" rel="noopener">{{ e.exercise }} ↗</a>
+              {% else %}{{ e.exercise }}{% endif %}
+            </td>
+            <td><span class="chip solid">{{ e.discipline }}</span></td>
+            <td class="dim">{{ e.type }}</td>
+            <td class="dim">{{ e.movement_pattern }}</td>
+            <td class="num">{{ e.current_sets or '—' }}</td>
+            <td class="num">{{ e.current_reps or '—' }}</td>
+            <td class="num rx-wt">{{ e.current_weight or '—' }}{% if e.current_weight %} lb{% endif %}</td>
+            <td class="mono dim rx-last">{{ e.last_performed or '—' }}</td>
+            <td class="rx-out">
+              {% if e.last_outcome %}
+                <span class="chip {% if '↑' in e.last_outcome %}good{% elif '→' in e.last_outcome %}warn{% elif '↓' in e.last_outcome %}bad{% else %}solid{% endif %}">{{ e.last_outcome }}</span>
+                {% if flagged %}<span class="chip bad">deload</span>{% endif %}
+                {% if e.consecutive_failures and e.consecutive_failures > 0 %}
+                  <span class="rx-fails mono" title="{{ e.consecutive_failures }} consecutive failure(s) — regression fires at 3">{{ e.consecutive_failures }}/3</span>
+                {% endif %}
+              {% else %}
+                <span class="dim">needs setup</span>
+              {% endif %}
+            </td>
+            <td class="rx-row-act">
+              {% if flagged %}
+              <form method="post" action="{{ url_for('rx.deload_entry', entry_id=e.id) }}"
+                    data-confirm="Drop {{ e.exercise }} by 10% and reset the plateau counter?">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <button type="submit" class="btn btn-ghost btn-sm rx-deload-btn"
+                        title="Drop primary dimension 10%, re-derive next, reset plateau + failure counters">−10%</button>
+              </form>
+              {% endif %}
+              <a class="btn btn-ghost btn-sm" href="{{ url_for('rx.edit_entry', entry_id=e.id) }}">Edit</a>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  {% if inventory_only %}{{ catalog_table() }}{% endif %}
+
+</div>
+
+{% elif has_filter %}
+<div class="stack">
+  {{ filter_bar() }}
+  <div class="card rx-nomatch">
+    <p class="eyebrow">● No matches</p>
+    <p class="rx-nomatch-txt">No prescribed exercises match these filters.</p>
+    <a class="btn btn-ghost btn-sm" href="{{ url_for('rx.list_entries') }}">Clear filters</a>
+  </div>
+  {% if inventory_only %}{{ catalog_table() }}{% endif %}
+</div>
+
+{% else %}
+<div class="stack">
+  <div class="rx-empty">
+    <p class="eyebrow accent">● No prescribed exercises yet</p>
+    <h1 class="rx-empty-title">No Rx yet.</h1>
+    <p class="rx-empty-sub">The exercise library tracks what you're currently prescribed — sets, reps,
+      weights, plateau watch. Generate a plan to populate it, or browse the catalog below.</p>
+    <div class="noplan-ways">
+      <div class="card noplan-card start">
+        <p class="eyebrow accent">● Recommended</p>
+        <div class="noplan-card-title">Generate from a plan</div>
+        <p class="noplan-card-sub">Plan synthesis populates strength + interval Rx from your skills,
+          locations, and goals.</p>
+        <a class="btn btn-primary" href="{{ url_for('plan_create.new_plan') }}">
+          <svg class="icon" width="13" height="13" aria-hidden="true"><use href="#i-bolt"></use></svg> Generate plan
+        </a>
+      </div>
+      <div class="card noplan-card">
+        <p class="eyebrow">● Catalog</p>
+        <div class="noplan-card-title">Browse exercises</div>
+        <p class="noplan-card-sub">{{ inventory_only|length }} exercise{{ 's' if inventory_only|length != 1 else '' }}
+          in the catalog. Your starting targets get tracked once a plan prescribes them.</p>
+        {% if inventory_only %}
+        <a class="btn btn-ghost" href="#catalog">
+          <svg class="icon" width="13" height="13" aria-hidden="true"><use href="#i-library"></use></svg> View catalog
+        </a>
         {% endif %}
-      </td>
-      <td class="text-nowrap"><span class="badge bg-light text-dark border">{{ e.discipline }}</span></td>
-      <td class="small text-nowrap">{{ e.type }}</td>
-      <td class="small text-nowrap">{{ e.movement_pattern }}</td>
-      <td class="small text-nowrap">{{ e.suggested_volume or '—' }}</td>
-      <td class="small text-nowrap">{{ e.where_available or '—' }}</td>
-    </tr>
-    {% endfor %}
-    </tbody>
-  </table>
+      </div>
+    </div>
+    <p class="rx-empty-note mono">ⓘ {{ inventory_only|length }} in the catalog · 0 in your active Rx</p>
+  </div>
+
+  {% if inventory_only %}{{ catalog_table() }}{% endif %}
 </div>
 {% endif %}
 {% endblock %}
