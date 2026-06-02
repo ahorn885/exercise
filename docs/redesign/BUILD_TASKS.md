@@ -43,7 +43,7 @@ Work top-to-bottom **within a phase** (phases defined in `BUILD_PLAN.md` §3). C
 ## Phase 4 — Library + Account
 | § | Section | DM | Blueprint / route | Current template | Migration note |
 |---|---|---|---|---|---|
-| 15 | Exercises library | DM | `rx.list_entries` | `rx/list.html` | "Exercises" = `rx`. No-Rx empty state. |
+| 15 | ✅ Exercises library | DM | `rx.list_entries` | `rx/list.html` | "Exercises" = `rx`. Current Rx data-table + plateau/deload watch + real GET filters; catalog (inventory w/ no current Rx) below; No-Rx "No Rx yet." hero. *(this PR)* |
 | 16 | Locations | DM | `locales.list_profiles` / `.form` | `locales/{list,form}.html` | UX copy "Locations"; route stays `locales`. Empty state. |
 | 17 | **Connections · hub** ★⟳ | DM | `garmin.dashboard` + `garmin.debug_fit` + provider bps (`strava`/`coros`/`polar`/`whoop`/`zwift`/`trainingpeaks`/`ride_with_gps`/`oauth_callbacks`) | `garmin/{dashboard,debug_fit}.html` | **4 surfaces → 1 hub.** Tabs: Sources / Files (FIT inspector = inline panel) / Preferences + empty. Garmin = PAUSED. **Hard-cut old URLs** (single user, no redirects). Kill "Garmin dashboard" phrasing. |
 | 18 | Athlete profile | DM | `profile.edit` | `profile/edit.html` | Day-1 first-run state. Connections/dedupe prefs **move out** to §17. |
@@ -93,7 +93,7 @@ The redesign covers every *user-facing* surface but a few blueprints have no red
 
 **Last updated:** 2026-06-02
 
-**Progress:** Phase 0 ✅ · Phase 1 shell ✅ · **Phase 2 COMPLETE** (§05–§09 ✅) · **Phase 3 COMPLETE\*** (§04 ✅ · §10 ✅ · §11 ✅ · §12 ◑ diff-via-refresh · §13 ✅ · §14 ✅) — **next: Phase 4 (§15–20 library + account)**. *\*§12 standalone A↔B compare deferred (no backend route); §13 still owes the §30/Phase-7 `coaching_bp` consolidation.*
+**Progress:** Phase 0 ✅ · Phase 1 shell ✅ · **Phase 2 COMPLETE** (§05–§09 ✅) · **Phase 3 COMPLETE\*** (§04 ✅ · §10 ✅ · §11 ✅ · §12 ◑ diff-via-refresh · §13 ✅ · §14 ✅) · **Phase 4 underway** (§15 ✅) — **next: §16 Locations**. *\*§12 standalone A↔B compare deferred (no backend route); §13 still owes the §30/Phase-7 `coaching_bp` consolidation.*
 Merged to `main`: PR #397 (review), #398 (Phase 0), #399 (docs), #400 (Phase 1 + §05),
 #401 (§06), #403 (§07), #404 (§07 follow-up), #406 (redesign card/grid Bootstrap-leak fix),
 #407 (§08 unified Log landing + 4 panes).
@@ -258,6 +258,26 @@ In flight: PR for §08 Strength pane + §09 Wellness (completes Phase 2) **and**
   - New §12/§13/§14 CSS + `tests/test_redesign_plan_refresh_import_render.py` (5). Existing
     `test_routes_plan_refresh.py` (64) still green; CSS braces balanced; CSP-clean.
 
+- **Phase 4 · §15 Exercises library** — `templates/rx/list.html` onto the new shell
+  (`nav_active='library'`). "Exercises" = the `rx` blueprint (current_rx joined to
+  exercise_inventory). **Current Rx** renders as a token `table.data` (Exercise · Disc. ·
+  Type · Pattern · Sets · Reps · Weight · Last done · Outcome · actions) with outcome chips
+  (↑ good / → warn / ↓ bad), `n/3` failure counter, and the **plateau/deload watch** — a
+  warn-tinted alert when `deload_pending`, plus a per-row **−10%** button on flagged rows
+  (real `rx.deload_entry` POST, `data-confirm`, CSP-clean). The real **GET filters**
+  (discipline · status · location) are preserved as a token filter bar; an active filter that
+  matches nothing shows a "no matches → Clear" note (not the hero). The **catalog**
+  (inventory exercises with no current Rx) lists below in a second `table.data`. Zero
+  prescribed Rx → a **"No Rx yet."** hero whose CTAs stay grounded in real routes: *Generate
+  plan* → `plan_create.new_plan`; *View catalog* anchors to the inline `#catalog` list (there
+  is **no** add/import endpoint for `rx`, so the artboard's "Add exercise"/"Import" top
+  actions were **not** ported). `rx/form.html` (edit) left on `base_legacy.html` for now —
+  still reachable from the row **Edit** link. New §15 CSS block + new
+  `tests/test_redesign_rx_list_render.py` (3: current-Rx+catalog+deload, no-Rx hero,
+  filtered-empty). Full redesign suite green (18); CSS braces balanced; zero inline
+  `style=`/`onclick=`. (Suite-wide, the only reds remain the pre-existing date-sensitive
+  `test_layer4_plan_create.py` cases — unrelated.)
+
 ### Known blocker (infra, not code) — Vercel **Preview** deploys 500
 Preview deployments crash with `FUNCTION_INVOCATION_FAILED`: `app.py` raises at **import** when
 `SECRET_KEY` is unset, and the Preview environment scope is missing it (runtime logs confirm
@@ -267,11 +287,9 @@ Until then, PR previews can't render — verify locally or via static checks. Th
 to any redesign PR (Production is unaffected).
 
 ### Next — Phase 4 (Library + Account)
-Phase 3 plan-lifecycle done (§12 standalone A↔B compare deferred — needs a backend route;
-§13 still owes the §30/Phase-7 `coaching_bp` consolidation). Continue Phase 4 top-to-bottom:
-- **§15** Exercises library (`rx.list_entries`) · **§16** Locations (`locales.*`) · **§17**
-  Connections hub (4 surfaces → 1) · **§18** Athlete profile · **§19** Account settings ·
-  **§20** Coach memory.
+Phase 4 underway — **§15 Exercises library ✅**. Continue top-to-bottom:
+- **§16** Locations (`locales.*`, empty state) · **§17** Connections hub (4 surfaces → 1) ·
+  **§18** Athlete profile · **§19** Account settings · **§20** Coach memory.
 Carry the established slice discipline: one responsive template, token classes only, CSP
 enforced (nonce'd scripts, no inline `style=`/`onclick=`), flip `base_legacy.html` → `base.html`,
 and add a render smoke test per the §08/§09 precedent.
