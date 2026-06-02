@@ -1,68 +1,63 @@
-{% extends 'base_legacy.html' %}
-{% block title %}Plan — AIDSTATION{% endblock %}
+{% extends 'base.html' %}
+{% set nav_active = 'plan' %}
+{% block title %}Training plan · AIDSTATION{% endblock %}
+{% block crumbs %}<a href="{{ url_for('dashboard.index') }}">Plan</a> <span class="sep">/</span> <b>Generated plan</b>{% endblock %}
+
 {% block content %}
+<div class="plan-gen">
+  <p class="eyebrow accent">● Plan · Pattern {{ plan_version.pattern }}</p>
+  <div class="plan-view-head">
+    <h1 class="plan-gen-title">Training plan</h1>
+    <span class="chip">{{ plan_version.created_via|replace('_', ' ') }}</span>
+  </div>
+  <p class="page-sub">
+    {{ plan_version.scope_start_date }} → {{ plan_version.scope_end_date }}
+    · {{ session_count }} session{{ '' if session_count == 1 else 's' }}
+  </p>
 
-<nav class="mb-3">
-  <a href="{{ url_for('dashboard.index') }}" class="text-muted small">&larr; Back to dashboard</a>
-</nav>
-
-<div class="d-flex align-items-center mb-3">
-  <h4 class="mb-0 me-2">Training plan</h4>
-  <span class="badge bg-primary me-2">Pattern {{ plan_version.pattern }}</span>
-  <span class="badge bg-secondary">{{ plan_version.created_via|replace('_', ' ') }}</span>
-</div>
-
-<p class="text-muted mb-3">
-  {{ plan_version.scope_start_date }} → {{ plan_version.scope_end_date }}
-  &middot; {{ session_count }} session{{ '' if session_count == 1 else 's' }}
-</p>
-
-{% if sessions_by_date %}
-  {% set ns = namespace(phase=None, week=None) %}
-  {% for d, sessions in sessions_by_date %}
-    {% set pm = sessions | selectattr('phase_metadata') | map(attribute='phase_metadata') | first %}
-    {% if pm and (pm.phase_name != ns.phase or pm.week_in_phase != ns.week) %}
-      <div class="d-flex align-items-baseline mt-4 mb-2 pb-1 border-bottom">
-        <span class="badge bg-dark me-2">{{ pm.phase_name }} phase</span>
-        <small class="text-muted me-2">Week {{ pm.week_in_phase }} of {{ pm.total_weeks_in_phase }}</small>
-        {% if pm.intended_volume_band and (pm.intended_volume_band[0] or pm.intended_volume_band[1]) %}
-          <small class="text-muted">target {{ '%g'|format(pm.intended_volume_band[0]) }}–{{ '%g'|format(pm.intended_volume_band[1]) }} h</small>
-        {% endif %}
-      </div>
-      {% set ns.phase = pm.phase_name %}
-      {% set ns.week = pm.week_in_phase %}
-    {% endif %}
-    <div class="mb-2">
-      <h6 class="mb-2">{{ d }} <small class="text-muted">{{ sessions[0].day_of_week }}</small></h6>
-      {% for sess in sessions %}
-        <div class="card mb-2">
-          <div class="card-body">
-            <div class="d-flex align-items-center mb-1">
-              <strong class="me-2">
-                {% if sess.kind == 'rest' %}
-                  Rest
-                {% else %}
-                  {{ sess.discipline_name or sess.discipline_id or sess.kind|title }} — {{ sess.duration_min }} min
-                {% endif %}
-              </strong>
-              <span class="badge bg-light text-dark">{{ sess.intensity_summary|title }}</span>
-              {% if sess.time_of_day != 'unspecified' %}
-                <small class="text-muted ms-2">{{ sess.time_of_day }}</small>
-              {% endif %}
-            </div>
-            {% if sess.coaching_intent %}
-              <p class="mb-1 small">{{ sess.coaching_intent }}</p>
-            {% endif %}
-            {% if sess.session_notes %}
-              <p class="mb-0 small text-muted">{{ sess.session_notes }}</p>
-            {% endif %}
-          </div>
+  {% if sessions_by_date %}
+  <div class="sec">
+    {% set ns = namespace(phase=None, week=None) %}
+    {% for d, sessions in sessions_by_date %}
+      {% set pm = sessions | selectattr('phase_metadata') | map(attribute='phase_metadata') | first %}
+      {% if pm and (pm.phase_name != ns.phase or pm.week_in_phase != ns.week) %}
+        <div class="phase-head">
+          <span class="chip accent">{{ pm.phase_name }} phase</span>
+          <span class="rail-note">Week {{ pm.week_in_phase }} of {{ pm.total_weeks_in_phase }}</span>
+          {% if pm.intended_volume_band and (pm.intended_volume_band[0] or pm.intended_volume_band[1]) %}
+          <span class="rail-note">target {{ '%g'|format(pm.intended_volume_band[0]) }}–{{ '%g'|format(pm.intended_volume_band[1]) }} h</span>
+          {% endif %}
         </div>
-      {% endfor %}
-    </div>
-  {% endfor %}
-{% else %}
-  <p class="text-muted">No sessions persisted for this plan version.</p>
-{% endif %}
-
+        {% set ns.phase = pm.phase_name %}
+        {% set ns.week = pm.week_in_phase %}
+      {% endif %}
+      <div class="day-group">
+        <div class="day-label">
+          <strong>{{ d }}</strong><span class="dow">{{ sessions[0].day_of_week }}</span>
+        </div>
+        <div class="stack">
+          {% for sess in sessions %}
+          <div class="card card-pad sess-card">
+            <div class="sess-head">
+              <span class="sess-name">
+                {% if sess.kind == 'rest' %}Rest
+                {% else %}{{ sess.discipline_name or sess.discipline_id or sess.kind|title }} — {{ sess.duration_min }} min{% endif %}
+              </span>
+              <span class="chip">{{ sess.intensity_summary|title }}</span>
+              {% if sess.time_of_day != 'unspecified' %}<span class="rail-note">{{ sess.time_of_day }}</span>{% endif %}
+            </div>
+            {% if sess.coaching_intent %}<p class="sess-intent">{{ sess.coaching_intent }}</p>{% endif %}
+            {% if sess.session_notes %}<p class="sess-notes">{{ sess.session_notes }}</p>{% endif %}
+          </div>
+          {% endfor %}
+        </div>
+      </div>
+    {% endfor %}
+  </div>
+  {% else %}
+  <div class="card card-pad sec">
+    <p class="rail-note">No sessions persisted for this plan version.</p>
+  </div>
+  {% endif %}
+</div>
 {% endblock %}

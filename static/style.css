@@ -1065,6 +1065,130 @@ body.bulk-mode { padding-bottom: 80px; }
 .app .rd-row { display: flex; flex-wrap: wrap; gap: 6px 18px; margin-top: 10px; font-size: 13px; color: var(--fg-2); }
 .app .rd-row b { color: var(--fg); font-weight: 600; }
 
+/* Strength session — set log + per-exercise summaries.
+   .set-log-head also captions the wellness self-report card (§09), so it is
+   not nested under .set-log. */
+.app .set-log-head {
+  display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between;
+  gap: 8px 14px;
+}
+.app .set-log .set-log-head { padding: 14px 18px; border-bottom: 1px solid var(--hairline-2); }
+.app .set-log .set-log-foot { padding: 12px 18px; border-top: 1px solid var(--hairline-2); }
+.app .set-log .data th { padding: 8px 10px; }
+.app .set-log .data td { padding: 6px 10px; }
+.app .set-log .data td:last-child { text-align: center; }
+
+.app .ex-summary { padding: 14px 16px; }
+.app .ex-summary-head {
+  display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between;
+  gap: 10px; margin-bottom: 10px;
+}
+.app .ex-summary .ex-name { font-weight: 600; }
+.app .ex-summary .ex-target { font-size: 12px; color: var(--fg-3); margin-left: 8px; }
+.app .ex-summary-controls { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.app .ex-summary-controls .lbl-inline { font-size: 12px; color: var(--fg-3); }
+.app .set-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+
+.app .fit-card-row {
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px;
+}
+.app .fit-card-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+
 @media (max-width: 859.98px) {
   .app .log-form .field-wide { grid-column: auto; }
+}
+
+/* ══ Wellness · 30-day readiness (§09) ═════════════════════════════════ */
+.app .wl-range { margin: 0; }
+.app .wl-range .field { margin-bottom: 0; }
+.app .chart-grid {
+  display: grid; gap: 16px; margin-top: 14px;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+}
+.app .chart-box { position: relative; height: 180px; }
+.app .chart-box.wide { height: 150px; }
+.app .chart-box canvas { max-width: 100%; }
+
+/* ══ Plan generation (§04) ═════════════════════════════════════════════ */
+.app .plan-gen { max-width: 920px; }
+.app .plan-gen-title { font-size: 40px; font-weight: 800; letter-spacing: -0.025em; line-height: 1.06; margin: 8px 0; }
+
+/* Start form — pre-flight checklist + start/anchor cards */
+.app .preflight { padding: 0; }
+.app .preflight-row {
+  display: grid; grid-template-columns: 200px 1fr auto; align-items: center;
+  gap: 12px; padding: 14px 18px; border-bottom: 1px solid var(--hairline-2);
+}
+.app .preflight-row:last-child { border-bottom: 0; }
+.app .preflight-row .pf-label { font-family: var(--mono); font-size: 9px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--fg-3); }
+.app .preflight-row .pf-v { font-weight: 600; font-size: 14px; }
+.app .preflight-row .pf-sub { font-size: 12px; color: var(--fg-3); margin-top: 2px; }
+
+.app .gen-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-top: 24px; }
+.app .gen-grid .num-lg { font-size: 26px; font-weight: 700; margin-top: 8px; }
+.app .anchor-card { background: color-mix(in oklab, var(--accent) 6%, var(--bg-2)); }
+
+/* Expectations phase band */
+.app .phase-band { display: flex; height: 36px; border-radius: var(--r-sm); overflow: hidden; margin-bottom: 12px; }
+.app .phase-band .seg { display: grid; place-items: center; font-family: var(--mono); font-size: 10px; letter-spacing: 0.18em; color: var(--fg-2); white-space: nowrap; padding: 0 4px; }
+.app .phase-band .seg.base  { flex: 4; background: var(--ink-3); }
+.app .phase-band .seg.build { flex: 8; background: color-mix(in oklab, var(--accent) 60%, var(--ink-3)); color: var(--ink); }
+.app .phase-band .seg.peak  { flex: 6; background: var(--accent); color: var(--ink); font-weight: 600; }
+.app .phase-band .seg.taper { flex: 4; background: var(--ink-3); }
+
+.app .gen-actions { margin-top: 24px; display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+.app .gen-actions form { margin: 0; }
+.app .gen-foot { font-family: var(--mono); font-size: 10px; color: var(--fg-4); margin-top: 16px; letter-spacing: 0.14em; text-transform: uppercase; }
+
+/* ── Progress · cup-pour ── */
+.app .gen-wrap { max-width: 680px; width: 100%; margin: 0 auto; text-align: center; }
+.app .gen-title { font-size: 44px; font-weight: 800; letter-spacing: -0.025em; line-height: 1.05; margin: 12px 0; }
+.app .gen-lede { color: var(--fg-3); font-size: 15px; line-height: 1.55; max-width: 480px; margin: 0 auto 24px; }
+.app .gen-cup { position: relative; width: 360px; height: 380px; max-width: 100%; margin: 8px auto 0; }
+.app .gen-cup-inner {
+  position: absolute; left: 50%; top: 90px; width: 260px; height: 260px;
+  transform-origin: 75% 90%;
+  animation: cupTipping 12s ease-in-out infinite;
+  will-change: transform;
+}
+.app .gen-cup-inner svg { overflow: visible; display: block; }
+/* Letters ride inside the rotating cup; JS sets --x/--y/--r + the per-letter
+   animation delay. Base transform keeps them settled in the cup for the
+   reduced-motion fallback (the .letter-tumble rule in the a11y block forces
+   opacity:1 + animation:none, so they rest in their slots instead of piling
+   at the origin). */
+.app .gen-letter {
+  position: absolute; left: 50%; top: 0; width: 14px; height: 18px;
+  text-align: center; font-family: var(--mono); font-size: 17px; font-weight: 800;
+  line-height: 1; color: var(--accent); opacity: 0;
+  transform: translate(calc(-50% + var(--x, 0px)), var(--y, 150px)) rotate(var(--r, 0deg));
+  pointer-events: none; will-change: transform, opacity;
+}
+.app .gen-meta { font-family: var(--mono); margin-top: 6px; font-size: 10px; letter-spacing: 0.18em; color: var(--fg-4); }
+.app .gen-sub { margin-top: 4px; font-size: 13px; color: var(--fg-3); }
+.app .gen-failed { max-width: 480px; margin: 0 auto; }
+.app .gen-actions.center { justify-content: center; }
+.app .eyebrow.bad { color: var(--bad); }
+
+/* ── View · generated plan ── */
+.app .plan-view-head { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.app .phase-head {
+  display: flex; align-items: baseline; flex-wrap: wrap; gap: 8px 12px;
+  margin: 28px 0 6px; padding-bottom: 8px; border-bottom: 1px solid var(--hairline);
+}
+.app .day-group { margin-top: 16px; }
+.app .day-group .day-label { display: flex; align-items: baseline; gap: 8px; margin-bottom: 8px; }
+.app .day-group .day-label .dow { font-family: var(--mono); font-size: 11px; color: var(--fg-3); }
+.app .sess-card { padding: 14px 16px; }
+.app .sess-head { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 4px; }
+.app .sess-head .sess-name { font-weight: 600; }
+.app .sess-intent { font-size: 13px; color: var(--fg-2); line-height: 1.5; }
+.app .sess-notes { font-size: 12px; color: var(--fg-3); margin-top: 4px; }
+
+@media (max-width: 859.98px) {
+  .app .plan-gen-title { font-size: 30px; }
+  .app .gen-title { font-size: 32px; }
+  .app .gen-grid { grid-template-columns: 1fr; }
+  .app .preflight-row { grid-template-columns: 1fr auto; }
+  .app .preflight-row .pf-label { grid-column: 1 / -1; }
 }

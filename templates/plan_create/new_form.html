@@ -1,56 +1,77 @@
-{% extends 'base_legacy.html' %}
-{% block title %}Create a plan — AIDSTATION{% endblock %}
+{% extends 'base.html' %}
+{% set nav_active = 'plan' %}
+{% block title %}Generate a plan · AIDSTATION{% endblock %}
+{% block crumbs %}<a href="{{ url_for('dashboard.index') }}">Plan</a> <span class="sep">/</span> <b>Generate</b>{% endblock %}
+
 {% block content %}
+<div class="plan-gen">
+  <p class="eyebrow accent">● Plan generate · Pattern A synthesis</p>
+  <h1 class="plan-gen-title">Build me a plan.</h1>
+  <p class="page-sub">Runs the full coaching cascade against your profile + current state + target race.
+    Typically 3–4 phases — Base → Build → Peak → Taper — with seam reviews between each.</p>
 
-<nav class="mb-3">
-  <a href="{{ url_for('dashboard.index') }}" class="text-muted small">&larr; Back to dashboard</a>
-</nav>
+  <form method="post" action="{{ url_for('plan_create.new_plan') }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
 
-<h4 class="mb-3">Create a training plan</h4>
-<p class="text-muted">
-  Generates a full plan from your profile + current state + target race (if set).
-  Pattern A synthesis — typically 3-4 phases (Base / Build / Peak / Taper)
-  with seam reviews between phases. This runs the full coaching cascade and can
-  take a few minutes; you'll see a progress screen while it works.
-</p>
+    {# ── Start date + target-race anchor ── #}
+    <div class="gen-grid">
+      <div class="card card-pad">
+        <span class="eyebrow">Plan start date</span>
+        <label class="field sec-sm"><span class="lbl">Today or any future date</span>
+          <input type="date" class="form-control form-control-sm" id="plan_start_date" name="plan_start_date"
+                 min="{{ today_iso }}" value="{{ today_iso }}" required></label>
+      </div>
 
-<form method="post" action="{{ url_for('plan_create.new_plan') }}">
-  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-
-  <div class="row g-3">
-    <div class="col-md-6">
-      <label class="form-label" for="plan_start_date">Plan start date</label>
-      <input type="date" class="form-control" id="plan_start_date" name="plan_start_date"
-             min="{{ today_iso }}" value="{{ today_iso }}" required>
-      <small class="text-muted">Today or any future date.</small>
+      {% if race_event %}
+      <div class="card card-pad anchor-card">
+        <span class="eyebrow accent">● Anchor · target race</span>
+        <div class="num-lg">{{ race_event.name }}</div>
+        <div class="mono gen-foot">
+          {% if race_event.event_date %}{{ race_event.event_date }} · {% endif %}plan ends on race day
+        </div>
+        <div class="rail-note">Change the target on
+          <a href="{{ url_for('profile.edit', tab='race-events') }}">your race events</a>.</div>
+      </div>
+      {% else %}
+      <div class="card card-pad">
+        <span class="eyebrow">No target race set</span>
+        <div class="num-lg">24-week open plan</div>
+        <div class="rail-note sec-sm">Set a target on
+          <a href="{{ url_for('profile.edit', tab='race-events') }}">your race events</a>
+          to scope the plan to it.</div>
+      </div>
+      {% endif %}
     </div>
-  </div>
 
-  {% if race_event %}
-    <div class="card mt-3">
-      <div class="card-body">
-        <h6 class="card-title">Target race</h6>
-        <p class="mb-1"><strong>{{ race_event.name }}</strong>
-          {% if race_event.event_date %}— {{ race_event.event_date }}{% endif %}
-        </p>
-        <small class="text-muted">
-          Plan ends on the race date. Change the target race on
-          <a href="{{ url_for('profile.edit', tab='race-events') }}">your race events</a>.
-        </small>
+    {# ── What you'll get (illustrative typical shape) ── #}
+    <div class="sec">
+      <span class="eyebrow">What you'll get</span>
+      <div class="card card-pad sec-sm">
+        <div class="phase-band" aria-hidden="true">
+          <div class="seg base">BASE</div>
+          <div class="seg build">BUILD</div>
+          <div class="seg peak">PEAK</div>
+          <div class="seg taper">TAPER</div>
+        </div>
+        <div class="sess-intent">
+          A full periodized plan — every session shaped by your locations, skills, and injury
+          constraints, and editable per-day after generation. The exact phase split depends on
+          your start date and target race; the band above is the typical shape, not your plan yet.
+        </div>
       </div>
     </div>
-  {% else %}
-    <div class="alert alert-light border mt-3">
-      <strong>No target race set.</strong> Generating an open-ended 24-week plan.
-      Set a target race on
-      <a href="{{ url_for('profile.edit', tab='race-events') }}">your race events</a>
-      to scope the plan to it.
+
+    <div class="gen-actions">
+      <button type="submit" class="btn btn-primary">
+        <svg class="icon" width="13" height="13" aria-hidden="true"><use href="#i-bolt"></use></svg> Generate plan
+      </button>
+      <a href="{{ url_for('plans.import_plan') }}" class="btn btn-ghost">
+        <svg class="icon" width="13" height="13" aria-hidden="true"><use href="#i-upload"></use></svg> Import plan from JSON
+      </a>
+      <a href="{{ url_for('dashboard.index') }}" class="btn btn-text">Cancel</a>
     </div>
-  {% endif %}
 
-  <div class="mt-3">
-    <button type="submit" class="btn btn-primary">Create plan</button>
-  </div>
-</form>
-
+    <p class="gen-foot">ⓘ Generation typically takes 2–5 min · we'll show live progress</p>
+  </form>
+</div>
 {% endblock %}

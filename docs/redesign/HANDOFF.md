@@ -10,6 +10,23 @@
 
 ---
 
+## 0 · Build status — implementation underway (live)
+
+The design canvas is done (everything below). **The redesign is now being built into the live Flask app**, phase by phase. Per-section status + the granular handoff lives in **`BUILD_TASKS.md`** (the live tracker) and the build rules in **`CONVENTIONS.md`**; this section is the top-line summary.
+
+**Shipped to `main`:** Phase 0 (token CSS + polish + icon sprite, `.app`-scoped) · Phase 1 (app shell — grouped sidebar + mobile tab bar) · **Phase 2 daily-loop COMPLETE** (§05 Dashboard · §06 Plan week · §07 Workout detail · §08 unified Logging w/ all 6 panes · §09 Wellness) · **Phase 3 §04 Plan generation** (start form + cup-pour progress + plan view).
+
+**Build mechanics that turned out to matter** (carry these forward):
+- **CSP is enforced** — no inline `style=`/`onclick=`; every inline `<script>` is nonced. Dynamic positioning (e.g. the cup-pour letters, progress-bar widths) is set via the **DOM API** (`element.style.setProperty`) or `data-*` + `app.js`, never inline attributes.
+- **All new CSS is `.app`-scoped** so legacy screens (on `base_legacy.html`) render unchanged until each is migrated. Token vocabulary only (`--bg/--fg/--accent`); light mode stays a free token-swap.
+- **Cup-pour keyframes** (`letterTumble`/`cupTipping`) shipped inert in `tokens.css` at Phase 0 and went live with §04; letters carry `.letter-tumble` so the reduced-motion rule settles them statically.
+- **Verification is render-test-based**: each slice adds a smoke test that boots the real app (DB stubbed — no local Postgres) and renders the route, asserting structure + CSP cleanliness. (Vercel **Preview** deploys were blocked on a missing `SECRET_KEY` env scope — an owner-side infra gap, not a code issue.)
+
+**Next:** Phase 3 continues — §10 Races · event manager, then §11–14 (plan history/versions · compare diff · refresh · import).
+
+---
+
+
 ## 1 · Design system
 
 Brand-aligned with **AidStation Brand Guide v3** (project root). Tokens in `redesign/tokens.css`; polish/accessibility CSS in `redesign/polish.css`.
@@ -208,7 +225,7 @@ What it applies:
 
 ## 8 · Outstanding work (§31)
 
-Everything code-backed is now designed. What remains is **build-time implementation** and optional polish — no missing screens.
+Everything code-backed is now designed. What remains is **build-time implementation** (now underway — see §0 for live status; Phases 0–2 + §04 shipped) and optional polish — no missing screens.
 
 - **Implement the a11y wiring in real components** — `a11y-wire.js` is the spec; move roles/labels/tab-order onto real elements, add focus trap/restore on the dialog.
 - **Light mode in code** — extend the `.light` / token-swap to the production stylesheet (design is done).
@@ -269,3 +286,9 @@ Everything code-backed is now designed. What remains is **build-time implementat
 - **v5** — empty/error round 1. **v4** — mobile core. **v3** — onboarding + cup-pour. **v1–2** — initial core screens.
 
 **Last touched:** v15. Canvas loads clean — no console errors as of last `done` call. Verifier-confirmed: landmarks, roving tab-order, tablists, dialog semantics, light toggle, and §29 all render and behave per spec.
+
+### Implementation log (live app build — see §0 + `BUILD_TASKS.md`)
+- **Phase 3 · §04** — Plan generation: start form, cup-pour progress (time-bucket, CSP-clean letters), plan view.
+- **Phase 2 COMPLETE** — §05 Dashboard · §06 Plan week · §07 Workout detail (+nutrition/upload-.FIT) · §08 unified Logging (6 panes) · §09 Wellness.
+- **Phase 1** — app shell (grouped sidebar + top bar + mobile tab bar + drawer); legacy screens re-pointed to `base_legacy.html`.
+- **Phase 0** — token CSS + polish layer + 34-icon sprite, `.app`-scoped (inert foundation).

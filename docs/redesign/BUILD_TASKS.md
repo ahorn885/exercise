@@ -27,13 +27,13 @@ Work top-to-bottom **within a phase** (phases defined in `BUILD_PLAN.md` §3). C
 | 05 | ✅ Dashboard · Today | DM | `dashboard.index` | `dashboard.html` | Hero = next workout. Live weather + hourly, plan CTAs, stats, recents. Mock-only widgets (readiness/interval/TSS) not ported. *(PR #400)* |
 | 06 | ✅ Training plan · week | DM | `plans.view_plan(plan_id)` (legacy model, §3b) | `plans/view.html` | 7-day Mon–Sun calendar grid (`_build_week_grid`). Bulk-edit, coach chat, gear, supplements preserved. *(PR #401)* |
 | 07 | ✅ Workout detail | DM | `plans.view_item` (+ `.FIT` up/download, garmin push) | `plans/item.html` | Targets + block-by-block + rest-day variant + context rail. "Upload completed .FIT"; inline edit/complete/skip preserved. *(PR #403)* |
-| 08 | Logging · adaptive form ⟳ | DM | `natural_log` + `cardio`/`training`/`body`/`conditions`/`injuries`/`wellness` `.new_entry` | `cardio/form.html`, `training/form.html`, `body/form.html`, `conditions/form.html`, `injuries/form.html` | **One landing, type picker swaps pane.** Six routes stay; UX is unified. Shared `onboarding/_skills_form.html` partial stays shared. |
-| 09 | Wellness | DM | `wellness.index` | `wellness/index.html` | 30-day readiness. Absorbs the old Wellness→.FIT import (now in Connections §17). |
+| 08 | ✅ Logging · adaptive form ⟳ | DM | `natural_log` + `cardio`/`training`/`body`/`conditions`/`injuries`/`wellness` `.new_entry` | `cardio/form.html`, `training/form.html`, `body/form.html`, `conditions/form.html`, `injuries/form.html` | **One landing, type picker swaps pane.** Six routes stay; UX is unified. Strength session form migrated; Wellness tile deep-links to §09 self-report card. *(PR #407 + Strength/Wellness follow-up)* |
+| 09 | ✅ Wellness | DM | `wellness.index` | `wellness/index.html` | 30-day readiness on new shell. Self-report card is the Log picker's Wellness deep-link target (`#self-report`); charts re-skinned to the dark `.app` token palette; "body battery"→"recovery" copy. |
 
 ## Phase 3 — Plan lifecycle
 | § | Section | DM | Blueprint / route | Current template | Migration note |
 |---|---|---|---|---|---|
-| 04 | Plan generation | DM | `plan_create.new_plan` / `.progress` / `.view` | `plan_create/{new_form,progress,view}.html` | Cup-pour progress = time bucket, **not** server sub-steps. Keyframes in `tokens.css`. |
+| 04 | ✅ Plan generation | DM | `plan_create.new_plan` / `.progress` / `.view` | `plan_create/{new_form,progress,view}.html` | Cup-pour progress = time bucket, **not** server sub-steps. Keyframes in `tokens.css`; letters injected + positioned via JS (`element.style`, CSP-clean). Failed state uses §27 "The build stalled." copy. *(in-flight PR)* |
 | 10 | Races · event manager ★ | DM | `race_events.*` | — (no template) | A/B/C priority; editing a date re-cascades the plan. New templates. |
 | 11 | Plans · history & versions | DM | `plans.list_plans` | `plans/v2/*` | Zero-plans → shared empty (§26). |
 | 12 | Plan compare · diff | DM | `plans.*` (version compare) | `plans/v2/*` | Version A ↔ B diff. |
@@ -93,10 +93,12 @@ The redesign covers every *user-facing* surface but a few blueprints have no red
 
 **Last updated:** 2026-06-01
 
-**Progress:** Phase 0 ✅ · Phase 1 shell ✅ · Phase 2 §05 ✅ §06 ✅ §07 ✅ §08 ◑ (4 of 6 panes) — **next: finish §08 (Strength + Wellness panes), then §09**.
+**Progress:** Phase 0 ✅ · Phase 1 shell ✅ · **Phase 2 COMPLETE** (§05–§09 ✅) · Phase 3 ◑ (§04 ✅) — **next: §10 races, §11–14 plan lifecycle**.
 Merged to `main`: PR #397 (review), #398 (Phase 0), #399 (docs), #400 (Phase 1 + §05),
-#401 (§06), #403 (§07), #404 (§07 follow-up), #406 (redesign card/grid Bootstrap-leak fix).
-In flight: PR for §08 (unified Log landing + picker + Cardio/Body/Conditions/Injury panes).
+#401 (§06), #403 (§07), #404 (§07 follow-up), #406 (redesign card/grid Bootstrap-leak fix),
+#407 (§08 unified Log landing + 4 panes).
+In flight: PR for §08 Strength pane + §09 Wellness (completes Phase 2) **and** Phase 3 §04
+(plan-gen start form + cup-pour progress + plan view).
 
 ### Done
 - **Pre-build review** — `PLAN_REVIEW_AND_CORRECTIONS.md` (PR #397, merged). Code-verified
@@ -168,6 +170,51 @@ In flight: PR for §08 (unified Log landing + picker + Cardio/Body/Conditions/In
   were bare siblings under `.page-body` and touched with no gap) by wrapping the content in
   `.stack`. Codified both lessons in `CONVENTIONS.md §C` (vertical rhythm via `.stack`;
   Bootstrap-override gotchas for card colour / row gutter).
+- **Phase 2 · §08 Strength pane + §09 Wellness — completes Phase 2.**
+  - **§08 Strength.** `training/session_form.html` (`training.new_entry`) now extends
+    `log/_shell.html` (`log_type='strength'`), so the type picker frames the strength
+    session form like every other pane. The 325-line dynamic-row/RX-fetch JS is preserved
+    verbatim; only the **injected** Bootstrap markup was re-skinned to token classes
+    (`badge`→`chip`, `card mb-2`→`card card-pad ex-summary`, outline buttons→`btn-ghost`/
+    `btn-mini`) and the set-log moved into a token `table.data`. Every input `name`, the
+    `/training/session` JSON POST, RX target lookups, RPE/per-exercise notes, and the
+    post-save **activity-FIT** card all unchanged (FIT copy is brand-neutral). New CSS:
+    `.set-log*`, `.ex-summary*`, `.set-chips`, `.fit-card-row` under the §08 block.
+  - **§09 Wellness.** `wellness/index.html` migrated off `base_legacy.html` onto the new
+    shell (`nav_active='insights'`). Self-report entry card carries `id="self-report"`; the
+    Log picker's **Wellness tile deep-links to it** (`url_for('wellness.index', _anchor=…)`)
+    — resolving the §08 "decide the Wellness pane" question by folding it into §09 rather
+    than duplicating the entry form. Chart.js series re-keyed from the legacy `--ink/--orange`
+    palette to the redesign tokens (`--fg/--accent/--info/--good/--hairline`) so they read on
+    the dark theme and re-skin for free under `body.theme-light`; charts laid out in a token
+    `.chart-grid` (no Bootstrap `.row g-3`). Garmin-ism scrubbed ("body battery"→"recovery").
+  - **Verified:** new `tests/test_redesign_log_wellness_render.py` boots the real app (DB
+    stubbed) and renders `/training/new` + `/wellness` + the picker — asserts shell present,
+    strength tile active, `#self-report` anchor, self-report field names, picker deep-link,
+    and no inline `style=`/`onclick=`. Full suite green (1867 passed, 16 skipped); CSS braces
+    balanced.
+- **Phase 3 · §04 Plan generation** — all three `plan_create` templates onto the new shell.
+  - **Start form** (`new_form.html`, `plan_create.new_plan`). "Build me a plan." — real start-date
+    picker + target-race **anchor card** (or the open-plan branch when no race), an illustrative
+    Base→Build→Peak→Taper phase band (clearly framed as the *typical* shape, not the generated
+    plan — the mock pre-flight checklist from the artboard was **not** ported, no backing data),
+    Generate / Import-JSON / Cancel actions.
+  - **Progress** (`progress.html`, `plan_create.plan_progress`). The signature **cup-pour**:
+    "Pouring you a plan." Honors BUILD_PLAN §9 — **time-bucket, not server sub-steps**, so the
+    legacy 6-message client cycle is gone. The cup outline is inline SVG; the tumbling letters are
+    **built and positioned in JS** (`element.style.setProperty('--x/--y/--r')` + per-letter
+    `animation` delay) so nothing trips the CSP nonce gate — the `letterTumble`/`cupTipping`
+    keyframes already shipped in `tokens.css` (Phase 0). Letters carry `.letter-tumble` so the
+    existing reduced-motion rule settles them statically in the cup. **The resumable poll loop is
+    preserved verbatim** (consecutive-failure cap, cache-resume on 5xx, CSRF from the meta tag).
+    Failed state adopts the §27 **"The build stalled."** headline + Retry.
+  - **View** (`view.html`, `plan_create.view_plan`). Generated plan grouped by date with phase-seam
+    headers (phase · week-in-phase · volume band) and per-session cards (discipline · duration ·
+    intensity chip · coaching intent · notes), rest-day variant kept.
+  - New `.app` CSS under a **§04** block (`.plan-gen*`, `.phase-band`, `.gen-cup*`, `.gen-letter`,
+    plan-view atoms). **Verified:** render tests extended to cover all three screens (start form,
+    cup-pour wired + no message-cycle + stalled copy, plan view with a phase-seam session). Full
+    suite green (1870 passed, 16 skipped); CSS braces balanced; zero inline `style=`/handlers.
 
 ### Known blocker (infra, not code) — Vercel **Preview** deploys 500
 Preview deployments crash with `FUNCTION_INVOCATION_FAILED`: `app.py` raises at **import** when
@@ -177,11 +224,12 @@ Preview deployments crash with `FUNCTION_INVOCATION_FAILED`: `app.py` raises at 
 Until then, PR previews can't render — verify locally or via static checks. This is unrelated
 to any redesign PR (Production is unaffected).
 
-### Next
-- **Finish §08:** migrate the **Strength** session form (`training/session_form.html`,
-  `training.new_entry` — 325 lines of dynamic-row/RX-fetch JS) into `log/_shell.html` so the
-  Strength pane joins the picker. Decide the **Wellness** pane: either extract the self-report
-  entry form into the log shell, or fold it into §09 and have the picker's Wellness tile deep-link
-  to the entry card on `wellness.index`.
-- **§09 Wellness** (`wellness.index`, 30-day readiness; absorbs the old Wellness→.FIT import,
-  now Connections §17). Migrate one template per slice, flipping `base_legacy.html` → `base.html`.
+### Next — Phase 3 (Plan lifecycle)
+Phase 2 done; Phase 3 §04 (plan generation) done. Continue Phase 3 top-to-bottom:
+- **§10 Races · event manager** ★ (`race_events.*`, no current template) — A/B/C priority;
+  editing a date re-cascades the plan. New templates.
+- **§11–14** Plans history/versions, compare diff, plan refresh (⟳ — see §30 consolidation
+  with `coaching_bp`), and plan import.
+Carry the established slice discipline: one responsive template, token classes only, CSP
+enforced (nonce'd scripts, no inline `style=`/`onclick=`), flip `base_legacy.html` → `base.html`,
+and add a render smoke test per the §08/§09 precedent.
