@@ -1537,14 +1537,17 @@ def test_discipline_excluded_d67_per_date_blocker():
 
 
 def test_sport_locale_compatible_no_fire():
-    payload = _minimal_layer4()
-    ctx = ValidatorContext(layer2c_payloads={"L-home": _layer2c()})
+    # A strength session whose discipline has resolvable coverage → no failure.
+    payload = _minimal_layer4(sessions=[_strength_session(discipline_id="D-001")])
+    ctx = ValidatorContext(layer2c_payloads={"L-home": _layer2c(discipline_id="D-001")})
     failures = validate_layer4_payload(payload, ctx).rule_failures
     assert not any(f.rule_name.startswith("sport_locale_incompatible") for f in failures)
 
 
-def test_sport_locale_incompatible_blocker():
-    payload = _minimal_layer4(sessions=[_cardio_session(discipline_id="D-MTB")])
+def test_sport_locale_incompatible_strength_zero_coverage_warns():
+    # A STRENGTH session whose discipline has 0 coverage → advisory warning
+    # (the per-exercise hard gate is Rule 6a equipment_unavailable, not this).
+    payload = _minimal_layer4(sessions=[_strength_session(discipline_id="D-MTB")])
     ctx = ValidatorContext(
         layer2c_payloads={
             "L-home": _layer2c(coverage_pct=0.0, total_exercises=0, discipline_id="D-MTB")
@@ -1553,7 +1556,22 @@ def test_sport_locale_incompatible_blocker():
     failures = validate_layer4_payload(payload, ctx).rule_failures
     sl = [f for f in failures if f.rule_name.startswith("sport_locale_incompatible")]
     assert sl
-    assert sl[0].severity == "blocker"
+    assert sl[0].severity == "warning"
+
+
+def test_sport_locale_incompatible_skips_cardio_sessions():
+    # A CARDIO/sport session is NOT gated by strength-exercise coverage — sport
+    # trainability at a locale is terrain-driven (Layer 2B), not equipment.
+    payload = _minimal_layer4(sessions=[_cardio_session(discipline_id="D-MTB")])
+    ctx = ValidatorContext(
+        layer2c_payloads={
+            "L-home": _layer2c(coverage_pct=0.0, total_exercises=0, discipline_id="D-MTB")
+        }
+    )
+    failures = validate_layer4_payload(payload, ctx).rule_failures
+    assert not any(
+        f.rule_name.startswith("sport_locale_incompatible") for f in failures
+    )
 
 
 # ─── Rule 14: taper_phase_intent_violation ─────────────────────────────────
