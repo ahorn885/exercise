@@ -87,6 +87,46 @@ def dashboard():
                            admin_user_id=ADMIN_USER_ID)
 
 
+@bp.route('/users/<int:user_id>')
+def user_detail(user_id):
+    """Per-user drill-in (§25). Identity + a data-footprint across the
+    user-scoped tables + the admin-audit trail targeting this user, and
+    the type-to-confirm delete dialog. Counts mirror the tables
+    `_delete_user_and_data` cascades, so the operator sees exactly what a
+    delete would remove. Admin-only; reads any user (operator surface)."""
+    _require_admin()
+    db = get_db()
+    u = db.execute(
+        '''SELECT u.id, u.username, u.email, u.display_name,
+                  u.created_at, u.last_login,
+                  (SELECT COUNT(*) FROM training_log     WHERE user_id = u.id) AS strength_logs,
+                  (SELECT COUNT(*) FROM cardio_log       WHERE user_id = u.id) AS cardio_logs,
+                  (SELECT COUNT(*) FROM training_plans   WHERE user_id = u.id) AS plans,
+                  (SELECT COUNT(*) FROM coaching_chat    WHERE user_id = u.id) AS chat_msgs,
+                  (SELECT COUNT(*) FROM locale_profiles  WHERE user_id = u.id) AS locations,
+                  (SELECT COUNT(*) FROM current_rx       WHERE user_id = u.id) AS rx_entries,
+                  (SELECT COUNT(*) FROM feedback_log     WHERE user_id = u.id) AS feedback_rows,
+                  (SELECT COUNT(*) FROM wellness_log     WHERE user_id = u.id) AS wellness_rows
+             FROM users u
+            WHERE u.id = ?''',
+        (user_id,),
+    ).fetchone()
+    if u is None:
+        abort(404)
+    audit_rows = db.execute(
+        '''SELECT a.id, a.action, a.actor_user_id, au.username AS actor_username,
+                  a.details, a.created_at
+             FROM admin_audit a
+             LEFT JOIN users au ON au.id = a.actor_user_id
+            WHERE a.target_user_id = ?
+            ORDER BY a.id DESC
+            LIMIT 10''',
+        (user_id,),
+    ).fetchall()
+    return render_template('admin/user_detail.html', u=u,
+                           audit_rows=audit_rows, admin_user_id=ADMIN_USER_ID)
+
+
 @bp.route('/users/<int:user_id>/delete', methods=['POST'])
 def delete_user(user_id):
     _require_admin()

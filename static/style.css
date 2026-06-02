@@ -1631,3 +1631,31 @@ body.bulk-mode { padding-bottom: 80px; }
 .ks-row dt { font-size: 13px; color: var(--fg-2); margin: 0; }
 .ks-row dd { margin: 0; display: flex; gap: 4px; }
 .cmdk-search kbd, .ks-row kbd { border: 1px solid var(--hairline); border-radius: 4px; padding: 1px 6px; background: var(--bg-3); color: var(--fg-2); font-size: 11px; line-height: 1.5; }
+
+/* ════════════════════════════════════════════════════════════════════
+   §25 · Admin — users / drill-in detail / audit / telemetry + delete dialog
+   ════════════════════════════════════════════════════════════════════ */
+.app .adm-tablewrap { overflow-x: auto; }
+.app .data td.num, .app .data th.num { text-align: right; font-variant-numeric: tabular-nums; }
+.app .adm-user-link { font-weight: 600; color: var(--fg); }
+.app .adm-user-link:hover { color: var(--accent); }
+.app .adm-detail { max-width: 900px; }
+.app .adm-detail > div > .eyebrow { display: block; margin-bottom: 12px; }
+.app .adm-stats { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 12px; }
+.app .adm-funnel-note { max-width: none; margin-top: 12px; }
+.app .adm-none, .app .adm-none-card { color: var(--fg-3); font-size: 14px; }
+.app .adm-danger { border-color: color-mix(in oklab, var(--bad) 30%, var(--hairline-2)); border-left: 3px solid var(--bad); }
+.app .adm-danger-txt { font-size: 14px; color: var(--fg-2); margin: 8px 0 14px; line-height: 1.5; }
+.app .adm-auditfilter { margin-bottom: 16px; }
+.app .adm-filter-row { display: flex; gap: 14px; align-items: flex-end; flex-wrap: wrap; }
+.app .adm-filter-row .field { margin-bottom: 0; }
+.app .adm-filter-actions { display: flex; gap: 8px; }
+
+/* Type-to-confirm danger dialog (§25/§29) — focus-trapped via app.js. */
+.dlg-backdrop { position: fixed; inset: 0; z-index: 1090; display: flex; align-items: center; justify-content: center; padding: 16px; background: color-mix(in oklab, #000 50%, transparent); }
+.dlg-backdrop[hidden] { display: none; }
+.dlg { width: min(440px, 100%); background: var(--bg-2); border: 1px solid var(--hairline); border-radius: var(--r-md); box-shadow: 0 24px 64px rgba(0, 0, 0, 0.5); padding: 20px 22px 18px; }
+.dlg-title { font-size: 18px; font-weight: 700; margin: 0 0 8px; }
+.dlg-body { font-size: 13px; color: var(--fg-2); line-height: 1.55; margin: 0 0 14px; }
+.dlg-input { width: 100%; }
+.dlg-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }

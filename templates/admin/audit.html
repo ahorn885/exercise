@@ -1,85 +1,77 @@
-{% extends 'base_legacy.html' %}
-{% block title %}Admin · Audit log{% endblock %}
+{# Redesign §25 — Admin · Audit log. Migrated onto the new shell (was
+   base_legacy). Read view over admin_audit, filterable by action + actor.
+   GET form (real query-string filters); capped row count surfaced. #}
+{% extends 'base.html' %}
+{% set nav_active = '' %}
+{% block title %}Admin · Audit log — AIDSTATION{% endblock %}
+{% block crumbs %}<a href="{{ url_for('admin.dashboard') }}">Admin</a> · <b>Audit log</b>{% endblock %}
+
+{% block topbar_actions %}
+<a class="btn btn-ghost btn-sm" href="{{ url_for('admin.dashboard') }}">Back to users</a>
+{% endblock %}
+
 {% block content %}
-<div class="d-flex justify-content-between align-items-center mb-3">
-  <h4 class="mb-0">Admin · Audit log</h4>
-  <a href="{{ url_for('admin.dashboard') }}" class="btn btn-sm btn-outline-secondary">
-    Back to users
-  </a>
+<div class="dash-head">
+  <div class="races-intro">
+    <p class="eyebrow accent">● Admin · audit log</p>
+    <h1 class="page-title">Who did what.</h1>
+    <p class="page-sub">Every admin mutation, newest first. Filter by action or actor.
+      {{ rows|length }} row{{ 's' if rows|length != 1 }}{% if rows|length >= limit %} (capped at {{ limit }}){% endif %}.</p>
+  </div>
 </div>
 
-<form method="get" action="{{ url_for('admin.audit') }}" class="row g-2 mb-3 align-items-end">
-  <div class="col-auto">
-    <label class="form-label small text-muted mb-1" for="audit-action">Action</label>
-    <select id="audit-action" name="action" class="form-select form-select-sm">
-      <option value="">All actions</option>
-      {% for a in actions %}
-      <option value="{{ a }}" {% if a == selected_action %}selected{% endif %}>{{ a }}</option>
-      {% endfor %}
-    </select>
-  </div>
-  <div class="col-auto">
-    <label class="form-label small text-muted mb-1" for="audit-actor">Actor (id or username)</label>
-    <input id="audit-actor" name="actor" type="text" class="form-control form-control-sm"
-           value="{{ selected_actor }}" placeholder="1 or alice">
-  </div>
-  <div class="col-auto">
-    <button type="submit" class="btn btn-sm btn-primary">Filter</button>
-    {% if selected_action or selected_actor %}
-    <a href="{{ url_for('admin.audit') }}" class="btn btn-sm btn-outline-secondary">Clear</a>
-    {% endif %}
-  </div>
-  <div class="col text-end text-muted small">
-    {{ rows|length }} row{{ 's' if rows|length != 1 }}{% if rows|length >= limit %} (capped at {{ limit }}){% endif %}
-  </div>
-</form>
+<div class="card card-pad adm-auditfilter">
+  <form method="get" action="{{ url_for('admin.audit') }}" class="adm-filter-row">
+    <label class="field"><span class="lbl">Action</span>
+      <select name="action" class="form-select form-select-sm">
+        <option value="">All actions</option>
+        {% for a in actions %}
+        <option value="{{ a }}" {% if a == selected_action %}selected{% endif %}>{{ a }}</option>
+        {% endfor %}
+      </select></label>
+    <label class="field"><span class="lbl">Actor (id or username)</span>
+      <input name="actor" type="text" class="form-control form-control-sm"
+             value="{{ selected_actor }}" placeholder="1 or alice"></label>
+    <div class="adm-filter-actions">
+      <button type="submit" class="btn btn-primary btn-sm">Filter</button>
+      {% if selected_action or selected_actor %}
+      <a href="{{ url_for('admin.audit') }}" class="btn btn-ghost btn-sm">Clear</a>
+      {% endif %}
+    </div>
+  </form>
+</div>
 
 {% if rows %}
-<div class="table-responsive">
-<table class="table table-sm align-middle">
-  <thead>
-    <tr>
-      <th>When</th>
-      <th>Actor</th>
-      <th>Action</th>
-      <th>Target</th>
-      <th>Details</th>
-    </tr>
-  </thead>
-  <tbody>
-    {% for r in rows %}
-    <tr>
-      <td class="small text-muted font-monospace">
-        {{ (r.created_at|string)[:19] }}
-      </td>
-      <td>
-        {% if r.actor_username %}
-          <span class="fw-semibold">{{ r.actor_username }}</span>
-          <span class="text-muted small">#{{ r.actor_user_id }}</span>
-        {% elif r.actor_user_id %}
-          <span class="text-muted">#{{ r.actor_user_id }} (deleted)</span>
-        {% else %}
-          <span class="text-muted">—</span>
-        {% endif %}
-      </td>
-      <td><code>{{ r.action }}</code></td>
-      <td>
-        {% if r.target_username or r.target_user_id %}
-          <span class="fw-semibold">{{ r.target_username or '—' }}</span>
-          {% if r.target_user_id %}
-          <span class="text-muted small">#{{ r.target_user_id }}</span>
-          {% endif %}
-        {% else %}
-          <span class="text-muted">—</span>
-        {% endif %}
-      </td>
-      <td class="small">{{ r.details or '' }}</td>
-    </tr>
-    {% endfor %}
-  </tbody>
-</table>
+<div class="card card-flush adm-tablewrap">
+  <table class="data">
+    <thead>
+      <tr><th>When</th><th>Actor</th><th>Action</th><th>Target</th><th>Details</th></tr>
+    </thead>
+    <tbody>
+      {% for r in rows %}
+      <tr>
+        <td class="dim mono">{{ (r.created_at|string)[:19] }}</td>
+        <td>
+          {% if r.actor_username %}
+            <b>{{ r.actor_username }}</b> <span class="dim mono">#{{ r.actor_user_id }}</span>
+          {% elif r.actor_user_id %}
+            <span class="dim">#{{ r.actor_user_id }} (deleted)</span>
+          {% else %}<span class="dim">—</span>{% endif %}
+        </td>
+        <td><code>{{ r.action }}</code></td>
+        <td>
+          {% if r.target_username or r.target_user_id %}
+            <b>{{ r.target_username or '—' }}</b>
+            {% if r.target_user_id %}<span class="dim mono">#{{ r.target_user_id }}</span>{% endif %}
+          {% else %}<span class="dim">—</span>{% endif %}
+        </td>
+        <td class="dim">{{ r.details or '' }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
 </div>
 {% else %}
-<p class="text-muted">No audit entries match the current filter.</p>
+<div class="card card-pad adm-none-card">No audit entries match the current filter.</div>
 {% endif %}
 {% endblock %}

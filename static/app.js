@@ -435,6 +435,79 @@
   });
 })();
 
+// §25/§29 — type-to-confirm danger dialog with a focus trap. Used by the
+// admin delete-user flow: a trigger [data-dialog-open="<id>"] opens the
+// matching <div id="<id>" data-dialog>; focus is trapped inside until close
+// (Esc, backdrop click, or [data-dialog-close]) and restored to the opener
+// afterwards. The submit button [data-typeconfirm-submit] stays disabled
+// until the [data-typeconfirm] input exactly matches its
+// data-typeconfirm-match value. No JS → the dialog stays hidden and the
+// button never enables (fail-safe). CSP-clean: data-* hooks, no inline JS.
+(function () {
+  var FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]), ' +
+    'select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+  var openDialog = null;
+  var lastFocus = null;
+
+  function focusables(root) {
+    return Array.prototype.slice.call(root.querySelectorAll(FOCUSABLE))
+      .filter(function (el) { return el.offsetParent !== null; });
+  }
+  function open(dlg) {
+    if (!dlg) return;
+    lastFocus = document.activeElement;
+    dlg.hidden = false;
+    openDialog = dlg;
+    var f = focusables(dlg);
+    if (f.length) f[0].focus();
+  }
+  function close(dlg) {
+    if (!dlg) return;
+    dlg.hidden = true;
+    if (openDialog === dlg) openDialog = null;
+    if (lastFocus && lastFocus.focus) lastFocus.focus();
+    lastFocus = null;
+  }
+
+  document.addEventListener('click', function (e) {
+    var opener = e.target.closest && e.target.closest('[data-dialog-open]');
+    if (opener) {
+      e.preventDefault();
+      open(document.getElementById(opener.getAttribute('data-dialog-open')));
+      return;
+    }
+    var closer = e.target.closest && e.target.closest('[data-dialog-close]');
+    if (closer && openDialog) { e.preventDefault(); close(openDialog); return; }
+    // Backdrop click (outside the .dlg panel) closes.
+    if (openDialog && e.target === openDialog) close(openDialog);
+  });
+
+  document.addEventListener('keydown', function (e) {
+    if (!openDialog) return;
+    var k = e.key && e.key.toLowerCase();
+    if (k === 'escape') { e.preventDefault(); close(openDialog); return; }
+    if (e.key === 'Tab') {
+      var f = focusables(openDialog);
+      if (!f.length) return;
+      var first = f[0], last = f[f.length - 1];
+      if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+      else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+    }
+  });
+
+  // Type-to-confirm: enable the paired submit only on an exact match.
+  Array.prototype.forEach.call(
+    document.querySelectorAll('[data-typeconfirm]'), function (input) {
+      var form = input.form;
+      var btn = form && form.querySelector('[data-typeconfirm-submit]');
+      if (!btn) return;
+      var want = input.getAttribute('data-typeconfirm-match') || '';
+      function sync() { btn.disabled = input.value !== want; }
+      input.addEventListener('input', sync);
+      sync();
+    });
+})();
+
 // data-progress="N": set element.style.width to N% on DOM-ready. Used by
 // progress bars whose width is computed in Jinja — CSP style-src forbids
 // parser-set inline style attributes, so the width is carried in a data-
