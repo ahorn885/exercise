@@ -69,7 +69,11 @@ Work top-to-bottom **within a phase** (phases defined in `BUILD_PLAN.md` §3). C
 | — | Print stylesheets (opt.) | — | `style.css @media print` | Plan week / workout / race-day brief. CSS hooks exist in polish. Confirm scope. |
 
 ## Phase 7 — Backend cleanup (HANDOFF §30)
-- [ ] **Retire `coaching_bp`.** `plan_refresh_bp` and `coaching_bp` register routes doing the same job (re-run cascade vs existing plan). Fold `coaching/review`'s richer inputs into `plan_refresh`. Remove `routes/coaching.py` + `templates/coaching/`. Update nav + any deep links. Remove `app.register_blueprint(coaching_bp)`.
+- [ ] **Retire `coaching_bp`. — ⛔ BLOCKED (code-verified 2026-06-02; do NOT delete as written).** The original note assumed `plan_refresh_bp` and `coaching_bp` "do the same job." Reading the code, they don't — and a literal `rm routes/coaching.py` + `templates/coaching/` would **break an already-shipped redesign screen.** Findings:
+  - **Two different, both-live plan models.** `coaching_bp` (`/coaching`) operates on the **legacy `training_plans`/`plan_items`** model; `plan_refresh_bp` (`/plans/v2/refresh`) operates on the **modern `plan_versions`** model (the two parallel models flagged in `PLAN_REVIEW_AND_CORRECTIONS.md`). Only `coaching.review` *conceptually* overlaps refresh, and even it can't fold in cleanly without **unifying the plan models** — a much larger effort that conflicts with the redesign's own decision to keep `training_plans` live (the migrated §06 week view runs on it).
+  - **`coaching_bp` is load-bearing for the migrated §06 plan view (`plans/view.html`, on `main`):** the "AI Review" button → `coaching.review`; the coach-chat panel → `coaching.chat` (GET history + POST, 5 refs); `coaching.clarify` backs `coaching/review.html`.
+  - **`coaching_bp` owns surfaces `plan_refresh` has no equivalent for:** `/chat`, `/preferences` (+`/preferences/<id>/delete`), `/clarify`, `/context`, headless `/api/review`. `context`/`api_review`/`delete_preference` have 0 *internal* refs but are intentional external/JSON APIs, not dead code.
+  - **Unblock prerequisite:** unify the `training_plans` ↔ `plan_versions` plan models (or migrate the §06 plan view + chat/review onto `plan_versions`) *first*; only then can review fold into `plan_refresh` and chat/preferences re-home. Until that backend slice exists, keep `coaching_bp` registered. Deferred, not dropped.
 
 ---
 
@@ -93,7 +97,7 @@ The redesign covers every *user-facing* surface but a few blueprints have no red
 
 **Last updated:** 2026-06-02
 
-**Progress:** Phase 0 ✅ · Phase 1 shell ✅ · **Phase 2 COMPLETE** (§05–§09 ✅) · **Phase 3 COMPLETE\*** (§04 ✅ · §10 ✅ · §11 ✅ · §12 ◑ diff-via-refresh · §13 ✅ · §14 ✅) · **Phase 4 COMPLETE** (§15 ✅ · §16 ✅ · §17 ✅ · §18 ✅ · §19 ✅ · §20 ✅) · **Phase 5 COMPLETE** (§21 ✅ · §22 ✅ read-only · §23 ✅ · §24 ✅ · §25 ✅) — **next: Phase 6+ (polish/§29 a11y sweep, §30 coaching consolidation, remaining `base_legacy` secondary forms)**. *\*§12 standalone A↔B compare deferred (no backend route); §13 still owes the §30/Phase-7 `coaching_bp` consolidation.*
+**Progress:** Phase 0 ✅ · Phase 1 shell ✅ · **Phase 2 COMPLETE** (§05–§09 ✅) · **Phase 3 COMPLETE\*** (§04 ✅ · §10 ✅ · §11 ✅ · §12 ◑ diff-via-refresh · §13 ✅ · §14 ✅) · **Phase 4 COMPLETE** (§15 ✅ · §16 ✅ · §17 ✅ · §18 ✅ · §19 ✅ · §20 ✅) · **Phase 5 COMPLETE** (§21 ✅ · §22 ✅ read-only · §23 ✅ · §24 ✅ · §25 ✅) — **next: Phase 6+ (polish/§29 a11y sweep, remaining `base_legacy` secondary forms)**. *\*§12 standalone A↔B compare deferred (no backend route); §13's §30/Phase-7 `coaching_bp` consolidation is **⛔ BLOCKED** — code-verified it can't be done as written (two live plan models; `coaching_bp` backs the migrated §06 plan view). See Phase 7 above.*
 Merged to `main`: PR #397 (review), #398 (Phase 0), #399 (docs), #400 (Phase 1 + §05),
 #401 (§06), #403 (§07), #404 (§07 follow-up), #406 (redesign card/grid Bootstrap-leak fix),
 #407 (§08 unified Log landing + 4 panes).
@@ -250,7 +254,7 @@ In flight: PR for §08 Strength pane + §09 Wellness (completes Phase 2) **and**
     real `garmin_workout_json` column + sport-type IDs kept as a developer reference).
   - **§13 Refresh** (`plans/v2/refresh.html`): horizon picker (T1/T2/T3) with active-tier
     highlighting, current-version card, no-plan empty state; the Bootstrap frequency-cap modal
-    (nonce'd) preserved. Still owes the §30/Phase-7 `coaching_bp` consolidation.
+    (nonce'd) preserved. The §30/Phase-7 `coaching_bp` consolidation it pointed at is now **⛔ BLOCKED** (see Phase 7).
   - **§12 diff** (`plans/v2/refresh_view.html`): refreshed-plan sessions grouped by date with
     updated/new diff badges + left-border accents — the app's **real** compare surface
     (refresh-vs-parent). Standalone arbitrary version A↔B compare has **no backend route**; not
@@ -368,7 +372,7 @@ of the core surface map are now on the new shell.
 Remaining work, lower priority:
 - **§29 a11y sweep** — the focus-trap pattern now exists (`app.js` dialog controller); audit the rest
   of the shell (skip links, modal/offcanvas focus, reduced-motion) against it.
-- **§30 / Phase 7** — `coaching_bp` consolidation (still owed from §13).
+- **§30 / Phase 7** — `coaching_bp` consolidation: **⛔ BLOCKED** (code-verified 2026-06-02). Can't be done as written — `coaching_bp` (legacy `training_plans`) and `plan_refresh_bp` (modern `plan_versions`) run on two different, both-live plan models, and `coaching_bp` is load-bearing for the migrated §06 plan view (chat + AI review). Prerequisite: unify the plan models first. Full rationale in **Phase 7** above.
 - **§12** standalone A↔B plan compare (needs a backend route; deferred).
 - **Secondary `base_legacy.html` forms still reachable:** ✅ `rx/form.html` (Edit Rx) · ✅ **entire
   `locales/` dir** (`form` editor all-3-modes · `new` add-location · `nearby` same-chain · `refresh_confirm`
