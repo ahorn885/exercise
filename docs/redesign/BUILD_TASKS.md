@@ -63,7 +63,7 @@ Work top-to-bottom **within a phase** (phases defined in `BUILD_PLAN.md` §3). C
 | § | Section | DM | Where | Migration note |
 |---|---|---|---|---|
 | 26 | Empty / first-run states ⟳ | DM | shared partial | **One** "You're at the start line." component reused across Dashboard/Plan/Plans-list (replaces 3 divergent headlines). |
-| 27 | Error states | DM | Flask `errorhandler` + shared `templates/_error.html` | 404 "You're off trail." · plan-gen "The build stalled." · 500 "Something seized up." Diagnostic block + `mailto:help@aidstation.pro`. |
+| 27 | ✅ Error states | DM | Flask `errorhandler` + shared `templates/_error.html` | 404 "You're off trail." (way-back quicklinks) · 500 "Something seized up." (retry) via 404/500 handlers in `app.py`. Per-request diagnostic block + `mailto:help@aidstation.pro` pre-filled. `_error.html` is **standalone** (no shell includes / no DB context) so a 500 can't cascade. Plan-gen "The build stalled." already lives inline in `plan_create/progress.html` (§04). *(this PR)* |
 | 28 | Light mode | DM | body theme class + token swap | Already token-ready. Wire a real toggle (persist in localStorage); no per-screen CSS. |
 | 29 | A11y / keyboard / motion | D | real components + `app.js` | **Port `a11y-wire.js` logic onto real elements.** Roving tab-order on nav/tabbar, `aria-current`, focus trap+restore on delete-user dialog, `role`/`aria-*` on tablists. Flip CSP REPORT_ONLY **off** and clear violations. |
 | — | Print stylesheets (opt.) | — | `style.css @media print` | Plan week / workout / race-day brief. CSS hooks exist in polish. Confirm scope. |
@@ -97,7 +97,7 @@ The redesign covers every *user-facing* surface but a few blueprints have no red
 
 **Last updated:** 2026-06-02
 
-**Progress:** Phase 0 ✅ · Phase 1 shell ✅ · **Phase 2 COMPLETE** (§05–§09 ✅) · **Phase 3 COMPLETE\*** (§04 ✅ · §10 ✅ · §11 ✅ · §12 ◑ diff-via-refresh · §13 ✅ · §14 ✅) · **Phase 4 COMPLETE** (§15 ✅ · §16 ✅ · §17 ✅ · §18 ✅ · §19 ✅ · §20 ✅) · **Phase 5 COMPLETE** (§21 ✅ · §22 ✅ read-only · §23 ✅ · §24 ✅ · §25 ✅) — **next: Phase 6+ (polish/§29 a11y sweep, remaining `base_legacy` secondary forms)**. *\*§12 standalone A↔B compare deferred (no backend route); §13's §30/Phase-7 `coaching_bp` consolidation is **⛔ BLOCKED** — code-verified it can't be done as written (two live plan models; `coaching_bp` backs the migrated §06 plan view). See Phase 7 above.*
+**Progress:** Phase 0 ✅ · Phase 1 shell ✅ · **Phase 2 COMPLETE** (§05–§09 ✅) · **Phase 3 COMPLETE\*** (§04 ✅ · §10 ✅ · §11 ✅ · §12 ◑ diff-via-refresh · §13 ✅ · §14 ✅) · **Phase 4 COMPLETE** (§15 ✅ · §16 ✅ · §17 ✅ · §18 ✅ · §19 ✅ · §20 ✅) · **Phase 5 COMPLETE** (§21 ✅ · §22 ✅ read-only · §23 ✅ · §24 ✅ · §25 ✅) · **Phase 6 polish — in progress** (§27 ✅ error states) — **next: §29 a11y sweep, §28 light-mode toggle, remaining `base_legacy` secondary forms**. *\*§12 standalone A↔B compare deferred (no backend route); §13's §30/Phase-7 `coaching_bp` consolidation is **⛔ BLOCKED** — code-verified it can't be done as written (two live plan models; `coaching_bp` backs the migrated §06 plan view). See Phase 7 above.*
 Merged to `main`: PR #397 (review), #398 (Phase 0), #399 (docs), #400 (Phase 1 + §05),
 #401 (§06), #403 (§07), #404 (§07 follow-up), #406 (redesign card/grid Bootstrap-leak fix),
 #407 (§08 unified Log landing + 4 panes).
@@ -354,6 +354,23 @@ In flight: PR for §08 Strength pane + §09 Wellness (completes Phase 2) **and**
   - New §18/§19/§20 CSS + `tests/test_redesign_profile_render.py` (7). Existing profile +
     onboarding + password/preference suites green; redesign suite green (32); braces balanced
     (669/669); CSP-clean.
+
+- **Phase 6 · §27 Error states** — the brand "trail-voice" error pages, grounded in real Flask
+  errorhandlers. New **shared `templates/_error.html`** — deliberately **standalone** (does NOT
+  extend `base.html`: no sidebar/topbar/nudges/cmdk includes, no DB-dependent context of its
+  own) so a 500 can't cascade into a second failure while rendering its own error page (models
+  the existing `auth/_shell.html` standalone pattern, `.app`-themed via tokens + sprite). Two
+  handlers in `app.py`: **404 "You're off trail."** (Today/Plan/Workouts way-back quicklinks, no
+  retry) and **500 "Something seized up."** (retry = reload for GET, else home). Each carries a
+  per-request **diagnostic block** (request_id · path/action · status · timestamp) and an
+  **`mailto:help@aidstation.pro`** with that diagnostic **pre-filled** — the 500 handler logs the
+  real exception server-side keyed by the request_id the user sees; the exception text never
+  reaches the page. Plan-gen **"The build stalled."** already lives inline in
+  `plan_create/progress.html` (§04), so no third handler. New §27 CSS block (`.error-*`, token
+  only, `.app`-scoped, responsive) + `tests/test_redesign_error_render.py` (2: 404 + 500 render,
+  copy/diag/mailto/quicklinks/retry, CSP-clean). Suites green (redesign + auth-gate + admin =
+  79); braces balanced (814/814); zero inline `style=`/`onclick=`/`<script>` on the page. The
+  existing `CSRFError` handler (plain 400) left as-is.
 
 ### Known blocker (infra, not code) — Vercel **Preview** deploys 500
 Preview deployments crash with `FUNCTION_INVOCATION_FAILED`: `app.py` raises at **import** when
