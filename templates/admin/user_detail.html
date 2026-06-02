@@ -1,0 +1,100 @@
+{# Redesign §25 — Admin · user drill-in. Identity + data footprint (counts
+   mirror the tables admin.delete_user cascades) + the admin-audit trail
+   targeting this user + a type-to-confirm delete dialog with a focus trap
+   (§29). The dialog's Delete button stays disabled until the operator types
+   the exact username (app.js data-typeconfirm). No JS, no delete: the button
+   simply never enables. #}
+{% extends 'base.html' %}
+{% set nav_active = '' %}
+{% block title %}Admin · {{ u.username }} — AIDSTATION{% endblock %}
+{% block crumbs %}<a href="{{ url_for('admin.dashboard') }}">Admin</a> · <b>{{ u.username }}</b>{% endblock %}
+
+{% block content %}
+<div class="dash-head">
+  <div class="races-intro">
+    <p class="eyebrow accent">● User #{{ u.id }}{% if u.id == admin_user_id %} · admin{% endif %}</p>
+    <h1 class="page-title">{{ u.display_name or u.username }}.</h1>
+    <p class="page-sub">{{ u.username }}{% if u.email %} · {{ u.email }}{% endif %}
+      {% if u.created_at %} · joined {{ (u.created_at|string)[:10] }}{% endif %}
+      {% if u.last_login %} · last seen {{ (u.last_login|string)[:10] }}{% endif %}</p>
+  </div>
+</div>
+
+<div class="stack adm-detail">
+
+  {# Data footprint — counts across the user-scoped tables a delete cascades. #}
+  <div>
+    <p class="eyebrow">● Data footprint</p>
+    <div class="adm-stats">
+      {%- set stats = [
+        ('Strength logs', u.strength_logs), ('Cardio logs', u.cardio_logs),
+        ('Plans', u.plans), ('Coach chat', u.chat_msgs),
+        ('Locations', u.locations), ('Rx entries', u.rx_entries),
+        ('Feedback', u.feedback_rows), ('Wellness', u.wellness_rows),
+      ] -%}
+      {% for label, n in stats %}
+      <div class="stat-card"><div class="k">{{ label }}</div><div class="v num">{{ n }}</div></div>
+      {% endfor %}
+    </div>
+  </div>
+
+  {# Admin-audit trail targeting this user. #}
+  <div>
+    <p class="eyebrow">● Admin actions on this user</p>
+    {% if audit_rows %}
+    <div class="card card-flush adm-tablewrap">
+      <table class="data">
+        <thead><tr><th>When</th><th>Action</th><th>By</th><th>Details</th></tr></thead>
+        <tbody>
+          {% for r in audit_rows %}
+          <tr>
+            <td class="dim mono">{{ (r.created_at|string)[:19] }}</td>
+            <td><code>{{ r.action }}</code></td>
+            <td>{{ r.actor_username or (('#' ~ r.actor_user_id) if r.actor_user_id else '—') }}</td>
+            <td class="dim">{{ r.details or '' }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <p class="adm-none">No admin actions recorded against this user.</p>
+    {% endif %}
+  </div>
+
+  {# Danger zone. #}
+  <div class="card card-pad adm-danger">
+    <p class="eyebrow bad">● Danger zone</p>
+    {% if u.id == admin_user_id %}
+    <p class="adm-danger-txt">This is the admin user and cannot be deleted.</p>
+    {% else %}
+    <p class="adm-danger-txt">Permanently delete <b>{{ u.username }}</b> and every per-user row across
+      25 scoped tables. This cannot be undone.</p>
+    <button type="button" class="btn btn-danger btn-sm" data-dialog-open="del-user-dlg">Delete user…</button>
+    {% endif %}
+  </div>
+
+</div>
+
+{% if u.id != admin_user_id %}
+<div class="dlg-backdrop" id="del-user-dlg" data-dialog hidden>
+  <div class="dlg" role="dialog" aria-modal="true" aria-labelledby="del-user-title">
+    <h2 class="dlg-title" id="del-user-title">Delete {{ u.username }}?</h2>
+    <p class="dlg-body">This removes the account and all associated data across 25 tables — logs,
+      plans, locations, Rx, wellness, coach memory, connections. There is no undo. To confirm, type
+      the username <code>{{ u.username }}</code> below.</p>
+    <form method="post" action="{{ url_for('admin.delete_user', user_id=u.id) }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <input type="text" class="form-control form-control-sm dlg-input" autocomplete="off"
+             spellcheck="false" placeholder="{{ u.username }}"
+             data-typeconfirm data-typeconfirm-match="{{ u.username }}"
+             aria-label="Type the username to confirm deletion">
+      <div class="dlg-actions">
+        <button type="button" class="btn btn-ghost btn-sm" data-dialog-close>Cancel</button>
+        <button type="submit" class="btn btn-danger btn-sm" data-typeconfirm-submit disabled>Delete permanently</button>
+      </div>
+    </form>
+  </div>
+</div>
+{% endif %}
+{% endblock %}

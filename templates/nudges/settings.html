@@ -1,0 +1,61 @@
+{# Redesign §22 — Notification settings (read-only by design).
+   There is no per-channel/per-category preference backend (see the handoff's
+   §22 backend-gap note); the only real control is dismissing an individual
+   nudge, which the §21 feed provides. Rather than fabricate toggles with
+   nowhere to write, this honestly documents the delivery model — the same
+   posture as §17 Connections › Preferences. `channels` + `reminders` come
+   from routes.nudges (NUDGE_REGISTRY-derived, so they can't drift). #}
+{% extends 'base.html' %}
+{% set nav_active = '' %}
+{% block title %}Notification settings — AIDSTATION{% endblock %}
+{% block crumbs %}<a href="{{ url_for('nudges.feed') }}">Notifications</a> · <b>Settings</b>{% endblock %}
+
+{% block content %}
+<div class="dash-head">
+  <div class="races-intro">
+    <p class="eyebrow accent">● Notifications · settings</p>
+    <h1 class="page-title">How AIDSTATION reaches you.</h1>
+    <p class="page-sub">A deliberately small surface. Notifications are managed automatically — the
+      one control you have is dismissing items in your <a href="{{ url_for('nudges.feed') }}">feed</a>.
+      Per-channel and per-category preferences aren't available yet.</p>
+  </div>
+</div>
+
+<div class="stack ns-wrap">
+
+  {# Channels — read-only description of how messages actually ship. #}
+  <div class="card card-pad">
+    <p class="eyebrow">● Channels</p>
+    <div class="ns-channels">
+      {% for c in channels %}
+      <div class="ns-channel">
+        <div class="ns-channel-head">
+          <span class="ns-channel-label">{{ c.label }}</span>
+          <span class="chip solid">{{ c.status }}</span>
+        </div>
+        <p class="ns-channel-detail">{{ c.detail }}</p>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+
+  {# Reminders — the live registry of what the system may nudge about. #}
+  <div class="card card-pad">
+    <p class="eyebrow">● What you may be reminded about</p>
+    <p class="ns-note">These in-app reminders fire only when they're relevant to your account (e.g.
+      no provider connected, a skipped onboarding step). Each can be dismissed from the feed.</p>
+    <ul class="ns-reminders">
+      {% for r in reminders %}
+      <li class="ns-reminder">
+        <span class="chip {{ 'warn' if r.category == 'warning' else 'solid' }}">{{ r.category }}</span>
+        <span class="ns-reminder-msg">{{ r.message }}</span>
+      </li>
+      {% endfor %}
+    </ul>
+  </div>
+
+  <p class="ns-foot mono">Granular notification preferences are planned but not wired yet — there's no
+    setting here that wouldn't be a no-op, so there isn't one.</p>
+
+</div>
+{% endblock %}

@@ -40,7 +40,7 @@ context processor in `app.py`. PG-only — `account_nudges` is in
 from datetime import datetime, timezone
 
 from flask import (
-    Blueprint, request, redirect, url_for, abort, jsonify,
+    Blueprint, request, redirect, url_for, abort, jsonify, render_template,
 )
 
 from database import get_db
@@ -156,6 +156,126 @@ def get_active_nudges(db, uid):
             **{k: v for k, v in entry.items() if k != 'display_delay_days'},
         })
     return out
+
+
+def _feed_overlay(row):
+    """Registry overlay for one `account_nudges` row, for the feed page.
+
+    Same visible-but-ugly-never-silent posture as `get_active_nudges`:
+    unknown nudge_types fall back to the raw `nudge_type` as the
+    message. Strips `display_delay_days` — a banner-only implementation
+    detail the feed template has no use for.
+    """
+    entry = NUDGE_REGISTRY.get(row['nudge_type'], {
+        'message': row['nudge_type'],
+        'cta_label': None,
+        'cta_endpoint': None,
+        'category': 'info',
+    })
+    return {
+        'id': row['id'],
+        'nudge_type': row['nudge_type'],
+        'created_at': row['created_at'],
+        **{k: v for k, v in entry.items() if k != 'display_delay_days'},
+    }
+
+
+def get_feed_nudges(db, uid):
+    """Return `(new, earlier)` decorated nudge lists for the §21 feed.
+
+    `new` mirrors the banner exactly — undismissed rows past their
+    display delay (reuses `get_active_nudges`, so the feed and the
+    banner can never disagree about what's "live"). `earlier` is every
+    dismissed row, most-recently-dismissed first, each carrying its
+    `dismissed_at`. Scheduled-but-not-yet-due nudges (undismissed but
+    still inside their grace window) are in neither list — they aren't
+    surfaced anywhere until the delay elapses.
+
+    Empty lists when `uid` is falsy so callers needn't special-case the
+    logged-out path. PG-only table — SQLite dev raises on the SELECT;
+    the route wraps this call and degrades to an empty feed.
+    """
+    if not uid:
+        return [], []
+    new = get_active_nudges(db, uid)
+    rows = db.execute(
+        'SELECT id, nudge_type, created_at, dismissed_at FROM account_nudges '
+        'WHERE user_id = ? AND dismissed_at IS NOT NULL '
+        'ORDER BY dismissed_at DESC',
+        (uid,),
+    ).fetchall()
+    earlier = []
+    for r in rows:
+        item = _feed_overlay(r)
+        item['dismissed_at'] = r['dismissed_at']
+        earlier.append(item)
+    return new, earlier
+
+
+@bp.route('/notifications', methods=['GET'])
+def feed():
+    """Full notifications feed (v5 §21).
+
+    Two sections: **New** (undismissed, banner-visible nudges — each
+    rendered with its registry CTA deep-link + an inline dismiss form)
+    and **Earlier** (previously dismissed, read-only). The full-page
+    companion to the passive banner (`_account_nudges.html`) and the
+    topbar bell dropdown.
+
+    Fail-open to an empty feed if the read raises — e.g. SQLite dev,
+    where `account_nudges` lives only in `_PG_MIGRATIONS` — so the page
+    renders rather than 500s, mirroring the `active_nudges` context
+    processor in app.py.
+    """
+    uid = current_user_id()
+    try:
+        new, earlier = get_feed_nudges(get_db(), uid)
+    except Exception as e:  # noqa: BLE001 — degrade to empty, never 500
+        print(f'nudges: get_feed_nudges failed: {e}')
+        new, earlier = [], []
+    return render_template('nudges/feed.html', new=new, earlier=earlier)
+
+
+# Delivery channels surfaced on the §22 settings page. Read-only — these
+# describe how notifications actually ship today, not configurable prefs.
+NOTIFICATION_CHANNELS = [
+    {
+        'label': 'In-app',
+        'status': 'On',
+        'detail': 'Passive banner + the notifications feed. Dismiss any '
+                  'item individually — that is the only per-notification '
+                  'control today.',
+    },
+    {
+        'label': 'Email',
+        'status': 'Account-critical only',
+        'detail': 'Transactional messages such as password resets. No '
+                  'digests or marketing — nothing to opt out of.',
+    },
+]
+
+
+@bp.route('/notifications/settings', methods=['GET'])
+def settings():
+    """Notification settings (v5 §22) — read-only by design.
+
+    There is no per-channel / per-category preference store today: the
+    only athlete-facing control is dismissing an individual in-app
+    nudge, which §21's feed already provides. Rather than fabricate
+    toggles with nowhere to write, this page honestly documents the
+    delivery model — the same posture as §17 Connections › Preferences.
+
+    The reminder list is derived live from `NUDGE_REGISTRY` so it can
+    never drift from what actually ships. Each entry carries the same
+    registry overlay the banner/feed use (message + category).
+    """
+    reminders = [
+        {'nudge_type': k, 'message': v['message'], 'category': v['category']}
+        for k, v in NUDGE_REGISTRY.items()
+    ]
+    return render_template('nudges/settings.html',
+                           channels=NOTIFICATION_CHANNELS,
+                           reminders=reminders)
 
 
 @bp.route('/cron/nudges/connect_provider_14d', methods=['GET'])

@@ -53,11 +53,11 @@ Work top-to-bottom **within a phase** (phases defined in `BUILD_PLAN.md` §3). C
 ## Phase 5 — System
 | § | Section | DM | Blueprint / route | Current template | Migration note |
 |---|---|---|---|---|---|
-| 21 | Notifications & feed ★ | DM | `nudges.*` | `_account_nudges.html` (partial) | Full feed + dropdown + deep-link route map. Backed by `account_nudges`. |
-| 22 | Notification settings ★ | DM | `nudges.*` / `profile` | — | Channel × category matrix. |
-| 23 | Command palette · ⌘K | DM | client-only | `static/app.js` | Jump-to-anything. No route; nonced JS + `data-*`. |
-| 24 | Keyboard shortcuts | D | client-only | `static/app.js` | Cheat sheet overlay. |
-| 25 | **Admin** ★ (desktop-only) | D | `admin.*` (+ `admin.audit`) | `admin/dashboard.html` | Users · drill-in detail · type-to-confirm **Delete user** (cascades 25 tables) · Audit log · System telemetry. Dialog needs focus trap (§29). |
+| 21 | ✅ Notifications & feed ★ | DM | `nudges.feed` (NEW `/notifications`) | `nudges/feed.html` + bell dropdown | **DONE.** New `nudges.feed` over `account_nudges` (`get_feed_nudges` → New/Earlier, registry CTA deep-links, inline dismiss). Topbar bell → Bootstrap dropdown (unread badge, recent 5, "See all"); mobile drawer link. Fail-open to empty on SQLite. 2 render tests. *(PR after #410)* |
+| 22 | ✅ Notification settings ★ | DM | `nudges.settings` (NEW `/notifications/settings`) | `nudges/settings.html` | **DONE (read-only).** No preference backend exists (confirmed: no settings table / channel store) — per the §17 precedent, an honest read-only page documenting the delivery model (In-app + transactional Email) + the live `NUDGE_REGISTRY` reminder list, **no fabricated toggles**. Linked from feed action + account menus. 1 render test. |
+| 23 | ✅ Command palette · ⌘K | DM | client-only | `_shell/cmdk.html` + `static/app.js` | **DONE.** ⌘K/Ctrl-K opens a jump-to-anything palette; destination list is server-rendered (`url_for`, admin-gated) so it can't drift; JS only filters (type-ahead) + arrow/Enter navigates. Topbar search affordance opens it too. Nonced JS, `data-*` hooks, no inline handlers. |
+| 24 | ✅ Keyboard shortcuts | D | client-only | `_shell/cmdk.html` + `static/app.js` | **DONE.** `?` opens a cheat-sheet overlay (⌘K · ? · ↑↓ · ↵ · esc). Esc/backdrop-click closes. Shares the §23 partial. 1 shell render test covers both. |
+| 25 | ✅ **Admin** ★ (desktop-only) | D | `admin.*` (+ NEW `admin.user_detail`) | `admin/{dashboard,user_detail,audit,telemetry_refresh}.html` | **DONE.** Dashboard/audit/telemetry migrated off `base_legacy` → new shell. NEW `admin.user_detail` drill-in: data-footprint stat-cards (counts mirror the 25 cascaded tables) + admin-audit trail + **type-to-confirm Delete user** in a **focus-trapped dialog** (§29; submit disabled until the username is typed exactly — app.js `data-typeconfirm`). 5 render tests. `plan_inspect`/`plan_diag` stay legacy (operator deep-debug, out of §25 scope). |
 
 ## Phase 6 — States + Polish
 | § | Section | DM | Where | Migration note |
@@ -93,7 +93,7 @@ The redesign covers every *user-facing* surface but a few blueprints have no red
 
 **Last updated:** 2026-06-02
 
-**Progress:** Phase 0 ✅ · Phase 1 shell ✅ · **Phase 2 COMPLETE** (§05–§09 ✅) · **Phase 3 COMPLETE\*** (§04 ✅ · §10 ✅ · §11 ✅ · §12 ◑ diff-via-refresh · §13 ✅ · §14 ✅) · **Phase 4 COMPLETE** (§15 ✅ · §16 ✅ · §17 ✅ · §18 ✅ · §19 ✅ · §20 ✅) — **next: Phase 5 (System: §21–§25)**. *\*§12 standalone A↔B compare deferred (no backend route); §13 still owes the §30/Phase-7 `coaching_bp` consolidation.*
+**Progress:** Phase 0 ✅ · Phase 1 shell ✅ · **Phase 2 COMPLETE** (§05–§09 ✅) · **Phase 3 COMPLETE\*** (§04 ✅ · §10 ✅ · §11 ✅ · §12 ◑ diff-via-refresh · §13 ✅ · §14 ✅) · **Phase 4 COMPLETE** (§15 ✅ · §16 ✅ · §17 ✅ · §18 ✅ · §19 ✅ · §20 ✅) · **Phase 5 COMPLETE** (§21 ✅ · §22 ✅ read-only · §23 ✅ · §24 ✅ · §25 ✅) — **next: Phase 6+ (polish/§29 a11y sweep, §30 coaching consolidation, remaining `base_legacy` secondary forms)**. *\*§12 standalone A↔B compare deferred (no backend route); §13 still owes the §30/Phase-7 `coaching_bp` consolidation.*
 Merged to `main`: PR #397 (review), #398 (Phase 0), #399 (docs), #400 (Phase 1 + §05),
 #401 (§06), #403 (§07), #404 (§07 follow-up), #406 (redesign card/grid Bootstrap-leak fix),
 #407 (§08 unified Log landing + 4 panes).
@@ -359,14 +359,23 @@ Preview deployments crash with `FUNCTION_INVOCATION_FAILED`: `app.py` raises at 
 Until then, PR previews can't render — verify locally or via static checks. This is unrelated
 to any redesign PR (Production is unaffected).
 
-### Next — Phase 5 (System)
-**Phase 4 COMPLETE** (§15 Exercises · §16 Locations · §17 Connections hub · §18 Athlete · §19
-Account · §20 Coach memory). Continue with Phase 5 top-to-bottom:
-- **§21** Notifications & feed (`nudges.*`) · **§22** Notification settings · **§23** Command
-  palette ⌘K (client-only) · **§24** Keyboard shortcuts (client-only) · **§25** Admin
-  (`admin.*`, desktop-only; delete-user focus trap).
-Carry the slice discipline: one responsive template, token classes only, CSP enforced, flip
-`base_legacy.html`→`base.html`, render smoke test per slice.
-Carry the established slice discipline: one responsive template, token classes only, CSP
-enforced (nonce'd scripts, no inline `style=`/`onclick=`), flip `base_legacy.html` → `base.html`,
-and add a render smoke test per the §08/§09 precedent.
+### Next — Phase 6+ (polish + remaining migrations)
+**Phase 5 COMPLETE** (§21 Notifications feed + bell dropdown · §22 Notification settings (read-only,
+honest — no preference backend) · §23 ⌘K command palette · §24 keyboard-shortcuts overlay · §25 Admin:
+users / drill-in detail / focus-trapped type-to-confirm delete / audit / telemetry). All five phases
+of the core surface map are now on the new shell.
+
+Remaining work, lower priority:
+- **§29 a11y sweep** — the focus-trap pattern now exists (`app.js` dialog controller); audit the rest
+  of the shell (skip links, modal/offcanvas focus, reduced-motion) against it.
+- **§30 / Phase 7** — `coaching_bp` consolidation (still owed from §13).
+- **§12** standalone A↔B plan compare (needs a backend route; deferred).
+- **Secondary `base_legacy.html` forms still reachable:** ✅ `rx/form.html` (Edit Rx) · ✅ **entire
+  `locales/` dir** (`form` editor all-3-modes · `new` add-location · `nearby` same-chain · `refresh_confirm`
+  Mapbox diff) — all migrated. Remaining — the garmin import/sync/wellness pages and admin
+  `plan_inspect.html`/`plan_diag` (operator deep-debug). The Mapbox **save/upgrade/refresh** + shared-profile
+  **save** + nearby-**add** POST paths weren't manually exercised here (render-tested only) — worth a manual smoke.
+
+Carry the established slice discipline: one responsive template, token classes only, CSP enforced
+(nonce'd scripts, no inline `style=`/`onclick=`), flip `base_legacy.html` → `base.html`, and add a
+render smoke test per the §08/§09 precedent.
