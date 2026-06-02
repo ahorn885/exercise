@@ -62,7 +62,7 @@ Work top-to-bottom **within a phase** (phases defined in `BUILD_PLAN.md` §3). C
 ## Phase 6 — States + Polish
 | § | Section | DM | Where | Migration note |
 |---|---|---|---|---|
-| 26 | Empty / first-run states ⟳ | DM | shared partial | **One** "You're at the start line." component reused across Dashboard/Plan/Plans-list (replaces 3 divergent headlines). |
+| 26 | ✅ Empty / first-run states ⟳ | DM | shared partial | "You're at the start line." extracted to **`templates/_no_plan.html`** (single source). The new IA already collapsed the design's 3 divergent no-plan headlines: Plan = `plans.list_plans` (uses the partial); the dashboard's no-plan state is a purpose-built daily-hub hero ("No session scheduled"), intentionally distinct. *(this PR)* |
 | 27 | ✅ Error states | DM | Flask `errorhandler` + shared `templates/_error.html` | 404 "You're off trail." (way-back quicklinks) · 500 "Something seized up." (retry) via 404/500 handlers in `app.py`. Per-request diagnostic block + `mailto:help@aidstation.pro` pre-filled. `_error.html` is **standalone** (no shell includes / no DB context) so a 500 can't cascade. Plan-gen "The build stalled." already lives inline in `plan_create/progress.html` (§04). *(this PR)* |
 | 28 | ✅ Light mode | DM | body theme class + token swap | Real toggle wired (topbar sun button + drawer row, `data-theme-toggle` → `app.js`), persisted in `localStorage`; **FOUC-free** via a nonced `<head>` pre-paint that sets `.theme-light` on `<html>`. Token swap only — no per-screen CSS. Fixed the dead `body.theme-light .app` selector (`body` *is* `.app`) → `.theme-light .app`. *(this PR)* |
 | 29 | ✅ A11y / keyboard / motion | D | real components + `app.js` | `a11y-wire.js` ported onto real elements: **roving tab-order** on sidebar + tab bar (`[data-roving]`/`[data-roving-item]` → `app.js`), `aria-current` (macros), focus-trap+restore on the delete-user dialog (§25), tablist/listbox roles (cmdk/§17/§25), focus-visible rings + reduced-motion (polish.css). Primary landmark relocated onto the `<nav>`. CSP already **enforced** in prod (REPORT_ONLY is a dev-only opt-in); all slices CSP-clean → no violations to clear. *(this PR)* |
@@ -97,7 +97,7 @@ The redesign covers every *user-facing* surface but a few blueprints have no red
 
 **Last updated:** 2026-06-02
 
-**Progress:** Phase 0 ✅ · Phase 1 shell ✅ · **Phase 2 COMPLETE** (§05–§09 ✅) · **Phase 3 COMPLETE\*** (§04 ✅ · §10 ✅ · §11 ✅ · §12 ◑ diff-via-refresh · §13 ✅ · §14 ✅) · **Phase 4 COMPLETE** (§15 ✅ · §16 ✅ · §17 ✅ · §18 ✅ · §19 ✅ · §20 ✅) · **Phase 5 COMPLETE** (§21 ✅ · §22 ✅ read-only · §23 ✅ · §24 ✅ · §25 ✅) · **Phase 6 polish — substantially done** (§27 ✅ error states · §28 ✅ light-mode toggle · §29 ✅ a11y sweep) — **remaining: §26 shared empty-state consolidation, optional print stylesheets, the operator `base_legacy` forms (garmin import/sync/wellness, admin `plan_inspect`/`plan_diag`)**. *\*§12 standalone A↔B compare deferred (no backend route); §13's §30/Phase-7 `coaching_bp` consolidation is **⛔ BLOCKED** — code-verified it can't be done as written (two live plan models; `coaching_bp` backs the migrated §06 plan view). See Phase 7 above.*
+**Progress:** Phase 0 ✅ · Phase 1 shell ✅ · **Phase 2 COMPLETE** (§05–§09 ✅) · **Phase 3 COMPLETE\*** (§04 ✅ · §10 ✅ · §11 ✅ · §12 ◑ diff-via-refresh · §13 ✅ · §14 ✅) · **Phase 4 COMPLETE** (§15 ✅ · §16 ✅ · §17 ✅ · §18 ✅ · §19 ✅ · §20 ✅) · **Phase 5 COMPLETE** (§21 ✅ · §22 ✅ read-only · §23 ✅ · §24 ✅ · §25 ✅) · **Phase 6 polish — done** (§26 ✅ shared empty-state · §27 ✅ error states · §28 ✅ light-mode toggle · §29 ✅ a11y sweep) — **remaining (optional/low-priority): print stylesheets, the operator `base_legacy` forms (garmin import/sync/wellness, admin `plan_inspect`/`plan_diag`)**. *\*§12 standalone A↔B compare deferred (no backend route); §13's §30/Phase-7 `coaching_bp` consolidation is **⛔ BLOCKED** — code-verified it can't be done as written (two live plan models; `coaching_bp` backs the migrated §06 plan view). See Phase 7 above.*
 Merged to `main`: PR #397 (review), #398 (Phase 0), #399 (docs), #400 (Phase 1 + §05),
 #401 (§06), #403 (§07), #404 (§07 follow-up), #406 (redesign card/grid Bootstrap-leak fix),
 #407 (§08 unified Log landing + 4 panes).
@@ -384,6 +384,14 @@ In flight: PR for §08 Strength pane + §09 Wellness (completes Phase 2) **and**
   `tests/test_redesign_theme_toggle_render.py` (1). Redesign + auth suites green (58); braces
   balanced (817/817); CSP-clean (the pre-paint script is nonced).
 
+- **Phase 6 · §26 Empty / first-run states** — extracted the "You're at the start line." block
+  to a shared partial **`templates/_no_plan.html`** (single source for the headline + copy + the
+  two grounded ways-in: `plan_create.new_plan` / `plans.import_plan`); `plans/list.html` now
+  `{% include %}`s it (byte-identical render — the existing empty-state test still passes). The
+  design's "3 divergent no-plan headlines" had **already** been consolidated by the new IA: the
+  "Plan" nav item *is* `plans.list_plans`, so Plan-page and Plans-list are one surface, and the
+  dashboard's no-plan state is a purpose-built daily-hub hero ("No session scheduled") that is
+  intentionally distinct (not forced onto this component).
 - **Phase 6 · §29 A11y sweep** — ported `a11y-wire.js`'s behavioral layer onto the real shell.
   The static contract was already in place (landmarks, `aria-current` via the nav macros,
   focus-visible rings on `.sidebar-item`/`.tab`, the §25 focus-trap dialog controller, cmdk
