@@ -10,6 +10,12 @@
 {% block title %}Notifications — AIDSTATION{% endblock %}
 {% block crumbs %}<b>Notifications</b>{% endblock %}
 
+{% block topbar_actions %}
+<a class="btn btn-ghost btn-sm" href="{{ url_for('nudges.settings') }}">
+  <svg class="icon" width="12" height="12" aria-hidden="true"><use href="#i-gear"></use></svg> Settings
+</a>
+{% endblock %}
+
 {% block content %}
 <div class="dash-head">
   <div class="races-intro">

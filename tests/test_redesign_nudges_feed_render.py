@@ -116,3 +116,22 @@ def test_feed_empty_all_caught_up(monkeypatch):
     # "Earlier" still appears in the intro copy, so key off the class).
     assert 'nf-earlier' not in html
     assert 'style="' not in html
+
+
+def test_settings_renders_readonly(monkeypatch):
+    # §22 doesn't read account_nudges (it's registry-derived) — empty
+    # context-processor reads are enough to render.
+    client = _client(monkeypatch, [], [])
+    resp = client.get('/notifications/settings')
+    assert resp.status_code == 200
+    html = resp.get_data(as_text=True)
+    assert 'app-shell' in html
+    assert 'How AIDSTATION reaches you.' in html
+    # Both channels described; at least one live registry reminder shown.
+    assert 'In-app' in html
+    assert 'Email' in html
+    assert 'fitness provider connected' in html
+    # Honest no-toggle posture: no checkboxes/selects, CSP-clean.
+    assert 'type="checkbox"' not in html
+    assert '<select' not in html
+    assert 'style="' not in html

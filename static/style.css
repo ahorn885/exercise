@@ -1586,3 +1586,20 @@ body.bulk-mode { padding-bottom: 80px; }
   .app .nf-row { flex-wrap: wrap; }
   .app .nf-dismiss { width: 100%; margin-top: 8px; }
 }
+
+/* §22 Notification settings (read-only) */
+.app .ns-wrap { max-width: 760px; }
+.app .ns-channels { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-top: 12px; }
+.app .ns-channel { border: 1px solid var(--hairline-2); border-radius: 10px; padding: 14px; }
+.app .ns-channel-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.app .ns-channel-label { font-size: 14px; font-weight: 600; }
+.app .ns-channel-detail { font-size: 13px; color: var(--fg-2); margin: 8px 0 0; line-height: 1.5; }
+.app .ns-note { font-size: 13px; color: var(--fg-3); margin: 8px 0 0; line-height: 1.5; }
+.app .ns-reminders { list-style: none; padding: 0; margin: 14px 0 0; display: flex; flex-direction: column; gap: 10px; }
+.app .ns-reminder { display: flex; align-items: flex-start; gap: 10px; }
+.app .ns-reminder-msg { font-size: 13px; line-height: 1.45; }
+.app .ns-foot { font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--fg-3); margin: 4px 2px 0; line-height: 1.6; }
+
+@media (max-width: 859.98px) {
+  .app .ns-channels { grid-template-columns: 1fr; }
+}

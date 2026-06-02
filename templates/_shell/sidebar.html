@@ -56,6 +56,7 @@
       <li><a class="dropdown-item" href="{{ url_for('profile.edit') }}">Athlete profile</a></li>
       <li><a class="dropdown-item" href="{{ url_for('profile.coach_memory') }}">Coach memory</a></li>
       <li><a class="dropdown-item" href="{{ url_for('profile.account_settings') }}">Account settings</a></li>
+      <li><a class="dropdown-item" href="{{ url_for('nudges.settings') }}">Notification settings</a></li>
       {% if current_user.id == 1 %}
       <li><a class="dropdown-item" href="{{ url_for('admin.dashboard') }}">Admin</a></li>
       {% endif %}

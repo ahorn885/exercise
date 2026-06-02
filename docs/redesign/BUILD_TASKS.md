@@ -54,7 +54,7 @@ Work top-to-bottom **within a phase** (phases defined in `BUILD_PLAN.md` §3). C
 | § | Section | DM | Blueprint / route | Current template | Migration note |
 |---|---|---|---|---|---|
 | 21 | ✅ Notifications & feed ★ | DM | `nudges.feed` (NEW `/notifications`) | `nudges/feed.html` + bell dropdown | **DONE.** New `nudges.feed` over `account_nudges` (`get_feed_nudges` → New/Earlier, registry CTA deep-links, inline dismiss). Topbar bell → Bootstrap dropdown (unread badge, recent 5, "See all"); mobile drawer link. Fail-open to empty on SQLite. 2 render tests. *(PR after #410)* |
-| 22 | Notification settings ★ | DM | `nudges.*` / `profile` | — | Channel × category matrix. |
+| 22 | ✅ Notification settings ★ | DM | `nudges.settings` (NEW `/notifications/settings`) | `nudges/settings.html` | **DONE (read-only).** No preference backend exists (confirmed: no settings table / channel store) — per the §17 precedent, an honest read-only page documenting the delivery model (In-app + transactional Email) + the live `NUDGE_REGISTRY` reminder list, **no fabricated toggles**. Linked from feed action + account menus. 1 render test. |
 | 23 | Command palette · ⌘K | DM | client-only | `static/app.js` | Jump-to-anything. No route; nonced JS + `data-*`. |
 | 24 | Keyboard shortcuts | D | client-only | `static/app.js` | Cheat sheet overlay. |
 | 25 | **Admin** ★ (desktop-only) | D | `admin.*` (+ `admin.audit`) | `admin/dashboard.html` | Users · drill-in detail · type-to-confirm **Delete user** (cascades 25 tables) · Audit log · System telemetry. Dialog needs focus trap (§29). |

@@ -236,6 +236,48 @@ def feed():
     return render_template('nudges/feed.html', new=new, earlier=earlier)
 
 
+# Delivery channels surfaced on the §22 settings page. Read-only — these
+# describe how notifications actually ship today, not configurable prefs.
+NOTIFICATION_CHANNELS = [
+    {
+        'label': 'In-app',
+        'status': 'On',
+        'detail': 'Passive banner + the notifications feed. Dismiss any '
+                  'item individually — that is the only per-notification '
+                  'control today.',
+    },
+    {
+        'label': 'Email',
+        'status': 'Account-critical only',
+        'detail': 'Transactional messages such as password resets. No '
+                  'digests or marketing — nothing to opt out of.',
+    },
+]
+
+
+@bp.route('/notifications/settings', methods=['GET'])
+def settings():
+    """Notification settings (v5 §22) — read-only by design.
+
+    There is no per-channel / per-category preference store today: the
+    only athlete-facing control is dismissing an individual in-app
+    nudge, which §21's feed already provides. Rather than fabricate
+    toggles with nowhere to write, this page honestly documents the
+    delivery model — the same posture as §17 Connections › Preferences.
+
+    The reminder list is derived live from `NUDGE_REGISTRY` so it can
+    never drift from what actually ships. Each entry carries the same
+    registry overlay the banner/feed use (message + category).
+    """
+    reminders = [
+        {'nudge_type': k, 'message': v['message'], 'category': v['category']}
+        for k, v in NUDGE_REGISTRY.items()
+    ]
+    return render_template('nudges/settings.html',
+                           channels=NOTIFICATION_CHANNELS,
+                           reminders=reminders)
+
+
 @bp.route('/cron/nudges/connect_provider_14d', methods=['GET'])
 def scan_connect_provider_14d():
     """Daily scan: insert one nudge row per eligible user.

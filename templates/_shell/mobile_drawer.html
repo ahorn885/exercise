@@ -41,6 +41,9 @@
         <li><a class="drawer-item" href="{{ url_for('profile.account_settings') }}">
           <svg class="icon" width="18" height="18" aria-hidden="true"><use href="#i-gear"></use></svg>
           <span>Account settings</span></a></li>
+        <li><a class="drawer-item" href="{{ url_for('nudges.settings') }}">
+          <svg class="icon" width="18" height="18" aria-hidden="true"><use href="#i-bell"></use></svg>
+          <span>Notification settings</span></a></li>
         {% if current_user and current_user.id == 1 %}
         <li><a class="drawer-item" href="{{ url_for('admin.dashboard') }}">
           <svg class="icon" width="18" height="18" aria-hidden="true"><use href="#i-gear"></use></svg>
