@@ -64,7 +64,7 @@ Work top-to-bottom **within a phase** (phases defined in `BUILD_PLAN.md` §3). C
 |---|---|---|---|---|
 | 26 | Empty / first-run states ⟳ | DM | shared partial | **One** "You're at the start line." component reused across Dashboard/Plan/Plans-list (replaces 3 divergent headlines). |
 | 27 | ✅ Error states | DM | Flask `errorhandler` + shared `templates/_error.html` | 404 "You're off trail." (way-back quicklinks) · 500 "Something seized up." (retry) via 404/500 handlers in `app.py`. Per-request diagnostic block + `mailto:help@aidstation.pro` pre-filled. `_error.html` is **standalone** (no shell includes / no DB context) so a 500 can't cascade. Plan-gen "The build stalled." already lives inline in `plan_create/progress.html` (§04). *(this PR)* |
-| 28 | Light mode | DM | body theme class + token swap | Already token-ready. Wire a real toggle (persist in localStorage); no per-screen CSS. |
+| 28 | ✅ Light mode | DM | body theme class + token swap | Real toggle wired (topbar sun button + drawer row, `data-theme-toggle` → `app.js`), persisted in `localStorage`; **FOUC-free** via a nonced `<head>` pre-paint that sets `.theme-light` on `<html>`. Token swap only — no per-screen CSS. Fixed the dead `body.theme-light .app` selector (`body` *is* `.app`) → `.theme-light .app`. *(this PR)* |
 | 29 | A11y / keyboard / motion | D | real components + `app.js` | **Port `a11y-wire.js` logic onto real elements.** Roving tab-order on nav/tabbar, `aria-current`, focus trap+restore on delete-user dialog, `role`/`aria-*` on tablists. Flip CSP REPORT_ONLY **off** and clear violations. |
 | — | Print stylesheets (opt.) | — | `style.css @media print` | Plan week / workout / race-day brief. CSS hooks exist in polish. Confirm scope. |
 
@@ -97,7 +97,7 @@ The redesign covers every *user-facing* surface but a few blueprints have no red
 
 **Last updated:** 2026-06-02
 
-**Progress:** Phase 0 ✅ · Phase 1 shell ✅ · **Phase 2 COMPLETE** (§05–§09 ✅) · **Phase 3 COMPLETE\*** (§04 ✅ · §10 ✅ · §11 ✅ · §12 ◑ diff-via-refresh · §13 ✅ · §14 ✅) · **Phase 4 COMPLETE** (§15 ✅ · §16 ✅ · §17 ✅ · §18 ✅ · §19 ✅ · §20 ✅) · **Phase 5 COMPLETE** (§21 ✅ · §22 ✅ read-only · §23 ✅ · §24 ✅ · §25 ✅) · **Phase 6 polish — in progress** (§27 ✅ error states) — **next: §29 a11y sweep, §28 light-mode toggle, remaining `base_legacy` secondary forms**. *\*§12 standalone A↔B compare deferred (no backend route); §13's §30/Phase-7 `coaching_bp` consolidation is **⛔ BLOCKED** — code-verified it can't be done as written (two live plan models; `coaching_bp` backs the migrated §06 plan view). See Phase 7 above.*
+**Progress:** Phase 0 ✅ · Phase 1 shell ✅ · **Phase 2 COMPLETE** (§05–§09 ✅) · **Phase 3 COMPLETE\*** (§04 ✅ · §10 ✅ · §11 ✅ · §12 ◑ diff-via-refresh · §13 ✅ · §14 ✅) · **Phase 4 COMPLETE** (§15 ✅ · §16 ✅ · §17 ✅ · §18 ✅ · §19 ✅ · §20 ✅) · **Phase 5 COMPLETE** (§21 ✅ · §22 ✅ read-only · §23 ✅ · §24 ✅ · §25 ✅) · **Phase 6 polish — in progress** (§27 ✅ error states · §28 ✅ light-mode toggle) — **next: §29 a11y sweep, remaining `base_legacy` secondary forms**. *\*§12 standalone A↔B compare deferred (no backend route); §13's §30/Phase-7 `coaching_bp` consolidation is **⛔ BLOCKED** — code-verified it can't be done as written (two live plan models; `coaching_bp` backs the migrated §06 plan view). See Phase 7 above.*
 Merged to `main`: PR #397 (review), #398 (Phase 0), #399 (docs), #400 (Phase 1 + §05),
 #401 (§06), #403 (§07), #404 (§07 follow-up), #406 (redesign card/grid Bootstrap-leak fix),
 #407 (§08 unified Log landing + 4 panes).
@@ -371,6 +371,18 @@ In flight: PR for §08 Strength pane + §09 Wellness (completes Phase 2) **and**
   copy/diag/mailto/quicklinks/retry, CSP-clean). Suites green (redesign + auth-gate + admin =
   79); braces balanced (814/814); zero inline `style=`/`onclick=`/`<script>` on the page. The
   existing `CSRFError` handler (plain 400) left as-is.
+
+- **Phase 6 · §28 Light mode** — wired the real toggle for the token-swap theme.
+  A nonced `<head>` **pre-paint bootstrap** (`base.html`) reads `localStorage['aidstation-theme']`
+  and sets `.theme-light` on `<html>` before first paint (no FOUC). Toggle controls:
+  a `data-theme-toggle` **sun icon** in the topbar + a **"Light mode"** row in the mobile
+  drawer; `app.js` flips `.theme-light` on `<html>`, persists, and syncs each control's
+  `aria-pressed`/`aria-label`. Fixed a latent bug: the light override keyed on the dead
+  `body.theme-light .app` (the shell `<body>` **is** `.app`, so a descendant combinator never
+  matched it) → now `.theme-light .app`. No per-screen CSS (token swap only); the new §28 CSS
+  is just the two control affordances + a `<button>.drawer-item` reset. New
+  `tests/test_redesign_theme_toggle_render.py` (1). Redesign + auth suites green (58); braces
+  balanced (817/817); CSP-clean (the pre-paint script is nonced).
 
 ### Known blocker (infra, not code) — Vercel **Preview** deploys 500
 Preview deployments crash with `FUNCTION_INVOCATION_FAILED`: `app.py` raises at **import** when
