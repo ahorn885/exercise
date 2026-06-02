@@ -45,7 +45,7 @@ Work top-to-bottom **within a phase** (phases defined in `BUILD_PLAN.md` §3). C
 |---|---|---|---|---|---|
 | 15 | ✅ Exercises library | DM | `rx.list_entries` | `rx/list.html` | "Exercises" = `rx`. Current Rx data-table + plateau/deload watch + real GET filters; catalog (inventory w/ no current Rx) below; No-Rx "No Rx yet." hero. *(this PR)* |
 | 16 | ✅ Locations | DM | `locales.list_profiles` / `.form` | `locales/{list,form}.html` | UX copy "Locations"; route stays `locales`. Card grid (legacy enums + custom) w/ equipment chips, refresh/edit/delete; "Where do you train?" hero when nothing configured. `form.html`/`new.html` left on legacy. *(this PR)* |
-| 17 | **Connections · hub** ★⟳ | DM | `garmin.dashboard` + `garmin.debug_fit` + provider bps (`strava`/`coros`/`polar`/`whoop`/`zwift`/`trainingpeaks`/`ride_with_gps`/`oauth_callbacks`) | `garmin/{dashboard,debug_fit}.html` | **4 surfaces → 1 hub.** Tabs: Sources / Files (FIT inspector = inline panel) / Preferences + empty. Garmin = PAUSED. **Hard-cut old URLs** (single user, no redirects). Kill "Garmin dashboard" phrasing. |
+| 17 | ✅ **Connections · hub** ★⟳ | DM | NEW `connections.hub` / `.inspect` (folds `garmin.dashboard`+`garmin.debug_fit`; providers via `profile.load_connections`) | NEW `connections/hub.html` | **4 surfaces → 1 hub.** Tabs: Sources (providers + Garmin PAUSED + drop zone→`garmin.import_fit`) / Files (`cardio_log` history + inline FIT inspector) / Preferences (grounded read-only behavior — no fabricated toggles). Old URLs **hard-cut**, "Garmin dashboard" phrasing gone. *(this PR)* |
 | 18 | Athlete profile | DM | `profile.edit` | `profile/edit.html` | Day-1 first-run state. Connections/dedupe prefs **move out** to §17. |
 | 19 | **Account settings** ★ | DM | `profile.change_password`, `auth.logout` | (part of `profile/edit.html`) | Identity + change password + sign out. **No** billing/2FA/export/delete. |
 | 20 | **Coach memory** ★ | DM | `profile.add_preference` / `.delete_preference` | — | Durable AI-coach prefs w/ `fb_source` provenance (chat/plan_review/natural_log/workout_note/manual). Each deletable; some permanent. |
@@ -93,7 +93,7 @@ The redesign covers every *user-facing* surface but a few blueprints have no red
 
 **Last updated:** 2026-06-02
 
-**Progress:** Phase 0 ✅ · Phase 1 shell ✅ · **Phase 2 COMPLETE** (§05–§09 ✅) · **Phase 3 COMPLETE\*** (§04 ✅ · §10 ✅ · §11 ✅ · §12 ◑ diff-via-refresh · §13 ✅ · §14 ✅) · **Phase 4 underway** (§15 ✅ · §16 ✅) — **next: §17 Connections hub**. *\*§12 standalone A↔B compare deferred (no backend route); §13 still owes the §30/Phase-7 `coaching_bp` consolidation.*
+**Progress:** Phase 0 ✅ · Phase 1 shell ✅ · **Phase 2 COMPLETE** (§05–§09 ✅) · **Phase 3 COMPLETE\*** (§04 ✅ · §10 ✅ · §11 ✅ · §12 ◑ diff-via-refresh · §13 ✅ · §14 ✅) · **Phase 4 underway** (§15 ✅ · §16 ✅ · §17 ✅) — **next: §18 Athlete profile**. *\*§12 standalone A↔B compare deferred (no backend route); §13 still owes the §30/Phase-7 `coaching_bp` consolidation.*
 Merged to `main`: PR #397 (review), #398 (Phase 0), #399 (docs), #400 (Phase 1 + §05),
 #401 (§06), #403 (§07), #404 (§07 follow-up), #406 (redesign card/grid Bootstrap-leak fix),
 #407 (§08 unified Log landing + 4 panes).
@@ -297,6 +297,36 @@ In flight: PR for §08 Strength pane + §09 Wellness (completes Phase 2) **and**
   grid, empty hero). Existing `test_locales.py` (142) still green; redesign suite green (20);
   CSS braces balanced (570/570); zero inline `style=`/`onclick=`.
 
+- **Phase 4 · §17 Connections hub** — the big consolidation: a **new `connections`
+  blueprint** (`/connections`) replaces four surfaces with one tabbed hub
+  (`connections/hub.html`, `nav_active='link'`), tabs server-rendered via `?tab=` (CSP-clean,
+  no SPA).
+  - **Sources** — OAuth providers via the reused `profile.load_connections` (COROS/Polar with
+    real `provider_auth` status → Connect / Re-authorise + Revoke `profile.disconnect_provider`);
+    **Garmin = PAUSED** (CONVENTIONS §E.3) with an "upload .FIT" path; the webhook-only stubs
+    (Strava/Whoop/TrainingPeaks/Zwift/RideWithGPS) shown as "not available yet" (no OAuth start
+    route → no dead button); a `.FIT` **drop zone** posting to the real `garmin.import_fit`
+    pipeline.
+  - **Files** — recent imported activities from `cardio_log` (real), tagged **manual vs synced**
+    by the `fit:`-prefixed dedup-id scheme, plus the **inline FIT inspector** (`connections.inspect`
+    reuses `garmin_fit_parser._dump_fit`) — the artboard's inline side panel, replacing the
+    standalone debug-fit page.
+  - **Preferences** — a **grounded, read-only** explainer of how ingestion actually behaves
+    today (content-hash SHA-256 dedup, plan matching, sport sniffing, manual+auto one log,
+    Garmin paused, provider-management link). The artboard's configurable trust-order /
+    pull-window / retention toggles have **no backend** and are intentionally **not fabricated**
+    (same discipline as §10 priority / §12 A↔B compare) — a note says they arrive with a
+    settings backend.
+  - **Hard-cut:** removed `garmin.dashboard` + `garmin.debug_fit` routes **and** their templates;
+    repointed every referrer (sidebar + mobile drawer nav, `base_legacy.html` dropdown, the
+    `garmin/{import,sync,wellness_log,import_wellness}.html` back-links, and the `sync_confirm`
+    redirect) at `connections.hub`. "Garmin dashboard" phrasing is gone. The `.FIT`
+    import/sync/wellness/auth **pipeline stays** (the hub feeds it). `connections_bp` registered
+    in `app.py`.
+  - New §17 CSS block + `tests/test_redesign_connections_render.py` (5: sources, files+inspector,
+    files-empty, prefs-grounded, bad-tab fallback). Existing garmin + profile suites green;
+    redesign suite green (25); CSS braces balanced (627/627); CSP-clean.
+
 ### Known blocker (infra, not code) — Vercel **Preview** deploys 500
 Preview deployments crash with `FUNCTION_INVOCATION_FAILED`: `app.py` raises at **import** when
 `SECRET_KEY` is unset, and the Preview environment scope is missing it (runtime logs confirm
@@ -306,10 +336,12 @@ Until then, PR previews can't render — verify locally or via static checks. Th
 to any redesign PR (Production is unaffected).
 
 ### Next — Phase 4 (Library + Account)
-Phase 4 underway — **§15 Exercises library ✅ · §16 Locations ✅**. Continue top-to-bottom:
-- **§17** Connections hub (4 surfaces → 1: `garmin.dashboard` + `garmin.debug_fit` + provider
-  bps; tabs Sources/Files/Preferences; Garmin = PAUSED; hard-cut old URLs) · **§18** Athlete
-  profile · **§19** Account settings · **§20** Coach memory.
+Phase 4 underway — **§15 Exercises library ✅ · §16 Locations ✅ · §17 Connections hub ✅**.
+Continue top-to-bottom:
+- **§18** Athlete profile (`profile.edit`; Day-1 first-run state; Connections/dedupe prefs
+  already moved out to §17 — drop that tab here) · **§19** Account settings (identity + change
+  password + sign out; no billing/2FA) · **§20** Coach memory (`profile.add_preference` /
+  `.delete_preference`, `fb_source` provenance).
 Carry the established slice discipline: one responsive template, token classes only, CSP
 enforced (nonce'd scripts, no inline `style=`/`onclick=`), flip `base_legacy.html` → `base.html`,
 and add a render smoke test per the §08/§09 precedent.
