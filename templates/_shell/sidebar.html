@@ -5,7 +5,7 @@
     Hidden < the shell breakpoint; the mobile tabbar + drawer take over. -#}
 {%- from '_shell/_nav_macros.html' import sidebar_item -%}
 {%- set active = nav_active | default('') -%}
-<aside class="sidebar" aria-label="Primary">
+<aside class="sidebar">
   <a class="sidebar-brand" href="{{ url_for('dashboard.index') }}" aria-label="AIDSTATION home">
     <svg viewBox="0 0 100 100" aria-hidden="true" focusable="false">
       <path d="M26 30 L74 30 L67 84 Q 50 92, 33 84 Z" fill="none" stroke="currentColor" stroke-width="6" stroke-linejoin="round"/>
@@ -16,7 +16,7 @@
     <span class="wordmark"><span class="b">AID</span><span class="r">STATION</span></span>
   </a>
 
-  <nav class="sidebar-nav">
+  <nav class="sidebar-nav" aria-label="Primary" data-roving="vertical">
     <div class="sidebar-section" id="nav-train">Train</div>
     <ul aria-labelledby="nav-train">
       {{ sidebar_item('home',    'Today',     'i-home',    url_for('dashboard.index'),     active) }}

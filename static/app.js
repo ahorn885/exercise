@@ -563,3 +563,55 @@
   }
 })();
 
+// Roving tab-order (§29) — ports a11y-wire.js makeRoving() onto the real nav.
+// Each [data-roving] container (sidebar = vertical, mobile tab bar =
+// horizontal) is ONE stop in the page tab order; arrow keys move between its
+// [data-roving-item]s, Home/End jump to the ends. The initial stop is the
+// aria-current="page" item (else the first). The items are real <a> links, so
+// Enter follows the href natively — we only manage tabindex + arrow focus.
+(function () {
+  function initRoving(container) {
+    var items = Array.prototype.slice.call(
+      container.querySelectorAll('[data-roving-item]'));
+    if (!items.length) return;
+    var horizontal = container.getAttribute('data-roving') === 'horizontal';
+
+    function setStop(target) {
+      items.forEach(function (it) {
+        it.setAttribute('tabindex', it === target ? '0' : '-1');
+      });
+    }
+
+    var current = items.filter(function (it) {
+      return it.getAttribute('aria-current') === 'page';
+    })[0] || items[0];
+    setStop(current);
+
+    container.addEventListener('keydown', function (e) {
+      var idx = items.indexOf(document.activeElement);
+      if (idx === -1) return;
+      var fwd = horizontal ? 'ArrowRight' : 'ArrowDown';
+      var bwd = horizontal ? 'ArrowLeft' : 'ArrowUp';
+      var next = null;
+      if (e.key === fwd) next = items[Math.min(items.length - 1, idx + 1)];
+      else if (e.key === bwd) next = items[Math.max(0, idx - 1)];
+      else if (e.key === 'Home') next = items[0];
+      else if (e.key === 'End') next = items[items.length - 1];
+      if (next) {
+        e.preventDefault();
+        setStop(next);
+        next.focus();
+      }
+    });
+  }
+
+  function init() {
+    document.querySelectorAll('[data-roving]').forEach(initRoving);
+  }
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', init);
+  } else {
+    init();
+  }
+})();
+
