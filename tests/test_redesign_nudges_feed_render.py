@@ -135,3 +135,23 @@ def test_settings_renders_readonly(monkeypatch):
     assert 'type="checkbox"' not in html
     assert '<select' not in html
     assert 'style="' not in html
+
+
+def test_command_palette_and_shortcuts_in_shell(monkeypatch):
+    # §23/§24 are client-only overlays included on every shell page. Assert
+    # the markup + server-rendered jump links are present and CSP-clean.
+    client = _client(monkeypatch, [], [])
+    resp = client.get('/notifications/settings')
+    assert resp.status_code == 200
+    html = resp.get_data(as_text=True)
+    # §23 palette: hidden root, search input, real url_for jump targets.
+    assert 'data-cmdk-root' in html
+    assert 'data-cmdk-input' in html
+    assert 'Jump to' in html
+    assert 'data-cmdk-label="exercises"' in html
+    # §24 cheat sheet overlay.
+    assert 'data-ks-root' in html
+    assert 'Keyboard shortcuts' in html
+    # CSP-clean: no inline handlers/styles introduced by the overlays.
+    assert 'onclick=' not in html
+    assert 'style="' not in html

@@ -1603,3 +1603,31 @@ body.bulk-mode { padding-bottom: 80px; }
 @media (max-width: 859.98px) {
   .app .ns-channels { grid-template-columns: 1fr; }
 }
+
+/* ════════════════════════════════════════════════════════════════════
+   §23 · Command palette (⌘K)  ·  §24 · Keyboard-shortcut cheat sheet
+   ════════════════════════════════════════════════════════════════════ */
+.cmdk-backdrop, .ks-backdrop { position: fixed; inset: 0; z-index: 1080; display: flex; justify-content: center; background: color-mix(in oklab, #000 48%, transparent); }
+.cmdk-backdrop[hidden], .ks-backdrop[hidden] { display: none; }
+.cmdk-backdrop { align-items: flex-start; padding: 12vh 16px 16px; }
+.ks-backdrop { align-items: center; padding: 16px; }
+
+.cmdk { width: min(560px, 100%); max-height: 64vh; display: flex; flex-direction: column; background: var(--bg-2); border: 1px solid var(--hairline); border-radius: var(--r-md); box-shadow: 0 24px 64px rgba(0, 0, 0, 0.45); overflow: hidden; }
+.cmdk-search { display: flex; align-items: center; gap: 10px; padding: 13px 15px; border-bottom: 1px solid var(--hairline-2); }
+.cmdk-search .icon { color: var(--fg-3); flex-shrink: 0; }
+.cmdk-input { flex: 1; min-width: 0; border: 0; background: transparent; color: var(--fg); font-size: 15px; outline: none; }
+.cmdk-list { list-style: none; margin: 0; padding: 6px; overflow-y: auto; }
+.cmdk-item > a { display: flex; align-items: center; gap: 10px; padding: 9px 10px; border-radius: var(--r-sm); color: var(--fg); font-size: 14px; text-decoration: none; }
+.cmdk-item > a .icon { color: var(--fg-3); flex-shrink: 0; }
+.cmdk-item.is-active > a { background: var(--bg-3); }
+.cmdk-empty { padding: 14px 12px; color: var(--fg-3); font-size: 14px; }
+.cmdk-empty[hidden] { display: none; }
+
+.ks { width: min(420px, 100%); background: var(--bg-2); border: 1px solid var(--hairline); border-radius: var(--r-md); box-shadow: 0 24px 64px rgba(0, 0, 0, 0.45); padding: 16px 20px 18px; }
+.ks-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px; }
+.ks-list { margin: 0; }
+.ks-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 9px 0; border-top: 1px solid var(--hairline-2); }
+.ks-row:first-child { border-top: 0; }
+.ks-row dt { font-size: 13px; color: var(--fg-2); margin: 0; }
+.ks-row dd { margin: 0; display: flex; gap: 4px; }
+.cmdk-search kbd, .ks-row kbd { border: 1px solid var(--hairline); border-radius: 4px; padding: 1px 6px; background: var(--bg-3); color: var(--fg-2); font-size: 11px; line-height: 1.5; }

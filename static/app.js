@@ -320,20 +320,118 @@
   }
 })();
 
-// App-shell affordances (Phase 1). The command palette (⌘K) is a no-op stub
-// this phase: the keybinding is captured so it doesn't trigger the browser
-// default, and focus lands on the search affordance. The full palette (§23)
-// and notifications feed (§21) wire up in Phase 5.
+// §23 command palette (⌘K) + §24 keyboard-shortcuts cheat sheet. Both are
+// client-only overlays rendered hidden by _shell/cmdk.html; this wires
+// open / close / filter / keyboard-navigate. No inline handlers (CSP):
+// everything keys off the data-* hooks in that partial. The destination
+// list is server-rendered (real url_for links) — JS only filters and
+// follows, so it can't drift from the routes.
 (function () {
+  var cmdkRoot = document.querySelector('[data-cmdk-root]');
+  var ksRoot = document.querySelector('[data-ks-root]');
+  var input = document.querySelector('[data-cmdk-input]');
+  var list = document.querySelector('[data-cmdk-list]');
+  var emptyEl = document.querySelector('[data-cmdk-empty]');
+  var items = list
+    ? Array.prototype.slice.call(list.querySelectorAll('[data-cmdk-item]'))
+    : [];
+  var active = -1;
+
+  function visibleItems() {
+    return items.filter(function (it) { return !it.hidden; });
+  }
+  function setActive(idx) {
+    var vis = visibleItems();
+    items.forEach(function (it) { it.classList.remove('is-active'); });
+    if (!vis.length) { active = -1; return; }
+    active = (idx + vis.length) % vis.length;
+    var el = vis[active];
+    el.classList.add('is-active');
+    el.scrollIntoView({ block: 'nearest' });
+  }
+  function filter(q) {
+    q = (q || '').trim().toLowerCase();
+    var shown = 0;
+    items.forEach(function (it) {
+      var label = it.getAttribute('data-cmdk-label') || '';
+      var match = !q || label.indexOf(q) !== -1;
+      it.hidden = !match;
+      if (match) shown += 1;
+    });
+    if (emptyEl) emptyEl.hidden = shown !== 0;
+    setActive(0);
+  }
+  function openCmdk() {
+    if (!cmdkRoot) return;
+    closeKs();
+    cmdkRoot.hidden = false;
+    if (input) { input.value = ''; input.focus(); }
+    filter('');
+  }
+  function closeCmdk() { if (cmdkRoot) cmdkRoot.hidden = true; }
+  function gotoActive() {
+    var vis = visibleItems();
+    if (active < 0 || active >= vis.length) return;
+    var a = vis[active].querySelector('a');
+    if (a) window.location.href = a.href;
+  }
+  function openKs() { closeCmdk(); if (ksRoot) ksRoot.hidden = false; }
+  function closeKs() { if (ksRoot) ksRoot.hidden = true; }
+
+  function typing(e) {
+    var t = e.target;
+    return t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' ||
+                 t.tagName === 'SELECT' || t.isContentEditable);
+  }
+
   document.addEventListener('keydown', function (e) {
     var k = e.key && e.key.toLowerCase();
+    // ⌘K / Ctrl-K toggles the palette from anywhere (incl. inside inputs).
     if ((e.metaKey || e.ctrlKey) && k === 'k') {
-      var search = document.querySelector('[data-action="cmdk"]');
-      if (search) {
-        e.preventDefault();
-        search.focus();
-      }
+      e.preventDefault();
+      if (cmdkRoot && cmdkRoot.hidden) openCmdk(); else closeCmdk();
+      return;
     }
+    // "?" opens the cheat sheet — but not while typing or with an overlay up.
+    if (k === '?' && !typing(e) && (!cmdkRoot || cmdkRoot.hidden) &&
+        (!ksRoot || ksRoot.hidden)) {
+      e.preventDefault();
+      openKs();
+      return;
+    }
+    if (cmdkRoot && !cmdkRoot.hidden) {
+      if (k === 'escape') { e.preventDefault(); closeCmdk(); }
+      else if (k === 'arrowdown') { e.preventDefault(); setActive(active + 1); }
+      else if (k === 'arrowup') { e.preventDefault(); setActive(active - 1); }
+      else if (k === 'enter') { e.preventDefault(); gotoActive(); }
+      return;
+    }
+    if (ksRoot && !ksRoot.hidden && k === 'escape') { e.preventDefault(); closeKs(); }
+  });
+
+  if (input) input.addEventListener('input', function () { filter(input.value); });
+  // Hover highlights the row under the pointer so mouse + keyboard agree.
+  items.forEach(function (it) {
+    it.addEventListener('mousemove', function () {
+      var idx = visibleItems().indexOf(it);
+      if (idx !== -1) setActive(idx);
+    });
+  });
+  // A click on the backdrop (outside the panel) closes the overlay.
+  if (cmdkRoot) cmdkRoot.addEventListener('click', function (e) {
+    if (e.target === cmdkRoot) closeCmdk();
+  });
+  if (ksRoot) ksRoot.addEventListener('click', function (e) {
+    if (e.target === ksRoot) closeKs();
+  });
+  var ksClose = document.querySelector('[data-ks-close]');
+  if (ksClose) ksClose.addEventListener('click', closeKs);
+
+  // The topbar search affordance now opens the palette (was a focus stub).
+  var trigger = document.querySelector('[data-action="cmdk"]');
+  if (trigger) trigger.addEventListener('click', function (e) {
+    e.preventDefault();
+    openCmdk();
   });
 })();
 
