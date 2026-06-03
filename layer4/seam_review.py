@@ -445,46 +445,58 @@ def _default_seam_reviewer_caller(
 # ─── Validation of invalid verdict-direction combinations per §4 / §6.2 ──────
 
 
-def _validate_verdict_combination(
+def _coerce_verdict_combination(
     verdict: str,
     direction: str | None,
     seam_issues: list[str],
-) -> None:
-    """Raise `Layer4OutputError('seam_reviewer_invalid_verdict_combination')`
-    on the invalid combinations from `Layer4_SeamReviewer_v2.md` §4 / spec
-    §6.2 verdict table. Caller treats as schema-violation per §5.5 (one
-    schema retry; bail on second)."""
-    code = "seam_reviewer_invalid_verdict_combination"
-    if verdict == "patched" and direction == "accept_with_observation":
-        raise Layer4OutputError(
-            code,
-            detail="`patched` verdict implies a re-prompt direction; cannot be `accept_with_observation`",
+) -> tuple[str, str | None]:
+    """Normalize an invalid (verdict, direction) combination from the
+    seam-reviewer LLM to the nearest VALID one, instead of failing the plan.
+
+    A seam review is advisory — it judges the transition between two
+    already-validated phases — so an LLM combo-mislabel here must never discard
+    valid synthesis. (pv=55, 2026-06-03: a single `patched` +
+    `accept_with_observation` raised `seam_reviewer_invalid_verdict_combination`,
+    which was NOT in the route's `_RETRYABLE_BLOCK_CODES`, so it killed a
+    70-session, near-complete plan on the FIRST occurrence — the #335 Phase-1
+    "no new blockers" lesson, re-learned on the seam path.)
+
+    Per spec §6.2 the `patched`/`flagged_major` verdict-name distinction is
+    informational, so each coercion preserves the load-bearing signal (severity
+    + escalation intent) and routes through the orchestrator's existing graceful
+    paths (record-only / accept-with-observation). Logs any coercion so the
+    model's combo-fumble rate stays observable in the runtime log. Replaces the
+    prior raise-based `_validate_verdict_combination`."""
+    original = (verdict, direction)
+
+    if verdict in ("flagged_major", "patched"):
+        # `patched` asserts confidence in a re-prompt direction; pairing it with
+        # `accept_with_observation` (or no direction at all) is contradictory.
+        # The verdict name is informational (§6.2) → settle on `flagged_major`,
+        # and when no usable re-prompt direction was given, escalate via
+        # accept-with-observation (the no-re-synthesis major path). A real
+        # `re_prompt_*` direction is already valid and is kept as-is.
+        if direction is None or direction == "accept_with_observation":
+            verdict, direction = "flagged_major", "accept_with_observation"
+    elif verdict == "approved":
+        # `approved` is "clean": it cannot carry issues or a patch direction.
+        if seam_issues:
+            # The model flagged rough edges but labeled it approved → the honest
+            # reading is record-only `flagged_minor`, keeping the issues.
+            verdict, direction = "flagged_minor", None
+        elif direction is not None:
+            direction = None
+    elif verdict == "flagged_minor":
+        # Record-only; a proposed direction is meaningless here.
+        direction = None
+
+    if (verdict, direction) != original:
+        print(
+            f"review_seam: coerced invalid seam verdict combination "
+            f"{original} -> {(verdict, direction)} "
+            f"(seam_issues={len(seam_issues)}); advisory degrade — plan continues"
         )
-    if verdict == "flagged_major" and direction is None:
-        raise Layer4OutputError(
-            code,
-            detail="`flagged_major` requires a non-null `proposed_patch_direction`",
-        )
-    if verdict == "patched" and direction is None:
-        raise Layer4OutputError(
-            code,
-            detail="`patched` requires a non-null `proposed_patch_direction`",
-        )
-    if verdict == "approved" and seam_issues:
-        raise Layer4OutputError(
-            code,
-            detail="`approved` requires empty `seam_issues`",
-        )
-    if verdict == "approved" and direction is not None:
-        raise Layer4OutputError(
-            code,
-            detail="`approved` requires null `proposed_patch_direction`",
-        )
-    if verdict == "flagged_minor" and direction is not None:
-        raise Layer4OutputError(
-            code,
-            detail="`flagged_minor` is record-only; `proposed_patch_direction` must be null",
-        )
+    return verdict, direction
 
 
 # ─── Single seam-review call ─────────────────────────────────────────────────
@@ -535,9 +547,11 @@ def review_seam(
     `plan_create.py` calls this; applies §6.2 authority semantics (decides
     whether to re-synthesize); records SeamReview rows.
 
-    Schema-violation special case per §5.5 + §6.2: invalid verdict/direction
-    combinations raise `Layer4OutputError('seam_reviewer_invalid_verdict_combination')`.
-    Orchestrator treats as schema-violation (one schema retry; bail on second)."""
+    Invalid verdict/direction combinations are COERCED to the nearest valid
+    combination (`_coerce_verdict_combination`), not raised — a seam review is
+    advisory and must never discard valid synthesis (pv=55, 2026-06-03). Only a
+    genuinely unparseable `reviewer_verdict` enum raises (`schema_violation`,
+    which the route retries)."""
     eff_caller = caller or _default_seam_reviewer_caller
     tool_schema = build_record_seam_review_tool()
     user_prompt = render_seam_review_prompt(
@@ -576,7 +590,7 @@ def review_seam(
             detail=f"reviewer_verdict={verdict!r} not in allowed enum",
         )
 
-    _validate_verdict_combination(verdict, direction, seam_issues)
+    verdict, direction = _coerce_verdict_combination(verdict, direction, seam_issues)
 
     return SeamReviewCallResult(
         verdict=verdict,  # type: ignore[arg-type]

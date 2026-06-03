@@ -1639,7 +1639,12 @@ class TestDailyWindowsSchedule:
 
 
 class TestSeamReviewInvalidCombinations:
-    def test_patched_with_accept_with_observation_raises(self):
+    def test_patched_with_accept_with_observation_coerces(self):
+        # A seam review is advisory; an invalid LLM verdict combination must be
+        # coerced to the nearest valid one, NOT raise and kill the plan (pv=55
+        # regression, 2026-06-03). `patched` + `accept_with_observation` →
+        # `flagged_major` + `accept_with_observation` (verdict name is
+        # informational per §6.2; the accept-with-observation intent is kept).
         from layer4.payload import PhaseSpec, SynthesisMetadata
         from layer4.seam_review import review_seam
 
@@ -1689,25 +1694,57 @@ class TestSeamReviewInvalidCombinations:
                 cap_hit=False,
             ),
         )
-        with pytest.raises(Exception) as exc:
-            review_seam(
-                seam_index=0,
-                prior_phase_spec=prior,
-                next_phase_spec=nxt,
-                prior_phase_sessions=[],
-                next_phase_sessions=[],
-                layer2a_payload=_layer2a(),
-                layer2d_payload=_layer2d(),
-                discipline_mix=["D-run"],
-                mode="standard",
-                start_phase="Base",
-                race_format="open_ended",
-                event_date=None,
-                seam_iteration=1,
-                prior_seam_issues=[],
-                caller=bad_caller,
-            )
-        assert "seam_reviewer_invalid_verdict_combination" in str(exc.value)
+        result = review_seam(
+            seam_index=0,
+            prior_phase_spec=prior,
+            next_phase_spec=nxt,
+            prior_phase_sessions=[],
+            next_phase_sessions=[],
+            layer2a_payload=_layer2a(),
+            layer2d_payload=_layer2d(),
+            discipline_mix=["D-run"],
+            mode="standard",
+            start_phase="Base",
+            race_format="open_ended",
+            event_date=None,
+            seam_iteration=1,
+            prior_seam_issues=[],
+            caller=bad_caller,
+        )
+        assert result.verdict == "flagged_major"
+        assert result.proposed_patch_direction == "accept_with_observation"
+        assert result.seam_issues == ["x"]
+
+    def test_coerce_verdict_combination_table(self):
+        # Every invalid combination maps to a valid one; valid combinations pass
+        # through untouched.
+        from layer4.seam_review import _coerce_verdict_combination
+
+        # Invalid → coerced
+        assert _coerce_verdict_combination("patched", "accept_with_observation", ["x"]) == (
+            "flagged_major", "accept_with_observation")
+        assert _coerce_verdict_combination("flagged_major", None, ["x"]) == (
+            "flagged_major", "accept_with_observation")
+        assert _coerce_verdict_combination("patched", None, ["x"]) == (
+            "flagged_major", "accept_with_observation")
+        assert _coerce_verdict_combination("approved", None, ["x"]) == (
+            "flagged_minor", None)
+        assert _coerce_verdict_combination("approved", "re_prompt_prior", []) == (
+            "approved", None)
+        assert _coerce_verdict_combination("flagged_minor", "re_prompt_next", ["x"]) == (
+            "flagged_minor", None)
+
+        # Valid → unchanged
+        assert _coerce_verdict_combination("approved", None, []) == ("approved", None)
+        assert _coerce_verdict_combination("flagged_minor", None, ["x"]) == (
+            "flagged_minor", None)
+        assert _coerce_verdict_combination("flagged_major", "re_prompt_prior", ["x"]) == (
+            "flagged_major", "re_prompt_prior")
+        assert _coerce_verdict_combination("patched", "re_prompt_next", ["x"]) == (
+            "patched", "re_prompt_next")
+        assert _coerce_verdict_combination(
+            "flagged_major", "accept_with_observation", ["x"]) == (
+            "flagged_major", "accept_with_observation")
 
 
 # ─── Step 6a: per-phase cache wiring (§9.2 chain) ────────────────────────────
