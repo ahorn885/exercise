@@ -1746,3 +1746,70 @@ body.bulk-mode { padding-bottom: 80px; }
    button chrome so it lines up with the anchor rows around it. */
 .app button.drawer-item { width: 100%; background: none; border: 0; font: inherit; text-align: left; cursor: pointer; }
 .app button.drawer-item[aria-pressed="true"] .icon { color: var(--accent); opacity: 1; }
+
+/* ════════════════════════════════════════════════════════════════════
+   .FIT import (finish-the-open) — manual-upload path on the new shell
+   (garmin/import · import_preview · import_wellness). Operator surface
+   reached from Connections (§17) + the §07 workout rail.
+   ════════════════════════════════════════════════════════════════════ */
+.app .fit-wrap { max-width: 760px; }
+.app .fit-sec-label { margin: 0 0 6px; }
+.app .fit-sec-sub { margin: 0 0 16px; }
+.app .req { color: var(--bad); }
+
+/* Drop zone (bulk uploader — data-bulk-* wired in app.js) */
+.app .fit-drop {
+  border: 2px dashed var(--hairline); border-radius: var(--r-sm);
+  padding: 24px; text-align: center; margin-bottom: 14px;
+  transition: border-color 0.15s ease, background-color 0.15s ease;
+}
+.app .fit-drop.u-drop-active {
+  border-color: var(--accent) !important;
+  background-color: color-mix(in oklab, var(--accent) 7%, transparent);
+}
+.app .fit-drop-hint { color: var(--fg-3); margin: 0 0 12px; }
+.app .fit-drop-actions { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; }
+.app .fit-file-btn { margin: 0; cursor: pointer; }
+
+/* Plan-match checkbox + selection / progress / results */
+.app .fit-match { display: flex; gap: 8px; align-items: flex-start; font-size: 13px; color: var(--fg-2); margin-bottom: 12px; line-height: 1.45; }
+.app .fit-match input { margin-top: 3px; }
+.app .fit-selection { margin-bottom: 8px; min-height: 0; }
+.app .fit-progress { margin-top: 14px; }
+.app .fit-progress-text { margin-top: 6px; }
+.app .fit-summary { margin-top: 14px; }
+.app .fit-results { margin-top: 8px; font-size: 12px; max-height: 200px; overflow-y: auto; }
+
+/* Action rows */
+.app .fit-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.app .fit-confirm-note { margin-left: 4px; }
+
+/* Single-file inline (wellness parse) */
+.app .fit-inline { display: flex; gap: 8px; max-width: 480px; }
+.app .fit-inline .form-control { flex: 1; }
+
+/* Preview — auto-match banner, disposition radios */
+.app .fit-automatch { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+.app .fit-automatch-name { font-weight: 600; }
+.app .fit-radio { display: flex; gap: 8px; align-items: flex-start; margin-bottom: 10px; font-size: 13px; color: var(--fg-2); line-height: 1.45; }
+.app .fit-radio:last-of-type { margin-bottom: 4px; }
+.app .fit-radio input { margin-top: 3px; }
+
+/* Preview — card head (title + chip), 2-col grid, metric table */
+.app .fit-card-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 16px; }
+.app .fit-card-head .fit-sec-label { margin: 0; }
+.app .fit-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.app .fit-grid .field { margin-bottom: 0; }
+.app .fit-metrics th { width: 40%; text-align: left; color: var(--fg-3); font-weight: 500; }
+.app .fit-notes { margin-top: 16px; margin-bottom: 0; }
+.app .fit-ex { font-weight: 600; }
+.app .fit-sets .chip { margin: 0 4px 4px 0; }
+
+/* Wellness summary */
+.app .fit-daterange { font-weight: 600; margin-top: 4px; }
+.app .fit-types { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
+
+@media (max-width: 859.98px) {
+  .app .fit-grid { grid-template-columns: 1fr; }
+  .app .fit-card-head { flex-direction: column; align-items: flex-start; }
+}

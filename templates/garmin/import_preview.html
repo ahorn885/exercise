@@ -1,5 +1,10 @@
-{% extends 'base_legacy.html' %}
-{% block title %}Preview FIT Import{% endblock %}
+{# Redesign (finish-the-open) — .FIT import preview/confirm. Migrated off
+   base_legacy onto the new .app shell. Form field names, the confirm
+   endpoint, and the disposition-toggle script are unchanged. #}
+{% extends 'base.html' %}
+{% set nav_active = 'link' %}
+{% block title %}Preview import{% endblock %}
+{% block crumbs %}<a href="{{ url_for('connections.hub') }}">Connections</a> <span class="sep">/</span> <a href="{{ url_for('garmin.import_fit') }}">Import .FIT</a> <span class="sep">/</span> <b>Preview</b>{% endblock %}
 
 {% macro plan_item_options(items, selected_id) %}
   {% for pi in items %}
@@ -15,85 +20,67 @@
 {% macro resolve_section(auto_match, nearby, plan_items) %}
   {# Auto-match summary banner — visible whenever the matcher returned a hit #}
   {% if auto_match %}
-    <div class="alert alert-success py-2 d-flex justify-content-between align-items-center mb-3">
+    <div class="alert alert-success fit-automatch">
       <div>
         <strong>Auto-matched</strong> to
-        <span class="fw-semibold">{{ auto_match.plan_item.workout_name }}</span>
+        <span class="fit-automatch-name">{{ auto_match.plan_item.workout_name }}</span>
         ({{ auto_match.plan_item.sport_type }})
         — {{ auto_match.plan_item.item_date }}
-        {% if auto_match.day_offset == -1 %}<span class="text-muted small">(previous day)</span>
-        {% elif auto_match.day_offset == -2 %}<span class="text-muted small">(2 days back)</span>
-        {% elif auto_match.day_offset == -3 %}<span class="text-muted small">(3 days back)</span>
-        {% elif auto_match.day_offset == 1 %}<span class="text-muted small">(next day)</span>
-        {% elif auto_match.day_offset == 2 %}<span class="text-muted small">(2 days forward)</span>
+        {% if auto_match.day_offset == -1 %}<span class="dim">(previous day)</span>
+        {% elif auto_match.day_offset == -2 %}<span class="dim">(2 days back)</span>
+        {% elif auto_match.day_offset == -3 %}<span class="dim">(3 days back)</span>
+        {% elif auto_match.day_offset == 1 %}<span class="dim">(next day)</span>
+        {% elif auto_match.day_offset == 2 %}<span class="dim">(2 days forward)</span>
         {% endif %}
       </div>
-      <span class="badge bg-success">{{ '%.0f'|format(auto_match.score * 100) }}% match</span>
+      <span class="chip good">{{ '%.0f'|format(auto_match.score * 100) }}% match</span>
     </div>
     <input type="hidden" name="disposition" value="completed">
     <input type="hidden" name="plan_item_id" value="{{ auto_match.plan_item.id }}">
   {% else %}
     {# No auto-match — ask the user which plan (or none) #}
-    <div class="card mb-3">
-      <div class="card-header">No planned workout matched — what was this?</div>
-      <div class="card-body">
-        <div class="form-check mb-2">
-          <input class="form-check-input disposition-radio" type="radio"
-                 name="disposition" id="dispNone" value="none" checked>
-          <label class="form-check-label" for="dispNone">
-            <strong>Standalone activity</strong>
-            <span class="text-muted small">— not associated with any planned workout</span>
-          </label>
-        </div>
-        <div class="form-check mb-2">
-          <input class="form-check-input disposition-radio" type="radio"
-                 name="disposition" id="dispCompleted" value="completed">
-          <label class="form-check-label" for="dispCompleted">
-            <strong>This was the planned workout</strong>
-            <span class="text-muted small">— mark plan item complete</span>
-          </label>
-        </div>
-        <div class="form-check mb-2">
-          <input class="form-check-input disposition-radio" type="radio"
-                 name="disposition" id="dispSwap" value="swapped_for">
-          <label class="form-check-label" for="dispSwap">
-            <strong>I did this instead of a planned workout</strong>
-            <span class="text-muted small">— mark plan item swapped, capture why</span>
-          </label>
-        </div>
-        <div class="form-check mb-3">
-          <input class="form-check-input disposition-radio" type="radio"
-                 name="disposition" id="dispAddition" value="in_addition_to">
-          <label class="form-check-label" for="dispAddition">
-            <strong>I did this in addition to my planned workout</strong>
-            <span class="text-muted small">— logged standalone, plan item stays scheduled</span>
-          </label>
-        </div>
+    <section class="card card-pad fit-card">
+      <p class="eyebrow accent fit-sec-label">● No planned workout matched — what was this?</p>
+      <label class="fit-radio">
+        <input class="disposition-radio" type="radio" name="disposition" id="dispNone" value="none" checked>
+        <span><strong>Standalone activity</strong> <span class="dim">— not associated with any planned workout</span></span>
+      </label>
+      <label class="fit-radio">
+        <input class="disposition-radio" type="radio" name="disposition" id="dispCompleted" value="completed">
+        <span><strong>This was the planned workout</strong> <span class="dim">— mark plan item complete</span></span>
+      </label>
+      <label class="fit-radio">
+        <input class="disposition-radio" type="radio" name="disposition" id="dispSwap" value="swapped_for">
+        <span><strong>I did this instead of a planned workout</strong> <span class="dim">— mark plan item swapped, capture why</span></span>
+      </label>
+      <label class="fit-radio">
+        <input class="disposition-radio" type="radio" name="disposition" id="dispAddition" value="in_addition_to">
+        <span><strong>I did this in addition to my planned workout</strong> <span class="dim">— logged standalone, plan item stays scheduled</span></span>
+      </label>
 
-        <div id="planItemPicker" class="mb-3 d-none">
-          <label class="form-label fw-semibold">Which planned workout?</label>
-          <select name="plan_item_id" class="form-select">
-            <option value="">— select —</option>
-            {% if nearby %}
-              <optgroup label="Nearby (-3 to +2 days)">
-                {{ plan_item_options(nearby, None) }}
-              </optgroup>
-            {% endif %}
-            {% if plan_items %}
-              <optgroup label="All scheduled">
-                {{ plan_item_options(plan_items, None) }}
-              </optgroup>
-            {% endif %}
-          </select>
-        </div>
-
-        <div id="reasonField" class="mb-1 d-none">
-          <label class="form-label fw-semibold">Why?</label>
-          <textarea name="swap_reason" class="form-control" rows="2"
-                    placeholder="e.g., didn't feel like running, did a bike ride instead"></textarea>
-        </div>
+      <div id="planItemPicker" class="field d-none">
+        <span class="lbl">Which planned workout?</span>
+        <select name="plan_item_id" class="form-control">
+          <option value="">— select —</option>
+          {% if nearby %}
+            <optgroup label="Nearby (-3 to +2 days)">
+              {{ plan_item_options(nearby, None) }}
+            </optgroup>
+          {% endif %}
+          {% if plan_items %}
+            <optgroup label="All scheduled">
+              {{ plan_item_options(plan_items, None) }}
+            </optgroup>
+          {% endif %}
+        </select>
       </div>
-    </div>
+
+      <div id="reasonField" class="field d-none">
+        <span class="lbl">Why?</span>
+        <textarea name="swap_reason" class="form-control" rows="2"
+                  placeholder="e.g., didn't feel like running, did a bike ride instead"></textarea>
+      </div>
+    </section>
     <script nonce="{{ csp_nonce() }}">
       // Toggle plan-item dropdown + reason textarea based on disposition radio.
       (function() {
@@ -113,146 +100,141 @@
 {% endmacro %}
 
 {% block content %}
-<div class="row justify-content-center">
-  <div class="col-lg-8">
-    <h2 class="mb-1">Preview Import</h2>
-    <p class="text-muted mb-4">
-      Review the parsed data below. Edit the name or notes if needed, then confirm to save.
-    </p>
-
-    {% if result.log_type == 'cardio' %}
-    {# ── CARDIO PREVIEW ── #}
-    {% set d = result.data %}
-    <form method="post" action="{{ url_for('garmin.import_confirm') }}">
-      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-      {{ resolve_section(auto_match, nearby, plan_items) }}
-
-      <div class="card mb-3">
-        <div class="card-header d-flex justify-content-between align-items-center">
-          <span>Cardio Activity — will be saved to <strong>Cardio Log</strong></span>
-          <span class="badge bg-primary">{{ d.activity }}</span>
-        </div>
-        <div class="card-body">
-          <div class="row g-3 mb-3">
-            <div class="col-md-6">
-              <label class="form-label fw-semibold">Activity Type</label>
-              <select name="activity" class="form-select">
-                {% for opt in ['Running','Treadmill','Trail Running','Hiking','Stair Climbing',
-                               'Road Cycling','Mountain Biking','Gravel Cycling','Indoor Bike Trainer',
-                               'Kayaking','Pack Rafting','Kayak Ergometer','Rowing Ergometer',
-                               'Swimming Pool','Swimming Open','Yoga'] %}
-                <option value="{{ opt }}" {% if opt == d.activity %}selected{% endif %}>{{ opt }}</option>
-                {% endfor %}
-              </select>
-            </div>
-            <div class="col-md-6">
-              <label class="form-label fw-semibold">Date</label>
-              <input type="text" class="form-control" value="{{ d.date }}" disabled>
-            </div>
-          </div>
-          <div class="mb-3">
-            <label class="form-label fw-semibold">Activity Name / Route</label>
-            <input type="text" name="activity_name" class="form-control"
-                   value="{{ name_override or d.activity_name or '' }}">
-          </div>
-
-          <table class="table table-sm table-bordered">
-            <tbody>
-              {% macro row(label, val, unit='') %}
-              <tr>
-                <th class="text-muted u-w-40pct">{{ label }}</th>
-                <td>{% if val is not none %}{{ val }}{% if unit %} {{ unit }}{% endif %}{% else %}<span class="text-muted">—</span>{% endif %}</td>
-              </tr>
-              {% endmacro %}
-              {{ row('Duration', d.duration_min, 'min') }}
-              {{ row('Moving Time', d.moving_time_min, 'min') }}
-              {{ row('Distance', d.distance_mi, 'mi') }}
-              {{ row('Avg Pace', d.avg_pace, '/mi') }}
-              {{ row('Avg Speed', d.avg_speed, 'mph') }}
-              {{ row('Avg HR', d.avg_hr, 'bpm') }}
-              {{ row('Max HR', d.max_hr, 'bpm') }}
-              {{ row('Calories', d.calories) }}
-              {{ row('Elev Gain', d.elev_gain_ft, 'ft') }}
-              {{ row('Elev Loss', d.elev_loss_ft, 'ft') }}
-              {{ row('Avg Cadence', d.avg_cadence) }}
-              {{ row('Max Cadence', d.max_cadence) }}
-              {{ row('Avg Power', d.avg_power, 'W') }}
-              {{ row('Max Power', d.max_power, 'W') }}
-              {{ row('Norm Power', d.norm_power, 'W') }}
-              {{ row('Aerobic TE', d.aerobic_te) }}
-              {{ row('Anaerobic TE', d.anaerobic_te) }}
-              {% if d.active_lengths %}{{ row('Active Lengths', d.active_lengths) }}{% endif %}
-              {% if d.stride_length_m %}{{ row('Avg Stride Length', d.stride_length_m, 'm') }}{% endif %}
-              {% if d.vert_oscillation_cm %}{{ row('Vertical Oscillation', d.vert_oscillation_cm, 'cm') }}{% endif %}
-              {% if d.vert_ratio_pct %}{{ row('Vertical Ratio', d.vert_ratio_pct, '%') }}{% endif %}
-              {% if d.gct_ms %}{{ row('Ground Contact Time', d.gct_ms, 'ms') }}{% endif %}
-              {% if d.gct_balance %}{{ row('GCT Balance', d.gct_balance) }}{% endif %}
-            </tbody>
-          </table>
-
-          <div class="mb-3">
-            <label class="form-label fw-semibold">Notes</label>
-            <textarea name="notes" class="form-control" rows="2">{{ notes }}</textarea>
-          </div>
-        </div>
-      </div>
-      <div class="d-flex gap-2">
-        <button type="submit" class="btn btn-success">Save to Cardio Log</button>
-        <a href="{{ url_for('garmin.import_fit') }}" class="btn btn-outline-secondary">Cancel</a>
-      </div>
-    </form>
-
-    {% elif result.log_type == 'strength' %}
-    {# ── STRENGTH PREVIEW ── #}
-    <form method="post" action="{{ url_for('garmin.import_confirm') }}">
-      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-      {{ resolve_section(auto_match, nearby, plan_items) }}
-
-      <div class="card mb-3">
-        <div class="card-header d-flex justify-content-between align-items-center">
-          <span>Strength Session — will be saved to <strong>Training Log</strong></span>
-          <span class="badge bg-warning text-dark">{{ result.data | length }} exercises</span>
-        </div>
-        <div class="card-body p-0">
-          <table class="table table-sm table-bordered mb-0">
-            <thead class="table-light">
-              <tr>
-                <th>Exercise</th><th>Sets</th>
-              </tr>
-            </thead>
-            <tbody>
-              {% for row in result.data %}
-              <tr>
-                <td class="fw-semibold">{{ row.exercise }}</td>
-                <td>
-                  {% for s in row.sets %}
-                    <span class="badge bg-secondary me-1">
-                      S{{ loop.index }}:
-                      {% if s.reps %}{{ s.reps }} reps{% endif %}
-                      {% if s.weight_lbs %}@ {{ s.weight_lbs }}lb{% endif %}
-                      {% if s.duration_sec and not s.reps %}{{ s.duration_sec }}s{% endif %}
-                    </span>
-                  {% else %}
-                    <span class="text-muted">—</span>
-                  {% endfor %}
-                </td>
-              </tr>
-              {% endfor %}
-            </tbody>
-          </table>
-        </div>
-      </div>
-      <div class="mb-3">
-        <label class="form-label fw-semibold">Notes (applied to all entries)</label>
-        <textarea name="notes" class="form-control" rows="2">{{ notes }}</textarea>
-      </div>
-      <div class="d-flex gap-2">
-        <button type="submit" class="btn btn-success">Save to Training Log</button>
-        <a href="{{ url_for('garmin.import_fit') }}" class="btn btn-outline-secondary">Cancel</a>
-      </div>
-    </form>
-    {% endif %}
-
+<div class="dash-head">
+  <div class="races-intro">
+    <p class="eyebrow accent">● Connections · review before saving</p>
+    <h1 class="page-title">Preview import.</h1>
+    <p class="page-sub">Review the parsed data below. Edit the name or notes if needed, then confirm to save.</p>
   </div>
+</div>
+
+<div class="stack fit-wrap">
+  {% if result.log_type == 'cardio' %}
+  {# ── CARDIO PREVIEW ── #}
+  {% set d = result.data %}
+  <form method="post" action="{{ url_for('garmin.import_confirm') }}" class="stack">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    {{ resolve_section(auto_match, nearby, plan_items) }}
+
+    <section class="card card-pad fit-card">
+      <div class="fit-card-head">
+        <p class="eyebrow accent fit-sec-label">● Cardio activity → cardio log</p>
+        <span class="chip">{{ d.activity }}</span>
+      </div>
+      <div class="fit-grid">
+        <label class="field">
+          <span class="lbl">Activity type</span>
+          <select name="activity" class="form-control">
+            {% for opt in ['Running','Treadmill','Trail Running','Hiking','Stair Climbing',
+                           'Road Cycling','Mountain Biking','Gravel Cycling','Indoor Bike Trainer',
+                           'Kayaking','Pack Rafting','Kayak Ergometer','Rowing Ergometer',
+                           'Swimming Pool','Swimming Open','Yoga'] %}
+            <option value="{{ opt }}" {% if opt == d.activity %}selected{% endif %}>{{ opt }}</option>
+            {% endfor %}
+          </select>
+        </label>
+        <label class="field">
+          <span class="lbl">Date</span>
+          <input type="text" class="form-control" value="{{ d.date }}" disabled>
+        </label>
+      </div>
+      <label class="field">
+        <span class="lbl">Activity name / route</span>
+        <input type="text" name="activity_name" class="form-control"
+               value="{{ name_override or d.activity_name or '' }}">
+      </label>
+
+      <div class="table-scroll">
+        <table class="data fit-metrics">
+          <tbody>
+            {% macro row(label, val, unit='') %}
+            <tr>
+              <th>{{ label }}</th>
+              <td>{% if val is not none %}{{ val }}{% if unit %} {{ unit }}{% endif %}{% else %}<span class="dim">—</span>{% endif %}</td>
+            </tr>
+            {% endmacro %}
+            {{ row('Duration', d.duration_min, 'min') }}
+            {{ row('Moving Time', d.moving_time_min, 'min') }}
+            {{ row('Distance', d.distance_mi, 'mi') }}
+            {{ row('Avg Pace', d.avg_pace, '/mi') }}
+            {{ row('Avg Speed', d.avg_speed, 'mph') }}
+            {{ row('Avg HR', d.avg_hr, 'bpm') }}
+            {{ row('Max HR', d.max_hr, 'bpm') }}
+            {{ row('Calories', d.calories) }}
+            {{ row('Elev Gain', d.elev_gain_ft, 'ft') }}
+            {{ row('Elev Loss', d.elev_loss_ft, 'ft') }}
+            {{ row('Avg Cadence', d.avg_cadence) }}
+            {{ row('Max Cadence', d.max_cadence) }}
+            {{ row('Avg Power', d.avg_power, 'W') }}
+            {{ row('Max Power', d.max_power, 'W') }}
+            {{ row('Norm Power', d.norm_power, 'W') }}
+            {{ row('Aerobic TE', d.aerobic_te) }}
+            {{ row('Anaerobic TE', d.anaerobic_te) }}
+            {% if d.active_lengths %}{{ row('Active Lengths', d.active_lengths) }}{% endif %}
+            {% if d.stride_length_m %}{{ row('Avg Stride Length', d.stride_length_m, 'm') }}{% endif %}
+            {% if d.vert_oscillation_cm %}{{ row('Vertical Oscillation', d.vert_oscillation_cm, 'cm') }}{% endif %}
+            {% if d.vert_ratio_pct %}{{ row('Vertical Ratio', d.vert_ratio_pct, '%') }}{% endif %}
+            {% if d.gct_ms %}{{ row('Ground Contact Time', d.gct_ms, 'ms') }}{% endif %}
+            {% if d.gct_balance %}{{ row('GCT Balance', d.gct_balance) }}{% endif %}
+          </tbody>
+        </table>
+      </div>
+
+      <label class="field fit-notes">
+        <span class="lbl">Notes</span>
+        <textarea name="notes" class="form-control" rows="2">{{ notes }}</textarea>
+      </label>
+    </section>
+    <div class="fit-actions">
+      <button type="submit" class="btn btn-primary">Save to cardio log</button>
+      <a href="{{ url_for('garmin.import_fit') }}" class="btn btn-ghost">Cancel</a>
+    </div>
+  </form>
+
+  {% elif result.log_type == 'strength' %}
+  {# ── STRENGTH PREVIEW ── #}
+  <form method="post" action="{{ url_for('garmin.import_confirm') }}" class="stack">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    {{ resolve_section(auto_match, nearby, plan_items) }}
+
+    <section class="card card-pad fit-card">
+      <div class="fit-card-head">
+        <p class="eyebrow accent fit-sec-label">● Strength session → training log</p>
+        <span class="chip warn">{{ result.data | length }} exercises</span>
+      </div>
+      <div class="table-scroll">
+        <table class="data">
+          <thead><tr><th>Exercise</th><th>Sets</th></tr></thead>
+          <tbody>
+            {% for row in result.data %}
+            <tr>
+              <td class="fit-ex">{{ row.exercise }}</td>
+              <td class="fit-sets">
+                {% for s in row.sets %}
+                  <span class="chip">S{{ loop.index }}:
+                    {% if s.reps %}{{ s.reps }} reps{% endif %}
+                    {% if s.weight_lbs %}@ {{ s.weight_lbs }}lb{% endif %}
+                    {% if s.duration_sec and not s.reps %}{{ s.duration_sec }}s{% endif %}
+                  </span>
+                {% else %}
+                  <span class="dim">—</span>
+                {% endfor %}
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      <label class="field fit-notes">
+        <span class="lbl">Notes <span class="dim">(applied to all entries)</span></span>
+        <textarea name="notes" class="form-control" rows="2">{{ notes }}</textarea>
+      </label>
+    </section>
+    <div class="fit-actions">
+      <button type="submit" class="btn btn-primary">Save to training log</button>
+      <a href="{{ url_for('garmin.import_fit') }}" class="btn btn-ghost">Cancel</a>
+    </div>
+  </form>
+  {% endif %}
 </div>
 {% endblock %}

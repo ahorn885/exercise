@@ -95,9 +95,9 @@ The redesign covers every *user-facing* surface but a few blueprints have no red
 
 ## Build status / handoff (live)
 
-**Last updated:** 2026-06-02
+**Last updated:** 2026-06-03
 
-**Progress:** Phase 0 ✅ · Phase 1 shell ✅ · **Phase 2 COMPLETE** (§05–§09 ✅) · **Phase 3 COMPLETE\*** (§04 ✅ · §10 ✅ · §11 ✅ · §12 ◑ diff-via-refresh · §13 ✅ · §14 ✅) · **Phase 4 COMPLETE** (§15 ✅ · §16 ✅ · §17 ✅ · §18 ✅ · §19 ✅ · §20 ✅) · **Phase 5 COMPLETE** (§21 ✅ · §22 ✅ read-only · §23 ✅ · §24 ✅ · §25 ✅) · **Phase 6 polish — done** (§26 ✅ shared empty-state · §27 ✅ error states · §28 ✅ light-mode toggle · §29 ✅ a11y sweep) — **remaining (optional/low-priority): print stylesheets, the operator `base_legacy` forms (garmin import/sync/wellness, admin `plan_inspect`/`plan_diag`)**. *\*§12 standalone A↔B compare deferred (no backend route); §13's §30/Phase-7 `coaching_bp` consolidation is **⛔ BLOCKED** — code-verified it can't be done as written (two live plan models; `coaching_bp` backs the migrated §06 plan view). See Phase 7 above.*
+**Progress:** Phase 0 ✅ · Phase 1 shell ✅ · **Phase 2 COMPLETE** (§05–§09 ✅) · **Phase 3 COMPLETE\*** (§04 ✅ · §10 ✅ · §11 ✅ · §12 ◑ diff-via-refresh · §13 ✅ · §14 ✅) · **Phase 4 COMPLETE** (§15 ✅ · §16 ✅ · §17 ✅ · §18 ✅ · §19 ✅ · §20 ✅) · **Phase 5 COMPLETE** (§21 ✅ · §22 ✅ read-only · §23 ✅ · §24 ✅ · §25 ✅) · **Phase 6 polish — done** (§26 ✅ shared empty-state · §27 ✅ error states · §28 ✅ light-mode toggle · §29 ✅ a11y sweep) — **finish-the-open started:** the manual-`.FIT`-import flow (`garmin/import` · `import_preview` · `import_wellness`) is now on the new shell (render-tested, CSP-clean). **Remaining (optional/low-priority): print stylesheets · the `garmin/wellness_log` viewer · the paused-Garmin-API forms (`garmin/auth`/`sync`/`sync_preview`) · admin `plan_inspect`/`plan_diag`**. *\*§12 standalone A↔B compare deferred (no backend route); §13's §30/Phase-7 `coaching_bp` consolidation is **⛔ BLOCKED** — code-verified it can't be done as written (two live plan models; `coaching_bp` backs the migrated §06 plan view). See Phase 7 above.*
 Merged to `main`: PR #397 (review), #398 (Phase 0), #399 (docs), #400 (Phase 1 + §05),
 #401 (§06), #403 (§07), #404 (§07 follow-up), #406 (redesign card/grid Bootstrap-leak fix),
 #407 (§08 unified Log landing + 4 panes).
@@ -404,6 +404,21 @@ In flight: PR for §08 Strength pane + §09 Wellness (completes Phase 2) **and**
   enforces (`REPORT_ONLY` is a dev-only opt-in, default off) and every slice has been CSP-clean,
   so there are no enforced-mode violations to clear. New `tests/test_redesign_a11y_render.py`
   (1). Redesign + auth suites green (59); `app.js` syntax-checks; CSP-clean.
+- **Phase 6 finish-the-open · manual `.FIT`-import flow** — migrated the live upload path off
+  `base_legacy` onto the new `.app` shell: `garmin/import` (bulk drop zone + single-activity
+  parse), `garmin/import_preview` (cardio + strength branches, auto-match banner, disposition
+  radios), `garmin/import_wellness` (bulk + single-file preview/confirm). Behaviour unchanged —
+  every form field name, confirm endpoint, the `data-bulk-*` uploader hooks (already ported into
+  `app.js`), and the nonced disposition-toggle script are preserved. Reskinned with token classes
+  (`.fit-*` block in `style.css`, braces 855/855); brand-neutral copy per CONVENTIONS §E.4 (no
+  top-level Garmin branding; the wellness "body battery" data type surfaces as **Recovery**).
+  Lives under Connections (§17 `nav_active = 'link'`); reached from the hub + the §07 workout rail.
+  New `tests/test_redesign_garmin_import_render.py` (5: landing, wellness landing, wellness preview
+  relabel, cardio no-match, strength auto-match). **Scoped out of this slice** (still legacy): the
+  Garmin-Connect-API forms `garmin/auth`/`sync`/`sync_preview` (the **paused** API path per
+  CONVENTIONS §E.3 — low value to polish) and the `garmin/wellness_log` data viewer (Chart.js on
+  legacy `--ink` tokens — a distinct viewer concern, deferred to keep the slice at the file
+  ceiling). Redesign + auth suites green (64).
 
 ### Known blocker (infra, not code) — Vercel **Preview** deploys 500
 Preview deployments crash with `FUNCTION_INVOCATION_FAILED`: `app.py` raises at **import** when
