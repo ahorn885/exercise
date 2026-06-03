@@ -1813,3 +1813,16 @@ body.bulk-mode { padding-bottom: 80px; }
   .app .fit-grid { grid-template-columns: 1fr; }
   .app .fit-card-head { flex-direction: column; align-items: flex-start; }
 }
+
+/* Wellness log viewer — date filter + Chart.js grid + records table */
+.app .well-filter { max-width: 240px; margin-bottom: 16px; }
+.app .well-filter .field { margin-bottom: 0; }
+.app .well-charts { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px; }
+.app .well-charts .eyebrow { margin: 0 0 12px; }
+.app .well-canvas { position: relative; height: 160px; }
+.app .well-records .eyebrow { margin: 0 0 14px; }
+.app .well-note { margin-top: 12px; }
+
+@media (max-width: 859.98px) {
+  .app .well-charts { grid-template-columns: 1fr; }
+}

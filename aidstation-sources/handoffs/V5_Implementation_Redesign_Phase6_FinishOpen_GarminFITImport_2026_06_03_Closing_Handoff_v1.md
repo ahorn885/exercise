@@ -1,10 +1,10 @@
 # V5 Implementation — Redesign Phase 6 Finish-the-Open: manual `.FIT`-import flow onto the new shell — Closing Handoff
 
-**Session:** Redesign track, "finish-the-open" (tier-3). Migrated the live manual-`.FIT`-upload path — `garmin/import`, `garmin/import_preview`, `garmin/import_wellness` — off `base_legacy.html` onto the new `.app` shell. Render-tested, CSP-clean. No backend/route/schema change.
+**Session:** Redesign track, "finish-the-open" (tier-3). Migrated the whole manual-`.FIT` surface off `base_legacy.html` onto the new `.app` shell — the upload flow (`garmin/import`, `garmin/import_preview`, `garmin/import_wellness`) **and the `garmin/wellness_log` viewer**. Render-tested, CSP-clean. No backend/route/schema change.
 **Date:** 2026-06-03
 **Predecessor handoff:** `V5_Implementation_Redesign_Phase6_Polish_HandoffSync_Coaching30Blocked_2026_06_03_Closing_Handoff_v1.md`
 **Branch:** `claude/great-lovelace-GuFhP` (harness-pinned; kept per the remote-session push contract)
-**Status:** PR open to `main`. Redesign + auth render suites green (**64**, was 59 + 5 new); CSS braces balanced (855/855); no migration, no owed deploy.
+**Status:** PR #414 open to `main`. Redesign + auth render suites green (**66**, was 59 + 7 new); CSS braces balanced (864/864); no migration, no owed deploy. *(Two-part session: shipped the import flow first, then the wellness-log viewer as a follow-on on the same PR at Andy's go-ahead.)*
 
 ---
 
@@ -22,8 +22,9 @@ Ran `aidstation-sources/scripts/verify-handoff.sh` — clean. Every predecessor 
 2. **Scoped the slice from the candidates.** The handoff named "operator `base_legacy` forms (garmin import/sync/wellness)". Reading the templates split that cleanly:
    - **Live manual-`.FIT`-upload path** (user-facing; the §07 workout rail + Connections hub link here): `garmin/import`, `garmin/import_preview`, `garmin/import_wellness` → **migrated this session.**
    - **Paused Garmin-Connect-API path** (`garmin/auth` = garth SSO login; `garmin/sync`, `garmin/sync_preview`): the **paused** API per CONVENTIONS §E.3 — low value to polish → **left legacy.**
-   - **`garmin/wellness_log`**: a Chart.js data *viewer* on legacy `--ink` tokens — a distinct concern; deferred to keep the slice at the 5-file ceiling.
-3. **Migrated the 3 templates** onto `base.html`, reusing the established redesign vocabulary (`.card`/`.card-pad`/`.field`/`.lbl`/`.stack`/`.data`/`.chip`/`.eyebrow.accent`/`.dash-head`), added a `.fit-*` CSS block, wrote a 5-case render test, ran the redesign+auth sweep green.
+   - **`garmin/wellness_log`**: a Chart.js data *viewer* on legacy `--ink` tokens — a distinct concern; first deferred to hold the ceiling, **then picked up this session** as the follow-on viewer slice (Andy: "do the log viewer").
+3. **Migrated the 3 import templates** onto `base.html`, reusing the established redesign vocabulary (`.card`/`.card-pad`/`.field`/`.lbl`/`.stack`/`.data`/`.chip`/`.eyebrow.accent`/`.dash-head`), added a `.fit-*` CSS block, wrote a 5-case render test, ran the redesign+auth sweep green. **Shipped the import flow as PR #414.**
+4. **Then the wellness-log viewer** — migrated `garmin/wellness_log` onto the shell with a `.well-*` CSS block, **remapped the Chart.js colour vars** off the legacy `--ink`/`--orange` palette onto the new tokens, relabeled "body battery" → Recovery, added a 2-case render test, swept green (66), and pushed onto the same PR.
 
 ---
 
@@ -38,11 +39,14 @@ Both branches preserved: **cardio** (activity-type select, disabled date, name o
 ### 3.3 `templates/garmin/import_wellness.html` (migrated)
 Bulk uploader → `garmin.import_wellness_bulk`; single-file parse; preview summary (`counts`, date range) + sample `.data` table; confirm → `garmin.import_wellness_confirm`. **Brand-neutral (CONVENTIONS §E.4):** the "body battery" data type surfaces as **Recovery** in display copy (badge + sample column); underlying data keys (`preview.counts.body_battery`, `r.body_battery`) unchanged.
 
-### 3.4 `static/style.css` (modified)
-New `.fit-*` section (drop zone + `.u-drop-active` token override, plan-match row, progress/results, 2-col `.fit-grid`, metric-table `th` width, auto-match banner, disposition radios, wellness summary; responsive collapse < 860px). Replaces the legacy `u-border-dashed`/`u-scrollbox-200`/`u-w-40pct`/`u-mw-480` utilities (legacy-only, unstyled on the new shell). Braces **855/855**.
+### 3.4 `templates/garmin/wellness_log.html` (migrated)
+The wellness-data *viewer* (reached from the import-wellness page + Connections). Date-filtered Chart.js panels (HR / stress / **recovery** / respiration) + the records `.data` table; `data-autosubmit` date picker (already wired in `app.js`). Chart.js stays (`cdn.jsdelivr.net` is CSP-allowed); the in-`{% block scripts %}` chart code is **nonced** and its colour reads were **remapped** from the legacy `--ink`/`--ink-3`/`--orange` palette to the new `--fg`/`--fg-3`/`--accent` tokens (the only behavioural delta — same charts, new palette). "Body battery" → **Recovery** (chart title + table column; the `body_battery` data key is unchanged).
 
-### 3.5 `tests/test_redesign_garmin_import_render.py` (new)
-5 cases, all route-driven through the real app + fake DB (matcher/FIT-parser stubbed): import landing, wellness landing, wellness preview (asserts **Recovery** relabel + no "Body battery"), cardio no-match (disposition radios + nonced script), strength auto-match (banner + 91% chip + no radios). Each asserts `app-shell` + CSP-clean (`style="`/`onclick=` absent).
+### 3.5 `static/style.css` (modified)
+New `.fit-*` section (drop zone + `.u-drop-active` token override, plan-match row, progress/results, 2-col `.fit-grid`, metric-table `th` width, auto-match banner, disposition radios, wellness summary; responsive collapse < 860px) **+ a `.well-*` section** (date filter, 2-col Chart.js grid, fixed-height `.well-canvas`, records card). Replaces the legacy `u-border-dashed`/`u-scrollbox-200`/`u-w-40pct`/`u-mw-480` utilities (legacy-only, unstyled on the new shell). Braces **864/864**.
+
+### 3.6 `tests/test_redesign_garmin_import_render.py` (new) + `tests/test_redesign_garmin_wellness_log_render.py` (new)
+**Import (5):** route-driven (matcher/FIT-parser stubbed) — import landing, wellness landing, wellness preview (**Recovery** relabel + no "Body battery"), cardio no-match (disposition radios + nonced script), strength auto-match (banner + 91% chip + no radios). **Wellness-log (2):** SQL-routing fake conn — populated (4 chart canvases + records table + Recovery relabel + asserts the legacy `--ink`/`--orange` palette is fully gone + reads `--fg`/`--accent`) and empty hero. Each asserts `app-shell` + CSP-clean (`style="`/`onclick=` absent).
 
 ---
 
@@ -65,7 +69,7 @@ Render-tested only; worth a smoke on the preview deploy:
 ## 6. Next session pointers
 
 ### 6.1 Architect-recommended next move
-Two coherent finish-the-open follow-ons remain, both low-priority/non-blocking: **(a)** the `garmin/wellness_log` viewer (Chart.js — remap the legacy `--ink`/`--orange` chart vars to the new `--fg`/`--accent` tokens; relabel the "Body battery" chart to Recovery for consistency with this slice); **(b)** print stylesheets (`@media print` for plan/workout — design says "confirm scope" first). The paused-Garmin-API forms (`auth`/`sync`/`sync_preview`) and admin `plan_inspect`/`plan_diag` are operator/paused surfaces — lowest value.
+One finish-the-open item remains, low-priority/non-blocking: **print stylesheets** (`@media print` for plan/workout — design says "confirm scope" first: which views, what chrome to hide). After that the redesign surface map is 100% on the new shell. The paused-Garmin-API forms (`auth`/`sync`/`sync_preview`) and admin `plan_inspect`/`plan_diag` are operator/paused surfaces left legacy by decision — lowest value.
 
 ### 6.2 Higher-priority alternative (off this thread)
 The **plan-gen go-live board** (tier-2): re-run the PGE e2e → read the diag endpoint → the #316/#350 wall-clock backstop → the still-owed §14 coherence read (#333). Mostly Andy's-hands (Neon egress blocked from the container).
@@ -93,11 +97,12 @@ The **plan-gen go-live board** (tier-2): re-run the PGE e2e → read the diag en
 | `garmin/import.html` extends `base.html` (not `base_legacy`) | ✅ grep |
 | `garmin/import_preview.html` extends `base.html`; both cardio+strength branches present | ✅ grep + render test |
 | `garmin/import_wellness.html` extends `base.html`; "Recovery" relabel, no "Body battery" | ✅ render test |
-| `data-bulk-*` hooks + confirm endpoints preserved in all 3 | ✅ grep |
-| `.fit-*` block in `static/style.css`; braces balanced (855/855) | ✅ |
-| No inline `style="`/`onclick=` in the 3 templates | ✅ grep (0/0/0) |
-| `tests/test_redesign_garmin_import_render.py` (5) present + green | ✅ pytest |
-| Redesign + auth sweep green (64) | ✅ `pytest -k "redesign or auth_gate"` |
+| `garmin/wellness_log.html` extends `base.html`; Chart.js vars remapped (no `--ink`/`--orange`), Recovery relabel | ✅ render test |
+| `data-bulk-*` + `data-autosubmit` hooks + confirm endpoints preserved | ✅ grep |
+| `.fit-*` + `.well-*` blocks in `static/style.css`; braces balanced (864/864) | ✅ |
+| No inline `style="`/`onclick=` in the 4 templates | ✅ grep + render tests |
+| `tests/test_redesign_garmin_import_render.py` (5) + `…wellness_log_render.py` (2) present + green | ✅ pytest |
+| Redesign + auth sweep green (66) | ✅ `pytest -k "redesign or auth_gate"` |
 | Working tree clean after push | ⏳ (push pending) |
 
 ---
@@ -108,8 +113,11 @@ The **plan-gen go-live board** (tier-2): re-run the PGE e2e → read the diag en
 1. `templates/garmin/import.html` (migrated)
 2. `templates/garmin/import_preview.html` (migrated)
 3. `templates/garmin/import_wellness.html` (migrated)
-4. `static/style.css` (`.fit-*` block)
-5. `tests/test_redesign_garmin_import_render.py` (new)
+4. `templates/garmin/wellness_log.html` (migrated)
+5. `static/style.css` (`.fit-*` + `.well-*` blocks)
+6. `tests/test_redesign_garmin_import_render.py` (new) + `tests/test_redesign_garmin_wellness_log_render.py` (new)
+
+*(Two-part session; exceeded the 5-substantive guideline by one, but shipped as two coherent slices — import flow, then viewer — each with its own render test and a green sweep before the next. Quality held.)*
 
 **Bookkeeping:** `docs/redesign/BUILD_TASKS.md`, `aidstation-sources/CURRENT_STATE.md`, this handoff.
 
@@ -117,7 +125,7 @@ The **plan-gen go-live board** (tier-2): re-run the PGE e2e → read the diag en
 
 ## 10. Carry-forward updates
 
-`CARRY_FORWARD.md`: noted the two remaining finish-the-open follow-ons (`wellness_log` viewer chart-token remap + relabel; print stylesheets) and that the paused-Garmin-API forms stay legacy by decision. No migration / no owed deploy from this slice.
+`CARRY_FORWARD.md`: with the `wellness_log` viewer now shipped, the only remaining finish-the-open follow-on is **print stylesheets** (`@media print`, confirm scope first); the paused-Garmin-API forms + admin `plan_inspect`/`plan_diag` stay legacy by decision. No migration / no owed deploy.
 
 ---
 

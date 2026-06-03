@@ -97,7 +97,7 @@ The redesign covers every *user-facing* surface but a few blueprints have no red
 
 **Last updated:** 2026-06-03
 
-**Progress:** Phase 0 ✅ · Phase 1 shell ✅ · **Phase 2 COMPLETE** (§05–§09 ✅) · **Phase 3 COMPLETE\*** (§04 ✅ · §10 ✅ · §11 ✅ · §12 ◑ diff-via-refresh · §13 ✅ · §14 ✅) · **Phase 4 COMPLETE** (§15 ✅ · §16 ✅ · §17 ✅ · §18 ✅ · §19 ✅ · §20 ✅) · **Phase 5 COMPLETE** (§21 ✅ · §22 ✅ read-only · §23 ✅ · §24 ✅ · §25 ✅) · **Phase 6 polish — done** (§26 ✅ shared empty-state · §27 ✅ error states · §28 ✅ light-mode toggle · §29 ✅ a11y sweep) — **finish-the-open started:** the manual-`.FIT`-import flow (`garmin/import` · `import_preview` · `import_wellness`) is now on the new shell (render-tested, CSP-clean). **Remaining (optional/low-priority): print stylesheets · the `garmin/wellness_log` viewer · the paused-Garmin-API forms (`garmin/auth`/`sync`/`sync_preview`) · admin `plan_inspect`/`plan_diag`**. *\*§12 standalone A↔B compare deferred (no backend route); §13's §30/Phase-7 `coaching_bp` consolidation is **⛔ BLOCKED** — code-verified it can't be done as written (two live plan models; `coaching_bp` backs the migrated §06 plan view). See Phase 7 above.*
+**Progress:** Phase 0 ✅ · Phase 1 shell ✅ · **Phase 2 COMPLETE** (§05–§09 ✅) · **Phase 3 COMPLETE\*** (§04 ✅ · §10 ✅ · §11 ✅ · §12 ◑ diff-via-refresh · §13 ✅ · §14 ✅) · **Phase 4 COMPLETE** (§15 ✅ · §16 ✅ · §17 ✅ · §18 ✅ · §19 ✅ · §20 ✅) · **Phase 5 COMPLETE** (§21 ✅ · §22 ✅ read-only · §23 ✅ · §24 ✅ · §25 ✅) · **Phase 6 polish — done** (§26 ✅ shared empty-state · §27 ✅ error states · §28 ✅ light-mode toggle · §29 ✅ a11y sweep) — **finish-the-open started:** the manual-`.FIT`-import flow (`garmin/import` · `import_preview` · `import_wellness`) **and the `garmin/wellness_log` viewer** are now on the new shell (render-tested, CSP-clean). **Remaining (optional/low-priority): print stylesheets · the paused-Garmin-API forms (`garmin/auth`/`sync`/`sync_preview`) · admin `plan_inspect`/`plan_diag`**. *\*§12 standalone A↔B compare deferred (no backend route); §13's §30/Phase-7 `coaching_bp` consolidation is **⛔ BLOCKED** — code-verified it can't be done as written (two live plan models; `coaching_bp` backs the migrated §06 plan view). See Phase 7 above.*
 Merged to `main`: PR #397 (review), #398 (Phase 0), #399 (docs), #400 (Phase 1 + §05),
 #401 (§06), #403 (§07), #404 (§07 follow-up), #406 (redesign card/grid Bootstrap-leak fix),
 #407 (§08 unified Log landing + 4 panes).
@@ -419,6 +419,15 @@ In flight: PR for §08 Strength pane + §09 Wellness (completes Phase 2) **and**
   CONVENTIONS §E.3 — low value to polish) and the `garmin/wellness_log` data viewer (Chart.js on
   legacy `--ink` tokens — a distinct viewer concern, deferred to keep the slice at the file
   ceiling). Redesign + auth suites green (64).
+- **Phase 6 finish-the-open · wellness-log viewer** — migrated `garmin/wellness_log` (`/garmin/wellness`)
+  onto the new shell, completing the wellness import→view loop. Date-filtered Chart.js panels
+  (HR / stress / recovery / respiration) + the records table, all on token classes (new `.well-*`
+  block in `style.css`, braces 864/864). Chart.js stays (`cdn.jsdelivr.net` is CSP-allowed); its
+  colour vars are **remapped** from the legacy `--ink`/`--ink-3`/`--orange` palette to the new
+  `--fg`/`--fg-3`/`--accent` tokens, and the "body battery" series surfaces as **Recovery** (§E.4).
+  `data-autosubmit` date picker (already wired in `app.js`). New
+  `tests/test_redesign_garmin_wellness_log_render.py` (2: populated charts+table+Recovery relabel +
+  legacy-palette gone; empty hero). Redesign + auth suites green (66).
 
 ### Known blocker (infra, not code) — Vercel **Preview** deploys 500
 Preview deployments crash with `FUNCTION_INVOCATION_FAILED`: `app.py` raises at **import** when
