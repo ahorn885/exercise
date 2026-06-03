@@ -1,45 +1,34 @@
-{% extends 'base_legacy.html' %}
+{% extends 'base.html' %}
+{% from 'onboarding/_onb_steps.html' import onb_steps %}
 {% block title %}Skills — AIDSTATION{% endblock %}
+{% block crumbs %}<b>Set up</b> <span class="sep">/</span> Skills{% endblock %}
+
+{# Redesign (finish-the-open) — onboarding Step 5 (Skills capture), migrated
+   onto the new .app shell. The toggle grid lives in the shared
+   `_skills_form.html` partial (also used by the §18 profile tab); this
+   template owns the step chrome + Save/Skip wrappers. #}
+
 {% block content %}
-
-{# v5 onboarding Step 5 — Skills capture surface (Bucket C sub-item (l)
-   capture-surface follow-on, 2026-05-24). 5-checkbox grid for the
-   skill-capability toggles seeded by populate_skill_capability_toggles.sql.
-   Default-OFF semantics; athletes opt in. Same form partial included by
-   profile/edit.html tab=skills. #}
-
-<div class="mb-4">
-  <ol class="list-inline small text-muted mb-1">
-    <li class="list-inline-item"><span class="badge bg-success">✓</span> Step 1 — Account</li>
-    <li class="list-inline-item">›</li>
-    <li class="list-inline-item"><span class="badge bg-success">✓</span> Step 2 — Connect providers</li>
-    <li class="list-inline-item">›</li>
-    <li class="list-inline-item"><span class="badge bg-success">✓</span> Step 3 — Prefill review</li>
-    <li class="list-inline-item">›</li>
-    <li class="list-inline-item"><span class="badge bg-success">✓</span> Step 4 — Locations</li>
-    <li class="list-inline-item">›</li>
-    <li class="list-inline-item"><strong class="text-body">Step 5 — Skills</strong></li>
-  </ol>
-  <h4 class="mb-0">What technical skills have you trained?</h4>
+<div class="dash-head">
+  <div class="races-intro">
+    <p class="eyebrow accent">● Set up · Step 5 of 6</p>
+    <h1 class="page-title">What technical skills have you trained?</h1>
+    <p class="page-sub">Check the skills you've practiced enough to apply on race day. Each unchecked skill
+      that matches your race terrain or disciplines surfaces a coaching flag to address the gap. Leave OFF
+      if you'd need coaching to do it safely; ON if you can self-direct. Editable any time.</p>
+  </div>
 </div>
 
-<p class="text-muted">
-  Check the skills you've practiced enough to apply on race day. Each
-  unchecked skill that matches your race terrain or included disciplines
-  surfaces a coaching flag asking the LLM to address the capability gap
-  in your plan. Leave OFF if you'd need coaching to do it safely; ON if
-  you can self-direct. Editable any time from Profile → Skills.
-</p>
+{{ onb_steps('skills') }}
 
-<form method="post" action="{{ url_for('onboarding.skills_save') }}">
+<form method="post" action="{{ url_for('onboarding.skills_save') }}" class="onb-wrap">
   <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
 
   {% include 'onboarding/_skills_form.html' %}
 
-  <div class="d-flex justify-content-between align-items-center mt-3 pt-3 border-top">
-    <a href="{{ post_step_skills_target }}" class="btn btn-link text-muted">Skip for now</a>
+  <div class="onb-nav">
+    <a href="{{ post_step_skills_target }}" class="btn btn-ghost">Skip for now</a>
     <button type="submit" class="btn btn-primary">Save & continue</button>
   </div>
 </form>
-
 {% endblock %}

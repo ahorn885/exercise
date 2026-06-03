@@ -1883,3 +1883,53 @@ body.bulk-mode { padding-bottom: 80px; }
 .app .auth-alt a:hover { color: var(--accent); }
 
 .app .auth-legal { font-size: 9px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--fg-4); text-align: center; margin: 0; }
+
+/* ════════════════════════════════════════════════════════════════════
+   Onboarding wizard (finish-the-open) — Steps 2–7 on the new shell.
+   Shared progress stepper (_onb_steps.html) + per-step layouts.
+   ════════════════════════════════════════════════════════════════════ */
+.app .onb-wrap { max-width: 760px; }
+.app .onb-note { font-size: 12px; }
+
+/* Progress stepper */
+.app .onb-steps { display: flex; flex-wrap: wrap; gap: 8px 18px; list-style: none; padding: 0; margin: 0 0 22px; }
+.app .onb-step { display: inline-flex; align-items: center; gap: 7px; color: var(--fg-4); }
+.app .onb-step-n { display: grid; place-items: center; width: 20px; height: 20px; border-radius: 50%; border: 1px solid var(--hairline); font-family: var(--mono); font-size: 10px; }
+.app .onb-step-l { font-family: var(--mono); font-size: 9px; letter-spacing: 0.16em; text-transform: uppercase; }
+.app .onb-step.is-current { color: var(--fg); }
+.app .onb-step.is-current .onb-step-n { border-color: var(--accent); color: var(--accent); }
+.app .onb-step.is-done { color: var(--fg-3); }
+.app .onb-step.is-done .onb-step-n { border-color: color-mix(in oklab, var(--good) 45%, transparent); color: var(--good); }
+
+/* Consent disclosure */
+.app .onb-consent > summary { cursor: pointer; }
+.app .onb-consent-body { margin-top: 12px; font-size: 13px; color: var(--fg-2); line-height: 1.55; }
+.app .onb-consent-body ul { padding-left: 18px; }
+
+/* Provider rows (Connect step) */
+.app .onb-provider { display: flex; justify-content: space-between; align-items: center; gap: 14px; flex-wrap: wrap; }
+.app .onb-provider-name { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+.app .onb-provider-meta { font-size: 12px; line-height: 1.5; }
+.app .onb-scopes { display: block; }
+.app .onb-provider-act { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.app .onb-consent-gate-row { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--fg-2); }
+
+/* Prefill comparison cards */
+.app .onb-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.app .onb-field-head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 10px; }
+.app .onb-field-row { display: grid; grid-template-columns: 132px 1fr; gap: 10px; padding: 7px 0; font-size: 13px; border-top: 1px solid var(--hairline-2); }
+.app .onb-field-row:first-of-type { border-top: 0; }
+.app .onb-field-row .lbl { margin: 0; font-family: var(--mono); font-size: 9px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--fg-3); }
+.app .onb-field-act { display: flex; gap: 8px; margin-top: 12px; }
+.app .onb-field-act form { margin: 0; }
+.app .onb-switchback { margin-top: 4px; }
+
+/* Step nav (skip / continue) */
+.app .onb-nav { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-top: 6px; }
+.app .onb-nav--end { justify-content: flex-end; }
+.app .onb-nav form { margin: 0; }
+
+@media (max-width: 859.98px) {
+  .app .onb-fields { grid-template-columns: 1fr; }
+  .app .onb-provider { align-items: flex-start; }
+}
