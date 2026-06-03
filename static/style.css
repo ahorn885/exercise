@@ -1948,3 +1948,14 @@ body.bulk-mode { padding-bottom: 80px; }
 .app .onb-loc-cap { text-transform: capitalize; }
 .app .onb-loc-notes { width: 100%; margin-top: 2px; }
 .app .onb-loc form { margin: 0; }
+
+/* ════════════════════════════════════════════════════════════════════
+   Logging history lists (finish-the-open) — §08 history views on the new
+   shell (training / cardio / body / conditions / injuries). Reuse `.data`
+   tables + `.chip`; these are just the filter bar + row-action affordances.
+   ════════════════════════════════════════════════════════════════════ */
+.app .loglist-filters { display: flex; gap: 14px; align-items: flex-end; flex-wrap: wrap; margin-bottom: 16px; }
+.app .loglist-filters .field { margin-bottom: 0; }
+.app .loglist-filter-act { display: flex; gap: 6px; }
+.app .loglist-act { white-space: nowrap; display: flex; gap: 6px; align-items: center; justify-content: flex-end; }
+.app .loglist-act form { margin: 0; }

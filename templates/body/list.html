@@ -1,27 +1,41 @@
-{% extends 'base_legacy.html' %}
-{% block title %}Body Metrics{% endblock %}
+{% extends 'base.html' %}
+{% set nav_active = 'insights' %}
+{% block title %}Body metrics{% endblock %}
+{% block crumbs %}<b>Body metrics</b>{% endblock %}
+{% block topbar_actions %}
+<a class="btn btn-primary btn-sm" href="{{ url_for('body.new_entry') }}">
+  <svg class="icon" width="12" height="12" aria-hidden="true"><use href="#i-plus"></use></svg> Log
+</a>
+{% endblock %}
+
+{# Redesign (finish-the-open) — body-metrics history list onto the new .app shell. #}
+
 {% block content %}
-<div class="d-flex justify-content-between align-items-center mb-3">
-  <h4 class="mb-0">Body Metrics</h4>
-  <a href="{{ url_for('body.new_entry') }}" class="btn btn-primary">+ Log</a>
+<div class="dash-head">
+  <div class="races-intro">
+    <p class="eyebrow accent">● Wellness · body metrics</p>
+    <h1 class="page-title">Body metrics.</h1>
+    <p class="page-sub">Weight, body fat, VO₂ max, and resting heart rate over time.</p>
+  </div>
 </div>
+
 {% if entries %}
-<div class="table-responsive">
-  <table class="table table-sm table-hover table-striped">
-    <thead class="table-dark">
-      <tr><th>Date</th><th>Weight (lb)</th><th class="d-none d-md-table-cell">Body Fat %</th><th>VO2 Max</th><th>Resting HR</th><th class="d-none d-md-table-cell">Notes</th><th></th></tr>
+<div class="card table-scroll">
+  <table class="data">
+    <thead>
+      <tr><th>Date</th><th>Weight (lb)</th><th>Body fat %</th><th>VO₂ max</th><th>Resting HR</th><th>Notes</th><th></th></tr>
     </thead>
     <tbody>
     {% for e in entries %}
     <tr>
-      <td>{{ e.date }}</td>
+      <td class="text-nowrap">{{ e.date }}</td>
       <td>{{ e.weight_lbs or '—' }}</td>
-      <td class="d-none d-md-table-cell">{{ e.body_fat_pct or '—' }}</td>
+      <td>{{ e.body_fat_pct or '—' }}</td>
       <td class="text-nowrap">{{ e.vo2_max or '—' }}</td>
       <td class="text-nowrap">{{ e.resting_hr or '—' }}</td>
-      <td class="text-muted small d-none d-md-table-cell">{{ e.notes or '' }}</td>
-      <td class="text-nowrap">
-        <a href="{{ url_for('body.edit_entry', entry_id=e.id) }}" class="btn btn-sm btn-outline-secondary py-0 px-1">Edit</a>
+      <td class="dim">{{ e.notes or '' }}</td>
+      <td class="loglist-act">
+        <a href="{{ url_for('body.edit_entry', entry_id=e.id) }}" class="btn btn-ghost btn-sm">Edit</a>
       </td>
     </tr>
     {% endfor %}
@@ -29,6 +43,6 @@
   </table>
 </div>
 {% else %}
-<p class="text-muted">No body metrics yet. <a href="{{ url_for('body.new_entry') }}">Log today's stats.</a></p>
+<p class="page-sub">No body metrics yet. <a href="{{ url_for('body.new_entry') }}">Log today's stats.</a></p>
 {% endif %}
 {% endblock %}
