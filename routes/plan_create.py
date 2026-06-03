@@ -610,9 +610,20 @@ def _advance_plan_generation_locked(db, uid: int, plan_version_id: int,
                 f"{fumble_detail}"
             )
             return {"status": "generating", "note": "block_retry_resume"}
+        # Non-retryable Layer4OutputError (a genuine contract/output fault, e.g.
+        # an unparseable seam verdict). Mirror the Layer3 branch below: log the
+        # code+detail AND persist the traceback to `generation_traceback` so the
+        # cause is readable via the token-gated diag endpoint next time, instead
+        # of dying with only the generic code (the pv=55 blind spot — Rule #14).
+        print(
+            f"_advance_plan_generation: Layer4 {type(exc).__name__} "
+            f"({exc.code}) for plan_version_id={plan_version_id}: "
+            f"{getattr(exc, 'detail', None)}"
+        )
         return _mark_plan_failed(
             db, plan_version_id, uid,
             f"Plan synthesis failed ({exc.code}). Adjust your inputs and try again.",
+            traceback_text=traceback.format_exc(),
         )
     except (
         Layer3AInputError,
