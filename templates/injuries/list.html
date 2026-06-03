@@ -1,179 +1,162 @@
-{% extends 'base_legacy.html' %}
-{% block title %}Injury Log{% endblock %}
+{% extends 'base.html' %}
+{% set nav_active = 'workout' %}
+{% block title %}Injury log{% endblock %}
+{% block crumbs %}<b>Injury log</b>{% endblock %}
+{% block topbar_actions %}
+<a class="btn btn-primary btn-sm" href="{{ url_for('injuries.new_entry') }}">
+  <svg class="icon" width="12" height="12" aria-hidden="true"><use href="#i-plus"></use></svg> Log injury
+</a>
+{% endblock %}
+
+{# Redesign (finish-the-open) — injury log + per-injury exercise-modification
+   editor, migrated onto the new .app shell. Status-tinted cards, the
+   collapsible mods editor (Bootstrap collapse, kept), the add-modification
+   form (Bootstrap grid inside `.onb-form`), and the nonced substitute-field
+   toggle script are all preserved. #}
+
 {% block content %}
-<div class="d-flex justify-content-between align-items-center mb-3">
-  <h4 class="mb-0">Injury Log</h4>
-  <a href="{{ url_for('injuries.new_entry') }}" class="btn btn-primary">+ Log Injury</a>
+<div class="dash-head">
+  <div class="races-intro">
+    <p class="eyebrow accent">● Health · injuries</p>
+    <h1 class="page-title">Injury log.</h1>
+    <p class="page-sub">Active and resolved injuries, with the exercise modifications that thread into your
+      plan (avoid / substitute / reduce load).</p>
+  </div>
 </div>
-<form class="row g-2 mb-3" method="get">
-  <div class="col-auto">
-    <select name="status" class="form-select form-select-sm">
+
+<form class="loglist-filters" method="get">
+  <label class="field">
+    <span class="lbl">Status</span>
+    <select name="status" class="form-control">
       <option value="">All statuses</option>
-      {% for s in statuses %}
-        <option value="{{ s }}" {% if status_filter == s %}selected{% endif %}>{{ s }}</option>
-      {% endfor %}
+      {% for s in statuses %}<option value="{{ s }}" {% if status_filter == s %}selected{% endif %}>{{ s }}</option>{% endfor %}
     </select>
-  </div>
-  <div class="col-auto">
-    <input type="text" name="body_part" class="form-control form-control-sm" placeholder="Body part…" value="{{ body_part_filter }}">
-  </div>
-  <div class="col-auto">
-    <button class="btn btn-sm btn-outline-secondary">Filter</button>
-    <a href="{{ url_for('injuries.list_entries') }}" class="btn btn-sm btn-outline-secondary">Clear</a>
+  </label>
+  <label class="field">
+    <span class="lbl">Body part</span>
+    <input type="text" name="body_part" class="form-control" placeholder="Body part…" value="{{ body_part_filter }}">
+  </label>
+  <div class="loglist-filter-act">
+    <button class="btn btn-ghost btn-sm" type="submit">Filter</button>
+    <a href="{{ url_for('injuries.list_entries') }}" class="btn btn-ghost btn-sm">Clear</a>
   </div>
 </form>
+
 {% if entries %}
-{% for e in entries %}
-{% set mods = modifications.get(e.id, []) %}
-<div class="card mb-3 {% if e.status == 'Active' %}border-danger{% elif e.status == 'Managing' %}border-warning{% endif %}" id="injury-{{ e.id }}">
-  <div class="card-header d-flex justify-content-between align-items-center py-2
-              {% if e.status == 'Active' %}bg-danger bg-opacity-10{% elif e.status == 'Managing' %}bg-warning bg-opacity-10{% endif %}">
-    <div class="d-flex align-items-center gap-2 flex-wrap">
-      <span class="badge {% if e.status == 'Active' %}bg-danger{% elif e.status == 'Managing' %}bg-warning text-dark{% else %}bg-success{% endif %}">{{ e.status }}</span>
-      <strong>{{ e.body_part }}</strong>
-      <span class="text-muted small">{{ e.start_date }}{% if e.resolved_date %} → {{ e.resolved_date }}{% endif %}</span>
-      {% if e.severity %}
-        {% if e.severity in ['Acute', 'Post-surgical'] %}
-          <span class="badge bg-danger">{{ e.severity }}</span>
-        {% elif e.severity in ['Recovering', 'Chronic-Managed', 'Structural-Permanent'] %}
-          <span class="badge bg-warning text-dark">{{ e.severity }}</span>
-        {% else %}
-          <span class="badge bg-secondary">{{ e.severity }}</span>
+<div class="stack">
+  {% for e in entries %}
+  {% set mods = modifications.get(e.id, []) %}
+  <section class="card card-pad injury-card{% if e.status == 'Active' %} is-active{% elif e.status == 'Managing' %} is-managing{% endif %}" id="injury-{{ e.id }}">
+    <div class="injury-head">
+      <div class="injury-id">
+        <span class="chip {% if e.status == 'Active' %}bad{% elif e.status == 'Managing' %}warn{% else %}good{% endif %}">{{ e.status }}</span>
+        <strong>{{ e.body_part }}</strong>
+        <span class="dim">{{ e.start_date }}{% if e.resolved_date %} → {{ e.resolved_date }}{% endif %}</span>
+        {% if e.severity %}
+          <span class="chip {% if e.severity in ['Acute', 'Post-surgical'] %}bad{% elif e.severity in ['Recovering', 'Chronic-Managed', 'Structural-Permanent'] %}warn{% endif %}">{{ e.severity }}</span>
         {% endif %}
-      {% endif %}
-    </div>
-    <div class="d-flex align-items-center gap-2">
-      {% if mods %}
-        <span class="badge bg-info">{{ mods|length }} exercise mod{{ 's' if mods|length != 1 }}</span>
-      {% endif %}
-      <a href="{{ url_for('injuries.edit_entry', entry_id=e.id) }}" class="btn btn-sm btn-outline-secondary py-0 px-2">Edit</a>
-      <form method="post" action="{{ url_for('injuries.delete_entry', entry_id=e.id) }}" class="d-inline" data-confirm="Delete injury and all its exercise modifications?">
-        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-        <button class="btn btn-sm btn-outline-danger py-0 px-2">Del</button>
-      </form>
-    </div>
-  </div>
-
-  <div class="card-body py-2">
-    {% if e.description %}
-      <p class="mb-1 small">{{ e.description }}</p>
-    {% endif %}
-    {% if e.modifications_needed %}
-      <p class="mb-2 text-muted small fst-italic">Notes: {{ e.modifications_needed }}</p>
-    {% endif %}
-
-    {% if e.status != 'Resolved' %}
-    {# Exercise modifications section #}
-    <div class="mt-1">
-      <button class="btn btn-sm btn-outline-secondary py-0 px-2 mb-2"
-              type="button" data-bs-toggle="collapse"
-              data-bs-target="#mods-panel-{{ e.id }}">
-        {% if mods %}Manage{% else %}+ Add{% endif %} Exercise Modifications
-      </button>
-
-      <div class="collapse {% if mods %}show{% endif %}" id="mods-panel-{{ e.id }}">
-        {% if mods %}
-        <div class="table-responsive mb-2">
-          <table class="table table-sm table-bordered mb-1">
-            <thead class="table-light">
-              <tr><th>Exercise</th><th>Type</th><th>Substitute / Notes</th><th></th></tr>
-            </thead>
-            <tbody>
-            {% for m in mods %}
-            <tr>
-              <td class="small fw-semibold">{{ m.exercise_name }}</td>
-              <td>
-                {% if m.modification_type == 'avoid' %}
-                  <span class="badge bg-danger">Avoid</span>
-                {% elif m.modification_type == 'substitute' %}
-                  <span class="badge bg-warning text-dark">Substitute</span>
-                {% elif m.modification_type == 'reduce_load' %}
-                  <span class="badge bg-info text-dark">Reduce Load</span>
-                {% else %}
-                  <span class="badge bg-secondary">Modify</span>
-                {% endif %}
-              </td>
-              <td class="small">
-                {% if m.substitute_name %}<span class="text-success fw-semibold">→ {{ m.substitute_name }}</span>{% endif %}
-                {% if m.modification_notes %}<span class="text-muted{% if m.substitute_name %} ms-2{% endif %}">{{ m.modification_notes }}</span>{% endif %}
-                {% if not m.substitute_name and not m.modification_notes %}—{% endif %}
-              </td>
-              <td>
-                <form method="post" action="{{ url_for('injuries.delete_modification', entry_id=e.id, mod_id=m.id) }}" class="d-inline">
-                  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                  <button class="btn btn-xs btn-outline-danger py-0 px-1 u-fs-70" title="Remove">✕</button>
-                </form>
-              </td>
-            </tr>
-            {% endfor %}
-            </tbody>
-          </table>
-        </div>
-        {% endif %}
-
-        {# Add modification form #}
-        <form method="post" action="{{ url_for('injuries.add_modification', entry_id=e.id) }}"
-              class="row g-2 align-items-end border rounded p-2 bg-light">
+      </div>
+      <div class="injury-act">
+        {% if mods %}<span class="chip accent">{{ mods|length }} exercise mod{{ 's' if mods|length != 1 }}</span>{% endif %}
+        <a href="{{ url_for('injuries.edit_entry', entry_id=e.id) }}" class="btn btn-ghost btn-sm">Edit</a>
+        <form method="post" action="{{ url_for('injuries.delete_entry', entry_id=e.id) }}" data-confirm="Delete injury and all its exercise modifications?">
           <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-          <div class="col-12 col-md-3">
-            <label class="form-label form-label-sm mb-1">Affected Exercise</label>
-            <select name="exercise_id" class="form-select form-select-sm" required>
-              <option value="">— select —</option>
-              {% for ex in exercises %}
-                <option value="{{ ex.id }}">{{ ex.exercise }}</option>
-              {% endfor %}
-            </select>
-          </div>
-          <div class="col-12 col-md-3">
-            <label class="form-label form-label-sm mb-1">Modification Type</label>
-            <select name="modification_type" class="form-select form-select-sm mod-type-select"
-                    data-injury="{{ e.id }}">
-              {% for val, label in mod_types %}
-                <option value="{{ val }}">{{ label }}</option>
-              {% endfor %}
-            </select>
-          </div>
-          <div class="col-12 col-md-3 sub-field-{{ e.id }}">
-            <label class="form-label form-label-sm mb-1">Substitute Exercise</label>
-            <select name="substitute_exercise_id" class="form-select form-select-sm">
-              <option value="">— none —</option>
-              {% for ex in exercises %}
-                <option value="{{ ex.id }}">{{ ex.exercise }}</option>
-              {% endfor %}
-            </select>
-          </div>
-          <div class="col-12 col-md-2">
-            <label class="form-label form-label-sm mb-1">Notes</label>
-            <input type="text" name="modification_notes" class="form-control form-control-sm"
-                   placeholder="optional">
-          </div>
-          <div class="col-auto">
-            <button type="submit" class="btn btn-sm btn-primary">Add</button>
-          </div>
+          <button class="btn btn-outline-danger btn-sm">Del</button>
         </form>
       </div>
     </div>
-    {% else %}
-    {# Resolved — show mods read-only if any #}
-    {% if mods %}
-    <div class="text-muted small">
-      {% for m in mods %}
-        <span class="badge bg-secondary me-1">{{ m.exercise_name }} ({{ m.modification_type }})</span>
-      {% endfor %}
+
+    {% if e.description %}<p class="injury-desc">{{ e.description }}</p>{% endif %}
+    {% if e.modifications_needed %}<p class="dim injury-notes">Notes: {{ e.modifications_needed }}</p>{% endif %}
+
+    {% if e.status != 'Resolved' %}
+    <button class="btn btn-ghost btn-sm injury-mods-toggle" type="button"
+            data-bs-toggle="collapse" data-bs-target="#mods-panel-{{ e.id }}">
+      {% if mods %}Manage{% else %}+ Add{% endif %} exercise modifications
+    </button>
+
+    <div class="collapse {% if mods %}show{% endif %}" id="mods-panel-{{ e.id }}">
+      {% if mods %}
+      <div class="table-scroll injury-mods">
+        <table class="data">
+          <thead><tr><th>Exercise</th><th>Type</th><th>Substitute / notes</th><th></th></tr></thead>
+          <tbody>
+          {% for m in mods %}
+          <tr>
+            <td>{{ m.exercise_name }}</td>
+            <td>
+              {% if m.modification_type == 'avoid' %}<span class="chip bad">Avoid</span>
+              {% elif m.modification_type == 'substitute' %}<span class="chip warn">Substitute</span>
+              {% elif m.modification_type == 'reduce_load' %}<span class="chip accent">Reduce load</span>
+              {% else %}<span class="chip">Modify</span>{% endif %}
+            </td>
+            <td>
+              {% if m.substitute_name %}<span class="injury-sub">→ {{ m.substitute_name }}</span>{% endif %}
+              {% if m.modification_notes %}<span class="dim">{{ m.modification_notes }}</span>{% endif %}
+              {% if not m.substitute_name and not m.modification_notes %}—{% endif %}
+            </td>
+            <td class="loglist-act">
+              <form method="post" action="{{ url_for('injuries.delete_modification', entry_id=e.id, mod_id=m.id) }}">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <button class="btn btn-outline-danger btn-sm" title="Remove">✕</button>
+              </form>
+            </td>
+          </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% endif %}
+
+      <form method="post" action="{{ url_for('injuries.add_modification', entry_id=e.id) }}" class="onb-form injury-add">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <div class="row g-2">
+          <div class="col-12 col-md-3">
+            <label class="form-label">Affected exercise</label>
+            <select name="exercise_id" class="form-select" required>
+              <option value="">— select —</option>
+              {% for ex in exercises %}<option value="{{ ex.id }}">{{ ex.exercise }}</option>{% endfor %}
+            </select>
+          </div>
+          <div class="col-12 col-md-3">
+            <label class="form-label">Modification type</label>
+            <select name="modification_type" class="form-select mod-type-select" data-injury="{{ e.id }}">
+              {% for val, label in mod_types %}<option value="{{ val }}">{{ label }}</option>{% endfor %}
+            </select>
+          </div>
+          <div class="col-12 col-md-3 sub-field-{{ e.id }}">
+            <label class="form-label">Substitute exercise</label>
+            <select name="substitute_exercise_id" class="form-select">
+              <option value="">— none —</option>
+              {% for ex in exercises %}<option value="{{ ex.id }}">{{ ex.exercise }}</option>{% endfor %}
+            </select>
+          </div>
+          <div class="col-12 col-md-2">
+            <label class="form-label">Notes</label>
+            <input type="text" name="modification_notes" class="form-control" placeholder="optional">
+          </div>
+          <div class="col-auto injury-add-act">
+            <button type="submit" class="btn btn-primary btn-sm">Add</button>
+          </div>
+        </div>
+      </form>
+    </div>
+    {% elif mods %}
+    <div class="injury-resolved-mods">
+      {% for m in mods %}<span class="chip">{{ m.exercise_name }} ({{ m.modification_type }})</span>{% endfor %}
     </div>
     {% endif %}
-    {% endif %}
-  </div>
+  </section>
+  {% endfor %}
 </div>
-{% endfor %}
 {% else %}
-<p class="text-muted">No injuries logged. Train freely.</p>
+<p class="page-sub">No injuries logged. Train freely.</p>
 {% endif %}
 {% endblock %}
 
 {% block scripts %}
 <script nonce="{{ csp_nonce() }}">
-// Show/hide substitute field based on modification type
+// Show/hide the substitute field based on modification type.
 document.querySelectorAll('.mod-type-select').forEach(function(sel) {
   const injuryId = sel.dataset.injury;
   const subField = document.querySelector('.sub-field-' + injuryId);

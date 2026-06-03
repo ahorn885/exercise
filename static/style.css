@@ -1959,3 +1959,23 @@ body.bulk-mode { padding-bottom: 80px; }
 .app .loglist-filter-act { display: flex; gap: 6px; }
 .app .loglist-act { white-space: nowrap; display: flex; gap: 6px; align-items: center; justify-content: flex-end; }
 .app .loglist-act form { margin: 0; }
+
+/* Injury log — status-tinted cards + inline modification editor */
+.app .injury-card.is-active { border-color: color-mix(in oklab, var(--bad) 38%, transparent); }
+.app .injury-card.is-managing { border-color: color-mix(in oklab, var(--warn) 38%, transparent); }
+.app .injury-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+.app .injury-id { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; min-width: 0; }
+.app .injury-act { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.app .injury-act form { margin: 0; }
+.app .injury-desc { font-size: 13px; color: var(--fg-2); margin: 12px 0 0; line-height: 1.5; }
+.app .injury-notes { font-size: 12px; font-style: italic; margin: 6px 0 0; }
+.app .injury-mods-toggle { margin-top: 14px; }
+.app .injury-mods { margin-top: 12px; }
+.app .injury-sub { color: var(--good); font-weight: 600; margin-right: 6px; }
+.app .injury-add { margin-top: 12px; }
+.app .injury-add-act { display: flex; align-items: flex-end; }
+.app .injury-resolved-mods { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 12px; }
+
+/* Coach-memory provenance detail (feedback) */
+.app .fb-meta { display: flex; align-items: center; gap: 6px; margin: 0 0 12px; }
+.app .fb-raw { font-family: var(--mono); font-size: 13px; color: var(--fg-2); white-space: pre-wrap; word-break: break-word; background: var(--bg); border-radius: var(--r-sm); padding: 14px; margin: 0; }
