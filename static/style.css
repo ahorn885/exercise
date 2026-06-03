@@ -748,7 +748,11 @@ pre code { background: none; border: 0; padding: 0; }
    Replaces the mockup's inline style="position:absolute" (CSP-clean). */
 .sprite-host { position: absolute; width: 0; height: 0; overflow: hidden; }
 
-/* Print — a single .app screen prints ink-on-paper */
+/* Print utilities: .print-only is hidden on screen, revealed in @media print
+   (below); .no-print is the inverse (shown on screen, hidden in print). */
+.app .print-only { display: none; }
+
+/* Print — a single .app screen prints ink-on-paper (chrome dropped below) */
 @media print {
   @page { margin: 14mm; }
   .app {
@@ -769,7 +773,30 @@ pre code { background: none; border: 0; padding: 0; }
     --hairline-2: color-mix(in oklab, var(--ink) 8%, transparent);
   }
   .app * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
-  .app .statusbar { display: none !important; }
+
+  /* Drop the app chrome — only the document content prints. */
+  .app .skip-link,
+  .app .sidebar,
+  .app .topbar,
+  .app .appbar,
+  .app .tabbar,
+  .app .nav-drawer,
+  .app .cmdk-backdrop,
+  .app .statusbar,
+  .app .alert,
+  .app .btn,
+  .app .btn-close,
+  .sprite-host { display: none !important; }
+
+  /* Un-flex the shell so <main> fills the page (the sidebar column is gone). */
+  .app .app-shell { display: block !important; }
+  .app .page { min-height: 0 !important; }
+  .app .page-body { padding: 0 !important; }
+
+  /* Per-screen overrides: .no-print hides, .print-only reveals. */
+  .app .no-print { display: none !important; }
+  .app .print-only { display: revert !important; }
+
   .app .page-title, .app .eyebrow { break-after: avoid; }
   .app tr, .app .card, .app .stat-card { break-inside: avoid; }
 }

@@ -97,7 +97,7 @@ The redesign covers every *user-facing* surface but a few blueprints have no red
 
 **Last updated:** 2026-06-03
 
-**Progress:** Phase 0 ✅ · Phase 1 shell ✅ · **Phase 2 COMPLETE** (§05–§09 ✅) · **Phase 3 COMPLETE\*** (§04 ✅ · §10 ✅ · §11 ✅ · §12 ◑ diff-via-refresh · §13 ✅ · §14 ✅) · **Phase 4 COMPLETE** (§15 ✅ · §16 ✅ · §17 ✅ · §18 ✅ · §19 ✅ · §20 ✅) · **Phase 5 COMPLETE** (§21 ✅ · §22 ✅ read-only · §23 ✅ · §24 ✅ · §25 ✅) · **Phase 6 polish — done** (§26 ✅ shared empty-state · §27 ✅ error states · §28 ✅ light-mode toggle · §29 ✅ a11y sweep) — **finish-the-open started:** the manual-`.FIT`-import flow (`garmin/import` · `import_preview` · `import_wellness`) **and the `garmin/wellness_log` viewer** are now on the new shell (render-tested, CSP-clean). **Remaining (optional/low-priority): print stylesheets · the paused-Garmin-API forms (`garmin/auth`/`sync`/`sync_preview`) · admin `plan_inspect`/`plan_diag`**. *\*§12 standalone A↔B compare deferred (no backend route); §13's §30/Phase-7 `coaching_bp` consolidation is **⛔ BLOCKED** — code-verified it can't be done as written (two live plan models; `coaching_bp` backs the migrated §06 plan view). See Phase 7 above.*
+**Progress:** Phase 0 ✅ · Phase 1 shell ✅ · **Phase 2 COMPLETE** (§05–§09 ✅) · **Phase 3 COMPLETE\*** (§04 ✅ · §10 ✅ · §11 ✅ · §12 ◑ diff-via-refresh · §13 ✅ · §14 ✅) · **Phase 4 COMPLETE** (§15 ✅ · §16 ✅ · §17 ✅ · §18 ✅ · §19 ✅ · §20 ✅) · **Phase 5 COMPLETE** (§21 ✅ · §22 ✅ read-only · §23 ✅ · §24 ✅ · §25 ✅) · **Phase 6 polish — done** (§26 ✅ shared empty-state · §27 ✅ error states · §28 ✅ light-mode toggle · §29 ✅ a11y sweep) — **finish-the-open DONE:** the manual-`.FIT` surface (`garmin/import` · `import_preview` · `import_wellness` · `wellness_log`) is on the new shell, and the **print stylesheet** ships (chrome dropped, ink-on-paper, `.no-print`/`.print-only` utilities). **The redesign surface map is now 100% on the new `.app` shell.** Only the paused-Garmin-API forms (`garmin/auth`/`sync`/`sync_preview`) + admin `plan_inspect`/`plan_diag` stay legacy by decision (paused/operator deep-debug surfaces). *\*§12 standalone A↔B compare deferred (no backend route); §13's §30/Phase-7 `coaching_bp` consolidation is **⛔ BLOCKED** — code-verified it can't be done as written (two live plan models; `coaching_bp` backs the migrated §06 plan view). See Phase 7 above.*
 Merged to `main`: PR #397 (review), #398 (Phase 0), #399 (docs), #400 (Phase 1 + §05),
 #401 (§06), #403 (§07), #404 (§07 follow-up), #406 (redesign card/grid Bootstrap-leak fix),
 #407 (§08 unified Log landing + 4 panes).
@@ -428,6 +428,15 @@ In flight: PR for §08 Strength pane + §09 Wellness (completes Phase 2) **and**
   `data-autosubmit` date picker (already wired in `app.js`). New
   `tests/test_redesign_garmin_wellness_log_render.py` (2: populated charts+table+Recovery relabel +
   legacy-palette gone; empty hero). Redesign + auth suites green (66).
+- **Phase 6 finish-the-open · print stylesheet** — extended the existing `@media print` baseline in
+  `style.css` (it already remapped the dark tokens to the light scale) to **drop the app chrome**
+  (sidebar / topbar / mobile appbar+tabbar / drawer / cmdk / skip-link / nudge+flash alerts /
+  buttons) and un-flex the shell so `<main>` prints full-width, plus `.no-print`/`.print-only`
+  per-screen utilities and the existing page-break rules (`.card`/`tr`/`.stat-card` break-inside
+  avoid). Global baseline → any `.app` screen prints ink-on-paper; the plan week (§06) + workout
+  (§07) are the design targets. New `tests/test_redesign_print_styles.py` (3, mechanical guard —
+  CSS has no render surface). Braces 870/870. Redesign + auth suites green (69). **Redesign
+  finish-the-open complete; the whole surface is on the new shell.**
 
 ### Known blocker (infra, not code) — Vercel **Preview** deploys 500
 Preview deployments crash with `FUNCTION_INVOCATION_FAILED`: `app.py` raises at **import** when
