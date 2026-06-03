@@ -1,0 +1,75 @@
+<!doctype html>
+{#- Shared error page (redesign §27). Deliberately standalone — it does NOT
+    extend base.html, so it carries no sidebar/topbar/nudges/cmdk includes and
+    makes no DB-dependent context calls of its own. That keeps a 500 from
+    cascading into a second failure while rendering its own error page. Themed
+    with the `.app` token system (tokens.css + style.css) + the icon sprite.
+    Driven entirely by the Flask errorhandlers in app.py. CSP-clean: no inline
+    <script>, no inline style=, no onclick=. -#}
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ title }} · AIDSTATION</title>
+  <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='favicon.svg') }}">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+  <link href="{{ url_for('static', filename='tokens.css') }}" rel="stylesheet">
+  <link href="{{ url_for('static', filename='style.css') }}" rel="stylesheet">
+</head>
+<body class="app error-page">
+{% include '_shell/icons.svg' %}
+
+<main class="error-card" id="main">
+  <div class="error-glyph error-glyph--{{ tone | default('bad') }}">
+    <svg class="icon" width="36" height="36" aria-hidden="true"><use href="#i-{{ glyph | default('x') }}"></use></svg>
+  </div>
+
+  <p class="eyebrow error-eyebrow--{{ tone | default('bad') }}">● {{ code }}</p>
+  <h1 class="error-title">{{ title }}</h1>
+  <p class="error-msg">{{ message }}</p>
+
+  {% if quicklinks %}
+  <div class="error-quicklinks">
+    <a class="card error-ql" href="{{ url_for('dashboard.index') }}">
+      <svg class="icon" width="18" height="18" aria-hidden="true"><use href="#i-home"></use></svg>
+      <span>Today</span>
+    </a>
+    <a class="card error-ql" href="{{ url_for('plans.list_plans') }}">
+      <svg class="icon" width="18" height="18" aria-hidden="true"><use href="#i-plan"></use></svg>
+      <span>Plan</span>
+    </a>
+    <a class="card error-ql" href="{{ url_for('training.list_entries') }}">
+      <svg class="icon" width="18" height="18" aria-hidden="true"><use href="#i-workout"></use></svg>
+      <span>Workouts</span>
+    </a>
+  </div>
+  {% endif %}
+
+  {% if diag %}
+  <div class="error-diag">
+    <p class="error-diag-head">● Diagnostic · included if you email us</p>
+    {% for k, v in diag %}
+    <div class="error-diag-row">{{ k }}: <span{% if loop.first %} class="error-diag-hl"{% endif %}>{{ v }}</span></div>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  <div class="error-actions">
+    <a class="btn btn-ghost" href="{{ mailto_href }}">
+      <svg class="icon" width="12" height="12" aria-hidden="true"><use href="#i-bell"></use></svg>
+      Email help@aidstation.pro
+    </a>
+    {% if show_retry %}
+    <a class="btn btn-primary" href="{{ retry_href | default('/') }}">
+      <svg class="icon" width="12" height="12" aria-hidden="true"><use href="#i-bolt"></use></svg>
+      {{ retry_label | default('Try again') }}
+    </a>
+    {% endif %}
+  </div>
+
+  <p class="error-foot">ⓘ Mailto includes the diagnostic above · no action required from you</p>
+</main>
+</body>
+</html>

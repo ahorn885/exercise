@@ -62,14 +62,18 @@ Work top-to-bottom **within a phase** (phases defined in `BUILD_PLAN.md` §3). C
 ## Phase 6 — States + Polish
 | § | Section | DM | Where | Migration note |
 |---|---|---|---|---|
-| 26 | Empty / first-run states ⟳ | DM | shared partial | **One** "You're at the start line." component reused across Dashboard/Plan/Plans-list (replaces 3 divergent headlines). |
-| 27 | Error states | DM | Flask `errorhandler` + shared `templates/_error.html` | 404 "You're off trail." · plan-gen "The build stalled." · 500 "Something seized up." Diagnostic block + `mailto:help@aidstation.pro`. |
-| 28 | Light mode | DM | body theme class + token swap | Already token-ready. Wire a real toggle (persist in localStorage); no per-screen CSS. |
-| 29 | A11y / keyboard / motion | D | real components + `app.js` | **Port `a11y-wire.js` logic onto real elements.** Roving tab-order on nav/tabbar, `aria-current`, focus trap+restore on delete-user dialog, `role`/`aria-*` on tablists. Flip CSP REPORT_ONLY **off** and clear violations. |
+| 26 | ✅ Empty / first-run states ⟳ | DM | shared partial | "You're at the start line." extracted to **`templates/_no_plan.html`** (single source). The new IA already collapsed the design's 3 divergent no-plan headlines: Plan = `plans.list_plans` (uses the partial); the dashboard's no-plan state is a purpose-built daily-hub hero ("No session scheduled"), intentionally distinct. *(this PR)* |
+| 27 | ✅ Error states | DM | Flask `errorhandler` + shared `templates/_error.html` | 404 "You're off trail." (way-back quicklinks) · 500 "Something seized up." (retry) via 404/500 handlers in `app.py`. Per-request diagnostic block + `mailto:help@aidstation.pro` pre-filled. `_error.html` is **standalone** (no shell includes / no DB context) so a 500 can't cascade. Plan-gen "The build stalled." already lives inline in `plan_create/progress.html` (§04). *(this PR)* |
+| 28 | ✅ Light mode | DM | body theme class + token swap | Real toggle wired (topbar sun button + drawer row, `data-theme-toggle` → `app.js`), persisted in `localStorage`; **FOUC-free** via a nonced `<head>` pre-paint that sets `.theme-light` on `<html>`. Token swap only — no per-screen CSS. Fixed the dead `body.theme-light .app` selector (`body` *is* `.app`) → `.theme-light .app`. *(this PR)* |
+| 29 | ✅ A11y / keyboard / motion | D | real components + `app.js` | `a11y-wire.js` ported onto real elements: **roving tab-order** on sidebar + tab bar (`[data-roving]`/`[data-roving-item]` → `app.js`), `aria-current` (macros), focus-trap+restore on the delete-user dialog (§25), tablist/listbox roles (cmdk/§17/§25), focus-visible rings + reduced-motion (polish.css). Primary landmark relocated onto the `<nav>`. CSP already **enforced** in prod (REPORT_ONLY is a dev-only opt-in); all slices CSP-clean → no violations to clear. *(this PR)* |
 | — | Print stylesheets (opt.) | — | `style.css @media print` | Plan week / workout / race-day brief. CSS hooks exist in polish. Confirm scope. |
 
 ## Phase 7 — Backend cleanup (HANDOFF §30)
-- [ ] **Retire `coaching_bp`.** `plan_refresh_bp` and `coaching_bp` register routes doing the same job (re-run cascade vs existing plan). Fold `coaching/review`'s richer inputs into `plan_refresh`. Remove `routes/coaching.py` + `templates/coaching/`. Update nav + any deep links. Remove `app.register_blueprint(coaching_bp)`.
+- [ ] **Retire `coaching_bp`. — ⛔ BLOCKED (code-verified 2026-06-02; do NOT delete as written).** The original note assumed `plan_refresh_bp` and `coaching_bp` "do the same job." Reading the code, they don't — and a literal `rm routes/coaching.py` + `templates/coaching/` would **break an already-shipped redesign screen.** Findings:
+  - **Two different, both-live plan models.** `coaching_bp` (`/coaching`) operates on the **legacy `training_plans`/`plan_items`** model; `plan_refresh_bp` (`/plans/v2/refresh`) operates on the **modern `plan_versions`** model (the two parallel models flagged in `PLAN_REVIEW_AND_CORRECTIONS.md`). Only `coaching.review` *conceptually* overlaps refresh, and even it can't fold in cleanly without **unifying the plan models** — a much larger effort that conflicts with the redesign's own decision to keep `training_plans` live (the migrated §06 week view runs on it).
+  - **`coaching_bp` is load-bearing for the migrated §06 plan view (`plans/view.html`, on `main`):** the "AI Review" button → `coaching.review`; the coach-chat panel → `coaching.chat` (GET history + POST, 5 refs); `coaching.clarify` backs `coaching/review.html`.
+  - **`coaching_bp` owns surfaces `plan_refresh` has no equivalent for:** `/chat`, `/preferences` (+`/preferences/<id>/delete`), `/clarify`, `/context`, headless `/api/review`. `context`/`api_review`/`delete_preference` have 0 *internal* refs but are intentional external/JSON APIs, not dead code.
+  - **Unblock prerequisite:** unify the `training_plans` ↔ `plan_versions` plan models (or migrate the §06 plan view + chat/review onto `plan_versions`) *first*; only then can review fold into `plan_refresh` and chat/preferences re-home. Until that backend slice exists, keep `coaching_bp` registered. Deferred, not dropped.
 
 ---
 
@@ -93,7 +97,7 @@ The redesign covers every *user-facing* surface but a few blueprints have no red
 
 **Last updated:** 2026-06-02
 
-**Progress:** Phase 0 ✅ · Phase 1 shell ✅ · **Phase 2 COMPLETE** (§05–§09 ✅) · **Phase 3 COMPLETE\*** (§04 ✅ · §10 ✅ · §11 ✅ · §12 ◑ diff-via-refresh · §13 ✅ · §14 ✅) · **Phase 4 COMPLETE** (§15 ✅ · §16 ✅ · §17 ✅ · §18 ✅ · §19 ✅ · §20 ✅) · **Phase 5 COMPLETE** (§21 ✅ · §22 ✅ read-only · §23 ✅ · §24 ✅ · §25 ✅) — **next: Phase 6+ (polish/§29 a11y sweep, §30 coaching consolidation, remaining `base_legacy` secondary forms)**. *\*§12 standalone A↔B compare deferred (no backend route); §13 still owes the §30/Phase-7 `coaching_bp` consolidation.*
+**Progress:** Phase 0 ✅ · Phase 1 shell ✅ · **Phase 2 COMPLETE** (§05–§09 ✅) · **Phase 3 COMPLETE\*** (§04 ✅ · §10 ✅ · §11 ✅ · §12 ◑ diff-via-refresh · §13 ✅ · §14 ✅) · **Phase 4 COMPLETE** (§15 ✅ · §16 ✅ · §17 ✅ · §18 ✅ · §19 ✅ · §20 ✅) · **Phase 5 COMPLETE** (§21 ✅ · §22 ✅ read-only · §23 ✅ · §24 ✅ · §25 ✅) · **Phase 6 polish — done** (§26 ✅ shared empty-state · §27 ✅ error states · §28 ✅ light-mode toggle · §29 ✅ a11y sweep) — **remaining (optional/low-priority): print stylesheets, the operator `base_legacy` forms (garmin import/sync/wellness, admin `plan_inspect`/`plan_diag`)**. *\*§12 standalone A↔B compare deferred (no backend route); §13's §30/Phase-7 `coaching_bp` consolidation is **⛔ BLOCKED** — code-verified it can't be done as written (two live plan models; `coaching_bp` backs the migrated §06 plan view). See Phase 7 above.*
 Merged to `main`: PR #397 (review), #398 (Phase 0), #399 (docs), #400 (Phase 1 + §05),
 #401 (§06), #403 (§07), #404 (§07 follow-up), #406 (redesign card/grid Bootstrap-leak fix),
 #407 (§08 unified Log landing + 4 panes).
@@ -250,7 +254,7 @@ In flight: PR for §08 Strength pane + §09 Wellness (completes Phase 2) **and**
     real `garmin_workout_json` column + sport-type IDs kept as a developer reference).
   - **§13 Refresh** (`plans/v2/refresh.html`): horizon picker (T1/T2/T3) with active-tier
     highlighting, current-version card, no-plan empty state; the Bootstrap frequency-cap modal
-    (nonce'd) preserved. Still owes the §30/Phase-7 `coaching_bp` consolidation.
+    (nonce'd) preserved. The §30/Phase-7 `coaching_bp` consolidation it pointed at is now **⛔ BLOCKED** (see Phase 7).
   - **§12 diff** (`plans/v2/refresh_view.html`): refreshed-plan sessions grouped by date with
     updated/new diff badges + left-border accents — the app's **real** compare surface
     (refresh-vs-parent). Standalone arbitrary version A↔B compare has **no backend route**; not
@@ -351,6 +355,56 @@ In flight: PR for §08 Strength pane + §09 Wellness (completes Phase 2) **and**
     onboarding + password/preference suites green; redesign suite green (32); braces balanced
     (669/669); CSP-clean.
 
+- **Phase 6 · §27 Error states** — the brand "trail-voice" error pages, grounded in real Flask
+  errorhandlers. New **shared `templates/_error.html`** — deliberately **standalone** (does NOT
+  extend `base.html`: no sidebar/topbar/nudges/cmdk includes, no DB-dependent context of its
+  own) so a 500 can't cascade into a second failure while rendering its own error page (models
+  the existing `auth/_shell.html` standalone pattern, `.app`-themed via tokens + sprite). Two
+  handlers in `app.py`: **404 "You're off trail."** (Today/Plan/Workouts way-back quicklinks, no
+  retry) and **500 "Something seized up."** (retry = reload for GET, else home). Each carries a
+  per-request **diagnostic block** (request_id · path/action · status · timestamp) and an
+  **`mailto:help@aidstation.pro`** with that diagnostic **pre-filled** — the 500 handler logs the
+  real exception server-side keyed by the request_id the user sees; the exception text never
+  reaches the page. Plan-gen **"The build stalled."** already lives inline in
+  `plan_create/progress.html` (§04), so no third handler. New §27 CSS block (`.error-*`, token
+  only, `.app`-scoped, responsive) + `tests/test_redesign_error_render.py` (2: 404 + 500 render,
+  copy/diag/mailto/quicklinks/retry, CSP-clean). Suites green (redesign + auth-gate + admin =
+  79); braces balanced (814/814); zero inline `style=`/`onclick=`/`<script>` on the page. The
+  existing `CSRFError` handler (plain 400) left as-is.
+
+- **Phase 6 · §28 Light mode** — wired the real toggle for the token-swap theme.
+  A nonced `<head>` **pre-paint bootstrap** (`base.html`) reads `localStorage['aidstation-theme']`
+  and sets `.theme-light` on `<html>` before first paint (no FOUC). Toggle controls:
+  a `data-theme-toggle` **sun icon** in the topbar + a **"Light mode"** row in the mobile
+  drawer; `app.js` flips `.theme-light` on `<html>`, persists, and syncs each control's
+  `aria-pressed`/`aria-label`. Fixed a latent bug: the light override keyed on the dead
+  `body.theme-light .app` (the shell `<body>` **is** `.app`, so a descendant combinator never
+  matched it) → now `.theme-light .app`. No per-screen CSS (token swap only); the new §28 CSS
+  is just the two control affordances + a `<button>.drawer-item` reset. New
+  `tests/test_redesign_theme_toggle_render.py` (1). Redesign + auth suites green (58); braces
+  balanced (817/817); CSP-clean (the pre-paint script is nonced).
+
+- **Phase 6 · §26 Empty / first-run states** — extracted the "You're at the start line." block
+  to a shared partial **`templates/_no_plan.html`** (single source for the headline + copy + the
+  two grounded ways-in: `plan_create.new_plan` / `plans.import_plan`); `plans/list.html` now
+  `{% include %}`s it (byte-identical render — the existing empty-state test still passes). The
+  design's "3 divergent no-plan headlines" had **already** been consolidated by the new IA: the
+  "Plan" nav item *is* `plans.list_plans`, so Plan-page and Plans-list are one surface, and the
+  dashboard's no-plan state is a purpose-built daily-hub hero ("No session scheduled") that is
+  intentionally distinct (not forced onto this component).
+- **Phase 6 · §29 A11y sweep** — ported `a11y-wire.js`'s behavioral layer onto the real shell.
+  The static contract was already in place (landmarks, `aria-current` via the nav macros,
+  focus-visible rings on `.sidebar-item`/`.tab`, the §25 focus-trap dialog controller, cmdk
+  listbox roles); the missing piece was **roving tab-order**. New `app.js` controller over
+  `[data-roving]` containers (sidebar = vertical, tab bar = horizontal): each is **one** page
+  tab stop, arrow keys move between `[data-roving-item]`s, Home/End jump, initial stop = the
+  `aria-current` item. Real `<a>` links, so Enter follows the href natively. Also relocated the
+  **Primary** landmark label off the `<aside class="sidebar">` (a complementary region) onto the
+  inner `<nav class="sidebar-nav">` (the actual navigation landmark). **CSP:** production already
+  enforces (`REPORT_ONLY` is a dev-only opt-in, default off) and every slice has been CSP-clean,
+  so there are no enforced-mode violations to clear. New `tests/test_redesign_a11y_render.py`
+  (1). Redesign + auth suites green (59); `app.js` syntax-checks; CSP-clean.
+
 ### Known blocker (infra, not code) — Vercel **Preview** deploys 500
 Preview deployments crash with `FUNCTION_INVOCATION_FAILED`: `app.py` raises at **import** when
 `SECRET_KEY` is unset, and the Preview environment scope is missing it (runtime logs confirm
@@ -368,7 +422,7 @@ of the core surface map are now on the new shell.
 Remaining work, lower priority:
 - **§29 a11y sweep** — the focus-trap pattern now exists (`app.js` dialog controller); audit the rest
   of the shell (skip links, modal/offcanvas focus, reduced-motion) against it.
-- **§30 / Phase 7** — `coaching_bp` consolidation (still owed from §13).
+- **§30 / Phase 7** — `coaching_bp` consolidation: **⛔ BLOCKED** (code-verified 2026-06-02). Can't be done as written — `coaching_bp` (legacy `training_plans`) and `plan_refresh_bp` (modern `plan_versions`) run on two different, both-live plan models, and `coaching_bp` is load-bearing for the migrated §06 plan view (chat + AI review). Prerequisite: unify the plan models first. Full rationale in **Phase 7** above.
 - **§12** standalone A↔B plan compare (needs a backend route; deferred).
 - **Secondary `base_legacy.html` forms still reachable:** ✅ `rx/form.html` (Edit Rx) · ✅ **entire
   `locales/` dir** (`form` editor all-3-modes · `new` add-location · `nearby` same-chain · `refresh_confirm`
