@@ -4,9 +4,9 @@
 **Date:** 2026-06-03
 **Predecessor handoff:** `V5_Implementation_Redesign_Phase6_Polish_HandoffSync_Coaching30Blocked_2026_06_03_Closing_Handoff_v1.md`
 **Branch:** `claude/great-lovelace-GuFhP` (harness-pinned; kept per the remote-session push contract)
-**Status:** PR #414 open to `main`. Redesign + auth render suites green (**81**, was 59 + 22 new); CSS braces balanced (886/886); no migration, no owed deploy. *(Four-part session on one PR at Andy's go-aheads: import flow → wellness-log viewer → print stylesheet → **auth screens** (login/register/forgot/reset off the old Bootstrap shell), plus an **artboard audit** of what else is implementable now.)*
+**Status:** PR #414 open to `main`. Redesign + auth render suites green (**89**, was 59 + 30 new); CSS braces balanced (928/928); no migration, no owed deploy. *(Multi-slice session on one PR at Andy's go-aheads: import flow → wellness-log viewer → print stylesheet → auth screens → **403 page** → **onboarding wizard (Slices A+B)**, plus an **artboard audit** that drove the auth/403/onboarding work.)*
 
-**Scope correction:** an earlier draft of this handoff said the redesign was "100% on the new shell" after the print slice. That was the **§04–§30 authed app surface** only. Two surfaces had been overlooked because they aren't numbered sections: the **auth screens** (now migrated this session) and the **onboarding wizard Steps 2–7** (still on `base_legacy` — see §6.1, the next slice).
+**Scope correction:** an earlier draft said the redesign was "100% on the new shell" after the print slice. That was the **§04–§30 authed app surface** only. Three surfaces had been overlooked because they aren't numbered sections — the **auth screens**, the **403 page**, and the **onboarding wizard** — all now migrated this session. The artboard audit also catalogued the remaining `base_legacy` templates by disposition (by-decision / blocked / undesigned / possible-future-gap — see §10 / `CARRY_FORWARD.md`).
 
 ---
 
@@ -29,7 +29,9 @@ Ran `aidstation-sources/scripts/verify-handoff.sh` — clean. Every predecessor 
 4. **Then the wellness-log viewer** — migrated `garmin/wellness_log` onto the shell with a `.well-*` CSS block, **remapped the Chart.js colour vars** off the legacy `--ink`/`--orange` palette onto the new tokens, relabeled "body battery" → Recovery, added a 2-case render test, swept green (66), and pushed onto the same PR.
 5. **Then the print stylesheet** (Andy: "do the last bit") — the existing `@media print` block already remapped the dark tokens to the light scale but left the nav chrome in; extended it to **drop the chrome** (sidebar/topbar/mobile bars/drawer/cmdk/skip-link/alerts/buttons) + un-flex the shell so `<main>` prints full-width, plus `.no-print`/`.print-only` utilities. Built as a **global baseline** (scope call: any `.app` screen prints clean; plan §06 + workout §07 are the named targets) rather than per-screen. Guard test (CSS has no render surface), swept green (69), pushed onto #414.
 6. **Then the auth screens** (Andy flagged login was still old on prod). Confirmed login/register/forgot/reset run on the old Bootstrap `auth/_shell.html` (no `tokens.css`) — overlooked because auth isn't a numbered §-section. Reskinned the shell + 4 forms onto an `.app`-themed standalone shell (model: `_error.html`), grounded in the `screens-desktop-b`/`mobile-aux` sign-in artboards. Kept the auth contract (real `username`, all field names/branches); per §A/§E.1 dropped the artboard's fabricated stats / "Continue with Strava" (no social-OAuth) / non-functional remember-me. 5-case render test, swept green (81), pushed onto #414.
-7. **Artboard audit** (Andy: "what else has artboards and is implementable now"). Spawned a research agent that inventoried every `screens-*.jsx` vs `BUILD_TASKS` + routes. **Result:** the only designed-but-unbuilt, no-new-backend surfaces are **(a) the onboarding wizard Steps 2–7** (still on `base_legacy`; routes exist → pure reskin — the next slice) and **(b) a small 403 page** (reuse `_error.html`). Everything else is built, blocked, backend-gated, or undesigned (`purchases` has no artboard). Recorded in `CARRY_FORWARD.md`.
+7. **Artboard audit** (Andy: "what else has artboards and is implementable now"). Spawned a research agent that inventoried every `screens-*.jsx` vs `BUILD_TASKS` + routes. **Result:** the only designed-but-unbuilt, no-new-backend surfaces are **(a) the onboarding wizard Steps 2–7** and **(b) a small 403 page**. Everything else is built, blocked, backend-gated, or undesigned (`purchases` has no artboard). Recorded in `CARRY_FORWARD.md`.
+8. **403 page** (Andy: "do 403"). `routes/admin.py` `abort(403)` rendered Flask's default; added `@app.errorhandler(403)` reusing `_error.html` (§27 system) — warn tone + quicklinks + diagnostic + mailto; single-user copy, not the artboard's roles wording. `tests/test_redesign_error_render.py` +1 (now 404/403/500). Green (82).
+9. **Onboarding wizard, Slices A+B** (Andy: "do the two onboarding slices"). Pulled the canonical step order from `routes/onboarding.py` (`_POST_STEP*_TARGET`: Connect→Profile→Locations→Skills→Schedule→Target race) and built a **shared stepper** (`_onb_steps.html`) keyed to it — which fixed the inconsistent hardcoded step labels the legacy templates carried (each had a different stepper). **Slice A** (4da758b): connect/prefill/skills/schedule + the stepper. **Slice B** (687d109): locales/route_locales/target_race + the eyebrow-number fix. Target race + route_locales keep their Bootstrap grid (target_race shares 3 race partials with the still-legacy `profile/race_event_edit`), with `.app .onb-form .row` restoring the gutters `.app .row` zeroes. `tests/test_redesign_onboarding_render.py` (7). Green (89). **Redesign migration done** (modulo the by-decision/blocked/undesigned/possible-gap `base_legacy` set in §10).
 
 ---
 
@@ -77,7 +79,7 @@ Render-tested only; worth a smoke on the preview deploy:
 ## 6. Next session pointers
 
 ### 6.1 Architect-recommended next move
-**The next redesign slice is the onboarding wizard Steps 2–7** — the artboard audit (§2.7) found it's the last designed-but-unbuilt surface backed by existing routes (pure reskin, no backend). Templates still on `base_legacy`: `onboarding/{connect,prefill,schedule,skills,locales,target_race,route_locales}.html`; designed in `screens-desktop-b.jsx` (`OnbShell`) + `screens-mobile-onb.jsx`; `routes/onboarding.py` already renders them. The shared `_schedule_form`/`_skills_form` partials are already de-CSP'd from §18. (Step-1 "create account" is covered by this session's auth migration.) That's ~7 templates — propose splitting into 2 slices to hold the file ceiling. A small **403 page** (`@app.errorhandler(403)` reusing `_error.html`, single-user copy) is a quick separate add. After those, the redesign migration is genuinely exhausted; remaining design ideas are backend-gated (§22/§17/§12) or net-new.
+**The audit-surfaced redesign migration is done** (auth + 403 + onboarding all shipped on #414). What remains on `base_legacy` is catalogued in §10 / `CARRY_FORWARD.md`: by-decision (paused-API garmin, admin plan_inspect), blocked (§30 coaching/review), undesigned (`purchases/*`, `references` — no artboard), and a set of **possible future gaps NOT in the 31-§ map** — the logging *history* lists (`cardio`/`body`/`conditions`/`injuries`/`training` `list.html`, `natural_log/index`), `training/form`, `workouts/*`, `profile/feedback`, and **`profile/race_event_edit`** (the most likely real gap: it shares the 3 race partials with the now-migrated `onboarding/target_race` and is reachable from the migrated §10 races). **Recommended next redesign step: a short audit pass** to confirm which of those have artboards / are in-scope before building any — `profile/race_event_edit` is the strongest candidate (its partials are already exercised on the new shell by target_race).
 
 The higher-priority track overall is still the **plan-gen go-live board** (tier-2, off the redesign thread): re-run the PGE e2e → read the diag endpoint → the #316/#350 wall-clock backstop → the §14 coherence read (#333). Mostly Andy's-hands (Neon egress blocked from the container).
 
@@ -114,10 +116,13 @@ The **plan-gen go-live board** (tier-2): re-run the PGE e2e → read the diag en
 | `@media print` block hides chrome + un-flexes shell; `.no-print`/`.print-only` defined | ✅ guard test |
 | `auth/_shell.html` + 4 forms extend the `.app` shell (`class="app auth-page"`, loads `tokens.css`) | ✅ render test |
 | Auth contract unchanged (real `username` field; bootstrap/registration branches) | ✅ render test |
-| `.fit-*` + `.well-*` + `.auth-*` blocks + print extension in `static/style.css`; braces (886/886) | ✅ |
+| `@app.errorhandler(403)` present; renders `_error.html` warn tone | ✅ grep + render test |
+| 7 `onboarding/*.html` extend `base.html` (no `base_legacy`); shared `_onb_steps.html` stepper | ✅ grep + render tests |
+| `target_race`/`route_locales` keep partials + scripts; `.onb-form .row` gutter restore present | ✅ render test + grep |
+| `.fit-*`/`.well-*`/`.auth-*`/`.onb-*` blocks + print ext in `static/style.css`; braces (928/928) | ✅ |
 | No inline `style="`/`onclick=` in any migrated template | ✅ grep + render tests |
-| `tests/test_redesign_{garmin_import(5),garmin_wellness_log(2),print_styles(3),auth(5)}` green | ✅ pytest |
-| Redesign + auth sweep green (81) | ✅ `pytest -k "redesign or auth"` |
+| `tests/test_redesign_{garmin_import(5),garmin_wellness_log(2),print_styles(3),auth(5),onboarding(7)}` + `_error(3)` green | ✅ pytest |
+| Redesign + auth sweep green (89) | ✅ `pytest -k "redesign or auth"` |
 | Working tree clean after push | ⏳ (push pending) |
 
 ---
@@ -129,11 +134,12 @@ The **plan-gen go-live board** (tier-2): re-run the PGE e2e → read the diag en
 2. `templates/garmin/import_preview.html` (migrated)
 3. `templates/garmin/import_wellness.html` (migrated)
 4. `templates/garmin/wellness_log.html` (migrated)
-5. `templates/auth/_shell.html` + `login.html` + `register.html` + `forgot.html` + `reset.html` (migrated)
-6. `static/style.css` (`.fit-*` + `.well-*` + `.auth-*` blocks + `@media print` chrome-drop extension)
-7. `tests/test_redesign_garmin_import_render.py` + `…garmin_wellness_log_render.py` + `…print_styles.py` + `…auth_render.py` (4 new)
+5. `templates/auth/_shell.html` + `login`/`register`/`forgot`/`reset` (migrated)
+6. `app.py` (`@errorhandler(403)`) + `templates/onboarding/_onb_steps.html` (new stepper) + `connect`/`prefill`/`schedule`/`skills`/`locales`/`route_locales`/`target_race` (migrated)
+7. `static/style.css` (`.fit-*`/`.well-*`/`.auth-*`/`.onb-*` blocks + `@media print` chrome-drop extension)
+8. `tests/test_redesign_{garmin_import,garmin_wellness_log,print_styles,auth,onboarding}_render.py` (5 new) + `…error_render.py` (+403)
 
-*(Four-part session; well over the 5-substantive guideline, but shipped as four coherent slices — import flow → viewer → print → auth — each with its own test and a green sweep before the next, plus a read-only artboard audit. Quality held; the size is the cost of a "finish-the-open" sweep where each slice is small and mechanical.)*
+*(Multi-slice session, well over the 5-substantive guideline, but shipped as independent coherent slices — import flow → viewer → print → auth → 403 → onboarding A+B — each with its own test and a green sweep before the next, plus a read-only artboard audit. Quality held; the size is the cost of a "finish-the-open" sweep where each slice is small and mechanical.)*
 
 **Bookkeeping:** `docs/redesign/BUILD_TASKS.md`, `aidstation-sources/CURRENT_STATE.md`, this handoff.
 
@@ -141,7 +147,7 @@ The **plan-gen go-live board** (tier-2): re-run the PGE e2e → read the diag en
 
 ## 10. Carry-forward updates
 
-`CARRY_FORWARD.md`: recorded the #414 slices (import flow + `wellness_log` viewer + print stylesheet + auth screens) and the **artboard audit** — the one remaining no-backend redesign slice is the **onboarding wizard Steps 2–7** (on `base_legacy`, routes exist), plus a small **403 page**; everything else is built/blocked/backend-gated/undesigned. Paused-Garmin-API forms + admin `plan_inspect`/`plan_diag` stay legacy by decision. No migration / no owed deploy.
+`CARRY_FORWARD.md`: recorded all #414 slices (import flow + `wellness_log` + print + auth + 403 + onboarding A/B) and the **artboard audit** — its two surfaced items (onboarding wizard, 403) are now both shipped. Catalogued the remaining `base_legacy` set by disposition: **by decision** (`garmin/auth`/`sync`/`sync_preview`, `admin/plan_inspect`), **blocked** (`coaching/review` §30), **undesigned** (`purchases/*`, `references` — no artboard), and **possible future gaps NOT in the 31-§ map** (logging history lists, `training/form`, `workouts/*`, `profile/feedback`, and `profile/race_event_edit` — the strongest candidate, shares the race partials with the now-migrated `target_race`). An audit pass is owed before building any of those. No migration / no owed deploy from #414.
 
 ---
 

@@ -97,7 +97,7 @@ The redesign covers every *user-facing* surface but a few blueprints have no red
 
 **Last updated:** 2026-06-03
 
-**Progress:** Phase 0 ✅ · Phase 1 shell ✅ · **Phase 2 COMPLETE** (§05–§09 ✅) · **Phase 3 COMPLETE\*** (§04 ✅ · §10 ✅ · §11 ✅ · §12 ◑ diff-via-refresh · §13 ✅ · §14 ✅) · **Phase 4 COMPLETE** (§15 ✅ · §16 ✅ · §17 ✅ · §18 ✅ · §19 ✅ · §20 ✅) · **Phase 5 COMPLETE** (§21 ✅ · §22 ✅ read-only · §23 ✅ · §24 ✅ · §25 ✅) · **Phase 6 polish — done** (§26 ✅ shared empty-state · §27 ✅ error states · §28 ✅ light-mode toggle · §29 ✅ a11y sweep) — **finish-the-open DONE:** the manual-`.FIT` surface (`garmin/import` · `import_preview` · `import_wellness` · `wellness_log`) is on the new shell, and the **print stylesheet** ships (chrome dropped, ink-on-paper, `.no-print`/`.print-only` utilities). **The §04–§30 authed app surface is 100% on the new `.app` shell, and the unauthenticated auth screens (login/register/forgot/reset) are now migrated too** (this session — they'd been overlooked: not a numbered section, still on the old Bootstrap `auth/_shell.html`). **Still on `base_legacy` (surfaced by an artboard audit 2026-06-03): the onboarding wizard Steps 2–7** (`onboarding/{connect,prefill,schedule,skills,locales,target_race,route_locales}.html`) — designed (`screens-desktop-b.jsx` `OnbShell` / `screens-mobile-onb.jsx`), routes exist, a pure reskin with no backend → the **next implementable design slice**. A small **403 page** (reuse `_error.html` via a new `@errorhandler(403)`) is the other no-backend add. Left legacy by decision: the paused-Garmin-API forms (`garmin/auth`/`sync`/`sync_preview`) + admin `plan_inspect`/`plan_diag`. *\*§12 standalone A↔B compare deferred (no backend route); §13's §30/Phase-7 `coaching_bp` consolidation is **⛔ BLOCKED** — code-verified it can't be done as written (two live plan models; `coaching_bp` backs the migrated §06 plan view). See Phase 7 above.*
+**Progress:** Phase 0 ✅ · Phase 1 shell ✅ · **Phase 2 COMPLETE** (§05–§09 ✅) · **Phase 3 COMPLETE\*** (§04 ✅ · §10 ✅ · §11 ✅ · §12 ◑ diff-via-refresh · §13 ✅ · §14 ✅) · **Phase 4 COMPLETE** (§15 ✅ · §16 ✅ · §17 ✅ · §18 ✅ · §19 ✅ · §20 ✅) · **Phase 5 COMPLETE** (§21 ✅ · §22 ✅ read-only · §23 ✅ · §24 ✅ · §25 ✅) · **Phase 6 polish — done** (§26 ✅ shared empty-state · §27 ✅ error states · §28 ✅ light-mode toggle · §29 ✅ a11y sweep) — **finish-the-open DONE:** the manual-`.FIT` surface (`garmin/import` · `import_preview` · `import_wellness` · `wellness_log`) is on the new shell, and the **print stylesheet** ships (chrome dropped, ink-on-paper, `.no-print`/`.print-only` utilities). **The §04–§30 authed app surface, the unauthenticated auth screens (login/register/forgot/reset), and the onboarding wizard (Connect/Profile/Locations/Skills/Schedule/Target race + route-locales) are all on the new `.app` shell**, plus a trail-voice **403** page (`@errorhandler(403)` → `_error.html`). The auth + onboarding surfaces had been overlooked (not numbered §-sections); an artboard audit (2026-06-03) surfaced them and confirmed they're the last no-backend designed gaps. **Still on `base_legacy` — by decision (not gaps):** paused-Garmin-API forms (`garmin/auth`/`sync`/`sync_preview`), admin `plan_inspect`, `coaching/review` (⛔ §30 blocked), undesigned `purchases/*` + `references/exercises` (no artboard). **Still on `base_legacy` — possible future gaps (NOT in the 31-§ map; need an audit pass to confirm artboard coverage):** the logging *history* lists (`cardio`/`body`/`conditions`/`injuries`/`training` `list.html`, `natural_log/index.html` — §08 migrated the entry *forms*, not these), `training/form.html`, `workouts/{build_form,suggestion_view}.html`, `profile/feedback.html`, and `profile/race_event_edit.html` (the race-event edit form — shares the 3 race partials with the now-migrated `onboarding/target_race`; reachable from the migrated §10 races). *\*§12 standalone A↔B compare deferred (no backend route); §13's §30/Phase-7 `coaching_bp` consolidation is **⛔ BLOCKED** — code-verified it can't be done as written (two live plan models; `coaching_bp` backs the migrated §06 plan view). See Phase 7 above.*
 Merged to `main`: PR #397 (review), #398 (Phase 0), #399 (docs), #400 (Phase 1 + §05),
 #401 (§06), #403 (§07), #404 (§07 follow-up), #406 (redesign card/grid Bootstrap-leak fix),
 #407 (§08 unified Log landing + 4 panes).
@@ -449,6 +449,23 @@ In flight: PR for §08 Strength pane + §09 Wellness (completes Phase 2) **and**
   non-functional remember-me were **not** ported; Terms/Privacy render as text (no dead links). New
   `tests/test_redesign_auth_render.py` (5: login, register bootstrap + normal, forgot, reset
   invalid-token). Redesign + auth suites green (81).
+- **403 page.** `routes/admin.py` gates to `user_id==1` and `abort(403)`s, which rendered Flask's
+  default. Added `@app.errorhandler(403)` reusing the standalone `_error.html` (§27 system) — warn
+  tone + way-back quicklinks + diagnostic + support mailto; single-user copy ("admin-only"), not
+  the artboard's multi-user/roles wording. `tests/test_redesign_error_render.py` +1. Green (82).
+- **Onboarding wizard — Steps Connect/Profile/Locations/Skills/Schedule/Target race + route-locales.**
+  The last designed-but-unbuilt surface backed by existing routes (artboard audit). Migrated all 7
+  step templates off `base_legacy` onto the new shell behind a **shared progress stepper**
+  (`onboarding/_onb_steps.html`, keyed to the canonical route order — which also fixed the
+  inconsistent hardcoded step labels the legacy templates carried). **Slice A** (PR commit): Connect
+  (consent-gate nonced script preserved), Profile prefill (use-provider/keep-current forms), Skills,
+  Schedule (the last two keep including the shared `_schedule_form`/`_skills_form` partials, already
+  on the new shell via §18). **Slice B**: Locations + route-locales (token-native), Target race (the
+  large §H.2 form keeps its Bootstrap grid + the three shared partials `_race_locale_picker`/
+  `_previous_attempts_editor`/`_race_terrain_editor` — also used by the still-legacy
+  `profile/race_event_edit`, so not rewritten — and both nonced scripts; only the chrome is
+  reskinned, with `.app .onb-form .row` restoring the Bootstrap gutters `.app .row` zeroes). New
+  `.onb-*` CSS (braces 928/928). `tests/test_redesign_onboarding_render.py` (7). Green (89).
 
 ### Known blocker (infra, not code) — Vercel **Preview** deploys 500
 Preview deployments crash with `FUNCTION_INVOCATION_FAILED`: `app.py` raises at **import** when
