@@ -1853,3 +1853,33 @@ body.bulk-mode { padding-bottom: 80px; }
 @media (max-width: 859.98px) {
   .app .well-charts { grid-template-columns: 1fr; }
 }
+
+/* ════════════════════════════════════════════════════════════════════
+   Auth screens — login / register / forgot / reset on the standalone
+   `.app`-themed auth shell (auth/_shell.html). Centered card, no
+   sidebar/topbar (the user isn't signed in yet). Grounded in the sign-in
+   artboard (screens-desktop-b.jsx "Welcome back." / screens-mobile-aux.jsx).
+   ════════════════════════════════════════════════════════════════════ */
+.app .auth-wrap { min-height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px; padding: 32px 20px; }
+.app .auth-card { width: 100%; max-width: 380px; background: var(--bg-2); border: 1px solid var(--hairline); border-radius: var(--r-lg); padding: 30px 28px; }
+
+.app .auth-brand { display: inline-flex; align-items: center; gap: 9px; color: var(--fg); text-decoration: none; margin-bottom: 22px; }
+.app .auth-brand svg { width: 26px; height: 26px; }
+
+.app .auth-title { font-size: 30px; font-weight: 800; letter-spacing: -0.02em; line-height: 1.05; margin: 8px 0 8px; }
+.app .auth-sub { font-size: 14px; color: var(--fg-3); line-height: 1.5; margin: 0 0 22px; }
+
+.app .auth-form { display: flex; flex-direction: column; gap: 14px; }
+.app .auth-form .field { margin-bottom: 0; }
+/* Override the .field > .lbl block default so the Password row can sit the
+   "Forgot?" link inline (higher specificity than `.app .field > .lbl`). */
+.app .field > .lbl.auth-lbl-row { display: flex; justify-content: space-between; align-items: baseline; }
+.app .auth-lbl-link { font-family: var(--mono); font-size: 9px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--fg-3); text-decoration: none; }
+.app .auth-lbl-link:hover { color: var(--accent); }
+.app .auth-submit { width: 100%; justify-content: center; margin-top: 4px; }
+
+.app .auth-alt { font-size: 13px; color: var(--fg-3); text-align: center; margin: 20px 0 0; }
+.app .auth-alt a { color: var(--fg); font-weight: 600; }
+.app .auth-alt a:hover { color: var(--accent); }
+
+.app .auth-legal { font-size: 9px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--fg-4); text-align: center; margin: 0; }

@@ -2,51 +2,50 @@
 {% block title %}{% if is_bootstrap %}First-run setup{% else %}Create account{% endif %} — AIDSTATION{% endblock %}
 
 {% block content %}
-<div class="card border-0 shadow-sm">
-  <div class="card-body p-4">
-    {% if is_bootstrap %}
-      <h1 class="h4 mb-2">First-run setup</h1>
-      <p class="text-muted small mb-3">No accounts exist yet. Create the owner account to continue.</p>
-    {% else %}
-      <h1 class="h4 mb-3">Create account</h1>
-    {% endif %}
-    <form method="post" action="{{ url_for('auth.register') }}">
-      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-      <div class="mb-3">
-        <label for="username" class="form-label">Username</label>
-        <input type="text" class="form-control" id="username" name="username"
-               value="{{ username }}" minlength="3" maxlength="32"
-               autocomplete="username" required autofocus>
-      </div>
-      <div class="mb-3">
-        <label for="display_name" class="form-label">Display name <span class="text-muted small">(optional)</span></label>
-        <input type="text" class="form-control" id="display_name" name="display_name"
-               value="{{ display_name }}" autocomplete="name">
-      </div>
-      <div class="mb-3">
-        <label for="email" class="form-label">Email <span class="text-muted small">(optional)</span></label>
-        <input type="email" class="form-control" id="email" name="email"
-               value="{{ email }}" autocomplete="email">
-      </div>
-      <div class="mb-3">
-        <label for="password" class="form-label">Password</label>
-        <input type="password" class="form-control" id="password" name="password"
-               minlength="8" autocomplete="new-password" required>
-      </div>
-      <div class="mb-3">
-        <label for="confirm" class="form-label">Confirm password</label>
-        <input type="password" class="form-control" id="confirm" name="confirm"
-               minlength="8" autocomplete="new-password" required>
-      </div>
-      <button type="submit" class="btn btn-primary w-100">
-        {% if is_bootstrap %}Create owner account{% else %}Create account{% endif %}
-      </button>
-    </form>
-    {% if not is_bootstrap %}
-      <div class="text-center mt-3 small">
-        <a href="{{ url_for('auth.login') }}">Already have an account? Sign in.</a>
-      </div>
-    {% endif %}
-  </div>
-</div>
+{% if is_bootstrap %}
+<p class="eyebrow accent">● First run</p>
+<h1 class="auth-title">Set up the owner.</h1>
+<p class="auth-sub">No accounts exist yet. Create the owner account to continue.</p>
+{% else %}
+<p class="eyebrow accent">● Get started</p>
+<h1 class="auth-title">Create account.</h1>
+<p class="auth-sub">One athlete, one engine. Let's build your plan.</p>
+{% endif %}
+
+<form method="post" action="{{ url_for('auth.register') }}" class="auth-form">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <label class="field">
+    <span class="lbl">Username</span>
+    <input type="text" class="form-control" name="username" value="{{ username }}"
+           minlength="3" maxlength="32" autocomplete="username" required autofocus>
+  </label>
+  <label class="field">
+    <span class="lbl">Display name <span class="dim">(optional)</span></span>
+    <input type="text" class="form-control" name="display_name" value="{{ display_name }}"
+           autocomplete="name">
+  </label>
+  <label class="field">
+    <span class="lbl">Email <span class="dim">(optional)</span></span>
+    <input type="email" class="form-control" name="email" value="{{ email }}"
+           autocomplete="email">
+  </label>
+  <label class="field">
+    <span class="lbl">Password</span>
+    <input type="password" class="form-control" name="password"
+           minlength="8" autocomplete="new-password" required>
+  </label>
+  <label class="field">
+    <span class="lbl">Confirm password</span>
+    <input type="password" class="form-control" name="confirm"
+           minlength="8" autocomplete="new-password" required>
+  </label>
+  <button type="submit" class="btn btn-primary auth-submit">
+    {% if is_bootstrap %}Create owner account{% else %}Create account{% endif %}
+    <svg class="icon" width="12" height="12" aria-hidden="true"><use href="#i-arrow"></use></svg>
+  </button>
+</form>
+
+{% if not is_bootstrap %}
+<p class="auth-alt">Already have an account? <a href="{{ url_for('auth.login') }}">Sign in</a></p>
+{% endif %}
 {% endblock %}

@@ -97,7 +97,7 @@ The redesign covers every *user-facing* surface but a few blueprints have no red
 
 **Last updated:** 2026-06-03
 
-**Progress:** Phase 0 ✅ · Phase 1 shell ✅ · **Phase 2 COMPLETE** (§05–§09 ✅) · **Phase 3 COMPLETE\*** (§04 ✅ · §10 ✅ · §11 ✅ · §12 ◑ diff-via-refresh · §13 ✅ · §14 ✅) · **Phase 4 COMPLETE** (§15 ✅ · §16 ✅ · §17 ✅ · §18 ✅ · §19 ✅ · §20 ✅) · **Phase 5 COMPLETE** (§21 ✅ · §22 ✅ read-only · §23 ✅ · §24 ✅ · §25 ✅) · **Phase 6 polish — done** (§26 ✅ shared empty-state · §27 ✅ error states · §28 ✅ light-mode toggle · §29 ✅ a11y sweep) — **finish-the-open DONE:** the manual-`.FIT` surface (`garmin/import` · `import_preview` · `import_wellness` · `wellness_log`) is on the new shell, and the **print stylesheet** ships (chrome dropped, ink-on-paper, `.no-print`/`.print-only` utilities). **The redesign surface map is now 100% on the new `.app` shell.** Only the paused-Garmin-API forms (`garmin/auth`/`sync`/`sync_preview`) + admin `plan_inspect`/`plan_diag` stay legacy by decision (paused/operator deep-debug surfaces). *\*§12 standalone A↔B compare deferred (no backend route); §13's §30/Phase-7 `coaching_bp` consolidation is **⛔ BLOCKED** — code-verified it can't be done as written (two live plan models; `coaching_bp` backs the migrated §06 plan view). See Phase 7 above.*
+**Progress:** Phase 0 ✅ · Phase 1 shell ✅ · **Phase 2 COMPLETE** (§05–§09 ✅) · **Phase 3 COMPLETE\*** (§04 ✅ · §10 ✅ · §11 ✅ · §12 ◑ diff-via-refresh · §13 ✅ · §14 ✅) · **Phase 4 COMPLETE** (§15 ✅ · §16 ✅ · §17 ✅ · §18 ✅ · §19 ✅ · §20 ✅) · **Phase 5 COMPLETE** (§21 ✅ · §22 ✅ read-only · §23 ✅ · §24 ✅ · §25 ✅) · **Phase 6 polish — done** (§26 ✅ shared empty-state · §27 ✅ error states · §28 ✅ light-mode toggle · §29 ✅ a11y sweep) — **finish-the-open DONE:** the manual-`.FIT` surface (`garmin/import` · `import_preview` · `import_wellness` · `wellness_log`) is on the new shell, and the **print stylesheet** ships (chrome dropped, ink-on-paper, `.no-print`/`.print-only` utilities). **The §04–§30 authed app surface is 100% on the new `.app` shell, and the unauthenticated auth screens (login/register/forgot/reset) are now migrated too** (this session — they'd been overlooked: not a numbered section, still on the old Bootstrap `auth/_shell.html`). **Still on `base_legacy` (surfaced by an artboard audit 2026-06-03): the onboarding wizard Steps 2–7** (`onboarding/{connect,prefill,schedule,skills,locales,target_race,route_locales}.html`) — designed (`screens-desktop-b.jsx` `OnbShell` / `screens-mobile-onb.jsx`), routes exist, a pure reskin with no backend → the **next implementable design slice**. A small **403 page** (reuse `_error.html` via a new `@errorhandler(403)`) is the other no-backend add. Left legacy by decision: the paused-Garmin-API forms (`garmin/auth`/`sync`/`sync_preview`) + admin `plan_inspect`/`plan_diag`. *\*§12 standalone A↔B compare deferred (no backend route); §13's §30/Phase-7 `coaching_bp` consolidation is **⛔ BLOCKED** — code-verified it can't be done as written (two live plan models; `coaching_bp` backs the migrated §06 plan view). See Phase 7 above.*
 Merged to `main`: PR #397 (review), #398 (Phase 0), #399 (docs), #400 (Phase 1 + §05),
 #401 (§06), #403 (§07), #404 (§07 follow-up), #406 (redesign card/grid Bootstrap-leak fix),
 #407 (§08 unified Log landing + 4 panes).
@@ -435,8 +435,20 @@ In flight: PR for §08 Strength pane + §09 Wellness (completes Phase 2) **and**
   per-screen utilities and the existing page-break rules (`.card`/`tr`/`.stat-card` break-inside
   avoid). Global baseline → any `.app` screen prints ink-on-paper; the plan week (§06) + workout
   (§07) are the design targets. New `tests/test_redesign_print_styles.py` (3, mechanical guard —
-  CSS has no render surface). Braces 870/870. Redesign + auth suites green (69). **Redesign
-  finish-the-open complete; the whole surface is on the new shell.**
+  CSS has no render surface). Braces 870/870. Redesign + auth suites green (69).
+- **Auth screens — login / register / forgot / reset onto the new shell.** The unauthenticated auth
+  surface was the last thing on the old Bootstrap `auth/_shell.html` (no `tokens.css`, light-bg
+  lockup) — overlooked because it isn't a numbered §-section. Reskinned `auth/_shell.html` as an
+  `.app`-themed **standalone** shell (mirrors `_error.html`: loads tokens+style+sprite, centered
+  `.auth-card`, nonced light-mode pre-paint, no sidebar/topbar) + all four forms onto token classes
+  (`.field`/`.lbl`/`.eyebrow.accent`/`.auth-*` block, braces 886/886). Grounded in the sign-in
+  artboard (`screens-desktop-b.jsx` "Welcome back." / `screens-mobile-aux.jsx`). **Auth contract
+  unchanged** — real `username` field kept (not the artboard's email), every form field name +
+  action + the bootstrap/registration-open branches preserved. Per CONVENTIONS §A/§E.1 the
+  artboard's fabricated marketing stats, "Continue with Strava" (no social-OAuth backend), and the
+  non-functional remember-me were **not** ported; Terms/Privacy render as text (no dead links). New
+  `tests/test_redesign_auth_render.py` (5: login, register bootstrap + normal, forgot, reset
+  invalid-token). Redesign + auth suites green (81).
 
 ### Known blocker (infra, not code) — Vercel **Preview** deploys 500
 Preview deployments crash with `FUNCTION_INVOCATION_FAILED`: `app.py` raises at **import** when

@@ -4,7 +4,9 @@
 **Date:** 2026-06-03
 **Predecessor handoff:** `V5_Implementation_Redesign_Phase6_Polish_HandoffSync_Coaching30Blocked_2026_06_03_Closing_Handoff_v1.md`
 **Branch:** `claude/great-lovelace-GuFhP` (harness-pinned; kept per the remote-session push contract)
-**Status:** PR #414 open to `main`. Redesign + auth render suites green (**69**, was 59 + 10 new); CSS braces balanced (870/870); no migration, no owed deploy. *(Three-part session on one PR at Andy's go-aheads: import flow → wellness-log viewer → print stylesheet.)*
+**Status:** PR #414 open to `main`. Redesign + auth render suites green (**81**, was 59 + 22 new); CSS braces balanced (886/886); no migration, no owed deploy. *(Four-part session on one PR at Andy's go-aheads: import flow → wellness-log viewer → print stylesheet → **auth screens** (login/register/forgot/reset off the old Bootstrap shell), plus an **artboard audit** of what else is implementable now.)*
+
+**Scope correction:** an earlier draft of this handoff said the redesign was "100% on the new shell" after the print slice. That was the **§04–§30 authed app surface** only. Two surfaces had been overlooked because they aren't numbered sections: the **auth screens** (now migrated this session) and the **onboarding wizard Steps 2–7** (still on `base_legacy` — see §6.1, the next slice).
 
 ---
 
@@ -25,7 +27,9 @@ Ran `aidstation-sources/scripts/verify-handoff.sh` — clean. Every predecessor 
    - **`garmin/wellness_log`**: a Chart.js data *viewer* on legacy `--ink` tokens — a distinct concern; first deferred to hold the ceiling, **then picked up this session** as the follow-on viewer slice (Andy: "do the log viewer").
 3. **Migrated the 3 import templates** onto `base.html`, reusing the established redesign vocabulary (`.card`/`.card-pad`/`.field`/`.lbl`/`.stack`/`.data`/`.chip`/`.eyebrow.accent`/`.dash-head`), added a `.fit-*` CSS block, wrote a 5-case render test, ran the redesign+auth sweep green. **Shipped the import flow as PR #414.**
 4. **Then the wellness-log viewer** — migrated `garmin/wellness_log` onto the shell with a `.well-*` CSS block, **remapped the Chart.js colour vars** off the legacy `--ink`/`--orange` palette onto the new tokens, relabeled "body battery" → Recovery, added a 2-case render test, swept green (66), and pushed onto the same PR.
-5. **Then the print stylesheet** (Andy: "do the last bit") — the existing `@media print` block already remapped the dark tokens to the light scale but left the nav chrome in; extended it to **drop the chrome** (sidebar/topbar/mobile bars/drawer/cmdk/skip-link/alerts/buttons) + un-flex the shell so `<main>` prints full-width, plus `.no-print`/`.print-only` utilities. Built as a **global baseline** (scope call: any `.app` screen prints clean; plan §06 + workout §07 are the named targets) rather than per-screen. Guard test (CSS has no render surface), swept green (69), pushed onto #414. **Finish-the-open done.**
+5. **Then the print stylesheet** (Andy: "do the last bit") — the existing `@media print` block already remapped the dark tokens to the light scale but left the nav chrome in; extended it to **drop the chrome** (sidebar/topbar/mobile bars/drawer/cmdk/skip-link/alerts/buttons) + un-flex the shell so `<main>` prints full-width, plus `.no-print`/`.print-only` utilities. Built as a **global baseline** (scope call: any `.app` screen prints clean; plan §06 + workout §07 are the named targets) rather than per-screen. Guard test (CSS has no render surface), swept green (69), pushed onto #414.
+6. **Then the auth screens** (Andy flagged login was still old on prod). Confirmed login/register/forgot/reset run on the old Bootstrap `auth/_shell.html` (no `tokens.css`) — overlooked because auth isn't a numbered §-section. Reskinned the shell + 4 forms onto an `.app`-themed standalone shell (model: `_error.html`), grounded in the `screens-desktop-b`/`mobile-aux` sign-in artboards. Kept the auth contract (real `username`, all field names/branches); per §A/§E.1 dropped the artboard's fabricated stats / "Continue with Strava" (no social-OAuth) / non-functional remember-me. 5-case render test, swept green (81), pushed onto #414.
+7. **Artboard audit** (Andy: "what else has artboards and is implementable now"). Spawned a research agent that inventoried every `screens-*.jsx` vs `BUILD_TASKS` + routes. **Result:** the only designed-but-unbuilt, no-new-backend surfaces are **(a) the onboarding wizard Steps 2–7** (still on `base_legacy`; routes exist → pure reskin — the next slice) and **(b) a small 403 page** (reuse `_error.html`). Everything else is built, blocked, backend-gated, or undesigned (`purchases` has no artboard). Recorded in `CARRY_FORWARD.md`.
 
 ---
 
@@ -46,8 +50,11 @@ The wellness-data *viewer* (reached from the import-wellness page + Connections)
 ### 3.5 `static/style.css` (modified)
 New `.fit-*` section (drop zone + `.u-drop-active` token override, plan-match row, progress/results, 2-col `.fit-grid`, metric-table `th` width, auto-match banner, disposition radios, wellness summary; responsive collapse < 860px) **+ a `.well-*` section** (date filter, 2-col Chart.js grid, fixed-height `.well-canvas`, records card) **+ the print extension.** The pre-existing `@media print` block already remapped the dark tokens to the light scale + set page-break rules; extended it to **hide the chrome** (`.skip-link`/`.sidebar`/`.topbar`/`.appbar`/`.tabbar`/`.nav-drawer`/`.cmdk-backdrop`/`.alert`/`.btn`/`.btn-close`/`.sprite-host`), un-flex the shell (`.app-shell{display:block}`, `.page-body{padding:0}`), and add `.no-print` (hide in print) / `.print-only` (hidden on screen via a screen-default rule, revealed in print). Replaces the legacy `u-border-dashed`/`u-scrollbox-200`/`u-w-40pct`/`u-mw-480` utilities (legacy-only, unstyled on the new shell). Braces **870/870**.
 
-### 3.6 Tests (3 new files)
-`tests/test_redesign_garmin_import_render.py` **(5):** route-driven (matcher/FIT-parser stubbed) — import landing, wellness landing, wellness preview (**Recovery** relabel + no "Body battery"), cardio no-match (disposition radios + nonced script), strength auto-match (banner + 91% chip + no radios). `tests/test_redesign_garmin_wellness_log_render.py` **(2):** SQL-routing fake conn — populated (4 chart canvases + records table + Recovery relabel + asserts the legacy `--ink`/`--orange` palette is gone + reads `--fg`/`--accent`) and empty hero. `tests/test_redesign_print_styles.py` **(3):** mechanical guard (print CSS has no render surface) — parses the `@media print` block, asserts the chrome selectors are hidden + the shell is un-flexed + the `.no-print`/`.print-only` utilities defined + braces balance. The render tests each assert `app-shell` + CSP-clean (`style="`/`onclick=` absent).
+### 3.55 `templates/auth/_shell.html` + `login`/`register`/`forgot`/`reset` (migrated)
+`auth/_shell.html` reskinned off the old Bootstrap (`body.auth-body`, light-bg lockup, no tokens) into an `.app`-themed **standalone** shell (model: `_error.html`) — loads `tokens.css`+`style.css`+fonts+icon sprite, body `class="app auth-page"`, a centered `.auth-card` with the inline-SVG brand (themes via `currentColor`), nonced light-mode pre-paint, flash region, Terms/Privacy footer (plain text, no dead links); no sidebar/topbar (unauthed). The 4 forms moved onto token classes (`.field`/`.lbl`/`.eyebrow.accent`/`.btn-primary`/`.auth-*`). **Auth contract untouched:** real `username` field (the artboard showed email — kept the route's actual field), `password`/`confirm`/`display_name`/`email` names, the `is_bootstrap` (first-run owner) + `registration_open` + reset-`error` branches all preserved. Per CONVENTIONS §A/§E.1 the artboard's fabricated marketing stats, "Continue with Strava" (no social-OAuth backend), and the non-functional "remember me" were **not** ported. New `.auth-*` CSS block (centered card, brand, field-label rows incl. a specificity-correct `Password`+`Forgot?` inline row, submit, alt-link, legal). Braces **886/886**.
+
+### 3.6 Tests (4 new files)
+`tests/test_redesign_garmin_import_render.py` **(5):** route-driven (matcher/FIT-parser stubbed) — import landing, wellness landing, wellness preview (**Recovery** relabel + no "Body battery"), cardio no-match (disposition radios + nonced script), strength auto-match (banner + 91% chip + no radios). `tests/test_redesign_garmin_wellness_log_render.py` **(2):** SQL-routing fake conn — populated (4 chart canvases + records table + Recovery relabel + asserts the legacy `--ink`/`--orange` palette is gone + reads `--fg`/`--accent`) and empty hero. `tests/test_redesign_print_styles.py` **(3):** mechanical guard (print CSS has no render surface) — parses the `@media print` block, asserts the chrome selectors are hidden + the shell is un-flexed + the `.no-print`/`.print-only` utilities defined + braces balance. `tests/test_redesign_auth_render.py` **(5):** route-driven (fake conn with a configurable user-count; `ALLOW_REGISTRATION` set via `monkeypatch.setenv`) — login, register bootstrap (first-run) + register normal, forgot, reset invalid-token; each asserts `class="app auth-page"` + `tokens.css` loaded (off the old Bootstrap shell). The render tests each assert the migrated shell + CSP-clean (`style="`/`onclick=` absent).
 
 ---
 
@@ -70,7 +77,9 @@ Render-tested only; worth a smoke on the preview deploy:
 ## 6. Next session pointers
 
 ### 6.1 Architect-recommended next move
-**Redesign finish-the-open is complete — the surface map is 100% on the new shell.** No redesign migration work remains; what's left (`garmin/auth`/`sync`/`sync_preview` + admin `plan_inspect`/`plan_diag`) is legacy by decision (paused-API / operator deep-debug). The higher-priority track is now the **plan-gen go-live board** (tier-2, off the redesign thread): re-run the PGE e2e → read the diag endpoint → the #316/#350 wall-clock backstop → the still-owed §14 coherence read (#333). Mostly Andy's-hands (Neon egress blocked from the container). Any further redesign work is net-new (new screens/features), not migration.
+**The next redesign slice is the onboarding wizard Steps 2–7** — the artboard audit (§2.7) found it's the last designed-but-unbuilt surface backed by existing routes (pure reskin, no backend). Templates still on `base_legacy`: `onboarding/{connect,prefill,schedule,skills,locales,target_race,route_locales}.html`; designed in `screens-desktop-b.jsx` (`OnbShell`) + `screens-mobile-onb.jsx`; `routes/onboarding.py` already renders them. The shared `_schedule_form`/`_skills_form` partials are already de-CSP'd from §18. (Step-1 "create account" is covered by this session's auth migration.) That's ~7 templates — propose splitting into 2 slices to hold the file ceiling. A small **403 page** (`@app.errorhandler(403)` reusing `_error.html`, single-user copy) is a quick separate add. After those, the redesign migration is genuinely exhausted; remaining design ideas are backend-gated (§22/§17/§12) or net-new.
+
+The higher-priority track overall is still the **plan-gen go-live board** (tier-2, off the redesign thread): re-run the PGE e2e → read the diag endpoint → the #316/#350 wall-clock backstop → the §14 coherence read (#333). Mostly Andy's-hands (Neon egress blocked from the container).
 
 **Print-stylesheet scope note:** built as a **global `@media print` baseline** (every `.app` screen prints clean) rather than per-screen — the design's "confirm scope" was resolved this way because the chrome to drop is identical on every screen and the token→light remap already existed globally. If a specific screen later needs print-specific layout (e.g. a plan laid out as a calendar grid for paper), use the new `.no-print`/`.print-only` hooks per-screen.
 
@@ -103,10 +112,12 @@ The **plan-gen go-live board** (tier-2): re-run the PGE e2e → read the diag en
 | `garmin/wellness_log.html` extends `base.html`; Chart.js vars remapped (no `--ink`/`--orange`), Recovery relabel | ✅ render test |
 | `data-bulk-*` + `data-autosubmit` hooks + confirm endpoints preserved | ✅ grep |
 | `@media print` block hides chrome + un-flexes shell; `.no-print`/`.print-only` defined | ✅ guard test |
-| `.fit-*` + `.well-*` blocks + print extension in `static/style.css`; braces balanced (870/870) | ✅ |
-| No inline `style="`/`onclick=` in the 4 templates | ✅ grep + render tests |
-| `tests/test_redesign_garmin_{import,wellness_log}_render.py` (5+2) + `…print_styles.py` (3) green | ✅ pytest |
-| Redesign + auth sweep green (69) | ✅ `pytest -k "redesign or auth_gate"` |
+| `auth/_shell.html` + 4 forms extend the `.app` shell (`class="app auth-page"`, loads `tokens.css`) | ✅ render test |
+| Auth contract unchanged (real `username` field; bootstrap/registration branches) | ✅ render test |
+| `.fit-*` + `.well-*` + `.auth-*` blocks + print extension in `static/style.css`; braces (886/886) | ✅ |
+| No inline `style="`/`onclick=` in any migrated template | ✅ grep + render tests |
+| `tests/test_redesign_{garmin_import(5),garmin_wellness_log(2),print_styles(3),auth(5)}` green | ✅ pytest |
+| Redesign + auth sweep green (81) | ✅ `pytest -k "redesign or auth"` |
 | Working tree clean after push | ⏳ (push pending) |
 
 ---
@@ -118,10 +129,11 @@ The **plan-gen go-live board** (tier-2): re-run the PGE e2e → read the diag en
 2. `templates/garmin/import_preview.html` (migrated)
 3. `templates/garmin/import_wellness.html` (migrated)
 4. `templates/garmin/wellness_log.html` (migrated)
-5. `static/style.css` (`.fit-*` + `.well-*` blocks + `@media print` chrome-drop extension)
-6. `tests/test_redesign_garmin_import_render.py` + `tests/test_redesign_garmin_wellness_log_render.py` + `tests/test_redesign_print_styles.py` (3 new)
+5. `templates/auth/_shell.html` + `login.html` + `register.html` + `forgot.html` + `reset.html` (migrated)
+6. `static/style.css` (`.fit-*` + `.well-*` + `.auth-*` blocks + `@media print` chrome-drop extension)
+7. `tests/test_redesign_garmin_import_render.py` + `…garmin_wellness_log_render.py` + `…print_styles.py` + `…auth_render.py` (4 new)
 
-*(Three-part session; exceeded the 5-substantive guideline, but shipped as three coherent slices — import flow → viewer → print — each with its own test and a green sweep before the next. Quality held.)*
+*(Four-part session; well over the 5-substantive guideline, but shipped as four coherent slices — import flow → viewer → print → auth — each with its own test and a green sweep before the next, plus a read-only artboard audit. Quality held; the size is the cost of a "finish-the-open" sweep where each slice is small and mechanical.)*
 
 **Bookkeeping:** `docs/redesign/BUILD_TASKS.md`, `aidstation-sources/CURRENT_STATE.md`, this handoff.
 
@@ -129,7 +141,7 @@ The **plan-gen go-live board** (tier-2): re-run the PGE e2e → read the diag en
 
 ## 10. Carry-forward updates
 
-`CARRY_FORWARD.md`: marked **redesign finish-the-open ✅ COMPLETE** — import flow + `wellness_log` viewer + print stylesheet all shipped on #414; the surface map is 100% on the new shell. Only the paused-Garmin-API forms + admin `plan_inspect`/`plan_diag` stay legacy by decision (not gaps). No migration / no owed deploy. Next redesign work, if any, is net-new.
+`CARRY_FORWARD.md`: recorded the #414 slices (import flow + `wellness_log` viewer + print stylesheet + auth screens) and the **artboard audit** — the one remaining no-backend redesign slice is the **onboarding wizard Steps 2–7** (on `base_legacy`, routes exist), plus a small **403 page**; everything else is built/blocked/backend-gated/undesigned. Paused-Garmin-API forms + admin `plan_inspect`/`plan_diag` stay legacy by decision. No migration / no owed deploy.
 
 ---
 
