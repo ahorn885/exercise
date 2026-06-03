@@ -1979,3 +1979,5 @@ body.bulk-mode { padding-bottom: 80px; }
 /* Coach-memory provenance detail (feedback) */
 .app .fb-meta { display: flex; align-items: center; gap: 6px; margin: 0 0 12px; }
 .app .fb-raw { font-family: var(--mono); font-size: 13px; color: var(--fg-2); white-space: pre-wrap; word-break: break-word; background: var(--bg); border-radius: var(--r-sm); padding: 14px; margin: 0; }
+
+.app .onb-wrap--wide { max-width: 920px; }
