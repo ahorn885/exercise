@@ -401,10 +401,10 @@ def add_preference():
 
     if category not in PREFERENCE_CATEGORIES:
         flash('Unknown preference category.', 'danger')
-        return redirect(url_for('profile.edit'))
+        return redirect(url_for('profile.coach_memory'))
     if not content:
         flash('Preference content required.', 'danger')
-        return redirect(url_for('profile.edit'))
+        return redirect(url_for('profile.coach_memory'))
 
     db.execute(
         'INSERT INTO coaching_preferences (category, content, permanent, user_id) '
@@ -413,7 +413,7 @@ def add_preference():
     )
     db.commit()
     flash('Preference added.', 'success')
-    return redirect(url_for('profile.edit'))
+    return redirect(url_for('profile.coach_memory'))
 
 
 @bp.route('/preference/<int:pref_id>/delete', methods=['POST'])
@@ -427,7 +427,7 @@ def delete_preference(pref_id):
     )
     db.commit()
     flash('Preference removed.', 'info')
-    return redirect(url_for('profile.edit'))
+    return redirect(url_for('profile.coach_memory'))
 
 
 @bp.route('/feedback/<int:fb_id>')
@@ -445,6 +445,35 @@ def view_feedback(fb_id):
     return render_template('profile/feedback.html', feedback=dict(row))
 
 
+@bp.route('/account')
+def account_settings():
+    """Redesign §19 — Account settings. Identity (read-only, from `users`) +
+    change password (posts to `profile.change_password`) + sign out (posts to
+    `auth.logout`). No billing / 2FA / export / delete — cut for lack of
+    backend (CONVENTIONS §E.1)."""
+    db = get_db()
+    uid = current_user_id()
+    user_row = db.execute(
+        'SELECT username, display_name, email, last_login FROM users WHERE id=?',
+        (uid,)
+    ).fetchone()
+    return render_template('profile/account.html',
+                           user_row=dict(user_row) if user_row else {})
+
+
+@bp.route('/memory')
+def coach_memory():
+    """Redesign §20 — Coach memory. Durable AI-coach preferences with
+    `fb_source` provenance (chat / plan_review / natural_log / workout_note /
+    manual). List + manual add (`add_preference`) + delete
+    (`delete_preference`)."""
+    db = get_db()
+    uid = current_user_id()
+    return render_template('profile/coach_memory.html',
+                           memory=_load_memory(db, uid),
+                           preference_categories=PREFERENCE_CATEGORIES)
+
+
 @bp.route('/password', methods=['POST'])
 def change_password():
     db = get_db()
@@ -455,14 +484,14 @@ def change_password():
 
     if not current or not new:
         flash('Current and new password are both required.', 'danger')
-        return redirect(url_for('profile.edit'))
+        return redirect(url_for('profile.account_settings'))
     user_row = db.execute(
         'SELECT password_hash, username, display_name, email FROM users WHERE id=?',
         (uid,)
     ).fetchone()
     if not user_row or not _check_password(current, user_row['password_hash']):
         flash('Current password is incorrect.', 'danger')
-        return redirect(url_for('profile.edit'))
+        return redirect(url_for('profile.account_settings'))
     strength_errors = _password_strength_errors(
         new, user_inputs=[user_row['username'], user_row['display_name'] or '',
                           user_row['email'] or '']
@@ -470,10 +499,10 @@ def change_password():
     if strength_errors:
         for e in strength_errors:
             flash(e, 'danger')
-        return redirect(url_for('profile.edit'))
+        return redirect(url_for('profile.account_settings'))
     if new != confirm:
         flash('New passwords do not match.', 'danger')
-        return redirect(url_for('profile.edit'))
+        return redirect(url_for('profile.account_settings'))
 
     db.execute(
         'UPDATE users SET password_hash=? WHERE id=?',
@@ -481,7 +510,7 @@ def change_password():
     )
     db.commit()
     flash('Password changed.', 'success')
-    return redirect(url_for('profile.edit'))
+    return redirect(url_for('profile.account_settings'))
 
 
 _TOKEN_TTL_DAYS_CHOICES = {'', '30', '90', '365'}

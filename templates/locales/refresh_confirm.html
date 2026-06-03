@@ -1,40 +1,47 @@
-{% extends 'base_legacy.html' %}
-{% block title %}Refresh {{ profile['locale_name'] or locale }}{% endblock %}
-{% block content %}
-<div class="d-flex justify-content-between align-items-center mb-3">
-  <h4 class="mb-0">Refresh {{ profile['locale_name'] or locale }}</h4>
-  <a href="{{ url_for('locales.list_profiles') }}" class="btn btn-sm btn-outline-secondary">← Back</a>
-</div>
+{# Redesign (Phase 6 secondary form) — Mapbox refresh confirm. Companion to
+   §16; migrated off base_legacy. All hidden POST fields preserved (confirm,
+   refresh_text, refresh_chain_id, refresh_chain_name, refresh_category,
+   refresh_payload) so the confirm roundtrip is unchanged. #}
+{% extends 'base.html' %}
+{% set nav_active = 'locations' %}
+{% block title %}Refresh {{ profile['locale_name'] or locale }} — AIDSTATION{% endblock %}
+{% block crumbs %}<a href="{{ url_for('locales.list_profiles') }}">Locations</a> · <b>Refresh</b>{% endblock %}
 
-<div class="card u-mw-480 mb-3">
-  <div class="card-body">
-    <p class="small mb-3">Mapbox returned different metadata for this place since you last saved it.</p>
-    <dl class="row small mb-0">
-      {% if name_changed %}
-        <dt class="col-sm-4 text-muted">Name was</dt>
-        <dd class="col-sm-8">{{ old_text or '—' }}</dd>
-        <dt class="col-sm-4 text-muted">Now</dt>
-        <dd class="col-sm-8 fw-semibold">{{ refreshed.text }}</dd>
-      {% endif %}
-      {% if chain_changed %}
-        <dt class="col-sm-4 text-muted">Chain was</dt>
-        <dd class="col-sm-8">{{ old_chain_name or '— (independent / non-gym)' }}</dd>
-        <dt class="col-sm-4 text-muted">Now</dt>
-        <dd class="col-sm-8 fw-semibold">{{ new_chain_name or '— (independent / non-gym)' }}</dd>
-      {% endif %}
-    </dl>
+{% block content %}
+<div class="dash-head">
+  <div class="races-intro">
+    <p class="eyebrow accent">● Refresh from Mapbox</p>
+    <h1 class="page-title">{{ profile['locale_name'] or locale }}.</h1>
+    <p class="page-sub">Mapbox returned different metadata for this place since you last saved it.</p>
   </div>
 </div>
 
-<form method="post" action="{{ url_for('locales.refresh_from_mapbox', locale=locale) }}" class="d-inline">
-  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-  <input type="hidden" name="confirm" value="1">
-  <input type="hidden" name="refresh_text" value="{{ refreshed.text }}">
-  <input type="hidden" name="refresh_chain_id" value="{{ new_chain_id or '' }}">
-  <input type="hidden" name="refresh_chain_name" value="{{ new_chain_name or '' }}">
-  <input type="hidden" name="refresh_category" value="{{ new_category or '' }}">
-  <input type="hidden" name="refresh_payload" value="{{ refreshed.raw_payload }}">
-  <button type="submit" class="btn btn-primary">Yes, update</button>
-</form>
-<a href="{{ url_for('locales.list_profiles') }}" class="btn btn-outline-secondary ms-2">No, keep current</a>
+<div class="stack loc-new-wrap">
+  <div class="card card-pad">
+    <dl class="loc-diff">
+      {% if name_changed %}
+      <div class="loc-diff-row"><dt>Name was</dt><dd>{{ old_text or '—' }}</dd></div>
+      <div class="loc-diff-row"><dt>Now</dt><dd class="loc-diff-new">{{ refreshed.text }}</dd></div>
+      {% endif %}
+      {% if chain_changed %}
+      <div class="loc-diff-row"><dt>Chain was</dt><dd>{{ old_chain_name or '— (independent / non-gym)' }}</dd></div>
+      <div class="loc-diff-row"><dt>Now</dt><dd class="loc-diff-new">{{ new_chain_name or '— (independent / non-gym)' }}</dd></div>
+      {% endif %}
+    </dl>
+  </div>
+
+  <div class="loc-confirm-actions">
+    <form method="post" action="{{ url_for('locales.refresh_from_mapbox', locale=locale) }}" class="m-0">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <input type="hidden" name="confirm" value="1">
+      <input type="hidden" name="refresh_text" value="{{ refreshed.text }}">
+      <input type="hidden" name="refresh_chain_id" value="{{ new_chain_id or '' }}">
+      <input type="hidden" name="refresh_chain_name" value="{{ new_chain_name or '' }}">
+      <input type="hidden" name="refresh_category" value="{{ new_category or '' }}">
+      <input type="hidden" name="refresh_payload" value="{{ refreshed.raw_payload }}">
+      <button type="submit" class="btn btn-primary btn-sm">Yes, update</button>
+    </form>
+    <a href="{{ url_for('locales.list_profiles') }}" class="btn btn-ghost btn-sm">No, keep current</a>
+  </div>
+</div>
 {% endblock %}

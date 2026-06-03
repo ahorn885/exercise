@@ -1,148 +1,136 @@
-{% extends 'base_legacy.html' %}
-{% block title %}Equipment at {{ (profile['locale_name'] if profile and profile['locale_name'] else locale) | capitalize }}{% endblock %}
+{# Redesign (Phase 6 secondary form) — Location equipment editor. Companion to
+   §16 Locations; migrated off base_legacy onto the new shell. All field names
+   + POST actions preserved: equipment[] checkboxes, locale_terrain_ids[],
+   city (legacy only), notes; plus the upgrade / refresh / delete affordances
+   and the three modes (legacy · shared_build · shared_inherit). #}
+{% extends 'base.html' %}
+{% set nav_active = 'locations' %}
+{% block title %}{{ (profile['locale_name'] if profile and profile['locale_name'] else locale) | capitalize }} · equipment — AIDSTATION{% endblock %}
+{% block crumbs %}<a href="{{ url_for('locales.list_profiles') }}">Locations</a> · <b>{{ profile['locale_name'] if profile and profile['locale_name'] else locale }}</b>{% endblock %}
+
 {% block content %}
-<div class="d-flex justify-content-between align-items-center mb-1">
-  <h4 class="mb-0">
-    {% if mode == 'legacy' and locale in ['home','hotel','partner','airport'] %}
-      Equipment at <span class="text-capitalize">{{ locale }}</span>
-    {% else %}
-      {{ profile['locale_name'] if profile and profile['locale_name'] else locale }}
-      {% if profile and profile['chain_name'] %}
-        <span class="badge bg-info text-dark ms-1 align-middle">{{ profile['chain_name'] }}</span>
-      {% elif profile and profile['category'] %}
-        <span class="badge bg-secondary ms-1 align-middle">{{ profile['category'].replace('_', ' ') }}</span>
-      {% endif %}
+<div class="dash-head">
+  <div class="races-intro">
+    <p class="eyebrow accent">● Location equipment</p>
+    <h1 class="page-title">
+      {%- if mode == 'legacy' and locale in ['home','hotel','partner','airport'] -%}
+        {{ locale|capitalize }}.
+      {%- else -%}
+        {{ profile['locale_name'] if profile and profile['locale_name'] else locale }}.
+      {%- endif -%}
+    </h1>
+    <p class="page-sub">
+      {% if profile and profile['chain_name'] %}<span class="chip solid">{{ profile['chain_name'] }}</span>
+      {% elif profile and profile['category'] %}<span class="chip solid">{{ profile['category'].replace('_', ' ') }}</span>{% endif %}
+      {% if display_address %} {{ display_address }}{% endif %}
+    </p>
+  </div>
+</div>
+
+<div class="stack loc-edit-wrap">
+
+  {# Upgrade + refresh affordances on Mapbox-anchored or manual-entry rows. #}
+  {% if mode != 'legacy' or is_manual or is_mapbox_anchored %}
+  <div class="loc-affordances">
+    {% if is_manual %}
+    <a href="{{ url_for('locales.new_locale', upgrade=locale) }}" class="btn btn-ghost btn-sm">🗺 Look up on map</a>
     {% endif %}
-  </h4>
-  <a href="{{ url_for('locales.list_profiles') }}" class="btn btn-sm btn-outline-secondary">← Back</a>
-</div>
-{% if display_address %}
-  <p class="text-muted small mb-3">{{ display_address }}</p>
-{% else %}
-  <div class="mb-3"></div>
-{% endif %}
-
-{# ── D-59 §6/§7 — upgrade + refresh affordances on Mapbox-anchored or manual-entry rows ── #}
-{% if mode != 'legacy' or is_manual or is_mapbox_anchored %}
-<div class="mb-3 d-flex gap-2 flex-wrap">
-  {% if is_manual %}
-    <a href="{{ url_for('locales.new_locale', upgrade=locale) }}" class="btn btn-sm btn-outline-primary">
-      🗺 Look up on map
-    </a>
-  {% endif %}
-  {% if is_mapbox_anchored %}
-    <form method="post" action="{{ url_for('locales.refresh_from_mapbox', locale=locale) }}" class="d-inline">
+    {% if is_mapbox_anchored %}
+    <form method="post" action="{{ url_for('locales.refresh_from_mapbox', locale=locale) }}" class="m-0">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-      <button type="submit" class="btn btn-sm btn-outline-secondary">⟳ Refresh from Mapbox</button>
+      <button type="submit" class="btn btn-ghost btn-sm">⟳ Refresh from Mapbox</button>
     </form>
+    {% endif %}
+  </div>
   {% endif %}
-</div>
-{% endif %}
 
-{% if mode == 'shared_build' %}
-  <div class="alert alert-info py-2 small">
-    <strong>First athlete at this gym.</strong> Build the equipment profile — what you save here becomes
-    the shared base for any future athlete at the same address. You'll be able to override it for your
-    own view later.
+  {# Mode banner. #}
+  {% if mode == 'shared_build' %}
+  <div class="note-card">
+    <b>First athlete at this gym.</b> Build the equipment profile — what you save becomes the shared
+    base for any future athlete at the same address. You can override it for your own view later.
   </div>
-{% elif mode == 'shared_inherit' %}
-  <div class="alert alert-secondary py-2 small">
-    <strong>Inherited from the shared profile</strong>{% if shared and shared['last_confirmed_at'] %}
-      &nbsp;·&nbsp; last confirmed {{ (shared['last_confirmed_at']|string)[:10] }}
-    {% endif %}{% if shared and shared['contribution_count'] %}
-      &nbsp;·&nbsp; {{ shared['contribution_count'] }} athlete{{ 's' if shared['contribution_count'] != 1 }}
-    {% endif %}. Edit any item to write a per-athlete override; the shared base is unchanged.
+  {% elif mode == 'shared_inherit' %}
+  <div class="note-card">
+    <b>Inherited from the shared profile</b>{% if shared and shared['last_confirmed_at'] %} · last
+    confirmed {{ (shared['last_confirmed_at']|string)[:10] }}{% endif %}{% if shared and shared['contribution_count'] %}
+    · {{ shared['contribution_count'] }} athlete{{ 's' if shared['contribution_count'] != 1 }}{% endif %}.
+    Edit any item to write a per-athlete override; the shared base is unchanged.
   </div>
-{% else %}
-  <p class="text-muted small mb-3">Check every item available at this location. Saving replaces the previous profile entirely.</p>
-{% endif %}
+  {% else %}
+  <p class="page-sub loc-instruct">Check every item available at this location. Saving replaces the
+    previous profile entirely.</p>
+  {% endif %}
 
-<form method="post">
-  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-  <div class="row g-3 mb-3">
-    {% for category_name, items in equipment_categories %}
-    <div class="col-12 col-md-6 col-lg-4">
-      <fieldset>
-        <legend class="fw-semibold small text-uppercase text-muted mb-2">{{ category_name }}</legend>
+  <form method="post" class="card card-pad loc-form">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+    <div class="loc-eq-grid">
+      {% for category_name, items in equipment_categories %}
+      <fieldset class="loc-eq-cat">
+        <legend>{{ category_name }}</legend>
         {% for tag, label in items %}
         <div class="form-check">
-          <input class="form-check-input" type="checkbox" name="equipment"
-                 value="{{ tag }}" id="eq_{{ tag }}"
-                 {% if tag in active %}checked{% endif %}>
-          <label class="form-check-label small" for="eq_{{ tag }}">
+          <input class="form-check-input" type="checkbox" name="equipment" value="{{ tag }}"
+                 id="eq_{{ tag }}" {% if tag in active %}checked{% endif %}>
+          <label class="form-check-label" for="eq_{{ tag }}">
             {{ label }}
             {% if mode == 'shared_inherit' %}
-              {% if tag in adds %}
-                <span class="badge bg-success bg-opacity-25 text-success ms-1" title="You added this on top of the shared profile">+ override</span>
-              {% elif tag in removes %}
-                <span class="badge bg-danger bg-opacity-25 text-danger ms-1" title="You removed this from the shared profile">– override</span>
-              {% elif tag in shared_tags %}
-                <span class="badge bg-light text-muted ms-1" title="Inherited from shared profile">shared</span>
-              {% endif %}
+              {% if tag in adds %}<span class="chip good" title="Added on top of the shared profile">+ override</span>
+              {% elif tag in removes %}<span class="chip bad" title="Removed from the shared profile">– override</span>
+              {% elif tag in shared_tags %}<span class="chip" title="Inherited from shared profile">shared</span>{% endif %}
             {% endif %}
           </label>
         </div>
         {% endfor %}
       </fieldset>
-    </div>
-    {% endfor %}
-  </div>
-
-  {# ── Phase 5.1 form-refresh C — §J locale terrain access (Open Item 2B-2) ── #}
-  {% if terrain_choices %}
-  <fieldset class="mb-4">
-    <legend class="form-label fw-semibold mb-1">Terrain accessible from this location</legend>
-    <p class="text-muted small mb-2">
-      Select terrain types you can train on from this locale. Include terrain reachable from here
-      even if not on-property (e.g. trail near a hotel, lake near home). Used by the planner to
-      identify race-vs-locale terrain gaps.
-    </p>
-    <div class="row g-2">
-      {% for choice in terrain_choices %}
-      <div class="col-12 col-md-6 col-lg-4">
-        <div class="form-check">
-          <input class="form-check-input" type="checkbox"
-                 name="locale_terrain_ids" value="{{ choice.id }}"
-                 id="loc_terrain_{{ choice.id }}"
-                 {% if choice.id in active_terrain_ids %}checked{% endif %}>
-          <label class="form-check-label small" for="loc_terrain_{{ choice.id }}">
-            {{ choice.label }}
-          </label>
-        </div>
-      </div>
       {% endfor %}
     </div>
-  </fieldset>
-  {% endif %}
 
-  {% if mode == 'legacy' %}
-  <div class="mb-3 u-mw-480">
-    <label class="form-label fw-semibold">City <span class="text-muted small fw-normal">(optional — e.g. "Minneapolis, MN" or "Renton, WA")</span></label>
-    <input type="text" name="city" class="form-control" value="{{ city }}" placeholder="City where this location is">
-  </div>
-  {% endif %}
-  <div class="mb-3 u-mw-480">
-    <label class="form-label fw-semibold">Notes <span class="text-muted small fw-normal">(optional — e.g. "DB up to 50 lb, no rack")</span></label>
-    <textarea name="notes" class="form-control" rows="2">{{ notes }}</textarea>
-  </div>
-  <div class="d-flex gap-2">
-    <button type="submit" class="btn btn-primary">
-      {% if mode == 'shared_build' %}Build profile
-      {% elif mode == 'shared_inherit' %}Save my view
-      {% else %}Save Profile
-      {% endif %}
-    </button>
-    <a href="{{ url_for('locales.list_profiles') }}" class="btn btn-outline-secondary">Cancel</a>
-  </div>
-</form>
+    {% if terrain_choices %}
+    <fieldset class="loc-terrain">
+      <legend>Terrain accessible from this location</legend>
+      <p class="loc-hint">Select terrain you can train on from this locale — include terrain reachable
+        from here even if not on-property (trail near a hotel, lake near home). Used by the planner to
+        spot race-vs-locale terrain gaps.</p>
+      <div class="loc-terrain-grid">
+        {% for choice in terrain_choices %}
+        <div class="form-check">
+          <input class="form-check-input" type="checkbox" name="locale_terrain_ids" value="{{ choice.id }}"
+                 id="loc_terrain_{{ choice.id }}" {% if choice.id in active_terrain_ids %}checked{% endif %}>
+          <label class="form-check-label" for="loc_terrain_{{ choice.id }}">{{ choice.label }}</label>
+        </div>
+        {% endfor %}
+      </div>
+    </fieldset>
+    {% endif %}
 
-{% if is_deletable %}
-  <hr class="my-4">
-  <form method="post"
-        action="{{ url_for('locales.delete_locale', locale=locale) }}"
+    {% if mode == 'legacy' %}
+    <label class="field loc-mw"><span class="lbl">City <span class="loc-opt">(optional — e.g. "Minneapolis, MN")</span></span>
+      <input type="text" name="city" class="form-control form-control-sm" value="{{ city }}"
+             placeholder="City where this location is"></label>
+    {% endif %}
+    <label class="field loc-mw"><span class="lbl">Notes <span class="loc-opt">(optional — e.g. "DB up to 50 lb, no rack")</span></span>
+      <textarea name="notes" class="form-control form-control-sm" rows="2">{{ notes }}</textarea></label>
+
+    <div class="pf-save">
+      <a href="{{ url_for('locales.list_profiles') }}" class="btn btn-ghost btn-sm">Cancel</a>
+      <button type="submit" class="btn btn-primary btn-sm">
+        {% if mode == 'shared_build' %}Build profile
+        {% elif mode == 'shared_inherit' %}Save my view
+        {% else %}Save profile{% endif %}
+      </button>
+    </div>
+  </form>
+
+  {% if is_deletable %}
+  <form method="post" action="{{ url_for('locales.delete_locale', locale=locale) }}"
+        class="loc-delete"
         data-confirm="Delete this location? Your equipment overrides for it will be removed too. This cannot be undone.">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-    <button type="submit" class="btn btn-sm btn-outline-danger">Delete this location</button>
+    <button type="submit" class="btn btn-ghost btn-sm loc-del-btn">Delete this location</button>
   </form>
-{% endif %}
+  {% endif %}
+
+</div>
 {% endblock %}

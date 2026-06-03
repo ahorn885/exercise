@@ -1,99 +1,112 @@
-{% extends 'base_legacy.html' %}
-{% block title %}Training Plans{% endblock %}
+{# Redesign §11 — Plans · history.
+   Migrates the training-plans list onto the new shell. Grounded in the
+   legacy `training_plans` model (active + archived), so the artboard's
+   version-history table — which belongs to the separate `plan_versions`
+   model — is intentionally not rendered here. Zero plans → the shared
+   "You're at the start line." empty (§26 copy). #}
+{% extends 'base.html' %}
+{% set nav_active = 'plan' %}
+{% block title %}Plans{% endblock %}
+{% block crumbs %}<b>Plans</b>{% endblock %}
+{% block topbar_actions %}
+<a class="btn btn-ghost btn-sm" href="{{ url_for('plans.import_plan') }}">
+  <svg class="icon" width="12" height="12" aria-hidden="true"><use href="#i-upload"></use></svg> Import
+</a>
+<a class="btn btn-primary btn-sm" href="{{ url_for('plan_create.new_plan') }}">
+  <svg class="icon" width="12" height="12" aria-hidden="true"><use href="#i-plus"></use></svg> New plan
+</a>
+{% endblock %}
 
 {% block content %}
-<div class="d-flex justify-content-between align-items-center mb-4">
-  <h2 class="mb-0">Training Plans</h2>
-  <div class="d-flex gap-2">
-    <a href="{{ url_for('plan_create.new_plan') }}" class="btn btn-primary">+ Create with AI</a>
-    <a href="{{ url_for('plans.import_plan') }}" class="btn btn-outline-secondary">Import Plan</a>
+{% if plans or archived %}
+<div class="dash-head">
+  <div class="races-intro">
+    <p class="eyebrow accent">● Plan history · {{ plans|length }} active{% if archived %} · {{ archived|length }} archived{% endif %}</p>
+    <h1 class="page-title">Your plans.</h1>
+    <p class="page-sub">Every plan periodizes back from a race. Open one to see the week grid; archive
+      the ones you're done with — they stay viewable.</p>
   </div>
 </div>
 
-{% if plans %}
-<div class="table-responsive">
-  <table class="table table-hover align-middle">
-    <thead class="table-dark">
-      <tr>
-        <th>Name</th><th class="d-none d-md-table-cell">Sport</th><th>Dates</th><th>Status</th><th class="d-none d-md-table-cell">Progress</th><th></th>
-      </tr>
-    </thead>
-    <tbody>
+<div class="stack">
+
+  {% if plans %}
+  <section class="plan-section">
+    <p class="eyebrow">Active · {{ plans|length }}</p>
+    <div class="plan-cards">
       {% for p in plans %}
-      <tr>
-        <td>
-          <a href="{{ url_for('plans.view_plan', plan_id=p.id) }}" class="fw-semibold text-decoration-none">{{ p.name }}</a>
-          <span class="d-md-none ms-1">
-            {% if p.status == 'active' %}<span class="badge bg-success">Active</span>
-            {% else %}<span class="badge bg-secondary">{{ p.status }}</span>{% endif %}
-          </span>
-        </td>
-        <td class="d-none d-md-table-cell">{{ p.sport_focus or '—' }}</td>
-        <td class="text-muted small">{{ p.start_date or '' }}{% if p.end_date %} → {{ p.end_date }}{% endif %}</td>
-        <td class="d-none d-md-table-cell">
-          {% if p.status == 'active' %}<span class="badge bg-success">Active</span>
-          {% else %}<span class="badge bg-secondary">{{ p.status }}</span>{% endif %}
-        </td>
-        <td class="d-none d-md-table-cell u-minw-140">
-          {% set total = p.item_count or 0 %}
-          {% set done = p.completed_count or 0 %}
-          {% if total > 0 %}
-          <div class="progress u-h-8">
-            <div class="progress-bar bg-success" data-progress="{{ (done/total*100)|round|int }}"></div>
+      {% set total = p.item_count or 0 %}
+      {% set done = p.completed_count or 0 %}
+      <div class="card plan-card{{ ' spot' if p.status == 'active' else '' }}">
+        <div class="plan-card-head">
+          <div class="pl-id">
+            <div class="pl-title">
+              <a class="pl-name" href="{{ url_for('plans.view_plan', plan_id=p.id) }}">{{ p.name }}</a>
+              {% if p.status == 'active' %}
+                <span class="chip accent">Active</span>
+              {% else %}
+                <span class="chip solid">{{ p.status }}</span>
+              {% endif %}
+              {% if p.sport_focus %}<span class="chip solid">{{ p.sport_focus }}</span>{% endif %}
+            </div>
+            <p class="pl-meta mono">
+              {{ p.start_date or 'No start date' }}{% if p.end_date %} → {{ p.end_date }}{% endif %}
+              · {{ done }}/{{ total }} done
+            </p>
           </div>
-          <small class="text-muted">{{ done }}/{{ total }}</small>
-          {% else %}<span class="text-muted small">No workouts</span>{% endif %}
-        </td>
-        <td>
-          <div class="d-flex gap-1">
-            <a href="{{ url_for('plans.view_plan', plan_id=p.id) }}" class="btn btn-sm btn-outline-secondary">View</a>
-            <form method="post" action="{{ url_for('plans.archive_plan', plan_id=p.id) }}" class="d-none d-md-inline">
+          <div class="pl-actions">
+            <a class="btn btn-primary btn-sm" href="{{ url_for('plans.view_plan', plan_id=p.id) }}">Open</a>
+            <form method="post" action="{{ url_for('plans.archive_plan', plan_id=p.id) }}">
               <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-              <button type="submit" class="btn btn-sm btn-outline-secondary" title="Archive">Archive</button>
+              <button type="submit" class="btn btn-ghost btn-sm">Archive</button>
             </form>
             <form method="post" action="{{ url_for('plans.delete_plan', plan_id=p.id) }}"
-                  data-confirm="Delete {{ p.name }}? This cannot be undone." class="d-none d-md-inline">
+                  data-confirm="Delete &quot;{{ p.name }}&quot;? This cannot be undone.">
               <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-              <button type="submit" class="btn btn-sm btn-outline-danger">Delete</button>
+              <button type="submit" class="btn btn-ghost btn-sm pl-del">Delete</button>
             </form>
           </div>
-        </td>
-      </tr>
+        </div>
+        {% if total > 0 %}
+        <div class="pbar"><span data-progress="{{ (done / total * 100) | round | int }}"></span></div>
+        {% endif %}
+      </div>
       {% endfor %}
-    </tbody>
-  </table>
-</div>
-{% else %}
-<div class="text-center py-5 text-muted">
-  <p>No training plans yet.</p>
-  <div class="d-flex gap-2 justify-content-center">
-    <a href="{{ url_for('plan_create.new_plan') }}" class="btn btn-primary">Create a plan with AI</a>
-    <a href="{{ url_for('plans.import_plan') }}" class="btn btn-outline-secondary">Import a Plan</a>
-  </div>
-</div>
-{% endif %}
+    </div>
+  </section>
+  {% endif %}
 
-{% if archived %}
-<div class="mt-4">
-  <a class="text-muted small text-decoration-none" data-bs-toggle="collapse" href="#archived-plans">
-    📦 {{ archived|length }} archived plan{{ 's' if archived|length != 1 }} ▾
-  </a>
-  <div class="collapse mt-2" id="archived-plans">
-    <table class="table table-sm table-hover align-middle text-muted">
-      <tbody>
-        {% for p in archived %}
-        <tr>
-          <td><a href="{{ url_for('plans.view_plan', plan_id=p.id) }}" class="text-decoration-none text-muted">{{ p.name }}</a></td>
-          <td class="small">{{ p.start_date or '' }}{% if p.end_date %} → {{ p.end_date }}{% endif %}</td>
-          <td class="small">{{ (p.completed_count or 0) }}/{{ (p.item_count or 0) }} completed</td>
-          <td>
-            <a href="{{ url_for('plans.view_plan', plan_id=p.id) }}" class="btn btn-sm btn-outline-secondary">View</a>
-          </td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  </div>
+  {% if archived %}
+  <section class="plan-section">
+    <p class="eyebrow">Archived · {{ archived|length }}</p>
+    <div class="card plan-archived">
+      {% for p in archived %}
+      <div class="pa-row">
+        <div class="pa-id">
+          <a class="pa-name" href="{{ url_for('plans.view_plan', plan_id=p.id) }}">{{ p.name }}</a>
+          <p class="pa-meta mono">
+            {{ p.start_date or '' }}{% if p.end_date %} → {{ p.end_date }}{% endif %}
+            · {{ (p.completed_count or 0) }}/{{ (p.item_count or 0) }} done
+          </p>
+        </div>
+        <div class="pa-actions">
+          <a class="btn btn-ghost btn-sm" href="{{ url_for('plans.view_plan', plan_id=p.id) }}">View</a>
+          <form method="post" action="{{ url_for('plans.unarchive_plan', plan_id=p.id) }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button type="submit" class="btn btn-ghost btn-sm">Restore</button>
+          </form>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+  </section>
+  {% endif %}
+
 </div>
+
+{% else %}
+{# Shared "You're at the start line." empty state (§26) — single source in
+   templates/_no_plan.html so the headline/copy/ways-in live in one place. #}
+{% include '_no_plan.html' %}
 {% endif %}
 {% endblock %}

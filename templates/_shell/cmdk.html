@@ -1,0 +1,70 @@
+{#- _shell/cmdk.html — §23 command palette (⌘K) + §24 keyboard-shortcuts
+    cheat sheet. Client-only: app.js opens / filters / navigates via the
+    data-* hooks below. The destination list is server-rendered with url_for
+    so it can never drift from the real routes — JS only filters + follows.
+    The Admin row is gated like the nav (current_user.id == 1). Both overlays
+    render hidden (no layout cost) and need no JS to exist — JS only animates
+    them in. -#}
+<div class="cmdk-backdrop" data-cmdk-root hidden>
+  <div class="cmdk" role="dialog" aria-modal="true" aria-label="Command palette">
+    <div class="cmdk-search">
+      <svg class="icon" width="15" height="15" aria-hidden="true"><use href="#i-search"></use></svg>
+      <input type="text" class="cmdk-input" data-cmdk-input placeholder="Jump to…"
+             aria-label="Jump to" autocomplete="off" spellcheck="false">
+      <kbd>esc</kbd>
+    </div>
+    <ul class="cmdk-list" data-cmdk-list role="listbox" aria-label="Destinations">
+      {%- set jumps = [
+        ('Today', 'dashboard.index', 'i-home'),
+        ('Plan', 'plans.list_plans', 'i-plan'),
+        ('Races', 'race_events.index', 'i-shoe'),
+        ('Workouts', 'training.list_entries', 'i-workout'),
+        ('Exercises', 'rx.list_entries', 'i-library'),
+        ('Quick log', 'log.index', 'i-log'),
+        ('Wellness', 'wellness.index', 'i-pulse'),
+        ('Athlete profile', 'profile.edit', 'i-athlete'),
+        ('Locations', 'locales.list_profiles', 'i-pin'),
+        ('Connections', 'connections.hub', 'i-link'),
+        ('Coach memory', 'profile.coach_memory', 'i-heart'),
+        ('Notifications', 'nudges.feed', 'i-bell'),
+        ('Account settings', 'profile.account_settings', 'i-gear'),
+        ('Notification settings', 'nudges.settings', 'i-bell'),
+      ] -%}
+      {% for label, endpoint, icon in jumps %}
+      <li class="cmdk-item" role="option" data-cmdk-item data-cmdk-label="{{ label|lower }}">
+        <a href="{{ url_for(endpoint) }}" tabindex="-1">
+          <svg class="icon" width="15" height="15" aria-hidden="true"><use href="#{{ icon }}"></use></svg>
+          <span>{{ label }}</span>
+        </a>
+      </li>
+      {% endfor %}
+      {% if current_user and current_user.id == 1 %}
+      <li class="cmdk-item" role="option" data-cmdk-item data-cmdk-label="admin">
+        <a href="{{ url_for('admin.dashboard') }}" tabindex="-1">
+          <svg class="icon" width="15" height="15" aria-hidden="true"><use href="#i-gear"></use></svg>
+          <span>Admin</span>
+        </a>
+      </li>
+      {% endif %}
+      <li class="cmdk-empty" data-cmdk-empty hidden>No matches.</li>
+    </ul>
+  </div>
+</div>
+
+<div class="ks-backdrop" data-ks-root hidden>
+  <div class="ks" role="dialog" aria-modal="true" aria-label="Keyboard shortcuts">
+    <div class="ks-head">
+      <span class="eyebrow">● Keyboard shortcuts</span>
+      <button type="button" class="btn btn-icon" data-ks-close aria-label="Close">
+        <svg class="icon" width="16" height="16" aria-hidden="true"><use href="#i-x"></use></svg>
+      </button>
+    </div>
+    <dl class="ks-list">
+      <div class="ks-row"><dt>Command palette</dt><dd><kbd>⌘</kbd><kbd>K</kbd></dd></div>
+      <div class="ks-row"><dt>This cheat sheet</dt><dd><kbd>?</kbd></dd></div>
+      <div class="ks-row"><dt>Move selection</dt><dd><kbd>↑</kbd><kbd>↓</kbd></dd></div>
+      <div class="ks-row"><dt>Go to selection</dt><dd><kbd>↵</kbd></dd></div>
+      <div class="ks-row"><dt>Close</dt><dd><kbd>esc</kbd></dd></div>
+    </dl>
+  </div>
+</div>

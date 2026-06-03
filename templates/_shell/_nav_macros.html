@@ -3,7 +3,7 @@
 
 {%- macro sidebar_item(key, label, icon, href, active) -%}
   <li>
-    <a class="sidebar-item{{ ' active' if key == active else '' }}" href="{{ href }}"
+    <a class="sidebar-item{{ ' active' if key == active else '' }}" href="{{ href }}" data-roving-item
        {% if key == active %}aria-current="page"{% endif %}>
       <svg class="icon" width="16" height="16" aria-hidden="true"><use href="#{{ icon }}"></use></svg>
       <span>{{ label }}</span>

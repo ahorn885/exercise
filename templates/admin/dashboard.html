@@ -1,64 +1,56 @@
-{% extends 'base_legacy.html' %}
-{% block title %}Admin{% endblock %}
+{# Redesign §25 — Admin · Users. Migrated onto the new shell (was
+   base_legacy). Lists every account with a data-count summary; each row
+   drills into admin.user_detail, where the type-to-confirm delete lives.
+   Desktop-first operator surface (gated to user_id == 1). #}
+{% extends 'base.html' %}
+{% set nav_active = '' %}
+{% block title %}Admin · Users — AIDSTATION{% endblock %}
+{% block crumbs %}<b>Admin</b> · Users{% endblock %}
+
+{% block topbar_actions %}
+<a class="btn btn-ghost btn-sm" href="{{ url_for('admin.audit') }}">Audit log</a>
+<a class="btn btn-ghost btn-sm" href="{{ url_for('admin.telemetry_refresh') }}">Telemetry</a>
+{% endblock %}
+
 {% block content %}
-<div class="d-flex justify-content-between align-items-center mb-3">
-  <h4 class="mb-0">Admin · Users</h4>
-  <div class="d-flex align-items-center gap-3">
-    <a href="{{ url_for('admin.audit') }}" class="btn btn-sm btn-outline-secondary">
-      Audit log
-    </a>
-    <span class="text-muted small">{{ users|length }} user{{ 's' if users|length != 1 }}</span>
+<div class="dash-head">
+  <div class="races-intro">
+    <p class="eyebrow accent">● Admin · {{ users|length }} user{{ 's' if users|length != 1 }}</p>
+    <h1 class="page-title">Users.</h1>
+    <p class="page-sub">Every account on this instance. Open a user to see their data footprint and
+      remove them. Deleting cascades every per-user row across 25 scoped tables; shared catalogs
+      (<code>exercise_inventory</code>, <code>equipment_items</code>, …) are untouched. The admin
+      user (id {{ admin_user_id }}) can't be deleted.</p>
   </div>
 </div>
-<p class="text-muted small mb-3">
-  Deleting a user removes their row in <code>users</code> and every per-user
-  row across the 25 scoped tables. Shared catalogs
-  (<code>exercise_inventory</code>, <code>equipment_items</code>,
-  <code>purchase_recommendations</code>, <code>training_modalities</code>) are
-  untouched. The admin user (id {{ admin_user_id }}) cannot be deleted.
-</p>
 
-<div class="table-responsive">
-<table class="table table-sm align-middle">
-  <thead>
-    <tr>
-      <th>ID</th>
-      <th>Username</th>
-      <th>Display name</th>
-      <th>Email</th>
-      <th class="text-end font-monospace">Strength</th>
-      <th class="text-end font-monospace">Cardio</th>
-      <th class="text-end font-monospace">Plans</th>
-      <th>Last login</th>
-      <th></th>
-    </tr>
-  </thead>
-  <tbody>
-    {% for u in users %}
-    <tr>
-      <td class="font-monospace text-muted">{{ u.id }}</td>
-      <td class="fw-semibold">{{ u.username }}{% if u.id == admin_user_id %} <span class="badge bg-secondary">admin</span>{% endif %}</td>
-      <td>{{ u.display_name or '—' }}</td>
-      <td>{{ u.email or '—' }}</td>
-      <td class="text-end font-monospace">{{ u.strength_logs }}</td>
-      <td class="text-end font-monospace">{{ u.cardio_logs }}</td>
-      <td class="text-end font-monospace">{{ u.plans }}</td>
-      <td class="small text-muted">
-        {{ (u.last_login|string)[:10] if u.last_login else '—' }}
-      </td>
-      <td class="text-end">
-        {% if u.id != admin_user_id %}
-        <form method="post" action="{{ url_for('admin.delete_user', user_id=u.id) }}"
-              data-confirm="Delete user \'{{ u.username }}\' and ALL of their data? This cannot be undone."
-              class="d-inline">
-          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-          <button type="submit" class="btn btn-sm btn-outline-danger">Delete</button>
-        </form>
-        {% endif %}
-      </td>
-    </tr>
-    {% endfor %}
-  </tbody>
-</table>
+<div class="card card-flush adm-tablewrap">
+  <table class="data">
+    <thead>
+      <tr>
+        <th>ID</th><th>Username</th><th>Display name</th><th>Email</th>
+        <th class="num">Strength</th><th class="num">Cardio</th><th class="num">Plans</th>
+        <th>Last login</th><th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for u in users %}
+      <tr>
+        <td class="dim mono">{{ u.id }}</td>
+        <td>
+          <a class="adm-user-link" href="{{ url_for('admin.user_detail', user_id=u.id) }}">{{ u.username }}</a>
+          {% if u.id == admin_user_id %}<span class="chip solid">admin</span>{% endif %}
+        </td>
+        <td>{{ u.display_name or '—' }}</td>
+        <td class="dim">{{ u.email or '—' }}</td>
+        <td class="num mono">{{ u.strength_logs }}</td>
+        <td class="num mono">{{ u.cardio_logs }}</td>
+        <td class="num mono">{{ u.plans }}</td>
+        <td class="dim">{{ (u.last_login|string)[:10] if u.last_login else '—' }}</td>
+        <td class="num"><a class="link" href="{{ url_for('admin.user_detail', user_id=u.id) }}">Open →</a></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
 </div>
 {% endblock %}

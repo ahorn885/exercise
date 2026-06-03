@@ -1,0 +1,34 @@
+{#- Shared "no active plan" empty state (redesign §26) — the single
+    "You're at the start line." component. Pure markup (no context needed),
+    so any no-plan surface can {% include '_no_plan.html' %}. The two ways in
+    are grounded in real routes: plan_create.new_plan + plans.import_plan.
+
+    Note: the new IA already collapsed the design's three divergent no-plan
+    headlines down to one surface — the "Plan" nav item IS plans.list_plans —
+    so this is currently included there. The dashboard's no-plan state is a
+    purpose-built daily-hub hero ("No session scheduled"), intentionally
+    distinct, and does NOT use this component. -#}
+<div class="noplan">
+  <p class="eyebrow accent">● No active plan</p>
+  <h1 class="noplan-title">You're at the start line.</h1>
+  <p class="noplan-sub">Every session you'll run anchors to a race. Generate your first plan in a few
+    minutes — built from your profile, your schedule, and your target — or import one you already have.</p>
+  <div class="noplan-ways">
+    <div class="card noplan-card start">
+      <p class="eyebrow accent">● Start here</p>
+      <div class="noplan-card-title">Generate from your profile</div>
+      <p class="noplan-card-sub">We periodize back from your race date — Base → Build → Peak → Taper.</p>
+      <a class="btn btn-primary" href="{{ url_for('plan_create.new_plan') }}">
+        <svg class="icon" width="13" height="13" aria-hidden="true"><use href="#i-bolt"></use></svg> Set race &amp; generate
+      </a>
+    </div>
+    <div class="card noplan-card">
+      <p class="eyebrow">● Power user</p>
+      <div class="noplan-card-title">Import a plan</div>
+      <p class="noplan-card-sub">Paste JSON from a coach, another tool, or hand-built.</p>
+      <a class="btn btn-ghost" href="{{ url_for('plans.import_plan') }}">
+        <svg class="icon" width="13" height="13" aria-hidden="true"><use href="#i-upload"></use></svg> Import
+      </a>
+    </div>
+  </div>
+</div>

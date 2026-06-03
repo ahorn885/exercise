@@ -45,6 +45,7 @@ from race_events_repo import (
     delete_route_locale,
     delete_route_locale_equipment,
     get_race_event,
+    list_athlete_race_events,
     list_route_locale_equipment,
     list_route_locales,
     set_target_event,
@@ -408,8 +409,76 @@ def _parse_previous_attempts(form) -> list[dict]:
     return out
 
 
+def _coerce_event_date(value):
+    """Coerce a stored `event_date` to a `date`, or None.
+
+    Postgres hands back a `date`; the SQLite dev fallback hands back an ISO
+    `'YYYY-MM-DD'` string. The manager listing compares against today to
+    bucket upcoming/past + compute weeks-out, so normalize both shapes here.
+    """
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    try:
+        return datetime.strptime(str(value)[:10], '%Y-%m-%d').date()
+    except (ValueError, TypeError):
+        return None
+
+
 def _tab_redirect():
-    return redirect(url_for('profile.edit', tab='race-events'))
+    return redirect(url_for('race_events.index'))
+
+
+@bp.route('/', methods=['GET'])
+def index():
+    """Standalone Races · event manager (redesign §10).
+
+    Promotes the race calendar out of the `/profile?tab=race-events` tab into
+    a first-class page under Plan. The target race drives Layer 3
+    periodization + the pre-race-week brief, so it gets a spotlight; the
+    remaining races split into upcoming / past by `event_date`. Per-race edit
+    (route locales, equipment, Mapbox anchor) still lives on `edit_race`;
+    create / set-target / delete reuse the existing POST handlers, which now
+    land back here via `_tab_redirect`.
+    """
+    db = get_db()
+    uid = current_user_id()
+    races = list_athlete_race_events(db, uid)
+    today = date.today()
+
+    target = None
+    upcoming: list[dict] = []
+    past: list[dict] = []
+    for r in races:
+        ed = _coerce_event_date(r['event_date'])
+        r['event_date_d'] = ed
+        r['weeks_out'] = (ed - today).days // 7 if ed and ed >= today else None
+        if r['is_target_event']:
+            target = r
+            continue
+        if ed is not None and ed < today:
+            past.append(r)
+        else:
+            upcoming.append(r)
+
+    # The repo returns event_date ascending; show past races most-recent-first.
+    past.reverse()
+
+    target_upcoming = bool(
+        target and (target['event_date_d'] is None or target['event_date_d'] >= today)
+    )
+    upcoming_count = len(upcoming) + (1 if target_upcoming else 0)
+
+    return render_template(
+        'profile/race_events.html',
+        target=target,
+        upcoming=upcoming,
+        past=past,
+        upcoming_count=upcoming_count,
+    )
 
 
 @bp.route('/new', methods=['GET', 'POST'])

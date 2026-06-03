@@ -1,86 +1,83 @@
-{% extends 'base_legacy.html' %}
-{% block title %}Refresh your plan — AIDSTATION{% endblock %}
+{# Redesign §13 — Plan refresh. Re-runs the cascade against an existing plan
+   version over a chosen horizon (T1/T2/T3) and writes a new version to diff
+   against. Migrated onto the new shell; the Bootstrap frequency-cap modal
+   (nonce'd, CSP-clean) is preserved. #}
+{% extends 'base.html' %}
+{% set nav_active = 'plan' %}
+{% block title %}Refresh plan{% endblock %}
+{% block crumbs %}<a href="{{ url_for('plans.list_plans') }}">Plan</a> <span class="sep">/</span> <b>Refresh</b>{% endblock %}
+
 {% block content %}
+<div class="dash-head">
+  <div class="races-intro">
+    <p class="eyebrow accent">● Plan · adapt to new context</p>
+    <h1 class="page-title">Refresh your plan.</h1>
+    <p class="page-sub">Pick a horizon and (optionally) tell us what changed. We re-run the cascade
+      that matters for that window and write a new plan version you can compare against the current one.</p>
+  </div>
+</div>
 
-<nav class="mb-3">
-  <a href="{{ url_for('dashboard.index') }}" class="text-muted small">&larr; Back to dashboard</a>
-</nav>
+<div class="stack refresh-wrap">
 
-<h4 class="mb-3">Refresh your plan</h4>
+  {% if parent_plan is none %}
+  <div class="card card-pad">
+    <p class="eyebrow accent">● No plan yet</p>
+    <h2 class="race-empty-title">Create a plan first.</h2>
+    <p class="page-sub">Plan refresh re-runs the cascade against an existing plan version, so you
+      need one to refresh.</p>
+    <a href="{{ url_for('plan_create.new_plan') }}" class="btn btn-primary">
+      <svg class="icon" width="13" height="13" aria-hidden="true"><use href="#i-bolt"></use></svg> Create a plan
+    </a>
+  </div>
+  {% else %}
 
-{% if parent_plan is none %}
-
-  <div class="alert alert-light border">
-    <strong>You don't have a plan yet.</strong>
-    Plan refresh re-runs the cascade against an existing plan version, so
-    you need to create one first.
-    <div class="mt-2">
-      <a href="{{ url_for('plan_create.new_plan') }}" class="btn btn-primary btn-sm">Create a plan</a>
-    </div>
+  <div class="card card-pad current-version">
+    <p class="eyebrow">Current plan version</p>
+    <p class="cv-line mono">
+      v{{ parent_plan.id }} · {{ parent_plan.created_via|replace('_', ' ') }} · Pattern {{ parent_plan.pattern }}
+      · {{ parent_plan.scope_start_date }} → {{ parent_plan.scope_end_date }}
+    </p>
   </div>
 
-{% else %}
-
-  <p class="text-muted">
-    Pick a horizon and (optionally) tell us what changed. We'll re-run
-    the cascade that matters for that window and write a new plan version
-    you can compare against the current one.
-  </p>
-
-  <div class="card mb-3">
-    <div class="card-body">
-      <h6 class="card-title mb-1">Current plan version</h6>
-      <p class="mb-0 small text-muted">
-        v{{ parent_plan.id }} ({{ parent_plan.created_via|replace('_', ' ') }},
-        Pattern {{ parent_plan.pattern }})
-        &middot; {{ parent_plan.scope_start_date }} → {{ parent_plan.scope_end_date }}
-      </p>
-    </div>
-  </div>
-
-  <form method="post" action="{{ url_for('plan_refresh.refresh') }}">
+  <form method="post" action="{{ url_for('plan_refresh.refresh') }}" class="card card-pad">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     {% if prefill_triggered_by_ad_hoc_id %}
-      {# D-63 §5.4 — round-trip the T1-hook ad-hoc FK so plan_refresh_log
-         attributes back to the originating suggestion. #}
-      <input type="hidden" name="triggered_by_ad_hoc_id"
-             value="{{ prefill_triggered_by_ad_hoc_id }}">
+      <input type="hidden" name="triggered_by_ad_hoc_id" value="{{ prefill_triggered_by_ad_hoc_id }}">
     {% endif %}
 
-    <div class="mb-3">
-      <label class="form-label" for="nl_context">What changed? (optional)</label>
+    <label class="field">
+      <span class="lbl">What changed? (optional)</span>
       <textarea class="form-control" id="nl_context" name="nl_context"
                 rows="3" maxlength="{{ nl_text_cap }}"
                 placeholder="I'm tired   —OR—   I tweaked my ankle   —OR—   Travel Wed-Fri   —OR—   I just got a new MTB">{{ prefill_nl_context or '' }}</textarea>
-      <small class="text-muted">~{{ nl_text_cap }} char soft cap. Plain English; no structure required.</small>
-    </div>
+      <span class="rail-note">~{{ nl_text_cap }} char soft cap. Plain English; no structure required.</span>
+    </label>
 
-    <div class="d-flex flex-wrap gap-2">
+    <div class="refresh-tiers">
       <button type="submit" name="submit_t1" value="1"
-              class="btn {% if prefill_tier is none or prefill_tier == 'T1' %}btn-primary{% else %}btn-outline-primary{% endif %}">
+              class="btn {% if prefill_tier is none or prefill_tier == 'T1' %}btn-primary{% else %}btn-ghost{% endif %}">
         Refresh next 2 days
       </button>
       <button type="submit" name="submit_t2" value="1"
-              class="btn {% if prefill_tier is none or prefill_tier == 'T2' %}btn-primary{% else %}btn-outline-primary{% endif %}">
+              class="btn {% if prefill_tier is none or prefill_tier == 'T2' %}btn-primary{% else %}btn-ghost{% endif %}">
         Refresh week
       </button>
       <button type="submit" name="submit_t3" value="1"
-              class="btn {% if prefill_tier is none or prefill_tier == 'T3' %}btn-primary{% else %}btn-outline-primary{% endif %}">
+              class="btn {% if prefill_tier is none or prefill_tier == 'T3' %}btn-primary{% else %}btn-ghost{% endif %}">
         Refresh next 4 weeks
       </button>
     </div>
 
-    <p class="text-muted small mt-3 mb-0">
-      <strong>Tip:</strong> 2 days = quick fix (energy / equipment-of-the-
-      moment). 7 days = weekly check-in. 28 days = big update
-      (fitness signal / race-block re-eval).
+    <p class="rail-note refresh-tip">
+      <b>Tip:</b> 2 days = quick fix (energy / equipment-of-the-moment). 7 days = weekly check-in.
+      28 days = big update (fitness signal / race-block re-eval).
     </p>
   </form>
 
   {% if cap_exceeded %}
     {# D-64 §8 frequency-cap modal-confirm. Auto-opens via the inline
        script below; [Refresh anyway] resubmits with hidden cap_override=1
-       preserving the submitted tier + nl_context. #}
+       preserving the submitted tier + nl_context. Bootstrap modal kept. #}
     <div class="modal fade" id="capExceededModal" tabindex="-1"
          aria-labelledby="capExceededLabel" aria-hidden="true">
       <div class="modal-dialog modal-dialog-centered">
@@ -102,7 +99,7 @@
             </p>
           </div>
           <div class="modal-footer">
-            <button type="button" class="btn btn-outline-secondary"
+            <button type="button" class="btn btn-ghost"
                     data-bs-dismiss="modal">Cancel</button>
             <form method="post" action="{{ url_for('plan_refresh.refresh') }}"
                   class="d-inline">
@@ -111,7 +108,6 @@
                      value="{{ prefill_nl_context or '' }}">
               <input type="hidden" name="cap_override" value="1">
               {% if prefill_triggered_by_ad_hoc_id %}
-                {# D-63 §5.4 — preserve attribution through the override. #}
                 <input type="hidden" name="triggered_by_ad_hoc_id"
                        value="{{ prefill_triggered_by_ad_hoc_id }}">
               {% endif %}
@@ -132,6 +128,6 @@
     </script>
   {% endif %}
 
-{% endif %}
-
+  {% endif %}
+</div>
 {% endblock %}
