@@ -1981,3 +1981,21 @@ body.bulk-mode { padding-bottom: 80px; }
 .app .fb-raw { font-family: var(--mono); font-size: 13px; color: var(--fg-2); white-space: pre-wrap; word-break: break-word; background: var(--bg); border-radius: var(--r-sm); padding: 14px; margin: 0; }
 
 .app .onb-wrap--wide { max-width: 920px; }
+
+/* ════════════════════════════════════════════════════════════════════
+   Natural-language "log via text" (finish-the-open) — conversational parse
+   → preview → confirm on the new shell. Replaces the legacy u-* utilities.
+   ════════════════════════════════════════════════════════════════════ */
+.app .nl-chat-card { padding: 0; overflow: hidden; }
+.app .nl-chat-head { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; padding: 14px 16px; border-bottom: 1px solid var(--hairline-2); flex-wrap: wrap; }
+.app .nl-chat { min-height: 120px; max-height: 360px; overflow-y: auto; padding: 16px; }
+.app .nl-chat-hint { text-align: center; }
+.app .nl-chat-foot { padding: 14px 16px; border-top: 1px solid var(--hairline-2); }
+.app .nl-input { display: flex; gap: 8px; }
+.app .nl-textarea { flex: 1; resize: none; }
+.app .nl-status-row { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-top: 8px; font-size: 12px; }
+.app .nl-restart { font-size: 12px; }
+.app .nl-preview .nl-chat-head { padding: 0 0 12px; }
+.app .nl-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 14px; }
+.app .nl-fit { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.app .nl-fit-act { display: flex; gap: 8px; }
