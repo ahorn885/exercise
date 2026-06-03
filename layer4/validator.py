@@ -1043,11 +1043,26 @@ def _rule_discipline_excluded(
 def _rule_sport_locale_incompatible(
     payload: Layer4Payload, ctx: ValidatorContext
 ) -> list[RuleFailure]:
+    # Spec-alignment fix: Layer 2C `discipline_coverage` measures how many of a
+    # discipline's *strength-conditioning* exercises (Layer 0B) resolve against a
+    # locale's equipment — it is explicitly ADVISORY per `Layer2C_Spec §8.1` (a
+    # `low_coverage` flag), NOT a gate. Two corrections from the prior blocker:
+    #   1. Only evaluate STRENGTH sessions. A cardio/sport session (go run / MTB /
+    #      trek) carries no strength_exercises; whether it can happen at a locale is
+    #      a TERRAIN question (Layer 2B, non-gating — multi-locale cluster work),
+    #      NOT an equipment-coverage question. Gating sport sessions here was a
+    #      category error that hard-blocked outdoor disciplines with zero Layer 0B
+    #      exercises (e.g. Mountain Biking, Rock Climbing) even when the athlete
+    #      owns the craft, stalling cold plans (prod pv=54: Build:seam0:w3 looped on
+    #      sport_locale_incompatible D-003/D-008/D-012 until the 900s stall reaper).
+    #   2. Demote to `warning`. The hard equipment gate on the *actual prescribed*
+    #      strength exercises is Rule 6a `equipment_unavailable` (per-exercise); this
+    #      discipline-level signal stays advisory, consistent with the spec.
     if not ctx.layer2c_payloads:
         return []
     out: list[RuleFailure] = []
     for s in payload.sessions:
-        if s.discipline_id is None or s.locale_id is None or s.kind == "rest":
+        if s.discipline_id is None or s.locale_id is None or s.kind != "strength":
             continue
         l2c = ctx.layer2c_payloads.get(s.locale_id)
         if l2c is None:
@@ -1064,10 +1079,11 @@ def _rule_sport_locale_incompatible(
                 RuleFailure(
                     rule_name=f"sport_locale_incompatible_{s.discipline_id}_{s.locale_id}_{s.session_id}",
                     phase_name=s.phase_metadata.phase_name if s.phase_metadata else None,
-                    severity="blocker",
+                    severity="warning",
                     detail=(
-                        f"discipline {s.discipline_id} not supported at locale {s.locale_id} "
-                        "(2C discipline_coverage has 0 exercises or 0 coverage)"
+                        f"discipline {s.discipline_id} has no resolvable strength exercises "
+                        f"at locale {s.locale_id} (2C discipline_coverage 0); advisory only — "
+                        "Rule 6a equipment_unavailable gates the actual prescribed exercises"
                     ),
                     affected_session_ids=[s.session_id],
                 )
