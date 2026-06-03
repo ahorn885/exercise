@@ -1933,3 +1933,18 @@ body.bulk-mode { padding-bottom: 80px; }
   .app .onb-fields { grid-template-columns: 1fr; }
   .app .onb-provider { align-items: flex-start; }
 }
+
+/* Onboarding forms that keep a Bootstrap grid (target_race + the route_locales
+   add-form — they share partials with the still-legacy race_event_edit, so we
+   don't rewrite the grid): restore the Bootstrap gutters `.app .row` zeroes. */
+.app .onb-form .row { gap: 0; --bs-gutter-x: 1.5rem; --bs-gutter-y: 1rem; }
+.app .onb-form .form-text { color: var(--fg-3); }
+
+/* Location list rows (onboarding locales + route_locales) */
+.app .onb-loc-list { list-style: none; margin: 12px 0 0; padding: 0; display: flex; flex-direction: column; }
+.app .onb-loc { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; padding: 12px 0; border-top: 1px solid var(--hairline-2); }
+.app .onb-loc:first-child { border-top: 0; padding-top: 0; }
+.app .onb-loc-id { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; min-width: 0; }
+.app .onb-loc-cap { text-transform: capitalize; }
+.app .onb-loc-notes { width: 100%; margin-top: 2px; }
+.app .onb-loc form { margin: 0; }

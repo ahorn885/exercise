@@ -34,12 +34,19 @@ class _Cursor:
         return []
 
 
+_TARGET = _FakeRow(id=9, name='Pocket Gopher Extreme', race_format='continuous_multi_day',
+                   event_date=None, race_terrain=None, previous_attempts=None,
+                   included_discipline_ids=None, event_locale_lat=None, event_locale_lng=None)
+
+
 class _Conn:
     def execute(self, sql, *a, **k):
         s = ' '.join(sql.split())
         if 'FROM users' in s:
             return _Cursor(_FakeRow(id=1, username='owner', email='o@x.test',
                                     display_name='Owner'))
+        if 'is_target_event = TRUE' in s:
+            return _Cursor(_TARGET)   # a target race exists → route_locales won't redirect
         return _Cursor(None)
 
     def commit(self):
@@ -100,3 +107,30 @@ def test_schedule_render(monkeypatch):
     html = resp.get_data(as_text=True)
     _assert_onboarding_shell(html, 'schedule')
     assert 'When can you train?' in html
+
+
+def test_locales_render(monkeypatch):
+    resp = _client(monkeypatch).get('/onboarding/locales')
+    assert resp.status_code == 200
+    html = resp.get_data(as_text=True)
+    _assert_onboarding_shell(html, 'locales')
+    assert 'Where do you train?' in html
+
+
+def test_target_race_render(monkeypatch):
+    resp = _client(monkeypatch).get('/onboarding/target-race')
+    assert resp.status_code == 200
+    html = resp.get_data(as_text=True)
+    _assert_onboarding_shell(html, 'target_race')
+    assert 'What race are you training for?' in html
+    # Bootstrap-grid form body kept under the gutter-restoring wrapper.
+    assert 'onb-form' in html
+
+
+def test_route_locales_render(monkeypatch):
+    # A target race exists (faked), so the route renders rather than redirecting.
+    resp = _client(monkeypatch).get('/onboarding/route-locales')
+    assert resp.status_code == 200
+    html = resp.get_data(as_text=True)
+    _assert_onboarding_shell(html, 'route_locales')
+    assert 'Map the race route.' in html

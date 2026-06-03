@@ -1,44 +1,29 @@
-{% extends 'base_legacy.html' %}
+{% extends 'base.html' %}
+{% from 'onboarding/_onb_steps.html' import onb_steps %}
 {% block title %}Target race — AIDSTATION{% endblock %}
+{% block crumbs %}<b>Set up</b> <span class="sep">/</span> Target race{% endblock %}
+
+{# Redesign (finish-the-open) — onboarding Step 7 (Target race), migrated onto
+   the new .app shell. The form body keeps its Bootstrap grid + the three
+   shared partials (_race_locale_picker / _previous_attempts_editor /
+   _race_terrain_editor — also used by profile/race_event_edit.html), with
+   gutters restored inside `.onb-form` (since `.app .row` zeroes them). Field
+   names, the two nonced rebind/metric scripts, and Save/Skip are unchanged. #}
+
 {% block content %}
-
-{# v5 onboarding Step 3c — "Target race" (D-66 §H.2).
-   Race name + event date + race_format (closed 4-enum) plus the
-   conditional distance/elevation/rules/gear fields for multi-day formats.
-   Single-day picks bounce to /profile?tab=athlete on Save; multi-day picks
-   advance to /onboarding/route-locales (Step 3d). The Skip-for-now link
-   POSTs to /onboarding/target-race/skip which writes an
-   'target_race_skipped' account_nudge and lands the athlete on the
-   profile form. #}
-
-<div class="mb-4">
-  <ol class="list-inline small text-muted mb-1">
-    <li class="list-inline-item"><span class="badge bg-success">✓</span> Step 1 — Account</li>
-    <li class="list-inline-item">›</li>
-    <li class="list-inline-item"><span class="badge bg-success">✓</span> Step 2 — Connect providers</li>
-    <li class="list-inline-item">›</li>
-    <li class="list-inline-item"><span class="badge bg-success">✓</span> Step 3 — Prefill review</li>
-    <li class="list-inline-item">›</li>
-    <li class="list-inline-item"><span class="badge bg-success">✓</span> Step 4 — Locations</li>
-    <li class="list-inline-item">›</li>
-    <li class="list-inline-item"><span class="badge bg-success">✓</span> Step 5 — Skills</li>
-    <li class="list-inline-item">›</li>
-    <li class="list-inline-item"><span class="badge bg-success">✓</span> Step 6 — Schedule</li>
-    <li class="list-inline-item">›</li>
-    <li class="list-inline-item"><strong class="text-body">Step 7 — Target race</strong></li>
-  </ol>
-  <h4 class="mb-0">What race are you training for?</h4>
+<div class="dash-head">
+  <div class="races-intro">
+    <p class="eyebrow accent">● Set up · Step 6 of 6</p>
+    <h1 class="page-title">What race are you training for?</h1>
+    <p class="page-sub">Plans calibrate periodization to your target race. Pick the race format first —
+      multi-day events get extra race-rules + mandatory-gear fields the race-week brief reasons against.
+      No race yet? Skip for now and come back any time from Profile → Race events.</p>
+  </div>
 </div>
 
-<p class="text-muted">
-  Plans calibrate periodization to your target race. Pick the race
-  format first — multi-day events get extra fields for race-rules and
-  mandatory gear so the race-week brief can reason against them. If you
-  don't have a race picked yet, skip for now and come back any time
-  from Profile → Race events.
-</p>
+{{ onb_steps('target_race') }}
 
-<form method="post" action="{{ url_for('onboarding.target_race_save') }}">
+<form method="post" action="{{ url_for('onboarding.target_race_save') }}" class="onb-form onb-wrap">
   <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
 
   <div class="row g-3">
