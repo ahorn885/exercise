@@ -29,8 +29,15 @@ def _boom():
     raise RuntimeError('kaboom — synthetic failure for the §27 test')
 
 
+def _forbidden():
+    from flask import abort
+    abort(403)
+
+
 if 'boom' not in _appmod.app.view_functions:
     _appmod.app.add_url_rule('/__boom__', 'boom', _boom)
+if 'forbidden' not in _appmod.app.view_functions:
+    _appmod.app.add_url_rule('/__forbidden__', 'forbidden', _forbidden)
 
 
 class _FakeRow(dict):
@@ -85,6 +92,26 @@ def test_404_renders_trail_voice(monkeypatch):
     assert 'request_id' in html
     assert 'mailto:help@aidstation.pro' in html
     # CSP-clean — standalone page, no inline style/handlers/script.
+    assert 'style="' not in html
+    assert 'onclick=' not in html
+    assert '<script' not in html
+
+
+def test_403_renders_admin_only(monkeypatch):
+    client = _client(monkeypatch)
+    resp = client.get('/__forbidden__')
+    assert resp.status_code == 403
+    html = resp.get_data(as_text=True)
+    assert 'error-page' in html
+    assert 'Crew only past here.' in html
+    assert '403 · ADMIN ONLY' in html
+    # Permission gate → warn tone, way-back quicklinks, no retry button.
+    assert 'error-glyph--warn' in html
+    assert 'error-quicklinks' in html
+    assert 'Try again' not in html
+    assert '403 forbidden' in html
+    assert 'mailto:help@aidstation.pro' in html
+    # CSP-clean — standalone page.
     assert 'style="' not in html
     assert 'onclick=' not in html
     assert '<script' not in html
