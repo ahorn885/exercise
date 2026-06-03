@@ -56,8 +56,9 @@ Default per-phase strength frequency (sessions/week), from the season-periodizat
 
 - **3–5 multi-joint, lower-body-biased exercises per session**, whole-body (not split).
 - Build phases: **2–3 sets × 4–10RM (~80–90% 1RM-equivalent)**, ~2–3 min rest, **not to failure**.
-- Maintenance (Peak/Taper): ~half the sets (e.g. main lift 2 sets, accessory 1 set), **load stays heavy**.
+- Maintenance (Peak/Taper): **reduce volume by cutting sets (3→2) and/or frequency (2→1×/wk) — keep ≥2 sets for realism — while HOLDING the load and rep range.** The maintenance literature is explicit: strength is preserved by cutting *volume*, **not** by reducing *intensity* — dropping the weight is precisely what detrains (Spiering 2021; Rønnestad 2010 held a ~23% strength gain on 1×/wk × 2 sets @ 80–85% 1RM). **Do not taper by lowering load.** (Note: this corrects the intuition to "drop reps or weight" — trimming a rep is fine, dropping kg is counterproductive.)
 - **Load = RM/RPE target string** (`"3×5 @ ~8RM"` / `"@RPE 8"`), not absolute weight. (Phase 2b swaps this for rx_engine absolute loads.)
+- **Novel / unlogged exercise (no history → unknown working weight):** prescribe the reps and instruct *"use a load you can complete for N reps with ~2 reps in reserve, and log it"* — the athlete self-establishes the baseline on first encounter, which seeds Phase 2b's rx_engine progression. **No exercise is withheld for lack of history.**
 - De-prioritize hypertrophy-range (6–12 to failure) — added mass can hurt economy; some hypertrophy tolerable for load-carriage/durability.
 
 ---
@@ -83,9 +84,10 @@ A `strength` PlanSession must carry a non-None `discipline_id` (schema invariant
 
 ## 7. Scheduling (paired + interference)
 
-- Strength is the **2nd session on an easy/moderate cardio day** (within §K windows, respecting the 2-per-day cap; `session_index_in_day ∈ {0,1}`).
-- Keep **≥3 h** from key intensity/long sessions (interference is abolished by ≥3 h separation; Schumann 2022); don't put heavy legs **before** a quality run (running economy degraded up to ~8 h post-leg-RT).
-- Endurance is **not** impaired by adding strength (asymmetric) — so strength placement protects strength/power, not the cardio.
+Scheduling is **day-level only** — the app prescribes sessions per day, not times of day; the athlete chooses when within the day. So:
+- Place strength on an **easy/moderate cardio day**, **not** the same day as a key intensity/long session (same-day concurrent work is where interference concentrates; Schumann 2022). It rides as the day's 2nd session (within §K windows, 2-per-day cap, `session_index_in_day ∈ {0,1}`).
+- The engine does **not** prescribe a time gap. If strength must share a day with a hard session, surface an athlete-facing cue in `session_notes` (e.g. *"separate this from today's hard session by a few hours if you can; don't lift heavy legs right before the quality session"*). The ≥3 h interference window is **athlete guidance, not an engine constraint**.
+- Endurance is **not** impaired by adding strength (asymmetric) — placement protects strength/power, not the cardio.
 
 ---
 
@@ -111,9 +113,9 @@ Empty pool for a discipline (e.g. D-008/D-012, zero 0B exercises) → render not
 Add a `# Strength programming` section to `SYSTEM_PROMPT` (`per_phase.py:170`). Proposed text (for sign-off — Trigger #1):
 
 > **# Strength programming**
-> Program resistance training every week per the phase dose: **Base/Build 2 sessions/week, Peak 1 (maintenance), Taper 1 early then none in the final ~7–10 days.** Each session: **3–5 multi-joint, lower-body-biased exercises, 2–3 sets, 4–10 rep range, not to failure**, prescribed as **RM/RPE targets** (e.g. `3×5 @ ~8RM`) — never invent absolute weights. Maintenance phases cut sets ~half but keep the rep range heavy.
+> Program resistance training every week per the phase dose: **Base/Build 2 sessions/week, Peak 1 (maintenance), Taper 1 early then none in the final ~7–10 days.** Each session: **3–5 multi-joint, lower-body-biased exercises, 2–3 sets, 4–10 rep range, not to failure**, prescribed as **RM/RPE targets** (e.g. `3×5 @ ~8RM`) — never invent absolute weights. In maintenance phases (Peak/Taper) **reduce volume — drop to ~2 sets and/or 1 session/week — but keep the load and rep range heavy; never maintain by lowering the weight.** If the athlete has no logged history for an exercise, prescribe the reps and tell them to *use a load they can complete for that many reps with ~2 reps in reserve, and log it* — they set their own baseline; do not withhold an exercise for lack of history.
 > Pick exercises from the rendered **Strength exercise pool** for the session's locale (never invent `exercise_id`s). Keep a **stable core** of 2–3 compound lifts across the phase for progression; **rotate accessory exercises** week-to-week for variety. Prefer **unilateral / offset / anti-rotation** variants (single-arm, single-leg, carries) — they build one-sided strength and trunk stability together, which transfers to multi-sport. Prefer heavy + explosive over hypertrophy; de-emphasize added muscle mass.
-> Attribute each strength session's `discipline_id` to the discipline it most supports. Place strength as the **second session on an easy/moderate cardio day**, **≥3 h after** (or on a different day from) key intensity/long sessions; never schedule heavy lower-body strength right before a quality endurance session. Honor 2D injury exclusions/accommodations.
+> Attribute each strength session's `discipline_id` to the discipline it most supports. Place strength as the **second session on an easy/moderate cardio day**, not on the same day as a key intensity/long session. Do not prescribe a time of day; if strength shares a day with a hard session, add a `session_notes` cue to separate them by a few hours and avoid heavy legs right before the quality session. Honor 2D injury exclusions/accommodations.
 
 Also update the `# Output discipline` line on `load_prescription` to say **RM/RPE target, not absolute load**.
 
@@ -148,7 +150,7 @@ Also update the `# Output discipline` line on `load_prescription` to say **RM/RP
 
 - **Phase 2b (#335):** rx_engine deterministic absolute loads from logged capacity records + `strength_benchmarks` bootstrap; confirm capacity records reach `layer4/context.py`.
 - **Optional Layer 0 enhancement:** a dedicated `offset/anti-rotation/contralateral` tag so the stability bias is data-driven, not prompt-only (today partial via `movement_patterns`/`movement_components`).
-- **Phase 3 (#298/#341):** multi-locale cluster — strength could then prefer the home-gym locale while cardio uses terrain locales.
+- **Phase 3 (#298/#341):** multi-locale cluster. Locale selection is **per-session and exclusive** (single-locale-per-session — never a workout requiring two places; the schema's single-locale invariant already enforces this). When a nearby strength gym is in the cluster, choose the session's locale by **anchoring on the highest-priority exercises**: if a Critical exercise (e.g. squat) needs equipment the home locale lacks but the gym has (a rack), select the gym; then any lower-priority exercise the chosen locale can't equip (e.g. battle ropes) is **substituted to fit that locale**, not split off to another place. The most-important exercise's equipment wins the locale; everything else conforms or is swapped.
 
 ---
 
