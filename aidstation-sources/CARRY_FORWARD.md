@@ -67,17 +67,32 @@ Rolling-state for items spanning multiple sessions. **Edit in place** — don't 
      session can read it (no token bypass). The secret never lives in the repo.
    - Hard-kill backstop (log drain, for 504/OOM before the except runs) is the
      deferred completeness layer — **#350**.
-5. **Phase 1 `sport_locale_incompatible` fix (PR #413, merged 2026-06-03) — re-run a fresh cold plan to validate.**
-   The fix (Rule 13 → advisory `warning`, strength-scoped; cardio/sport sessions no
-   longer gated on strength-exercise coverage) auto-deploys on the #413 merge. **Owed
-   (Andy's hands): create a fresh PGE plan** (must be *cold* — a scope/start that
-   doesn't replay pv≤54's cached blocks — reaching race day 2026-07-17) and watch
-   `GET /admin/plan/<id>/diag?token=…`; confirm it no longer stalls on
-   `sport_locale_incompatible`. **Watch for the NEXT constraint:** `volume_band_above/below`
-   blockers + the **#316 latency** (≈376s/block + a ~401s *wasted* thinking attempt that
-   hits `max_tokens` with no tool call on the seam re-synth) may be what limits a cold
-   plan next — Phase 1 removes the *unsatisfiable* blockers, it does not touch latency.
-6. **Phase 2 strength programming — ready to implement (spec signed off).**
+5. ✅ **DONE — Phase 1 `sport_locale_incompatible` fix validated by pv=55/pv=56 (2026-06-04); two NEW blockers found + fixed.**
+   The two cold re-runs both sailed far past pv=54's stall-at-0, so Phase 1 (PR #413) is
+   **validated**. They surfaced two distinct downstream blockers, both fixed this session:
+   **pv=55** (70 sessions / 6 blocks) died at the seam reviewer on a fatal invalid-verdict
+   combo → **PR #416** (`_coerce_verdict_combination` + non-retryable-branch traceback
+   persist). **pv=56** (1 block) stalled on a **leaked advance-lock** → **PR #419** (TTL
+   claim; see new owed item #7). **⚠ NEW owed (Andy's hands): the #419 migration (item 7)**,
+   then **re-run a fresh cold plan** (cold scope; reaches race day 2026-07-17) — expect it to
+   bank a block per pass to `ready` and finally exercise the seam fix. **#316 latency is the
+   remaining limiter** (see item 6.1 — the budget is mis-sized vs the real ~300s gateway).
+6. **#419 advance-lock TTL migration (merged 2026-06-04) — `python init_db.py` on Neon.**
+   Adds `plan_versions.advance_lock_until TIMESTAMPTZ` (idempotent, nullable). **Apply
+   BEFORE/with the #419 prod deploy** — the new claim/release SQL (`UPDATE … SET
+   advance_lock_until = now()+TTL … RETURNING id` / `… = NULL`) needs the column; without it
+   the claim errors and the guard fails. Replaces the leak-prone session `pg_advisory_lock`
+   that starved pv=56 after a SIGKILL skipped its `finally`.
+   - **6.1 Optional env-tune (not owed, recommended): set `PLAN_GEN_FUNCTION_CAP_S=300` in
+     Vercel.** pv=56's block-0 inspect (`latency_ms=168657`, 0 retries, `cap_hit=False`) +
+     the cron log proved the per-invocation budget is mis-sized vs the **real ~300s gateway**:
+     with `PLAN_GEN_FUNCTION_CAP_S=800` the budget is `800−330=470s > 300s`, so a pass *starts*
+     block N+1 (≈338s) and gets gateway-killed mid-flight — what triggered the pv=56 lock leak.
+     Setting it to **300** makes a pass return after ~1 block (before the gateway), banking
+     cleanly and making the leak rare. The #419 TTL lock makes completion correct either way;
+     this is a speed/cost win. Confirms the CLAUDE.md "re-validate the 800s-cap triage" note —
+     the effective ceiling is the gateway, not 800s.
+7. **Phase 2 strength programming — ready to implement (spec signed off).**
    `aidstation-sources/Layer4_StrengthProgramming_Phase2_Design_v1.md` fixes **#335**
    (bare-label / zero strength): render the 2C resolved-exercise surface into the
    per-phase prompt + an evidence-based dose policy (2/2/1/taper, 3–5 multi-joint,

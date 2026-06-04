@@ -40,15 +40,17 @@ def test_try_acquire_advance_lock_contract():
             self.calls.append((sql, params))
             return _Cur(self._row)
 
-    assert pc._try_acquire_advance_lock(_Db({"locked": True}), 7) is True
-    assert pc._try_acquire_advance_lock(_Db({"locked": False}), 7) is False
-    # null result (the non-Postgres FakeDb default) reads as acquired (fail-open)
-    assert pc._try_acquire_advance_lock(_Db(None), 7) is True
+    # The conditional UPDATE...RETURNING id returns a row IFF this pass won the
+    # claim (column NULL/lapsed); a live claim held elsewhere matches 0 rows.
+    assert pc._try_acquire_advance_lock(_Db({"id": 7}), 7) is True   # claimed
+    assert pc._try_acquire_advance_lock(_Db(None), 7) is False        # held elsewhere
 
-    db = _Db({"locked": True})
+    db = _Db({"id": 42})
     pc._try_acquire_advance_lock(db, 42)
-    assert db.calls[0][1] == (pc._ADVANCE_LOCK_NS, 42)
-    assert "pg_try_advisory_lock" in db.calls[0][0]
+    # TTL seconds + plan id, against the advance_lock_until column.
+    assert db.calls[0][1] == (pc._ADVANCE_LOCK_TTL_S, 42)
+    assert "advance_lock_until" in db.calls[0][0]
+    assert "RETURNING id" in db.calls[0][0]
 
 
 def test_advance_skips_when_lock_held(monkeypatch):
@@ -69,8 +71,8 @@ def test_advance_skips_when_lock_held(monkeypatch):
 
     class _Db:
         def execute(self, sql, params=()):
-            if "pg_try_advisory_lock" in sql:
-                return _Cur({"locked": False})
+            # The conditional claim UPDATE matches 0 rows (returns no row) when a
+            # live claim is already held by another invocation.
             return _Cur(None)
 
         def commit(self):
@@ -102,7 +104,8 @@ def test_advance_in_progress_noop_is_logged(monkeypatch, capsys):
 
     class _Db:
         def execute(self, sql, params=()):
-            return _Cur({"locked": False} if "pg_try_advisory_lock" in sql else None)
+            # Claim held elsewhere → the conditional UPDATE returns no row.
+            return _Cur(None)
 
         def commit(self):
             pass
@@ -113,8 +116,8 @@ def test_advance_in_progress_noop_is_logged(monkeypatch, capsys):
 
 
 def test_release_advance_lock_keyed_and_best_effort(capsys):
-    """`_release_advance_lock` issues `pg_advisory_unlock` keyed to the plan,
-    and a release fault is swallowed (it must never mask the pass outcome)."""
+    """`_release_advance_lock` clears `advance_lock_until` for the plan, and a
+    release fault is swallowed (it must never mask the pass outcome)."""
     calls = []
 
     class _Db:
@@ -123,8 +126,8 @@ def test_release_advance_lock_keyed_and_best_effort(capsys):
             return _Cur(None)
 
     pc._release_advance_lock(_Db(), 55)
-    assert "pg_advisory_unlock" in calls[-1][0]
-    assert calls[-1][1] == (pc._ADVANCE_LOCK_NS, 55)
+    assert "advance_lock_until = NULL" in calls[-1][0]
+    assert calls[-1][1] == (55,)
 
     class _Boom:
         def execute(self, *a, **k):
@@ -135,15 +138,17 @@ def test_release_advance_lock_keyed_and_best_effort(capsys):
 
 
 class _RecordingDb:
-    """Lock acquired (True); records every SQL so a test can assert the
-    advance lock is released. Tolerates any other query."""
+    """Claim won (the conditional UPDATE returns a row); records every SQL so a
+    test can assert the advance claim is cleared on exit. Tolerates any other
+    query."""
 
     def __init__(self):
         self.sql = []
 
     def execute(self, sql, params=()):
         self.sql.append(sql)
-        return _Cur({"locked": True} if "pg_try_advisory_lock" in sql else None)
+        claimed = "advance_lock_until = now()" in sql and "RETURNING id" in sql
+        return _Cur({"id": 7} if claimed else None)
 
     def commit(self):
         pass
@@ -153,20 +158,21 @@ class _RecordingDb:
 
 
 def test_advance_releases_lock_on_clean_return(monkeypatch):
-    """A pass that ACQUIRES the lock releases it on the way out — otherwise a
-    clean return on a pooled connection leaks it and starves the plan."""
+    """A pass that WON the claim clears it on the way out — otherwise a clean
+    return on a pooled connection leaves the stamp until the TTL and slows the
+    next pass."""
     monkeypatch.setattr(pc, "_load_plan_version", _generating_pv)
     monkeypatch.setattr(
         pc, "_advance_plan_generation_locked", lambda *a, **k: {"status": "ready"}
     )
     db = _RecordingDb()
     assert pc._advance_plan_generation(db, 1, 7) == {"status": "ready"}
-    assert any("pg_advisory_unlock" in s for s in db.sql)
+    assert any("advance_lock_until = NULL" in s for s in db.sql)
 
 
 def test_advance_releases_lock_even_when_body_raises(monkeypatch):
     """The release is in a `finally`, so it fires even if the locked body
-    raises — the lock must not survive a crashing pass on a pooled conn."""
+    raises — the claim must not survive a crashing pass on a pooled conn."""
     monkeypatch.setattr(pc, "_load_plan_version", _generating_pv)
 
     def _boom(*a, **k):
@@ -176,7 +182,7 @@ def test_advance_releases_lock_even_when_body_raises(monkeypatch):
     db = _RecordingDb()
     with pytest.raises(RuntimeError):
         pc._advance_plan_generation(db, 1, 7)
-    assert any("pg_advisory_unlock" in s for s in db.sql)
+    assert any("advance_lock_until = NULL" in s for s in db.sql)
 
 
 # ─── per-invocation budget ───────────────────────────────────────────────────
@@ -241,8 +247,9 @@ def test_advance_budget_incomplete_keeps_generating(monkeypatch):
 
     class _Db:
         def execute(self, sql, params=()):
-            if "pg_try_advisory_lock" in sql:
-                return _Cur({"locked": True})
+            # Win the advance claim (the conditional UPDATE returns the id row).
+            if "advance_lock_until = now()" in sql and "RETURNING id" in sql:
+                return _Cur({"id": 7})
             return _Cur(None)
 
         def commit(self):

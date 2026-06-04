@@ -121,19 +121,23 @@ _CRON_WALL_CLOCK_BUDGET_S = 240
 _STALL_WALLCLOCK_S = 900
 
 
-# D-77 concurrency guard. Vercel's every-minute cron re-fires while a prior
-# pass is still running (each can run up to the function-duration cap) and the
+# D-77 concurrency guard. Vercel's every-minute cron re-fires while a prior pass
+# is still running (each can run up to the function-duration cap) and the
 # progress poller hits the same row -- so without a guard up to ~5 invocations
-# advance ONE plan at once. They all replay the cached blocks, all MISS the
-# same frontier week, and all synthesize it concurrently: N duplicate
-# extended-thinking calls, one wins the cache put, the rest are burned. (This,
-# not single-pass cost, is the dominant money-loop once cache keys are
-# deterministic.) A Postgres session advisory lock keyed on the plan lets
-# exactly one invocation advance it; the rest no-op. Session locks auto-release
-# when the connection closes (request teardown OR a 504 dropping the conn), so
-# a killed pass never strands the lock -- the next fire re-acquires and resumes
-# from the cache.
-_ADVANCE_LOCK_NS = 0x504C414E  # ascii 'PLAN' -- advisory-lock namespace
+# advance ONE plan at once. They all replay the cached blocks, all MISS the same
+# frontier week, and all synthesize it concurrently: N duplicate extended-thinking
+# calls, one wins the cache put, the rest are burned. (This, not single-pass cost,
+# is the dominant money-loop once cache keys are deterministic.) Exactly one
+# invocation may hold the per-plan advance claim; the rest no-op.
+#
+# The claim is a TTL stamp on `plan_versions.advance_lock_until`, NOT a session
+# `pg_advisory_lock`. The advisory lock leaked on a hard SIGKILL: a pass
+# 504-killed mid-synthesis never ran its `finally` release, and on Neon's
+# transaction pooler the session lock survived on the parked backend, so EVERY
+# later advance no-op'd on it until the backend recycled -- starving the plan
+# until the stall backstop failed it (pv=56, 2026-06-04). A TTL stamp can't
+# outlive its pass: a killed claim simply lapses after `_ADVANCE_LOCK_TTL_S` and
+# the next cron reclaims (`_ADVANCE_LOCK_TTL_S` is derived below, off the budget).
 
 # D-77 per-invocation budget. Sized off the Vercel function Max Duration
 # (PLAN_GEN_FUNCTION_CAP_S, a dashboard setting: 300s default, up to 800s on
@@ -153,6 +157,19 @@ _FUNCTION_CAP_S = float(os.environ.get("PLAN_GEN_FUNCTION_CAP_S", "300"))
 _INVOCATION_RESERVE_S = float(os.environ.get("PLAN_GEN_INVOCATION_RESERVE_S", "330"))
 _INVOCATION_BUDGET_S = max(_FUNCTION_CAP_S - _INVOCATION_RESERVE_S, 30.0)
 
+# D-77 advance-claim TTL (see the concurrency-guard note above). Must EXCEED the
+# longest a LIVE pass can hold the claim -- the per-invocation budget plus the
+# worst single block that started just under the deadline and ran to completion
+# after it (+persist) -- so a working pass is never robbed of its claim mid-block;
+# and stay UNDER `_STALL_WALLCLOCK_S` so a LEAKED stamp (a pass SIGKILLed before
+# it cleared the column) self-heals before the stall backstop fires. Derived from
+# the budget so it tracks any cap retune; capped a minute under the stall window.
+_ADVANCE_LOCK_TTL_MARGIN_S = 280.0  # worst-block overrun (~250s) + persist/seam
+_ADVANCE_LOCK_TTL_S = min(
+    _INVOCATION_BUDGET_S + _ADVANCE_LOCK_TTL_MARGIN_S,
+    _STALL_WALLCLOCK_S - 60.0,
+)
+
 # #324 resilience — Layer4OutputError codes that mean "the synthesizer fumbled
 # ONE block's output" (unparseable sessions), as opposed to a genuine
 # input/contract fault. These are usually transient (temp=0.2 stochastic), so a
@@ -167,43 +184,43 @@ from layer4.generation_budget import (  # noqa: E402 (grouped with its config)
 
 
 def _try_acquire_advance_lock(db, plan_version_id: int) -> bool:
-    """Non-blocking `pg_try_advisory_lock(ns, plan_version_id)`. True => this
-    invocation holds the advance lock for the plan; False => another already
-    does (skip, don't duplicate-synthesize). A null/absent result (the
-    non-Postgres FakeDb in unit tests) reads as acquired, so the guard is inert
-    there unless contention is explicitly simulated."""
+    """Atomically claim the per-plan advance lock by stamping
+    `plan_versions.advance_lock_until = now() + TTL`, but ONLY if no live claim
+    exists (the column is NULL or already lapsed). Returns True iff THIS
+    invocation won the claim.
+
+    Replaces the prior session-scoped `pg_advisory_lock`, which leaked on a hard
+    SIGKILL: a 504-killed pass never ran its `finally` release, so on Neon's
+    transaction pooler the lock survived on the parked backend and starved every
+    later advance until recycle (the pv=56 stall). The TTL stamp lapses on its
+    own, so a killed claim self-heals in <= `_ADVANCE_LOCK_TTL_S`. The conditional
+    UPDATE is atomic — Postgres row-locks the plan row, so of N racing cron/poller
+    fires exactly one sees `advance_lock_until` still NULL/lapsed and wins; the
+    rest match 0 rows. A non-Postgres FakeDb returns no row → reads as NOT
+    acquired; unit tests queue an explicit claimed row to simulate a win."""
     row = db.execute(
-        "SELECT pg_try_advisory_lock(?, ?) AS locked",
-        (_ADVANCE_LOCK_NS, plan_version_id),
+        "UPDATE plan_versions "
+        "SET advance_lock_until = now() + (? * interval '1 second') "
+        "WHERE id = ? "
+        "AND (advance_lock_until IS NULL OR advance_lock_until < now()) "
+        "RETURNING id",
+        (_ADVANCE_LOCK_TTL_S, plan_version_id),
     ).fetchone()
-    if row is None:
-        return True  # non-Postgres FakeDb (no canned row) → fail-open, guard inert
-    try:
-        locked = row["locked"]
-    except (KeyError, TypeError, IndexError):
-        return True  # row that isn't a lock result → fail-open
-    return bool(locked)
+    return row is not None
 
 
 def _release_advance_lock(db, plan_version_id: int) -> None:
-    """Explicitly release the session-scoped advance lock from
-    `_try_acquire_advance_lock`, in a `finally` around the locked pass.
-
-    The lock is SESSION-scoped on purpose (it must survive the per-block
-    commits inside a pass — a `pg_advisory_xact_lock` would drop at the first
-    `db.commit()` and defeat the guard). But a session lock only auto-releases
-    when the CONNECTION closes — which never happens for a clean return whose
-    connection returns alive to a pooler (Neon transaction pooling). The lock
-    then leaks and EVERY later advance of this plan no-ops on it, silently
-    starving the plan until the holding backend is recycled (the 2026-05-31
-    plan-49 stall). Releasing here makes that deterministic. Best-effort: a
-    release fault must not mask the pass's real outcome, and the connection
-    close remains the backstop. (A hard 504 SIGKILL still skips this — that
-    hung-call window is the separately-tracked synthesis-timeout work.)"""
+    """Clear this plan's advance claim (`advance_lock_until = NULL`) in a
+    `finally` around the locked pass, so the next pass reclaims immediately
+    instead of waiting out the TTL. Best-effort: a release fault must not mask
+    the pass's real outcome, and the TTL lapse is the backstop if this never
+    runs — which is exactly the hard-SIGKILL window the TTL stamp exists to
+    bound (the prior session advisory lock had no such backstop, so a skipped
+    release leaked until backend recycle — pv=56)."""
     try:
         db.execute(
-            "SELECT pg_advisory_unlock(?, ?)",
-            (_ADVANCE_LOCK_NS, plan_version_id),
+            "UPDATE plan_versions SET advance_lock_until = NULL WHERE id = ?",
+            (plan_version_id,),
         )
     except Exception as exc:  # noqa: BLE001 — release must not mask the outcome
         print(
@@ -422,11 +439,11 @@ def _advance_plan_generation(db, uid: int, plan_version_id: int) -> dict:
             or "Plan generation failed. Please try again.",
         }
 
-    # D-77 concurrency guard -- see `_ADVANCE_LOCK_NS`. Acquire the per-plan
-    # advance lock; if another invocation (a concurrent cron fire or the
-    # poller) already holds it, no-op now rather than duplicate-synthesizing the
-    # same frontier week. The session lock auto-releases when this request's
-    # connection closes, so the next pass resumes from the cache.
+    # D-77 concurrency guard -- see the `_ADVANCE_LOCK_TTL_S` note. Claim the
+    # per-plan advance lock; if another invocation (a concurrent cron fire or the
+    # poller) holds a live claim, no-op now rather than duplicate-synthesizing the
+    # same frontier week. A killed pass's claim lapses after the TTL, so the next
+    # pass reclaims and resumes from the cache even if `finally` never ran.
     if not _try_acquire_advance_lock(db, plan_version_id):
         # #350 observability — this no-op was SILENT: a pass blocked on the
         # per-plan advance lock logged nothing, so a leaked/long-held lock that
@@ -438,10 +455,10 @@ def _advance_plan_generation(db, uid: int, plan_version_id: int) -> dict:
             f"skipping (keep-polling)"
         )
         return {"status": "generating", "note": "advance_in_progress_elsewhere"}
-    # Lock acquired. Run the locked body under try/finally so the SESSION
-    # advisory lock is released on EVERY exit (return or raise), not left to
-    # connection-close — which never fires when the connection returns alive to
-    # a pooler, leaking the lock and silently starving this plan's advances.
+    # Claim won. Run the locked body under try/finally so the claim is cleared on
+    # EVERY exit (return or raise), letting the next pass reclaim immediately
+    # rather than waiting out the TTL. A hard SIGKILL still skips this `finally`
+    # — that's the leak window the TTL stamp bounds (it lapses on its own).
     try:
         return _advance_plan_generation_locked(db, uid, plan_version_id, plan_version)
     finally:
