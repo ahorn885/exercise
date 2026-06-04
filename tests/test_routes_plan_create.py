@@ -226,9 +226,13 @@ class TestOrchestrationErrorMessage:
 
 
 def _queue_plan_version(
-    conn, *, status, error=None, pvid=7, uid=3, units_cached=0, stall_passes=0
+    conn, *, status, error=None, pvid=7, uid=3, units_cached=0, stall_passes=0,
+    lock_claimed=True,
 ):
-    """Queue the `_load_plan_version` SELECT response for a plan row."""
+    """Queue the `_load_plan_version` SELECT response for a plan row, followed by
+    the advance-lock claim response. `lock_claimed=True` queues a row (the
+    conditional UPDATE...RETURNING id won the claim); the claim row is harmlessly
+    unconsumed on a ready/failed short-circuit that returns before claiming."""
     conn.queue_response(row={
         'id': pvid, 'user_id': uid, 'created_at': 'ts',
         'created_via': 'plan_create',
@@ -240,6 +244,8 @@ def _queue_plan_version(
         'generation_units_cached': units_cached,
         'generation_stall_passes': stall_passes,
     })
+    # Advance-lock claim (UPDATE plan_versions ... RETURNING id): a row => won.
+    conn.queue_response(row={'id': pvid} if lock_claimed else None)
 
 
 class TestAdvancePlanGeneration:
@@ -528,7 +534,6 @@ class TestStallBackstop:
     def test_stall_trips_when_no_block_cached_within_window(self, monkeypatch):
         conn = _FakeConn()
         _queue_plan_version(conn, status='generating', units_cached=0)
-        conn.queue_response(row={'locked': True})   # advance lock acquired
         conn.queue_response(row={'n': 0})            # _count_cached_blocks
         conn.queue_response(row={'stalled': True})   # over the wall-clock window
 
@@ -547,7 +552,6 @@ class TestStallBackstop:
     def test_recent_progress_runs_cone_and_records_count(self, monkeypatch):
         conn = _FakeConn()
         _queue_plan_version(conn, status='generating', units_cached=2)
-        conn.queue_response(row={'locked': True})   # advance lock acquired
         conn.queue_response(row={'n': 5})            # 5 blocks cached so far
         conn.queue_response(row={'stalled': False})  # a block cached recently
         monkeypatch.setattr(plan_create, '_build_layer4_cache', lambda: 'CACHE')
@@ -571,7 +575,6 @@ class TestStallBackstop:
         # than the plan being failed ~46s in (the old per-call counter's bug).
         conn = _FakeConn()
         _queue_plan_version(conn, status='generating', units_cached=0)
-        conn.queue_response(row={'locked': True})   # advance lock acquired
         conn.queue_response(row={'n': 0})            # nothing cached yet
         conn.queue_response(row={'stalled': False})  # within the wall-clock window
         ran = {}

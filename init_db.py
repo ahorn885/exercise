@@ -2007,6 +2007,15 @@ _PG_MIGRATIONS = [
     # Nullable; the persist (routes/plan_create.py::_mark_plan_failed) is
     # best-effort so the code is deploy-safe even before this column lands.
     "ALTER TABLE plan_versions ADD COLUMN IF NOT EXISTS generation_traceback TEXT",
+    # D-77 advance-claim TTL (#350 follow-up, 2026-06-04): the per-plan advance
+    # lock is a TTL stamp here, NOT a session pg_advisory_lock. The advisory lock
+    # leaked on a hard SIGKILL — a 504-killed pass never ran its `finally`
+    # release, and on Neon's transaction pooler the lock survived on the parked
+    # backend, so every later advance no-op'd until recycle, starving the plan
+    # until the stall backstop failed it (pv=56). A TTL stamp lapses on its own,
+    # so a killed claim self-heals. Nullable; the claim/release SQL is
+    # deploy-safe only AFTER this column lands (apply before deploying).
+    "ALTER TABLE plan_versions ADD COLUMN IF NOT EXISTS advance_lock_until TIMESTAMPTZ",
     # layer4_cache entry_point drift fix (2026-05-26) — the Layer 3A/3B
     # cached wrappers (2026-05-20) + the NL-parser cache (2026-05-21) write
     # entry_point values the original 4-value CHECK rejected, so every 3A/3B
