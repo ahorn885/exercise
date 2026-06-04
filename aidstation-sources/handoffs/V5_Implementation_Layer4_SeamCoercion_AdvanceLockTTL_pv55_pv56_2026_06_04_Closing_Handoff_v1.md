@@ -59,12 +59,14 @@ The block-0 inspect (`latency_ms=168657`, 0 retries, `cap_hit=False`) plus the c
 
 ## 6. Owed (Andy's hands) + next moves
 
-### 6.1 Owed deploys
-1. **Apply the #419 migration on Neon** (see CARRY_FORWARD item) — `ALTER TABLE plan_versions ADD COLUMN IF NOT EXISTS advance_lock_until TIMESTAMPTZ`. **Must land before/with the #419 deploy** — the claim/release SQL needs the column. (Container can't reach Neon.)
-2. **Optional env tune:** set `PLAN_GEN_FUNCTION_CAP_S=300` in Vercel (§4).
+### 6.1 Owed deploys — ✅ DONE (Andy, 2026-06-04)
+1. ✅ **#419 migration applied on Neon** — `ALTER TABLE plan_versions ADD COLUMN IF NOT EXISTS advance_lock_until TIMESTAMPTZ`. Andy's run reported the column **already existed** (init_db.py applied it on the #419 deploy boot) — idempotent no-op, column confirmed present. The claim/release SQL is live.
+2. ✅ **`PLAN_GEN_FUNCTION_CAP_S=300` set + prod redeployed** (§4). Resulting config: `_INVOCATION_BUDGET_S = max(300−330, 30) = 30s` (a pass banks ~1 block ≈169s then returns before the ~300s gateway, releasing the lock cleanly); `_ADVANCE_LOCK_TTL_S = min(30+280, 840) = 310s` (above one block, well under the 900s stall). Both mechanisms now sized to the real gateway ceiling.
+
+**Nothing owed remains for this fix.** Next is the cold-plan run itself (§6.2).
 
 ### 6.2 Next moves (4-tier)
-- **Tier 2 (go-live):** re-run a fresh cold PGE plan after the #419 deploy + migration. Expect it to bank a block per pass and grind to `ready` — finally exercising the seam fix. Read via `GET /admin/plan/<id>/diag?token=…`; if the coercion fires, the runtime log shows `review_seam: coerced invalid seam verdict combination …`.
+- **Tier 2 (go-live) — IN FLIGHT:** the #419 deploy + migration + the `PLAN_GEN_FUNCTION_CAP_S=300` redeploy are all live (§6.1). **Andy is starting a fresh cold PGE plan in a new session to monitor it.** Expect `blocks_snapshotted` to climb ~1 per pass and grind to `ready` — finally exercising the seam fix. Read via `GET /admin/plan/<id>/diag?token=…` (token in the #352 handoff §6.1.1: `0dKHoR2Ub5laemc-_Gmu7nHjErZzxyIevy8plBUAyWc`); if the coercion fires, the runtime log shows `review_seam: coerced invalid seam verdict combination …`. If it stalls again, pull `/admin/plan/<id>/inspect` for per-block `synthesis_metadata` (latency_ms) + the cron log for `advance lock` lines.
 - **Tier 2/3:** the latency itself (#316) and #418 (observations have no reader) remain.
 - **Tier 4:** **Phase 2 strength programming** (`Layer4_StrengthProgramming_Phase2_Design_v1.md`, #335) — spec signed off, ready to implement *once a cold plan completes* so it's built on a plan that finishes. Strength is still bare/empty until then (expected, not a regression).
 
