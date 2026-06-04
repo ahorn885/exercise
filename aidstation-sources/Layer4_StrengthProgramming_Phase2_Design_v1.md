@@ -1,6 +1,6 @@
 # Layer 4 — Strength Programming (Phase 2) Design v1
 
-**Status:** design / awaiting sign-off (Trigger #1 — LLM prompt design). No code until approved.
+**Status:** signed off + **Slice 1 implemented** (2026-06-04, pv=57 stall investigation — strength surface was the upstream cause of the `equipment_unavailable` blockers + synthesis thrash). Slice 1 = §8 exercise-surface rendering + §9 system-prompt section in `layer4/per_phase.py` (the synthesizer now picks real resolved `exercise_id`s instead of inventing them). **Slice 2 (still owed):** §3 deterministic per-phase frequency target plumbing + the §10 `strength_frequency_band` advisory validator. **Slice-1 deviations** (both compensated by the §9 prompt): movement-pattern ranking omitted (`ResolvedExercise` has no `movement_patterns`); core-vs-accessory marking left to the prompt; pool rendered unfiltered by `exercise_type` (fail-open — `exercises_resolved` is already the 0B exercise set, and over-filtering risks the empty-surface bug this fixes).
 **Fixes:** #335 (strength = bare labels). **Related:** #298, #341, #316. **Predecessor work:** PR #413 (Phase 1 — `sport_locale_incompatible` gate fix).
 **Date:** 2026-06-03. **Source:** pv=54 cold-plan investigation + a cited sport-science deep-research pass (see §A).
 
