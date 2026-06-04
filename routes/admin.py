@@ -397,6 +397,56 @@ def _diag_authorized() -> bool:
     return _diag_token_ok(supplied, os.environ.get('DIAG_TOKEN'))
 
 
+def _summarize_progress_blocks(blocks: list[dict]) -> dict:
+    """Pure aggregation of `load_progress_blocks()` output into the diag JSON
+    block view + a timing rollup. Factored out (like `_diag_token_ok`) so it's
+    unit-testable without a live DB or Flask request context.
+
+    Rule #14 — the per-block `synthesis_metadata` (latency_ms / retries_used /
+    cap_hit) is the signal that localizes a stall to slow synthesis. It's
+    persisted (`plan_progress_blocks`) and shown on the HTML inspect page, but
+    the token-readable diag JSON used to drop it, so an agent debugging past the
+    login wall couldn't see it. The per-block view carries counts + metadata
+    only (NOT the session bodies) to keep the payload lean."""
+    block_diags: list[dict] = []
+    total_latency_ms = 0
+    max_block_latency_ms = 0
+    total_retries = 0
+    any_cap_hit = False
+    last_snapshot_at = None
+    for b in blocks:
+        meta = b.get('synthesis_metadata') or {}
+        latency_ms = int(meta.get('latency_ms') or 0)
+        total_latency_ms += latency_ms
+        max_block_latency_ms = max(max_block_latency_ms, latency_ms)
+        total_retries += int(meta.get('retries_used') or 0)
+        any_cap_hit = any_cap_hit or bool(meta.get('cap_hit'))
+        snap = b.get('snapshot_at')
+        if isinstance(snap, datetime) and (
+            last_snapshot_at is None or snap > last_snapshot_at
+        ):
+            last_snapshot_at = snap
+        block_diags.append({
+            'phase_idx': b.get('phase_idx'),
+            'phase_name': b.get('phase_name'),
+            'session_count': len(b.get('sessions') or []),
+            'synthesis_metadata': meta or None,
+            'snapshot_at': str(snap) if snap is not None else None,
+        })
+    return {
+        'blocks': block_diags,
+        'block_timing': {
+            'total_latency_ms': total_latency_ms,
+            'max_block_latency_ms': max_block_latency_ms,
+            'total_retries': total_retries,
+            'any_cap_hit': any_cap_hit,
+            'last_snapshot_at': (
+                str(last_snapshot_at) if last_snapshot_at is not None else None
+            ),
+        },
+    }
+
+
 @bp.route('/plan/<int:plan_version_id>/diag')
 def plan_diag(plan_version_id):
     """Rule #14 log-visibility — JSON diagnostics for a plan generation,
@@ -419,17 +469,24 @@ def plan_diag(plan_version_id):
     ).fetchone()
     if pv is None:
         abort(404)
-    # generation_traceback is read separately + best-effort so the endpoint
-    # still works before the column migration lands (Neon egress is blocked
-    # from the web container, so the migration is an Andy's-hands action).
+    # generation_traceback + advance_lock_until are read separately + best-
+    # effort so the endpoint still works before those columns' migrations land
+    # (Neon egress is blocked from the web container, so a migration is an
+    # Andy's-hands action). advance_lock_until exposes the #419 TTL advance-lock
+    # state — paired with `server_now` below, a reader can tell whether a pass
+    # currently holds the per-plan claim and for how long (the self-heal cycle).
     traceback_text = None
+    advance_lock_until = None
     try:
-        tb_row = db.execute(
-            "SELECT generation_traceback FROM plan_versions WHERE id = ?",
+        diag_row = db.execute(
+            "SELECT generation_traceback, advance_lock_until "
+            "FROM plan_versions WHERE id = ?",
             (plan_version_id,),
         ).fetchone()
-        traceback_text = tb_row['generation_traceback'] if tb_row else None
-    except Exception:  # noqa: BLE001 — column may be pre-migration
+        if diag_row is not None:
+            traceback_text = diag_row['generation_traceback']
+            advance_lock_until = diag_row['advance_lock_until']
+    except Exception:  # noqa: BLE001 — columns may be pre-migration
         db.rollback()
     blocks = load_progress_blocks(db, plan_version_id)
     return jsonify({
@@ -442,6 +499,11 @@ def plan_diag(plan_version_id):
         'generation_error': pv['generation_error'],
         'generation_units_cached': pv['generation_units_cached'],
         'generation_traceback': traceback_text,
+        'advance_lock_until': (
+            str(advance_lock_until) if advance_lock_until is not None else None
+        ),
+        'server_now': str(datetime.now(timezone.utc)),
         'blocks_snapshotted': len(blocks),
         'total_sessions': sum(len(b['sessions'] or []) for b in blocks),
+        **_summarize_progress_blocks(blocks),
     })
