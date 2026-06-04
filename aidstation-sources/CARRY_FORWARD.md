@@ -67,6 +67,30 @@ Rolling-state for items spanning multiple sessions. **Edit in place** — don't 
      session can read it (no token bypass). The secret never lives in the repo.
    - Hard-kill backstop (log drain, for 504/OOM before the except runs) is the
      deferred completeness layer — **#350**.
+5. **Phase 1 `sport_locale_incompatible` fix (PR #413, merged 2026-06-03) — re-run a fresh cold plan to validate.**
+   The fix (Rule 13 → advisory `warning`, strength-scoped; cardio/sport sessions no
+   longer gated on strength-exercise coverage) auto-deploys on the #413 merge. **Owed
+   (Andy's hands): create a fresh PGE plan** (must be *cold* — a scope/start that
+   doesn't replay pv≤54's cached blocks — reaching race day 2026-07-17) and watch
+   `GET /admin/plan/<id>/diag?token=…`; confirm it no longer stalls on
+   `sport_locale_incompatible`. **Watch for the NEXT constraint:** `volume_band_above/below`
+   blockers + the **#316 latency** (≈376s/block + a ~401s *wasted* thinking attempt that
+   hits `max_tokens` with no tool call on the seam re-synth) may be what limits a cold
+   plan next — Phase 1 removes the *unsatisfiable* blockers, it does not touch latency.
+6. **Phase 2 strength programming — ready to implement (spec signed off).**
+   `aidstation-sources/Layer4_StrengthProgramming_Phase2_Design_v1.md` fixes **#335**
+   (bare-label / zero strength): render the 2C resolved-exercise surface into the
+   per-phase prompt + an evidence-based dose policy (2/2/1/taper, 3–5 multi-joint,
+   4–10RM, RM/RPE loads, hybrid core+rotating, unilateral/offset stability bias,
+   paired day-level scheduling). Deterministic freq/pool/guardrails (warnings) + LLM
+   selection/placement/variety. ~1–2 substantive files (`layer4/per_phase.py` + tests)
+   + the spec. **Trigger #1 already cleared** (Andy signed off §9 prompt text). **Sequence
+   it AFTER the #5 cold re-run** so we build strength on a validated, non-stalling base.
+   **Phase 2b (deferred, #335):** wire `rx_engine` for deterministic, performance-driven
+   absolute loads from logged capacity records (bootstrap from `strength_benchmarks`).
+   **Phase 3 (deferred, #298/#341):** multi-locale cluster — union nearby locales'
+   terrain + equipment; per-session exclusive locale chosen by anchoring on the
+   highest-priority exercises (design intent recorded on #341).
 
 ---
 
