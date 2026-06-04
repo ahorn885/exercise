@@ -73,25 +73,24 @@ Rolling-state for items spanning multiple sessions. **Edit in place** — don't 
    **pv=55** (70 sessions / 6 blocks) died at the seam reviewer on a fatal invalid-verdict
    combo → **PR #416** (`_coerce_verdict_combination` + non-retryable-branch traceback
    persist). **pv=56** (1 block) stalled on a **leaked advance-lock** → **PR #419** (TTL
-   claim; see new owed item #7). **⚠ NEW owed (Andy's hands): the #419 migration (item 7)**,
-   then **re-run a fresh cold plan** (cold scope; reaches race day 2026-07-17) — expect it to
-   bank a block per pass to `ready` and finally exercise the seam fix. **#316 latency is the
-   remaining limiter** (see item 6.1 — the budget is mis-sized vs the real ~300s gateway).
-6. **#419 advance-lock TTL migration (merged 2026-06-04) — `python init_db.py` on Neon.**
-   Adds `plan_versions.advance_lock_until TIMESTAMPTZ` (idempotent, nullable). **Apply
-   BEFORE/with the #419 prod deploy** — the new claim/release SQL (`UPDATE … SET
-   advance_lock_until = now()+TTL … RETURNING id` / `… = NULL`) needs the column; without it
-   the claim errors and the guard fails. Replaces the leak-prone session `pg_advisory_lock`
-   that starved pv=56 after a SIGKILL skipped its `finally`.
-   - **6.1 Optional env-tune (not owed, recommended): set `PLAN_GEN_FUNCTION_CAP_S=300` in
-     Vercel.** pv=56's block-0 inspect (`latency_ms=168657`, 0 retries, `cap_hit=False`) +
-     the cron log proved the per-invocation budget is mis-sized vs the **real ~300s gateway**:
-     with `PLAN_GEN_FUNCTION_CAP_S=800` the budget is `800−330=470s > 300s`, so a pass *starts*
-     block N+1 (≈338s) and gets gateway-killed mid-flight — what triggered the pv=56 lock leak.
-     Setting it to **300** makes a pass return after ~1 block (before the gateway), banking
-     cleanly and making the leak rare. The #419 TTL lock makes completion correct either way;
-     this is a speed/cost win. Confirms the CLAUDE.md "re-validate the 800s-cap triage" note —
-     the effective ceiling is the gateway, not 800s.
+   claim; see item #6, now DONE). **Both #419 deploys are now applied (item 6).** **Remaining:
+   re-run a fresh cold plan** (cold scope; reaches race day 2026-07-17) — expect it to bank a
+   block per pass to `ready` and finally exercise the seam fix. **Andy is monitoring a fresh
+   plan-gen in a new session (2026-06-04).** **#316 latency is the remaining structural limiter.**
+6. ✅ **DONE (Andy, 2026-06-04) — #419 advance-lock TTL migration + the 300-cap redeploy.**
+   `plan_versions.advance_lock_until TIMESTAMPTZ` is present on Neon — Andy's run reported the
+   column **already existed** (init_db.py applied it on the #419 deploy boot; idempotent no-op).
+   The new claim/release SQL is live. Replaces the leak-prone session `pg_advisory_lock` that
+   starved pv=56 after a SIGKILL skipped its `finally`.
+   - ✅ **6.1 DONE — `PLAN_GEN_FUNCTION_CAP_S=300` set + prod redeployed.** Resulting config:
+     `_INVOCATION_BUDGET_S = max(300−330, 30) = 30s` (a pass banks ~1 block ≈169s then returns
+     before the ~300s gateway, releasing the lock cleanly); `_ADVANCE_LOCK_TTL_S =
+     min(30+280, 840) = 310s` (above one block, well under the 900s stall). **Why:** pv=56's
+     block-0 inspect (`latency_ms=168657`, 0 retries, `cap_hit=False`) + the cron log proved the
+     budget was mis-sized vs the **real ~300s gateway** — with `=800` the budget was
+     `800−330=470s > 300s`, so a pass started block N+1 (≈338s) and got gateway-killed
+     mid-flight (what triggered the pv=56 lock leak). Confirms the CLAUDE.md "re-validate the
+     800s-cap triage" note — the effective ceiling is the gateway, not 800s.
 7. **Phase 2 strength programming — ready to implement (spec signed off).**
    `aidstation-sources/Layer4_StrengthProgramming_Phase2_Design_v1.md` fixes **#335**
    (bare-label / zero strength): render the 2C resolved-exercise surface into the
