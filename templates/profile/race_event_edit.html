@@ -1,21 +1,23 @@
-{% extends 'base_legacy.html' %}
+{% extends 'base.html' %}
+{% set nav_active = 'races' %}
 {% block title %}{% if is_new %}Add race{% else %}Edit race{% endif %} — AIDSTATION{% endblock %}
+{% block crumbs %}<a href="{{ url_for('profile.edit', tab='race-events') }}">Races</a> <span class="sep">/</span> <b>{% if is_new %}Add race{% else %}Edit{% endif %}</b>{% endblock %}
+
+{# Redesign (finish-the-open) — race-event add/edit form, migrated onto the new
+   .app shell. Multi-section page (race location · details · route) that shares
+   the 3 race partials with onboarding/target_race; the whole body is wrapped in
+   `.onb-form` so the Bootstrap grids keep their gutters on the new shell. All
+   forms, partials, and the two nonced scripts are unchanged. #}
+
 {% block content %}
+<div class="dash-head">
+  <div class="races-intro">
+    <p class="eyebrow accent">● Races{% if not is_new and race.is_target_event %} · target race{% endif %}</p>
+    <h1 class="page-title">{% if is_new %}Add race.{% else %}{{ race.name }}{% endif %}</h1>
+  </div>
+</div>
 
-<nav class="mb-3">
-  <a href="{{ url_for('profile.edit', tab='race-events') }}" class="text-muted small">&larr; Back to race events</a>
-</nav>
-
-<h4 class="mb-3">
-  {% if is_new %}
-    Add race
-  {% else %}
-    {{ race.name }}
-    {% if race.is_target_event %}
-      <span class="badge bg-success align-middle">Target race</span>
-    {% endif %}
-  {% endif %}
-</h4>
+<div class="onb-form onb-wrap onb-wrap--wide">
 
 {% if not is_new %}
   {# ── Race location picker (Mapbox-anchored, D-73 Phase 5.2 walkthrough #1) ────
@@ -582,5 +584,5 @@
     sync();
   })();
 </script>
-
+</div>
 {% endblock %}

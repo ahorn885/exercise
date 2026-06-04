@@ -748,7 +748,11 @@ pre code { background: none; border: 0; padding: 0; }
    Replaces the mockup's inline style="position:absolute" (CSP-clean). */
 .sprite-host { position: absolute; width: 0; height: 0; overflow: hidden; }
 
-/* Print — a single .app screen prints ink-on-paper */
+/* Print utilities: .print-only is hidden on screen, revealed in @media print
+   (below); .no-print is the inverse (shown on screen, hidden in print). */
+.app .print-only { display: none; }
+
+/* Print — a single .app screen prints ink-on-paper (chrome dropped below) */
 @media print {
   @page { margin: 14mm; }
   .app {
@@ -769,7 +773,30 @@ pre code { background: none; border: 0; padding: 0; }
     --hairline-2: color-mix(in oklab, var(--ink) 8%, transparent);
   }
   .app * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
-  .app .statusbar { display: none !important; }
+
+  /* Drop the app chrome — only the document content prints. */
+  .app .skip-link,
+  .app .sidebar,
+  .app .topbar,
+  .app .appbar,
+  .app .tabbar,
+  .app .nav-drawer,
+  .app .cmdk-backdrop,
+  .app .statusbar,
+  .app .alert,
+  .app .btn,
+  .app .btn-close,
+  .sprite-host { display: none !important; }
+
+  /* Un-flex the shell so <main> fills the page (the sidebar column is gone). */
+  .app .app-shell { display: block !important; }
+  .app .page { min-height: 0 !important; }
+  .app .page-body { padding: 0 !important; }
+
+  /* Per-screen overrides: .no-print hides, .print-only reveals. */
+  .app .no-print { display: none !important; }
+  .app .print-only { display: revert !important; }
+
   .app .page-title, .app .eyebrow { break-after: avoid; }
   .app tr, .app .card, .app .stat-card { break-inside: avoid; }
 }
@@ -1746,3 +1773,229 @@ body.bulk-mode { padding-bottom: 80px; }
    button chrome so it lines up with the anchor rows around it. */
 .app button.drawer-item { width: 100%; background: none; border: 0; font: inherit; text-align: left; cursor: pointer; }
 .app button.drawer-item[aria-pressed="true"] .icon { color: var(--accent); opacity: 1; }
+
+/* ════════════════════════════════════════════════════════════════════
+   .FIT import (finish-the-open) — manual-upload path on the new shell
+   (garmin/import · import_preview · import_wellness). Operator surface
+   reached from Connections (§17) + the §07 workout rail.
+   ════════════════════════════════════════════════════════════════════ */
+.app .fit-wrap { max-width: 760px; }
+.app .fit-sec-label { margin: 0 0 6px; }
+.app .fit-sec-sub { margin: 0 0 16px; }
+.app .req { color: var(--bad); }
+
+/* Drop zone (bulk uploader — data-bulk-* wired in app.js) */
+.app .fit-drop {
+  border: 2px dashed var(--hairline); border-radius: var(--r-sm);
+  padding: 24px; text-align: center; margin-bottom: 14px;
+  transition: border-color 0.15s ease, background-color 0.15s ease;
+}
+.app .fit-drop.u-drop-active {
+  border-color: var(--accent) !important;
+  background-color: color-mix(in oklab, var(--accent) 7%, transparent);
+}
+.app .fit-drop-hint { color: var(--fg-3); margin: 0 0 12px; }
+.app .fit-drop-actions { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; }
+.app .fit-file-btn { margin: 0; cursor: pointer; }
+
+/* Plan-match checkbox + selection / progress / results */
+.app .fit-match { display: flex; gap: 8px; align-items: flex-start; font-size: 13px; color: var(--fg-2); margin-bottom: 12px; line-height: 1.45; }
+.app .fit-match input { margin-top: 3px; }
+.app .fit-selection { margin-bottom: 8px; min-height: 0; }
+.app .fit-progress { margin-top: 14px; }
+.app .fit-progress-text { margin-top: 6px; }
+.app .fit-summary { margin-top: 14px; }
+.app .fit-results { margin-top: 8px; font-size: 12px; max-height: 200px; overflow-y: auto; }
+
+/* Action rows */
+.app .fit-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.app .fit-confirm-note { margin-left: 4px; }
+
+/* Single-file inline (wellness parse) */
+.app .fit-inline { display: flex; gap: 8px; max-width: 480px; }
+.app .fit-inline .form-control { flex: 1; }
+
+/* Preview — auto-match banner, disposition radios */
+.app .fit-automatch { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+.app .fit-automatch-name { font-weight: 600; }
+.app .fit-radio { display: flex; gap: 8px; align-items: flex-start; margin-bottom: 10px; font-size: 13px; color: var(--fg-2); line-height: 1.45; }
+.app .fit-radio:last-of-type { margin-bottom: 4px; }
+.app .fit-radio input { margin-top: 3px; }
+
+/* Preview — card head (title + chip), 2-col grid, metric table */
+.app .fit-card-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 16px; }
+.app .fit-card-head .fit-sec-label { margin: 0; }
+.app .fit-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.app .fit-grid .field { margin-bottom: 0; }
+.app .fit-metrics th { width: 40%; text-align: left; color: var(--fg-3); font-weight: 500; }
+.app .fit-notes { margin-top: 16px; margin-bottom: 0; }
+.app .fit-ex { font-weight: 600; }
+.app .fit-sets .chip { margin: 0 4px 4px 0; }
+
+/* Wellness summary */
+.app .fit-daterange { font-weight: 600; margin-top: 4px; }
+.app .fit-types { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
+
+@media (max-width: 859.98px) {
+  .app .fit-grid { grid-template-columns: 1fr; }
+  .app .fit-card-head { flex-direction: column; align-items: flex-start; }
+}
+
+/* Wellness log viewer — date filter + Chart.js grid + records table */
+.app .well-filter { max-width: 240px; margin-bottom: 16px; }
+.app .well-filter .field { margin-bottom: 0; }
+.app .well-charts { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px; }
+.app .well-charts .eyebrow { margin: 0 0 12px; }
+.app .well-canvas { position: relative; height: 160px; }
+.app .well-records .eyebrow { margin: 0 0 14px; }
+.app .well-note { margin-top: 12px; }
+
+@media (max-width: 859.98px) {
+  .app .well-charts { grid-template-columns: 1fr; }
+}
+
+/* ════════════════════════════════════════════════════════════════════
+   Auth screens — login / register / forgot / reset on the standalone
+   `.app`-themed auth shell (auth/_shell.html). Centered card, no
+   sidebar/topbar (the user isn't signed in yet). Grounded in the sign-in
+   artboard (screens-desktop-b.jsx "Welcome back." / screens-mobile-aux.jsx).
+   ════════════════════════════════════════════════════════════════════ */
+.app .auth-wrap { min-height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px; padding: 32px 20px; }
+.app .auth-card { width: 100%; max-width: 380px; background: var(--bg-2); border: 1px solid var(--hairline); border-radius: var(--r-lg); padding: 30px 28px; }
+
+.app .auth-brand { display: inline-flex; align-items: center; gap: 9px; color: var(--fg); text-decoration: none; margin-bottom: 22px; }
+.app .auth-brand svg { width: 26px; height: 26px; }
+
+.app .auth-title { font-size: 30px; font-weight: 800; letter-spacing: -0.02em; line-height: 1.05; margin: 8px 0 8px; }
+.app .auth-sub { font-size: 14px; color: var(--fg-3); line-height: 1.5; margin: 0 0 22px; }
+
+.app .auth-form { display: flex; flex-direction: column; gap: 14px; }
+.app .auth-form .field { margin-bottom: 0; }
+/* Override the .field > .lbl block default so the Password row can sit the
+   "Forgot?" link inline (higher specificity than `.app .field > .lbl`). */
+.app .field > .lbl.auth-lbl-row { display: flex; justify-content: space-between; align-items: baseline; }
+.app .auth-lbl-link { font-family: var(--mono); font-size: 9px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--fg-3); text-decoration: none; }
+.app .auth-lbl-link:hover { color: var(--accent); }
+.app .auth-submit { width: 100%; justify-content: center; margin-top: 4px; }
+
+.app .auth-alt { font-size: 13px; color: var(--fg-3); text-align: center; margin: 20px 0 0; }
+.app .auth-alt a { color: var(--fg); font-weight: 600; }
+.app .auth-alt a:hover { color: var(--accent); }
+
+.app .auth-legal { font-size: 9px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--fg-4); text-align: center; margin: 0; }
+
+/* ════════════════════════════════════════════════════════════════════
+   Onboarding wizard (finish-the-open) — Steps 2–7 on the new shell.
+   Shared progress stepper (_onb_steps.html) + per-step layouts.
+   ════════════════════════════════════════════════════════════════════ */
+.app .onb-wrap { max-width: 760px; }
+.app .onb-note { font-size: 12px; }
+
+/* Progress stepper */
+.app .onb-steps { display: flex; flex-wrap: wrap; gap: 8px 18px; list-style: none; padding: 0; margin: 0 0 22px; }
+.app .onb-step { display: inline-flex; align-items: center; gap: 7px; color: var(--fg-4); }
+.app .onb-step-n { display: grid; place-items: center; width: 20px; height: 20px; border-radius: 50%; border: 1px solid var(--hairline); font-family: var(--mono); font-size: 10px; }
+.app .onb-step-l { font-family: var(--mono); font-size: 9px; letter-spacing: 0.16em; text-transform: uppercase; }
+.app .onb-step.is-current { color: var(--fg); }
+.app .onb-step.is-current .onb-step-n { border-color: var(--accent); color: var(--accent); }
+.app .onb-step.is-done { color: var(--fg-3); }
+.app .onb-step.is-done .onb-step-n { border-color: color-mix(in oklab, var(--good) 45%, transparent); color: var(--good); }
+
+/* Consent disclosure */
+.app .onb-consent > summary { cursor: pointer; }
+.app .onb-consent-body { margin-top: 12px; font-size: 13px; color: var(--fg-2); line-height: 1.55; }
+.app .onb-consent-body ul { padding-left: 18px; }
+
+/* Provider rows (Connect step) */
+.app .onb-provider { display: flex; justify-content: space-between; align-items: center; gap: 14px; flex-wrap: wrap; }
+.app .onb-provider-name { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+.app .onb-provider-meta { font-size: 12px; line-height: 1.5; }
+.app .onb-scopes { display: block; }
+.app .onb-provider-act { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.app .onb-consent-gate-row { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--fg-2); }
+
+/* Prefill comparison cards */
+.app .onb-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.app .onb-field-head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 10px; }
+.app .onb-field-row { display: grid; grid-template-columns: 132px 1fr; gap: 10px; padding: 7px 0; font-size: 13px; border-top: 1px solid var(--hairline-2); }
+.app .onb-field-row:first-of-type { border-top: 0; }
+.app .onb-field-row .lbl { margin: 0; font-family: var(--mono); font-size: 9px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--fg-3); }
+.app .onb-field-act { display: flex; gap: 8px; margin-top: 12px; }
+.app .onb-field-act form { margin: 0; }
+.app .onb-switchback { margin-top: 4px; }
+
+/* Step nav (skip / continue) */
+.app .onb-nav { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-top: 6px; }
+.app .onb-nav--end { justify-content: flex-end; }
+.app .onb-nav form { margin: 0; }
+
+@media (max-width: 859.98px) {
+  .app .onb-fields { grid-template-columns: 1fr; }
+  .app .onb-provider { align-items: flex-start; }
+}
+
+/* Onboarding forms that keep a Bootstrap grid (target_race + the route_locales
+   add-form — they share partials with the still-legacy race_event_edit, so we
+   don't rewrite the grid): restore the Bootstrap gutters `.app .row` zeroes. */
+.app .onb-form .row { gap: 0; --bs-gutter-x: 1.5rem; --bs-gutter-y: 1rem; }
+.app .onb-form .form-text { color: var(--fg-3); }
+
+/* Location list rows (onboarding locales + route_locales) */
+.app .onb-loc-list { list-style: none; margin: 12px 0 0; padding: 0; display: flex; flex-direction: column; }
+.app .onb-loc { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; padding: 12px 0; border-top: 1px solid var(--hairline-2); }
+.app .onb-loc:first-child { border-top: 0; padding-top: 0; }
+.app .onb-loc-id { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; min-width: 0; }
+.app .onb-loc-cap { text-transform: capitalize; }
+.app .onb-loc-notes { width: 100%; margin-top: 2px; }
+.app .onb-loc form { margin: 0; }
+
+/* ════════════════════════════════════════════════════════════════════
+   Logging history lists (finish-the-open) — §08 history views on the new
+   shell (training / cardio / body / conditions / injuries). Reuse `.data`
+   tables + `.chip`; these are just the filter bar + row-action affordances.
+   ════════════════════════════════════════════════════════════════════ */
+.app .loglist-filters { display: flex; gap: 14px; align-items: flex-end; flex-wrap: wrap; margin-bottom: 16px; }
+.app .loglist-filters .field { margin-bottom: 0; }
+.app .loglist-filter-act { display: flex; gap: 6px; }
+.app .loglist-act { white-space: nowrap; display: flex; gap: 6px; align-items: center; justify-content: flex-end; }
+.app .loglist-act form { margin: 0; }
+
+/* Injury log — status-tinted cards + inline modification editor */
+.app .injury-card.is-active { border-color: color-mix(in oklab, var(--bad) 38%, transparent); }
+.app .injury-card.is-managing { border-color: color-mix(in oklab, var(--warn) 38%, transparent); }
+.app .injury-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+.app .injury-id { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; min-width: 0; }
+.app .injury-act { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.app .injury-act form { margin: 0; }
+.app .injury-desc { font-size: 13px; color: var(--fg-2); margin: 12px 0 0; line-height: 1.5; }
+.app .injury-notes { font-size: 12px; font-style: italic; margin: 6px 0 0; }
+.app .injury-mods-toggle { margin-top: 14px; }
+.app .injury-mods { margin-top: 12px; }
+.app .injury-sub { color: var(--good); font-weight: 600; margin-right: 6px; }
+.app .injury-add { margin-top: 12px; }
+.app .injury-add-act { display: flex; align-items: flex-end; }
+.app .injury-resolved-mods { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 12px; }
+
+/* Coach-memory provenance detail (feedback) */
+.app .fb-meta { display: flex; align-items: center; gap: 6px; margin: 0 0 12px; }
+.app .fb-raw { font-family: var(--mono); font-size: 13px; color: var(--fg-2); white-space: pre-wrap; word-break: break-word; background: var(--bg); border-radius: var(--r-sm); padding: 14px; margin: 0; }
+
+.app .onb-wrap--wide { max-width: 920px; }
+
+/* ════════════════════════════════════════════════════════════════════
+   Natural-language "log via text" (finish-the-open) — conversational parse
+   → preview → confirm on the new shell. Replaces the legacy u-* utilities.
+   ════════════════════════════════════════════════════════════════════ */
+.app .nl-chat-card { padding: 0; overflow: hidden; }
+.app .nl-chat-head { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; padding: 14px 16px; border-bottom: 1px solid var(--hairline-2); flex-wrap: wrap; }
+.app .nl-chat { min-height: 120px; max-height: 360px; overflow-y: auto; padding: 16px; }
+.app .nl-chat-hint { text-align: center; }
+.app .nl-chat-foot { padding: 14px 16px; border-top: 1px solid var(--hairline-2); }
+.app .nl-input { display: flex; gap: 8px; }
+.app .nl-textarea { flex: 1; resize: none; }
+.app .nl-status-row { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-top: 8px; font-size: 12px; }
+.app .nl-restart { font-size: 12px; }
+.app .nl-preview .nl-chat-head { padding: 0 0 12px; }
+.app .nl-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 14px; }
+.app .nl-fit { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.app .nl-fit-act { display: flex; gap: 8px; }

@@ -116,6 +116,26 @@ def _handle_404(e):
     ), 404
 
 
+@app.errorhandler(403)
+def _handle_403(e):
+    code = '403 · ADMIN ONLY'
+    diag = [
+        ('request_id', _error_request_id()),
+        ('attempted_path', request.path),
+        ('method', request.method),
+        ('status', '403 forbidden'),
+    ]
+    return render_template(
+        '_error.html', tone='warn', glyph='gear', code=code,
+        title='Crew only past here.',
+        message="This corner of AIDSTATION is admin-only and your account "
+                "doesn't have the keys. If that's a surprise, the request_id "
+                "below helps us look into it. Here's the way back.",
+        diag=diag, quicklinks=True, show_retry=False,
+        mailto_href=_error_mailto(code, diag),
+    ), 403
+
+
 @app.errorhandler(500)
 def _handle_500(e):
     code = '500 · SOMETHING BROKE'

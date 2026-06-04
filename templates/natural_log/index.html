@@ -1,79 +1,85 @@
-{% extends 'base_legacy.html' %}
-{% block title %}Log via Text{% endblock %}
+{% extends 'base.html' %}
+{% set nav_active = 'log' %}
+{% block title %}Log via text{% endblock %}
+
+{# Redesign (finish-the-open) — natural-language "log via text" parse screen,
+   migrated onto the new .app shell. The conversational parse → preview →
+   confirm flow + the already-nonced controller script are unchanged; only the
+   chrome + the legacy `u-*` utility classes are reskinned to tokens (`.nl-*`).
+   Reached from the dashboard CTA + the §08 log picker. #}
 
 {% block content %}
-<div class="d-flex justify-content-between align-items-center mb-3">
-  <h4 class="mb-0">Log Workout via Text</h4>
-  <a href="{{ url_for('dashboard.index') }}" class="btn btn-sm btn-outline-secondary">← Dashboard</a>
+<div class="dash-head">
+  <div class="races-intro">
+    <p class="eyebrow accent">● Quick log · plain language</p>
+    <h1 class="page-title">Log via text.</h1>
+    <p class="page-sub">Describe your session in your own words — the coach parses it, you review and
+      confirm. Cardio, strength, body metrics, conditions, all from one box.</p>
+  </div>
 </div>
 
 {% if not api_configured %}
-<div class="alert alert-warning mb-3">
-  <strong>AI not configured.</strong> Set <code>ANTHROPIC_API_KEY</code> in your <code>.env</code> file
-  next to <code>docker-compose.yml</code>, then run <code>docker compose up -d</code> on the host
-  to recreate the container with the new env. Watchtower image updates do not reload <code>.env</code>.
+<div class="alert alert-warning" role="alert">
+  <strong>AI not configured.</strong> Set <code>ANTHROPIC_API_KEY</code> in the Vercel project
+  environment, then redeploy — natural-language logging needs it to parse your text.
 </div>
 {% endif %}
 
 {% if scheduled %}
-<div class="alert alert-info py-2 px-3 mb-3 small">
+<div class="alert alert-info" role="alert">
   <strong>Scheduled today/yesterday:</strong>
-  {% for s in scheduled %}
-    <span class="badge bg-secondary me-1">{{ s.item_date }} · {{ s.workout_name }}</span>
-  {% endfor %}
-  — Claude will automatically try to link your entry to these.
+  {% for s in scheduled %}<span class="chip">{{ s.item_date }} · {{ s.workout_name }}</span>{% endfor %}
+  — we'll try to link your entry to these.
 </div>
 {% endif %}
 
-<!-- Chat window -->
-<div class="card mb-3">
-  <div class="card-header fw-semibold d-flex justify-content-between align-items-center">
-    <span>💬 Describe your workout</span>
-    <small class="text-muted">e.g. "I ran outside for 45 min, about 5 miles"</small>
-  </div>
-  <div class="card-body p-0">
-    <div id="chat-area" class="u-chat-scroll">
-      <div class="text-muted small text-center" id="chat-hint"></div>
+<div class="stack onb-wrap">
+  {# Chat window #}
+  <section class="card nl-chat-card">
+    <div class="nl-chat-head">
+      <strong>Describe your workout</strong>
+      <span class="dim">e.g. "I ran outside for 45 min, about 5 miles"</span>
     </div>
-  </div>
-  <div class="card-footer">
-    <div class="input-group">
-      <textarea id="user-input" class="form-control u-resize-none" rows="2"
-                placeholder="Today I ran outside for 45 minutes and made it about 5 miles…"></textarea>
-      <button class="btn btn-primary" id="send-btn">Send</button>
+    <div id="chat-area" class="nl-chat">
+      <div class="dim nl-chat-hint" id="chat-hint"></div>
     </div>
-    <div class="d-flex justify-content-between mt-1">
-      <div id="status" class="small text-muted"></div>
-      <button class="btn btn-link btn-sm text-muted p-0 d-none u-fs-80" id="restart-btn">Start over</button>
+    <div class="nl-chat-foot">
+      <div class="nl-input">
+        <textarea id="user-input" class="form-control nl-textarea" rows="2"
+                  placeholder="Today I ran outside for 45 minutes and made it about 5 miles…"></textarea>
+        <button class="btn btn-primary" id="send-btn">Send</button>
+      </div>
+      <div class="nl-status-row">
+        <div id="status" class="dim"></div>
+        <button class="btn-link d-none nl-restart" id="restart-btn">Start over</button>
+      </div>
     </div>
-  </div>
-</div>
+  </section>
 
-<!-- Preview / confirm card — shown when Claude returns "ready" -->
-<div id="preview-card" class="card border-warning mb-3 d-none">
-  <div class="card-header d-flex justify-content-between align-items-center">
-    <span class="fw-semibold">Review &amp; Confirm</span>
-    <small class="text-muted">Edit any fields before saving</small>
-  </div>
-  <div class="card-body" id="preview-body"></div>
-  <div class="card-footer d-flex gap-2 flex-wrap">
-    <button class="btn btn-success" id="confirm-btn">✓ Save to Log</button>
-    <button class="btn btn-outline-secondary" id="discard-btn">✕ Discard</button>
-  </div>
-</div>
+  {# Preview / confirm — shown when the parse returns "ready" #}
+  <section id="preview-card" class="card card-pad nl-preview d-none">
+    <div class="nl-chat-head">
+      <strong>Review &amp; confirm</strong>
+      <span class="dim">Edit any fields before saving</span>
+    </div>
+    <div id="preview-body"></div>
+    <div class="nl-actions">
+      <button class="btn btn-primary" id="confirm-btn">✓ Save to log</button>
+      <button class="btn btn-ghost" id="discard-btn">✕ Discard</button>
+    </div>
+  </section>
 
-<!-- FIT download prompt — shown after successful save when a cardio entry was logged -->
-<div id="fit-card" class="card border-info mb-3 d-none">
-  <div class="card-body d-flex align-items-center justify-content-between flex-wrap gap-2">
+  {# FIT download prompt — after a cardio save #}
+  <section id="fit-card" class="card card-pad nl-fit d-none">
     <div>
-      <strong>Generate Activity FIT file?</strong>
-      <div class="small text-muted">Download a .fit file to manually sync this session to Garmin Connect or other platforms.</div>
+      <strong>Generate activity .FIT file?</strong>
+      <div class="dim">Download a .fit file to manually sync this session to any platform.</div>
     </div>
-    <div class="d-flex gap-2">
-      <a id="fit-download-link" href="#" class="btn btn-info btn-sm" download>⬇ Download FIT</a>
-      <button id="fit-skip-btn" class="btn btn-outline-secondary btn-sm">Skip →</button>
+    <div class="nl-fit-act">
+      <a id="fit-download-link" href="#" class="btn btn-primary btn-sm" download>⬇ Download FIT</a>
+      <button id="fit-skip-btn" class="btn btn-ghost btn-sm">Skip →</button>
     </div>
-  </div>
+  </section>
 </div>
 {% endblock %}
 

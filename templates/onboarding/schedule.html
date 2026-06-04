@@ -1,56 +1,34 @@
-{% extends 'base_legacy.html' %}
+{% extends 'base.html' %}
+{% from 'onboarding/_onb_steps.html' import onb_steps %}
 {% block title %}Schedule & availability — AIDSTATION{% endblock %}
+{% block crumbs %}<b>Set up</b> <span class="sep">/</span> Schedule{% endblock %}
+
+{# Redesign (finish-the-open) — onboarding Step 6 (Schedule & availability),
+   migrated onto the new .app shell. The form fields live in the shared
+   `_schedule_form.html` partial (also used by the §18 profile tab, already on
+   the new shell); this template owns the step chrome + Save/Skip wrappers. #}
+
 {% block content %}
-
-{# v5 onboarding Step 3b — "Schedule & availability" (D-61 §G).
-   Per-day windows + the Doubles Feasible toggle. The long-session day +
-   rest days are inferred from the windows (longest enabled window = long
-   session; unchecked days = rest), not asked (FormRefresh Slice C
-   2026-05-25). Replaces v4's weekly-totals §G shape. JIT session-card
-   swap UI explicitly out of this PR; gates on Layer 4 spec.
-
-   PR14-followup: the form fields live in `_schedule_form.html` so the
-   profile-tab edit surface can include the same partial without
-   duplicating markup. This template owns the step-indicator chrome,
-   intro copy, and the Save+Continue / Skip wrappers. #}
-
-<div class="mb-4">
-  <ol class="list-inline small text-muted mb-1">
-    <li class="list-inline-item"><span class="badge bg-success">✓</span> Step 1 — Account</li>
-    <li class="list-inline-item">›</li>
-    <li class="list-inline-item"><span class="badge bg-success">✓</span> Step 2 — Connect providers</li>
-    <li class="list-inline-item">›</li>
-    <li class="list-inline-item"><span class="badge bg-success">✓</span> Step 3 — Prefill review</li>
-    <li class="list-inline-item">›</li>
-    <li class="list-inline-item"><span class="badge bg-success">✓</span> Step 4 — Locations</li>
-    <li class="list-inline-item">›</li>
-    <li class="list-inline-item"><span class="badge bg-success">✓</span> Step 5 — Skills</li>
-    <li class="list-inline-item">›</li>
-    <li class="list-inline-item"><strong class="text-body">Step 6 — Schedule & availability</strong></li>
-  </ol>
-  <h4 class="mb-0">When can you train?</h4>
+<div class="dash-head">
+  <div class="races-intro">
+    <p class="eyebrow accent">● Set up · Step 5 of 6</p>
+    <h1 class="page-title">When can you train?</h1>
+    <p class="page-sub">Mark the days you typically have a training window, the earliest you can start,
+      and how long the window is. Sessions schedule inside these windows — never past
+      <em>start + duration</em>. Editable any time.</p>
+  </div>
 </div>
 
-<p class="text-muted">
-  Mark the days you typically have a training window, the earliest you
-  can start, and how long the window is. Plans schedule sessions inside
-  these windows; sessions never run past <em>start + duration</em>.
-  You can come back and edit any of this later.
-</p>
+{{ onb_steps('schedule') }}
 
-<form method="post" action="{{ url_for('onboarding.schedule_save') }}">
+<form method="post" action="{{ url_for('onboarding.schedule_save') }}" class="onb-wrap">
   <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
 
   {% include 'onboarding/_schedule_form.html' %}
 
-  <div class="d-flex justify-content-between align-items-center mt-4 pt-3 border-top">
-    <a href="{{ post_step3b_target }}" class="btn btn-link text-muted">
-      Skip for now
-    </a>
-    <button type="submit" class="btn btn-primary">
-      Save and continue
-    </button>
+  <div class="onb-nav">
+    <a href="{{ post_step3b_target }}" class="btn btn-ghost">Skip for now</a>
+    <button type="submit" class="btn btn-primary">Save and continue</button>
   </div>
 </form>
-
 {% endblock %}

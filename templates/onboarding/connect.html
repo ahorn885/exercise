@@ -1,169 +1,121 @@
-{% extends 'base_legacy.html' %}
+{% extends 'base.html' %}
+{% from 'onboarding/_onb_steps.html' import onb_steps %}
 {% block title %}Connect your providers — AIDSTATION{% endblock %}
+{% block crumbs %}<b>Set up</b> <span class="sep">/</span> Connect{% endblock %}
+
+{# Redesign (finish-the-open) — onboarding Step 2 (Connect providers), migrated
+   off base_legacy onto the new .app shell. Behaviour unchanged: the consent
+   disclosure, the per-provider consent-gate (checkbox enables the Connect
+   link), and the skip/continue forms are preserved; the gate script is nonced. #}
+
 {% block content %}
-
-{# v5 onboarding Step 2 — "Connect your fitness providers" (D-58 connect
-   step). Step 1 (account-creation acknowledgment) fires at signup;
-   Step 3 (§A entry with provider prefill) lands in PR6 (D2). #}
-
-<div class="mb-4">
-  <ol class="list-inline small text-muted mb-1">
-    <li class="list-inline-item"><span class="badge bg-success">✓</span> Step 1 — Account</li>
-    <li class="list-inline-item">›</li>
-    <li class="list-inline-item"><strong class="text-body">Step 2 — Connect providers</strong></li>
-    <li class="list-inline-item">›</li>
-    <li class="list-inline-item">Step 3 — Profile</li>
-  </ol>
-  <h4 class="mb-0">Connect your fitness providers</h4>
+<div class="dash-head">
+  <div class="races-intro">
+    <p class="eyebrow accent">● Set up · Step 1 of 6</p>
+    <h1 class="page-title">Connect your providers.</h1>
+    <p class="page-sub">AIDSTATION pulls activity, sleep, and heart-rate data from the services you
+      already use, so your plan reacts to what you actually do — not what you remember to log.
+      Connect zero or more now; change it any time from Profile → Connections.</p>
+  </div>
 </div>
 
-<p class="text-muted">
-  AIDSTATION pulls activity, sleep, and heart-rate data from the
-  services you already use so your training plan reacts to what you
-  actually do — not what you remember to log. Connect zero or more
-  providers now; you can change this any time from Profile → Connections.
-</p>
+{{ onb_steps('connect') }}
 
-{% if just_connected_label %}
-  <div class="alert alert-success d-flex justify-content-between align-items-start" role="alert">
-    <div>
-      <strong>{{ just_connected_label }} connected.</strong>
-      We'll start pulling your activity, sleep, and heart-rate data on
-      the next provider sync. Connect another service below, or click
-      Continue when you're done.
-    </div>
+<div class="stack onb-wrap">
+  {% if just_connected_label %}
+  <div class="alert alert-success" role="alert">
+    <strong>{{ just_connected_label }} connected.</strong>
+    We'll start pulling your activity, sleep, and heart-rate data on the next provider sync.
+    Connect another below, or click Continue when you're done.
     <a href="{{ url_for('onboarding.connect') }}" class="btn-close" aria-label="Dismiss"></a>
   </div>
-{% endif %}
-
-{% if oauth_error_label %}
-  <div class="alert alert-danger d-flex justify-content-between align-items-start" role="alert">
-    <div>
-      <strong>{{ oauth_error_label }} did not connect.</strong>
-      The OAuth handshake or partner-user registration failed. Try the
-      Connect button again; if it keeps failing, the provider's auth
-      surface may be down.
-    </div>
+  {% endif %}
+  {% if oauth_error_label %}
+  <div class="alert alert-danger" role="alert">
+    <strong>{{ oauth_error_label }} did not connect.</strong>
+    The OAuth handshake or partner-user registration failed. Try Connect again; if it keeps
+    failing, the provider's auth surface may be down.
     <a href="{{ url_for('onboarding.connect') }}" class="btn-close" aria-label="Dismiss"></a>
   </div>
-{% endif %}
+  {% endif %}
 
-{# v5 §A.1 Connected Service consent disclosure. The disclosure slot is
-   spec-defined; final copy is product/legal-owned per the spec footnote.
-   The draft text below names the four data classes the integrated
-   providers actually read (activity, wellness, sleep, scopes-snapshot)
-   and points at the revocation path. Each provider's specific scope
-   acknowledgment is recorded at OAuth callback time
-   (provider_auth.record_oauth_scope_ack — PR1 wiring). #}
-<details class="card mb-4">
-  <summary class="card-header" style="cursor: pointer;">
-    <strong>What you're consenting to when you connect a service</strong>
-    <span class="text-muted small">— click to expand</span>
-  </summary>
-  <div class="card-body small">
-    <p class="mb-2">
-      When you connect a fitness provider, AIDSTATION will read data
-      from your account in these categories:
-    </p>
-    <ul class="mb-2">
-      <li><strong>Activity data</strong> — workouts, durations, distances, heart-rate streams, pace, power, elevation gain.</li>
-      <li><strong>Wellness data</strong> — body weight, resting heart rate, recovery scores (where the provider supplies them).</li>
-      <li><strong>Sleep data</strong> — nightly sleep duration and sleep-quality summaries (where the provider supplies them).</li>
-      <li><strong>Account profile</strong> — your name + provider user id, used to map incoming webhooks back to your AIDSTATION account.</li>
-    </ul>
-    <p class="mb-2">
-      The specific scopes granted are recorded each time you authorise
-      a provider. You can review or revoke any provider at any time
-      from <strong>Profile → Connections</strong>; revoking stops new
-      data from being pulled but leaves the historical data already
-      ingested intact.
-    </p>
-    <p class="mb-0 text-muted">
-      Draft copy — final wording is product/legal-owned per v5 spec §A.1.
-    </p>
-  </div>
-</details>
+  <details class="card card-pad onb-consent">
+    <summary><strong>What you're consenting to when you connect a service</strong>
+      <span class="dim">— click to expand</span></summary>
+    <div class="onb-consent-body">
+      <p>When you connect a fitness provider, AIDSTATION will read data from your account in these categories:</p>
+      <ul>
+        <li><strong>Activity data</strong> — workouts, durations, distances, heart-rate streams, pace, power, elevation gain.</li>
+        <li><strong>Wellness data</strong> — body weight, resting heart rate, recovery scores (where the provider supplies them).</li>
+        <li><strong>Sleep data</strong> — nightly sleep duration and sleep-quality summaries (where the provider supplies them).</li>
+        <li><strong>Account profile</strong> — your name + provider user id, used to map incoming webhooks back to your account.</li>
+      </ul>
+      <p>The specific scopes granted are recorded each time you authorise a provider. Review or revoke
+        any provider any time from <strong>Profile → Connections</strong>; revoking stops new data from
+        being pulled but leaves historical data intact.</p>
+      <p class="dim">Draft copy — final wording is product/legal-owned per v5 spec §A.1.</p>
+    </div>
+  </details>
 
-<div class="list-group mb-4">
-  {% for c in connections %}
-    <div class="list-group-item">
-      <div class="d-flex flex-wrap justify-content-between align-items-start gap-2">
-        <div>
-          <div class="d-flex align-items-center gap-2 mb-1">
-            <h6 class="mb-0">{{ c.label }}</h6>
-            <span class="badge {{ c.badge_class }}">{{ c.status_label }}</span>
-          </div>
-          <div class="text-muted small">
-            {% if c.is_connected and c.row and c.row.registered_at %}
-              Connected since {{ (c.row.registered_at|string)[:10] }}.
-            {% elif c.row and c.row.created_at %}
-              Previously connected (currently {{ c.status_label|lower }}).
-              Re-connect below.
-            {% else %}
-              Not connected yet.
-            {% endif %}
-            {% if c.row and c.row.scopes %}
-              <span class="d-block">Scopes: <code class="small">{{ c.row.scopes }}</code></span>
-            {% endif %}
-          </div>
+  <div class="stack onb-providers">
+    {% for c in connections %}
+    <div class="card card-pad onb-provider">
+      <div class="onb-provider-id">
+        <div class="onb-provider-name">
+          <strong>{{ c.label }}</strong>
+          <span class="chip{{ ' good' if c.is_connected else '' }}">{{ c.status_label }}</span>
         </div>
-        <div class="d-flex flex-wrap gap-2 align-items-center">
-          {% if c.is_connected %}
-            <span class="text-success small me-2" aria-hidden="true">✓ Connected</span>
-            <a href="{{ c.connect_url }}" class="btn btn-sm btn-outline-secondary"
-               title="Run the OAuth handshake again to refresh tokens or scope grants.">Re-authorise</a>
+        <div class="dim onb-provider-meta">
+          {% if c.is_connected and c.row and c.row.registered_at %}
+            Connected since {{ (c.row.registered_at|string)[:10] }}.
+          {% elif c.row and c.row.created_at %}
+            Previously connected (currently {{ c.status_label|lower }}). Re-connect below.
           {% else %}
-            <div class="form-check small me-2">
-              <input class="form-check-input onboarding-consent-gate"
-                     type="checkbox"
-                     id="consent-{{ c.slug }}"
-                     data-target-link="connect-link-{{ c.slug }}">
-              <label class="form-check-label" for="consent-{{ c.slug }}">
-                I agree to the data sharing above
-              </label>
-            </div>
-            <a href="{{ c.connect_url }}"
-               id="connect-link-{{ c.slug }}"
-               class="btn btn-sm btn-primary disabled"
-               aria-disabled="true"
-               tabindex="-1">Connect {{ c.label }}</a>
+            Not connected yet.
           {% endif %}
+          {% if c.row and c.row.scopes %}<span class="onb-scopes">Scopes: <code>{{ c.row.scopes }}</code></span>{% endif %}
         </div>
       </div>
+      <div class="onb-provider-act">
+        {% if c.is_connected %}
+          <span class="chip good">✓ Connected</span>
+          <a href="{{ c.connect_url }}" class="btn btn-ghost btn-sm"
+             title="Run the OAuth handshake again to refresh tokens or scope grants.">Re-authorise</a>
+        {% else %}
+          <label class="onb-consent-gate-row">
+            <input class="onboarding-consent-gate" type="checkbox"
+                   id="consent-{{ c.slug }}" data-target-link="connect-link-{{ c.slug }}">
+            <span>I agree to the data sharing above</span>
+          </label>
+          <a href="{{ c.connect_url }}" id="connect-link-{{ c.slug }}"
+             class="btn btn-primary btn-sm disabled" aria-disabled="true" tabindex="-1">Connect {{ c.label }}</a>
+        {% endif %}
+      </div>
     </div>
-  {% endfor %}
+    {% endfor %}
+  </div>
+
+  <p class="page-sub onb-note">More providers (Wahoo, Strava, Whoop, TrainingPeaks, Zwift, Ride With GPS)
+    ship as their OAuth blueprints come online. Garmin is paused while Garmin's API access is closed.</p>
+
+  <div class="onb-nav">
+    <form method="post" action="{{ url_for('onboarding.skip') }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <button type="submit" class="btn btn-ghost">Skip for now</button>
+    </form>
+    <form method="post" action="{{ url_for('onboarding.continue_') }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <button type="submit" class="btn btn-primary">
+        {% if connected_count > 0 %}Continue ({{ connected_count }} connected){% else %}Continue without connecting{% endif %}
+      </button>
+    </form>
+  </div>
 </div>
 
-<p class="text-muted small">
-  More providers (Wahoo, Strava, Whoop, TrainingPeaks, Zwift, Ride With
-  GPS) ship as their OAuth blueprints come online. Garmin is paused
-  while Garmin's API access is closed.
-</p>
-
-<div class="d-flex justify-content-between align-items-center mt-4 pt-3 border-top">
-  <form method="post" action="{{ url_for('onboarding.skip') }}" class="d-inline">
-    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-    <button type="submit" class="btn btn-link text-muted">Skip for now</button>
-  </form>
-  <form method="post" action="{{ url_for('onboarding.continue_') }}" class="d-inline">
-    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-    <button type="submit" class="btn btn-primary">
-      {% if connected_count > 0 %}
-        Continue ({{ connected_count }} connected)
-      {% else %}
-        Continue without connecting
-      {% endif %}
-    </button>
-  </form>
-</div>
-
-{# Consent gate: each Connect button starts disabled and enables only
-   when its sibling checkbox is checked. The .disabled class on an <a>
-   element plus aria-disabled + tabindex=-1 is the Bootstrap 5 pattern
-   for a disabled link (anchors can't be disabled via the disabled
-   attribute the way buttons can). Toggling the class flips the link
-   between disabled and active state. Same defensive feature-detect
-   as PR4's tab-activation script — no-ops if the DOM isn't there. #}
+{# Consent gate: each Connect link starts disabled and enables only when its
+   sibling checkbox is checked (anchors can't use the disabled attribute, so
+   we toggle the .disabled class + aria-disabled + tabindex). Feature-detects,
+   no-ops if the DOM isn't there. #}
 <script nonce="{{ csp_nonce() }}">
   (function() {
     var gates = document.querySelectorAll('.onboarding-consent-gate');
@@ -186,5 +138,4 @@
     });
   })();
 </script>
-
 {% endblock %}

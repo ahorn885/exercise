@@ -1,160 +1,120 @@
-{% extends 'base_legacy.html' %}
+{% extends 'base.html' %}
+{% from 'onboarding/_onb_steps.html' import onb_steps %}
 {% block title %}Review your profile data — AIDSTATION{% endblock %}
+{% block crumbs %}<b>Set up</b> <span class="sep">/</span> Profile{% endblock %}
+
+{# Redesign (finish-the-open) — onboarding Step 3 (prefill review), migrated
+   onto the new .app shell. Per-field comparison: stored value vs each
+   connected provider's candidate; the use-provider / keep-current forms +
+   the §A.2.6 clear-override path are unchanged. #}
+
 {% block content %}
-
-{# v5 onboarding Step 3a — "Prefill review" (D-58).
-   Per-field comparison cards showing the athlete's stored value next
-   to each connected provider's extractor output. [Use provider value]
-   applies the winning candidate; [Keep current] suppresses re-prefill
-   via 'manual_override'. An inline "Use {provider} value instead" link
-   beneath a manual_override badge restores prefill (v5 §A.2.6). #}
-
-<div class="mb-4">
-  <ol class="list-inline small text-muted mb-1">
-    <li class="list-inline-item"><span class="badge bg-success">✓</span> Step 1 — Account</li>
-    <li class="list-inline-item">›</li>
-    <li class="list-inline-item"><span class="badge bg-success">✓</span> Step 2 — Connect providers</li>
-    <li class="list-inline-item">›</li>
-    <li class="list-inline-item"><strong class="text-body">Step 3 — Review your profile data</strong></li>
-  </ol>
-  <h4 class="mb-0">Review your profile data</h4>
+<div class="dash-head">
+  <div class="races-intro">
+    <p class="eyebrow accent">● Set up · Step 2 of 6</p>
+    <h1 class="page-title">Review your profile data.</h1>
+    <p class="page-sub">Where a connected provider has a value for a performance baseline, you can apply
+      it or keep what you've already set. You can revisit this any time after connecting more providers.</p>
+  </div>
 </div>
 
-{% if connected_count == 0 %}
+{{ onb_steps('prefill') }}
+
+<div class="stack onb-wrap">
+  {% if connected_count == 0 %}
   <div class="alert alert-info" role="alert">
-    <strong>No providers connected yet.</strong>
-    You skipped Step 2 or connected zero providers, so there's nothing to
-    prefill from. You'll enter the values below manually on the next page.
-    You can connect providers any time from Profile → Connections and
-    re-run this review.
+    <strong>No providers connected yet.</strong> You skipped Step 2 or connected zero providers, so
+    there's nothing to prefill from. Enter the values below manually on the next page — we'll prefill
+    from your providers automatically as their data arrives.
   </div>
-{% elif fields_with_candidates == 0 %}
-  <p class="text-muted">
-    Your {{ connected_count }} connected provider{{ '' if connected_count == 1 else 's' }}
-    {{ 'has' if connected_count == 1 else 'have' }} not synced enough data yet
-    to fill in any of the performance baselines below. Continue to the
-    profile form to enter them manually; we'll prefill from your providers
-    automatically as their data arrives.
-  </p>
-{% else %}
-  <p class="text-muted">
-    We found provider data for
-    <strong>{{ fields_with_candidates }} of {{ fields|length }}</strong>
-    performance baseline{{ '' if fields|length == 1 else 's' }}.
-    Click <em>Use provider value</em> to apply a candidate, or
-    <em>Keep current</em> to suppress re-prefill for a value you've
-    already set. You can revisit this page any time after connecting
-    additional providers.
-  </p>
-{% endif %}
+  {% elif fields_with_candidates == 0 %}
+  <p class="page-sub">Your {{ connected_count }} connected provider{{ '' if connected_count == 1 else 's' }}
+    {{ 'has' if connected_count == 1 else 'have' }} not synced enough data yet to fill any of the
+    baselines below. Continue to enter them manually; we'll prefill as data arrives.</p>
+  {% else %}
+  <p class="page-sub">We found provider data for <strong>{{ fields_with_candidates }} of {{ fields|length }}</strong>
+    baseline{{ '' if fields|length == 1 else 's' }}. <em>Use provider value</em> applies a candidate;
+    <em>Keep current</em> suppresses re-prefill for a value you've already set.</p>
+  {% endif %}
 
-<div class="row row-cols-1 row-cols-md-2 g-3 mb-4">
-  {% for f in fields %}
-    <div class="col">
-      <div class="card h-100">
-        <div class="card-header d-flex justify-content-between align-items-center">
-          <h6 class="mb-0">{{ f.label }}</h6>
-          <span class="text-muted small">{{ f.unit }}</span>
-        </div>
-        <div class="card-body">
+  <div class="onb-fields">
+    {% for f in fields %}
+    <div class="card card-pad onb-field">
+      <div class="onb-field-head">
+        <strong>{{ f.label }}</strong>
+        <span class="dim mono">{{ f.unit }}</span>
+      </div>
 
-          <dl class="row mb-0 small">
-            <dt class="col-sm-5 text-muted">Currently stored</dt>
-            <dd class="col-sm-7">
-              {% if f.current_value is not none %}
-                <strong>{{ f.current_value }}</strong>
-                {% if f.provenance %}
-                  <span class="badge bg-light text-dark border ms-1">
-                    {% if f.provenance.source == 'self_report' %}Self-reported
-                    {% elif f.provenance.source == 'manual_override' %}Manually set
-                    {% elif f.provenance.source.startswith('provider_') %}From {{ provider_label(f.provenance.source[9:]) }}
-                    {% else %}{{ f.provenance.source }}{% endif %}
-                  </span>
-                {% endif %}
-                {# v5 §A.2.6 clear-override path. Inline "switch back"
-                   form beneath the badge — surfaces only when source
-                   is manual_override AND a live provider candidate
-                   exists (the suggestion to switch to). #}
-                {% if f.provenance and f.provenance.source == 'manual_override' and f.candidates %}
-                  <div class="mt-1">
-                    <form method="post" action="{{ url_for('onboarding.use_provider', field=f.name) }}" class="d-inline">
-                      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                      <button type="submit" class="btn btn-link btn-sm p-0 text-decoration-underline align-baseline">
-                        Use {{ f.candidates[0].provider_label }} value
-                        ({{ f.candidates[0].value }} {{ f.unit }}{% if f.candidates[0].synced_at %}, as of {{ f.candidates[0].synced_at|string }}{% endif %})
-                        instead
-                      </button>
-                    </form>
-                  </div>
-                {% endif %}
-              {% else %}
-                <em class="text-muted">Not set</em>
-              {% endif %}
-            </dd>
-
-            {% if f.candidates %}
-              {% for c in f.candidates %}
-                <dt class="col-sm-5 text-muted">{{ c.provider_label }} suggests</dt>
-                <dd class="col-sm-7">
-                  <strong>{{ c.value }}</strong>
-                  {% if c.synced_at %}
-                    <div class="text-muted small">As of {{ c.synced_at|string }}.</div>
-                  {% endif %}
-                  {% if c.note %}
-                    <div class="text-muted small">{{ c.note }}</div>
-                  {% endif %}
-                </dd>
-              {% endfor %}
-            {% else %}
-              <dt class="col-sm-5 text-muted">Provider data</dt>
-              <dd class="col-sm-7">
-                <em class="text-muted">None of your connected providers
-                supply this field yet.</em>
-              </dd>
+      <div class="onb-field-row">
+        <span class="lbl">Currently stored</span>
+        <div>
+          {% if f.current_value is not none %}
+            <strong>{{ f.current_value }}</strong>
+            {% if f.provenance %}
+              <span class="chip">
+                {% if f.provenance.source == 'self_report' %}Self-reported
+                {% elif f.provenance.source == 'manual_override' %}Manually set
+                {% elif f.provenance.source.startswith('provider_') %}From {{ provider_label(f.provenance.source[9:]) }}
+                {% else %}{{ f.provenance.source }}{% endif %}
+              </span>
             {% endif %}
-          </dl>
-
-          {% if f.candidates %}
-            <div class="mt-3 d-flex flex-wrap gap-2">
-              <form method="post" action="{{ url_for('onboarding.use_provider', field=f.name) }}" class="d-inline">
+            {% if f.provenance and f.provenance.source == 'manual_override' and f.candidates %}
+              <form method="post" action="{{ url_for('onboarding.use_provider', field=f.name) }}" class="onb-switchback">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                <button type="submit" class="btn btn-sm btn-primary">
+                <button type="submit" class="btn-link">
                   Use {{ f.candidates[0].provider_label }} value
+                  ({{ f.candidates[0].value }} {{ f.unit }}{% if f.candidates[0].synced_at %}, as of {{ f.candidates[0].synced_at|string }}{% endif %}) instead
                 </button>
               </form>
-              {# [Keep current] only meaningful when there's a value to
-                 keep — clicking it writes `'manual_override'` to
-                 suppress future re-prefill per v5 §A.2.3. Hidden for
-                 empty fields (athlete fills in manually on the profile
-                 page; no override-stickiness state to express). #}
-              {% if f.current_value is not none %}
-                <form method="post" action="{{ url_for('onboarding.keep_current', field=f.name) }}" class="d-inline">
-                  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                  <button type="submit" class="btn btn-sm btn-outline-secondary">
-                    Keep current
-                  </button>
-                </form>
-              {% endif %}
-            </div>
+            {% endif %}
+          {% else %}
+            <span class="dim">Not set</span>
           {% endif %}
-
         </div>
       </div>
+
+      {% if f.candidates %}
+        {% for c in f.candidates %}
+        <div class="onb-field-row">
+          <span class="lbl">{{ c.provider_label }} suggests</span>
+          <div>
+            <strong>{{ c.value }}</strong>
+            {% if c.synced_at %}<div class="dim">As of {{ c.synced_at|string }}.</div>{% endif %}
+            {% if c.note %}<div class="dim">{{ c.note }}</div>{% endif %}
+          </div>
+        </div>
+        {% endfor %}
+      {% else %}
+        <div class="onb-field-row">
+          <span class="lbl">Provider data</span>
+          <div class="dim">None of your connected providers supply this field yet.</div>
+        </div>
+      {% endif %}
+
+      {% if f.candidates %}
+      <div class="onb-field-act">
+        <form method="post" action="{{ url_for('onboarding.use_provider', field=f.name) }}">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <button type="submit" class="btn btn-primary btn-sm">Use {{ f.candidates[0].provider_label }} value</button>
+        </form>
+        {% if f.current_value is not none %}
+        <form method="post" action="{{ url_for('onboarding.keep_current', field=f.name) }}">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <button type="submit" class="btn btn-ghost btn-sm">Keep current</button>
+        </form>
+        {% endif %}
+      </div>
+      {% endif %}
     </div>
-  {% endfor %}
+    {% endfor %}
+  </div>
+
+  <p class="page-sub onb-note">These are the v5 spec's prefill-eligible performance baselines (§A.2).
+    More fields (sleep, training volume, race results) ship as their extractors come online. Profile
+    data is always editable from Profile → Athlete.</p>
+
+  <div class="onb-nav onb-nav--end">
+    <a href="{{ post_step3_target }}" class="btn btn-primary">Continue to locations</a>
+  </div>
 </div>
-
-<p class="text-muted small">
-  These five fields are the v5 spec's prefill-eligible performance
-  baselines (§A.2). More fields (sleep, training volume, race results)
-  ship as their provider extractors come online. Profile data you
-  enter on the next page is always editable from Profile → Athlete.
-</p>
-
-<div class="d-flex justify-content-end align-items-center mt-4 pt-3 border-top">
-  <a href="{{ post_step3_target }}" class="btn btn-primary">
-    Continue to schedule
-  </a>
-</div>
-
 {% endblock %}

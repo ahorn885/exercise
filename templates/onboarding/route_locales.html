@@ -1,147 +1,108 @@
-{% extends 'base_legacy.html' %}
+{% extends 'base.html' %}
+{% from 'onboarding/_onb_steps.html' import onb_steps %}
 {% block title %}Route locales — AIDSTATION{% endblock %}
+{% block crumbs %}<b>Set up</b> <span class="sep">/</span> <a href="{{ url_for('onboarding.target_race') }}">Target race</a> <span class="sep">/</span> Route{% endblock %}
+
+{# Redesign (finish-the-open) — onboarding route locales (sub-step of Target
+   race), migrated onto the new .app shell. Captures the race route graph
+   (start / transitions / aid stations / drop bags / bivvy / finish). Always
+   optional. The add-form keeps its Bootstrap grid inside `.onb-form` (gutters
+   restored); field names + the add/remove/skip/continue actions unchanged. #}
+
 {% block content %}
-
-{# v5 onboarding Step 3d — "Route locales" (D-66 §H.4). Offered on every
-   event type; always optional (Skip/Continue pass through cleanly).
-   Captures the route graph (start + transition areas + aid stations +
-   drop bag points + bivvy + finish) for the athlete's target race.
-   Athletes can fill in 0..N route locales; Continue with <2 writes an
-   'route_locales_incomplete' account_nudge so they see a soft reminder
-   later. Equipment-per-locale CRUD is deferred to the profile UI —
-   onboarding captures the route graph only per design §6.3
-   "step skippable; profile UI handles later additions". #}
-
-<div class="mb-4">
-  <ol class="list-inline small text-muted mb-1">
-    <li class="list-inline-item"><span class="badge bg-success">✓</span> Step 1 — Account</li>
-    <li class="list-inline-item">›</li>
-    <li class="list-inline-item"><span class="badge bg-success">✓</span> Step 2 — Connect providers</li>
-    <li class="list-inline-item">›</li>
-    <li class="list-inline-item"><span class="badge bg-success">✓</span> Step 3 — Prefill review</li>
-    <li class="list-inline-item">›</li>
-    <li class="list-inline-item"><span class="badge bg-success">✓</span> Step 4 — Locations</li>
-    <li class="list-inline-item">›</li>
-    <li class="list-inline-item"><span class="badge bg-success">✓</span> Step 5 — Skills</li>
-    <li class="list-inline-item">›</li>
-    <li class="list-inline-item"><span class="badge bg-success">✓</span> Step 6 — Schedule</li>
-    <li class="list-inline-item">›</li>
-    <li class="list-inline-item"><span class="badge bg-success">✓</span> Step 7 — Target race</li>
-    <li class="list-inline-item">›</li>
-    <li class="list-inline-item"><strong class="text-body">Step 8 — Route locales</strong></li>
-  </ol>
-  <h4 class="mb-0">Map the race route</h4>
+<div class="dash-head">
+  <div class="races-intro">
+    <p class="eyebrow accent">● Set up · Target race · Route</p>
+    <h1 class="page-title">Map the race route.</h1>
+    <p class="page-sub">For <strong>{{ target.name }}</strong>
+      ({{ target.race_format|replace('_', ' ')|title }}), add the start, transitions, aid stations,
+      drop-bag points, bivvy points, and finish — in race order, with optional mile markers. This powers
+      per-segment pacing + kit decisions in the race-week brief. Optional for any race; equipment per
+      locale lives on Profile → Race events.</p>
+  </div>
 </div>
 
-<p class="text-muted">
-  For <strong>{{ target.name }}</strong> ({{ target.race_format|replace('_', ' ')|title }}),
-  add the start, transition areas, aid stations, drop-bag points,
-  bivvy points, and finish — in race order, with optional mile markers.
-  This is what powers per-segment pacing + kit decisions in the
-  race-week brief. It's optional for any race — skip it if your event
-  doesn't need a route graph. Equipment per locale lives on the
-  Profile → Race events edit page; you can flesh that in any time
-  after onboarding.
-</p>
+{{ onb_steps('route_locales') }}
 
-{% if race_locales %}
-  <h6 class="mt-4 mb-2">Route so far ({{ race_locales|length }} {{ 'locale' if race_locales|length == 1 else 'locales' }})</h6>
-  <ul class="list-group mb-3">
-    {% for rl in race_locales %}
-      <li class="list-group-item d-flex justify-content-between align-items-start">
-        <div>
-          <span class="badge bg-secondary me-1">#{{ rl.sequence_idx }}</span>
+<div class="stack onb-wrap">
+  {% if race_locales %}
+  <section class="card card-pad">
+    <p class="eyebrow accent">● Route so far ({{ race_locales|length }} {{ 'locale' if race_locales|length == 1 else 'locales' }})</p>
+    <ul class="onb-loc-list">
+      {% for rl in race_locales %}
+      <li class="onb-loc">
+        <div class="onb-loc-id">
+          <span class="chip">#{{ rl.sequence_idx }}</span>
           <strong>{{ rl.name }}</strong>
-          <span class="text-muted small ms-1">{{ rl.role|replace('_', ' ') }}</span>
-          {% if rl.mile_marker is not none %}
-            <span class="text-muted small ms-2">— mile {{ rl.mile_marker }}</span>
-          {% endif %}
-          {% if rl.notes %}
-            <div class="text-muted small mt-1">{{ rl.notes }}</div>
-          {% endif %}
+          <span class="dim">{{ rl.role|replace('_', ' ') }}</span>
+          {% if rl.mile_marker is not none %}<span class="dim">— mile {{ rl.mile_marker }}</span>{% endif %}
+          {% if rl.notes %}<div class="dim onb-loc-notes">{{ rl.notes }}</div>{% endif %}
         </div>
-        <form method="post"
-              action="{{ url_for('onboarding.route_locales_delete', route_locale_id=rl.id) }}">
+        <form method="post" action="{{ url_for('onboarding.route_locales_delete', route_locale_id=rl.id) }}">
           <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-          <button type="submit" class="btn btn-sm btn-outline-danger"
-                  data-confirm="Remove this route locale?">
-            Remove
-          </button>
+          <button type="submit" class="btn btn-outline-danger btn-sm" data-confirm="Remove this route locale?">Remove</button>
         </form>
       </li>
-    {% endfor %}
-  </ul>
-{% else %}
-  <div class="alert alert-light border mt-4">
-    No route locales yet. Add at least a start + finish to give the
-    race-week brief something to anchor against, or skip and add them
-    later from your profile.
+      {% endfor %}
+    </ul>
+  </section>
+  {% else %}
+  <div class="alert alert-info" role="alert">
+    No route locales yet. Add at least a start + finish to give the race-week brief something to anchor
+    against, or skip and add them later from your profile.
   </div>
-{% endif %}
+  {% endif %}
 
-<h6 class="mt-4 mb-2">Add a route locale</h6>
-<form method="post" action="{{ url_for('onboarding.route_locales_add') }}">
-  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <section class="card card-pad">
+    <p class="eyebrow accent">● Add a route locale</p>
+    <form method="post" action="{{ url_for('onboarding.route_locales_add') }}" class="onb-form">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <div class="row g-3">
+        <div class="col-md-2">
+          <label class="form-label" for="add_sequence_idx">Sequence #</label>
+          <input type="number" min="1" step="1" class="form-control" id="add_sequence_idx"
+                 name="sequence_idx" required value="{{ next_sequence_idx }}">
+          <small class="form-text">Gaps OK</small>
+        </div>
+        <div class="col-md-3">
+          <label class="form-label" for="add_role">Role</label>
+          <select class="form-select" id="add_role" name="role" required>
+            <option value="">—</option>
+            {% for r in route_locale_roles %}<option value="{{ r }}">{{ r|replace('_', ' ')|title }}</option>{% endfor %}
+          </select>
+        </div>
+        <div class="col-md-5">
+          <label class="form-label" for="add_name">Name</label>
+          <input type="text" class="form-control" id="add_name" name="name" required
+                 placeholder="e.g., TA1 — Lake Mary Trailhead">
+        </div>
+        <div class="col-md-2">
+          <label class="form-label" for="add_mile_marker">Mile marker</label>
+          <input type="number" step="0.1" min="0" class="form-control" id="add_mile_marker" name="mile_marker">
+        </div>
+        <div class="col-12">
+          <label class="form-label" for="add_notes">Notes (optional)</label>
+          <input type="text" class="form-control" id="add_notes" name="notes"
+                 placeholder="Crew access, mandatory gear checkpoint, water availability, …">
+        </div>
+      </div>
+      <div class="onb-nav onb-nav--end">
+        <button type="submit" class="btn btn-outline-primary">Add route locale</button>
+      </div>
+    </form>
+  </section>
 
-  <div class="row g-3">
-    <div class="col-md-2">
-      <label class="form-label" for="add_sequence_idx">Sequence #</label>
-      <input type="number" min="1" step="1" class="form-control"
-             id="add_sequence_idx" name="sequence_idx" required
-             value="{{ next_sequence_idx }}">
-      <small class="text-muted">Gaps OK</small>
-    </div>
-    <div class="col-md-3">
-      <label class="form-label" for="add_role">Role</label>
-      <select class="form-select" id="add_role" name="role" required>
-        <option value="">—</option>
-        {% for r in route_locale_roles %}
-          <option value="{{ r }}">{{ r|replace('_', ' ')|title }}</option>
-        {% endfor %}
-      </select>
-    </div>
-    <div class="col-md-5">
-      <label class="form-label" for="add_name">Name</label>
-      <input type="text" class="form-control" id="add_name" name="name" required
-             placeholder="e.g., TA1 — Lake Mary Trailhead">
-    </div>
-    <div class="col-md-2">
-      <label class="form-label" for="add_mile_marker">Mile marker</label>
-      <input type="number" step="0.1" min="0" class="form-control"
-             id="add_mile_marker" name="mile_marker">
-    </div>
-
-    <div class="col-12">
-      <label class="form-label" for="add_notes">Notes (optional)</label>
-      <input type="text" class="form-control" id="add_notes" name="notes"
-             placeholder="Crew access, mandatory gear checkpoint, water availability, …">
-    </div>
+  <div class="onb-nav">
+    <form method="post" action="{{ url_for('onboarding.route_locales_skip') }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <button type="submit" class="btn btn-ghost">Skip for now</button>
+    </form>
+    <form method="post" action="{{ url_for('onboarding.route_locales_continue') }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <button type="submit" class="btn btn-primary">
+        {% if race_locales|length >= 2 %}Save and finish{% else %}Continue (add more later){% endif %}
+      </button>
+    </form>
   </div>
-
-  <div class="text-end mt-3">
-    <button type="submit" class="btn btn-outline-primary">
-      Add route locale
-    </button>
-  </div>
-</form>
-
-<div class="d-flex justify-content-between align-items-center mt-4 pt-3 border-top">
-  <form method="post" action="{{ url_for('onboarding.route_locales_skip') }}" class="d-inline">
-    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-    <button type="submit" class="btn btn-link text-muted">
-      Skip for now
-    </button>
-  </form>
-  <form method="post" action="{{ url_for('onboarding.route_locales_continue') }}" class="d-inline">
-    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-    <button type="submit" class="btn btn-primary">
-      {% if race_locales|length >= 2 %}
-        Save and finish
-      {% else %}
-        Continue (add more later)
-      {% endif %}
-    </button>
-  </form>
 </div>
-
 {% endblock %}

@@ -1,24 +1,27 @@
-{% extends 'base_legacy.html' %}
+{% extends 'base.html' %}
+{% set nav_active = 'athlete' %}
 {% block title %}Original feedback — AIDSTATION{% endblock %}
-{% block content %}
-<div class="d-flex justify-content-between align-items-start mb-3">
-  <h4 class="mb-0">Original feedback</h4>
-  <a href="{{ url_for('profile.edit') }}" class="btn btn-sm btn-outline-secondary">← Back to profile</a>
-</div>
+{% block crumbs %}<a href="{{ url_for('profile.edit') }}">Athlete</a> <span class="sep">/</span> <b>Original feedback</b>{% endblock %}
 
-<div class="card mb-3">
-  <div class="card-body">
-    <div class="small text-muted mb-2">
-      <span class="badge bg-secondary me-1">{{ feedback.source|replace('_', ' ') }}</span>
-      Captured {{ feedback.captured_at }}
-    </div>
-    <pre class="mb-0 u-pre-wrap-inherit">{{ feedback.raw_content }}</pre>
+{# Redesign (finish-the-open) — coach-memory provenance detail (§20 sub-page),
+   migrated onto the new .app shell. Read-only verbatim view of the feedback_log
+   row behind a coaching preference. #}
+
+{% block content %}
+<div class="dash-head">
+  <div class="races-intro">
+    <p class="eyebrow accent">● Coach memory · provenance</p>
+    <h1 class="page-title">Original feedback.</h1>
+    <p class="page-sub">The verbatim text that produced the linked coaching preference.</p>
   </div>
 </div>
 
-<p class="text-muted small">
-  This is the verbatim text that produced the linked coaching preference.
-  Edits to this raw row aren't supported — if the extracted preference is
-  wrong, delete it from the profile page and add a corrected one manually.
-</p>
+<div class="stack onb-wrap">
+  <div class="card card-pad">
+    <p class="eyebrow accent fb-meta">● <span class="chip">{{ feedback.source|replace('_', ' ') }}</span> captured {{ feedback.captured_at }}</p>
+    <pre class="fb-raw">{{ feedback.raw_content }}</pre>
+  </div>
+  <p class="page-sub">Edits to this raw row aren't supported — if the extracted preference is wrong, delete it
+    from the profile page and add a corrected one manually.</p>
+</div>
 {% endblock %}

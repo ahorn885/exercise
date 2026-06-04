@@ -95,9 +95,9 @@ The redesign covers every *user-facing* surface but a few blueprints have no red
 
 ## Build status / handoff (live)
 
-**Last updated:** 2026-06-02
+**Last updated:** 2026-06-03
 
-**Progress:** Phase 0 ✅ · Phase 1 shell ✅ · **Phase 2 COMPLETE** (§05–§09 ✅) · **Phase 3 COMPLETE\*** (§04 ✅ · §10 ✅ · §11 ✅ · §12 ◑ diff-via-refresh · §13 ✅ · §14 ✅) · **Phase 4 COMPLETE** (§15 ✅ · §16 ✅ · §17 ✅ · §18 ✅ · §19 ✅ · §20 ✅) · **Phase 5 COMPLETE** (§21 ✅ · §22 ✅ read-only · §23 ✅ · §24 ✅ · §25 ✅) · **Phase 6 polish — done** (§26 ✅ shared empty-state · §27 ✅ error states · §28 ✅ light-mode toggle · §29 ✅ a11y sweep) — **remaining (optional/low-priority): print stylesheets, the operator `base_legacy` forms (garmin import/sync/wellness, admin `plan_inspect`/`plan_diag`)**. *\*§12 standalone A↔B compare deferred (no backend route); §13's §30/Phase-7 `coaching_bp` consolidation is **⛔ BLOCKED** — code-verified it can't be done as written (two live plan models; `coaching_bp` backs the migrated §06 plan view). See Phase 7 above.*
+**Progress:** Phase 0 ✅ · Phase 1 shell ✅ · **Phase 2 COMPLETE** (§05–§09 ✅) · **Phase 3 COMPLETE\*** (§04 ✅ · §10 ✅ · §11 ✅ · §12 ◑ diff-via-refresh · §13 ✅ · §14 ✅) · **Phase 4 COMPLETE** (§15 ✅ · §16 ✅ · §17 ✅ · §18 ✅ · §19 ✅ · §20 ✅) · **Phase 5 COMPLETE** (§21 ✅ · §22 ✅ read-only · §23 ✅ · §24 ✅ · §25 ✅) · **Phase 6 polish — done** (§26 ✅ shared empty-state · §27 ✅ error states · §28 ✅ light-mode toggle · §29 ✅ a11y sweep) — **finish-the-open DONE:** the manual-`.FIT` surface (`garmin/import` · `import_preview` · `import_wellness` · `wellness_log`) is on the new shell, and the **print stylesheet** ships (chrome dropped, ink-on-paper, `.no-print`/`.print-only` utilities). **The §04–§30 authed app surface, the unauthenticated auth screens (login/register/forgot/reset), and the onboarding wizard (Connect/Profile/Locations/Skills/Schedule/Target race + route-locales) are all on the new `.app` shell**, plus a trail-voice **403** page (`@errorhandler(403)` → `_error.html`). A **second audit pass (2026-06-03)** then took the rest of the implementable set: the logging **history lists** (`training`/`cardio`/`body`/`conditions`/`injuries` `list.html`), `training/form.html` (strength edit), `profile/feedback.html` (§20 provenance), `profile/race_event_edit.html` (race form — shares the 3 race partials with the migrated `target_race`), and `natural_log/index.html` (NL "log via text"). **Every designed + route-backed surface is now on the new `.app` shell.** **Remaining on `base_legacy` — final disposition (NOT deployable gaps):** **by decision** → paused-Garmin-API forms (`garmin/auth`/`sync`/`sync_preview`), admin `plan_inspect`; **blocked** → `coaching/review` (⛔ §30); **undesigned (no artboard)** → `purchases/{list,detail}`, `references/exercises`, `workouts/{build_form,suggestion_view}` (the ad-hoc LLM build flow — route exists but no artboard; design later). *\*§12 standalone A↔B compare deferred (no backend route); §13's §30/Phase-7 `coaching_bp` consolidation is **⛔ BLOCKED** — code-verified it can't be done as written (two live plan models; `coaching_bp` backs the migrated §06 plan view). See Phase 7 above.*
 Merged to `main`: PR #397 (review), #398 (Phase 0), #399 (docs), #400 (Phase 1 + §05),
 #401 (§06), #403 (§07), #404 (§07 follow-up), #406 (redesign card/grid Bootstrap-leak fix),
 #407 (§08 unified Log landing + 4 panes).
@@ -404,6 +404,83 @@ In flight: PR for §08 Strength pane + §09 Wellness (completes Phase 2) **and**
   enforces (`REPORT_ONLY` is a dev-only opt-in, default off) and every slice has been CSP-clean,
   so there are no enforced-mode violations to clear. New `tests/test_redesign_a11y_render.py`
   (1). Redesign + auth suites green (59); `app.js` syntax-checks; CSP-clean.
+- **Phase 6 finish-the-open · manual `.FIT`-import flow** — migrated the live upload path off
+  `base_legacy` onto the new `.app` shell: `garmin/import` (bulk drop zone + single-activity
+  parse), `garmin/import_preview` (cardio + strength branches, auto-match banner, disposition
+  radios), `garmin/import_wellness` (bulk + single-file preview/confirm). Behaviour unchanged —
+  every form field name, confirm endpoint, the `data-bulk-*` uploader hooks (already ported into
+  `app.js`), and the nonced disposition-toggle script are preserved. Reskinned with token classes
+  (`.fit-*` block in `style.css`, braces 855/855); brand-neutral copy per CONVENTIONS §E.4 (no
+  top-level Garmin branding; the wellness "body battery" data type surfaces as **Recovery**).
+  Lives under Connections (§17 `nav_active = 'link'`); reached from the hub + the §07 workout rail.
+  New `tests/test_redesign_garmin_import_render.py` (5: landing, wellness landing, wellness preview
+  relabel, cardio no-match, strength auto-match). **Scoped out of this slice** (still legacy): the
+  Garmin-Connect-API forms `garmin/auth`/`sync`/`sync_preview` (the **paused** API path per
+  CONVENTIONS §E.3 — low value to polish) and the `garmin/wellness_log` data viewer (Chart.js on
+  legacy `--ink` tokens — a distinct viewer concern, deferred to keep the slice at the file
+  ceiling). Redesign + auth suites green (64).
+- **Phase 6 finish-the-open · wellness-log viewer** — migrated `garmin/wellness_log` (`/garmin/wellness`)
+  onto the new shell, completing the wellness import→view loop. Date-filtered Chart.js panels
+  (HR / stress / recovery / respiration) + the records table, all on token classes (new `.well-*`
+  block in `style.css`, braces 864/864). Chart.js stays (`cdn.jsdelivr.net` is CSP-allowed); its
+  colour vars are **remapped** from the legacy `--ink`/`--ink-3`/`--orange` palette to the new
+  `--fg`/`--fg-3`/`--accent` tokens, and the "body battery" series surfaces as **Recovery** (§E.4).
+  `data-autosubmit` date picker (already wired in `app.js`). New
+  `tests/test_redesign_garmin_wellness_log_render.py` (2: populated charts+table+Recovery relabel +
+  legacy-palette gone; empty hero). Redesign + auth suites green (66).
+- **Phase 6 finish-the-open · print stylesheet** — extended the existing `@media print` baseline in
+  `style.css` (it already remapped the dark tokens to the light scale) to **drop the app chrome**
+  (sidebar / topbar / mobile appbar+tabbar / drawer / cmdk / skip-link / nudge+flash alerts /
+  buttons) and un-flex the shell so `<main>` prints full-width, plus `.no-print`/`.print-only`
+  per-screen utilities and the existing page-break rules (`.card`/`tr`/`.stat-card` break-inside
+  avoid). Global baseline → any `.app` screen prints ink-on-paper; the plan week (§06) + workout
+  (§07) are the design targets. New `tests/test_redesign_print_styles.py` (3, mechanical guard —
+  CSS has no render surface). Braces 870/870. Redesign + auth suites green (69).
+- **Auth screens — login / register / forgot / reset onto the new shell.** The unauthenticated auth
+  surface was the last thing on the old Bootstrap `auth/_shell.html` (no `tokens.css`, light-bg
+  lockup) — overlooked because it isn't a numbered §-section. Reskinned `auth/_shell.html` as an
+  `.app`-themed **standalone** shell (mirrors `_error.html`: loads tokens+style+sprite, centered
+  `.auth-card`, nonced light-mode pre-paint, no sidebar/topbar) + all four forms onto token classes
+  (`.field`/`.lbl`/`.eyebrow.accent`/`.auth-*` block, braces 886/886). Grounded in the sign-in
+  artboard (`screens-desktop-b.jsx` "Welcome back." / `screens-mobile-aux.jsx`). **Auth contract
+  unchanged** — real `username` field kept (not the artboard's email), every form field name +
+  action + the bootstrap/registration-open branches preserved. Per CONVENTIONS §A/§E.1 the
+  artboard's fabricated marketing stats, "Continue with Strava" (no social-OAuth backend), and the
+  non-functional remember-me were **not** ported; Terms/Privacy render as text (no dead links). New
+  `tests/test_redesign_auth_render.py` (5: login, register bootstrap + normal, forgot, reset
+  invalid-token). Redesign + auth suites green (81).
+- **403 page.** `routes/admin.py` gates to `user_id==1` and `abort(403)`s, which rendered Flask's
+  default. Added `@app.errorhandler(403)` reusing the standalone `_error.html` (§27 system) — warn
+  tone + way-back quicklinks + diagnostic + support mailto; single-user copy ("admin-only"), not
+  the artboard's multi-user/roles wording. `tests/test_redesign_error_render.py` +1. Green (82).
+- **Onboarding wizard — Steps Connect/Profile/Locations/Skills/Schedule/Target race + route-locales.**
+  The last designed-but-unbuilt surface backed by existing routes (artboard audit). Migrated all 7
+  step templates off `base_legacy` onto the new shell behind a **shared progress stepper**
+  (`onboarding/_onb_steps.html`, keyed to the canonical route order — which also fixed the
+  inconsistent hardcoded step labels the legacy templates carried). **Slice A** (PR commit): Connect
+  (consent-gate nonced script preserved), Profile prefill (use-provider/keep-current forms), Skills,
+  Schedule (the last two keep including the shared `_schedule_form`/`_skills_form` partials, already
+  on the new shell via §18). **Slice B**: Locations + route-locales (token-native), Target race (the
+  large §H.2 form keeps its Bootstrap grid + the three shared partials `_race_locale_picker`/
+  `_previous_attempts_editor`/`_race_terrain_editor` — also used by the still-legacy
+  `profile/race_event_edit`, so not rewritten — and both nonced scripts; only the chrome is
+  reskinned, with `.app .onb-form .row` restoring the Bootstrap gutters `.app .row` zeroes). New
+  `.onb-*` CSS (braces 928/928). `tests/test_redesign_onboarding_render.py` (7). Green (89).
+- **Second audit pass — the rest of the implementable `base_legacy` set (4 slices).** A read-only
+  agent audit ranked the 11 remaining legacy templates by deployable-now (route + reachable +
+  designed/reskinnable, no backend); shipped all 9 that qualified, leaving only the undesigned
+  `workouts/{build_form,suggestion_view}` + the by-decision/blocked set. **Slice 1 — logging history
+  lists** (`training`/`cardio`/`body`/`conditions` `list.html`): `.data` tables + `.chip`s, token
+  filter bars (`.loglist-*`), edit/FIT/delete actions with `data-confirm`. **Slice 2** — `injuries/list`
+  (status-tinted cards + collapsible modification CRUD + add-form in `.onb-form` + nonced
+  substitute-toggle), `training/form` (strength EDIT form — Bootstrap grid in `.onb-form` + the nonced
+  Rx-fetch script), `profile/feedback` (§20 provenance, tiny read-only). **Slice 3** — `profile/race_event_edit`
+  (the multi-section race form sharing the 3 race partials with `target_race`; whole body wrapped in
+  `.onb-form`, both nonced scripts kept; `.onb-wrap--wide`). **Slice 4** — `natural_log/index` (the NL
+  "log via text" flow; already-nonced controller kept, legacy `u-*` utils → `.nl-*`, stale
+  Docker copy → Vercel). New `.loglist-*`/`.injury-*`/`.fb-*`/`.nl-*` CSS (braces 963/963). New
+  `tests/test_redesign_{log_lists(4),log_detail(3),race_event_edit(1),natural_log(1)}_render.py`.
+  Green (98). **Every designed + route-backed surface is now on the new shell.**
 
 ### Known blocker (infra, not code) — Vercel **Preview** deploys 500
 Preview deployments crash with `FUNCTION_INVOCATION_FAILED`: `app.py` raises at **import** when

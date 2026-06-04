@@ -1,0 +1,23 @@
+{#- Shared onboarding progress stepper (redesign finish-the-open). Renders the
+    6 setup steps in canonical route order — Connect → Profile (prefill) →
+    Locations → Skills → Schedule → Target race — with done / current / upcoming
+    states. `route_locales` is a sub-step of Target race, so it highlights that
+    step. Account (signup) is already complete by the time onboarding runs, so
+    it isn't shown. CSP-clean (no inline style). -#}
+{% macro onb_steps(current) %}
+{%- set order = ['connect', 'prefill', 'locales', 'skills', 'schedule', 'target_race'] -%}
+{%- set labels = {'connect': 'Connect', 'prefill': 'Profile', 'locales': 'Locations',
+                  'skills': 'Skills', 'schedule': 'Schedule', 'target_race': 'Target race'} -%}
+{%- set cur = 'target_race' if current == 'route_locales' else current -%}
+{%- set cur_idx = order.index(cur) if cur in order else 0 -%}
+<ol class="onb-steps" aria-label="Setup progress">
+  {%- for key in order %}
+  {%- set i = loop.index0 %}
+  <li class="onb-step{{ ' is-done' if i < cur_idx else (' is-current' if i == cur_idx else '') }}"
+      {% if i == cur_idx %}aria-current="step"{% endif %}>
+    <span class="onb-step-n" aria-hidden="true">{{ '✓' if i < cur_idx else loop.index }}</span>
+    <span class="onb-step-l">{{ labels[key] }}</span>
+  </li>
+  {%- endfor %}
+</ol>
+{% endmacro %}

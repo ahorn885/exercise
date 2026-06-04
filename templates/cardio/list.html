@@ -1,81 +1,83 @@
-{% extends 'base_legacy.html' %}
-{% block title %}Cardio Log{% endblock %}
+{% extends 'base.html' %}
+{% set nav_active = 'workout' %}
+{% block title %}Cardio log{% endblock %}
+{% block crumbs %}<b>Cardio log</b>{% endblock %}
+{% block topbar_actions %}
+<a class="btn btn-primary btn-sm" href="{{ url_for('cardio.new_entry') }}">
+  <svg class="icon" width="12" height="12" aria-hidden="true"><use href="#i-plus"></use></svg> Log cardio
+</a>
+{% endblock %}
+
+{# Redesign (finish-the-open) — §08 cardio-log history list onto the new .app
+   shell. Filters + edit / FIT-download / delete actions preserved (the FIT
+   link keeps its data-confirm). #}
+
 {% block content %}
-<div class="d-flex justify-content-between align-items-center mb-3">
-  <h4 class="mb-0">Cardio Log</h4>
-  <a href="{{ url_for('cardio.new_entry') }}" class="btn btn-success">+ Log Cardio</a>
-</div>
-<form class="row g-2 mb-3" method="get">
-  <div class="col-auto">
-    <input type="date" name="date" class="form-control form-control-sm" value="{{ date_filter }}">
+<div class="dash-head">
+  <div class="races-intro">
+    <p class="eyebrow accent">● Workouts · cardio history</p>
+    <h1 class="page-title">Cardio log.</h1>
+    <p class="page-sub">Every logged activity with pace, heart rate, power, and training effect. Filter by
+      day or activity type.</p>
   </div>
-  <div class="col-auto">
-    <select name="activity" class="form-select form-select-sm">
+</div>
+
+<form class="loglist-filters" method="get">
+  <label class="field">
+    <span class="lbl">Date</span>
+    <input type="date" name="date" class="form-control" value="{{ date_filter }}">
+  </label>
+  <label class="field">
+    <span class="lbl">Activity</span>
+    <select name="activity" class="form-control">
       <option value="">All activities</option>
       {% for a in activities %}
-        <option value="{{ a.activity }}" {% if activity_filter == a.activity %}selected{% endif %}>{{ a.activity }}</option>
+      <option value="{{ a.activity }}" {% if activity_filter == a.activity %}selected{% endif %}>{{ a.activity }}</option>
       {% endfor %}
     </select>
-  </div>
-  <div class="col-auto">
-    <button class="btn btn-sm btn-outline-secondary">Filter</button>
-    <a href="{{ url_for('cardio.list_entries') }}" class="btn btn-sm btn-outline-secondary">Clear</a>
+  </label>
+  <div class="loglist-filter-act">
+    <button class="btn btn-ghost btn-sm" type="submit">Filter</button>
+    <a href="{{ url_for('cardio.list_entries') }}" class="btn btn-ghost btn-sm">Clear</a>
   </div>
 </form>
+
 {% if entries %}
-<div class="table-responsive">
-  <table class="table table-sm table-hover table-striped">
-    <thead class="table-dark">
-      <tr>
-        <th>Date</th>
-        <th>Activity</th>
-        <th>Name</th>
-        <th>Duration</th>
-        <th>Distance</th>
-        <th>Pace / Speed</th>
-        <th>Avg HR</th>
-        <th>Elev+</th>
-        <th>Power</th>
-        <th>TE</th>
-        <th></th>
-      </tr>
+{% set BIKE = ['Road Cycling','Mountain Biking','Gravel Cycling','Indoor Bike Trainer'] %}
+<div class="card table-scroll">
+  <table class="data">
+    <thead>
+      <tr><th>Date</th><th>Activity</th><th>Name</th><th>Duration</th><th>Distance</th><th>Pace / Speed</th><th>Avg HR</th><th>Elev+</th><th>Power</th><th>TE</th><th></th></tr>
     </thead>
     <tbody>
-    {% set BIKE = ['Road Cycling','Mountain Biking','Gravel Cycling','Indoor Bike Trainer'] %}
-    {% set PADDLE = ['Kayaking','Pack Rafting','Kayak Ergometer','Rowing Ergometer'] %}
     {% for e in entries %}
     <tr>
       <td class="text-nowrap">{{ e.date }}</td>
       <td class="text-nowrap">{{ e.activity }}</td>
-      <td class="text-muted small text-nowrap">{{ e.activity_name or '' }}</td>
+      <td class="text-nowrap dim">{{ e.activity_name or '' }}</td>
       <td class="text-nowrap">{{ e.duration_min or '—' }}{% if e.duration_min %} min{% endif %}</td>
       <td class="text-nowrap">{{ e.distance_mi or '—' }}{% if e.distance_mi %} mi{% endif %}</td>
       <td class="text-nowrap">
-        {%- if e.activity in BIKE and e.avg_speed -%}
-          {{ e.avg_speed }} mph
-        {%- elif e.avg_pace -%}
-          {{ e.avg_pace }}/mi
-        {%- elif e.avg_speed -%}
-          {{ e.avg_speed }} mph
+        {%- if e.activity in BIKE and e.avg_speed -%}{{ e.avg_speed }} mph
+        {%- elif e.avg_pace -%}{{ e.avg_pace }}/mi
+        {%- elif e.avg_speed -%}{{ e.avg_speed }} mph
         {%- else -%}—{%- endif -%}
       </td>
       <td class="text-nowrap">{{ e.avg_hr or '—' }}</td>
       <td class="text-nowrap">{{ e.elev_gain_ft or '—' }}</td>
       <td class="text-nowrap">
-        {%- if e.avg_power -%}{{ e.avg_power }}W
-          {%- if e.norm_power %} <span class="text-muted small">(NP {{ e.norm_power }})</span>{% endif %}
+        {%- if e.avg_power -%}{{ e.avg_power }}W{% if e.norm_power %} <span class="dim">(NP {{ e.norm_power }})</span>{% endif %}
         {%- elif e.norm_power -%}NP {{ e.norm_power }}W
         {%- else -%}—{%- endif -%}
       </td>
       <td class="text-nowrap">{{ e.aerobic_te or '—' }}</td>
-      <td class="text-nowrap">
-        <a href="{{ url_for('cardio.edit_entry', entry_id=e.id) }}" class="btn btn-sm btn-outline-secondary py-0 px-1">Edit</a>
-        <a href="{{ url_for('cardio.activity_fit', entry_id=e.id) }}" class="btn btn-sm btn-outline-info py-0 px-1" title="Download Activity FIT"
-           data-confirm="Generate and download an activity FIT file for this session?">FIT</a>
-        <form method="post" action="{{ url_for('cardio.delete_entry', entry_id=e.id) }}" class="d-inline"
-              data-confirm="Delete this entry?">
+      <td class="loglist-act">
+        <a href="{{ url_for('cardio.edit_entry', entry_id=e.id) }}" class="btn btn-ghost btn-sm">Edit</a>
+        <a href="{{ url_for('cardio.activity_fit', entry_id=e.id) }}" class="btn btn-ghost btn-sm"
+           title="Download Activity FIT" data-confirm="Generate and download an activity FIT file for this session?">FIT</a>
+        <form method="post" action="{{ url_for('cardio.delete_entry', entry_id=e.id) }}" data-confirm="Delete this entry?">
           <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-          <button class="btn btn-sm btn-outline-danger py-0 px-1">Del</button>
+          <button class="btn btn-outline-danger btn-sm">Del</button>
         </form>
       </td>
     </tr>
@@ -84,6 +86,6 @@
   </table>
 </div>
 {% else %}
-<p class="text-muted">No cardio logged yet. <a href="{{ url_for('cardio.new_entry') }}">Log a session.</a></p>
+<p class="page-sub">No cardio logged yet. <a href="{{ url_for('cardio.new_entry') }}">Log a session.</a></p>
 {% endif %}
 {% endblock %}

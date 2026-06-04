@@ -1,114 +1,108 @@
-{% extends 'base_legacy.html' %}
-{% block title %}{{ 'Edit' if entry else 'Log' }} Workout{% endblock %}
+{% extends 'base.html' %}
+{% set nav_active = 'workout' %}
+{% block title %}{{ 'Edit' if entry else 'Log' }} workout{% endblock %}
+{% block crumbs %}<a href="{{ url_for('training.list_entries') }}">Strength log</a> <span class="sep">/</span> <b>{{ 'Edit' if entry else 'Log' }}</b>{% endblock %}
+
+{# Redesign (finish-the-open) — strength-log edit form, migrated onto the new
+   .app shell (counterpart of the already-migrated session_form). Keeps its
+   Bootstrap grid inside `.onb-form` (gutters restored) + the nonced Rx-fetch /
+   injury-warning script; all field names + the plan-link select unchanged. #}
+
 {% block content %}
-<div class="d-flex justify-content-between align-items-center mb-3">
-  <h4 class="mb-0">{{ 'Edit Entry' if entry else 'Log Strength Workout' }}</h4>
-  <a href="{{ url_for('training.list_entries') }}" class="btn btn-sm btn-outline-secondary">← Back</a>
+<div class="dash-head">
+  <div class="races-intro">
+    <p class="eyebrow accent">● Workouts · strength</p>
+    <h1 class="page-title">{{ 'Edit entry.' if entry else 'Log strength workout.' }}</h1>
+  </div>
 </div>
 
-<form method="post">
+<form method="post" class="onb-form onb-wrap stack">
   <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-  <div class="row g-3 mb-3">
+  <div class="row g-3">
     <div class="col-md-3">
       <label class="form-label">Date</label>
-      <input type="date" name="date" class="form-control" required
-             value="{{ entry.date if entry else '' }}">
+      <input type="date" name="date" class="form-control" required value="{{ entry.date if entry else '' }}">
     </div>
     <div class="col-md-5">
       <label class="form-label">Exercise</label>
       <select name="exercise" id="exercise-select" class="form-select" required>
         <option value="">— select exercise —</option>
         {% for ex in exercises %}
-          <option value="{{ ex.exercise }}" {% if entry and entry.exercise == ex.exercise %}selected{% endif %}>
-            {{ ex.exercise }} ({{ ex.movement_pattern }})
-          </option>
+        <option value="{{ ex.exercise }}" {% if entry and entry.exercise == ex.exercise %}selected{% endif %}>{{ ex.exercise }} ({{ ex.movement_pattern }})</option>
         {% endfor %}
       </select>
       <div id="injury-warning" class="mt-2 d-none"></div>
     </div>
     <div class="col-md-2">
       <label class="form-label">RPE (1–10)</label>
-      <input type="number" name="rpe" class="form-control" min="1" max="10" step="0.5"
-             value="{{ entry.rpe if entry else '' }}">
+      <input type="number" name="rpe" class="form-control" min="1" max="10" step="0.5" value="{{ entry.rpe if entry else '' }}">
     </div>
     <div class="col-md-2">
       <label class="form-label">Rest (sec)</label>
-      <input type="number" name="rest_sec" class="form-control"
-             value="{{ entry.rest_sec if entry else '' }}">
+      <input type="number" name="rest_sec" class="form-control" value="{{ entry.rest_sec if entry else '' }}">
     </div>
   </div>
 
-  <div class="row g-3 mb-3">
-    <div class="col-12"><h6 class="text-muted">Target (from Rx)</h6></div>
+  <div class="row g-3">
+    <div class="col-12"><p class="eyebrow accent">● Target (from Rx)</p></div>
     <div class="col-6 col-md-3">
       <label class="form-label">Sets</label>
-      <input type="number" name="target_sets" id="target_sets" class="form-control"
-             value="{{ entry.target_sets if entry else '' }}">
+      <input type="number" name="target_sets" id="target_sets" class="form-control" value="{{ entry.target_sets if entry else '' }}">
     </div>
     <div class="col-6 col-md-3">
       <label class="form-label">Reps</label>
-      <input type="number" name="target_reps" id="target_reps" class="form-control"
-             value="{{ entry.target_reps if entry else '' }}">
+      <input type="number" name="target_reps" id="target_reps" class="form-control" value="{{ entry.target_reps if entry else '' }}">
     </div>
     <div class="col-6 col-md-3">
       <label class="form-label">Weight (lb)</label>
-      <input type="number" name="target_weight" id="target_weight" class="form-control" step="0.5"
-             value="{{ entry.target_weight if entry else '' }}">
+      <input type="number" name="target_weight" id="target_weight" class="form-control" step="0.5" value="{{ entry.target_weight if entry else '' }}">
     </div>
     <div class="col-6 col-md-3">
       <label class="form-label">Duration (sec)</label>
-      <input type="number" name="target_duration" id="target_duration" class="form-control"
-             value="{{ entry.target_duration if entry else '' }}">
+      <input type="number" name="target_duration" id="target_duration" class="form-control" value="{{ entry.target_duration if entry else '' }}">
     </div>
   </div>
 
-  <div class="row g-3 mb-3">
-    <div class="col-12"><h6 class="text-muted">Actual</h6></div>
+  <div class="row g-3">
+    <div class="col-12"><p class="eyebrow accent">● Actual</p></div>
     <div class="col-6 col-md-3">
       <label class="form-label">Sets</label>
-      <input type="number" name="actual_sets" class="form-control"
-             value="{{ entry.actual_sets if entry else '' }}">
+      <input type="number" name="actual_sets" class="form-control" value="{{ entry.actual_sets if entry else '' }}">
     </div>
     <div class="col-6 col-md-3">
       <label class="form-label">Reps</label>
-      <input type="number" name="actual_reps" class="form-control"
-             value="{{ entry.actual_reps if entry else '' }}">
+      <input type="number" name="actual_reps" class="form-control" value="{{ entry.actual_reps if entry else '' }}">
     </div>
     <div class="col-6 col-md-3">
       <label class="form-label">Weight (lb)</label>
-      <input type="number" name="actual_weight" class="form-control" step="0.5"
-             value="{{ entry.actual_weight if entry else '' }}">
+      <input type="number" name="actual_weight" class="form-control" step="0.5" value="{{ entry.actual_weight if entry else '' }}">
     </div>
     <div class="col-6 col-md-3">
       <label class="form-label">Duration (sec)</label>
-      <input type="number" name="actual_duration" class="form-control"
-             value="{{ entry.actual_duration if entry else '' }}">
+      <input type="number" name="actual_duration" class="form-control" value="{{ entry.actual_duration if entry else '' }}">
     </div>
   </div>
 
   {% if plan_items %}
-  <div class="mb-3">
-    <label class="form-label">Link to Plan Workout <span class="text-muted small">(optional — marks it complete)</span></label>
-    <select name="plan_item_id" class="form-select">
+  <label class="field">
+    <span class="lbl">Link to plan workout <span class="dim">(optional — marks it complete)</span></span>
+    <select name="plan_item_id" class="form-control">
       <option value="">— not linked to a plan —</option>
       {% for pi in plan_items %}
-        <option value="{{ pi.id }}"
-          {% if entry and entry.plan_item_id == pi.id %}selected{% endif %}>
-          {{ pi.item_date }} · {{ pi.workout_name }} ({{ pi.sport_type }}) — {{ pi.plan_name }}
-        </option>
+      <option value="{{ pi.id }}" {% if entry and entry.plan_item_id == pi.id %}selected{% endif %}>{{ pi.item_date }} · {{ pi.workout_name }} ({{ pi.sport_type }}) — {{ pi.plan_name }}</option>
       {% endfor %}
     </select>
-  </div>
+  </label>
   {% endif %}
 
-  <div class="mb-3">
-    <label class="form-label">Notes</label>
+  <label class="field">
+    <span class="lbl">Notes</span>
     <textarea name="notes" class="form-control" rows="2">{{ entry.notes if entry else '' }}</textarea>
-  </div>
+  </label>
 
-  <div class="d-flex gap-2">
+  <div class="onb-nav">
+    <a href="{{ url_for('training.list_entries') }}" class="btn btn-ghost">Cancel</a>
     <button type="submit" class="btn btn-primary">{{ 'Update' if entry else 'Save' }}</button>
-    <a href="{{ url_for('training.list_entries') }}" class="btn btn-outline-secondary">Cancel</a>
   </div>
 </form>
 {% endblock %}
@@ -133,15 +127,12 @@ function loadRx(exercise) {
       if (mods.length === 0) { warn.classList.add('d-none'); return; }
 
       const typeLabels = {avoid:'Avoid',substitute:'Substitute',reduce_load:'Reduce Load',modify:'Modify'};
-      const typeBadge  = {avoid:'danger',substitute:'warning',reduce_load:'info',modify:'secondary'};
-
       let html = mods.map(m => {
-        const badge = `<span class="badge bg-${typeBadge[m.modification_type] || 'secondary'}">${typeLabels[m.modification_type] || m.modification_type}</span>`;
         const sub   = m.substitute_name ? ` → <strong>${m.substitute_name}</strong>` : '';
-        const notes = m.modification_notes ? ` <span class="text-muted">${m.modification_notes}</span>` : '';
-        return `<div>${badge} <strong>${m.body_part}</strong> (${m.status})${sub}${notes}</div>`;
+        const notes = m.modification_notes ? ` <span class="dim">${m.modification_notes}</span>` : '';
+        return `<div>${typeLabels[m.modification_type] || m.modification_type}: <strong>${m.body_part}</strong> (${m.status})${sub}${notes}</div>`;
       }).join('');
-      warn.innerHTML = `<div class="alert alert-warning py-2 px-3 mb-0 small">⚠️ Active injury modification${mods.length > 1 ? 's' : ''}:<br>${html}</div>`;
+      warn.innerHTML = `<div class="alert alert-warning"><strong>Active injury modification${mods.length > 1 ? 's' : ''}:</strong><br>${html}</div>`;
       warn.classList.remove('d-none');
     });
 }
