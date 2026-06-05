@@ -65,6 +65,7 @@ from layer4.payload import (
     HRTarget,
     Layer4Payload,
     PaceTarget,
+    PhaseStructure,
     PlanSession,
     PowerTarget,
     RPETarget,
@@ -73,6 +74,7 @@ from layer4.payload import (
     SwimPaceTarget,
     ValidatorResult,
 )
+from layer4.periodization import week_volume_multiplier
 
 
 # ─── ValidatorContext ───────────────────────────────────────────────────────
@@ -319,6 +321,31 @@ def phase_volume_bands_hours(
     }
 
 
+def phase_week_volume_bands_hours(
+    layer2a: Layer2APayload | None,
+    phase_name: str,
+    week_in_phase: int,
+    phase_structure: PhaseStructure | None,
+    capacity_hours: float | None,
+) -> dict[str, tuple[float, float]]:
+    """Per-discipline weekly-HOUR band for ONE `(phase, week_in_phase)`.
+
+    The flat per-phase band (`phase_volume_bands_hours`) scaled by the per-week
+    periodization multiplier (`periodization.week_volume_multiplier`) so the
+    band ramps / deloads / tapers with the intended shape — the single source of
+    truth shared with the synthesizer prompt and `recovery_week` stamping. When
+    the structure can't resolve the week the multiplier is 1.0, so this is
+    identical to the flat band (graceful degradation for entry points without a
+    `phase_structure`)."""
+    flat = phase_volume_bands_hours(layer2a, phase_name, capacity_hours)
+    if not flat:
+        return {}
+    m = week_volume_multiplier(phase_structure, phase_name, week_in_phase)
+    if m == 1.0:
+        return flat
+    return {did: (lo * m, hi * m) for did, (lo, hi) in flat.items()}
+
+
 def weekly_capacity_hours(layer1_payload: dict | None) -> float | None:
     """Athlete's bounded weekly training hours = `min(available, goal)`.
 
@@ -372,54 +399,40 @@ def _rule_volume_band(payload: Layer4Payload, ctx: ValidatorContext) -> list[Rul
         wk = s.phase_metadata.week_in_phase
         key = (wk, s.discipline_id, s.phase_metadata.phase_name)
         by_week_disc.setdefault(key, []).append(s)
-    bands_by_phase: dict[str, dict[str, tuple[float, float]]] = {}
+    # Per-week band grid (`periodization`): the flat 2A band scaled by the
+    # intended ramp / deload / taper for THIS training week, so a legitimate
+    # progression no longer false-blocks against a flat per-phase constant — the
+    # pre-grid behavior that looped re-synthesis into the function-timeout stall
+    # (prod plan 58 `Build:w2`: per-discipline `volume_band` blockers). The grid
+    # is volume-neutral on Base/Build/Peak and a Bosquet descent on Taper; when
+    # `phase_structure` is absent it degrades to the flat band. `above`/`below`
+    # are now SYMMETRIC — with a correct per-week band, the old Peak/Taper/
+    # `recovery_week` `below`→warning demotion (an interim flat-band patch) is no
+    # longer needed: a deload/taper week is simply inside its (lower) week band.
+    bands_by_phase_week: dict[
+        tuple[str, int], dict[str, tuple[float, float]]
+    ] = {}
     for (wk, disc, phase), sessions in by_week_disc.items():
-        if phase not in bands_by_phase:
-            bands_by_phase[phase] = phase_volume_bands_hours(
-                ctx.layer2a_payload, phase, ctx.capacity_hours
+        if (phase, wk) not in bands_by_phase_week:
+            bands_by_phase_week[(phase, wk)] = phase_week_volume_bands_hours(
+                ctx.layer2a_payload,
+                phase,
+                wk,
+                payload.phase_structure,
+                ctx.capacity_hours,
             )
-        band = bands_by_phase[phase].get(disc)
+        band = bands_by_phase_week[(phase, wk)].get(disc)
         if band is None:
             continue
         low, high = band
         actual = sum(_session_volume_hours(s) for s in sessions)
-        blocker_low, blocker_high = low * 0.8, high * 1.2
-        warning_low, warning_high = low * 0.9, high * 1.1
-        if actual < blocker_low or actual > blocker_high:
+        if actual < low * 0.8 or actual > high * 1.2:
             severity = "blocker"
-        elif actual < warning_low or actual > warning_high:
+        elif actual < low * 0.9 or actual > high * 1.1:
             severity = "warning"
         else:
             continue
         direction = "below" if actual < low else "above"
-        # D-77 interim (pending the per-week periodization grid): the band is a
-        # flat per-PHASE constant (`phase_volume_bands_hours` has no intra-phase
-        # taper), but the synthesizer is told to ramp + deload + taper volume
-        # within a phase. So a *correctly* reduced Peak/Taper week, or a flagged
-        # `recovery_week` deload in any phase, reads `below` the flat band and a
-        # `blocker` forces wasteful best-effort retries (prod pv=38: Peak:w1 spent
-        # ~8.5min retrying volume_band_below that the taper made unavoidable).
-        # Demote `below` to a warning in those reduced-volume contexts — it still
-        # surfaces for review, just doesn't hard-block. `above` stays a blocker
-        # (genuine over-prescription in a taper is still worth catching). The
-        # periodization grid will restore real per-week enforcement.
-        #
-        # The Peak/Taper *phase* check is the live path (it covers the pv=38
-        # incident). The `recovery_week` check is forward-looking: that flag is a
-        # spec-auto deload marker (`per_phase` §8.1/§8.5) that the orchestrator is
-        # documented to stamp onto `coaching_flags` but does not yet write — so
-        # for now the clause only fires once that stamping lands. Reading it from
-        # `coaching_flags` (the real field; there is no `flags` attribute) means
-        # it lights up automatically when stamping ships, with no validator edit.
-        is_recovery_week = any(
-            "recovery_week" in s.coaching_flags for s in sessions
-        )
-        if (
-            severity == "blocker"
-            and direction == "below"
-            and (phase in ("Peak", "Taper") or is_recovery_week)
-        ):
-            severity = "warning"
         out.append(
             RuleFailure(
                 rule_name=f"volume_band_{direction}_week_{wk}_{disc}_{phase.lower()}",

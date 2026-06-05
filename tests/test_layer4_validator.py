@@ -230,6 +230,37 @@ def _phase_structure() -> PhaseStructure:
     )
 
 
+def _unit_phase_structure() -> PhaseStructure:
+    """A single 1-week Base phase. Its week-1 periodization multiplier is
+    exactly 1.0 (mean of a length-1 vector), so the volume band equals the flat
+    per-phase band — used by the severity-threshold tests so they grade against
+    a known (un-reshaped) band. The per-week reshaping is covered separately in
+    `tests/test_layer4_periodization.py` and the grid-behavior tests below."""
+    return PhaseStructure(
+        phases=[
+            PhaseSpec(
+                phase_name="Base",
+                start_date=_SCOPE_START,
+                end_date=_SCOPE_START + timedelta(days=6),
+                weeks=1,
+                intended_volume_band=(5.0, 8.0),
+                intended_intensity_distribution={"Z1-Z2": 0.80, "Z3": 0.15, "Z4-Z5": 0.05},
+                synthesis_metadata=SynthesisMetadata(
+                    model="m",
+                    temperature=0.0,
+                    input_tokens=0,
+                    output_tokens=0,
+                    latency_ms=0,
+                    retries_used=0,
+                    cap_hit=False,
+                ),
+            )
+        ],
+        total_weeks=1,
+        derived_from="3b_standard",
+    )
+
+
 def _minimal_layer4(
     *,
     mode: str = "plan_create",
@@ -238,6 +269,7 @@ def _minimal_layer4(
     suggestion_id: int | None = None,
     race_week_brief: RaceWeekBrief | None = None,
     race_plan: RacePlan | None = None,
+    phase_structure: object = _UNSET,
 ) -> Layer4Payload:
     if sessions is None:
         sessions = [_cardio_session()]
@@ -258,7 +290,11 @@ def _minimal_layer4(
         llm_call_count=1,
         etl_version_set={"layer0": "v7"},
         sessions=sessions,
-        phase_structure=_phase_structure() if is_pattern_a else None,
+        phase_structure=(
+            phase_structure
+            if phase_structure is not _UNSET
+            else (_phase_structure() if is_pattern_a else None)
+        ),  # type: ignore[arg-type]
         seam_reviews=[] if is_pattern_a else None,
         validator_results=[
             ValidatorResult(
@@ -739,7 +775,9 @@ def test_volume_band_above_warning():
         )
         for i in range(6)
     ]  # 9h: above 8 × 1.1=8.8 but ≤ 8 × 1.2=9.6 → warning
-    payload = _minimal_layer4(sessions=sessions)
+    # Unit (1-week) structure → week-1 multiplier 1.0 → band is the flat 5–8h, so
+    # this exercises the severity thresholds, not the per-week reshaping.
+    payload = _minimal_layer4(sessions=sessions, phase_structure=_unit_phase_structure())
     ctx = ValidatorContext(
         layer2a_payload=_layer2a_with_band(), capacity_hours=999.0
     )
@@ -2114,7 +2152,9 @@ def test_volume_band_boundaries(actual_hours: float, expected_severity: str | No
             duration_min=minutes,
         )
     ]
-    payload = _minimal_layer4(sessions=sessions)
+    # Unit (1-week) structure → week-1 multiplier 1.0 → flat 5–8h band, so the
+    # boundary arithmetic above is exact (per-week reshaping tested separately).
+    payload = _minimal_layer4(sessions=sessions, phase_structure=_unit_phase_structure())
     ctx = ValidatorContext(
         layer2a_payload=_layer2a_with_band(), capacity_hours=999.0
     )
@@ -2238,11 +2278,13 @@ def test_volume_band_below_fires_on_genuine_hour_shortfall():
     assert vb and vb[0].severity == "blocker"
 
 
-# ─── Rule 1: volume_band — D-77 interim reduced-volume demotion ───────────────
-# A flat per-phase band + a synthesizer told to taper/deload within a phase means
-# a correctly-reduced Peak/Taper week (or a flagged recovery_week deload) reads
-# `below` band. Demote that `below` blocker to a warning so it stops forcing
-# wasteful best-effort retries; `above` stays a blocker. Pending the per-week grid.
+# ─── Rule 1: volume_band — per-week periodization grid ───────────────────────
+# The band bends with the intended ramp/deload/taper (`layer4.periodization`),
+# so a legitimately-reduced week is graded against its OWN (lower) week band
+# rather than a flat per-phase constant. `above`/`below` are symmetric — the old
+# flat-band Peak/Taper/recovery_week `below`→warning demotion is gone (the band
+# itself now meets the reduced week). Grid math is unit-tested in
+# `tests/test_layer4_periodization.py`; these cover the rule consuming it.
 
 
 def _below_band_session(*, phase: str, coaching_flags=None):
@@ -2267,50 +2309,76 @@ def _below_band_ctx():
     return ValidatorContext(layer2a_payload=layer2a, capacity_hours=10.0)
 
 
-@pytest.mark.parametrize("phase", ["Peak", "Taper"])
-def test_volume_band_below_demoted_to_warning_in_peak_taper(phase):
-    payload = _minimal_layer4(sessions=[_below_band_session(phase=phase)])
-    failures = validate_layer4_payload(payload, _below_band_ctx()).rule_failures
-    vb = [f for f in failures if f.rule_name.startswith("volume_band_below")]
-    assert vb, f"expected a volume_band_below failure in {phase}"
-    assert all(f.severity == "warning" for f in vb), (
-        f"{phase} below-band should be demoted to warning, got "
-        f"{[(f.rule_name, f.severity) for f in vb]}"
-    )
-
-
 def test_volume_band_below_stays_blocker_in_base():
-    # Base (not a reduced-volume phase, no recovery flag) keeps the hard blocker.
+    # A genuine shortfall in a normal loading week keeps the hard blocker.
     payload = _minimal_layer4(sessions=[_below_band_session(phase="Base")])
     failures = validate_layer4_payload(payload, _below_band_ctx()).rule_failures
     vb = [f for f in failures if f.rule_name.startswith("volume_band_below")]
     assert vb and all(f.severity == "blocker" for f in vb)
 
 
-def test_volume_band_below_demoted_on_recovery_week_flag():
-    # A flagged deload week in a normally-strict phase (Base) is demoted by the
-    # recovery_week coaching flag, independent of phase.
-    payload = _minimal_layer4(
-        sessions=[_below_band_session(phase="Base", coaching_flags=["recovery_week"])]
-    )
-    failures = validate_layer4_payload(payload, _below_band_ctx()).rule_failures
-    vb = [f for f in failures if f.rule_name.startswith("volume_band_below")]
-    assert vb and all(f.severity == "warning" for f in vb)
-
-
-def test_volume_band_above_stays_blocker_in_taper():
-    # Over-prescription in a reduced-volume phase is NOT demoted — only `below` is.
+def test_volume_band_above_blocker_symmetric():
+    # `above` is a hard blocker just like `below` — gross over-prescription
+    # (10h against a ~1–2h band) blocks regardless of phase.
     over = _cardio_session(
         session_id="S-t",
         d=_SCOPE_START,
-        duration_min=600,  # 10h trail vs a 1–2h band → above blocker_high
+        duration_min=600,
         discipline_id="D-trail",
-        phase_metadata=_phase_metadata("Taper"),
+        phase_metadata=_phase_metadata("Base"),
     )
     payload = _minimal_layer4(sessions=[over])
     failures = validate_layer4_payload(payload, _below_band_ctx()).rule_failures
     vb = [f for f in failures if f.rule_name.startswith("volume_band_above")]
     assert vb and all(f.severity == "blocker" for f in vb)
+
+
+def test_volume_band_grid_deload_week_band_reduced():
+    # The rule grades each week against its PER-WEEK band: in the 8-week Base
+    # (standard cadence → deload at week 4) the deload-week band is bent down, so
+    # volume sized to the FLAT band now reads `above` the reduced deload band —
+    # the per-week enforcement the flat band could not do.
+    from layer4.validator import (
+        phase_volume_bands_hours,
+        phase_week_volume_bands_hours,
+    )
+
+    ps = _phase_structure()  # 8-week Base, derived_from 3b_standard
+    l2a = _layer2a_with_band()
+    cap = 999.0
+    flat = phase_volume_bands_hours(l2a, "Base", cap)["D-001"]
+    wk4 = phase_week_volume_bands_hours(l2a, "Base", 4, ps, cap)["D-001"]
+    assert wk4[0] < flat[0] and wk4[1] < flat[1]  # deload week bent down
+
+    flat_mid_min = int(((flat[0] + flat[1]) / 2) * 60)
+    s_over = _cardio_session(
+        duration_min=flat_mid_min,
+        phase_metadata=_phase_metadata("Base").model_copy(
+            update={"week_in_phase": 4}
+        ),
+    )
+    over = _minimal_layer4(sessions=[s_over], phase_structure=ps)
+    ctx = ValidatorContext(layer2a_payload=l2a, capacity_hours=cap)
+    vb_over = [
+        f
+        for f in validate_layer4_payload(over, ctx).rule_failures
+        if f.rule_name.startswith("volume_band")
+    ]
+    assert any(f.rule_name.startswith("volume_band_above") for f in vb_over)
+
+    # Volume sized to the reduced deload-week target sits in band → no fire.
+    wk4_mid_min = int(((wk4[0] + wk4[1]) / 2) * 60)
+    s_ok = _cardio_session(
+        duration_min=wk4_mid_min,
+        phase_metadata=_phase_metadata("Base").model_copy(
+            update={"week_in_phase": 4}
+        ),
+    )
+    ok = _minimal_layer4(sessions=[s_ok], phase_structure=ps)
+    assert not any(
+        f.rule_name.startswith("volume_band")
+        for f in validate_layer4_payload(ok, ctx).rule_failures
+    )
 
 
 def test_volume_band_open_ended_without_capacity():

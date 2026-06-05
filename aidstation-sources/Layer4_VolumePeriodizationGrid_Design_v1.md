@@ -1,6 +1,22 @@
 # Layer 4 — Per-week volume periodization grid (Design v1, for sign-off)
 
-**Status:** DRAFT — awaiting Andy's sign-off on §4 (the curve) before implementation.
+**Status:** SIGNED OFF + IMPLEMENTED (2026-06-05). Curve parameters confirmed by
+Andy (§4 resolutions below). Shipped in `layer4/periodization.py` +
+`validator.py` (`phase_week_volume_bands_hours`, `_rule_volume_band`) +
+`per_phase.py` (`_format_phase_load_bands`, `recovery_week` stamp). v2 3A coupling
+(Q4) is a **committed** follow-up, tracked separately.
+
+**Resolved decisions (2026-06-05):**
+- **Q1** Volume-neutral on Base/Build/Peak (phase mean = 1.0); **Taper is the
+  exception** — a deliberate net-negative Bosquet descent (NOT renormalized).
+- **Q2** Deload cadence = mode-dependent (`standard 4` / `compressed 3` /
+  `extended 5`, reusing `per_phase._DELOAD_CADENCE`; `custom` → none); depth
+  `_M_DELOAD = 0.55` (~45% cut). Evidence: 30–60% volume reduction, every 4–8 wk.
+- **Q3** Loading ramp `_RAMP_STEP = 0.08` (~8%/wk, resets each deload → 3:1
+  sawtooth); Taper factors 0.40 (race wk) / 0.60 / 0.75 (Bosquet 41–60%).
+- **Q4** 3A coupling (`recent_trajectory` / `data_density` / ACWR) **deferred to
+  v2** — committed, separate change.
+
 **Date:** 2026-06-05
 **Motivates:** the plan-58 `Build:w2` stall (per-discipline `volume_band` blockers → retry loop → 800s timeout).
 **Related:** `Layer4_Spec.md` §5.4 (validator rule 1), §6.1 (phase allocation), §8.2–§8.5 (spec-auto flags), `Layer3_3A_Spec.md` (`recent_trajectory` "drives volume ramp shape").

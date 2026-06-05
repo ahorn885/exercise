@@ -61,6 +61,7 @@ from layer4.payload import (
     SynthesisMetadata,
     ValidatorResult,
 )
+from layer4 import periodization
 from layer4.validator import (
     ValidatorContext,
     phase_volume_bands_hours,
@@ -699,29 +700,63 @@ def _format_phase_load_bands(
     layer2a: Layer2APayload | None,
     phase_name: str,
     capacity_hours: float | None,
+    *,
+    phase_structure: PhaseStructure | None = None,
+    week_range: tuple[int, int] | None = None,
 ) -> list[str]:
-    """Per-discipline weekly-HOUR volume bands for the phase.
+    """Per-discipline weekly-HOUR volume TARGETS, rendered per training week.
 
-    The 2A `phase_load` values are percentages; `phase_volume_bands_hours`
-    converts them to the athlete's capacity-bounded hours (shared with the
-    validator). Falls back to open-ended bands when the conversion can't run
-    (no 2A payload, no capacity, or no weekly-total row on file)."""
+    The 2A `phase_load` percentages → capacity-bounded hours
+    (`phase_volume_bands_hours`, shared with the validator), then scaled by the
+    per-week periodization multiplier (`periodization`) so the model gets a
+    concrete target + tolerance band for EACH week it synthesizes. That concrete
+    per-week, per-discipline anchor is what stops it mis-splitting the fixed
+    weekly hour budget across disciplines (the plan-58 `Build:w2` failure: one
+    sport over-prescribed, two under). Falls back to a single flat band per
+    discipline when the per-week grid can't be computed (no 2A payload, no
+    capacity, or no phase structure)."""
     if layer2a is None:
         return ["- (Layer 2A payload not supplied; using open-ended bands.)"]
-    bands = phase_volume_bands_hours(layer2a, phase_name, capacity_hours)
+    flat = phase_volume_bands_hours(layer2a, phase_name, capacity_hours)
+    disciplines = [
+        d
+        for d in layer2a.disciplines
+        if d.inclusion == "included" and d.discipline_id in flat
+    ]
+    if not disciplines:
+        return ["- (No phase-load hours on file; using open-ended bands.)"]
+
+    mults = periodization.phase_week_multipliers_for_phase(
+        phase_structure, phase_name
+    )
+    if not mults:
+        # Flat fallback — no per-week shape available.
+        return [
+            f"- {d.discipline_name} ({d.discipline_id}): "
+            f"{sum(flat[d.discipline_id]) / 2:.1f} hr/wk target "
+            f"(band {flat[d.discipline_id][0]:.1f}–{flat[d.discipline_id][1]:.1f})"
+            for d in disciplines
+        ]
+
+    if week_range is not None:
+        weeks: range = range(week_range[0], week_range[1] + 1)
+    else:
+        weeks = range(1, len(mults) + 1)
     out: list[str] = []
-    for d in layer2a.disciplines:
-        if d.inclusion != "included":
+    for w in weeks:
+        if not (1 <= w <= len(mults)):
             continue
-        band = bands.get(d.discipline_id)
-        if band is None:
-            continue
-        low, high = band
-        out.append(
-            f"- {d.discipline_name} ({d.discipline_id}): {low:.1f}–{high:.1f} hr/wk"
-        )
-    if not out:
-        out.append("- (No phase-load hours on file; using open-ended bands.)")
+        m = mults[w - 1]
+        deload = periodization.is_deload_week_for(phase_structure, phase_name, w)
+        tag = " — DELOAD (planned recovery; reduced volume, hold intensity)" if deload else ""
+        out.append(f"Week {w}{tag}:")
+        for d in disciplines:
+            low, high = flat[d.discipline_id]
+            out.append(
+                f"  - {d.discipline_name} ({d.discipline_id}): "
+                f"{(low + high) / 2 * m:.1f} hr target "
+                f"(band {low * m:.1f}–{high * m:.1f})"
+            )
     return out
 
 
@@ -1042,12 +1077,17 @@ def render_user_prompt(
         f" (mode={mode})"
     )
     parts.append("")
-    parts.append("Phase volume bands per discipline (weekly hours):")
+    parts.append(
+        "Per-week volume targets per discipline (weekly hours; hit the target, "
+        "stay inside the band):"
+    )
     parts.extend(
         _format_phase_load_bands(
             layer2a_payload,
             phase_spec.phase_name,
             weekly_capacity_hours(layer1_payload),
+            phase_structure=phase_structure,
+            week_range=week_range,
         )
     )
     parts.append("")
@@ -2025,6 +2065,12 @@ def synthesize_phase(
                 f"{s.discipline_name or s.kind} {s.duration_min}min "
                 f"{s.intensity_summary}"
             )
+
+    # §8.1 orchestrator stamp: mark planned-deload weeks `recovery_week` (the
+    # same cadence the volume grid uses, so the flag and the bent band agree).
+    # Done here — before the block is returned/snapshotted/cached — so the flag
+    # rides every persistence path. Closes the documented-but-unimplemented gap.
+    periodization.stamp_recovery_week(latest_sessions, phase_structure)
 
     return PhaseSynthesisResult(
         phase_name=phase_spec.phase_name,
