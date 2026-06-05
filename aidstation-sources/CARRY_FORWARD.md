@@ -123,6 +123,24 @@ Rolling-state for items spanning multiple sessions. **Edit in place** — don't 
    - **Advance-lock TTL (310s) < real max function duration (800s):** a long pass outlives its
      own lock → a concurrent pass can reclaim mid-flight (duplicate Anthropic spend on a stuck
      block). Align the TTL to the real ceiling, or cap pass wall-clock < TTL.
+9. **pv=58 carry-forward — the per-week volume periodization grid SHIPPED + #316 CLOSED (2026-06-05, PR #422 merged).**
+   Andy raised `PLAN_GEN_FUNCTION_CAP_S` to **800** (the item-8 env tune — now done) and re-ran a cold
+   plan (pv=58); it stalled at `Build:w2`. Untruncated logs root-caused **two engines**: **(A)** the
+   synthesizer's first attempt (`extended_thinking_budget=5000` + `tool_choice:auto`) ran away to
+   `max_tokens` (418s, empty) before the forced retry did the real work in 110s — each failed attempt
+   ≈530s, ungated; **(B)** `volume_band` graded each week against a flat per-phase band → `Build:w2`
+   mis-split the weekly hour budget (`above_week_2_D-001` + `below_week_2_D-003/D-009` blockers).
+   **Fixed Engine B = #316** (new `layer4/periodization.py` per-`(phase,week)` grid → validator bends the
+   band per week + drops the PR #315 demotion; prompt feeds concrete per-week targets; `recovery_week`
+   stamper). Curve signed off (`Layer4_VolumePeriodizationGrid_Design_v1.md`). NO migration. `tests/test_layer4_*` 875 passed.
+   - **⚠ Engine A is UNFIXED — #423 (the next lever).** The 418s thinking-first runaway + ungated first
+     attempt is the latency engine; Andy deferred it ("no time-limit work until the data problem is
+     sorted"). Drop `extended_thinking_budget`→0 for block synthesis (forced retry already does the work
+     in ~110s) and gate/headroom the first attempt. **A dense week can still 504 even though validation
+     now passes** — that's #423, not the grid.
+   - **Grid v2 = #424 (committed):** 3A coupling — modulate ramp steepness by `recent_trajectory` /
+     `data_density` / ACWR. v1 is athlete-agnostic.
+   - **Expected first post-deploy cold plan:** a one-time block re-synth (prompt-text cache-key shift; cone still HITs). NO owed deploy beyond the merge.
 
 ---
 

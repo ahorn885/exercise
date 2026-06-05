@@ -61,6 +61,7 @@ from layer4.payload import (
     SynthesisMetadata,
     ValidatorResult,
 )
+from layer4 import periodization
 from layer4.validator import (
     ValidatorContext,
     phase_volume_bands_hours,
@@ -93,14 +94,18 @@ over-emit clamp scale from this × the block's week count."""
 _PER_BLOCK_BUDGET_MS = 120_000
 """D-77 §6 per-block synthesis budget (accumulated LLM latency). A block's
 capped-retry stack runs multiple sequential extended-thinking calls in ONE
-non-resumable function invocation; if the stack exceeds the immovable 300s
-Vercel cap it 504-kills mid-loop, caches nothing, and the next pass restarts it
-from attempt 1 — an infinite loop the wall-clock backstop only converts into a
-loud failure after ~900s. This bound stops the loop from STARTING another
-attempt once the block has spent its LLM-time budget, so a block always RETURNS
-within the function cap: it caches the best parseable attempt as best-effort
-(§5.5 cap-hit) or fails terminally fast. 120s leaves headroom for one more
-in-flight attempt under the 300s cap. The first attempt is never gated."""
+non-resumable function invocation; if the stack exceeds the function cap
+(`PLAN_GEN_FUNCTION_CAP_S` — 300s default, raised to 800s on Pro) it 504-kills
+mid-loop, caches nothing, and the next pass restarts it from attempt 1 — an
+infinite loop the wall-clock backstop only converts into a loud failure after
+~900s. This bound stops the loop from STARTING another attempt once the block
+has spent its LLM-time budget, so a block always RETURNS within the function
+cap: it caches the best parseable attempt as best-effort (§5.5 cap-hit) or fails
+terminally fast. NOTE the gate is on retries ONLY — the first attempt is never
+gated and is itself uninterruptible, so a single long attempt (e.g. an
+extended-thinking call that exhausts `max_tokens` before emitting the tool) can
+alone approach the cap; 120s only bounds how much ADDITIONAL retry latency the
+loop will start, not the worst-case first attempt."""
 
 _BLOCK_OUTPUT_TOKENS_PER_SESSION = 1400
 """D-77 §6 follow-on (raised 600→900 after pv=38, then 900→1400 after pv=40).
@@ -695,29 +700,63 @@ def _format_phase_load_bands(
     layer2a: Layer2APayload | None,
     phase_name: str,
     capacity_hours: float | None,
+    *,
+    phase_structure: PhaseStructure | None = None,
+    week_range: tuple[int, int] | None = None,
 ) -> list[str]:
-    """Per-discipline weekly-HOUR volume bands for the phase.
+    """Per-discipline weekly-HOUR volume TARGETS, rendered per training week.
 
-    The 2A `phase_load` values are percentages; `phase_volume_bands_hours`
-    converts them to the athlete's capacity-bounded hours (shared with the
-    validator). Falls back to open-ended bands when the conversion can't run
-    (no 2A payload, no capacity, or no weekly-total row on file)."""
+    The 2A `phase_load` percentages → capacity-bounded hours
+    (`phase_volume_bands_hours`, shared with the validator), then scaled by the
+    per-week periodization multiplier (`periodization`) so the model gets a
+    concrete target + tolerance band for EACH week it synthesizes. That concrete
+    per-week, per-discipline anchor is what stops it mis-splitting the fixed
+    weekly hour budget across disciplines (the plan-58 `Build:w2` failure: one
+    sport over-prescribed, two under). Falls back to a single flat band per
+    discipline when the per-week grid can't be computed (no 2A payload, no
+    capacity, or no phase structure)."""
     if layer2a is None:
         return ["- (Layer 2A payload not supplied; using open-ended bands.)"]
-    bands = phase_volume_bands_hours(layer2a, phase_name, capacity_hours)
+    flat = phase_volume_bands_hours(layer2a, phase_name, capacity_hours)
+    disciplines = [
+        d
+        for d in layer2a.disciplines
+        if d.inclusion == "included" and d.discipline_id in flat
+    ]
+    if not disciplines:
+        return ["- (No phase-load hours on file; using open-ended bands.)"]
+
+    mults = periodization.phase_week_multipliers_for_phase(
+        phase_structure, phase_name
+    )
+    if not mults:
+        # Flat fallback — no per-week shape available.
+        return [
+            f"- {d.discipline_name} ({d.discipline_id}): "
+            f"{sum(flat[d.discipline_id]) / 2:.1f} hr/wk target "
+            f"(band {flat[d.discipline_id][0]:.1f}–{flat[d.discipline_id][1]:.1f})"
+            for d in disciplines
+        ]
+
+    if week_range is not None:
+        weeks: range = range(week_range[0], week_range[1] + 1)
+    else:
+        weeks = range(1, len(mults) + 1)
     out: list[str] = []
-    for d in layer2a.disciplines:
-        if d.inclusion != "included":
+    for w in weeks:
+        if not (1 <= w <= len(mults)):
             continue
-        band = bands.get(d.discipline_id)
-        if band is None:
-            continue
-        low, high = band
-        out.append(
-            f"- {d.discipline_name} ({d.discipline_id}): {low:.1f}–{high:.1f} hr/wk"
-        )
-    if not out:
-        out.append("- (No phase-load hours on file; using open-ended bands.)")
+        m = mults[w - 1]
+        deload = periodization.is_deload_week_for(phase_structure, phase_name, w)
+        tag = " — DELOAD (planned recovery; reduced volume, hold intensity)" if deload else ""
+        out.append(f"Week {w}{tag}:")
+        for d in disciplines:
+            low, high = flat[d.discipline_id]
+            out.append(
+                f"  - {d.discipline_name} ({d.discipline_id}): "
+                f"{(low + high) / 2 * m:.1f} hr target "
+                f"(band {low * m:.1f}–{high * m:.1f})"
+            )
     return out
 
 
@@ -1038,12 +1077,17 @@ def render_user_prompt(
         f" (mode={mode})"
     )
     parts.append("")
-    parts.append("Phase volume bands per discipline (weekly hours):")
+    parts.append(
+        "Per-week volume targets per discipline (weekly hours; hit the target, "
+        "stay inside the band):"
+    )
     parts.extend(
         _format_phase_load_bands(
             layer2a_payload,
             phase_spec.phase_name,
             weekly_capacity_hours(layer1_payload),
+            phase_structure=phase_structure,
+            week_range=week_range,
         )
     )
     parts.append("")
@@ -1687,9 +1731,10 @@ def synthesize_phase(
         current_pass = retries_already_used + pass_offset
         # D-77 §6 per-block budget guard: don't START another extended-thinking
         # attempt once the block has spent its LLM-time budget — the block must
-        # RETURN within the 300s function cap so it caches (or fails terminally
-        # fast) rather than 504-looping forever. The first attempt always runs;
-        # later retries are gated on accumulated latency.
+        # RETURN within the function cap (`PLAN_GEN_FUNCTION_CAP_S`, 300s default
+        # / 800s Pro) so it caches (or fails terminally fast) rather than
+        # 504-looping forever. The first attempt always runs; later retries are
+        # gated on accumulated latency.
         if pass_offset > 0 and total_latency_ms >= _PER_BLOCK_BUDGET_MS:
             if latest_sessions is not None:
                 # Accept the best parseable attempt so far as best-effort
@@ -1755,7 +1800,8 @@ def synthesize_phase(
         total_latency_ms += llm_out.latency_ms
 
         # D-77 §6 diagnostics — per-attempt LLM latency so a 504-looping block
-        # reveals whether a SINGLE call is near the 300s function cap or whether
+        # reveals whether a SINGLE call is near the function cap
+        # (`PLAN_GEN_FUNCTION_CAP_S`, 300s default / 800s Pro) or whether
         # the capped-retry stack (multiple extended-thinking calls in one
         # non-resumable function invocation) is what blows the budget. Diagnostic
         # only; trim once the per-block cost driver is identified.
@@ -1987,7 +2033,8 @@ def synthesize_phase(
         )
 
     # D-77 §6 diagnostics — per-block synthesis summary: call count + total
-    # latency expose how close a block runs to the 300s function cap, and
+    # latency expose how close a block runs to the function cap
+    # (`PLAN_GEN_FUNCTION_CAP_S`, 300s default / 800s Pro), and
     # cap_hit/retries_used show whether it converged or was best-effort accepted.
     # (Fires only when the block RETURNS — a block 504-killed mid-loop is traced
     # via the per-attempt lines above instead.) Diagnostic only; trim later.
@@ -2018,6 +2065,12 @@ def synthesize_phase(
                 f"{s.discipline_name or s.kind} {s.duration_min}min "
                 f"{s.intensity_summary}"
             )
+
+    # §8.1 orchestrator stamp: mark planned-deload weeks `recovery_week` (the
+    # same cadence the volume grid uses, so the flag and the bent band agree).
+    # Done here — before the block is returned/snapshotted/cached — so the flag
+    # rides every persistence path. Closes the documented-but-unimplemented gap.
+    periodization.stamp_recovery_week(latest_sessions, phase_structure)
 
     return PhaseSynthesisResult(
         phase_name=phase_spec.phase_name,
