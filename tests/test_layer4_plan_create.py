@@ -81,13 +81,13 @@ from layer4.seam_review import _SeamReviewerOutput as _SeamOut
 # ─── Fixtures ────────────────────────────────────────────────────────────────
 
 
-# Plan start must be today-or-future (the §4.2 `plan_start_date_in_past` guard)
-# AND a Monday (the weekly-bucketing fixtures assume Monday week-starts). Anchor
-# to the next Monday on/after today so the suite never goes stale by the calendar
-# — a hardcoded date silently failed every test in this file once it slipped into
-# the past. event_date / race fixtures derive from this relatively, so the
-# weeks-to-event (and thus the phase structure) is unchanged.
-_PLAN_START = date.today() + timedelta(days=(7 - date.today().weekday()) % 7)  # next Mon ≥ today
+# Plan start must be today-or-future (the §4.2 `plan_start_date_in_past` guard).
+# Anchored to today so the suite never goes stale by the calendar — a hardcoded
+# date silently failed every test in this file once it slipped into the past.
+# Day-of-week is irrelevant: weeks bucket by `week_in_phase` offset from the
+# phase start, not by ISO/calendar week. event_date / race fixtures derive from
+# this relatively, so weeks-to-event (and the phase structure) is unchanged.
+_PLAN_START = date.today()
 
 
 def _layer1() -> dict[str, Any]:
