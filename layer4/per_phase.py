@@ -93,14 +93,18 @@ over-emit clamp scale from this × the block's week count."""
 _PER_BLOCK_BUDGET_MS = 120_000
 """D-77 §6 per-block synthesis budget (accumulated LLM latency). A block's
 capped-retry stack runs multiple sequential extended-thinking calls in ONE
-non-resumable function invocation; if the stack exceeds the immovable 300s
-Vercel cap it 504-kills mid-loop, caches nothing, and the next pass restarts it
-from attempt 1 — an infinite loop the wall-clock backstop only converts into a
-loud failure after ~900s. This bound stops the loop from STARTING another
-attempt once the block has spent its LLM-time budget, so a block always RETURNS
-within the function cap: it caches the best parseable attempt as best-effort
-(§5.5 cap-hit) or fails terminally fast. 120s leaves headroom for one more
-in-flight attempt under the 300s cap. The first attempt is never gated."""
+non-resumable function invocation; if the stack exceeds the function cap
+(`PLAN_GEN_FUNCTION_CAP_S` — 300s default, raised to 800s on Pro) it 504-kills
+mid-loop, caches nothing, and the next pass restarts it from attempt 1 — an
+infinite loop the wall-clock backstop only converts into a loud failure after
+~900s. This bound stops the loop from STARTING another attempt once the block
+has spent its LLM-time budget, so a block always RETURNS within the function
+cap: it caches the best parseable attempt as best-effort (§5.5 cap-hit) or fails
+terminally fast. NOTE the gate is on retries ONLY — the first attempt is never
+gated and is itself uninterruptible, so a single long attempt (e.g. an
+extended-thinking call that exhausts `max_tokens` before emitting the tool) can
+alone approach the cap; 120s only bounds how much ADDITIONAL retry latency the
+loop will start, not the worst-case first attempt."""
 
 _BLOCK_OUTPUT_TOKENS_PER_SESSION = 1400
 """D-77 §6 follow-on (raised 600→900 after pv=38, then 900→1400 after pv=40).
@@ -1687,9 +1691,10 @@ def synthesize_phase(
         current_pass = retries_already_used + pass_offset
         # D-77 §6 per-block budget guard: don't START another extended-thinking
         # attempt once the block has spent its LLM-time budget — the block must
-        # RETURN within the 300s function cap so it caches (or fails terminally
-        # fast) rather than 504-looping forever. The first attempt always runs;
-        # later retries are gated on accumulated latency.
+        # RETURN within the function cap (`PLAN_GEN_FUNCTION_CAP_S`, 300s default
+        # / 800s Pro) so it caches (or fails terminally fast) rather than
+        # 504-looping forever. The first attempt always runs; later retries are
+        # gated on accumulated latency.
         if pass_offset > 0 and total_latency_ms >= _PER_BLOCK_BUDGET_MS:
             if latest_sessions is not None:
                 # Accept the best parseable attempt so far as best-effort
@@ -1755,7 +1760,8 @@ def synthesize_phase(
         total_latency_ms += llm_out.latency_ms
 
         # D-77 §6 diagnostics — per-attempt LLM latency so a 504-looping block
-        # reveals whether a SINGLE call is near the 300s function cap or whether
+        # reveals whether a SINGLE call is near the function cap
+        # (`PLAN_GEN_FUNCTION_CAP_S`, 300s default / 800s Pro) or whether
         # the capped-retry stack (multiple extended-thinking calls in one
         # non-resumable function invocation) is what blows the budget. Diagnostic
         # only; trim once the per-block cost driver is identified.
@@ -1987,7 +1993,8 @@ def synthesize_phase(
         )
 
     # D-77 §6 diagnostics — per-block synthesis summary: call count + total
-    # latency expose how close a block runs to the 300s function cap, and
+    # latency expose how close a block runs to the function cap
+    # (`PLAN_GEN_FUNCTION_CAP_S`, 300s default / 800s Pro), and
     # cap_hit/retries_used show whether it converged or was best-effort accepted.
     # (Fires only when the block RETURNS — a block 504-killed mid-loop is traced
     # via the per-attempt lines above instead.) Diagnostic only; trim later.
