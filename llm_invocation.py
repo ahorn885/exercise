@@ -113,6 +113,16 @@ def invoke_tool_call(
     # from the logs (the failing attempt's usage was discarded).
     last_miss: dict[str, Any] = {}
 
+    # Cumulative wall-clock latency across EVERY `_attempt` in this call,
+    # including a failed thinking attempt that emitted no usable tool block.
+    # The winning ToolCallResult reports this sum (not just its own attempt's
+    # latency) so the caller's per-block budget guard sees the TRUE time the
+    # block spent: a thinking runaway that burns ~430s then a ~110s forced
+    # retry must count as ~540s, not 110s — otherwise the guard (which keys off
+    # the returned latency) lets a doomed next attempt start and 504s the
+    # whole function.
+    latency_acc: dict[str, int] = {"ms": 0}
+
     def _attempt(thinking_budget: int) -> tuple[ToolCallResult | None, str | None]:
         """One `messages.create` call. Returns `(result, stop_reason)`;
         `result` is None when the response carried no matching tool_use
@@ -154,6 +164,7 @@ def invoke_tool_call(
                 detail=f"{type(exc).__name__}: {exc}",
             ) from exc
         latency_ms = int((time.monotonic() - start) * 1000)
+        latency_acc["ms"] += latency_ms
 
         stop_reason = getattr(msg, "stop_reason", None)
         out_tokens = getattr(getattr(msg, "usage", None), "output_tokens", None)
@@ -179,11 +190,11 @@ def invoke_tool_call(
                         thinking=thinking_budget, kind="empty_tool_args",
                     )
                     # #316 Slice 0 diagnostic — measure the per-attempt cost +
-                    # outcome so the wasted-thinking-attempt latency (otherwise
-                    # discarded; the returned latency_ms is only the WINNING
-                    # attempt's) is visible. Lets us quantify what fraction of a
-                    # block's wall time is the thinking-then-forced-retry double
-                    # call vs. validator retries, before committing to a fix.
+                    # outcome. The per-attempt `latency_ms` in this print is THIS
+                    # call only; the returned ToolCallResult.latency_ms carries
+                    # the cumulative `latency_acc` (this attempt + any prior
+                    # failed one), so the caller's per-block budget guard sees
+                    # true wall time rather than just the winning attempt's.
                     print(
                         f"invoke_tool_call: {tool_name} attempt "
                         f"(thinking={thinking_budget}) {latency_ms}ms "
@@ -202,7 +213,7 @@ def invoke_tool_call(
                         tool_args=tool_args,
                         input_tokens=msg.usage.input_tokens,
                         output_tokens=msg.usage.output_tokens,
-                        latency_ms=latency_ms,
+                        latency_ms=latency_acc["ms"],
                     ),
                     stop_reason,
                 )
