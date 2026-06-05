@@ -2,8 +2,8 @@
 
 **Date:** 2026-06-05
 **Branch:** `claude/practical-wozniak-WSKk4`
-**PR:** (open to `main`)
-**Issue:** Track 1 of the 3-track redesign (`Locations_Consolidation_Design_v1.md`, now **APPROVED**). Fixes the pv=59 `equipment_unavailable` vocabulary-mismatch root cause.
+**PR:** #426 — **CI green; squash-merged to `main`.**
+**Issues:** 3-track epic **#427** filed (Track 1 **#428**, Track 2 **#429**, Track 3 **#430** as native sub-issues). This work = Track 1 (#428). Fixes the pv=59 `equipment_unavailable` vocabulary-mismatch root cause. Design `Locations_Consolidation_Design_v1.md` is **APPROVED**.
 
 ---
 
@@ -57,8 +57,8 @@ Design decision 8 ("public equipment vocab retires entirely in Track 1") **confl
 
 ## 5. Next move
 
-- **File the 3-track program as a GitHub epic** (still owed from the prior handoff).
-- **Track 2 — determinism-first Layer 4 synthesis** (NOT yet specced; spec just-in-time): make the feasible pool authoritative (tool-schema-constrain `exercise_id` ∈ pool ∖ 2D-excluded), deterministic session-allocation + intensity stages, wire `rx_engine`, demote feasibility validator rules to warnings. **Session→locale assignment + per-cluster pool union semantics live here** (Track 1 stops at "2C sees every cluster locale's pool").
+- ✅ **3-track program filed as GitHub epic #427** (Track 1 #428 / Track 2 #429 / Track 3 #430 sub-issues).
+- **Track 2 (#429) — determinism-first Layer 4 synthesis** (NOT yet specced; spec just-in-time): make the feasible pool authoritative (tool-schema-constrain `exercise_id` ∈ pool ∖ 2D-excluded), deterministic session-allocation + intensity stages, wire `rx_engine`, demote feasibility validator rules to warnings. **Session→locale assignment + per-cluster pool union semantics live here** (Track 1 stops at "2C sees every cluster locale's pool").
 - **Track 3 — D-52 catalog migration** (parallel/after): retire `public.exercise_inventory`/`exercise_equipment`/`equipment_items` → `layer0.*`; **restores the references/purchases surfaces degraded in §3**.
 - **Engine A (#423)** is in from the prior session (PR #425 merged); the next cold plan with both #423 + Track 1 is the real grid + equipment test.
 
