@@ -2,7 +2,7 @@
 
 **Status:** DRAFT — awaiting sign-off (Andy)
 **Date:** 2026-06-05
-**Track:** 1 of 2 (this = locations/equipment model; Track 2 = determinism-first Layer 4 synthesis, separate spec)
+**Track:** 1 of 3 (this = locations/equipment model; Track 2 = determinism-first Layer 4 synthesis; Track 3 = D-52 exercise-catalog migration — both separate specs)
 **Supersedes the deferred D-60 §5.5 decision** ("`locale_equipment` deprecation is not a v1 concern") — promoted to active per Andy 2026-06-05.
 
 ---
@@ -25,7 +25,7 @@ Plan-gen reads **only the legacy path** (`orchestrator._q_locale_equipment_pool`
 3. **`home` flag = reuse `locale_profiles.preferred`** (one TRUE per athlete). Replaces the hardcoded `locale='home'`.
 4. **`private` flag = `gym_profiles.private=TRUE`** → excluded from crowd-source discovery/dispute/visibility; otherwise identical storage + picker.
 5. **Multi-locale cluster now:** plan-gen resolves a cluster (home + nearby) and 2C produces a per-locale pool for each member. (Session→locale *assignment* is Track 2.)
-6. **Out of scope:** `public.exercise_inventory` / `layer0.*` catalog unification = the separate **D-52** migration (`exercise_inventory` is live — `rx_engine` + 7 v1 routes depend on it; NOT orphaned). Not touched here.
+6. **D-52 catalog migration is IN — as its own spec (Track 3), sequenced after Track 1.** Retire `public.exercise_inventory` → `layer0.*` and move `rx_engine` + the v1 strength routes onto `layer0`. `exercise_inventory` is **live, not orphaned** (`rx_engine` + 7 v1 routes read it), so this is a real migration, not dead-code deletion. Andy 2026-06-05: "we need to clean this up and do the migration now." Specced separately because it's a different surface (exercise catalog, not locations) — and `Catalog_Migration_Plan_v3.md` (5 phases) already owns it. **Interaction to honor:** Track 1 *removes* one D-52 Phase-4 item — `locale_equipment.equipment_id → public.equipment_items(id)` — by dropping `locale_equipment` and storing equipment as **tags in `gym_profiles.equipment` JSON**. To avoid creating rework for D-52, Track 1's tag vocabulary must be chosen **tag-forward toward `layer0.equipment_items.canonical_name`** (D-52 §2.3 equipment-identity), not the soon-to-be-retired `public.equipment_items.tag`.
 
 ## 3. Target data model
 
@@ -62,7 +62,7 @@ def locale_effective_tags(db, user_id, locale) -> set[str]:
     return (shared | adds) - removes
 ```
 
-This is exactly `_effective_equipment()` already in `routes/locales.py:352` — promote it to a shared helper (e.g. `locales_equipment.py`) and call it everywhere. **One code path for private and public** (private differs only in discovery/visibility, §6).
+Today this logic is **duplicated and divergent**: `routes/locales.py::_effective_equipment()` resolves the *new* model for the UI, while `orchestrator._q_locale_equipment_pool()` runs its *own* SQL against the *legacy* table for plan-gen — they disagree by construction, which IS the pv=59 bug. Collapse to **one authoritative definition** of "effective equipment at a locale", living in the locations domain module, that the UI, references, and plan-gen all call. This is not a utility wrapper over scattered SQL — it is the single canonical implementation, with the legacy query deleted. **One path for private and public** (private differs only in discovery/visibility, §6).
 
 ## 5. Home + multi-locale cluster resolution
 
@@ -73,7 +73,8 @@ This is exactly `_effective_equipment()` already in `routes/locales.py:352` — 
 ### 5.2 Cluster (home + nearby)
 - `cluster_locale_ids(db, user_id)` = the home locale **+ every saved locale within `_CLUSTER_RADIUS_KM` of home** by `lat`/`lng` (reuse D-59's `42.2 km` nearby radius). Manual-entry locales (no coords) are included only if explicitly the home or flagged in-cluster.
 - Plan-gen passes the full `cluster_locale_ids` to Layer 2C (today stubbed to `[primary_locale]`); 2C already accepts a list and produces one `effective_pool` per locale. **Session→locale assignment stays in Track 2** — Track 1 only guarantees 2C sees every cluster locale's pool.
-- **Open decision D-1 (see §11):** cluster = radius-based (proposed) vs. all-saved-locales vs. an explicit per-locale "in training cluster" checkbox.
+- **Cluster rule (RESOLVED — Andy 2026-06-05):** radius-based — home + every saved locale within **26.2 mi / 42.2 km** of home (the existing D-59 nearby radius). A manual "include this one anyway" (a place just outside the radius the athlete trains at often) is a **deferred** follow-up, not in this track.
+- `_CLUSTER_RADIUS_KM = 42.2` (= 26.2 mi); reuse the D-59 great-circle distance on `lat`/`lng`.
 
 ## 6. Private flag + crowd-sourcing exclusion
 - A locale is private when its `gym_profiles.private=TRUE` (residential default; any locale can be marked private at creation).
@@ -90,7 +91,7 @@ This is exactly `_effective_equipment()` already in `routes/locales.py:352` — 
 | `layer4/orchestrator.py` | `_q_primary_locale` → `preferred`; `_q_locale_equipment_pool` → §4 helper; `cluster_locale_ids` → §5.2 (drop the `[primary_locale]` stub). |
 | `routes/references.py` | Equipment union via §4 across selected locales (drop `locale_equipment` join). |
 | `routes/plans.py`, `dashboard.py`, `coaching.py`, `ad_hoc_workouts.py` | `locale='home'` city/default lookups → `preferred`. |
-| new `locales_equipment.py` | Home of the §4 `locale_effective_tags` + `cluster_locale_ids` helpers (shared by routes + orchestrator). |
+| new `locations.py` (domain module) | The **authoritative** `locale_effective_tags` + `cluster_locale_ids` — one definition the UI, references, and plan-gen all call (replaces the divergent UI vs plan-gen copies). |
 
 **5-file ceiling:** this is ~6 substantive files — propose splitting into **1a** (helper + orchestrator rewire + drop legacy read path; unblocks plan-gen) and **1b** (routes/UI cleanup + DROP DDL).
 
@@ -107,16 +108,16 @@ Neon DDL is Andy's-hands (container egress blocked) — both the index and the D
 - Marking `preferred` (home) or cluster membership change must evict Layer 2C (pool inputs changed) — add an eviction on those saves.
 
 ## 10. Edge cases
-- **No home set:** `primary_locale_missing` → onboarding gate must require one `preferred` locale.
+- **Home is a REQUIRED invariant — never a no-home state.** Onboarding must set one `preferred` locale; the **first locale an athlete creates is auto-flagged home**. The home flag can be *moved* but never cleared to none (UI offers no "unset home", only "make this one home"). `primary_locale_missing` is therefore a guarded can't-happen, not a runtime branch to tolerate.
 - **Private locale, no Mapbox:** `gym_profiles` row with `mapbox_id=NULL`, `private=TRUE` (nullable-UNIQUE permits it).
-- **Two homes:** prevented by the partial unique index + app sets the prior home `preferred=FALSE` on change.
+- **Setting a new home de-selects the old one:** marking a locale home **atomically clears the previous home's `preferred` flag** in the same transaction (exactly one home, always). Enforced in app logic AND by the partial unique index (§3.3) as a backstop.
 - **Cluster with a far-away saved locale (travel):** excluded by the radius rule (§5.2) so a hotel gym 1,000 km away doesn't inflate a home-week pool.
 - **Empty pool (no equipment saved):** synthesis must degrade to bodyweight/Tier-3 proxies (Track 2 concern; note here so the validator demotion accounts for it).
 
 ## 11. Open items / decisions
-- **D-1 — cluster membership rule** (§5.2): radius-based (proposed) vs all-saved vs explicit checkbox. Drives whether multi-locale needs new UI.
-- **D-2 — Track 2 dependency:** session→locale assignment + the per-cluster pool union semantics belong to the synthesis spec; Track 1 stops at "2C sees every cluster locale."
-- **D-3 — `exercise_inventory`/D-52:** confirm kept out of this track (recommended).
+- **D-1 — RESOLVED:** cluster = radius-based, 26.2 mi / 42.2 km (§5.2). Manual out-of-radius "include anyway" deferred to a follow-up.
+- **D-2 — Track 2 dependency:** session→locale assignment + per-cluster pool union semantics belong to the synthesis spec; Track 1 stops at "2C sees every cluster locale."
+- **D-3 — RESOLVED:** D-52 catalog migration is IN, as its own spec (Track 3), sequenced after Track 1 (§2.6).
 
 ## 12. Gut check
 - **Biggest risk:** the cluster (multi-locale) piece is the only genuinely *new* surface — everything else is delete-legacy + rewire-to-existing-tables. If cluster scope balloons (per-session locale assignment, travel weeks), it could swamp the simple win (one clean home pool). Mitigation: ship 1a (single home pool, unblocks pv=59) before the cluster union lands; gate cluster behind D-1.
