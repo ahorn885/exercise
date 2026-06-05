@@ -76,9 +76,18 @@ from layer4.validator import (
 DEFAULT_MAX_TOKENS = 4000
 """Per `Layer4_Spec.md` §3.1 default `max_tokens_per_phase`."""
 
-DEFAULT_EXTENDED_THINKING_BUDGET = 5000
-"""Per `Layer4_PerPhase_v1.md` D2 (max-defensive — synthesizer is judgment-heavy
-AND combinatorial)."""
+DEFAULT_EXTENDED_THINKING_BUDGET = 0
+"""0 = go straight to the forced-tool call (one ~110s invocation), skipping the
+extended-thinking attempt. The thinking-first attempt (the former max-defensive
+5000 per `Layer4_PerPhase_v1.md` D2) repeatedly burned the full
+`max_tokens + budget` ceiling on reasoning and returned NO tool block
+(`stop_reason=max_tokens`, ~430s of dead time) on dense Build/Peak weeks, then
+the forced retry did the real work in ~110s anyway — so the thinking attempt was
+pure overhead that consumed the per-block budget and starved the validator
+correction loop (pv=58 Build:w2, pv=59 Build:w1). With 0 the forced tool gets
+all of `max_tokens` as output budget. The seam reviewer keeps its own
+`seam_thinking_budget` (independent constant), so this change is scoped to
+block/phase synthesis."""
 
 _MAX_SESSIONS_PER_PHASE = 56
 """Bounded-collection ceiling for the `sessions` array. Kept lock-step with the
