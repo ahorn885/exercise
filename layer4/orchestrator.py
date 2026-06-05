@@ -110,6 +110,7 @@ from layer4.context import (
 )
 from layer4.payload import Layer4Payload, PlanSession
 from layer4.single_session import SingleSessionRequest
+import locations
 from race_events_repo import load_target_race_event_payload
 
 
@@ -303,12 +304,13 @@ def _upstream_full_cone(
         etl_version_set=etl_version_set,
     )
 
-    locale_equipment_pool = _q_locale_equipment_pool(db, user_id, primary_locale)
+    cluster = locations.cluster_locale_ids(db, user_id)
+    locale_equipment_pool = locations.cluster_effective_tags(db, user_id, cluster)
     layer2c_payload = q_layer2c_equipment_mapper_payload(
         db,
         locale_id=primary_locale,
         locale_equipment_pool=locale_equipment_pool,
-        cluster_locale_ids=[primary_locale],
+        cluster_locale_ids=cluster,
         cluster_gear_toggle_states={},
         included_discipline_ids=included_discipline_ids,
         layer2d_payload=layer2d_payload,
@@ -852,36 +854,24 @@ def _q_current_etl_version_set(db: Any) -> dict[str, str]:
 
 
 def _q_primary_locale(db: Any, user_id: int) -> str:
-    """Return the athlete's primary locale slug per the v1 `locale='home'`
-    convention (matches `routes/dashboard.py:31`, `routes/plans.py:625`).
-
-    Multi-locale clusters are out of scope for the vertical slice; raise
-    when the athlete has no 'home' locale row.
+    """Return the athlete's home locale slug — the `locale_profiles` row with
+    `preferred = TRUE` (Locations_Consolidation_Design_v1 §5.1). Replaces the
+    hardcoded `locale = 'home'` convention. Delegates to the authoritative
+    `locations.primary_locale`; re-raises its domain error as the
+    layer-contract `OrchestrationError("primary_locale_missing")`.
     """
-    cur = db.execute(
-        "SELECT locale FROM locale_profiles WHERE user_id = ? AND locale = 'home' LIMIT 1",
-        (user_id,),
-    )
-    row = cur.fetchone()
-    if row is None:
-        raise OrchestrationError(
-            "primary_locale_missing",
-            f"user_id={user_id} has no locale_profiles row with locale='home'",
-        )
-    return row["locale"]
+    try:
+        return locations.primary_locale(db, user_id)
+    except locations.PrimaryLocaleMissing as exc:
+        raise OrchestrationError("primary_locale_missing", str(exc)) from exc
 
 
 def _q_locale_equipment_pool(db: Any, user_id: int, locale: str) -> list[str]:
-    """Return canonical `equipment_items.tag` tokens available at `locale`."""
-    cur = db.execute(
-        """SELECT ei.tag
-           FROM locale_equipment le
-           JOIN equipment_items ei ON ei.id = le.equipment_id
-           WHERE le.user_id = ? AND le.locale = ?
-           ORDER BY ei.tag""",
-        (user_id, locale),
-    )
-    return [row["tag"] for row in cur.fetchall()]
+    """Return the canonical-name equipment pool effective at a single
+    `locale`, via the authoritative `locations.locale_effective_tags`. Used by
+    the single-session path (one athlete-picked locale); the full plan-gen
+    cone unions across the cluster (`locations.cluster_effective_tags`)."""
+    return sorted(locations.locale_effective_tags(db, user_id, locale))
 
 
 def _q_locale_by_slug(db: Any, user_id: int, locale: str) -> bool:

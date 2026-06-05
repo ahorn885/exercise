@@ -222,8 +222,29 @@ def _queue_primary_locale(conn: _FakeConn, *, locale: str = "home") -> None:
     conn.queue(row={"locale": locale})
 
 
+# Locations Consolidation (Track 1) — the cone now resolves the equipment pool
+# through `locations`: the cluster anchor (preferred-home lookup) followed by
+# each cluster locale's `gym_profiles` link + `locale_equipment_overrides`. A
+# single "universal" fake row satisfies whichever fetchone() consumer (terrain,
+# cluster-anchor, or gym lookup) pops it next — `lat`/`lng` NULL keeps the
+# cluster a single home locale (no radius sweep), `gym_profile_id` NULL leaves
+# the shared pool empty; fetchall() consumers (overrides) get the empty
+# `rows=[]`. Three responses cover the cone's post-terrain sequence; the
+# single-session path consumes a subset and leaves the rest unread (all
+# downstream callers are mocked, so leftover responses are never consumed).
+_POOL_UNIVERSAL_ROW = {
+    "locale": "home",
+    "lat": None,
+    "lng": None,
+    "locale_terrain_ids": None,
+    "gym_profile_id": None,
+    "equipment": None,
+}
+
+
 def _queue_locale_equipment_pool(conn: _FakeConn) -> None:
-    conn.queue(rows=[])  # empty pool — Layer 2C handles
+    for _ in range(3):
+        conn.queue(row=dict(_POOL_UNIVERSAL_ROW), rows=[])
 
 
 # ─── Stub upstream-payload factories ────────────────────────────────────────
