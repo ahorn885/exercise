@@ -1,26 +1,10 @@
-from collections import defaultdict
 from flask import Blueprint, render_template, request
 from database import get_db
+import locations
 from routes.auth import current_user_id
 from routes.locales import athlete_locale_choices
 
 bp = Blueprint('references', __name__)
-
-
-def _exercise_available(exercise_id, ex_eq_map, profile_equipment_ids):
-    """Return True if the exercise requires no equipment, or any option_group is fully covered.
-
-    ex_eq_map: {exercise_id: [(equipment_id, option_group), ...]}
-    option_group rows sharing the same group number are all required (AND);
-    the exercise is available if ANY group is fully satisfied (OR).
-    """
-    reqs = ex_eq_map.get(exercise_id)
-    if not reqs:
-        return True  # bodyweight / no equipment rows
-    groups = defaultdict(set)
-    for eq_id, grp in reqs:
-        groups[grp].add(eq_id)
-    return any(grp_ids.issubset(profile_equipment_ids) for grp_ids in groups.values())
 
 
 @bp.route('/exercises')
@@ -34,8 +18,6 @@ def exercises():
     rows = db.execute('SELECT * FROM exercise_inventory ORDER BY discipline, exercise').fetchall()
 
     profiles_active = {}
-    profile_equipment_ids = set()
-    ex_eq_map = {}
     equipment_counts = {}
 
     if locale_filter:
@@ -48,31 +30,14 @@ def exercises():
         ).fetchall():
             profiles_active[p['locale']] = p
 
-        # Union of equipment_ids across all selected locales (locale_equipment
-        # carries user_id directly since Session 3).
-        for row in db.execute(
-            f'SELECT DISTINCT equipment_id FROM locale_equipment '
-            f'WHERE user_id = ? AND locale IN ({placeholders})',
-            [uid] + list(locale_filter)
-        ).fetchall():
-            profile_equipment_ids.add(row['equipment_id'])
-
-        # Per-locale item counts for display
-        for row in db.execute(
-            f'SELECT locale, COUNT(*) as cnt FROM locale_equipment '
-            f'WHERE user_id = ? AND locale IN ({placeholders}) '
-            f'GROUP BY locale',
-            [uid] + list(locale_filter)
-        ).fetchall():
-            equipment_counts[row['locale']] = row['cnt']
-
-        # Load full exercise_equipment map for availability check (shared catalog)
-        for row in db.execute(
-            'SELECT exercise_id, equipment_id, option_group FROM exercise_equipment'
-        ).fetchall():
-            ex_eq_map.setdefault(row['exercise_id'], []).append(
-                (row['equipment_id'], row['option_group'])
-            )
+        # Per-locale equipment counts via the authoritative resolver (layer0
+        # canonical names). Track 1 retired the legacy locale_equipment join;
+        # the exercise-availability *filter* below is the public int-id
+        # vocabulary (exercise_equipment) which can't be matched against the
+        # canonical pool until the catalog migrates to layer0 (Track 3) — so
+        # only the where_available bucket filter applies until then.
+        for loc in locale_filter:
+            equipment_counts[loc] = len(locations.locale_effective_tags(db, uid, loc))
 
     if locale_filter:
         # Map each selected athlete-slug → Layer 0 where_available bucket via
@@ -82,15 +47,10 @@ def exercises():
         # follow-up lands).
         selected_buckets = {c['bucket'] for c in locale_choices
                             if c['slug'] in locale_filter and c['bucket']}
-        filtered = []
-        for r in rows:
-            ex_locales = set((r['where_available'] or '').split(','))
-            if not (selected_buckets & ex_locales):
-                continue
-            if profiles_active and not _exercise_available(r['id'], ex_eq_map, profile_equipment_ids):
-                continue
-            filtered.append(r)
-        rows = filtered
+        rows = [
+            r for r in rows
+            if selected_buckets & set((r['where_available'] or '').split(','))
+        ]
 
     return render_template('references/exercises.html', rows=rows,
                            locale_filter=locale_filter, locales=locale_choices,

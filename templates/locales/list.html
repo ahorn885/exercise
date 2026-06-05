@@ -51,6 +51,7 @@
               {% if p and p['category'] %}<span class="chip solid">{{ p['category'].replace('_', ' ') }}</span>{% endif %}
               {% if p and p['manual_entry'] %}<span class="chip">manual</span>{% endif %}
             {% endif %}
+            {% if home_locale and locale == home_locale %}<span class="chip accent" title="Your home location">★ Home</span>{% endif %}
           </div>
           {% set addr = display_addresses.get(locale) %}
           {% if addr %}<p class="loc-addr mono">▽ {{ addr }}</p>{% endif %}
@@ -60,6 +61,12 @@
           <form method="post" action="{{ url_for('locales.refresh_from_mapbox', locale=locale) }}">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <button type="submit" class="btn btn-ghost btn-sm" title="Refresh from Mapbox">⟳</button>
+          </form>
+          {% endif %}
+          {% if p and not (home_locale and locale == home_locale) %}
+          <form method="post" action="{{ url_for('locales.make_home', locale=locale) }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button type="submit" class="btn btn-ghost btn-sm" title="Make this your home location">★ Make home</button>
           </form>
           {% endif %}
           <a class="btn btn-ghost btn-sm" href="{{ url_for('locales.edit_profile', locale=locale) }}">Edit</a>

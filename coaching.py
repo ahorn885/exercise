@@ -13,6 +13,7 @@ from datetime import date, timedelta
 import anthropic
 import requests
 
+import locations
 from routes.auth import current_user_id
 
 # ── Base system prompt (generic, always included) ─────────────────────────────
@@ -286,20 +287,26 @@ def _get_plan_sport_module(db, plan_id: int) -> str:
 
 def get_coaching_context(db, plan_id=None, lookback_days=14, locale='home'):
     """Gather all training context for Claude. Returns a dict."""
+    uid = current_user_id()
+    # Track 1 — resolve the locale: honor an explicitly-saved slug, else fall
+    # back to the athlete's home (preferred). The legacy 'home' literal no
+    # longer maps to a row, so an unknown/legacy slug degrades to the home.
+    if db.execute(
+        'SELECT 1 FROM locale_profiles WHERE user_id = ? AND locale = ? LIMIT 1',
+        (uid, locale),
+    ).fetchone() is None:
+        try:
+            locale = locations.primary_locale(db, uid)
+        except locations.PrimaryLocaleMissing:
+            pass
     ctx = {'today': date.today().isoformat(), 'locale': locale}
 
-    # Equipment and terrain available at current locale (per-user since
-    # Session 3 — locale_equipment carries user_id directly).
-    uid = current_user_id()
-    equipment_rows = db.execute(
-        '''SELECT ei.tag, ei.label, ei.category
-           FROM locale_equipment le
-           JOIN equipment_items ei ON ei.id = le.equipment_id
-           WHERE le.user_id = ? AND le.locale = ?
-           ORDER BY ei.category, ei.label''',
-        (uid, locale)
-    ).fetchall()
-    ctx['available_equipment'] = [dict(r) for r in equipment_rows]
+    # Equipment available at the resolved locale, as layer0 canonical names
+    # via the authoritative resolver (replaces the legacy locale_equipment
+    # join). label == canonical name; category dropped (the catalog category
+    # lives in layer0 now and the prompt only needs the names).
+    equipment_names = sorted(locations.locale_effective_tags(db, uid, locale))
+    ctx['available_equipment'] = [{'tag': n, 'label': n} for n in equipment_names]
 
     locale_profile = db.execute(
         'SELECT notes, city FROM locale_profiles WHERE locale = ? AND user_id = ?',

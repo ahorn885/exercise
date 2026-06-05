@@ -30,8 +30,7 @@ from layer4.cache import (
 )
 from routes.locales import (
     _TRN_PATTERN,
-    _edit_legacy_locale,
-    _edit_shared_locale,
+    _edit_locale,
     _evict_layer2b_on_terrain_change,
     _evict_layer2c_on_equipment_change,
     _hydrate_locale_terrain_ids,
@@ -419,18 +418,16 @@ def _sql_indices(calls, fragment: str) -> list[int]:
     return [i for i, (sql, _params) in enumerate(calls) if fragment in sql]
 
 
-class TestDeleteLocaleClearsEquipmentFirst:
-    """Bucket B #2 (2026-05-21 walkthrough) — `/locales/<slug>/delete`
-    raised `ForeignKeyViolation` because `locale_equipment` has a FK on
-    `(user_id, locale)` with no `ON DELETE CASCADE`. Fix clears
-    `locale_equipment` before `locale_profiles`.
-    """
+class TestDeleteLocale:
+    """Track 1 — `locale_equipment` is dropped; delete_locale no longer
+    touches it (overrides cascade on the locale_profiles delete). Residential
+    categories still drop the athlete-owned private gym_profiles row."""
 
-    def test_locale_equipment_cleared_before_locale_profiles(self, monkeypatch):
+    def test_deletes_locale_profiles_not_legacy_table(self, monkeypatch):
         app = _make_app()
         conn = _FakeConn()
-        # delete_locale flow: (1) SELECT profile, (2) DELETE locale_equipment,
-        # (3) DELETE locale_profiles, (4) optional DELETE gym_profiles.
+        # delete_locale flow: (1) SELECT profile, (2) DELETE locale_profiles,
+        # (3) optional DELETE gym_profiles (residential + owned).
         conn.queue_response(row={
             'category': 'other_residence',
             'gym_profile_id': None,
@@ -443,14 +440,10 @@ class TestDeleteLocaleClearsEquipmentFirst:
         with app.test_request_context('/locales/horn_s_house/delete', method='POST'):
             delete_locale('horn_s_house')
 
-        eq_idx = _sql_indices(conn.calls, 'DELETE FROM locale_equipment')
+        # The legacy table is gone — no DELETE against it.
+        assert not _sql_indices(conn.calls, 'DELETE FROM locale_equipment ')
         lp_idx = _sql_indices(conn.calls, 'DELETE FROM locale_profiles')
-        assert eq_idx, 'expected a DELETE FROM locale_equipment call'
         assert lp_idx, 'expected a DELETE FROM locale_profiles call'
-        assert eq_idx[0] < lp_idx[0], (
-            f'locale_equipment must be cleared before locale_profiles to '
-            f'satisfy the FK (got positions {eq_idx[0]} vs {lp_idx[0]})'
-        )
 
     def test_legacy_locale_short_circuits_without_delete(self, monkeypatch):
         app = _make_app()
@@ -463,24 +456,33 @@ class TestDeleteLocaleClearsEquipmentFirst:
             delete_locale('home')
 
         # Legacy enum slot → redirected to edit, no DELETEs issued.
-        assert not _sql_indices(conn.calls, 'DELETE FROM locale_equipment')
         assert not _sql_indices(conn.calls, 'DELETE FROM locale_profiles')
 
 
-# ─── locale_terrain_ids round-trip (Bucket B #3 2026-05-21) ────────────────
+# ─── unified edit path — locale_terrain_ids round-trip ─────────────────────
 
 
-class TestEditLegacyLocaleTerrainPersists:
-    """Bucket B #3 — terrain checkboxes did not persist on save. This
-    test exercises the legacy-locale POST path with terrain checkboxes
-    and asserts the upsert SQL receives the parsed list at param index 4.
-    """
+def _seed_edit_layer0_equipment(conn, names=('Barbell',)):
+    """Queue the `_layer0_equipment` SELECT (first query in `_edit_locale`)."""
+    conn.queue_response(rows=[
+        {'canonical_name': n, 'equipment_category': 'Free Weights'} for n in names
+    ])
 
-    def test_upsert_includes_locale_terrain_ids(self, monkeypatch):
+
+class TestEditLocaleTerrainPersists:
+    """Track 1 — the unified `_edit_locale` POST persists `locale_terrain_ids`
+    via the INSERT ... ON CONFLICT upsert (param index 4) on the build path
+    (no backing gym profile yet)."""
+
+    def test_build_path_upsert_includes_terrain(self, monkeypatch):
         app = _make_app()
         conn = _FakeConn()
-        # First call inside _edit_legacy_locale is the prior-equipment snapshot.
+        _seed_edit_layer0_equipment(conn)
+        # locale_effective_tags: gym_profile_id lookup (None → empty) + overrides.
+        conn.queue_response(row={'gym_profile_id': None})
         conn.queue_response(rows=[])
+        # _ensure_home: a home already exists → no extra UPDATE.
+        conn.queue_response(row={'preferred': 1})
         import routes.locales as locales_mod
         monkeypatch.setattr(locales_mod, 'get_db', lambda: conn)
         monkeypatch.setattr(locales_mod, 'current_user_id', lambda: 1)
@@ -500,7 +502,7 @@ class TestEditLegacyLocaleTerrainPersists:
                 'locale_terrain_ids': ['TRN-002', 'TRN-003', 'TRN-016'],
             },
         ):
-            _edit_legacy_locale(conn, 1, 'horn_s_house', profile)
+            _edit_locale(conn, 1, 'horn_s_house', profile)
 
         upsert = [
             (sql, params) for sql, params in conn.calls
@@ -517,30 +519,21 @@ class TestEditLegacyLocaleTerrainPersists:
         # typing — production rows landed empty without it.
         assert '::text[]' in sql
 
-
-class TestEditSharedLocaleTerrainPersists:
-    """Bucket B #3 — shared-profile path (outdoor_park, gym, etc.) must
-    also persist `locale_terrain_ids`. Andy's repro locale
-    `chisenhall_mtb_trailhead` is category `outdoor_park` (in
-    `SHARED_PROFILE_CATEGORIES`), so it routes through
-    `_edit_shared_locale`.
-    """
-
-    def test_inherit_path_updates_terrain_ids(self, monkeypatch):
+    def test_inherit_path_writes_overrides_and_terrain(self, monkeypatch):
         app = _make_app()
         conn = _FakeConn()
-        # _edit_shared_locale call order on inherit path:
-        # 1. SELECT gym_profiles WHERE id=? (shared lookup)
-        # 2. _load_overrides SELECT (prior overrides snapshot)
-        # 3. _save_overrides DELETE (then 0+ INSERTs)
-        # 4. UPDATE locale_profiles SET notes, locale_terrain_ids, ...
-        conn.queue_response(row={
-            'id': 42,
-            'equipment': '[]',
-            'last_confirmed_at': None,
-            'contribution_count': 1,
-        })
-        conn.queue_response(rows=[])  # _load_overrides
+        _seed_edit_layer0_equipment(conn, names=('Barbell', 'Squat rack'))
+        # _resolve_shared_profile: gym_profiles lookup → a PEER profile
+        # (created_by != uid) → inherit path.
+        peer = {'id': 42, 'equipment': '["Barbell"]', 'created_by_user_id': 99,
+                'last_confirmed_at': None, 'contribution_count': 1}
+        conn.queue_response(row=peer)
+        # locale_effective_tags: gym_profile_id (42) + gym_profiles.equipment + overrides.
+        conn.queue_response(row={'gym_profile_id': 42})
+        conn.queue_response(row={'equipment': '["Barbell"]'})
+        conn.queue_response(rows=[])
+        # _ensure_home: home exists.
+        conn.queue_response(row={'preferred': 1})
         import routes.locales as locales_mod
         monkeypatch.setattr(locales_mod, 'get_db', lambda: conn)
         monkeypatch.setattr(locales_mod, 'current_user_id', lambda: 1)
@@ -562,25 +555,27 @@ class TestEditSharedLocaleTerrainPersists:
             '/locales/chisenhall_mtb_trailhead/edit',
             method='POST',
             data={
-                'equipment': [],
+                'equipment': ['Squat rack'],
                 'notes': '',
                 'locale_terrain_ids': ['TRN-002', 'TRN-003'],
             },
         ):
-            _edit_shared_locale(conn, 1, 'chisenhall_mtb_trailhead', profile)
+            _edit_locale(conn, 1, 'chisenhall_mtb_trailhead', profile)
 
-        # Find the UPDATE locale_profiles statement carrying terrain ids.
-        update = [
+        # Terrain lands in the upsert.
+        upsert = [
             (sql, params) for sql, params in conn.calls
-            if 'UPDATE locale_profiles' in sql
+            if 'INSERT INTO locale_profiles' in sql
             and 'locale_terrain_ids' in sql
         ]
-        assert update, 'expected UPDATE locale_profiles SET ... locale_terrain_ids'
-        sql, params = update[0]
-        # Inherit-path params: (notes, new_terrain_ids, uid, locale).
-        assert params[0] == ''
-        assert params[1] == ['TRN-002', 'TRN-003']
-        assert params[2] == 1
-        assert params[3] == 'chisenhall_mtb_trailhead'
-        # Defensive `::text[]` cast — see legacy-path test.
-        assert '::text[]' in sql
+        assert upsert, 'expected INSERT ... ON CONFLICT for locale_profiles'
+        assert upsert[0][1][4] == ['TRN-002', 'TRN-003']
+        # Inherit path writes per-athlete override deltas (canonical names),
+        # not a direct gym_profiles equipment edit.
+        assert _sql_indices(conn.calls, 'DELETE FROM locale_equipment_overrides')
+        ovr_inserts = [
+            params for sql, params in conn.calls
+            if 'INSERT INTO locale_equipment_overrides' in sql
+        ]
+        # Submitted {'Squat rack'} on a shared base of {'Barbell'} → add 'Squat rack'.
+        assert any('Squat rack' in p and 'add' in p for p in ovr_inserts)

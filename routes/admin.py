@@ -60,7 +60,8 @@ def _delete_user_and_data(db, user_id):
     db.execute('DELETE FROM wellness_self_report          WHERE user_id = ?', (user_id,))
     db.execute('DELETE FROM garmin_auth                   WHERE user_id = ?', (user_id,))
     db.execute('DELETE FROM garmin_workouts               WHERE user_id = ?', (user_id,))
-    db.execute('DELETE FROM locale_equipment              WHERE user_id = ?', (user_id,))
+    # Track 1 — locale_equipment is dropped; locale_equipment_overrides +
+    # locale_toggle_overrides cascade on the locale_profiles delete below.
     db.execute('DELETE FROM locale_profiles               WHERE user_id = ?', (user_id,))
     db.execute('DELETE FROM clothing_options              WHERE user_id = ?', (user_id,))
     db.execute('DELETE FROM current_rx                    WHERE user_id = ?', (user_id,))

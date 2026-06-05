@@ -4,10 +4,10 @@ import uuid
 
 from flask import Blueprint, render_template, request, redirect, url_for, flash
 
+import locations
 import mapbox_client
 from chain_registry import GYM_CHAINS, detect_chain
 from database import get_db
-from init_db import EQUIPMENT_CATEGORIES
 from layer4.cache import Layer4Cache
 from layer4.cache_invalidation import evict_on_layer_change
 from layer4.cache_postgres import PostgresCacheBackend
@@ -15,7 +15,40 @@ from routes.auth import current_user_id
 
 bp = Blueprint('locales', __name__)
 
+# Locations Consolidation (Track 1) — the legacy hardcoded home/hotel/partner/
+# airport enum is retired. Home is now `locale_profiles.preferred` (one per
+# athlete), every locale uses the unified gym_profiles + overrides model, and
+# equipment is the layer0 canonical-name vocabulary (no snake_case
+# public.equipment_items.tag). `LOCALES` survives only as the set of slugs that
+# still auto-create on first save for backward-compatible deep-links; they
+# carry no special equipment semantics.
 LOCALES = ['home', 'hotel', 'partner', 'airport']
+
+
+def _layer0_equipment(db):
+    """Return `(categories, names)` from `layer0.equipment_items` — the
+    authoritative equipment vocabulary (Track 1, decision 8). `categories` is
+    `[(equipment_category, [(canonical_name, canonical_name), ...]), ...]`
+    shaped to match the template's `(category, [(value, label)])` loop (value
+    == label == canonical name); `names` is the flat validation set. Active
+    rows only (superseded_at IS NULL)."""
+    rows = db.execute(
+        'SELECT canonical_name, equipment_category FROM layer0.equipment_items '
+        'WHERE superseded_at IS NULL '
+        'ORDER BY equipment_category, canonical_name'
+    ).fetchall()
+    categories: list = []
+    names: set = set()
+    by_cat: dict = {}
+    for r in rows:
+        name = r['canonical_name']
+        cat = r['equipment_category'] or 'Other'
+        names.add(name)
+        by_cat.setdefault(cat, []).append((name, name))
+    for cat in sorted(by_cat):
+        categories.append((cat, by_cat[cat]))
+    return categories, names
+
 
 
 # Phase 5.1 form-refresh C — canonical TRN-xxx slug pattern.
@@ -130,9 +163,6 @@ def _evict_layer2c_on_equipment_change(db, user_id: int) -> None:
     cache = Layer4Cache(PostgresCacheBackend(lambda: db))
     evict_on_layer_change(cache, user_id, 'layer2c')
 
-# Flat set of all valid tag keys for input validation
-ALL_TAGS = {tag for _, items in EQUIPMENT_CATEGORIES for tag, _ in items}
-
 # D-59 §8 — disclosure_id stored in disclosure_acknowledgments. Bumped only
 # when the disclosure copy materially changes; athletes re-acknowledge on
 # bump.
@@ -141,11 +171,10 @@ MAPBOX_DISCLOSURE_VERSION = 'v1'
 
 # D-60 §3 — locale category taxonomy. Manual-entry dropdown surfaces the
 # whole taxonomy so athletes can pick the right value when bypassing chain
-# detection. The eight shared-profile categories (SHARED_PROFILE_CATEGORIES
-# below) gate the inherit/override UI on the edit screen. PR18 reclassified
-# outdoor_park into shared-profile: the privacy boundary is residence-vs-
-# public, not gym-vs-non-gym — parks with verifiable Mapbox addresses are
-# publicly shareable.
+# detection. Every category now uses the unified gym_profiles + overrides
+# model (Track 1); residential categories (RESIDENTIAL_CATEGORIES) default
+# private. PR18 reclassified outdoor_park as publicly shareable: the privacy
+# boundary is residence-vs-public, not gym-vs-non-gym.
 MANUAL_CATEGORIES = (
     ('commercial_chain_gym', 'Commercial gym (chain)'),
     ('independent_gym', 'Commercial gym (independent)'),
@@ -159,15 +188,10 @@ MANUAL_CATEGORIES = (
     ('other_residence', 'Other residence (in-laws / friend / AirBnB)'),
 )
 
-# D-60 §3 — categories that expect a shared gym_profiles row. The
-# remaining two (home_gym, other_residence) stay per-athlete + private;
-# their equipment lives in legacy `locale_equipment` and they're never
-# enterprise-shareable.
-SHARED_PROFILE_CATEGORIES = frozenset({
-    'commercial_chain_gym', 'independent_gym', 'hotel_gym',
-    'climbing_gym_chain', 'climbing_gym_indie',
-    'pool_indoor', 'pool_outdoor', 'outdoor_park',
-})
+# Track 1 §6 — residential categories default `gym_profiles.private = TRUE`
+# (excluded from crowd-source discovery/dispute/visibility; otherwise identical
+# storage + picker). Every other category is shareable by default.
+RESIDENTIAL_CATEGORIES = frozenset({'home_gym', 'other_residence'})
 
 # PR19 Item E — map MANUAL_CATEGORIES → Layer 0 exercise_inventory.where_available
 # buckets. The 4-bucket where_available taxonomy is gym-centric (home / hotel /
@@ -291,25 +315,6 @@ def _row_has(row, col: str) -> bool:
         return False
 
 
-def _is_shared_profile_locale(profile_row) -> bool:
-    """True when this locale should use the D-60 gym_profiles inherit/
-    override model. False for legacy enums, manual-entry rows, private
-    residential categories (home_gym/other_residence), and any row
-    missing a mapbox_id (no stable join key for the shared profile)."""
-    if not profile_row:
-        return False
-    if not _row_has(profile_row, 'category') or not _row_has(profile_row, 'mapbox_id'):
-        return False
-    category = profile_row['category']
-    if category not in SHARED_PROFILE_CATEGORIES:
-        return False
-    if not profile_row['mapbox_id']:
-        return False
-    if _row_has(profile_row, 'manual_entry') and profile_row['manual_entry']:
-        return False
-    return True
-
-
 def _find_gym_profile(db, mapbox_id):
     """Look up the shared gym profile keyed by mapbox_id (D-60 §4.1). Returns
     the row or None. mapbox_id is UNIQUE on gym_profiles."""
@@ -322,7 +327,9 @@ def _find_gym_profile(db, mapbox_id):
 
 
 def _shared_equipment_set(profile_row) -> set:
-    """Parse gym_profiles.equipment (JSON array) into a tag set."""
+    """Parse gym_profiles.equipment (JSON array of layer0 canonical names) into
+    a set. The picker constrains values to the active catalog, so no static
+    whitelist filter is applied here (Track 1 — canonical-direct)."""
     if not profile_row or not _row_has(profile_row, 'equipment'):
         return set()
     payload = profile_row['equipment']
@@ -332,7 +339,7 @@ def _shared_equipment_set(profile_row) -> set:
         tags = json.loads(payload)
     except (ValueError, TypeError):
         return set()
-    return {t for t in tags if isinstance(t, str) and t in ALL_TAGS}
+    return {t for t in tags if isinstance(t, str)}
 
 
 def _load_overrides(db, uid: int, locale: str):
@@ -349,14 +356,12 @@ def _load_overrides(db, uid: int, locale: str):
     return adds, removes
 
 
-def _effective_equipment(shared_tags: set, adds: set, removes: set) -> set:
-    """Per D-60 §4.4: (shared ∪ adds) ∖ removes."""
-    return (set(shared_tags) | set(adds)) - set(removes)
-
-
-def _save_overrides(db, uid: int, locale: str, shared_tags: set, athlete_tags: set) -> None:
+def _save_overrides(db, uid: int, locale: str, shared_tags: set,
+                    athlete_tags: set, valid_names: set) -> None:
     """Replace this athlete's overrides on this locale with the diff of
-    athlete_tags vs. shared_tags. Atomic-per-locale: DELETE-then-INSERT."""
+    athlete_tags vs. shared_tags. Atomic-per-locale: DELETE-then-INSERT.
+    Stored values are layer0 canonical names; `valid_names` is the active
+    catalog used to reject crafted POSTs."""
     db.execute(
         'DELETE FROM locale_equipment_overrides WHERE user_id = ? AND locale = ?',
         (uid, locale),
@@ -364,7 +369,7 @@ def _save_overrides(db, uid: int, locale: str, shared_tags: set, athlete_tags: s
     adds = athlete_tags - shared_tags
     removes = shared_tags - athlete_tags
     for tag in adds:
-        if tag in ALL_TAGS:
+        if tag in valid_names:
             db.execute(
                 '''INSERT INTO locale_equipment_overrides
                    (user_id, locale, equipment_tag, action)
@@ -372,7 +377,7 @@ def _save_overrides(db, uid: int, locale: str, shared_tags: set, athlete_tags: s
                 (uid, locale, tag, 'add'),
             )
     for tag in removes:
-        if tag in ALL_TAGS:
+        if tag in valid_names:
             db.execute(
                 '''INSERT INTO locale_equipment_overrides
                    (user_id, locale, equipment_tag, action)
@@ -381,22 +386,25 @@ def _save_overrides(db, uid: int, locale: str, shared_tags: set, athlete_tags: s
             )
 
 
-def _create_gym_profile(db, uid: int, profile_row, equipment_tags: set):
-    """First-athlete-at-this-mapbox flow (D-60 §4.2). Creates a new
-    gym_profiles row with `equipment` as JSON and returns the new id.
-    Caller links via locale_profiles.gym_profile_id."""
-    equipment_json = json.dumps(sorted(t for t in equipment_tags if t in ALL_TAGS))
+def _create_gym_profile(db, uid: int, profile_row, equipment_tags: set,
+                        valid_names: set):
+    """First-athlete-at-this-locale flow. Creates a new gym_profiles row with
+    `equipment` as a JSON array of layer0 canonical names and returns the new
+    id; caller links via locale_profiles.gym_profile_id. Residential
+    categories default `private = TRUE` (Track 1 §6)."""
+    equipment_json = json.dumps(sorted(t for t in equipment_tags if t in valid_names))
     display = profile_row['locale_name'] if _row_has(profile_row, 'locale_name') else None
     category = profile_row['category'] if _row_has(profile_row, 'category') else None
     mapbox_id = profile_row['mapbox_id'] if _row_has(profile_row, 'mapbox_id') else None
+    private = category in RESIDENTIAL_CATEGORIES
     row = db.execute(
         '''INSERT INTO gym_profiles
            (mapbox_id, display_name, category, equipment,
             created_by_user_id, last_confirmed_by, last_confirmed_at,
             contribution_count, private)
-           VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, 1, FALSE)
+           VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, 1, ?)
            RETURNING id''',
-        (mapbox_id, display, category, equipment_json, uid, uid),
+        (mapbox_id, display, category, equipment_json, uid, uid, private),
     ).fetchone()
     return row['id'] if row else None
 
@@ -442,6 +450,35 @@ def _display_address(profile_row) -> str:
     return props.get('full_address') or props.get('place_formatted') or ''
 
 
+def _set_home(db, uid: int, locale: str) -> None:
+    """Atomically make `locale` the athlete's home: clear the previous home's
+    `preferred` flag and set this one's, in the same transaction (Track 1 §10 —
+    exactly one home, always). The partial unique index
+    `locale_profiles_one_home_idx` backstops this in the DB."""
+    db.execute(
+        'UPDATE locale_profiles SET preferred = FALSE WHERE user_id = ? AND preferred',
+        (uid,),
+    )
+    db.execute(
+        'UPDATE locale_profiles SET preferred = TRUE WHERE user_id = ? AND locale = ?',
+        (uid, locale),
+    )
+
+
+def _ensure_home(db, uid: int, locale: str) -> None:
+    """First-locale-auto-home (Track 1 §10): flag `locale` home iff the athlete
+    has no home yet. Home can be moved later but never cleared to none."""
+    row = db.execute(
+        'SELECT 1 FROM locale_profiles WHERE user_id = ? AND preferred LIMIT 1',
+        (uid,),
+    ).fetchone()
+    if row is None:
+        db.execute(
+            'UPDATE locale_profiles SET preferred = TRUE WHERE user_id = ? AND locale = ?',
+            (uid, locale),
+        )
+
+
 def _existing_locale_by_mapbox_id(db, uid: int, mapbox_id: str, exclude_slug: str | None = None):
     """Return the existing (slug, locale_name) for a row this athlete
     already has pointing at the same Mapbox feature (PR18 item C —
@@ -479,29 +516,29 @@ def list_profiles():
             'SELECT * FROM locale_profiles WHERE user_id = ?', (uid,)
         ).fetchall()
     }
-    # Display: legacy enums first, then athlete-created (D-59) rows in
-    # creation order. Mixed list keeps the existing 4-card v1 UX while
-    # surfacing rows from /locales/new alongside.
+    # Display: legacy enum slots first (still auto-render for back-compat),
+    # then athlete-created rows in slug order.
     custom_locales = [k for k in profiles.keys() if k not in LOCALES]
     custom_locales.sort()
     displayed_locales = list(LOCALES) + custom_locales
+    # Equipment per locale via the authoritative resolver — layer0 canonical
+    # names from gym_profiles + overrides (Track 1; replaces the legacy
+    # locale_equipment join). value == label == canonical name.
     tags_by_locale = {}
-    for row in db.execute(
-        '''SELECT le.locale, ei.tag, ei.label
-           FROM locale_equipment le
-           JOIN equipment_items ei ON ei.id = le.equipment_id
-           WHERE le.user_id = ?
-           ORDER BY le.locale, ei.category, ei.label''',
-        (uid,)
-    ).fetchall():
-        tags_by_locale.setdefault(row['locale'], []).append(
-            {'tag': row['tag'], 'label': row['label']}
-        )
+    for loc in profiles:
+        names = sorted(locations.locale_effective_tags(db, uid, loc))
+        if names:
+            tags_by_locale[loc] = [{'tag': n, 'label': n} for n in names]
     counts = {loc: len(items) for loc, items in tags_by_locale.items()}
+    home_locale = next(
+        (loc for loc, p in profiles.items()
+         if _row_has(p, 'preferred') and p['preferred']),
+        None,
+    )
     display_addresses = {loc: _display_address(p) for loc, p in profiles.items()}
     return render_template('locales/list.html', locales=displayed_locales,
                            legacy_locales=LOCALES, profiles=profiles,
-                           equipment_categories=EQUIPMENT_CATEGORIES,
+                           home_locale=home_locale,
                            tags_by_locale=tags_by_locale, counts=counts,
                            display_addresses=display_addresses)
 
@@ -524,55 +561,65 @@ def edit_profile(locale):
         'SELECT * FROM locale_profiles WHERE locale=? AND user_id=?',
         (locale, uid)
     ).fetchone()
-    # D-60 §4 — branch into the shared-profile path when the locale's
-    # category is one of the seven gym/pool flavors and we have a stable
-    # mapbox_id to key on. Legacy enums (home/hotel/partner/airport),
-    # manual-entry rows, and no-shared-profile categories fall through to
-    # the legacy locale_equipment path.
-    if _is_shared_profile_locale(profile):
-        return _edit_shared_locale(db, uid, locale, profile)
-    return _edit_legacy_locale(db, uid, locale, profile)
+    return _edit_locale(db, uid, locale, profile)
 
 
-def _edit_legacy_locale(db, uid: int, locale: str, profile):
-    """Legacy per-athlete `locale_equipment` flow (pre-D-60). Used for
-    legacy enums, manual-entry rows, and no-shared-profile categories
-    (home_gym, outdoor_park, other_residence)."""
+def _resolve_shared_profile(db, uid: int, profile):
+    """Resolve the gym_profiles row backing a locale, if any: the linked
+    `gym_profile_id` first, else a peer at the same `mapbox_id` (another
+    athlete may have built it). Returns (shared_row_or_None, gym_profile_id)."""
+    gym_profile_id = (
+        profile['gym_profile_id']
+        if profile is not None and _row_has(profile, 'gym_profile_id')
+        else None
+    )
+    shared = None
+    if gym_profile_id:
+        shared = db.execute(
+            'SELECT * FROM gym_profiles WHERE id = ?', (gym_profile_id,),
+        ).fetchone()
+    if not shared:
+        mapbox_id = (
+            profile['mapbox_id']
+            if profile is not None and _row_has(profile, 'mapbox_id')
+            else None
+        )
+        shared = _find_gym_profile(db, mapbox_id)
+    return shared, gym_profile_id
+
+
+def _edit_locale(db, uid: int, locale: str, profile):
+    """Unified locale equipment editor (Track 1 — replaces the legacy/shared
+    split). Every locale uses the gym_profiles + overrides model on the layer0
+    canonical-name vocabulary:
+
+      - no backing profile yet  → build a new gym_profiles row from the
+        submission (residential categories default private);
+      - the athlete's own profile (created_by == uid) → edit its equipment
+        directly;
+      - a peer/shared profile (created_by != uid) → inherit + write per-athlete
+        deltas to locale_equipment_overrides.
+    """
+    categories, valid_names = _layer0_equipment(db)
+    shared, gym_profile_id = _resolve_shared_profile(db, uid, profile)
+    shared_tags = _shared_equipment_set(shared)
+    owns_shared = bool(
+        shared and _row_has(shared, 'created_by_user_id')
+        and shared['created_by_user_id'] == uid
+    )
+    inherit = bool(shared and not owns_shared)
     prior_terrain_ids = _hydrate_locale_terrain_ids(profile)
-    # Snapshot prior equipment tags before any mutation so the POST branch
-    # can fire Layer 2C eviction only on actual change (mirrors the
-    # terrain_ids no-op gate per form-refresh C D10).
-    prior_equipment_rows = db.execute(
-        '''SELECT ei.tag FROM locale_equipment le
-           JOIN equipment_items ei ON ei.id = le.equipment_id
-           WHERE le.user_id = ? AND le.locale = ?''',
-        (uid, locale)
-    ).fetchall()
-    prior_equipment_tags = {row['tag'] for row in prior_equipment_rows}
+    prior_effective = locations.locale_effective_tags(db, uid, locale)
+
     if request.method == 'POST':
-        selected_tags = [t for t in request.form.getlist('equipment') if t in ALL_TAGS]
+        submitted = {t for t in request.form.getlist('equipment') if t in valid_names}
         notes = request.form.get('notes', '').strip()
         city = request.form.get('city', '').strip()
         new_terrain_ids = _parse_locale_terrain(request.form)
-        # Resolve tags to equipment_ids (shared catalog)
-        if selected_tags:
-            placeholders = ','.join('?' * len(selected_tags))
-            eq_rows = db.execute(
-                f'SELECT id, tag FROM equipment_items WHERE tag IN ({placeholders})',
-                selected_tags
-            ).fetchall()
-            tag_to_id = {r['tag']: r['id'] for r in eq_rows}
-        else:
-            tag_to_id = {}
-        # Upsert locale_profiles first — locale_equipment has an FK on this
-        # table. PK is composite (user_id, locale) since Session 3. Phase
-        # 5.1 form-refresh C (2026-05-20) threads `locale_terrain_ids` so
-        # both the new-row INSERT and the existing-row UPDATE branch
-        # persist the athlete's terrain selection alongside notes + city.
-        # Explicit `::text[]` cast on the array placeholder — psycopg2's
-        # default list adapter is shape-correct under direct testing but
-        # production rows landed empty without the cast (Bucket B #3,
-        # 2026-05-21 walkthrough).
+        # Ensure the locale_profiles row exists first — gym_profiles links +
+        # overrides FK onto it. Legacy enum slugs auto-create here on first
+        # save (preserved v1 behaviour). `?::text[]` cast: see the Bucket B #3
+        # fix (psycopg2 list adapter landed empty arrays in prod without it).
         db.execute(
             '''INSERT INTO locale_profiles (user_id, locale, notes, city, locale_terrain_ids, updated_at)
                VALUES (?, ?, ?, ?, ?::text[], CURRENT_TIMESTAMP)
@@ -583,154 +630,62 @@ def _edit_legacy_locale(db, uid: int, locale: str, profile):
                  updated_at=excluded.updated_at''',
             (uid, locale, notes, city, new_terrain_ids)
         )
-        # Replace locale_equipment rows atomically (scoped per-user)
-        db.execute(
-            'DELETE FROM locale_equipment WHERE user_id = ? AND locale = ?',
-            (uid, locale)
-        )
-        for tag in selected_tags:
-            eq_id = tag_to_id.get(tag)
-            if eq_id:
-                db.execute(
-                    'INSERT INTO locale_equipment (user_id, locale, equipment_id) VALUES (?, ?, ?)',
-                    (uid, locale, eq_id)
-                )
-        db.commit()
-        # Phase 5.1 form-refresh C — fire Layer 2B eviction when the
-        # locale's terrain selection materially changed. Per D10 we only
-        # fire on actual change (set inequality); no-op saves are silent.
-        if sorted(new_terrain_ids) != sorted(prior_terrain_ids):
-            _evict_layer2b_on_terrain_change(db, uid)
-        # Same no-op gate for the Layer 2C equipment-pool eviction. Layer
-        # 2C policy is `_ALL_ENTRY_POINTS` so this also evicts cached
-        # single-session synthesis (on-demand workouts that picked
-        # equipment from the prior pool).
-        if set(selected_tags) != prior_equipment_tags:
-            _evict_layer2c_on_equipment_change(db, uid)
-        flash(f'{locale.title()} profile saved ({len(selected_tags)} items).', 'success')
-        return redirect(url_for('locales.list_profiles'))
-    # GET — load active equipment from locale_equipment (parent-JOIN scoped).
-    # Same SELECT as the prior_equipment_tags snapshot above; kept separate
-    # so the snapshot stays close to the mutation it gates.
-    active_rows = db.execute(
-        '''SELECT ei.tag FROM locale_equipment le
-           JOIN equipment_items ei ON ei.id = le.equipment_id
-           WHERE le.user_id = ? AND le.locale = ?''',
-        (uid, locale)
-    ).fetchall()
-    active = {row['tag'] for row in active_rows}
-    is_manual = bool(_row_has(profile, 'manual_entry') and profile['manual_entry'])
-    is_mapbox_anchored = bool(_row_has(profile, 'mapbox_id') and profile['mapbox_id'])
-    is_deletable = locale not in LOCALES
-    return render_template('locales/form.html', mode='legacy', locale=locale,
-                           profile=profile,
-                           equipment_categories=EQUIPMENT_CATEGORIES,
-                           active=active,
-                           notes=profile['notes'] if profile else '',
-                           city=profile['city'] if profile and profile['city'] else '',
-                           is_manual=is_manual,
-                           is_mapbox_anchored=is_mapbox_anchored,
-                           is_deletable=is_deletable,
-                           display_address=_display_address(profile),
-                           terrain_choices=_terrain_choices(db),
-                           active_terrain_ids=set(prior_terrain_ids))
-
-
-def _edit_shared_locale(db, uid: int, locale: str, profile):
-    """D-60 §4.2/§4.3/§4.4 — shared gym profile inherit/override flow.
-    First athlete at this mapbox_id creates the gym_profiles row; subsequent
-    athletes inherit and write deltas to locale_equipment_overrides."""
-    mapbox_id = profile['mapbox_id']
-    gym_profile_id = profile['gym_profile_id'] if _row_has(profile, 'gym_profile_id') else None
-    shared = None
-    if gym_profile_id:
-        shared = db.execute(
-            'SELECT * FROM gym_profiles WHERE id = ?',
-            (gym_profile_id,),
-        ).fetchone()
-    if not shared:
-        # No FK yet — look up a peer profile for this mapbox_id (another
-        # athlete may have built one). If found, treat this as the inherit
-        # case and link the FK on first save.
-        shared = _find_gym_profile(db, mapbox_id)
-    shared_tags = _shared_equipment_set(shared)
-    prior_terrain_ids = _hydrate_locale_terrain_ids(profile)
-    # Snapshot prior effective equipment view before mutation so the POST
-    # branch can fire Layer 2C eviction only on actual change. In the
-    # build-new case there's no shared profile yet so the prior effective
-    # set is empty; in the inherit case it's shared_tags ± overrides.
-    if shared:
-        prior_adds_tags, prior_removes_tags = _load_overrides(db, uid, locale)
-        prior_effective_equipment = _effective_equipment(
-            shared_tags, prior_adds_tags, prior_removes_tags
-        )
-    else:
-        prior_effective_equipment = set()
-    if request.method == 'POST':
-        submitted = {t for t in request.form.getlist('equipment') if t in ALL_TAGS}
-        notes = request.form.get('notes', '').strip()
-        new_terrain_ids = _parse_locale_terrain(request.form)
-        if not shared:
-            # First athlete here — build the shared profile from this
-            # athlete's submission. Athlete's effective view becomes the
-            # base; no overrides yet.
-            new_id = _create_gym_profile(db, uid, profile, submitted)
+        # First-locale-auto-home (Track 1 §10) — a legacy enum slug saved
+        # before any home exists becomes home.
+        _ensure_home(db, uid, locale)
+        if shared is None:
+            # Build a new backing profile from this submission.
+            new_id = _create_gym_profile(db, uid, profile, submitted, valid_names)
             if new_id:
                 _link_gym_profile(db, uid, locale, new_id)
-            # `?::text[]` cast — see legacy-path comment above; same Bucket
-            # B #3 defensive fix.
+        elif owns_shared:
+            # The athlete's own profile — edit its equipment in place; clear
+            # any stale overrides so the effective set is just the profile.
+            if not gym_profile_id:
+                _link_gym_profile(db, uid, locale, shared['id'])
             db.execute(
-                '''UPDATE locale_profiles
-                   SET notes = ?, locale_terrain_ids = ?::text[],
-                       updated_at = CURRENT_TIMESTAMP
-                   WHERE user_id = ? AND locale = ?''',
-                (notes, new_terrain_ids, uid, locale),
+                'UPDATE gym_profiles SET equipment = ? WHERE id = ?',
+                (json.dumps(sorted(t for t in submitted if t in valid_names)),
+                 shared['id']),
             )
-            db.commit()
-            if sorted(new_terrain_ids) != sorted(prior_terrain_ids):
-                _evict_layer2b_on_terrain_change(db, uid)
-            if submitted != prior_effective_equipment:
-                _evict_layer2c_on_equipment_change(db, uid)
-            flash(f'Built the equipment profile for {profile["locale_name"] or locale} ({len(submitted)} items).', 'success')
-            return redirect(url_for('locales.list_profiles'))
-        # Inherit case — link FK if not yet linked, then save deltas vs.
-        # the shared base.
-        if not gym_profile_id:
-            _link_gym_profile(db, uid, locale, shared['id'])
-            _touch_gym_profile_confirmation(db, uid, shared['id'])
-        _save_overrides(db, uid, locale, shared_tags, submitted)
-        # `?::text[]` cast — see shared_build branch comment; same Bucket
-        # B #3 defensive fix for the inherit path.
-        db.execute(
-            '''UPDATE locale_profiles
-               SET notes = ?, locale_terrain_ids = ?::text[],
-                   updated_at = CURRENT_TIMESTAMP
-               WHERE user_id = ? AND locale = ?''',
-            (notes, new_terrain_ids, uid, locale),
-        )
+            db.execute(
+                'DELETE FROM locale_equipment_overrides WHERE user_id = ? AND locale = ?',
+                (uid, locale),
+            )
+        else:
+            # Inherit from a peer/shared base; persist per-athlete deltas.
+            if not gym_profile_id:
+                _link_gym_profile(db, uid, locale, shared['id'])
+                _touch_gym_profile_confirmation(db, uid, shared['id'])
+            _save_overrides(db, uid, locale, shared_tags, submitted, valid_names)
         db.commit()
         if sorted(new_terrain_ids) != sorted(prior_terrain_ids):
             _evict_layer2b_on_terrain_change(db, uid)
-        if submitted != prior_effective_equipment:
+        if submitted != prior_effective:
             _evict_layer2c_on_equipment_change(db, uid)
-        flash(f'Saved your view of {profile["locale_name"] or locale} ({len(submitted)} items).', 'success')
+        flash(f'Saved {profile["locale_name"] if profile and _row_has(profile, "locale_name") and profile["locale_name"] else locale} '
+              f'({len(submitted)} items).', 'success')
         return redirect(url_for('locales.list_profiles'))
-    # GET — render either the build-new form or the inherit-with-overrides
-    # form. Effective view drives the pre-checked state.
+
+    # GET — effective set drives the checked state; inherit mode adds override
+    # chips. `mode` keeps the template's existing branches working: 'legacy'
+    # for own/build (city field, plain save), 'shared_inherit' for peer inherit
+    # (override chips, no city).
     adds, removes = _load_overrides(db, uid, locale)
-    effective = _effective_equipment(shared_tags, adds, removes) if shared else set()
-    mode = 'shared_inherit' if shared else 'shared_build'
+    mode = 'shared_inherit' if inherit else 'legacy'
+    is_manual = bool(_row_has(profile, 'manual_entry') and profile['manual_entry'])
+    is_mapbox_anchored = bool(_row_has(profile, 'mapbox_id') and profile['mapbox_id'])
     return render_template('locales/form.html', mode=mode, locale=locale,
                            profile=profile,
-                           equipment_categories=EQUIPMENT_CATEGORIES,
-                           active=effective,
+                           equipment_categories=categories,
+                           active=prior_effective,
                            shared_tags=shared_tags,
                            adds=adds, removes=removes,
                            shared=shared,
-                           notes=profile['notes'] if profile and profile['notes'] else '',
-                           city=profile['city'] if profile and profile['city'] else '',
-                           is_manual=False,
-                           is_mapbox_anchored=True,
+                           notes=(profile['notes'] if profile and profile['notes'] else ''),
+                           city=(profile['city'] if profile and _row_has(profile, 'city') and profile['city'] else ''),
+                           is_manual=is_manual,
+                           is_mapbox_anchored=is_mapbox_anchored,
                            is_deletable=locale not in LOCALES,
                            display_address=_display_address(profile),
                            terrain_choices=_terrain_choices(db),
@@ -900,6 +855,7 @@ def _save_mapbox_anchored(db, uid: int):
         (uid, slug, locale_name, mapbox_id, lat, lng,
          chain_id, chain_name, category, raw_payload or place_name),
     )
+    _ensure_home(db, uid, slug)  # first-locale-auto-home (Track 1 §10)
     db.commit()
     flash(f'Saved {locale_name}.', 'success')
     if chain_id:
@@ -935,6 +891,7 @@ def save_manual_locale():
            VALUES (?, ?, ?, ?, ?, ?, TRUE, CURRENT_TIMESTAMP)''',
         (uid, slug, locale_name, address, '', category or None),
     )
+    _ensure_home(db, uid, slug)  # first-locale-auto-home (Track 1 §10)
     db.commit()
     flash(f'Saved {locale_name} (manual entry).', 'success')
     return redirect(url_for('locales.list_profiles'))
@@ -1131,6 +1088,32 @@ def refresh_from_mapbox(locale):
                            chain_changed=chain_changed)
 
 
+# ── Track 1 — home (preferred) selection ───────────────────────────────
+
+
+@bp.route('/locales/<locale>/home', methods=['POST'])
+def make_home(locale):
+    """Mark a locale as the athlete's home (`locale_profiles.preferred`).
+    Atomically clears the previous home (Track 1 §10 — exactly one home). The
+    plan-gen cone resolves the home + cluster from this flag."""
+    db = get_db()
+    uid = current_user_id()
+    profile = db.execute(
+        'SELECT 1 FROM locale_profiles WHERE user_id = ? AND locale = ?',
+        (uid, locale),
+    ).fetchone()
+    if not profile:
+        flash('Unknown location.', 'danger')
+        return redirect(url_for('locales.list_profiles'))
+    _set_home(db, uid, locale)
+    # Cluster/home inputs to Layer 2C changed — evict so the next plan-gen
+    # re-derives the equipment pool from the new home.
+    _evict_layer2c_on_equipment_change(db, uid)
+    db.commit()
+    flash('Home location updated.', 'success')
+    return redirect(url_for('locales.list_profiles'))
+
+
 # ── PR18 item D — delete with privacy-aware split rule ─────────────────
 
 
@@ -1174,19 +1157,15 @@ def delete_locale(locale):
         if _row_has(profile, 'locale_name') and profile['locale_name']
         else locale
     )
-    # locale_equipment has a FK on (user_id, locale) with no ON DELETE
-    # CASCADE (see init_db.py:653); clear it first or the parent DELETE
-    # below raises ForeignKeyViolation. locale_equipment_overrides and
-    # locale_toggle_overrides do cascade so they're handled implicitly.
-    db.execute(
-        'DELETE FROM locale_equipment WHERE user_id = ? AND locale = ?',
-        (uid, locale),
-    )
+    # Track 1 — the legacy `locale_equipment` table is gone; the only
+    # locale-scoped dependents now are locale_equipment_overrides +
+    # locale_toggle_overrides, both ON DELETE CASCADE, so the parent DELETE
+    # cleans them up implicitly.
     db.execute(
         'DELETE FROM locale_profiles WHERE user_id = ? AND locale = ?',
         (uid, locale),
     )
-    if category in ('home_gym', 'other_residence') and gym_profile_id:
+    if category in RESIDENTIAL_CATEGORIES and gym_profile_id:
         db.execute(
             '''DELETE FROM gym_profiles
                WHERE id = ? AND created_by_user_id = ?''',

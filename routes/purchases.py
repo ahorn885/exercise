@@ -43,14 +43,14 @@ def list_purchases():
         (uid,)
     ).fetchall()
 
-    # Set of equipment_ids this user owns somewhere (any locale). Drives
-    # the "you already have this" hint independent of explicit status.
-    owned_equipment_ids = {
-        r['equipment_id'] for r in db.execute(
-            'SELECT DISTINCT equipment_id FROM locale_equipment WHERE user_id = ?',
-            (uid,)
-        ).fetchall()
-    }
+    # Track 1 — the "you already have this" hint sourced int equipment_ids from
+    # the legacy locale_equipment table, now retired for the layer0
+    # canonical-name store. The public purchase catalog (exercise_equipment /
+    # equipment_items) is still int-id keyed, so the hint can't be matched
+    # against the canonical pool until the catalog migrates to layer0 (Track 3).
+    # Degraded to off until then (approved 2026-06-05); the explicit
+    # owned/wanted/passed status below is unaffected.
+    owned_equipment_ids = set()
 
     # Impacted-exercise counts in one query, then attach per row.
     impact_counts = {

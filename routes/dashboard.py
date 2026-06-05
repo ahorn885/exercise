@@ -43,7 +43,7 @@ def _get_weather(db):
         loc = trip['city']
     else:
         home = db.execute(
-            "SELECT city FROM locale_profiles WHERE locale='home' AND user_id=? LIMIT 1",
+            "SELECT city FROM locale_profiles WHERE preferred AND user_id=? LIMIT 1",
             (uid,)
         ).fetchone()
         if home and home['city']:
@@ -165,7 +165,7 @@ def index():
             city = trip['city'] if trip else ''
             if not city:
                 home = db.execute(
-                    "SELECT city FROM locale_profiles WHERE locale='home' AND user_id=? LIMIT 1",
+                    "SELECT city FROM locale_profiles WHERE preferred AND user_id=? LIMIT 1",
                     (uid,)
                 ).fetchone()
                 city = home['city'] if home and home['city'] else ''
