@@ -81,7 +81,13 @@ from layer4.seam_review import _SeamReviewerOutput as _SeamOut
 # ─── Fixtures ────────────────────────────────────────────────────────────────
 
 
-_PLAN_START = date(2026, 6, 1)  # Mon
+# Plan start must be today-or-future (the §4.2 `plan_start_date_in_past` guard).
+# Anchored to today so the suite never goes stale by the calendar — a hardcoded
+# date silently failed every test in this file once it slipped into the past.
+# Day-of-week is irrelevant: weeks bucket by `week_in_phase` offset from the
+# phase start, not by ISO/calendar week. event_date / race fixtures derive from
+# this relatively, so weeks-to-event (and the phase structure) is unchanged.
+_PLAN_START = date.today()
 
 
 def _layer1() -> dict[str, Any]:
@@ -603,7 +609,7 @@ class TestTopLevelPayloadValidationRetryable:
         from layer4.errors import Layer4OutputError
 
         calls = {"n": 0}
-        # Three cardio sessions all dated 2026-06-02 (inside the week-1 block
+        # Three cardio sessions all dated to week-1 day 2 (inside the block
         # window). Each parses fine on its own — `session_index_in_day` stays
         # ∈{0,1} (the per-row `<= 1` validator), so the parse step accepts them
         # — but the cross-session `_check_two_per_day` invariant, which only
@@ -611,11 +617,11 @@ class TestTopLevelPayloadValidationRetryable:
         # boundary #47 fell through.
         bad = {
             "sessions": [
-                _cardio_session(d=date(2026, 6, 2), idx=0),
-                _cardio_session(d=date(2026, 6, 2), idx=1),
-                _cardio_session(d=date(2026, 6, 2), idx=1),
+                _cardio_session(d=_PLAN_START + timedelta(days=1), idx=0),
+                _cardio_session(d=_PLAN_START + timedelta(days=1), idx=1),
+                _cardio_session(d=_PLAN_START + timedelta(days=1), idx=1),
             ],
-            "phase_synthesis_notes": "over-emitted a 3rd session on 06-02",
+            "phase_synthesis_notes": "over-emitted a 3rd session on day 2",
         }
 
         def _caller(*_a, **_kw):
@@ -658,7 +664,7 @@ class TestTopLevelPayloadValidationRetryable:
         def _caller(*_a, **_kw):
             return _PhaseOut(
                 tool_args={
-                    "sessions": [_cardio_session(d=date(2026, 6, 2), idx=0)],
+                    "sessions": [_cardio_session(d=_PLAN_START + timedelta(days=1), idx=0)],
                     "phase_synthesis_notes": "n",
                 },
                 input_tokens=6000,

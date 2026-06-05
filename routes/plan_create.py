@@ -326,6 +326,57 @@ def _generation_stalled(db, user_id: int, plan_version_id: int) -> bool:
     return bool(row['stalled']) if row else False
 
 
+def _stall_diagnostic_text(db, user_id: int, plan_version_id: int,
+                           cached_blocks: int) -> str:
+    """Build the stall diagnostic persisted to `generation_traceback` when the
+    D-77 backstop fires. The reaper used to leave `generation_traceback` NULL (a
+    stall is a wall-clock gate, not a raised exception), so a stalled plan's diag
+    couldn't say WHY it stalled — only that it did. This records exactly what the
+    gate measured: the anchor it timed from (the most-recent plan_create block's
+    cache time, else generation start — the SAME expression as
+    `_generation_stalled`), the age past which it tripped, the window, and how
+    far generation got. So the token-gated diag self-explains a stall per Rule
+    #14. Best-effort: any read fault degrades to the static message — it must
+    never break the already-committed failure path."""
+    anchor_at = age_s = gen_started_at = None
+    try:
+        row = db.execute(
+            "SELECT "
+            "  COALESCE((SELECT MAX(created_at) FROM layer4_cache "
+            "             WHERE user_id = ? AND entry_point = 'plan_create' "
+            "               AND phase_idx >= 0 AND phase_idx < ? "
+            "               AND created_at >= pv.created_at), pv.created_at) "
+            "    AS anchor_at, "
+            "  EXTRACT(EPOCH FROM (NOW() - COALESCE((SELECT MAX(created_at) "
+            "             FROM layer4_cache WHERE user_id = ? "
+            "               AND entry_point = 'plan_create' AND phase_idx >= 0 "
+            "               AND phase_idx < ? AND created_at >= pv.created_at), "
+            "             pv.created_at)))::int AS age_s, "
+            "  pv.created_at AS gen_started_at "
+            "FROM plan_versions pv WHERE pv.id = ? AND pv.user_id = ?",
+            (user_id, _SEAM_CACHE_PHASE_IDX_BASE, user_id,
+             _SEAM_CACHE_PHASE_IDX_BASE, plan_version_id, user_id),
+        ).fetchone()
+        if row is not None:
+            anchor_at = row["anchor_at"]
+            age_s = row["age_s"]
+            gen_started_at = row["gen_started_at"]
+    except Exception:  # noqa: BLE001 — observability read must not break the failure path
+        db.rollback()
+    return (
+        "STALL DIAGNOSTIC (not a Python traceback): the D-77 wall-clock stall "
+        "backstop fired.\n"
+        f"window_s={_STALL_WALLCLOCK_S} cached_blocks={cached_blocks} "
+        f"next_block_index={cached_blocks}\n"
+        f"last_progress_at={anchor_at} age_since_last_progress_s={age_s} "
+        f"generation_started_at={gen_started_at}\n"
+        "Meaning: no new plan_create week-block cached within the window — the "
+        "synthesis unit (cone + the next block) did not complete within the "
+        "function budget across passes. See `block_timing` / `blocks` in this "
+        "diag for per-block latency and `advance_lock_until` for the lock cycle."
+    )
+
+
 _ORCH_ERROR_MESSAGES = {
     'etl_version_set_undiscoverable': "Platform data is unavailable. Try again shortly.",
     'primary_locale_missing': "Set up your home locale before creating a plan.",
@@ -491,6 +542,9 @@ def _advance_plan_generation_locked(db, uid: int, plan_version_id: int,
             db, plan_version_id, uid,
             "Plan generation stalled and was stopped — a step couldn't complete "
             "within the time budget. This is unexpected; please contact support.",
+            traceback_text=_stall_diagnostic_text(
+                db, uid, plan_version_id, now_cached
+            ),
         )
     # Not stalled — persist the latest progress count (telemetry: the progress
     # screen and a later pass can see how far generation has gotten) before

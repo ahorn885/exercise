@@ -629,7 +629,14 @@ def test_driver_empty_payload_accepted():
     payload = _minimal_layer4()
     result = validate_layer4_payload(payload, ValidatorContext())
     assert result.accepted
-    assert result.rule_failures == []
+    # #335 §10: a strength-less Base week now surfaces an advisory (warning)
+    # strength_frequency_band. The driver still ACCEPTS — warnings never block —
+    # so the contract under test (minimal payload accepted, no blockers) holds.
+    assert not any(f.severity == "blocker" for f in result.rule_failures)
+    assert all(
+        f.rule_name.startswith("strength_frequency_band")
+        for f in result.rule_failures
+    )
     assert result.pass_index == 0
     assert result.retried_phase_names == []
 

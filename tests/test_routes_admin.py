@@ -326,3 +326,66 @@ class TestDiagTokenOk:
     def test_exact_match_authorizes(self):
         from routes.admin import _diag_token_ok
         assert _diag_token_ok("secret", "secret") is True
+
+
+class TestSummarizeProgressBlocks:
+    """`_summarize_progress_blocks(blocks)` — the pure per-block diag view +
+    timing rollup the diag JSON exposes so per-block synthesis latency/retries/
+    cap_hit (the stall-localizing signal) is readable past the login wall."""
+
+    def test_rollup_aggregates_metadata_and_picks_latest_snapshot(self):
+        from datetime import datetime, timezone
+        from routes.admin import _summarize_progress_blocks
+
+        t0 = datetime(2026, 6, 4, 12, 17, tzinfo=timezone.utc)
+        t1 = datetime(2026, 6, 4, 12, 29, tzinfo=timezone.utc)
+        blocks = [
+            {"phase_idx": 0, "phase_name": "Base",
+             "sessions": [{"id": "a"}, {"id": "b"}],
+             "synthesis_metadata": {"latency_ms": 169000, "retries_used": 1,
+                                    "cap_hit": False},
+             "snapshot_at": t0},
+            {"phase_idx": 1, "phase_name": "Base",
+             "sessions": [{"id": "c"}],
+             "synthesis_metadata": {"latency_ms": 240000, "retries_used": 0,
+                                    "cap_hit": True},
+             "snapshot_at": t1},
+        ]
+
+        out = _summarize_progress_blocks(blocks)
+
+        assert out["block_timing"] == {
+            "total_latency_ms": 409000,
+            "max_block_latency_ms": 240000,
+            "total_retries": 1,
+            "any_cap_hit": True,
+            "last_snapshot_at": str(t1),   # the most-recent snapshot, not t0
+        }
+        # Per-block view carries counts + metadata, NOT the session bodies.
+        assert [b["session_count"] for b in out["blocks"]] == [2, 1]
+        assert "sessions" not in out["blocks"][0]
+        assert out["blocks"][0]["synthesis_metadata"]["latency_ms"] == 169000
+
+    def test_missing_or_null_metadata_tolerated(self):
+        from routes.admin import _summarize_progress_blocks
+
+        # A block snapshotted before its metadata landed (None) must not raise
+        # and contributes zero to the rollup.
+        out = _summarize_progress_blocks([
+            {"phase_idx": 0, "phase_name": "Base", "sessions": None,
+             "synthesis_metadata": None, "snapshot_at": None},
+        ])
+
+        assert out["block_timing"]["total_latency_ms"] == 0
+        assert out["block_timing"]["any_cap_hit"] is False
+        assert out["block_timing"]["last_snapshot_at"] is None
+        assert out["blocks"][0]["session_count"] == 0
+        assert out["blocks"][0]["synthesis_metadata"] is None
+
+    def test_empty_blocks_is_zeroed_rollup(self):
+        from routes.admin import _summarize_progress_blocks
+        out = _summarize_progress_blocks([])
+        assert out["blocks"] == []
+        assert out["block_timing"]["total_latency_ms"] == 0
+        assert out["block_timing"]["max_block_latency_ms"] == 0
+        assert out["block_timing"]["last_snapshot_at"] is None

@@ -211,6 +211,14 @@ These six flags are the only flags you emit. Other flags (`recovery_week`, `peak
 
 Layer 2C per-locale `effective_pool` + `exercises_resolved` (Tier 1 direct / Tier 2 athlete-listed substitute / Tier 3 nearest-neighbor proxy) is your equipment surface for strength prescriptions. Prefer Tier 1 when present; Tier 2 acceptable; Tier 3 fallback only. Each session has one `locale_id` — all blocks within a session must resolve at that locale (single-locale-per-session invariant per `Layer4_Spec.md` §5.4 rule 6b).
 
+# Strength programming
+
+Program resistance training every week per the phase dose: Base/Build 2 sessions/week, Peak 1 (maintenance), Taper 1 early then none in the final ~7–10 days. Each session: 3–5 multi-joint, lower-body-biased exercises, 2–3 sets, 4–10 rep range, not to failure, prescribed as RM/RPE targets (e.g. 3×5 @ ~8RM) — never invent absolute weights. In maintenance phases (Peak/Taper) reduce volume — drop to ~2 sets and/or 1 session/week — but keep the load and rep range heavy; never maintain by lowering the weight. If the athlete has no logged history for an exercise, prescribe the reps and tell them to use a load they can complete for that many reps with ~2 reps in reserve, and log it — they set their own baseline; do not withhold an exercise for lack of history.
+
+Pick exercises from the rendered `=== Strength exercise pool ===` for the session's locale (never invent `exercise_id`s). Keep a stable core of 2–3 compound lifts across the phase for progression; rotate accessory exercises week-to-week for variety. Prefer unilateral / offset / anti-rotation variants (single-arm, single-leg, carries) — they build one-sided strength and trunk stability together, which transfers to multi-sport. Prefer heavy + explosive over hypertrophy; de-emphasize added muscle mass.
+
+Attribute each strength session's `discipline_id` to the discipline it most supports. Place strength as the second session on an easy/moderate cardio day, not on the same day as a key intensity/long session. Do not prescribe a time of day; if strength shares a day with a hard session, add a `session_notes` cue to separate them by a few hours and avoid heavy legs right before the quality session. Honor 2D injury exclusions/accommodations.
+
 # Schedule respect
 
 Layer 1 §K `daily_availability_windows` per-day windows: prescribe on `available=True` days only; session `duration_min` must fit within the day's window minutes (validator: `daily_window_fit_*`). Sessions on `available=False` days raise unless explicitly flagged `athlete_self_scheduled` (not in this flag enum — orchestrator path only). The athlete's **long-session day** is the day carrying the longest enabled window — FormRefresh Slice C retired the standalone long-session input, so the longest window now *is* the long-session capacity. Anchor the primary discipline's weekly `long_slow_distance` cornerstone (flag list above) on that day; secondary-discipline LSDs fit their own longest available day. The `=== Schedule ===` block names the computed long-session day.
@@ -550,6 +558,136 @@ def _format_active_injuries(layer2d: Layer2DPayload | None) -> list[str]:
         out.append(
             f"- ACCOMMODATE {er.exercise_id} ({er.exercise_name}): {mod_list}"
         )
+    return out
+
+
+# #335 Phase 2 §8 — strength exercise-surface rendering. The per-discipline cap
+# (N≈8–12 in the design) balances grounding the synthesizer in real resolved
+# exercise_ids against input-token cost (#316).
+_STRENGTH_POOL_CAP_PER_DISCIPLINE = 10
+_STRENGTH_PRIORITY_RANK = {"Critical": 0, "High": 1, "Medium": 2, "Low": 3}
+# §8 ranking bias + §5 integrated-stability bias (movement_patterns, lowercased
+# for case-insensitive match against the 0B vocab e.g. "Single-Leg"/"Hinge").
+_STRENGTH_PREFERRED_PATTERNS = {
+    "single-leg", "hinge", "squat", "lunge", "carry", "anti-rotation",
+}
+# Core-eligible = big compound multi-joint lifts (the §5 "2–3 progressed
+# compound lifts" stable core); the rest are rotating accessory.
+_STRENGTH_COMPOUND_PATTERNS = {"hinge", "squat", "lunge", "single-leg"}
+_STRENGTH_CORE_CAP = 3
+
+
+def _strength_pattern_match(rx, vocab: set[str]) -> bool:
+    return any(
+        (p or "").strip().lower() in vocab for p in (rx.movement_patterns or [])
+    )
+
+
+def _format_strength_exercise_pool(
+    layer2c_payloads: dict[str, Layer2CPayload],
+    layer2a_payload: Layer2APayload | None,
+    layer2d_payload: Layer2DPayload | None,
+) -> list[str]:
+    """#335 Phase 2 §8 — render the resolved strength-exercise surface so the
+    synthesizer prescribes real, locale-available `exercise_id`s instead of
+    inventing them. Without this the prompt rendered only `effective_pool
+    size=N` (a count), so the model guessed ids and Rule 6a rejected every guess
+    as `equipment_unavailable` — even when the athlete owns the gear; the id
+    simply was never in the resolved set.
+
+    Per locale, per included discipline (2A load-weight order), the resolved
+    exercises ranked Critical→High→Medium then Tier-1-first, 2D-excluded
+    dropped, deduped across disciplines (listed under the first/highest-weight
+    discipline that surfaces them), capped per discipline. A discipline with no
+    resolved exercises (e.g. zero-0B disciplines like MTB/Climbing) renders
+    nothing — no blocker; sport sessions cover those (Phase 1).
+
+    Two §8 deviations, both compensated by the §9 prompt text: movement-pattern
+    ranking (Single-Leg/Hinge/…) is omitted because `ResolvedExercise` carries
+    no `movement_patterns`, so the unilateral/offset bias rides on the prompt;
+    core-vs-accessory marking is likewise left to the prompt (no data signal)."""
+    if not layer2c_payloads:
+        return []
+    excluded_ids = (
+        {er.exercise_id for er in layer2d_payload.excluded_exercises}
+        if layer2d_payload is not None
+        else set()
+    )
+    weight_order: list[str] = []
+    if layer2a_payload is not None:
+        included = [
+            d for d in layer2a_payload.disciplines if d.inclusion == "included"
+        ]
+        included.sort(key=lambda d: d.load_weight.value, reverse=True)
+        weight_order = [d.discipline_id for d in included]
+
+    out: list[str] = []
+    for locale_id, l2c in layer2c_payloads.items():
+        present = {d for rx in l2c.exercises_resolved for d in rx.discipline_ids}
+        ordered = [d for d in weight_order if d in present] + sorted(
+            present - set(weight_order)
+        )
+        seen: set[str] = set()
+        locale_lines: list[str] = []
+        for d_id in ordered:
+            cands = [
+                rx
+                for rx in l2c.exercises_resolved
+                if d_id in rx.discipline_ids
+                and rx.exercise_id not in excluded_ids
+                and rx.exercise_id not in seen
+            ]
+            cands.sort(
+                key=lambda rx: (
+                    _STRENGTH_PRIORITY_RANK.get(
+                        rx.priority_per_discipline.get(d_id, ""), 4
+                    ),
+                    0 if _strength_pattern_match(
+                        rx, _STRENGTH_PREFERRED_PATTERNS
+                    ) else 1,
+                    rx.tier,
+                )
+            )
+            cands = cands[:_STRENGTH_POOL_CAP_PER_DISCIPLINE]
+            if not cands:
+                continue
+            locale_lines.append(f"  {d_id}:")
+            core_count = 0
+            for rx in cands:
+                seen.add(rx.exercise_id)
+                # Core = a high-relevance compound lift to progress consistently
+                # (priority Critical/High AND a compound pattern), capped; the
+                # rest rotate as accessory (§5 hybrid core+accessory).
+                is_core = (
+                    core_count < _STRENGTH_CORE_CAP
+                    and _STRENGTH_PRIORITY_RANK.get(
+                        rx.priority_per_discipline.get(d_id, ""), 4
+                    ) <= 1
+                    and _strength_pattern_match(rx, _STRENGTH_COMPOUND_PATTERNS)
+                )
+                if is_core:
+                    core_count += 1
+                attrs = ["core" if is_core else "accessory", f"Tier {rx.tier}"]
+                prio = rx.priority_per_discipline.get(d_id, "")
+                if prio:
+                    attrs.append(prio)
+                if rx.movement_patterns:
+                    attrs.append(",".join(rx.movement_patterns))
+                if rx.tier != 1 and rx.resolution_detail is not None:
+                    if rx.resolution_detail.substitute_text:
+                        attrs.append(
+                            f"substitute: {rx.resolution_detail.substitute_text}"
+                        )
+                    elif rx.resolution_detail.proxy_exercise_id:
+                        attrs.append(
+                            f"proxy: {rx.resolution_detail.proxy_exercise_id}"
+                        )
+                locale_lines.append(
+                    f"  - {rx.exercise_id} ({rx.exercise_name}) [{'; '.join(attrs)}]"
+                )
+        if locale_lines:
+            out.append(f"- Locale {locale_id}:")
+            out.extend(locale_lines)
     return out
 
 
@@ -1046,6 +1184,17 @@ def render_user_prompt(
                 f"discipline_coverage={[d.discipline_id for d in l2c.discipline_coverage]}"
             )
     parts.append("")
+
+    # #335 Phase 2 §8 — the resolved strength-exercise pool, so the synthesizer
+    # picks real exercise_ids instead of inventing them (Rule 6a otherwise
+    # rejects invented ids as equipment_unavailable).
+    pool_lines = _format_strength_exercise_pool(
+        layer2c_payloads, layer2a_payload, layer2d_payload
+    )
+    if pool_lines:
+        parts.append("=== Strength exercise pool ===")
+        parts.extend(pool_lines)
+        parts.append("")
 
     # === Best-fit training substitution ===
     if training_substitution_payload is not None:

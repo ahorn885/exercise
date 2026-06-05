@@ -1470,6 +1470,58 @@ def _rule_indoor_only_violation(
     return out
 
 
+# ─── Rule 6d: strength_frequency_band (#335 Phase 2 §10) ────────────────────
+
+# Per-phase default strength dose (sessions/week). Base/Build build strength;
+# Peak/Taper maintain on reduced volume. Taper's "1 early then 0 in the final
+# ~7–10 days" is week-position-dependent and carried by the synthesis prompt,
+# not enforced here — the ±1 band below already tolerates a Taper week of 0.
+_STRENGTH_SESSIONS_PER_WEEK = {"Base": 2, "Build": 2, "Peak": 1, "Taper": 1}
+_STRENGTH_FREQ_BAND = 1
+
+
+def _rule_strength_frequency_band(
+    payload: Layer4Payload, ctx: ValidatorContext
+) -> list[RuleFailure]:
+    """#335 Phase 2 §10 — advisory check that each (phase, week) carries strength
+    sessions within the per-phase dose ±1. `warning` only (never a blocker — the
+    Phase 1 lesson: a blocker here would stall cold synthesis the way the
+    equipment blockers did). Catches both the bare/empty-strength regression
+    (Base/Build week with 0) and gross over-dosing, without gating the plan."""
+    if payload.mode == "single_session_synthesize":
+        return []
+    counts: dict[tuple[str, int], int] = {}
+    weeks: set[tuple[str, int]] = set()
+    for s in payload.sessions:
+        pm = s.phase_metadata
+        if pm is None:
+            continue
+        key = (pm.phase_name, pm.week_in_phase)
+        weeks.add(key)
+        if s.kind == "strength":
+            counts[key] = counts.get(key, 0) + 1
+    out: list[RuleFailure] = []
+    for phase_name, week in sorted(weeks):
+        target = _STRENGTH_SESSIONS_PER_WEEK.get(phase_name)
+        if target is None:
+            continue
+        actual = counts.get((phase_name, week), 0)
+        if abs(actual - target) > _STRENGTH_FREQ_BAND:
+            out.append(
+                RuleFailure(
+                    rule_name=f"strength_frequency_band_{phase_name}_w{week}",
+                    phase_name=phase_name,
+                    severity="warning",
+                    detail=(
+                        f"{actual} strength session(s) in {phase_name} week {week}; "
+                        f"target {target} ±{_STRENGTH_FREQ_BAND}"
+                    ),
+                    affected_session_ids=[],
+                )
+            )
+    return out
+
+
 # ─── Rule registry + driver ────────────────────────────────────────────────
 
 
@@ -1495,6 +1547,7 @@ _ALL_RULES: tuple[Callable[[Layer4Payload, ValidatorContext], list[RuleFailure]]
     _rule_phase_date_out_of_range,
     _rule_daily_window_fit,
     _rule_indoor_only_violation,
+    _rule_strength_frequency_band,
 )
 
 

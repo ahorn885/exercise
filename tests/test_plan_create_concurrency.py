@@ -258,3 +258,57 @@ def test_advance_budget_incomplete_keeps_generating(monkeypatch):
     out = pc._advance_plan_generation(_Db(), 1, 7)
     assert out["status"] == "generating"
     assert out.get("note") == "budget_partial_progress"
+
+
+# ─── stall diagnostic (Rule #14 — a stalled plan self-explains in diag) ──────
+
+
+def test_stall_diagnostic_text_records_the_measured_gate():
+    captured = {}
+
+    class _Db:
+        def execute(self, sql, params=()):
+            captured['sql'] = sql
+            captured['params'] = params
+            return _Cur({
+                "anchor_at": "2026-06-04 12:35:00+00",
+                "age_s": 642,
+                "gen_started_at": "2026-06-04 12:05:00+00",
+            })
+
+    text = pc._stall_diagnostic_text(_Db(), user_id=1, plan_version_id=57,
+                                     cached_blocks=3)
+
+    # The window, how far it got, and the measured age/anchor are all present so
+    # the diag's generation_traceback explains WHY the reaper fired (it used to
+    # be NULL on a stall).
+    assert f"window_s={pc._STALL_WALLCLOCK_S}" in text
+    assert "cached_blocks=3" in text and "next_block_index=3" in text
+    assert "age_since_last_progress_s=642" in text
+    assert "last_progress_at=2026-06-04 12:35:00+00" in text
+    assert "generation_started_at=2026-06-04 12:05:00+00" in text
+    # Anchored on the SAME plan_create cache expression the stall gate uses.
+    assert "FROM layer4_cache" in captured['sql']
+    assert captured['params'][0] == 1                 # user_id
+    assert tuple(captured['params'][-2:]) == (57, 1)  # plan_version_id, user_id
+
+
+def test_stall_diagnostic_text_degrades_on_read_fault():
+    # An observability read fault must NEVER break the (already-committed)
+    # failure path — the helper rolls back and still returns a usable static
+    # diagnostic with the fields it couldn't read shown as None.
+    rolled_back = []
+
+    class _Db:
+        def execute(self, sql, params=()):
+            raise RuntimeError("connection dropped mid-stall")
+
+        def rollback(self):
+            rolled_back.append(True)
+
+    text = pc._stall_diagnostic_text(_Db(), user_id=1, plan_version_id=57,
+                                     cached_blocks=2)
+    assert rolled_back == [True]
+    assert "STALL DIAGNOSTIC" in text
+    assert "cached_blocks=2" in text
+    assert "last_progress_at=None" in text
