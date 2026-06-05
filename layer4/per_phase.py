@@ -566,6 +566,21 @@ def _format_active_injuries(layer2d: Layer2DPayload | None) -> list[str]:
 # exercise_ids against input-token cost (#316).
 _STRENGTH_POOL_CAP_PER_DISCIPLINE = 10
 _STRENGTH_PRIORITY_RANK = {"Critical": 0, "High": 1, "Medium": 2, "Low": 3}
+# §8 ranking bias + §5 integrated-stability bias (movement_patterns, lowercased
+# for case-insensitive match against the 0B vocab e.g. "Single-Leg"/"Hinge").
+_STRENGTH_PREFERRED_PATTERNS = {
+    "single-leg", "hinge", "squat", "lunge", "carry", "anti-rotation",
+}
+# Core-eligible = big compound multi-joint lifts (the §5 "2–3 progressed
+# compound lifts" stable core); the rest are rotating accessory.
+_STRENGTH_COMPOUND_PATTERNS = {"hinge", "squat", "lunge", "single-leg"}
+_STRENGTH_CORE_CAP = 3
+
+
+def _strength_pattern_match(rx, vocab: set[str]) -> bool:
+    return any(
+        (p or "").strip().lower() in vocab for p in (rx.movement_patterns or [])
+    )
 
 
 def _format_strength_exercise_pool(
@@ -627,6 +642,9 @@ def _format_strength_exercise_pool(
                     _STRENGTH_PRIORITY_RANK.get(
                         rx.priority_per_discipline.get(d_id, ""), 4
                     ),
+                    0 if _strength_pattern_match(
+                        rx, _STRENGTH_PREFERRED_PATTERNS
+                    ) else 1,
                     rx.tier,
                 )
             )
@@ -634,12 +652,27 @@ def _format_strength_exercise_pool(
             if not cands:
                 continue
             locale_lines.append(f"  {d_id}:")
+            core_count = 0
             for rx in cands:
                 seen.add(rx.exercise_id)
-                attrs = [f"Tier {rx.tier}"]
+                # Core = a high-relevance compound lift to progress consistently
+                # (priority Critical/High AND a compound pattern), capped; the
+                # rest rotate as accessory (§5 hybrid core+accessory).
+                is_core = (
+                    core_count < _STRENGTH_CORE_CAP
+                    and _STRENGTH_PRIORITY_RANK.get(
+                        rx.priority_per_discipline.get(d_id, ""), 4
+                    ) <= 1
+                    and _strength_pattern_match(rx, _STRENGTH_COMPOUND_PATTERNS)
+                )
+                if is_core:
+                    core_count += 1
+                attrs = ["core" if is_core else "accessory", f"Tier {rx.tier}"]
                 prio = rx.priority_per_discipline.get(d_id, "")
                 if prio:
                     attrs.append(prio)
+                if rx.movement_patterns:
+                    attrs.append(",".join(rx.movement_patterns))
                 if rx.tier != 1 and rx.resolution_detail is not None:
                     if rx.resolution_detail.substitute_text:
                         attrs.append(

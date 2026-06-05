@@ -271,6 +271,7 @@ def _load_exercises(
           e.terrain_required,
           e.contraindicated_parts,
           e.contraindicated_conditions,
+          e.movement_patterns,
           sdb.discipline_id,
           sdb.discipline_name,
           sdb.exercise_db_sport
@@ -447,6 +448,7 @@ def _dedupe_by_exercise(
                 "contraindicated_conditions": list(
                     r.get("contraindicated_conditions") or []
                 ),
+                "movement_patterns": list(r.get("movement_patterns") or []),
                 "discipline_ids": [],
                 "sport_relevance_notes": {},
                 "priority_per_discipline": {},
@@ -759,6 +761,7 @@ def q_layer2c_equipment_mapper_payload(
                 discipline_ids=list(ex["discipline_ids"]),
                 sport_relevance_notes=dict(ex["sport_relevance_notes"]),
                 priority_per_discipline=dict(ex["priority_per_discipline"]),
+                movement_patterns=list(ex["movement_patterns"]),
                 tier=tier,
                 resolution_detail=detail,
                 terrain_required=list(ex["terrain_required"]),

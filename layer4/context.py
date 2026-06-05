@@ -400,6 +400,11 @@ class ResolvedExercise(_Base):
     discipline_ids: list[str]
     sport_relevance_notes: dict[str, str]
     priority_per_discipline: dict[str, str]
+    # 0B `exercises.movement_patterns` (e.g. ["Single-Leg", "Hinge"]). Threaded
+    # through 2C (#335 Phase 2) so the Layer 4 strength pool can rank by pattern
+    # and derive a compound core. Defaulted so pre-change cached 2C payloads
+    # hydrate cleanly.
+    movement_patterns: list[str] = []
     tier: Literal[0, 1, 2, 3]
     resolution_detail: ResolutionDetail | None = None
     terrain_required: list[str]
