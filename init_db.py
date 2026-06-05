@@ -2030,6 +2030,17 @@ _PG_MIGRATIONS = [
         ALTER TABLE layer4_cache ADD CONSTRAINT layer4_cache_entry_point_check
             CHECK (entry_point IN ('plan_create', 'plan_refresh', 'single_session_synthesize', 'race_week_brief', 'llm_layer3a_athlete_state', 'llm_layer3b_goal_timeline_viability', 'nl_parser_parse_intent'));
     END $$;""",
+    # ── Locations Consolidation (Track 1) ────────────────────────────────
+    # Home is `locale_profiles.preferred`; this partial unique index backstops
+    # the app-logic "exactly one home per athlete" invariant (§3.3 / §10).
+    "CREATE UNIQUE INDEX IF NOT EXISTS locale_profiles_one_home_idx "
+    "ON locale_profiles (user_id) WHERE preferred",
+    # Drop the legacy equipment model now that every locale uses gym_profiles +
+    # overrides on the layer0 canonical vocabulary (§3.2). Idempotent; runs
+    # after the unified read/write path ships. Nothing FKs onto locale_equipment
+    # (race_route_locale_equipment is a separate table).
+    "DROP TABLE IF EXISTS locale_equipment",
+    "ALTER TABLE locale_profiles DROP COLUMN IF EXISTS equipment",
 ]
 
 _CLOTHING_SEEDS = [
@@ -2493,22 +2504,10 @@ def init_postgres():
                         'ON CONFLICT DO NOTHING',
                         (ex_id, eq_id, group_num)
                     )
-    # Phase 4 — Migrate locale_profiles.equipment → locale_equipment (idempotent).
-    # locale_equipment now carries user_id directly (Session 3 composite PK).
-    cur.execute('SELECT user_id, locale, equipment FROM locale_profiles')
-    for row in cur.fetchall():
-        if row[0] is None:
-            continue  # Skip pre-bootstrap NULLs (cleaned up by Session 3 rebuild migration).
-        for tag in (row[2] or '').split(','):
-            tag = tag.strip()
-            if tag:
-                eq_id = tag_to_id.get(tag)
-                if eq_id:
-                    cur.execute(
-                        'INSERT INTO locale_equipment (user_id, locale, equipment_id) '
-                        'VALUES (%s, %s, %s) ON CONFLICT DO NOTHING',
-                        (row[0], row[1], eq_id)
-                    )
+    # Phase 4 — (removed) the legacy locale_profiles.equipment → locale_equipment
+    # backfill retired with Track 1: the locale_equipment table is dropped and
+    # every locale now stores equipment as layer0 canonical names in
+    # gym_profiles + locale_equipment_overrides.
     # Phase 5 — Backfill exercise_id FKs (runs after seeding so exercise_inventory is populated)
     cur.execute('''UPDATE current_rx SET exercise_id = ei.id
         FROM exercise_inventory ei WHERE ei.exercise = current_rx.exercise

@@ -1,14 +1,17 @@
 """Render smoke tests for the redesign §16 Locations.
 
 Boots the real Flask app with a fake DB and drives `locales.list_profiles`
-through `render_template` on the new shell. The route makes two reads
-(locale_profiles, locale_equipment join) plus the user-hydration fetchone;
-a fake connection keyed off the SQL exercises the populated-grid vs
-empty-hero branches. Assertions stay structural + CSP-clean.
+through `render_template` on the new shell. Track 1: equipment per locale is
+resolved via `locations.locale_effective_tags` (gym_profiles.equipment +
+overrides, layer0 canonical names) rather than the dropped locale_equipment
+join; the fake connection answers the locale_profiles list, per-locale
+gym_profile_id lookups, gym_profiles.equipment, and overrides, plus the
+user-hydration fetchone. Assertions stay structural + CSP-clean.
 """
 
 from __future__ import annotations
 
+import json
 import os
 import sys
 
@@ -17,35 +20,54 @@ os.environ['DATABASE_URL'] = ''
 
 import app as _appmod  # noqa: E402
 
+_USER_ROW = None  # set lazily below
+
 
 class _FakeRow(dict):
     pass
 
 
+_USER_ROW = _FakeRow(id=1, username='owner', email='o@x.test',
+                     display_name='Owner')
+
+
 class _Cursor:
-    def __init__(self, rows):
-        self._rows = rows
+    def __init__(self, one=None, rows=None):
+        self._one = one
+        self._rows = rows or []
 
     def fetchone(self):
-        return _FakeRow(id=1, username='owner', email='o@x.test',
-                        display_name='Owner')
+        return self._one
 
     def fetchall(self):
         return self._rows
 
 
 class _Conn:
-    def __init__(self, profiles, equipment):
+    def __init__(self, profiles, gym_profiles=None, overrides=None):
         self._profiles = profiles
-        self._equipment = equipment
+        self._gym = gym_profiles or {}      # gym_profile_id -> equipment JSON
+        self._overrides = overrides or {}   # locale -> list of override rows
 
     def execute(self, sql, *a, **k):
         s = ' '.join(sql.split())
+        params = a[0] if a else ()
+        if 'gym_profile_id FROM locale_profiles' in s:
+            locale = params[1] if len(params) > 1 else None
+            prof = next((p for p in self._profiles if p.get('locale') == locale), None)
+            if prof is None:
+                return _Cursor(one=None)
+            return _Cursor(one=_FakeRow(gym_profile_id=prof.get('gym_profile_id')))
+        if 'FROM gym_profiles WHERE id' in s:
+            gid = params[0] if params else None
+            return _Cursor(one=_FakeRow(equipment=self._gym.get(gid)))
+        if 'FROM locale_equipment_overrides' in s:
+            locale = params[1] if len(params) > 1 else None
+            return _Cursor(rows=self._overrides.get(locale, []))
         if 'FROM locale_profiles' in s:
-            return _Cursor(self._profiles)
-        if 'FROM locale_equipment' in s:
-            return _Cursor(self._equipment)
-        return _Cursor([])
+            return _Cursor(rows=self._profiles)
+        # Default (incl. user hydration before_request) → the owner row.
+        return _Cursor(one=_USER_ROW)
 
     def commit(self):
         pass
@@ -55,6 +77,7 @@ def _profile(**kw):
     base = {
         'locale': 'home', 'locale_name': None, 'chain_name': None,
         'category': None, 'manual_entry': 0, 'mapbox_id': None,
+        'gym_profile_id': None, 'preferred': False,
         'city': 'Washington', 'notes': None, 'updated_at': '2026-05-14',
         'address': None, 'street': None, 'state': None, 'postal_code': None,
     }
@@ -62,12 +85,7 @@ def _profile(**kw):
     return _FakeRow(base)
 
 
-def _equip(locale, tag, label):
-    return _FakeRow(locale=locale, tag=tag, label=label)
-
-
-def _client(monkeypatch, profiles, equipment):
-    conn = _Conn(profiles, equipment)
+def _client(monkeypatch, conn):
     for mod in list(sys.modules.values()):
         if mod is not None and getattr(mod, 'get_db', None) is not None:
             monkeypatch.setattr(mod, 'get_db', lambda conn=conn: conn,
@@ -81,17 +99,17 @@ def _client(monkeypatch, profiles, equipment):
 
 def test_locations_grid_with_profiles(monkeypatch):
     profiles = [
-        _profile(locale='home', city='Washington', notes='Garage at 65°F.'),
+        _profile(locale='home', city='Washington', notes='Garage at 65°F.',
+                 gym_profile_id=1, preferred=True),
         _profile(locale='Equinox Cap Hill', locale_name='Equinox Capitol Hill',
                  chain_name='Equinox', category='gym', manual_entry=0,
-                 mapbox_id='mb-123', city='Washington'),
+                 mapbox_id='mb-123', city='Washington', gym_profile_id=2),
     ]
-    equipment = [
-        _equip('home', 'barbell', 'Barbell'),
-        _equip('home', 'rack', 'Squat rack'),
-        _equip('Equinox Cap Hill', 'platform', 'Olympic platform'),
-    ]
-    client = _client(monkeypatch, profiles, equipment)
+    gym = {
+        1: json.dumps(['Barbell', 'Squat rack']),
+        2: json.dumps(['Olympic platform']),
+    }
+    client = _client(monkeypatch, _Conn(profiles, gym_profiles=gym))
     resp = client.get('/locales')
     assert resp.status_code == 200
     html = resp.get_data(as_text=True)
@@ -114,7 +132,7 @@ def test_locations_grid_with_profiles(monkeypatch):
 
 
 def test_locations_empty_hero(monkeypatch):
-    client = _client(monkeypatch, [], [])
+    client = _client(monkeypatch, _Conn([]))
     resp = client.get('/locales')
     assert resp.status_code == 200
     html = resp.get_data(as_text=True)

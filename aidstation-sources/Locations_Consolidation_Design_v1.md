@@ -1,6 +1,6 @@
 # Locations Consolidation — Design Spec v1
 
-**Status:** DRAFT — awaiting sign-off (Andy)
+**Status:** APPROVED (Andy, 2026-06-05) — implemented (Track 1 / 1a+1b; live verification + Neon DDL owed, §8)
 **Date:** 2026-06-05
 **Track:** 1 of 3 (this = locations/equipment model; Track 2 = determinism-first Layer 4 synthesis; Track 3 = D-52 exercise-catalog migration — both separate specs)
 **Supersedes the deferred D-60 §5.5 decision** ("`locale_equipment` deprecation is not a v1 concern") — promoted to active per Andy 2026-06-05.

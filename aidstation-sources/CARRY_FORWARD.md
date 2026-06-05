@@ -18,6 +18,23 @@ Rolling-state for items spanning multiple sessions. **Edit in place** — don't 
 > are **Andy's-hands** actions. Tick each off (and note it on the linked issue)
 > once run.
 
+0. **Track 1 Locations Consolidation (2026-06-05) — Neon DDL + re-enter Home + cold re-run.**
+   Track 1 code is merged-pending (PR on `claude/practical-wozniak-WSKk4`); the live
+   proof + the DROP are Andy's-hands (design §8). In order:
+   1. **Run A0 first** if not already done — `etl/sources/dedupe_layer0_equipment_items.sql`
+      on Neon (the canonical picker reads the deduped `layer0.equipment_items`).
+   2. **`python init_db.py` on Neon** — idempotent tail migrations: `locale_profiles_one_home_idx`
+      (partial unique, `WHERE preferred`), `DROP TABLE locale_equipment`,
+      `DROP COLUMN locale_profiles.equipment`.
+   3. **Re-enter Home gear in the unified canonical picker** (`/locales/home/edit` or a new
+      locale) and **mark it Home** (★ Make home). The legacy enum no longer carries equipment;
+      `preferred` is the home flag and the orchestrator requires one (else `primary_locale_missing`).
+   4. **Re-run a cold PGE plan.** Win: no `equipment_unavailable` blockers (the pv=59 root
+      cause), blocks → `ready`; diag `effective_pool` shows canonical names (barbell/rack), not empty.
+   5. **UI smoke** (container can't run Flask): `/locales` list/edit/Make-home + a public-gym
+      inherit; `/references/exercises` (bucket filter works; availability filter intentionally
+      OFF until Track 3); `/purchases` (owned-hint OFF until Track 3).
+
 1. ✅ **DONE — D-77 PGE completion: six-link chain proven by pv=46 (2026-05-30).**
    #332 merged (19:21 UTC) + deployed (`dpl_95uU2…`/`50bd3c7`), so all six fixes
    (#325/#327/#329/#330/#331/#332) were live. **pv=46 generated end-to-end and reached

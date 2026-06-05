@@ -651,8 +651,10 @@ def view_plan(plan_id):
         ).fetchone()
         city = trip['city'] if trip else ''
         if not city:
+            # Track 1 — home city via the preferred-flagged locale (replaces
+            # the hardcoded locale='home').
             home = db.execute(
-                "SELECT city FROM locale_profiles WHERE locale='home' AND user_id=? LIMIT 1",
+                "SELECT city FROM locale_profiles WHERE preferred AND user_id=? LIMIT 1",
                 (uid,)
             ).fetchone()
             city = home['city'] if home and home['city'] else ''
