@@ -91,20 +91,38 @@ Rolling-state for items spanning multiple sessions. **Edit in place** — don't 
      `800−330=470s > 300s`, so a pass started block N+1 (≈338s) and got gateway-killed
      mid-flight (what triggered the pv=56 lock leak). Confirms the CLAUDE.md "re-validate the
      800s-cap triage" note — the effective ceiling is the gateway, not 800s.
-7. **Phase 2 strength programming — ready to implement (spec signed off).**
-   `aidstation-sources/Layer4_StrengthProgramming_Phase2_Design_v1.md` fixes **#335**
-   (bare-label / zero strength): render the 2C resolved-exercise surface into the
-   per-phase prompt + an evidence-based dose policy (2/2/1/taper, 3–5 multi-joint,
-   4–10RM, RM/RPE loads, hybrid core+rotating, unilateral/offset stability bias,
-   paired day-level scheduling). Deterministic freq/pool/guardrails (warnings) + LLM
-   selection/placement/variety. ~1–2 substantive files (`layer4/per_phase.py` + tests)
-   + the spec. **Trigger #1 already cleared** (Andy signed off §9 prompt text). **Sequence
-   it AFTER the #5 cold re-run** so we build strength on a validated, non-stalling base.
-   **Phase 2b (deferred, #335):** wire `rx_engine` for deterministic, performance-driven
-   absolute loads from logged capacity records (bootstrap from `strength_benchmarks`).
-   **Phase 3 (deferred, #298/#341):** multi-locale cluster — union nearby locales'
-   terrain + equipment; per-session exclusive locale chosen by anchoring on the
-   highest-priority exercises (design intent recorded on #341).
+7. ✅ **DONE (PR #421, 2026-06-05) — #335 strength programming Slices 1 & 2.** The **pv=57**
+   cold plan stalled at `Peak:w1`; the logs root-caused it to this exact gap — the per-phase
+   prompt rendered only `effective_pool size=N` (a count), never the resolved exercise list →
+   the synthesizer **invented `exercise_id`s** → Rule 6a rejected them as `equipment_unavailable`
+   (even for gear Andy owns) → the under-specified task drove a **395s empty-output thinking
+   attempt** → the 800s timeout. **Slice 1:** `layer4/per_phase.py:_format_strength_exercise_pool`
+   renders `=== Strength exercise pool ===` + the `# Strength programming` system prompt (pick
+   real ids, never invent; per-phase dose 2/2/1/1; RM/RPE). **`movement_patterns` threaded**
+   through 2C (`layer0.exercises.movement_patterns` → query → `ResolvedExercise`) → pattern
+   ranking + **data-driven core/accessory** (core = Critical/High priority + compound pattern).
+   **Slice 2:** `strength_frequency_band` advisory validator (`warning`-only). **NO migration.**
+   First post-merge cold plan re-synthesizes cold (prompt + 2C cache-key shift — expected).
+   - **Deferred — Slice 3 (#335):** §3 **3A-strength-state dose modulation** (the base dose
+     2/2/1/1 ships; personalizing it by the athlete's 3A strength state is not wired — needs the
+     3A strength-state field). **Phase 2b (#335):** `rx_engine` absolute loads from logged
+     capacity (bootstrap `strength_benchmarks`). **Phase 3 (#298/#341):** multi-locale cluster.
+8. **pv=57 carry-forward (non-blocking; from the pulled diag logs, 2026-06-05).**
+   - **⚠ CORRECTION to item 6.1's "real ~300s gateway":** that is **WRONG**. The kill is the
+     **800s `FUNCTION_INVOCATION_TIMEOUT`** (request `bd6z7-…`, `Duration: 800047ms`), not a
+     300s gateway. The cone is a **clean HIT** on reclaim (`ibundle` stable), not re-computing.
+     The pv=57 stall was the #335 strength thrash (item 7), not latency/gateway.
+   - **`PLAN_GEN_FUNCTION_CAP_S` env tune (Andy's call, optional, reversible):** currently **300**
+     (budget 30s → 1 block/pass, clean). With #335 removing the thrash and the real ceiling
+     confirmed at **800s**, raising back toward **800** (budget ~470s → ~2 blocks/pass) is faster
+     and safe. The earlier "don't raise it" caution was under the now-disproven 300s-gateway
+     hypothesis. **Not required** for a successful run.
+   - **Layer 2B cache-key drift:** at 12:35 only `l2b` drifted (`f17c69d0`→`5fcf7380`) while every
+     other cone hash held → re-keys all blocks → re-synth churn. The #199/#294 determinism class,
+     now on Layer 2B. Worth a determinism fix (day-anchor / pin the drifting field).
+   - **Advance-lock TTL (310s) < real max function duration (800s):** a long pass outlives its
+     own lock → a concurrent pass can reclaim mid-flight (duplicate Anthropic spend on a stuck
+     block). Align the TTL to the real ceiling, or cap pass wall-clock < TTL.
 
 ---
 
