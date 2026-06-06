@@ -76,16 +76,17 @@ def test_cardio_list_render(monkeypatch):
     _check(monkeypatch, '/cardio', 'Cardio log.')
 
 
-def test_workouts_feed_renders_both_modalities(monkeypatch):
-    """SQL-routed fake: strength + cardio rows BOTH appear on /training."""
+def test_workouts_feed_aggregates_strength_by_session(monkeypatch):
+    """SQL-routed fake: a strength session with multiple exercises renders
+    as ONE row on /training, not one row per exercise. Cardio interleaves."""
 
-    strength_row = _FakeRow(
-        id=11, date='2026-06-05', exercise='Back squat',
-        actual_sets=3, actual_reps=5, actual_weight=225, rpe=8,
-        volume=3375, outcome='PROGRESS ↑', est_1rm=275,
-        next_sets=3, next_reps=5, next_weight=230,
-        target_sets=None, target_reps=None, target_weight=None,
-    )
+    # One strength session on 2026-06-05 with three exercises.
+    session_row = _FakeRow(id=7, date='2026-06-05', notes=None, plan_item_id=None)
+    log_rows = [
+        _FakeRow(id=11, session_id=7, exercise='Back squat', volume=3375),
+        _FakeRow(id=12, session_id=7, exercise='Bench press', volume=2250),
+        _FakeRow(id=13, session_id=7, exercise='Deadlift',    volume=4500),
+    ]
     cardio_row = _FakeRow(
         id=22, date='2026-06-06', activity='Trail Running', activity_name='Lebanon hills',
         duration_min=62, distance_mi=6.4, avg_pace='9:42', avg_speed=None,
@@ -102,8 +103,10 @@ def test_workouts_feed_renders_both_modalities(monkeypatch):
     class _RoutedConn:
         def execute(self, sql, *_a, **_k):
             s = sql.lower()
+            if 'from training_sessions' in s:
+                return _RoutedCursor([session_row])
             if 'from training_log' in s and 'training_log_sets' not in s:
-                return _RoutedCursor([strength_row])
+                return _RoutedCursor(log_rows)
             if 'from cardio_log' in s:
                 return _RoutedCursor([cardio_row])
             return _RoutedCursor([])
@@ -121,13 +124,82 @@ def test_workouts_feed_renders_both_modalities(monkeypatch):
     resp = c.get('/training')
     assert resp.status_code == 200
     html = resp.get_data(as_text=True)
-    # Both rows render with the right modality chip.
-    assert 'Back squat' in html and 'Strength' in html
-    assert 'Trail Running' in html and 'Cardio' in html
-    # Cardio (2026-06-06) sorts before strength (2026-06-05) — date desc.
-    assert html.index('Trail Running') < html.index('Back squat')
-    # Dropped columns are gone from the row markup.
-    assert 'Next Rx' not in html and 'Target' not in html and '1RM' not in html
+    # Strength session aggregates: ONE row showing the count + summary, NOT
+    # three rows (one per exercise).
+    assert '3 exercises' in html
+    assert 'Back squat' in html and 'Bench press' in html and 'Deadlift' in html
+    # Cardio still renders independently and sorts before strength (date desc).
+    assert 'Trail Running' in html
+    assert html.index('Trail Running') < html.index('3 exercises')
+    # The per-exercise outcome / 1RM / Next Rx columns are gone from the feed.
+    assert 'Next Rx' not in html and 'Target' not in html
+    assert 'style="' not in html
+
+
+def test_session_detail_renders_each_exercise(monkeypatch):
+    """The new /training/session/<id> detail page renders every exercise in
+    the session with its per-set chips + outcome + per-exercise edit link."""
+
+    session_row = _FakeRow(id=7, date='2026-06-05', notes='Heavy day.',
+                           user_id=1, plan_item_id=None)
+    log_rows = [
+        _FakeRow(id=11, session_id=7, exercise='Back squat',
+                 target_sets=3, target_reps=5, target_weight=225,
+                 actual_sets=3, actual_reps=5, actual_weight=225,
+                 rpe=8, volume=3375, est_1rm=275,
+                 outcome='PROGRESS ↑', next_sets=3, next_reps=5, next_weight=230,
+                 notes=None),
+        _FakeRow(id=12, session_id=7, exercise='Bench press',
+                 target_sets=None, target_reps=None, target_weight=None,
+                 actual_sets=3, actual_reps=8, actual_weight=185,
+                 rpe=7, volume=4440, est_1rm=235,
+                 outcome='REPEAT →', next_sets=3, next_reps=8, next_weight=185,
+                 notes=None),
+    ]
+    sets_rows = [
+        _FakeRow(id=101, training_log_id=11, set_number=1, reps=5, weight_lbs=225, duration_sec=None),
+        _FakeRow(id=102, training_log_id=11, set_number=2, reps=5, weight_lbs=225, duration_sec=None),
+        _FakeRow(id=103, training_log_id=11, set_number=3, reps=5, weight_lbs=225, duration_sec=None),
+    ]
+
+    class _RoutedCursor:
+        def __init__(self, rows, one=None): self._rows = rows; self._one = one
+        def fetchone(self):
+            return self._one if self._one is not None else _FakeRow(
+                id=1, username='owner', email='o@x.test', display_name='Owner')
+        def fetchall(self):
+            return self._rows
+
+    class _RoutedConn:
+        def execute(self, sql, *_a, **_k):
+            s = sql.lower()
+            if 'from training_sessions' in s and 'where id' in s:
+                return _RoutedCursor([], one=session_row)
+            if 'from training_log_sets' in s:
+                return _RoutedCursor(sets_rows)
+            if 'from training_log' in s:
+                return _RoutedCursor(log_rows)
+            return _RoutedCursor([])
+        def commit(self):
+            pass
+
+    conn = _RoutedConn()
+    for mod in list(sys.modules.values()):
+        if mod is not None and getattr(mod, 'get_db', None) is not None:
+            monkeypatch.setattr(mod, 'get_db', lambda conn=conn: conn, raising=False)
+    _appmod.app.config['TESTING'] = True
+    c = _appmod.app.test_client()
+    with c.session_transaction() as sess:
+        sess['user_id'] = 1
+    resp = c.get('/training/session/7')
+    assert resp.status_code == 200
+    html = resp.get_data(as_text=True)
+    assert 'Back squat' in html and 'Bench press' in html
+    assert 'PROGRESS ↑' in html and 'REPEAT →' in html
+    assert '/training/11/edit' in html and '/training/12/edit' in html
+    assert 'Heavy day.' in html      # session notes render
+    assert 'S1:' in html and 'S2:' in html and 'S3:' in html  # per-set chips
+    assert 'Delete session' in html  # session-level delete CTA
     assert 'style="' not in html
 
 

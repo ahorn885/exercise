@@ -11,10 +11,11 @@
 </a>
 {% endblock %}
 
-{# Federated Workouts feed (#441) — strength + cardio sessions chronologically.
-   Each row links to its modality-specific edit page (the de facto detail
-   surface for now). Target / Next Rx / 1RM moved off this view: Target is a
-   pre-workout concern, Next Rx + 1RM belong on /rx/ (current engine state). #}
+{# Federated Workouts feed — one row per session. Strength sessions
+   aggregate by training_sessions (a single multi-exercise workout = one
+   row); cardio is naturally one row per cardio_log entry. Per-exercise
+   detail (sets/reps/load/outcome) lives on the strength session detail
+   page; conditions on the cardio detail page. #}
 
 {% set BIKE = ['Road Cycling','Mountain Biking','Gravel Cycling','Indoor Bike Trainer'] %}
 
@@ -55,10 +56,9 @@
         <th>Date</th>
         <th>Type</th>
         <th>What</th>
-        <th>Details</th>
-        <th>RPE / HR</th>
-        <th>Vol / Dist</th>
-        <th>Outcome / Elev+</th>
+        <th>Volume</th>
+        <th>Distance / HR</th>
+        <th>Elev+</th>
         <th></th>
       </tr>
     </thead>
@@ -68,26 +68,16 @@
       <tr>
         <td class="text-nowrap">{{ e.date }}</td>
         <td class="text-nowrap"><span class="chip accent">Strength</span></td>
-        <td class="text-nowrap">{{ e.exercise }}</td>
         <td>
-          {% if e.id in sets_by_log %}
-            {% for s in sets_by_log[e.id] %}
-              <span class="chip">S{{ s.set_number }}:{% if s.reps %} {{ s.reps }}r{% endif %}{% if s.weight_lbs %} {{ s.weight_lbs }}lb{% endif %}{% if s.duration_sec %} {{ s.duration_sec }}s{% endif %}</span>
-            {% endfor %}
-          {% else %}
-            <span class="dim">{{ e.actual_sets or '—' }}×{{ e.actual_reps or '—' }}{% if e.actual_weight %} @ {{ e.actual_weight }}lb{% endif %}</span>
-          {% endif %}
+          <strong>{{ e.exercise_count }} exercise{% if e.exercise_count != 1 %}s{% endif %}</strong>
+          <span class="dim">· {{ e.exercises_summary }}</span>
         </td>
-        <td class="text-nowrap">{{ e.rpe or '—' }}</td>
-        <td class="text-nowrap">{{ e.volume | int if e.volume else '—' }}</td>
-        <td>
-          {% if e.outcome %}
-            <span class="chip {% if '↑' in e.outcome %}good{% elif '→' in e.outcome %}warn{% else %}bad{% endif %}">{{ e.outcome }}</span>
-          {% else %}—{% endif %}
-        </td>
+        <td class="text-nowrap">{{ e.total_volume | int }}</td>
+        <td class="text-nowrap dim">—</td>
+        <td class="text-nowrap dim">—</td>
         <td class="loglist-act">
-          <a href="{{ url_for('training.edit_entry', entry_id=e.id) }}" class="btn btn-ghost btn-sm">Open</a>
-          <form method="post" action="{{ url_for('training.delete_entry', entry_id=e.id) }}" data-confirm="Delete this entry?">
+          <a href="{{ url_for('training.session_detail', session_id=e.id) }}" class="btn btn-ghost btn-sm">Open</a>
+          <form method="post" action="{{ url_for('training.session_delete', session_id=e.id) }}" data-confirm="Delete this entire strength session ({{ e.exercise_count }} exercise{% if e.exercise_count != 1 %}s{% endif %})?">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <button class="btn btn-outline-danger btn-sm">Del</button>
           </form>
@@ -97,19 +87,20 @@
       <tr>
         <td class="text-nowrap">{{ e.date }}</td>
         <td class="text-nowrap"><span class="chip">Cardio</span></td>
-        <td class="text-nowrap">
+        <td>
           {{ e.activity }}{% if e.activity_name %} <span class="dim">· {{ e.activity_name }}</span>{% endif %}
-        </td>
-        <td class="text-nowrap">
-          {{ e.duration_min or '—' }}{% if e.duration_min %} min{% endif %}
           <span class="dim">·</span>
-          {%- if e.activity in BIKE and e.avg_speed %} {{ e.avg_speed }} mph
-          {%- elif e.avg_pace %} {{ e.avg_pace }}/mi
-          {%- elif e.avg_speed %} {{ e.avg_speed }} mph
-          {%- else %} —{%- endif -%}
+          {{ e.duration_min or '—' }}{% if e.duration_min %} min{% endif %}
+          {%- if e.activity in BIKE and e.avg_speed %} <span class="dim">·</span> {{ e.avg_speed }} mph
+          {%- elif e.avg_pace %} <span class="dim">·</span> {{ e.avg_pace }}/mi
+          {%- elif e.avg_speed %} <span class="dim">·</span> {{ e.avg_speed }} mph
+          {%- endif -%}
         </td>
-        <td class="text-nowrap">{% if e.avg_hr %}{{ e.avg_hr }} bpm{% else %}—{% endif %}</td>
-        <td class="text-nowrap">{{ e.distance_mi or '—' }}{% if e.distance_mi %} mi{% endif %}</td>
+        <td class="text-nowrap dim">—</td>
+        <td class="text-nowrap">
+          {{ e.distance_mi or '—' }}{% if e.distance_mi %} mi{% endif %}
+          {% if e.avg_hr %}<span class="dim">· {{ e.avg_hr }} bpm</span>{% endif %}
+        </td>
         <td class="text-nowrap">{% if e.elev_gain_ft %}{{ e.elev_gain_ft }} ft{% else %}—{% endif %}</td>
         <td class="loglist-act">
           <a href="{{ url_for('cardio.edit_entry', entry_id=e.id) }}" class="btn btn-ghost btn-sm">Open</a>
