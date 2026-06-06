@@ -109,6 +109,49 @@ _FLOAT_SENTINELS = frozenset({
 })
 _INT_SENTINELS = frozenset({255, 65535, 4294967295})
 
+
+# Strength-set physical sanity ceilings. Some FIT exports surface a
+# scale-mismatched or device-internal value that isn't in the sentinel set
+# but is still clearly garbage (e.g. Andy's 2026-05-25 import: weight=4096 kg,
+# raw uint16 4096 with an unexpected scale). Anything above these caps is
+# treated as missing — a strongman deadlift is ~500 kg, a high-rep set tops
+# out around 100, no per-set duration runs an hour.
+_SET_REPS_MAX = 500
+_SET_WEIGHT_KG_MAX = 1000.0
+_SET_DURATION_SEC_MAX = 7200
+
+
+def _set_int(value, *, max_reasonable=None):
+    """Strength-set int field with FIT sentinel + sanity-ceiling filtering.
+    Returns None for missing, zero, the uint8/uint16/uint32 "no value"
+    sentinels, or anything above the optional ceiling."""
+    if value is None:
+        return None
+    try:
+        i = int(value)
+    except (TypeError, ValueError):
+        return None
+    if i <= 0 or i in _INT_SENTINELS:
+        return None
+    if max_reasonable is not None and i > max_reasonable:
+        return None
+    return i
+
+
+def _set_float(value, *, max_reasonable=None):
+    """Strength-set float counterpart. Same shape as _set_int."""
+    if value is None:
+        return None
+    try:
+        f = float(value)
+    except (TypeError, ValueError):
+        return None
+    if math.isnan(f) or f <= 0.0 or f in _FLOAT_SENTINELS:
+        return None
+    if max_reasonable is not None and f > max_reasonable:
+        return None
+    return f
+
 # fit-tool attributes that are internal metadata, not data fields
 _DUMP_SKIP_ATTRS = frozenset({
     'definition_message', 'developer_fields', 'endian', 'fields',
@@ -393,22 +436,20 @@ def _parse_strength(session, sets) -> dict:
     for s in sets:
         name = _exercise_name(s)
 
-        reps = getattr(s, 'repetitions', None)
-        weight_kg = getattr(s, 'weight', None)
-        duration_s = getattr(s, 'duration', None)
-
-        try:
-            weight_lbs = round(float(weight_kg) * 2.20462, 1) if weight_kg else None
-        except (TypeError, ValueError):
-            weight_lbs = None
-        try:
-            reps_int = int(reps) if reps is not None else None
-        except (TypeError, ValueError):
-            reps_int = None
-        try:
-            duration_sec = int(duration_s) if duration_s is not None else None
-        except (TypeError, ValueError):
-            duration_sec = None
+        # Filter FIT sentinels + physical-sanity ceilings before recording.
+        # Without this the set chips render junk like "65535r 9030.0lb"
+        # (uint16 sentinel reps + scale-mismatched weight) and poison the
+        # downstream volume / est_1RM aggregates.
+        reps_int = _set_int(
+            getattr(s, 'repetitions', None), max_reasonable=_SET_REPS_MAX,
+        )
+        weight_kg = _set_float(
+            getattr(s, 'weight', None), max_reasonable=_SET_WEIGHT_KG_MAX,
+        )
+        weight_lbs = round(weight_kg * 2.20462, 1) if weight_kg else None
+        duration_sec = _set_int(
+            getattr(s, 'duration', None), max_reasonable=_SET_DURATION_SEC_MAX,
+        )
 
         if name not in exercise_sets:
             exercise_sets[name] = []
