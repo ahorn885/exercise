@@ -104,6 +104,16 @@
         <input type="hidden" name="mapbox_id" value="{{ r.mapbox_id }}">
         <input type="hidden" name="text" value="{{ r.text }}">
         <input type="hidden" name="place_name" value="{{ r.place_name }}">
+        {# Coordinates + payload from the Mapbox feature — required by the save
+           handler (lng/lat float-parse + cluster proximity). Restored after the
+           Phase-6 redesign dropped them. #}
+        <input type="hidden" name="lng" value="{{ r.lng }}">
+        <input type="hidden" name="lat" value="{{ r.lat }}">
+        <input type="hidden" name="mapbox_category" value="{{ r.category }}">
+        <input type="hidden" name="raw_payload" value="{{ r.raw_payload }}">
+        <input type="text" name="locale_name" class="form-control form-control-sm loc-result-name-input"
+               value="{{ r.text }}" placeholder="Name this location" required>
+        {% if upgrade_slug %}<input type="hidden" name="upgrade_slug" value="{{ upgrade_slug }}">{% endif %}
         <button type="submit" class="btn btn-primary btn-sm">{% if upgrade_slug %}Upgrade to this{% else %}Save this{% endif %}</button>
       </form>
     </div>

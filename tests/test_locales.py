@@ -519,6 +519,45 @@ class TestEditLocaleTerrainPersists:
         # typing — production rows landed empty without it.
         assert '::text[]' in sql
 
+    def test_build_path_categoryless_defaults_private_residential(self, monkeypatch):
+        """gym_profiles.category is NOT NULL — a categoryless locale (legacy
+        enum slug, or a Mapbox/manual locale with no detected category) must
+        build a profile with a non-null category, defaulting to private
+        residential. Regression: NULL category 500'd /locales/<l>/edit."""
+        app = _make_app()
+        conn = _FakeConn()
+        _seed_edit_layer0_equipment(conn, names=('Barbell',))
+        conn.queue_response(row={'gym_profile_id': None})  # locale_effective_tags
+        conn.queue_response(rows=[])                        # overrides
+        conn.queue_response(row={'preferred': 1})           # _ensure_home
+        conn.queue_response(row={'id': 5})                  # _create_gym_profile RETURNING
+        import routes.locales as locales_mod
+        monkeypatch.setattr(locales_mod, 'get_db', lambda: conn)
+        monkeypatch.setattr(locales_mod, 'current_user_id', lambda: 1)
+        monkeypatch.setattr(locales_mod, '_evict_layer2b_on_terrain_change',
+                            lambda *_a, **_k: None)
+        monkeypatch.setattr(locales_mod, '_evict_layer2c_on_equipment_change',
+                            lambda *_a, **_k: None)
+
+        # No 'category' key → categoryless (legacy 'home' slug shape).
+        profile = _FakeRow({'locale_terrain_ids': []})
+        with app.test_request_context(
+            '/locales/home/edit', method='POST',
+            data={'equipment': ['Barbell'], 'notes': '', 'city': '',
+                  'locale_terrain_ids': []},
+        ):
+            _edit_locale(conn, 1, 'home', profile)
+
+        gym_insert = [
+            params for sql, params in conn.calls
+            if 'INSERT INTO gym_profiles' in sql
+        ]
+        assert gym_insert, 'expected a gym_profiles INSERT on the build path'
+        # params = (mapbox_id, display, category, equipment_json, uid, uid, private)
+        category, private = gym_insert[0][2], gym_insert[0][6]
+        assert category == 'home_gym', f'category must be non-null; got {category!r}'
+        assert private is True, 'categoryless residential build must be private'
+
     def test_inherit_path_writes_overrides_and_terrain(self, monkeypatch):
         app = _make_app()
         conn = _FakeConn()

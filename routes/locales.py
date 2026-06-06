@@ -395,6 +395,10 @@ def _create_gym_profile(db, uid: int, profile_row, equipment_tags: set,
     equipment_json = json.dumps(sorted(t for t in equipment_tags if t in valid_names))
     display = profile_row['locale_name'] if _row_has(profile_row, 'locale_name') else None
     category = profile_row['category'] if _row_has(profile_row, 'category') else None
+    # gym_profiles.category is NOT NULL. A categoryless locale (a legacy enum
+    # slug like 'home', or a manual entry the athlete didn't categorize)
+    # defaults to a private residential profile.
+    category = category or 'home_gym'
     mapbox_id = profile_row['mapbox_id'] if _row_has(profile_row, 'mapbox_id') else None
     private = category in RESIDENTIAL_CATEGORIES
     row = db.execute(
