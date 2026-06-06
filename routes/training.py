@@ -15,10 +15,13 @@ _MODALITIES = ('strength', 'cardio')
 
 @bp.route('/training')
 def list_entries():
-    """Federated workouts feed — strength + cardio sessions chronologically.
+    """Federated workouts feed — one row per session (strength + cardio).
 
     The sidebar 'Workouts' item lives here. URL stays /training for back-compat
-    with edit/delete redirects; the page itself is now multi-modality.
+    with edit/delete redirects. Strength rows aggregate by `training_sessions`
+    (one row per session, not per exercise) — a single multi-exercise workout
+    is now one row. Pre-migration training_log rows with NULL session_id are
+    excluded; they must be deleted on Neon before re-importing.
     """
     db = get_db()
     uid = current_user_id()
@@ -27,17 +30,18 @@ def list_entries():
     if modality_filter not in _MODALITIES:
         modality_filter = ''  # 'all'
 
-    strength_rows: list = []
+    sessions: list = []
     cardio_rows: list = []
 
     if modality_filter in ('', 'strength'):
-        q = 'SELECT * FROM training_log WHERE user_id = ?'
+        q = ('SELECT id, date, notes, plan_item_id FROM training_sessions '
+             'WHERE user_id = ?')
         params: list = [uid]
         if date_filter:
             q += ' AND date = ?'
             params.append(date_filter)
         q += ' ORDER BY date DESC, id DESC'
-        strength_rows = db.execute(q, params).fetchall()
+        sessions = db.execute(q, params).fetchall()
 
     if modality_filter in ('', 'cardio'):
         q = 'SELECT * FROM cardio_log WHERE user_id = ?'
@@ -48,10 +52,68 @@ def list_entries():
         q += ' ORDER BY date DESC, id DESC'
         cardio_rows = db.execute(q, params).fetchall()
 
-    # Per-set chips for strength rows only.
+    # Per-session training_log aggregation. One query for all sessions on the
+    # page; group in Python so the SQL stays DB-agnostic.
+    logs_by_session: dict = {}
+    if sessions:
+        session_ids = [s['id'] for s in sessions]
+        placeholders = ','.join('?' * len(session_ids))
+        log_rows = db.execute(
+            f'SELECT id, session_id, exercise, volume FROM training_log '
+            f'WHERE session_id IN ({placeholders}) AND user_id = ? '
+            f'ORDER BY session_id, id',
+            session_ids + [uid]
+        ).fetchall()
+        for r in log_rows:
+            logs_by_session.setdefault(r['session_id'], []).append(r)
+
+    # Build entries — one row per session.
+    entries: list = []
+    for s in sessions:
+        logs = logs_by_session.get(s['id'], [])
+        if not logs:
+            continue  # defensive: empty session
+        entries.append({
+            'modality': 'strength',
+            'id': s['id'],
+            'date': s['date'],
+            'exercise_count': len(logs),
+            'exercises_summary': ', '.join(l['exercise'] for l in logs),
+            'total_volume': sum((l['volume'] or 0) for l in logs),
+        })
+    for r in cardio_rows:
+        d = dict(r)
+        d['modality'] = 'cardio'
+        entries.append(d)
+    entries.sort(key=lambda e: (str(e['date']), e['id']), reverse=True)
+
+    return render_template('training/list.html', entries=entries,
+                           date_filter=date_filter, modality_filter=modality_filter)
+
+
+@bp.route('/training/session/<int:session_id>')
+def session_detail(session_id):
+    """Read-focused detail page for one strength session — the click-through
+    target from the Workouts feed. Shows every exercise in the session with
+    per-set chips, the session's outcome rollup, and links to per-exercise
+    edit / FIT download / session-level delete."""
+    db = get_db()
+    uid = current_user_id()
+    session = db.execute(
+        'SELECT * FROM training_sessions WHERE id = ? AND user_id = ?',
+        (session_id, uid)
+    ).fetchone()
+    if not session:
+        flash('Session not found.', 'danger')
+        return redirect(url_for('training.list_entries'))
+    logs = db.execute(
+        'SELECT * FROM training_log WHERE session_id = ? AND user_id = ? '
+        'ORDER BY id',
+        (session_id, uid)
+    ).fetchall()
     sets_by_log: dict = {}
-    if strength_rows:
-        log_ids = [r['id'] for r in strength_rows]
+    if logs:
+        log_ids = [l['id'] for l in logs]
         placeholders = ','.join('?' * len(log_ids))
         set_rows = db.execute(
             f'SELECT * FROM training_log_sets '
@@ -61,24 +123,45 @@ def list_entries():
         ).fetchall()
         for s in set_rows:
             sets_by_log.setdefault(s['training_log_id'], []).append(s)
+    plan_item = None
+    if session['plan_item_id']:
+        plan_item = db.execute(
+            'SELECT pi.id, pi.item_date, pi.workout_name, pi.sport_type, '
+            '       p.name AS plan_name '
+            'FROM plan_items pi LEFT JOIN training_plans p ON p.id = pi.plan_id '
+            'WHERE pi.id = ? AND pi.user_id = ?',
+            (session['plan_item_id'], uid)
+        ).fetchone()
+    return render_template('training/session_detail.html',
+                           session=session, logs=logs, sets_by_log=sets_by_log,
+                           plan_item=plan_item)
 
-    # Merge by date desc, then id desc within a date. Modality is tagged so
-    # the template can render the right row shape. `id` is per-table so ties
-    # across modalities are arbitrary but stable within a modality.
-    entries: list = []
-    for r in strength_rows:
-        d = dict(r)
-        d['modality'] = 'strength'
-        entries.append(d)
-    for r in cardio_rows:
-        d = dict(r)
-        d['modality'] = 'cardio'
-        entries.append(d)
-    entries.sort(key=lambda e: (str(e['date']), e['id']), reverse=True)
 
-    return render_template('training/list.html', entries=entries,
-                           date_filter=date_filter, modality_filter=modality_filter,
-                           sets_by_log=sets_by_log)
+@bp.route('/training/session/<int:session_id>/delete', methods=['POST'])
+def session_delete(session_id):
+    """Delete an entire strength session. Cascade removes its training_log
+    rows + per-set rows via the ON DELETE CASCADE chain. Used from the feed's
+    Delete button and from the session detail page."""
+    db = get_db()
+    uid = current_user_id()
+    session = db.execute(
+        'SELECT id FROM training_sessions WHERE id = ? AND user_id = ?',
+        (session_id, uid)
+    ).fetchone()
+    if not session:
+        flash('Session not found.', 'danger')
+        return redirect(url_for('training.list_entries'))
+    db.execute(
+        'DELETE FROM training_log WHERE session_id = ? AND user_id = ?',
+        (session_id, uid)
+    )
+    db.execute(
+        'DELETE FROM training_sessions WHERE id = ? AND user_id = ?',
+        (session_id, uid)
+    )
+    db.commit()
+    flash('Session deleted.', 'success')
+    return redirect(url_for('training.list_entries'))
 
 
 @bp.route('/training/new', methods=['GET'])

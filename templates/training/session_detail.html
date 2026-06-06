@@ -1,0 +1,84 @@
+{% extends 'base.html' %}
+{% set nav_active = 'workout' %}
+{% block title %}Strength session — {{ session.date }}{% endblock %}
+{% block crumbs %}<a href="{{ url_for('training.list_entries') }}">Workouts</a> · <b>Strength session</b>{% endblock %}
+{% block topbar_actions %}
+<a class="btn btn-ghost btn-sm" href="{{ url_for('training.session_activity_fit', session_id=session.id) }}"
+   data-confirm="Download an activity FIT for this session?">FIT</a>
+<form method="post" action="{{ url_for('training.session_delete', session_id=session.id) }}"
+      class="d-inline"
+      data-confirm="Delete this entire session ({{ logs|length }} exercise{% if logs|length != 1 %}s{% endif %})?">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <button class="btn btn-outline-danger btn-sm">Delete session</button>
+</form>
+{% endblock %}
+
+{# Strength session detail — the click-through target from the federated
+   Workouts feed (#441 follow-up). Renders every exercise in the session
+   with its per-set chips + the per-exercise outcome / RPE / volume. Edit
+   actions stay at the per-exercise level (the existing edit form). #}
+
+{% block content %}
+<div class="dash-head">
+  <div class="races-intro">
+    <p class="eyebrow accent">● Strength session · {{ session.date }}</p>
+    <h1 class="page-title">{{ logs|length }} exercise{% if logs|length != 1 %}s{% endif %}.</h1>
+    {% if plan_item %}
+    <p class="page-sub dim">
+      Linked to plan: <strong>{{ plan_item.workout_name }}</strong> ({{ plan_item.sport_type }}) ·
+      {{ plan_item.plan_name }} · {{ plan_item.item_date }}
+    </p>
+    {% endif %}
+    {% if session.notes %}
+    <p class="page-sub">{{ session.notes }}</p>
+    {% endif %}
+  </div>
+</div>
+
+<div class="stack">
+{% for log in logs %}
+<div class="card card-pad">
+  <div class="set-log-head">
+    <span class="eyebrow accent">● {{ log.exercise }}</span>
+    <span class="rail-note">
+      {% if log.target_sets or log.target_reps or log.target_weight %}
+        Target: {{ log.target_sets or '—' }}×{{ log.target_reps or '—' }}{% if log.target_weight %} @ {{ log.target_weight }}lb{% endif %}
+      {% endif %}
+    </span>
+  </div>
+
+  {% if log.id in sets_by_log %}
+  <div class="sec-sm">
+    {% for s in sets_by_log[log.id] %}
+      <span class="chip">S{{ s.set_number }}:{% if s.reps %} {{ s.reps }}r{% endif %}{% if s.weight_lbs %} {{ s.weight_lbs }}lb{% endif %}{% if s.duration_sec %} {{ s.duration_sec }}s{% endif %}</span>
+    {% endfor %}
+  </div>
+  {% else %}
+  <p class="dim">{{ log.actual_sets or '—' }}×{{ log.actual_reps or '—' }}{% if log.actual_weight %} @ {{ log.actual_weight }}lb{% endif %}</p>
+  {% endif %}
+
+  <div class="kv-row sec-sm">
+    {% if log.rpe %}<span><b>RPE:</b> {{ log.rpe }}</span>{% endif %}
+    {% if log.volume %}<span><b>Vol:</b> {{ log.volume | int }}</span>{% endif %}
+    {% if log.est_1rm %}<span><b>1RM est:</b> {{ log.est_1rm }}</span>{% endif %}
+    {% if log.outcome %}
+      <span class="chip {% if '↑' in log.outcome %}good{% elif '→' in log.outcome %}warn{% else %}bad{% endif %}">{{ log.outcome }}</span>
+    {% endif %}
+    {% if log.next_sets or log.next_weight %}
+      <span class="dim">Next Rx: {{ log.next_sets or '—' }}×{{ log.next_reps or '—' }}{% if log.next_weight %} @ {{ log.next_weight }}lb{% endif %}</span>
+    {% endif %}
+  </div>
+
+  {% if log.notes %}
+  <p class="dim sec-sm">{{ log.notes }}</p>
+  {% endif %}
+
+  <div class="form-actions sec-sm">
+    <a href="{{ url_for('training.edit_entry', entry_id=log.id) }}" class="btn btn-ghost btn-sm">Edit exercise</a>
+  </div>
+</div>
+{% else %}
+<p class="page-sub">This session has no logged exercises.</p>
+{% endfor %}
+</div>
+{% endblock %}
