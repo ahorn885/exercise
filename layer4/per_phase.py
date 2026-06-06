@@ -62,6 +62,7 @@ from layer4.payload import (
     ValidatorResult,
 )
 from layer4 import periodization
+from layer4.session_grid import build_session_grid
 from layer4.validator import (
     ValidatorContext,
     phase_volume_bands_hours,
@@ -202,9 +203,19 @@ Exactly one tool call to `record_phase_sessions` with:
 
 # Phase intent — the spine of your output
 
-Each phase has an intended volume band per discipline (from 2A `phase_load_bands`) and an intended intensity distribution (Base ≈ 80/15/5 Z1-Z2/Z3/Z4-Z5; Build ≈ 70/20/10; Peak ≈ 70/20/10 — shares Build's shape; race-pace differentiation surfaces via the `race_pace_specific` per-session flag rather than zone-distribution; Taper ≈ 75/15/10). Per-week volume should land inside the band ±10%; per-phase intensity distribution within ±10pp of intended.
+Each phase has a per-discipline weekly hour band (from 2A `phase_load_bands`) that the deterministic session grid converts into per-week session counts (see `=== Session grid ===` block in the user prompt). The orchestrator stamps `recovery_week` spec-auto on deload weeks; you do not need to identify them.
 
-Volume shape across the phase typically ramps with one deload week per mode anchor. The deload week reduces volume to the lower edge of the band and biases intensity toward Z1-Z2; the orchestrator stamps `recovery_week` spec-auto.
+# Session grid — deterministic counts + intensity mix
+
+The user prompt's `=== Session grid ===` block is computed deterministically from the athlete's capacity + the phase's intended load + (when applicable) the race format's race-sim anchor. It is **authoritative** for:
+
+- Per-discipline session counts each week (including maintenance-cadence rotations for small-share disciplines — a discipline at e.g. 3% of phase_load gets ~1 session every 3–4 weeks rather than once weekly).
+- The cardio polarized intensity mix (easy vs hard session count at the week level — no Z3/moderate; polarized training avoids it).
+- Race-sim long day slot (present only when the race format is `continuous_multi_day`; multi-discipline, weekend-anchored).
+
+Your job: PLACE these sessions across the week — pick the day, the time-of-day, the exercise/discipline content within the constraints, and the coaching intent. Do NOT deviate from the counts, the intensity mix, or the maintenance cadence. If a discipline shows 0 sessions for this week (maintenance-week skip), honor that. If the grid is genuinely wrong (e.g. an excluded discipline shows allocation), call it out in `phase_synthesis_notes` and produce the best plan you can within the grid.
+
+The intensity mix is at-the-week level, not per-discipline — distribute the easy/hard count across the cardio sessions as you see fit. Typically the long session is hard or moderate-effort and short sessions are easy; the race-sim long day (when present) counts as one hard session.
 
 # Coaching-flag emission (closed-set; 6 flags LLM-emitted)
 
@@ -227,7 +238,7 @@ Layer 2C per-locale `effective_pool` + `exercises_resolved` (Tier 1 direct / Tie
 
 # Strength programming
 
-Program resistance training every week per the phase dose: Base/Build 2 sessions/week, Peak 1 (maintenance), Taper 1 early then none in the final ~7–10 days. Each session: 3–5 multi-joint, lower-body-biased exercises, 2–3 sets, 4–10 rep range, not to failure, prescribed as RM/RPE targets (e.g. 3×5 @ ~8RM) — never invent absolute weights. In maintenance phases (Peak/Taper) reduce volume — drop to ~2 sets and/or 1 session/week — but keep the load and rep range heavy; never maintain by lowering the weight. If the athlete has no logged history for an exercise, prescribe the reps and tell them to use a load they can complete for that many reps with ~2 reps in reserve, and log it — they set their own baseline; do not withhold an exercise for lack of history.
+Each strength session (count emitted by the session grid): 3–5 multi-joint, lower-body-biased exercises, 2–3 sets, 4–10 rep range, not to failure, prescribed as RM/RPE targets (e.g. 3×5 @ ~8RM) — never invent absolute weights. In maintenance phases (Peak/Taper) the grid reduces session count and you should also drop sets per session, but keep the load and rep range heavy; never maintain by lowering the weight. If the athlete has no logged history for an exercise, prescribe the reps and tell them to use a load they can complete for that many reps with ~2 reps in reserve, and log it — they set their own baseline; do not withhold an exercise for lack of history.
 
 Pick exercises from the rendered `=== Strength exercise pool ===` for the session's locale (never invent `exercise_id`s). Keep a stable core of 2–3 compound lifts across the phase for progression; rotate accessory exercises week-to-week for variety. Prefer unilateral / offset / anti-rotation variants (single-arm, single-leg, carries) — they build one-sided strength and trunk stability together, which transfers to multi-sport. Prefer heavy + explosive over hypertrophy; de-emphasize added muscle mass.
 
@@ -357,11 +368,42 @@ def _intensity_target_schema() -> dict[str, Any]:
     }
 
 
-def _session_schema() -> dict[str, Any]:
+_FEASIBLE_POOL_ENUM_WARN_THRESHOLD = 200
+
+
+def compute_feasible_pool_ids(
+    layer2c_payloads: dict[str, Layer2CPayload],
+    layer2d_payload: Layer2DPayload | None,
+) -> list[str]:
+    """Track 2 D1: cluster-union of resolved strength `exercise_id`s across
+    every locale in `layer2c_payloads`, minus 2D-excluded ids. Sorted+deduped
+    for deterministic enum ordering across calls (cache-key stability + diff
+    legibility). Empty result means no resolvable strength surface (caller
+    typically reverts to free-string schema rather than passing an empty enum)."""
+    if not layer2c_payloads:
+        return []
+    excluded: set[str] = (
+        {er.exercise_id for er in layer2d_payload.excluded_exercises}
+        if layer2d_payload is not None
+        else set()
+    )
+    pool: set[str] = set()
+    for l2c in layer2c_payloads.values():
+        for rx in l2c.exercises_resolved:
+            if rx.exercise_id not in excluded:
+                pool.add(rx.exercise_id)
+    return sorted(pool)
+
+
+def _session_schema(feasible_pool_ids: list[str] | None = None) -> dict[str, Any]:
     """One element of `sessions[]`. Full PlanSession contract mirror per the
     Step 4a Option 2 precedent. Includes `rest` kind (Pattern A produces full
     schedules including rest days; differs from refresh/single_session which
-    only emit working sessions)."""
+    only emit working sessions).
+
+    Track 2 D1: when `feasible_pool_ids` is non-empty, the
+    `strength_exercises.exercise_id` property is bounded by enum, making
+    out-of-pool picks structurally impossible at the SDK boundary."""
     return {
         "type": "object",
         "additionalProperties": False,
@@ -469,7 +511,11 @@ def _session_schema() -> dict[str, Any]:
                         "coaching_flags",
                     ],
                     "properties": {
-                        "exercise_id": {"type": "string"},
+                        "exercise_id": (
+                            {"type": "string", "enum": feasible_pool_ids}
+                            if feasible_pool_ids
+                            else {"type": "string"}
+                        ),
                         "exercise_name": {"type": "string"},
                         "resolution_tier": {"type": "integer", "enum": [1, 2, 3]},
                         "substitute_text": {"type": ["string", "null"]},
@@ -513,12 +559,19 @@ def _session_schema() -> dict[str, Any]:
     }
 
 
-def build_record_phase_sessions_tool(max_sessions: int = 56) -> dict[str, Any]:
+def build_record_phase_sessions_tool(
+    max_sessions: int = 56,
+    feasible_pool_ids: list[str] | None = None,
+) -> dict[str, Any]:
     """Anthropic tool definition for `record_phase_sessions`. Sessions array
     `maxItems` accommodates up to 4 weeks × 7 days × 2/day = 56 for the
     longest typical phase (Base in standard mode 12 wks would split across
     multiple synthesizer calls in v2 if budget pressure surfaces; v1 single
-    call per phase). Caller can override `max_sessions` for tighter caps."""
+    call per phase). Caller can override `max_sessions` for tighter caps.
+
+    Track 2 D1: `feasible_pool_ids` (when non-empty) bounds
+    `strength_exercises.exercise_id` via JSON-schema enum. Production callers
+    pass `compute_feasible_pool_ids(layer2c_payloads, layer2d_payload)`."""
     return {
         "name": "record_phase_sessions",
         "description": (
@@ -535,7 +588,7 @@ def build_record_phase_sessions_tool(max_sessions: int = 56) -> dict[str, Any]:
                     "type": "array",
                     "minItems": 0,
                     "maxItems": max_sessions,
-                    "items": _session_schema(),
+                    "items": _session_schema(feasible_pool_ids),
                 },
                 "phase_synthesis_notes": {
                     "type": "string",
@@ -705,66 +758,83 @@ def _format_strength_exercise_pool(
     return out
 
 
-def _format_phase_load_bands(
-    layer2a: Layer2APayload | None,
+def _format_session_grid(
+    layer1_payload: dict[str, Any],
+    layer2a_payload: Layer2APayload | None,
+    phase_structure: PhaseStructure | None,
     phase_name: str,
-    capacity_hours: float | None,
+    race_event_payload: RaceEventPayload | None,
     *,
-    phase_structure: PhaseStructure | None = None,
     week_range: tuple[int, int] | None = None,
 ) -> list[str]:
-    """Per-discipline weekly-HOUR volume TARGETS, rendered per training week.
+    """Track 2 slice 2b: render the deterministic per-week session grid that
+    replaces the prior `_format_phase_load_bands` block. The grid is
+    authoritative for per-discipline session counts (including maintenance
+    cadence for small-share disciplines), the polarized intensity mix, and the
+    race-sim long-day slot for `continuous_multi_day` race formats.
 
-    The 2A `phase_load` percentages → capacity-bounded hours
-    (`phase_volume_bands_hours`, shared with the validator), then scaled by the
-    per-week periodization multiplier (`periodization`) so the model gets a
-    concrete target + tolerance band for EACH week it synthesizes. That concrete
-    per-week, per-discipline anchor is what stops it mis-splitting the fixed
-    weekly hour budget across disciplines (the plan-58 `Build:w2` failure: one
-    sport over-prescribed, two under). Falls back to a single flat band per
-    discipline when the per-week grid can't be computed (no 2A payload, no
-    capacity, or no phase structure)."""
-    if layer2a is None:
-        return ["- (Layer 2A payload not supplied; using open-ended bands.)"]
-    flat = phase_volume_bands_hours(layer2a, phase_name, capacity_hours)
-    disciplines = [
-        d
-        for d in layer2a.disciplines
-        if d.inclusion == "included" and d.discipline_id in flat
-    ]
-    if not disciplines:
-        return ["- (No phase-load hours on file; using open-ended bands.)"]
+    Returns an open-ended-bands fallback line when 2A or phase_structure is
+    unavailable (preserves the graceful-degradation contract of the function
+    this replaces)."""
+    if layer2a_payload is None or phase_structure is None:
+        return ["- (Layer 2A / phase_structure unavailable; using open-ended bands.)"]
 
-    mults = periodization.phase_week_multipliers_for_phase(
-        phase_structure, phase_name
-    )
-    if not mults:
-        # Flat fallback — no per-week shape available.
-        return [
-            f"- {d.discipline_name} ({d.discipline_id}): "
-            f"{sum(flat[d.discipline_id]) / 2:.1f} hr/wk target "
-            f"(band {flat[d.discipline_id][0]:.1f}–{flat[d.discipline_id][1]:.1f})"
-            for d in disciplines
-        ]
+    capacity = weekly_capacity_hours(layer1_payload)
+
+    race_format: str | None = None
+    race_duration_h: float | None = None
+    if race_event_payload is not None:
+        race_format = race_event_payload.race_format
+        if race_event_payload.estimated_duration_hr is not None:
+            race_duration_h = float(race_event_payload.estimated_duration_hr)
 
     if week_range is not None:
         weeks: range = range(week_range[0], week_range[1] + 1)
     else:
-        weeks = range(1, len(mults) + 1)
+        phase_weeks_n = next(
+            (p.weeks for p in phase_structure.phases if p.phase_name == phase_name),
+            0,
+        )
+        weeks = range(1, phase_weeks_n + 1)
+
     out: list[str] = []
     for w in weeks:
-        if not (1 <= w <= len(mults)):
+        grid = build_session_grid(
+            layer2a_payload,
+            phase_structure,
+            phase_name,
+            w,
+            capacity_hours=capacity,
+            race_format=race_format,
+            race_duration_h=race_duration_h,
+        )
+        out.append(
+            f"Week {w} — weekly capacity {grid.weekly_capacity_hours:.1f} hours:"
+        )
+        if not grid.discipline_allocations:
+            out.append("  (No allocations resolved — open-ended bands.)")
             continue
-        m = mults[w - 1]
-        deload = periodization.is_deload_week_for(phase_structure, phase_name, w)
-        tag = " — DELOAD (planned recovery; reduced volume, hold intensity)" if deload else ""
-        out.append(f"Week {w}{tag}:")
-        for d in disciplines:
-            low, high = flat[d.discipline_id]
+        out.append(
+            "  Per-discipline session counts (deterministic — do not deviate):"
+        )
+        for a in grid.discipline_allocations:
+            cadence = f" — {a.cadence_note}" if a.cadence_note else ""
             out.append(
-                f"  - {d.discipline_name} ({d.discipline_id}): "
-                f"{(low + high) / 2 * m:.1f} hr target "
-                f"(band {low * m:.1f}–{high * m:.1f})"
+                f"  - {a.discipline_name} ({a.discipline_id}): "
+                f"{a.sessions_this_week} session(s) × ~{a.typical_session_minutes} min, "
+                f"target {a.target_hours_this_week:.1f} hours{cadence}."
+            )
+        if grid.intensity_mix.total > 0:
+            out.append(
+                f"  Cardio intensity mix (polarized, week-level): "
+                f"{grid.intensity_mix.easy_count} easy + "
+                f"{grid.intensity_mix.hard_count} hard."
+            )
+        if grid.race_sim_long_day is not None:
+            sim = grid.race_sim_long_day
+            out.append(
+                f"  Race-sim long day ({sim.phase_position}): "
+                f"1 × {sim.duration_min} min, multi-discipline, weekend-anchored."
             )
     return out
 
@@ -1086,28 +1156,16 @@ def render_user_prompt(
         f" (mode={mode})"
     )
     parts.append("")
-    parts.append(
-        "Per-week volume targets per discipline (weekly hours; hit the target, "
-        "stay inside the band):"
-    )
+    parts.append("=== Session grid (deterministic — Track 2 §5.1/§5.2/§5.3) ===")
     parts.extend(
-        _format_phase_load_bands(
+        _format_session_grid(
+            layer1_payload,
             layer2a_payload,
+            phase_structure,
             phase_spec.phase_name,
-            weekly_capacity_hours(layer1_payload),
-            phase_structure=phase_structure,
+            race_event_payload,
             week_range=week_range,
         )
-    )
-    parts.append("")
-    parts.append(
-        "Intended intensity distribution (Z1-Z2 / Z3 / Z4-Z5) — within ±10pp tolerance:"
-    )
-    iid = phase_spec.intended_intensity_distribution
-    parts.append(
-        f"- Z1-Z2: {iid.get('Z1-Z2', 0.0) * 100:.0f}% | "
-        f"Z3: {iid.get('Z3', 0.0) * 100:.0f}% | "
-        f"Z4-Z5: {iid.get('Z4-Z5', 0.0) * 100:.0f}%"
     )
     parts.append("")
 
@@ -1238,9 +1296,11 @@ def render_user_prompt(
             )
     parts.append("")
 
-    # #335 Phase 2 §8 — the resolved strength-exercise pool, so the synthesizer
-    # picks real exercise_ids instead of inventing them (Rule 6a otherwise
-    # rejects invented ids as equipment_unavailable).
+    # #335 Phase 2 §8 — the resolved strength-exercise pool, rendered for the
+    # synthesizer's reading. Track 2 D1 also binds the tool-schema enum to the
+    # cluster-union of these ids (see `compute_feasible_pool_ids` +
+    # `build_record_phase_sessions_tool(..., feasible_pool_ids=...)`), making
+    # out-of-pool picks structurally impossible at the SDK boundary.
     pool_lines = _format_strength_exercise_pool(
         layer2c_payloads, layer2a_payload, layer2d_payload
     )
@@ -1697,7 +1757,20 @@ def synthesize_phase(
         # 56-session single call is the unit D-77 decomposition replaced; the
         # week-seam stitcher (Slice 3), not a token bump, is its scaling path.
         effective_max_tokens = max_tokens
-    tool_schema = build_record_phase_sessions_tool(max_sessions_this_unit)
+    feasible_pool_ids = compute_feasible_pool_ids(layer2c_payloads, layer2d_payload)
+    if len(feasible_pool_ids) > _FEASIBLE_POOL_ENUM_WARN_THRESHOLD:
+        import logging
+        logging.getLogger(__name__).warning(
+            "feasible_pool_ids=%d exceeds threshold %d for %s; "
+            "investigate 2C/2D filtering",
+            len(feasible_pool_ids),
+            _FEASIBLE_POOL_ENUM_WARN_THRESHOLD,
+            unit_tag,
+        )
+    tool_schema = build_record_phase_sessions_tool(
+        max_sessions_this_unit,
+        feasible_pool_ids=feasible_pool_ids or None,
+    )
 
     rule_failures: list[RuleFailure] = []
     validator_results: list[ValidatorResult] = []

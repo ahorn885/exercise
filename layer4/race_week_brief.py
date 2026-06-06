@@ -67,6 +67,7 @@ from layer4.context import (
     TrainingSubstitutionPayload,
 )
 from layer4.errors import Layer4InputError, Layer4OutputError
+from layer4.per_phase import compute_feasible_pool_ids
 from layer4.payload import (
     CardioBlock,
     Contingency,
@@ -191,12 +192,18 @@ def _intensity_target_schema() -> dict[str, Any]:
     }
 
 
-def _taper_override_session_schema() -> dict[str, Any]:
+def _taper_override_session_schema(
+    feasible_pool_ids: list[str] | None = None,
+) -> dict[str, Any]:
     """Schema for one Taper-session override per `Layer4_RaceWeekBrief_v2.md`
     §4.1. Mirrors `PlanSession` shape with the closed 2-flag race-week-brief
     enum (`intensity_modulated`, `discipline_specific_intensity`) per
     `Layer4_Spec.md` §8.6 — spec-auto Taper flags (§8.5) are orchestrator-
-    stamped post-synthesis."""
+    stamped post-synthesis.
+
+    Track 2 D1: when `feasible_pool_ids` is non-empty, the
+    `strength_exercises.exercise_id` property is bounded by enum, making
+    out-of-pool picks structurally impossible at the SDK boundary."""
     return {
         "type": "object",
         "additionalProperties": False,
@@ -312,7 +319,11 @@ def _taper_override_session_schema() -> dict[str, Any]:
                         "coaching_flags",
                     ],
                     "properties": {
-                        "exercise_id": {"type": "string"},
+                        "exercise_id": (
+                            {"type": "string", "enum": feasible_pool_ids}
+                            if feasible_pool_ids
+                            else {"type": "string"}
+                        ),
                         "exercise_name": {"type": "string"},
                         "resolution_tier": {"type": "integer", "enum": [1, 2, 3]},
                         "substitute_text": {"type": ["string", "null"]},
@@ -621,10 +632,16 @@ def _race_plan_schema() -> dict[str, Any]:
     }
 
 
-def build_record_race_week_brief_tool() -> dict[str, Any]:
+def build_record_race_week_brief_tool(
+    feasible_pool_ids: list[str] | None = None,
+) -> dict[str, Any]:
     """The `record_race_week_brief` Anthropic tool definition per
     `Layer4_RaceWeekBrief_v2.md` §4.1 — mirrors the full `RaceWeekBrief`
-    + `RacePlan` + Taper-session override contracts from `layer4/payload.py`."""
+    + `RacePlan` + Taper-session override contracts from `layer4/payload.py`.
+
+    Track 2 D1: `feasible_pool_ids` (when non-empty) bounds
+    `strength_exercises.exercise_id` via JSON-schema enum. Production callers
+    pass `compute_feasible_pool_ids(layer2c_payloads, layer2d_payload)`."""
     return {
         "name": "record_race_week_brief",
         "description": (
@@ -640,7 +657,7 @@ def build_record_race_week_brief_tool() -> dict[str, Any]:
                 "taper_session_overrides": {
                     "type": "array",
                     "maxItems": 42,
-                    "items": _taper_override_session_schema(),
+                    "items": _taper_override_session_schema(feasible_pool_ids),
                 },
                 "race_week_brief": _race_week_brief_schema(),
                 "race_plan": _race_plan_schema(),
@@ -1576,7 +1593,10 @@ def llm_layer4_race_week_brief(
     )
 
     caller: LLMCaller = llm_caller or _default_llm_caller
-    tool_schema = build_record_race_week_brief_tool()
+    feasible_pool_ids = compute_feasible_pool_ids(layer2c_payloads, layer2d_payload)
+    tool_schema = build_record_race_week_brief_tool(
+        feasible_pool_ids=feasible_pool_ids or None
+    )
 
     # Climate normals for the weather contingency (best-effort; None when the
     # race has no coordinates or the lookup fails — the prompt then degrades to

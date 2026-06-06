@@ -168,4 +168,6 @@ def test_system_prompt_has_strength_section_and_no_invent_rule():
     assert "never invent `exercise_id`s" in SYSTEM_PROMPT
     assert "=== Strength exercise pool ===" in SYSTEM_PROMPT
     assert "RM/RPE" in SYSTEM_PROMPT
-    assert "2 sessions/week" in SYSTEM_PROMPT
+    # Track 2 slice 2b: session counts moved to the deterministic grid;
+    # the prompt now references the grid rather than hardcoded "2 sessions/week".
+    assert "session grid" in SYSTEM_PROMPT.lower()

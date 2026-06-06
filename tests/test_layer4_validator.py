@@ -787,13 +787,15 @@ def test_volume_band_above_warning():
     assert all(f.severity == "warning" for f in vb)
 
 
-def test_volume_band_above_blocker():
+def test_volume_band_above_now_warning_post_track2():
+    """Track 2 slice 2b: volume_band is advisory; 12h over an 8h band emits a
+    warning (was blocker pre-2b)."""
     sessions = [
         _cardio_session(
             session_id=f"S-{i}", d=_SCOPE_START + timedelta(days=i), duration_min=120
         )
         for i in range(6)
-    ]  # 12h: above 8 × 1.2=9.6 → blocker
+    ]  # 12h: above 8 × 1.2=9.6
     payload = _minimal_layer4(sessions=sessions)
     ctx = ValidatorContext(
         layer2a_payload=_layer2a_with_band(), capacity_hours=999.0
@@ -801,7 +803,8 @@ def test_volume_band_above_blocker():
     failures = validate_layer4_payload(payload, ctx).rule_failures
     vb = [f for f in failures if f.rule_name.startswith("volume_band")]
     assert vb
-    assert any(f.severity == "blocker" for f in vb)
+    assert all(f.severity == "warning" for f in vb)
+    assert not any(f.severity == "blocker" for f in vb)
 
 
 def test_volume_band_skips_when_no_2a():
@@ -850,15 +853,16 @@ def test_volume_band_non_monday_compliant_week_no_false_blocker():
     assert not any(f.rule_name.startswith("volume_band") for f in failures)
 
 
-def test_volume_band_non_monday_genuine_undershoot_still_blocks():
+def test_volume_band_non_monday_genuine_undershoot_still_fires_as_warning():
     # The week_in_phase fix must NOT mask a real undershoot: a non-Monday week
     # that straddles two ISO weeks AND is genuinely under-volumed still fires —
-    # once (one training week), not once-per-ISO-week.
+    # once (one training week), not once-per-ISO-week. Track 2 slice 2b: now
+    # surfaces as warning (advisory), not blocker.
     start = date(2026, 4, 1)  # Wed
     sessions = [
         _cardio_session(session_id="S-a", d=start, duration_min=60),          # ISO wk N
         _cardio_session(session_id="S-b", d=start + timedelta(days=5), duration_min=60),  # ISO wk N+1
-    ]  # 2h total, well below the 5–8h band (blocker_low = 4.0h)
+    ]  # 2h total, well below the 5–8h band
     assert {s.phase_metadata.week_in_phase for s in sessions} == {1}
     assert len({_iso_week(s.date) for s in sessions}) == 2
     payload = _minimal_layer4(sessions=sessions)
@@ -867,8 +871,8 @@ def test_volume_band_non_monday_genuine_undershoot_still_blocks():
         f for f in validate_layer4_payload(payload, ctx).rule_failures
         if f.rule_name.startswith("volume_band")
     ]
-    assert vb, "a genuinely under-volumed week must still fail"
-    assert all(f.severity == "blocker" and "below" in f.rule_name for f in vb)
+    assert vb, "a genuinely under-volumed week must still surface"
+    assert all(f.severity == "warning" and "below" in f.rule_name for f in vb)
     assert len({f.rule_name for f in vb}) == 1  # one training-week bucket, not two ISO
 
 
@@ -1044,42 +1048,10 @@ def test_two_per_day_fires_via_model_construct_bypass():
     assert any("max_exceeded" in f.rule_name for f in tpd)
 
 
-# ─── Rule 6a: equipment_unavailable ────────────────────────────────────────
-
-
-def test_equipment_unavailable_in_pool_no_fire():
-    sessions = [
-        _strength_session(
-            session_id="S-1",
-            exercises=[_strength_exercise(exercise_id="E-squat")],
-        )
-    ]
-    payload = _minimal_layer4(sessions=sessions)
-    ctx = ValidatorContext(layer2c_payloads={"L-home": _layer2c(exercise_ids=["E-squat"])})
-    failures = validate_layer4_payload(payload, ctx).rule_failures
-    assert not any(f.rule_name.startswith("equipment_unavailable") for f in failures)
-
-
-def test_equipment_unavailable_missing_blocker():
-    sessions = [
-        _strength_session(
-            session_id="S-1",
-            exercises=[_strength_exercise(exercise_id="E-bench")],
-        )
-    ]
-    payload = _minimal_layer4(sessions=sessions)
-    ctx = ValidatorContext(layer2c_payloads={"L-home": _layer2c(exercise_ids=["E-squat"])})
-    failures = validate_layer4_payload(payload, ctx).rule_failures
-    eu = [f for f in failures if f.rule_name.startswith("equipment_unavailable")]
-    assert eu
-    assert eu[0].severity == "blocker"
-
-
-def test_equipment_unavailable_skipped_without_2c():
-    sessions = [_strength_session(session_id="S-1")]
-    payload = _minimal_layer4(sessions=sessions)
-    failures = validate_layer4_payload(payload, ValidatorContext()).rule_failures
-    assert not any(f.rule_name.startswith("equipment_unavailable") for f in failures)
+# ─── Rule 6a retired (Track 2 D1) — see Layer4_DeterminismFirst_Synthesis_Design_v1.md.
+#     Out-of-pool exercise_id is now structurally impossible via tool-schema
+#     enum (`compute_feasible_pool_ids` in `layer4/per_phase.py`). Enum behavior
+#     is covered by `test_layer4_plan_create.py::test_*_feasible_pool_enum*`.
 
 
 # ─── Rule 6b: session_multi_locale ─────────────────────────────────────────
@@ -1591,7 +1563,7 @@ def test_sport_locale_compatible_no_fire():
 
 def test_sport_locale_incompatible_strength_zero_coverage_warns():
     # A STRENGTH session whose discipline has 0 coverage → advisory warning
-    # (the per-exercise hard gate is Rule 6a equipment_unavailable, not this).
+    # (the per-exercise hard gate is now Track 2 D1's tool-schema enum, not this).
     payload = _minimal_layer4(sessions=[_strength_session(discipline_id="D-MTB")])
     ctx = ValidatorContext(
         layer2c_payloads={
@@ -2131,15 +2103,18 @@ def test_mode_gate_plan_create_runs_phase_date_check():
 @pytest.mark.parametrize(
     "actual_hours,expected_severity",
     [
-        # Band: low=5, high=8. warning ±10% → 4.5/8.8; blocker ±20% → 4.0/9.6.
+        # Track 2 slice 2b: volume_band fully demoted to warning. Band: low=5,
+        # high=8. ±10% → 4.5/8.8; ±20% → 4.0/9.6. Both tiers now emit warning
+        # (the session_grid is the new authoritative allocation source; this
+        # rule is advisory drift detection only).
         (6.0, None),  # in band
-        (8.5, None),  # within ±10% (warning_high=8.8)
+        (8.5, None),  # within ±10%
         (9.0, "warning"),
-        (9.7, "blocker"),
-        (12.0, "blocker"),
-        (4.6, None),  # 4.6 > 4.5 warning_low → in band
-        (4.4, "warning"),  # below 4.5 warning_low
-        (3.9, "blocker"),  # below 4.0 blocker_low
+        (9.7, "warning"),  # was blocker pre-2b
+        (12.0, "warning"),  # was blocker pre-2b
+        (4.6, None),  # in band
+        (4.4, "warning"),
+        (3.9, "warning"),  # was blocker pre-2b
     ],
 )
 def test_volume_band_boundaries(actual_hours: float, expected_severity: str | None):
@@ -2257,15 +2232,15 @@ def test_volume_band_uses_hours_not_raw_percentages():
     assert not [f for f in failures if f.rule_name.startswith("volume_band")]
 
 
-def test_volume_band_below_fires_on_genuine_hour_shortfall():
-    """The rule still catches a real shortfall once the band is in hours."""
+def test_volume_band_below_fires_as_warning_on_genuine_hour_shortfall():
+    """Track 2 slice 2b: still catches a real shortfall, now as a warning."""
     disc_pcts = {
         "D-trail": (10.0, 20.0),
         "D-bike": (30.0, 50.0),
         "D-hike": (40.0, 50.0),
     }
     layer2a = _layer2a_multi(disc_pcts, weekly_total=(16.0, 18.0))
-    # trail band 1.0–2.0h; 0.5h is below blocker_low (0.8h).
+    # trail band 1.0–2.0h; 0.5h is well below band.
     sessions = [
         _cardio_session(
             session_id="S-t", d=_SCOPE_START, duration_min=30, discipline_id="D-trail"
@@ -2275,7 +2250,7 @@ def test_volume_band_below_fires_on_genuine_hour_shortfall():
     ctx = ValidatorContext(layer2a_payload=layer2a, capacity_hours=10.0)
     failures = validate_layer4_payload(payload, ctx).rule_failures
     vb = [f for f in failures if f.rule_name.startswith("volume_band_below")]
-    assert vb and vb[0].severity == "blocker"
+    assert vb and vb[0].severity == "warning"
 
 
 # ─── Rule 1: volume_band — per-week periodization grid ───────────────────────
@@ -2309,17 +2284,18 @@ def _below_band_ctx():
     return ValidatorContext(layer2a_payload=layer2a, capacity_hours=10.0)
 
 
-def test_volume_band_below_stays_blocker_in_base():
-    # A genuine shortfall in a normal loading week keeps the hard blocker.
+def test_volume_band_below_warning_in_base_post_track2():
+    """Track 2 slice 2b: shortfall in a normal loading week surfaces as warning."""
     payload = _minimal_layer4(sessions=[_below_band_session(phase="Base")])
     failures = validate_layer4_payload(payload, _below_band_ctx()).rule_failures
     vb = [f for f in failures if f.rule_name.startswith("volume_band_below")]
-    assert vb and all(f.severity == "blocker" for f in vb)
+    assert vb and all(f.severity == "warning" for f in vb)
 
 
-def test_volume_band_above_blocker_symmetric():
-    # `above` is a hard blocker just like `below` — gross over-prescription
-    # (10h against a ~1–2h band) blocks regardless of phase.
+def test_volume_band_above_warning_symmetric_post_track2():
+    """Track 2 slice 2b: above and below are still symmetric, both warning.
+    A gross over-prescription (10h against a ~1-2h band) surfaces but does not
+    block — the deterministic session_grid is now the allocation gate."""
     over = _cardio_session(
         session_id="S-t",
         d=_SCOPE_START,
@@ -2330,7 +2306,7 @@ def test_volume_band_above_blocker_symmetric():
     payload = _minimal_layer4(sessions=[over])
     failures = validate_layer4_payload(payload, _below_band_ctx()).rule_failures
     vb = [f for f in failures if f.rule_name.startswith("volume_band_above")]
-    assert vb and all(f.severity == "blocker" for f in vb)
+    assert vb and all(f.severity == "warning" for f in vb)
 
 
 def test_volume_band_grid_deload_week_band_reduced():
