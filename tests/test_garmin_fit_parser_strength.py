@@ -107,3 +107,55 @@ def test_legitimate_set_passes_through_unchanged():
         assert s['reps'] == 5
         # 102 kg * 2.20462 ≈ 224.9 lb
         assert s['weight_lbs'] == 224.9
+
+
+# ── Richer (category, category_subtype) labeling — pulls from fit_tool's
+# per-category ExerciseName enums (the Garmin SDK is the source of truth).
+
+def _ex(*, category, category_subtype, reps=5, weight_kg=100.0, duration=None):
+    """Set stub that exercises the (category, category_subtype) lookup path.
+    `exercise_name` deliberately absent so the legacy attr path is skipped."""
+    return SimpleNamespace(
+        repetitions=reps, weight=weight_kg, duration=duration,
+        exercise_name=None,
+        category=[category], category_subtype=[category_subtype],
+    )
+
+
+def test_subtype_lookup_resolves_barbell_bench_press():
+    """(category=0 BENCH_PRESS, subtype=1 BARBELL_BENCH_PRESS) →
+    'Barbell Bench Press' — not the coarse 'Bench Press'."""
+    out = _parse_strength(_session(), [_ex(category=0, category_subtype=1)])
+    assert out['data'][0]['exercise'] == 'Barbell Bench Press'
+
+
+def test_subtype_lookup_resolves_incline_dumbbell_bench_press():
+    """The example in Andy's request — subtype=9 in BenchPressExerciseName."""
+    out = _parse_strength(_session(), [_ex(category=0, category_subtype=9)])
+    assert out['data'][0]['exercise'] == 'Incline Dumbbell Bench Press'
+
+
+def test_subtype_lookup_strips_n_prefix_for_digit_tokens():
+    """N3_WAY_CALF_RAISE (CalfRaise.N3_WAY_CALF_RAISE = 0) → "3 Way Calf Raise"."""
+    out = _parse_strength(_session(), [_ex(category=1, category_subtype=0)])
+    assert out['data'][0]['exercise'] == '3 Way Calf Raise'
+
+
+def test_unknown_subtype_falls_back_to_category():
+    """Subtype 9999 isn't in BenchPressExerciseName → 'Bench Press'."""
+    out = _parse_strength(_session(), [_ex(category=0, category_subtype=9999)])
+    assert out['data'][0]['exercise'] == 'Bench Press'
+
+
+def test_subtype_sentinel_falls_back_to_category():
+    """Subtype 65535 (UNKNOWN) → fall back to the category-only label."""
+    out = _parse_strength(_session(), [_ex(category=8, category_subtype=65535)])
+    assert out['data'][0]['exercise'] == 'Deadlift'
+
+
+def test_no_category_or_subtype_yields_unknown():
+    """Confirms the Andy-Fenix-uncategorized path still lands 'Unknown Exercise'."""
+    s = SimpleNamespace(repetitions=5, weight=100.0, duration=None,
+                        exercise_name=None, category=None, category_subtype=None)
+    out = _parse_strength(_session(), [s])
+    assert out['data'][0]['exercise'] == 'Unknown Exercise'

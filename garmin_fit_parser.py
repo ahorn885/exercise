@@ -95,6 +95,52 @@ _EXERCISE_CATEGORY_MAP = {
     32: 'Run',
 }
 
+
+def _humanize_enum_name(name: str) -> str:
+    """Garmin enum names are SCREAM_CASE with an N-prefix on tokens that start
+    with a digit (Python identifier rule): `N3_WAY_CALF_RAISE` → "3 Way Calf
+    Raise". Strip the N-prefix where applicable, then title-case."""
+    parts = name.split('_')
+    parts = [
+        p[1:] if (len(p) > 1 and p[0] == 'N' and p[1].isdigit()) else p
+        for p in parts
+    ]
+    return ' '.join(p.capitalize() for p in parts)
+
+
+def _build_exercise_subtype_map() -> dict:
+    """Walk fit_tool's per-category `<Category>ExerciseName` enums to build
+    `{category_code: {subtype_code: 'Human Name'}}`. Garmin's FIT SDK is the
+    source of truth — pulling at import time keeps this in sync with any
+    `fit_tool` upgrade without hand-maintaining ~30 enums of 10-100 members.
+    Degrades gracefully to an empty map if `fit_tool` isn't importable."""
+    try:
+        from fit_tool.profile.profile_type import ExerciseCategory
+        import fit_tool.profile.profile_type as _pt
+    except ImportError:
+        return {}
+    out: dict = {}
+    for cat in ExerciseCategory:
+        # Naming convention: BENCH_PRESS → BenchPressExerciseName.
+        enum_class_name = ''.join(
+            w.capitalize() for w in cat.name.split('_')
+        ) + 'ExerciseName'
+        enum_class = getattr(_pt, enum_class_name, None)
+        if enum_class is None:
+            continue
+        subtypes: dict = {}
+        for member in enum_class:
+            # Skip the per-category UNKNOWN sentinel (65535) consistently.
+            if member.value >= 65534:
+                continue
+            subtypes[member.value] = _humanize_enum_name(member.name)
+        if subtypes:
+            out[cat.value] = subtypes
+    return out
+
+
+_EXERCISE_SUBTYPE_MAP = _build_exercise_subtype_map()
+
 # FIT sentinel values — these mean "field not recorded by device"
 # uint8 max=255, uint16 max=65535, uint32 max=4294967295
 # Scaled sentinels appear after fit-tool applies scale factors:
@@ -411,22 +457,40 @@ def _parse_strength(session, sets) -> dict:
         getattr(session, 'start_time', None) or getattr(session, 'timestamp', None)
     )
 
+    def _coerce_list(v):
+        if v is None:
+            return []
+        return list(v) if isinstance(v, (list, tuple)) else [v]
+
     def _exercise_name(s):
+        # Most specific: `(category, category_subtype)` → the per-category
+        # `<Category>ExerciseName` enum (e.g. (0, 1) → "Barbell Bench Press").
+        cats = _coerce_list(getattr(s, 'category', None))
+        subs = _coerce_list(getattr(s, 'category_subtype', None))
+        for cat, sub in zip(cats, subs):
+            try:
+                cat_int, sub_int = int(cat), int(sub)
+            except (TypeError, ValueError):
+                continue
+            if cat_int >= 65534 or sub_int >= 65534:
+                continue
+            cat_map = _EXERCISE_SUBTYPE_MAP.get(cat_int)
+            if cat_map and sub_int in cat_map:
+                return cat_map[sub_int]
+        # Coarse fallback: category only.
+        for cat in cats:
+            try:
+                c_int = int(cat)
+                if c_int < 65534:
+                    return _EXERCISE_CATEGORY_MAP.get(c_int, f'Exercise {c_int}')
+            except (TypeError, ValueError):
+                continue
+        # Free-form string label (non-SetMessage callers).
         ex = getattr(s, 'exercise_name', None)
         if ex is not None:
             ex_str = str(ex)
             if ex_str not in ('None', '', '65535', '65534'):
                 return ex_str.replace('_', ' ').title()
-        cat = getattr(s, 'category', None)
-        if cat is not None:
-            cats = cat if isinstance(cat, (list, tuple)) else [cat]
-            for c in cats:
-                try:
-                    c_int = int(c)
-                    if c_int < 65534:
-                        return _EXERCISE_CATEGORY_MAP.get(c_int, f'Exercise {c_int}')
-                except (TypeError, ValueError):
-                    pass
         return 'Unknown Exercise'
 
     # Group all sets by exercise, preserving first-seen order (handles circuits)
