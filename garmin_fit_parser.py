@@ -882,3 +882,390 @@ def parse_wellness_fit(fit_bytes: bytes) -> list:
             result.append(row)
 
     return result
+
+
+# ── Metrics / Sleep / HRV FIT parsers ────────────────────────────────────────
+# Three new file types beyond `_WELLNESS.fit`, all of which Garmin emits per
+# day:
+#   _METRICS.fit      — daily derived metrics (sleep score, sleep timing,
+#                       sleep contributors, sleep respiration, HRV daily, …)
+#   _SLEEP_DATA.fit   — sleep detail (overall score + 6 contributor sub-scores)
+#   _HRV_STATUS.fit   — overnight HRV (avg + per-period samples)
+#
+# fit_tool has no typed profiles for the GenericMessage types these files use;
+# all decoding here is reverse-engineered against `442850388081_METRICS.fit`,
+# `442850395134_METRICS.fit`, `442850402350_SLEEP_DATA.fit`, and
+# `442850380765_HRV_STATUS.fit` (all from 2026-05-28), cross-referenced against
+# the user's Garmin Connect screenshots for the same date (sleep score 96,
+# bedtime 01:14 IST, wake 09:30 IST, awake 4 min, avg sleep respiration 13,
+# overnight HRV 54 ms).
+#
+# Field mappings are documented with the verifying value in the comment. Where
+# a field's purpose is unverified (no second reference day yet), it's parsed
+# but left out of the returned dict, with a TODO. Don't guess what unverified
+# fields hold — issue #283 follow-up will revisit once more days land.
+
+# `_METRICS.fit` `GenericMessage[330]` — simple sleep-score row.
+# field_2 = sleep score (verified: 96 ↔ Garmin Connect 96).
+_METRICS_SLEEP_SCORE_SIMPLE_MSG = 330
+
+# `_METRICS.fit` `GenericMessage[384]` — rich sleep summary.
+# Verified fields:
+#   field_2  / field_16 = sleep_score (both = 96 in our reference day)
+#   field_9              = sleep_start_time (FIT epoch sec; 01:14 IST ✓)
+#   field_11             = sleep_end_time   (FIT epoch sec; 09:30 IST ✓)
+#   field_17 / field_24  = awake_minutes (both = 4 ✓)
+#   field_18             = avg respiration during sleep (=13 brpm ✓)
+# Unverified (parsed but not surfaced — need a second reference day):
+#   field_0, 1, 4, 10, 12, 14, 20-23, 25, 5/6/7 (large packed values that
+#   likely encode Deep/Light/REM minutes — pattern not yet decoded).
+_METRICS_SLEEP_SUMMARY_MSG = 384
+
+# `_METRICS.fit` `GenericMessage[378]` — likely HRV/SpO2 daily summary.
+# Day-to-day variation observed (May 27: 20,1,1,118,219,5; May 28: 16,1,1,98,
+# 219,5) so field_0 and field_3 are daily metrics, field_4/5 static. But the
+# user's Connect numbers don't pin which (HRV 54 ms vs SpO2 94% vs other).
+# Parsed-but-not-returned until verified.
+_METRICS_UNVERIFIED_DAILY_MSG = 378
+
+# `_SLEEP_DATA.fit` `GenericMessage[346]` — sleep contributors.
+# Verified:
+#   field_6 = sleep_score (=96 ✓, matches METRICS[330].field_2 and [384].field_2)
+# Educated guess (six 0–100 sub-scores; Garmin shows 6 contributors:
+# Duration/Stress/Deep/Light/REM/Awake, with May 28 = Exc/Exc/Exc/Good/Good/Exc):
+#   field_5  = 83  (Good)        ←┐ Light or REM (Good)
+#   field_7  = 95  (Excellent)    │ Deep or Awake (Excellent)
+#   field_8  = 95  (Excellent)    │ Deep or Awake (Excellent)
+#   field_9  = 81  (Good)         │ Light or REM (Good)
+#   field_0-4, 10, 14 = 100       │ Duration / Stress (Excellent)
+# Ordering across the contributors can't be locked without a second day with
+# divergent contributor ratings. Surfaced as a 6-element list rather than
+# named keys until then.
+_SLEEP_DATA_SCORE_MSG = 346
+
+# `_HRV_STATUS.fit` `GenericMessage[370]` — nightly HRV summary.
+# Verified:
+#   field_1 = overnight_avg_hrv_ms * 128  (6912/128 = 54.0 ms ✓)
+# Likely (unverified — user's 7d HRV showed "No Status"):
+#   field_2 = 7d_avg_hrv_ms * 128         (9856/128 = 77.0 ms; not surfaced
+#                                          until confirmed)
+_HRV_STATUS_SUMMARY_MSG = 370
+
+# `_HRV_STATUS.fit` `GenericMessage[371]` — per-period HRV samples through
+# the night. field_0 = sample * 128 (range 65-90 ms observed, plausible).
+# 99 instances in the May 28 file → ~5-minute cadence over an 8h sleep.
+_HRV_STATUS_SAMPLE_MSG = 371
+
+# Garmin `FileIdMessage.type` enum identifies the file type. Confirmed values
+# from the May 28 dumps:
+#   32 = wellness (per-second monitoring)
+#   44 = metrics  (daily derived)
+#   49 = sleep_data
+#   68 = hrv_status
+_FIT_FILE_TYPE_WELLNESS   = 32
+_FIT_FILE_TYPE_METRICS    = 44
+_FIT_FILE_TYPE_SLEEP_DATA = 49
+_FIT_FILE_TYPE_HRV_STATUS = 68
+
+
+def _fit_seconds_to_unix_ms(raw_ts) -> int:
+    """Treat a FIT timestamp value as **FIT epoch seconds** and return Unix ms.
+
+    Used for the GenericMessage timestamp fields in metrics/sleep/hrv files,
+    which arrive as FIT-epoch seconds (~1.1 billion range). `_fit_ts_to_unix_ms`
+    above is ambiguous between Unix-seconds / FIT-seconds / Unix-ms — these
+    metric files always use FIT seconds, so we don't want the auto-detect.
+    """
+    if raw_ts is None:
+        return 0
+    try:
+        ts = int(raw_ts)
+        if ts <= 0:
+            return 0
+        return (ts + _FIT_EPOCH_OFFSET_S) * 1000
+    except (TypeError, ValueError):
+        return 0
+
+
+def _fit_seconds_to_date(raw_ts) -> str:
+    """FIT epoch seconds → YYYY-MM-DD UTC. Empty on bad input."""
+    ms = _fit_seconds_to_unix_ms(raw_ts)
+    if not ms:
+        return ''
+    try:
+        return datetime.fromtimestamp(ms / 1000.0, tz=timezone.utc).strftime('%Y-%m-%d')
+    except Exception:
+        return ''
+
+
+def _generic_field_map(msg) -> dict:
+    """Read a GenericMessage as {field_id: value}. Skip None values."""
+    out = {}
+    for field in getattr(msg, 'fields', []):
+        try:
+            fid = getattr(field, 'field_id', None)
+            if fid is None:
+                continue
+            v = field.get_value(0)
+            if v is not None:
+                out[fid] = v
+        except Exception:
+            pass
+    return out
+
+
+def _fit_file_type(fit) -> int | None:
+    """Read the FileIdMessage.type enum (32=wellness, 44=metrics, …)."""
+    for record in fit.records:
+        msg = record.message
+        if type(msg).__name__ == 'FileIdMessage':
+            t = getattr(msg, 'type', None)
+            try:
+                return int(t) if t is not None else None
+            except (TypeError, ValueError):
+                return None
+    return None
+
+
+def detect_fit_type(fit_bytes: bytes) -> str:
+    """Return one of 'wellness' / 'metrics' / 'sleep_data' / 'hrv_status' /
+    'unknown' from the FIT file's FileIdMessage. Lets the bulk importer route
+    a file to the right parser without relying on Garmin's filename suffix
+    (athletes can rename files; this reads the source of truth)."""
+    from fit_tool.fit_file import FitFile
+    tmp_path = os.path.join(tempfile.gettempdir(), f'fit_{uuid.uuid4().hex}.fit')
+    try:
+        with open(tmp_path, 'wb') as f:
+            f.write(fit_bytes)
+        fit = FitFile.from_file(tmp_path)
+    finally:
+        try:
+            os.remove(tmp_path)
+        except OSError:
+            pass
+    t = _fit_file_type(fit)
+    return {
+        _FIT_FILE_TYPE_WELLNESS:   'wellness',
+        _FIT_FILE_TYPE_METRICS:    'metrics',
+        _FIT_FILE_TYPE_SLEEP_DATA: 'sleep_data',
+        _FIT_FILE_TYPE_HRV_STATUS: 'hrv_status',
+    }.get(t, 'unknown')
+
+
+def parse_metrics_fit(fit_bytes: bytes) -> dict:
+    """Parse a Garmin `_METRICS.fit` file (FileIdMessage.type = 44).
+
+    Returns a dict of daily-derived metrics keyed for UPSERT into
+    `garmin_daily_metrics`. `date` is the UTC date of the record timestamp
+    (Garmin attributes the night to the wake day). Returns `{}` if the file
+    carries no recognized metric.
+
+    Known limitation: Deep / Light / REM minute split isn't returned — see
+    `_METRICS_SLEEP_SUMMARY_MSG` for the decode TODO.
+    """
+    from fit_tool.fit_file import FitFile
+    tmp_path = os.path.join(tempfile.gettempdir(), f'fit_{uuid.uuid4().hex}.fit')
+    try:
+        with open(tmp_path, 'wb') as f:
+            f.write(fit_bytes)
+        fit = FitFile.from_file(tmp_path)
+    finally:
+        try:
+            os.remove(tmp_path)
+        except OSError:
+            pass
+
+    out: dict = {}
+    for record in fit.records:
+        msg = record.message
+        if type(msg).__name__ != 'GenericMessage':
+            continue
+        gid = getattr(msg, 'global_id', None)
+        fields = _generic_field_map(msg)
+        if not fields:
+            continue
+
+        if gid == _METRICS_SLEEP_SUMMARY_MSG:
+            # Rich sleep summary — wins over the simpler [330] row if both
+            # appear in the same file, because it carries timing + awake +
+            # respiration in addition to the score.
+            score = fields.get(2) or fields.get(16)
+            if score is not None:
+                out['sleep_score'] = int(score)
+            start_ts = _fit_seconds_to_unix_ms(fields.get(9))
+            end_ts   = _fit_seconds_to_unix_ms(fields.get(11))
+            if start_ts:
+                out['sleep_start_ms'] = start_ts
+            if end_ts:
+                out['sleep_end_ms'] = end_ts
+            awake = fields.get(17) if fields.get(17) is not None else fields.get(24)
+            if awake is not None:
+                out['sleep_awake_min'] = int(awake)
+            if fields.get(18) is not None:
+                out['sleep_avg_respiration'] = float(fields[18])
+            # Date = the wake day (sleep is attributed to the morning).
+            if end_ts:
+                out['date'] = datetime.fromtimestamp(
+                    end_ts / 1000.0, tz=timezone.utc
+                ).strftime('%Y-%m-%d')
+
+        elif gid == _METRICS_SLEEP_SCORE_SIMPLE_MSG:
+            # Only fill score if the rich [384] row didn't already provide it.
+            if 'sleep_score' not in out and fields.get(2) is not None:
+                out['sleep_score'] = int(fields[2])
+            if 'date' not in out:
+                # field_253 (record timestamp) → date
+                ts = _fit_seconds_to_unix_ms(getattr(msg, 'timestamp', None)) or \
+                     _fit_seconds_to_unix_ms(fields.get(3))
+                if ts:
+                    out['date'] = datetime.fromtimestamp(
+                        ts / 1000.0, tz=timezone.utc
+                    ).strftime('%Y-%m-%d')
+
+    # Fall back to the file-level timestamp if no GenericMessage gave us a date.
+    if 'date' not in out:
+        for record in fit.records:
+            msg = record.message
+            if type(msg).__name__ == 'FileIdMessage':
+                tc = getattr(msg, 'time_created', None)
+                if tc is not None:
+                    try:
+                        ts_ms = int(tc)
+                        if ts_ms < 1_000_000_000_000:
+                            ts_ms *= 1000
+                        out['date'] = datetime.fromtimestamp(
+                            ts_ms / 1000.0, tz=timezone.utc
+                        ).strftime('%Y-%m-%d')
+                    except (TypeError, ValueError):
+                        pass
+                break
+
+    return out if out.get('date') else {}
+
+
+def parse_sleep_data_fit(fit_bytes: bytes) -> dict:
+    """Parse a Garmin `_SLEEP_DATA.fit` file (FileIdMessage.type = 49).
+
+    Returns `{date, sleep_score, sleep_contributors}` where `sleep_contributors`
+    is a 6-element list of 0–100 sub-scores in Garmin's storage order. The
+    order maps to Duration / Stress / Deep / Light / REM / Awake but the
+    1-to-1 alignment isn't locked yet — see `_SLEEP_DATA_SCORE_MSG`.
+    """
+    from fit_tool.fit_file import FitFile
+    tmp_path = os.path.join(tempfile.gettempdir(), f'fit_{uuid.uuid4().hex}.fit')
+    try:
+        with open(tmp_path, 'wb') as f:
+            f.write(fit_bytes)
+        fit = FitFile.from_file(tmp_path)
+    finally:
+        try:
+            os.remove(tmp_path)
+        except OSError:
+            pass
+
+    out: dict = {}
+    for record in fit.records:
+        msg = record.message
+        if type(msg).__name__ != 'GenericMessage':
+            continue
+        if getattr(msg, 'global_id', None) != _SLEEP_DATA_SCORE_MSG:
+            continue
+        fields = _generic_field_map(msg)
+        if fields.get(6) is not None:
+            out['sleep_score'] = int(fields[6])
+        # Six contributor positions observed on the May 28 reference. Pull
+        # whichever are present so a file with extra slots doesn't lose them.
+        contributors = []
+        for fid in (5, 7, 8, 9, 10, 14):
+            v = fields.get(fid)
+            contributors.append(int(v) if v is not None else None)
+        if any(c is not None for c in contributors):
+            out['sleep_contributors'] = contributors
+        break  # one [346] per file
+
+    # Date = the file's creation timestamp (= morning sync after sleep).
+    for record in fit.records:
+        msg = record.message
+        if type(msg).__name__ == 'FileIdMessage':
+            tc = getattr(msg, 'time_created', None)
+            if tc is not None:
+                try:
+                    ts_ms = int(tc)
+                    if ts_ms < 1_000_000_000_000:
+                        ts_ms *= 1000
+                    out['date'] = datetime.fromtimestamp(
+                        ts_ms / 1000.0, tz=timezone.utc
+                    ).strftime('%Y-%m-%d')
+                except (TypeError, ValueError):
+                    pass
+            break
+    return out if out.get('date') and 'sleep_score' in out else {}
+
+
+def parse_hrv_status_fit(fit_bytes: bytes) -> dict:
+    """Parse a Garmin `_HRV_STATUS.fit` file (FileIdMessage.type = 68).
+
+    Returns `{date, hrv_overnight_avg_ms, hrv_samples}` where `hrv_samples`
+    is a list of `(timestamp_ms, value_ms)` tuples from the overnight
+    `GenericMessage[371]` stream. All HRV values are de-scaled from the raw
+    `value * 128` storage (verified: 6912/128 = 54.0 ms ↔ Garmin Connect 54
+    ms avg).
+    """
+    from fit_tool.fit_file import FitFile
+    tmp_path = os.path.join(tempfile.gettempdir(), f'fit_{uuid.uuid4().hex}.fit')
+    try:
+        with open(tmp_path, 'wb') as f:
+            f.write(fit_bytes)
+        fit = FitFile.from_file(tmp_path)
+    finally:
+        try:
+            os.remove(tmp_path)
+        except OSError:
+            pass
+
+    out: dict = {}
+    samples: list = []
+    for record in fit.records:
+        msg = record.message
+        if type(msg).__name__ != 'GenericMessage':
+            continue
+        gid = getattr(msg, 'global_id', None)
+        fields = _generic_field_map(msg)
+        if not fields:
+            continue
+
+        if gid == _HRV_STATUS_SUMMARY_MSG:
+            raw = fields.get(1)
+            if raw is not None:
+                try:
+                    out['hrv_overnight_avg_ms'] = round(int(raw) / 128.0, 1)
+                except (TypeError, ValueError):
+                    pass
+            ts = _fit_seconds_to_unix_ms(fields.get(253) or
+                                         getattr(msg, 'timestamp', None))
+            if ts and 'date' not in out:
+                out['date'] = datetime.fromtimestamp(
+                    ts / 1000.0, tz=timezone.utc
+                ).strftime('%Y-%m-%d')
+
+        elif gid == _HRV_STATUS_SAMPLE_MSG:
+            raw = fields.get(0)
+            ts = _fit_seconds_to_unix_ms(fields.get(253) or
+                                         getattr(msg, 'timestamp', None))
+            if raw is not None and ts:
+                try:
+                    samples.append((ts, round(int(raw) / 128.0, 1)))
+                except (TypeError, ValueError):
+                    pass
+
+    if samples:
+        out['hrv_samples'] = samples
+        if 'date' not in out:
+            # Use the latest sample's date as the night attribution.
+            out['date'] = datetime.fromtimestamp(
+                max(s[0] for s in samples) / 1000.0, tz=timezone.utc
+            ).strftime('%Y-%m-%d')
+
+    return out if out.get('date') and (
+        'hrv_overnight_avg_ms' in out or 'hrv_samples' in out
+    ) else {}
