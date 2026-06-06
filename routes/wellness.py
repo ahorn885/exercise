@@ -143,12 +143,18 @@ def index():
 
     # Garmin wellness daily aggregates — `wellness_log` is per-second from
     # `_WELLNESS.fit`. Body-battery extremes feed the Energy overlay (min)
-    # and the standalone "Body battery" card (high+low). HR and stress and
+    # and the standalone "Body battery" card (high+low). HR / stress /
     # respiration aggregations get their own combined cards.
     #
     # Steps / active_calories / distance arrive in MonitoringMessage as
     # **cumulative running totals** (each new row > the previous), so the
     # daily total is MAX(...) per day, not SUM — summing would double-count.
+    #
+    # Stress bucketing: Garmin samples stress every ~3 minutes; we COUNT(*)
+    # the samples in each stress-level band (Garmin's standard cutoffs:
+    # Rest 0-25 / Low 26-50 / Medium 51-75 / High 76-100) and multiply by
+    # the sample interval to surface "minutes spent in each band" on the
+    # chart, mirroring what Garmin Connect's daily stress page shows.
     garmin_rows = db.execute(
         'SELECT date, '
         '  AVG(heart_rate)        AS avg_hr, '
@@ -162,9 +168,33 @@ def index():
         '  MIN(body_battery)      AS bb_low, '
         '  MAX(steps)             AS daily_steps, '
         '  MAX(active_calories)   AS daily_active_cal, '
-        '  MAX(distance_m)        AS daily_distance_m '
+        '  MAX(distance_m)        AS daily_distance_m, '
+        '  SUM(CASE WHEN stress_level BETWEEN 0  AND 25  THEN 1 ELSE 0 END) AS stress_rest_samples, '
+        '  SUM(CASE WHEN stress_level BETWEEN 26 AND 50  THEN 1 ELSE 0 END) AS stress_low_samples, '
+        '  SUM(CASE WHEN stress_level BETWEEN 51 AND 75  THEN 1 ELSE 0 END) AS stress_med_samples, '
+        '  SUM(CASE WHEN stress_level BETWEEN 76 AND 100 THEN 1 ELSE 0 END) AS stress_high_samples '
         'FROM wellness_log WHERE user_id=? AND date >= ? '
         'GROUP BY date ORDER BY date',
+        (uid, cutoff)
+    ).fetchall()
+
+    # Body battery charged / drained — walk the per-second series with
+    # LAG() and sum the positive and negative deltas separately. Returns one
+    # row per day; missing days drop out cleanly via the LEFT-join in
+    # `_build_chart_data`. Done as a separate query because window-function
+    # aggregation can't sit alongside plain GROUP BY columns in the main
+    # rollup above without a CTE / subquery.
+    bb_delta_rows = db.execute(
+        'WITH deltas AS ('
+        '  SELECT date, body_battery - LAG(body_battery) OVER ('
+        '    PARTITION BY user_id, date ORDER BY timestamp_ms'
+        '  ) AS delta '
+        '  FROM wellness_log WHERE user_id=? AND date >= ? AND body_battery IS NOT NULL'
+        ') '
+        'SELECT date, '
+        '  SUM(CASE WHEN delta > 0 THEN delta ELSE 0 END)  AS charged, '
+        '  SUM(CASE WHEN delta < 0 THEN -delta ELSE 0 END) AS drained '
+        'FROM deltas GROUP BY date ORDER BY date',
         (uid, cutoff)
     ).fetchall()
 
@@ -173,7 +203,7 @@ def index():
     # whichever columns the source file knows about, so this select gets the
     # merged best-of view.
     daily_metric_rows = db.execute(
-        'SELECT date, sleep_score, hrv_overnight_avg_ms '
+        'SELECT date, sleep_score, hrv_overnight_avg_ms, resting_metabolic_rate '
         'FROM garmin_daily_metrics WHERE user_id=? AND date >= ? ORDER BY date',
         (uid, cutoff)
     ).fetchall()
@@ -181,7 +211,7 @@ def index():
     chart_data = _build_chart_data(
         self_report_rows, body_rows,
         cardio_load, strength_load, strength_counts,
-        garmin_rows, daily_metric_rows,
+        garmin_rows, daily_metric_rows, bb_delta_rows,
     )
 
     return render_template(
@@ -259,11 +289,16 @@ def _d(value) -> str:
     return str(value)[:10] if value is not None else ''
 
 
+_STRESS_SAMPLE_MIN = 3.0  # Garmin samples stress ~every 3 minutes
+
+
 def _build_chart_data(self_rows, body_rows, cardio_rows, strength_rows,
-                      strength_count_rows, garmin_rows, daily_metric_rows=()):
+                      strength_count_rows, garmin_rows, daily_metric_rows=(),
+                      bb_delta_rows=()):
     self_by_date = {_d(r['date']): r for r in self_rows}
     garmin_by_date = {_d(r['date']): r for r in garmin_rows}
     daily_by_date = {_d(r['date']): r for r in daily_metric_rows}
+    bb_delta_by_date = {_d(r['date']): r for r in bb_delta_rows}
 
     sleep_hours = [
         {'x': d, 'y': float(r['sleep_hours'])}
@@ -363,6 +398,50 @@ def _build_chart_data(self_rows, body_rows, cardio_rows, strength_rows,
         {'x': d, 'y': float(r['hrv_overnight_avg_ms'])}
         for d, r in daily_by_date.items() if r['hrv_overnight_avg_ms'] is not None
     ]
+    resting_calories = []
+    for d, r in daily_by_date.items():
+        try:
+            v = r['resting_metabolic_rate']
+        except (KeyError, IndexError):
+            continue
+        if v is not None:
+            resting_calories.append({'x': d, 'y': float(v)})
+
+    # Stress time-in-zone — sample counts × ~3 min interval. Garmin Connect
+    # displays the same buckets on the stress page.
+    stress_minutes = {
+        'rest':   [], 'low':  [], 'medium': [], 'high': [],
+    }
+    bucket_columns = {
+        'rest':   'stress_rest_samples',
+        'low':    'stress_low_samples',
+        'medium': 'stress_med_samples',
+        'high':   'stress_high_samples',
+    }
+    for r in garmin_rows:
+        d = _d(r['date'])
+        for bucket, col in bucket_columns.items():
+            # SELECT returns these always, but unit-test fixtures may omit
+            # them — Row objects raise on missing keys, so guard with a get.
+            try:
+                n = r[col]
+            except (KeyError, IndexError):
+                continue
+            if n:
+                stress_minutes[bucket].append(
+                    {'x': d, 'y': round(int(n) * _STRESS_SAMPLE_MIN, 1)}
+                )
+
+    # Body battery charged / drained — separately summed positive and
+    # negative deltas across the day.
+    body_battery['charged'] = [
+        {'x': d, 'y': float(r['charged'])}
+        for d, r in bb_delta_by_date.items() if r['charged'] is not None
+    ]
+    body_battery['drained'] = [
+        {'x': d, 'y': float(r['drained'])}
+        for d, r in bb_delta_by_date.items() if r['drained'] is not None
+    ]
 
     return {
         'sleep_hours':   sleep_hours,
@@ -378,7 +457,9 @@ def _build_chart_data(self_rows, body_rows, cardio_rows, strength_rows,
         'respiration':   respiration,
         'body_battery':  body_battery,
         'daily_activity': daily_activity,
-        'hrv':           hrv,
+        'hrv':            hrv,
+        'resting_calories': resting_calories,
+        'stress_minutes':   stress_minutes,
         # #283 follow-up — these still need their own FIT file types
         # (TRAINING_STATUS / SPO2 / VO2max emissions are separate from
         # _METRICS.fit and we haven't seen samples yet). Template renders

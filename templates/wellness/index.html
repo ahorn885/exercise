@@ -193,6 +193,14 @@
   </div>
   {% endif %}
 
+  {# Stress time-in-zone — stacked minutes per bucket per day #}
+  {% if chart_data.stress_minutes.rest or chart_data.stress_minutes.low or chart_data.stress_minutes.medium or chart_data.stress_minutes.high %}
+  <div class="card card-pad">
+    <span class="eyebrow">Stress · time-in-zone (min/day)</span>
+    <div class="chart-box wide sec-sm"><canvas id="chart-stress-zones"></canvas></div>
+  </div>
+  {% endif %}
+
   {# Respiration — avg + lowest from wellness_log #}
   {% if chart_data.respiration.avg or chart_data.respiration.low %}
   <div class="card card-pad">
@@ -209,6 +217,14 @@
   </div>
   {% endif %}
 
+  {# Body battery charged vs drained — daily delta totals #}
+  {% if chart_data.body_battery.charged or chart_data.body_battery.drained %}
+  <div class="card card-pad">
+    <span class="eyebrow">Body battery · charged / drained per day</span>
+    <div class="chart-box wide sec-sm"><canvas id="chart-body-battery-delta"></canvas></div>
+  </div>
+  {% endif %}
+
   {# Daily activity — cumulative MAX from wellness_log per day #}
   {% if chart_data.daily_activity.steps or chart_data.daily_activity.active_cal or chart_data.daily_activity.distance_mi %}
   <div class="card card-pad">
@@ -218,6 +234,14 @@
       {% if chart_data.daily_activity.active_cal %}<div class="chart-box"><canvas id="chart-active-cal"></canvas></div>{% endif %}
       {% if chart_data.daily_activity.distance_mi %}<div class="chart-box"><canvas id="chart-distance"></canvas></div>{% endif %}
     </div>
+  </div>
+  {% endif %}
+
+  {# Resting calories — Garmin's RMR computed from profile + activity baseline #}
+  {% if chart_data.resting_calories %}
+  <div class="card card-pad">
+    <span class="eyebrow">Resting calories · device (kcal/day)</span>
+    <div class="chart-box wide sec-sm"><canvas id="chart-resting-cal"></canvas></div>
   </div>
   {% endif %}
 
@@ -385,6 +409,38 @@ if (data.stress) {
   if (series.length) line('chart-stress', series, { yAxis: { min: 0, max: 100 } });
 }
 
+// ─── Stress time-in-zone (stacked bars per day) ─────────────
+if (data.stress_minutes) {
+  const series = [];
+  if (data.stress_minutes.rest   && data.stress_minutes.rest.length)   series.push(bar('Rest',   data.stress_minutes.rest,   good));
+  if (data.stress_minutes.low    && data.stress_minutes.low.length)    series.push(bar('Low',    data.stress_minutes.low,    info));
+  if (data.stress_minutes.medium && data.stress_minutes.medium.length) series.push(bar('Medium', data.stress_minutes.medium, accent));
+  if (data.stress_minutes.high   && data.stress_minutes.high.length)   series.push(bar('High',   data.stress_minutes.high,   fg));
+  if (series.length) {
+    new Chart(document.getElementById('chart-stress-zones'), {
+      type: 'bar',
+      data: { datasets: series },
+      options: {
+        responsive: true, maintainAspectRatio: false, animation: false,
+        parsing: false,
+        plugins: {
+          legend: { display: true, labels: { font: { size: 11 } } },
+          tooltip: {
+            backgroundColor: fg, padding: 8, displayColors: true,
+            titleFont: { family: "'JetBrains Mono', monospace", size: 11 },
+            bodyFont:  { family: "'JetBrains Mono', monospace", size: 12 },
+            callbacks: { label: ctx => `${ctx.dataset.label}: ${ctx.parsed.y} min` },
+          },
+        },
+        scales: {
+          x: Object.assign(dateAxis(), { stacked: true }),
+          y: valueAxis({ stacked: true, beginAtZero: true }),
+        },
+      },
+    });
+  }
+}
+
 // ─── Respiration (avg + lowest) ─────────────────────────────
 if (data.respiration) {
   const series = [];
@@ -399,6 +455,13 @@ if (data.body_battery) {
   if (data.body_battery.high && data.body_battery.high.length) series.push(ds('High', data.body_battery.high, good));
   if (data.body_battery.low  && data.body_battery.low.length)  series.push(ds('Low',  data.body_battery.low,  accent));
   if (series.length) line('chart-body-battery', series, { yAxis: { min: 0, max: 100 } });
+
+  // Charged vs drained per day (stacked-ish — they're independent positives;
+  // showing both lines on one axis makes the day's net effect visible).
+  const deltaSeries = [];
+  if (data.body_battery.charged && data.body_battery.charged.length) deltaSeries.push(ds('Charged', data.body_battery.charged, good));
+  if (data.body_battery.drained && data.body_battery.drained.length) deltaSeries.push(ds('Drained', data.body_battery.drained, accent));
+  if (deltaSeries.length) line('chart-body-battery-delta', deltaSeries, { yAxis: { beginAtZero: true } });
 }
 
 // ─── Daily activity (steps / cal / distance) ────────────────
@@ -406,6 +469,11 @@ if (data.daily_activity) {
   if (data.daily_activity.steps       && data.daily_activity.steps.length)       line('chart-steps',       [bar('Steps',        data.daily_activity.steps,       fg)],     { type: 'bar', yAxis: { beginAtZero: true } });
   if (data.daily_activity.active_cal  && data.daily_activity.active_cal.length)  line('chart-active-cal',  [bar('Active cal',   data.daily_activity.active_cal,  accent)], { type: 'bar', yAxis: { beginAtZero: true } });
   if (data.daily_activity.distance_mi && data.daily_activity.distance_mi.length) line('chart-distance',    [bar('Distance (mi)', data.daily_activity.distance_mi, info)],  { type: 'bar', yAxis: { beginAtZero: true }, unit: ' mi' });
+}
+
+// ─── Resting calories (RMR) ────────────────────────────────
+if (data.resting_calories && data.resting_calories.length) {
+  line('chart-resting-cal', [ds('RMR', data.resting_calories, fg)], { unit: ' kcal' });
 }
 
 // ─── Body composition ──────────────────────────────────────

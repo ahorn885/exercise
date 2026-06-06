@@ -131,3 +131,100 @@ def test_metrics_to_db_fields_only_emits_present_keys():
         'hrv_samples': [[1779928000000, 65.3]],
     })
     assert set(fields.keys()) == {'hrv_overnight_avg_ms', 'hrv_samples_json'}
+
+
+# ── Follow-up additions (RMR, stress bucketing, body battery deltas) ─────────
+
+def test_resting_calories_surface_from_garmin_daily_metrics():
+    """RMR is extracted from MonitoringInfoMessage by parse_wellness_daily_extras
+    and UPSERTed into garmin_daily_metrics. The chart reads it from there."""
+    daily_metric_rows = [
+        _r(date='2026-05-28', sleep_score=None, hrv_overnight_avg_ms=None,
+           resting_metabolic_rate=1994),
+        _r(date='2026-05-29', sleep_score=None, hrv_overnight_avg_ms=None,
+           resting_metabolic_rate=2010),
+    ]
+    chart = _build_chart_data([], [], [], [], [], [], daily_metric_rows)
+    assert chart['resting_calories'] == [
+        {'x': '2026-05-28', 'y': 1994.0},
+        {'x': '2026-05-29', 'y': 2010.0},
+    ]
+
+
+def test_metrics_to_db_fields_passes_through_rmr():
+    """RMR lands as its own column from the wellness importer's extras call."""
+    from routes.garmin import _metrics_to_db_fields
+    fields = _metrics_to_db_fields({
+        'date': '2026-05-28',
+        'resting_metabolic_rate': 1994,
+    })
+    assert fields == {'resting_metabolic_rate': 1994}
+
+
+def test_stress_time_in_zone_minutes_uses_3min_sample_interval():
+    """COUNT(*) samples per stress band × 3 min interval ≈ Garmin Connect's
+    bucketed minutes. Andy's May 28: 24h day, ~480 samples expected; the
+    rest/low/medium/high counts should multiply by 3 cleanly."""
+    garmin_rows = [
+        _r(date='2026-05-28', avg_hr=58.0, resting_hr=44, peak_hr=89,
+           avg_stress=24.0, peak_stress=70,
+           avg_resp=13.0, min_resp=6.0,
+           bb_high=99, bb_low=24,
+           daily_steps=5438, daily_active_cal=106, daily_distance_m=4250.0,
+           stress_rest_samples=240, stress_low_samples=140,
+           stress_med_samples=20,  stress_high_samples=2),
+    ]
+    chart = _build_chart_data([], [], [], [], [], garmin_rows)
+    # 240 × 3 = 720 min Rest (Andy's Garmin Connect reads 12h 13min on May 28)
+    assert chart['stress_minutes']['rest']   == [{'x': '2026-05-28', 'y': 720.0}]
+    assert chart['stress_minutes']['low']    == [{'x': '2026-05-28', 'y': 420.0}]
+    assert chart['stress_minutes']['medium'] == [{'x': '2026-05-28', 'y':  60.0}]
+    assert chart['stress_minutes']['high']   == [{'x': '2026-05-28', 'y':   6.0}]
+
+
+def test_stress_buckets_skip_zero_sample_days():
+    """A day with zero samples in a bucket shouldn't put a zero on the chart —
+    the rest of the cards skip NULLs, this stays consistent."""
+    garmin_rows = [
+        _r(date='2026-05-28', avg_hr=58.0, resting_hr=44, peak_hr=89,
+           avg_stress=24.0, peak_stress=70,
+           avg_resp=13.0, min_resp=6.0,
+           bb_high=99, bb_low=24,
+           daily_steps=5438, daily_active_cal=106, daily_distance_m=4250.0,
+           stress_rest_samples=240, stress_low_samples=0,
+           stress_med_samples=0,   stress_high_samples=0),
+    ]
+    chart = _build_chart_data([], [], [], [], [], garmin_rows)
+    assert chart['stress_minutes']['rest']   == [{'x': '2026-05-28', 'y': 720.0}]
+    assert chart['stress_minutes']['low']    == []
+    assert chart['stress_minutes']['medium'] == []
+    assert chart['stress_minutes']['high']   == []
+
+
+def test_body_battery_charged_drained_from_lag_deltas():
+    """body_battery.{charged, drained} land from the bb_delta_rows query —
+    each day's positive deltas summed separately from negatives."""
+    bb_delta_rows = [
+        _r(date='2026-05-28', charged=68, drained=52),
+        _r(date='2026-05-29', charged=70, drained=40),
+    ]
+    chart = _build_chart_data([], [], [], [], [], [], (),
+                              bb_delta_rows=bb_delta_rows)
+    assert chart['body_battery']['charged'] == [
+        {'x': '2026-05-28', 'y': 68.0},
+        {'x': '2026-05-29', 'y': 70.0},
+    ]
+    assert chart['body_battery']['drained'] == [
+        {'x': '2026-05-28', 'y': 52.0},
+        {'x': '2026-05-29', 'y': 40.0},
+    ]
+
+
+def test_body_battery_delta_query_failure_doesnt_break_other_cards():
+    """If bb_delta_rows is empty/missing (e.g. window function unavailable
+    in a future SQLite test path), the rest of the chart still renders."""
+    chart = _build_chart_data([], [], [], [], [], [], (), bb_delta_rows=())
+    assert chart['body_battery']['charged'] == []
+    assert chart['body_battery']['drained'] == []
+    # Other cards still work
+    assert chart['sleep_score'] == {'self': [], 'device': []}
