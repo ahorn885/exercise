@@ -142,14 +142,27 @@ def index():
     ).fetchall()
 
     # Garmin wellness daily aggregates — `wellness_log` is per-second from
-    # `_WELLNESS.fit`. Body-battery min (the trough is the meaningful value,
-    # not the average) feeds the Energy overlay; HR avg and stress peak get
-    # their own cards.
+    # `_WELLNESS.fit`. Body-battery extremes feed the Energy overlay (min)
+    # and the standalone "Body battery" card (high+low). HR and stress and
+    # respiration aggregations get their own combined cards.
+    #
+    # Steps / active_calories / distance arrive in MonitoringMessage as
+    # **cumulative running totals** (each new row > the previous), so the
+    # daily total is MAX(...) per day, not SUM — summing would double-count.
     garmin_rows = db.execute(
         'SELECT date, '
-        '  AVG(heart_rate)    AS avg_hr, '
-        '  MAX(stress_level)  AS peak_stress, '
-        '  MIN(body_battery)  AS min_bb '
+        '  AVG(heart_rate)        AS avg_hr, '
+        '  MIN(heart_rate)        AS resting_hr, '
+        '  MAX(heart_rate)        AS peak_hr, '
+        '  AVG(stress_level)      AS avg_stress, '
+        '  MAX(stress_level)      AS peak_stress, '
+        '  AVG(respiration_rate)  AS avg_resp, '
+        '  MIN(respiration_rate)  AS min_resp, '
+        '  MAX(body_battery)      AS bb_high, '
+        '  MIN(body_battery)      AS bb_low, '
+        '  MAX(steps)             AS daily_steps, '
+        '  MAX(active_calories)   AS daily_active_cal, '
+        '  MAX(distance_m)        AS daily_distance_m '
         'FROM wellness_log WHERE user_id=? AND date >= ? '
         'GROUP BY date ORDER BY date',
         (uid, cutoff)
@@ -283,8 +296,8 @@ def _build_chart_data(self_rows, body_rows, cardio_rows, strength_rows,
         # Body battery is bucketed daily as the trough (`MIN`) — recovery
         # bottoms out at the lowest reading, not the average.
         'device': [
-            {'x': d, 'y': float(r['min_bb'])}
-            for d, r in garmin_by_date.items() if r['min_bb'] is not None
+            {'x': d, 'y': float(r['bb_low'])}
+            for d, r in garmin_by_date.items() if r['bb_low'] is not None
         ],
     }
 
@@ -314,14 +327,37 @@ def _build_chart_data(self_rows, body_rows, cardio_rows, strength_rows,
         for d in activity_dates
     ]
 
-    avg_hr = [
-        {'x': _d(r['date']), 'y': float(r['avg_hr'])}
-        for r in garmin_rows if r['avg_hr'] is not None
-    ]
-    peak_stress = [
-        {'x': _d(r['date']), 'y': float(r['peak_stress'])}
-        for r in garmin_rows if r['peak_stress'] is not None
-    ]
+    # Heart-rate card: resting (MIN, the overnight low) + avg + peak, all on
+    # one chart so the daily spread is visible at a glance.
+    heart_rate = {
+        'resting': _series(garmin_rows, 'resting_hr'),
+        'avg':     _series(garmin_rows, 'avg_hr'),
+        'peak':    _series(garmin_rows, 'peak_hr'),
+    }
+    # Stress: AVG + peak. The user's Garmin Connect shows a single 0–100
+    # daily-average stress number; we add peak so the page also surfaces the
+    # spike days.
+    stress = {
+        'avg':  _series(garmin_rows, 'avg_stress'),
+        'peak': _series(garmin_rows, 'peak_stress'),
+    }
+    respiration = {
+        'avg':  _series(garmin_rows, 'avg_resp'),
+        'low':  _series(garmin_rows, 'min_resp'),
+    }
+    body_battery = {
+        'high': _series(garmin_rows, 'bb_high'),
+        'low':  _series(garmin_rows, 'bb_low'),
+    }
+    # Daily activity from cumulative MonitoringMessage — distance comes out
+    # in metres; convert to miles for the chart so it reads alongside cardio
+    # mileage on the rest of the app.
+    daily_activity = {
+        'steps':       _series(garmin_rows, 'daily_steps'),
+        'active_cal':  _series(garmin_rows, 'daily_active_cal'),
+        'distance_mi': [{'x': p['x'], 'y': round(p['y'] * 0.000621371, 2)}
+                        for p in _series(garmin_rows, 'daily_distance_m')],
+    }
 
     hrv = [
         {'x': d, 'y': float(r['hrv_overnight_avg_ms'])}
@@ -329,17 +365,20 @@ def _build_chart_data(self_rows, body_rows, cardio_rows, strength_rows,
     ]
 
     return {
-        'sleep_hours':  sleep_hours,
-        'sleep_score':  sleep_score,
-        'energy':       energy,
-        'soreness':     soreness,
-        'mood':         mood,
-        'body':         {k: v for k, v in body.items() if v},
-        'training':     training,
-        'activities':   activities,
-        'avg_hr':       avg_hr,
-        'peak_stress':  peak_stress,
-        'hrv':          hrv,
+        'sleep_hours':   sleep_hours,
+        'sleep_score':   sleep_score,
+        'energy':        energy,
+        'soreness':      soreness,
+        'mood':          mood,
+        'body':          {k: v for k, v in body.items() if v},
+        'training':      training,
+        'activities':    activities,
+        'heart_rate':    heart_rate,
+        'stress':        stress,
+        'respiration':   respiration,
+        'body_battery':  body_battery,
+        'daily_activity': daily_activity,
+        'hrv':           hrv,
         # #283 follow-up — these still need their own FIT file types
         # (TRAINING_STATUS / SPO2 / VO2max emissions are separate from
         # _METRICS.fit and we haven't seen samples yet). Template renders
@@ -349,6 +388,16 @@ def _build_chart_data(self_rows, body_rows, cardio_rows, strength_rows,
         'vo2max_cycling':     [],
         'active_minutes':     [],
     }
+
+
+def _series(rows, column: str) -> list:
+    """{x: date, y: value} from a SELECT result, skipping NULLs."""
+    out = []
+    for r in rows:
+        v = r[column]
+        if v is not None:
+            out.append({'x': _d(r['date']), 'y': float(v)})
+    return out
 
 
 def _has_any_data(chart_data) -> bool:

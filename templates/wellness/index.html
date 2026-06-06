@@ -131,11 +131,11 @@
     {% endif %}
   </div>
 
-  {# Avg HR — wellness_log #}
-  {% if chart_data.avg_hr %}
+  {# Heart rate — resting (min overnight) / avg / peak from wellness_log #}
+  {% if chart_data.heart_rate.resting or chart_data.heart_rate.avg or chart_data.heart_rate.peak %}
   <div class="card card-pad">
-    <span class="eyebrow">Average heart rate · device (bpm)</span>
-    <div class="chart-box wide sec-sm"><canvas id="chart-avg-hr"></canvas></div>
+    <span class="eyebrow">Heart rate · device (bpm)</span>
+    <div class="chart-box wide sec-sm"><canvas id="chart-heart-rate"></canvas></div>
   </div>
   {% endif %}
 
@@ -185,11 +185,39 @@
   </div>
   {% endif %}
 
-  {# Peak stress — wellness_log #}
-  {% if chart_data.peak_stress %}
+  {# Stress — avg + peak from wellness_log #}
+  {% if chart_data.stress.avg or chart_data.stress.peak %}
   <div class="card card-pad">
-    <span class="eyebrow">Peak stress · device (0–100)</span>
-    <div class="chart-box wide sec-sm"><canvas id="chart-peak-stress"></canvas></div>
+    <span class="eyebrow">Stress · device (0–100)</span>
+    <div class="chart-box wide sec-sm"><canvas id="chart-stress"></canvas></div>
+  </div>
+  {% endif %}
+
+  {# Respiration — avg + lowest from wellness_log #}
+  {% if chart_data.respiration.avg or chart_data.respiration.low %}
+  <div class="card card-pad">
+    <span class="eyebrow">Respiration · device (breaths/min)</span>
+    <div class="chart-box wide sec-sm"><canvas id="chart-respiration"></canvas></div>
+  </div>
+  {% endif %}
+
+  {# Body battery — daily high + low (low also overlaid into Energy above) #}
+  {% if chart_data.body_battery.high or chart_data.body_battery.low %}
+  <div class="card card-pad">
+    <span class="eyebrow">Body battery · device (0–100)</span>
+    <div class="chart-box wide sec-sm"><canvas id="chart-body-battery"></canvas></div>
+  </div>
+  {% endif %}
+
+  {# Daily activity — cumulative MAX from wellness_log per day #}
+  {% if chart_data.daily_activity.steps or chart_data.daily_activity.active_cal or chart_data.daily_activity.distance_mi %}
+  <div class="card card-pad">
+    <span class="eyebrow">Daily activity · device</span>
+    <div class="chart-grid">
+      {% if chart_data.daily_activity.steps %}<div class="chart-box"><canvas id="chart-steps"></canvas></div>{% endif %}
+      {% if chart_data.daily_activity.active_cal %}<div class="chart-box"><canvas id="chart-active-cal"></canvas></div>{% endif %}
+      {% if chart_data.daily_activity.distance_mi %}<div class="chart-box"><canvas id="chart-distance"></canvas></div>{% endif %}
+    </div>
   </div>
   {% endif %}
 
@@ -326,9 +354,13 @@ if (data.hrv && data.hrv.length) {
 
 // ─── VO2max / training-readiness / active-minutes — follow-up scaffolds ───
 
-// ─── Average HR ─────────────────────────────────────────────
-if (data.avg_hr && data.avg_hr.length) {
-  line('chart-avg-hr', [ds('Avg HR', data.avg_hr, fg)], { unit: ' bpm' });
+// ─── Heart rate (resting / avg / peak) ─────────────────────
+if (data.heart_rate) {
+  const series = [];
+  if (data.heart_rate.resting && data.heart_rate.resting.length) series.push(ds('Resting', data.heart_rate.resting, info));
+  if (data.heart_rate.avg     && data.heart_rate.avg.length)     series.push(ds('Avg',     data.heart_rate.avg,     fg));
+  if (data.heart_rate.peak    && data.heart_rate.peak.length)    series.push(ds('Peak',    data.heart_rate.peak,    accent));
+  if (series.length) line('chart-heart-rate', series, { unit: ' bpm' });
 }
 
 // ─── Training load ─────────────────────────────────────────
@@ -345,10 +377,35 @@ if (data.activities && data.activities.length) {
        { type: 'bar', yAxis: { beginAtZero: true, ticks: { stepSize: 1 } } });
 }
 
-// ─── Peak stress ────────────────────────────────────────────
-if (data.peak_stress && data.peak_stress.length) {
-  line('chart-peak-stress', [ds('Peak stress', data.peak_stress, accent)],
-       { yAxis: { min: 0, max: 100 } });
+// ─── Stress (avg + peak) ────────────────────────────────────
+if (data.stress) {
+  const series = [];
+  if (data.stress.avg  && data.stress.avg.length)  series.push(ds('Avg',  data.stress.avg,  fg));
+  if (data.stress.peak && data.stress.peak.length) series.push(ds('Peak', data.stress.peak, accent));
+  if (series.length) line('chart-stress', series, { yAxis: { min: 0, max: 100 } });
+}
+
+// ─── Respiration (avg + lowest) ─────────────────────────────
+if (data.respiration) {
+  const series = [];
+  if (data.respiration.avg && data.respiration.avg.length) series.push(ds('Avg',    data.respiration.avg, fg));
+  if (data.respiration.low && data.respiration.low.length) series.push(ds('Lowest', data.respiration.low, info));
+  if (series.length) line('chart-respiration', series, { unit: ' brpm' });
+}
+
+// ─── Body battery (high + low) ──────────────────────────────
+if (data.body_battery) {
+  const series = [];
+  if (data.body_battery.high && data.body_battery.high.length) series.push(ds('High', data.body_battery.high, good));
+  if (data.body_battery.low  && data.body_battery.low.length)  series.push(ds('Low',  data.body_battery.low,  accent));
+  if (series.length) line('chart-body-battery', series, { yAxis: { min: 0, max: 100 } });
+}
+
+// ─── Daily activity (steps / cal / distance) ────────────────
+if (data.daily_activity) {
+  if (data.daily_activity.steps       && data.daily_activity.steps.length)       line('chart-steps',       [bar('Steps',        data.daily_activity.steps,       fg)],     { type: 'bar', yAxis: { beginAtZero: true } });
+  if (data.daily_activity.active_cal  && data.daily_activity.active_cal.length)  line('chart-active-cal',  [bar('Active cal',   data.daily_activity.active_cal,  accent)], { type: 'bar', yAxis: { beginAtZero: true } });
+  if (data.daily_activity.distance_mi && data.daily_activity.distance_mi.length) line('chart-distance',    [bar('Distance (mi)', data.daily_activity.distance_mi, info)],  { type: 'bar', yAxis: { beginAtZero: true }, unit: ' mi' });
 }
 
 // ─── Body composition ──────────────────────────────────────

@@ -29,8 +29,16 @@ def test_overlays_normalize_self_report_to_100_scale():
            soreness=4, mood=3),
     ]
     garmin_rows = [
-        _r(date='2026-06-01', avg_hr=58.0, peak_stress=42, min_bb=35),
-        _r(date='2026-06-02', avg_hr=61.0, peak_stress=70, min_bb=20),
+        _r(date='2026-06-01', avg_hr=58.0, resting_hr=48, peak_hr=120,
+           avg_stress=22, peak_stress=42,
+           avg_resp=14.0, min_resp=8.0,
+           bb_high=92, bb_low=35,
+           daily_steps=8200, daily_active_cal=210, daily_distance_m=5400.0),
+        _r(date='2026-06-02', avg_hr=61.0, resting_hr=50, peak_hr=128,
+           avg_stress=31, peak_stress=70,
+           avg_resp=15.0, min_resp=9.0,
+           bb_high=88, bb_low=20,
+           daily_steps=9100, daily_active_cal=245, daily_distance_m=6100.0),
     ]
 
     chart = _build_chart_data(self_rows, [], [], [], [], garmin_rows)
@@ -113,3 +121,53 @@ def test_has_any_data_detects_overlay_self_series():
         [], [], [], [], [],
     )
     assert _has_any_data(chart) is True
+
+
+def test_wellness_log_aggregations_surface_as_combined_cards():
+    """`/wellness` reads daily aggregates off `wellness_log` and groups
+    them into combined cards (HR resting+avg+peak together, etc.). Verify
+    each aggregate column lands in the expected card slot, and that the
+    distance series gets m → mi converted."""
+    garmin_rows = [
+        _r(date='2026-05-28', avg_hr=58.0, resting_hr=44, peak_hr=89,
+           avg_stress=24.0, peak_stress=70,
+           avg_resp=13.0, min_resp=6.0,
+           bb_high=99, bb_low=24,
+           daily_steps=5438, daily_active_cal=106, daily_distance_m=4250.0),
+    ]
+    chart = _build_chart_data([], [], [], [], [], garmin_rows)
+    assert chart['heart_rate']['resting'] == [{'x': '2026-05-28', 'y': 44.0}]
+    assert chart['heart_rate']['avg']     == [{'x': '2026-05-28', 'y': 58.0}]
+    assert chart['heart_rate']['peak']    == [{'x': '2026-05-28', 'y': 89.0}]
+    assert chart['stress']['avg']         == [{'x': '2026-05-28', 'y': 24.0}]
+    assert chart['stress']['peak']        == [{'x': '2026-05-28', 'y': 70.0}]
+    assert chart['respiration']['avg']    == [{'x': '2026-05-28', 'y': 13.0}]
+    assert chart['respiration']['low']    == [{'x': '2026-05-28', 'y': 6.0}]
+    assert chart['body_battery']['high']  == [{'x': '2026-05-28', 'y': 99.0}]
+    assert chart['body_battery']['low']   == [{'x': '2026-05-28', 'y': 24.0}]
+    assert chart['daily_activity']['steps']      == [{'x': '2026-05-28', 'y': 5438.0}]
+    assert chart['daily_activity']['active_cal'] == [{'x': '2026-05-28', 'y': 106.0}]
+    # 4250 m × 0.000621371 = 2.64 mi (2 decimals)
+    assert chart['daily_activity']['distance_mi'] == [{'x': '2026-05-28', 'y': 2.64}]
+
+
+def test_aggregation_series_skip_null_rows():
+    """A day with no body battery sample shouldn't put a NULL on the chart.
+    Verifies the per-column NULL skip in `_series`."""
+    garmin_rows = [
+        _r(date='2026-05-28', avg_hr=58.0, resting_hr=44, peak_hr=89,
+           avg_stress=24.0, peak_stress=70,
+           avg_resp=13.0, min_resp=6.0,
+           bb_high=None, bb_low=None,
+           daily_steps=5438, daily_active_cal=106, daily_distance_m=4250.0),
+        _r(date='2026-05-29', avg_hr=None, resting_hr=None, peak_hr=None,
+           avg_stress=None, peak_stress=None,
+           avg_resp=None, min_resp=None,
+           bb_high=80, bb_low=18,
+           daily_steps=None, daily_active_cal=None, daily_distance_m=None),
+    ]
+    chart = _build_chart_data([], [], [], [], [], garmin_rows)
+    # 28th had no battery; 29th did → only 29th lands.
+    assert chart['body_battery']['high'] == [{'x': '2026-05-29', 'y': 80.0}]
+    # 29th had no steps; 28th did → only 28th lands.
+    assert chart['daily_activity']['steps'] == [{'x': '2026-05-28', 'y': 5438.0}]
