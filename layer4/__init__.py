@@ -178,6 +178,11 @@ from layer4.locale_assign import (
     SessionAssignment,
     assign_locales,
 )
+from layer4.rx_wire import (
+    ExerciseRxOutcome,
+    RxWireDiagnostic,
+    apply_current_rx,
+)
 from layer4.session_grid import (
     InsufficientRestWarning,
     detect_insufficient_rest,
@@ -426,6 +431,10 @@ __all__ = [
     "InsufficientRestWarning",
     "detect_insufficient_rest",
     "expected_rest_count",
+    # Track 2 slice 2d — deterministic rx wiring (rx_wire.py)
+    "ExerciseRxOutcome",
+    "RxWireDiagnostic",
+    "apply_current_rx",
     # Race-week brief synthesizer (race_week_brief.py)
     "build_record_race_week_brief_tool",
     "llm_layer4_race_week_brief",

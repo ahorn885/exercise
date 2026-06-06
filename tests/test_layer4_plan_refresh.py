@@ -390,6 +390,7 @@ def _strength_session(
     duration_min: int = 45,
     exercise_ids: tuple[str, ...] = ("E-squat", "E-pushup"),
     locale_id: str | None = "home_gym",
+    discipline_id: str = "D-run",
 ) -> dict[str, Any]:
     return {
         "date": d.isoformat(),
@@ -397,8 +398,8 @@ def _strength_session(
         "session_index_in_day": idx,
         "time_of_day": "afternoon",
         "kind": "strength",
-        "discipline_id": "D-run",
-        "discipline_name": "Running",
+        "discipline_id": discipline_id,
+        "discipline_name": discipline_id,
         "locale_id": locale_id,
         "locale_name": locale_id,
         "duration_min": duration_min,
@@ -1255,10 +1256,20 @@ class TestObservationEmission:
 
 
 def _injury_violating_session(d: date) -> dict[str, Any]:
-    """Strength session prescribing an excluded exercise — fires
-    `injury_violation_*` blocker."""
-    s = _strength_session(d=d, exercise_ids=("E-banned",))
-    return s
+    """Strength session on a discipline NOT in `_layer2a()`'s included set —
+    fires `discipline_excluded_*` blocker (Rule 12, structural per spec §8).
+
+    Was injury_violation (Rule 7) until Track 2 slice 2d demoted Rule 7 to
+    warning; switched to Rule 12 as the still-blocker driver for the
+    capped-retry tests below. Helper name preserved so the call sites read
+    the same (the only thing the tests care about is "produces a blocker
+    that drives a retry").
+    """
+    return _strength_session(
+        d=d,
+        exercise_ids=("E-banned",),
+        discipline_id="D-not-included",
+    )
 
 
 class TestCappedRetry:

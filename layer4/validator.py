@@ -488,8 +488,12 @@ def _rule_acwr(payload: Layer4Payload, ctx: ValidatorContext) -> list[RuleFailur
     if chronic_avg_per_week <= 0:
         return []
     ratio = acute / chronic_avg_per_week
+    # Track 2 slice 2d: demoted to warning (§8 / D2 row). The deterministic
+    # ramp + Bosquet taper from `layer4/periodization.py` handle the real
+    # ACWR cases; this rule stays as advisory drift detection. Single tier
+    # now — anything outside the ±20pp band emits warning, not blocker.
     if ratio < 0.7 or ratio > 1.4:
-        severity = "blocker"
+        severity = "warning"
     elif ratio < 0.8 or ratio > 1.3:
         severity = "warning"
     else:
@@ -830,7 +834,14 @@ def _rule_injury_violation(payload: Layer4Payload, ctx: ValidatorContext) -> lis
                 RuleFailure(
                     rule_name=f"injury_violation_{ex.exercise_id}_in_{s.session_id}",
                     phase_name=s.phase_metadata.phase_name if s.phase_metadata else None,
-                    severity="blocker",
+                    # Track 2 slice 2d: demoted to warning (§8 / D2 row 7).
+                    # The 2D-exclusion is enforced structurally at the slice-2a
+                    # tool-schema enum (`compute_feasible_pool_ids` subtracts
+                    # `Layer2DPayload.excluded_exercises`), so an injury-excluded
+                    # exercise can't reach the payload through the normal path.
+                    # This rule stays as an edge-case advisory for hand-edited /
+                    # legacy-cached payloads.
+                    severity="warning",
                     detail=(
                         f"prescribed exercise {ex.exercise_id} ('{ex.exercise_name}') is in "
                         "Layer2D excluded_exercises (injury contraindication)"

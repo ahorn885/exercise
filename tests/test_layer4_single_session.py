@@ -711,10 +711,14 @@ class TestCappedRetry:
         }
 
     def test_validator_fail_then_pass_retries_once(self):
-        # First pass: emits an excluded exercise → injury_violation_* blocker.
-        # Retry: emits clean exercises → validator passes.
-        excluded_2d = _layer2d(excluded=("E-bench",))
-        bad_strength = _strength_tool_output(exercise_ids=("E-bench",))
+        # First pass: emits a session with a locale_id NOT in the validator
+        # context's cluster → `session_locale_not_in_cluster_*` blocker
+        # (Rule 6c, structural per spec §8). Retry: emits the right locale →
+        # accepted. Switched from injury_violation in Track 2 slice 2d: Rule 7
+        # is now warning-only.
+        bad_strength = _strength_tool_output(
+            exercise_ids=("E-squat",), locale_id="not_in_cluster",
+        )
         good_strength = _strength_tool_output(exercise_ids=("E-squat",))
 
         req = SingleSessionRequest(
@@ -725,9 +729,9 @@ class TestCappedRetry:
         )
         payload = llm_layer4_single_session_synthesize(
             request=req,
-            layer2c_payload_for_locale=_layer2c(exercise_ids=("E-bench", "E-squat")),
+            layer2c_payload_for_locale=_layer2c(exercise_ids=("E-squat",)),
             llm_caller=_sequence_caller([bad_strength, good_strength]),
-            **self._common(layer2d=excluded_2d),
+            **self._common(),
         )
         assert payload.llm_call_count == 2
         # validator_results: pass 0 (fail), pass 1 (accepted)
@@ -736,8 +740,10 @@ class TestCappedRetry:
         assert payload.validator_results[-1].accepted is True
 
     def test_cap_hit_emits_best_effort_observation(self):
-        excluded_2d = _layer2d(excluded=("E-bench",))
-        bad_strength = _strength_tool_output(exercise_ids=("E-bench",))
+        # Same blocker swap as above — Rule 6c session_locale_not_in_cluster.
+        bad_strength = _strength_tool_output(
+            exercise_ids=("E-squat",), locale_id="not_in_cluster",
+        )
 
         req = SingleSessionRequest(
             sport="strength",
@@ -747,10 +753,10 @@ class TestCappedRetry:
         )
         payload = llm_layer4_single_session_synthesize(
             request=req,
-            layer2c_payload_for_locale=_layer2c(exercise_ids=("E-bench",)),
+            layer2c_payload_for_locale=_layer2c(exercise_ids=("E-squat",)),
             llm_caller=_sequence_caller([bad_strength, bad_strength, bad_strength]),
             capped_retries=2,
-            **self._common(layer2d=excluded_2d),
+            **self._common(),
         )
         # 1 initial + 2 retries = 3 LLM calls
         assert payload.llm_call_count == 3
