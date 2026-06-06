@@ -1,25 +1,30 @@
 {% extends 'base.html' %}
 {% set nav_active = 'workout' %}
-{% block title %}Strength log{% endblock %}
-{% block crumbs %}<b>Strength log</b>{% endblock %}
+{% block title %}Workouts{% endblock %}
+{% block crumbs %}<b>Workouts</b>{% endblock %}
 {% block topbar_actions %}
+<a class="btn btn-ghost btn-sm" href="{{ url_for('cardio.new_entry') }}">
+  <svg class="icon" width="12" height="12" aria-hidden="true"><use href="#i-plus"></use></svg> Log cardio
+</a>
 <a class="btn btn-primary btn-sm" href="{{ url_for('training.new_entry') }}">
-  <svg class="icon" width="12" height="12" aria-hidden="true"><use href="#i-plus"></use></svg> Log session
+  <svg class="icon" width="12" height="12" aria-hidden="true"><use href="#i-plus"></use></svg> Log strength
 </a>
 {% endblock %}
 
-{# Redesign (finish-the-open) — §08 strength-log history list, migrated onto the
-   new .app shell (the entry form migrated earlier; this is its history view,
-   the live target of the sidebar "Workouts" item). Filters + edit/delete
-   actions + the rx outcome chips preserved. #}
+{# Federated Workouts feed (#441) — strength + cardio sessions chronologically.
+   Each row links to its modality-specific edit page (the de facto detail
+   surface for now). Target / Next Rx / 1RM moved off this view: Target is a
+   pre-workout concern, Next Rx + 1RM belong on /rx/ (current engine state). #}
+
+{% set BIKE = ['Road Cycling','Mountain Biking','Gravel Cycling','Indoor Bike Trainer'] %}
 
 {% block content %}
 <div class="dash-head">
   <div class="races-intro">
-    <p class="eyebrow accent">● Workouts · strength history</p>
-    <h1 class="page-title">Strength log.</h1>
-    <p class="page-sub">Every logged session with its sets, RPE, estimated 1RM, and the engine's next
-      prescription. Filter by day or exercise.</p>
+    <p class="eyebrow accent">● Workouts · recent sessions</p>
+    <h1 class="page-title">Workouts.</h1>
+    <p class="page-sub">Every logged strength + cardio session, newest first. Click a row for the full
+      detail (per-set breakdown, conditions, notes).</p>
   </div>
 </div>
 
@@ -29,12 +34,11 @@
     <input type="date" name="date" class="form-control" value="{{ date_filter }}">
   </label>
   <label class="field">
-    <span class="lbl">Exercise</span>
-    <select name="exercise" class="form-control">
-      <option value="">All exercises</option>
-      {% for ex in exercises %}
-      <option value="{{ ex.exercise }}" {% if ex.exercise == exercise_filter %}selected{% endif %}>{{ ex.exercise }}</option>
-      {% endfor %}
+    <span class="lbl">Modality</span>
+    <select name="modality" class="form-control">
+      <option value="">All</option>
+      <option value="strength" {% if modality_filter == 'strength' %}selected{% endif %}>Strength</option>
+      <option value="cardio"   {% if modality_filter == 'cardio'   %}selected{% endif %}>Cardio</option>
     </select>
   </label>
   <div class="loglist-filter-act">
@@ -47,45 +51,82 @@
 <div class="card table-scroll">
   <table class="data">
     <thead>
-      <tr><th>Date</th><th>Exercise</th><th>Target</th><th>Sets</th><th>RPE</th><th>1RM</th><th>Vol</th><th>Outcome</th><th>Next Rx</th><th></th></tr>
+      <tr>
+        <th>Date</th>
+        <th>Type</th>
+        <th>What</th>
+        <th>Details</th>
+        <th>RPE / HR</th>
+        <th>Vol / Dist</th>
+        <th>Outcome / Elev+</th>
+        <th></th>
+      </tr>
     </thead>
     <tbody>
     {% for e in entries %}
-    <tr>
-      <td class="text-nowrap">{{ e.date }}</td>
-      <td class="text-nowrap">{{ e.exercise }}</td>
-      <td class="text-nowrap dim">{{ e.target_sets or '—' }}×{{ e.target_reps or '—' }}{% if e.target_weight %} @ {{ e.target_weight }}lb{% endif %}</td>
-      <td>
-        {% if e.id in sets_by_log %}
-          {% for s in sets_by_log[e.id] %}
-            <span class="chip">S{{ s.set_number }}:{% if s.reps %} {{ s.reps }}r{% endif %}{% if s.weight_lbs %} {{ s.weight_lbs }}lb{% endif %}{% if s.duration_sec %} {{ s.duration_sec }}s{% endif %}</span>
-          {% endfor %}
-        {% else %}
-          <span class="dim">{{ e.actual_sets or '—' }}×{{ e.actual_reps or '—' }}{% if e.actual_weight %} @ {{ e.actual_weight }}lb{% endif %}</span>
-        {% endif %}
-      </td>
-      <td class="text-nowrap">{{ e.rpe or '—' }}</td>
-      <td class="text-nowrap">{{ e.est_1rm or '—' }}</td>
-      <td class="text-nowrap">{{ e.volume | int if e.volume else '—' }}</td>
-      <td>
-        {% if e.outcome %}
-          <span class="chip {% if '↑' in e.outcome %}good{% elif '→' in e.outcome %}warn{% else %}bad{% endif %}">{{ e.outcome }}</span>
-        {% else %}—{% endif %}
-      </td>
-      <td class="text-nowrap dim">{% if e.next_sets %}{{ e.next_sets }}×{{ e.next_reps }}{% if e.next_weight %}@{{ e.next_weight }}lb{% endif %}{% endif %}</td>
-      <td class="loglist-act">
-        <a href="{{ url_for('training.edit_entry', entry_id=e.id) }}" class="btn btn-ghost btn-sm">Edit</a>
-        <form method="post" action="{{ url_for('training.delete_entry', entry_id=e.id) }}" data-confirm="Delete this entry?">
-          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-          <button class="btn btn-outline-danger btn-sm">Del</button>
-        </form>
-      </td>
-    </tr>
+      {% if e.modality == 'strength' %}
+      <tr>
+        <td class="text-nowrap">{{ e.date }}</td>
+        <td class="text-nowrap"><span class="chip accent">Strength</span></td>
+        <td class="text-nowrap">{{ e.exercise }}</td>
+        <td>
+          {% if e.id in sets_by_log %}
+            {% for s in sets_by_log[e.id] %}
+              <span class="chip">S{{ s.set_number }}:{% if s.reps %} {{ s.reps }}r{% endif %}{% if s.weight_lbs %} {{ s.weight_lbs }}lb{% endif %}{% if s.duration_sec %} {{ s.duration_sec }}s{% endif %}</span>
+            {% endfor %}
+          {% else %}
+            <span class="dim">{{ e.actual_sets or '—' }}×{{ e.actual_reps or '—' }}{% if e.actual_weight %} @ {{ e.actual_weight }}lb{% endif %}</span>
+          {% endif %}
+        </td>
+        <td class="text-nowrap">{{ e.rpe or '—' }}</td>
+        <td class="text-nowrap">{{ e.volume | int if e.volume else '—' }}</td>
+        <td>
+          {% if e.outcome %}
+            <span class="chip {% if '↑' in e.outcome %}good{% elif '→' in e.outcome %}warn{% else %}bad{% endif %}">{{ e.outcome }}</span>
+          {% else %}—{% endif %}
+        </td>
+        <td class="loglist-act">
+          <a href="{{ url_for('training.edit_entry', entry_id=e.id) }}" class="btn btn-ghost btn-sm">Open</a>
+          <form method="post" action="{{ url_for('training.delete_entry', entry_id=e.id) }}" data-confirm="Delete this entry?">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button class="btn btn-outline-danger btn-sm">Del</button>
+          </form>
+        </td>
+      </tr>
+      {% else %}
+      <tr>
+        <td class="text-nowrap">{{ e.date }}</td>
+        <td class="text-nowrap"><span class="chip">Cardio</span></td>
+        <td class="text-nowrap">
+          {{ e.activity }}{% if e.activity_name %} <span class="dim">· {{ e.activity_name }}</span>{% endif %}
+        </td>
+        <td class="text-nowrap">
+          {{ e.duration_min or '—' }}{% if e.duration_min %} min{% endif %}
+          <span class="dim">·</span>
+          {%- if e.activity in BIKE and e.avg_speed %} {{ e.avg_speed }} mph
+          {%- elif e.avg_pace %} {{ e.avg_pace }}/mi
+          {%- elif e.avg_speed %} {{ e.avg_speed }} mph
+          {%- else %} —{%- endif -%}
+        </td>
+        <td class="text-nowrap">{% if e.avg_hr %}{{ e.avg_hr }} bpm{% else %}—{% endif %}</td>
+        <td class="text-nowrap">{{ e.distance_mi or '—' }}{% if e.distance_mi %} mi{% endif %}</td>
+        <td class="text-nowrap">{% if e.elev_gain_ft %}{{ e.elev_gain_ft }} ft{% else %}—{% endif %}</td>
+        <td class="loglist-act">
+          <a href="{{ url_for('cardio.edit_entry', entry_id=e.id) }}" class="btn btn-ghost btn-sm">Open</a>
+          <form method="post" action="{{ url_for('cardio.delete_entry', entry_id=e.id) }}" data-confirm="Delete this entry?">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button class="btn btn-outline-danger btn-sm">Del</button>
+          </form>
+        </td>
+      </tr>
+      {% endif %}
     {% endfor %}
     </tbody>
   </table>
 </div>
 {% else %}
-<p class="page-sub">No entries found. <a href="{{ url_for('training.new_entry') }}">Log a session.</a></p>
+<p class="page-sub">No sessions logged yet.
+  <a href="{{ url_for('training.new_entry') }}">Log strength</a> or
+  <a href="{{ url_for('cardio.new_entry') }}">log cardio</a>.</p>
 {% endif %}
 {% endblock %}

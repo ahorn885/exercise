@@ -58,9 +58,10 @@ def new_entry():
 @bp.route('/cardio/<int:entry_id>/edit', methods=['GET', 'POST'])
 def edit_entry(entry_id):
     db = get_db()
+    uid = current_user_id()
     entry = db.execute(
         'SELECT * FROM cardio_log WHERE id=? AND user_id=?',
-        (entry_id, current_user_id())
+        (entry_id, uid)
     ).fetchone()
     if not entry:
         flash('Entry not found.', 'danger')
@@ -70,8 +71,15 @@ def edit_entry(entry_id):
         flash('Entry updated.', 'success')
         return redirect(url_for('cardio.list_entries'))
     plan_items = _load_plan_items(db)
+    # Conditions are FK'd to cardio_log; surface them on the detail page so
+    # the athlete sees weather + clothing alongside the session (#441).
+    conditions = db.execute(
+        'SELECT * FROM conditions_log WHERE cardio_log_id=? AND user_id=? '
+        'ORDER BY id',
+        (entry_id, uid)
+    ).fetchall()
     return render_template('cardio/form.html', entry=entry, activities=ACTIVITIES,
-                           plan_items=plan_items)
+                           plan_items=plan_items, conditions=conditions)
 
 
 @bp.route('/cardio/<int:entry_id>/activity-fit')

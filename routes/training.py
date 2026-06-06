@@ -10,44 +10,74 @@ from routes.auth import current_user_id
 bp = Blueprint('training', __name__)
 
 
+_MODALITIES = ('strength', 'cardio')
+
+
 @bp.route('/training')
 def list_entries():
+    """Federated workouts feed — strength + cardio sessions chronologically.
+
+    The sidebar 'Workouts' item lives here. URL stays /training for back-compat
+    with edit/delete redirects; the page itself is now multi-modality.
+    """
     db = get_db()
+    uid = current_user_id()
     date_filter = request.args.get('date', '')
-    exercise_filter = request.args.get('exercise', '')
+    modality_filter = request.args.get('modality', '').strip().lower()
+    if modality_filter not in _MODALITIES:
+        modality_filter = ''  # 'all'
 
-    query = 'SELECT * FROM training_log WHERE user_id = ?'
-    params = [current_user_id()]
-    if date_filter:
-        query += ' AND date = ?'
-        params.append(date_filter)
-    if exercise_filter:
-        query += ' AND exercise LIKE ?'
-        params.append(f'%{exercise_filter}%')
-    query += ' ORDER BY date DESC, id DESC'
+    strength_rows: list = []
+    cardio_rows: list = []
 
-    entries = db.execute(query, params).fetchall()
-    exercises = db.execute(
-        'SELECT DISTINCT exercise FROM current_rx WHERE user_id = ? ORDER BY exercise',
-        (current_user_id(),)
-    ).fetchall()
+    if modality_filter in ('', 'strength'):
+        q = 'SELECT * FROM training_log WHERE user_id = ?'
+        params: list = [uid]
+        if date_filter:
+            q += ' AND date = ?'
+            params.append(date_filter)
+        q += ' ORDER BY date DESC, id DESC'
+        strength_rows = db.execute(q, params).fetchall()
 
-    # Fetch per-set data for entries that have it (children of user-scoped log)
-    log_ids = [e['id'] for e in entries]
-    sets_by_log = {}
-    if log_ids:
+    if modality_filter in ('', 'cardio'):
+        q = 'SELECT * FROM cardio_log WHERE user_id = ?'
+        params = [uid]
+        if date_filter:
+            q += ' AND date = ?'
+            params.append(date_filter)
+        q += ' ORDER BY date DESC, id DESC'
+        cardio_rows = db.execute(q, params).fetchall()
+
+    # Per-set chips for strength rows only.
+    sets_by_log: dict = {}
+    if strength_rows:
+        log_ids = [r['id'] for r in strength_rows]
         placeholders = ','.join('?' * len(log_ids))
         set_rows = db.execute(
             f'SELECT * FROM training_log_sets '
             f'WHERE training_log_id IN ({placeholders}) AND user_id = ? '
             f'ORDER BY training_log_id, set_number',
-            log_ids + [current_user_id()]
+            log_ids + [uid]
         ).fetchall()
         for s in set_rows:
             sets_by_log.setdefault(s['training_log_id'], []).append(s)
 
-    return render_template('training/list.html', entries=entries, exercises=exercises,
-                           date_filter=date_filter, exercise_filter=exercise_filter,
+    # Merge by date desc, then id desc within a date. Modality is tagged so
+    # the template can render the right row shape. `id` is per-table so ties
+    # across modalities are arbitrary but stable within a modality.
+    entries: list = []
+    for r in strength_rows:
+        d = dict(r)
+        d['modality'] = 'strength'
+        entries.append(d)
+    for r in cardio_rows:
+        d = dict(r)
+        d['modality'] = 'cardio'
+        entries.append(d)
+    entries.sort(key=lambda e: (str(e['date']), e['id']), reverse=True)
+
+    return render_template('training/list.html', entries=entries,
+                           date_filter=date_filter, modality_filter=modality_filter,
                            sets_by_log=sets_by_log)
 
 

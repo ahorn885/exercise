@@ -80,6 +80,36 @@
         <input type="number" name="active_lengths" class="form-control form-control-sm" value="{{ entry.active_lengths if entry else '' }}"></label>
     </div>
 
+    {# ── Conditions (weather + clothing, FK'd to cardio_log) — read-only.
+       Surfaces the linked conditions_log row(s) on the cardio detail page
+       (#441). Logged via the separate /conditions surface. #}
+    {% if entry and conditions %}
+    {% for c in conditions %}
+    <div class="note-card sec cond-card">
+      <span class="eyebrow">Conditions{% if conditions|length > 1 %} · #{{ loop.index }}{% endif %}</span>
+      <div class="rd-row">
+        {% if c.temp_f is not none %}<span><b>Temp:</b> {{ c.temp_f }}°F{% if c.feels_like_f is not none %} (feels {{ c.feels_like_f }}°F){% endif %}</span>{% endif %}
+        {% if c.wind_mph is not none %}<span><b>Wind:</b> {{ c.wind_mph }} mph{% if c.wind_dir %} {{ c.wind_dir }}{% endif %}</span>{% endif %}
+        {% if c.conditions %}<span><b>Sky:</b> {{ c.conditions }}</span>{% endif %}
+        {% if c.comfort is not none %}<span><b>Comfort:</b> {{ c.comfort }}/5</span>{% endif %}
+      </div>
+      {% set clothing_pairs = [('Head', c.headwear), ('Face/neck', c.face_neck),
+                                ('Upper shell', c.upper_shell), ('Mid', c.upper_mid_layer),
+                                ('Base', c.upper_base_layer), ('Lower outer', c.lower_outer),
+                                ('Under', c.lower_under), ('Gloves', c.gloves),
+                                ('Arm warmers', c.arm_warmers), ('Socks', c.socks),
+                                ('Footwear', c.footwear)] %}
+      {% set worn = clothing_pairs | selectattr(1) | list %}
+      {% if worn %}
+      <div class="rd-row">
+        {% for label, value in worn %}<span><b>{{ label }}:</b> {{ value }}</span>{% endfor %}
+      </div>
+      {% endif %}
+      {% if c.comfort_notes %}<p class="dim">{{ c.comfort_notes }}</p>{% endif %}
+    </div>
+    {% endfor %}
+    {% endif %}
+
     {# ── Running dynamics (read-only, from FIT import) ── #}
     {% if entry and (entry.stride_length_m or entry.vert_oscillation_cm or entry.gct_ms) %}
     <div class="note-card sec">
