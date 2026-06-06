@@ -1,6 +1,6 @@
 # Layer 4 Determinism-First Synthesis — Design Spec v1
 
-**Status:** DRAFT (Andy, 2026-06-06) — pending sign-off; implementation to follow in slices 2a → 2d (§10).
+**Status:** APPROVED (Andy, 2026-06-06). Slice 2a shipped this commit (5 files; all-paths enum + Rule 6a delete); 2b → 2d follow per §10.
 **Date:** 2026-06-06
 **Track:** 2 of 3 (#429, parent epic #427). Track 1 (Locations Consolidation, #428) shipped (PRs #426 + #431). Track 3 (D-52 catalog migration, #430) parallel/after.
 **Closes / addresses:** #335 #336 #338 #339 #341 #337 (the plan-gen quality issues #429 says Track 2 subsumes).
@@ -73,21 +73,38 @@ The LLM keeps the genuinely-creative work (exercise selection within constraints
 
 ## 4. Tool-schema constraint (D1)
 
-The `record_phase_sessions` tool's `strength_exercises.exercise_id` field changes from a free string to an **enum bounded by the per-block resolved feasible pool**:
+The four LLM tool schemas that emit `strength_exercises.exercise_id` change the field from a free string to an **enum bounded by the per-block resolved feasible pool**:
+
+| Tool | File | Caller |
+|---|---|---|
+| `record_phase_sessions` | `layer4/per_phase.py` | Pattern A fresh-plan synth |
+| `record_refresh_sessions` | `layer4/plan_refresh.py` | T1 / T2 / T3 plan patches |
+| `record_single_session` | `layer4/single_session.py` | D-63 on-demand workout |
+| `record_race_week_brief` | `layer4/race_week_brief.py` | Taper-week overrides |
 
 ```python
-# layer4/per_phase.py — _session_schema() / build_record_phase_sessions_tool()
-"exercise_id": {
-    "type": "string",
-    "enum": sorted(feasible_pool_ids),  # ≈ tens to low hundreds per block
-},
+# Canonical helper in layer4/per_phase.py; imported by the other three modules.
+def compute_feasible_pool_ids(
+    layer2c_payloads: dict[str, Layer2CPayload],
+    layer2d_payload: Layer2DPayload | None,
+) -> list[str]:
+    """Cluster-union of resolved exercise_ids minus 2D-excluded; sorted+deduped."""
+
+# Each tool builder accepts feasible_pool_ids: list[str] | None = None
+"exercise_id": (
+    {"type": "string", "enum": feasible_pool_ids}
+    if feasible_pool_ids
+    else {"type": "string"}
+),
 ```
 
-`feasible_pool_ids` = the per-block cluster-union pool already rendered by `_format_strength_exercise_pool` (§600 in `per_phase.py`), minus 2D-excluded exercises (`injury_risk_profile.excluded_exercise_ids`). The list is already computed; the schema reads from the same source as the prompt.
+`feasible_pool_ids` is the cluster-union of `Layer2CPayload.exercises_resolved[].exercise_id` across every locale in the bundle, minus `Layer2DPayload.excluded_exercises[].exercise_id`. The list is already computed; the schema reads from the same source as the prompt. Sorted+deduped for deterministic enum ordering (cache-key stability + diff legibility).
 
-**Size bound:** Anthropic's tool-use schema accepts large enums; we cap at 200 (with a warning log if a block exceeds it — would indicate a 2C/2D mis-filter). Per-block scoping keeps real-world cases well under.
+**Empty-pool semantics:** when the helper returns `[]` (no resolvable strength surface — e.g. cardio-only locale, all candidates 2D-excluded), callers pass `feasible_pool_ids=None` so the schema reverts to free string (avoids an invalid empty-enum). The athlete-facing "no_strength_feasible" escape is a §11 edge case spec'd separately.
 
-**Validator consequence:** Rule 6a (`equipment_unavailable`) is deleted — the class is structurally impossible.
+**Size bound:** Anthropic's tool-use schema accepts large enums; per_phase logs a warning at 200 (would indicate a 2C/2D mis-filter). Per-block scoping keeps real-world cases well under (~10 disciplines × 10 cap = 100 typical).
+
+**Validator consequence:** Rule 6a (`equipment_unavailable`) is deleted — out-of-pool picks are structurally impossible at the SDK boundary across all four synthesis paths.
 
 ## 5. Deterministic stages
 
@@ -230,12 +247,18 @@ After 2d ships: only **6b / 6c / 5 / 12** remain as retry-driving blockers. The 
 
 ## 10. Code changes (file-by-file) + PR slicing
 
-### Slice 2a — schema enum + delete Rule 6a (≤3 files)
+### Slice 2a — schema enum (all 4 paths) + delete Rule 6a (5 substantive files)
 | File | Change |
 |---|---|
-| `layer4/per_phase.py` | `_session_schema` / `build_record_phase_sessions_tool` accept `feasible_pool_ids` parameter; `exercise_id` becomes enum. |
-| `layer4/validator.py` | Delete `_rule_equipment_unavailable` + remove from `_ALL_RULES`. |
-| `tests/test_layer4_per_phase.py` + `tests/test_layer4_validator.py` | Schema-enum test; deletion test. |
+| `layer4/per_phase.py` | NEW `compute_feasible_pool_ids()` helper (cluster-union of resolved ids ∖ 2D-excluded; canonical, imported by the other 3); `_session_schema` + `build_record_phase_sessions_tool` accept `feasible_pool_ids` parameter; caller computes + passes. |
+| `layer4/plan_refresh.py` | `_session_schema` + `build_record_refresh_sessions_tool` accept `feasible_pool_ids`; caller computes from `layer2_bundle.c` / `.d` + passes. |
+| `layer4/single_session.py` | `build_record_single_session_tool` accepts `feasible_pool_ids`; caller wraps single-locale `layer2c_payload_for_locale` as `{locale_id: l2c}` for the helper + passes. |
+| `layer4/race_week_brief.py` | `_taper_override_session_schema` + `build_record_race_week_brief_tool` accept `feasible_pool_ids`; caller computes + passes. |
+| `layer4/validator.py` | Delete `_rule_equipment_unavailable` + remove from `_ALL_RULES`; retire-stub comment in place; update stale 6a references in adjacent comments. |
+
+Non-substantive (test files): `tests/test_layer4_plan_create.py` adds `TestComputeFeasiblePoolIds` (4 tests) + `test_feasible_pool_enum*` (3 tests on the tool builder); `tests/test_layer4_validator.py` deletes the 3 Rule 6a tests + updates stale comments. `layer4/__init__.py` re-exports `compute_feasible_pool_ids`.
+
+**Scope expansion from the original spec** (single-file per_phase only): the original §10 listed per_phase + validator only. During implementation we discovered 3 other tool schemas (`record_refresh_sessions`, `record_single_session`, `record_race_week_brief`) that also emit `exercise_id` — deleting Rule 6a without enum-bounding those paths would create a feasibility-gating hole. Expanded to all 4 paths to keep §3's "structurally impossible" guarantee honest. Andy 2026-06-06 approved option A over the conservative-demotion option B.
 
 ### Slice 2b — session-count grid + intensity split + prompt rewrite (≤5 files)
 | File | Change |

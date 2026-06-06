@@ -51,6 +51,7 @@ from layer4.context import (
     Layer3APayload,
 )
 from layer4.errors import Layer4InputError, Layer4OutputError
+from layer4.per_phase import compute_feasible_pool_ids
 from layer4.payload import (
     CardioBlock,
     Layer4Payload,
@@ -201,12 +202,19 @@ def _intensity_target_schema() -> dict[str, Any]:
     }
 
 
-def build_record_single_session_tool() -> dict[str, Any]:
+def build_record_single_session_tool(
+    feasible_pool_ids: list[str] | None = None,
+) -> dict[str, Any]:
     """The `record_single_session` Anthropic tool definition per
     `Layer4_SingleSession_v2.md` §4.1 — mirrors the full `PlanSession`
     contract from `layer4/payload.py` (minus orchestrator-filled metadata:
     `session_id`, `plan_version_id`, `is_ad_hoc`, `ad_hoc_request_payload`,
-    `phase_metadata`)."""
+    `phase_metadata`).
+
+    Track 2 D1: `feasible_pool_ids` (when non-empty) bounds
+    `strength_exercises.exercise_id` via JSON-schema enum, making out-of-pool
+    picks structurally impossible at the SDK boundary. Production callers
+    pass `compute_feasible_pool_ids({locale_id: layer2c}, layer2d_payload)`."""
     return {
         "name": "record_single_session",
         "description": (
@@ -332,7 +340,11 @@ def build_record_single_session_tool() -> dict[str, Any]:
                                     "coaching_flags",
                                 ],
                                 "properties": {
-                                    "exercise_id": {"type": "string"},
+                                    "exercise_id": (
+                                        {"type": "string", "enum": feasible_pool_ids}
+                                        if feasible_pool_ids
+                                        else {"type": "string"}
+                                    ),
                                     "exercise_name": {"type": "string"},
                                     "resolution_tier": {"type": "integer", "enum": [1, 2, 3]},
                                     "substitute_text": {"type": ["string", "null"]},
@@ -873,7 +885,17 @@ def llm_layer4_single_session_synthesize(
         session_date = _date_type.today()
 
     caller: LLMCaller = llm_caller or _default_llm_caller
-    tool_schema = build_record_single_session_tool()
+    feasible_pool_ids = (
+        compute_feasible_pool_ids(
+            {layer2c_payload_for_locale.locale_id: layer2c_payload_for_locale},
+            layer2d_payload,
+        )
+        if layer2c_payload_for_locale is not None
+        else []
+    )
+    tool_schema = build_record_single_session_tool(
+        feasible_pool_ids=feasible_pool_ids or None
+    )
 
     rule_failures: list[RuleFailure] = []
     validator_results: list[ValidatorResult] = []

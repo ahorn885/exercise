@@ -1044,42 +1044,10 @@ def test_two_per_day_fires_via_model_construct_bypass():
     assert any("max_exceeded" in f.rule_name for f in tpd)
 
 
-# ─── Rule 6a: equipment_unavailable ────────────────────────────────────────
-
-
-def test_equipment_unavailable_in_pool_no_fire():
-    sessions = [
-        _strength_session(
-            session_id="S-1",
-            exercises=[_strength_exercise(exercise_id="E-squat")],
-        )
-    ]
-    payload = _minimal_layer4(sessions=sessions)
-    ctx = ValidatorContext(layer2c_payloads={"L-home": _layer2c(exercise_ids=["E-squat"])})
-    failures = validate_layer4_payload(payload, ctx).rule_failures
-    assert not any(f.rule_name.startswith("equipment_unavailable") for f in failures)
-
-
-def test_equipment_unavailable_missing_blocker():
-    sessions = [
-        _strength_session(
-            session_id="S-1",
-            exercises=[_strength_exercise(exercise_id="E-bench")],
-        )
-    ]
-    payload = _minimal_layer4(sessions=sessions)
-    ctx = ValidatorContext(layer2c_payloads={"L-home": _layer2c(exercise_ids=["E-squat"])})
-    failures = validate_layer4_payload(payload, ctx).rule_failures
-    eu = [f for f in failures if f.rule_name.startswith("equipment_unavailable")]
-    assert eu
-    assert eu[0].severity == "blocker"
-
-
-def test_equipment_unavailable_skipped_without_2c():
-    sessions = [_strength_session(session_id="S-1")]
-    payload = _minimal_layer4(sessions=sessions)
-    failures = validate_layer4_payload(payload, ValidatorContext()).rule_failures
-    assert not any(f.rule_name.startswith("equipment_unavailable") for f in failures)
+# ─── Rule 6a retired (Track 2 D1) — see Layer4_DeterminismFirst_Synthesis_Design_v1.md.
+#     Out-of-pool exercise_id is now structurally impossible via tool-schema
+#     enum (`compute_feasible_pool_ids` in `layer4/per_phase.py`). Enum behavior
+#     is covered by `test_layer4_plan_create.py::test_*_feasible_pool_enum*`.
 
 
 # ─── Rule 6b: session_multi_locale ─────────────────────────────────────────
@@ -1591,7 +1559,7 @@ def test_sport_locale_compatible_no_fire():
 
 def test_sport_locale_incompatible_strength_zero_coverage_warns():
     # A STRENGTH session whose discipline has 0 coverage → advisory warning
-    # (the per-exercise hard gate is Rule 6a equipment_unavailable, not this).
+    # (the per-exercise hard gate is now Track 2 D1's tool-schema enum, not this).
     payload = _minimal_layer4(sessions=[_strength_session(discipline_id="D-MTB")])
     ctx = ValidatorContext(
         layer2c_payloads={

@@ -148,6 +148,7 @@ from layer4.errors import (
 )
 from layer4.per_phase import (
     build_record_phase_sessions_tool,
+    compute_feasible_pool_ids,
     synthesize_phase,
 )
 from layer4.phase_structure import (
@@ -395,6 +396,7 @@ __all__ = [
     "scope_spans_phase_boundary",
     # Pattern A — per-phase synthesizer + seam reviewer + plan_create driver (Step 4f)
     "build_record_phase_sessions_tool",
+    "compute_feasible_pool_ids",
     "build_record_seam_review_tool",
     "llm_layer4_plan_create",
     "review_seam",

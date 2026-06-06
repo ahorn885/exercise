@@ -58,6 +58,7 @@ from layer4.context import (
     TrainingSubstitutionPayload,
 )
 from layer4.errors import Layer4InputError, Layer4OutputError
+from layer4.per_phase import compute_feasible_pool_ids
 from layer4.payload import (
     CardioBlock,
     Layer4Payload,
@@ -211,11 +212,15 @@ _REFRESH_COACHING_FLAGS = [
 ]
 
 
-def _session_schema() -> dict[str, Any]:
+def _session_schema(feasible_pool_ids: list[str] | None = None) -> dict[str, Any]:
     """One element of the `sessions` array — the full PlanSession contract
     mirror per Step 4a precedent. Differs from single_session.py only in the
     closed coaching_flags enum (7 refresh flags vs 3 single-session flags)
-    and the absence of `is_ad_hoc`-related sentinel fields."""
+    and the absence of `is_ad_hoc`-related sentinel fields.
+
+    Track 2 D1: when `feasible_pool_ids` is non-empty, the
+    `strength_exercises.exercise_id` property is bounded by enum, making
+    out-of-pool picks structurally impossible at the SDK boundary."""
     return {
         "type": "object",
         "additionalProperties": False,
@@ -323,7 +328,11 @@ def _session_schema() -> dict[str, Any]:
                         "coaching_flags",
                     ],
                     "properties": {
-                        "exercise_id": {"type": "string"},
+                        "exercise_id": (
+                            {"type": "string", "enum": feasible_pool_ids}
+                            if feasible_pool_ids
+                            else {"type": "string"}
+                        ),
                         "exercise_name": {"type": "string"},
                         "resolution_tier": {"type": "integer", "enum": [1, 2, 3]},
                         "substitute_text": {"type": ["string", "null"]},
@@ -367,12 +376,19 @@ def _session_schema() -> dict[str, Any]:
     }
 
 
-def build_record_refresh_sessions_tool(tier: Literal["T1", "T2", "T3"]) -> dict[str, Any]:
+def build_record_refresh_sessions_tool(
+    tier: Literal["T1", "T2", "T3"],
+    feasible_pool_ids: list[str] | None = None,
+) -> dict[str, Any]:
     """Anthropic tool definition for `record_refresh_sessions`. Sessions
     array `maxItems` is tier-specific: T1=4 (2-day window × max 2/day);
     T2=14 (7-day window × max 2/day); T3=56 (28-day window × max 2/day).
     Per-session shape is the full PlanSession contract mirror per the
-    Step 4a Option 2 precedent."""
+    Step 4a Option 2 precedent.
+
+    Track 2 D1: `feasible_pool_ids` (when non-empty) bounds
+    `strength_exercises.exercise_id` via JSON-schema enum. Production callers
+    pass `compute_feasible_pool_ids(layer2c_payloads, layer2d_payload)`."""
     max_items = {"T1": 4, "T2": 14, "T3": 56}[tier]
     description = (
         f"Record the synthesized {tier} refresh sessions covering "
@@ -393,7 +409,7 @@ def build_record_refresh_sessions_tool(tier: Literal["T1", "T2", "T3"]) -> dict[
                     "type": "array",
                     "minItems": 0,
                     "maxItems": max_items,
-                    "items": _session_schema(),
+                    "items": _session_schema(feasible_pool_ids),
                 }
             },
         },
@@ -910,7 +926,12 @@ def llm_layer4_plan_refresh(
         else tier_module.DEFAULT_EXTENDED_THINKING_BUDGET
     )
     system_prompt = tier_module.SYSTEM_PROMPT
-    tool_schema = build_record_refresh_sessions_tool(tier)
+    feasible_pool_ids = compute_feasible_pool_ids(
+        dict(layer2_bundle.c), layer2_bundle.d
+    )
+    tool_schema = build_record_refresh_sessions_tool(
+        tier, feasible_pool_ids=feasible_pool_ids or None
+    )
     caller: LLMCaller = llm_caller or _default_llm_caller
 
     effective_intent = parsed_intent or _default_parsed_intent()

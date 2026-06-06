@@ -357,11 +357,42 @@ def _intensity_target_schema() -> dict[str, Any]:
     }
 
 
-def _session_schema() -> dict[str, Any]:
+_FEASIBLE_POOL_ENUM_WARN_THRESHOLD = 200
+
+
+def compute_feasible_pool_ids(
+    layer2c_payloads: dict[str, Layer2CPayload],
+    layer2d_payload: Layer2DPayload | None,
+) -> list[str]:
+    """Track 2 D1: cluster-union of resolved strength `exercise_id`s across
+    every locale in `layer2c_payloads`, minus 2D-excluded ids. Sorted+deduped
+    for deterministic enum ordering across calls (cache-key stability + diff
+    legibility). Empty result means no resolvable strength surface (caller
+    typically reverts to free-string schema rather than passing an empty enum)."""
+    if not layer2c_payloads:
+        return []
+    excluded: set[str] = (
+        {er.exercise_id for er in layer2d_payload.excluded_exercises}
+        if layer2d_payload is not None
+        else set()
+    )
+    pool: set[str] = set()
+    for l2c in layer2c_payloads.values():
+        for rx in l2c.exercises_resolved:
+            if rx.exercise_id not in excluded:
+                pool.add(rx.exercise_id)
+    return sorted(pool)
+
+
+def _session_schema(feasible_pool_ids: list[str] | None = None) -> dict[str, Any]:
     """One element of `sessions[]`. Full PlanSession contract mirror per the
     Step 4a Option 2 precedent. Includes `rest` kind (Pattern A produces full
     schedules including rest days; differs from refresh/single_session which
-    only emit working sessions)."""
+    only emit working sessions).
+
+    Track 2 D1: when `feasible_pool_ids` is non-empty, the
+    `strength_exercises.exercise_id` property is bounded by enum, making
+    out-of-pool picks structurally impossible at the SDK boundary."""
     return {
         "type": "object",
         "additionalProperties": False,
@@ -469,7 +500,11 @@ def _session_schema() -> dict[str, Any]:
                         "coaching_flags",
                     ],
                     "properties": {
-                        "exercise_id": {"type": "string"},
+                        "exercise_id": (
+                            {"type": "string", "enum": feasible_pool_ids}
+                            if feasible_pool_ids
+                            else {"type": "string"}
+                        ),
                         "exercise_name": {"type": "string"},
                         "resolution_tier": {"type": "integer", "enum": [1, 2, 3]},
                         "substitute_text": {"type": ["string", "null"]},
@@ -513,12 +548,19 @@ def _session_schema() -> dict[str, Any]:
     }
 
 
-def build_record_phase_sessions_tool(max_sessions: int = 56) -> dict[str, Any]:
+def build_record_phase_sessions_tool(
+    max_sessions: int = 56,
+    feasible_pool_ids: list[str] | None = None,
+) -> dict[str, Any]:
     """Anthropic tool definition for `record_phase_sessions`. Sessions array
     `maxItems` accommodates up to 4 weeks × 7 days × 2/day = 56 for the
     longest typical phase (Base in standard mode 12 wks would split across
     multiple synthesizer calls in v2 if budget pressure surfaces; v1 single
-    call per phase). Caller can override `max_sessions` for tighter caps."""
+    call per phase). Caller can override `max_sessions` for tighter caps.
+
+    Track 2 D1: `feasible_pool_ids` (when non-empty) bounds
+    `strength_exercises.exercise_id` via JSON-schema enum. Production callers
+    pass `compute_feasible_pool_ids(layer2c_payloads, layer2d_payload)`."""
     return {
         "name": "record_phase_sessions",
         "description": (
@@ -535,7 +577,7 @@ def build_record_phase_sessions_tool(max_sessions: int = 56) -> dict[str, Any]:
                     "type": "array",
                     "minItems": 0,
                     "maxItems": max_sessions,
-                    "items": _session_schema(),
+                    "items": _session_schema(feasible_pool_ids),
                 },
                 "phase_synthesis_notes": {
                     "type": "string",
@@ -1238,9 +1280,11 @@ def render_user_prompt(
             )
     parts.append("")
 
-    # #335 Phase 2 §8 — the resolved strength-exercise pool, so the synthesizer
-    # picks real exercise_ids instead of inventing them (Rule 6a otherwise
-    # rejects invented ids as equipment_unavailable).
+    # #335 Phase 2 §8 — the resolved strength-exercise pool, rendered for the
+    # synthesizer's reading. Track 2 D1 also binds the tool-schema enum to the
+    # cluster-union of these ids (see `compute_feasible_pool_ids` +
+    # `build_record_phase_sessions_tool(..., feasible_pool_ids=...)`), making
+    # out-of-pool picks structurally impossible at the SDK boundary.
     pool_lines = _format_strength_exercise_pool(
         layer2c_payloads, layer2a_payload, layer2d_payload
     )
@@ -1697,7 +1741,20 @@ def synthesize_phase(
         # 56-session single call is the unit D-77 decomposition replaced; the
         # week-seam stitcher (Slice 3), not a token bump, is its scaling path.
         effective_max_tokens = max_tokens
-    tool_schema = build_record_phase_sessions_tool(max_sessions_this_unit)
+    feasible_pool_ids = compute_feasible_pool_ids(layer2c_payloads, layer2d_payload)
+    if len(feasible_pool_ids) > _FEASIBLE_POOL_ENUM_WARN_THRESHOLD:
+        import logging
+        logging.getLogger(__name__).warning(
+            "feasible_pool_ids=%d exceeds threshold %d for %s; "
+            "investigate 2C/2D filtering",
+            len(feasible_pool_ids),
+            _FEASIBLE_POOL_ENUM_WARN_THRESHOLD,
+            unit_tag,
+        )
+    tool_schema = build_record_phase_sessions_tool(
+        max_sessions_this_unit,
+        feasible_pool_ids=feasible_pool_ids or None,
+    )
 
     rule_failures: list[RuleFailure] = []
     validator_results: list[ValidatorResult] = []

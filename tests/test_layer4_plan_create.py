@@ -902,6 +902,141 @@ class TestRecordPhaseSessionsTool:
         )
         assert len(cb_items["properties"]["intensity_target"]["oneOf"]) == 9
 
+    def test_feasible_pool_enum_bounds_exercise_id(self):
+        """Track 2 D1: passing feasible_pool_ids constrains exercise_id to enum."""
+        pool = ["E-back-squat", "E-deadlift", "E-bench-press"]
+        t = build_record_phase_sessions_tool(feasible_pool_ids=pool)
+        ex_prop = (
+            t["input_schema"]["properties"]["sessions"]["items"][
+                "properties"
+            ]["strength_exercises"]["items"]["properties"]["exercise_id"]
+        )
+        assert ex_prop == {"type": "string", "enum": pool}
+
+    def test_feasible_pool_none_keeps_free_string(self):
+        """Backward compat: no feasible_pool_ids → free-string exercise_id."""
+        t = build_record_phase_sessions_tool()
+        ex_prop = (
+            t["input_schema"]["properties"]["sessions"]["items"][
+                "properties"
+            ]["strength_exercises"]["items"]["properties"]["exercise_id"]
+        )
+        assert ex_prop == {"type": "string"}
+        assert "enum" not in ex_prop
+
+    def test_feasible_pool_empty_list_keeps_free_string(self):
+        """Empty list → no enum (avoids invalid empty-enum schema)."""
+        t = build_record_phase_sessions_tool(feasible_pool_ids=[])
+        ex_prop = (
+            t["input_schema"]["properties"]["sessions"]["items"][
+                "properties"
+            ]["strength_exercises"]["items"]["properties"]["exercise_id"]
+        )
+        assert "enum" not in ex_prop
+
+
+class TestComputeFeasiblePoolIds:
+    """Track 2 D1: cluster-union of resolved exercise ids minus 2D-excluded."""
+
+    def _l2c(self, locale_id: str, exercise_ids: list[str]) -> Layer2CPayload:
+        return Layer2CPayload(
+            locale_id=locale_id,
+            etl_version_set={"layer0": "v7"},
+            effective_pool=list(exercise_ids),
+            discipline_coverage=[
+                DisciplineCoverage(
+                    discipline_id="D-run",
+                    discipline_name="Running",
+                    exercise_db_sport="x",
+                    total_exercises=len(exercise_ids),
+                    tier_1_count=len(exercise_ids),
+                    tier_2_count=0,
+                    tier_3_count=0,
+                    unavailable_count=0,
+                    coverage_pct=1.0,
+                )
+            ],
+            exercises_resolved=[
+                ResolvedExercise(
+                    exercise_id=ex,
+                    exercise_name=ex,
+                    exercise_type="strength",
+                    discipline_ids=["D-run"],
+                    sport_relevance_notes={"D-run": "x"},
+                    priority_per_discipline={"D-run": "Medium"},
+                    tier=1,
+                    terrain_required=[],
+                    contraindicated_parts=[],
+                    contraindicated_conditions=[],
+                    accommodations=[],
+                )
+                for ex in exercise_ids
+            ],
+            coaching_flags=[],
+        )
+
+    def test_empty_payloads_returns_empty(self):
+        from layer4 import compute_feasible_pool_ids
+
+        assert compute_feasible_pool_ids({}, None) == []
+
+    def test_single_locale_returns_sorted_ids(self):
+        from layer4 import compute_feasible_pool_ids
+
+        l2c = self._l2c("L-home", ["E-deadlift", "E-back-squat", "E-bench"])
+        assert compute_feasible_pool_ids({"L-home": l2c}, None) == [
+            "E-back-squat",
+            "E-bench",
+            "E-deadlift",
+        ]
+
+    def test_cluster_union_dedupes(self):
+        from layer4 import compute_feasible_pool_ids
+
+        home = self._l2c("L-home", ["E-deadlift", "E-bench"])
+        hotel = self._l2c("L-hotel", ["E-bench", "E-pushup"])
+        out = compute_feasible_pool_ids({"L-home": home, "L-hotel": hotel}, None)
+        assert out == ["E-bench", "E-deadlift", "E-pushup"]
+
+    def test_2d_exclusion_drops_excluded_ids(self):
+        from layer4 import compute_feasible_pool_ids
+        from layer4.context import Evidence, ExerciseRisk
+
+        l2c = self._l2c("L-home", ["E-deadlift", "E-back-squat", "E-overhead-press"])
+        l2d = Layer2DPayload(
+            etl_version_set={"layer0": "v7"},
+            excluded_exercises=[
+                ExerciseRisk(
+                    exercise_id="E-overhead-press",
+                    exercise_name="Overhead Press",
+                    discipline_ids=["D-run"],
+                    verdict="exclude",
+                    accommodations=[],
+                    evidence=[
+                        Evidence(
+                            source="contraindicated_part",
+                            exercise_field="contraindicated_parts",
+                            matched_value="wrist",
+                            injury_body_part="wrist",
+                            injury_severity="severe",
+                        )
+                    ],
+                )
+            ],
+            accommodated_exercises=[],
+            clean_exercise_ids=["E-deadlift", "E-back-squat"],
+            discipline_risk_profiles=[],
+            coaching_flags=[],
+            hitl_required=False,
+            hitl_items=[],
+            body_part_vocab_misses=[],
+            condition_vocab_misses=[],
+        )
+        assert compute_feasible_pool_ids({"L-home": l2c}, l2d) == [
+            "E-back-squat",
+            "E-deadlift",
+        ]
+
 
 class TestRecordSeamReviewTool:
     def test_tool_name(self):

@@ -645,38 +645,11 @@ def _rule_two_per_day(payload: Layer4Payload, ctx: ValidatorContext) -> list[Rul
     return out
 
 
-# ─── Rule 6a: equipment_unavailable ────────────────────────────────────────
-
-
-def _rule_equipment_unavailable(
-    payload: Layer4Payload, ctx: ValidatorContext
-) -> list[RuleFailure]:
-    out: list[RuleFailure] = []
-    if not ctx.layer2c_payloads:
-        return out
-    for s in payload.sessions:
-        if s.kind != "strength" or s.locale_id is None or s.strength_exercises is None:
-            continue
-        l2c = ctx.layer2c_payloads.get(s.locale_id)
-        if l2c is None:
-            continue  # rule 6c surfaces the unknown-locale case
-        resolved_ids = {rx.exercise_id for rx in l2c.exercises_resolved}
-        pool_ids = set(l2c.effective_pool)
-        for ex in s.strength_exercises:
-            if ex.exercise_id in resolved_ids or ex.exercise_id in pool_ids:
-                continue
-            out.append(
-                RuleFailure(
-                    rule_name=f"equipment_unavailable_{ex.exercise_id}_at_{s.locale_id}",
-                    phase_name=s.phase_metadata.phase_name if s.phase_metadata else None,
-                    severity="blocker",
-                    detail=(
-                        f"exercise {ex.exercise_id} not in effective_pool at locale {s.locale_id}"
-                    ),
-                    affected_session_ids=[s.session_id],
-                )
-            )
-    return out
+# ─── Rule 6a retired (Track 2 D1) — structurally impossible via tool-schema
+# enum on `exercise_id` (see `compute_feasible_pool_ids` in `layer4/per_phase.py`
+# + the four tool builders: per_phase, plan_refresh, single_session,
+# race_week_brief). Rule 6b below still catches the degenerate edge where a
+# session's `locale_id` has no resolvable exercise overlap.
 
 
 # ─── Rule 6b: session_multi_locale ─────────────────────────────────────────
@@ -1069,8 +1042,9 @@ def _rule_sport_locale_incompatible(
     #      owns the craft, stalling cold plans (prod pv=54: Build:seam0:w3 looped on
     #      sport_locale_incompatible D-003/D-008/D-012 until the 900s stall reaper).
     #   2. Demote to `warning`. The hard equipment gate on the *actual prescribed*
-    #      strength exercises is Rule 6a `equipment_unavailable` (per-exercise); this
-    #      discipline-level signal stays advisory, consistent with the spec.
+    #      strength exercises is now Track 2 D1's tool-schema enum (per-exercise
+    #      structural impossibility); this discipline-level signal stays advisory,
+    #      consistent with the spec.
     if not ctx.layer2c_payloads:
         return []
     out: list[RuleFailure] = []
@@ -1096,7 +1070,7 @@ def _rule_sport_locale_incompatible(
                     detail=(
                         f"discipline {s.discipline_id} has no resolvable strength exercises "
                         f"at locale {s.locale_id} (2C discipline_coverage 0); advisory only — "
-                        "Rule 6a equipment_unavailable gates the actual prescribed exercises"
+                        "Track 2 D1 tool-schema enum structurally bounds prescribed exercises"
                     ),
                     affected_session_ids=[s.session_id],
                 )
@@ -1544,7 +1518,6 @@ _ALL_RULES: tuple[Callable[[Layer4Payload, ValidatorContext], list[RuleFailure]]
     _rule_rest_spacing,
     _rule_intensity_dist,
     _rule_two_per_day,
-    _rule_equipment_unavailable,
     _rule_session_multi_locale,
     _rule_session_locale_not_in_cluster,
     _rule_injury_violation,
