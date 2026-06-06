@@ -34,16 +34,16 @@ This is the second half of Andy's 2026-06-05 redesign decision. Track 1 made the
    - Taper: 90% easy / 10% hard
    - Per-discipline ratio tuning deferred to v1.1. Edge-case risk handled via coach-note overrides where needed.
 
-5. **Deterministic rest placement** (D4). Phase-dependent required rest count; placement adjacent to the heaviest training day of the week. `daily_availability_windows` disabled days remain hard rest (already the case).
+5. **Deterministic rest detection** (D4). Phase-dependent **expected** rest count (not required); a deterministic post-check counts actual rest days in the synthesized week and emits a `insufficient_rest` warning + coaching flag when the count is below expected. LLM keeps placement freedom; the deterministic layer monitors and surfaces. `daily_availability_windows` disabled days remain hard rest (schema invariant; already the case).
 
 6. **Locale assignment process** (D5 + D6, Andy's reframe):
    1. LLM picks the ideal exercise set per session, **locale-agnostic**, from the cluster-union enum (§4).
    2. Deterministic: for each session, find the cluster locale where the **majority** of the ideal set fits (highest `equipment_required ⊆ effective_pool` coverage; ties → home; second tie → closest by `lat`/`lng`).
    3. Deterministic: assign that `locale_id` to the session.
    4. Deterministic substitution: any exercise from the ideal set that doesn't fit the chosen locale is swapped via the existing `_strength_pattern_match` infrastructure (movement-pattern overlap + matching `sport_priority` rank). Fall back to Tier-3 bodyweight proxy if no pattern-match candidate exists.
-   5. LLM substitution only as a final fallback — pattern-match returns no candidate AND no Tier-3 proxy exists. (Rare; one extra round-trip only when truly stuck.)
+   5. LLM substitution only as a final fallback — pattern-match returns no candidate AND no Tier-3 proxy exists. **Dedicated small call, not a re-invocation of the big synthesizer.** Single-purpose tool: input = `(exercise_id, movement_patterns, sport_priority, locale.effective_pool, excluded_ids)`; output = single `substitute_exercise_id` bounded by an enum on the locale pool. Haiku-class model, no periodization context, no week framing. Cache key `(exercise_id, locale_id, excluded_ids_hash) → substitute_id` (stable, highly reusable across athletes/blocks). One extra round-trip only when truly stuck.
 
-7. **rx_engine post-hoc wiring** (D7). Synthesizer emits `load_prescription` as advisory text. A deterministic post-step looks up `current_rx[(user_id, exercise_id)]` and rewrites the field with the precise rx (`"185 lbs × 5, RPE 7"`). First-exposure exercises (no `current_rx` row) keep the LLM's text + a `first_exposure` coaching flag (scale conservatively).
+7. **rx_engine post-hoc wiring** (D7). Synthesizer emits `load_prescription` as advisory text. A deterministic post-step looks up `current_rx[(user_id, exercise_id)]` and rewrites the field with the precise rx (`"185 lbs × 5, RPE 7"` — weight + reps + RPE target, all three useful: weight = the actual load to put on the bar, RPE = how it should feel for autoregulation). **First-exposure exercises** (no `current_rx` row) get a **deterministic RPE-only template** keyed off the exercise's category (compound barbell: `"calibration set — pick a weight that feels RPE 6 for 8 reps; log to set baseline"`; DB / bodyweight / cable variants: analogous) + a `first_exposure` coaching flag. No LLM in the first-exposure path — the template is a lookup off the exercise's category, not creative work.
 
 8. **Validator demotion sweep** (D8). Per-rule mapping in §8. Followed by a **quality-assurance audit** (deferred follow-up) once 3–4 plans have run on the new contract: review the warnings stream for false negatives, re-promote any rule whose demotion proved unsafe.
 
@@ -135,14 +135,19 @@ The grid annotates each session with a target `intensity_summary` (`easy` / `mod
 
 The LLM places which day is which but cannot deviate from the count.
 
-### 5.4 Rest placement (D4)
+### 5.4 Rest detection (D4)
 
 ```python
-def rest_days(phase: str, week_in_phase: int, weekly_capacity_d: int) -> set[Weekday]:
-    """Required rest days for the week, placed adjacent to the heaviest training day."""
+def expected_rest_count(phase: str, weekly_capacity_d: int) -> int:
+    """Coach-expected rest-day count for the week. Advisory."""
+
+def detect_insufficient_rest(week: SynthesizedWeek, expected: int) -> Warning | None:
+    """Post-synthesis check. Counts actual rest days (sessions=0 days, ignoring
+    daily_availability_windows-disabled days which are hard-rest already).
+    Returns Warning('insufficient_rest', expected=N, actual=M) when actual < expected."""
 ```
 
-Required rest count per phase: Base 2 / Build 1–2 / Peak 1 / Taper 2–3. Disabled `daily_availability_windows` days are added on top.
+Expected rest count per phase (advisory): Base 2 / Build 1–2 / Peak 1 / Taper 2–3. LLM places sessions freely; the deterministic post-check flags weeks below the expected count. Rendered as a `coaching_flag` on the affected week.
 
 ### 5.5 Locale assignment + substitution (D5 / §2.6)
 
@@ -161,7 +166,7 @@ Step-by-step (per session):
 3. Pick the `L` with max `fit_count`. Ties → home; second tie → closest by haversine.
 4. Substitute each non-fitting exercise via `_strength_pattern_match(ex, L.effective_pool, excluded_ids)`; mark `resolution_tier = 2` (substitute).
 5. If no pattern-match candidate, swap to Tier-3 bodyweight proxy; mark `resolution_tier = 3`.
-6. If neither (impossible-to-fulfill), call out via warning + LLM re-pick (last-resort path; ≤1× per block budget).
+6. If neither (impossible-to-fulfill), invoke the **small-call LLM substitution** (architecture in §2.6.5): tight prompt, Haiku-class model, single-purpose `substitute_exercise_id` tool enum-bounded by the locale pool. Cache key `(exercise_id, locale_id, excluded_ids_hash)`. Last-resort path; ≤1× per block budget.
 
 Cardio sessions: locale defaults to home unless the discipline requires a route-locale (e.g., MTB needs trail access) — then nearest cluster locale with `discipline_id ∈ locale_terrain_ids`.
 
@@ -178,15 +183,22 @@ Post-synthesis step in `layer4/rx_wire.py`:
 ```python
 def apply_current_rx(payload: Layer4Payload, db, user_id: int) -> Layer4Payload:
     """Overwrite load_prescription with current_rx where available;
-    leave LLM text + add first_exposure flag where not."""
+    deterministic RPE-only template + first_exposure flag where not."""
 ```
 
 For each `StrengthExercise`:
 - `rx = rx_engine.current_rx(db, user_id, exercise_id)` — returns `{sets, reps, load_kg|load_lbs, rir|rpe}` or `None`
-- If `rx`: format as `f"{rx.load_lbs} lbs × {rx.reps} @ RPE {rx.rpe}"` and overwrite
-- If `None`: keep LLM text, append `first_exposure` to `coaching_flags`
+- If `rx`: format as `f"{rx.load_lbs} lbs × {rx.reps} @ RPE {rx.rpe}"` and overwrite (weight + reps + RPE all rendered — weight is the actual bar load, RPE is the autoregulation target)
+- If `None` (first exposure): apply a **deterministic RPE-only template** keyed off the exercise's category — no LLM in this path:
+  - `compound_barbell` → `"Calibration set — pick a weight that feels RPE 6 for 8 reps; log to set baseline"`
+  - `compound_dumbbell` → `"Calibration — pick DBs that feel RPE 6 for 10 reps; log to set baseline"`
+  - `accessory_dumbbell` / `accessory_cable` → `"Calibration — RPE 7 for 12 reps; log to set baseline"`
+  - `bodyweight` → `"3 sets × max reps with 2 reps in reserve; log to set baseline"`
+  - Append `first_exposure` to `coaching_flags` so the UI can render the "calibration" framing.
 
-`rx_engine.current_rx` is the existing strength-tracker read (currently called only from `routes/training.py`); exposes it as a layer4-callable interface. **Track 3 dependency:** `rx_engine` currently reads `public.exercise_inventory`; Track 3 moves this to `layer0.*`. Until Track 3 ships, rx lookups are limited to the exercises in the public catalog (subset of layer0); a layer0-only exercise emitted by the synthesizer will fall through to first-exposure. Acceptable v1 behavior; full coverage with Track 3.
+Weight is omitted in the first-exposure path because it's genuinely unknown; rendering an LLM-guessed pound number would be misleading. The athlete sets the baseline via the calibration set; subsequent sessions read `current_rx` and become precise.
+
+`rx_engine.current_rx` is the existing strength-tracker read (currently called only from `routes/training.py`); exposes it as a layer4-callable interface. **Track 3 dependency:** `rx_engine` currently reads `public.exercise_inventory`; Track 3 moves this to `layer0.*`. Until Track 3 ships, rx lookups are limited to the exercises in the public catalog (subset of layer0); a layer0-only exercise emitted by the synthesizer falls through to first-exposure. Acceptable v1 behavior; full coverage with Track 3.
 
 ## 8. Validator demotion sweep (D8)
 
@@ -194,7 +206,7 @@ For each `StrengthExercise`:
 |---|---|---|---|
 | 1 `volume_band` | BLOCKER | **warning** | D2 grid makes weekly volume self-consistent |
 | 2 `acwr` | BLOCKER | warning | Heuristic; the deterministic ramp + Bosquet taper handle the real cases |
-| 3 `rest_spacing` | BLOCKER | warning | D4 places rest; misfires are a placement nuance, not a fail |
+| 3 `rest_spacing` | BLOCKER | warning | D4 detects insufficient rest deterministically; LLM keeps placement freedom; rule becomes the surface for the detected warning |
 | 4 `intensity_dist` | BLOCKER | warning | D3 enforces the distribution; warning catches LLM placement drift |
 | 5 `two_per_day` | structural | **structural (keep)** | Real schema invariant; not synthesis quality |
 | 6a `equipment_unavailable` | BLOCKER | **DELETE** | D1 makes it structurally impossible |
@@ -225,21 +237,22 @@ After 2d ships: only **6b / 6c / 5 / 12** remain as retry-driving blockers. The 
 | `layer4/validator.py` | Delete `_rule_equipment_unavailable` + remove from `_ALL_RULES`. |
 | `tests/test_layer4_per_phase.py` + `tests/test_layer4_validator.py` | Schema-enum test; deletion test. |
 
-### Slice 2b — session-count grid + intensity split (≤4 files)
+### Slice 2b — session-count grid + intensity split + prompt rewrite (≤5 files)
 | File | Change |
 |---|---|
 | `layer4/session_grid.py` | NEW — §5.1 + §5.2 + §5.3. |
-| `layer4/per_phase.py` | `render_user_prompt` consumes grid output; renders per-week per-discipline session table with intensity_summary targets. |
+| `layer4/per_phase.py` | **Prompt rewrite** (load-bearing): today the SYSTEM_PROMPT + USER_PROMPT ask the LLM to **allocate** the week (decide counts, intensities, rest). After 2b the prompt **hands the LLM a pre-filled grid** (per-discipline session counts + intensity targets + race-sim slot when applicable) and asks for **placement + content** only — which day, which time-of-day, which exercise selection within the constraints, coaching intent. The `render_user_prompt` + the SYSTEM_PROMPT framing both change; the grid-rendering template is new. Estimate ~150–200 line delta in `per_phase.py` for the rewrite, separate from the new `session_grid.py` consumption call. |
 | `layer4/validator.py` | Demote `_rule_volume_band` to warning; demote `_rule_intensity_dist` to warning. |
 | `tests/test_layer4_session_grid.py` | NEW. |
+| `tests/test_layer4_per_phase.py` | Add prompt-rewrite tests: assert pre-filled grid appears verbatim in rendered prompt; assert old "allocate" language is gone. |
 
-### Slice 2c — rest placement + locale assignment + substitution (≤5 files)
+### Slice 2c — rest detection + locale assignment + substitution (≤5 files)
 | File | Change |
 |---|---|
-| `layer4/session_grid.py` | Extend with `rest_days()` (§5.4). |
-| `layer4/locale_assign.py` | NEW — §5.5 pipeline + `_strength_pattern_match` consumer. |
+| `layer4/session_grid.py` | Extend with `expected_rest_count()` + `detect_insufficient_rest()` (§5.4); emits `insufficient_rest` coaching flag, no required placement. |
+| `layer4/locale_assign.py` | NEW — §5.5 pipeline + `_strength_pattern_match` consumer + small-call LLM substitution per §2.6.5 (separate tool module, not a synth re-invocation). |
 | `layer4/plan_create.py` + `layer4/plan_refresh.py` | Call `assign_locales()` after `synthesize_phase`, before persist. |
-| `layer4/validator.py` | Demote Rules 3 / 11 to warning. |
+| `layer4/validator.py` | Demote Rules 3 / 11 to warning; Rule 3 now wraps the deterministic `detect_insufficient_rest` warning rather than running its own logic. |
 | `tests/test_layer4_locale_assign.py` | NEW. |
 
 ### Slice 2d — rx_engine wiring + remaining validator demotion (≤4 files)
@@ -260,6 +273,7 @@ Each slice fits the 5-file substantive ceiling; each is independently verifiable
 - **`current_rx` exists but is stale** (athlete hasn't logged the exercise in 3+ months). Use as a baseline + add `stale_rx` coaching flag; the LLM-emitted load_prescription remains visible as a fallback for the athlete to judge.
 - **Locale `effective_pool` is empty** (athlete added a locale but hasn't set equipment yet). Skip that locale in majority-fit consideration; fall through to next.
 - **Cluster of 1 locale (home only).** All sessions assign to home; majority-fit collapses to "does home cover it" — substitute or Tier-3 proxy as needed.
+- **Athlete travelling without a defined locale** (no cluster locale in range; week falls outside the home 26.2-mile cluster). Use the existing `hotel_gym` shared-profile default (`Athlete_Onboarding_Data_Spec_v6.md` §H.5 — treadmill + basic DBs + bench) as a synthetic `default_hotel` locale for assignment purposes. The LLM is told "you're training out of a default hotel set this week — basic equipment only"; the deterministic assigner uses the default pool for fit + substitution. Athlete sees a `traveling_default_hotel` coaching flag. (When the athlete pre-adds a hotel locale with detail, that takes precedence — this fallback only fires when nothing else is in range.)
 - **Multi-day brick that crosses midnight.** Out of scope for v1; document as a v1.1 follow-up. Single-day brick (two sessions one date) covered.
 
 ## 12. Open items / decisions
@@ -293,9 +307,7 @@ Each slice fits the 5-file substantive ceiling; each is independently verifiable
 
 - **Biggest risk:** the session-count grid (D2 / §5.1) encodes assumptions that are correct for road-marathon-shape sports but may produce odd output for the genuinely-multi-disciplinary cases (PGE itself, swimrun, modern triathlon). Typical-session-hour lookups especially are coach-estimate, not measured. Mitigation: ship 2a first (which fixes the equipment failure mode independently); land 2b under the §13 e2e win condition; if the grid produces visibly-wrong allocations for any one discipline, the file is one constants table to tune.
 
-- **Biggest unknown:** whether the deterministic locale-assignment (§5.5) handles the cases I haven't seen yet — Andy's travel weeks, hotel-gym fallback, a temporarily-out-of-cluster locale. The greedy majority-fit is correct for the simple cases; the complex ones we can only design against once they exist. Track-2.5 follow-up: revisit assigner after the first 3 multi-locale plans.
-
-- **What might be missing:** the spec doesn't yet talk about how the synthesizer's prompt *reads* differently after 2b — today the prompt asks the LLM to allocate; after 2b it hands the LLM a filled-in week and asks for placement + content. That prompt rewrite is non-trivial and is the unstated load-bearing piece of 2b. Implementation needs to budget for it.
+- **Biggest unknown:** whether the deterministic locale-assignment (§5.5) handles the cases I haven't seen yet — multi-locale travel patterns where the athlete bounces between 2–3 destinations in a single block, partial-week locale switches, locale priority signals. The greedy majority-fit + `hotel_gym` default-pool fallback (§11) cover the simple travel cases; complex multi-destination weeks we can only design against once they exist. Track-2.5 follow-up: revisit assigner after the first 3 multi-locale plans.
 
 - **Best argument against the whole approach:** Track 2 is a big bet on "feasibility is solvable deterministically." If a real edge case proves otherwise (e.g., a session's ideal exercise set has no majority-fit locale AND no pattern-match substitute AND no Tier-3 proxy), the LLM fallback in step 5.5.6 is the only escape valve — and if it fires often, we've added complexity without removing the LLM-as-feasibility-decider role. Mitigation: instrument the fallback heavily; if it fires > 1% of sessions across 3 plans, re-think §5.5.
 
