@@ -25,9 +25,17 @@ Rolling-state for items spanning multiple sessions. **Edit in place** — don't 
    3. ✅ **DONE — locale UI verified live (Andy, 2026-06-06):** add Mapbox locations, save equipment on
       legacy + new locations, mark either as Home — all work. (Required PR #431: the categoryless-locale
       500 fix + the restored Mapbox `new.html` coord/name fields.)
-   4. ⬜ **OWED — re-run a cold PGE plan.** Win: no `equipment_unavailable` blockers (the pv=59 root
-      cause), blocks → `ready`; diag `effective_pool` shows canonical names (barbell/rack), not empty.
+   4. ⬜ **OWED — re-run a cold PGE plan (combined Track 1 + Track 2 slices 2a + 2b win).** Win:
+      - **No `equipment_unavailable` blockers** (Track 1 vocabulary fix + Track 2 slice 2a structural-impossibility); diag's `validator_failures_by_rule` should have zero `equipment_unavailable_*` rows.
+      - **Per-discipline session counts match the deterministic grid** (Track 2 slice 2b); e.g. PGE Build:w1 capacity 12h should show climbing at 1 session this week then skip 3 weeks (maintenance cadence at 3% of phase_load), not 1/wk.
+      - **`volume_band` failures (if any) are `severity=warning`, not blocker** (Track 2 slice 2b validator demotion). The synthesis no longer kills on band drift.
+      - **Plan looks polarized:** most cardio easy, a small fraction hard, no slog of moderate Z3. Race-sim long day appears in Peak (1 × ~7h for PGE if `estimated_duration_hr` set to ~56h).
       If it throws, pull the diag JSON / failing block log line.
+
+1. **Track 2 Determinism-First Synthesis (2026-06-06) — spec APPROVED + slices 2a + 2b merged (PR #433); slices 2c + 2d still owed.**
+   - ⬜ **Slice 2c — locale assignment + substitution + rest detection.** New `layer4/locale_assign.py` (§5.5 pipeline: majority-fit locale → pattern-match substitution → Tier-3 proxy → small-call LLM fallback). Extend `layer4/session_grid.py` with `expected_rest_count` + `detect_insufficient_rest` (§5.4 — advisory; LLM keeps placement freedom). Demote Rules 3 + 11 to warning. Five substantive files.
+   - ⬜ **Slice 2d — `rx_engine` post-hoc wiring + remaining validator demotions.** New `layer4/rx_wire.py` (§7: `current_rx` overwrites `load_prescription`; first-exposure gets deterministic RPE-only template keyed off exercise category — NO LLM, NO guessed weight). Demote Rules 2 / 7 / 7b to warning. Track 3 dependency: rx_engine reads `public.exercise_inventory`; layer0-only exercises fall through to first-exposure until Track 3 ships (acceptable v1).
+   - No DDL owed; both slices are pure-function + post-synth pipeline changes.
    - Note: `/references/exercises` availability filter + `/purchases` owned-hint are intentionally OFF
      until Track 3 (#430) migrates the catalog to layer0 (approved degrade, 2026-06-05).
 
