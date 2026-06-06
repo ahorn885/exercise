@@ -35,6 +35,21 @@ def _parse_range_days() -> int:
     return _RANGE_CHOICES.get(raw, _DEFAULT_RANGE_DAYS)
 
 
+def _parse_picked_date(raw: str | None, *, today: date) -> date:
+    """Parse a self-report date from the form/querystring. Returns today on
+    invalid input, and clamps future dates to today (callers should never let
+    the athlete log a session that hasn't happened yet)."""
+    if not raw:
+        return today
+    try:
+        d = datetime.strptime(raw.strip(), '%Y-%m-%d').date()
+    except ValueError:
+        return today
+    if d > today:
+        return today
+    return d
+
+
 def _parse_int(value, *, lo: int, hi: int) -> int | None:
     """Bound int parser for the 1–5 ratings. Empty/invalid → None."""
     if value is None or value == '':
@@ -69,12 +84,17 @@ def index():
         return _save_self_report(db, uid)
 
     range_days = _parse_range_days()
-    cutoff = (date.today() - timedelta(days=range_days - 1)).isoformat()
+    today = date.today()
+    cutoff = (today - timedelta(days=range_days - 1)).isoformat()
 
-    today_iso = date.today().isoformat()
-    today_row = db.execute(
+    # `picked` is the date the form acts on — defaults to today, can be set
+    # by `?date=YYYY-MM-DD` so an athlete can backfill a missed prior day.
+    # `today_iso` stays around as the `max=` ceiling on the picker.
+    today_iso = today.isoformat()
+    picked_iso = _parse_picked_date(request.args.get('date'), today=today).isoformat()
+    picked_row = db.execute(
         'SELECT * FROM wellness_self_report WHERE user_id=? AND date=?',
-        (uid, today_iso)
+        (uid, picked_iso)
     ).fetchone()
 
     self_report_rows = db.execute(
@@ -130,7 +150,8 @@ def index():
     return render_template(
         'wellness/index.html',
         today_iso=today_iso,
-        today_row=dict(today_row) if today_row else {},
+        picked_iso=picked_iso,
+        picked_row=dict(picked_row) if picked_row else {},
         range_days=range_days,
         range_choices=sorted(_RANGE_CHOICES.values()),
         chart_data=chart_data,
@@ -140,13 +161,15 @@ def index():
 
 
 def _save_self_report(db, uid):
-    submitted_date = (request.form.get('date') or date.today().isoformat()).strip()
+    today = date.today()
+    submitted_date = (request.form.get('date') or today.isoformat()).strip()
     try:
-        # Parse loose — reject obviously bad input but accept the common
-        # YYYY-MM-DD form without further normalization.
-        datetime.strptime(submitted_date, '%Y-%m-%d')
+        parsed = datetime.strptime(submitted_date, '%Y-%m-%d').date()
     except ValueError:
         flash('Invalid date.', 'danger')
+        return redirect(url_for('wellness.index'))
+    if parsed > today:
+        flash('Cannot log a wellness report for a future date.', 'danger')
         return redirect(url_for('wellness.index'))
 
     sleep_hours   = _parse_float(request.form.get('sleep_hours'))
@@ -181,7 +204,13 @@ def _save_self_report(db, uid):
         )
     db.commit()
     flash('Wellness report saved.', 'success')
-    return redirect(url_for('wellness.index', range=request.form.get('range') or ''))
+    # Preserve the picked date on redirect so the form stays anchored to the
+    # day the athlete just saved (matters for prior-day backfill).
+    return redirect(url_for(
+        'wellness.index',
+        range=request.form.get('range') or '',
+        date=submitted_date if parsed != today else None,
+    ))
 
 
 # ─── Series builders ─────────────────────────────────────────────────────────
