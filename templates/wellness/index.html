@@ -85,13 +85,13 @@
   </div>
   {% endif %}
 
-  {# Sleep score — self-report (1–5 → ×20) overlaid with Garmin sleep score (Phase B) #}
+  {# Sleep score — self-report (1–5 → ×20) overlaid with Garmin sleep score #}
   {% if chart_data.sleep_score.self or chart_data.sleep_score.device %}
   <div class="card card-pad">
     <span class="eyebrow">Sleep score · self vs device (0–100)</span>
     <div class="chart-box wide sec-sm"><canvas id="chart-sleep-score"></canvas></div>
     {% if not chart_data.sleep_score.device %}
-    <p class="rail-note">Garmin sleep score will appear here once <code>_METRICS.fit</code> ingestion lands (#283).</p>
+    <p class="rail-note">Upload Garmin <code>_METRICS.fit</code> or <code>_SLEEP_DATA.fit</code> files to overlay the device sleep score.</p>
     {% endif %}
   </div>
   {% endif %}
@@ -120,13 +120,14 @@
   </div>
   {% endif %}
 
-  {# HRV — _METRICS.fit (Phase B scaffold) #}
+  {# HRV — _HRV_STATUS.fit overnight avg #}
   <div class="card card-pad">
-    <span class="eyebrow">HRV · device</span>
+    <span class="eyebrow">HRV · overnight avg (ms)</span>
     {% if chart_data.hrv %}
     <div class="chart-box wide sec-sm"><canvas id="chart-hrv"></canvas></div>
     {% else %}
-    <p class="rail-note">Will appear once <code>_METRICS.fit</code> ingestion lands (#283).</p>
+    <p class="rail-note">Upload Garmin <code>_HRV_STATUS.fit</code> files at
+      <a href="{{ url_for('garmin.import_wellness') }}">Garmin → Import wellness</a> to see overnight HRV.</p>
     {% endif %}
   </div>
 
@@ -318,7 +319,12 @@ if (data.mood && data.mood.length) {
   line('chart-mood', [ds('Mood', data.mood, good)], { yAxis: { min: 0, max: 5 } });
 }
 
-// ─── HRV / VO2max / active-minutes — Phase B scaffolds (no JS until data lands) ─
+// ─── HRV (overnight avg, ms) ──────────────────────────────
+if (data.hrv && data.hrv.length) {
+  line('chart-hrv', [ds('HRV', data.hrv, accent)], { unit: ' ms' });
+}
+
+// ─── VO2max / training-readiness / active-minutes — follow-up scaffolds ───
 
 // ─── Average HR ─────────────────────────────────────────────
 if (data.avg_hr && data.avg_hr.length) {

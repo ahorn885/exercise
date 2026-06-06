@@ -3,18 +3,21 @@
 One card per metric, with device readings and self-report overlaid where they
 measure the same thing (sleep score, energy / body battery). Reads pull from:
 
-  - `wellness_self_report` — self-reported sleep, energy, soreness, mood
-  - `body_metrics`         — weight, body fat %, resting HR
-  - `wellness_log`         — Garmin per-second wellness (`_WELLNESS.fit`)
-  - `cardio_log`           — cardio activities (count + duration)
-  - `training_log`         — strength activities (count + duration)
+  - `wellness_self_report`   — self-reported sleep, energy, soreness, mood
+  - `body_metrics`           — weight, body fat %, resting HR
+  - `wellness_log`           — Garmin per-second wellness (`_WELLNESS.fit`)
+  - `garmin_daily_metrics`   — Garmin daily-derived metrics from
+                               `_METRICS.fit` / `_SLEEP_DATA.fit` /
+                               `_HRV_STATUS.fit` (sleep score, HRV, …)
+  - `cardio_log`             — cardio activities (count + duration)
+  - `training_log`           — strength activities (count + duration)
 
 Sleep score and energy charts overlay self-report (normalized to 0–100) against
-the device reading on a single axis. Device-side data for sleep score / HRV /
-VO2max / training readiness comes from `_METRICS.fit`, which is not parsed yet
-(#283 Phase B, blocked on #196 Phase 1) — those series render as empty
-scaffolds.
+the device reading on a single axis. VO2max / training readiness / active
+minutes still render as empty scaffolds — they live in FIT file types we
+haven't seen yet (#283 follow-up).
 """
+import json
 from datetime import date, datetime, timedelta
 
 from flask import Blueprint, render_template, request, redirect, url_for, flash
@@ -152,10 +155,20 @@ def index():
         (uid, cutoff)
     ).fetchall()
 
+    # Garmin daily-derived metrics from `_METRICS.fit` / `_SLEEP_DATA.fit` /
+    # `_HRV_STATUS.fit` (#283 Phase B). One row per (user, date); UPSERT lands
+    # whichever columns the source file knows about, so this select gets the
+    # merged best-of view.
+    daily_metric_rows = db.execute(
+        'SELECT date, sleep_score, hrv_overnight_avg_ms '
+        'FROM garmin_daily_metrics WHERE user_id=? AND date >= ? ORDER BY date',
+        (uid, cutoff)
+    ).fetchall()
+
     chart_data = _build_chart_data(
         self_report_rows, body_rows,
         cardio_load, strength_load, strength_counts,
-        garmin_rows,
+        garmin_rows, daily_metric_rows,
     )
 
     return render_template(
@@ -234,9 +247,10 @@ def _d(value) -> str:
 
 
 def _build_chart_data(self_rows, body_rows, cardio_rows, strength_rows,
-                      strength_count_rows, garmin_rows):
+                      strength_count_rows, garmin_rows, daily_metric_rows=()):
     self_by_date = {_d(r['date']): r for r in self_rows}
     garmin_by_date = {_d(r['date']): r for r in garmin_rows}
+    daily_by_date = {_d(r['date']): r for r in daily_metric_rows}
 
     sleep_hours = [
         {'x': d, 'y': float(r['sleep_hours'])}
@@ -256,8 +270,10 @@ def _build_chart_data(self_rows, body_rows, cardio_rows, strength_rows,
             {'x': d, 'y': float(r['sleep_quality']) * _SELF_REPORT_TO_100}
             for d, r in self_by_date.items() if r['sleep_quality'] is not None
         ],
-        # Garmin sleep score lives in _METRICS.fit — Phase B (#283).
-        'device': [],
+        'device': [
+            {'x': d, 'y': float(r['sleep_score'])}
+            for d, r in daily_by_date.items() if r['sleep_score'] is not None
+        ],
     }
     energy = {
         'self': [
@@ -307,6 +323,11 @@ def _build_chart_data(self_rows, body_rows, cardio_rows, strength_rows,
         for r in garmin_rows if r['peak_stress'] is not None
     ]
 
+    hrv = [
+        {'x': d, 'y': float(r['hrv_overnight_avg_ms'])}
+        for d, r in daily_by_date.items() if r['hrv_overnight_avg_ms'] is not None
+    ]
+
     return {
         'sleep_hours':  sleep_hours,
         'sleep_score':  sleep_score,
@@ -318,14 +339,15 @@ def _build_chart_data(self_rows, body_rows, cardio_rows, strength_rows,
         'activities':   activities,
         'avg_hr':       avg_hr,
         'peak_stress':  peak_stress,
-        # Phase B (#283) — empty scaffolds for the device-only metrics that
-        # need _METRICS.fit parsing. Template renders the cards as "no
-        # device data yet" until the parser lands.
-        'hrv':              [],
+        'hrv':          hrv,
+        # #283 follow-up — these still need their own FIT file types
+        # (TRAINING_STATUS / SPO2 / VO2max emissions are separate from
+        # _METRICS.fit and we haven't seen samples yet). Template renders
+        # the cards as "no device data yet" until they're wired.
         'training_readiness': [],
-        'vo2max_running':   [],
-        'vo2max_cycling':   [],
-        'active_minutes':   [],
+        'vo2max_running':     [],
+        'vo2max_cycling':     [],
+        'active_minutes':     [],
     }
 
 

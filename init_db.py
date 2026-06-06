@@ -851,6 +851,41 @@ _PG_MIGRATIONS = [
         UNIQUE(user_id, date)
     )""",
     "CREATE INDEX IF NOT EXISTS wellness_self_report_user_date_idx ON wellness_self_report(user_id, date)",
+    # #283 Phase B — Garmin daily-derived metrics from _METRICS.fit /
+    # _SLEEP_DATA.fit / _HRV_STATUS.fit. One row per (user, date); each FIT
+    # file UPSERTs the columns it owns (sleep_score may arrive from any of
+    # the three sources, HRV from _HRV_STATUS only, etc.) so files can land
+    # in any order without clobbering each other. `hrv_samples_json` carries
+    # the overnight per-period series for the wellness chart's HRV card.
+    # Columns left nullable cover metrics whose FIT field mapping isn't
+    # locked yet (sleep stages, training readiness, VO2max, SpO2) — they'll
+    # populate as the parser's TODO mappings are resolved.
+    """CREATE TABLE IF NOT EXISTS garmin_daily_metrics (
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER NOT NULL REFERENCES users(id),
+        date TEXT NOT NULL,
+        sleep_score INTEGER,
+        sleep_start_ms BIGINT,
+        sleep_end_ms BIGINT,
+        sleep_awake_min INTEGER,
+        sleep_avg_respiration REAL,
+        sleep_contributors_json TEXT,
+        sleep_deep_min INTEGER,
+        sleep_light_min INTEGER,
+        sleep_rem_min INTEGER,
+        hrv_overnight_avg_ms REAL,
+        hrv_7d_avg_ms REAL,
+        hrv_samples_json TEXT,
+        training_readiness INTEGER,
+        vo2max_running REAL,
+        vo2max_cycling REAL,
+        spo2_avg INTEGER,
+        spo2_low INTEGER,
+        created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        UNIQUE(user_id, date)
+    )""",
+    "CREATE INDEX IF NOT EXISTS garmin_daily_metrics_user_date_idx ON garmin_daily_metrics(user_id, date)",
     # D-50 Phase 1 — provider integration tables. Mirrors the SQLite block
     # above with PG-native types (SERIAL, TIMESTAMP DEFAULT NOW(), BIGINT,
     # BOOLEAN). Per Athlete_Data_Integration_Spec v3 §4–§6. Garmin paused
