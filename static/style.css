@@ -145,8 +145,12 @@ h6 { font-size: 14px; font-weight: 600; }
 a       { color: var(--ink); text-decoration: underline; text-underline-offset: 2px; text-decoration-color: color-mix(in oklab, currentColor 30%, transparent); }
 a:hover { color: var(--orange-deep); text-decoration-color: currentColor; }
 
-.text-muted, .text-secondary { color: var(--ink-3) !important; }
-small, .small               { color: var(--ink-3); font-size: 13px; font-weight: 500; }
+/* Inside the redesign `.app` shell, --fg-3 resolves to a paper-tinted muted
+   that's legible on dark and adapts to light. Outside .app (legacy pages),
+   the fallback preserves the old --ink-3 behavior. Closes the dark-gray-on-
+   black contrast bug on Profile Schedule + every other shell page. */
+.text-muted, .text-secondary { color: var(--fg-3, var(--ink-3)) !important; }
+small, .small               { color: var(--fg-3, var(--ink-3)); font-size: 13px; font-weight: 500; }
 
 ::selection { background: var(--orange-soft); color: var(--ink); }
 
@@ -310,8 +314,10 @@ body { overflow-x: hidden; }
 }
 
 /* ── Forms ────────────────────────────────────────────── */
+/* Pure --paper (~98% lightness) reads as jarring pure-white against the dark
+   shell. --paper-2 is a touch creamier (~95%) and within the theme. */
 .form-control, .form-select {
-  background: var(--paper);
+  background: var(--paper-2);
   color: var(--ink);
   border: 1px solid var(--hairline);
   border-radius: 4px;
@@ -320,7 +326,7 @@ body { overflow-x: hidden; }
   padding: 9px 12px;
 }
 .form-control:focus, .form-select:focus {
-  background: var(--paper);
+  background: var(--paper-2);
   color: var(--ink);
   border-color: var(--orange);
   box-shadow: 0 0 0 3px color-mix(in oklab, var(--orange) 20%, transparent);
