@@ -920,7 +920,10 @@ def test_acwr_skipped_when_no_prior_data():
 # ─── Rule 3: rest_spacing ──────────────────────────────────────────────────
 
 
-def test_rest_spacing_consecutive_hard_blocker():
+def test_rest_spacing_consecutive_hard_warning():
+    """Track 2 slice 2c (§8 / D4): demoted from blocker → warning. The
+    deterministic detect_insufficient_rest in session_grid is now the rest
+    contract; consecutive-hards detection stays as advisory drift detection."""
     sessions = [
         _cardio_session(
             session_id="S-1", d=_SCOPE_START, intensity_summary="hard"
@@ -935,7 +938,7 @@ def test_rest_spacing_consecutive_hard_blocker():
     failures = validate_layer4_payload(payload, ValidatorContext()).rule_failures
     rs = [f for f in failures if f.rule_name.startswith("rest_spacing")]
     assert rs
-    assert rs[0].severity == "blocker"
+    assert rs[0].severity == "warning"
 
 
 def test_rest_spacing_exempted_by_overreach_test_flag():
@@ -1496,7 +1499,11 @@ def test_schedule_violation_enabled_day_no_fire():
     assert not any(f.rule_name.startswith("schedule_violation") for f in failures)
 
 
-def test_schedule_violation_disabled_day_blocker():
+def test_schedule_violation_disabled_day_warning():
+    """Track 2 slice 2c (§8 / D4 row 11): demoted from blocker → warning.
+    Disabled-availability days are hard-rest invariant via the
+    daily_availability_windows schedule contract; an LLM placement on a
+    disabled day still flags but doesn't gate plan acceptance."""
     # Disable Mon — session falls on Mon.
     windows = [_daily_window(dow=d, enabled=(d != "Mon")) for d in _DOW_NAMES]
     payload = _minimal_layer4()
@@ -1504,7 +1511,7 @@ def test_schedule_violation_disabled_day_blocker():
     failures = validate_layer4_payload(payload, ctx).rule_failures
     sv = [f for f in failures if f.rule_name.startswith("schedule_violation")]
     assert sv
-    assert sv[0].severity == "blocker"
+    assert sv[0].severity == "warning"
 
 
 def test_schedule_violation_athlete_self_scheduled_exempts():
