@@ -6,7 +6,7 @@
 {% block content %}
 <div class="dash-head">
   <div>
-    <p class="eyebrow accent">● 30-day readiness</p>
+    <p class="eyebrow accent">● {{ range_days }}-day readiness</p>
     <h1 class="page-title">Wellness</h1>
   </div>
   <form method="get" action="{{ url_for('wellness.index') }}" class="wl-range">
@@ -69,34 +69,87 @@
   {# ── Charts ── #}
   {% if not has_any_data %}
   <div class="card card-pad">
-    <p class="rail-note">No data in the last {{ range_days }} days. Log a wellness self-report above, or add
+    <p class="rail-note">No data in the last {{ range_days }} days. Log a wellness self-report above, or upload Garmin wellness FIT files at
+      <a href="{{ url_for('garmin.import_wellness') }}">Garmin → Import wellness</a>, or add
       <a href="{{ url_for('body.new_entry') }}">body metrics</a>,
       <a href="{{ url_for('cardio.list_entries') }}">cardio</a>, or
       <a href="{{ url_for('training.list_entries') }}">strength</a> entries to see them charted here.</p>
   </div>
   {% else %}
 
-  {% if chart_data.self_report %}
+  {# Sleep hours — self-report only #}
+  {% if chart_data.sleep_hours %}
   <div class="card card-pad">
-    <span class="eyebrow">Self-report</span>
-    <div class="chart-grid">
-      <div class="chart-box"><canvas id="chart-sleep-hours"></canvas></div>
-      <div class="chart-box"><canvas id="chart-ratings"></canvas></div>
-    </div>
+    <span class="eyebrow">Sleep · hours</span>
+    <div class="chart-box wide sec-sm"><canvas id="chart-sleep-hours"></canvas></div>
   </div>
   {% endif %}
 
-  {% if chart_data.body %}
+  {# Sleep score — self-report (1–5 → ×20) overlaid with Garmin sleep score #}
+  {% if chart_data.sleep_score.self or chart_data.sleep_score.device %}
   <div class="card card-pad">
-    <span class="eyebrow">Body composition</span>
-    <div class="chart-grid">
-      {% if chart_data.body.weight_lbs %}<div class="chart-box"><canvas id="chart-weight"></canvas></div>{% endif %}
-      {% if chart_data.body.body_fat_pct %}<div class="chart-box"><canvas id="chart-bf"></canvas></div>{% endif %}
-      {% if chart_data.body.resting_hr %}<div class="chart-box"><canvas id="chart-rhr"></canvas></div>{% endif %}
-    </div>
+    <span class="eyebrow">Sleep score · self vs device (0–100)</span>
+    <div class="chart-box wide sec-sm"><canvas id="chart-sleep-score"></canvas></div>
+    {% if not chart_data.sleep_score.device %}
+    <p class="rail-note">Upload Garmin <code>_METRICS.fit</code> or <code>_SLEEP_DATA.fit</code> files to overlay the device sleep score.</p>
+    {% endif %}
   </div>
   {% endif %}
 
+  {# Energy — self-report (1–5 → ×20) overlaid with Garmin body battery (daily trough) #}
+  {% if chart_data.energy.self or chart_data.energy.device %}
+  <div class="card card-pad">
+    <span class="eyebrow">Energy · self vs body battery (0–100)</span>
+    <div class="chart-box wide sec-sm"><canvas id="chart-energy"></canvas></div>
+  </div>
+  {% endif %}
+
+  {# Soreness — self-report 1–5 #}
+  {% if chart_data.soreness %}
+  <div class="card card-pad">
+    <span class="eyebrow">Soreness · 1–5 (5 = fresh)</span>
+    <div class="chart-box wide sec-sm"><canvas id="chart-soreness"></canvas></div>
+  </div>
+  {% endif %}
+
+  {# Mood — self-report 1–5 #}
+  {% if chart_data.mood %}
+  <div class="card card-pad">
+    <span class="eyebrow">Mood · 1–5</span>
+    <div class="chart-box wide sec-sm"><canvas id="chart-mood"></canvas></div>
+  </div>
+  {% endif %}
+
+  {# HRV — _HRV_STATUS.fit overnight avg #}
+  <div class="card card-pad">
+    <span class="eyebrow">HRV · overnight avg (ms)</span>
+    {% if chart_data.hrv %}
+    <div class="chart-box wide sec-sm"><canvas id="chart-hrv"></canvas></div>
+    {% else %}
+    <p class="rail-note">Upload Garmin <code>_HRV_STATUS.fit</code> files at
+      <a href="{{ url_for('garmin.import_wellness') }}">Garmin → Import wellness</a> to see overnight HRV.</p>
+    {% endif %}
+  </div>
+
+  {# Heart rate — resting (min overnight) / avg / peak from wellness_log #}
+  {% if chart_data.heart_rate.resting or chart_data.heart_rate.avg or chart_data.heart_rate.peak %}
+  <div class="card card-pad">
+    <span class="eyebrow">Heart rate · device (bpm)</span>
+    <div class="chart-box wide sec-sm"><canvas id="chart-heart-rate"></canvas></div>
+  </div>
+  {% endif %}
+
+  {# Active / intensity minutes — _METRICS.fit (Phase B scaffold) #}
+  <div class="card card-pad">
+    <span class="eyebrow">Active &amp; intensity minutes · device</span>
+    {% if chart_data.active_minutes %}
+    <div class="chart-box wide sec-sm"><canvas id="chart-active-min"></canvas></div>
+    {% else %}
+    <p class="rail-note">Will appear once <code>_METRICS.fit</code> ingestion lands (#283).</p>
+    {% endif %}
+  </div>
+
+  {# Training load — cardio + strength minutes/day #}
   {% if chart_data.training %}
   <div class="card card-pad">
     <span class="eyebrow">Training load · minutes/day</span>
@@ -104,13 +157,102 @@
   </div>
   {% endif %}
 
-  {% if chart_data.garmin %}
+  {# VO2max running — _METRICS.fit (Phase B scaffold) #}
   <div class="card card-pad">
-    <span class="eyebrow">Device · daily aggregates</span>
+    <span class="eyebrow">VO₂max · running</span>
+    {% if chart_data.vo2max_running %}
+    <div class="chart-box wide sec-sm"><canvas id="chart-vo2-run"></canvas></div>
+    {% else %}
+    <p class="rail-note">Will appear once <code>_METRICS.fit</code> ingestion lands (#283).</p>
+    {% endif %}
+  </div>
+
+  {# VO2max cycling — _METRICS.fit (Phase B scaffold) #}
+  <div class="card card-pad">
+    <span class="eyebrow">VO₂max · cycling</span>
+    {% if chart_data.vo2max_cycling %}
+    <div class="chart-box wide sec-sm"><canvas id="chart-vo2-bike"></canvas></div>
+    {% else %}
+    <p class="rail-note">Will appear once <code>_METRICS.fit</code> ingestion lands (#283).</p>
+    {% endif %}
+  </div>
+
+  {# Activities done that day #}
+  {% if chart_data.activities %}
+  <div class="card card-pad">
+    <span class="eyebrow">Activities · per day</span>
+    <div class="chart-box wide sec-sm"><canvas id="chart-activities"></canvas></div>
+  </div>
+  {% endif %}
+
+  {# Stress — avg + peak from wellness_log #}
+  {% if chart_data.stress.avg or chart_data.stress.peak %}
+  <div class="card card-pad">
+    <span class="eyebrow">Stress · device (0–100)</span>
+    <div class="chart-box wide sec-sm"><canvas id="chart-stress"></canvas></div>
+  </div>
+  {% endif %}
+
+  {# Stress time-in-zone — stacked minutes per bucket per day #}
+  {% if chart_data.stress_minutes.rest or chart_data.stress_minutes.low or chart_data.stress_minutes.medium or chart_data.stress_minutes.high %}
+  <div class="card card-pad">
+    <span class="eyebrow">Stress · time-in-zone (min/day)</span>
+    <div class="chart-box wide sec-sm"><canvas id="chart-stress-zones"></canvas></div>
+  </div>
+  {% endif %}
+
+  {# Respiration — avg + lowest from wellness_log #}
+  {% if chart_data.respiration.avg or chart_data.respiration.low %}
+  <div class="card card-pad">
+    <span class="eyebrow">Respiration · device (breaths/min)</span>
+    <div class="chart-box wide sec-sm"><canvas id="chart-respiration"></canvas></div>
+  </div>
+  {% endif %}
+
+  {# Body battery — daily high + low (low also overlaid into Energy above) #}
+  {% if chart_data.body_battery.high or chart_data.body_battery.low %}
+  <div class="card card-pad">
+    <span class="eyebrow">Body battery · device (0–100)</span>
+    <div class="chart-box wide sec-sm"><canvas id="chart-body-battery"></canvas></div>
+  </div>
+  {% endif %}
+
+  {# Body battery charged vs drained — daily delta totals #}
+  {% if chart_data.body_battery.charged or chart_data.body_battery.drained %}
+  <div class="card card-pad">
+    <span class="eyebrow">Body battery · charged / drained per day</span>
+    <div class="chart-box wide sec-sm"><canvas id="chart-body-battery-delta"></canvas></div>
+  </div>
+  {% endif %}
+
+  {# Daily activity — cumulative MAX from wellness_log per day #}
+  {% if chart_data.daily_activity.steps or chart_data.daily_activity.active_cal or chart_data.daily_activity.distance_mi %}
+  <div class="card card-pad">
+    <span class="eyebrow">Daily activity · device</span>
     <div class="chart-grid">
-      {% if chart_data.garmin.avg_hr %}<div class="chart-box"><canvas id="chart-g-hr"></canvas></div>{% endif %}
-      {% if chart_data.garmin.peak_stress %}<div class="chart-box"><canvas id="chart-g-stress"></canvas></div>{% endif %}
-      {% if chart_data.garmin.min_bb %}<div class="chart-box"><canvas id="chart-g-bb"></canvas></div>{% endif %}
+      {% if chart_data.daily_activity.steps %}<div class="chart-box"><canvas id="chart-steps"></canvas></div>{% endif %}
+      {% if chart_data.daily_activity.active_cal %}<div class="chart-box"><canvas id="chart-active-cal"></canvas></div>{% endif %}
+      {% if chart_data.daily_activity.distance_mi %}<div class="chart-box"><canvas id="chart-distance"></canvas></div>{% endif %}
+    </div>
+  </div>
+  {% endif %}
+
+  {# Resting calories — Garmin's RMR computed from profile + activity baseline #}
+  {% if chart_data.resting_calories %}
+  <div class="card card-pad">
+    <span class="eyebrow">Resting calories · device (kcal/day)</span>
+    <div class="chart-box wide sec-sm"><canvas id="chart-resting-cal"></canvas></div>
+  </div>
+  {% endif %}
+
+  {# Body composition #}
+  {% if chart_data.body %}
+  <div class="card card-pad">
+    <span class="eyebrow">Body composition</span>
+    <div class="chart-grid">
+      {% if chart_data.body.weight_lbs %}<div class="chart-box"><canvas id="chart-weight"></canvas></div>{% endif %}
+      {% if chart_data.body.body_fat_pct %}<div class="chart-box"><canvas id="chart-bf"></canvas></div>{% endif %}
+      {% if chart_data.body.resting_hr %}<div class="chart-box"><canvas id="chart-rhr"></canvas></div>{% endif %}
     </div>
   </div>
   {% endif %}
@@ -164,7 +306,7 @@ function line(canvasId, datasets, opts = {}) {
   const el = document.getElementById(canvasId);
   if (!el) return;
   return new Chart(el, {
-    type: 'line',
+    type: opts.type || 'line',
     data: { datasets },
     options: {
       responsive: true, maintainAspectRatio: false, animation: false,
@@ -191,43 +333,154 @@ function ds(label, points, color, fill = false) {
   };
 }
 
-// ─── Self-report ────────────────────────────────────────────
-if (data.self_report) {
-  if (data.self_report.sleep_hours && data.self_report.sleep_hours.length) {
-    line('chart-sleep-hours',
-      [ds('Sleep (h)', data.self_report.sleep_hours, fg)],
-      { unit: ' h' });
-  }
-  const rating = [
-    ['sleep_quality', 'Sleep quality', fg],
-    ['energy',        'Energy',        accent],
-    ['soreness',      'Soreness',      info],
-    ['mood',          'Mood',          good],
-  ].filter(([k]) => data.self_report[k] && data.self_report[k].length)
-   .map(([k, label, color]) => ds(label, data.self_report[k], color));
-  if (rating.length) line('chart-ratings', rating, { yAxis: { min: 0, max: 5 } });
+function bar(label, points, color) {
+  return {
+    label, data: points, backgroundColor: color, borderColor: color,
+    borderWidth: 0,
+  };
 }
 
-// ─── Body ───────────────────────────────────────────────────
-if (data.body) {
-  if (data.body.weight_lbs   && data.body.weight_lbs.length)   line('chart-weight', [ds('Weight (lb)', data.body.weight_lbs, fg)],     { unit: ' lb' });
-  if (data.body.body_fat_pct && data.body.body_fat_pct.length) line('chart-bf',     [ds('Body fat %', data.body.body_fat_pct, accent)], { unit: ' %'  });
-  if (data.body.resting_hr   && data.body.resting_hr.length)   line('chart-rhr',    [ds('Resting HR', data.body.resting_hr,   fg3)],   { unit: ' bpm'});
+// ─── Sleep hours ────────────────────────────────────────────
+if (data.sleep_hours && data.sleep_hours.length) {
+  line('chart-sleep-hours',
+    [ds('Sleep (h)', data.sleep_hours, fg)],
+    { unit: ' h' });
+}
+
+// ─── Sleep score (self ×20 vs device 0–100) ────────────────
+if (data.sleep_score && (data.sleep_score.self.length || data.sleep_score.device.length)) {
+  const series = [];
+  if (data.sleep_score.self.length)   series.push(ds('Self-report (×20)', data.sleep_score.self, fg));
+  if (data.sleep_score.device.length) series.push(ds('Garmin sleep score', data.sleep_score.device, accent));
+  line('chart-sleep-score', series, { yAxis: { min: 0, max: 100 } });
+}
+
+// ─── Energy (self ×20 vs body battery 0–100) ───────────────
+if (data.energy && (data.energy.self.length || data.energy.device.length)) {
+  const series = [];
+  if (data.energy.self.length)   series.push(ds('Self-report (×20)', data.energy.self, fg));
+  if (data.energy.device.length) series.push(ds('Body battery (min)', data.energy.device, accent));
+  line('chart-energy', series, { yAxis: { min: 0, max: 100 } });
+}
+
+// ─── Soreness / Mood ────────────────────────────────────────
+if (data.soreness && data.soreness.length) {
+  line('chart-soreness', [ds('Soreness', data.soreness, info)], { yAxis: { min: 0, max: 5 } });
+}
+if (data.mood && data.mood.length) {
+  line('chart-mood', [ds('Mood', data.mood, good)], { yAxis: { min: 0, max: 5 } });
+}
+
+// ─── HRV (overnight avg, ms) ──────────────────────────────
+if (data.hrv && data.hrv.length) {
+  line('chart-hrv', [ds('HRV', data.hrv, accent)], { unit: ' ms' });
+}
+
+// ─── VO2max / training-readiness / active-minutes — follow-up scaffolds ───
+
+// ─── Heart rate (resting / avg / peak) ─────────────────────
+if (data.heart_rate) {
+  const series = [];
+  if (data.heart_rate.resting && data.heart_rate.resting.length) series.push(ds('Resting', data.heart_rate.resting, info));
+  if (data.heart_rate.avg     && data.heart_rate.avg.length)     series.push(ds('Avg',     data.heart_rate.avg,     fg));
+  if (data.heart_rate.peak    && data.heart_rate.peak.length)    series.push(ds('Peak',    data.heart_rate.peak,    accent));
+  if (series.length) line('chart-heart-rate', series, { unit: ' bpm' });
 }
 
 // ─── Training load ─────────────────────────────────────────
-if (data.training) {
+if (data.training && (data.training.cardio_min || data.training.strength_min)) {
   line('chart-load', [
     ds('Cardio',   data.training.cardio_min,   fg),
     ds('Strength', data.training.strength_min, accent),
   ], { unit: ' min' });
 }
 
-// ─── Device ─────────────────────────────────────────────────
-if (data.garmin) {
-  if (data.garmin.avg_hr      && data.garmin.avg_hr.length)      line('chart-g-hr',     [ds('Avg HR',      data.garmin.avg_hr,      fg)],   { unit: ' bpm' });
-  if (data.garmin.peak_stress && data.garmin.peak_stress.length) line('chart-g-stress', [ds('Peak stress', data.garmin.peak_stress, accent)],{ yAxis: { min: 0, max: 100 } });
-  if (data.garmin.min_bb      && data.garmin.min_bb.length)      line('chart-g-bb',     [ds('Recovery low', data.garmin.min_bb, fg3)], { yAxis: { min: 0, max: 100 } });
+// ─── Activities per day ────────────────────────────────────
+if (data.activities && data.activities.length) {
+  line('chart-activities', [bar('Activities', data.activities, accent)],
+       { type: 'bar', yAxis: { beginAtZero: true, ticks: { stepSize: 1 } } });
+}
+
+// ─── Stress (avg + peak) ────────────────────────────────────
+if (data.stress) {
+  const series = [];
+  if (data.stress.avg  && data.stress.avg.length)  series.push(ds('Avg',  data.stress.avg,  fg));
+  if (data.stress.peak && data.stress.peak.length) series.push(ds('Peak', data.stress.peak, accent));
+  if (series.length) line('chart-stress', series, { yAxis: { min: 0, max: 100 } });
+}
+
+// ─── Stress time-in-zone (stacked bars per day) ─────────────
+if (data.stress_minutes) {
+  const series = [];
+  if (data.stress_minutes.rest   && data.stress_minutes.rest.length)   series.push(bar('Rest',   data.stress_minutes.rest,   good));
+  if (data.stress_minutes.low    && data.stress_minutes.low.length)    series.push(bar('Low',    data.stress_minutes.low,    info));
+  if (data.stress_minutes.medium && data.stress_minutes.medium.length) series.push(bar('Medium', data.stress_minutes.medium, accent));
+  if (data.stress_minutes.high   && data.stress_minutes.high.length)   series.push(bar('High',   data.stress_minutes.high,   fg));
+  if (series.length) {
+    new Chart(document.getElementById('chart-stress-zones'), {
+      type: 'bar',
+      data: { datasets: series },
+      options: {
+        responsive: true, maintainAspectRatio: false, animation: false,
+        parsing: false,
+        plugins: {
+          legend: { display: true, labels: { font: { size: 11 } } },
+          tooltip: {
+            backgroundColor: fg, padding: 8, displayColors: true,
+            titleFont: { family: "'JetBrains Mono', monospace", size: 11 },
+            bodyFont:  { family: "'JetBrains Mono', monospace", size: 12 },
+            callbacks: { label: ctx => `${ctx.dataset.label}: ${ctx.parsed.y} min` },
+          },
+        },
+        scales: {
+          x: Object.assign(dateAxis(), { stacked: true }),
+          y: valueAxis({ stacked: true, beginAtZero: true }),
+        },
+      },
+    });
+  }
+}
+
+// ─── Respiration (avg + lowest) ─────────────────────────────
+if (data.respiration) {
+  const series = [];
+  if (data.respiration.avg && data.respiration.avg.length) series.push(ds('Avg',    data.respiration.avg, fg));
+  if (data.respiration.low && data.respiration.low.length) series.push(ds('Lowest', data.respiration.low, info));
+  if (series.length) line('chart-respiration', series, { unit: ' brpm' });
+}
+
+// ─── Body battery (high + low) ──────────────────────────────
+if (data.body_battery) {
+  const series = [];
+  if (data.body_battery.high && data.body_battery.high.length) series.push(ds('High', data.body_battery.high, good));
+  if (data.body_battery.low  && data.body_battery.low.length)  series.push(ds('Low',  data.body_battery.low,  accent));
+  if (series.length) line('chart-body-battery', series, { yAxis: { min: 0, max: 100 } });
+
+  // Charged vs drained per day (stacked-ish — they're independent positives;
+  // showing both lines on one axis makes the day's net effect visible).
+  const deltaSeries = [];
+  if (data.body_battery.charged && data.body_battery.charged.length) deltaSeries.push(ds('Charged', data.body_battery.charged, good));
+  if (data.body_battery.drained && data.body_battery.drained.length) deltaSeries.push(ds('Drained', data.body_battery.drained, accent));
+  if (deltaSeries.length) line('chart-body-battery-delta', deltaSeries, { yAxis: { beginAtZero: true } });
+}
+
+// ─── Daily activity (steps / cal / distance) ────────────────
+if (data.daily_activity) {
+  if (data.daily_activity.steps       && data.daily_activity.steps.length)       line('chart-steps',       [bar('Steps',        data.daily_activity.steps,       fg)],     { type: 'bar', yAxis: { beginAtZero: true } });
+  if (data.daily_activity.active_cal  && data.daily_activity.active_cal.length)  line('chart-active-cal',  [bar('Active cal',   data.daily_activity.active_cal,  accent)], { type: 'bar', yAxis: { beginAtZero: true } });
+  if (data.daily_activity.distance_mi && data.daily_activity.distance_mi.length) line('chart-distance',    [bar('Distance (mi)', data.daily_activity.distance_mi, info)],  { type: 'bar', yAxis: { beginAtZero: true }, unit: ' mi' });
+}
+
+// ─── Resting calories (RMR) ────────────────────────────────
+if (data.resting_calories && data.resting_calories.length) {
+  line('chart-resting-cal', [ds('RMR', data.resting_calories, fg)], { unit: ' kcal' });
+}
+
+// ─── Body composition ──────────────────────────────────────
+if (data.body) {
+  if (data.body.weight_lbs   && data.body.weight_lbs.length)   line('chart-weight', [ds('Weight (lb)', data.body.weight_lbs, fg)],     { unit: ' lb' });
+  if (data.body.body_fat_pct && data.body.body_fat_pct.length) line('chart-bf',     [ds('Body fat %', data.body.body_fat_pct, accent)], { unit: ' %'  });
+  if (data.body.resting_hr   && data.body.resting_hr.length)   line('chart-rhr',    [ds('Resting HR', data.body.resting_hr,   fg3)],   { unit: ' bpm'});
 }
 </script>
 {% endif %}

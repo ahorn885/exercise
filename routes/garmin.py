@@ -1253,41 +1253,153 @@ def _bulk_insert_wellness(db, rows: list, uid: int, chunk: int = 500) -> tuple:
 def _wellness_skip_detail(name: str) -> str:
     """Accurate skip reason for a file that yielded no wellness readings.
 
-    parse_wellness_fit only extracts the five per-second streams (heart rate,
-    stress, body battery, respiration, steps). Garmin _METRICS files hold daily
-    summary metrics instead, so they legitimately yield nothing here. Use the
-    Garmin filename convention as a hint so the message isn't misleading."""
+    `parse_wellness_fit` only extracts the five per-second streams (heart
+    rate, stress, body battery, respiration, steps). _METRICS / _SLEEP_DATA
+    / _HRV_STATUS files are routed away from this parser by the bulk
+    importer (#283 Phase B), so a file landing here is genuinely empty or
+    of an unrecognized type. Use the Garmin filename convention as a hint
+    so the message isn't misleading."""
     upper = (name or '').upper()
-    if 'METRICS' in upper:
-        return ('Garmin metrics file — daily metrics (HRV, sleep, training '
-                'readiness, VO2max) are not imported by the wellness importer')
     if 'ACTIVITY' in upper:
         return 'activity file — import it on the Garmin → Import FIT page instead'
     return ('no supported wellness readings found '
             '(heart rate, stress, body battery, respiration, steps)')
 
 
+_DAILY_METRICS_COLUMNS = (
+    'sleep_score', 'sleep_start_ms', 'sleep_end_ms', 'sleep_awake_min',
+    'sleep_avg_respiration', 'sleep_contributors_json',
+    'sleep_deep_min', 'sleep_light_min', 'sleep_rem_min',
+    'hrv_overnight_avg_ms', 'hrv_7d_avg_ms', 'hrv_samples_json',
+    'training_readiness', 'vo2max_running', 'vo2max_cycling',
+    'spo2_avg', 'spo2_low',
+    'resting_metabolic_rate',
+)
+
+
+def _upsert_garmin_daily_metrics(db, uid: int, date: str, fields: dict) -> bool:
+    """UPSERT one day's derived metrics. Only the keys present in `fields`
+    are touched — a `_HRV_STATUS.fit` upload won't clobber a sleep_score
+    that a `_METRICS.fit` upload already wrote for the same date. Returns
+    True if any column actually changed."""
+    cols = [c for c in _DAILY_METRICS_COLUMNS if c in fields]
+    if not cols:
+        return False
+    set_clause = ', '.join(f'{c} = COALESCE(EXCLUDED.{c}, garmin_daily_metrics.{c})'
+                           for c in cols)
+    col_sql = ', '.join(cols)
+    placeholder_sql = ', '.join(['?'] * len(cols))
+    values = [fields[c] for c in cols]
+    db.execute(
+        f'INSERT INTO garmin_daily_metrics (user_id, date, {col_sql}, updated_at) '
+        f'VALUES (?, ?, {placeholder_sql}, NOW()) '
+        f'ON CONFLICT (user_id, date) DO UPDATE SET '
+        f'{set_clause}, updated_at = NOW()',
+        [uid, date, *values],
+    )
+    return True
+
+
+def _metrics_to_db_fields(parsed: dict) -> dict:
+    """Translate the parser's dict shape into `garmin_daily_metrics` column
+    values. Lists land as JSON strings; ms timestamps pass through."""
+    out: dict = {}
+    for key in ('sleep_score', 'sleep_start_ms', 'sleep_end_ms',
+                'sleep_awake_min', 'sleep_avg_respiration',
+                'hrv_overnight_avg_ms', 'hrv_7d_avg_ms',
+                'training_readiness', 'vo2max_running', 'vo2max_cycling',
+                'spo2_avg', 'spo2_low',
+                'sleep_deep_min', 'sleep_light_min', 'sleep_rem_min',
+                'resting_metabolic_rate'):
+        if key in parsed:
+            out[key] = parsed[key]
+    if 'sleep_contributors' in parsed:
+        out['sleep_contributors_json'] = json.dumps(parsed['sleep_contributors'])
+    if 'hrv_samples' in parsed:
+        # Compact list of [ts_ms, ms_value] pairs for the overnight chart.
+        out['hrv_samples_json'] = json.dumps(parsed['hrv_samples'])
+    return out
+
+
 @bp.route('/import-wellness/bulk', methods=['POST'])
 def import_wellness_bulk():
-    """Parse many wellness/monitoring FITs and merge their per-second readings
-    into wellness_log. Duplicate seconds are skipped. Returns JSON for the
-    drag-and-drop UI."""
+    """Parse many Garmin daily FITs and merge them into the right table:
+
+      - `_WELLNESS.fit` (per-second monitoring) → `wellness_log`
+      - `_METRICS.fit` / `_SLEEP_DATA.fit` / `_HRV_STATUS.fit` (daily-derived
+        metrics) → `garmin_daily_metrics`, UPSERTed by (user, date) so the
+        three file types can land in any order and each contributes the
+        columns it owns
+
+    Duplicate per-second readings are skipped at the wellness_log layer.
+    Returns JSON for the drag-and-drop UI.
+    """
     db = get_db()
     uid = current_user_id()
     files = request.files.getlist('files')
     if not files:
         return jsonify({'ok': False, 'error': 'No files in request.'}), 400
 
-    from garmin_fit_parser import parse_wellness_fit
+    from garmin_fit_parser import (
+        detect_fit_type, parse_wellness_fit, parse_wellness_daily_extras,
+        parse_metrics_fit, parse_sleep_data_fit, parse_hrv_status_fit,
+    )
 
     results = []
-    summary = {'imported': 0, 'duplicates': 0, 'skipped': 0, 'errors': 0, 'files': 0}
+    summary = {'imported': 0, 'duplicates': 0, 'skipped': 0, 'errors': 0,
+               'files': 0, 'metrics_days': 0}
 
     for name, raw, err in _iter_fit_blobs(files):
         if err:
             results.append({'name': name, 'status': 'skipped', 'detail': err})
             summary['skipped'] += 1
             continue
+
+        try:
+            kind = detect_fit_type(raw)
+        except Exception as e:
+            db.rollback()
+            results.append({'name': name, 'status': 'error', 'detail': str(e)})
+            summary['errors'] += 1
+            continue
+
+        if kind in ('metrics', 'sleep_data', 'hrv_status'):
+            parser = {
+                'metrics':    parse_metrics_fit,
+                'sleep_data': parse_sleep_data_fit,
+                'hrv_status': parse_hrv_status_fit,
+            }[kind]
+            try:
+                parsed = parser(raw)
+            except Exception as e:
+                db.rollback()
+                results.append({'name': name, 'status': 'error', 'detail': str(e)})
+                summary['errors'] += 1
+                continue
+            if not parsed or 'date' not in parsed:
+                results.append({'name': name, 'status': 'skipped',
+                                'detail': f'no {kind} fields recognized'})
+                summary['skipped'] += 1
+                continue
+            try:
+                fields = _metrics_to_db_fields(parsed)
+                wrote = _upsert_garmin_daily_metrics(db, uid, parsed['date'], fields)
+                db.commit()
+                detail_keys = ', '.join(sorted(fields.keys())) or '(no columns)'
+                results.append({'name': name, 'status': 'imported',
+                                'detail': f"{kind} · {parsed['date']} · {detail_keys}"})
+                if wrote:
+                    summary['metrics_days'] += 1
+                summary['files'] += 1
+            except Exception as e:
+                db.rollback()
+                results.append({'name': name, 'status': 'error', 'detail': str(e)})
+                summary['errors'] += 1
+            continue
+
+        # Wellness path (kind == 'wellness' or 'unknown' — older files w/o
+        # FileIdMessage fall here too, and parse_wellness_fit will return []
+        # if there's truly nothing recognizable).
         try:
             rows = parse_wellness_fit(raw)
         except Exception as e:
@@ -1302,6 +1414,19 @@ def import_wellness_bulk():
             continue
         try:
             ins, dup = _bulk_insert_wellness(db, rows, uid)
+            # Also harvest the daily-aggregate values that live in WELLNESS
+            # files (resting metabolic rate from MonitoringInfoMessage). Best-
+            # effort: a parse failure here shouldn't fail the per-second
+            # insert above.
+            try:
+                extras = parse_wellness_daily_extras(raw)
+                if extras.get('date') and 'resting_metabolic_rate' in extras:
+                    _upsert_garmin_daily_metrics(
+                        db, uid, extras['date'],
+                        {'resting_metabolic_rate': extras['resting_metabolic_rate']},
+                    )
+            except Exception:
+                pass
             db.commit()
             dates = sorted({r['date'] for r in rows if r.get('date')})
             drange = dates[0] if dates else '?'
