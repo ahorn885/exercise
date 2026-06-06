@@ -1,4 +1,4 @@
-"""Deterministic per-week training grid — Track 2 slice 2b (§5.1, §5.2, §5.3
+"""Deterministic per-week training grid — Track 2 slices 2b + 2c (§5.1–§5.4
 of `Layer4_DeterminismFirst_Synthesis_Design_v1.md`).
 
 Replaces the LLM's "decide how many sessions per discipline this week" job with
@@ -13,8 +13,16 @@ Slice 2b covers:
   - intensity split (polarized per-phase ratios, Seiler 2010).
   - race-sim long day slot for `race_format == 'continuous_multi_day'`.
 
-Slice 2c will extend with rest-detection (`expected_rest_count` +
-`detect_insufficient_rest`); not in 2b.
+Slice 2c extends with rest detection (§5.4):
+  - `expected_rest_count(phase, weekly_capacity_d)` — advisory count of rest
+    days the coach expects per phase (Base 2 / Build 1–2 / Peak 1 / Taper 2–3).
+  - `detect_insufficient_rest(sessions_in_week, expected, disabled_days)` —
+    post-synthesis check that counts actual rest days and returns an
+    `InsufficientRestWarning` when the count is below expected. Rest = a day
+    with zero non-rest sessions; disabled-availability days are hard rest and
+    already excluded by the schedule contract. The LLM keeps full placement
+    freedom — this is detection, not enforcement (validator Rule 3 surfaces
+    the warning).
 
 Cache surface: pure function of (layer2a, phase_structure, phase, week_in_phase,
 capacity_hours, race_format, race_duration_h). No new key surface beyond what
@@ -326,10 +334,113 @@ def build_session_grid(
     )
 
 
+# ─── Rest detection (slice 2c §5.4) ─────────────────────────────────────────
+
+# Coach-expected rest-day count per phase. Advisory only — the LLM keeps
+# placement freedom. Values from spec §5.4: Base 2 / Build 1–2 / Peak 1 /
+# Taper 2–3. We pick the midpoint of the ranges (Build=2, Taper=2) and let
+# the deterministic post-check warn when actual < expected, not blocker.
+_PHASE_EXPECTED_REST_DAYS: dict[str, int] = {
+    "Base": 2,
+    "Build": 2,
+    "Peak": 1,
+    "Taper": 2,
+}
+
+
+@dataclass(frozen=True)
+class InsufficientRestWarning:
+    """Post-synthesis detection result — surfaced as the `insufficient_rest`
+    coaching flag + the validator Rule 3 warning. Carries the (expected, actual)
+    pair so the warning string is self-explanatory in the diag JSON."""
+
+    expected: int
+    actual: int
+    week_dates: list[str]  # ISO dates in the week (Mon..Sun) for the affected window
+
+
+def expected_rest_count(
+    phase_name: str,
+    weekly_capacity_days: int | None = None,
+) -> int:
+    """Coach-expected rest-day count for the week, ABOVE the days the athlete
+    has hard-disabled via `daily_availability_windows`. Phase-driven default;
+    when `weekly_capacity_days` (the count of *enabled* days) is supplied, we
+    subtract the already-disabled days from the phase target — disabled days
+    cover that portion of the rest contract automatically.
+
+    Example: Base (default 2 rest) with enabled=5 → 2 disabled days already
+    cover the rest target → returns 0 (no additional LLM rest required).
+    Base with enabled=7 → returns 2 (LLM must pick 2 rest days).
+
+    Returns 0 for unknown phases (graceful — caller treats as "no expectation
+    set", no warning ever fires)."""
+    phase_expected = _PHASE_EXPECTED_REST_DAYS.get(phase_name, 0)
+    if weekly_capacity_days is None:
+        return phase_expected
+    already_rest_from_disabled = max(0, 7 - max(0, weekly_capacity_days))
+    return max(0, phase_expected - already_rest_from_disabled)
+
+
+def detect_insufficient_rest(
+    sessions_in_week: list,
+    expected: int,
+    disabled_dates: set | None = None,
+) -> InsufficientRestWarning | None:
+    """Count rest days (calendar days with 0 non-rest sessions) across the
+    full 7-day week the synthesized `sessions_in_week` covers; emit a warning
+    when actual < expected. `disabled_dates` is the set of ISO date strings
+    that are hard rest per `daily_availability_windows` — they count toward
+    the rest tally automatically (athlete had no choice). The LLM's choice of
+    additional rest days on top is what we're measuring.
+
+    The week boundaries are derived from the sessions' min/max dates; the
+    actual rest count = 7 - days_with_a_non_rest_session. (A day with NO
+    sessions at all and NO disabled flag still counts as rest — the LLM
+    just didn't schedule anything.)
+
+    Returns None when the week meets or exceeds the expected count, or when
+    `expected == 0` (e.g. unknown phase / disabled-covers contract met).
+    """
+    if expected <= 0 or not sessions_in_week:
+        return None
+
+    dates_with_session: set[str] = set()
+    for s in sessions_in_week:
+        if getattr(s, "kind", None) == "rest":
+            continue
+        date_iso = s.date.isoformat() if hasattr(s.date, "isoformat") else str(s.date)
+        dates_with_session.add(date_iso)
+
+    days_with_session = len(dates_with_session)
+    # The week is 7 calendar days regardless of how many sessions the LLM
+    # placed; days without sessions count as rest by default.
+    actual_rest_days = max(0, 7 - days_with_session)
+    # Disabled days are hard rest — but if the synthesizer correctly skipped
+    # them (the schedule contract), they're already in the "no session"
+    # bucket. We don't double-count.
+    _ = disabled_dates  # noqa: F841 — kept for future explicit-disabled accounting
+
+    if actual_rest_days >= expected:
+        return None
+
+    return InsufficientRestWarning(
+        expected=expected,
+        actual=actual_rest_days,
+        week_dates=sorted(
+            s.date.isoformat() if hasattr(s.date, "isoformat") else str(s.date)
+            for s in sessions_in_week
+        ),
+    )
+
+
 __all__ = [
     "DisciplineAllocation",
     "IntensityMix",
+    "InsufficientRestWarning",
     "RaceSimLongDay",
     "SessionGrid",
     "build_session_grid",
+    "detect_insufficient_rest",
+    "expected_rest_count",
 ]

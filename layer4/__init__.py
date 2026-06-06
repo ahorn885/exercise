@@ -172,6 +172,17 @@ from layer4.race_week_brief import (
     build_record_race_week_brief_tool,
     llm_layer4_race_week_brief,
 )
+from layer4.locale_assign import (
+    ExerciseSubstitution,
+    LocaleAssignDiagnostic,
+    SessionAssignment,
+    assign_locales,
+)
+from layer4.session_grid import (
+    InsufficientRestWarning,
+    detect_insufficient_rest,
+    expected_rest_count,
+)
 from layer4.single_session import (
     SingleSessionRequest,
     build_record_single_session_tool,
@@ -406,6 +417,15 @@ __all__ = [
     "SingleSessionRequest",
     "build_record_single_session_tool",
     "llm_layer4_single_session_synthesize",
+    # Track 2 slice 2c — locale assignment + substitution (locale_assign.py)
+    "ExerciseSubstitution",
+    "LocaleAssignDiagnostic",
+    "SessionAssignment",
+    "assign_locales",
+    # Track 2 slice 2c — rest detection (session_grid.py)
+    "InsufficientRestWarning",
+    "detect_insufficient_rest",
+    "expected_rest_count",
     # Race-week brief synthesizer (race_week_brief.py)
     "build_record_race_week_brief_tool",
     "llm_layer4_race_week_brief",

@@ -358,3 +358,115 @@ class TestRaceSimLongDay:
             race_format="continuous_multi_day", race_duration_h=56.0,
         )
         assert grid_t2.race_sim_long_day is None
+
+
+# ─── Track 2 slice 2c §5.4 — rest detection ────────────────────────────────
+
+
+class _StubSession:
+    """Minimal duck-type for `detect_insufficient_rest` (only `.date` + `.kind`
+    are read). Keeps the rest-detection tests independent of the full
+    PlanSession schema (which requires pydantic + many unrelated fields)."""
+
+    def __init__(self, date_: date, kind: str = "cardio") -> None:
+        self.date = date_
+        self.kind = kind
+
+
+class TestExpectedRestCount:
+    def test_phase_defaults(self):
+        from layer4.session_grid import expected_rest_count
+
+        assert expected_rest_count("Base") == 2
+        assert expected_rest_count("Build") == 2
+        assert expected_rest_count("Peak") == 1
+        assert expected_rest_count("Taper") == 2
+
+    def test_unknown_phase_returns_zero(self):
+        from layer4.session_grid import expected_rest_count
+
+        assert expected_rest_count("Bogus") == 0
+
+    def test_disabled_days_cover_rest_target(self):
+        """Athlete with 5 enabled days has 2 disabled days already → Base's
+        2-rest target is already met by disabled days → return 0 (no
+        additional LLM rest required)."""
+        from layer4.session_grid import expected_rest_count
+
+        assert expected_rest_count("Base", weekly_capacity_days=5) == 0
+
+    def test_partial_disabled_subtracts_from_target(self):
+        """6 enabled days = 1 disabled = 1 auto-rest. Base needs 2 total →
+        LLM must pick 1 more rest day."""
+        from layer4.session_grid import expected_rest_count
+
+        assert expected_rest_count("Base", weekly_capacity_days=6) == 1
+
+    def test_full_capacity_no_subtraction(self):
+        """All 7 days enabled = 0 auto-rest. Phase target stands."""
+        from layer4.session_grid import expected_rest_count
+
+        assert expected_rest_count("Base", weekly_capacity_days=7) == 2
+
+    def test_peak_one_day_target(self):
+        from layer4.session_grid import expected_rest_count
+
+        assert expected_rest_count("Peak", weekly_capacity_days=7) == 1
+        # Peak only wants 1 rest; even 6 enabled (1 disabled) meets it.
+        assert expected_rest_count("Peak", weekly_capacity_days=6) == 0
+
+
+class TestDetectInsufficientRest:
+    def test_meets_expected_returns_none(self):
+        """3 days with sessions, 7-3=4 rest days, expected 2 → no warning."""
+        from layer4.session_grid import detect_insufficient_rest
+
+        monday = date(2026, 6, 1)
+        sessions = [_StubSession(monday + timedelta(days=i)) for i in range(3)]
+        assert detect_insufficient_rest(sessions, expected=2) is None
+
+    def test_below_expected_emits_warning(self):
+        """7 days with non-rest sessions → 0 rest days, expected 2 → warning."""
+        from layer4.session_grid import detect_insufficient_rest
+
+        monday = date(2026, 6, 1)
+        sessions = [_StubSession(monday + timedelta(days=i)) for i in range(7)]
+        warning = detect_insufficient_rest(sessions, expected=2)
+        assert warning is not None
+        assert warning.expected == 2
+        assert warning.actual == 0
+
+    def test_rest_session_doesnt_count_as_workload(self):
+        """A `kind='rest'` session on a date doesn't count as a workload day —
+        it's still a rest day. So Mon/Tue cardio + Wed rest = 2 workload
+        days → 7-2=5 rest days, expected 2 → no warning."""
+        from layer4.session_grid import detect_insufficient_rest
+
+        monday = date(2026, 6, 1)
+        sessions = [
+            _StubSession(monday, "cardio"),
+            _StubSession(monday + timedelta(days=1), "cardio"),
+            _StubSession(monday + timedelta(days=2), "rest"),
+        ]
+        assert detect_insufficient_rest(sessions, expected=2) is None
+
+    def test_six_workload_days_one_rest_warns(self):
+        """6 workload days → 1 rest day. Expected 2 → warning (actual 1 < 2)."""
+        from layer4.session_grid import detect_insufficient_rest
+
+        monday = date(2026, 6, 1)
+        sessions = [_StubSession(monday + timedelta(days=i)) for i in range(6)]
+        warning = detect_insufficient_rest(sessions, expected=2)
+        assert warning is not None
+        assert warning.actual == 1
+
+    def test_zero_expected_returns_none(self):
+        from layer4.session_grid import detect_insufficient_rest
+
+        sessions = [_StubSession(date(2026, 6, 1))]
+        assert detect_insufficient_rest(sessions, expected=0) is None
+
+    def test_empty_sessions_returns_none(self):
+        from layer4.session_grid import detect_insufficient_rest
+
+        assert detect_insufficient_rest([], expected=2) is None

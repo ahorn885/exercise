@@ -1,6 +1,6 @@
 # Layer 4 Determinism-First Synthesis — Design Spec v1
 
-**Status:** APPROVED (Andy, 2026-06-06). Slice 2a shipped this commit (5 files; all-paths enum + Rule 6a delete); 2b → 2d follow per §10.
+**Status:** APPROVED (Andy, 2026-06-06). Slice 2a + 2b + 2c shipped; 2d follows per §10. Slice 2c cardio-routing pulled out → 2c.2 follow-up (depends on layer0 vocab work).
 **Date:** 2026-06-06
 **Track:** 2 of 3 (#429, parent epic #427). Track 1 (Locations Consolidation, #428) shipped (PRs #426 + #431). Track 3 (D-52 catalog migration, #430) parallel/after.
 **Closes / addresses:** #335 #336 #338 #339 #341 #337 (the plan-gen quality issues #429 says Track 2 subsumes).
@@ -269,14 +269,25 @@ Non-substantive (test files): `tests/test_layer4_plan_create.py` adds `TestCompu
 | `tests/test_layer4_session_grid.py` | NEW. |
 | `tests/test_layer4_per_phase.py` | Add prompt-rewrite tests: assert pre-filled grid appears verbatim in rendered prompt; assert old "allocate" language is gone. |
 
-### Slice 2c — rest detection + locale assignment + substitution (≤5 files)
+### Slice 2c — rest detection + STRENGTH locale assignment + substitution (5 files, shipped 2026-06-06)
+
+Cardio routing pulled out → 2c.2 follow-up. See "**Slice 2c.2 follow-up**" below.
+
 | File | Change |
 |---|---|
-| `layer4/session_grid.py` | Extend with `expected_rest_count()` + `detect_insufficient_rest()` (§5.4); emits `insufficient_rest` coaching flag, no required placement. |
-| `layer4/locale_assign.py` | NEW — §5.5 pipeline + `_strength_pattern_match` consumer + small-call LLM substitution per §2.6.5 (separate tool module, not a synth re-invocation). |
-| `layer4/plan_create.py` + `layer4/plan_refresh.py` | Call `assign_locales()` after `synthesize_phase`, before persist. |
-| `layer4/validator.py` | Demote Rules 3 / 11 to warning; Rule 3 now wraps the deterministic `detect_insufficient_rest` warning rather than running its own logic. |
-| `tests/test_layer4_locale_assign.py` | NEW. |
+| `layer4/session_grid.py` | Extended with `expected_rest_count(phase, weekly_capacity_d)` + `detect_insufficient_rest(sessions, expected, disabled_dates)` (§5.4); returns `InsufficientRestWarning` consumed by validator Rule 3. |
+| `layer4/locale_assign.py` | NEW — §5.5 pipeline (majority-fit → pattern-match substitute → tier-3 bodyweight proxy → small-call LLM substitute → coaching_flag tail). `_LLM_SUBSTITUTE_CALLS_PER_INVOCATION = 1` budget. Returns `LocaleAssignDiagnostic` for `synthesis_metadata` (Rule #14 observability). Cardio + rest sessions pass through untouched. |
+| `layer4/orchestrator.py` | NEW `_apply_locale_assign(db, user_id, payload, layer2c_payloads)` runs post-cached engine on `orchestrate_plan_create` + `orchestrate_plan_refresh`. Pass-through degrade on exception (non-fatal). The natural call site is the orchestrator (already has `db` + `user_id`), not `plan_create.py` / `plan_refresh.py` as the original §10 row implied. |
+| `layer4/validator.py` | Demoted Rules 3 / 11 to warning. Added `_append_insufficient_rest_warnings` invoked from `_rule_rest_spacing` — emits one warning per (phase, ISO-week) with rest count below expected. |
+| `tests/test_layer4_locale_assign.py` | NEW. 14 tests covering majority-fit, ties→home, pattern-match substitute (tier-1/2 preferred over tier-3), tier-3 proxy fallback, LLM small-call budget, hallucination defense, coaching-flag tail, cardio/rest pass-through, diagnostic serialization. |
+
+**Slice 2c.2 follow-up (NOT shipped): cardio-session route-locale routing** (§5.5 final ¶). Pulled out 2026-06-06 because it depends on layer0 vocab work not yet done:
+
+- **Layer 0 vocab adds (Andy 2026-06-06):** new TRN-017 row "Off-Trail / Bush" for overland navigation (currently no canonical terrain covers this), and rename TRN-007 from "Technical Rock" → "Technical Rock/Scree" for clarity. Both are layer0 vocabulary changes that need `etl/layer0/extractors/vocabulary.py` updates + ETL migration + Neon re-run + spec edit. Trigger #3 cross-layer surface change; track in its own micro-spec.
+- **Snow-sports semantics decision (Andy 2026-06-06):** Mountain/Alpine (TRN-005) ≠ Snow access (TRN-012). Need a ratified rule for D-018 Mountaineering routing (current OR-match has the LLM/athlete handle seasonality; alternative is snow-only routing for mountaineering with athlete editing for non-snow seasons). Open design call.
+- **Discipline→required_terrain map drafted, NOT locked:** 17 of 21 disciplines mapped; 4 default to home (D-002 Road Running, D-006 Road Cycling, D-007 TT Cycling, D-027 OCR). Full table in the slice 2c handoff §3.
+
+**Persistent-cache follow-up:** the small-call LLM substitute uses an in-memory cache scoped to one `assign_locales` invocation. The spec §5.5 step 6 calls out a persistent `(exercise_id, locale_id, excluded_ids_hash) → substitute_id` cache reusable across athletes; that requires extending `cache.VALID_ENTRY_POINTS` + the `layer4_cache.entry_point` CHECK constraint to add a new `llm_locale_substitute` label. Defer until real-world telemetry shows the LLM substitute firing often enough to warrant the persistence cost.
 
 ### Slice 2d — rx_engine wiring + remaining validator demotion (≤4 files)
 | File | Change |

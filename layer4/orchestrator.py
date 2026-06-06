@@ -93,6 +93,7 @@ from layer4.cached_wrappers import (
     llm_layer4_race_week_brief_cached,
     llm_layer4_single_session_synthesize_cached,
 )
+from layer4.locale_assign import assign_locales
 from layer4.context import (
     Layer1Payload,
     Layer2APayload,
@@ -456,6 +457,40 @@ def _upstream_full_cone(
     )
 
 
+def _apply_locale_assign(
+    db: Any,
+    user_id: int,
+    payload: Layer4Payload,
+    layer2c_payloads: dict[str, "Layer2CPayload"],
+) -> Layer4Payload:
+    """Track 2 slice 2c — run the deterministic post-synthesis locale-assign
+    pipeline (`layer4/locale_assign.py`) on the synthesized payload, swap the
+    payload's sessions for the assigned-and-substituted set. Cardio + rest
+    sessions are untouched (cardio routing deferred to slice 2c.2).
+
+    Runs OUTSIDE the cached engine — locale-only edits already invalidate
+    Layer 2C and transitively Layer 4 (Track 1 eviction policy), so this
+    is a pure post-hydrate transform. Failure here is non-fatal: a degraded
+    pass-through preserves the original payload + logs the cause, so a
+    locale-assign defect can never wedge plan generation.
+    """
+    try:
+        new_sessions, _diag = assign_locales(
+            sessions=list(payload.sessions),
+            layer2c_payloads=layer2c_payloads,
+            db=db,
+            user_id=user_id,
+            llm_substitute_caller=None,  # in-flight wiring; deterministic ladder ships first
+        )
+        return payload.model_copy(update={"sessions": new_sessions})
+    except Exception as exc:  # noqa: BLE001 — see docstring on the degraded path
+        import logging
+        logging.getLogger(__name__).warning(
+            "_apply_locale_assign: degraded pass-through after exception: %s", exc,
+        )
+        return payload
+
+
 def orchestrate_race_week_brief(
     db: Any,
     user_id: int,
@@ -718,7 +753,7 @@ def orchestrate_plan_refresh(
         e=cone.layer2e_payload,
     )
 
-    return llm_layer4_plan_refresh_cached(
+    payload = llm_layer4_plan_refresh_cached(
         user_id=user_id,
         tier=tier,
         refresh_scope_start=refresh_scope_start,
@@ -738,6 +773,7 @@ def orchestrate_plan_refresh(
         # refresh prompt body + cache key.
         training_substitution_payload=cone.training_substitution_payload,
     )
+    return _apply_locale_assign(db, user_id, payload, layer2_bundle.c)
 
 
 def orchestrate_plan_create(
@@ -795,12 +831,13 @@ def orchestrate_plan_create(
         viability_current_date=plan_start_date,
     )
 
-    return llm_layer4_plan_create_cached(
+    layer2c_payloads = {cone.primary_locale: cone.layer2c_payload}
+    payload = llm_layer4_plan_create_cached(
         user_id=user_id,
         layer1_payload=cone.layer1_payload.model_dump(mode="json"),
         layer2a_payload=cone.layer2a_payload,
         layer2b_payload=cone.layer2b_payload,
-        layer2c_payloads={cone.primary_locale: cone.layer2c_payload},
+        layer2c_payloads=layer2c_payloads,
         layer2d_payload=cone.layer2d_payload,
         layer2e_payload=cone.layer2e_payload,
         layer3a_payload=cone.layer3a_payload,
@@ -814,6 +851,7 @@ def orchestrate_plan_create(
         # per-phase prompt bodies + cache key.
         training_substitution_payload=cone.training_substitution_payload,
     )
+    return _apply_locale_assign(db, user_id, payload, layer2c_payloads)
 
 
 def _max_etl_version(versions: list[str]) -> str:
