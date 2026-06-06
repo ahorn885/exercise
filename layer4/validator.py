@@ -426,8 +426,13 @@ def _rule_volume_band(payload: Layer4Payload, ctx: ValidatorContext) -> list[Rul
             continue
         low, high = band
         actual = sum(_session_volume_hours(s) for s in sessions)
+        # Track 2 slice 2b: demoted to warning across both band widths. The
+        # deterministic `session_grid` (Track 2 §5.1) is now authoritative for
+        # per-discipline allocation; the validator's role here shifts from
+        # gating to advisory drift detection. A persistent ±20% miss is still
+        # surfaced — but it no longer kills the synthesis.
         if actual < low * 0.8 or actual > high * 1.2:
-            severity = "blocker"
+            severity = "warning"
         elif actual < low * 0.9 or actual > high * 1.1:
             severity = "warning"
         else:
