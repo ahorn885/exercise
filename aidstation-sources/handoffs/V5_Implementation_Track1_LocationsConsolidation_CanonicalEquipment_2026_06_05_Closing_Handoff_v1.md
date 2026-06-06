@@ -86,4 +86,13 @@ Design decision 8 ("public equipment vocab retires entirely in Track 1") **confl
 ## 7. Test / verification state
 - Container: **full `tests/` suite 1998 passed / 16 skipped** (incl. new `tests/test_locations.py` ×9; rewired `test_locales.py`, `test_redesign_locales_list_render.py`, `test_layer4_orchestrator.py`). `app.py` imports + the `make_home` route registers. **No DB/LLM/live-app run from the container** (Neon egress + no Flask runtime) — the cold re-run + UI smoke (§4) after the owed Neon work is the real proof.
 
+## 9. Post-merge addendum (2026-06-06 — live on prod)
+
+PR #426 merged → Andy ran the Neon DDL (A0 dedupe clean: residual=0; `init_db.py` applied the one-home index + the two DROPs; verified `equipment` column gone, `locale_equipment` dropped, index present). Live testing then surfaced two save-equipment bugs, both fixed in **PR #431 (merged, `7636217`)**:
+
+1. **500 on `POST /locales/<l>/edit`** (legacy `home` AND new-style `home_2`) — Track 1 regression: `gym_profiles.category` is `NOT NULL` but a categoryless locale (legacy enum slug, or a Mapbox/manual locale with no detected category) made `_create_gym_profile` INSERT `NULL`. **Fixed:** a categoryless build defaults to a private residential profile (`home_gym`) — privacy-safe. Regression test `test_build_path_categoryless_defaults_private_residential`.
+2. **"Place lookup result was malformed; try again"** on Mapbox save — **pre-existing** (the Phase-6 redesign of `templates/locales/new.html`, commit 255a8c5, NOT #426): the search-result form dropped the `lng`/`lat`/`raw_payload`/`mapbox_category` fields + the locale-name input that `_save_mapbox_anchored` requires. **Fixed:** restored them (+ `upgrade_slug` passthrough).
+
+**Andy verified live (2026-06-06):** adding Mapbox locations, saving equipment on legacy + new locations, and marking either as Home all work. **Still owed: the cold PGE plan run** (the actual `equipment_unavailable`-gone / blocks-→-`ready` proof).
+
 *End of handoff.*
