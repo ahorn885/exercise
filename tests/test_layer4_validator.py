@@ -684,14 +684,13 @@ def test_driver_pass_index_preserved():
 
 
 def test_driver_accepted_false_on_blocker():
-    payload = _minimal_layer4(
-        sessions=[
-            _strength_session(
-                exercises=[_strength_exercise(exercise_id="E-bench")],
-            )
-        ]
-    )
-    ctx = ValidatorContext(layer2d_payload=_layer2d_with_excluded(["E-bench"]))
+    """Uses Rule 12 (`discipline_excluded`) — a still-blocker structural rule
+    per spec §8 / D2 — to exercise the driver's `accepted=False` path. Rule 7
+    (`injury_violation`) was demoted to warning in Track 2 slice 2d, so it's
+    no longer a valid blocker proxy here.
+    """
+    payload = _minimal_layer4(sessions=[_cardio_session(discipline_id="D-002")])
+    ctx = ValidatorContext(layer2a_payload=_layer2a_with_band(discipline_id="D-001"))
     result = validate_layer4_payload(payload, ctx)
     assert not result.accepted
     assert any(f.severity == "blocker" for f in result.rule_failures)
@@ -896,7 +895,11 @@ def test_acwr_in_band_no_fire():
     assert not any(f.rule_name.startswith("acwr") for f in failures)
 
 
-def test_acwr_above_blocker():
+def test_acwr_above_warning():
+    """Track 2 slice 2d (§8 / D2 row 2): demoted from blocker → warning.
+    The deterministic periodization ramp + Bosquet taper handle the real
+    ACWR cases; this rule stays as advisory drift detection.
+    """
     # Acute = 14h (last 7d in payload). Chronic_total = 14h. chronic_avg = 14/4 = 3.5/wk. ratio = 14/3.5 = 4.0.
     sessions = [
         _cardio_session(session_id=f"S-{i}", d=_SCOPE_START + timedelta(days=i), duration_min=120)
@@ -907,7 +910,7 @@ def test_acwr_above_blocker():
     failures = validate_layer4_payload(payload, ctx).rule_failures
     acwr = [f for f in failures if f.rule_name.startswith("acwr")]
     assert acwr
-    assert acwr[0].severity == "blocker"
+    assert acwr[0].severity == "warning"
 
 
 def test_acwr_skipped_when_no_prior_data():
@@ -1154,14 +1157,19 @@ def test_injury_violation_clean_no_fire():
     assert not any(f.rule_name.startswith("injury_violation") for f in failures)
 
 
-def test_injury_violation_excluded_exercise_blocker():
+def test_injury_violation_excluded_exercise_warning():
+    """Track 2 slice 2d (§8 / D2 row 7): demoted from blocker → warning.
+    The 2D-exclusion is enforced structurally at the slice-2a tool-schema
+    enum (`compute_feasible_pool_ids` subtracts excluded ids); this rule
+    stays as an edge-case advisory for hand-edited / legacy-cached payloads.
+    """
     sessions = [_strength_session(exercises=[_strength_exercise(exercise_id="E-bench")])]
     payload = _minimal_layer4(sessions=sessions)
     ctx = ValidatorContext(layer2d_payload=_layer2d_with_excluded(["E-bench"]))
     failures = validate_layer4_payload(payload, ctx).rule_failures
     iv = [f for f in failures if f.rule_name.startswith("injury_violation")]
     assert iv
-    assert iv[0].severity == "blocker"
+    assert iv[0].severity == "warning"
 
 
 def test_injury_violation_skipped_without_2d():

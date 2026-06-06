@@ -94,6 +94,7 @@ from layer4.cached_wrappers import (
     llm_layer4_single_session_synthesize_cached,
 )
 from layer4.locale_assign import assign_locales
+from layer4.rx_wire import apply_current_rx
 from layer4.context import (
     Layer1Payload,
     Layer2APayload,
@@ -491,6 +492,42 @@ def _apply_locale_assign(
         return payload
 
 
+def _apply_rx_wire(
+    db: Any,
+    user_id: int,
+    payload: Layer4Payload,
+    layer2c_payloads: dict[str, "Layer2CPayload"],
+) -> Layer4Payload:
+    """Track 2 slice 2d — run the deterministic post-synth rx wiring
+    (`layer4/rx_wire.py`) on the synthesized payload. For each strength
+    exercise: overwrite `load_prescription` with the precise `current_rx`
+    baseline when one exists; else write a category-keyed RPE template and
+    append `first_exposure` to `coaching_flags`. NO LLM in this path.
+
+    Runs AFTER `_apply_locale_assign` on the same hydrated payload (per
+    spec §10 slice-2d row): substitutions decided by the locale-assign step
+    can change which exercise we look up rx for, so rx wiring must see the
+    post-substitution exercise list. `current_rx` reads are per-athlete
+    state, intentionally outside the block synthesis cache (a `current_rx`
+    edit updates the rendered prescription on next read without
+    invalidating Layer 4 blocks — spec §9).
+
+    Degraded pass-through on exception: an rx-wire defect can never wedge
+    plan generation.
+    """
+    try:
+        new_payload, _diag = apply_current_rx(
+            payload, db, user_id, layer2c_payloads,
+        )
+        return new_payload
+    except Exception as exc:  # noqa: BLE001 — see docstring on the degraded path
+        import logging
+        logging.getLogger(__name__).warning(
+            "_apply_rx_wire: degraded pass-through after exception: %s", exc,
+        )
+        return payload
+
+
 def orchestrate_race_week_brief(
     db: Any,
     user_id: int,
@@ -773,7 +810,9 @@ def orchestrate_plan_refresh(
         # refresh prompt body + cache key.
         training_substitution_payload=cone.training_substitution_payload,
     )
-    return _apply_locale_assign(db, user_id, payload, layer2_bundle.c)
+    payload = _apply_locale_assign(db, user_id, payload, layer2_bundle.c)
+    payload = _apply_rx_wire(db, user_id, payload, layer2_bundle.c)
+    return payload
 
 
 def orchestrate_plan_create(
@@ -851,7 +890,9 @@ def orchestrate_plan_create(
         # per-phase prompt bodies + cache key.
         training_substitution_payload=cone.training_substitution_payload,
     )
-    return _apply_locale_assign(db, user_id, payload, layer2c_payloads)
+    payload = _apply_locale_assign(db, user_id, payload, layer2c_payloads)
+    payload = _apply_rx_wire(db, user_id, payload, layer2c_payloads)
+    return payload
 
 
 def _max_etl_version(versions: list[str]) -> str:

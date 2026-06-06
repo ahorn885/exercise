@@ -34,6 +34,43 @@ from calculations import (
 DELOAD_THRESHOLD = 5
 
 
+def current_rx(db, user_id, exercise_name):
+    """Read the current prescription row for `(user_id, exercise_name)`.
+
+    Returns a dict `{sets, reps, weight_lbs, duration_sec, movement_pattern}`
+    when a row exists with at least one of weight or duration recorded; None
+    otherwise. Track 2 slice 2d wires this into `layer4.rx_wire.apply_current_rx`
+    to overwrite synthesizer-emitted `load_prescription` text with the
+    deterministic baseline.
+
+    Track 3 dependency (per Layer4_DeterminismFirst_Synthesis_Design_v1.md §7):
+    `current_rx.exercise` is the public-catalog exercise name, NOT a layer0
+    EX-id. Until Track 3 migrates `current_rx` to layer0 ids, a layer0-only
+    exercise (no matching public-catalog name row) returns None and the
+    rx_wire step falls through to the first-exposure template.
+    """
+    row = db.execute(
+        '''SELECT current_sets, current_reps, current_weight, current_duration,
+                  movement_pattern
+             FROM current_rx
+            WHERE exercise=? AND user_id=?''',
+        (exercise_name, user_id),
+    ).fetchone()
+    if row is None:
+        return None
+    weight = row['current_weight']
+    duration = row['current_duration']
+    if weight is None and duration is None:
+        return None
+    return {
+        'sets': row['current_sets'],
+        'reps': row['current_reps'],
+        'weight_lbs': weight,
+        'duration_sec': duration,
+        'movement_pattern': row['movement_pattern'],
+    }
+
+
 def _bootstrap_baseline(sets):
     """Derive baseline values from a target-less session (FIT bootstrap).
 

@@ -1,6 +1,6 @@
 # Layer 4 Determinism-First Synthesis — Design Spec v1
 
-**Status:** APPROVED (Andy, 2026-06-06). Slice 2a + 2b + 2c shipped; 2d follows per §10. Slice 2c cardio-routing pulled out → 2c.2 follow-up (depends on layer0 vocab work).
+**Status:** APPROVED (Andy, 2026-06-06). Slice 2a + 2b + 2c + 2d shipped — Track 2 closed. Slice 2c cardio-routing pulled out → 2c.2 follow-up (depends on layer0 vocab work).
 **Date:** 2026-06-06
 **Track:** 2 of 3 (#429, parent epic #427). Track 1 (Locations Consolidation, #428) shipped (PRs #426 + #431). Track 3 (D-52 catalog migration, #430) parallel/after.
 **Closes / addresses:** #335 #336 #338 #339 #341 #337 (the plan-gen quality issues #429 says Track 2 subsumes).
@@ -289,13 +289,17 @@ Cardio routing pulled out → 2c.2 follow-up. See "**Slice 2c.2 follow-up**" bel
 
 **Persistent-cache follow-up:** the small-call LLM substitute uses an in-memory cache scoped to one `assign_locales` invocation. The spec §5.5 step 6 calls out a persistent `(exercise_id, locale_id, excluded_ids_hash) → substitute_id` cache reusable across athletes; that requires extending `cache.VALID_ENTRY_POINTS` + the `layer4_cache.entry_point` CHECK constraint to add a new `llm_locale_substitute` label. Defer until real-world telemetry shows the LLM substitute firing often enough to warrant the persistence cost.
 
-### Slice 2d — rx_engine wiring + remaining validator demotion (≤4 files)
+### Slice 2d — rx_engine wiring + remaining validator demotion (5 files, shipped 2026-06-06)
+
 | File | Change |
 |---|---|
-| `layer4/rx_wire.py` | NEW — §7. |
-| `rx_engine.py` | Add `current_rx(db, user_id, exercise_id) -> Rx | None` if not already exported. |
-| `layer4/plan_create.py` + `layer4/plan_refresh.py` | Call `apply_current_rx()` after `assign_locales()`. |
-| `layer4/validator.py` | Demote Rules 2 / 7 / 7b to warning. |
+| `layer4/rx_wire.py` | NEW — §7. `apply_current_rx(payload, db, user_id, layer2c_payloads) -> (Layer4Payload, RxWireDiagnostic)`. Per strength exercise: look up `current_rx` → overwrite `load_prescription` with `"{sets} × {reps} @ {lbs} lbs"` (or `"{sets} × {dur}s"` for duration targets); else first-exposure → category-keyed RPE template (compound_barbell / compound_dumbbell / accessory_dumbbell / accessory_cable / bodyweight) + append `first_exposure` to `coaching_flags`. Identity-preserving short-circuit when no exercises were touched. Non-strength sessions pass through. Diagnostic surfaced for `synthesis_metadata` (Rule #14 observability). |
+| `rx_engine.py` | NEW `current_rx(db, user_id, exercise_name) -> dict \| None` reader. Pure SELECT against `current_rx` table. Returns None for missing rows OR rows with both weight and duration NULL (sparse → falls through to first-exposure). Track 3 dependency: keyed by name in v1; layer0-id lookup follows the catalog migration. |
+| `layer4/orchestrator.py` | NEW `_apply_rx_wire(db, user_id, payload, layer2c_payloads)` mirrors `_apply_locale_assign`'s degraded pass-through pattern. Called AFTER `_apply_locale_assign` on `orchestrate_plan_create` + `orchestrate_plan_refresh` (locale substitutions can change which exercise we look up rx for; rx wiring sees the post-substitution list). The orchestrator is the natural call site for the same reason 2c picked it: it has `db` + `user_id` without expanding the synthesizer signatures (spec text below this row was updated 2026-06-06 — the original "Call from `plan_create.py` + `plan_refresh.py`" instruction was superseded). |
+| `layer4/validator.py` | Demoted Rule 2 (`_rule_acwr`) blocker-tier → warning. Demoted Rule 7 (`_rule_injury_violation`) blocker → warning. Rule 7b (`_rule_injury_accommodation_violation` / `_check_modality`) was already warning-only per the §10 Layer-4 spec amendment (no edit needed). |
+| `tests/test_layer4_rx_wire.py` | NEW. 19 tests covering current_rx hit (lbs rounding, duration-only render, sparse-row fall-through) × 4, first-exposure templates (5 categories) × 7, classifier × 4, non-strength pass-through × 2, degraded-db pass-through × 1, diagnostic shape × 1. |
+
+**Test-suite knock-on adjustments (in-place, NOT new test files):** `tests/test_layer4_validator.py` — renamed `test_acwr_above_blocker` → `test_acwr_above_warning` + `test_injury_violation_excluded_exercise_blocker` → `test_injury_violation_excluded_exercise_warning`; updated `test_driver_accepted_false_on_blocker` to use Rule 12 (`discipline_excluded`, still blocker) as the blocker-driving rule. `tests/test_layer4_plan_refresh.py` + `tests/test_layer4_single_session.py` — `TestCappedRetry` tests switched from Rule 7 (injury_violation) to Rule 12 (discipline_excluded, plan_refresh) / Rule 6c (session_locale_not_in_cluster, single_session) as the retry-driving blocker. Helper `_injury_violating_session` retained as a name (now wraps a discipline_excluded-firing session). **Final suite: 2084 passed / 12 skipped (+33 net from slice 2c's 2051 / 16).**
 
 Each slice fits the 5-file substantive ceiling; each is independently verifiable against a cold PGE plan.
 
