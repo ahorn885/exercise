@@ -1,19 +1,19 @@
-"""Unified multi-source wellness dashboard.
+"""Unified multi-metric wellness dashboard.
 
-Combines four data domains on one page:
+One card per metric, with device readings and self-report overlaid where they
+measure the same thing (sleep score, energy / body battery). Reads pull from:
 
-  1. Self-report (sleep, energy, soreness, mood) — `wellness_self_report`,
-     entered via the form at the top of the page.
-  2. Body composition (weight, body fat %, resting HR) — `body_metrics`.
-  3. Training load (cardio + strength minutes per day) — `cardio_log` +
-     `training_sessions` joined to `training_log`.
-  4. Garmin wellness daily aggregates (avg HR, peak stress, min body
-     battery) — `wellness_log`.
+  - `wellness_self_report` — self-reported sleep, energy, soreness, mood
+  - `body_metrics`         — weight, body fat %, resting HR
+  - `wellness_log`         — Garmin per-second wellness (`_WELLNESS.fit`)
+  - `cardio_log`           — cardio activities (count + duration)
+  - `training_log`         — strength activities (count + duration)
 
-Each domain renders independently and degrades gracefully when there's
-no data in the range. The provider-OAuth domain (Strava/Polar/Wahoo)
-is referenced in the page footer but not yet wired — the OAuth callback
-stubs return 501 today.
+Sleep score and energy charts overlay self-report (normalized to 0–100) against
+the device reading on a single axis. Device-side data for sleep score / HRV /
+VO2max / training readiness comes from `_METRICS.fit`, which is not parsed yet
+(#283 Phase B, blocked on #196 Phase 1) — those series render as empty
+scaffolds.
 """
 from datetime import date, datetime, timedelta
 
@@ -28,6 +28,10 @@ bp = Blueprint('wellness', __name__)
 _RANGE_CHOICES = {'7': 7, '30': 30, '90': 90}
 _DEFAULT_RANGE_DAYS = 30
 _RATING_FIELDS = ('sleep_quality', 'energy', 'soreness', 'mood')
+
+# Self-report ratings are captured 1–5. Multiply by 20 to overlay against
+# device metrics that live on a 0–100 scale (sleep score, body battery).
+_SELF_REPORT_TO_100 = 20
 
 
 def _parse_range_days() -> int:
@@ -114,22 +118,30 @@ def index():
     # (sec → min) per day. Strength sessions without an actual_duration
     # contribute 0 minutes; we'd rather under-count than guess.
     cardio_load = db.execute(
-        'SELECT date, COALESCE(SUM(duration_min), 0) AS minutes '
+        'SELECT date, COALESCE(SUM(duration_min), 0) AS minutes, COUNT(*) AS n '
         'FROM cardio_log WHERE user_id=? AND date >= ? '
         'GROUP BY date ORDER BY date',
         (uid, cutoff)
     ).fetchall()
     strength_load = db.execute(
-        'SELECT date, COALESCE(SUM(actual_duration), 0)/60.0 AS minutes '
+        'SELECT date, COALESCE(SUM(actual_duration), 0)/60.0 AS minutes, COUNT(*) AS n '
         'FROM training_log WHERE user_id=? AND date >= ? '
         'AND actual_duration IS NOT NULL '
         'GROUP BY date ORDER BY date',
         (uid, cutoff)
     ).fetchall()
+    # Activity counts include strength rows even without a recorded duration,
+    # since the count reflects "did the athlete train today?" not load.
+    strength_counts = db.execute(
+        'SELECT date, COUNT(*) AS n FROM training_log '
+        'WHERE user_id=? AND date >= ? GROUP BY date ORDER BY date',
+        (uid, cutoff)
+    ).fetchall()
 
-    # Garmin wellness daily aggregates. wellness_log is a per-minute series
-    # so we collapse to per-day stats: daytime avg HR, peak stress, lowest
-    # body battery (the trough is the meaningful value, not the average).
+    # Garmin wellness daily aggregates — `wellness_log` is per-second from
+    # `_WELLNESS.fit`. Body-battery min (the trough is the meaningful value,
+    # not the average) feeds the Energy overlay; HR avg and stress peak get
+    # their own cards.
     garmin_rows = db.execute(
         'SELECT date, '
         '  AVG(heart_rate)    AS avg_hr, '
@@ -140,12 +152,11 @@ def index():
         (uid, cutoff)
     ).fetchall()
 
-    chart_data = {
-        'self_report': _series_self_report(self_report_rows),
-        'body':        _series_body(body_rows),
-        'training':    _series_training(cardio_load, strength_load),
-        'garmin':      _series_garmin(garmin_rows),
-    }
+    chart_data = _build_chart_data(
+        self_report_rows, body_rows,
+        cardio_load, strength_load, strength_counts,
+        garmin_rows,
+    )
 
     return render_template(
         'wellness/index.html',
@@ -155,7 +166,7 @@ def index():
         range_days=range_days,
         range_choices=sorted(_RANGE_CHOICES.values()),
         chart_data=chart_data,
-        has_any_data=any(chart_data.values()),
+        has_any_data=_has_any_data(chart_data),
         provider_count=len(provider_slugs()),
     )
 
@@ -213,60 +224,118 @@ def _save_self_report(db, uid):
     ))
 
 
-# ─── Series builders ─────────────────────────────────────────────────────────
-# Each returns either a list of {x, y} points (Chart.js linear scale) or
-# {} when empty so the template can hide the section.
+# ─── Chart-data builder ───────────────────────────────────────────────────────
+# Each metric gets one entry. Overlay charts (sleep_score, energy) carry both
+# `self` and `device` series so the template can stack them on one canvas.
 
 def _d(value) -> str:
     """Stringify a date that may arrive as datetime.date (PG) or str (SQLite)."""
     return str(value)[:10] if value is not None else ''
 
 
-def _series_self_report(rows):
-    if not rows:
-        return {}
-    out = {f: [] for f in ('sleep_hours',) + _RATING_FIELDS}
-    for r in rows:
+def _build_chart_data(self_rows, body_rows, cardio_rows, strength_rows,
+                      strength_count_rows, garmin_rows):
+    self_by_date = {_d(r['date']): r for r in self_rows}
+    garmin_by_date = {_d(r['date']): r for r in garmin_rows}
+
+    sleep_hours = [
+        {'x': d, 'y': float(r['sleep_hours'])}
+        for d, r in self_by_date.items() if r['sleep_hours'] is not None
+    ]
+    soreness = [
+        {'x': d, 'y': float(r['soreness'])}
+        for d, r in self_by_date.items() if r['soreness'] is not None
+    ]
+    mood = [
+        {'x': d, 'y': float(r['mood'])}
+        for d, r in self_by_date.items() if r['mood'] is not None
+    ]
+
+    sleep_score = {
+        'self': [
+            {'x': d, 'y': float(r['sleep_quality']) * _SELF_REPORT_TO_100}
+            for d, r in self_by_date.items() if r['sleep_quality'] is not None
+        ],
+        # Garmin sleep score lives in _METRICS.fit — Phase B (#283).
+        'device': [],
+    }
+    energy = {
+        'self': [
+            {'x': d, 'y': float(r['energy']) * _SELF_REPORT_TO_100}
+            for d, r in self_by_date.items() if r['energy'] is not None
+        ],
+        # Body battery is bucketed daily as the trough (`MIN`) — recovery
+        # bottoms out at the lowest reading, not the average.
+        'device': [
+            {'x': d, 'y': float(r['min_bb'])}
+            for d, r in garmin_by_date.items() if r['min_bb'] is not None
+        ],
+    }
+
+    body = {'weight_lbs': [], 'body_fat_pct': [], 'resting_hr': []}
+    for r in body_rows:
         d = _d(r['date'])
-        for f in out:
-            v = r[f]
-            if v is not None:
-                out[f].append({'x': d, 'y': float(v)})
-    return out if any(out.values()) else {}
+        for f in body:
+            if r[f] is not None:
+                body[f].append({'x': d, 'y': float(r[f])})
 
+    cardio_min = {_d(r['date']): float(r['minutes']) for r in cardio_rows}
+    strength_min = {_d(r['date']): float(r['minutes']) for r in strength_rows}
+    load_dates = sorted(set(cardio_min) | set(strength_min))
+    training = {
+        'cardio_min':   [{'x': d, 'y': cardio_min.get(d, 0.0)}   for d in load_dates],
+        'strength_min': [{'x': d, 'y': strength_min.get(d, 0.0)} for d in load_dates],
+    } if load_dates else {}
 
-def _series_body(rows):
-    if not rows:
-        return {}
-    out = {'weight_lbs': [], 'body_fat_pct': [], 'resting_hr': []}
-    for r in rows:
-        d = _d(r['date'])
-        for f in out:
-            v = r[f]
-            if v is not None:
-                out[f].append({'x': d, 'y': float(v)})
-    return out if any(out.values()) else {}
+    # Activities-done — count cardio + strength sessions per day. Strength
+    # rows without a duration still count (different question from training
+    # load).
+    cardio_n = {_d(r['date']): int(r['n']) for r in cardio_rows}
+    strength_n = {_d(r['date']): int(r['n']) for r in strength_count_rows}
+    activity_dates = sorted(set(cardio_n) | set(strength_n))
+    activities = [
+        {'x': d, 'y': cardio_n.get(d, 0) + strength_n.get(d, 0)}
+        for d in activity_dates
+    ]
 
+    avg_hr = [
+        {'x': _d(r['date']), 'y': float(r['avg_hr'])}
+        for r in garmin_rows if r['avg_hr'] is not None
+    ]
+    peak_stress = [
+        {'x': _d(r['date']), 'y': float(r['peak_stress'])}
+        for r in garmin_rows if r['peak_stress'] is not None
+    ]
 
-def _series_training(cardio_rows, strength_rows):
-    if not cardio_rows and not strength_rows:
-        return {}
-    cardio = {_d(r['date']): float(r['minutes']) for r in cardio_rows}
-    strength = {_d(r['date']): float(r['minutes']) for r in strength_rows}
-    all_dates = sorted(set(cardio) | set(strength))
     return {
-        'cardio_min':   [{'x': d, 'y': cardio.get(d, 0.0)}   for d in all_dates],
-        'strength_min': [{'x': d, 'y': strength.get(d, 0.0)} for d in all_dates],
+        'sleep_hours':  sleep_hours,
+        'sleep_score':  sleep_score,
+        'energy':       energy,
+        'soreness':     soreness,
+        'mood':         mood,
+        'body':         {k: v for k, v in body.items() if v},
+        'training':     training,
+        'activities':   activities,
+        'avg_hr':       avg_hr,
+        'peak_stress':  peak_stress,
+        # Phase B (#283) — empty scaffolds for the device-only metrics that
+        # need _METRICS.fit parsing. Template renders the cards as "no
+        # device data yet" until the parser lands.
+        'hrv':              [],
+        'training_readiness': [],
+        'vo2max_running':   [],
+        'vo2max_cycling':   [],
+        'active_minutes':   [],
     }
 
 
-def _series_garmin(rows):
-    if not rows:
-        return {}
-    out = {'avg_hr': [], 'peak_stress': [], 'min_bb': []}
-    for r in rows:
-        d = _d(r['date'])
-        if r['avg_hr']      is not None: out['avg_hr'].append({'x': d, 'y': float(r['avg_hr'])})
-        if r['peak_stress'] is not None: out['peak_stress'].append({'x': d, 'y': float(r['peak_stress'])})
-        if r['min_bb']      is not None: out['min_bb'].append({'x': d, 'y': float(r['min_bb'])})
-    return out if any(out.values()) else {}
+def _has_any_data(chart_data) -> bool:
+    """True if any chart has at least one point."""
+    for v in chart_data.values():
+        if isinstance(v, list) and v:
+            return True
+        if isinstance(v, dict):
+            for sub in v.values():
+                if sub:
+                    return True
+    return False
