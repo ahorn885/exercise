@@ -1273,6 +1273,7 @@ _DAILY_METRICS_COLUMNS = (
     'hrv_overnight_avg_ms', 'hrv_7d_avg_ms', 'hrv_samples_json',
     'training_readiness', 'vo2max_running', 'vo2max_cycling',
     'spo2_avg', 'spo2_low',
+    'resting_metabolic_rate',
 )
 
 
@@ -1308,7 +1309,8 @@ def _metrics_to_db_fields(parsed: dict) -> dict:
                 'hrv_overnight_avg_ms', 'hrv_7d_avg_ms',
                 'training_readiness', 'vo2max_running', 'vo2max_cycling',
                 'spo2_avg', 'spo2_low',
-                'sleep_deep_min', 'sleep_light_min', 'sleep_rem_min'):
+                'sleep_deep_min', 'sleep_light_min', 'sleep_rem_min',
+                'resting_metabolic_rate'):
         if key in parsed:
             out[key] = parsed[key]
     if 'sleep_contributors' in parsed:
@@ -1339,7 +1341,7 @@ def import_wellness_bulk():
         return jsonify({'ok': False, 'error': 'No files in request.'}), 400
 
     from garmin_fit_parser import (
-        detect_fit_type, parse_wellness_fit,
+        detect_fit_type, parse_wellness_fit, parse_wellness_daily_extras,
         parse_metrics_fit, parse_sleep_data_fit, parse_hrv_status_fit,
     )
 
@@ -1412,6 +1414,19 @@ def import_wellness_bulk():
             continue
         try:
             ins, dup = _bulk_insert_wellness(db, rows, uid)
+            # Also harvest the daily-aggregate values that live in WELLNESS
+            # files (resting metabolic rate from MonitoringInfoMessage). Best-
+            # effort: a parse failure here shouldn't fail the per-second
+            # insert above.
+            try:
+                extras = parse_wellness_daily_extras(raw)
+                if extras.get('date') and 'resting_metabolic_rate' in extras:
+                    _upsert_garmin_daily_metrics(
+                        db, uid, extras['date'],
+                        {'resting_metabolic_rate': extras['resting_metabolic_rate']},
+                    )
+            except Exception:
+                pass
             db.commit()
             dates = sorted({r['date'] for r in rows if r.get('date')})
             drange = dates[0] if dates else '?'

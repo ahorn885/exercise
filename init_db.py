@@ -881,11 +881,15 @@ _PG_MIGRATIONS = [
         vo2max_cycling REAL,
         spo2_avg INTEGER,
         spo2_low INTEGER,
+        resting_metabolic_rate INTEGER,
         created_at TIMESTAMP NOT NULL DEFAULT NOW(),
         updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
         UNIQUE(user_id, date)
     )""",
     "CREATE INDEX IF NOT EXISTS garmin_daily_metrics_user_date_idx ON garmin_daily_metrics(user_id, date)",
+    # Backfill for environments where garmin_daily_metrics shipped before
+    # RMR was added (i.e. PR #460 deployed without this column).
+    "ALTER TABLE garmin_daily_metrics ADD COLUMN IF NOT EXISTS resting_metabolic_rate INTEGER",
     # D-50 Phase 1 — provider integration tables. Mirrors the SQLite block
     # above with PG-native types (SERIAL, TIMESTAMP DEFAULT NOW(), BIGINT,
     # BOOLEAN). Per Athlete_Data_Integration_Spec v3 §4–§6. Garmin paused

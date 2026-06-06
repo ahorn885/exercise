@@ -884,6 +884,66 @@ def parse_wellness_fit(fit_bytes: bytes) -> list:
     return result
 
 
+def parse_wellness_daily_extras(fit_bytes: bytes) -> dict:
+    """Pull the daily-aggregate values that live in `_WELLNESS.fit` but
+    aren't per-second readings — currently the resting metabolic rate
+    Garmin computes from the user's profile + activity baseline.
+
+    `MonitoringInfoMessage.resting_metabolic_rate` repeats once per file
+    (constant per day per user) — we just need any one occurrence. Returns
+    `{date, resting_metabolic_rate}` or `{}` if neither is present. The
+    bulk importer UPSERTs this into `garmin_daily_metrics` so the wellness
+    page can surface it alongside the daily activity card.
+    """
+    from fit_tool.fit_file import FitFile
+
+    tmp_path = os.path.join(tempfile.gettempdir(), f'fit_{uuid.uuid4().hex}.fit')
+    try:
+        with open(tmp_path, 'wb') as f:
+            f.write(fit_bytes)
+        fit = FitFile.from_file(tmp_path)
+    finally:
+        try:
+            os.remove(tmp_path)
+        except OSError:
+            pass
+
+    rmr = None
+    file_ts_ms = 0
+    for record in fit.records:
+        msg = record.message
+        mtype = type(msg).__name__
+        if mtype == 'MonitoringInfoMessage' and rmr is None:
+            v = getattr(msg, 'resting_metabolic_rate', None)
+            if v is not None:
+                try:
+                    n = int(v)
+                    # 0 is a sensible "device didn't compute" sentinel;
+                    # values < 800 or > 4000 kcal aren't physiological.
+                    if 800 <= n <= 4000:
+                        rmr = n
+                except (TypeError, ValueError):
+                    pass
+        elif mtype == 'FileIdMessage' and not file_ts_ms:
+            tc = getattr(msg, 'time_created', None)
+            if tc is not None:
+                try:
+                    ms = int(tc)
+                    if ms < 1_000_000_000_000:
+                        ms *= 1000
+                    file_ts_ms = ms
+                except (TypeError, ValueError):
+                    pass
+
+    if rmr is None or not file_ts_ms:
+        return {}
+    return {
+        'date': datetime.fromtimestamp(file_ts_ms / 1000.0, tz=timezone.utc)
+                        .strftime('%Y-%m-%d'),
+        'resting_metabolic_rate': rmr,
+    }
+
+
 # ── Metrics / Sleep / HRV FIT parsers ────────────────────────────────────────
 # Three new file types beyond `_WELLNESS.fit`, all of which Garmin emits per
 # day:
