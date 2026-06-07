@@ -924,9 +924,9 @@ def test_acwr_skipped_when_no_prior_data():
 
 
 def test_rest_spacing_consecutive_hard_warning():
-    """Track 2 slice 2c (§8 / D4): demoted from blocker → warning. The
-    deterministic detect_insufficient_rest in session_grid is now the rest
-    contract; consecutive-hards detection stays as advisory drift detection."""
+    """Track 2 slice 2c (§8 / D4): demoted from blocker → warning. The athlete
+    owns their rest days (daily_availability_windows); consecutive-hards
+    detection stays as advisory recovery-spacing drift detection."""
     sessions = [
         _cardio_session(
             session_id="S-1", d=_SCOPE_START, intensity_summary="hard"

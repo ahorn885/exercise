@@ -184,9 +184,9 @@ from layer4.rx_wire import (
     apply_current_rx,
 )
 from layer4.session_grid import (
-    InsufficientRestWarning,
-    detect_insufficient_rest,
-    expected_rest_count,
+    apply_session_ceiling,
+    phase_session_ceiling,
+    resolve_available_days,
 )
 from layer4.single_session import (
     SingleSessionRequest,
@@ -427,10 +427,10 @@ __all__ = [
     "LocaleAssignDiagnostic",
     "SessionAssignment",
     "assign_locales",
-    # Track 2 slice 2c — rest detection (session_grid.py)
-    "InsufficientRestWarning",
-    "detect_insufficient_rest",
-    "expected_rest_count",
+    # Track 2 slice 2b.2 — session-count ceiling (session_grid.py)
+    "apply_session_ceiling",
+    "phase_session_ceiling",
+    "resolve_available_days",
     # Track 2 slice 2d — deterministic rx wiring (rx_wire.py)
     "ExerciseRxOutcome",
     "RxWireDiagnostic",

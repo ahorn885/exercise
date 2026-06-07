@@ -62,7 +62,7 @@ from layer4.payload import (
     ValidatorResult,
 )
 from layer4 import periodization
-from layer4.session_grid import build_session_grid
+from layer4.session_grid import build_session_grid, resolve_available_days
 from layer4.validator import (
     ValidatorContext,
     phase_volume_bands_hours,
@@ -780,6 +780,12 @@ def _format_session_grid(
         return ["- (Layer 2A / phase_structure unavailable; using open-ended bands.)"]
 
     capacity = weekly_capacity_hours(layer1_payload)
+    # §5.1.1 ceiling inputs — resolve available days from §K availability;
+    # two_a_day_preference / peak_sessions_max default until the athlete fields
+    # land (slice 2b.2b), so the grid uses the spec defaults (occasionally / 10).
+    available_days = resolve_available_days(layer1_payload)
+    two_a_day_preference = (layer1_payload or {}).get("two_a_day_preference")
+    peak_sessions_max = (layer1_payload or {}).get("peak_sessions_max")
 
     race_format: str | None = None
     race_duration_h: float | None = None
@@ -807,6 +813,9 @@ def _format_session_grid(
             capacity_hours=capacity,
             race_format=race_format,
             race_duration_h=race_duration_h,
+            available_days=available_days,
+            two_a_day_preference=two_a_day_preference,
+            peak_sessions_max=peak_sessions_max,
         )
         out.append(
             f"Week {w} — weekly capacity {grid.weekly_capacity_hours:.1f} hours:"
