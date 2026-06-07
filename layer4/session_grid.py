@@ -13,16 +13,15 @@ Slice 2b covers:
   - intensity split (polarized per-phase ratios, Seiler 2010).
   - race-sim long day slot for `race_format == 'continuous_multi_day'`.
 
-Slice 2c extends with rest detection (§5.4):
-  - `expected_rest_count(phase, weekly_capacity_d)` — advisory count of rest
-    days the coach expects per phase (Base 2 / Build 1–2 / Peak 1 / Taper 2–3).
-  - `detect_insufficient_rest(sessions_in_week, expected, disabled_days)` —
-    post-synthesis check that counts actual rest days and returns an
-    `InsufficientRestWarning` when the count is below expected. Rest = a day
-    with zero non-rest sessions; disabled-availability days are hard rest and
-    already excluded by the schedule contract. The LLM keeps full placement
-    freedom — this is detection, not enforcement (validator Rule 3 surfaces
-    the warning).
+Slice 2b.2 (§5.1.1 / D11) adds the session-count ceiling:
+  - `apply_session_ceiling(...)` caps the week's total session count at a
+    deterministic, athlete-controlled ceiling derived from available days
+    (`peak_sessions_max` default 10 / `two_a_day_preference`), scaled per phase
+    and hard-clamped to 2 × available_days. Over-ceiling weeks shed the
+    lowest-priority disciplines first (rotating them onto lighter weeks). Fixes
+    the cold-PGE plan #60 failure (14 sessions for a 6-day athlete → unschedulable
+    under the two_per_day invariant). The athlete owns their rest days
+    (`daily_availability_windows`); there is no separate rest-count expectation.
 
 Cache surface: pure function of (layer2a, phase_structure, phase, week_in_phase,
 capacity_hours, race_format, race_duration_h). No new key surface beyond what
@@ -32,7 +31,7 @@ capacity_hours, race_format, race_duration_h). No new key surface beyond what
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Literal
 
 from layer4.context import Layer2APayload
@@ -264,6 +263,142 @@ def _race_sim_slot(
     return None
 
 
+# ─── Session-count ceiling (§5.1.1, D11) ────────────────────────────────────
+
+# Athlete two-a-day preference → sessions per available training day at Peak.
+# Module constants per spec §5.1.1 (D-8, tunable). `never` = strictly one-a-day;
+# `regularly` ≈ near the 2/day ceiling.
+_TWO_A_DAY_DENSITY: dict[str, float] = {
+    "never": 1.0,
+    "occasionally": 1.5,
+    "regularly": 1.85,
+}
+_DEFAULT_TWO_A_DAY_PREFERENCE = "occasionally"
+
+# Default Peak weekly-session ceiling when the athlete hasn't set one. The
+# two_a_day_preference UI writes this value; the number is the source of truth.
+_DEFAULT_PEAK_SESSIONS_MAX = 10
+
+# Per-phase scale on the Peak ceiling. Near-flat: endurance frequency is roughly
+# stable across phases (the volume_band + §5.3 polarized split carry the
+# periodization); the taper cuts volume, not session count (Mujika & Padilla 2003).
+_PHASE_SESSION_SCALE: dict[str, float] = {
+    "Base": 0.90,
+    "Build": 1.00,
+    "Peak": 1.00,
+    "Taper": 0.85,
+}
+
+# Availability fallback when neither available_days_per_week nor any enabled
+# daily_availability_windows is set: assume the whole week is open (Andy, D-7).
+_DEFAULT_AVAILABLE_DAYS = 7
+
+
+def resolve_available_days(layer1_payload: dict | None) -> int:
+    """Resolve the athlete's available training days/week for the ceiling:
+    `available_days_per_week` if set; else the count of enabled
+    `daily_availability_windows`; else all 7 (spec §5.1.1, D-7)."""
+    if not layer1_payload:
+        return _DEFAULT_AVAILABLE_DAYS
+    avail = layer1_payload.get("available_days_per_week")
+    if isinstance(avail, int) and avail > 0:
+        return avail
+    windows = layer1_payload.get("daily_availability_windows") or []
+    enabled = sum(
+        1 for w in windows
+        if (w.get("enabled") if isinstance(w, dict) else getattr(w, "enabled", False))
+    )
+    return enabled if enabled > 0 else _DEFAULT_AVAILABLE_DAYS
+
+
+def _peak_ceiling(
+    available_days: int,
+    two_a_day_preference: str | None,
+    peak_sessions_max: int | None,
+) -> int:
+    """The Peak weekly-session ceiling, hard-clamped to 2 × available_days.
+    `peak_sessions_max` is authoritative (default 10); when absent it derives
+    from `two_a_day_preference` via the density map; when both are absent it
+    falls back to the default."""
+    d = max(1, available_days)
+    if peak_sessions_max is not None:
+        ceiling = peak_sessions_max
+    elif two_a_day_preference is not None:
+        density = _TWO_A_DAY_DENSITY.get(
+            two_a_day_preference, _TWO_A_DAY_DENSITY[_DEFAULT_TWO_A_DAY_PREFERENCE]
+        )
+        ceiling = round(density * d)
+    else:
+        ceiling = _DEFAULT_PEAK_SESSIONS_MAX
+    return max(1, min(int(ceiling), 2 * d))
+
+
+def phase_session_ceiling(
+    phase_name: str,
+    available_days: int,
+    two_a_day_preference: str | None = None,
+    peak_sessions_max: int | None = None,
+) -> int:
+    """Deterministic weekly session ceiling for `(phase, available_days)`: the
+    Peak ceiling scaled by the phase factor, hard-clamped to 2 × available_days."""
+    d = max(1, available_days)
+    peak = _peak_ceiling(d, two_a_day_preference, peak_sessions_max)
+    scale = _PHASE_SESSION_SCALE.get(phase_name, 1.0)
+    return max(1, min(round(peak * scale), 2 * d))
+
+
+def apply_session_ceiling(
+    allocations: list[DisciplineAllocation],
+    phase_name: str,
+    available_days: int,
+    two_a_day_preference: str | None = None,
+    peak_sessions_max: int | None = None,
+) -> list[DisciplineAllocation]:
+    """Cap the week's total session count at the deterministic phase ceiling
+    (§5.1.1). `allocations` MUST be in priority order (highest `load_weight`
+    first — `build_session_grid` sorts them so). Sheds lowest-priority sessions
+    first: trims multi-session disciplines down toward 1 before dropping any
+    discipline to 0 (rotated out, with a cadence note). Returns the input list
+    unchanged (identity-preserving) when nothing needs shedding."""
+    ceiling = phase_session_ceiling(
+        phase_name, available_days, two_a_day_preference, peak_sessions_max
+    )
+    counts = [a.sessions_this_week for a in allocations]
+    total = sum(counts)
+    if total <= ceiling:
+        return allocations
+
+    # Phase 1: trim multi-session disciplines (>1), lowest-priority (tail) first.
+    while total > ceiling and any(c > 1 for c in counts):
+        for i in range(len(counts) - 1, -1, -1):
+            if counts[i] > 1:
+                counts[i] -= 1
+                total -= 1
+                break
+    # Phase 2: still over → drop lowest-priority single-session disciplines to 0
+    # (they rotate back in on a lighter week via the maintenance-cadence note).
+    while total > ceiling and any(c == 1 for c in counts):
+        for i in range(len(counts) - 1, -1, -1):
+            if counts[i] == 1:
+                counts[i] = 0
+                total -= 1
+                break
+
+    out: list[DisciplineAllocation] = []
+    for a, c in zip(allocations, counts):
+        if c == a.sessions_this_week:
+            out.append(a)
+        elif c == 0:
+            out.append(replace(
+                a,
+                sessions_this_week=0,
+                cadence_note="deferred — weekly capacity ceiling; rotates in on a lighter week",
+            ))
+        else:
+            out.append(replace(a, sessions_this_week=c))
+    return out
+
+
 def build_session_grid(
     layer2a: Layer2APayload | None,
     phase_structure: PhaseStructure | None,
@@ -273,6 +408,9 @@ def build_session_grid(
     *,
     race_format: str | None = None,
     race_duration_h: float | None = None,
+    available_days: int | None = None,
+    two_a_day_preference: str | None = None,
+    peak_sessions_max: int | None = None,
 ) -> SessionGrid:
     """The §5.1 deterministic grid for one `(phase, week_in_phase)`. Returns an
     empty-but-typed `SessionGrid` when inputs are insufficient (graceful
@@ -301,6 +439,19 @@ def build_session_grid(
                     week_in_phase=week_in_phase,
                 )
             )
+
+    # §5.1.1 ceiling — cap the weekly session total to a schedulable, athlete-
+    # controlled number before counting cardio for the intensity mix. Applied
+    # only when available_days is known (callers in the synthesis path resolve
+    # it via resolve_available_days; bare unit callers pass None → no cap).
+    if allocations and available_days is not None:
+        allocations = apply_session_ceiling(
+            allocations,
+            phase_name,
+            available_days,
+            two_a_day_preference,
+            peak_sessions_max,
+        )
 
     # Count cardio sessions for intensity mix. Strength is excluded —
     # the polarized split is a cardio-aerobic-system concept.
@@ -334,113 +485,13 @@ def build_session_grid(
     )
 
 
-# ─── Rest detection (slice 2c §5.4) ─────────────────────────────────────────
-
-# Coach-expected rest-day count per phase. Advisory only — the LLM keeps
-# placement freedom. Values from spec §5.4: Base 2 / Build 1–2 / Peak 1 /
-# Taper 2–3. We pick the midpoint of the ranges (Build=2, Taper=2) and let
-# the deterministic post-check warn when actual < expected, not blocker.
-_PHASE_EXPECTED_REST_DAYS: dict[str, int] = {
-    "Base": 2,
-    "Build": 2,
-    "Peak": 1,
-    "Taper": 2,
-}
-
-
-@dataclass(frozen=True)
-class InsufficientRestWarning:
-    """Post-synthesis detection result — surfaced as the `insufficient_rest`
-    coaching flag + the validator Rule 3 warning. Carries the (expected, actual)
-    pair so the warning string is self-explanatory in the diag JSON."""
-
-    expected: int
-    actual: int
-    week_dates: list[str]  # ISO dates in the week (Mon..Sun) for the affected window
-
-
-def expected_rest_count(
-    phase_name: str,
-    weekly_capacity_days: int | None = None,
-) -> int:
-    """Coach-expected rest-day count for the week, ABOVE the days the athlete
-    has hard-disabled via `daily_availability_windows`. Phase-driven default;
-    when `weekly_capacity_days` (the count of *enabled* days) is supplied, we
-    subtract the already-disabled days from the phase target — disabled days
-    cover that portion of the rest contract automatically.
-
-    Example: Base (default 2 rest) with enabled=5 → 2 disabled days already
-    cover the rest target → returns 0 (no additional LLM rest required).
-    Base with enabled=7 → returns 2 (LLM must pick 2 rest days).
-
-    Returns 0 for unknown phases (graceful — caller treats as "no expectation
-    set", no warning ever fires)."""
-    phase_expected = _PHASE_EXPECTED_REST_DAYS.get(phase_name, 0)
-    if weekly_capacity_days is None:
-        return phase_expected
-    already_rest_from_disabled = max(0, 7 - max(0, weekly_capacity_days))
-    return max(0, phase_expected - already_rest_from_disabled)
-
-
-def detect_insufficient_rest(
-    sessions_in_week: list,
-    expected: int,
-    disabled_dates: set | None = None,
-) -> InsufficientRestWarning | None:
-    """Count rest days (calendar days with 0 non-rest sessions) across the
-    full 7-day week the synthesized `sessions_in_week` covers; emit a warning
-    when actual < expected. `disabled_dates` is the set of ISO date strings
-    that are hard rest per `daily_availability_windows` — they count toward
-    the rest tally automatically (athlete had no choice). The LLM's choice of
-    additional rest days on top is what we're measuring.
-
-    The week boundaries are derived from the sessions' min/max dates; the
-    actual rest count = 7 - days_with_a_non_rest_session. (A day with NO
-    sessions at all and NO disabled flag still counts as rest — the LLM
-    just didn't schedule anything.)
-
-    Returns None when the week meets or exceeds the expected count, or when
-    `expected == 0` (e.g. unknown phase / disabled-covers contract met).
-    """
-    if expected <= 0 or not sessions_in_week:
-        return None
-
-    dates_with_session: set[str] = set()
-    for s in sessions_in_week:
-        if getattr(s, "kind", None) == "rest":
-            continue
-        date_iso = s.date.isoformat() if hasattr(s.date, "isoformat") else str(s.date)
-        dates_with_session.add(date_iso)
-
-    days_with_session = len(dates_with_session)
-    # The week is 7 calendar days regardless of how many sessions the LLM
-    # placed; days without sessions count as rest by default.
-    actual_rest_days = max(0, 7 - days_with_session)
-    # Disabled days are hard rest — but if the synthesizer correctly skipped
-    # them (the schedule contract), they're already in the "no session"
-    # bucket. We don't double-count.
-    _ = disabled_dates  # noqa: F841 — kept for future explicit-disabled accounting
-
-    if actual_rest_days >= expected:
-        return None
-
-    return InsufficientRestWarning(
-        expected=expected,
-        actual=actual_rest_days,
-        week_dates=sorted(
-            s.date.isoformat() if hasattr(s.date, "isoformat") else str(s.date)
-            for s in sessions_in_week
-        ),
-    )
-
-
 __all__ = [
     "DisciplineAllocation",
     "IntensityMix",
-    "InsufficientRestWarning",
     "RaceSimLongDay",
     "SessionGrid",
+    "apply_session_ceiling",
     "build_session_grid",
-    "detect_insufficient_rest",
-    "expected_rest_count",
+    "phase_session_ceiling",
+    "resolve_available_days",
 ]

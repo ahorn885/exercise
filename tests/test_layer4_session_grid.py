@@ -1,4 +1,5 @@
-"""Tests for `layer4.session_grid` — Track 2 slice 2b §5.1 / §5.2 / §5.3."""
+"""Tests for `layer4.session_grid` — Track 2 slice 2b §5.1 / §5.2 / §5.3 +
+slice 2b.2 §5.1.1 (session-count ceiling)."""
 
 from __future__ import annotations
 
@@ -20,7 +21,10 @@ from layer4.session_grid import (
     IntensityMix,
     RaceSimLongDay,
     SessionGrid,
+    apply_session_ceiling,
     build_session_grid,
+    phase_session_ceiling,
+    resolve_available_days,
 )
 
 
@@ -360,113 +364,113 @@ class TestRaceSimLongDay:
         assert grid_t2.race_sim_long_day is None
 
 
-# ─── Track 2 slice 2c §5.4 — rest detection ────────────────────────────────
+# ─── Track 2 slice 2b.2 §5.1.1 — session-count ceiling ──────────────────────
 
 
-class _StubSession:
-    """Minimal duck-type for `detect_insufficient_rest` (only `.date` + `.kind`
-    are read). Keeps the rest-detection tests independent of the full
-    PlanSession schema (which requires pydantic + many unrelated fields)."""
-
-    def __init__(self, date_: date, kind: str = "cardio") -> None:
-        self.date = date_
-        self.kind = kind
-
-
-class TestExpectedRestCount:
-    def test_phase_defaults(self):
-        from layer4.session_grid import expected_rest_count
-
-        assert expected_rest_count("Base") == 2
-        assert expected_rest_count("Build") == 2
-        assert expected_rest_count("Peak") == 1
-        assert expected_rest_count("Taper") == 2
-
-    def test_unknown_phase_returns_zero(self):
-        from layer4.session_grid import expected_rest_count
-
-        assert expected_rest_count("Bogus") == 0
-
-    def test_disabled_days_cover_rest_target(self):
-        """Athlete with 5 enabled days has 2 disabled days already → Base's
-        2-rest target is already met by disabled days → return 0 (no
-        additional LLM rest required)."""
-        from layer4.session_grid import expected_rest_count
-
-        assert expected_rest_count("Base", weekly_capacity_days=5) == 0
-
-    def test_partial_disabled_subtracts_from_target(self):
-        """6 enabled days = 1 disabled = 1 auto-rest. Base needs 2 total →
-        LLM must pick 1 more rest day."""
-        from layer4.session_grid import expected_rest_count
-
-        assert expected_rest_count("Base", weekly_capacity_days=6) == 1
-
-    def test_full_capacity_no_subtraction(self):
-        """All 7 days enabled = 0 auto-rest. Phase target stands."""
-        from layer4.session_grid import expected_rest_count
-
-        assert expected_rest_count("Base", weekly_capacity_days=7) == 2
-
-    def test_peak_one_day_target(self):
-        from layer4.session_grid import expected_rest_count
-
-        assert expected_rest_count("Peak", weekly_capacity_days=7) == 1
-        # Peak only wants 1 rest; even 6 enabled (1 disabled) meets it.
-        assert expected_rest_count("Peak", weekly_capacity_days=6) == 0
+def _alloc(did: str, sessions: int, hours: float = 2.0) -> DisciplineAllocation:
+    return DisciplineAllocation(
+        discipline_id=did,
+        discipline_name=did.title(),
+        sessions_this_week=sessions,
+        typical_session_minutes=60,
+        target_hours_this_week=hours,
+    )
 
 
-class TestDetectInsufficientRest:
-    def test_meets_expected_returns_none(self):
-        """3 days with sessions, 7-3=4 rest days, expected 2 → no warning."""
-        from layer4.session_grid import detect_insufficient_rest
+class TestPhaseSessionCeiling:
+    def test_peak_anchor_and_phase_scales(self):
+        # peak_sessions_max=10, D=6 → Build/Peak 10, Base round(9.0)=9, Taper round(8.5)=8
+        assert phase_session_ceiling("Peak", 6, peak_sessions_max=10) == 10
+        assert phase_session_ceiling("Build", 6, peak_sessions_max=10) == 10
+        assert phase_session_ceiling("Base", 6, peak_sessions_max=10) == 9
+        assert phase_session_ceiling("Taper", 6, peak_sessions_max=10) == 8
 
-        monday = date(2026, 6, 1)
-        sessions = [_StubSession(monday + timedelta(days=i)) for i in range(3)]
-        assert detect_insufficient_rest(sessions, expected=2) is None
+    def test_hard_clamp_two_per_day(self):
+        # D=4 → hard max 2×4=8, even though peak_sessions_max asks for 10.
+        assert phase_session_ceiling("Peak", 4, peak_sessions_max=10) == 8
 
-    def test_below_expected_emits_warning(self):
-        """7 days with non-rest sessions → 0 rest days, expected 2 → warning."""
-        from layer4.session_grid import detect_insufficient_rest
+    def test_preference_density_fallback(self):
+        # No explicit number → derive from the two_a_day_preference density.
+        assert phase_session_ceiling("Peak", 6, two_a_day_preference="never") == 6
+        assert phase_session_ceiling("Peak", 6, two_a_day_preference="occasionally") == 9
+        assert phase_session_ceiling("Peak", 6, two_a_day_preference="regularly") == 11
 
-        monday = date(2026, 6, 1)
-        sessions = [_StubSession(monday + timedelta(days=i)) for i in range(7)]
-        warning = detect_insufficient_rest(sessions, expected=2)
-        assert warning is not None
-        assert warning.expected == 2
-        assert warning.actual == 0
+    def test_default_when_unset(self):
+        # Both unset → default peak ceiling of 10.
+        assert phase_session_ceiling("Peak", 6) == 10
 
-    def test_rest_session_doesnt_count_as_workload(self):
-        """A `kind='rest'` session on a date doesn't count as a workload day —
-        it's still a rest day. So Mon/Tue cardio + Wed rest = 2 workload
-        days → 7-2=5 rest days, expected 2 → no warning."""
-        from layer4.session_grid import detect_insufficient_rest
 
-        monday = date(2026, 6, 1)
-        sessions = [
-            _StubSession(monday, "cardio"),
-            _StubSession(monday + timedelta(days=1), "cardio"),
-            _StubSession(monday + timedelta(days=2), "rest"),
-        ]
-        assert detect_insufficient_rest(sessions, expected=2) is None
+class TestApplySessionCeiling:
+    def test_under_ceiling_is_identity(self):
+        allocs = [_alloc("a", 2), _alloc("b", 2)]  # total 4 ≤ 10
+        out = apply_session_ceiling(allocs, "Build", 6, peak_sessions_max=10)
+        assert out is allocs  # identity-preserving short-circuit
 
-    def test_six_workload_days_one_rest_warns(self):
-        """6 workload days → 1 rest day. Expected 2 → warning (actual 1 < 2)."""
-        from layer4.session_grid import detect_insufficient_rest
+    def test_trims_multi_before_dropping(self):
+        # 3 disciplines × 2 = 6; Peak/D=2 → ceiling min(10, 4) = 4.
+        # Trim lowest-priority multis (tail first); nothing drops to 0 (2+1+1=4).
+        allocs = [_alloc("a", 2), _alloc("b", 2), _alloc("c", 2)]
+        out = apply_session_ceiling(allocs, "Peak", 2, peak_sessions_max=10)
+        counts = {a.discipline_id: a.sessions_this_week for a in out}
+        assert sum(counts.values()) == 4
+        assert counts["a"] == 2  # highest priority keeps its sessions
+        assert all(v >= 1 for v in counts.values())  # breadth preserved
 
-        monday = date(2026, 6, 1)
-        sessions = [_StubSession(monday + timedelta(days=i)) for i in range(6)]
-        warning = detect_insufficient_rest(sessions, expected=2)
-        assert warning is not None
-        assert warning.actual == 1
+    def test_drops_lowest_priority_when_all_singles(self):
+        # 5 singles; ceiling 4 (D=2) → drop the lowest-priority discipline to 0.
+        allocs = [_alloc(x, 1) for x in ("a", "b", "c", "d", "e")]
+        out = apply_session_ceiling(allocs, "Peak", 2, peak_sessions_max=10)
+        counts = {a.discipline_id: a.sessions_this_week for a in out}
+        assert sum(counts.values()) == 4
+        assert counts["a"] == 1  # highest priority kept
+        assert counts["e"] == 0  # lowest priority rotated out
+        dropped = next(a for a in out if a.discipline_id == "e")
+        assert dropped.cadence_note is not None
 
-    def test_zero_expected_returns_none(self):
-        from layer4.session_grid import detect_insufficient_rest
+    def test_volume_preserved_on_trim(self):
+        # b (lowest priority) trimmed 3→2 but its target hours are unchanged
+        # ("fewer, longer sessions").
+        allocs = [_alloc("a", 2, hours=5.0), _alloc("b", 3, hours=6.0)]  # total 5
+        out = apply_session_ceiling(allocs, "Peak", 2, peak_sessions_max=10)  # ceiling 4
+        b = next(a for a in out if a.discipline_id == "b")
+        assert b.sessions_this_week == 2
+        assert b.target_hours_this_week == 6.0
 
-        sessions = [_StubSession(date(2026, 6, 1))]
-        assert detect_insufficient_rest(sessions, expected=0) is None
 
-    def test_empty_sessions_returns_none(self):
-        from layer4.session_grid import detect_insufficient_rest
+class TestResolveAvailableDays:
+    def test_available_days_per_week_wins(self):
+        assert resolve_available_days({"available_days_per_week": 5}) == 5
 
-        assert detect_insufficient_rest([], expected=2) is None
+    def test_falls_back_to_enabled_window_count(self):
+        windows = [{"enabled": True}, {"enabled": False}, {"enabled": True}]
+        assert resolve_available_days(
+            {"daily_availability_windows": windows}
+        ) == 2
+
+    def test_defaults_to_all_seven_when_unset(self):
+        assert resolve_available_days({}) == 7
+        assert resolve_available_days(None) == 7
+
+
+class TestBuildGridCeilingIntegration:
+    def test_caps_to_available_days(self):
+        # 7 disciplines naturally allocate ≥7 sessions; with D=2 the grid must
+        # cap the week to the 2×2 = 4 hard max (proves the ceiling plumbs through).
+        l2a = _layer2a([
+            _discipline(f"d{i}", f"D{i}", load_weight=1.0 - i * 0.1)
+            for i in range(7)
+        ])
+        ps = _phase_structure({"Base": 4, "Build": 4, "Peak": 4, "Taper": 2})
+        grid = build_session_grid(
+            l2a, ps, "Peak", 1, capacity_hours=14.0, available_days=2,
+        )
+        total = sum(a.sessions_this_week for a in grid.discipline_allocations)
+        assert total <= 4
+
+    def test_no_cap_without_available_days(self):
+        # Bare caller (no available_days) keeps the uncapped per-discipline sum.
+        l2a = _layer2a([_discipline(f"d{i}", f"D{i}") for i in range(7)])
+        ps = _phase_structure({"Base": 4, "Build": 4, "Peak": 4, "Taper": 2})
+        grid = build_session_grid(l2a, ps, "Peak", 1, capacity_hours=14.0)
+        total = sum(a.sessions_this_week for a in grid.discipline_allocations)
+        assert total >= 7  # ≥1-per-discipline floor, no ceiling applied

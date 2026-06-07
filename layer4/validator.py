@@ -517,71 +517,13 @@ def _rule_acwr(payload: Layer4Payload, ctx: ValidatorContext) -> list[RuleFailur
 _REST_SPACING_EXEMPT_FLAGS = frozenset({"overreach_test", "race_rehearsal"})
 
 
-def _append_insufficient_rest_warnings(
-    out: list[RuleFailure],
-    payload: Layer4Payload,
-    ctx: ValidatorContext,
-) -> None:
-    """Track 2 slice 2c §5.4: group payload sessions by ISO-week, run
-    `detect_insufficient_rest` per week against the phase's expected count.
-    Emits one warning per week with actual rest days below expected. Disabled
-    `daily_availability_windows` days count toward the rest tally (they're
-    hard-rest by schema invariant — the synthesizer can't place a session
-    there).
-
-    Phase-keyed expected count comes from `session_grid.expected_rest_count`;
-    a session without `phase_metadata` (e.g. plan_refresh T1) is skipped.
-    """
-    from layer4.session_grid import expected_rest_count, detect_insufficient_rest
-
-    if not payload.sessions:
-        return
-
-    enabled_count = 7
-    if ctx.daily_availability_windows:
-        enabled_count = sum(
-            1 for w in ctx.daily_availability_windows if w.enabled
-        )
-
-    # Group by (phase_name, iso_week) so we emit one warning per (phase, week)
-    # pair. Skip sessions without phase_metadata.
-    from collections import defaultdict
-    by_week: dict[tuple[str, int, int], list[PlanSession]] = defaultdict(list)
-    for s in payload.sessions:
-        if s.phase_metadata is None:
-            continue
-        iso_year, iso_week, _iso_dow = s.date.isocalendar()
-        by_week[(s.phase_metadata.phase_name, iso_year, iso_week)].append(s)
-
-    for (phase_name, iso_year, iso_week), sessions in by_week.items():
-        expected = expected_rest_count(phase_name, enabled_count)
-        warning = detect_insufficient_rest(
-            sessions_in_week=sessions,
-            expected=expected,
-            disabled_dates=None,  # disabled days surfaced via Rule 11 already
-        )
-        if warning is None:
-            continue
-        out.append(
-            RuleFailure(
-                rule_name=f"insufficient_rest_{phase_name.lower()}_{iso_year}_{iso_week:02d}",
-                phase_name=phase_name,
-                severity="warning",
-                detail=(
-                    f"{phase_name} week {iso_year}-W{iso_week:02d}: expected "
-                    f"≥{warning.expected} rest day(s), actual {warning.actual}"
-                ),
-                affected_session_ids=[s.session_id for s in sessions],
-            )
-        )
-
-
 def _rule_rest_spacing(payload: Layer4Payload, ctx: ValidatorContext) -> list[RuleFailure]:
     out: list[RuleFailure] = []
-    # Track 2 slice 2c §5.4 — deterministic insufficient-rest detection,
-    # grouped per ISO-week. Emits one warning per week with too few rest days.
-    # The consecutive-hards check below stays as a complementary advisory.
-    _append_insufficient_rest_warnings(out, payload, ctx)
+    # The athlete owns their rest days via daily_availability_windows (§5.1.1,
+    # Andy 2026-06-06) — there is no separate rest-day-count expectation; the
+    # session-count ceiling keeps the synthesizer off rest days in the first
+    # place. The consecutive-hards check below stays: it's recovery spacing
+    # (don't stack two hard days), not a rest-day-count override.
     by_disc: dict[str, list[PlanSession]] = {}
     for s in payload.sessions:
         if s.discipline_id is None or not _hard_session(s):
@@ -601,10 +543,9 @@ def _rule_rest_spacing(payload: Layer4Payload, ctx: ValidatorContext) -> list[Ru
                 RuleFailure(
                     rule_name=f"rest_spacing_consecutive_hard_{disc}_{cur.date.isoformat()}",
                     phase_name=cur.phase_metadata.phase_name if cur.phase_metadata else None,
-                    # Track 2 slice 2c: demoted to warning (§8 / D4). The
-                    # deterministic detect_insufficient_rest in session_grid
-                    # surfaces the real rest contract; consecutive-hards is now
-                    # advisory drift detection (LLM keeps placement freedom).
+                    # Track 2 slice 2c: demoted to warning (§8 / D4).
+                    # Consecutive-hards is advisory drift detection — the LLM
+                    # keeps placement freedom; rest days are the athlete's own.
                     severity="warning",
                     detail=(
                         f"two consecutive hard sessions in {disc} on {prev.date} + {cur.date} "
@@ -1049,9 +990,8 @@ def _rule_schedule_violation(
                     # Disabled-availability days are hard-rest invariant via
                     # `daily_availability_windows` + the per-session schedule
                     # check; an LLM placement on a disabled day still flags but
-                    # doesn't gate plan acceptance. The session_grid's
-                    # `expected_rest_count` already factors disabled days into
-                    # the rest contract.
+                    # doesn't gate plan acceptance. The athlete owns their rest
+                    # days — there is no separate coach rest-count expectation.
                     severity="warning",
                     detail=(
                         f"session on {s.date} ({dow}) but day is enabled=False in §G availability"

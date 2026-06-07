@@ -228,7 +228,7 @@ def detect_insufficient_rest(week: SynthesizedWeek, expected: int) -> Warning | 
 
 Expected rest count per phase (advisory): Base 2 / Build 1–2 / Peak 1 / Taper 2–3. LLM places sessions freely; the deterministic post-check flags weeks below the expected count. Rendered as a `coaching_flag` on the affected week.
 
-> **v2 correction (Andy 2026-06-06) — the athlete owns their rest days; we do not supersede them.** The original §5.4 (shipped in slice 2c) treats rest as a *phase-coach expectation* and warns when the synthesized week has fewer rest days than that expectation — even within days the athlete marked available. That second-guesses the athlete's own schedule and is being **removed**: the rest contract is simply **honor `daily_availability_windows`** — disabled days are hard rest (already enforced), and we never warn an athlete for training on a day they themselves marked available. The session-count ceiling (§5.1.1) already prevents the #60 failure mode (the synthesizer spilling onto a rest day because it had too many sessions to place), so the `insufficient_rest` nudge is no longer load-bearing. **Implementation (part of slice 2b.2):** retire `detect_insufficient_rest` / `expected_rest_count` and demote-then-remove the validator Rule 3 `insufficient_rest` warning. `expected_rest_count`'s disabled-day accounting (which already returns 0 extra rest when disabled days cover the contract) is the behavior we keep in spirit — we just stop asking for *more* than the athlete chose. Pending Andy's confirm before the code change lands (it touches shipped 2c).
+> **v2 correction (Andy 2026-06-06) — the athlete owns their rest days; we do not supersede them.** The original §5.4 (shipped in slice 2c) treats rest as a *phase-coach expectation* and warns when the synthesized week has fewer rest days than that expectation — even within days the athlete marked available. That second-guesses the athlete's own schedule and is being **removed**: the rest contract is simply **honor `daily_availability_windows`** — disabled days are hard rest (already enforced), and we never warn an athlete for training on a day they themselves marked available. The session-count ceiling (§5.1.1) already prevents the #60 failure mode (the synthesizer spilling onto a rest day because it had too many sessions to place), so the `insufficient_rest` nudge is no longer load-bearing. **Implementation (part of slice 2b.2):** retire `detect_insufficient_rest` / `expected_rest_count` and demote-then-remove the validator Rule 3 `insufficient_rest` warning. `expected_rest_count`'s disabled-day accounting (which already returned 0 extra rest when disabled days cover the contract) is the behavior we keep in spirit — we just stop asking for *more* than the athlete chose. **Confirmed by Andy 2026-06-06 and shipped in slice 2b.2a:** `detect_insufficient_rest` / `expected_rest_count` / `InsufficientRestWarning` removed from `session_grid.py`; `_append_insufficient_rest_warnings` + the `insufficient_rest` Rule 3 warning removed from `validator.py` (the consecutive-hard recovery-spacing advisory in Rule 3 stays).
 
 ### 5.5 Locale assignment + substitution (D5 / §2.6)
 
@@ -367,9 +367,9 @@ Cardio routing pulled out → 2c.2 follow-up. See "**Slice 2c.2 follow-up**" bel
 
 Each slice fits the 5-file substantive ceiling; each is independently verifiable against a cold PGE plan.
 
-### Slice 2b.2 — session-count ceiling (post-#60 fix, v2)
+### Slice 2b.2 — session-count ceiling (post-#60 fix, v2) — 2b.2a SHIPPED 2026-06-06
 
-The §5.1 grid had no global session ceiling and no available-days awareness → plan #60 prescribed 14 sessions for a 6-day athlete and failed unschedulably on Build:w2. §5.1.1 caps the weekly total.
+The §5.1 grid had no global session ceiling and no available-days awareness → plan #60 prescribed 14 sessions for a 6-day athlete and failed unschedulably on Build:w2. §5.1.1 caps the weekly total. **2b.2a shipped** (grid algorithm + call-site wiring + §5.4 rest-detection removal + tests; full suite green). **2b.2b** (athlete fields + schema migration + onboarding/profile UI) still owed.
 
 | File | Change |
 |---|---|
