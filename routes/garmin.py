@@ -1268,15 +1268,20 @@ def _wellness_skip_detail(name: str) -> str:
 
 _DAILY_METRICS_COLUMNS = (
     'sleep_score', 'sleep_start_ms', 'sleep_end_ms', 'sleep_awake_min',
+    # sleep_avg_respiration retired in the field-mapping audit (Jun 7):
+    # [384] field_18 was a coincidence on May 28 (=13 matched 13 brpm) but
+    # diverged on May 30 / Jun 2. Column kept nullable so old rows don't
+    # need a DROP; new uploads stop writing it.
     'sleep_avg_respiration', 'sleep_contributors_json',
     'sleep_deep_min', 'sleep_light_min', 'sleep_rem_min',
-    'sleep_duration_sub_score',
+    'sleep_duration_sub_score', 'restless_moments',
     'hrv_overnight_avg_ms', 'hrv_7d_avg_ms', 'hrv_highest_5min_ms',
     'hrv_samples_json',
     'training_readiness', 'vo2max_running', 'vo2max_cycling',
     'spo2_avg', 'spo2_low',
     'resting_metabolic_rate', 'resting_hr', 'resting_hr_7day_avg',
     'heat_acclimation_pct', 'acute_training_load',
+    'floors_climbed', 'floors_descended', 'intensity_minutes',
 )
 
 
@@ -1307,9 +1312,11 @@ def _metrics_to_db_fields(parsed: dict) -> dict:
     """Translate the parser's dict shape into `garmin_daily_metrics` column
     values. Lists land as JSON strings; ms timestamps pass through."""
     out: dict = {}
+    # sleep_avg_respiration intentionally NOT in this list — retired Jun 7
+    # after the May 28 field_18 match was disproved by Jun 2 data.
     for key in ('sleep_score', 'sleep_start_ms', 'sleep_end_ms',
-                'sleep_awake_min', 'sleep_avg_respiration',
-                'sleep_duration_sub_score',
+                'sleep_awake_min',
+                'sleep_duration_sub_score', 'restless_moments',
                 'hrv_overnight_avg_ms', 'hrv_7d_avg_ms',
                 'hrv_highest_5min_ms',
                 'training_readiness', 'vo2max_running', 'vo2max_cycling',
@@ -1317,7 +1324,8 @@ def _metrics_to_db_fields(parsed: dict) -> dict:
                 'sleep_deep_min', 'sleep_light_min', 'sleep_rem_min',
                 'resting_metabolic_rate', 'resting_hr',
                 'resting_hr_7day_avg',
-                'heat_acclimation_pct', 'acute_training_load'):
+                'heat_acclimation_pct', 'acute_training_load',
+                'floors_climbed', 'floors_descended', 'intensity_minutes'):
         if key in parsed:
             out[key] = parsed[key]
     if 'sleep_contributors' in parsed:
@@ -1348,7 +1356,7 @@ def import_wellness_bulk():
         return jsonify({'ok': False, 'error': 'No files in request.'}), 400
 
     from garmin_fit_parser import (
-        detect_fit_type, parse_wellness_fit, parse_wellness_daily_extras,
+        fit_file_meta, parse_wellness_fit, parse_wellness_daily_extras,
         parse_metrics_fit, parse_sleep_data_fit, parse_hrv_status_fit,
     )
 
@@ -1356,20 +1364,34 @@ def import_wellness_bulk():
     summary = {'imported': 0, 'duplicates': 0, 'skipped': 0, 'errors': 0,
                'files': 0, 'metrics_days': 0}
 
+    # Pre-pass: pull (kind, time_created_ms) once per file so we can sort
+    # chronologically. Without this, three _METRICS.fit files for the same
+    # day in arbitrary zip order can have the earliest UPSERT clobber the
+    # latest value of acute_training_load / RMR / etc. — Andy's Jun 2 upload
+    # had ATL = 95 → 107 → 126 across the morning/midday/evening syncs.
+    pending = []
     for name, raw, err in _iter_fit_blobs(files):
         if err:
             results.append({'name': name, 'status': 'skipped', 'detail': err})
             summary['skipped'] += 1
             continue
-
         try:
-            kind = detect_fit_type(raw)
+            kind, time_ms = fit_file_meta(raw)
         except Exception as e:
             db.rollback()
             results.append({'name': name, 'status': 'error', 'detail': str(e)})
             summary['errors'] += 1
             continue
+        # Tuples sort lexically; time_ms == 0 (no FileIdMessage) sorts to
+        # the front, which is fine — those files write only wellness_log
+        # per-second rows and don't compete with the metrics UPSERT race.
+        pending.append((time_ms, name, raw, kind))
 
+    # Stable chronological order. files keep their relative within-second
+    # ordering, which is also stable in `pending.sort`.
+    pending.sort(key=lambda p: p[0])
+
+    for _time_ms, name, raw, kind in pending:
         if kind in ('metrics', 'sleep_data', 'hrv_status'):
             parser = {
                 'metrics':    parse_metrics_fit,
@@ -1431,7 +1453,10 @@ def import_wellness_bulk():
                     extras_fields = {
                         k: v for k, v in extras.items()
                         if k in ('resting_metabolic_rate', 'resting_hr',
-                                 'resting_hr_7day_avg')
+                                 'resting_hr_7day_avg',
+                                 'floors_climbed', 'floors_descended',
+                                 'intensity_minutes',
+                                 'spo2_avg', 'spo2_low')
                     }
                     if extras_fields:
                         _upsert_garmin_daily_metrics(

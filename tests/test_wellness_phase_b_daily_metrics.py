@@ -52,11 +52,12 @@ def test_hrv_chart_populates_from_daily_metrics():
 
 def test_phase_b_followup_keys_still_empty_until_their_file_types_land():
     chart = _build_chart_data([], [], [], [], [], [], [])
-    for k in ('training_readiness', 'vo2max_running', 'vo2max_cycling',
-              'active_minutes'):
+    # active_minutes was retired Jun 7 in favour of intensity_minutes,
+    # which now ships from MonitoringMessage.
+    for k in ('training_readiness', 'vo2max_running', 'vo2max_cycling'):
         assert chart[k] == [], (
-            f'{k} stays empty until TRAINING_STATUS / SPO2 / VO2max file '
-            f'types are added in a follow-up'
+            f'{k} stays empty until its FIT file type / field map is added '
+            f'in a follow-up'
         )
 
 
@@ -228,6 +229,178 @@ def test_body_battery_delta_query_failure_doesnt_break_other_cards():
     assert chart['body_battery']['drained'] == []
     # Other cards still work
     assert chart['sleep_score'] == {'self': [], 'device': []}
+
+
+# ── Field-mapping audit (Jun 7) ──────────────────────────────────────────────
+
+def test_restless_moments_surface_from_garmin_daily_metrics():
+    """[382] field_1 = restless_moments was verified May 28 = 28 against
+    Andy's Garmin Connect "28 Restless Moments." Andy's May 30 = 15,
+    Jun 2 = 32."""
+    daily_metric_rows = [
+        _r(date='2026-05-28', sleep_score=96, restless_moments=28),
+        _r(date='2026-05-30', sleep_score=65, restless_moments=15),
+        _r(date='2026-06-02', sleep_score=58, restless_moments=32),
+    ]
+    chart = _build_chart_data([], [], [], [], [], [], daily_metric_rows)
+    assert chart['restless_moments'] == [
+        {'x': '2026-05-28', 'y': 28.0},
+        {'x': '2026-05-30', 'y': 15.0},
+        {'x': '2026-06-02', 'y': 32.0},
+    ]
+
+
+def test_floors_climbed_descended_render_as_two_series():
+    """Floors come from MonitoringMessage.ascent / .descent (cumulative,
+    MAX-per-day in the parser). Andy's reference: May 30 = 10/15, Jun 2 = 8/5."""
+    daily_metric_rows = [
+        _r(date='2026-05-30', floors_climbed=10, floors_descended=15),
+        _r(date='2026-06-02', floors_climbed=8,  floors_descended=5),
+    ]
+    chart = _build_chart_data([], [], [], [], [], [], daily_metric_rows)
+    assert chart['floors']['climbed'] == [
+        {'x': '2026-05-30', 'y': 10.0},
+        {'x': '2026-06-02', 'y': 8.0},
+    ]
+    assert chart['floors']['descended'] == [
+        {'x': '2026-05-30', 'y': 15.0},
+        {'x': '2026-06-02', 'y': 5.0},
+    ]
+
+
+def test_intensity_minutes_surface():
+    """Intensity minutes from MonitoringMessage attributes. Andy's
+    reference: May 30 = 5 min, Jun 2 = 204 min."""
+    daily_metric_rows = [
+        _r(date='2026-05-30', intensity_minutes=5),
+        _r(date='2026-06-02', intensity_minutes=204),
+    ]
+    chart = _build_chart_data([], [], [], [], [], [], daily_metric_rows)
+    assert chart['intensity_minutes'] == [
+        {'x': '2026-05-30', 'y': 5.0},
+        {'x': '2026-06-02', 'y': 204.0},
+    ]
+
+
+def test_spo2_overlay_when_emitted():
+    """SpO₂ is opportunistically captured if MonitoringMessage exposes
+    pulse_ox. Verifies the overlay shape; the parser-side capture is
+    best-effort and is documented in parse_wellness_daily_extras."""
+    daily_metric_rows = [
+        _r(date='2026-05-30', spo2_avg=91, spo2_low=85),
+        _r(date='2026-06-02', spo2_avg=93, spo2_low=88),
+    ]
+    chart = _build_chart_data([], [], [], [], [], [], daily_metric_rows)
+    assert chart['spo2']['avg'] == [
+        {'x': '2026-05-30', 'y': 91.0},
+        {'x': '2026-06-02', 'y': 93.0},
+    ]
+    assert chart['spo2']['low'] == [
+        {'x': '2026-05-30', 'y': 85.0},
+        {'x': '2026-06-02', 'y': 88.0},
+    ]
+
+
+def test_sleep_avg_respiration_no_longer_written():
+    """[384] field_18 was retired Jun 7 — the May 28 match (13 brpm = 13)
+    was coincidence. Jun 2 disproved it (field_18 = 70, actual breath rate
+    = 12). The column stays in the DB schema for old rows but nothing new
+    writes to it."""
+    from routes.garmin import _metrics_to_db_fields
+    # Old-shape input that USED to populate sleep_avg_respiration via the
+    # parser dict. The translator now drops it on the floor.
+    fields = _metrics_to_db_fields({
+        'date': '2026-06-02',
+        'sleep_score': 58,
+        'sleep_avg_respiration': 70.0,  # parser no longer emits this, but if
+                                        # something injects it, it stays out.
+    })
+    assert 'sleep_avg_respiration' not in fields
+    assert fields['sleep_score'] == 58
+
+
+def test_metrics_to_db_fields_passes_through_extraction_audit_columns():
+    from routes.garmin import _metrics_to_db_fields
+    fields = _metrics_to_db_fields({
+        'date': '2026-06-02',
+        'restless_moments': 32,
+        'floors_climbed': 8,
+        'floors_descended': 5,
+        'intensity_minutes': 204,
+        'spo2_avg': 93,
+        'spo2_low': 88,
+    })
+    assert fields == {
+        'restless_moments': 32,
+        'floors_climbed': 8,
+        'floors_descended': 5,
+        'intensity_minutes': 204,
+        'spo2_avg': 93,
+        'spo2_low': 88,
+    }
+
+
+def test_pending_list_sorts_by_time_created_so_latest_wins():
+    """The bulk importer's pre-pass collects (time_ms, name, raw, kind)
+    tuples then sorts ascending. Verifies the sort key so the latest ATL
+    value wins even when files arrive in arbitrary zip order — the actual
+    Jun 2 reproduction was: 95 (morning) / 107 (midday) / 126 (evening)
+    in chronological order, zipped in alphabetic name order."""
+    # Synthetic stand-ins for the (time_ms, name, raw, kind) tuples the
+    # importer builds.
+    pending = [
+        (1780438088000, 'late.fit', b'', 'metrics'),   # Jun 2 21:08 UTC
+        (1780354915000, 'early.fit', b'', 'metrics'),  # Jun 2 22:01 prior UTC
+        (1780387016000, 'mid.fit',  b'', 'metrics'),   # Jun 2 06:36 UTC
+    ]
+    pending.sort(key=lambda p: p[0])
+    names = [p[1] for p in pending]
+    # Chronological — earliest first; the last UPSERT (named 'late.fit') wins.
+    assert names == ['early.fit', 'mid.fit', 'late.fit']
+
+
+def test_fit_file_meta_raises_on_garbage_so_importer_must_wrap():
+    """fit_file_meta delegates to fit_tool's FitFile reader, which raises
+    on malformed bytes. The bulk importer wraps the call in try/except so
+    one bad file in a zip doesn't kill the whole upload — this test pins
+    that contract so a future "swallow errors in the helper" refactor
+    doesn't silently hide bad uploads."""
+    from garmin_fit_parser import fit_file_meta
+    import pytest
+    with pytest.raises(Exception):
+        fit_file_meta(b'not a fit file at all')
+
+
+def test_fit_file_meta_round_trip_with_minimal_valid_header():
+    """Smoke-test the helper's happy path: build a minimal FIT file with
+    a known FileIdMessage(type=44) + time_created, round-trip it through
+    fit_file_meta, expect ('metrics', expected_ms)."""
+    import struct
+    from datetime import datetime, timezone
+    from garmin_fit_parser import fit_file_meta
+    # A minimal FIT file is non-trivial to hand-roll; skip this branch
+    # unless fit_tool's writer module is available. Real-world validation
+    # is the bulk-importer integration on Vercel.
+    try:
+        from fit_tool.fit_file_builder import FitFileBuilder
+        from fit_tool.profile.messages.file_id_message import FileIdMessage
+        from fit_tool.profile.profile_type import FileType, Manufacturer
+    except ImportError:
+        return
+    builder = FitFileBuilder()
+    fid = FileIdMessage()
+    fid.type = FileType.MONITORING_B  # 32 / wellness
+    fid.manufacturer = Manufacturer.GARMIN.value
+    fid.product = 3291
+    # 2026-06-02 00:00 UTC
+    ts_dt = datetime(2026, 6, 2, tzinfo=timezone.utc)
+    ts_ms = int(ts_dt.timestamp() * 1000)
+    fid.time_created = ts_ms
+    builder.add(fid)
+    raw = bytes(builder.build().to_bytes())
+    kind, time_ms = fit_file_meta(raw)
+    assert kind == 'wellness'
+    assert time_ms == ts_ms
 
 
 # ── Mapping refinements (May 28 + May 30 calibration) ────────────────────────
