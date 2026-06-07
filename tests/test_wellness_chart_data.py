@@ -105,8 +105,11 @@ def test_activities_count_combines_cardio_and_strength():
 
 def test_phase_b_scaffold_keys_present_but_empty():
     chart = _build_chart_data([], [], [], [], [], [])
-    for k in ('training_readiness', 'vo2max_running',
-              'vo2max_cycling', 'active_minutes'):
+    # `active_minutes` was retired Jun 7 — Garmin's "Intensity Minutes"
+    # (moderate + 2×vigorous) is the published metric and now ships from
+    # MonitoringMessage as `intensity_minutes`. The remaining scaffolds
+    # wait on FIT file types we haven't seen yet.
+    for k in ('training_readiness', 'vo2max_running', 'vo2max_cycling'):
         assert chart[k] == [], f'{k} should be an empty list until Phase B lands'
     # HRV is now an overlay (overnight + highest_5min) — both sides empty
     # when there's no _HRV_STATUS.fit.

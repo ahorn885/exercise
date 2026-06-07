@@ -901,11 +901,19 @@ def parse_wellness_daily_extras(fit_bytes: bytes) -> dict:
     aren't per-second readings:
       - resting metabolic rate (from `MonitoringInfoMessage`)
       - today's resting HR + 7-day-avg resting HR (`GenericMessage[211]`)
+      - floors climbed / descended (from `MonitoringMessage.ascent`/`descent`,
+        cumulative across the day → take MAX per file)
+      - intensity minutes (`moderate_activity_minutes + 2 * vigorous_*`,
+        also cumulative → MAX)
+      - SpO₂ avg / low (`MonitoringMessage.pulse_ox` if the watch emits it;
+        Garmin's wrist-pulse-ox measurement otherwise lives in `_SPO2_DATA.fit`
+        which this watch doesn't appear to produce — captured opportunistically)
 
-    Returns `{date, resting_metabolic_rate?, resting_hr?,
-    resting_hr_7day_avg?}` or `{}` if none of the daily fields are present.
-    The bulk importer UPSERTs this into `garmin_daily_metrics` so the
-    wellness page can surface it alongside the daily activity card.
+    Returns `{date, resting_metabolic_rate?, resting_hr?, resting_hr_7day_avg?,
+    floors_climbed?, floors_descended?, intensity_minutes?, spo2_avg?,
+    spo2_low?}` or `{}` if none of the daily fields are present. The bulk
+    importer UPSERTs this into `garmin_daily_metrics` so the wellness page
+    can surface it alongside the daily activity card.
     """
     from fit_tool.fit_file import FitFile
 
@@ -922,6 +930,10 @@ def parse_wellness_daily_extras(fit_bytes: bytes) -> dict:
 
     out: dict = {}
     file_ts_ms = 0
+    # MonitoringMessage cumulative trackers (running max across the file).
+    max_ascent = max_descent = None
+    max_moderate = max_vigorous = None
+    spo2_samples: list = []
     for record in fit.records:
         msg = record.message
         mtype = type(msg).__name__
@@ -936,6 +948,56 @@ def parse_wellness_daily_extras(fit_bytes: bytes) -> dict:
                         out['resting_metabolic_rate'] = n
                 except (TypeError, ValueError):
                     pass
+        elif mtype == 'MonitoringMessage':
+            # ascent / descent / *_activity_minutes are cumulative running
+            # totals — take the file's MAX rather than summing.
+            ascent = getattr(msg, 'ascent', None)
+            if ascent is not None:
+                try:
+                    n = int(ascent)
+                    if n >= 0 and (max_ascent is None or n > max_ascent):
+                        max_ascent = n
+                except (TypeError, ValueError):
+                    pass
+            descent = getattr(msg, 'descent', None)
+            if descent is not None:
+                try:
+                    n = int(descent)
+                    if n >= 0 and (max_descent is None or n > max_descent):
+                        max_descent = n
+                except (TypeError, ValueError):
+                    pass
+            mod = getattr(msg, 'moderate_activity_minutes', None)
+            if mod is not None:
+                try:
+                    n = int(mod)
+                    if n >= 0 and (max_moderate is None or n > max_moderate):
+                        max_moderate = n
+                except (TypeError, ValueError):
+                    pass
+            vig = getattr(msg, 'vigorous_activity_minutes', None)
+            if vig is not None:
+                try:
+                    n = int(vig)
+                    if n >= 0 and (max_vigorous is None or n > max_vigorous):
+                        max_vigorous = n
+                except (TypeError, ValueError):
+                    pass
+            # Pulse-ox: opportunistic — try the documented attribute names;
+            # fit_tool's typed MonitoringMessage may not expose any of them,
+            # in which case spo2_samples stays empty.
+            for attr in ('pulse_ox', 'current_pulse_ox', 'spo2'):
+                v = getattr(msg, attr, None)
+                if v is not None:
+                    try:
+                        n = int(v)
+                        # Garmin reports SpO₂ as a 0-100 % integer; 0 means
+                        # "no reading this minute".
+                        if 50 <= n <= 100:
+                            spo2_samples.append(n)
+                    except (TypeError, ValueError):
+                        pass
+                    break  # only one attribute should populate per message
         elif mtype == 'GenericMessage' and \
                 getattr(msg, 'global_id', None) == _WELLNESS_RESTING_HR_MSG:
             # First occurrence wins — these repeat with the same value
@@ -965,6 +1027,21 @@ def parse_wellness_daily_extras(fit_bytes: bytes) -> dict:
                     file_ts_ms = ms
                 except (TypeError, ValueError):
                     pass
+
+    if max_ascent is not None:
+        out['floors_climbed'] = max_ascent
+    if max_descent is not None:
+        out['floors_descended'] = max_descent
+    # Garmin's published "Intensity Minutes" = moderate + 2 × vigorous,
+    # per the activity tracker spec. Cap at a generous physiological ceiling
+    # (24 h × 60 min = 1440) to drop any scale-mismatched outlier.
+    if max_moderate is not None or max_vigorous is not None:
+        total = (max_moderate or 0) + 2 * (max_vigorous or 0)
+        if 0 <= total <= 1440:
+            out['intensity_minutes'] = total
+    if spo2_samples:
+        out['spo2_avg'] = int(round(sum(spo2_samples) / len(spo2_samples)))
+        out['spo2_low'] = min(spo2_samples)
 
     if not out or not file_ts_ms:
         return {}
@@ -999,8 +1076,8 @@ def parse_wellness_daily_extras(fit_bytes: bytes) -> dict:
 _METRICS_SLEEP_SCORE_SIMPLE_MSG = 330
 
 # `_METRICS.fit` `GenericMessage[384]` — rich sleep summary.
-# Verified across May 28 + May 30 references:
-#   field_2              = sleep_score (96/65 ↔ Garmin Connect 96/65)
+# Verified across May 28 + May 30 + Jun 2 references:
+#   field_2              = sleep_score (96 / 65 / 58 ↔ Garmin Connect)
 #                          NOTE: field_16 was 96 on May 28 but 75 on May 30 —
 #                          NOT a duplicate of sleep_score (some other 0-100
 #                          metric, not yet identified).
@@ -1008,12 +1085,15 @@ _METRICS_SLEEP_SCORE_SIMPLE_MSG = 330
 #                          May 28: 01:14 IST ✓, May 30: 02:11 IST ✓
 #   field_11             = sleep_end_time
 #                          May 28: 09:30 IST ✓, May 30: 07:16 IST ✓
-#   field_24             = awake_minutes  (May 28: 4 ✓, May 30: 8 ✓)
-#                          NOTE: field_17 also = 4 on May 28 (coincidence) but
-#                          = 3 on May 30 when awake was 8 — so field_17 is
-#                          NOT awake (probably wake-event count). Don't fall
-#                          back to it.
-#   field_18             = avg_respiration_during_sleep (=13 brpm on May 28)
+#   field_24             = awake_minutes (May 28: 4 ✓, May 30: 8 ✓, Jun 2: 10 ✓)
+#                          field_17 also = 4 on May 28 (coincidence) but
+#                          diverged on May 30 (3 vs actual 8) — NOT awake.
+# RETRACTED in this PR:
+#   field_18 was claimed = sleep_avg_respiration (May 28 was 13 brpm, both
+#   field and Connect agreed). Jun 2 disproved it — Andy's Connect breath
+#   rate was 12, but field_18 = 70. May 30 was 49. The 13/49/70 spread
+#   tracks INVERSELY with sleep quality (96/65/58) — likely sleep onset
+#   latency or pre-sleep disturbance, not respiration. Not surfaced.
 _METRICS_SLEEP_SUMMARY_MSG = 384
 
 # `_METRICS.fit` `GenericMessage[378]` — daily training-state row.
@@ -1045,6 +1125,13 @@ _METRICS_WELLNESS_SUMMARY_MSG = 281
 # only labels them qualitatively ("Good"/"Excellent"), so the 1-to-1
 # slot ↔ name alignment isn't locked yet — surfaced as an ordered list.
 _SLEEP_DATA_SCORE_MSG = 346
+
+# `_SLEEP_DATA.fit` `GenericMessage[382]` — sleep event counts.
+# Verified across May 28 / May 30 / Jun 2:
+#   field_1 = restless_moments_count (May 28: 28 ✓ matches Garmin Connect
+#             "28 Restless Moments"; May 30: 15; Jun 2: 32)
+_SLEEP_DATA_EVENTS_MSG = 382
+
 
 # `_HRV_STATUS.fit` `GenericMessage[370]` — nightly HRV summary.
 # Verified across May 28 + 30:
@@ -1134,11 +1221,16 @@ def _fit_file_type(fit) -> int | None:
     return None
 
 
-def detect_fit_type(fit_bytes: bytes) -> str:
-    """Return one of 'wellness' / 'metrics' / 'sleep_data' / 'hrv_status' /
-    'unknown' from the FIT file's FileIdMessage. Lets the bulk importer route
-    a file to the right parser without relying on Garmin's filename suffix
-    (athletes can rename files; this reads the source of truth)."""
+def fit_file_meta(fit_bytes: bytes) -> tuple:
+    """Return `(kind, time_created_ms)` from the file's FileIdMessage in a
+    single parse pass. `kind` is one of 'wellness' / 'metrics' / 'sleep_data'
+    / 'hrv_status' / 'unknown'. `time_created_ms` is Unix ms (0 if absent).
+
+    The bulk importer reads both up front so it can sort uploads by
+    chronological order before UPSERTing — without that, three `_METRICS.fit`
+    files for the same day landing in arbitrary zip order can have the
+    earliest ATL/RMR clobber the latest.
+    """
     from fit_tool.fit_file import FitFile
     tmp_path = os.path.join(tempfile.gettempdir(), f'fit_{uuid.uuid4().hex}.fit')
     try:
@@ -1150,13 +1242,39 @@ def detect_fit_type(fit_bytes: bytes) -> str:
             os.remove(tmp_path)
         except OSError:
             pass
-    t = _fit_file_type(fit)
-    return {
+    type_code = None
+    time_ms = 0
+    for record in fit.records:
+        msg = record.message
+        if type(msg).__name__ == 'FileIdMessage':
+            t = getattr(msg, 'type', None)
+            try:
+                type_code = int(t) if t is not None else None
+            except (TypeError, ValueError):
+                pass
+            tc = getattr(msg, 'time_created', None)
+            if tc is not None:
+                try:
+                    ms = int(tc)
+                    if ms < 1_000_000_000_000:
+                        ms *= 1000
+                    time_ms = ms
+                except (TypeError, ValueError):
+                    pass
+            break  # FileIdMessage is the first record by FIT-spec
+    kind = {
         _FIT_FILE_TYPE_WELLNESS:   'wellness',
         _FIT_FILE_TYPE_METRICS:    'metrics',
         _FIT_FILE_TYPE_SLEEP_DATA: 'sleep_data',
         _FIT_FILE_TYPE_HRV_STATUS: 'hrv_status',
-    }.get(t, 'unknown')
+    }.get(type_code, 'unknown')
+    return (kind, time_ms)
+
+
+def detect_fit_type(fit_bytes: bytes) -> str:
+    """Backwards-compat wrapper. Prefer `fit_file_meta` so the importer can
+    sort by `time_created_ms` without a second parse."""
+    return fit_file_meta(fit_bytes)[0]
 
 
 def parse_metrics_fit(fit_bytes: bytes) -> dict:
@@ -1212,8 +1330,6 @@ def parse_metrics_fit(fit_bytes: bytes) -> dict:
             # actual 8), so it's some other metric.
             if fields.get(24) is not None:
                 out['sleep_awake_min'] = int(fields[24])
-            if fields.get(18) is not None:
-                out['sleep_avg_respiration'] = float(fields[18])
             # Date = the wake day (sleep is attributed to the morning).
             if end_ts:
                 out['date'] = datetime.fromtimestamp(
@@ -1290,27 +1406,31 @@ def parse_sleep_data_fit(fit_bytes: bytes) -> dict:
         msg = record.message
         if type(msg).__name__ != 'GenericMessage':
             continue
-        if getattr(msg, 'global_id', None) != _SLEEP_DATA_SCORE_MSG:
-            continue
-        fields = _generic_field_map(msg)
-        if fields.get(6) is not None:
-            out['sleep_score'] = int(fields[6])
-        # Duration sub-score — verified across May 28 (100, "Excellent") and
-        # May 30 (51, "Fair", short 4h 57m sleep). Named separately because
-        # it's the only contributor slot whose position is locked.
-        if fields.get(4) is not None:
-            out['sleep_duration_sub_score'] = int(fields[4])
-        # Remaining contributor positions carry the Stress / Deep / Light
-        # / REM / Awake sub-scores but the slot ↔ name alignment isn't
-        # locked yet — surfaced as an ordered list of the same 6 slots
-        # already documented in `_SLEEP_DATA_SCORE_MSG`.
-        contributors = []
-        for fid in (5, 7, 8, 9, 10, 14):
-            v = fields.get(fid)
-            contributors.append(int(v) if v is not None else None)
-        if any(c is not None for c in contributors):
-            out['sleep_contributors'] = contributors
-        break  # one [346] per file
+        gid = getattr(msg, 'global_id', None)
+        if gid == _SLEEP_DATA_SCORE_MSG:
+            fields = _generic_field_map(msg)
+            if fields.get(6) is not None:
+                out['sleep_score'] = int(fields[6])
+            # Duration sub-score — verified across May 28 (100, "Excellent")
+            # and May 30 (51, "Fair", short 4h 57m sleep). Named separately
+            # because it's the only contributor slot whose position is
+            # locked.
+            if fields.get(4) is not None:
+                out['sleep_duration_sub_score'] = int(fields[4])
+            # Remaining contributor positions carry the Stress / Deep /
+            # Light / REM / Awake sub-scores but the slot ↔ name alignment
+            # isn't locked yet — surfaced as an ordered list of the same 6
+            # slots already documented in `_SLEEP_DATA_SCORE_MSG`.
+            contributors = []
+            for fid in (5, 7, 8, 9, 10, 14):
+                v = fields.get(fid)
+                contributors.append(int(v) if v is not None else None)
+            if any(c is not None for c in contributors):
+                out['sleep_contributors'] = contributors
+        elif gid == _SLEEP_DATA_EVENTS_MSG:
+            fields = _generic_field_map(msg)
+            if fields.get(1) is not None:
+                out['restless_moments'] = int(fields[1])
 
     # Date = the file's creation timestamp (= morning sync after sleep).
     for record in fit.records:
