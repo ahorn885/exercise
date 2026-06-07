@@ -884,16 +884,28 @@ def parse_wellness_fit(fit_bytes: bytes) -> list:
     return result
 
 
+# `_WELLNESS.fit` `GenericMessage[211]` — daily resting-HR summary.
+# Verified across May 28 (Garmin Connect: 7d 48, daily 44) and May 30
+# (7d 45, daily 46):
+#   field_0 = 7d_avg_resting_hr  (bpm)
+#   field_1 = today_resting_hr   (bpm) — Garmin's authoritative value,
+#                                        computed from a sustained-low
+#                                        overnight window. More accurate
+#                                        than MIN(wellness_log.heart_rate),
+#                                        which can pick up brief dips.
+_WELLNESS_RESTING_HR_MSG = 211
+
+
 def parse_wellness_daily_extras(fit_bytes: bytes) -> dict:
     """Pull the daily-aggregate values that live in `_WELLNESS.fit` but
-    aren't per-second readings — currently the resting metabolic rate
-    Garmin computes from the user's profile + activity baseline.
+    aren't per-second readings:
+      - resting metabolic rate (from `MonitoringInfoMessage`)
+      - today's resting HR + 7-day-avg resting HR (`GenericMessage[211]`)
 
-    `MonitoringInfoMessage.resting_metabolic_rate` repeats once per file
-    (constant per day per user) — we just need any one occurrence. Returns
-    `{date, resting_metabolic_rate}` or `{}` if neither is present. The
-    bulk importer UPSERTs this into `garmin_daily_metrics` so the wellness
-    page can surface it alongside the daily activity card.
+    Returns `{date, resting_metabolic_rate?, resting_hr?,
+    resting_hr_7day_avg?}` or `{}` if none of the daily fields are present.
+    The bulk importer UPSERTs this into `garmin_daily_metrics` so the
+    wellness page can surface it alongside the daily activity card.
     """
     from fit_tool.fit_file import FitFile
 
@@ -908,12 +920,12 @@ def parse_wellness_daily_extras(fit_bytes: bytes) -> dict:
         except OSError:
             pass
 
-    rmr = None
+    out: dict = {}
     file_ts_ms = 0
     for record in fit.records:
         msg = record.message
         mtype = type(msg).__name__
-        if mtype == 'MonitoringInfoMessage' and rmr is None:
+        if mtype == 'MonitoringInfoMessage' and 'resting_metabolic_rate' not in out:
             v = getattr(msg, 'resting_metabolic_rate', None)
             if v is not None:
                 try:
@@ -921,7 +933,26 @@ def parse_wellness_daily_extras(fit_bytes: bytes) -> dict:
                     # 0 is a sensible "device didn't compute" sentinel;
                     # values < 800 or > 4000 kcal aren't physiological.
                     if 800 <= n <= 4000:
-                        rmr = n
+                        out['resting_metabolic_rate'] = n
+                except (TypeError, ValueError):
+                    pass
+        elif mtype == 'GenericMessage' and \
+                getattr(msg, 'global_id', None) == _WELLNESS_RESTING_HR_MSG:
+            # First occurrence wins — these repeat with the same value
+            # throughout the file.
+            fields = _generic_field_map(msg)
+            if 'resting_hr_7day_avg' not in out and fields.get(0) is not None:
+                try:
+                    hr7 = int(fields[0])
+                    if 30 <= hr7 <= 120:
+                        out['resting_hr_7day_avg'] = hr7
+                except (TypeError, ValueError):
+                    pass
+            if 'resting_hr' not in out and fields.get(1) is not None:
+                try:
+                    hr = int(fields[1])
+                    if 30 <= hr <= 120:
+                        out['resting_hr'] = hr
                 except (TypeError, ValueError):
                     pass
         elif mtype == 'FileIdMessage' and not file_ts_ms:
@@ -935,13 +966,11 @@ def parse_wellness_daily_extras(fit_bytes: bytes) -> dict:
                 except (TypeError, ValueError):
                     pass
 
-    if rmr is None or not file_ts_ms:
+    if not out or not file_ts_ms:
         return {}
-    return {
-        'date': datetime.fromtimestamp(file_ts_ms / 1000.0, tz=timezone.utc)
-                        .strftime('%Y-%m-%d'),
-        'resting_metabolic_rate': rmr,
-    }
+    out['date'] = datetime.fromtimestamp(file_ts_ms / 1000.0, tz=timezone.utc) \
+                          .strftime('%Y-%m-%d')
+    return out
 
 
 # ── Metrics / Sleep / HRV FIT parsers ────────────────────────────────────────
@@ -970,45 +999,63 @@ def parse_wellness_daily_extras(fit_bytes: bytes) -> dict:
 _METRICS_SLEEP_SCORE_SIMPLE_MSG = 330
 
 # `_METRICS.fit` `GenericMessage[384]` — rich sleep summary.
-# Verified fields:
-#   field_2  / field_16 = sleep_score (both = 96 in our reference day)
-#   field_9              = sleep_start_time (FIT epoch sec; 01:14 IST ✓)
-#   field_11             = sleep_end_time   (FIT epoch sec; 09:30 IST ✓)
-#   field_17 / field_24  = awake_minutes (both = 4 ✓)
-#   field_18             = avg respiration during sleep (=13 brpm ✓)
-# Unverified (parsed but not surfaced — need a second reference day):
-#   field_0, 1, 4, 10, 12, 14, 20-23, 25, 5/6/7 (large packed values that
-#   likely encode Deep/Light/REM minutes — pattern not yet decoded).
+# Verified across May 28 + May 30 references:
+#   field_2              = sleep_score (96/65 ↔ Garmin Connect 96/65)
+#                          NOTE: field_16 was 96 on May 28 but 75 on May 30 —
+#                          NOT a duplicate of sleep_score (some other 0-100
+#                          metric, not yet identified).
+#   field_9              = sleep_start_time (FIT epoch sec)
+#                          May 28: 01:14 IST ✓, May 30: 02:11 IST ✓
+#   field_11             = sleep_end_time
+#                          May 28: 09:30 IST ✓, May 30: 07:16 IST ✓
+#   field_24             = awake_minutes  (May 28: 4 ✓, May 30: 8 ✓)
+#                          NOTE: field_17 also = 4 on May 28 (coincidence) but
+#                          = 3 on May 30 when awake was 8 — so field_17 is
+#                          NOT awake (probably wake-event count). Don't fall
+#                          back to it.
+#   field_18             = avg_respiration_during_sleep (=13 brpm on May 28)
 _METRICS_SLEEP_SUMMARY_MSG = 384
 
-# `_METRICS.fit` `GenericMessage[378]` — likely HRV/SpO2 daily summary.
-# Day-to-day variation observed (May 27: 20,1,1,118,219,5; May 28: 16,1,1,98,
-# 219,5) so field_0 and field_3 are daily metrics, field_4/5 static. But the
-# user's Connect numbers don't pin which (HRV 54 ms vs SpO2 94% vs other).
-# Parsed-but-not-returned until verified.
-_METRICS_UNVERIFIED_DAILY_MSG = 378
+# `_METRICS.fit` `GenericMessage[378]` — daily training-state row.
+# Verified across May 27 + 28 + 30:
+#   field_3 = acute_training_load
+#             May 28: 98, May 30: 59 (Andy's interpretation — values in
+#             range and tracking with recent workout intensity).
+#   field_4 = 219 (static — profile/zone threshold, not a daily metric)
+# Other fields (0, 1, 2, 5) vary day-to-day but their semantics aren't
+# locked yet — left out of the returned dict.
+_METRICS_TRAINING_STATE_MSG = 378
+
+# `_METRICS.fit` `GenericMessage[281]` — daily wellness summary.
+# Verified across May 27 + 28 + 30:
+#   field_6 = heat_acclimation_pct
+#             May 27/28: 32%, May 30: 22% (Andy's reference — decreasing
+#             after moving from US to Ireland tracks loss of acclimation).
+# field_9 also varies (38/32/26) but isn't yet identified.
+_METRICS_WELLNESS_SUMMARY_MSG = 281
 
 # `_SLEEP_DATA.fit` `GenericMessage[346]` — sleep contributors.
 # Verified:
-#   field_6 = sleep_score (=96 ✓, matches METRICS[330].field_2 and [384].field_2)
-# Educated guess (six 0–100 sub-scores; Garmin shows 6 contributors:
-# Duration/Stress/Deep/Light/REM/Awake, with May 28 = Exc/Exc/Exc/Good/Good/Exc):
-#   field_5  = 83  (Good)        ←┐ Light or REM (Good)
-#   field_7  = 95  (Excellent)    │ Deep or Awake (Excellent)
-#   field_8  = 95  (Excellent)    │ Deep or Awake (Excellent)
-#   field_9  = 81  (Good)         │ Light or REM (Good)
-#   field_0-4, 10, 14 = 100       │ Duration / Stress (Excellent)
-# Ordering across the contributors can't be locked without a second day with
-# divergent contributor ratings. Surfaced as a 6-element list rather than
-# named keys until then.
+#   field_6 = sleep_score (=96/65 ↔ Garmin Connect)
+#   field_4 = duration_sub_score
+#             May 28 (8h 12m): 100 ("Excellent")
+#             May 30 (4h 57m): 51  ("Fair")
+# The remaining sub-score positions (5, 7, 8, 9, 10, 14) carry the
+# Stress / Deep / Light / REM / Awake contributors but Garmin Connect
+# only labels them qualitatively ("Good"/"Excellent"), so the 1-to-1
+# slot ↔ name alignment isn't locked yet — surfaced as an ordered list.
 _SLEEP_DATA_SCORE_MSG = 346
 
 # `_HRV_STATUS.fit` `GenericMessage[370]` — nightly HRV summary.
-# Verified:
-#   field_1 = overnight_avg_hrv_ms * 128  (6912/128 = 54.0 ms ✓)
-# Likely (unverified — user's 7d HRV showed "No Status"):
-#   field_2 = 7d_avg_hrv_ms * 128         (9856/128 = 77.0 ms; not surfaced
-#                                          until confirmed)
+# Verified across May 28 + 30:
+#   field_0 = 7d_avg_hrv * 128 (65535 sentinel = "No Status" before
+#             the 19-day baseline window is filled)
+#   field_1 = overnight_avg_hrv_ms * 128
+#             May 28: 6912/128 = 54.0 ms ✓
+#             May 30: 6656/128 = 52.0 ms ✓
+#   field_2 = highest_5min_avg_hrv_ms * 128
+#             May 28: 9856/128 = 77.0 ms
+#             May 30: 10112/128 = 79.0 ms ✓ (matches Garmin Connect "79 ms")
 _HRV_STATUS_SUMMARY_MSG = 370
 
 # `_HRV_STATUS.fit` `GenericMessage[371]` — per-period HRV samples through
@@ -1149,18 +1196,22 @@ def parse_metrics_fit(fit_bytes: bytes) -> dict:
             # Rich sleep summary — wins over the simpler [330] row if both
             # appear in the same file, because it carries timing + awake +
             # respiration in addition to the score.
-            score = fields.get(2) or fields.get(16)
-            if score is not None:
-                out['sleep_score'] = int(score)
+            #
+            # field_2 is the only reliable sleep_score slot (field_16 was a
+            # match on May 28 but diverged from the overall score on May 30).
+            if fields.get(2) is not None:
+                out['sleep_score'] = int(fields[2])
             start_ts = _fit_seconds_to_unix_ms(fields.get(9))
             end_ts   = _fit_seconds_to_unix_ms(fields.get(11))
             if start_ts:
                 out['sleep_start_ms'] = start_ts
             if end_ts:
                 out['sleep_end_ms'] = end_ts
-            awake = fields.get(17) if fields.get(17) is not None else fields.get(24)
-            if awake is not None:
-                out['sleep_awake_min'] = int(awake)
+            # Awake minutes is field_24 only — field_17 looked like a
+            # duplicate on May 28 (both = 4) but diverged on May 30 (3 vs
+            # actual 8), so it's some other metric.
+            if fields.get(24) is not None:
+                out['sleep_awake_min'] = int(fields[24])
             if fields.get(18) is not None:
                 out['sleep_avg_respiration'] = float(fields[18])
             # Date = the wake day (sleep is attributed to the morning).
@@ -1181,6 +1232,17 @@ def parse_metrics_fit(fit_bytes: bytes) -> dict:
                     out['date'] = datetime.fromtimestamp(
                         ts / 1000.0, tz=timezone.utc
                     ).strftime('%Y-%m-%d')
+
+        elif gid == _METRICS_TRAINING_STATE_MSG:
+            # Acute training load (Andy's interpretation; values track recent
+            # workout intensity day-to-day).
+            if fields.get(3) is not None:
+                out['acute_training_load'] = int(fields[3])
+
+        elif gid == _METRICS_WELLNESS_SUMMARY_MSG:
+            # Heat acclimation percent (verified across May 27/28/30).
+            if fields.get(6) is not None:
+                out['heat_acclimation_pct'] = int(fields[6])
 
     # Fall back to the file-level timestamp if no GenericMessage gave us a date.
     if 'date' not in out:
@@ -1233,8 +1295,15 @@ def parse_sleep_data_fit(fit_bytes: bytes) -> dict:
         fields = _generic_field_map(msg)
         if fields.get(6) is not None:
             out['sleep_score'] = int(fields[6])
-        # Six contributor positions observed on the May 28 reference. Pull
-        # whichever are present so a file with extra slots doesn't lose them.
+        # Duration sub-score — verified across May 28 (100, "Excellent") and
+        # May 30 (51, "Fair", short 4h 57m sleep). Named separately because
+        # it's the only contributor slot whose position is locked.
+        if fields.get(4) is not None:
+            out['sleep_duration_sub_score'] = int(fields[4])
+        # Remaining contributor positions carry the Stress / Deep / Light
+        # / REM / Awake sub-scores but the slot ↔ name alignment isn't
+        # locked yet — surfaced as an ordered list of the same 6 slots
+        # already documented in `_SLEEP_DATA_SCORE_MSG`.
         contributors = []
         for fid in (5, 7, 8, 9, 10, 14):
             v = fields.get(fid)
@@ -1262,14 +1331,19 @@ def parse_sleep_data_fit(fit_bytes: bytes) -> dict:
     return out if out.get('date') and 'sleep_score' in out else {}
 
 
+_HRV_NO_STATUS_SENTINEL = 65535
+
+
 def parse_hrv_status_fit(fit_bytes: bytes) -> dict:
     """Parse a Garmin `_HRV_STATUS.fit` file (FileIdMessage.type = 68).
 
-    Returns `{date, hrv_overnight_avg_ms, hrv_samples}` where `hrv_samples`
-    is a list of `(timestamp_ms, value_ms)` tuples from the overnight
-    `GenericMessage[371]` stream. All HRV values are de-scaled from the raw
-    `value * 128` storage (verified: 6912/128 = 54.0 ms ↔ Garmin Connect 54
-    ms avg).
+    Returns `{date, hrv_overnight_avg_ms, hrv_highest_5min_ms,
+    hrv_7d_avg_ms, hrv_samples}`. All HRV values are de-scaled from the
+    raw `value * 128` storage (6912/128 = 54.0 ms ↔ Garmin Connect 54 ms).
+    `field_0` may carry the 65535 sentinel meaning "7-day baseline not
+    established yet" (≥19 days of overnight data needed) — in that case
+    `hrv_7d_avg_ms` is omitted entirely so the chart shows it as missing
+    rather than a fake 511 ms.
     """
     from fit_tool.fit_file import FitFile
     tmp_path = os.path.join(tempfile.gettempdir(), f'fit_{uuid.uuid4().hex}.fit')
@@ -1295,12 +1369,23 @@ def parse_hrv_status_fit(fit_bytes: bytes) -> dict:
             continue
 
         if gid == _HRV_STATUS_SUMMARY_MSG:
-            raw = fields.get(1)
-            if raw is not None:
+            # Overnight avg (field_1) and highest 5-min avg (field_2) — both
+            # always present once HRV tracking is on. 7-day avg (field_0)
+            # uses the 65535 sentinel before the 19-day baseline window is
+            # filled, so check for that explicitly.
+            for fid, key in ((1, 'hrv_overnight_avg_ms'),
+                             (2, 'hrv_highest_5min_ms'),
+                             (0, 'hrv_7d_avg_ms')):
+                raw = fields.get(fid)
+                if raw is None:
+                    continue
                 try:
-                    out['hrv_overnight_avg_ms'] = round(int(raw) / 128.0, 1)
+                    n = int(raw)
                 except (TypeError, ValueError):
-                    pass
+                    continue
+                if n == _HRV_NO_STATUS_SENTINEL:
+                    continue
+                out[key] = round(n / 128.0, 1)
             ts = _fit_seconds_to_unix_ms(fields.get(253) or
                                          getattr(msg, 'timestamp', None))
             if ts and 'date' not in out:
@@ -1327,5 +1412,6 @@ def parse_hrv_status_fit(fit_bytes: bytes) -> dict:
             ).strftime('%Y-%m-%d')
 
     return out if out.get('date') and (
-        'hrv_overnight_avg_ms' in out or 'hrv_samples' in out
+        'hrv_overnight_avg_ms' in out or 'hrv_highest_5min_ms' in out
+        or 'hrv_7d_avg_ms' in out or 'hrv_samples' in out
     ) else {}
