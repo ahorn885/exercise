@@ -120,16 +120,32 @@
   </div>
   {% endif %}
 
-  {# HRV — _HRV_STATUS.fit overnight avg #}
+  {# HRV — _HRV_STATUS.fit overnight avg + highest 5-min #}
   <div class="card card-pad">
-    <span class="eyebrow">HRV · overnight avg (ms)</span>
-    {% if chart_data.hrv %}
+    <span class="eyebrow">HRV · device (ms)</span>
+    {% if chart_data.hrv.overnight or chart_data.hrv.highest_5min %}
     <div class="chart-box wide sec-sm"><canvas id="chart-hrv"></canvas></div>
     {% else %}
     <p class="rail-note">Upload Garmin <code>_HRV_STATUS.fit</code> files at
       <a href="{{ url_for('garmin.import_wellness') }}">Garmin → Import wellness</a> to see overnight HRV.</p>
     {% endif %}
   </div>
+
+  {# Acute training load — _METRICS.fit (Andy's interpretation, May 2026) #}
+  {% if chart_data.acute_load %}
+  <div class="card card-pad">
+    <span class="eyebrow">Acute training load · device</span>
+    <div class="chart-box wide sec-sm"><canvas id="chart-acute-load"></canvas></div>
+  </div>
+  {% endif %}
+
+  {# Heat acclimation — _METRICS.fit #}
+  {% if chart_data.heat_acclimation %}
+  <div class="card card-pad">
+    <span class="eyebrow">Heat acclimation · device (%)</span>
+    <div class="chart-box wide sec-sm"><canvas id="chart-heat-acclimation"></canvas></div>
+  </div>
+  {% endif %}
 
   {# Heart rate — resting (min overnight) / avg / peak from wellness_log #}
   {% if chart_data.heart_rate.resting or chart_data.heart_rate.avg or chart_data.heart_rate.peak %}
@@ -371,19 +387,23 @@ if (data.mood && data.mood.length) {
   line('chart-mood', [ds('Mood', data.mood, good)], { yAxis: { min: 0, max: 5 } });
 }
 
-// ─── HRV (overnight avg, ms) ──────────────────────────────
-if (data.hrv && data.hrv.length) {
-  line('chart-hrv', [ds('HRV', data.hrv, accent)], { unit: ' ms' });
+// ─── HRV (overnight avg + highest 5-min, ms) ──────────────
+if (data.hrv) {
+  const series = [];
+  if (data.hrv.overnight    && data.hrv.overnight.length)    series.push(ds('Overnight avg', data.hrv.overnight,    accent));
+  if (data.hrv.highest_5min && data.hrv.highest_5min.length) series.push(ds('Highest 5-min', data.hrv.highest_5min, info));
+  if (series.length) line('chart-hrv', series, { unit: ' ms' });
 }
 
 // ─── VO2max / training-readiness / active-minutes — follow-up scaffolds ───
 
-// ─── Heart rate (resting / avg / peak) ─────────────────────
+// ─── Heart rate (resting / 7d-avg resting / avg / peak) ────
 if (data.heart_rate) {
   const series = [];
-  if (data.heart_rate.resting && data.heart_rate.resting.length) series.push(ds('Resting', data.heart_rate.resting, info));
-  if (data.heart_rate.avg     && data.heart_rate.avg.length)     series.push(ds('Avg',     data.heart_rate.avg,     fg));
-  if (data.heart_rate.peak    && data.heart_rate.peak.length)    series.push(ds('Peak',    data.heart_rate.peak,    accent));
+  if (data.heart_rate.resting          && data.heart_rate.resting.length)          series.push(ds('Resting',         data.heart_rate.resting,          info));
+  if (data.heart_rate.resting_7day_avg && data.heart_rate.resting_7day_avg.length) series.push(ds('7-day avg resting', data.heart_rate.resting_7day_avg, good));
+  if (data.heart_rate.avg              && data.heart_rate.avg.length)              series.push(ds('Avg',             data.heart_rate.avg,              fg));
+  if (data.heart_rate.peak             && data.heart_rate.peak.length)             series.push(ds('Peak',            data.heart_rate.peak,             accent));
   if (series.length) line('chart-heart-rate', series, { unit: ' bpm' });
 }
 
@@ -474,6 +494,17 @@ if (data.daily_activity) {
 // ─── Resting calories (RMR) ────────────────────────────────
 if (data.resting_calories && data.resting_calories.length) {
   line('chart-resting-cal', [ds('RMR', data.resting_calories, fg)], { unit: ' kcal' });
+}
+
+// ─── Acute training load ───────────────────────────────────
+if (data.acute_load && data.acute_load.length) {
+  line('chart-acute-load', [ds('Acute load', data.acute_load, accent)], { yAxis: { beginAtZero: true } });
+}
+
+// ─── Heat acclimation (%) ──────────────────────────────────
+if (data.heat_acclimation && data.heat_acclimation.length) {
+  line('chart-heat-acclimation', [ds('Heat acclimation', data.heat_acclimation, accent)],
+       { unit: ' %', yAxis: { min: 0, max: 100 } });
 }
 
 // ─── Body composition ──────────────────────────────────────

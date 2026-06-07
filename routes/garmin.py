@@ -1270,10 +1270,13 @@ _DAILY_METRICS_COLUMNS = (
     'sleep_score', 'sleep_start_ms', 'sleep_end_ms', 'sleep_awake_min',
     'sleep_avg_respiration', 'sleep_contributors_json',
     'sleep_deep_min', 'sleep_light_min', 'sleep_rem_min',
-    'hrv_overnight_avg_ms', 'hrv_7d_avg_ms', 'hrv_samples_json',
+    'sleep_duration_sub_score',
+    'hrv_overnight_avg_ms', 'hrv_7d_avg_ms', 'hrv_highest_5min_ms',
+    'hrv_samples_json',
     'training_readiness', 'vo2max_running', 'vo2max_cycling',
     'spo2_avg', 'spo2_low',
-    'resting_metabolic_rate',
+    'resting_metabolic_rate', 'resting_hr', 'resting_hr_7day_avg',
+    'heat_acclimation_pct', 'acute_training_load',
 )
 
 
@@ -1306,11 +1309,15 @@ def _metrics_to_db_fields(parsed: dict) -> dict:
     out: dict = {}
     for key in ('sleep_score', 'sleep_start_ms', 'sleep_end_ms',
                 'sleep_awake_min', 'sleep_avg_respiration',
+                'sleep_duration_sub_score',
                 'hrv_overnight_avg_ms', 'hrv_7d_avg_ms',
+                'hrv_highest_5min_ms',
                 'training_readiness', 'vo2max_running', 'vo2max_cycling',
                 'spo2_avg', 'spo2_low',
                 'sleep_deep_min', 'sleep_light_min', 'sleep_rem_min',
-                'resting_metabolic_rate'):
+                'resting_metabolic_rate', 'resting_hr',
+                'resting_hr_7day_avg',
+                'heat_acclimation_pct', 'acute_training_load'):
         if key in parsed:
             out[key] = parsed[key]
     if 'sleep_contributors' in parsed:
@@ -1415,16 +1422,21 @@ def import_wellness_bulk():
         try:
             ins, dup = _bulk_insert_wellness(db, rows, uid)
             # Also harvest the daily-aggregate values that live in WELLNESS
-            # files (resting metabolic rate from MonitoringInfoMessage). Best-
-            # effort: a parse failure here shouldn't fail the per-second
+            # files (resting metabolic rate, resting HR, 7d-avg resting HR).
+            # Best-effort: a parse failure here shouldn't fail the per-second
             # insert above.
             try:
                 extras = parse_wellness_daily_extras(raw)
-                if extras.get('date') and 'resting_metabolic_rate' in extras:
-                    _upsert_garmin_daily_metrics(
-                        db, uid, extras['date'],
-                        {'resting_metabolic_rate': extras['resting_metabolic_rate']},
-                    )
+                if extras.get('date'):
+                    extras_fields = {
+                        k: v for k, v in extras.items()
+                        if k in ('resting_metabolic_rate', 'resting_hr',
+                                 'resting_hr_7day_avg')
+                    }
+                    if extras_fields:
+                        _upsert_garmin_daily_metrics(
+                            db, uid, extras['date'], extras_fields,
+                        )
             except Exception:
                 pass
             db.commit()
