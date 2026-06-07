@@ -105,9 +105,12 @@ def test_activities_count_combines_cardio_and_strength():
 
 def test_phase_b_scaffold_keys_present_but_empty():
     chart = _build_chart_data([], [], [], [], [], [])
-    for k in ('hrv', 'training_readiness', 'vo2max_running',
+    for k in ('training_readiness', 'vo2max_running',
               'vo2max_cycling', 'active_minutes'):
         assert chart[k] == [], f'{k} should be an empty list until Phase B lands'
+    # HRV is now an overlay (overnight + highest_5min) — both sides empty
+    # when there's no _HRV_STATUS.fit.
+    assert chart['hrv'] == {'overnight': [], 'highest_5min': []}
     assert chart['sleep_score']['device'] == []
     # No data anywhere → empty-state path on the page.
     assert _has_any_data(chart) is False

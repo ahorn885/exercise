@@ -203,7 +203,9 @@ def index():
     # whichever columns the source file knows about, so this select gets the
     # merged best-of view.
     daily_metric_rows = db.execute(
-        'SELECT date, sleep_score, hrv_overnight_avg_ms, resting_metabolic_rate '
+        'SELECT date, sleep_score, hrv_overnight_avg_ms, hrv_highest_5min_ms, '
+        '  resting_metabolic_rate, resting_hr, resting_hr_7day_avg, '
+        '  heat_acclimation_pct, acute_training_load '
         'FROM garmin_daily_metrics WHERE user_id=? AND date >= ? ORDER BY date',
         (uid, cutoff)
     ).fetchall()
@@ -394,18 +396,26 @@ def _build_chart_data(self_rows, body_rows, cardio_rows, strength_rows,
                         for p in _series(garmin_rows, 'daily_distance_m')],
     }
 
-    hrv = [
-        {'x': d, 'y': float(r['hrv_overnight_avg_ms'])}
-        for d, r in daily_by_date.items() if r['hrv_overnight_avg_ms'] is not None
-    ]
-    resting_calories = []
-    for d, r in daily_by_date.items():
-        try:
-            v = r['resting_metabolic_rate']
-        except (KeyError, IndexError):
-            continue
-        if v is not None:
-            resting_calories.append({'x': d, 'y': float(v)})
+    hrv = {
+        'overnight':    _maybe_series(daily_by_date, 'hrv_overnight_avg_ms'),
+        'highest_5min': _maybe_series(daily_by_date, 'hrv_highest_5min_ms'),
+    }
+    resting_calories = _maybe_series(daily_by_date, 'resting_metabolic_rate')
+
+    # Heart-rate card already pulls min/avg/max from wellness_log; if
+    # garmin_daily_metrics has the authoritative resting HR from [211],
+    # that wins over wellness_log's MIN (which can catch brief dips and
+    # under-report). Render both — the rest line on the HR card swaps to
+    # Garmin's value when present.
+    garmin_resting_hr = _maybe_series(daily_by_date, 'resting_hr')
+    if garmin_resting_hr:
+        heart_rate['resting'] = garmin_resting_hr
+    heart_rate['resting_7day_avg'] = _maybe_series(
+        daily_by_date, 'resting_hr_7day_avg'
+    )
+
+    heat_acclimation = _maybe_series(daily_by_date, 'heat_acclimation_pct')
+    acute_load = _maybe_series(daily_by_date, 'acute_training_load')
 
     # Stress time-in-zone — sample counts × ~3 min interval. Garmin Connect
     # displays the same buckets on the stress page.
@@ -457,9 +467,11 @@ def _build_chart_data(self_rows, body_rows, cardio_rows, strength_rows,
         'respiration':   respiration,
         'body_battery':  body_battery,
         'daily_activity': daily_activity,
-        'hrv':            hrv,
+        'hrv':              hrv,
         'resting_calories': resting_calories,
         'stress_minutes':   stress_minutes,
+        'heat_acclimation': heat_acclimation,
+        'acute_load':       acute_load,
         # #283 follow-up — these still need their own FIT file types
         # (TRAINING_STATUS / SPO2 / VO2max emissions are separate from
         # _METRICS.fit and we haven't seen samples yet). Template renders
@@ -478,6 +490,20 @@ def _series(rows, column: str) -> list:
         v = r[column]
         if v is not None:
             out.append({'x': _d(r['date']), 'y': float(v)})
+    return out
+
+
+def _maybe_series(by_date: dict, column: str) -> list:
+    """Like `_series` but reads from the {date: row} dict shape and tolerates
+    rows that don't carry the column at all (older SELECTs, unit fixtures)."""
+    out = []
+    for d, r in by_date.items():
+        try:
+            v = r[column]
+        except (KeyError, IndexError):
+            continue
+        if v is not None:
+            out.append({'x': d, 'y': float(v)})
     return out
 
 

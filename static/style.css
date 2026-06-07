@@ -1489,6 +1489,12 @@ body.bulk-mode { padding-bottom: 80px; }
 
 /* Files tab */
 .app .conn-files { display: grid; grid-template-columns: 1.15fr 1fr; gap: 16px; align-items: start; }
+/* Without min-width: 0, the JSON dump in the Inspector's <pre> (white-space:
+   pre, long unbreakable tokens) inflates the right track's min-content and
+   squeezes the activities column to almost nothing. Lock each track to its
+   fractional allocation regardless of content width. */
+.app .cf-list,
+.app .cf-inspector { min-width: 0; }
 .app .cf-card { padding: 0; }
 .app .file-row { display: flex; gap: 12px; align-items: center; padding: 12px 16px; }
 .app .file-row + .file-row { border-top: 1px solid var(--hairline-2); }
@@ -1505,6 +1511,7 @@ body.bulk-mode { padding-bottom: 80px; }
 .app .cf-inspector { position: sticky; top: 76px; }
 .app .insp-sub { font-size: 12px; color: var(--fg-3); line-height: 1.45; margin: 8px 0 14px; }
 .app .insp-results { margin-top: 16px; }
+.app .insp-actions { display: flex; justify-content: flex-end; margin-bottom: 8px; }
 .app .insp-file + .insp-file { margin-top: 12px; }
 .app .insp-name { font-size: 11px; font-weight: 600; color: var(--fg-2); margin: 0 0 6px; word-break: break-all; }
 .app .insp-err { font-size: 12px; color: var(--bad); margin: 0; }

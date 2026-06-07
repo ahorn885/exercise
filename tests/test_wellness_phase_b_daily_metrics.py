@@ -42,7 +42,7 @@ def test_hrv_chart_populates_from_daily_metrics():
         _r(date='2026-05-29', sleep_score=None, hrv_overnight_avg_ms=61.5),
     ]
     chart = _build_chart_data([], [], [], [], [], [], daily_metric_rows)
-    assert chart['hrv'] == [
+    assert chart['hrv']['overnight'] == [
         {'x': '2026-05-28', 'y': 54.0},
         {'x': '2026-05-29', 'y': 61.5},
     ]
@@ -65,7 +65,7 @@ def test_build_chart_data_default_daily_metric_rows_is_empty():
     # still work — Phase A signature compat.
     chart = _build_chart_data([], [], [], [], [], [])
     assert chart['sleep_score'] == {'self': [], 'device': []}
-    assert chart['hrv'] == []
+    assert chart['hrv'] == {'overnight': [], 'highest_5min': []}
 
 
 # ── FIT timestamp helpers ────────────────────────────────────────────────────
@@ -228,3 +228,90 @@ def test_body_battery_delta_query_failure_doesnt_break_other_cards():
     assert chart['body_battery']['drained'] == []
     # Other cards still work
     assert chart['sleep_score'] == {'self': [], 'device': []}
+
+
+# ── Mapping refinements (May 28 + May 30 calibration) ────────────────────────
+
+def test_hrv_overlay_shows_overnight_and_highest_5min():
+    """Both HRV series from `_HRV_STATUS.fit` [370] land on the overlay chart."""
+    daily_metric_rows = [
+        _r(date='2026-05-28', sleep_score=None,
+           hrv_overnight_avg_ms=54.0, hrv_highest_5min_ms=77.0),
+        _r(date='2026-05-30', sleep_score=None,
+           hrv_overnight_avg_ms=52.0, hrv_highest_5min_ms=79.0),
+    ]
+    chart = _build_chart_data([], [], [], [], [], [], daily_metric_rows)
+    assert chart['hrv']['overnight'] == [
+        {'x': '2026-05-28', 'y': 54.0},
+        {'x': '2026-05-30', 'y': 52.0},
+    ]
+    assert chart['hrv']['highest_5min'] == [
+        {'x': '2026-05-28', 'y': 77.0},
+        {'x': '2026-05-30', 'y': 79.0},
+    ]
+
+
+def test_garmin_resting_hr_overrides_wellness_log_min_when_present():
+    """When garmin_daily_metrics has Garmin's authoritative resting HR from
+    [211], it replaces the MIN(wellness_log.heart_rate) value on the HR
+    card's resting line. The 7-day-avg series shows up alongside it."""
+    garmin_rows = [
+        _r(date='2026-05-28', avg_hr=58.0, resting_hr=40, peak_hr=89,
+           avg_stress=24.0, peak_stress=70,
+           avg_resp=13.0, min_resp=6.0,
+           bb_high=99, bb_low=24,
+           daily_steps=5438, daily_active_cal=106, daily_distance_m=4250.0),
+    ]
+    daily_metric_rows = [
+        _r(date='2026-05-28', sleep_score=None,
+           # Andy's Garmin Connect for May 28 — these win over wellness_log
+           # MIN of 40, which can catch transient dips.
+           resting_hr=44, resting_hr_7day_avg=48),
+    ]
+    chart = _build_chart_data([], [], [], [], [], garmin_rows, daily_metric_rows)
+    # Garmin's 44 wins over wellness_log MIN of 40.
+    assert chart['heart_rate']['resting'] == [{'x': '2026-05-28', 'y': 44.0}]
+    # 7-day-avg series shows up.
+    assert chart['heart_rate']['resting_7day_avg'] == [
+        {'x': '2026-05-28', 'y': 48.0}
+    ]
+
+
+def test_heat_acclimation_and_acute_load_surface_as_their_own_cards():
+    daily_metric_rows = [
+        _r(date='2026-05-28', sleep_score=None,
+           heat_acclimation_pct=32, acute_training_load=98),
+        _r(date='2026-05-30', sleep_score=None,
+           heat_acclimation_pct=22, acute_training_load=59),
+    ]
+    chart = _build_chart_data([], [], [], [], [], [], daily_metric_rows)
+    assert chart['heat_acclimation'] == [
+        {'x': '2026-05-28', 'y': 32.0},
+        {'x': '2026-05-30', 'y': 22.0},
+    ]
+    assert chart['acute_load'] == [
+        {'x': '2026-05-28', 'y': 98.0},
+        {'x': '2026-05-30', 'y': 59.0},
+    ]
+
+
+def test_metrics_to_db_fields_passes_through_new_columns():
+    """The new fields from refined mappings reach the table correctly."""
+    from routes.garmin import _metrics_to_db_fields
+    fields = _metrics_to_db_fields({
+        'date': '2026-05-28',
+        'sleep_duration_sub_score': 100,
+        'hrv_highest_5min_ms': 77.0,
+        'heat_acclimation_pct': 32,
+        'acute_training_load': 98,
+        'resting_hr': 44,
+        'resting_hr_7day_avg': 48,
+    })
+    assert fields == {
+        'sleep_duration_sub_score': 100,
+        'hrv_highest_5min_ms': 77.0,
+        'heat_acclimation_pct': 32,
+        'acute_training_load': 98,
+        'resting_hr': 44,
+        'resting_hr_7day_avg': 48,
+    }

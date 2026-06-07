@@ -2,7 +2,7 @@
 
 **Date:** 2026-06-06
 **Branch:** `claude/eloquent-gauss-fE3PC`
-**PR:** pending (this session)
+**PR:** #462 (squash-merged to `main`, commit `a0b7b20`; prod deploy `dpl_9KhyJjWBe3L3BesWEesFcgvVuoBk` READY on `aidstation-pro.vercel.app`).
 **Issues:** Track 2 (#429) of the 3-track redesign epic #427. Spec `Layer4_DeterminismFirst_Synthesis_Design_v1.md` v1 (APPROVED; status amended to "2a + 2b + 2c + 2d shipped — Track 2 closed"). Slice 2d shipped this session; 2c.2 (cardio routing) + layer0 vocab adds still owed (see §5).
 
 ---
