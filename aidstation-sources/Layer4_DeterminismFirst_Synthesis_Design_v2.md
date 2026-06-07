@@ -54,7 +54,7 @@ This is the second half of Andy's 2026-06-05 redesign decision. Track 1 made the
    - **2d:** D7 (rx_engine wiring) + the rest of the §8 validator sweep.
    - Ship 2a first; verify against a cold PGE plan; then 2b / 2c / 2d in order.
 
-10. **Session-count ceiling + athlete two-a-day preference** (D11, Andy 2026-06-06, post-#60). The §5.1 grid summed per-discipline counts with **no global ceiling and no available-days awareness** → cold PGE plan #60 prescribed **14 sessions** for a 6-training-day athlete (hard schedulable max 12), unschedulable under the `two_per_day` payload invariant → Build:w2 never cached → stall backstop → plan failed. Fix (§5.1.1): cap the weekly total at a deterministic ceiling anchored on Peak — `round(density × available_days)` where `density` comes from an athlete `two_a_day_preference` (never / occasionally / regularly) with an optional explicit `peak_sessions_max` override — scaled down per phase and hard-clamped to `2 × available_days`. Over-ceiling weeks shed the lowest-`load_weight` disciplines first; the phase `volume_band` hours are **preserved** (fewer, longer sessions — Andy's call). Fully deterministic, no LLM. The two new Layer 1 §K fields are a cross-layer surface change (Trigger #3) + a schema migration (owed-Andy's-hands; Neon egress is blocked from the container).
+10. **Session-count ceiling + athlete two-a-day preference** (D11, Andy 2026-06-06, post-#60). The §5.1 grid summed per-discipline counts with **no global ceiling and no available-days awareness** → cold PGE plan #60 prescribed **14 sessions** for a 6-training-day athlete (hard schedulable max 12), unschedulable under the `two_per_day` payload invariant → Build:w2 never cached → stall backstop → plan failed. Fix (§5.1.1): cap the weekly total at a deterministic ceiling — `peak_sessions_max` (athlete-set, default 10, written by a friendly `two_a_day_preference` enum), scaled **near-flat** per phase (sport-science D-8: endurance frequency is stable across phases; the taper cuts volume, not count) and hard-clamped to `2 × available_days`. Over-ceiling weeks shed the lowest-`load_weight` disciplines first (rotating them onto lighter weeks); the phase `volume_band` hours are **preserved** (fewer, longer sessions — Andy's call). **No HITL** — the deterministic shed always converges, so the plan never fails on this path. Fully deterministic, no LLM. The two new Layer 1 §K fields are a cross-layer surface change (Trigger #3) + a schema migration (owed-Andy's-hands; Neon egress is blocked from the container).
 
 ## 3. Determinism boundary
 
@@ -145,9 +145,9 @@ Algorithm per discipline:
 | Field | Type | Default | Validation |
 |---|---|---|---|
 | `two_a_day_preference` | enum `never` / `occasionally` / `regularly` | `occasionally` | — |
-| `peak_sessions_max` | int, nullable | null → derive from preference | reject `> 2 × available_days_per_week` at input |
+| `peak_sessions_max` | int | **10** (clamped to `2 × available_days`) | reject `> 2 × available_days_per_week` at input |
 
-`two_a_day_preference` is the primary, athlete-friendly control ("How often do you want to train twice in a day?"). `peak_sessions_max` is the advanced override — prefilled from the preference, editable, hard-capped at the feasibility maximum.
+**One source of truth: `peak_sessions_max` is the effective weekly ceiling** (it caps Build/Peak — see phase table). It defaults to **10**. `two_a_day_preference` is the friendly primary UI control ("How often do you want to train twice in a day?"); changing it *writes* `peak_sessions_max = round(density × available_days)`. Advanced users edit the number directly. Either way the stored, grid-consumed value is the number, hard-capped at the feasibility maximum.
 
 **Density map (preference → sessions per available training day at Peak):**
 
@@ -157,25 +157,25 @@ Algorithm per discipline:
 | occasionally | 1.5 |
 | regularly | 1.85 |
 
-Module constants, tunable. `never` ⇒ strictly one-a-day at Peak; `regularly` ⇒ near the 2/day ceiling.
+Module constants, tunable (D-8). `never` ⇒ strictly one-a-day at Peak; `regularly` ⇒ near the 2/day ceiling. Sport-science note: world-class endurance athletes accumulate double-session *days* on a large share of training days (~60% in world-class XC skiers — Solli et al. 2025), so `regularly ≈ 1.85` reflects an elite-leaning pattern; the conservative default is well-supported too — two longer sessions outperform four shorter ones for endurance adaptation (Seiler-line interval-frequency RCT, PMC7246952).
 
 **Peak ceiling:**
 
 ```
 D = available_days            # resolution below
-peak_ceiling = peak_sessions_max if peak_sessions_max is not None
-               else round(density[pref] * D)
-peak_ceiling = min(peak_ceiling, 2 * D)     # hard feasibility clamp
+# peak_sessions_max is always set (default 10; the two_a_day_preference UI
+# writes it via round(density[pref] * D)). It is the effective Peak ceiling.
+peak_ceiling = min(peak_sessions_max, 2 * D)     # hard feasibility clamp
 ```
 
-**Per-phase ceiling — scale off Peak (Peak = 1.0):**
+**Per-phase ceiling — near-flat, anchored on the Peak ceiling (Peak = 1.0).** Sport-science correction (D-8): endurance training **frequency is relatively stable across phases** — what periodizes is *volume* (duration) and *intensity distribution*, both already handled (the `volume_band` + the §5.3 polarized split). The **taper holds session frequency while cutting duration/volume** (Mujika & Padilla 2003; the §13 search corpus). So the session-*count* scale is deliberately mild — it must NOT act as a second volume taper.
 
-| Phase | scale | example (peak_ceiling=10, D=6) |
-|---|---|---|
-| Base | 0.70 | 7 |
-| Build | 0.85 | 8–9 |
-| Peak | 1.00 | 10 |
-| Taper | 0.55 | 5–6 |
+| Phase | scale | example (peak_ceiling=10, D=6) | rationale |
+|---|---|---|---|
+| Base | 0.90 | 9 | high volume, lower intensity; frequency near-full |
+| Build | 1.00 | 10 | highest combined load; frequency at the ceiling |
+| Peak | 1.00 | 10 | volume drops via `volume_band`, frequency held, intensity peaks |
+| Taper | 0.85 | 8–9 | frequency largely maintained (literature: hold frequency); mild count trim for pre-race rest, the real volume cut is the `volume_band`'s job |
 
 ```
 phase_ceiling = min(round(peak_ceiling * scale[phase]), 2 * D)
@@ -190,9 +190,9 @@ Net effect: the dominant disciplines keep their frequency; the least-important v
 
 **Volume preservation ("fewer, longer" — Andy 2026-06-06).** Capping the count does **not** reduce the phase `volume_band` hours. `DisciplineAllocation.target_hours_this_week` is unchanged by the shed, so trimming a discipline from 2→1 sessions leaves its hours intact and the remaining session is longer. The grid renders both count and target-hours to the synthesizer, so the LLM packs the same volume into fewer, longer sessions. (Exception: a discipline rotated fully to 0 this week drops that week's hours — intended; that's a maintenance-cadence skip, not a load cut.)
 
-**Available-days resolution.** `D = available_days_per_week` if set; else `count(w for w in daily_availability_windows if w.enabled)`; else fall back to **6** (conservative default — see Open item D-7). The `2 × D` clamp guarantees a schedulable plan regardless of upstream count drift.
+**Available-days resolution.** `D = available_days_per_week` if set; else `count(w for w in daily_availability_windows if w.enabled)`; else **assume all 7 days available, all hours** (`D = 7` — Andy 2026-06-06, D-7). The `2 × D` clamp guarantees a schedulable plan regardless of upstream count drift.
 
-**Discipline-frequency infeasibility (Layer4_Spec §1077 / TS-11, issue #214).** If the count of disciplines that must appear *every* week exceeds `2 × D` (can't fit even one session each within the feasibility max), the shed can't converge — surface `discipline_frequency_infeasible` (HITL: drop or merge a discipline) rather than fail silently. For Andy (7 disciplines, D=6 → 12 slots) this does not fire. Wiring the real `Layer4ShapeInfeasibleError` is #214's scope; until then the grid logs the condition and clamps to fit by dropping the lowest-priority disciplines.
+**Over-subscription is resolved deterministically — no HITL, never fails (Andy 2026-06-06).** There is no human-in-the-loop gate in v1, so a hard "infeasible" raise here would just fail the plan — the exact failure we're removing. Instead the shed above **always converges**: when even one-session-each across all included disciplines exceeds the ceiling, the lowest-`load_weight` disciplines drop to 0 this week (step 2) and **rotate in on lighter weeks** via the existing maintenance-cadence mechanism. A very-low-availability athlete simply gets their minor disciplines less often — a correct, sparse plan, not a failure. (The spec'd `discipline_frequency_infeasible` / `Layer4ShapeInfeasibleError` HITL path from Layer4_Spec §1077 / TS-11 / #214 is **out of scope** for this fix; if a real HITL gate ships later (#211), it can layer on top to *suggest* dropping a discipline, but the grid never depends on it.)
 
 ### 5.2 AR / continuous_multi_day extensions
 
@@ -227,6 +227,8 @@ def detect_insufficient_rest(week: SynthesizedWeek, expected: int) -> Warning | 
 ```
 
 Expected rest count per phase (advisory): Base 2 / Build 1–2 / Peak 1 / Taper 2–3. LLM places sessions freely; the deterministic post-check flags weeks below the expected count. Rendered as a `coaching_flag` on the affected week.
+
+> **v2 correction (Andy 2026-06-06) — the athlete owns their rest days; we do not supersede them.** The original §5.4 (shipped in slice 2c) treats rest as a *phase-coach expectation* and warns when the synthesized week has fewer rest days than that expectation — even within days the athlete marked available. That second-guesses the athlete's own schedule and is being **removed**: the rest contract is simply **honor `daily_availability_windows`** — disabled days are hard rest (already enforced), and we never warn an athlete for training on a day they themselves marked available. The session-count ceiling (§5.1.1) already prevents the #60 failure mode (the synthesizer spilling onto a rest day because it had too many sessions to place), so the `insufficient_rest` nudge is no longer load-bearing. **Implementation (part of slice 2b.2):** retire `detect_insufficient_rest` / `expected_rest_count` and demote-then-remove the validator Rule 3 `insufficient_rest` warning. `expected_rest_count`'s disabled-day accounting (which already returns 0 extra rest when disabled days cover the contract) is the behavior we keep in spirit — we just stop asking for *more* than the athlete chose. Pending Andy's confirm before the code change lands (it touches shipped 2c).
 
 ### 5.5 Locale assignment + substitution (D5 / §2.6)
 
@@ -379,7 +381,7 @@ The §5.1 grid had no global session ceiling and no available-days awareness →
 | `tests/test_layer4_session_grid.py` | Add `TestSessionCeiling` — density map, Peak-anchor + phase-scale math, `2×D` clamp, shed order (trim multi before drop), volume preserved on trim, available-days resolution + fallback. |
 
 End-to-end this exceeds the 5-file substantive ceiling → **ship in two passes:**
-- **2b.2a** — grid algorithm + call site + tests, with `two_a_day_preference` defaulted to `occasionally` and `peak_sessions_max` null. Uses `available_days` already in the Layer 1 payload, so it makes plans **schedulable immediately** (unblocks the #60 re-run) before the athlete control exists.
+- **2b.2a** — grid algorithm + call site + tests, with the defaults baked in (`two_a_day_preference = occasionally`, `peak_sessions_max = 10`, available-days → all-7 fallback). Uses `available_days` already in the Layer 1 payload, so it makes plans **schedulable immediately** (unblocks the #60 re-run) before the athlete control exists. If Andy confirms the §5.4 correction, this pass also retires `detect_insufficient_rest` / `expected_rest_count` + the validator Rule 3 `insufficient_rest` warning (small: 2 functions + 1 rule + their tests).
 - **2b.2b** — schema migration + Layer 1 §K fields + onboarding/profile UI, surfacing the athlete control.
 
 ## 11. Edge cases
@@ -401,8 +403,8 @@ End-to-end this exceeds the 5-file substantive ceiling → **ship in two passes:
 - **D-4 — DEFERRED:** validator-demotion QA audit. After 3–4 plans on the new contract, review the warnings stream; re-promote rules whose demotion proved unsafe.
 - **D-5 — DEFERRED:** multi-day brick crossing midnight (§11 edge case).
 - **D-6 — DEPENDENCY:** Track 3 (#430) catalog migration moves `rx_engine` to `layer0.*`. Until then, rx lookups are limited to the public-catalog subset; layer0-only exercises fall through to first-exposure (§7). Acceptable.
-- **D-7 — OPEN (Andy decide, §5.1.1):** available-days fallback when neither `available_days_per_week` nor any enabled `daily_availability_windows` is set. Spec'd default = 6 (conservative). Alternative: make `available_days_per_week` a required onboarding field and drop the fallback. The `2×D` clamp bounds the downside either way.
-- **D-8 — TUNABLE (§5.1.1):** the density map (never 1.0 / occasionally 1.5 / regularly 1.85) and phase scales (Base 0.70 / Build 0.85 / Peak 1.00 / Taper 0.55) are coach-estimate starting constants. Revisit after 2–3 plans on the new ceiling; one constants block to tune.
+- **D-7 — RESOLVED (Andy 2026-06-06):** when neither `available_days_per_week` nor any enabled `daily_availability_windows` is set, **assume all 7 days + all hours available** (`D = 7`). The `2 × D` clamp still bounds it.
+- **D-8 — RESOLVED via sport-science research (Andy 2026-06-06):** density map kept (never 1.0 / occasionally 1.5 / regularly 1.85 — elite endurance athletes double on ~60% of training days, Solli et al. 2025; conservative default supported by the "two longer > four shorter" interval RCT, PMC7246952). Phase scales **revised** from the original aggressive taper (Base 0.70 / Build 0.85 / Peak 1.00 / Taper 0.55) to **near-flat** (Base 0.90 / Build 1.00 / Peak 1.00 / Taper 0.85): the literature shows endurance *frequency* is roughly stable across phases and the **taper holds frequency while cutting duration/volume** (Mujika & Padilla 2003) — the volume taper is the `volume_band`'s job, so the count scale must not double-cut it. Still tunable; revisit after 2–3 plans.
 
 ## 13. Test plan
 
@@ -417,7 +419,7 @@ End-to-end this exceeds the 5-file substantive ceiling → **ship in two passes:
 - **After 2b:** cold PGE plan. Win = no `volume_band` blockers, weekly counts match the grid, intensity ratios match phase defaults.
 - **After 2c:** cold PGE plan. Win = every session has a `locale_id`; no `session_multi_locale` or `session_locale_not_in_cluster` integrity violations; rest days place adjacent to the long-run day.
 - **After 2d:** cold PGE plan. Win = strength sessions have precise loads (`"185 lbs × 5, RPE 7"`) for exercises Andy has logged; `first_exposure` flag on new exercises only.
-- **After 2b.2 (the #60 re-run):** cold PGE plan. Win = every week's session total ≤ its phase ceiling (≈8 for Andy at peak=10 / D=6); **no day exceeds 2 sessions**; no `two_per_day` ValidationError anywhere in the diag; ≥1 true rest day per week; the Build:w2 `synthesis_budget_exhausted` → stall failure does not recur.
+- **After 2b.2 (the #60 re-run):** cold PGE plan. Win = every week's session total ≤ its phase ceiling (for Andy at peak=10 / D=6: Base/Build/Peak ≈ 9–10, Taper ≈ 8–9, hard cap ≤ 12); **no day exceeds 2 sessions**; no `two_per_day` ValidationError anywhere in the diag; the athlete's disabled days carry zero sessions (rest honored); the Build:w2 `synthesis_budget_exhausted` → stall failure does not recur.
 
 ### Regression
 - Full `tests/` suite green at each slice (Track 1 baseline: 1998 passed / 16 skipped).
