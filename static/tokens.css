@@ -139,6 +139,14 @@
 .app .btn-primary { background: var(--accent); color: var(--ink); }
 .app .btn-ghost   { background: transparent; color: var(--fg); border-color: var(--hairline); }
 .app .btn-text    { background: transparent; color: var(--fg-2); padding: 9px 0; }
+/* Outline-secondary inside the .app shell. Without this, it falls through to
+   the bare `.btn-outline-secondary` (style.css) whose `--bs-btn-color: var(--ink)`
+   is a FIXED dark token — in the default dark theme that paints near-black text
+   on the near-black `--bg`, rendering the button invisible (e.g. the "+ Add
+   terrain" / "+ Add attempt" buttons on the race form). Use theme-aware tokens
+   like the other .app buttons so it stays legible in both themes. */
+.app .btn-outline-secondary { background: transparent; color: var(--fg); border-color: var(--hairline); }
+.app .btn-outline-secondary:hover { background: var(--fg); color: var(--bg); border-color: var(--fg); }
 .app .btn-sm      { font-size: 10px; padding: 6px 10px; }
 .app .btn-icon    {
   width: 30px; height: 30px; padding: 0; justify-content: center;
