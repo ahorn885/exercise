@@ -59,7 +59,7 @@
   </section>
 
   <div class="onb-nav">
-    <a href="{{ url_for('locales.list_profiles') }}" class="btn btn-ghost">+ Add or manage locations</a>
+    <a href="{{ url_for('locales.list_profiles', return_to=url_for('onboarding.locales')) }}" class="btn btn-ghost">+ Add or manage locations</a>
     <form method="post" action="{{ url_for('onboarding.locales_continue') }}">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <button type="submit" class="btn btn-primary">Continue</button>
