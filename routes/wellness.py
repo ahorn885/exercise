@@ -205,7 +205,9 @@ def index():
     daily_metric_rows = db.execute(
         'SELECT date, sleep_score, hrv_overnight_avg_ms, hrv_highest_5min_ms, '
         '  resting_metabolic_rate, resting_hr, resting_hr_7day_avg, '
-        '  heat_acclimation_pct, acute_training_load '
+        '  heat_acclimation_pct, acute_training_load, '
+        '  restless_moments, floors_climbed, floors_descended, '
+        '  intensity_minutes, spo2_avg, spo2_low '
         'FROM garmin_daily_metrics WHERE user_id=? AND date >= ? ORDER BY date',
         (uid, cutoff)
     ).fetchall()
@@ -320,10 +322,7 @@ def _build_chart_data(self_rows, body_rows, cardio_rows, strength_rows,
             {'x': d, 'y': float(r['sleep_quality']) * _SELF_REPORT_TO_100}
             for d, r in self_by_date.items() if r['sleep_quality'] is not None
         ],
-        'device': [
-            {'x': d, 'y': float(r['sleep_score'])}
-            for d, r in daily_by_date.items() if r['sleep_score'] is not None
-        ],
+        'device': _maybe_series(daily_by_date, 'sleep_score'),
     }
     energy = {
         'self': [
@@ -416,6 +415,16 @@ def _build_chart_data(self_rows, body_rows, cardio_rows, strength_rows,
 
     heat_acclimation = _maybe_series(daily_by_date, 'heat_acclimation_pct')
     acute_load = _maybe_series(daily_by_date, 'acute_training_load')
+    restless_moments = _maybe_series(daily_by_date, 'restless_moments')
+    floors = {
+        'climbed':   _maybe_series(daily_by_date, 'floors_climbed'),
+        'descended': _maybe_series(daily_by_date, 'floors_descended'),
+    }
+    intensity_minutes = _maybe_series(daily_by_date, 'intensity_minutes')
+    spo2 = {
+        'avg': _maybe_series(daily_by_date, 'spo2_avg'),
+        'low': _maybe_series(daily_by_date, 'spo2_low'),
+    }
 
     # Stress time-in-zone — sample counts × ~3 min interval. Garmin Connect
     # displays the same buckets on the stress page.
@@ -472,14 +481,17 @@ def _build_chart_data(self_rows, body_rows, cardio_rows, strength_rows,
         'stress_minutes':   stress_minutes,
         'heat_acclimation': heat_acclimation,
         'acute_load':       acute_load,
-        # #283 follow-up — these still need their own FIT file types
-        # (TRAINING_STATUS / SPO2 / VO2max emissions are separate from
-        # _METRICS.fit and we haven't seen samples yet). Template renders
-        # the cards as "no device data yet" until they're wired.
+        'restless_moments': restless_moments,
+        'floors':           floors,
+        'intensity_minutes': intensity_minutes,
+        'spo2':             spo2,
+        # #283 follow-up — these still need their own FIT file types or a
+        # field map we haven't decoded. `active_minutes` was retired in
+        # favour of `intensity_minutes` (Garmin's published metric =
+        # moderate + 2 × vigorous, already wired from MonitoringMessage).
         'training_readiness': [],
         'vo2max_running':     [],
         'vo2max_cycling':     [],
-        'active_minutes':     [],
     }
 
 

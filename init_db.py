@@ -903,6 +903,10 @@ _PG_MIGRATIONS = [
     "ALTER TABLE garmin_daily_metrics ADD COLUMN IF NOT EXISTS hrv_highest_5min_ms REAL",
     "ALTER TABLE garmin_daily_metrics ADD COLUMN IF NOT EXISTS heat_acclimation_pct INTEGER",
     "ALTER TABLE garmin_daily_metrics ADD COLUMN IF NOT EXISTS acute_training_load INTEGER",
+    "ALTER TABLE garmin_daily_metrics ADD COLUMN IF NOT EXISTS restless_moments INTEGER",
+    "ALTER TABLE garmin_daily_metrics ADD COLUMN IF NOT EXISTS floors_climbed INTEGER",
+    "ALTER TABLE garmin_daily_metrics ADD COLUMN IF NOT EXISTS floors_descended INTEGER",
+    "ALTER TABLE garmin_daily_metrics ADD COLUMN IF NOT EXISTS intensity_minutes INTEGER",
     # D-50 Phase 1 — provider integration tables. Mirrors the SQLite block
     # above with PG-native types (SERIAL, TIMESTAMP DEFAULT NOW(), BIGINT,
     # BOOLEAN). Per Athlete_Data_Integration_Spec v3 §4–§6. Garmin paused
