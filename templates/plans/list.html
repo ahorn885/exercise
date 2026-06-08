@@ -18,10 +18,10 @@
 {% endblock %}
 
 {% block content %}
-{% if plans or archived %}
+{% if plans or archived or completed %}
 <div class="dash-head">
   <div class="races-intro">
-    <p class="eyebrow accent">● Plan history · {{ plans|length }} active{% if archived %} · {{ archived|length }} archived{% endif %}</p>
+    <p class="eyebrow accent">● Plan history · {{ plans|length }} active{% if completed %} · {{ completed|length }} completed{% endif %}{% if archived %} · {{ archived|length }} archived{% endif %}</p>
     <h1 class="page-title">Your plans.</h1>
     <p class="page-sub">Every plan periodizes back from a race. Open one to see the week grid; archive
       the ones you're done with — they stay viewable.</p>
@@ -70,6 +70,34 @@
         {% if total > 0 %}
         <div class="pbar"><span data-progress="{{ (done / total * 100) | round | int }}"></span></div>
         {% endif %}
+      </div>
+      {% endfor %}
+    </div>
+  </section>
+  {% endif %}
+
+  {% if completed %}
+  <section class="plan-section">
+    <p class="eyebrow">Completed · {{ completed|length }}</p>
+    <div class="plan-cards">
+      {% for c in completed %}
+      <div class="card plan-card">
+        <div class="plan-card-head">
+          <div class="pl-id">
+            <div class="pl-title">
+              <a class="pl-name" href="{{ url_for('plan_create.view_plan', plan_version_id=c.id) }}">Generated plan</a>
+              <span class="chip accent">Pattern {{ c.pattern }}</span>
+              <span class="chip solid">{{ c.created_via|replace('_', ' ') }}</span>
+            </div>
+            <p class="pl-meta mono">
+              {{ c.scope_start_date }} → {{ c.scope_end_date }}
+              · {{ c.session_count or 0 }} session{{ '' if c.session_count == 1 else 's' }}
+            </p>
+          </div>
+          <div class="pl-actions">
+            <a class="btn btn-primary btn-sm" href="{{ url_for('plan_create.view_plan', plan_version_id=c.id) }}">Open</a>
+          </div>
+        </div>
       </div>
       {% endfor %}
     </div>

@@ -25,7 +25,7 @@ class _FakeRow(dict):
 
 
 class _ListCursor:
-    """Cursor whose fetchall() returns a caller-supplied plan list; fetchone()
+    """Cursor whose fetchall() returns a caller-supplied row list; fetchone()
     serves the current_user() hydration row."""
 
     def __init__(self, rows):
@@ -40,13 +40,17 @@ class _ListCursor:
 
 
 class _ListConn:
-    def __init__(self, rows):
+    """Routes the route's two fetchall() reads by SQL: the legacy
+    `training_plans` list vs. the `plan_versions` (completed AI-generated)
+    list. The auth/user lookups use fetchone(), which ignores both."""
+
+    def __init__(self, rows, completed=()):
         self._rows = rows
+        self._completed = list(completed)
 
     def execute(self, sql, *a, **k):
-        # The plans list query is the only fetchall() the route makes; the
-        # auth/user lookups use fetchone(). Hand the plan rows to every
-        # cursor — fetchone() ignores them.
+        if 'plan_versions' in sql:
+            return _ListCursor(self._completed)
         return _ListCursor(self._rows)
 
     def commit(self):
@@ -63,11 +67,23 @@ def _plan(**kw):
     return _FakeRow(base)
 
 
-def _client(monkeypatch, rows):
+def _completed(**kw):
+    base = {
+        'id': 7, 'created_at': '2026-06-01', 'created_via': 'plan_create',
+        'scope_start_date': '2026-06-10', 'scope_end_date': '2026-11-01',
+        'pattern': 'A', 'session_count': 42,
+    }
+    base.update(kw)
+    return _FakeRow(base)
+
+
+def _client(monkeypatch, rows, completed=()):
     for mod in list(sys.modules.values()):
         if mod is not None and getattr(mod, 'get_db', None) is not None:
-            monkeypatch.setattr(mod, 'get_db', lambda rows=rows: _ListConn(rows),
-                                raising=False)
+            monkeypatch.setattr(
+                mod, 'get_db',
+                lambda rows=rows, completed=completed: _ListConn(rows, completed),
+                raising=False)
     _appmod.app.config['TESTING'] = True
     c = _appmod.app.test_client()
     with c.session_transaction() as sess:
@@ -110,3 +126,28 @@ def test_plans_list_empty_state(monkeypatch):
     assert 'Import a plan' in html
     assert 'plan-cards' not in html
     assert 'style="' not in html
+
+
+def test_plans_list_renders_completed_generated_plans(monkeypatch):
+    # AI-generated plans live in plan_versions, so they surface even when there
+    # are zero legacy training_plans — the original bug was an empty screen.
+    client = _client(monkeypatch, [], completed=[
+        _completed(id=7, pattern='A', session_count=42),
+        _completed(id=8, pattern='B', session_count=1),
+    ])
+    resp = client.get('/plans/')
+    assert resp.status_code == 200
+    html = resp.get_data(as_text=True)
+    # Not the empty state — the Completed section renders the generated plans.
+    assert "You're at the start line." not in html
+    assert 'Completed · 2' in html
+    assert 'Pattern A' in html
+    assert 'Pattern B' in html
+    # Each links to its /plans/v2/<id> view.
+    assert '/plans/v2/7' in html
+    assert '/plans/v2/8' in html
+    # Session-count pluralization.
+    assert '42 sessions' in html
+    assert '1 session' in html
+    assert 'style="' not in html
+    assert 'onclick=' not in html

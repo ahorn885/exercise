@@ -212,7 +212,29 @@ def list_plans():
     ).fetchall()
     plans = [p for p in all_plans if p['status'] != 'archived']
     archived = [p for p in all_plans if p['status'] == 'archived']
-    return render_template('plans/list.html', plans=plans, archived=archived)
+
+    # AI-generated plans live in the separate `plan_versions` model (written by
+    # the Layer 4 generator in routes/plan_create.py), NOT in `training_plans`.
+    # Without this they were unreachable from the Plan screen — a successfully
+    # generated plan only existed at its direct /plans/v2/<id> URL — so the list
+    # looked empty even after generating plans. Surface the completed (ready,
+    # not-yet-superseded) generations here as their own "Completed" section.
+    completed = db.execute(
+        '''SELECT pv.id, pv.created_at, pv.created_via, pv.scope_start_date,
+                  pv.scope_end_date, pv.pattern,
+                  COUNT(s.id) AS session_count
+           FROM plan_versions pv
+           LEFT JOIN plan_sessions s ON s.plan_version_id = pv.id
+           WHERE pv.user_id = ?
+             AND pv.generation_status = 'ready'
+             AND pv.superseded_at IS NULL
+           GROUP BY pv.id
+           ORDER BY pv.created_at DESC''',
+        (current_user_id(),)
+    ).fetchall()
+
+    return render_template('plans/list.html', plans=plans, archived=archived,
+                           completed=completed)
 
 
 @bp.route('/import', methods=['GET', 'POST'])
