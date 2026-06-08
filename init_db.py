@@ -2072,6 +2072,12 @@ _PG_MIGRATIONS = [
     # so a killed claim self-heals. Nullable; the claim/release SQL is
     # deploy-safe only AFTER this column lands (apply before deploying).
     "ALTER TABLE plan_versions ADD COLUMN IF NOT EXISTS advance_lock_until TIMESTAMPTZ",
+    # User-facing lifecycle: a manual "mark complete" stamp, set when the athlete
+    # retires a plan (e.g. they cancelled it, or it was superseded by a refresh
+    # and they want it filed away) regardless of its scope dates. The Plan list
+    # buckets ready plans by scope dates into Upcoming / Active / Completed; a
+    # non-NULL `completed_at` forces a plan into Completed no matter the dates.
+    "ALTER TABLE plan_versions ADD COLUMN IF NOT EXISTS completed_at TIMESTAMPTZ",
     # layer4_cache entry_point drift fix (2026-05-26) — the Layer 3A/3B
     # cached wrappers (2026-05-20) + the NL-parser cache (2026-05-21) write
     # entry_point values the original 4-value CHECK rejected, so every 3A/3B

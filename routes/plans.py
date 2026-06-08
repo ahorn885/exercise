@@ -15,6 +15,21 @@ from routes.auth import current_user_id
 bp = Blueprint('plans', __name__, url_prefix='/plans')
 
 
+def _coerce_date(value):
+    """Best-effort coerce a DB value to a `date` for bucketing.
+
+    psycopg returns DATE columns as `datetime.date` already; this also accepts
+    ISO strings (the render harness's fake cursor returns canned string dates)
+    and returns None for anything unparseable so a bad value just falls through
+    to the Active bucket rather than 500-ing the page."""
+    if value is None or isinstance(value, date_type):
+        return value
+    try:
+        return date_type.fromisoformat(str(value)[:10])
+    except ValueError:
+        return None
+
+
 DAILY_SUPPLEMENTS = [
     'Creatine 5g (morning)',
     'Omega-3 2–3g',
@@ -217,24 +232,51 @@ def list_plans():
     # the Layer 4 generator in routes/plan_create.py), NOT in `training_plans`.
     # Without this they were unreachable from the Plan screen — a successfully
     # generated plan only existed at its direct /plans/v2/<id> URL — so the list
-    # looked empty even after generating plans. Surface the completed (ready,
-    # not-yet-superseded) generations here as their own "Completed" section.
-    completed = db.execute(
+    # looked empty even after generating plans. Surface the live generations
+    # (still generating, or ready and not-yet-superseded) here. Failed
+    # generations are intentionally NOT listed — they're a dead end the athlete
+    # re-runs, not a plan to act on.
+    gen_rows = db.execute(
         '''SELECT pv.id, pv.created_at, pv.created_via, pv.scope_start_date,
-                  pv.scope_end_date, pv.pattern,
+                  pv.scope_end_date, pv.pattern, pv.generation_status,
+                  pv.completed_at,
                   COUNT(s.id) AS session_count
            FROM plan_versions pv
            LEFT JOIN plan_sessions s ON s.plan_version_id = pv.id
            WHERE pv.user_id = ?
-             AND pv.generation_status = 'ready'
+             AND pv.generation_status IN ('ready', 'generating')
              AND pv.superseded_at IS NULL
            GROUP BY pv.id
-           ORDER BY pv.created_at DESC''',
+           ORDER BY pv.scope_start_date ASC, pv.created_at ASC''',
         (current_user_id(),)
     ).fetchall()
 
-    return render_template('plans/list.html', plans=plans, archived=archived,
-                           completed=completed)
+    # Bucket the ready plans by their scope dates against today: a plan whose
+    # scope hasn't started is Upcoming, one whose scope is live is Active, one
+    # whose scope has ended (or that the athlete manually marked complete) is
+    # Completed. Bucketing in Python — not SQL — keeps it testable through the
+    # render harness's fake cursor (which returns canned rows, ignoring the SQL).
+    today = date_type.today()
+    gen_generating, gen_upcoming, gen_active, gen_completed = [], [], [], []
+    for r in gen_rows:
+        if r['generation_status'] == 'generating':
+            gen_generating.append(r)
+            continue
+        start = _coerce_date(r['scope_start_date'])
+        end = _coerce_date(r['scope_end_date'])
+        if r['completed_at'] is not None:
+            gen_completed.append(r)
+        elif end is not None and end < today:
+            gen_completed.append(r)
+        elif start is not None and start > today:
+            gen_upcoming.append(r)
+        else:
+            gen_active.append(r)
+
+    return render_template(
+        'plans/list.html', plans=plans, archived=archived,
+        gen_generating=gen_generating, gen_upcoming=gen_upcoming,
+        gen_active=gen_active, gen_completed=gen_completed)
 
 
 @bp.route('/import', methods=['GET', 'POST'])

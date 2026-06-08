@@ -834,3 +834,51 @@ class TestMarkPlanFailed:
         assert "generation_status = 'failed'" in sql
         assert "WHERE id = ? AND user_id = ?" in sql
         assert params == ('nope', 7, 3)
+
+
+# ─── mark_plan_complete / reopen_plan (Plan-list lifecycle actions) ───────────
+
+
+def _lifecycle_app():
+    # Both blueprints: the lifecycle routes redirect to `plans.list_plans`, so
+    # that endpoint must be registered for url_for to build the redirect.
+    from routes.plans import bp as plans_bp
+    app = Flask(__name__)
+    app.secret_key = 'test'  # flash() needs a session
+    app.register_blueprint(plan_create_bp)
+    app.register_blueprint(plans_bp)
+    return app
+
+
+class TestPlanLifecycleRoutes:
+    def _client(self, monkeypatch, conn):
+        monkeypatch.setattr(plan_create, 'get_db', lambda: conn)
+        monkeypatch.setattr(plan_create, 'current_user_id', lambda: 3)
+        return _lifecycle_app().test_client()
+
+    def test_mark_complete_stamps_ready_uncompleted_row(self, monkeypatch):
+        conn = _FakeConn()
+        client = self._client(monkeypatch, conn)
+        resp = client.post('/plans/v2/30/complete')
+        assert resp.status_code == 302
+        assert resp.headers['Location'].endswith('/plans/')
+        assert conn.commits == 1
+        sql, params = conn.calls[0]
+        assert 'completed_at = NOW()' in sql
+        # Guards: only a ready row that isn't already completed, scoped to user.
+        assert "generation_status = 'ready'" in sql
+        assert 'completed_at IS NULL' in sql
+        assert 'WHERE id = ? AND user_id = ?' in sql
+        assert params == (30, 3)
+
+    def test_reopen_clears_completion_stamp(self, monkeypatch):
+        conn = _FakeConn()
+        client = self._client(monkeypatch, conn)
+        resp = client.post('/plans/v2/30/reopen')
+        assert resp.status_code == 302
+        assert resp.headers['Location'].endswith('/plans/')
+        assert conn.commits == 1
+        sql, params = conn.calls[0]
+        assert 'completed_at = NULL' in sql
+        assert 'WHERE id = ? AND user_id = ?' in sql
+        assert params == (30, 3)
