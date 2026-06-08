@@ -9,15 +9,13 @@
 
 ## Summary
 
-- **36 rows changed** out of 73 total in Sheet 3.
+- **43 rows changed** out of 73 total in Sheet 3.
 - **All changes verified to parse correctly** against the ETL regex `(\d+)(?:[–-](\d+))?%` per `Layer0_ETL_Spec_v3.md:251` — the first match is the operational `race_time_pct_low/high` pair.
 - **No schema changes.** Only the text values in column F change. Other columns (Applicability, Role, Sport-Specific Context, B2B Pairing Rule, Phase Load text, Default Inclusion) untouched.
 - **Sheet 5 (Phase Load Allocation) NOT patched in this revision.** Deferred to a follow-up research pass (see `Bridge_Bands_Research_v1.md` next-steps §3).
 - **Rows intentionally left unpatched** (no operational impact):
-  - r25 (Ultramarathon Trail × Mountaineering) — `EXCLUDED`, dash band, no load_weight.
-  - r27 (Triathlon × D-007 TT bike) — text "Included in D-006 bike % — not additional time", no band; intentional.
-  - r40, r44 (Mountain Running / Fell Running × D-001 Trail Running base) — descriptor rows without explicit %; base aerobic engine, sub-discipline rows carry the operational bands.
-  - r58–r62 (Long Distance / Endurance Cycling sub-format rows) — duration descriptors (hours, not %); race format-specific. Mono-discipline per research; durations preserved as athlete-facing context.
+  - r25 (Ultramarathon Trail × Mountaineering) — `EXCLUDED`, dash band, no load_weight (excluded disciplines don't allocate).
+  - r27 (Triathlon × D-007 TT bike) — text "Included in D-006 bike % — not additional time". Design choice: TT bike is a variant of D-006, not a separate allocation slot. Load_weight intentionally on D-006 only.
 
 ## Changes by sport
 
@@ -111,13 +109,21 @@ ISMF Individual race; uphill dominates.
 
 Row 38 (D-022 Alpine Descent 20–35%) unchanged.
 
-### Mountain Running / Skyrunning (rows 40–43) — unchanged
+### Mountain Running / Skyrunning (rows 40–43, 1 change — base-row null-band fix)
 
-Existing bands match research closely (Uphill 50–65%, Downhill 35–50%, Scrambling 0–5%, Trail Running base = aerobic engine descriptor).
+Sub-discipline rows already match research closely (Uphill 50–65%, Downhill 35–50%, Scrambling 0–5%). The base D-001 row had no `%` band, leaving D-001 NULL-weighted for Mountain Running athletes.
 
-### Fell Running (rows 44–47) — unchanged
+| Row | Discipline | Old | New | Why |
+|---|---|---|---|---|
+| 40 | D-001 Trail Running (base) | (no band; null) | **95–100%** | Umbrella mono-discipline; uphill / downhill / scrambling rows sub-allocate within. Without a band, D-001 silently dropped from Layer 2A allocation if `included_discipline_ids` referenced it. |
 
-Existing bands match research (Uphill 40–60%, Downhill 30–50%, Navigation 5–15% active, Trail Running base = aerobic engine descriptor).
+### Fell Running (rows 44–47, 1 change — base-row null-band fix)
+
+Same shape as Mountain Running. Sub-discipline rows correct; base row was null.
+
+| Row | Discipline | Old | New | Why |
+|---|---|---|---|---|
+| 44 | D-001 Trail Running (base) | (no band; null) | **95–100%** | Umbrella mono-discipline; uphill / downhill / nav rows sub-allocate within. |
 
 ### Modern Pentathlon (rows 48–51, 4 changes)
 
@@ -148,9 +154,19 @@ Row 54 (Road cross-train 0–10%) unchanged.
 
 Uphill/downhill split preserved as useful per-discipline allocation.
 
-### Long Distance / Endurance Cycling (rows 58–62) — unchanged
+### Long Distance / Endurance Cycling (rows 58–62, 5 changes — duration-descriptor null-band fix)
 
-Existing rows are duration descriptors per format (Century, Gravel, TT, XC, Enduro). Mono-discipline per research; per-format duration text retained for athlete-facing context. Bands rely on athlete-side framework_sport + race format selection.
+All five rows previously held duration text (hours/minutes) instead of `%` bands. Layer 2A parsed NULL load_weight, silently dropping D-006 / D-008 from allocation for Endurance Cycling athletes. Each row gets a 95–100% band reflecting its mono-discipline format share, while preserving the duration text as athlete-facing context.
+
+| Row | Discipline | Old | New | Why |
+|---|---|---|---|---|
+| 58 | D-006 Road Cycling (Road Long Distance) | (duration only; null) | **95–100%** | Mono-discipline for road-format athletes. Century / Ultra-endurance road. |
+| 59 | D-006 Road Cycling (Gravel Racing) | (duration only; null) | **95–100%** | Mono-discipline for gravel-format athletes. 50-mi to Unbound 200. |
+| 60 | D-006+D-007 Time Trial Cycling | (duration only; null) | **95–100%** | Mono-discipline for TT-format athletes. 10km TT to 100km TT. |
+| 61 | D-008 Mountain Biking (XC Olympic / Short) | (duration only; null) | **95–100%** | Mono-discipline for XC-MTB-format athletes. XCO / XCS / XCM. |
+| 62 | D-008 Mountain Biking (Enduro) | (duration only; null) | **95–100%** | Mono-discipline for Enduro-format athletes. Aggregate time on bike. |
+
+**Note on duplicate discipline_ids:** rows 58 + 59 both carry D-006 with different format variants. Layer 2A's SELECT against `sport_discipline_bridge` will return both for the Endurance Cycling framework_sport; the query orders by `discipline_id` and the duplicate handling is undefined. This is a pre-existing bridge schema limitation (multiple rows per (sport, discipline_id) for sub-format variants). Worth filing as its own bug; not blocking the X1a fix.
 
 ### Off-Road / Adventure Multisport (XTERRA, rows 63–65, 3 changes)
 
@@ -210,11 +226,12 @@ r 64 Off-Road / XTERRA        D-008  Mountain Biking          → low= 55 high= 
 
 Full table dumped at apply-time.
 
-## Pre-existing v11 issues identified but NOT fixed in this patch
+## Pre-existing v11 issues — fix status
 
-- **r40, r44 base aerobic engine rows** (Mountain Running / Fell Running × D-001) — no `%` band; parses to NULL load_weight. The sub-discipline uphill/downhill rows carry the operational bands. If a plan synthesizes for these sports with `included_discipline_ids` containing D-001, it gets NULL weight — which may quietly drop it from the normalize step. Watch for symptom in real plans; this is its own bug worth filing.
-- **r58–r62 Endurance Cycling rows** — durations not %s. Same NULL-weight implication. Sub-format duration descriptors are useful athlete-facing text but don't drive allocation.
-- **r25, r27** — intentionally null (`EXCLUDED` and "see other row" respectively).
+- **r40, r44 base aerobic-engine rows** (Mountain Running / Fell Running × D-001) — **FIXED** in this patch (95–100% bands; preserves the aerobic-engine descriptor as inline context).
+- **r58–r62 Endurance Cycling format-variant rows** — **FIXED** in this patch (95–100% bands per format; duration descriptors retained as inline context).
+- **r25, r27** — intentionally null and left unpatched. `EXCLUDED` (Mountaineering in Trail Ultra) and "see D-006 for TT bike" are valid design choices, not bugs.
+- **Duplicate discipline_ids in same framework_sport** (e.g., D-006 appears in r58 + r59 for Endurance Cycling) — **NOT FIXED** here. Pre-existing bridge schema limitation; Layer 2A's SELECT returns both rows and duplicate handling is undefined. Worth filing as its own bug.
 
 ## Apply this patch
 
