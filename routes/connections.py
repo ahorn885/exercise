@@ -12,8 +12,10 @@ Three tabs, server-rendered via `?tab=` (no SPA — CSP-clean):
     webhook-only stub providers as "not available yet", and the `.FIT`
     drop zone (posts to the real `garmin.import_fit` pipeline).
   - **Files**    — recent imported activities (`cardio_log`, real) tagged
-    manual-vs-synced by the `fit:` dedup-id scheme, plus the inline `.FIT`
-    inspector (reuses `garmin_fit_parser._dump_fit`, replacing debug_fit).
+    manual-vs-synced by the `fit:` dedup-id scheme, plus the `.FIT` drop
+    zone for actual imports. The developer-facing field-dump inspector is
+    operator tooling and lives on the admin surface (`admin.fit_inspect`,
+    issue #473), not here.
   - **Preferences** — a grounded, read-only explainer of how ingestion
     actually behaves today (content-hash dedup, sport sniffing, Garmin
     paused). The artboard's configurable trust-order / pull-window /
@@ -22,8 +24,7 @@ Three tabs, server-rendered via `?tab=` (no SPA — CSP-clean):
 """
 
 from flask import (Blueprint, render_template, request, redirect, url_for,
-                   flash, session as flask_session)
-from werkzeug.utils import secure_filename
+                   flash)
 
 from database import get_db
 from routes.auth import current_user_id
@@ -79,7 +80,6 @@ def _hub_context(db, uid, tab, **extra):
         provider_total=len(oauth_providers) + len(STUB_PROVIDERS) + 1,
         recent_activities=recent_activities,
         activity_count=activity_count,
-        inspect_dumps=None,
     )
     ctx.update(extra)
     return ctx
@@ -93,45 +93,3 @@ def hub():
     if tab not in VALID_TABS:
         tab = 'sources'
     return render_template('connections/hub.html', **_hub_context(db, uid, tab))
-
-
-@bp.route('/inspect', methods=['POST'])
-def inspect():
-    """Inline .FIT inspector for the Files tab — parses an uploaded .FIT (or
-    every .fit inside a .zip) and renders the field dump alongside the file
-    history. Replaces the standalone garmin.debug_fit surface."""
-    db = get_db()
-    uid = current_user_id()
-    f = request.files.get('fit_file')
-    if not f or not f.filename:
-        flash('No file selected.', 'warning')
-        return redirect(url_for('connections.hub', tab='files'))
-    dumps = []
-    try:
-        from garmin_fit_parser import _dump_fit
-        raw = f.read()
-        fname = secure_filename(f.filename or '').lower()
-        if fname.endswith('.zip'):
-            import zipfile
-            import io
-            with zipfile.ZipFile(io.BytesIO(raw)) as zf:
-                fit_names = [n for n in zf.namelist()
-                             if n.lower().endswith('.fit')]
-                if not fit_names:
-                    flash('No .fit file found inside the zip.', 'danger')
-                    return redirect(url_for('connections.hub', tab='files'))
-                for n in fit_names[:60]:
-                    try:
-                        dumps.append({'name': n, 'dump': _dump_fit(zf.read(n))})
-                    except Exception as e:  # noqa: BLE001 — per-entry isolation
-                        dumps.append({'name': n, 'error': str(e)})
-        else:
-            dumps.append({'name': f.filename, 'dump': _dump_fit(raw)})
-    except Exception as e:  # noqa: BLE001 — surface parse errors to the user
-        flash(f'Error: {e}', 'danger')
-        return redirect(url_for('connections.hub', tab='files'))
-    # Drop any stale import payload so we never echo it back here.
-    flask_session.pop('fit_inspect', None)
-    return render_template(
-        'connections/hub.html',
-        **_hub_context(db, uid, 'files', inspect_dumps=dumps))

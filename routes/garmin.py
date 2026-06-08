@@ -23,8 +23,10 @@ bp = Blueprint('garmin', __name__, url_prefix='/garmin')
 
 # Redesign §17 — the `garmin.dashboard` (GET /garmin/) and `garmin.debug_fit`
 # (/garmin/debug-fit) surfaces were folded into the unified Connections hub
-# (`connections.hub`): the dashboard's recent-activity view is the Files tab,
-# and the FIT inspector is `connections.inspect`. Old URLs were hard-cut
+# (`connections.hub`): the dashboard's recent-activity view is the Files tab.
+# The FIT field-dump inspector now lives on the admin surface
+# (`admin.fit_inspect`, issue #473) — it's operator diagnostic tooling, not
+# athlete-facing. Old URLs were hard-cut
 # (single-user app, no redirect shims — CONVENTIONS §A). The .FIT import +
 # sync + wellness + auth pipeline below stays; the hub's drop zone posts to
 # `garmin.import_fit`.

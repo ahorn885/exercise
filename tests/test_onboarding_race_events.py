@@ -353,30 +353,71 @@ class TestParseRaceTerrain:
 
 
 class TestTerrainChoices:
-    def test_returns_id_label_dicts_in_terrain_id_order(self):
+    def test_returns_id_label_description_dicts_in_terrain_id_order(self):
         conn = _FakeConn()
         conn.queue_response(rows=[
-            {'terrain_id': 'TRN-002', 'canonical_name': 'Singletrack'},
-            {'terrain_id': 'TRN-003', 'canonical_name': 'Doubletrack'},
-            {'terrain_id': 'TRN-009', 'canonical_name': 'Flat water'},
+            {'terrain_id': 'TRN-002', 'canonical_name': 'Singletrack',
+             'notes': 'Compacted singletrack.'},
+            {'terrain_id': 'TRN-003', 'canonical_name': 'Doubletrack',
+             'notes': 'Rocky, root-crossed trail.'},
+            {'terrain_id': 'TRN-009', 'canonical_name': 'Flat water',
+             'notes': 'Still water — lake, reservoir.'},
         ])
 
         out = _terrain_choices(conn)
         assert out == [
-            {'id': 'TRN-002', 'label': 'Singletrack'},
-            {'id': 'TRN-003', 'label': 'Doubletrack'},
-            {'id': 'TRN-009', 'label': 'Flat water'},
+            {'id': 'TRN-002', 'label': 'Singletrack',
+             'description': 'Compacted singletrack.'},
+            {'id': 'TRN-003', 'label': 'Doubletrack',
+             'description': 'Rocky, root-crossed trail.'},
+            {'id': 'TRN-009', 'label': 'Flat water',
+             'description': 'Still water — lake, reservoir.'},
         ]
 
         sql, _params = conn.calls[0]
         assert 'FROM layer0.terrain_types' in sql
         assert 'superseded_at IS NULL' in sql
         assert 'ORDER BY terrain_id' in sql
+        assert 'notes' in sql
+
+    def test_filters_out_training_only_terrains(self):
+        # Issue #445 — climbing gym / pump track / indoor gym never host a
+        # race, so they're dropped from the race-form terrain selector.
+        conn = _FakeConn()
+        conn.queue_response(rows=[
+            {'terrain_id': 'TRN-002', 'canonical_name': 'Singletrack',
+             'notes': None},
+            {'terrain_id': 'TRN-014', 'canonical_name': 'Climbing Gym',
+             'notes': None},
+            {'terrain_id': 'TRN-015', 'canonical_name': 'Pump Track',
+             'notes': None},
+            {'terrain_id': 'TRN-016', 'canonical_name': 'Indoor / Gym',
+             'notes': None},
+        ])
+        out = _terrain_choices(conn)
+        assert [c['id'] for c in out] == ['TRN-002']
 
     def test_empty_when_no_rows(self):
         conn = _FakeConn()
         conn.queue_response(rows=[])
         assert _terrain_choices(conn) == []
+
+
+class TestRaceIneligibleTerrainConsistency:
+    """The route-side race-form filter set (issue #445) is kept code-side to
+    preserve the app/ETL boundary, but it must stay in lockstep with the
+    `race_eligible: False` rows in the vocabulary source of record. Pin them
+    together so adding/removing a training-only terrain in one place without
+    the other fails CI."""
+
+    def test_route_filter_matches_vocab_source(self):
+        from etl.layer0.extractors.vocabulary import (
+            RACE_INELIGIBLE_TERRAIN_IDS as VOCAB_SET,
+        )
+        from routes.race_events import RACE_INELIGIBLE_TERRAIN_IDS as ROUTE_SET
+        assert ROUTE_SET == VOCAB_SET
+        # Sanity: the three training-only terrains Andy named.
+        assert VOCAB_SET == {'TRN-014', 'TRN-015', 'TRN-016'}
 
 
 # ─── _athlete_locale_choices removed ────────────────────────────────────────

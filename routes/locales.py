@@ -61,23 +61,29 @@ _TRN_PATTERN = re.compile(r"^TRN-\d{3}$")
 
 
 def _terrain_choices(db) -> list[dict]:
-    """Return `{id, label}` dicts for every active `layer0.terrain_types` row.
+    """Return `{id, label, description}` dicts for every active
+    `layer0.terrain_types` row.
 
     Used by the locale-edit template to populate the terrain checkbox grid.
-    `id` is the canonical TRN-xxx slug; `label` is the `canonical_name`.
-    ORDER BY terrain_id for stable rendering; ~16 rows so no caching.
-    Mirrors `routes/race_events.py:_terrain_choices` +
-    `routes/onboarding.py:_terrain_choices`.
+    `id` is the canonical TRN-xxx slug; `label` is the `canonical_name`;
+    `description` is the row `notes` (rendered as a hover tooltip so opaque
+    labels like "Technical Rock" are self-explanatory — issue #444). ORDER BY
+    terrain_id for stable rendering; ~16 rows so no caching. Mirrors
+    `routes/race_events.py:_terrain_choices` +
+    `routes/onboarding.py:_terrain_choices`, EXCEPT this picker is for
+    training venues, so it is intentionally NOT race-eligibility filtered —
+    all terrains (incl. climbing gym / pump track / indoor gym) belong here.
     """
     # D-73 Phase 5.2 Bucket E.(a) — defensive `terrain_id IS NOT NULL`
     # filter. See `routes/race_events.py:_terrain_choices` for rationale.
     cur = db.execute(
-        'SELECT terrain_id, canonical_name FROM layer0.terrain_types '
+        'SELECT terrain_id, canonical_name, notes FROM layer0.terrain_types '
         'WHERE superseded_at IS NULL AND terrain_id IS NOT NULL '
         'ORDER BY terrain_id'
     )
     return [
-        {'id': r['terrain_id'], 'label': r['canonical_name']}
+        {'id': r['terrain_id'], 'label': r['canonical_name'],
+         'description': r['notes']}
         for r in cur.fetchall()
     ]
 

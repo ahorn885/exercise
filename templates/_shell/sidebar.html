@@ -36,7 +36,7 @@
     <ul aria-labelledby="nav-account">
       {{ sidebar_item('athlete',   'Athlete',     'i-athlete', url_for('profile.edit'),          active) }}
       {{ sidebar_item('locations', 'Locations',   'i-pin',     url_for('locales.list_profiles'), active) }}
-      {{ sidebar_item('link',      'Connections', 'i-link',    url_for('connections.hub'),       active) }}
+      {{ sidebar_item('link',      'Data',        'i-link',    url_for('connections.hub'),       active) }}
     </ul>
   </nav>
 
@@ -53,7 +53,6 @@
       <svg class="icon" width="16" height="16" aria-hidden="true"><use href="#i-more"></use></svg>
     </button>
     <ul class="dropdown-menu" aria-labelledby="user-chip">
-      <li><a class="dropdown-item" href="{{ url_for('profile.edit') }}">Athlete profile</a></li>
       <li><a class="dropdown-item" href="{{ url_for('profile.coach_memory') }}">Coach memory</a></li>
       <li><a class="dropdown-item" href="{{ url_for('profile.account_settings') }}">Account settings</a></li>
       <li><a class="dropdown-item" href="{{ url_for('nudges.settings') }}">Notification settings</a></li>

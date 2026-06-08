@@ -163,3 +163,64 @@ def test_telemetry_renders(monkeypatch):
     assert 'Ad-hoc workout generation' in html
     assert 'Plan refresh by tier' in html
     assert 'style="' not in html and 'onclick=' not in html
+
+
+def test_dashboard_links_to_fit_inspect(monkeypatch):
+    """The relocated FIT inspector (issue #473) is reachable from the admin
+    dashboard, not the user-facing Connections/Data hub."""
+    client = _client(monkeypatch, _Conn())
+    resp = client.get('/admin/')
+    assert resp.status_code == 200
+    assert '/admin/fit-inspect' in resp.get_data(as_text=True)
+
+
+def test_fit_inspect_get_renders_form(monkeypatch):
+    client = _client(monkeypatch, _Conn())
+    resp = client.get('/admin/fit-inspect')
+    assert resp.status_code == 200
+    html = resp.get_data(as_text=True)
+    assert 'app-shell' in html
+    assert 'FIT inspector.' in html
+    # The upload form posts back to the admin route.
+    assert '/admin/fit-inspect' in html
+    assert 'name="fit_file"' in html
+    assert 'style="' not in html and 'onclick=' not in html
+
+
+def test_fit_inspect_post_renders_dumps_with_copy_all(monkeypatch):
+    """After an upload, the admin inspector renders the dump inline with the
+    'Copy all' button + per-dump data-copy-name hooks (CSP-clean)."""
+    import io
+
+    import garmin_fit_parser as gfp
+    monkeypatch.setattr(gfp, '_dump_fit',
+                        lambda raw: {'message_counts': {'FileIdMessage': 1}})
+
+    client = _client(monkeypatch, _Conn())
+    # CSRFProtect is global — bypass via WTF_CSRF_ENABLED for this POST.
+    _appmod.app.config['WTF_CSRF_ENABLED'] = False
+    try:
+        data = {'fit_file': (io.BytesIO(b'\x0e\x10\x00\x00.FIT'), 'sample.fit')}
+        resp = client.post('/admin/fit-inspect', data=data,
+                           content_type='multipart/form-data')
+    finally:
+        _appmod.app.config['WTF_CSRF_ENABLED'] = True
+    assert resp.status_code == 200
+    html = resp.get_data(as_text=True)
+    assert 'data-copy-all' in html
+    assert 'data-copy-label-default="Copy all"' in html
+    assert 'data-copy-label-done="Copied!"' in html
+    assert 'data-copy-name="sample.fit"' in html
+    assert 'navigator.clipboard' in html
+    assert '<script nonce=' in html
+    assert 'style="' not in html
+    assert 'onclick=' not in html
+
+
+def test_fit_inspect_requires_admin(monkeypatch):
+    """Non-admin users get a 403 — the dump is operator-only."""
+    client = _client(monkeypatch, _Conn())
+    with client.session_transaction() as sess:
+        sess['user_id'] = 2  # not the admin (id 1)
+    resp = client.get('/admin/fit-inspect')
+    assert resp.status_code == 403

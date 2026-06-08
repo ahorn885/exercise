@@ -8,8 +8,13 @@
    - existing_terrain: list of {terrain_id: str, pct_of_race: float,
                        discipline_id: str|None} dicts (empty list for new
                        races / no terrain captured yet)
-   - terrain_choices:  list of {id: str (TRN-xxx), label: str} dicts from
-                       layer0.terrain_types (request-time vocabulary lookup)
+   - terrain_choices:  list of {id: str (TRN-xxx), label: str,
+                       description: str|None} dicts from layer0.terrain_types
+                       (request-time vocabulary lookup). `description` is the
+                       terrain `notes`, rendered as an <option> title tooltip
+                       so opaque labels are self-explanatory (issue #444).
+                       Training-only terrains are pre-filtered out of this
+                       race-form list by the route (issue #445).
    - discipline_choices: list of {id: str (D-xxx), label: str} dicts from
                        layer0.sport_discipline_bridge for the effective
                        framework_sport (D-73 Phase 5.2 Bucket E.(c)-C1).
@@ -34,7 +39,8 @@
                   name="race_terrain[{{ loop.index0 }}][terrain_id]">
             <option value="">— Pick terrain —</option>
             {% for tc in terrain_choices %}
-              <option value="{{ tc.id }}" {% if tc.id == entry.terrain_id %}selected{% endif %}>
+              <option value="{{ tc.id }}" {% if tc.id == entry.terrain_id %}selected{% endif %}
+                      {% if tc.description %}title="{{ tc.description }}"{% endif %}>
                 {{ tc.label }}
               </option>
             {% endfor %}
@@ -79,7 +85,8 @@
         <select class="form-select form-select-sm" name="race_terrain[__IDX__][terrain_id]">
           <option value="">— Pick terrain —</option>
           {% for tc in terrain_choices %}
-            <option value="{{ tc.id }}">{{ tc.label }}</option>
+            <option value="{{ tc.id }}"
+                    {% if tc.description %}title="{{ tc.description }}"{% endif %}>{{ tc.label }}</option>
           {% endfor %}
         </select>
       </div>

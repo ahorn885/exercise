@@ -9,8 +9,8 @@
    retention) have no backend and are intentionally not fabricated. #}
 {% extends 'base.html' %}
 {% set nav_active = 'link' %}
-{% block title %}Connections{% endblock %}
-{% block crumbs %}<b>Connections</b>{% endblock %}
+{% block title %}Data{% endblock %}
+{% block crumbs %}<b>Data</b>{% endblock %}
 {% block topbar_actions %}
 <a class="btn btn-primary btn-sm" href="{{ url_for('garmin.import_fit') }}">
   <svg class="icon" width="12" height="12" aria-hidden="true"><use href="#i-upload"></use></svg> Upload .FIT
@@ -20,7 +20,7 @@
 {% block content %}
 <div class="dash-head">
   <div class="races-intro">
-    <p class="eyebrow accent">● Connections · everything that feeds the app</p>
+    <p class="eyebrow accent">● Data · everything that feeds the app</p>
     <h1 class="page-title">Bring data in.</h1>
     <p class="page-sub">One place for every source — auto-sync providers, manual .FIT uploads, and
       how we handle the overlap. Both paths feed the same engine; your plan adapts either way.</p>
@@ -28,7 +28,7 @@
 </div>
 
 {# ── Tabs ── #}
-<div class="conn-tabs" role="tablist" aria-label="Connections sections">
+<div class="conn-tabs" role="tablist" aria-label="Data sections">
   {% for key, label, sub in [
        ('sources', 'Sources', 'providers + upload'),
        ('files', 'Files', 'import history'),
@@ -175,48 +175,12 @@
     {% else %}
     <div class="card cf-empty">
       <p class="eyebrow">● No files yet</p>
-      <p class="cf-empty-txt">Nothing imported yet. Upload a .FIT on the Sources tab, or inspect one
-        on the right before it lands in your log.</p>
+      <p class="cf-empty-txt">Nothing imported yet. Upload a .FIT on the Sources tab to bring
+        activity data in.</p>
       <a class="btn btn-ghost btn-sm" href="{{ url_for('connections.hub', tab='sources') }}">Go to Sources</a>
     </div>
     {% endif %}
   </div>
-
-  <aside class="cf-inspector">
-    <div class="card card-pad">
-      <p class="eyebrow accent">● Inspector</p>
-      <p class="insp-sub">Parse any .FIT to see exactly what we read — sport, records, and device
-        metadata — before it touches your log.</p>
-      <form method="post" action="{{ url_for('connections.inspect') }}" enctype="multipart/form-data">
-        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-        <label class="field">
-          <span class="lbl">.fit or .zip</span>
-          <input type="file" name="fit_file" accept=".fit,.zip" class="form-control form-control-sm" required>
-        </label>
-        <button type="submit" class="btn btn-primary btn-sm">Inspect</button>
-      </form>
-
-      {% if inspect_dumps %}
-      <div class="insp-results" data-insp-results>
-        <div class="insp-actions">
-          <button type="button" class="btn btn-ghost btn-sm" data-copy-all
-                  data-copy-label-default="Copy all"
-                  data-copy-label-done="Copied!">Copy all</button>
-        </div>
-        {% for d in inspect_dumps %}
-        <div class="insp-file">
-          <p class="insp-name mono">{{ d.name }}</p>
-          {% if d.error %}
-            <p class="insp-err" data-copy-name="{{ d.name }}">Error: {{ d.error }}</p>
-          {% else %}
-            <pre class="insp-pre" data-copy-name="{{ d.name }}">{{ d.dump|tojson(indent=2) }}</pre>
-          {% endif %}
-        </div>
-        {% endfor %}
-      </div>
-      {% endif %}
-    </div>
-  </aside>
 
 </div>
 
@@ -263,57 +227,3 @@
 {% endif %}
 {% endblock %}
 
-{% block scripts %}
-{% if inspect_dumps %}
-<script nonce="{{ csp_nonce() }}">
-// Inspect-results "Copy all" — concatenates every parsed dump (or error
-// message) on the page with a "── filename ──" header for each, then writes
-// the lot to the clipboard. Lets the athlete paste the whole inspection
-// result somewhere useful without click-by-click selection of each <pre>.
-(function () {
-  const btn = document.querySelector('button[data-copy-all]');
-  if (!btn) return;
-  btn.addEventListener('click', function () {
-    const root = document.querySelector('[data-insp-results]');
-    if (!root) return;
-    const parts = [];
-    root.querySelectorAll('[data-copy-name]').forEach(function (el) {
-      parts.push('── ' + (el.getAttribute('data-copy-name') || '?') + ' ──');
-      parts.push(el.textContent);
-      parts.push('');
-    });
-    const payload = parts.join('\n');
-    const done = btn.getAttribute('data-copy-label-done') || 'Copied!';
-    const def  = btn.getAttribute('data-copy-label-default') || btn.textContent;
-    function flash(msg) {
-      btn.textContent = msg;
-      setTimeout(function () { btn.textContent = def; }, 1400);
-    }
-    if (navigator.clipboard && navigator.clipboard.writeText) {
-      navigator.clipboard.writeText(payload).then(
-        function () { flash(done); },
-        function () { flash('Copy failed'); }
-      );
-      return;
-    }
-    // Fallback: select + execCommand on a temp textarea (older browsers).
-    const ta = document.createElement('textarea');
-    ta.value = payload;
-    ta.setAttribute('readonly', '');
-    ta.style.position = 'absolute';
-    ta.style.left = '-9999px';
-    document.body.appendChild(ta);
-    ta.select();
-    try {
-      document.execCommand('copy');
-      flash(done);
-    } catch (e) {
-      flash('Copy failed');
-    } finally {
-      document.body.removeChild(ta);
-    }
-  });
-})();
-</script>
-{% endif %}
-{% endblock %}

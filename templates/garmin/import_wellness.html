@@ -5,7 +5,7 @@
 {% extends 'base.html' %}
 {% set nav_active = 'link' %}
 {% block title %}Import wellness .FIT{% endblock %}
-{% block crumbs %}<a href="{{ url_for('connections.hub') }}">Connections</a> <span class="sep">/</span> <b>Wellness .FIT</b>{% endblock %}
+{% block crumbs %}<a href="{{ url_for('connections.hub') }}">Data</a> <span class="sep">/</span> <b>Wellness .FIT</b>{% endblock %}
 {% block topbar_actions %}
 <a class="btn btn-ghost btn-sm" href="{{ url_for('garmin.wellness_log') }}">View wellness log</a>
 {% endblock %}
@@ -13,7 +13,7 @@
 {% block content %}
 <div class="dash-head">
   <div class="races-intro">
-    <p class="eyebrow accent">● Connections · wellness data</p>
+    <p class="eyebrow accent">● Data · wellness data</p>
     <h1 class="page-title">Import wellness .FIT.</h1>
     <p class="page-sub">Upload wellness <code>.fit</code> files (from your device's monitoring export, or a zip)
       to bring in heart rate, stress, recovery, respiration, and step data.</p>
