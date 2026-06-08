@@ -31,7 +31,8 @@ def _render(template, **ctx):
 # ─── locales/form.html ──────────────────────────────────────────────────
 
 _EQUIP = [('Free weights', [('db', 'Dumbbells'), ('bb', 'Barbell')])]
-_TERRAIN = [{'id': 'trail', 'label': 'Trail'}, {'id': 'road', 'label': 'Road'}]
+_TERRAIN = [{'id': 'trail', 'label': 'Trail', 'description': 'Dirt singletrack.'},
+            {'id': 'road', 'label': 'Road'}]
 
 
 def _form_ctx(**kw):
@@ -58,6 +59,8 @@ def test_form_legacy_renders():
     assert 'name="city"' in html          # legacy-only field present
     assert 'name="notes"' in html
     assert 'Dumbbells' in html and 'Trail' in html
+    # Terrain `notes` render as a hover tooltip on the label (issue #444).
+    assert 'title="Dirt singletrack."' in html
     # No shared-profile override chips in legacy mode.
     assert '+ override' not in html
     assert 'style="' not in html and 'onclick=' not in html

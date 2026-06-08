@@ -176,25 +176,35 @@ class TestParseLocaleTerrain:
 
 
 class TestTerrainChoices:
-    def test_returns_id_label_dicts_in_select_order(self):
+    def test_returns_id_label_description_dicts_in_select_order(self):
         conn = _FakeConn()
         conn.queue_response(rows=[
-            {'terrain_id': 'TRN-001', 'canonical_name': 'Road / Paved'},
-            {'terrain_id': 'TRN-002', 'canonical_name': 'Groomed Trail'},
-            {'terrain_id': 'TRN-016', 'canonical_name': 'Indoor / Gym'},
+            {'terrain_id': 'TRN-001', 'canonical_name': 'Road / Paved',
+             'notes': 'Sealed road surface.'},
+            {'terrain_id': 'TRN-002', 'canonical_name': 'Groomed Trail',
+             'notes': 'Compacted dirt trail.'},
+            {'terrain_id': 'TRN-016', 'canonical_name': 'Indoor / Gym',
+             'notes': 'The indoor training environment itself.'},
         ])
 
         result = _terrain_choices(conn)
 
+        # The locale picker is for training venues, so it is NOT race-
+        # eligibility filtered (issue #445) — TRN-016 (Indoor / Gym) stays.
+        # `description` carries the row notes for the #444 hover tooltip.
         assert result == [
-            {'id': 'TRN-001', 'label': 'Road / Paved'},
-            {'id': 'TRN-002', 'label': 'Groomed Trail'},
-            {'id': 'TRN-016', 'label': 'Indoor / Gym'},
+            {'id': 'TRN-001', 'label': 'Road / Paved',
+             'description': 'Sealed road surface.'},
+            {'id': 'TRN-002', 'label': 'Groomed Trail',
+             'description': 'Compacted dirt trail.'},
+            {'id': 'TRN-016', 'label': 'Indoor / Gym',
+             'description': 'The indoor training environment itself.'},
         ]
         sql, _params = conn.calls[0]
         assert 'layer0.terrain_types' in sql
         assert 'superseded_at IS NULL' in sql
         assert 'ORDER BY terrain_id' in sql
+        assert 'notes' in sql
 
     def test_empty_rows_returns_empty_list(self):
         conn = _FakeConn()

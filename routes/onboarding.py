@@ -805,22 +805,31 @@ def _parse_discipline_id_filter(form):
 
 
 def _terrain_choices(db):
-    """Return `{id, label}` dicts for every active `layer0.terrain_types` row.
+    """Return `{id, label, description}` dicts for race-eligible
+    `layer0.terrain_types` rows.
 
-    `id` is the canonical TRN-xxx slug; `label` is the `canonical_name`.
-    ORDER BY terrain_id for stable rendering; ~16 rows so no caching.
-    Mirrors `routes/race_events.py:_terrain_choices`.
+    `id` is the canonical TRN-xxx slug; `label` is the `canonical_name`;
+    `description` is the row `notes` (rendered as a hover tooltip — issue
+    #444). Training-only terrains are dropped (issue #445). ORDER BY
+    terrain_id for stable rendering; ~16 rows so no caching. Mirrors
+    `routes/race_events.py:_terrain_choices` (this form renders the same
+    `_race_terrain_editor.html` partial, so the two must agree).
     """
+    # Function-local import to match this module's other race_events imports
+    # and keep blueprint load order circular-import-safe.
+    from routes.race_events import RACE_INELIGIBLE_TERRAIN_IDS
     # D-73 Phase 5.2 Bucket E.(a) — defensive `terrain_id IS NOT NULL`
     # filter. See `routes/race_events.py:_terrain_choices` for rationale.
     cur = db.execute(
-        'SELECT terrain_id, canonical_name FROM layer0.terrain_types '
+        'SELECT terrain_id, canonical_name, notes FROM layer0.terrain_types '
         'WHERE superseded_at IS NULL AND terrain_id IS NOT NULL '
         'ORDER BY terrain_id'
     )
     return [
-        {'id': r['terrain_id'], 'label': r['canonical_name']}
+        {'id': r['terrain_id'], 'label': r['canonical_name'],
+         'description': r['notes']}
         for r in cur.fetchall()
+        if r['terrain_id'] not in RACE_INELIGIBLE_TERRAIN_IDS
     ]
 
 

@@ -1487,14 +1487,11 @@ body.bulk-mode { padding-bottom: 80px; }
 .app .pv-revoke { color: var(--bad); border-color: color-mix(in oklab, var(--bad) 35%, transparent); }
 .app .pv-soon { font-size: 9px; letter-spacing: 0.16em; color: var(--fg-4); text-transform: uppercase; }
 
-/* Files tab */
-.app .conn-files { display: grid; grid-template-columns: 1.15fr 1fr; gap: 16px; align-items: start; }
-/* Without min-width: 0, the JSON dump in the Inspector's <pre> (white-space:
-   pre, long unbreakable tokens) inflates the right track's min-content and
-   squeezes the activities column to almost nothing. Lock each track to its
-   fractional allocation regardless of content width. */
-.app .cf-list,
-.app .cf-inspector { min-width: 0; }
+/* Files tab — the developer FIT inspector moved to admin (issue #473), so the
+   activities list is the sole column now. Cap its width so the rows don't
+   stretch edge-to-edge on wide desktops. */
+.app .conn-files { display: block; }
+.app .cf-list { min-width: 0; max-width: 760px; }
 .app .cf-card { padding: 0; }
 .app .file-row { display: flex; gap: 12px; align-items: center; padding: 12px 16px; }
 .app .file-row + .file-row { border-top: 1px solid var(--hairline-2); }
@@ -1507,8 +1504,7 @@ body.bulk-mode { padding-bottom: 80px; }
 .app .cf-empty { padding: 22px; text-align: center; }
 .app .cf-empty-txt { font-size: 13px; color: var(--fg-3); margin: 8px 0 14px; line-height: 1.5; }
 
-/* Inspector */
-.app .cf-inspector { position: sticky; top: 76px; }
+/* Inspector (admin.fit_inspect — relocated from the Files tab, issue #473) */
 .app .insp-sub { font-size: 12px; color: var(--fg-3); line-height: 1.45; margin: 8px 0 14px; }
 .app .insp-results { margin-top: 16px; }
 .app .insp-actions { display: flex; justify-content: flex-end; margin-bottom: 8px; }
@@ -1526,8 +1522,6 @@ body.bulk-mode { padding-bottom: 80px; }
 .app .pref-facts a { color: var(--accent); }
 
 @media (max-width: 859.98px) {
-  .app .conn-files { grid-template-columns: 1fr; }
-  .app .cf-inspector { position: static; }
   .app .provider-row { flex-wrap: wrap; }
   .app .pv-actions { justify-content: flex-start; width: 100%; }
 }

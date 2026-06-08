@@ -102,7 +102,7 @@ def test_sources_tab(monkeypatch):
     assert 'onclick=' not in html
 
 
-def test_files_tab_lists_activities_and_inspector(monkeypatch):
+def test_files_tab_lists_activities(monkeypatch):
     activities = [
         _activity(id=1, activity_name='Manual trail run',
                   garmin_activity_id='fit:hash1'),
@@ -119,8 +119,10 @@ def test_files_tab_lists_activities_and_inspector(monkeypatch):
     # Manual (fit:) vs synced classification.
     assert 'Manual .FIT' in html
     assert 'Synced' in html
-    # Inline inspector posts to the new connections.inspect route.
-    assert '/connections/inspect' in html
+    # The developer FIT inspector moved to the admin surface (issue #473) —
+    # the user-facing Files tab no longer carries it.
+    assert '/connections/inspect' not in html
+    assert 'data-copy-all' not in html
     assert 'style="' not in html
 
 
@@ -130,7 +132,7 @@ def test_files_tab_empty(monkeypatch):
     assert resp.status_code == 200
     html = resp.get_data(as_text=True)
     assert 'No files yet' in html
-    assert '/connections/inspect' in html
+    assert '/connections/inspect' not in html
     assert 'style="' not in html
 
 
@@ -156,53 +158,6 @@ def test_bad_tab_falls_back_to_sources(monkeypatch):
     # Sources content present.
     assert 'Auto-sync providers' in html
 
-
-def test_inspect_results_copy_all_and_layout_stays_balanced(monkeypatch):
-    """After an inspector upload, the page renders inspect_dumps inline.
-    Verify the 'Copy all' button + payload script are present, that each
-    dump carries a data-copy-name attribute the script reads, and that the
-    CSS keeps the activities/inspector tracks balanced (min-width: 0)."""
-    import io
-    import routes.connections as conn_mod
-
-    # Stub the FIT parser so we don't need real .fit bytes in the test.
-    monkeypatch.setattr(
-        conn_mod, '_hub_context',
-        # Pass through to the original but stamp inspect_dumps directly.
-        lambda db, uid, tab, **extra: {
-            'tab': tab, 'oauth_providers': [], 'stub_providers': [],
-            'garmin_auth': {'authenticated': False, 'username': None},
-            'connected_count': 0, 'provider_total': 1,
-            'recent_activities': [], 'activity_count': 0,
-            'inspect_dumps': extra.get('inspect_dumps'),
-        },
-    )
-    # Patch the dump call inside the inspect route to skip fit_tool.
-    import garmin_fit_parser as gfp
-    monkeypatch.setattr(gfp, '_dump_fit',
-                        lambda raw: {'message_counts': {'FileIdMessage': 1}})
-
-    client = _client(monkeypatch)
-    # CSRFProtect is global — bypass via WTF_CSRF_ENABLED for this POST.
-    _appmod.app.config['WTF_CSRF_ENABLED'] = False
-    try:
-        data = {'fit_file': (io.BytesIO(b'\x0e\x10\x00\x00.FIT'), 'sample.fit')}
-        resp = client.post('/connections/inspect', data=data,
-                           content_type='multipart/form-data')
-    finally:
-        _appmod.app.config['WTF_CSRF_ENABLED'] = True
-    assert resp.status_code == 200
-    html = resp.get_data(as_text=True)
-
-    # Copy-all button + its hooks
-    assert 'data-copy-all' in html
-    assert 'data-copy-label-default="Copy all"' in html
-    assert 'data-copy-label-done="Copied!"' in html
-    # Each dump carries the name so the script can label it
-    assert 'data-copy-name="sample.fit"' in html
-    # Copy script is loaded (CSP-clean, nonce'd) and uses the clipboard API
-    assert 'navigator.clipboard' in html
-    assert '<script nonce=' in html
-    # Inline style/handler hygiene
-    assert 'style="' not in html
-    assert 'onclick=' not in html
+# NOTE: the FIT field-dump inspector moved to the admin surface
+# (admin.fit_inspect, issue #473). Its render + copy-all coverage now lives in
+# tests/test_redesign_admin_render.py.

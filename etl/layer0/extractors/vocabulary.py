@@ -416,6 +416,7 @@ _TERRAIN_STRUCTURED_ROWS: list[dict[str, Any]] = [
         "simulatable": "full",
         "simulation_note": "Full fidelity for movement pattern development, finger strength, and route reading on plastic holds.",
         "notes": "Indoor climbing wall. Bouldering or roped. Standard AR climbing prep environment.",
+        "race_eligible": False,
     },
     # MTB terrain
     {
@@ -428,6 +429,7 @@ _TERRAIN_STRUCTURED_ROWS: list[dict[str, Any]] = [
         "simulatable": "none",
         "simulation_note": "No indoor substitute for pump track or MTB skills course. Balance and cornering drills are poor proxies.",
         "notes": "MTB-specific terrain. Berms, jumps, pump sections, technical flow. Skills training focused.",
+        "race_eligible": False,
     },
     # Gym / indoor
     {
@@ -440,8 +442,25 @@ _TERRAIN_STRUCTURED_ROWS: list[dict[str, Any]] = [
         "simulatable": "full",
         "simulation_note": "By definition this is the simulation environment. Full fidelity for any exercise it hosts.",
         "notes": "Treadmill, stair climber, erg, gym equipment. The indoor training environment itself.",
+        "race_eligible": False,
     },
 ]
+
+# Issue #445 — training-only environments that should never appear on the
+# race-event terrain selector (no real race takes place at a climbing gym,
+# pump track, or indoor gym). The `race_eligible: False` rows above are the
+# source of record; this frozenset mirrors them for the app's request-time
+# filter (`routes/race_events.py` + `routes/onboarding.py`), since the app
+# reads `layer0.terrain_types` over SQL and there is no `race_eligible`
+# column yet. Promoting the flag to a Layer 0 column (schema + ETL + a
+# `WHERE race_eligible` clause) is the clean follow-up; until then these
+# stable TRN ids carry it code-side. Same entries stay visible on the
+# locale/training pickers (they're real training venues).
+RACE_INELIGIBLE_TERRAIN_IDS = frozenset(
+    row["terrain_id"]
+    for row in _TERRAIN_STRUCTURED_ROWS
+    if row.get("race_eligible") is False
+)
 
 
 def _parse_terrain(text: str) -> list[dict[str, Any]]:

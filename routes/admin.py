@@ -11,6 +11,7 @@ from datetime import datetime, timedelta, timezone
 from flask import (
     Blueprint, render_template, redirect, url_for, flash, abort, request, jsonify,
 )
+from werkzeug.utils import secure_filename
 
 from database import get_db
 from plan_sessions_repo import load_progress_blocks
@@ -86,6 +87,52 @@ def dashboard():
     ).fetchall()
     return render_template('admin/dashboard.html', users=users,
                            admin_user_id=ADMIN_USER_ID)
+
+
+@bp.route('/fit-inspect', methods=['GET', 'POST'])
+def fit_inspect():
+    """Operator-only .FIT field-dump inspector.
+
+    Relocated from the user-facing Connections/Data hub Files tab (issue
+    #473) — the raw FIT field dump is developer diagnostic tooling for
+    parsing issues (#458, #456), not something an athlete manages their data
+    with. Parses an uploaded .FIT (or every .fit inside a .zip) and renders
+    the dump. Reuses `garmin_fit_parser._dump_fit` — no parsing-logic change,
+    just a relocation behind the admin gate.
+    """
+    _require_admin()
+    dumps = None
+    if request.method == 'POST':
+        f = request.files.get('fit_file')
+        if not f or not f.filename:
+            flash('No file selected.', 'warning')
+            return redirect(url_for('admin.fit_inspect'))
+        dumps = []
+        try:
+            import io
+            import zipfile
+
+            from garmin_fit_parser import _dump_fit
+            raw = f.read()
+            fname = secure_filename(f.filename or '').lower()
+            if fname.endswith('.zip'):
+                with zipfile.ZipFile(io.BytesIO(raw)) as zf:
+                    fit_names = [n for n in zf.namelist()
+                                 if n.lower().endswith('.fit')]
+                    if not fit_names:
+                        flash('No .fit file found inside the zip.', 'danger')
+                        return redirect(url_for('admin.fit_inspect'))
+                    for n in fit_names[:60]:
+                        try:
+                            dumps.append({'name': n, 'dump': _dump_fit(zf.read(n))})
+                        except Exception as e:  # noqa: BLE001 — per-entry isolation
+                            dumps.append({'name': n, 'error': str(e)})
+            else:
+                dumps.append({'name': f.filename, 'dump': _dump_fit(raw)})
+        except Exception as e:  # noqa: BLE001 — surface parse errors to the operator
+            flash(f'Error: {e}', 'danger')
+            return redirect(url_for('admin.fit_inspect'))
+    return render_template('admin/fit_inspect.html', inspect_dumps=dumps)
 
 
 @bp.route('/users/<int:user_id>')

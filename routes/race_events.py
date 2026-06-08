@@ -66,15 +66,30 @@ bp = Blueprint('race_events', __name__, url_prefix='/profile/race-events')
 
 _TRN_PATTERN = re.compile(r"^TRN-\d{3}$")
 
+# Issue #445 — training-only environments (climbing gym, pump track, indoor
+# gym) never host a real race, so they're filtered out of the race-event
+# terrain selector. Mirrors the `race_eligible: False` terrain rows in
+# `etl/layer0/extractors/vocabulary.py` (its `RACE_INELIGIBLE_TERRAIN_IDS`).
+# Kept route-side rather than imported from the ETL layer to preserve the
+# app/ETL separation; a consistency test pins it to the vocab source so the
+# two can't drift. The same terrains stay visible on the locale/training
+# pickers (`routes/locales.py`), which are NOT filtered — they're real
+# training venues. Promoting the flag to a `layer0.terrain_types.race_eligible`
+# column (schema + ETL + a `WHERE race_eligible` clause) is the clean
+# follow-up; until then these stable TRN ids carry it code-side.
+RACE_INELIGIBLE_TERRAIN_IDS = frozenset({'TRN-014', 'TRN-015', 'TRN-016'})
+
 
 def _terrain_choices(db) -> list[dict]:
-    """Return `{id, label}` dicts for every active `layer0.terrain_types` row.
+    """Return `{id, label, description}` dicts for race-eligible
+    `layer0.terrain_types` rows.
 
     Used by the race-event edit template to populate the per-row terrain
     dropdown. `id` is the canonical TRN-xxx slug; `label` is the
-    `canonical_name`. ORDER BY terrain_id for stable rendering; ~16 rows so
-    no caching. Matches the `_athlete_locale_choices` precedent for
-    request-time vocabulary lookups.
+    `canonical_name`; `description` is the row `notes` (rendered as a hover
+    tooltip so opaque labels like "Technical Rock" are self-explanatory —
+    issue #444). Training-only terrains are dropped (issue #445). ORDER BY
+    terrain_id for stable rendering; ~16 rows so no caching.
     """
     # D-73 Phase 5.2 Bucket E.(a) — defensive `terrain_id IS NOT NULL`
     # filter. The original pre-r2 `layer0.terrain_types` rows (canonical
@@ -86,13 +101,15 @@ def _terrain_choices(db) -> list[dict]:
     # Filtering at the query keeps the dropdown clean regardless of the
     # migration's run-state on each environment.
     cur = db.execute(
-        'SELECT terrain_id, canonical_name FROM layer0.terrain_types '
+        'SELECT terrain_id, canonical_name, notes FROM layer0.terrain_types '
         'WHERE superseded_at IS NULL AND terrain_id IS NOT NULL '
         'ORDER BY terrain_id'
     )
     return [
-        {'id': r['terrain_id'], 'label': r['canonical_name']}
+        {'id': r['terrain_id'], 'label': r['canonical_name'],
+         'description': r['notes']}
         for r in cur.fetchall()
+        if r['terrain_id'] not in RACE_INELIGIBLE_TERRAIN_IDS
     ]
 
 
