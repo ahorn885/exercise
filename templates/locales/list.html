@@ -15,6 +15,11 @@
 {% block title %}Locations{% endblock %}
 {% block crumbs %}<b>Locations</b>{% endblock %}
 {% block topbar_actions %}
+{# When reached mid-setup (e.g. onboarding Step 4) `return_to` lets the athlete
+   step back without first adding a location. Saving one bounces back too. #}
+{% if return_to %}
+<a class="btn btn-ghost btn-sm" href="{{ return_to }}">← Back to setup</a>
+{% endif %}
 <a class="btn btn-primary btn-sm" href="{{ url_for('locales.new_locale') }}">
   <svg class="icon" width="12" height="12" aria-hidden="true"><use href="#i-plus"></use></svg> Add location
 </a>

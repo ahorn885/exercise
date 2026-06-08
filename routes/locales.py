@@ -2,7 +2,8 @@ import json
 import re
 import uuid
 
-from flask import Blueprint, render_template, request, redirect, url_for, flash
+from flask import (Blueprint, render_template, request, redirect, url_for,
+                   flash, session)
 
 import locations
 import mapbox_client
@@ -14,6 +15,28 @@ from layer4.cache_postgres import PostgresCacheBackend
 from routes.auth import current_user_id
 
 bp = Blueprint('locales', __name__)
+
+# When the locale flow is entered from a host step (e.g. onboarding Step 4) the
+# caller passes `?return_to=<local-path>`; we stash it so the terminal "saved a
+# location" redirect bounces back there instead of dead-ending on /locales.
+# Mirrors the OAuth return_to convention in routes/coros.py (same safety check).
+_LOCALE_RETURN_TO = 'locale_return_to'
+
+
+def _stash_return_to():
+    """Persist a safe, local `?return_to` for the duration of the locale flow."""
+    rt = request.args.get('return_to')
+    if rt and rt.startswith('/') and not rt.startswith('//'):
+        session[_LOCALE_RETURN_TO] = rt
+
+
+def _locale_flow_redirect():
+    """Terminal redirect after saving a locale: bounce back to the stashed
+    host-step path (consumed once) or fall back to the locale list."""
+    target = session.pop(_LOCALE_RETURN_TO, None)
+    if target and target.startswith('/') and not target.startswith('//'):
+        return redirect(target)
+    return redirect(url_for('locales.list_profiles'))
 
 # Locations Consolidation (Track 1) — the legacy hardcoded home/hotel/partner/
 # airport enum is retired. Home is now `locale_profiles.preferred` (one per
@@ -517,6 +540,7 @@ def _existing_locale_by_mapbox_id(db, uid: int, mapbox_id: str, exclude_slug: st
 def list_profiles():
     db = get_db()
     uid = current_user_id()
+    _stash_return_to()
     # locale_profiles is parent-scoped; locale_equipment is parent-JOIN scoped
     # via locale_profiles. Session 3 makes the locale PK composite (user_id, locale)
     # so users can have independent locales — until then, the global PK means a
@@ -550,7 +574,8 @@ def list_profiles():
                            legacy_locales=LOCALES, profiles=profiles,
                            home_locale=home_locale,
                            tags_by_locale=tags_by_locale, counts=counts,
-                           display_addresses=display_addresses)
+                           display_addresses=display_addresses,
+                           return_to=session.get(_LOCALE_RETURN_TO))
 
 
 @bp.route('/locales/<locale>/edit', methods=['GET', 'POST'])
@@ -719,6 +744,7 @@ def new_locale():
     uid = current_user_id()
     if request.method == 'POST':
         return _save_mapbox_anchored(db, uid)
+    _stash_return_to()
     manual = request.args.get('manual') == '1'
     query = (request.args.get('q') or '').strip()
     # D-59 §6 step 3 — `?upgrade=<slug>` lets athletes flip an existing
@@ -842,7 +868,7 @@ def _save_mapbox_anchored(db, uid: int):
         flash(f'Upgraded {locale_name} with place data.', 'success')
         if chain_id:
             return redirect(url_for('locales.nearby_instances', locale=upgrade_slug))
-        return redirect(url_for('locales.list_profiles'))
+        return _locale_flow_redirect()
     # PR18 item C — duplicate detection at create-time. If the athlete
     # already has a row pointing at the same Mapbox feature, redirect
     # them to edit the existing one instead of inserting a duplicate.
@@ -870,7 +896,7 @@ def _save_mapbox_anchored(db, uid: int):
     flash(f'Saved {locale_name}.', 'success')
     if chain_id:
         return redirect(url_for('locales.nearby_instances', locale=slug))
-    return redirect(url_for('locales.list_profiles'))
+    return _locale_flow_redirect()
 
 
 @bp.route('/locales/new/manual', methods=['POST'])
@@ -904,7 +930,7 @@ def save_manual_locale():
     _ensure_home(db, uid, slug)  # first-locale-auto-home (Track 1 §10)
     db.commit()
     flash(f'Saved {locale_name} (manual entry).', 'success')
-    return redirect(url_for('locales.list_profiles'))
+    return _locale_flow_redirect()
 
 
 @bp.route('/locales/<locale>/nearby', methods=['GET', 'POST'])
@@ -924,7 +950,7 @@ def nearby_instances(locale):
     chain_id = anchor['chain_id'] if 'chain_id' in anchor.keys() else None
     if not chain_id or anchor['lat'] is None or anchor['lng'] is None:
         # D-59 §4.2 — non-chain or manual-entry rows have no nearby surface.
-        return redirect(url_for('locales.list_profiles'))
+        return _locale_flow_redirect()
     canonical = _canonical_name(chain_id) or anchor['chain_name'] or ''
     try:
         candidates = mapbox_client.search_nearby(
@@ -935,7 +961,7 @@ def nearby_instances(locale):
         # D-59 §3.4 — fail-open: no nearby surface, but the anchor row
         # itself is already saved.
         flash(f'Saved {anchor["locale_name"] or locale}; nearby search unavailable.', 'info')
-        return redirect(url_for('locales.list_profiles'))
+        return _locale_flow_redirect()
     # D-59 §5 step 3 + 4 — keep only same-chain matches and exclude the
     # anchor itself by mapbox_id.
     same_chain: list[dict] = []
@@ -981,7 +1007,7 @@ def nearby_instances(locale):
             flash(f'Added {added} nearby {canonical} location{"s" if added != 1 else ""}.', 'success')
         if skipped:
             flash(f'Skipped {skipped} already-saved location{"s" if skipped != 1 else ""}.', 'info')
-        return redirect(url_for('locales.list_profiles'))
+        return _locale_flow_redirect()
     return render_template('locales/nearby.html',
                            anchor=anchor, canonical=canonical,
                            candidates=same_chain)

@@ -39,9 +39,10 @@ class _Cursor:
 
 
 class _Conn:
-    def __init__(self, providers, activities):
+    def __init__(self, providers, activities, strength=()):
         self._providers = providers
         self._activities = activities
+        self._strength = list(strength)
 
     def execute(self, sql, *a, **k):
         s = ' '.join(sql.split())
@@ -49,8 +50,12 @@ class _Conn:
             return _Cursor(self._providers)
         if 'COUNT(*)' in s and 'cardio_log' in s:
             return _Cursor([], one=_FakeRow(n=len(self._activities)))
+        if 'COUNT(*)' in s and 'training_sessions' in s:
+            return _Cursor([], one=_FakeRow(n=len(self._strength)))
         if 'FROM cardio_log' in s:
             return _Cursor(self._activities)
+        if 'FROM training_sessions' in s and 'JOIN training_log' in s:
+            return _Cursor(self._strength)
         return _Cursor([])
 
     def commit(self):
@@ -68,8 +73,17 @@ def _activity(**kw):
     return _FakeRow(base)
 
 
-def _client(monkeypatch, providers=(), activities=()):
-    conn = _Conn(list(providers), list(activities))
+def _strength_session(**kw):
+    base = {
+        'id': 1, 'date': '2026-05-23', 'garmin_activity_id': 'fit:strhash',
+        'exercise_count': 5, 'created_at': '2026-05-23',
+    }
+    base.update(kw)
+    return _FakeRow(base)
+
+
+def _client(monkeypatch, providers=(), activities=(), strength=()):
+    conn = _Conn(list(providers), list(activities), list(strength))
     for mod in list(sys.modules.values()):
         if mod is not None and getattr(mod, 'get_db', None) is not None:
             monkeypatch.setattr(mod, 'get_db', lambda conn=conn: conn,
@@ -124,6 +138,30 @@ def test_files_tab_lists_activities(monkeypatch):
     assert '/connections/inspect' not in html
     assert 'data-copy-all' not in html
     assert 'style="' not in html
+
+
+def test_files_tab_lists_strength_sessions(monkeypatch):
+    # Strength sessions live in training_sessions/training_log, not cardio_log;
+    # the Files list rolls each session up to a single row (issue #474).
+    activities = [_activity(id=1, date='2026-05-22',
+                            activity_name='Morning run')]
+    strength = [
+        _strength_session(id=7, date='2026-05-24', exercise_count=5,
+                          garmin_activity_id='fit:strhash'),
+        _strength_session(id=8, date='2026-05-21', exercise_count=1,
+                          garmin_activity_id=None),
+    ]
+    client = _client(monkeypatch, activities=activities, strength=strength)
+    resp = client.get('/connections/?tab=files')
+    assert resp.status_code == 200
+    html = resp.get_data(as_text=True)
+    # Both the cardio and the strength sessions are surfaced.
+    assert 'Morning run' in html
+    assert 'Strength session · 5 exercises' in html
+    assert 'Strength session · 1 exercise' in html  # singular
+    # A FIT-imported strength session is tagged Manual; count covers both kinds.
+    assert 'Manual .FIT' in html
+    assert 'of 3' in html  # 1 cardio + 2 strength sessions
 
 
 def test_files_tab_empty(monkeypatch):

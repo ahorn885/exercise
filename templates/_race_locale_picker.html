@@ -45,6 +45,8 @@
       {% endif %}
     </div>
     <button type="button" class="btn btn-sm btn-link p-0" id="elp_clear_btn">Change</button>
+    <button type="button" class="btn btn-sm btn-link text-danger p-0 ms-2"
+            id="elp_remove_btn">Clear race location</button>
   </div>
 
   {% if not mapbox_acked %}
@@ -79,6 +81,28 @@
     </div>
   {% endif %}
 </div>
+
+{# "Clear race location" is wired in its own always-present block (not gated on
+   mapbox_acked) so an already-anchored race can be cleared even when the search
+   script isn't loaded — e.g. a disclosure-version bump leaves mapbox_acked
+   false while a previously-saved location is still shown. #}
+<script nonce="{{ csp_nonce() }}">
+(function () {
+  var removeBtn = document.getElementById('elp_remove_btn');
+  if (!removeBtn) return;
+  removeBtn.addEventListener('click', function () {
+    ['elp_name', 'elp_mapbox_id', 'elp_place_name', 'elp_lat', 'elp_lng']
+      .forEach(function (id) {
+        var el = document.getElementById(id);
+        if (el) el.value = '';
+      });
+    var selectedEl = document.getElementById('elp_selected');
+    if (selectedEl) selectedEl.classList.add('d-none');
+    var searchboxEl = document.getElementById('elp_searchbox');
+    if (searchboxEl) searchboxEl.classList.remove('d-none');
+  });
+})();
+</script>
 
 {% if mapbox_acked %}
 <script nonce="{{ csp_nonce() }}">

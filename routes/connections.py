@@ -51,6 +51,42 @@ _ACTIVITY_SQL = (
     'FROM cardio_log WHERE user_id = ? ORDER BY date DESC, id DESC LIMIT 25'
 )
 
+# Strength sessions don't live in cardio_log — they're one training_sessions
+# row fanned out into per-exercise training_log rows (see garmin._bulk_insert_
+# strength). Roll each session back up so the Files list shows it as a single
+# activity, shaped like a cardio_log row so the template renders it uniformly.
+# MIN(garmin_activity_id) carries the 'fit:' dedup prefix that drives the
+# Manual-vs-Synced chip; the exercises of one session share a single gid.
+_STRENGTH_SQL = (
+    'SELECT ts.id AS id, ts.date AS date, '
+    'MIN(tl.garmin_activity_id) AS garmin_activity_id, '
+    'COUNT(tl.id) AS exercise_count, ts.created_at AS created_at '
+    'FROM training_sessions ts JOIN training_log tl ON tl.session_id = ts.id '
+    'WHERE ts.user_id = ? '
+    'GROUP BY ts.id, ts.date, ts.created_at '
+    'ORDER BY ts.date DESC, ts.id DESC LIMIT 25'
+)
+
+
+def _strength_row(s):
+    """Shape a rolled-up strength session as a cardio_log-style row dict so the
+    Files template can render strength and cardio in one list."""
+    n = s['exercise_count']
+    return {
+        'id': s['id'],
+        'date': s['date'],
+        'activity': 'Strength',
+        'activity_name': 'Strength session · %d exercise%s' % (
+            n, '' if n == 1 else 's'),
+        'duration_min': None,
+        'distance_mi': None,
+        'avg_hr': None,
+        'max_hr': None,
+        'calories': None,
+        'garmin_activity_id': s['garmin_activity_id'],
+        'created_at': s['created_at'],
+    }
+
 
 def _hub_context(db, uid, tab, **extra):
     """Shared render context for both the GET hub and the POST inspector."""
@@ -65,11 +101,25 @@ def _hub_context(db, uid, tab, **extra):
     recent_activities = []
     activity_count = 0
     if tab == 'files':
-        recent_activities = db.execute(_ACTIVITY_SQL, (uid,)).fetchall()
-        row = db.execute(
+        cardio = db.execute(_ACTIVITY_SQL, (uid,)).fetchall()
+        strength = [_strength_row(s)
+                    for s in db.execute(_STRENGTH_SQL, (uid,)).fetchall()]
+        # Merge both sources newest-first and cap at the same 25-row window.
+        recent_activities = sorted(
+            list(cardio) + strength,
+            key=lambda r: (r['date'], r['created_at']), reverse=True,
+        )[:25]
+        cardio_n = db.execute(
             'SELECT COUNT(*) AS n FROM cardio_log WHERE user_id = ?', (uid,)
         ).fetchone()
-        activity_count = (row['n'] if row else 0) or 0
+        strength_n = db.execute(
+            'SELECT COUNT(*) AS n FROM training_sessions ts '
+            'WHERE ts.user_id = ? AND EXISTS '
+            '(SELECT 1 FROM training_log tl WHERE tl.session_id = ts.id)',
+            (uid,)
+        ).fetchone()
+        activity_count = ((cardio_n['n'] if cardio_n else 0) or 0) \
+            + ((strength_n['n'] if strength_n else 0) or 0)
     ctx = dict(
         tab=tab,
         oauth_providers=oauth_providers,
