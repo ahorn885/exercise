@@ -87,9 +87,15 @@ def insert_versioned(
 
     Steps:
       1. Delete existing rows of this `etl_version` (idempotent re-run).
-      2. Insert new rows with etl_version, etl_run_at, superseded_at=NULL.
-      3. Mark prior versions of the same source family as superseded
+      2. Mark prior versions of the same source family as superseded
          (sets superseded_at where it was NULL and version != current).
+      3. Insert new rows with etl_version, etl_run_at, superseded_at=NULL.
+
+    Supersede MUST run before the insert: tables with a partial-unique
+    index on active rows (e.g. layer0.equipment_items'
+    `equipment_items_active_ci_name_idx` on lower(canonical_name) WHERE
+    superseded_at IS NULL) would otherwise see two active versions of the
+    same key coexist during the insert and raise a UniqueViolation.
 
     Source-family scoping prevents (e.g.) a 0A re-run from superseding
     0C vocabulary rows that haven't changed.
@@ -107,18 +113,9 @@ def insert_versioned(
             (etl_version,),
         )
 
-        # 2. Insert new rows
-        if rows:
-            values = [tuple(list(r) + [etl_version, etl_run_at]) for r in rows]
-            placeholders = "(" + ",".join(["%s"] * len(full_columns)) + ")"
-            execute_values(
-                cur,
-                f"INSERT INTO {table} ({','.join(full_columns)}) VALUES %s",
-                values,
-                template=placeholders,
-            )
-
-        # 3. Supersede older rows of the same source family
+        # 2. Supersede older rows of the same source family. Done BEFORE
+        #    the insert so a partial-unique-on-active index never sees two
+        #    active versions of the same key at once.
         cur.execute(
             f"""
             UPDATE {table}
@@ -129,6 +126,17 @@ def insert_versioned(
             """,
             (etl_run_at, etl_version, prefix + "%"),
         )
+
+        # 3. Insert new rows
+        if rows:
+            values = [tuple(list(r) + [etl_version, etl_run_at]) for r in rows]
+            placeholders = "(" + ",".join(["%s"] * len(full_columns)) + ")"
+            execute_values(
+                cur,
+                f"INSERT INTO {table} ({','.join(full_columns)}) VALUES %s",
+                values,
+                template=placeholders,
+            )
 
     conn.commit()
     return len(rows)

@@ -32,16 +32,19 @@ from etl.layer0.validation.sum_to_100 import run_sum_to_100
 from etl.layer0.validation.vocab_alignment import run_vocab_alignment
 
 SOURCES = Path(__file__).parent.parent / "sources"
-SPORTS_XLSX = SOURCES / "Sports_Framework_v11.xlsx"
+SPORTS_XLSX = SOURCES / "Sports_Framework_v12.xlsx"
 EXERCISES_XLSX = SOURCES / "AR_Exercise_Database_v19.xlsx"
 VOCAB_MD = SOURCES / "Vocabulary_Audit_v2.md"
 
 # Source-file provenance (NOT the per-run etl_version — that comes from
-# --version-tag, see main()): 0A = Sports_Framework_v11.xlsx (R6 discipline-ID
-# renumber + kayak/mountain-running collapses → D-001..D-029); 0B =
-# AR_Exercise_Database_v19.xlsx (Pass 1+2 Equipment-column cleanup); 0C
-# unchanged. The live etl_version line is `0A-v1.3.1` (tag `1.3.1`).
-# See aidstation-sources/Discipline_ID_Renumber_R6_Design_v1.md.
+# --version-tag, see main()): 0A = Sports_Framework_v12.xlsx (X1a bands rewrite
+# per Bridge_Bands_Research_v1.md — 43 of 73 Sheet 3 rows repatched against
+# authoritative governing-body sources for race_time_pct bands; the AR MTB
+# band went from 10-20 → 35-55, the smoking gun behind plan #60/#61's
+# TR-dominant allocation). 0B = AR_Exercise_Database_v19.xlsx (unchanged
+# from v11.0). 0C unchanged. Discipline-ID renumber R6 still in effect
+# (D-001..D-029). Bump --version-tag to `1.4.0` (or next available) when
+# applying v12 on Neon. See aidstation-sources/Bridge_Bands_Patch_Log_v1.md.
 
 
 def _v(family: str, tag: str) -> str:
