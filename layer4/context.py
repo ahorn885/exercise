@@ -168,7 +168,7 @@ AccommodationModality = Annotated[
 
 class WeightResult(_Base):
     value: float | None
-    source: Literal["system_default", "athlete_override"]
+    source: Literal["system_default", "athlete_override", "race_override"]
     system_default: float | None
 
 
@@ -258,6 +258,30 @@ class Layer2APayload(_Base):
     weekly_total_hours_by_phase: dict[str, tuple[float, float]] = Field(
         default_factory=dict
     )
+    # X1b.2 — per-group pool/redistribute diagnostics. One entry per
+    # modality_group containing >=2 members in the included set. Singleton
+    # groups (one included member) and uncovered groups are omitted. Used
+    # for the diag endpoint / synthesis_metadata; consumers downstream see
+    # only the post-normalize per-discipline `load_weight`.
+    modality_group_allocations: list["ModalityGroupAllocation"] = Field(
+        default_factory=list
+    )
+
+
+class ModalityGroupAllocation(_Base):
+    """Per-modality-group pool + redistribute diagnostic.
+
+    Emitted by Layer 2A when a group has >=2 members in `included_discipline_ids`.
+    See `Modality_Group_Spec_v1.md` §7 for schema rationale + §5.1 for the
+    pool-redistribute algorithm.
+    """
+    group_id: str
+    members: list[str]               # discipline_ids in this group ∩ included set
+    pool_race: float                  # sum of race-override signal for this group (0 if no race signal)
+    pool_athlete: float               # sum of athlete-override signal (0 if no athlete signal)
+    pool_base: float                  # sum of bridge midpoints
+    per_member_final: dict[str, float]  # post-pool, pre-normalize weights per member
+    flags: list[str] = Field(default_factory=list)
 
 
 # ─── Layer 2B — terrain (Layer2B_Spec.md §7) ─────────────────────────────────

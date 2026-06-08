@@ -357,10 +357,11 @@ class TestARBaseline:
         assert payload.rationale_metadata.template_version == "v1"
         assert payload.rationale_metadata.generated_at  # non-empty ISO string
 
-        # Two queries: the per-discipline join + the per-phase weekly-total
-        # hours fetch (`phase_load_weekly_totals`, used to convert the
-        # per-discipline phase_load percentages into hours downstream).
-        assert len(conn.calls) == 2
+        # Three queries: the per-discipline join + the modality_group
+        # membership fetch (X1b.2) + the per-phase weekly-total hours fetch
+        # (`phase_load_weekly_totals`, used to convert the per-discipline
+        # phase_load percentages into hours downstream).
+        assert len(conn.calls) == 3
         sql, params = conn.calls[0]
         assert "layer0.sport_discipline_map" in sql
         assert "layer0.phase_load_allocation" in sql
@@ -370,7 +371,10 @@ class TestARBaseline:
         # D-05 standing filter present (psycopg2 `%%` escape — see Bucket
         # B #1, 2026-05-21 walkthrough)
         assert "NOT LIKE '%%WEEKLY TOTAL%%'" in sql
-        assert "layer0.phase_load_weekly_totals" in conn.calls[1][0]
+        # calls[1] is the X1b.2 modality_group membership SELECT
+        assert "layer0.discipline_modality_membership" in conn.calls[1][0]
+        # calls[2] is the per-phase weekly-total hours fetch
+        assert "layer0.phase_load_weekly_totals" in conn.calls[2][0]
         # Params: top_level=AR, version_0a, framework_sport=AR (same — no
         # parens), then version_0a × 3 for the PLA / DTG / disciplines joins.
         assert params == ("Adventure Racing", "v19", "Adventure Racing", "v19", "v19", "v19")

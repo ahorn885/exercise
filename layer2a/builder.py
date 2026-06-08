@@ -33,6 +33,7 @@ from layer4.context import (
     Layer2ACoachingFlag,
     Layer2ADiscipline,
     Layer2APayload,
+    ModalityGroupAllocation,
     PhaseLoadBands,
     RationaleMetadata,
     TrainingGap,
@@ -359,6 +360,173 @@ def _compute_load_weight(
     )
 
 
+def _load_modality_groups(
+    db,
+    version_0a: str,
+) -> dict[str, list[str]]:
+    """X1b.2 — load `layer0.discipline_modality_membership` for the given
+    Layer 0 version.
+
+    Returns `{discipline_id: [group_id, ...]}`. Empty dict (no rows) is
+    treated by the caller as the pre-v1.5.0 state — every discipline is
+    its own singleton, behavior identical to pre-X1b.
+    """
+    cur = db.execute(
+        "SELECT discipline_id, group_id "
+        "FROM layer0.discipline_modality_membership "
+        "WHERE etl_version = ? AND superseded_at IS NULL",
+        (version_0a,),
+    )
+    out: dict[str, list[str]] = {}
+    for row in cur.fetchall():
+        did = row["discipline_id"]
+        gid = row["group_id"]
+        out.setdefault(did, []).append(gid)
+    return out
+
+
+def _apply_modality_group_pooling(
+    disciplines: list["Layer2ADiscipline"],
+    membership: dict[str, list[str]],
+    race_overrides: dict[str, float] | None,
+    athlete_overrides: dict[str, dict] | None,
+) -> list[ModalityGroupAllocation]:
+    """X1b.2 — Per `Modality_Group_Spec_v1.md` §5.1.
+
+    Pools per-discipline load_weight by modality group, then redistributes
+    per the precedence rule (race > athlete > bridge) within the pool.
+    Singleton groups (one included member) are no-ops; pooling only
+    matters when 2+ included members share a group.
+
+    Mutates `disciplines[i].load_weight.value` in place. Returns the
+    per-group diagnostic for emission in the payload.
+
+    Sums and redistributes use the RAW (pre-normalize) load_weight value.
+    The final `_normalize_load_weights` pass downstream rescales the set
+    to sum to 1.0 — unchanged behavior. Race/athlete-tagged members win
+    per-member; untagged members in a group with any race signal fall
+    back to the athlete signal, then to bridge midpoints.
+
+    REDIRECT semantics (§5.3): if a race tag names a member that's
+    excluded from `disciplines` (i.e. athlete doesn't own that craft),
+    the tag is applied to the FIRST included member of the same group
+    instead, and a `craft_substitution_via_group` flag is recorded on
+    the allocation. The simpler in-set case (race tags an included
+    member directly) is handled by the per-member-wins path.
+    """
+    if not membership:
+        # Pre-v1.5.0 substrate: skip pooling, behavior identical to pre-X1b.
+        return []
+
+    included_ids = {d.discipline_id for d in disciplines}
+    by_id = {d.discipline_id: d for d in disciplines}
+
+    # Reverse map: group_id → included members
+    group_to_members: dict[str, list[str]] = {}
+    for did in included_ids:
+        for gid in membership.get(did, []):
+            group_to_members.setdefault(gid, []).append(did)
+
+    # REDIRECT: race tags pointing at non-included disciplines need to be
+    # re-attributed to an included same-group member.
+    effective_race: dict[str, float] = dict(race_overrides or {})
+    redirect_flags: dict[str, list[str]] = {}  # group_id → flag list
+    for tagged_did in list(effective_race.keys()):
+        if tagged_did in included_ids:
+            continue
+        # tagged but not in included set — redirect within shared groups
+        for gid in membership.get(tagged_did, []):
+            members = group_to_members.get(gid, [])
+            if not members:
+                continue
+            # Redirect to the first included member of this group
+            target = members[0]
+            pct = effective_race.pop(tagged_did)
+            effective_race[target] = effective_race.get(target, 0.0) + pct
+            redirect_flags.setdefault(gid, []).append(
+                f"craft_substitution_via_group: race tag {tagged_did} → {target}"
+            )
+            break
+
+    diagnostics: list[ModalityGroupAllocation] = []
+
+    for gid, members in sorted(group_to_members.items()):
+        if len(members) < 2:
+            # Singleton — no pooling to do. Race/athlete-on-the-one-member
+            # is handled by per-member override below for ALL groups.
+            continue
+
+        # Per-member original midpoint base
+        bases = {
+            did: float(by_id[did].load_weight.value or 0.0)
+            for did in members
+        }
+
+        # Pool sums
+        pool_race = sum(effective_race.get(did, 0.0) for did in members)
+        pool_athlete = sum(
+            float((athlete_overrides or {}).get(did, {}).get("weight", 0.0))
+            for did in members
+        )
+        pool_base = sum(bases.values())
+
+        # Per-member final assignment per precedence rule
+        finals: dict[str, float] = {}
+        for did in members:
+            if did in effective_race:
+                finals[did] = effective_race[did]
+            elif did in (athlete_overrides or {}) and "weight" in athlete_overrides[did]:
+                finals[did] = float(athlete_overrides[did]["weight"])
+            else:
+                # Untagged: keep its bridge midpoint share
+                finals[did] = bases[did]
+
+        # Apply finals to disciplines
+        for did, weight in finals.items():
+            d = by_id[did]
+            d.load_weight = WeightResult(
+                value=float(weight),
+                source=(
+                    "race_override" if did in effective_race
+                    else (
+                        "athlete_override"
+                        if did in (athlete_overrides or {})
+                            and "weight" in athlete_overrides[did]
+                        else d.load_weight.source
+                    )
+                ),
+                system_default=d.load_weight.system_default,
+            )
+
+        diagnostics.append(
+            ModalityGroupAllocation(
+                group_id=gid,
+                members=sorted(members),
+                pool_race=pool_race,
+                pool_athlete=pool_athlete,
+                pool_base=pool_base,
+                per_member_final=finals,
+                flags=redirect_flags.get(gid, []),
+            )
+        )
+
+    # Handle race tags for singleton-group disciplines too (precedence still applies
+    # outside of pooling — race overrides win even with no group pooling).
+    for did, pct in effective_race.items():
+        if did not in by_id:
+            continue
+        if any(did in alloc.members for alloc in diagnostics):
+            continue  # already handled in a multi-member pool
+        d = by_id[did]
+        d.load_weight = WeightResult(
+            value=float(pct),
+            source="race_override",
+            system_default=d.load_weight.system_default,
+        )
+
+    return diagnostics
+
+
 def _normalize_load_weights(disciplines: list["Layer2ADiscipline"]) -> None:
     """Rescale `load_weight` in place so the included disciplines' `value`s
     sum to ≈1.0 (Layer4_Spec §4.2). `value` is the midpoint of the 0–100
@@ -568,6 +736,7 @@ def q_layer2a_discipline_classifier_payload(
     framework_sport: str,
     *,
     athlete_discipline_overrides: dict[str, dict] | None = None,
+    race_discipline_overrides: dict[str, float] | None = None,
     estimated_race_duration_hours: float | None = None,
     team_format: str | None = None,
     discipline_id_filter: list[str] | None = None,
@@ -698,6 +867,21 @@ def q_layer2a_discipline_classifier_payload(
     )
     training_gaps_summary = _build_training_gaps_summary(disciplines)
 
+    # X1b.2 — Modality-group pool/redistribute per Modality_Group_Spec_v1 §5.1.
+    # Loads layer0.discipline_modality_membership for the current 0A version
+    # and mutates per-discipline load_weight values per precedence (race >
+    # athlete > bridge). REDIRECT semantics apply when race tags a craft the
+    # athlete doesn't own — weight redirects to a same-group included member.
+    # Returns the per-group diagnostic for the payload. Empty membership table
+    # (pre-v1.5.0) is a no-op — every discipline stays its own singleton.
+    membership = _load_modality_groups(db, version_0a)
+    modality_group_allocations = _apply_modality_group_pooling(
+        disciplines,
+        membership,
+        race_discipline_overrides,
+        athlete_discipline_overrides,
+    )
+
     # Normalize load_weight onto a 0–1 distribution over the included set so
     # the Layer 4 plan_create precondition holds (Layer4_Spec §4.2:
     # `discipline_weights` sum to ≈1.0). The raw value is the midpoint of the
@@ -719,6 +903,7 @@ def q_layer2a_discipline_classifier_payload(
         hitl_required=hitl_required,
         unresolved_flags=unresolved_flags,
         coaching_flags=coaching_flags,
+        modality_group_allocations=modality_group_allocations,
         rationale_metadata=RationaleMetadata(
             template_version=_TEMPLATE_VERSION,
             # Day-anchored: `generated_at` is hashed into `layer2a_hash`, which
