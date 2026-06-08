@@ -15,6 +15,19 @@ The current `layer0.sport_discipline_bridge` `race_time_pct_low/high` bands (dra
 
 This dataset rewrites all 21 sports' `race_time_pct` bands using authoritative governing-body sources first, peer-reviewed sport science second.
 
+## Determinism note
+
+Bands are documented as low/high but the runtime algorithm is fully deterministic. From `layer2a/builder.py:_compute_load_weight` (lines 339-343):
+
+```python
+if low is not None and high is not None:
+    default_weight = float((float(low) + float(high)) / 2.0)
+```
+
+**The algorithm uses the midpoint.** The low/high range exists in the bridge to encode authoritative-source uncertainty (e.g., elite vs. age-group splits vary; course profile shifts the share). Runtime always picks `(low + high) / 2`. Same bridge input → same load_weight, every time.
+
+So each band below produces one operational value via midpoint. The width of the band is the documented honesty of the source, not runtime variance.
+
 ---
 
 ## Per-sport bands
@@ -285,13 +298,18 @@ This dataset rewrites all 21 sports' `race_time_pct` bands using authoritative g
 
 ---
 
-## Next steps (X1a implementation, post-Andy review)
+## Next steps (X1a implementation)
 
-1. Andy reviews bands per sport; redirects any band he disagrees with (likely candidates: AR ranges given expedition vs. shorter-format variance, the AR sub-discipline split between trekking vs. trail running).
-2. Excel patch — update `etl/sources/Sports_Framework_v11.xlsx` Sheet 3 (race_time_pct column) AND Sheet 5 (Phase Load Allocation, Base/Build/Peak/Taper bands) row-by-row. Sheet 5 phase bands need recalibration to match the new race_time_pct anchors.
+Sign-off resolutions (Andy 2026-06-07):
+- **AR is "one standard" default.** No sprint/expedition split. Athlete-side race terrain input expresses any per-race variance. The bands below are for typical 24-48h+ expedition AR (the modal AR format); athletes racing sprint AR fill out their race terrain accordingly and the race override (X3) shifts the allocation.
+- **AR foot share is one band** (trekking + trail running = 25-45%). The bridge keeps per-discipline rows (D-001 TR + D-003 Trek) but those rows sit in the same `foot` modality group, so they pool at runtime regardless of the per-discipline band split.
+- **No PGE-specific tuning.**
+
+Implementation steps:
+1. Excel patch — update `etl/sources/Sports_Framework_v11.xlsx` Sheet 3 (race_time_pct column) row-by-row per the bands documented above.
+2. Sheet 5 (Phase Load Allocation, Base/Build/Peak/Taper bands) — DEFERRED. The per-phase band recalibration depends on Sheet 3's relative shape landing first and on a separate sport-science research pass (taper / volume / specificity literature). Schedule as a follow-up after Sheet 3 ships.
 3. Re-ETL on Neon with a new `--version-tag` (e.g. 1.4.0) — `etl/layer0/extractors/sport_discipline_bridge.py` runs the rebuild.
 4. Cone cache fully invalidates on `etl_version_set` change, so first post-deploy plan is a cold rebuild (expected).
-5. Sport-specific phase-load bands (Sheet 5) — a related but separate research pass. Current bands like AR Trail Running "Base 12-15% / Build 12-15% / Peak 10-14% / Taper 12-15%" need recalibration to match the new race_time_pct anchor and sport-science taper / volume / specificity literature. Recommend deferring Sheet 5 to a follow-up research pass after Sheet 3 lands — Sheet 5 bands depend on Sheet 3's relative shape.
 
 ---
 

@@ -66,21 +66,23 @@ Closed seed set; revisable in subsequent ETL versions only.
 
 | group_id | group_name | group_kind | Initial member disciplines |
 |---|---|---|---|
-| `paddle_flatwater` | Flatwater paddle | `paddle` | D-009 Packrafting, D-010 Flat-water Kayaking, D-011 Canoeing |
-| `paddle_whitewater` | Whitewater paddle | `paddle` | D-010 Whitewater Kayaking |
-| `foot_trail` | Foot-on-trail | `foot` | D-001 Trail Running, D-003 Hiking (Weighted) |
-| `foot_road` | Foot-on-road | `foot` | D-002 Road Running |
-| `bike_pavement` | Bike on pavement | `bike` | D-006 XC Cycling (Road/Gravel) |
-| `bike_offroad` | Bike off-road | `bike` | D-008 Mountain Biking |
-| `snow_travel` | Snow travel (foot/snowshoe) | `snow` | D-017 Snowshoeing, D-018 Mountaineering (snow sections) |
+| `paddle_flatwater` | Flatwater paddle | `paddle` | D-009 Packrafting, D-010 Kayaking, D-011 Canoeing |
+| `paddle_whitewater` | Whitewater paddle | `paddle` | D-009 Packrafting, D-010 Kayaking |
+| `foot` | Foot (run / hike / nav) | `foot` | D-001 Trail Running, D-002 Road Running, D-003 Hiking (Weighted/Trekking), D-015 Orienteering, + sport-specific running disciplines (Fell Running, Skyrunning, Mountain Running) once their discipline_ids are confirmed in the bridge |
+| `bike_pavement` | Bike on pavement | `bike` | D-006 Road/TT Cycling (currently lumped in bridge as "XC Cycling Road/Gravel") |
+| `bike_offroad` | Bike off-road | `bike` | D-008 Mountain Biking (gravel rolls in once D-006 is split into road vs gravel disciplines) |
+| `snow_travel` | Snow travel (foot/snowshoe) | `snow` | D-017 Snowshoeing, D-018 Mountaineering |
 | `snow_glide` | Snow travel (gliding) | `snow` | Skimo disciplines, Cross-Country Nordic disciplines |
-| `climb_rope` | Rope-protected climbing | `climb` | D-012 Rock Climbing, D-014 Via Ferrata |
-| `climb_descent` | Rope descent | `climb` | D-013 Abseiling |
-| `swim_openwater` | Open-water swim | `swim` | D-004 Open Water Swimming, D-016 Swimming (in open water context) |
+| `climb` | Climbing (any rope discipline) | `climb` | D-012 Rock Climbing, D-013 Abseiling, D-014 Via Ferrata |
+| `swim_openwater` | Open-water swim | `swim` | D-004 Open Water Swimming, D-016 Swimming |
 
-**Ungrouped disciplines** (intentionally — no equivalent training stimulus): D-015 Orienteering/Nav (skill overlay, not a physical stimulus), single-row disciplines in mono-sport bridges.
+**No ungrouped disciplines.** Per Andy 2026-06-07: every discipline MUST belong to ≥1 group. ETL extractor (`etl/layer0/extractors/modality_groups.py`) raises on any orphan discipline. Singleton groups are acceptable (some sports have mono-discipline modalities that don't combine with anything else — e.g. a hypothetical D-XXX archery discipline could be in its own `archery` group). The `modality_group_orphan` flag/edge-case (previously §10) is removed because it can't fire.
 
-**Note on D-001 vs D-002:** Trail Running and Road Running are NOT in the same group. The training stresses differ (impact distribution, eccentric loading, pacing) enough that transfer is incomplete. If real plan data shows over-aggressive separation, v2 may add a `foot_running_generic` super-group; not in v1.
+**D-001 / D-002 / D-003 / D-015 in one `foot` group** (Andy directive 2026-06-07): Trail Running, Road Running, Hiking/Trekking, and Orienteering all impose foot-impact training stress and transfer well between each other. An AR athlete who trains via road running gets credit toward AR's foot-discipline allocation. A road marathoner who does the occasional trail run isn't double-counted.
+
+**D-009 Packrafting in both paddle groups** (Andy directive 2026-06-07): packraft is functionally usable on both flatwater and whitewater. Many-to-many membership supports this.
+
+**Bike disciplines forward-pointer:** D-006 in the current bridge is labeled "XC Cycling (Road/Gravel)" — one row covering both. v1 places it in `bike_pavement`. If/when the bridge splits D-006 into separate road and gravel disciplines, the gravel sub-row joins `bike_offroad`. Document the forward-pointer in the migration plan.
 
 ### 3.3 Closed-enum `group_kind`
 
@@ -217,13 +219,11 @@ This is the cleanest interpretation of "training-equivalent group." The race spe
 
 Alternative considered: SPLIT 50/50 between members and let athlete train both. Rejected because it forces athletes who don't own kayak to underprepare. Andy can override via athlete_discipline_overrides if they want a different split.
 
-### 5.4 Open design call
+### 5.4 Closed — athlete weighting is all-or-nothing
 
-Two redistribute behaviors when athlete signal exists but doesn't cover all group members:
-- **(A)** Athlete signal is partial → use bridge midpoints for the gap members
-- **(B)** Athlete signal is the full vocabulary → un-mentioned members get 0
+Per Andy 2026-06-07: the athlete weighting UI does NOT allow incomplete entry. If an athlete opens the weighting UI, they must declare a weight for every `included_discipline_ids` member, summing to 100. Otherwise the UI rejects save and no rows are written. Layer 2A sees either a complete weighting or no weighting (all zeros / empty dict).
 
-Recommend **(A)** for v1 — athletes shouldn't have to enumerate every discipline; bridge fills gaps. Pair with a coaching flag `athlete_weighting_incomplete` if the explicit weights cover < 80% of the group pool.
+This eliminates the partial-coverage case the previous draft considered. No `athlete_weighting_incomplete` flag is needed.
 
 ---
 
@@ -280,11 +280,13 @@ New flag types emitted by Layer 2A + Layer 2's substitution path:
 |---|---|---|---|
 | `training_craft_substitution` | `resolve_training_substitution` | race tags discipline D-X, athlete owns only D-Y in same group | info |
 | `craft_substitution_via_group` | Layer 2C | Layer 2C surfaces an alternate-group-member as substitution candidate | info |
-| `athlete_weighting_incomplete` | Layer 2A | athlete weighting covers <80% of a group's pool | warning |
-| `modality_group_orphan` | Layer 2A | discipline in `included_discipline_ids` belongs to no group AND is also not the only included member of any singleton's group (i.e. genuinely unparented) | info |
 | `modality_group_vocabulary_gap` | Layer 2A | runtime sees a discipline in 2+ groups whose redistribution rules conflict (defensive — should not fire if ETL invariants hold) | warning |
 
 All flags carry the discipline_id(s) involved in the `target_discipline_ids` field of the flag payload.
+
+**Removed from earlier draft** (per Andy 2026-06-07):
+- `athlete_weighting_incomplete` — UI enforces complete entry, can't fire.
+- `modality_group_orphan` — ETL enforces every discipline belongs to ≥1 group, can't fire.
 
 ---
 
@@ -300,12 +302,16 @@ All flags carry the discipline_id(s) involved in the `target_discipline_ids` fie
 
 | Case | Behavior |
 |---|---|
-| Discipline in 2+ groups, both have included members | Discipline contributes its base_weight share to each group's pool proportionally to group size. (Rare in v1 vocabulary; defensive design.) |
+| Discipline in 2+ groups, both have included members | Discipline contributes its base_weight share to each group's pool proportionally to group size. (e.g., D-009 Packraft in both `paddle_flatwater` and `paddle_whitewater`.) |
 | Race tags 2+ members of the same group with overlapping percentages | Each tagged member gets its tagged %. Pool sum may exceed 100% of the group's bridge share — normalize at the final step handles this. |
-| Athlete weighting names a discipline not in `included_discipline_ids` | Silently dropped (consistent with current Layer 2A behavior for the rare race-level exclusion case). |
+| Athlete weighting names a discipline not in `included_discipline_ids` | Prevented by UI — athlete weighting form only renders rows for the race's included disciplines. Cannot reach Layer 2A. |
 | All members of a group are excluded by `included_discipline_ids` | Group is inert; no pooling, no flag. |
-| Empty `modality_groups` table (pre-ETL state) | Every discipline is its own singleton. Layer 2A behavior identical to pre-v1. Allows phased ETL rollout. |
-| Race terrain has 5 rows with discipline_id=D-008, two race-wide rows (no discipline_id) | Race-wide rows are dropped (X3 decision — confirmed by Andy in design discussion). Only tagged rows contribute. |
+| Race terrain has rows with `discipline_id=None` (race-wide) | Race-wide rows are dropped from discipline-mix derivation (Andy 2026-06-07). They still drive Layer 2B terrain coverage. |
+
+**Invariants enforced upstream** (no runtime fall-through):
+- Every discipline belongs to ≥1 modality group (ETL extractor raises on orphan).
+- Athlete weighting either covers all `included_discipline_ids` with sum=100, or is empty (UI all-or-nothing).
+- Modality_groups table is non-empty at runtime (seeded by ETL v1.4.0+).
 
 ---
 
@@ -320,12 +326,18 @@ All flags carry the discipline_id(s) involved in the `target_discipline_ids` fie
 
 ## 12. Open items / forward references
 
-1. **The athlete-facing label question.** `craft_substitution` flag text needs to be athlete-readable. Today it's "athlete owns packraft (training surface), race specifies kayak (race surface) — your packraft training contributes to your paddle preparation." Decide whether to surface this on the plan view UI or keep internal.
-2. **Stage-race / multi-format athletes.** An athlete training for both XTERRA (off-road tri) and an expedition AR simultaneously hits two framework_sports with overlapping disciplines. v1 picks one framework_sport (primary_sport). v2 may add multi-sport blending — out of scope here.
-3. **Group vocabulary evolution.** v1 ships the seed in §3.2. New disciplines added in later ETL versions need group assignments. ETL extractor (`etl/layer0/extractors/modality_groups.py` — new) reads from an Excel sheet (Sports_Framework_v12.xlsx?) for the next iteration.
-4. **Layer 2C `also_satisfies` consolidation.** Long-term, `also_satisfies` toggle chains and modality groups overlap conceptually. Not consolidating in v1 (different semantics — toggle-to-toggle vs discipline-to-discipline). Watch for confusion. Revisit if real plan data shows conflicts.
-5. **D-010 split (Flat-water vs Whitewater Kayaking).** Today they're both D-010 in the bridge but distinct in spirit. The seed vocabulary puts them in different groups, but if the bridge keeps them as one row, the membership table can't distinguish. May need to fork into D-010a / D-010b before this ships. Cross-reference Layer 0 vocabulary plans.
-6. **AR (Sprint) / AR (Expedition) format-split.** Decided this session to use "typical AR" (24-48h expedition) without splitting framework_sports. If the X1a research surfaces large band differences across AR formats, may need to revisit.
+All previously-noted open items resolved by Andy 2026-06-07:
+
+- ~~Athlete-facing label for craft_substitution flag~~ → **Keep internal.** Diagnostic only, not surfaced to athletes.
+- ~~Multi-format athletes~~ → **Moot.** Only one primary race target supported in v1.
+- ~~Group vocabulary evolution~~ → Standard ETL-version flow handles this; no special design needed.
+- ~~Layer 2C `also_satisfies` consolidation~~ → Deferred; revisit only if real plan data surfaces conflicts.
+- ~~D-010 flatwater/whitewater split~~ → Not needed; membership is discipline-id keyed and D-009 sits in both paddle groups, which gives the same effective behavior.
+- ~~AR sprint vs expedition format-split~~ → **One standard ("default AR" bands).** Athlete-side race terrain input expresses any per-race variance.
+
+Genuine future-work item (only one remaining):
+
+1. **Bike discipline split (forward-pointer).** D-006 currently lumps Road + Gravel cycling into one discipline. If/when the bridge splits these into separate disciplines, gravel moves from `bike_pavement` to `bike_offroad`. Not a v1 blocker — D-006 sits in `bike_pavement` for now.
 
 ---
 
@@ -334,9 +346,9 @@ All flags carry the discipline_id(s) involved in the `target_discipline_ids` fie
 1. **Singleton-only sport** — Marathon (Road), one discipline, no groups. Behavior identical to pre-v1; verify no regressions.
 2. **All-members race-tagged** — AR race tagging TR + Trek (foot_trail group both members). Both keep their tagged %. Verify no over-counting in pool.
 3. **Partial race tag** — AR race tags only Packraft (D-009) at 20%, athlete owns Kayak only. Race weight redirects to D-010 per §5.3 REDIRECT decision. Coaching flag `training_craft_substitution` emitted with both ids.
-4. **Athlete weighting partial coverage** — athlete declares weights for 3 of 5 disciplines in a group. Bridge fills the 2 gaps; `athlete_weighting_incomplete` flag fires if those 2 sum to >20% of group pool.
-5. **Cross-group discipline** — hypothetical D-X in both foot_trail and foot_road groups (none in v1 vocab). Verify defensive splitting.
-6. **Empty group vocabulary** — pre-ETL state (no rows in `modality_groups`). Layer 2A produces identical output to current behavior; no flag noise.
+4. **Athlete weighting present, all members covered** — athlete declares 50/30/15/5 across 4 disciplines in a group; sum = 100. Verify race overrides win per-member where present, athlete signal fills the rest.
+5. **Cross-group discipline (D-009 in both paddle groups)** — race tags D-010 Kayak at 20% (whitewater context). D-009 Packraft in both `paddle_flatwater` and `paddle_whitewater`. Verify pool math splits D-009's bridge contribution proportionally and redistribute respects the whitewater context.
+6. **Foot group pooling** — race tags D-001 TR at 20% and D-003 Trek at 25%. Both in `foot` group. Verify per-member tags win (no smoothing), pool_race = 45.
 7. **Layer 2C substitution narrowing** — locale doesn't have kayak, has packraft. Pre-v1: 2C returns "discipline_low_coverage" for D-010. Post-v1: 2C surfaces D-009 as `craft_substitution_via_group` candidate. Verify flag carries both ids.
 8. **Bridge change invalidates cones** — change ETL group vocabulary, re-run plan_create. Verify cone cache miss, layer2a re-runs, pool allocation differs.
 9. **Worked example fidelity** — implement §5.2 inputs in a unit test, assert outputs match the documented 19.3% / 14.5% / 43.5% / 19.3% / 2.4% / 1.0% distribution.
