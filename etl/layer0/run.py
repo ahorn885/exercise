@@ -27,24 +27,27 @@ from etl.layer0.validation.fk_checks import (
     run_substitution_fks,
     run_training_gap_fks,
 )
+from etl.layer0.validation.modality_group_orphan import run_modality_group_orphan
 from etl.layer0.validation.report import build_report
 from etl.layer0.validation.sum_to_100 import run_sum_to_100
 from etl.layer0.validation.vocab_alignment import run_vocab_alignment
 
 SOURCES = Path(__file__).parent.parent / "sources"
-SPORTS_XLSX = SOURCES / "Sports_Framework_v12.xlsx"
+SPORTS_XLSX = SOURCES / "Sports_Framework_v13.xlsx"
 EXERCISES_XLSX = SOURCES / "AR_Exercise_Database_v19.xlsx"
 VOCAB_MD = SOURCES / "Vocabulary_Audit_v2.md"
 
 # Source-file provenance (NOT the per-run etl_version — that comes from
-# --version-tag, see main()): 0A = Sports_Framework_v12.xlsx (X1a bands rewrite
-# per Bridge_Bands_Research_v1.md — 43 of 73 Sheet 3 rows repatched against
-# authoritative governing-body sources for race_time_pct bands; the AR MTB
-# band went from 10-20 → 35-55, the smoking gun behind plan #60/#61's
-# TR-dominant allocation). 0B = AR_Exercise_Database_v19.xlsx (unchanged
-# from v11.0). 0C unchanged. Discipline-ID renumber R6 still in effect
-# (D-001..D-029). Bump --version-tag to `1.4.0` (or next available) when
-# applying v12 on Neon. See aidstation-sources/Bridge_Bands_Patch_Log_v1.md.
+# --version-tag, see main()): 0A = Sports_Framework_v13.xlsx (X1b modality
+# groups added — 2 new sheets "Modality Groups" + "Discipline Modality
+# Membership" seeding 9 groups × 26 memberships per Modality_Group_Spec_v1
+# §3.2; layer0.modality_groups + layer0.discipline_modality_membership tables
+# added to schema.sql; modality_group_orphan validator enforces every active
+# discipline has >=1 group). X1a v12 base intact: 43 of 73 Sheet 3 rows
+# rewritten per Bridge_Bands_Research_v1.md (AR MTB 10-20 → 35-55 etc.).
+# 0B = AR_Exercise_Database_v19.xlsx (unchanged). 0C unchanged. Bump
+# --version-tag to `1.5.0` (or next available) when applying v13 on Neon.
+# See Modality_Group_Spec_v1.md + Bridge_Bands_Patch_Log_v1.md.
 
 
 def _v(family: str, tag: str) -> str:
@@ -498,6 +501,43 @@ def main(argv: list[str] | None = None) -> int:
         _print(f"layer0.discipline_training_gaps: inserted {n} rows")
         summaries.append(f"layer0.discipline_training_gaps: {n}")
 
+        # X1b — Modality Groups (Modality_Group_Spec_v1.md §3). 0A-versioned
+        # reference data; depends on disciplines existing for the membership
+        # FK-shape check (validated at runtime by run_modality_group_orphan).
+        mg_rows = sports_framework.extract_modality_groups(wb)
+        n = insert_versioned(
+            conn, "layer0.modality_groups",
+            ["group_id", "group_name", "group_kind", "description"],
+            [(r["group_id"], r["group_name"], r["group_kind"], r["description"])
+             for r in mg_rows],
+            v_0a, run_at, source_family="0A",
+        )
+        _print(f"layer0.modality_groups: inserted {n} rows")
+        summaries.append(f"layer0.modality_groups: {n}")
+
+        # Filter membership rows to surviving disciplines only (post-canon).
+        # Drops rows pointing at canon-removed disciplines silently — they're
+        # not consumers of the membership table anyway.
+        surviving_disc_ids = {d["discipline_id"] for d in disc_rows}
+        dmm_rows_raw = sports_framework.extract_discipline_modality_membership(wb)
+        dropped_dmm = [
+            r for r in dmm_rows_raw if r["discipline_id"] not in surviving_disc_ids
+        ]
+        dmm_rows = [r for r in dmm_rows_raw if r["discipline_id"] in surviving_disc_ids]
+        if dropped_dmm:
+            _print(
+                f"  [canon] discipline_modality_membership: dropped {len(dropped_dmm)} "
+                f"row(s) pointing at canon-removed disciplines"
+            )
+        n = insert_versioned(
+            conn, "layer0.discipline_modality_membership",
+            ["discipline_id", "group_id", "note"],
+            [(r["discipline_id"], r["group_id"], r["note"]) for r in dmm_rows],
+            v_0a, run_at, source_family="0A",
+        )
+        _print(f"layer0.discipline_modality_membership: inserted {n} rows")
+        summaries.append(f"layer0.discipline_modality_membership: {n}")
+
         # ----- Phase 3 — Bridge + 0B -----
         _print("[layer0 ETL] Phase 3 — Bridge + Exercise DB")
         bridge_rows = sports_framework.build_sport_discipline_bridge(sd_rows)
@@ -622,9 +662,22 @@ def main(argv: list[str] | None = None) -> int:
             f"{canon_result['pass_count']} PASS, {canon_result['error_count']} ERROR"
         )
 
+        # X1b — every active discipline must belong to >=1 modality group.
+        mg_orphan_result = run_modality_group_orphan(conn)
+        _print(
+            f"modality_group_orphan: {mg_orphan_result['rows_checked']} disciplines, "
+            f"{mg_orphan_result['pass_count']} PASS, {mg_orphan_result['error_count']} ERROR"
+            + (
+                f" (orphans: {mg_orphan_result['orphans']})"
+                if mg_orphan_result["error_count"]
+                else ""
+            )
+        )
+
         report_path = build_report(
             tag, run_at, summaries, sum_to_100_result, vocab_result,
             extras={
+                "modality_group_orphan": mg_orphan_result,
                 "dropped_sd_dupes": dropped_sd_dupes,
                 "dropped_sxm_dupes": dropped_sxm_dupes,
                 "movement_warnings": movement_warnings,

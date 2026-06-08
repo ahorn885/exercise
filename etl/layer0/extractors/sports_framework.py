@@ -963,3 +963,64 @@ def build_sport_discipline_bridge(
             "default_race_time_pct_high": r.get("race_time_pct_high"),
         })
     return rows
+
+
+_VALID_GROUP_KINDS: frozenset[str] = frozenset(
+    {"paddle", "foot", "bike", "snow", "climb", "swim", "nav"}
+)
+
+
+def extract_modality_groups(wb) -> list[dict[str, Any]]:
+    """X1b — Sheet "Modality Groups" (Sports_Framework v13+).
+
+    Columns (R1 header, R2+ data): Group ID | Group Name | Group Kind |
+    Description. `group_kind` validated against `_VALID_GROUP_KINDS`;
+    invalid kinds raise ValueError (closed enum per Modality_Group_Spec §3.3).
+    Returns empty list if the sheet is absent (back-compat for pre-v13
+    workbooks).
+    """
+    if "Modality Groups" not in wb.sheetnames:
+        return []
+    ws = wb["Modality Groups"]
+    rows: list[dict[str, Any]] = []
+    for r in range(2, ws.max_row + 1):
+        gid = _t(ws.cell(row=r, column=1).value)
+        if not gid:
+            continue
+        kind = _t(ws.cell(row=r, column=3).value) or ""
+        if kind not in _VALID_GROUP_KINDS:
+            raise ValueError(
+                f"modality_groups row {r}: group_kind {kind!r} not in "
+                f"{sorted(_VALID_GROUP_KINDS)}"
+            )
+        rows.append({
+            "group_id": gid,
+            "group_name": _t(ws.cell(row=r, column=2).value) or gid,
+            "group_kind": kind,
+            "description": _t(ws.cell(row=r, column=4).value) or "",
+        })
+    return rows
+
+
+def extract_discipline_modality_membership(wb) -> list[dict[str, Any]]:
+    """X1b — Sheet "Discipline Modality Membership" (Sports_Framework v13+).
+
+    Columns (R1 header, R2+ data): Discipline ID | Group ID | Note. Returns
+    one row per (discipline_id, group_id) pair — many-to-many membership.
+    Empty list if the sheet is absent.
+    """
+    if "Discipline Modality Membership" not in wb.sheetnames:
+        return []
+    ws = wb["Discipline Modality Membership"]
+    rows: list[dict[str, Any]] = []
+    for r in range(2, ws.max_row + 1):
+        did = _t(ws.cell(row=r, column=1).value)
+        gid = _t(ws.cell(row=r, column=2).value)
+        if not did or not gid:
+            continue
+        rows.append({
+            "discipline_id": did,
+            "group_id": gid,
+            "note": _t(ws.cell(row=r, column=3).value) or None,
+        })
+    return rows

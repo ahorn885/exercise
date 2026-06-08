@@ -381,6 +381,36 @@ CREATE TABLE IF NOT EXISTS layer0.phase_load_weekly_totals (
   UNIQUE (sport_name, phase, etl_version)
 );
 
+-- Modality groups (X1b — Modality_Group_Spec_v1.md §3.1). Reference vocabulary
+-- of training-equivalent discipline groupings. Layer 2A pools per-discipline
+-- load_weight by group and redistributes per the precedence rule (race > athlete
+-- > bridge). Layer 2C surfaces alternate-group-member substitution candidates.
+CREATE TABLE IF NOT EXISTS layer0.modality_groups (
+  id              SERIAL PRIMARY KEY,
+  group_id        TEXT NOT NULL,
+  group_name      TEXT NOT NULL,
+  group_kind      TEXT NOT NULL,
+  description     TEXT NOT NULL,
+  etl_version     TEXT NOT NULL,
+  etl_run_at      TIMESTAMPTZ NOT NULL,
+  superseded_at   TIMESTAMPTZ,
+  UNIQUE (group_id, etl_version)
+);
+
+-- Many-to-many membership. A discipline can belong to >=1 group (e.g., D-009
+-- Packraft is in both paddle_flatwater and paddle_whitewater). No-orphan
+-- invariant is application-enforced by the modality_group_orphan validator.
+CREATE TABLE IF NOT EXISTS layer0.discipline_modality_membership (
+  id              SERIAL PRIMARY KEY,
+  discipline_id   TEXT NOT NULL,
+  group_id        TEXT NOT NULL,
+  note            TEXT,
+  etl_version     TEXT NOT NULL,
+  etl_run_at      TIMESTAMPTZ NOT NULL,
+  superseded_at   TIMESTAMPTZ,
+  UNIQUE (discipline_id, group_id, etl_version)
+);
+
 ----------------------------------------------------------------------
 -- Additive column migrations (idempotent)
 ----------------------------------------------------------------------
