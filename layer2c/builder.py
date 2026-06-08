@@ -244,6 +244,32 @@ def _load_discipline_info(
     return info
 
 
+def _load_modality_groups(
+    db,
+    version_0a: str,
+) -> dict[str, list[str]]:
+    """X1b.3 — load `layer0.discipline_modality_membership` for the given
+    Layer 0 version. Returns `{discipline_id: [group_id, ...]}`.
+
+    Empty result is treated by the caller as the pre-v1.5.0 substrate
+    state — no `craft_substitution_via_group` flags emitted, behavior
+    identical to pre-X1b.3. Mirrors `layer2a/builder.py:_load_modality_groups`;
+    the second consumer; promote to a shared reader on a third.
+    """
+    cur = db.execute(
+        "SELECT discipline_id, group_id "
+        "FROM layer0.discipline_modality_membership "
+        "WHERE etl_version = ? AND superseded_at IS NULL",
+        (version_0a,),
+    )
+    out: dict[str, list[str]] = {}
+    for row in cur.fetchall():
+        did = row["discipline_id"]
+        gid = row["group_id"]
+        out.setdefault(did, []).append(gid)
+    return out
+
+
 def _load_exercises(
     db,
     included_discipline_ids: list[str],
@@ -689,6 +715,72 @@ def _emit_coaching_flags(
     return flags
 
 
+def _emit_modality_group_substitution_flags(
+    coverage: list[DisciplineCoverage],
+    membership: dict[str, list[str]],
+) -> list[Layer2CCoachingFlag]:
+    """X1b.3 per `Modality_Group_Spec_v1.md` §6.
+
+    For each discipline whose locale coverage is below
+    `_LOW_COVERAGE_THRESHOLD`, surface same-modality-group members whose
+    coverage is at or above the threshold as substitution candidates.
+    One flag per (target, candidate) pair. Pairs are deterministic:
+    iteration follows `coverage` order, candidates sorted by id within
+    each target.
+
+    Pre-v1.5.0 substrate (empty membership) → no flags. Target with no
+    group membership → no flags. Candidate filtered to the included set
+    only; cross-set candidates are out of scope for v1 (the simpler
+    interpretation of §6).
+    """
+    if not membership:
+        return []
+
+    flags: list[Layer2CCoachingFlag] = []
+    for target in coverage:
+        if target.coverage_pct >= _LOW_COVERAGE_THRESHOLD:
+            continue
+        target_groups = set(membership.get(target.discipline_id, []))
+        if not target_groups:
+            continue
+        candidates = sorted(
+            (
+                c for c in coverage
+                if c.discipline_id != target.discipline_id
+                and c.coverage_pct >= _LOW_COVERAGE_THRESHOLD
+                and target_groups & set(membership.get(c.discipline_id, []))
+            ),
+            key=lambda c: c.discipline_id,
+        )
+        for candidate in candidates:
+            shared = target_groups & set(membership.get(candidate.discipline_id, []))
+            group_id = sorted(shared)[0]
+            flags.append(
+                Layer2CCoachingFlag(
+                    flag_type="craft_substitution_via_group",
+                    discipline_id=target.discipline_id,
+                    discipline_name=target.discipline_name,
+                    affected_exercise_ids=[],
+                    message=(
+                        f"{target.discipline_name} locale coverage is "
+                        f"{target.coverage_pct:.0%}; {candidate.discipline_name} "
+                        f"shares the {group_id} modality group and is well-covered "
+                        f"({candidate.coverage_pct:.0%}) — consider it as a "
+                        "training substitute."
+                    ),
+                    metadata={
+                        "group_id": group_id,
+                        "candidate_discipline_id": candidate.discipline_id,
+                        "candidate_discipline_name": candidate.discipline_name,
+                        "target_coverage_pct": target.coverage_pct,
+                        "candidate_coverage_pct": candidate.coverage_pct,
+                    },
+                )
+            )
+
+    return flags
+
+
 # ─── Public entry point ──────────────────────────────────────────────────────
 
 
@@ -785,6 +877,14 @@ def q_layer2c_equipment_mapper_payload(
         included_discipline_ids,
         skill_toggle_defs,
         skill_toggle_states,
+    )
+    # X1b.3 — modality-group substitution flags appended after the
+    # spec-§8 flags so coaching surfaces see the existing rule output
+    # unchanged. Empty membership (pre-v1.5.0) returns []; no behavior
+    # change for callers on the old substrate.
+    membership = _load_modality_groups(db, version_0a)
+    coaching_flags.extend(
+        _emit_modality_group_substitution_flags(coverage, membership)
     )
 
     return Layer2CPayload(

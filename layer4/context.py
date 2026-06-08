@@ -449,6 +449,12 @@ class Layer2CCoachingFlag(_Base):
         # `toggle_off_for_discipline` flag — same payload shape, distinct
         # flag_type so the brief LLM can render appropriate guidance.
         "requires_skill_capability",
+        # X1b.3 (Modality_Group_Spec_v1 §6) — target discipline has
+        # low locale-equipment coverage but a same-modality-group member
+        # is well-covered. Metadata carries the candidate discipline_id;
+        # message names both crafts so downstream prompts can suggest
+        # the training swap.
+        "craft_substitution_via_group",
     ]
     discipline_id: str | None = None
     discipline_name: str | None = None
