@@ -4,7 +4,7 @@
 {% extends 'base.html' %}
 {% set nav_active = 'link' %}
 {% block title %}Preview import{% endblock %}
-{% block crumbs %}<a href="{{ url_for('connections.hub') }}">Connections</a> <span class="sep">/</span> <a href="{{ url_for('garmin.import_fit') }}">Import .FIT</a> <span class="sep">/</span> <b>Preview</b>{% endblock %}
+{% block crumbs %}<a href="{{ url_for('connections.hub') }}">Data</a> <span class="sep">/</span> <a href="{{ url_for('garmin.import_fit') }}">Import .FIT</a> <span class="sep">/</span> <b>Preview</b>{% endblock %}
 
 {% macro plan_item_options(items, selected_id) %}
   {% for pi in items %}
@@ -102,7 +102,7 @@
 {% block content %}
 <div class="dash-head">
   <div class="races-intro">
-    <p class="eyebrow accent">● Connections · review before saving</p>
+    <p class="eyebrow accent">● Data · review before saving</p>
     <h1 class="page-title">Preview import.</h1>
     <p class="page-sub">Review the parsed data below. Edit the name or notes if needed, then confirm to save.</p>
   </div>

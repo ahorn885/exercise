@@ -6,12 +6,12 @@
 {% extends 'base.html' %}
 {% set nav_active = 'link' %}
 {% block title %}Import .FIT{% endblock %}
-{% block crumbs %}<a href="{{ url_for('connections.hub') }}">Connections</a> <span class="sep">/</span> <b>Import .FIT</b>{% endblock %}
+{% block crumbs %}<a href="{{ url_for('connections.hub') }}">Data</a> <span class="sep">/</span> <b>Import .FIT</b>{% endblock %}
 
 {% block content %}
 <div class="dash-head">
   <div class="races-intro">
-    <p class="eyebrow accent">● Connections · manual upload</p>
+    <p class="eyebrow accent">● Data · manual upload</p>
     <h1 class="page-title">Import .FIT files.</h1>
     <p class="page-sub">Upload completed activities from any device that exports <code>.fit</code>. Each file
       is parsed and logged to your cardio or training log; re-importing the same file is skipped.</p>

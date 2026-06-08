@@ -9,8 +9,8 @@
    retention) have no backend and are intentionally not fabricated. #}
 {% extends 'base.html' %}
 {% set nav_active = 'link' %}
-{% block title %}Connections{% endblock %}
-{% block crumbs %}<b>Connections</b>{% endblock %}
+{% block title %}Data{% endblock %}
+{% block crumbs %}<b>Data</b>{% endblock %}
 {% block topbar_actions %}
 <a class="btn btn-primary btn-sm" href="{{ url_for('garmin.import_fit') }}">
   <svg class="icon" width="12" height="12" aria-hidden="true"><use href="#i-upload"></use></svg> Upload .FIT
@@ -20,7 +20,7 @@
 {% block content %}
 <div class="dash-head">
   <div class="races-intro">
-    <p class="eyebrow accent">● Connections · everything that feeds the app</p>
+    <p class="eyebrow accent">● Data · everything that feeds the app</p>
     <h1 class="page-title">Bring data in.</h1>
     <p class="page-sub">One place for every source — auto-sync providers, manual .FIT uploads, and
       how we handle the overlap. Both paths feed the same engine; your plan adapts either way.</p>
@@ -28,7 +28,7 @@
 </div>
 
 {# ── Tabs ── #}
-<div class="conn-tabs" role="tablist" aria-label="Connections sections">
+<div class="conn-tabs" role="tablist" aria-label="Data sections">
   {% for key, label, sub in [
        ('sources', 'Sources', 'providers + upload'),
        ('files', 'Files', 'import history'),

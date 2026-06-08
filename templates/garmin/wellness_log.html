@@ -6,7 +6,7 @@
 {% extends 'base.html' %}
 {% set nav_active = 'link' %}
 {% block title %}Wellness log{% endblock %}
-{% block crumbs %}<a href="{{ url_for('connections.hub') }}">Connections</a> <span class="sep">/</span> <b>Wellness log</b>{% endblock %}
+{% block crumbs %}<a href="{{ url_for('connections.hub') }}">Data</a> <span class="sep">/</span> <b>Wellness log</b>{% endblock %}
 {% block topbar_actions %}
 <a class="btn btn-primary btn-sm" href="{{ url_for('garmin.import_wellness') }}">
   <svg class="icon" width="12" height="12" aria-hidden="true"><use href="#i-upload"></use></svg> Import wellness .FIT
@@ -16,7 +16,7 @@
 {% block content %}
 <div class="dash-head">
   <div class="races-intro">
-    <p class="eyebrow accent">● Connections · per-second readings</p>
+    <p class="eyebrow accent">● Data · per-second readings</p>
     <h1 class="page-title">Wellness log.</h1>
     <p class="page-sub">Heart rate, stress, recovery, respiration, and step data imported from your
       device's wellness <code>.fit</code> files. Pick a day to chart it.</p>
