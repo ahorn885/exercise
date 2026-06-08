@@ -857,6 +857,43 @@ def view_plan(plan_version_id: int):
     )
 
 
+@bp.route('/<int:plan_version_id>/complete', methods=['POST'])
+def mark_plan_complete(plan_version_id: int):
+    """Manually file a ready plan under Completed on the Plan list, regardless
+    of its scope dates — for when the athlete cancels a plan or it was
+    superseded and they want it out of Upcoming/Active. Idempotent: only stamps
+    a row that's `ready` and not already completed; the user_id filter is the
+    cross-user guard. Redirects back to the list either way."""
+    db = get_db()
+    uid = current_user_id()
+    db.execute(
+        "UPDATE plan_versions SET completed_at = NOW() "
+        "WHERE id = ? AND user_id = ? AND generation_status = 'ready' "
+        "AND completed_at IS NULL",
+        (plan_version_id, uid),
+    )
+    db.commit()
+    flash("Plan marked complete.", 'success')
+    return redirect(url_for('plans.list_plans'))
+
+
+@bp.route('/<int:plan_version_id>/reopen', methods=['POST'])
+def reopen_plan(plan_version_id: int):
+    """Clear a manual completion stamp, returning the plan to its date-derived
+    bucket (Upcoming/Active/Completed) on the Plan list. Inverse of
+    `mark_plan_complete`; same cross-user guard + redirect."""
+    db = get_db()
+    uid = current_user_id()
+    db.execute(
+        "UPDATE plan_versions SET completed_at = NULL "
+        "WHERE id = ? AND user_id = ?",
+        (plan_version_id, uid),
+    )
+    db.commit()
+    flash("Plan reopened.", 'success')
+    return redirect(url_for('plans.list_plans'))
+
+
 @bp.route('/<int:plan_version_id>/progress', methods=['GET'])
 def plan_progress(plan_version_id: int):
     """Render the generation progress screen. Its JS polls

@@ -1,9 +1,12 @@
-{# Redesign §11 — Plans · history.
-   Migrates the training-plans list onto the new shell. Grounded in the
-   legacy `training_plans` model (active + archived), so the artboard's
-   version-history table — which belongs to the separate `plan_versions`
-   model — is intentionally not rendered here. Zero plans → the shared
-   "You're at the start line." empty (§26 copy). #}
+{# Plans · history.
+   Surfaces BOTH plan models on one screen:
+   - AI-generated plans (the `plan_versions` model, written by the Layer 4
+     generator). Live generations are bucketed by their scope dates against
+     today into Generating / Upcoming / Active / Completed. A manual
+     `completed_at` stamp forces a plan into Completed regardless of dates;
+     failed + superseded generations are filtered out upstream in the route.
+   - Legacy imported plans (the `training_plans` model: imported + archived).
+   Zero of either → the shared "You're at the start line." empty (§26 copy). #}
 {% extends 'base.html' %}
 {% set nav_active = 'plan' %}
 {% block title %}Plans{% endblock %}
@@ -17,22 +20,95 @@
 </a>
 {% endblock %}
 
+{% macro gen_card(c) %}
+<div class="card plan-card">
+  <div class="plan-card-head">
+    <div class="pl-id">
+      <div class="pl-title">
+        <a class="pl-name" href="{{ url_for('plan_create.view_plan', plan_version_id=c.id) }}">Generated plan</a>
+        <span class="chip accent">Pattern {{ c.pattern }}</span>
+        {% if c.generation_status == 'generating' %}<span class="chip solid">Generating…</span>{% endif %}
+        {% if c.completed_at %}<span class="chip solid">Marked complete</span>{% endif %}
+        <span class="chip solid">{{ c.created_via|replace('_', ' ') }}</span>
+      </div>
+      <p class="pl-meta mono">
+        {{ c.scope_start_date }} → {{ c.scope_end_date }}{% if c.generation_status == 'ready' %} · {{ c.session_count or 0 }} session{{ '' if c.session_count == 1 else 's' }}{% endif %}
+      </p>
+    </div>
+    <div class="pl-actions">
+      {% if c.generation_status == 'generating' %}
+      <a class="btn btn-ghost btn-sm" href="{{ url_for('plan_create.plan_progress', plan_version_id=c.id) }}">View progress</a>
+      {% else %}
+      <a class="btn btn-primary btn-sm" href="{{ url_for('plan_create.view_plan', plan_version_id=c.id) }}">Open</a>
+      {% if c.completed_at %}
+      <form method="post" action="{{ url_for('plan_create.reopen_plan', plan_version_id=c.id) }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button type="submit" class="btn btn-ghost btn-sm">Reopen</button>
+      </form>
+      {% else %}
+      <form method="post" action="{{ url_for('plan_create.mark_plan_complete', plan_version_id=c.id) }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button type="submit" class="btn btn-ghost btn-sm">Mark complete</button>
+      </form>
+      {% endif %}
+      {% endif %}
+    </div>
+  </div>
+</div>
+{% endmacro %}
+
 {% block content %}
-{% if plans or archived %}
+{% if plans or archived or gen_generating or gen_upcoming or gen_active or gen_completed %}
 <div class="dash-head">
   <div class="races-intro">
-    <p class="eyebrow accent">● Plan history · {{ plans|length }} active{% if archived %} · {{ archived|length }} archived{% endif %}</p>
+    <p class="eyebrow accent">● Plan history{% if gen_active %} · {{ gen_active|length }} active{% endif %}{% if gen_upcoming %} · {{ gen_upcoming|length }} upcoming{% endif %}{% if gen_completed %} · {{ gen_completed|length }} completed{% endif %}</p>
     <h1 class="page-title">Your plans.</h1>
-    <p class="page-sub">Every plan periodizes back from a race. Open one to see the week grid; archive
-      the ones you're done with — they stay viewable.</p>
+    <p class="page-sub">Every plan periodizes back from a race. Open one to see the week grid;
+      mark a plan complete when you're done with it — it stays viewable.</p>
   </div>
 </div>
 
 <div class="stack">
 
+  {% if gen_generating %}
+  <section class="plan-section">
+    <p class="eyebrow">Generating · {{ gen_generating|length }}</p>
+    <div class="plan-cards">
+      {% for c in gen_generating %}{{ gen_card(c) }}{% endfor %}
+    </div>
+  </section>
+  {% endif %}
+
+  {% if gen_upcoming %}
+  <section class="plan-section">
+    <p class="eyebrow">Upcoming · {{ gen_upcoming|length }}</p>
+    <div class="plan-cards">
+      {% for c in gen_upcoming %}{{ gen_card(c) }}{% endfor %}
+    </div>
+  </section>
+  {% endif %}
+
+  {% if gen_active %}
+  <section class="plan-section">
+    <p class="eyebrow">Active · {{ gen_active|length }}</p>
+    <div class="plan-cards">
+      {% for c in gen_active %}{{ gen_card(c) }}{% endfor %}
+    </div>
+  </section>
+  {% endif %}
+
+  {% if gen_completed %}
+  <section class="plan-section">
+    <p class="eyebrow">Completed · {{ gen_completed|length }}</p>
+    <div class="plan-cards">
+      {% for c in gen_completed %}{{ gen_card(c) }}{% endfor %}
+    </div>
+  </section>
+  {% endif %}
+
   {% if plans %}
   <section class="plan-section">
-    <p class="eyebrow">Active · {{ plans|length }}</p>
+    <p class="eyebrow">Imported · {{ plans|length }}</p>
     <div class="plan-cards">
       {% for p in plans %}
       {% set total = p.item_count or 0 %}
