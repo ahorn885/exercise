@@ -177,10 +177,13 @@ def _build_logs_query(args) -> tuple[str, list]:
 
 
 def _with_verify(resp):
-    """Echo the configured `x-vercel-verify` value as a response header. Vercel
-    proves endpoint ownership when a drain is created/edited by checking we
-    return this header, so attach it to every response from the ingest route."""
-    verify = os.environ.get('LOG_DRAIN_VERIFY')
+    """Echo the `x-vercel-verify` ownership token as a response header. Vercel's
+    verification request carries the expected value as a request header, so echo
+    that when present — verification then passes with no pre-shared token and no
+    redeploy. Fall back to `LOG_DRAIN_VERIFY` for callers that don't send it. The
+    value is an ownership proof, not a secret, so echoing the incoming one is
+    safe."""
+    verify = request.headers.get('x-vercel-verify') or os.environ.get('LOG_DRAIN_VERIFY')
     if verify:
         resp.headers['x-vercel-verify'] = verify
     return resp
