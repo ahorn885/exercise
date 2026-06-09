@@ -15,7 +15,11 @@ from __future__ import annotations
 import inspect
 import json
 
-from plan_sessions_repo import load_progress_blocks, snapshot_progress_blocks
+from plan_sessions_repo import (
+    load_plan_sessions_as_blocks,
+    load_progress_blocks,
+    snapshot_progress_blocks,
+)
 
 
 class _FakeRow(dict):
@@ -134,6 +138,141 @@ def test_load_hydrates_orders_and_tolerates_json_string():
     assert "FROM plan_progress_blocks" in sql
     assert "ORDER BY phase_idx" in sql
     assert params == (42,)
+
+
+# ─── load_plan_sessions_as_blocks ────────────────────────────────────────────
+
+
+def _payload_for_session(
+    *,
+    session_id: str,
+    d: str,
+    phase_name: str | None = "Base",
+    week_in_phase: int = 1,
+    discipline_id: str = "D-run",
+    discipline_name: str = "Running",
+    intensity_summary: str = "easy",
+    duration_min: int = 45,
+    coaching_intent: str = "Easy aerobic.",
+) -> str:
+    """Round-trippable PlanSession JSON for the load-as-blocks fallback test.
+    Built as a string (the same shape `plan_sessions.payload_json` carries
+    on the SQLite shim path) so the hydration path inside
+    `load_plan_sessions_by_version` is exercised end-to-end."""
+    pm = (
+        {
+            "phase_name": phase_name,
+            "week_in_phase": week_in_phase,
+            "total_weeks_in_phase": 4,
+            "intended_volume_band": [5.0, 7.0],
+            "intended_intensity_distribution": {"Z2": 1.0},
+        }
+        if phase_name is not None
+        else None
+    )
+    payload = {
+        "session_id": session_id,
+        "plan_version_id": 46,
+        "date": d,
+        "day_of_week": "Mon",
+        "session_index_in_day": 0,
+        "time_of_day": "morning",
+        "kind": "cardio",
+        "discipline_id": discipline_id,
+        "discipline_name": discipline_name,
+        "locale_id": "home",
+        "locale_name": "Home",
+        "duration_min": duration_min,
+        "intensity_summary": intensity_summary,
+        "cardio_blocks": [
+            {
+                "block_kind": "main_set",
+                "duration_min": duration_min,
+                "intensity_zone": "Z2",
+                "intensity_target": {"hr_bpm_low": 125, "hr_bpm_high": 140},
+                "instructions": "Steady easy.",
+            }
+        ],
+        "strength_exercises": None,
+        "rest_reason": None,
+        "phase_metadata": pm,
+        "session_notes": "n",
+        "coaching_intent": coaching_intent,
+        "coaching_flags": [],
+        "is_ad_hoc": False,
+        "ad_hoc_request_payload": None,
+    }
+    return json.dumps(payload)
+
+
+def test_load_as_blocks_groups_by_phase_and_week():
+    """#333 — sessions group into one block per (phase_name, week_in_phase);
+    blocks preserve session-emission order (first-seen wins in dict)."""
+    conn = _FakeConn()
+    conn.queue(rows=[
+        {"payload_json": _payload_for_session(
+            session_id="s1", d="2026-06-01",
+            phase_name="Base", week_in_phase=1)},
+        {"payload_json": _payload_for_session(
+            session_id="s2", d="2026-06-03",
+            phase_name="Base", week_in_phase=1)},
+        {"payload_json": _payload_for_session(
+            session_id="s3", d="2026-06-08",
+            phase_name="Base", week_in_phase=2)},
+        {"payload_json": _payload_for_session(
+            session_id="s4", d="2026-06-15",
+            phase_name="Build", week_in_phase=1)},
+    ])
+
+    blocks = load_plan_sessions_as_blocks(conn, plan_version_id=46)
+
+    assert [b["phase_name"] for b in blocks] == [
+        "Base · week 1", "Base · week 2", "Build · week 1",
+    ]
+    assert [b["phase_idx"] for b in blocks] == [0, 1, 2]
+    assert [len(b["sessions"]) for b in blocks] == [2, 1, 1]
+    # Per-session shape matches what plan_inspect.html reads off
+    # plan_progress_blocks.sessions_json entries.
+    s0 = blocks[0]["sessions"][0]
+    assert s0["date"] == "2026-06-01"
+    assert s0["discipline_name"] == "Running"
+    assert s0["kind"] == "cardio"
+    assert s0["duration_min"] == 45
+    assert s0["intensity_summary"] == "easy"
+    assert s0["coaching_intent"] == "Easy aerobic."
+    # Per-pass signals are absent from this path — the template guards on them.
+    assert blocks[0]["synthesis_metadata"] is None
+    assert blocks[0]["snapshot_at"] is None
+
+
+def test_load_as_blocks_no_sessions_returns_empty():
+    """No persisted sessions → empty list; route surfaces the "even the fallback
+    table is empty" copy."""
+    conn = _FakeConn()
+    conn.queue(rows=[])
+    assert load_plan_sessions_as_blocks(conn, plan_version_id=999) == []
+
+
+def test_load_as_blocks_buckets_no_phase_metadata_last():
+    """Sessions with phase_metadata=None (Pattern B refresh / single_session_
+    synthesize / ad-hoc) get one trailing `(no phase metadata)` block — not
+    dropped, but not promoted ahead of named phases either."""
+    conn = _FakeConn()
+    conn.queue(rows=[
+        {"payload_json": _payload_for_session(
+            session_id="s1", d="2026-06-01", phase_name="Base", week_in_phase=1)},
+        {"payload_json": _payload_for_session(
+            session_id="s2", d="2026-06-02", phase_name=None)},
+        {"payload_json": _payload_for_session(
+            session_id="s3", d="2026-06-03", phase_name=None)},
+    ])
+
+    blocks = load_plan_sessions_as_blocks(conn, plan_version_id=46)
+
+    assert [b["phase_name"] for b in blocks] == [
+        "Base · week 1", "(no phase metadata)",
+    ]
+    assert len(blocks[1]["sessions"]) == 2
 
 
 # ─── determinism guardrail ───────────────────────────────────────────────────

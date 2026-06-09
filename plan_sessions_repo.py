@@ -261,6 +261,72 @@ def load_progress_blocks(db: Any, plan_version_id: int) -> list[dict[str, Any]]:
     return out
 
 
+def load_plan_sessions_as_blocks(
+    db: Any, plan_version_id: int
+) -> list[dict[str, Any]]:
+    """#333 — reconstruct the per-block inspect-view shape from `plan_sessions`
+    for a terminal (`ready`/`failed`) plan whose `plan_progress_blocks` snapshot
+    is empty (the snapshot is the in-flight signal; a finished plan's sessions
+    live in `plan_sessions`, so the #321/#323 inspect view goes blank exactly
+    when you want to audit the result). Groups sessions by
+    `(phase_metadata.phase_name, week_in_phase)` so the per-phase composition
+    a finished plan_create plan emitted is still legible. Sessions with no
+    `phase_metadata` (Pattern B refresh, single_session_synthesize, ad-hoc)
+    bucket into a trailing `(no phase metadata)` block so they're not dropped.
+
+    Returns dicts in `load_progress_blocks`'s shape so the inspect template
+    renders them identically; `synthesis_metadata` and `snapshot_at` are None
+    because those signals only exist in the per-pass snapshot, not in the
+    persisted session payload. `phase_idx` is a synthetic ordinal — it does
+    NOT correspond to the orchestrator's `phase_idx` (which is per-week-block
+    inside the cache layer); the name carries the meaningful identity here.
+    """
+    sessions = load_plan_sessions_by_version(db, plan_version_id)
+    if not sessions:
+        return []
+    groups: dict = {}
+    no_phase: list[PlanSession] = []
+    for s in sessions:
+        if s.phase_metadata is None:
+            no_phase.append(s)
+            continue
+        key = (s.phase_metadata.phase_name, s.phase_metadata.week_in_phase)
+        groups.setdefault(key, []).append(s)
+    blocks: list[dict[str, Any]] = []
+    for (phase_name, week), session_list in groups.items():
+        blocks.append({
+            "phase_idx": len(blocks),
+            "phase_name": f"{phase_name} · week {week}",
+            "sessions": [_session_to_inspect_dict(s) for s in session_list],
+            "synthesis_metadata": None,
+            "snapshot_at": None,
+        })
+    if no_phase:
+        blocks.append({
+            "phase_idx": len(blocks),
+            "phase_name": "(no phase metadata)",
+            "sessions": [_session_to_inspect_dict(s) for s in no_phase],
+            "synthesis_metadata": None,
+            "snapshot_at": None,
+        })
+    return blocks
+
+
+def _session_to_inspect_dict(s: PlanSession) -> dict[str, Any]:
+    """Shape a `PlanSession` to match the per-row fields the admin inspect
+    template reads off `plan_progress_blocks.sessions_json` entries (date /
+    discipline_name / kind / duration_min / intensity_summary /
+    coaching_intent)."""
+    return {
+        "date": s.date.isoformat(),
+        "discipline_name": s.discipline_name,
+        "kind": s.kind,
+        "duration_min": s.duration_min,
+        "intensity_summary": s.intensity_summary,
+        "coaching_intent": s.coaching_intent,
+    }
+
+
 def load_prior_plan_session_window(
     db: Any,
     user_id: int,
