@@ -236,6 +236,7 @@ from routes.nudges import bp as nudges_bp, get_active_nudges
 from routes.ad_hoc_workouts import bp as ad_hoc_workouts_bp
 from routes.plan_create import bp as plan_create_bp
 from routes.plan_refresh import bp as plan_refresh_bp
+from routes.logs import bp as logs_bp
 
 app.register_blueprint(dashboard_bp)
 app.register_blueprint(training_bp)
@@ -272,6 +273,7 @@ app.register_blueprint(nudges_bp)
 app.register_blueprint(ad_hoc_workouts_bp)
 app.register_blueprint(plan_create_bp)
 app.register_blueprint(plan_refresh_bp)
+app.register_blueprint(logs_bp)
 # COROS pushes workout-summary data to /coros/webhook from their servers,
 # not from a browser session, so the global CSRF protection doesn't apply
 # (and would 400 every push). Auth is via the `client` + `secret` request
@@ -291,6 +293,11 @@ csrf.exempt(strava_bp)
 csrf.exempt(whoop_bp)
 csrf.exempt(trainingpeaks_bp)
 csrf.exempt(zwift_bp)
+# Vercel POSTs log batches to /admin/logs/drain from its log-drain servers,
+# not a browser session — same CSRF rationale as the provider webhooks. Auth
+# is the x-vercel-signature HMAC-SHA1 verified against LOG_DRAIN_SECRET inside
+# the blueprint (issue #350).
+csrf.exempt(logs_bp)
 
 
 # ── Auth gate ────────────────────────────────────────────────────────────────
@@ -332,6 +339,12 @@ _AUTH_EXEMPT_ENDPOINTS = {
     # — it must be exempt from this global session wall or the wall shadows the
     # token check and the endpoint is unreachable except by a logged-in admin.
     'admin.plan_diag',
+    # Vercel Log Drain sink + its token-authed reader (issue #350). The drain
+    # ingest is verified by the x-vercel-signature HMAC; the query endpoint by
+    # the same DIAG_TOKEN gate as plan_diag. Both must bypass the session wall:
+    # Vercel carries no cookie, and an agent reads via token, not a browser.
+    'logs.drain_ingest',
+    'logs.query_logs',
 }
 
 

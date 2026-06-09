@@ -2095,6 +2095,34 @@ _PG_MIGRATIONS = [
     # (race_route_locale_equipment is a separate table).
     "DROP TABLE IF EXISTS locale_equipment",
     "ALTER TABLE locale_profiles DROP COLUMN IF EXISTS equipment",
+    # ── Vercel Log Drain sink (issue #350) ───────────────────────────────
+    # Hard-kill backstop the plan-diag endpoint structurally can't be: a
+    # gateway 504 / OOM kills the lambda before any `except` runs, so
+    # generation_traceback stays NULL. A Vercel Log Drain POSTs runtime
+    # stdout/stderr (+ the proxy request log carrying the 504) to
+    # /admin/logs/drain; we persist each entry verbatim and query it past the
+    # login wall via /admin/logs (routes/logs.py). `raw` is TEXT JSON like the
+    # webhook_events sink — full fidelity, no truncation. log_id is UNIQUE so
+    # the ingest ON CONFLICT dedups drain retries.
+    """CREATE TABLE IF NOT EXISTS vercel_logs (
+        id SERIAL PRIMARY KEY,
+        log_id TEXT UNIQUE,
+        ts TIMESTAMP,
+        source TEXT,
+        log_type TEXT,
+        level TEXT,
+        deployment_id TEXT,
+        request_id TEXT,
+        status_code INTEGER,
+        method TEXT,
+        path TEXT,
+        message TEXT,
+        raw TEXT NOT NULL,
+        received_at TIMESTAMP DEFAULT NOW()
+    )""",
+    "CREATE INDEX IF NOT EXISTS idx_vercel_logs_ts ON vercel_logs (ts DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_vercel_logs_status ON vercel_logs (status_code) WHERE status_code >= 400",
+    "CREATE INDEX IF NOT EXISTS idx_vercel_logs_request ON vercel_logs (request_id)",
 ]
 
 _CLOTHING_SEEDS = [
