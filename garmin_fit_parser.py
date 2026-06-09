@@ -1113,23 +1113,27 @@ _METRICS_SLEEP_SCORE_SIMPLE_MSG = 330
 #   tracks INVERSELY with sleep quality (96/65/58) — likely sleep onset
 #   latency or pre-sleep disturbance, not respiration. Not surfaced.
 #
-# Unresolved — Deep / Light / REM minute split (`field_5 / field_6 / field_7`):
-#   May 28 (8h12m, score 96): 23412736 / 11425109 /  3543590
-#   May 30 (4h57m, score 65):  7165269 / 35711660 /  3440511
-#   Jun  2 (---  , score 58):  9797632 / 36590932 /  2558531
-# Suspicious: f5 is the LARGEST on the good-sleep night but f6 is largest on
-# the two short/fragmented nights. Light sleep is normally the biggest stage
-# every night, so the field positions don't correspond to fixed stage types
-# in any simple way. None of these decoders fit consistently across the 3
-# days: raw seconds, /1000 ms→s, /16384, /65536 (16.16 fixed-point minutes),
-# upper-16 / lower-16 splits, per-byte packs. `_sleep_stage_decode_candidates`
-# below emits the most plausible numeric interpretations side by side; the
-# FIT inspector surfaces it so the next reference day can be compared to
-# Connect's Deep/Light/REM minutes without re-deriving the candidates.
-# `find_sleep_stage_decoder` is an inverse solver — once Andy can hand us
-# at least 2 days of (f5, f6, f7, deep_min, light_min, rem_min) tuples from
-# Connect, it brute-forces (scale × permutation) and returns the matching
-# decoder.
+# Confirmed in PR #489 (Andy's Jun 9 Connect data):
+#   field_7              = hrv_overnight_avg_ms × 65536
+#                          May 28: 3543590 / 65536 = 54.07 ms (Connect: 54) ✓
+#                          May 30: 3440511 / 65536 = 52.50 ms (Connect: 52) ✓
+#                          Jun  2: 2558531 / 65536 = 39.04 ms (Connect: 39) ✓
+#   Duplicate of `_HRV_STATUS.fit` `[370] field_1` — not surfaced from here,
+#   parser stays single-source on the HRV file. But it locks the 16.16
+#   fixed-point encoding for this message family, so other unmapped fields
+#   probably use the same /65536 scale.
+#
+# Retracted in PR #489 — Deep / Light / REM split was NOT in field_5/6/7:
+#   The Jun 9 ground-truth data from Connect (May 30: D=70 L=180 R=47;
+#   Jun 2: D=75 L=170 R=50) ruled out every scalar+permutation candidate.
+#   Combined with the f7=HRV confirmation, f5/f6 are also not stage minutes —
+#   they're some other per-night metric we haven't named yet. After /65536:
+#   f5 = 357.25 / 109.33 / 149.50 min; f6 = 174.33 / 544.92 / 558.34 min.
+#   The stage split lives in some other field position of `[384]` —
+#   field_3, _8, _10, _12, _13, _14, _15 are unprobed. `_dump_fit` now
+#   surfaces every field plus the `_sleep_stage_decode_candidates` block,
+#   so the next pass can grep the dump for the known stage minute values
+#   (70 / 180 / 47 on May 30) across every field.
 _METRICS_SLEEP_SUMMARY_MSG = 384
 
 # Sleep-stage decode candidates for `[384] field_5/6/7`. None of these is

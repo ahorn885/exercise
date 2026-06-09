@@ -551,27 +551,40 @@ def test_find_sleep_stage_decoder_locates_a_known_decoder_under_a_permutation():
     assert top['max_error_min'] <= 0.5
 
 
-def test_find_sleep_stage_decoder_returns_empty_when_no_decoder_fits():
-    """The actual 3-day reference set in `_METRICS_SLEEP_SUMMARY_MSG`'s
-    docstring doesn't admit a scalar-decoder fit (we'd already have shipped
-    the decode if it did). This test pins that — protects against a
-    drive-by 'this looks like minutes' change slipping through."""
+def test_find_sleep_stage_decoder_returns_empty_for_actual_connect_ground_truth():
+    """Pinned with Andy's Jun 9 Garmin Connect screenshots — the f5/f6/f7
+    fields are NOT the Deep/Light/REM stage minutes (and the f7 = HRV
+    discovery in `_METRICS_SLEEP_SUMMARY_MSG`'s comment explains why: f7
+    is overnight HRV avg × 65536, not REM minutes). Future hands-off
+    changes to the decoder list shouldn't accidentally surface a fake
+    'fit' for the stage split — this test pins that."""
     from garmin_fit_parser import find_sleep_stage_decoder
-    # Reference set uses placeholder Deep/Light/REM minutes — without
-    # Connect's exact stage minutes from Andy we don't know the truth, but
-    # we DO know no scalar decoder can fit because f5 is the largest field
-    # on May 28 while f6 is the largest on May 30 + Jun 2. Any assignment
-    # of fixed stage positions will mis-rank Light on one of those nights.
-    # We pick made-up stage minutes that respect Light > Deep + REM on each
-    # night (i.e., physically plausible) and confirm the solver finds no
-    # decoder fitting within a tight tolerance.
     reference = [
-        # f5,        f6,       f7,        deep, light, rem
-        (23412736, 11425109, 3543590,    90,  295,  103),  # May 28, 8h12m
-        ( 7165269, 35711660, 3440511,    40,  195,   54),  # May 30, 4h57m
-        ( 9797632, 36590932, 2558531,    50,  200,   60),  # Jun 2,  ?
+        # f5,        f6,       f7,       deep, light, rem
+        ( 7165269, 35711660, 3440511,    70,   180,   47),  # May 30, 4h57m
+        ( 9797632, 36590932, 2558531,    75,   170,   50),  # Jun  2, 4h55m
     ]
     assert find_sleep_stage_decoder(reference, tolerance_min=2.0) == []
+
+
+def test_metrics_384_field_7_decodes_as_hrv_overnight_avg_ms():
+    """Confirms the f7 = HRV finding from Andy's Jun 9 Connect data: every
+    night, `[384] field_7 / 65536` rounds to Connect's overnight HRV. f7
+    is a duplicate of `[370] field_1` from `_HRV_STATUS.fit` — the parser
+    stays single-source on the HRV file, so we don't write it from here.
+    But the encoding is locked, which is what justifies the 16.16
+    fixed-point hypothesis for the rest of the message family."""
+    from garmin_fit_parser import _sleep_stage_decode_candidates
+
+    def hrv_from_f7(raw_f7):
+        for c in _sleep_stage_decode_candidates(0, 0, raw_f7):
+            if c['decoder'] == 'fixed_point_min':
+                return round(c['f7_min'])
+        raise AssertionError('fixed_point_min decoder is missing')
+
+    assert hrv_from_f7(3543590) == 54  # May 28 ↔ Connect 54 ms
+    assert hrv_from_f7(3440511) == 52  # May 30 ↔ Connect 52 ms (52.50 rounds to 52)
+    assert hrv_from_f7(2558531) == 39  # Jun  2 ↔ Connect 39 ms
 
 
 def test_find_sleep_stage_decoder_needs_at_least_two_nights():
