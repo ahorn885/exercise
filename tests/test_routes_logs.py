@@ -18,13 +18,33 @@ from datetime import datetime, timezone
 from flask import Flask, make_response
 
 from routes.logs import (
+    _DRAIN_PATH,
     _build_logs_query,
     _coerce_status,
     _coerce_ts,
     _extract,
+    _is_drain_self_log,
     _verify_signature,
     _with_verify,
 )
+
+
+# ─── _is_drain_self_log (feedback-loop guard) ────────────────────────────────
+
+
+class TestIsDrainSelfLog:
+    """The drain's own delivery POSTs emit a proxy request log that the next
+    batch would re-ingest forever — `_is_drain_self_log` flags those so ingest
+    drops them."""
+
+    def test_drain_path_is_self_log(self):
+        assert _is_drain_self_log(_DRAIN_PATH) is True
+        assert _is_drain_self_log('/admin/logs/drain') is True
+
+    def test_other_paths_kept(self):
+        assert _is_drain_self_log('/plans/v2/48/generate') is False
+        assert _is_drain_self_log('/admin/logs') is False  # the reader, not a loop
+        assert _is_drain_self_log(None) is False  # stdout lines carry no path
 
 
 # ─── _with_verify (Vercel ownership handshake) ───────────────────────────────

@@ -39,6 +39,20 @@ bp = Blueprint('logs', __name__, url_prefix='/admin/logs')
 _DEFAULT_LIMIT = 100
 _MAX_LIMIT = 1000
 
+# The drain's own ingest path. Every delivery POST here emits a proxy request
+# log that the next batch would ship straight back — a self-sustaining feedback
+# loop that grows the table and drowns real app logs. We drop these at ingest
+# (see drain_ingest) so the table never accumulates the drain's own traffic.
+_DRAIN_PATH = '/admin/logs/drain'
+
+
+def _is_drain_self_log(path: str | None) -> bool:
+    """True for the drain endpoint's own request logs — the self-referential
+    entries we skip at ingest to break the feedback loop. Stdout the handler
+    prints carries no `path`, so those still persist; only the proxy request
+    log for the ingest route itself is dropped."""
+    return path == _DRAIN_PATH
+
 
 def _verify_signature(raw_body: bytes, supplied_sig: str | None,
                       secret: str | None) -> bool:
@@ -220,11 +234,17 @@ def drain_ingest():
 
     db = get_db()
     inserted = 0
+    skipped = 0
     try:
         for entry in entries:
             if not isinstance(entry, dict):
                 continue
             cols = _extract(entry)
+            if _is_drain_self_log(cols['path']):
+                # The drain logging its own deliveries — drop, don't persist,
+                # or the table fills with self-referential noise.
+                skipped += 1
+                continue
             cur = db.execute(
                 "INSERT INTO vercel_logs (log_id, ts, source, log_type, level, "
                 "deployment_id, request_id, status_code, method, path, message, raw) "
@@ -248,7 +268,8 @@ def drain_ingest():
             jsonify(ok=False, error='persist_failed'), 500))
 
     return _with_verify(make_response(
-        jsonify(ok=True, received=len(entries), inserted=inserted), 200))
+        jsonify(ok=True, received=len(entries), inserted=inserted,
+                skipped=skipped), 200))
 
 
 @bp.route('', methods=['GET'])
