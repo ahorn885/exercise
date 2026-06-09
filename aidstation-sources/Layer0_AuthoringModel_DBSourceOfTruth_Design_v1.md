@@ -87,7 +87,7 @@ Keep `(etl_version, etl_run_at, superseded_at)` and the supersede-before-insert 
 1. **Genesis snapshot.** One final clean ETL run of v13/v19/Vocab-v2 (we're mid-flight at `0A/0B/0C-v1.5.0`); the committed `etl/output/layer0_etl_v1.5.0.sql` is the reproducible genesis artifact. Declare the DB canonical from here. *(Mostly already done — v1.5.0 is live on prod.)*
 2. **Port the validators** → `validate_layer0` + CI wire. **This is slice 1 and the first thing to build.** No authoring change ships before the gate exists.
 3. **Establish `etl/migrations/layer0/`** + the migration convention (§5.1). First real DB-native edit (e.g. the #476 D-007 cleanup or #477 discipline-ID split) becomes the proof migration instead of a v14 workbook.
-4. **Retire the extractors + xlsx.** Once 2–3 edits have gone through migrations cleanly, freeze `etl/layer0/extractors/`, `run.py`, `emit_sql.py`, and `etl/sources/*.xlsx` into an archive (the way `Project_Backlog_vN.md` was frozen). Resolve the test pins first (§7).
+4. **Retire the extractors + xlsx.** Once 2–3 edits have gone through migrations cleanly, freeze `etl/layer0/extractors/`, `run.py`, `emit_sql.py`, and the two remaining workbooks (`Sports_Framework_v13.xlsx`, `AR_Exercise_Database_v19.xlsx`) into an archive (the way `Project_Backlog_vN.md` was frozen). The old-version test pins are already resolved (§7.2 — tests now run against v13, the live source).
 5. **(Optional) DB→xlsx export** (decision B) and/or **admin UI** (decision A).
 
 ## 7. What gets deleted / retired
@@ -103,10 +103,12 @@ Keep `(etl_version, etl_run_at, superseded_at)` and the supersede-before-insert 
 
 All remain recoverable from git history; this only de-clutters the working tree and kills the "which workbook is real?" ambiguity.
 
-### 7.2 Held back — pinned by live code (delete as part of phase 4, not now)
+### 7.2 Older versions retired in this PR (the deliberate pass — were pinned by live code)
 
-- `etl/sources/Sports_Framework_v11.xlsx` — read by `etl/tests/test_discipline_canon.py` + `etl/tests/test_v11_parsers.py`. Deleting it reddens the suite. **Blocker to full retirement:** these parser/canon assertions are pinned to v11 source shape; retargeting them to v13 changes the asserted values, so it needs a deliberate pass, not a silent path swap.
-- `etl/sources/Sports_Framework_v10.xlsx` — read by `etl/sources/migrate_discipline_ids_R6.py` (already-executed one-off R6 renumber). Archive the script + v10 together in phase 4.
+- `etl/sources/Sports_Framework_v11.xlsx` — was read by `etl/tests/test_discipline_canon.py` + `test_v11_parsers.py`. Both repointed to **v13** (the live production source — the ETL already runs v13 through these exact extractors, so this modernizes the drift detector rather than weakening it). All 59 tests pass against v13 unchanged; the pinned counts (89 substitutes, 3 training gaps, 1 cross-sport property) held, confirming those sheets didn't change v11→v13. `test_v11_parsers.py` renamed `test_sports_framework_parsers.py` (version-agnostic). Three stale `etl/layer0` docstrings that named v11 as "the source" de-dangled to "the Sports Framework workbook".
+- `etl/sources/Sports_Framework_v10.xlsx` + `etl/sources/migrate_discipline_ids_R6.py` — the already-executed one-off R6 renumber (produced v11 from v10). Both deleted; recoverable from git history.
+
+CI is unaffected — the GitHub Actions Python job runs `pytest tests/` only, not `etl/tests/`; the repoint keeps the local ETL suite green regardless.
 
 ### 7.3 Current authoritative sources (untouched)
 

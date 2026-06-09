@@ -1,7 +1,7 @@
 """Canon coverage + correctness, validated against the real source xlsx.
 
 These tests run the actual `sports_framework` extractors over
-`Sports_Framework_v11.xlsx` (no DB needed) and assert that the discipline
+`Sports_Framework_v13.xlsx` (no DB needed) and assert that the discipline
 canon resolves *every* (id, name) the source produces — so drift can never
 silently reappear: a new unmapped variant in the source would fail
 `test_every_source_id_is_accounted_for`.
@@ -17,7 +17,7 @@ from etl.layer0 import discipline_canon as dc
 from etl.layer0.extractors import sports_framework as sf
 
 _XLSX = os.path.join(
-    os.path.dirname(os.path.dirname(__file__)), "sources", "Sports_Framework_v11.xlsx"
+    os.path.dirname(os.path.dirname(__file__)), "sources", "Sports_Framework_v13.xlsx"
 )
 
 

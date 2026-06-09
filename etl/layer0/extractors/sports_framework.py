@@ -1,4 +1,4 @@
-"""Layer 0 ETL — extractor for Sports_Framework_v11.xlsx (source 0A).
+"""Layer 0 ETL — extractor for the Sports Framework workbook (source 0A).
 
 One function per sheet. Each returns a list of dicts ready for INSERT.
 Parsing rules per spec §4.2–§4.15 (Layer0_ETL_Spec_v3.md).
