@@ -339,3 +339,195 @@ class TestLayer3ASmoke:
             "expected at least one data_gap/clamp observation given sparse "
             f"data; got {[o.category for o in payload.notable_observations]}"
         )
+
+
+# ─── §13 regression scenarios 13.2 / 13.3 / 13.6 / 13.10 ────────────────────
+#
+# 13.1 (dense-fit) + 13.4 (sparse-returning) are the two scenarios above.
+# 13.7 (missing primary_sport → Layer3AInputError, no LLM call) is an
+# input-error case covered in tests/test_layer3a_builder.py, so it isn't
+# duplicated in this key-gated module. 13.5 (pregnancy) / 13.8 (model-swap) /
+# 13.9 (volume conflict-flag) are tracked separately (#225) — 13.8 needs a
+# second model and 13.5/13.9 need extra fixture plumbing.
+
+
+def _make_bundle(
+    *,
+    n_workouts: int = 20,
+    providers: bool = True,
+    workout_source: str = "garmin",
+    ratio: float | None = 1.14,
+    zone: str = "sweet_spot",
+    with_sleep: bool = True,
+    sleep_hours: float = 7.5,
+) -> Layer3AIntegrationBundle:
+    """Flexible integration bundle for the §13 scenarios. `providers=False`
+    drops connected providers (manual-log shape); `ratio=None` leaves the
+    combined ACWR unpopulated (sparse shape)."""
+    workouts = [
+        WorkoutRecord(
+            date=_AS_OF.date() - timedelta(days=i),
+            activity="Run" if i % 2 == 0 else "Bike",
+            duration_min=60.0 + (i % 4) * 15.0,
+            distance_mi=6.0 + (i % 4) * 2.0,
+            avg_hr=145 + (i % 3) * 5,
+            source=workout_source,
+        )
+        for i in range(n_workouts)
+    ]
+    sleep = (
+        [
+            SleepRecord(
+                date=_AS_OF.date() - timedelta(days=i),
+                total_sleep_hours=sleep_hours,
+                sleep_quality=8 if i % 2 == 0 else 7,
+                source="polar",
+            )
+            for i in range(14)
+        ]
+        if (with_sleep and providers)
+        else []
+    )
+    combined = (
+        None
+        if ratio is None
+        else ACWREntry(
+            acute_load=round(7.0 * ratio, 2),
+            chronic_load=7.0,
+            ratio=ratio,
+            zone=zone,
+            units="hours",
+        )
+    )
+    provs = (
+        [
+            ProviderStatus(
+                provider="garmin",
+                status="active",
+                last_sync=_AS_OF - timedelta(hours=2),
+                has_recent_workouts=True,
+                has_recent_sleep=False,
+                has_recent_hrv=False,
+            )
+        ]
+        if providers
+        else []
+    )
+    return Layer3AIntegrationBundle(
+        as_of=_AS_OF,
+        recent_workouts=workouts,
+        recent_sleep=sleep,
+        recent_hrv=[],
+        combined_load=CombinedLoadReport(
+            per_discipline={},
+            combined=combined,
+            units="hours",
+            polar_cross_ref=None,
+        ),
+        connected_providers=provs,
+    )
+
+
+class TestLayer3ASmokeScenarios:
+    """§13 regression scenarios beyond 13.1/13.4. Real-LLM, gated on the key."""
+
+    def test_13_2_sparse_new_athlete(self):
+        """§13.2 — new athlete, ~6 weeks history, 8 manual entries, no
+        providers. Expect low trajectory confidence + a data_gap, and an
+        aerobic read no higher than 'good' with non-high confidence."""
+        payload = llm_layer3a_athlete_state(
+            user_id=1,
+            layer1_payload=_make_layer1(
+                years_structured_training=1,
+                peak_weekly_volume_hrs=3.0,
+                pushup_max_reps=None,
+                cycling_ftp_w=None,
+            ),
+            layer2a_payload=_make_layer2a(),
+            integration_bundle=_make_bundle(
+                n_workouts=8, providers=False, workout_source="manual", ratio=None
+            ),
+            as_of=_AS_OF,
+            etl_version_set=_ETL,
+        )
+        assert payload.input_tokens > 0 and payload.output_tokens > 0
+        assert payload.recent_trajectory.confidence == "low"
+        assert payload.current_state.aerobic_capacity.confidence in {"low", "medium"}
+        assert payload.current_state.aerobic_capacity.level in {
+            "low",
+            "moderate",
+            "good",
+            "insufficient_data",
+        }
+        gaps = [o for o in payload.notable_observations if o.category == "data_gap"]
+        assert gaps, "expected a data_gap observation for a sparse new athlete"
+
+    def test_13_3_conflicting_signals(self):
+        """§13.3 — high logged volume + functional-overreach ACWR + short
+        sleep. Expect a solid aerobic read but a fatigue-leaning trajectory
+        and at least one warning/data_hygiene observation."""
+        l1 = _make_layer1()
+        l1.lifestyle.sleep_baseline_hours = 5.5
+        payload = llm_layer3a_athlete_state(
+            user_id=1,
+            layer1_payload=l1,
+            layer2a_payload=_make_layer2a(),
+            integration_bundle=_make_bundle(
+                n_workouts=24, ratio=1.45, zone="non_functional_overreach"
+            ),
+            as_of=_AS_OF,
+            etl_version_set=_ETL,
+        )
+        assert payload.current_state.aerobic_capacity.level in {"good", "strong"}
+        assert payload.recent_trajectory.short_term.direction in {
+            "fatigued",
+            "overreached",
+            "steady",
+        }
+        flagged = [
+            o
+            for o in payload.notable_observations
+            if o.category in {"warning", "data_hygiene"}
+        ]
+        assert flagged, "expected a warning/data_hygiene observation on conflict"
+
+    def test_13_6_no_providers_rich_self_report(self):
+        """§13.6 — rich manual cardio_log (35 entries), no providers. Expect
+        a plausible aerobic read at non-high confidence + a provider-gap
+        data_gap observation, with combined ACWR populated from the log."""
+        payload = llm_layer3a_athlete_state(
+            user_id=1,
+            layer1_payload=_make_layer1(years_structured_training=4),
+            layer2a_payload=_make_layer2a(),
+            integration_bundle=_make_bundle(
+                n_workouts=35, providers=False, workout_source="manual", ratio=1.05
+            ),
+            as_of=_AS_OF,
+            etl_version_set=_ETL,
+        )
+        assert payload.input_tokens > 0
+        assert payload.current_state.aerobic_capacity.confidence in {"low", "medium"}
+        assert payload.recent_trajectory.acwr_status.combined is not None
+        gaps = [o for o in payload.notable_observations if o.category == "data_gap"]
+        assert gaps, "expected a provider-connection data_gap observation"
+
+    def test_13_10_acwr_red_zone(self):
+        """§13.10 — combined ACWR 1.62 (non-functional overreach). Expect a
+        warning observation and a fatigue-leaning short-term trajectory."""
+        payload = llm_layer3a_athlete_state(
+            user_id=1,
+            layer1_payload=_make_layer1(),
+            layer2a_payload=_make_layer2a(),
+            integration_bundle=_make_bundle(
+                n_workouts=24, ratio=1.62, zone="non_functional_overreach"
+            ),
+            as_of=_AS_OF,
+            etl_version_set=_ETL,
+        )
+        warnings = [o for o in payload.notable_observations if o.category == "warning"]
+        assert warnings, "expected a warning observation for a red-zone ACWR"
+        assert payload.recent_trajectory.short_term.direction in {
+            "overreached",
+            "fatigued",
+            "steady",
+        }

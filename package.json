@@ -1,0 +1,13 @@
+{
+  "name": "aidstation-web-tests",
+  "version": "0.0.0",
+  "private": true,
+  "description": "JS test harness for static/app.js — jsdom + the node:test runner. Closes the static/app.js manual-only verification gap (#231).",
+  "type": "module",
+  "scripts": {
+    "test": "node --test tests/js/*.test.mjs"
+  },
+  "devDependencies": {
+    "jsdom": "^25.0.1"
+  }
+}
