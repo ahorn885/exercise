@@ -1,0 +1,75 @@
+name: CI
+
+# Runs the default (stubbed, $0) Python suite + the JS harness on every PR and
+# push to main. The real-LLM smoke suite is gated separately (real-llm-smoke
+# job) so the per-PR run stays free and side-effect-free — the smoke tests
+# skip without ANTHROPIC_API_KEY via the requires_anthropic_api_key marker.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+  schedule:
+    # Nightly real-LLM smoke (06:00 UTC). Only the real-llm-smoke job gates on
+    # the schedule trigger; the unit jobs no-op on schedule.
+    - cron: "0 6 * * *"
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  python-tests:
+    name: Python unit suite (stubbed)
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install deps
+        # pytest is intentionally not in requirements.txt (runtime-lean image).
+        run: pip install -r requirements.txt pytest
+      - name: Run test suite
+        # Real-LLM smoke files skip without ANTHROPIC_API_KEY (not set here).
+        run: python -m pytest tests/ -q
+
+  js-tests:
+    name: JS harness (jsdom)
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+      - run: npm test
+
+  real-llm-smoke:
+    name: Real-LLM smoke (Sonnet 4.6)
+    # Costs real tokens — only on the nightly schedule or a manual dispatch,
+    # never on every PR. Skips cleanly if the secret is unset.
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install deps
+        run: pip install -r requirements.txt pytest
+      - name: Run real-LLM smoke suite
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          python -m pytest -q \
+            tests/test_nl_parser_smoke.py \
+            tests/test_layer3a_smoke.py \
+            tests/test_layer3b_smoke.py \
+            tests/test_layer4_smoke.py

@@ -8,3 +8,6 @@ __pycache__/
 venv/
 .venv/
 .vercel/
+
+# JS test harness (#231)
+node_modules/

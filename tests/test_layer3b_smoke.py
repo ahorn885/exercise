@@ -27,7 +27,7 @@ without false positives.
 
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 
 import pytest
@@ -337,3 +337,177 @@ class TestLayer3BSmoke:
         # No-event endurance block → no blocker HITL expected
         blockers = [h for h in payload.hitl_surface if h.severity == "blocker"]
         assert not blockers, f"unexpected blocker HITL: {[h.item_label for h in blockers]}"
+
+
+# ─── §13 regression scenarios TS-2/3/5/6/7 ──────────────────────────────────
+#
+# TS-1 (AR finisher compressed) + TS-4 (no-event endurance standard) are the
+# two scenarios above. TS-8 (event_date in the past → Layer3BInputError, no
+# LLM call) is an input-error case covered in tests/test_layer3b_builder.py,
+# so it is not duplicated here in the key-gated module.
+
+
+def _race_event_weeks_out(
+    weeks: int,
+    *,
+    name: str = "Test Race",
+    race_format: str = "continuous_multi_day",
+    distance_km: str = "250",
+) -> RaceEventPayload:
+    return RaceEventPayload(
+        race_event_id=1,
+        user_id=1,
+        name=name,
+        event_date=_TODAY + timedelta(weeks=weeks),
+        race_format=race_format,
+        distance_km=Decimal(distance_km),
+        is_target_event=True,
+        event_locale_id="nerstrand-mn",
+        route_locales=[],
+    )
+
+
+class TestLayer3BSmokeScenarios:
+    """§13 regression scenarios beyond TS-1/TS-4. Real-LLM, gated on the key.
+    Assertions are structural + loose-enum to absorb minor model variance."""
+
+    def test_ts2_ar_podium_4_weeks_unrealistic(self):
+        """§13 TS-2 — Podium attempt only 4 weeks out (unrealistic). Expect
+        unrealistic-as-stated viability + a blocker HITL + compressed shape."""
+        payload = llm_layer3b_goal_timeline_viability(
+            user_id=1,
+            layer1_payload=_make_layer1(),
+            layer3a_payload=_make_layer3a(
+                aerobic_level="moderate", strength_level="moderate"
+            ),
+            layer2a_payload=_make_layer2a(),
+            race_event_payload=_race_event_weeks_out(4, name="Short AR"),
+            current_date=_TODAY,
+            etl_version_set=_ETL,
+            goal_outcome="Podium attempt",
+            first_time_at_distance=False,
+            previous_attempts=[],
+        )
+        assert payload.input_tokens > 0 and payload.output_tokens > 0
+        assert payload.mode == "event"
+        assert payload.time_to_event_weeks is not None
+        assert 3 <= payload.time_to_event_weeks <= 5
+        assert payload.goal_viability.viability == "unrealistic-as-stated"
+        blockers = [h for h in payload.hitl_surface if h.severity == "blocker"]
+        assert blockers, "expected a blocker HITL for a 4-week podium goal"
+        assert payload.periodization_shape.mode in {"compressed", "custom"}
+
+    def test_ts3_trail_half_first_time_12_weeks(self):
+        """§13 TS-3 — first-time competitive trail half, 12 weeks out. Expect
+        achievable-with-adjustment + a first-time warning HITL + standard."""
+        payload = llm_layer3b_goal_timeline_viability(
+            user_id=1,
+            layer1_payload=_make_layer1(primary_sport="Trail Running"),
+            layer3a_payload=_make_layer3a(
+                aerobic_level="moderate",
+                strength_level="good",
+                short_term="steady",
+                trajectory_confidence="high",
+            ),
+            layer2a_payload=_make_layer2a(framework_sport="Trail Running"),
+            race_event_payload=_race_event_weeks_out(
+                12, name="Trail Half", distance_km="21"
+            ),
+            current_date=_TODAY,
+            etl_version_set=_ETL,
+            goal_outcome="Compete mid-pack",
+            first_time_at_distance=True,
+            previous_attempts=[],
+        )
+        assert payload.mode == "event"
+        assert payload.goal_viability.viability in {
+            "achievable",
+            "achievable-with-adjustment",
+        }
+        warnings = [h for h in payload.hitl_surface if h.severity == "warning"]
+        assert warnings, "expected a first-time competitive-goal warning HITL"
+        assert payload.periodization_shape.mode in {"standard", "compressed"}
+
+    def test_ts5_no_event_strength_8_weeks_low_base(self):
+        """§13 TS-5 — 8-week no-event strength block from a low strength base
+        (primary sport cycling). Expect achievable-with-adjustment + an
+        extended/longer-base shape; no blocker HITL."""
+        payload = llm_layer3b_goal_timeline_viability(
+            user_id=1,
+            layer1_payload=_make_layer1(primary_sport="Road Cycling"),
+            layer3a_payload=_make_layer3a(
+                strength_level="low", aerobic_level="good"
+            ),
+            layer2a_payload=_make_layer2a(framework_sport="Road Cycling"),
+            race_event_payload=None,
+            current_date=_TODAY,
+            etl_version_set=_ETL,
+            plan_duration_weeks=8,
+            non_event_goal_type="strength",
+        )
+        assert payload.mode == "no-event"
+        assert payload.goal_viability.viability in {
+            "achievable",
+            "achievable-with-adjustment",
+        }
+        assert payload.periodization_shape.mode in {
+            "standard",
+            "extended",
+            "custom",
+        }
+        blockers = [h for h in payload.hitl_surface if h.severity == "blocker"]
+        assert not blockers
+
+    def test_ts6_ultra_prior_dnf_12_weeks(self):
+        """§13 TS-6 — 100-mile ultra Finish with a prior DNF (quad_failure),
+        12 weeks out. Expect achievable-with-adjustment + no blocker (the DNF
+        window is borderline → warning, not blocker)."""
+        payload = llm_layer3b_goal_timeline_viability(
+            user_id=1,
+            layer1_payload=_make_layer1(primary_sport="Trail Running"),
+            layer3a_payload=_make_layer3a(
+                aerobic_level="good", strength_level="moderate"
+            ),
+            layer2a_payload=_make_layer2a(framework_sport="Trail Running"),
+            race_event_payload=_race_event_weeks_out(
+                12, name="100-mile Ultra", distance_km="161"
+            ),
+            current_date=_TODAY,
+            etl_version_set=_ETL,
+            goal_outcome="Finish",
+            first_time_at_distance=False,
+            previous_attempts=[{"outcome": "DNF", "dnf_cause": "quad_failure"}],
+        )
+        assert payload.mode == "event"
+        assert payload.goal_viability.viability in {
+            "achievable",
+            "achievable-with-adjustment",
+        }
+        blockers = [h for h in payload.hitl_surface if h.severity == "blocker"]
+        assert not blockers, "DNF 12-weeks-out should warn, not block"
+        assert payload.periodization_shape.mode in {
+            "standard",
+            "compressed",
+            "extended",
+        }
+
+    def test_ts7_event_one_week_away(self):
+        """§13 TS-7 — event ~1 week out. Expect a compressed taper-anchored
+        shape regardless of goal."""
+        payload = llm_layer3b_goal_timeline_viability(
+            user_id=1,
+            layer1_payload=_make_layer1(),
+            layer3a_payload=_make_layer3a(),
+            layer2a_payload=_make_layer2a(),
+            race_event_payload=_race_event_weeks_out(1, name="Imminent AR"),
+            current_date=_TODAY,
+            etl_version_set=_ETL,
+            goal_outcome="Finish",
+            first_time_at_distance=False,
+            previous_attempts=[{"outcome": "Finished", "dnf_cause": ""}],
+        )
+        assert payload.mode == "event"
+        assert payload.time_to_event_weeks is not None
+        assert payload.time_to_event_weeks <= 2
+        assert payload.periodization_shape.mode in {"compressed", "custom"}
+        assert payload.periodization_shape.start_phase in {"Taper", "Peak"}
