@@ -35,7 +35,10 @@ jobs:
         run: pip install -r requirements.txt pytest
       - name: Run test suite
         # Real-LLM smoke files skip without ANTHROPIC_API_KEY (not set here).
-        run: python -m pytest tests/ -q
+        # Includes etl/tests/ (Layer 0 ETL parsers + discipline canon) —
+        # psycopg2 is present via requirements.txt; these tests read the
+        # source workbooks directly and need no live DB.
+        run: python -m pytest tests/ etl/tests/ -q
 
   js-tests:
     name: JS harness (jsdom)

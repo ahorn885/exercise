@@ -119,7 +119,7 @@ CI is unaffected — the GitHub Actions Python job runs `pytest tests/` only, no
 - **Open decision A** — admin UI now or defer (recommend defer).
 - **Open decision B** — build the DB→xlsx export hedge now or defer (recommend build it at phase 4, cheap insurance against losing bulk review).
 - **Open decision C** — which validators graduate WARN→FAIL (recommend FK + canon + orphan FAIL, rest WARN).
-- **Open item D** — the v11 test pins (§7.2). Concrete blocker to deleting the last old workbook; needs its own small slice.
+- ~~**Open item D** — the v11 test pins~~ ✅ Resolved in #487 (§7.2): tests repointed to v13, v10/v11 deleted.
 - **Open item E** — confirm no downstream assumes Layer 0 versions only advance via a full ETL run (`etl_version_set` pinning / partial-update invalidation). Trigger #3 check.
 
 **Gut check:**
@@ -127,10 +127,17 @@ CI is unaffected — the GitHub Actions Python job runs `pytest tests/` only, no
 - *Biggest risk:* shipping any authoring change before §6.2 (the validator port). Don't reorder — the gate is the prerequisite, not the polish.
 - *What I might be missing:* whether the canon transforms are truly idempotent against already-canonical input. If any extractor is *only* correct on raw-spreadsheet shape, hand-authored canonical rows could diverge from ETL-authored ones. Worth a one-time audit before phase 3.
 
-## 9. Issues to file (on approval)
+## 9. Tracking
 
-- Epic: "Layer 0 authoring model → DB source of truth" (`v2`, `layer:0`, `area:etl`).
-- Sub: `validate_layer0` port + CI wire (slice 1).
-- Sub: `etl/migrations/layer0/` convention + first proof migration.
-- Sub: resolve v11 test pins; archive extractors + xlsx (phase 4).
-- Sub: DB→xlsx export (decision B, if approved).
+Epic filed: **[#488](https://github.com/ahorn885/exercise/issues/488)** — "Retire legacy xlsx foundational docs → DB as source of truth" (`layer:0`, `area:etl`, `v2`). The task checklist lives there. Status as of this PR (#487):
+
+- [x] Prune stale/superseded workbooks; retire v10/v11.
+- [x] Add `etl/tests/` to the CI Python job (see §10).
+- [ ] Slice 1 — `validate_layer0` port + CI wire (the integrity gate; nothing ships before it).
+- [ ] `etl/migrations/layer0/` convention + first proof migration.
+- [ ] Phase 4 — freeze extractors + remaining workbooks (v13/v19).
+- [ ] DB→xlsx export (decision B, if approved).
+
+## 10. CI coverage note (shipped in #487)
+
+The Layer 0 ETL parser + discipline-canon tests (`etl/tests/`) were **not CI-gated** — the GitHub Actions Python job ran `pytest tests/` only. A future change breaking the ETL extractors would have passed CI green. Folded `etl/tests/` into the same job (`pytest tests/ etl/tests/`); `psycopg2` is already installed via `requirements.txt` and the ETL tests read the source workbooks directly (no live DB needed). This is a prerequisite-grade safety net for the rest of the migration — the extractor/canon code is exactly what the later phases will touch and retire.
