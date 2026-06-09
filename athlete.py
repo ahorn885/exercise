@@ -201,8 +201,7 @@ BODY_PART_CONSTRAINTS = {
 del _MC
 
 # D-73 Phase 1.2B (D-51 §3.2a) — health_conditions_log.system_category closed
-# enum per v5 §B.4.1. Layer 1 builder auto-populates 'gi_immune' when
-# food_allergies has an anaphylaxis-tier row (per §B.4.2; storage independent).
+# enum per v5 §B.4.1.
 KNOWN_SYSTEM_CATEGORIES = (
     'cardiac',
     'respiratory',
@@ -231,25 +230,6 @@ KNOWN_MEDICATION_CLASSES = (
     'anticoagulant',
     'other',
 )
-
-# D-73 Phase 1.2B (D-51 §3.2c) — food_allergies enums per v5 §B.
-# 'anaphylaxis' is the trigger for the §B.4.2 auto-populate rule into
-# health_conditions_log (Layer 1 builder; not a write-path DB action).
-KNOWN_ALLERGEN_CATEGORIES = (
-    'tree_nut',
-    'peanut',
-    'dairy',
-    'gluten',
-    'egg',
-    'shellfish',
-    'fish',
-    'soy',
-    'nightshade',
-    'fodmap',
-    'caffeine_sensitivity',
-    'other',
-)
-ALLERGEN_SEVERITIES = ('intolerance', 'allergy', 'anaphylaxis')
 
 # D-73 Phase 1.2B (D-51 §3.3) — athlete_secondary_sports.experience_tier
 # closed enum per v5 §C row 2.

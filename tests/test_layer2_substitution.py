@@ -68,7 +68,6 @@ def _gap(
         proxy_methods=methods or [],
         uncoverable_stimulus=uncoverable or [],
         prescription_note="",
-        discipline_relevance_assessed=False,
     )
 
 

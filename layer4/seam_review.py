@@ -628,9 +628,6 @@ def compose_seam_review_row(
         triggered_resynthesis=triggered_resynthesis,
         re_prompted_phase_name=re_prompted_phase_name,
         reviewer_model=reviewer_model,
-        reviewer_input_tokens=call_result.input_tokens,
-        reviewer_output_tokens=call_result.output_tokens,
-        reviewer_latency_ms=call_result.latency_ms,
     )
 
 

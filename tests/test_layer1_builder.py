@@ -76,11 +76,10 @@ class _FakeConn:
 
 
 def _queue_empty_athlete(conn: _FakeConn) -> None:
-    """Queue 25 empty responses — every SELECT returns no rows.
-    (Bumped from 24 to 25 by D-73 Phase 5.2 Bucket C (l) — Layer 1
-    builder gained `_load_skill_toggle_states` query for the athlete's
-    skill-capability toggle picks.)"""
-    for _ in range(25):
+    """Queue 24 empty responses — every SELECT returns no rows.
+    (D-73 Phase 5.2 Bucket C (l) added the `_load_skill_toggle_states`
+    query; the dead `food_allergies` load was later removed.)"""
+    for _ in range(24):
         conn.queue_response()
 
 
@@ -155,7 +154,6 @@ class TestEmptyUser:
         assert payload.identity.primary_sport is None
         assert payload.health_status.current_injuries == []
         assert payload.health_status.injury_history == []
-        assert payload.health_status.food_allergies == []
         assert payload.health_status.resting_hr_bpm is None
         assert payload.training_history.years_structured_training is None
         assert payload.training_history.secondary_sports == []
@@ -171,13 +169,13 @@ class TestEmptyUser:
         assert payload.network.network_links == []
         assert payload.disclosures.acknowledgments == []
 
-    def test_25_selects_issued(self):
+    def test_24_selects_issued(self):
         conn = _FakeConn()
         _queue_empty_athlete(conn)
         build_layer1_payload(conn, user_id=1)
-        # 24 → 25 after D-73 Phase 5.2 Bucket C (l) added the skill-toggle
-        # state SELECT.
-        assert len(conn.calls) == 25
+        # 25 → 24 after the dead `food_allergies` load was removed (the
+        # skill-toggle SELECT added by D-73 Phase 5.2 Bucket C (l) stays).
+        assert len(conn.calls) == 24
 
     def test_user_id_required(self):
         conn = _FakeConn()
@@ -278,34 +276,30 @@ class TestFullyPopulated:
             {"id": 101, "medication_class": "nsaid_chronic", "medication_name": "ibuprofen",
              "started_at": date(2026, 3, 1), "stopped_at": date(2026, 4, 1), "notes": "wrist flare"},
         ])
-        # 8) food_allergies
-        conn.queue_response(rows=[
-            {"id": 200, "allergen_category": "shellfish", "severity": "anaphylaxis", "notes": None},
-        ])
-        # 9) athlete_secondary_sports
+        # 8) athlete_secondary_sports
         conn.queue_response(rows=[
             {"sport_slug": "trail_running", "experience_tier": "3plus_yr"},
             {"sport_slug": "mountain_biking", "experience_tier": "1_to_3yr"},
         ])
-        # 10) athlete_discipline_weighting — sums to 100
+        # 9) athlete_discipline_weighting — sums to 100
         conn.queue_response(rows=[
             {"discipline_slug": "trail_running", "weight_pct": 40},
             {"discipline_slug": "hiking", "weight_pct": 25},
             {"discipline_slug": "mtb", "weight_pct": 20},
             {"discipline_slug": "packrafting", "weight_pct": 15},
         ])
-        # 11) recent_race_results
+        # 10) recent_race_results
         conn.queue_response(rows=[
             {"event_name": "PGE 2024", "event_date": date(2024, 7, 19),
              "distance_km": 180.0, "finish_time_seconds": 180000,
              "result_notes": "finisher", "source": "self_report"},
         ])
-        # 12) pack_load_history
+        # 11) pack_load_history
         conn.queue_response(rows=[
             {"pack_weight_kg": 8.0, "session_count_4wk": 6, "longest_session_hrs": 4.0,
              "terrain_type": "moorland", "notes": None},
         ])
-        # 13) strength_benchmarks
+        # 12) strength_benchmarks
         conn.queue_response(row={
             "front_plank_sec": 180, "dead_bug_max_reps": 20,
             "side_plank_left_sec": 90, "side_plank_right_sec": 95,
@@ -315,7 +309,7 @@ class TestFullyPopulated:
             "grip_strength_left_kg": 48.0, "grip_strength_right_kg": 52.0,
             "last_tested_at": date(2026, 4, 1),
         })
-        # 14) discipline_baseline_running
+        # 13) discipline_baseline_running
         conn.queue_response(row={
             "easy_run_pace_sec_per_km": 330, "vertical_gain_weekly_m": 800.0,
             "vertical_gain_peak_session_m": 1200.0,
@@ -324,56 +318,56 @@ class TestFullyPopulated:
             "night_running": True, "gut_training_g_per_hr_cho": 80,
             "gut_training_issues": None,
         })
-        # 15) discipline_baseline_cycling
+        # 14) discipline_baseline_cycling
         conn.queue_response(row={
             "bike_types_available": "mountain_bike,gravel_bike",
             "mtb_skill": "intermediate", "longest_ride_distance_km": 120.0,
             "longest_ride_hrs": 6.5, "saddle_endurance_hrs": 5.0,
             "aero_endurance_min": 45,
         })
-        # 16) discipline_baseline_swimming — sparse (one field set)
+        # 15) discipline_baseline_swimming — sparse (one field set)
         conn.queue_response(row={
             "pool_100m_pace_sec": 110, "ow_experience": None,
             "wetsuit_experience": None, "cold_water_experience": None,
             "ow_feeding_experience": None, "weekly_swim_volume_km": None,
         })
-        # 17) discipline_baseline_paddling
+        # 16) discipline_baseline_paddling
         conn.queue_response(row={
             "longest_paddle_km": 30.0, "longest_paddle_hrs": 5.0,
             "paddle_craft_types": "packraft,kayak",
         })
-        # 18) discipline_baseline_skiing — absent
+        # 17) discipline_baseline_skiing — absent
         conn.queue_response()
-        # 19) discipline_baseline_navigation
+        # 18) discipline_baseline_navigation
         conn.queue_response(row={
             "experience_level": "expert", "night_nav_experience": True,
         })
-        # 20) discipline_baseline_technical
+        # 19) discipline_baseline_technical
         conn.queue_response(row={
             "rock_climbing_outdoor_grade": "5.10a", "rock_climbing_indoor_grade": "V3",
             "abseiling_experience": True,
         })
-        # 21) race_events target
+        # 20) race_events target
         conn.queue_response(row={"id": 99})
-        # 22) athlete_network_links
+        # 21) athlete_network_links
         conn.queue_response(rows=[
             {"id": 500, "partner_name": "Alex", "linked_account_user_id": None,
              "relationship_types": "race_teammate,training_partner",
              "partner_specific_rules": None, "race_event_id": 99,
              "discipline_focus_on_team": "navigation"},
         ])
-        # 23) linked_partner_consents
+        # 22) linked_partner_consents
         conn.queue_response(rows=[
             {"id": 600, "link_id": 500, "consent_scope": "activity_summaries",
              "granted_at": datetime(2026, 5, 1, 10, 0, 0), "revoked_at": None},
         ])
-        # 24) disclosure_acknowledgments
+        # 23) disclosure_acknowledgments
         conn.queue_response(rows=[
             {"disclosure_id": "account_creation_ack", "version_id": "v1",
              "scopes_granted": None, "delivery_method": "in_app",
              "acknowledged_at": datetime(2026, 4, 1, 9, 0, 0)},
         ])
-        # 25) athlete_skill_toggles — D-73 Phase 5.2 Bucket C (l). Andy
+        # 24) athlete_skill_toggles — D-73 Phase 5.2 Bucket C (l). Andy
         # has the climbing_roped + whitewater_handling toggles enabled
         # (PGE 2026 athlete with real AR experience), the rest implicit
         # OFF since they're not in the athlete_skill_toggles table.
@@ -401,7 +395,6 @@ class TestFullyPopulated:
         assert len(payload.health_status.medications_active) == 1
         assert payload.health_status.medications_active[0].medication_class == "stimulant_adhd"
         assert len(payload.health_status.medications_history) == 1
-        assert payload.health_status.food_allergies[0].severity == "anaphylaxis"
         assert payload.health_status.resting_hr_bpm == 48
 
     def test_training_history_weighting_sum_validates(self):
@@ -549,8 +542,8 @@ class TestSkillToggleStates:
         (absent from dict) at the consumer if it cares. Layer 2B/2C
         currently treat both as OFF so the semantics collapse."""
         conn = _FakeConn()
-        # Queue 24 empty + 1 populated for the new toggle SELECT.
-        for _ in range(24):
+        # Queue 23 empty + 1 populated for the trailing toggle SELECT.
+        for _ in range(23):
             conn.queue_response()
         conn.queue_response(rows=[
             {"toggle_name": "climbing_roped", "enabled": False},
@@ -599,14 +592,14 @@ class TestCsvSplitting:
 class TestWeightingSumInvariant:
     def test_non_summing_weights_raise(self):
         conn = _FakeConn()
-        for _ in range(9):
+        for _ in range(8):
             conn.queue_response()
-        # 10) discipline_weighting — sums to 90, should raise.
+        # 9) discipline_weighting — sums to 90, should raise.
         conn.queue_response(rows=[
             {"discipline_slug": "trail_running", "weight_pct": 50},
             {"discipline_slug": "mtb", "weight_pct": 40},
         ])
-        for _ in range(14):
+        for _ in range(15):
             conn.queue_response()
 
         with pytest.raises(Exception, match="weight_pct must sum to 100"):

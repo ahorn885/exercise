@@ -25,7 +25,6 @@ from layer4.context import (
     DailyAvailabilityWindow,
     DisclosureAck,
     DisciplineWeightRecord,
-    FoodAllergyRecord,
     HealthConditionRecord,
     InjuryRecord,
     Layer1Availability,
@@ -100,7 +99,6 @@ def build_layer1_payload(db, user_id: int) -> Layer1Payload:
     current_injuries, injury_history = _load_injuries(db, user_id)
     conditions_active, conditions_history = _load_health_conditions(db, user_id)
     medications_active, medications_history = _load_medications(db, user_id)
-    food_allergies = _load_food_allergies(db, user_id)
     secondary_sports = _load_secondary_sports(db, user_id)
     discipline_weighting = _load_discipline_weighting(db, user_id)
     recent_race_results = _load_recent_race_results(db, user_id)
@@ -120,7 +118,6 @@ def build_layer1_payload(db, user_id: int) -> Layer1Payload:
         health_conditions_history=conditions_history,
         medications_active=medications_active,
         medications_history=medications_history,
-        food_allergies=food_allergies,
         resting_hr_bpm=resting_hr_bpm,
     )
     training_history = Layer1TrainingHistory(
@@ -563,26 +560,6 @@ def _load_medications(
         else:
             history.append(record)
     return active, history
-
-
-# ─── food_allergies ──────────────────────────────────────────────────────────
-
-
-def _load_food_allergies(db, user_id: int) -> list[FoodAllergyRecord]:
-    cur = db.execute(
-        "SELECT id, allergen_category, severity, notes "
-        "FROM food_allergies WHERE user_id = ? ORDER BY id DESC",
-        (user_id,),
-    )
-    return [
-        FoodAllergyRecord(
-            allergy_id=int(r["id"]),
-            allergen_category=r["allergen_category"],
-            severity=r["severity"],
-            notes=r["notes"],
-        )
-        for r in cur.fetchall()
-    ]
 
 
 # ─── athlete_secondary_sports ────────────────────────────────────────────────

@@ -331,7 +331,6 @@ class TerrainGap(_Base):
     proxy_methods: list[str]
     uncoverable_stimulus: list[str]
     prescription_note: str
-    discipline_relevance_assessed: bool
 
 
 class RaceTerrainOutput(_Base):
@@ -521,7 +520,6 @@ class TrainingSubstitutionFlag(_Base):
     # training-substitution node.
     flag_type: Literal[
         "craft_unavailable",
-        "craft_substitution",
         "terrain_untrainable",
         "terrain_low_fidelity",
     ]
@@ -641,7 +639,6 @@ class Layer2DPayload(_Base):
     hitl_required: bool
     hitl_items: list[Layer2DHitlItem]
     body_part_vocab_misses: list[str]
-    condition_vocab_misses: list[str]
 
     @model_validator(mode="after")
     def _check_excluded_verdict(self) -> "Layer2DPayload":
@@ -1560,26 +1557,6 @@ class MedicationRecord(_Base):
     notes: str | None = None
 
 
-class FoodAllergyRecord(_Base):
-    allergy_id: int
-    allergen_category: Literal[
-        "tree_nut",
-        "peanut",
-        "dairy",
-        "gluten",
-        "egg",
-        "shellfish",
-        "fish",
-        "soy",
-        "nightshade",
-        "fodmap",
-        "caffeine_sensitivity",
-        "other",
-    ]
-    severity: Literal["intolerance", "allergy", "anaphylaxis"]
-    notes: str | None = None
-
-
 class Layer1HealthStatus(_Base):
     current_injuries: list[InjuryRecord] = Field(default_factory=list)
     injury_history: list[InjuryRecord] = Field(default_factory=list)
@@ -1587,7 +1564,6 @@ class Layer1HealthStatus(_Base):
     health_conditions_history: list[HealthConditionRecord] = Field(default_factory=list)
     medications_active: list[MedicationRecord] = Field(default_factory=list)
     medications_history: list[MedicationRecord] = Field(default_factory=list)
-    food_allergies: list[FoodAllergyRecord] = Field(default_factory=list)
     resting_hr_bpm: int | None = None
 
 

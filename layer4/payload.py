@@ -347,9 +347,6 @@ class SeamReview(_Base):
     triggered_resynthesis: bool
     re_prompted_phase_name: Literal["Base", "Build", "Peak", "Taper"] | None = None
     reviewer_model: str
-    reviewer_input_tokens: int
-    reviewer_output_tokens: int
-    reviewer_latency_ms: int
 
 
 # ─── §7.8 ShapeOverride ────────────────────────────────────────────────────

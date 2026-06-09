@@ -16,8 +16,6 @@ that consume the affected fields:
 | total_elevation_gain_m / race_rules_summary /      |                                                  | narrowest cut; only the brief reads these fields     |
 | mandatory_gear_text / notes) + route_locales CRUD  |                                                  |                                                      |
 | + route_locale_equipment CRUD on target race       |                                                  |                                                      |
-| event_locale_id change on target row               | `evict_on_target_event_locale_change()`          | `evict_on_layer_change(cache, uid, 'layer2c')` —     |
-|                                                    |                                                  | _ALL_ENTRY_POINTS (locale resolution cascades)       |
 | Any edit on a non-target race_events row           | (no helper — writer skips the call)              | No invalidation; race not in scope of any plan       |
 
 Non-target edits (e.g., updating a future race that is not the athlete's
@@ -88,21 +86,6 @@ def evict_on_target_event_brief_field_change(
         layer='race_events_brief_field',
         user_id=user_id,
     )
-
-
-def evict_on_target_event_locale_change(
-    db,
-    user_id: int,
-    *,
-    cache: Layer4Cache | None = None,
-) -> int:
-    """`event_locale_id` change on the target row. Cascades through Layer
-    2C (locale resolution for the event locale); `layer2c` policy is
-    `_ALL_ENTRY_POINTS` so this is the broadest cut of the three helpers.
-    """
-    if cache is None:
-        cache = _build_default_cache(db)
-    return evict_on_layer_change(cache, user_id, 'layer2c')
 
 
 def evict_on_target_event_framework_sport_change(

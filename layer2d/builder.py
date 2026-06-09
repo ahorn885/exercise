@@ -1370,8 +1370,6 @@ def q_layer2d_injury_risk_profile_payload(
         history_conditions,
         body_part_vocab_misses,
     )
-    # Condition-vocab miss audit — defensive against future enum drift.
-    condition_vocab_misses: list[str] = []
     return Layer2DPayload(
         etl_version_set=dict(etl_version_set),
         excluded_exercises=excluded,
@@ -1382,7 +1380,6 @@ def q_layer2d_injury_risk_profile_payload(
         hitl_required=hitl_required,
         hitl_items=hitl_items,
         body_part_vocab_misses=body_part_vocab_misses,
-        condition_vocab_misses=condition_vocab_misses,
     )
 
 

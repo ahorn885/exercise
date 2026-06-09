@@ -589,7 +589,6 @@ def _layer2d_payload() -> Layer2DPayload:
         hitl_required=False,
         hitl_items=[],
         body_part_vocab_misses=[],
-        condition_vocab_misses=[],
     )
 
 
@@ -928,7 +927,6 @@ def test_layer2d_excluded_with_wrong_verdict_rejected():
             hitl_required=False,
             hitl_items=[],
             body_part_vocab_misses=[],
-            condition_vocab_misses=[],
         )
 
 
@@ -953,7 +951,6 @@ def test_layer2d_accommodated_with_wrong_verdict_rejected():
             hitl_required=False,
             hitl_items=[],
             body_part_vocab_misses=[],
-            condition_vocab_misses=[],
         )
 
 
