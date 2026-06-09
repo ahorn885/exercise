@@ -189,7 +189,7 @@ def main(argv: list[str] | None = None) -> int:
     # ── Header
     sql_buf.append(f"-- Layer 0 ETL — emitted SQL for Neon SQL editor\n")
     sql_buf.append(f"-- Version tag: {tag}\n")
-    sql_buf.append(f"-- Source: etl/sources/Sports_Framework_v12.xlsx\n")
+    sql_buf.append(f"-- Source: etl/sources/Sports_Framework_v13.xlsx\n")
     sql_buf.append(f"-- Emitted at: {datetime.utcnow().isoformat()}Z\n")
     sql_buf.append("-- Paste this entire file into Neon's SQL editor.\n")
     sql_buf.append("-- Idempotent: re-runs under the same --version-tag refresh in place.\n")
