@@ -40,7 +40,7 @@ def test_uint16_sentinel_reps_become_none():
     sets = out['data'][0]['sets']
     assert sets[0]['reps'] is None
     # Real weight + duration still pass through.
-    assert sets[0]['weight_lbs'] is not None
+    assert sets[0]['weight_kg'] is not None
     assert sets[0]['duration_sec'] == 46
 
 
@@ -56,7 +56,7 @@ def test_implausible_weight_becomes_none():
     (~9030 lb). Sanity ceiling kicks it out."""
     out = _parse_strength(_session(), [_set(reps=5, weight_kg=4096.0, duration=46)])
     sets = out['data'][0]['sets']
-    assert sets[0]['weight_lbs'] is None
+    assert sets[0]['weight_kg'] is None
     assert sets[0]['reps'] == 5
 
 
@@ -71,7 +71,7 @@ def test_zero_weight_remains_none():
     """A 0 kg / 0 rep field is a sentinel-equivalent — drop it."""
     out = _parse_strength(_session(), [_set(reps=5, weight_kg=0.0, duration=46)])
     sets = out['data'][0]['sets']
-    assert sets[0]['weight_lbs'] is None
+    assert sets[0]['weight_kg'] is None
     assert sets[0]['reps'] == 5
 
 
@@ -88,7 +88,7 @@ def test_andys_2026_05_25_fixture():
     assert len(sets) == 10
     for s in sets:
         assert s['reps'] is None
-        assert s['weight_lbs'] is None
+        assert s['weight_kg'] is None
         assert s['duration_sec'] is not None  # durations pass through
 
 
@@ -105,8 +105,8 @@ def test_legitimate_set_passes_through_unchanged():
     assert len(sets) == 3
     for s in sets:
         assert s['reps'] == 5
-        # 102 kg * 2.20462 ≈ 224.9 lb
-        assert s['weight_lbs'] == 224.9
+        # Storage is canonical kg now (#469).
+        assert s['weight_kg'] == 102.0
 
 
 # ── Richer (category, category_subtype) labeling — pulls from fit_tool's

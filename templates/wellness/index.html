@@ -289,7 +289,7 @@
   <div class="card card-pad">
     <span class="eyebrow">Body composition</span>
     <div class="chart-grid">
-      {% if chart_data.body.weight_lbs %}<div class="chart-box"><canvas id="chart-weight"></canvas></div>{% endif %}
+      {% if chart_data.body.weight %}<div class="chart-box"><canvas id="chart-weight"></canvas></div>{% endif %}
       {% if chart_data.body.body_fat_pct %}<div class="chart-box"><canvas id="chart-bf"></canvas></div>{% endif %}
       {% if chart_data.body.resting_hr %}<div class="chart-box"><canvas id="chart-rhr"></canvas></div>{% endif %}
     </div>
@@ -577,7 +577,10 @@ if (data.heat_acclimation && data.heat_acclimation.length) {
 
 // ─── Body composition ──────────────────────────────────────
 if (data.body) {
-  if (data.body.weight_lbs   && data.body.weight_lbs.length)   line('chart-weight', [ds('Weight (lb)', data.body.weight_lbs, fg)],     { unit: ' lb' });
+  // #469 — `data.body.weight` is pre-converted server-side; the unit label
+  // comes from data.body_units.weight ('lb' or 'kg').
+  const wtUnit = (data.body_units && data.body_units.weight) || 'lb';
+  if (data.body.weight       && data.body.weight.length)       line('chart-weight', [ds('Weight (' + wtUnit + ')', data.body.weight, fg)], { unit: ' ' + wtUnit });
   if (data.body.body_fat_pct && data.body.body_fat_pct.length) line('chart-bf',     [ds('Body fat %', data.body.body_fat_pct, accent)], { unit: ' %'  });
   if (data.body.resting_hr   && data.body.resting_hr.length)   line('chart-rhr',    [ds('Resting HR', data.body.resting_hr,   fg3)],   { unit: ' bpm'});
 }

@@ -28,6 +28,11 @@ from athlete import (
     get_athlete_profile, upsert_athlete_profile,
     get_daily_availability_windows, upsert_daily_availability_windows,
 )
+from units import (
+    UNIT_PREFERENCE_CHOICES, DEFAULT_UNIT_PREFERENCE,
+    normalize_unit_preference, entered_weight_to_kg, display_weight,
+    weight_unit_label,
+)
 from athlete_skill_toggles_repo import (
     evict_layer1_on_skill_toggle_change,
     get_athlete_skill_toggles,
@@ -217,8 +222,16 @@ def edit():
             except (ValueError, TypeError):
                 return None
 
+        # #469 — body weight is entered in the athlete's chosen display unit
+        # but stored canonically in kg. The form posts the current preference
+        # alongside the body weight so we know which unit the entered value
+        # is in (handles the case where the athlete is changing both at once).
+        submitted_unit_pref = normalize_unit_preference(_str('unit_preference'))
+        entered_body_weight = _num('body_weight')
+        body_weight_kg = entered_weight_to_kg(entered_body_weight, submitted_unit_pref)
+
         prefill_values = {
-            'body_weight_kg': _num('body_weight_kg'),
+            'body_weight_kg': body_weight_kg,
             'hrmax_bpm': _num('hrmax_bpm', cast=int),
             'lactate_threshold_hr_bpm': _num('lactate_threshold_hr_bpm', cast=int),
             'vo2max': _num('vo2max'),
@@ -232,6 +245,7 @@ def edit():
             primary_sport=_str('primary_sport'),
             weekly_hours_target=_num('weekly_hours_target'),
             notes=_str('notes'),
+            unit_preference=submitted_unit_pref,
             **prefill_values,
         )
         _record_self_report_provenance(db, uid, prefill_values)
@@ -289,10 +303,19 @@ def edit():
     skill_toggle_defs = load_active_skill_capability_toggle_vocab(db)
     skill_toggle_states = get_athlete_skill_toggles(db, uid)
 
+    # #469 — body weight is stored canonical kg; render it in the athlete's
+    # chosen display unit so the form field round-trips cleanly. `profile` is
+    # mutated in place because it's the dict the template reads.
+    unit_pref = normalize_unit_preference(profile.get('unit_preference'))
+    profile['unit_preference'] = unit_pref
+    profile['body_weight_display'] = display_weight(profile.get('body_weight_kg'), unit_pref)
+    profile['weight_unit_label'] = weight_unit_label(unit_pref)
+
     from datetime import datetime as _dt
     return render_template(
         'profile/edit.html',
         profile=profile,
+        unit_preference_choices=UNIT_PREFERENCE_CHOICES,
         memory=memory,
         preference_categories=PREFERENCE_CATEGORIES,
         user_row=dict(user_row) if user_row else {},

@@ -391,7 +391,7 @@ def get_coaching_context(db, plan_id=None, lookback_days=14, locale='home'):
 
     # Body metrics — last 4 entries for trend visibility
     metrics_rows = db.execute(
-        'SELECT date, weight_lbs, body_fat_pct, vo2_max, resting_hr FROM body_metrics '
+        'SELECT date, weight_kg, body_fat_pct, vo2_max, resting_hr FROM body_metrics '
         'WHERE user_id = ? ORDER BY date DESC LIMIT 4',
         (uid,)
     ).fetchall()
@@ -609,17 +609,17 @@ def _build_nutrition_context(body_metrics: list, nutrition_goal: str, race_philo
 
     if body_metrics:
         latest = body_metrics[0]
-        if latest.get('weight_lbs'):
-            lines.append(f'Current weight: {latest["weight_lbs"]} lbs')
+        if latest.get('weight_kg'):
+            lines.append(f'Current weight: {latest["weight_kg"]:.1f} kg')
         if latest.get('body_fat_pct'):
             lines.append(f'Current body fat: {latest["body_fat_pct"]}%')
         if latest.get('vo2_max'):
             lines.append(f'VO2 max: {latest["vo2_max"]}')
         if len(body_metrics) > 1:
             oldest = body_metrics[-1]
-            if latest.get('weight_lbs') and oldest.get('weight_lbs'):
-                delta = latest['weight_lbs'] - oldest['weight_lbs']
-                lines.append(f'Weight trend ({oldest["date"]} → {latest["date"]}): {"↓" if delta < 0 else "↑"} {abs(delta):.1f} lbs')
+            if latest.get('weight_kg') and oldest.get('weight_kg'):
+                delta = latest['weight_kg'] - oldest['weight_kg']
+                lines.append(f'Weight trend ({oldest["date"]} → {latest["date"]}): {"↓" if delta < 0 else "↑"} {abs(delta):.1f} kg')
             if latest.get('body_fat_pct') and oldest.get('body_fat_pct'):
                 bf_delta = latest['body_fat_pct'] - oldest['body_fat_pct']
                 lines.append(f'Body fat trend: {"↓" if bf_delta < 0 else "↑"} {abs(bf_delta):.1f}%')

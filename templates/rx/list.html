@@ -139,7 +139,7 @@
             <td class="dim">{{ e.movement_pattern }}</td>
             <td class="num">{{ e.current_sets or '—' }}</td>
             <td class="num">{{ e.current_reps or '—' }}</td>
-            <td class="num rx-wt">{{ e.current_weight or '—' }}{% if e.current_weight %} lb{% endif %}</td>
+            <td class="num rx-wt">{{ e.current_weight_display or '—' }}{% if e.current_weight_display %} {{ weight_unit_label or 'lb' }}{% endif %}</td>
             <td class="mono dim rx-last">{{ e.last_performed or '—' }}</td>
             <td class="rx-out">
               {% if e.last_outcome %}

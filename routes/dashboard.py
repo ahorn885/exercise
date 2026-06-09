@@ -90,12 +90,22 @@ def index():
     }
 
     wt = db.execute(
-        'SELECT weight_lbs, date FROM body_metrics WHERE user_id = ? '
+        'SELECT weight_kg, date FROM body_metrics WHERE user_id = ? '
         'ORDER BY date DESC LIMIT 1',
         (uid,)
     ).fetchone()
     if wt:
-        stats['latest_weight'] = wt['weight_lbs']
+        # #469 — surface body weight in the athlete's display unit. Storage
+        # stays canonical kg.
+        from units import (
+            normalize_unit_preference, display_weight, weight_unit_label,
+        )
+        from athlete import get_athlete_profile
+        profile = get_athlete_profile(db, uid) or {}
+        unit_pref = normalize_unit_preference(profile.get('unit_preference'))
+        d = display_weight(wt['weight_kg'], unit_pref)
+        stats['latest_weight'] = round(d, 1) if d is not None else None
+        stats['latest_weight_unit'] = weight_unit_label(unit_pref)
         stats['weight_date'] = wt['date']
 
     today_workouts = db.execute(

@@ -192,7 +192,8 @@ const FIELD_LABELS = {
   elev_gain_ft: 'Elev Gain (ft)', calories: 'Calories',
   avg_power: 'Avg Power (W)', norm_power: 'NP (W)',
   aerobic_te: 'Aerobic TE', notes: 'Notes',
-  weight_lbs: 'Weight (lb)', body_fat_pct: 'Body Fat %',
+  weight: '{{ "Weight (lb)" if weight_unit_label == "lb" else "Weight (kg)" }}',
+  body_fat_pct: 'Body Fat %',
   resting_hr: 'Resting HR', vo2_max: 'VO2 Max',
 };
 
@@ -233,9 +234,12 @@ function renderStrengthEntry(entry, idx) {
           <strong class="ms-auto">${escapeHtml(ex.exercise || '')}</strong>
         </div>
         <table class="table table-sm mb-2 table-num">
-          <thead><tr><th>Set</th><th>Reps</th><th>Weight (lb)</th><th>Duration (s)</th></tr></thead>
+          <thead><tr><th>Set</th><th>Reps</th><th>Weight ({{ weight_unit_label or 'lb' }})</th><th>Duration (s)</th></tr></thead>
           <tbody>`;
     sets.forEach((s, sIdx) => {
+      // #469 — the LLM emits `weight` in the athlete's unit_preference; legacy
+      // `weight_lbs` entries from older sessions are surfaced via the same key.
+      const setWt = (s.weight != null) ? s.weight : s.weight_lbs;
       html += `
         <tr>
           <td>${sIdx + 1}</td>
@@ -243,8 +247,8 @@ function renderStrengthEntry(entry, idx) {
                      data-idx="${idx}" data-ex="${exIdx}" data-set="${sIdx}" data-key="reps"
                      value="${s.reps ?? ''}"></td>
           <td><input type="number" step="0.5" class="form-control form-control-sm strength-set"
-                     data-idx="${idx}" data-ex="${exIdx}" data-set="${sIdx}" data-key="weight_lbs"
-                     value="${s.weight_lbs ?? ''}"></td>
+                     data-idx="${idx}" data-ex="${exIdx}" data-set="${sIdx}" data-key="weight"
+                     value="${setWt ?? ''}"></td>
           <td><input type="number" class="form-control form-control-sm strength-set"
                      data-idx="${idx}" data-ex="${exIdx}" data-set="${sIdx}" data-key="duration_sec"
                      value="${s.duration_sec ?? ''}"></td>

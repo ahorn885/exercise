@@ -227,30 +227,33 @@ class TestCurrentRxHit:
     to `load_prescription` and `first_exposure` is NOT added."""
 
     def test_renders_weight_reps_sets(self):
+        # #469 — storage is canonical kg; imperial-default display renders lb.
+        # 83.9 kg ≈ 185 lb after conversion.
         ex = _strength_ex("EX-001", name="Back Squat")
         session = _strength_session("S-1", [ex])
         l2c = _layer2c("home", [_resolved("EX-001", "Back Squat", patterns=["Squat"])])
-        db = _FakeDb({("Back Squat", 1): _row(sets=3, reps=5, weight=185)})
+        db = _FakeDb({("Back Squat", 1): _row(sets=3, reps=5, weight=83.9146)})
 
         new_payload, diag = apply_current_rx(_payload([session]), db, 1, {"home": l2c})
 
         result_ex = new_payload.sessions[0].strength_exercises[0]
-        assert result_ex.load_prescription == "3 × 5 @ 185 lbs"
+        assert result_ex.load_prescription == "3 × 5 @ 185 lb"
         assert "first_exposure" not in result_ex.coaching_flags
         assert diag.current_rx_hits == 1
         assert diag.first_exposure_count == 0
         assert diag.outcomes[0].path == "current_rx"
 
     def test_rounds_weight_to_whole_lbs(self):
+        # #469 — 84.6 kg → 186.5 lb → rounds to 187 lb. Whole-number
+        # rendering reads cleaner than "186.5 lb".
         ex = _strength_ex("EX-001", name="Back Squat")
         session = _strength_session("S-1", [ex])
         l2c = _layer2c("home", [_resolved("EX-001", "Back Squat", patterns=["Squat"])])
-        db = _FakeDb({("Back Squat", 1): _row(sets=3, reps=5, weight=187.5)})
+        db = _FakeDb({("Back Squat", 1): _row(sets=3, reps=5, weight=84.6)})
 
         new_payload, _ = apply_current_rx(_payload([session]), db, 1, {"home": l2c})
 
-        # 187.5 → 188 (whole-number rendering reads cleaner than "187.5 lbs").
-        assert new_payload.sessions[0].strength_exercises[0].load_prescription == "3 × 5 @ 188 lbs"
+        assert new_payload.sessions[0].strength_exercises[0].load_prescription == "3 × 5 @ 187 lb"
 
     def test_duration_only_renders_seconds(self):
         ex = _strength_ex("EX-PLANK", name="Plank")
