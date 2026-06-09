@@ -488,3 +488,95 @@ def test_metrics_to_db_fields_passes_through_new_columns():
         'resting_hr': 44,
         'resting_hr_7day_avg': 48,
     }
+
+
+# ── Sleep-stage decode candidates ([384] field_5/6/7 — encoding unsolved) ────
+
+def test_sleep_stage_decode_candidates_emits_one_row_per_decoder():
+    """`_sleep_stage_decode_candidates` should return one entry per registered
+    decoder, each carrying the per-field minute interpretation under that
+    decoder. None is verified — they're for eyeball comparison against
+    Connect's Deep/Light/REM minutes when the next reference day lands."""
+    from garmin_fit_parser import (
+        _sleep_stage_decode_candidates,
+        _SLEEP_STAGE_DECODE_CANDIDATES,
+    )
+    # May 28 reference values (sleep score 96, 8h12m sleep).
+    candidates = _sleep_stage_decode_candidates(23412736, 11425109, 3543590)
+    assert len(candidates) == len(_SLEEP_STAGE_DECODE_CANDIDATES)
+    for row in candidates:
+        assert set(row) == {
+            'decoder', 'description', 'f5_min', 'f6_min', 'f7_min', 'sum_min',
+        }
+    by_name = {row['decoder']: row for row in candidates}
+    # Spot-check the 16.16 fixed-point candidate, the closest the existing
+    # 3-day dataset gets to looking like plausible minute values (May 28
+    # produces 357.25 / 174.33 / 54.07 — but the sum overshoots the actual
+    # 492-minute total, so it isn't a real fit).
+    assert by_name['fixed_point_min']['f5_min'] == 357.25
+    assert by_name['fixed_point_min']['f6_min'] == 174.33
+    assert by_name['fixed_point_min']['f7_min'] == 54.07
+
+
+def test_sleep_stage_decode_candidates_skips_when_a_field_is_missing():
+    """`field_5` / `_6` / `_7` are only present on the rich [384] row. The
+    helper should bail on None inputs so the inspector dump doesn't render
+    spurious entries for messages that don't carry the sleep summary."""
+    from garmin_fit_parser import _sleep_stage_decode_candidates
+    assert _sleep_stage_decode_candidates(None, 1, 2) == []
+    assert _sleep_stage_decode_candidates(1, None, 2) == []
+    assert _sleep_stage_decode_candidates(1, 2, None) == []
+
+
+def test_find_sleep_stage_decoder_locates_a_known_decoder_under_a_permutation():
+    """Synthetic 2-day reference set where field_5/_6/_7 are encoded as
+    (minutes × 65536) for REM / Deep / Light respectively. The solver should
+    recover the `fixed_point_min` decoder and the swap-permutation."""
+    from garmin_fit_parser import find_sleep_stage_decoder
+
+    def pack(minutes):
+        return int(round(minutes * 65536))
+
+    # Two nights with materially different stage distributions — without
+    # that, multiple decoders end up trivially "fitting" both days.
+    night_1 = (pack(85),  pack(110), pack(305),  110, 305, 85)
+    night_2 = (pack(45),  pack(60),  pack(220),  60,  220, 45)
+    matches = find_sleep_stage_decoder([night_1, night_2], tolerance_min=0.5)
+    assert matches, 'expected the synthetic decoder to be recoverable'
+    top = matches[0]
+    assert top['decoder'] == 'fixed_point_min'
+    assert top['permutation'] == {
+        'field_5': 'rem', 'field_6': 'deep', 'field_7': 'light',
+    }
+    assert top['max_error_min'] <= 0.5
+
+
+def test_find_sleep_stage_decoder_returns_empty_when_no_decoder_fits():
+    """The actual 3-day reference set in `_METRICS_SLEEP_SUMMARY_MSG`'s
+    docstring doesn't admit a scalar-decoder fit (we'd already have shipped
+    the decode if it did). This test pins that — protects against a
+    drive-by 'this looks like minutes' change slipping through."""
+    from garmin_fit_parser import find_sleep_stage_decoder
+    # Reference set uses placeholder Deep/Light/REM minutes — without
+    # Connect's exact stage minutes from Andy we don't know the truth, but
+    # we DO know no scalar decoder can fit because f5 is the largest field
+    # on May 28 while f6 is the largest on May 30 + Jun 2. Any assignment
+    # of fixed stage positions will mis-rank Light on one of those nights.
+    # We pick made-up stage minutes that respect Light > Deep + REM on each
+    # night (i.e., physically plausible) and confirm the solver finds no
+    # decoder fitting within a tight tolerance.
+    reference = [
+        # f5,        f6,       f7,        deep, light, rem
+        (23412736, 11425109, 3543590,    90,  295,  103),  # May 28, 8h12m
+        ( 7165269, 35711660, 3440511,    40,  195,   54),  # May 30, 4h57m
+        ( 9797632, 36590932, 2558531,    50,  200,   60),  # Jun 2,  ?
+    ]
+    assert find_sleep_stage_decoder(reference, tolerance_min=2.0) == []
+
+
+def test_find_sleep_stage_decoder_needs_at_least_two_nights():
+    """One night admits trivially many decoder/permutation fits — the
+    solver should refuse rather than emit noise."""
+    from garmin_fit_parser import find_sleep_stage_decoder
+    assert find_sleep_stage_decoder([(1, 2, 3, 4, 5, 6)]) == []
+    assert find_sleep_stage_decoder([]) == []

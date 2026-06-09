@@ -647,6 +647,23 @@ def _dump_fit(fit_bytes: bytes) -> dict:
             if entry['developer_fields'] and len(dev_data_samples) < 5:
                 dev_data_samples.append(entry)
 
+    # Surface decode candidates for `[384] field_5/6/7` (Deep/Light/REM
+    # minute split, encoding unsolved — see `_METRICS_SLEEP_SUMMARY_MSG`).
+    # The operator can paste Connect's stage minutes alongside the candidates
+    # to find the decoder (if any) that matches the new reference day.
+    sleep_stage_candidates = []
+    for sample in generic_samples.get(str(_METRICS_SLEEP_SUMMARY_MSG), []):
+        try:
+            f5 = int(sample.get('field_5', ''))
+            f6 = int(sample.get('field_6', ''))
+            f7 = int(sample.get('field_7', ''))
+        except (TypeError, ValueError):
+            continue
+        sleep_stage_candidates.append({
+            'raw': {'f5': f5, 'f6': f6, 'f7': f7},
+            'candidates': _sleep_stage_decode_candidates(f5, f6, f7),
+        })
+
     return {
         'message_counts': dict(sorted(msg_counts.items())),
         'session_fields': session_fields,
@@ -655,6 +672,7 @@ def _dump_fit(fit_bytes: bytes) -> dict:
         'sample_records': sample_records,
         'all_message_samples': all_message_samples,
         'generic_samples': dict(sorted(generic_samples.items())),
+        'sleep_stage_decode_candidates': sleep_stage_candidates,
     }
 
 
@@ -1094,7 +1112,133 @@ _METRICS_SLEEP_SCORE_SIMPLE_MSG = 330
 #   rate was 12, but field_18 = 70. May 30 was 49. The 13/49/70 spread
 #   tracks INVERSELY with sleep quality (96/65/58) — likely sleep onset
 #   latency or pre-sleep disturbance, not respiration. Not surfaced.
+#
+# Unresolved — Deep / Light / REM minute split (`field_5 / field_6 / field_7`):
+#   May 28 (8h12m, score 96): 23412736 / 11425109 /  3543590
+#   May 30 (4h57m, score 65):  7165269 / 35711660 /  3440511
+#   Jun  2 (---  , score 58):  9797632 / 36590932 /  2558531
+# Suspicious: f5 is the LARGEST on the good-sleep night but f6 is largest on
+# the two short/fragmented nights. Light sleep is normally the biggest stage
+# every night, so the field positions don't correspond to fixed stage types
+# in any simple way. None of these decoders fit consistently across the 3
+# days: raw seconds, /1000 ms→s, /16384, /65536 (16.16 fixed-point minutes),
+# upper-16 / lower-16 splits, per-byte packs. `_sleep_stage_decode_candidates`
+# below emits the most plausible numeric interpretations side by side; the
+# FIT inspector surfaces it so the next reference day can be compared to
+# Connect's Deep/Light/REM minutes without re-deriving the candidates.
+# `find_sleep_stage_decoder` is an inverse solver — once Andy can hand us
+# at least 2 days of (f5, f6, f7, deep_min, light_min, rem_min) tuples from
+# Connect, it brute-forces (scale × permutation) and returns the matching
+# decoder.
 _METRICS_SLEEP_SUMMARY_MSG = 384
+
+# Sleep-stage decode candidates for `[384] field_5/6/7`. None of these is
+# verified — they're surfaced for fast eyeball comparison against Garmin
+# Connect's Deep/Light/REM minutes once the next reference day lands.
+# `value_fn` takes the raw uint and returns the candidate in minutes.
+_SLEEP_STAGE_DECODE_CANDIDATES = (
+    ('raw_seconds_to_min',   'raw value / 60 (treat as seconds)',
+     lambda v: v / 60.0),
+    ('ms_to_min',            'raw value / 60000 (treat as milliseconds)',
+     lambda v: v / 60000.0),
+    ('fixed_point_min',      'raw value / 65536 (16.16 fixed-point minutes)',
+     lambda v: v / 65536.0),
+    ('fixed_point_sec',      'raw value / 65536 / 60 (16.16 fixed-point seconds)',
+     lambda v: v / 65536.0 / 60.0),
+    ('scale_1024_sec',       'raw value / 1024 / 60 (scaled seconds to minutes)',
+     lambda v: v / 1024.0 / 60.0),
+    ('scale_16384_sec',      'raw value / 16384 / 60 (scaled seconds to minutes)',
+     lambda v: v / 16384.0 / 60.0),
+    ('upper16_min',          'upper 16 bits as minutes',
+     lambda v: float((v >> 16) & 0xFFFF)),
+    ('upper16_sec_to_min',   'upper 16 bits as seconds, expressed in minutes',
+     lambda v: ((v >> 16) & 0xFFFF) / 60.0),
+)
+
+
+def _sleep_stage_decode_candidates(f5, f6, f7) -> list:
+    """Emit candidate Deep/Light/REM minute decodings of `[384] field_5/6/7`.
+
+    Returns a list of dicts, one per decoder in `_SLEEP_STAGE_DECODE_CANDIDATES`:
+      `{decoder, description, f5_min, f6_min, f7_min, sum_min}`.
+
+    Skips decoders that error on the input. Used by the FIT inspector to
+    surface the candidates next to the raw values — paste Connect's stage
+    minutes alongside to find the decoder (if any) that matches.
+    """
+    out = []
+    raws = (f5, f6, f7)
+    if any(r is None for r in raws):
+        return out
+    try:
+        raws = tuple(int(r) for r in raws)
+    except (TypeError, ValueError):
+        return out
+    for name, desc, fn in _SLEEP_STAGE_DECODE_CANDIDATES:
+        try:
+            vals = tuple(fn(r) for r in raws)
+        except (ZeroDivisionError, ValueError, OverflowError):
+            continue
+        out.append({
+            'decoder': name,
+            'description': desc,
+            'f5_min': round(vals[0], 2),
+            'f6_min': round(vals[1], 2),
+            'f7_min': round(vals[2], 2),
+            'sum_min': round(sum(vals), 2),
+        })
+    return out
+
+
+def find_sleep_stage_decoder(reference_set, *, tolerance_min: float = 2.0) -> list:
+    """Brute-force find a (decoder, field-to-stage permutation) that maps
+    `[384] field_5/6/7` to (Deep, Light, REM) minutes consistently across a
+    reference set of nights.
+
+    `reference_set` is an iterable of `(f5, f6, f7, deep_min, light_min,
+    rem_min)` tuples — at least 2 nights with materially different stage
+    distributions are needed for the result to be meaningful.
+
+    Returns a list of `{decoder, description, permutation, max_error_min}`
+    matches, sorted by `max_error_min` ascending. An empty list means no
+    candidate decoder fits within `tolerance_min` minutes per stage per
+    night — the encoding likely uses a non-scalar transform (bit-packing,
+    variable-resolution, …) that this helper doesn't model.
+    """
+    from itertools import permutations
+
+    rows = list(reference_set)
+    if len(rows) < 2:
+        return []
+
+    matches = []
+    stage_keys = ('deep', 'light', 'rem')
+    for name, desc, fn in _SLEEP_STAGE_DECODE_CANDIDATES:
+        # Decode each night's (f5, f6, f7) once.
+        try:
+            decoded = [tuple(fn(int(r[i])) for i in (0, 1, 2)) for r in rows]
+        except (ZeroDivisionError, ValueError, OverflowError, TypeError):
+            continue
+        # Try every assignment of (f5, f6, f7) -> (deep, light, rem).
+        for perm in permutations((0, 1, 2)):
+            max_err = 0.0
+            for r, dec in zip(rows, decoded):
+                actual = (r[3], r[4], r[5])
+                for stage_idx, slot in enumerate(perm):
+                    err = abs(dec[slot] - actual[stage_idx])
+                    if err > max_err:
+                        max_err = err
+            if max_err <= tolerance_min:
+                matches.append({
+                    'decoder': name,
+                    'description': desc,
+                    'permutation': dict(zip(
+                        (f'field_{5 + p}' for p in perm), stage_keys,
+                    )),
+                    'max_error_min': round(max_err, 2),
+                })
+    matches.sort(key=lambda m: m['max_error_min'])
+    return matches
 
 # `_METRICS.fit` `GenericMessage[378]` — daily training-state row.
 # Verified across May 27 + 28 + 30:
