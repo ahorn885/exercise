@@ -1,7 +1,7 @@
 """Canon coverage + correctness, validated against the real source xlsx.
 
 These tests run the actual `sports_framework` extractors over
-`Sports_Framework_v11.xlsx` (no DB needed) and assert that the discipline
+`Sports_Framework_v14.xlsx` (no DB needed) and assert that the discipline
 canon resolves *every* (id, name) the source produces — so drift can never
 silently reappear: a new unmapped variant in the source would fail
 `test_every_source_id_is_accounted_for`.
@@ -17,7 +17,7 @@ from etl.layer0 import discipline_canon as dc
 from etl.layer0.extractors import sports_framework as sf
 
 _XLSX = os.path.join(
-    os.path.dirname(os.path.dirname(__file__)), "sources", "Sports_Framework_v11.xlsx"
+    os.path.dirname(os.path.dirname(__file__)), "sources", "Sports_Framework_v14.xlsx"
 )
 
 
@@ -32,8 +32,10 @@ def wb():
 # Static canon shape
 # ---------------------------------------------------------------------------
 
-def test_canon_has_21_disciplines():
-    assert len(dc.CANONICAL_NAMES) == 21
+def test_canon_has_24_disciplines():
+    # 21 original + D-030 Gravel Cycling / D-031 Cross Country Cycling /
+    # D-032 Stand-up Paddleboard (Vocabulary V1, 2026-06-08).
+    assert len(dc.CANONICAL_NAMES) == 24
 
 
 def test_merges_and_removals():
@@ -149,10 +151,10 @@ def test_every_resolved_id_has_a_canonical_name(wb):
 # Row-level normalization against the live source workbook
 # ---------------------------------------------------------------------------
 
-def test_dimension_collapses_to_21_canonical_rows(wb):
+def test_dimension_collapses_to_24_canonical_rows(wb):
     rows = dc.normalize_dimension_rows(sf.extract_disciplines(wb["Discipline Library"]))
     ids = [r["discipline_id"] for r in rows]
-    assert sorted(ids) == sorted(dc.CANONICAL_NAMES)        # exactly the 21
+    assert sorted(ids) == sorted(dc.CANONICAL_NAMES)        # exactly the 24
     assert len(ids) == len(set(ids))                        # no dup dims
     for r in rows:
         assert r["discipline_name"] == dc.CANONICAL_NAMES[r["discipline_id"]]
