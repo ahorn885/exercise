@@ -593,3 +593,53 @@ def test_find_sleep_stage_decoder_needs_at_least_two_nights():
     from garmin_fit_parser import find_sleep_stage_decoder
     assert find_sleep_stage_decoder([(1, 2, 3, 4, 5, 6)]) == []
     assert find_sleep_stage_decoder([]) == []
+
+
+# ── [275] sleep-stage transition walker + minute tally ──────────────────────
+
+def test_stage_minutes_from_events_tallies_between_adjacent_events():
+    """Each adjacent pair contributes (next.ts - this.ts) seconds to the
+    current event's code. Verified against the 5 visible May 30 events
+    from Andy's `_SLEEP_DATA.fit` dump (codes 2/1/2/3/2 at FIT epoch sec
+    1149038520/1149038760/1149039360/1149040140/1149040680)."""
+    from garmin_fit_parser import _stage_minutes_from_events
+    events = [
+        (1149038520, 2), (1149038760, 1), (1149039360, 2),
+        (1149040140, 3), (1149040680, 2),
+    ]
+    # Without sleep_end the last event drops out, leaving 4 adjacent gaps.
+    assert _stage_minutes_from_events(events) == {2: 17, 1: 10, 3: 9}
+
+
+def test_stage_minutes_from_events_uses_sleep_end_for_final_segment():
+    """When sleep_end_ts is supplied (cross-file from `[384] field_11`),
+    the final event gets a duration too."""
+    from garmin_fit_parser import _stage_minutes_from_events
+    events = [
+        (1000, 1), (1300, 2), (1900, 1),  # last event needs sleep_end
+    ]
+    # Without sleep_end: code 1 = 5 min (300s), code 2 = 10 min (600s)
+    assert _stage_minutes_from_events(events) == {1: 5, 2: 10}
+    # With sleep_end at 2200: last code 1 segment = 300s = 5 min added
+    assert _stage_minutes_from_events(events, sleep_end_ts=2200) == {1: 10, 2: 10}
+
+
+def test_stage_minutes_from_events_clips_implausible_segments():
+    """A 24-hour-plus gap between events is almost certainly a parse
+    error or skipped record — clip it rather than letting a single
+    bogus segment dominate the tally."""
+    from garmin_fit_parser import _stage_minutes_from_events
+    events = [
+        (1000, 1),          # +60s → code 1 = 1 min
+        (1060, 2),          # +90,000s gap → 25 hours, clipped
+        (91060, 3),         # ignored due to clip on previous
+    ]
+    out = _stage_minutes_from_events(events, sleep_end_ts=91120)
+    assert 2 not in out  # 25h gap clipped
+    assert out.get(1) == 1
+
+
+def test_stage_minutes_from_events_empty_input():
+    from garmin_fit_parser import _stage_minutes_from_events
+    assert _stage_minutes_from_events([]) == {}
+    assert _stage_minutes_from_events([], sleep_end_ts=1000) == {}
