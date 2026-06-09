@@ -15,13 +15,52 @@ import hashlib
 import hmac
 from datetime import datetime, timezone
 
+from flask import Flask, make_response
+
 from routes.logs import (
     _build_logs_query,
     _coerce_status,
     _coerce_ts,
     _extract,
     _verify_signature,
+    _with_verify,
 )
+
+
+# ─── _with_verify (Vercel ownership handshake) ───────────────────────────────
+
+
+class TestWithVerify:
+    """`_with_verify(resp)` attaches the `x-vercel-verify` ownership header.
+    Echoes the incoming request header first (so drain verification passes with
+    no pre-shared token / redeploy), env var second."""
+
+    def test_echoes_incoming_request_header(self):
+        app = Flask(__name__)
+        with app.test_request_context(headers={'x-vercel-verify': 'incoming-tok'}):
+            resp = _with_verify(make_response('', 200))
+            assert resp.headers.get('x-vercel-verify') == 'incoming-tok'
+
+    def test_falls_back_to_env(self, monkeypatch):
+        monkeypatch.setenv('LOG_DRAIN_VERIFY', 'env-tok')
+        app = Flask(__name__)
+        with app.test_request_context():  # no incoming header
+            resp = _with_verify(make_response('', 200))
+            assert resp.headers.get('x-vercel-verify') == 'env-tok'
+
+    def test_incoming_header_wins_over_env(self, monkeypatch):
+        monkeypatch.setenv('LOG_DRAIN_VERIFY', 'env-tok')
+        app = Flask(__name__)
+        with app.test_request_context(headers={'x-vercel-verify': 'incoming-tok'}):
+            resp = _with_verify(make_response('', 200))
+            assert resp.headers.get('x-vercel-verify') == 'incoming-tok'
+
+    def test_no_token_no_header(self, monkeypatch):
+        monkeypatch.delenv('LOG_DRAIN_VERIFY', raising=False)
+        app = Flask(__name__)
+        with app.test_request_context():
+            resp = _with_verify(make_response('', 200))
+            assert 'x-vercel-verify' not in resp.headers
 
 
 # ─── _verify_signature ───────────────────────────────────────────────────────
