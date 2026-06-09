@@ -904,7 +904,6 @@ class TestAccommodationPassThrough:
             hitl_required=False,
             hitl_items=[],
             body_part_vocab_misses=[],
-            condition_vocab_misses=[],
         )
         payload = q_layer2c_equipment_mapper_payload(
             conn,

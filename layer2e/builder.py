@@ -28,10 +28,9 @@ This is the **vertical-slice** ship per Andy 2026-05-19 scope pick:
                                       + open items 2E-2/3/4 — every event
                                       surfaces `temp_signal='unknown'`
                                       with a `race_temp_unknown` flag)
-  §5.9 HITL triggers                — none active (gate 5 anaphylaxis ×
-                                      aid stations was removed with the
-                                      `aid_stations` column in FormRefresh
-                                      A2; gates 1-4 require structured
+  §5.9 HITL triggers                — none active (the food-allergy gate 5
+                                      was retired with the food_allergies
+                                      capture; gates 1-4 require structured
                                       supplements + a pregnancy field
                                       that aren't deployed yet)
 
@@ -42,8 +41,6 @@ Drift translations between spec §3 and deployed `Layer1*` types
   spec status 'Current'/'History' → status 'Active'/'Resolved'/'Inactive'
                                     (Active → Current; Resolved+Inactive
                                     → History)
-  spec FoodAllergyRecord.name     → allergen_category enum (12-value)
-  spec allergy severity 5-enum    → 3-enum lowercase
   spec dietary_pattern Title Case → list[str], free-form; matched
                                     case-insensitively
   spec salt_tolerance Low/Standard/High
@@ -933,7 +930,7 @@ def _stub_heat_acclim_adjustments(
     return adjustments, flags
 
 
-# ─── §5.9 HITL (partial — gate 5 only) ──────────────────────────────────────
+# ─── §5.9 HITL (no active gates) ────────────────────────────────────────────
 
 
 def _emit_hitl_items(
@@ -941,9 +938,8 @@ def _emit_hitl_items(
     target_events: list[Layer2ETargetEvent],
 ) -> list[Layer2EHitlItem]:
     # Gates 1-4 require structured supplements + a pregnancy field; deferred
-    # to post-§I.1-refresh. Gate 5 (anaphylaxis × aid-station-bound event)
-    # was removed with the `aid_stations` column in FormRefresh A2
-    # (2026-05-25) — the project does not capture or plan for that scenario.
+    # to post-§I.1-refresh. The food-allergy gate 5 was retired along with the
+    # food_allergies capture (dead code — never populated or consumed).
     # No active gates remain; this stays as the emission point for the
     # deferred gates.
     return []

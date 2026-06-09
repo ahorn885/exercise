@@ -217,7 +217,6 @@ def _build_terrain_gap(row: dict[str, Any]) -> TerrainGap:
         proxy_methods=list(row.get("proxy_methods") or []),
         uncoverable_stimulus=list(row.get("uncoverable_stimulus") or []),
         prescription_note=row.get("prescription_note") or "",
-        discipline_relevance_assessed=False,
     )
 
 
@@ -240,7 +239,6 @@ def _build_undefined_gap(
             "No gap-rule data exists for this terrain. "
             "Plan-gen treats as unbridgeable by default until a rule is authored."
         ),
-        discipline_relevance_assessed=False,
     )
 
 
@@ -510,8 +508,8 @@ def q_layer2b_terrain_classifier_payload(
     back to the rule's unbridgeable row when no real proxy is reachable,
     or to a synthetic 'undefined' gap when the target has no rule rows at
     all. `included_discipline_ids` is required input but not currently
-    used for relevance scoping (v1 ships with `discipline_relevance_assessed=False`
-    per §5.3 — full structured relevance is queued as open item 2B-1).
+    used for relevance scoping (full structured relevance is queued as
+    open item 2B-1 per §5.3).
 
     `skill_toggle_states` (D-73 Phase 5.2 Bucket C (l)) carries the
     athlete's ON/OFF state per `layer0.skill_capability_toggles.toggle_name`.

@@ -1622,20 +1622,12 @@ _PG_MIGRATIONS = [
         created_at TIMESTAMP DEFAULT NOW()
     )""",
     "CREATE INDEX IF NOT EXISTS medications_log_user_class_active_idx ON medications_log (user_id, medication_class) WHERE stopped_at IS NULL",
-    # D-73 Phase 1.2B (D-51 §3.2c) — food_allergies. Closed-enum allergen
-    # categories in athlete.KNOWN_ALLERGEN_CATEGORIES. severity 'anaphylaxis'
-    # tier triggers the v5 §B.4.2 auto-populate rule for health_conditions_log
-    # system_category='gi_immune' (Layer 1 builder responsibility; storage is
-    # independent of that derivation).
-    """CREATE TABLE IF NOT EXISTS food_allergies (
-        id SERIAL PRIMARY KEY,
-        user_id INTEGER NOT NULL REFERENCES users(id),
-        allergen_category TEXT NOT NULL,
-        severity TEXT NOT NULL DEFAULT 'intolerance',
-        notes TEXT,
-        created_at TIMESTAMP DEFAULT NOW()
-    )""",
-    "CREATE INDEX IF NOT EXISTS food_allergies_user_idx ON food_allergies (user_id)",
+    # food_allergies (D-73 Phase 1.2B) was dropped as dead code: the table
+    # had no write path (never populated), the Layer 1 → 2E plumbing that
+    # loaded it was never consumed downstream, and the §B.4.2 'gi_immune'
+    # auto-populate rule it was meant to trigger was never implemented.
+    # DROP IF EXISTS is idempotent + no-op on a fresh DB.
+    "DROP TABLE IF EXISTS food_allergies",
     # D-73 Phase 1.2B (D-51 §3.3) — §C multi-row companions. athlete_secondary
     # _sports.sport_slug FK-validated in application code against the 18-sport
     # Sports_Framework_v10.xlsx (no closed-enum DB constraint; the framework

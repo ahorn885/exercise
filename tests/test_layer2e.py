@@ -33,7 +33,6 @@ import pytest
 
 from layer2e import Layer2EInputError, q_layer2e_nutrition_baseline_payload
 from layer4.context import (
-    FoodAllergyRecord,
     Layer1HealthStatus,
     Layer1Identity,
     Layer1Lifestyle,
@@ -756,24 +755,14 @@ class TestHeatAcclimStub:
 
 
 class TestHITLGatesNoneActive:
-    # Gate 5 (anaphylaxis × aid stations) was removed with the
-    # `aid_stations` column in FormRefresh A2 (2026-05-25); gates 1-4 are
-    # deferred (need structured supplements + a pregnancy field). No active
-    # gate should fire — this locks the removal so it isn't reintroduced
-    # accidentally.
-    def test_anaphylaxis_with_event_no_longer_gates(self):
+    # Gates 1-4 are deferred (need structured supplements + a pregnancy
+    # field) and the food-allergy gate 5 was retired with the food_allergies
+    # capture. No active gate should fire — this locks that so a gate isn't
+    # reintroduced accidentally.
+    def test_event_present_no_gates_fire(self):
         db = _FakeConn()
         db.queue_pla_for_all_phases((4, 6), (6, 10), (8, 12), (3, 6))
-        health = Layer1HealthStatus(
-            food_allergies=[
-                FoodAllergyRecord(
-                    allergy_id=1,
-                    allergen_category="tree_nut",
-                    severity="anaphylaxis",
-                    notes=None,
-                )
-            ]
-        )
+        health = Layer1HealthStatus()
         event = Layer2ETargetEvent(
             event_id="ar-x", event_name="AR X",
             event_date=date(2026, 8, 1),
