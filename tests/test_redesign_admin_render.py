@@ -224,3 +224,157 @@ def test_fit_inspect_requires_admin(monkeypatch):
         sess['user_id'] = 2  # not the admin (id 1)
     resp = client.get('/admin/fit-inspect')
     assert resp.status_code == 403
+
+
+# ─── /admin/plan/<id>/inspect — #333 plan_sessions fallback ──────────────────
+
+
+class _PlanInspectConn:
+    """#333 — routes the three SELECTs the inspect view fires (plan_versions /
+    plan_progress_blocks / plan_sessions). Decoupled from `_Conn` so the
+    fallback path can be exercised without bleeding into the dashboard fakes."""
+
+    def __init__(self, *, pv_row, progress_rows, session_payload_rows):
+        self.pv_row = pv_row
+        self.progress_rows = progress_rows
+        self.session_payload_rows = session_payload_rows
+        self.calls: list[str] = []
+
+    def execute(self, sql, *a, **k):
+        s = ' '.join(sql.split())
+        self.calls.append(s)
+        # User-hydration query fires on every request via the login wall
+        # (app._require_login → routes.auth.current_user). Route it to ADMIN
+        # so the gate admits the session and the inspect route is reached.
+        if 'FROM users WHERE id' in s:
+            return _Cursor(one=ADMIN)
+        if 'FROM plan_versions' in s:
+            return _Cursor(one=self.pv_row)
+        if 'FROM plan_progress_blocks' in s:
+            return _Cursor(rows=self.progress_rows)
+        if 'FROM plan_sessions' in s:
+            return _Cursor(rows=self.session_payload_rows)
+        return _Cursor()
+
+    def commit(self):
+        pass
+
+    def rollback(self):
+        pass
+
+
+def _pv_ready_row():
+    return {
+        'id': 46, 'user_id': 1, 'created_at': '2026-05-30',
+        'created_via': 'plan_create',
+        'scope_start_date': '2026-06-01', 'scope_end_date': '2026-08-24',
+        'pattern': 'A', 'generation_status': 'ready',
+        'generation_error': None, 'generation_units_cached': 12,
+    }
+
+
+def _session_payload_row(*, session_id, d, phase_name, week_in_phase):
+    import json as _json
+    return {'payload_json': _json.dumps({
+        'session_id': session_id, 'plan_version_id': 46,
+        'date': d, 'day_of_week': 'Mon', 'session_index_in_day': 0,
+        'time_of_day': 'morning', 'kind': 'cardio',
+        'discipline_id': 'D-run', 'discipline_name': 'Running',
+        'locale_id': 'home', 'locale_name': 'Home',
+        'duration_min': 45, 'intensity_summary': 'easy',
+        'cardio_blocks': [{
+            'block_kind': 'main_set', 'duration_min': 45,
+            'intensity_zone': 'Z2',
+            'intensity_target': {'hr_bpm_low': 125, 'hr_bpm_high': 140},
+            'instructions': 'Steady easy.',
+        }],
+        'strength_exercises': None, 'rest_reason': None,
+        'phase_metadata': {
+            'phase_name': phase_name, 'week_in_phase': week_in_phase,
+            'total_weeks_in_phase': 4,
+            'intended_volume_band': [5.0, 7.0],
+            'intended_intensity_distribution': {'Z2': 1.0},
+        },
+        'session_notes': 'n', 'coaching_intent': 'Easy aerobic.',
+        'coaching_flags': [], 'is_ad_hoc': False,
+        'ad_hoc_request_payload': None,
+    })}
+
+
+def test_plan_inspect_falls_back_to_plan_sessions_for_ready_plan(monkeypatch):
+    """#333 — a `ready` plan with no per-block snapshot reconstructs blocks
+    from `plan_sessions` so the inspect view stays useful post-completion.
+    Before the fix this page rendered `blocks: 0 / sessions: 0` for the first
+    finished PGE 2026 plan (pv=46) — the snapshot is in-flight only."""
+    conn = _PlanInspectConn(
+        pv_row=_pv_ready_row(),
+        progress_rows=[],  # the in-flight snapshot is empty for a finished plan
+        session_payload_rows=[
+            _session_payload_row(session_id='s1', d='2026-06-01',
+                                 phase_name='Base', week_in_phase=1),
+            _session_payload_row(session_id='s2', d='2026-06-08',
+                                 phase_name='Base', week_in_phase=2),
+            _session_payload_row(session_id='s3', d='2026-06-15',
+                                 phase_name='Build', week_in_phase=1),
+        ],
+    )
+    client = _client(monkeypatch, conn)
+    resp = client.get('/admin/plan/46/inspect')
+    assert resp.status_code == 200
+    html = resp.get_data(as_text=True)
+    # Fallback notice surfaces so the operator knows where the data came from.
+    assert 'Reconstructed from' in html
+    assert 'plan_sessions' in html
+    # The reconstructed blocks render with phase × week labels.
+    assert 'Base · week 1' in html
+    assert 'Base · week 2' in html
+    assert 'Build · week 1' in html
+    # The per-row session shape lands in the table.
+    assert '2026-06-01' in html
+    assert 'Running' in html
+
+
+def test_plan_inspect_skips_fallback_when_progress_blocks_present(monkeypatch):
+    """In-flight plan with a real snapshot: the fallback path is skipped
+    entirely (no plan_sessions SELECT, no info alert) — the snapshot is the
+    canonical source while the pass is still running."""
+    conn = _PlanInspectConn(
+        pv_row=_pv_ready_row(),
+        progress_rows=[{
+            'phase_idx': 0, 'phase_name': 'Base',
+            'sessions_json': [{
+                'date': '2026-06-01', 'discipline_name': 'Running',
+                'duration_min': 45, 'intensity_summary': 'easy',
+                'coaching_intent': 'Easy aerobic.',
+            }],
+            'synthesis_metadata_json': {'accepted': True, 'latency_ms': 1200},
+            'snapshot_at': '2026-05-30 12:00:00',
+        }],
+        session_payload_rows=[],  # would assert below if the fallback queried this
+    )
+    client = _client(monkeypatch, conn)
+    resp = client.get('/admin/plan/46/inspect')
+    assert resp.status_code == 200
+    html = resp.get_data(as_text=True)
+    assert 'Reconstructed from' not in html
+    # Snapshot's own metadata still surfaces (accepted badge + snapshot_at).
+    assert 'accepted' in html
+    assert any('FROM plan_sessions' in c for c in conn.calls) is False
+
+
+def test_plan_inspect_no_fallback_for_generating_plan(monkeypatch):
+    """A `generating` plan with no snapshot yet shows the "nothing yet" copy
+    instead of guessing from plan_sessions — sessions don't persist until the
+    generation completes, so the fallback would always be empty for an
+    in-flight plan and the snapshot is the only signal of pass progress."""
+    pv = {**_pv_ready_row(), 'generation_status': 'generating'}
+    conn = _PlanInspectConn(
+        pv_row=pv, progress_rows=[], session_payload_rows=[],
+    )
+    client = _client(monkeypatch, conn)
+    resp = client.get('/admin/plan/46/inspect')
+    assert resp.status_code == 200
+    html = resp.get_data(as_text=True)
+    assert 'Reconstructed from' not in html
+    # The plan_sessions table is never queried for an in-flight plan.
+    assert any('FROM plan_sessions' in c for c in conn.calls) is False
