@@ -37,7 +37,7 @@ DELOAD_THRESHOLD = 5
 def current_rx(db, user_id, exercise_name):
     """Read the current prescription row for `(user_id, exercise_name)`.
 
-    Returns a dict `{sets, reps, weight_lbs, duration_sec, movement_pattern}`
+    Returns a dict `{sets, reps, weight_kg, duration_sec, movement_pattern}`
     when a row exists with at least one of weight or duration recorded; None
     otherwise. Track 2 slice 2d wires this into `layer4.rx_wire.apply_current_rx`
     to overwrite synthesizer-emitted `load_prescription` text with the
@@ -65,7 +65,7 @@ def current_rx(db, user_id, exercise_name):
     return {
         'sets': row['current_sets'],
         'reps': row['current_reps'],
-        'weight_lbs': weight,
+        'weight_kg': weight,
         'duration_sec': duration,
         'movement_pattern': row['movement_pattern'],
     }
@@ -79,7 +79,7 @@ def _bootstrap_baseline(sets):
     """
     actual_sets = len(sets)
     reps = [s.get('reps') or 0 for s in sets if (s.get('reps') or 0) > 0]
-    wts = [s.get('weight_lbs') or 0 for s in sets if (s.get('weight_lbs') or 0) > 0]
+    wts = [s.get('weight_kg') or 0 for s in sets if (s.get('weight_kg') or 0) > 0]
     durs = [s.get('duration_sec') or 0 for s in sets if (s.get('duration_sec') or 0) > 0]
     return {
         'sets': actual_sets or None,

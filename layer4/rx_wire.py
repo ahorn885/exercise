@@ -170,21 +170,29 @@ def _classify_category(
     return "compound_barbell" if is_compound else "bodyweight"
 
 
-def _render_current_rx(rx: dict[str, Any]) -> str | None:
-    """Format `{sets, reps, weight_lbs}` as `"{sets} × {reps} @ {lbs} lbs"`.
+def _render_current_rx(rx: dict[str, Any], unit_pref: str | None = None) -> str | None:
+    """Format `{sets, reps, weight_kg}` as `"{sets} × {reps} @ {wt} {unit}"`.
+
+    `unit_pref` selects the athlete's display unit (`imperial` → lb, `metric`
+    → kg). Storage is canonical kg; the `units.format_weight` helper handles
+    rounding so imperial loads still read as whole numbers.
+
     Returns None when the row is too sparse to render meaningfully
     (no weight + no duration); the caller falls through to first-exposure.
     """
+    from units import format_weight  # local import — module load order
+
     sets = rx.get("sets")
     reps = rx.get("reps")
-    weight = rx.get("weight_lbs")
+    weight = rx.get("weight_kg")
     duration = rx.get("duration_sec")
 
     if weight is not None and weight > 0:
-        # Whole-number lbs read cleaner than e.g. "185.0 lbs".
         try:
-            weight_str = f"{int(round(float(weight)))} lbs"
+            weight_str = format_weight(float(weight), unit_pref)
         except (TypeError, ValueError):
+            return None
+        if not weight_str:
             return None
         if sets and reps:
             return f"{sets} × {reps} @ {weight_str}"
@@ -229,6 +237,19 @@ def apply_current_rx(
     """
     # Import lazily to avoid circular-import risk at module load.
     from rx_engine import current_rx
+    from athlete import get_athlete_profile
+    from units import normalize_unit_preference
+
+    # #469 — read the athlete's unit_preference once; pass it to every
+    # `_render_current_rx` call so the prescribed-load text matches the
+    # athlete-facing display unit ("185 lb" vs "84 kg"). Falls back to the
+    # `units` default on missing profile rows or DB hiccups — rx_wire is
+    # degradable; a DB error here must not wedge plan generation.
+    try:
+        profile = get_athlete_profile(db, user_id) or {}
+    except Exception:  # noqa: BLE001 — degraded path
+        profile = {}
+    unit_pref = normalize_unit_preference(profile.get("unit_preference"))
 
     resolved_index = _build_cluster_resolved_index(layer2c_payloads)
 
@@ -264,7 +285,7 @@ def apply_current_rx(
                 new_exercises.append(ex)
                 continue
 
-            rendered = _render_current_rx(rx) if rx else None
+            rendered = _render_current_rx(rx, unit_pref=unit_pref) if rx else None
             if rendered:
                 new_ex = ex.model_copy(update={"load_prescription": rendered})
                 new_exercises.append(new_ex)

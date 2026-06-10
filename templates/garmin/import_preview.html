@@ -213,7 +213,7 @@
                 {% for s in row.sets %}
                   <span class="chip">S{{ loop.index }}:
                     {% if s.reps %}{{ s.reps }} reps{% endif %}
-                    {% if s.weight_lbs %}@ {{ s.weight_lbs }}lb{% endif %}
+                    {% if s.weight_display %}@ {{ s.weight_display }}{{ weight_unit_label or 'lb' }}{% endif %}
                     {% if s.duration_sec and not s.reps %}{{ s.duration_sec }}s{% endif %}
                   </span>
                 {% else %}

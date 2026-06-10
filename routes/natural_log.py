@@ -62,7 +62,7 @@ Body metrics entry:
 {
   "log_type": "body",
   "date": "YYYY-MM-DD",
-  "weight_lbs": <number or null>,
+  "weight": <number in athlete's unit_preference (lb if imperial, kg if metric) or null>,
   "body_fat_pct": <number or null>,
   "resting_hr": <integer or null>,
   "vo2_max": <number or null>,
@@ -77,7 +77,7 @@ Strength session entry (one entry per session, may contain many exercises):
     {
       "exercise": "<must match a name from the strength exercise list below — pick closest>",
       "sets": [
-        {"reps": <int or null>, "weight_lbs": <number or null>, "duration_sec": <int or null>}
+        {"reps": <int or null>, "weight": <number in athlete's unit_preference or null>, "duration_sec": <int or null>}
       ],
       "rpe": <0.0-10.0 or null>,
       "notes": ""
@@ -105,7 +105,9 @@ Otherwise set plan_match to null.
 - Do NOT ask about optional fields (HR, elevation, power, calories) — leave them null
 - If duration was given in any form (time range, "about X", etc.) that's enough — estimate it
 - Strength: build a single "strength" entry with exercises[] for the session. If the user
-  gives a shorthand like "3x5 @ 185", expand it to 3 sets of {reps:5, weight_lbs:185}.
+  gives a shorthand like "3x5 @ 185", expand it to 3 sets of {reps:5, weight:185}.
+  Interpret bare weight numbers in the athlete's unit_preference. If they explicitly say
+  "kg" or "lb", convert into their unit_preference before emitting the JSON value.
   If an exercise name doesn't match the list closely, ask which exercise they mean.
 
 ## Date rules
@@ -150,9 +152,14 @@ def _load_scheduled(db):
     return [dict(r) for r in rows]
 
 
-def _build_system(scheduled, strength_exercises=None):
+def _build_system(scheduled, strength_exercises=None, unit_pref=None):
     today = date.today().isoformat()
     text = _SYSTEM.replace('{today}', today)
+    if unit_pref:
+        unit_label = 'lb' if unit_pref == 'imperial' else 'kg'
+        text += f"\n\n## Athlete unit preference: {unit_pref} ({unit_label})\n"
+        text += f"Emit all weight values in {unit_label}. If the user says a weight "
+        text += "in the other unit, convert before writing the JSON value."
     if strength_exercises:
         text += '\n\n## Strength exercise list (match closest by name)\n'
         text += ', '.join(strength_exercises)
@@ -185,10 +192,15 @@ def _parse_json(text):
 def index():
     db = get_db()
     scheduled = _load_scheduled(db)
+    from units import normalize_unit_preference, weight_unit_label
+    from athlete import get_athlete_profile
+    profile = get_athlete_profile(db, current_user_id()) or {}
+    unit_pref = normalize_unit_preference(profile.get('unit_preference'))
     return render_template('natural_log/index.html',
                            api_configured=_check_api_key(),
                            scheduled=scheduled,
-                           today=date.today().isoformat())
+                           today=date.today().isoformat(),
+                           weight_unit_label=weight_unit_label(unit_pref))
 
 
 @bp.route('/parse', methods=['POST'])
@@ -206,7 +218,13 @@ def parse():
     db = get_db()
     scheduled = _load_scheduled(db)
     strength = _load_strength_exercises(db)
-    system_text = _build_system(scheduled, strength)
+    # #469 — surface unit_preference to the LLM so it emits weight values in
+    # the athlete's display unit; save() converts to canonical kg.
+    from units import normalize_unit_preference
+    from athlete import get_athlete_profile
+    _profile = get_athlete_profile(db, current_user_id()) or {}
+    _unit_pref = normalize_unit_preference(_profile.get('unit_preference'))
+    system_text = _build_system(scheduled, strength, unit_pref=_unit_pref)
 
     messages = [{'role': t['role'], 'content': t['content']} for t in history]
     messages.append({'role': 'user', 'content': message})
@@ -252,6 +270,12 @@ def save():
     db = get_db()
     uid = current_user_id()
     saved = []
+    # #469 — athlete display unit drives the input-side conversion for the
+    # whole batch (strength sets + body metrics).
+    from units import normalize_unit_preference, entered_weight_to_kg
+    from athlete import get_athlete_profile
+    profile = get_athlete_profile(db, uid) or {}
+    unit_pref = normalize_unit_preference(profile.get('unit_preference'))
 
     for entry in entries:
         log_type = entry.get('log_type')
@@ -303,17 +327,28 @@ def save():
             session_id = cur.lastrowid
 
             body_wt_row = db.execute(
-                'SELECT weight_lbs FROM body_metrics WHERE user_id = ? '
+                'SELECT weight_kg FROM body_metrics WHERE user_id = ? '
                 'ORDER BY date DESC LIMIT 1',
                 (uid,)
             ).fetchone()
-            body_weight = body_wt_row['weight_lbs'] if body_wt_row else None
+            body_weight = body_wt_row['weight_kg'] if body_wt_row else None
 
             for ex_data in entry.get('exercises', []):
                 exercise = (ex_data.get('exercise') or '').strip()
                 if not exercise:
                     continue
-                sets = ex_data.get('sets') or []
+                raw_sets = ex_data.get('sets') or []
+                # #469 — JS posts weight in the athlete's display unit; convert
+                # to canonical kg before storage + downstream calculations.
+                sets = []
+                for s in raw_sets:
+                    raw_wt = s.get('weight') if 'weight' in s else s.get('weight_lbs')
+                    sets.append({
+                        'set_number': s.get('set_number'),
+                        'reps': s.get('reps'),
+                        'weight_kg': entered_weight_to_kg(raw_wt, unit_pref),
+                        'duration_sec': s.get('duration_sec'),
+                    })
 
                 # exercise_inventory is a shared catalog
                 ei = db.execute(
@@ -328,10 +363,10 @@ def save():
 
                 actual_sets = len(sets)
                 last_reps = sets[-1].get('reps') if sets else None
-                weights = [s.get('weight_lbs') or 0 for s in sets]
+                weights = [s.get('weight_kg') or 0 for s in sets]
                 max_weight = max(weights) if weights and max(weights) > 0 else None
                 last_duration = sets[-1].get('duration_sec') if sets else None
-                volume = sum((s.get('reps') or 0) * (s.get('weight_lbs') or 0) for s in sets) or None
+                volume = sum((s.get('reps') or 0) * (s.get('weight_kg') or 0) for s in sets) or None
 
                 log_cur = db.execute(
                     '''INSERT INTO training_log
@@ -349,28 +384,32 @@ def save():
                 for i, s in enumerate(sets, start=1):
                     db.execute(
                         '''INSERT INTO training_log_sets
-                           (training_log_id, set_number, reps, weight_lbs, duration_sec, user_id)
+                           (training_log_id, set_number, reps, weight_kg, duration_sec, user_id)
                            VALUES (?,?,?,?,?,?)''',
                         (log_id, s.get('set_number') or i,
-                         s.get('reps'), s.get('weight_lbs'), s.get('duration_sec'), uid)
+                         s.get('reps'), s.get('weight_kg'), s.get('duration_sec'), uid)
                     )
 
             saved.append({'type': 'strength', 'id': session_id, 'redirect': '/training'})
 
         elif log_type == 'body':
+            # #469 — body-weight entry arrives in the athlete's display unit;
+            # convert to canonical kg for storage.
+            entered_wt = entry.get('weight') if 'weight' in entry else entry.get('weight_lbs')
+            weight_kg = entered_weight_to_kg(entered_wt, unit_pref)
             db.execute(
                 '''INSERT INTO body_metrics
-                   (date, weight_lbs, body_fat_pct, resting_hr, vo2_max, notes, user_id)
+                   (date, weight_kg, body_fat_pct, resting_hr, vo2_max, notes, user_id)
                    VALUES (?,?,?,?,?,?,?)
                    ON CONFLICT(user_id, date) DO UPDATE SET
-                     weight_lbs=excluded.weight_lbs,
+                     weight_kg=excluded.weight_kg,
                      body_fat_pct=excluded.body_fat_pct,
                      resting_hr=excluded.resting_hr,
                      vo2_max=excluded.vo2_max,
                      notes=excluded.notes''',
                 (
                     entry.get('date', date.today().isoformat()),
-                    entry.get('weight_lbs'),
+                    weight_kg,
                     entry.get('body_fat_pct'),
                     entry.get('resting_hr'),
                     entry.get('vo2_max'),

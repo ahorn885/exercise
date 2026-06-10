@@ -18,6 +18,10 @@ PROFILE_FIELDS = (
     'sex',
     'height_cm',
     'primary_sport',
+    # #469 — athlete-facing unit toggle (`imperial` / `metric`). Storage is
+    # always kg; this flag drives the UI/entry boundary + rx prescription
+    # display. See `units.py` for the conversion helpers.
+    'unit_preference',
     # `target_event_name` + `target_event_date` retired from the form per
     # D-66 Layer 3B Scope A; columns dropped from athlete_profile in Scope B
     # (init_db.py migrations). `training_window` retired in D-73 Phase 1.2A

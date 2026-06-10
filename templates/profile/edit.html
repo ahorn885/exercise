@@ -11,6 +11,8 @@
 {% set sub = active_tab if active_tab in ['athlete', 'schedule', 'skills'] else 'athlete' %}
 {% set is_first_run = not (profile.date_of_birth or profile.primary_sport or profile.height_cm
    or profile.weekly_hours_target or profile.body_weight_kg or profile.notes) %}
+{% set unit_pref = profile.unit_preference or 'imperial' %}
+{% set wt_label = profile.weight_unit_label or 'lb' %}
 {% block title %}Athlete — AIDSTATION{% endblock %}
 {% block crumbs %}<b>Athlete</b>{% endblock %}
 
@@ -51,6 +53,12 @@
 {% if sub == 'athlete' %}
 <form method="post" action="{{ url_for('profile.edit') }}" class="pf-form">
   <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  {# #469 — render-time unit of the body weight + height inputs. The handler
+     converts those fields from THIS unit (not the newly-submitted preference)
+     so toggling lb→kg without retyping doesn't double-store the displayed
+     number. #}
+  <input type="hidden" name="body_weight_input_unit" value="{{ unit_pref }}">
+  <input type="hidden" name="height_input_unit" value="{{ unit_pref }}">
 
   <div class="card card-pad stack">
     <p class="eyebrow">● Basics</p>
@@ -65,9 +73,9 @@
             <option value="{{ s }}" {% if profile.sex == s %}selected{% endif %}>{{ s|replace('_', ' ')|title }}</option>
           {% endfor %}
         </select></label>
-      <label class="field"><span class="lbl">Height (cm)</span>
-        <input type="number" step="0.1" name="height_cm" class="form-control form-control-sm"
-               value="{{ profile.height_cm if profile.height_cm is not none else '' }}"></label>
+      <label class="field"><span class="lbl">Height ({{ profile.height_unit_label or 'cm' }})</span>
+        <input type="number" step="0.1" name="height" class="form-control form-control-sm"
+               value="{{ '%.1f' % profile.height_display if profile.height_display is not none else '' }}"></label>
       <label class="field field-wide"><span class="lbl">Primary sport</span>
         <input type="text" name="primary_sport" class="form-control form-control-sm"
                placeholder="e.g. adventure_racing, triathlon, marathon"
@@ -80,14 +88,32 @@
 
   <div class="card card-pad stack">
     <div>
+      <p class="eyebrow">● Units</p>
+      <p class="pf-hint">Toggles weight display + entry across the site (body metrics, training-log
+        set weights, prescribed loads). Storage is canonical kg — switching units never loses data.</p>
+    </div>
+    <div class="pf-grid">
+      <label class="field"><span class="lbl">Unit preference</span>
+        <select name="unit_preference" class="form-select form-select-sm">
+          {% for choice in (unit_preference_choices or ['imperial', 'metric']) %}
+            <option value="{{ choice }}" {% if unit_pref == choice %}selected{% endif %}>
+              {{ 'Imperial (lb)' if choice == 'imperial' else 'Metric (kg)' }}
+            </option>
+          {% endfor %}
+        </select></label>
+    </div>
+  </div>
+
+  <div class="card card-pad stack">
+    <div>
       <p class="eyebrow">● Performance baselines</p>
       <p class="pf-hint">Optional — feeds Layer 3 athlete evaluation. Connected providers will
         auto-populate these in a future release; self-report is the only path for now.</p>
     </div>
     <div class="pf-grid">
-      <label class="field"><span class="lbl">Body weight (kg)</span>
-        <input type="number" step="0.1" min="20" max="300" name="body_weight_kg" class="form-control form-control-sm"
-               value="{{ profile.body_weight_kg if profile.body_weight_kg is not none else '' }}"></label>
+      <label class="field"><span class="lbl">Body weight ({{ wt_label }})</span>
+        <input type="number" step="0.1" min="20" max="700" name="body_weight" class="form-control form-control-sm"
+               value="{{ '%.1f' % profile.body_weight_display if profile.body_weight_display is not none else '' }}"></label>
       <label class="field"><span class="lbl">HRmax (bpm)</span>
         <input type="number" step="1" min="100" max="240" name="hrmax_bpm" class="form-control form-control-sm"
                value="{{ profile.hrmax_bpm if profile.hrmax_bpm is not none else '' }}"></label>

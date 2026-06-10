@@ -157,9 +157,9 @@ def test_session_detail_renders_each_exercise(monkeypatch):
                  notes=None),
     ]
     sets_rows = [
-        _FakeRow(id=101, training_log_id=11, set_number=1, reps=5, weight_lbs=225, duration_sec=None),
-        _FakeRow(id=102, training_log_id=11, set_number=2, reps=5, weight_lbs=225, duration_sec=None),
-        _FakeRow(id=103, training_log_id=11, set_number=3, reps=5, weight_lbs=225, duration_sec=None),
+        _FakeRow(id=101, training_log_id=11, set_number=1, reps=5, weight_kg=102, duration_sec=None),
+        _FakeRow(id=102, training_log_id=11, set_number=2, reps=5, weight_kg=102, duration_sec=None),
+        _FakeRow(id=103, training_log_id=11, set_number=3, reps=5, weight_kg=102, duration_sec=None),
     ]
 
     class _RoutedCursor:

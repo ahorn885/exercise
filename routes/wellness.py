@@ -112,7 +112,7 @@ def index():
     ).fetchall()
 
     body_rows = db.execute(
-        'SELECT date, weight_lbs, body_fat_pct, resting_hr '
+        'SELECT date, weight_kg, body_fat_pct, resting_hr '
         'FROM body_metrics WHERE user_id=? AND date >= ? ORDER BY date',
         (uid, cutoff)
     ).fetchall()
@@ -212,11 +212,24 @@ def index():
         (uid, cutoff)
     ).fetchall()
 
+    # #469 — surface athlete's display unit so body-weight series renders
+    # in their chosen unit.
+    from units import normalize_unit_preference
+    from athlete import get_athlete_profile
+    profile = get_athlete_profile(db, uid) or {}
+    unit_pref = normalize_unit_preference(profile.get('unit_preference'))
+
     chart_data = _build_chart_data(
         self_report_rows, body_rows,
         cardio_load, strength_load, strength_counts,
         garmin_rows, daily_metric_rows, bb_delta_rows,
+        unit_pref=unit_pref,
     )
+    # Surface the body-series unit label to the chart JS without polluting
+    # `chart_data` (the `_has_any_data` walker would treat any non-empty
+    # value as data and break the empty-state UI).
+    from units import weight_unit_label as _wt_lbl
+    chart_data['body_units'] = {'weight': _wt_lbl(unit_pref)} if chart_data.get('body') else {}
 
     return render_template(
         'wellness/index.html',
@@ -298,7 +311,7 @@ _STRESS_SAMPLE_MIN = 3.0  # Garmin samples stress ~every 3 minutes
 
 def _build_chart_data(self_rows, body_rows, cardio_rows, strength_rows,
                       strength_count_rows, garmin_rows, daily_metric_rows=(),
-                      bb_delta_rows=()):
+                      bb_delta_rows=(), unit_pref=None):
     self_by_date = {_d(r['date']): r for r in self_rows}
     garmin_by_date = {_d(r['date']): r for r in garmin_rows}
     daily_by_date = {_d(r['date']): r for r in daily_metric_rows}
@@ -337,12 +350,26 @@ def _build_chart_data(self_rows, body_rows, cardio_rows, strength_rows,
         ],
     }
 
-    body = {'weight_lbs': [], 'body_fat_pct': [], 'resting_hr': []}
+    # #469 — chart-side conversion: storage is canonical kg, but imperial-pref
+    # athletes see lb-shaped y-values + a "lb" unit label on the chart.
+    from units import (
+        normalize_unit_preference, display_weight, weight_unit_label,
+    )
+    unit_pref = normalize_unit_preference(unit_pref)
+    wt_label = weight_unit_label(unit_pref)
+
+    body = {'weight': [], 'body_fat_pct': [], 'resting_hr': []}
+    body_units = {'weight': wt_label}
     for r in body_rows:
         d = _d(r['date'])
-        for f in body:
-            if r[f] is not None:
-                body[f].append({'x': d, 'y': float(r[f])})
+        if r['weight_kg'] is not None:
+            v = display_weight(r['weight_kg'], unit_pref)
+            if v is not None:
+                body['weight'].append({'x': d, 'y': round(float(v), 1)})
+        if r['body_fat_pct'] is not None:
+            body['body_fat_pct'].append({'x': d, 'y': float(r['body_fat_pct'])})
+        if r['resting_hr'] is not None:
+            body['resting_hr'].append({'x': d, 'y': float(r['resting_hr'])})
 
     cardio_min = {_d(r['date']): float(r['minutes']) for r in cardio_rows}
     strength_min = {_d(r['date']): float(r['minutes']) for r in strength_rows}

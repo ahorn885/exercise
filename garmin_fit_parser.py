@@ -446,9 +446,13 @@ def _parse_strength(session, sets) -> dict:
     Returns per-exercise data with individual set details preserved:
       {'log_type': 'strength', 'data': [
         {'date': str, 'exercise': str,
-         'sets': [{'reps': int|None, 'weight_lbs': float|None, 'duration_sec': int|None}, ...]},
+         'sets': [{'reps': int|None, 'weight_kg': float|None, 'duration_sec': int|None}, ...]},
         ...
       ]}
+
+    Weight is read from the FIT record's native `weight` field (kg per the
+    FIT spec) and stored as-is. Display-side unit conversion is the
+    consumer's responsibility (see `units.format_weight`).
 
     Sets are grouped by exercise (all sets of the same exercise together),
     preserving the order in which exercises first appear.
@@ -510,7 +514,8 @@ def _parse_strength(session, sets) -> dict:
         weight_kg = _set_float(
             getattr(s, 'weight', None), max_reasonable=_SET_WEIGHT_KG_MAX,
         )
-        weight_lbs = round(weight_kg * 2.20462, 1) if weight_kg else None
+        # FIT weight is already kg (per spec); round to 1 dp for chip display.
+        weight_kg = round(weight_kg, 1) if weight_kg else None
         duration_sec = _set_int(
             getattr(s, 'duration', None), max_reasonable=_SET_DURATION_SEC_MAX,
         )
@@ -519,7 +524,7 @@ def _parse_strength(session, sets) -> dict:
             exercise_sets[name] = []
             exercise_order.append(name)
         exercise_sets[name].append(
-            {'reps': reps_int, 'weight_lbs': weight_lbs, 'duration_sec': duration_sec}
+            {'reps': reps_int, 'weight_kg': weight_kg, 'duration_sec': duration_sec}
         )
 
     data = [

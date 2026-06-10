@@ -2,14 +2,19 @@
 
 Progression rules (PROGRESSION_RULES):
   Each movement pattern defines the default step sizes and regression threshold.
-  weight_incr   — fallback lb increment when actual_weight is unavailable (see _resolve_weight_incr)
+  weight_incr   — fallback kg increment when actual_weight is unavailable (see _resolve_weight_incr)
   rep_incr      — reps to add per PROGRESS session (bodyweight / rep-focused patterns)
   duration_incr — seconds to add per PROGRESS session (time-based patterns)
   regression_threshold — consecutive REDUCE outcomes before weight/duration actually decreases
 
+  Storage is canonical kg per #469. Increments are picked as natural metric
+  plate sizes (2.5 kg ≈ 5.5 lb, 1.25 kg ≈ 2.75 lb). Imperial-pref athletes
+  see the converted display values; the kg→lb shift across an increment is
+  ≤ 0.5 lb vs. the legacy lb-canonical behavior.
+
 Weight increment runtime rule (overrides weight_incr when actual_weight is known):
-  actual_weight < 15 lb  → 2.5 lb increment  (light KB/DB; micro-plate scale)
-  actual_weight >= 15 lb → 5.0 lb increment   (standard KB/DB or barbell)
+  actual_weight < 7 kg   → 1.25 kg increment  (light KB/DB; micro-plate scale)
+  actual_weight >= 7 kg  → 2.5 kg increment   (standard KB/DB or barbell)
   explicit weight_increment arg   → use that value instead (per-exercise override stored in exercise_inventory)
 
 Outcome rules (calculate_outcome_from_sets, per-set):
@@ -40,37 +45,37 @@ import math
 
 
 PROGRESSION_RULES = {
-    'Squat':       {'weight_incr': 5,   'rep_incr': 0, 'duration_incr': 0,  'regression_threshold': 3},
-    'Hinge':       {'weight_incr': 5,   'rep_incr': 0, 'duration_incr': 0,  'regression_threshold': 3},
-    'Lunge':       {'weight_incr': 5,   'rep_incr': 0, 'duration_incr': 0,  'regression_threshold': 3},
-    'Push':        {'weight_incr': 5,   'rep_incr': 1, 'duration_incr': 0,  'regression_threshold': 3},
-    'Pull':        {'weight_incr': 5,   'rep_incr': 1, 'duration_incr': 0,  'regression_threshold': 3},
-    'Core':        {'weight_incr': 0,   'rep_incr': 2, 'duration_incr': 5,  'regression_threshold': 3},
-    'Carry':       {'weight_incr': 5,   'rep_incr': 0, 'duration_incr': 0,  'regression_threshold': 3},
-    'Rotation':    {'weight_incr': 2.5, 'rep_incr': 0, 'duration_incr': 0,  'regression_threshold': 3},
-    'Plyo':        {'weight_incr': 0,   'rep_incr': 0, 'duration_incr': 0,  'regression_threshold': 3},  # add sets only
-    'Balance':     {'weight_incr': 0,   'rep_incr': 0, 'duration_incr': 5,  'regression_threshold': 3},
-    'Various':     {'weight_incr': 2.5, 'rep_incr': 1, 'duration_incr': 5,  'regression_threshold': 3},
-    'Complex':     {'weight_incr': 5,   'rep_incr': 0, 'duration_incr': 0,  'regression_threshold': 3},
-    'Conditioning':{'weight_incr': 0,   'rep_incr': 0, 'duration_incr': 5,  'regression_threshold': 3},
-    'Grip':        {'weight_incr': 0,   'rep_incr': 2, 'duration_incr': 5,  'regression_threshold': 3},
-    'Locomotion':  {'weight_incr': 0,   'rep_incr': 0, 'duration_incr': 5,  'regression_threshold': 3},
-    'Mobility':    {'weight_incr': 0,   'rep_incr': 0, 'duration_incr': 5,  'regression_threshold': 3},
+    'Squat':       {'weight_incr': 2.5,  'rep_incr': 0, 'duration_incr': 0,  'regression_threshold': 3},
+    'Hinge':       {'weight_incr': 2.5,  'rep_incr': 0, 'duration_incr': 0,  'regression_threshold': 3},
+    'Lunge':       {'weight_incr': 2.5,  'rep_incr': 0, 'duration_incr': 0,  'regression_threshold': 3},
+    'Push':        {'weight_incr': 2.5,  'rep_incr': 1, 'duration_incr': 0,  'regression_threshold': 3},
+    'Pull':        {'weight_incr': 2.5,  'rep_incr': 1, 'duration_incr': 0,  'regression_threshold': 3},
+    'Core':        {'weight_incr': 0,    'rep_incr': 2, 'duration_incr': 5,  'regression_threshold': 3},
+    'Carry':       {'weight_incr': 2.5,  'rep_incr': 0, 'duration_incr': 0,  'regression_threshold': 3},
+    'Rotation':    {'weight_incr': 1.25, 'rep_incr': 0, 'duration_incr': 0,  'regression_threshold': 3},
+    'Plyo':        {'weight_incr': 0,    'rep_incr': 0, 'duration_incr': 0,  'regression_threshold': 3},  # add sets only
+    'Balance':     {'weight_incr': 0,    'rep_incr': 0, 'duration_incr': 5,  'regression_threshold': 3},
+    'Various':     {'weight_incr': 1.25, 'rep_incr': 1, 'duration_incr': 5,  'regression_threshold': 3},
+    'Complex':     {'weight_incr': 2.5,  'rep_incr': 0, 'duration_incr': 0,  'regression_threshold': 3},
+    'Conditioning':{'weight_incr': 0,    'rep_incr': 0, 'duration_incr': 5,  'regression_threshold': 3},
+    'Grip':        {'weight_incr': 0,    'rep_incr': 2, 'duration_incr': 5,  'regression_threshold': 3},
+    'Locomotion':  {'weight_incr': 0,    'rep_incr': 0, 'duration_incr': 5,  'regression_threshold': 3},
+    'Mobility':    {'weight_incr': 0,    'rep_incr': 0, 'duration_incr': 5,  'regression_threshold': 3},
 }
 
 
 def _resolve_weight_incr(weight_increment_override, actual_weight, pattern_default):
-    """Return the lb increment to use for progression/regression.
+    """Return the kg increment to use for progression/regression.
 
     Priority:
       1. Explicit per-exercise override (stored in exercise_inventory.weight_increment)
-      2. Runtime rule from actual_weight: < 15 lb → 2.5, >= 15 lb → 5.0
+      2. Runtime rule from actual_weight: < 7 kg → 1.25, >= 7 kg → 2.5
       3. Pattern default from PROGRESSION_RULES (fallback when weight unknown)
     """
     if weight_increment_override is not None:
         return weight_increment_override
     if actual_weight is not None:
-        return 2.5 if actual_weight < 15 else 5.0
+        return 1.25 if actual_weight < 7 else 2.5
     return pattern_default
 
 
@@ -146,7 +151,7 @@ def calculate_outcome_from_sets(target_sets, target_reps, target_weight, target_
 
     def _set_passed(s):
         reps = s.get('reps') or 0
-        weight = s.get('weight_lbs') or 0
+        weight = s.get('weight_kg') or 0
         duration = s.get('duration_sec') or 0
         if duration_mode:
             return duration >= target_d
@@ -168,7 +173,7 @@ def calculate_outcome_from_sets(target_sets, target_reps, target_weight, target_
             # Use weight=1 fallback for bodyweight so the volume check reduces to rep counts
             target_vol = (target_s or 1) * (target_r or 1) * (target_w or 1)
             actual_vol = sum(
-                (s.get('reps') or 0) * ((s.get('weight_lbs') or 0) or 1)
+                (s.get('reps') or 0) * ((s.get('weight_kg') or 0) or 1)
                 for s in sets_data
             )
         ratio = (actual_vol / target_vol) if target_vol > 0 else 0
@@ -204,7 +209,7 @@ def calculate_outcome_from_sets(target_sets, target_reps, target_weight, target_
         over = [s.get(key) or 0 for s in sets_data if (s.get(key) or 0) > target]
         return min(over) if len(over) >= 2 else None
 
-    working_weight = _working_dim(target_w, 'weight_lbs')
+    working_weight = _working_dim(target_w, 'weight_kg')
     working_reps = _working_dim(target_r, 'reps')
     working_duration = _working_dim(target_d, 'duration_sec')
     working_sets = (target_s + qualifying_extras) if qualifying_extras else None
