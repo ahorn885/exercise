@@ -221,23 +221,56 @@ def test_profile_nutrition_protocol_renders(monkeypatch):
     client = _client(monkeypatch, _Conn(profile=profile))
     html = client.get('/profile/?tab=athlete').get_data(as_text=True)
     assert 'Nutrition &amp; fueling' in html
-    # Enum tokens humanized (comma + underscore expanded).
-    assert 'vegetarian, gluten free' in html
-    assert 'gel, drink mix' in html
+    # Editable controls present.
+    assert 'name="dietary_pattern"' in html
+    assert 'name="fueling_format_preference"' in html
+    assert 'name="caffeine_tolerance"' in html
+    assert 'name="supplement_protocol_notes"' in html
+    # Stored values pre-fill the inputs (free-text, number, and >=1 checkbox).
     assert 'Creatine 5g daily' in html
     assert 'high fructose' in html
+    assert 'value="200"' in html
+    assert 'checked' in html  # multi-select tokens pre-checked
     # No live plan in the default conn -> the plan-baseline card stays hidden.
     assert 'Active plan · daily baseline' not in html
     assert 'style="' not in html
 
 
-def test_profile_nutrition_protocol_empty_state(monkeypatch):
+def test_profile_nutrition_protocol_empty_form(monkeypatch):
     client = _client(monkeypatch, _Conn(
         profile={'primary_sport': 'run', 'updated_at': '2026-05-30 10:00:00'}))
     html = client.get('/profile/?tab=athlete').get_data(as_text=True)
     assert 'Nutrition &amp; fueling' in html
-    assert 'No standing nutrition details captured yet' in html
+    assert 'name="dietary_pattern"' in html      # form still rendered
+    assert 'checked' not in html                  # nothing pre-selected
     assert 'Active plan · daily baseline' not in html
+
+
+def test_profile_post_persists_nutrition(monkeypatch):
+    captured = {}
+    monkeypatch.setattr(_profile, 'upsert_athlete_profile',
+                        lambda db, uid, **kw: captured.update(kw) or {})
+    monkeypatch.setitem(_appmod.app.config, 'WTF_CSRF_ENABLED', False)
+    client = _client(monkeypatch, _Conn(profile={}))
+    resp = client.post('/profile/', data={
+        'unit_preference': 'metric',
+        'dietary_pattern': ['vegan', 'keto', 'bogus'],   # 'bogus' not in vocab
+        'fueling_format_preference': ['gel', 'drink_mix'],
+        'caffeine_tolerance': 'moderate',
+        'caffeine_daily_mg_estimate': '180',
+        'salt_electrolyte_tolerance': 'high',
+        'gi_triggers_known': 'dairy mid-effort',
+        'supplement_protocol_notes': 'creatine 5g',
+    })
+    assert resp.status_code in (302, 303)
+    # Multi-selects join to CSV and filter to the known vocab ('bogus' dropped).
+    assert captured['dietary_pattern'] == 'vegan,keto'
+    assert captured['fueling_format_preference'] == 'gel,drink_mix'
+    assert captured['caffeine_tolerance'] == 'moderate'
+    assert captured['caffeine_daily_mg_estimate'] == 180
+    assert captured['salt_electrolyte_tolerance'] == 'high'
+    assert captured['gi_triggers_known'] == 'dairy mid-effort'
+    assert captured['supplement_protocol_notes'] == 'creatine 5g'
 
 
 def test_profile_active_plan_baseline_renders(monkeypatch):

@@ -28,6 +28,9 @@ from routes.auth import (
 from athlete import (
     PROFILE_FIELDS, PREFILL_ELIGIBLE_FIELDS,
     DOUBLES_FEASIBLE_CHOICES,
+    DIETARY_PATTERN_CHOICES, FUELING_FORMAT_CHOICES,
+    CAFFEINE_TOLERANCE_CHOICES, CAFFEINE_RACE_DAY_STRATEGY_CHOICES,
+    SALT_ELECTROLYTE_TOLERANCE_CHOICES,
     get_athlete_profile, upsert_athlete_profile,
     get_daily_availability_windows, upsert_daily_availability_windows,
 )
@@ -267,6 +270,12 @@ def edit():
             except (ValueError, TypeError):
                 return None
 
+        def _csv(key, allowed):
+            # Multi-select checkbox group -> comma-separated storage. Filter to
+            # the known vocab so a tampered POST can't store junk tokens.
+            picked = [v for v in f.getlist(key) if v in allowed]
+            return ','.join(picked) or None
+
         # #469 — body weight is entered in the athlete's chosen display unit
         # but stored canonically in kg. The form posts BOTH the in-effect
         # preference at render time (hidden `body_weight_input_unit`) AND
@@ -306,6 +315,16 @@ def edit():
             weekly_hours_target=_num('weekly_hours_target'),
             notes=_str('notes'),
             unit_preference=submitted_unit_pref,
+            # §I.2 nutrition & fueling protocol.
+            dietary_pattern=_csv('dietary_pattern', DIETARY_PATTERN_CHOICES),
+            fueling_format_preference=_csv(
+                'fueling_format_preference', FUELING_FORMAT_CHOICES),
+            caffeine_tolerance=_str('caffeine_tolerance'),
+            caffeine_daily_mg_estimate=_num('caffeine_daily_mg_estimate', cast=int),
+            caffeine_race_day_strategy=_str('caffeine_race_day_strategy'),
+            salt_electrolyte_tolerance=_str('salt_electrolyte_tolerance'),
+            gi_triggers_known=_str('gi_triggers_known'),
+            supplement_protocol_notes=_str('supplement_protocol_notes'),
             **prefill_values,
         )
         _record_self_report_provenance(db, uid, prefill_values)
@@ -398,6 +417,11 @@ def edit():
         days=days,
         doubles_feasible=doubles,
         doubles_choices=DOUBLES_FEASIBLE_CHOICES,
+        dietary_pattern_choices=DIETARY_PATTERN_CHOICES,
+        fueling_format_choices=FUELING_FORMAT_CHOICES,
+        caffeine_tolerance_choices=CAFFEINE_TOLERANCE_CHOICES,
+        caffeine_race_day_strategy_choices=CAFFEINE_RACE_DAY_STRATEGY_CHOICES,
+        salt_electrolyte_tolerance_choices=SALT_ELECTROLYTE_TOLERANCE_CHOICES,
         skill_toggle_defs=skill_toggle_defs,
         skill_toggle_states=skill_toggle_states,
         # Used by the template to render an "Expired" badge without

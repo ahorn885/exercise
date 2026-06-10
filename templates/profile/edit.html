@@ -137,44 +137,74 @@
     </label>
   </div>
 
+  {# §I.2 standing nutrition + fueling protocol — fed to the coach when building
+     plans. Per-day fuel targets are computed per plan (shown on the plan + below). #}
+  {% set sel_diet = (profile.dietary_pattern or '').split(',') %}
+  {% set sel_fuel = (profile.fueling_format_preference or '').split(',') %}
+  <div class="card card-pad stack pf-nutrition">
+    <div>
+      <p class="eyebrow">● Nutrition &amp; fueling</p>
+      <p class="pf-hint">Your standing dietary, fueling, and supplement protocol. All optional —
+        anything blank is simply absent from the prompt.</p>
+    </div>
+    <div class="pf-checkset">
+      <span class="lbl">Dietary pattern</span>
+      <div class="pf-chips">
+        {% for opt in dietary_pattern_choices %}
+        <label class="pf-chip"><input type="checkbox" name="dietary_pattern" value="{{ opt }}"
+          {% if opt in sel_diet %}checked{% endif %}><span>{{ opt|replace('_', ' ') }}</span></label>
+        {% endfor %}
+      </div>
+    </div>
+    <div class="pf-checkset">
+      <span class="lbl">Fueling formats</span>
+      <div class="pf-chips">
+        {% for opt in fueling_format_choices %}
+        <label class="pf-chip"><input type="checkbox" name="fueling_format_preference" value="{{ opt }}"
+          {% if opt in sel_fuel %}checked{% endif %}><span>{{ opt|replace('_', ' ') }}</span></label>
+        {% endfor %}
+      </div>
+    </div>
+    <div class="pf-grid">
+      <label class="field"><span class="lbl">Caffeine tolerance</span>
+        <select name="caffeine_tolerance" class="form-select form-select-sm">
+          <option value="">—</option>
+          {% for opt in caffeine_tolerance_choices %}
+          <option value="{{ opt }}" {% if profile.caffeine_tolerance == opt %}selected{% endif %}>{{ opt|title }}</option>
+          {% endfor %}
+        </select></label>
+      <label class="field"><span class="lbl">Caffeine (mg/day est.)</span>
+        <input type="number" step="10" min="0" max="2000" name="caffeine_daily_mg_estimate" class="form-control form-control-sm"
+               value="{{ profile.caffeine_daily_mg_estimate if profile.caffeine_daily_mg_estimate is not none else '' }}"></label>
+      <label class="field"><span class="lbl">Race-day caffeine strategy</span>
+        <select name="caffeine_race_day_strategy" class="form-select form-select-sm">
+          <option value="">—</option>
+          {% for opt in caffeine_race_day_strategy_choices %}
+          <option value="{{ opt }}" {% if profile.caffeine_race_day_strategy == opt %}selected{% endif %}>{{ opt|replace('_', ' ')|title }}</option>
+          {% endfor %}
+        </select></label>
+      <label class="field"><span class="lbl">Salt / electrolyte tolerance</span>
+        <select name="salt_electrolyte_tolerance" class="form-select form-select-sm">
+          <option value="">—</option>
+          {% for opt in salt_electrolyte_tolerance_choices %}
+          <option value="{{ opt }}" {% if profile.salt_electrolyte_tolerance == opt %}selected{% endif %}>{{ opt|title }}</option>
+          {% endfor %}
+        </select></label>
+    </div>
+    <label class="field"><span class="lbl">Known GI triggers</span>
+      <input type="text" name="gi_triggers_known" class="form-control form-control-sm"
+             placeholder="e.g. high fructose, dairy mid-effort"
+             value="{{ profile.gi_triggers_known or '' }}"></label>
+    <label class="field"><span class="lbl">Supplement protocol</span>
+      <textarea name="supplement_protocol_notes" rows="2" class="form-control form-control-sm"
+                placeholder="e.g. creatine 5g daily, electrolyte mix on long days">{{ profile.supplement_protocol_notes or '' }}</textarea></label>
+  </div>
+
   <div class="pf-save">
     <span class="pf-saved mono">{% if profile.updated_at %}Last saved {{ (profile.updated_at|string)[:19] }}{% else %}Not yet saved{% endif %}</span>
     <button type="submit" class="btn btn-primary">Save profile</button>
   </div>
 </form>
-
-{# Standing nutrition protocol — read-only; captured at onboarding and fed to
-   the coach. The computed per-day targets live on each plan. #}
-{% set has_nutrition_protocol = profile.dietary_pattern or profile.fueling_format_preference
-   or profile.caffeine_tolerance or profile.salt_electrolyte_tolerance
-   or profile.gi_triggers_known or profile.supplement_protocol_notes %}
-<div class="card card-pad stack pf-nutrition">
-  <div>
-    <p class="eyebrow">● Nutrition &amp; fueling</p>
-    <p class="pf-hint">Your standing dietary, fueling, and supplement protocol — captured at
-      onboarding and used when the coach builds plans. Per-day fuel targets appear on each plan.</p>
-  </div>
-  {% if has_nutrition_protocol %}
-  <dl class="pf-readout">
-    {% if profile.dietary_pattern %}
-    <div><dt>Dietary pattern</dt><dd>{{ profile.dietary_pattern|replace(',', ', ')|replace('_', ' ') }}</dd></div>{% endif %}
-    {% if profile.fueling_format_preference %}
-    <div><dt>Fueling formats</dt><dd>{{ profile.fueling_format_preference|replace(',', ', ')|replace('_', ' ') }}</dd></div>{% endif %}
-    {% if profile.caffeine_tolerance %}
-    <div><dt>Caffeine tolerance</dt><dd>{{ profile.caffeine_tolerance|replace('_', ' ') }}{% if profile.caffeine_daily_mg_estimate %} · ~{{ profile.caffeine_daily_mg_estimate }} mg/day{% endif %}</dd></div>{% endif %}
-    {% if profile.caffeine_race_day_strategy %}
-    <div><dt>Race-day caffeine</dt><dd>{{ profile.caffeine_race_day_strategy }}</dd></div>{% endif %}
-    {% if profile.salt_electrolyte_tolerance %}
-    <div><dt>Salt / electrolyte tolerance</dt><dd>{{ profile.salt_electrolyte_tolerance|replace('_', ' ') }}</dd></div>{% endif %}
-    {% if profile.gi_triggers_known %}
-    <div><dt>Known GI triggers</dt><dd>{{ profile.gi_triggers_known }}</dd></div>{% endif %}
-    {% if profile.supplement_protocol_notes %}
-    <div><dt>Supplement protocol</dt><dd>{{ profile.supplement_protocol_notes }}</dd></div>{% endif %}
-  </dl>
-  {% else %}
-  <p class="pf-hint">No standing nutrition details captured yet — these are collected during onboarding.</p>
-  {% endif %}
-</div>
 
 {# Plan-specific daily baseline — only when a plan is live (slice 4 PlanNutrition). #}
 {% if plan_nutrition %}

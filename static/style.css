@@ -1583,10 +1583,16 @@ body.bulk-mode { padding-bottom: 80px; }
 .app .pf-save { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
 .app .pf-saved { font-size: 10px; letter-spacing: 0.14em; color: var(--fg-3); text-transform: uppercase; }
 .app .pf-nutrition .nutri-phases { margin-top: 4px; }
-.app .pf-readout { display: grid; grid-template-columns: minmax(150px, max-content) 1fr; gap: 8px 16px; margin: 4px 0 0; }
-.app .pf-readout > div { display: contents; }
-.app .pf-readout dt { font-size: 12px; color: var(--fg-3); text-transform: uppercase; letter-spacing: 0.1em; }
-.app .pf-readout dd { margin: 0; font-size: 13px; color: var(--fg-2); line-height: 1.5; }
+.app .pf-checkset { display: flex; flex-direction: column; gap: 8px; }
+.app .pf-checkset > .lbl { font-size: 12px; color: var(--fg-3); }
+.app .pf-chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.app .pf-chip {
+  display: inline-flex; align-items: center; gap: 6px; cursor: pointer;
+  border: 1px solid var(--hairline); border-radius: 999px; padding: 5px 12px;
+  font-size: 13px; color: var(--fg-2); user-select: none;
+}
+.app .pf-chip:has(input:checked) { border-color: var(--accent); color: var(--accent); }
+.app .pf-chip input { margin: 0; }
 
 /* §19 Account */
 .app .acct-wrap { max-width: 720px; }
