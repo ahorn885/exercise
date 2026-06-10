@@ -102,6 +102,17 @@ def fit_inspect():
     """
     _require_admin()
     dumps = None
+    scan_matches = None
+    # `target` defaults to 48 (Andy's stable VO2max running — #283 follow-up).
+    # `?target=X` overrides for other constant-value lookups. `_METRICS.fit`
+    # GenericMessages 281/330/378/384 are the standard scan targets for
+    # daily-rolled metrics, but `?scope=all` widens the search.
+    try:
+        scan_target = float(request.args.get('target') or 48)
+    except (TypeError, ValueError):
+        scan_target = 48.0
+    scan_scope = (request.args.get('scope') or '').strip().lower()
+    scan_message_ids = None if scan_scope == 'all' else (281, 330, 378, 384)
     if request.method == 'POST':
         f = request.files.get('fit_file')
         if not f or not f.filename:
@@ -112,7 +123,7 @@ def fit_inspect():
             import io
             import zipfile
 
-            from garmin_fit_parser import _dump_fit
+            from garmin_fit_parser import _dump_fit, find_constant_value_fields
             raw = f.read()
             fname = secure_filename(f.filename or '').lower()
             if fname.endswith('.zip'):
@@ -129,10 +140,27 @@ def fit_inspect():
                             dumps.append({'name': n, 'error': str(e)})
             else:
                 dumps.append({'name': f.filename, 'dump': _dump_fit(raw)})
+            # Cross-file constant-value scan only kicks in with ≥2 successful
+            # dumps (one file admits trivially many false matches). Helps lock
+            # constants like VO2max running across multiple `_METRICS.fit`
+            # uploads.
+            nights = [d['dump'].get('generic_samples', {})
+                      for d in dumps if 'dump' in d]
+            if len(nights) >= 2:
+                scan_matches = find_constant_value_fields(
+                    nights, scan_target, message_ids=scan_message_ids,
+                )
         except Exception as e:  # noqa: BLE001 — surface parse errors to the operator
             flash(f'Error: {e}', 'danger')
             return redirect(url_for('admin.fit_inspect'))
-    return render_template('admin/fit_inspect.html', inspect_dumps=dumps)
+    return render_template(
+        'admin/fit_inspect.html',
+        inspect_dumps=dumps,
+        inspect_scan_matches=scan_matches,
+        inspect_scan_target=scan_target,
+        inspect_scan_scope=('all' if scan_scope == 'all'
+                            else '_METRICS.fit GenericMessages'),
+    )
 
 
 @bp.route('/users/<int:user_id>')

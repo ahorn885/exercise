@@ -649,6 +649,106 @@ def test_sleep_sub_score_slot_candidates_breaks_ties_by_slot_order():
     assert ranks == {'field_5': 1, 'field_7': 2, 'field_8': 3, 'field_10': 4}
 
 
+# ── find_constant_value_fields — VO₂max constant scanner (#283) ─────────────
+
+def test_find_constant_value_fields_matches_when_value_constant_across_nights():
+    """The motivating case: VO₂max running ≈ 48 steady on Andy's Fenix 8.
+    Across multiple `_METRICS.fit` uploads, find any field whose value
+    is 48 (or a scaled equivalent) on every night."""
+    from garmin_fit_parser import find_constant_value_fields
+    # Synthetic 2 nights, gid 281 carries field_4 = 48 on both nights.
+    nights = [
+        {'281': [{'global_id': '281', 'field_4': '48', 'field_5': '32'}]},
+        {'281': [{'global_id': '281', 'field_4': '48', 'field_5': '22'}]},
+    ]
+    matches = find_constant_value_fields(nights, target=48)
+    assert len(matches) == 1
+    m = matches[0]
+    assert m['message_id'] == '281'
+    assert m['field_id'] == 'field_4'
+    assert m['scale'] == 1.0
+    assert m['raw_values'] == [48.0, 48.0]
+
+
+def test_find_constant_value_fields_handles_garmin_scale_factors():
+    """Garmin often stores fractional values as ×10 or ×100 integers in FIT.
+    If a field carries 480 on both nights, target=48 should match under
+    scale=0.1 (480 × 0.1 = 48)."""
+    from garmin_fit_parser import find_constant_value_fields
+    nights = [
+        {'378': [{'field_2': '480'}]},
+        {'378': [{'field_2': '480'}]},
+    ]
+    matches = find_constant_value_fields(nights, target=48)
+    assert len(matches) == 1
+    assert matches[0]['scale'] == 0.1
+    assert matches[0]['scaled_values'] == [48.0, 48.0]
+
+
+def test_find_constant_value_fields_rejects_varying_values():
+    """If a field shifts between nights, it's not a constant. The scanner
+    must drop it — otherwise the operator would chase phantom matches."""
+    from garmin_fit_parser import find_constant_value_fields
+    nights = [
+        {'281': [{'field_4': '48'}]},
+        {'281': [{'field_4': '50'}]},
+    ]
+    assert find_constant_value_fields(nights, target=48) == []
+
+
+def test_find_constant_value_fields_skips_fields_missing_in_any_night():
+    """A constant has to be present on every night. A field that appears
+    on night 1 with value 48 but is absent night 2 isn't a constant."""
+    from garmin_fit_parser import find_constant_value_fields
+    nights = [
+        {'281': [{'field_4': '48', 'field_5': '99'}]},
+        {'281': [{'field_5': '99'}]},  # field_4 missing
+    ]
+    matches = find_constant_value_fields(nights, target=48)
+    assert matches == []
+
+
+def test_find_constant_value_fields_message_ids_filter_restricts_scope():
+    """`message_ids=(281,)` should scan only gid 281, ignoring other gids
+    even if they carry the target value. Matches the inspector route's
+    default scan-to-_METRICS.fit-messages behaviour."""
+    from garmin_fit_parser import find_constant_value_fields
+    nights = [
+        {'281': [{'field_4': '99'}], '999': [{'field_0': '48'}]},
+        {'281': [{'field_4': '99'}], '999': [{'field_0': '48'}]},
+    ]
+    # Default (None) catches field_0 of 999.
+    default_matches = find_constant_value_fields(nights, target=48)
+    assert any(m['message_id'] == '999' for m in default_matches)
+    # Filtered to (281,) does not.
+    filtered = find_constant_value_fields(
+        nights, target=48, message_ids=(281,)
+    )
+    assert filtered == []
+
+
+def test_find_constant_value_fields_needs_at_least_two_nights():
+    """One night admits trivially many false matches — the helper should
+    refuse rather than emit noise."""
+    from garmin_fit_parser import find_constant_value_fields
+    one_night = [{'281': [{'field_4': '48'}]}]
+    assert find_constant_value_fields(one_night, target=48) == []
+    assert find_constant_value_fields([], target=48) == []
+
+
+def test_find_constant_value_fields_tolerance_allows_small_drift():
+    """FIT round-trip can drift by sub-integer amounts; default tolerance
+    of 0.5 allows 47.6 and 48.4 to still match target=48. A tighter
+    tolerance rejects the drift."""
+    from garmin_fit_parser import find_constant_value_fields
+    nights = [
+        {'281': [{'field_4': '47.6'}]},
+        {'281': [{'field_4': '48.4'}]},
+    ]
+    assert find_constant_value_fields(nights, target=48) != []
+    assert find_constant_value_fields(nights, target=48, tolerance=0.1) == []
+
+
 # ── [275] sleep-stage transition walker + minute tally ──────────────────────
 
 def test_stage_minutes_from_events_tallies_between_adjacent_events():

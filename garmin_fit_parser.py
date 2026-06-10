@@ -1316,6 +1316,89 @@ def _sleep_sub_score_slot_candidates(f5, f7, f8, f10) -> list:
     ]
 
 
+def find_constant_value_fields(
+    nights: list,
+    target: float,
+    *,
+    scales: tuple = (1.0, 0.1, 10.0, 0.01, 100.0),
+    message_ids: tuple | None = None,
+    tolerance: float = 0.5,
+) -> list:
+    """Cross-file scan that finds GenericMessage fields whose value equals
+    `target` (under one of the candidate `scales`) on every night.
+
+    Designed for "this metric is constant on Andy's device — which raw
+    field encodes it?" use cases. The motivating case (issue #283) is
+    VO2max running ≈ 48: scan unmapped `_METRICS.fit` fields across 2+
+    nights for a field that lands on 48 under some scale on every night.
+
+    Inputs:
+      nights      — list of `_dump_fit()['generic_samples']`-shaped dicts.
+                    Each element: `{gid_str: [field_dict_per_instance,…]}`.
+      target      — the expected constant (e.g. 48 for VO2max running).
+      scales      — multipliers to try (default covers raw, /10, ×10, /100,
+                    ×100 — covers common FIT fixed-point encodings).
+      message_ids — restrict the scan to these gids. Pass e.g.
+                    `(281, 330, 378, 384)` for `_METRICS.fit` messages
+                    only. None scans every gid present.
+      tolerance   — allowed |scaled − target| (covers small FIT round-trip
+                    drift; 0.5 allows ±0.5 ml/kg/min for VO2max).
+
+    Returns one entry per matching (gid, field, scale): {message_id,
+    field_id, scale, raw_values_per_night, scaled_values_per_night}. Each
+    entry carries the per-night raw values so the operator can sanity-
+    check before locking. Fields missing from any night are dropped — a
+    constant has to be continuously present to be a constant.
+
+    Requires at least 2 nights (one night admits trivially many fits)."""
+    if len(nights) < 2:
+        return []
+
+    # Take the first instance's value per (gid, field) per night — fields
+    # with multiple instances at different values aren't day-constants by
+    # construction. First-instance keeps the rule simple and deterministic.
+    from collections import defaultdict
+    per_field_values: dict = defaultdict(list)
+    for night in nights:
+        seen: set = set()
+        for gid_str, samples in night.items():
+            try:
+                if message_ids is not None and int(gid_str) not in message_ids:
+                    continue
+            except (TypeError, ValueError):
+                continue
+            for sample in samples:
+                for field_key, raw in sample.items():
+                    if not field_key.startswith('field_'):
+                        continue
+                    key = (gid_str, field_key)
+                    if key in seen:
+                        continue
+                    try:
+                        val = float(raw)
+                    except (TypeError, ValueError):
+                        continue
+                    per_field_values[key].append(val)
+                    seen.add(key)
+
+    matches = []
+    for (gid, field), values in sorted(per_field_values.items()):
+        if len(values) != len(nights):
+            continue
+        for scale in scales:
+            scaled = [v * scale for v in values]
+            if all(abs(s - target) <= tolerance for s in scaled):
+                matches.append({
+                    'message_id': gid,
+                    'field_id': field,
+                    'scale': scale,
+                    'raw_values': values,
+                    'scaled_values': [round(s, 3) for s in scaled],
+                })
+                break  # one scale wins per field
+    return matches
+
+
 def sleep_stress_avg(stress_sum: int, sleep_min: int) -> float | None:
     """Garmin Connect's "Stress avg" for a night's sleep, computed from
     `[346] field_15` (sum of all stress samples taken during sleep) and
