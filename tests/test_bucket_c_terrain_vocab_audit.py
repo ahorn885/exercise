@@ -98,20 +98,21 @@ _CANONICAL_NAMES_LOWER: frozenset[str] = frozenset(
 
 
 class TestCanonicalTerrainVocab:
-    """Locks in the 18-row TRN-001..TRN-017 + TRN-020 canonical shape so
+    """Locks in the 19-row TRN-001..TRN-018 + TRN-020 canonical shape so
     accidental additions, removals, or ID-pattern drift surface loudly.
 
     Row count bumped from 16 to 17 by the Bucket C (f) water-vocab
     expansion 2026-05-24 — NEW TRN-017 Moving Water added; TRN-009 and
     TRN-010 retightened in place (no count change for those two). Bumped
     from 17 to 18 by the Bucket C (g) terrain↔equipment merge 2026-05-24
-    — NEW TRN-020 Gravel added as the unambiguous surface gap. TRN-018
-    and TRN-019 are intentionally reserved (gap in the sequence) — if
-    Andy later ratifies the S3 cycling-vocab expansion, the cycling
-    rows would land at TRN-018/019."""
+    — NEW TRN-020 Gravel added as the unambiguous surface gap. Bumped
+    from 18 to 19 by Vocabulary V3 — NEW TRN-018 Off Trail / Bushwhack
+    (#340). TRN-019 remains intentionally reserved (gap in the sequence)
+    — if Andy later ratifies the S3 cycling-vocab expansion, a cycling
+    row would land at TRN-019."""
 
-    def test_canonical_row_count_is_18(self):
-        assert len(_TERRAIN_STRUCTURED_ROWS) == 18
+    def test_canonical_row_count_is_19(self):
+        assert len(_TERRAIN_STRUCTURED_ROWS) == 19
 
     def test_every_canonical_row_has_TRN_pattern_id(self):
         for row in _TERRAIN_STRUCTURED_ROWS:
@@ -127,11 +128,11 @@ class TestCanonicalTerrainVocab:
         names = [row["canonical_name"] for row in _TERRAIN_STRUCTURED_ROWS]
         assert len(names) == len(set(names))
 
-    def test_canonical_ids_are_TRN_001_through_017_plus_020(self):
+    def test_canonical_ids_are_TRN_001_through_018_plus_020(self):
         ids = sorted(row["terrain_id"] for row in _TERRAIN_STRUCTURED_ROWS)
-        # TRN-018 and TRN-019 intentionally reserved per the Bucket C (g)
-        # design pass — see class docstring.
-        expected = sorted([f"TRN-{i:03d}" for i in range(1, 18)] + ["TRN-020"])
+        # TRN-018 now used (Vocabulary V3 — Off Trail / Bushwhack, #340).
+        # TRN-019 remains intentionally reserved — see class docstring.
+        expected = sorted([f"TRN-{i:03d}" for i in range(1, 19)] + ["TRN-020"])
         assert ids == expected
 
 
