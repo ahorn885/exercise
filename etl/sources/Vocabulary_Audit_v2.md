@@ -354,10 +354,8 @@ active names). The A-list item maps to the existing row; casing reconciliation
 | Packraft | Packraft, Loaded Packraft | "Loaded" is prescription detail, not equipment |
 | Stand-up Paddleboard | SUP, Stand-Up Paddleboard, SUP Paddle | Renamed from "SUP" → canonical "Stand-up Paddleboard" (V4 §4). "SUP Paddle" is sub-component, assumed with the board. |
 | Raft | Raft, Inflatable Raft | Renamed from "Inflatable raft" → "Raft" (V4 §4). |
-| Paddle (double-blade) | Paddle, Two Paddles | Generic — implicit with Kayak/Packraft |
-| Single-blade paddle | Single-Blade Paddle ✓ | Implicit with Canoe |
-| Rowing oar | Rowing Oar, Sculling Blade, Erg Handle, Oars | Sub-components of Rowing Erg (Rowing shell vessel pruned, V4 §4) |
-| Kayak / canoe seat | Kayak / Canoe Seat ✓ | Implicit with vessel |
+
+**V4c — paddle accessories dropped (assumed with the vessel).** Paddle, single-blade paddle, double-blade paddle, kayak/canoe seat, and rowing oar are NO LONGER tracked: if the athlete has the vessel, assume they have the seat and paddle (Andy). The four accessory rows (Paddle (double-blade), Single-blade paddle, Rowing oar, Kayak / canoe seat) are removed; the lone exercise token that referenced one (`Canoe Seat`) is dropped in `vocabulary_transforms._DROP_TOKENS`. On-water rowing is not prescribed, so `Rowing Shell` exercise tokens normalize to `Rowing ergometer`.
 
 **Whitewater-specific accessories** (spray skirt, WW helmet, WW PFD) → rolled into **Whitewater paddling setup** toggle (Section 4 below).
 

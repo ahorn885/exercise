@@ -26,22 +26,22 @@ from typing import Iterable
 
 _RENAME: dict[str, str] = {
     # Bands
-    "band": "Resistance Band",
-    "rubber band": "Resistance Band",
+    "band": "Resistance band",
+    "rubber band": "Resistance band",
     # Cycling
-    "mtb": "Mountain Bike",
+    "mtb": "Mountain bike",
     # Cable machine
-    "cable": "Cable Machine",
+    "cable": "Cable machine",
     # Plyo box family
-    "box": "Plyo Box",
-    "vault box": "Plyo Box",
+    "box": "Plyo box",
+    "vault box": "Plyo box",
     # Vest family
-    "vest": "Weighted Vest",
-    "weight vest": "Weighted Vest",
+    "vest": "Weighted vest",
+    "weight vest": "Weighted vest",
     # Footwear
-    "shoes": "Running Shoes",
+    "shoes": "Running shoes",
     # Rings
-    "rings": "Gymnastic Rings",
+    "rings": "Gymnastic rings",
     # Cycling trainer (renamed from "Bike trainer" — V4 §4)
     "trainer": "Cycling trainer",
     "or trainer": "Cycling trainer",  # comma-split artifact noted in audit
@@ -49,6 +49,37 @@ _RENAME: dict[str, str] = {
     "stand-up paddleboard": "Stand-up Paddleboard",
     # TT bike — normalize legacy exercise token to the existing 0C vessel (V4b).
     "tt bike": "TT / triathlon bike",
+    # V4c: wire the audit's documented col-7 → canonical renames that were never
+    # implemented, so exercise tokens match the sentence-case canonical the
+    # athlete pool uses (matching is exact-string). Case-only normalizations:
+    "ab wheel": "Ab wheel",
+    "agility ladder": "Agility ladder",
+    "balance disc": "Balance disc",
+    "campus board": "Campus board",
+    "dip bars": "Dip bars",
+    "foam pad": "Foam pad",
+    "foam roller": "Foam roller",
+    "gymnastic rings": "Gymnastic rings",
+    "incline board": "Incline board",
+    "landmine attachment": "Landmine attachment",
+    "leg curl machine": "Leg curl machine",
+    "leg extension machine": "Leg extension machine",
+    "leg press machine": "Leg press machine",
+    "medicine ball": "Medicine ball",
+    "paddle ergometer": "Paddle ergometer",
+    "pinch block": "Pinch block",
+    "pull-up bar": "Pull-up bar",
+    "rowing ergometer": "Rowing ergometer",
+    "stability ball": "Stability ball",
+    "trekking poles": "Trekking poles",
+    "weighted sled": "Weighted sled",
+    "wrist roller": "Wrist roller",
+    # V4c: target renames (canonical differs from the token, not just case).
+    "bike trainer": "Cycling trainer",      # V4 renamed the vessel
+    "trx": "TRX / suspension trainer",
+    "suspension trainer": "TRX / suspension trainer",
+    "sea kayak": "Kayak",                    # V4 pruned the sea-kayak vessel
+    "rowing shell": "Rowing ergometer",      # on-water rowing not prescribed (Andy)
     # Fix typo
     "race belt)": "Race belt",
 }
@@ -59,6 +90,12 @@ _DROP_TOKENS: set[str] = {
     "chews",
     "cups",
     "soft flask",
+    # V4c: improvised / accessory tokens we don't track. "Chairs" is improvised
+    # furniture (the exercise keeps its real supports). Paddle-vessel accessories
+    # are assumed present if the athlete has the vessel (Andy) — we don't track a
+    # kayak seat or paddle separately.
+    "chairs",
+    "canoe seat",
 }
 
 
