@@ -34,6 +34,7 @@ import pytest
 from layer2e import Layer2EInputError, q_layer2e_nutrition_baseline_payload
 from layer4.context import (
     AthleteSupplementRecord,
+    HealthConditionRecord,
     Layer1HealthStatus,
     Layer1Identity,
     Layer1Lifestyle,
@@ -46,15 +47,16 @@ from layer4.context import (
     WeightResult,
 )
 
-# §5.5 race-day vocab fixture — the id→name pairs the suggestion engine reads
-# from layer0.supplement_vocabulary (names mirror the FC-1 seed).
+# §5.5 vocab fixture — (supplement_id, canonical_name, contraindications) rows
+# the engine reads from layer0.supplement_vocabulary (mirroring the FC-1 seed;
+# caffeine carries the real ['Cardiac','pregnancy'] tokens).
 _RACE_DAY_VOCAB = [
-    ("electrolyte_mix", "Sodium/potassium/magnesium electrolyte mix"),
-    ("carb_powder", "Carbohydrate powder (maltodextrin/fructose blend)"),
-    ("caffeine", "Caffeine (anhydrous, pill, gum, gel)"),
-    ("magnesium", "Magnesium (glycinate, citrate, malate)"),
-    ("omega_3", "Omega-3 (EPA/DHA)"),
-    ("bcaas", "Branched-chain amino acids"),
+    ("electrolyte_mix", "Sodium/potassium/magnesium electrolyte mix", []),
+    ("carb_powder", "Carbohydrate powder (maltodextrin/fructose blend)", []),
+    ("caffeine", "Caffeine (anhydrous, pill, gum, gel)", ["Cardiac", "pregnancy"]),
+    ("magnesium", "Magnesium (glycinate, citrate, malate)", []),
+    ("omega_3", "Omega-3 (EPA/DHA)", []),
+    ("bcaas", "Branched-chain amino acids", []),
 ]
 from layer4.hashing import compute_payload_hash
 
@@ -102,12 +104,13 @@ class _FakeConn:
         for low, high in (base, build, peak, taper):
             self.queue_pla_row(low, high)
 
-    def queue_supplement_vocab(self, id_name_pairs):
+    def queue_supplement_vocab(self, rows):
         # §5.5 multi-row response for the layer0.supplement_vocabulary read
         # (fired last, after the per-phase PLA reads). List → fetchall path.
         self.responses.append([
-            {"supplement_id": sid, "canonical_name": name}
-            for sid, name in id_name_pairs
+            {"supplement_id": sid, "canonical_name": name,
+             "contraindications": contra}
+            for sid, name, contra in rows
         ])
 
     def execute(self, sql, params=()):
@@ -524,6 +527,78 @@ class TestPGEBaseline:
         # No queue_supplement_vocab → the read returns no rows.
         payload = _andy_baseline_call(db)
         assert payload.supplement_integration.race_day_suggestions == []
+
+    # ── B2: non-blocking Cardiac contraindication screening ──────────────────
+
+    def test_cardiac_supplement_auto_removed_and_warned_nonblocking(self):
+        # Athlete logs caffeine (carries 'Cardiac') + has an active cardiac
+        # condition → caffeine auto-removed from integrated + race-day, warned;
+        # magnesium (clean) retained. NON-BLOCKING: no HITL, plan not blocked.
+        db = _FakeConn()
+        db.queue_pla_for_all_phases((8, 12), (10, 14), (12, 16), (6, 10))
+        db.queue_supplement_vocab(_RACE_DAY_VOCAB)
+        health = Layer1HealthStatus(health_conditions_active=[
+            HealthConditionRecord(condition_id=1, system_category="cardiac",
+                                  condition_name="Paroxysmal atrial fibrillation",
+                                  status="Active")])
+        ls = _andy_lifestyle().model_copy(update={"supplements": [
+            AthleteSupplementRecord(
+                supplement_id="caffeine",
+                canonical_name="Caffeine (anhydrous, pill, gum, gel)",
+                category="Performance"),
+            AthleteSupplementRecord(
+                supplement_id="magnesium",
+                canonical_name="Magnesium (glycinate, citrate, malate)",
+                category="Health"),
+        ]})
+        payload = _andy_baseline_call(db, lifestyle=ls, health=health)
+        si = payload.supplement_integration
+        integrated_ids = {s.supplement_id for s in si.integrated}
+        assert "caffeine" not in integrated_ids       # auto-removed
+        assert "magnesium" in integrated_ids          # clean → retained
+        warn = [f for f in si.contraindication_flags if f.supplement_id == "caffeine"]
+        assert len(warn) == 1
+        assert warn[0].flag_type == "supplement_contraindicated_cardiac"
+        assert warn[0].severity == "high"
+        assert warn[0].metadata["auto_removed"] is True
+        # Removed from race-day suggestions too.
+        assert "caffeine" not in {s.supplement_id for s in si.race_day_suggestions}
+        # Non-blocking: no HITL item, plan not blocked.
+        assert si.contraindication_hitl_items == []
+        assert payload.hitl_required is False
+
+    def test_no_cardiac_condition_no_removal(self):
+        # Same caffeine record, but no active cardiac condition → nothing removed.
+        db = _FakeConn()
+        db.queue_pla_for_all_phases((8, 12), (10, 14), (12, 16), (6, 10))
+        db.queue_supplement_vocab(_RACE_DAY_VOCAB)
+        ls = _andy_lifestyle().model_copy(update={"supplements": [
+            AthleteSupplementRecord(
+                supplement_id="caffeine",
+                canonical_name="Caffeine (anhydrous, pill, gum, gel)",
+                category="Performance")]})
+        si = _andy_baseline_call(db, lifestyle=ls).supplement_integration
+        assert "caffeine" in {s.supplement_id for s in si.integrated}
+        assert si.contraindication_flags == []
+
+    def test_race_day_caffeine_loading_with_cardiac_warns_and_suppresses(self):
+        # Gate 2: caffeine_loading strategy + active cardiac → warn + drop
+        # caffeine from race-day suggestions; still non-blocking.
+        db = _FakeConn()
+        db.queue_pla_for_all_phases((8, 12), (10, 14), (12, 16), (6, 10))
+        db.queue_supplement_vocab(_RACE_DAY_VOCAB)
+        health = Layer1HealthStatus(health_conditions_active=[
+            HealthConditionRecord(condition_id=1, system_category="cardiac",
+                                  condition_name="SVT", status="Active")])
+        ls = _andy_lifestyle().model_copy(
+            update={"caffeine_race_day_strategy": "caffeine_loading"})
+        payload = _andy_baseline_call(db, lifestyle=ls, health=health)
+        si = payload.supplement_integration
+        assert "caffeine" not in {s.supplement_id for s in si.race_day_suggestions}
+        assert "race_day_caffeine_contraindicated_cardiac" in {
+            f.flag_type for f in si.contraindication_flags}
+        assert si.contraindication_hitl_items == []
+        assert payload.hitl_required is False
 
 
 # ─── §13.7 time-based mode ───────────────────────────────────────────────────
