@@ -69,34 +69,34 @@ def test_passthrough_canonical_items():
 
 
 def test_rename_band_family():
-    assert transform_equipment_string("Band") == (["Resistance Band"], [])
-    assert transform_equipment_string("Rubber Band") == (["Resistance Band"], [])
+    assert transform_equipment_string("Band") == (["Resistance band"], [])
+    assert transform_equipment_string("Rubber Band") == (["Resistance band"], [])
 
 
 def test_rename_mtb():
-    assert transform_equipment_string("MTB") == (["Mountain Bike"], [])
+    assert transform_equipment_string("MTB") == (["Mountain bike"], [])
 
 
 def test_rename_cable_to_cable_machine():
-    assert transform_equipment_string("Cable") == (["Cable Machine"], [])
+    assert transform_equipment_string("Cable") == (["Cable machine"], [])
 
 
 def test_rename_box_to_plyo_box():
-    assert transform_equipment_string("Box") == (["Plyo Box"], [])
-    assert transform_equipment_string("Vault Box") == (["Plyo Box"], [])
+    assert transform_equipment_string("Box") == (["Plyo box"], [])
+    assert transform_equipment_string("Vault Box") == (["Plyo box"], [])
 
 
 def test_rename_vest_family():
-    assert transform_equipment_string("Vest") == (["Weighted Vest"], [])
-    assert transform_equipment_string("Weight Vest") == (["Weighted Vest"], [])
+    assert transform_equipment_string("Vest") == (["Weighted vest"], [])
+    assert transform_equipment_string("Weight Vest") == (["Weighted vest"], [])
 
 
 def test_rename_shoes_to_running_shoes():
-    assert transform_equipment_string("Shoes") == (["Running Shoes"], [])
+    assert transform_equipment_string("Shoes") == (["Running shoes"], [])
 
 
 def test_rename_rings_to_gymnastic_rings():
-    assert transform_equipment_string("Rings") == (["Gymnastic Rings"], [])
+    assert transform_equipment_string("Rings") == (["Gymnastic rings"], [])
 
 
 def test_rename_trainer_to_cycling_trainer():
@@ -119,7 +119,7 @@ def test_decompose_three_way_slash():
 
 def test_or_treated_as_slash():
     out, _ = transform_equipment_string("Bench or Box")
-    assert out == ["Bench", "Plyo Box"]
+    assert out == ["Bench", "Plyo box"]
 
 
 def test_rollup_climbing_roped():
@@ -159,6 +159,42 @@ def test_ambiguous_crampons_default_to_mountaineering():
 def test_drop_race_fueling_tokens():
     out, _ = transform_equipment_string("Backpack, Gels, Soft Flask")
     assert out == ["Backpack"]
+
+
+# ---------------------------------------------------------------------------
+# V4c — col-7 -> canonical case renames (must match the sentence-case pool)
+# ---------------------------------------------------------------------------
+
+def test_v4c_titlecase_tokens_normalize_to_canonical():
+    for raw, canonical in [
+        ("Ab Wheel", "Ab wheel"),
+        ("Foam Roller", "Foam roller"),
+        ("Gymnastic Rings", "Gymnastic rings"),
+        ("Rings", "Gymnastic rings"),
+        ("Pull-Up Bar", "Pull-up bar"),
+        ("Trekking Poles", "Trekking poles"),
+        ("Medicine Ball", "Medicine ball"),
+        ("Vest", "Weighted vest"),
+        ("Shoes", "Running shoes"),
+        ("MTB", "Mountain bike"),
+    ]:
+        out, _ = transform_equipment_string(raw)
+        assert out == [canonical], f"{raw!r} -> {out!r}, expected [{canonical!r}]"
+
+
+def test_v4c_target_renames():
+    assert transform_equipment_string("Bike trainer")[0] == ["Cycling trainer"]
+    assert transform_equipment_string("TRX")[0] == ["TRX / suspension trainer"]
+    assert transform_equipment_string("Sea Kayak")[0] == ["Kayak"]
+    # on-water rowing is not prescribed -> normalize to the erg
+    assert transform_equipment_string("Rowing Shell")[0] == ["Rowing ergometer"]
+
+
+def test_v4c_dropped_accessory_and_improvised_tokens():
+    # Chairs (improvised) and Canoe Seat (assumed with the vessel) drop out.
+    assert transform_equipment_string("Parallettes, Chairs")[0] == ["Parallettes"]
+    out, _ = transform_equipment_string("Kayak, Canoe Seat, Foam Pad")
+    assert out == ["Kayak", "Foam pad"]
 
 
 def test_dedupe_preserves_order():

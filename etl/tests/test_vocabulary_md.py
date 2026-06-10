@@ -85,15 +85,23 @@ def test_health_categories_known_present(parsed):
 # ---------------------------------------------------------------------------
 
 def test_equipment_count(parsed):
-    # Vocabulary V4b — legacy 0A/0B equipment reconciled into the 0C vocab.
-    # 122 -> 131: re-homed 9 standalone items (Rollerskis, Inline skates + 7
-    # gym/misc). The climbing/ski *aggregate* kits are NOT equipment rows — they
-    # roll up into the existing readiness toggles (Climbing — roped,
-    # Mountaineering, Touring/AT ski setup) via vocabulary_transforms._ROLLUP.
-    # TT Bike normalizes to the existing "TT / triathlon bike" vessel. The 22
-    # legacy rows are superseded on Neon by retire_legacy_equipment_v4b.sql
-    # (not visible to this parse).
-    assert len(parsed["equipment_items"]) == 131
+    # Vocabulary V4b -> V4c.
+    # V4b (122 -> 131): re-homed 9 standalone legacy items; the climbing/ski
+    # aggregate kits roll into the existing readiness toggles, not equipment rows.
+    # V4c (131 -> 127): removed 4 unreferenced paddle accessories (Paddle
+    # (double-blade), Single-blade paddle, Rowing oar, Kayak / canoe seat) — the
+    # seat/paddle/oar are assumed present if the athlete has the vessel.
+    assert len(parsed["equipment_items"]) == 127
+
+
+def test_v4c_paddle_accessories_removed(parsed):
+    names = {e["canonical_name"] for e in parsed["equipment_items"]}
+    for gone in ["Paddle (double-blade)", "Single-blade paddle", "Rowing oar",
+                 "Kayak / canoe seat"]:
+        assert gone not in names, f"{gone!r} should be removed (assumed with vessel)"
+    # the vessels themselves remain
+    for kept in ["Kayak", "Canoe", "Packraft", "Stand-up Paddleboard"]:
+        assert kept in names
 
 
 def test_equipment_v4b_legacy_reconciliation(parsed):
