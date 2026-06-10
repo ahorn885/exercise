@@ -143,6 +143,62 @@
   </div>
 </form>
 
+{# Standing nutrition protocol — read-only; captured at onboarding and fed to
+   the coach. The computed per-day targets live on each plan. #}
+{% set has_nutrition_protocol = profile.dietary_pattern or profile.fueling_format_preference
+   or profile.caffeine_tolerance or profile.salt_electrolyte_tolerance
+   or profile.gi_triggers_known or profile.supplement_protocol_notes %}
+<div class="card card-pad stack pf-nutrition">
+  <div>
+    <p class="eyebrow">● Nutrition &amp; fueling</p>
+    <p class="pf-hint">Your standing dietary, fueling, and supplement protocol — captured at
+      onboarding and used when the coach builds plans. Per-day fuel targets appear on each plan.</p>
+  </div>
+  {% if has_nutrition_protocol %}
+  <dl class="pf-readout">
+    {% if profile.dietary_pattern %}
+    <div><dt>Dietary pattern</dt><dd>{{ profile.dietary_pattern|replace(',', ', ')|replace('_', ' ') }}</dd></div>{% endif %}
+    {% if profile.fueling_format_preference %}
+    <div><dt>Fueling formats</dt><dd>{{ profile.fueling_format_preference|replace(',', ', ')|replace('_', ' ') }}</dd></div>{% endif %}
+    {% if profile.caffeine_tolerance %}
+    <div><dt>Caffeine tolerance</dt><dd>{{ profile.caffeine_tolerance|replace('_', ' ') }}{% if profile.caffeine_daily_mg_estimate %} · ~{{ profile.caffeine_daily_mg_estimate }} mg/day{% endif %}</dd></div>{% endif %}
+    {% if profile.caffeine_race_day_strategy %}
+    <div><dt>Race-day caffeine</dt><dd>{{ profile.caffeine_race_day_strategy }}</dd></div>{% endif %}
+    {% if profile.salt_electrolyte_tolerance %}
+    <div><dt>Salt / electrolyte tolerance</dt><dd>{{ profile.salt_electrolyte_tolerance|replace('_', ' ') }}</dd></div>{% endif %}
+    {% if profile.gi_triggers_known %}
+    <div><dt>Known GI triggers</dt><dd>{{ profile.gi_triggers_known }}</dd></div>{% endif %}
+    {% if profile.supplement_protocol_notes %}
+    <div><dt>Supplement protocol</dt><dd>{{ profile.supplement_protocol_notes }}</dd></div>{% endif %}
+  </dl>
+  {% else %}
+  <p class="pf-hint">No standing nutrition details captured yet — these are collected during onboarding.</p>
+  {% endif %}
+</div>
+
+{# Plan-specific daily baseline — only when a plan is live (slice 4 PlanNutrition). #}
+{% if plan_nutrition %}
+<div class="card card-pad stack pf-nutrition">
+  <div>
+    <p class="eyebrow accent">● Active plan · daily baseline</p>
+    <p class="pf-hint">Phase baselines from your current plan — the every-day average. Per-day targets
+      shift with training load; <a href="{{ url_for('plan_create.view_plan', plan_version_id=active_plan_id) }}">see the plan</a>.</p>
+  </div>
+  <div class="nutri-phases">
+    {% for phase, t in plan_nutrition.per_phase_baseline.items() %}
+    <div class="nutri-phase">
+      <span class="chip">{{ phase }}</span>
+      <span class="nutri-kcal">{{ t.daily_calorie_target_kcal }} kcal</span>
+      <span class="rail-note nutri-macros">C {{ t.macros.cho_g }} · P {{ t.macros.protein_g }} · F {{ t.macros.fat_g }} g</span>
+    </div>
+    {% endfor %}
+  </div>
+  {% if plan_nutrition.standing_supplement_notes %}
+  <p class="sess-notes">💊 {{ plan_nutrition.standing_supplement_notes }}</p>
+  {% endif %}
+</div>
+{% endif %}
+
 {# ════════════════════ SCHEDULE ════════════════════ #}
 {% elif sub == 'schedule' %}
 <form method="post" action="{{ url_for('profile.save_schedule') }}" class="pf-form">

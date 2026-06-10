@@ -17,7 +17,10 @@ from datetime import datetime
 import bcrypt
 from flask import Blueprint, render_template, request, redirect, url_for, flash, abort
 
+from datetime import date
+
 from database import get_db
+from plan_nutrition_repo import load_plan_nutrition_by_version
 from routes.auth import (
     current_user_id, _hash_password, _check_password, _password_strength_errors,
     generate_api_token,
@@ -66,6 +69,48 @@ CONNECTION_PROVIDERS = (
     ('coros', 'COROS', 'coros.oauth_start'),
     ('polar', 'Polar', 'polar.oauth_start'),
 )
+
+
+def _coerce_date(value):
+    """Best-effort scope-date coercion; tolerates date objects, ISO strings,
+    or None (mirrors routes/plans.py bucketing for the fake-cursor tests)."""
+    if value is None or isinstance(value, date):
+        return value
+    try:
+        return date.fromisoformat(str(value)[:10])
+    except (ValueError, TypeError):
+        return None
+
+
+def _load_active_plan_nutrition(db, uid):
+    """The athlete's currently-live AI plan + its nutrition artifact, if any.
+
+    Active mirrors routes/plans.list_plans: `ready`, not superseded, not
+    completed, and scope spans today. Returns `(plan_version_id, PlanNutrition)`
+    or `(None, None)`. Advisory — wholly best-effort, so a fault here never
+    breaks the profile page (the standing protocol still renders)."""
+    try:
+        rows = db.execute(
+            "SELECT id, scope_start_date, scope_end_date, completed_at "
+            "FROM plan_versions WHERE user_id = ? "
+            "AND generation_status = 'ready' AND superseded_at IS NULL "
+            "ORDER BY created_at DESC",
+            (uid,),
+        ).fetchall()
+        today = date.today()
+        for r in rows:
+            if r['completed_at'] is not None:
+                continue
+            start = _coerce_date(r['scope_start_date'])
+            end = _coerce_date(r['scope_end_date'])
+            if start is not None and start > today:
+                continue
+            if end is not None and end < today:
+                continue
+            return r['id'], load_plan_nutrition_by_version(db, r['id'])
+    except Exception as exc:  # noqa: BLE001 — advisory must not break the page
+        print(f"_load_active_plan_nutrition failed for uid={uid} (non-fatal): {exc}")
+    return None, None
 
 # pa.status → (badge label, Bootstrap badge class). Mirrors v5 §Account
 # Config 1 "Connection Status" enum (Connected / Disconnected / Auth
@@ -328,10 +373,16 @@ def edit():
     profile['height_display'] = display_height(profile.get('height_cm'), unit_pref)
     profile['height_unit_label'] = height_unit_label(unit_pref)
 
+    # Plan-specific nutrition is surfaced only when a plan is live (hidden
+    # otherwise). The standing protocol below always renders from `profile`.
+    active_plan_id, plan_nutrition = _load_active_plan_nutrition(db, uid)
+
     from datetime import datetime as _dt
     return render_template(
         'profile/edit.html',
         profile=profile,
+        active_plan_id=active_plan_id,
+        plan_nutrition=plan_nutrition,
         unit_preference_choices=UNIT_PREFERENCE_CHOICES,
         memory=memory,
         preference_categories=PREFERENCE_CATEGORIES,

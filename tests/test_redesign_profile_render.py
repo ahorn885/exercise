@@ -186,3 +186,109 @@ def test_profile_schedule_tab(monkeypatch):
     assert 'Training windows' in html
     assert '/profile/schedule' in html  # save action
     assert 'style="' not in html
+
+
+# ── §18 Nutrition surface (standing protocol + active-plan baseline) ──
+
+from datetime import date, timedelta  # noqa: E402
+from types import SimpleNamespace  # noqa: E402
+
+import routes.profile as _profile  # noqa: E402
+
+
+def _fake_plan_nutrition():
+    """Minimal stand-in exposing only what the profile template reads."""
+    macros = SimpleNamespace(cho_g=420, protein_g=119, fat_g=70)
+    base = SimpleNamespace(daily_calorie_target_kcal=3000, macros=macros)
+    return SimpleNamespace(
+        per_phase_baseline={'Base': base},
+        standing_supplement_notes='Iron 18mg with breakfast',
+    )
+
+
+def test_profile_nutrition_protocol_renders(monkeypatch):
+    profile = {
+        'primary_sport': 'triathlon',
+        'dietary_pattern': 'vegetarian,gluten_free',
+        'supplement_protocol_notes': 'Creatine 5g daily',
+        'caffeine_tolerance': 'moderate',
+        'caffeine_daily_mg_estimate': 200,
+        'salt_electrolyte_tolerance': 'high',
+        'fueling_format_preference': 'gel,drink_mix',
+        'gi_triggers_known': 'high fructose',
+        'updated_at': '2026-05-30 10:00:00',
+    }
+    client = _client(monkeypatch, _Conn(profile=profile))
+    html = client.get('/profile/?tab=athlete').get_data(as_text=True)
+    assert 'Nutrition &amp; fueling' in html
+    # Enum tokens humanized (comma + underscore expanded).
+    assert 'vegetarian, gluten free' in html
+    assert 'gel, drink mix' in html
+    assert 'Creatine 5g daily' in html
+    assert 'high fructose' in html
+    # No live plan in the default conn -> the plan-baseline card stays hidden.
+    assert 'Active plan · daily baseline' not in html
+    assert 'style="' not in html
+
+
+def test_profile_nutrition_protocol_empty_state(monkeypatch):
+    client = _client(monkeypatch, _Conn(
+        profile={'primary_sport': 'run', 'updated_at': '2026-05-30 10:00:00'}))
+    html = client.get('/profile/?tab=athlete').get_data(as_text=True)
+    assert 'Nutrition &amp; fueling' in html
+    assert 'No standing nutrition details captured yet' in html
+    assert 'Active plan · daily baseline' not in html
+
+
+def test_profile_active_plan_baseline_renders(monkeypatch):
+    monkeypatch.setattr(_profile, '_load_active_plan_nutrition',
+                        lambda db, uid: (77, _fake_plan_nutrition()))
+    client = _client(monkeypatch, _Conn(
+        profile={'primary_sport': 'run', 'updated_at': '2026-05-30 10:00:00'}))
+    html = client.get('/profile/?tab=athlete').get_data(as_text=True)
+    assert 'Active plan · daily baseline' in html
+    assert '3000 kcal' in html
+    assert 'Iron 18mg with breakfast' in html
+    assert '/plans/v2/77' in html  # link to the live plan
+    assert 'style="' not in html
+
+
+class _PlanRowsConn:
+    """Serves only the active-plan SELECT for the helper unit tests."""
+    def __init__(self, rows):
+        self._rows = rows
+
+    def execute(self, sql, params=()):
+        return SimpleNamespace(fetchall=lambda: self._rows, fetchone=lambda: None)
+
+
+def test_load_active_plan_nutrition_picks_live_plan(monkeypatch):
+    today = date.today()
+    rows = [
+        {'id': 1, 'scope_start_date': today + timedelta(days=5),
+         'scope_end_date': today + timedelta(days=40), 'completed_at': None},   # upcoming
+        {'id': 2, 'scope_start_date': today - timedelta(days=3),
+         'scope_end_date': today + timedelta(days=20), 'completed_at': None},   # live
+        {'id': 3, 'scope_start_date': today - timedelta(days=60),
+         'scope_end_date': today - timedelta(days=2), 'completed_at': None},    # ended
+    ]
+    monkeypatch.setattr(_profile, 'load_plan_nutrition_by_version',
+                        lambda db, pvid: f'NUTR-{pvid}')
+    pid, nutr = _profile._load_active_plan_nutrition(_PlanRowsConn(rows), uid=9)
+    assert pid == 2 and nutr == 'NUTR-2'
+
+
+def test_load_active_plan_nutrition_none_when_no_live_plan(monkeypatch):
+    today = date.today()
+    rows = [
+        {'id': 3, 'scope_start_date': today - timedelta(days=60),
+         'scope_end_date': today - timedelta(days=2), 'completed_at': None},    # ended
+        {'id': 4, 'scope_start_date': today - timedelta(days=10),
+         'scope_end_date': today + timedelta(days=10), 'completed_at': 'done'},  # completed
+    ]
+    called = []
+    monkeypatch.setattr(_profile, 'load_plan_nutrition_by_version',
+                        lambda db, pvid: called.append(pvid))
+    pid, nutr = _profile._load_active_plan_nutrition(_PlanRowsConn(rows), uid=9)
+    assert pid is None and nutr is None
+    assert called == []  # never loads nutrition when nothing is live
