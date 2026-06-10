@@ -1661,7 +1661,7 @@ class SwimmingBaseline(_Base):
 class PaddlingBaseline(_Base):
     longest_paddle_km: float | None = Field(default=None, ge=0)
     longest_paddle_hrs: float | None = Field(default=None, ge=0)
-    paddle_craft_types: list[Literal["kayak", "canoe", "packraft", "surfski"]] = Field(
+    paddle_craft_types: list[Literal["kayak", "canoe", "packraft"]] = Field(
         default_factory=list
     )
 

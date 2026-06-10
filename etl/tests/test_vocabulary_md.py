@@ -85,10 +85,14 @@ def test_health_categories_known_present(parsed):
 # ---------------------------------------------------------------------------
 
 def test_equipment_count(parsed):
-    # 121 = standard categories minus DROPs minus duplicates, plus 9 universal.
-    # If the audit grows / shrinks this changes — we pin the count to catch
-    # it.
-    assert len(parsed["equipment_items"]) == 121
+    # 122 = standard categories minus DROPs minus duplicates, plus 9 universal.
+    # Vocabulary V4 §6 took this 121 -> 122: pruned 3 vessels (Bike (generic),
+    # Sea kayak, Rowing shell) and folded in 4 A-only items (Tricep bar,
+    # Preacher curl bench, Slam ball, Treadwall). "Climbing wall" is NOT
+    # folded in — it already exists in layer0 as the active 0B legacy
+    # "Climbing Wall" (would violate the case-insensitive active-name index).
+    # Renames and the Bench/Weighted-vest moves are count-neutral.
+    assert len(parsed["equipment_items"]) == 122
 
 
 def test_equipment_universal_flag(parsed):
@@ -103,11 +107,18 @@ def test_equipment_universal_flag(parsed):
 
 def test_equipment_has_categories(parsed):
     cats = {e["equipment_category"] for e in parsed["equipment_items"]}
-    for c in ["Barbells & Bars", "Dumbbells", "Kettlebells",
-              "Machines — Cardio", "Bodyweight & Portable Equipment",
+    # Vocabulary V4 §6 — gym rows now live in the 6-bucket scheme.
+    for c in ["Freeweights", "Machines - Strength", "Machines - Cardio",
+              "Plyo, Power & Stability", "Grip & Climbing",
+              "Bodyweight & Portable Equipment",
               "Sport-Specific — Paddle (top-level vessels — kept individual)",
               "Assumed Universal"]:
         assert c in cats
+    # Old pre-V4 category headers must be fully gone.
+    for old in ["Barbells & Bars", "Dumbbells", "Kettlebells",
+                "Machines — Lower Body", "Machines — Upper Body",
+                "Stability & Balance", "Plyo & Power", "Grip & Forearm Specific"]:
+        assert old not in cats, f"{old!r} should have been recategorized"
 
 
 def test_equipment_dropped_items_absent(parsed):
@@ -117,6 +128,35 @@ def test_equipment_dropped_items_absent(parsed):
     for dropped in ["Jacob's Ladder", "Compression boots (Normatec)",
                     "Sauna access", "Stretch strap"]:
         assert dropped not in names, f"{dropped!r} should have been dropped"
+
+
+def test_equipment_v4_prunes_renames_and_foldins(parsed):
+    # Vocabulary V4 §4/§6 — vessel prunes, renames, and A-only fold-ins.
+    names = {e["canonical_name"] for e in parsed["equipment_items"]}
+    by_name = {e["canonical_name"]: e for e in parsed["equipment_items"]}
+    # Pruned vessels gone.
+    for pruned in ["Bike (generic)", "Sea kayak", "Rowing shell"]:
+        assert pruned not in names, f"{pruned!r} should be pruned"
+    # Renames: new canonical present, old gone.
+    for old, new in [("Bike trainer", "Cycling trainer"),
+                     ("SUP", "Stand-up Paddleboard"),
+                     ("Inflatable raft", "Raft")]:
+        assert old not in names, f"{old!r} should be renamed away"
+        assert new in names, f"{new!r} (rename target) should be present"
+    # Cycling trainer relocated to the cycling vessel category.
+    assert by_name["Cycling trainer"]["equipment_category"].startswith(
+        "Sport-Specific — Cycling")
+    # A-only fold-ins now carried in layer0 so EQUIPMENT_CATEGORIES can retire (V5).
+    for folded, cat in [("Tricep bar (W-bar)", "Freeweights"),
+                        ("Preacher curl bench", "Freeweights"),
+                        ("Slam ball", "Plyo, Power & Stability"),
+                        ("Treadwall", "Grip & Climbing")]:
+        assert folded in names, f"{folded!r} fold-in missing"
+        assert by_name[folded]["equipment_category"] == cat
+    # "Climbing wall" is NOT folded into 0C — it already lives in layer0 as the
+    # active 0B legacy "Climbing Wall"; a 0C copy would collide on the
+    # case-insensitive active-name index. So no 0C "Climbing wall" row here.
+    assert "Climbing wall" not in names
 
 
 def test_equipment_dedupe_foam_roller(parsed):

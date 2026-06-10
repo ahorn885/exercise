@@ -42,11 +42,11 @@ _RENAME: dict[str, str] = {
     "shoes": "Running Shoes",
     # Rings
     "rings": "Gymnastic Rings",
-    # Bike trainer
-    "trainer": "Bike Trainer",
-    "or trainer": "Bike Trainer",  # comma-split artifact noted in audit
-    # SUP
-    "stand-up paddleboard": "SUP",
+    # Cycling trainer (renamed from "Bike trainer" — V4 §4)
+    "trainer": "Cycling trainer",
+    "or trainer": "Cycling trainer",  # comma-split artifact noted in audit
+    # Stand-up Paddleboard (renamed from "SUP" — V4 §4)
+    "stand-up paddleboard": "Stand-up Paddleboard",
     # Fix typo
     "race belt)": "Race belt",
 }
