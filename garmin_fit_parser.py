@@ -1281,17 +1281,28 @@ def _sleep_sub_score_slot_candidates(f5, f7, f8, f10) -> list:
     """Per-night diagnostic for `[346] field_5 / 7 / 8 / 10` — the four
     sub-score positions for Stress / Light / REM / Awake contributors.
 
-    Locks (Jun 10 2026 — Andy's Connect Jun 2 contributor breakdown):
-      • `field_5` = **Awake sub-score** — stable-or-highest across nights,
-        92 Excellent on Jun 2 (Awake=10 min on 5h05m = 3.3%, very good).
+    Locks (Jun 10 2026 — disambiguated across 5 reference nights including
+    Sep 8 2025's 37-score night with 72 min awake on 306 min sleep):
+      • `field_10` = **Awake sub-score** — 100 Excellent on May 28 (4 min
+        awake), 0 Poor (rank 1) on Sep 8 (72 min awake = 23.5%). Inverse-
+        tracks awake-time fraction across nights.
       • `field_8` = **Stress sub-score** — most reactive, 46 Fair on Jun 2
-        (Connect Stress avg 27 = Fair band), 95→74→46 across May 28 / 29 /
-        Jun 2 in lockstep with worsening sleep.
+        (Connect Stress avg 27 = Fair band), 98 Excellent on Sep 8 even
+        though sleep was atrocious (stress avg 3.40 = low → stress
+        sub-score stays high; bad sleep was awake-driven). Triple-
+        confirmed across May 28 / Jun 2 / Sep 8.
 
-    Still ambiguous: `field_7` vs `field_10` carry Light + REM in some
-    order — both landed Good (73/74) on Jun 2 with similar percentages
-    (Light 55.7% / REM 16.4% of sleep). Locks once a night surfaces a
-    materially-different Light vs REM rating.
+    Still ambiguous: `field_5` vs `field_7` carry Light + REM in some
+    order — across all 5 reference nights both stay in the same band
+    (mostly Good-Excellent). Locks once a night surfaces a materially-
+    different Light-vs-REM contributor rating (e.g. Excellent Light +
+    Poor REM, or vice versa).
+
+    Earlier wrong-lock retraction: Jun 2 alone suggested `field_5 =
+    Awake` because field_5 = 92 with Awake = 10 min looked plausible —
+    but Sep 8 surfaced `field_5 = 61` despite 72 min awake, while
+    `field_10 = 0` matched perfectly. field_5 is one of {Light, REM},
+    not Awake.
 
     Returns one dict per slot with the raw value, a 1-to-4 rank (1 = the
     lowest of the four that night, 4 = highest), and the qualitative band

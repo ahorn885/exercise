@@ -649,25 +649,43 @@ def test_sleep_sub_score_slot_candidates_breaks_ties_by_slot_order():
     assert ranks == {'field_5': 1, 'field_7': 2, 'field_8': 3, 'field_10': 4}
 
 
-def test_sleep_sub_score_slot_candidates_jun2_locks_field_5_awake_and_field_8_stress():
-    """Andy's Jun 2 reference night: Connect contributor breakdown was
-    Stress=27 avg (Fair), Awake=10 min on 5h05m sleep (Excellent),
-    Light=170 min / REM=50 min (both Good band). Raw `[346]` slot values
-    were field_5=92 / field_7=73 / field_8=46 / field_10=74. The locks:
-      • field_5 = 92 (Excellent) — matches Awake (only 3.3% of sleep)
-      • field_8 = 46 (Fair, rank 1) — matches Stress (27 avg, Fair band)
-    field_7 vs field_10 ambiguous (Light + REM in some order; both Good)
-    until a night surfaces a distinct Light-vs-REM rating gap."""
+def test_sleep_sub_score_slot_candidates_sep8_locks_field_10_awake():
+    """Sep 8 2025 reference: 37 sleep score (atrocious), 72 min awake on
+    5h06m total (23.5% awake — terrible), but stress avg 3.40 (very low).
+    Raw `[346]` slots: field_5=61 / field_7=58 / field_8=98 / field_10=0.
+
+    Locks Awake to field_10 (raw 0 = rank 1 Poor — only metric that
+    cratered on this night). Triple-confirms field_8 = Stress (rank 4
+    Excellent at 98 despite atrocious sleep — because stress was low).
+    Earlier Jun 2 reading (field_5 = 92 with Awake = 10 min) suggested
+    field_5 = Awake but Sep 8's 72-min-awake night with field_5 = 61
+    rules that out: Awake is field_10."""
+    from garmin_fit_parser import _sleep_sub_score_slot_candidates
+    candidates = _sleep_sub_score_slot_candidates(61, 58, 98, 0)
+    by_slot = {c['slot']: c for c in candidates}
+    # The lock: field_10 = 0 is the rank-1 Poor slot → Awake sub-score.
+    assert by_slot['field_10']['rank'] == 1
+    assert by_slot['field_10']['raw'] == 0
+    assert by_slot['field_10']['band_garmin_std'] == 'Poor'
+    # field_8 = 98 (rank 4 Excellent) confirms field_8 = Stress (low
+    # stress on Sep 8 → high stress sub-score).
+    assert by_slot['field_8']['rank'] == 4
+    assert by_slot['field_8']['band_garmin_std'] == 'Excellent'
+
+
+def test_sleep_sub_score_slot_candidates_jun2_locks_field_8_stress():
+    """Jun 2 2026 reference: 58 sleep score, Connect Stress 27 avg (Fair
+    band). Raw `[346]` slot values: field_5=92 / field_7=73 / field_8=46
+    / field_10=74. The lock: field_8 = 46 (rank 1 Fair) matches Connect's
+    Stress=27 Fair rating. Triple-confirmed across Jun 2 + Sep 8 + May 28."""
     from garmin_fit_parser import _sleep_sub_score_slot_candidates
     candidates = _sleep_sub_score_slot_candidates(92, 73, 46, 74)
     by_slot = {c['slot']: c for c in candidates}
     # The lock: field_8 is the rank-1 (worst) slot and in Fair band.
     assert by_slot['field_8']['rank'] == 1
     assert by_slot['field_8']['band_garmin_std'] == 'Fair'
-    # field_5 is the rank-4 (best) slot and in Excellent band.
-    assert by_slot['field_5']['rank'] == 4
-    assert by_slot['field_5']['band_garmin_std'] == 'Excellent'
-    # field_7 / field_10 land in the Good band — ambiguous Light/REM pair.
+    # field_7 / field_10 land in the Good band (Light+REM+Awake ambiguous
+    # without the Sep 8 datapoint).
     assert by_slot['field_7']['band_garmin_std'] == 'Good'
     assert by_slot['field_10']['band_garmin_std'] == 'Good'
 
