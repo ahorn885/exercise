@@ -1750,11 +1750,36 @@ class Layer1EventGoal(_Base):
 
 
 # §I — lifestyle
+class AthleteSupplementRecord(_Base):
+    """One structured supplement the athlete currently takes (§I.1).
+
+    Captured on the profile (`athlete_supplements`), soft-referencing the
+    Layer 0 `supplement_vocabulary`: `supplement_id` is the vocab key, while
+    `canonical_name`/`category` are denormalized onto the row so Layer 1 needs
+    no cross-schema join. `frequency`/`timing` are closed vocabs
+    (`athlete_supplements_repo.SUPPLEMENT_FREQUENCIES`/`SUPPLEMENT_TIMINGS`,
+    validated on write); `dose`/`notes` stay free text. This is the structured
+    shape Layer 2E §5.5 consumes — it supersedes the free-text
+    `Layer1Lifestyle.supplement_protocol_notes`.
+    """
+    supplement_id: str
+    canonical_name: str
+    category: str | None = None
+    dose: str | None = None
+    frequency: str | None = None
+    timing: str | None = None
+    notes: str | None = None
+
+
 class Layer1Lifestyle(_Base):
     sleep_baseline_hours: float | None = Field(default=None, ge=0)
     work_stress_level: Literal["low", "moderate", "high", "variable"] | None = None
     dietary_pattern: list[str] = Field(default_factory=list)
+    # Legacy free-text protocol. Superseded by the structured `supplements`
+    # record set below (§I.1); retained while Layer 3A still renders it and
+    # for any pre-refresh rows. New captures write `supplements`, not this.
     supplement_protocol_notes: str | None = None
+    supplements: list[AthleteSupplementRecord] = Field(default_factory=list)
     caffeine_tolerance: Literal["none", "low", "moderate", "high"] | None = None
     caffeine_daily_mg_estimate: int | None = Field(default=None, ge=0)
     caffeine_race_day_strategy: Literal[
