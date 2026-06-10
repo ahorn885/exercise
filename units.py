@@ -1,14 +1,16 @@
-"""Unit conversion + display formatting for athlete-facing weight values.
+"""Unit conversion + display formatting for athlete-facing measurements.
 
-Internal storage is kilograms across the board (issue #469). Athletes pick
-`imperial` or `metric` on their profile; the UI/entry boundary and the rx
-display layer convert via these helpers so the canonical value never leaks
-the wrong unit into a prompt or form.
+Internal storage is canonical metric (kg for weight, cm for height) across
+the board (issue #469). Athletes pick `imperial` or `metric` on their
+profile; the UI/entry boundary and the rx display layer convert via these
+helpers so the canonical value never leaks the wrong unit into a prompt
+or form.
 
 `format_weight()` returns the display string used in templates and the
 Layer 4 `load_prescription` text. Whole-number imperial is the common case
 and prints cleanly ("185 lb" not "185.0 lb"); fractional kg rounds to 1 dp
-for readability.
+for readability. Height (`display_height` / `entered_height_to_cm`) is a
+single-field number — inches for imperial, cm for metric.
 """
 
 from __future__ import annotations
@@ -19,6 +21,10 @@ from typing import Optional
 # International avoirdupois pound, exact to 7 decimal places.
 LB_PER_KG = 2.2046226218
 KG_PER_LB = 0.45359237
+
+# International inch (exact).
+CM_PER_INCH = 2.54
+INCH_PER_CM = 1.0 / CM_PER_INCH
 
 IMPERIAL = 'imperial'
 METRIC = 'metric'
@@ -90,3 +96,43 @@ def format_weight(value_kg: Optional[float], unit_pref: Optional[str],
         lbs = kg_to_lb(value_kg)
         return f"{int(round(lbs))} lb"
     return f"{float(value_kg):.1f} kg"
+
+
+# ─── Height (canonical cm) ────────────────────────────────────────────────
+
+
+def cm_to_in(value: Optional[float]) -> Optional[float]:
+    if value is None:
+        return None
+    return float(value) * INCH_PER_CM
+
+
+def in_to_cm(value: Optional[float]) -> Optional[float]:
+    if value is None:
+        return None
+    return float(value) * CM_PER_INCH
+
+
+def display_height(value_cm: Optional[float], unit_pref: Optional[str]) -> Optional[float]:
+    """Return `value_cm` converted to the athlete's display unit (in or cm)."""
+    if value_cm is None:
+        return None
+    pref = normalize_unit_preference(unit_pref)
+    if pref == IMPERIAL:
+        return cm_to_in(value_cm)
+    return float(value_cm)
+
+
+def entered_height_to_cm(value: Optional[float], unit_pref: Optional[str]) -> Optional[float]:
+    """Inverse of `display_height` — convert from athlete's unit to canonical cm."""
+    if value is None:
+        return None
+    pref = normalize_unit_preference(unit_pref)
+    if pref == IMPERIAL:
+        return in_to_cm(value)
+    return float(value)
+
+
+def height_unit_label(unit_pref: Optional[str]) -> str:
+    """Short label for templates: 'in' or 'cm'."""
+    return 'in' if normalize_unit_preference(unit_pref) == IMPERIAL else 'cm'

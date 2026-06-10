@@ -31,7 +31,7 @@ from athlete import (
 from units import (
     UNIT_PREFERENCE_CHOICES, DEFAULT_UNIT_PREFERENCE,
     normalize_unit_preference, entered_weight_to_kg, display_weight,
-    weight_unit_label,
+    weight_unit_label, entered_height_to_cm, display_height, height_unit_label,
 )
 from athlete_skill_toggles_repo import (
     evict_layer1_on_skill_toggle_change,
@@ -237,6 +237,14 @@ def edit():
         entered_body_weight = _num('body_weight')
         body_weight_kg = entered_weight_to_kg(entered_body_weight, input_unit_pref)
 
+        # Same render-time-unit pattern for height — entered in `in` for
+        # imperial, `cm` for metric, stored canonical cm.
+        height_input_unit_pref = normalize_unit_preference(
+            _str('height_input_unit')
+        ) or submitted_unit_pref
+        entered_height = _num('height')
+        height_cm = entered_height_to_cm(entered_height, height_input_unit_pref)
+
         prefill_values = {
             'body_weight_kg': body_weight_kg,
             'hrmax_bpm': _num('hrmax_bpm', cast=int),
@@ -248,7 +256,7 @@ def edit():
             db, uid,
             date_of_birth=_str('date_of_birth'),
             sex=_str('sex'),
-            height_cm=_num('height_cm'),
+            height_cm=height_cm,
             primary_sport=_str('primary_sport'),
             weekly_hours_target=_num('weekly_hours_target'),
             notes=_str('notes'),
@@ -317,6 +325,8 @@ def edit():
     profile['unit_preference'] = unit_pref
     profile['body_weight_display'] = display_weight(profile.get('body_weight_kg'), unit_pref)
     profile['weight_unit_label'] = weight_unit_label(unit_pref)
+    profile['height_display'] = display_height(profile.get('height_cm'), unit_pref)
+    profile['height_unit_label'] = height_unit_label(unit_pref)
 
     from datetime import datetime as _dt
     return render_template(

@@ -53,11 +53,12 @@
 {% if sub == 'athlete' %}
 <form method="post" action="{{ url_for('profile.edit') }}" class="pf-form">
   <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-  {# #469 — render-time unit of the body weight input. The handler converts
-     `body_weight` from THIS unit (not the newly-submitted preference) so
-     toggling lb→kg without retyping doesn't double-store the displayed
+  {# #469 — render-time unit of the body weight + height inputs. The handler
+     converts those fields from THIS unit (not the newly-submitted preference)
+     so toggling lb→kg without retyping doesn't double-store the displayed
      number. #}
   <input type="hidden" name="body_weight_input_unit" value="{{ unit_pref }}">
+  <input type="hidden" name="height_input_unit" value="{{ unit_pref }}">
 
   <div class="card card-pad stack">
     <p class="eyebrow">● Basics</p>
@@ -72,9 +73,9 @@
             <option value="{{ s }}" {% if profile.sex == s %}selected{% endif %}>{{ s|replace('_', ' ')|title }}</option>
           {% endfor %}
         </select></label>
-      <label class="field"><span class="lbl">Height (cm)</span>
-        <input type="number" step="0.1" name="height_cm" class="form-control form-control-sm"
-               value="{{ profile.height_cm if profile.height_cm is not none else '' }}"></label>
+      <label class="field"><span class="lbl">Height ({{ profile.height_unit_label or 'cm' }})</span>
+        <input type="number" step="0.1" name="height" class="form-control form-control-sm"
+               value="{{ '%.1f' % profile.height_display if profile.height_display is not none else '' }}"></label>
       <label class="field field-wide"><span class="lbl">Primary sport</span>
         <input type="text" name="primary_sport" class="form-control form-control-sm"
                placeholder="e.g. adventure_racing, triathlon, marathon"
