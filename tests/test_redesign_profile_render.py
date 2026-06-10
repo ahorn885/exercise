@@ -261,7 +261,6 @@ def test_profile_post_persists_nutrition(monkeypatch):
         'caffeine_daily_mg_estimate': '180',
         'salt_electrolyte_tolerance': 'high',
         'gi_triggers_known': 'dairy mid-effort',
-        'supplement_protocol_notes': 'creatine 5g',
     })
     assert resp.status_code in (302, 303)
     # Multi-selects join to CSV and filter to the known vocab ('bogus' dropped).
@@ -271,7 +270,9 @@ def test_profile_post_persists_nutrition(monkeypatch):
     assert captured['caffeine_daily_mg_estimate'] == 180
     assert captured['salt_electrolyte_tolerance'] == 'high'
     assert captured['gi_triggers_known'] == 'dairy mid-effort'
-    assert captured['supplement_protocol_notes'] == 'creatine 5g'
+    # Supplements moved to structured records (2E-6) — the profile-save upsert
+    # no longer writes the legacy free-text column (so it isn't wiped to NULL).
+    assert 'supplement_protocol_notes' not in captured
 
 
 def test_profile_active_plan_baseline_renders(monkeypatch):
