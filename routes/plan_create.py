@@ -868,8 +868,17 @@ def view_plan(plan_version_id: int):
         sessions_by_date.setdefault(session.date, []).append(session)
 
     # Layer 5A — the per-day + plan-level nutrition artifact (None until the
-    # post-`ready` stage has run); keyed by date for the per-day cards.
-    nutrition = load_plan_nutrition_by_version(db, plan_version_id)
+    # post-`ready` stage has run); keyed by date for the per-day cards. Advisory:
+    # a nutrition load fault must NEVER 500 the plan view, so degrade to "no
+    # nutrition" rather than propagate.
+    try:
+        nutrition = load_plan_nutrition_by_version(db, plan_version_id)
+    except Exception as _nutr_exc:  # noqa: BLE001 — advisory must not break the view
+        print(
+            f"view_plan: nutrition load failed for "
+            f"plan_version_id={plan_version_id} (non-fatal): {_nutr_exc}"
+        )
+        nutrition = None
     nutrition_by_date = (
         {day.date: day for day in nutrition.days} if nutrition else {}
     )
