@@ -282,6 +282,25 @@ def test_sleep_sub_scores_land_per_date_for_all_four_contributors():
     ]
 
 
+def test_sleep_stress_above_resting_lands_per_date():
+    """`sleep_stress_above_resting` lands as a series from
+    `sleep_stress_above_resting_pct`. Best-guess mapping of `[384]
+    field_18` — surfaces the "% of overnight stress above the resting
+    threshold" signal so the operator can flag nights where stress was
+    elevated even when the average was low (e.g. Sep 8 with 72 min awake
+    + low stress_avg 3.40 still showed field_18 = 51)."""
+    daily_rows = [
+        _r(date='2026-05-28', sleep_stress_above_resting_pct=13),
+        _r(date='2026-06-02', sleep_stress_above_resting_pct=70),
+    ]
+    chart = _build_chart_data([], [], [], [], [], [],
+                              daily_metric_rows=daily_rows)
+    assert chart['sleep_stress_above_resting'] == [
+        {'x': '2026-05-28', 'y': 13.0},
+        {'x': '2026-06-02', 'y': 70.0},
+    ]
+
+
 def test_body_battery_overnight_delta_skips_partial_coverage():
     """If a night's BB time-series is missing the sleep_start or sleep_end
     sample (e.g. watch off mid-night), drop the night rather than fabricate

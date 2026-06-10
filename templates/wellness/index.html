@@ -173,6 +173,17 @@
   </div>
   {% endif %}
 
+  {# Sleep stress fraction — [384] field_18 best-guess: % of overnight
+     stress samples above Garmin's "resting" threshold. Complement to
+     body-battery overnight recovery; flags nights where stress was
+     elevated even if the average looked benign. #}
+  {% if chart_data.sleep_stress_above_resting %}
+  <div class="card card-pad">
+    <span class="eyebrow">Sleep stress fraction · device (% above resting, best-guess)</span>
+    <div class="chart-box wide sec-sm"><canvas id="chart-sleep-stress-fraction"></canvas></div>
+  </div>
+  {% endif %}
+
   {# Heat acclimation — _METRICS.fit #}
   {% if chart_data.heat_acclimation %}
   <div class="card card-pad">
@@ -654,6 +665,13 @@ if (data.sleep_sub_scores) {
   if (data.sleep_sub_scores.stress && data.sleep_sub_scores.stress.length) subSeries.push(ds('Stress', data.sleep_sub_scores.stress, accent));
   if (data.sleep_sub_scores.awake  && data.sleep_sub_scores.awake.length)  subSeries.push(ds('Awake',  data.sleep_sub_scores.awake,  good));
   if (subSeries.length) line('chart-sleep-sub-scores', subSeries, { yAxis: { min: 0, max: 100 } });
+}
+
+// ─── Sleep stress fraction (% of overnight samples above resting) ───
+if (data.sleep_stress_above_resting && data.sleep_stress_above_resting.length) {
+  line('chart-sleep-stress-fraction',
+       [ds('% above resting', data.sleep_stress_above_resting, accent)],
+       { yAxis: { min: 0, max: 100 }, unit: '%' });
 }
 
 // ─── Body composition ──────────────────────────────────────

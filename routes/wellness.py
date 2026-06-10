@@ -239,7 +239,8 @@ def index():
         '  intensity_minutes, spo2_avg, spo2_low, '
         '  sleep_deep_min, sleep_stress_avg, sleep_wake_count, '
         '  sleep_light_sub_score, sleep_rem_sub_score, '
-        '  sleep_stress_sub_score, sleep_awake_sub_score '
+        '  sleep_stress_sub_score, sleep_awake_sub_score, '
+        '  sleep_stress_above_resting_pct '
         'FROM garmin_daily_metrics WHERE user_id=? AND date >= ? ORDER BY date',
         (uid, cutoff)
     ).fetchall()
@@ -501,6 +502,12 @@ def _build_chart_data(self_rows, body_rows, cardio_rows, strength_rows,
         'stress': _maybe_series(daily_by_date, 'sleep_stress_sub_score'),
         'awake':  _maybe_series(daily_by_date, 'sleep_awake_sub_score'),
     }
+    # `[384] field_18` best-guess — % of overnight stress samples above
+    # Garmin's "resting" threshold. Tracks "how much of the night was
+    # stress-elevated" — complement to body-battery overnight recovery.
+    sleep_stress_above_resting = _maybe_series(
+        daily_by_date, 'sleep_stress_above_resting_pct'
+    )
 
     # Stress time-in-zone — sample counts × ~3 min interval. Garmin Connect
     # displays the same buckets on the stress page.
@@ -576,6 +583,7 @@ def _build_chart_data(self_rows, body_rows, cardio_rows, strength_rows,
         'sleep_stress_avg': sleep_stress_avg,
         'sleep_wake_count': sleep_wake_count,
         'sleep_sub_scores': sleep_sub_scores,
+        'sleep_stress_above_resting': sleep_stress_above_resting,
         # #283 follow-up — these still need their own FIT file types or a
         # field map we haven't decoded. `active_minutes` was retired in
         # favour of `intensity_minutes` (Garmin's published metric =

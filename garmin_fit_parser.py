@@ -2073,6 +2073,14 @@ def parse_metrics_fit(fit_bytes: bytes) -> dict:
             # actual 8), so it's some other metric.
             if fields.get(24) is not None:
                 out['sleep_awake_min'] = int(fields[24])
+            # field_18 = sleep_stress_above_resting_pct (best-guess;
+            # see the comment block above `_METRICS_SLEEP_SUMMARY_MSG`).
+            # Surfaced as a "sleep stress fraction" chart so the operator
+            # can spot nights where most of the overnight stress samples
+            # crossed the resting threshold even when the average stress
+            # stayed low. Not Connect-visible directly.
+            if fields.get(18) is not None:
+                out['sleep_stress_above_resting_pct'] = int(fields[18])
             # Date = the wake day (sleep is attributed to the morning).
             if end_ts:
                 out['date'] = datetime.fromtimestamp(

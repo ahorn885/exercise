@@ -875,6 +875,7 @@ _PG_MIGRATIONS = [
         sleep_rem_sub_score INTEGER,
         sleep_stress_sub_score INTEGER,
         sleep_awake_sub_score INTEGER,
+        sleep_stress_above_resting_pct INTEGER,
         sleep_deep_min INTEGER,
         sleep_light_min INTEGER,
         sleep_rem_min INTEGER,
@@ -927,6 +928,10 @@ _PG_MIGRATIONS = [
     "ALTER TABLE garmin_daily_metrics ADD COLUMN IF NOT EXISTS sleep_rem_sub_score INTEGER",
     "ALTER TABLE garmin_daily_metrics ADD COLUMN IF NOT EXISTS sleep_stress_sub_score INTEGER",
     "ALTER TABLE garmin_daily_metrics ADD COLUMN IF NOT EXISTS sleep_awake_sub_score INTEGER",
+    # `[384] field_18` best-guess = % of overnight stress samples above
+    # Garmin's "resting" threshold (>25 on the 0-100 scale). Fits 6
+    # reference nights within rounding. Not Connect-visible directly.
+    "ALTER TABLE garmin_daily_metrics ADD COLUMN IF NOT EXISTS sleep_stress_above_resting_pct INTEGER",
     # D-50 Phase 1 — provider integration tables. Mirrors the SQLite block
     # above with PG-native types (SERIAL, TIMESTAMP DEFAULT NOW(), BIGINT,
     # BOOLEAN). Per Athlete_Data_Integration_Spec v3 §4–§6. Garmin paused
