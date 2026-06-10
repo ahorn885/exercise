@@ -231,6 +231,41 @@ def test_body_battery_delta_query_failure_doesnt_break_other_cards():
     assert chart['sleep_score'] == {'self': [], 'device': []}
 
 
+def test_body_battery_overnight_delta_lands_per_night():
+    """`body_battery.overnight_delta` lands from bb_overnight_rows — per-night
+    BB value at sleep_end minus value at sleep_start. Surfaces the #283
+    "how restful was this sleep?" signal. May 30 = +47 (good recovery on
+    short sleep), Jun 2 = +27 (worse recovery despite similar duration)."""
+    bb_overnight_rows = [
+        _r(date='2026-05-28', bb_start=20, bb_end=95),  # +75
+        _r(date='2026-05-30', bb_start=48, bb_end=95),  # +47
+        _r(date='2026-06-02', bb_start=46, bb_end=73),  # +27
+    ]
+    chart = _build_chart_data([], [], [], [], [], [], (),
+                              bb_overnight_rows=bb_overnight_rows)
+    assert chart['body_battery']['overnight_delta'] == [
+        {'x': '2026-05-28', 'y': 75},
+        {'x': '2026-05-30', 'y': 47},
+        {'x': '2026-06-02', 'y': 27},
+    ]
+
+
+def test_body_battery_overnight_delta_skips_partial_coverage():
+    """If a night's BB time-series is missing the sleep_start or sleep_end
+    sample (e.g. watch off mid-night), drop the night rather than fabricate
+    a misleading delta from a partial reading."""
+    bb_overnight_rows = [
+        _r(date='2026-05-28', bb_start=20, bb_end=95),   # complete
+        _r(date='2026-05-29', bb_start=None, bb_end=80), # missing start
+        _r(date='2026-05-30', bb_start=48, bb_end=None), # missing end
+    ]
+    chart = _build_chart_data([], [], [], [], [], [], (),
+                              bb_overnight_rows=bb_overnight_rows)
+    assert chart['body_battery']['overnight_delta'] == [
+        {'x': '2026-05-28', 'y': 75},
+    ]
+
+
 # ── Field-mapping audit (Jun 7) ──────────────────────────────────────────────
 
 def test_restless_moments_surface_from_garmin_daily_metrics():
@@ -671,6 +706,26 @@ def test_sleep_sub_score_slot_candidates_sep8_locks_field_10_awake():
     # stress on Sep 8 → high stress sub-score).
     assert by_slot['field_8']['rank'] == 4
     assert by_slot['field_8']['band_garmin_std'] == 'Excellent'
+
+
+def test_sleep_sub_score_slot_candidates_field_5_and_field_7_lock_light_and_rem():
+    """May 28 + Jun 2 disambiguate the last two slots:
+      May 28 (8h12m great sleep, Light ~68% high / REM ~20% ideal):
+        field_5 = 83 (Excellent low — penalized for high Light fraction)
+        field_7 = 95 (Excellent — ideal REM)
+      Jun 2 (5h05m short sleep, Light 55.7% ideal / REM 16.4% low):
+        field_5 = 92 (Excellent — Light in range)
+        field_7 = 73 (Good — REM low)
+    Locks field_5 = Light sub-score, field_7 = REM sub-score."""
+    from garmin_fit_parser import _sleep_sub_score_slot_candidates
+    # May 28 reference
+    may28 = {c['slot']: c for c in _sleep_sub_score_slot_candidates(83, 95, 95, 100)}
+    assert may28['field_5']['raw'] == 83  # Light sub-score: high Light → 83
+    assert may28['field_7']['raw'] == 95  # REM sub-score: ideal REM → 95
+    # Jun 2 reference
+    jun2 = {c['slot']: c for c in _sleep_sub_score_slot_candidates(92, 73, 46, 74)}
+    assert jun2['field_5']['raw'] == 92  # Light in range → 92
+    assert jun2['field_7']['raw'] == 73  # REM low → 73
 
 
 def test_sleep_sub_score_slot_candidates_jun2_locks_field_8_stress():

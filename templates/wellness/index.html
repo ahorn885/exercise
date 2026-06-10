@@ -264,6 +264,16 @@
   </div>
   {% endif %}
 
+  {# Body battery overnight recovery — BB jump during the per-night sleep
+     window. #283 follow-up: cleaner "how restful was this sleep?" signal
+     than the raw score, anchored to garmin_daily_metrics.sleep_start/end_ms. #}
+  {% if chart_data.body_battery.overnight_delta %}
+  <div class="card card-pad">
+    <span class="eyebrow">Body battery · overnight recovery (per night)</span>
+    <div class="chart-box wide sec-sm"><canvas id="chart-body-battery-overnight"></canvas></div>
+  </div>
+  {% endif %}
+
   {# Daily activity — cumulative MAX from wellness_log per day #}
   {% if chart_data.daily_activity.steps or chart_data.daily_activity.active_cal or chart_data.daily_activity.distance_mi %}
   <div class="card card-pad">
@@ -529,6 +539,15 @@ if (data.body_battery) {
   if (data.body_battery.charged && data.body_battery.charged.length) deltaSeries.push(ds('Charged', data.body_battery.charged, good));
   if (data.body_battery.drained && data.body_battery.drained.length) deltaSeries.push(ds('Drained', data.body_battery.drained, accent));
   if (deltaSeries.length) line('chart-body-battery-delta', deltaSeries, { yAxis: { beginAtZero: true } });
+
+  // Overnight recovery — single bar per night, BB gain during sleep window.
+  // Negative bars (rare) mean BB dropped during sleep; surfacing both
+  // positive and negative on a single axis makes those nights obvious.
+  if (data.body_battery.overnight_delta && data.body_battery.overnight_delta.length) {
+    line('chart-body-battery-overnight',
+         [bar('Overnight recovery', data.body_battery.overnight_delta, good)],
+         { type: 'bar', yAxis: { beginAtZero: true } });
+  }
 }
 
 // ─── Daily activity (steps / cal / distance) ────────────────

@@ -1172,8 +1172,18 @@ _METRICS_SLEEP_SCORE_SIMPLE_MSG = 330
 # Verified across May 28 + May 30 + Jun 2 references:
 #   field_2              = sleep_score (96 / 65 / 58 ↔ Garmin Connect)
 #                          NOTE: field_16 was 96 on May 28 but 75 on May 30 —
-#                          NOT a duplicate of sleep_score (some other 0-100
-#                          metric, not yet identified).
+#                          NOT a duplicate of sleep_score. Observation across
+#                          6 reference nights (Jun 10 2026): field_16 tracks
+#                          field_8 (Stress sub-score) more closely than the
+#                          overall score —
+#                            May 28: f8=95 / f16=96 (Δ +1)
+#                            May 29: f8=74 / f16=82 (Δ +8; long sleep bonus?)
+#                            Mar 17: f8=94 / f16=84 (Δ -10; short sleep)
+#                            Sep 8:  f8=98 / f16=90 (Δ -8; lots of awake)
+#                            Jun 2:  f8=46 / f16=43 (Δ -3)
+#                          Looks like Stress sub-score adjusted by duration
+#                          /awake. No clean formula locks across all 6
+#                          nights — left documented, not surfaced.
 #   field_9              = sleep_start_time (FIT epoch sec)
 #                          May 28: 01:14 IST ✓, May 30: 02:11 IST ✓
 #   field_11             = sleep_end_time
@@ -1308,26 +1318,30 @@ def _sleep_sub_score_slot_candidates(f5, f7, f8, f10) -> list:
 
     Locks (Jun 10 2026 — disambiguated across 5 reference nights including
     Sep 8 2025's 37-score night with 72 min awake on 306 min sleep):
-      • `field_10` = **Awake sub-score** — 100 Excellent on May 28 (4 min
-        awake), 0 Poor (rank 1) on Sep 8 (72 min awake = 23.5%). Inverse-
-        tracks awake-time fraction across nights.
+      • `field_5` = **Light sub-score** — penalized when Light fraction is
+        high (May 28's 8h12m great sleep had Light ~68% → field_5 = 83
+        Excellent-low; Jun 2's 5h05m short sleep with Light 55.7% in
+        ideal range → field_5 = 92 Excellent).
+      • `field_7` = **REM sub-score** — penalized when REM fraction is
+        low (May 28's REM ~20% ideal → field_7 = 95 Excellent; Jun 2's
+        REM 16.4% slightly low → field_7 = 73 Good).
       • `field_8` = **Stress sub-score** — most reactive, 46 Fair on Jun 2
         (Connect Stress avg 27 = Fair band), 98 Excellent on Sep 8 even
         though sleep was atrocious (stress avg 3.40 = low → stress
         sub-score stays high; bad sleep was awake-driven). Triple-
         confirmed across May 28 / Jun 2 / Sep 8.
+      • `field_10` = **Awake sub-score** — 100 Excellent on May 28 (4 min
+        awake), 0 Poor (rank 1) on Sep 8 (72 min awake = 23.5%). Inverse-
+        tracks awake-time fraction across nights.
 
-    Still ambiguous: `field_5` vs `field_7` carry Light + REM in some
-    order — across all 5 reference nights both stay in the same band
-    (mostly Good-Excellent). Locks once a night surfaces a materially-
-    different Light-vs-REM contributor rating (e.g. Excellent Light +
-    Poor REM, or vice versa).
+    All four contributor positions now locked: Light=5, REM=7, Stress=8,
+    Awake=10.
 
     Earlier wrong-lock retraction: Jun 2 alone suggested `field_5 =
     Awake` because field_5 = 92 with Awake = 10 min looked plausible —
     but Sep 8 surfaced `field_5 = 61` despite 72 min awake, while
-    `field_10 = 0` matched perfectly. field_5 is one of {Light, REM},
-    not Awake.
+    `field_10 = 0` matched perfectly. The Light vs REM disambiguation
+    came from May 28 + Jun 2 stage-ratio analysis.
 
     Returns one dict per slot with the raw value, a 1-to-4 rank (1 = the
     lowest of the four that night, 4 = highest), and the qualitative band
