@@ -1188,6 +1188,31 @@ _METRICS_SLEEP_SCORE_SIMPLE_MSG = 330
 #   tracks INVERSELY with sleep quality (96/65/58) — likely sleep onset
 #   latency or pre-sleep disturbance, not respiration. Not surfaced.
 #
+# field_18 = sleep_stress_above_resting_pct (best-guess from Jun 10 2026
+# research — Garmin doesn't publish this metric; no community FIT
+# reverse-engineering project documents msg 384). Across 6 reference
+# nights field_18 cleanly fits "percentage of overnight stress samples
+# at >25 on Garmin's 0-100 stress scale" (i.e. fraction of the night
+# the body was NOT in fully resting state):
+#   May 28 score=96 stress_avg=6.83 → field_18=13 (mostly resting)
+#   May 29 score=82 stress_avg=9.53 → field_18=38 (moderate)
+#   May 30 score=65 stress_avg=15.06 → field_18=49 (~half above resting)
+#   Mar 17 score=54 stress_avg=4.81 → field_18=32 (short fragmented sleep)
+#   Sep 8 score=37 stress_avg=3.40 → field_18=51 (driven by 72 min awake
+#                                                — high stress while awake)
+#   Jun 2 score=58 stress_avg=25.78 → field_18=70 (most samples elevated)
+# Why this matches better than "100 - body_battery_overnight_delta":
+# 3 of 5 BB-delta nights matched within 4 (May 29/30/Jun 2), but May 28
+# (BB +75 / field_18=13) and Mar 17 (BB +40 / field_18=32) broke it.
+# The "% above resting" framing accommodates Sep 8 (low avg stress but
+# fragmented sleep with high-stress awake periods) which any pure
+# stress-avg or BB-only formula can't explain. Garmin's published stress
+# bands (0-25 resting, 26-50 low, 51-75 medium, 76-100 high) are sampled
+# every ~3 min from HRV — the count of non-resting samples ÷ total
+# samples × 100 is the candidate. Not surfaced as a chart yet — flagged
+# best-guess until either a Connect-API field confirms or the formula
+# gets disproven on a new reference night.
+#
 # Confirmed in PR #489 (Andy's Jun 9 Connect data):
 #   field_7              = hrv_overnight_avg_ms × 65536
 #                          May 28: 3543590 / 65536 = 54.07 ms (Connect: 54) ✓
