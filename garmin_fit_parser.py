@@ -696,6 +696,45 @@ def _dump_fit(fit_bytes: bytes) -> dict:
         sleep_stage_events, sleep_end_ts=sleep_end_ts,
     )
 
+    # Surface candidate sub-score slot values for `[346] field_5/7/8/10`.
+    # The slot ↔ Stress/Light/REM/Awake mapping isn't locked; the
+    # diagnostic carries raw values, intra-night ranks, and qualitative
+    # bands so the operator can correlate against Connect's per-
+    # contributor ratings across multiple nights. See
+    # `_sleep_sub_score_slot_candidates` for the disambiguation strategy.
+    sleep_sub_score_slot_candidates = []
+    for sample in generic_samples.get(str(_SLEEP_DATA_SCORE_MSG), []):
+        raw = {
+            slot: sample.get(slot, '')
+            for slot in _SLEEP_SUB_SCORE_SLOTS
+        }
+        candidates = _sleep_sub_score_slot_candidates(
+            raw['field_5'], raw['field_7'],
+            raw['field_8'], raw['field_10'],
+        )
+        if candidates:
+            sleep_sub_score_slot_candidates.append({
+                'raw': raw,
+                'candidates': candidates,
+            })
+
+    # Surface counter-derivation candidates for `[346] field_12 / field_13`
+    # — the mystery sleep counters (issue #283). Computes plausible
+    # derivations from the `[275]` event list (stage-period counts,
+    # transition count) and flags any that match the raw `[346]` values
+    # in the same file. Operator hypothesis-tests across nights.
+    sleep_counter_candidates = []
+    for sample in generic_samples.get(str(_SLEEP_DATA_SCORE_MSG), []):
+        raw_counters = {
+            'field_12': sample.get('field_12', ''),
+            'field_13': sample.get('field_13', ''),
+        }
+        cand = _sleep_counter_derivation_candidates(
+            sleep_stage_events, raw_counters,
+        )
+        if cand:
+            sleep_counter_candidates.append(cand)
+
     return {
         'message_counts': dict(sorted(msg_counts.items())),
         'session_fields': session_fields,
@@ -707,6 +746,8 @@ def _dump_fit(fit_bytes: bytes) -> dict:
         'sleep_stage_decode_candidates': sleep_stage_candidates,
         'sleep_stage_events': sleep_stage_events,
         'sleep_stage_minutes_by_code': sleep_stage_minutes,
+        'sleep_sub_score_slot_candidates': sleep_sub_score_slot_candidates,
+        'sleep_counter_derivation_candidates': sleep_counter_candidates,
     }
 
 
@@ -1131,8 +1172,18 @@ _METRICS_SLEEP_SCORE_SIMPLE_MSG = 330
 # Verified across May 28 + May 30 + Jun 2 references:
 #   field_2              = sleep_score (96 / 65 / 58 ↔ Garmin Connect)
 #                          NOTE: field_16 was 96 on May 28 but 75 on May 30 —
-#                          NOT a duplicate of sleep_score (some other 0-100
-#                          metric, not yet identified).
+#                          NOT a duplicate of sleep_score. Observation across
+#                          6 reference nights (Jun 10 2026): field_16 tracks
+#                          field_8 (Stress sub-score) more closely than the
+#                          overall score —
+#                            May 28: f8=95 / f16=96 (Δ +1)
+#                            May 29: f8=74 / f16=82 (Δ +8; long sleep bonus?)
+#                            Mar 17: f8=94 / f16=84 (Δ -10; short sleep)
+#                            Sep 8:  f8=98 / f16=90 (Δ -8; lots of awake)
+#                            Jun 2:  f8=46 / f16=43 (Δ -3)
+#                          Looks like Stress sub-score adjusted by duration
+#                          /awake. No clean formula locks across all 6
+#                          nights — left documented, not surfaced.
 #   field_9              = sleep_start_time (FIT epoch sec)
 #                          May 28: 01:14 IST ✓, May 30: 02:11 IST ✓
 #   field_11             = sleep_end_time
@@ -1146,6 +1197,31 @@ _METRICS_SLEEP_SCORE_SIMPLE_MSG = 330
 #   rate was 12, but field_18 = 70. May 30 was 49. The 13/49/70 spread
 #   tracks INVERSELY with sleep quality (96/65/58) — likely sleep onset
 #   latency or pre-sleep disturbance, not respiration. Not surfaced.
+#
+# field_18 = sleep_stress_above_resting_pct (best-guess from Jun 10 2026
+# research — Garmin doesn't publish this metric; no community FIT
+# reverse-engineering project documents msg 384). Across 6 reference
+# nights field_18 cleanly fits "percentage of overnight stress samples
+# at >25 on Garmin's 0-100 stress scale" (i.e. fraction of the night
+# the body was NOT in fully resting state):
+#   May 28 score=96 stress_avg=6.83 → field_18=13 (mostly resting)
+#   May 29 score=82 stress_avg=9.53 → field_18=38 (moderate)
+#   May 30 score=65 stress_avg=15.06 → field_18=49 (~half above resting)
+#   Mar 17 score=54 stress_avg=4.81 → field_18=32 (short fragmented sleep)
+#   Sep 8 score=37 stress_avg=3.40 → field_18=51 (driven by 72 min awake
+#                                                — high stress while awake)
+#   Jun 2 score=58 stress_avg=25.78 → field_18=70 (most samples elevated)
+# Why this matches better than "100 - body_battery_overnight_delta":
+# 3 of 5 BB-delta nights matched within 4 (May 29/30/Jun 2), but May 28
+# (BB +75 / field_18=13) and Mar 17 (BB +40 / field_18=32) broke it.
+# The "% above resting" framing accommodates Sep 8 (low avg stress but
+# fragmented sleep with high-stress awake periods) which any pure
+# stress-avg or BB-only formula can't explain. Garmin's published stress
+# bands (0-25 resting, 26-50 low, 51-75 medium, 76-100 high) are sampled
+# every ~3 min from HRV — the count of non-resting samples ÷ total
+# samples × 100 is the candidate. Not surfaced as a chart yet — flagged
+# best-guess until either a Connect-API field confirms or the formula
+# gets disproven on a new reference night.
 #
 # Confirmed in PR #489 (Andy's Jun 9 Connect data):
 #   field_7              = hrv_overnight_avg_ms × 65536
@@ -1226,6 +1302,347 @@ def _sleep_stage_decode_candidates(f5, f6, f7) -> list:
             'sum_min': round(sum(vals), 2),
         })
     return out
+
+
+# `[346]` sub-score slot positions whose Stress / Light / REM / Awake
+# alignment isn't locked yet. field_4 (Duration) and field_9 (Deep min)
+# are already pinned to their own keys; field_14/_15 carry the stress
+# sample count + sum — so the four remaining contributor sub-scores
+# live in these positions in some unknown order.
+_SLEEP_SUB_SCORE_SLOTS = ('field_5', 'field_7', 'field_8', 'field_10')
+
+
+def _sleep_sub_score_slot_candidates(f5, f7, f8, f10) -> list:
+    """Per-night diagnostic for `[346] field_5 / 7 / 8 / 10` — the four
+    sub-score positions for Stress / Light / REM / Awake contributors.
+
+    Locks (Jun 10 2026 — disambiguated across 5 reference nights including
+    Sep 8 2025's 37-score night with 72 min awake on 306 min sleep):
+      • `field_5` = **Light sub-score** — penalized when Light fraction is
+        high (May 28's 8h12m great sleep had Light ~68% → field_5 = 83
+        Excellent-low; Jun 2's 5h05m short sleep with Light 55.7% in
+        ideal range → field_5 = 92 Excellent).
+      • `field_7` = **REM sub-score** — penalized when REM fraction is
+        low (May 28's REM ~20% ideal → field_7 = 95 Excellent; Jun 2's
+        REM 16.4% slightly low → field_7 = 73 Good).
+      • `field_8` = **Stress sub-score** — most reactive, 46 Fair on Jun 2
+        (Connect Stress avg 27 = Fair band), 98 Excellent on Sep 8 even
+        though sleep was atrocious (stress avg 3.40 = low → stress
+        sub-score stays high; bad sleep was awake-driven). Triple-
+        confirmed across May 28 / Jun 2 / Sep 8.
+      • `field_10` = **Awake sub-score** — 100 Excellent on May 28 (4 min
+        awake), 0 Poor (rank 1) on Sep 8 (72 min awake = 23.5%). Inverse-
+        tracks awake-time fraction across nights.
+
+    All four contributor positions now locked: Light=5, REM=7, Stress=8,
+    Awake=10.
+
+    Earlier wrong-lock retraction: Jun 2 alone suggested `field_5 =
+    Awake` because field_5 = 92 with Awake = 10 min looked plausible —
+    but Sep 8 surfaced `field_5 = 61` despite 72 min awake, while
+    `field_10 = 0` matched perfectly. The Light vs REM disambiguation
+    came from May 28 + Jun 2 stage-ratio analysis.
+
+    Returns one dict per slot with the raw value, a 1-to-4 rank (1 = the
+    lowest of the four that night, 4 = highest), and the qualitative band
+    under Garmin's standard 0-100 quartile bands (Poor/Fair/Good/Excellent
+    at 25/50/75 cutoffs).
+
+    The standard quartiles applied fine once Andy's Jun 2 brought a real
+    "Fair" reading (field_8 = 46). On nights where all sub-scores land in
+    Excellent, rank-relative comparison stays the useful signal.
+
+    Skips slots whose raw value is None or non-integer. Ranks tie-break
+    by slot order (earliest wins) so output stays stable across runs.
+    """
+    raws = []
+    for slot, raw in (
+        ('field_5', f5), ('field_7', f7),
+        ('field_8', f8), ('field_10', f10),
+    ):
+        if raw is None:
+            continue
+        try:
+            raws.append((slot, int(raw)))
+        except (TypeError, ValueError):
+            continue
+    if not raws:
+        return []
+
+    ordered = sorted(enumerate(raws), key=lambda ix: (ix[1][1], ix[0]))
+    rank_by_slot = {slot: i + 1 for i, (_, (slot, _)) in enumerate(ordered)}
+
+    def _band(v: int) -> str:
+        if v <= 25:
+            return 'Poor'
+        if v <= 50:
+            return 'Fair'
+        if v <= 75:
+            return 'Good'
+        return 'Excellent'
+
+    return [
+        {
+            'slot': slot,
+            'raw': raw,
+            'rank': rank_by_slot[slot],
+            'band_garmin_std': _band(raw),
+        }
+        for slot, raw in raws
+    ]
+
+
+def find_value_match_fields(
+    dump,
+    targets: list,
+    *,
+    scales: tuple = (1.0, 0.1, 10.0, 0.01, 100.0),
+    message_ids: tuple | None = None,
+    tolerance: float = 0.5,
+) -> list:
+    """Single-file scan that finds GenericMessage fields whose value
+    matches *any* of the supplied target values (under one of the
+    candidate scales).
+
+    Designed for "Connect shows these reference values for last night —
+    which raw fields encode them?" use cases. Issue #283 motivating case:
+    Connect-smoothed Light / REM / Awake / Deep minutes (May 30: 180 /
+    47 / 8 / 70); pass those as targets and the scanner returns every
+    field that matches, ordered by message_id / field_id.
+
+    Inputs:
+      dump        — a `_dump_fit()` result OR just its `generic_samples`
+                    sub-dict — both shapes work.
+      targets     — list of values to match (e.g. [180, 47, 8, 70]).
+      scales      — multipliers to try (default covers Garmin's common
+                    ×10 / ÷10 fixed-point encodings).
+      message_ids — restrict the scan to these gids. None scans every
+                    gid present in the dump.
+      tolerance   — allowed |scaled − target| (covers FIT round-trip
+                    drift).
+
+    Returns one entry per (gid, field_id, target, scale) match:
+      {message_id, field_id, target, scale, raw_value, scaled_value}.
+
+    Unlike `find_constant_value_fields` (cross-file, single target),
+    this scans a single file and matches against multiple targets —
+    useful when you have a per-night ground truth but don't have
+    multiple nights to cross-correlate."""
+    if not targets:
+        return []
+    samples = dump.get('generic_samples') if isinstance(dump, dict) else None
+    if samples is None:
+        samples = dump if isinstance(dump, dict) else {}
+    matches = []
+    for gid_str, instances in sorted(samples.items()):
+        try:
+            if message_ids is not None and int(gid_str) not in message_ids:
+                continue
+        except (TypeError, ValueError):
+            continue
+        seen_fields: set = set()
+        for sample in instances:
+            if not isinstance(sample, dict):
+                continue
+            for field_key, raw in sample.items():
+                if not field_key.startswith('field_'):
+                    continue
+                key = (gid_str, field_key)
+                if key in seen_fields:
+                    continue
+                try:
+                    val = float(raw)
+                except (TypeError, ValueError):
+                    continue
+                seen_fields.add(key)
+                for target in targets:
+                    for scale in scales:
+                        scaled = val * scale
+                        if abs(scaled - target) <= tolerance:
+                            matches.append({
+                                'message_id': gid_str,
+                                'field_id': field_key,
+                                'target': target,
+                                'scale': scale,
+                                'raw_value': val,
+                                'scaled_value': round(scaled, 3),
+                            })
+                            break  # one scale per (field, target)
+    return matches
+
+
+def _sleep_counter_derivation_candidates(
+    stage_events: list,
+    raw_counters: dict,
+) -> dict:
+    """Per-night diagnostic that surfaces derivations from `[275]` stage
+    transitions for comparison against the `[346] field_12 / field_13`
+    mystery counter values (issue #283).
+
+    Pinned facts on Andy's Fenix 8:
+      • May 28: field_12=2, field_13=7
+      • May 30: field_12=14, field_13=0
+
+    The values are obviously sleep-derived counters but the exact
+    derivation isn't locked. This helper computes the plausible
+    candidates from the `[275]` event list — stage-period counts,
+    transition counts, REM-onset counts — and surfaces them next to
+    the raw `[346]` values. Operator compares: any derivation that hits
+    both raw counters on ≥2 nights is the lock candidate.
+
+    Stage codes (from `_SLEEP_DATA_STAGE_MSG` docs): 1=Unmeasurable,
+    2=Light, 3=Deep, 4=REM. `[275]` instances mark the entry into a
+    stage; a contiguous run of identical codes (rare — each transition
+    emits a new event) is one stage period.
+
+    Inputs:
+      stage_events — `[(ts, code), ...]` from `_walk_sleep_stage_events`.
+      raw_counters — `{field_12: str_value, field_13: str_value}` from
+                     the `[346]` GenericMessage. Pass empty dict if the
+                     file has no `[346]`.
+
+    Returns:
+      {
+        'raw': {'field_12': int|None, 'field_13': int|None},
+        'derived': {
+          'total_events':         len(stage_events),
+          'transition_count':     len(stage_events) - 1,
+          'light_period_count':   contiguous runs of code 2,
+          'deep_period_count':    contiguous runs of code 3,
+          'rem_period_count':     contiguous runs of code 4,
+          'awake_period_count':   contiguous runs of code 1,
+        },
+        'matches_field_12': [list of derivation keys equal to field_12],
+        'matches_field_13': [list of derivation keys equal to field_13],
+      }
+    Returns {} when there are no `[275]` events at all (nothing to
+    derive from)."""
+    if not stage_events:
+        return {}
+
+    # Count contiguous runs of each code — back-to-back events with the
+    # same code count once. (Adjacent same-code events are rare but
+    # possible if the watch re-emits the same stage.)
+    period_counts = {1: 0, 2: 0, 3: 0, 4: 0}
+    prev_code = None
+    for _ts, code in stage_events:
+        if code != prev_code:
+            if code in period_counts:
+                period_counts[code] += 1
+            prev_code = code
+
+    derived = {
+        'total_events': len(stage_events),
+        'transition_count': max(len(stage_events) - 1, 0),
+        'awake_period_count': period_counts[1],
+        'light_period_count': period_counts[2],
+        'deep_period_count': period_counts[3],
+        'rem_period_count': period_counts[4],
+    }
+
+    def _as_int(v):
+        try:
+            return int(float(v))
+        except (TypeError, ValueError):
+            return None
+
+    raw = {
+        'field_12': _as_int(raw_counters.get('field_12')),
+        'field_13': _as_int(raw_counters.get('field_13')),
+    }
+
+    matches_12 = [k for k, v in derived.items() if raw['field_12'] is not None and v == raw['field_12']]
+    matches_13 = [k for k, v in derived.items() if raw['field_13'] is not None and v == raw['field_13']]
+
+    return {
+        'raw': raw,
+        'derived': derived,
+        'matches_field_12': matches_12,
+        'matches_field_13': matches_13,
+    }
+
+
+def find_constant_value_fields(
+    nights: list,
+    target: float,
+    *,
+    scales: tuple = (1.0, 0.1, 10.0, 0.01, 100.0),
+    message_ids: tuple | None = None,
+    tolerance: float = 0.5,
+) -> list:
+    """Cross-file scan that finds GenericMessage fields whose value equals
+    `target` (under one of the candidate `scales`) on every night.
+
+    Designed for "this metric is constant on Andy's device — which raw
+    field encodes it?" use cases. The motivating case (issue #283) is
+    VO2max running ≈ 48: scan unmapped `_METRICS.fit` fields across 2+
+    nights for a field that lands on 48 under some scale on every night.
+
+    Inputs:
+      nights      — list of `_dump_fit()['generic_samples']`-shaped dicts.
+                    Each element: `{gid_str: [field_dict_per_instance,…]}`.
+      target      — the expected constant (e.g. 48 for VO2max running).
+      scales      — multipliers to try (default covers raw, /10, ×10, /100,
+                    ×100 — covers common FIT fixed-point encodings).
+      message_ids — restrict the scan to these gids. Pass e.g.
+                    `(281, 330, 378, 384)` for `_METRICS.fit` messages
+                    only. None scans every gid present.
+      tolerance   — allowed |scaled − target| (covers small FIT round-trip
+                    drift; 0.5 allows ±0.5 ml/kg/min for VO2max).
+
+    Returns one entry per matching (gid, field, scale): {message_id,
+    field_id, scale, raw_values_per_night, scaled_values_per_night}. Each
+    entry carries the per-night raw values so the operator can sanity-
+    check before locking. Fields missing from any night are dropped — a
+    constant has to be continuously present to be a constant.
+
+    Requires at least 2 nights (one night admits trivially many fits)."""
+    if len(nights) < 2:
+        return []
+
+    # Take the first instance's value per (gid, field) per night — fields
+    # with multiple instances at different values aren't day-constants by
+    # construction. First-instance keeps the rule simple and deterministic.
+    from collections import defaultdict
+    per_field_values: dict = defaultdict(list)
+    for night in nights:
+        seen: set = set()
+        for gid_str, samples in night.items():
+            try:
+                if message_ids is not None and int(gid_str) not in message_ids:
+                    continue
+            except (TypeError, ValueError):
+                continue
+            for sample in samples:
+                for field_key, raw in sample.items():
+                    if not field_key.startswith('field_'):
+                        continue
+                    key = (gid_str, field_key)
+                    if key in seen:
+                        continue
+                    try:
+                        val = float(raw)
+                    except (TypeError, ValueError):
+                        continue
+                    per_field_values[key].append(val)
+                    seen.add(key)
+
+    matches = []
+    for (gid, field), values in sorted(per_field_values.items()):
+        if len(values) != len(nights):
+            continue
+        for scale in scales:
+            scaled = [v * scale for v in values]
+            if all(abs(s - target) <= tolerance for s in scaled):
+                matches.append({
+                    'message_id': gid,
+                    'field_id': field,
+                    'scale': scale,
+                    'raw_values': values,
+                    'scaled_values': [round(s, 3) for s in scaled],
+                })
+                break  # one scale wins per field
+    return matches
 
 
 def sleep_stress_avg(stress_sum: int, sleep_min: int) -> float | None:
@@ -1400,9 +1817,12 @@ _METRICS_WELLNESS_SUMMARY_MSG = 281
 # The remaining positions in field_5/7/8/10 likely carry sub-scores
 # for the other contributors but the slot-to-name mapping isn't locked
 # — most values land in the Excellent band even on nights when Connect
-# rates Light or REM lower, so the qualitative thresholds don't align.
-# Surfaced as an ordered list pending a night where Connect ratings
-# diverge enough to disambiguate.
+# rates Light or REM lower, so the absolute quartile thresholds don't
+# align. The inspector dumps an `_sleep_sub_score_slot_candidates`
+# block per [346] sample carrying raw values + intra-night rank +
+# qualitative band so the operator can correlate the rank-1 slot
+# against Connect's worst-rated contributor across nights; once a
+# stable correlation appears the slot ↔ name mapping locks.
 _SLEEP_DATA_SCORE_MSG = 346
 
 # `_SLEEP_DATA.fit` `GenericMessage[382]` — sleep event counts.
@@ -1653,6 +2073,14 @@ def parse_metrics_fit(fit_bytes: bytes) -> dict:
             # actual 8), so it's some other metric.
             if fields.get(24) is not None:
                 out['sleep_awake_min'] = int(fields[24])
+            # field_18 = sleep_stress_above_resting_pct (best-guess;
+            # see the comment block above `_METRICS_SLEEP_SUMMARY_MSG`).
+            # Surfaced as a "sleep stress fraction" chart so the operator
+            # can spot nights where most of the overnight stress samples
+            # crossed the resting threshold even when the average stress
+            # stayed low. Not Connect-visible directly.
+            if fields.get(18) is not None:
+                out['sleep_stress_above_resting_pct'] = int(fields[18])
             # Date = the wake day (sleep is attributed to the morning).
             if end_ts:
                 out['date'] = datetime.fromtimestamp(
@@ -1707,10 +2135,10 @@ def parse_metrics_fit(fit_bytes: bytes) -> dict:
 def parse_sleep_data_fit(fit_bytes: bytes) -> dict:
     """Parse a Garmin `_SLEEP_DATA.fit` file (FileIdMessage.type = 49).
 
-    Returns `{date, sleep_score, sleep_contributors}` where `sleep_contributors`
-    is a 6-element list of 0–100 sub-scores in Garmin's storage order. The
-    order maps to Duration / Stress / Deep / Light / REM / Awake but the
-    1-to-1 alignment isn't locked yet — see `_SLEEP_DATA_SCORE_MSG`.
+    Returns the daily-derived sleep keys for UPSERT into
+    `garmin_daily_metrics`: sleep_score, the 4 contributor sub-scores
+    (Light/REM/Stress/Awake — all locked Jun 10 2026), Deep minutes,
+    Stress sum/sample-count, restless moments.
     """
     from fit_tool.fit_file import FitFile
     tmp_path = os.path.join(tempfile.gettempdir(), f'fit_{uuid.uuid4().hex}.fit')
@@ -1756,12 +2184,23 @@ def parse_sleep_data_fit(fit_bytes: bytes) -> dict:
                 out['sleep_stress_sample_count_capped'] = int(fields[14])
             if fields.get(15) is not None:
                 out['sleep_stress_sum'] = int(fields[15])
-            # Remaining contributor positions (5/7/8/10) carry sub-scores
-            # for Light / REM / Awake / restless contributors but the
-            # slot ↔ name alignment isn't locked yet — surfaced as an
-            # ordered list pending a night where Connect ratings diverge
-            # enough to disambiguate. field_9 and field_14 dropped from
-            # this list since they're now their own fields.
+            # All four contributor positions LOCKED Jun 10 2026 across
+            # 6 reference nights including Sep 8 2025 (37 score with 72 min
+            # awake = the disambiguation night). See
+            # `_sleep_sub_score_slot_candidates` docstring for the mapping
+            # evidence per slot.
+            for fid, name in (
+                (5,  'sleep_light_sub_score'),
+                (7,  'sleep_rem_sub_score'),
+                (8,  'sleep_stress_sub_score'),
+                (10, 'sleep_awake_sub_score'),
+            ):
+                v = fields.get(fid)
+                if v is not None:
+                    out[name] = int(v)
+            # Legacy `sleep_contributors` ordered-list — kept for backwards
+            # compat with `sleep_contributors_json` rows already in prod
+            # (#283 Phase A). New consumers should read the named columns.
             contributors = []
             for fid in (5, 7, 8, 10):
                 v = fields.get(fid)

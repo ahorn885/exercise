@@ -163,6 +163,27 @@
   </div>
   {% endif %}
 
+  {# Sleep contributor sub-scores — Light / REM / Stress / Awake, all 4
+     locked Jun 10 against [346] field_5/7/8/10. Multi-line chart shows
+     which contributor drags a night's score down. #}
+  {% if chart_data.sleep_sub_scores.light or chart_data.sleep_sub_scores.rem or chart_data.sleep_sub_scores.stress or chart_data.sleep_sub_scores.awake %}
+  <div class="card card-pad">
+    <span class="eyebrow">Sleep contributor sub-scores · device (0–100)</span>
+    <div class="chart-box wide sec-sm"><canvas id="chart-sleep-sub-scores"></canvas></div>
+  </div>
+  {% endif %}
+
+  {# Sleep stress fraction — [384] field_18 best-guess: % of overnight
+     stress samples above Garmin's "resting" threshold. Complement to
+     body-battery overnight recovery; flags nights where stress was
+     elevated even if the average looked benign. #}
+  {% if chart_data.sleep_stress_above_resting %}
+  <div class="card card-pad">
+    <span class="eyebrow">Sleep stress fraction · device (% above resting, best-guess)</span>
+    <div class="chart-box wide sec-sm"><canvas id="chart-sleep-stress-fraction"></canvas></div>
+  </div>
+  {% endif %}
+
   {# Heat acclimation — _METRICS.fit #}
   {% if chart_data.heat_acclimation %}
   <div class="card card-pad">
@@ -261,6 +282,16 @@
   <div class="card card-pad">
     <span class="eyebrow">Body battery · charged / drained per day</span>
     <div class="chart-box wide sec-sm"><canvas id="chart-body-battery-delta"></canvas></div>
+  </div>
+  {% endif %}
+
+  {# Body battery overnight recovery — BB jump during the per-night sleep
+     window. #283 follow-up: cleaner "how restful was this sleep?" signal
+     than the raw score, anchored to garmin_daily_metrics.sleep_start/end_ms. #}
+  {% if chart_data.body_battery.overnight_delta %}
+  <div class="card card-pad">
+    <span class="eyebrow">Body battery · overnight recovery (per night)</span>
+    <div class="chart-box wide sec-sm"><canvas id="chart-body-battery-overnight"></canvas></div>
   </div>
   {% endif %}
 
@@ -529,6 +560,15 @@ if (data.body_battery) {
   if (data.body_battery.charged && data.body_battery.charged.length) deltaSeries.push(ds('Charged', data.body_battery.charged, good));
   if (data.body_battery.drained && data.body_battery.drained.length) deltaSeries.push(ds('Drained', data.body_battery.drained, accent));
   if (deltaSeries.length) line('chart-body-battery-delta', deltaSeries, { yAxis: { beginAtZero: true } });
+
+  // Overnight recovery — single bar per night, BB gain during sleep window.
+  // Negative bars (rare) mean BB dropped during sleep; surfacing both
+  // positive and negative on a single axis makes those nights obvious.
+  if (data.body_battery.overnight_delta && data.body_battery.overnight_delta.length) {
+    line('chart-body-battery-overnight',
+         [bar('Overnight recovery', data.body_battery.overnight_delta, good)],
+         { type: 'bar', yAxis: { beginAtZero: true } });
+  }
 }
 
 // ─── Daily activity (steps / cal / distance) ────────────────
@@ -615,6 +655,23 @@ if (data.sleep_stress_avg && data.sleep_stress_avg.length) {
 if (data.sleep_wake_count && data.sleep_wake_count.length) {
   line('chart-sleep-wake-count', [bar('Wake events', data.sleep_wake_count, fg)],
        { type: 'bar', yAxis: { beginAtZero: true, ticks: { stepSize: 1 } } });
+}
+
+// ─── Sleep contributor sub-scores (Light / REM / Stress / Awake) ────
+if (data.sleep_sub_scores) {
+  const subSeries = [];
+  if (data.sleep_sub_scores.light  && data.sleep_sub_scores.light.length)  subSeries.push(ds('Light',  data.sleep_sub_scores.light,  fg));
+  if (data.sleep_sub_scores.rem    && data.sleep_sub_scores.rem.length)    subSeries.push(ds('REM',    data.sleep_sub_scores.rem,    info));
+  if (data.sleep_sub_scores.stress && data.sleep_sub_scores.stress.length) subSeries.push(ds('Stress', data.sleep_sub_scores.stress, accent));
+  if (data.sleep_sub_scores.awake  && data.sleep_sub_scores.awake.length)  subSeries.push(ds('Awake',  data.sleep_sub_scores.awake,  good));
+  if (subSeries.length) line('chart-sleep-sub-scores', subSeries, { yAxis: { min: 0, max: 100 } });
+}
+
+// ─── Sleep stress fraction (% of overnight samples above resting) ───
+if (data.sleep_stress_above_resting && data.sleep_stress_above_resting.length) {
+  line('chart-sleep-stress-fraction',
+       [ds('% above resting', data.sleep_stress_above_resting, accent)],
+       { yAxis: { min: 0, max: 100 }, unit: '%' });
 }
 
 // ─── Body composition ──────────────────────────────────────

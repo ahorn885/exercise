@@ -231,6 +231,92 @@ def test_body_battery_delta_query_failure_doesnt_break_other_cards():
     assert chart['sleep_score'] == {'self': [], 'device': []}
 
 
+def test_body_battery_overnight_delta_lands_per_night():
+    """`body_battery.overnight_delta` lands from bb_overnight_rows — per-night
+    BB value at sleep_end minus value at sleep_start. Surfaces the #283
+    "how restful was this sleep?" signal. May 30 = +47 (good recovery on
+    short sleep), Jun 2 = +27 (worse recovery despite similar duration)."""
+    bb_overnight_rows = [
+        _r(date='2026-05-28', bb_start=20, bb_end=95),  # +75
+        _r(date='2026-05-30', bb_start=48, bb_end=95),  # +47
+        _r(date='2026-06-02', bb_start=46, bb_end=73),  # +27
+    ]
+    chart = _build_chart_data([], [], [], [], [], [], (),
+                              bb_overnight_rows=bb_overnight_rows)
+    assert chart['body_battery']['overnight_delta'] == [
+        {'x': '2026-05-28', 'y': 75},
+        {'x': '2026-05-30', 'y': 47},
+        {'x': '2026-06-02', 'y': 27},
+    ]
+
+
+def test_sleep_sub_scores_land_per_date_for_all_four_contributors():
+    """All 4 contributor sub-scores land per night with their locked names
+    (Light=field_5, REM=field_7, Stress=field_8, Awake=field_10). Powers
+    the multi-line `chart-sleep-sub-scores` card on /wellness."""
+    daily_rows = [
+        _r(date='2026-05-28',
+           sleep_light_sub_score=83, sleep_rem_sub_score=95,
+           sleep_stress_sub_score=95, sleep_awake_sub_score=100),
+        _r(date='2026-06-02',
+           sleep_light_sub_score=92, sleep_rem_sub_score=73,
+           sleep_stress_sub_score=46, sleep_awake_sub_score=74),
+    ]
+    chart = _build_chart_data([], [], [], [], [], [],
+                              daily_metric_rows=daily_rows)
+    assert chart['sleep_sub_scores']['light'] == [
+        {'x': '2026-05-28', 'y': 83.0},
+        {'x': '2026-06-02', 'y': 92.0},
+    ]
+    assert chart['sleep_sub_scores']['rem'] == [
+        {'x': '2026-05-28', 'y': 95.0},
+        {'x': '2026-06-02', 'y': 73.0},
+    ]
+    assert chart['sleep_sub_scores']['stress'] == [
+        {'x': '2026-05-28', 'y': 95.0},
+        {'x': '2026-06-02', 'y': 46.0},
+    ]
+    assert chart['sleep_sub_scores']['awake'] == [
+        {'x': '2026-05-28', 'y': 100.0},
+        {'x': '2026-06-02', 'y': 74.0},
+    ]
+
+
+def test_sleep_stress_above_resting_lands_per_date():
+    """`sleep_stress_above_resting` lands as a series from
+    `sleep_stress_above_resting_pct`. Best-guess mapping of `[384]
+    field_18` — surfaces the "% of overnight stress above the resting
+    threshold" signal so the operator can flag nights where stress was
+    elevated even when the average was low (e.g. Sep 8 with 72 min awake
+    + low stress_avg 3.40 still showed field_18 = 51)."""
+    daily_rows = [
+        _r(date='2026-05-28', sleep_stress_above_resting_pct=13),
+        _r(date='2026-06-02', sleep_stress_above_resting_pct=70),
+    ]
+    chart = _build_chart_data([], [], [], [], [], [],
+                              daily_metric_rows=daily_rows)
+    assert chart['sleep_stress_above_resting'] == [
+        {'x': '2026-05-28', 'y': 13.0},
+        {'x': '2026-06-02', 'y': 70.0},
+    ]
+
+
+def test_body_battery_overnight_delta_skips_partial_coverage():
+    """If a night's BB time-series is missing the sleep_start or sleep_end
+    sample (e.g. watch off mid-night), drop the night rather than fabricate
+    a misleading delta from a partial reading."""
+    bb_overnight_rows = [
+        _r(date='2026-05-28', bb_start=20, bb_end=95),   # complete
+        _r(date='2026-05-29', bb_start=None, bb_end=80), # missing start
+        _r(date='2026-05-30', bb_start=48, bb_end=None), # missing end
+    ]
+    chart = _build_chart_data([], [], [], [], [], [], (),
+                              bb_overnight_rows=bb_overnight_rows)
+    assert chart['body_battery']['overnight_delta'] == [
+        {'x': '2026-05-28', 'y': 75},
+    ]
+
+
 # ── Field-mapping audit (Jun 7) ──────────────────────────────────────────────
 
 def test_restless_moments_surface_from_garmin_daily_metrics():
@@ -593,6 +679,364 @@ def test_find_sleep_stage_decoder_needs_at_least_two_nights():
     from garmin_fit_parser import find_sleep_stage_decoder
     assert find_sleep_stage_decoder([(1, 2, 3, 4, 5, 6)]) == []
     assert find_sleep_stage_decoder([]) == []
+
+
+# ── [346] sub-score slot candidates (Stress/Light/REM/Awake unmapped) ────────
+
+def test_sleep_sub_score_slot_candidates_emits_one_row_per_present_field():
+    """`_sleep_sub_score_slot_candidates` returns one entry per field with a
+    non-None value, carrying slot name, raw value, intra-night rank, and
+    qualitative band. The slot ↔ contributor name correlation is done by
+    the operator across multiple nights using the rank column."""
+    from garmin_fit_parser import _sleep_sub_score_slot_candidates
+    # Synthetic night: field_8 lowest (the candidate for "worst contributor"),
+    # field_5 highest, others in the middle.
+    candidates = _sleep_sub_score_slot_candidates(95, 88, 60, 82)
+    assert candidates == [
+        {'slot': 'field_5',  'raw': 95, 'rank': 4, 'band_garmin_std': 'Excellent'},
+        {'slot': 'field_7',  'raw': 88, 'rank': 3, 'band_garmin_std': 'Excellent'},
+        {'slot': 'field_8',  'raw': 60, 'rank': 1, 'band_garmin_std': 'Good'},
+        {'slot': 'field_10', 'raw': 82, 'rank': 2, 'band_garmin_std': 'Excellent'},
+    ]
+
+
+def test_sleep_sub_score_slot_candidates_skips_none_fields():
+    """Real `[346]` samples occasionally lack a field. The helper should
+    drop the missing slot rather than treat None as a low value."""
+    from garmin_fit_parser import _sleep_sub_score_slot_candidates
+    candidates = _sleep_sub_score_slot_candidates(95, None, 60, 82)
+    assert [c['slot'] for c in candidates] == ['field_5', 'field_8', 'field_10']
+    assert all(1 <= c['rank'] <= 3 for c in candidates)
+    # No candidates when every field is missing.
+    assert _sleep_sub_score_slot_candidates(None, None, None, None) == []
+
+
+def test_sleep_sub_score_slot_candidates_bands_match_garmin_quartiles():
+    """Band cutoffs are the standard Garmin 0-100 quartile breaks at 25/50/75.
+    Empirically this metric family runs hot (mostly 80-100) so absolute
+    bands aren't the primary signal — pin them anyway so the dump output
+    stays consistent."""
+    from garmin_fit_parser import _sleep_sub_score_slot_candidates
+    candidates = _sleep_sub_score_slot_candidates(10, 40, 70, 99)
+    by_slot = {c['slot']: c for c in candidates}
+    assert by_slot['field_5']['band_garmin_std']  == 'Poor'
+    assert by_slot['field_7']['band_garmin_std']  == 'Fair'
+    assert by_slot['field_8']['band_garmin_std']  == 'Good'
+    assert by_slot['field_10']['band_garmin_std'] == 'Excellent'
+
+
+def test_sleep_sub_score_slot_candidates_breaks_ties_by_slot_order():
+    """When two slots carry the same raw value, rank goes by slot order
+    (earliest wins rank 1). Keeps dump output stable across runs and
+    avoids spurious "the ranking flipped" interpretations."""
+    from garmin_fit_parser import _sleep_sub_score_slot_candidates
+    candidates = _sleep_sub_score_slot_candidates(80, 80, 80, 80)
+    ranks = {c['slot']: c['rank'] for c in candidates}
+    assert ranks == {'field_5': 1, 'field_7': 2, 'field_8': 3, 'field_10': 4}
+
+
+def test_sleep_sub_score_slot_candidates_sep8_locks_field_10_awake():
+    """Sep 8 2025 reference: 37 sleep score (atrocious), 72 min awake on
+    5h06m total (23.5% awake — terrible), but stress avg 3.40 (very low).
+    Raw `[346]` slots: field_5=61 / field_7=58 / field_8=98 / field_10=0.
+
+    Locks Awake to field_10 (raw 0 = rank 1 Poor — only metric that
+    cratered on this night). Triple-confirms field_8 = Stress (rank 4
+    Excellent at 98 despite atrocious sleep — because stress was low).
+    Earlier Jun 2 reading (field_5 = 92 with Awake = 10 min) suggested
+    field_5 = Awake but Sep 8's 72-min-awake night with field_5 = 61
+    rules that out: Awake is field_10."""
+    from garmin_fit_parser import _sleep_sub_score_slot_candidates
+    candidates = _sleep_sub_score_slot_candidates(61, 58, 98, 0)
+    by_slot = {c['slot']: c for c in candidates}
+    # The lock: field_10 = 0 is the rank-1 Poor slot → Awake sub-score.
+    assert by_slot['field_10']['rank'] == 1
+    assert by_slot['field_10']['raw'] == 0
+    assert by_slot['field_10']['band_garmin_std'] == 'Poor'
+    # field_8 = 98 (rank 4 Excellent) confirms field_8 = Stress (low
+    # stress on Sep 8 → high stress sub-score).
+    assert by_slot['field_8']['rank'] == 4
+    assert by_slot['field_8']['band_garmin_std'] == 'Excellent'
+
+
+def test_sleep_sub_score_slot_candidates_field_5_and_field_7_lock_light_and_rem():
+    """May 28 + Jun 2 disambiguate the last two slots:
+      May 28 (8h12m great sleep, Light ~68% high / REM ~20% ideal):
+        field_5 = 83 (Excellent low — penalized for high Light fraction)
+        field_7 = 95 (Excellent — ideal REM)
+      Jun 2 (5h05m short sleep, Light 55.7% ideal / REM 16.4% low):
+        field_5 = 92 (Excellent — Light in range)
+        field_7 = 73 (Good — REM low)
+    Locks field_5 = Light sub-score, field_7 = REM sub-score."""
+    from garmin_fit_parser import _sleep_sub_score_slot_candidates
+    # May 28 reference
+    may28 = {c['slot']: c for c in _sleep_sub_score_slot_candidates(83, 95, 95, 100)}
+    assert may28['field_5']['raw'] == 83  # Light sub-score: high Light → 83
+    assert may28['field_7']['raw'] == 95  # REM sub-score: ideal REM → 95
+    # Jun 2 reference
+    jun2 = {c['slot']: c for c in _sleep_sub_score_slot_candidates(92, 73, 46, 74)}
+    assert jun2['field_5']['raw'] == 92  # Light in range → 92
+    assert jun2['field_7']['raw'] == 73  # REM low → 73
+
+
+def test_sleep_sub_score_slot_candidates_jun2_locks_field_8_stress():
+    """Jun 2 2026 reference: 58 sleep score, Connect Stress 27 avg (Fair
+    band). Raw `[346]` slot values: field_5=92 / field_7=73 / field_8=46
+    / field_10=74. The lock: field_8 = 46 (rank 1 Fair) matches Connect's
+    Stress=27 Fair rating. Triple-confirmed across Jun 2 + Sep 8 + May 28."""
+    from garmin_fit_parser import _sleep_sub_score_slot_candidates
+    candidates = _sleep_sub_score_slot_candidates(92, 73, 46, 74)
+    by_slot = {c['slot']: c for c in candidates}
+    # The lock: field_8 is the rank-1 (worst) slot and in Fair band.
+    assert by_slot['field_8']['rank'] == 1
+    assert by_slot['field_8']['band_garmin_std'] == 'Fair'
+    # field_7 / field_10 land in the Good band (Light+REM+Awake ambiguous
+    # without the Sep 8 datapoint).
+    assert by_slot['field_7']['band_garmin_std'] == 'Good'
+    assert by_slot['field_10']['band_garmin_std'] == 'Good'
+
+
+# ── find_constant_value_fields — VO₂max constant scanner (#283) ─────────────
+
+def test_find_constant_value_fields_matches_when_value_constant_across_nights():
+    """The motivating case: VO₂max running ≈ 48 steady on Andy's Fenix 8.
+    Across multiple `_METRICS.fit` uploads, find any field whose value
+    is 48 (or a scaled equivalent) on every night."""
+    from garmin_fit_parser import find_constant_value_fields
+    # Synthetic 2 nights, gid 281 carries field_4 = 48 on both nights.
+    nights = [
+        {'281': [{'global_id': '281', 'field_4': '48', 'field_5': '32'}]},
+        {'281': [{'global_id': '281', 'field_4': '48', 'field_5': '22'}]},
+    ]
+    matches = find_constant_value_fields(nights, target=48)
+    assert len(matches) == 1
+    m = matches[0]
+    assert m['message_id'] == '281'
+    assert m['field_id'] == 'field_4'
+    assert m['scale'] == 1.0
+    assert m['raw_values'] == [48.0, 48.0]
+
+
+def test_find_constant_value_fields_handles_garmin_scale_factors():
+    """Garmin often stores fractional values as ×10 or ×100 integers in FIT.
+    If a field carries 480 on both nights, target=48 should match under
+    scale=0.1 (480 × 0.1 = 48)."""
+    from garmin_fit_parser import find_constant_value_fields
+    nights = [
+        {'378': [{'field_2': '480'}]},
+        {'378': [{'field_2': '480'}]},
+    ]
+    matches = find_constant_value_fields(nights, target=48)
+    assert len(matches) == 1
+    assert matches[0]['scale'] == 0.1
+    assert matches[0]['scaled_values'] == [48.0, 48.0]
+
+
+def test_find_constant_value_fields_rejects_varying_values():
+    """If a field shifts between nights, it's not a constant. The scanner
+    must drop it — otherwise the operator would chase phantom matches."""
+    from garmin_fit_parser import find_constant_value_fields
+    nights = [
+        {'281': [{'field_4': '48'}]},
+        {'281': [{'field_4': '50'}]},
+    ]
+    assert find_constant_value_fields(nights, target=48) == []
+
+
+def test_find_constant_value_fields_skips_fields_missing_in_any_night():
+    """A constant has to be present on every night. A field that appears
+    on night 1 with value 48 but is absent night 2 isn't a constant."""
+    from garmin_fit_parser import find_constant_value_fields
+    nights = [
+        {'281': [{'field_4': '48', 'field_5': '99'}]},
+        {'281': [{'field_5': '99'}]},  # field_4 missing
+    ]
+    matches = find_constant_value_fields(nights, target=48)
+    assert matches == []
+
+
+def test_find_constant_value_fields_message_ids_filter_restricts_scope():
+    """`message_ids=(281,)` should scan only gid 281, ignoring other gids
+    even if they carry the target value. Matches the inspector route's
+    default scan-to-_METRICS.fit-messages behaviour."""
+    from garmin_fit_parser import find_constant_value_fields
+    nights = [
+        {'281': [{'field_4': '99'}], '999': [{'field_0': '48'}]},
+        {'281': [{'field_4': '99'}], '999': [{'field_0': '48'}]},
+    ]
+    # Default (None) catches field_0 of 999.
+    default_matches = find_constant_value_fields(nights, target=48)
+    assert any(m['message_id'] == '999' for m in default_matches)
+    # Filtered to (281,) does not.
+    filtered = find_constant_value_fields(
+        nights, target=48, message_ids=(281,)
+    )
+    assert filtered == []
+
+
+def test_find_constant_value_fields_needs_at_least_two_nights():
+    """One night admits trivially many false matches — the helper should
+    refuse rather than emit noise."""
+    from garmin_fit_parser import find_constant_value_fields
+    one_night = [{'281': [{'field_4': '48'}]}]
+    assert find_constant_value_fields(one_night, target=48) == []
+    assert find_constant_value_fields([], target=48) == []
+
+
+def test_find_constant_value_fields_tolerance_allows_small_drift():
+    """FIT round-trip can drift by sub-integer amounts; default tolerance
+    of 0.5 allows 47.6 and 48.4 to still match target=48. A tighter
+    tolerance rejects the drift."""
+    from garmin_fit_parser import find_constant_value_fields
+    nights = [
+        {'281': [{'field_4': '47.6'}]},
+        {'281': [{'field_4': '48.4'}]},
+    ]
+    assert find_constant_value_fields(nights, target=48) != []
+    assert find_constant_value_fields(nights, target=48, tolerance=0.1) == []
+
+
+# ── find_value_match_fields — per-file Connect-smoothed minutes scan (#283) ─
+
+def test_find_value_match_fields_matches_target_in_field():
+    """Issue #283 motivating case: Connect-smoothed Light = 180 min on
+    May 30. The scanner walks a single dump and returns any field whose
+    value equals 180 (under one of the candidate scales)."""
+    from garmin_fit_parser import find_value_match_fields
+    dump = {'generic_samples': {
+        '346': [{'field_5': '90', 'field_7': '180', 'field_8': '70'}],
+    }}
+    matches = find_value_match_fields(dump, targets=[180])
+    assert len(matches) == 1
+    m = matches[0]
+    assert m['message_id'] == '346'
+    assert m['field_id'] == 'field_7'
+    assert m['target'] == 180
+    assert m['scale'] == 1.0
+
+
+def test_find_value_match_fields_handles_multiple_targets():
+    """Pass [180, 47, 8] (Connect Light/REM/Awake) — the scanner emits
+    a match per (field, target) hit."""
+    from garmin_fit_parser import find_value_match_fields
+    dump = {'generic_samples': {
+        '346': [{'field_a': '180', 'field_b': '47', 'field_c': '8',
+                 'field_d': '999'}],
+    }}
+    matches = find_value_match_fields(dump, targets=[180, 47, 8])
+    targets_hit = {m['target'] for m in matches}
+    assert targets_hit == {180, 47, 8}
+
+
+def test_find_value_match_fields_handles_scale_factors():
+    """A field carrying 1800 (×10 encoded Light minutes) should match
+    target=180 under scale=0.1. Same for 80 → target=8 at scale=0.1."""
+    from garmin_fit_parser import find_value_match_fields
+    dump = {'generic_samples': {
+        '346': [{'field_5': '1800', 'field_7': '80'}],
+    }}
+    matches = find_value_match_fields(dump, targets=[180, 8])
+    targets_hit = {(m['target'], m['scale']) for m in matches}
+    assert (180, 0.1) in targets_hit
+    assert (8, 0.1) in targets_hit
+
+
+def test_find_value_match_fields_message_ids_filter():
+    """Restrict to gid 346 — fields on gid 999 with target value are
+    ignored. Mirrors the inspector's optional scope-narrowing."""
+    from garmin_fit_parser import find_value_match_fields
+    dump = {'generic_samples': {
+        '346': [{'field_5': '180'}],
+        '999': [{'field_5': '180'}],
+    }}
+    matches = find_value_match_fields(
+        dump, targets=[180], message_ids=(346,),
+    )
+    assert len(matches) == 1
+    assert matches[0]['message_id'] == '346'
+
+
+def test_find_value_match_fields_empty_targets_returns_empty():
+    """No targets → nothing to match. The route uses this for the
+    `?values=off` escape hatch."""
+    from garmin_fit_parser import find_value_match_fields
+    dump = {'generic_samples': {'346': [{'field_5': '180'}]}}
+    assert find_value_match_fields(dump, targets=[]) == []
+
+
+def test_find_value_match_fields_accepts_bare_generic_samples():
+    """Convenience: caller can pass the generic_samples dict directly
+    instead of the full `_dump_fit` result — the helper does the
+    lookup. Lets ad-hoc scripts skip the wrapping dict."""
+    from garmin_fit_parser import find_value_match_fields
+    bare = {'346': [{'field_5': '47'}]}
+    matches = find_value_match_fields(bare, targets=[47])
+    assert len(matches) == 1
+    assert matches[0]['field_id'] == 'field_5'
+
+
+# ── _sleep_counter_derivation_candidates — [346] field_12/13 probe (#283) ───
+
+def test_sleep_counter_derivation_surfaces_stage_period_counts():
+    """The helper computes contiguous-run counts per stage code from
+    `[275]` events. With 2 Light periods (codes 2…2…2 then gap then
+    2…2), it should report light_period_count = 2."""
+    from garmin_fit_parser import _sleep_counter_derivation_candidates
+    # ts in seconds; code: 1=Unmeas, 2=Light, 3=Deep, 4=REM
+    events = [
+        (1000, 2),  # Light period 1
+        (1300, 3),  # Deep period 1
+        (1600, 2),  # Light period 2
+        (1900, 4),  # REM period 1
+        (2200, 2),  # Light period 3
+    ]
+    out = _sleep_counter_derivation_candidates(events, {})
+    assert out['derived']['light_period_count'] == 3
+    assert out['derived']['deep_period_count'] == 1
+    assert out['derived']['rem_period_count'] == 1
+    assert out['derived']['awake_period_count'] == 0
+    assert out['derived']['total_events'] == 5
+    assert out['derived']['transition_count'] == 4
+
+
+def test_sleep_counter_derivation_flags_matches_against_raw_counters():
+    """When a derived count equals raw field_12 or field_13, the helper
+    surfaces that derivation in `matches_field_12/13` — that's the lock
+    candidate the operator hunts for."""
+    from garmin_fit_parser import _sleep_counter_derivation_candidates
+    # 4 Light periods, 2 REM periods → field_12=4 should match
+    # light_period_count, field_13=2 should match rem_period_count.
+    events = [
+        (1000, 2), (1300, 4), (1600, 2), (1900, 4),
+        (2200, 2), (2500, 3), (2800, 2),
+    ]
+    out = _sleep_counter_derivation_candidates(
+        events, {'field_12': '4', 'field_13': '2'},
+    )
+    assert 'light_period_count' in out['matches_field_12']
+    assert 'rem_period_count' in out['matches_field_13']
+    assert out['raw'] == {'field_12': 4, 'field_13': 2}
+
+
+def test_sleep_counter_derivation_handles_missing_raw_counters():
+    """File without `[346]` (e.g. partial sleep upload) — caller passes
+    empty raw_counters and the helper still emits the derivation
+    summary so operator can correlate manually."""
+    from garmin_fit_parser import _sleep_counter_derivation_candidates
+    events = [(1000, 2), (1300, 3)]
+    out = _sleep_counter_derivation_candidates(events, {})
+    assert out['raw'] == {'field_12': None, 'field_13': None}
+    assert out['matches_field_12'] == []
+    assert out['matches_field_13'] == []
+    assert out['derived']['light_period_count'] == 1
+
+
+def test_sleep_counter_derivation_returns_empty_without_events():
+    """No `[275]` data → nothing to derive from. Returning {} keeps the
+    inspector output clean (no empty `sleep_counter_derivation_candidates`
+    entries for files without sleep data)."""
+    from garmin_fit_parser import _sleep_counter_derivation_candidates
+    assert _sleep_counter_derivation_candidates([], {'field_12': '5'}) == {}
 
 
 # ── [275] sleep-stage transition walker + minute tally ──────────────────────

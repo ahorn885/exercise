@@ -1287,6 +1287,9 @@ _DAILY_METRICS_COLUMNS = (
     # diverged on May 30 / Jun 2. Column kept nullable so old rows don't
     # need a DROP; new uploads stop writing it.
     'sleep_avg_respiration', 'sleep_contributors_json',
+    'sleep_light_sub_score', 'sleep_rem_sub_score',
+    'sleep_stress_sub_score', 'sleep_awake_sub_score',
+    'sleep_stress_above_resting_pct',
     'sleep_deep_min', 'sleep_light_min', 'sleep_rem_min',
     'sleep_stress_avg', 'sleep_wake_count',
     'sleep_duration_sub_score', 'restless_moments',
@@ -1332,6 +1335,9 @@ def _metrics_to_db_fields(parsed: dict) -> dict:
     for key in ('sleep_score', 'sleep_start_ms', 'sleep_end_ms',
                 'sleep_awake_min',
                 'sleep_duration_sub_score', 'restless_moments',
+                'sleep_light_sub_score', 'sleep_rem_sub_score',
+                'sleep_stress_sub_score', 'sleep_awake_sub_score',
+                'sleep_stress_above_resting_pct',
                 'hrv_overnight_avg_ms', 'hrv_7d_avg_ms',
                 'hrv_highest_5min_ms',
                 'training_readiness', 'vo2max_running', 'vo2max_cycling',

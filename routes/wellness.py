@@ -198,6 +198,35 @@ def index():
         (uid, cutoff)
     ).fetchall()
 
+    # Body battery overnight delta (#283 follow-up) — BB value at sleep_end
+    # minus BB value at sleep_start. This is the cleanest single-number
+    # "how well did this sleep recover you?" signal: it's directly visible
+    # in the wellness_log time-series, anchored to the per-night sleep
+    # window from `garmin_daily_metrics.sleep_start_ms / sleep_end_ms`.
+    # ROW_NUMBER() picks the first BB sample at/after sleep_start and the
+    # last sample at/before sleep_end so partial-coverage nights still
+    # land an honest delta. Partitioned by dm.date (the sleep-night
+    # anchor) so a sleep window that crosses midnight still groups as
+    # one night.
+    bb_overnight_rows = db.execute(
+        'WITH bb_in_sleep AS ( '
+        '  SELECT dm.date AS sleep_date, wl.body_battery, wl.timestamp_ms, '
+        '    ROW_NUMBER() OVER (PARTITION BY dm.date ORDER BY wl.timestamp_ms ASC)  AS rn_start, '
+        '    ROW_NUMBER() OVER (PARTITION BY dm.date ORDER BY wl.timestamp_ms DESC) AS rn_end '
+        '  FROM garmin_daily_metrics dm '
+        '  JOIN wellness_log wl ON wl.user_id = dm.user_id '
+        '    AND wl.body_battery IS NOT NULL '
+        '    AND wl.timestamp_ms BETWEEN dm.sleep_start_ms AND dm.sleep_end_ms '
+        '  WHERE dm.user_id=? AND dm.date >= ? '
+        '    AND dm.sleep_start_ms IS NOT NULL AND dm.sleep_end_ms IS NOT NULL '
+        ') '
+        'SELECT sleep_date AS date, '
+        '  MAX(CASE WHEN rn_start = 1 THEN body_battery END) AS bb_start, '
+        '  MAX(CASE WHEN rn_end   = 1 THEN body_battery END) AS bb_end '
+        'FROM bb_in_sleep GROUP BY sleep_date ORDER BY sleep_date',
+        (uid, cutoff)
+    ).fetchall()
+
     # Garmin daily-derived metrics from `_METRICS.fit` / `_SLEEP_DATA.fit` /
     # `_HRV_STATUS.fit` (#283 Phase B). One row per (user, date); UPSERT lands
     # whichever columns the source file knows about, so this select gets the
@@ -208,7 +237,10 @@ def index():
         '  heat_acclimation_pct, acute_training_load, '
         '  restless_moments, floors_climbed, floors_descended, '
         '  intensity_minutes, spo2_avg, spo2_low, '
-        '  sleep_deep_min, sleep_stress_avg, sleep_wake_count '
+        '  sleep_deep_min, sleep_stress_avg, sleep_wake_count, '
+        '  sleep_light_sub_score, sleep_rem_sub_score, '
+        '  sleep_stress_sub_score, sleep_awake_sub_score, '
+        '  sleep_stress_above_resting_pct '
         'FROM garmin_daily_metrics WHERE user_id=? AND date >= ? ORDER BY date',
         (uid, cutoff)
     ).fetchall()
@@ -224,6 +256,7 @@ def index():
         self_report_rows, body_rows,
         cardio_load, strength_load, strength_counts,
         garmin_rows, daily_metric_rows, bb_delta_rows,
+        bb_overnight_rows=bb_overnight_rows,
         unit_pref=unit_pref,
     )
     # Surface the body-series unit label to the chart JS without polluting
@@ -312,11 +345,12 @@ _STRESS_SAMPLE_MIN = 3.0  # Garmin samples stress ~every 3 minutes
 
 def _build_chart_data(self_rows, body_rows, cardio_rows, strength_rows,
                       strength_count_rows, garmin_rows, daily_metric_rows=(),
-                      bb_delta_rows=(), unit_pref=None):
+                      bb_delta_rows=(), bb_overnight_rows=(), unit_pref=None):
     self_by_date = {_d(r['date']): r for r in self_rows}
     garmin_by_date = {_d(r['date']): r for r in garmin_rows}
     daily_by_date = {_d(r['date']): r for r in daily_metric_rows}
     bb_delta_by_date = {_d(r['date']): r for r in bb_delta_rows}
+    bb_overnight_by_date = {_d(r['date']): r for r in bb_overnight_rows}
 
     sleep_hours = [
         {'x': d, 'y': float(r['sleep_hours'])}
@@ -459,6 +493,21 @@ def _build_chart_data(self_rows, body_rows, cardio_rows, strength_rows,
     sleep_deep_min   = _maybe_series(daily_by_date, 'sleep_deep_min')
     sleep_stress_avg = _maybe_series(daily_by_date, 'sleep_stress_avg')
     sleep_wake_count = _maybe_series(daily_by_date, 'sleep_wake_count')
+    # `[346]` sleep contributor sub-scores — all 4 locked Jun 10 2026.
+    # Surfaced as a single multi-line chart so the operator can see
+    # which contributor is dragging the night's score down at a glance.
+    sleep_sub_scores = {
+        'light':  _maybe_series(daily_by_date, 'sleep_light_sub_score'),
+        'rem':    _maybe_series(daily_by_date, 'sleep_rem_sub_score'),
+        'stress': _maybe_series(daily_by_date, 'sleep_stress_sub_score'),
+        'awake':  _maybe_series(daily_by_date, 'sleep_awake_sub_score'),
+    }
+    # `[384] field_18` best-guess — % of overnight stress samples above
+    # Garmin's "resting" threshold. Tracks "how much of the night was
+    # stress-elevated" — complement to body-battery overnight recovery.
+    sleep_stress_above_resting = _maybe_series(
+        daily_by_date, 'sleep_stress_above_resting_pct'
+    )
 
     # Stress time-in-zone — sample counts × ~3 min interval. Garmin Connect
     # displays the same buckets on the stress page.
@@ -495,6 +544,17 @@ def _build_chart_data(self_rows, body_rows, cardio_rows, strength_rows,
         {'x': d, 'y': float(r['drained'])}
         for d, r in bb_delta_by_date.items() if r['drained'] is not None
     ]
+    # Body battery overnight delta — the BB jump during the per-night sleep
+    # window (sleep_end value − sleep_start value). Cleaner "how restful
+    # was this sleep?" signal than the raw sleep score, especially
+    # surfaced against May 30 (+47, score 65) vs Jun 2 (+27, score 58)
+    # where the lower-score-but-higher-BB-gain night was actually the
+    # better recovery (#283 follow-up).
+    body_battery['overnight_delta'] = [
+        {'x': d, 'y': int(r['bb_end']) - int(r['bb_start'])}
+        for d, r in bb_overnight_by_date.items()
+        if r['bb_start'] is not None and r['bb_end'] is not None
+    ]
 
     return {
         'sleep_hours':   sleep_hours,
@@ -522,6 +582,8 @@ def _build_chart_data(self_rows, body_rows, cardio_rows, strength_rows,
         'sleep_deep_min':   sleep_deep_min,
         'sleep_stress_avg': sleep_stress_avg,
         'sleep_wake_count': sleep_wake_count,
+        'sleep_sub_scores': sleep_sub_scores,
+        'sleep_stress_above_resting': sleep_stress_above_resting,
         # #283 follow-up — these still need their own FIT file types or a
         # field map we haven't decoded. `active_minutes` was retired in
         # favour of `intensity_minutes` (Garmin's published metric =

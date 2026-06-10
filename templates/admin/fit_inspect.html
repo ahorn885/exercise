@@ -32,6 +32,54 @@
     <button type="submit" class="btn btn-primary btn-sm">Inspect</button>
   </form>
 
+  {% if inspect_scan_matches is not none %}
+  <div class="insp-scan sec-sm">
+    <p class="eyebrow">Constant-value field scan · target = {{ inspect_scan_target }}
+      · scope = {{ inspect_scan_scope }}</p>
+    {% if inspect_scan_matches %}
+    <p class="rail-note">Fields whose value matches the target on every uploaded file
+      (under one of the candidate scales). Use to lock constants like VO₂max running
+      that the watch emits unchanged across days.</p>
+    <ul class="mono">
+      {% for m in inspect_scan_matches %}
+      <li>[{{ m.message_id }}] {{ m.field_id }} · ×{{ m.scale }} →
+        raw {{ m.raw_values|join(' / ') }} → scaled {{ m.scaled_values|join(' / ') }}</li>
+      {% endfor %}
+    </ul>
+    {% else %}
+    <p class="rail-note">No fields land on {{ inspect_scan_target }} across every file
+      in {{ inspect_scan_scope }}. Override the target with <code>?target=X</code> or
+      broaden with <code>?scope=all</code>.</p>
+    {% endif %}
+  </div>
+  {% endif %}
+
+  {% if inspect_value_matches is not none %}
+  <div class="insp-value-match sec-sm">
+    <p class="eyebrow">Value-match scan · targets = {{ inspect_value_targets|join(', ') }}</p>
+    <p class="rail-note">Per-file scan for fields whose value matches any target
+      (under candidate scales). Pass <code>?values=A,B,C</code> to override or
+      <code>?values=off</code> to disable. Default targets are Andy's May 30
+      Connect-smoothed stage minutes (#283) — useful for locking which raw fields
+      carry the smoothed Light / REM / Awake values.</p>
+    {% for entry in inspect_value_matches %}
+    <div class="insp-vm-file">
+      <p class="mono"><b>{{ entry.name }}</b></p>
+      {% if entry.matches %}
+      <ul class="mono">
+        {% for m in entry.matches %}
+        <li>[{{ m.message_id }}] {{ m.field_id }} · raw {{ m.raw_value }} · ×{{ m.scale }} →
+          {{ m.scaled_value }} ≈ target {{ m.target }}</li>
+        {% endfor %}
+      </ul>
+      {% else %}
+      <p class="rail-note">No matches.</p>
+      {% endif %}
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+
   {% if inspect_dumps %}
   <div class="insp-results" data-insp-results>
     <div class="insp-actions">
