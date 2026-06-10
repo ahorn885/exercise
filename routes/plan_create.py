@@ -606,10 +606,12 @@ def _advance_plan_generation_locked(db, uid: int, plan_version_id: int,
         # The plan is already durable + `ready` above; a nutrition fault must
         # NEVER affect it, so it's isolated in its own try and never propagates
         # (mirrors the progress-block snapshot pattern). Zero-LLM + fast, so it's
-        # safe to run inline on the completing pass.
+        # safe to run inline on the completing pass. Commit only when something
+        # was actually persisted, so the common no-inputs case adds no extra
+        # commit (and no DB work).
         try:
-            generate_and_persist_plan_nutrition(db, uid, plan_version_id)
-            db.commit()
+            if generate_and_persist_plan_nutrition(db, uid, plan_version_id) is not None:
+                db.commit()
         except Exception as _nutr_exc:  # noqa: BLE001 — advisory must not break gen
             db.rollback()
             print(
