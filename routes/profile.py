@@ -33,6 +33,13 @@ from units import (
     normalize_unit_preference, entered_weight_to_kg, display_weight,
     weight_unit_label, entered_height_to_cm, display_height, height_unit_label,
 )
+from athlete_discipline_weighting_repo import (
+    DisciplineWeightingError,
+    evict_layer1_on_discipline_weighting_change,
+    get_discipline_weighting,
+    load_discipline_catalog,
+    replace_discipline_weighting,
+)
 from athlete_skill_toggles_repo import (
     evict_layer1_on_skill_toggle_change,
     get_athlete_skill_toggles,
@@ -318,6 +325,11 @@ def edit():
     skill_toggle_defs = load_active_skill_capability_toggle_vocab(db)
     skill_toggle_states = get_athlete_skill_toggles(db, uid)
 
+    # X2 — discipline-weighting picker (Athlete tab). Catalog = all potential
+    # disciplines; weighting = the athlete's current split (empty → unset).
+    discipline_catalog = load_discipline_catalog(db)
+    discipline_weighting = get_discipline_weighting(db, uid)
+
     # #469 — body weight is stored canonical kg; render it in the athlete's
     # chosen display unit so the form field round-trips cleanly. `profile` is
     # mutated in place because it's the dict the template reads.
@@ -349,6 +361,8 @@ def edit():
         doubles_choices=DOUBLES_FEASIBLE_CHOICES,
         skill_toggle_defs=skill_toggle_defs,
         skill_toggle_states=skill_toggle_states,
+        discipline_catalog=discipline_catalog,
+        discipline_weighting=discipline_weighting,
         # Used by the template to render an "Expired" badge without
         # round-tripping the timestamp through a Jinja-only comparison.
         now_iso=_dt.utcnow().isoformat(timespec='seconds'),
@@ -405,6 +419,40 @@ def save_skills():
         evict_layer1_on_skill_toggle_change(db, uid)
         flash('Skills saved.', 'success')
     return redirect(url_for('profile.edit', tab='skills'))
+
+
+@bp.route('/disciplines', methods=['POST'])
+def save_disciplines():
+    """Persist the discipline-weighting form (Athlete tab).
+
+    All-or-nothing: the athlete selects + weights any subset of the
+    discipline catalog; non-zero weights must sum to 100, or the whole set is
+    cleared (revert to Layer 2A system defaults). Form fields are `dw_<id>`
+    carrying the percent. Mirrors `save_skills`' parse → write → evict-Layer-1
+    path. Stored `discipline_slug` holds the canonical `discipline_id`.
+    """
+    db = get_db()
+    uid = current_user_id()
+    catalog_ids = {d['id'] for d in load_discipline_catalog(db)}
+    weights: dict[str, int] = {}
+    for did in catalog_ids:
+        raw = (request.form.get(f'dw_{did}') or '').strip()
+        if not raw:
+            continue
+        try:
+            weights[did] = int(float(raw))
+        except (ValueError, TypeError):
+            flash(f'Invalid weight for {did}.', 'error')
+            return redirect(url_for('profile.edit', tab='athlete'))
+    try:
+        replace_discipline_weighting(db, uid, weights)
+    except DisciplineWeightingError as exc:
+        flash(str(exc), 'error')
+        return redirect(url_for('profile.edit', tab='athlete'))
+    db.commit()
+    evict_layer1_on_discipline_weighting_change(db, uid)
+    flash('Discipline weighting saved.', 'success')
+    return redirect(url_for('profile.edit', tab='athlete'))
 
 
 @bp.route('/connections/<provider>/disconnect', methods=['POST'])
