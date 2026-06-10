@@ -281,7 +281,10 @@ MTB_SKILL_LEVELS = ('beginner', 'intermediate', 'advanced')
 OW_EXPERIENCE_LEVELS = ('none', 'limited', 'experienced')
 
 # §D.4 — discipline_baseline_paddling.paddle_craft_types (multi-select).
-PADDLE_CRAFT_TYPES = ('kayak', 'canoe', 'packraft', 'surfski')
+# Vocabulary V4 §4: 'surfski' pruned (enum-only vessel, never tracked to a
+# discipline). Hard-removed per build decision — any pre-existing athlete row
+# storing 'surfski' must be migrated (it will otherwise fail enum validation).
+PADDLE_CRAFT_TYPES = ('kayak', 'canoe', 'packraft')
 
 # §D.5 — discipline_baseline_skiing.ski_disciplines (multi-select).
 SKI_DISCIPLINES = ('classic_xc', 'skate_xc', 'skimo')

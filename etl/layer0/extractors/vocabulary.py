@@ -33,16 +33,17 @@ _BODY_REGION_HEADERS = [
 # is_universal flag. "Terrain (separate from equipment ...)" feeds the
 # terrain table, not equipment.
 _EQUIPMENT_CATEGORIES = [
-    "Barbells & Bars",
-    "Dumbbells",
-    "Kettlebells",
-    "Machines — Lower Body",
-    "Machines — Upper Body",
-    "Machines — Cardio",
+    # Vocabulary V4 §6 — gym rows recategorized from the prior 10-category
+    # scheme into these 6 buckets. Order matters: dedupe is first-seen-wins,
+    # so Bodyweight & Portable must precede Recovery & Therapy (Foam roller
+    # resolves to Bodyweight). Headers must match the ## sections in
+    # Vocabulary_Audit_v2.md Section 3 exactly.
+    "Freeweights",
+    "Machines - Strength",
+    "Machines - Cardio",
+    "Plyo, Power & Stability",
+    "Grip & Climbing",
     "Bodyweight & Portable Equipment",
-    "Stability & Balance",
-    "Plyo & Power",
-    "Grip & Forearm Specific",
     "Sport-Specific — Cycling (top-level vessels — kept individual)",
     "Sport-Specific — Paddle (top-level vessels — kept individual)",
     "Sport-Specific — Running & Hiking (top-level — kept individual)",

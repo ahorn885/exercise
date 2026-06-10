@@ -211,37 +211,30 @@ These remain valid col 13 flags for exercise filtering at runtime but are not as
 
 Organised to mirror AR Schema 2.2 categories. Each row shows the canonical name and (where applicable) col 7 variants that should be renamed to it. New "Assumed Universal" category and rolled-up "Sport-Specific Gear Readiness" categories at the end.
 
-## Barbells & Bars
+## Freeweights
 
-| Canonical | Col 7 variant(s) → rename to canonical | Notes |
+| Canonical | Col 7 variant(s) | Notes |
 |---|---|---|
 | Barbell | Barbell ✓ | Bar weight (15/35/45 lb) sub-question retained |
-| Squat rack | Rack | "Rack" alone in col 7 (2) is ambiguous; clarify in cleanup |
-| Smith machine | — | Kept |
+| Squat rack | Rack | "Rack" alone in col 7 is ambiguous; clarify in cleanup |
 | EZ curl bar | — | |
 | Trap bar | — | |
 | Safety squat bar | — | |
+| Tricep bar (W-bar) | — | Folded in from EQUIPMENT_CATEGORIES (Vocabulary V4) so the A-only list can retire |
 | Landmine attachment | Landmine Attachment ✓ | |
 | Weight plates | Weight Plate, Light Plate, Barbell with Plates | Consolidate; "Barbell with Plates" redundant with Barbell |
-
-## Dumbbells
-
-| Canonical | Col 7 variant(s) | Notes |
-|---|---|---|
-| Dumbbell | Dumbbell, Light Dumbbell, Heavy Dumbbell, Light DB | Quantity/weight via sub-question; col 7 should not encode "light/heavy" — that's prescription detail |
-
-## Kettlebells
-
-| Canonical | Col 7 variant(s) | Notes |
-|---|---|---|
+| Dumbbell | Dumbbell, Light Dumbbell, Heavy Dumbbell, Light DB | Quantity/weight via sub-question |
 | Kettlebell | Kettlebell ✓ | |
+| Bench | Bench, Floor or Bench, Bench or Box, Incline Bench | Generic flat bench; sub-questions for incline. Moved from Bodyweight & Portable (V4 §6) |
+| Preacher curl bench | — | Folded in from EQUIPMENT_CATEGORIES (Vocabulary V4) |
 
-## Machines — Lower Body
+## Machines - Strength
 
 | Canonical | Col 7 variant(s) | Notes |
 |---|---|---|
+| Smith machine | — | |
 | Leg press machine | Leg Press Machine ✓ | |
-| Hack squat machine | — | Not in col 7 |
+| Hack squat machine | — | |
 | Leg extension machine | Leg Extension Machine ✓ | |
 | Leg curl machine | Leg Curl Machine ✓ | |
 | Standing calf raise machine | — | |
@@ -250,11 +243,6 @@ Organised to mirror AR Schema 2.2 categories. Each row shows the canonical name 
 | Hip adductor machine | — | |
 | Glute ham developer (GHD) | — | |
 | Hip thrust machine | — | |
-
-## Machines — Upper Body
-
-| Canonical | Col 7 variant(s) | Notes |
-|---|---|---|
 | Cable machine | Cable, Cable Machine | RENAME col 7 "Cable" → "Cable Machine" |
 | Lat pulldown machine | — | |
 | Seated row machine | — | |
@@ -264,23 +252,53 @@ Organised to mirror AR Schema 2.2 categories. Each row shows the canonical name 
 | Assisted pull-up / dip machine | — | |
 | Bicep station | — | |
 | Tricep station | — | |
-| Rowing ergometer | Rowing Ergometer ✓ | |
-| Ski erg | — | |
-| Arm bike / UBE | — | |
 
-## Machines — Cardio
+## Machines - Cardio
 
 | Canonical | Col 7 variant(s) | Notes |
 |---|---|---|
-| Treadmill | Treadmill, Inclined Treadmill at Maximum Grade, Climb or Inclined Treadmill | Incline % is a sub-question, not a separate equipment item |
+| Treadmill | Treadmill, Inclined Treadmill at Maximum Grade | Incline % is a sub-question, not a separate equipment item |
 | Stationary bike | — | |
 | Spin bike | — | |
-| Bike trainer | Trainer, Bike Trainer, or Trainer | RENAME col 7 → "Bike Trainer". "or Trainer" is comma-split artifact — fix in col 7 cleanup |
 | Stair climber | — | |
-| Jacob's Ladder | — | **DROP from AR Schema 2.2** — never used in col 7 |
 | Elliptical | — | |
-| Paddle ergometer | Paddle Ergometer ✓ | |
 | Assault bike | — | |
+| Rowing ergometer | Rowing Ergometer ✓ | |
+| Ski erg | — | |
+| Paddle ergometer | Paddle Ergometer ✓ | |
+| Arm bike / UBE | — | |
+
+## Plyo, Power & Stability
+
+| Canonical | Col 7 variant(s) | Notes |
+|---|---|---|
+| Plyo box | Plyo Box, Box, Vault Box | RENAME col 7 "Box", "Vault Box" → "Plyo Box" |
+| Medicine ball | Medicine Ball ✓ | |
+| Slam ball | — | Folded in from EQUIPMENT_CATEGORIES (V4). Power implement — grouped with the other power items (you tagged Bodyweight; placed here per build decision) |
+| Weighted sled | Weighted Sled ✓ | |
+| Battle ropes | — | |
+| Sandbag | — | |
+| BOSU ball | BOSU ✓ | |
+| Balance disc | Balance Disc ✓ | |
+| Stability ball | Stability Ball ✓ | |
+| Slider discs | — | |
+| Foam pad | Foam Pad ✓ | Used in paddle balance drills |
+| Incline board | Incline Board ✓ | Used for balance/calf |
+
+## Grip & Climbing
+
+| Canonical | Col 7 variant(s) | Notes |
+|---|---|---|
+| Hangboard | Hangboard ✓ | |
+| Campus board | Campus Board ✓ | |
+| Grip trainer | — | |
+| Wrist roller | Wrist Roller ✓ | |
+| Rice bucket | Rice Bucket ✓ | |
+| Fat grips | — | |
+| Pinch block | Pinch Block ✓ | |
+| Finger extension band | — | |
+| Treadwall | — | Folded in from EQUIPMENT_CATEGORIES (Vocabulary V4) |
+| Climbing wall | — | Folded in from EQUIPMENT_CATEGORIES (Vocabulary V4) |
 
 ## Bodyweight & Portable Equipment
 
@@ -301,44 +319,8 @@ Organised to mirror AR Schema 2.2 categories. Each row shows the canonical name 
 | Cones | Cones ✓ | |
 | Yoga mat | — | |
 | Nordic curl strap | — | |
-| Bench | Bench, Floor or Bench, Bench or Box, Incline Bench | "Bench" is generic flat bench; sub-questions for incline. "Bench or Box" is exercise-side OR-logic, not new equipment |
 | Knee pad | Knee Pad ✓ | |
-
-**ADD to AR Schema 2.2:** Bench (currently absent from the checklist; col 7 uses it 5 times).
-
-## Stability & Balance
-
-| Canonical | Col 7 variant(s) | Notes |
-|---|---|---|
-| BOSU ball | BOSU ✓ | |
-| Balance disc | Balance Disc ✓ | |
-| Stability ball | Stability Ball ✓ | |
-| Slider discs | — | |
-| Foam pad | Foam Pad ✓ | Used in paddle balance drills; add to AR Schema 2.2 |
-| Incline board | Incline Board ✓ | Used for balance/calf — add to AR Schema 2.2 |
-
-## Plyo & Power
-
-| Canonical | Col 7 variant(s) | Notes |
-|---|---|---|
-| Plyo box | Plyo Box, Box, Vault Box | RENAME col 7 "Box", "Vault Box" → "Plyo Box". "Vault Box" is OCR-specific; merge unless distinct height matters |
-| Medicine ball | Medicine Ball ✓ | |
-| Weighted sled | Weighted Sled ✓ | |
-| Battle ropes | — | |
-| Sandbag | — | Not currently in col 7 — DB gap to fill |
-
-## Grip & Forearm Specific
-
-| Canonical | Col 7 variant(s) | Notes |
-|---|---|---|
-| Hangboard | Hangboard ✓ | |
-| Campus board | Campus Board ✓ | |
-| Grip trainer | — | |
-| Wrist roller | Wrist Roller ✓ | |
-| Rice bucket | Rice Bucket ✓ | |
-| Fat grips | — | |
-| Pinch block | Pinch Block ✓ | |
-| Finger extension band | — | |
+| Weighted vest | Vest, Weight Vest | RENAME col 7 → "Weighted Vest". Moved from Sport-Specific Running & Hiking (Vocabulary V4 §6) |
 
 ## Sport-Specific — Cycling (top-level vessels — kept individual)
 
@@ -349,23 +331,21 @@ Organised to mirror AR Schema 2.2 categories. Each row shows the canonical name 
 | Gravel bike | Gravel Bike ✓ | |
 | TT / triathlon bike | TT Bike or Road Bike on Trainer, Aero Bars | "TT Bike or Road Bike on Trainer" is exercise-side OR-logic; col 7 cleanup needed |
 | Power meter | — | |
-| Bike (generic) | Bike, Road or MTB Bike, Road or Trail, Trail or Road, Road or Gravel Bike | Generic-bike entries in col 7 acceptable (any bike works); resolve at matching time |
+| Cycling trainer | Trainer, Bike Trainer, Indoor Trainer | RENAME col 7 → "Cycling trainer". Indoor cycling trainer; maps to all cycling disciplines. Renamed from "Bike trainer" + relocated here from Machines — Cardio (V4 §4). |
 | Helmet | Helmet ✓ | Add to AR Schema 2.2 — currently assumed but listed in col 7 |
 
 ## Sport-Specific — Paddle (top-level vessels — kept individual)
 
 | Canonical | Col 7 variant(s) → rename / split | Notes |
 |---|---|---|
-| Kayak | Kayak, Kayak / Packraft, Kayak / Canoe, Kayak / Sea Kayak, Kayak / Canoe / Packraft, Kayak / Canoe / Raft | **DECOMPOSE.** Each slash-string in col 7 splits to atomic items + OR-match logic |
-| Sea kayak | (subtype of Kayak via sub-question) | Type sub-question handles this |
+| Kayak | Kayak, Kayak / Packraft, Kayak / Canoe, Kayak / Sea Kayak, Kayak / Canoe / Packraft, Kayak / Canoe / Raft | **DECOMPOSE.** Each slash-string in col 7 splits to atomic items + OR-match logic. "Sea Kayak" token folds to Kayak (subtype via sub-question) — Sea kayak pruned as a standalone vessel (V4 §4). |
 | Canoe | Canoe ✓ | |
 | Packraft | Packraft, Loaded Packraft | "Loaded" is prescription detail, not equipment |
-| SUP | Stand-Up Paddleboard, SUP Paddle | Rename "Stand-Up Paddleboard" → "SUP" for col 7 brevity. "SUP Paddle" is sub-component, assumed with SUP |
-| Inflatable raft | Inflatable Raft ✓ | |
-| Rowing shell | Rowing Shell ✓ | |
+| Stand-up Paddleboard | SUP, Stand-Up Paddleboard, SUP Paddle | Renamed from "SUP" → canonical "Stand-up Paddleboard" (V4 §4). "SUP Paddle" is sub-component, assumed with the board. |
+| Raft | Raft, Inflatable Raft | Renamed from "Inflatable raft" → "Raft" (V4 §4). |
 | Paddle (double-blade) | Paddle, Two Paddles | Generic — implicit with Kayak/Packraft |
 | Single-blade paddle | Single-Blade Paddle ✓ | Implicit with Canoe |
-| Rowing oar | Rowing Oar, Sculling Blade, Erg Handle, Oars | Sub-components of Rowing Shell or Rowing Erg |
+| Rowing oar | Rowing Oar, Sculling Blade, Erg Handle, Oars | Sub-components of Rowing Erg (Rowing shell vessel pruned, V4 §4) |
 | Kayak / canoe seat | Kayak / Canoe Seat ✓ | Implicit with vessel |
 
 **Whitewater-specific accessories** (spray skirt, WW helmet, WW PFD) → rolled into **Whitewater paddling setup** toggle (Section 4 below).
@@ -378,7 +358,6 @@ Organised to mirror AR Schema 2.2 categories. Each row shows the canonical name 
 | Hiking boots | — | |
 | Trekking poles | Trekking Poles, Poles | "Poles" is ambiguous (trekking / ski / paddle). Disambiguate at col 7 cleanup |
 | Backpack | Backpack, Loaded Backpack | "Loaded" is prescription detail |
-| Weighted vest | Vest, Weight Vest | RENAME col 7 → "Weighted Vest" |
 | Headlamp | Headlamp ✓ | |
 
 **Race nutrition items — not tracked.** Col 7 entries "Gels", "Chews", "Cups", "Soft Flask" dropped from athlete onboarding. Fueling advice is provided in plan generation (Section I race fueling preferences); item availability is not logged. **Layer 0 cleanup:** move these col 7 entries to col 10 (Notes / Cues), or drop entirely.

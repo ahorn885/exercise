@@ -24,7 +24,7 @@ Sub-item closure:
   (e) Climbing gym vs outdoor split — TRN-013 (Outdoor) + TRN-014
       (Indoor Gym) are distinct canonical rows. `TestClimbingSplit`.
   (h) Cycling Trainer / Bike Trainer / Indoor Trainer dedup —
-      aliased to 'Bike trainer' equipment item via
+      aliased to 'Cycling trainer' equipment item via
       etl/sources/parse_substitutes.py:58; not a terrain.
       `TestLegacyTokensNotCanonical`.
   (j) Layer 2B classifier vocab boundary — every canonical TRN-xxx row
@@ -182,7 +182,7 @@ class TestLegacyTokensNotCanonical:
     into equipment) but has no canonical TRN-xxx row (silently dropped
     at terrain-name resolution). Bucket C (h): Trainer / Bike Trainer /
     Cycling Trainer / Indoor Trainer is an equipment item aliased to
-    'Bike trainer' via `etl/sources/parse_substitutes.py:58` — must NOT
+    'Cycling trainer' via `etl/sources/parse_substitutes.py:58` — must NOT
     appear as a canonical terrain row."""
 
     def test_varied_terrain_recognized_during_etl(self):

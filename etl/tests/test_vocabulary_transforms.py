@@ -99,11 +99,12 @@ def test_rename_rings_to_gymnastic_rings():
     assert transform_equipment_string("Rings") == (["Gymnastic Rings"], [])
 
 
-def test_rename_trainer_to_bike_trainer():
-    assert transform_equipment_string("Trainer") == (["Bike Trainer"], [])
+def test_rename_trainer_to_cycling_trainer():
+    # V4 §4: canonical renamed "Bike trainer" -> "Cycling trainer".
+    assert transform_equipment_string("Trainer") == (["Cycling trainer"], [])
     # Comma-split artifact "or Trainer"
     eq, _ = transform_equipment_string("TT Bike, or Trainer")
-    assert "Bike Trainer" in eq
+    assert "Cycling trainer" in eq
 
 
 def test_decompose_slash_string_kayak_packraft():
