@@ -33,6 +33,7 @@ import pytest
 
 from layer2e import Layer2EInputError, q_layer2e_nutrition_baseline_payload
 from layer4.context import (
+    AthleteSupplementRecord,
     Layer1HealthStatus,
     Layer1Identity,
     Layer1Lifestyle,
@@ -44,6 +45,17 @@ from layer4.context import (
     PhaseLoadBands,
     WeightResult,
 )
+
+# §5.5 race-day vocab fixture — the id→name pairs the suggestion engine reads
+# from layer0.supplement_vocabulary (names mirror the FC-1 seed).
+_RACE_DAY_VOCAB = [
+    ("electrolyte_mix", "Sodium/potassium/magnesium electrolyte mix"),
+    ("carb_powder", "Carbohydrate powder (maltodextrin/fructose blend)"),
+    ("caffeine", "Caffeine (anhydrous, pill, gum, gel)"),
+    ("magnesium", "Magnesium (glycinate, citrate, malate)"),
+    ("omega_3", "Omega-3 (EPA/DHA)"),
+    ("bcaas", "Branched-chain amino acids"),
+]
 from layer4.hashing import compute_payload_hash
 
 
@@ -58,14 +70,15 @@ class _FakeRow(dict):
 
 
 class _FakeCursor:
-    def __init__(self, row=None):
+    def __init__(self, row=None, rows=None):
         self._row = row
+        self._rows = rows or []
 
     def fetchone(self):
         return _FakeRow(self._row) if self._row else None
 
     def fetchall(self):
-        return []
+        return [_FakeRow(r) for r in self._rows]
 
 
 class _FakeConn:
@@ -89,13 +102,20 @@ class _FakeConn:
         for low, high in (base, build, peak, taper):
             self.queue_pla_row(low, high)
 
+    def queue_supplement_vocab(self, id_name_pairs):
+        # §5.5 multi-row response for the layer0.supplement_vocabulary read
+        # (fired last, after the per-phase PLA reads). List → fetchall path.
+        self.responses.append([
+            {"supplement_id": sid, "canonical_name": name}
+            for sid, name in id_name_pairs
+        ])
+
     def execute(self, sql, params=()):
         self.calls.append((sql, params))
-        if self.responses:
-            row = self.responses.pop(0)
-        else:
-            row = None
-        return _FakeCursor(row=row)
+        resp = self.responses.pop(0) if self.responses else None
+        if isinstance(resp, list):
+            return _FakeCursor(rows=resp)
+        return _FakeCursor(row=resp)
 
     def commit(self):
         pass
@@ -453,25 +473,57 @@ class TestPGEBaseline:
         assert p1.computed_at == p2.computed_at
         assert compute_payload_hash(p1) == compute_payload_hash(p2)
 
-    def test_pge_supplement_integration_stub(self):
+    def test_pge_race_day_supplement_suggestions(self):
+        # B1: PGE is 56 h → tier_extended_expedition → full additive set.
+        # Andy's default protocol is empty, caffeine strategy = maintain.
         db = _FakeConn()
         db.queue_pla_for_all_phases((8, 12), (10, 14), (12, 16), (6, 10))
-        # Lifestyle with free-text supplement notes triggers stub flag
-        ls = _andy_lifestyle().model_copy(
-            update={"supplement_protocol_notes": "creatine 5g/day, magnesium 400mg PM"}
-        )
-        payload = _andy_baseline_call(db, lifestyle=ls)
-        assert payload.supplement_integration.integrated == []
-        assert payload.supplement_integration.race_day_suggestions == []
-        flag_types = {f.flag_type for f in payload.coaching_flags}
-        assert "supplements_not_structured" in flag_types
+        db.queue_supplement_vocab(_RACE_DAY_VOCAB)
+        payload = _andy_baseline_call(db)
+        si = payload.supplement_integration
+        # Contraindication matching stays empty until B2.
+        assert si.integrated == []
+        assert si.contraindication_flags == []
+        assert si.contraindication_hitl_items == []
+        sugg = si.race_day_suggestions
+        assert {s.supplement_id for s in sugg} == {
+            "electrolyte_mix", "carb_powder", "caffeine",
+            "magnesium", "omega_3", "bcaas",
+        }
+        assert all(s.event_id == "pge-2026" for s in sugg)
+        assert all(not s.already_in_athlete_protocol for s in sugg)
+        # canonical_name resolves from the vocab, not the bare id.
+        carb = next(s for s in sugg if s.supplement_id == "carb_powder")
+        assert carb.canonical_name.startswith("Carbohydrate powder")
 
-    def test_pge_no_supplement_notes_no_stub_flag(self):
+    def test_race_day_already_in_protocol_tagged_and_caffeine_avoid(self):
+        # electrolyte_mix already taken → suggestion tagged, not dropped.
+        # caffeine_race_day_strategy=avoid → caffeine suggestion suppressed.
         db = _FakeConn()
         db.queue_pla_for_all_phases((8, 12), (10, 14), (12, 16), (6, 10))
-        payload = _andy_baseline_call(db)  # default lifestyle has supplement_protocol_notes=None
-        flag_types = {f.flag_type for f in payload.coaching_flags}
-        assert "supplements_not_structured" not in flag_types
+        db.queue_supplement_vocab(_RACE_DAY_VOCAB)
+        ls = _andy_lifestyle().model_copy(update={
+            "caffeine_race_day_strategy": "avoid",
+            "supplements": [AthleteSupplementRecord(
+                supplement_id="electrolyte_mix",
+                canonical_name="Sodium/potassium/magnesium electrolyte mix",
+                category="Race-day", frequency="as_needed",
+                timing="during_exercise",
+            )],
+        })
+        sugg = _andy_baseline_call(db, lifestyle=ls).supplement_integration.race_day_suggestions
+        ids = {s.supplement_id for s in sugg}
+        assert "caffeine" not in ids  # avoid strategy suppresses it
+        elec = next(s for s in sugg if s.supplement_id == "electrolyte_mix")
+        assert elec.already_in_athlete_protocol is True
+
+    def test_race_day_suggestions_empty_without_vocab(self):
+        # Vocab unavailable (table absent / no rows) → no suggestions, no raise.
+        db = _FakeConn()
+        db.queue_pla_for_all_phases((8, 12), (10, 14), (12, 16), (6, 10))
+        # No queue_supplement_vocab → the read returns no rows.
+        payload = _andy_baseline_call(db)
+        assert payload.supplement_integration.race_day_suggestions == []
 
 
 # ─── §13.7 time-based mode ───────────────────────────────────────────────────

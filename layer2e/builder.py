@@ -60,6 +60,7 @@ from datetime import date, datetime, timezone
 from typing import Any, Literal
 
 from layer4.context import (
+    AthleteSupplementRecord,
     CaffeineRacedayPlan,
     DailyNutritionBaseline,
     DailyPhaseTargets,
@@ -76,6 +77,7 @@ from layer4.context import (
     Layer2ETargetEvent,
     MacroTargets,
     RaceDayFueling,
+    RaceDaySupplementSuggestion,
     SleepDepFuelingOverlay,
     SupplementIntegrationPayload,
 )
@@ -713,45 +715,111 @@ def _build_race_day_fueling(
     return rdf, blocked
 
 
-# ─── §5.5 Supplement integration (STUB) ─────────────────────────────────────
+# ─── §5.5 Supplement integration ────────────────────────────────────────────
+
+# Race-day supplement suggestions by duration tier (§5.5). Additive — richer
+# tiers inherit the lighter tiers' set. caffeine is gated on the athlete's
+# race-day strategy below. sodium_bicarbonate is intentionally omitted: the
+# spec gates it on a high-intensity sub-discipline AND "athlete has tested it",
+# neither of which is captured today (no-padding — don't suggest on data we
+# don't have).
+_S_ELECTROLYTE = ("electrolyte_mix",
+                  "Replace sodium and fluid lost across the effort.")
+_S_CARB = ("carb_powder",
+           "Hit race-day CHO g/hr targets without leaning on solids alone.")
+_S_CAFFEINE = ("caffeine",
+               "Ergogenic for sustained efforts; dose per your race-day "
+               "caffeine strategy.")
+_S_MAGNESIUM = ("magnesium",
+                "Post-race neuromuscular recovery after prolonged load.")
+_S_OMEGA3 = ("omega_3",
+             "Anti-inflammatory and recovery support across a multi-day event.")
+_S_BCAAS = ("bcaas",
+            "Branched-chain support for muscle preservation on "
+            "expedition-length events.")
+
+_RACE_DAY_TIER_SUPPLEMENTS: dict[str, list[tuple[str, str]]] = {
+    "tier_short": [_S_ELECTROLYTE],
+    "tier_mid": [_S_ELECTROLYTE, _S_CARB, _S_CAFFEINE],
+    "tier_long": [_S_ELECTROLYTE, _S_CARB, _S_CAFFEINE, _S_MAGNESIUM],
+    "tier_expedition": [_S_ELECTROLYTE, _S_CARB, _S_CAFFEINE, _S_MAGNESIUM,
+                        _S_OMEGA3, _S_BCAAS],
+    "tier_extended_expedition": [_S_ELECTROLYTE, _S_CARB, _S_CAFFEINE,
+                                 _S_MAGNESIUM, _S_OMEGA3, _S_BCAAS],
+}
 
 
-def _stub_supplement_integration(
+def _load_supplement_vocab_names(db) -> dict[str, str]:
+    """`supplement_id -> canonical_name` for active `layer0.supplement_vocabulary`
+    rows. Best-effort: the table is ETL-owned and may be absent on a freshly
+    migrated DB, so any read fault yields {} (→ no race-day suggestions) rather
+    than breaking the nutrition baseline."""
+    try:
+        cur = db.execute(
+            "SELECT supplement_id, canonical_name "
+            "FROM layer0.supplement_vocabulary WHERE superseded_at IS NULL"
+        )
+        return {r["supplement_id"]: r["canonical_name"] for r in cur.fetchall()}
+    except Exception as exc:  # noqa: BLE001 — advisory; never break the baseline
+        print(f"_load_supplement_vocab_names failed (non-fatal): {exc}")
+        return {}
+
+
+def _race_day_supplement_suggestions(
+    db,
+    target_events: list[Layer2ETargetEvent],
+    supplements: list[AthleteSupplementRecord],
+    lifestyle: Layer1Lifestyle,
+) -> list[RaceDaySupplementSuggestion]:
+    # §5.5 — per event, suggest the duration tier's standard race-day
+    # supplements. Additive (never deletion/replacement); ones already in the
+    # athlete's protocol are emitted tagged `already_in_athlete_protocol=True`
+    # rather than dropped, so Layer 3/4 can see what was considered.
+    if not target_events:
+        return []
+    vocab_names = _load_supplement_vocab_names(db)
+    if not vocab_names:
+        return []
+    in_protocol = {s.supplement_id for s in supplements}
+    avoid_caffeine = lifestyle.caffeine_race_day_strategy == "avoid"
+    suggestions: list[RaceDaySupplementSuggestion] = []
+    for ev in target_events:
+        tier = _classify_duration_tier(ev.estimated_duration_hr)
+        for supp_id, reason in _RACE_DAY_TIER_SUPPLEMENTS[tier]:
+            if supp_id == "caffeine" and avoid_caffeine:
+                continue
+            name = vocab_names.get(supp_id)
+            if name is None:
+                continue  # vocab id absent (shouldn't happen for the seed ids)
+            suggestions.append(RaceDaySupplementSuggestion(
+                event_id=ev.event_id,
+                supplement_id=supp_id,
+                canonical_name=name,
+                reason=reason,
+                already_in_athlete_protocol=supp_id in in_protocol,
+            ))
+    return suggestions
+
+
+def _build_supplement_integration(
+    db,
     lifestyle: Layer1Lifestyle,
     target_events: list[Layer2ETargetEvent],
 ) -> tuple[SupplementIntegrationPayload, list[Layer2ECoachingFlag]]:
-    # Vertical-slice stub. The structured `lifestyle.supplements`
-    # (`list[AthleteSupplementRecord]`) is now populated by Layer 1 (§I.1 form
-    # refresh shipped), so the input-shape gap is closed — the §5.5 de-stub
-    # (Slice B) can run contraindication crosschecks against
-    # `layer0.supplement_vocabulary` over those records. Until then this stub
-    # only flags the legacy free-text `supplement_protocol_notes` when present.
-    flags: list[Layer2ECoachingFlag] = []
-    if lifestyle.supplement_protocol_notes:
-        flags.append(Layer2ECoachingFlag(
-            flag_type="supplements_not_structured",
-            event_id=None,
-            supplement_id=None,
-            message=(
-                "Athlete has supplement notes recorded as free text; "
-                "structured §I.1 form refresh required before 2E can "
-                "match against supplement_vocabulary for contraindication "
-                "and race-day suggestions."
-            ),
-            severity="low",
-            metadata={
-                "raw_notes_present": True,
-                "stub_phase": "vertical_slice_2_5",
-            },
-        ))
+    # §5.5 vertical slice B1: race-day suggestions only. Contraindication
+    # matching + Cardiac HITL gates are B2 (blocked on the supplement_vocabulary
+    # ↔ §B token reconciliation, D-21); pregnancy gates 3/4 deferred to #518.
+    race_day_suggestions = _race_day_supplement_suggestions(
+        db, target_events, lifestyle.supplements, lifestyle
+    )
     return (
         SupplementIntegrationPayload(
             integrated=[],
-            race_day_suggestions=[],
+            race_day_suggestions=race_day_suggestions,
             contraindication_flags=[],
             contraindication_hitl_items=[],
         ),
-        flags,
+        [],
     )
 
 
@@ -1049,11 +1117,12 @@ def q_layer2e_nutrition_baseline_payload(
     (4 SELECTs total). All other paths are pure-Python math against
     spec-internal constant tables.
 
-    Vertical-slice ship: §5.5 supplement integration + §5.8 heat acclim
-    are stubbed pending Layer 1 §I.1 form refresh + Plan Management
-    contract authorship. §5.9 HITL fires gate 5 only (gates 1-4 require
-    structured supplements). See module docstring for the full drift
-    map.
+    Vertical-slice ship: §5.5 supplement integration ships race-day
+    suggestions (B1); contraindication matching + Cardiac HITL gates are
+    B2 (blocked on the supplement_vocabulary ↔ §B token reconciliation,
+    D-21) and pregnancy gates 3/4 are deferred to #518. §5.8 heat acclim
+    stays stubbed pending Plan Management contract authorship. §5.9 HITL
+    emits no gates yet. See module docstring for the full drift map.
 
     Validation per §4 raises `Layer2EInputError`.
     """
@@ -1105,9 +1174,9 @@ def q_layer2e_nutrition_baseline_payload(
         )
         race_day.append(rdf)
 
-    # §5.5 supplement integration — stub.
-    supplement_payload, supplement_flags = _stub_supplement_integration(
-        lifestyle, target_events
+    # §5.5 supplement integration — race-day suggestions (B1).
+    supplement_payload, supplement_flags = _build_supplement_integration(
+        db, lifestyle, target_events
     )
 
     # §5.6 dietary pattern adjustments.
