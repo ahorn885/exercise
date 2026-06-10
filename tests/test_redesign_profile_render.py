@@ -358,14 +358,20 @@ def test_profile_supplements_card_renders(monkeypatch):
                  category='Race-day', typical_dose='per session', primary_effect='...'),
     ]
     supps = [_FakeRow(id=7, supplement_id='creatine_monohydrate', canonical_name='Creatine monohydrate',
-                      category='Performance', dose='5 g', timing='morning', notes='micronized')]
+                      category='Performance', dose='5 g', frequency='daily',
+                      timing='post_exercise', notes='micronized')]
     client = _client(monkeypatch, _SuppConn(vocab=vocab, supps=supps,
                                             profile={'primary_sport': 'run', 'updated_at': 'x'}))
     html = client.get('/profile/?tab=athlete').get_data(as_text=True)
     assert 'Current supplements' in html
-    assert 'Creatine monohydrate' in html and 'morning' in html      # the record
+    assert 'Creatine monohydrate' in html                             # the record
+    # Stored tokens render via their vocab labels, not the raw token.
+    assert 'Daily' in html and 'Post-exercise' in html
     assert 'optgroup label="Performance"' in html                     # grouped picker
     assert 'optgroup label="Race-day"' in html
+    # Frequency/timing are closed-vocab selects now (not free-text inputs).
+    assert 'name="frequency"' in html and 'name="timing"' in html
+    assert '<input type="text" name="timing"' not in html
     assert '/profile/supplement/add' in html                          # add form
     assert '/profile/supplement/7/delete' in html                     # delete form
     assert 'style="' not in html
@@ -381,13 +387,32 @@ def test_supplement_add_resolves_name_from_vocab(monkeypatch):
     client = _client(monkeypatch, _Conn(profile={}))
     resp = client.post('/profile/supplement/add', data={
         'supplement_id': 'creatine_monohydrate', 'dose': '5 g',
-        'timing': 'morning', 'notes': 'micronized', 'canonical_name': 'SPOOFED'})
+        'frequency': 'daily', 'timing': 'post_exercise',
+        'notes': 'micronized', 'canonical_name': 'SPOOFED'})
     assert resp.status_code in (302, 303)
     # Display fields come from the vocab, not the client-supplied 'canonical_name'.
     assert captured['canonical_name'] == 'Creatine monohydrate'
     assert captured['category'] == 'Performance'
-    assert captured['dose'] == '5 g' and captured['timing'] == 'morning'
+    assert captured['dose'] == '5 g'
+    # frequency/timing persist as their vocab tokens.
+    assert captured['frequency'] == 'daily' and captured['timing'] == 'post_exercise'
     assert captured['notes'] == 'micronized'
+
+
+def test_supplement_add_filters_frequency_timing_to_vocab(monkeypatch):
+    captured = {}
+    monkeypatch.setattr(_profile, 'vocab_index', lambda db: {
+        'creatine_monohydrate': {'supplement_id': 'creatine_monohydrate',
+                                 'canonical_name': 'Creatine monohydrate', 'category': 'Performance'}})
+    monkeypatch.setattr(_profile, 'add_athlete_supplement', lambda db, uid, **kw: captured.update(kw))
+    monkeypatch.setitem(_appmod.app.config, 'WTF_CSRF_ENABLED', False)
+    client = _client(monkeypatch, _Conn(profile={}))
+    resp = client.post('/profile/supplement/add', data={
+        'supplement_id': 'creatine_monohydrate',
+        'frequency': 'bogus', 'timing': 'whenever'})  # neither in the closed vocab
+    assert resp.status_code in (302, 303)
+    # Out-of-vocab tokens are dropped to NULL rather than stored.
+    assert captured['frequency'] is None and captured['timing'] is None
 
 
 def test_supplement_add_rejects_unknown_id(monkeypatch):
@@ -429,10 +454,25 @@ def test_supplement_repo_sql_shape():
     db = _Rec()
     _supp_repo.list_athlete_supplements(db, 1)
     _supp_repo.add_athlete_supplement(db, 1, supplement_id='x', canonical_name='X',
-                                      category='Health', dose='1', timing='am', notes=None)
+                                      category='Health', dose='1', frequency='daily',
+                                      timing='post_exercise', notes=None)
     _supp_repo.delete_athlete_supplement(db, 1, 5)
     sqls = [c[0] for c in db.calls]
     assert any('FROM athlete_supplements WHERE user_id' in s for s in sqls)
     assert any('INSERT INTO athlete_supplements' in s for s in sqls)
+    # frequency rides alongside timing in both read and write paths.
+    assert any('frequency' in s and 'INSERT INTO athlete_supplements' in s for s in sqls)
+    ins_call = next(c for c in db.calls if 'INSERT INTO athlete_supplements' in c[0])
+    assert 'daily' in ins_call[1] and 'post_exercise' in ins_call[1]
     del_call = next(c for c in db.calls if 'DELETE' in c[0])
     assert del_call[1] == (5, 1)  # (id, user_id) — scoped
+
+
+def test_supplement_vocab_cleaners():
+    # Closed-vocab guards: in-vocab passes, anything else (incl. blank) -> None.
+    assert _supp_repo.clean_frequency('twice_daily') == 'twice_daily'
+    assert _supp_repo.clean_frequency('  as_needed ') == 'as_needed'
+    assert _supp_repo.clean_frequency('bogus') is None
+    assert _supp_repo.clean_frequency('') is None and _supp_repo.clean_frequency(None) is None
+    assert _supp_repo.clean_timing('during_exercise') == 'during_exercise'
+    assert _supp_repo.clean_timing('whenever') is None

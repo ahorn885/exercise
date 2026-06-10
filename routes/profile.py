@@ -57,6 +57,9 @@ from race_events_repo import list_athlete_race_events
 from athlete_supplements_repo import (
     load_supplement_vocab, vocab_index, list_athlete_supplements,
     add_athlete_supplement, delete_athlete_supplement,
+    clean_frequency, clean_timing,
+    SUPPLEMENT_FREQUENCIES, SUPPLEMENT_TIMINGS,
+    FREQUENCY_LABELS, TIMING_LABELS,
 )
 from routes import provider_auth as pa
 
@@ -427,6 +430,10 @@ def edit():
         plan_nutrition=plan_nutrition,
         supplements=supplements,
         supplement_vocab=supplement_vocab,
+        supplement_frequencies=SUPPLEMENT_FREQUENCIES,
+        supplement_timings=SUPPLEMENT_TIMINGS,
+        frequency_labels=FREQUENCY_LABELS,
+        timing_labels=TIMING_LABELS,
         unit_preference_choices=UNIT_PREFERENCE_CHOICES,
         memory=memory,
         preference_categories=PREFERENCE_CATEGORIES,
@@ -629,7 +636,10 @@ def add_supplement():
         canonical_name=vocab_row['canonical_name'],
         category=vocab_row.get('category'),
         dose=_opt('dose'),
-        timing=_opt('timing'),
+        # frequency/timing are closed vocabs — drop anything not in the set so a
+        # tampered POST stores NULL rather than a junk token.
+        frequency=clean_frequency(request.form.get('frequency')),
+        timing=clean_timing(request.form.get('timing')),
         notes=_opt('notes'),
     )
     db.commit()

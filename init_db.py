@@ -1573,11 +1573,17 @@ _PG_MIGRATIONS = [
         canonical_name TEXT NOT NULL,
         category TEXT,
         dose TEXT,
+        frequency TEXT,
         timing TEXT,
         notes TEXT,
         created_at TIMESTAMP NOT NULL DEFAULT NOW()
     )""",
     "CREATE INDEX IF NOT EXISTS athlete_supplements_user_id_idx ON athlete_supplements(user_id)",
+    # 2E-6 §I.1 — frequency/timing moved from free text to closed vocabs
+    # (athlete_supplements_repo.SUPPLEMENT_FREQUENCIES/TIMINGS). frequency is a
+    # new structured axis; add it idempotently for DBs that already created the
+    # table from this PR's first commit (the CREATE above only fires on fresh).
+    "ALTER TABLE athlete_supplements ADD COLUMN IF NOT EXISTS frequency TEXT",
     # D-73 Phase 1.2A (D-51 §3.5) — strength_benchmarks 1:1 sub-table.
     # PK = user_id so each athlete has at most one row; populated lazily when
     # the athlete enters benchmarks. Right/left split on side-plank, single-leg

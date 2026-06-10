@@ -16,6 +16,46 @@ from __future__ import annotations
 from typing import Any
 
 
+# Closed vocabularies for the structured frequency/timing selects (2E-6 §I.1).
+# Ordered (value, label) pairs — `value` is the stored token, `label` the UI
+# string. These are app-owned *capture* enums (how often / when an athlete takes
+# something), distinct from the ETL-owned Layer 0 supplement catalog. Frequency
+# and timing are orthogonal — e.g. creatine is "Daily" + "Post-exercise",
+# caffeine is "As needed" + "Pre-exercise" — so they're two fields, not one.
+SUPPLEMENT_FREQUENCIES: list[tuple[str, str]] = [
+    ("daily", "Daily"),
+    ("twice_daily", "Twice daily"),
+    ("weekly_few", "A few times a week"),
+    ("as_needed", "As needed"),
+]
+SUPPLEMENT_TIMINGS: list[tuple[str, str]] = [
+    ("pre_exercise", "Pre-exercise"),
+    ("during_exercise", "During exercise"),
+    ("post_exercise", "Post-exercise"),
+    ("morning", "Morning"),
+    ("evening", "Evening / bedtime"),
+    ("with_meals", "With meals"),
+    ("anytime", "Anytime"),
+]
+
+# Token -> label, for rendering a stored record back to its display string.
+FREQUENCY_LABELS: dict[str, str] = dict(SUPPLEMENT_FREQUENCIES)
+TIMING_LABELS: dict[str, str] = dict(SUPPLEMENT_TIMINGS)
+
+
+def clean_frequency(value: str | None) -> str | None:
+    """Return the posted frequency only if it's in the closed vocab, else None —
+    a tampered or blank POST stores NULL rather than a junk token."""
+    v = (value or "").strip()
+    return v if v in FREQUENCY_LABELS else None
+
+
+def clean_timing(value: str | None) -> str | None:
+    """Return the posted timing only if it's in the closed vocab, else None."""
+    v = (value or "").strip()
+    return v if v in TIMING_LABELS else None
+
+
 def load_supplement_vocab(db) -> list[dict]:
     """Active `layer0.supplement_vocabulary` rows for the add-supplement
     picker, ordered by category then name.
@@ -50,7 +90,8 @@ def list_athlete_supplements(db, user_id) -> list[dict]:
     if user_id is None:
         return []
     rows = db.execute(
-        "SELECT id, supplement_id, canonical_name, category, dose, timing, notes "
+        "SELECT id, supplement_id, canonical_name, category, dose, frequency, "
+        "       timing, notes "
         "  FROM athlete_supplements WHERE user_id = ? "
         " ORDER BY created_at, id",
         (user_id,),
@@ -60,17 +101,19 @@ def list_athlete_supplements(db, user_id) -> list[dict]:
 
 def add_athlete_supplement(
     db, user_id, *, supplement_id: str, canonical_name: str,
-    category: str | None, dose: str | None, timing: str | None,
-    notes: str | None,
+    category: str | None, dose: str | None, frequency: str | None,
+    timing: str | None, notes: str | None,
 ) -> None:
     """Insert one structured record. Caller resolves `canonical_name`/`category`
-    from the vocab index (don't trust client-supplied display fields). Caller
-    commits."""
+    from the vocab index (don't trust client-supplied display fields) and
+    validates `frequency`/`timing` against the closed vocabs. Caller commits."""
     db.execute(
         "INSERT INTO athlete_supplements "
-        "  (user_id, supplement_id, canonical_name, category, dose, timing, notes) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?)",
-        (user_id, supplement_id, canonical_name, category, dose, timing, notes),
+        "  (user_id, supplement_id, canonical_name, category, dose, frequency, "
+        "   timing, notes) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        (user_id, supplement_id, canonical_name, category, dose, frequency,
+         timing, notes),
     )
 
 
