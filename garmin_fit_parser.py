@@ -696,6 +696,28 @@ def _dump_fit(fit_bytes: bytes) -> dict:
         sleep_stage_events, sleep_end_ts=sleep_end_ts,
     )
 
+    # Surface candidate sub-score slot values for `[346] field_5/7/8/10`.
+    # The slot ↔ Stress/Light/REM/Awake mapping isn't locked; the
+    # diagnostic carries raw values, intra-night ranks, and qualitative
+    # bands so the operator can correlate against Connect's per-
+    # contributor ratings across multiple nights. See
+    # `_sleep_sub_score_slot_candidates` for the disambiguation strategy.
+    sleep_sub_score_slot_candidates = []
+    for sample in generic_samples.get(str(_SLEEP_DATA_SCORE_MSG), []):
+        raw = {
+            slot: sample.get(slot, '')
+            for slot in _SLEEP_SUB_SCORE_SLOTS
+        }
+        candidates = _sleep_sub_score_slot_candidates(
+            raw['field_5'], raw['field_7'],
+            raw['field_8'], raw['field_10'],
+        )
+        if candidates:
+            sleep_sub_score_slot_candidates.append({
+                'raw': raw,
+                'candidates': candidates,
+            })
+
     return {
         'message_counts': dict(sorted(msg_counts.items())),
         'session_fields': session_fields,
@@ -707,6 +729,7 @@ def _dump_fit(fit_bytes: bytes) -> dict:
         'sleep_stage_decode_candidates': sleep_stage_candidates,
         'sleep_stage_events': sleep_stage_events,
         'sleep_stage_minutes_by_code': sleep_stage_minutes,
+        'sleep_sub_score_slot_candidates': sleep_sub_score_slot_candidates,
     }
 
 
@@ -1228,6 +1251,71 @@ def _sleep_stage_decode_candidates(f5, f6, f7) -> list:
     return out
 
 
+# `[346]` sub-score slot positions whose Stress / Light / REM / Awake
+# alignment isn't locked yet. field_4 (Duration) and field_9 (Deep min)
+# are already pinned to their own keys; field_14/_15 carry the stress
+# sample count + sum — so the four remaining contributor sub-scores
+# live in these positions in some unknown order.
+_SLEEP_SUB_SCORE_SLOTS = ('field_5', 'field_7', 'field_8', 'field_10')
+
+
+def _sleep_sub_score_slot_candidates(f5, f7, f8, f10) -> list:
+    """Per-night diagnostic for `[346] field_5 / 7 / 8 / 10` — the four
+    remaining sub-score positions for Stress / Light / REM / Awake.
+
+    Returns one dict per slot with the raw value, a 1-to-4 rank (1 = the
+    lowest of the four that night, 4 = highest), and the qualitative band
+    under Garmin's standard 0-100 quartile bands (Poor/Fair/Good/Excellent
+    at 25/50/75 cutoffs).
+
+    The standard quartiles don't apply here directly — empirically most
+    values land in 80-100 on every contributor — so rank-relative
+    comparison is the useful signal. On a night where Connect rates one
+    contributor distinctly worse than the others (e.g. "Light: Poor,
+    others Good/Excellent"), the slot with rank=1 is the candidate for
+    that contributor name. Repeated across enough nights, a consistent
+    correlation locks the slot → name mapping.
+
+    Skips slots whose raw value is None or non-integer. Ranks tie-break
+    by slot order (earliest wins) so output stays stable across runs.
+    """
+    raws = []
+    for slot, raw in (
+        ('field_5', f5), ('field_7', f7),
+        ('field_8', f8), ('field_10', f10),
+    ):
+        if raw is None:
+            continue
+        try:
+            raws.append((slot, int(raw)))
+        except (TypeError, ValueError):
+            continue
+    if not raws:
+        return []
+
+    ordered = sorted(enumerate(raws), key=lambda ix: (ix[1][1], ix[0]))
+    rank_by_slot = {slot: i + 1 for i, (_, (slot, _)) in enumerate(ordered)}
+
+    def _band(v: int) -> str:
+        if v <= 25:
+            return 'Poor'
+        if v <= 50:
+            return 'Fair'
+        if v <= 75:
+            return 'Good'
+        return 'Excellent'
+
+    return [
+        {
+            'slot': slot,
+            'raw': raw,
+            'rank': rank_by_slot[slot],
+            'band_garmin_std': _band(raw),
+        }
+        for slot, raw in raws
+    ]
+
+
 def sleep_stress_avg(stress_sum: int, sleep_min: int) -> float | None:
     """Garmin Connect's "Stress avg" for a night's sleep, computed from
     `[346] field_15` (sum of all stress samples taken during sleep) and
@@ -1400,9 +1488,12 @@ _METRICS_WELLNESS_SUMMARY_MSG = 281
 # The remaining positions in field_5/7/8/10 likely carry sub-scores
 # for the other contributors but the slot-to-name mapping isn't locked
 # — most values land in the Excellent band even on nights when Connect
-# rates Light or REM lower, so the qualitative thresholds don't align.
-# Surfaced as an ordered list pending a night where Connect ratings
-# diverge enough to disambiguate.
+# rates Light or REM lower, so the absolute quartile thresholds don't
+# align. The inspector dumps an `_sleep_sub_score_slot_candidates`
+# block per [346] sample carrying raw values + intra-night rank +
+# qualitative band so the operator can correlate the rank-1 slot
+# against Connect's worst-rated contributor across nights; once a
+# stable correlation appears the slot ↔ name mapping locks.
 _SLEEP_DATA_SCORE_MSG = 346
 
 # `_SLEEP_DATA.fit` `GenericMessage[382]` — sleep event counts.

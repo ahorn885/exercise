@@ -595,6 +595,60 @@ def test_find_sleep_stage_decoder_needs_at_least_two_nights():
     assert find_sleep_stage_decoder([]) == []
 
 
+# ── [346] sub-score slot candidates (Stress/Light/REM/Awake unmapped) ────────
+
+def test_sleep_sub_score_slot_candidates_emits_one_row_per_present_field():
+    """`_sleep_sub_score_slot_candidates` returns one entry per field with a
+    non-None value, carrying slot name, raw value, intra-night rank, and
+    qualitative band. The slot ↔ contributor name correlation is done by
+    the operator across multiple nights using the rank column."""
+    from garmin_fit_parser import _sleep_sub_score_slot_candidates
+    # Synthetic night: field_8 lowest (the candidate for "worst contributor"),
+    # field_5 highest, others in the middle.
+    candidates = _sleep_sub_score_slot_candidates(95, 88, 60, 82)
+    assert candidates == [
+        {'slot': 'field_5',  'raw': 95, 'rank': 4, 'band_garmin_std': 'Excellent'},
+        {'slot': 'field_7',  'raw': 88, 'rank': 3, 'band_garmin_std': 'Excellent'},
+        {'slot': 'field_8',  'raw': 60, 'rank': 1, 'band_garmin_std': 'Good'},
+        {'slot': 'field_10', 'raw': 82, 'rank': 2, 'band_garmin_std': 'Excellent'},
+    ]
+
+
+def test_sleep_sub_score_slot_candidates_skips_none_fields():
+    """Real `[346]` samples occasionally lack a field. The helper should
+    drop the missing slot rather than treat None as a low value."""
+    from garmin_fit_parser import _sleep_sub_score_slot_candidates
+    candidates = _sleep_sub_score_slot_candidates(95, None, 60, 82)
+    assert [c['slot'] for c in candidates] == ['field_5', 'field_8', 'field_10']
+    assert all(1 <= c['rank'] <= 3 for c in candidates)
+    # No candidates when every field is missing.
+    assert _sleep_sub_score_slot_candidates(None, None, None, None) == []
+
+
+def test_sleep_sub_score_slot_candidates_bands_match_garmin_quartiles():
+    """Band cutoffs are the standard Garmin 0-100 quartile breaks at 25/50/75.
+    Empirically this metric family runs hot (mostly 80-100) so absolute
+    bands aren't the primary signal — pin them anyway so the dump output
+    stays consistent."""
+    from garmin_fit_parser import _sleep_sub_score_slot_candidates
+    candidates = _sleep_sub_score_slot_candidates(10, 40, 70, 99)
+    by_slot = {c['slot']: c for c in candidates}
+    assert by_slot['field_5']['band_garmin_std']  == 'Poor'
+    assert by_slot['field_7']['band_garmin_std']  == 'Fair'
+    assert by_slot['field_8']['band_garmin_std']  == 'Good'
+    assert by_slot['field_10']['band_garmin_std'] == 'Excellent'
+
+
+def test_sleep_sub_score_slot_candidates_breaks_ties_by_slot_order():
+    """When two slots carry the same raw value, rank goes by slot order
+    (earliest wins rank 1). Keeps dump output stable across runs and
+    avoids spurious "the ranking flipped" interpretations."""
+    from garmin_fit_parser import _sleep_sub_score_slot_candidates
+    candidates = _sleep_sub_score_slot_candidates(80, 80, 80, 80)
+    ranks = {c['slot']: c['rank'] for c in candidates}
+    assert ranks == {'field_5': 1, 'field_7': 2, 'field_8': 3, 'field_10': 4}
+
+
 # ── [275] sleep-stage transition walker + minute tally ──────────────────────
 
 def test_stage_minutes_from_events_tallies_between_adjacent_events():
