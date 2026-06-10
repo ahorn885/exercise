@@ -195,13 +195,6 @@
       <input type="text" name="gi_triggers_known" class="form-control form-control-sm"
              placeholder="e.g. high fructose, dairy mid-effort"
              value="{{ profile.gi_triggers_known or '' }}"></label>
-    <div>
-      <label class="field"><span class="lbl">Current supplements</span>
-        <textarea name="supplement_protocol_notes" rows="2" class="form-control form-control-sm"
-                  placeholder="e.g. creatine 5g daily, electrolyte mix on long days">{{ profile.supplement_protocol_notes or '' }}</textarea></label>
-      <p class="pf-hint">What you already take — so the coach can account for it and avoid conflicts.
-        Recommended supplements will come from your plan.</p>
-    </div>
   </div>
 
   <div class="pf-save">
@@ -257,6 +250,77 @@
     recompute();
   })();
 </script>
+
+{# 2E-6 — structured supplement capture. Add/delete are their own forms (can't
+   nest inside the main profile form); mirrors the coach-memory editor. #}
+<div class="card card-pad stack pf-nutrition">
+  <div>
+    <p class="eyebrow">● Current supplements</p>
+    <p class="pf-hint">What you already take — so the coach can account for it and avoid conflicts.
+      Recommended supplements will come from your plan.</p>
+  </div>
+
+  {% if supplements %}
+  <ul class="supp-list">
+    {% for s in supplements %}
+    <li class="supp-row">
+      <div class="supp-main">
+        <span class="supp-name">{{ s.canonical_name }}</span>
+        {% if s.category %}<span class="chip">{{ s.category }}</span>{% endif %}
+        {% if s.dose %}<span class="supp-meta">{{ s.dose }}</span>{% endif %}
+        {% if s.frequency %}<span class="chip">{{ frequency_labels.get(s.frequency, s.frequency) }}</span>{% endif %}
+        {% if s.timing %}<span class="rail-note">{{ timing_labels.get(s.timing, s.timing) }}</span>{% endif %}
+        {% if s.notes %}<span class="rail-note">· {{ s.notes }}</span>{% endif %}
+      </div>
+      <form method="post" action="{{ url_for('profile.delete_supplement', supp_id=s.id) }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button type="submit" class="btn btn-text supp-del" aria-label="Remove {{ s.canonical_name }}">Remove</button>
+      </form>
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p class="pf-hint">No supplements added yet.</p>
+  {% endif %}
+
+  {% if supplement_vocab %}
+  <form method="post" action="{{ url_for('profile.add_supplement') }}" class="supp-add pf-grid">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <label class="field"><span class="lbl">Supplement</span>
+      <select name="supplement_id" class="form-select form-select-sm" required>
+        <option value="">Choose…</option>
+        {% for cat, items in supplement_vocab|groupby('category') %}
+        <optgroup label="{{ cat }}">
+          {% for v in items %}
+          <option value="{{ v.supplement_id }}">{{ v.canonical_name }}</option>
+          {% endfor %}
+        </optgroup>
+        {% endfor %}
+      </select></label>
+    <label class="field"><span class="lbl">Dose</span>
+      <input type="text" name="dose" class="form-control form-control-sm" placeholder="e.g. 5 g"></label>
+    <label class="field"><span class="lbl">Frequency</span>
+      <select name="frequency" class="form-select form-select-sm">
+        <option value="">—</option>
+        {% for value, label in supplement_frequencies %}
+        <option value="{{ value }}">{{ label }}</option>
+        {% endfor %}
+      </select></label>
+    <label class="field"><span class="lbl">Timing</span>
+      <select name="timing" class="form-select form-select-sm">
+        <option value="">—</option>
+        {% for value, label in supplement_timings %}
+        <option value="{{ value }}">{{ label }}</option>
+        {% endfor %}
+      </select></label>
+    <label class="field field-wide"><span class="lbl">Notes (optional)</span>
+      <input type="text" name="notes" class="form-control form-control-sm" placeholder="caveats, brand, interactions…"></label>
+    <div class="supp-add-actions"><button type="submit" class="btn btn-primary">Add supplement</button></div>
+  </form>
+  {% else %}
+  <p class="pf-hint mono">Supplement catalog unavailable right now — try again shortly.</p>
+  {% endif %}
+</div>
 
 {# Plan-specific daily baseline — only when a plan is live (slice 4 PlanNutrition). #}
 {% if plan_nutrition %}

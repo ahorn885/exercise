@@ -1559,6 +1559,31 @@ _PG_MIGRATIONS = [
     "ALTER TABLE athlete_profile ADD COLUMN IF NOT EXISTS salt_electrolyte_tolerance TEXT",
     "ALTER TABLE athlete_profile ADD COLUMN IF NOT EXISTS sleep_deprivation_max_hrs_continuous_awake SMALLINT",
     "ALTER TABLE athlete_profile ADD COLUMN IF NOT EXISTS sleep_deprivation_strategy_notes TEXT",
+    # 2E-6 §I.1 — structured supplement capture. Promotes the free-text
+    # `athlete_profile.supplement_protocol_notes` to per-supplement records that
+    # soft-reference `layer0.supplement_vocabulary.supplement_id` (no hard FK —
+    # the vocab lives in a different schema and is ETL-owned). `canonical_name` +
+    # `category` are denormalized so the profile + Layer 1 read without a
+    # cross-schema join. The Layer 2E supplement_integration de-stub (the
+    # recommendation + contraindication engine) consumes these next.
+    """CREATE TABLE IF NOT EXISTS athlete_supplements (
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER NOT NULL REFERENCES users(id),
+        supplement_id TEXT NOT NULL,
+        canonical_name TEXT NOT NULL,
+        category TEXT,
+        dose TEXT,
+        frequency TEXT,
+        timing TEXT,
+        notes TEXT,
+        created_at TIMESTAMP NOT NULL DEFAULT NOW()
+    )""",
+    "CREATE INDEX IF NOT EXISTS athlete_supplements_user_id_idx ON athlete_supplements(user_id)",
+    # 2E-6 §I.1 — frequency/timing moved from free text to closed vocabs
+    # (athlete_supplements_repo.SUPPLEMENT_FREQUENCIES/TIMINGS). frequency is a
+    # new structured axis; add it idempotently for DBs that already created the
+    # table from this PR's first commit (the CREATE above only fires on fresh).
+    "ALTER TABLE athlete_supplements ADD COLUMN IF NOT EXISTS frequency TEXT",
     # D-73 Phase 1.2A (D-51 §3.5) — strength_benchmarks 1:1 sub-table.
     # PK = user_id so each athlete has at most one row; populated lazily when
     # the athlete enters benchmarks. Right/left split on side-plank, single-leg
