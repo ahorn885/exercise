@@ -47,6 +47,8 @@ _RENAME: dict[str, str] = {
     "or trainer": "Cycling trainer",  # comma-split artifact noted in audit
     # Stand-up Paddleboard (renamed from "SUP" — V4 §4)
     "stand-up paddleboard": "Stand-up Paddleboard",
+    # TT bike — normalize legacy exercise token to the existing 0C vessel (V4b).
+    "tt bike": "TT / triathlon bike",
     # Fix typo
     "race belt)": "Race belt",
 }
@@ -121,6 +123,16 @@ _ROLLUP: dict[str, str] = {
     "carabiners": "Climbing — roped",
     "anchor hardware": "Climbing — roped",
     "quickdraws": "Climbing — roped",
+    # V4b: legacy 0A/0B aggregate climbing tokens reconcile into the existing
+    # roped-climbing toggle (the toggle IS the "climbing kit" bundle — we do not
+    # track each item, nor add a redundant equipment row).
+    "climbing gear": "Climbing — roped",
+    "climbing wall": "Climbing — roped",
+    "harness": "Climbing — roped",
+    # V4b: legacy training-wall token. NOT routed to Bouldering — bouldering is
+    # not a discipline in any of our sports and is slated for removal (see
+    # follow-up issue); route to the surviving roped-climbing toggle instead.
+    "climbing holds": "Climbing — roped",
     # Bouldering
     "bouldering shoes": "Bouldering",
     "crash pad": "Bouldering",
@@ -133,7 +145,9 @@ _ROLLUP: dict[str, str] = {
     "mountaineering boots": "Mountaineering",
     "mountaineering harness": "Mountaineering",
     "mechanical ascender": "Mountaineering",
+    "mountaineering kit": "Mountaineering",  # V4b: legacy 0B aggregate token
     # Touring/AT ski setup
+    "touring ski kit": "Touring/AT ski setup",  # V4b: legacy 0B aggregate token
     "touring skis": "Touring/AT ski setup",
     "alpine skis": "Touring/AT ski setup",
     "ski boots (touring)": "Touring/AT ski setup",
