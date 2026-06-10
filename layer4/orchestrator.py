@@ -892,7 +892,57 @@ def orchestrate_plan_create(
     )
     payload = _apply_locale_assign(db, user_id, payload, layer2c_payloads)
     payload = _apply_rx_wire(db, user_id, payload, layer2c_payloads)
+    # Layer 5A — stash the nutrition inputs (2E payload + body weight + event
+    # dates) so the post-`ready` deterministic nutrition stage + the manual
+    # regenerate action can rebuild without re-running this cone, pinned to
+    # exactly what the plan was built on. Best-effort: a stash fault must NEVER
+    # break plan generation, so it is isolated and never propagates. Reached
+    # only on the completing pass (budget-incomplete passes raise before here);
+    # the write rides the caller's transaction (committed at the ready-flip).
+    _stash_plan_nutrition_inputs(db, user_id, plan_version_id, cone, race_event)
     return payload
+
+
+def _stash_plan_nutrition_inputs(
+    db: Any,
+    user_id: int,
+    plan_version_id: int,
+    cone: "_UpstreamFullCone",
+    race_event: Any,
+) -> None:
+    """Best-effort capture of the Layer 5A nutrition inputs for `plan_version_id`.
+
+    WRITE-ONLY / advisory — never an input to a Layer 4 cache key. Isolated so
+    any fault (a missing body weight, a serialization surprise) is logged and
+    swallowed rather than failing the generation it rides alongside.
+    """
+    try:
+        from plan_nutrition_repo import persist_plan_nutrition_inputs
+
+        # Body weight is optional on Layer 1; without it the energy model can't
+        # run, so skip cleanly (no stash) rather than persisting unusable inputs.
+        body_weight = cone.layer1_payload.performance.body_weight_kg
+        if body_weight is None or float(body_weight) <= 0:
+            return
+
+        event_dates: dict[str, str] = {}
+        if race_event is not None:
+            event_dates[str(race_event.race_event_id)] = (
+                race_event.event_date.isoformat()
+            )
+        persist_plan_nutrition_inputs(
+            db,
+            user_id,
+            plan_version_id,
+            layer2e_payload_json=cone.layer2e_payload.model_dump(mode="json"),
+            body_weight_kg=float(body_weight),
+            event_dates=event_dates,
+        )
+    except Exception as exc:  # noqa: BLE001 — advisory stash must not break gen
+        print(
+            f"_stash_plan_nutrition_inputs: failed for "
+            f"plan_version_id={plan_version_id} (non-fatal): {exc}"
+        )
 
 
 def _max_etl_version(versions: list[str]) -> str:

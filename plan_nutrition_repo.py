@@ -73,6 +73,61 @@ def load_plan_nutrition_by_version(
     return PlanNutrition.model_validate(_decode_payload(row["payload_json"]))
 
 
+def persist_plan_nutrition_inputs(
+    db: Any,
+    user_id: int,
+    plan_version_id: int,
+    *,
+    layer2e_payload_json: dict[str, Any],
+    body_weight_kg: float,
+    event_dates: dict[str, str],
+) -> None:
+    """Upsert the Layer 5A inputs snapshot for `plan_version_id`.
+
+    `layer2e_payload_json` is `Layer2EPayload.model_dump(mode="json")`;
+    `event_dates` maps event_id -> ISO date string (matching the
+    `RaceDayFueling.event_id` keys). Idempotent on `plan_version_id`. Caller
+    owns the transaction boundary — this helper does NOT commit.
+    """
+    blob = {
+        "layer2e_payload": layer2e_payload_json,
+        "body_weight_kg": body_weight_kg,
+        "event_dates": event_dates,
+    }
+    db.execute(
+        """INSERT INTO plan_nutrition_inputs
+               (plan_version_id, user_id, payload_json)
+            VALUES (?, ?, ?)
+            ON CONFLICT (plan_version_id) DO UPDATE SET
+                user_id = EXCLUDED.user_id,
+                payload_json = EXCLUDED.payload_json,
+                updated_at = NOW()""",
+        (plan_version_id, user_id, json.dumps(blob)),
+    )
+
+
+def load_plan_nutrition_inputs(
+    db: Any, plan_version_id: int
+) -> dict[str, Any] | None:
+    """Load the Layer 5A inputs snapshot for `plan_version_id`, or None.
+
+    Returns the decoded blob ``{"layer2e_payload": ..., "body_weight_kg": ...,
+    "event_dates": ...}``. None when no snapshot exists (e.g. a plan generated
+    before this feature shipped, or an open-ended plan whose generation predates
+    the stash) — callers treat that as "nutrition not available".
+    """
+    cur = db.execute(
+        """SELECT payload_json
+             FROM plan_nutrition_inputs
+            WHERE plan_version_id = ?""",
+        (plan_version_id,),
+    )
+    row = cur.fetchone()
+    if row is None:
+        return None
+    return _decode_payload(row["payload_json"])
+
+
 def _decode_payload(raw: Any) -> dict[str, Any]:
     """Normalize the `payload_json` column to a Python dict.
 

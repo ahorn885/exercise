@@ -21,7 +21,9 @@ from layer4.payload import CardioBlock, HRTarget, PlanSession, SessionPhaseMetad
 from layer5 import build_plan_nutrition
 from plan_nutrition_repo import (
     load_plan_nutrition_by_version,
+    load_plan_nutrition_inputs,
     persist_plan_nutrition,
+    persist_plan_nutrition_inputs,
 )
 
 BW = 70.0
@@ -203,3 +205,36 @@ def test_load_tolerates_dict_payload_from_jsonb_adapter():
     loaded = load_plan_nutrition_by_version(conn, 99)
     assert loaded is not None
     assert loaded.plan_version_id == 99
+
+
+# ─── inputs snapshot ─────────────────────────────────────────────────────────
+
+
+def test_inputs_persist_load_round_trip():
+    conn = _FakeConn()
+    l2e_json = {"daily_nutrition_baseline": {"per_phase": {}}, "bmr_kcal": 1600.0}
+    persist_plan_nutrition_inputs(
+        conn,
+        USER_ID,
+        99,
+        layer2e_payload_json=l2e_json,
+        body_weight_kg=70.0,
+        event_dates={"1": "2026-06-06"},
+    )
+    sql, params = conn.calls[0]
+    assert "INSERT INTO plan_nutrition_inputs" in sql
+    assert "ON CONFLICT (plan_version_id) DO UPDATE" in sql
+    assert params[0] == 99 and params[1] == USER_ID
+
+    reader = _FakeConn()
+    reader.queue(row={"payload_json": params[2]})  # the stored JSON blob
+    blob = load_plan_nutrition_inputs(reader, 99)
+    assert blob is not None
+    assert blob["body_weight_kg"] == 70.0
+    assert blob["event_dates"] == {"1": "2026-06-06"}
+    assert blob["layer2e_payload"] == l2e_json
+
+
+def test_inputs_load_returns_none_when_absent():
+    conn = _FakeConn()
+    assert load_plan_nutrition_inputs(conn, 404) is None
