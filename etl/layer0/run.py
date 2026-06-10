@@ -137,13 +137,16 @@ def main(argv: list[str] | None = None) -> int:
             [
                 "terrain_id", "canonical_name", "category",
                 "requires_elevation", "technical_surface", "environment",
-                "simulatable", "simulation_note", "notes",
+                "simulatable", "simulation_note", "notes", "race_eligible",
             ],
             [
                 (
                     r["terrain_id"], r["canonical_name"], r["category"],
                     r["requires_elevation"], r["technical_surface"], r["environment"],
                     r["simulatable"], r["simulation_note"], r["notes"],
+                    # V3: default TRUE; only training-only venues carry False
+                    # (etl/layer0/extractors/vocabulary.py). #445 column promotion.
+                    r.get("race_eligible", True),
                 )
                 for r in vocab["terrain_types"]
             ],
