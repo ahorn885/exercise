@@ -673,6 +673,52 @@ def test_sleep_stress_avg_rejects_missing_inputs():
     assert sleep_stress_avg(1491, -5) is None
 
 
+def test_new_sleep_metrics_render_as_their_own_chart_series():
+    """The PR #489 mappings — `sleep_deep_min` (from [346] field_9),
+    `sleep_stress_avg` (derived from [346] field_15 ÷ sample count), and
+    `sleep_wake_count` (from [382] field_2) — each light up an
+    independent chart card on `/wellness` when at least one day has
+    data. Pins the wiring so the chart layer doesn't drop them."""
+    daily_metric_rows = [
+        _r(date='2026-05-28', sleep_deep_min=81, sleep_stress_avg=6.8,
+           sleep_wake_count=4),
+        _r(date='2026-05-30', sleep_deep_min=70, sleep_stress_avg=15.1,
+           sleep_wake_count=9),
+    ]
+    chart = _build_chart_data([], [], [], [], [], [], daily_metric_rows)
+    assert chart['sleep_deep_min'] == [
+        {'x': '2026-05-28', 'y': 81.0},
+        {'x': '2026-05-30', 'y': 70.0},
+    ]
+    assert chart['sleep_stress_avg'] == [
+        {'x': '2026-05-28', 'y': 6.8},
+        {'x': '2026-05-30', 'y': 15.1},
+    ]
+    assert chart['sleep_wake_count'] == [
+        {'x': '2026-05-28', 'y': 4.0},
+        {'x': '2026-05-30', 'y': 9.0},
+    ]
+
+
+def test_metrics_to_db_fields_passes_through_pr489_columns():
+    """Pin the parser-to-DB plumbing for the new PR #489 fields. The
+    parser emits `sleep_deep_min`, `sleep_stress_avg`, `sleep_wake_count`
+    keyed to match their `garmin_daily_metrics` column names; the
+    translator passes them straight through."""
+    from routes.garmin import _metrics_to_db_fields
+    fields = _metrics_to_db_fields({
+        'date': '2026-05-30',
+        'sleep_deep_min': 70,
+        'sleep_stress_avg': 15.1,
+        'sleep_wake_count': 9,
+    })
+    assert fields == {
+        'sleep_deep_min': 70,
+        'sleep_stress_avg': 15.1,
+        'sleep_wake_count': 9,
+    }
+
+
 def test_may_28_full_21_event_tally_pins_code_mapping_across_two_nights():
     """May 28 _SLEEP_DATA.fit (great-sleep night, 21 [275] events,
     score 96) cross-verifies the code → stage mapping from May 30.

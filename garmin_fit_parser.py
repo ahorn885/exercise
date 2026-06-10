@@ -1739,8 +1739,9 @@ def parse_sleep_data_fit(fit_bytes: bytes) -> dict:
             # May 28 = 81 min ✓ (Andy's verification), May 30 = 70 min ↔
             # Connect "1h 10m" exactly. NOT a sub-score (the values land
             # outside Garmin's 0-100 qualitative bands on most nights).
+            # Keyed to match the DB column name (`sleep_deep_min`).
             if fields.get(9) is not None:
-                out['deep_sleep_min'] = int(fields[9])
+                out['sleep_deep_min'] = int(fields[9])
             # Stress sample count + sum during sleep — LOCKED in PR #489.
             # field_14 is the count of 0-100 stress readings taken during
             # the sleep period (every ~3 min, capped at 100). field_15 is
@@ -1775,8 +1776,9 @@ def parse_sleep_data_fit(fit_bytes: bytes) -> dict:
             # Wake event count — distinct from awake_min (total awake
             # duration in `[384] field_24`). LOCKED PR #489 against May
             # 28 (4 events / 4 min) + May 30 (9 events / 8 min).
+            # Keyed `sleep_wake_count` to match the DB column.
             if fields.get(2) is not None:
-                out['wake_event_count'] = int(fields[2])
+                out['sleep_wake_count'] = int(fields[2])
 
     # Walk `[275]` stage transitions — each instance is a stage entry.
     # The importer cross-files `[384] field_11` for sleep_end_ts to compute
@@ -1789,6 +1791,18 @@ def parse_sleep_data_fit(fit_bytes: bytes) -> dict:
         out['sleep_stage_minutes_by_code_partial'] = _stage_minutes_from_events(
             stage_events,
         )
+        # Derive `sleep_stress_avg` (= Connect's "Stress avg" during sleep)
+        # when both `[346] field_15` (stress sum) and a sleep_period are
+        # available. sleep_period_min = (last_event_ts - first_event_ts) / 60
+        # is a few-minute approximation of the actual sleep duration (which
+        # lives in [384] field_11 - field_9 - awake_min in a separate file),
+        # but it round-trips to the same Connect-rounded average.
+        sum_raw = out.get('sleep_stress_sum')
+        if sum_raw is not None and len(stage_events) >= 2:
+            span_min = (stage_events[-1][0] - stage_events[0][0]) // 60
+            avg = sleep_stress_avg(sum_raw, span_min)
+            if avg is not None:
+                out['sleep_stress_avg'] = avg
 
     # Date = the file's creation timestamp (= morning sync after sleep).
     for record in fit.records:
