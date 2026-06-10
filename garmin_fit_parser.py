@@ -1376,23 +1376,32 @@ _SLEEP_DATA_SCORE_MSG = 346
 _SLEEP_DATA_EVENTS_MSG = 382
 
 # `_SLEEP_DATA.fit` `GenericMessage[275]` — per-stage sleep transitions.
-# DISCOVERED in PR #489 (May 30 had 15 instances in a single file). Each
-# instance marks ENTRY into a sleep stage:
-#   field_0   = stage code (small int)
+# DISCOVERED + code-mapping LOCKED in PR #489 against May 30 (15 events,
+# stage timing matches textbook patterns):
+#   field_0   = stage code:
+#               1 = unmeasurable / restless (Connect doesn't surface this
+#                   directly — see "interpolation" note below)
+#               2 = LIGHT (occupies gaps between Deep / REM)
+#               3 = DEEP (all 3 May-30 occurrences in first half:
+#                   t+38 / t+88 / t+152 min — textbook Deep distribution)
+#               4 = REM (first at t+126 min = classic first REM cycle;
+#                   second at t+277 min, long late-night REM — textbook)
 #   field_253 = stage_start_time (FIT epoch sec)
-# The stage's duration is `(next instance's ts) - (this instance's ts)`,
-# and the final stage's duration is `sleep_end_ts - last_event_ts` (the
-# sleep_end timestamp lives in `[384] field_11` in `_METRICS.fit`, so the
-# importer plumbs it across files).
+# Stage duration = (next instance's ts) - (this instance's ts). The final
+# instance lands exactly at `sleep_end_ts` (= `[384] field_11`) and acts
+# as the END marker — it contributes 0 to its own code's tally.
 #
-# Stage code → stage name (Deep / Light / REM / Awake / Unmeasurable)
-# isn't locked yet. The standard FIT SDK `sleep_level` enum is
-# 3=Awake / 4=Light / 5=Deep / 6=REM but Garmin's per-device codes can
-# differ. `_walk_sleep_stage_events` returns the raw (code, minutes)
-# tuples so the operator can match them against Connect's known stage
-# minutes (May 30: Deep=70 / Light=180 / REM=47 / Awake=8) to nail the
-# mapping. Once locked, the importer fills deep / light / rem columns
-# directly from the tallied durations.
+# Interpolation gap — Connect's reported D/L/R/A minutes are HIGHER than
+# the raw [275] code 2/3/4 tally:
+#   May 30 raw tally:   {1: 74, 2: 125, 3: 57, 4: 38} = 294 min
+#   May 30 in-bed:      305 min (sleep_end - sleep_start)
+#   May 30 unmeasured:  74 (code 1) + 11 (pre-sleep gap) = 85 min
+#   May 30 Connect:     Deep=70 / Light=180 / REM=47 / Awake=8 = 305 min
+#   Connect needs:      +13 Deep, +55 Light, +9 REM, +8 Awake = 85 min ✓
+# Garmin's algorithm smooths the unmeasurable 85 min into the 4 stages.
+# We don't reverse-engineer the smoothing — for Deep we use the Connect-
+# smoothed value directly from `[346] field_9` (locked); for Light / REM
+# / Awake the smoothed values aren't yet found in any decoded field.
 _SLEEP_DATA_STAGE_MSG = 275
 
 # Most GenericMessage types repeat with redundant payloads — we cap at 5

@@ -643,3 +643,25 @@ def test_stage_minutes_from_events_empty_input():
     from garmin_fit_parser import _stage_minutes_from_events
     assert _stage_minutes_from_events([]) == {}
     assert _stage_minutes_from_events([], sleep_end_ts=1000) == {}
+
+
+def test_may_30_full_15_event_tally_matches_locked_code_mapping():
+    """Lock the May 30 reference tally against Andy's preview-URL dump
+    (15 [275] events, all visible). Pins the code -> stage mapping:
+      1 = unmeasurable/restless, 2 = Light, 3 = Deep, 4 = REM
+    Connect's reported Deep/Light/REM/Awake for May 30 are 70/180/47/8,
+    summing to 305 (the in-bed period). The RAW [275] tally undercounts
+    each stage because Garmin's algorithm smooths the 85 unmeasurable
+    minutes (74 code-1 + 11 pre-sleep) into the four stages."""
+    from garmin_fit_parser import _stage_minutes_from_events
+    events = [
+        (1149038520, 2), (1149038760, 1), (1149039360, 2), (1149040140, 3),
+        (1149040680, 2), (1149043140, 3), (1149043980, 2), (1149045420, 4),
+        (1149046020, 2), (1149046980, 3), (1149049020, 2), (1149049260, 1),
+        (1149053100, 2), (1149054480, 4), (1149056160, 2),
+    ]
+    # sleep_end = 1149056160 (from [384] field_11). The final event lands
+    # exactly here and contributes 0 min to its own code.
+    tally = _stage_minutes_from_events(events, sleep_end_ts=1149056160)
+    assert tally == {1: 74, 2: 125, 3: 57, 4: 38}
+    assert sum(tally.values()) == 294  # in-bed period minus 11 min pre-sleep gap
