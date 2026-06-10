@@ -1288,6 +1288,7 @@ _DAILY_METRICS_COLUMNS = (
     # need a DROP; new uploads stop writing it.
     'sleep_avg_respiration', 'sleep_contributors_json',
     'sleep_deep_min', 'sleep_light_min', 'sleep_rem_min',
+    'sleep_stress_avg', 'sleep_wake_count',
     'sleep_duration_sub_score', 'restless_moments',
     'hrv_overnight_avg_ms', 'hrv_7d_avg_ms', 'hrv_highest_5min_ms',
     'hrv_samples_json',
@@ -1336,6 +1337,7 @@ def _metrics_to_db_fields(parsed: dict) -> dict:
                 'training_readiness', 'vo2max_running', 'vo2max_cycling',
                 'spo2_avg', 'spo2_low',
                 'sleep_deep_min', 'sleep_light_min', 'sleep_rem_min',
+                'sleep_stress_avg', 'sleep_wake_count',
                 'resting_metabolic_rate', 'resting_hr',
                 'resting_hr_7day_avg',
                 'heat_acclimation_pct', 'acute_training_load',

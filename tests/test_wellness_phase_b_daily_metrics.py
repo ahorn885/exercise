@@ -488,3 +488,276 @@ def test_metrics_to_db_fields_passes_through_new_columns():
         'resting_hr': 44,
         'resting_hr_7day_avg': 48,
     }
+
+
+# ── Sleep-stage decode candidates ([384] field_5/6/7 — encoding unsolved) ────
+
+def test_sleep_stage_decode_candidates_emits_one_row_per_decoder():
+    """`_sleep_stage_decode_candidates` should return one entry per registered
+    decoder, each carrying the per-field minute interpretation under that
+    decoder. None is verified — they're for eyeball comparison against
+    Connect's Deep/Light/REM minutes when the next reference day lands."""
+    from garmin_fit_parser import (
+        _sleep_stage_decode_candidates,
+        _SLEEP_STAGE_DECODE_CANDIDATES,
+    )
+    # May 28 reference values (sleep score 96, 8h12m sleep).
+    candidates = _sleep_stage_decode_candidates(23412736, 11425109, 3543590)
+    assert len(candidates) == len(_SLEEP_STAGE_DECODE_CANDIDATES)
+    for row in candidates:
+        assert set(row) == {
+            'decoder', 'description', 'f5_min', 'f6_min', 'f7_min', 'sum_min',
+        }
+    by_name = {row['decoder']: row for row in candidates}
+    # Spot-check the 16.16 fixed-point candidate, the closest the existing
+    # 3-day dataset gets to looking like plausible minute values (May 28
+    # produces 357.25 / 174.33 / 54.07 — but the sum overshoots the actual
+    # 492-minute total, so it isn't a real fit).
+    assert by_name['fixed_point_min']['f5_min'] == 357.25
+    assert by_name['fixed_point_min']['f6_min'] == 174.33
+    assert by_name['fixed_point_min']['f7_min'] == 54.07
+
+
+def test_sleep_stage_decode_candidates_skips_when_a_field_is_missing():
+    """`field_5` / `_6` / `_7` are only present on the rich [384] row. The
+    helper should bail on None inputs so the inspector dump doesn't render
+    spurious entries for messages that don't carry the sleep summary."""
+    from garmin_fit_parser import _sleep_stage_decode_candidates
+    assert _sleep_stage_decode_candidates(None, 1, 2) == []
+    assert _sleep_stage_decode_candidates(1, None, 2) == []
+    assert _sleep_stage_decode_candidates(1, 2, None) == []
+
+
+def test_find_sleep_stage_decoder_locates_a_known_decoder_under_a_permutation():
+    """Synthetic 2-day reference set where field_5/_6/_7 are encoded as
+    (minutes × 65536) for REM / Deep / Light respectively. The solver should
+    recover the `fixed_point_min` decoder and the swap-permutation."""
+    from garmin_fit_parser import find_sleep_stage_decoder
+
+    def pack(minutes):
+        return int(round(minutes * 65536))
+
+    # Two nights with materially different stage distributions — without
+    # that, multiple decoders end up trivially "fitting" both days.
+    night_1 = (pack(85),  pack(110), pack(305),  110, 305, 85)
+    night_2 = (pack(45),  pack(60),  pack(220),  60,  220, 45)
+    matches = find_sleep_stage_decoder([night_1, night_2], tolerance_min=0.5)
+    assert matches, 'expected the synthetic decoder to be recoverable'
+    top = matches[0]
+    assert top['decoder'] == 'fixed_point_min'
+    assert top['permutation'] == {
+        'field_5': 'rem', 'field_6': 'deep', 'field_7': 'light',
+    }
+    assert top['max_error_min'] <= 0.5
+
+
+def test_find_sleep_stage_decoder_returns_empty_for_actual_connect_ground_truth():
+    """Pinned with Andy's Jun 9 Garmin Connect screenshots — the f5/f6/f7
+    fields are NOT the Deep/Light/REM stage minutes (and the f7 = HRV
+    discovery in `_METRICS_SLEEP_SUMMARY_MSG`'s comment explains why: f7
+    is overnight HRV avg × 65536, not REM minutes). Future hands-off
+    changes to the decoder list shouldn't accidentally surface a fake
+    'fit' for the stage split — this test pins that."""
+    from garmin_fit_parser import find_sleep_stage_decoder
+    reference = [
+        # f5,        f6,       f7,       deep, light, rem
+        ( 7165269, 35711660, 3440511,    70,   180,   47),  # May 30, 4h57m
+        ( 9797632, 36590932, 2558531,    75,   170,   50),  # Jun  2, 4h55m
+    ]
+    assert find_sleep_stage_decoder(reference, tolerance_min=2.0) == []
+
+
+def test_metrics_384_field_7_decodes_as_hrv_overnight_avg_ms():
+    """Confirms the f7 = HRV finding from Andy's Jun 9 Connect data: every
+    night, `[384] field_7 / 65536` rounds to Connect's overnight HRV. f7
+    is a duplicate of `[370] field_1` from `_HRV_STATUS.fit` — the parser
+    stays single-source on the HRV file, so we don't write it from here.
+    But the encoding is locked, which is what justifies the 16.16
+    fixed-point hypothesis for the rest of the message family."""
+    from garmin_fit_parser import _sleep_stage_decode_candidates
+
+    def hrv_from_f7(raw_f7):
+        for c in _sleep_stage_decode_candidates(0, 0, raw_f7):
+            if c['decoder'] == 'fixed_point_min':
+                return round(c['f7_min'])
+        raise AssertionError('fixed_point_min decoder is missing')
+
+    assert hrv_from_f7(3543590) == 54  # May 28 ↔ Connect 54 ms
+    assert hrv_from_f7(3440511) == 52  # May 30 ↔ Connect 52 ms (52.50 rounds to 52)
+    assert hrv_from_f7(2558531) == 39  # Jun  2 ↔ Connect 39 ms
+
+
+def test_find_sleep_stage_decoder_needs_at_least_two_nights():
+    """One night admits trivially many decoder/permutation fits — the
+    solver should refuse rather than emit noise."""
+    from garmin_fit_parser import find_sleep_stage_decoder
+    assert find_sleep_stage_decoder([(1, 2, 3, 4, 5, 6)]) == []
+    assert find_sleep_stage_decoder([]) == []
+
+
+# ── [275] sleep-stage transition walker + minute tally ──────────────────────
+
+def test_stage_minutes_from_events_tallies_between_adjacent_events():
+    """Each adjacent pair contributes (next.ts - this.ts) seconds to the
+    current event's code. Verified against the 5 visible May 30 events
+    from Andy's `_SLEEP_DATA.fit` dump (codes 2/1/2/3/2 at FIT epoch sec
+    1149038520/1149038760/1149039360/1149040140/1149040680)."""
+    from garmin_fit_parser import _stage_minutes_from_events
+    events = [
+        (1149038520, 2), (1149038760, 1), (1149039360, 2),
+        (1149040140, 3), (1149040680, 2),
+    ]
+    # Without sleep_end the last event drops out, leaving 4 adjacent gaps.
+    assert _stage_minutes_from_events(events) == {2: 17, 1: 10, 3: 9}
+
+
+def test_stage_minutes_from_events_uses_sleep_end_for_final_segment():
+    """When sleep_end_ts is supplied (cross-file from `[384] field_11`),
+    the final event gets a duration too."""
+    from garmin_fit_parser import _stage_minutes_from_events
+    events = [
+        (1000, 1), (1300, 2), (1900, 1),  # last event needs sleep_end
+    ]
+    # Without sleep_end: code 1 = 5 min (300s), code 2 = 10 min (600s)
+    assert _stage_minutes_from_events(events) == {1: 5, 2: 10}
+    # With sleep_end at 2200: last code 1 segment = 300s = 5 min added
+    assert _stage_minutes_from_events(events, sleep_end_ts=2200) == {1: 10, 2: 10}
+
+
+def test_stage_minutes_from_events_clips_implausible_segments():
+    """A 24-hour-plus gap between events is almost certainly a parse
+    error or skipped record — clip it rather than letting a single
+    bogus segment dominate the tally."""
+    from garmin_fit_parser import _stage_minutes_from_events
+    events = [
+        (1000, 1),          # +60s → code 1 = 1 min
+        (1060, 2),          # +90,000s gap → 25 hours, clipped
+        (91060, 3),         # ignored due to clip on previous
+    ]
+    out = _stage_minutes_from_events(events, sleep_end_ts=91120)
+    assert 2 not in out  # 25h gap clipped
+    assert out.get(1) == 1
+
+
+def test_stage_minutes_from_events_empty_input():
+    from garmin_fit_parser import _stage_minutes_from_events
+    assert _stage_minutes_from_events([]) == {}
+    assert _stage_minutes_from_events([], sleep_end_ts=1000) == {}
+
+
+def test_sleep_stress_avg_matches_connect_for_may_30():
+    """`[346] field_15` is the SUM of all stress samples taken during sleep;
+    Garmin samples stress every ~3 min, so avg = sum × 3 / sleep_min.
+    May 30 ground truth from Connect: 'Stress 15 avg'. The locked
+    formula produces 15.06 ↔ Connect 15 (rounding tolerance)."""
+    from garmin_fit_parser import sleep_stress_avg
+    # field_15 = 1491, sleep_min = 297
+    assert sleep_stress_avg(1491, 297) == 15.1
+
+
+def test_sleep_stress_avg_handles_capped_sample_count():
+    """`[346] field_14` is capped at 100, which would skew the average on
+    long nights (sleep_min > 300). `sleep_stress_avg` derives the count
+    from sleep_min directly to avoid the cap."""
+    from garmin_fit_parser import sleep_stress_avg
+    # May 28: sleep_min = 492, samples = 164 (uncapped), field_15 = 1120
+    # field_14 = 100 (capped from 164) — naive 1120/100 = 11.2 would be wrong.
+    assert sleep_stress_avg(1120, 492) == 6.8
+
+
+def test_sleep_stress_avg_rejects_missing_inputs():
+    from garmin_fit_parser import sleep_stress_avg
+    assert sleep_stress_avg(None, 297) is None
+    assert sleep_stress_avg(1491, None) is None
+    assert sleep_stress_avg(1491, 0) is None
+    assert sleep_stress_avg(1491, -5) is None
+
+
+def test_new_sleep_metrics_render_as_their_own_chart_series():
+    """The PR #489 mappings — `sleep_deep_min` (from [346] field_9),
+    `sleep_stress_avg` (derived from [346] field_15 ÷ sample count), and
+    `sleep_wake_count` (from [382] field_2) — each light up an
+    independent chart card on `/wellness` when at least one day has
+    data. Pins the wiring so the chart layer doesn't drop them."""
+    daily_metric_rows = [
+        _r(date='2026-05-28', sleep_deep_min=81, sleep_stress_avg=6.8,
+           sleep_wake_count=4),
+        _r(date='2026-05-30', sleep_deep_min=70, sleep_stress_avg=15.1,
+           sleep_wake_count=9),
+    ]
+    chart = _build_chart_data([], [], [], [], [], [], daily_metric_rows)
+    assert chart['sleep_deep_min'] == [
+        {'x': '2026-05-28', 'y': 81.0},
+        {'x': '2026-05-30', 'y': 70.0},
+    ]
+    assert chart['sleep_stress_avg'] == [
+        {'x': '2026-05-28', 'y': 6.8},
+        {'x': '2026-05-30', 'y': 15.1},
+    ]
+    assert chart['sleep_wake_count'] == [
+        {'x': '2026-05-28', 'y': 4.0},
+        {'x': '2026-05-30', 'y': 9.0},
+    ]
+
+
+def test_metrics_to_db_fields_passes_through_pr489_columns():
+    """Pin the parser-to-DB plumbing for the new PR #489 fields. The
+    parser emits `sleep_deep_min`, `sleep_stress_avg`, `sleep_wake_count`
+    keyed to match their `garmin_daily_metrics` column names; the
+    translator passes them straight through."""
+    from routes.garmin import _metrics_to_db_fields
+    fields = _metrics_to_db_fields({
+        'date': '2026-05-30',
+        'sleep_deep_min': 70,
+        'sleep_stress_avg': 15.1,
+        'sleep_wake_count': 9,
+    })
+    assert fields == {
+        'sleep_deep_min': 70,
+        'sleep_stress_avg': 15.1,
+        'sleep_wake_count': 9,
+    }
+
+
+def test_may_28_full_21_event_tally_pins_code_mapping_across_two_nights():
+    """May 28 _SLEEP_DATA.fit (great-sleep night, 21 [275] events,
+    score 96) cross-verifies the code → stage mapping from May 30.
+    Raw tally: {1: 6, 2: 334, 3: 53, 4: 97} — code 1 (unmeasurable) is
+    only 6 min on this great night vs 74 min on the poor May 30 night,
+    confirming code 1 tracks restlessness/uncertainty rather than any
+    sleep stage. Code 3 (Deep) raw = 53 vs Connect/`[346] field_9` = 81
+    — Garmin's smoothing redistributes ~28 min of unmeasured/transition
+    time into Deep on this night, mirroring the May 30 pattern."""
+    from garmin_fit_parser import _stage_minutes_from_events
+    events = [
+        (1148862060, 2), (1148864640, 3), (1148865240, 2), (1148865840, 4),
+        (1148866440, 2), (1148868540, 3), (1148868780, 1), (1148869140, 2),
+        (1148870280, 3), (1148871180, 2), (1148873340, 4), (1148873700, 2),
+        (1148875980, 3), (1148877060, 2), (1148878860, 4), (1148879880, 2),
+        (1148882700, 3), (1148883060, 2), (1148886060, 4), (1148889900, 2),
+        (1148891460, 4),
+    ]
+    tally = _stage_minutes_from_events(events)  # no sleep_end → drops last
+    assert tally == {1: 6, 2: 334, 3: 53, 4: 97}
+
+
+def test_may_30_full_15_event_tally_matches_locked_code_mapping():
+    """Lock the May 30 reference tally against Andy's preview-URL dump
+    (15 [275] events, all visible). Pins the code -> stage mapping:
+      1 = unmeasurable/restless, 2 = Light, 3 = Deep, 4 = REM
+    Connect's reported Deep/Light/REM/Awake for May 30 are 70/180/47/8,
+    summing to 305 (the in-bed period). The RAW [275] tally undercounts
+    each stage because Garmin's algorithm smooths the 85 unmeasurable
+    minutes (74 code-1 + 11 pre-sleep) into the four stages."""
+    from garmin_fit_parser import _stage_minutes_from_events
+    events = [
+        (1149038520, 2), (1149038760, 1), (1149039360, 2), (1149040140, 3),
+        (1149040680, 2), (1149043140, 3), (1149043980, 2), (1149045420, 4),
+        (1149046020, 2), (1149046980, 3), (1149049020, 2), (1149049260, 1),
+        (1149053100, 2), (1149054480, 4), (1149056160, 2),
+    ]
+    # sleep_end = 1149056160 (from [384] field_11). The final event lands
+    # exactly here and contributes 0 min to its own code.
+    tally = _stage_minutes_from_events(events, sleep_end_ts=1149056160)
+    assert tally == {1: 74, 2: 125, 3: 57, 4: 38}
+    assert sum(tally.values()) == 294  # in-bed period minus 11 min pre-sleep gap

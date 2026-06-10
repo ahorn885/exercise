@@ -874,6 +874,8 @@ _PG_MIGRATIONS = [
         sleep_deep_min INTEGER,
         sleep_light_min INTEGER,
         sleep_rem_min INTEGER,
+        sleep_stress_avg REAL,
+        sleep_wake_count INTEGER,
         hrv_overnight_avg_ms REAL,
         hrv_7d_avg_ms REAL,
         hrv_samples_json TEXT,
@@ -908,6 +910,12 @@ _PG_MIGRATIONS = [
     "ALTER TABLE garmin_daily_metrics ADD COLUMN IF NOT EXISTS floors_climbed INTEGER",
     "ALTER TABLE garmin_daily_metrics ADD COLUMN IF NOT EXISTS floors_descended INTEGER",
     "ALTER TABLE garmin_daily_metrics ADD COLUMN IF NOT EXISTS intensity_minutes INTEGER",
+    # PR #489 — new mappings decoded from May 28 + May 30 reference data:
+    # sleep_deep_min via [346] field_9 (already in the table create above
+    # but Phase B environments may pre-date it), sleep_stress_avg derived
+    # from [346] field_15 ÷ sample_count, sleep_wake_count from [382] field_2.
+    "ALTER TABLE garmin_daily_metrics ADD COLUMN IF NOT EXISTS sleep_stress_avg REAL",
+    "ALTER TABLE garmin_daily_metrics ADD COLUMN IF NOT EXISTS sleep_wake_count INTEGER",
     # D-50 Phase 1 — provider integration tables. Mirrors the SQLite block
     # above with PG-native types (SERIAL, TIMESTAMP DEFAULT NOW(), BIGINT,
     # BOOLEAN). Per Athlete_Data_Integration_Spec v3 §4–§6. Garmin paused
