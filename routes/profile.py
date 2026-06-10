@@ -223,12 +223,19 @@ def edit():
                 return None
 
         # #469 — body weight is entered in the athlete's chosen display unit
-        # but stored canonically in kg. The form posts the current preference
-        # alongside the body weight so we know which unit the entered value
-        # is in (handles the case where the athlete is changing both at once).
+        # but stored canonically in kg. The form posts BOTH the in-effect
+        # preference at render time (hidden `body_weight_input_unit`) AND
+        # the newly-chosen preference (the dropdown). We convert the entered
+        # body weight from the RENDER-time unit — if the user toggled the
+        # dropdown without retyping the weight, the displayed number is still
+        # in the render-time unit, so reading it as the new unit would store
+        # the wrong value (the classic "161.8 lb saved as 161.8 kg" bug).
         submitted_unit_pref = normalize_unit_preference(_str('unit_preference'))
+        input_unit_pref = normalize_unit_preference(
+            _str('body_weight_input_unit')
+        ) or submitted_unit_pref
         entered_body_weight = _num('body_weight')
-        body_weight_kg = entered_weight_to_kg(entered_body_weight, submitted_unit_pref)
+        body_weight_kg = entered_weight_to_kg(entered_body_weight, input_unit_pref)
 
         prefill_values = {
             'body_weight_kg': body_weight_kg,
