@@ -1279,20 +1279,28 @@ _SLEEP_SUB_SCORE_SLOTS = ('field_5', 'field_7', 'field_8', 'field_10')
 
 def _sleep_sub_score_slot_candidates(f5, f7, f8, f10) -> list:
     """Per-night diagnostic for `[346] field_5 / 7 / 8 / 10` — the four
-    remaining sub-score positions for Stress / Light / REM / Awake.
+    sub-score positions for Stress / Light / REM / Awake contributors.
+
+    Locks (Jun 10 2026 — Andy's Connect Jun 2 contributor breakdown):
+      • `field_5` = **Awake sub-score** — stable-or-highest across nights,
+        92 Excellent on Jun 2 (Awake=10 min on 5h05m = 3.3%, very good).
+      • `field_8` = **Stress sub-score** — most reactive, 46 Fair on Jun 2
+        (Connect Stress avg 27 = Fair band), 95→74→46 across May 28 / 29 /
+        Jun 2 in lockstep with worsening sleep.
+
+    Still ambiguous: `field_7` vs `field_10` carry Light + REM in some
+    order — both landed Good (73/74) on Jun 2 with similar percentages
+    (Light 55.7% / REM 16.4% of sleep). Locks once a night surfaces a
+    materially-different Light vs REM rating.
 
     Returns one dict per slot with the raw value, a 1-to-4 rank (1 = the
     lowest of the four that night, 4 = highest), and the qualitative band
     under Garmin's standard 0-100 quartile bands (Poor/Fair/Good/Excellent
     at 25/50/75 cutoffs).
 
-    The standard quartiles don't apply here directly — empirically most
-    values land in 80-100 on every contributor — so rank-relative
-    comparison is the useful signal. On a night where Connect rates one
-    contributor distinctly worse than the others (e.g. "Light: Poor,
-    others Good/Excellent"), the slot with rank=1 is the candidate for
-    that contributor name. Repeated across enough nights, a consistent
-    correlation locks the slot → name mapping.
+    The standard quartiles applied fine once Andy's Jun 2 brought a real
+    "Fair" reading (field_8 = 46). On nights where all sub-scores land in
+    Excellent, rank-relative comparison stays the useful signal.
 
     Skips slots whose raw value is None or non-integer. Ranks tie-break
     by slot order (earliest wins) so output stays stable across runs.
