@@ -1147,6 +1147,17 @@ _METRICS_SLEEP_SCORE_SIMPLE_MSG = 330
 #   tracks INVERSELY with sleep quality (96/65/58) — likely sleep onset
 #   latency or pre-sleep disturbance, not respiration. Not surfaced.
 #
+# Candidate added (#283 follow-up — needs 2nd reference day):
+#   field_3              = sleep_onset_latency_sec ("Time to fall asleep")
+#                          May 30: 889 sec = 14m 49s ↔ likely Connect "Time
+#                          to fall asleep" — pending Andy's cross-reference
+#                          against the Connect Sleep details view for May
+#                          28 / Jun 2 to lock the mapping. If a future
+#                          reference day disproves it, retract following
+#                          the `sleep_avg_respiration` (field_18) precedent
+#                          above: parser stops writing, column kept
+#                          nullable so old rows stay valid.
+#
 # Confirmed in PR #489 (Andy's Jun 9 Connect data):
 #   field_7              = hrv_overnight_avg_ms × 65536
 #                          May 28: 3543590 / 65536 = 54.07 ms (Connect: 54) ✓
@@ -1653,6 +1664,13 @@ def parse_metrics_fit(fit_bytes: bytes) -> dict:
             # actual 8), so it's some other metric.
             if fields.get(24) is not None:
                 out['sleep_awake_min'] = int(fields[24])
+            # Sleep onset latency seconds — candidate, pending 2-day
+            # cross-reference against Garmin Connect "Time to fall asleep".
+            # May 30 = 889 sec (14m 49s) is the only pinned value so far.
+            # See `_METRICS_SLEEP_SUMMARY_MSG` header for the retraction
+            # plan if a future reference day disproves it.
+            if fields.get(3) is not None:
+                out['sleep_onset_latency_sec'] = int(fields[3])
             # Date = the wake day (sleep is attributed to the morning).
             if end_ts:
                 out['date'] = datetime.fromtimestamp(
