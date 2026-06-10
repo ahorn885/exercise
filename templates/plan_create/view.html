@@ -40,13 +40,72 @@
           <div class="card card-pad sess-card">
             <div class="sess-head">
               <span class="sess-name">
-                {% if sess.kind == 'rest' %}Rest
+                {% if sess.kind == 'rest' %}Rest{% if sess.rest_reason %} — {{ sess.rest_reason|replace('_', ' ')|capitalize }}{% endif %}
                 {% else %}{{ sess.discipline_name or sess.discipline_id or sess.kind|title }} — {{ sess.duration_min }} min{% endif %}
               </span>
-              <span class="chip">{{ sess.intensity_summary|title }}</span>
+              {% if sess.kind != 'rest' %}<span class="chip">{{ sess.intensity_summary|title }}</span>{% endif %}
               {% if sess.time_of_day != 'unspecified' %}<span class="rail-note">{{ sess.time_of_day }}</span>{% endif %}
+              {% if sess.locale_name %}<span class="rail-note">@ {{ sess.locale_name }}</span>{% endif %}
             </div>
             {% if sess.coaching_intent %}<p class="sess-intent">{{ sess.coaching_intent }}</p>{% endif %}
+
+            {% if sess.kind == 'cardio' and sess.cardio_blocks %}
+            <ol class="sess-blocks">
+              {% for block in sess.cardio_blocks %}
+              <li class="sess-block">
+                <div class="sess-block-head">
+                  <span class="sess-block-kind">{{ block.block_kind|replace('_', ' ')|capitalize }}</span>
+                  <span class="rail-note">{{ block.duration_min }} min · {{ block.intensity_zone }}</span>
+                  {% if block.block_kind == 'interval_set' %}
+                  <span class="rail-note">{{ block.repetitions }}× · rest {{ block.rest_between_min }} min {{ block.rest_intensity_zone }}</span>
+                  {% endif %}
+                </div>
+                {% set t = block.intensity_target %}
+                {% set target_str = '' %}
+                {% if t.hr_bpm_low is defined %}{% set target_str = 'HR ' ~ t.hr_bpm_low ~ '–' ~ t.hr_bpm_high ~ ' bpm' %}
+                {% elif t.power_w_low is defined %}{% set target_str = t.power_w_low ~ '–' ~ t.power_w_high ~ ' W' %}
+                {% elif t.pace_per_km_low is defined %}{% set target_str = 'pace ' ~ t.pace_per_km_low ~ '–' ~ t.pace_per_km_high ~ ' /km' %}
+                {% elif t.pace_per_100m_low is defined %}{% set target_str = 'pace ' ~ t.pace_per_100m_low ~ '–' ~ t.pace_per_100m_high ~ ' /100m' %}
+                {% elif t.rpe_low is defined %}{% set target_str = 'RPE ' ~ t.rpe_low ~ '–' ~ t.rpe_high %}
+                {% elif t.vert_m_per_hr_low is defined %}{% set target_str = t.vert_m_per_hr_low ~ '–' ~ t.vert_m_per_hr_high ~ ' vm/h' %}
+                {% elif t.strokes_per_min_low is defined %}{% set target_str = t.strokes_per_min_low ~ '–' ~ t.strokes_per_min_high ~ ' spm' %}
+                {% elif t.rpm_low is defined %}{% set target_str = t.rpm_low ~ '–' ~ t.rpm_high ~ ' rpm' %}
+                {% elif t.grade_min is defined %}{% set target_str = t.grade_min ~ '–' ~ t.grade_max ~ ' (' ~ t.grade_system|replace('_', ' ') ~ ')' %}
+                {% endif %}
+                {% if target_str %}<div class="sess-block-target">{{ target_str }}</div>{% endif %}
+                {% if block.instructions %}<p class="sess-block-instr">{{ block.instructions }}</p>{% endif %}
+              </li>
+              {% endfor %}
+            </ol>
+            {% endif %}
+
+            {% if sess.kind == 'strength' and sess.strength_exercises %}
+            <ol class="sess-exercises">
+              {% for ex in sess.strength_exercises %}
+              <li class="sess-exercise">
+                <div class="sess-exercise-head">
+                  <span class="sess-exercise-name">{{ ex.exercise_name }}</span>
+                  {% if ex.resolution_tier == 2 %}<span class="chip">substitute</span>
+                  {% elif ex.resolution_tier == 3 %}<span class="chip">proxy</span>{% endif %}
+                </div>
+                <div class="sess-exercise-prescription">
+                  {{ ex.sets }} × {{ ex.reps_per_set }} @ {{ ex.load_prescription }}
+                  · rest {{ ex.rest_between_sets_sec }}s
+                  {% if ex.tempo %} · tempo {{ ex.tempo }}{% endif %}
+                </div>
+                {% if ex.substitute_text %}<p class="sess-block-instr">{{ ex.substitute_text }}</p>{% endif %}
+                {% if ex.instructions %}<p class="sess-block-instr">{{ ex.instructions }}</p>{% endif %}
+              </li>
+              {% endfor %}
+            </ol>
+            {% endif %}
+
+            {% if sess.coaching_flags %}
+            <div class="sess-flags">
+              {% for f in sess.coaching_flags %}<span class="chip warn">{{ f|replace('_', ' ') }}</span>{% endfor %}
+            </div>
+            {% endif %}
+
             {% if sess.session_notes %}<p class="sess-notes">{{ sess.session_notes }}</p>{% endif %}
           </div>
           {% endfor %}
