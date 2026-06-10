@@ -719,41 +719,6 @@ def test_metrics_to_db_fields_passes_through_pr489_columns():
     }
 
 
-def test_sleep_onset_latency_renders_as_minutes_on_its_own_chart():
-    """`[384] field_3` is the candidate sleep_onset_latency_sec ("Time to
-    fall asleep"). Storage is seconds (column `sleep_onset_latency_sec`)
-    but the chart renders as minutes so a 889-second value reads as
-    14.8 min — matching the Garmin Connect Sleep details view."""
-    daily_metric_rows = [
-        # May 30: 889 sec = 14m 49s ↔ Connect "Time to fall asleep" candidate
-        _r(date='2026-05-30', sleep_onset_latency_sec=889),
-    ]
-    chart = _build_chart_data([], [], [], [], [], [], daily_metric_rows)
-    assert chart['sleep_onset_min'] == [{'x': '2026-05-30', 'y': 14.8}]
-
-
-def test_sleep_onset_latency_skips_days_without_a_value():
-    """Daily-metrics rows where the column is NULL drop out of the
-    series — same `_maybe_series` behaviour as the other [384] derivatives."""
-    daily_metric_rows = [
-        _r(date='2026-05-28', sleep_onset_latency_sec=None),
-        _r(date='2026-05-30', sleep_onset_latency_sec=889),
-    ]
-    chart = _build_chart_data([], [], [], [], [], [], daily_metric_rows)
-    assert chart['sleep_onset_min'] == [{'x': '2026-05-30', 'y': 14.8}]
-
-
-def test_metrics_to_db_fields_passes_through_sleep_onset_latency():
-    """The parser emits `sleep_onset_latency_sec` keyed to the DB column;
-    `_metrics_to_db_fields` passes it straight through to the UPSERT."""
-    from routes.garmin import _metrics_to_db_fields
-    fields = _metrics_to_db_fields({
-        'date': '2026-05-30',
-        'sleep_onset_latency_sec': 889,
-    })
-    assert fields == {'sleep_onset_latency_sec': 889}
-
-
 def test_may_28_full_21_event_tally_pins_code_mapping_across_two_nights():
     """May 28 _SLEEP_DATA.fit (great-sleep night, 21 [275] events,
     score 96) cross-verifies the code → stage mapping from May 30.

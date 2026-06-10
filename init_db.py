@@ -876,7 +876,6 @@ _PG_MIGRATIONS = [
         sleep_rem_min INTEGER,
         sleep_stress_avg REAL,
         sleep_wake_count INTEGER,
-        sleep_onset_latency_sec INTEGER,
         hrv_overnight_avg_ms REAL,
         hrv_7d_avg_ms REAL,
         hrv_samples_json TEXT,
@@ -917,13 +916,6 @@ _PG_MIGRATIONS = [
     # from [346] field_15 ÷ sample_count, sleep_wake_count from [382] field_2.
     "ALTER TABLE garmin_daily_metrics ADD COLUMN IF NOT EXISTS sleep_stress_avg REAL",
     "ALTER TABLE garmin_daily_metrics ADD COLUMN IF NOT EXISTS sleep_wake_count INTEGER",
-    # #283 follow-up — `_METRICS.fit` `[384] field_3` candidate for
-    # `sleep_onset_latency_sec` ("Time to fall asleep" in Garmin Connect).
-    # May 30 = 889 sec = 14m 49s is the only pinned value so far; May 28 /
-    # Jun 2 cross-references are still pending. Nullable so the column is
-    # safe to retract per the `sleep_avg_respiration` precedent if a future
-    # reference day disproves the mapping.
-    "ALTER TABLE garmin_daily_metrics ADD COLUMN IF NOT EXISTS sleep_onset_latency_sec INTEGER",
     # D-50 Phase 1 — provider integration tables. Mirrors the SQLite block
     # above with PG-native types (SERIAL, TIMESTAMP DEFAULT NOW(), BIGINT,
     # BOOLEAN). Per Athlete_Data_Integration_Spec v3 §4–§6. Garmin paused

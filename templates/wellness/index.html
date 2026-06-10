@@ -163,14 +163,6 @@
   </div>
   {% endif %}
 
-  {# Sleep onset latency — _METRICS.fit [384] field_3 (#283 follow-up) #}
-  {% if chart_data.sleep_onset_min %}
-  <div class="card card-pad">
-    <span class="eyebrow">Time to fall asleep · device (min)</span>
-    <div class="chart-box wide sec-sm"><canvas id="chart-sleep-onset"></canvas></div>
-  </div>
-  {% endif %}
-
   {# Heat acclimation — _METRICS.fit #}
   {% if chart_data.heat_acclimation %}
   <div class="card card-pad">
@@ -623,12 +615,6 @@ if (data.sleep_stress_avg && data.sleep_stress_avg.length) {
 if (data.sleep_wake_count && data.sleep_wake_count.length) {
   line('chart-sleep-wake-count', [bar('Wake events', data.sleep_wake_count, fg)],
        { type: 'bar', yAxis: { beginAtZero: true, ticks: { stepSize: 1 } } });
-}
-
-// ─── Sleep onset latency (Time to fall asleep, min) ─────────
-if (data.sleep_onset_min && data.sleep_onset_min.length) {
-  line('chart-sleep-onset', [bar('Time to fall asleep', data.sleep_onset_min, accent)],
-       { type: 'bar', unit: ' min', yAxis: { beginAtZero: true } });
 }
 
 // ─── Body composition ──────────────────────────────────────

@@ -208,8 +208,7 @@ def index():
         '  heat_acclimation_pct, acute_training_load, '
         '  restless_moments, floors_climbed, floors_descended, '
         '  intensity_minutes, spo2_avg, spo2_low, '
-        '  sleep_deep_min, sleep_stress_avg, sleep_wake_count, '
-        '  sleep_onset_latency_sec '
+        '  sleep_deep_min, sleep_stress_avg, sleep_wake_count '
         'FROM garmin_daily_metrics WHERE user_id=? AND date >= ? ORDER BY date',
         (uid, cutoff)
     ).fetchall()
@@ -460,12 +459,6 @@ def _build_chart_data(self_rows, body_rows, cardio_rows, strength_rows,
     sleep_deep_min   = _maybe_series(daily_by_date, 'sleep_deep_min')
     sleep_stress_avg = _maybe_series(daily_by_date, 'sleep_stress_avg')
     sleep_wake_count = _maybe_series(daily_by_date, 'sleep_wake_count')
-    # Sleep onset latency in minutes — `[384] field_3` lands as seconds, but
-    # "Time to fall asleep" reads more naturally in minutes on the chart.
-    sleep_onset_min  = [
-        {'x': p['x'], 'y': round(p['y'] / 60.0, 1)}
-        for p in _maybe_series(daily_by_date, 'sleep_onset_latency_sec')
-    ]
 
     # Stress time-in-zone — sample counts × ~3 min interval. Garmin Connect
     # displays the same buckets on the stress page.
@@ -529,7 +522,6 @@ def _build_chart_data(self_rows, body_rows, cardio_rows, strength_rows,
         'sleep_deep_min':   sleep_deep_min,
         'sleep_stress_avg': sleep_stress_avg,
         'sleep_wake_count': sleep_wake_count,
-        'sleep_onset_min':  sleep_onset_min,
         # #283 follow-up — these still need their own FIT file types or a
         # field map we haven't decoded. `active_minutes` was retired in
         # favour of `intensity_minutes` (Garmin's published metric =
