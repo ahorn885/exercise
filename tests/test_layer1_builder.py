@@ -76,10 +76,11 @@ class _FakeConn:
 
 
 def _queue_empty_athlete(conn: _FakeConn) -> None:
-    """Queue 24 empty responses — every SELECT returns no rows.
+    """Queue 25 empty responses — every SELECT returns no rows.
     (D-73 Phase 5.2 Bucket C (l) added the `_load_skill_toggle_states`
-    query; the dead `food_allergies` load was later removed.)"""
-    for _ in range(24):
+    query; the dead `food_allergies` load was later removed; 2E-6 §I.1 added
+    the `_load_supplements` query.)"""
+    for _ in range(25):
         conn.queue_response()
 
 
@@ -169,13 +170,14 @@ class TestEmptyUser:
         assert payload.network.network_links == []
         assert payload.disclosures.acknowledgments == []
 
-    def test_24_selects_issued(self):
+    def test_25_selects_issued(self):
         conn = _FakeConn()
         _queue_empty_athlete(conn)
         build_layer1_payload(conn, user_id=1)
         # 25 → 24 after the dead `food_allergies` load was removed (the
-        # skill-toggle SELECT added by D-73 Phase 5.2 Bucket C (l) stays).
-        assert len(conn.calls) == 24
+        # skill-toggle SELECT added by D-73 Phase 5.2 Bucket C (l) stays);
+        # back to 25 with the 2E-6 §I.1 `_load_supplements` SELECT.
+        assert len(conn.calls) == 25
 
     def test_user_id_required(self):
         conn = _FakeConn()
@@ -375,6 +377,18 @@ class TestFullyPopulated:
             {"toggle_name": "climbing_roped", "enabled": True},
             {"toggle_name": "whitewater_handling", "enabled": True},
         ])
+        # 25) athlete_supplements — 2E-6 §I.1 structured protocol. Two records;
+        # frequency/timing are closed-vocab tokens, dose/notes free text.
+        conn.queue_response(rows=[
+            {"supplement_id": "creatine_monohydrate",
+             "canonical_name": "Creatine monohydrate", "category": "Performance",
+             "dose": "5 g", "frequency": "daily", "timing": "post_exercise",
+             "notes": "micronized"},
+            {"supplement_id": "electrolyte_mix",
+             "canonical_name": "Electrolyte mix", "category": "Race-day",
+             "dose": "1 scoop", "frequency": "as_needed",
+             "timing": "during_exercise", "notes": None},
+        ])
 
     def test_identity_populated(self):
         conn = _FakeConn()
@@ -456,6 +470,32 @@ class TestFullyPopulated:
         assert payload.lifestyle.dietary_pattern == ["omnivore", "low_fodmap"]
         assert payload.lifestyle.fueling_format_preference == ["gel", "bar"]
         assert payload.lifestyle.caffeine_tolerance == "high"
+
+    def test_supplements_structured_records_thread_through(self):
+        # 2E-6 §I.1 — athlete_supplements rows surface as structured
+        # AthleteSupplementRecord on lifestyle.supplements (the shape Layer 2E
+        # §5.5 consumes), preserving order + the closed-vocab frequency/timing.
+        conn = _FakeConn()
+        self._queue_andy(conn)
+        payload = build_layer1_payload(conn, user_id=1)
+        supps = payload.lifestyle.supplements
+        assert [s.supplement_id for s in supps] == [
+            "creatine_monohydrate", "electrolyte_mix"]
+        creatine = supps[0]
+        assert creatine.canonical_name == "Creatine monohydrate"
+        assert creatine.category == "Performance"
+        assert creatine.dose == "5 g"
+        assert creatine.frequency == "daily"
+        assert creatine.timing == "post_exercise"
+        assert creatine.notes == "micronized"
+        # Optional fields tolerate NULL (electrolyte mix has no notes).
+        assert supps[1].notes is None
+
+    def test_empty_athlete_has_no_supplements(self):
+        conn = _FakeConn()
+        _queue_empty_athlete(conn)
+        payload = build_layer1_payload(conn, user_id=1)
+        assert payload.lifestyle.supplements == []
 
     def test_network_and_consents(self):
         conn = _FakeConn()

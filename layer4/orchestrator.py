@@ -202,6 +202,51 @@ def _collect_athlete_crafts(layer1_payload: Layer1Payload) -> list[str]:
     return sorted(set(crafts))
 
 
+def _athlete_discipline_overrides(layer1_payload: Layer1Payload) -> dict[str, dict]:
+    """X2 — unpack the athlete's discipline weighting into Layer 2A's
+    `athlete_discipline_overrides` shape (`{discipline_id: {"weight": pct}}`,
+    consumed by `_compute_load_weight` per spec §5.4). `discipline_slug` stores
+    the canonical `discipline_id` (X2 write convention), so this is a direct
+    remap. Empty weighting → `{}` and 2A falls back to race-time-midpoint
+    system defaults."""
+    return {
+        r.discipline_slug: {"weight": float(r.weight_pct)}
+        for r in layer1_payload.training_history.discipline_weighting
+    }
+
+
+def _derive_race_discipline_mix(
+    target_race_event: RaceEventPayload | None,
+) -> dict[str, float]:
+    """X3 — derive the race's per-discipline weight signal from its terrain
+    breakdown into Layer 2A's `race_discipline_overrides` shape
+    (`{discipline_id: pct}`), consumed at the top of the pooling precedence
+    chain (race > athlete > bridge, `_apply_modality_group_pooling`).
+
+    Group-sums `pct_of_race` over the terrain rows that carry a
+    `discipline_id`. Race-wide rows (`discipline_id is None`,
+    Modality_Group_Spec §10) are dropped — they apportion across every
+    included discipline, not one, so they hold no per-discipline signal.
+    Percentage sums pass through unnormalized: the downstream
+    `_normalize_load_weights` pass rescales the included set to sum 1.0.
+    Empty (no event, or no discipline-tagged terrain) → `{}`, leaving the
+    override inert (2A falls back to athlete, then bridge midpoints).
+
+    The same `{discipline_id: pct}` map is the shared seam for #509's
+    inclusion axis (a discipline with a race weight → `included`); kept a
+    standalone helper so that slice reads it off the keys without rework."""
+    if target_race_event is None:
+        return {}
+    mix: dict[str, float] = {}
+    for entry in target_race_event.race_terrain:
+        if entry.discipline_id is None:
+            continue
+        mix[entry.discipline_id] = mix.get(entry.discipline_id, 0.0) + float(
+            entry.pct_of_race
+        )
+    return mix
+
+
 def _q_modality_groups(db: Any, version_0a: str) -> dict[str, list[str]]:
     """X1b.3b — `{discipline_id: [group_id, ...]}` from
     `layer0.discipline_modality_membership` for the cone's 0A version. Mirrors
@@ -305,6 +350,11 @@ def _upstream_full_cone(
         framework_sport=framework_sport,
         discipline_id_filter=discipline_id_filter,
         etl_version_set=etl_version_set,
+        athlete_discipline_overrides=_athlete_discipline_overrides(layer1_payload),
+        # X4 — race terrain mix wins over the athlete split, which wins over
+        # bridge midpoints (precedence resolved in _apply_modality_group_pooling).
+        # Inert when the race carries no discipline-tagged terrain.
+        race_discipline_overrides=_derive_race_discipline_mix(target_race_event),
     )
     included_discipline_ids = [
         d.discipline_id
@@ -694,6 +744,7 @@ def orchestrate_single_session_synthesize(
             db,
             framework_sport=request.sport,
             etl_version_set=etl_version_set,
+            athlete_discipline_overrides=_athlete_discipline_overrides(layer1_payload),
         )
     except Layer2AInputError as exc:
         raise OrchestrationError(

@@ -37,7 +37,11 @@ from layer4 import (
     orchestrate_race_week_brief,
     orchestrate_single_session_synthesize,
 )
-from layer4.orchestrator import _max_etl_version, _q_current_etl_version_set
+from layer4.orchestrator import (
+    _derive_race_discipline_mix,
+    _max_etl_version,
+    _q_current_etl_version_set,
+)
 from layer2a.builder import Layer2AInputError
 from layer4.context import (
     ACWRStatus,
@@ -74,6 +78,7 @@ from layer4.context import (
     PhaseLoadBands,
     RaceDayFueling,
     RaceEventPayload,
+    RaceTerrainEntry,
     RaceTerrainOutput,
     RationaleMetadata,
     RecentTrajectory,
@@ -1068,6 +1073,108 @@ class TestRaceTerrainWireUp:
 
         m_l2b = mocks[2]
         assert m_l2b.call_args.kwargs["race_terrain"] == []
+
+
+class TestDeriveRaceDisciplineMix:
+    """X3 — `_derive_race_discipline_mix` group-sums the race terrain rows
+    into the `{discipline_id: pct}` override map that Layer 2A's pooling
+    consumes at the top of the precedence chain (race > athlete > bridge).
+    Pure function; the same map is the shared seam for #509's inclusion axis."""
+
+    def _race_event(self, race_terrain: list[RaceTerrainEntry]) -> RaceEventPayload:
+        return RaceEventPayload(
+            race_event_id=1,
+            user_id=_USER_ID,
+            name="Test Race 2026",
+            event_date=_EVENT_DATE,
+            race_format="single_day",
+            event_locale_id="home",
+            event_locale_mapbox_id="poi.test_anchor",
+            is_target_event=True,
+            race_terrain=race_terrain,
+        )
+
+    def test_groups_and_sums_pct_by_discipline(self):
+        ev = self._race_event(
+            [
+                RaceTerrainEntry(terrain_id="TRN-002", pct_of_race=30.0, discipline_id="D-008"),
+                RaceTerrainEntry(terrain_id="TRN-009", pct_of_race=15.0, discipline_id="D-008"),
+                RaceTerrainEntry(terrain_id="TRN-001", pct_of_race=20.0, discipline_id="D-001"),
+            ]
+        )
+        assert _derive_race_discipline_mix(ev) == {"D-008": 45.0, "D-001": 20.0}
+
+    def test_drops_race_wide_rows(self):
+        ev = self._race_event(
+            [
+                RaceTerrainEntry(terrain_id="TRN-002", pct_of_race=40.0, discipline_id="D-008"),
+                # discipline_id None → race-wide, no per-discipline signal → dropped
+                RaceTerrainEntry(terrain_id="TRN-003", pct_of_race=60.0),
+            ]
+        )
+        assert _derive_race_discipline_mix(ev) == {"D-008": 40.0}
+
+    def test_no_event_returns_empty(self):
+        assert _derive_race_discipline_mix(None) == {}
+
+    def test_no_terrain_returns_empty(self):
+        assert _derive_race_discipline_mix(self._race_event([])) == {}
+
+    def test_all_race_wide_returns_empty(self):
+        ev = self._race_event(
+            [
+                RaceTerrainEntry(terrain_id="TRN-002", pct_of_race=50.0),
+                RaceTerrainEntry(terrain_id="TRN-003", pct_of_race=50.0),
+            ]
+        )
+        assert _derive_race_discipline_mix(ev) == {}
+
+
+class TestRaceDisciplineMixWireUp:
+    """X4 — the derived race mix reaches the cone's Layer 2A call as
+    `race_discipline_overrides`; the pooling (tested in test_layer2a_modality_groups)
+    resolves precedence over the athlete split and bridge defaults from there."""
+
+    def test_race_discipline_mix_threads_into_layer2a_call(self):
+        conn = _FakeConn()
+        _queue_target_race_event(
+            conn,
+            race_terrain=[
+                {"terrain_id": "TRN-002", "pct_of_race": 30.0, "discipline_id": "D-008"},
+                {"terrain_id": "TRN-009", "pct_of_race": 15.0, "discipline_id": "D-008"},
+                {"terrain_id": "TRN-001", "pct_of_race": 20.0, "discipline_id": "D-001"},
+                {"terrain_id": "TRN-003", "pct_of_race": 35.0},  # race-wide → dropped
+            ],
+        )
+        _queue_etl_version_set(conn)
+        _queue_primary_locale(conn)
+        _queue_locale_equipment_pool(conn)
+        cache = Layer4Cache(InMemoryCacheBackend())
+
+        race_event_for_l4 = RaceEventPayload(
+            race_event_id=1,
+            user_id=_USER_ID,
+            name="Test Race 2026",
+            event_date=_EVENT_DATE,
+            race_format="single_day",
+            event_locale_id="home",
+            event_locale_mapbox_id="poi.test_anchor",
+            is_target_event=True,
+        )
+        stack = _patches(
+            layer4_return=_fake_layer4_payload(race_event_payload=race_event_for_l4)
+        )
+        mocks = _enter_all(stack)
+        try:
+            orchestrate_race_week_brief(conn, _USER_ID, cache=cache, today=_TODAY)
+        finally:
+            _exit_all(stack)
+
+        m_l2a = mocks[1]
+        assert m_l2a.call_args.kwargs["race_discipline_overrides"] == {
+            "D-008": 45.0,
+            "D-001": 20.0,
+        }
 
 
 class TestFrameworkSportOverride:
