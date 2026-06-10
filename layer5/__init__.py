@@ -11,6 +11,7 @@ from layer5.builder import (
     build_plan_nutrition,
     build_race_day_fueling_plan,
 )
+from layer5.orchestrator import generate_and_persist_plan_nutrition
 from layer5.payload import (
     DayNutrition,
     EnergyModelMeta,
@@ -23,6 +24,7 @@ __all__ = [
     "ENERGY_MODEL_NAME",
     "build_plan_nutrition",
     "build_race_day_fueling_plan",
+    "generate_and_persist_plan_nutrition",
     "DayNutrition",
     "EnergyModelMeta",
     "PlanNutrition",
