@@ -1046,28 +1046,43 @@ def _max_etl_version(versions: list[str]) -> str:
 
 
 def _q_current_etl_version_set(db: Any) -> dict[str, str]:
-    """Discover the active Layer 0 ETL version triplet.
+    """Discover the active Layer 0 ETL version per source family.
 
-    v1 approximation: take the highest `etl_version` from `layer0.sports` (a
-    representative table) and apply it to all three sub-arc keys. Coordinated
-    Layer 0 rollouts ship aligned versions, so the v1 approximation matches
-    production. Promote to per-sub-arc when independent versioning ships.
+    Each family is versioned independently and its rows store a
+    family-prefixed `etl_version` — `0A-v…` (sports), `0B-v…` (exercises),
+    `0C-v…` (vocabulary / terrain / body-parts / equipment). Read each
+    family's own highest active version from a representative table; do NOT
+    broadcast one table's version across all three. Layer 2B/2C filter their
+    0B/0C reads by exact `etl_version`, so a `0A-`prefixed string handed to
+    them matches no rows (the bug this replaces).
+
+    A family is a single version line: a migration that bumps it re-stamps
+    every table in that family in lockstep (the `0C-v%` supersede scoping in
+    `etl/layer0/db.py:insert_versioned`), so one representative table per
+    family is authoritative for that family's current version.
 
     The max is computed by numeric component (see `_max_etl_version`), not a
     lexical SQL `MAX` — the latter ranks `0A-v11.0` below `0A-v9.0` at a
     digit-width boundary.
     """
-    cur = db.execute(
-        "SELECT DISTINCT etl_version AS v FROM layer0.sports WHERE superseded_at IS NULL"
+    representatives = (
+        ("0A", "layer0.sports"),
+        ("0B", "layer0.exercises"),
+        ("0C", "layer0.terrain_types"),
     )
-    versions = [row["v"] for row in cur.fetchall() if row["v"]]
-    if not versions:
-        raise OrchestrationError(
-            "etl_version_set_undiscoverable",
-            "layer0.sports has no non-superseded rows",
+    version_set: dict[str, str] = {}
+    for family, table in representatives:
+        cur = db.execute(
+            f"SELECT DISTINCT etl_version AS v FROM {table} WHERE superseded_at IS NULL"
         )
-    v = _max_etl_version(versions)
-    return {"0A": v, "0B": v, "0C": v}
+        versions = [row["v"] for row in cur.fetchall() if row["v"]]
+        if not versions:
+            raise OrchestrationError(
+                "etl_version_set_undiscoverable",
+                f"{table} has no non-superseded rows",
+            )
+        version_set[family] = _max_etl_version(versions)
+    return version_set
 
 
 def _q_primary_locale(db: Any, user_id: int) -> str:

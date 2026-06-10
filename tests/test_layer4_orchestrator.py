@@ -37,7 +37,11 @@ from layer4 import (
     orchestrate_race_week_brief,
     orchestrate_single_session_synthesize,
 )
-from layer4.orchestrator import _derive_race_discipline_mix, _max_etl_version
+from layer4.orchestrator import (
+    _derive_race_discipline_mix,
+    _max_etl_version,
+    _q_current_etl_version_set,
+)
 from layer2a.builder import Layer2AInputError
 from layer4.context import (
     ACWRStatus,
@@ -215,8 +219,22 @@ def _queue_target_race_event(
     conn.queue(rows=[])  # route_locales (empty for single_day)
 
 
-def _queue_etl_version_set(conn: _FakeConn, *, v: str = "v7") -> None:
-    conn.queue(rows=[{"v": v}])
+def _queue_etl_version_set(
+    conn: _FakeConn,
+    *,
+    v: str = "v7",
+    v_0a: str | None = None,
+    v_0b: str | None = None,
+    v_0c: str | None = None,
+) -> None:
+    """Queue the three per-family version probes (`_q_current_etl_version_set`
+    reads sports/0A, exercises/0B, terrain_types/0C in that order). Default
+    `v="v7"` yields the aligned `{"0A":"v7","0B":"v7","0C":"v7"}` the existing
+    assertions expect; pass `v_0a`/`v_0b`/`v_0c` to exercise divergent
+    per-family versions."""
+    conn.queue(rows=[{"v": v_0a or v}])  # layer0.sports        (0A)
+    conn.queue(rows=[{"v": v_0b or v}])  # layer0.exercises     (0B)
+    conn.queue(rows=[{"v": v_0c or v}])  # layer0.terrain_types (0C)
 
 
 def _queue_primary_locale(conn: _FakeConn, *, locale: str = "home") -> None:
@@ -1953,6 +1971,47 @@ class TestMaxEtlVersion:
         assert _max_etl_version(["0A-v11.0", "0A-v11.2"]) == "0A-v11.2"
 
 
+class TestQCurrentEtlVersionSet:
+    """`_q_current_etl_version_set` resolves each source family's own active
+    version. Regression guard: it previously broadcast `layer0.sports`'s
+    `0A-`prefixed version to the 0B/0C keys, so Layer 2B/2C — which exact-match
+    `etl_version` against `0B-`/`0C-`prefixed rows — resolved zero terrain and
+    zero exercises in production."""
+
+    def test_reads_per_family_no_broadcast(self):
+        conn = _FakeConn()
+        _queue_etl_version_set(
+            conn, v_0a="0A-v1.6.7", v_0b="0B-v1.6.7", v_0c="0C-v1.6.7"
+        )
+        assert _q_current_etl_version_set(conn) == {
+            "0A": "0A-v1.6.7",
+            "0B": "0B-v1.6.7",
+            "0C": "0C-v1.6.7",
+        }
+
+    def test_per_family_max_by_numeric_component(self):
+        # Each family independently resolves its own highest active version.
+        conn = _FakeConn()
+        conn.queue(rows=[{"v": "0A-v9.0"}, {"v": "0A-v11.0"}])    # 0A sports
+        conn.queue(rows=[{"v": "0B-v1.6.7"}])                     # 0B exercises
+        conn.queue(rows=[{"v": "0C-v2.0"}, {"v": "0C-v2.0-r2"}])  # 0C terrain
+        assert _q_current_etl_version_set(conn) == {
+            "0A": "0A-v11.0",
+            "0B": "0B-v1.6.7",
+            "0C": "0C-v2.0-r2",
+        }
+
+    def test_undiscoverable_when_a_family_is_empty(self):
+        # 0B empty → raise (do NOT silently fall back to another family).
+        conn = _FakeConn()
+        conn.queue(rows=[{"v": "0A-v1.6.7"}])  # 0A present
+        conn.queue(rows=[])                    # 0B empty
+        with pytest.raises(OrchestrationError) as exc:
+            _q_current_etl_version_set(conn)
+        assert exc.value.code == "etl_version_set_undiscoverable"
+        assert "layer0.exercises" in exc.value.detail
+
+
 class TestOrchestrateSingleSessionSynthesizeDiscoveryFailures:
     def test_etl_version_set_undiscoverable(self):
         """No non-superseded `layer0.sports` row → orchestrator raises before
@@ -2101,9 +2160,10 @@ class TestOrchestrateSingleSessionSynthesizeSportSemantics:
             )
         finally:
             _exit_all(stack)
-        # Only 1 SELECT (etl_version_set) — the orchestrator didn't query
-        # locale_profiles or locale_equipment on the quick_equipment path.
-        assert len(conn.calls) == 1
+        # Only the 3 etl_version_set probes (one per source family) — the
+        # orchestrator didn't query locale_profiles or locale_equipment on the
+        # quick_equipment path.
+        assert len(conn.calls) == 3
 
 
 class TestOrchestrateSingleSessionSynthesizeReturnValue:
