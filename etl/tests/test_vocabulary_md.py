@@ -85,14 +85,37 @@ def test_health_categories_known_present(parsed):
 # ---------------------------------------------------------------------------
 
 def test_equipment_count(parsed):
-    # 122 = standard categories minus DROPs minus duplicates, plus 9 universal.
-    # Vocabulary V4 §6 took this 121 -> 122: pruned 3 vessels (Bike (generic),
-    # Sea kayak, Rowing shell) and folded in 4 A-only items (Tricep bar,
-    # Preacher curl bench, Slam ball, Treadwall). "Climbing wall" is NOT
-    # folded in — it already exists in layer0 as the active 0B legacy
-    # "Climbing Wall" (would violate the case-insensitive active-name index).
-    # Renames and the Bench/Weighted-vest moves are count-neutral.
-    assert len(parsed["equipment_items"]) == 122
+    # Vocabulary V4b — legacy 0A/0B equipment reconciled into the 0C vocab.
+    # 122 -> 131: re-homed 9 standalone items (Rollerskis, Inline skates + 7
+    # gym/misc). The climbing/ski *aggregate* kits are NOT equipment rows — they
+    # roll up into the existing readiness toggles (Climbing — roped,
+    # Mountaineering, Touring/AT ski setup) via vocabulary_transforms._ROLLUP.
+    # TT Bike normalizes to the existing "TT / triathlon bike" vessel. The 22
+    # legacy rows are superseded on Neon by retire_legacy_equipment_v4b.sql
+    # (not visible to this parse).
+    assert len(parsed["equipment_items"]) == 131
+
+
+def test_equipment_v4b_legacy_reconciliation(parsed):
+    by_name = {e["canonical_name"]: e for e in parsed["equipment_items"]}
+    names = set(by_name)
+    # Climbing/ski aggregate kits are toggle rollups, NOT equipment rows.
+    for kit in ["Climbing kit", "Mountaineering kit", "Touring ski kit",
+                "XC ski kit", "Climbing gear", "Climbing Wall", "Harness",
+                "Climbing holds", "TT Bike"]:
+        assert kit not in names, f"{kit!r} should be a toggle rollup, not equipment"
+    # Standalone gear re-homed (exact legacy casing so substitute tokens match).
+    for item, cat in [("Rollerskis", "Sport-Specific — Winter"),
+                      ("Inline skates", "Sport-Specific — Winter"),
+                      ("Hyperextension bench", "Machines - Strength"),
+                      ("Ab straps", "Bodyweight & Portable Equipment"),
+                      ("Mini hurdles", "Bodyweight & Portable Equipment"),
+                      ("Stairs", "Bodyweight & Portable Equipment"),
+                      ("Mini trampoline", "Plyo, Power & Stability"),
+                      ("Wobble board", "Plyo, Power & Stability"),
+                      ("Stick roller", "Recovery & Therapy")]:
+        assert item in names, f"{item!r} re-home missing"
+        assert by_name[item]["equipment_category"].startswith(cat)
 
 
 def test_equipment_universal_flag(parsed):

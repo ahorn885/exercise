@@ -2738,7 +2738,7 @@
         "substitute_text": "Climbing holds mounted on wall",
         "equipment_required": [
           [
-            "Climbing holds"
+            "Climbing — roped"
           ]
         ],
         "is_improvised": false
@@ -3138,7 +3138,7 @@
         "substitute_text": "Friction rope segment",
         "equipment_required": [
           [
-            "Climbing rope"
+            "Climbing — roped"
           ]
         ],
         "is_improvised": false
