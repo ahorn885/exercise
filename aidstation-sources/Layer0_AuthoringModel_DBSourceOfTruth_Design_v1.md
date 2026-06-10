@@ -1,6 +1,6 @@
 # Layer 0 Authoring Model — DB as Source of Truth — Design Spec v1
 
-**Status:** DRAFT — proposed, pending Andy sign-off (stop-and-ask triggers #3 cross-layer surface change + #5 architectural alternatives). This spec is the review artifact; no implementation lands until approved.
+**Status:** APPROVED — Andy sign-off 2026-06-10. Decisions A/B/C resolved (see §5.2 + §8). Slice 1 (the `validate_layer0` validator port) is cleared to build; nothing else ships before it. *(Approved in place from the v1 DRAFT review artifact — the lifecycle close of that draft, not a content revision; git holds the draft state.)*
 **Date:** 2026-06-09
 **Scope:** Retire the legacy xlsx "foundational documents" as the authoring source of truth for Layer 0 reference data; make the `layer0.*` Postgres tables authoritative. Serving path is already DB-only — this is purely an *authoring/curation* change plus porting the validation gate off the ETL.
 
@@ -42,8 +42,8 @@ So in the **serving** sense the DB is already the source of truth. What we still
 1. **DB row is canonical; xlsx is retired.** After a final genesis snapshot, no further authoring in the workbooks. New reference-data changes are reviewed SQL migrations in git.
 2. **Edits are versioned SQL migrations, not spreadsheet diffs.** Reuse the existing supersede-before-insert discipline (one `etl_version` per source family, `superseded_at` flip). Source artifact = a reviewed `.sql` in the repo, applied via Neon SQL editor (container can't reach Neon — unchanged constraint).
 3. **Port the validators to run against the DB**, as a standalone `validate_layer0` pass wired into CI. Most already query the DB, not the workbook — see §5.2.
-4. **No admin editing UI in v1.** Andy is the sole curator and recent Layer 0 work is surgical (X1a bridge bands, X1b modality groups, D-007 cleanup). SQL migrations fit that shape. Revisit a Flask admin surface only if a wholesale re-curation lands (the Flask app *can* reach Neon at runtime, so it's the natural home if we ever need one). — **Open decision A.**
-5. **Keep a DB→xlsx export as the bulk-review hedge.** A read-only export script preserves the one thing the spreadsheet is genuinely better at (seeing all 245 exercises / 38 sports at once) while inverting the dependency. — **Open decision B** (build now vs defer).
+4. **No admin editing UI in v1.** Andy is the sole curator and recent Layer 0 work is surgical (X1a bridge bands, X1b modality groups, D-007 cleanup). SQL migrations fit that shape. Revisit a Flask admin surface only if a wholesale re-curation lands (the Flask app *can* reach Neon at runtime, so it's the natural home if we ever need one). — **Decision A — RESOLVED 2026-06-10: defer (no admin UI in v1).**
+5. **Keep a DB→xlsx export as the bulk-review hedge.** A read-only export script preserves the one thing the spreadsheet is genuinely better at (seeing all 245 exercises / 38 sports at once) while inverting the dependency. — **Decision B — RESOLVED 2026-06-10: build at phase 4.**
 
 ## 4. Why this shape (alternatives considered)
 
@@ -67,16 +67,19 @@ write etl/migrations/layer0/NNNN_<change>.sql   (supersede prior etl_version, in
 
 A standalone module/CLI that runs the existing checks against `layer0.*` and exits non-zero on hard failures. Inventory + proposed disposition:
 
-| Validator | Reads DB today? | Proposed home | WARN→FAIL? |
+| Validator | Reads DB today? | Proposed home | Disposition (decision C — RESOLVED 2026-06-10) |
 |---|---|---|---|
 | `fk_checks` (substitution + training-gap FKs) | yes | `validate_layer0` + consider real FK constraints | **FAIL** (a dangling FK is never intended) |
-| `discipline_canon_check` | yes | `validate_layer0` | FAIL |
-| `modality_group_orphan` | yes | `validate_layer0` (already ERROR-severity) | FAIL |
-| `sum_to_100` | yes | `validate_layer0` | WARN (9 sports legitimately fall short today) |
-| `vocab_alignment` | yes | `validate_layer0` | WARN (documented by-design mismatches) |
-| `contraindicated_conditions`, `default_inclusion` | yes | `validate_layer0` | WARN → revisit |
+| `discipline_canon_check` | yes | `validate_layer0` | **FAIL** |
+| `modality_group_orphan` | yes | `validate_layer0` (already ERROR-severity) | **FAIL** |
+| `sum_to_100` | yes | `validate_layer0` | **FAIL + waiver registry** — the intentionally sub-100 sports get explicit, reviewed, dated waivers; gate fails on any *unwaived* violation |
+| `vocab_alignment` | yes | `validate_layer0` | **FAIL — fix the data** (reconcile the documented by-design mismatches; no waiver) |
+| `contraindicated_conditions` | yes | `validate_layer0` | **FAIL — triage the data** (typos fixed; a genuinely-new condition category is a no-padding / trigger-#2 call before it passes) |
+| `default_inclusion` | yes | `validate_layer0` | **FAIL** (closed enum `included`/`excluded`/`prompt_required`; no legitimate exception, so no waiver) |
 
-These are mostly mechanical to lift because they already take a DB connection, not the workbook. **Open decision C:** which checks graduate to hard-fail. The conservative default: FK + canon + orphan FAIL; the rest stay WARN as they are today.
+**Correction:** the `default_inclusion` validator is **already ERROR-severity in the ETL today** (`etl/layer0/validation/default_inclusion.py` docstring: "Mismatch → ERROR") — the prior "WARN → revisit" lumping understated its current state; FAIL in `validate_layer0` preserves existing behavior. Separately, the *serving* consumption of `default_inclusion` is a known bug (Layer 2A ignores the column and re-derives from `notes_conditions`, losing authored `excluded`/`included` intent) — tracked as **#509**, out of scope here; the FAIL guards the column's integrity regardless of which path serving reads.
+
+**Decision C — RESOLVED 2026-06-10:** all validators graduate to FAIL, with exactly one waiver bucket (`sum_to_100`) and two clean-the-data-first buckets (`vocab_alignment`, `contraindicated_conditions`). These are mostly mechanical to lift because they already take a DB connection, not the workbook.
 
 ### 5.3 Versioning (unchanged)
 
@@ -117,11 +120,12 @@ CI is unaffected — the GitHub Actions Python job runs `pytest tests/` only, no
 
 ## 8. Risks / open items / gut check
 
-- **Open decision A** — admin UI now or defer (recommend defer).
-- **Open decision B** — build the DB→xlsx export hedge now or defer (recommend build it at phase 4, cheap insurance against losing bulk review).
-- **Open decision C** — which validators graduate WARN→FAIL (recommend FK + canon + orphan FAIL, rest WARN).
+- ~~**Open decision A** — admin UI now or defer~~ ✅ **RESOLVED 2026-06-10: defer** (no admin UI in v1).
+- ~~**Open decision B** — DB→xlsx export hedge now or defer~~ ✅ **RESOLVED 2026-06-10: build at phase 4.**
+- ~~**Open decision C** — which validators graduate WARN→FAIL~~ ✅ **RESOLVED 2026-06-10: all FAIL**, with one waiver bucket (`sum_to_100`) and two fix-the-data buckets (`vocab_alignment`, `contraindicated_conditions`). See §5.2.
 - ~~**Open item D** — the v11 test pins~~ ✅ Resolved in #487 (§7.2): tests repointed to v14, v10–v13 deleted.
-- **Open item E** — confirm no downstream assumes Layer 0 versions only advance via a full ETL run (`etl_version_set` pinning / partial-update invalidation). Trigger #3 check.
+- **Open item E** — confirm no downstream assumes Layer 0 versions only advance via a full ETL run (`etl_version_set` pinning / partial-update invalidation). Trigger #3 check. **→ folded into Slice 1 (#488) as a prerequisite check.**
+- **New (spun out) — #509:** Layer 2A ignores the `default_inclusion` column and re-derives inclusion from `notes_conditions`, losing the curator's authored `excluded`/`included` intent (4/17 AR rows diverge in the genesis snapshot). Fix = unify inclusion onto the weighting precedence (`race > athlete > curator default`, per `Modality_Group_Spec_v1` §5.1) + wire the column + reconcile the stale `Layer2A_Spec` §5.3 ("not a column" — false since schema v10). Triggers #3/#4; sequenced with X3/X4; **out of this epic's authoring-migration scope.**
 
 **Gut check:**
 - *Best argument against the whole thing:* the spreadsheet's real value is bulk human review. If a wholesale exercise-DB re-curation is on the roadmap, SQL migrations are the wrong tool and you'll miss the workbook — the §3.5 export is the only thing that makes full retirement safe. If we won't build the export, consider keeping the xlsx as the bulk-edit tool for 0B (exercises) only and migrating 0A/0C.
@@ -130,14 +134,15 @@ CI is unaffected — the GitHub Actions Python job runs `pytest tests/` only, no
 
 ## 9. Tracking
 
-Epic filed: **[#488](https://github.com/ahorn885/exercise/issues/488)** — "Retire legacy xlsx foundational docs → DB as source of truth" (`layer:0`, `area:etl`, `v2`). The task checklist lives there. Status as of this PR (#487):
+Epic filed: **[#488](https://github.com/ahorn885/exercise/issues/488)** — "Retire legacy xlsx foundational docs → DB as source of truth" (`layer:0`, `area:etl`, `v2`). The task checklist lives there. Status as of 2026-06-10 (spec **APPROVED**; decisions A/B/C resolved):
 
 - [x] Prune stale/superseded workbooks; retire v10/v11.
 - [x] Add `etl/tests/` to the CI Python job (see §10).
-- [ ] Slice 1 — `validate_layer0` port + CI wire (the integrity gate; nothing ships before it).
+- [ ] Slice 1 — `validate_layer0` port + CI wire (the integrity gate; nothing ships before it). Includes: `sum_to_100` waiver registry · fix `vocab_alignment` data · triage `contraindicated_conditions` data · clear open item E.
 - [ ] `etl/migrations/layer0/` convention + first proof migration.
 - [ ] Phase 4 — freeze extractors + remaining workbooks (v14/v19).
-- [ ] DB→xlsx export (decision B, if approved).
+- [ ] DB→xlsx export (decision B — at phase 4).
+- [ ] **#509** (spun out) — Layer 2A inclusion-precedence unification + wire `default_inclusion` column. Out of scope here; sequenced with X3/X4.
 
 ## 10. CI coverage note (shipped in #487)
 
