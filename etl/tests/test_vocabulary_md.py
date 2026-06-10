@@ -85,12 +85,14 @@ def test_health_categories_known_present(parsed):
 # ---------------------------------------------------------------------------
 
 def test_equipment_count(parsed):
-    # 123 = standard categories minus DROPs minus duplicates, plus 9 universal.
-    # Vocabulary V4 §6 took this 121 -> 123: pruned 3 vessels (Bike (generic),
-    # Sea kayak, Rowing shell) and folded in 5 A-only items (Tricep bar,
-    # Preacher curl bench, Slam ball, Treadwall, Climbing wall); renames and
-    # the Bench/Weighted-vest moves are count-neutral. Pinned to catch drift.
-    assert len(parsed["equipment_items"]) == 123
+    # 122 = standard categories minus DROPs minus duplicates, plus 9 universal.
+    # Vocabulary V4 §6 took this 121 -> 122: pruned 3 vessels (Bike (generic),
+    # Sea kayak, Rowing shell) and folded in 4 A-only items (Tricep bar,
+    # Preacher curl bench, Slam ball, Treadwall). "Climbing wall" is NOT
+    # folded in — it already exists in layer0 as the active 0B legacy
+    # "Climbing Wall" (would violate the case-insensitive active-name index).
+    # Renames and the Bench/Weighted-vest moves are count-neutral.
+    assert len(parsed["equipment_items"]) == 122
 
 
 def test_equipment_universal_flag(parsed):
@@ -144,14 +146,17 @@ def test_equipment_v4_prunes_renames_and_foldins(parsed):
     # Cycling trainer relocated to the cycling vessel category.
     assert by_name["Cycling trainer"]["equipment_category"].startswith(
         "Sport-Specific — Cycling")
-    # Five A-only fold-ins now carried in layer0 so EQUIPMENT_CATEGORIES can retire (V5).
+    # A-only fold-ins now carried in layer0 so EQUIPMENT_CATEGORIES can retire (V5).
     for folded, cat in [("Tricep bar (W-bar)", "Freeweights"),
                         ("Preacher curl bench", "Freeweights"),
                         ("Slam ball", "Plyo, Power & Stability"),
-                        ("Treadwall", "Grip & Climbing"),
-                        ("Climbing wall", "Grip & Climbing")]:
+                        ("Treadwall", "Grip & Climbing")]:
         assert folded in names, f"{folded!r} fold-in missing"
         assert by_name[folded]["equipment_category"] == cat
+    # "Climbing wall" is NOT folded into 0C — it already lives in layer0 as the
+    # active 0B legacy "Climbing Wall"; a 0C copy would collide on the
+    # case-insensitive active-name index. So no 0C "Climbing wall" row here.
+    assert "Climbing wall" not in names
 
 
 def test_equipment_dedupe_foam_roller(parsed):

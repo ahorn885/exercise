@@ -298,7 +298,12 @@ Organised to mirror AR Schema 2.2 categories. Each row shows the canonical name 
 | Pinch block | Pinch Block ✓ | |
 | Finger extension band | — | |
 | Treadwall | — | Folded in from EQUIPMENT_CATEGORIES (Vocabulary V4) |
-| Climbing wall | — | Folded in from EQUIPMENT_CATEGORIES (Vocabulary V4) |
+
+<!-- "Climbing wall" is intentionally NOT folded in here: it already exists in
+layer0 as the active 0B legacy row "Climbing Wall" (0B-v19.K2). Adding a 0C
+copy violates equipment_items_active_ci_name_idx (case-insensitive unique on
+active names). The A-list item maps to the existing row; casing reconciliation
+(Climbing Wall vs Climbing wall) is left to V5's EQUIPMENT_CATEGORIES retirement. -->
 
 ## Bodyweight & Portable Equipment
 
