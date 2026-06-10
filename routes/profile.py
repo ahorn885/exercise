@@ -54,6 +54,10 @@ from athlete_skill_toggles_repo import (
     upsert_athlete_skill_toggles,
 )
 from race_events_repo import list_athlete_race_events
+from athlete_supplements_repo import (
+    load_supplement_vocab, vocab_index, list_athlete_supplements,
+    add_athlete_supplement, delete_athlete_supplement,
+)
 from routes import provider_auth as pa
 
 
@@ -331,7 +335,9 @@ def edit():
             caffeine_race_day_strategy=_str('caffeine_race_day_strategy'),
             salt_electrolyte_tolerance=_str('salt_electrolyte_tolerance'),
             gi_triggers_known=_str('gi_triggers_known'),
-            supplement_protocol_notes=_str('supplement_protocol_notes'),
+            # supplement_protocol_notes is no longer edited here — supplements
+            # moved to structured records (athlete_supplements). The legacy
+            # column is left untouched (not passed) rather than wiped to NULL.
             **prefill_values,
         )
         _record_self_report_provenance(db, uid, prefill_values)
@@ -408,12 +414,19 @@ def edit():
     # otherwise). The standing protocol below always renders from `profile`.
     active_plan_id, plan_nutrition = _load_active_plan_nutrition(db, uid)
 
+    # 2E-6 — structured supplement capture: the athlete's records + the Layer 0
+    # vocab that powers the add-supplement picker.
+    supplements = list_athlete_supplements(db, uid)
+    supplement_vocab = load_supplement_vocab(db)
+
     from datetime import datetime as _dt
     return render_template(
         'profile/edit.html',
         profile=profile,
         active_plan_id=active_plan_id,
         plan_nutrition=plan_nutrition,
+        supplements=supplements,
+        supplement_vocab=supplement_vocab,
         unit_preference_choices=UNIT_PREFERENCE_CHOICES,
         memory=memory,
         preference_categories=PREFERENCE_CATEGORIES,
@@ -591,6 +604,48 @@ def delete_preference(pref_id):
     db.commit()
     flash('Preference removed.', 'info')
     return redirect(url_for('profile.coach_memory'))
+
+
+@bp.route('/supplement/add', methods=['POST'])
+def add_supplement():
+    """Add one structured supplement record. The selection is validated against
+    the Layer 0 vocab and the display fields (name/category) are taken from
+    there — a crafted POST can't store an unknown id or a spoofed name."""
+    db = get_db()
+    uid = current_user_id()
+    supplement_id = (request.form.get('supplement_id') or '').strip()
+    index = vocab_index(db)
+    vocab_row = index.get(supplement_id)
+    if vocab_row is None:
+        flash('Unknown supplement.', 'danger')
+        return redirect(url_for('profile.edit'))
+
+    def _opt(key):
+        return (request.form.get(key) or '').strip() or None
+
+    add_athlete_supplement(
+        db, uid,
+        supplement_id=supplement_id,
+        canonical_name=vocab_row['canonical_name'],
+        category=vocab_row.get('category'),
+        dose=_opt('dose'),
+        timing=_opt('timing'),
+        notes=_opt('notes'),
+    )
+    db.commit()
+    flash('Supplement added.', 'success')
+    return redirect(url_for('profile.edit'))
+
+
+@bp.route('/supplement/<int:supp_id>/delete', methods=['POST'])
+def delete_supplement(supp_id):
+    """Remove one supplement record. Scoped on user_id — a crafted POST can't
+    reach another athlete's row."""
+    db = get_db()
+    delete_athlete_supplement(db, current_user_id(), supp_id)
+    db.commit()
+    flash('Supplement removed.', 'info')
+    return redirect(url_for('profile.edit'))
 
 
 @bp.route('/feedback/<int:fb_id>')

@@ -225,12 +225,13 @@ def test_profile_nutrition_protocol_renders(monkeypatch):
     assert 'name="dietary_pattern"' in html
     assert 'name="fueling_format_preference"' in html
     assert 'name="caffeine_tolerance"' in html
-    assert 'name="supplement_protocol_notes"' in html
     # Stored values pre-fill the inputs (free-text, number, and >=1 checkbox).
-    assert 'Creatine 5g daily' in html
     assert 'high fructose' in html
     assert 'value="200"' in html
     assert 'checked' in html  # multi-select tokens pre-checked
+    # Supplements moved to a structured editor (separate card), not a textarea.
+    assert 'name="supplement_protocol_notes"' not in html
+    assert 'Current supplements' in html
     # No live plan in the default conn -> the plan-baseline card stays hidden.
     assert 'Active plan · daily baseline' not in html
     assert 'style="' not in html
@@ -325,3 +326,112 @@ def test_load_active_plan_nutrition_none_when_no_live_plan(monkeypatch):
     pid, nutr = _profile._load_active_plan_nutrition(_PlanRowsConn(rows), uid=9)
     assert pid is None and nutr is None
     assert called == []  # never loads nutrition when nothing is live
+
+
+# ── 2E-6 structured supplement capture ───────────────────────────────
+
+import athlete_supplements_repo as _supp_repo  # noqa: E402
+
+
+class _SuppConn(_Conn):
+    """Adds canned rows for the supplement vocab + the athlete's records."""
+    def __init__(self, vocab=(), supps=(), **kw):
+        super().__init__(**kw)
+        self._vocab = list(vocab)
+        self._supps = list(supps)
+
+    def execute(self, sql, *a, **k):
+        s = ' '.join(sql.split())
+        if 'supplement_vocabulary' in s:
+            return _Cursor(self._vocab)
+        if 'FROM athlete_supplements' in s:
+            return _Cursor(self._supps)
+        return super().execute(sql, *a, **k)
+
+
+def test_profile_supplements_card_renders(monkeypatch):
+    vocab = [
+        _FakeRow(supplement_id='creatine_monohydrate', canonical_name='Creatine monohydrate',
+                 category='Performance', typical_dose='5 g', primary_effect='...'),
+        _FakeRow(supplement_id='electrolyte_mix', canonical_name='Electrolyte mix',
+                 category='Race-day', typical_dose='per session', primary_effect='...'),
+    ]
+    supps = [_FakeRow(id=7, supplement_id='creatine_monohydrate', canonical_name='Creatine monohydrate',
+                      category='Performance', dose='5 g', timing='morning', notes='micronized')]
+    client = _client(monkeypatch, _SuppConn(vocab=vocab, supps=supps,
+                                            profile={'primary_sport': 'run', 'updated_at': 'x'}))
+    html = client.get('/profile/?tab=athlete').get_data(as_text=True)
+    assert 'Current supplements' in html
+    assert 'Creatine monohydrate' in html and 'morning' in html      # the record
+    assert 'optgroup label="Performance"' in html                     # grouped picker
+    assert 'optgroup label="Race-day"' in html
+    assert '/profile/supplement/add' in html                          # add form
+    assert '/profile/supplement/7/delete' in html                     # delete form
+    assert 'style="' not in html
+
+
+def test_supplement_add_resolves_name_from_vocab(monkeypatch):
+    captured = {}
+    monkeypatch.setattr(_profile, 'vocab_index', lambda db: {
+        'creatine_monohydrate': {'supplement_id': 'creatine_monohydrate',
+                                 'canonical_name': 'Creatine monohydrate', 'category': 'Performance'}})
+    monkeypatch.setattr(_profile, 'add_athlete_supplement', lambda db, uid, **kw: captured.update(kw))
+    monkeypatch.setitem(_appmod.app.config, 'WTF_CSRF_ENABLED', False)
+    client = _client(monkeypatch, _Conn(profile={}))
+    resp = client.post('/profile/supplement/add', data={
+        'supplement_id': 'creatine_monohydrate', 'dose': '5 g',
+        'timing': 'morning', 'notes': 'micronized', 'canonical_name': 'SPOOFED'})
+    assert resp.status_code in (302, 303)
+    # Display fields come from the vocab, not the client-supplied 'canonical_name'.
+    assert captured['canonical_name'] == 'Creatine monohydrate'
+    assert captured['category'] == 'Performance'
+    assert captured['dose'] == '5 g' and captured['timing'] == 'morning'
+    assert captured['notes'] == 'micronized'
+
+
+def test_supplement_add_rejects_unknown_id(monkeypatch):
+    calls = []
+    monkeypatch.setattr(_profile, 'vocab_index', lambda db: {'creatine_monohydrate': {}})
+    monkeypatch.setattr(_profile, 'add_athlete_supplement', lambda *a, **k: calls.append(k))
+    monkeypatch.setitem(_appmod.app.config, 'WTF_CSRF_ENABLED', False)
+    client = _client(monkeypatch, _Conn(profile={}))
+    resp = client.post('/profile/supplement/add', data={'supplement_id': 'snake_oil'})
+    assert resp.status_code in (302, 303)
+    assert calls == []  # unknown id is never persisted
+
+
+def test_supplement_delete_is_user_scoped(monkeypatch):
+    calls = []
+    monkeypatch.setattr(_profile, 'delete_athlete_supplement',
+                        lambda db, uid, sid: calls.append((uid, sid)))
+    monkeypatch.setitem(_appmod.app.config, 'WTF_CSRF_ENABLED', False)
+    client = _client(monkeypatch, _Conn(profile={}))
+    resp = client.post('/profile/supplement/9/delete', data={})
+    assert resp.status_code in (302, 303)
+    assert calls == [(1, 9)]  # scoped on the session user (id=1)
+
+
+def test_load_supplement_vocab_is_best_effort():
+    class _Boom:
+        def execute(self, *a, **k):
+            raise RuntimeError('layer0 schema missing')
+    assert _supp_repo.load_supplement_vocab(_Boom()) == []  # degrades, no raise
+
+
+def test_supplement_repo_sql_shape():
+    class _Rec:
+        def __init__(self):
+            self.calls = []
+        def execute(self, sql, params=()):
+            self.calls.append((' '.join(sql.split()), params))
+            return _Cursor([])
+    db = _Rec()
+    _supp_repo.list_athlete_supplements(db, 1)
+    _supp_repo.add_athlete_supplement(db, 1, supplement_id='x', canonical_name='X',
+                                      category='Health', dose='1', timing='am', notes=None)
+    _supp_repo.delete_athlete_supplement(db, 1, 5)
+    sqls = [c[0] for c in db.calls]
+    assert any('FROM athlete_supplements WHERE user_id' in s for s in sqls)
+    assert any('INSERT INTO athlete_supplements' in s for s in sqls)
+    del_call = next(c for c in db.calls if 'DELETE' in c[0])
+    assert del_call[1] == (5, 1)  # (id, user_id) — scoped
