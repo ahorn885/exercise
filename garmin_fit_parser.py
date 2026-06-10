@@ -2135,10 +2135,10 @@ def parse_metrics_fit(fit_bytes: bytes) -> dict:
 def parse_sleep_data_fit(fit_bytes: bytes) -> dict:
     """Parse a Garmin `_SLEEP_DATA.fit` file (FileIdMessage.type = 49).
 
-    Returns `{date, sleep_score, sleep_contributors}` where `sleep_contributors`
-    is a 6-element list of 0–100 sub-scores in Garmin's storage order. The
-    order maps to Duration / Stress / Deep / Light / REM / Awake but the
-    1-to-1 alignment isn't locked yet — see `_SLEEP_DATA_SCORE_MSG`.
+    Returns the daily-derived sleep keys for UPSERT into
+    `garmin_daily_metrics`: sleep_score, the 4 contributor sub-scores
+    (Light/REM/Stress/Awake — all locked Jun 10 2026), Deep minutes,
+    Stress sum/sample-count, restless moments.
     """
     from fit_tool.fit_file import FitFile
     tmp_path = os.path.join(tempfile.gettempdir(), f'fit_{uuid.uuid4().hex}.fit')
