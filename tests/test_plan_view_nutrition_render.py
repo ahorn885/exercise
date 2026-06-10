@@ -132,6 +132,7 @@ def _render(nutrition):
     tmpl = _env().get_template("plan_create/view.html")
     return tmpl.render(
         plan_version=plan_version,
+        plan_version_id=1,
         sessions_by_date=[(RACE_DATE, [session])],
         session_count=1,
         nutrition=nutrition,

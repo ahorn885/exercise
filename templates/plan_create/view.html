@@ -19,7 +19,7 @@
     <div class="nutri-head">
       <p class="eyebrow accent">● Nutrition</p>
       <form method="post" class="nutri-regen"
-            action="{{ url_for('plan_create.regenerate_nutrition', plan_version_id=plan_version.id) }}">
+            action="{{ url_for('plan_create.regenerate_nutrition', plan_version_id=plan_version_id) }}">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <button type="submit" class="btn btn-ghost btn-sm">{{ 'Regenerate' if nutrition else 'Generate' }}</button>
       </form>

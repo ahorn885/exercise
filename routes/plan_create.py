@@ -886,6 +886,7 @@ def view_plan(plan_version_id: int):
     return render_template(
         'plan_create/view.html',
         plan_version=plan_version,
+        plan_version_id=plan_version_id,
         sessions_by_date=sorted(sessions_by_date.items()),
         session_count=len(sessions),
         nutrition=nutrition,
