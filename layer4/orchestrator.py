@@ -202,6 +202,39 @@ def _collect_athlete_crafts(layer1_payload: Layer1Payload) -> list[str]:
     return sorted(set(crafts))
 
 
+def _q_modality_groups(db: Any, version_0a: str) -> dict[str, list[str]]:
+    """X1b.3b — `{discipline_id: [group_id, ...]}` from
+    `layer0.discipline_modality_membership` for the cone's 0A version. Mirrors
+    `layer2a/builder.py:_load_modality_groups` (the third consumer — promote to
+    a shared reader on a fourth). Empty dict → substitution narrowing is off."""
+    cur = db.execute(
+        "SELECT discipline_id, group_id "
+        "FROM layer0.discipline_modality_membership "
+        "WHERE etl_version = ? AND superseded_at IS NULL",
+        (version_0a,),
+    )
+    out: dict[str, list[str]] = {}
+    for row in cur.fetchall():
+        out.setdefault(row["discipline_id"], []).append(row["group_id"])
+    return out
+
+
+def _q_craft_discipline_aliases(db: Any, version_0a: str) -> dict[str, list[str]]:
+    """X1b.3b — `{craft_name: [discipline_id, ...]}` (many-to-many) from
+    `layer0.craft_discipline_aliases` for the cone's 0A version. Empty dict →
+    substitution narrowing is off (pre-X1b.3b behavior)."""
+    cur = db.execute(
+        "SELECT craft_name, discipline_id "
+        "FROM layer0.craft_discipline_aliases "
+        "WHERE etl_version = ? AND superseded_at IS NULL",
+        (version_0a,),
+    )
+    out: dict[str, list[str]] = {}
+    for row in cur.fetchall():
+        out.setdefault(row["craft_name"], []).append(row["discipline_id"])
+    return out
+
+
 def _upstream_full_cone(
     db: Any,
     user_id: int,
@@ -440,6 +473,10 @@ def _upstream_full_cone(
         discipline_names={
             d.discipline_id: d.discipline_name for d in layer2a_payload.disciplines
         },
+        # X1b.3b — narrow craft candidates to the race discipline's modality
+        # group(s). Loaded once at cone construction (1 query each).
+        discipline_modality_groups=_q_modality_groups(db, etl_version_set["0A"]),
+        craft_discipline_aliases=_q_craft_discipline_aliases(db, etl_version_set["0A"]),
     )
 
     return _UpstreamFullCone(

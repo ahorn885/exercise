@@ -520,6 +520,7 @@ class TrainingSubstitutionFlag(_Base):
     # training-substitution node.
     flag_type: Literal[
         "craft_unavailable",
+        "craft_substitution",
         "terrain_untrainable",
         "terrain_low_fidelity",
     ]

@@ -59,6 +59,8 @@ def resolve_training_substitution(
     discipline_names: dict[str, str] | None = None,
     fidelity_floor: float = _UNTRAINABLE_FIDELITY_FLOOR,
     low_fidelity_threshold: float = _LOW_FIDELITY_THRESHOLD,
+    discipline_modality_groups: dict[str, list[str]] | None = None,
+    craft_discipline_aliases: dict[str, list[str]] | None = None,
 ) -> TrainingSubstitutionPayload:
     """Per `BestFitModality_Spec_v4.md` §5.
 
@@ -72,6 +74,13 @@ def resolve_training_substitution(
             the pure-craft label (defaults to the curated display-name map).
         fidelity_floor: below this a proxy is untrainable (§5.1).
         low_fidelity_threshold: a proxy below this raises `terrain_low_fidelity`.
+        discipline_modality_groups: X1b.3b — `{discipline_id: [group_id, ...]}`
+            from `layer0.discipline_modality_membership`. When supplied with
+            `craft_discipline_aliases`, the candidate craft set is narrowed
+            per craft-based discipline to crafts that share a modality group
+            with it (Modality_Group_Spec §6). Both None → today's behavior.
+        craft_discipline_aliases: X1b.3b — `{craft_name: [discipline_id, ...]}`
+            from `layer0.craft_discipline_aliases` (many-to-many).
 
     Returns a `TrainingSubstitutionPayload`; pure-Python, no LLM, no DB.
     """
@@ -83,12 +92,79 @@ def resolve_training_substitution(
     names = discipline_names or {}
     candidate_crafts = sorted(set(athlete_crafts))
 
+    # X1b.3b — craft → modality-group narrowing (Modality_Group_Spec §6). When
+    # both maps are present, narrow the per-discipline candidate crafts to those
+    # whose aliased discipline(s) share a modality group with the block's
+    # discipline. `_craft_relevant_groups` is the universe of groups reachable
+    # from any owned craft, so the narrowing only fires on craft-based
+    # disciplines (a foot/swim/climb block is left untouched — no craft applies,
+    # and it is NOT a craft_unavailable case). Both maps None → pre-X1b.3b.
+    _disc_groups = discipline_modality_groups or {}
+    _craft_aliases = craft_discipline_aliases or {}
+    _filter_crafts = bool(_disc_groups and _craft_aliases and candidate_crafts)
+    _craft_groups = {
+        c: {g for d in _craft_aliases.get(c, []) for g in _disc_groups.get(d, [])}
+        for c in candidate_crafts
+    }
+    # The universe of craft-trainable groups comes from the FULL alias table
+    # (not just owned crafts) — otherwise a bike discipline would look
+    # non-craft-relevant to a paddle-only athlete and skip the narrowing,
+    # leaving a kayak wrongly surfaced as a mountain-bike substitute.
+    _craft_relevant_groups: set[str] = {
+        g
+        for discs in _craft_aliases.values()
+        for d in discs
+        for g in _disc_groups.get(d, [])
+    }
+
     recommendations: list[TrainingSubstitution] = []
     flags: list[TrainingSubstitutionFlag] = []
 
     for block in terrain_by_discipline:
         d_id = block.discipline_id
         d_name = discipline_display_name(d_id, fallback=names.get(d_id))
+
+        # X1b.3b — narrow candidate crafts to those sharing a modality group
+        # with this discipline (craft-based disciplines only).
+        block_candidates = candidate_crafts
+        if _filter_crafts:
+            target_groups = set(_disc_groups.get(d_id, []))
+            if target_groups & _craft_relevant_groups:
+                filtered = [
+                    c for c in candidate_crafts if target_groups & _craft_groups[c]
+                ]
+                if filtered != candidate_crafts:
+                    if filtered:
+                        flags.append(
+                            TrainingSubstitutionFlag(
+                                flag_type="craft_substitution",
+                                discipline_id=d_id,
+                                discipline_name=d_name,
+                                message=(
+                                    f"Craft substitution for {d_name} narrowed to "
+                                    f"same-modality crafts: {', '.join(filtered)}."
+                                ),
+                                metadata={
+                                    "candidate_crafts": filtered,
+                                    "all_crafts": list(candidate_crafts),
+                                },
+                            )
+                        )
+                    else:
+                        flags.append(
+                            TrainingSubstitutionFlag(
+                                flag_type="craft_unavailable",
+                                discipline_id=d_id,
+                                discipline_name=d_name,
+                                message=(
+                                    f"You own no craft in the same modality group as "
+                                    f"{d_name} — sessions will reason from the "
+                                    f"discipline label alone."
+                                ),
+                                metadata={"all_crafts": list(candidate_crafts)},
+                            )
+                        )
+                block_candidates = filtered
 
         emphasis: list[TerrainEmphasis] = []
         untrainable: list[TerrainGapRef] = []
@@ -190,7 +266,7 @@ def resolve_training_substitution(
                 discipline_id=d_id,
                 discipline_name=d_name,
                 race_craft=d_name,
-                candidate_training_crafts=list(candidate_crafts),
+                candidate_training_crafts=list(block_candidates),
                 terrain_emphasis=emphasis,
                 untrainable_terrain=untrainable,
             )
