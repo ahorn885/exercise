@@ -195,9 +195,13 @@
       <input type="text" name="gi_triggers_known" class="form-control form-control-sm"
              placeholder="e.g. high fructose, dairy mid-effort"
              value="{{ profile.gi_triggers_known or '' }}"></label>
-    <label class="field"><span class="lbl">Supplement protocol</span>
-      <textarea name="supplement_protocol_notes" rows="2" class="form-control form-control-sm"
-                placeholder="e.g. creatine 5g daily, electrolyte mix on long days">{{ profile.supplement_protocol_notes or '' }}</textarea></label>
+    <div>
+      <label class="field"><span class="lbl">Current supplements</span>
+        <textarea name="supplement_protocol_notes" rows="2" class="form-control form-control-sm"
+                  placeholder="e.g. creatine 5g daily, electrolyte mix on long days">{{ profile.supplement_protocol_notes or '' }}</textarea></label>
+      <p class="pf-hint">What you already take — so the coach can account for it and avoid conflicts.
+        Recommended supplements will come from your plan.</p>
+    </div>
   </div>
 
   <div class="pf-save">
