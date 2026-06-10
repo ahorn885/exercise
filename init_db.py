@@ -27,6 +27,7 @@ PG_SCHEMA = '''
         vo2max REAL,
         cycling_ftp_w INTEGER,
         doubles_feasible TEXT,
+        unit_preference TEXT NOT NULL DEFAULT 'imperial',
         updated_at TIMESTAMP DEFAULT NOW()
     );
     CREATE TABLE IF NOT EXISTS exercise_inventory (
@@ -101,7 +102,7 @@ PG_SCHEMA = '''
         training_log_id INTEGER NOT NULL REFERENCES training_log(id) ON DELETE CASCADE,
         set_number INTEGER NOT NULL,
         reps INTEGER,
-        weight_lbs REAL,
+        weight_kg REAL,
         duration_sec INTEGER
     );
     CREATE TABLE IF NOT EXISTS current_rx (
@@ -134,7 +135,7 @@ PG_SCHEMA = '''
     CREATE TABLE IF NOT EXISTS body_metrics (
         id SERIAL PRIMARY KEY,
         user_id INTEGER REFERENCES users(id),
-        date TEXT NOT NULL, weight_lbs REAL, body_fat_pct REAL,
+        date TEXT NOT NULL, weight_kg REAL, body_fat_pct REAL,
         vo2_max REAL, resting_hr INTEGER, notes TEXT,
         created_at TIMESTAMP DEFAULT NOW(),
         UNIQUE(user_id, date)
@@ -618,7 +619,7 @@ _PG_MIGRATIONS = [
     "ALTER TABLE locale_profiles ADD COLUMN IF NOT EXISTS city TEXT DEFAULT ''",
     "CREATE TABLE IF NOT EXISTS plan_travel (id SERIAL PRIMARY KEY, plan_id INTEGER NOT NULL REFERENCES training_plans(id), start_date TEXT NOT NULL, end_date TEXT NOT NULL, locale TEXT NOT NULL, city TEXT DEFAULT '', notes TEXT DEFAULT '', created_at TIMESTAMP DEFAULT NOW())",
     "CREATE TABLE IF NOT EXISTS training_sessions (id SERIAL PRIMARY KEY, date TEXT NOT NULL, notes TEXT, plan_item_id INTEGER REFERENCES plan_items(id), created_at TIMESTAMP DEFAULT NOW())",
-    "CREATE TABLE IF NOT EXISTS training_log_sets (id SERIAL PRIMARY KEY, training_log_id INTEGER NOT NULL REFERENCES training_log(id) ON DELETE CASCADE, set_number INTEGER NOT NULL, reps INTEGER, weight_lbs REAL, duration_sec INTEGER)",
+    "CREATE TABLE IF NOT EXISTS training_log_sets (id SERIAL PRIMARY KEY, training_log_id INTEGER NOT NULL REFERENCES training_log(id) ON DELETE CASCADE, set_number INTEGER NOT NULL, reps INTEGER, weight_kg REAL, duration_sec INTEGER)",
     "ALTER TABLE training_log ADD COLUMN IF NOT EXISTS session_id INTEGER REFERENCES training_sessions(id)",
     "CREATE INDEX IF NOT EXISTS idx_tl_session ON training_log(session_id)",
     "CREATE INDEX IF NOT EXISTS idx_tls_log ON training_log_sets(training_log_id)",
@@ -873,6 +874,8 @@ _PG_MIGRATIONS = [
         sleep_deep_min INTEGER,
         sleep_light_min INTEGER,
         sleep_rem_min INTEGER,
+        sleep_stress_avg REAL,
+        sleep_wake_count INTEGER,
         hrv_overnight_avg_ms REAL,
         hrv_7d_avg_ms REAL,
         hrv_samples_json TEXT,
@@ -907,6 +910,12 @@ _PG_MIGRATIONS = [
     "ALTER TABLE garmin_daily_metrics ADD COLUMN IF NOT EXISTS floors_climbed INTEGER",
     "ALTER TABLE garmin_daily_metrics ADD COLUMN IF NOT EXISTS floors_descended INTEGER",
     "ALTER TABLE garmin_daily_metrics ADD COLUMN IF NOT EXISTS intensity_minutes INTEGER",
+    # PR #489 — new mappings decoded from May 28 + May 30 reference data:
+    # sleep_deep_min via [346] field_9 (already in the table create above
+    # but Phase B environments may pre-date it), sleep_stress_avg derived
+    # from [346] field_15 ÷ sample_count, sleep_wake_count from [382] field_2.
+    "ALTER TABLE garmin_daily_metrics ADD COLUMN IF NOT EXISTS sleep_stress_avg REAL",
+    "ALTER TABLE garmin_daily_metrics ADD COLUMN IF NOT EXISTS sleep_wake_count INTEGER",
     # D-50 Phase 1 — provider integration tables. Mirrors the SQLite block
     # above with PG-native types (SERIAL, TIMESTAMP DEFAULT NOW(), BIGINT,
     # BOOLEAN). Per Athlete_Data_Integration_Spec v3 §4–§6. Garmin paused
@@ -2095,6 +2104,82 @@ _PG_MIGRATIONS = [
     # (race_route_locale_equipment is a separate table).
     "DROP TABLE IF EXISTS locale_equipment",
     "ALTER TABLE locale_profiles DROP COLUMN IF EXISTS equipment",
+    # ── Vercel Log Drain sink (issue #350) ───────────────────────────────
+    # Hard-kill backstop the plan-diag endpoint structurally can't be: a
+    # gateway 504 / OOM kills the lambda before any `except` runs, so
+    # generation_traceback stays NULL. A Vercel Log Drain POSTs runtime
+    # stdout/stderr (+ the proxy request log carrying the 504) to
+    # /admin/logs/drain; we persist each entry verbatim and query it past the
+    # login wall via /admin/logs (routes/logs.py). `raw` is TEXT JSON like the
+    # webhook_events sink — full fidelity, no truncation. log_id is UNIQUE so
+    # the ingest ON CONFLICT dedups drain retries.
+    """CREATE TABLE IF NOT EXISTS vercel_logs (
+        id SERIAL PRIMARY KEY,
+        log_id TEXT UNIQUE,
+        ts TIMESTAMP,
+        source TEXT,
+        log_type TEXT,
+        level TEXT,
+        deployment_id TEXT,
+        request_id TEXT,
+        status_code INTEGER,
+        method TEXT,
+        path TEXT,
+        message TEXT,
+        raw TEXT NOT NULL,
+        received_at TIMESTAMP DEFAULT NOW()
+    )""",
+    "CREATE INDEX IF NOT EXISTS idx_vercel_logs_ts ON vercel_logs (ts DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_vercel_logs_status ON vercel_logs (status_code) WHERE status_code >= 400",
+    "CREATE INDEX IF NOT EXISTS idx_vercel_logs_request ON vercel_logs (request_id)",
+    # ── #469 — athlete unit preference + canonical-kg weight migration ────
+    # New profile field; defaults to imperial so historical user 1 reads as
+    # lb-display until they pick otherwise.
+    "ALTER TABLE athlete_profile ADD COLUMN IF NOT EXISTS unit_preference TEXT NOT NULL DEFAULT 'imperial'",
+    # Reconcile the known mis-entry: user 1's body_weight_kg=161 was a
+    # pounds value typed into the kg-labeled field (surfaced during plan #60
+    # triage; ~73 kg ≈ 161 lb). Guarded on the exact mis-entry value so
+    # re-runs after a real edit are no-ops.
+    "UPDATE athlete_profile SET body_weight_kg = ROUND((161 * 0.45359237)::numeric, 2) "
+    "  WHERE user_id = 1 AND body_weight_kg = 161",
+    # body_metrics: rename weight_lbs → weight_kg + convert existing rows.
+    # The two-step rename pattern (add new, convert, drop old) survives a
+    # partial migration: weight_kg appears first, then values land, then
+    # the old column drops. Idempotent via IF (NOT) EXISTS.
+    "ALTER TABLE body_metrics ADD COLUMN IF NOT EXISTS weight_kg REAL",
+    "UPDATE body_metrics SET weight_kg = ROUND((weight_lbs * 0.45359237)::numeric, 3)::real "
+    "  WHERE weight_kg IS NULL AND weight_lbs IS NOT NULL",
+    "ALTER TABLE body_metrics DROP COLUMN IF EXISTS weight_lbs",
+    # training_log_sets: same pattern.
+    "ALTER TABLE training_log_sets ADD COLUMN IF NOT EXISTS weight_kg REAL",
+    "UPDATE training_log_sets SET weight_kg = ROUND((weight_lbs * 0.45359237)::numeric, 3)::real "
+    "  WHERE weight_kg IS NULL AND weight_lbs IS NOT NULL",
+    "ALTER TABLE training_log_sets DROP COLUMN IF EXISTS weight_lbs",
+    # current_rx: column names are unit-agnostic (current_weight / next_weight),
+    # so we convert in place rather than rename. The `_kg_converted` flag
+    # column makes this idempotent — flipped to TRUE after first conversion,
+    # checked before a second pass would double-convert.
+    "ALTER TABLE current_rx ADD COLUMN IF NOT EXISTS weight_kg_converted BOOLEAN NOT NULL DEFAULT FALSE",
+    "UPDATE current_rx SET current_weight = ROUND((current_weight * 0.45359237)::numeric, 3)::real, "
+    "  next_weight = ROUND((next_weight * 0.45359237)::numeric, 3)::real, "
+    "  weight_increment = ROUND((weight_increment * 0.45359237)::numeric, 3)::real, "
+    "  weight_kg_converted = TRUE "
+    "  WHERE NOT weight_kg_converted",
+    # training_log: target_weight / actual_weight / next_weight / body_weight
+    # all in lbs historically; convert once.
+    "ALTER TABLE training_log ADD COLUMN IF NOT EXISTS weight_kg_converted BOOLEAN NOT NULL DEFAULT FALSE",
+    "UPDATE training_log SET target_weight = ROUND((target_weight * 0.45359237)::numeric, 3)::real, "
+    "  actual_weight = ROUND((actual_weight * 0.45359237)::numeric, 3)::real, "
+    "  next_weight = ROUND((next_weight * 0.45359237)::numeric, 3)::real, "
+    "  body_weight = ROUND((body_weight * 0.45359237)::numeric, 3)::real, "
+    "  weight_kg_converted = TRUE "
+    "  WHERE NOT weight_kg_converted",
+    # exercise_inventory.weight_increment is the prescribed bump size in lbs
+    # historically; convert to kg so the rx engine works in canonical units.
+    "ALTER TABLE exercise_inventory ADD COLUMN IF NOT EXISTS weight_increment_kg_converted BOOLEAN NOT NULL DEFAULT FALSE",
+    "UPDATE exercise_inventory SET weight_increment = ROUND((weight_increment * 0.45359237)::numeric, 3)::real, "
+    "  weight_increment_kg_converted = TRUE "
+    "  WHERE NOT weight_increment_kg_converted",
 ]
 
 _CLOTHING_SEEDS = [

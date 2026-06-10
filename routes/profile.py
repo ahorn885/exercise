@@ -28,6 +28,11 @@ from athlete import (
     get_athlete_profile, upsert_athlete_profile,
     get_daily_availability_windows, upsert_daily_availability_windows,
 )
+from units import (
+    UNIT_PREFERENCE_CHOICES, DEFAULT_UNIT_PREFERENCE,
+    normalize_unit_preference, entered_weight_to_kg, display_weight,
+    weight_unit_label, entered_height_to_cm, display_height, height_unit_label,
+)
 from athlete_skill_toggles_repo import (
     evict_layer1_on_skill_toggle_change,
     get_athlete_skill_toggles,
@@ -217,8 +222,31 @@ def edit():
             except (ValueError, TypeError):
                 return None
 
+        # #469 — body weight is entered in the athlete's chosen display unit
+        # but stored canonically in kg. The form posts BOTH the in-effect
+        # preference at render time (hidden `body_weight_input_unit`) AND
+        # the newly-chosen preference (the dropdown). We convert the entered
+        # body weight from the RENDER-time unit — if the user toggled the
+        # dropdown without retyping the weight, the displayed number is still
+        # in the render-time unit, so reading it as the new unit would store
+        # the wrong value (the classic "161.8 lb saved as 161.8 kg" bug).
+        submitted_unit_pref = normalize_unit_preference(_str('unit_preference'))
+        input_unit_pref = normalize_unit_preference(
+            _str('body_weight_input_unit')
+        ) or submitted_unit_pref
+        entered_body_weight = _num('body_weight')
+        body_weight_kg = entered_weight_to_kg(entered_body_weight, input_unit_pref)
+
+        # Same render-time-unit pattern for height — entered in `in` for
+        # imperial, `cm` for metric, stored canonical cm.
+        height_input_unit_pref = normalize_unit_preference(
+            _str('height_input_unit')
+        ) or submitted_unit_pref
+        entered_height = _num('height')
+        height_cm = entered_height_to_cm(entered_height, height_input_unit_pref)
+
         prefill_values = {
-            'body_weight_kg': _num('body_weight_kg'),
+            'body_weight_kg': body_weight_kg,
             'hrmax_bpm': _num('hrmax_bpm', cast=int),
             'lactate_threshold_hr_bpm': _num('lactate_threshold_hr_bpm', cast=int),
             'vo2max': _num('vo2max'),
@@ -228,10 +256,11 @@ def edit():
             db, uid,
             date_of_birth=_str('date_of_birth'),
             sex=_str('sex'),
-            height_cm=_num('height_cm'),
+            height_cm=height_cm,
             primary_sport=_str('primary_sport'),
             weekly_hours_target=_num('weekly_hours_target'),
             notes=_str('notes'),
+            unit_preference=submitted_unit_pref,
             **prefill_values,
         )
         _record_self_report_provenance(db, uid, prefill_values)
@@ -289,10 +318,21 @@ def edit():
     skill_toggle_defs = load_active_skill_capability_toggle_vocab(db)
     skill_toggle_states = get_athlete_skill_toggles(db, uid)
 
+    # #469 — body weight is stored canonical kg; render it in the athlete's
+    # chosen display unit so the form field round-trips cleanly. `profile` is
+    # mutated in place because it's the dict the template reads.
+    unit_pref = normalize_unit_preference(profile.get('unit_preference'))
+    profile['unit_preference'] = unit_pref
+    profile['body_weight_display'] = display_weight(profile.get('body_weight_kg'), unit_pref)
+    profile['weight_unit_label'] = weight_unit_label(unit_pref)
+    profile['height_display'] = display_height(profile.get('height_cm'), unit_pref)
+    profile['height_unit_label'] = height_unit_label(unit_pref)
+
     from datetime import datetime as _dt
     return render_template(
         'profile/edit.html',
         profile=profile,
+        unit_preference_choices=UNIT_PREFERENCE_CHOICES,
         memory=memory,
         preference_categories=PREFERENCE_CATEGORIES,
         user_row=dict(user_row) if user_row else {},

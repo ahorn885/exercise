@@ -18,6 +18,10 @@ PROFILE_FIELDS = (
     'sex',
     'height_cm',
     'primary_sport',
+    # #469 — athlete-facing unit toggle (`imperial` / `metric`). Storage is
+    # always kg; this flag drives the UI/entry boundary + rx prescription
+    # display. See `units.py` for the conversion helpers.
+    'unit_preference',
     # `target_event_name` + `target_event_date` retired from the form per
     # D-66 Layer 3B Scope A; columns dropped from athlete_profile in Scope B
     # (init_db.py migrations). `training_window` retired in D-73 Phase 1.2A
@@ -277,7 +281,10 @@ MTB_SKILL_LEVELS = ('beginner', 'intermediate', 'advanced')
 OW_EXPERIENCE_LEVELS = ('none', 'limited', 'experienced')
 
 # §D.4 — discipline_baseline_paddling.paddle_craft_types (multi-select).
-PADDLE_CRAFT_TYPES = ('kayak', 'canoe', 'packraft', 'surfski')
+# Vocabulary V4 §4: 'surfski' pruned (enum-only vessel, never tracked to a
+# discipline). Hard-removed per build decision — any pre-existing athlete row
+# storing 'surfski' must be migrated (it will otherwise fail enum validation).
+PADDLE_CRAFT_TYPES = ('kayak', 'canoe', 'packraft')
 
 # §D.5 — discipline_baseline_skiing.ski_disciplines (multi-select).
 SKI_DISCIPLINES = ('classic_xc', 'skate_xc', 'skimo')

@@ -19,7 +19,10 @@
       <span class="text-muted small">pattern {{ pv['pattern'] }}</span>
       <span class="text-muted small">scope {{ pv['scope_start_date'] }} → {{ pv['scope_end_date'] }}</span>
       <span class="text-muted small">blocks cached: {{ pv['generation_units_cached'] or 0 }}</span>
-      <span class="text-muted small">snapshotted blocks: {{ blocks|length }}</span>
+      <span class="text-muted small">
+        {% if fallback_from_plan_sessions %}reconstructed{% else %}snapshotted{% endif %}
+        blocks: {{ blocks|length }}
+      </span>
       <span class="text-muted small">total sessions: {{ total_sessions }}</span>
     </div>
     {% if pv['generation_error'] %}
@@ -32,12 +35,21 @@
 
 {% if not blocks %}
   <p class="text-muted">
-    No per-block snapshot yet. Blocks are snapshotted once per generation pass;
-    a plan that hasn't completed its first pass (or a `ready` plan generated
-    before this feature shipped) will show none — the finished plan's sessions
-    live in <code>plan_sessions</code>.
+    No per-block snapshot yet, and no persisted sessions to fall back on.
+    Blocks are snapshotted once per generation pass; a plan that hasn't
+    completed its first pass will show none. A terminal (`ready`/`failed`)
+    plan with no snapshot reconstructs its blocks from <code>plan_sessions</code>
+    — empty here means even that table has nothing for this plan_version_id.
   </p>
 {% else %}
+  {% if fallback_from_plan_sessions %}
+  <div class="alert alert-info small mb-3">
+    Reconstructed from <code>plan_sessions</code> — the per-block snapshot is empty
+    (terminal plan, or generated before the #321 snapshot feature shipped). Per-pass
+    signals (<code>synthesis_metadata</code>, <code>snapshot_at</code>) aren't
+    available on this path; blocks are grouped by phase × week_in_phase.
+  </div>
+  {% endif %}
   {% for b in blocks %}
   {% set meta = b['synthesis_metadata'] or {} %}
   <div class="card mb-3">
@@ -51,7 +63,7 @@
         </span>
       {% endif %}
       {% if meta.get('cap_hit') %}<span class="badge bg-warning text-dark">cap_hit</span>{% endif %}
-      <span class="text-muted small ms-auto">snapshot {{ b['snapshot_at'] }}</span>
+      {% if b['snapshot_at'] %}<span class="text-muted small ms-auto">snapshot {{ b['snapshot_at'] }}</span>{% endif %}
     </div>
     <div class="card-body">
       {% if meta %}

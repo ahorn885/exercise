@@ -14,7 +14,7 @@ from flask import (
 from werkzeug.utils import secure_filename
 
 from database import get_db
-from plan_sessions_repo import load_progress_blocks
+from plan_sessions_repo import load_plan_sessions_as_blocks, load_progress_blocks
 from routes.auth import current_user_id
 
 bp = Blueprint('admin', __name__, url_prefix='/admin')
@@ -417,12 +417,22 @@ def plan_inspect(plan_version_id):
     if pv is None:
         abort(404)
     blocks = load_progress_blocks(db, plan_version_id)
+    # #333 — the per-block snapshot is in-flight progress; a finished plan's
+    # sessions live in `plan_sessions`, so a terminal plan (and one generated
+    # before the #321 snapshot feature shipped) goes blank on this page exactly
+    # when you want to audit the result. Fall back to reconstructing per-block
+    # shape from `plan_sessions` so a `ready`/`failed` plan stays inspectable.
+    fallback_from_plan_sessions = False
+    if not blocks and pv['generation_status'] in ('ready', 'failed'):
+        blocks = load_plan_sessions_as_blocks(db, plan_version_id)
+        fallback_from_plan_sessions = bool(blocks)
     total_sessions = sum(len(b['sessions'] or []) for b in blocks)
     return render_template(
         'admin/plan_inspect.html',
         pv=pv,
         blocks=blocks,
         total_sessions=total_sessions,
+        fallback_from_plan_sessions=fallback_from_plan_sessions,
     )
 
 

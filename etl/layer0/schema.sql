@@ -474,6 +474,15 @@ ALTER TABLE layer0.terrain_types
   ADD COLUMN IF NOT EXISTS simulatable         TEXT,
   ADD COLUMN IF NOT EXISTS simulation_note     TEXT;
 
+-- Vocabulary V3 (#445 clean follow-up): promote race_eligible from a code-side
+-- frozenset (RACE_INELIGIBLE_TERRAIN_IDS) to a real Layer 0 column. TRUE for
+-- real race terrains; FALSE for training-only venues (climbing gym, pump track,
+-- indoor gym). Lets the race-event terrain picker move to a `WHERE race_eligible`
+-- clause instead of the code-side id filter. Default TRUE — only training venues
+-- are flagged FALSE in etl/layer0/extractors/vocabulary.py.
+ALTER TABLE layer0.terrain_types
+  ADD COLUMN IF NOT EXISTS race_eligible BOOLEAN;
+
 DO $$
 BEGIN
   IF NOT EXISTS (

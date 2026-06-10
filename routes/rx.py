@@ -3,8 +3,26 @@ from database import get_db
 from calculations import project_next_from_current, compute_deload_baseline
 from rx_engine import DELOAD_THRESHOLD
 from routes.auth import current_user_id
+from units import (
+    normalize_unit_preference, display_weight, entered_weight_to_kg,
+    weight_unit_label,
+)
+from athlete import get_athlete_profile
 
 bp = Blueprint('rx', __name__)
+
+
+def _unit_pref(db, uid):
+    profile = get_athlete_profile(db, uid) or {}
+    return normalize_unit_preference(profile.get('unit_preference'))
+
+
+def _decorate_entry(entry, unit_pref):
+    row = dict(entry)
+    for col in ('current_weight', 'next_weight', 'weight_increment'):
+        v = display_weight(row.get(col), unit_pref)
+        row[col + '_display'] = round(v, 1) if v is not None else None
+    return row
 
 
 @bp.route('/rx')
@@ -57,12 +75,17 @@ def list_entries():
         if (e['sessions_since_progress'] or 0) >= DELOAD_THRESHOLD
     ]
 
-    return render_template('rx/list.html', entries=entries,
+    unit_pref = _unit_pref(db, uid)
+    entries_view = [_decorate_entry(e, unit_pref) for e in entries]
+    deload_pending_view = [_decorate_entry(e, unit_pref) for e in deload_pending]
+
+    return render_template('rx/list.html', entries=entries_view,
                            inventory_only=inventory_only,
                            discipline=discipline, status=status,
                            locale_filter=locale_filter, locales=locales,
-                           deload_pending=deload_pending,
-                           deload_threshold=DELOAD_THRESHOLD)
+                           deload_pending=deload_pending_view,
+                           deload_threshold=DELOAD_THRESHOLD,
+                           weight_unit_label=weight_unit_label(unit_pref))
 
 
 @bp.route('/rx/<int:entry_id>/deload', methods=['POST'])
@@ -100,9 +123,12 @@ def deload_entry(entry_id):
          'Auto-deload', entry_id, uid))
     db.commit()
 
-    # Build a human-readable note about what changed
+    # Build a human-readable note about what changed. Storage is canonical
+    # kg; the flash renders in the athlete's display unit.
+    from units import format_weight as _fmt_wt
+    _unit = _unit_pref(db, uid)
     if entry['current_weight'] and deloaded['weight'] != entry['current_weight']:
-        delta = f"{entry['current_weight']} → {deloaded['weight']} lb"
+        delta = f"{_fmt_wt(entry['current_weight'], _unit)} → {_fmt_wt(deloaded['weight'], _unit)}"
     elif entry['current_duration'] and deloaded['duration'] != entry['current_duration']:
         delta = f"{entry['current_duration']} → {deloaded['duration']} sec"
     elif entry['current_reps'] and deloaded['reps'] != entry['current_reps']:
@@ -132,9 +158,12 @@ def edit_entry(entry_id):
             except: return None
         cur_sets = num(f.get('current_sets'), int)
         cur_reps = num(f.get('current_reps'), int)
-        cur_weight = num(f.get('current_weight'))
+        # #469 — weight inputs arrive in the athlete's display unit; convert
+        # to canonical kg before storing.
+        unit_pref = _unit_pref(db, uid)
+        cur_weight = entered_weight_to_kg(num(f.get('current_weight')), unit_pref)
         cur_duration = num(f.get('current_duration'), int)
-        weight_increment = num(f.get('weight_increment'))
+        weight_increment = entered_weight_to_kg(num(f.get('weight_increment')), unit_pref)
 
         # Re-derive next_* from the manually-edited current_*. Without this,
         # the prescription stays stale at whatever was last computed from a
@@ -160,4 +189,7 @@ def edit_entry(entry_id):
         db.commit()
         flash('Rx updated.', 'success')
         return redirect(url_for('rx.list_entries'))
-    return render_template('rx/form.html', entry=entry)
+    unit_pref = _unit_pref(db, uid)
+    return render_template('rx/form.html',
+                           entry=_decorate_entry(entry, unit_pref),
+                           weight_unit_label=weight_unit_label(unit_pref))

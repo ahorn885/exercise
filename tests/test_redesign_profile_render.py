@@ -91,7 +91,10 @@ def test_profile_athlete_tab_first_run(monkeypatch):
     # Sub-tabs present; athlete fields rendered.
     assert '?tab=schedule' in html and '?tab=skills' in html
     assert 'name="primary_sport"' in html
-    assert 'name="body_weight_kg"' in html
+    # #469 — body weight is entered in the athlete's display unit; the form
+    # field is `body_weight`, storage is canonical kg.
+    assert 'name="body_weight"' in html
+    assert 'name="unit_preference"' in html
     # The legacy Bootstrap tab-activation inline script is gone.
     assert 'bootstrap.Tab' not in html
     assert 'style="' not in html

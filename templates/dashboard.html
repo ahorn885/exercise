@@ -239,7 +239,7 @@
   <div class="stat-card"><div class="k">Strength</div><div class="v num">{{ stats.training_total }}</div><div class="delta">entries</div></div>
   <div class="stat-card"><div class="k">Cardio</div><div class="v num">{{ stats.cardio_total }}</div><div class="delta">sessions</div></div>
   <div class="stat-card"><div class="k">Progressing</div><div class="v num">{{ stats.exercises_progress }}</div><div class="delta">exercises ↑</div></div>
-  <div class="stat-card"><div class="k">Body weight</div><div class="v num">{% if stats.latest_weight %}{{ stats.latest_weight }}<span class="u">lb</span>{% else %}—{% endif %}</div><div class="delta">{{ stats.weight_date if stats.latest_weight else 'no data' }}</div></div>
+  <div class="stat-card"><div class="k">Body weight</div><div class="v num">{% if stats.latest_weight %}{{ stats.latest_weight }}<span class="u">{{ stats.latest_weight_unit or 'lb' }}</span>{% else %}—{% endif %}</div><div class="delta">{{ stats.weight_date if stats.latest_weight else 'no data' }}</div></div>
   <div class="stat-card"><div class="k">Injuries</div><div class="v num">{{ stats.active_injuries }}</div><div class="delta">{{ 'clean' if stats.active_injuries == 0 else 'active' }}</div></div>
 </div>
 
@@ -306,7 +306,7 @@
     {% if stats.latest_weight %}
     <div class="card card-pad">
       <div class="kv"><span class="k">Latest weight</span><span class="mono dim">{{ stats.weight_date }}</span></div>
-      <div class="wx-temp num">{{ stats.latest_weight }}<span class="u"> lb</span></div>
+      <div class="wx-temp num">{{ stats.latest_weight }}<span class="u"> {{ stats.latest_weight_unit or 'lb' }}</span></div>
     </div>
     {% endif %}
   </div>

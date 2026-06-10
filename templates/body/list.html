@@ -23,13 +23,13 @@
 <div class="card table-scroll">
   <table class="data">
     <thead>
-      <tr><th>Date</th><th>Weight (lb)</th><th>Body fat %</th><th>VO₂ max</th><th>Resting HR</th><th>Notes</th><th></th></tr>
+      <tr><th>Date</th><th>Weight ({{ weight_unit_label or 'lb' }})</th><th>Body fat %</th><th>VO₂ max</th><th>Resting HR</th><th>Notes</th><th></th></tr>
     </thead>
     <tbody>
     {% for e in entries %}
     <tr>
       <td class="text-nowrap">{{ e.date }}</td>
-      <td>{{ e.weight_lbs or '—' }}</td>
+      <td>{{ '%.1f' % e.weight_display if e.weight_display is not none else '—' }}</td>
       <td>{{ e.body_fat_pct or '—' }}</td>
       <td class="text-nowrap">{{ e.vo2_max or '—' }}</td>
       <td class="text-nowrap">{{ e.resting_hr or '—' }}</td>

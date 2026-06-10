@@ -1,9 +1,9 @@
-"""Tests for the sports_framework parsers against the live v13 workbook.
+"""Tests for the sports_framework parsers against the live v14 workbook.
 
 Covers `_parse_constituent_movements`, `_parse_bool`,
 `_split_phase_load_notes`, `_parse_weekly_total_text`,
 plus the discipline substitutes / training gaps / cross-sport
-properties extractors against the in-repo v13 workbook.
+properties extractors against the in-repo v14 workbook.
 """
 from __future__ import annotations
 
@@ -66,7 +66,7 @@ def test_pairing_matrix_dedupes_collapse_and_skips_self_pairs():
     assert by_pair[("D-010", "D-001")] == "PREFERRED"
     assert pairs.count(("D-001", "D-010")) == 1
 
-V13_PATH = Path(__file__).parent.parent / "sources" / "Sports_Framework_v13.xlsx"
+V14_PATH = Path(__file__).parent.parent / "sources" / "Sports_Framework_v14.xlsx"
 
 
 # ---------------------------------------------------------------------------
@@ -265,15 +265,15 @@ def test_weekly_totals_mixed_units_within_phase_rejects_phase():
 # ---------------------------------------------------------------------------
 
 @pytest.fixture(scope="module")
-def v13_wb():
-    return load_workbook(str(V13_PATH), read_only=False, data_only=True)
+def v14_wb():
+    return load_workbook(str(V14_PATH), read_only=False, data_only=True)
 
 
-def test_extract_discipline_substitutes_count_89(v13_wb):
+def test_extract_discipline_substitutes_count_89(v14_wb):
     # 89 = 91 source rows − 2 dropped by the R6 collapse dedup (one duplicate
     # (D-010, D-011, 'Canoeing') key + one self-substitute the merge created).
     warns: list = []
-    rows = extract_discipline_substitutes(v13_wb, parse_warnings=warns)
+    rows = extract_discipline_substitutes(v14_wb, parse_warnings=warns)
     assert len(rows) == 89
     assert warns == []
     # No duplicate UNIQUE keys + no self-substitutes survive the dedup.
@@ -286,8 +286,8 @@ def test_extract_discipline_substitutes_count_89(v13_wb):
     assert 0.0 <= first["fidelity"] <= 1.0
 
 
-def test_extract_discipline_training_gaps_count_3(v13_wb):
-    rows = extract_discipline_training_gaps(v13_wb)
+def test_extract_discipline_training_gaps_count_3(v14_wb):
+    rows = extract_discipline_training_gaps(v14_wb)
     assert len(rows) == 3
     by_id = {r["discipline_id"]: r for r in rows}
     assert "D-020" in by_id
@@ -300,8 +300,8 @@ def test_extract_discipline_training_gaps_count_3(v13_wb):
     assert by_id["D-022"]["gap_type"] == "no_off_environment_substitute"
 
 
-def test_extract_cross_sport_properties_filters_commentary(v13_wb):
-    rows = extract_cross_sport_properties(v13_wb["Cross-Sport Properties"])
+def test_extract_cross_sport_properties_filters_commentary(v14_wb):
+    rows = extract_cross_sport_properties(v14_wb["Cross-Sport Properties"])
     assert len(rows) == 1
     r = rows[0]
     assert r["property_id"] == "LIT_RATIO_001"
@@ -310,10 +310,10 @@ def test_extract_cross_sport_properties_filters_commentary(v13_wb):
     assert r["notes"] is not None
 
 
-def test_extract_phase_load_weekly_totals_emits_4_rows_per_sport(v13_wb):
+def test_extract_phase_load_weekly_totals_emits_4_rows_per_sport(v14_wb):
     failures: list = []
     rows = extract_phase_load_weekly_totals(
-        v13_wb["Phase Load Allocation"], parse_failures=failures,
+        v14_wb["Phase Load Allocation"], parse_failures=failures,
     )
     # Group by sport — every parsed sport should yield exactly 4 phase rows.
     by_sport: dict[str, set[str]] = {}

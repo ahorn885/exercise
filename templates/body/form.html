@@ -13,8 +13,8 @@
     <div class="row">
       <label class="field col"><span class="lbl">Date</span>
         <input type="date" name="date" class="form-control form-control-sm" required value="{{ entry.date if entry else '' }}"></label>
-      <label class="field col"><span class="lbl">Weight (lb)</span>
-        <input type="number" name="weight_lbs" step="0.1" class="form-control form-control-sm" value="{{ entry.weight_lbs if entry else '' }}"></label>
+      <label class="field col"><span class="lbl">Weight ({{ weight_unit_label or 'lb' }})</span>
+        <input type="number" name="weight" step="0.1" class="form-control form-control-sm" value="{{ '%.1f' % entry.weight_display if entry and entry.weight_display is not none else '' }}"></label>
     </div>
     <div class="row">
       <label class="field col"><span class="lbl">Body fat %</span>

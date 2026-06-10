@@ -33,16 +33,17 @@ _BODY_REGION_HEADERS = [
 # is_universal flag. "Terrain (separate from equipment ...)" feeds the
 # terrain table, not equipment.
 _EQUIPMENT_CATEGORIES = [
-    "Barbells & Bars",
-    "Dumbbells",
-    "Kettlebells",
-    "Machines — Lower Body",
-    "Machines — Upper Body",
-    "Machines — Cardio",
+    # Vocabulary V4 §6 — gym rows recategorized from the prior 10-category
+    # scheme into these 6 buckets. Order matters: dedupe is first-seen-wins,
+    # so Bodyweight & Portable must precede Recovery & Therapy (Foam roller
+    # resolves to Bodyweight). Headers must match the ## sections in
+    # Vocabulary_Audit_v2.md Section 3 exactly.
+    "Freeweights",
+    "Machines - Strength",
+    "Machines - Cardio",
+    "Plyo, Power & Stability",
+    "Grip & Climbing",
     "Bodyweight & Portable Equipment",
-    "Stability & Balance",
-    "Plyo & Power",
-    "Grip & Forearm Specific",
     "Sport-Specific — Cycling (top-level vessels — kept individual)",
     "Sport-Specific — Paddle (top-level vessels — kept individual)",
     "Sport-Specific — Running & Hiking (top-level — kept individual)",
@@ -297,7 +298,7 @@ _TERRAIN_STRUCTURED_ROWS: list[dict[str, Any]] = [
     },
     {
         "terrain_id": "TRN-007",
-        "canonical_name": "Technical Rock",
+        "canonical_name": "Technical Rock / Scree",
         "category": "Foot",
         "requires_elevation": False,
         "technical_surface": True,
@@ -305,6 +306,24 @@ _TERRAIN_STRUCTURED_ROWS: list[dict[str, Any]] = [
         "simulatable": "none",
         "simulation_note": "Balance drills develop general stability but rock-specific proprioceptive adaptation requires actual boulder/scree terrain.",
         "notes": "Loose boulder fields, scree slopes, rock gardens. Distinct from rock climbing — locomotive movement over unstable rock.",
+    },
+    # Vocabulary V3 (#340) — Off-trail / trackless ground. Distinct stimulus
+    # confirmed against the existing vocab: TRN-002 is a maintained path,
+    # TRN-003 is technical-but-tracked trail, and TRN-006 Fell/Moorland is OPEN
+    # pathless upland (heather/bog). This row is the vegetated/wooded bushwhack
+    # case — scrub, tall grass, deadfall — a real expedition-AR stimulus with no
+    # path at all. race_eligible TRUE (expedition courses genuinely cross it).
+    {
+        "terrain_id": "TRN-018",
+        "canonical_name": "Off Trail / Bushwhack",
+        "category": "Foot",
+        "requires_elevation": False,
+        "technical_surface": True,
+        "environment": "Outdoor",
+        "simulatable": "none",
+        "simulation_note": "No indoor substitute. Trackless travel through scrub, tall grass, deadfall, and uneven vegetated ground demands constant footing micro-adjustment, vegetation resistance, and continuous route-finding that no treadmill or machine reproduces.",
+        "notes": "Trackless off-trail ground — scrub brush, tall grass, bushwhacking through vegetated or untracked terrain. No path at all. Distinct from groomed trail (TRN-002), technical-but-tracked trail (TRN-003), and open pathless upland (TRN-006 Fell / Moorland). Expedition-AR stimulus.",
+        "race_eligible": True,
     },
     # Bucket C sub-item (g) 2026-05-24 — Gravel added as the unambiguous surface
     # gap in the terrain vocab (TRN-001 is paved, TRN-002 is dirt singletrack,
@@ -449,12 +468,12 @@ _TERRAIN_STRUCTURED_ROWS: list[dict[str, Any]] = [
 # Issue #445 — training-only environments that should never appear on the
 # race-event terrain selector (no real race takes place at a climbing gym,
 # pump track, or indoor gym). The `race_eligible: False` rows above are the
-# source of record; this frozenset mirrors them for the app's request-time
-# filter (`routes/race_events.py` + `routes/onboarding.py`), since the app
-# reads `layer0.terrain_types` over SQL and there is no `race_eligible`
-# column yet. Promoting the flag to a Layer 0 column (schema + ETL + a
-# `WHERE race_eligible` clause) is the clean follow-up; until then these
-# stable TRN ids carry it code-side. Same entries stay visible on the
+# source of record. As of Vocabulary V3 the flag is also promoted to a real
+# `layer0.terrain_types.race_eligible` column (schema + ETL emit — #445's
+# documented clean follow-up), so the app can move to a `WHERE race_eligible`
+# clause. This frozenset still mirrors the rows for the current code-side
+# request-time filter (`routes/race_events.py` + `routes/onboarding.py`)
+# until that query switch lands. Same entries stay visible on the
 # locale/training pickers (they're real training venues).
 RACE_INELIGIBLE_TERRAIN_IDS = frozenset(
     row["terrain_id"]
@@ -464,7 +483,7 @@ RACE_INELIGIBLE_TERRAIN_IDS = frozenset(
 
 
 def _parse_terrain(text: str) -> list[dict[str, Any]]:
-    """Returns the 18 TRN-xxx structured terrain rows.
+    """Returns the 19 TRN-xxx structured terrain rows.
 
     `text` is accepted for parser-signature parity with the other section
     parsers but is unused — terrain vocab is code-side per the module-level

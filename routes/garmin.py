@@ -100,11 +100,23 @@ def import_preview():
     ).fetchall()
     plan_items = [r for r in all_scheduled if r['id'] not in nearby_ids]
 
+    from units import normalize_unit_preference, display_weight, weight_unit_label
+    from athlete import get_athlete_profile
+    profile = get_athlete_profile(db, current_user_id()) or {}
+    unit_pref = normalize_unit_preference(profile.get('unit_preference'))
+    # #469 — FIT sets carry weight_kg; surface a `weight_display` chip value
+    # so the preview reads in the athlete's chosen unit.
+    if result and result.get('log_type') == 'strength':
+        for row in result.get('data', []):
+            for s in row.get('sets', []):
+                d = display_weight(s.get('weight_kg'), unit_pref)
+                s['weight_display'] = round(d, 1) if d is not None else None
     return render_template('garmin/import_preview.html', result=result,
                            name_override=flask_session.get('fit_name_override', ''),
                            notes=flask_session.get('fit_notes', ''),
                            plan_items=plan_items,
                            nearby=nearby_dicts,
+                           weight_unit_label=weight_unit_label(unit_pref),
                            auto_match=(
                                {'plan_item': dict(auto_match['plan_item']),
                                 'score': auto_match['score'],
@@ -268,11 +280,11 @@ def import_confirm():
         session_id = sess_cur.lastrowid
 
         body_wt_row = db.execute(
-            'SELECT weight_lbs FROM body_metrics WHERE user_id = ? '
+            'SELECT weight_kg FROM body_metrics WHERE user_id = ? '
             'ORDER BY date DESC LIMIT 1',
             (uid,)
         ).fetchone()
-        body_weight = body_wt_row['weight_lbs'] if body_wt_row else None
+        body_weight = body_wt_row['weight_kg'] if body_wt_row else None
 
         inserted = 0
         first_log_id = None
@@ -282,15 +294,15 @@ def import_confirm():
 
             actual_sets = len(sets)
             last_reps = sets[-1].get('reps') if sets else None
-            all_weights = [s.get('weight_lbs') or 0 for s in sets]
+            all_weights = [s.get('weight_kg') or 0 for s in sets]
             max_weight = max(all_weights) if all_weights else None
             if max_weight == 0:
                 max_weight = None
             last_duration = sets[-1].get('duration_sec') if sets else None
-            volume = sum((s.get('reps') or 0) * (s.get('weight_lbs') or 0) for s in sets) or None
+            volume = sum((s.get('reps') or 0) * (s.get('weight_kg') or 0) for s in sets) or None
             if volume == 0:
                 volume = None
-            all_1rms = [calculate_1rm(s.get('weight_lbs'), s.get('reps')) or 0 for s in sets]
+            all_1rms = [calculate_1rm(s.get('weight_kg'), s.get('reps')) or 0 for s in sets]
             est_1rm = max(all_1rms) if all_1rms else None
             if est_1rm == 0:
                 est_1rm = None
@@ -322,8 +334,8 @@ def import_confirm():
 
             for i, s in enumerate(sets, 1):
                 db.execute(
-                    'INSERT INTO training_log_sets (training_log_id, set_number, reps, weight_lbs, duration_sec, user_id) VALUES (?,?,?,?,?,?)',
-                    (log_id, i, s.get('reps'), s.get('weight_lbs'), s.get('duration_sec'), uid)
+                    'INSERT INTO training_log_sets (training_log_id, set_number, reps, weight_kg, duration_sec, user_id) VALUES (?,?,?,?,?,?)',
+                    (log_id, i, s.get('reps'), s.get('weight_kg'), s.get('duration_sec'), uid)
                 )
             inserted += 1
 
@@ -448,10 +460,10 @@ def _bulk_insert_strength(db, rows: list, uid: int, gid: str,
     first_log_id = None
 
     body_wt_row = db.execute(
-        'SELECT weight_lbs FROM body_metrics WHERE user_id = ? ORDER BY date DESC LIMIT 1',
+        'SELECT weight_kg FROM body_metrics WHERE user_id = ? ORDER BY date DESC LIMIT 1',
         (uid,)
     ).fetchone()
-    body_weight = body_wt_row['weight_lbs'] if body_wt_row else None
+    body_weight = body_wt_row['weight_kg'] if body_wt_row else None
 
     inserted = 0
     for row in rows:
@@ -459,15 +471,15 @@ def _bulk_insert_strength(db, rows: list, uid: int, gid: str,
         sets = row.get('sets', [])
         actual_sets = len(sets)
         last_reps = sets[-1].get('reps') if sets else None
-        all_weights = [s.get('weight_lbs') or 0 for s in sets]
+        all_weights = [s.get('weight_kg') or 0 for s in sets]
         max_weight = max(all_weights) if all_weights else None
         if max_weight == 0:
             max_weight = None
         last_duration = sets[-1].get('duration_sec') if sets else None
-        volume = sum((s.get('reps') or 0) * (s.get('weight_lbs') or 0) for s in sets) or None
+        volume = sum((s.get('reps') or 0) * (s.get('weight_kg') or 0) for s in sets) or None
         if volume == 0:
             volume = None
-        all_1rms = [calculate_1rm(s.get('weight_lbs'), s.get('reps')) or 0 for s in sets]
+        all_1rms = [calculate_1rm(s.get('weight_kg'), s.get('reps')) or 0 for s in sets]
         est_1rm = max(all_1rms) if all_1rms else None
         if est_1rm == 0:
             est_1rm = None
@@ -496,8 +508,8 @@ def _bulk_insert_strength(db, rows: list, uid: int, gid: str,
             first_log_id = log_id
         for i, s in enumerate(sets, 1):
             db.execute(
-                'INSERT INTO training_log_sets (training_log_id, set_number, reps, weight_lbs, duration_sec, user_id) VALUES (?,?,?,?,?,?)',
-                (log_id, i, s.get('reps'), s.get('weight_lbs'), s.get('duration_sec'), uid)
+                'INSERT INTO training_log_sets (training_log_id, set_number, reps, weight_kg, duration_sec, user_id) VALUES (?,?,?,?,?,?)',
+                (log_id, i, s.get('reps'), s.get('weight_kg'), s.get('duration_sec'), uid)
             )
         inserted += 1
     return inserted, first_log_id
@@ -743,11 +755,11 @@ def _import_activity(db, act: dict, plan_item, compliance: dict,
             session_id = sess_cur.lastrowid
 
             body_wt_row = db.execute(
-            'SELECT weight_lbs FROM body_metrics WHERE user_id = ? '
+            'SELECT weight_kg FROM body_metrics WHERE user_id = ? '
             'ORDER BY date DESC LIMIT 1',
             (uid,)
         ).fetchone()
-            body_weight = body_wt_row['weight_lbs'] if body_wt_row else None
+            body_weight = body_wt_row['weight_kg'] if body_wt_row else None
 
             for row in rows:
                 exercise = row.get('exercise', '')
@@ -755,15 +767,15 @@ def _import_activity(db, act: dict, plan_item, compliance: dict,
 
                 actual_sets = len(sets)
                 last_reps = sets[-1].get('reps') if sets else None
-                all_weights = [s.get('weight_lbs') or 0 for s in sets]
+                all_weights = [s.get('weight_kg') or 0 for s in sets]
                 max_weight = max(all_weights) if all_weights else None
                 if max_weight == 0:
                     max_weight = None
                 last_duration = sets[-1].get('duration_sec') if sets else None
-                volume = sum((s.get('reps') or 0) * (s.get('weight_lbs') or 0) for s in sets) or None
+                volume = sum((s.get('reps') or 0) * (s.get('weight_kg') or 0) for s in sets) or None
                 if volume == 0:
                     volume = None
-                all_1rms = [calculate_1rm(s.get('weight_lbs'), s.get('reps')) or 0 for s in sets]
+                all_1rms = [calculate_1rm(s.get('weight_kg'), s.get('reps')) or 0 for s in sets]
                 est_1rm = max(all_1rms) if all_1rms else None
                 if est_1rm == 0:
                     est_1rm = None
@@ -793,8 +805,8 @@ def _import_activity(db, act: dict, plan_item, compliance: dict,
 
                 for i, s in enumerate(sets, 1):
                     db.execute(
-                        'INSERT INTO training_log_sets (training_log_id, set_number, reps, weight_lbs, duration_sec, user_id) VALUES (?,?,?,?,?,?)',
-                        (log_id, i, s.get('reps'), s.get('weight_lbs'), s.get('duration_sec'), uid)
+                        'INSERT INTO training_log_sets (training_log_id, set_number, reps, weight_kg, duration_sec, user_id) VALUES (?,?,?,?,?,?)',
+                        (log_id, i, s.get('reps'), s.get('weight_kg'), s.get('duration_sec'), uid)
                     )
 
             if raw_plan_item_id:
@@ -1276,6 +1288,7 @@ _DAILY_METRICS_COLUMNS = (
     # need a DROP; new uploads stop writing it.
     'sleep_avg_respiration', 'sleep_contributors_json',
     'sleep_deep_min', 'sleep_light_min', 'sleep_rem_min',
+    'sleep_stress_avg', 'sleep_wake_count',
     'sleep_duration_sub_score', 'restless_moments',
     'hrv_overnight_avg_ms', 'hrv_7d_avg_ms', 'hrv_highest_5min_ms',
     'hrv_samples_json',
@@ -1324,6 +1337,7 @@ def _metrics_to_db_fields(parsed: dict) -> dict:
                 'training_readiness', 'vo2max_running', 'vo2max_cycling',
                 'spo2_avg', 'spo2_low',
                 'sleep_deep_min', 'sleep_light_min', 'sleep_rem_min',
+                'sleep_stress_avg', 'sleep_wake_count',
                 'resting_metabolic_rate', 'resting_hr',
                 'resting_hr_7day_avg',
                 'heat_acclimation_pct', 'acute_training_load',

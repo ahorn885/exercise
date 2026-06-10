@@ -54,7 +54,7 @@
       <input type="number" name="target_reps" id="target_reps" class="form-control" value="{{ entry.target_reps if entry else '' }}">
     </div>
     <div class="col-6 col-md-3">
-      <label class="form-label">Weight (lb)</label>
+      <label class="form-label">Weight ({{ weight_unit_label or 'lb' }})</label>
       <input type="number" name="target_weight" id="target_weight" class="form-control" step="0.5" value="{{ entry.target_weight if entry else '' }}">
     </div>
     <div class="col-6 col-md-3">
@@ -74,7 +74,7 @@
       <input type="number" name="actual_reps" class="form-control" value="{{ entry.actual_reps if entry else '' }}">
     </div>
     <div class="col-6 col-md-3">
-      <label class="form-label">Weight (lb)</label>
+      <label class="form-label">Weight ({{ weight_unit_label or 'lb' }})</label>
       <input type="number" name="actual_weight" class="form-control" step="0.5" value="{{ entry.actual_weight if entry else '' }}">
     </div>
     <div class="col-6 col-md-3">
@@ -119,7 +119,10 @@ function loadRx(exercise) {
     .then(data => {
       if (data.current_sets) document.getElementById('target_sets').value = data.next_sets || data.current_sets;
       if (data.current_reps) document.getElementById('target_reps').value = data.next_reps || data.current_reps;
-      if (data.current_weight) document.getElementById('target_weight').value = data.next_weight || data.current_weight;
+      // #469 — the rx API surfaces display-unit values pre-converted via the
+      // athlete's unit_preference; the form labels match. Storage stays kg.
+      const tgtWt = (data.next_weight_display != null) ? data.next_weight_display : data.current_weight_display;
+      if (tgtWt != null) document.getElementById('target_weight').value = tgtWt;
       if (data.current_duration) document.getElementById('target_duration').value = data.current_duration;
 
       const warn = document.getElementById('injury-warning');

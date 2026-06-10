@@ -55,7 +55,7 @@ EQUIPMENT_PATTERNS = [
     (r'\bElliptical\b', ['Elliptical'], False),
     (r'\bStair Climber\b|\bStairmaster\b|\bStepmill\b', ['Stair climber'], False),
     (r'\bTreadmill\b', ['Treadmill'], False),
-    (r'\bCycling Trainer\b|\bIndoor Trainer\b|\bBike Trainer\b', ['Bike trainer'], False),
+    (r'\bCycling Trainer\b|\bIndoor Trainer\b|\bBike Trainer\b', ['Cycling trainer'], False),
     (r'\bGHD\b|\bGlute[- ]?Ham [Dd]eveloper\b', ['Glute ham developer (GHD)'], False),
     (r'\bHyperextension [Bb]ench\b|\bRoman [Cc]hair\b|\bReverse Hyper\b', ['Hyperextension bench'], False),
     (r'\bLandmine\b', ['Landmine attachment'], False),

@@ -132,9 +132,39 @@ def session_detail(session_id):
             'WHERE pi.id = ? AND pi.user_id = ?',
             (session['plan_item_id'], uid)
         ).fetchone()
+    # #469 — decorate kg-canonical weights with display values + unit label
+    # so the detail page renders in the athlete's chosen unit.
+    from units import normalize_unit_preference, display_weight, weight_unit_label
+    from athlete import get_athlete_profile
+    profile = get_athlete_profile(db, uid) or {}
+    unit_pref = normalize_unit_preference(profile.get('unit_preference'))
+    wt_label = weight_unit_label(unit_pref)
+
+    def _fmt_wt(v):
+        d = display_weight(v, unit_pref)
+        if d is None:
+            return None
+        return round(d, 1)
+
+    logs_view = []
+    for log in logs:
+        row = dict(log)
+        row['target_weight_display'] = _fmt_wt(row.get('target_weight'))
+        row['actual_weight_display'] = _fmt_wt(row.get('actual_weight'))
+        row['next_weight_display'] = _fmt_wt(row.get('next_weight'))
+        logs_view.append(row)
+
+    sets_view: dict = {}
+    for log_id, rows in sets_by_log.items():
+        sets_view[log_id] = []
+        for s in rows:
+            srow = dict(s)
+            srow['weight_display'] = _fmt_wt(srow.get('weight_kg'))
+            sets_view[log_id].append(srow)
+
     return render_template('training/session_detail.html',
-                           session=session, logs=logs, sets_by_log=sets_by_log,
-                           plan_item=plan_item)
+                           session=session, logs=logs_view, sets_by_log=sets_view,
+                           plan_item=plan_item, weight_unit_label=wt_label)
 
 
 @bp.route('/training/session/<int:session_id>/delete', methods=['POST'])
@@ -167,14 +197,20 @@ def session_delete(session_id):
 @bp.route('/training/new', methods=['GET'])
 def new_entry():
     db = get_db()
+    uid = current_user_id()
     exercises = db.execute(
         'SELECT exercise, movement_pattern FROM current_rx WHERE user_id = ? ORDER BY exercise',
-        (current_user_id(),)
+        (uid,)
     ).fetchall()
     exercises_json = [{'exercise': e['exercise'], 'movement_pattern': e['movement_pattern']} for e in exercises]
     plan_items = _load_plan_items(db)
+    from units import normalize_unit_preference, weight_unit_label
+    from athlete import get_athlete_profile
+    profile = get_athlete_profile(db, uid) or {}
+    unit_pref = normalize_unit_preference(profile.get('unit_preference'))
     return render_template('training/session_form.html', exercises=exercises,
-                           exercises_json=exercises_json, plan_items=plan_items)
+                           exercises_json=exercises_json, plan_items=plan_items,
+                           weight_unit_label=weight_unit_label(unit_pref))
 
 
 @bp.route('/training/session', methods=['POST'])
@@ -196,20 +232,43 @@ def save_session():
     session_id = cur.lastrowid
 
     body_wt_row = db.execute(
-        'SELECT weight_lbs FROM body_metrics WHERE user_id = ? '
+        'SELECT weight_kg FROM body_metrics WHERE user_id = ? '
         'ORDER BY date DESC LIMIT 1',
         (uid,)
     ).fetchone()
-    body_weight = body_wt_row['weight_lbs'] if body_wt_row else None
+    body_weight = body_wt_row['weight_kg'] if body_wt_row else None
+
+    # #469 — JS posts set weights in the athlete's display unit (form label
+    # matches their `unit_preference`). Convert to canonical kg once here so
+    # the rest of this handler + the rx_engine see kg only.
+    from units import normalize_unit_preference, entered_weight_to_kg
+    from athlete import get_athlete_profile
+    _profile = get_athlete_profile(db, uid) or {}
+    _unit_pref = normalize_unit_preference(_profile.get('unit_preference'))
+
+    def _set_weight_kg(s):
+        return entered_weight_to_kg(s.get('weight'), _unit_pref)
 
     for ex_data in data.get('exercises', []):
         exercise = ex_data.get('exercise', '').strip()
         if not exercise:
             continue
 
-        sets = ex_data.get('sets', [])
+        raw_sets = ex_data.get('sets', [])
+        # Sets carry canonical-kg `weight_kg` once converted. The rx_engine
+        # + calculations modules both work in kg now.
+        sets = []
+        for s in raw_sets:
+            sets.append({
+                'set_number': s.get('set_number', 0),
+                'reps': s.get('reps'),
+                'weight_kg': _set_weight_kg(s),
+                'duration_sec': s.get('duration_sec'),
+            })
         target_sets = ex_data.get('target_sets')
         target_reps = ex_data.get('target_reps')
+        # target_weight comes back from the rx API in kg (canonical) — no
+        # conversion needed.
         target_weight = ex_data.get('target_weight')
         target_duration = ex_data.get('target_duration')
         rpe = ex_data.get('rpe')
@@ -221,15 +280,15 @@ def save_session():
         # rx_engine.
         actual_sets = len(sets)
         last_reps = sets[-1].get('reps') if sets else None
-        all_weights = [s.get('weight_lbs') or 0 for s in sets]
+        all_weights = [s.get('weight_kg') or 0 for s in sets]
         max_weight = max(all_weights) if all_weights else None
         if max_weight == 0:
             max_weight = None
         last_duration = sets[-1].get('duration_sec') if sets else None
-        volume = sum((s.get('reps') or 0) * (s.get('weight_lbs') or 0) for s in sets) or None
+        volume = sum((s.get('reps') or 0) * (s.get('weight_kg') or 0) for s in sets) or None
         if volume == 0:
             volume = None
-        all_1rms = [calculate_1rm(s.get('weight_lbs'), s.get('reps')) or 0 for s in sets]
+        all_1rms = [calculate_1rm(s.get('weight_kg'), s.get('reps')) or 0 for s in sets]
         est_1rm = max(all_1rms) if all_1rms else None
         if est_1rm == 0:
             est_1rm = None
@@ -260,8 +319,8 @@ def save_session():
 
         for s in sets:
             db.execute(
-                'INSERT INTO training_log_sets (training_log_id, set_number, reps, weight_lbs, duration_sec, user_id) VALUES (?,?,?,?,?,?)',
-                (log_id, s.get('set_number', 0), s.get('reps'), s.get('weight_lbs'), s.get('duration_sec'), uid)
+                'INSERT INTO training_log_sets (training_log_id, set_number, reps, weight_kg, duration_sec, user_id) VALUES (?,?,?,?,?,?)',
+                (log_id, s.get('set_number', 0), s.get('reps'), s.get('weight_kg'), s.get('duration_sec'), uid)
             )
 
     if plan_item_id:
@@ -333,8 +392,19 @@ def edit_entry(entry_id):
         (uid,)
     ).fetchall()
     plan_items = _load_plan_items(db)
-    return render_template('training/form.html', entry=entry, exercises=exercises,
-                           plan_items=plan_items)
+    # #469 — convert canonical-kg weights to the athlete's display unit so
+    # the legacy form prefills cleanly.
+    from units import normalize_unit_preference, display_weight, weight_unit_label
+    from athlete import get_athlete_profile
+    profile = get_athlete_profile(db, uid) or {}
+    unit_pref = normalize_unit_preference(profile.get('unit_preference'))
+    entry_dict = dict(entry)
+    for col in ('target_weight', 'actual_weight'):
+        v = display_weight(entry_dict.get(col), unit_pref)
+        entry_dict[col] = round(v, 1) if v is not None else None
+    return render_template('training/form.html', entry=entry_dict, exercises=exercises,
+                           plan_items=plan_items,
+                           weight_unit_label=weight_unit_label(unit_pref))
 
 
 @bp.route('/training/<int:entry_id>/delete', methods=['POST'])
@@ -385,6 +455,19 @@ def get_rx(exercise):
         (exercise, uid)
     ).fetchall()
     result['injury_mods'] = [dict(m) for m in mods]
+    # #469 — surface display-unit values + label so the session-form JS can
+    # render rx targets in the athlete's chosen unit without re-fetching the
+    # profile. Storage stays canonical kg in current_weight/next_weight.
+    from units import normalize_unit_preference, display_weight, weight_unit_label
+    from athlete import get_athlete_profile
+    profile = get_athlete_profile(db, uid) or {}
+    unit_pref = normalize_unit_preference(profile.get('unit_preference'))
+    result['weight_unit_label'] = weight_unit_label(unit_pref)
+    if rx is not None:
+        cur_d = display_weight(result.get('current_weight'), unit_pref)
+        nxt_d = display_weight(result.get('next_weight'), unit_pref)
+        result['current_weight_display'] = round(cur_d, 1) if cur_d is not None else None
+        result['next_weight_display'] = round(nxt_d, 1) if nxt_d is not None else None
     return jsonify(result)
 
 
@@ -411,25 +494,35 @@ def _save_entry(db, entry_id):
     rpe = num(f.get('rpe'))
     rest_sec = num(f.get('rest_sec'), int)
 
+    # #469 — target_weight + actual_weight both arrive in the athlete's
+    # display unit (form labels match `unit_preference`). Convert once here
+    # so rx_engine + 1RM/volume calculations see kg only.
+    uid = current_user_id()
+    from units import normalize_unit_preference, entered_weight_to_kg
+    from athlete import get_athlete_profile
+    _profile = get_athlete_profile(db, uid) or {}
+    _unit_pref = normalize_unit_preference(_profile.get('unit_preference'))
+    target_weight = entered_weight_to_kg(target_weight, _unit_pref)
+    actual_weight = entered_weight_to_kg(actual_weight, _unit_pref)
+
     # Synthesize per-set data from the aggregate form so the same engine
     # decides outcome / Family A / Family B. The aggregate form treats every
     # set as identical, which matches the original calculate_outcome() shape.
     n = actual_sets or 1
     synthesized_sets = [
-        {'reps': actual_reps, 'weight_lbs': actual_weight, 'duration_sec': actual_duration}
+        {'reps': actual_reps, 'weight_kg': actual_weight, 'duration_sec': actual_duration}
         for _ in range(n)
     ]
 
     est_1rm = calculate_1rm(actual_weight, actual_reps)
     volume = calculate_volume(actual_sets, actual_reps, actual_weight)
 
-    uid = current_user_id()
     body_wt_row = db.execute(
-        'SELECT weight_lbs FROM body_metrics WHERE user_id = ? '
+        'SELECT weight_kg FROM body_metrics WHERE user_id = ? '
         'ORDER BY date DESC LIMIT 1',
         (uid,)
     ).fetchone()
-    body_weight = body_wt_row['weight_lbs'] if body_wt_row else None
+    body_weight = body_wt_row['weight_kg'] if body_wt_row else None
 
     rx = apply_session_outcome(
         db, exercise, date, synthesized_sets,

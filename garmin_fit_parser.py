@@ -446,9 +446,13 @@ def _parse_strength(session, sets) -> dict:
     Returns per-exercise data with individual set details preserved:
       {'log_type': 'strength', 'data': [
         {'date': str, 'exercise': str,
-         'sets': [{'reps': int|None, 'weight_lbs': float|None, 'duration_sec': int|None}, ...]},
+         'sets': [{'reps': int|None, 'weight_kg': float|None, 'duration_sec': int|None}, ...]},
         ...
       ]}
+
+    Weight is read from the FIT record's native `weight` field (kg per the
+    FIT spec) and stored as-is. Display-side unit conversion is the
+    consumer's responsibility (see `units.format_weight`).
 
     Sets are grouped by exercise (all sets of the same exercise together),
     preserving the order in which exercises first appear.
@@ -510,7 +514,8 @@ def _parse_strength(session, sets) -> dict:
         weight_kg = _set_float(
             getattr(s, 'weight', None), max_reasonable=_SET_WEIGHT_KG_MAX,
         )
-        weight_lbs = round(weight_kg * 2.20462, 1) if weight_kg else None
+        # FIT weight is already kg (per spec); round to 1 dp for chip display.
+        weight_kg = round(weight_kg, 1) if weight_kg else None
         duration_sec = _set_int(
             getattr(s, 'duration', None), max_reasonable=_SET_DURATION_SEC_MAX,
         )
@@ -519,7 +524,7 @@ def _parse_strength(session, sets) -> dict:
             exercise_sets[name] = []
             exercise_order.append(name)
         exercise_sets[name].append(
-            {'reps': reps_int, 'weight_lbs': weight_lbs, 'duration_sec': duration_sec}
+            {'reps': reps_int, 'weight_kg': weight_kg, 'duration_sec': duration_sec}
         )
 
     data = [
@@ -607,8 +612,17 @@ def _dump_fit(fit_bytes: bytes) -> dict:
             # Keep a few distinct samples per global_id so real values are
             # visible even when one message carries a sentinel — needed to
             # tell e.g. a valid body-battery from the -200 "invalid" marker.
+            # For [275] sleep stages we keep every instance — each one is a
+            # distinct stage transition and the 5-cap would lose mid-night
+            # stages, breaking the duration tally.
             _bucket = generic_samples.setdefault(str(gid), [])
-            if len(_bucket) < 5 and fields not in _bucket:
+            try:
+                _gid_int = int(gid)
+            except (TypeError, ValueError):
+                _gid_int = None
+            if _gid_int in _DUMP_KEEP_ALL_INSTANCES:
+                _bucket.append(fields)
+            elif len(_bucket) < 5 and fields not in _bucket:
                 _bucket.append(fields)
         else:
             sample_key = msg_type
@@ -647,6 +661,41 @@ def _dump_fit(fit_bytes: bytes) -> dict:
             if entry['developer_fields'] and len(dev_data_samples) < 5:
                 dev_data_samples.append(entry)
 
+    # Surface decode candidates for `[384] field_5/6/7` (the Deep/Light/REM
+    # minute split hypothesis was retired in PR #489 — f7 turned out to be
+    # HRV × 65536; see `_METRICS_SLEEP_SUMMARY_MSG`).
+    # The operator can paste Connect's stage minutes alongside the candidates
+    # to find the decoder (if any) that matches the new reference day.
+    sleep_stage_candidates = []
+    for sample in generic_samples.get(str(_METRICS_SLEEP_SUMMARY_MSG), []):
+        try:
+            f5 = int(sample.get('field_5', ''))
+            f6 = int(sample.get('field_6', ''))
+            f7 = int(sample.get('field_7', ''))
+        except (TypeError, ValueError):
+            continue
+        sleep_stage_candidates.append({
+            'raw': {'f5': f5, 'f6': f6, 'f7': f7},
+            'candidates': _sleep_stage_decode_candidates(f5, f6, f7),
+        })
+
+    # Walk `_SLEEP_DATA.fit` `[275]` stage transitions and tally minutes per
+    # code. Final stage's duration uses the latest available sleep_end_ts
+    # (from `[384] field_11` if the file also contains metrics, else None —
+    # in the standalone _SLEEP_DATA.fit case we omit the last segment, which
+    # still recovers all the stage codes for matching against Connect).
+    sleep_stage_events = _walk_sleep_stage_events(fit)
+    sleep_end_ts = None
+    for sample in generic_samples.get(str(_METRICS_SLEEP_SUMMARY_MSG), []):
+        try:
+            sleep_end_ts = int(sample.get('field_11', ''))
+            break
+        except (TypeError, ValueError):
+            continue
+    sleep_stage_minutes = _stage_minutes_from_events(
+        sleep_stage_events, sleep_end_ts=sleep_end_ts,
+    )
+
     return {
         'message_counts': dict(sorted(msg_counts.items())),
         'session_fields': session_fields,
@@ -655,6 +704,9 @@ def _dump_fit(fit_bytes: bytes) -> dict:
         'sample_records': sample_records,
         'all_message_samples': all_message_samples,
         'generic_samples': dict(sorted(generic_samples.items())),
+        'sleep_stage_decode_candidates': sleep_stage_candidates,
+        'sleep_stage_events': sleep_stage_events,
+        'sleep_stage_minutes_by_code': sleep_stage_minutes,
     }
 
 
@@ -1094,7 +1146,214 @@ _METRICS_SLEEP_SCORE_SIMPLE_MSG = 330
 #   rate was 12, but field_18 = 70. May 30 was 49. The 13/49/70 spread
 #   tracks INVERSELY with sleep quality (96/65/58) — likely sleep onset
 #   latency or pre-sleep disturbance, not respiration. Not surfaced.
+#
+# Confirmed in PR #489 (Andy's Jun 9 Connect data):
+#   field_7              = hrv_overnight_avg_ms × 65536
+#                          May 28: 3543590 / 65536 = 54.07 ms (Connect: 54) ✓
+#                          May 30: 3440511 / 65536 = 52.50 ms (Connect: 52) ✓
+#                          Jun  2: 2558531 / 65536 = 39.04 ms (Connect: 39) ✓
+#   Duplicate of `_HRV_STATUS.fit` `[370] field_1` — not surfaced from here,
+#   parser stays single-source on the HRV file. But it locks the 16.16
+#   fixed-point encoding for this message family, so other unmapped fields
+#   probably use the same /65536 scale.
+#
+# Retracted in PR #489 — Deep / Light / REM split was NOT in field_5/6/7:
+#   The Jun 9 ground-truth data from Connect (May 30: D=70 L=180 R=47;
+#   Jun 2: D=75 L=170 R=50) ruled out every scalar+permutation candidate.
+#   Combined with the f7=HRV confirmation, f5/f6 are also not stage minutes —
+#   they're some other per-night metric we haven't named yet. After /65536:
+#   f5 = 357.25 / 109.33 / 149.50 min; f6 = 174.33 / 544.92 / 558.34 min.
+#   The stage split lives in some other field position of `[384]` —
+#   field_3, _8, _10, _12, _13, _14, _15 are unprobed. `_dump_fit` now
+#   surfaces every field plus the `_sleep_stage_decode_candidates` block,
+#   so the next pass can grep the dump for the known stage minute values
+#   (70 / 180 / 47 on May 30) across every field.
 _METRICS_SLEEP_SUMMARY_MSG = 384
+
+# Sleep-stage decode candidates for `[384] field_5/6/7`. None of these is
+# verified — they're surfaced for fast eyeball comparison against Garmin
+# Connect's Deep/Light/REM minutes once the next reference day lands.
+# `value_fn` takes the raw uint and returns the candidate in minutes.
+_SLEEP_STAGE_DECODE_CANDIDATES = (
+    ('raw_seconds_to_min',   'raw value / 60 (treat as seconds)',
+     lambda v: v / 60.0),
+    ('ms_to_min',            'raw value / 60000 (treat as milliseconds)',
+     lambda v: v / 60000.0),
+    ('fixed_point_min',      'raw value / 65536 (16.16 fixed-point minutes)',
+     lambda v: v / 65536.0),
+    ('fixed_point_sec',      'raw value / 65536 / 60 (16.16 fixed-point seconds)',
+     lambda v: v / 65536.0 / 60.0),
+    ('scale_1024_sec',       'raw value / 1024 / 60 (scaled seconds to minutes)',
+     lambda v: v / 1024.0 / 60.0),
+    ('scale_16384_sec',      'raw value / 16384 / 60 (scaled seconds to minutes)',
+     lambda v: v / 16384.0 / 60.0),
+    ('upper16_min',          'upper 16 bits as minutes',
+     lambda v: float((v >> 16) & 0xFFFF)),
+    ('upper16_sec_to_min',   'upper 16 bits as seconds, expressed in minutes',
+     lambda v: ((v >> 16) & 0xFFFF) / 60.0),
+)
+
+
+def _sleep_stage_decode_candidates(f5, f6, f7) -> list:
+    """Emit candidate Deep/Light/REM minute decodings of `[384] field_5/6/7`.
+
+    Returns a list of dicts, one per decoder in `_SLEEP_STAGE_DECODE_CANDIDATES`:
+      `{decoder, description, f5_min, f6_min, f7_min, sum_min}`.
+
+    Skips decoders that error on the input. Used by the FIT inspector to
+    surface the candidates next to the raw values — paste Connect's stage
+    minutes alongside to find the decoder (if any) that matches.
+    """
+    out = []
+    raws = (f5, f6, f7)
+    if any(r is None for r in raws):
+        return out
+    try:
+        raws = tuple(int(r) for r in raws)
+    except (TypeError, ValueError):
+        return out
+    for name, desc, fn in _SLEEP_STAGE_DECODE_CANDIDATES:
+        try:
+            vals = tuple(fn(r) for r in raws)
+        except (ZeroDivisionError, ValueError, OverflowError):
+            continue
+        out.append({
+            'decoder': name,
+            'description': desc,
+            'f5_min': round(vals[0], 2),
+            'f6_min': round(vals[1], 2),
+            'f7_min': round(vals[2], 2),
+            'sum_min': round(sum(vals), 2),
+        })
+    return out
+
+
+def sleep_stress_avg(stress_sum: int, sleep_min: int) -> float | None:
+    """Garmin Connect's "Stress avg" for a night's sleep, computed from
+    `[346] field_15` (sum of all stress samples taken during sleep) and
+    the total sleep duration in minutes.
+
+    Garmin samples stress every ~3 minutes during sleep, so the sample
+    count is `sleep_min // 3`. The average is the sum divided by the
+    sample count. Verified against May 30: 1491 × 3 / 297 = 15.06 ↔
+    Connect "Stress 15 avg" ✓.
+
+    `field_14` carries the same sample count but capped at 100 — using
+    the un-capped derived count keeps the average accurate on nights
+    with sleep duration > 300 min.
+
+    Returns None when sleep_min is missing or <= 0 (the caller can't
+    derive a meaningful average without the duration)."""
+    if sleep_min is None or sleep_min <= 0 or stress_sum is None:
+        return None
+    samples = sleep_min // 3
+    if samples <= 0:
+        return None
+    return round(stress_sum / samples, 1)
+
+
+def _walk_sleep_stage_events(fit) -> list:
+    """Collect `[275]` sleep-stage transition events from a parsed FIT file
+    and return `[(timestamp_fit_sec, code), ...]` sorted by timestamp.
+
+    Each `[275]` instance marks the entry into a sleep stage (Deep / Light /
+    REM / Awake / Unmeasurable); the stage's duration is the gap to the
+    next instance's timestamp. See `_SLEEP_DATA_STAGE_MSG`."""
+    events = []
+    for record in fit.records:
+        msg = record.message
+        if type(msg).__name__ != 'GenericMessage':
+            continue
+        if getattr(msg, 'global_id', None) != _SLEEP_DATA_STAGE_MSG:
+            continue
+        fields = _generic_field_map(msg)
+        code = fields.get(0)
+        ts = fields.get(253) or getattr(msg, 'timestamp', None)
+        if code is None or ts is None:
+            continue
+        try:
+            events.append((int(ts), int(code)))
+        except (TypeError, ValueError):
+            continue
+    events.sort()
+    return events
+
+
+def _stage_minutes_from_events(events: list, *, sleep_end_ts: int = None) -> dict:
+    """Tally `[275]` event list into `{code: minutes_in_that_code}`.
+
+    Each adjacent pair `(events[i], events[i+1])` contributes
+    `events[i+1].ts - events[i].ts` seconds to `events[i].code`. The final
+    event's duration uses `sleep_end_ts` — when caller can't supply it
+    (the standalone `_SLEEP_DATA.fit` parse path), the last event is
+    skipped so the tallies still recover every stage code that appears
+    mid-night. Sanity-clips per-segment durations to `< 24 h`.
+    """
+    if not events:
+        return {}
+    durations_s = {}
+    for i, (ts, code) in enumerate(events):
+        if i + 1 < len(events):
+            next_ts = events[i + 1][0]
+        elif sleep_end_ts is not None:
+            next_ts = int(sleep_end_ts)
+        else:
+            continue
+        delta = next_ts - ts
+        if 0 < delta < 86400:
+            durations_s[code] = durations_s.get(code, 0) + delta
+    return {code: round(s / 60) for code, s in durations_s.items()}
+
+
+def find_sleep_stage_decoder(reference_set, *, tolerance_min: float = 2.0) -> list:
+    """Brute-force find a (decoder, field-to-stage permutation) that maps
+    `[384] field_5/6/7` to (Deep, Light, REM) minutes consistently across a
+    reference set of nights.
+
+    `reference_set` is an iterable of `(f5, f6, f7, deep_min, light_min,
+    rem_min)` tuples — at least 2 nights with materially different stage
+    distributions are needed for the result to be meaningful.
+
+    Returns a list of `{decoder, description, permutation, max_error_min}`
+    matches, sorted by `max_error_min` ascending. An empty list means no
+    candidate decoder fits within `tolerance_min` minutes per stage per
+    night — the encoding likely uses a non-scalar transform (bit-packing,
+    variable-resolution, …) that this helper doesn't model.
+    """
+    from itertools import permutations
+
+    rows = list(reference_set)
+    if len(rows) < 2:
+        return []
+
+    matches = []
+    stage_keys = ('deep', 'light', 'rem')
+    for name, desc, fn in _SLEEP_STAGE_DECODE_CANDIDATES:
+        # Decode each night's (f5, f6, f7) once.
+        try:
+            decoded = [tuple(fn(int(r[i])) for i in (0, 1, 2)) for r in rows]
+        except (ZeroDivisionError, ValueError, OverflowError, TypeError):
+            continue
+        # Try every assignment of (f5, f6, f7) -> (deep, light, rem).
+        for perm in permutations((0, 1, 2)):
+            max_err = 0.0
+            for r, dec in zip(rows, decoded):
+                actual = (r[3], r[4], r[5])
+                for stage_idx, slot in enumerate(perm):
+                    err = abs(dec[slot] - actual[stage_idx])
+                    if err > max_err:
+                        max_err = err
+            if max_err <= tolerance_min:
+                matches.append({
+                    'decoder': name,
+                    'description': desc,
+                    'permutation': dict(zip(
+                        (f'field_{5 + p}' for p in perm), stage_keys,
+                    )),
+                    'max_error_min': round(max_err, 2),
+                })
+    matches.sort(key=lambda m: m['max_error_min'])
+    return matches
 
 # `_METRICS.fit` `GenericMessage[378]` — daily training-state row.
 # Verified across May 27 + 28 + 30:
@@ -1120,17 +1379,81 @@ _METRICS_WELLNESS_SUMMARY_MSG = 281
 #   field_4 = duration_sub_score
 #             May 28 (8h 12m): 100 ("Excellent")
 #             May 30 (4h 57m): 51  ("Fair")
-# The remaining sub-score positions (5, 7, 8, 9, 10, 14) carry the
-# Stress / Deep / Light / REM / Awake contributors but Garmin Connect
-# only labels them qualitatively ("Good"/"Excellent"), so the 1-to-1
-# slot ↔ name alignment isn't locked yet — surfaced as an ordered list.
+#   field_9 = deep_sleep_min — LOCKED in PR #489 across 2 days:
+#             May 28 = 81 min (16.5% of 8h12m sleep — Excellent range)
+#             May 30 = 70 min ↔ Connect "1h 10m" exactly ✓
+#             (NOT a sub-score as previously assumed — value tracks
+#             stage MINUTES, and on a Good Deep night the value lands
+#             well below the 76-100 "Excellent" sub-score range.)
+#   field_14 = sleep_stress_sample_count_capped100 — LOCKED PR #489:
+#             Garmin samples stress every ~3 minutes during sleep, so
+#             expected count = sleep_min // 3, capped at 100.
+#             May 30: 297 // 3 = 99 (uncapped) ✓ exact
+#             May 28: 492 // 3 = 164 → capped to 100 ✓ exact
+#   field_15 = sleep_stress_sample_sum — LOCKED PR #489:
+#             Sum of all 0-100 stress values taken during sleep.
+#             Derived: avg_sleep_stress = field_15 × 3 / sleep_min.
+#             May 30: 1491 × 3 / 297 = 15.06 ↔ Connect "Stress 15 avg" ✓
+#             May 28: 1120 × 3 / 492 = 6.83 (very low stress, matches
+#             the great-sleep night — direction ✓; Connect avg
+#             unverified but plausible).
+# The remaining positions in field_5/7/8/10 likely carry sub-scores
+# for the other contributors but the slot-to-name mapping isn't locked
+# — most values land in the Excellent band even on nights when Connect
+# rates Light or REM lower, so the qualitative thresholds don't align.
+# Surfaced as an ordered list pending a night where Connect ratings
+# diverge enough to disambiguate.
 _SLEEP_DATA_SCORE_MSG = 346
 
 # `_SLEEP_DATA.fit` `GenericMessage[382]` — sleep event counts.
 # Verified across May 28 / May 30 / Jun 2:
 #   field_1 = restless_moments_count (May 28: 28 ✓ matches Garmin Connect
 #             "28 Restless Moments"; May 30: 15; Jun 2: 32)
+#   field_0 = sleep_start_seconds_since_local_midnight — LOCKED PR #489
+#             across 2 days:
+#             May 28: 4500 / 60 = 75 min = 01:15 AM ↔ Connect 01:14 ✓
+#             May 30: 7860 / 60 = 131 min = 02:11 AM ↔ Connect 02:11 ✓
+#   field_2 = wake_event_count — LOCKED PR #489 across 2 days:
+#             May 28: 4 events / 4 min awake = 1 min avg per event
+#             May 30: 9 events / 8 min awake = <1 min avg per event
+#             (Distinct from `awake_min` in `[384] field_24`, which is
+#             the total awake duration.)
 _SLEEP_DATA_EVENTS_MSG = 382
+
+# `_SLEEP_DATA.fit` `GenericMessage[275]` — per-stage sleep transitions.
+# DISCOVERED + code-mapping LOCKED in PR #489 against May 30 (15 events,
+# stage timing matches textbook patterns):
+#   field_0   = stage code:
+#               1 = unmeasurable / restless (Connect doesn't surface this
+#                   directly — see "interpolation" note below)
+#               2 = LIGHT (occupies gaps between Deep / REM)
+#               3 = DEEP (all 3 May-30 occurrences in first half:
+#                   t+38 / t+88 / t+152 min — textbook Deep distribution)
+#               4 = REM (first at t+126 min = classic first REM cycle;
+#                   second at t+277 min, long late-night REM — textbook)
+#   field_253 = stage_start_time (FIT epoch sec)
+# Stage duration = (next instance's ts) - (this instance's ts). The final
+# instance lands exactly at `sleep_end_ts` (= `[384] field_11`) and acts
+# as the END marker — it contributes 0 to its own code's tally.
+#
+# Interpolation gap — Connect's reported D/L/R/A minutes are HIGHER than
+# the raw [275] code 2/3/4 tally:
+#   May 30 raw tally:   {1: 74, 2: 125, 3: 57, 4: 38} = 294 min
+#   May 30 in-bed:      305 min (sleep_end - sleep_start)
+#   May 30 unmeasured:  74 (code 1) + 11 (pre-sleep gap) = 85 min
+#   May 30 Connect:     Deep=70 / Light=180 / REM=47 / Awake=8 = 305 min
+#   Connect needs:      +13 Deep, +55 Light, +9 REM, +8 Awake = 85 min ✓
+# Garmin's algorithm smooths the unmeasurable 85 min into the 4 stages.
+# We don't reverse-engineer the smoothing — for Deep we use the Connect-
+# smoothed value directly from `[346] field_9` (locked); for Light / REM
+# / Awake the smoothed values aren't yet found in any decoded field.
+_SLEEP_DATA_STAGE_MSG = 275
+
+# Most GenericMessage types repeat with redundant payloads — we cap at 5
+# distinct samples per gid in `_dump_fit` to keep dumps small. Exception:
+# messages where each instance carries unique event data (e.g. [275]
+# sleep stage transitions — capping there would lose mid-night stages).
+_DUMP_KEEP_ALL_INSTANCES = frozenset({_SLEEP_DATA_STAGE_MSG})
 
 
 # `_HRV_STATUS.fit` `GenericMessage[370]` — nightly HRV summary.
@@ -1417,12 +1740,30 @@ def parse_sleep_data_fit(fit_bytes: bytes) -> dict:
             # locked.
             if fields.get(4) is not None:
                 out['sleep_duration_sub_score'] = int(fields[4])
-            # Remaining contributor positions carry the Stress / Deep /
-            # Light / REM / Awake sub-scores but the slot ↔ name alignment
-            # isn't locked yet — surfaced as an ordered list of the same 6
-            # slots already documented in `_SLEEP_DATA_SCORE_MSG`.
+            # Deep sleep minutes — LOCKED in PR #489 across 2 days:
+            # May 28 = 81 min ✓ (Andy's verification), May 30 = 70 min ↔
+            # Connect "1h 10m" exactly. NOT a sub-score (the values land
+            # outside Garmin's 0-100 qualitative bands on most nights).
+            # Keyed to match the DB column name (`sleep_deep_min`).
+            if fields.get(9) is not None:
+                out['sleep_deep_min'] = int(fields[9])
+            # Stress sample count + sum during sleep — LOCKED in PR #489.
+            # field_14 is the count of 0-100 stress readings taken during
+            # the sleep period (every ~3 min, capped at 100). field_15 is
+            # the SUM of those readings; dividing by the sample count
+            # yields Garmin Connect's "Stress avg" for sleep.
+            if fields.get(14) is not None:
+                out['sleep_stress_sample_count_capped'] = int(fields[14])
+            if fields.get(15) is not None:
+                out['sleep_stress_sum'] = int(fields[15])
+            # Remaining contributor positions (5/7/8/10) carry sub-scores
+            # for Light / REM / Awake / restless contributors but the
+            # slot ↔ name alignment isn't locked yet — surfaced as an
+            # ordered list pending a night where Connect ratings diverge
+            # enough to disambiguate. field_9 and field_14 dropped from
+            # this list since they're now their own fields.
             contributors = []
-            for fid in (5, 7, 8, 9, 10, 14):
+            for fid in (5, 7, 8, 10):
                 v = fields.get(fid)
                 contributors.append(int(v) if v is not None else None)
             if any(c is not None for c in contributors):
@@ -1431,6 +1772,42 @@ def parse_sleep_data_fit(fit_bytes: bytes) -> dict:
             fields = _generic_field_map(msg)
             if fields.get(1) is not None:
                 out['restless_moments'] = int(fields[1])
+            # Sleep start time as seconds since local midnight — LOCKED in
+            # PR #489 against May 28 + May 30: 4500/7860 = 01:15/02:11.
+            # Surfaced for cross-check; the canonical sleep_start_ts FIT-
+            # epoch sec lives in `[384] field_9`.
+            if fields.get(0) is not None:
+                out['sleep_start_seconds_since_midnight'] = int(fields[0])
+            # Wake event count — distinct from awake_min (total awake
+            # duration in `[384] field_24`). LOCKED PR #489 against May
+            # 28 (4 events / 4 min) + May 30 (9 events / 8 min).
+            # Keyed `sleep_wake_count` to match the DB column.
+            if fields.get(2) is not None:
+                out['sleep_wake_count'] = int(fields[2])
+
+    # Walk `[275]` stage transitions — each instance is a stage entry.
+    # The importer cross-files `[384] field_11` for sleep_end_ts to compute
+    # the final segment; here we surface the raw (ts, code) list and the
+    # tally-without-last-segment so the inspector dump can still recover
+    # every code that appears mid-night.
+    stage_events = _walk_sleep_stage_events(fit)
+    if stage_events:
+        out['sleep_stage_events'] = stage_events
+        out['sleep_stage_minutes_by_code_partial'] = _stage_minutes_from_events(
+            stage_events,
+        )
+        # Derive `sleep_stress_avg` (= Connect's "Stress avg" during sleep)
+        # when both `[346] field_15` (stress sum) and a sleep_period are
+        # available. sleep_period_min = (last_event_ts - first_event_ts) / 60
+        # is a few-minute approximation of the actual sleep duration (which
+        # lives in [384] field_11 - field_9 - awake_min in a separate file),
+        # but it round-trips to the same Connect-rounded average.
+        sum_raw = out.get('sleep_stress_sum')
+        if sum_raw is not None and len(stage_events) >= 2:
+            span_min = (stage_events[-1][0] - stage_events[0][0]) // 60
+            avg = sleep_stress_avg(sum_raw, span_min)
+            if avg is not None:
+                out['sleep_stress_avg'] = avg
 
     # Date = the file's creation timestamp (= morning sync after sleep).
     for record in fit.records:

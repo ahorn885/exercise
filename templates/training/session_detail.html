@@ -41,8 +41,8 @@
   <div class="set-log-head">
     <span class="eyebrow accent">● {{ log.exercise }}</span>
     <span class="rail-note">
-      {% if log.target_sets or log.target_reps or log.target_weight %}
-        Target: {{ log.target_sets or '—' }}×{{ log.target_reps or '—' }}{% if log.target_weight %} @ {{ log.target_weight }}lb{% endif %}
+      {% if log.target_sets or log.target_reps or log.target_weight_display %}
+        Target: {{ log.target_sets or '—' }}×{{ log.target_reps or '—' }}{% if log.target_weight_display %} @ {{ log.target_weight_display }}{{ weight_unit_label }}{% endif %}
       {% endif %}
     </span>
   </div>
@@ -50,11 +50,11 @@
   {% if log.id in sets_by_log %}
   <div class="sec-sm">
     {% for s in sets_by_log[log.id] %}
-      <span class="chip">S{{ s.set_number }}:{% if s.reps %} {{ s.reps }}r{% endif %}{% if s.weight_lbs %} {{ s.weight_lbs }}lb{% endif %}{% if s.duration_sec %} {{ s.duration_sec }}s{% endif %}</span>
+      <span class="chip">S{{ s.set_number }}:{% if s.reps %} {{ s.reps }}r{% endif %}{% if s.weight_display %} {{ s.weight_display }}{{ weight_unit_label }}{% endif %}{% if s.duration_sec %} {{ s.duration_sec }}s{% endif %}</span>
     {% endfor %}
   </div>
   {% else %}
-  <p class="dim">{{ log.actual_sets or '—' }}×{{ log.actual_reps or '—' }}{% if log.actual_weight %} @ {{ log.actual_weight }}lb{% endif %}</p>
+  <p class="dim">{{ log.actual_sets or '—' }}×{{ log.actual_reps or '—' }}{% if log.actual_weight_display %} @ {{ log.actual_weight_display }}{{ weight_unit_label }}{% endif %}</p>
   {% endif %}
 
   <div class="kv-row sec-sm">
@@ -64,8 +64,8 @@
     {% if log.outcome %}
       <span class="chip {% if '↑' in log.outcome %}good{% elif '→' in log.outcome %}warn{% else %}bad{% endif %}">{{ log.outcome }}</span>
     {% endif %}
-    {% if log.next_sets or log.next_weight %}
-      <span class="dim">Next Rx: {{ log.next_sets or '—' }}×{{ log.next_reps or '—' }}{% if log.next_weight %} @ {{ log.next_weight }}lb{% endif %}</span>
+    {% if log.next_sets or log.next_weight_display %}
+      <span class="dim">Next Rx: {{ log.next_sets or '—' }}×{{ log.next_reps or '—' }}{% if log.next_weight_display %} @ {{ log.next_weight_display }}{{ weight_unit_label }}{% endif %}</span>
     {% endif %}
   </div>
 

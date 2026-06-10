@@ -39,7 +39,7 @@
           <tr>
             <th class="u-minw-180">Exercise</th>
             <th class="u-w-75">Reps</th>
-            <th class="u-w-95">Weight (lb)</th>
+            <th class="u-w-95">Weight ({{ weight_unit_label or 'lb' }})</th>
             <th class="u-w-85">Dur (sec)</th>
             <th class="u-w-36"></th>
           </tr>
@@ -160,7 +160,9 @@ function fetchRx(ex) {
 function getRowValues(id) {
   return {
     reps: parseInt(document.getElementById('reps' + id)?.value) || null,
-    weight_lbs: parseFloat(document.getElementById('wt' + id)?.value) || null,
+    // #469 — `weight` is in the athlete's display unit. The server reads
+    // their `unit_preference` and converts to kg before storing.
+    weight: parseFloat(document.getElementById('wt' + id)?.value) || null,
     duration_sec: parseInt(document.getElementById('dur' + id)?.value) || null,
   };
 }
@@ -195,17 +197,20 @@ function renderSummaries() {
     const rx = rxCache[ex] || {};
     const tSets = rx.next_sets || rx.current_sets;
     const tReps = rx.next_reps || rx.current_reps;
-    const tWt = rx.next_weight || rx.current_weight;
+    // #469 — render target + chip weights in the athlete's display unit.
+    // `*_display` values are pre-converted by the /api/rx endpoint.
+    const tWt = (rx.next_weight_display != null) ? rx.next_weight_display : rx.current_weight_display;
     const tDur = rx.current_duration;
+    const wtLabel = rx.weight_unit_label || 'lb';
 
     let targetStr = '';
-    if (tSets && tReps) targetStr = `${tSets}×${tReps}${tWt ? ' @ ' + tWt + 'lb' : ''}`;
+    if (tSets && tReps) targetStr = `${tSets}×${tReps}${tWt ? ' @ ' + tWt + wtLabel : ''}`;
     else if (tSets && tDur) targetStr = `${tSets}×${tDur}s`;
 
     const chips = sets.map((s, i) => {
       const label = [
         s.reps ? s.reps + ' reps' : null,
-        s.weight_lbs ? s.weight_lbs + 'lb' : null,
+        s.weight ? s.weight + wtLabel : null,
         s.duration_sec ? s.duration_sec + 's' : null,
       ].filter(Boolean).join(' @ ') || '—';
       return `<span class="chip">S${i + 1}: ${label}</span>`;
@@ -266,6 +271,8 @@ function buildPayload() {
       rest_sec: null,
       target_sets: rx.next_sets || rx.current_sets || null,
       target_reps: rx.next_reps || rx.current_reps || null,
+      // #469 — target_weight is the canonical-kg rx baseline; the API
+      // returns it unchanged (display values are separate `_display` keys).
       target_weight: rx.next_weight || rx.current_weight || null,
       target_duration: rx.current_duration || null,
       notes: exNotes[ex] || '',
