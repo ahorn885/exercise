@@ -21,6 +21,7 @@ from typing import Any
 
 from layer4.context import (
     AthleteNetworkLink,
+    AthleteSupplementRecord,
     CyclingBaseline,
     DailyAvailabilityWindow,
     DisclosureAck,
@@ -110,6 +111,7 @@ def build_layer1_payload(db, user_id: int) -> Layer1Payload:
     linked_partner_consents = _load_linked_partner_consents(db, user_id)
     disclosures = _load_disclosures(db, user_id)
     skill_toggle_states = _load_skill_toggle_states(db, user_id)
+    supplements = _load_supplements(db, user_id)
 
     health_status = Layer1HealthStatus(
         current_injuries=current_injuries,
@@ -134,6 +136,7 @@ def build_layer1_payload(db, user_id: int) -> Layer1Payload:
     lifestyle_model = Layer1Lifestyle(
         sleep_baseline_hours=sleep_baseline_hours,
         skill_toggle_states=skill_toggle_states,
+        supplements=supplements,
         **lifestyle,
     )
     availability = Layer1Availability(**availability_scalars)
@@ -385,6 +388,36 @@ def _load_skill_toggle_states(db, user_id: int) -> dict[str, bool]:
         (user_id,),
     )
     return {r["toggle_name"]: bool(r["enabled"]) for r in cur.fetchall()}
+
+
+# ─── athlete_supplements — structured §I.1 protocol ──────────────────────────
+
+
+def _load_supplements(db, user_id: int) -> list[AthleteSupplementRecord]:
+    """The athlete's structured supplement protocol from `athlete_supplements`
+    (§I.1), oldest first. Empty list for athletes who've added none. Rows
+    soft-reference `layer0.supplement_vocabulary`; canonical_name/category are
+    denormalized on the row, so no cross-schema join is needed here. Supersedes
+    the free-text `supplement_protocol_notes` — consumed by Layer 2E §5.5.
+    """
+    cur = db.execute(
+        "SELECT supplement_id, canonical_name, category, dose, frequency, "
+        "timing, notes "
+        "FROM athlete_supplements WHERE user_id = ? ORDER BY created_at, id",
+        (user_id,),
+    )
+    return [
+        AthleteSupplementRecord(
+            supplement_id=r["supplement_id"],
+            canonical_name=r["canonical_name"],
+            category=r["category"],
+            dose=r["dose"],
+            frequency=r["frequency"],
+            timing=r["timing"],
+            notes=r["notes"],
+        )
+        for r in cur.fetchall()
+    ]
 
 
 # ─── wellness_self_report — latest sleep_hours ───────────────────────────────

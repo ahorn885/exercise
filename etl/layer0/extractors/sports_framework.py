@@ -1,4 +1,4 @@
-"""Layer 0 ETL — extractor for Sports_Framework_v11.xlsx (source 0A).
+"""Layer 0 ETL — extractor for the Sports Framework workbook (source 0A).
 
 One function per sheet. Each returns a list of dicts ready for INSERT.
 Parsing rules per spec §4.2–§4.15 (Layer0_ETL_Spec_v3.md).
@@ -1022,5 +1022,39 @@ def extract_discipline_modality_membership(wb) -> list[dict[str, Any]]:
             "discipline_id": did,
             "group_id": gid,
             "note": _t(ws.cell(row=r, column=3).value) or None,
+        })
+    return rows
+
+
+def extract_craft_discipline_aliases(wb) -> list[dict[str, Any]]:
+    """X1b.3b — Sheet "Craft Discipline Aliases" (Sports_Framework v14+).
+
+    Columns (R1 header, R2+ data): Craft Slug | Discipline ID | Group Kind.
+    Maps an athlete-owned craft (a `bike_types_available` / `paddle_craft_types`
+    slug) to the discipline(s) it counts as training for — many-to-many: one
+    row per (craft_slug, discipline_id) pair (e.g. a gravel bike trains Road +
+    Gravel + XC cycling). `group_kind` is validated against `_VALID_GROUP_KINDS`
+    (closed enum, Modality_Group_Spec §3.3). Empty list if the sheet is absent
+    (back-compat: the substitution filter then falls back to today's behavior).
+    """
+    if "Craft Discipline Aliases" not in wb.sheetnames:
+        return []
+    ws = wb["Craft Discipline Aliases"]
+    rows: list[dict[str, Any]] = []
+    for r in range(2, ws.max_row + 1):
+        craft = _t(ws.cell(row=r, column=1).value)
+        did = _t(ws.cell(row=r, column=2).value)
+        if not craft or not did:
+            continue
+        kind = _t(ws.cell(row=r, column=3).value) or ""
+        if kind not in _VALID_GROUP_KINDS:
+            raise ValueError(
+                f"craft_discipline_aliases row {r}: group_kind {kind!r} not in "
+                f"{sorted(_VALID_GROUP_KINDS)}"
+            )
+        rows.append({
+            "craft_name": craft,
+            "discipline_id": did,
+            "group_kind": kind,
         })
     return rows

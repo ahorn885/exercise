@@ -85,14 +85,45 @@ def test_health_categories_known_present(parsed):
 # ---------------------------------------------------------------------------
 
 def test_equipment_count(parsed):
-    # 122 = standard categories minus DROPs minus duplicates, plus 9 universal.
-    # Vocabulary V4 §6 took this 121 -> 122: pruned 3 vessels (Bike (generic),
-    # Sea kayak, Rowing shell) and folded in 4 A-only items (Tricep bar,
-    # Preacher curl bench, Slam ball, Treadwall). "Climbing wall" is NOT
-    # folded in — it already exists in layer0 as the active 0B legacy
-    # "Climbing Wall" (would violate the case-insensitive active-name index).
-    # Renames and the Bench/Weighted-vest moves are count-neutral.
-    assert len(parsed["equipment_items"]) == 122
+    # Vocabulary V4b -> V4c.
+    # V4b (122 -> 131): re-homed 9 standalone legacy items; the climbing/ski
+    # aggregate kits roll into the existing readiness toggles, not equipment rows.
+    # V4c (131 -> 127): removed 4 unreferenced paddle accessories (Paddle
+    # (double-blade), Single-blade paddle, Rowing oar, Kayak / canoe seat) — the
+    # seat/paddle/oar are assumed present if the athlete has the vessel.
+    assert len(parsed["equipment_items"]) == 127
+
+
+def test_v4c_paddle_accessories_removed(parsed):
+    names = {e["canonical_name"] for e in parsed["equipment_items"]}
+    for gone in ["Paddle (double-blade)", "Single-blade paddle", "Rowing oar",
+                 "Kayak / canoe seat"]:
+        assert gone not in names, f"{gone!r} should be removed (assumed with vessel)"
+    # the vessels themselves remain
+    for kept in ["Kayak", "Canoe", "Packraft", "Stand-up Paddleboard"]:
+        assert kept in names
+
+
+def test_equipment_v4b_legacy_reconciliation(parsed):
+    by_name = {e["canonical_name"]: e for e in parsed["equipment_items"]}
+    names = set(by_name)
+    # Climbing/ski aggregate kits are toggle rollups, NOT equipment rows.
+    for kit in ["Climbing kit", "Mountaineering kit", "Touring ski kit",
+                "XC ski kit", "Climbing gear", "Climbing Wall", "Harness",
+                "Climbing holds", "TT Bike"]:
+        assert kit not in names, f"{kit!r} should be a toggle rollup, not equipment"
+    # Standalone gear re-homed (exact legacy casing so substitute tokens match).
+    for item, cat in [("Rollerskis", "Sport-Specific — Winter"),
+                      ("Inline skates", "Sport-Specific — Winter"),
+                      ("Hyperextension bench", "Machines - Strength"),
+                      ("Ab straps", "Bodyweight & Portable Equipment"),
+                      ("Mini hurdles", "Bodyweight & Portable Equipment"),
+                      ("Stairs", "Bodyweight & Portable Equipment"),
+                      ("Mini trampoline", "Plyo, Power & Stability"),
+                      ("Wobble board", "Plyo, Power & Stability"),
+                      ("Stick roller", "Recovery & Therapy")]:
+        assert item in names, f"{item!r} re-home missing"
+        assert by_name[item]["equipment_category"].startswith(cat)
 
 
 def test_equipment_universal_flag(parsed):

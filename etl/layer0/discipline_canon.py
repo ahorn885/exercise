@@ -3,7 +3,7 @@
 Background
 ----------
 Discipline names were drifting: the ETL extracted `discipline_name` *literally*
-from `Sports_Framework_v11.xlsx`, so the same `discipline_id` carried up to ten
+from the Sports Framework workbook, so the same `discipline_id` carried up to ten
 different labels across the denorm tables (per-sport context smeared into the
 name field — "Trail Running (Base) (on fell terrain where possible)", etc.). A
 parallel app-layer overlay (`discipline_display_names.py`) tried to clean this

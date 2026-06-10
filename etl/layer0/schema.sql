@@ -411,6 +411,23 @@ CREATE TABLE IF NOT EXISTS layer0.discipline_modality_membership (
   UNIQUE (discipline_id, group_id, etl_version)
 );
 
+-- X1b.3b — craft → discipline aliases. Maps an athlete-owned craft (a
+-- bike_types_available / paddle_craft_types slug) to the discipline(s) it
+-- counts as training for. Many-to-many (one row per craft × discipline): a
+-- gravel bike maps to Road + Gravel + XC cycling; a smart trainer to every
+-- bike discipline. Layer 2C's training-substitution filter joins craft →
+-- discipline → modality_group to narrow substitution candidates.
+CREATE TABLE IF NOT EXISTS layer0.craft_discipline_aliases (
+  id              SERIAL PRIMARY KEY,
+  craft_name      TEXT NOT NULL,
+  discipline_id   TEXT NOT NULL,
+  group_kind      TEXT NOT NULL,
+  etl_version     TEXT NOT NULL,
+  etl_run_at      TIMESTAMPTZ NOT NULL,
+  superseded_at   TIMESTAMPTZ,
+  UNIQUE (craft_name, discipline_id, etl_version)
+);
+
 ----------------------------------------------------------------------
 -- Additive column migrations (idempotent)
 ----------------------------------------------------------------------

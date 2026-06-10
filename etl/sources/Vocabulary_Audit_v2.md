@@ -252,6 +252,7 @@ Organised to mirror AR Schema 2.2 categories. Each row shows the canonical name 
 | Assisted pull-up / dip machine | — | |
 | Bicep station | — | |
 | Tricep station | — | |
+| Hyperextension bench | Hyperextension Bench, Roman Chair, Reverse Hyper | Re-homed from legacy 0A equipment (V4b reconciliation) |
 
 ## Machines - Cardio
 
@@ -284,6 +285,8 @@ Organised to mirror AR Schema 2.2 categories. Each row shows the canonical name 
 | Slider discs | — | |
 | Foam pad | Foam Pad ✓ | Used in paddle balance drills |
 | Incline board | Incline Board ✓ | Used for balance/calf |
+| Mini trampoline | Mini Trampoline, Rebounder | Re-homed from legacy 0A (V4b) |
+| Wobble board | Wobble Board | Re-homed from legacy 0A (V4b) |
 
 ## Grip & Climbing
 
@@ -326,6 +329,9 @@ active names). The A-list item maps to the existing row; casing reconciliation
 | Nordic curl strap | — | |
 | Knee pad | Knee Pad ✓ | |
 | Weighted vest | Vest, Weight Vest | RENAME col 7 → "Weighted Vest". Moved from Sport-Specific Running & Hiking (Vocabulary V4 §6) |
+| Ab straps | Ab Straps | Hanging ab straps. Re-homed from legacy 0A (V4b) |
+| Mini hurdles | Mini Hurdles | Agility. Re-homed from legacy 0A (V4b) |
+| Stairs | Stairs | Stair running / step drills. Re-homed from legacy 0A (V4b) |
 
 ## Sport-Specific — Cycling (top-level vessels — kept individual)
 
@@ -348,10 +354,8 @@ active names). The A-list item maps to the existing row; casing reconciliation
 | Packraft | Packraft, Loaded Packraft | "Loaded" is prescription detail, not equipment |
 | Stand-up Paddleboard | SUP, Stand-Up Paddleboard, SUP Paddle | Renamed from "SUP" → canonical "Stand-up Paddleboard" (V4 §4). "SUP Paddle" is sub-component, assumed with the board. |
 | Raft | Raft, Inflatable Raft | Renamed from "Inflatable raft" → "Raft" (V4 §4). |
-| Paddle (double-blade) | Paddle, Two Paddles | Generic — implicit with Kayak/Packraft |
-| Single-blade paddle | Single-Blade Paddle ✓ | Implicit with Canoe |
-| Rowing oar | Rowing Oar, Sculling Blade, Erg Handle, Oars | Sub-components of Rowing Erg (Rowing shell vessel pruned, V4 §4) |
-| Kayak / canoe seat | Kayak / Canoe Seat ✓ | Implicit with vessel |
+
+**V4c — paddle accessories dropped (assumed with the vessel).** Paddle, single-blade paddle, double-blade paddle, kayak/canoe seat, and rowing oar are NO LONGER tracked: if the athlete has the vessel, assume they have the seat and paddle (Andy). The four accessory rows (Paddle (double-blade), Single-blade paddle, Rowing oar, Kayak / canoe seat) are removed; the lone exercise token that referenced one (`Canoe Seat`) is dropped in `vocabulary_transforms._DROP_TOKENS`. On-water rowing is not prescribed, so `Rowing Shell` exercise tokens normalize to `Rowing ergometer`.
 
 **Whitewater-specific accessories** (spray skirt, WW helmet, WW PFD) → rolled into **Whitewater paddling setup** toggle (Section 4 below).
 
@@ -373,8 +377,12 @@ active names). The A-list item maps to the existing row; casing reconciliation
 |---|---|---|
 | Snowshoes | Snowshoes ✓ | Single-item kit — no rollup needed; the item IS the kit |
 | Avalanche safety gear | — | Beacon + probe + shovel + training. Safety gate retained — gates backcountry programming on **Avalanche safety training completed Y/N** |
+| Rollerskis | Rollerskis | XC dryland training. Re-homed from legacy 0A (V4b) |
+| Inline skates | Inline Skates | Skate/XC dryland training. Re-homed from legacy 0A (V4b) |
 
 **All other ski equipment** (touring skis, alpine skis, XC skis, ski boots, ski poles, climbing skins, ski crampons, boot buckles, ice axe, mountaineering harness used in SkiMo) → rolled into the three ski-setup toggles in Section 4 below.
+
+**V4b — ski/climbing aggregate kits are toggle rollups, not equipment rows.** The legacy 0A/0B aggregate tokens `Touring ski kit`, `XC ski kit`, `Climbing gear`, `Climbing Wall`, `Climbing holds`, `Mountaineering kit` (and sub-items Harness, Quickdraws, etc.) reconcile into the existing readiness toggles (`Touring/AT ski setup`, `Climbing — roped`, `Mountaineering`) via `vocabulary_transforms._ROLLUP` — the toggle IS the bundle, so we don't track each item or add redundant equipment rows. Rollerskis / Inline skates stay as equipment (standalone dryland tools, referenced as Tier-2 substitutes). `TT Bike` normalizes to the existing `TT / triathlon bike` vessel. Bouldering is **not** a discipline in our sports and is slated for removal (see follow-up issue); no new tokens route to it.
 
 ## Sport-Specific — Swimming (top-level — kept individual)
 
@@ -401,6 +409,7 @@ active names). The A-list item maps to the existing row; casing reconciliation
 | TENS / EMS unit | — | |
 | Yoga blocks | — | |
 | Stretch strap | — | **DROP from AR Schema 2.2** — never used in col 7 |
+| Stick roller | Stick Roller | Re-homed from legacy 0A (V4b) |
 
 ## Assumed Universal — system-level category
 

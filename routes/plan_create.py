@@ -82,6 +82,8 @@ from plan_sessions_repo import (
     snapshot_progress_blocks,
 )
 from race_events_repo import load_target_race_event_payload
+from plan_nutrition_repo import load_plan_nutrition_by_version
+from layer5 import generate_and_persist_plan_nutrition
 from routes.auth import cron_authorized, current_user_id
 
 
@@ -601,6 +603,22 @@ def _advance_plan_generation_locked(db, uid: int, plan_version_id: int,
             (plan_version_id, uid),
         )
         db.commit()
+        # Layer 5A — best-effort post-`ready` deterministic nutrition synthesis.
+        # The plan is already durable + `ready` above; a nutrition fault must
+        # NEVER affect it, so it's isolated in its own try and never propagates
+        # (mirrors the progress-block snapshot pattern). Zero-LLM + fast, so it's
+        # safe to run inline on the completing pass. Commit only when something
+        # was actually persisted, so the common no-inputs case adds no extra
+        # commit (and no DB work).
+        try:
+            if generate_and_persist_plan_nutrition(db, uid, plan_version_id) is not None:
+                db.commit()
+        except Exception as _nutr_exc:  # noqa: BLE001 — advisory must not break gen
+            db.rollback()
+            print(
+                f"_advance_plan_generation: post-ready nutrition synthesis failed "
+                f"for plan_version_id={plan_version_id} (non-fatal): {_nutr_exc}"
+            )
         return {"status": "ready"}
     except Layer4GenerationIncomplete as exc:
         # D-77 budget spent mid-pass -- NOT a failure. Blocks synthesized this
@@ -849,11 +867,30 @@ def view_plan(plan_version_id: int):
     for session in sessions:
         sessions_by_date.setdefault(session.date, []).append(session)
 
+    # Layer 5A — the per-day + plan-level nutrition artifact (None until the
+    # post-`ready` stage has run); keyed by date for the per-day cards. Advisory:
+    # a nutrition load fault must NEVER 500 the plan view, so degrade to "no
+    # nutrition" rather than propagate.
+    try:
+        nutrition = load_plan_nutrition_by_version(db, plan_version_id)
+    except Exception as _nutr_exc:  # noqa: BLE001 — advisory must not break the view
+        print(
+            f"view_plan: nutrition load failed for "
+            f"plan_version_id={plan_version_id} (non-fatal): {_nutr_exc}"
+        )
+        nutrition = None
+    nutrition_by_date = (
+        {day.date: day for day in nutrition.days} if nutrition else {}
+    )
+
     return render_template(
         'plan_create/view.html',
         plan_version=plan_version,
+        plan_version_id=plan_version_id,
         sessions_by_date=sorted(sessions_by_date.items()),
         session_count=len(sessions),
+        nutrition=nutrition,
+        nutrition_by_date=nutrition_by_date,
     )
 
 
@@ -892,6 +929,43 @@ def reopen_plan(plan_version_id: int):
     db.commit()
     flash("Plan reopened.", 'success')
     return redirect(url_for('plans.list_plans'))
+
+
+@bp.route('/<int:plan_version_id>/nutrition/regenerate', methods=['POST'])
+def regenerate_nutrition(plan_version_id: int):
+    """Manually (re)generate the Layer 5A nutrition for a ready plan.
+
+    The auto-trigger runs once when a plan flips `ready`; this lets the athlete
+    re-run it on demand (e.g. after the energy model improves, or if the
+    best-effort auto-run was skipped). Same cross-user guard as the other
+    per-plan actions; redirects back to the plan view either way.
+    """
+    db = get_db()
+    uid = current_user_id()
+    plan_version = _load_plan_version(db, uid, plan_version_id)
+    if plan_version is None:
+        abort(404)
+    if plan_version['generation_status'] != 'ready':
+        flash("Nutrition is only available once the plan is ready.", 'error')
+        return redirect(_view_plan_url(plan_version_id))
+    try:
+        result = generate_and_persist_plan_nutrition(db, uid, plan_version_id)
+        db.commit()
+        if result is None:
+            flash(
+                "Nutrition inputs aren't available for this plan — regenerate "
+                "the plan to enable nutrition.",
+                'error',
+            )
+        else:
+            flash("Nutrition regenerated.", 'success')
+    except Exception as exc:  # noqa: BLE001 — surface a friendly message, don't 500
+        db.rollback()
+        print(
+            f"regenerate_nutrition: failed for plan_version_id={plan_version_id}: {exc}"
+        )
+        flash("Couldn't regenerate nutrition. Please try again.", 'error')
+    return redirect(_view_plan_url(plan_version_id))
 
 
 @bp.route('/<int:plan_version_id>/progress', methods=['GET'])

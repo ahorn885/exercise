@@ -17,7 +17,10 @@ from datetime import datetime
 import bcrypt
 from flask import Blueprint, render_template, request, redirect, url_for, flash, abort
 
+from datetime import date
+
 from database import get_db
+from plan_nutrition_repo import load_plan_nutrition_by_version
 from routes.auth import (
     current_user_id, _hash_password, _check_password, _password_strength_errors,
     generate_api_token,
@@ -25,6 +28,9 @@ from routes.auth import (
 from athlete import (
     PROFILE_FIELDS, PREFILL_ELIGIBLE_FIELDS,
     DOUBLES_FEASIBLE_CHOICES,
+    DIETARY_PATTERN_CHOICES, FUELING_FORMAT_CHOICES,
+    CAFFEINE_TOLERANCE_CHOICES, CAFFEINE_RACE_DAY_STRATEGY_CHOICES,
+    SALT_ELECTROLYTE_TOLERANCE_CHOICES,
     get_athlete_profile, upsert_athlete_profile,
     get_daily_availability_windows, upsert_daily_availability_windows,
 )
@@ -32,6 +38,13 @@ from units import (
     UNIT_PREFERENCE_CHOICES, DEFAULT_UNIT_PREFERENCE,
     normalize_unit_preference, entered_weight_to_kg, display_weight,
     weight_unit_label, entered_height_to_cm, display_height, height_unit_label,
+)
+from athlete_discipline_weighting_repo import (
+    DisciplineWeightingError,
+    evict_layer1_on_discipline_weighting_change,
+    get_discipline_weighting,
+    load_discipline_catalog,
+    replace_discipline_weighting,
 )
 from athlete_skill_toggles_repo import (
     evict_layer1_on_skill_toggle_change,
@@ -41,6 +54,13 @@ from athlete_skill_toggles_repo import (
     upsert_athlete_skill_toggles,
 )
 from race_events_repo import list_athlete_race_events
+from athlete_supplements_repo import (
+    load_supplement_vocab, vocab_index, list_athlete_supplements,
+    add_athlete_supplement, delete_athlete_supplement,
+    clean_frequency, clean_timing,
+    SUPPLEMENT_FREQUENCIES, SUPPLEMENT_TIMINGS,
+    FREQUENCY_LABELS, TIMING_LABELS,
+)
 from routes import provider_auth as pa
 
 
@@ -66,6 +86,48 @@ CONNECTION_PROVIDERS = (
     ('coros', 'COROS', 'coros.oauth_start'),
     ('polar', 'Polar', 'polar.oauth_start'),
 )
+
+
+def _coerce_date(value):
+    """Best-effort scope-date coercion; tolerates date objects, ISO strings,
+    or None (mirrors routes/plans.py bucketing for the fake-cursor tests)."""
+    if value is None or isinstance(value, date):
+        return value
+    try:
+        return date.fromisoformat(str(value)[:10])
+    except (ValueError, TypeError):
+        return None
+
+
+def _load_active_plan_nutrition(db, uid):
+    """The athlete's currently-live AI plan + its nutrition artifact, if any.
+
+    Active mirrors routes/plans.list_plans: `ready`, not superseded, not
+    completed, and scope spans today. Returns `(plan_version_id, PlanNutrition)`
+    or `(None, None)`. Advisory — wholly best-effort, so a fault here never
+    breaks the profile page (the standing protocol still renders)."""
+    try:
+        rows = db.execute(
+            "SELECT id, scope_start_date, scope_end_date, completed_at "
+            "FROM plan_versions WHERE user_id = ? "
+            "AND generation_status = 'ready' AND superseded_at IS NULL "
+            "ORDER BY created_at DESC",
+            (uid,),
+        ).fetchall()
+        today = date.today()
+        for r in rows:
+            if r['completed_at'] is not None:
+                continue
+            start = _coerce_date(r['scope_start_date'])
+            end = _coerce_date(r['scope_end_date'])
+            if start is not None and start > today:
+                continue
+            if end is not None and end < today:
+                continue
+            return r['id'], load_plan_nutrition_by_version(db, r['id'])
+    except Exception as exc:  # noqa: BLE001 — advisory must not break the page
+        print(f"_load_active_plan_nutrition failed for uid={uid} (non-fatal): {exc}")
+    return None, None
 
 # pa.status → (badge label, Bootstrap badge class). Mirrors v5 §Account
 # Config 1 "Connection Status" enum (Connected / Disconnected / Auth
@@ -222,6 +284,12 @@ def edit():
             except (ValueError, TypeError):
                 return None
 
+        def _csv(key, allowed):
+            # Multi-select checkbox group -> comma-separated storage. Filter to
+            # the known vocab so a tampered POST can't store junk tokens.
+            picked = [v for v in f.getlist(key) if v in allowed]
+            return ','.join(picked) or None
+
         # #469 — body weight is entered in the athlete's chosen display unit
         # but stored canonically in kg. The form posts BOTH the in-effect
         # preference at render time (hidden `body_weight_input_unit`) AND
@@ -261,6 +329,18 @@ def edit():
             weekly_hours_target=_num('weekly_hours_target'),
             notes=_str('notes'),
             unit_preference=submitted_unit_pref,
+            # §I.2 nutrition & fueling protocol.
+            dietary_pattern=_csv('dietary_pattern', DIETARY_PATTERN_CHOICES),
+            fueling_format_preference=_csv(
+                'fueling_format_preference', FUELING_FORMAT_CHOICES),
+            caffeine_tolerance=_str('caffeine_tolerance'),
+            caffeine_daily_mg_estimate=_num('caffeine_daily_mg_estimate', cast=int),
+            caffeine_race_day_strategy=_str('caffeine_race_day_strategy'),
+            salt_electrolyte_tolerance=_str('salt_electrolyte_tolerance'),
+            gi_triggers_known=_str('gi_triggers_known'),
+            # supplement_protocol_notes is no longer edited here — supplements
+            # moved to structured records (athlete_supplements). The legacy
+            # column is left untouched (not passed) rather than wiped to NULL.
             **prefill_values,
         )
         _record_self_report_provenance(db, uid, prefill_values)
@@ -318,6 +398,11 @@ def edit():
     skill_toggle_defs = load_active_skill_capability_toggle_vocab(db)
     skill_toggle_states = get_athlete_skill_toggles(db, uid)
 
+    # X2 — discipline-weighting picker (Athlete tab). Catalog = all potential
+    # disciplines; weighting = the athlete's current split (empty → unset).
+    discipline_catalog = load_discipline_catalog(db)
+    discipline_weighting = get_discipline_weighting(db, uid)
+
     # #469 — body weight is stored canonical kg; render it in the athlete's
     # chosen display unit so the form field round-trips cleanly. `profile` is
     # mutated in place because it's the dict the template reads.
@@ -328,10 +413,27 @@ def edit():
     profile['height_display'] = display_height(profile.get('height_cm'), unit_pref)
     profile['height_unit_label'] = height_unit_label(unit_pref)
 
+    # Plan-specific nutrition is surfaced only when a plan is live (hidden
+    # otherwise). The standing protocol below always renders from `profile`.
+    active_plan_id, plan_nutrition = _load_active_plan_nutrition(db, uid)
+
+    # 2E-6 — structured supplement capture: the athlete's records + the Layer 0
+    # vocab that powers the add-supplement picker.
+    supplements = list_athlete_supplements(db, uid)
+    supplement_vocab = load_supplement_vocab(db)
+
     from datetime import datetime as _dt
     return render_template(
         'profile/edit.html',
         profile=profile,
+        active_plan_id=active_plan_id,
+        plan_nutrition=plan_nutrition,
+        supplements=supplements,
+        supplement_vocab=supplement_vocab,
+        supplement_frequencies=SUPPLEMENT_FREQUENCIES,
+        supplement_timings=SUPPLEMENT_TIMINGS,
+        frequency_labels=FREQUENCY_LABELS,
+        timing_labels=TIMING_LABELS,
         unit_preference_choices=UNIT_PREFERENCE_CHOICES,
         memory=memory,
         preference_categories=PREFERENCE_CATEGORIES,
@@ -347,8 +449,15 @@ def edit():
         days=days,
         doubles_feasible=doubles,
         doubles_choices=DOUBLES_FEASIBLE_CHOICES,
+        dietary_pattern_choices=DIETARY_PATTERN_CHOICES,
+        fueling_format_choices=FUELING_FORMAT_CHOICES,
+        caffeine_tolerance_choices=CAFFEINE_TOLERANCE_CHOICES,
+        caffeine_race_day_strategy_choices=CAFFEINE_RACE_DAY_STRATEGY_CHOICES,
+        salt_electrolyte_tolerance_choices=SALT_ELECTROLYTE_TOLERANCE_CHOICES,
         skill_toggle_defs=skill_toggle_defs,
         skill_toggle_states=skill_toggle_states,
+        discipline_catalog=discipline_catalog,
+        discipline_weighting=discipline_weighting,
         # Used by the template to render an "Expired" badge without
         # round-tripping the timestamp through a Jinja-only comparison.
         now_iso=_dt.utcnow().isoformat(timespec='seconds'),
@@ -405,6 +514,40 @@ def save_skills():
         evict_layer1_on_skill_toggle_change(db, uid)
         flash('Skills saved.', 'success')
     return redirect(url_for('profile.edit', tab='skills'))
+
+
+@bp.route('/disciplines', methods=['POST'])
+def save_disciplines():
+    """Persist the discipline-weighting form (Athlete tab).
+
+    All-or-nothing: the athlete selects + weights any subset of the
+    discipline catalog; non-zero weights must sum to 100, or the whole set is
+    cleared (revert to Layer 2A system defaults). Form fields are `dw_<id>`
+    carrying the percent. Mirrors `save_skills`' parse → write → evict-Layer-1
+    path. Stored `discipline_slug` holds the canonical `discipline_id`.
+    """
+    db = get_db()
+    uid = current_user_id()
+    catalog_ids = {d['id'] for d in load_discipline_catalog(db)}
+    weights: dict[str, int] = {}
+    for did in catalog_ids:
+        raw = (request.form.get(f'dw_{did}') or '').strip()
+        if not raw:
+            continue
+        try:
+            weights[did] = int(float(raw))
+        except (ValueError, TypeError):
+            flash(f'Invalid weight for {did}.', 'error')
+            return redirect(url_for('profile.edit', tab='athlete'))
+    try:
+        replace_discipline_weighting(db, uid, weights)
+    except DisciplineWeightingError as exc:
+        flash(str(exc), 'error')
+        return redirect(url_for('profile.edit', tab='athlete'))
+    db.commit()
+    evict_layer1_on_discipline_weighting_change(db, uid)
+    flash('Discipline weighting saved.', 'success')
+    return redirect(url_for('profile.edit', tab='athlete'))
 
 
 @bp.route('/connections/<provider>/disconnect', methods=['POST'])
@@ -468,6 +611,51 @@ def delete_preference(pref_id):
     db.commit()
     flash('Preference removed.', 'info')
     return redirect(url_for('profile.coach_memory'))
+
+
+@bp.route('/supplement/add', methods=['POST'])
+def add_supplement():
+    """Add one structured supplement record. The selection is validated against
+    the Layer 0 vocab and the display fields (name/category) are taken from
+    there — a crafted POST can't store an unknown id or a spoofed name."""
+    db = get_db()
+    uid = current_user_id()
+    supplement_id = (request.form.get('supplement_id') or '').strip()
+    index = vocab_index(db)
+    vocab_row = index.get(supplement_id)
+    if vocab_row is None:
+        flash('Unknown supplement.', 'danger')
+        return redirect(url_for('profile.edit'))
+
+    def _opt(key):
+        return (request.form.get(key) or '').strip() or None
+
+    add_athlete_supplement(
+        db, uid,
+        supplement_id=supplement_id,
+        canonical_name=vocab_row['canonical_name'],
+        category=vocab_row.get('category'),
+        dose=_opt('dose'),
+        # frequency/timing are closed vocabs — drop anything not in the set so a
+        # tampered POST stores NULL rather than a junk token.
+        frequency=clean_frequency(request.form.get('frequency')),
+        timing=clean_timing(request.form.get('timing')),
+        notes=_opt('notes'),
+    )
+    db.commit()
+    flash('Supplement added.', 'success')
+    return redirect(url_for('profile.edit'))
+
+
+@bp.route('/supplement/<int:supp_id>/delete', methods=['POST'])
+def delete_supplement(supp_id):
+    """Remove one supplement record. Scoped on user_id — a crafted POST can't
+    reach another athlete's row."""
+    db = get_db()
+    delete_athlete_supplement(db, current_user_id(), supp_id)
+    db.commit()
+    flash('Supplement removed.', 'info')
+    return redirect(url_for('profile.edit'))
 
 
 @bp.route('/feedback/<int:fb_id>')

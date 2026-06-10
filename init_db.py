@@ -1575,6 +1575,31 @@ _PG_MIGRATIONS = [
     "ALTER TABLE athlete_profile ADD COLUMN IF NOT EXISTS salt_electrolyte_tolerance TEXT",
     "ALTER TABLE athlete_profile ADD COLUMN IF NOT EXISTS sleep_deprivation_max_hrs_continuous_awake SMALLINT",
     "ALTER TABLE athlete_profile ADD COLUMN IF NOT EXISTS sleep_deprivation_strategy_notes TEXT",
+    # 2E-6 §I.1 — structured supplement capture. Promotes the free-text
+    # `athlete_profile.supplement_protocol_notes` to per-supplement records that
+    # soft-reference `layer0.supplement_vocabulary.supplement_id` (no hard FK —
+    # the vocab lives in a different schema and is ETL-owned). `canonical_name` +
+    # `category` are denormalized so the profile + Layer 1 read without a
+    # cross-schema join. The Layer 2E supplement_integration de-stub (the
+    # recommendation + contraindication engine) consumes these next.
+    """CREATE TABLE IF NOT EXISTS athlete_supplements (
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER NOT NULL REFERENCES users(id),
+        supplement_id TEXT NOT NULL,
+        canonical_name TEXT NOT NULL,
+        category TEXT,
+        dose TEXT,
+        frequency TEXT,
+        timing TEXT,
+        notes TEXT,
+        created_at TIMESTAMP NOT NULL DEFAULT NOW()
+    )""",
+    "CREATE INDEX IF NOT EXISTS athlete_supplements_user_id_idx ON athlete_supplements(user_id)",
+    # 2E-6 §I.1 — frequency/timing moved from free text to closed vocabs
+    # (athlete_supplements_repo.SUPPLEMENT_FREQUENCIES/TIMINGS). frequency is a
+    # new structured axis; add it idempotently for DBs that already created the
+    # table from this PR's first commit (the CREATE above only fires on fresh).
+    "ALTER TABLE athlete_supplements ADD COLUMN IF NOT EXISTS frequency TEXT",
     # D-73 Phase 1.2A (D-51 §3.5) — strength_benchmarks 1:1 sub-table.
     # PK = user_id so each athlete has at most one row; populated lazily when
     # the athlete enters benchmarks. Right/left split on side-plank, single-leg
@@ -1918,6 +1943,45 @@ _PG_MIGRATIONS = [
         UNIQUE (plan_version_id, phase_idx)
     )""",
     "CREATE INDEX IF NOT EXISTS plan_progress_blocks_user_version_idx ON plan_progress_blocks (user_id, plan_version_id)",
+    # Layer 5A nutrition synthesis — deterministic per-day + plan-level nutrition
+    # computed AFTER a plan reaches `ready` (zero-LLM advisory tier; see
+    # `layer5/`). One row per plan_version holds the whole `PlanNutrition`
+    # bundle (top-level baseline + per-day targets + race-day fueling) as JSONB.
+    # UNIQUE (plan_version_id) makes the write an idempotent upsert so a
+    # regenerate overwrites in place. `energy_model` is denormalized so a future
+    # model-version bump can find + recompute stale artifacts. ON DELETE CASCADE
+    # mirrors plan_sessions: the artifact is meaningless without its plan.
+    # WRITE-ONLY / advisory — never an input to any Layer 4 cache key.
+    """CREATE TABLE IF NOT EXISTS plan_nutrition (
+        id BIGSERIAL PRIMARY KEY,
+        plan_version_id BIGINT NOT NULL REFERENCES plan_versions(id) ON DELETE CASCADE,
+        user_id INTEGER NOT NULL REFERENCES users(id),
+        energy_model TEXT NOT NULL,
+        payload_json JSONB NOT NULL,
+        generated_at TIMESTAMPTZ NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        UNIQUE (plan_version_id)
+    )""",
+    "CREATE INDEX IF NOT EXISTS plan_nutrition_user_version_idx ON plan_nutrition (user_id, plan_version_id)",
+    # Layer 5A nutrition INPUTS snapshot — the slice of the Layer 2E payload (+
+    # body weight + event dates) that the deterministic nutrition stage consumes,
+    # captured at plan-generation time. `orchestrate_plan_create` computes the
+    # 2E payload inside its upstream cone and discards it; stashing it here (best-
+    # effort, riding the generation transaction) lets the post-`ready` stage AND
+    # the manual regenerate action rebuild nutrition without re-running the cone,
+    # and pins the inputs to exactly what the plan was built on (no drift).
+    # One row per plan_version; UNIQUE for idempotent overwrite. ON DELETE CASCADE.
+    """CREATE TABLE IF NOT EXISTS plan_nutrition_inputs (
+        id BIGSERIAL PRIMARY KEY,
+        plan_version_id BIGINT NOT NULL REFERENCES plan_versions(id) ON DELETE CASCADE,
+        user_id INTEGER NOT NULL REFERENCES users(id),
+        payload_json JSONB NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        UNIQUE (plan_version_id)
+    )""",
+    "CREATE INDEX IF NOT EXISTS plan_nutrition_inputs_user_version_idx ON plan_nutrition_inputs (user_id, plan_version_id)",
     # D-63 §5.3 — ad_hoc_workout_suggestions. Holds generated-but-not-yet-
     # logged single-session synthesizer outputs. request_payload carries the
     # SingleSessionRequest; generated_session carries the single PlanSession

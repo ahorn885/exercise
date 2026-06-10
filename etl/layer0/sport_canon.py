@@ -4,7 +4,7 @@ Background
 ----------
 Disciplines have a code-side canon (`discipline_canon.py`) that curates the raw
 xlsx rows at ETL time — renames, removals, merges. Framework **sports** had no
-equivalent: they flowed straight from `Sports_Framework_v11.xlsx` Sheet 1 into
+equivalent: they flowed straight from the Sports Framework workbook Sheet 1 into
 `layer0.sports`, with no diff-reviewable place to express "remove this sport."
 
 This module is that place. It mirrors the discipline canon: a small, code-
@@ -33,6 +33,25 @@ REMOVED_SPORTS: frozenset[str] = frozenset({"Modern Pentathlon", "Biathlon"})
 # discipline_canon.ID_REMAP). Empty today — declared so the curation surface
 # exists in one obvious place rather than being invented ad hoc later.
 SPORT_NAME_REMAP: dict[str, str] = {}
+
+# ---------------------------------------------------------------------------
+# Exercise-DB "sport" tags that name a canon-removed discipline.
+#   The AR_Exercise_Database "Sport-Exercise Map" tags exercises by discipline
+#   name used as a sport. When a sport is removed (REMOVED_SPORTS) its
+#   pentathlon/biathlon-only disciplines go in lockstep (discipline_canon —
+#   D-025 Fencing / D-026 Laser Run / D-029 Rifle Shooting), but the exercise
+#   DB still tags exercises to those discipline names. Left in, they survive as
+#   `sport_exercise_map` rows with no `sport_discipline_bridge` home — a
+#   vocab_alignment failure. Drop them in lockstep with the sport removal.
+# ---------------------------------------------------------------------------
+REMOVED_EXERCISE_DB_SPORTS: frozenset[str] = frozenset({
+    "Fencing", "Laser Run", "Rifle Shooting",
+})
+
+
+def is_removed_exercise_db_sport(sport_name: str | None) -> bool:
+    """True if an exercise-DB sport tag names a canon-removed discipline."""
+    return _canon_sport_name(sport_name) in REMOVED_EXERCISE_DB_SPORTS
 
 
 def _canon_sport_name(name: str | None) -> str:

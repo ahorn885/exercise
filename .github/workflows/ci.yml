@@ -35,7 +35,10 @@ jobs:
         run: pip install -r requirements.txt pytest
       - name: Run test suite
         # Real-LLM smoke files skip without ANTHROPIC_API_KEY (not set here).
-        run: python -m pytest tests/ -q
+        # Includes etl/tests/ (Layer 0 ETL parsers + discipline canon) —
+        # psycopg2 is present via requirements.txt; these tests read the
+        # source workbooks directly and need no live DB.
+        run: python -m pytest tests/ etl/tests/ -q
 
   js-tests:
     name: JS harness (jsdom)
@@ -49,6 +52,47 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm test
+
+  layer0-gate:
+    name: Layer 0 integrity gate
+    # Stands up a throwaway Postgres, loads the schema + the latest committed
+    # genesis snapshot (etl/output/layer0_etl_v*.sql), and runs validate_layer0
+    # against it — the DB-side integrity gate (decision C, all checks FAIL with
+    # a sum_to_100 waiver bucket). A FAIL here means the committed snapshot has
+    # an unwaived integrity violation to fix or waive; no live DB / Neon needed.
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: layer0
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/layer0
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install deps
+        run: pip install -r requirements.txt
+      - name: Load schema + genesis snapshot
+        run: |
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f etl/layer0/schema.sql
+          snapshot="$(ls etl/output/layer0_etl_v*.sql | sort -V | tail -1)"
+          echo "Loading snapshot: $snapshot"
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f "$snapshot"
+      - name: Run validate_layer0 gate
+        run: python -m etl.layer0.validate_layer0
 
   real-llm-smoke:
     name: Real-LLM smoke (Sonnet 4.6)

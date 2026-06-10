@@ -46,9 +46,10 @@ VOCAB_MD = SOURCES / "Vocabulary_Audit_v2.md"
 # kept, #476 superseded: D-007 NOT removed); 5 new "Discipline Modality
 # Membership" rows: D-030 bike_pavement+bike_offroad, D-031 bike_offroad,
 # D-032 paddle_flatwater, D-019 paddle_whitewater. v13 base intact: X1b
-# modality groups (9 groups) + X1a v12 bridge bands. 0B =
-# AR_Exercise_Database_v19.xlsx (unchanged). 0C unchanged. Bump --version-tag
-# to `1.6.0` (or next available) when applying v14 on Neon.
+# modality groups (9 groups) + X1a v12 bridge bands. X1b.3b (2026-06-10) added
+# the "Craft Discipline Aliases" sheet to v14 (craft slug → discipline(s),
+# many-to-many). 0B = AR_Exercise_Database_v19.xlsx (unchanged). 0C unchanged.
+# Bump --version-tag to the next available (1.6.6+) when applying on Neon.
 # See Vocabulary_TargetState_and_Plan_v1.md + Modality_Group_Spec_v1.md.
 
 
@@ -543,6 +544,27 @@ def main(argv: list[str] | None = None) -> int:
         _print(f"layer0.discipline_modality_membership: inserted {n} rows")
         summaries.append(f"layer0.discipline_modality_membership: {n}")
 
+        # X1b.3b — Craft → discipline aliases (Modality_Group_Spec §6). Filter
+        # to surviving disciplines (post-canon), same as membership above.
+        cda_rows_raw = sports_framework.extract_craft_discipline_aliases(wb)
+        dropped_cda = [
+            r for r in cda_rows_raw if r["discipline_id"] not in surviving_disc_ids
+        ]
+        cda_rows = [r for r in cda_rows_raw if r["discipline_id"] in surviving_disc_ids]
+        if dropped_cda:
+            _print(
+                f"  [canon] craft_discipline_aliases: dropped {len(dropped_cda)} "
+                f"row(s) pointing at canon-removed disciplines"
+            )
+        n = insert_versioned(
+            conn, "layer0.craft_discipline_aliases",
+            ["craft_name", "discipline_id", "group_kind"],
+            [(r["craft_name"], r["discipline_id"], r["group_kind"]) for r in cda_rows],
+            v_0a, run_at, source_family="0A",
+        )
+        _print(f"layer0.craft_discipline_aliases: inserted {n} rows")
+        summaries.append(f"layer0.craft_discipline_aliases: {n}")
+
         # ----- Phase 3 — Bridge + 0B -----
         _print("[layer0 ETL] Phase 3 — Bridge + Exercise DB")
         bridge_rows = sports_framework.build_sport_discipline_bridge(sd_rows)
@@ -610,6 +632,20 @@ def main(argv: list[str] | None = None) -> int:
                 f"(exercise_id, sport_name) rows — see report"
             )
         sxm_rows = sport_canon.filter_sport_rows(sxm_rows)  # sport canon cascade
+        # Lockstep: drop exercise tags naming a canon-removed discipline
+        # (Fencing / Laser Run / Rifle Shooting) — orphaned by the sport
+        # removal, they'd otherwise fail vocab_alignment (no bridge home).
+        sxm_dropped_removed_disc = [
+            r for r in sxm_rows if sport_canon.is_removed_exercise_db_sport(r.get("sport_name"))
+        ]
+        sxm_rows = [
+            r for r in sxm_rows if not sport_canon.is_removed_exercise_db_sport(r.get("sport_name"))
+        ]
+        if sxm_dropped_removed_disc:
+            _print(
+                f"  [canon] sport_exercise_map: dropped {len(sxm_dropped_removed_disc)} "
+                f"row(s) tagged to canon-removed disciplines"
+            )
         n = insert_versioned(
             conn, "layer0.sport_exercise_map",
             [

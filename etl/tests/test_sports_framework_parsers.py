@@ -1,9 +1,9 @@
-"""Tests for the sports_framework parsers against the live v11 workbook.
+"""Tests for the sports_framework parsers against the live v14 workbook.
 
 Covers `_parse_constituent_movements`, `_parse_bool`,
 `_split_phase_load_notes`, `_parse_weekly_total_text`,
 plus the discipline substitutes / training gaps / cross-sport
-properties extractors against the in-repo v11 workbook (post-R6 renumber).
+properties extractors against the in-repo v14 workbook.
 """
 from __future__ import annotations
 
@@ -19,6 +19,7 @@ from etl.layer0.extractors.sports_framework import (
     _parse_constituent_movements,
     _parse_weekly_total_text,
     _split_phase_load_notes,
+    extract_craft_discipline_aliases,
     extract_cross_sport_properties,
     extract_discipline_pairing_matrix,
     extract_discipline_substitutes,
@@ -66,7 +67,7 @@ def test_pairing_matrix_dedupes_collapse_and_skips_self_pairs():
     assert by_pair[("D-010", "D-001")] == "PREFERRED"
     assert pairs.count(("D-001", "D-010")) == 1
 
-V11_PATH = Path(__file__).parent.parent / "sources" / "Sports_Framework_v11.xlsx"
+V14_PATH = Path(__file__).parent.parent / "sources" / "Sports_Framework_v14.xlsx"
 
 
 # ---------------------------------------------------------------------------
@@ -265,15 +266,15 @@ def test_weekly_totals_mixed_units_within_phase_rejects_phase():
 # ---------------------------------------------------------------------------
 
 @pytest.fixture(scope="module")
-def v11_wb():
-    return load_workbook(str(V11_PATH), read_only=False, data_only=True)
+def v14_wb():
+    return load_workbook(str(V14_PATH), read_only=False, data_only=True)
 
 
-def test_extract_discipline_substitutes_count_89(v11_wb):
+def test_extract_discipline_substitutes_count_89(v14_wb):
     # 89 = 91 source rows − 2 dropped by the R6 collapse dedup (one duplicate
     # (D-010, D-011, 'Canoeing') key + one self-substitute the merge created).
     warns: list = []
-    rows = extract_discipline_substitutes(v11_wb, parse_warnings=warns)
+    rows = extract_discipline_substitutes(v14_wb, parse_warnings=warns)
     assert len(rows) == 89
     assert warns == []
     # No duplicate UNIQUE keys + no self-substitutes survive the dedup.
@@ -286,8 +287,8 @@ def test_extract_discipline_substitutes_count_89(v11_wb):
     assert 0.0 <= first["fidelity"] <= 1.0
 
 
-def test_extract_discipline_training_gaps_count_3(v11_wb):
-    rows = extract_discipline_training_gaps(v11_wb)
+def test_extract_discipline_training_gaps_count_3(v14_wb):
+    rows = extract_discipline_training_gaps(v14_wb)
     assert len(rows) == 3
     by_id = {r["discipline_id"]: r for r in rows}
     assert "D-020" in by_id
@@ -300,8 +301,8 @@ def test_extract_discipline_training_gaps_count_3(v11_wb):
     assert by_id["D-022"]["gap_type"] == "no_off_environment_substitute"
 
 
-def test_extract_cross_sport_properties_filters_commentary(v11_wb):
-    rows = extract_cross_sport_properties(v11_wb["Cross-Sport Properties"])
+def test_extract_cross_sport_properties_filters_commentary(v14_wb):
+    rows = extract_cross_sport_properties(v14_wb["Cross-Sport Properties"])
     assert len(rows) == 1
     r = rows[0]
     assert r["property_id"] == "LIT_RATIO_001"
@@ -310,10 +311,10 @@ def test_extract_cross_sport_properties_filters_commentary(v11_wb):
     assert r["notes"] is not None
 
 
-def test_extract_phase_load_weekly_totals_emits_4_rows_per_sport(v11_wb):
+def test_extract_phase_load_weekly_totals_emits_4_rows_per_sport(v14_wb):
     failures: list = []
     rows = extract_phase_load_weekly_totals(
-        v11_wb["Phase Load Allocation"], parse_failures=failures,
+        v14_wb["Phase Load Allocation"], parse_failures=failures,
     )
     # Group by sport — every parsed sport should yield exactly 4 phase rows.
     by_sport: dict[str, set[str]] = {}
@@ -340,3 +341,43 @@ def test_substitute_with_missing_fidelity_dropped_with_warning():
     assert len(warns) == 1
     assert warns[0]["target_id"] == "D-002"
     assert "fidelity" in warns[0]["reason"]
+
+
+# ---------------------------------------------------------------------------
+# X1b.3b — extract_craft_discipline_aliases (Craft Discipline Aliases sheet)
+# ---------------------------------------------------------------------------
+
+def test_extract_craft_discipline_aliases_seed(v14_wb):
+    rows = extract_craft_discipline_aliases(v14_wb)
+    by_craft: dict[str, set[str]] = {}
+    for r in rows:
+        assert set(r) == {"craft_name", "discipline_id", "group_kind"}
+        by_craft.setdefault(r["craft_name"], set()).add(r["discipline_id"])
+    # Many-to-many: gravel bike trains road + gravel + XC; trainer = all bikes.
+    assert by_craft["kayak"] == {"D-010"}
+    assert by_craft["gravel_bike"] == {"D-006", "D-030", "D-031"}
+    assert by_craft["mountain_bike"] == {"D-008", "D-031"}
+    assert by_craft["cycling_trainer"] == {"D-006", "D-007", "D-008", "D-030", "D-031"}
+    assert len(rows) == 14
+
+
+def test_extract_craft_discipline_aliases_validates_group_kind():
+    from openpyxl import Workbook
+
+    from etl.layer0.extractors.sports_framework import _VALID_GROUP_KINDS
+
+    wb = Workbook()
+    wb.active.title = "Craft Discipline Aliases"
+    ws = wb["Craft Discipline Aliases"]
+    ws.append(["Craft Slug", "Discipline ID", "Group Kind"])
+    ws.append(["road_bike", "D-006", "not_a_kind"])
+    assert "not_a_kind" not in _VALID_GROUP_KINDS
+    with pytest.raises(ValueError):
+        extract_craft_discipline_aliases(wb)
+
+
+def test_extract_craft_discipline_aliases_absent_sheet_back_compat():
+    from openpyxl import Workbook
+
+    wb = Workbook()  # no "Craft Discipline Aliases" sheet
+    assert extract_craft_discipline_aliases(wb) == []
