@@ -153,6 +153,25 @@ KNOWN_INJURY_SEVERITIES = (
     'Resolved',
 )
 
+# D-73 §I.2 nutrition & fueling capture vocab. Closed enums per
+# Layer1_D51_Design_v1.md §3.9; storage stays unconstrained (the Layer 1/2E
+# builders parse permissively) but the profile form constrains entry to these
+# tokens. `dietary_pattern` + `fueling_format_preference` are multi-select
+# (stored comma-separated). The `fueling_format` token set follows the
+# Layer2E §I.2 format vocabulary (no enum was committed to a Layer 1 spec).
+DIETARY_PATTERN_CHOICES = (
+    'omnivore', 'vegetarian', 'vegan', 'pescatarian', 'paleo', 'keto',
+    'gluten_free', 'low_fodmap', 'other',
+)
+FUELING_FORMAT_CHOICES = (
+    'gel', 'chew', 'drink_mix', 'sports_drink', 'bar', 'real_food',
+)
+CAFFEINE_TOLERANCE_CHOICES = ('none', 'low', 'moderate', 'high')
+CAFFEINE_RACE_DAY_STRATEGY_CHOICES = (
+    'caffeine_loading', 'taper', 'maintain', 'avoid',
+)
+SALT_ELECTROLYTE_TOLERANCE_CHOICES = ('low', 'moderate', 'high')
+
 # D-73 Phase 2.2 (Athlete_Onboarding_Data_Spec_v5.md §B.3) — injury_log
 # movement_constraints multi-select. Maps to exercise DB col 9 keyword
 # patterns; Layer 2D §5.3.3 substring-matches the per-constraint keyword
