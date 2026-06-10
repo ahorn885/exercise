@@ -82,6 +82,7 @@ from plan_sessions_repo import (
     snapshot_progress_blocks,
 )
 from race_events_repo import load_target_race_event_payload
+from plan_nutrition_repo import load_plan_nutrition_by_version
 from layer5 import generate_and_persist_plan_nutrition
 from routes.auth import cron_authorized, current_user_id
 
@@ -866,11 +867,30 @@ def view_plan(plan_version_id: int):
     for session in sessions:
         sessions_by_date.setdefault(session.date, []).append(session)
 
+    # Layer 5A — the per-day + plan-level nutrition artifact (None until the
+    # post-`ready` stage has run); keyed by date for the per-day cards. Advisory:
+    # a nutrition load fault must NEVER 500 the plan view, so degrade to "no
+    # nutrition" rather than propagate.
+    try:
+        nutrition = load_plan_nutrition_by_version(db, plan_version_id)
+    except Exception as _nutr_exc:  # noqa: BLE001 — advisory must not break the view
+        print(
+            f"view_plan: nutrition load failed for "
+            f"plan_version_id={plan_version_id} (non-fatal): {_nutr_exc}"
+        )
+        nutrition = None
+    nutrition_by_date = (
+        {day.date: day for day in nutrition.days} if nutrition else {}
+    )
+
     return render_template(
         'plan_create/view.html',
         plan_version=plan_version,
+        plan_version_id=plan_version_id,
         sessions_by_date=sorted(sessions_by_date.items()),
         session_count=len(sessions),
+        nutrition=nutrition,
+        nutrition_by_date=nutrition_by_date,
     )
 
 

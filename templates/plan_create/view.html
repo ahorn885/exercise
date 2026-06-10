@@ -15,6 +15,39 @@
     · {{ session_count }} session{{ '' if session_count == 1 else 's' }}
   </p>
 
+  <div class="card card-pad sec nutri-card">
+    <div class="nutri-head">
+      <p class="eyebrow accent">● Nutrition</p>
+      <form method="post" class="nutri-regen"
+            action="{{ url_for('plan_create.regenerate_nutrition', plan_version_id=plan_version_id) }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button type="submit" class="btn btn-ghost btn-sm">{{ 'Regenerate' if nutrition else 'Generate' }}</button>
+      </form>
+    </div>
+    {% if nutrition %}
+    <p class="rail-note">Daily targets shift with each day's training load (shown per day below). Phase baselines — the every-day average:</p>
+    <div class="nutri-phases">
+      {% for phase, t in nutrition.per_phase_baseline.items() %}
+      <div class="nutri-phase">
+        <span class="chip">{{ phase }}</span>
+        <span class="nutri-kcal">{{ t.daily_calorie_target_kcal }} kcal</span>
+        <span class="rail-note nutri-macros">C {{ t.macros.cho_g }} · P {{ t.macros.protein_g }} · F {{ t.macros.fat_g }} g</span>
+      </div>
+      {% endfor %}
+    </div>
+    {% if nutrition.standing_supplement_notes %}
+    <p class="sess-notes">💊 {{ nutrition.standing_supplement_notes }}</p>
+    {% endif %}
+    {% if nutrition.dietary_flags %}
+    <div class="sess-flags">
+      {% for f in nutrition.dietary_flags %}<span class="chip warn">{{ f.pattern }} — {{ f.concern }}</span>{% endfor %}
+    </div>
+    {% endif %}
+    {% else %}
+    <p class="rail-note">Nutrition hasn't been generated for this plan yet.</p>
+    {% endif %}
+  </div>
+
   {% if sessions_by_date %}
   <div class="sec">
     {% set ns = namespace(phase=None, week=None) %}
@@ -35,6 +68,22 @@
         <div class="day-label">
           <strong>{{ d }}</strong><span class="dow">{{ sessions[0].day_of_week }}</span>
         </div>
+        {% set dn = nutrition_by_date.get(d) %}
+        {% if dn %}
+        <div class="day-fuel">
+          <span class="chip{{ ' accent' if dn.load_tier in ['hard', 'peak'] else '' }}">⚡ {{ dn.total_kcal }} kcal</span>
+          <span class="rail-note day-fuel-macros">C {{ dn.macros.cho_g }} · P {{ dn.macros.protein_g }} · F {{ dn.macros.fat_g }} g · {{ dn.load_tier }}</span>
+          {% if dn.fueling_note %}<p class="day-fuel-note">{{ dn.fueling_note }}</p>{% endif %}
+          {% if dn.is_race_day %}
+            {% for rf in nutrition.race_fueling if rf.event_id in dn.race_fueling_event_ids %}
+            <div class="race-fuel">
+              <span class="chip warn">🏁 {{ rf.event_name }}</span>
+              <span class="rail-note">CHO {{ '%g'|format(rf.cho_g_per_hr[0]) }}–{{ '%g'|format(rf.cho_g_per_hr[1]) }} g/h · Na {{ '%g'|format(rf.na_mg_per_hr[0]) }}–{{ '%g'|format(rf.na_mg_per_hr[1]) }} mg/h{% if rf.fluid_ml_per_hr %} · fluid {{ '%g'|format(rf.fluid_ml_per_hr[0]) }}–{{ '%g'|format(rf.fluid_ml_per_hr[1]) }} ml/h{% endif %}</span>
+            </div>
+            {% endfor %}
+          {% endif %}
+        </div>
+        {% endif %}
         <div class="stack">
           {% for sess in sessions %}
           <div class="card card-pad sess-card">

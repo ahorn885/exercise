@@ -16,9 +16,10 @@ Schema reference: `init_db.py` `plan_nutrition` migration. Typed contract:
 from __future__ import annotations
 
 import json
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from layer5.payload import PlanNutrition
+if TYPE_CHECKING:  # avoid an import cycle (layer5 -> orchestrator -> this module)
+    from layer5.payload import PlanNutrition
 
 
 def persist_plan_nutrition(
@@ -70,6 +71,8 @@ def load_plan_nutrition_by_version(
     row = cur.fetchone()
     if row is None:
         return None
+    from layer5.payload import PlanNutrition  # local import breaks the cycle
+
     return PlanNutrition.model_validate(_decode_payload(row["payload_json"]))
 
 
