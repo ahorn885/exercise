@@ -1223,6 +1223,30 @@ def _sleep_stage_decode_candidates(f5, f6, f7) -> list:
     return out
 
 
+def sleep_stress_avg(stress_sum: int, sleep_min: int) -> float | None:
+    """Garmin Connect's "Stress avg" for a night's sleep, computed from
+    `[346] field_15` (sum of all stress samples taken during sleep) and
+    the total sleep duration in minutes.
+
+    Garmin samples stress every ~3 minutes during sleep, so the sample
+    count is `sleep_min // 3`. The average is the sum divided by the
+    sample count. Verified against May 30: 1491 × 3 / 297 = 15.06 ↔
+    Connect "Stress 15 avg" ✓.
+
+    `field_14` carries the same sample count but capped at 100 — using
+    the un-capped derived count keeps the average accurate on nights
+    with sleep duration > 300 min.
+
+    Returns None when sleep_min is missing or <= 0 (the caller can't
+    derive a meaningful average without the duration)."""
+    if sleep_min is None or sleep_min <= 0 or stress_sum is None:
+        return None
+    samples = sleep_min // 3
+    if samples <= 0:
+        return None
+    return round(stress_sum / samples, 1)
+
+
 def _walk_sleep_stage_events(fit) -> list:
     """Collect `[275]` sleep-stage transition events from a parsed FIT file
     and return `[(timestamp_fit_sec, code), ...]` sorted by timestamp.
@@ -1356,23 +1380,39 @@ _METRICS_WELLNESS_SUMMARY_MSG = 281
 #             (NOT a sub-score as previously assumed — value tracks
 #             stage MINUTES, and on a Good Deep night the value lands
 #             well below the 76-100 "Excellent" sub-score range.)
-# The remaining positions in field_5/7/8/10/14 likely carry sub-scores
-# for the other contributors (Stress / Light / REM / Awake / restless)
-# but the slot-to-name mapping isn't locked — most values land in the
-# Excellent band even on nights when Connect rates Light or REM lower,
-# so the qualitative thresholds don't align. Surfaced as an ordered list
-# pending a night where Connect ratings diverge enough to disambiguate.
+#   field_14 = sleep_stress_sample_count_capped100 — LOCKED PR #489:
+#             Garmin samples stress every ~3 minutes during sleep, so
+#             expected count = sleep_min // 3, capped at 100.
+#             May 30: 297 // 3 = 99 (uncapped) ✓ exact
+#             May 28: 492 // 3 = 164 → capped to 100 ✓ exact
+#   field_15 = sleep_stress_sample_sum — LOCKED PR #489:
+#             Sum of all 0-100 stress values taken during sleep.
+#             Derived: avg_sleep_stress = field_15 × 3 / sleep_min.
+#             May 30: 1491 × 3 / 297 = 15.06 ↔ Connect "Stress 15 avg" ✓
+#             May 28: 1120 × 3 / 492 = 6.83 (very low stress, matches
+#             the great-sleep night — direction ✓; Connect avg
+#             unverified but plausible).
+# The remaining positions in field_5/7/8/10 likely carry sub-scores
+# for the other contributors but the slot-to-name mapping isn't locked
+# — most values land in the Excellent band even on nights when Connect
+# rates Light or REM lower, so the qualitative thresholds don't align.
+# Surfaced as an ordered list pending a night where Connect ratings
+# diverge enough to disambiguate.
 _SLEEP_DATA_SCORE_MSG = 346
 
 # `_SLEEP_DATA.fit` `GenericMessage[382]` — sleep event counts.
 # Verified across May 28 / May 30 / Jun 2:
 #   field_1 = restless_moments_count (May 28: 28 ✓ matches Garmin Connect
 #             "28 Restless Moments"; May 30: 15; Jun 2: 32)
-#   field_0 = sleep_start_seconds_since_local_midnight — LOCKED in PR
-#             #489 against May 30 (bedtime 2:11 IST):
-#             field_0 = 7860 = 131 min × 60 = 2 h 11 min ✓
-# field_2 still unverified (May 30: 9 — could be awake event count
-# distinct from restless moments).
+#   field_0 = sleep_start_seconds_since_local_midnight — LOCKED PR #489
+#             across 2 days:
+#             May 28: 4500 / 60 = 75 min = 01:15 AM ↔ Connect 01:14 ✓
+#             May 30: 7860 / 60 = 131 min = 02:11 AM ↔ Connect 02:11 ✓
+#   field_2 = wake_event_count — LOCKED PR #489 across 2 days:
+#             May 28: 4 events / 4 min awake = 1 min avg per event
+#             May 30: 9 events / 8 min awake = <1 min avg per event
+#             (Distinct from `awake_min` in `[384] field_24`, which is
+#             the total awake duration.)
 _SLEEP_DATA_EVENTS_MSG = 382
 
 # `_SLEEP_DATA.fit` `GenericMessage[275]` — per-stage sleep transitions.
@@ -1701,14 +1741,23 @@ def parse_sleep_data_fit(fit_bytes: bytes) -> dict:
             # outside Garmin's 0-100 qualitative bands on most nights).
             if fields.get(9) is not None:
                 out['deep_sleep_min'] = int(fields[9])
-            # Remaining contributor positions (5/7/8/10/14) carry the
-            # Stress / Light / REM / Awake / restless sub-scores but the
+            # Stress sample count + sum during sleep — LOCKED in PR #489.
+            # field_14 is the count of 0-100 stress readings taken during
+            # the sleep period (every ~3 min, capped at 100). field_15 is
+            # the SUM of those readings; dividing by the sample count
+            # yields Garmin Connect's "Stress avg" for sleep.
+            if fields.get(14) is not None:
+                out['sleep_stress_sample_count_capped'] = int(fields[14])
+            if fields.get(15) is not None:
+                out['sleep_stress_sum'] = int(fields[15])
+            # Remaining contributor positions (5/7/8/10) carry sub-scores
+            # for Light / REM / Awake / restless contributors but the
             # slot ↔ name alignment isn't locked yet — surfaced as an
             # ordered list pending a night where Connect ratings diverge
-            # enough to disambiguate. field_9 dropped from this list
-            # since it's now its own field.
+            # enough to disambiguate. field_9 and field_14 dropped from
+            # this list since they're now their own fields.
             contributors = []
-            for fid in (5, 7, 8, 10, 14):
+            for fid in (5, 7, 8, 10):
                 v = fields.get(fid)
                 contributors.append(int(v) if v is not None else None)
             if any(c is not None for c in contributors):
@@ -1718,11 +1767,16 @@ def parse_sleep_data_fit(fit_bytes: bytes) -> dict:
             if fields.get(1) is not None:
                 out['restless_moments'] = int(fields[1])
             # Sleep start time as seconds since local midnight — LOCKED in
-            # PR #489 against May 30: field_0 = 7860 = 2:11 AM ✓ (bedtime).
+            # PR #489 against May 28 + May 30: 4500/7860 = 01:15/02:11.
             # Surfaced for cross-check; the canonical sleep_start_ts FIT-
             # epoch sec lives in `[384] field_9`.
             if fields.get(0) is not None:
                 out['sleep_start_seconds_since_midnight'] = int(fields[0])
+            # Wake event count — distinct from awake_min (total awake
+            # duration in `[384] field_24`). LOCKED PR #489 against May
+            # 28 (4 events / 4 min) + May 30 (9 events / 8 min).
+            if fields.get(2) is not None:
+                out['wake_event_count'] = int(fields[2])
 
     # Walk `[275]` stage transitions — each instance is a stage entry.
     # The importer cross-files `[384] field_11` for sleep_end_ts to compute

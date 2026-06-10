@@ -645,6 +645,56 @@ def test_stage_minutes_from_events_empty_input():
     assert _stage_minutes_from_events([], sleep_end_ts=1000) == {}
 
 
+def test_sleep_stress_avg_matches_connect_for_may_30():
+    """`[346] field_15` is the SUM of all stress samples taken during sleep;
+    Garmin samples stress every ~3 min, so avg = sum × 3 / sleep_min.
+    May 30 ground truth from Connect: 'Stress 15 avg'. The locked
+    formula produces 15.06 ↔ Connect 15 (rounding tolerance)."""
+    from garmin_fit_parser import sleep_stress_avg
+    # field_15 = 1491, sleep_min = 297
+    assert sleep_stress_avg(1491, 297) == 15.1
+
+
+def test_sleep_stress_avg_handles_capped_sample_count():
+    """`[346] field_14` is capped at 100, which would skew the average on
+    long nights (sleep_min > 300). `sleep_stress_avg` derives the count
+    from sleep_min directly to avoid the cap."""
+    from garmin_fit_parser import sleep_stress_avg
+    # May 28: sleep_min = 492, samples = 164 (uncapped), field_15 = 1120
+    # field_14 = 100 (capped from 164) — naive 1120/100 = 11.2 would be wrong.
+    assert sleep_stress_avg(1120, 492) == 6.8
+
+
+def test_sleep_stress_avg_rejects_missing_inputs():
+    from garmin_fit_parser import sleep_stress_avg
+    assert sleep_stress_avg(None, 297) is None
+    assert sleep_stress_avg(1491, None) is None
+    assert sleep_stress_avg(1491, 0) is None
+    assert sleep_stress_avg(1491, -5) is None
+
+
+def test_may_28_full_21_event_tally_pins_code_mapping_across_two_nights():
+    """May 28 _SLEEP_DATA.fit (great-sleep night, 21 [275] events,
+    score 96) cross-verifies the code → stage mapping from May 30.
+    Raw tally: {1: 6, 2: 334, 3: 53, 4: 97} — code 1 (unmeasurable) is
+    only 6 min on this great night vs 74 min on the poor May 30 night,
+    confirming code 1 tracks restlessness/uncertainty rather than any
+    sleep stage. Code 3 (Deep) raw = 53 vs Connect/`[346] field_9` = 81
+    — Garmin's smoothing redistributes ~28 min of unmeasured/transition
+    time into Deep on this night, mirroring the May 30 pattern."""
+    from garmin_fit_parser import _stage_minutes_from_events
+    events = [
+        (1148862060, 2), (1148864640, 3), (1148865240, 2), (1148865840, 4),
+        (1148866440, 2), (1148868540, 3), (1148868780, 1), (1148869140, 2),
+        (1148870280, 3), (1148871180, 2), (1148873340, 4), (1148873700, 2),
+        (1148875980, 3), (1148877060, 2), (1148878860, 4), (1148879880, 2),
+        (1148882700, 3), (1148883060, 2), (1148886060, 4), (1148889900, 2),
+        (1148891460, 4),
+    ]
+    tally = _stage_minutes_from_events(events)  # no sleep_end → drops last
+    assert tally == {1: 6, 2: 334, 3: 53, 4: 97}
+
+
 def test_may_30_full_15_event_tally_matches_locked_code_mapping():
     """Lock the May 30 reference tally against Andy's preview-URL dump
     (15 [275] events, all visible). Pins the code -> stage mapping:
