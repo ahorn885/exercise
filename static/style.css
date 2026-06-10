@@ -1234,6 +1234,26 @@ body.bulk-mode { padding-bottom: 80px; }
 .app .sess-block-instr { font-size: 12px; color: var(--fg-3); margin: 4px 0 0; line-height: 1.5; }
 .app .sess-flags { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
 
+/* Layer 5A nutrition — plan-level baseline + per-day fuel */
+.app .nutri-card { margin-top: 16px; }
+.app .nutri-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.app .nutri-regen { margin: 0; }
+.app .nutri-phases { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 12px; }
+.app .nutri-phase {
+  display: flex; flex-direction: column; gap: 2px; min-width: 116px;
+  border: 1px solid var(--hairline); border-radius: 8px; padding: 8px 12px;
+}
+.app .nutri-phase .nutri-kcal { font-family: var(--mono); font-weight: 600; font-size: 14px; margin-top: 4px; }
+.app .nutri-phase .nutri-macros { margin-top: 2px; }
+.app .day-fuel {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 6px 10px;
+  margin-bottom: 8px; padding: 6px 10px;
+  border-left: 2px solid var(--accent); border-radius: 4px;
+}
+.app .day-fuel .day-fuel-macros { margin-top: 0; }
+.app .day-fuel-note { width: 100%; font-size: 12px; color: var(--fg-3); margin: 2px 0 0; line-height: 1.5; }
+.app .race-fuel { width: 100%; display: flex; align-items: baseline; flex-wrap: wrap; gap: 6px 10px; margin-top: 4px; }
+
 @media (max-width: 859.98px) {
   .app .plan-gen-title { font-size: 30px; }
   .app .gen-title { font-size: 32px; }
@@ -1559,9 +1579,23 @@ body.bulk-mode { padding-bottom: 80px; }
 .app .pf-grid .field { margin-bottom: 0; }
 .app .pf-grid .field-wide { grid-column: span 2; }
 .app .pf-grid textarea.form-control { min-height: 84px; }
+/* Reserve two lines for the nutrition grid's micro-labels so a wrapping label
+   (e.g. "Salt / electrolyte tolerance") doesn't push its control below the row. */
+.app .pf-nutrition .pf-grid > .field > .lbl { min-height: 2.6em; }
 .app .pf-hint { font-size: 12px; color: var(--fg-3); margin: 5px 0 0; line-height: 1.5; }
 .app .pf-save { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
 .app .pf-saved { font-size: 10px; letter-spacing: 0.14em; color: var(--fg-3); text-transform: uppercase; }
+.app .pf-nutrition .nutri-phases { margin-top: 4px; }
+.app .pf-checkset { display: flex; flex-direction: column; gap: 8px; }
+.app .pf-checkset > .lbl { font-size: 12px; color: var(--fg-3); }
+.app .pf-chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.app .pf-chip {
+  display: inline-flex; align-items: center; gap: 6px; cursor: pointer;
+  border: 1px solid var(--hairline); border-radius: 999px; padding: 5px 12px;
+  font-size: 13px; color: var(--fg-2); user-select: none;
+}
+.app .pf-chip:has(input:checked) { border-color: var(--accent); color: var(--accent); }
+.app .pf-chip input { margin: 0; }
 
 /* §19 Account */
 .app .acct-wrap { max-width: 720px; }

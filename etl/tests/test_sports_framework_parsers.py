@@ -19,6 +19,7 @@ from etl.layer0.extractors.sports_framework import (
     _parse_constituent_movements,
     _parse_weekly_total_text,
     _split_phase_load_notes,
+    extract_craft_discipline_aliases,
     extract_cross_sport_properties,
     extract_discipline_pairing_matrix,
     extract_discipline_substitutes,
@@ -340,3 +341,43 @@ def test_substitute_with_missing_fidelity_dropped_with_warning():
     assert len(warns) == 1
     assert warns[0]["target_id"] == "D-002"
     assert "fidelity" in warns[0]["reason"]
+
+
+# ---------------------------------------------------------------------------
+# X1b.3b — extract_craft_discipline_aliases (Craft Discipline Aliases sheet)
+# ---------------------------------------------------------------------------
+
+def test_extract_craft_discipline_aliases_seed(v14_wb):
+    rows = extract_craft_discipline_aliases(v14_wb)
+    by_craft: dict[str, set[str]] = {}
+    for r in rows:
+        assert set(r) == {"craft_name", "discipline_id", "group_kind"}
+        by_craft.setdefault(r["craft_name"], set()).add(r["discipline_id"])
+    # Many-to-many: gravel bike trains road + gravel + XC; trainer = all bikes.
+    assert by_craft["kayak"] == {"D-010"}
+    assert by_craft["gravel_bike"] == {"D-006", "D-030", "D-031"}
+    assert by_craft["mountain_bike"] == {"D-008", "D-031"}
+    assert by_craft["cycling_trainer"] == {"D-006", "D-007", "D-008", "D-030", "D-031"}
+    assert len(rows) == 14
+
+
+def test_extract_craft_discipline_aliases_validates_group_kind():
+    from openpyxl import Workbook
+
+    from etl.layer0.extractors.sports_framework import _VALID_GROUP_KINDS
+
+    wb = Workbook()
+    wb.active.title = "Craft Discipline Aliases"
+    ws = wb["Craft Discipline Aliases"]
+    ws.append(["Craft Slug", "Discipline ID", "Group Kind"])
+    ws.append(["road_bike", "D-006", "not_a_kind"])
+    assert "not_a_kind" not in _VALID_GROUP_KINDS
+    with pytest.raises(ValueError):
+        extract_craft_discipline_aliases(wb)
+
+
+def test_extract_craft_discipline_aliases_absent_sheet_back_compat():
+    from openpyxl import Workbook
+
+    wb = Workbook()  # no "Craft Discipline Aliases" sheet
+    assert extract_craft_discipline_aliases(wb) == []

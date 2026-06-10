@@ -335,3 +335,96 @@ class TestEdgeCases:
                 athlete_crafts=["kayak"],
                 etl_version_set={},
             )
+
+
+# ---------------------------------------------------------------------------
+# X1b.3b — craft → modality-group candidate narrowing (Modality_Group_Spec §6)
+# ---------------------------------------------------------------------------
+
+# Membership + alias maps mirroring the live v14 seed (bike + paddle subset).
+_DISC_GROUPS = {
+    "D-006": ["bike_pavement"],
+    "D-007": ["bike_pavement"],
+    "D-008": ["bike_offroad"],
+    "D-030": ["bike_pavement", "bike_offroad"],
+    "D-031": ["bike_offroad"],
+    "D-009": ["paddle_flatwater", "paddle_whitewater"],
+    "D-010": ["paddle_flatwater", "paddle_whitewater"],
+    "D-011": ["paddle_flatwater"],
+    "D-001": ["foot"],
+}
+_CRAFT_ALIASES = {
+    "kayak": ["D-010"],
+    "canoe": ["D-011"],
+    "packraft": ["D-009"],
+    "road_bike": ["D-006"],
+    "gravel_bike": ["D-006", "D-030", "D-031"],
+    "mountain_bike": ["D-008", "D-031"],
+    "cycling_trainer": ["D-006", "D-007", "D-008", "D-030", "D-031"],
+}
+
+
+def _flat(discipline_id: str) -> Layer2BDisciplineBlock:
+    # One locally-available terrain → no terrain flags; isolates craft logic.
+    return _block(
+        discipline_id,
+        [_terrain("TRN-x", 100.0, name="X", available=True, discipline_id=discipline_id)],
+    )
+
+
+def _resolve(discipline_id, crafts):
+    return resolve_training_substitution(
+        terrain_by_discipline=[_flat(discipline_id)],
+        athlete_crafts=crafts,
+        etl_version_set=_ETL,
+        discipline_modality_groups=_DISC_GROUPS,
+        craft_discipline_aliases=_CRAFT_ALIASES,
+    )
+
+
+class TestX1b3bCraftNarrowing:
+    def test_mtb_block_narrows_to_offroad_crafts(self):
+        # Race MTB (bike_offroad): road bike drops, MTB stays → craft_substitution.
+        p = _resolve("D-008", ["road_bike", "mountain_bike"])
+        assert p.recommendations[0].candidate_training_crafts == ["mountain_bike"]
+        flags = [f.flag_type for f in p.coaching_flags]
+        assert "craft_substitution" in flags
+
+    def test_gravel_bike_qualifies_for_both_road_and_offroad(self):
+        # Gravel bike pools road + gravel + XC → matches pavement AND off-road.
+        for disc in ("D-006", "D-008"):
+            p = _resolve(disc, ["gravel_bike"])
+            assert p.recommendations[0].candidate_training_crafts == ["gravel_bike"]
+        # sole matching craft → no narrowing flag
+        assert not [f for f in _resolve("D-006", ["gravel_bike"]).coaching_flags
+                    if f.flag_type in ("craft_substitution", "craft_unavailable")]
+
+    def test_trainer_matches_every_bike_discipline(self):
+        for disc in ("D-006", "D-007", "D-008", "D-030", "D-031"):
+            p = _resolve(disc, ["cycling_trainer"])
+            assert p.recommendations[0].candidate_training_crafts == ["cycling_trainer"]
+
+    def test_paddle_only_athlete_unavailable_for_bike_block(self):
+        # Owns only a kayak; race needs MTB → empty + per-block craft_unavailable.
+        p = _resolve("D-008", ["kayak"])
+        assert p.recommendations[0].candidate_training_crafts == []
+        assert any(f.flag_type == "craft_unavailable" and f.discipline_id == "D-008"
+                   for f in p.coaching_flags)
+
+    def test_foot_discipline_not_filtered_or_flagged(self):
+        # A running block isn't craft-based — crafts pass through, no craft flag.
+        p = _resolve("D-001", ["road_bike", "kayak"])
+        assert p.recommendations[0].candidate_training_crafts == ["kayak", "road_bike"]
+        assert not [f for f in p.coaching_flags
+                    if f.flag_type in ("craft_substitution", "craft_unavailable")]
+
+    def test_backcompat_no_maps_surfaces_all_crafts(self):
+        # No maps → pre-X1b.3b behavior: every craft surfaced, no new flags.
+        p = resolve_training_substitution(
+            terrain_by_discipline=[_flat("D-008")],
+            athlete_crafts=["road_bike", "kayak"],
+            etl_version_set=_ETL,
+        )
+        assert p.recommendations[0].candidate_training_crafts == ["kayak", "road_bike"]
+        assert not [f for f in p.coaching_flags
+                    if f.flag_type in ("craft_substitution", "craft_unavailable")]

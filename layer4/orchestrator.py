@@ -202,6 +202,39 @@ def _collect_athlete_crafts(layer1_payload: Layer1Payload) -> list[str]:
     return sorted(set(crafts))
 
 
+def _q_modality_groups(db: Any, version_0a: str) -> dict[str, list[str]]:
+    """X1b.3b — `{discipline_id: [group_id, ...]}` from
+    `layer0.discipline_modality_membership` for the cone's 0A version. Mirrors
+    `layer2a/builder.py:_load_modality_groups` (the third consumer — promote to
+    a shared reader on a fourth). Empty dict → substitution narrowing is off."""
+    cur = db.execute(
+        "SELECT discipline_id, group_id "
+        "FROM layer0.discipline_modality_membership "
+        "WHERE etl_version = ? AND superseded_at IS NULL",
+        (version_0a,),
+    )
+    out: dict[str, list[str]] = {}
+    for row in cur.fetchall():
+        out.setdefault(row["discipline_id"], []).append(row["group_id"])
+    return out
+
+
+def _q_craft_discipline_aliases(db: Any, version_0a: str) -> dict[str, list[str]]:
+    """X1b.3b — `{craft_name: [discipline_id, ...]}` (many-to-many) from
+    `layer0.craft_discipline_aliases` for the cone's 0A version. Empty dict →
+    substitution narrowing is off (pre-X1b.3b behavior)."""
+    cur = db.execute(
+        "SELECT craft_name, discipline_id "
+        "FROM layer0.craft_discipline_aliases "
+        "WHERE etl_version = ? AND superseded_at IS NULL",
+        (version_0a,),
+    )
+    out: dict[str, list[str]] = {}
+    for row in cur.fetchall():
+        out.setdefault(row["craft_name"], []).append(row["discipline_id"])
+    return out
+
+
 def _upstream_full_cone(
     db: Any,
     user_id: int,
@@ -440,6 +473,10 @@ def _upstream_full_cone(
         discipline_names={
             d.discipline_id: d.discipline_name for d in layer2a_payload.disciplines
         },
+        # X1b.3b — narrow craft candidates to the race discipline's modality
+        # group(s). Loaded once at cone construction (1 query each).
+        discipline_modality_groups=_q_modality_groups(db, etl_version_set["0A"]),
+        craft_discipline_aliases=_q_craft_discipline_aliases(db, etl_version_set["0A"]),
     )
 
     return _UpstreamFullCone(
@@ -892,7 +929,57 @@ def orchestrate_plan_create(
     )
     payload = _apply_locale_assign(db, user_id, payload, layer2c_payloads)
     payload = _apply_rx_wire(db, user_id, payload, layer2c_payloads)
+    # Layer 5A — stash the nutrition inputs (2E payload + body weight + event
+    # dates) so the post-`ready` deterministic nutrition stage + the manual
+    # regenerate action can rebuild without re-running this cone, pinned to
+    # exactly what the plan was built on. Best-effort: a stash fault must NEVER
+    # break plan generation, so it is isolated and never propagates. Reached
+    # only on the completing pass (budget-incomplete passes raise before here);
+    # the write rides the caller's transaction (committed at the ready-flip).
+    _stash_plan_nutrition_inputs(db, user_id, plan_version_id, cone, race_event)
     return payload
+
+
+def _stash_plan_nutrition_inputs(
+    db: Any,
+    user_id: int,
+    plan_version_id: int,
+    cone: "_UpstreamFullCone",
+    race_event: Any,
+) -> None:
+    """Best-effort capture of the Layer 5A nutrition inputs for `plan_version_id`.
+
+    WRITE-ONLY / advisory — never an input to a Layer 4 cache key. Isolated so
+    any fault (a missing body weight, a serialization surprise) is logged and
+    swallowed rather than failing the generation it rides alongside.
+    """
+    try:
+        from plan_nutrition_repo import persist_plan_nutrition_inputs
+
+        # Body weight is optional on Layer 1; without it the energy model can't
+        # run, so skip cleanly (no stash) rather than persisting unusable inputs.
+        body_weight = cone.layer1_payload.performance.body_weight_kg
+        if body_weight is None or float(body_weight) <= 0:
+            return
+
+        event_dates: dict[str, str] = {}
+        if race_event is not None:
+            event_dates[str(race_event.race_event_id)] = (
+                race_event.event_date.isoformat()
+            )
+        persist_plan_nutrition_inputs(
+            db,
+            user_id,
+            plan_version_id,
+            layer2e_payload_json=cone.layer2e_payload.model_dump(mode="json"),
+            body_weight_kg=float(body_weight),
+            event_dates=event_dates,
+        )
+    except Exception as exc:  # noqa: BLE001 — advisory stash must not break gen
+        print(
+            f"_stash_plan_nutrition_inputs: failed for "
+            f"plan_version_id={plan_version_id} (non-fatal): {exc}"
+        )
 
 
 def _max_etl_version(versions: list[str]) -> str:
