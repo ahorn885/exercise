@@ -77,7 +77,7 @@ def _gen(**kw):
         'scope_start_date': today - timedelta(days=7),
         'scope_end_date': today + timedelta(days=30),
         'pattern': 'A', 'generation_status': 'ready', 'completed_at': None,
-        'session_count': 42,
+        'archived_at': None, 'session_count': 42,
     }
     base.update(kw)
     return _FakeRow(base)
@@ -109,6 +109,8 @@ def test_plans_list_renders_imported_and_archived(monkeypatch):
     html = resp.get_data(as_text=True)
     assert 'app-shell' in html
     assert 'Your plans.' in html
+    # In-page New plan / Import row for mobile (CSS-gated to the breakpoint).
+    assert 'plans-mobile-actions' in html
     assert 'Boston Marathon 2026' in html
     assert 'Fall Base Block' in html
     # Legacy active card spotlight + archived section both rendered.
@@ -159,8 +161,30 @@ def test_generated_plans_bucketed_by_scope_dates(monkeypatch):
     assert '42 sessions' in html
     # Non-completed plans expose a Mark-complete action.
     assert '/plans/v2/11/complete' in html
+    # Every live generated plan now also offers Archive + hard Delete.
+    assert '/plans/v2/11/archive' in html
+    assert '/plans/v2/11/delete' in html
     assert 'style="' not in html
     assert 'onclick=' not in html
+
+
+def test_archived_generated_plan_shown_with_restore(monkeypatch):
+    today = date.today()
+    # An archived stamp pulls the plan into the Archived section regardless of
+    # its (still-active) scope dates, offering Restore + Delete (not complete).
+    client = _client(monkeypatch, [], generated=[
+        _gen(id=40, scope_start_date=today - timedelta(days=3),
+             scope_end_date=today + timedelta(days=30),
+             archived_at='2026-06-09T00:00:00Z'),
+    ])
+    resp = client.get('/plans/')
+    html = resp.get_data(as_text=True)
+    assert 'Archived · 1' in html
+    assert 'Active ·' not in html
+    # Archived offers Restore + Delete, not Mark-complete/Archive.
+    assert '/plans/v2/40/unarchive' in html
+    assert '/plans/v2/40/delete' in html
+    assert '/plans/v2/40/complete' not in html
 
 
 def test_generating_plan_shown_with_progress_link(monkeypatch):

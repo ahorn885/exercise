@@ -239,7 +239,7 @@ def list_plans():
     gen_rows = db.execute(
         '''SELECT pv.id, pv.created_at, pv.created_via, pv.scope_start_date,
                   pv.scope_end_date, pv.pattern, pv.generation_status,
-                  pv.completed_at,
+                  pv.completed_at, pv.archived_at,
                   COUNT(s.id) AS session_count
            FROM plan_versions pv
            LEFT JOIN plan_sessions s ON s.plan_version_id = pv.id
@@ -257,10 +257,15 @@ def list_plans():
     # Completed. Bucketing in Python — not SQL — keeps it testable through the
     # render harness's fake cursor (which returns canned rows, ignoring the SQL).
     today = date_type.today()
-    gen_generating, gen_upcoming, gen_active, gen_completed = [], [], [], []
+    gen_generating, gen_upcoming, gen_active, gen_completed, gen_archived = [], [], [], [], []
     for r in gen_rows:
         if r['generation_status'] == 'generating':
             gen_generating.append(r)
+            continue
+        # Archived is an explicit user action (the plan was quit/superseded,
+        # no completion implied) and takes precedence over the date buckets.
+        if r['archived_at'] is not None:
+            gen_archived.append(r)
             continue
         start = _coerce_date(r['scope_start_date'])
         end = _coerce_date(r['scope_end_date'])
@@ -276,7 +281,8 @@ def list_plans():
     return render_template(
         'plans/list.html', plans=plans, archived=archived,
         gen_generating=gen_generating, gen_upcoming=gen_upcoming,
-        gen_active=gen_active, gen_completed=gen_completed)
+        gen_active=gen_active, gen_completed=gen_completed,
+        gen_archived=gen_archived)
 
 
 @bp.route('/import', methods=['GET', 'POST'])

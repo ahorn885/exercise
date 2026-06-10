@@ -20,7 +20,10 @@
 </a>
 {% endblock %}
 
-{% macro gen_card(c) %}
+{# `archived` swaps the lifecycle actions: an archived plan offers Restore
+   (not complete/archive); a live one offers Mark-complete/Reopen + Archive.
+   Both non-generating states offer a hard Delete. #}
+{% macro gen_card(c, archived=False) %}
 <div class="card plan-card">
   <div class="plan-card-head">
     <div class="pl-id">
@@ -28,7 +31,7 @@
         <a class="pl-name" href="{{ url_for('plan_create.view_plan', plan_version_id=c.id) }}">Generated plan</a>
         <span class="chip accent">Pattern {{ c.pattern }}</span>
         {% if c.generation_status == 'generating' %}<span class="chip solid">Generating…</span>{% endif %}
-        {% if c.completed_at %}<span class="chip solid">Marked complete</span>{% endif %}
+        {% if archived %}<span class="chip solid">Archived</span>{% elif c.completed_at %}<span class="chip solid">Marked complete</span>{% endif %}
         <span class="chip solid">{{ c.created_via|replace('_', ' ') }}</span>
       </div>
       <p class="pl-meta mono">
@@ -38,6 +41,17 @@
     <div class="pl-actions">
       {% if c.generation_status == 'generating' %}
       <a class="btn btn-ghost btn-sm" href="{{ url_for('plan_create.plan_progress', plan_version_id=c.id) }}">View progress</a>
+      {% elif archived %}
+      <a class="btn btn-primary btn-sm" href="{{ url_for('plan_create.view_plan', plan_version_id=c.id) }}">Open</a>
+      <form method="post" action="{{ url_for('plan_create.unarchive_plan', plan_version_id=c.id) }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button type="submit" class="btn btn-ghost btn-sm">Restore</button>
+      </form>
+      <form method="post" action="{{ url_for('plan_create.delete_plan', plan_version_id=c.id) }}"
+            data-confirm="Delete this generated plan? This cannot be undone.">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button type="submit" class="btn btn-ghost btn-sm pl-del">Delete</button>
+      </form>
       {% else %}
       <a class="btn btn-primary btn-sm" href="{{ url_for('plan_create.view_plan', plan_version_id=c.id) }}">Open</a>
       {% if c.completed_at %}
@@ -51,6 +65,15 @@
         <button type="submit" class="btn btn-ghost btn-sm">Mark complete</button>
       </form>
       {% endif %}
+      <form method="post" action="{{ url_for('plan_create.archive_plan', plan_version_id=c.id) }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button type="submit" class="btn btn-ghost btn-sm">Archive</button>
+      </form>
+      <form method="post" action="{{ url_for('plan_create.delete_plan', plan_version_id=c.id) }}"
+            data-confirm="Delete this generated plan? This cannot be undone.">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button type="submit" class="btn btn-ghost btn-sm pl-del">Delete</button>
+      </form>
       {% endif %}
     </div>
   </div>
@@ -58,13 +81,23 @@
 {% endmacro %}
 
 {% block content %}
-{% if plans or archived or gen_generating or gen_upcoming or gen_active or gen_completed %}
+{% if plans or archived or gen_generating or gen_upcoming or gen_active or gen_completed or gen_archived %}
 <div class="dash-head">
   <div class="races-intro">
     <p class="eyebrow accent">● Plan history{% if gen_active %} · {{ gen_active|length }} active{% endif %}{% if gen_upcoming %} · {{ gen_upcoming|length }} upcoming{% endif %}{% if gen_completed %} · {{ gen_completed|length }} completed{% endif %}</p>
     <h1 class="page-title">Your plans.</h1>
     <p class="page-sub">Every plan periodizes back from a race. Open one to see the week grid;
       mark a plan complete when you're done with it — it stays viewable.</p>
+  </div>
+  {# The desktop topbar holds these actions but is hidden < the shell
+     breakpoint, so surface them in-page on mobile (CSS-gated). #}
+  <div class="plans-mobile-actions">
+    <a class="btn btn-ghost btn-sm" href="{{ url_for('plans.import_plan') }}">
+      <svg class="icon" width="12" height="12" aria-hidden="true"><use href="#i-upload"></use></svg> Import
+    </a>
+    <a class="btn btn-primary btn-sm" href="{{ url_for('plan_create.new_plan') }}">
+      <svg class="icon" width="12" height="12" aria-hidden="true"><use href="#i-plus"></use></svg> New plan
+    </a>
   </div>
 </div>
 
@@ -102,6 +135,15 @@
     <p class="eyebrow">Completed · {{ gen_completed|length }}</p>
     <div class="plan-cards">
       {% for c in gen_completed %}{{ gen_card(c) }}{% endfor %}
+    </div>
+  </section>
+  {% endif %}
+
+  {% if gen_archived %}
+  <section class="plan-section">
+    <p class="eyebrow">Archived · {{ gen_archived|length }}</p>
+    <div class="plan-cards">
+      {% for c in gen_archived %}{{ gen_card(c, archived=True) }}{% endfor %}
     </div>
   </section>
   {% endif %}

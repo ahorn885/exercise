@@ -931,6 +931,82 @@ def reopen_plan(plan_version_id: int):
     return redirect(url_for('plans.list_plans'))
 
 
+@bp.route('/<int:plan_version_id>/archive', methods=['POST'])
+def archive_plan(plan_version_id: int):
+    """Shelve a plan the athlete quit or that a refresh superseded, without
+    implying completion. Archived plans drop off the active Plan list into its
+    Archived section (still openable + restorable). Distinct from
+    `mark_plan_complete` (which implies the plan was finished). Same cross-user
+    guard + redirect."""
+    db = get_db()
+    uid = current_user_id()
+    db.execute(
+        "UPDATE plan_versions SET archived_at = NOW() "
+        "WHERE id = ? AND user_id = ? AND archived_at IS NULL",
+        (plan_version_id, uid),
+    )
+    db.commit()
+    flash("Plan archived.", 'secondary')
+    return redirect(url_for('plans.list_plans'))
+
+
+@bp.route('/<int:plan_version_id>/unarchive', methods=['POST'])
+def unarchive_plan(plan_version_id: int):
+    """Clear an archive stamp, returning the plan to its date-derived bucket on
+    the Plan list. Inverse of `archive_plan`; same cross-user guard + redirect."""
+    db = get_db()
+    uid = current_user_id()
+    db.execute(
+        "UPDATE plan_versions SET archived_at = NULL "
+        "WHERE id = ? AND user_id = ?",
+        (plan_version_id, uid),
+    )
+    db.commit()
+    flash("Plan restored.", 'success')
+    return redirect(url_for('plans.list_plans'))
+
+
+@bp.route('/<int:plan_version_id>/delete', methods=['POST'])
+def delete_plan(plan_version_id: int):
+    """Hard-delete a generated plan version + its sessions/nutrition (ON DELETE
+    CASCADE handles plan_sessions / plan_progress_blocks / plan_nutrition /
+    plan_nutrition_inputs). The non-cascading back-references — a superseded
+    predecessor's `superseded_by_version_id` pointer and the plan_refresh_log
+    audit rows — are nulled first so the DELETE doesn't trip an FK violation.
+    Cross-user guard via the ownership check + the user_id filter on every
+    write."""
+    db = get_db()
+    uid = current_user_id()
+    if not db.execute(
+        'SELECT 1 FROM plan_versions WHERE id = ? AND user_id = ?',
+        (plan_version_id, uid),
+    ).fetchone():
+        flash("Plan not found.", 'danger')
+        return redirect(url_for('plans.list_plans'))
+    db.execute(
+        "UPDATE plan_versions SET superseded_by_version_id = NULL "
+        "WHERE superseded_by_version_id = ? AND user_id = ?",
+        (plan_version_id, uid),
+    )
+    db.execute(
+        "UPDATE plan_refresh_log SET plan_version_id_before = NULL "
+        "WHERE plan_version_id_before = ? AND user_id = ?",
+        (plan_version_id, uid),
+    )
+    db.execute(
+        "UPDATE plan_refresh_log SET plan_version_id_after = NULL "
+        "WHERE plan_version_id_after = ? AND user_id = ?",
+        (plan_version_id, uid),
+    )
+    db.execute(
+        "DELETE FROM plan_versions WHERE id = ? AND user_id = ?",
+        (plan_version_id, uid),
+    )
+    db.commit()
+    flash("Plan deleted.", 'warning')
+    return redirect(url_for('plans.list_plans'))
+
+
 @bp.route('/<int:plan_version_id>/nutrition/regenerate', methods=['POST'])
 def regenerate_nutrition(plan_version_id: int):
     """Manually (re)generate the Layer 5A nutrition for a ready plan.

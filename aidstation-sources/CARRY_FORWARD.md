@@ -11,6 +11,18 @@ Rolling-state for items spanning multiple sessions. **Edit in place** — don't 
 
 ---
 
+## Plans-page UI detour (2026-06-10, PR #531) — DONE, one owed migration
+
+**PR [#531](https://github.com/ahorn885/exercise/pull/531) squash-merged to `main`, branch `claude/plans-page-ui-issues-wjmw3l`.** One-session detour off the X-series, at Andy's direction. Two Plans-screen gaps:
+
+- **(1) AI-generated plans had no removal path** (only Mark-complete). Added **Archive** (shelve a quit/superseded plan, kept referenceable, *no completion implied* — distinct from Complete) + hard **Delete**. Delete nulls the non-cascading back-refs (`plan_versions.superseded_by_version_id` predecessor pointer + `plan_refresh_log.plan_version_id_before/_after`) before the DELETE; `ON DELETE CASCADE` then clears sessions/nutrition/progress-blocks. New `gen_archived` bucket + Archived section in `templates/plans/list.html` (the `gen_card` macro took an `archived` param → Restore/Delete); `archive`/`unarchive`/`delete` routes in `routes/plan_create.py`; `profile._load_active_plan_nutrition` now skips archived plans so a shelved live-scope plan doesn't leak back as "active".
+- **(2) New-plan/Import unreachable on mobile** (those actions live only in the desktop topbar, `display:none` < the 860px shell breakpoint). Surfaced an in-page mobile-only action row in `dash-head`, CSS-gated in `static/style.css`.
+- Tests: `test_redesign_plans_list_render.py` + `test_redesign_profile_render.py`. Full suite **2274 passed / 30 skipped**.
+- ⬜ **OWED-Andy's-hands — Neon migration (apply BEFORE relying on the prod Plans page).** New nullable `archived_at TIMESTAMPTZ` on `plan_versions`. Idempotent `ALTER TABLE … ADD COLUMN IF NOT EXISTS` is in `init_db.py` immediately after the `completed_at` ALTER. **`routes/plans.list_plans` now SELECTs `pv.archived_at`, so the prod Plans list 500s until the column lands.** Re-run `init_db.py` patterns via the Neon SQL editor, or apply the single ALTER by hand. The Archive button is inert until applied; Delete + the mobile create-actions work regardless.
+- **Next session: resume the original track** — the X1-X4 + #509 win-condition empirical proof (in the deploys list below; gated on whether the PGE race event's terrain rows carry per-row `discipline_id` + `pct_of_race`).
+
+---
+
 ## Owed Andy's-hands deploys (consolidated)
 
 > Single place for the owed deploys so a new session doesn't have to hunt them
