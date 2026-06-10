@@ -16,12 +16,13 @@ _ID_RE = re.compile(r"^D-\d{3}$")
 
 class TestDisciplineDisplayNameMap:
     def test_map_covers_every_canonical_discipline(self):
-        # 21 surviving disciplines after the canon: 29 ids minus D-005/D-016
-        # (merged into D-004 "Swimming"), D-020 (Swimrun -> sport), D-023
-        # (Ski Transitions -> dropped), D-015 (Orienteering -> folded into D-003
-        # "Trekking"), and D-025/D-026/D-029 (Pentathlon/Biathlon-only, removed
-        # with those sports). Pins the count so a drift is loud.
-        assert len(DISCIPLINE_DISPLAY_NAMES) == 21
+        # 24 surviving disciplines after the canon: the 21 base (29 source ids
+        # minus D-005/D-016 merged into D-004, D-020 Swimrun -> sport, D-023 Ski
+        # Transitions dropped, D-015 Orienteering folded into D-003, and
+        # D-025/D-026/D-029 Pentathlon/Biathlon removed) PLUS the Vocabulary V1
+        # adds D-030 Gravel Cycling / D-031 Cross Country Cycling / D-032
+        # Stand-up Paddleboard. Pins the count so a drift is loud.
+        assert len(DISCIPLINE_DISPLAY_NAMES) == 24
 
     def test_all_keys_are_valid_discipline_ids(self):
         for did in DISCIPLINE_DISPLAY_NAMES:

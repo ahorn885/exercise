@@ -33,21 +33,23 @@ from etl.layer0.validation.sum_to_100 import run_sum_to_100
 from etl.layer0.validation.vocab_alignment import run_vocab_alignment
 
 SOURCES = Path(__file__).parent.parent / "sources"
-SPORTS_XLSX = SOURCES / "Sports_Framework_v13.xlsx"
+SPORTS_XLSX = SOURCES / "Sports_Framework_v14.xlsx"
 EXERCISES_XLSX = SOURCES / "AR_Exercise_Database_v19.xlsx"
 VOCAB_MD = SOURCES / "Vocabulary_Audit_v2.md"
 
 # Source-file provenance (NOT the per-run etl_version — that comes from
-# --version-tag, see main()): 0A = Sports_Framework_v13.xlsx (X1b modality
-# groups added — 2 new sheets "Modality Groups" + "Discipline Modality
-# Membership" seeding 9 groups × 26 memberships per Modality_Group_Spec_v1
-# §3.2; layer0.modality_groups + layer0.discipline_modality_membership tables
-# added to schema.sql; modality_group_orphan validator enforces every active
-# discipline has >=1 group). X1a v12 base intact: 43 of 73 Sheet 3 rows
-# rewritten per Bridge_Bands_Research_v1.md (AR MTB 10-20 → 35-55 etc.).
-# 0B = AR_Exercise_Database_v19.xlsx (unchanged). 0C unchanged. Bump
-# --version-tag to `1.5.0` (or next available) when applying v13 on Neon.
-# See Modality_Group_Spec_v1.md + Bridge_Bands_Patch_Log_v1.md.
+# --version-tag, see main()): 0A = Sports_Framework_v14.xlsx (Vocabulary V1,
+# 2026-06-08 — 3 new disciplines D-030 Gravel Cycling / D-031 Cross Country
+# Cycling / D-032 Stand-up Paddleboard added to "Discipline Library"; the
+# Endurance-Cycling "Sport × Discipline Map" rows given distinct ids so the 5
+# format variants stop deduping onto D-006/D-008 (#477 fix — D-006/D-007/D-008
+# kept, #476 superseded: D-007 NOT removed); 5 new "Discipline Modality
+# Membership" rows: D-030 bike_pavement+bike_offroad, D-031 bike_offroad,
+# D-032 paddle_flatwater, D-019 paddle_whitewater. v13 base intact: X1b
+# modality groups (9 groups) + X1a v12 bridge bands. 0B =
+# AR_Exercise_Database_v19.xlsx (unchanged). 0C unchanged. Bump --version-tag
+# to `1.6.0` (or next available) when applying v14 on Neon.
+# See Vocabulary_TargetState_and_Plan_v1.md + Modality_Group_Spec_v1.md.
 
 
 def _v(family: str, tag: str) -> str:

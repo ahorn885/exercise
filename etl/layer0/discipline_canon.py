@@ -25,7 +25,8 @@ from __future__ import annotations
 import re
 
 # ---------------------------------------------------------------------------
-# The canon — 21 surviving disciplines, one clean craft name each.
+# The canon — 24 surviving disciplines, one clean craft name each (21 original
+# + D-030/D-031/D-032 added in Vocabulary V1, 2026-06-08).
 # ---------------------------------------------------------------------------
 
 CANONICAL_NAMES: dict[str, str] = {
@@ -50,6 +51,12 @@ CANONICAL_NAMES: dict[str, str] = {
     "D-024": "Mountain Running",
     "D-027": "Obstacle Course Racing",
     "D-028": "Cross-Country Skiing",
+    # Vocabulary V1 (Andy 2026-06-08): new disciplines added to resolve the
+    # Endurance-Cycling bridge duplicate-id bug (#477, superseded — D-006/D-007/
+    # D-008 kept, format variants get distinct ids) + a SUP craft discipline.
+    "D-030": "Gravel Cycling",
+    "D-031": "Cross Country Cycling",
+    "D-032": "Stand-up Paddleboard",
 }
 
 # Merged-away ids -> survivor. Swim variants collapse onto D-004; Orienteering
@@ -99,6 +106,9 @@ DISCIPLINE_ENDURANCE_PROFILE: dict[str, str] = {
     "D-024": "Pure endurance",       # Mountain Running
     "D-027": "Mixed",                # Obstacle Course Racing
     "D-028": "Pure endurance",       # Cross-Country Skiing
+    "D-030": "Pure endurance",       # Gravel Cycling      (like Road Cycling)
+    "D-031": "Mixed",                # Cross Country Cycling (like Mountain Biking)
+    "D-032": "Pure endurance",       # Stand-up Paddleboard (like Kayaking)
 }
 
 # Invariant: every surviving discipline has a curated endurance profile.
