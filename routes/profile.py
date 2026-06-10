@@ -103,12 +103,13 @@ def _load_active_plan_nutrition(db, uid):
     """The athlete's currently-live AI plan + its nutrition artifact, if any.
 
     Active mirrors routes/plans.list_plans: `ready`, not superseded, not
-    completed, and scope spans today. Returns `(plan_version_id, PlanNutrition)`
-    or `(None, None)`. Advisory — wholly best-effort, so a fault here never
-    breaks the profile page (the standing protocol still renders)."""
+    completed, not archived, and scope spans today. Returns
+    `(plan_version_id, PlanNutrition)` or `(None, None)`. Advisory — wholly
+    best-effort, so a fault here never breaks the profile page (the standing
+    protocol still renders)."""
     try:
         rows = db.execute(
-            "SELECT id, scope_start_date, scope_end_date, completed_at "
+            "SELECT id, scope_start_date, scope_end_date, completed_at, archived_at "
             "FROM plan_versions WHERE user_id = ? "
             "AND generation_status = 'ready' AND superseded_at IS NULL "
             "ORDER BY created_at DESC",
@@ -116,7 +117,7 @@ def _load_active_plan_nutrition(db, uid):
         ).fetchall()
         today = date.today()
         for r in rows:
-            if r['completed_at'] is not None:
+            if r['completed_at'] is not None or r['archived_at'] is not None:
                 continue
             start = _coerce_date(r['scope_start_date'])
             end = _coerce_date(r['scope_end_date'])

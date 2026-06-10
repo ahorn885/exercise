@@ -864,6 +864,10 @@ body.app { margin: 0; min-height: 100vh; }
 /* Desktop is the default; the mobile chrome is hidden until the breakpoint. */
 .app .appbar, .app .tabbar { display: none; }
 
+/* Plans page: the New plan / Import actions live in the desktop topbar, which
+   is hidden < the shell breakpoint — so surface them in-page on mobile only. */
+.app .plans-mobile-actions { display: none; }
+
 /* ── Mobile shell (< 860px): sidebar/topbar → appbar + bottom tab bar ── */
 @media (max-width: 859.98px) {
   .app .app-shell { display: block; }
@@ -880,6 +884,8 @@ body.app { margin: 0; min-height: 100vh; }
   .app .tabbar .tab { justify-content: center; text-decoration: none; }
   /* Clear the fixed tab bar so content isn't hidden behind it. */
   .app .page-body { padding: 20px 16px calc(78px + 20px); }
+
+  .app .plans-mobile-actions { display: flex; gap: 8px; margin-top: 14px; }
 }
 
 /* ══ Dashboard · Today (§05) ═══════════════════════════════════════════

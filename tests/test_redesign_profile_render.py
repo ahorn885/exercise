@@ -301,11 +301,14 @@ def test_load_active_plan_nutrition_picks_live_plan(monkeypatch):
     today = date.today()
     rows = [
         {'id': 1, 'scope_start_date': today + timedelta(days=5),
-         'scope_end_date': today + timedelta(days=40), 'completed_at': None},   # upcoming
+         'scope_end_date': today + timedelta(days=40),
+         'completed_at': None, 'archived_at': None},   # upcoming
         {'id': 2, 'scope_start_date': today - timedelta(days=3),
-         'scope_end_date': today + timedelta(days=20), 'completed_at': None},   # live
+         'scope_end_date': today + timedelta(days=20),
+         'completed_at': None, 'archived_at': None},   # live
         {'id': 3, 'scope_start_date': today - timedelta(days=60),
-         'scope_end_date': today - timedelta(days=2), 'completed_at': None},    # ended
+         'scope_end_date': today - timedelta(days=2),
+         'completed_at': None, 'archived_at': None},    # ended
     ]
     monkeypatch.setattr(_profile, 'load_plan_nutrition_by_version',
                         lambda db, pvid: f'NUTR-{pvid}')
@@ -317,9 +320,14 @@ def test_load_active_plan_nutrition_none_when_no_live_plan(monkeypatch):
     today = date.today()
     rows = [
         {'id': 3, 'scope_start_date': today - timedelta(days=60),
-         'scope_end_date': today - timedelta(days=2), 'completed_at': None},    # ended
+         'scope_end_date': today - timedelta(days=2),
+         'completed_at': None, 'archived_at': None},    # ended
         {'id': 4, 'scope_start_date': today - timedelta(days=10),
-         'scope_end_date': today + timedelta(days=10), 'completed_at': 'done'},  # completed
+         'scope_end_date': today + timedelta(days=10),
+         'completed_at': 'done', 'archived_at': None},  # completed
+        {'id': 5, 'scope_start_date': today - timedelta(days=4),
+         'scope_end_date': today + timedelta(days=18),
+         'completed_at': None, 'archived_at': 'shelved'},  # archived (live scope, but shelved)
     ]
     called = []
     monkeypatch.setattr(_profile, 'load_plan_nutrition_by_version',

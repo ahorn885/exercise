@@ -2159,6 +2159,14 @@ _PG_MIGRATIONS = [
     # buckets ready plans by scope dates into Upcoming / Active / Completed; a
     # non-NULL `completed_at` forces a plan into Completed no matter the dates.
     "ALTER TABLE plan_versions ADD COLUMN IF NOT EXISTS completed_at TIMESTAMPTZ",
+    # User-facing lifecycle: a manual "archive" stamp, set when the athlete
+    # shelves a plan they did NOT finish — they quit it, or a refresh
+    # superseded it — but want it kept for reference. Independent of
+    # `completed_at` (which implies the plan was completed): an archived plan
+    # drops off the active Plan list into its Archived section, no completion
+    # implied. The list buckets a non-NULL `archived_at` row into Archived
+    # ahead of the scope-date buckets.
+    "ALTER TABLE plan_versions ADD COLUMN IF NOT EXISTS archived_at TIMESTAMPTZ",
     # layer4_cache entry_point drift fix (2026-05-26) — the Layer 3A/3B
     # cached wrappers (2026-05-20) + the NL-parser cache (2026-05-21) write
     # entry_point values the original 4-value CHECK rejected, so every 3A/3B
