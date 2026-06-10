@@ -120,19 +120,21 @@ LEFT JOIN layer0.discipline_training_gaps dtg
 - **D-05 standing filter** applied on PLA: `AND discipline_name NOT LIKE '%WEEKLY TOTAL%'`. Mandatory per drift backlog.
 - `applicability = 'INCLUDED'` filter on SDM matches the spec §4.4 rule — EXCLUDED rows are loaded for documentation but not consumed at runtime.
 - LEFT JOINs on PLA and DTG — a discipline may legitimately have no phase-load row for a specific sub-format sport, and most disciplines don't have a training gap entry.
-- `default_inclusion` is **not** a column on `layer0.phase_load_allocation` (an earlier draft of this spec referenced `pla.default_inclusion`; the column was never added). 2A derives it code-side from `notes_conditions` text per §5.3 — rows whose `notes_conditions` starts with `*CONDITIONAL` map to `'prompt_required'`; otherwise `'included'`. The typed payload field (`SportDisciplineRow.default_inclusion`) is populated from this derivation.
+- `default_inclusion` **is** a column on `layer0.phase_load_allocation` (schema v10) — closed enum `included` / `excluded` / `prompt_required`, populated on every PLA row and enforced by the Slice 1 `validate_layer0` gate (#488). 2A's SELECT pulls `pla.default_inclusion` and treats it as the **authoritative curator base** for inclusion resolution (§5.3); the typed payload field (`SportDisciplineRow.default_inclusion`) echoes it. NULL / no-PLA-row → `included` (the historical non-conditional default). _(#509, 2026-06-10: this supersedes the prior text — the column was real all along, but serving ignored it and derived inclusion from `notes_conditions` text, a heuristic that could only emit `included`/`prompt_required` and so leaked curator-`excluded` disciplines through as `prompt_required`.)_
 
-### 5.3 Conditional resolution
+### 5.3 Inclusion resolution (race > athlete > curator-default)
 
-After the query, each discipline is one of:
+**Unified with the weighting precedence (#509, 2026-06-10).** Each discipline's `inclusion` resolves deterministically (no LLM) by the same `race > athlete > curator-default` chain the weighting axis uses (§5.4). `_resolve_inclusion(row, race_discipline_overrides, athlete_discipline_overrides)`:
 
-- **Unconditionally included** — `role` does not contain `(*Conditional)` and `notes_conditions` doesn't start with `*CONDITIONAL`. Discipline is in.
-- **Conditional — athlete-opt-in** — `default_inclusion = 'prompt_required'`. Plan-gen prompts the athlete; 2A surfaces this in `hitl_required` (see §8). An explicit `athlete_discipline_overrides` entry resolves it to `included`/`excluded` (`conditional_resolution = 'athlete_opt_in'`).
-  - **Relay-only legs** — depend on `team_format`. Not applicable to AR; relay-leg filtering deferred (no current consumer sport).
+1. **Race demand** — the discipline appears in `race_discipline_overrides` (the `{discipline_id: pct}` map the orchestrator derives from the race's per-row terrain `discipline_id` × `pct_of_race`, X3) → `included`. **Race wins over athlete.** `conditional_resolution = None`; race provenance rides on `load_weight.source = 'race_override'`.
+2. **Athlete weighting** — when `athlete_discipline_overrides` is **non-empty** it is the athlete's *complete, all-or-nothing* (sum-to-100, X2) discipline list: a listed discipline → `included`, an unlisted one → `excluded` (`conditional_resolution = 'athlete_opt_in'` either way — both are the athlete's call). An empty set is no signal (the athlete deferred) → fall through to the curator.
+3. **Curator default** — the authoritative `phase_load_allocation.default_inclusion` column (§5.2): `included` / `excluded` → that value (`conditional_resolution = None`); `prompt_required` → plan-gen prompts the athlete, surfaced in `hitl_required` (§5.6), `conditional_resolution = 'athlete_opt_in'`. NULL / no-PLA-row → `included`.
 
-> **Race-rule auto-resolution retired (2026-05-25).** Earlier revisions auto-included/excluded the navigation discipline (D-015) from a `navigation_required` input. That input was removed end-to-end; the navigation discipline is now a plain `*Conditional` (athlete opt-in like any other), and the `race_rule_auto_in`/`race_rule_auto_out` resolutions + the `conditional_auto_resolved` flag no longer exist.
+The retired `_resolve_conditional` derived inclusion from `*CONDITIONAL` role/`notes_conditions` text and could never emit `excluded`; its explicit `{"included": bool}` athlete branch had no live producer. `is_conditional` (payload field) still reads role/notes — it's an informational "the curator marked this conditional" flag, independent of the resolved `inclusion`.
 
-The detailed conditional rule table per sport lives in code, not the data model. Reasoning: rules are tightly coupled to race-specific business logic and easier to maintain in versioned code than in a normalized table. (If this gets unwieldy, candidate for a future `discipline_conditional_rules` table — tracked as future open item.)
+> **Race-rule auto-resolution retired (2026-05-25), reframed by #509.** Earlier revisions auto-included/excluded the navigation discipline (D-015) from a `navigation_required` input. That narrow boolean was removed end-to-end (the `race_rule_auto_in`/`race_rule_auto_out` resolutions + the `conditional_auto_resolved` flag no longer exist). #509 reintroduces *race-driven inclusion* on the general axis — a race that demands a discipline via its terrain mix includes it — but as the deterministic terrain-derived signal in step 1, not the retired boolean.
+
+  - **Relay-only legs** — depend on `team_format`. Not applicable to AR; relay-leg filtering still deferred (no current consumer sport). `team_format` is validated but unused by inclusion.
 
 ### 5.4 Discipline weighting
 
@@ -174,11 +176,11 @@ Example: `"Trail Running is a core discipline of Adventure Racing. It accounts f
 
 `hitl_required = True` if any of:
 
-- A `default_inclusion = 'prompt_required'` discipline can't be resolved from event context (athlete didn't pre-answer)
+- A discipline resolves to `inclusion = 'prompt_required'` — i.e. the curator column says `prompt_required` **and** neither a race-terrain signal nor an athlete weighting resolved it first (§5.3). The race/athlete signals **clear** the prompt; an athlete who sets any weighting (the complete all-or-nothing list) resolves every discipline, so HITL only fires for athletes who haven't weighted and have a curator-`prompt_required` discipline with no race demand.
 - `unresolved_flags[]` non-empty (athlete selected disciplines not found in canonical framework)
 
 HITL does NOT fire on:
-- Conditional disciplines that auto-resolve from race parameters (those are handled deterministically)
+- Curator-`excluded` disciplines (#509) — `excluded` is a deterministic curator decision, not a prompt. The four AR rows the curator marked Kayaking `included` / Canoeing · Snowshoeing · Mountaineering `excluded` now resolve to those values and do **not** trip the gate (pre-#509 all four leaked through as `prompt_required` and spuriously gated).
 - Training gaps alone (gaps surface as informational warnings, not gates)
 
 ## 6. Drift items affecting 2A
