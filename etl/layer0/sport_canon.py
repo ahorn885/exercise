@@ -4,7 +4,7 @@ Background
 ----------
 Disciplines have a code-side canon (`discipline_canon.py`) that curates the raw
 xlsx rows at ETL time — renames, removals, merges. Framework **sports** had no
-equivalent: they flowed straight from `Sports_Framework_v11.xlsx` Sheet 1 into
+equivalent: they flowed straight from the Sports Framework workbook Sheet 1 into
 `layer0.sports`, with no diff-reviewable place to express "remove this sport."
 
 This module is that place. It mirrors the discipline canon: a small, code-
