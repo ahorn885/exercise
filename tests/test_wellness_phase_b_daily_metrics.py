@@ -250,6 +250,38 @@ def test_body_battery_overnight_delta_lands_per_night():
     ]
 
 
+def test_sleep_sub_scores_land_per_date_for_all_four_contributors():
+    """All 4 contributor sub-scores land per night with their locked names
+    (Light=field_5, REM=field_7, Stress=field_8, Awake=field_10). Powers
+    the multi-line `chart-sleep-sub-scores` card on /wellness."""
+    daily_rows = [
+        _r(date='2026-05-28',
+           sleep_light_sub_score=83, sleep_rem_sub_score=95,
+           sleep_stress_sub_score=95, sleep_awake_sub_score=100),
+        _r(date='2026-06-02',
+           sleep_light_sub_score=92, sleep_rem_sub_score=73,
+           sleep_stress_sub_score=46, sleep_awake_sub_score=74),
+    ]
+    chart = _build_chart_data([], [], [], [], [], [],
+                              daily_metric_rows=daily_rows)
+    assert chart['sleep_sub_scores']['light'] == [
+        {'x': '2026-05-28', 'y': 83.0},
+        {'x': '2026-06-02', 'y': 92.0},
+    ]
+    assert chart['sleep_sub_scores']['rem'] == [
+        {'x': '2026-05-28', 'y': 95.0},
+        {'x': '2026-06-02', 'y': 73.0},
+    ]
+    assert chart['sleep_sub_scores']['stress'] == [
+        {'x': '2026-05-28', 'y': 95.0},
+        {'x': '2026-06-02', 'y': 46.0},
+    ]
+    assert chart['sleep_sub_scores']['awake'] == [
+        {'x': '2026-05-28', 'y': 100.0},
+        {'x': '2026-06-02', 'y': 74.0},
+    ]
+
+
 def test_body_battery_overnight_delta_skips_partial_coverage():
     """If a night's BB time-series is missing the sleep_start or sleep_end
     sample (e.g. watch off mid-night), drop the night rather than fabricate

@@ -2176,12 +2176,23 @@ def parse_sleep_data_fit(fit_bytes: bytes) -> dict:
                 out['sleep_stress_sample_count_capped'] = int(fields[14])
             if fields.get(15) is not None:
                 out['sleep_stress_sum'] = int(fields[15])
-            # Remaining contributor positions (5/7/8/10) carry sub-scores
-            # for Light / REM / Awake / restless contributors but the
-            # slot ↔ name alignment isn't locked yet — surfaced as an
-            # ordered list pending a night where Connect ratings diverge
-            # enough to disambiguate. field_9 and field_14 dropped from
-            # this list since they're now their own fields.
+            # All four contributor positions LOCKED Jun 10 2026 across
+            # 6 reference nights including Sep 8 2025 (37 score with 72 min
+            # awake = the disambiguation night). See
+            # `_sleep_sub_score_slot_candidates` docstring for the mapping
+            # evidence per slot.
+            for fid, name in (
+                (5,  'sleep_light_sub_score'),
+                (7,  'sleep_rem_sub_score'),
+                (8,  'sleep_stress_sub_score'),
+                (10, 'sleep_awake_sub_score'),
+            ):
+                v = fields.get(fid)
+                if v is not None:
+                    out[name] = int(v)
+            # Legacy `sleep_contributors` ordered-list — kept for backwards
+            # compat with `sleep_contributors_json` rows already in prod
+            # (#283 Phase A). New consumers should read the named columns.
             contributors = []
             for fid in (5, 7, 8, 10):
                 v = fields.get(fid)

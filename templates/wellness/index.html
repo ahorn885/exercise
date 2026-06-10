@@ -163,6 +163,16 @@
   </div>
   {% endif %}
 
+  {# Sleep contributor sub-scores — Light / REM / Stress / Awake, all 4
+     locked Jun 10 against [346] field_5/7/8/10. Multi-line chart shows
+     which contributor drags a night's score down. #}
+  {% if chart_data.sleep_sub_scores.light or chart_data.sleep_sub_scores.rem or chart_data.sleep_sub_scores.stress or chart_data.sleep_sub_scores.awake %}
+  <div class="card card-pad">
+    <span class="eyebrow">Sleep contributor sub-scores · device (0–100)</span>
+    <div class="chart-box wide sec-sm"><canvas id="chart-sleep-sub-scores"></canvas></div>
+  </div>
+  {% endif %}
+
   {# Heat acclimation — _METRICS.fit #}
   {% if chart_data.heat_acclimation %}
   <div class="card card-pad">
@@ -634,6 +644,16 @@ if (data.sleep_stress_avg && data.sleep_stress_avg.length) {
 if (data.sleep_wake_count && data.sleep_wake_count.length) {
   line('chart-sleep-wake-count', [bar('Wake events', data.sleep_wake_count, fg)],
        { type: 'bar', yAxis: { beginAtZero: true, ticks: { stepSize: 1 } } });
+}
+
+// ─── Sleep contributor sub-scores (Light / REM / Stress / Awake) ────
+if (data.sleep_sub_scores) {
+  const subSeries = [];
+  if (data.sleep_sub_scores.light  && data.sleep_sub_scores.light.length)  subSeries.push(ds('Light',  data.sleep_sub_scores.light,  fg));
+  if (data.sleep_sub_scores.rem    && data.sleep_sub_scores.rem.length)    subSeries.push(ds('REM',    data.sleep_sub_scores.rem,    info));
+  if (data.sleep_sub_scores.stress && data.sleep_sub_scores.stress.length) subSeries.push(ds('Stress', data.sleep_sub_scores.stress, accent));
+  if (data.sleep_sub_scores.awake  && data.sleep_sub_scores.awake.length)  subSeries.push(ds('Awake',  data.sleep_sub_scores.awake,  good));
+  if (subSeries.length) line('chart-sleep-sub-scores', subSeries, { yAxis: { min: 0, max: 100 } });
 }
 
 // ─── Body composition ──────────────────────────────────────

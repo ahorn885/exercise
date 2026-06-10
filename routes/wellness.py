@@ -237,7 +237,9 @@ def index():
         '  heat_acclimation_pct, acute_training_load, '
         '  restless_moments, floors_climbed, floors_descended, '
         '  intensity_minutes, spo2_avg, spo2_low, '
-        '  sleep_deep_min, sleep_stress_avg, sleep_wake_count '
+        '  sleep_deep_min, sleep_stress_avg, sleep_wake_count, '
+        '  sleep_light_sub_score, sleep_rem_sub_score, '
+        '  sleep_stress_sub_score, sleep_awake_sub_score '
         'FROM garmin_daily_metrics WHERE user_id=? AND date >= ? ORDER BY date',
         (uid, cutoff)
     ).fetchall()
@@ -490,6 +492,15 @@ def _build_chart_data(self_rows, body_rows, cardio_rows, strength_rows,
     sleep_deep_min   = _maybe_series(daily_by_date, 'sleep_deep_min')
     sleep_stress_avg = _maybe_series(daily_by_date, 'sleep_stress_avg')
     sleep_wake_count = _maybe_series(daily_by_date, 'sleep_wake_count')
+    # `[346]` sleep contributor sub-scores — all 4 locked Jun 10 2026.
+    # Surfaced as a single multi-line chart so the operator can see
+    # which contributor is dragging the night's score down at a glance.
+    sleep_sub_scores = {
+        'light':  _maybe_series(daily_by_date, 'sleep_light_sub_score'),
+        'rem':    _maybe_series(daily_by_date, 'sleep_rem_sub_score'),
+        'stress': _maybe_series(daily_by_date, 'sleep_stress_sub_score'),
+        'awake':  _maybe_series(daily_by_date, 'sleep_awake_sub_score'),
+    }
 
     # Stress time-in-zone — sample counts × ~3 min interval. Garmin Connect
     # displays the same buckets on the stress page.
@@ -564,6 +575,7 @@ def _build_chart_data(self_rows, body_rows, cardio_rows, strength_rows,
         'sleep_deep_min':   sleep_deep_min,
         'sleep_stress_avg': sleep_stress_avg,
         'sleep_wake_count': sleep_wake_count,
+        'sleep_sub_scores': sleep_sub_scores,
         # #283 follow-up — these still need their own FIT file types or a
         # field map we haven't decoded. `active_minutes` was retired in
         # favour of `intensity_minutes` (Garmin's published metric =
