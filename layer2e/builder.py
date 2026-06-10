@@ -720,11 +720,12 @@ def _stub_supplement_integration(
     lifestyle: Layer1Lifestyle,
     target_events: list[Layer2ETargetEvent],
 ) -> tuple[SupplementIntegrationPayload, list[Layer2ECoachingFlag]]:
-    # Vertical-slice stub. Deployed §I lifestyle carries free-text
-    # `supplement_protocol_notes` rather than the structured
-    # `list[AthleteSupplementRecord]` Layer2E_Spec §3 expects, so
-    # contraindication crosschecks cannot run against
-    # `layer0.supplement_vocabulary`. §I.1 form refresh closes the gap.
+    # Vertical-slice stub. The structured `lifestyle.supplements`
+    # (`list[AthleteSupplementRecord]`) is now populated by Layer 1 (§I.1 form
+    # refresh shipped), so the input-shape gap is closed — the §5.5 de-stub
+    # (Slice B) can run contraindication crosschecks against
+    # `layer0.supplement_vocabulary` over those records. Until then this stub
+    # only flags the legacy free-text `supplement_protocol_notes` when present.
     flags: list[Layer2ECoachingFlag] = []
     if lifestyle.supplement_protocol_notes:
         flags.append(Layer2ECoachingFlag(
