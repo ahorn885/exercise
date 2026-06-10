@@ -202,6 +202,19 @@ def _collect_athlete_crafts(layer1_payload: Layer1Payload) -> list[str]:
     return sorted(set(crafts))
 
 
+def _athlete_discipline_overrides(layer1_payload: Layer1Payload) -> dict[str, dict]:
+    """X2 — unpack the athlete's discipline weighting into Layer 2A's
+    `athlete_discipline_overrides` shape (`{discipline_id: {"weight": pct}}`,
+    consumed by `_compute_load_weight` per spec §5.4). `discipline_slug` stores
+    the canonical `discipline_id` (X2 write convention), so this is a direct
+    remap. Empty weighting → `{}` and 2A falls back to race-time-midpoint
+    system defaults."""
+    return {
+        r.discipline_slug: {"weight": float(r.weight_pct)}
+        for r in layer1_payload.training_history.discipline_weighting
+    }
+
+
 def _q_modality_groups(db: Any, version_0a: str) -> dict[str, list[str]]:
     """X1b.3b — `{discipline_id: [group_id, ...]}` from
     `layer0.discipline_modality_membership` for the cone's 0A version. Mirrors
@@ -305,6 +318,7 @@ def _upstream_full_cone(
         framework_sport=framework_sport,
         discipline_id_filter=discipline_id_filter,
         etl_version_set=etl_version_set,
+        athlete_discipline_overrides=_athlete_discipline_overrides(layer1_payload),
     )
     included_discipline_ids = [
         d.discipline_id
@@ -694,6 +708,7 @@ def orchestrate_single_session_synthesize(
             db,
             framework_sport=request.sport,
             etl_version_set=etl_version_set,
+            athlete_discipline_overrides=_athlete_discipline_overrides(layer1_payload),
         )
     except Layer2AInputError as exc:
         raise OrchestrationError(

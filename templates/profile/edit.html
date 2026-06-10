@@ -210,6 +210,54 @@
   </div>
 </form>
 
+{# ── Discipline weighting (X2) — separate form so its sum-to-100 rule can't
+   block the profile save above. #}
+<form method="post" action="{{ url_for('profile.save_disciplines') }}" class="pf-form"
+      id="dw-form">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <div class="card card-pad stack">
+    <div>
+      <p class="eyebrow">● Discipline weighting</p>
+      <p class="pf-hint">Optional. Split your training load across the disciplines you race —
+        the percentages must add up to <strong>100</strong>. Leave every box blank to let the
+        coach infer the split from your race's discipline mix (the default).</p>
+    </div>
+    <div class="pf-grid">
+      {% for d in discipline_catalog %}
+      <label class="field"><span class="lbl">{{ d.label }}</span>
+        <input type="number" step="1" min="0" max="100" name="dw_{{ d.id }}"
+               class="form-control form-control-sm dw-input"
+               value="{{ discipline_weighting.get(d.id, '') }}"></label>
+      {% endfor %}
+    </div>
+    <p class="pf-hint">Total: <strong id="dw-total" class="mono">0</strong>%
+      <span id="dw-warn" class="mono" hidden> — must equal 100 to save</span></p>
+  </div>
+  <div class="pf-save">
+    <span></span>
+    <button type="submit" class="btn btn-primary">Save weighting</button>
+  </div>
+</form>
+<script>
+  (function () {
+    var form = document.getElementById('dw-form');
+    if (!form) return;
+    var totalEl = document.getElementById('dw-total');
+    var warnEl = document.getElementById('dw-warn');
+    function recompute() {
+      var sum = 0;
+      form.querySelectorAll('.dw-input').forEach(function (el) {
+        var v = parseFloat(el.value);
+        if (!isNaN(v)) sum += v;
+      });
+      totalEl.textContent = sum;
+      warnEl.hidden = !(sum !== 0 && sum !== 100);
+    }
+    form.addEventListener('input', recompute);
+    recompute();
+  })();
+</script>
+
 {# Plan-specific daily baseline — only when a plan is live (slice 4 PlanNutrition). #}
 {% if plan_nutrition %}
 <div class="card card-pad stack pf-nutrition">
