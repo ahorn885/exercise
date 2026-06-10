@@ -94,6 +94,7 @@ def _row(
     taper_pct_high: float | None = None,
     pla_role: str | None = None,
     notes_conditions: str | None = None,
+    default_inclusion: str | None = None,
     gap_type: str | None = None,
     gap_notes: str | None = None,
     multi_substitute_candidate: bool | None = None,
@@ -124,6 +125,7 @@ def _row(
         "taper_pct_high": taper_pct_high,
         "pla_role": pla_role,
         "notes_conditions": notes_conditions,
+        "default_inclusion": default_inclusion,
         "gap_type": gap_type,
         "gap_notes": gap_notes,
         "multi_substitute_candidate": multi_substitute_candidate,
@@ -218,6 +220,9 @@ def _ar_rows() -> list[dict]:
         _row(
             "D-015", "Orienteering / Navigation", "Technical (*Conditional)",
             notes_conditions="*CONDITIONAL: included when navigation required",
+            # #509: inclusion now reads the authoritative curator column, not
+            # the notes text. The curator marks this conditional prompt_required.
+            default_inclusion="prompt_required",
         ),
         _row(
             "D-018", "Mountaineering", "Minor",
@@ -439,6 +444,113 @@ class TestAROverride:
         assert divergence_flags[0].metadata["override_pct"] == 25.0
         assert divergence_flags[0].metadata["default_pct"] == 15.0
         assert divergence_flags[0].metadata["divergence_relative"] > 0.5
+
+
+# ─── §5.3 inclusion precedence (race > athlete > curator-default), #509 ───────
+
+
+class TestInclusionPrecedence:
+    """#509 — `inclusion` resolves deterministically via
+    `race ?? athlete ?? curator-default-column ?? included`. The curator's
+    authored `default_inclusion` column is authoritative (honors `excluded`);
+    the retired notes-derive heuristic could never express `excluded`."""
+
+    def _curator_rows(self):
+        # Mirrors the #509 AR evidence: curator marks Kayaking included, and
+        # Canoeing / Snowshoeing / Mountaineering excluded.
+        return [
+            _row("D-001", "Trail Running", "Primary",
+                 race_time_pct_low=25, race_time_pct_high=40,
+                 default_inclusion="included"),
+            _row("D-010", "Kayaking", "Secondary",
+                 race_time_pct_low=5, race_time_pct_high=10,
+                 default_inclusion="included"),
+            _row("D-011", "Canoeing", "Minor", default_inclusion="excluded"),
+            _row("D-016", "Snowshoeing", "Minor", default_inclusion="excluded"),
+            _row("D-018", "Mountaineering", "Minor", default_inclusion="excluded"),
+        ]
+
+    def test_curator_column_authoritative_honors_excluded(self):
+        conn = _FakeConn()
+        conn.queue_response(rows=self._curator_rows())
+        payload = q_layer2a_discipline_classifier_payload(
+            conn, "Adventure Racing", etl_version_set=_DEFAULT_ETL,
+        )
+        by_id = {d.discipline_id: d for d in payload.disciplines}
+        assert by_id["D-010"].inclusion == "included"
+        assert by_id["D-011"].inclusion == "excluded"
+        assert by_id["D-016"].inclusion == "excluded"
+        assert by_id["D-018"].inclusion == "excluded"
+        # Curator include/exclude is deterministic — no athlete prompt.
+        assert by_id["D-011"].conditional_resolution is None
+        assert payload.hitl_required is False
+
+    def test_null_column_defaults_to_included(self):
+        conn = _FakeConn()
+        conn.queue_response(rows=[
+            _row("D-001", "Trail Running", "Primary",
+                 race_time_pct_low=25, race_time_pct_high=40),  # no default_inclusion
+        ])
+        payload = q_layer2a_discipline_classifier_payload(
+            conn, "Adventure Racing", etl_version_set=_DEFAULT_ETL,
+        )
+        assert payload.disciplines[0].inclusion == "included"
+
+    def test_curator_prompt_required_gates_hitl(self):
+        conn = _FakeConn()
+        conn.queue_response(rows=[
+            _row("D-015", "Orienteering / Navigation", "Technical (*Conditional)",
+                 default_inclusion="prompt_required"),
+        ])
+        payload = q_layer2a_discipline_classifier_payload(
+            conn, "Adventure Racing", etl_version_set=_DEFAULT_ETL,
+        )
+        nav = payload.disciplines[0]
+        assert nav.inclusion == "prompt_required"
+        assert nav.conditional_resolution == "athlete_opt_in"
+        assert payload.hitl_required is True
+
+    def test_race_demand_overrides_curator_excluded(self):
+        conn = _FakeConn()
+        conn.queue_response(rows=self._curator_rows())
+        payload = q_layer2a_discipline_classifier_payload(
+            conn, "Adventure Racing", etl_version_set=_DEFAULT_ETL,
+            # Race terrain names Canoeing → it's in, even though curator excluded it.
+            race_discipline_overrides={"D-011": 30.0},
+        )
+        by_id = {d.discipline_id: d for d in payload.disciplines}
+        assert by_id["D-011"].inclusion == "included"
+        assert by_id["D-011"].conditional_resolution is None
+
+    def test_athlete_weighting_is_complete_list(self):
+        conn = _FakeConn()
+        conn.queue_response(rows=self._curator_rows())
+        payload = q_layer2a_discipline_classifier_payload(
+            conn, "Adventure Racing", etl_version_set=_DEFAULT_ETL,
+            # Athlete weights only Trail Running — that's the whole list (Option A).
+            athlete_discipline_overrides={"D-001": {"weight": 100.0}},
+        )
+        by_id = {d.discipline_id: d for d in payload.disciplines}
+        assert by_id["D-001"].inclusion == "included"
+        assert by_id["D-001"].conditional_resolution == "athlete_opt_in"
+        # Kayaking is curator-included but unlisted → excluded by the athlete's list.
+        assert by_id["D-010"].inclusion == "excluded"
+        assert by_id["D-010"].conditional_resolution == "athlete_opt_in"
+        # An all-or-nothing athlete list resolves everything → no prompt.
+        assert payload.hitl_required is False
+
+    def test_race_beats_athlete_for_unlisted_discipline(self):
+        conn = _FakeConn()
+        conn.queue_response(rows=self._curator_rows())
+        payload = q_layer2a_discipline_classifier_payload(
+            conn, "Adventure Racing", etl_version_set=_DEFAULT_ETL,
+            athlete_discipline_overrides={"D-001": {"weight": 100.0}},
+            # Race demands Kayaking; athlete didn't list it → race wins → included.
+            race_discipline_overrides={"D-010": 20.0},
+        )
+        by_id = {d.discipline_id: d for d in payload.disciplines}
+        assert by_id["D-010"].inclusion == "included"
+        assert by_id["D-001"].inclusion == "included"
 
 
 # ─── §13.4 Triathlon D-17 strip logic ────────────────────────────────────────

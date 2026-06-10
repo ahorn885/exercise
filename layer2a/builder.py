@@ -164,6 +164,7 @@ def _load_disciplines(
             pla.taper_pct_high,
             pla.role AS pla_role,
             pla.notes_conditions,
+            pla.default_inclusion,
             dtg.gap_type,
             dtg.notes AS gap_notes,
             dtg.multi_substitute_candidate,
@@ -247,17 +248,25 @@ def _is_conditional(role: str, notes_conditions: str | None) -> bool:
     return False
 
 
-def _default_inclusion(notes_conditions: str | None) -> str:
-    """Derive `PhaseLoadBands.default_inclusion` from PLA notes_conditions.
+_INCLUSION_VALUES = {"included", "excluded", "prompt_required"}
 
-    The layer0 schema doesn't carry a separate column for this — it's
-    encoded in the free-text `notes_conditions`. Per spec §5.3:
-    `*CONDITIONAL`-prefixed notes → `prompt_required`; otherwise → `included`.
-    `excluded` is applied downstream during conditional resolution, not
-    here.
-    """
-    if notes_conditions and notes_conditions.strip().lower().startswith("*conditional"):
-        return "prompt_required"
+
+def _curator_default_inclusion(row: dict[str, Any]) -> str:
+    """The curator's authored base inclusion for a discipline, read from the
+    authoritative `layer0.phase_load_allocation.default_inclusion` column (#509).
+
+    Replaces the retired notes-text heuristic, which derived only from
+    `notes_conditions` and so could express `included`/`prompt_required` but
+    never `excluded` — letting curator-excluded disciplines (e.g. AR
+    Canoeing/Snowshoeing/Mountaineering) leak through as `prompt_required`.
+
+    NULL / unpopulated (e.g. a discipline with no PLA row joined) → `included`,
+    matching the historical non-conditional default. The Slice 1
+    `validate_layer0` gate enforces a populated closed-enum value on every
+    real PLA row, so this fallback only catches no-PLA-row disciplines."""
+    val = (row.get("default_inclusion") or "").strip().lower()
+    if val in _INCLUSION_VALUES:
+        return val
     return "included"
 
 
@@ -271,7 +280,11 @@ def _build_phase_load(row: dict[str, Any]) -> PhaseLoadBands | None:
         "peak_pct_low", "peak_pct_high",
         "taper_pct_low", "taper_pct_high",
     )
-    if all(row.get(k) is None for k in band_keys) and row.get("notes_conditions") is None:
+    if (
+        all(row.get(k) is None for k in band_keys)
+        and row.get("notes_conditions") is None
+        and row.get("default_inclusion") is None
+    ):
         return None
     return PhaseLoadBands(
         base_low=row.get("base_pct_low"),
@@ -283,7 +296,7 @@ def _build_phase_load(row: dict[str, Any]) -> PhaseLoadBands | None:
         taper_low=row.get("taper_pct_low"),
         taper_high=row.get("taper_pct_high"),
         notes_conditions=row.get("notes_conditions"),
-        default_inclusion=_default_inclusion(row.get("notes_conditions")),
+        default_inclusion=_curator_default_inclusion(row),
     )
 
 
@@ -301,33 +314,50 @@ def _build_training_gap(row: dict[str, Any]) -> TrainingGap | None:
     )
 
 
-def _resolve_conditional(
+def _resolve_inclusion(
     row: dict[str, Any],
-    race_duration_hours: float | None,
-    team_format: str | None,
-    overrides: dict[str, dict] | None,
+    race_overrides: dict[str, float] | None,
+    athlete_overrides: dict[str, dict] | None,
 ) -> tuple[str, str | None]:
-    """Apply spec §5.3 conditional rules. Returns
-    `(inclusion, conditional_resolution)`.
+    """Resolve a discipline's inclusion via the #509 precedence chain
+    `race > athlete > curator-default`. Returns `(inclusion, conditional_resolution)`.
 
-    - Unconditional → `('included', None)`.
-    - Conditional: prompt_required (athlete opt-in) unless overrides
-      explicitly include/exclude.
-    """
+    1. **Race demand** — the race terrain mix names this discipline
+       (`race_discipline_overrides`, derived from per-row `discipline_id` by
+       the X3 orchestrator helper) → `included`. Race wins over athlete.
+    2. **Athlete weighting** — a non-empty `athlete_discipline_overrides` is the
+       athlete's complete, all-or-nothing (sum-to-100, X2) discipline list:
+       a listed discipline → `included`, an unlisted one → `excluded`. An empty
+       set is no signal (the athlete deferred) → fall through to the curator.
+    3. **Curator default** — the authoritative
+       `phase_load_allocation.default_inclusion` column
+       (`included` / `excluded` / `prompt_required`; NULL → `included`).
+
+    `conditional_resolution` records athlete-driven resolution (`athlete_opt_in`
+    — both a list-in and a list-out are the athlete's call) and the
+    pending-prompt curator case; race / curator-included / curator-excluded
+    carry `None`. Race provenance rides on `load_weight.source == "race_override"`.
+
+    This supersedes the retired `_resolve_conditional`, whose notes-derived
+    path could only ever emit `included` / `prompt_required` and whose explicit
+    `{"included": bool}` athlete branch had no live producer."""
     discipline_id = row["discipline_id"]
-    is_cond = _is_conditional(row["role"], row.get("notes_conditions"))
 
-    if not is_cond:
+    # 1. Race demand wins (X3 terrain-derived mix).
+    if race_overrides and discipline_id in race_overrides:
         return ("included", None)
 
-    # Athlete-explicit override wins.
-    ov = (overrides or {}).get(discipline_id) or {}
-    if "included" in ov:
-        return ("included" if ov["included"] else "excluded", "athlete_opt_in")
+    # 2. Athlete weighting is the complete membership list when set (#509 Option A).
+    if athlete_overrides:
+        if discipline_id in athlete_overrides:
+            return ("included", "athlete_opt_in")
+        return ("excluded", "athlete_opt_in")
 
-    # v1 scope: relay-leg filtering deferred (no current consumer sport).
-    # Fall through: unresolved conditional → prompt athlete.
-    return ("prompt_required", "athlete_opt_in")
+    # 3. Curator default_inclusion column (authoritative base).
+    curator = _curator_default_inclusion(row)
+    if curator == "prompt_required":
+        return ("prompt_required", "athlete_opt_in")
+    return (curator, None)
 
 
 def _compute_load_weight(
@@ -418,7 +448,11 @@ def _apply_modality_group_pooling(
         # Pre-v1.5.0 substrate: skip pooling, behavior identical to pre-X1b.
         return []
 
-    included_ids = {d.discipline_id for d in disciplines}
+    # Pool only over INCLUDED members — #509's race/athlete/curator inclusion
+    # resolution can now exclude many disciplines (Option A: a non-empty athlete
+    # weighting is the complete list), and an excluded discipline must not
+    # contribute its bridge midpoint to a group pool.
+    included_ids = {d.discipline_id for d in disciplines if d.inclusion == "included"}
     by_id = {d.discipline_id: d for d in disciplines}
 
     # Reverse map: group_id → included members
@@ -794,10 +828,9 @@ def q_layer2a_discipline_classifier_payload(
 
     disciplines: list[Layer2ADiscipline] = []
     for row in raw_rows:
-        inclusion, conditional_resolution = _resolve_conditional(
+        inclusion, conditional_resolution = _resolve_inclusion(
             row,
-            estimated_race_duration_hours,
-            team_format,
+            race_discipline_overrides,
             athlete_discipline_overrides,
         )
         load_weight = _compute_load_weight(row, athlete_discipline_overrides)
