@@ -749,6 +749,149 @@ def test_find_constant_value_fields_tolerance_allows_small_drift():
     assert find_constant_value_fields(nights, target=48, tolerance=0.1) == []
 
 
+# ── find_value_match_fields — per-file Connect-smoothed minutes scan (#283) ─
+
+def test_find_value_match_fields_matches_target_in_field():
+    """Issue #283 motivating case: Connect-smoothed Light = 180 min on
+    May 30. The scanner walks a single dump and returns any field whose
+    value equals 180 (under one of the candidate scales)."""
+    from garmin_fit_parser import find_value_match_fields
+    dump = {'generic_samples': {
+        '346': [{'field_5': '90', 'field_7': '180', 'field_8': '70'}],
+    }}
+    matches = find_value_match_fields(dump, targets=[180])
+    assert len(matches) == 1
+    m = matches[0]
+    assert m['message_id'] == '346'
+    assert m['field_id'] == 'field_7'
+    assert m['target'] == 180
+    assert m['scale'] == 1.0
+
+
+def test_find_value_match_fields_handles_multiple_targets():
+    """Pass [180, 47, 8] (Connect Light/REM/Awake) — the scanner emits
+    a match per (field, target) hit."""
+    from garmin_fit_parser import find_value_match_fields
+    dump = {'generic_samples': {
+        '346': [{'field_a': '180', 'field_b': '47', 'field_c': '8',
+                 'field_d': '999'}],
+    }}
+    matches = find_value_match_fields(dump, targets=[180, 47, 8])
+    targets_hit = {m['target'] for m in matches}
+    assert targets_hit == {180, 47, 8}
+
+
+def test_find_value_match_fields_handles_scale_factors():
+    """A field carrying 1800 (×10 encoded Light minutes) should match
+    target=180 under scale=0.1. Same for 80 → target=8 at scale=0.1."""
+    from garmin_fit_parser import find_value_match_fields
+    dump = {'generic_samples': {
+        '346': [{'field_5': '1800', 'field_7': '80'}],
+    }}
+    matches = find_value_match_fields(dump, targets=[180, 8])
+    targets_hit = {(m['target'], m['scale']) for m in matches}
+    assert (180, 0.1) in targets_hit
+    assert (8, 0.1) in targets_hit
+
+
+def test_find_value_match_fields_message_ids_filter():
+    """Restrict to gid 346 — fields on gid 999 with target value are
+    ignored. Mirrors the inspector's optional scope-narrowing."""
+    from garmin_fit_parser import find_value_match_fields
+    dump = {'generic_samples': {
+        '346': [{'field_5': '180'}],
+        '999': [{'field_5': '180'}],
+    }}
+    matches = find_value_match_fields(
+        dump, targets=[180], message_ids=(346,),
+    )
+    assert len(matches) == 1
+    assert matches[0]['message_id'] == '346'
+
+
+def test_find_value_match_fields_empty_targets_returns_empty():
+    """No targets → nothing to match. The route uses this for the
+    `?values=off` escape hatch."""
+    from garmin_fit_parser import find_value_match_fields
+    dump = {'generic_samples': {'346': [{'field_5': '180'}]}}
+    assert find_value_match_fields(dump, targets=[]) == []
+
+
+def test_find_value_match_fields_accepts_bare_generic_samples():
+    """Convenience: caller can pass the generic_samples dict directly
+    instead of the full `_dump_fit` result — the helper does the
+    lookup. Lets ad-hoc scripts skip the wrapping dict."""
+    from garmin_fit_parser import find_value_match_fields
+    bare = {'346': [{'field_5': '47'}]}
+    matches = find_value_match_fields(bare, targets=[47])
+    assert len(matches) == 1
+    assert matches[0]['field_id'] == 'field_5'
+
+
+# ── _sleep_counter_derivation_candidates — [346] field_12/13 probe (#283) ───
+
+def test_sleep_counter_derivation_surfaces_stage_period_counts():
+    """The helper computes contiguous-run counts per stage code from
+    `[275]` events. With 2 Light periods (codes 2…2…2 then gap then
+    2…2), it should report light_period_count = 2."""
+    from garmin_fit_parser import _sleep_counter_derivation_candidates
+    # ts in seconds; code: 1=Unmeas, 2=Light, 3=Deep, 4=REM
+    events = [
+        (1000, 2),  # Light period 1
+        (1300, 3),  # Deep period 1
+        (1600, 2),  # Light period 2
+        (1900, 4),  # REM period 1
+        (2200, 2),  # Light period 3
+    ]
+    out = _sleep_counter_derivation_candidates(events, {})
+    assert out['derived']['light_period_count'] == 3
+    assert out['derived']['deep_period_count'] == 1
+    assert out['derived']['rem_period_count'] == 1
+    assert out['derived']['awake_period_count'] == 0
+    assert out['derived']['total_events'] == 5
+    assert out['derived']['transition_count'] == 4
+
+
+def test_sleep_counter_derivation_flags_matches_against_raw_counters():
+    """When a derived count equals raw field_12 or field_13, the helper
+    surfaces that derivation in `matches_field_12/13` — that's the lock
+    candidate the operator hunts for."""
+    from garmin_fit_parser import _sleep_counter_derivation_candidates
+    # 4 Light periods, 2 REM periods → field_12=4 should match
+    # light_period_count, field_13=2 should match rem_period_count.
+    events = [
+        (1000, 2), (1300, 4), (1600, 2), (1900, 4),
+        (2200, 2), (2500, 3), (2800, 2),
+    ]
+    out = _sleep_counter_derivation_candidates(
+        events, {'field_12': '4', 'field_13': '2'},
+    )
+    assert 'light_period_count' in out['matches_field_12']
+    assert 'rem_period_count' in out['matches_field_13']
+    assert out['raw'] == {'field_12': 4, 'field_13': 2}
+
+
+def test_sleep_counter_derivation_handles_missing_raw_counters():
+    """File without `[346]` (e.g. partial sleep upload) — caller passes
+    empty raw_counters and the helper still emits the derivation
+    summary so operator can correlate manually."""
+    from garmin_fit_parser import _sleep_counter_derivation_candidates
+    events = [(1000, 2), (1300, 3)]
+    out = _sleep_counter_derivation_candidates(events, {})
+    assert out['raw'] == {'field_12': None, 'field_13': None}
+    assert out['matches_field_12'] == []
+    assert out['matches_field_13'] == []
+    assert out['derived']['light_period_count'] == 1
+
+
+def test_sleep_counter_derivation_returns_empty_without_events():
+    """No `[275]` data → nothing to derive from. Returning {} keeps the
+    inspector output clean (no empty `sleep_counter_derivation_candidates`
+    entries for files without sleep data)."""
+    from garmin_fit_parser import _sleep_counter_derivation_candidates
+    assert _sleep_counter_derivation_candidates([], {'field_12': '5'}) == {}
+
+
 # ── [275] sleep-stage transition walker + minute tally ──────────────────────
 
 def test_stage_minutes_from_events_tallies_between_adjacent_events():

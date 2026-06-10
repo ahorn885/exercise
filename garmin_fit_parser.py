@@ -718,6 +718,23 @@ def _dump_fit(fit_bytes: bytes) -> dict:
                 'candidates': candidates,
             })
 
+    # Surface counter-derivation candidates for `[346] field_12 / field_13`
+    # — the mystery sleep counters (issue #283). Computes plausible
+    # derivations from the `[275]` event list (stage-period counts,
+    # transition count) and flags any that match the raw `[346]` values
+    # in the same file. Operator hypothesis-tests across nights.
+    sleep_counter_candidates = []
+    for sample in generic_samples.get(str(_SLEEP_DATA_SCORE_MSG), []):
+        raw_counters = {
+            'field_12': sample.get('field_12', ''),
+            'field_13': sample.get('field_13', ''),
+        }
+        cand = _sleep_counter_derivation_candidates(
+            sleep_stage_events, raw_counters,
+        )
+        if cand:
+            sleep_counter_candidates.append(cand)
+
     return {
         'message_counts': dict(sorted(msg_counts.items())),
         'session_fields': session_fields,
@@ -730,6 +747,7 @@ def _dump_fit(fit_bytes: bytes) -> dict:
         'sleep_stage_events': sleep_stage_events,
         'sleep_stage_minutes_by_code': sleep_stage_minutes,
         'sleep_sub_score_slot_candidates': sleep_sub_score_slot_candidates,
+        'sleep_counter_derivation_candidates': sleep_counter_candidates,
     }
 
 
@@ -1314,6 +1332,176 @@ def _sleep_sub_score_slot_candidates(f5, f7, f8, f10) -> list:
         }
         for slot, raw in raws
     ]
+
+
+def find_value_match_fields(
+    dump,
+    targets: list,
+    *,
+    scales: tuple = (1.0, 0.1, 10.0, 0.01, 100.0),
+    message_ids: tuple | None = None,
+    tolerance: float = 0.5,
+) -> list:
+    """Single-file scan that finds GenericMessage fields whose value
+    matches *any* of the supplied target values (under one of the
+    candidate scales).
+
+    Designed for "Connect shows these reference values for last night —
+    which raw fields encode them?" use cases. Issue #283 motivating case:
+    Connect-smoothed Light / REM / Awake / Deep minutes (May 30: 180 /
+    47 / 8 / 70); pass those as targets and the scanner returns every
+    field that matches, ordered by message_id / field_id.
+
+    Inputs:
+      dump        — a `_dump_fit()` result OR just its `generic_samples`
+                    sub-dict — both shapes work.
+      targets     — list of values to match (e.g. [180, 47, 8, 70]).
+      scales      — multipliers to try (default covers Garmin's common
+                    ×10 / ÷10 fixed-point encodings).
+      message_ids — restrict the scan to these gids. None scans every
+                    gid present in the dump.
+      tolerance   — allowed |scaled − target| (covers FIT round-trip
+                    drift).
+
+    Returns one entry per (gid, field_id, target, scale) match:
+      {message_id, field_id, target, scale, raw_value, scaled_value}.
+
+    Unlike `find_constant_value_fields` (cross-file, single target),
+    this scans a single file and matches against multiple targets —
+    useful when you have a per-night ground truth but don't have
+    multiple nights to cross-correlate."""
+    if not targets:
+        return []
+    samples = dump.get('generic_samples') if isinstance(dump, dict) else None
+    if samples is None:
+        samples = dump if isinstance(dump, dict) else {}
+    matches = []
+    for gid_str, instances in sorted(samples.items()):
+        try:
+            if message_ids is not None and int(gid_str) not in message_ids:
+                continue
+        except (TypeError, ValueError):
+            continue
+        seen_fields: set = set()
+        for sample in instances:
+            if not isinstance(sample, dict):
+                continue
+            for field_key, raw in sample.items():
+                if not field_key.startswith('field_'):
+                    continue
+                key = (gid_str, field_key)
+                if key in seen_fields:
+                    continue
+                try:
+                    val = float(raw)
+                except (TypeError, ValueError):
+                    continue
+                seen_fields.add(key)
+                for target in targets:
+                    for scale in scales:
+                        scaled = val * scale
+                        if abs(scaled - target) <= tolerance:
+                            matches.append({
+                                'message_id': gid_str,
+                                'field_id': field_key,
+                                'target': target,
+                                'scale': scale,
+                                'raw_value': val,
+                                'scaled_value': round(scaled, 3),
+                            })
+                            break  # one scale per (field, target)
+    return matches
+
+
+def _sleep_counter_derivation_candidates(
+    stage_events: list,
+    raw_counters: dict,
+) -> dict:
+    """Per-night diagnostic that surfaces derivations from `[275]` stage
+    transitions for comparison against the `[346] field_12 / field_13`
+    mystery counter values (issue #283).
+
+    Pinned facts on Andy's Fenix 8:
+      • May 28: field_12=2, field_13=7
+      • May 30: field_12=14, field_13=0
+
+    The values are obviously sleep-derived counters but the exact
+    derivation isn't locked. This helper computes the plausible
+    candidates from the `[275]` event list — stage-period counts,
+    transition counts, REM-onset counts — and surfaces them next to
+    the raw `[346]` values. Operator compares: any derivation that hits
+    both raw counters on ≥2 nights is the lock candidate.
+
+    Stage codes (from `_SLEEP_DATA_STAGE_MSG` docs): 1=Unmeasurable,
+    2=Light, 3=Deep, 4=REM. `[275]` instances mark the entry into a
+    stage; a contiguous run of identical codes (rare — each transition
+    emits a new event) is one stage period.
+
+    Inputs:
+      stage_events — `[(ts, code), ...]` from `_walk_sleep_stage_events`.
+      raw_counters — `{field_12: str_value, field_13: str_value}` from
+                     the `[346]` GenericMessage. Pass empty dict if the
+                     file has no `[346]`.
+
+    Returns:
+      {
+        'raw': {'field_12': int|None, 'field_13': int|None},
+        'derived': {
+          'total_events':         len(stage_events),
+          'transition_count':     len(stage_events) - 1,
+          'light_period_count':   contiguous runs of code 2,
+          'deep_period_count':    contiguous runs of code 3,
+          'rem_period_count':     contiguous runs of code 4,
+          'awake_period_count':   contiguous runs of code 1,
+        },
+        'matches_field_12': [list of derivation keys equal to field_12],
+        'matches_field_13': [list of derivation keys equal to field_13],
+      }
+    Returns {} when there are no `[275]` events at all (nothing to
+    derive from)."""
+    if not stage_events:
+        return {}
+
+    # Count contiguous runs of each code — back-to-back events with the
+    # same code count once. (Adjacent same-code events are rare but
+    # possible if the watch re-emits the same stage.)
+    period_counts = {1: 0, 2: 0, 3: 0, 4: 0}
+    prev_code = None
+    for _ts, code in stage_events:
+        if code != prev_code:
+            if code in period_counts:
+                period_counts[code] += 1
+            prev_code = code
+
+    derived = {
+        'total_events': len(stage_events),
+        'transition_count': max(len(stage_events) - 1, 0),
+        'awake_period_count': period_counts[1],
+        'light_period_count': period_counts[2],
+        'deep_period_count': period_counts[3],
+        'rem_period_count': period_counts[4],
+    }
+
+    def _as_int(v):
+        try:
+            return int(float(v))
+        except (TypeError, ValueError):
+            return None
+
+    raw = {
+        'field_12': _as_int(raw_counters.get('field_12')),
+        'field_13': _as_int(raw_counters.get('field_13')),
+    }
+
+    matches_12 = [k for k, v in derived.items() if raw['field_12'] is not None and v == raw['field_12']]
+    matches_13 = [k for k, v in derived.items() if raw['field_13'] is not None and v == raw['field_13']]
+
+    return {
+        'raw': raw,
+        'derived': derived,
+        'matches_field_12': matches_12,
+        'matches_field_13': matches_13,
+    }
 
 
 def find_constant_value_fields(

@@ -54,6 +54,32 @@
   </div>
   {% endif %}
 
+  {% if inspect_value_matches is not none %}
+  <div class="insp-value-match sec-sm">
+    <p class="eyebrow">Value-match scan · targets = {{ inspect_value_targets|join(', ') }}</p>
+    <p class="rail-note">Per-file scan for fields whose value matches any target
+      (under candidate scales). Pass <code>?values=A,B,C</code> to override or
+      <code>?values=off</code> to disable. Default targets are Andy's May 30
+      Connect-smoothed stage minutes (#283) — useful for locking which raw fields
+      carry the smoothed Light / REM / Awake values.</p>
+    {% for entry in inspect_value_matches %}
+    <div class="insp-vm-file">
+      <p class="mono"><b>{{ entry.name }}</b></p>
+      {% if entry.matches %}
+      <ul class="mono">
+        {% for m in entry.matches %}
+        <li>[{{ m.message_id }}] {{ m.field_id }} · raw {{ m.raw_value }} · ×{{ m.scale }} →
+          {{ m.scaled_value }} ≈ target {{ m.target }}</li>
+        {% endfor %}
+      </ul>
+      {% else %}
+      <p class="rail-note">No matches.</p>
+      {% endif %}
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+
   {% if inspect_dumps %}
   <div class="insp-results" data-insp-results>
     <div class="insp-actions">

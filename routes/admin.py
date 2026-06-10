@@ -103,6 +103,7 @@ def fit_inspect():
     _require_admin()
     dumps = None
     scan_matches = None
+    value_match_results = None
     # `target` defaults to 48 (Andy's stable VO2max running — #283 follow-up).
     # `?target=X` overrides for other constant-value lookups. `_METRICS.fit`
     # GenericMessages 281/330/378/384 are the standard scan targets for
@@ -113,6 +114,21 @@ def fit_inspect():
         scan_target = 48.0
     scan_scope = (request.args.get('scope') or '').strip().lower()
     scan_message_ids = None if scan_scope == 'all' else (281, 330, 378, 384)
+    # `?values=70,180,47,8` runs the per-file value-match scanner —
+    # finds fields whose value matches any of the targets. Defaults to
+    # Andy's May 30 Connect-smoothed stage minutes (#283 motivating
+    # case): Deep=70 (already locked to [346] field_9), Light=180,
+    # REM=47, Awake=8. `?values=off` disables.
+    raw_values = (request.args.get('values') or '70,180,47,8').strip()
+    if raw_values.lower() == 'off':
+        value_targets: list = []
+    else:
+        value_targets = []
+        for part in raw_values.split(','):
+            try:
+                value_targets.append(float(part.strip()))
+            except (TypeError, ValueError):
+                continue
     if request.method == 'POST':
         f = request.files.get('fit_file')
         if not f or not f.filename:
@@ -123,7 +139,9 @@ def fit_inspect():
             import io
             import zipfile
 
-            from garmin_fit_parser import _dump_fit, find_constant_value_fields
+            from garmin_fit_parser import (
+                _dump_fit, find_constant_value_fields, find_value_match_fields,
+            )
             raw = f.read()
             fname = secure_filename(f.filename or '').lower()
             if fname.endswith('.zip'):
@@ -150,6 +168,19 @@ def fit_inspect():
                 scan_matches = find_constant_value_fields(
                     nights, scan_target, message_ids=scan_message_ids,
                 )
+            # Per-file value-match scan runs on every successful dump.
+            # Empty `value_targets` (operator passed `?values=off`) skips.
+            if value_targets:
+                value_match_results = []
+                for d in dumps:
+                    if 'dump' not in d:
+                        continue
+                    value_match_results.append({
+                        'name': d['name'],
+                        'matches': find_value_match_fields(
+                            d['dump'], value_targets,
+                        ),
+                    })
         except Exception as e:  # noqa: BLE001 — surface parse errors to the operator
             flash(f'Error: {e}', 'danger')
             return redirect(url_for('admin.fit_inspect'))
@@ -160,6 +191,8 @@ def fit_inspect():
         inspect_scan_target=scan_target,
         inspect_scan_scope=('all' if scan_scope == 'all'
                             else '_METRICS.fit GenericMessages'),
+        inspect_value_matches=value_match_results,
+        inspect_value_targets=value_targets,
     )
 
 
