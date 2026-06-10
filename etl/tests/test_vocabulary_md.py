@@ -140,17 +140,19 @@ def test_terrain_count(parsed):
     # Row count bumped 16 → 17 by the Bucket C (f) water-vocab expansion
     # 2026-05-24 (NEW TRN-017 Moving Water); bumped 17 → 18 by the Bucket C
     # (g) terrain↔equipment merge 2026-05-24 (NEW TRN-020 Gravel — surface
-    # gap; modality cross-reference future-slice).
-    assert len(parsed["terrain_types"]) == 18
+    # gap; modality cross-reference future-slice); bumped 18 → 19 by Vocabulary
+    # V3 (NEW TRN-018 Off Trail / Bushwhack — #340).
+    assert len(parsed["terrain_types"]) == 19
 
 
 def test_terrain_ids_unique_and_sequential(parsed):
     ids = sorted(t["terrain_id"] for t in parsed["terrain_types"])
     assert len(ids) == len(set(ids))
-    # TRN-018/TRN-019 reserved (intentional gap) — Bucket C (g) added TRN-020
-    # Gravel without back-filling the gap; future cycling-specific terrain
-    # rows would land at TRN-018/019 if Andy ratifies expansion (S3) later.
-    expected_ids = [f"TRN-{i:03d}" for i in range(1, 18)] + ["TRN-020"]
+    # TRN-018 now used (Vocabulary V3 — Off Trail / Bushwhack, #340). TRN-019
+    # remains reserved (intentional gap) — TRN-020 Gravel was added by Bucket C
+    # (g) ahead of it; a future cycling-specific terrain row could land at
+    # TRN-019 if Andy ratifies expansion later.
+    expected_ids = [f"TRN-{i:03d}" for i in range(1, 19)] + ["TRN-020"]
     assert ids == sorted(expected_ids)
 
 
@@ -161,7 +163,7 @@ def test_terrain_known_canonical_names_present(parsed):
         "Pool", "Flat Water", "Moving Water", "Ocean / Tidal", "Whitewater",
         "Snow / Winter Alpine",
         "Climbing Gym", "Pump Track / Skills Course", "Indoor / Gym",
-        "Gravel",
+        "Gravel", "Technical Rock / Scree", "Off Trail / Bushwhack",
     ]:
         assert required in names
 
