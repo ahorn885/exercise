@@ -150,10 +150,14 @@ def test_load_waivers_missing_file_is_empty(tmp_path) -> None:
     assert v.load_waivers(tmp_path / "nope.json") == {}
 
 
-def test_shipped_registry_is_valid_and_empty() -> None:
-    # The committed registry parses and (per genesis) carries no waivers yet.
+def test_shipped_registry_matches_policy() -> None:
+    # The committed registry parses, and per decision C only `sum_to_100`
+    # carries waivers (vocab/contraindicated are fix-not-waive).
     waivers = v.load_waivers(v.WAIVERS_PATH)
-    assert waivers == {}
+    assert set(waivers) == {"sum_to_100"}
+    # The five by-design sub-100 sports the gate's first DB run enumerated.
+    assert "Swimrun" in waivers["sum_to_100"]
+    assert len(waivers["sum_to_100"]) == 5
 
 
 def test_format_report_json_shape() -> None:

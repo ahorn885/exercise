@@ -610,6 +610,20 @@ def main(argv: list[str] | None = None) -> int:
                 f"(exercise_id, sport_name) rows — see report"
             )
         sxm_rows = sport_canon.filter_sport_rows(sxm_rows)  # sport canon cascade
+        # Lockstep: drop exercise tags naming a canon-removed discipline
+        # (Fencing / Laser Run / Rifle Shooting) — orphaned by the sport
+        # removal, they'd otherwise fail vocab_alignment (no bridge home).
+        sxm_dropped_removed_disc = [
+            r for r in sxm_rows if sport_canon.is_removed_exercise_db_sport(r.get("sport_name"))
+        ]
+        sxm_rows = [
+            r for r in sxm_rows if not sport_canon.is_removed_exercise_db_sport(r.get("sport_name"))
+        ]
+        if sxm_dropped_removed_disc:
+            _print(
+                f"  [canon] sport_exercise_map: dropped {len(sxm_dropped_removed_disc)} "
+                f"row(s) tagged to canon-removed disciplines"
+            )
         n = insert_versioned(
             conn, "layer0.sport_exercise_map",
             [

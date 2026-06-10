@@ -1,4 +1,10 @@
 {
   "_comment": "validate_layer0 waiver registry. Per decision C (Layer0_AuthoringModel_DBSourceOfTruth_Design_v1.md §5.2, Andy 2026-06-10): only `sum_to_100` carries waivers (sports whose adjusted stack legitimately falls short of the per-phase threshold by design). `vocab_alignment` and `contraindicated_conditions` violations must be FIXED in the data, not waived — that policy is enforced by review of this file, not by code. Every waiver needs: check, id (the violation id the gate prints), reason, added (YYYY-MM-DD), by. The genesis-snapshot waiver set is empty until the gate's first DB run enumerates the real sub-100 sports.",
-  "waivers": []
+  "waivers": [
+    {"check": "sum_to_100", "id": "Canoe / Kayak Marathon (Ultra-Distance)", "reason": "Intentional sub-100 high-band stack (base/build/peak) — pre-existing WARN carried from the ETL era; per decision C sum_to_100 shortfalls are by-design, not curation errors.", "added": "2026-06-10", "by": "andy (decision C)"},
+    {"check": "sum_to_100", "id": "Marathon (Mountain)", "reason": "Intentional sub-100 high-band stack (build/peak) — by-design per decision C.", "added": "2026-06-10", "by": "andy (decision C)"},
+    {"check": "sum_to_100", "id": "Mountain Running / Skyrunning", "reason": "Intentional sub-100 high-band stack (build/peak) — by-design per decision C.", "added": "2026-06-10", "by": "andy (decision C)"},
+    {"check": "sum_to_100", "id": "Swimrun", "reason": "Intentional sub-100 high-band stack (build/peak/taper) — by-design per decision C.", "added": "2026-06-10", "by": "andy (decision C)"},
+    {"check": "sum_to_100", "id": "Ultramarathon (Trail)", "reason": "Intentional sub-100 high-band stack (peak) — by-design per decision C.", "added": "2026-06-10", "by": "andy (decision C)"}
+  ]
 }
