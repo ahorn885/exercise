@@ -1217,6 +1217,22 @@ body.bulk-mode { padding-bottom: 80px; }
 .app .sess-head .sess-name { font-weight: 600; }
 .app .sess-intent { font-size: 13px; color: var(--fg-2); line-height: 1.5; }
 .app .sess-notes { font-size: 12px; color: var(--fg-3); margin-top: 4px; }
+.app .sess-blocks, .app .sess-exercises {
+  list-style: decimal inside; padding: 0; margin: 8px 0 0;
+  display: flex; flex-direction: column; gap: 8px;
+}
+.app .sess-block, .app .sess-exercise {
+  border-top: 1px solid var(--hairline); padding-top: 8px;
+}
+.app .sess-block-head, .app .sess-exercise-head {
+  display: inline-flex; align-items: baseline; flex-wrap: wrap; gap: 6px 10px;
+}
+.app .sess-block-kind, .app .sess-exercise-name { font-weight: 600; font-size: 13px; }
+.app .sess-block-target, .app .sess-exercise-prescription {
+  font-family: var(--mono); font-size: 12px; color: var(--fg-2); margin-top: 2px;
+}
+.app .sess-block-instr { font-size: 12px; color: var(--fg-3); margin: 4px 0 0; line-height: 1.5; }
+.app .sess-flags { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
 
 @media (max-width: 859.98px) {
   .app .plan-gen-title { font-size: 30px; }
