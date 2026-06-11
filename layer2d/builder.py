@@ -35,7 +35,7 @@ Spec-vs-deployed reconciliations applied:
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any, Iterable
 
 from layer4.context import (
@@ -490,6 +490,7 @@ def _apply_phase_contraindications(
     base: list[AccommodationModality],
     primary: InjuryRecord,
     exercise: dict[str, Any],
+    today: date,
 ) -> list[AccommodationModality]:
     """Filter / rewrite base modalities per spec §5.3.6.4 phase rules.
 
@@ -540,7 +541,7 @@ def _apply_phase_contraindications(
                 *base,
             ]
         return base
-    if primary.severity == "Post-surgical" and _is_recent_post_surgical(primary):
+    if primary.severity == "Post-surgical" and _is_recent_post_surgical(primary, today):
         # Rule 3: prefer the cross-education swap.
         already_swapped = any(
             isinstance(m, LoadingTypeChangeModality)
@@ -560,11 +561,17 @@ def _apply_phase_contraindications(
     return base
 
 
-def _is_recent_post_surgical(injury: InjuryRecord) -> bool:
-    """True when severity is Post-surgical AND start_date is within 6 weeks."""
+def _is_recent_post_surgical(injury: InjuryRecord, today: date) -> bool:
+    """True when severity is Post-surgical AND start_date is within 6 weeks.
+
+    `today` is the cone's day-anchored reference (not wall-clock): this
+    recency bool drives the cross-education loading swap, which rides in the
+    accommodation modalities → Layer2D payload → `layer2d_hash` →
+    `plan_create_key`, so anchoring to `today` keeps the plan cache stable
+    across resumable passes (#202)."""
     if injury.severity != "Post-surgical" or injury.start_date is None:
         return False
-    delta = (datetime.utcnow().date() - injury.start_date).days
+    delta = (today - injury.start_date).days
     return 0 <= delta < _POST_SURGICAL_RECENT_DAYS
 
 
@@ -671,6 +678,7 @@ def _recommend_accommodations(
     exercise: dict[str, Any],
     current_injuries: list[InjuryRecord],
     evidence: list[Evidence],
+    today: date,
 ) -> list[AccommodationModality]:
     """Spec §5.3.6.5 — pick modalities from V1_DEFAULT_ACCOMMODATIONS,
     fall back to V1_FALLBACK, then apply §5.3.6.4 phase contraindications.
@@ -708,13 +716,14 @@ def _recommend_accommodations(
     base = table.get(
         (primary.injury_type, primary.severity), fallback,
     )
-    return _apply_phase_contraindications(base, primary, exercise)
+    return _apply_phase_contraindications(base, primary, exercise, today)
 
 
 def _evaluate_exercise(
     exercise: dict[str, Any],
     current_injuries: list[InjuryRecord],
     current_conditions: list[HealthConditionRecord],
+    today: date,
 ) -> ExerciseRisk:
     """Spec §5.3.5 — combine three signals, build the ExerciseRisk."""
     body_v, body_ev = _body_part_verdict(exercise, current_injuries)
@@ -723,7 +732,7 @@ def _evaluate_exercise(
     overall = _max_verdict(body_v, cond_v, move_v)
     evidence = body_ev + cond_ev + move_ev
     accommodations: list[AccommodationModality] = (
-        _recommend_accommodations(exercise, current_injuries, evidence)
+        _recommend_accommodations(exercise, current_injuries, evidence, today)
         if overall == "accommodate"
         else []
     )
@@ -1244,14 +1253,23 @@ def q_layer2d_injury_risk_profile_payload(
     included_discipline_ids: list[str],
     *,
     etl_version_set: dict[str, str],
+    today: date | None = None,
 ) -> Layer2DPayload:
     """Layer 2D — injury-risk profile per `Layer2D_Spec.md` §3.
 
     Returns the categorized exercise view + per-discipline risk profile +
     coaching flags + HITL items. Pure read; deterministic given inputs.
     Performance budget per spec §11: ~350ms for AR baseline.
+
+    `today` is the cone's day-anchored reference for the post-surgical
+    recency window (#202). The sole production caller (the Layer 4
+    orchestrator) passes the cone's `today`; the fallback below is purely
+    defensive (a wall-clock anchor here would drift `layer2d_hash` →
+    `plan_create_key` across a calendar boundary between resumable passes).
     """
     _validate_inputs(injuries, conditions, included_discipline_ids, etl_version_set)
+    if today is None:
+        today = datetime.utcnow().date()
     # §5.1 partition by status. Deployed `InjuryRecord.status` is the
     # ('Active' / 'Resolved' / 'Inactive') 3-enum; spec's `.status` computed
     # property partitions on severity. We use the deployed status to split
@@ -1279,7 +1297,7 @@ def q_layer2d_injury_risk_profile_payload(
     accommodated: list[ExerciseRisk] = []
     clean_ids: list[str] = []
     for ex in candidates:
-        risk = _evaluate_exercise(ex, current_injuries, current_conditions)
+        risk = _evaluate_exercise(ex, current_injuries, current_conditions, today)
         if risk.verdict == "exclude":
             excluded.append(risk)
         elif risk.verdict == "accommodate":
