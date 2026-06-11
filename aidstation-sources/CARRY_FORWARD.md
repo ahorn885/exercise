@@ -11,6 +11,18 @@ Rolling-state for items spanning multiple sessions. **Edit in place** — don't 
 
 ---
 
+## Locations privacy surfacing (2026-06-11, PR #535) — DONE, NO migration owed
+
+**PR [#535](https://github.com/ahorn885/exercise/pull/535) squash-merged to `main`, branch `claude/github-issue-446-lhnk9c`.** Closes **#446** (Track 1 child of #434; Locations epic #427). New locations derived privacy purely from category with no visible indicator and no override — so a residence Mapbox geocoded as `commercial_gym` silently landed shareable ("everything defaults to shared, there's no toggle").
+
+- **UI surfacing, not a model change** (per the issue spec note). `gym_profiles.private` stays source-of-truth; the previously-**dormant** `locale_profiles.sharing_opt_out` column (declared but never read/written) now carries the explicit choice from locale-creation → profile-build. Effective `private = (category ∈ RESIDENTIAL_CATEGORIES) OR sharing_opt_out` via `_resolve_private` / `_category_default_private` in `routes/locales.py`. The opt-out can only **tighten** — residences are never crowd-shareable (the safe default).
+- Live private/shared **chip** + **opt-out toggle**: manual `new.html` form (chip updates as category is picked; nonce'd inline JS per the terrain-editor precedent), each Mapbox result card, and the edit `form.html` (own/build mode; residences show a locked "Private" state; `shared_inherit` mode untouched — the shared profile's privacy is its creator's).
+- **Crowd-source filtering now reads the explicit flag:** `_find_gym_profile` excludes `private` rows (a peer at the same `mapbox_id` builds their own profile instead of inheriting one its creator marked private; the creator still reaches their own via the `gym_profile_id` link). `delete_locale` cleanup is flag-driven (`created_by_user_id = uid AND COALESCE(private,FALSE)=TRUE`), not re-derived from category — prevents orphaned private profiles from opted-out shareable locales.
+- Tests: `tests/test_locales.py` (+10 — `_resolve_private`/`_category_default_private` truth table, `_find_gym_profile` exclusion, build-path opt-out → `private`, flag-driven delete) + render smoke `tests/test_redesign_locales_form_render.py` updated for the new template contract. CI green (Vercel + stubbed unit suite).
+- ✅ **NO Neon migration owed** — both `gym_profiles.private` and `locale_profiles.sharing_opt_out` already exist on prod (landed with the Track 1 DDL, item 0 below). Pure code/UI change; live the moment the deploy lands.
+
+---
+
 ## Plans-page UI detour (2026-06-10, PR #531) — DONE, one owed migration
 
 **PR [#531](https://github.com/ahorn885/exercise/pull/531) squash-merged to `main`, branch `claude/plans-page-ui-issues-wjmw3l`.** One-session detour off the X-series, at Andy's direction. Two Plans-screen gaps:

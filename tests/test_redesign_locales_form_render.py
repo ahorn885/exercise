@@ -43,6 +43,7 @@ def _form_ctx(**kw):
         equipment_categories=_EQUIP, active={'db'},
         notes='', city='', is_manual=False, is_mapbox_anchored=False,
         is_deletable=False, display_address='',
+        privacy_locked=False, privacy_opt_out=False, privacy_effective=False,
         terrain_choices=_TERRAIN, active_terrain_ids={'trail'},
     )
     base.update(kw)
@@ -96,6 +97,7 @@ def test_form_deletable_shows_delete():
 def _new_ctx(**kw):
     base = dict(manual=False, query='', acked=True, results=[], error=None,
                 manual_categories=[('home', 'Home gym')],
+                residential_categories=['home_gym', 'other_residence'],
                 disclosure_version='v1', upgrade_slug='', upgrade_locale=None)
     base.update(kw)
     return base
