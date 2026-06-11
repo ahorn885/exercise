@@ -66,6 +66,7 @@ from layer4.session_grid import build_session_grid, resolve_available_days
 from layer4.validator import (
     ValidatorContext,
     phase_volume_bands_hours,
+    skill_gated_disciplines,
     validate_layer4_payload,
     weekly_capacity_hours,
 )
@@ -758,6 +759,47 @@ def _format_strength_exercise_pool(
     return out
 
 
+def _format_skill_capability_gates(
+    layer2c_payloads: dict[str, Layer2CPayload],
+    layer2a_payload: Layer2APayload | None,
+) -> list[str]:
+    """#336 — render the skill-capability substitution directive.
+
+    For each included discipline whose required skill-capability toggle is OFF
+    (sourced from the Layer 2C `requires_skill_capability` flags — the signal
+    that was computed-but-unconsumed, #298), instruct the synthesizer to
+    substitute strength-and-conditioning work for the skill-specific session
+    rather than prescribing training the athlete isn't cleared for. The
+    deterministic validator (`_rule_skill_capability_gate`) blocks any
+    surviving `kind == 'cardio'` session tagged to a gated discipline, so this
+    guidance and the gate agree. Empty when nothing is gated."""
+    gated = skill_gated_disciplines(layer2c_payloads)
+    if not gated:
+        return []
+    names: dict[str, str] = {}
+    if layer2a_payload is not None:
+        names = {d.discipline_id: d.discipline_name for d in layer2a_payload.disciplines}
+    out: list[str] = [
+        "=== Skill-capability gates (#336 — SAFETY; deterministic) ===",
+        "The athlete has NOT been cleared for the skill(s) these disciplines "
+        "require. Do NOT prescribe skill-specific (kind='cardio') sessions for "
+        "them — the validator will reject those. Instead substitute strength-"
+        "and-conditioning work (kind='strength') that builds the underlying "
+        "capacity (e.g. grip + upper-body strength in place of a climbing "
+        "session), and state the substitution in coaching_intent — "
+        "\"prescribing strength until you're cleared on <skill>\":",
+    ]
+    for d_id in sorted(gated):
+        toggle = gated[d_id]
+        d_name = names.get(d_id, d_id)
+        out.append(
+            f"  - {d_name} ({d_id}): not cleared for '{toggle}' — substitute "
+            "strength-and-conditioning; no skill-specific session."
+        )
+    out.append("")
+    return out
+
+
 def _format_session_grid(
     layer1_payload: dict[str, Any],
     layer2a_payload: Layer2APayload | None,
@@ -766,6 +808,7 @@ def _format_session_grid(
     race_event_payload: RaceEventPayload | None,
     *,
     week_range: tuple[int, int] | None = None,
+    skill_gated: dict[str, str] | None = None,
 ) -> list[str]:
     """Track 2 slice 2b: render the deterministic per-week session grid that
     replaces the prior `_format_phase_load_bands` block. The grid is
@@ -828,10 +871,19 @@ def _format_session_grid(
         )
         for a in grid.discipline_allocations:
             cadence = f" — {a.cadence_note}" if a.cadence_note else ""
+            # #336 — flag skill-gated disciplines inline in the authoritative
+            # grid so the count is read as a STRENGTH substitution, not a
+            # skill-specific session (the validator blocks the latter).
+            gate = ""
+            if skill_gated and a.discipline_id in skill_gated:
+                gate = (
+                    f" [SKILL-GATED: not cleared for '{skill_gated[a.discipline_id]}' "
+                    "— prescribe as strength substitution, NOT a skill session]"
+                )
             out.append(
                 f"  - {a.discipline_name} ({a.discipline_id}): "
                 f"{a.sessions_this_week} session(s) × ~{a.typical_session_minutes} min, "
-                f"target {a.target_hours_this_week:.1f} hours{cadence}."
+                f"target {a.target_hours_this_week:.1f} hours{cadence}.{gate}"
             )
         if grid.intensity_mix.total > 0:
             out.append(
@@ -1165,6 +1217,10 @@ def render_user_prompt(
         f" (mode={mode})"
     )
     parts.append("")
+    # #336 — skill-capability gate set (discipline_id → toggle_name), derived
+    # once from the Layer 2C `requires_skill_capability` flags and threaded into
+    # both the grid annotation and the dedicated substitution directive below.
+    skill_gated = skill_gated_disciplines(layer2c_payloads or {})
     parts.append("=== Session grid (deterministic — Track 2 §5.1/§5.2/§5.3) ===")
     parts.extend(
         _format_session_grid(
@@ -1174,9 +1230,13 @@ def render_user_prompt(
             phase_spec.phase_name,
             race_event_payload,
             week_range=week_range,
+            skill_gated=skill_gated,
         )
     )
     parts.append("")
+    parts.extend(
+        _format_skill_capability_gates(layer2c_payloads or {}, layer2a_payload)
+    )
 
     # === Prior continuity ===
     if not block_mode:

@@ -4,7 +4,7 @@ Pure-function rule set; no LLM, no I/O, no state. Runs after every synthesis
 call in both Pattern A and Pattern B; runs once more as a final pass over the
 cumulative plan in Pattern A step 5.
 
-Implements 21 rules per the §5.4 table (post-PR-C ±20/±10 volume bands +
+Implements 22 rules per the §5.4 table (post-PR-C ±20/±10 volume bands +
 28-day ACWR chronic window + rule-6 split into 6a/6b/6c + new
 `indoor_only_violation_*` + post-PR-C-followon `injury_violation_*`
 rewrite + new `injury_accommodation_violation_*`).
@@ -1005,6 +1005,30 @@ def _rule_schedule_violation(
 # ─── Rule 12: discipline_excluded ──────────────────────────────────────────
 
 
+def skill_gated_disciplines(
+    layer2c_payloads: dict[str, Layer2CPayload],
+) -> dict[str, str]:
+    """Disciplines the athlete must not be prescribed skill-specific (sport /
+    cardio) sessions for, because a required skill-capability toggle is OFF
+    (default OFF = assume-not-skilled).
+
+    Sourced from the Layer 2C `requires_skill_capability` coaching flags
+    (D-73 Phase 5.2 Bucket C sub-item (l)) — the capability signal that was
+    computed-but-unconsumed (#298). Maps `discipline_id → toggle_name`,
+    deduped across cluster locales (iterate locale-ids sorted for
+    determinism; first flag for a discipline wins). Empty dict when no 2C
+    payloads carry the flag (capture surface populated / no gated disciplines
+    included)."""
+    out: dict[str, str] = {}
+    for locale_id in sorted(layer2c_payloads):
+        l2c = layer2c_payloads[locale_id]
+        for f in l2c.coaching_flags:
+            if f.flag_type != "requires_skill_capability" or f.discipline_id is None:
+                continue
+            out.setdefault(f.discipline_id, f.metadata.get("toggle_name", ""))
+    return out
+
+
 def _rule_discipline_excluded(
     payload: Layer4Payload, ctx: ValidatorContext
 ) -> list[RuleFailure]:
@@ -1050,6 +1074,60 @@ def _rule_discipline_excluded(
                     affected_session_ids=[s.session_id],
                 )
             )
+    return out
+
+
+# ─── Rule 12b: skill_capability_gate (#336) ────────────────────────────────
+
+
+def _rule_skill_capability_gate(
+    payload: Layer4Payload, ctx: ValidatorContext
+) -> list[RuleFailure]:
+    """#336 — do not prescribe skill-specific (sport / `cardio`) sessions for a
+    discipline whose required skill-capability toggle is OFF.
+
+    Roped climbing, abseiling, open-water swimming, whitewater paddling, and
+    alpine travel each assume a technical competence the athlete may not have;
+    prescribing that training when the athlete hasn't claimed the skill is a
+    correctness AND safety problem (pv=46: rock-climbing + abseiling
+    prescribed for an athlete who never selected roped climbing). The fix is
+    substitution, not exclusion (Andy 2026-06-11): the discipline stays in the
+    plan, but its `kind == 'cardio'` skill session is blocked so the
+    synthesizer swaps it for strength-and-conditioning work (kind 'strength')
+    that builds the underlying capacity — e.g. grip / upper-body strength in
+    place of a climbing session — carrying a coach note until the skill is
+    cleared. Strength substitutions (kind 'strength', even tagged to the gated
+    discipline) are intentionally NOT blocked.
+
+    Gate set is sourced from the Layer 2C `requires_skill_capability` flags
+    (consumes the previously-orphaned flag, #298). `blocker` severity so the
+    capped-retry loop drives the substitution; a surviving unsafe session is
+    worse than a retry."""
+    gated = skill_gated_disciplines(ctx.layer2c_payloads)
+    if not gated:
+        return []
+    out: list[RuleFailure] = []
+    for s in payload.sessions:
+        if s.kind != "cardio" or s.discipline_id is None:
+            continue
+        toggle = gated.get(s.discipline_id)
+        if toggle is None:
+            continue
+        out.append(
+            RuleFailure(
+                rule_name=f"skill_capability_gate_{s.discipline_id}_{s.session_id}",
+                phase_name=s.phase_metadata.phase_name if s.phase_metadata else None,
+                severity="blocker",
+                detail=(
+                    f"discipline {s.discipline_id} requires the '{toggle}' skill "
+                    "capability the athlete has not enabled; substitute a "
+                    "strength-and-conditioning session (kind='strength') that builds "
+                    "the underlying capacity instead of a skill-specific session, "
+                    "and note the substitution in coaching_intent until cleared"
+                ),
+                affected_session_ids=[s.session_id],
+            )
+        )
     return out
 
 
@@ -1554,6 +1632,7 @@ _ALL_RULES: tuple[Callable[[Layer4Payload, ValidatorContext], list[RuleFailure]]
     _rule_injury_accommodation_violation,
     _rule_schedule_violation,
     _rule_discipline_excluded,
+    _rule_skill_capability_gate,
     _rule_sport_locale_incompatible,
     _rule_taper_phase_intent_violation,
     _rule_kit_manifest_inputs_incomplete,
@@ -1572,7 +1651,7 @@ def validate_layer4_payload(
     context: ValidatorContext,
     pass_index: int = 0,
 ) -> ValidatorResult:
-    """Run all 21 §5.4 rules against `payload` + `context`; return a
+    """Run all 22 §5.4 rules against `payload` + `context`; return a
     `ValidatorResult` with aggregated `RuleFailure` rows.
 
     `accepted` is True iff no `blocker`-severity failures fired. `warning`-
