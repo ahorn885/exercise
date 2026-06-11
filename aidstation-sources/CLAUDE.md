@@ -45,7 +45,7 @@ Spec-first, multi-layer LLM pipeline. Storage: PostgreSQL with JSONB. Versioning
 | **4** | Plan generation + periodization validator (capped correction loop). |
 | **5** | Parallel supplemental outputs: nutrition, supplements, 7-day clothing/conditions advisor. |
 
-Live per-layer status: `CURRENT_STATE.md`. Architecture canonical doc: `Control_Spec` (resolve to highest `_vN.md` by directory listing).
+Live per-layer status: `CURRENT_STATE.md`. Architecture canonical doc: `specs/Control_Spec` (resolve to highest `_vN.md` by listing `specs/`). Docs are organized under `specs/` (canonical layer + architecture specs), `designs/` (per-feature designs), `research/` (audits/evidence), `plans/` (implementation plans); superseded versions live under `archive/superseded-specs/`. See `README.md` for the full map.
 
 ---
 
@@ -71,7 +71,7 @@ When a handoff defers edits, include mechanically-applicable instructions:
 
 ### Rule #12 — Numeric version suffixes
 
-Revised files save with a numeric version suffix (`_v1.md`, `_v2.md`, …). Each revision bumps N from the highest existing. Old versions accumulate as in-project history — do not delete. Cross-references cite the logical name without version; resolve via directory listing to the highest N at use time.
+Revised files save with a numeric version suffix (`_v1.md`, `_v2.md`, …). Each revision bumps N from the highest existing. The current version stays in its live folder (`specs/`, `designs/`, …); **superseded versions move to `archive/superseded-specs/`** (preserved as history — not deleted; git retains them too). Cross-references cite the logical name without version; resolve via directory listing of the live folder to the highest N at use time. *(Reorg 2026-06-11: the flat `aidstation-sources/` root was foldered into `specs/`/`designs/`/`research/`/`plans/` with superseded versions archived — see `README.md`.)*
 
 **Backlog (historical):** the `Project_Backlog_vN.md` chain is **frozen** under `archive/backlog/` as of 2026-05-27 — backlog now lives in GitHub issues (see Working principles). The old convention is recorded here only to read the archive: it bumped N on **structural** change, with status flips / Notes-column annotations / new D-row additions as **in-file edits** plus a `## Changelog` entry (most-recent first).
 
@@ -127,7 +127,7 @@ The first four are foundational (adapted from Karpathy's CLAUDE.md, github.com/m
 - **Goal-driven execution — define success criteria, loop until verified.** Translate every task into a measurable goal before starting, then loop against it independently instead of round-tripping for direction. The translation pattern: "add validation" → "write tests for the invalid inputs, implement until they pass"; "fix the bug" → "reproduce it with a failing test, fix until the test goes green"; "refactor X" → "confirm the tests pass before *and* after." For compound work, write the brief step→verify chain up front (`1. [step] → verify: [check]` …) so each step has a checkable exit. Vague criteria ("make it work") force ongoing back-and-forth; concrete ones let the work run to done on its own. This is the same engine as spec-first sequencing and the Layer-4 periodization validator's capped correction loop — declarative success criteria with a verification loop, scaled down to the individual task. *Health check on whether this is working:* diffs carry fewer incidental changes, fewer iterations get burned undoing overengineering, and the clarifying questions land **before** implementation rather than as after-the-fact corrections.
 - **Spec-first sequencing.** Architecture → prompts → implementation. Resist shortcuts. Resist producing testable output before the spec is correct and complete.
 - **Redesign work.** For redesign work, follow `docs/redesign/CONVENTIONS.md` and the phase specs alongside it.
-- **Layer specs follow a depth standard.** 14 sections matching `Layer2C_Spec.md`: purpose, boundaries, function signature, validation, algorithm, payload schema, coaching flags, caching, edge cases, performance budget, open items, test scenarios, gut check. Do not skip per-node specs; do not let design decisions live only in handoff docs.
+- **Layer specs follow a depth standard.** 14 sections matching `specs/Layer2C_Spec.md`: purpose, boundaries, function signature, validation, algorithm, payload schema, coaching flags, caching, edge cases, performance budget, open items, test scenarios, gut check. Do not skip per-node specs; do not let design decisions live only in handoff docs.
 - **5-file ceiling = substantive files only.** "Substantive" means new/modified code, specs, designs, prompt bodies. Bookkeeping files (`CURRENT_STATE.md` edits, backlog in-file edits, `CARRY_FORWARD.md` edits, the closing handoff, `CLAUDE.md` rule edits) do not count against the ceiling. Quality degrades past ~5 substantive files. If a session needs more, propose splitting before starting.
 - **`CURRENT_STATE.md` is the rolling pointer.** Update it on every shipped session (last-handoff name + focus + layer status). The closing handoff is the long-form record. Don't accumulate session narrative in `CLAUDE.md` — that file is for stable rules.
 - **`CARRY_FORWARD.md` is the rolling carry-state.** Manual walkthroughs, doc-sweep nits, orthogonal/parallel tracks. Edit in place; don't restate in handoff narratives.

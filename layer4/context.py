@@ -2,7 +2,7 @@
 contracts Layer 4 consumes.
 
 See:
-- `aidstation-sources/Layer1_Spec.md` §7 → `Layer1Payload` (D-73 Phase 1.3
+- `aidstation-sources/specs/Layer1_Spec.md` §7 → `Layer1Payload` (D-73 Phase 1.3
   typed-payload promotion 2026-05-19; mirrors D-51 §3 storage shipped in
   Phase 1.2A/B/C). Section-keyed sub-models (`Layer1Identity`,
   `Layer1HealthStatus`, `Layer1TrainingHistory`, `Layer1DisciplineBaselines`,
@@ -12,16 +12,16 @@ See:
   per `Upstream_Implementation_Plan_v1.md` §6 item 3 + §8 mitigation
   ("keep dict[str, Any] for v1; promote in v2"). The orchestrator
   (Phase 5) calls `.model_dump()` before threading to Layer 4.
-- `aidstation-sources/Layer2A_Spec.md` §7 → `Layer2APayload`
-- `aidstation-sources/Layer2B_Spec.md` §7 → `Layer2BPayload`
-- `aidstation-sources/Layer2C_Spec.md` §7 (+ §5.6 amendment) → `Layer2CPayload`
-- `aidstation-sources/Layer2D_Spec.md` §7 (+ §5.3.6 amendment) → `Layer2DPayload`
+- `aidstation-sources/specs/Layer2A_Spec.md` §7 → `Layer2APayload`
+- `aidstation-sources/specs/Layer2B_Spec.md` §7 → `Layer2BPayload`
+- `aidstation-sources/specs/Layer2C_Spec.md` §7 (+ §5.6 amendment) → `Layer2CPayload`
+- `aidstation-sources/specs/Layer2D_Spec_v1.md` §7 (+ §5.3.6 amendment) → `Layer2DPayload`
   + `AccommodationModality` discriminated union (6 variants).
-- `aidstation-sources/Layer2E_Spec.md` §7 → `Layer2EPayload`
-- `aidstation-sources/Layer3_3A_Spec.md` §7 → `Layer3APayload`
-- `aidstation-sources/Layer3_3B_Spec.md` §7 → `Layer3BPayload`
-- `aidstation-sources/Athlete_Onboarding_Data_Spec_v5.md` §G.1 → `DailyAvailabilityWindow`
-- `aidstation-sources/Race_Events_D66_Design_v1.md` §4 → `RaceEventPayload`
+- `aidstation-sources/specs/Layer2E_Spec.md` §7 → `Layer2EPayload`
+- `aidstation-sources/specs/Layer3_3A_Spec.md` §7 → `Layer3APayload`
+- `aidstation-sources/specs/Layer3_3B_Spec.md` §7 → `Layer3BPayload`
+- `aidstation-sources/specs/Athlete_Onboarding_Data_Spec_v6.md` §G.1 → `DailyAvailabilityWindow`
+- `aidstation-sources/designs/Race_Events_D66_Design_v1.md` §4 → `RaceEventPayload`
   + `RouteLocale` + `RouteLocaleEquipment` + `RaceFormat` + `RouteLocaleRole`
   (D-66 design wave shipped 2026-05-18; replaces v1 RaceEventStub placeholder).
 - `Layer4_Spec.md` §5.4 forward-pointer — `PerDateRestriction` (pending D-67;

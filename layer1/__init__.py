@@ -7,10 +7,10 @@ wellness_self_report, race_events, injury_log, disclosure_acknowledgments)
 and assembles a typed `Layer1Payload` per `Layer1_Spec.md` §3.
 
 See:
-- `aidstation-sources/Layer1_Spec.md` — full spec (purpose, signature,
+- `aidstation-sources/specs/Layer1_Spec.md` — full spec (purpose, signature,
   validation, algorithm, payload schema, edge cases, test scenarios).
 - `layer4/context.py` — `Layer1Payload` + section sub-models.
-- `aidstation-sources/Layer1_D51_Design_v1.md` §3 — storage design wave.
+- `aidstation-sources/designs/Layer1_D51_Design_v1.md` §3 — storage design wave.
 
 Per `Upstream_Implementation_Plan_v1.md` §6 item 3 + §8 mitigation, Layer 4
 entry points keep `layer1_payload: dict[str, Any]` for v1; the orchestrator

@@ -11,6 +11,16 @@ Rolling-state for items spanning multiple sessions. **Edit in place** — don't 
 
 ---
 
+## `aidstation-sources/` reorg (2026-06-11) — DONE; two follow-ups
+
+Foldered the flat doc root into `specs/`/`designs/`/`research/`/`plans/` + `archive/superseded-specs/` + `archive/etl-scratch/`; `README.md` is now the plain-English index; `CLAUDE.md` paths + Rule #12 synced. Handoff: `V5_Housekeeping_AidstationSources_Reorg_2026_06_11_Closing_Handoff_v1.md`. **Doc layout changed — specs are under `specs/` now, not the flat root.**
+
+- ⬜ **NEXT SLICE — the xlsx-authoring freeze (Option 3).** Gate cleared by #546, clean base from the reorg. Retire `etl/layer0/extractors/` + `run.py` + `emit_sql.py` + v14/v19 workbooks + their ETL-only tests; first relocate the live-referenced constants (`RACE_INELIGIBLE_TERRAIN_IDS`, `_TERRAIN_STRUCTURED_ROWS`, gear-toggle/substitute helpers) out of `extractors/` to a staying module. **Trigger #6** — lead with a per-reference keep-vs-retire classification for Andy before moving anything.
+- ✅ **Brand `.zip`s** → moved to `brand/` (Andy's call, 2026-06-11).
+- ✅ **Stale doc-path pointers swept** (2026-06-11). All 17 references across 7 `layer*/` modules repointed to the new folder paths (prefix-only, filesystem-derived; every target verified to exist + files parse). The two version-nuance refs (`layer4/context.py` Layer2D + Onboarding) were bumped to the **current** specs (`specs/Layer2D_Spec_v1.md` §7/§5.3.6, `specs/Athlete_Onboarding_Data_Spec_v6.md` §G.1 — anchors confirmed present). Bare-name inline comments (no path) left as-is — they resolve by name.
+
+---
+
 ## Layer 0 phase 4 — DB→xlsx bulk-review export (2026-06-11, PR #545) — DONE
 
 **Decision B shipped — the ripe half of phase 4.** `etl/layer0/export_xlsx.py` is a read-only DB→xlsx projection (one sheet per `information_schema`-discovered `layer0.*` table, active rows only) that recovers bulk visual review of all reference data *without* re-introducing the workbook as an authoring input — edits still arrive as `etl/migrations/layer0/` SQL. Mirrors `validate_layer0`'s pure-logic + lazy-DB shape (12 DB-free tests; `etl/tests/` 197 green). The serializer flattens the psycopg2 types openpyxl rejects — tz-aware `datetime`→ISO string, `Decimal`→float, `TEXT[]`→comma-join, `JSONB`→JSON. Design doc §6.5/§8/§9 synced in place; handoff `V5_Implementation_Layer0_Phase4_DBExport_2026_06_11_Closing_Handoff_v1.md`. CI green, squash-merged. **The §6.4 extractor/workbook freeze is the remaining phase-4 item — still owed AND gated** on 2–3 migrations going through cleanly (only `0001` has); the export now makes that freeze *safe* when the gate clears. Owed Andy's-hands live run is in the consolidated deploys list below.
