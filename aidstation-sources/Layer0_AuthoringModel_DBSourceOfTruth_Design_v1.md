@@ -90,7 +90,8 @@ Keep `(etl_version, etl_run_at, superseded_at)` and the supersede-before-insert 
 1. **Genesis snapshot.** One final clean ETL run of v14/v19/Vocab-v2; the latest committed `etl/output/layer0_etl_v1.6.x.sql` is the reproducible genesis artifact. Declare the DB canonical from here. *(Mostly already done — the v1.6.x line is the current emitted snapshot.)*
 2. **Port the validators** → `validate_layer0` + CI wire. **This is slice 1 and the first thing to build.** No authoring change ships before the gate exists.
 3. **Establish `etl/migrations/layer0/`** + the migration convention (§5.1). First real DB-native edit (e.g. the #476 D-007 cleanup or #477 discipline-ID split) becomes the proof migration instead of a v15 workbook.
-4. **Retire the extractors + xlsx.** Once 2–3 edits have gone through migrations cleanly, freeze `etl/layer0/extractors/`, `run.py`, `emit_sql.py`, and the two remaining workbooks (`Sports_Framework_v14.xlsx`, `AR_Exercise_Database_v19.xlsx`) into an archive (the way `Project_Backlog_vN.md` was frozen). The old-version test pins are already resolved (§7.2 — tests now run against v14, the live source).
+4. **Retire the extractors + xlsx.** Once 2–3 edits have gone through migrations cleanly, freeze `etl/layer0/extractors/`, `run.py`, `emit_sql.py`, and the two remaining workbooks (`Sports_Framework_v14.xlsx`, `AR_Exercise_Database_v19.xlsx`) into an archive (the way `Project_Backlog_vN.md` was frozen). The old-version test pins are already resolved (§7.2 — tests now run against v14, the live source). _Migrations through cleanly so far: `0001` (D-007 cleanup) + `0002` (de-orphan `supplement_vocabulary`, 2026-06-11) — `terrain_gap_rules` as `0003` clears the 2–3 gate._
+   - **Spec-sourced orphan tables.** Two Layer 0 tables — `supplement_vocabulary` and `terrain_gap_rules` — are hand-authored from specs, not ETL-emitted, so they were never in the genesis snapshot and lived as one-shot `etl/sources/migrate_*.sql` the gate never saw. Folding them into the gate-covered model is itself a freeze prerequisite (you cannot retire the authoring loop while Layer 0 tables are managed by ad-hoc SQL): DDL → `schema.sql`, seed → a self-contained migration here. `0002` did `supplement_vocabulary` (and subsumed the D-21 contraindication retag — its seed already carries the canonical §B tokens).
 5. **DB→xlsx export** (decision B) — ✅ **built 2026-06-11** as `etl/layer0/export_xlsx.py` (read-only `information_schema`-discovered projection, one sheet per `layer0.*` table, active rows only). Shipped ahead of the §6.4 freeze on purpose: §8's gut check makes the bulk-review export the prerequisite that makes full xlsx retirement *safe*. Admin UI (decision A) stays deferred.
 
 ## 7. What gets deleted / retired
@@ -139,8 +140,10 @@ Epic filed: **[#488](https://github.com/ahorn885/exercise/issues/488)** — "Ret
 - [x] Prune stale/superseded workbooks; retire v10/v11.
 - [x] Add `etl/tests/` to the CI Python job (see §10).
 - [ ] Slice 1 — `validate_layer0` port + CI wire (the integrity gate; nothing ships before it). Includes: `sum_to_100` waiver registry · fix `vocab_alignment` data · triage `contraindicated_conditions` data · clear open item E.
-- [ ] `etl/migrations/layer0/` convention + first proof migration.
-- [ ] Phase 4 — freeze extractors + remaining workbooks (v14/v19). _Gated on 2–3 migrations going through cleanly (§6.4); only `0001` has so far — still owed._
+- [x] `etl/migrations/layer0/` convention + first proof migration (`0001`).
+- [x] `0002` — de-orphan `supplement_vocabulary` into the gate (DDL → `schema.sql`, seed → `etl/migrations/layer0/0002_seed_supplement_vocabulary.sql`; subsumes the D-21 retag) (2026-06-11).
+- [ ] `0003` (owed) — de-orphan `terrain_gap_rules` the same way (the last spec-sourced orphan; also clears the freeze gate's 2–3-migration bar).
+- [ ] Phase 4 — freeze extractors + remaining workbooks (v14/v19). _Gated on 2–3 migrations going through cleanly (§6.4); `0001` + `0002` so far — still owed._
 - [x] DB→xlsx export (decision B — at phase 4). `etl/layer0/export_xlsx.py` + `etl/tests/test_export_xlsx.py` (2026-06-11).
 - [ ] **#509** (spun out) — Layer 2A inclusion-precedence unification + wire `default_inclusion` column. Out of scope here; sequenced with X3/X4.
 

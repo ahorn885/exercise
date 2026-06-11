@@ -89,6 +89,29 @@ UPDATE layer0.terrain_types SET superseded_at = now()
 > (`_q_current_etl_version_set` + the Layer 2 builders reading the active set);
 > it replaced the earlier per-family re-stamp.
 
+## Tables that are not in the genesis snapshot (spec-sourced, not ETL-emitted)
+
+Most `layer0.*` tables are emitted by the ETL into the genesis snapshot
+(`etl/output/layer0_etl_v1.6.x.sql`). A few are **spec-sourced** — hand-authored
+from a spec rather than parsed from a workbook — so they never appeared in the
+snapshot and historically lived as one-shot `etl/sources/migrate_*.sql` files the
+gate never saw. Folding them into this loop has two halves:
+
+1. **DDL → `etl/layer0/schema.sql`** so the gate (and any `apply_schema` setup)
+   creates the table. Mirror the table's *existing* live shape exactly — do not
+   "normalize" column types/columns in the same step, or you risk drift with a
+   copy already on Neon.
+2. **Seed → a migration here**, self-contained (`CREATE TABLE IF NOT EXISTS` +
+   `INSERT … ON CONFLICT DO NOTHING`) so a standalone Neon SQL-editor apply
+   provisions the table without a separate schema step.
+
+`0002_seed_supplement_vocabulary.sql` is the worked example (epic #488): it
+de-orphans `layer0.supplement_vocabulary`, subsuming the legacy
+`migrate_supplement_vocabulary.sql` (base seed) + the D-21
+`migrate_supplement_vocab_contraindication_retag_v1.sql` (the seed already
+carries the canonical §B tokens the retag produced). `layer0.terrain_gap_rules`
+is the remaining orphan and the natural next migration in this shape.
+
 ## The gate
 
 The `layer0-gate` job in `.github/workflows/ci.yml` is the integrity backstop:
