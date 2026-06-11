@@ -11,6 +11,20 @@ Rolling-state for items spanning multiple sessions. **Edit in place** — don't 
 
 ---
 
+## #540 Layer 4 slice 2c.2 — terrain-feasibility cascade (2026-06-11, PR #553) — CORE MERGED, wiring owed
+
+**Go-live blocker #540** (sessions prescribed at locales lacking the required terrain — pv=65 Rock-Climbing-at-home). Long design session; **design fully ratified with Andy** and the **verified pure core merged**. Handoff: `V5_Implementation_Layer4_Slice2c2_TerrainFeasibility_2026_06_11_Closing_Handoff_v1.md` (§2 = ratified design, **§4 = the next move**).
+
+**Ratified model:** deterministic, **pre-synthesis** resolution (not a post-hoc validator); **make a session that works, never flag-and-prescribe**; route across the whole **cluster** (home + nearby). Two axes — **terrain (this slice)** + **craft (deferred)**. Cascade per discipline: EXACT cluster terrain → PROXY terrain (`terrain_gap_rules` @ fidelity ≥ 0.25, e.g. MTB→road ride) → INDOOR machine (treadmill/stair climber/erg/trainer, gated on a cluster locale's equipment) → STRENGTH substitute (the discipline's own mapped exercises via Layer 2C `ResolvedExercise.discipline_ids`, e.g. climbing→pull/grip) → reallocate. All on **existing layer0 data — no padding, no migration.** D-018 Mountaineering = TRN-005/007/012.
+
+- ✅ **MERGED (PR #553):** `layer4/session_feasibility.py` (pure `resolve_terrain_feasibility` + the two maps), `locations.cluster_terrain_by_locale`/`cluster_equipment_by_locale` (per-locale, keyed — the "not always home" fix), 19 tests. CI green.
+- ⬜ **NEXT (own PR) — wiring:** thread the resolution from the orchestrator through the cached `plan_create` engine into the `=== Session grid ===` prompt, **mirroring `training_substitution_payload` exactly** (orchestrator gather + a `_q_terrain_gap_rules` reader → `cached_wrappers` cache key → `plan_create` → `per_phase` render). The render is a **Trigger #1** prompt change — show Andy the rendered text against a real cone before shipping. Exceeds the 5-file ceiling → separate PR. Step-by-step in handoff §4.
+- ⬜ **Slice 2c.2b — craft-capture integrity** (prereq for the craft axis): `bike_types_available` is free-text (→ enum + casing normalize); paddle/bike capture forms unwired; no craft capture for foot/snow/swim/climb; extend `craft_discipline_aliases` (SUP/raft/TT-bike/snow). Craft axis has ~no real data until this lands.
+- ⬜ **Slice 2c.2c — craft axis** (own the bike?): `group → group_kind` substitution ladder (road-bike-for-MTB via `group_kind='bike'`). Build on 2c.2b.
+- ⬜ **layer0 column lift** of the discipline→terrain + indoor-machine maps (Track-3-gated).
+
+---
+
 ## `aidstation-sources/` reorg (2026-06-11) — DONE; two follow-ups
 
 Foldered the flat doc root into `specs/`/`designs/`/`research/`/`plans/` + `archive/superseded-specs/` + `archive/etl-scratch/`; `README.md` is now the plain-English index; `CLAUDE.md` paths + Rule #12 synced. Handoff: `V5_Housekeeping_AidstationSources_Reorg_2026_06_11_Closing_Handoff_v1.md`. **Doc layout changed — specs are under `specs/` now, not the flat root.**
@@ -42,7 +56,7 @@ Foldered the flat doc root into `specs/`/`designs/`/`research/`/`plans/` + `arch
 
 **Filed as issues (the rest of the pv=65 review — NOT done):**
 - ⬜ **[#539](https://github.com/ahorn885/exercise/issues/539)** (high) — plan-gen crawls when the progress tab is closed; drive to completion in the background. Go-live blocker.
-- ⬜ **[#540](https://github.com/ahorn885/exercise/issues/540)** (high) — sessions prescribed at locales lacking the required terrain (climbing at home). The owed slice **2c.2** + a feasibility validator rule.
+- 🔧 **[#540](https://github.com/ahorn885/exercise/issues/540)** (high) — sessions prescribed at locales lacking the required terrain (climbing at home). **Slice 2c.2 in flight** — core merged (PR #553), wiring owed; see the dedicated #540 section at the top of this file + the slice-2c.2 handoff.
 - ⬜ **[#541](https://github.com/ahorn885/exercise/issues/541)** — strength too shallow (~4 exercises). Prompt change → stop-and-ask.
 - ⬜ **[#542](https://github.com/ahorn885/exercise/issues/542)** — plan nutrition under-recommends protein (Layer 5A macro formula).
 - ⬜ **[#543](https://github.com/ahorn885/exercise/issues/543)** — health-conditions capture → structured/system-filtered/training-relevant list (#532 follow-up; vocab add).
