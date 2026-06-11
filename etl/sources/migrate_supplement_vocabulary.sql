@@ -65,14 +65,14 @@ VALUES
   ('beetroot_nitrate', 'Beetroot or nitrate supplement', 'Performance',
    'Nitric oxide production via dietary nitrate; vasodilation, improved O2 economy',
    '6–8 mmol nitrate (~500 mg)',
-   ARRAY['Pre-workout'], ARRAY['rx:PDE5-inhibitors'], 'Moderate',
+   ARRAY['Pre-workout'], ARRAY['rx:pde5_inhibitor'], 'Moderate',
    'Effect more pronounced in lower-trained athletes; elite endurance athletes see smaller gains. Pre-workout dose 2–3 hr before event.',
    'supp_vocab.v1.FC1'),
 
   ('caffeine', 'Caffeine (anhydrous, pill, gum, gel)', 'Performance',
    'Adenosine antagonist; ergogenic for endurance and high-intensity',
    '3–6 mg/kg body weight',
-   ARRAY['Pre-workout','During workout'], ARRAY['Cardiac','pregnancy'], 'Strong',
+   ARRAY['Pre-workout','During workout'], ARRAY['cardiac','pregnancy'], 'Strong',
    'Cross-ref §I.1 Caffeine Tolerance & Strategy and §I.1.1 Race-day Caffeine Strategy — daily intake and race-day strategy are captured there. This vocabulary entry handles non-daily supplemental use (race-day pills/gels).',
    'supp_vocab.v1.FC1'),
 
@@ -87,14 +87,14 @@ VALUES
   ('whey_protein', 'Whey protein isolate or concentrate', 'Recovery',
    'Fast-absorbing protein for post-training MPS stimulation',
    '20–40 g',
-   ARRAY['Post-workout','Morning'], ARRAY['allergen:dairy'], 'Strong',
+   ARRAY['Post-workout','Morning'], ARRAY[]::TEXT[], 'Strong',
    'Concentrate has lactose; isolate is near-lactose-free.',
    'supp_vocab.v1.FC1'),
 
   ('casein_protein', 'Casein protein', 'Recovery',
    'Slow-release protein; supports overnight MPS',
    '20–40 g',
-   ARRAY['Evening'], ARRAY['allergen:dairy'], 'Moderate',
+   ARRAY['Evening'], ARRAY[]::TEXT[], 'Moderate',
    'Often combined with magnesium for sleep support.',
    'supp_vocab.v1.FC1'),
 
@@ -151,14 +151,14 @@ VALUES
   ('magnesium', 'Magnesium (glycinate, citrate, malate)', 'Health',
    'Muscle/nerve function, sleep support; common deficiency in athletes',
    '200–400 mg',
-   ARRAY['Evening'], ARRAY['GI'], 'Moderate',
+   ARRAY['Evening'], ARRAY['gi_immune'], 'Moderate',
    'Glycinate is best-tolerated for sleep; citrate has laxative effect at high doses.',
    'supp_vocab.v1.FC1'),
 
   ('iron', 'Iron (ferrous sulfate, bisglycinate, etc.)', 'Health',
    'Red blood cell production; addresses common athlete iron deficiency',
    '18–65 mg elemental iron',
-   ARRAY['Morning'], ARRAY['GI','rx:thyroid medications'], 'Strong',
+   ARRAY['Morning'], ARRAY['gi_immune','rx:thyroid_medication'], 'Strong',
    'Requires medical guidance — supplementation without serum ferritin testing risks overload. Morning dose away from coffee/tea. Often combined with Vit C for absorption. Separate from thyroid meds by 4hr.',
    'supp_vocab.v1.FC1'),
 
@@ -187,21 +187,21 @@ VALUES
   ('electrolyte_mix', 'Sodium/potassium/magnesium electrolyte mix', 'Race-day',
    'Hot-weather sodium replacement and cramp prevention',
    'Scaled to sweat loss; typical 300–1000 mg Na/hr',
-   ARRAY['During workout','As-needed'], ARRAY['Cardiac','Endocrine/Metabolic'], 'Strong',
+   ARRAY['During workout','As-needed'], ARRAY['cardiac','endocrine','metabolic'], 'Strong',
    'Cross-ref §I.2 Salt/Electrolyte Tolerance. Cardiac contraindication applies to high-Na formulas; Endocrine/Metabolic applies to aldosterone disorders.',
    'supp_vocab.v1.FC1'),
 
   ('carb_powder', 'Carbohydrate powder (maltodextrin/fructose blend)', 'Race-day',
    'Race-day exogenous CHO; sustains blood glucose at intensity',
    '60–120 g/hr during effort',
-   ARRAY['During workout'], ARRAY['GI'], 'Strong',
+   ARRAY['During workout'], ARRAY['gi_immune'], 'Strong',
    'Multi-transporter blends (maltodextrin + fructose at 2:1) tolerated up to ~120 g/hr. Single-source caps near 60 g/hr. High-concentration formulas can cause GI distress.',
    'supp_vocab.v1.FC1'),
 
   ('sodium_bicarbonate', 'Sodium bicarbonate', 'Race-day',
    'Extracellular H+ buffering; ergogenic for 1–7 min high-intensity efforts',
    '0.2–0.3 g/kg body weight',
-   ARRAY['Pre-workout'], ARRAY['GI','Cardiac','Endocrine/Metabolic'], 'Strong',
+   ARRAY['Pre-workout'], ARRAY['gi_immune','cardiac','endocrine','metabolic'], 'Strong',
    'GI distress is the limiting factor; new enteric-coated forms reduce risk. Test in training before race use. Take 60–90 min pre-workout. Effect is meaningful only in repeated high-intensity efforts, not long endurance.',
    'supp_vocab.v1.FC1'),
 
@@ -217,7 +217,7 @@ VALUES
   ('melatonin', 'Melatonin', 'Sleep',
    'Circadian regulation, sleep-onset support',
    '0.3–3 mg',
-   ARRAY['Evening'], ARRAY['rx:SSRIs','rx:blood-pressure medications'], 'Strong',
+   ARRAY['Evening'], ARRAY['rx:ssri','rx:beta_blocker','rx:diuretic'], 'Strong',
    'Take 30–60 min before sleep. Lower doses (0.3–1 mg) often as effective as higher; high doses can cause grogginess. Avoid chronic daily use without medical guidance.',
    'supp_vocab.v1.FC1'),
 
@@ -225,7 +225,7 @@ VALUES
   ('ashwagandha', 'Ashwagandha (KSM-66 or sensoril)', 'Hormonal-Stress',
    'Cortisol modulation, stress adaptation, possible sleep and recovery benefit',
    '300–600 mg/day',
-   ARRAY['Morning','Evening'], ARRAY['rx:thyroid medications','pregnancy'], 'Moderate',
+   ARRAY['Morning','Evening'], ARRAY['rx:thyroid_medication','pregnancy'], 'Moderate',
    'Standardized extracts (KSM-66) have more research support than general extract. Effects most pronounced in stressed populations.',
    'supp_vocab.v1.FC1')
 

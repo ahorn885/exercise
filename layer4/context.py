@@ -1550,6 +1550,8 @@ class MedicationRecord(_Base):
         "stimulant_adhd",
         "corticosteroid_chronic",
         "anticoagulant",
+        "thyroid_medication",  # D-21
+        "pde5_inhibitor",      # D-21
         "other",
     ]
     medication_name: str | None = None

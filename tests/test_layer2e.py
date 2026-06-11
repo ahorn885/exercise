@@ -48,14 +48,15 @@ from layer4.context import (
 )
 
 # §5.5 vocab fixture — (supplement_id, canonical_name, contraindications) rows
-# the engine reads from layer0.supplement_vocabulary (mirroring the FC-1 seed;
-# caffeine carries the real ['Cardiac','pregnancy'] tokens).
+# the engine reads from layer0.supplement_vocabulary. Tokens are the canonical
+# §B form after the D-21 retag: bare system_category, rx:<medication_class>,
+# pregnancy. caffeine → cardiac; omega_3 → rx:anticoagulant.
 _RACE_DAY_VOCAB = [
     ("electrolyte_mix", "Sodium/potassium/magnesium electrolyte mix", []),
     ("carb_powder", "Carbohydrate powder (maltodextrin/fructose blend)", []),
-    ("caffeine", "Caffeine (anhydrous, pill, gum, gel)", ["Cardiac", "pregnancy"]),
+    ("caffeine", "Caffeine (anhydrous, pill, gum, gel)", ["cardiac", "pregnancy"]),
     ("magnesium", "Magnesium (glycinate, citrate, malate)", []),
-    ("omega_3", "Omega-3 (EPA/DHA)", []),
+    ("omega_3", "Omega-3 (EPA/DHA)", ["rx:anticoagulant"]),
     ("bcaas", "Branched-chain amino acids", []),
 ]
 from layer4.hashing import compute_payload_hash
@@ -531,7 +532,7 @@ class TestPGEBaseline:
     # ── B2: non-blocking Cardiac contraindication screening ──────────────────
 
     def test_cardiac_supplement_auto_removed_and_warned_nonblocking(self):
-        # Athlete logs caffeine (carries 'Cardiac') + has an active cardiac
+        # Athlete logs caffeine (carries 'cardiac') + has an active cardiac
         # condition → caffeine auto-removed from integrated + race-day, warned;
         # magnesium (clean) retained. NON-BLOCKING: no HITL, plan not blocked.
         db = _FakeConn()
@@ -558,9 +559,12 @@ class TestPGEBaseline:
         assert "magnesium" in integrated_ids          # clean → retained
         warn = [f for f in si.contraindication_flags if f.supplement_id == "caffeine"]
         assert len(warn) == 1
-        assert warn[0].flag_type == "supplement_contraindicated_cardiac"
+        assert warn[0].flag_type == "supplement_contraindicated"
         assert warn[0].severity == "high"
         assert warn[0].metadata["auto_removed"] is True
+        assert warn[0].metadata["condition_categories"] == ["cardiac"]
+        # The athlete-facing message names the actual condition.
+        assert "Paroxysmal atrial fibrillation" in warn[0].message
         # Removed from race-day suggestions too.
         assert "caffeine" not in {s.supplement_id for s in si.race_day_suggestions}
         # Non-blocking: no HITL item, plan not blocked.
@@ -599,6 +603,27 @@ class TestPGEBaseline:
             f.flag_type for f in si.contraindication_flags}
         assert si.contraindication_hitl_items == []
         assert payload.hitl_required is False
+
+    def test_medication_contraindicated_supplement_auto_removed(self):
+        # D-21: omega_3 carries rx:anticoagulant; athlete on an anticoagulant →
+        # omega_3 auto-removed + warned (medication branch), non-blocking.
+        db = _FakeConn()
+        db.queue_pla_for_all_phases((8, 12), (10, 14), (12, 16), (6, 10))
+        db.queue_supplement_vocab(_RACE_DAY_VOCAB)
+        health = Layer1HealthStatus(medications_active=[
+            MedicationRecord(medication_id=1, medication_class="anticoagulant",
+                             medication_name="warfarin")])
+        ls = _andy_lifestyle().model_copy(update={"supplements": [
+            AthleteSupplementRecord(
+                supplement_id="omega_3", canonical_name="Omega-3 (EPA/DHA)",
+                category="Recovery")]})
+        si = _andy_baseline_call(db, lifestyle=ls, health=health).supplement_integration
+        assert "omega_3" not in {s.supplement_id for s in si.integrated}
+        warn = [f for f in si.contraindication_flags if f.supplement_id == "omega_3"]
+        assert len(warn) == 1
+        assert warn[0].metadata["medication_classes"] == ["anticoagulant"]
+        assert "anticoagulant" in warn[0].message
+        assert si.contraindication_hitl_items == []
 
 
 # ─── §13.7 time-based mode ───────────────────────────────────────────────────
