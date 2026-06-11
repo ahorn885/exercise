@@ -114,6 +114,33 @@
     <label class="field loc-mw"><span class="lbl">Notes <span class="loc-opt">(optional — e.g. "DB up to 50 lb, no rack")</span></span>
       <textarea name="notes" class="form-control form-control-sm" rows="2">{{ notes }}</textarea></label>
 
+    {# #446 — privacy state + explicit opt-out. Only the own/build mode owns the
+       backing profile, so the toggle is hidden in shared_inherit mode (the
+       shared profile's privacy is its creator's). Residences are locked private. #}
+    {% if mode == 'legacy' %}
+    <fieldset class="field loc-mw loc-privacy" id="loc-edit-privacy">
+      <legend class="lbl">Visibility</legend>
+      {% if privacy_locked %}
+      <p class="loc-privacy-state"><span class="chip solid">Private — only used in your own plans</span></p>
+      <p class="loc-hint">This is a residence — it's always private and never appears in crowd-sourced
+        discovery near this place.</p>
+      {% else %}
+      <p class="loc-privacy-state">
+        <span class="chip {% if privacy_effective %}solid{% endif %}" data-privacy-chip>
+          {% if privacy_effective %}Private — only used in your own plans
+          {%- else %}Shared — appears for other athletes near this place{% endif %}
+        </span>
+      </p>
+      <label class="form-check loc-privacy-toggle">
+        <input class="form-check-input" type="checkbox" name="private" value="1" data-privacy-input
+               {% if privacy_opt_out %}checked{% endif %}>
+        <span class="form-check-label">Keep this location private — don't share its equipment with
+          other athletes near this place.</span>
+      </label>
+      {% endif %}
+    </fieldset>
+    {% endif %}
+
     <div class="pf-save">
       <a href="{{ url_for('locales.list_profiles') }}" class="btn btn-ghost btn-sm">Cancel</a>
       <button type="submit" class="btn btn-primary btn-sm">
@@ -134,4 +161,26 @@
   {% endif %}
 
 </div>
+{% endblock %}
+
+{% block scripts %}
+{% if mode == 'legacy' and not privacy_locked %}
+{# #446 — live privacy chip on the edit form (own/build mode). Nonce required
+   by CSP. #}
+<script nonce="{{ csp_nonce() }}">
+  (function () {
+    const wrap = document.getElementById('loc-edit-privacy');
+    if (!wrap) return;
+    const chip = wrap.querySelector('[data-privacy-chip]');
+    const input = wrap.querySelector('[data-privacy-input]');
+    if (!chip || !input) return;
+    const PRIVATE = 'Private — only used in your own plans';
+    const SHARED = 'Shared — appears for other athletes near this place';
+    input.addEventListener('change', function () {
+      chip.textContent = input.checked ? PRIVATE : SHARED;
+      chip.classList.toggle('solid', input.checked);
+    });
+  })();
+</script>
+{% endif %}
 {% endblock %}

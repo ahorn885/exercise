@@ -222,6 +222,26 @@ MANUAL_CATEGORIES = (
 # storage + picker). Every other category is shareable by default.
 RESIDENTIAL_CATEGORIES = frozenset({'home_gym', 'other_residence'})
 
+
+def _category_default_private(category) -> bool:
+    """The category-derived privacy default (Track 1 §6). Residential
+    categories default private; everything else defaults shareable. A
+    categoryless locale (legacy enum slug / un-categorized manual entry)
+    falls back to the residential default — matching `_create_gym_profile`,
+    where `category or 'home_gym'` keeps the NOT-NULL column populated."""
+    return (category or 'home_gym') in RESIDENTIAL_CATEGORIES
+
+
+def _resolve_private(category, sharing_opt_out) -> bool:
+    """Effective `gym_profiles.private` for a locale (#446). Residential
+    categories are always private; a shareable-category locale becomes
+    private when the athlete explicitly opts out of sharing
+    (`locale_profiles.sharing_opt_out`) — e.g. a residence that Mapbox
+    returned as `commercial_gym`. Residences are never crowd-shareable, so
+    the opt-out can only tighten privacy, never loosen a residence."""
+    return _category_default_private(category) or bool(sharing_opt_out)
+
+
 # PR19 Item E — map MANUAL_CATEGORIES → Layer 0 exercise_inventory.where_available
 # buckets. The 4-bucket where_available taxonomy is gym-centric (home / hotel /
 # partner / airport); the locale-CRUD model lets athletes save arbitrary places
@@ -346,11 +366,17 @@ def _row_has(row, col: str) -> bool:
 
 def _find_gym_profile(db, mapbox_id):
     """Look up the shared gym profile keyed by mapbox_id (D-60 §4.1). Returns
-    the row or None. mapbox_id is UNIQUE on gym_profiles."""
+    the row or None. mapbox_id is UNIQUE on gym_profiles.
+
+    Crowd-source filtering reads the explicit `private` flag (#446): a
+    private profile is never surfaced to peers here, so another athlete at
+    the same address builds their own profile instead of inheriting one its
+    creator marked private. The creator still reaches their own private
+    profile via the `gym_profile_id` link in `_resolve_shared_profile`."""
     if not mapbox_id:
         return None
     return db.execute(
-        'SELECT * FROM gym_profiles WHERE mapbox_id = ?',
+        'SELECT * FROM gym_profiles WHERE mapbox_id = ? AND COALESCE(private, FALSE) = FALSE',
         (mapbox_id,),
     ).fetchone()
 
@@ -416,11 +442,16 @@ def _save_overrides(db, uid: int, locale: str, shared_tags: set,
 
 
 def _create_gym_profile(db, uid: int, profile_row, equipment_tags: set,
-                        valid_names: set):
+                        valid_names: set, sharing_opt_out: bool = False):
     """First-athlete-at-this-locale flow. Creates a new gym_profiles row with
     `equipment` as a JSON array of layer0 canonical names and returns the new
     id; caller links via locale_profiles.gym_profile_id. Residential
-    categories default `private = TRUE` (Track 1 §6)."""
+    categories default `private = TRUE` (Track 1 §6); a shareable-category
+    locale is private when the athlete opted out of sharing (#446).
+
+    `sharing_opt_out` is passed explicitly by `_edit_locale` from the freshly
+    submitted form so the build picks up a same-request toggle; it falls back
+    to the (possibly stale) `profile_row.sharing_opt_out` for other callers."""
     equipment_json = json.dumps(sorted(t for t in equipment_tags if t in valid_names))
     display = profile_row['locale_name'] if _row_has(profile_row, 'locale_name') else None
     category = profile_row['category'] if _row_has(profile_row, 'category') else None
@@ -429,7 +460,10 @@ def _create_gym_profile(db, uid: int, profile_row, equipment_tags: set,
     # defaults to a private residential profile.
     category = category or 'home_gym'
     mapbox_id = profile_row['mapbox_id'] if _row_has(profile_row, 'mapbox_id') else None
-    private = category in RESIDENTIAL_CATEGORIES
+    opt_out = bool(sharing_opt_out) or bool(
+        _row_has(profile_row, 'sharing_opt_out') and profile_row['sharing_opt_out']
+    )
+    private = _resolve_private(category, opt_out)
     row = db.execute(
         '''INSERT INTO gym_profiles
            (mapbox_id, display_name, category, equipment,
@@ -651,36 +685,48 @@ def _edit_locale(db, uid: int, locale: str, profile):
         notes = request.form.get('notes', '').strip()
         city = request.form.get('city', '').strip()
         new_terrain_ids = _parse_locale_terrain(request.form)
+        # #446 — explicit privacy override. The form posts `private=1` when the
+        # athlete opts a shareable-category locale out of crowd-source sharing.
+        # Residential categories are locked private regardless (the toggle is
+        # hidden), so `_resolve_private` ORs the category default in. Only the
+        # build/own modes carry the toggle; inherit mode leaves it untouched.
+        opt_out = request.form.get('private') == '1'
         # Ensure the locale_profiles row exists first — gym_profiles links +
         # overrides FK onto it. Legacy enum slugs auto-create here on first
         # save (preserved v1 behaviour). `?::text[]` cast: see the Bucket B #3
         # fix (psycopg2 list adapter landed empty arrays in prod without it).
         db.execute(
-            '''INSERT INTO locale_profiles (user_id, locale, notes, city, locale_terrain_ids, updated_at)
-               VALUES (?, ?, ?, ?, ?::text[], CURRENT_TIMESTAMP)
+            '''INSERT INTO locale_profiles (user_id, locale, notes, city, sharing_opt_out, locale_terrain_ids, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?::text[], CURRENT_TIMESTAMP)
                ON CONFLICT(user_id, locale) DO UPDATE SET
                  notes=excluded.notes,
                  city=excluded.city,
+                 sharing_opt_out=excluded.sharing_opt_out,
                  locale_terrain_ids=excluded.locale_terrain_ids,
                  updated_at=excluded.updated_at''',
-            (uid, locale, notes, city, new_terrain_ids)
+            (uid, locale, notes, city, opt_out, new_terrain_ids)
         )
         # First-locale-auto-home (Track 1 §10) — a legacy enum slug saved
         # before any home exists becomes home.
         _ensure_home(db, uid, locale)
         if shared is None:
-            # Build a new backing profile from this submission.
-            new_id = _create_gym_profile(db, uid, profile, submitted, valid_names)
+            # Build a new backing profile from this submission. Pass the
+            # freshly submitted opt-out so the new profile's `private` reflects
+            # this request (the `profile` row predates the upsert above).
+            new_id = _create_gym_profile(db, uid, profile, submitted, valid_names,
+                                         sharing_opt_out=opt_out)
             if new_id:
                 _link_gym_profile(db, uid, locale, new_id)
         elif owns_shared:
-            # The athlete's own profile — edit its equipment in place; clear
-            # any stale overrides so the effective set is just the profile.
+            # The athlete's own profile — edit its equipment + privacy in place;
+            # clear any stale overrides so the effective set is just the profile.
             if not gym_profile_id:
                 _link_gym_profile(db, uid, locale, shared['id'])
+            shared_category = shared['category'] if _row_has(shared, 'category') else None
             db.execute(
-                'UPDATE gym_profiles SET equipment = ? WHERE id = ?',
+                'UPDATE gym_profiles SET equipment = ?, private = ? WHERE id = ?',
                 (json.dumps(sorted(t for t in submitted if t in valid_names)),
+                 _resolve_private(shared_category, opt_out),
                  shared['id']),
             )
             db.execute(
@@ -710,6 +756,21 @@ def _edit_locale(db, uid: int, locale: str, profile):
     mode = 'shared_inherit' if inherit else 'legacy'
     is_manual = bool(_row_has(profile, 'manual_entry') and profile['manual_entry'])
     is_mapbox_anchored = bool(_row_has(profile, 'mapbox_id') and profile['mapbox_id'])
+    # #446 — privacy state for the form chip + opt-out toggle. The backing
+    # category is the gym_profile's when the athlete owns one, else the
+    # locale's. `privacy_locked` = residential (always private, no toggle);
+    # otherwise the toggle reflects the stored sharing_opt_out.
+    if owns_shared and _row_has(shared, 'category'):
+        privacy_category = shared['category']
+    elif _row_has(profile, 'category'):
+        privacy_category = profile['category']
+    else:
+        privacy_category = None
+    if owns_shared and _row_has(shared, 'private'):
+        current_opt_out = bool(shared['private'])
+    else:
+        current_opt_out = bool(_row_has(profile, 'sharing_opt_out') and profile['sharing_opt_out'])
+    privacy_locked = _category_default_private(privacy_category)
     return render_template('locales/form.html', mode=mode, locale=locale,
                            profile=profile,
                            equipment_categories=categories,
@@ -723,6 +784,9 @@ def _edit_locale(db, uid: int, locale: str, profile):
                            is_mapbox_anchored=is_mapbox_anchored,
                            is_deletable=locale not in LOCALES,
                            display_address=_display_address(profile),
+                           privacy_locked=privacy_locked,
+                           privacy_opt_out=current_opt_out,
+                           privacy_effective=_resolve_private(privacy_category, current_opt_out),
                            terrain_choices=_terrain_choices(db),
                            active_terrain_ids=set(prior_terrain_ids))
 
@@ -777,6 +841,7 @@ def new_locale():
                            manual=manual, query=query,
                            acked=acked, results=results, error=error,
                            manual_categories=MANUAL_CATEGORIES,
+                           residential_categories=sorted(RESIDENTIAL_CATEGORIES),
                            disclosure_version=MAPBOX_DISCLOSURE_VERSION,
                            upgrade_slug=upgrade_slug,
                            upgrade_locale=upgrade_locale)
@@ -809,6 +874,9 @@ def _save_mapbox_anchored(db, uid: int):
     text = (request.form.get('text') or '').strip()
     place_name = (request.form.get('place_name') or '').strip()
     raw_payload = request.form.get('raw_payload') or ''
+    # #446 — per-result opt-out: force this locale private even when Mapbox
+    # returned a shareable category (e.g. a residence geocoded as a gym).
+    opt_out = request.form.get('private') == '1'
     try:
         lng = float(request.form.get('lng') or '')
         lat = float(request.form.get('lat') or '')
@@ -855,12 +923,12 @@ def _save_mapbox_anchored(db, uid: int):
             '''UPDATE locale_profiles
                SET locale_name = ?, mapbox_id = ?, lat = ?, lng = ?,
                    chain_id = ?, chain_name = ?, category = ?,
-                   manual_entry = FALSE,
+                   manual_entry = FALSE, sharing_opt_out = ?,
                    place_payload = ?, place_fetched_at = CURRENT_TIMESTAMP,
                    updated_at = CURRENT_TIMESTAMP
                WHERE user_id = ? AND locale = ?''',
             (locale_name, mapbox_id, lat, lng,
-             chain_id, chain_name, category,
+             chain_id, chain_name, category, opt_out,
              raw_payload or place_name,
              uid, upgrade_slug),
         )
@@ -885,11 +953,11 @@ def _save_mapbox_anchored(db, uid: int):
     db.execute(
         '''INSERT INTO locale_profiles
            (user_id, locale, locale_name, mapbox_id, lat, lng,
-            chain_id, chain_name, category, manual_entry,
+            chain_id, chain_name, category, manual_entry, sharing_opt_out,
             place_payload, place_fetched_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, FALSE, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)''',
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, FALSE, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)''',
         (uid, slug, locale_name, mapbox_id, lat, lng,
-         chain_id, chain_name, category, raw_payload or place_name),
+         chain_id, chain_name, category, opt_out, raw_payload or place_name),
     )
     _ensure_home(db, uid, slug)  # first-locale-auto-home (Track 1 §10)
     db.commit()
@@ -912,6 +980,10 @@ def save_manual_locale():
     valid_categories = {c[0] for c in MANUAL_CATEGORIES}
     if category and category not in valid_categories:
         category = None
+    # #446 — explicit opt-out for shareable categories. Residential categories
+    # are private regardless; `_resolve_private` ORs the category default in
+    # when the gym_profile is later built.
+    opt_out = request.form.get('private') == '1'
     if not locale_name:
         flash('Locale name is required.', 'danger')
         return redirect(url_for('locales.new_locale', manual=1))
@@ -923,9 +995,9 @@ def save_manual_locale():
     db.execute(
         '''INSERT INTO locale_profiles
            (user_id, locale, locale_name, city, notes,
-            category, manual_entry, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, TRUE, CURRENT_TIMESTAMP)''',
-        (uid, slug, locale_name, address, '', category or None),
+            category, manual_entry, sharing_opt_out, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, TRUE, ?, CURRENT_TIMESTAMP)''',
+        (uid, slug, locale_name, address, '', category or None, opt_out),
     )
     _ensure_home(db, uid, slug)  # first-locale-auto-home (Track 1 §10)
     db.commit()
@@ -1184,7 +1256,6 @@ def delete_locale(locale):
     if not profile:
         flash('Unknown location.', 'danger')
         return redirect(url_for('locales.list_profiles'))
-    category = profile['category'] if _row_has(profile, 'category') else None
     gym_profile_id = (
         profile['gym_profile_id'] if _row_has(profile, 'gym_profile_id') else None
     )
@@ -1201,10 +1272,16 @@ def delete_locale(locale):
         'DELETE FROM locale_profiles WHERE user_id = ? AND locale = ?',
         (uid, locale),
     )
-    if category in RESIDENTIAL_CATEGORIES and gym_profile_id:
+    # Privacy split rule keyed on the explicit `private` flag (#446), not the
+    # locale category: a private, athlete-owned gym_profile is personal data
+    # (a residence, or a shareable-category place the athlete opted out of
+    # sharing) and goes away with the locale. A shared (non-private) profile is
+    # preserved so peer/enterprise data survives for other athletes.
+    if gym_profile_id:
         db.execute(
             '''DELETE FROM gym_profiles
-               WHERE id = ? AND created_by_user_id = ?''',
+               WHERE id = ? AND created_by_user_id = ?
+                 AND COALESCE(private, FALSE) = TRUE''',
             (gym_profile_id, uid),
         )
     db.commit()

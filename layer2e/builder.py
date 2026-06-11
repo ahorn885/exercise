@@ -66,6 +66,7 @@ from layer4.context import (
     DailyPhaseTargets,
     DietaryPatternFlag,
     HeatAcclimEventAdjustment,
+    HealthConditionRecord,
     IntegratedSupplement,
     Layer1HealthStatus,
     Layer1Identity,
@@ -772,28 +773,67 @@ def _load_supplement_vocab(db) -> dict[str, dict]:
         return {}
 
 
-# Vocab contraindication token (lower-cased) -> the §B `system_category` enum
-# value(s) it resolves to. B2 wires Cardiac only. The GI / Endocrine÷Metabolic /
-# Renal / `rx:*` reconciliation (D-21) is deferred to a later slice, so those
-# tokens simply aren't here yet → no match → no false auto-removal.
-_VOCAB_CONDITION_MAP: dict[str, set[str]] = {
-    "cardiac": {"cardiac"},
-}
+def _contraindication_hits(
+    contraindications: list[str],
+    active_categories: set[str],
+    active_med_classes: set[str],
+) -> tuple[set[str], set[str]]:
+    """Split a supplement's canonical vocab contraindications (D-21 retag)
+    against the athlete's active §B inputs → (matched system_category values,
+    matched medication_class values).
 
-
-def _supplement_condition_hits(
-    contraindications: list[str], active_categories: set[str]
-) -> set[str]:
-    """§B `system_category` values an active condition shares with a supplement's
-    vocab contraindications, via `_VOCAB_CONDITION_MAP`. `rx:` / `allergen:` /
-    `pregnancy` tokens aren't condition tokens and are ignored here (deferred /
-    #518)."""
-    hits: set[str] = set()
+    Tokens are canonical now (no in-app mapping): a bare token is a
+    `system_category`; an `rx:<class>` token is a `medication_class`. `pregnancy`
+    is deferred (#518) and ignored; any other unrecognized token can't match."""
+    condition_hits: set[str] = set()
+    med_hits: set[str] = set()
     for token in contraindications:
-        cats = _VOCAB_CONDITION_MAP.get(token.lower())
-        if cats:
-            hits |= cats & active_categories
-    return hits
+        if token == "pregnancy":
+            continue  # deferred to #518
+        if token.startswith("rx:"):
+            cls = token[3:]
+            if cls in active_med_classes:
+                med_hits.add(cls)
+        elif token in active_categories:
+            condition_hits.add(token)
+    return condition_hits, med_hits
+
+
+def _contraindication_flag(
+    canonical_name: str,
+    supplement_id: str,
+    cond_hits: set[str],
+    med_hits: set[str],
+    active_conditions: list[HealthConditionRecord],
+) -> Layer2ECoachingFlag:
+    """Non-blocking warning naming the active condition(s) / medication class(es)
+    a just-removed supplement conflicts with."""
+    named = [c.condition_name for c in active_conditions
+             if c.system_category in cond_hits]
+    reasons: list[str] = []
+    if named:
+        reasons.append("an active health condition (" + ", ".join(named) + ")")
+    if med_hits:
+        reasons.append("a medication you take ("
+                       + ", ".join(sorted(m.replace("_", " ") for m in med_hits))
+                       + ")")
+    return Layer2ECoachingFlag(
+        flag_type="supplement_contraindicated",
+        event_id=None,
+        supplement_id=supplement_id,
+        message=(
+            f"{canonical_name} contraindicates with {' and '.join(reasons)}. "
+            f"It's been removed from your active supplement protocol — clear any "
+            f"use with your physician first."
+        ),
+        severity="high",
+        metadata={
+            "auto_removed": True,
+            "condition_categories": sorted(cond_hits),
+            "condition_names": named,
+            "medication_classes": sorted(med_hits),
+        },
+    )
 
 
 def _race_day_supplement_suggestions(
@@ -839,19 +879,16 @@ def _build_supplement_integration(
     target_events: list[Layer2ETargetEvent],
     health_status: Layer1HealthStatus,
 ) -> tuple[SupplementIntegrationPayload, list[Layer2ECoachingFlag]]:
-    # §5.5 B2 — non-blocking Cardiac contraindication screening (Andy
-    # 2026-06-10). A logged supplement that contraindicates with an active
-    # health condition is (a) auto-removed from the integrated protocol +
-    # race-day suggestions and (b) flagged with a non-blocking warning. NO
-    # Layer 3.5 block, NO HITL item, no medical-clearance step. The fuzzy
-    # multi-category matching (GI/Endocrine/Renal/rx, D-21) is deferred; the
-    # pregnancy gates are deferred to #518.
+    # §5.5 — non-blocking contraindication screening (Andy 2026-06-10). A logged
+    # supplement that contraindicates with an active health condition (§B
+    # system_category) OR medication (§B medication_class) is (a) auto-removed
+    # from the integrated protocol + race-day suggestions and (b) flagged with a
+    # non-blocking warning. NO Layer 3.5 block, NO HITL item, no medical-clearance.
+    # Tokens match the canonical vocab directly (D-21 retag); pregnancy → #518.
     vocab = _load_supplement_vocab(db)
-    active_cardiac = [
-        c for c in health_status.health_conditions_active
-        if c.system_category == "cardiac"
-    ]
-    active_categories = {c.system_category for c in active_cardiac}
+    active_conditions = health_status.health_conditions_active
+    active_categories = {c.system_category for c in active_conditions}
+    active_med_classes = {m.medication_class for m in health_status.medications_active}
 
     integrated: list[IntegratedSupplement] = []
     flags: list[Layer2ECoachingFlag] = []
@@ -868,29 +905,14 @@ def _build_supplement_integration(
                 contraindication_hits=[],
             ))
             continue
-        hits = _supplement_condition_hits(
-            vocab_row["contraindications"], active_categories
+        cond_hits, med_hits = _contraindication_hits(
+            vocab_row["contraindications"], active_categories, active_med_classes
         )
-        if hits:
+        if cond_hits or med_hits:
             removed_ids.add(rec.supplement_id)
-            cond = active_cardiac[0]
-            flags.append(Layer2ECoachingFlag(
-                flag_type="supplement_contraindicated_cardiac",
-                event_id=None,
-                supplement_id=rec.supplement_id,
-                message=(
-                    f"{vocab_row['canonical_name']} carries a cardiac "
-                    f"contraindication and you have an active cardiac condition "
-                    f"on file ({cond.condition_name}). It's been removed from "
-                    f"your active supplement protocol — clear any use with your "
-                    f"physician first."
-                ),
-                severity="high",
-                metadata={
-                    "auto_removed": True,
-                    "condition_category": "cardiac",
-                    "condition_name": cond.condition_name,
-                },
+            flags.append(_contraindication_flag(
+                vocab_row["canonical_name"], rec.supplement_id,
+                cond_hits, med_hits, active_conditions,
             ))
             continue  # auto-removed → not carried in `integrated`
         integrated.append(IntegratedSupplement(
@@ -903,16 +925,17 @@ def _build_supplement_integration(
     # Gate 2 — race-day caffeine loading × active cardiac → warn + suppress
     # caffeine from race-day suggestions (no supplement record to remove).
     suppressed_suggestion_ids = set(removed_ids)
-    if active_cardiac and lifestyle.caffeine_race_day_strategy == "caffeine_loading":
+    cardiac = next(
+        (c for c in active_conditions if c.system_category == "cardiac"), None)
+    if cardiac and lifestyle.caffeine_race_day_strategy == "caffeine_loading":
         suppressed_suggestion_ids.add("caffeine")
-        cond = active_cardiac[0]
         flags.append(Layer2ECoachingFlag(
             flag_type="race_day_caffeine_contraindicated_cardiac",
             event_id=None,
             supplement_id="caffeine",
             message=(
                 f"Your race-day caffeine-loading strategy conflicts with an "
-                f"active cardiac condition ({cond.condition_name}). Caffeine has "
+                f"active cardiac condition ({cardiac.condition_name}). Caffeine has "
                 f"been left out of your race-day suggestions — clear any race-day "
                 f"stimulant plan with your physician first."
             ),
@@ -1237,13 +1260,12 @@ def q_layer2e_nutrition_baseline_payload(
     spec-internal constant tables.
 
     Vertical-slice ship: §5.5 supplement integration ships race-day
-    suggestions (B1) + non-blocking Cardiac contraindication screening
-    (B2 — auto-remove + warning flag, no HITL block). The fuzzy
-    multi-category contraindication matching (GI/Endocrine/Renal/rx,
-    D-21) is deferred and the pregnancy gates go to #518. §5.8 heat
-    acclim stays stubbed pending Plan Management contract authorship.
-    §5.9 emits no blocking HITL gates. See module docstring for the
-    full drift map.
+    suggestions (B1) + non-blocking contraindication screening across all
+    §B conditions + medications (B2 + D-21 — auto-remove + warning flag,
+    no HITL block; matches the canonical vocab directly after the D-21
+    retag). Pregnancy contraindications go to #518. §5.8 heat acclim
+    stays stubbed pending Plan Management contract authorship. §5.9 emits
+    no blocking HITL gates. See module docstring for the full drift map.
 
     Validation per §4 raises `Layer2EInputError`.
     """
@@ -1296,7 +1318,7 @@ def q_layer2e_nutrition_baseline_payload(
         race_day.append(rdf)
 
     # §5.5 supplement integration — race-day suggestions (B1) + non-blocking
-    # Cardiac contraindication screening (B2).
+    # contraindication screening across §B conditions + medications (B2 + D-21).
     supplement_payload, supplement_flags = _build_supplement_integration(
         db, lifestyle, target_events, health_status
     )

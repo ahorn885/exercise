@@ -30,11 +30,14 @@ from layer4.cache import (
 )
 from routes.locales import (
     _TRN_PATTERN,
+    _category_default_private,
     _edit_locale,
     _evict_layer2b_on_terrain_change,
     _evict_layer2c_on_equipment_change,
+    _find_gym_profile,
     _hydrate_locale_terrain_ids,
     _parse_locale_terrain,
+    _resolve_private,
     _terrain_choices,
     delete_locale,
 )
@@ -430,8 +433,36 @@ def _sql_indices(calls, fragment: str) -> list[int]:
 
 class TestDeleteLocale:
     """Track 1 — `locale_equipment` is dropped; delete_locale no longer
-    touches it (overrides cascade on the locale_profiles delete). Residential
-    categories still drop the athlete-owned private gym_profiles row."""
+    touches it (overrides cascade on the locale_profiles delete). A private,
+    athlete-owned gym_profiles row is dropped too — keyed on the explicit
+    `private` flag (#446), not re-derived from the locale category."""
+
+    def test_drops_owned_private_gym_profile_by_flag(self, monkeypatch):
+        app = _make_app()
+        conn = _FakeConn()
+        # Opted-private shareable locale with a linked, owned gym_profile.
+        conn.queue_response(row={
+            'category': 'independent_gym',
+            'gym_profile_id': 42,
+            'locale_name': "Joe's Place",
+        })
+        import routes.locales as locales_mod
+        monkeypatch.setattr(locales_mod, 'get_db', lambda: conn)
+        monkeypatch.setattr(locales_mod, 'current_user_id', lambda: 1)
+
+        with app.test_request_context('/locales/joe_s_place/delete', method='POST'):
+            delete_locale('joe_s_place')
+
+        gym_del = [
+            (sql, params) for sql, params in conn.calls
+            if 'DELETE FROM gym_profiles' in sql
+        ]
+        assert gym_del, 'expected the linked gym_profiles row to be deleted'
+        sql, params = gym_del[0]
+        # The privacy gate is the row's own `private` flag, not the category.
+        assert 'private' in sql.lower()
+        assert 'created_by_user_id' in sql
+        assert params == (42, 1)
 
     def test_deletes_locale_profiles_not_legacy_table(self, monkeypatch):
         app = _make_app()
@@ -521,10 +552,10 @@ class TestEditLocaleTerrainPersists:
         ]
         assert upsert, 'expected an INSERT ... ON CONFLICT for locale_profiles'
         sql, params = upsert[0]
-        # Params: (uid, locale, notes, city, new_terrain_ids).
+        # Params: (uid, locale, notes, city, sharing_opt_out, new_terrain_ids).
         assert params[0] == 1
         assert params[1] == 'horn_s_house'
-        assert params[4] == ['TRN-002', 'TRN-003', 'TRN-016']
+        assert params[5] == ['TRN-002', 'TRN-003', 'TRN-016']
         # Defensive `::text[]` cast on the array placeholder forces explicit
         # typing — production rows landed empty without it.
         assert '::text[]' in sql
@@ -618,7 +649,8 @@ class TestEditLocaleTerrainPersists:
             and 'locale_terrain_ids' in sql
         ]
         assert upsert, 'expected INSERT ... ON CONFLICT for locale_profiles'
-        assert upsert[0][1][4] == ['TRN-002', 'TRN-003']
+        # Params: (uid, locale, notes, city, sharing_opt_out, new_terrain_ids).
+        assert upsert[0][1][5] == ['TRN-002', 'TRN-003']
         # Inherit path writes per-athlete override deltas (canonical names),
         # not a direct gym_profiles equipment edit.
         assert _sql_indices(conn.calls, 'DELETE FROM locale_equipment_overrides')
@@ -628,3 +660,138 @@ class TestEditLocaleTerrainPersists:
         ]
         # Submitted {'Squat rack'} on a shared base of {'Barbell'} → add 'Squat rack'.
         assert any('Squat rack' in p and 'add' in p for p in ovr_inserts)
+
+
+# ─── #446 — explicit privacy override (private/shared) ──────────────────────
+
+
+class TestResolvePrivate:
+    """`_resolve_private` / `_category_default_private` — privacy is
+    category-derived by default but an explicit `sharing_opt_out` can only
+    *tighten* a shareable-category locale to private; residences stay private
+    regardless of the flag (residences are never crowd-shareable)."""
+
+    def test_residential_categories_default_private(self):
+        assert _category_default_private('home_gym') is True
+        assert _category_default_private('other_residence') is True
+
+    def test_categoryless_defaults_private(self):
+        # gym_profiles defaults a category-less locale to home_gym, so the
+        # privacy default must match (private).
+        assert _category_default_private(None) is True
+        assert _category_default_private('') is True
+
+    def test_shareable_categories_default_shared(self):
+        assert _category_default_private('commercial_chain_gym') is False
+        assert _category_default_private('independent_gym') is False
+        assert _category_default_private('outdoor_park') is False
+
+    def test_opt_out_forces_shareable_private(self):
+        assert _resolve_private('independent_gym', False) is False
+        assert _resolve_private('independent_gym', True) is True
+
+    def test_opt_out_cannot_loosen_a_residence(self):
+        # The opt-out only tightens; a residence can never be made shareable.
+        assert _resolve_private('home_gym', False) is True
+        assert _resolve_private('home_gym', True) is True
+
+
+class TestFindGymProfileExcludesPrivate:
+    """Crowd-source discovery reads the explicit `private` flag (#446): a
+    private peer profile is never surfaced for inheritance."""
+
+    def test_query_filters_private(self):
+        conn = _FakeConn()
+        conn.queue_response(row=None)
+        _find_gym_profile(conn, 'mbx.123')
+        assert conn.calls, 'expected a SELECT on gym_profiles'
+        sql, params = conn.calls[0]
+        assert 'FROM gym_profiles' in sql
+        assert 'private' in sql.lower()
+        assert params == ('mbx.123',)
+
+    def test_no_mapbox_id_short_circuits(self):
+        conn = _FakeConn()
+        assert _find_gym_profile(conn, None) is None
+        assert conn.calls == []
+
+
+class TestEditPrivacyOverride:
+    """`_edit_locale` POST persists the explicit opt-out: it lands in the
+    locale_profiles upsert (`sharing_opt_out`) and drives `gym_profiles.private`
+    on the build path."""
+
+    def _common_monkeypatch(self, monkeypatch, conn):
+        import routes.locales as locales_mod
+        monkeypatch.setattr(locales_mod, 'get_db', lambda: conn)
+        monkeypatch.setattr(locales_mod, 'current_user_id', lambda: 1)
+        monkeypatch.setattr(locales_mod, '_evict_layer2b_on_terrain_change',
+                            lambda *_a, **_k: None)
+        monkeypatch.setattr(locales_mod, '_evict_layer2c_on_equipment_change',
+                            lambda *_a, **_k: None)
+
+    def test_opt_out_forces_shareable_build_private(self, monkeypatch):
+        app = _make_app()
+        conn = _FakeConn()
+        _seed_edit_layer0_equipment(conn, names=('Barbell',))
+        conn.queue_response(row={'gym_profile_id': None})  # locale_effective_tags
+        conn.queue_response(rows=[])                        # overrides
+        conn.queue_response(row={'preferred': 1})           # _ensure_home
+        conn.queue_response(row={'id': 7})                  # _create_gym_profile RETURNING
+        self._common_monkeypatch(monkeypatch, conn)
+
+        # Shareable category (independent_gym) + explicit opt-out.
+        profile = _FakeRow({'category': 'independent_gym', 'locale_terrain_ids': []})
+        with app.test_request_context(
+            '/locales/joe_s_garage/edit', method='POST',
+            data={'equipment': ['Barbell'], 'notes': '', 'city': '',
+                  'private': '1', 'locale_terrain_ids': []},
+        ):
+            _edit_locale(conn, 1, 'joe_s_garage', profile)
+
+        # sharing_opt_out lands TRUE in the locale_profiles upsert (index 4).
+        upsert = [
+            params for sql, params in conn.calls
+            if 'INSERT INTO locale_profiles' in sql and 'sharing_opt_out' in sql
+        ]
+        assert upsert, 'expected locale_profiles upsert with sharing_opt_out'
+        assert upsert[0][4] is True
+
+        # The built gym_profiles row is private despite the shareable category.
+        gym_insert = [
+            params for sql, params in conn.calls
+            if 'INSERT INTO gym_profiles' in sql
+        ]
+        assert gym_insert, 'expected a gym_profiles INSERT on the build path'
+        # params = (mapbox_id, display, category, equipment_json, uid, uid, private)
+        assert gym_insert[0][2] == 'independent_gym'
+        assert gym_insert[0][6] is True
+
+    def test_no_opt_out_keeps_shareable_build_shared(self, monkeypatch):
+        app = _make_app()
+        conn = _FakeConn()
+        _seed_edit_layer0_equipment(conn, names=('Barbell',))
+        conn.queue_response(row={'gym_profile_id': None})
+        conn.queue_response(rows=[])
+        conn.queue_response(row={'preferred': 1})
+        conn.queue_response(row={'id': 8})
+        self._common_monkeypatch(monkeypatch, conn)
+
+        profile = _FakeRow({'category': 'independent_gym', 'locale_terrain_ids': []})
+        with app.test_request_context(
+            '/locales/joe_s_gym/edit', method='POST',
+            data={'equipment': ['Barbell'], 'notes': '', 'city': '',
+                  'locale_terrain_ids': []},
+        ):
+            _edit_locale(conn, 1, 'joe_s_gym', profile)
+
+        upsert = [
+            params for sql, params in conn.calls
+            if 'INSERT INTO locale_profiles' in sql and 'sharing_opt_out' in sql
+        ]
+        assert upsert[0][4] is False
+        gym_insert = [
+            params for sql, params in conn.calls
+            if 'INSERT INTO gym_profiles' in sql
+        ]
+        assert gym_insert[0][6] is False

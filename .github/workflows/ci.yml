@@ -91,6 +91,16 @@ jobs:
           snapshot="$(ls etl/output/layer0_etl_v*.sql | sort -V | tail -1)"
           echo "Loading snapshot: $snapshot"
           psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f "$snapshot"
+      - name: Apply Layer 0 migrations
+        # DB-native edits stack on the frozen genesis snapshot in sort -V order
+        # (etl/migrations/layer0/README.md). Validating snapshot + migrations is
+        # the "would-be-applied state" the gate guards before Andy hits Neon.
+        run: |
+          shopt -s nullglob
+          for m in $(ls etl/migrations/layer0/*.sql 2>/dev/null | sort -V); do
+            echo "Applying migration: $m"
+            psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f "$m"
+          done
       - name: Run validate_layer0 gate
         run: python -m etl.layer0.validate_layer0
 
