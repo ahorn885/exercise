@@ -404,20 +404,16 @@ class TestTerrainChoices:
 
 
 class TestRaceIneligibleTerrainConsistency:
-    """The route-side race-form filter set (issue #445) is kept code-side to
-    preserve the app/ETL boundary, but it must stay in lockstep with the
-    `race_eligible: False` rows in the vocabulary source of record. Pin them
-    together so adding/removing a training-only terrain in one place without
-    the other fails CI."""
+    """The route-side race-form filter set (issue #445) is kept code-side. Its
+    former ETL-side mirror (`extractors.vocabulary.RACE_INELIGIBLE_TERRAIN_IDS`)
+    was retired with the xlsx-authoring freeze, so the cross-check is gone; pin
+    the live route set to the three training-only terrains so an accidental edit
+    fails CI. (Terrain race-eligibility is also a `layer0.terrain_types.race_eligible`
+    DB column now — the canonical source going forward.)"""
 
-    def test_route_filter_matches_vocab_source(self):
-        from etl.layer0.extractors.vocabulary import (
-            RACE_INELIGIBLE_TERRAIN_IDS as VOCAB_SET,
-        )
+    def test_route_filter_is_the_three_training_only_terrains(self):
         from routes.race_events import RACE_INELIGIBLE_TERRAIN_IDS as ROUTE_SET
-        assert ROUTE_SET == VOCAB_SET
-        # Sanity: the three training-only terrains Andy named.
-        assert VOCAB_SET == {'TRN-014', 'TRN-015', 'TRN-016'}
+        assert ROUTE_SET == {'TRN-014', 'TRN-015', 'TRN-016'}
 
 
 # ─── _athlete_locale_choices removed ────────────────────────────────────────
