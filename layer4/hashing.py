@@ -13,6 +13,7 @@ allocated values. None of the helpers below accept them.
 
 from __future__ import annotations
 
+import dataclasses
 import hashlib
 import json
 from datetime import date, datetime
@@ -79,6 +80,18 @@ def compute_payload_hash(payload: Any) -> str:
     return _sha256_hex(canonical_json(payload))
 
 
+def compute_terrain_feasibility_hash(terrain_feasibility: dict[str, Any]) -> str:
+    """#540 slice 2c.2 — SHA-256 of the per-discipline terrain resolutions.
+
+    Folds into `plan_create_key` so a feasibility change (e.g. a newly-tagged
+    locale terrain) invalidates the cached plan. Values are `TerrainResolution`
+    frozen dataclasses; `asdict` flattens each to a jsonable mapping and
+    `canonical_json` sorts by discipline_id for a stable digest.
+    """
+    flat = {d: dataclasses.asdict(r) for d, r in terrain_feasibility.items()}
+    return _sha256_hex(canonical_json(flat))
+
+
 def compute_layer2c_bundle_hash(locale_to_hash: dict[str, str]) -> str:
     """Per §9.1 — SHA-256 of canonical-JSON of {locale_id: layer2c_hash}, sorted by locale_id.
 
@@ -134,6 +147,7 @@ def plan_create_key(
     max_tokens_per_phase: int,
     capped_retries_per_phase: int,
     training_substitution_hash: str | None = None,
+    terrain_feasibility_hash: str | None = None,
 ) -> str:
     """Per §9.1 — cache key for `llm_layer4_plan_create`.
 
@@ -141,8 +155,8 @@ def plan_create_key(
     on hit per §9.4). `layer2c_bundle_hash` is the bundle hash from
     `compute_layer2c_bundle_hash`.
 
-    `training_substitution_hash` collapses None → '' so callers that don't
-    supply a substitution payload retain stable keys.
+    `training_substitution_hash` + `terrain_feasibility_hash` collapse None → ''
+    so callers that don't supply those payloads retain stable keys.
     """
     components = [
         str(user_id),
@@ -162,6 +176,7 @@ def plan_create_key(
         str(max_tokens_per_phase),
         str(capped_retries_per_phase),
         training_substitution_hash or "",
+        terrain_feasibility_hash or "",
     ]
     return _sha256_hex("||".join(components))
 

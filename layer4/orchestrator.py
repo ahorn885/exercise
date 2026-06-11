@@ -111,7 +111,12 @@ from layer4.context import (
     TrainingSubstitutionPayload,
 )
 from layer4.payload import Layer4Payload, PlanSession
+from layer4.session_feasibility import (
+    TerrainResolution,
+    resolve_terrain_feasibility,
+)
 from layer4.single_session import SingleSessionRequest
+from layer4.validator import skill_gated_disciplines
 import locations
 from race_events_repo import load_target_race_event_payload
 
@@ -275,6 +280,92 @@ def _q_craft_discipline_aliases(db: Any) -> dict[str, list[str]]:
     out: dict[str, list[str]] = {}
     for row in cur.fetchall():
         out.setdefault(row["craft_name"], []).append(row["discipline_id"])
+    return out
+
+
+def _q_terrain_gap_rules(db: Any) -> dict[str, list[tuple[str, float]]]:
+    """#540 slice 2c.2 — `{target_terrain_id: [(proxy_terrain_id, fidelity), ...]}`
+    from `layer0.terrain_gap_rules` (active rows with a proxy). Feeds the PROXY
+    tier of `resolve_terrain_feasibility`. Mirrors `_q_modality_groups`. Empty
+    dict → the PROXY tier is inert (cascade falls through to INDOOR/STRENGTH)."""
+    cur = db.execute(
+        "SELECT target_terrain_id, proxy_terrain_id, proxy_fidelity "
+        "FROM layer0.terrain_gap_rules "
+        "WHERE proxy_terrain_id IS NOT NULL AND superseded_at IS NULL"
+    )
+    out: dict[str, list[tuple[str, float]]] = {}
+    for row in cur.fetchall():
+        if row["proxy_fidelity"] is None:
+            continue
+        out.setdefault(row["target_terrain_id"], []).append(
+            (row["proxy_terrain_id"], float(row["proxy_fidelity"]))
+        )
+    return out
+
+
+# Layer 2C `priority_per_discipline` rank — best (Critical) first. Drives the
+# order of the strength-substitute exercise pool handed to the STRENGTH tier.
+_PRIORITY_RANK: dict[str, int] = {"Critical": 0, "High": 1, "Medium": 2, "Low": 3}
+
+
+def _build_terrain_feasibility(
+    db: Any,
+    user_id: int,
+    cone: "_UpstreamFullCone",
+) -> dict[str, TerrainResolution]:
+    """#540 slice 2c.2 — resolve, per included discipline, where/how its sessions
+    can actually be done across the athlete's locale cluster (terrain axis).
+
+    Runs the deterministic EXACT→PROXY→INDOOR→STRENGTH→REALLOCATE cascade
+    (`resolve_terrain_feasibility`) on existing layer0 data — the cluster
+    terrain/equipment maps, `terrain_gap_rules`, and the discipline's own 2C
+    mapped exercises. Skill-gated disciplines (#336) are EXCLUDED: they are
+    already substituted to strength at the session level by the skill-capability
+    gate, so running the terrain cascade on them would emit a conflicting
+    directive (the two compose by partition, not by clobber). Unconstrained
+    disciplines (resolver returns None) are dropped — nothing to guide."""
+    cluster = locations.cluster_locale_ids(db, user_id)
+    if not cluster:
+        return {}
+    terrain_by_locale = locations.cluster_terrain_by_locale(db, user_id, cluster)
+    equip_by_locale = locations.cluster_equipment_by_locale(db, user_id, cluster)
+    gap_rules = _q_terrain_gap_rules(db)
+
+    # The discipline's own mapped strength pool, ranked best-first by 2C
+    # priority. tier 0 = unavailable at this locale set; keep 1/2/3.
+    pool_by_discipline: dict[str, list[str]] = {}
+    for ex in cone.layer2c_payload.exercises_resolved:
+        if ex.tier not in (1, 2, 3):
+            continue
+        for d_id in ex.discipline_ids:
+            pool_by_discipline.setdefault(d_id, []).append(ex.exercise_id)
+    # Rank each discipline's pool by its per-discipline priority (stable).
+    for d_id, ids in pool_by_discipline.items():
+        rank_of = {
+            ex.exercise_id: _PRIORITY_RANK.get(
+                ex.priority_per_discipline.get(d_id, ""), 99
+            )
+            for ex in cone.layer2c_payload.exercises_resolved
+        }
+        ids.sort(key=lambda e: rank_of.get(e, 99))
+
+    gated = skill_gated_disciplines({cone.primary_locale: cone.layer2c_payload})
+    included = [d for d in cone.layer2a_payload.disciplines if d.inclusion == "included"]
+
+    out: dict[str, TerrainResolution] = {}
+    for d in included:
+        if d.discipline_id in gated:
+            continue
+        resolution = resolve_terrain_feasibility(
+            d.discipline_id,
+            locale_order=cluster,
+            cluster_terrain_by_locale=terrain_by_locale,
+            cluster_equipment_by_locale=equip_by_locale,
+            gap_rules=gap_rules,
+            discipline_exercise_ids=pool_by_discipline.get(d.discipline_id, []),
+        )
+        if resolution is not None:
+            out[d.discipline_id] = resolution
     return out
 
 
@@ -957,6 +1048,11 @@ def orchestrate_plan_create(
     )
 
     layer2c_payloads = {cone.primary_locale: cone.layer2c_payload}
+    # #540 slice 2c.2 — deterministic per-discipline terrain feasibility across
+    # the locale cluster, resolved pre-synthesis so the synthesizer is handed a
+    # session that already works (never a Rock Climbing session at a home with no
+    # climbing terrain). Wired create-side first; refresh is the follow-up (§4.4).
+    terrain_feasibility = _build_terrain_feasibility(db, user_id, cone)
     payload = llm_layer4_plan_create_cached(
         user_id=user_id,
         layer1_payload=cone.layer1_payload.model_dump(mode="json"),
@@ -975,6 +1071,9 @@ def orchestrate_plan_create(
         # Thread the training-substitution payload from the cone into the
         # per-phase prompt bodies + cache key.
         training_substitution_payload=cone.training_substitution_payload,
+        # Thread the per-discipline terrain-feasibility resolutions into the
+        # session-grid prompt + cache key.
+        terrain_feasibility=terrain_feasibility,
     )
     payload = _apply_locale_assign(db, user_id, payload, layer2c_payloads)
     payload = _apply_rx_wire(db, user_id, payload, layer2c_payloads)

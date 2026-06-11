@@ -45,6 +45,7 @@ from layer4.hashing import (
     compute_layer2c_bundle_hash,
     compute_payload_hash,
     compute_prior_plan_session_window_hash,
+    compute_terrain_feasibility_hash,
     plan_create_key,
     plan_refresh_key,
     race_week_brief_key,
@@ -52,6 +53,7 @@ from layer4.hashing import (
 )
 from layer4.payload import Layer4Payload, PlanSession
 from layer4.plan_create import llm_layer4_plan_create
+from layer4.session_feasibility import TerrainResolution
 from layer4.plan_refresh import llm_layer4_plan_refresh
 from layer4.race_week_brief import llm_layer4_race_week_brief
 from layer4.single_session import SingleSessionRequest, llm_layer4_single_session_synthesize
@@ -320,6 +322,10 @@ def llm_layer4_plan_create_cached(
     # threaded into the per-phase render. Default None preserves existing
     # call sites.
     training_substitution_payload: TrainingSubstitutionPayload | None = None,
+    # #540 — per-discipline terrain-feasibility resolutions. Hashed into the
+    # cache key + threaded into the session-grid render. Default None/{} for
+    # existing call sites (notably test fixtures).
+    terrain_feasibility: dict[str, TerrainResolution] | None = None,
     model_synthesizer: str = "claude-sonnet-4-6",
     model_seam_reviewer: str = "claude-sonnet-4-6",
     temperature: float = 0.2,
@@ -358,6 +364,11 @@ def llm_layer4_plan_create_cached(
         if training_substitution_payload is not None
         else None
     )
+    terrain_feasibility_hash = (
+        compute_terrain_feasibility_hash(terrain_feasibility)
+        if terrain_feasibility
+        else None
+    )
 
     key = plan_create_key(
         user_id=user_id,
@@ -377,6 +388,7 @@ def llm_layer4_plan_create_cached(
         max_tokens_per_phase=max_tokens_per_phase if max_tokens_per_phase is not None else 0,
         capped_retries_per_phase=capped_retries_per_phase,
         training_substitution_hash=training_substitution_hash,
+        terrain_feasibility_hash=terrain_feasibility_hash,
     )
 
     # D-77 diagnostic: the call cache key + its component layer-hashes. Logged
@@ -402,6 +414,7 @@ def llm_layer4_plan_create_cached(
         kwargs: dict[str, Any] = {
             "race_event_payload": race_event_payload,
             "training_substitution_payload": training_substitution_payload,
+            "terrain_feasibility": terrain_feasibility,
             "model_synthesizer": model_synthesizer,
             "model_seam_reviewer": model_seam_reviewer,
             "temperature": temperature,

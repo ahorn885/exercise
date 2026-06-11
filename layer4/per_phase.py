@@ -62,6 +62,11 @@ from layer4.payload import (
     ValidatorResult,
 )
 from layer4 import periodization
+from layer4.session_feasibility import (
+    TerrainResolution,
+    feasibility_line,
+    grid_annotation,
+)
 from layer4.session_grid import build_session_grid, resolve_available_days
 from layer4.validator import (
     ValidatorContext,
@@ -800,6 +805,52 @@ def _format_skill_capability_gates(
     return out
 
 
+def _format_session_feasibility(
+    terrain_feasibility: dict[str, TerrainResolution] | None,
+    layer2a_payload: Layer2APayload | None,
+    layer2c_payloads: dict[str, Layer2CPayload],
+) -> list[str]:
+    """#540 slice 2c.2 — render the deterministic per-discipline terrain-
+    feasibility directive (the companion to the inline session-grid tag).
+
+    For each discipline the cascade resolved (EXACT/PROXY/INDOOR/STRENGTH/
+    REALLOCATE), state where + how its sessions are actually doable across the
+    athlete's locale cluster, so the synthesizer composes a session that works
+    rather than one the athlete can't physically do. Skill-gated disciplines
+    are absent here by construction (handled by the #336 substitution directive
+    — the orchestrator partitions the two). Empty when nothing was resolved."""
+    if not terrain_feasibility:
+        return []
+    names: dict[str, str] = {}
+    if layer2a_payload is not None:
+        names = {d.discipline_id: d.discipline_name for d in layer2a_payload.disciplines}
+    # Exercise id → display name for the STRENGTH tier's substitute pool, from
+    # the already-threaded 2C resolved set (no extra plumbing).
+    exercise_names: dict[str, str] = {}
+    for l2c in layer2c_payloads.values():
+        for ex in l2c.exercises_resolved:
+            exercise_names.setdefault(ex.exercise_id, ex.exercise_name)
+    out: list[str] = [
+        "=== Session feasibility (deterministic — terrain routing, #540) ===",
+        "Per discipline, where + how its sessions are actually doable across your "
+        "locale cluster (home + nearby). The session grid above is authoritative "
+        "for counts; this is authoritative for WHERE + as WHAT to compose each "
+        "one. Honor it — do not prescribe a session the athlete can't physically "
+        "do. Cite locales / surfaces in natural language; never the internal "
+        "`TRN-xxx` / `discipline_id` strings:",
+    ]
+    for d_id in sorted(terrain_feasibility):
+        out.append(
+            feasibility_line(
+                terrain_feasibility[d_id],
+                discipline_name=names.get(d_id, d_id),
+                exercise_names=exercise_names,
+            )
+        )
+    out.append("")
+    return out
+
+
 def _format_session_grid(
     layer1_payload: dict[str, Any],
     layer2a_payload: Layer2APayload | None,
@@ -809,6 +860,7 @@ def _format_session_grid(
     *,
     week_range: tuple[int, int] | None = None,
     skill_gated: dict[str, str] | None = None,
+    terrain_feasibility: dict[str, TerrainResolution] | None = None,
 ) -> list[str]:
     """Track 2 slice 2b: render the deterministic per-week session grid that
     replaces the prior `_format_phase_load_bands` block. The grid is
@@ -880,10 +932,17 @@ def _format_session_grid(
                     f" [SKILL-GATED: not cleared for '{skill_gated[a.discipline_id]}' "
                     "— prescribe as strength substitution, NOT a skill session]"
                 )
+            # #540 — inline terrain-feasibility tag for the tiers that change the
+            # session KIND (strength) or drop it (reallocate). Composes with the
+            # skill-gate tag (both append; the orchestrator partitions which
+            # disciplines each owns, so they never describe the same one twice).
+            terrain_tag = ""
+            if terrain_feasibility and a.discipline_id in terrain_feasibility:
+                terrain_tag = grid_annotation(terrain_feasibility[a.discipline_id])
             out.append(
                 f"  - {a.discipline_name} ({a.discipline_id}): "
                 f"{a.sessions_this_week} session(s) × ~{a.typical_session_minutes} min, "
-                f"target {a.target_hours_this_week:.1f} hours{cadence}.{gate}"
+                f"target {a.target_hours_this_week:.1f} hours{cadence}.{gate}{terrain_tag}"
             )
         if grid.intensity_mix.total > 0:
             out.append(
@@ -1162,6 +1221,7 @@ def render_user_prompt(
     seam_issues: list[str],
     seam_direction: Literal["re_prompt_prior", "re_prompt_next"] | None,
     training_substitution_payload: TrainingSubstitutionPayload | None = None,
+    terrain_feasibility: dict[str, TerrainResolution] | None = None,
     week_range: tuple[int, int] | None = None,
 ) -> str:
     """Render the §6 user prompt for one synthesis unit. Inline Python
@@ -1231,11 +1291,18 @@ def render_user_prompt(
             race_event_payload,
             week_range=week_range,
             skill_gated=skill_gated,
+            terrain_feasibility=terrain_feasibility,
         )
     )
     parts.append("")
     parts.extend(
         _format_skill_capability_gates(layer2c_payloads or {}, layer2a_payload)
+    )
+    # #540 — terrain-feasibility directive (companion to the inline grid tag).
+    parts.extend(
+        _format_session_feasibility(
+            terrain_feasibility, layer2a_payload, layer2c_payloads or {}
+        )
     )
 
     # === Prior continuity ===
@@ -1748,6 +1815,9 @@ def synthesize_phase(
     # prompt via `_format_training_substitution_per_phase`. Default None
     # preserves legacy call sites that don't surface the cone.
     training_substitution_payload: TrainingSubstitutionPayload | None = None,
+    # #540 — per-discipline terrain-feasibility resolutions rendered into the
+    # session-grid block. Default None preserves legacy call sites.
+    terrain_feasibility: dict[str, TerrainResolution] | None = None,
     # D-77: when set, scope this call to an inclusive `week_in_phase` range
     # (the per-week synthesis unit). None = whole phase (seam re-synth path).
     week_range: tuple[int, int] | None = None,
@@ -1933,6 +2003,7 @@ def synthesize_phase(
             seam_issues=seam_issues or [],
             seam_direction=seam_direction,
             training_substitution_payload=training_substitution_payload,
+            terrain_feasibility=terrain_feasibility,
             week_range=week_range,
         )
 
