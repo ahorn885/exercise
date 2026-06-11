@@ -40,6 +40,7 @@ from etl.layer0.validation.fk_checks import (
     run_training_gap_fks,
 )
 from etl.layer0.validation.modality_group_orphan import run_modality_group_orphan
+from etl.layer0.validation.terrain_types_check import run_terrain_types
 from etl.layer0.validation.sum_to_100 import run_sum_to_100
 from etl.layer0.validation.vocab_alignment import run_vocab_alignment
 
@@ -84,6 +85,17 @@ def _v_discipline_canon(r: dict) -> list[Violation]:
 
 def _v_modality_group_orphan(r: dict) -> list[Violation]:
     return [Violation(d, "no modality-group membership") for d in r["orphans"]]
+
+
+def _v_terrain_types(r: dict) -> list[Violation]:
+    out: list[Violation] = []
+    out += [Violation(f"terrain_id:{t}", "malformed terrain_id (expected TRN-NNN)")
+            for t in r["malformed_ids"]]
+    out += [Violation(f"dup_terrain_id:{t}", "duplicate terrain_id in active set")
+            for t in r["duplicate_ids"]]
+    out += [Violation(f"dup_name:{n}", "duplicate canonical_name in active set")
+            for n in r["duplicate_names"]]
+    return out
 
 
 def _v_sum_to_100(r: dict) -> list[Violation]:
@@ -139,6 +151,7 @@ CHECKS: tuple[Check, ...] = (
     Check("training_gap_fks", run_training_gap_fks, _v_training_gap_fks),
     Check("discipline_canon", run_discipline_canon_conformance, _v_discipline_canon),
     Check("modality_group_orphan", run_modality_group_orphan, _v_modality_group_orphan),
+    Check("terrain_types", run_terrain_types, _v_terrain_types),
     Check("sum_to_100", run_sum_to_100, _v_sum_to_100),
     Check("vocab_alignment", run_vocab_alignment, _v_vocab_alignment),
     Check("contraindicated_conditions", run_contraindicated_conditions, _v_contraindicated),

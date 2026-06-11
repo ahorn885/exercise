@@ -19,6 +19,7 @@ def _clean_results() -> dict[str, dict]:
         "training_gap_fks": {"errors": []},
         "discipline_canon": {"errors": []},
         "modality_group_orphan": {"orphans": []},
+        "terrain_types": {"malformed_ids": [], "duplicate_ids": [], "duplicate_names": []},
         "sum_to_100": {
             "sport_results": [
                 {"sport": "Adventure Racing",
@@ -39,12 +40,14 @@ def test_clean_results_pass() -> None:
     assert {o.name for o in outcomes} == {c.name for c in v.CHECKS}
 
 
-def test_registry_has_all_seven_logical_checks() -> None:
-    # fk_checks splits into two runners → 8 entries, 7 logical checks.
-    assert len(v.CHECKS) == 8
+def test_registry_has_all_logical_checks() -> None:
+    # fk_checks splits into two runners → 9 entries (8 logical checks: the
+    # original 7 + terrain_types added with the xlsx-authoring freeze).
+    assert len(v.CHECKS) == 9
     names = [c.name for c in v.CHECKS]
     assert names.count("substitution_fks") == 1
     assert names.count("training_gap_fks") == 1
+    assert "terrain_types" in names
 
 
 def test_fk_violation_fails_the_gate() -> None:

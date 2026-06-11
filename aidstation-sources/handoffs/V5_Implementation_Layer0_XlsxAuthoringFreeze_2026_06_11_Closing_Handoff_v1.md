@@ -18,7 +18,9 @@ The last open item of epic [#488](https://github.com/ahorn885/exercise/issues/48
 **Three main-suite tests resolved** (kept their live parts):
 - `tests/test_onboarding_race_events.py` — `TestRaceIneligibleTerrainConsistency` was an ETL-vocab-vs-route cross-check; narrowed to assert the **live route set** == `{TRN-014,015,016}` (the ETL mirror is gone; the route keeps its own; terrain race-eligibility is also a `terrain_types.race_eligible` DB column now).
 - `tests/test_layer2c_prep.py` — retired the parser classes (`TestGearToggleParser`, `TestParsedSubstitutesLoader`) + their imports/fixture; **kept `TestSchemaSubstrate`** (reads `schema.sql` + the archived migration + constructs `Layer2CPayload`).
-- `etl/_frozen_xlsx_authoring/tests/test_bucket_c_terrain_vocab_audit.py` (was `tests/`) — **frozen whole** with the freeze: it is built end-to-end on `_TERRAIN_STRUCTURED_ROWS` (the ETL terrain source, consumed only by the now-frozen `run.py`). **Coverage note (owed/optional):** terrain-vocab integrity (19-row count, TRN ids, climbing split, water expansion, layer2b boundary) is no longer guarded; the clean rebuild is a DB-side `validate_layer0` terrain check — flagged, not built.
+- `etl/_frozen_xlsx_authoring/tests/test_bucket_c_terrain_vocab_audit.py` (was `tests/`) — **frozen whole** with the freeze: it is built end-to-end on `_TERRAIN_STRUCTURED_ROWS` (the ETL terrain source, consumed only by the now-frozen `run.py`). Its terrain-integrity coverage was **rebuilt DB-side** (next bullet) rather than lost.
+
+**Coverage rebuilt — new `terrain_types` validator** (`etl/layer0/validation/terrain_types_check.py`, wired into `validate_layer0` as the 9th check; FAIL per decision C). Replaces the meaningful, growth-tolerant core of the frozen terrain audit, moved onto the active `layer0.terrain_types` set: every `terrain_id` is well-formed `TRN-NNN`, and `terrain_id` + `canonical_name` are unique within the active set. Deliberately drops the frozen test's brittle snapshot assertions (exact 19-row count, specific climbing/water id presence) — those suited a frozen constant, not a living table. Pure `check_terrain_rows(rows)` helper + `run_terrain_types(conn)` wrapper (mirrors `sum_to_100`); 7 DB-free unit tests (`etl/tests/test_terrain_types_check.py`); `test_validate_layer0` registry updated (8→9 checks). **Verified green on the genesis data** (19 active terrain rows, 0 violations).
 
 **Stayed live (untouched):** `etl/layer0/schema.sql`, `validate_layer0.py` + `validation/` + waivers, `export_xlsx.py` (the DB→xlsx hedge, #545), `db.py`, the canon/transform modules (`discipline_canon`/`sport_canon`/`vocabulary_transforms`/`sport_name_aliases` — imported by the gate), `etl/migrations/layer0/`, the genesis snapshot. The `layer0-gate` is the integrity net going forward; authoring is now SQL migrations only.
 
@@ -27,22 +29,22 @@ Design doc §6.4 + §9 marked DONE (epic complete); CLAUDE.md needed no change (
 ## 3. Verification
 
 - **Full-suite collection clean:** `pytest tests/ etl/tests/ --co` → **2364 tests collected, no import errors** (confirms nothing live imported the freeze set; the dependency map held).
-- Edited/remaining tests pass: `tests/test_layer2c_prep.py` + `tests/test_onboarding_race_events.py` + `etl/tests/` → **123 passed**.
+- Edited/remaining tests pass: `tests/test_layer2c_prep.py` + `tests/test_onboarding_race_events.py` + `etl/tests/` (**88 passed**, incl. the 7 new `terrain_types` validator tests). Earlier the broader edited set ran 123.
 - Gate + hedge import clean: `import etl.layer0.{validate_layer0,export_xlsx,db}` OK.
-- The `layer0-gate` (schema + genesis + migrations + `validate_layer0`) is untouched by the freeze (verified green earlier this day on the 0002/0003 work; the freeze removed none of its inputs).
+- **New `terrain_types` check verified green on the genesis data** via the local throwaway-Postgres `layer0-gate` replica (schema + genesis + `0001`+`0002`+`0003` → `validate_layer0` PASS; 19 active terrain rows, 0 violations). The rest of the `layer0-gate` is untouched by the freeze.
 - No app code or CI workflow changed; `extractors/` dir removed (empty after the moves).
 
 ## 4. Owed / next move
 
-1. **(Optional) Terrain-vocab integrity guard, DB-side.** The frozen `test_bucket_c_terrain_vocab_audit` was the only coverage of terrain-row integrity; if wanted, rebuild as a `validate_layer0` check over `layer0.terrain_types` (count / TRN-id pattern / climbing+water categories). Filed as a note here; not built.
-2. **Epic #488 — close on merge** (PR body carries `Closes #488`).
-3. **Carried (unchanged):** `0003` Neon re-apply optional; cold-plan post-deploy verify (slice 3b/#521); go-live blockers **#539** (tab-closed plan-gen crawl) + **#540** (terrain-infeasible locale routing) are the top of the 4-tier order now that the Layer 0 epic is done.
+1. **Epic #488 — close on merge** (PR body carries `Closes #488`).
+2. **Carried (unchanged):** `0003` Neon re-apply optional; cold-plan post-deploy verify (slice 3b/#521); go-live blockers **#539** (tab-closed plan-gen crawl) + **#540** (terrain-infeasible locale routing) are the top of the 4-tier order now that the Layer 0 epic is done.
 
 ## 5. §8 anchor table (Rule #10)
 
 | Claim | File | Anchor / check |
 |---|---|---|
 | ETL toolchain frozen | `etl/_frozen_xlsx_authoring/` | `extractors/`, `run.py`, `emit_sql.py`, `sources/*.xlsx`, `tests/` + `README.md` marker present |
+| Terrain coverage rebuilt DB-side | `etl/layer0/validation/terrain_types_check.py` | `def check_terrain_rows` (TRN-NNN + uniqueness); wired in `validate_layer0.CHECKS` as `terrain_types`; `etl/tests/test_terrain_types_check.py` (7) |
 | Freeze set gone from live tree | `etl/layer0/` | no `extractors/`, `run.py`, `emit_sql.py`; gate + canon + `export_xlsx` remain |
 | Gate untouched + imports clean | `etl/layer0/validate_layer0.py` | `import etl.layer0.validate_layer0` OK; `layer0-gate` inputs (schema/genesis/migrations) intact |
 | Main-suite tests resolved | `tests/test_onboarding_race_events.py`, `tests/test_layer2c_prep.py` | `test_route_filter_is_the_three_training_only_terrains`; `TestSchemaSubstrate` kept, parser classes gone |
@@ -59,4 +61,4 @@ Trigger #6 (architecture/status promotion — retiring the ETL authoring path): 
 
 ## 7. Summary
 
-Closed epic #488: retired the legacy xlsx → DB Layer 0 authoring toolchain. The classification's key finding — every freeze-set symbol is test-only, with live equivalents standing alone — meant Option 3 needed **no constant relocation**, just archival + ETL-guard-test retirement. Moved `extractors/`, `run.py`, `emit_sql.py`, the two workbooks, and their 6 parser/canon tests to `etl/_frozen_xlsx_authoring/` (README-marked, CI-uncollected); narrowed the route-terrain cross-check to the live route set; kept `TestSchemaSubstrate`; froze the `_TERRAIN_STRUCTURED_ROWS` terrain-vocab audit whole (flagging the lone coverage loss as an optional DB-side rebuild). The gate (`schema.sql` + genesis + migrations + `validate_layer0`), the canon modules it imports, and the `export_xlsx` hedge are untouched; full suite collects clean (2364, 0 import errors) and the edited/remaining tests pass (123). Layer 0 is now DB-authoritative end-to-end — authored via SQL migrations, validated by the gate, with the spreadsheet path frozen as history.
+Closed epic #488: retired the legacy xlsx → DB Layer 0 authoring toolchain. The classification's key finding — every freeze-set symbol is test-only, with live equivalents standing alone — meant Option 3 needed **no constant relocation**, just archival + ETL-guard-test retirement. Moved `extractors/`, `run.py`, `emit_sql.py`, the two workbooks, and their 6 parser/canon tests to `etl/_frozen_xlsx_authoring/` (README-marked, CI-uncollected); narrowed the route-terrain cross-check to the live route set; kept `TestSchemaSubstrate`; froze the `_TERRAIN_STRUCTURED_ROWS` terrain-vocab audit whole but **rebuilt its integrity coverage DB-side** as a new `terrain_types` `validate_layer0` check (TRN-NNN format + active-set uniqueness, growth-tolerant; 7 unit tests; green on the genesis data). The gate (`schema.sql` + genesis + migrations + `validate_layer0`), the canon modules it imports, and the `export_xlsx` hedge are untouched; full suite collects clean (2364, 0 import errors) and the edited/remaining + new tests pass. Layer 0 is now DB-authoritative end-to-end — authored via SQL migrations, validated by the gate (now incl. terrain structural integrity), with the spreadsheet path frozen as history.
