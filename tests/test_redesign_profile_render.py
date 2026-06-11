@@ -343,11 +343,14 @@ import athlete_supplements_repo as _supp_repo  # noqa: E402
 
 
 class _SuppConn(_Conn):
-    """Adds canned rows for the supplement vocab + the athlete's records."""
-    def __init__(self, vocab=(), supps=(), **kw):
+    """Adds canned rows for the supplement vocab + the athlete's records, plus
+    the §B health-condition / medication capture lists."""
+    def __init__(self, vocab=(), supps=(), conditions=(), medications=(), **kw):
         super().__init__(**kw)
         self._vocab = list(vocab)
         self._supps = list(supps)
+        self._conditions = list(conditions)
+        self._medications = list(medications)
 
     def execute(self, sql, *a, **k):
         s = ' '.join(sql.split())
@@ -355,6 +358,10 @@ class _SuppConn(_Conn):
             return _Cursor(self._vocab)
         if 'FROM athlete_supplements' in s:
             return _Cursor(self._supps)
+        if 'FROM health_conditions_log' in s:
+            return _Cursor(self._conditions)
+        if 'FROM medications_log' in s:
+            return _Cursor(self._medications)
         return super().execute(sql, *a, **k)
 
 
@@ -484,3 +491,89 @@ def test_supplement_vocab_cleaners():
     assert _supp_repo.clean_frequency('') is None and _supp_repo.clean_frequency(None) is None
     assert _supp_repo.clean_timing('during_exercise') == 'during_exercise'
     assert _supp_repo.clean_timing('whenever') is None
+
+
+# ── §B health-condition + medication capture ─────────────────────────────────
+
+import health_inputs_repo as _hi_repo  # noqa: E402
+
+
+def test_health_inputs_cards_render(monkeypatch):
+    conditions = [_FakeRow(id=3, system_category='cardiac',
+                           condition_name='Atrial fibrillation', severity=2, notes=None)]
+    medications = [_FakeRow(id=5, medication_class='anticoagulant',
+                            medication_name='warfarin', notes=None)]
+    client = _client(monkeypatch, _SuppConn(conditions=conditions, medications=medications,
+                                            profile={'primary_sport': 'run', 'updated_at': 'x'}))
+    html = client.get('/profile/?tab=athlete').get_data(as_text=True)
+    # Both cards + the stored records (rendered via their §B labels).
+    assert 'Health conditions' in html and 'Medications' in html
+    assert 'Atrial fibrillation' in html and 'Cardiac' in html
+    assert 'Anticoagulant' in html and 'warfarin' in html
+    # Vocab-backed add selects + scoped delete forms.
+    assert 'name="system_category"' in html and 'name="medication_class"' in html
+    assert '/profile/condition/add' in html and '/profile/condition/3/delete' in html
+    assert '/profile/medication/add' in html and '/profile/medication/5/delete' in html
+    assert 'style="' not in html
+
+
+def test_condition_add_validates_category(monkeypatch):
+    calls = []
+    monkeypatch.setattr(_profile, 'add_health_condition',
+                        lambda db, uid, **kw: calls.append(kw) or True)
+    monkeypatch.setitem(_appmod.app.config, 'WTF_CSRF_ENABLED', False)
+    client = _client(monkeypatch, _Conn(profile={}))
+    resp = client.post('/profile/condition/add', data={
+        'system_category': 'cardiac', 'condition_name': 'SVT', 'severity': '3'})
+    assert resp.status_code in (302, 303)
+    assert calls[0]['system_category'] == 'cardiac'
+    assert calls[0]['condition_name'] == 'SVT' and calls[0]['severity'] == 3
+
+
+def test_condition_add_rejects_unknown_category(monkeypatch):
+    # The repo guard rejects out-of-vocab categories — no row stored.
+    class _Rec:
+        def __init__(self):
+            self.calls = []
+        def execute(self, sql, params=()):
+            self.calls.append(sql)
+            return _Cursor([])
+    db = _Rec()
+    assert _hi_repo.add_health_condition(
+        db, 1, system_category='bogus', condition_name='x',
+        severity=None, notes=None) is False
+    assert not any('INSERT' in s for s in db.calls)
+
+
+def test_medication_add_rejects_unknown_class(monkeypatch):
+    class _Rec:
+        def __init__(self):
+            self.calls = []
+        def execute(self, sql, params=()):
+            self.calls.append(sql)
+            return _Cursor([])
+    db = _Rec()
+    assert _hi_repo.add_medication(
+        db, 1, medication_class='snake_oil', medication_name='x', notes=None) is False
+    assert not any('INSERT' in s for s in db.calls)
+
+
+def test_health_input_deletes_are_user_scoped():
+    class _Rec:
+        def __init__(self):
+            self.calls = []
+        def execute(self, sql, params=()):
+            self.calls.append((' '.join(sql.split()), params))
+            return _Cursor([])
+    db = _Rec()
+    _hi_repo.delete_health_condition(db, 1, 9)
+    _hi_repo.delete_medication(db, 1, 4)
+    cond = next(c for c in db.calls if 'health_conditions_log' in c[0])
+    med = next(c for c in db.calls if 'medications_log' in c[0])
+    assert cond[1] == (9, 1) and med[1] == (4, 1)  # (id, user_id) — scoped
+
+
+def test_severity_cleaner():
+    assert _hi_repo.clean_severity('3') == 3
+    assert _hi_repo.clean_severity('0') is None and _hi_repo.clean_severity('6') is None
+    assert _hi_repo.clean_severity('') is None and _hi_repo.clean_severity(None) is None
