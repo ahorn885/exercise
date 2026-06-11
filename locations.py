@@ -129,6 +129,56 @@ def cluster_effective_tags(db: Any, user_id: int, cluster: list[str]) -> list[st
     return sorted(pool)
 
 
+def cluster_equipment_by_locale(
+    db: Any, user_id: int, cluster: list[str]
+) -> dict[str, set[str]]:
+    """Per-locale effective-equipment sets across the cluster — the equipment
+    analogue kept un-unioned (keyed by locale) for session-feasibility routing,
+    where *which* locale carries a cardio machine matters (#540 slice 2c.2)."""
+    return {locale: locale_effective_tags(db, user_id, locale) for locale in cluster}
+
+
+def cluster_terrain_by_locale(
+    db: Any, user_id: int, cluster: list[str]
+) -> dict[str, set[str]]:
+    """Per-locale `locale_terrain_ids` (canonical TRN-xxx) across the cluster —
+    the terrain analogue of `cluster_equipment_by_locale`. Reads the
+    `locale_profiles.locale_terrain_ids` TEXT[] for each locale; the Postgres
+    list shape and the SQLite JSON-string shim are both tolerated (mirrors
+    `_hydrate_locale_terrain_ids` route-side). Locales with NULL/empty terrain
+    map to an empty set. Keyed by locale (not unioned) because session routing
+    needs to know *which* cluster locale carries the required terrain (#540)."""
+    out: dict[str, set[str]] = {}
+    for locale in cluster:
+        row = db.execute(
+            "SELECT locale_terrain_ids FROM locale_profiles "
+            "WHERE user_id = ? AND locale = ? LIMIT 1",
+            (user_id, locale),
+        ).fetchone()
+        out[locale] = _coerce_terrain_ids(row["locale_terrain_ids"] if row else None)
+    return out
+
+
+def _coerce_terrain_ids(raw: Any) -> set[str]:
+    """Normalize a `locale_terrain_ids` cell (PG list / SQLite JSON-string /
+    NULL) into a set of TRN-xxx ids."""
+    if raw is None:
+        return set()
+    if isinstance(raw, (list, tuple)):
+        return {str(t) for t in raw if t}
+    if isinstance(raw, str):
+        s = raw.strip()
+        if not s or s in ("{}", "[]"):
+            return set()
+        try:
+            parsed = json.loads(s)
+        except (ValueError, TypeError):
+            return set()
+        if isinstance(parsed, list):
+            return {str(t) for t in parsed if t}
+    return set()
+
+
 def _haversine_km(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
     """Great-circle distance in km between two lat/lng points."""
     radius = 6371.0
