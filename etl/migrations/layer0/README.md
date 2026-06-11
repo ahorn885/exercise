@@ -95,22 +95,34 @@ Most `layer0.*` tables are emitted by the ETL into the genesis snapshot
 (`etl/output/layer0_etl_v1.6.x.sql`). A few are **spec-sourced** — hand-authored
 from a spec rather than parsed from a workbook — so they never appeared in the
 snapshot and historically lived as one-shot `etl/sources/migrate_*.sql` files the
-gate never saw. Folding them into this loop has two halves:
+gate never saw. Bring such a table into the gate with **one self-contained
+migration** here: `CREATE TABLE IF NOT EXISTS` + the seed
+(`INSERT … ON CONFLICT DO NOTHING`), so a standalone Neon SQL-editor paste
+provisions it without any separate schema step. Mirror the table's *existing*
+live shape exactly — do not "normalize" column types/columns in the same step,
+or you risk drift with a copy already on Neon.
 
-1. **DDL → `etl/layer0/schema.sql`** so the gate (and any `apply_schema` setup)
-   creates the table. Mirror the table's *existing* live shape exactly — do not
-   "normalize" column types/columns in the same step, or you risk drift with a
-   copy already on Neon.
-2. **Seed → a migration here**, self-contained (`CREATE TABLE IF NOT EXISTS` +
-   `INSERT … ON CONFLICT DO NOTHING`) so a standalone Neon SQL-editor apply
-   provisions the table without a separate schema step.
+**Do not add their DDL to `etl/layer0/schema.sql`.** The
+`TestLayer0TableFamilyMap` drift guard
+(`tests/test_layer4_orchestrator.py`) requires every `etl_version`-bearing table
+in `schema.sql` to appear in `_LAYER0_TABLE_FAMILY` (`layer4/orchestrator.py`),
+the per-table cache-invalidation digest — and that map is pinned to the
+`{0A, 0B, 0C}` families. A table that is **outside** that cone, or versioned on
+its own line, must therefore stay out of `schema.sql` (the existing precedent:
+`terrain_gap_rules` is created by `etl/sources/populate_terrain_gap_rules.sql`,
+not `schema.sql`). The self-contained migration is what the gate runs.
 
 `0002_seed_supplement_vocabulary.sql` is the worked example (epic #488): it
-de-orphans `layer0.supplement_vocabulary`, subsuming the legacy
+de-orphans `layer0.supplement_vocabulary` (read by Layer 2E, versioned on its
+own `supp_vocab.*` line — outside the 0A/0B/0C cone, so deliberately not in
+`_LAYER0_TABLE_FAMILY` per slice 3b), subsuming the legacy
 `migrate_supplement_vocabulary.sql` (base seed) + the D-21
 `migrate_supplement_vocab_contraindication_retag_v1.sql` (the seed already
 carries the canonical §B tokens the retag produced). `layer0.terrain_gap_rules`
-is the remaining orphan and the natural next migration in this shape.
+is the remaining orphan and the natural next migration in this shape — note it
+*is* a 0C cone table (read by Layer 2B) and already in `_LAYER0_TABLE_FAMILY`,
+so its migration stays out of `schema.sql` for the same drift-guard reason but
+the family entry already exists.
 
 ## The gate
 

@@ -511,38 +511,3 @@ BEGIN
       UNIQUE (terrain_id, etl_version);
   END IF;
 END $$;
-
--- D-26 / FC-1: supplement_vocabulary. Was the standalone one-shot
--- etl/sources/migrate_supplement_vocabulary.sql — folded here (like the
--- terrain_types block above) so schema.sql is the canonical substrate and the
--- layer0-gate creates the table before applying its seed migration
--- (etl/migrations/layer0/0002_seed_supplement_vocabulary.sql). This is a
--- spec-sourced (Supplement_Vocabulary_Spec.md), NOT ETL-emitted, table, so it
--- is absent from the ETL genesis snapshot — the seed lives in the migration,
--- the DDL lives here. Shape mirrors the original migrate file exactly (bare
--- TIMESTAMP superseded_at, no etl_run_at) to stay drift-free with any copy
--- already applied on Neon; consumed by Layer 2E (nutrition baseline).
-CREATE TABLE IF NOT EXISTS layer0.supplement_vocabulary (
-  supplement_id            TEXT PRIMARY KEY,
-  canonical_name           TEXT NOT NULL,
-  alternative_names        TEXT[] DEFAULT '{}',
-  category                 TEXT NOT NULL,
-  primary_effect           TEXT NOT NULL,
-  typical_dose             TEXT NOT NULL,
-  timing_recommendations   TEXT[] NOT NULL,
-  contraindications        TEXT[] DEFAULT '{}',
-  evidence_quality         TEXT NOT NULL,
-  notes                    TEXT,
-  etl_version              TEXT NOT NULL,
-  superseded_at            TIMESTAMP,
-  CONSTRAINT supp_vocab_category_enum CHECK (
-    category IN ('Performance', 'Recovery', 'Health', 'Race-day', 'GI', 'Sleep', 'Hormonal-Stress', 'Other')
-  ),
-  CONSTRAINT supp_vocab_evidence_enum CHECK (
-    evidence_quality IN ('Strong', 'Moderate', 'Weak', 'Theoretical')
-  )
-);
-
-CREATE INDEX IF NOT EXISTS idx_supplement_vocab_active
-  ON layer0.supplement_vocabulary (supplement_id)
-  WHERE superseded_at IS NULL;
