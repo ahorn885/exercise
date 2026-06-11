@@ -1,11 +1,13 @@
 # AR Exercise Database — Schema Documentation & Implementation Guide
 ## Version 17 | 245 Exercises · 1,068 Sport Mappings · 36 Sports
 
+> **⚠ Historical reference (epic [#488](https://github.com/ahorn885/exercise/issues/488), 2026-06-11).** The live source of truth for exercise data is now the `layer0.exercises` / `layer0.sport_exercise_map` tables in Postgres, edited via SQL migrations under `etl/migrations/layer0/`. The `.xlsx` workbook this document describes is **frozen** under `etl/_frozen_xlsx_authoring/` and is no longer authored against. This doc remains useful as a description of the data model and column semantics (which the DB mirrors); where it says the spreadsheet/sheet is "source of truth," read that as the *DB table* of the same shape.
+
 ---
 
 ## 1. Purpose
 
-This document fully describes the AR Exercise Database so that any system — human, LLM, or application — can query it, extend it, and build training programs from it without needing to see the spreadsheet.
+This document fully describes the AR Exercise Database structure so that any system — human, LLM, or application — can query it, extend it, and build training programs from it. (The data now lives in the `layer0` Postgres tables; this guide documents the model those tables mirror — see the banner above.)
 
 The database is a cross-referencing exercise library built for **multi-sport endurance athletes**. It answers questions like:
 

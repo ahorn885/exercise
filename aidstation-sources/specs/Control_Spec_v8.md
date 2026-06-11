@@ -87,7 +87,7 @@
    ETL          Onboarding      2A 2B 2C 2D 2E (parallel)        Gate           Synth          Parallel
 ```
 
-Data flows left-to-right. Layer 0 is the canonical reference data; Layers 1-5 reason against it. No layer writes back to Layer 0 in normal operation (Layer 0 updates come from ETL runs against authoritative xlsx sources, not from athlete-facing flows).
+Data flows left-to-right. Layer 0 is the canonical reference data; Layers 1-5 reason against it. No layer writes back to Layer 0 in normal operation (Layer 0 updates come from reviewed SQL migrations under `etl/migrations/layer0/`, gated by `validate_layer0` — not from athlete-facing flows).
 
 ---
 
@@ -97,17 +97,16 @@ Data flows left-to-right. Layer 0 is the canonical reference data; Layers 1-5 re
 
 **Owns:** Sports, disciplines, exercises, terrain types, equipment vocabulary, gear toggles, phase-load allocations, substitution maps, training gaps, technique foci.
 
+**Authoring model (epic #488):** the `layer0.*` DB tables are the source of truth. Edits are authored as reviewed SQL migrations under `etl/migrations/layer0/`, gated by `validate_layer0` (CI `layer0-gate`), and applied to Neon by hand. The legacy xlsx → ETL authoring loop is **retired** — frozen under `etl/_frozen_xlsx_authoring/`. See `designs/Layer0_AuthoringModel_DBSourceOfTruth_Design_v1.md`.
+
 **Spec docs:**
-- `Layer0_ETL_Spec_v7.md` (the canonical doc; FC-4b, 2026-05-13; folds v6 + D-21 `health_condition_categories` column-name reconciliation. **Layer 0 spec is now fully self-consistent against deployed Neon schema across every enumerated table.**)
-- `Layer0_Deployed_Schema_and_Drift_Report.md` (current state of truth; consulted in parallel)
-- Patches `Layer0_ETL_Spec_v3_Patch_Batch_B/C/D/B_Correction.md` — folded into v4 / carried in v5 / v6 / v7 (kept for audit history)
+- `designs/Layer0_AuthoringModel_DBSourceOfTruth_Design_v1.md` (the current authoring model; DB-as-source-of-truth, migrations, the gate)
+- `Layer0_ETL_Spec` (resolve to highest `_vN` in `specs/`) — the canonical schema/table reference; its §3–§6 *authoring* mechanics describe the now-retired xlsx ETL and are historical, but the schema/validation content is still current
+- `Layer0_Deployed_Schema_and_Drift_Report.md` (deployed-schema reference; consulted in parallel)
 
-**Source data:**
-- `Sports_Framework_v10.xlsx` (0A)
-- `AR_Exercise_Database_v19.xlsx` (0B)
-- `Vocabulary_Audit_v3.md` (0C)
+**Source data:** the historical 0A/0B/0C source workbooks (`Sports_Framework`, `AR_Exercise_Database`) and the `Vocabulary_Audit` are frozen under `etl/_frozen_xlsx_authoring/`; the genesis snapshot `etl/output/layer0_etl_v1.6.7.sql` is the migration baseline.
 
-**Versioning:** `etl_version` on every row. New ETL run inserts new rows + sets `superseded_at` on prior. No overwrites. `etl_version_set = {0A: vX, 0B: vY, 0C: vZ}` is pinned at plan-generation time and threaded through every downstream call.
+**Versioning:** `etl_version` on every row; rows are versioned by **invalidation** — a migration supersedes the prior row (`superseded_at`) and inserts the new value, never overwriting. Serving reads `WHERE superseded_at IS NULL` (it no longer matches on `etl_version` — slice 3b); `etl_version` survives as the per-table cache-invalidation signal digested into the plan-gen cache key.
 
 **21 tables** in `layer0` schema. See drift report §2 for the authoritative deployed schema.
 
@@ -436,8 +435,8 @@ Where things currently live, what's pending. **Cross-references in this map use 
 - **File versioning convention (Option H, confirmed 2026-05-11).** Materially revised files save with a numeric revision suffix (`_v1.md`, `_v2.md`...). Each revision bumps `N` from the highest existing version. Andy uploads the new file under the bumped name — no rename, no overwrite. Old versions accumulate in project knowledge as natural history; optionally pruned. Cross-references cite the logical name without revision suffix (e.g., "see `Control_Spec` §8.2"); Claude resolves to the highest-N file via `view` at read time, not via `project_knowledge_search` (which can surface stale fragments from old revisions). **Exception:** files whose name encodes a semantic version (`Layer0_ETL_Spec_v3.md`, `AR_Exercise_Database_v19.xlsx`, etc.) bump the *semantic* version on material content changes rather than adding a file-revision suffix. Memory rule #12; companion to rules #9 / #10 / #11.
 - **Project_Backlog is the only deferred-work tracker.** Per-spec open items reference back to it.
 - **No artifact creation for explanations.** Specs and code only.
-- **Sports Framework xlsx is source of truth for 0A.** Never reconstruct from prose.
-- **etl_version increments on every Layer 0 row change; never overwrite rows.** This is the data-row rule, separate from file-versioning above.
+- **The `layer0.*` DB tables are the source of truth for Layer 0 (epic #488).** Author edits as reviewed SQL migrations under `etl/migrations/layer0/`, gated by `validate_layer0`; the legacy Sports Framework / AR Exercise Database xlsx workbooks are frozen under `etl/_frozen_xlsx_authoring/` — do not revive them. Never reconstruct reference data from prose.
+- **Rows are versioned by invalidation, never overwritten.** A migration supersedes a row (`superseded_at`) and inserts the new value; serving reads `WHERE superseded_at IS NULL`. This is the data-row rule, separate from file-versioning above.
 - **Idempotent SQL with verify blocks is house style.** See Batch B/C migration scripts.
 
 ---
