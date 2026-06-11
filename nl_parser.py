@@ -1,7 +1,7 @@
 """D-64 plan-refresh NL intent parser runtime.
 
 Companion contract: `aidstation-sources/prompts/NLParser_v1.md`.
-Design source: `aidstation-sources/Plan_Refresh_D64_Design_v1.md` §5.
+Design source: `aidstation-sources/designs/Plan_Refresh_D64_Design_v1.md` §5.
 
 Single LLM-backed classifier: athlete's free-text plan-refresh note +
 tier + closed-vocab locale list + active-injury summary → `ParsedIntent`
