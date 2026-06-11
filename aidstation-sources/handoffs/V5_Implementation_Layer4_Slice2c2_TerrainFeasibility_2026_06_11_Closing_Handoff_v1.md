@@ -74,6 +74,8 @@ In `_format_session_grid`, append a line per `DisciplineAllocation` from `terrai
 ```
 The resolution's `.note` + `.tier` carry everything needed. Resolve `locale_id`→display name and `substitute_exercise_ids`→names from the cone (the 2C resolved set / locale names).
 
+> **Reuse #336 (merged 2026-06-11, PR #551).** The skill-capability gate already added a **`[SKILL-GATED]` session-grid annotation + a "substitute strength" directive** to `per_phase.py` at this exact render site, plus the `kind=='cardio'`-blocking validator rule `_rule_skill_capability_gate` + `skill_gated_disciplines()` in `layer4/validator.py`. The #540 STRENGTH tier is the same idea (substitute strength at the session level) — model the render + any validator backstop on #336's pattern rather than inventing a parallel one. Note the two can co-fire on the same discipline (skill-gated AND terrain-infeasible); make the annotations compose, not clobber.
+
 ### 4.4 Also wire `orchestrate_plan_refresh`
 Same pattern at the refresh call site (~`873`, `llm_layer4_plan_refresh_cached` passes `cone.training_substitution_payload`) for consistency — or do create-only first and note refresh as the immediate follow-up.
 
