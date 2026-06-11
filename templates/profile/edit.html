@@ -322,6 +322,99 @@
   {% endif %}
 </div>
 
+{# §B health conditions — feeds the Layer 2E supplement contraindication screen. #}
+<div class="card card-pad stack pf-nutrition">
+  <div>
+    <p class="eyebrow">● Health conditions</p>
+    <p class="pf-hint">Active conditions the coach should account for — used to flag supplements
+      that conflict with them. Add only what's current.</p>
+  </div>
+
+  {% if health_conditions %}
+  <ul class="supp-list">
+    {% for c in health_conditions %}
+    <li class="supp-row">
+      <div class="supp-main">
+        <span class="supp-name">{{ c.condition_name }}</span>
+        <span class="chip">{{ system_category_labels.get(c.system_category, c.system_category) }}</span>
+        {% if c.severity %}<span class="supp-meta">severity {{ c.severity }}/5</span>{% endif %}
+        {% if c.notes %}<span class="rail-note">· {{ c.notes }}</span>{% endif %}
+      </div>
+      <form method="post" action="{{ url_for('profile.delete_condition', condition_id=c.id) }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button type="submit" class="btn btn-text supp-del" aria-label="Remove {{ c.condition_name }}">Remove</button>
+      </form>
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p class="pf-hint">No health conditions added yet.</p>
+  {% endif %}
+
+  <form method="post" action="{{ url_for('profile.add_condition') }}" class="supp-add pf-grid">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <label class="field"><span class="lbl">System</span>
+      <select name="system_category" class="form-select form-select-sm" required>
+        <option value="">Choose…</option>
+        {% for value, label in system_category_choices %}
+        <option value="{{ value }}">{{ label }}</option>
+        {% endfor %}
+      </select></label>
+    <label class="field"><span class="lbl">Condition</span>
+      <input type="text" name="condition_name" class="form-control form-control-sm" placeholder="e.g. atrial fibrillation" required></label>
+    <label class="field"><span class="lbl">Severity (1–5)</span>
+      <input type="number" name="severity" min="1" max="5" class="form-control form-control-sm" placeholder="optional"></label>
+    <label class="field field-wide"><span class="lbl">Notes (optional)</span>
+      <input type="text" name="notes" class="form-control form-control-sm" placeholder="context, management…"></label>
+    <div class="supp-add-actions"><button type="submit" class="btn btn-primary">Add condition</button></div>
+  </form>
+</div>
+
+{# §B medications — feeds the Layer 2E supplement contraindication screen. #}
+<div class="card card-pad stack pf-nutrition">
+  <div>
+    <p class="eyebrow">● Medications</p>
+    <p class="pf-hint">Medications you currently take — used to flag supplements that interact with them.
+      Class only; no need for exact names or doses.</p>
+  </div>
+
+  {% if medications %}
+  <ul class="supp-list">
+    {% for m in medications %}
+    <li class="supp-row">
+      <div class="supp-main">
+        <span class="supp-name">{{ medication_class_labels.get(m.medication_class, m.medication_class) }}</span>
+        {% if m.medication_name %}<span class="supp-meta">{{ m.medication_name }}</span>{% endif %}
+        {% if m.notes %}<span class="rail-note">· {{ m.notes }}</span>{% endif %}
+      </div>
+      <form method="post" action="{{ url_for('profile.delete_medication_route', medication_id=m.id) }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button type="submit" class="btn btn-text supp-del" aria-label="Remove medication">Remove</button>
+      </form>
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p class="pf-hint">No medications added yet.</p>
+  {% endif %}
+
+  <form method="post" action="{{ url_for('profile.add_medication_route') }}" class="supp-add pf-grid">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <label class="field"><span class="lbl">Class</span>
+      <select name="medication_class" class="form-select form-select-sm" required>
+        <option value="">Choose…</option>
+        {% for value, label in medication_class_choices %}
+        <option value="{{ value }}">{{ label }}</option>
+        {% endfor %}
+      </select></label>
+    <label class="field"><span class="lbl">Name (optional)</span>
+      <input type="text" name="medication_name" class="form-control form-control-sm" placeholder="e.g. metoprolol"></label>
+    <label class="field field-wide"><span class="lbl">Notes (optional)</span>
+      <input type="text" name="notes" class="form-control form-control-sm" placeholder="context…"></label>
+    <div class="supp-add-actions"><button type="submit" class="btn btn-primary">Add medication</button></div>
+  </form>
+</div>
+
 {# Plan-specific daily baseline — only when a plan is live (slice 4 PlanNutrition). #}
 {% if plan_nutrition %}
 <div class="card card-pad stack pf-nutrition">

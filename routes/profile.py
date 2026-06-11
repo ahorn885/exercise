@@ -61,6 +61,12 @@ from athlete_supplements_repo import (
     SUPPLEMENT_FREQUENCIES, SUPPLEMENT_TIMINGS,
     FREQUENCY_LABELS, TIMING_LABELS,
 )
+from health_inputs_repo import (
+    list_health_conditions, add_health_condition, delete_health_condition,
+    list_medications, add_medication, delete_medication, clean_severity,
+    SYSTEM_CATEGORY_CHOICES, MEDICATION_CLASS_CHOICES,
+    SYSTEM_CATEGORY_LABELS, MEDICATION_CLASS_LABELS,
+)
 from routes import provider_auth as pa
 
 
@@ -421,6 +427,9 @@ def edit():
     # vocab that powers the add-supplement picker.
     supplements = list_athlete_supplements(db, uid)
     supplement_vocab = load_supplement_vocab(db)
+    # §B health inputs — feed the Layer 2E contraindication screening.
+    health_conditions = list_health_conditions(db, uid)
+    medications = list_medications(db, uid)
 
     from datetime import datetime as _dt
     return render_template(
@@ -430,6 +439,12 @@ def edit():
         plan_nutrition=plan_nutrition,
         supplements=supplements,
         supplement_vocab=supplement_vocab,
+        health_conditions=health_conditions,
+        medications=medications,
+        system_category_choices=SYSTEM_CATEGORY_CHOICES,
+        medication_class_choices=MEDICATION_CLASS_CHOICES,
+        system_category_labels=SYSTEM_CATEGORY_LABELS,
+        medication_class_labels=MEDICATION_CLASS_LABELS,
         supplement_frequencies=SUPPLEMENT_FREQUENCIES,
         supplement_timings=SUPPLEMENT_TIMINGS,
         frequency_labels=FREQUENCY_LABELS,
@@ -655,6 +670,65 @@ def delete_supplement(supp_id):
     delete_athlete_supplement(db, current_user_id(), supp_id)
     db.commit()
     flash('Supplement removed.', 'info')
+    return redirect(url_for('profile.edit'))
+
+
+@bp.route('/condition/add', methods=['POST'])
+def add_condition():
+    """Add one active health condition. system_category is validated against the
+    §B vocab; a tampered category or blank name is rejected (no insert)."""
+    db = get_db()
+    ok = add_health_condition(
+        db, current_user_id(),
+        system_category=(request.form.get('system_category') or '').strip(),
+        condition_name=request.form.get('condition_name') or '',
+        severity=clean_severity(request.form.get('severity')),
+        notes=(request.form.get('notes') or '').strip() or None,
+    )
+    if ok:
+        db.commit()
+        flash('Health condition added.', 'success')
+    else:
+        flash('Pick a category and enter a condition name.', 'danger')
+    return redirect(url_for('profile.edit'))
+
+
+@bp.route('/condition/<int:condition_id>/delete', methods=['POST'])
+def delete_condition(condition_id):
+    """Remove one health condition. Scoped on user_id."""
+    db = get_db()
+    delete_health_condition(db, current_user_id(), condition_id)
+    db.commit()
+    flash('Health condition removed.', 'info')
+    return redirect(url_for('profile.edit'))
+
+
+@bp.route('/medication/add', methods=['POST'])
+def add_medication_route():
+    """Add one active medication. medication_class is validated against the §B
+    vocab; a tampered class is rejected (no insert)."""
+    db = get_db()
+    ok = add_medication(
+        db, current_user_id(),
+        medication_class=(request.form.get('medication_class') or '').strip(),
+        medication_name=request.form.get('medication_name') or '',
+        notes=(request.form.get('notes') or '').strip() or None,
+    )
+    if ok:
+        db.commit()
+        flash('Medication added.', 'success')
+    else:
+        flash('Pick a medication class.', 'danger')
+    return redirect(url_for('profile.edit'))
+
+
+@bp.route('/medication/<int:medication_id>/delete', methods=['POST'])
+def delete_medication_route(medication_id):
+    """Remove one medication. Scoped on user_id."""
+    db = get_db()
+    delete_medication(db, current_user_id(), medication_id)
+    db.commit()
+    flash('Medication removed.', 'info')
     return redirect(url_for('profile.edit'))
 
 
