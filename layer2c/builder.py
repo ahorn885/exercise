@@ -143,13 +143,11 @@ def _validate_inputs(
 
 def _load_toggle_defs(
     db,
-    version_0c: str,
 ) -> dict[str, dict[str, Any]]:
-    """§5.1 DP1 (A) — Runtime lookup of toggle definitions for the active
-    0C version. Returns a dict keyed by toggle_name carrying the four
-    fields 2C reads (paired_equipment_categories, also_satisfies,
-    gated_discipline_ids, display_label). Single query against the
-    11-row table; indexed by UNIQUE (toggle_name, etl_version).
+    """§5.1 DP1 (A) — Runtime lookup of the active toggle definitions.
+    Returns a dict keyed by toggle_name carrying the four fields 2C reads
+    (paired_equipment_categories, also_satisfies, gated_discipline_ids,
+    display_label). Single query against the 11-row table.
     """
     cur = db.execute(
         """
@@ -160,10 +158,8 @@ def _load_toggle_defs(
           also_satisfies,
           gated_discipline_ids
         FROM layer0.sport_specific_gear_toggles
-         WHERE etl_version = ?
-           AND superseded_at IS NULL
-        """,
-        (version_0c,),
+         WHERE superseded_at IS NULL
+        """
     )
     return {
         r["toggle_name"]: {
@@ -181,11 +177,9 @@ def _load_toggle_defs(
 
 def _load_skill_capability_toggle_defs(
     db,
-    version_0c: str,
 ) -> dict[str, dict[str, list[str]]]:
     """D-73 Phase 5.2 Bucket C (l) — read the skill-capability toggle
-    vocab from `layer0.skill_capability_toggles` (5 active rows at
-    canonical 0C version per
+    vocab from `layer0.skill_capability_toggles` (5 active rows per
     `etl/sources/populate_skill_capability_toggles.sql`). Returns a
     dict keyed by toggle_name carrying `gated_discipline_ids` (2C reads
     the discipline side; 2B has its own copy that reads the terrain
@@ -195,10 +189,8 @@ def _load_skill_capability_toggle_defs(
         """
         SELECT toggle_name, gated_terrain_ids, gated_discipline_ids
           FROM layer0.skill_capability_toggles
-         WHERE etl_version = ?
-           AND superseded_at IS NULL
-        """,
-        (version_0c,),
+         WHERE superseded_at IS NULL
+        """
     )
     return {
         r["toggle_name"]: {
@@ -212,7 +204,6 @@ def _load_skill_capability_toggle_defs(
 def _load_discipline_info(
     db,
     discipline_ids: list[str],
-    version_0a: str,
 ) -> dict[str, dict[str, str]]:
     """Pull discipline_name + exercise_db_sport from sport_discipline_bridge
     for every included discipline. Standalone so zero-exercise disciplines
@@ -228,10 +219,9 @@ def _load_discipline_info(
         SELECT discipline_id, discipline_name, exercise_db_sport
           FROM layer0.sport_discipline_bridge
          WHERE discipline_id = ANY(?)
-           AND etl_version = ?
            AND superseded_at IS NULL
         """,
-        (list(discipline_ids), version_0a),
+        (list(discipline_ids),),
     )
     info: dict[str, dict[str, str]] = {}
     for r in cur.fetchall():
@@ -246,10 +236,9 @@ def _load_discipline_info(
 
 def _load_modality_groups(
     db,
-    version_0a: str,
 ) -> dict[str, list[str]]:
-    """X1b.3 — load `layer0.discipline_modality_membership` for the given
-    Layer 0 version. Returns `{discipline_id: [group_id, ...]}`.
+    """X1b.3 — load `layer0.discipline_modality_membership` (active rows).
+    Returns `{discipline_id: [group_id, ...]}`.
 
     Empty result is treated by the caller as the pre-v1.5.0 substrate
     state — no `craft_substitution_via_group` flags emitted, behavior
@@ -259,8 +248,7 @@ def _load_modality_groups(
     cur = db.execute(
         "SELECT discipline_id, group_id "
         "FROM layer0.discipline_modality_membership "
-        "WHERE etl_version = ? AND superseded_at IS NULL",
-        (version_0a,),
+        "WHERE superseded_at IS NULL"
     )
     out: dict[str, list[str]] = {}
     for row in cur.fetchall():
@@ -273,8 +261,6 @@ def _load_modality_groups(
 def _load_exercises(
     db,
     included_discipline_ids: list[str],
-    version_0a: str,
-    versions_0b: list[str],
 ) -> list[dict[str, Any]]:
     """Spec §5.2 — exercise universe across the included disciplines.
 
@@ -307,14 +293,11 @@ def _load_exercises(
         JOIN layer0.exercises e
           ON e.exercise_id = sxm.exercise_id
         WHERE sdb.discipline_id = ANY(?)
-          AND sdb.etl_version = ?
-          AND sxm.etl_version = ANY(?)
-          AND e.etl_version = ANY(?)
           AND sdb.superseded_at IS NULL
           AND sxm.superseded_at IS NULL
           AND e.superseded_at IS NULL
         """,
-        (list(included_discipline_ids), version_0a, versions_0b, versions_0b),
+        (list(included_discipline_ids),),
     )
     return [dict(r) for r in cur.fetchall()]
 
@@ -818,23 +801,10 @@ def q_layer2c_equipment_mapper_payload(
     )
     skill_toggle_states = skill_toggle_states or {}
 
-    version_0a = etl_version_set["0A"]
-    version_0b = etl_version_set["0B"]
-    version_0c = etl_version_set["0C"]
-    # 2D precedent for the 0B multi-version note in `Layer2C_Spec.md`
-    # §5.2 — single 0B string wrapped into a list to satisfy the `ANY`
-    # placeholder. When the etl_version_set evolves to carry a real set,
-    # the wrapping is the only code that changes.
-    versions_0b = [version_0b]
-
-    toggle_defs = _load_toggle_defs(db, version_0c)
-    skill_toggle_defs = _load_skill_capability_toggle_defs(db, version_0c)
-    discipline_info = _load_discipline_info(
-        db, included_discipline_ids, version_0a
-    )
-    raw_rows = _load_exercises(
-        db, included_discipline_ids, version_0a, versions_0b
-    )
+    toggle_defs = _load_toggle_defs(db)
+    skill_toggle_defs = _load_skill_capability_toggle_defs(db)
+    discipline_info = _load_discipline_info(db, included_discipline_ids)
+    raw_rows = _load_exercises(db, included_discipline_ids)
 
     effective_pool = _build_effective_pool(
         locale_equipment_pool, cluster_gear_toggle_states, toggle_defs
@@ -882,7 +852,7 @@ def q_layer2c_equipment_mapper_payload(
     # spec-§8 flags so coaching surfaces see the existing rule output
     # unchanged. Empty membership (pre-v1.5.0) returns []; no behavior
     # change for callers on the old substrate.
-    membership = _load_modality_groups(db, version_0a)
+    membership = _load_modality_groups(db)
     coaching_flags.extend(
         _emit_modality_group_substitution_flags(coverage, membership)
     )

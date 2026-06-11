@@ -817,8 +817,6 @@ def _substitute_back_check(
 def _load_candidates(
     db,
     included_discipline_ids: list[str],
-    version_0a: str,
-    versions_0b: list[str],
 ) -> list[dict[str, Any]]:
     """Spec §5.2 — exercise universe across the included disciplines.
 
@@ -860,14 +858,11 @@ def _load_candidates(
         JOIN layer0.exercises e
           ON e.exercise_id = sxm.exercise_id
         WHERE sdb.discipline_id = ANY(?)
-          AND sdb.etl_version = ?
-          AND sxm.etl_version = ANY(?)
-          AND e.etl_version = ANY(?)
           AND sdb.superseded_at IS NULL
           AND sxm.superseded_at IS NULL
           AND e.superseded_at IS NULL
         """,
-        (included_discipline_ids, version_0a, versions_0b, versions_0b),
+        (included_discipline_ids,),
     )
     by_id: dict[str, dict[str, Any]] = {}
     for r in cur.fetchall():
@@ -891,7 +886,6 @@ def _load_candidates(
 def _load_disciplines(
     db,
     included_discipline_ids: list[str],
-    version_0a: str,
 ) -> list[dict[str, Any]]:
     """Load disciplines for §5.4 risk profiling."""
     cur = db.execute(
@@ -899,10 +893,9 @@ def _load_disciplines(
         SELECT discipline_id, discipline_name, common_injury_patterns
         FROM layer0.disciplines
         WHERE discipline_id = ANY(?)
-          AND etl_version = ?
           AND superseded_at IS NULL
         """,
-        (included_discipline_ids, version_0a),
+        (included_discipline_ids,),
     )
     return [
         {
@@ -917,7 +910,6 @@ def _load_disciplines(
 def _load_substitutes(
     db,
     discipline_id: str,
-    version_0a: str,
 ) -> list[dict[str, Any]]:
     """Spec §5.6 — load discipline_substitutes ordered by fidelity DESC."""
     cur = db.execute(
@@ -933,14 +925,12 @@ def _load_substitutes(
         FROM layer0.discipline_substitutes ds
         LEFT JOIN layer0.disciplines d
           ON d.discipline_id = ds.substitute_id
-          AND d.etl_version = ?
           AND d.superseded_at IS NULL
         WHERE ds.target_id = ?
-          AND ds.etl_version = ?
           AND ds.superseded_at IS NULL
         ORDER BY ds.fidelity DESC
         """,
-        (version_0a, discipline_id, version_0a),
+        (discipline_id,),
     )
     return [
         {
@@ -963,19 +953,17 @@ def _load_substitutes(
 def _load_training_gaps(
     db,
     included_discipline_ids: list[str],
-    version_0a: str,
 ) -> set[str]:
-    """Return the set of `discipline_id` that have a discipline_training_gaps
-    row at the pinned 0A version. Used by §5.7 rule 5."""
+    """Return the set of `discipline_id` that have an active
+    discipline_training_gaps row. Used by §5.7 rule 5."""
     cur = db.execute(
         """
         SELECT discipline_id
         FROM layer0.discipline_training_gaps
         WHERE discipline_id = ANY(?)
-          AND etl_version = ?
           AND superseded_at IS NULL
         """,
-        (included_discipline_ids, version_0a),
+        (included_discipline_ids,),
     )
     return {r["discipline_id"] for r in cur.fetchall()}
 
@@ -1264,9 +1252,6 @@ def q_layer2d_injury_risk_profile_payload(
     Performance budget per spec §11: ~350ms for AR baseline.
     """
     _validate_inputs(injuries, conditions, included_discipline_ids, etl_version_set)
-    version_0a = etl_version_set["0A"]
-    version_0b = etl_version_set["0B"]
-    versions_0b = [version_0b]
     # §5.1 partition by status. Deployed `InjuryRecord.status` is the
     # ('Active' / 'Resolved' / 'Inactive') 3-enum; spec's `.status` computed
     # property partitions on severity. We use the deployed status to split
@@ -1288,9 +1273,7 @@ def q_layer2d_injury_risk_profile_payload(
             if canonical not in body_part_vocab_misses:
                 body_part_vocab_misses.append(canonical)
     # §5.2 candidate exercises.
-    candidates = _load_candidates(
-        db, included_discipline_ids, version_0a, versions_0b,
-    )
+    candidates = _load_candidates(db, included_discipline_ids)
     # §5.3 per-exercise verdict.
     excluded: list[ExerciseRisk] = []
     accommodated: list[ExerciseRisk] = []
@@ -1304,11 +1287,9 @@ def q_layer2d_injury_risk_profile_payload(
         else:
             clean_ids.append(risk.exercise_id)
     # §5.4 discipline risk profiles.
-    disciplines = _load_disciplines(db, included_discipline_ids, version_0a)
+    disciplines = _load_disciplines(db, included_discipline_ids)
     discipline_by_id = {d["discipline_id"]: d for d in disciplines}
-    gap_disciplines = _load_training_gaps(
-        db, included_discipline_ids, version_0a,
-    )
+    gap_disciplines = _load_training_gaps(db, included_discipline_ids)
     discipline_risks: list[DisciplineRisk] = []
     for did in included_discipline_ids:
         d = discipline_by_id.get(did)
@@ -1330,7 +1311,7 @@ def q_layer2d_injury_risk_profile_payload(
         # §5.6 substitutes — fetch only if elevated/high (perf budget).
         substitutes: list[SubstituteRecommendation] = []
         if risk_level in ("elevated", "high"):
-            for s in _load_substitutes(db, did, version_0a)[:3]:
+            for s in _load_substitutes(db, did)[:3]:
                 still_at_risk, overlaps = _substitute_back_check(
                     s["substitute_patterns_text"], current_injuries,
                 )

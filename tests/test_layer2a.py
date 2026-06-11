@@ -380,9 +380,9 @@ class TestARBaseline:
         assert "layer0.discipline_modality_membership" in conn.calls[1][0]
         # calls[2] is the per-phase weekly-total hours fetch
         assert "layer0.phase_load_weekly_totals" in conn.calls[2][0]
-        # Params: top_level=AR, version_0a, framework_sport=AR (same — no
-        # parens), then version_0a × 3 for the PLA / DTG / disciplines joins.
-        assert params == ("Adventure Racing", "v19", "Adventure Racing", "v19", "v19", "v19")
+        # Params (slice 3b — no etl_version binds; serving reads active rows):
+        # top_level=AR (SDM), framework_sport=AR (PLA, same — no parens strip).
+        assert params == ("Adventure Racing", "Adventure Racing")
 
     def test_endurance_profile_and_primary_movement_plumb_through(self):
         # The layer0.disciplines join surfaces the endurance + movement axes
@@ -579,13 +579,10 @@ class TestTriathlonD17:
         assert payload.framework_sport == "Triathlon (Standard / Olympic)"
 
         # Params: SDM gets stripped top-level "Triathlon"; PLA gets full
-        # sub-format name "Triathlon (Standard / Olympic)".
+        # sub-format name "Triathlon (Standard / Olympic)". No etl_version
+        # binds (slice 3b).
         sql, params = conn.calls[0]
-        assert params[0] == "Triathlon"  # top_level_sport
-        assert params[1] == "v19"
-        assert params[2] == "Triathlon (Standard / Olympic)"  # framework_sport for PLA
-        assert params[3] == "v19"
-        assert params[4] == "v19"
+        assert params == ("Triathlon", "Triathlon (Standard / Olympic)")
 
     def test_sport_without_parens_not_stripped(self):
         """AR has no parens — both SDM + PLA lookups use the full name."""
@@ -596,7 +593,7 @@ class TestTriathlonD17:
         )
         sql, params = conn.calls[0]
         assert params[0] == "Adventure Racing"
-        assert params[2] == "Adventure Racing"
+        assert params[1] == "Adventure Racing"
 
     def test_non_whitelisted_parens_not_stripped(self):
         """Defensive: only sports in `_SUB_FORMAT_SPORTS` get stripped.
@@ -612,7 +609,7 @@ class TestTriathlonD17:
         sql, params = conn.calls[0]
         # Both lookups carry the full name — no false-positive strip
         assert params[0] == "Some New Sport (Variant)"
-        assert params[2] == "Some New Sport (Variant)"
+        assert params[1] == "Some New Sport (Variant)"
 
 
 # ─── §10 edge cases ──────────────────────────────────────────────────────────
