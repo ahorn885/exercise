@@ -40,6 +40,8 @@ MEDICATION_CLASS_LABELS: dict[str, str] = {
     "stimulant_adhd": "ADHD stimulant",
     "corticosteroid_chronic": "Corticosteroid (chronic)",
     "anticoagulant": "Anticoagulant",
+    "thyroid_medication": "Thyroid medication",
+    "pde5_inhibitor": "PDE5 inhibitor",
     "other": "Other",
 }
 

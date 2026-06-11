@@ -251,6 +251,11 @@ KNOWN_MEDICATION_CLASSES = (
     'stimulant_adhd',
     'corticosteroid_chronic',
     'anticoagulant',
+    # D-21 — added so the supplement_vocabulary contraindication tokens
+    # `rx:thyroid_medication` (iron absorption) + `rx:pde5_inhibitor`
+    # (nitrate/beetroot hypotension interaction) have a §B class to match.
+    'thyroid_medication',
+    'pde5_inhibitor',
     'other',
 )
 
