@@ -133,7 +133,6 @@ def _validate_inputs(
 def _load_terrain_names(
     db,
     terrain_ids: list[str],
-    version_0c: str,
 ) -> dict[str, str]:
     if not terrain_ids:
         return {}
@@ -142,10 +141,9 @@ def _load_terrain_names(
         SELECT terrain_id, canonical_name
           FROM layer0.terrain_types
          WHERE terrain_id = ANY(?)
-           AND etl_version = ?
            AND superseded_at IS NULL
         """,
-        (list(terrain_ids), version_0c),
+        (list(terrain_ids),),
     )
     return {r["terrain_id"]: r["canonical_name"] for r in cur.fetchall()}
 
@@ -154,7 +152,6 @@ def _load_best_proxy(
     db,
     target_terrain_id: str,
     locale_terrain_ids: list[str],
-    version_0c: str,
 ) -> dict[str, Any] | None:
     # Per spec §5.2 — best-proxy ORDER BY: highest fidelity wins, ties
     # broken by lowest severity. Severity ordering encodes
@@ -176,7 +173,6 @@ def _load_best_proxy(
           gap.prescription_note
         FROM layer0.terrain_gap_rules gap
         WHERE gap.target_terrain_id = ?
-          AND gap.etl_version = ?
           AND gap.superseded_at IS NULL
           AND (
             gap.proxy_terrain_id IS NULL
@@ -194,7 +190,7 @@ def _load_best_proxy(
           END
         LIMIT 1
         """,
-        (target_terrain_id, version_0c, list(locale_terrain_ids)),
+        (target_terrain_id, list(locale_terrain_ids)),
     )
     row = cur.fetchone()
     return dict(row) if row else None
@@ -244,24 +240,20 @@ def _build_undefined_gap(
 
 def _load_skill_capability_toggle_defs(
     db,
-    version_0c: str,
 ) -> dict[str, dict[str, list[str]]]:
     """D-73 Phase 5.2 Bucket C (l) — read the skill-capability toggle
-    vocab (5 active rows at canonical 0C version per
-    `populate_skill_capability_toggles.sql`). Returns a dict keyed by
-    toggle_name carrying `gated_terrain_ids` + `gated_discipline_ids`
-    (Layer 2B reads the terrain side; Layer 2C reads the discipline
-    side via its own copy of this loader). Empty dict when the table
-    has no active rows at the requested version.
+    vocab (5 active rows per `populate_skill_capability_toggles.sql`).
+    Returns a dict keyed by toggle_name carrying `gated_terrain_ids` +
+    `gated_discipline_ids` (Layer 2B reads the terrain side; Layer 2C reads
+    the discipline side via its own copy of this loader). Empty dict when
+    the table has no active rows.
     """
     cur = db.execute(
         """
         SELECT toggle_name, gated_terrain_ids, gated_discipline_ids
           FROM layer0.skill_capability_toggles
-         WHERE etl_version = ?
-           AND superseded_at IS NULL
-        """,
-        (version_0c,),
+         WHERE superseded_at IS NULL
+        """
     )
     return {
         r["toggle_name"]: {
@@ -527,7 +519,6 @@ def q_layer2b_terrain_classifier_payload(
     )
     skill_toggle_states = skill_toggle_states or {}
 
-    version_0c = etl_version_set["0C"]
     race_id_set = {e.terrain_id for e in race_terrain}
     locale_id_set = set(locale_terrain_ids)
     pct_by_target = {e.terrain_id: e.pct_of_race for e in race_terrain}
@@ -535,12 +526,12 @@ def q_layer2b_terrain_classifier_payload(
     covered_ids = race_id_set & locale_id_set
     gap_ids = race_id_set - locale_id_set
 
-    name_map = _load_terrain_names(db, sorted(race_id_set), version_0c)
+    name_map = _load_terrain_names(db, sorted(race_id_set))
 
     gaps_by_target: dict[str, TerrainGap] = {}
     for gap_id in sorted(gap_ids):
         proxy_row = _load_best_proxy(
-            db, gap_id, sorted(locale_id_set), version_0c
+            db, gap_id, sorted(locale_id_set)
         )
         if proxy_row is None:
             gaps_by_target[gap_id] = _build_undefined_gap(
@@ -577,7 +568,7 @@ def q_layer2b_terrain_classifier_payload(
     # every gated race terrain — the intended default-OFF nuisance until
     # the athlete-side capture surface ships.
     if race_terrain:
-        skill_toggle_defs = _load_skill_capability_toggle_defs(db, version_0c)
+        skill_toggle_defs = _load_skill_capability_toggle_defs(db)
     else:
         skill_toggle_defs = {}
 

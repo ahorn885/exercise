@@ -20,7 +20,9 @@ needs to answer the orchestrator's direct queries
 
 from __future__ import annotations
 
+import re
 from datetime import date, datetime
+from pathlib import Path
 from typing import Any
 from unittest.mock import patch
 
@@ -39,6 +41,7 @@ from layer4 import (
 )
 from layer4.orchestrator import (
     _derive_race_discipline_mix,
+    _LAYER0_TABLE_FAMILY,
     _max_etl_version,
     _q_current_etl_version_set,
 )
@@ -219,6 +222,9 @@ def _queue_target_race_event(
     conn.queue(rows=[])  # route_locales (empty for single_day)
 
 
+_DEFAULT_ETL = {"0A": "sports=v7", "0B": "exercises=v7", "0C": "terrain_types=v7"}
+
+
 def _queue_etl_version_set(
     conn: _FakeConn,
     *,
@@ -227,14 +233,16 @@ def _queue_etl_version_set(
     v_0b: str | None = None,
     v_0c: str | None = None,
 ) -> None:
-    """Queue the three per-family version probes (`_q_current_etl_version_set`
-    reads sports/0A, exercises/0B, terrain_types/0C in that order). Default
-    `v="v7"` yields the aligned `{"0A":"v7","0B":"v7","0C":"v7"}` the existing
-    assertions expect; pass `v_0a`/`v_0b`/`v_0c` to exercise divergent
-    per-family versions."""
-    conn.queue(rows=[{"v": v_0a or v}])  # layer0.sports        (0A)
-    conn.queue(rows=[{"v": v_0b or v}])  # layer0.exercises     (0B)
-    conn.queue(rows=[{"v": v_0c or v}])  # layer0.terrain_types (0C)
+    """Queue the single UNION probe `_q_current_etl_version_set` issues across
+    every versioned layer0 table. The fake ignores SQL, so one representative
+    table per family is enough to populate the per-family digest. Default
+    `v="v7"` yields `_DEFAULT_ETL`; pass `v_0a`/`v_0b`/`v_0c` to diverge
+    families."""
+    conn.queue(rows=[
+        {"tbl": "sports", "v": v_0a or v},      # 0A
+        {"tbl": "exercises", "v": v_0b or v},   # 0B
+        {"tbl": "terrain_types", "v": v_0c or v},  # 0C
+    ])
 
 
 def _queue_primary_locale(conn: _FakeConn, *, locale: str = "home") -> None:
@@ -711,7 +719,7 @@ class TestHappyPath:
         assert l4_kwargs["prior_plan_session_window"] == []
         assert l4_kwargs["cache"] is cache
         assert l4_kwargs["today"] == _TODAY
-        assert l4_kwargs["etl_version_set"] == {"0A": "v7", "0B": "v7", "0C": "v7"}
+        assert l4_kwargs["etl_version_set"] == _DEFAULT_ETL
         # layer1_payload threaded as dict (not pydantic model)
         assert isinstance(l4_kwargs["layer1_payload"], dict)
         # Per-locale dict keyed by primary locale slug
@@ -1830,7 +1838,7 @@ class TestOrchestrateSingleSessionSynthesizeHappyPath:
         assert l4_kwargs["suggestion_id"] == 99
         assert l4_kwargs["cache"] is cache
         assert l4_kwargs["session_date"] == _TODAY
-        assert l4_kwargs["etl_version_set"] == {"0A": "v7", "0B": "v7", "0C": "v7"}
+        assert l4_kwargs["etl_version_set"] == _DEFAULT_ETL
         # layer1_payload threaded as dict (matches race_week_brief precedent)
         assert isinstance(l4_kwargs["layer1_payload"], dict)
         # 2C payload non-None on the locale path
@@ -1972,44 +1980,88 @@ class TestMaxEtlVersion:
 
 
 class TestQCurrentEtlVersionSet:
-    """`_q_current_etl_version_set` resolves each source family's own active
-    version. Regression guard: it previously broadcast `layer0.sports`'s
-    `0A-`prefixed version to the 0B/0C keys, so Layer 2B/2C — which exact-match
-    `etl_version` against `0B-`/`0C-`prefixed rows — resolved zero terrain and
-    zero exercises in production."""
+    """`_q_current_etl_version_set` digests each source family's active version
+    per table (slice 3b). Serving reads `superseded_at IS NULL` directly; this
+    digest is only the cache-invalidation signal, made per-table so a
+    single-table migration perturbs it without a whole-family re-stamp. The
+    digest bucketing is keyed on `_LAYER0_TABLE_FAMILY` (the table's family),
+    not on parsing the `0X-` version prefix."""
 
-    def test_reads_per_family_no_broadcast(self):
+    def test_digest_is_per_table_within_each_family(self):
         conn = _FakeConn()
-        _queue_etl_version_set(
-            conn, v_0a="0A-v1.6.7", v_0b="0B-v1.6.7", v_0c="0C-v1.6.7"
-        )
+        # One UNION probe; the fake returns (tbl, v) rows. Two 0A tables at
+        # different versions must both surface in the 0A digest.
+        conn.queue(rows=[
+            {"tbl": "sports", "v": "0A-v1.6.7"},
+            {"tbl": "disciplines", "v": "0A-v1.6.8"},
+            {"tbl": "exercises", "v": "0B-v1.6.7"},
+            {"tbl": "terrain_types", "v": "0C-v1.6.7"},
+        ])
         assert _q_current_etl_version_set(conn) == {
-            "0A": "0A-v1.6.7",
-            "0B": "0B-v1.6.7",
-            "0C": "0C-v1.6.7",
+            "0A": "disciplines=0A-v1.6.8;sports=0A-v1.6.7",
+            "0B": "exercises=0B-v1.6.7",
+            "0C": "terrain_types=0C-v1.6.7",
         }
 
-    def test_per_family_max_by_numeric_component(self):
-        # Each family independently resolves its own highest active version.
+    def test_per_table_max_by_numeric_component(self):
+        # Within a table, the highest active version wins (numeric, not lexical:
+        # 0A-v11.0 > 0A-v9.0). A revision suffix outranks its base.
         conn = _FakeConn()
-        conn.queue(rows=[{"v": "0A-v9.0"}, {"v": "0A-v11.0"}])    # 0A sports
-        conn.queue(rows=[{"v": "0B-v1.6.7"}])                     # 0B exercises
-        conn.queue(rows=[{"v": "0C-v2.0"}, {"v": "0C-v2.0-r2"}])  # 0C terrain
+        conn.queue(rows=[
+            {"tbl": "sports", "v": "0A-v9.0"},
+            {"tbl": "sports", "v": "0A-v11.0"},
+            {"tbl": "exercises", "v": "0B-v1.6.7"},
+            {"tbl": "terrain_types", "v": "0C-v2.0"},
+            {"tbl": "terrain_types", "v": "0C-v2.0-r2"},
+        ])
         assert _q_current_etl_version_set(conn) == {
-            "0A": "0A-v11.0",
-            "0B": "0B-v1.6.7",
-            "0C": "0C-v2.0-r2",
+            "0A": "sports=0A-v11.0",
+            "0B": "exercises=0B-v1.6.7",
+            "0C": "terrain_types=0C-v2.0-r2",
         }
 
     def test_undiscoverable_when_a_family_is_empty(self):
-        # 0B empty → raise (do NOT silently fall back to another family).
+        # No active 0B/0C rows → raise (do NOT silently emit a partial set).
         conn = _FakeConn()
-        conn.queue(rows=[{"v": "0A-v1.6.7"}])  # 0A present
-        conn.queue(rows=[])                    # 0B empty
+        conn.queue(rows=[{"tbl": "sports", "v": "0A-v1.6.7"}])  # only 0A present
         with pytest.raises(OrchestrationError) as exc:
             _q_current_etl_version_set(conn)
         assert exc.value.code == "etl_version_set_undiscoverable"
-        assert "layer0.exercises" in exc.value.detail
+        assert "0B" in exc.value.detail
+
+
+class TestLayer0TableFamilyMap:
+    """Drift guard for `_LAYER0_TABLE_FAMILY`: discovery's per-family digest is
+    only foot-gun-free if every versioned `layer0.*` table is mapped. A new
+    versioned table left out would silently not contribute to any family's
+    cache-invalidation signal."""
+
+    def _schema_versioned_tables(self) -> set[str]:
+        schema = (
+            Path(__file__).resolve().parent.parent
+            / "etl" / "layer0" / "schema.sql"
+        ).read_text()
+        tables: set[str] = set()
+        for block in re.split(r"CREATE TABLE IF NOT EXISTS ", schema)[1:]:
+            name = block.split("(", 1)[0].strip()
+            if name.startswith("layer0.") and re.search(r"\betl_version\b", block):
+                tables.add(name.split(".", 1)[1])
+        return tables
+
+    def test_map_covers_every_schema_versioned_table(self):
+        missing = self._schema_versioned_tables() - set(_LAYER0_TABLE_FAMILY)
+        assert not missing, (
+            f"versioned layer0 tables absent from _LAYER0_TABLE_FAMILY: "
+            f"{sorted(missing)} — add them or their edits won't invalidate caches"
+        )
+
+    def test_includes_out_of_schema_serving_tables(self):
+        # terrain_gap_rules is a 0C serving table created outside schema.sql
+        # (etl/sources/populate_terrain_gap_rules.sql); read by Layer 2B.
+        assert _LAYER0_TABLE_FAMILY.get("terrain_gap_rules") == "0C"
+
+    def test_families_are_canonical(self):
+        assert set(_LAYER0_TABLE_FAMILY.values()) == {"0A", "0B", "0C"}
 
 
 class TestOrchestrateSingleSessionSynthesizeDiscoveryFailures:
@@ -2160,10 +2212,10 @@ class TestOrchestrateSingleSessionSynthesizeSportSemantics:
             )
         finally:
             _exit_all(stack)
-        # Only the 3 etl_version_set probes (one per source family) — the
-        # orchestrator didn't query locale_profiles or locale_equipment on the
-        # quick_equipment path.
-        assert len(conn.calls) == 3
+        # Only the single etl_version_set probe (one UNION across families) —
+        # the orchestrator didn't query locale_profiles or locale_equipment on
+        # the quick_equipment path.
+        assert len(conn.calls) == 1
 
 
 class TestOrchestrateSingleSessionSynthesizeReturnValue:
@@ -2882,7 +2934,7 @@ class TestOrchestratePlanCreateHappyPath:
         assert kw["plan_start_date"] == date(2026, 6, 1)
         assert kw["plan_version_id"] == 3
         assert kw["cache"] is cache
-        assert kw["etl_version_set"] == {"0A": "v7", "0B": "v7", "0C": "v7"}
+        assert kw["etl_version_set"] == _DEFAULT_ETL
         # layer1_payload threaded as dict (matches race_week_brief +
         # plan_refresh — driver expects dict[str, Any]).
         assert isinstance(kw["layer1_payload"], dict)

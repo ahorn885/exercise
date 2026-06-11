@@ -247,16 +247,15 @@ def _derive_race_discipline_mix(
     return mix
 
 
-def _q_modality_groups(db: Any, version_0a: str) -> dict[str, list[str]]:
+def _q_modality_groups(db: Any) -> dict[str, list[str]]:
     """X1b.3b — `{discipline_id: [group_id, ...]}` from
-    `layer0.discipline_modality_membership` for the cone's 0A version. Mirrors
+    `layer0.discipline_modality_membership` (active rows). Mirrors
     `layer2a/builder.py:_load_modality_groups` (the third consumer — promote to
     a shared reader on a fourth). Empty dict → substitution narrowing is off."""
     cur = db.execute(
         "SELECT discipline_id, group_id "
         "FROM layer0.discipline_modality_membership "
-        "WHERE etl_version = ? AND superseded_at IS NULL",
-        (version_0a,),
+        "WHERE superseded_at IS NULL"
     )
     out: dict[str, list[str]] = {}
     for row in cur.fetchall():
@@ -264,15 +263,14 @@ def _q_modality_groups(db: Any, version_0a: str) -> dict[str, list[str]]:
     return out
 
 
-def _q_craft_discipline_aliases(db: Any, version_0a: str) -> dict[str, list[str]]:
+def _q_craft_discipline_aliases(db: Any) -> dict[str, list[str]]:
     """X1b.3b — `{craft_name: [discipline_id, ...]}` (many-to-many) from
-    `layer0.craft_discipline_aliases` for the cone's 0A version. Empty dict →
-    substitution narrowing is off (pre-X1b.3b behavior)."""
+    `layer0.craft_discipline_aliases` (active rows). Empty dict → substitution
+    narrowing is off (pre-X1b.3b behavior)."""
     cur = db.execute(
         "SELECT craft_name, discipline_id "
         "FROM layer0.craft_discipline_aliases "
-        "WHERE etl_version = ? AND superseded_at IS NULL",
-        (version_0a,),
+        "WHERE superseded_at IS NULL"
     )
     out: dict[str, list[str]] = {}
     for row in cur.fetchall():
@@ -525,8 +523,8 @@ def _upstream_full_cone(
         },
         # X1b.3b — narrow craft candidates to the race discipline's modality
         # group(s). Loaded once at cone construction (1 query each).
-        discipline_modality_groups=_q_modality_groups(db, etl_version_set["0A"]),
-        craft_discipline_aliases=_q_craft_discipline_aliases(db, etl_version_set["0A"]),
+        discipline_modality_groups=_q_modality_groups(db),
+        craft_discipline_aliases=_q_craft_discipline_aliases(db),
     )
 
     return _UpstreamFullCone(
@@ -1045,43 +1043,98 @@ def _max_etl_version(versions: list[str]) -> str:
     return max(versions, key=lambda v: tuple(int(n) for n in re.findall(r"\d+", v)))
 
 
+# Every versioned `layer0.*` table, mapped to its source family (`0A` sports,
+# `0B` exercises, `0C` vocabulary/terrain/body-parts/equipment/conditions/
+# toggles). Authoritative source: the `source_family=` argument on each
+# `insert_versioned` call in `etl/layer0/run.py`. Family is a property of the
+# *table*, not the version string — discovery does not parse the `0X-` prefix.
+# `tests/test_layer4_orchestrator.py::TestLayer0TableFamilyMap` guards this
+# against drift from `etl/layer0/schema.sql`; keep it in sync when a versioned
+# table is added.
+_LAYER0_TABLE_FAMILY: dict[str, str] = {
+    # 0A — sports framework
+    "sports": "0A",
+    "disciplines": "0A",
+    "sport_discipline_map": "0A",
+    "discipline_pairing": "0A",
+    "phase_load_allocation": "0A",
+    "phase_load_weekly_totals": "0A",
+    "team_formats": "0A",
+    "cross_sport_properties": "0A",
+    "sport_discipline_bridge": "0A",
+    "discipline_substitutes": "0A",
+    "discipline_training_gaps": "0A",
+    "modality_groups": "0A",
+    "discipline_modality_membership": "0A",
+    "craft_discipline_aliases": "0A",
+    # 0B — exercise library
+    "exercises": "0B",
+    "sport_exercise_map": "0B",
+    # 0C — vocabulary / terrain / body-parts / equipment / conditions / toggles
+    "body_parts": "0C",
+    "health_condition_categories": "0C",
+    "equipment_items": "0C",
+    "terrain_types": "0C",
+    "terrain_gap_rules": "0C",
+    "sport_specific_gear_toggles": "0C",
+    "skill_capability_toggles": "0C",
+    "sport_name_aliases": "0C",
+}
+# Note: `layer0.supplement_vocabulary` (read by Layer 2E) is intentionally
+# absent — it carries its own `supp_vocab.*` version line, not a 0A/0B/0C
+# family prefix, and was never part of `etl_version_set`. It reads
+# `WHERE superseded_at IS NULL` directly, so its edits serve live without a
+# cache-key dependency (unchanged by slice 3b).
+
+
 def _q_current_etl_version_set(db: Any) -> dict[str, str]:
-    """Discover the active Layer 0 ETL version per source family.
+    """Discover the active Layer 0 version fingerprint per source family.
 
-    Each family is versioned independently and its rows store a
-    family-prefixed `etl_version` — `0A-v…` (sports), `0B-v…` (exercises),
-    `0C-v…` (vocabulary / terrain / body-parts / equipment). Read each
-    family's own highest active version from a representative table; do NOT
-    broadcast one table's version across all three. Layer 2B/2C filter their
-    0B/0C reads by exact `etl_version`, so a `0A-`prefixed string handed to
-    them matches no rows (the bug this replaces).
+    Returns `{"0A": …, "0B": …, "0C": …}` where each value is a digest of every
+    table in that family at its current active version, e.g.
+    `"sports=0A-v1.6.7;disciplines=0A-v1.6.8;…"`. The digest changes whenever
+    *any* table in the family changes its active version, so a single-table
+    migration invalidates the plan-gen caches that fold `etl_version_set` into
+    their key — without a whole-family re-stamp (slice 3b, epic #488).
 
-    A family is a single version line: a migration that bumps it re-stamps
-    every table in that family in lockstep (the `0C-v%` supersede scoping in
-    `etl/layer0/db.py:insert_versioned`), so one representative table per
-    family is authoritative for that family's current version.
+    Serving itself no longer matches on `etl_version`: the Layer 2 builders read
+    `WHERE superseded_at IS NULL` and pick up the active row set directly, so a
+    migration is observed the moment it commits. The version digest exists only
+    as the cache-invalidation signal (per-table, so no advance-the-max foot-gun)
+    and the version provenance carried on each payload.
 
-    The max is computed by numeric component (see `_max_etl_version`), not a
-    lexical SQL `MAX` — the latter ranks `0A-v11.0` below `0A-v9.0` at a
-    digit-width boundary.
+    Per-table max (see `_max_etl_version`) tolerates the transient in-migration
+    state where a table briefly holds two active versions; the steady state is
+    one active version per table.
     """
-    representatives = (
-        ("0A", "layer0.sports"),
-        ("0B", "layer0.exercises"),
-        ("0C", "layer0.terrain_types"),
+    union = " UNION ALL ".join(
+        f"SELECT DISTINCT '{table}' AS tbl, etl_version AS v "
+        f"FROM layer0.{table} WHERE superseded_at IS NULL"
+        for table in _LAYER0_TABLE_FAMILY
     )
+    cur = db.execute(f"SELECT tbl, v FROM ({union}) members")
+
+    by_family: dict[str, dict[str, list[str]]] = {"0A": {}, "0B": {}, "0C": {}}
+    for row in cur.fetchall():
+        version = row["v"]
+        if not version:
+            continue
+        family = _LAYER0_TABLE_FAMILY.get(row["tbl"])
+        if family is None:
+            continue
+        by_family[family].setdefault(row["tbl"], []).append(version)
+
     version_set: dict[str, str] = {}
-    for family, table in representatives:
-        cur = db.execute(
-            f"SELECT DISTINCT etl_version AS v FROM {table} WHERE superseded_at IS NULL"
-        )
-        versions = [row["v"] for row in cur.fetchall() if row["v"]]
-        if not versions:
+    for family, tables in by_family.items():
+        if not tables:
             raise OrchestrationError(
                 "etl_version_set_undiscoverable",
-                f"{table} has no non-superseded rows",
+                f"layer0 family {family} has no non-superseded rows",
             )
-        version_set[family] = _max_etl_version(versions)
+        version_set[family] = ";".join(
+            f"{table}={_max_etl_version(versions)}"
+            for table, versions in sorted(tables.items())
+        )
     return version_set
 
 

@@ -117,15 +117,14 @@ def _load_disciplines(
     db,
     top_level_sport: str,
     framework_sport: str,
-    version_0a: str,
 ) -> list[dict[str, Any]]:
     """Issue the spec §5.2 query. Returns one row per included discipline
     in SDM for the sport, with PLA + DTG + discipline-library rows joined
     LEFT (may be NULL).
 
-    Six positional params: top_level_sport, version_0a, framework_sport,
-    version_0a, version_0a, version_0a. Trailing three version_0a params
-    are for the PLA, DTG, and disciplines joins respectively.
+    Reads the active row set (`superseded_at IS NULL`); the active version is
+    resolved per-table at serving time, so no `etl_version` predicate (slice
+    3b). Two positional params: top_level_sport (SDM), framework_sport (PLA).
     """
     cur = db.execute(
         """
@@ -142,7 +141,6 @@ def _load_disciplines(
             FROM layer0.sport_discipline_map sdm
             WHERE sdm.sport_name = ?
               AND sdm.applicability = 'INCLUDED'
-              AND sdm.etl_version = ?
               AND sdm.superseded_at IS NULL
         )
         SELECT
@@ -174,25 +172,22 @@ def _load_disciplines(
         LEFT JOIN layer0.phase_load_allocation pla
             ON pla.sport_name = ?
            AND pla.discipline_id = sd.discipline_id
-           AND pla.etl_version = ?
            AND pla.superseded_at IS NULL
            AND pla.discipline_name NOT LIKE '%%WEEKLY TOTAL%%'
         LEFT JOIN layer0.discipline_training_gaps dtg
             ON dtg.discipline_id = sd.discipline_id
-           AND dtg.etl_version = ?
            AND dtg.superseded_at IS NULL
         LEFT JOIN layer0.disciplines dl
             ON dl.discipline_id = sd.discipline_id
-           AND dl.etl_version = ?
            AND dl.superseded_at IS NULL
         """,
-        (top_level_sport, version_0a, framework_sport, version_0a, version_0a, version_0a),
+        (top_level_sport, framework_sport),
     )
     return [dict(r) for r in cur.fetchall()]
 
 
 def _load_weekly_total_hours(
-    db, framework_sport: str, version_0a: str
+    db, framework_sport: str
 ) -> dict[str, tuple[float, float]]:
     """Per-phase whole-sport weekly HOUR totals from the spreadsheet's
     `WEEKLY TOTAL TARGET` row (extracted to `layer0.phase_load_weekly_totals`).
@@ -207,10 +202,9 @@ def _load_weekly_total_hours(
         SELECT phase, weekly_low_hours, weekly_high_hours
           FROM layer0.phase_load_weekly_totals
          WHERE sport_name = ?
-           AND etl_version = ?
            AND superseded_at IS NULL
         """,
-        (framework_sport, version_0a),
+        (framework_sport,),
     )
     out: dict[str, tuple[float, float]] = {}
     for r in cur.fetchall():
@@ -392,10 +386,8 @@ def _compute_load_weight(
 
 def _load_modality_groups(
     db,
-    version_0a: str,
 ) -> dict[str, list[str]]:
-    """X1b.2 — load `layer0.discipline_modality_membership` for the given
-    Layer 0 version.
+    """X1b.2 — load `layer0.discipline_modality_membership` (active rows).
 
     Returns `{discipline_id: [group_id, ...]}`. Empty dict (no rows) is
     treated by the caller as the pre-v1.5.0 state — every discipline is
@@ -404,8 +396,7 @@ def _load_modality_groups(
     cur = db.execute(
         "SELECT discipline_id, group_id "
         "FROM layer0.discipline_modality_membership "
-        "WHERE etl_version = ? AND superseded_at IS NULL",
-        (version_0a,),
+        "WHERE superseded_at IS NULL"
     )
     out: dict[str, list[str]] = {}
     for row in cur.fetchall():
@@ -810,9 +801,8 @@ def q_layer2a_discipline_classifier_payload(
         )
 
     top_level_sport = _strip_sub_format(framework_sport)
-    version_0a = etl_version_set["0A"]
 
-    raw_rows = _load_disciplines(db, top_level_sport, framework_sport, version_0a)
+    raw_rows = _load_disciplines(db, top_level_sport, framework_sport)
 
     # D-73 Phase 5.2 Bucket E.(b)-B2 (2026-05-24) — when a race-level
     # `discipline_id_filter` is supplied, prune the bridge-derived rows to
@@ -907,7 +897,7 @@ def q_layer2a_discipline_classifier_payload(
     # athlete doesn't own — weight redirects to a same-group included member.
     # Returns the per-group diagnostic for the payload. Empty membership table
     # (pre-v1.5.0) is a no-op — every discipline stays its own singleton.
-    membership = _load_modality_groups(db, version_0a)
+    membership = _load_modality_groups(db)
     modality_group_allocations = _apply_modality_group_pooling(
         disciplines,
         membership,
@@ -930,7 +920,7 @@ def q_layer2a_discipline_classifier_payload(
         etl_version_set=dict(etl_version_set),
         disciplines=disciplines,
         weekly_total_hours_by_phase=_load_weekly_total_hours(
-            db, framework_sport, version_0a
+            db, framework_sport
         ),
         training_gaps_summary=training_gaps_summary,
         hitl_required=hitl_required,

@@ -41,18 +41,22 @@ new value arrives as a fresh `INSERT … superseded_at = NULL`. The
 + maps + phase-load + modality + aliases), `0B-v…` (exercises + sport_exercise_map),
 `0C-v…` (vocabulary / terrain / body-parts / equipment / conditions / toggles).
 
-Serving resolves **one active version per family** and exact-matches it
-(`layer4/orchestrator.py:_q_current_etl_version_set` → the Layer 2 builders), and
-that version string is part of every plan-gen cache key. Two consequences shape
-how you write a migration:
+**Serving reads the active set directly** (`WHERE superseded_at IS NULL`) — it does
+*not* match on `etl_version` (slice 3b). A migration is therefore picked up the
+moment it commits, with no version coordination. The `etl_version` string survives
+only as the **cache-invalidation signal**: `_q_current_etl_version_set`
+(`layer4/orchestrator.py`) digests each family's active version **per table**, and
+that digest is part of every plan-gen cache key. Because it is per-table, bumping
+one table's version perturbs the digest — and invalidates the caches — without
+touching any other table. Two shapes follow:
 
 ### Two edit shapes
 
 **1. Cache-neutral structural edit** — when the change does not alter any served
 output (e.g. removing zero-weight rows, fixing a field no serving path reads).
-Just supersede / insert the affected rows; **no version bump**. The active set
-stays uniform at the current family version, and caches need not invalidate
-(stale = correct, because the output is unchanged). `0001` is this shape.
+Just supersede / insert the affected rows; **no version bump**. Serving picks up
+the new active set immediately, but the version digest is unchanged so caches stay
+warm (stale = correct, because the output is unchanged). `0001` is this shape.
 
 ```sql
 -- remove a row from the active set (history preserved)
@@ -61,28 +65,29 @@ UPDATE layer0.<table> SET superseded_at = now()
 ```
 
 **2. Serving-relevant edit** — when the change *does* alter served output and the
-plan-gen caches must invalidate. Today this requires **bumping the family
-version**, which (because serving exact-matches one version per family) means
-re-stamping every table in that family to the new version via copy-forward +
-supersede:
+plan-gen caches must invalidate. Supersede the affected rows and re-insert them
+with the edit applied at a **bumped version on that table only**. The table's
+entry in the family digest advances, so the caches invalidate; every other table
+(and every unchanged row) stays put. No whole-family re-stamp:
 
 ```sql
--- bump family 0A: copy every active row forward to the new version, applying
--- the surgical change inline, then supersede the old version.
-INSERT INTO layer0.<each 0A table> (<cols>, etl_version, etl_run_at)
-SELECT <cols, with the edit applied via CASE/WHERE>, '0A-v<new>', now()
-  FROM layer0.<each 0A table>
- WHERE superseded_at IS NULL AND etl_version = '0A-v<old>';
-UPDATE layer0.<each 0A table> SET superseded_at = now()
- WHERE superseded_at IS NULL AND etl_version = '0A-v<old>';
--- ...repeat for all ~14 0A tables...
+-- serving-relevant edit to one table (e.g. terrain_types). Only the changed
+-- rows move to the new version; unchanged rows stay active at the old one.
+INSERT INTO layer0.terrain_types (<cols>, etl_version, etl_run_at)
+SELECT <cols, with the edit applied>, '0C-v<new>', now()
+  FROM layer0.terrain_types
+ WHERE superseded_at IS NULL AND <rows to change>;
+UPDATE layer0.terrain_types SET superseded_at = now()
+ WHERE superseded_at IS NULL AND etl_version = '0C-v<old>' AND <rows to change>;
 ```
 
-> The ~14-table re-stamp for a single-row 0A edit is the cost of the
-> per-family version model. A follow-up slice (per-table version resolution)
-> will shrink a serving-relevant edit to just the changed table — until that
-> lands, a serving-relevant edit re-stamps the whole family. No migration of
-> this shape has shipped yet; `0001` is deliberately the cache-neutral kind.
+> The new version need only **differ** from the table's current active version
+> (convention: bump up) — it need not advance a family-wide max, because the
+> digest is per-table. Serving reads `superseded_at IS NULL`, so the mixed
+> active-version state (changed rows new, unchanged rows old) serves correctly;
+> the digest takes the per-table max. The per-table model landed in slice 3b
+> (`_q_current_etl_version_set` + the Layer 2 builders reading the active set);
+> it replaced the earlier per-family re-stamp.
 
 ## The gate
 

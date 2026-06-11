@@ -81,9 +81,9 @@ A standalone module/CLI that runs the existing checks against `layer0.*` and exi
 
 **Decision C — RESOLVED 2026-06-10:** all validators graduate to FAIL, with exactly one waiver bucket (`sum_to_100`) and two clean-the-data-first buckets (`vocab_alignment`, `contraindicated_conditions`). These are mostly mechanical to lift because they already take a DB connection, not the workbook.
 
-### 5.3 Versioning (unchanged)
+### 5.3 Versioning
 
-Keep `(etl_version, etl_run_at, superseded_at)` and the supersede-before-insert ordering (DELETE same-version → UPDATE supersede prior → INSERT active — the ordering fix from X1a / PR #475 stays). Migrations bump the per-family version string exactly as `--version-tag` does today. `etl_version_set` pinning semantics for partial-update invalidation are **unchanged in shape** (the version-set dict is still the cache-key component), but the trigger-#3 check (Open item E, §8) found the *discovery* of that set was broadcasting one family's version across all three — a serving bug now fixed to read per-family. With that fix, a single-family migration correctly invalidates the cache and routes the builders to the right version.
+Keep `(etl_version, etl_run_at, superseded_at)` and the supersede-before-insert ordering (DELETE same-version → UPDATE supersede prior → INSERT active — the ordering fix from X1a / PR #475 stays). `etl_version_set` is still a `{0A,0B,0C}` cache-key component, but **slice 3b (2026-06-11) decoupled it from serving**: the Layer 2 builders now read the active set (`WHERE superseded_at IS NULL`) and no longer match on `etl_version`, so a migration serves the moment it commits. `_q_current_etl_version_set` now digests each family's active version **per table** (keyed on `_LAYER0_TABLE_FAMILY`), so a serving-relevant edit can bump just the changed table — the digest shifts and invalidates the plan-gen caches with no whole-family re-stamp. (This superseded the earlier per-family exact-match, which had also masked the Open item E broadcast bug, §8.) One-time cost: the cache-key value shape changed from a single version string to a per-table digest, so the first deploy invalidates all plan-gen caches once.
 
 ## 6. Phased plan
 

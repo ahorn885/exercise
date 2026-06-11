@@ -390,7 +390,6 @@ def _load_phase_weekly_hours(
     db,
     framework_sport: str,
     phase: str,
-    etl_version: str,
 ) -> tuple[float | None, float | None]:
     cur = db.execute(
         """
@@ -398,11 +397,10 @@ def _load_phase_weekly_hours(
           FROM layer0.phase_load_weekly_totals
          WHERE sport_name = ?
            AND phase = ?
-           AND etl_version = ?
            AND superseded_at IS NULL
          LIMIT 1
         """,
-        (framework_sport, phase, etl_version),
+        (framework_sport, phase),
     )
     row = cur.fetchone()
     if row is None:
@@ -419,9 +417,8 @@ def _compute_activity_multiplier(
     db,
     framework_sport: str,
     phase: str,
-    etl_version_0a: str,
 ) -> tuple[float, dict[str, Any], bool]:
-    low, high = _load_phase_weekly_hours(db, framework_sport, phase, etl_version_0a)
+    low, high = _load_phase_weekly_hours(db, framework_sport, phase)
     if low is None or high is None:
         return (
             _PHASE_DEFAULT_MULTIPLIER[phase],
@@ -1282,7 +1279,6 @@ def q_layer2e_nutrition_baseline_payload(
     )
 
     today = today or date.today()
-    version_0a = etl_version_set["0A"]
     body_weight_kg = float(performance.body_weight_kg)
 
     # §5.2 BMR + per-phase activity multiplier.
@@ -1292,7 +1288,7 @@ def q_layer2e_nutrition_baseline_payload(
     pla_fallback_phases: list[str] = []
     for phase in _PHASES:
         multiplier, source, fallback = _compute_activity_multiplier(
-            db, framework_sport, phase, version_0a
+            db, framework_sport, phase
         )
         if fallback:
             pla_fallback_phases.append(phase)
