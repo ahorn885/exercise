@@ -214,6 +214,8 @@ class TestSchemaSubstrate:
     MIGRATION_PATH = (
         Path(__file__).parent.parent
         / "aidstation-sources"
+        / "archive"
+        / "etl-scratch"
         / "migrations"
         / "migrate_toggles_v3_columns.sql"
     )
