@@ -384,7 +384,6 @@
     <li class="supp-row">
       <div class="supp-main">
         <span class="supp-name">{{ medication_class_labels.get(m.medication_class, m.medication_class) }}</span>
-        {% if m.medication_name %}<span class="supp-meta">{{ m.medication_name }}</span>{% endif %}
         {% if m.notes %}<span class="rail-note">· {{ m.notes }}</span>{% endif %}
       </div>
       <form method="post" action="{{ url_for('profile.delete_medication_route', medication_id=m.id) }}">
@@ -407,8 +406,6 @@
         <option value="{{ value }}">{{ label }}</option>
         {% endfor %}
       </select></label>
-    <label class="field"><span class="lbl">Name (optional)</span>
-      <input type="text" name="medication_name" class="form-control form-control-sm" placeholder="e.g. metoprolol"></label>
     <label class="field field-wide"><span class="lbl">Notes (optional)</span>
       <input type="text" name="notes" class="form-control form-control-sm" placeholder="context…"></label>
     <div class="supp-add-actions"><button type="submit" class="btn btn-primary">Add medication</button></div>

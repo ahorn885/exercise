@@ -1581,6 +1581,10 @@ body.bulk-mode { padding-bottom: 80px; }
 
 /* Profile form */
 .app .pf-form { display: flex; flex-direction: column; gap: 16px; }
+/* The §B capture cards (supplements / health conditions / medications) sit after
+   the .pf-form, outside its flex gap, so they'd otherwise butt together. Give each
+   the same 16px rhythm. */
+.app .pf-form ~ .pf-nutrition { margin-top: 16px; }
 .app .pf-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 14px; }
 .app .pf-grid .field { margin-bottom: 0; }
 .app .pf-grid .field-wide { grid-column: span 2; }
