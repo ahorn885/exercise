@@ -91,7 +91,7 @@ Keep `(etl_version, etl_run_at, superseded_at)` and the supersede-before-insert 
 2. **Port the validators** → `validate_layer0` + CI wire. **This is slice 1 and the first thing to build.** No authoring change ships before the gate exists.
 3. **Establish `etl/migrations/layer0/`** + the migration convention (§5.1). First real DB-native edit (e.g. the #476 D-007 cleanup or #477 discipline-ID split) becomes the proof migration instead of a v15 workbook.
 4. **Retire the extractors + xlsx.** Once 2–3 edits have gone through migrations cleanly, freeze `etl/layer0/extractors/`, `run.py`, `emit_sql.py`, and the two remaining workbooks (`Sports_Framework_v14.xlsx`, `AR_Exercise_Database_v19.xlsx`) into an archive (the way `Project_Backlog_vN.md` was frozen). The old-version test pins are already resolved (§7.2 — tests now run against v14, the live source).
-5. **(Optional) DB→xlsx export** (decision B) and/or **admin UI** (decision A).
+5. **DB→xlsx export** (decision B) — ✅ **built 2026-06-11** as `etl/layer0/export_xlsx.py` (read-only `information_schema`-discovered projection, one sheet per `layer0.*` table, active rows only). Shipped ahead of the §6.4 freeze on purpose: §8's gut check makes the bulk-review export the prerequisite that makes full xlsx retirement *safe*. Admin UI (decision A) stays deferred.
 
 ## 7. What gets deleted / retired
 
@@ -121,7 +121,7 @@ CI is unaffected — the GitHub Actions Python job runs `pytest tests/` only, no
 ## 8. Risks / open items / gut check
 
 - ~~**Open decision A** — admin UI now or defer~~ ✅ **RESOLVED 2026-06-10: defer** (no admin UI in v1).
-- ~~**Open decision B** — DB→xlsx export hedge now or defer~~ ✅ **RESOLVED 2026-06-10: build at phase 4.**
+- ~~**Open decision B** — DB→xlsx export hedge now or defer~~ ✅ **RESOLVED 2026-06-10: build at phase 4.** **Built 2026-06-11** — `etl/layer0/export_xlsx.py` (§6.5).
 - ~~**Open decision C** — which validators graduate WARN→FAIL~~ ✅ **RESOLVED 2026-06-10: all FAIL**, with one waiver bucket (`sum_to_100`) and two fix-the-data buckets (`vocab_alignment`, `contraindicated_conditions`). See §5.2.
 - ~~**Open item D** — the v11 test pins~~ ✅ Resolved in #487 (§7.2): tests repointed to v14, v10–v13 deleted.
 - ~~**Open item E** — confirm no downstream assumes Layer 0 versions only advance via a full ETL run~~ ✅ **RESOLVED 2026-06-10: it did — and the assumption was masking a live serving bug.** `_q_current_etl_version_set` (`layer4/orchestrator.py`) read only `layer0.sports` and broadcast its `0A-`prefixed version to the `0B`/`0C` keys (a self-described "v1 approximation … promote to per-sub-arc when independent versioning ships"). Since prod stores **family-prefixed** versions (`0A-v1.6.7` / `0B-v1.6.7` / `0C-v1.6.7`, confirmed by query) and Layer 2B/2C exact-match `etl_version`, terrain (2B) and the exercise pool (2C) were resolving **zero rows** — degraded silently because both fail soft to empty. **Fix (Trigger #3, Andy sign-off 2026-06-10):** read each family's own highest active version from a representative table (`sports`/0A, `exercises`/0B, `terrain_types`/0C). This both repairs the live 2B/2C bug and makes a single-family migration *observable* to cache invalidation + the version the builders query — the prerequisite for the `etl/migrations/layer0/` model. Regression guard: `tests/test_layer4_orchestrator.py::TestQCurrentEtlVersionSet`. Live verification (cold plan shows non-empty terrain + real exercise pool) is owed-Andy's-hands post-deploy.
@@ -140,8 +140,8 @@ Epic filed: **[#488](https://github.com/ahorn885/exercise/issues/488)** — "Ret
 - [x] Add `etl/tests/` to the CI Python job (see §10).
 - [ ] Slice 1 — `validate_layer0` port + CI wire (the integrity gate; nothing ships before it). Includes: `sum_to_100` waiver registry · fix `vocab_alignment` data · triage `contraindicated_conditions` data · clear open item E.
 - [ ] `etl/migrations/layer0/` convention + first proof migration.
-- [ ] Phase 4 — freeze extractors + remaining workbooks (v14/v19).
-- [ ] DB→xlsx export (decision B — at phase 4).
+- [ ] Phase 4 — freeze extractors + remaining workbooks (v14/v19). _Gated on 2–3 migrations going through cleanly (§6.4); only `0001` has so far — still owed._
+- [x] DB→xlsx export (decision B — at phase 4). `etl/layer0/export_xlsx.py` + `etl/tests/test_export_xlsx.py` (2026-06-11).
 - [ ] **#509** (spun out) — Layer 2A inclusion-precedence unification + wire `default_inclusion` column. Out of scope here; sequenced with X3/X4.
 
 ## 10. CI coverage note (shipped in #487)
