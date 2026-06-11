@@ -11,6 +11,17 @@ Rolling-state for items spanning multiple sessions. **Edit in place** — don't 
 
 ---
 
+## Skill-capability gating (2026-06-11, PR #551) — DONE; one owed deploy (now load-bearing)
+
+**PR [#551](https://github.com/ahorn885/exercise/pull/551) squash-merged to `main` (`94ec454`), branch `claude/upbeat-fermi-7bkkde`. Closes [#336](https://github.com/ahorn885/exercise/issues/336)** (high/safety; parent #201). The `requires_skill_capability` signal was computed in Layer 2C but **gated nothing** — pv=46 prescribed roped climbing + abseiling to an athlete who never claimed the skill. **Andy's call: substitute, not exclude** — the discipline stays in the plan, its skill-specific session is swapped for strength-and-conditioning (grip/upper-body for climbing) with a coach note "prescribing strength until you're cleared on `<skill>`".
+
+- New `blocker` validator rule `_rule_skill_capability_gate` (`layer4/validator.py`) + shared `skill_gated_disciplines()` helper, sourced from the 2C `requires_skill_capability` flags — **consumes the previously-orphaned flag (#298)**. Blocks `kind=='cardio'` sessions tagged to a gated discipline; strength substitutions pass. Per-phase synthesizer prompt gains a "Skill-capability gates" substitution directive + an inline `[SKILL-GATED]` session-grid annotation (`layer4/per_phase.py`). 2C flag message reworded toward substitution (`layer2c/builder.py`). +10 tests; suite **2351 passed / 30 skipped**; CI green.
+- **Key data finding:** `D-012 Rock Climbing`'s `exercise_db_sport` is "Adventure Racing", so its 2C exercises are already AR strength — the prescribed climbing was *discipline-level sport sessions*, which is why the gate lands at the session level, not the exercise pool.
+- ⬜ **OWED — Andy's-hands Neon deploy, now LOAD-BEARING.** The gate is **data-driven** off `layer0.skill_capability_toggles` (5 rows). If that table is empty/absent on Neon, the 2C flags never fire → the gate silently no-ops (nothing gated). Apply `etl/sources/run_owed_layer0_migrations.sql` (or `populate_skill_capability_toggles.sql` alone — idempotent, self-verifies 5 active rows). Previously a "hygiene no-op" in the owed list below; #336 makes confirming it required for the safety gate to function.
+- Handoff: `V5_Implementation_SkillCapabilityGating_336_2026_06_11_Closing_Handoff_v1.md`.
+
+---
+
 ## `aidstation-sources/` reorg (2026-06-11) — DONE; two follow-ups
 
 Foldered the flat doc root into `specs/`/`designs/`/`research/`/`plans/` + `archive/superseded-specs/` + `archive/etl-scratch/`; `README.md` is now the plain-English index; `CLAUDE.md` paths + Rule #12 synced. Handoff: `V5_Housekeeping_AidstationSources_Reorg_2026_06_11_Closing_Handoff_v1.md`. **Doc layout changed — specs are under `specs/` now, not the flat root.**
@@ -179,7 +190,11 @@ A. **Supplement contraindication arc (2026-06-10/11) — SHIPPED end-to-end; one
    Neon (idempotent — lands 10 canonical 0B equipment names: Treadmill / Road
    bike / Rope / Quickdraws / Harness / Crash pad / Hangboard / Climbing gym
    membership / Kayak / Canoe). Also confirm
-   `etl/sources/populate_skill_capability_toggles.sql` is applied.
+   `etl/sources/populate_skill_capability_toggles.sql` is applied — **now
+   load-bearing as of #336 (PR #551):** the skill-capability safety gate is
+   data-driven off `layer0.skill_capability_toggles`, so an unapplied table
+   means the gate silently no-ops (nothing gated). See the #551 section at the
+   top of this file.
 4. **Log-visibility diag endpoint (2026-05-31, PR #349; auth-gate fixed PR #352).**
    ✅ **NOW LIVE PAST THE LOGIN WALL (PR #352, squash-merged to `main`).** The
    #349 endpoint was unreachable in prod — the global `_require_login`
