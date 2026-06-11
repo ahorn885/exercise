@@ -112,17 +112,20 @@ its own line, must therefore stay out of `schema.sql` (the existing precedent:
 `terrain_gap_rules` is created by `etl/sources/populate_terrain_gap_rules.sql`,
 not `schema.sql`). The self-contained migration is what the gate runs.
 
-`0002_seed_supplement_vocabulary.sql` is the worked example (epic #488): it
-de-orphans `layer0.supplement_vocabulary` (read by Layer 2E, versioned on its
-own `supp_vocab.*` line — outside the 0A/0B/0C cone, so deliberately not in
-`_LAYER0_TABLE_FAMILY` per slice 3b), subsuming the legacy
-`migrate_supplement_vocabulary.sql` (base seed) + the D-21
-`migrate_supplement_vocab_contraindication_retag_v1.sql` (the seed already
-carries the canonical §B tokens the retag produced). `layer0.terrain_gap_rules`
-is the remaining orphan and the natural next migration in this shape — note it
-*is* a 0C cone table (read by Layer 2B) and already in `_LAYER0_TABLE_FAMILY`,
-so its migration stays out of `schema.sql` for the same drift-guard reason but
-the family entry already exists.
+`0002_seed_supplement_vocabulary.sql` and `0003_seed_terrain_gap_rules.sql` are
+the worked examples (epic #488). `0002` de-orphans `layer0.supplement_vocabulary`
+(read by Layer 2E, versioned on its own `supp_vocab.*` line — **outside** the
+0A/0B/0C cone, so deliberately not in `_LAYER0_TABLE_FAMILY` per slice 3b),
+subsuming the legacy `migrate_supplement_vocabulary.sql` (base seed) + the D-21
+`migrate_supplement_vocab_contraindication_retag_v1.sql` (the seed already carries
+the canonical §B tokens the retag produced). `0003` de-orphans
+`layer0.terrain_gap_rules` — the **last** spec-sourced orphan — subsuming
+`populate_terrain_gap_rules.sql` (CREATE + 16 gap rows) + the `partial`→4-band
+`migrate_terrain_gap_rules_severity.sql` reclassification. Note `terrain_gap_rules`
+*is* a 0C **cone** table (read by Layer 2B) and already in `_LAYER0_TABLE_FAMILY`
+as `0C`, so the drift guard would *not* object to it being in `schema.sql`; it
+stays out anyway, for consistency with this self-contained shape and to keep the
+`test_includes_out_of_schema_serving_tables` guard true.
 
 ## The gate
 
