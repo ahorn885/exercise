@@ -712,7 +712,7 @@ def add_medication_route():
     ok = add_medication(
         db, current_user_id(),
         medication_class=(request.form.get('medication_class') or '').strip(),
-        medication_name=request.form.get('medication_name') or '',
+        medication_name=None,  # class only — we don't capture exact names (Andy 2026-06-11)
         notes=(request.form.get('notes') or '').strip() or None,
     )
     if ok:

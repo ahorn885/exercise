@@ -90,6 +90,7 @@
             <div class="sess-head">
               <span class="sess-name">
                 {% if sess.kind == 'rest' %}Rest{% if sess.rest_reason %} — {{ sess.rest_reason|replace('_', ' ')|capitalize }}{% endif %}
+                {% elif sess.kind == 'strength' %}Strength{% if sess.discipline_name %} · {{ sess.discipline_name }}{% endif %} — {{ sess.duration_min }} min
                 {% else %}{{ sess.discipline_name or sess.discipline_id or sess.kind|title }} — {{ sess.duration_min }} min{% endif %}
               </span>
               {% if sess.kind != 'rest' %}<span class="chip">{{ sess.intensity_summary|title }}</span>{% endif %}
@@ -97,6 +98,7 @@
               {% if sess.locale_name %}<span class="rail-note">@ {{ sess.locale_name }}</span>{% endif %}
             </div>
             {% if sess.coaching_intent %}<p class="sess-intent">{{ sess.coaching_intent }}</p>{% endif %}
+            {% if sess.session_notes %}<p class="sess-notes">{{ sess.session_notes }}</p>{% endif %}
 
             {% if sess.kind == 'cardio' and sess.cardio_blocks %}
             <ol class="sess-blocks">
@@ -154,8 +156,6 @@
               {% for f in sess.coaching_flags %}<span class="chip warn">{{ f|replace('_', ' ') }}</span>{% endfor %}
             </div>
             {% endif %}
-
-            {% if sess.session_notes %}<p class="sess-notes">{{ sess.session_notes }}</p>{% endif %}
           </div>
           {% endfor %}
         </div>

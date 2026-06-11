@@ -239,6 +239,18 @@ def test_strength_exercises_render_with_prescription(client, monkeypatch):
     assert 'style="' not in html
 
 
+def test_strength_session_labeled_strength_not_its_discipline(client, monkeypatch):
+    # The synthesizer tags strength sessions with their associated sport
+    # (discipline_name). The card must label them "Strength" — keeping the
+    # sport as a secondary association — not as the sport alone (#4).
+    _patch_view(monkeypatch, [_strength_session(
+        discipline_id='D-008', discipline_name='Mountain Biking')])
+    html = client.get('/plans/v2/46').get_data(as_text=True)
+    # Labeled "Strength" with the sport kept as a secondary association — the
+    # sport is never the standalone label for a strength session.
+    assert 'Strength · Mountain Biking — 45 min' in html
+
+
 def test_rest_session_surfaces_reason(client, monkeypatch):
     _patch_view(monkeypatch, [_rest_session()])
     resp = client.get('/plans/v2/46')

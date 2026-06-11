@@ -509,7 +509,9 @@ def test_health_inputs_cards_render(monkeypatch):
     # Both cards + the stored records (rendered via their §B labels).
     assert 'Health conditions' in html and 'Medications' in html
     assert 'Atrial fibrillation' in html and 'Cardiac' in html
-    assert 'Anticoagulant' in html and 'warfarin' in html
+    # Medication shows by class only — the exact name is no longer captured/shown.
+    assert 'Anticoagulant' in html
+    assert 'warfarin' not in html and 'name="medication_name"' not in html
     # Vocab-backed add selects + scoped delete forms.
     assert 'name="system_category"' in html and 'name="medication_class"' in html
     assert '/profile/condition/add' in html and '/profile/condition/3/delete' in html

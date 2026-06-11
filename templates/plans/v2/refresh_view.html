@@ -46,6 +46,7 @@
           <div class="sess-head">
             <span class="sess-name">
               {% if sess.kind == 'rest' %}Rest
+              {% elif sess.kind == 'strength' %}Strength{% if sess.discipline_name %} · {{ sess.discipline_name }}{% endif %} — {{ sess.duration_min }} min
               {% else %}{{ sess.discipline_name or sess.discipline_id or sess.kind|title }} — {{ sess.duration_min }} min{% endif %}
             </span>
             <span class="chip solid">{{ sess.intensity_summary|title }}</span>
