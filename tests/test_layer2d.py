@@ -466,6 +466,66 @@ class TestPostSurgicalHitl:
         assert post_surgical_items[0].severity == "warn"
 
 
+# ─── #202 — post-surgical recency anchored to `today` (cache-key determinism) ─
+
+
+class TestPostSurgicalRecencyDeterminism:
+    """#202: `_is_recent_post_surgical` must key off the cone's day-anchored
+    `today`, not wall-clock `utcnow()`. The recency bool drives the
+    cross-education loading swap, whose modality rides in the Layer2D payload →
+    `layer2d_hash` → `plan_create_key`; a wall-clock anchor would drift that
+    cache key across a calendar boundary between resumable passes, the exact
+    non-convergence class #202 hunts."""
+
+    def test_recency_window_keys_off_passed_today_not_wall_clock(self):
+        from layer2d.builder import _is_recent_post_surgical
+
+        start = date(2026, 3, 1)
+        injury = _injury(
+            "Right Knee",
+            severity="Post-surgical",
+            injury_type="Joint (mechanical) — surgical",
+            start_date=start,
+        )
+        # Anchored entirely on the passed `today`: inside vs outside the 42-day
+        # window flips on the boundary, independent of when the test runs.
+        assert _is_recent_post_surgical(injury, start + timedelta(days=20)) is True
+        assert _is_recent_post_surgical(injury, start + timedelta(days=41)) is True
+        assert _is_recent_post_surgical(injury, start + timedelta(days=42)) is False
+        assert _is_recent_post_surgical(injury, start + timedelta(days=60)) is False
+        # Deterministic: same `today` → same verdict, every call.
+        anchor = start + timedelta(days=20)
+        assert _is_recent_post_surgical(injury, anchor) == _is_recent_post_surgical(
+            injury, anchor
+        )
+
+    def test_payload_hash_stable_across_passes_for_same_today(self):
+        """The public entry accepts the day-anchored `today` and two builds with
+        the same `today` produce an identical payload hash — the #202
+        convergence guarantee carried through `layer2d_hash`."""
+        from layer4.hashing import compute_payload_hash
+
+        def _build(today: date):
+            conn = _FakeConn()
+            conn.queue_response(rows=[
+                _exercise("E-001", "Squat", "D-001", contraindicated_parts=["Knee"]),
+            ])
+            conn.queue_response(rows=[_discipline("D-001", "Trail Running")])
+            conn.queue_response(rows=[])
+            injuries = [_injury(
+                "Right Knee",
+                severity="Post-surgical",
+                injury_type="Joint (mechanical) — surgical",
+                start_date=date(2026, 3, 1),
+            )]
+            return q_layer2d_injury_risk_profile_payload(
+                conn, injuries, [], ["D-001"], etl_version_set=_PIN, today=today,
+            )
+
+        today = date(2026, 3, 21)
+        assert compute_payload_hash(_build(today)) == compute_payload_hash(_build(today))
+
+
 # ─── §13.3 Concussion history (informational, no HITL) ───────────────────────
 
 

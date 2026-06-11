@@ -385,6 +385,7 @@ def _upstream_full_cone(
         conditions=layer1_payload.health_status.health_conditions_active,
         included_discipline_ids=included_discipline_ids,
         etl_version_set=etl_version_set,
+        today=today,
     )
 
     cluster = locations.cluster_locale_ids(db, user_id)
@@ -762,6 +763,7 @@ def orchestrate_single_session_synthesize(
         conditions=layer1_payload.health_status.health_conditions_active,
         included_discipline_ids=included_discipline_ids,
         etl_version_set=etl_version_set,
+        today=today,
     )
 
     layer2c_payload_for_locale = None
