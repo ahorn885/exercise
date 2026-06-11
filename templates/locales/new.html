@@ -51,7 +51,7 @@
        un-categorized place, which the model treats as a residence) are always
        private; the toggle hides and a locked note shows instead. #}
     <div class="field loc-privacy" id="loc-privacy"
-         data-residential="{{ residential_categories|tojson }}">
+         data-residential="{{ (residential_categories or [])|tojson }}">
       <span class="lbl">Visibility</span>
       <p class="loc-privacy-state">
         <span class="chip" data-privacy-chip>Private — only used in your own plans</span>
