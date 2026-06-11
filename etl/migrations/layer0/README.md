@@ -89,6 +89,44 @@ UPDATE layer0.terrain_types SET superseded_at = now()
 > (`_q_current_etl_version_set` + the Layer 2 builders reading the active set);
 > it replaced the earlier per-family re-stamp.
 
+## Tables that are not in the genesis snapshot (spec-sourced, not ETL-emitted)
+
+Most `layer0.*` tables are emitted by the ETL into the genesis snapshot
+(`etl/output/layer0_etl_v1.6.x.sql`). A few are **spec-sourced** — hand-authored
+from a spec rather than parsed from a workbook — so they never appeared in the
+snapshot and historically lived as one-shot `etl/sources/migrate_*.sql` files the
+gate never saw. Bring such a table into the gate with **one self-contained
+migration** here: `CREATE TABLE IF NOT EXISTS` + the seed
+(`INSERT … ON CONFLICT DO NOTHING`), so a standalone Neon SQL-editor paste
+provisions it without any separate schema step. Mirror the table's *existing*
+live shape exactly — do not "normalize" column types/columns in the same step,
+or you risk drift with a copy already on Neon.
+
+**Do not add their DDL to `etl/layer0/schema.sql`.** The
+`TestLayer0TableFamilyMap` drift guard
+(`tests/test_layer4_orchestrator.py`) requires every `etl_version`-bearing table
+in `schema.sql` to appear in `_LAYER0_TABLE_FAMILY` (`layer4/orchestrator.py`),
+the per-table cache-invalidation digest — and that map is pinned to the
+`{0A, 0B, 0C}` families. A table that is **outside** that cone, or versioned on
+its own line, must therefore stay out of `schema.sql` (the existing precedent:
+`terrain_gap_rules` is created by `etl/sources/populate_terrain_gap_rules.sql`,
+not `schema.sql`). The self-contained migration is what the gate runs.
+
+`0002_seed_supplement_vocabulary.sql` and `0003_seed_terrain_gap_rules.sql` are
+the worked examples (epic #488). `0002` de-orphans `layer0.supplement_vocabulary`
+(read by Layer 2E, versioned on its own `supp_vocab.*` line — **outside** the
+0A/0B/0C cone, so deliberately not in `_LAYER0_TABLE_FAMILY` per slice 3b),
+subsuming the legacy `migrate_supplement_vocabulary.sql` (base seed) + the D-21
+`migrate_supplement_vocab_contraindication_retag_v1.sql` (the seed already carries
+the canonical §B tokens the retag produced). `0003` de-orphans
+`layer0.terrain_gap_rules` — the **last** spec-sourced orphan — subsuming
+`populate_terrain_gap_rules.sql` (CREATE + 16 gap rows) + the `partial`→4-band
+`migrate_terrain_gap_rules_severity.sql` reclassification. Note `terrain_gap_rules`
+*is* a 0C **cone** table (read by Layer 2B) and already in `_LAYER0_TABLE_FAMILY`
+as `0C`, so the drift guard would *not* object to it being in `schema.sql`; it
+stays out anyway, for consistency with this self-contained shape and to keep the
+`test_includes_out_of_schema_serving_tables` guard true.
+
 ## The gate
 
 The `layer0-gate` job in `.github/workflows/ci.yml` is the integrity backstop:
