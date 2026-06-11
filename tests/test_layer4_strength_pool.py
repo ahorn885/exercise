@@ -17,6 +17,7 @@ from layer4.per_phase import (
     SYSTEM_PROMPT,
     _STRENGTH_CORE_CAP,
     _STRENGTH_POOL_CAP_PER_DISCIPLINE,
+    _format_skill_capability_gates,
     _format_strength_exercise_pool,
 )
 
@@ -161,6 +162,48 @@ def test_tier2_substitute_and_tier3_proxy_notes():
 
 def test_no_layer2c_returns_empty():
     assert _format_strength_exercise_pool({}, _l2a({"D-003": 1.0}), None) == []
+
+
+# ─── #336 skill-capability gate substitution directive ──────────────────────
+
+
+def _l2c_with_skill_flag(locale_id, discipline_id, toggle_name):
+    flag = NS(
+        flag_type="requires_skill_capability",
+        discipline_id=discipline_id,
+        metadata={"toggle_name": toggle_name},
+    )
+    return NS(locale_id=locale_id, exercises_resolved=[], coaching_flags=[flag])
+
+
+def _l2a_named(names):
+    return NS(disciplines=[
+        NS(discipline_id=d, discipline_name=n, inclusion="included",
+           load_weight=NS(value=0.5))
+        for d, n in names.items()
+    ])
+
+
+def test_skill_gates_render_substitution_directive():
+    pool = {"home": _l2c_with_skill_flag("home", "D-012", "climbing_roped")}
+    text = "\n".join(
+        _format_skill_capability_gates(pool, _l2a_named({"D-012": "Rock Climbing"}))
+    )
+    assert "Skill-capability gates" in text
+    assert "kind='strength'" in text
+    assert "Rock Climbing (D-012)" in text
+    assert "climbing_roped" in text
+
+
+def test_skill_gates_empty_when_nothing_gated():
+    pool = {"home": NS(locale_id="home", exercises_resolved=[], coaching_flags=[])}
+    assert _format_skill_capability_gates(pool, _l2a_named({"D-012": "Rock Climbing"})) == []
+
+
+def test_skill_gates_falls_back_to_id_without_2a():
+    pool = {"home": _l2c_with_skill_flag("home", "D-012", "climbing_roped")}
+    text = "\n".join(_format_skill_capability_gates(pool, None))
+    assert "D-012" in text
 
 
 def test_system_prompt_has_strength_section_and_no_invent_rule():

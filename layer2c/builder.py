@@ -626,9 +626,12 @@ def _emit_coaching_flags(
                     discipline_name=d_name,
                     affected_exercise_ids=[],
                     message=(
-                        f"You included {d_name} but the '{toggle_name}' "
-                        "skill capability is not enabled. Treat as a "
-                        "capability gap until the skill is acquired."
+                        f"{d_name} requires the '{toggle_name}' skill capability, "
+                        "which the athlete has not enabled. Substitute "
+                        "strength-and-conditioning work that builds the underlying "
+                        f"capacity instead of prescribing {d_name}-specific "
+                        "sessions, and note the substitution until the skill is "
+                        "cleared (#336)."
                     ),
                     metadata={"toggle_name": toggle_name},
                 )

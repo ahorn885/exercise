@@ -35,6 +35,7 @@ from layer4 import (
     IntensityReductionModality,
     Layer2ADiscipline,
     Layer2APayload,
+    Layer2CCoachingFlag,
     Layer2CPayload,
     Layer2DPayload,
     Layer4Payload,
@@ -65,7 +66,11 @@ from layer4 import (
     validate_layer4_payload,
 )
 from layer4.payload import RuleFailure
-from layer4.validator import _iso_week, phase_volume_bands_hours
+from layer4.validator import (
+    _iso_week,
+    phase_volume_bands_hours,
+    skill_gated_disciplines,
+)
 from layer4.context import (
     DailyNutritionBaseline,
     DailyPhaseTargets,
@@ -1561,6 +1566,94 @@ def test_discipline_excluded_d67_per_date_blocker():
     de = [f for f in failures if f.rule_name.startswith("discipline_excluded_per_date")]
     assert de
     assert de[0].severity == "blocker"
+
+
+# ─── Rule 12b: skill_capability_gate (#336) ────────────────────────────────
+
+
+def _layer2c_skill_gated(
+    *,
+    locale_id: str = "L-home",
+    discipline_id: str = "D-012",
+    toggle_name: str = "climbing_roped",
+) -> Layer2CPayload:
+    """A 2C payload carrying a `requires_skill_capability` flag — the signal
+    `skill_gated_disciplines` / `_rule_skill_capability_gate` consume."""
+    l2c = _layer2c(locale_id=locale_id, discipline_id=discipline_id)
+    return l2c.model_copy(
+        update={
+            "coaching_flags": [
+                Layer2CCoachingFlag(
+                    flag_type="requires_skill_capability",
+                    discipline_id=discipline_id,
+                    discipline_name=discipline_id,
+                    affected_exercise_ids=[],
+                    message="m",
+                    metadata={"toggle_name": toggle_name},
+                )
+            ]
+        }
+    )
+
+
+def test_skill_gated_disciplines_extracts_from_2c_flags():
+    payloads = {"L-home": _layer2c_skill_gated(discipline_id="D-012", toggle_name="climbing_roped")}
+    assert skill_gated_disciplines(payloads) == {"D-012": "climbing_roped"}
+
+
+def test_skill_gated_disciplines_empty_when_no_flag():
+    assert skill_gated_disciplines({"L-home": _layer2c(discipline_id="D-012")}) == {}
+
+
+def test_skill_gated_disciplines_dedupes_across_locales():
+    payloads = {
+        "L-b": _layer2c_skill_gated(locale_id="L-b", discipline_id="D-012"),
+        "L-a": _layer2c_skill_gated(locale_id="L-a", discipline_id="D-012"),
+    }
+    # Deterministic: locale-ids iterated sorted, first wins.
+    assert skill_gated_disciplines(payloads) == {"D-012": "climbing_roped"}
+
+
+def test_skill_capability_gate_blocks_cardio_for_gated_discipline():
+    payload = _minimal_layer4(sessions=[_cardio_session(discipline_id="D-012")])
+    ctx = ValidatorContext(
+        layer2a_payload=_layer2a_with_band(discipline_id="D-012"),
+        layer2c_payloads={"L-home": _layer2c_skill_gated(discipline_id="D-012")},
+    )
+    failures = validate_layer4_payload(payload, ctx).rule_failures
+    sg = [f for f in failures if f.rule_name.startswith("skill_capability_gate")]
+    assert sg
+    assert sg[0].severity == "blocker"
+    assert "climbing_roped" in sg[0].detail
+    assert not validate_layer4_payload(payload, ctx).accepted
+
+
+def test_skill_capability_gate_allows_strength_substitution():
+    # A STRENGTH session (the substitution) tagged to the gated discipline is
+    # explicitly NOT blocked — that's the intended swap.
+    payload = _minimal_layer4(sessions=[_strength_session(discipline_id="D-012")])
+    ctx = ValidatorContext(
+        layer2a_payload=_layer2a_with_band(discipline_id="D-012"),
+        layer2c_payloads={"L-home": _layer2c_skill_gated(discipline_id="D-012")},
+    )
+    failures = validate_layer4_payload(payload, ctx).rule_failures
+    assert not any(f.rule_name.startswith("skill_capability_gate") for f in failures)
+
+
+def test_skill_capability_gate_no_fire_for_ungated_discipline():
+    payload = _minimal_layer4(sessions=[_cardio_session(discipline_id="D-001")])
+    ctx = ValidatorContext(
+        layer2a_payload=_layer2a_with_band(discipline_id="D-001"),
+        layer2c_payloads={"L-home": _layer2c_skill_gated(discipline_id="D-012")},
+    )
+    failures = validate_layer4_payload(payload, ctx).rule_failures
+    assert not any(f.rule_name.startswith("skill_capability_gate") for f in failures)
+
+
+def test_skill_capability_gate_no_fire_when_no_2c_payloads():
+    payload = _minimal_layer4(sessions=[_cardio_session(discipline_id="D-012")])
+    failures = validate_layer4_payload(payload, ValidatorContext()).rule_failures
+    assert not any(f.rule_name.startswith("skill_capability_gate") for f in failures)
 
 
 # ─── Rule 13: sport_locale_incompatible ────────────────────────────────────
