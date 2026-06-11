@@ -50,20 +50,24 @@ vercel env pull .env --environment=preview --yes   # or =production
 
 `.vercel/` is gitignored.
 
-## Layer 0 ETL
+## Layer 0 reference data
 
-Postgres-only. Set `DATABASE_URL` to a dev branch (the production Neon
-branch should not be the target of routine ETL runs):
+Postgres-only. The `layer0.*` tables are the source of truth (epic #488).
+Author edits as reviewed SQL migrations under `etl/migrations/layer0/`,
+validated by the `validate_layer0` gate — the legacy "edit a spreadsheet
+and re-run the ETL" path is retired (frozen under
+`etl/_frozen_xlsx_authoring/`).
+
+Validate locally against a dev branch (the production Neon branch should
+not be the target of routine work):
 
 ```
-python -m etl.layer0.run --version-tag 1.3.1
+python -m etl.layer0.validate_layer0
 ```
 
-Reports land in `etl/reports/`. The run is idempotent within a version
-tag (delete-and-reinsert) and superseding (sets `superseded_at` on the
-prior version) when the tag changes.
-
-See `etl/README.md` for the full versioning model and rollback path.
+See `etl/migrations/layer0/README.md` for the authoring flow + the
+invalidation-not-overwrite versioning model, and `etl/README.md` for the
+overall layout and the gate.
 
 ## Windows gotchas
 
@@ -85,7 +89,7 @@ bare command and pops up the Store. Use the `py` launcher instead:
 
 ```powershell
 py -m pip install -r requirements.txt
-py -m etl.layer0.run --version-tag 1.3.1
+py -m etl.layer0.validate_layer0
 ```
 
 ### 3. UTF-8 default encoding
@@ -135,5 +139,5 @@ Get-Content .env | ForEach-Object {
   }
 }
 $env:PYTHONUTF8 = "1"
-py -m etl.layer0.run --version-tag 1.3.1
+py -m etl.layer0.validate_layer0
 ```

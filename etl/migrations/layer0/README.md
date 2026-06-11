@@ -2,9 +2,9 @@
 
 Reviewed SQL migrations are the authoring source of truth for Layer 0 reference
 data, replacing the xlsx → `etl.layer0.run` re-import loop. See
-`aidstation-sources/Layer0_AuthoringModel_DBSourceOfTruth_Design_v1.md` (epic
-[#488](https://github.com/ahorn885/exercise/issues/488)) for the why; this README
-is the how.
+`aidstation-sources/designs/Layer0_AuthoringModel_DBSourceOfTruth_Design_v1.md`
+(epic [#488](https://github.com/ahorn885/exercise/issues/488)) for the why; this
+README is the how.
 
 The genesis snapshot (`etl/output/layer0_etl_v1.6.7.sql`) is the frozen baseline.
 Migrations stack on top of it in order. **Do not emit new full snapshots while
