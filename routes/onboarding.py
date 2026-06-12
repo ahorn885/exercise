@@ -92,6 +92,12 @@ from athlete_skill_toggles_repo import (
     parse_skill_form,
     upsert_athlete_skill_toggles,
 )
+from athlete_crafts_repo import (
+    CraftSelectionError,
+    get_athlete_crafts,
+    load_craft_catalog,
+    replace_athlete_crafts,
+)
 
 
 bp = Blueprint('onboarding', __name__, url_prefix='/onboarding')
@@ -485,6 +491,9 @@ def skills():
         'onboarding/skills.html',
         toggle_defs=load_active_skill_capability_toggle_vocab(db),
         current_states=get_athlete_skill_toggles(db, uid),
+        # 2c.2b (#540) — owned-craft picker shares this step.
+        craft_catalog=load_craft_catalog(),
+        athlete_crafts=get_athlete_crafts(db, uid),
         post_step_skills_target=_POST_STEP_SKILLS_TARGET,
     )
 
@@ -504,11 +513,25 @@ def skills_save():
     uid = current_user_id()
     vocab = load_active_skill_capability_toggle_vocab(db)
     states = parse_skill_form(request.form, vocab)
+    # 2c.2b (#540) — the same step captures owned crafts (replace-all per
+    # family; the form always submits the current checkbox state). Validated
+    # against the closed enums before any write.
+    try:
+        replace_athlete_crafts(
+            db,
+            uid,
+            bike_types=request.form.getlist('bike_types'),
+            paddle_crafts=request.form.getlist('paddle_crafts'),
+        )
+    except CraftSelectionError as exc:
+        flash(str(exc), 'error')
+        return redirect(url_for('onboarding.skills'))
     if states:
         upsert_athlete_skill_toggles(db, uid, states)
-        db.commit()
-        evict_layer1_on_skill_toggle_change(db, uid)
-        flash('Skills saved.', 'success')
+    db.commit()
+    # Skills + crafts both live in Layer 1 — one eviction covers both.
+    evict_layer1_on_skill_toggle_change(db, uid)
+    flash('Skills & gear saved.', 'success')
     return redirect(_POST_STEP_SKILLS_TARGET)
 
 

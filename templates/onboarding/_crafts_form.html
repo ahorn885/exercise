@@ -1,0 +1,49 @@
+{# Shared owned-craft picker (bike + paddle) — 2c.2b (#540).
+
+   Used by the profile Athlete tab (wrapped in its own /profile/crafts form)
+   and the onboarding Skills step (saved with the skills form). The field names
+   `bike_types` / `paddle_crafts` are read by
+   athlete_crafts_repo.replace_athlete_crafts; the slugs double as
+   layer0.craft_discipline_aliases keys.
+
+   Inputs:
+     craft_catalog (dict)  — load_craft_catalog(): {'cycling': [...], 'paddling': [...]}
+                             each item {slug, label}.
+     athlete_crafts (dict) — get_athlete_crafts(): {'bike_types': [...],
+                             'paddle_crafts': [...]} (the currently-owned slugs).
+
+   Kept authoritative in one place so slug/label/help-text edits don't drift
+   between the two surfaces (mirrors _skills_form.html / _schedule_form.html).
+#}
+<div class="card card-pad stack">
+  <div>
+    <p class="eyebrow">● Gear you own</p>
+    <p class="pf-hint">Check the bikes and paddle craft you have access to. The coach trains each
+      discipline on the closest craft you own — so a race leg that wants a mountain bike becomes
+      road-bike work if that's what you've got. Leave blank where it doesn't apply.</p>
+  </div>
+  <div class="pf-grid">
+    <fieldset class="field field-wide">
+      <span class="lbl">Bikes</span>
+      {% for c in craft_catalog.cycling %}
+      <div class="form-check">
+        <input class="form-check-input" type="checkbox" id="bike_{{ c.slug }}"
+               name="bike_types" value="{{ c.slug }}"
+               {% if c.slug in athlete_crafts.bike_types %}checked{% endif %}>
+        <label class="form-check-label" for="bike_{{ c.slug }}">{{ c.label }}</label>
+      </div>
+      {% endfor %}
+    </fieldset>
+    <fieldset class="field field-wide">
+      <span class="lbl">Paddle craft</span>
+      {% for c in craft_catalog.paddling %}
+      <div class="form-check">
+        <input class="form-check-input" type="checkbox" id="paddle_{{ c.slug }}"
+               name="paddle_crafts" value="{{ c.slug }}"
+               {% if c.slug in athlete_crafts.paddle_crafts %}checked{% endif %}>
+        <label class="form-check-label" for="paddle_{{ c.slug }}">{{ c.label }}</label>
+      </div>
+      {% endfor %}
+    </fieldset>
+  </div>
+</div>
