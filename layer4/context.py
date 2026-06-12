@@ -1644,7 +1644,12 @@ class RunningBaseline(_Base):
 
 
 class CyclingBaseline(_Base):
-    bike_types_available: list[str] = Field(default_factory=list)
+    # 2c.2b (#540) — closed to the canonical bike-craft slugs so a stored value
+    # always matches a layer0.craft_discipline_aliases key (no silent miss in
+    # the craft-substitution lookup). Mirrors paddle_craft_types' Literal.
+    bike_types_available: list[
+        Literal["road_bike", "mountain_bike", "gravel_bike", "cycling_trainer"]
+    ] = Field(default_factory=list)
     mtb_skill: Literal["beginner", "intermediate", "advanced"] | None = None
     longest_ride_distance_km: float | None = Field(default=None, ge=0)
     longest_ride_hrs: float | None = Field(default=None, ge=0)

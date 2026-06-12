@@ -289,17 +289,22 @@ LINKED_PARTNER_CONSENT_SCOPES = ('none', 'activity_summaries', 'full_plan_access
 # D-73 Phase 1.2C (D-51 §3.4) — per-discipline §D closed-enum write-path
 # constants. Each is paired with a discipline_baseline_<discipline> column
 # in init_db.py _PG_MIGRATIONS. Multi-select fields (trail_experience_terrain,
-# paddle_craft_types, ski_disciplines) store comma-separated subsets validated
-# against the constant tuple. bike_types_available + rock_climbing_*_grade are
-# intentionally not enumerated here: design wave §3.4 left bike_types as a
-# subset-of-EQUIPMENT_CATEGORIES['Cycling Equipment'] (no separate constant),
-# and rock_climbing grades are free-text multi-system per Layer 4 Step 4a.
+# bike_types_available, paddle_craft_types, ski_disciplines) store comma-
+# separated subsets validated against the constant tuple. rock_climbing_*_grade
+# stay free-text multi-system per Layer 4 Step 4a (not enumerated).
 
 # §D.1 — discipline_baseline_running.trail_experience_terrain (multi-select).
 TRAIL_EXPERIENCE_TERRAINS = ('moderate', 'technical', 'mountain', 'moorland')
 
 # §D.2 — discipline_baseline_cycling.mtb_skill.
 MTB_SKILL_LEVELS = ('beginner', 'intermediate', 'advanced')
+
+# §D.2b — discipline_baseline_cycling.bike_types_available (multi-select).
+# 2c.2b (#540): enumerated so the craft picker + write path stay in lockstep
+# with the layer0.craft_discipline_aliases keys (the X1b.3b craft-substitution
+# path — owned craft → discipline). Slugs == EQUIPMENT_CATEGORIES['Cycling
+# Equipment'] tags. Previously left free-text (design wave §3.4).
+BIKE_TYPES = ('road_bike', 'mountain_bike', 'gravel_bike', 'cycling_trainer')
 
 # §D.3 — discipline_baseline_swimming.ow_experience.
 OW_EXPERIENCE_LEVELS = ('none', 'limited', 'experienced')
@@ -309,6 +314,18 @@ OW_EXPERIENCE_LEVELS = ('none', 'limited', 'experienced')
 # discipline). Hard-removed per build decision — any pre-existing athlete row
 # storing 'surfski' must be migrated (it will otherwise fail enum validation).
 PADDLE_CRAFT_TYPES = ('kayak', 'canoe', 'packraft')
+
+# Display labels for the owned-craft pickers (bike + paddle, 2c.2b). Slugs are
+# the stored + aliased keys; labels are presentation-only.
+CRAFT_LABELS = {
+    'road_bike': 'Road bike',
+    'mountain_bike': 'Mountain bike',
+    'gravel_bike': 'Gravel bike',
+    'cycling_trainer': 'Cycling trainer / smart trainer',
+    'kayak': 'Kayak',
+    'canoe': 'Canoe',
+    'packraft': 'Packraft',
+}
 
 # §D.5 — discipline_baseline_skiing.ski_disciplines (multi-select).
 SKI_DISCIPLINES = ('classic_xc', 'skate_xc', 'skimo')
