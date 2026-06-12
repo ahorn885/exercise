@@ -658,6 +658,7 @@ pre code { background: none; border: 0; padding: 0; }
 .u-h-8            { height: 8px; }
 .u-h-10           { height: 10px; }
 
+.u-mw-120         { max-width: 120px; }
 .u-mw-360         { max-width: 360px; }
 .u-mw-460         { max-width: 460px; }
 .u-mw-480         { max-width: 480px; }

@@ -1745,6 +1745,12 @@ class Layer1Performance(_Base):
 # rest days are inferred from the windows, not stored.
 class Layer1Availability(_Base):
     doubles_feasible: Literal["regularly", "occasionally", "no"] | None = None
+    # Slice 2b.2b (§5.1.1 / D11) — the session-count ceiling controls.
+    # `two_a_day_preference` is the friendly density control; `peak_sessions_max`
+    # is the optional advanced override (NULL → the grid derives the ceiling
+    # from the preference via `session_grid._TWO_A_DAY_DENSITY`).
+    two_a_day_preference: Literal["never", "occasionally", "regularly"] | None = None
+    peak_sessions_max: int | None = Field(default=None, ge=1)
 
 
 # §H — event/goal
