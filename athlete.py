@@ -42,6 +42,13 @@ PROFILE_FIELDS = (
     # day + rest days are no longer stored — they're inferred from the
     # windows (longest enabled window = long session; disabled days = rest).
     'doubles_feasible',
+    # Slice 2b.2b (§5.1.1 / D11) — session-count ceiling controls.
+    # `two_a_day_preference` drives the Peak sessions/day density;
+    # `peak_sessions_max` is the optional advanced override (NULL = derive
+    # from the preference). Distinct from `doubles_feasible` (which gates
+    # second-window *scheduling*): this is the *desired* training density.
+    'two_a_day_preference',
+    'peak_sessions_max',
     # D-73 Phase 1.2A (D-51 §3.3) — §C training history scalars. All
     # self-report at onboarding today; `previous_coaching` closed enum
     # (`self` / `online_plan` / `coach` / `none`). Free-text columns
@@ -117,6 +124,12 @@ DAY_LABELS = ('Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 
 # entry in the form; 'occasionally' surfaces second windows but plan-gen
 # treats them as discretionary per D-61 §3.3.
 DOUBLES_FEASIBLE_CHOICES = ('regularly', 'occasionally', 'no')
+
+# Slice 2b.2b §G two-a-day preference enum — the friendly primary control
+# for the Peak session-count ceiling. Order is ascending density; mirrors
+# `layer4.session_grid._TWO_A_DAY_DENSITY` keys (never 1.0× / occasionally
+# 1.5× / regularly 1.85× sessions per available day at Peak).
+TWO_A_DAY_CHOICES = ('never', 'occasionally', 'regularly')
 
 # D-73 Phase 2.2 (Athlete_Onboarding_Data_Spec_v5.md §B.1.1) — injury_log
 # closed enums. injury_type drives Layer 2D §5.3.6 accommodation-modality

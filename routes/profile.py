@@ -27,7 +27,7 @@ from routes.auth import (
 )
 from athlete import (
     PROFILE_FIELDS, PREFILL_ELIGIBLE_FIELDS,
-    DOUBLES_FEASIBLE_CHOICES,
+    DOUBLES_FEASIBLE_CHOICES, TWO_A_DAY_CHOICES,
     DIETARY_PATTERN_CHOICES, FUELING_FORMAT_CHOICES,
     CAFFEINE_TOLERANCE_CHOICES, CAFFEINE_RACE_DAY_STRATEGY_CHOICES,
     SALT_ELECTROLYTE_TOLERANCE_CHOICES,
@@ -370,6 +370,10 @@ def edit():
     if doubles not in DOUBLES_FEASIBLE_CHOICES:
         doubles = 'no'
 
+    two_a_day = (profile.get('two_a_day_preference') or 'occasionally').lower()
+    if two_a_day not in TWO_A_DAY_CHOICES:
+        two_a_day = 'occasionally'
+
     user_row = db.execute(
         'SELECT username, display_name, email, last_login FROM users WHERE id=?', (uid,)
     ).fetchone()
@@ -477,6 +481,9 @@ def edit():
         days=days,
         doubles_feasible=doubles,
         doubles_choices=DOUBLES_FEASIBLE_CHOICES,
+        two_a_day_preference=two_a_day,
+        two_a_day_choices=TWO_A_DAY_CHOICES,
+        peak_sessions_max=profile.get('peak_sessions_max'),
         dietary_pattern_choices=DIETARY_PATTERN_CHOICES,
         fueling_format_choices=FUELING_FORMAT_CHOICES,
         caffeine_tolerance_choices=CAFFEINE_TOLERANCE_CHOICES,

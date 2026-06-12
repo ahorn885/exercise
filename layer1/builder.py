@@ -197,6 +197,8 @@ _PROFILE_COLS = (
     "vo2max",
     "cycling_ftp_w",
     "doubles_feasible",
+    "two_a_day_preference",
+    "peak_sessions_max",
     "years_structured_training",
     "peak_weekly_volume_hrs",
     "peak_weekly_volume_year",
@@ -311,6 +313,8 @@ def _load_athlete_profile(db, user_id: int):
     }
     availability_scalars = {
         "doubles_feasible": row["doubles_feasible"],
+        "two_a_day_preference": row["two_a_day_preference"],
+        "peak_sessions_max": row["peak_sessions_max"],
     }
     return identity, performance, training_scalars, event_scalars, lifestyle, availability_scalars
 
@@ -356,6 +360,8 @@ def _empty_lifestyle() -> dict[str, Any]:
 def _empty_availability_scalars() -> dict[str, Any]:
     return {
         "doubles_feasible": None,
+        "two_a_day_preference": None,
+        "peak_sessions_max": None,
     }
 
 

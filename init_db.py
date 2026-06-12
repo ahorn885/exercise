@@ -2268,6 +2268,14 @@ _PG_MIGRATIONS = [
     "UPDATE exercise_inventory SET weight_increment = ROUND((weight_increment * 0.45359237)::numeric, 3)::real, "
     "  weight_increment_kg_converted = TRUE "
     "  WHERE NOT weight_increment_kg_converted",
+    # Slice 2b.2b — athlete-facing session-grid unit fields. Nullable; NULL =
+    # "unset", so the Layer 4 session grid falls back to its spec defaults
+    # (two_a_day_preference -> 'occasionally', peak_sessions_max -> 10). The
+    # enum/range are enforced at the app layer (onboarding + routes/profile.py),
+    # matching the sibling text columns (sex, doubles_feasible) that carry no
+    # DB CHECK.
+    "ALTER TABLE athlete_profile ADD COLUMN IF NOT EXISTS two_a_day_preference TEXT",
+    "ALTER TABLE athlete_profile ADD COLUMN IF NOT EXISTS peak_sessions_max INTEGER",
 ]
 
 _CLOTHING_SEEDS = [

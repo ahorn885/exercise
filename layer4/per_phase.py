@@ -876,11 +876,13 @@ def _format_session_grid(
 
     capacity = weekly_capacity_hours(layer1_payload)
     # §5.1.1 ceiling inputs — resolve available days from §K availability;
-    # two_a_day_preference / peak_sessions_max default until the athlete fields
-    # land (slice 2b.2b), so the grid uses the spec defaults (occasionally / 10).
+    # two_a_day_preference / peak_sessions_max are the §G availability scalars
+    # (slice 2b.2b). Both default to None when the athlete hasn't set them, so
+    # the grid falls back to its spec defaults (occasionally / derive-from-pref).
     available_days = resolve_available_days(layer1_payload)
-    two_a_day_preference = (layer1_payload or {}).get("two_a_day_preference")
-    peak_sessions_max = (layer1_payload or {}).get("peak_sessions_max")
+    _availability = (layer1_payload or {}).get("availability") or {}
+    two_a_day_preference = _availability.get("two_a_day_preference")
+    peak_sessions_max = _availability.get("peak_sessions_max")
 
     race_format: str | None = None
     race_duration_h: float | None = None
