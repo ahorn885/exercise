@@ -1,41 +1,69 @@
-# Layer 0 ETL
+# Layer 0
 
-Standalone CLI that lands platform-level reference data (sport rule sets,
-exercise library, canonical vocabularies) into a `layer0` schema in
-Postgres. Postgres-only — does not share code with the existing app.
+Platform-level reference data (sport rule sets, exercise library, canonical
+vocabularies, terrain, equipment, …) lives in a `layer0` schema in Postgres
+(Neon for prod). Postgres-only — does not share code with the existing app.
+
+**The `layer0.*` DB tables are the source of truth** (epic
+[#488](https://github.com/ahorn885/exercise/issues/488)). Edits are authored as
+reviewed SQL migrations and validated by an integrity gate before they reach the
+database. The legacy "edit a spreadsheet → re-run the ETL" authoring path has been
+**retired** — see [_frozen_xlsx_authoring/](#frozen-legacy-xlsx-authoring) below.
 
 ## Layout
 
 ```
 etl/
 ├── README.md                  ← this file
-├── reports/                   ← run reports (markdown, gitignored)
-├── sources/                   ← input files; do not modify
-│   ├── Layer0_ETL_Spec_v2.md
-│   ├── Sports_Framework_v6.xlsx
-│   ├── AR_Exercise_Database_v17.xlsx
-│   ├── Vocabulary_Audit_v2.md
-│   └── Phase_Load_Allocation_Audit_Log.md
-├── layer0/
-│   ├── schema.sql             ← idempotent CREATE TABLEs
+├── layer0/                    ← the live gate + serving substrate
+│   ├── schema.sql             ← idempotent CREATE TABLEs (the substrate)
+│   ├── validate_layer0.py     ← the integrity gate (CLI: python -m etl.layer0.validate_layer0)
+│   ├── validation/            ← the gate's checks (sum_to_100, vocab_alignment,
+│   │                            fk_checks, terrain_types, … )
+│   ├── layer0_validation_waivers.json
+│   ├── export_xlsx.py         ← read-only DB→xlsx bulk-review export (#545)
 │   ├── db.py                  ← psycopg2 helpers (connect, versioned insert)
-│   ├── run.py                 ← orchestrator (CLI entry point)
-│   ├── vocabulary_transforms.py
-│   ├── extractors/
-│   │   ├── sports_framework.py
-│   │   ├── exercise_db.py
-│   │   └── vocabulary.py
-│   └── validation/
-│       ├── sum_to_100.py
-│       ├── vocab_alignment.py
-│       └── report.py
-└── tests/                     ← pytest tests for transforms + parsers
+│   ├── discipline_canon.py / sport_canon.py / sport_name_aliases.py
+│   └── vocabulary_transforms.py
+├── migrations/
+│   └── layer0/                ← THE AUTHORING LOOP — reviewed SQL edits + README
+│       ├── 0001_*.sql … 0003_*.sql
+│       └── README.md          ← how to write a Layer 0 migration
+├── output/
+│   └── layer0_etl_v1.6.7.sql  ← the frozen genesis snapshot (baseline for migrations)
+├── tests/                     ← pytest tests for the gate + validators
+├── reports/                   ← run reports (markdown, gitignored)
+├── sources/                   ← legacy ETL scratch (specs, one-shot SQL); not an input anymore
+└── _frozen_xlsx_authoring/    ← the retired spreadsheet ETL (history; not run, not in CI)
+```
+
+## Authoring Layer 0 data
+
+Write a reviewed SQL migration under `etl/migrations/layer0/` and let the gate
+validate it. The full edit flow, naming convention, and the
+invalidation-not-overwrite versioning model are documented in
+**[`etl/migrations/layer0/README.md`](migrations/layer0/README.md)**. The design
+rationale is `aidstation-sources/designs/Layer0_AuthoringModel_DBSourceOfTruth_Design_v1.md`
+(epic #488).
+
+In short:
+
+```
+1. write etl/migrations/layer0/NNNN_<slug>.sql
+2. CI "Layer 0 integrity gate" loads schema + genesis snapshot, applies every
+   migration in order, then runs validate_layer0 — a bad migration fails here
+   BEFORE it reaches the database
+3. review the .sql diff in the PR
+4. on merge, Andy applies the migration in the Neon SQL editor
+   (the container has no Neon egress, so the apply stays a hands-on step)
+5. the app picks it up automatically (every serving query filters
+   `WHERE superseded_at IS NULL`) — no restart, no redeploy
 ```
 
 ## Prereqs
 
 - Python 3.11+
-- `pip install openpyxl psycopg2-binary` (already in `requirements.txt`)
+- `pip install psycopg2-binary` (already in `requirements.txt`); `openpyxl` too if you run the DB→xlsx export
 - Pytest for the test suite (`pip install pytest`)
 - Access to a Postgres instance (Neon for prod; any Postgres works locally)
 
@@ -45,136 +73,44 @@ etl/
 |----------------|----------|-------------------------------------------|
 | `DATABASE_URL` | yes      | Postgres connection string (e.g. `postgresql://user:pass@host:5432/db`) |
 
-No other env vars are read. The ETL never touches the existing app's
-`public` schema.
-
-## Running
-
-```bash
-DATABASE_URL=postgresql://... python -m etl.layer0.run --version-tag 1.0
-```
-
-Sample output:
-
-```
-[layer0 ETL] Connecting to Neon...
-[layer0 ETL] Phase 1 — Vocabularies
-layer0.body_parts: inserted 50 rows
-layer0.health_condition_categories: inserted 11 rows
-layer0.equipment_items: inserted 121 rows
-layer0.terrain_types: inserted 15 rows
-layer0.sport_specific_gear_toggles: inserted 12 rows
-[layer0 ETL] Phase 2 — Sports Framework
-layer0.sports: inserted 38 rows
-layer0.disciplines: inserted 32 rows
-  [warn] sport_discipline_map: dropped 3 duplicate (sport, discipline_id) rows — see report
-layer0.sport_discipline_map: inserted 68 rows
-layer0.discipline_pairing: inserted 292 rows (289 matrix + 3 fallback)
-layer0.phase_load_allocation: inserted 192 rows
-layer0.team_formats: inserted 26 rows
-layer0.cross_sport_properties: inserted 1 rows
-[layer0 ETL] Phase 3 — Bridge + Exercise DB
-layer0.sport_discipline_bridge: inserted 67 rows
-layer0.exercises: inserted 245 rows
-  [warn] sport_exercise_map: dropped 3 duplicate (exercise_id, sport_name) rows — see report
-layer0.sport_exercise_map: inserted 1065 rows
-[layer0 ETL] Validation
-sum_to_100: 33 sports checked, 24 PASS, 9 WARN
-vocab_alignment: 245 exercises checked, 217 PASS, 28 WARN; 36 sport names checked, 5 PASS, 31 WARN
-[layer0 ETL] Report written to etl/reports/run-1.0-YYYYMMDD-HHMMSS.md
-[layer0 ETL] Done.
-```
+No other env vars are read. Layer 0 never touches the existing app's `public`
+schema.
 
 ## Versioning model
 
-Each ETL run carries an `--version-tag`. The orchestrator turns it into
-three independent version strings, one per source family:
+Layer 0 rows are versioned by **invalidation, not overwrite**: every row carries
+`(etl_version, etl_run_at, superseded_at)`; a row is retired by setting
+`superseded_at` (it stays as history, leaves the active set) and a new value
+arrives as a fresh `INSERT … superseded_at = NULL`. **Serving always reads the
+active set** (`WHERE superseded_at IS NULL`); it does not match on `etl_version`.
+The `etl_version` string survives only as the per-table cache-invalidation signal
+(slice 3b). The two migration shapes (cache-neutral vs serving-relevant) and the
+per-table digest are spelled out in `etl/migrations/layer0/README.md`.
 
-| Source family | xlsx / md                       | Version string |
-|---------------|---------------------------------|---------------|
-| 0A            | `Sports_Framework_v6.xlsx`      | `0A-v1.0`     |
-| 0B            | `AR_Exercise_Database_v17.xlsx` | `0B-v1.0`     |
-| 0C            | `Vocabulary_Audit_v2.md`        | `0C-v1.0`     |
+## The gate (validation)
 
-Every Layer 0 table carries `(etl_version, etl_run_at, superseded_at)`.
-Queries always filter `WHERE superseded_at IS NULL` for current data.
+`python -m etl.layer0.validate_layer0` is the integrity backstop. The CI
+`layer0-gate` job (`.github/workflows/ci.yml`) stands up a throwaway Postgres,
+loads `etl/layer0/schema.sql` + the genesis snapshot, applies every migration in
+`etl/migrations/layer0/` in order, then runs the gate — so a migration that
+introduces a dangling FK, a canon violation, a sub-100 phase load, a malformed
+terrain id, etc. fails CI before it can be applied to Neon. Disposition is owned
+by `etl/layer0/validate_layer0.py` (decision C: every check FAIL, `sum_to_100`
+the only waiver bucket — see `layer0_validation_waivers.json`).
 
-### Re-running the same version is idempotent
+The checks live in `etl/layer0/validation/` (`sum_to_100`, `vocab_alignment`,
+`fk_checks`, `contraindicated_conditions`, `default_inclusion`,
+`discipline_canon_check`, `modality_group_orphan`, `terrain_types`). Each emits
+stable violation ids; the orchestrator filters waivers and exits non-zero on any
+remaining violation.
 
-```bash
-# First run
-python -m etl.layer0.run --version-tag 1.0   # inserts all rows
+## DB → xlsx bulk-review export
 
-# Re-run with same version
-python -m etl.layer0.run --version-tag 1.0   # deletes 1.0 rows, re-inserts
-```
-
-The orchestrator deletes rows of the matching `etl_version` before
-inserting, so retrying a partial / interrupted run is safe.
-
-### Releasing a new version supersedes the prior one
-
-```bash
-python -m etl.layer0.run --version-tag 1.1
-```
-
-After this:
-
-- 1.0 rows have `superseded_at` set to the run timestamp
-- 1.1 rows are current (`superseded_at IS NULL`)
-- Supersede is **scoped per source family**: re-running only 0B (e.g. a
-  new exercise database) does not supersede 0A or 0C
-
-### Rolling back
-
-To revert to a prior version:
-
-```sql
--- Drop the new version's rows
-DELETE FROM layer0.<table> WHERE etl_version = '0A-v1.1';
-
--- Un-supersede the prior version
-UPDATE layer0.<table>
-   SET superseded_at = NULL
- WHERE etl_version = '0A-v1.0';
-```
-
-Apply to every table whose source family was rolled back. No migration
-needed — the schema is unchanged, only data versioning flips.
-
-## Validation
-
-Both validation passes are **informational only** — they never fail the
-ETL. The report file documents exact mismatches.
-
-### sum_to_100 (`etl/layer0/validation/sum_to_100.py`)
-
-For each sport in `phase_load_allocation`, computes the adjusted stack:
-
-- Rows whose `role` is `Conditional` or contains `(*Conditional)` → zeroed
-- Among paddle disciplines (Packrafting, Kayaking, Canoeing, SUP, Rowing,
-  Sea Kayak), only the maximum per-phase contribution is counted
-  (interchangeable interpretation per the audit log's adjusted-stack
-  pattern)
-- The "Weekly Total Target" row is excluded from the sum
-
-The HIGH band must reach ≥ 100% on every phase. Sports that fall short
-are surfaced as WARN.
-
-### vocab_alignment (`etl/layer0/validation/vocab_alignment.py`)
-
-(a) Every `contraindicated_parts[]` entry on `layer0.exercises` is
-checked against `layer0.body_parts.canonical_name`. The Vocab Audit §5
-col-13 renames are applied at extract time, so warnings here are
-typically genuine non-body-part filter flags (Cardiac, Cognitive, Saddle,
-Goggle, Blister, Lungs, etc.) that the v2 query layer should route to
-`health_condition_categories` instead.
-
-(b) Every distinct `sport_name` in `layer0.sport_exercise_map` is checked
-against `layer0.sport_discipline_bridge.exercise_db_sport`. Mismatches
-resolve spec Open Item #5 — the exercise-DB sport vocabulary doesn't
-fully overlap with the framework sport names by design (e.g. "Marathon"
-in the exercise DB maps to multiple framework sports).
+`python -m etl.layer0.export_xlsx` projects the active `layer0.*` tables into a
+read-only workbook (one sheet per table, active rows only) for eyeballing all the
+reference data at once. It is a **review convenience, not an authoring input** —
+edits still arrive as migrations. Output defaults to
+`etl/output/layer0_db_export.xlsx` (gitignored).
 
 ## Tests
 
@@ -182,39 +118,24 @@ in the exercise DB maps to multiple framework sports).
 python -m pytest etl/tests/ -v
 ```
 
-Covers:
-- `transform_equipment_string` rename + slash-decompose + rollup rules
-- `transform_body_part_string` col-13 renames (Lumbar→Lower back, etc.)
-- Sports framework regex parsers: pack weight, weeks, age-adjusted ramp,
-  race time %, dot-list split, recovery modalities, YES/NO flags
-- Exercise DB parsers: `EX### — Name` reference, `physical_proxies`,
-  `equipment_substitutes` 🏠 prefix split
+Covers the gate orchestrator and each validator (including the DB-free
+`check_*` helpers and the export serializer). The frozen parser/canon tests under
+`_frozen_xlsx_authoring/tests/` are **not** collected.
 
-## Known divergences from the spec
+## <a name="frozen-legacy-xlsx-authoring"></a>Frozen: legacy xlsx authoring
 
-The build surfaced a few places where the spec / source files don't fully
-align. Each is documented in the run report; summary:
+`etl/_frozen_xlsx_authoring/` holds the retired spreadsheet ETL — the extractors,
+`run.py` (the `python -m etl.layer0.run` runner), `emit_sql.py`, and the last
+authoring workbooks (`Sports_Framework_v14.xlsx`, `AR_Exercise_Database_v19.xlsx`).
+Layer 0 reference data used to be authored in those spreadsheets and projected
+into Postgres by that one-time ETL; epic #488 inverted it so the DB is the source
+of truth. The frozen tree is **not run, not imported by anything live, and not
+collected by CI** — kept only as history. Do **not** revive it; recovering the
+workbooks from git history is the escape hatch if a wholesale re-curation is ever
+needed. See `etl/_frozen_xlsx_authoring/README.md`.
 
-- `Vocabulary_Audit_v2.md` §1 says "Total: 41 canonical body parts" but
-  the table contents enumerate 50. Source is the table; loaded as 50.
-- Spec §4.12.2 says ~21 health condition categories; the audit's §2.2
-  enum table has 11. Loaded as 11 (the audit is the source).
-- `Sport × Discipline Map` (Sheet 3) has 3 rows with duplicate
-  `(sport_name, discipline_id)` keys — one true dup (Triathlon D-002),
-  two genuine sub-format splits (Long Distance / Endurance Cycling
-  D-005 / D-006). The spec's UNIQUE constraint can't model the splits;
-  ETL drops first-wins and surfaces in the report.
-- `Sport-Exercise Map` (0B) has 3 rows with duplicate
-  `(exercise_id, sport_name)` keys — accidental rephrasings during DB
-  curation. Same first-wins treatment.
-- Sheet 7 (Athlete Profile Data Points) is excluded per spec §2 (Layer 1
-  territory).
+## What's NOT here (per spec §7 / non-goals)
 
-## What's NOT built (per spec §7 / non-goals)
-
-- The query layer (spec §5) — separate later build
-- Any Flask integration — Layer 0 ETL is standalone
-- A web/admin UI to trigger runs — CLI only
-- Alembic / SQLAlchemy — direct psycopg2 + plain SQL
-- SQLite parity — Postgres only (the v1 dual-backend pattern in
-  `database.py` is being dropped at v2 cutover)
+- A web/admin UI to author Layer 0 — SQL migrations only (admin UI deferred).
+- Alembic / SQLAlchemy — direct psycopg2 + plain SQL.
+- SQLite parity — Postgres only.

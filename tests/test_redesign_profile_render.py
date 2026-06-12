@@ -59,6 +59,12 @@ class _Conn:
             return _Cursor(self._memory)
         if 'athlete_profile' in s:
             return _Cursor([], one=_FakeRow(self._profile) if self._profile else None)
+        if 'discipline_baseline_' in s:
+            # 2c.2b craft picker reads bike/paddle baselines; an empty athlete
+            # has null craft columns (→ unchecked boxes). _Cursor.fetchone()
+            # never returns None, so hand back a row carrying the columns.
+            return _Cursor([], one=_FakeRow(
+                bike_types_available=None, paddle_craft_types=None))
         return _Cursor([])
 
     def commit(self):

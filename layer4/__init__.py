@@ -1,6 +1,6 @@
 """Layer 4 — Plan generation payload schemas + upstream context.
 
-See `aidstation-sources/Layer4_Spec.md` §7 for the output contract; this
+See `aidstation-sources/specs/Layer4_Spec.md` §7 for the output contract; this
 package implements:
 
 - `payload.py` — Layer 4's typed output schemas (Layer4Payload + PlanSession

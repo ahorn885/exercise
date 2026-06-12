@@ -66,6 +66,7 @@ from layer4.per_phase import (
     synthesize_phase,
 )
 from layer4.phase_structure import phase_structure_from_3b
+from layer4.session_feasibility import TerrainResolution
 from layer4.seam_review import (
     DEFAULT_EXTENDED_THINKING_BUDGET as _SEAM_THINKING_DEFAULT,
     DEFAULT_MAX_TOKENS as _SEAM_MAX_TOKENS_DEFAULT,
@@ -632,6 +633,7 @@ def _run_pattern_a_engine(
     call_cache_key: str | None = None,
     executor: Executor | None = None,
     training_substitution_payload: TrainingSubstitutionPayload | None = None,
+    terrain_feasibility: dict[str, TerrainResolution] | None = None,
 ) -> _PatternAResult:
     """Run the Pattern A loop per `Layer4_Spec.md` §5.2.
 
@@ -733,6 +735,7 @@ def _run_pattern_a_engine(
                     llm_caller=phase_caller,
                     session_id_prefix=f"{session_id_prefix}-p{_i}-w{_wr[0]}",
                     training_substitution_payload=training_substitution_payload,
+                    terrain_feasibility=terrain_feasibility,
                     week_range=_wr,
                 )
 
@@ -1149,6 +1152,7 @@ def _run_pattern_a_engine(
                         f"-s{seam_idx}-w{_wr[0]}"
                     ),
                     training_substitution_payload=training_substitution_payload,
+                    terrain_feasibility=terrain_feasibility,
                     week_range=_wr,
                 )
 
@@ -1525,6 +1529,9 @@ def llm_layer4_plan_create(
     # `_run_pattern_a_engine` → `synthesize_phase` → `render_user_prompt`.
     # Default None preserves existing call sites.
     training_substitution_payload: TrainingSubstitutionPayload | None = None,
+    # #540 — per-discipline terrain-feasibility resolutions, threaded the same
+    # path into the session-grid render. Default None preserves call sites.
+    terrain_feasibility: dict[str, TerrainResolution] | None = None,
 ) -> Layer4Payload:
     """Pattern A plan-create entry point per `Layer4_Spec.md` §3.1.
 
@@ -1600,6 +1607,7 @@ def llm_layer4_plan_create(
         call_cache_key=call_cache_key,
         executor=executor,
         training_substitution_payload=training_substitution_payload,
+        terrain_feasibility=terrain_feasibility,
     )
 
     return _build_plan_create_payload(

@@ -1,4 +1,4 @@
-"""Layer 4 payload schemas per `aidstation-sources/Layer4_Spec.md` §7.
+"""Layer 4 payload schemas per `aidstation-sources/specs/Layer4_Spec.md` §7.
 
 All §7.12 cross-field invariants are enforced at construction time via
 `@model_validator(mode='after')`. Models reject unknown keys (`extra='forbid'`)

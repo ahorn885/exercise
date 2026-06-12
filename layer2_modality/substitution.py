@@ -1,6 +1,6 @@
 """Training-substitution resolver — `resolve_training_substitution`.
 
-Per `aidstation-sources/BestFitModality_Spec_v4.md` §5 (re-model Slice 5,
+Per `aidstation-sources/designs/BestFitModality_Spec_v4.md` §5 (re-model Slice 5,
 2026-05-25). This is the *re-model* of the best-fit node: given a race
 described per-discipline (craft + terrain breakdown), it produces a
 per-discipline training-substitution brief — the closest trainable terrain

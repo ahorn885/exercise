@@ -114,6 +114,43 @@
   {% endfor %}
 </div>
 
+<h5 class="mt-4">Training density</h5>
+<p class="text-muted small mb-2">
+  How often do you <em>want</em> to train twice in a day? This sets how many
+  sessions we schedule per day in your hardest (Peak) weeks — it's about your
+  target density, separate from whether doubles are feasible above.
+</p>
+<div class="mb-3">
+  {% for choice in two_a_day_choices %}
+    <div class="form-check form-check-inline">
+      <input class="form-check-input"
+             type="radio"
+             name="two_a_day_preference"
+             id="two_a_day_{{ choice }}"
+             value="{{ choice }}"
+             {% if two_a_day_preference == choice %}checked{% endif %}>
+      <label class="form-check-label" for="two_a_day_{{ choice }}">
+        {{ choice|capitalize }}
+      </label>
+    </div>
+  {% endfor %}
+</div>
+<div class="mb-3">
+  <label class="form-label small mb-1" for="peak_sessions_max">
+    Most sessions per week at Peak <span class="text-muted">(advanced — optional)</span>
+  </label>
+  <input type="number"
+         class="form-control form-control-sm u-mw-120"
+         id="peak_sessions_max"
+         name="peak_sessions_max"
+         min="1" step="1"
+         value="{{ peak_sessions_max if peak_sessions_max is not none else '' }}">
+  <div class="form-text">
+    Leave blank to let your two-a-day preference set the cap. The maximum is
+    twice your enabled training days.
+  </div>
+</div>
+
 {# Client-side behaviour: (a) recompute the weekly-hours display as
    athletes edit durations / enable rows, (b) show/hide the second-window
    columns based on the doubles radio, (c) disable the second-window

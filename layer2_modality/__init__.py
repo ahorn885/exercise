@@ -7,7 +7,7 @@ terrain blocks (`terrain_by_discipline`) + the athlete's owned crafts,
 (ranked `pct × fidelity`), untrainable-terrain gaps, and the craft
 candidate set Layer 4 picks from.
 
-Design canonical doc: `aidstation-sources/BestFitModality_Spec_v4.md`.
+Design canonical doc: `aidstation-sources/designs/BestFitModality_Spec_v4.md`.
 Output schemas live in `layer4.context` alongside `Layer2CPayload`
 (matches the existing payload-contract convention).
 """

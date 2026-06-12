@@ -72,7 +72,7 @@ Vertical-slice limitations carried as forward-pointers:
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, datetime, time
 from typing import Any, Literal
 
@@ -111,7 +111,13 @@ from layer4.context import (
     TrainingSubstitutionPayload,
 )
 from layer4.payload import Layer4Payload, PlanSession
+from layer4.session_feasibility import (
+    TerrainResolution,
+    resolve_craft_feasibility,
+    resolve_terrain_feasibility,
+)
 from layer4.single_session import SingleSessionRequest
+from layer4.validator import skill_gated_disciplines
 import locations
 from race_events_repo import load_target_race_event_payload
 
@@ -278,6 +284,183 @@ def _q_craft_discipline_aliases(db: Any) -> dict[str, list[str]]:
     return out
 
 
+def _q_modality_group_kind(db: Any) -> dict[str, str]:
+    """#540 slice 2c.2c — `{group_id: group_kind}` from `layer0.modality_groups`
+    (active rows). The craft axis reads it to find a discipline's `group_kind`
+    (bike/paddle = craft-bearing). Empty dict → the craft axis is inert (every
+    discipline passes straight to the terrain axis)."""
+    cur = db.execute(
+        "SELECT group_id, group_kind FROM layer0.modality_groups "
+        "WHERE superseded_at IS NULL"
+    )
+    return {row["group_id"]: row["group_kind"] for row in cur.fetchall()}
+
+
+def _q_craft_group_kind(db: Any) -> dict[str, str]:
+    """#540 slice 2c.2c — `{craft_name: group_kind}` from
+    `layer0.craft_discipline_aliases` (active rows; `group_kind` is per-craft,
+    constant across its discipline rows). Pairs with `_q_craft_discipline_aliases`
+    to drive the craft axis. Empty dict → the craft axis is inert."""
+    cur = db.execute(
+        "SELECT DISTINCT craft_name, group_kind FROM layer0.craft_discipline_aliases "
+        "WHERE superseded_at IS NULL"
+    )
+    return {row["craft_name"]: row["group_kind"] for row in cur.fetchall()}
+
+
+def _q_terrain_gap_rules(db: Any) -> dict[str, list[tuple[str, float]]]:
+    """#540 slice 2c.2 — `{target_terrain_id: [(proxy_terrain_id, fidelity), ...]}`
+    from `layer0.terrain_gap_rules` (active rows with a proxy). Feeds the PROXY
+    tier of `resolve_terrain_feasibility`. Mirrors `_q_modality_groups`. Empty
+    dict → the PROXY tier is inert (cascade falls through to INDOOR/STRENGTH)."""
+    cur = db.execute(
+        "SELECT target_terrain_id, proxy_terrain_id, proxy_fidelity "
+        "FROM layer0.terrain_gap_rules "
+        "WHERE proxy_terrain_id IS NOT NULL AND superseded_at IS NULL"
+    )
+    out: dict[str, list[tuple[str, float]]] = {}
+    for row in cur.fetchall():
+        if row["proxy_fidelity"] is None:
+            continue
+        out.setdefault(row["target_terrain_id"], []).append(
+            (row["proxy_terrain_id"], float(row["proxy_fidelity"]))
+        )
+    return out
+
+
+# Layer 2C `priority_per_discipline` rank — best (Critical) first. Drives the
+# order of the strength-substitute exercise pool handed to the STRENGTH tier.
+_PRIORITY_RANK: dict[str, int] = {"Critical": 0, "High": 1, "Medium": 2, "Low": 3}
+
+
+def _build_terrain_feasibility(
+    db: Any,
+    user_id: int,
+    cone: "_UpstreamFullCone",
+) -> dict[str, TerrainResolution]:
+    """#540 slice 2c.2 — resolve, per included discipline, where/how its sessions
+    can actually be done across the athlete's locale cluster (terrain axis).
+
+    Runs the deterministic EXACT→PROXY→INDOOR→STRENGTH→REALLOCATE cascade
+    (`resolve_terrain_feasibility`) on existing layer0 data — the cluster
+    terrain/equipment maps, `terrain_gap_rules`, and the discipline's own 2C
+    mapped exercises. Skill-gated disciplines (#336) are EXCLUDED: they are
+    already substituted to strength at the session level by the skill-capability
+    gate, so running the terrain cascade on them would emit a conflicting
+    directive (the two compose by partition, not by clobber). Unconstrained
+    disciplines (resolver returns None) are dropped — nothing to guide."""
+    cluster = locations.cluster_locale_ids(db, user_id)
+    if not cluster:
+        return {}
+    terrain_by_locale = locations.cluster_terrain_by_locale(db, user_id, cluster)
+    equip_by_locale = locations.cluster_equipment_by_locale(db, user_id, cluster)
+    gap_rules = _q_terrain_gap_rules(db)
+
+    # Craft axis (#540 2c.2c) maps — runs per discipline AHEAD of terrain.
+    owned_crafts = _collect_athlete_crafts(cone.layer1_payload)
+    craft_disciplines = _q_craft_discipline_aliases(db)
+    craft_kind = _q_craft_group_kind(db)
+    discipline_groups = _q_modality_groups(db)
+    group_kind_by_group = _q_modality_group_kind(db)
+
+    # The discipline's own mapped strength pool, ranked best-first by 2C
+    # priority. tier 0 = unavailable at this locale set; keep 1/2/3.
+    pool_by_discipline: dict[str, list[str]] = {}
+    for ex in cone.layer2c_payload.exercises_resolved:
+        if ex.tier not in (1, 2, 3):
+            continue
+        for d_id in ex.discipline_ids:
+            pool_by_discipline.setdefault(d_id, []).append(ex.exercise_id)
+    # Rank each discipline's pool by its per-discipline priority (stable).
+    for d_id, ids in pool_by_discipline.items():
+        rank_of = {
+            ex.exercise_id: _PRIORITY_RANK.get(
+                ex.priority_per_discipline.get(d_id, ""), 99
+            )
+            for ex in cone.layer2c_payload.exercises_resolved
+        }
+        ids.sort(key=lambda e: rank_of.get(e, 99))
+
+    gated = skill_gated_disciplines({cone.primary_locale: cone.layer2c_payload})
+    included = [d for d in cone.layer2a_payload.disciplines if d.inclusion == "included"]
+    name_by_discipline = {
+        d.discipline_id: d.discipline_name for d in cone.layer2a_payload.disciplines
+    }
+    # Strength locale for a craft terminal: the gym — first cluster locale that
+    # carries equipment, else home. Mirrors the terrain STRENGTH tier's choice.
+    strength_locale = next(
+        (loc for loc in cluster if equip_by_locale.get(loc)), cluster[0]
+    )
+
+    def _terrain(disc_id: str) -> TerrainResolution | None:
+        return resolve_terrain_feasibility(
+            disc_id,
+            locale_order=cluster,
+            cluster_terrain_by_locale=terrain_by_locale,
+            cluster_equipment_by_locale=equip_by_locale,
+            gap_rules=gap_rules,
+            discipline_exercise_ids=pool_by_discipline.get(disc_id, []),
+        )
+
+    def _craft_kind_of(disc_id: str) -> str:
+        """The craft-bearing group_kind (bike/paddle) of a discipline, for the
+        STRENGTH terminal's reason line."""
+        for g in discipline_groups.get(disc_id, []):
+            k = group_kind_by_group.get(g)
+            if k in ("bike", "paddle"):
+                return k
+        return "craft"
+
+    out: dict[str, TerrainResolution] = {}
+    for d in included:
+        if d.discipline_id in gated:
+            continue
+        craft = resolve_craft_feasibility(
+            d.discipline_id,
+            owned_crafts=owned_crafts,
+            craft_disciplines=craft_disciplines,
+            craft_group_kind=craft_kind,
+            discipline_groups=discipline_groups,
+            group_kind=group_kind_by_group,
+        )
+        # ── Craft STRENGTH terminal — own no craft of this kind at all ───────
+        if craft is not None and craft.tier == "strength":
+            out[d.discipline_id] = TerrainResolution(
+                discipline_id=d.discipline_id,
+                tier="strength",
+                locale_id=strength_locale,
+                substitute_exercise_ids=list(
+                    pool_by_discipline.get(d.discipline_id, [])
+                ),
+                craft_tier="strength",
+                owned_craft=craft.owned_craft,
+                craft_kind=_craft_kind_of(d.discipline_id),
+            )
+            continue
+        # ── Craft SWAP — own a same-kind craft, but only in another group ────
+        if craft is not None and craft.tier == "swap":
+            eff = craft.effective_discipline_id
+            resolution = _terrain(eff)
+            if resolution is None:
+                # Swap target carries no terrain requirement (freely doable) —
+                # emit a craft-only line so the swap still reaches synthesis.
+                resolution = TerrainResolution(
+                    discipline_id=eff, tier="exact", locale_id=cluster[0]
+                )
+            out[d.discipline_id] = replace(
+                resolution,
+                craft_tier="swap",
+                owned_craft=craft.owned_craft,
+                craft_swap_to_name=name_by_discipline.get(eff, eff),
+            )
+            continue
+        # ── Owned craft, or a non-craft discipline — terrain axis as-is ──────
+        resolution = _terrain(d.discipline_id)
+        if resolution is not None:
+            out[d.discipline_id] = resolution
+    return out
+
+
 def _upstream_full_cone(
     db: Any,
     user_id: int,
@@ -385,6 +568,7 @@ def _upstream_full_cone(
         conditions=layer1_payload.health_status.health_conditions_active,
         included_discipline_ids=included_discipline_ids,
         etl_version_set=etl_version_set,
+        today=today,
     )
 
     cluster = locations.cluster_locale_ids(db, user_id)
@@ -762,6 +946,7 @@ def orchestrate_single_session_synthesize(
         conditions=layer1_payload.health_status.health_conditions_active,
         included_discipline_ids=included_discipline_ids,
         etl_version_set=etl_version_set,
+        today=today,
     )
 
     layer2c_payload_for_locale = None
@@ -957,6 +1142,11 @@ def orchestrate_plan_create(
     )
 
     layer2c_payloads = {cone.primary_locale: cone.layer2c_payload}
+    # #540 slice 2c.2 — deterministic per-discipline terrain feasibility across
+    # the locale cluster, resolved pre-synthesis so the synthesizer is handed a
+    # session that already works (never a Rock Climbing session at a home with no
+    # climbing terrain). Wired create-side first; refresh is the follow-up (§4.4).
+    terrain_feasibility = _build_terrain_feasibility(db, user_id, cone)
     payload = llm_layer4_plan_create_cached(
         user_id=user_id,
         layer1_payload=cone.layer1_payload.model_dump(mode="json"),
@@ -975,6 +1165,9 @@ def orchestrate_plan_create(
         # Thread the training-substitution payload from the cone into the
         # per-phase prompt bodies + cache key.
         training_substitution_payload=cone.training_substitution_payload,
+        # Thread the per-discipline terrain-feasibility resolutions into the
+        # session-grid prompt + cache key.
+        terrain_feasibility=terrain_feasibility,
     )
     payload = _apply_locale_assign(db, user_id, payload, layer2c_payloads)
     payload = _apply_rx_wire(db, user_id, payload, layer2c_payloads)

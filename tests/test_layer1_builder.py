@@ -204,6 +204,8 @@ class TestFullyPopulated:
             "vo2max": 55.0,
             "cycling_ftp_w": 280,
             "doubles_feasible": "occasionally",
+            "two_a_day_preference": "regularly",
+            "peak_sessions_max": 12,
             "years_structured_training": 8,
             "peak_weekly_volume_hrs": 18.0,
             "peak_weekly_volume_year": 2024,
@@ -444,6 +446,10 @@ class TestFullyPopulated:
         assert mon.enabled is False
         # available_days_per_week derived count.
         assert payload.available_days_per_week == 2
+        # Slice 2b.2b — the §G session-ceiling scalars round-trip from
+        # athlete_profile onto the availability sub-model (read by per_phase).
+        assert payload.availability.two_a_day_preference == "regularly"
+        assert payload.availability.peak_sessions_max == 12
 
     def test_discipline_baselines_partial(self):
         conn = _FakeConn()
@@ -657,7 +663,8 @@ _PROFILE_COL_NAMES = (
     "date_of_birth", "sex", "height_cm", "primary_sport",
     "weekly_hours_target", "notes", "body_weight_kg", "hrmax_bpm",
     "lactate_threshold_hr_bpm", "vo2max", "cycling_ftp_w",
-    "doubles_feasible", "years_structured_training",
+    "doubles_feasible", "two_a_day_preference", "peak_sessions_max",
+    "years_structured_training",
     "peak_weekly_volume_hrs", "peak_weekly_volume_year",
     "longest_event_completed", "training_consistency_disrupted_weeks",
     "training_consistency_cause", "previous_coaching",

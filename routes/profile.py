@@ -27,7 +27,7 @@ from routes.auth import (
 )
 from athlete import (
     PROFILE_FIELDS, PREFILL_ELIGIBLE_FIELDS,
-    DOUBLES_FEASIBLE_CHOICES,
+    DOUBLES_FEASIBLE_CHOICES, TWO_A_DAY_CHOICES,
     DIETARY_PATTERN_CHOICES, FUELING_FORMAT_CHOICES,
     CAFFEINE_TOLERANCE_CHOICES, CAFFEINE_RACE_DAY_STRATEGY_CHOICES,
     SALT_ELECTROLYTE_TOLERANCE_CHOICES,
@@ -45,6 +45,13 @@ from athlete_discipline_weighting_repo import (
     get_discipline_weighting,
     load_discipline_catalog,
     replace_discipline_weighting,
+)
+from athlete_crafts_repo import (
+    CraftSelectionError,
+    evict_layer1_on_crafts_change,
+    get_athlete_crafts,
+    load_craft_catalog,
+    replace_athlete_crafts,
 )
 from athlete_skill_toggles_repo import (
     evict_layer1_on_skill_toggle_change,
@@ -363,6 +370,10 @@ def edit():
     if doubles not in DOUBLES_FEASIBLE_CHOICES:
         doubles = 'no'
 
+    two_a_day = (profile.get('two_a_day_preference') or 'occasionally').lower()
+    if two_a_day not in TWO_A_DAY_CHOICES:
+        two_a_day = 'occasionally'
+
     user_row = db.execute(
         'SELECT username, display_name, email, last_login FROM users WHERE id=?', (uid,)
     ).fetchone()
@@ -409,6 +420,11 @@ def edit():
     # disciplines; weighting = the athlete's current split (empty → unset).
     discipline_catalog = load_discipline_catalog(db)
     discipline_weighting = get_discipline_weighting(db, uid)
+
+    # 2c.2b (#540) — owned-craft picker (Athlete tab). Catalog = the closed
+    # bike/paddle craft enums; current = the athlete's saved crafts.
+    craft_catalog = load_craft_catalog()
+    athlete_crafts = get_athlete_crafts(db, uid)
 
     # #469 — body weight is stored canonical kg; render it in the athlete's
     # chosen display unit so the form field round-trips cleanly. `profile` is
@@ -465,6 +481,9 @@ def edit():
         days=days,
         doubles_feasible=doubles,
         doubles_choices=DOUBLES_FEASIBLE_CHOICES,
+        two_a_day_preference=two_a_day,
+        two_a_day_choices=TWO_A_DAY_CHOICES,
+        peak_sessions_max=profile.get('peak_sessions_max'),
         dietary_pattern_choices=DIETARY_PATTERN_CHOICES,
         fueling_format_choices=FUELING_FORMAT_CHOICES,
         caffeine_tolerance_choices=CAFFEINE_TOLERANCE_CHOICES,
@@ -474,6 +493,8 @@ def edit():
         skill_toggle_states=skill_toggle_states,
         discipline_catalog=discipline_catalog,
         discipline_weighting=discipline_weighting,
+        craft_catalog=craft_catalog,
+        athlete_crafts=athlete_crafts,
         # Used by the template to render an "Expired" badge without
         # round-tripping the timestamp through a Jinja-only comparison.
         now_iso=_dt.utcnow().isoformat(timespec='seconds'),
@@ -563,6 +584,34 @@ def save_disciplines():
     db.commit()
     evict_layer1_on_discipline_weighting_change(db, uid)
     flash('Discipline weighting saved.', 'success')
+    return redirect(url_for('profile.edit', tab='athlete'))
+
+
+@bp.route('/crafts', methods=['POST'])
+def save_crafts():
+    """Persist the owned-craft form (Athlete tab) — 2c.2b (#540).
+
+    The athlete checks the bike types + paddle crafts they own; each family is
+    replace-all (unchecked = not owned). Slugs are validated against the closed
+    enums, then the discipline-baseline craft columns are upserted. Mirrors
+    `save_disciplines`' parse → write → evict-Layer-1 path. These crafts feed
+    the X1b.3b craft-substitution narrowing in plan generation.
+    """
+    db = get_db()
+    uid = current_user_id()
+    try:
+        replace_athlete_crafts(
+            db,
+            uid,
+            bike_types=request.form.getlist('bike_types'),
+            paddle_crafts=request.form.getlist('paddle_crafts'),
+        )
+    except CraftSelectionError as exc:
+        flash(str(exc), 'error')
+        return redirect(url_for('profile.edit', tab='athlete'))
+    db.commit()
+    evict_layer1_on_crafts_change(db, uid)
+    flash('Gear saved.', 'success')
     return redirect(url_for('profile.edit', tab='athlete'))
 
 

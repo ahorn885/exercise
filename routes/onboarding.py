@@ -61,7 +61,7 @@ from flask import (
 
 from database import get_db
 from athlete import (
-    DAY_TOKENS, DAY_LABELS, DOUBLES_FEASIBLE_CHOICES,
+    DAY_TOKENS, DAY_LABELS, DOUBLES_FEASIBLE_CHOICES, TWO_A_DAY_CHOICES,
     get_athlete_profile, upsert_athlete_profile,
     get_daily_availability_windows, upsert_daily_availability_windows,
 )
@@ -91,6 +91,12 @@ from athlete_skill_toggles_repo import (
     load_active_skill_capability_toggle_vocab,
     parse_skill_form,
     upsert_athlete_skill_toggles,
+)
+from athlete_crafts_repo import (
+    CraftSelectionError,
+    get_athlete_crafts,
+    load_craft_catalog,
+    replace_athlete_crafts,
 )
 
 
@@ -485,6 +491,9 @@ def skills():
         'onboarding/skills.html',
         toggle_defs=load_active_skill_capability_toggle_vocab(db),
         current_states=get_athlete_skill_toggles(db, uid),
+        # 2c.2b (#540) — owned-craft picker shares this step.
+        craft_catalog=load_craft_catalog(),
+        athlete_crafts=get_athlete_crafts(db, uid),
         post_step_skills_target=_POST_STEP_SKILLS_TARGET,
     )
 
@@ -504,11 +513,25 @@ def skills_save():
     uid = current_user_id()
     vocab = load_active_skill_capability_toggle_vocab(db)
     states = parse_skill_form(request.form, vocab)
+    # 2c.2b (#540) — the same step captures owned crafts (replace-all per
+    # family; the form always submits the current checkbox state). Validated
+    # against the closed enums before any write.
+    try:
+        replace_athlete_crafts(
+            db,
+            uid,
+            bike_types=request.form.getlist('bike_types'),
+            paddle_crafts=request.form.getlist('paddle_crafts'),
+        )
+    except CraftSelectionError as exc:
+        flash(str(exc), 'error')
+        return redirect(url_for('onboarding.skills'))
     if states:
         upsert_athlete_skill_toggles(db, uid, states)
-        db.commit()
-        evict_layer1_on_skill_toggle_change(db, uid)
-        flash('Skills saved.', 'success')
+    db.commit()
+    # Skills + crafts both live in Layer 1 — one eviction covers both.
+    evict_layer1_on_skill_toggle_change(db, uid)
+    flash('Skills & gear saved.', 'success')
     return redirect(_POST_STEP_SKILLS_TARGET)
 
 
@@ -632,9 +655,36 @@ def _parse_schedule_form(form):
     # FormRefresh Slice C (2026-05-25) — the long-session day + rest days are
     # no longer asked: the longest enabled window is the weekly long session
     # and disabled days are the rest days, both derived downstream from the
-    # per-day windows. `doubles_feasible` is the sole surviving §G scalar.
+    # per-day windows.
+    #
+    # Slice 2b.2b §5.1.1 — two session-count-ceiling scalars join doubles:
+    #   * two_a_day_preference: the friendly density control (radio; defaults
+    #     to 'occasionally' on miss, mirroring the doubles fallback).
+    #   * peak_sessions_max: the optional advanced override. Blank → NULL (the
+    #     grid derives the ceiling from the preference). Rejected (with a flash)
+    #     when out of 1..2×available_days — the grid's hard feasibility clamp.
+    two_a_day = form.get('two_a_day_preference', '').strip().lower()
+    if two_a_day not in TWO_A_DAY_CHOICES:
+        two_a_day = 'occasionally'
+
+    available_days = sum(1 for w in windows if w['primary']['enabled'])
+    raw_peak = (form.get('peak_sessions_max') or '').strip()
+    if raw_peak:
+        peak_sessions_max = _parse_int(raw_peak, min_=1, max_=max(1, 2 * available_days))
+        if peak_sessions_max is None:
+            errors.append(
+                f'Most sessions per week at Peak must be a whole number from 1 '
+                f'to {2 * available_days} (2× your {available_days} available '
+                'training day(s)). Left unset — the ceiling follows your '
+                'two-a-day preference instead.'
+            )
+    else:
+        peak_sessions_max = None
+
     profile_updates = {
         'doubles_feasible': doubles,
+        'two_a_day_preference': two_a_day,
+        'peak_sessions_max': peak_sessions_max,
     }
     return windows, profile_updates, errors
 
@@ -657,11 +707,18 @@ def schedule():
     if doubles not in DOUBLES_FEASIBLE_CHOICES:
         doubles = 'no'
 
+    two_a_day = (profile.get('two_a_day_preference') or 'occasionally').lower()
+    if two_a_day not in TWO_A_DAY_CHOICES:
+        two_a_day = 'occasionally'
+
     return render_template(
         'onboarding/schedule.html',
         days=days,
         doubles_feasible=doubles,
         doubles_choices=DOUBLES_FEASIBLE_CHOICES,
+        two_a_day_preference=two_a_day,
+        two_a_day_choices=TWO_A_DAY_CHOICES,
+        peak_sessions_max=profile.get('peak_sessions_max'),
         post_step3b_target=_POST_STEP3B_TARGET,
     )
 

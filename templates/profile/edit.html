@@ -251,6 +251,18 @@
   })();
 </script>
 
+{# ── Owned crafts (2c.2b, #540) — bike + paddle gear the athlete owns. Feeds
+   the craft-substitution narrowing in plan-gen. Separate form; the checkbox
+   block is the shared _crafts_form partial (also used by onboarding Skills). #}
+<form method="post" action="{{ url_for('profile.save_crafts') }}" class="pf-form">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  {% include 'onboarding/_crafts_form.html' %}
+  <div class="pf-save">
+    <span></span>
+    <button type="submit" class="btn btn-primary">Save gear</button>
+  </div>
+</form>
+
 {# 2E-6 — structured supplement capture. Add/delete are their own forms (can't
    nest inside the main profile form); mirrors the coach-memory editor. #}
 <div class="card card-pad stack pf-nutrition">
