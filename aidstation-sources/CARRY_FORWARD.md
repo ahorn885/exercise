@@ -11,6 +11,17 @@ Rolling-state for items spanning multiple sessions. **Edit in place** — don't 
 
 ---
 
+## Layer 2D determinism close (#202) — DONE; 3 open injury-accommodation workflow gaps; NO deploy owed
+
+**PR [#554](https://github.com/ahorn885/exercise/pull/554) (`Closes #202`, branch `claude/happy-davinci-hsf02q`) squash-merged to `main`.** Closed [#202](https://github.com/ahorn885/exercise/issues/202) (plan-gen cache-key non-determinism, parent #201): Layer 2D's `_is_recent_post_surgical` used wall-clock `utcnow().date()` → reached `layer2d_hash` → `plan_create_key`; now anchored to the cone's `today` (threaded through the 2D builder chain; orchestrator passes `today` at both call sites). The rest of #202's audit was already resolved (Layers 1/2A/2E + 3A + uuid prefixes). **NO DDL / NO Neon deploy owed.**
+
+**Downstream audit surfaced 3 coupled gaps in the Layer 2D → Layer 4 injury-accommodation workflow — all dormant today** (the post-surgical accommodate path is unreachable: `_severity_to_verdict` maps Post-surgical → `exclude`, dominating `_max_verdict`). Fix when the feature is next exercised; ranked tier-3, below go-live #539/#540:
+- ⬜ **[#555](https://github.com/ahorn885/exercise/issues/555)** — `layer4/per_phase.py:_format_active_injuries` renders only modality *type names*, dropping params (factor/tempo/`to_type`/cap) + rationale for all 6 modality types. Fix = prompt-body change → **Stop-and-ask Trigger #1**.
+- ⬜ **[#242](https://github.com/ahorn885/exercise/issues/242)** — Layer 4 validator skips `loading_type_change` enforcement (no v1 laterality metadata) + placeholder-threshold calibration. Annotated with the #202 finding.
+- ⬜ **Dead-branch design fork (noted on #242, not yet its own issue)** — the cross-education swap in `_apply_phase_contraindications` Rule 3 is unreachable; decide: remove as dead code, OR route Post-surgical-*with-clearance* → `accommodate` so it fires for cleared athletes. Trigger #5; surface to Andy.
+
+---
+
 ## #540 Layer 4 slice 2c.2 — terrain-feasibility cascade — CORE + create-wiring MERGED (PR #553 + #556); refresh + craft axis owed
 
 **Go-live blocker #540** (sessions prescribed at locales lacking the required terrain — pv=65 Rock-Climbing-at-home). Design fully ratified with Andy (slice-2c.2 handoff §2); pure core merged (PR #553); the create-path wiring + Trigger-#1 prompt render merged (PR #556). Handoffs: `V5_Implementation_Layer4_Slice2c2_TerrainFeasibility_2026_06_11_Closing_Handoff_v1.md` (§2 design, §4 wiring plan) + `V5_Implementation_Layer4_Slice2c2_Wiring_2026_06_12_Closing_Handoff_v1.md` (the wiring).
