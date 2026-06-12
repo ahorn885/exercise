@@ -99,9 +99,19 @@ def _flag(discipline_id, toggle):
     )
 
 
-def _cone(*, exercises, flags, disciplines, primary_locale="Home"):
+def _cone(
+    *, exercises, flags, disciplines, primary_locale="Home",
+    bike_crafts=None, paddle_crafts=None,
+):
+    cycling = SimpleNamespace(bike_types_available=bike_crafts) if bike_crafts else None
+    paddling = (
+        SimpleNamespace(paddle_craft_types=paddle_crafts) if paddle_crafts else None
+    )
     return SimpleNamespace(
         primary_locale=primary_locale,
+        layer1_payload=SimpleNamespace(
+            discipline_baselines=SimpleNamespace(paddling=paddling, cycling=cycling)
+        ),
         layer2c_payload=SimpleNamespace(
             exercises_resolved=exercises, coaching_flags=flags
         ),
@@ -120,6 +130,92 @@ def _patch_cluster(monkeypatch, *, cluster, terrain, equipment, gaps):
         orchestrator.locations, "cluster_equipment_by_locale", lambda db, uid, c: equipment
     )
     monkeypatch.setattr(orchestrator, "_q_terrain_gap_rules", lambda db: gaps)
+
+
+# Craft-axis maps (#540 2c.2c). Default: empty → craft axis inert (the terrain
+# tests above don't patch it, and _FakeDb([]) also yields empty maps).
+_BIKE_GROUPS = {"D-008": ["bike_offroad"], "D-006": ["bike_pavement"]}
+_BIKE_GROUP_KIND = {"bike_offroad": "bike", "bike_pavement": "bike"}
+
+
+def _patch_craft(monkeypatch, *, craft_disc, craft_kind, disc_groups, group_kind):
+    monkeypatch.setattr(orchestrator, "_q_craft_discipline_aliases", lambda db: craft_disc)
+    monkeypatch.setattr(orchestrator, "_q_craft_group_kind", lambda db: craft_kind)
+    monkeypatch.setattr(orchestrator, "_q_modality_groups", lambda db: disc_groups)
+    monkeypatch.setattr(orchestrator, "_q_modality_group_kind", lambda db: group_kind)
+
+
+def test_build_craft_swap_road_bike_for_mtb(monkeypatch):
+    # Race wants MTB (D-008); athlete owns only a road bike + the cluster has
+    # off-road terrain (so terrain alone would prescribe an un-equippable MTB
+    # ride). The craft axis swaps the MTB allocation to Road Cycling, and the
+    # terrain axis re-runs on THAT discipline (road surface, TRN-001).
+    cone = _cone(
+        exercises=[],
+        flags=[],
+        disciplines=[
+            SimpleNamespace(discipline_id="D-008", discipline_name="Mountain Biking", inclusion="included"),
+            SimpleNamespace(discipline_id="D-006", discipline_name="Road Cycling", inclusion="included"),
+        ],
+        bike_crafts=["road_bike"],
+    )
+    _patch_cluster(
+        monkeypatch,
+        cluster=["Home"],
+        terrain={"Home": {"TRN-001", "TRN-002"}},  # road + trail both present
+        equipment={"Home": set()},
+        gaps={},
+    )
+    _patch_craft(
+        monkeypatch,
+        craft_disc={"road_bike": ["D-006"]},
+        craft_kind={"road_bike": "bike"},
+        disc_groups=_BIKE_GROUPS,
+        group_kind=_BIKE_GROUP_KIND,
+    )
+    feas = orchestrator._build_terrain_feasibility(_FakeDb([]), 1, cone)
+    mtb = feas["D-008"]
+    assert mtb.craft_tier == "swap"
+    assert mtb.owned_craft == "road_bike"
+    assert mtb.craft_swap_to_name == "Road Cycling"
+    # Terrain resolved for the SWAPPED discipline (road), not MTB's trail.
+    assert mtb.tier == "exact" and mtb.terrain_id == "TRN-001"
+    # The owned-outright road discipline carries no craft action.
+    assert feas["D-006"].craft_tier == "" and feas["D-006"].tier == "exact"
+
+
+def test_build_craft_strength_when_no_bike_owned(monkeypatch):
+    # Own no bike at all: even though the cluster has MTB terrain (TRN-002), the
+    # craft terminal fires FIRST → strength from the discipline's own pool, at
+    # the equipment-bearing locale.
+    cone = _cone(
+        exercises=[_ex("EX-SQUAT", ["D-008"], 1, {"D-008": "Critical"}, "Back Squat")],
+        flags=[],
+        disciplines=[
+            SimpleNamespace(discipline_id="D-008", discipline_name="Mountain Biking", inclusion="included"),
+        ],
+        bike_crafts=None,
+    )
+    _patch_cluster(
+        monkeypatch,
+        cluster=["Home", "Gym"],
+        terrain={"Home": {"TRN-002"}, "Gym": set()},
+        equipment={"Home": set(), "Gym": {"Barbell"}},
+        gaps={},
+    )
+    _patch_craft(
+        monkeypatch,
+        craft_disc={"road_bike": ["D-006"]},
+        craft_kind={"road_bike": "bike"},
+        disc_groups=_BIKE_GROUPS,
+        group_kind=_BIKE_GROUP_KIND,
+    )
+    feas = orchestrator._build_terrain_feasibility(_FakeDb([]), 1, cone)
+    res = feas["D-008"]
+    assert res.craft_tier == "strength" and res.tier == "strength"
+    assert res.craft_kind == "bike"
+    assert res.substitute_exercise_ids == ["EX-SQUAT"]
+    assert res.locale_id == "Gym"
 
 
 def test_build_terrain_feasibility_climbing_no_gym_to_strength(monkeypatch):
@@ -246,6 +342,34 @@ def test_grid_annotation_only_for_kind_changing_tiers():
     assert "reallocate" in grid_annotation(
         TerrainResolution("D", "reallocate", None)
     )
+
+
+def test_feasibility_line_and_grid_craft_swap():
+    # SWAP: craft prefix + the terrain detail for the swapped-to discipline.
+    swap = TerrainResolution(
+        "D-006", "exact", "Home", terrain_id="TRN-001",
+        craft_tier="swap", owned_craft="road_bike", craft_swap_to_name="Road Cycling",
+    )
+    line = feasibility_line(swap, discipline_name="Mountain Biking")
+    assert "you own a road bike" in line
+    assert "train this allocation as Road Cycling" in line
+    assert 'real terrain available at "Home" (TRN-001)' in line
+    tag = grid_annotation(swap)
+    assert "CRAFT-SWAP" in tag and "compose as Road Cycling" in tag
+
+
+def test_feasibility_line_and_grid_craft_strength():
+    # Craft STRENGTH terminal: reason is the missing craft, not missing terrain.
+    cstr = TerrainResolution(
+        "D-008", "strength", "Gym", substitute_exercise_ids=["EX-1"],
+        craft_tier="strength", craft_kind="bike",
+    )
+    line = feasibility_line(
+        cstr, discipline_name="Mountain Biking", exercise_names={"EX-1": "Back Squat"}
+    )
+    assert "you own no bike for this discipline" in line and "Back Squat" in line
+    tag = grid_annotation(cstr)
+    assert "NO CRAFT" in tag and "you own no bike" in tag
 
 
 def test_format_session_feasibility_block_renders_names_and_skips_when_empty():

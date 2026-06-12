@@ -140,6 +140,16 @@ class TerrainResolution:
     machine: str | None = None
     substitute_exercise_ids: list[str] = field(default_factory=list)
     note: str = ""
+    # Craft axis (#540 2c.2c) overlay, set by the orchestrator after the craft
+    # ladder runs. "" → no craft action (terrain line renders untouched). "swap"
+    # → terrain fields describe the SWAPPED-TO discipline; `craft_swap_to_name` +
+    # `owned_craft` render the "train as X" prefix. "strength" → a craft terminal
+    # (own no craft of the kind); `tier` is "strength" and `craft_kind` supplies
+    # the reason in place of the terrain one.
+    craft_tier: Literal["", "swap", "strength"] = ""
+    owned_craft: str | None = None
+    craft_swap_to_name: str = ""
+    craft_kind: str = ""
 
 
 def required_terrains(discipline_id: str) -> frozenset[str]:
@@ -398,44 +408,76 @@ def feasibility_line(
     """
     loc = resolution.locale_id
     tier = resolution.tier
-    if tier == "exact":
-        return (
-            f"- {discipline_name}: real terrain available at \"{loc}\" "
-            f"({resolution.terrain_id}) — train it for real there."
-        )
-    if tier == "proxy":
-        return (
-            f"- {discipline_name}: no required terrain in your locales — train as "
-            f"the nearest surface ({resolution.terrain_id}, fidelity "
-            f"{resolution.proxy_fidelity:.2f}) at \"{loc}\". Compose for that surface."
-        )
-    if tier == "indoor":
-        return (
-            f"- {discipline_name}: no outdoor terrain in your locales — train "
-            f"indoors on the {resolution.machine} at \"{loc}\"."
+    # Craft axis (#540 2c.2c) composes ahead of the terrain detail. A SWAP
+    # prepends "you own <craft> — train as <effective discipline>" and the terrain
+    # body below already describes that swapped-to discipline's surface. A craft
+    # STRENGTH terminal supplies its own reason in place of the terrain one.
+    craft_prefix = ""
+    if resolution.craft_tier == "swap":
+        owned = (resolution.owned_craft or "your craft").replace("_", " ")
+        swap_to = resolution.craft_swap_to_name or "a craft you own"
+        craft_prefix = (
+            f"you own a {owned}, not the gear for it — train this allocation as "
+            f"{swap_to}. "
         )
     if tier == "strength":
         names = ", ".join(
             (exercise_names or {}).get(ex, ex)
             for ex in resolution.substitute_exercise_ids
         ) or "the discipline's mapped strength pool"
-        return (
-            f"- {discipline_name}: no terrain, proxy, or machine in your locales — "
-            f"substitute a STRENGTH session targeting this discipline's demands at "
-            f"\"{loc}\" from: {names}. Keep the target hours; compose as strength."
+        reason = (
+            f"you own no {resolution.craft_kind or 'craft'} for this discipline"
+            if resolution.craft_tier == "strength"
+            else "no terrain, proxy, or machine in your locales"
         )
-    # reallocate
-    return (
-        f"- {discipline_name}: infeasible anywhere in your locale cluster — do NOT "
-        "prescribe this session; reallocate its time to feasible disciplines."
-    )
+        return (
+            f"- {discipline_name}: {reason} — substitute a STRENGTH session "
+            f"targeting this discipline's demands at \"{loc}\" from: {names}. "
+            "Keep the target hours; compose as strength."
+        )
+    if tier == "exact":
+        body = (
+            f"real terrain available at \"{loc}\" ({resolution.terrain_id}) — "
+            "train it for real there."
+        )
+    elif tier == "proxy":
+        body = (
+            f"no required terrain in your locales — train as the nearest surface "
+            f"({resolution.terrain_id}, fidelity {resolution.proxy_fidelity:.2f}) "
+            f"at \"{loc}\". Compose for that surface."
+        )
+    elif tier == "indoor":
+        body = (
+            f"no outdoor terrain in your locales — train indoors on the "
+            f"{resolution.machine} at \"{loc}\"."
+        )
+    else:  # reallocate
+        body = (
+            "infeasible anywhere in your locale cluster — do NOT prescribe this "
+            "session; reallocate its time to feasible disciplines."
+        )
+    return f"- {discipline_name}: {craft_prefix}{body}"
 
 
 def grid_annotation(resolution: TerrainResolution) -> str:
     """The short inline session-grid tag, or '' for tiers that don't change the
     session kind/placement (exact/proxy/indoor read the same count, just composed
     differently — the dedicated block carries that). Strength/reallocate change
-    what the count MEANS, so they get an unmissable inline flag."""
+    what the count MEANS, so they get an unmissable inline flag. The craft axis
+    (#540 2c.2c) checks first: a SWAP changes the SPORT (compose as a different
+    craft) even on an exact-terrain tier, and a craft STRENGTH terminal flags the
+    real reason (no craft, not no terrain)."""
+    if resolution.craft_tier == "swap":
+        owned = (resolution.owned_craft or "craft").replace("_", " ")
+        swap_to = resolution.craft_swap_to_name or "a craft you own"
+        return (
+            f" [CRAFT-SWAP: own a {owned} — compose as {swap_to}, NOT as-prescribed]"
+        )
+    if resolution.craft_tier == "strength":
+        return (
+            f" [NO CRAFT: you own no {resolution.craft_kind or 'craft'} — prescribe "
+            "as a STRENGTH substitution, NOT a cardio session]"
+        )
     if resolution.tier == "strength":
         return (
             " [TERRAIN-INFEASIBLE: no terrain/machine in your locales — prescribe "
