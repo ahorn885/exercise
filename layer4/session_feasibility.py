@@ -244,7 +244,14 @@ def resolve_terrain_feasibility(
 
     # ── 4. STRENGTH — substitute a strength session from the mapped pool ─────
     if discipline_exercise_ids:
-        locale = locale_order[0] if locale_order else None
+        # Place the session where the gear actually is: the first cluster locale
+        # (home-first) that carries any equipment — the gym — falling back to
+        # home when no locale lists equipment (bodyweight-feasible at home).
+        # Mirrors the INDOOR tier's "first locale that satisfies" locale choice.
+        locale = next(
+            (loc for loc in locale_order if cluster_equipment_by_locale.get(loc)),
+            locale_order[0] if locale_order else None,
+        )
         return TerrainResolution(
             discipline_id=discipline_id,
             tier="strength",
@@ -265,9 +272,87 @@ def resolve_terrain_feasibility(
     )
 
 
+# ─── Synthesis-prompt rendering ──────────────────────────────────────────────
+# The resolution is internal synthesis guidance, rendered into the deterministic
+# session-grid block the same way that block already surfaces discipline ids /
+# TRN ids; the synthesizer is instructed elsewhere to translate to natural
+# language in its output. Two surfaces (mirroring #336's skill-capability gate):
+#   - `feasibility_line`  — the full per-discipline guidance line, rendered once
+#     in the dedicated feasibility block.
+#   - `grid_annotation`   — a short inline tag on the authoritative count line,
+#     only for the tiers that change the session KIND (strength) or drop it
+#     (reallocate), so the count is never read as the as-prescribed sport.
+
+
+def feasibility_line(
+    resolution: TerrainResolution,
+    *,
+    discipline_name: str,
+    exercise_names: dict[str, str] | None = None,
+) -> str:
+    """The full one-line guidance for a resolved discipline (dedicated block).
+
+    `exercise_names` maps the strength-substitute ids to display names; only the
+    STRENGTH tier consumes it (falls back to the id when a name is missing).
+    """
+    loc = resolution.locale_id
+    tier = resolution.tier
+    if tier == "exact":
+        return (
+            f"- {discipline_name}: real terrain available at \"{loc}\" "
+            f"({resolution.terrain_id}) — train it for real there."
+        )
+    if tier == "proxy":
+        return (
+            f"- {discipline_name}: no required terrain in your locales — train as "
+            f"the nearest surface ({resolution.terrain_id}, fidelity "
+            f"{resolution.proxy_fidelity:.2f}) at \"{loc}\". Compose for that surface."
+        )
+    if tier == "indoor":
+        return (
+            f"- {discipline_name}: no outdoor terrain in your locales — train "
+            f"indoors on the {resolution.machine} at \"{loc}\"."
+        )
+    if tier == "strength":
+        names = ", ".join(
+            (exercise_names or {}).get(ex, ex)
+            for ex in resolution.substitute_exercise_ids
+        ) or "the discipline's mapped strength pool"
+        return (
+            f"- {discipline_name}: no terrain, proxy, or machine in your locales — "
+            f"substitute a STRENGTH session targeting this discipline's demands at "
+            f"\"{loc}\" from: {names}. Keep the target hours; compose as strength."
+        )
+    # reallocate
+    return (
+        f"- {discipline_name}: infeasible anywhere in your locale cluster — do NOT "
+        "prescribe this session; reallocate its time to feasible disciplines."
+    )
+
+
+def grid_annotation(resolution: TerrainResolution) -> str:
+    """The short inline session-grid tag, or '' for tiers that don't change the
+    session kind/placement (exact/proxy/indoor read the same count, just composed
+    differently — the dedicated block carries that). Strength/reallocate change
+    what the count MEANS, so they get an unmissable inline flag."""
+    if resolution.tier == "strength":
+        return (
+            " [TERRAIN-INFEASIBLE: no terrain/machine in your locales — prescribe "
+            "as a STRENGTH substitution, NOT a cardio session]"
+        )
+    if resolution.tier == "reallocate":
+        return (
+            " [TERRAIN-INFEASIBLE: cannot be done anywhere in your cluster — "
+            "reallocate this time, do NOT prescribe]"
+        )
+    return ""
+
+
 __all__ = [
     "TerrainResolution",
     "resolve_terrain_feasibility",
     "required_terrains",
     "indoor_machines",
+    "feasibility_line",
+    "grid_annotation",
 ]

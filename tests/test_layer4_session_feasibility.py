@@ -162,6 +162,29 @@ class TestStrengthTerminal:
         assert r.locale_id == "home"
         assert r.substitute_exercise_ids == ["EX-PULLUP", "EX-HANGBOARD", "EX-DEADHANG"]
 
+    def test_strength_routes_to_the_equipment_bearing_locale(self):
+        # Home has no gear; the gym (a nearby cluster locale) does → the
+        # strength session is placed at the gym, not home.
+        r = _resolve(
+            "D-012",
+            locale_order=["home", "home_gym"],
+            cluster_equipment_by_locale={"home": set(), "home_gym": {"Pull-up bar"}},
+            discipline_exercise_ids=["EX-PULLUP"],
+        )
+        assert r.tier == "strength"
+        assert r.locale_id == "home_gym"
+
+    def test_strength_falls_back_to_home_when_no_locale_lists_equipment(self):
+        # Bodyweight-feasible: no locale carries equipment → home.
+        r = _resolve(
+            "D-012",
+            locale_order=["home", "park"],
+            cluster_equipment_by_locale={},
+            discipline_exercise_ids=["EX-PUSHUP"],
+        )
+        assert r.tier == "strength"
+        assert r.locale_id == "home"
+
     def test_strength_preferred_over_reallocate(self):
         r_with = _resolve("D-012", discipline_exercise_ids=["EX-1"])
         r_without = _resolve("D-012", discipline_exercise_ids=[])
