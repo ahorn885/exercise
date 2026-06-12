@@ -200,6 +200,7 @@ def plan_refresh_key(
     max_tokens: int,
     capped_retries: int,
     training_substitution_hash: str | None = None,
+    terrain_feasibility_hash: str | None = None,
 ) -> str:
     """Per §9.1 — cache key for `llm_layer4_plan_refresh`.
 
@@ -208,8 +209,8 @@ def plan_refresh_key(
     the seam-reviewer model to the key. None → '' in the key to prevent
     gratuitous cache misses on the model field for Pattern B refreshes.
 
-    `training_substitution_hash` collapses None → '' so callers that don't
-    supply a substitution payload retain stable keys.
+    `training_substitution_hash` + `terrain_feasibility_hash` collapse None → ''
+    so callers that don't supply those payloads retain stable keys.
     """
     components = [
         str(user_id),
@@ -229,6 +230,7 @@ def plan_refresh_key(
         str(max_tokens),
         str(capped_retries),
         training_substitution_hash or "",
+        terrain_feasibility_hash or "",
     ]
     return _sha256_hex("||".join(components))
 

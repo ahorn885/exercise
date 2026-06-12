@@ -1061,6 +1061,13 @@ def orchestrate_plan_refresh(
         e=cone.layer2e_payload,
     )
 
+    # #557 — mirror the create-side #540 terrain-feasibility cascade onto the
+    # refresh path so a *refreshed* plan also never prescribes a session the
+    # athlete can't physically do (e.g. climbing at a home with no climbing
+    # terrain). Same deterministic builder + cone the create path uses; threaded
+    # into the refresh prompt + folded into the plan_refresh cache key below.
+    terrain_feasibility = _build_terrain_feasibility(db, user_id, cone)
+
     payload = llm_layer4_plan_refresh_cached(
         user_id=user_id,
         tier=tier,
@@ -1080,6 +1087,9 @@ def orchestrate_plan_refresh(
         # Thread the training-substitution payload from the cone into the
         # refresh prompt body + cache key.
         training_substitution_payload=cone.training_substitution_payload,
+        # Thread the per-discipline terrain-feasibility resolutions into the
+        # refresh prompt + cache key (#557, mirrors create).
+        terrain_feasibility=terrain_feasibility,
     )
     payload = _apply_locale_assign(db, user_id, payload, layer2_bundle.c)
     payload = _apply_rx_wire(db, user_id, payload, layer2_bundle.c)

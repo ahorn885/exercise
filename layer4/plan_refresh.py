@@ -794,6 +794,7 @@ def llm_layer4_plan_refresh(
     *,
     plan_start_date: _date_type | None = None,
     training_substitution_payload: TrainingSubstitutionPayload | None = None,
+    terrain_feasibility: dict[str, Any] | None = None,
     model_synthesizer: str = "claude-sonnet-4-6",
     model_seam_reviewer: str | None = None,
     temperature: float = 0.4,
@@ -891,6 +892,7 @@ def llm_layer4_plan_refresh(
                 prior_plan_session_window=prior_plan_session_window,
                 plan_version_id=plan_version_id,
                 etl_version_set=etl_version_set,
+                terrain_feasibility=terrain_feasibility,
                 model_synthesizer=model_synthesizer,
                 model_seam_reviewer=(
                     model_seam_reviewer or "claude-sonnet-4-6"
@@ -972,6 +974,7 @@ def llm_layer4_plan_refresh(
             retries_used=retries_used,
             rule_failures=rule_failures,
             training_substitution_payload=training_substitution_payload,
+            terrain_feasibility=terrain_feasibility,
             **extra_kwargs,
         )
 
@@ -1140,6 +1143,7 @@ def _route_t3_cross_phase_to_pattern_a(
     prior_plan_session_window: list[PlanSession],
     plan_version_id: int,
     etl_version_set: dict[str, str],
+    terrain_feasibility: dict[str, Any] | None = None,
     model_synthesizer: str,
     model_seam_reviewer: str,
     temperature: float,
@@ -1202,6 +1206,7 @@ def _route_t3_cross_phase_to_pattern_a(
         refresh_scope_end=refresh_scope_end,
         plan_version_id=plan_version_id,
         etl_version_set=etl_version_set,
+        terrain_feasibility=terrain_feasibility,
         model_synthesizer=model_synthesizer,
         model_seam_reviewer=model_seam_reviewer,
         temperature=temperature,

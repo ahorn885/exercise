@@ -1611,6 +1611,38 @@ class TestPromptRendering:
         )
         assert "EXCLUDE E-wrist" in prompt
 
+    def test_terrain_feasibility_block_rendered_when_present(self):
+        # #557 — the refresh prompt must carry the deterministic terrain-
+        # feasibility block (mirrors create #540) so a refreshed plan never
+        # prescribes a session the athlete can't physically do.
+        from layer4.plan_refresh_t1 import render_user_prompt
+        from layer4.session_feasibility import TerrainResolution
+
+        feas = {
+            "D-012": TerrainResolution(
+                "D-012", "strength", "Home Gym",
+                substitute_exercise_ids=["E-pull"],
+            )
+        }
+        kwargs = dict(
+            refresh_scope_start=_T1_START,
+            refresh_scope_end=_T1_END,
+            layer1_payload=_layer1(),
+            layer2_bundle=Layer2Bundle(a=_layer2a(), c={}, d=_layer2d()),
+            layer3a_payload=_layer3a(),
+            layer3b_payload=_layer3b(),
+            prior_plan_session_window=_prior_window(_T1_START, _T1_END),
+            parsed_intent=ParsedIntent(),
+            retries_used=0,
+            rule_failures=[],
+        )
+        with_feas = render_user_prompt(**kwargs, terrain_feasibility=feas)
+        without = render_user_prompt(**kwargs)
+        assert "=== Session feasibility" in with_feas
+        assert "substitute a STRENGTH session" in with_feas
+        # Omitted entirely when nothing was resolved (legacy/empty callers).
+        assert "=== Session feasibility" not in without
+
     def test_default_parsed_intent_when_none_passed(self):
         """When parsed_intent=None, the driver substitutes a degraded
         ParsedIntent with parser_confidence='low'."""
