@@ -63,6 +63,7 @@ from layer4 import (
 from layer3a.builder import Layer3AOutputError
 from layer3b.builder import Layer3BOutputError
 from layer4.errors import Layer4InputError, Layer4OutputError
+from layer4.context import ParsedIntent as _ParsedIntent
 from layer4.plan_refresh import _default_parsed_intent
 from nl_parser import IntentParserInput, NLParserError
 from plan_sessions_repo import (
@@ -506,8 +507,14 @@ def refresh():
     )
 
     parent_id: int = parent_plan["id"]
-    layers_run = _TIER_DEFAULT_LAYERS_RUN[tier]
 
+    # #208 — async/resumable refresh. Allocate the plan_versions row, FREEZE the
+    # refresh inputs on it (including the once-parsed intent — never re-parsed
+    # per pass, which would drift the cache key and break convergence), mark it
+    # `generating`, and hand off to the shared progress screen + cron/poller
+    # (the same path plan-create uses). The POST runs no LLM synthesis, so it
+    # can't blow the function timeout; a T3 cross-phase (Pattern A) refresh now
+    # resumes from the layer4_cache pass by pass exactly like a created plan.
     new_plan_version_id = allocate_plan_version_row(
         db,
         uid,
@@ -517,126 +524,167 @@ def refresh():
         pattern="B",
         notes=None,
     )
-
-    started = time.monotonic()
-    try:
-        prior_window = load_prior_plan_session_window(
-            db, uid, today=today, tier=tier
-        )
-        result = orchestrate_plan_refresh(
-            db,
+    db.execute(
+        "UPDATE plan_versions SET generation_status = 'generating', "
+        "refresh_nl_text = ?, refresh_parent_version_id = ?, "
+        "refresh_triggered_by_ad_hoc_id = ?, refresh_cap_overridden = ?, "
+        "refresh_parsed_intent_json = ?, refresh_used_degraded = ? "
+        "WHERE id = ? AND user_id = ?",
+        (
+            nl_text,
+            parent_id,
+            triggered_by_ad_hoc_id,
+            cap_overridden,
+            parsed_intent.model_dump_json(),
+            used_degraded,
+            new_plan_version_id,
             uid,
-            tier=tier,  # type: ignore[arg-type]
-            refresh_scope_start=scope_start_date,
-            refresh_scope_end=scope_end_date,
-            plan_version_id=new_plan_version_id,
-            plan_version_id_parent=parent_id,
-            prior_plan_session_window=prior_window,
-            cache=_build_layer4_cache(),
-            parsed_intent=parsed_intent,
-            today=today,
-        )
-    except OrchestrationError as exc:
-        duration_ms = int((time.monotonic() - started) * 1000)
-        db.rollback()
-        _write_refresh_log(
-            db,
-            user_id=uid,
-            tier=tier,
-            nl_text=nl_text,
-            parsed_intent_json=parsed_intent.model_dump_json(),
-            layers_run=layers_run,
-            scope_start_date=scope_start_date,
-            scope_end_date=scope_end_date,
-            plan_version_id_before=parent_id,
-            plan_version_id_after=None,
-            duration_ms=duration_ms,
-            sessions_changed=None,
-            success=False,
-            failure_reason=f"orchestration:{exc.code}",
-            triggered_by_ad_hoc_id=triggered_by_ad_hoc_id,
-        )
-        db.commit()
-        flash(_orchestration_error_message(exc), "danger")
-        return redirect(url_for("plan_refresh.refresh"))
-    except (
-        Layer3AOutputError,
-        Layer3BOutputError,
-        Layer4InputError,
-        Layer4OutputError,
-    ) as exc:
-        # 3A/3B run upstream of Layer 4 in the same cone, so a Layer3*OutputError
-        # (e.g. a `schema_violation` from the synthesizer) reaches here too;
-        # without this catch it bubbles as an unhandled 500.
-        duration_ms = int((time.monotonic() - started) * 1000)
-        db.rollback()
-        layer_tag = (
-            "layer3"
-            if isinstance(exc, (Layer3AOutputError, Layer3BOutputError))
-            else "layer4"
-        )
-        _write_refresh_log(
-            db,
-            user_id=uid,
-            tier=tier,
-            nl_text=nl_text,
-            parsed_intent_json=parsed_intent.model_dump_json(),
-            layers_run=layers_run,
-            scope_start_date=scope_start_date,
-            scope_end_date=scope_end_date,
-            plan_version_id_before=parent_id,
-            plan_version_id_after=None,
-            duration_ms=duration_ms,
-            sessions_changed=None,
-            success=False,
-            failure_reason=f"{layer_tag}:{exc.code}",
-            triggered_by_ad_hoc_id=triggered_by_ad_hoc_id,
-        )
-        db.commit()
-        flash(
-            f"Plan refresh failed ({exc.code}). Adjust your inputs and try again.",
-            "danger",
-        )
-        return redirect(url_for("plan_refresh.refresh"))
-
-    duration_ms = int((time.monotonic() - started) * 1000)
-    persist_layer4_sessions(db, result)
-
-    parent_sessions = load_plan_sessions_by_version(db, parent_id)
-    _, sessions_changed = _diff_sessions_against_parent(
-        result.sessions, parent_sessions
-    )
-
-    _write_refresh_log(
-        db,
-        user_id=uid,
-        tier=tier,
-        nl_text=nl_text,
-        parsed_intent_json=parsed_intent.model_dump_json(),
-        layers_run=layers_run,
-        scope_start_date=scope_start_date,
-        scope_end_date=scope_end_date,
-        plan_version_id_before=parent_id,
-        plan_version_id_after=new_plan_version_id,
-        duration_ms=duration_ms,
-        sessions_changed=sessions_changed,
-        success=True,
-        failure_reason="parser_degraded" if used_degraded else None,
-        cap_overridden=cap_overridden,
-        triggered_by_ad_hoc_id=triggered_by_ad_hoc_id,
+        ),
     )
     db.commit()
 
     if used_degraded:
         flash(
-            "NL parser unavailable — refresh ran on the default cascade only.",
+            "NL parser unavailable — refresh will run on the default cascade only.",
             "warning",
         )
     return redirect(
         url_for(
-            "plan_refresh.view_refresh", plan_version_id=new_plan_version_id
+            "plan_create.plan_progress", plan_version_id=new_plan_version_id
         )
     )
+
+
+# ─── #208 background-pass helpers (driven by the shared plan-create cron/poller
+# via `created_via`-dispatch in routes/plan_create._advance_plan_generation) ──
+
+
+_CREATED_VIA_TIER: dict[str, str] = {v: k for k, v in _TIER_CREATED_VIA.items()}
+
+
+def build_refresh_advance_ctx(db, uid: int, plan_version: dict) -> dict:
+    """Re-derive one background refresh pass's inputs from the frozen row.
+
+    The original request is long gone, so everything comes off the row. The
+    parsed_intent is read back VERBATIM (never re-parsed) so the plan_refresh
+    cache key is identical across passes — the determinism that lets a T3
+    Pattern A refresh resume from cache instead of looping (the #202 lesson).
+    `today` is re-read per pass (matching plan-create's cone posture); the
+    refresh scope itself is the frozen row's scope dates.
+    """
+    tier = _CREATED_VIA_TIER[plan_version['created_via']]
+    today = date.today()
+    parsed_json = plan_version.get('refresh_parsed_intent_json')
+    parsed_intent = (
+        _ParsedIntent.model_validate_json(parsed_json)
+        if parsed_json else _default_parsed_intent()
+    )
+    prior_window = load_prior_plan_session_window(db, uid, today=today, tier=tier)
+    return {
+        'tier': tier,
+        'today': today,
+        'scope_start': plan_version['scope_start_date'],
+        'scope_end': plan_version['scope_end_date'],
+        'parsed_intent': parsed_intent,
+        'prior_window': prior_window,
+        'parent_id': plan_version.get('refresh_parent_version_id'),
+        'nl_text': plan_version.get('refresh_nl_text') or "",
+        'used_degraded': bool(plan_version.get('refresh_used_degraded')),
+        'cap_overridden': bool(plan_version.get('refresh_cap_overridden')),
+        'triggered_by_ad_hoc_id': plan_version.get('refresh_triggered_by_ad_hoc_id'),
+        'layers_run': _TIER_DEFAULT_LAYERS_RUN[tier],
+        'started': time.monotonic(),
+    }
+
+
+def run_refresh_orchestration(db, uid: int, plan_version_id: int, ctx: dict, *, cache):
+    """Run one resumable refresh orchestration pass. Returns the Layer4Payload;
+    raises the same typed errors plan-create handles (so the shared resumable
+    pass owns budget-partial / retryable-block / terminal-fail uniformly)."""
+    return orchestrate_plan_refresh(
+        db,
+        uid,
+        tier=ctx['tier'],  # type: ignore[arg-type]
+        refresh_scope_start=ctx['scope_start'],
+        refresh_scope_end=ctx['scope_end'],
+        plan_version_id=plan_version_id,
+        plan_version_id_parent=ctx['parent_id'],
+        prior_plan_session_window=ctx['prior_window'],
+        cache=cache,
+        parsed_intent=ctx['parsed_intent'],
+        today=ctx['today'],
+    )
+
+
+def finalize_refresh_success_log(
+    db, uid: int, plan_version_id: int, result, ctx: dict | None
+) -> None:
+    """Write the success refresh-log (diff vs parent + attribution) once the
+    refreshed plan is durable + `ready`. Mirrors the old synchronous tail."""
+    if ctx is None:
+        return
+    duration_ms = int((time.monotonic() - ctx['started']) * 1000)
+    parent_id = ctx['parent_id']
+    parent_sessions = (
+        load_plan_sessions_by_version(db, parent_id) if parent_id is not None else []
+    )
+    _, sessions_changed = _diff_sessions_against_parent(
+        result.sessions, parent_sessions
+    )
+    _write_refresh_log(
+        db,
+        user_id=uid,
+        tier=ctx['tier'],
+        nl_text=ctx['nl_text'],
+        parsed_intent_json=ctx['parsed_intent'].model_dump_json(),
+        layers_run=ctx['layers_run'],
+        scope_start_date=ctx['scope_start'],
+        scope_end_date=ctx['scope_end'],
+        plan_version_id_before=parent_id,
+        plan_version_id_after=plan_version_id,
+        duration_ms=duration_ms,
+        sessions_changed=sessions_changed,
+        success=True,
+        failure_reason="parser_degraded" if ctx['used_degraded'] else None,
+        cap_overridden=ctx['cap_overridden'],
+        triggered_by_ad_hoc_id=ctx['triggered_by_ad_hoc_id'],
+    )
+    db.commit()
+
+
+def write_refresh_failure_log(
+    db, plan_version_id: int, user_id: int, *, failure_reason: str
+) -> None:
+    """Best-effort failure refresh-log for an async-refresh row, re-derived from
+    the frozen row. A no-op for plan-create rows. Called from the single
+    terminal choke point (`_mark_plan_failed`)."""
+    from routes.plan_create import _load_plan_version  # lazy: avoid import cycle
+
+    pv = _load_plan_version(db, user_id, plan_version_id)
+    if pv is None or (pv.get('created_via') or '') not in _CREATED_VIA_TIER:
+        return
+    tier = _CREATED_VIA_TIER[pv['created_via']]
+    parsed_json = pv.get('refresh_parsed_intent_json')
+    parsed_intent_json = parsed_json or _default_parsed_intent().model_dump_json()
+    _write_refresh_log(
+        db,
+        user_id=user_id,
+        tier=tier,
+        nl_text=pv.get('refresh_nl_text') or "",
+        parsed_intent_json=parsed_intent_json,
+        layers_run=_TIER_DEFAULT_LAYERS_RUN[tier],
+        scope_start_date=pv['scope_start_date'],
+        scope_end_date=pv['scope_end_date'],
+        plan_version_id_before=pv.get('refresh_parent_version_id'),
+        plan_version_id_after=None,
+        duration_ms=0,
+        sessions_changed=None,
+        success=False,
+        failure_reason=(failure_reason or "generation_failed")[:200],
+        cap_overridden=bool(pv.get('refresh_cap_overridden')),
+        triggered_by_ad_hoc_id=pv.get('refresh_triggered_by_ad_hoc_id'),
+    )
+    db.commit()
 
 
 @bp.route("/<int:plan_version_id>", methods=["GET"])

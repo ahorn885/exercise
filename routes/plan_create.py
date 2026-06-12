@@ -249,7 +249,10 @@ def _load_plan_version(db, user_id: int, plan_version_id: int) -> dict | None:
     row = db.execute(
         "SELECT id, user_id, created_at, created_via, scope_start_date, "
         "scope_end_date, pattern, generation_status, generation_error, "
-        "generation_units_cached, generation_stall_passes "
+        "generation_units_cached, generation_stall_passes, "
+        "refresh_nl_text, refresh_parent_version_id, "
+        "refresh_triggered_by_ad_hoc_id, refresh_cap_overridden, "
+        "refresh_parsed_intent_json, refresh_used_degraded "
         "FROM plan_versions WHERE id = ? AND user_id = ?",
         (plan_version_id, user_id),
     ).fetchone()
@@ -267,6 +270,19 @@ def _load_plan_version(db, user_id: int, plan_version_id: int) -> dict | None:
         'generation_error': row['generation_error'],
         'generation_units_cached': int(row['generation_units_cached'] or 0),
         'generation_stall_passes': int(row['generation_stall_passes'] or 0),
+        # #208 async-refresh inputs (NULL on plan-create rows).
+        'refresh_nl_text': row['refresh_nl_text'],
+        'refresh_parent_version_id': (
+            int(row['refresh_parent_version_id'])
+            if row['refresh_parent_version_id'] is not None else None
+        ),
+        'refresh_triggered_by_ad_hoc_id': (
+            int(row['refresh_triggered_by_ad_hoc_id'])
+            if row['refresh_triggered_by_ad_hoc_id'] is not None else None
+        ),
+        'refresh_cap_overridden': bool(row['refresh_cap_overridden']),
+        'refresh_parsed_intent_json': row['refresh_parsed_intent_json'],
+        'refresh_used_degraded': bool(row['refresh_used_degraded']),
     }
 
 
@@ -412,6 +428,17 @@ def _view_plan_url(plan_version_id: int) -> str:
     return url_for('plan_create.view_plan', plan_version_id=plan_version_id)
 
 
+def _completed_view_url(plan_version_id: int, created_via: str | None) -> str:
+    """Where a finished plan-version lands. #208 — a refreshed plan opens its
+    diff view (`plan_refresh.view_refresh`); a created plan opens the plan view.
+    `created_via` distinguishes them (`plan_refresh_t*` vs `plan_create`)."""
+    if (created_via or '').startswith('plan_refresh'):
+        return url_for(
+            'plan_refresh.view_refresh', plan_version_id=plan_version_id
+        )
+    return _view_plan_url(plan_version_id)
+
+
 def _mark_plan_failed(
     db, plan_version_id: int, user_id: int, message: str,
     traceback_text: str | None = None,
@@ -453,6 +480,21 @@ def _mark_plan_failed(
                 f"plan_version_id={plan_version_id} (non-fatal; column may be "
                 f"pre-migration): {_tb_exc}"
             )
+    # #208 — for an async-refresh row, record a best-effort failure entry in the
+    # refresh log (the success path logs from the finalize step). A no-op for
+    # plan-create rows. Isolated + best-effort so a log fault can never turn the
+    # already-committed failure path back into a 500.
+    try:
+        from routes.plan_refresh import write_refresh_failure_log
+        write_refresh_failure_log(
+            db, plan_version_id, user_id, failure_reason=message
+        )
+    except Exception as _rl_exc:  # noqa: BLE001 — refresh-log must not break the failure path
+        db.rollback()
+        print(
+            f"_mark_plan_failed: refresh failure-log write skipped for "
+            f"plan_version_id={plan_version_id} (non-fatal): {_rl_exc}"
+        )
     return {"status": "failed", "error": message}
 
 
@@ -573,18 +615,35 @@ def _advance_plan_generation_locked(db, uid: int, plan_version_id: int,
         )
     db.commit()
 
+    # #208 — a refresh row reuses this whole resumable pass (stall backstop,
+    # per-invocation budget, retryable-block resume, terminal-fail handling);
+    # only the orchestration call + the post-`ready` side-effect differ. The
+    # dispatch is purely additive — plan-create rows take the identical path.
+    is_refresh = (plan_version.get('created_via') or '').startswith('plan_refresh')
+    refresh_ctx = None
     try:
         with generation_deadline(_INVOCATION_BUDGET_S):
             # D-77 per-invocation budget -- stop synthesizing new blocks before
             # the function-duration cap so the pass returns cleanly (cached
             # blocks persist; next pass resumes) instead of 504-ing
             # mid-synthesis and wasting that block's Anthropic call.
-            result = orchestrate_plan_create(
-                db, uid,
-                plan_start_date=plan_version['scope_start_date'],
-                plan_version_id=plan_version_id,
-                cache=_build_layer4_cache(),
-            )
+            if is_refresh:
+                from routes.plan_refresh import (
+                    build_refresh_advance_ctx,
+                    run_refresh_orchestration,
+                )
+                refresh_ctx = build_refresh_advance_ctx(db, uid, plan_version)
+                result = run_refresh_orchestration(
+                    db, uid, plan_version_id, refresh_ctx,
+                    cache=_build_layer4_cache(),
+                )
+            else:
+                result = orchestrate_plan_create(
+                    db, uid,
+                    plan_start_date=plan_version['scope_start_date'],
+                    plan_version_id=plan_version_id,
+                    cache=_build_layer4_cache(),
+                )
         # Success path runs INSIDE the try so a persist/commit failure (e.g. a
         # plan_sessions schema or natural-key surprise) is caught below and
         # marks the row terminal — not a raw 500 that leaves it 'generating'
@@ -603,22 +662,39 @@ def _advance_plan_generation_locked(db, uid: int, plan_version_id: int,
             (plan_version_id, uid),
         )
         db.commit()
-        # Layer 5A — best-effort post-`ready` deterministic nutrition synthesis.
-        # The plan is already durable + `ready` above; a nutrition fault must
-        # NEVER affect it, so it's isolated in its own try and never propagates
-        # (mirrors the progress-block snapshot pattern). Zero-LLM + fast, so it's
-        # safe to run inline on the completing pass. Commit only when something
-        # was actually persisted, so the common no-inputs case adds no extra
-        # commit (and no DB work).
-        try:
-            if generate_and_persist_plan_nutrition(db, uid, plan_version_id) is not None:
-                db.commit()
-        except Exception as _nutr_exc:  # noqa: BLE001 — advisory must not break gen
-            db.rollback()
-            print(
-                f"_advance_plan_generation: post-ready nutrition synthesis failed "
-                f"for plan_version_id={plan_version_id} (non-fatal): {_nutr_exc}"
-            )
+        if is_refresh:
+            # #208 — record the successful refresh (diff vs parent + attribution)
+            # in the refresh log, mirroring the synchronous route's success path.
+            # Best-effort: the plan is already durable + `ready`, so a log fault
+            # must never propagate.
+            try:
+                from routes.plan_refresh import finalize_refresh_success_log
+                finalize_refresh_success_log(
+                    db, uid, plan_version_id, result, refresh_ctx
+                )
+            except Exception as _rl_exc:  # noqa: BLE001 — log must not break gen
+                db.rollback()
+                print(
+                    f"_advance_plan_generation: refresh success-log write failed "
+                    f"for plan_version_id={plan_version_id} (non-fatal): {_rl_exc}"
+                )
+        else:
+            # Layer 5A — best-effort post-`ready` deterministic nutrition
+            # synthesis. The plan is already durable + `ready` above; a nutrition
+            # fault must NEVER affect it, so it's isolated in its own try and
+            # never propagates (mirrors the progress-block snapshot pattern).
+            # Zero-LLM + fast, so it's safe to run inline on the completing pass.
+            # Commit only when something was actually persisted, so the common
+            # no-inputs case adds no extra commit (and no DB work).
+            try:
+                if generate_and_persist_plan_nutrition(db, uid, plan_version_id) is not None:
+                    db.commit()
+            except Exception as _nutr_exc:  # noqa: BLE001 — advisory must not break gen
+                db.rollback()
+                print(
+                    f"_advance_plan_generation: post-ready nutrition synthesis failed "
+                    f"for plan_version_id={plan_version_id} (non-fatal): {_nutr_exc}"
+                )
         return {"status": "ready"}
     except Layer4GenerationIncomplete as exc:
         # D-77 budget spent mid-pass -- NOT a failure. Blocks synthesized this
@@ -1058,7 +1134,9 @@ def plan_progress(plan_version_id: int):
         abort(404)
 
     if plan_version['generation_status'] == 'ready':
-        return redirect(_view_plan_url(plan_version_id))
+        return redirect(
+            _completed_view_url(plan_version_id, plan_version.get('created_via'))
+        )
 
     return render_template(
         'plan_create/progress.html',
@@ -1066,7 +1144,9 @@ def plan_progress(plan_version_id: int):
         generate_url=url_for(
             'plan_create.generate_plan', plan_version_id=plan_version_id
         ),
-        view_url=_view_plan_url(plan_version_id),
+        view_url=_completed_view_url(
+            plan_version_id, plan_version.get('created_via')
+        ),
         new_url=url_for('plan_create.new_plan'),
     )
 
@@ -1088,9 +1168,13 @@ def generate_plan(plan_version_id: int):
     if status == 'not_found':
         abort(404)
     if status == 'ready':
-        return jsonify(
-            {"status": "ready", "redirect": _view_plan_url(plan_version_id)}
-        )
+        # Refreshed plans open their diff view; created plans the plan view.
+        plan_version = _load_plan_version(db, uid, plan_version_id)
+        created_via = plan_version.get('created_via') if plan_version else None
+        return jsonify({
+            "status": "ready",
+            "redirect": _completed_view_url(plan_version_id, created_via),
+        })
     if status == 'failed':
         return jsonify({"status": "failed", "error": outcome['error']})
     # 'generating' — this pass made partial progress and the row is still

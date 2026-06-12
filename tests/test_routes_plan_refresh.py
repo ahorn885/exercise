@@ -23,6 +23,7 @@ from layer4 import OrchestrationError
 from layer4.context import ParsedIntent
 from layer4.payload import PlanSession
 from nl_parser import NLParserError
+import routes.plan_refresh as plan_refresh_mod
 from routes.plan_refresh import (
     _TIER_CAP_LIMITS,
     _athlete_active_injury_summary,
@@ -39,6 +40,8 @@ from routes.plan_refresh import (
     _run_parser,
     _validate_ad_hoc_id_for_user,
     _write_refresh_log,
+    build_refresh_advance_ctx,
+    write_refresh_failure_log,
 )
 
 
@@ -803,3 +806,93 @@ class TestCheckFrequencyCap:
         _, params = db.calls[0]
         # T3 window is 168h
         assert params[2] == now - timedelta(hours=168)
+
+
+# ─── #208 async-refresh background helpers ───────────────────────────────────
+
+
+def _frozen_refresh_row(**overrides):
+    """A plan_versions row as `_load_plan_version` returns it for an
+    async-refresh row (created_via encodes the tier)."""
+    row = {
+        'id': 71,
+        'user_id': 3,
+        'created_via': 'plan_refresh_t2',
+        'scope_start_date': date(2026, 6, 12),
+        'scope_end_date': date(2026, 6, 18),
+        'generation_status': 'generating',
+        'refresh_nl_text': 'legs felt heavy',
+        'refresh_parent_version_id': 65,
+        'refresh_triggered_by_ad_hoc_id': None,
+        'refresh_cap_overridden': False,
+        'refresh_parsed_intent_json': ParsedIntent(raw_text='FROZEN').model_dump_json(),
+        'refresh_used_degraded': False,
+    }
+    row.update(overrides)
+    return row
+
+
+class TestBuildRefreshAdvanceCtx:
+    def test_reads_frozen_inputs_without_reparsing(self, monkeypatch):
+        # The parser must NOT run again — the ctx's parsed_intent must be the
+        # frozen one verbatim (re-parsing would drift the cache key, #202).
+        monkeypatch.setattr(
+            plan_refresh_mod, "load_prior_plan_session_window",
+            lambda *a, **k: [],
+        )
+        # Hard-fail if anything tries to re-run the NL parser this pass.
+        monkeypatch.setattr(
+            plan_refresh_mod, "_run_parser",
+            lambda *a, **k: (_ for _ in ()).throw(AssertionError("re-parsed!")),
+        )
+        ctx = build_refresh_advance_ctx(_FakeConn(), 3, _frozen_refresh_row())
+        assert ctx['tier'] == 'T2'  # derived from created_via
+        assert ctx['parsed_intent'].raw_text == 'FROZEN'
+        assert ctx['scope_start'] == date(2026, 6, 12)
+        assert ctx['scope_end'] == date(2026, 6, 18)
+        assert ctx['parent_id'] == 65
+        assert ctx['nl_text'] == 'legs felt heavy'
+        assert ctx['prior_window'] == []
+
+    def test_missing_parsed_intent_falls_back_to_default(self, monkeypatch):
+        monkeypatch.setattr(
+            plan_refresh_mod, "load_prior_plan_session_window",
+            lambda *a, **k: [],
+        )
+        ctx = build_refresh_advance_ctx(
+            _FakeConn(), 3, _frozen_refresh_row(refresh_parsed_intent_json=None)
+        )
+        assert isinstance(ctx['parsed_intent'], ParsedIntent)
+
+
+class TestWriteRefreshFailureLog:
+    def test_noop_for_plan_create_row(self, monkeypatch):
+        import routes.plan_create as pc
+        monkeypatch.setattr(
+            pc, "_load_plan_version",
+            lambda db, uid, pvid: {'created_via': 'plan_create', 'id': pvid},
+        )
+        calls = []
+        monkeypatch.setattr(
+            plan_refresh_mod, "_write_refresh_log",
+            lambda *a, **k: calls.append(k),
+        )
+        write_refresh_failure_log(_FakeConn(), 9, 3, failure_reason="boom")
+        assert calls == []  # create rows never write a refresh log
+
+    def test_writes_failure_row_for_refresh(self, monkeypatch):
+        import routes.plan_create as pc
+        monkeypatch.setattr(
+            pc, "_load_plan_version", lambda db, uid, pvid: _frozen_refresh_row(id=pvid)
+        )
+        calls = []
+        monkeypatch.setattr(
+            plan_refresh_mod, "_write_refresh_log",
+            lambda *a, **k: calls.append(k),
+        )
+        write_refresh_failure_log(_FakeConn(), 71, 3, failure_reason="layer4:schema_violation")
+        assert len(calls) == 1
+        assert calls[0]['success'] is False
+        assert calls[0]['plan_version_id_after'] is None
+        assert calls[0]['tier'] == 'T2'
+        assert calls[0]['failure_reason'] == "layer4:schema_violation"
