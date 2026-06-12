@@ -46,6 +46,13 @@ from athlete_discipline_weighting_repo import (
     load_discipline_catalog,
     replace_discipline_weighting,
 )
+from athlete_crafts_repo import (
+    CraftSelectionError,
+    evict_layer1_on_crafts_change,
+    get_athlete_crafts,
+    load_craft_catalog,
+    replace_athlete_crafts,
+)
 from athlete_skill_toggles_repo import (
     evict_layer1_on_skill_toggle_change,
     get_athlete_skill_toggles,
@@ -410,6 +417,11 @@ def edit():
     discipline_catalog = load_discipline_catalog(db)
     discipline_weighting = get_discipline_weighting(db, uid)
 
+    # 2c.2b (#540) — owned-craft picker (Athlete tab). Catalog = the closed
+    # bike/paddle craft enums; current = the athlete's saved crafts.
+    craft_catalog = load_craft_catalog()
+    athlete_crafts = get_athlete_crafts(db, uid)
+
     # #469 — body weight is stored canonical kg; render it in the athlete's
     # chosen display unit so the form field round-trips cleanly. `profile` is
     # mutated in place because it's the dict the template reads.
@@ -474,6 +486,8 @@ def edit():
         skill_toggle_states=skill_toggle_states,
         discipline_catalog=discipline_catalog,
         discipline_weighting=discipline_weighting,
+        craft_catalog=craft_catalog,
+        athlete_crafts=athlete_crafts,
         # Used by the template to render an "Expired" badge without
         # round-tripping the timestamp through a Jinja-only comparison.
         now_iso=_dt.utcnow().isoformat(timespec='seconds'),
@@ -563,6 +577,34 @@ def save_disciplines():
     db.commit()
     evict_layer1_on_discipline_weighting_change(db, uid)
     flash('Discipline weighting saved.', 'success')
+    return redirect(url_for('profile.edit', tab='athlete'))
+
+
+@bp.route('/crafts', methods=['POST'])
+def save_crafts():
+    """Persist the owned-craft form (Athlete tab) — 2c.2b (#540).
+
+    The athlete checks the bike types + paddle crafts they own; each family is
+    replace-all (unchecked = not owned). Slugs are validated against the closed
+    enums, then the discipline-baseline craft columns are upserted. Mirrors
+    `save_disciplines`' parse → write → evict-Layer-1 path. These crafts feed
+    the X1b.3b craft-substitution narrowing in plan generation.
+    """
+    db = get_db()
+    uid = current_user_id()
+    try:
+        replace_athlete_crafts(
+            db,
+            uid,
+            bike_types=request.form.getlist('bike_types'),
+            paddle_crafts=request.form.getlist('paddle_crafts'),
+        )
+    except CraftSelectionError as exc:
+        flash(str(exc), 'error')
+        return redirect(url_for('profile.edit', tab='athlete'))
+    db.commit()
+    evict_layer1_on_crafts_change(db, uid)
+    flash('Gear saved.', 'success')
     return redirect(url_for('profile.edit', tab='athlete'))
 
 
