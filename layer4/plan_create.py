@@ -686,6 +686,26 @@ def _run_pattern_a_engine(
         generation_deadline_passed,
     )
     synth_count = [0]
+    # Rule #15 observability (once per synthesis-driver entry): the 3B
+    # periodization shape + 2D injury constraints are upstream inputs that shape
+    # volume/intensity targets and which exercises are off-limits — log them so a
+    # mis-periodized or over-excluded plan is attributable upstream of synthesis.
+    _phases_dbg = [
+        f"{p.phase_name}:{p.weeks}w vol={p.intended_volume_band} "
+        f"int={p.intended_intensity_distribution}"
+        for p in phase_structure.phases
+    ]
+    print(
+        f"plan_create 3B phase_structure: derived_from={phase_structure.derived_from} "
+        f"total_weeks={phase_structure.total_weeks} phases={_phases_dbg}"
+    )
+    _excl_2d = layer2d_payload.excluded_exercises if layer2d_payload else []
+    _acc_2d = layer2d_payload.accommodated_exercises if layer2d_payload else []
+    print(
+        f"plan_create 2D injury inputs: excluded_n={len(_excl_2d)} "
+        f"excluded_ids={[getattr(e, 'exercise_id', '?') for e in _excl_2d][:20]} "
+        f"accommodated_n={len(_acc_2d)}"
+    )
     for i, phase in enumerate(phase_structure.phases):
         if i not in phase_indices_to_synthesize:
             # Carryover phase (T3 cross-phase): not synthesized this call, but
@@ -748,6 +768,16 @@ def _run_pattern_a_engine(
                     phase_index=i,
                     week_in_phase=week,
                     prev_accepted_output_hash=prev_accepted_output_hash,
+                )
+                # Rule #15 observability: the per-block key CHAINS on
+                # prev_accepted_output_hash, so if an upstream block re-synthesizes
+                # to different content this block's key changes and it MISSes again
+                # — the "re-synthesizes every drive" churn (#202 class). Log the
+                # chain input + key so churn is attributable to the chain vs. a
+                # stable-but-uncached block.
+                print(
+                    f"compute_block_cache_key: {phase.phase_name}:w{week} idx={i} "
+                    f"key={block_key} prev_accepted_output_hash={prev_accepted_output_hash}"
                 )
 
                 def _serialize_block(

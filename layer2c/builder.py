@@ -608,6 +608,22 @@ def _emit_coaching_flags(
     # Affected_exercise_ids stays empty — capability gating is about
     # whether to include the discipline at all in race-relevant work,
     # not about which exercises in the discipline are blocked.
+    # Rule #15 observability: skill-gating is the third feasibility "why"
+    # (terrain / equipment / skill). Default-OFF toggles silently gate
+    # disciplines to strength, so log the loaded toggle vocab + the athlete's
+    # states + which off-toggles gate which disciplines — an EMPTY
+    # `skill_toggle_defs` means `layer0.skill_capability_toggles` is unapplied
+    # (the gate then silently no-ops), which is itself a finding.
+    _skill_gate_dbg = {
+        t: td["gated_discipline_ids"]
+        for t, td in skill_toggle_defs.items()
+        if td["gated_discipline_ids"] and not skill_toggle_states.get(t, False)
+    }
+    print(
+        f"layer2c skill-capability: toggle_defs={sorted(skill_toggle_defs)} "
+        f"toggle_states={dict(sorted(skill_toggle_states.items()))} "
+        f"off_toggle_gates={_skill_gate_dbg}"
+    )
     for toggle_name, td in skill_toggle_defs.items():
         gated_ids = td["gated_discipline_ids"]
         if not gated_ids:

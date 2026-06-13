@@ -100,9 +100,20 @@ def cluster_locale_ids(db: Any, user_id: int) -> list[str]:
         (user_id,),
     ).fetchone()
     if home is None:
+        print(
+            f"cluster_locale_ids: user_id={user_id} no preferred/home locale set "
+            f"→ cluster=[] (feasibility resolution will be skipped)"
+        )
         return []
     ids = [home["locale"]]
     if home["lat"] is None or home["lng"] is None:
+        # Rule #15 observability: a home without coords yields a single-locale
+        # cluster (radius sweep skipped) that looks normal downstream but can
+        # starve the feasibility cascade of terrain/equipment at other locales.
+        print(
+            f"cluster_locale_ids: user_id={user_id} home={home['locale']!r} has "
+            f"no coords → cluster=[home] only (radius sweep skipped)"
+        )
         return ids
     home_lat, home_lng = float(home["lat"]), float(home["lng"])
     others = db.execute(
@@ -135,7 +146,24 @@ def cluster_equipment_by_locale(
     """Per-locale effective-equipment sets across the cluster — the equipment
     analogue kept un-unioned (keyed by locale) for session-feasibility routing,
     where *which* locale carries a cardio machine matters (#540 slice 2c.2)."""
-    return {locale: locale_effective_tags(db, user_id, locale) for locale in cluster}
+    out = {locale: locale_effective_tags(db, user_id, locale) for locale in cluster}
+    # Rule #15 observability: equipment feeds the feasibility INDOOR tier + craft
+    # routing. The usual reason a locale's pool is empty is that it links no
+    # gym_profile — log the link + tag count per locale so a thin pool is
+    # attributable to "no profile linked" rather than guessed. Scoped to this
+    # feasibility/2C helper, not the per-page-load `locale_effective_tags`.
+    for locale in cluster:
+        prof = db.execute(
+            "SELECT gym_profile_id FROM locale_profiles "
+            "WHERE user_id = ? AND locale = ? LIMIT 1",
+            (user_id, locale),
+        ).fetchone()
+        gid = prof["gym_profile_id"] if prof else None
+        print(
+            f"cluster_equipment_by_locale: user_id={user_id} locale={locale!r} "
+            f"gym_profile_id={gid} n_tags={len(out[locale])}"
+        )
+    return out
 
 
 def cluster_terrain_by_locale(
