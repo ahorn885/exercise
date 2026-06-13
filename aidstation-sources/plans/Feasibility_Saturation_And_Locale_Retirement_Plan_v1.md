@@ -27,8 +27,9 @@ pv=69 is `created_via=plan_create`. The Peak week resolved **5 strength sessions
 |----|-------|--------|----|
 | A | Observability — feasibility/collision/source logging | **MERGED** | #576, #577 |
 | D | Feasibility-correctness investigation | **RESOLVED** (plan-70, 2026-06-13) — see §6 | — |
-| **F** | **Craft ownership from the equipment inventory (Slice V5)** | **BUILDING NOW — root-cause fix** | `claude/craft-from-equipment` |
-| E | Saturation backstop (deterministic cap + repair) | **defense-in-depth, after F** | — |
+| F | Craft ownership from the equipment inventory (Slice V5) | **MERGED** (root-cause fix) | #578 |
+| E1 | Deterministic strength+strength repair (crash-guard) | **BUILDING** (relocate-else-drop, pre-validation) | `claude/strength-collision-repair` |
+| E2 | Saturation policy — dose+2 cap + reallocate-with-variety | queued (lower priority now F + E1 cover the live issue) | follow-up |
 | B | Retire the legacy `LOCALES` enum | queued (same one-source-of-truth theme as F) | follow-up PR |
 | C | Onboarding: force build + tag a home locale | queued | follow-up PR |
 | V | Full Vocabulary arc V1–V7 (`Vocabulary_TargetState_and_Plan_v1`) | durable follow-up (already decided) | — |
