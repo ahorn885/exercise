@@ -32,6 +32,7 @@ pv=69 is `created_via=plan_create`. The Peak week resolved **5 strength sessions
 | E2 | Saturation policy — dose+2 cap + reallocate-with-variety | queued (lower priority now E1 + craft model cover it) | follow-up |
 | G | Craft = athlete-owned canonical store (set B), available home-cluster-wide | **DECIDED — next** | follow-up PR |
 | H | Away craft availability — (b) craft↔location + (c) craft attached to a travel event | **DECIDED** — design + build (new schema/UI) | follow-up PR |
+| I | Craft/equipment taxonomy + unified feasibility cascade | **DESIGNED** (`designs/CraftEquipment_Taxonomy_And_FeasibilityCascade_Design_v1.md`) — ordering + explicit craft↔terrain ratified; OPEN: the craft→terrain seed grid (Trigger #2) | follow-up PR |
 | B | Retire the legacy `LOCALES` enum | queued (same one-source-of-truth theme) | follow-up PR |
 | C | Onboarding: force build + tag a home locale (+ capture athlete craft) | queued | follow-up PR |
 | V | Full Vocabulary arc V1–V7 (`Vocabulary_TargetState_and_Plan_v1`) | durable follow-up (already decided) | — |
