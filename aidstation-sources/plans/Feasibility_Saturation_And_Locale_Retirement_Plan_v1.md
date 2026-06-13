@@ -30,7 +30,7 @@ pv=69 is `created_via=plan_create`. The Peak week resolved **5 strength sessions
 | F | Craft from the equipment inventory (#578) | **REVERTED** (`4bdcb3c`) — wrong scoping; craft is athlete-owned, not location | #578 (reverted) |
 | E1 | Deterministic strength+strength repair (crash-guard) | **MERGED** | #579 |
 | E2 | Saturation policy — dose+2 cap + reallocate-with-variety | queued (lower priority now E1 + craft model cover it) | follow-up |
-| G | Craft = athlete-owned canonical store (set B), available home-cluster-wide | **DECIDED — next** | follow-up PR |
+| G | Craft = athlete-owned canonical store (set B), available home-cluster-wide | **VALIDATED LIVE** (pv=71, 2026-06-13 — set B populated → D-008/D-009 `tier=exact` → plan `ready`; #585) | #585 |
 | H | Away craft availability — (b) craft↔location + (c) craft attached to a travel event | **DECIDED** — design + build (new schema/UI) | follow-up PR |
 | I | Craft/equipment taxonomy + unified feasibility cascade | **DESIGNED** (`designs/CraftEquipment_Taxonomy_And_FeasibilityCascade_Design_v1.md`) — ordering + explicit craft↔terrain ratified; OPEN: the craft→terrain seed grid (Trigger #2) | follow-up PR |
 | B | Retire the legacy `LOCALES` enum | queued (same one-source-of-truth theme) | follow-up PR |
