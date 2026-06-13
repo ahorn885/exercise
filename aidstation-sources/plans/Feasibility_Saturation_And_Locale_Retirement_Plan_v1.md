@@ -47,8 +47,14 @@ Shipped on `main`:
 - `locations.cluster_equipment_by_locale`: per-locale `gym_profile_id` link + tag count — equipment thinness attributable to "no gym profile linked" vs. a genuinely empty pool.
 - `locations.cluster_locale_ids`: the two degenerate paths (no preferred/home → empty cluster; home without coords → single-locale cluster, radius sweep skipped) — catches a tiny/wrong cluster that looks normal downstream (incl. a stale legacy locale read as home).
 - `layer2c/builder.py` skill block: loaded `skill_toggle_defs` + the athlete's `skill_toggle_states` + which off-toggles gate which disciplines — an **empty** defs set means `layer0.skill_capability_toggles` is unapplied (the gate silently no-ops), itself a finding.
+- `layer4/per_phase.py` `_format_session_grid`: the deterministic `build_session_grid` per-(phase,week) allocation (`sessions_this_week × min` per discipline) — the **upstream half** of saturation (how many sessions the week wants, *before* feasibility turns infeasible ones to strength).
+- `layer4/orchestrator.py` `_build_terrain_feasibility`: each discipline's **2A inclusion** status — feasibility is built on the included set, so a wrong include/exclude is root-upstream.
 
-These feed WS-D. Read them on the next prod create via `/admin/logs` with `q=_build_terrain_feasibility`, `q=cluster_terrain_by_locale`, `q=cluster_equipment_by_locale`, `q=cluster_locale_ids`, `q=layer2c skill-capability`.
+Together these give the full causal chain: **2A include → grid allocate → feasibility resolve → failover/collision**. Feed WS-D. Read on the next prod create via `/admin/logs` with `q=_build_terrain_feasibility` (incl. `2A_inclusion`), `q=cluster_terrain_by_locale`, `q=cluster_equipment_by_locale`, `q=cluster_locale_ids`, `q=layer2c skill-capability`, `q=build_session_grid`.
+
+**Diag-token reachability (verified):** all of the above are `print()` → Vercel log drain → `vercel_logs` → readable via `GET /admin/logs?token=<DIAG_TOKEN>` (same gate as `/admin/plan/<id>/diag`), stored **verbatim** (no truncation). Caveats: (1) must be deployed to `main` (prod runs on `main`); (2) a log fires only when its path executes — the feasibility/grid/terrain/equipment/cluster + per-block-collision logs fire on any **cold plan-create**, but the `layer2c skill-capability` line fires only on a **cold cone/2C build** (silent if the cone is a cache hit).
+
+**Known-but-unlogged suspects (add on demand if WS-D points there):** block cache-**key components** (only the hash is logged → the "re-synthesizes every drive" determinism / #202 question); 3B phase-structure derivation + per-phase volume/intensity band targets; 2D injury exclusions applied (wrist); LLM transient API errors (usually surface via the failure traceback).
 
 ---
 
