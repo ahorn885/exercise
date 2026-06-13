@@ -25,7 +25,7 @@ pv=69 is `created_via=plan_create`. The Peak week resolved **5 strength sessions
 
 | WS | Title | Status | PR |
 |----|-------|--------|----|
-| A | Observability — feasibility/collision logging | **MERGED** | #576 |
+| A | Observability — feasibility/collision/source logging | **MERGED #576 + extended #577** | #576, #577 |
 | B | Retire the legacy `LOCALES` enum | **DECIDED — build now** | this branch (`claude/locale-retirement`) |
 | C | Onboarding: force build + tag a home locale | **DECIDED — next** | follow-up PR |
 | D | Feasibility-correctness investigation | **PENDING** the logged re-run | — |
@@ -43,7 +43,12 @@ Shipped on `main`:
 - `layer4/per_phase.py`: on a `_check_two_per_day` reject, dump each multi-session day's `kind/discipline_id/session_index_in_day`.
 - `CLAUDE.md` **Rule #15 — Instrument as you build**.
 
-These feed WS-D. Read them on the next prod create via `/admin/logs?q=_build_terrain_feasibility` and `q=cluster_terrain_by_locale`.
+**Extended on #577 (source-level "why" for all three failure types):**
+- `locations.cluster_equipment_by_locale`: per-locale `gym_profile_id` link + tag count — equipment thinness attributable to "no gym profile linked" vs. a genuinely empty pool.
+- `locations.cluster_locale_ids`: the two degenerate paths (no preferred/home → empty cluster; home without coords → single-locale cluster, radius sweep skipped) — catches a tiny/wrong cluster that looks normal downstream (incl. a stale legacy locale read as home).
+- `layer2c/builder.py` skill block: loaded `skill_toggle_defs` + the athlete's `skill_toggle_states` + which off-toggles gate which disciplines — an **empty** defs set means `layer0.skill_capability_toggles` is unapplied (the gate silently no-ops), itself a finding.
+
+These feed WS-D. Read them on the next prod create via `/admin/logs` with `q=_build_terrain_feasibility`, `q=cluster_terrain_by_locale`, `q=cluster_equipment_by_locale`, `q=cluster_locale_ids`, `q=layer2c skill-capability`.
 
 ---
 
@@ -99,6 +104,7 @@ Do **not** implement until WS-D data is in. Recorded Andy decisions (held as des
 - **Over-cap failovers → `reallocate`** — note: in the cascade, `reallocate` is the *last* tier (only reached with no strength pool); STRENGTH is preferred over it. So "trim over-cap strength-subs to reallocate" is a **new weekly-saturation rule that overrides** the per-discipline strength>reallocate preference — not the existing tier firing.
 - **Reallocation must respect VARIETY, not just feasibility.** Andy's failure mode: *"3 running + 3 attempted cycling, cycling infeasible → reallocated to running = 6 running"* is too little variety. The rule must distribute reallocated volume across feasible disciplines and cap how much any one discipline can absorb — not dump it all on the nearest one.
 - **Deterministic repair is the Layer-3 crash guard** (Andy's pick over a prompt-only rule): on a `_check_two_per_day` strength+strength, relocate/drop the lower-priority strength before validation so a stray collision self-heals instead of re-rolling to the stall backstop.
+- **Prefer deterministic defensive routes (Andy 2026-06-13):** *"I want as many of the defensive routes to be deterministic as makes sense. I don't want to create new likely failure modes."* The cap, the over-cap→reallocate trim, the variety distribution, and the collision repair should be **deterministic code**, not new LLM prompt-directives. The root failure was precisely an LLM-driven defensive route (the failover-as-prompt-directive intermittently emitting the collision); the fix must not swap one probabilistic failure mode for another. Reserve the LLM for composing session *content*; let code decide *which/where/how-many*. (Cross-cutting principle for this arc, not just WS-E.)
 
 **Triggers:** the saturation policy + any prompt wording are **Trigger #1 (prompt) / #5 (cascade architecture)** — bring exact wording + the cap value + the variety rule for Andy's sign-off before editing.
 
