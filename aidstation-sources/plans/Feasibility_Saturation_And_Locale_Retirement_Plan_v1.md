@@ -27,14 +27,18 @@ pv=69 is `created_via=plan_create`. The Peak week resolved **5 strength sessions
 |----|-------|--------|----|
 | A | Observability — feasibility/collision/source logging | **MERGED** | #576, #577 |
 | D | Feasibility-correctness investigation | **RESOLVED** (plan-70, 2026-06-13) — see §6 | — |
-| F | Craft ownership from the equipment inventory (Slice V5) | **MERGED** (root-cause fix) | #578 |
-| E1 | Deterministic strength+strength repair (crash-guard) | **BUILDING** (relocate-else-drop, pre-validation) | `claude/strength-collision-repair` |
-| E2 | Saturation policy — dose+2 cap + reallocate-with-variety | queued (lower priority now F + E1 cover the live issue) | follow-up |
-| B | Retire the legacy `LOCALES` enum | queued (same one-source-of-truth theme as F) | follow-up PR |
-| C | Onboarding: force build + tag a home locale | queued | follow-up PR |
+| F | Craft from the equipment inventory (#578) | **REVERTED** (`4bdcb3c`) — wrong scoping; craft is athlete-owned, not location | #578 (reverted) |
+| E1 | Deterministic strength+strength repair (crash-guard) | **MERGED** | #579 |
+| E2 | Saturation policy — dose+2 cap + reallocate-with-variety | queued (lower priority now E1 + craft model cover it) | follow-up |
+| G | Craft = athlete-owned canonical store (set B), available home-cluster-wide | **DECIDED — next** | follow-up PR |
+| H | Away craft availability — (b) craft↔location + (c) craft attached to a travel event | **DECIDED** — design + build (new schema/UI) | follow-up PR |
+| B | Retire the legacy `LOCALES` enum | queued (same one-source-of-truth theme) | follow-up PR |
+| C | Onboarding: force build + tag a home locale (+ capture athlete craft) | queued | follow-up PR |
 | V | Full Vocabulary arc V1–V7 (`Vocabulary_TargetState_and_Plan_v1`) | durable follow-up (already decided) | — |
 
-**Root cause (WS-D RESOLVED):** the live re-run (plan-70) proved the saturation is a **craft source-of-truth drift**, *not* genuine infeasibility (Andy's prior held). The craft axis reads the `bike_types_available`/`paddle_craft_types` capture columns (**set B**, empty for the athlete), while the athlete's bikes/boats live in the **equipment inventory** (**set C**, `layer0.equipment_items`). So D-008 Mountain Biking (grid-allocated 5×) + D-009 Packrafting craft-fail to strength → 7 strength/week → the `no strength+strength` collision. `Vocabulary_TargetState_and_Plan_v1` §1/§7 **already decided** set C is authoritative and the capture enums should be projected from it (Slice V5) — but that stalled, and #558/#560 instead built more of set B. WS-F executes the decided V5.
+**Root cause (WS-D RESOLVED):** the live re-run (plan-70) proved the saturation is a **craft source-of-truth drift**, *not* genuine infeasibility (Andy's prior held). The craft axis reads the athlete-level `bike_types_available`/`paddle_craft_types` capture columns (**set B**), which were **empty** for the athlete, while the bikes/boats were entered as **location equipment** (`gym_profiles.equipment`). So D-008 Mountain Biking (grid-allocated 5×) + D-009 Packrafting craft-fail to strength → 7 strength/week → the `no strength+strength` collision.
+
+**Correction (Andy 2026-06-13):** craft is **athlete-owned, portable gear** — scoped to the *athlete*, not a location. The canonical store is therefore the **athlete-level capture (set B)**, available across the whole home-cluster by default, with away availability set explicitly per **(b) craft↔location** + **(c) craft attached to a travel event** (WS-G/H). #578 wrongly derived ownership from the per-locale equipment inventory and was **reverted**. (Slice V5 in `Vocabulary_TargetState_and_Plan_v1` was about sourcing the craft picker's *option vocabulary* from the `equipment_items` catalog — **not** sourcing *ownership* from location equipment; that was my misread.)
 
 **Sequence:** A,D done → **F now** (sources craft ownership from equipment → fixes the live blocker + the drift deterministically) → re-run to confirm → **E** deterministic backstop (so *any* residual saturation can't crash) → **B/C** locale retirement + onboarding home (same one-source-of-truth theme) → **V** the full decided vocabulary arc as the durable cleanup.
 
@@ -115,17 +119,21 @@ The logged re-run answered it. Cluster + terrain were richly populated (5 locale
 
 ---
 
-## 6a. Workstream F — Craft ownership from the equipment inventory (Slice V5, BUILDING)
+## 6a. Workstream F (REVERTED) → G/H — Craft is athlete-owned, not location-scoped
 
-Source craft ownership from the **equipment inventory** (set C, the decided authoritative source) instead of only the separate `bike_types_available`/`paddle_craft_types` capture columns (set B). Surgical realization of `Vocabulary_TargetState_and_Plan_v1` Slice V5, deterministic (no new LLM surface).
+**F (#578) reverted (`4bdcb3c`).** It derived craft ownership from the per-locale equipment inventory, conflating portable athlete gear with fixed location equipment and offering no travel story. The corrected model (Andy 2026-06-13):
 
-- **`layer4/session_feasibility.py`** — new pure `craft_slugs_from_equipment(equipment_names)` + `_EQUIPMENT_CRAFT_SLUGS` (the bike+paddle vessels minus indoor `cycling_trainer`). Normalizes casing + parenthetical labels ("Mountain Bike (MTB)" → `mountain_bike`).
-- **`layer4/orchestrator.py`** `_build_terrain_feasibility` — `owned_crafts = capture-enums ∪ craft_slugs_from_equipment(cluster equipment)`. **Union**, not replace — additive, so it can't break the existing capture path (the full retirement of set B is the durable **V** arc, not this PR).
-- **Tests** — helper unit tests + a recurrence guard that `_EQUIPMENT_CRAFT_SLUGS` stays in sync with `athlete.BIKE_TYPES`/`PADDLE_CRAFT_TYPES`.
+**WS-G — athlete-owned craft, home-cluster-wide.** The canonical store is the athlete-level capture (set B, `bike_types_available`/`paddle_craft_types`, already `user_id`-scoped with the #558/#560 write path). The craft axis treats an owned craft as available at **every home-cluster locale** by default (no per-locale equipment check). For the athlete to be unblocked now, set B must be **populated** — the existing profile "Gear" form writes it; WS-C makes capture mandatory in onboarding so new users can't ship empty craft data.
 
-**Verify:** plan re-run shows `owned_crafts=[mountain_bike, packraft, …]` (was `[]`), D-008/D-009 resolve via terrain/indoor (not craft-strength), Peak/Build weeks drop to ~dose strength, plan reaches `ready`. **Secondary (not in this PR, → E/V):** the craft-STRENGTH terminal still preempts the INDOOR tier (a trainer/erg should let a craftless athlete train indoors before strength); `strength_pool_n=0` craft-strength substitutions are degenerate.
+**WS-H — away craft availability (new product surface).** Both:
+- **(b)** a craft↔location association — mark that an owned craft is available at a specific away (non-home-cluster) location.
+- **(c)** attach a craft to a **travel event** — the craft is available at that event's location for its window.
+This needs new schema (craft↔location, craft↔event) + capture UI + a per-locale craft-availability read in the cascade (today `owned_crafts` is a flat athlete-wide list; H makes it locale-aware for away locations while staying home-cluster-wide by default). Design before build.
+
+**Verify (G):** with set B populated, a re-run shows `owned_crafts` carrying the athlete's vessels, D-008/D-009 resolve via terrain/indoor (not craft-strength), weeks drop to ~dose strength, plan reaches `ready`. **Secondary (→ E2/V):** the craft-STRENGTH terminal still preempts the INDOOR tier (a trainer/erg should serve a craftless athlete before strength); `strength_pool_n=0` craft-strength substitutions are degenerate.
 
 ---
+
 
 ## 7. Workstream E — Saturation backstop (deterministic; defense-in-depth after F)
 
