@@ -1776,6 +1776,86 @@ class PhaseSynthesisResult:
     llm_call_count: int
 
 
+def _repair_strength_collisions(
+    sessions: list[PlanSession],
+) -> tuple[list[PlanSession], list[str]]:
+    """WS-E deterministic crash-guard: resolve any day carrying two `strength`
+    sessions — which `Layer4Payload._check_two_per_day` hard-rejects — BEFORE
+    validation, so the collision self-heals in code instead of forcing a model
+    re-synthesis (the pv=69 / plan-70 stall class). Code decides placement; the
+    LLM is left to compose session content.
+
+    For each offending day, the later (`session_index_in_day==1`) strength is
+    relocated onto the nearest in-list day holding a single non-hard CARDIO
+    session — becoming that day's 2nd session (valid: a cardio is present, not
+    two-strength, not two-hard) — and that target is consumed so a second
+    collision can't reuse it. If no such day exists, the extra strength is
+    dropped. Conservative: only relocates onto days the model already populated,
+    so it never invents an unavailable training day. Pure. Returns
+    (repaired_sessions, notes); empty notes == unchanged. Scoped to
+    strength+strength; other `_check_two_per_day` cases keep the existing retry.
+    """
+    by_day: dict = {}
+    for s in sessions:
+        by_day.setdefault(s.date, []).append(s)
+
+    consumed: set = set()
+    updates: dict = {}  # session_id -> replacement PlanSession
+    drops: set = set()  # session_ids to drop
+    notes: list[str] = []
+
+    def _find_target(exclude_date):
+        for td in sorted(by_day):
+            if td == exclude_date or td in consumed:
+                continue
+            ds = by_day[td]
+            if (
+                len(ds) == 1
+                and ds[0].kind == "cardio"
+                and ds[0].intensity_summary != "hard"
+            ):
+                return td, ds[0]
+        return None
+
+    for d in sorted(by_day):
+        ss = by_day[d]
+        strengths = [s for s in ss if s.kind == "strength"]
+        if len(ss) != 2 or len(strengths) != 2:
+            continue
+        mover = max(strengths, key=lambda s: s.session_index_in_day)
+        keeper = min(strengths, key=lambda s: s.session_index_in_day)
+        updates[keeper.session_id] = keeper.model_copy(
+            update={"session_index_in_day": 0}
+        )
+        target = _find_target(d)
+        if target is not None:
+            td, cardio = target
+            consumed.add(td)
+            updates[cardio.session_id] = cardio.model_copy(
+                update={"session_index_in_day": 0}
+            )
+            updates[mover.session_id] = mover.model_copy(
+                update={
+                    "date": td,
+                    "day_of_week": cardio.day_of_week,
+                    "session_index_in_day": 1,
+                }
+            )
+            notes.append(f"{d}: relocated 2nd strength -> {td}")
+        else:
+            drops.add(mover.session_id)
+            notes.append(f"{d}: dropped 2nd strength (no relocation day)")
+
+    if not notes:
+        return sessions, []
+    out: list[PlanSession] = []
+    for s in sessions:
+        if s.session_id in drops:
+            continue
+        out.append(updates.get(s.session_id, s))
+    return out, notes
+
+
 def _build_payload_for_validation(
     *,
     user_id: int,
@@ -2166,6 +2246,16 @@ def synthesize_phase(
             ]
             final_retries_used = current_pass + 1
             continue
+
+        # WS-E deterministic crash-guard: resolve any strength+strength day in
+        # code BEFORE validation so a collision self-heals instead of forcing a
+        # retry/fumble (the pv=69 / plan-70 stall class). Runs every pass.
+        sessions, _collision_notes = _repair_strength_collisions(sessions)
+        if _collision_notes:
+            print(
+                f"synthesize_phase: {unit_tag} strength-collision repair — "
+                + "; ".join(_collision_notes)
+            )
 
         latest_sessions = sessions
         latest_notes = notes_str
