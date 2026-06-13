@@ -113,6 +113,8 @@ from layer4.context import (
 from layer4.payload import Layer4Payload, PlanSession
 from layer4.session_feasibility import (
     TerrainResolution,
+    indoor_machines,
+    required_terrains,
     resolve_craft_feasibility,
     resolve_terrain_feasibility,
 )
@@ -351,6 +353,14 @@ def _build_terrain_feasibility(
     disciplines (resolver returns None) are dropped — nothing to guide."""
     cluster = locations.cluster_locale_ids(db, user_id)
     if not cluster:
+        # Rule #15 observability: an empty cluster short-circuits the whole
+        # cascade before the per-discipline log below, so log the reason here —
+        # otherwise "no feasibility resolution" looks identical to "all feasible".
+        print(
+            f"_build_terrain_feasibility: user_id={user_id} cluster=[] "
+            f"(no preferred/home locale, or home lacks coords) — "
+            f"feasibility resolution skipped entirely"
+        )
         return {}
     terrain_by_locale = locations.cluster_terrain_by_locale(db, user_id, cluster)
     equip_by_locale = locations.cluster_equipment_by_locale(db, user_id, cluster)
@@ -458,6 +468,62 @@ def _build_terrain_feasibility(
         resolution = _terrain(d.discipline_id)
         if resolution is not None:
             out[d.discipline_id] = resolution
+
+    # Rule #15 observability: the cascade was print()-silent, so a plan
+    # over-saturated with strength substitutions couldn't be traced to its
+    # cause. Log, per discipline, WHY each tier resolved as it did — required
+    # vs. available terrain (EXACT), applicable proxies + fidelity + whether
+    # they're in the cluster (PROXY), indoor machines + whether they're in the
+    # equipment pool (INDOOR), strength-pool size (STRENGTH) — plus the
+    # skill-gate toggle and craft status. A STRENGTH/reallocate outcome is then
+    # attributable to a real gap vs. a mis-read/empty terrain/equipment input
+    # ("the substitute should have been in the cluster"). (pv=69 triage.)
+    _terr_by_loc = {loc: sorted(terrain_by_locale.get(loc, set())) for loc in cluster}
+    _equip_by_loc = {loc: sorted(equip_by_locale.get(loc, set())) for loc in cluster}
+    _cluster_terr = set().union(*terrain_by_locale.values()) if terrain_by_locale else set()
+    _cluster_equip = set().union(*equip_by_locale.values()) if equip_by_locale else set()
+    print(
+        f"_build_terrain_feasibility: user_id={user_id} cluster={cluster} "
+        f"terrain_by_locale={_terr_by_loc} equipment_by_locale={_equip_by_loc} "
+        f"owned_crafts={sorted(owned_crafts) if owned_crafts else []} "
+        f"skill_gated={dict(sorted(gated.items()))}"
+    )
+    for d in included:
+        d_id = d.discipline_id
+        d_name = name_by_discipline.get(d_id, "?")
+        if d_id in gated:
+            print(
+                f"  feasibility[{d_id}/{d_name}]: SKILL-GATED "
+                f"toggle='{gated[d_id]}' OFF — excluded from terrain cascade, "
+                f"strength-substituted at the session level (#336)"
+            )
+            continue
+        req = sorted(required_terrains(d_id))
+        if not req:
+            print(
+                f"  feasibility[{d_id}/{d_name}]: unconstrained "
+                f"(no terrain requirement) — scheduled as-is"
+            )
+            continue
+        proxies = sorted({(p, round(f, 2)) for r in req for p, f in gap_rules.get(r, [])})
+        machines = list(indoor_machines(d_id))
+        res = out.get(d_id)
+        tier = res.tier if res is not None else "DROPPED"
+        craft = (
+            f" craft_tier={res.craft_tier} owned_craft={res.owned_craft}"
+            if res is not None and res.craft_tier
+            else ""
+        )
+        print(
+            f"  feasibility[{d_id}/{d_name}]: tier={tier}{craft} "
+            f"required_terrain={req} "
+            f"exact_match={sorted(set(req) & _cluster_terr)} "
+            f"proxies={proxies} "
+            f"proxy_in_cluster={[p for p, _f in proxies if p in _cluster_terr]} "
+            f"indoor_machines={machines} "
+            f"machine_in_cluster={[m for m in machines if m in _cluster_equip]} "
+            f"strength_pool_n={len(pool_by_discipline.get(d_id, []))}"
+        )
     return out
 
 

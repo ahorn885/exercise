@@ -96,6 +96,12 @@ When diagnosing, treat logs as the source of truth — and never substitute a gu
 
 Rationale: on the #47 triage (2026-05-31) the truncated MCP made log-probe negatives *look* like they excluded a `ValueError`, when the real fault was a pydantic `ValidationError` — invisible until Andy pasted the raw traceback. Inference around an unreadable log burns turns and lands wrong. (The log-visibility build that closes this gap natively is tracked in CARRY_FORWARD / GitHub issues.)
 
+### Rule #15 — Instrument as you build (Andy 2026-06-13)
+
+When you build a new feature or edit an existing one, **add logging if it doesn't already exist** — in the same change, not as a follow-up. Every code path whose behaviour you'd need to diagnose in production must emit a `print()` (captured by the log drain → readable past the app login via `/admin/logs`, Rule #14) carrying the **inputs it decided on and the decision it made**. This especially covers: a deterministic resolution/cascade (log the inputs + the chosen tier/branch), an LLM synthesis or payload-validation step (log the rejected detail, not a truncated exception repr), and any branch that can silently drop, substitute, or cap something. The bar: *if this path failed or behaved surprisingly in prod, could you tell **why** from the logs alone?* If not, the line is missing — add it.
+
+Rationale: the pv=69 triage (2026-06-13) burned a long investigation because both the terrain-feasibility cascade and the per-block payload-validation reject were `print()`-silent on the decision detail — the offending sessions were truncated inside the pydantic error and the cascade inputs were never logged, so root cause had to be reverse-engineered from indirect signals. This is the build-side complement to Rule #14 (which governs *reading* logs); Rule #14 only helps when the line was written in the first place.
+
 ---
 
 ## Stop-and-ask triggers

@@ -2199,6 +2199,28 @@ def synthesize_phase(
                 f"synthesize_phase: {unit_tag} attempt {current_pass + 1} "
                 f"payload validation failed ({type(e).__name__}): {str(e)[:240]}"
             )
+            # Rule #15 observability: the pydantic error truncates the offending
+            # sessions, so a `_check_two_per_day` reject (strength+strength,
+            # two-hard, >2/day, neither-cardio) was opaque in the log. Dump each
+            # multi-session day's kind/discipline/index so the collision is
+            # diagnosable from the log alone (Rule #14) rather than the discarded
+            # draft. pv=69 (2026-06-13) burned a long triage on exactly this gap.
+            _days_dbg: dict = {}
+            for _s in sessions:
+                _days_dbg.setdefault(_s.date, []).append(_s)
+            _multi_dbg = sorted((d, ss) for d, ss in _days_dbg.items() if len(ss) > 1)
+            if _multi_dbg:
+                _detail_dbg = "; ".join(
+                    f"{d}: "
+                    + ", ".join(
+                        f"{x.kind}/{x.discipline_id or '-'}/idx{x.session_index_in_day}"
+                        for x in sorted(ss, key=lambda y: y.session_index_in_day)
+                    )
+                    for d, ss in _multi_dbg
+                )
+                print(
+                    f"synthesize_phase: {unit_tag} multi-session days — {_detail_dbg}"
+                )
             if current_pass >= capped_retries:
                 raise Layer4OutputError(
                     "schema_violation",
