@@ -1,7 +1,7 @@
 # Craft / Equipment Taxonomy + Unified Feasibility Cascade — Design v1
 
 **Date:** 2026-06-13
-**Status:** DESIGN — Andy-ratified cascade ordering + explicit craft↔terrain data (2026-06-13). Awaiting sign-off on the remaining open items before build.
+**Status:** DESIGN — BUILD-READY. Andy-ratified: cascade ordering, explicit craft↔terrain data, **and the seed grid (§4, 2026-06-13)**. No open data blockers remain.
 **Origin:** the pv=69→71 feasibility-saturation arc. Watching pv=71 (the gear-toggle profile test) surfaced two coupled structural problems that the set-B craft-population fix (#581/WS-G) masks but does not solve.
 **Arc:** `plans/Feasibility_Saturation_And_Locale_Retirement_Plan_v1.md` (new workstream — see §7).
 **Supersedes the secondary note in:** that plan's §6a WS-G "Verify (G) Secondary" + the WS-E2/V "degenerate INDOOR-preempt" line — this design is the general case.
@@ -64,7 +64,18 @@ layer0.craft_terrain_compatibility(craft_name, terrain_id, etl_version)   -- man
 ```
 seeded in the `Sports_Framework` xlsx (new sheet, additive — mirrors the `Craft Discipline Aliases` precedent in `X1b3b_CraftDisciplineAliases_v1.md`). The cascade reads it to answer "can craft C ride terrain T" at tiers 2 (own-craft/other-terrain), 3 (proxy-craft/desired-terrain gate), and 4 (proxy-craft/own-terrain).
 
-**Open (needs Andy):** the seed rows themselves — the craft→terrain grid for `road_bike / mountain_bike / gravel_bike / kayak / canoe / packraft` against the TRN-* set. This is **Trigger #2** (vocabulary/data) — bring the proposed grid for sign-off before authoring the sheet.
+**Seed grid (Andy-ratified 2026-06-13).** Indoor surfaces (TRN-016 Gym, TRN-008 Pool, TRN-014 Climbing Gym) are excluded by construction — those are the INDOOR tier, not craft terrain.
+
+| craft | → usable terrain |
+|---|---|
+| `road_bike` | TRN-001 Road, TRN-004 Hill/Rolling |
+| `gravel_bike` | TRN-001 Road, TRN-002 Groomed Trail, TRN-004 Hill/Rolling, TRN-020 Gravel |
+| `mountain_bike` | TRN-001 Road, TRN-002 Groomed Trail, TRN-003 Technical Trail, TRN-004 Hill/Rolling, TRN-015 Pump/MTB Skills, TRN-020 Gravel |
+| `kayak` | TRN-009 Flat Water, TRN-010 Ocean/Tidal, TRN-011 Whitewater, TRN-017 Moving Water |
+| `canoe` | TRN-009 Flat Water, TRN-017 Moving Water |
+| `packraft` | TRN-009 Flat Water, TRN-011 Whitewater, TRN-017 Moving Water |
+
+Encodes the singletrack rule (gravel rides groomed trail TRN-002 but not technical TRN-003; MTB rides both). Ratified edits from the proposal: MTB **excludes** Mountain/Alpine (TRN-005) and Tech Rock/Scree (TRN-007) — hike-a-bike, not rideable; road bike **excludes** Gravel (TRN-020). Known limitation (deferred, not blocking): `kayak` is a single generic slug (no sea/whitewater/rec split), so it carries both whitewater + ocean; a subtype split is a separate vocab decision if that proves too permissive.
 
 ---
 
@@ -102,8 +113,8 @@ Sequence: lands after #581/WS-G (already populates set B) and is independent of 
 
 ## 8. Open items (Andy sign-off before build)
 
-1. **The craft→terrain seed grid** (§4) — Trigger #2. The load-bearing missing data.
-2. **Tier-2 vs tier-5 edge:** if an athlete owns the craft but neither exact nor other-usable terrain is in-cluster (tier 1+2 miss) **and** an indoor machine exists — do we prefer indoor (tier 5) over dropping to strength? Per §3 yes (tiers 3–4 also miss for the *owned*-craft-no-terrain case, so the walk reaches indoor). Confirm that's intended: an owned-bike athlete with no ridable terrain but a trainer gets trainer sessions, not strength.
+1. ~~The craft→terrain seed grid~~ — **RESOLVED** (§4, ratified 2026-06-13).
+2. **Tier-2 vs tier-5 edge** — **CONFIRMED (Andy 2026-06-13):** an owned-craft athlete with no ridable terrain in-cluster but an indoor machine present routes to **indoor** (tier 5), not strength. The walk reaches indoor because tiers 1–4 all miss.
 3. **Reallocate vs strength interplay** stays as the existing per-discipline preference; the weekly saturation cap (WS-E2) is orthogonal and still queued.
 
 ---
