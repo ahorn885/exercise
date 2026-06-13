@@ -17,7 +17,7 @@
 -- discipline requires a capability the athlete hasn't enabled.
 --
 -- Ratified mappings (Andy 2026-05-24, tightened from initial proposal):
---   climbing_roped      → {TRN-013}                  | {D-012}
+--   climbing_roped      → {TRN-013}                  | {D-012, D-013}
 --   via_ferrata         → {}  (no canonical terrain row) | {D-014}
 --   whitewater_handling → {TRN-011, TRN-017}         | {D-010}
 --   swim_open_water     → {TRN-009, TRN-010}         | {D-004}
@@ -53,7 +53,7 @@ VALUES
       'rock adds protection-placement, route-finding, and real-fall '
       'exposure judgement.',
     ARRAY['TRN-013'],
-    ARRAY['D-012'],
+    ARRAY['D-012', 'D-013'],
     '0C-v2.0-r2', NOW() ),
 
   ( 'via_ferrata',
