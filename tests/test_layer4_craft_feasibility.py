@@ -121,3 +121,48 @@ class TestStrength:
 def test_pure_and_stable():
     out = [_resolve("D-008", ["road_bike"]) for _ in range(3)]
     assert out[0] == out[1] == out[2]
+
+
+# ─── Slice V5: craft ownership from the equipment inventory ──────────────────
+
+
+class TestCraftSlugsFromEquipment:
+    """`craft_slugs_from_equipment` bridges the equipment-inventory canonical
+    names → craft slugs, so listing a bike/boat as equipment counts as owning
+    the craft (the decided single-source-of-truth fix)."""
+
+    def test_canonical_names_map_to_slugs(self):
+        from layer4.session_feasibility import craft_slugs_from_equipment
+
+        got = craft_slugs_from_equipment(
+            {"Mountain bike", "Road bike", "Packraft", "Kayak"}
+        )
+        assert got == {"mountain_bike", "road_bike", "packraft", "kayak"}
+
+    def test_parenthetical_label_and_casing_tolerated(self):
+        from layer4.session_feasibility import craft_slugs_from_equipment
+
+        assert craft_slugs_from_equipment({"Mountain Bike (MTB)"}) == {"mountain_bike"}
+        assert craft_slugs_from_equipment({"GRAVEL BIKE"}) == {"gravel_bike"}
+
+    def test_non_craft_equipment_ignored(self):
+        from layer4.session_feasibility import craft_slugs_from_equipment
+
+        # Indoor machines + generic gear are NOT craft ownership.
+        assert craft_slugs_from_equipment(
+            {"Cycling trainer", "Paddle ergometer", "Treadmill", "Barbell", "Bodyweight"}
+        ) == set()
+
+    def test_empty(self):
+        from layer4.session_feasibility import craft_slugs_from_equipment
+
+        assert craft_slugs_from_equipment(set()) == set()
+
+    def test_set_in_sync_with_athlete_enums(self):
+        # Recurrence guard (#558 coverage-guard pattern): the equipment craft
+        # set is exactly the bike + paddle vessel enums minus the indoor trainer.
+        from athlete import BIKE_TYPES, PADDLE_CRAFT_TYPES
+        from layer4.session_feasibility import _EQUIPMENT_CRAFT_SLUGS
+
+        expected = (set(BIKE_TYPES) | set(PADDLE_CRAFT_TYPES)) - {"cycling_trainer"}
+        assert set(_EQUIPMENT_CRAFT_SLUGS) == expected

@@ -25,13 +25,17 @@ pv=69 is `created_via=plan_create`. The Peak week resolved **5 strength sessions
 
 | WS | Title | Status | PR |
 |----|-------|--------|----|
-| A | Observability — feasibility/collision/source logging | **MERGED #576 + extended #577** | #576, #577 |
-| B | Retire the legacy `LOCALES` enum | **DECIDED — build now** | this branch (`claude/locale-retirement`) |
-| C | Onboarding: force build + tag a home locale | **DECIDED — next** | follow-up PR |
-| D | Feasibility-correctness investigation | **PENDING** the logged re-run | — |
-| E | Failover saturation fix (cap + reallocate + repair) | **PENDING DATA** | — |
+| A | Observability — feasibility/collision/source logging | **MERGED** | #576, #577 |
+| D | Feasibility-correctness investigation | **RESOLVED** (plan-70, 2026-06-13) — see §6 | — |
+| **F** | **Craft ownership from the equipment inventory (Slice V5)** | **BUILDING NOW — root-cause fix** | `claude/craft-from-equipment` |
+| E | Saturation backstop (deterministic cap + repair) | **defense-in-depth, after F** | — |
+| B | Retire the legacy `LOCALES` enum | queued (same one-source-of-truth theme as F) | follow-up PR |
+| C | Onboarding: force build + tag a home locale | queued | follow-up PR |
+| V | Full Vocabulary arc V1–V7 (`Vocabulary_TargetState_and_Plan_v1`) | durable follow-up (already decided) | — |
 
-**Sequence:** A (done) → B → C → (logged re-run reads WS-A output) → D diagnosis → E fix. B unblocks Andy immediately; C must follow B closely (B removes the implicit "home always exists"); D/E wait on real logs before any code.
+**Root cause (WS-D RESOLVED):** the live re-run (plan-70) proved the saturation is a **craft source-of-truth drift**, *not* genuine infeasibility (Andy's prior held). The craft axis reads the `bike_types_available`/`paddle_craft_types` capture columns (**set B**, empty for the athlete), while the athlete's bikes/boats live in the **equipment inventory** (**set C**, `layer0.equipment_items`). So D-008 Mountain Biking (grid-allocated 5×) + D-009 Packrafting craft-fail to strength → 7 strength/week → the `no strength+strength` collision. `Vocabulary_TargetState_and_Plan_v1` §1/§7 **already decided** set C is authoritative and the capture enums should be projected from it (Slice V5) — but that stalled, and #558/#560 instead built more of set B. WS-F executes the decided V5.
+
+**Sequence:** A,D done → **F now** (sources craft ownership from equipment → fixes the live blocker + the drift deterministically) → re-run to confirm → **E** deterministic backstop (so *any* residual saturation can't crash) → **B/C** locale retirement + onboarding home (same one-source-of-truth theme) → **V** the full decided vocabulary arc as the durable cleanup.
 
 ---
 
@@ -97,17 +101,32 @@ The flow already has a `/onboarding/locales` step (`prefill → locales → skil
 
 ---
 
-## 6. Workstream D — Feasibility-correctness investigation (PENDING the logged re-run)
+## 6. Workstream D — Feasibility-correctness investigation (RESOLVED, plan-70 2026-06-13)
 
-After B/C and a prod re-run with WS-A logging, read per-discipline resolution + cluster maps. Decide which is true:
-- **Maps populated, genuine gap** → the saturation is real infeasibility → WS-E (saturation policy) is the fix.
-- **Maps thin/empty despite data present** → a read/coercion/cluster bug (e.g., legacy locale read as home, `_coerce_terrain_ids` dropping a shape, radius excluding the locale with terrain) → fix *that* (the bigger lever); WS-E becomes belt-and-suspenders.
+The logged re-run answered it. Cluster + terrain were richly populated (5 locales, TRN ids across all), so **not** the empty-cluster/coercion hypothesis. The cause: `owned_crafts=[]` while the home equipment inventory lists Mountain bike / Road bike / Packraft / Kayak / Cycling trainer / Paddle ergometer. Per-discipline:
+- D-008 Mountain Biking (grid **5×**) → `tier=strength craft_tier=strength owned_craft=None` — despite exact terrain + Cycling trainer present.
+- D-009 Packrafting → same craft-strength fail despite water terrain + Paddle ergometer.
+- D-001/D-003 → exact (correct); D-012 climbing → skill-gate (correct); D-013 abseiling → reallocate (correct).
 
-**Verify:** we can name exactly why each discipline resolved to its tier.
+→ 7 strength/week; the `multi-session days — 2026-06-16: strength/D-008/idx0, strength/D-008/idx1` log proved the collision is two craft-failed MTB sessions on one day. **Conclusion: a craft source-of-truth drift (set B empty / set C populated), fixed by WS-F.** Maps-thin and genuine-infeasibility were both ruled out.
+
+**Verify:** ✅ every discipline's tier is named with its inputs.
 
 ---
 
-## 7. Workstream E — Failover saturation fix (PENDING DATA — candidate only)
+## 6a. Workstream F — Craft ownership from the equipment inventory (Slice V5, BUILDING)
+
+Source craft ownership from the **equipment inventory** (set C, the decided authoritative source) instead of only the separate `bike_types_available`/`paddle_craft_types` capture columns (set B). Surgical realization of `Vocabulary_TargetState_and_Plan_v1` Slice V5, deterministic (no new LLM surface).
+
+- **`layer4/session_feasibility.py`** — new pure `craft_slugs_from_equipment(equipment_names)` + `_EQUIPMENT_CRAFT_SLUGS` (the bike+paddle vessels minus indoor `cycling_trainer`). Normalizes casing + parenthetical labels ("Mountain Bike (MTB)" → `mountain_bike`).
+- **`layer4/orchestrator.py`** `_build_terrain_feasibility` — `owned_crafts = capture-enums ∪ craft_slugs_from_equipment(cluster equipment)`. **Union**, not replace — additive, so it can't break the existing capture path (the full retirement of set B is the durable **V** arc, not this PR).
+- **Tests** — helper unit tests + a recurrence guard that `_EQUIPMENT_CRAFT_SLUGS` stays in sync with `athlete.BIKE_TYPES`/`PADDLE_CRAFT_TYPES`.
+
+**Verify:** plan re-run shows `owned_crafts=[mountain_bike, packraft, …]` (was `[]`), D-008/D-009 resolve via terrain/indoor (not craft-strength), Peak/Build weeks drop to ~dose strength, plan reaches `ready`. **Secondary (not in this PR, → E/V):** the craft-STRENGTH terminal still preempts the INDOOR tier (a trainer/erg should let a craftless athlete train indoors before strength); `strength_pool_n=0` craft-strength substitutions are degenerate.
+
+---
+
+## 7. Workstream E — Saturation backstop (deterministic; defense-in-depth after F)
 
 Do **not** implement until WS-D data is in. Recorded Andy decisions (held as design input, not yet ratified against data):
 - **Cap = dose + 2** total strength/week (programmed + failover).
