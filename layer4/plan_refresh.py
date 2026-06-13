@@ -58,7 +58,7 @@ from layer4.context import (
     TrainingSubstitutionPayload,
 )
 from layer4.errors import Layer4InputError, Layer4OutputError
-from layer4.per_phase import compute_feasible_pool_ids
+from layer4.per_phase import block_output_budget, compute_feasible_pool_ids
 from layer4.payload import (
     CardioBlock,
     Layer4Payload,
@@ -389,7 +389,7 @@ def build_record_refresh_sessions_tool(
     Track 2 D1: `feasible_pool_ids` (when non-empty) bounds
     `strength_exercises.exercise_id` via JSON-schema enum. Production callers
     pass `compute_feasible_pool_ids(layer2c_payloads, layer2d_payload)`."""
-    max_items = {"T1": 4, "T2": 14, "T3": 56}[tier]
+    max_items = _TIER_MAX_SESSIONS[tier]
     description = (
         f"Record the synthesized {tier} refresh sessions covering "
         f"[refresh_scope_start, refresh_scope_end]. Output is a list of 0-"
@@ -422,6 +422,11 @@ def build_record_refresh_sessions_tool(
 _T1_MAX_SCOPE_DAYS = 3
 _T2_MAX_SCOPE_DAYS = 9
 _T3_MAX_SCOPE_DAYS = 32
+
+# Per-tier `sessions` array ceiling: 2-day/7-day/28-day window × max 2/day.
+# Drives both the tool schema's `maxItems` and the output-token budget the driver
+# sizes per `per_phase.block_output_budget` (so a dense block doesn't truncate).
+_TIER_MAX_SESSIONS = {"T1": 4, "T2": 14, "T3": 56}
 
 
 def _validate_inputs(
@@ -919,9 +924,17 @@ def llm_layer4_plan_refresh(
     else:
         from layer4 import plan_refresh_t3 as tier_module
 
-    effective_max_tokens = (
-        max_tokens if max_tokens is not None else tier_module.DEFAULT_MAX_TOKENS
-    )
+    # Size the output budget to the tier's session ceiling, reusing the create
+    # path's per-block sizing (`per_phase.block_output_budget`) instead of a flat
+    # per-tier constant. A T3 cross-phase block emits up to 56 sessions and
+    # truncated `record_refresh_sessions` against the old flat 10000 ceiling
+    # (`schema_violation` at `stop_reason=max_tokens` → cron retry loop, never
+    # `ready`). The tier `DEFAULT_MAX_TOKENS` is the floor; the helper raises it to
+    # fit the block and clamps to the model's 64K output ceiling. T3 runs thinking
+    # off (its `DEFAULT_EXTENDED_THINKING_BUDGET`) so the 64K output budget isn't
+    # pushed past the model ceiling by a stacked thinking budget.
+    floor = max_tokens if max_tokens is not None else tier_module.DEFAULT_MAX_TOKENS
+    effective_max_tokens = block_output_budget(_TIER_MAX_SESSIONS[tier], floor=floor)
     effective_thinking = (
         extended_thinking_budget
         if extended_thinking_budget is not None

@@ -150,6 +150,33 @@ JSON envelope/scaffolding. Raised 800→1200→2000 alongside the per-session bu
 for the same anti-truncation headroom (pv=40 forced-retry truncation; see
 `_BLOCK_OUTPUT_TOKENS_PER_SESSION`)."""
 
+_MODEL_MAX_OUTPUT_TOKENS = 64000
+"""Per-request output-token ceiling of the synthesizer model
+(`claude-sonnet-4-6` = 64K). `block_output_budget` clamps to this: a `max_tokens`
+above the model's limit is a 400. The create path's per-week blocks (≤14 sessions
+→ ≤21,600) never reach it, so the clamp is a no-op there; it binds only for a
+single-call refresh sized to its full session ceiling (T3 = 56 → 80,400 raw).
+Under extended thinking the request ceiling is `max_tokens + thinking_budget`, so
+a caller sizing to this ceiling must run thinking off (the refresh T3 path does)."""
+
+
+def block_output_budget(max_sessions: int, floor: int = 0) -> int:
+    """Output-token budget for one synthesis block (D-77 §6): size to the unit's
+    session ceiling at `_BLOCK_OUTPUT_TOKENS_PER_SESSION` + fixed overhead, never
+    below `floor` (the caller's own value), clamped to the model's max output
+    ceiling. Shared by the create per-phase synthesizer and the refresh driver so
+    both scale output room with the sessions they ask the model to emit — a flat
+    per-call constant truncates a dense block (`schema_violation` at
+    `stop_reason=max_tokens`)."""
+    return min(
+        _MODEL_MAX_OUTPUT_TOKENS,
+        max(
+            floor,
+            max_sessions * _BLOCK_OUTPUT_TOKENS_PER_SESSION
+            + _BLOCK_OUTPUT_TOKENS_OVERHEAD,
+        ),
+    )
+
 
 # Per `Layer4_PerPhase_v1.md` D5: closed set of 6 LLM-emitted coaching flags.
 # Spec-auto flags (`recovery_week`, `peak_volume_marker`, `race_rehearsal`,
@@ -1884,10 +1911,8 @@ def synthesize_phase(
         # caller's value. Higher `max_tokens` is only a ceiling — billed/latency
         # cost tracks tokens actually emitted, and the per-block budget guard
         # still bounds total synthesis time.
-        effective_max_tokens = max(
-            max_tokens,
-            max_sessions_this_unit * _BLOCK_OUTPUT_TOKENS_PER_SESSION
-            + _BLOCK_OUTPUT_TOKENS_OVERHEAD,
+        effective_max_tokens = block_output_budget(
+            max_sessions_this_unit, floor=max_tokens
         )
     else:
         max_sessions_this_unit = _MAX_SESSIONS_PER_PHASE
@@ -2336,6 +2361,7 @@ __all__ = [
     "SYSTEM_PROMPT",
     "LLMCaller",
     "PhaseSynthesisResult",
+    "block_output_budget",
     "build_record_phase_sessions_tool",
     "build_synthesis_metadata_from_result",
     "render_user_prompt",
