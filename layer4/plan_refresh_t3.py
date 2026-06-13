@@ -10,7 +10,10 @@ that the refresh scope is intra-phase (per `phase_structure_from_3b()` +
 T3 differences from T2:
 
 - Wider sessions array (up to 56 = 28 days × max 2/day).
-- Larger sampling budget (max_tokens=10000; thinking=6500).
+- Output budget sized to the 56-session ceiling by the driver via
+  `per_phase.block_output_budget` (clamped to the model's 64K ceiling), with
+  thinking OFF so the forced tool call gets the whole budget — a flat 10000
+  truncated `record_refresh_sessions` mid-output (`stop_reason=max_tokens`).
 - Full upstream cascade in payload (all 5 Layer 2 nodes + 3A + 3B + 1).
 - Tiered prior-window rendering: week -2 rollup + week -1 verbatim
   (extends T2's single-week prior context).
@@ -50,7 +53,16 @@ from layer4.plan_refresh_t2 import _format_weekly_aggregate
 
 
 DEFAULT_MAX_TOKENS = 10000
-DEFAULT_EXTENDED_THINKING_BUDGET = 6500
+"""Floor only — the driver sizes the effective ceiling to the 56-session block via
+`per_phase.block_output_budget` (clamped to the model's 64K output ceiling)."""
+
+DEFAULT_EXTENDED_THINKING_BUDGET = 0
+"""Thinking OFF (mirrors `per_phase.DEFAULT_EXTENDED_THINKING_BUDGET`): the forced
+tool call gets the entire `max_tokens` as output budget. Required here because the
+output budget is sized to the model's 64K ceiling — a stacked thinking budget
+would make the request `max_tokens + thinking` exceed the model limit (a 400). The
+former 6500, paired with a flat 10000 max_tokens, also starved output on the
+thinking attempt (the #569 live verify caught the resulting `schema_violation`)."""
 
 
 # Per-mode deload cadence (which week-in-mesocycle is the deload):

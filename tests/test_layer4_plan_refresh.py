@@ -1055,8 +1055,11 @@ class TestT3IntraPhase:
         assert len(result.sessions) == 0
         assert result.validator_results[-1].accepted is True
 
-    def test_intra_phase_t3_uses_t3_max_tokens_default(self):
-        """T3 default max_tokens=10000; verify via stub caller capture."""
+    def test_intra_phase_t3_sizes_output_budget_to_session_ceiling(self):
+        """T3 output budget is sized to its 56-session ceiling and clamped to the
+        model's 64K limit, with thinking OFF — not the flat 10000 that truncated
+        `record_refresh_sessions` (the #569 live verify caught the
+        `schema_violation`). Verify via stub caller capture."""
         captured: dict[str, Any] = {}
 
         def _capturing_caller(
@@ -1072,8 +1075,9 @@ class TestT3IntraPhase:
             )
 
         _call_t3_intra_phase(llm_caller=_capturing_caller)
-        assert captured["max_tokens"] == 10000
-        assert captured["thinking"] == 6500
+        # 56 * 1400 + 2000 = 80400, clamped to the 64K model ceiling.
+        assert captured["max_tokens"] == 64000
+        assert captured["thinking"] == 0
 
     def test_intra_phase_extended_mode_routes_correctly(self):
         """Extended mode: Base = 60% of 12wks = 7-8 weeks. Days 15-42 stay
@@ -1095,6 +1099,51 @@ class TestT3IntraPhase:
         result = _call_t3_intra_phase(layer3b=l3b)
         assert result.mode == "plan_refresh"
         assert result.pattern == "B"
+
+
+# ─── Output-budget sizing (create-path reuse) ────────────────────────────────
+
+
+class TestOutputBudgetSizing:
+    """The refresh driver sizes the synthesizer output budget to the tier's
+    session ceiling via `per_phase.block_output_budget` — the same balancing the
+    create per-phase path uses — instead of a flat per-tier constant that
+    truncated dense blocks (the #569 live verify caught a T3 `schema_violation`)."""
+
+    def test_block_output_budget_scales_per_session(self):
+        from layer4.per_phase import block_output_budget
+
+        assert block_output_budget(14) == 21600  # create per-week block
+        assert block_output_budget(4) == 7600
+
+    def test_block_output_budget_clamps_to_model_ceiling(self):
+        from layer4.per_phase import block_output_budget
+
+        # 56 × 1400 + 2000 = 80400 > 64K model ceiling → clamped.
+        assert block_output_budget(56) == 64000
+
+    def test_block_output_budget_respects_floor(self):
+        from layer4.per_phase import block_output_budget
+
+        # Caller floor wins when it exceeds the per-session estimate.
+        assert block_output_budget(1, floor=9000) == 9000
+
+    def test_t1_driver_sizes_budget_to_session_ceiling(self):
+        captured: dict[str, Any] = {}
+
+        def _capturing_caller(
+            _sys, _user, _tool, _model, _temp, max_tokens, thinking
+        ) -> _SynthesizerOutput:
+            captured["max_tokens"] = max_tokens
+            return _SynthesizerOutput(
+                tool_args={"sessions": []},
+                input_tokens=100,
+                output_tokens=100,
+                latency_ms=100,
+            )
+
+        _call_t1(llm_caller=_capturing_caller)
+        assert captured["max_tokens"] == 7600  # 4 × 1400 + 2000
 
 
 # ─── Entry-point happy path ──────────────────────────────────────────────────
