@@ -11,6 +11,15 @@ Rolling-state for items spanning multiple sessions. **Edit in place** — don't 
 
 ---
 
+## T3 plan-refresh `plan_start_date` fix (2026-06-13, PR #569) — DONE; one live re-verify owed
+
+**PR [#569](https://github.com/ahorn885/exercise/pull/569) (`Closes #570`, branch `claude/plan-65-refresh-r8tclv`) squash-merged to `main`.** The live T3-refresh verify owed by the #566/#208 handoff surfaced that **T3 refresh had never worked**: `routes/plan_refresh.py` never passed `plan_start_date` to `orchestrate_plan_refresh`, so every T3 (cross-phase) refresh failed `_validate_inputs` with `plan_start_date_missing` (T1/T2 don't require it → silent). Fix: `_resolve_plan_start_date` walks `refresh_parent_version_id` to the root `plan_create` row's `scope_start_date` (the plan's true start, NOT the refresh window), threaded through `build_refresh_advance_ctx` → `run_refresh_orchestration`. **Code-only, NO DDL, nothing to deploy.** Handoff: `V5_Implementation_T3RefreshPlanStartDateFix_2026_06_13_Closing_Handoff_v1.md`.
+
+- ✅ **#208 async/resumable refresh — confirmed live-correct.** The watch proved the plumbing: POST→302→progress→cron/poller passes, cron solo-drove after tab-close, advance-lock guard held, graceful `_mark_plan_failed` (no 504). The owed "live refresh verify" from #566 is effectively discharged for the async machinery.
+- ⬜ **OWED — Andy's-hands live T3 re-verify (post-#569 deploy).** Re-run a **T3** refresh on prod → confirm the new pv reaches `generation_status=ready` with a phase-correct `total_sessions`. Read via the diag token: Vercel MCP `web_fetch_vercel_url("…/admin/plan/<id>/diag?token=<DIAG_TOKEN>")` (direct container curl is egress-blocked; the runtime-log MCP misses `print()` failures — they log as `info`).
+
+---
+
 ## Layer 2D determinism close (#202) — DONE; 3 open injury-accommodation workflow gaps; NO deploy owed
 
 **PR [#554](https://github.com/ahorn885/exercise/pull/554) (`Closes #202`, branch `claude/happy-davinci-hsf02q`) squash-merged to `main`.** Closed [#202](https://github.com/ahorn885/exercise/issues/202) (plan-gen cache-key non-determinism, parent #201): Layer 2D's `_is_recent_post_surgical` used wall-clock `utcnow().date()` → reached `layer2d_hash` → `plan_create_key`; now anchored to the cone's `today` (threaded through the 2D builder chain; orchestrator passes `today` at both call sites). The rest of #202's audit was already resolved (Layers 1/2A/2E + 3A + uuid prefixes). **NO DDL / NO Neon deploy owed.**

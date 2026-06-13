@@ -35,6 +35,7 @@ from routes.plan_refresh import (
     _latest_plan_version,
     _orchestration_error_message,
     _parse_tier,
+    _resolve_plan_start_date,
     _resolve_prefill,
     _resolve_scope_dates,
     _run_parser,
@@ -232,6 +233,67 @@ class TestLatestPlanVersion:
         sql, params = db.calls[0]
         assert "WHERE user_id = ?" in sql
         assert params == (99,)
+
+
+# ─── _resolve_plan_start_date ───────────────────────────────────────────────
+
+
+class TestResolvePlanStartDate:
+    def test_immediate_create_parent(self):
+        """Parent is the root create row → its scope_start_date is the plan
+        start. (The common case: refreshing a freshly-created plan.)"""
+        db = _FakeConn()
+        db.queue_response(
+            row={
+                "scope_start_date": date(2026, 6, 11),
+                "refresh_parent_version_id": None,
+            }
+        )
+        assert _resolve_plan_start_date(db, 1, parent_id=65) == date(2026, 6, 11)
+
+    def test_walks_chain_to_root_create_row(self):
+        """Refresh-of-a-refresh: the immediate parent is itself a refresh row
+        (scope_start is a refresh window) — walk to the root create row so the
+        plan start is the plan's REAL start, not an intermediate window."""
+        db = _FakeConn()
+        # parent (a refresh row) → points further up
+        db.queue_response(
+            row={
+                "scope_start_date": date(2026, 6, 20),  # a refresh window — NOT it
+                "refresh_parent_version_id": 65,
+            }
+        )
+        # root create row → no parent → this is the answer
+        db.queue_response(
+            row={
+                "scope_start_date": date(2026, 6, 11),
+                "refresh_parent_version_id": None,
+            }
+        )
+        assert _resolve_plan_start_date(db, 1, parent_id=66) == date(2026, 6, 11)
+
+    def test_none_parent_returns_none(self):
+        db = _FakeConn()
+        assert _resolve_plan_start_date(db, 1, parent_id=None) is None
+
+    def test_missing_row_returns_none(self):
+        db = _FakeConn()
+        db.queue_response(row=None)
+        assert _resolve_plan_start_date(db, 1, parent_id=999) is None
+
+    def test_cycle_guard_terminates(self):
+        """A cyclic parent pointer must not loop forever — the seen-set guard
+        bails and returns None rather than hanging."""
+        db = _FakeConn()
+        # 66 → 66 (self-referential); second lookup is never reached because the
+        # id is already in `seen`, so the loop exits and returns None.
+        db.queue_response(
+            row={
+                "scope_start_date": date(2026, 6, 20),
+                "refresh_parent_version_id": 66,
+            }
+        )
+        assert _resolve_plan_start_date(db, 1, parent_id=66) is None
 
 
 # ─── _athlete_locale_slugs ──────────────────────────────────────────────────
@@ -863,6 +925,56 @@ class TestBuildRefreshAdvanceCtx:
             _FakeConn(), 3, _frozen_refresh_row(refresh_parsed_intent_json=None)
         )
         assert isinstance(ctx['parsed_intent'], ParsedIntent)
+
+    def test_threads_resolved_plan_start_date(self, monkeypatch):
+        # The ctx must carry the plan's TRUE start (root create row's
+        # scope_start_date), NOT the refresh row's own scope_start — T3 needs it
+        # to anchor phase boundaries (the plan_start_date_missing bug).
+        monkeypatch.setattr(
+            plan_refresh_mod, "load_prior_plan_session_window",
+            lambda *a, **k: [],
+        )
+        db = _FakeConn()
+        db.queue_response(
+            row={
+                "scope_start_date": date(2026, 6, 11),
+                "refresh_parent_version_id": None,
+            }
+        )
+        ctx = build_refresh_advance_ctx(db, 3, _frozen_refresh_row())
+        assert ctx['plan_start_date'] == date(2026, 6, 11)
+        # ...distinct from the refresh window itself.
+        assert ctx['plan_start_date'] != ctx['scope_start']
+
+
+class TestRunRefreshOrchestration:
+    def test_forwards_plan_start_date(self, monkeypatch):
+        # Regression guard: run_refresh_orchestration MUST pass plan_start_date
+        # into orchestrate_plan_refresh — omitting it made every T3 refresh fail
+        # _validate_inputs with plan_start_date_missing.
+        captured = {}
+
+        def _fake_orchestrate(db, uid, **kwargs):
+            captured.update(kwargs)
+            return object()
+
+        monkeypatch.setattr(
+            plan_refresh_mod, "orchestrate_plan_refresh", _fake_orchestrate
+        )
+        ctx = {
+            'tier': 'T3',
+            'scope_start': date(2026, 6, 13),
+            'scope_end': date(2026, 7, 10),
+            'plan_start_date': date(2026, 6, 11),
+            'parent_id': 65,
+            'prior_window': [],
+            'parsed_intent': ParsedIntent(raw_text='x'),
+            'today': date(2026, 6, 13),
+        }
+        plan_refresh_mod.run_refresh_orchestration(
+            _FakeConn(), 3, 66, ctx, cache=object()
+        )
+        assert captured['plan_start_date'] == date(2026, 6, 11)
 
 
 class TestWriteRefreshFailureLog:

@@ -153,6 +153,39 @@ def _load_plan_version(db, user_id: int, plan_version_id: int) -> dict | None:
     }
 
 
+def _resolve_plan_start_date(db, user_id: int, parent_id: int | None):
+    """Resolve the underlying plan's TRUE start date by walking
+    `refresh_parent_version_id` back from `parent_id` to the root create row.
+
+    A T3 refresh needs `plan_start_date` so `phase_structure_from_3b()` anchors
+    the periodization phase boundaries on the plan's real start. We must NOT use
+    the refresh row's own `scope_start_date` — that's the refresh *window*, which
+    would mis-place every phase boundary. The immediate parent is also wrong when
+    it is itself a refresh row (its scope_start is another refresh window), so we
+    walk parent pointers until the row with no refresh parent (the root
+    `plan_create` row) and return its `scope_start_date`.
+
+    Returns None when the chain can't be resolved (no parent / missing row); the
+    T3 input validator then surfaces `plan_start_date_missing` rather than
+    silently anchoring on a wrong date."""
+    seen: set[int] = set()
+    current_id = parent_id
+    while current_id is not None and current_id not in seen:
+        seen.add(current_id)
+        row = db.execute(
+            "SELECT scope_start_date, refresh_parent_version_id "
+            "FROM plan_versions WHERE id = ? AND user_id = ?",
+            (current_id, user_id),
+        ).fetchone()
+        if row is None:
+            return None
+        next_parent = row["refresh_parent_version_id"]
+        if next_parent is None:
+            return row["scope_start_date"]
+        current_id = int(next_parent)
+    return None
+
+
 def _athlete_locale_slugs(db, user_id: int) -> tuple[str, ...]:
     rows = db.execute(
         "SELECT locale FROM locale_profiles WHERE user_id = ? ORDER BY locale",
@@ -580,14 +613,18 @@ def build_refresh_advance_ctx(db, uid: int, plan_version: dict) -> dict:
         if parsed_json else _default_parsed_intent()
     )
     prior_window = load_prior_plan_session_window(db, uid, today=today, tier=tier)
+    parent_id = plan_version.get('refresh_parent_version_id')
     return {
         'tier': tier,
         'today': today,
         'scope_start': plan_version['scope_start_date'],
         'scope_end': plan_version['scope_end_date'],
+        # The plan's TRUE start (root create row), NOT the refresh window — T3
+        # needs it to anchor phase boundaries via phase_structure_from_3b().
+        'plan_start_date': _resolve_plan_start_date(db, uid, parent_id),
         'parsed_intent': parsed_intent,
         'prior_window': prior_window,
-        'parent_id': plan_version.get('refresh_parent_version_id'),
+        'parent_id': parent_id,
         'nl_text': plan_version.get('refresh_nl_text') or "",
         'used_degraded': bool(plan_version.get('refresh_used_degraded')),
         'cap_overridden': bool(plan_version.get('refresh_cap_overridden')),
@@ -613,6 +650,7 @@ def run_refresh_orchestration(db, uid: int, plan_version_id: int, ctx: dict, *, 
         cache=cache,
         parsed_intent=ctx['parsed_intent'],
         today=ctx['today'],
+        plan_start_date=ctx['plan_start_date'],
     )
 
 
