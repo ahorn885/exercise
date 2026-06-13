@@ -945,6 +945,19 @@ def _format_session_grid(
             two_a_day_preference=two_a_day_preference,
             peak_sessions_max=peak_sessions_max,
         )
+        # Rule #15 observability: the deterministic grid decides sessions/week
+        # per discipline BEFORE feasibility runs — the upstream half of a
+        # strength-saturated week (too many sessions across disciplines that
+        # then resolve to failover strength). Log the allocation so saturation
+        # is attributable to the grid vs. the failover substitution.
+        _alloc_dbg = ", ".join(
+            f"{a.discipline_id}:{a.sessions_this_week}x{a.typical_session_minutes}m"
+            for a in grid.discipline_allocations
+        )
+        print(
+            f"build_session_grid: {phase_name}:w{w} "
+            f"capacity={grid.weekly_capacity_hours:.1f}h allocations=[{_alloc_dbg}]"
+        )
         out.append(
             f"Week {w} — weekly capacity {grid.weekly_capacity_hours:.1f} hours:"
         )

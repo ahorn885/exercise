@@ -478,6 +478,8 @@ def _build_terrain_feasibility(
     # skill-gate toggle and craft status. A STRENGTH/reallocate outcome is then
     # attributable to a real gap vs. a mis-read/empty terrain/equipment input
     # ("the substitute should have been in the cluster"). (pv=69 triage.)
+    _incl_dbg = {d.discipline_id: d.inclusion for d in cone.layer2a_payload.disciplines}
+    print(f"_build_terrain_feasibility: user_id={user_id} 2A_inclusion={_incl_dbg}")
     _terr_by_loc = {loc: sorted(terrain_by_locale.get(loc, set())) for loc in cluster}
     _equip_by_loc = {loc: sorted(equip_by_locale.get(loc, set())) for loc in cluster}
     _cluster_terr = set().union(*terrain_by_locale.values()) if terrain_by_locale else set()
