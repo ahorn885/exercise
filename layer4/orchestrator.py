@@ -458,6 +458,22 @@ def _build_terrain_feasibility(
         resolution = _terrain(d.discipline_id)
         if resolution is not None:
             out[d.discipline_id] = resolution
+
+    # Rule #15 observability: the cascade was print()-silent, so a plan
+    # over-saturated with strength substitutions (constrained disciplines all
+    # falling to the STRENGTH tier) couldn't be traced from logs to its cause —
+    # a genuine terrain gap vs. empty/under-populated terrain/equipment/craft
+    # inputs. Log the cascade inputs + each discipline's resolved tier so a
+    # STRENGTH pile-up is attributable. (pv=69 triage, 2026-06-13.)
+    _terrain_dbg = {loc: sorted(terrain_by_locale.get(loc, set())) for loc in cluster}
+    _equip_dbg = {loc: len(equip_by_locale.get(loc, set())) for loc in cluster}
+    _tiers_dbg = {d_id: r.tier for d_id, r in out.items()}
+    print(
+        f"_build_terrain_feasibility: user_id={user_id} cluster={cluster} "
+        f"terrain_by_locale={_terrain_dbg} equip_count_by_locale={_equip_dbg} "
+        f"owned_crafts={sorted(owned_crafts) if owned_crafts else []} "
+        f"resolved_tiers={_tiers_dbg}"
+    )
     return out
 
 
