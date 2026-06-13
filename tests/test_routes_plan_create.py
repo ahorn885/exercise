@@ -135,6 +135,12 @@ class TestLoadPlanVersion:
             'generation_error': None,
             'generation_units_cached': 0,
             'generation_stall_passes': 0,
+            'refresh_nl_text': None,
+            'refresh_parent_version_id': None,
+            'refresh_triggered_by_ad_hoc_id': None,
+            'refresh_cap_overridden': False,
+            'refresh_parsed_intent_json': None,
+            'refresh_used_degraded': False,
         })
         result = _load_plan_version(conn, user_id=3, plan_version_id=7)
         assert result is not None
@@ -243,6 +249,12 @@ def _queue_plan_version(
         'generation_error': error,
         'generation_units_cached': units_cached,
         'generation_stall_passes': stall_passes,
+        'refresh_nl_text': None,
+        'refresh_parent_version_id': None,
+        'refresh_triggered_by_ad_hoc_id': None,
+        'refresh_cap_overridden': False,
+        'refresh_parsed_intent_json': None,
+        'refresh_used_degraded': False,
     })
     # Advance-lock claim (UPDATE plan_versions ... RETURNING id): a row => won.
     conn.queue_response(row={'id': pvid} if lock_claimed else None)

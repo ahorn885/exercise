@@ -38,6 +38,7 @@ from layer4.context import (
 from layer4.payload import PlanSession, RuleFailure
 from layer4.per_phase import (
     _format_daily_windows_schedule,
+    _format_session_feasibility,
     _format_training_substitution_per_phase,
 )
 from layer4.plan_refresh_t1 import (
@@ -144,6 +145,7 @@ def render_user_prompt(
     retries_used: int,
     rule_failures: list[RuleFailure],
     training_substitution_payload: TrainingSubstitutionPayload | None = None,
+    terrain_feasibility: dict[str, Any] | None = None,
     dominant_phase_name: str | None = None,
     dominant_phase_start_date: _date_type | None = None,
     dominant_phase_end_date: _date_type | None = None,
@@ -219,6 +221,13 @@ def render_user_prompt(
     if voice:
         parts.append(f"Voice notes: {voice}")
     parts.append("")
+
+    # === Session feasibility (#557 — terrain routing, mirrors create #540) ===
+    parts.extend(
+        _format_session_feasibility(
+            terrain_feasibility, layer2_bundle.a, dict(layer2_bundle.c)
+        )
+    )
 
     # === Schedule ===
     parts.extend(_format_daily_windows_schedule(layer1_payload))

@@ -24,7 +24,11 @@ from layer4.context import (
     TrainingSubstitutionPayload,
 )
 from layer4.payload import PlanSession, RuleFailure
-from layer4.per_phase import _format_training_substitution_per_phase
+from layer4.injury_render import format_active_injuries
+from layer4.per_phase import (
+    _format_session_feasibility,
+    _format_training_substitution_per_phase,
+)
 
 
 DEFAULT_MAX_TOKENS = 2000
@@ -68,23 +72,19 @@ OUTPUT DISCIPLINE:
 
 def _format_active_injuries(layer2_bundle: Layer2Bundle) -> list[str]:
     """Render the active-injuries block (hard constraints) from 2D
-    excluded + accommodated lists."""
-    layer2d = layer2_bundle.d
-    if layer2d is None:
-        return ["(2D payload not provided this refresh; no injury data available.)"]
-    excluded = layer2d.excluded_exercises
-    accommodated = layer2d.accommodated_exercises
-    if not excluded and not accommodated:
-        return ["(No active injuries.)"]
-    lines: list[str] = []
-    for er in excluded:
-        lines.append(f"- EXCLUDE {er.exercise_id} ({er.exercise_name})")
-    for er in accommodated:
-        mod_list = ", ".join(m.modality_type for m in er.accommodations)
-        lines.append(
-            f"- ACCOMMODATE {er.exercise_id} ({er.exercise_name}): {mod_list}"
-        )
-    return lines
+    excluded + accommodated lists.
+
+    Delegates to the shared `layer4.injury_render` renderer (same one the
+    create path uses) so the two prompts can't drift; that renderer carries
+    each modality's params + rationale (#555), not just the type name.
+    """
+    return format_active_injuries(
+        layer2_bundle.d,
+        none_payload_line=(
+            "(2D payload not provided this refresh; no injury data available.)"
+        ),
+        none_on_file_line="(No active injuries.)",
+    )
 
 
 def _format_prior_window_summary(
@@ -146,6 +146,7 @@ def render_user_prompt(
     retries_used: int,
     rule_failures: list[RuleFailure],
     training_substitution_payload: TrainingSubstitutionPayload | None = None,
+    terrain_feasibility: dict[str, Any] | None = None,
 ) -> str:
     """Render the §6 user prompt for T1. Inline Python rendering replaces
     Mustache from the prompt body MD."""
@@ -203,6 +204,13 @@ def render_user_prompt(
     if voice:
         parts.append(f"Voice notes: {voice}")
     parts.append("")
+
+    # === Session feasibility (#557 — terrain routing, mirrors create #540) ===
+    parts.extend(
+        _format_session_feasibility(
+            terrain_feasibility, layer2_bundle.a, dict(layer2_bundle.c)
+        )
+    )
 
     # === Periodization shape ===
     parts.append("=== Periodization shape (3B — re-run as part of refresh cascade) ===")

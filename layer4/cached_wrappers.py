@@ -198,6 +198,10 @@ def llm_layer4_plan_refresh_cached(
     cache: Layer4Cache,
     plan_start_date: _date_type | None = None,
     training_substitution_payload: TrainingSubstitutionPayload | None = None,
+    # #557 — per-discipline terrain-feasibility resolutions (mirrors create).
+    # Hashed into the cache key + threaded into the refresh prompt. Default
+    # None/{} preserves existing call sites (notably test fixtures).
+    terrain_feasibility: dict[str, TerrainResolution] | None = None,
     model_synthesizer: str = "claude-sonnet-4-6",
     model_seam_reviewer: str | None = None,
     temperature: float = 0.4,
@@ -238,6 +242,11 @@ def llm_layer4_plan_refresh_cached(
         if training_substitution_payload is not None
         else None
     )
+    terrain_feasibility_hash = (
+        compute_terrain_feasibility_hash(terrain_feasibility)
+        if terrain_feasibility
+        else None
+    )
 
     key = plan_refresh_key(
         user_id=user_id,
@@ -257,6 +266,7 @@ def llm_layer4_plan_refresh_cached(
         max_tokens=max_tokens if max_tokens is not None else 0,
         capped_retries=capped_retries,
         training_substitution_hash=training_substitution_hash,
+        terrain_feasibility_hash=terrain_feasibility_hash,
     )
 
     def _synthesize() -> Layer4Payload:
@@ -276,6 +286,7 @@ def llm_layer4_plan_refresh_cached(
             etl_version_set,
             plan_start_date=plan_start_date,
             training_substitution_payload=training_substitution_payload,
+            terrain_feasibility=terrain_feasibility,
             model_synthesizer=model_synthesizer,
             model_seam_reviewer=model_seam_reviewer,
             temperature=temperature,
