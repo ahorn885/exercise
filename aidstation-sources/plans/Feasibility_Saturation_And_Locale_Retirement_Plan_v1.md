@@ -54,7 +54,11 @@ Together these give the full causal chain: **2A include → grid allocate → fe
 
 **Diag-token reachability (verified):** all of the above are `print()` → Vercel log drain → `vercel_logs` → readable via `GET /admin/logs?token=<DIAG_TOKEN>` (same gate as `/admin/plan/<id>/diag`), stored **verbatim** (no truncation). Caveats: (1) must be deployed to `main` (prod runs on `main`); (2) a log fires only when its path executes — the feasibility/grid/terrain/equipment/cluster + per-block-collision logs fire on any **cold plan-create**, but the `layer2c skill-capability` line fires only on a **cold cone/2C build** (silent if the cone is a cache hit).
 
-**Known-but-unlogged suspects (add on demand if WS-D points there):** block cache-**key components** (only the hash is logged → the "re-synthesizes every drive" determinism / #202 question); 3B phase-structure derivation + per-phase volume/intensity band targets; 2D injury exclusions applied (wrist); LLM transient API errors (usually surface via the failure traceback).
+**Now logged too (Andy 2026-06-13 — "add them all, we don't lose anything"):**
+- block cache-**key chain** — `q=compute_block_cache_key` (`prev_accepted_output_hash` + the key, for the "re-synthesizes every drive" #202 churn).
+- 3B phase-structure + per-phase volume/intensity band targets — `q=plan_create 3B phase_structure`.
+- 2D injury exclusions + accommodations applied — `q=plan_create 2D injury` (wrist).
+- LLM transient API errors at the call site — `q=anthropic.APIError` (rate-limit / overload / timeout / 5xx, previously only in the failure traceback).
 
 ---
 

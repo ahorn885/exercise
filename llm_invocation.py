@@ -159,6 +159,15 @@ def invoke_tool_call(
         try:
             msg = client.messages.create(**request_kwargs)
         except anthropic.APIError as exc:
+            # Rule #15 observability: surface transient/API failures
+            # (rate-limit / overloaded / timeout / 5xx) at the call site — they
+            # otherwise only appear buried in the downstream failure traceback.
+            print(
+                f"invoke_tool_call: {tool_name} anthropic.APIError "
+                f"({type(exc).__name__}) model={model} "
+                f"max_tokens={request_kwargs['max_tokens']} "
+                f"thinking={thinking_budget}: {str(exc)[:240]}"
+            )
             raise ThinkingToolCallError(
                 "anthropic_api_error",
                 detail=f"{type(exc).__name__}: {exc}",
