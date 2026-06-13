@@ -11,6 +11,17 @@ Rolling-state for items spanning multiple sessions. **Edit in place** — don't 
 
 ---
 
+## Layer 4 strength two-template (PR #571) — DONE; one advisory-quality tail (#573); one-time cache recompute (auto)
+
+**PR [#571](https://github.com/ahorn885/exercise/pull/571) (branch `claude/vibrant-wright-4kcjku`) squash-merged to `main`.** Deepened Layer 4 strength to a two-template model (programmed layered session vs failover muscular-endurance substitution) in shared `layer4/strength_guidance.py`, spliced into `per_phase` + `plan_refresh_t1/t2`; addresses **[#541](https://github.com/ahorn885/exercise/issues/541)** (shallow strength). Handoff: `V5_Implementation_Layer4_StrengthTwoTemplate_2026_06_13_Closing_Handoff_v1.md`. Design: `Layer4_StrengthProgramming_Phase2_Design_v2`.
+
+- ✅ **Both templates live on gen + refresh.** The failover trigger (`[TERRAIN-INFEASIBLE]`/`[NO CRAFT]`) reaches refresh because **#557 + #208 already wired terrain-feasibility into `orchestrate_plan_refresh` → T1/T2 renders** — so the originally-planned "PR 2 refresh-feasibility wiring" is **moot** (shipped independently).
+- ⬜ **[#573](https://github.com/ahorn885/exercise/issues/573) — strength-specific tail (advisory-quality, not correctness):** add `strength_substitution: bool` to `PlanSession` + the `record_phase_sessions`/`record_refresh_sessions` tool schemas + instruct the prompt to set it on failover; then scope `_rule_strength_frequency_band` (`layer4/validator.py`) to count only programmed sessions (exclude `strength_substitution=true`). Until then the advisory `warning` counts all strength incl. failover stacking — noisier but harmless (it never blocks; the cap is `warning`-only by design so it can't starve the terminal fallback).
+- 🔁 **One-time cache recompute (auto, no action):** `hashing.LAYER4_PROMPT_REVISION="2"` was added to `plan_create_key` + `plan_refresh_key` (the prompt body isn't otherwise in the key). First post-deploy plan/refresh re-synthesizes cold; bump the constant on any future Layer 4 prompt-body change.
+- 🩺 **Worth a live spot-check (Andy's hands, low priority):** regenerate a plan (or refresh a week) post-deploy and eyeball a Build-phase strength day — confirm it reads as the layered ~6–8-movement session (heavy core + durability + plyo + carry), not the old ~4-exercise circuit; and that a terrain-infeasible discipline on refresh composes as a muscular-endurance circuit, not heavy lifting.
+
+---
+
 ## T3 plan-refresh `plan_start_date` fix (2026-06-13, PR #569) — DONE; one live re-verify owed
 
 **PR [#569](https://github.com/ahorn885/exercise/pull/569) (`Closes #570`, branch `claude/plan-65-refresh-r8tclv`) squash-merged to `main`.** The live T3-refresh verify owed by the #566/#208 handoff surfaced that **T3 refresh had never worked**: `routes/plan_refresh.py` never passed `plan_start_date` to `orchestrate_plan_refresh`, so every T3 (cross-phase) refresh failed `_validate_inputs` with `plan_start_date_missing` (T1/T2 don't require it → silent). Fix: `_resolve_plan_start_date` walks `refresh_parent_version_id` to the root `plan_create` row's `scope_start_date` (the plan's true start, NOT the refresh window), threaded through `build_refresh_advance_ctx` → `run_refresh_orchestration`. **Code-only, NO DDL, nothing to deploy.** Handoff: `V5_Implementation_T3RefreshPlanStartDateFix_2026_06_13_Closing_Handoff_v1.md`.
