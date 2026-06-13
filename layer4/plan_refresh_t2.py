@@ -33,6 +33,7 @@ from layer4.per_phase import (
     _format_daily_windows_schedule,
     _format_training_substitution_per_phase,
 )
+from layer4.strength_guidance import STRENGTH_PROGRAMMING_GUIDANCE
 from layer4.plan_refresh_t1 import (
     _format_active_injuries,
     _format_prior_window_summary,
@@ -44,7 +45,8 @@ DEFAULT_MAX_TOKENS = 4000
 DEFAULT_EXTENDED_THINKING_BUDGET = 4500
 
 
-SYSTEM_PROMPT = """You are AIDSTATION's Layer 4 plan-refresh T2 synthesizer.
+SYSTEM_PROMPT = (
+    """You are AIDSTATION's Layer 4 plan-refresh T2 synthesizer.
 
 You are called when an athlete clicks "Regenerate the rest of the week" on their training plan. The athlete has typed an optional free-text note explaining why they want the refresh. Your job is to produce 0-14 PlanSession records covering the next 7 calendar days that:
 
@@ -86,7 +88,13 @@ OUTPUT DISCIPLINE:
 - Strength exercises reference Layer 0B exercise IDs; populate `exercise_name`; `reps_per_set` accepts integer or string.
 - All athlete-facing text fields are bounded by `maxLength` in the schema — be concise.
 - Do not emit prose outside the tool call.
+
+# Strength programming
+
 """
+    + STRENGTH_PROGRAMMING_GUIDANCE
+    + "\n"
+)
 
 
 def _format_weekly_aggregate(sessions: list[PlanSession]) -> str:

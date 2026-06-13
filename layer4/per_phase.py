@@ -62,6 +62,7 @@ from layer4.payload import (
     ValidatorResult,
 )
 from layer4 import periodization
+from layer4.strength_guidance import STRENGTH_PROGRAMMING_GUIDANCE
 from layer4.session_feasibility import (
     TerrainResolution,
     feasibility_line,
@@ -188,7 +189,8 @@ _TAPER_ANCHOR_BY_FORMAT: dict[str, str] = {
 }
 
 
-SYSTEM_PROMPT = """You are AIDSTATION's Layer 4 per-phase synthesizer.
+SYSTEM_PROMPT = (
+    """You are AIDSTATION's Layer 4 per-phase synthesizer.
 
 You are called once per periodization phase (Base / Build / Peak / Taper) inside Pattern A orchestration (plan_create + plan_refresh T3 cross-phase). Your job is to produce a complete day-by-day `list[PlanSession]` for ONE phase — typically 3–10 weeks — given the athlete's full upstream context plus the prior phase's accepted output (when this is not the first phase synthesized) and the phase's intended exit/entry state.
 
@@ -244,9 +246,11 @@ Layer 2C per-locale `effective_pool` + `exercises_resolved` (Tier 1 direct / Tie
 
 # Strength programming
 
-Each strength session (count emitted by the session grid): 3–5 multi-joint, lower-body-biased exercises, 2–3 sets, 4–10 rep range, not to failure, prescribed as RM/RPE targets (e.g. 3×5 @ ~8RM) — never invent absolute weights. In maintenance phases (Peak/Taper) the grid reduces session count and you should also drop sets per session, but keep the load and rep range heavy; never maintain by lowering the weight. If the athlete has no logged history for an exercise, prescribe the reps and tell them to use a load they can complete for that many reps with ~2 reps in reserve, and log it — they set their own baseline; do not withhold an exercise for lack of history.
+"""
+    + STRENGTH_PROGRAMMING_GUIDANCE
+    + """
 
-Pick exercises from the rendered `=== Strength exercise pool ===` for the session's locale (never invent `exercise_id`s). Keep a stable core of 2–3 compound lifts across the phase for progression; rotate accessory exercises week-to-week for variety. Prefer unilateral / offset / anti-rotation variants (single-arm, single-leg, carries) — they build one-sided strength and trunk stability together, which transfers to multi-sport. Prefer heavy + explosive over hypertrophy; de-emphasize added muscle mass.
+Pick exercises from the rendered `=== Strength exercise pool ===` for the session's locale (never invent `exercise_id`s). Keep a stable core of 2–3 compound lifts across the phase for progression; rotate accessory exercises week-to-week. If the athlete has no logged history for an exercise, prescribe the reps and tell them to use a load they can complete for that many reps with ~2 reps in reserve, and log it — they set their own baseline; do not withhold an exercise for lack of history.
 
 Attribute each strength session's `discipline_id` to the discipline it most supports. Place strength as the second session on an easy/moderate cardio day, not on the same day as a key intensity/long session. Do not prescribe a time of day; if strength shares a day with a hard session, add a `session_notes` cue to separate them by a few hours and avoid heavy legs right before the quality session. Honor 2D injury exclusions/accommodations.
 
@@ -275,6 +279,7 @@ When `start_phase != 'Base'` (athlete starts partway through), the prior phase's
 - Strength `exercise_id` references Layer 0B canonical IDs; populate `exercise_name`. `resolution_tier` 1 / 2 / 3 maps to 2C's substitution metadata; `substitute_text` set for tier 2; `proxy_origin_id` set for tier 3.
 - All athlete-facing text fields are bounded by `maxLength` in the schema — be concise. `session_notes` 1–3 sentences; `coaching_intent` one line.
 """
+)
 
 
 # ─── Tool schema (record_phase_sessions) ─────────────────────────────────────

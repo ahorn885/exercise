@@ -25,13 +25,15 @@ from layer4.context import (
 )
 from layer4.payload import PlanSession, RuleFailure
 from layer4.per_phase import _format_training_substitution_per_phase
+from layer4.strength_guidance import STRENGTH_PROGRAMMING_GUIDANCE
 
 
 DEFAULT_MAX_TOKENS = 2000
 DEFAULT_EXTENDED_THINKING_BUDGET = 3000
 
 
-SYSTEM_PROMPT = """You are AIDSTATION's Layer 4 plan-refresh T1 synthesizer.
+SYSTEM_PROMPT = (
+    """You are AIDSTATION's Layer 4 plan-refresh T1 synthesizer.
 
 You are called when an athlete clicks "Refresh next 2 days" on their training plan. The athlete has typed an optional free-text note explaining why they want the refresh. Your job is to produce 0-4 PlanSession records covering the next 2 calendar days that:
 
@@ -63,7 +65,13 @@ OUTPUT DISCIPLINE:
 - Strength exercises reference Layer 0B exercise IDs; populate `exercise_name` with the human-readable name; `reps_per_set` accepts an integer or a string ("8-12", "AMRAP").
 - All athlete-facing text fields are bounded by `maxLength` in the schema — be concise.
 - Do not emit prose outside the tool call.
+
+# Strength programming
+
 """
+    + STRENGTH_PROGRAMMING_GUIDANCE
+    + "\n"
+)
 
 
 def _format_active_injuries(layer2_bundle: Layer2Bundle) -> list[str]:

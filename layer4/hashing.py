@@ -27,6 +27,15 @@ from layer4.payload import PlanSession
 
 _LAYER2_BUNDLE_ATTRS = frozenset({"a", "b", "c", "d", "e"})
 
+# Prompt-body revision tag mixed into the plan-create / plan-refresh cache keys.
+# The synthesis/refresh PROMPT TEXT is not otherwise part of the key (the key is
+# keyed on payload + model + sampling, not prompt content), so a prompt-only
+# change does not invalidate cached plans on its own. Bump this when a Layer 4
+# synthesis or refresh prompt body changes in a way that should re-synthesize
+# cached plans. "2" = #335 Phase 2 strength two-template restructure
+# (per_phase + plan_refresh T1/T2 + shared strength_guidance).
+LAYER4_PROMPT_REVISION = "2"
+
 
 def _to_jsonable(obj: Any) -> Any:
     """Recursive conversion to JSON-safe types with stable serialization.
@@ -177,6 +186,7 @@ def plan_create_key(
         str(capped_retries_per_phase),
         training_substitution_hash or "",
         terrain_feasibility_hash or "",
+        LAYER4_PROMPT_REVISION,
     ]
     return _sha256_hex("||".join(components))
 
@@ -229,6 +239,7 @@ def plan_refresh_key(
         str(max_tokens),
         str(capped_retries),
         training_substitution_hash or "",
+        LAYER4_PROMPT_REVISION,
     ]
     return _sha256_hex("||".join(components))
 
