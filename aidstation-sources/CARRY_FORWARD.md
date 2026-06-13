@@ -11,6 +11,22 @@ Rolling-state for items spanning multiple sessions. **Edit in place** — don't 
 
 ---
 
+---
+
+## pv=69/70 feasibility-saturation arc (2026-06-13) — observability + crash-guard shipped; craft model corrected; WS-G/H/B/C/E2 open
+
+**Watched live plan-creates pv=69/70; caught a deterministic D-77 stall-fail and diagnosed it from a full new instrumentation pass.** Handoff: `V5_Implementation_pv69_FeasibilitySaturation_CraftModel_2026_06_13_Closing_Handoff_v1.md`. North-star plan: `plans/Feasibility_Saturation_And_Locale_Retirement_Plan_v1.md`.
+
+- ✅ **Observability — DONE (PRs #576/#577).** Full plan-gen decision-surface logging (3B / 2A inclusion / `build_session_grid` / `cluster_locale_ids` / `cluster_terrain_by_locale` / `cluster_equipment_by_locale` / `layer2c skill-capability` / `_build_terrain_feasibility` per-discipline why / `compute_block_cache_key` / `synthesize_phase` collision detail / `anthropic.APIError`), readable **verbatim** via `/admin/logs?token=<DIAG_TOKEN>&q=<substr>`. **CLAUDE.md Rule #15 (Instrument as you build)** added.
+- ✅ **Strength+strength crash-guard — DONE (PR #579).** `per_phase._repair_strength_collisions` relocates-else-drops a colliding 2nd strength before validation → a collision self-heals instead of cron-looping to the stall backstop. Deterministic; scoped to strength+strength.
+- ✅ **Root cause (proven pv=70):** bike/paddle disciplines craft-fail to STRENGTH because the athlete-level craft store (`bike_types_available`/`paddle_craft_types`) is empty while the bikes/boats are entered as location equipment → strength-saturated weeks → the collision. **The #540 "craft axis DONE / nothing owed" bullet below is SUPERSEDED** — craft feasibility is reopened (see #581).
+- ↩️ **Craft model corrected (Andy) — #578 REVERTED (#580).** #578 derived craft ownership from per-locale equipment (wrong: craft is athlete-owned portable gear). Decided: canonical = the athlete-level capture, **home-cluster-wide**; away availability explicit via **(b) craft↔location** + **(c) craft-on-travel-event**.
+- ⬜ **OPEN (issues filed):** [#581](https://github.com/ahorn885/exercise/issues/581) athlete-owned craft store + home-cluster-wide (WS-G, **HIGH/immediate**) → away availability (WS-H, needs DDL, design first); [#582](https://github.com/ahorn885/exercise/issues/582) retire legacy `LOCALES` enum (WS-B); [#583](https://github.com/ahorn885/exercise/issues/583) onboarding forced-home + craft capture (WS-C, under epic #246); [#584](https://github.com/ahorn885/exercise/issues/584) saturation policy dose+2 + reallocate-with-variety (WS-E2, low).
+- 🩺 **Andy's-hands now:** after #580 deploys, set B is empty → tick your bikes/packraft in **profile → "Gear"**, then re-run a create — MTB/packraft should resolve to rides (the `_build_terrain_feasibility` log will show `owned_crafts` populated). No crash either way (#579 guards it).
+- ⬜ **Still owed (carried — NOT done this session):** the post-#572 live **T3 *refresh*** re-verify (below). This session watched *create* plans, not a refresh.
+
+---
+
 ## Layer 4 strength two-template (PR #571) — DONE; one advisory-quality tail (#573); one-time cache recompute (auto)
 
 **PR [#571](https://github.com/ahorn885/exercise/pull/571) (branch `claude/vibrant-wright-4kcjku`) squash-merged to `main`.** Deepened Layer 4 strength to a two-template model (programmed layered session vs failover muscular-endurance substitution) in shared `layer4/strength_guidance.py`, spliced into `per_phase` + `plan_refresh_t1/t2`; addresses **[#541](https://github.com/ahorn885/exercise/issues/541)** (shallow strength). Handoff: `V5_Implementation_Layer4_StrengthTwoTemplate_2026_06_13_Closing_Handoff_v1.md`. Design: `Layer4_StrengthProgramming_Phase2_Design_v2`.

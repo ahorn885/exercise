@@ -113,7 +113,6 @@ from layer4.context import (
 from layer4.payload import Layer4Payload, PlanSession
 from layer4.session_feasibility import (
     TerrainResolution,
-    craft_slugs_from_equipment,
     indoor_machines,
     required_terrains,
     resolve_craft_feasibility,
@@ -368,19 +367,7 @@ def _build_terrain_feasibility(
     gap_rules = _q_terrain_gap_rules(db)
 
     # Craft axis (#540 2c.2c) maps — runs per discipline AHEAD of terrain.
-    # Slice V5 (decided in Vocabulary_TargetState_and_Plan_v1 §1/§7): craft
-    # ownership is sourced from the EQUIPMENT inventory (the canonical source of
-    # truth) UNIONed with the legacy capture columns. Without this, an athlete
-    # who lists their bike/packraft as gym equipment but never filled the
-    # separate Gear form has owned_crafts=[] → every bike/paddle discipline
-    # craft-fails to a strength substitution (the pv=69 / plan-70 saturation).
-    _equip_union: set[str] = set()
-    for _loc in cluster:
-        _equip_union |= equip_by_locale.get(_loc, set())
-    owned_crafts = sorted(
-        set(_collect_athlete_crafts(cone.layer1_payload))
-        | craft_slugs_from_equipment(_equip_union)
-    )
+    owned_crafts = _collect_athlete_crafts(cone.layer1_payload)
     craft_disciplines = _q_craft_discipline_aliases(db)
     craft_kind = _q_craft_group_kind(db)
     discipline_groups = _q_modality_groups(db)

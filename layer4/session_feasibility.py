@@ -301,35 +301,6 @@ def resolve_terrain_feasibility(
 _CRAFT_GROUP_KINDS = frozenset({"bike", "paddle"})
 
 
-# Outdoor craft VESSELS an athlete can own — the bike + paddle slugs minus the
-# indoor `cycling_trainer` (a trainer is the INDOOR tier's concern, not proof of
-# owning an outdoor bike/boat). Mirrors `athlete.BIKE_TYPES` + `PADDLE_CRAFT_TYPES`;
-# `tests/test_layer4_craft_feasibility.py` guards the two staying in sync (the
-# #558 coverage-guard pattern).
-_EQUIPMENT_CRAFT_SLUGS = frozenset(
-    {"road_bike", "mountain_bike", "gravel_bike", "kayak", "canoe", "packraft"}
-)
-
-
-def craft_slugs_from_equipment(equipment_names: set[str]) -> set[str]:
-    """Owned-craft slugs derived from the athlete's EQUIPMENT inventory canonical
-    names (e.g. "Mountain bike" -> "mountain_bike"). Normalizes casing + a
-    trailing parenthetical label ("Mountain Bike (MTB)") then matches the closed
-    craft-vessel set, so an athlete who lists their bike/boat as equipment is
-    treated as owning that craft.
-
-    The Slice-V5 single-source-of-truth bridge (`Vocabulary_TargetState_and_Plan_v1`
-    §1/§7): craft ownership reads from `layer0.equipment_items` — the canonical
-    source — instead of the separate `bike_types_available`/`paddle_craft_types`
-    capture columns that drift empty. Pure."""
-    out: set[str] = set()
-    for name in equipment_names:
-        slug = name.lower().split("(")[0].strip().replace(" ", "_")
-        if slug in _EQUIPMENT_CRAFT_SLUGS:
-            out.add(slug)
-    return out
-
-
 @dataclass(frozen=True)
 class CraftResolution:
     """The deterministic craft decision for one discipline the grid wants.
