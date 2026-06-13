@@ -155,7 +155,17 @@ def cluster_terrain_by_locale(
             "WHERE user_id = ? AND locale = ? LIMIT 1",
             (user_id, locale),
         ).fetchone()
-        out[locale] = _coerce_terrain_ids(row["locale_terrain_ids"] if row else None)
+        raw = row["locale_terrain_ids"] if row else None
+        coerced = _coerce_terrain_ids(raw)
+        # Rule #15 observability: log the raw cell alongside the coerced set so a
+        # terrain that IS saved but fails to surface (missing row, NULL, or an
+        # unexpected TEXT[]/JSON shape `_coerce_terrain_ids` drops to empty) is
+        # visible rather than silently absent from the feasibility cascade.
+        print(
+            f"cluster_terrain_by_locale: user_id={user_id} locale={locale!r} "
+            f"row_found={row is not None} raw={raw!r} coerced={sorted(coerced)}"
+        )
+        out[locale] = coerced
     return out
 
 
