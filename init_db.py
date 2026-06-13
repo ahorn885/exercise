@@ -2167,6 +2167,23 @@ _PG_MIGRATIONS = [
     # implied. The list buckets a non-NULL `archived_at` row into Archived
     # ahead of the scope-date buckets.
     "ALTER TABLE plan_versions ADD COLUMN IF NOT EXISTS archived_at TIMESTAMPTZ",
+    # #208 — async/resumable plan-refresh. A refresh row is allocated
+    # `generating` and driven by the same cron/poller as plan-create, so the
+    # background pass must re-derive the refresh inputs from the row (the
+    # original request is long gone). `created_via` already encodes the tier
+    # (`plan_refresh_t{1,2,3}`); these carry the rest: the athlete's typed note
+    # (re-parsed each pass), the parent plan version, the D-63 ad-hoc
+    # attribution, and whether the frequency cap was overridden — everything
+    # `_write_refresh_log` needs at completion.
+    "ALTER TABLE plan_versions ADD COLUMN IF NOT EXISTS refresh_nl_text TEXT",
+    "ALTER TABLE plan_versions ADD COLUMN IF NOT EXISTS refresh_parent_version_id BIGINT REFERENCES plan_versions(id)",
+    "ALTER TABLE plan_versions ADD COLUMN IF NOT EXISTS refresh_triggered_by_ad_hoc_id BIGINT",
+    "ALTER TABLE plan_versions ADD COLUMN IF NOT EXISTS refresh_cap_overridden BOOLEAN NOT NULL DEFAULT FALSE",
+    # The NL parse is done ONCE at request time and frozen here, NOT re-run per
+    # background pass: a non-deterministic re-parse would drift parsed_intent →
+    # drift the plan_refresh cache key → non-convergence (the #202 class of bug).
+    "ALTER TABLE plan_versions ADD COLUMN IF NOT EXISTS refresh_parsed_intent_json TEXT",
+    "ALTER TABLE plan_versions ADD COLUMN IF NOT EXISTS refresh_used_degraded BOOLEAN NOT NULL DEFAULT FALSE",
     # layer4_cache entry_point drift fix (2026-05-26) — the Layer 3A/3B
     # cached wrappers (2026-05-20) + the NL-parser cache (2026-05-21) write
     # entry_point values the original 4-value CHECK rejected, so every 3A/3B

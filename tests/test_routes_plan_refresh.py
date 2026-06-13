@@ -23,6 +23,7 @@ from layer4 import OrchestrationError
 from layer4.context import ParsedIntent
 from layer4.payload import PlanSession
 from nl_parser import NLParserError
+import routes.plan_refresh as plan_refresh_mod
 from routes.plan_refresh import (
     _TIER_CAP_LIMITS,
     _athlete_active_injury_summary,
@@ -34,11 +35,14 @@ from routes.plan_refresh import (
     _latest_plan_version,
     _orchestration_error_message,
     _parse_tier,
+    _resolve_plan_start_date,
     _resolve_prefill,
     _resolve_scope_dates,
     _run_parser,
     _validate_ad_hoc_id_for_user,
     _write_refresh_log,
+    build_refresh_advance_ctx,
+    write_refresh_failure_log,
 )
 
 
@@ -229,6 +233,67 @@ class TestLatestPlanVersion:
         sql, params = db.calls[0]
         assert "WHERE user_id = ?" in sql
         assert params == (99,)
+
+
+# ─── _resolve_plan_start_date ───────────────────────────────────────────────
+
+
+class TestResolvePlanStartDate:
+    def test_immediate_create_parent(self):
+        """Parent is the root create row → its scope_start_date is the plan
+        start. (The common case: refreshing a freshly-created plan.)"""
+        db = _FakeConn()
+        db.queue_response(
+            row={
+                "scope_start_date": date(2026, 6, 11),
+                "refresh_parent_version_id": None,
+            }
+        )
+        assert _resolve_plan_start_date(db, 1, parent_id=65) == date(2026, 6, 11)
+
+    def test_walks_chain_to_root_create_row(self):
+        """Refresh-of-a-refresh: the immediate parent is itself a refresh row
+        (scope_start is a refresh window) — walk to the root create row so the
+        plan start is the plan's REAL start, not an intermediate window."""
+        db = _FakeConn()
+        # parent (a refresh row) → points further up
+        db.queue_response(
+            row={
+                "scope_start_date": date(2026, 6, 20),  # a refresh window — NOT it
+                "refresh_parent_version_id": 65,
+            }
+        )
+        # root create row → no parent → this is the answer
+        db.queue_response(
+            row={
+                "scope_start_date": date(2026, 6, 11),
+                "refresh_parent_version_id": None,
+            }
+        )
+        assert _resolve_plan_start_date(db, 1, parent_id=66) == date(2026, 6, 11)
+
+    def test_none_parent_returns_none(self):
+        db = _FakeConn()
+        assert _resolve_plan_start_date(db, 1, parent_id=None) is None
+
+    def test_missing_row_returns_none(self):
+        db = _FakeConn()
+        db.queue_response(row=None)
+        assert _resolve_plan_start_date(db, 1, parent_id=999) is None
+
+    def test_cycle_guard_terminates(self):
+        """A cyclic parent pointer must not loop forever — the seen-set guard
+        bails and returns None rather than hanging."""
+        db = _FakeConn()
+        # 66 → 66 (self-referential); second lookup is never reached because the
+        # id is already in `seen`, so the loop exits and returns None.
+        db.queue_response(
+            row={
+                "scope_start_date": date(2026, 6, 20),
+                "refresh_parent_version_id": 66,
+            }
+        )
+        assert _resolve_plan_start_date(db, 1, parent_id=66) is None
 
 
 # ─── _athlete_locale_slugs ──────────────────────────────────────────────────
@@ -803,3 +868,143 @@ class TestCheckFrequencyCap:
         _, params = db.calls[0]
         # T3 window is 168h
         assert params[2] == now - timedelta(hours=168)
+
+
+# ─── #208 async-refresh background helpers ───────────────────────────────────
+
+
+def _frozen_refresh_row(**overrides):
+    """A plan_versions row as `_load_plan_version` returns it for an
+    async-refresh row (created_via encodes the tier)."""
+    row = {
+        'id': 71,
+        'user_id': 3,
+        'created_via': 'plan_refresh_t2',
+        'scope_start_date': date(2026, 6, 12),
+        'scope_end_date': date(2026, 6, 18),
+        'generation_status': 'generating',
+        'refresh_nl_text': 'legs felt heavy',
+        'refresh_parent_version_id': 65,
+        'refresh_triggered_by_ad_hoc_id': None,
+        'refresh_cap_overridden': False,
+        'refresh_parsed_intent_json': ParsedIntent(raw_text='FROZEN').model_dump_json(),
+        'refresh_used_degraded': False,
+    }
+    row.update(overrides)
+    return row
+
+
+class TestBuildRefreshAdvanceCtx:
+    def test_reads_frozen_inputs_without_reparsing(self, monkeypatch):
+        # The parser must NOT run again — the ctx's parsed_intent must be the
+        # frozen one verbatim (re-parsing would drift the cache key, #202).
+        monkeypatch.setattr(
+            plan_refresh_mod, "load_prior_plan_session_window",
+            lambda *a, **k: [],
+        )
+        # Hard-fail if anything tries to re-run the NL parser this pass.
+        monkeypatch.setattr(
+            plan_refresh_mod, "_run_parser",
+            lambda *a, **k: (_ for _ in ()).throw(AssertionError("re-parsed!")),
+        )
+        ctx = build_refresh_advance_ctx(_FakeConn(), 3, _frozen_refresh_row())
+        assert ctx['tier'] == 'T2'  # derived from created_via
+        assert ctx['parsed_intent'].raw_text == 'FROZEN'
+        assert ctx['scope_start'] == date(2026, 6, 12)
+        assert ctx['scope_end'] == date(2026, 6, 18)
+        assert ctx['parent_id'] == 65
+        assert ctx['nl_text'] == 'legs felt heavy'
+        assert ctx['prior_window'] == []
+
+    def test_missing_parsed_intent_falls_back_to_default(self, monkeypatch):
+        monkeypatch.setattr(
+            plan_refresh_mod, "load_prior_plan_session_window",
+            lambda *a, **k: [],
+        )
+        ctx = build_refresh_advance_ctx(
+            _FakeConn(), 3, _frozen_refresh_row(refresh_parsed_intent_json=None)
+        )
+        assert isinstance(ctx['parsed_intent'], ParsedIntent)
+
+    def test_threads_resolved_plan_start_date(self, monkeypatch):
+        # The ctx must carry the plan's TRUE start (root create row's
+        # scope_start_date), NOT the refresh row's own scope_start — T3 needs it
+        # to anchor phase boundaries (the plan_start_date_missing bug).
+        monkeypatch.setattr(
+            plan_refresh_mod, "load_prior_plan_session_window",
+            lambda *a, **k: [],
+        )
+        db = _FakeConn()
+        db.queue_response(
+            row={
+                "scope_start_date": date(2026, 6, 11),
+                "refresh_parent_version_id": None,
+            }
+        )
+        ctx = build_refresh_advance_ctx(db, 3, _frozen_refresh_row())
+        assert ctx['plan_start_date'] == date(2026, 6, 11)
+        # ...distinct from the refresh window itself.
+        assert ctx['plan_start_date'] != ctx['scope_start']
+
+
+class TestRunRefreshOrchestration:
+    def test_forwards_plan_start_date(self, monkeypatch):
+        # Regression guard: run_refresh_orchestration MUST pass plan_start_date
+        # into orchestrate_plan_refresh — omitting it made every T3 refresh fail
+        # _validate_inputs with plan_start_date_missing.
+        captured = {}
+
+        def _fake_orchestrate(db, uid, **kwargs):
+            captured.update(kwargs)
+            return object()
+
+        monkeypatch.setattr(
+            plan_refresh_mod, "orchestrate_plan_refresh", _fake_orchestrate
+        )
+        ctx = {
+            'tier': 'T3',
+            'scope_start': date(2026, 6, 13),
+            'scope_end': date(2026, 7, 10),
+            'plan_start_date': date(2026, 6, 11),
+            'parent_id': 65,
+            'prior_window': [],
+            'parsed_intent': ParsedIntent(raw_text='x'),
+            'today': date(2026, 6, 13),
+        }
+        plan_refresh_mod.run_refresh_orchestration(
+            _FakeConn(), 3, 66, ctx, cache=object()
+        )
+        assert captured['plan_start_date'] == date(2026, 6, 11)
+
+
+class TestWriteRefreshFailureLog:
+    def test_noop_for_plan_create_row(self, monkeypatch):
+        import routes.plan_create as pc
+        monkeypatch.setattr(
+            pc, "_load_plan_version",
+            lambda db, uid, pvid: {'created_via': 'plan_create', 'id': pvid},
+        )
+        calls = []
+        monkeypatch.setattr(
+            plan_refresh_mod, "_write_refresh_log",
+            lambda *a, **k: calls.append(k),
+        )
+        write_refresh_failure_log(_FakeConn(), 9, 3, failure_reason="boom")
+        assert calls == []  # create rows never write a refresh log
+
+    def test_writes_failure_row_for_refresh(self, monkeypatch):
+        import routes.plan_create as pc
+        monkeypatch.setattr(
+            pc, "_load_plan_version", lambda db, uid, pvid: _frozen_refresh_row(id=pvid)
+        )
+        calls = []
+        monkeypatch.setattr(
+            plan_refresh_mod, "_write_refresh_log",
+            lambda *a, **k: calls.append(k),
+        )
+        write_refresh_failure_log(_FakeConn(), 71, 3, failure_reason="layer4:schema_violation")
+        assert len(calls) == 1
+        assert calls[0]['success'] is False
+        assert calls[0]['plan_version_id_after'] is None
+        assert calls[0]['tier'] == 'T2'
+        assert calls[0]['failure_reason'] == "layer4:schema_violation"

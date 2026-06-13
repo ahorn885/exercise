@@ -19,7 +19,11 @@ from types import SimpleNamespace
 
 from layer4 import orchestrator
 from layer4 import per_phase
-from layer4.hashing import compute_terrain_feasibility_hash, plan_create_key
+from layer4.hashing import (
+    compute_terrain_feasibility_hash,
+    plan_create_key,
+    plan_refresh_key,
+)
 from layer4.session_feasibility import (
     TerrainResolution,
     feasibility_line,
@@ -443,6 +447,43 @@ def test_plan_create_key_folds_terrain_feasibility():
     assert base != with_feas
     # None collapses to '' → identical to omitting it (stable for legacy callers).
     assert plan_create_key(**_base_key_kwargs(), terrain_feasibility_hash=None) == base
+
+
+def _base_refresh_key_kwargs():
+    return dict(
+        user_id=1,
+        tier="T1",
+        refresh_scope_start=date(2026, 6, 12),
+        refresh_scope_end=date(2026, 6, 13),
+        layer1_hash="l1",
+        layer2_bundle_canonical_hash="l2",
+        layer3a_hash="l3a",
+        layer3b_hash="l3b",
+        prior_plan_session_window_hash="pw",
+        parsed_intent_hash=None,
+        etl_version_set={"0A": "v7"},
+        model_synthesizer="m",
+        model_seam_reviewer=None,
+        temperature=0.4,
+        max_tokens=0,
+        capped_retries=2,
+    )
+
+
+def test_plan_refresh_key_folds_terrain_feasibility():
+    # #557 — the refresh cache key must invalidate when terrain feasibility
+    # changes (a moved/edited locale → different prescription), and stay stable
+    # for legacy callers that don't supply it.
+    base = plan_refresh_key(**_base_refresh_key_kwargs())
+    with_feas = plan_refresh_key(
+        **_base_refresh_key_kwargs(),
+        terrain_feasibility_hash="abc123",
+    )
+    assert base != with_feas
+    assert (
+        plan_refresh_key(**_base_refresh_key_kwargs(), terrain_feasibility_hash=None)
+        == base
+    )
 
 
 # ─── integration — climbing-no-gym cone → strength → rendered prompt ─────────

@@ -8,10 +8,24 @@
   </a>
 {% endblock %}
 
+{# Canonical "open this scheduled session" URL. Legacy `plan_items` rows go to
+   the per-item view; v2 `plan_sessions` cards (is_v2) have no per-item route,
+   so they open the whole-plan v2 view instead. #}
+{% macro wk_url(w) -%}
+{%- if w.is_v2 -%}{{ url_for('plan_create.view_plan', plan_version_id=w.plan_version_id) }}{%- else -%}{{ url_for('plans.view_item', plan_id=w.plan_id, item_id=w.id) }}{%- endif -%}
+{%- endmacro %}
+
 {# Action buttons for a scheduled plan item — complete / skip stay POST+csrf;
-   .FIT is the brand-neutral "upload completed" round-trip download (HANDOFF §4). #}
+   .FIT is the brand-neutral "upload completed" round-trip download (HANDOFF §4).
+   v2 sessions have no per-item complete/skip/FIT routes yet, so they get a
+   single read-only "View" link into the plan instead of fabricated actions. #}
 {% macro wk_actions(w, fit=true) %}
 <div class="wk-actions">
+  {% if w.is_v2 %}
+  <a class="btn btn-ghost btn-sm" href="{{ wk_url(w) }}">
+    <svg class="icon" width="11" height="11" aria-hidden="true"><use href="#i-arrow"></use></svg> View
+  </a>
+  {% else %}
   <form method="post" action="{{ url_for('plans.complete_item', plan_id=w.plan_id, item_id=w.id) }}" data-confirm="Mark as complete?">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <button class="btn btn-primary btn-sm" type="submit">
@@ -28,6 +42,7 @@
   <a class="btn btn-ghost btn-sm" href="{{ url_for('plans.download_item_fit', plan_id=w.plan_id, item_id=w.id) }}">
     <svg class="icon" width="11" height="11" aria-hidden="true"><use href="#i-download"></use></svg> .FIT
   </a>
+  {% endif %}
   {% endif %}
 </div>
 {% endmacro %}
@@ -61,7 +76,7 @@
         <div class="hero-top">
           <div>
             <p class="eyebrow accent">● Today · Primary</p>
-            <a class="hero-title d-block" href="{{ url_for('plans.view_item', plan_id=primary.plan_id, item_id=primary.id) }}">{{ primary.workout_name }}</a>
+            <a class="hero-title d-block" href="{{ wk_url(primary) }}">{{ primary.workout_name }}</a>
             <div class="hero-sub">
               {{ primary.sport_type }}{% if primary.target_duration_min %} · {{ primary.target_duration_min|int }} min{% endif %}{% if primary.intensity %} · {{ primary.intensity }}{% endif %}
             </div>
@@ -74,7 +89,7 @@
         {% for w in today_workouts[1:] %}
         <div class="wk-row">
           <div>
-            <a class="wk-name" href="{{ url_for('plans.view_item', plan_id=w.plan_id, item_id=w.id) }}">{{ w.workout_name }}</a>
+            <a class="wk-name" href="{{ wk_url(w) }}">{{ w.workout_name }}</a>
             <div class="wk-meta">
               <span class="chip">{{ w.sport_type }}</span>
               {% if w.target_duration_min %}<span class="num">{{ w.target_duration_min|int }} min</span>{% endif %}
@@ -151,7 +166,7 @@
     {% for w in tomorrow_workouts %}
     <div class="wk-row">
       <div>
-        <a class="wk-name" href="{{ url_for('plans.view_item', plan_id=w.plan_id, item_id=w.id) }}">{{ w.workout_name }}</a>
+        <a class="wk-name" href="{{ wk_url(w) }}">{{ w.workout_name }}</a>
         <div class="wk-meta">
           <span class="chip">{{ w.sport_type }}</span>
           {% if w.target_duration_min %}<span class="num">{{ w.target_duration_min|int }} min</span>{% endif %}

@@ -31,6 +31,7 @@ from layer4.context import (
 from layer4.payload import PlanSession, RuleFailure
 from layer4.per_phase import (
     _format_daily_windows_schedule,
+    _format_session_feasibility,
     _format_training_substitution_per_phase,
 )
 from layer4.strength_guidance import STRENGTH_PROGRAMMING_GUIDANCE
@@ -131,6 +132,7 @@ def render_user_prompt(
     retries_used: int,
     rule_failures: list[RuleFailure],
     training_substitution_payload: TrainingSubstitutionPayload | None = None,
+    terrain_feasibility: dict[str, Any] | None = None,
 ) -> str:
     """Render the §6 user prompt for T2. Inline Python rendering replaces
     Mustache from the prompt body MD."""
@@ -186,6 +188,13 @@ def render_user_prompt(
     if voice:
         parts.append(f"Voice notes: {voice}")
     parts.append("")
+
+    # === Session feasibility (#557 — terrain routing, mirrors create #540) ===
+    parts.extend(
+        _format_session_feasibility(
+            terrain_feasibility, layer2_bundle.a, dict(layer2_bundle.c)
+        )
+    )
 
     # === Schedule ===
     parts.extend(_format_daily_windows_schedule(layer1_payload))

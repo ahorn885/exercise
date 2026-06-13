@@ -62,6 +62,7 @@ from layer4.payload import (
     ValidatorResult,
 )
 from layer4 import periodization
+from layer4.injury_render import format_active_injuries
 from layer4.strength_guidance import STRENGTH_PROGRAMMING_GUIDANCE
 from layer4.session_feasibility import (
     TerrainResolution,
@@ -622,21 +623,19 @@ def _format_active_injuries(layer2d: Layer2DPayload | None) -> list[str]:
     """Render 2D excluded + accommodated exercises for the active-injury
     block per the PR-C-followon v2 amendment (replaces the v1 prompt's
     reference to 3A `active_injuries.restriction_text` which never existed
-    in 3A's typed contract — canonical injury source is 2D)."""
-    if layer2d is None:
-        return ["- (Layer 2D payload not supplied; no injury exclusions in scope.)"]
-    out: list[str] = []
-    if not layer2d.excluded_exercises and not layer2d.accommodated_exercises:
-        out.append("- None on file.")
-        return out
-    for er in layer2d.excluded_exercises:
-        out.append(f"- EXCLUDE {er.exercise_id} ({er.exercise_name})")
-    for er in layer2d.accommodated_exercises:
-        mod_list = ", ".join(m.modality_type for m in er.accommodations)
-        out.append(
-            f"- ACCOMMODATE {er.exercise_id} ({er.exercise_name}): {mod_list}"
-        )
-    return out
+    in 3A's typed contract — canonical injury source is 2D).
+
+    Delegates to the shared `layer4.injury_render` renderer so the create +
+    refresh prompts can't drift; that renderer also carries each modality's
+    params + rationale (#555), not just the type name.
+    """
+    return format_active_injuries(
+        layer2d,
+        none_payload_line=(
+            "- (Layer 2D payload not supplied; no injury exclusions in scope.)"
+        ),
+        none_on_file_line="- None on file.",
+    )
 
 
 # #335 Phase 2 §8 — strength exercise-surface rendering. The per-discipline cap

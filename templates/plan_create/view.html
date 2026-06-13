@@ -2,6 +2,14 @@
 {% set nav_active = 'plan' %}
 {% block title %}Training plan · AIDSTATION{% endblock %}
 {% block crumbs %}<a href="{{ url_for('dashboard.index') }}">Plan</a> <span class="sep">/</span> <b>Generated plan</b>{% endblock %}
+{% block topbar_actions %}
+  {# Refresh acts on the athlete's latest plan version (the refresh page
+     resolves the parent + shows the tier picker) — same entry point as the
+     dashboard Quick-actions button, surfaced here on the plan itself. #}
+  <a class="btn btn-ghost" href="{{ url_for('plan_refresh.refresh') }}">
+    <svg class="icon" width="12" height="12" aria-hidden="true"><use href="#i-arrow"></use></svg> Refresh plan
+  </a>
+{% endblock %}
 
 {% block content %}
 <div class="plan-gen">

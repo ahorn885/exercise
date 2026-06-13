@@ -23,7 +23,8 @@ Net: a deeper, layered session is justified **for durability**, not economy. v2 
 The strength-authoring prompts produce strength sessions for new plans (`per_phase.py`, Pattern A) **and** refreshes (`plan_refresh_t1/t2`, plus T3 → per_phase). v2 makes all of them share one evidence-based composition policy with two templates, and ensures a prompt-only change actually re-synthesizes cached plans.
 
 **In scope (PR 1):** the two-template shared guidance (`layer4/strength_guidance.py`); splice into `per_phase` + `plan_refresh_t1` + `plan_refresh_t2`; cache-key prompt-revision bump (`hashing.py`).
-**Deferred to PR 2 (the refresh-feasibility track):** wiring the deterministic terrain/craft feasibility resolver into the refresh orchestrator so the **failover template's trigger** (`[TERRAIN-INFEASIBLE]`/`[NO CRAFT]`) actually fires on refresh — today refresh runs **no** feasibility resolution (a pre-existing gap: refresh can prescribe/clobber infeasible cardio); the `strength_substitution` schema marker + validator source-scoping (§10) ride with it.
+**Update at merge (2026-06-13):** PR 1 originally planned to defer the refresh **failover trigger** to a "PR 2" — but #557 + #208 landed on `main` first and **already wire the terrain/craft feasibility resolver end-to-end into refresh** (`orchestrate_plan_refresh` → `_build_terrain_feasibility` → T1/T2 `render_user_prompt` → `_format_session_feasibility`, emitting the `[TERRAIN-INFEASIBLE]`/`[NO CRAFT]` annotations). So on merge the **failover template is live on refresh too** (the guidance keys off exactly those tags), and the pre-existing "refresh prescribes/clobbers infeasible cardio" bug is closed.
+**Deferred to #573 (strength-specific tail only):** the `strength_substitution` schema marker + validator source-scoping (§10) — so the advisory frequency warning counts only *programmed* sessions. No longer blocked on refresh-feasibility wiring (that shipped via #557).
 **Out of scope (unchanged from v1):** rx_engine absolute loads (Phase 2b, #335); single_session (renders its own pool; prompt unchanged in PR 1).
 
 ---
@@ -95,7 +96,7 @@ Unchanged from v1 — strength rides as the 2nd session on an easy/moderate day,
 
 Strength is authored in **three** prompts, which previously could drift: `per_phase` (new-plan + T3 cross-phase) and the rolling-window refreshers `plan_refresh_t1` (2-day) / `plan_refresh_t2` (7-day "regenerate the week"). v1's guidance lived only in `per_phase`; the refreshers carried their own thinner strength instructions. v2 extracts the composition policy into **`layer4/strength_guidance.py` (`STRENGTH_PROGRAMMING_GUIDANCE`)**, imported and spliced into all three system prompts, so a refresh can't revert a plan to the old shallow style.
 
-**Trigger caveat (→ PR 2):** the **programmed** template fires everywhere immediately. The **failover** template needs the `[TERRAIN-INFEASIBLE]`/`[NO CRAFT]` annotation, which only `per_phase`/plan-create compute today. The refresh paths run **no** feasibility resolution, so the failover half is dormant on refresh until PR 2 wires `_build_terrain_feasibility()` into `orchestrate_plan_refresh()` (and threads it through T1/T2 + the T3 `synthesize_pattern_a_for_refresh()` pass-through). That PR 2 also fixes the standalone pre-existing bug (refresh prescribing/clobbering infeasible cardio) and adds the `strength_substitution` marker.
+**Trigger status (resolved at merge):** the **programmed** template fires everywhere. The **failover** template needs the `[TERRAIN-INFEASIBLE]`/`[NO CRAFT]` annotation — and as of #557 + #208 (landed on `main` before this merge) the refresh paths **do** run feasibility resolution end-to-end (`orchestrate_plan_refresh` → `_build_terrain_feasibility` → T1/T2 `_format_session_feasibility`). So the failover template is **live on refresh** the moment this guidance merges; the earlier "dormant until PR 2" caveat no longer applies. The only remaining strength-specific tail is the `strength_substitution` marker + validator scoping (#573).
 
 ---
 
@@ -122,7 +123,7 @@ PR 1 (`tests/test_layer4_strength_templates.py`): both templates + trigger seam 
 
 ## 13. Open items / deferred
 
-- **PR 2 — refresh-feasibility track:** `_build_terrain_feasibility()` into `orchestrate_plan_refresh()`; thread to T1/T2 prompts + fix T3 `terrain_feasibility` pass-through; add it to the refresh cache key; **`strength_substitution` marker** on `PlanSession` + tool schemas + validator source-scoping (§10). Closes the pre-existing "refresh ignores feasibility" bug and lights the failover template on refresh.
+- **#573 — strength-specific tail:** **`strength_substitution` marker** on `PlanSession` + tool schemas + validator source-scoping (§10), so the advisory counts only programmed sessions. _(The refresh-feasibility wiring this originally depended on already shipped via #557 + #208; the failover template is live on refresh now.)_
 - **Phase 2b (#335):** rx_engine absolute loads.
 - **Phase 3 (#298/#341):** multi-locale cluster.
 
@@ -130,8 +131,8 @@ PR 1 (`tests/test_layer4_strength_templates.py`): both templates + trigger seam 
 
 - **Risk — the deeper session is durability-justified, not economy-justified, and that evidence is medium-confidence** (Lauersen's dose-response rests on 6 studies; expedition-AR durability is extrapolated from runners + military). It is **not** a performance/economy win (economy plateaus). If we wanted to stay strictly on high-confidence economy evidence, v1's leaner 3–5 holds. Justification for going deeper: AIDSTATION's market *is* underserved extreme endurance, so designing strength for multi-day durability is on-brand and defensible. **Decision (Andy 2026-06-13): go deeper.**
 - **Risk — contested sub-claims** (Nordic ~51%: Impellizzeri 2021 reappraisal; unilateral-asymmetry→injury chain disputed; core→economy small/mixed). Mitigation: these ride in the template on **specificity/efficiency** grounds, not as hard injury claims.
-- **Risk — refresh fan-out is only half-live in PR 1** (failover dormant until PR 2). Mitigation: programmed template improves refresh immediately; refresh is **no worse** than today on failover (the latent bug is untouched, not worsened); PR 2 is scoped and queued.
-- **Best argument against:** do PR 1 + PR 2 together so both templates are fully live everywhere at once. Rejected: that bundles a prompt change with a refresh-orchestration + caching change (10+ files, over the ceiling) into one hard-to-review PR; the split ships the durability deepening now and isolates the feasibility-wiring/bugfix.
+- **Refresh fan-out — fully live at merge.** The split was planned as "PR 1 programmed-only on refresh, PR 2 wires the failover trigger," but #557 + #208 landed the refresh-feasibility wiring first, so **both** templates are live on gen + refresh at merge. The only tail is the `strength_substitution` marker (#573), which is advisory-quality, not correctness.
+- **Best argument against (the original split):** do the prompt change + the refresh-feasibility wiring together. Moot now — the wiring shipped independently (#557); this PR is the prompt half, cleanly isolated, and the marker tail (#573) is small.
 
 ---
 

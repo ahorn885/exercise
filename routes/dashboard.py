@@ -6,10 +6,47 @@ from flask import Blueprint, render_template
 from database import get_db
 from datetime import date, timedelta
 from routes.auth import current_user_id
+from plan_sessions_repo import load_scheduled_sessions_for_window
 
 bp = Blueprint('dashboard', __name__)
 
 _weather_cache = {}
+
+
+def _v2_session_card(session) -> dict:
+    """Normalize a v2 `PlanSession` into the dict shape the dashboard
+    Today/Tomorrow cards render for legacy `plan_items` rows, so both models
+    flow through the same template markup. `is_v2` flips the card's links +
+    actions over to the v2 plan view (v2 has no per-session item routes).
+
+    Labels mirror `plan_create/view.html` (rest → "Rest"; strength →
+    "Strength · <sport>"; cardio → discipline name) so the dashboard reads
+    consistently with the plan page.
+    """
+    kind = session.kind
+    if kind == 'rest':
+        name = 'Rest'
+    elif kind == 'strength':
+        name = 'Strength'
+        if session.discipline_name:
+            name += f' · {session.discipline_name}'
+    else:
+        name = session.discipline_name or session.discipline_id or kind.title()
+
+    item_date = session.date
+    return {
+        'is_v2': True,
+        'plan_version_id': session.plan_version_id,
+        'workout_name': name,
+        'sport_type': kind,
+        'target_duration_min': session.duration_min,
+        # Rest days carry no meaningful intensity; the template hides falsy.
+        'intensity': None if kind == 'rest' else session.intensity_summary,
+        'locale_name': session.locale_name,
+        'plan_name': 'Generated plan',
+        'item_date': item_date.isoformat() if hasattr(item_date, 'isoformat')
+        else item_date,
+    }
 
 
 def _has_plan_version(db, user_id: int) -> bool:
@@ -119,6 +156,28 @@ def index():
         "JOIN training_plans tp ON tp.id = pi.plan_id "
         "WHERE tp.user_id=? AND pi.item_date=? AND pi.status='scheduled' AND tp.status!='archived'",
         (uid, tomorrow)).fetchall()
+
+    # AI-generated (v2) plans live in `plan_versions`/`plan_sessions`, NOT the
+    # legacy `plan_items` model the queries above read — so without this an
+    # active v2 plan's sessions never show on the dashboard. Resolve "what's
+    # scheduled today/tomorrow" via the same per-day version pointer the plan
+    # view + refresh use (latest active version wins per date), then normalize
+    # each PlanSession into the card shape the template already renders. Legacy
+    # rows and v2 cards coexist in the same lists; `is_v2` switches the links.
+    today_d = date.today()
+    tomorrow_d = today_d + timedelta(days=1)
+    today_workouts = list(today_workouts) + [
+        _v2_session_card(s)
+        for s in load_scheduled_sessions_for_window(
+            db, uid, start=today_d, end=today_d
+        )
+    ]
+    tomorrow_workouts = list(tomorrow_workouts) + [
+        _v2_session_card(s)
+        for s in load_scheduled_sessions_for_window(
+            db, uid, start=tomorrow_d, end=tomorrow_d
+        )
+    ]
 
     missed_workouts = db.execute(
         "SELECT pi.*, tp.name as plan_name FROM plan_items pi "

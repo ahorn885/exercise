@@ -385,6 +385,53 @@ def load_prior_plan_session_window(
     ]
 
 
+def load_scheduled_sessions_for_window(
+    db: Any,
+    user_id: int,
+    *,
+    start: date,
+    end: date,
+) -> list[PlanSession]:
+    """Load the athlete's *currently-scheduled* sessions over the inclusive
+    date window `[start, end]`, resolved via the same D-64 §6.3 per-day
+    version pointer used by `load_prior_plan_session_window`
+    (`DISTINCT ON (date, session_index_in_day) ORDER BY plan_version_id
+    DESC` — the latest plan version wins for any given (date, slot), so a
+    refresh that re-plans today onward overrides the parent for those dates).
+
+    Unlike the prior-window read, this is restricted to **active** plan
+    versions only — `generation_status = 'ready'`, not archived, not
+    completed — so a stale/shelved/in-flight version can never surface a
+    session as "scheduled". (We deliberately do NOT filter `superseded_at`:
+    a tier-1/2 refresh supersedes the parent but only re-plans a short
+    window, so the parent still legitimately owns its non-refreshed tail —
+    the per-day `plan_version_id DESC` pointer is what resolves an overlap.)
+    This is the read the dashboard uses for the Today / Tomorrow cards (the
+    prior-window read is strictly pre-today and applies no status filter).
+
+    Returns the de-duplicated `list[PlanSession]` ordered by
+    (date ascending, session_index_in_day ascending); `[]` when the athlete
+    has no active sessions in the window.
+    """
+    cur = db.execute(
+        """SELECT DISTINCT ON (s.date, s.session_index_in_day)
+                  s.payload_json
+             FROM plan_sessions s
+             JOIN plan_versions pv ON pv.id = s.plan_version_id
+            WHERE s.user_id = ?
+              AND s.date BETWEEN ? AND ?
+              AND pv.generation_status = 'ready'
+              AND pv.archived_at IS NULL
+              AND pv.completed_at IS NULL
+            ORDER BY s.date, s.session_index_in_day, s.plan_version_id DESC""",
+        (user_id, start, end),
+    )
+    return [
+        PlanSession.model_validate(_decode_payload(row["payload_json"]))
+        for row in cur.fetchall()
+    ]
+
+
 def _decode_json(raw: Any) -> Any:
     """Type-agnostic JSONB normalizer (dict, list, or JSON string). Unlike
     `_decode_payload`, tolerates a JSON *array* column (e.g. the
