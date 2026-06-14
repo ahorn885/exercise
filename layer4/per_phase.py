@@ -894,10 +894,15 @@ def _event_window_label(segment: "EventWindowSegment") -> str:
         elif ov.override_type == "locale_unavailable":
             parts.append(f"\"{ov.unavailable_locale}\" unavailable (closed this window)")
         elif ov.override_type == "away":
-            # Trigger-#1 wording APPROVED (Andy 2026-06-14).
+            # Trigger-#1 wording APPROVED (Andy 2026-06-14). Slice 4 dropped the
+            # hard-coded "no brought craft" clause — it became false once a craft
+            # can be brought (c) or kept at the destination (b); the actual craft
+            # availability shows in the per-discipline resolutions this overlay
+            # renders (D-009 exact when the boat travelled, etc.), so the label
+            # states the environment without asserting an absent-craft claim.
             parts.append(
                 f"away at \"{ov.away_locale}\" (training environment: that "
-                f"location's terrain/equipment; no brought craft)"
+                f"location's terrain/equipment + any craft you have there)"
             )
         else:  # defensive
             parts.append(ov.override_type)

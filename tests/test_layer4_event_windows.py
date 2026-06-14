@@ -24,6 +24,12 @@ from athlete_event_windows_repo import (
     delete_event_window,
     load_event_windows,
 )
+from athlete_craft_locale_repo import (
+    CraftLocaleError,
+    delete_craft_locale,
+    load_craft_locales,
+    replace_craft_locale,
+)
 from layer4.context import (
     Layer2ADiscipline,
     Layer2APayload,
@@ -256,6 +262,7 @@ class TestOverlayBuilder:
     def _patch(self, monkeypatch, fi, windows):
         import layer4.orchestrator as orch
         monkeypatch.setattr(orch, "load_event_windows", lambda db, uid: windows)
+        monkeypatch.setattr(orch, "load_craft_locales", lambda db, uid: {})
         monkeypatch.setattr(orch, "_gather_feasibility_inputs", lambda db, uid, cone: fi)
 
     def test_changed_segment_emitted_noop_dropped(self, monkeypatch):
@@ -312,9 +319,13 @@ class TestAwayWindows:
     cascade runs against the away env (spec §4). The away segment carries the FULL
     away feasibility for the grid (counts-follow-away, §4.1)."""
 
-    def _patch(self, monkeypatch, fi, windows, *, cluster, terrain, equip):
+    def _patch(self, monkeypatch, fi, windows, *, cluster, terrain, equip,
+               craft_locales=None):
         import layer4.orchestrator as orch
         monkeypatch.setattr(orch, "load_event_windows", lambda db, uid: windows)
+        monkeypatch.setattr(
+            orch, "load_craft_locales", lambda db, uid: dict(craft_locales or {})
+        )
         monkeypatch.setattr(orch, "_gather_feasibility_inputs", lambda db, uid, cone: fi)
         monkeypatch.setattr(
             orch.locations, "cluster_locale_ids",
@@ -410,6 +421,91 @@ class TestAwayWindows:
         )
         # away env resolved (D-001 exact at trailtown), not the home-indoor result.
         assert segments[0].away_feasibility["D-001"].tier == "exact"
+
+
+# ─── away craft (Slice 4): brought-craft (c) ∪ standing craft↔locale (b) ─────
+
+class TestAwayCraft:
+    """The away segment's `owned_crafts` is the union of the window's brought-craft
+    (c) and the standing craft kept at any locale in the destination cluster (b).
+    Verified by spying the craft set passed to `_resolve_included_feasibility` —
+    Slice 4 changes only that value (the cascade itself is reused)."""
+
+    def _captured_owned_crafts(self, monkeypatch, windows, *, cluster,
+                               craft_locales=None):
+        import layer4.orchestrator as orch
+        fi = _mk_inputs(
+            cluster=["home"], terrain_by_locale={"home": set()},
+            equip_by_locale={"home": set()}, disciplines=["D-008"],
+        )
+        recorded: dict = {}
+
+        def _spy(_fi, *, locale_order, terrain_by_locale, equip_by_locale,
+                 owned_crafts=None):
+            recorded["owned_crafts"] = owned_crafts
+            return {}
+
+        monkeypatch.setattr(orch, "load_event_windows", lambda db, uid: windows)
+        monkeypatch.setattr(
+            orch, "load_craft_locales", lambda db, uid: dict(craft_locales or {})
+        )
+        monkeypatch.setattr(orch, "_gather_feasibility_inputs", lambda db, uid, cone: fi)
+        monkeypatch.setattr(orch, "_resolve_included_feasibility", _spy)
+        monkeypatch.setattr(
+            orch.locations, "cluster_locale_ids",
+            lambda db, uid, anchor_locale=None: list(cluster),
+        )
+        monkeypatch.setattr(
+            orch.locations, "cluster_terrain_by_locale", lambda db, uid, c: {}
+        )
+        monkeypatch.setattr(
+            orch.locations, "cluster_equipment_by_locale", lambda db, uid, c: {}
+        )
+        _build_event_window_overlay(
+            None, 7, None, plan_start=date(2026, 6, 1), plan_end=date(2026, 6, 30),
+            home_feasibility={},
+        )
+        return recorded["owned_crafts"]
+
+    def _away_win(self, dest, brought=()):
+        return EventWindow(
+            1, 7, date(2026, 6, 10), date(2026, 6, 12), "away", None, dest, "",
+            brought_craft=tuple(brought),
+        )
+
+    def test_brought_craft_passed_as_owned_crafts(self, monkeypatch):
+        got = self._captured_owned_crafts(
+            monkeypatch, [self._away_win("belfast", ("packraft",))],
+            cluster=["belfast"],
+        )
+        assert got == ["packraft"]
+
+    def test_standing_craft_at_cluster_locale_unioned(self, monkeypatch):
+        got = self._captured_owned_crafts(
+            monkeypatch, [self._away_win("cabin")], cluster=["cabin"],
+            craft_locales={"cabin": ["mountain_bike"]},
+        )
+        assert got == ["mountain_bike"]
+
+    def test_brought_and_standing_union_deduped_and_sorted(self, monkeypatch):
+        got = self._captured_owned_crafts(
+            monkeypatch, [self._away_win("cabin", ("packraft",))], cluster=["cabin"],
+            craft_locales={"cabin": ["packraft", "mountain_bike"]},
+        )
+        assert got == ["mountain_bike", "packraft"]
+
+    def test_standing_craft_outside_away_cluster_excluded(self, monkeypatch):
+        got = self._captured_owned_crafts(
+            monkeypatch, [self._away_win("belfast")], cluster=["belfast"],
+            craft_locales={"home": ["road_bike"]},
+        )
+        assert got == []
+
+    def test_empty_union_is_byte_identical_to_slice2a(self, monkeypatch):
+        got = self._captured_owned_crafts(
+            monkeypatch, [self._away_win("belfast")], cluster=["belfast"],
+        )
+        assert got == []
 
 
 class TestCountsFollowAway:
@@ -551,7 +647,7 @@ class TestOverlayRender:
             [seg], date(2026, 6, 1), date(2026, 6, 14), None, {},
         ))
         assert 'away at "hotel"' in text
-        assert "no brought craft" in text
+        assert "any craft you have there" in text  # Slice 4 dropped "no brought craft"
         assert "or replaced" in text  # away-aware intro
 
     def test_assumed_baseline_note_renders_on_cold_away_segment(self):
@@ -606,6 +702,15 @@ class TestHashAndKey:
         chamonix = self._win("away", away="chamonix")
         assert compute_event_windows_hash([belfast]) != compute_event_windows_hash([chamonix])
 
+    def test_hash_changes_with_brought_craft(self):
+        # Slice 4 (c): brought-craft is a declared window field → in the digest.
+        bare = self._win("away", away="belfast")
+        packraft = EventWindow(
+            1, 7, date(2026, 6, 10), date(2026, 6, 12), "away", None, "belfast", "",
+            brought_craft=("packraft",),
+        )
+        assert compute_event_windows_hash([bare]) != compute_event_windows_hash([packraft])
+
     def _key_kwargs(self):
         return dict(
             user_id=7, layer1_hash="l1", layer2a_hash="2a", layer2b_hash="2b",
@@ -657,7 +762,8 @@ class TestRepo:
         conn.queue_response(rows=[
             {"id": 1, "user_id": 7, "start_date": "2026-06-10",
              "end_date": "2026-06-12", "override_type": "indoor_only",
-             "unavailable_locale": None, "away_locale": None, "notes": ""},
+             "unavailable_locale": None, "away_locale": None,
+             "brought_craft": None, "notes": ""},
         ])
         windows = load_event_windows(conn, 7)
         assert windows[0].start_date == date(2026, 6, 10)
@@ -700,7 +806,7 @@ class TestRepo:
         insert = conn.calls[-1]
         assert "INSERT INTO athlete_event_windows" in insert[0]
         assert insert[1] == (7, date(2026, 6, 1), date(2026, 6, 2),
-                             "locale_unavailable", "park", None, "x")
+                             "locale_unavailable", "park", None, None, "x")
 
     def test_away_requires_resolvable_destination(self):
         conn = _FakeConn()
@@ -743,6 +849,81 @@ class TestRepo:
         delete_event_window(conn, 7, 3)
         assert conn.calls[0][1] == (3, 7)
         assert "user_id = ?" in conn.calls[0][0]
+
+    def test_away_stores_brought_craft_in_enum_order(self):
+        conn = _FakeConn()
+        conn.queue_response(rows=[{"1": 1}])  # _locale_exists → found
+        add_event_window(
+            conn, 7, start_date=date(2026, 6, 1), end_date=date(2026, 6, 2),
+            override_type="away", away_locale="belfast",
+            brought_craft=["packraft", "road_bike"],
+        )
+        # index 6 = brought_craft CSV, emitted in BIKE+PADDLE enum order.
+        assert conn.calls[-1][1][6] == "road_bike,packraft"
+
+    def test_away_rejects_unknown_brought_craft(self):
+        conn = _FakeConn()
+        conn.queue_response(rows=[{"1": 1}])  # _locale_exists → found
+        with pytest.raises(EventWindowError):
+            add_event_window(
+                conn, 7, start_date=date(2026, 6, 1), end_date=date(2026, 6, 2),
+                override_type="away", away_locale="belfast", brought_craft=["jetpack"],
+            )
+
+    def test_non_away_window_clears_brought_craft(self):
+        conn = _FakeConn()
+        add_event_window(
+            conn, 7, start_date=date(2026, 6, 1), end_date=date(2026, 6, 2),
+            override_type="indoor_only", brought_craft=["packraft"],
+        )
+        assert conn.calls[-1][1][6] is None  # brought-craft only on 'away'
+
+
+# ─── craft↔locale repo (Slice 4, the (b) surface) ────────────────────────────
+
+class TestCraftLocaleRepo:
+    def test_load_groups_by_locale_in_enum_order(self):
+        conn = _FakeConn()
+        conn.queue_response(rows=[
+            {"locale": "cabin", "craft_slug": "packraft"},
+            {"locale": "cabin", "craft_slug": "mountain_bike"},
+        ])
+        assert load_craft_locales(conn, 7) == {"cabin": ["mountain_bike", "packraft"]}
+
+    def test_replace_rejects_foreign_locale(self):
+        conn = _FakeConn()
+        conn.queue_response(rows=[])  # _locale_exists → not found
+        with pytest.raises(CraftLocaleError):
+            replace_craft_locale(conn, 7, "ghost", ["packraft"])
+        assert not any("INSERT" in c[0] for c in conn.calls)
+
+    def test_replace_rejects_unknown_slug(self):
+        conn = _FakeConn()
+        conn.queue_response(rows=[{"1": 1}])  # _locale_exists → found
+        with pytest.raises(CraftLocaleError):
+            replace_craft_locale(conn, 7, "cabin", ["jetpack"])
+
+    def test_replace_deletes_then_inserts_in_enum_order(self):
+        conn = _FakeConn()
+        conn.queue_response(rows=[{"1": 1}])  # _locale_exists → found
+        replace_craft_locale(conn, 7, "cabin", ["packraft", "mountain_bike"])
+        assert any("DELETE FROM athlete_craft_locale" in c[0] for c in conn.calls)
+        inserts = [c for c in conn.calls if "INSERT INTO athlete_craft_locale" in c[0]]
+        assert [c[1] for c in inserts] == [
+            (7, "mountain_bike", "cabin"), (7, "packraft", "cabin")
+        ]
+
+    def test_replace_with_empty_clears(self):
+        conn = _FakeConn()
+        conn.queue_response(rows=[{"1": 1}])  # _locale_exists → found
+        replace_craft_locale(conn, 7, "cabin", [])
+        assert any("DELETE FROM athlete_craft_locale" in c[0] for c in conn.calls)
+        assert not any("INSERT" in c[0] for c in conn.calls)
+
+    def test_delete_scoped_to_user_and_locale(self):
+        conn = _FakeConn()
+        delete_craft_locale(conn, 7, "cabin")
+        assert conn.calls[0][1] == (7, "cabin")
 
 
 # ─── integration: the overlay reaches a full synthesis prompt ────────────────

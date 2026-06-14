@@ -2308,6 +2308,20 @@ _PG_MIGRATIONS = [
     "CREATE INDEX IF NOT EXISTS idx_aew_user ON athlete_event_windows(user_id)",
     # Event Windows Slice 2 (#581 WS-H) — away_locale on the pre-existing table.
     "ALTER TABLE athlete_event_windows ADD COLUMN IF NOT EXISTS away_locale TEXT",
+    # Event Windows Slice 4 (#581 WS-H) — away craft. (c) brought_craft: the
+    # comma-separated craft slugs the athlete brings to an 'away' window (CSV per
+    # the discipline_baseline_*.{bike_types_available,paddle_craft_types}
+    # convention; closed-enum re-asserted in athlete_event_windows_repo.py).
+    "ALTER TABLE athlete_event_windows ADD COLUMN IF NOT EXISTS brought_craft TEXT",
+    # (b) craft<->locale: a standing "this craft is kept at this locale"
+    # association (a bike at the parents' place). Many-to-many, no per-row
+    # attribute → a thin join table; athlete-scoped; locale app-validated against
+    # the athlete's locale_profiles (no FK, the no-CHECK convention).
+    "CREATE TABLE IF NOT EXISTS athlete_craft_locale ("
+    "user_id INTEGER NOT NULL REFERENCES users(id), craft_slug TEXT NOT NULL, "
+    "locale TEXT NOT NULL, created_at TIMESTAMP DEFAULT NOW(), "
+    "PRIMARY KEY (user_id, craft_slug, locale))",
+    "CREATE INDEX IF NOT EXISTS idx_acl_user ON athlete_craft_locale(user_id)",
 ]
 
 _CLOTHING_SEEDS = [

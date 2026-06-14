@@ -106,14 +106,17 @@ def compute_event_windows_hash(windows: list[Any]) -> str:
     overlapping the plan span.
 
     Each window contributes `(override_type, start_date, end_date,
-    unavailable_locale, away_locale)` — the declared inputs, NOT the derived
-    resolutions (the cluster terrain/equipment that resolution depends on is
-    already keyed via `compute_terrain_feasibility_hash`; an away destination's
-    equipment edit evicts the plan caches via the locale-edit path). Sorted for a
-    stable digest. Folds into `plan_create_key` / `plan_refresh_key`; the caller
-    passes None when no window overlaps the span so the key collapses to '' and
-    stays byte-identical to the pre-Slice-1 key (the no-windows regression
-    criterion).
+    unavailable_locale, away_locale, brought_craft)` — the declared inputs, NOT
+    the derived resolutions (the cluster terrain/equipment that resolution
+    depends on is already keyed via `compute_terrain_feasibility_hash`; an away
+    destination's equipment edit evicts the plan caches via the locale-edit
+    path). `brought_craft` (Slice 4, the (c) surface) is a declared window field,
+    so it belongs here; the standing craft↔locale (b) surface is athlete-level
+    data covered by `evict_plan_caches_on_craft_locale_change`, not this hash.
+    Sorted for a stable digest. Folds into `plan_create_key` / `plan_refresh_key`;
+    the caller passes None when no window overlaps the span so the key collapses
+    to '' and stays byte-identical to the pre-Slice-1 key (the no-windows
+    regression criterion).
     """
     flat = sorted(
         (
@@ -123,6 +126,7 @@ def compute_event_windows_hash(windows: list[Any]) -> str:
                 "end_date": w.end_date,
                 "unavailable_locale": w.unavailable_locale,
                 "away_locale": getattr(w, "away_locale", None),
+                "brought_craft": sorted(getattr(w, "brought_craft", ()) or ()),
             }
             for w in windows
         ),
@@ -132,6 +136,7 @@ def compute_event_windows_hash(windows: list[Any]) -> str:
             d["override_type"],
             d["unavailable_locale"] or "",
             d["away_locale"] or "",
+            tuple(d["brought_craft"]),
         ),
     )
     return _sha256_hex(canonical_json(flat))

@@ -172,10 +172,16 @@ def test_refresh_confirm_renders_diff():
 
 
 def test_event_windows_capture_renders_away_create_link():
+    catalog = {
+        'cycling': [{'slug': 'mountain_bike', 'label': 'Mountain bike'}],
+        'paddling': [{'slug': 'packraft', 'label': 'Packraft'}],
+    }
     html = _render('profile/event_windows.html',
                    windows=[],
                    locales=['home', 'belfast-hotel'],
-                   override_types=('indoor_only', 'locale_unavailable', 'away'))
+                   override_types=('indoor_only', 'locale_unavailable', 'away'),
+                   craft_catalog=catalog,
+                   craft_locales={})
     assert 'app-shell' in html
     # 2a — pick-existing destination dropdown.
     assert 'name="away_locale"' in html
@@ -185,5 +191,11 @@ def test_event_windows_capture_renders_away_create_link():
     assert '/locales/new?return_to=' in html
     assert 'event-windows' in html
     assert 'Add a new location' in html
+    # Slice 4 (WS-H #581): brought-craft (c) on the away window + the standing
+    # craft↔locale (b) section, both fed from the closed craft catalog.
+    assert 'name="brought_craft"' in html
+    assert 'name="craft_slug"' in html
+    assert 'crafts-at-locale' in html
+    assert 'Packraft' in html and 'Mountain bike' in html
     # Strict-CSP: no inline style/handlers.
     assert 'style="' not in html and 'onclick=' not in html

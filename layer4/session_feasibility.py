@@ -604,6 +604,10 @@ class EventWindowOverride:
     override_type: Literal["indoor_only", "locale_unavailable", "away"]
     unavailable_locale: str | None = None
     away_locale: str | None = None
+    # Slice 4 (#581 WS-H) — craft brought to this `away` window (the (c) surface);
+    # unioned with the standing craft↔locale set for the destination cluster to
+    # form the away segment's `owned_crafts`. Empty on non-away overrides.
+    brought_craft: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)

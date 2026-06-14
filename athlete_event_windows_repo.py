@@ -32,9 +32,16 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date
 
+from athlete import BIKE_TYPES, PADDLE_CRAFT_TYPES
+
 # Override types. Kept here (not a DB CHECK) so the capture form + this repo are
 # the single closed set the validator asserts. Slice 2 adds 'away'.
 OVERRIDE_TYPES: tuple[str, ...] = ("indoor_only", "locale_unavailable", "away")
+
+# Slice 4 (#581 WS-H) — the closed craft enum brought-craft is validated against
+# (the same set athlete_crafts_repo offers). Emitted in this order for a stable
+# stored CSV → deterministic compute_event_windows_hash.
+_CRAFT_SLUGS: tuple[str, ...] = (*BIKE_TYPES, *PADDLE_CRAFT_TYPES)
 
 
 class EventWindowError(ValueError):
@@ -53,6 +60,10 @@ class EventWindow:
     unavailable_locale: str | None
     away_locale: str | None
     notes: str
+    # Slice 4 (#581 WS-H) — craft brought to an 'away' window (the (c) surface);
+    # empty tuple on non-away windows / when nothing is brought. Fed (unioned with
+    # the standing craft<->locale set) as the away cluster's owned_crafts.
+    brought_craft: tuple[str, ...] = ()
 
 
 def load_event_windows(db, user_id: int) -> list[EventWindow]:
@@ -60,7 +71,8 @@ def load_event_windows(db, user_id: int) -> list[EventWindow]:
     deterministic plan-span hash + render order."""
     rows = db.execute(
         "SELECT id, user_id, start_date, end_date, override_type, "
-        "unavailable_locale, away_locale, notes FROM athlete_event_windows "
+        "unavailable_locale, away_locale, brought_craft, notes "
+        "FROM athlete_event_windows "
         "WHERE user_id = ? ORDER BY start_date, id",
         (user_id,),
     ).fetchall()
@@ -74,6 +86,7 @@ def load_event_windows(db, user_id: int) -> list[EventWindow]:
             unavailable_locale=row["unavailable_locale"] or None,
             away_locale=row["away_locale"] or None,
             notes=row["notes"] or "",
+            brought_craft=tuple(_split_craft(row["brought_craft"])),
         )
         for row in rows
     ]
@@ -88,6 +101,7 @@ def add_event_window(
     override_type: str,
     unavailable_locale: str | None = None,
     away_locale: str | None = None,
+    brought_craft: list[str] | None = None,
     notes: str = "",
 ) -> None:
     """Validate + insert one event window. Raises `EventWindowError` (writing
@@ -104,6 +118,7 @@ def add_event_window(
         )
     unavail = (unavailable_locale or "").strip() or None
     away = (away_locale or "").strip() or None
+    crafts: list[str] = []
     if override_type == "locale_unavailable":
         if unavail is None:
             raise EventWindowError(
@@ -122,6 +137,10 @@ def add_event_window(
                 f"away_locale {away!r} is not one of your saved locales"
             )
         unavail = None
+        # Brought-craft is only meaningful on an away window (the destination's
+        # env replaces home); validate against the closed enum, emit in enum
+        # order for a stable stored CSV.
+        crafts = _validate_crafts(brought_craft or [])
     else:
         # indoor_only carries no locale — clear any stray value so the stored row
         # can't imply a subtraction it doesn't make.
@@ -130,9 +149,12 @@ def add_event_window(
     db.execute(
         "INSERT INTO athlete_event_windows "
         "  (user_id, start_date, end_date, override_type, unavailable_locale, "
-        "   away_locale, notes) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?)",
-        (user_id, start_date, end_date, override_type, unavail, away, notes),
+        "   away_locale, brought_craft, notes) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            user_id, start_date, end_date, override_type, unavail, away,
+            (",".join(crafts) or None), notes,
+        ),
     )
 
 
@@ -162,6 +184,26 @@ def evict_plan_caches_on_event_windows_change(db, user_id: int) -> None:
         layer="event_windows",
         entry_points=("plan_create", "plan_refresh"),
     )
+
+
+def _split_craft(value) -> list[str]:
+    """Split the stored comma-separated brought-craft CSV (mirror of
+    `athlete_crafts_repo._split`)."""
+    if not value:
+        return []
+    return [tok.strip() for tok in str(value).split(",") if tok.strip()]
+
+
+def _validate_crafts(values: list[str]) -> list[str]:
+    """De-dupe + reject unknown slugs; emit in `_CRAFT_SLUGS` order for a stable
+    stored CSV. Mirrors `athlete_crafts_repo._validate`."""
+    chosen = {v for v in values if v}
+    unknown = chosen - set(_CRAFT_SLUGS)
+    if unknown:
+        raise EventWindowError(
+            f"unknown brought craft(s): {', '.join(sorted(unknown))}"
+        )
+    return [s for s in _CRAFT_SLUGS if s in chosen]
 
 
 def _locale_exists(db, user_id: int, locale: str) -> bool:
