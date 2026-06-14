@@ -1,0 +1,87 @@
+{# Event Windows — Slice 1 (#581 WS-H). Minimal capture: declare date-bounded
+   SUBTRACTIVE home windows (indoor-only / a closed locale). Plan generation
+   date-segments the plan span against these and reroutes the affected days
+   against the reduced environment. Away windows are Slice 2. #}
+{% extends 'base.html' %}
+{% set nav_active = 'athlete' %}
+{% block title %}Event windows — AIDSTATION{% endblock %}
+{% block crumbs %}<a href="{{ url_for('profile.edit') }}">Athlete</a> · <b>Event windows</b>{% endblock %}
+
+{% block content %}
+<div class="dash-head">
+  <div class="races-intro">
+    <p class="eyebrow accent">● Training · event windows</p>
+    <h1 class="page-title">Event windows.</h1>
+    <p class="page-sub">Date-bounded periods when your training environment is reduced — weather or
+      childcare forcing you indoors, or one of your locales closed (gym remodel, flooded park).
+      Plan generation reroutes the affected days against what's still available.</p>
+  </div>
+</div>
+
+<div class="stack">
+
+  <div class="card card-pad">
+    <p class="eyebrow">● Your windows</p>
+    {% if windows %}
+    <table class="table">
+      <thead>
+        <tr><th>Dates</th><th>Constraint</th><th>Notes</th><th></th></tr>
+      </thead>
+      <tbody>
+        {% for w in windows %}
+        <tr>
+          <td class="mono">{{ w.start_date.isoformat() }} → {{ w.end_date.isoformat() }}</td>
+          <td>
+            {% if w.override_type == 'indoor_only' %}Indoor only (no outdoor terrain)
+            {% elif w.override_type == 'locale_unavailable' %}“{{ w.unavailable_locale }}” unavailable
+            {% else %}{{ w.override_type }}{% endif %}
+          </td>
+          <td class="dim">{{ w.notes or '—' }}</td>
+          <td>
+            <form method="post"
+                  action="{{ url_for('profile.delete_event_window_route', window_id=w.id) }}">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <button type="submit" class="btn btn-ghost btn-sm">Remove</button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <p class="acct-hint">No event windows declared. Your plan resolves entirely against your home cluster.</p>
+    {% endif %}
+  </div>
+
+  <div class="card card-pad">
+    <p class="eyebrow">● Add a window</p>
+    <form method="post" action="{{ url_for('profile.add_event_window_route') }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <div class="pf-grid">
+        <label class="field"><span class="lbl">Start date</span>
+          <input type="date" name="start_date" class="form-control form-control-sm" required></label>
+        <label class="field"><span class="lbl">End date (inclusive)</span>
+          <input type="date" name="end_date" class="form-control form-control-sm" required></label>
+        <label class="field"><span class="lbl">Constraint</span>
+          <select name="override_type" class="form-control form-control-sm" required>
+            <option value="indoor_only">Indoor only — no outdoor terrain</option>
+            <option value="locale_unavailable">A locale is unavailable</option>
+          </select></label>
+        <label class="field"><span class="lbl">Unavailable locale <span class="dim">(if a locale is closed)</span></span>
+          <select name="unavailable_locale" class="form-control form-control-sm">
+            <option value="">—</option>
+            {% for loc in locales %}<option value="{{ loc }}">{{ loc }}</option>{% endfor %}
+          </select></label>
+        <label class="field field-wide"><span class="lbl">Notes <span class="dim">(optional)</span></span>
+          <input type="text" name="notes" maxlength="200" class="form-control form-control-sm"
+                 placeholder="e.g. work travel, gym remodel"></label>
+      </div>
+      <div class="pf-save">
+        <span class="pf-saved mono">Indoor-only drops outdoor terrain · locale-unavailable drops that one place</span>
+        <button type="submit" class="btn btn-primary">Add window</button>
+      </div>
+    </form>
+  </div>
+
+</div>
+{% endblock %}

@@ -111,16 +111,23 @@ from layer4.context import (
     TrainingSubstitutionPayload,
 )
 from layer4.payload import Layer4Payload, PlanSession
+from layer4.hashing import compute_event_windows_hash
+from layer4.phase_structure import phase_structure_from_3b
+from layer4.plan_create import _compute_total_weeks
 from layer4.session_feasibility import (
+    EventWindowOverride,
+    EventWindowSegment,
     TerrainResolution,
     indoor_machines,
     required_terrains,
     resolve_craft_terrain_feasibility,
     resolve_terrain_feasibility,
+    segment_window_boundaries,
 )
 from layer4.single_session import SingleSessionRequest
 from layer4.validator import skill_gated_disciplines
 import locations
+from athlete_event_windows_repo import load_event_windows
 from race_events_repo import load_target_race_event_payload
 
 
@@ -352,22 +359,37 @@ def _q_terrain_gap_rules(db: Any) -> dict[str, list[tuple[str, float]]]:
 _PRIORITY_RANK: dict[str, int] = {"Critical": 0, "High": 1, "Medium": 2, "Low": 3}
 
 
-def _build_terrain_feasibility(
-    db: Any,
-    user_id: int,
-    cone: "_UpstreamFullCone",
-) -> dict[str, TerrainResolution]:
-    """#540 slice 2c.2 — resolve, per included discipline, where/how its sessions
-    can actually be done across the athlete's locale cluster (terrain axis).
+@dataclass
+class _FeasibilityInputs:
+    """The environment-INDEPENDENT inputs to the feasibility cascade, gathered
+    once per plan-gen. `_resolve_included_feasibility` runs the cascade against
+    an injected `(locale_order, terrain_by_locale, equip_by_locale)` — the home
+    cluster for the default plan, or an event window's reduced environment for a
+    date-segment. Everything here (gap rules, craft maps, strength pools, the
+    gated/included discipline sets) is identical across environments."""
 
-    Runs the deterministic EXACT→PROXY→INDOOR→STRENGTH→REALLOCATE cascade
-    (`resolve_terrain_feasibility`) on existing layer0 data — the cluster
-    terrain/equipment maps, `terrain_gap_rules`, and the discipline's own 2C
-    mapped exercises. Skill-gated disciplines (#336) are EXCLUDED: they are
-    already substituted to strength at the session level by the skill-capability
-    gate, so running the terrain cascade on them would emit a conflicting
-    directive (the two compose by partition, not by clobber). Unconstrained
-    disciplines (resolver returns None) are dropped — nothing to guide."""
+    cluster: list[str]
+    terrain_by_locale: dict[str, set[str]]
+    equip_by_locale: dict[str, set[str]]
+    gap_rules: dict[str, list[tuple[str, float]]]
+    owned_crafts: list[str]
+    craft_disciplines: dict[str, list[str]]
+    craft_kind: dict[str, str]
+    craft_terrain: dict[str, set[str]]
+    discipline_groups: dict[str, list[str]]
+    group_kind_by_group: dict[str, str]
+    pool_by_discipline: dict[str, list[str]]
+    gated: dict[str, str]
+    included: list[Any]
+    name_by_discipline: dict[str, str]
+
+
+def _gather_feasibility_inputs(
+    db: Any, user_id: int, cone: "_UpstreamFullCone"
+) -> "_FeasibilityInputs | None":
+    """Read the cluster + all environment-independent cascade inputs once.
+    Returns None (logging the reason) when the athlete has no resolvable home
+    cluster — feasibility resolution is skipped entirely in that case."""
     cluster = locations.cluster_locale_ids(db, user_id)
     if not cluster:
         # Rule #15 observability: an empty cluster short-circuits the whole
@@ -378,7 +400,7 @@ def _build_terrain_feasibility(
             f"(no preferred/home locale, or home lacks coords) — "
             f"feasibility resolution skipped entirely"
         )
-        return {}
+        return None
     terrain_by_locale = locations.cluster_terrain_by_locale(db, user_id, cluster)
     equip_by_locale = locations.cluster_equipment_by_locale(db, user_id, cluster)
     gap_rules = _q_terrain_gap_rules(db)
@@ -415,41 +437,117 @@ def _build_terrain_feasibility(
     name_by_discipline = {
         d.discipline_id: d.discipline_name for d in cone.layer2a_payload.disciplines
     }
+    return _FeasibilityInputs(
+        cluster=cluster,
+        terrain_by_locale=terrain_by_locale,
+        equip_by_locale=equip_by_locale,
+        gap_rules=gap_rules,
+        owned_crafts=owned_crafts,
+        craft_disciplines=craft_disciplines,
+        craft_kind=craft_kind,
+        craft_terrain=craft_terrain,
+        discipline_groups=discipline_groups,
+        group_kind_by_group=group_kind_by_group,
+        pool_by_discipline=pool_by_discipline,
+        gated=gated,
+        included=included,
+        name_by_discipline=name_by_discipline,
+    )
 
-    def _terrain(disc_id: str) -> TerrainResolution | None:
-        return resolve_terrain_feasibility(
-            disc_id,
-            locale_order=cluster,
-            cluster_terrain_by_locale=terrain_by_locale,
-            cluster_equipment_by_locale=equip_by_locale,
-            gap_rules=gap_rules,
-            discipline_exercise_ids=pool_by_discipline.get(disc_id, []),
-        )
 
+def _resolve_included_feasibility(
+    fi: "_FeasibilityInputs",
+    *,
+    locale_order: list[str],
+    terrain_by_locale: dict[str, set[str]],
+    equip_by_locale: dict[str, set[str]],
+) -> dict[str, TerrainResolution]:
+    """Run the existing EXACT→PROXY→INDOOR→STRENGTH→REALLOCATE cascade for every
+    included, non-skill-gated discipline against the supplied environment.
+
+    The logic is identical for the home cluster and for an event window's reduced
+    environment — only the `(locale_order, terrain, equipment)` inputs differ
+    (Andy 2026-06-14: a window is just different terrain/equipment, not new
+    resolution logic). Craft disciplines (bike/paddle) walk the unified
+    craft/terrain cascade; it returns None for non-craft disciplines, which fall
+    back to the terrain-only cascade."""
     out: dict[str, TerrainResolution] = {}
-    for d in included:
-        if d.discipline_id in gated:
+    for d in fi.included:
+        if d.discipline_id in fi.gated:
             continue
-        # Craft disciplines (bike/paddle) walk the unified craft/terrain cascade;
-        # it returns None for non-craft disciplines, which fall back to terrain-only.
         resolution = resolve_craft_terrain_feasibility(
             d.discipline_id,
-            owned_crafts=owned_crafts,
-            craft_disciplines=craft_disciplines,
-            craft_group_kind=craft_kind,
-            discipline_groups=discipline_groups,
-            group_kind=group_kind_by_group,
-            craft_terrain=craft_terrain,
-            locale_order=cluster,
+            owned_crafts=fi.owned_crafts,
+            craft_disciplines=fi.craft_disciplines,
+            craft_group_kind=fi.craft_kind,
+            discipline_groups=fi.discipline_groups,
+            group_kind=fi.group_kind_by_group,
+            craft_terrain=fi.craft_terrain,
+            locale_order=locale_order,
             cluster_terrain_by_locale=terrain_by_locale,
             cluster_equipment_by_locale=equip_by_locale,
-            discipline_exercise_ids=pool_by_discipline.get(d.discipline_id, []),
-            discipline_names=name_by_discipline,
+            discipline_exercise_ids=fi.pool_by_discipline.get(d.discipline_id, []),
+            discipline_names=fi.name_by_discipline,
         )
         if resolution is None:
-            resolution = _terrain(d.discipline_id)
+            resolution = resolve_terrain_feasibility(
+                d.discipline_id,
+                locale_order=locale_order,
+                cluster_terrain_by_locale=terrain_by_locale,
+                cluster_equipment_by_locale=equip_by_locale,
+                gap_rules=fi.gap_rules,
+                discipline_exercise_ids=fi.pool_by_discipline.get(d.discipline_id, []),
+            )
         if resolution is not None:
             out[d.discipline_id] = resolution
+    return out
+
+
+def _build_terrain_feasibility(
+    db: Any,
+    user_id: int,
+    cone: "_UpstreamFullCone",
+) -> dict[str, TerrainResolution]:
+    """#540 slice 2c.2 — resolve, per included discipline, where/how its sessions
+    can actually be done across the athlete's locale cluster (terrain axis).
+
+    Runs the deterministic EXACT→PROXY→INDOOR→STRENGTH→REALLOCATE cascade
+    (`resolve_terrain_feasibility`) on existing layer0 data — the cluster
+    terrain/equipment maps, `terrain_gap_rules`, and the discipline's own 2C
+    mapped exercises. Skill-gated disciplines (#336) are EXCLUDED: they are
+    already substituted to strength at the session level by the skill-capability
+    gate, so running the terrain cascade on them would emit a conflicting
+    directive (the two compose by partition, not by clobber). Unconstrained
+    disciplines (resolver returns None) are dropped — nothing to guide.
+
+    Resolves the DEFAULT home cluster. Event-window date-segments resolve the
+    same cascade against a reduced environment via `_build_event_window_overlay`
+    (Event Windows Slice 1)."""
+    fi = _gather_feasibility_inputs(db, user_id, cone)
+    if fi is None:
+        return {}
+    out = _resolve_included_feasibility(
+        fi,
+        locale_order=fi.cluster,
+        terrain_by_locale=fi.terrain_by_locale,
+        equip_by_locale=fi.equip_by_locale,
+    )
+
+    # Bind the gathered inputs to the local names the detailed Rule #15 log below
+    # was written against (kept verbatim from the pre-refactor function).
+    cluster = fi.cluster
+    terrain_by_locale = fi.terrain_by_locale
+    equip_by_locale = fi.equip_by_locale
+    owned_crafts = fi.owned_crafts
+    craft_terrain = fi.craft_terrain
+    craft_kind = fi.craft_kind
+    discipline_groups = fi.discipline_groups
+    group_kind_by_group = fi.group_kind_by_group
+    gated = fi.gated
+    included = fi.included
+    name_by_discipline = fi.name_by_discipline
+    pool_by_discipline = fi.pool_by_discipline
+    gap_rules = fi.gap_rules
 
     # Rule #15 observability: the cascade was print()-silent, so a plan
     # over-saturated with strength substitutions couldn't be traced to its
@@ -534,6 +632,104 @@ def _build_terrain_feasibility(
             f"strength_pool_n={len(pool_by_discipline.get(d_id, []))}"
         )
     return out
+
+
+def _reduced_env(
+    fi: "_FeasibilityInputs", overrides: tuple[EventWindowOverride, ...]
+) -> tuple[list[str], dict[str, set[str]], dict[str, set[str]]]:
+    """Apply a date-segment's active SUBTRACTIVE overrides to the home cluster →
+    `(locale_order, terrain_by_locale, equip_by_locale)` for the reduced
+    environment. `indoor_only` removes all outdoor terrain (outdoor cardio
+    reroutes to the indoor machine / strength — equipment is untouched);
+    `locale_unavailable(L)` drops locale L entirely from terrain + equipment +
+    the locale order. Overlapping overrides apply cumulatively (union of
+    subtractions per spec §8). A locale not in the cluster is a no-op."""
+    locale_order = list(fi.cluster)
+    terrain = {loc: set(s) for loc, s in fi.terrain_by_locale.items()}
+    equip = {loc: set(s) for loc, s in fi.equip_by_locale.items()}
+    for ov in overrides:
+        if ov.override_type == "indoor_only":
+            terrain = {loc: set() for loc in terrain}
+        elif ov.override_type == "locale_unavailable" and ov.unavailable_locale:
+            loc = ov.unavailable_locale
+            terrain.pop(loc, None)
+            equip.pop(loc, None)
+            locale_order = [x for x in locale_order if x != loc]
+    return locale_order, terrain, equip
+
+
+def _build_event_window_overlay(
+    db: Any,
+    user_id: int,
+    cone: "_UpstreamFullCone",
+    *,
+    plan_start: date,
+    plan_end: date,
+    home_feasibility: dict[str, TerrainResolution],
+) -> tuple[list[EventWindowSegment], list[Any]]:
+    """Event Windows Slice 1 (#581 WS-H) — date-segment the plan span by the
+    athlete's declared event windows and resolve the EXISTING cascade once per
+    reduced environment. Returns `(segments, overlapping_windows)`:
+
+      - `segments` — the atomic date sub-ranges whose routing DIFFERS from home,
+        each carrying only the changed disciplines (the synthesis overlay
+        payload rendered date-scoped by `per_phase`).
+      - `overlapping_windows` — the declared windows overlapping the span, fed to
+        `compute_event_windows_hash` for the plan cache key.
+
+    Counts stay on the home environment (spec §4): this only re-scopes the
+    per-date feasibility synthesis composes against, never the grid / E2 cap."""
+    windows = load_event_windows(db, user_id)
+    overlapping = [
+        w for w in windows if w.end_date >= plan_start and w.start_date <= plan_end
+    ]
+    if not overlapping:
+        return [], []
+    fi = _gather_feasibility_inputs(db, user_id, cone)
+    if fi is None:
+        # No resolvable home cluster — windows can't subtract from an empty env.
+        # Still surface the overlapping windows so the cache key reflects them.
+        print(
+            f"event_window_overlay: user_id={user_id} {len(overlapping)} window(s) "
+            f"overlap the plan span but cluster=[] — no reduced-env resolution"
+        )
+        return [], overlapping
+
+    raw = [
+        (
+            w.start_date,
+            w.end_date,
+            EventWindowOverride(w.override_type, w.unavailable_locale),
+        )
+        for w in overlapping
+    ]
+    segments: list[EventWindowSegment] = []
+    for seg_start, seg_end, active in segment_window_boundaries(plan_start, plan_end, raw):
+        locale_order, terrain, equip = _reduced_env(fi, active)
+        reduced = _resolve_included_feasibility(
+            fi,
+            locale_order=locale_order,
+            terrain_by_locale=terrain,
+            equip_by_locale=equip,
+        )
+        changed = {d: r for d, r in reduced.items() if home_feasibility.get(d) != r}
+        # Rule #15 (spec §7): name, per discipline, the tier the cascade landed
+        # on for this segment — so a surprising windowed-day plan is diagnosable
+        # from logs alone (never assuming indoor/strength).
+        _ov = ",".join(
+            ov.override_type
+            + (f":{ov.unavailable_locale}" if ov.unavailable_locale else "")
+            for ov in active
+        )
+        print(
+            f"event_window_overlay: user_id={user_id} "
+            f"dates={seg_start.isoformat()}..{seg_end.isoformat()} override={_ov} "
+            f"tiers={ {d: r.tier for d, r in sorted(changed.items())} }"
+            + ("" if changed else " (no routing change — segment not emitted)")
+        )
+        if changed:
+            segments.append(EventWindowSegment(seg_start, seg_end, active, changed))
+    return segments, overlapping
 
 
 def _upstream_full_cone(
@@ -1232,6 +1428,27 @@ def orchestrate_plan_create(
     # session that already works (never a Rock Climbing session at a home with no
     # climbing terrain). Wired create-side first; refresh is the follow-up (§4.4).
     terrain_feasibility = _build_terrain_feasibility(db, user_id, cone)
+    # Event Windows Slice 1 (#581 WS-H) — date-segment the plan span by the
+    # athlete's declared event windows. The plan span is the same deterministic
+    # phase_structure the engine rebuilds internally, so the overlapping-window
+    # set (and thus the cache key) matches what the synthesis units render.
+    total_weeks = _compute_total_weeks(cone.layer3b_payload, plan_start_date, race_event)
+    phase_structure = phase_structure_from_3b(
+        cone.layer3b_payload, plan_start_date, total_weeks=total_weeks
+    )
+    plan_end = (
+        phase_structure.phases[-1].end_date
+        if phase_structure.phases
+        else plan_start_date
+    )
+    event_window_segments, overlapping_windows = _build_event_window_overlay(
+        db, user_id, cone,
+        plan_start=plan_start_date, plan_end=plan_end,
+        home_feasibility=terrain_feasibility,
+    )
+    event_windows_hash = (
+        compute_event_windows_hash(overlapping_windows) if overlapping_windows else None
+    )
     payload = llm_layer4_plan_create_cached(
         user_id=user_id,
         layer1_payload=cone.layer1_payload.model_dump(mode="json"),
@@ -1253,6 +1470,10 @@ def orchestrate_plan_create(
         # Thread the per-discipline terrain-feasibility resolutions into the
         # session-grid prompt + cache key.
         terrain_feasibility=terrain_feasibility,
+        # Event Windows Slice 1 — date-scoped reduced-environment segments
+        # (synthesis overlay) + the declared-window digest (cache key).
+        event_window_segments=event_window_segments,
+        event_windows_hash=event_windows_hash,
     )
     payload = _apply_locale_assign(db, user_id, payload, layer2c_payloads)
     payload = _apply_rx_wire(db, user_id, payload, layer2c_payloads)

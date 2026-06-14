@@ -66,7 +66,7 @@ from layer4.per_phase import (
     synthesize_phase,
 )
 from layer4.phase_structure import phase_structure_from_3b
-from layer4.session_feasibility import TerrainResolution
+from layer4.session_feasibility import EventWindowSegment, TerrainResolution
 from layer4.seam_review import (
     DEFAULT_EXTENDED_THINKING_BUDGET as _SEAM_THINKING_DEFAULT,
     DEFAULT_MAX_TOKENS as _SEAM_MAX_TOKENS_DEFAULT,
@@ -634,6 +634,7 @@ def _run_pattern_a_engine(
     executor: Executor | None = None,
     training_substitution_payload: TrainingSubstitutionPayload | None = None,
     terrain_feasibility: dict[str, TerrainResolution] | None = None,
+    event_window_segments: list[EventWindowSegment] | None = None,
 ) -> _PatternAResult:
     """Run the Pattern A loop per `Layer4_Spec.md` §5.2.
 
@@ -756,6 +757,7 @@ def _run_pattern_a_engine(
                     session_id_prefix=f"{session_id_prefix}-p{_i}-w{_wr[0]}",
                     training_substitution_payload=training_substitution_payload,
                     terrain_feasibility=terrain_feasibility,
+                    event_window_segments=event_window_segments,
                     week_range=_wr,
                 )
 
@@ -1562,6 +1564,9 @@ def llm_layer4_plan_create(
     # #540 — per-discipline terrain-feasibility resolutions, threaded the same
     # path into the session-grid render. Default None preserves call sites.
     terrain_feasibility: dict[str, TerrainResolution] | None = None,
+    # Event Windows Slice 1 (#581 WS-H) — date-scoped reduced-environment
+    # segments, threaded the same path into the per-phase overlay render.
+    event_window_segments: list[EventWindowSegment] | None = None,
 ) -> Layer4Payload:
     """Pattern A plan-create entry point per `Layer4_Spec.md` §3.1.
 
@@ -1638,6 +1643,7 @@ def llm_layer4_plan_create(
         executor=executor,
         training_substitution_payload=training_substitution_payload,
         terrain_feasibility=terrain_feasibility,
+        event_window_segments=event_window_segments,
     )
 
     return _build_plan_create_payload(
