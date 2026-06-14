@@ -2,7 +2,9 @@
    windows — SUBTRACTIVE home (indoor-only / a closed locale) or AWAY (training
    from a different saved location). Plan generation date-segments the plan span
    against these and resolves the affected days against the reduced/replacement
-   environment. Inline-create-a-new-destination is Slice 2b. #}
+   environment. Slice 2b: when the destination isn't saved yet, the away field
+   links into the existing /locales/new Mapbox flow with a return_to back here
+   (reusing its geocoding-consent + mapbox_id dedup) — no duplicated search UI. #}
 {% extends 'base.html' %}
 {% set nav_active = 'athlete' %}
 {% block title %}Event windows — AIDSTATION{% endblock %}
@@ -80,7 +82,10 @@
           <select name="away_locale" class="form-control form-control-sm">
             <option value="">—</option>
             {% for loc in locales %}<option value="{{ loc }}">{{ loc }}</option>{% endfor %}
-          </select></label>
+          </select>
+          <span class="dim">Destination not saved yet?
+            <a href="{{ url_for('locales.new_locale', return_to=url_for('profile.event_windows')) }}">Add a new location</a>
+            — you'll return here to finish the window.</span></label>
         <label class="field field-wide"><span class="lbl">Notes <span class="dim">(optional)</span></span>
           <input type="text" name="notes" maxlength="200" class="form-control form-control-sm"
                  placeholder="e.g. work travel, gym remodel, training camp"></label>
