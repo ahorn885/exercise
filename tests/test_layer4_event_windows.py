@@ -12,7 +12,7 @@ exercise `_reduced_env` + `_resolve_included_feasibility` directly — no DB / L
 """
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 from types import SimpleNamespace
 
 import pytest
@@ -23,6 +23,14 @@ from athlete_event_windows_repo import (
     add_event_window,
     delete_event_window,
     load_event_windows,
+)
+from layer4.context import (
+    Layer2ADiscipline,
+    Layer2APayload,
+    PhaseLoadBands,
+    RationaleMetadata,
+    TrainingGapsSummary,
+    WeightResult,
 )
 from layer4.hashing import (
     compute_event_windows_hash,
@@ -35,7 +43,8 @@ from layer4.orchestrator import (
     _reduced_env,
     _resolve_included_feasibility,
 )
-from layer4.per_phase import _format_event_window_overlay
+from layer4.payload import PhaseSpec, PhaseStructure, SynthesisMetadata
+from layer4.per_phase import _format_event_window_overlay, _format_session_grid
 from layer4.session_feasibility import (
     EventWindowOverride,
     EventWindowSegment,
@@ -262,10 +271,10 @@ class TestOverlayBuilder:
         )
         windows = [
             # indoor_only → D-001 exact→indoor → CHANGED → emitted
-            EventWindow(1, 7, date(2026, 6, 10), date(2026, 6, 12), "indoor_only", None, ""),
+            EventWindow(1, 7, date(2026, 6, 10), date(2026, 6, 12), "indoor_only", None, None, ""),
             # locale_unavailable on a non-cluster locale → no-op → dropped
             EventWindow(2, 7, date(2026, 6, 20), date(2026, 6, 22),
-                        "locale_unavailable", "ghost", ""),
+                        "locale_unavailable", "ghost", None, ""),
         ]
         self._patch(monkeypatch, fi, windows)
         segments, overlapping = _build_event_window_overlay(
@@ -284,7 +293,7 @@ class TestOverlayBuilder:
             equip_by_locale={"home": set()}, disciplines=["D-001"],
         )
         windows = [
-            EventWindow(1, 7, date(2026, 9, 1), date(2026, 9, 5), "indoor_only", None, ""),
+            EventWindow(1, 7, date(2026, 9, 1), date(2026, 9, 5), "indoor_only", None, None, ""),
         ]
         self._patch(monkeypatch, fi, windows)
         segments, overlapping = _build_event_window_overlay(
@@ -293,6 +302,197 @@ class TestOverlayBuilder:
             home_feasibility={},
         )
         assert segments == [] and overlapping == []
+
+
+# ─── away windows (Slice 2): replacement env + counts-follow-away ────────────
+
+class TestAwayWindows:
+    """`away` REPLACES the home cluster with the destination's own radius cluster
+    (re-anchored `cluster_locale_ids`), with `owned_crafts=[]` (F4). The SAME
+    cascade runs against the away env (spec §4). The away segment carries the FULL
+    away feasibility for the grid (counts-follow-away, §4.1)."""
+
+    def _patch(self, monkeypatch, fi, windows, *, cluster, terrain, equip):
+        import layer4.orchestrator as orch
+        monkeypatch.setattr(orch, "load_event_windows", lambda db, uid: windows)
+        monkeypatch.setattr(orch, "_gather_feasibility_inputs", lambda db, uid, cone: fi)
+        monkeypatch.setattr(
+            orch.locations, "cluster_locale_ids",
+            lambda db, uid, anchor_locale=None: cluster,
+        )
+        monkeypatch.setattr(
+            orch.locations, "cluster_terrain_by_locale",
+            lambda db, uid, c: terrain,
+        )
+        monkeypatch.setattr(
+            orch.locations, "cluster_equipment_by_locale",
+            lambda db, uid, c: equip,
+        )
+
+    def _away_win(self, dest):
+        return EventWindow(
+            1, 7, date(2026, 6, 10), date(2026, 6, 12), "away", None, dest, "",
+        )
+
+    def test_away_degrades_when_destination_lacks_terrain(self, monkeypatch):
+        # Home: trail + treadmill → D-001 exact. Away "hotel": nothing → strength.
+        fi = _mk_inputs(
+            cluster=["home"], terrain_by_locale={"home": {"TRN-002"}},
+            equip_by_locale={"home": {"Treadmill"}}, disciplines=["D-001"],
+            pool_by_discipline={"D-001": ["EX-1"]},
+        )
+        home = _resolve_included_feasibility(
+            fi, locale_order=fi.cluster,
+            terrain_by_locale=fi.terrain_by_locale, equip_by_locale=fi.equip_by_locale,
+        )
+        assert home["D-001"].tier == "exact"
+        self._patch(
+            monkeypatch, fi, [self._away_win("hotel")],
+            cluster=["hotel"], terrain={"hotel": set()}, equip={"hotel": set()},
+        )
+        segments, overlapping = _build_event_window_overlay(
+            None, 7, None, plan_start=date(2026, 6, 1), plan_end=date(2026, 6, 30),
+            home_feasibility=home,
+        )
+        assert len(overlapping) == 1 and len(segments) == 1
+        seg = segments[0]
+        assert seg.resolutions["D-001"].tier == "strength"
+        # counts-follow-away needs the FULL away map on the segment (§4.1).
+        assert seg.away_feasibility is not None
+        assert seg.away_feasibility["D-001"].tier == "strength"
+
+    def test_away_stays_exact_when_destination_has_terrain(self, monkeypatch):
+        # Home: no trail (indoor only). Away "trailtown": trail → exact (CHANGED).
+        fi = _mk_inputs(
+            cluster=["home"], terrain_by_locale={"home": set()},
+            equip_by_locale={"home": {"Treadmill"}}, disciplines=["D-001"],
+        )
+        home = _resolve_included_feasibility(
+            fi, locale_order=fi.cluster,
+            terrain_by_locale=fi.terrain_by_locale, equip_by_locale=fi.equip_by_locale,
+        )
+        assert home["D-001"].tier == "indoor"
+        self._patch(
+            monkeypatch, fi, [self._away_win("trailtown")],
+            cluster=["trailtown"], terrain={"trailtown": {"TRN-002"}},
+            equip={"trailtown": set()},
+        )
+        segments, _ = _build_event_window_overlay(
+            None, 7, None, plan_start=date(2026, 6, 1), plan_end=date(2026, 6, 30),
+            home_feasibility=home,
+        )
+        assert segments[0].away_feasibility["D-001"].tier == "exact"
+
+    def test_away_wins_over_subtractive_on_same_dates(self, monkeypatch):
+        # An away + indoor_only declared on the same dates → away replaces; the
+        # subtractive override is ignored (precedence, §4).
+        fi = _mk_inputs(
+            cluster=["home"], terrain_by_locale={"home": set()},
+            equip_by_locale={"home": set()}, disciplines=["D-001"],
+        )
+        home = _resolve_included_feasibility(
+            fi, locale_order=fi.cluster,
+            terrain_by_locale=fi.terrain_by_locale, equip_by_locale=fi.equip_by_locale,
+        )
+        windows = [
+            self._away_win("trailtown"),
+            EventWindow(2, 7, date(2026, 6, 10), date(2026, 6, 12),
+                        "indoor_only", None, None, ""),
+        ]
+        self._patch(
+            monkeypatch, fi, windows,
+            cluster=["trailtown"], terrain={"trailtown": {"TRN-002"}},
+            equip={"trailtown": set()},
+        )
+        segments, _ = _build_event_window_overlay(
+            None, 7, None, plan_start=date(2026, 6, 1), plan_end=date(2026, 6, 30),
+            home_feasibility=home,
+        )
+        # away env resolved (D-001 exact at trailtown), not the home-indoor result.
+        assert segments[0].away_feasibility["D-001"].tier == "exact"
+
+
+class TestCountsFollowAway:
+    """Spec §4.1 — a plan week FULLY inside an away window is counted against the
+    destination (the grid is fed the away tiers); a partial week keeps home."""
+
+    def _l2a(self):
+        def _disc(did, name, lw):
+            return Layer2ADiscipline(
+                discipline_id=did, discipline_name=name,
+                inclusion="included", role="Primary", is_conditional=False,
+                load_weight=WeightResult(
+                    value=lw, source="system_default", system_default=lw,
+                ),
+                sleep_deprivation_relevant=False, rationale="t",
+                phase_load=PhaseLoadBands(
+                    base_low=20.0, base_high=30.0, build_low=20.0, build_high=30.0,
+                    peak_low=40.0, peak_high=50.0, taper_low=20.0, taper_high=30.0,
+                    default_inclusion="included",
+                ),
+            )
+        return Layer2APayload(
+            framework_sport="adventure_racing", etl_version_set={"layer0": "v7"},
+            disciplines=[_disc("D-001", "Trail Running", 3.0),
+                         _disc("D-008", "Mountain Biking", 2.0)],
+            training_gaps_summary=TrainingGapsSummary(
+                flagged_count=0, any_no_substitute=False,
+                any_multi_substitute_candidate=False),
+            hitl_required=False, unresolved_flags=[], coaching_flags=[],
+            rationale_metadata=RationaleMetadata(
+                template_version="v1", generated_at="2026-06-06T00:00:00Z"),
+            weekly_total_hours_by_phase={
+                "Base": (8.0, 10.0), "Build": (10.0, 14.0),
+                "Peak": (12.0, 16.0), "Taper": (5.0, 7.0)},
+        )
+
+    def _phase(self, start):
+        # A 2-week Peak phase: week 1 = start..+6, week 2 = start+7..+13.
+        return PhaseStructure(
+            phases=[PhaseSpec(
+                phase_name="Peak", start_date=start, end_date=start + timedelta(days=13),
+                weeks=2, intended_volume_band=(12.0, 16.0),
+                intended_intensity_distribution={"easy": 0.7, "hard": 0.3},
+                synthesis_metadata=SynthesisMetadata(
+                    model="m", temperature=0.2, input_tokens=0, output_tokens=0,
+                    latency_ms=0, retries_used=0, cap_hit=False),
+            )],
+            total_weeks=2, derived_from="3b_standard",
+        )
+
+    def _away_seg(self, start, end):
+        # Away env: D-008 (bike) infeasible (strength), D-001 exact.
+        res = {
+            "D-001": TerrainResolution(discipline_id="D-001", tier="exact",
+                                       locale_id="away", note="trail away"),
+            "D-008": TerrainResolution(discipline_id="D-008", tier="strength",
+                                       locale_id=None, note="no craft away"),
+        }
+        return EventWindowSegment(
+            start, end, (EventWindowOverride("away", away_locale="away"),),
+            {"D-008": res["D-008"]}, away_feasibility=res,
+        )
+
+    def test_fully_away_week_logged_partial_not(self, capsys):
+        start = date(2026, 6, 1)
+        l2a, ps = self._l2a(), self._phase(start)
+        # Away window covers ALL of week 1 (06-01..06-07) but only part of week 2.
+        seg = self._away_seg(start, start + timedelta(days=9))  # 06-01..06-10
+        _format_session_grid(
+            {"availability": {}}, l2a, ps, "Peak", None,
+            terrain_feasibility=None, event_window_segments=[seg],
+        )
+        logged = capsys.readouterr().out
+        assert "counts_follow_away: Peak:w1" in logged   # week 1 fully away
+        assert "counts_follow_away: Peak:w2" not in logged  # week 2 only partial
+
+    def test_no_away_segment_never_logs(self, capsys):
+        start = date(2026, 6, 1)
+        _format_session_grid(
+            {"availability": {}}, self._l2a(), self._phase(start), "Peak", None,
+            terrain_feasibility=None, event_window_segments=None,
+        )
+        assert "counts_follow_away" not in capsys.readouterr().out
 
 
 # ─── synthesis overlay render (Trigger #1 wording) ───────────────────────────
@@ -337,18 +537,40 @@ class TestOverlayRender:
             None, date(2026, 6, 1), date(2026, 6, 14), None, {},
         ) == []
 
+    def test_away_segment_renders_away_label(self):
+        res = TerrainResolution(
+            discipline_id="D-008", tier="strength", locale_id=None,
+            note="no craft away",
+        )
+        seg = EventWindowSegment(
+            date(2026, 6, 10), date(2026, 6, 12),
+            (EventWindowOverride("away", away_locale="hotel"),),
+            {"D-008": res}, away_feasibility={"D-008": res},
+        )
+        text = "\n".join(_format_event_window_overlay(
+            [seg], date(2026, 6, 1), date(2026, 6, 14), None, {},
+        ))
+        assert 'away at "hotel"' in text
+        assert "no brought craft" in text
+        assert "or replaced" in text  # away-aware intro
+
 
 # ─── hashing + cache-key regression ──────────────────────────────────────────
 
 class TestHashAndKey:
-    def _win(self, ot="indoor_only", loc=None):
-        return EventWindow(1, 7, date(2026, 6, 10), date(2026, 6, 12), ot, loc, "")
+    def _win(self, ot="indoor_only", loc=None, away=None):
+        return EventWindow(1, 7, date(2026, 6, 10), date(2026, 6, 12), ot, loc, away, "")
 
     def test_hash_order_independent_and_nonempty(self):
         a = self._win("indoor_only")
         b = self._win("locale_unavailable", "park")
         assert compute_event_windows_hash([a, b]) == compute_event_windows_hash([b, a])
         assert compute_event_windows_hash([]) != compute_event_windows_hash([a])
+
+    def test_hash_changes_with_away_locale(self):
+        belfast = self._win("away", away="belfast")
+        chamonix = self._win("away", away="chamonix")
+        assert compute_event_windows_hash([belfast]) != compute_event_windows_hash([chamonix])
 
     def _key_kwargs(self):
         return dict(
@@ -401,7 +623,7 @@ class TestRepo:
         conn.queue_response(rows=[
             {"id": 1, "user_id": 7, "start_date": "2026-06-10",
              "end_date": "2026-06-12", "override_type": "indoor_only",
-             "unavailable_locale": None, "notes": ""},
+             "unavailable_locale": None, "away_locale": None, "notes": ""},
         ])
         windows = load_event_windows(conn, 7)
         assert windows[0].start_date == date(2026, 6, 10)
@@ -413,7 +635,7 @@ class TestRepo:
         with pytest.raises(EventWindowError):
             add_event_window(
                 conn, 7, start_date=date(2026, 6, 1), end_date=date(2026, 6, 2),
-                override_type="away",
+                override_type="teleport",
             )
         assert conn.calls == []  # validation precedes any write
 
@@ -444,7 +666,34 @@ class TestRepo:
         insert = conn.calls[-1]
         assert "INSERT INTO athlete_event_windows" in insert[0]
         assert insert[1] == (7, date(2026, 6, 1), date(2026, 6, 2),
-                             "locale_unavailable", "park", "x")
+                             "locale_unavailable", "park", None, "x")
+
+    def test_away_requires_resolvable_destination(self):
+        conn = _FakeConn()
+        with pytest.raises(EventWindowError):  # missing away_locale
+            add_event_window(
+                conn, 7, start_date=date(2026, 6, 1), end_date=date(2026, 6, 2),
+                override_type="away",
+            )
+        conn2 = _FakeConn()
+        conn2.queue_response(rows=[])  # _locale_exists → not found
+        with pytest.raises(EventWindowError):
+            add_event_window(
+                conn2, 7, start_date=date(2026, 6, 1), end_date=date(2026, 6, 2),
+                override_type="away", away_locale="ghost",
+            )
+
+    def test_away_inserts_and_clears_unavailable_locale(self):
+        conn = _FakeConn()
+        conn.queue_response(rows=[{"1": 1}])  # _locale_exists → found
+        add_event_window(
+            conn, 7, start_date=date(2026, 6, 1), end_date=date(2026, 6, 2),
+            override_type="away", away_locale="hotel",
+            unavailable_locale="park",  # stray — must be nulled for away
+        )
+        params = conn.calls[-1][1]
+        assert params[4] is None        # unavailable_locale nulled
+        assert params[5] == "hotel"     # away_locale persisted
 
     def test_indoor_only_clears_stray_locale(self):
         conn = _FakeConn()

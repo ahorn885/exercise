@@ -461,23 +461,30 @@ def _resolve_included_feasibility(
     locale_order: list[str],
     terrain_by_locale: dict[str, set[str]],
     equip_by_locale: dict[str, set[str]],
+    owned_crafts: list[str] | None = None,
 ) -> dict[str, TerrainResolution]:
     """Run the existing EXACT→PROXY→INDOOR→STRENGTH→REALLOCATE cascade for every
     included, non-skill-gated discipline against the supplied environment.
 
-    The logic is identical for the home cluster and for an event window's reduced
-    environment — only the `(locale_order, terrain, equipment)` inputs differ
-    (Andy 2026-06-14: a window is just different terrain/equipment, not new
-    resolution logic). Craft disciplines (bike/paddle) walk the unified
-    craft/terrain cascade; it returns None for non-craft disciplines, which fall
-    back to the terrain-only cascade."""
+    The logic is identical for the home cluster and for an event window's
+    reduced/replacement environment — only the inputs differ (Andy 2026-06-14: a
+    window is just different terrain/equipment, not new resolution logic). Craft
+    disciplines (bike/paddle) walk the unified craft/terrain cascade; it returns
+    None for non-craft disciplines, which fall back to the terrain-only cascade.
+
+    `owned_crafts=None` → the athlete's home crafts (`fi.owned_crafts`,
+    byte-identical for the home cluster + the subtractive Slice-1 segments). An
+    `away` segment passes `[]` (Slice 2, F4 — home crafts don't travel; the
+    SAME cascade runs, the craft tiers just find nothing and the walk degrades
+    through INDOOR→STRENGTH→REALLOCATE). Slice 4 supplies declared brought-craft."""
+    crafts = fi.owned_crafts if owned_crafts is None else owned_crafts
     out: dict[str, TerrainResolution] = {}
     for d in fi.included:
         if d.discipline_id in fi.gated:
             continue
         resolution = resolve_craft_terrain_feasibility(
             d.discipline_id,
-            owned_crafts=fi.owned_crafts,
+            owned_crafts=crafts,
             craft_disciplines=fi.craft_disciplines,
             craft_group_kind=fi.craft_kind,
             discipline_groups=fi.discipline_groups,
@@ -699,19 +706,52 @@ def _build_event_window_overlay(
         (
             w.start_date,
             w.end_date,
-            EventWindowOverride(w.override_type, w.unavailable_locale),
+            EventWindowOverride(w.override_type, w.unavailable_locale, w.away_locale),
         )
         for w in overlapping
     ]
     segments: list[EventWindowSegment] = []
     for seg_start, seg_end, active in segment_window_boundaries(plan_start, plan_end, raw):
-        locale_order, terrain, equip = _reduced_env(fi, active)
-        reduced = _resolve_included_feasibility(
-            fi,
-            locale_order=locale_order,
-            terrain_by_locale=terrain,
-            equip_by_locale=equip,
-        )
+        away_ov = next((ov for ov in active if ov.override_type == "away"), None)
+        away_feasibility: dict[str, TerrainResolution] | None = None
+        _away_dbg = ""
+        if away_ov is not None and away_ov.away_locale:
+            # REPLACEMENT env (Slice 2): `away` wins over any co-active subtractive
+            # override on the same dates (you can't be home-indoor-only AND away).
+            # The destination's OWN radius cluster — re-anchored cluster_locale_ids,
+            # the same logic as home (Andy 2026-06-14). Home crafts don't travel:
+            # owned_crafts=[] (F4 — the SAME cascade runs, the craft tiers just
+            # find nothing and the walk degrades through INDOOR→STRENGTH→REALLOCATE).
+            away_cluster = locations.cluster_locale_ids(
+                db, user_id, anchor_locale=away_ov.away_locale
+            )
+            reduced = _resolve_included_feasibility(
+                fi,
+                locale_order=away_cluster,
+                terrain_by_locale=locations.cluster_terrain_by_locale(
+                    db, user_id, away_cluster
+                ),
+                equip_by_locale=locations.cluster_equipment_by_locale(
+                    db, user_id, away_cluster
+                ),
+                owned_crafts=[],
+            )
+            away_feasibility = reduced
+            # Rule #15 (spec §7): the away env + the empty craft set — the #1
+            # reason an away bike/paddle day lands on strength is "no craft
+            # travelled", so print the input that drove the decision.
+            _away_dbg = (
+                f" away_locale={away_ov.away_locale} away_cluster={away_cluster} "
+                f"owned_crafts=[]"
+            )
+        else:
+            locale_order, terrain, equip = _reduced_env(fi, active)
+            reduced = _resolve_included_feasibility(
+                fi,
+                locale_order=locale_order,
+                terrain_by_locale=terrain,
+                equip_by_locale=equip,
+            )
         changed = {d: r for d, r in reduced.items() if home_feasibility.get(d) != r}
         # Rule #15 (spec §7): name, per discipline, the tier the cascade landed
         # on for this segment — so a surprising windowed-day plan is diagnosable
@@ -719,16 +759,23 @@ def _build_event_window_overlay(
         _ov = ",".join(
             ov.override_type
             + (f":{ov.unavailable_locale}" if ov.unavailable_locale else "")
+            + (f":{ov.away_locale}" if ov.away_locale else "")
             for ov in active
         )
         print(
             f"event_window_overlay: user_id={user_id} "
-            f"dates={seg_start.isoformat()}..{seg_end.isoformat()} override={_ov} "
+            f"dates={seg_start.isoformat()}..{seg_end.isoformat()} override={_ov}"
+            f"{_away_dbg} "
             f"tiers={ {d: r.tier for d, r in sorted(changed.items())} }"
             + ("" if changed else " (no routing change — segment not emitted)")
         )
         if changed:
-            segments.append(EventWindowSegment(seg_start, seg_end, active, changed))
+            segments.append(
+                EventWindowSegment(
+                    seg_start, seg_end, active, changed,
+                    away_feasibility=away_feasibility,
+                )
+            )
     return segments, overlapping
 
 

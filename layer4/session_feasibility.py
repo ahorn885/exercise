@@ -595,26 +595,37 @@ def grid_annotation(resolution: TerrainResolution) -> str:
 
 @dataclass(frozen=True)
 class EventWindowOverride:
-    """One subtractive override active over a date-segment. `unavailable_locale`
-    is the `locale_profiles.locale` slug for `locale_unavailable`, else None."""
+    """One override active over a date-segment. `unavailable_locale` is the
+    `locale_profiles.locale` slug for `locale_unavailable`; `away_locale` is the
+    destination slug (the cluster ANCHOR) for `away` (Slice 2). The first two
+    types SUBTRACT from the home cluster; `away` REPLACES it with the
+    destination's own radius cluster."""
 
-    override_type: Literal["indoor_only", "locale_unavailable"]
+    override_type: Literal["indoor_only", "locale_unavailable", "away"]
     unavailable_locale: str | None = None
+    away_locale: str | None = None
 
 
 @dataclass(frozen=True)
 class EventWindowSegment:
-    """An atomic date sub-range of the plan span whose environment is a
-    subtraction of the home cluster, plus the per-discipline resolutions the
-    window CHANGES. `resolutions` holds only the disciplines whose reduced-env
+    """An atomic date sub-range of the plan span whose environment differs from
+    the home cluster, plus the per-discipline resolutions the window CHANGES.
+    `resolutions` holds only the disciplines whose reduced/replacement-env
     routing differs from the home resolution — the set the synthesis overlay
     renders (an empty change-set means the window is a no-op for this athlete's
-    disciplines and the segment is not emitted)."""
+    disciplines and the segment is not emitted).
+
+    `away_feasibility` (Slice 2) is the FULL away-environment resolution
+    (`discipline -> TerrainResolution`), set only on `away` segments. The overlay
+    renders the terse `resolutions` diff; the session grid needs the complete map
+    to count a fully-away week against the destination (counts-follow-away,
+    spec §4.1). None on subtractive segments."""
 
     start_date: date
     end_date: date
     overrides: tuple[EventWindowOverride, ...]
     resolutions: dict[str, TerrainResolution]
+    away_feasibility: dict[str, TerrainResolution] | None = None
 
 
 def segment_window_boundaries(
