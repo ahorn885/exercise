@@ -154,13 +154,117 @@ def cluster_effective_tags(db: Any, user_id: int, cluster: list[str]) -> list[st
     return sorted(pool)
 
 
+# ── Event Windows Slice 3 (#581 WS-H, F8) — category equipment baselines ──────
+# A not-yet-logged locale (an away destination the athlete just created inline,
+# or a cold home gym) links no gym_profile and carries no logged terrain, so the
+# feasibility cascade degrades every discipline to near-strength. F8: until the
+# athlete logs actuals on arrival, a locale whose CATEGORY has an authored
+# baseline ASSUMES that baseline's equipment + terrain (the plan is built around
+# it; logging actuals then refreshes the window — the arrival-regen loop). The 5
+# gym + 2 pool MANUAL_CATEGORIES slugs (routes/locales.py) collapse to 4 authored
+# baselines (layer0.location_category_equipment_baseline, migration 0005).
+_CATEGORY_BASELINE_KEY: dict[str, str] = {
+    "commercial_chain_gym": "commercial",
+    "independent_gym": "commercial",
+    "hotel_gym": "hotel",
+    "climbing_gym_chain": "climbing",
+    "climbing_gym_indie": "climbing",
+    "pool_indoor": "pool",
+    "pool_outdoor": "pool",
+}
+
+# Display label for the assumed-baseline overlay note (Trigger-#1 wording, Andy
+# 2026-06-14). Keyed by the logical baseline category.
+_BASELINE_DISPLAY: dict[str, str] = {
+    "commercial": "commercial gym",
+    "hotel": "hotel gym",
+    "climbing": "climbing gym",
+    "pool": "pool",
+}
+
+
+def load_category_baselines(db: Any) -> dict[str, dict[str, set[str]]]:
+    """`{baseline_key: {"equipment": {...}, "terrain": {...}}}` from
+    `layer0.location_category_equipment_baseline` (active rows). Empty dict when
+    the table is absent (pre-migration 0005) or unreadable — the substitution
+    then no-ops and a cold locale degrades exactly as before Slice 3, rather than
+    crashing the resolution."""
+    try:
+        rows = db.execute(
+            "SELECT category, equipment_tags, terrain_ids "
+            "FROM layer0.location_category_equipment_baseline "
+            "WHERE superseded_at IS NULL"
+        ).fetchall()
+    except Exception:  # table not yet migrated / unreachable
+        return {}
+    return {
+        r["category"]: {
+            "equipment": _coerce_terrain_ids(r["equipment_tags"]),
+            "terrain": _coerce_terrain_ids(r["terrain_ids"]),
+        }
+        for r in rows
+    }
+
+
+def _category_baseline(
+    baselines: dict[str, dict[str, set[str]]], category: str | None
+) -> dict[str, set[str]] | None:
+    """The assumed baseline for a locale's MANUAL_CATEGORIES slug, or None when
+    the slug maps to no baseline (park/residences) or the table is empty."""
+    return baselines.get(_CATEGORY_BASELINE_KEY.get(category or ""))
+
+
+def _locale_category(db: Any, user_id: int, locale: str) -> str | None:
+    """The locale's MANUAL_CATEGORIES slug. Issued as its own query (kept out of
+    the existing `gym_profile_id` / `locale_terrain_ids` SELECTs so their SQL
+    shape is unchanged) and only ever called when a baseline table exists."""
+    row = db.execute(
+        "SELECT category FROM locale_profiles "
+        "WHERE user_id = ? AND locale = ? LIMIT 1",
+        (user_id, locale),
+    ).fetchone()
+    return row["category"] if row else None
+
+
+def locale_assumed_baseline_display(
+    db: Any, user_id: int, locale: str
+) -> str | None:
+    """The display label of the baseline a locale ASSUMES — set only when the
+    locale is genuinely cold (no logged equipment AND no logged terrain) and its
+    category has an authored baseline. Used to mark an away window's overlay as
+    running on assumed equipment/terrain (Slice 3). None otherwise."""
+    baselines = load_category_baselines(db)
+    if not baselines:
+        return None
+    row = db.execute(
+        "SELECT category, locale_terrain_ids FROM locale_profiles "
+        "WHERE user_id = ? AND locale = ? LIMIT 1",
+        (user_id, locale),
+    ).fetchone()
+    if row is None:
+        return None
+    key = _CATEGORY_BASELINE_KEY.get(row["category"] or "")
+    if key is None or key not in baselines:
+        return None
+    if locale_effective_tags(db, user_id, locale):
+        return None  # has logged equipment → not assumed
+    if _coerce_terrain_ids(row["locale_terrain_ids"]):
+        return None  # has logged terrain → not assumed
+    return _BASELINE_DISPLAY.get(key, key)
+
+
 def cluster_equipment_by_locale(
     db: Any, user_id: int, cluster: list[str]
 ) -> dict[str, set[str]]:
     """Per-locale effective-equipment sets across the cluster — the equipment
     analogue kept un-unioned (keyed by locale) for session-feasibility routing,
-    where *which* locale carries a cardio machine matters (#540 slice 2c.2)."""
+    where *which* locale carries a cardio machine matters (#540 slice 2c.2).
+
+    Slice 3 (F8): a locale with NO logged equipment whose category has an
+    authored baseline assumes that baseline (replace semantics — any logged
+    equipment wins, so a logged locale is untouched)."""
     out = {locale: locale_effective_tags(db, user_id, locale) for locale in cluster}
+    baselines = load_category_baselines(db)
     # Rule #15 observability: equipment feeds the feasibility INDOOR tier + craft
     # routing. The usual reason a locale's pool is empty is that it links no
     # gym_profile — log the link + tag count per locale so a thin pool is
@@ -173,9 +277,19 @@ def cluster_equipment_by_locale(
             (user_id, locale),
         ).fetchone()
         gid = prof["gym_profile_id"] if prof else None
+        assumed = ""
+        if baselines and not out[locale]:
+            category = _locale_category(db, user_id, locale)
+            base = _category_baseline(baselines, category)
+            if base and base["equipment"]:
+                out[locale] = set(base["equipment"])
+                assumed = (
+                    f" assumed_baseline={_CATEGORY_BASELINE_KEY.get(category)}"
+                    f" (category={category} no logged equipment)"
+                )
         print(
             f"cluster_equipment_by_locale: user_id={user_id} locale={locale!r} "
-            f"gym_profile_id={gid} n_tags={len(out[locale])}"
+            f"gym_profile_id={gid} n_tags={len(out[locale])}{assumed}"
         )
     return out
 
@@ -191,6 +305,7 @@ def cluster_terrain_by_locale(
     map to an empty set. Keyed by locale (not unioned) because session routing
     needs to know *which* cluster locale carries the required terrain (#540)."""
     out: dict[str, set[str]] = {}
+    baselines = load_category_baselines(db)
     for locale in cluster:
         row = db.execute(
             "SELECT locale_terrain_ids FROM locale_profiles "
@@ -199,13 +314,26 @@ def cluster_terrain_by_locale(
         ).fetchone()
         raw = row["locale_terrain_ids"] if row else None
         coerced = _coerce_terrain_ids(raw)
+        # Slice 3 (F8): a locale with NO logged terrain whose category has an
+        # authored baseline assumes that baseline's terrain (replace semantics —
+        # any logged terrain wins). Mirrors the equipment fallback above.
+        assumed = ""
+        if baselines and not coerced:
+            category = _locale_category(db, user_id, locale)
+            base = _category_baseline(baselines, category)
+            if base and base["terrain"]:
+                coerced = set(base["terrain"])
+                assumed = (
+                    f" assumed_baseline={_CATEGORY_BASELINE_KEY.get(category)}"
+                    f" (category={category} no logged terrain)"
+                )
         # Rule #15 observability: log the raw cell alongside the coerced set so a
         # terrain that IS saved but fails to surface (missing row, NULL, or an
         # unexpected TEXT[]/JSON shape `_coerce_terrain_ids` drops to empty) is
         # visible rather than silently absent from the feasibility cascade.
         print(
             f"cluster_terrain_by_locale: user_id={user_id} locale={locale!r} "
-            f"row_found={row is not None} raw={raw!r} coerced={sorted(coerced)}"
+            f"row_found={row is not None} raw={raw!r} coerced={sorted(coerced)}{assumed}"
         )
         out[locale] = coerced
     return out

@@ -901,7 +901,22 @@ def _event_window_label(segment: "EventWindowSegment") -> str:
             )
         else:  # defensive
             parts.append(ov.override_type)
-    return " + ".join(parts)
+    label = " + ".join(parts)
+    # Slice 3 (F8): the destination was cold, so its equipment/terrain came from
+    # the category baseline — tell the athlete to log actuals on arrival so the
+    # window re-plans on real gear (Trigger-#1 wording, Andy 2026-06-14).
+    if segment.assumed_baseline_category:
+        away_loc = next(
+            (ov.away_locale for ov in segment.overrides
+             if ov.override_type == "away" and ov.away_locale),
+            "the destination",
+        )
+        label += (
+            f' [Equipment/terrain at "{away_loc}" is assumed from the standard '
+            f"{segment.assumed_baseline_category} baseline — log the gym's actual "
+            f"equipment on arrival to refine the plan for this window.]"
+        )
+    return label
 
 
 def _format_event_window_overlay(

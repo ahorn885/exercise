@@ -714,6 +714,7 @@ def _build_event_window_overlay(
     for seg_start, seg_end, active in segment_window_boundaries(plan_start, plan_end, raw):
         away_ov = next((ov for ov in active if ov.override_type == "away"), None)
         away_feasibility: dict[str, TerrainResolution] | None = None
+        assumed_baseline: str | None = None
         _away_dbg = ""
         if away_ov is not None and away_ov.away_locale:
             # REPLACEMENT env (Slice 2): `away` wins over any co-active subtractive
@@ -737,12 +738,19 @@ def _build_event_window_overlay(
                 owned_crafts=[],
             )
             away_feasibility = reduced
+            # Slice 3 (F8): if the destination is cold (no logged equipment/
+            # terrain) and its category has a baseline, the away cluster resolved
+            # above ran on that ASSUMED baseline — mark the segment so the overlay
+            # tells the athlete to log actuals on arrival (Trigger-#1 wording).
+            assumed_baseline = locations.locale_assumed_baseline_display(
+                db, user_id, away_ov.away_locale
+            )
             # Rule #15 (spec §7): the away env + the empty craft set — the #1
             # reason an away bike/paddle day lands on strength is "no craft
             # travelled", so print the input that drove the decision.
             _away_dbg = (
                 f" away_locale={away_ov.away_locale} away_cluster={away_cluster} "
-                f"owned_crafts=[]"
+                f"owned_crafts=[] assumed_baseline={assumed_baseline}"
             )
         else:
             locale_order, terrain, equip = _reduced_env(fi, active)
@@ -774,6 +782,7 @@ def _build_event_window_overlay(
                 EventWindowSegment(
                     seg_start, seg_end, active, changed,
                     away_feasibility=away_feasibility,
+                    assumed_baseline_category=assumed_baseline,
                 )
             )
     return segments, overlapping
@@ -1650,6 +1659,13 @@ _LAYER0_TABLE_FAMILY: dict[str, str] = {
     "sport_specific_gear_toggles": "0C",
     "skill_capability_toggles": "0C",
     "sport_name_aliases": "0C",
+    # location_category_equipment_baseline (#581 WS-H Slice 3 / F8) is a 0C
+    # serving table created by migration 0005 (not schema.sql); read via
+    # locations.load_category_baselines to assume equipment/terrain for a
+    # not-yet-logged locale. Registered so a baseline edit (supersede + bumped
+    # etl_version) shifts the 0C digest → plan keys change → affected plans
+    # re-synthesize on the new assumption.
+    "location_category_equipment_baseline": "0C",
 }
 # Note: `layer0.supplement_vocabulary` (read by Layer 2E) is intentionally
 # absent — it carries its own `supp_vocab.*` version line, not a 0A/0B/0C
