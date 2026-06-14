@@ -1692,6 +1692,86 @@ class TestPromptRendering:
         # Omitted entirely when nothing was resolved (legacy/empty callers).
         assert "=== Session feasibility" not in without
 
+    def test_event_window_overlay_rendered_when_segment_overlaps(self):
+        # #581 WS-H — the refresh prompt must carry the date-scoped event-window
+        # overlay (mirrors the create-side per_phase render) when a declared
+        # window overlaps the refresh scope, and omit it otherwise.
+        from layer4.plan_refresh_t1 import render_user_prompt
+        from layer4.session_feasibility import (
+            EventWindowOverride,
+            EventWindowSegment,
+            TerrainResolution,
+        )
+
+        seg = EventWindowSegment(
+            _T1_START,
+            _T1_END,
+            (EventWindowOverride("indoor_only"),),
+            {
+                "D-001": TerrainResolution(
+                    "D-001", "indoor", "Home Gym", machine="Treadmill",
+                    note="indoor Treadmill at Home Gym",
+                )
+            },
+        )
+        kwargs = dict(
+            refresh_scope_start=_T1_START,
+            refresh_scope_end=_T1_END,
+            layer1_payload=_layer1(),
+            layer2_bundle=Layer2Bundle(a=_layer2a(), c={}, d=_layer2d()),
+            layer3a_payload=_layer3a(),
+            layer3b_payload=_layer3b(),
+            prior_plan_session_window=_prior_window(_T1_START, _T1_END),
+            parsed_intent=ParsedIntent(),
+            retries_used=0,
+            rule_failures=[],
+        )
+        with_overlay = render_user_prompt(**kwargs, event_window_segments=[seg])
+        without = render_user_prompt(**kwargs)
+        assert "=== Event-window overlay" in with_overlay
+        assert "indoor-only (no outdoor terrain available)" in with_overlay
+        assert "Placement preference (soft)" in with_overlay
+        # Omitted when no segment supplied (legacy/no-window refreshes).
+        assert "=== Event-window overlay" not in without
+
+    def test_event_window_overlay_absent_when_segment_outside_scope(self):
+        # A window that doesn't overlap the refresh scope renders nothing.
+        from datetime import timedelta
+
+        from layer4.plan_refresh_t1 import render_user_prompt
+        from layer4.session_feasibility import (
+            EventWindowOverride,
+            EventWindowSegment,
+            TerrainResolution,
+        )
+
+        far = _T1_END + timedelta(days=30)
+        seg = EventWindowSegment(
+            far,
+            far + timedelta(days=2),
+            (EventWindowOverride("indoor_only"),),
+            {
+                "D-001": TerrainResolution(
+                    "D-001", "indoor", "Home Gym", machine="Treadmill",
+                    note="indoor Treadmill at Home Gym",
+                )
+            },
+        )
+        prompt = render_user_prompt(
+            refresh_scope_start=_T1_START,
+            refresh_scope_end=_T1_END,
+            layer1_payload=_layer1(),
+            layer2_bundle=Layer2Bundle(a=_layer2a(), c={}, d=_layer2d()),
+            layer3a_payload=_layer3a(),
+            layer3b_payload=_layer3b(),
+            prior_plan_session_window=_prior_window(_T1_START, _T1_END),
+            parsed_intent=ParsedIntent(),
+            retries_used=0,
+            rule_failures=[],
+            event_window_segments=[seg],
+        )
+        assert "=== Event-window overlay" not in prompt
+
     def test_default_parsed_intent_when_none_passed(self):
         """When parsed_intent=None, the driver substitutes a degraded
         ParsedIntent with parser_confidence='low'."""

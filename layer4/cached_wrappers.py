@@ -202,6 +202,11 @@ def llm_layer4_plan_refresh_cached(
     # Hashed into the cache key + threaded into the refresh prompt. Default
     # None/{} preserves existing call sites (notably test fixtures).
     terrain_feasibility: dict[str, TerrainResolution] | None = None,
+    # Event Windows (#581 WS-H) — date-scoped reduced-environment segments
+    # (refresh-side overlay, mirrors create) + the declared-window digest folded
+    # into the refresh cache key. Default None preserves existing call sites.
+    event_window_segments: list[EventWindowSegment] | None = None,
+    event_windows_hash: str | None = None,
     model_synthesizer: str = "claude-sonnet-4-6",
     model_seam_reviewer: str | None = None,
     temperature: float = 0.4,
@@ -267,6 +272,7 @@ def llm_layer4_plan_refresh_cached(
         capped_retries=capped_retries,
         training_substitution_hash=training_substitution_hash,
         terrain_feasibility_hash=terrain_feasibility_hash,
+        event_windows_hash=event_windows_hash,
     )
 
     def _synthesize() -> Layer4Payload:
@@ -287,6 +293,7 @@ def llm_layer4_plan_refresh_cached(
             plan_start_date=plan_start_date,
             training_substitution_payload=training_substitution_payload,
             terrain_feasibility=terrain_feasibility,
+            event_window_segments=event_window_segments,
             model_synthesizer=model_synthesizer,
             model_seam_reviewer=model_seam_reviewer,
             temperature=temperature,

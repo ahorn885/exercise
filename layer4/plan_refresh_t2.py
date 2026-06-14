@@ -31,6 +31,7 @@ from layer4.context import (
 from layer4.payload import PlanSession, RuleFailure
 from layer4.per_phase import (
     _format_daily_windows_schedule,
+    _format_event_window_overlay,
     _format_session_feasibility,
     _format_training_substitution_per_phase,
 )
@@ -133,6 +134,7 @@ def render_user_prompt(
     rule_failures: list[RuleFailure],
     training_substitution_payload: TrainingSubstitutionPayload | None = None,
     terrain_feasibility: dict[str, Any] | None = None,
+    event_window_segments: list[Any] | None = None,
 ) -> str:
     """Render the §6 user prompt for T2. Inline Python rendering replaces
     Mustache from the prompt body MD."""
@@ -193,6 +195,19 @@ def render_user_prompt(
     parts.extend(
         _format_session_feasibility(
             terrain_feasibility, layer2_bundle.a, dict(layer2_bundle.c)
+        )
+    )
+
+    # Event Windows (#581 WS-H) — date-scoped overlay for any declared window
+    # overlapping the refresh scope (mirrors the create-side per_phase render;
+    # the refresh prompt's synthesis unit is the refresh scope window).
+    parts.extend(
+        _format_event_window_overlay(
+            event_window_segments,
+            refresh_scope_start,
+            refresh_scope_end,
+            layer2_bundle.a,
+            dict(layer2_bundle.c),
         )
     )
 

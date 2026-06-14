@@ -380,6 +380,18 @@ class TestHashAndKey:
         )
         assert plan_refresh_key(**kw) == plan_refresh_key(**kw, event_windows_hash=None)
 
+    def test_plan_refresh_key_changes_with_windows(self):
+        kw = dict(
+            user_id=7, tier="T1", refresh_scope_start=date(2026, 6, 1),
+            refresh_scope_end=date(2026, 6, 30), layer1_hash="l1",
+            layer2_bundle_canonical_hash="b", layer3a_hash="3a", layer3b_hash="3b",
+            prior_plan_session_window_hash="w", parsed_intent_hash=None,
+            etl_version_set={"x": "1"}, model_synthesizer="m", model_seam_reviewer=None,
+            temperature=0.2, max_tokens=10, capped_retries=2,
+        )
+        ewh = compute_event_windows_hash([self._win()])
+        assert plan_refresh_key(**kw, event_windows_hash=ewh) != plan_refresh_key(**kw)
+
 
 # ─── repo: app-layer validation ──────────────────────────────────────────────
 
