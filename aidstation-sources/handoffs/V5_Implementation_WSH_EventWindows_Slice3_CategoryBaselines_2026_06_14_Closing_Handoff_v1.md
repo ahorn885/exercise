@@ -35,8 +35,8 @@ Keyed by **logical category**; the 5 gym + 2 pool `MANUAL_CATEGORIES` slugs coll
 | Baseline (slugs) | Equipment (exact `equipment_items` canonical names) | Terrain |
 |---|---|---|
 | **commercial** (`commercial_chain_gym`, `independent_gym`) | Dip bars, Foam roller, Pull-up bar, Resistance band, TRX / suspension trainer, Yoga mat, Barbell, Bench, Dumbbell, EZ curl bar, Kettlebell, Squat rack, Weight plates, Elliptical, Rowing ergometer, Stationary bike, Treadmill, Cable machine, Chest press machine, Lat pulldown machine, Leg press machine, Seated row machine, Smith machine, BOSU ball, Battle ropes, Medicine ball, Plyo box, Stability ball | TRN-001, TRN-016 |
-| **hotel** (`hotel_gym`) | Dumbbell, Treadmill, Stationary bike, Elliptical, Bench press rack, Yoga mat, Stability ball | TRN-001, TRN-016 |
-| **climbing** (`climbing_gym_chain`, `climbing_gym_indie`) | Climbing Wall, Hangboard, Crash pad, Pull-up bar | TRN-001, TRN-016, TRN-014 |
+| **hotel** (`hotel_gym`) | Dumbbell, Treadmill, Stationary bike, Elliptical, Bench, Yoga mat, Stability ball | TRN-001, TRN-016 |
+| **climbing** (`climbing_gym_chain`, `climbing_gym_indie`) | Treadwall, Hangboard, Pull-up bar, Campus board | TRN-001, TRN-016, TRN-014 |
 | **pool** (`pool_indoor`, `pool_outdoor`) | *(terrain-only)* | TRN-008 |
 
 Terrain ids: `TRN-001` Road/Paved, `TRN-016` Indoor/Gym, `TRN-014` Climbing Gym, `TRN-008` Pool.
@@ -69,17 +69,22 @@ Terrain ids: `TRN-001` Road/Paved, `TRN-016` Indoor/Gym, `TRN-014` Climbing Gym,
 
 ---
 
-## 6. CI note — the genesis-vs-live drift (why the equipment FK-check is a NOTICE)
+## 6. CI + the post-apply token correction
 
-The first push **failed** the Layer-0 integrity gate. Root cause: the gate loads the **frozen genesis snapshot** (`etl/output/layer0_etl_v1.6.7.sql`, the latest `sort -V`) + the `etl/migrations/layer0/*.sql` migrations — it does **not** load the `etl/sources/*.sql` equipment additions. So three live canonical tokens — **`Bench press rack`** (batch_a), **`Climbing Wall`** (K2), **`Crash pad`** (K3) — are present on Neon but **absent from CI's genesis**. A hard `RAISE EXCEPTION` equipment FK-check failed the gate on that pre-existing drift.
+The first push **failed** the Layer-0 integrity gate on a hard equipment FK-check: three seed tokens — `Bench press rack`, `Climbing Wall`, `Crash pad` — were absent from the gate's frozen genesis snapshot. They turned out to be **wrong/renamed canonical names** I pulled from stale `etl/sources` files: the live `layer0.equipment_items` vocabulary (confirmed by Andy pasting it on the Neon apply, Rule #14) has **no** such tokens — they were superseded/renamed in a later vocab pass. So the fix was a **contents correction**, not a CI hack:
 
-**Fix (commit 2):** the 0005 equipment FK-check is a **`RAISE NOTICE`**, not `EXCEPTION` — it stays silent on the authoritative Neon apply (where all tokens exist) and surfaces a genuine typo there, while not failing CI's incomplete genesis. The **terrain** FK-check + the row-count stay **hard** (terrain ids are all in genesis). This drift is **pre-existing and broader than this slice** (etl/sources additions were never folded into a genesis snapshot or migration) — left as-is, not fixed here. Possible future cleanup: fold the etl/sources equipment additions into a migration so CI genesis matches live.
+- **hotel:** `Bench press rack` → **`Bench`**.
+- **climbing:** `Climbing Wall` → **`Treadwall`** (the live "Grip & Climbing" wall token, Andy's call); `Crash pad` **dropped** (no live token; the boulder mats are the venue = the `TRN-014 Climbing Gym` terrain already in the baseline); **`Campus board`** added (Andy). → `{Treadwall, Hangboard, Pull-up bar, Campus board}`.
+- Climbing-gym indoor feasibility rests on **`TRN-014 Climbing Gym`** in the baseline's terrain (Andy's "make sure the terrain is mapped to climbing gyms too" — it already was).
+
+All corrected tokens are in both the live vocabulary **and** the CI genesis, so the equipment FK-check is **hard (`RAISE EXCEPTION`)** again — the temporary NOTICE softening was reverted once the seed was correct. Full gate reproduced locally → PASS. **Neon:** the first apply committed the *old* (wrong) tokens; corrected in place via two `UPDATE`s (hotel + climbing `equipment_tags`) — see §7. *(Sidebar: the live vocab is cleaner-cased than the v1.6.7 genesis dump — `Pinch block`, `Wrist roller`, `Glute ham developer (GHD)` — i.e. genesis lags live in general; not relevant to this slice now that every seed token is in both.)*
 
 ---
 
 ## 7. Owed Andy's hands
 
-- ⛔ **BLOCKING (pre-merge): apply migration `0005` on Neon before merging/deploying #603.** The `etl_version_set` digest UNION queries `layer0.location_category_equipment_baseline` on **every** plan-gen, so deploying ahead of the migration crashes plan-gen (apply-first ordering, same as 0004). The migration is idempotent + self-validating (terrain FK + row-count hard; equipment NOTICE silent when clean).
+- ✅ **Migration `0005` APPLIED on Neon (Andy 2026-06-14)** — 4 rows landed. The first apply committed the *wrong* `Bench press rack`/`Climbing Wall`/`Crash pad` tokens; **corrected in place** with two `UPDATE`s (hotel `equipment_tags` → `Bench`; climbing → `{Treadwall, Hangboard, Pull-up bar, Campus board}`). Re-run of the missing-tag check returns 0 rows = clean.
+- ⛔ **BLOCKING (pre-merge) was: apply 0005 before deploy** (the `etl_version_set` digest queries the table every plan-gen → deploy-ahead crashes plan-gen, apply-first like 0004). **Now satisfied** — safe to merge #603 once the two UPDATEs are confirmed.
 - (carried, unrelated) the post-#572 live **T3 *refresh*** re-verify (diag token + Andy pasting logs, Rule #14).
 
 ---

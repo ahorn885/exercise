@@ -77,13 +77,13 @@ VALUES
   ('hotel',
    ARRAY[
      'Dumbbell','Treadmill','Stationary bike','Elliptical',
-     'Bench press rack','Yoga mat','Stability ball'
+     'Bench','Yoga mat','Stability ball'
    ]::TEXT[],
    ARRAY['TRN-001','TRN-016']::TEXT[],
    '0C-v1.0', NOW()),
 
   ('climbing',
-   ARRAY['Climbing Wall','Hangboard','Crash pad','Pull-up bar']::TEXT[],
+   ARRAY['Treadwall','Hangboard','Pull-up bar','Campus board']::TEXT[],
    ARRAY['TRN-001','TRN-016','TRN-014']::TEXT[],
    '0C-v1.0', NOW()),
 
@@ -94,20 +94,12 @@ VALUES
 ON CONFLICT (category, etl_version) DO NOTHING;
 
 -- ── 3. verify ───────────────────────────────────────────────────────────────
--- 4 active rows; every terrain id resolves to a live terrain_types row (hard);
--- every equipment tag resolves to a live equipment_items canonical_name (soft —
--- NOTICE, see below).
---
--- The equipment FK-check is a NOTICE, not an EXCEPTION, because the CI Layer-0
--- gate (.github/workflows/ci.yml) validates against the FROZEN genesis snapshot
--- (etl/output/layer0_etl_v1.6.7.sql) + migrations only — it does NOT load the
--- etl/sources/*.sql equipment additions (batch_a, K-additions). So a handful of
--- live canonical tokens (Bench press rack, Climbing Wall, Crash pad, …) are
--- present on Neon but absent from CI's genesis; a hard EXCEPTION here would fail
--- the gate on that pre-existing genesis-vs-live drift. On the REAL Neon apply
--- the equipment_items table is authoritative, so the NOTICE is silent when every
--- tag exists and surfaces a genuine typo. The terrain ids (TRN-001/008/014/016)
--- are all in genesis, so that check stays a hard EXCEPTION.
+-- 4 active rows; every terrain id resolves to a live terrain_types row; every
+-- equipment tag resolves to a live equipment_items canonical_name. All hard
+-- (RAISE EXCEPTION → the migration rolls back on any mismatch). Every seed token
+-- was reconciled against the live layer0.equipment_items vocabulary on apply
+-- (2026-06-14) and all are also present in the CI genesis snapshot, so the gate
+-- passes with the hard check.
 
 DO $$
 DECLARE
@@ -147,7 +139,7 @@ BEGIN
       WHERE e.canonical_name = t.tag AND e.superseded_at IS NULL
    );
   IF bad_equip IS NOT NULL THEN
-    RAISE NOTICE 'baseline equipment tags not found in equipment_items (expected for CI genesis lag; verify on Neon): %', bad_equip;
+    RAISE EXCEPTION 'baseline equipment tags absent from equipment_items: %', bad_equip;
   END IF;
 END $$;
 
