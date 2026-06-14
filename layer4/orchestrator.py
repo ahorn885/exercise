@@ -1339,6 +1339,23 @@ def orchestrate_plan_refresh(
     # into the refresh prompt + folded into the plan_refresh cache key below.
     terrain_feasibility = _build_terrain_feasibility(db, user_id, cone)
 
+    # Event Windows (#581 WS-H) — date-segment the REFRESH scope by the athlete's
+    # declared event windows and resolve the existing cascade per reduced
+    # environment, mirroring the create path. Scoped to [refresh_scope_start,
+    # refresh_scope_end] because only those dates are re-synthesized; the segments
+    # render into the refresh tier prompts (T1/T2/T3-intra + T3 cross-phase
+    # Pattern A) and the declared-window digest folds into the refresh cache key
+    # (a window edit already evicts plan_refresh too, so this only enables the
+    # overlay RENDER on refresh — the create-first follow-up).
+    event_window_segments, overlapping_windows = _build_event_window_overlay(
+        db, user_id, cone,
+        plan_start=refresh_scope_start, plan_end=refresh_scope_end,
+        home_feasibility=terrain_feasibility,
+    )
+    event_windows_hash = (
+        compute_event_windows_hash(overlapping_windows) if overlapping_windows else None
+    )
+
     payload = llm_layer4_plan_refresh_cached(
         user_id=user_id,
         tier=tier,
@@ -1361,6 +1378,10 @@ def orchestrate_plan_refresh(
         # Thread the per-discipline terrain-feasibility resolutions into the
         # refresh prompt + cache key (#557, mirrors create).
         terrain_feasibility=terrain_feasibility,
+        # Event Windows (#581 WS-H) — date-scoped reduced-environment segments
+        # (refresh overlay) + the declared-window digest (cache key).
+        event_window_segments=event_window_segments,
+        event_windows_hash=event_windows_hash,
     )
     payload = _apply_locale_assign(db, user_id, payload, layer2_bundle.c)
     payload = _apply_rx_wire(db, user_id, payload, layer2_bundle.c)
