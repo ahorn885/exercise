@@ -4,7 +4,10 @@
    against these and resolves the affected days against the reduced/replacement
    environment. Slice 2b: when the destination isn't saved yet, the away field
    links into the existing /locales/new Mapbox flow with a return_to back here
-   (reusing its geocoding-consent + mapbox_id dedup) — no duplicated search UI. #}
+   (reusing its geocoding-consent + mapbox_id dedup) — no duplicated search UI.
+   Slice 4 (c): brought-craft on the away window. (Slice 5: the (b) standing
+   craft↔locale capture moved to the per-locale edit page — craft kept at a place
+   is a property of the place; see templates/locales/form.html.) #}
 {% extends 'base.html' %}
 {% set nav_active = 'athlete' %}
 {% block title %}Event windows — AIDSTATION{% endblock %}
@@ -109,57 +112,9 @@
     </form>
   </div>
 
-  <div class="card card-pad">
-    <p class="eyebrow">● Craft you keep at a location</p>
-    <p class="acct-hint">A bike at the cabin, a kayak at the lake house — craft that lives at one of your
-      locations, not brought per trip. It counts whenever that location is your away destination's cluster,
-      with no need to re-declare it each window.</p>
-    {% if craft_locales %}
-    <table class="table">
-      <thead><tr><th>Location</th><th>Craft kept there</th><th></th></tr></thead>
-      <tbody>
-        {% for loc, crafts in craft_locales.items() %}
-        <tr>
-          <td class="mono">{{ loc }}</td>
-          <td>{{ crafts | join(', ') | replace('_', ' ') }}</td>
-          <td>
-            <form method="post" action="{{ url_for('profile.delete_craft_locale_route') }}">
-              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-              <input type="hidden" name="locale" value="{{ loc }}">
-              <button type="submit" class="btn btn-ghost btn-sm">Clear</button>
-            </form>
-          </td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
-    {% endif %}
-    <form method="post" action="{{ url_for('profile.save_craft_locale_route') }}">
-      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-      <div class="pf-grid">
-        <label class="field"><span class="lbl">Location</span>
-          <select name="locale" class="form-control form-control-sm" required>
-            <option value="">—</option>
-            {% for loc in locales %}<option value="{{ loc }}">{{ loc }}</option>{% endfor %}
-          </select></label>
-        <fieldset class="field field-wide"><span class="lbl">Craft kept here</span>
-          {% for group, items in craft_catalog.items() %}
-            {% for c in items %}
-            <div class="form-check">
-              <input class="form-check-input" type="checkbox" id="kept_{{ c.slug }}"
-                     name="craft_slug" value="{{ c.slug }}">
-              <label class="form-check-label" for="kept_{{ c.slug }}">{{ c.label }}</label>
-            </div>
-            {% endfor %}
-          {% endfor %}
-        </fieldset>
-      </div>
-      <div class="pf-save">
-        <span class="pf-saved mono">Replace-all per location · save with no craft checked to clear that location</span>
-        <button type="submit" class="btn btn-primary">Save craft at location</button>
-      </div>
-    </form>
-  </div>
+  <p class="acct-hint">Craft you <b>keep</b> at a location (a bike at the cabin, a kayak at the lake house) —
+    set that on the <a href="{{ url_for('locales.list_profiles') }}">location's own page</a>, since it's a
+    property of the place, not of the trip.</p>
 
 </div>
 {% endblock %}

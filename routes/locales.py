@@ -13,6 +13,13 @@ from layer4.cache import Layer4Cache
 from layer4.cache_invalidation import evict_on_layer_change
 from layer4.cache_postgres import PostgresCacheBackend
 from routes.auth import current_user_id
+from athlete_crafts_repo import load_craft_catalog
+from athlete_craft_locale_repo import (
+    CraftLocaleError,
+    evict_plan_caches_on_craft_locale_change,
+    load_craft_locales,
+    replace_craft_locale,
+)
 
 bp = Blueprint('locales', __name__)
 
@@ -623,6 +630,32 @@ def edit_profile(locale):
     return _edit_locale(db, uid, locale, profile)
 
 
+@bp.route('/locales/<locale>/crafts', methods=['POST'])
+def save_locale_crafts(locale):
+    """WS-H #581 Slice 5 — the (b) craft↔locale surface, relocated here from the
+    event-windows page (craft kept at a place is a property of the place). Replace
+    the crafts the athlete keeps at this locale (replace-all; save with none
+    checked to clear), validate the slugs + locale via the repo, then evict the
+    plan caches it feeds. Resolution is unchanged — only the capture point moved."""
+    db = get_db()
+    uid = current_user_id()
+    if not db.execute(
+        'SELECT 1 FROM locale_profiles WHERE user_id = ? AND locale = ?',
+        (uid, locale),
+    ).fetchone():
+        flash('Unknown location.', 'danger')
+        return redirect(url_for('locales.list_profiles'))
+    try:
+        replace_craft_locale(db, uid, locale, request.form.getlist('craft_slug'))
+    except CraftLocaleError as exc:
+        flash(str(exc), 'error')
+        return redirect(url_for('locales.edit_profile', locale=locale))
+    db.commit()
+    evict_plan_caches_on_craft_locale_change(db, uid)
+    flash('Craft kept at this location saved.', 'success')
+    return redirect(url_for('locales.edit_profile', locale=locale))
+
+
 def _resolve_shared_profile(db, uid: int, profile):
     """Resolve the gym_profiles row backing a locale, if any: the linked
     `gym_profile_id` first, else a peer at the same `mapbox_id` (another
@@ -779,7 +812,11 @@ def _edit_locale(db, uid: int, locale: str, profile):
                            privacy_opt_out=current_opt_out,
                            privacy_effective=_resolve_private(privacy_category, current_opt_out),
                            terrain_choices=_terrain_choices(db),
-                           active_terrain_ids=set(prior_terrain_ids))
+                           active_terrain_ids=set(prior_terrain_ids),
+                           # WS-H #581 Slice 5 — craft-kept-here capture (the (b)
+                           # craft↔locale surface, relocated from event-windows).
+                           craft_catalog=load_craft_catalog(),
+                           crafts_here=load_craft_locales(db, uid).get(locale, []))
 
 
 # ── D-59 — Mapbox-anchored locale creation ──────────────────────────────

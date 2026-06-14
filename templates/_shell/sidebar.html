@@ -53,6 +53,7 @@
       <svg class="icon" width="16" height="16" aria-hidden="true"><use href="#i-more"></use></svg>
     </button>
     <ul class="dropdown-menu" aria-labelledby="user-chip">
+      <li><a class="dropdown-item" href="{{ url_for('profile.event_windows') }}">Event windows</a></li>
       <li><a class="dropdown-item" href="{{ url_for('profile.coach_memory') }}">Coach memory</a></li>
       <li><a class="dropdown-item" href="{{ url_for('profile.account_settings') }}">Account settings</a></li>
       <li><a class="dropdown-item" href="{{ url_for('nudges.settings') }}">Notification settings</a></li>
