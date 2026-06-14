@@ -101,6 +101,38 @@ def compute_terrain_feasibility_hash(terrain_feasibility: dict[str, Any]) -> str
     return _sha256_hex(canonical_json(flat))
 
 
+def compute_event_windows_hash(windows: list[Any]) -> str:
+    """Event Windows Slice 1 (#581 WS-H) — SHA-256 of the declared event windows
+    overlapping the plan span.
+
+    Each window contributes `(override_type, start_date, end_date,
+    unavailable_locale)` — the declared inputs, NOT the derived resolutions (the
+    cluster terrain/equipment that resolution depends on is already keyed via
+    `compute_terrain_feasibility_hash`). Sorted for a stable digest. Folds into
+    `plan_create_key` / `plan_refresh_key`; the caller passes None when no window
+    overlaps the span so the key collapses to '' and stays byte-identical to the
+    pre-Slice-1 key (the no-windows regression criterion).
+    """
+    flat = sorted(
+        (
+            {
+                "override_type": w.override_type,
+                "start_date": w.start_date,
+                "end_date": w.end_date,
+                "unavailable_locale": w.unavailable_locale,
+            }
+            for w in windows
+        ),
+        key=lambda d: (
+            d["start_date"],
+            d["end_date"],
+            d["override_type"],
+            d["unavailable_locale"] or "",
+        ),
+    )
+    return _sha256_hex(canonical_json(flat))
+
+
 def compute_layer2c_bundle_hash(locale_to_hash: dict[str, str]) -> str:
     """Per §9.1 — SHA-256 of canonical-JSON of {locale_id: layer2c_hash}, sorted by locale_id.
 
@@ -157,6 +189,7 @@ def plan_create_key(
     capped_retries_per_phase: int,
     training_substitution_hash: str | None = None,
     terrain_feasibility_hash: str | None = None,
+    event_windows_hash: str | None = None,
 ) -> str:
     """Per §9.1 — cache key for `llm_layer4_plan_create`.
 
@@ -164,8 +197,9 @@ def plan_create_key(
     on hit per §9.4). `layer2c_bundle_hash` is the bundle hash from
     `compute_layer2c_bundle_hash`.
 
-    `training_substitution_hash` + `terrain_feasibility_hash` collapse None → ''
-    so callers that don't supply those payloads retain stable keys.
+    `training_substitution_hash` + `terrain_feasibility_hash` +
+    `event_windows_hash` collapse None → '' so callers that don't supply those
+    payloads retain stable keys.
     """
     components = [
         str(user_id),
@@ -186,8 +220,13 @@ def plan_create_key(
         str(capped_retries_per_phase),
         training_substitution_hash or "",
         terrain_feasibility_hash or "",
-        LAYER4_PROMPT_REVISION,
     ]
+    # Appended only when an event window overlaps the plan span, so a no-windows
+    # plan keeps a key byte-identical to the pre-Slice-1 form (regression (a)).
+    # LAYER4_PROMPT_REVISION stays the last component either way.
+    if event_windows_hash:
+        components.append(event_windows_hash)
+    components.append(LAYER4_PROMPT_REVISION)
     return _sha256_hex("||".join(components))
 
 
@@ -211,6 +250,7 @@ def plan_refresh_key(
     capped_retries: int,
     training_substitution_hash: str | None = None,
     terrain_feasibility_hash: str | None = None,
+    event_windows_hash: str | None = None,
 ) -> str:
     """Per §9.1 — cache key for `llm_layer4_plan_refresh`.
 
@@ -219,8 +259,9 @@ def plan_refresh_key(
     the seam-reviewer model to the key. None → '' in the key to prevent
     gratuitous cache misses on the model field for Pattern B refreshes.
 
-    `training_substitution_hash` + `terrain_feasibility_hash` collapse None → ''
-    so callers that don't supply those payloads retain stable keys.
+    `training_substitution_hash` + `terrain_feasibility_hash` +
+    `event_windows_hash` collapse None → '' so callers that don't supply those
+    payloads retain stable keys.
     """
     components = [
         str(user_id),
@@ -241,8 +282,12 @@ def plan_refresh_key(
         str(capped_retries),
         training_substitution_hash or "",
         terrain_feasibility_hash or "",
-        LAYER4_PROMPT_REVISION,
     ]
+    # Appended only when an event window overlaps the refresh span, keeping
+    # no-windows refresh keys byte-identical to the pre-Slice-1 form.
+    if event_windows_hash:
+        components.append(event_windows_hash)
+    components.append(LAYER4_PROMPT_REVISION)
     return _sha256_hex("||".join(components))
 
 

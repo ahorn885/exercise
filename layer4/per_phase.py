@@ -65,6 +65,7 @@ from layer4 import periodization
 from layer4.injury_render import format_active_injuries
 from layer4.strength_guidance import STRENGTH_PROGRAMMING_GUIDANCE
 from layer4.session_feasibility import (
+    EventWindowSegment,
     TerrainResolution,
     feasibility_line,
     grid_annotation,
@@ -882,6 +883,89 @@ def _format_session_feasibility(
     return out
 
 
+def _event_window_label(segment: "EventWindowSegment") -> str:
+    """Human-readable label for a date-segment's active subtractive overrides
+    (Event Windows Slice 1). Joined with ' + ' when a segment carries more than
+    one (overlapping windows)."""
+    parts: list[str] = []
+    for ov in segment.overrides:
+        if ov.override_type == "indoor_only":
+            parts.append("indoor-only (no outdoor terrain available)")
+        elif ov.override_type == "locale_unavailable":
+            parts.append(f"\"{ov.unavailable_locale}\" unavailable (closed this window)")
+        else:  # defensive — Slice 2 introduces 'away'
+            parts.append(ov.override_type)
+    return " + ".join(parts)
+
+
+def _format_event_window_overlay(
+    event_window_segments: list["EventWindowSegment"] | None,
+    unit_start: _date_type | None,
+    unit_end: _date_type | None,
+    layer2a_payload: Layer2APayload | None,
+    layer2c_payloads: dict[str, Layer2CPayload],
+) -> list[str]:
+    """Event Windows Slice 1 (#581 WS-H) — render the date-scoped overlay for any
+    event-window segment overlapping THIS synthesis unit's date window.
+
+    Each segment's environment is a subtraction of the home cluster (Slice 1:
+    `indoor_only` / `locale_unavailable`); its `resolutions` already hold only
+    the disciplines whose routing the window CHANGES, resolved by the existing
+    cascade against the reduced environment. The displayed date range is clipped
+    to the unit window so the synthesizer knows which of THIS block's dates are
+    affected. Empty when no segment overlaps (the common case → no overlay).
+
+    Wording sign-off: Andy 2026-06-14 (Trigger #1)."""
+    if not event_window_segments or unit_start is None or unit_end is None:
+        return []
+    overlapping = [
+        s for s in event_window_segments
+        if s.end_date >= unit_start and s.start_date <= unit_end
+    ]
+    if not overlapping:
+        return []
+    names: dict[str, str] = {}
+    if layer2a_payload is not None:
+        names = {d.discipline_id: d.discipline_name for d in layer2a_payload.disciplines}
+    exercise_names: dict[str, str] = {}
+    for l2c in layer2c_payloads.values():
+        for ex in l2c.exercises_resolved:
+            exercise_names.setdefault(ex.exercise_id, ex.exercise_name)
+
+    out: list[str] = [
+        "=== Event-window overlay (deterministic — date-scoped routing) ===",
+        "Part of this block falls inside a declared event window where the "
+        "training environment is reduced. On the dates below, routing differs "
+        "from the default feasibility block above. Compose any session dated "
+        "within a window against THAT window's routing; sessions outside the "
+        "windows use the default. Counts are unchanged — a session that lands on "
+        "a window day is composed at that day's environment, never dropped.",
+    ]
+    for seg in sorted(overlapping, key=lambda s: (s.start_date, s.end_date)):
+        disp_start = max(seg.start_date, unit_start)
+        disp_end = min(seg.end_date, unit_end)
+        out.append(
+            f"- {disp_start.isoformat()}–{disp_end.isoformat()} · "
+            f"{_event_window_label(seg)}:"
+        )
+        for d_id in sorted(seg.resolutions):
+            out.append(
+                "  " + feasibility_line(
+                    seg.resolutions[d_id],
+                    discipline_name=names.get(d_id, d_id),
+                    exercise_names=exercise_names,
+                )
+            )
+    out.append(
+        "Placement preference (soft): where a discipline's weekly count leaves a "
+        "choice of days, prefer scheduling its outdoor-dependent sessions on the "
+        "unconstrained days; let indoor/strength-appropriate work fall on the "
+        "window days."
+    )
+    out.append("")
+    return out
+
+
 def _format_session_grid(
     layer1_payload: dict[str, Any],
     layer2a_payload: Layer2APayload | None,
@@ -1278,6 +1362,7 @@ def render_user_prompt(
     seam_direction: Literal["re_prompt_prior", "re_prompt_next"] | None,
     training_substitution_payload: TrainingSubstitutionPayload | None = None,
     terrain_feasibility: dict[str, TerrainResolution] | None = None,
+    event_window_segments: list[EventWindowSegment] | None = None,
     week_range: tuple[int, int] | None = None,
 ) -> str:
     """Render the §6 user prompt for one synthesis unit. Inline Python
@@ -1358,6 +1443,22 @@ def render_user_prompt(
     parts.extend(
         _format_session_feasibility(
             terrain_feasibility, layer2a_payload, layer2c_payloads or {}
+        )
+    )
+    # Event Windows Slice 1 (#581 WS-H) — date-scoped overlay for any declared
+    # window overlapping THIS synthesis unit. Block mode scopes to the block's
+    # date window; whole-phase mode (seam re-synth) scopes to the phase span.
+    if block_mode:
+        _unit_start, _unit_end = _block_date_window(phase_spec, week_range)  # type: ignore[arg-type]
+    else:
+        _unit_start, _unit_end = phase_spec.start_date, phase_spec.end_date
+    parts.extend(
+        _format_event_window_overlay(
+            event_window_segments,
+            _unit_start,
+            _unit_end,
+            layer2a_payload,
+            layer2c_payloads or {},
         )
     )
 
@@ -1954,6 +2055,10 @@ def synthesize_phase(
     # #540 — per-discipline terrain-feasibility resolutions rendered into the
     # session-grid block. Default None preserves legacy call sites.
     terrain_feasibility: dict[str, TerrainResolution] | None = None,
+    # Event Windows Slice 1 (#581 WS-H) — date-scoped reduced-environment
+    # segments rendered into the per-phase overlay. Default None preserves
+    # legacy call sites + athletes with no windows.
+    event_window_segments: list[EventWindowSegment] | None = None,
     # D-77: when set, scope this call to an inclusive `week_in_phase` range
     # (the per-week synthesis unit). None = whole phase (seam re-synth path).
     week_range: tuple[int, int] | None = None,
@@ -2138,6 +2243,7 @@ def synthesize_phase(
             seam_direction=seam_direction,
             training_substitution_payload=training_substitution_payload,
             terrain_feasibility=terrain_feasibility,
+            event_window_segments=event_window_segments,
             week_range=week_range,
         )
 

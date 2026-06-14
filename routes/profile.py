@@ -53,6 +53,14 @@ from athlete_crafts_repo import (
     load_craft_catalog,
     replace_athlete_crafts,
 )
+from athlete_event_windows_repo import (
+    EventWindowError,
+    OVERRIDE_TYPES,
+    add_event_window,
+    delete_event_window,
+    evict_plan_caches_on_event_windows_change,
+    load_event_windows,
+)
 from athlete_skill_toggles_repo import (
     evict_layer1_on_skill_toggle_change,
     get_athlete_skill_toggles,
@@ -613,6 +621,76 @@ def save_crafts():
     evict_layer1_on_crafts_change(db, uid)
     flash('Gear saved.', 'success')
     return redirect(url_for('profile.edit', tab='athlete'))
+
+
+# ─── Event windows — Slice 1 (#581 WS-H) ─────────────────────────────────────
+# Minimal capture: list + add + delete of date-bounded SUBTRACTIVE home windows
+# (`indoor_only` / `locale_unavailable`). Plan generation date-segments the plan
+# span against these and resolves the existing feasibility cascade per reduced
+# environment. (Nav-linking + the plan-gen review-panel hook are Slice-5 polish.)
+
+@bp.route('/event-windows')
+def event_windows():
+    """List + capture the athlete's event windows."""
+    db = get_db()
+    uid = current_user_id()
+    windows = load_event_windows(db, uid)
+    locales = [
+        r['locale']
+        for r in db.execute(
+            "SELECT locale FROM locale_profiles WHERE user_id = ? ORDER BY locale",
+            (uid,),
+        ).fetchall()
+    ]
+    return render_template(
+        'profile/event_windows.html',
+        windows=windows,
+        locales=locales,
+        override_types=OVERRIDE_TYPES,
+    )
+
+
+@bp.route('/event-windows/add', methods=['POST'])
+def add_event_window_route():
+    """Validate + persist one event window (the repo enforces date order +
+    override/locale rules), then evict the plan-gen caches it feeds."""
+    db = get_db()
+    uid = current_user_id()
+    try:
+        start = date.fromisoformat((request.form.get('start_date') or '').strip())
+        end = date.fromisoformat((request.form.get('end_date') or '').strip())
+    except ValueError:
+        flash('Enter valid start and end dates.', 'error')
+        return redirect(url_for('profile.event_windows'))
+    try:
+        add_event_window(
+            db,
+            uid,
+            start_date=start,
+            end_date=end,
+            override_type=(request.form.get('override_type') or '').strip(),
+            unavailable_locale=(request.form.get('unavailable_locale') or None),
+            notes=(request.form.get('notes') or '').strip(),
+        )
+    except EventWindowError as exc:
+        flash(str(exc), 'error')
+        return redirect(url_for('profile.event_windows'))
+    db.commit()
+    evict_plan_caches_on_event_windows_change(db, uid)
+    flash('Event window saved.', 'success')
+    return redirect(url_for('profile.event_windows'))
+
+
+@bp.route('/event-windows/<int:window_id>/delete', methods=['POST'])
+def delete_event_window_route(window_id):
+    """Delete one of the athlete's windows (user-scoped) + evict plan caches."""
+    db = get_db()
+    uid = current_user_id()
+    delete_event_window(db, uid, window_id)
+    db.commit()
+    evict_plan_caches_on_event_windows_change(db, uid)
+    flash('Event window removed.', 'success')
+    return redirect(url_for('profile.event_windows'))
 
 
 @bp.route('/connections/<provider>/disconnect', methods=['POST'])

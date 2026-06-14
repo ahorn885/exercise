@@ -44,6 +44,7 @@ filed as a follow-up to #540.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import date, timedelta
 from typing import Literal
 
 # Below this proxy fidelity a `terrain_gap_rules` proxy is not worth scheduling
@@ -579,6 +580,87 @@ def grid_annotation(resolution: TerrainResolution) -> str:
     return ""
 
 
+# ─── Event Windows Slice 1 (#581 WS-H) — date-segmented subtractive overlay ───
+# An event window is a date-bounded period where the athlete's training
+# environment differs from the default home cluster. Slice 1 covers the two
+# SUBTRACTIVE home overrides — `indoor_only` (home cluster minus all outdoor
+# terrain) and `locale_unavailable(L)` (home cluster minus one locale). The
+# resolution model is unchanged (Andy 2026-06-14): the EXACT→…→reallocate
+# cascade above, just run against a reduced `(terrain, equipment)` input for a
+# date range. The only new element here is the time dimension — cutting the plan
+# span into atomic date sub-ranges at window boundaries so the orchestrator can
+# run the existing cascade once per distinct reduced environment. (`away` — a
+# DIFFERENT additive environment — is Slice 2, a third override_type.)
+
+
+@dataclass(frozen=True)
+class EventWindowOverride:
+    """One subtractive override active over a date-segment. `unavailable_locale`
+    is the `locale_profiles.locale` slug for `locale_unavailable`, else None."""
+
+    override_type: Literal["indoor_only", "locale_unavailable"]
+    unavailable_locale: str | None = None
+
+
+@dataclass(frozen=True)
+class EventWindowSegment:
+    """An atomic date sub-range of the plan span whose environment is a
+    subtraction of the home cluster, plus the per-discipline resolutions the
+    window CHANGES. `resolutions` holds only the disciplines whose reduced-env
+    routing differs from the home resolution — the set the synthesis overlay
+    renders (an empty change-set means the window is a no-op for this athlete's
+    disciplines and the segment is not emitted)."""
+
+    start_date: date
+    end_date: date
+    overrides: tuple[EventWindowOverride, ...]
+    resolutions: dict[str, TerrainResolution]
+
+
+def segment_window_boundaries(
+    plan_start: date,
+    plan_end: date,
+    windows: list[tuple[date, date, EventWindowOverride]],
+) -> list[tuple[date, date, tuple[EventWindowOverride, ...]]]:
+    """Cut `[plan_start, plan_end]` (inclusive) into atomic date sub-ranges at
+    every window boundary. Each returned sub-range carries the tuple of overrides
+    active across ALL its days (overlapping windows → union of subtractions per
+    §8); home-only sub-ranges (no active override) are dropped. Pure.
+
+    Because every window start/end is a cut point, a window either fully covers
+    or doesn't touch any given sub-range — so the active set is unambiguous.
+    Overrides are emitted in a deterministic order (type, then locale)."""
+    if plan_end < plan_start or not windows:
+        return []
+    clamped: list[tuple[date, date, EventWindowOverride]] = []
+    for start, end, override in windows:
+        cs, ce = max(start, plan_start), min(end, plan_end)
+        if cs <= ce:
+            clamped.append((cs, ce, override))
+    if not clamped:
+        return []
+    one = timedelta(days=1)
+    cuts = {plan_start, plan_end + one}
+    for start, end, _ in clamped:
+        cuts.add(start)
+        cuts.add(end + one)
+    points = sorted(c for c in cuts if plan_start <= c <= plan_end + one)
+    segments: list[tuple[date, date, tuple[EventWindowOverride, ...]]] = []
+    for seg_start, nxt in zip(points, points[1:]):
+        seg_end = nxt - one
+        if seg_end < seg_start:
+            continue
+        active = tuple(
+            sorted(
+                (ov for (s, e, ov) in clamped if s <= seg_start and e >= seg_end),
+                key=lambda o: (o.override_type, o.unavailable_locale or ""),
+            )
+        )
+        if active:
+            segments.append((seg_start, seg_end, active))
+    return segments
+
+
 __all__ = [
     "TerrainResolution",
     "resolve_terrain_feasibility",
@@ -587,4 +669,7 @@ __all__ = [
     "indoor_machines",
     "feasibility_line",
     "grid_annotation",
+    "EventWindowOverride",
+    "EventWindowSegment",
+    "segment_window_boundaries",
 ]
