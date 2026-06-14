@@ -126,14 +126,15 @@ class TestModelGuard:
 
 
 # ─── recurrence guard: capture enums cover every craft-alias key ─────────────
-# Seeded from the live v1.6.7 layer0.craft_discipline_aliases rows. The
-# craft-substitution lookup is exact-match on these snake_case keys, so a
-# capture slug that drifts from an alias key (or vice versa) silently breaks
-# narrowing — this fails loudly instead (the craft-domain analogue of V4c's
-# equipment-token coverage guard).
+# Seeded from the live craft_discipline_aliases active set. The craft-substitution
+# lookup is exact-match on these snake_case keys, so a capture slug that drifts
+# from an alias key (or vice versa) silently breaks narrowing — this fails loudly
+# instead (the craft-domain analogue of V4c's equipment-token coverage guard).
+# cycling_trainer retired as a craft (WS-I, #586) — it is equipment, not a mobile
+# vessel; its alias rows superseded in etl/migrations/layer0/0004_*.
 _ALIAS_CRAFT_NAMES = {
     "kayak", "canoe", "packraft",
-    "road_bike", "gravel_bike", "mountain_bike", "cycling_trainer",
+    "road_bike", "gravel_bike", "mountain_bike",
 }
 
 

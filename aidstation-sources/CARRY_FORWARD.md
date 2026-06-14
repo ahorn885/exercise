@@ -13,6 +13,19 @@ Rolling-state for items spanning multiple sessions. **Edit in place** — don't 
 
 ---
 
+## WS-I Slice A — craft/equipment taxonomy + craft_terrain_compatibility seed (2026-06-14) — PR #587 (open, CI-green)
+
+**Data + taxonomy half of WS-I ([#586](https://github.com/ahorn885/exercise/issues/586)); Andy-ratified "Slice A first" split.** Handoff: `V5_Implementation_WSI_SliceA_CraftEquipmentTaxonomy_2026_06_14_Closing_Handoff_v1.md`. Branch `claude/dreamy-wozniak-t3tifr`.
+
+- ✅ **Slice A shipped + CI-green.** Dropped `cycling_trainer` from the craft enum (`athlete.py`); new `etl/migrations/layer0/0004_*` creates + seeds `layer0.craft_terrain_compatibility` (21-row grid, design §4) and retires the `cycling_trainer` aliases (cache-neutral). Validated against a throwaway Postgres running the exact CI gate.
+- ✅ **`0004` APPLIED on Neon** (Andy, 2026-06-14). Was briefly blocked by the Neon SQL editor being in the **wrong project** (`3F000 schema "layer0" does not exist`) — resolved by switching projects. The migration assumes `layer0` pre-exists (never `CREATE SCHEMA`), matching 0001–0003.
+- ✅ **Per-athlete data fix — DONE** (Andy, 2026-06-14). Ran the `discipline_baseline_cycling.bike_types_available` strip + ticked **Cycling trainer** in his home locale's equipment. So set B is now trainer-free and the trainer is in set C — Slice B's INDOOR tier will read it there.
+- ⬜ **WS-I Slice B (the cascade) — NEXT, deferred to a fresh branch after #587 merges.** Add `craft_terrain_compatibility`→`0A` to `_LAYER0_TABLE_FAMILY`; rewrite `session_feasibility.py`+`orchestrator.py` to the unified nested cascade (design §3) reading the new table, with Rule #15 logging + the craftless-with-trainer + proxy-craft-terrain test matrix. This is where the live craft-STRENGTH-preempts-INDOOR bug (`orchestrator.py:437`) actually gets fixed. **Deploy-ordering:** Slice B reads `craft_terrain_compatibility`, so it must not reach prod before `0004` is on Neon (now done).
+- 📌 **Design-doc note:** `CraftEquipment_Taxonomy_And_FeasibilityCascade_Design_v1.md` §4 still describes the retired xlsx/extractor seed mechanism — the decisions (grid, ordering) are intact; only the *mechanism* is stale (epic #488). Left as-is (point-in-time design); built on the migration model.
+- 🩺 **Local Postgres gate recipe** (no Neon egress): container has PG binaries (`/usr/lib/postgresql/*/bin`), won't run as root → `useradd -m pgrunner` + run `initdb`/`pg_ctl`/the CI gate steps as that user. Reproduces `layer0-gate` exactly. (Details in handoff §6.3.)
+
+---
+
 ## pv=71 gear-toggle validation + abseiling gate + WS-I design (2026-06-13) — WS-G CONFIRMED LIVE; PR #585
 
 **Watched live plan-create pv=71 (Andy's gear-toggle profile test) via the diag token → `ready` (41 sessions, 5 phases; Peak:w1 clean).** Handoff: `V5_Implementation_pv71_GearToggleValidation_AbseilGate_WSI_CraftCascadeDesign_2026_06_13_Closing_Handoff_v1.md`. PR [#585](https://github.com/ahorn885/exercise/pull/585) (branch `claude/gear-toggles-profile-test-lxvzy1`, squash-merged to `main`).
