@@ -13,6 +13,18 @@ Rolling-state for items spanning multiple sessions. **Edit in place** — don't 
 
 ---
 
+## WS-B/WS-C — retire legacy `LOCALES` enum + onboarding forced-home gate (2026-06-14) — PR #589 (open, CI-green)
+
+**Next slice off the locale-retirement north star (`Feasibility_Saturation_And_Locale_Retirement_Plan_v1` §4/§5).** Handoff: `V5_Implementation_WSBC_LocaleRetirement_OnboardingHome_2026_06_14_Closing_Handoff_v1.md`. Branch `claude/ws-bc-locale-retirement-onboarding-home`.
+
+- ✅ **WS-B shipped:** `LOCALES` enum fully retired — locales purely athlete-created; home = the `preferred` flag. All force-render / auto-create / undeletable special cases removed from `routes/locales.py` + the `LEGACY_LOCALES` import from `routes/onboarding.py`.
+- ✅ **WS-C shipped:** `onboarding.locales_continue` gates on ≥1 built locale + a `preferred` home before advancing to skills (else flash + bounce back). Closes the "new user → no home → empty cluster → strength saturation" path (plan §5). Craft capture (the parenthetical in plan §5's title) already shipped earlier (WS-G / Track-2 slice 2c.2b), so WS-C here is the home-gate only.
+- ✅ **Full suite green (2380 passed, 30 skipped). NO DDL** — schema already supports athlete-created locales + `preferred`. Nothing owed Andy's hands; merging #589 is the only remaining step.
+- ⬜ **Next-session Andy's-hands (optional, not owed for merge):** live onboarding-gate walkthrough on the preview/prod URL — new user blocked at the locations step until a home is built.
+- 📌 **`send_later` unavailable this session** — couldn't arm an automated PR re-check; relying on webhook events + manual status checks for #589.
+
+---
+
 ## WS-I Slice B — unified craft/terrain feasibility cascade (2026-06-14) — the bug fix; PR #588 (merged)
 
 **Cascade-rewrite half of WS-I ([#586](https://github.com/ahorn885/exercise/issues/586)) — WS-I COMPLETE + MERGED, #586 closed.** Handoff: `V5_Implementation_WSI_SliceB_UnifiedCraftTerrainCascade_2026_06_14_Closing_Handoff_v1.md`. Branch `claude/zealous-gauss-bl22ek`.
