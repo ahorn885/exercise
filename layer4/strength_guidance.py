@@ -37,6 +37,6 @@ FAILOVER STRENGTH (a cardio session the grid flags [TERRAIN-INFEASIBLE] or [NO C
 This session stands in for an infeasible endurance session, so it must REPLACE aerobic work, not add a heavy CNS day:
 - Compose as muscular endurance / aerobic-strength: circuits, higher reps (12–20+), short rests, loaded carries, and the durability movements above. Keep the missing session's target hours — a 2-hour infeasible session becomes a long circuit, never two hours of maximal lifting.
 - Target the muscles the infeasible discipline demands, drawn from the rendered substitution pool.
-- These do NOT count toward the programmed 2–3/week dose — they are forced by feasibility and may push total strength sessions higher in a constrained week. That is acceptable; compose them light."""
+- These do NOT count toward the programmed 2–3/week dose, but they ARE capped: the grid hands you at most a bounded number of strength sessions per week (the programmed dose plus a small failover headroom) and deterministically reallocates any excess infeasible volume to feasible disciplines before you compose. Compose only the strength sessions the grid gives you, and compose them light."""
 
 __all__ = ["STRENGTH_PROGRAMMING_GUIDANCE"]

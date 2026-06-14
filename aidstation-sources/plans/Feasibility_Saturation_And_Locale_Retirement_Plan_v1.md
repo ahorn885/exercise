@@ -29,7 +29,7 @@ pv=69 is `created_via=plan_create`. The Peak week resolved **5 strength sessions
 | D | Feasibility-correctness investigation | **RESOLVED** (plan-70, 2026-06-13) — see §6 | — |
 | F | Craft from the equipment inventory (#578) | **REVERTED** (`4bdcb3c`) — wrong scoping; craft is athlete-owned, not location | #578 (reverted) |
 | E1 | Deterministic strength+strength repair (crash-guard) | **MERGED** | #579 |
-| E2 | Saturation policy — dose+2 cap + reallocate-with-variety | queued (lower priority now E1 + craft model cover it) | follow-up |
+| E2 | Saturation policy — dose+2 cap + reallocate-with-variety | **SHIPPED** (2026-06-14) — deterministic pre-synthesis grid cap; failover strength capped at dose+2, excess reallocated to feasible disciplines proportional to load_weight | #590 |
 | G | Craft = athlete-owned canonical store (set B), available home-cluster-wide | **VALIDATED LIVE** (pv=71, 2026-06-13 — set B populated → D-008/D-009 `tier=exact` → plan `ready`; #585) | #585 |
 | H | Away craft availability — (b) craft↔location + (c) craft attached to a travel event | **DECIDED** — design + build (new schema/UI) | follow-up PR |
 | I | Craft/equipment taxonomy + unified feasibility cascade | **DESIGNED** (`designs/CraftEquipment_Taxonomy_And_FeasibilityCascade_Design_v1.md`) — ordering + explicit craft↔terrain ratified; OPEN: the craft→terrain seed grid (Trigger #2) | follow-up PR |
@@ -138,7 +138,9 @@ This needs new schema (craft↔location, craft↔event) + capture UI + a per-loc
 
 ## 7. Workstream E — Saturation backstop (deterministic; defense-in-depth after F)
 
-Do **not** implement until WS-D data is in. Recorded Andy decisions (held as design input, not yet ratified against data):
+**E2 SHIPPED 2026-06-14 (#590).** Built as a deterministic **pre-synthesis grid pass** (`session_grid.apply_strength_saturation_cap`, run after the §5.1.1 ceiling, fed the per-discipline feasibility tiers + skill-gated set). Weekly **failover** strength is capped at `dose + 2` total (a flat +2 failover headroom every phase — the dose cancels); the over-cap excess is **trimmed lowest-priority-first and reallocated** to feasible (exact/proxy/indoor) disciplines **proportional to load_weight** (d'Hondt highest-averages), with a per-discipline absorption ceiling (a discipline can at most double in one pass) so it spreads instead of dumping. **Volume-conserving** (sessions move strength→feasible 1:1, so the upstream ceiling holds); excess no absorber can take **stays as strength** (training time preserved — never dropped). Rule #15 line `strength_saturation_cap:` logs the full decision. Trigger-#1 prompt edit: the `strength_guidance.py` failover paragraph now states the cap (was "may push total higher… acceptable"). **Scope note:** caps terrain/craft failover only; skill-gated strength (#336, a deliberate safety substitution) is excluded from both trim and absorb. The collision crash-guard (E1/#579) still backstops a same-day clash. Andy-ratified (2026-06-14, AskUserQuestion): pre-synthesis grid pass + proportional-to-load_weight + build-now.
+
+Recorded Andy decisions (the design input that drove the build):
 - **Cap = dose + 2** total strength/week (programmed + failover).
 - **Over-cap failovers → `reallocate`** — note: in the cascade, `reallocate` is the *last* tier (only reached with no strength pool); STRENGTH is preferred over it. So "trim over-cap strength-subs to reallocate" is a **new weekly-saturation rule that overrides** the per-discipline strength>reallocate preference — not the existing tier firing.
 - **Reallocation must respect VARIETY, not just feasibility.** Andy's failure mode: *"3 running + 3 attempted cycling, cycling infeasible → reallocated to running = 6 running"* is too little variety. The rule must distribute reallocated volume across feasible disciplines and cap how much any one discipline can absorb — not dump it all on the nearest one.

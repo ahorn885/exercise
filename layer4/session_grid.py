@@ -36,7 +36,10 @@ from typing import Literal
 
 from layer4.context import Layer2APayload
 from layer4.payload import PhaseStructure
-from layer4.validator import phase_week_volume_bands_hours
+from layer4.validator import (
+    _STRENGTH_SESSIONS_PER_WEEK as _STRENGTH_DOSE_PER_WEEK,
+    phase_week_volume_bands_hours,
+)
 
 # ─── Constants ──────────────────────────────────────────────────────────────
 
@@ -149,6 +152,9 @@ class SessionGrid:
         default_factory=lambda: IntensityMix(easy_count=0, hard_count=0)
     )
     race_sim_long_day: RaceSimLongDay | None = None
+    # Rule #15 — the strength-saturation cap's decision line for this (phase,
+    # week), or None when the cap didn't fire. The caller prints it.
+    saturation_note: str | None = None
 
 
 # ─── Algorithm ──────────────────────────────────────────────────────────────
@@ -399,6 +405,186 @@ def apply_session_ceiling(
     return out
 
 
+# ─── Strength-saturation cap (§7 WS-E2) ─────────────────────────────────────
+
+# Headroom over the per-phase programmed strength dose for FAILOVER strength
+# (terrain/craft-infeasible cardio composed as a strength substitution). Total
+# strength/week is capped at `dose + this`; excess failover is reallocated to
+# feasible disciplines rather than crowding the week with strength (Andy §7:
+# "Cap = dose + 2 total strength/week"). The deterministic crash-guard
+# (`per_phase._repair_strength_collisions`, #579) still backstops a same-day
+# strength collision; this cap is the upstream periodization-quality guard.
+_FAILOVER_STRENGTH_HEADROOM = 2
+
+# A single feasible discipline may absorb at most this multiple of its own
+# current weekly count from reallocated over-cap strength — Andy §7: "cap how
+# much any one discipline can absorb … not dump it all on the nearest one." A
+# multiplier of 1.0 means a discipline can at most DOUBLE in one reallocation
+# pass; anything it can't absorb stays as (capped) strength rather than
+# concentrating volume on one sport (the "3 running + 3 cycling → 6 running"
+# failure mode). The split across absorbers is proportional to load_weight.
+_REALLOCATION_ABSORB_MULTIPLE = 1.0
+
+# Default load weight for an absorber whose 2A `load_weight.value` is None, so a
+# weightless discipline still participates proportionally rather than being
+# dropped from the reallocation.
+_DEFAULT_ABSORB_WEIGHT = 1.0
+
+# Feasible tiers an absorber can be in (real trainable sessions). STRENGTH /
+# REALLOCATE change or drop the session kind, so they are never absorbers.
+_FEASIBLE_TIERS = frozenset({"exact", "proxy", "indoor"})
+
+
+def apply_strength_saturation_cap(
+    allocations: list[DisciplineAllocation],
+    phase_name: str,
+    feasibility_tiers: dict[str, str],
+    discipline_weights: dict[str, float],
+    skill_gated_ids: frozenset[str] | set[str] = frozenset(),
+) -> tuple[list[DisciplineAllocation], str]:
+    """Cap weekly FAILOVER strength at `dose + _FAILOVER_STRENGTH_HEADROOM` and
+    reallocate the excess to feasible disciplines, proportional to load_weight
+    (§7 WS-E2). `allocations` MUST be priority-ordered (highest `load_weight`
+    first — `build_session_grid` sorts them so).
+
+    Volume-conserving: each trimmed over-cap strength session is MOVED to a
+    feasible discipline 1:1 (never created or destroyed), so the §5.1.1 session
+    ceiling already applied upstream is preserved. Excess that no feasible
+    absorber can take (capacity exhausted, or no feasible candidate) STAYS as
+    strength — never dropped (training time is preserved; the collision guard
+    backstops any same-day clash).
+
+    Scope: caps terrain/craft failover strength (the pv=69 saturation cause).
+    Skill-gated disciplines (#336, a deliberate safety substitution) are neither
+    trimmed nor used as absorbers — `skill_gated_ids` excludes them.
+
+    Returns `(adjusted_allocations, log_detail)`; the detail is the Rule #15
+    decision line the caller prints. Identity-preserving (returns the input list
+    + an empty detail) when nothing needs capping.
+    """
+    dose = _STRENGTH_DOSE_PER_WEEK.get(phase_name)
+    if dose is None:
+        return allocations, ""
+
+    # The programmed strength dose (`dose`) is added by the synthesis prompt, not
+    # the grid, so it is NOT in these allocations. Total strength = dose + grid
+    # `strength` allocation (rare — strength is usually prompt-added, not a 2A
+    # discipline) + failover. Capping total at `dose + headroom` therefore allows
+    # `headroom - grid_strength` failover sessions — the dose cancels, so the
+    # failover headroom is a flat +`_FAILOVER_STRENGTH_HEADROOM` in every phase.
+    grid_strength = sum(
+        a.sessions_this_week for a in allocations if a.discipline_id == "strength"
+    )
+    allowed_failover = max(0, _FAILOVER_STRENGTH_HEADROOM - grid_strength)
+
+    def _is_failover(a: DisciplineAllocation) -> bool:
+        return (
+            a.discipline_id != "strength"
+            and a.discipline_id not in skill_gated_ids
+            and a.sessions_this_week > 0
+            and feasibility_tiers.get(a.discipline_id) == "strength"
+        )
+
+    def _is_absorber(a: DisciplineAllocation) -> bool:
+        # Feasible if explicitly in a real-session tier, OR carrying no terrain
+        # constraint at all (absent from the map) and not skill-gated.
+        tier = feasibility_tiers.get(a.discipline_id)
+        return (
+            a.discipline_id != "strength"
+            and a.discipline_id not in skill_gated_ids
+            and a.sessions_this_week > 0
+            and (tier in _FEASIBLE_TIERS or tier is None)
+        )
+
+    failover_total = sum(a.sessions_this_week for a in allocations if _is_failover(a))
+    over = failover_total - allowed_failover
+    if over <= 0:
+        return allocations, ""
+
+    # Absorber capacity: each feasible discipline takes at most `multiple × its
+    # current count` (the variety cap). total_capacity bounds how much we can move.
+    abs_idx = [i for i, a in enumerate(allocations) if _is_absorber(a)]
+    capacity = {
+        i: int(math.floor(allocations[i].sessions_this_week * _REALLOCATION_ABSORB_MULTIPLE))
+        for i in abs_idx
+    }
+    total_capacity = sum(capacity.values())
+    to_move = min(over, total_capacity)
+    if to_move <= 0:
+        # Over the cap but nowhere feasible to put the volume → leave as strength.
+        return allocations, (
+            f"saturation: {phase_name} dose={dose} allowed_failover={allowed_failover} "
+            f"failover={failover_total} over={over} moved=0 (no absorber capacity); "
+            f"residual stays strength"
+        )
+
+    counts = [a.sessions_this_week for a in allocations]
+
+    # ── 1. Trim `to_move` failover sessions, LOWEST priority first (tail). ────
+    trims: dict[int, int] = {}
+    moved = 0
+    for i in range(len(allocations) - 1, -1, -1):
+        if moved >= to_move:
+            break
+        if _is_failover(allocations[i]):
+            take = min(counts[i], to_move - moved)
+            if take:
+                counts[i] -= take
+                trims[i] = take
+                moved += take
+
+    # ── 2. Distribute the moved sessions across absorbers, proportional to ────
+    #       load_weight (d'Hondt highest-averages — deterministic, respects the
+    #       per-discipline capacity, spreads by priority).
+    weights = {
+        i: (discipline_weights.get(allocations[i].discipline_id) or _DEFAULT_ABSORB_WEIGHT)
+        for i in abs_idx
+    }
+    adds: dict[int, int] = {i: 0 for i in abs_idx}
+    for _ in range(moved):
+        eligible = [i for i in abs_idx if adds[i] < capacity[i]]
+        if not eligible:
+            break
+        # Highest weight / (already_assigned + 1); tie → higher weight, then
+        # higher priority (lower index).
+        best = max(eligible, key=lambda i: (weights[i] / (adds[i] + 1), weights[i], -i))
+        adds[best] += 1
+        counts[best] += 1
+
+    # ── 3. Rebuild allocations with the adjusted counts + observability notes. ─
+    out: list[DisciplineAllocation] = []
+    for i, a in enumerate(allocations):
+        if i in trims:
+            note = f"strength capped at dose+{_FAILOVER_STRENGTH_HEADROOM} — {trims[i]} session(s) reallocated"
+            out.append(replace(
+                a,
+                sessions_this_week=counts[i],
+                cadence_note=f"{a.cadence_note}; {note}" if a.cadence_note else note,
+            ))
+        elif adds.get(i):
+            note = f"+{adds[i]} session(s) reallocated from over-cap strength"
+            out.append(replace(
+                a,
+                sessions_this_week=counts[i],
+                cadence_note=f"{a.cadence_note}; {note}" if a.cadence_note else note,
+            ))
+        else:
+            out.append(a)
+
+    trim_str = ", ".join(
+        f"{allocations[i].discipline_id}-{n}" for i, n in sorted(trims.items())
+    )
+    add_str = ", ".join(
+        f"{allocations[i].discipline_id}+{adds[i]}" for i in abs_idx if adds[i]
+    )
+    detail = (
+        f"saturation: {phase_name} dose={dose} allowed_failover={allowed_failover} "
+        f"failover={failover_total} over={over} moved={moved} "
+        f"residual={over - moved} trims=[{trim_str}] absorbs=[{add_str}]"
+    )
+    return out, detail
+
+
 def build_session_grid(
     layer2a: Layer2APayload | None,
     phase_structure: PhaseStructure | None,
@@ -411,15 +597,24 @@ def build_session_grid(
     available_days: int | None = None,
     two_a_day_preference: str | None = None,
     peak_sessions_max: int | None = None,
+    strength_feasibility_tiers: dict[str, str] | None = None,
+    skill_gated_ids: frozenset[str] | set[str] = frozenset(),
 ) -> SessionGrid:
     """The §5.1 deterministic grid for one `(phase, week_in_phase)`. Returns an
     empty-but-typed `SessionGrid` when inputs are insufficient (graceful
-    degradation — caller renders nothing rather than fabricating a target)."""
+    degradation — caller renders nothing rather than fabricating a target).
+
+    When `strength_feasibility_tiers` (discipline_id → feasibility tier) is
+    supplied, the §7 WS-E2 saturation cap runs after the §5.1.1 ceiling: weekly
+    failover strength is capped at `dose + 2` and the excess reallocated to
+    feasible disciplines proportional to load_weight. Bare callers omit it → no
+    cap (mirrors the `available_days`-gated ceiling)."""
     bands = phase_week_volume_bands_hours(
         layer2a, phase_name, week_in_phase, phase_structure, capacity_hours
     )
 
     allocations: list[DisciplineAllocation] = []
+    discipline_weights: dict[str, float] = {}
     if layer2a is not None and bands:
         # Sort by load_weight desc (highest-priority discipline first) so the
         # rendered grid mirrors the existing prompt's discipline order.
@@ -428,6 +623,7 @@ def build_session_grid(
             if d.inclusion == "included" and d.discipline_id in bands
         ]
         included.sort(key=lambda d: d.load_weight.value, reverse=True)
+        discipline_weights = {d.discipline_id: d.load_weight.value for d in included}
         for d in included:
             lo, hi = bands[d.discipline_id]
             target = (lo + hi) / 2.0
@@ -452,6 +648,20 @@ def build_session_grid(
             two_a_day_preference,
             peak_sessions_max,
         )
+
+    # §7 WS-E2 saturation cap — runs on the already-ceilinged allocations so it
+    # rebalances strength within a schedulable week. Volume-conserving (moves
+    # over-cap strength → feasible disciplines 1:1), so the ceiling holds.
+    saturation_note: str | None = None
+    if allocations and strength_feasibility_tiers is not None:
+        allocations, _sat_detail = apply_strength_saturation_cap(
+            allocations,
+            phase_name,
+            strength_feasibility_tiers,
+            discipline_weights,
+            skill_gated_ids,
+        )
+        saturation_note = _sat_detail or None
 
     # Count cardio sessions for intensity mix. Strength is excluded —
     # the polarized split is a cardio-aerobic-system concept.
@@ -482,6 +692,7 @@ def build_session_grid(
         discipline_allocations=allocations,
         intensity_mix=intensity,
         race_sim_long_day=race_sim,
+        saturation_note=saturation_note,
     )
 
 
@@ -491,6 +702,7 @@ __all__ = [
     "RaceSimLongDay",
     "SessionGrid",
     "apply_session_ceiling",
+    "apply_strength_saturation_cap",
     "build_session_grid",
     "phase_session_ceiling",
     "resolve_available_days",
