@@ -42,18 +42,17 @@ Andy: **"option 1."**
 
 ## 6. CI / PR
 
-- **PR [#609](https://github.com/ahorn885/exercise/pull/609) OPEN** (ready for review, **Part of #608** item 1 of 3). **GitHub Actions CI run #279 = success**; **Vercel preview deploy = success**. No review threads at handoff time.
-- **Subscribed to PR #609 activity** (CI-failure / review-comment autofix). **`send_later` is NOT available this session** → no timed self check-in scheduled. Webhooks wake on CI-failure + review-comment only; **CI-success, new pushes, and merge are NOT delivered** — so the merge transition won't auto-wake; confirm + write the §8 post-merge handoff when next active.
+- **PR [#609](https://github.com/ahorn885/exercise/pull/609) squash-merged to `main`** (**Part of #608** item 1 of 3; #608 stays open for items 2–3). **GitHub Actions CI green** (run #279 on the feature commit, #280 on the bookkeeping commit); **Vercel deploy = success**. No review threads.
+- Andy directed the merge in-session ("do the bookkeeping. update github. merge.").
 
 ## 7. Owed Andy's hands
 
-- **Slice 5b (PR #609) owes nothing** — no DDL; reuses live routes/repo. Just **review + merge** PR #609.
+- **Slice 5b (PR #609) owes nothing** — no DDL; reuses live routes/repo. PR #609 merged this session.
 - (carried, #604) the live **`pg_dump`** → `etl/output/layer0_etl_v1.7.0.sql` (parts 1–2) + the Rule #12 sign-off / K3 decision for part 3 (see the Slice-5a handoff §2 + CARRY_FORWARD).
 - (carried, unrelated) the post-#572 live **T3 *refresh*** re-verify (diag token + Andy pasting logs, Rule #14).
 
 ## 8. Next session
 
-- **On PR #609 merge:** update this handoff's merge row + `CURRENT_STATE.md` (the entry currently reads "PR OPEN — awaiting merge").
 - **#608 items 2–3** (the Slice-5b remainder): (2) the **2b round-trip start-date form-state preservation** — when the athlete bounces to `/locales/new` mid-window-capture and returns, preserve the partially-filled window form (strict-CSP-blocked without inline JS — needs a server-side stash of the in-progress form, or a CSP carve-out; flag the tradeoff); (3) the **onboarding event-window panel (F5)**.
 - **#604 — vocab single-source-of-truth** (parked; still owed the live `pg_dump`; part 3 scaffolding retirement needs a Rule #12 sign-off + the K3 decision).
 - (split out) #592 race-location terrain/weather; #593 reduced-volume travel days.
@@ -74,5 +73,5 @@ Andy: **"option 1."**
 | Editor round-trip UI | `templates/profile/event_windows.html` | `Back to plan generation`; `name="return_to"` on add + delete forms; nested `return_to` on the `new_locale` link |
 | Tests | `tests/test_redesign_locales_form_render.py` | `test_plan_create_form_lists_event_windows_for_review`; `test_event_windows_renders_plan_gen_round_trip_when_return_to_set`; `test_event_windows_return_to_rejects_non_local_paths` |
 | Suite | — | 2472 passed / 30 skipped |
-| CI / PR | — | PR #609 OPEN (Part of #608 item 1/3); GH Actions CI run #279 green; Vercel preview green; no review threads — **awaiting merge** |
+| CI / PR | — | PR #609 squash-merged to `main` (Part of #608 item 1/3; #608 open for items 2–3); GH Actions CI green (runs #279/#280); Vercel deploy green; no review threads |
 | Owed | — | Slice 5b owes nothing (no DDL); #604 `pg_dump` + the T3-refresh re-verify carried |
