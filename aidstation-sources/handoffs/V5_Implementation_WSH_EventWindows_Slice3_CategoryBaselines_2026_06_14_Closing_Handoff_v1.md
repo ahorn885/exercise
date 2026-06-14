@@ -3,7 +3,7 @@
 **Session:** Built **Slice 3** of the Event-Windows arc — category equipment baselines (design §F8). A not-yet-logged locale (an away destination created inline per Slice 2b, or a cold home gym) now **assumes** an authored, per-category equipment + terrain baseline until the athlete logs actuals on arrival → which then refreshes the window (the arrival-regen loop). This is **what makes "away" useful cold** — before, a never-logged destination resolved empty and degraded every discipline to near-strength.
 **Date:** 2026-06-14
 **Predecessor handoff:** `V5_Implementation_WSH_EventWindows_Slice2b_InlineCreate_2026_06_14_Closing_Handoff_v1.md` (Slice 2b inline-create, PR #601 merged + live).
-**Branch:** `claude/v5-wsh-eventwindows-inline-create-rt69cq` (PR [#603](https://github.com/ahorn885/exercise/pull/603) — **OPEN, not merged**). *(Harness-pinned branch name reads "inline-create" / Slice 2b; actual scope is Slice 3. Kept per the session's explicit "never push to a different branch" instruction rather than renamed.)*
+**Branch:** `claude/v5-wsh-eventwindows-inline-create-rt69cq` (PR [#603](https://github.com/ahorn885/exercise/pull/603) — **squash-merged to `main` 2026-06-14, CI green**). *(Harness-pinned branch name reads "inline-create" / Slice 2b; actual scope is Slice 3. Kept per the session's explicit "never push to a different branch" instruction rather than renamed.)*
 **Spec/arc:** `designs/Event_Windows_Design_v1.md` §F8 + §6 (Slice 3). **North-star:** `plans/Feasibility_Saturation_And_Locale_Retirement_Plan_v1.md` §2 WS-H. **Epic:** [#581](https://github.com/ahorn885/exercise/issues/581).
 
 ---
@@ -91,6 +91,7 @@ All corrected tokens are in both the live vocabulary **and** the CI genesis, so 
 
 ## 8. Next session
 
+- **[#604](https://github.com/ahorn885/exercise/issues/604) — vocab single-source-of-truth (design-first; Andy chose the full-genesis-refresh path).** Refresh the layer0 genesis snapshot from live (`pg_dump --data-only --schema=layer0 --inserts --no-owner "<neon_url>" > etl/output/layer0_etl_v1.7.0.sql` — **owed Andy's hands**, Neon egress blocked) → reconcile vs `schema.sql`, `validate_layer0`, archive the retired `etl/sources/populate_equipment_items_*.sql` (+ v19 `Equipment_Column_Canonical_Addendum.md`). Closes the genesis-lag (live has `Glute ham developer (GHD)`, v1.6.7 doesn't) and removes the stale scaffolding that caused this session's token mix-up. **Diagnosis (verified): NOT a live-data drift** — the WS-V reconciliation held; the stale terms came from sourcing the retired xlsx scaffolding, and the Layer-0 gate caught it.
 - **Slice 4 — away craft** (the literal WS-H [#581](https://github.com/ahorn885/exercise/issues/581) (b)+(c)): craft↔locale ∪ craft↔window → populates the away env's `owned_crafts`, today hard-coded `[]` (F4) at `orchestrator.py` away branch. Needs DDL (`athlete_craft_locale` + a window craft carrier) — design-first, Trigger #3.
 - **Slice 5 — capture UX polish** (nav-link to `/profile/event-windows`; plan-gen review panel; the 2b round-trip form-state preservation).
 - (split out) #592 race-location terrain/weather; #593 reduced-volume travel days.
