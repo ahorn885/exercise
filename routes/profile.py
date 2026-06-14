@@ -640,6 +640,16 @@ def _safe_local_path(value):
     return None
 
 
+def _event_windows_return_label(return_to):
+    """Label for the editor's 'back to …' banner, derived from the round-trip
+    origin so it reads right whether the athlete arrived from plan generation
+    (#608 item 1) or from onboarding setup (#608 item 3). Consistent across the
+    add/delete redirects, which preserve return_to but not a separate label."""
+    if return_to and return_to.startswith('/onboarding'):
+        return 'setup'
+    return 'plan generation'
+
+
 def _event_windows_redirect(return_to):
     """Redirect back to the event-windows page, PRESERVING a safe `return_to` so
     the Slice-5b 'back to plan generation' link survives across an add/delete
@@ -692,6 +702,7 @@ def event_windows():
             (uid,),
         ).fetchall()
     ]
+    return_to = _safe_local_path(request.args.get('return_to'))
     return render_template(
         'profile/event_windows.html',
         windows=windows,
@@ -702,10 +713,11 @@ def event_windows():
         # edit page in Slice 5.)
         craft_catalog=load_craft_catalog(),
         # Slice 5b (#581 WS-H) — when the athlete reached this page from the
-        # plan-gen review panel, thread the create-form path through so the
-        # add/delete forms preserve it and the "back to plan generation" link can
-        # round-trip them back to where they started.
-        return_to=_safe_local_path(request.args.get('return_to')),
+        # plan-gen review panel (#608 item 1) or onboarding setup (#608 item 3),
+        # thread the origin path through so the add/delete forms preserve it and
+        # the "back to <origin>" link can round-trip them back where they started.
+        return_to=return_to,
+        return_to_label=_event_windows_return_label(return_to),
         # #608 item 2 — repopulate the add-window form after an inline
         # new-location round-trip (consumed once); None on a normal visit.
         draft=_pop_event_window_draft(),

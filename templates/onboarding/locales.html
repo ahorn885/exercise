@@ -53,6 +53,22 @@
   </section>
   {% endif %}
 
+  {# F5 (#608 item 3): event-window capture surfaced during setup as a
+     lightweight, optional link into the live editor (return_to bounces back
+     here) — NOT a gated step. Most new athletes have no travel/indoor windows
+     yet, so it stays out of the home-location gate; they can declare windows
+     now or any time later. Sits with Locations since an away window reuses the
+     locales built on this step. #}
+  <section class="card card-pad">
+    <p class="eyebrow accent">● Optional · event windows</p>
+    <p class="page-sub">Traveling, training away, or stuck indoors for stretches during your plan?
+      Declare those date ranges as <strong>event windows</strong> and plan generation adapts those
+      days to the right environment — an away trip uses the destination's own locations. Add or
+      change them now or any time later; this won't block setup.</p>
+    <a href="{{ url_for('profile.event_windows', return_to=url_for('onboarding.locales')) }}"
+       class="btn btn-ghost btn-sm">Set up event windows</a>
+  </section>
+
   <div class="onb-nav">
     <a href="{{ url_for('locales.list_profiles', return_to=url_for('onboarding.locales')) }}" class="btn btn-ghost">+ Add or manage locations</a>
     <form method="post" action="{{ url_for('onboarding.locales_continue') }}">

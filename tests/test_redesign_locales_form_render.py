@@ -350,6 +350,21 @@ def test_event_windows_return_to_rejects_non_local_paths():
     assert _safe_local_path(None) is None
 
 
+def test_event_windows_back_link_label_reflects_origin():
+    """#608 item 3 (WS-H): the editor's back-link label is derived from the
+    round-trip origin so it reads 'setup' when reached from onboarding and
+    'plan generation' from the create form — consistent across add/delete."""
+    from routes.profile import _event_windows_return_label
+    assert _event_windows_return_label('/onboarding/locales') == 'setup'
+    assert _event_windows_return_label('/plans/v2/new') == 'plan generation'
+    assert _event_windows_return_label(None) == 'plan generation'
+    html = _render('profile/event_windows.html', windows=[], locales=['home'],
+                   override_types=('indoor_only', 'locale_unavailable', 'away'),
+                   craft_catalog={}, return_to='/onboarding/locales',
+                   return_to_label='setup')
+    assert 'Back to setup' in html and 'href="/onboarding/locales"' in html
+
+
 def test_event_window_draft_stash_is_consumed_once():
     """#608 item 2: the in-progress add-window form is stashed in the session
     (preserving the multi-valued brought-craft list) and popped exactly once on
