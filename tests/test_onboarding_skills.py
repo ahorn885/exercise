@@ -205,46 +205,44 @@ class TestEvictLayer1OnSkillToggleChange:
 
 
 class TestAthleteLocalesForReview:
-    def test_empty_athlete_yields_four_unconfigured_legacy_slots(self):
+    def test_empty_athlete_yields_empty_list(self):
+        # Legacy slots retired (WS-B) — no rows means an empty review list,
+        # which drives the template's "add your first location" empty state.
         from routes.onboarding import _athlete_locales_for_review
         conn = _FakeConn()
         conn.queue_response(rows=[])
         result = _athlete_locales_for_review(conn, 42)
-        assert len(result) == 4
-        for entry in result:
-            assert entry['is_custom'] is False
-            assert entry['configured'] is False
-        assert {e['slug'] for e in result} == {
-            'home', 'hotel', 'partner', 'airport',
-        }
+        assert result == []
 
-    def test_configured_legacy_slot_uses_locale_name(self):
-        from routes.onboarding import _athlete_locales_for_review
-        conn = _FakeConn()
-        conn.queue_response(rows=[
-            {'locale': 'home', 'locale_name': 'My Apartment',
-             'category': 'home_gym'},
-        ])
-        result = _athlete_locales_for_review(conn, 42)
-        home = next(e for e in result if e['slug'] == 'home')
-        assert home['label'] == 'My Apartment'
-        assert home['configured'] is True
-        assert home['is_custom'] is False
-
-    def test_custom_locale_appended_with_is_custom_true(self):
+    def test_locale_row_mapped(self):
         from routes.onboarding import _athlete_locales_for_review
         conn = _FakeConn()
         conn.queue_response(rows=[
             {'locale': 'trailhead_alpha', 'locale_name': 'Alpha Trail',
-             'category': 'outdoor_park'},
+             'category': 'outdoor_park', 'preferred': False},
         ])
         result = _athlete_locales_for_review(conn, 42)
-        assert len(result) == 5  # 4 legacy + 1 custom
-        custom = result[-1]
-        assert custom['slug'] == 'trailhead_alpha'
-        assert custom['label'] == 'Alpha Trail'
-        assert custom['is_custom'] is True
-        assert custom['category'] == 'outdoor_park'
+        assert result == [{
+            'slug': 'trailhead_alpha',
+            'label': 'Alpha Trail',
+            'category': 'outdoor_park',
+            'is_home': False,
+        }]
+
+    def test_home_row_flagged_and_sorted(self):
+        from routes.onboarding import _athlete_locales_for_review
+        conn = _FakeConn()
+        conn.queue_response(rows=[
+            {'locale': 'zeta_gym', 'locale_name': 'Zeta Gym',
+             'category': 'gym', 'preferred': False},
+            {'locale': 'apt', 'locale_name': 'My Apartment',
+             'category': 'home_gym', 'preferred': True},
+        ])
+        result = _athlete_locales_for_review(conn, 42)
+        assert [e['slug'] for e in result] == ['apt', 'zeta_gym']  # slug-sorted
+        home = next(e for e in result if e['is_home'])
+        assert home['slug'] == 'apt'
+        assert home['label'] == 'My Apartment'
 
 
 class TestLocalesRoute:
@@ -269,13 +267,16 @@ class TestLocalesRoute:
             ob_mod.locales()
 
         assert captured['tpl'] == 'onboarding/locales.html'
-        assert len(captured['athlete_locales']) == 4  # 4 legacy slots
+        assert captured['athlete_locales'] == []  # legacy slots retired
         assert captured['post_step_locales_target'] == '/onboarding/skills'
 
-    def test_continue_redirects_to_skills(self, monkeypatch):
+    def test_continue_with_home_redirects_to_skills(self, monkeypatch):
+        # WS-C gate satisfied: a locale exists and one is tagged home.
         app = _make_onboarding_app()
+        conn = _FakeConn()
+        conn.queue_response(rows=[{'preferred': True}])
         import routes.onboarding as ob_mod
-        monkeypatch.setattr(ob_mod, 'get_db', lambda: _FakeConn())
+        monkeypatch.setattr(ob_mod, 'get_db', lambda: conn)
         monkeypatch.setattr(ob_mod, 'current_user_id', lambda: 1)
         with app.test_request_context(
             '/onboarding/locales/continue', method='POST'
@@ -283,6 +284,38 @@ class TestLocalesRoute:
             response = ob_mod.locales_continue()
         assert response.status_code == 302
         assert '/onboarding/skills' in response.location
+
+    def test_continue_blocked_when_no_locale(self, monkeypatch):
+        # WS-C gate: no locale built → bounce back to the locations step.
+        app = _make_onboarding_app()
+        conn = _FakeConn()
+        conn.queue_response(rows=[])
+        import routes.onboarding as ob_mod
+        monkeypatch.setattr(ob_mod, 'get_db', lambda: conn)
+        monkeypatch.setattr(ob_mod, 'current_user_id', lambda: 1)
+        with app.test_request_context(
+            '/onboarding/locales/continue', method='POST'
+        ):
+            response = ob_mod.locales_continue()
+        assert response.status_code == 302
+        assert '/onboarding/locales' in response.location
+        assert '/onboarding/skills' not in response.location
+
+    def test_continue_blocked_when_no_home(self, monkeypatch):
+        # WS-C gate: locale(s) exist but none tagged home → bounce back.
+        app = _make_onboarding_app()
+        conn = _FakeConn()
+        conn.queue_response(rows=[{'preferred': False}])
+        import routes.onboarding as ob_mod
+        monkeypatch.setattr(ob_mod, 'get_db', lambda: conn)
+        monkeypatch.setattr(ob_mod, 'current_user_id', lambda: 1)
+        with app.test_request_context(
+            '/onboarding/locales/continue', method='POST'
+        ):
+            response = ob_mod.locales_continue()
+        assert response.status_code == 302
+        assert '/onboarding/locales' in response.location
+        assert '/onboarding/skills' not in response.location
 
 
 class TestSkillsRoute:

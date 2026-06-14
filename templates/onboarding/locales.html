@@ -3,66 +3,61 @@
 {% block title %}Locations — AIDSTATION{% endblock %}
 {% block crumbs %}<b>Set up</b> <span class="sep">/</span> Locations{% endblock %}
 
-{# Redesign (finish-the-open) — onboarding Step 4 (Locations review), migrated
-   onto the new .app shell. Surfaces the locale_profiles list inline; add/edit
-   link out to the existing /locales blueprint (which owns the Mapbox picker +
-   terrain/equipment editors). Continue is never gated. #}
+{# Onboarding locations step (WS-B/WS-C), on the new .app shell. Surfaces the
+   athlete-created locale_profiles list inline; add/edit link out to the existing
+   /locales blueprint (which owns the Mapbox picker + terrain/equipment editors).
+   The legacy home/hotel/partner/airport slots are retired (WS-B). WS-C: this
+   step is a GATE — the athlete must build ≥1 location and tag one home before
+   Continue advances (enforced server-side in onboarding.locales_continue). #}
 
 {% block content %}
+{% set home_set = athlete_locales|selectattr('is_home')|list|length > 0 %}
 <div class="dash-head">
   <div class="races-intro">
     <p class="eyebrow accent">● Set up · Step 3 of 6</p>
     <h1 class="page-title">Where do you train?</h1>
     <p class="page-sub">AIDSTATION reasons about plans against the locations you can actually reach — your
-      gym, your home trails, the pool you swim at. Each carries its own terrain and equipment. The four
-      legacy slots (Home / Hotel / Partner / Airport) are always available; add custom locations from the
-      Locations page.</p>
+      gym, your home trails, the pool you swim at. Each carries its own terrain and equipment. Add at
+      least one location and tag one as <strong>home</strong> — it anchors your training plan. You can't
+      continue without a home location.</p>
   </div>
 </div>
 
 {{ onb_steps('locales') }}
 
-{% set custom = athlete_locales|selectattr('is_custom')|list %}
-{% set legacy = athlete_locales|rejectattr('is_custom')|list %}
-
 <div class="stack onb-wrap">
-  {% if custom %}
+  {% if athlete_locales %}
   <section class="card card-pad">
-    <p class="eyebrow accent">● Your custom locations</p>
+    <p class="eyebrow accent">● Your locations</p>
     <ul class="onb-loc-list">
-      {% for loc in custom %}
+      {% for loc in athlete_locales %}
       <li class="onb-loc">
         <div class="onb-loc-id">
           <strong>{{ loc.label }}</strong>
+          {% if loc.is_home %}<span class="chip accent" title="Your home location">★ Home</span>{% endif %}
           {% if loc.category %}<span class="chip">{{ loc.category|replace('_', ' ') }}</span>{% endif %}
         </div>
         <a href="{{ url_for('locales.edit_profile', locale=loc.slug) }}" class="btn btn-ghost btn-sm">Edit</a>
       </li>
       {% endfor %}
     </ul>
+    {% if not home_set %}
+    <p class="dim">No home tagged yet — open a location and choose <strong>Make home</strong> before continuing.</p>
+    {% endif %}
+  </section>
+  {% else %}
+  <section class="card card-pad">
+    <p class="eyebrow accent">● No locations yet</p>
+    <p class="page-sub">You haven't added any locations. Add your home base first — search by address or
+      business name. The first location you build is tagged home automatically.</p>
   </section>
   {% endif %}
-
-  <section class="card card-pad">
-    <p class="eyebrow accent">● Legacy slots</p>
-    <ul class="onb-loc-list">
-      {% for loc in legacy %}
-      <li class="onb-loc">
-        <div class="onb-loc-id">
-          <strong class="onb-loc-cap">{{ loc.label }}</strong>
-          {% if not loc.configured %}<span class="dim">(not configured)</span>{% endif %}
-        </div>
-        <a href="{{ url_for('locales.edit_profile', locale=loc.slug) }}" class="btn btn-ghost btn-sm">Edit</a>
-      </li>
-      {% endfor %}
-    </ul>
-  </section>
 
   <div class="onb-nav">
     <a href="{{ url_for('locales.list_profiles', return_to=url_for('onboarding.locales')) }}" class="btn btn-ghost">+ Add or manage locations</a>
     <form method="post" action="{{ url_for('onboarding.locales_continue') }}">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-      <button type="submit" class="btn btn-primary">Continue</button>
+      <button type="submit" class="btn btn-primary"{% if not athlete_locales or not home_set %} title="Add a location and tag one home to continue"{% endif %}>Continue</button>
     </form>
   </div>
 </div>

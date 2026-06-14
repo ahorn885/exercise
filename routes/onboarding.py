@@ -81,7 +81,6 @@ from race_events_repo import (
     update_race_event,
 )
 from routes.auth import current_user_id
-from routes.locales import LOCALES as LEGACY_LOCALES
 from routes.profile import CONNECTION_PROVIDERS, load_connections
 from routes.profile_fields import KNOWN_PROFILE_FIELDS, provider_label
 
@@ -404,54 +403,43 @@ def keep_current(field):
 
 
 def _athlete_locales_for_review(db, uid: int) -> list:
-    """Return the per-athlete locale rows for the onboarding-Step-4
-    review template. Shape:
-      {slug, label, is_custom, configured, category}
+    """Return the per-athlete locale rows for the onboarding locations
+    review step. Shape:
+      {slug, label, category, is_home}
 
-    Includes every legacy slot (home / hotel / partner / airport) with
-    `is_custom=False` so athletes always see the four default slots
-    even when zero rows exist. Custom rows (locale_profiles where slug
-    is not in LEGACY_LOCALES) carry `is_custom=True`. `configured`
-    reflects whether locale_profiles has a row for the slug — drives
-    the "(not configured)" small print in the legacy-slot list.
+    All locales are athlete-created (the legacy home/hotel/partner/airport
+    slots are retired, WS-B), so an athlete with no `locale_profiles` rows
+    gets an empty list and the template shows the empty-state CTA. `is_home`
+    flags the `preferred` row so the review can show which one anchors the
+    plan-gen cluster (WS-C requires one before continuing).
     """
     rows = db.execute(
-        'SELECT locale, locale_name, category FROM locale_profiles '
+        'SELECT locale, locale_name, category, preferred FROM locale_profiles '
         'WHERE user_id = ?',
         (uid,),
     ).fetchall()
-    by_slug = {r['locale']: r for r in rows}
     out = []
-    for slug in LEGACY_LOCALES:
-        row = by_slug.get(slug)
-        out.append({
-            'slug': slug,
-            'label': (row['locale_name'] if row and row['locale_name'] else slug),
-            'is_custom': False,
-            'configured': row is not None,
-            'category': (row['category'] if row else None),
-        })
-    for slug in sorted(s for s in by_slug if s not in LEGACY_LOCALES):
-        row = by_slug[slug]
+    for row in rows:
+        slug = row['locale']
         out.append({
             'slug': slug,
             'label': row['locale_name'] or slug,
-            'is_custom': True,
-            'configured': True,
             'category': row['category'],
+            'is_home': bool(row['preferred']),
         })
+    out.sort(key=lambda e: e['slug'])
     return out
 
 
 @bp.route('/locales', methods=['GET'])
 def locales():
-    """Render the Step 4 locations review screen.
+    """Render the locations review/build step.
 
-    Read-only summary of the athlete's locale_profiles rows + the four
-    legacy slots, with edit links pointing at the existing /locales
-    blueprint (which owns the Mapbox picker, terrain grid, equipment
-    editor). Continue advances to /onboarding/skills regardless of
-    locale count — the step educates and provides a CTA, not a gate.
+    Summary of the athlete's locale_profiles rows, with edit links pointing
+    at the existing /locales blueprint (which owns the Mapbox picker, terrain
+    grid, equipment editor). WS-C: the step is now a GATE — the athlete must
+    build ≥1 locale and tag one home before Continue advances (enforced in
+    `locales_continue`); the template surfaces that requirement.
     """
     db = get_db()
     uid = current_user_id()
@@ -464,11 +452,31 @@ def locales():
 
 @bp.route('/locales/continue', methods=['POST'])
 def locales_continue():
-    """Advance from Step 4 (locations review) to Step 5 (skills).
+    """Advance from the locations step to Step 5 (skills).
 
-    No DB write — the review step doesn't mutate locale_profiles; that
-    happens through the /locales blueprint's own POST handlers.
+    WS-C — this is a GATE: onboarding cannot proceed until the athlete has
+    built at least one locale AND tagged one home (`locale_profiles.preferred`).
+    Without a home the plan-gen cone resolves an empty cluster → the strength-
+    saturation failure mode the locale-retirement arc is closing (plan §5).
+    Building any locale auto-tags the first as home (`_ensure_home`), so in
+    practice one built locale satisfies both, but both are checked defensively.
+    No DB write — the review step doesn't mutate locale_profiles; that happens
+    through the /locales blueprint's own POST handlers.
     """
+    db = get_db()
+    uid = current_user_id()
+    rows = db.execute(
+        'SELECT preferred FROM locale_profiles WHERE user_id = ?',
+        (uid,),
+    ).fetchall()
+    if not rows:
+        flash('Add at least one location before continuing — your plan needs '
+              'somewhere to train.', 'warning')
+        return redirect(_POST_STEP3_TARGET)
+    if not any(r['preferred'] for r in rows):
+        flash('Tag one of your locations as home before continuing — it anchors '
+              'your training plan.', 'warning')
+        return redirect(_POST_STEP3_TARGET)
     return redirect(_POST_STEP_LOCALES_TARGET)
 
 

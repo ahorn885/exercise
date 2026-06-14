@@ -38,14 +38,12 @@ def _locale_flow_redirect():
         return redirect(target)
     return redirect(url_for('locales.list_profiles'))
 
-# Locations Consolidation (Track 1) — the legacy hardcoded home/hotel/partner/
-# airport enum is retired. Home is now `locale_profiles.preferred` (one per
-# athlete), every locale uses the unified gym_profiles + overrides model, and
-# equipment is the layer0 canonical-name vocabulary (no snake_case
-# public.equipment_items.tag). `LOCALES` survives only as the set of slugs that
-# still auto-create on first save for backward-compatible deep-links; they
-# carry no special equipment semantics.
-LOCALES = ['home', 'hotel', 'partner', 'airport']
+# Locations Consolidation (Track 1, completed WS-B 2026-06-14) — the legacy
+# hardcoded home/hotel/partner/airport enum is fully retired. Locales are now
+# purely athlete-created (`locale_profiles` + `gym_profiles` + overrides); home
+# is the `locale_profiles.preferred` flag (one per athlete, set by `_ensure_home`
+# on first build); equipment is the layer0 canonical-name vocabulary. There are
+# no force-rendered default slots.
 
 
 def _layer0_equipment(db):
@@ -265,10 +263,9 @@ CATEGORY_TO_WHERE_AVAILABLE_BUCKET = {
 
 def athlete_locale_choices(db, uid: int) -> list:
     """Return ordered list of {slug, label, bucket} dicts representing every
-    locale the athlete can pick — legacy enum slots (home/hotel/partner/
-    airport) always present + athlete-created rows. `bucket` is the
-    where_available analog used by /references filter logic; for legacy slugs
-    bucket == slug, for custom slugs bucket comes from
+    locale the athlete can pick — the athlete-created `locale_profiles` rows
+    (legacy enum slots retired, WS-B). `bucket` is the where_available analog
+    used by /references filter logic; it comes from
     CATEGORY_TO_WHERE_AVAILABLE_BUCKET (may be '' when no Layer 0 analog).
     """
     rows = db.execute(
@@ -279,11 +276,7 @@ def athlete_locale_choices(db, uid: int) -> list:
     by_slug = {r['locale']: r for r in rows}
 
     choices = []
-    for slug in LOCALES:
-        row = by_slug.get(slug)
-        label = (row['locale_name'] if row and row['locale_name'] else slug.capitalize())
-        choices.append({'slug': slug, 'label': label, 'bucket': slug})
-    for slug in sorted(s for s in by_slug if s not in LOCALES):
+    for slug in sorted(by_slug):
         row = by_slug[slug]
         label = row['locale_name'] or slug
         bucket = CATEGORY_TO_WHERE_AVAILABLE_BUCKET.get(row['category'] or '', '')
@@ -584,11 +577,8 @@ def list_profiles():
             'SELECT * FROM locale_profiles WHERE user_id = ?', (uid,)
         ).fetchall()
     }
-    # Display: legacy enum slots first (still auto-render for back-compat),
-    # then athlete-created rows in slug order.
-    custom_locales = [k for k in profiles.keys() if k not in LOCALES]
-    custom_locales.sort()
-    displayed_locales = list(LOCALES) + custom_locales
+    # Display: athlete-created rows in slug order (legacy enum slots retired, WS-B).
+    displayed_locales = sorted(profiles.keys())
     # Equipment per locale via the authoritative resolver — layer0 canonical
     # names from gym_profiles + overrides (Track 1; replaces the legacy
     # locale_equipment join). value == label == canonical name.
@@ -605,7 +595,7 @@ def list_profiles():
     )
     display_addresses = {loc: _display_address(p) for loc, p in profiles.items()}
     return render_template('locales/list.html', locales=displayed_locales,
-                           legacy_locales=LOCALES, profiles=profiles,
+                           profiles=profiles,
                            home_locale=home_locale,
                            tags_by_locale=tags_by_locale, counts=counts,
                            display_addresses=display_addresses,
@@ -616,16 +606,16 @@ def list_profiles():
 def edit_profile(locale):
     db = get_db()
     uid = current_user_id()
-    # Legacy enum locales auto-create on first save (existing v1 behaviour);
-    # athlete-created (D-59) locales must already exist for this user.
-    if locale not in LOCALES:
-        existing = db.execute(
-            'SELECT 1 FROM locale_profiles WHERE user_id = ? AND locale = ?',
-            (uid, locale),
-        ).fetchone()
-        if not existing:
-            flash('Unknown location.', 'danger')
-            return redirect(url_for('locales.list_profiles'))
+    # All locales are athlete-created (D-59) and must already exist for this
+    # user — the legacy auto-create-on-first-save enum is retired (WS-B); new
+    # locales are built through `new_locale` (Mapbox/manual), not the edit screen.
+    existing = db.execute(
+        'SELECT 1 FROM locale_profiles WHERE user_id = ? AND locale = ?',
+        (uid, locale),
+    ).fetchone()
+    if not existing:
+        flash('Unknown location.', 'danger')
+        return redirect(url_for('locales.list_profiles'))
     profile = db.execute(
         'SELECT * FROM locale_profiles WHERE locale=? AND user_id=?',
         (locale, uid)
@@ -691,10 +681,11 @@ def _edit_locale(db, uid: int, locale: str, profile):
         # hidden), so `_resolve_private` ORs the category default in. Only the
         # build/own modes carry the toggle; inherit mode leaves it untouched.
         opt_out = request.form.get('private') == '1'
-        # Ensure the locale_profiles row exists first — gym_profiles links +
-        # overrides FK onto it. Legacy enum slugs auto-create here on first
-        # save (preserved v1 behaviour). `?::text[]` cast: see the Bucket B #3
-        # fix (psycopg2 list adapter landed empty arrays in prod without it).
+        # Upsert the locale_profiles row — gym_profiles links + overrides FK
+        # onto it. `edit_profile` already guaranteed the row exists, so this is
+        # an UPDATE in practice; the ON CONFLICT stays defensive. `?::text[]`
+        # cast: see the Bucket B #3 fix (psycopg2 list adapter landed empty
+        # arrays in prod without it).
         db.execute(
             '''INSERT INTO locale_profiles (user_id, locale, notes, city, sharing_opt_out, locale_terrain_ids, updated_at)
                VALUES (?, ?, ?, ?, ?, ?::text[], CURRENT_TIMESTAMP)
@@ -706,7 +697,7 @@ def _edit_locale(db, uid: int, locale: str, profile):
                  updated_at=excluded.updated_at''',
             (uid, locale, notes, city, opt_out, new_terrain_ids)
         )
-        # First-locale-auto-home (Track 1 §10) — a legacy enum slug saved
+        # First-locale-auto-home (Track 1 §10) — the first locale saved
         # before any home exists becomes home.
         _ensure_home(db, uid, locale)
         if shared is None:
@@ -782,7 +773,7 @@ def _edit_locale(db, uid: int, locale: str, profile):
                            city=(profile['city'] if profile and _row_has(profile, 'city') and profile['city'] else ''),
                            is_manual=is_manual,
                            is_mapbox_anchored=is_mapbox_anchored,
-                           is_deletable=locale not in LOCALES,
+                           is_deletable=True,
                            display_address=_display_address(profile),
                            privacy_locked=privacy_locked,
                            privacy_opt_out=current_opt_out,
@@ -1239,15 +1230,11 @@ def delete_locale(locale):
     gym_profiles row intact so enterprise data is preserved for other
     athletes.
 
-    Legacy enum slugs (home/hotel/partner/airport) are not deletable
-    here — they auto-render on /locales independent of any row, and the
-    delete UI is gated behind the athlete-created edit screen.
+    All locales are athlete-created and deletable (the legacy enum slots
+    that used to be undeletable are retired, WS-B).
     """
     db = get_db()
     uid = current_user_id()
-    if locale in LOCALES:
-        flash('Legacy locale slots cannot be deleted.', 'warning')
-        return redirect(url_for('locales.edit_profile', locale=locale))
     profile = db.execute(
         '''SELECT category, gym_profile_id, locale_name
            FROM locale_profiles WHERE user_id = ? AND locale = ?''',
