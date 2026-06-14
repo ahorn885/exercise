@@ -43,6 +43,43 @@
       {% endif %}
     </div>
 
+    {# ── Event windows review (Slice 5b, #581 WS-H) ──
+       Surface the athlete's upcoming event windows for review at plan generation
+       (F1). Editing/appending — including inline new-location create — round-trips
+       to the dedicated /profile/event-windows page, which returns here. #}
+    <div class="sec">
+      <span class="eyebrow">● Event windows</span>
+      <div class="card card-pad sec-sm">
+        {% if event_windows %}
+        <p class="pf-hint sec-sm">Date ranges where your training environment differs. Plan generation
+          resolves the affected days against that environment — review them before you build.</p>
+        <table class="table">
+          <thead><tr><th>Dates</th><th>Constraint</th><th>Notes</th></tr></thead>
+          <tbody>
+            {% for w in event_windows %}
+            <tr>
+              <td class="mono">{{ w.start_date.isoformat() }} → {{ w.end_date.isoformat() }}</td>
+              <td>
+                {% if w.override_type == 'indoor_only' %}Indoor only (no outdoor terrain)
+                {% elif w.override_type == 'locale_unavailable' %}“{{ w.unavailable_locale }}” unavailable
+                {% elif w.override_type == 'away' %}Away at “{{ w.away_locale }}”
+                  {% if w.brought_craft %}<span class="dim">· with {{ w.brought_craft | join(', ') | replace('_', ' ') }}</span>{% endif %}
+                {% else %}{{ w.override_type }}{% endif %}
+              </td>
+              <td class="dim">{{ w.notes or '—' }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        {% else %}
+        <p class="pf-hint sec-sm">No upcoming event windows. If you'll be travelling, training away, or stuck
+          indoors during this plan, declare those date ranges so the plan adapts to them.</p>
+        {% endif %}
+        <a href="{{ url_for('profile.event_windows', return_to=url_for('plan_create.new_plan')) }}"
+           class="btn btn-ghost btn-sm">Add / edit event windows</a>
+      </div>
+    </div>
+
     {# ── What you'll get (illustrative typical shape) ── #}
     <div class="sec">
       <span class="eyebrow">What you'll get</span>

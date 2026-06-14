@@ -27,6 +27,13 @@
 
 <div class="stack">
 
+  {# Slice 5b (#581 WS-H) — reached from the plan-gen review panel: a round-trip
+     link back to the create form once the athlete is done editing windows. #}
+  {% if return_to %}
+  <p class="acct-hint"><a href="{{ return_to }}">← Back to plan generation</a> —
+    your changes here apply the next time you generate or refresh a plan.</p>
+  {% endif %}
+
   <div class="card card-pad">
     <p class="eyebrow">● Your windows</p>
     {% if windows %}
@@ -50,6 +57,7 @@
             <form method="post"
                   action="{{ url_for('profile.delete_event_window_route', window_id=w.id) }}">
               <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <input type="hidden" name="return_to" value="{{ return_to or '' }}">
               <button type="submit" class="btn btn-ghost btn-sm">Remove</button>
             </form>
           </td>
@@ -66,6 +74,7 @@
     <p class="eyebrow">● Add a window</p>
     <form method="post" action="{{ url_for('profile.add_event_window_route') }}">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <input type="hidden" name="return_to" value="{{ return_to or '' }}">
       <div class="pf-grid">
         <label class="field"><span class="lbl">Start date</span>
           <input type="date" name="start_date" class="form-control form-control-sm" required></label>
@@ -88,7 +97,7 @@
             {% for loc in locales %}<option value="{{ loc }}">{{ loc }}</option>{% endfor %}
           </select>
           <span class="dim">Destination not saved yet?
-            <a href="{{ url_for('locales.new_locale', return_to=url_for('profile.event_windows')) }}">Add a new location</a>
+            <a href="{{ url_for('locales.new_locale', return_to=url_for('profile.event_windows', return_to=return_to)) }}">Add a new location</a>
             — you'll return here to finish the window.</span></label>
         <fieldset class="field field-wide"><span class="lbl">Craft brought <span class="dim">(if training away — only craft you bring counts at the destination)</span></span>
           {% for group, items in craft_catalog.items() %}

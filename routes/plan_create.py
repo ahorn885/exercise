@@ -82,6 +82,7 @@ from plan_sessions_repo import (
     snapshot_progress_blocks,
 )
 from race_events_repo import load_target_race_event_payload
+from athlete_event_windows_repo import load_event_windows
 from plan_nutrition_repo import load_plan_nutrition_by_version
 from layer5 import generate_and_persist_plan_nutrition
 from routes.auth import cron_authorized, current_user_id
@@ -906,10 +907,17 @@ def new_plan():
         )
 
     race_event = load_target_race_event_payload(db, uid)
+    # Slice 5b (#581 WS-H) — surface the athlete's standing event windows for
+    # REVIEW at plan generation (F1). Editing/appending round-trips to the
+    # dedicated /profile/event-windows page (return_to back here); only upcoming
+    # windows (end_date today-or-later) are worth reviewing for a new plan.
+    today = date.today()
+    event_windows = [w for w in load_event_windows(db, uid) if w.end_date >= today]
     return render_template(
         'plan_create/new_form.html',
         race_event=race_event,
-        today_iso=date.today().isoformat(),
+        today_iso=today.isoformat(),
+        event_windows=event_windows,
     )
 
 
