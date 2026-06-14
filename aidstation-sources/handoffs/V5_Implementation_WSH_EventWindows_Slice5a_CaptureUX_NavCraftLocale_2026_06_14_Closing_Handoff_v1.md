@@ -67,4 +67,5 @@ Design §6 Slice 5 = "capture UX polish (F5): full panel on profile + onboarding
 | Nav reachability | `templates/_shell/sidebar.html`, `templates/_shell/mobile_drawer.html` | `url_for('profile.event_windows')` "Event windows" entry |
 | Tests | `tests/test_redesign_locales_form_render.py` | `test_form_renders_craft_kept_here`; updated event-windows render asserts |
 | Suite | — | 2468 passed / 30 skipped |
+| Merge | — | PR #607 squash-merged to `main`, CI run #276 green (Vercel deploy green); no review threads |
 | Owed | — | Slice 5a owes nothing (no DDL); #604 `pg_dump` + the T3-refresh re-verify carried |
