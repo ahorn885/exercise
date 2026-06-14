@@ -3,7 +3,7 @@
 **Session:** Shipped the §7 WS-E2 saturation backstop — the last code workstream on the feasibility-saturation / locale-retirement north-star plan. A deterministic, pre-synthesis grid pass that caps weekly **failover** strength at `dose + 2` and reallocates the excess to feasible disciplines proportional to load_weight (variety-respecting, volume-conserving).
 **Date:** 2026-06-14
 **Predecessor handoff:** `V5_Implementation_WSBC_LocaleRetirement_OnboardingHome_2026_06_14_Closing_Handoff_v1.md` (WS-B/WS-C complete, #589 merged).
-**Branch / PR:** [#590](https://github.com/ahorn885/exercise/pull/590) (`claude/next-slice-implementation-37iur2`). Closes WS-E2 ([#584](https://github.com/ahorn885/exercise/issues/584)).
+**Branch / PR:** [#590](https://github.com/ahorn885/exercise/pull/590) (`claude/next-slice-implementation-37iur2`). **Squash-merged to `main`, CI-green.** Closes WS-E2 ([#584](https://github.com/ahorn885/exercise/issues/584)).
 **North-star plan:** `plans/Feasibility_Saturation_And_Locale_Retirement_Plan_v1.md` (§7 WS-E2).
 **Status:** 3 substantive code/template files + 1 new test — **within the 5-file ceiling.** No DDL.
 
@@ -65,7 +65,7 @@ The live behavior (an over-constrained week capping to dose+2 + reallocating) is
 ## 6. Next session pointers
 
 ### 6.1 This slice
-WS-E2 **shipped** on #590 (no DDL). Plan §2 table flipped to SHIPPED; §7 carries the build note. Issue [#584](https://github.com/ahorn885/exercise/issues/584) to close on merge.
+WS-E2 **shipped + squash-merged to `main`** on #590 (CI-green, no DDL). Plan §2 table flipped to SHIPPED; §7 carries the build note. Issue [#584](https://github.com/ahorn885/exercise/issues/584) closed (`completed`, PR #590).
 
 ### 6.2 Next forward moves (4-tier order)
 - **STILL OWED (carried, Tier 1):** the post-#572 live **T3 *refresh*** re-verify (paired: diag token + Andy pasting logs, Rule #14). Never live-verified post-#572; pv=71 was a *create*.
