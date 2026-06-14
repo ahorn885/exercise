@@ -115,6 +115,11 @@ def test_locales_render(monkeypatch):
     html = resp.get_data(as_text=True)
     _assert_onboarding_shell(html, 'locales')
     assert 'Where do you train?' in html
+    # F5 (#608 item 3): the optional event-windows card links into the live
+    # editor with a return_to back to this step — surfaced, not gated.
+    assert 'event windows' in html
+    assert 'Set up event windows' in html
+    assert '/profile/event-windows?return_to=' in html
 
 
 def test_target_race_render(monkeypatch):

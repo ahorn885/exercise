@@ -32,7 +32,7 @@
   {# Slice 5b (#581 WS-H) — reached from the plan-gen review panel: a round-trip
      link back to the create form once the athlete is done editing windows. #}
   {% if return_to %}
-  <p class="acct-hint"><a href="{{ return_to }}">← Back to plan generation</a> —
+  <p class="acct-hint"><a href="{{ return_to }}">← Back to {{ return_to_label or 'plan generation' }}</a> —
     your changes here apply the next time you generate or refresh a plan.</p>
   {% endif %}
 
