@@ -128,6 +128,7 @@ from layer4.single_session import SingleSessionRequest
 from layer4.validator import skill_gated_disciplines
 import locations
 from athlete_event_windows_repo import load_event_windows
+from athlete_craft_locale_repo import load_craft_locales
 from race_events_repo import load_target_race_event_payload
 
 
@@ -702,11 +703,20 @@ def _build_event_window_overlay(
         )
         return [], overlapping
 
+    # Slice 4 (#581 WS-H) — the standing craft↔locale map, loaded once. The away
+    # branch unions the crafts kept at any locale in the destination cluster (b)
+    # with the window's brought-craft (c) → the away segment's owned_crafts.
+    craft_locale_map = load_craft_locales(db, user_id)
     raw = [
         (
             w.start_date,
             w.end_date,
-            EventWindowOverride(w.override_type, w.unavailable_locale, w.away_locale),
+            EventWindowOverride(
+                w.override_type,
+                w.unavailable_locale,
+                w.away_locale,
+                brought_craft=tuple(w.brought_craft),
+            ),
         )
         for w in overlapping
     ]
@@ -726,6 +736,14 @@ def _build_event_window_overlay(
             away_cluster = locations.cluster_locale_ids(
                 db, user_id, anchor_locale=away_ov.away_locale
             )
+            # Slice 4 (#581 WS-H): away craft = brought-craft on this window (c) ∪
+            # standing craft kept at any locale in the destination cluster (b).
+            # Empty union → byte-identical to the Slice-2a owned_crafts=[] path.
+            brought = set(away_ov.brought_craft)
+            standing = {
+                c for loc in away_cluster for c in craft_locale_map.get(loc, ())
+            }
+            away_crafts = sorted(brought | standing)
             reduced = _resolve_included_feasibility(
                 fi,
                 locale_order=away_cluster,
@@ -735,7 +753,7 @@ def _build_event_window_overlay(
                 equip_by_locale=locations.cluster_equipment_by_locale(
                     db, user_id, away_cluster
                 ),
-                owned_crafts=[],
+                owned_crafts=away_crafts,
             )
             away_feasibility = reduced
             # Slice 3 (F8): if the destination is cold (no logged equipment/
@@ -745,12 +763,14 @@ def _build_event_window_overlay(
             assumed_baseline = locations.locale_assumed_baseline_display(
                 db, user_id, away_ov.away_locale
             )
-            # Rule #15 (spec §7): the away env + the empty craft set — the #1
-            # reason an away bike/paddle day lands on strength is "no craft
-            # travelled", so print the input that drove the decision.
+            # Rule #15 (spec §7): the away env + the resolved craft set with its
+            # provenance — the #1 reason an away bike/paddle day lands on strength
+            # is "no craft available", so print the inputs that drove the decision
+            # (brought on the window (c) vs kept at the destination (b)).
             _away_dbg = (
                 f" away_locale={away_ov.away_locale} away_cluster={away_cluster} "
-                f"owned_crafts=[] assumed_baseline={assumed_baseline}"
+                f"owned_crafts={away_crafts} (brought={sorted(brought)} "
+                f"standing={sorted(standing)}) assumed_baseline={assumed_baseline}"
             )
         else:
             locale_order, terrain, equip = _reduced_env(fi, active)
