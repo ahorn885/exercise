@@ -944,6 +944,11 @@ def _format_session_grid(
             available_days=available_days,
             two_a_day_preference=two_a_day_preference,
             peak_sessions_max=peak_sessions_max,
+            strength_feasibility_tiers=(
+                {d: r.tier for d, r in terrain_feasibility.items()}
+                if terrain_feasibility else None
+            ),
+            skill_gated_ids=frozenset(skill_gated or {}),
         )
         # Rule #15 observability: the deterministic grid decides sessions/week
         # per discipline BEFORE feasibility runs — the upstream half of a
@@ -958,6 +963,11 @@ def _format_session_grid(
             f"build_session_grid: {phase_name}:w{w} "
             f"capacity={grid.weekly_capacity_hours:.1f}h allocations=[{_alloc_dbg}]"
         )
+        # Rule #15 — the WS-E2 strength-saturation cap's decision (which failover
+        # strength was trimmed + where its volume was reallocated), so an
+        # over-constrained week's final strength count is attributable in prod.
+        if grid.saturation_note:
+            print(f"strength_saturation_cap: {phase_name}:w{w} {grid.saturation_note}")
         out.append(
             f"Week {w} — weekly capacity {grid.weekly_capacity_hours:.1f} hours:"
         )
