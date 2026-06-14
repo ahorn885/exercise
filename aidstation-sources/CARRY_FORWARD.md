@@ -13,16 +13,15 @@ Rolling-state for items spanning multiple sessions. **Edit in place** — don't 
 
 ---
 
-## WS-I Slice A — craft/equipment taxonomy + craft_terrain_compatibility seed (2026-06-14) — PR #587 (open, CI-green)
+## WS-I Slice B — unified craft/terrain feasibility cascade (2026-06-14) — the bug fix; PR TBD
 
-**Data + taxonomy half of WS-I ([#586](https://github.com/ahorn885/exercise/issues/586)); Andy-ratified "Slice A first" split.** Handoff: `V5_Implementation_WSI_SliceA_CraftEquipmentTaxonomy_2026_06_14_Closing_Handoff_v1.md`. Branch `claude/dreamy-wozniak-t3tifr`.
+**Cascade-rewrite half of WS-I ([#586](https://github.com/ahorn885/exercise/issues/586)) — WS-I now COMPLETE.** Handoff: `V5_Implementation_WSI_SliceB_UnifiedCraftTerrainCascade_2026_06_14_Closing_Handoff_v1.md`. Branch `claude/zealous-gauss-bl22ek`.
 
-- ✅ **Slice A shipped + CI-green.** Dropped `cycling_trainer` from the craft enum (`athlete.py`); new `etl/migrations/layer0/0004_*` creates + seeds `layer0.craft_terrain_compatibility` (21-row grid, design §4) and retires the `cycling_trainer` aliases (cache-neutral). Validated against a throwaway Postgres running the exact CI gate.
-- ✅ **`0004` APPLIED on Neon** (Andy, 2026-06-14). Was briefly blocked by the Neon SQL editor being in the **wrong project** (`3F000 schema "layer0" does not exist`) — resolved by switching projects. The migration assumes `layer0` pre-exists (never `CREATE SCHEMA`), matching 0001–0003.
-- ✅ **Per-athlete data fix — DONE** (Andy, 2026-06-14). Ran the `discipline_baseline_cycling.bike_types_available` strip + ticked **Cycling trainer** in his home locale's equipment. So set B is now trainer-free and the trainer is in set C — Slice B's INDOOR tier will read it there.
-- ⬜ **WS-I Slice B (the cascade) — NEXT, deferred to a fresh branch after #587 merges.** Add `craft_terrain_compatibility`→`0A` to `_LAYER0_TABLE_FAMILY`; rewrite `session_feasibility.py`+`orchestrator.py` to the unified nested cascade (design §3) reading the new table, with Rule #15 logging + the craftless-with-trainer + proxy-craft-terrain test matrix. This is where the live craft-STRENGTH-preempts-INDOOR bug (`orchestrator.py:437`) actually gets fixed. **Deploy-ordering:** Slice B reads `craft_terrain_compatibility`, so it must not reach prod before `0004` is on Neon (now done).
-- 📌 **Design-doc note:** `CraftEquipment_Taxonomy_And_FeasibilityCascade_Design_v1.md` §4 still describes the retired xlsx/extractor seed mechanism — the decisions (grid, ordering) are intact; only the *mechanism* is stale (epic #488). Left as-is (point-in-time design); built on the migration model.
-- 🩺 **Local Postgres gate recipe** (no Neon egress): container has PG binaries (`/usr/lib/postgresql/*/bin`), won't run as root → `useradd -m pgrunner` + run `initdb`/`pg_ctl`/the CI gate steps as that user. Reproduces `layer0-gate` exactly. (Details in handoff §6.3.)
+- ✅ **Slice B shipped + full suite green (2379 passed, 30 skipped).** Replaced the two non-composing axes with the single nested `resolve_craft_terrain_feasibility` (design §3, tier 3 > tier 4); removed the `orchestrator.py:437` craft-STRENGTH short-circuit. Craftless-with-trainer now resolves INDOOR (the live bug, design §1b). New `_q_craft_terrain_compatibility` reader; tiers 2–4 read `layer0.craft_terrain_compatibility`. Registered it `→0A` in `_LAYER0_TABLE_FAMILY`. Rule #15 logging rewritten. Stale `cycling_trainer` synthetic fixtures (§4) cleaned.
+- ✅ **Deploy-ordering satisfied:** Slice B reads + cache-registers `craft_terrain_compatibility`, and `0004` is already on Neon (applied in Slice A) → no prod query against a missing table. The reader degrades (empty dict → tiers 1–4 miss) rather than crashing if the table were absent.
+- ⬜ **Merge the Slice B PR after review** → WS-I closed end-to-end (taxonomy + data + cascade). No further owed-hands deploy for WS-I (no new DDL this slice).
+- 📌 **Profile UI:** no change needed — the craft picker derives from the post-Slice-A `BIKE_TYPES` (no `cycling_trainer`), and "Cycling trainer" is already a `layer0.equipment_items` row, so the INDOOR tier reads it from set C.
+- 🩺 **Local Postgres gate recipe** (no Neon egress): container has PG binaries (`/usr/lib/postgresql/*/bin`), won't run as root → `useradd -m pgrunner` + run `initdb`/`pg_ctl`/the CI gate steps as that user. Reproduces `layer0-gate` exactly.
 
 ---
 

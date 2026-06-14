@@ -136,24 +136,31 @@ def _patch_cluster(monkeypatch, *, cluster, terrain, equipment, gaps):
     monkeypatch.setattr(orchestrator, "_q_terrain_gap_rules", lambda db: gaps)
 
 
-# Craft-axis maps (#540 2c.2c). Default: empty → craft axis inert (the terrain
-# tests above don't patch it, and _FakeDb([]) also yields empty maps).
+# Craft/terrain cascade maps (#586 WS-I). Default: empty → craft cascade tiers
+# 1–4 all miss (the terrain tests above don't patch it, and _FakeDb([]) also
+# yields empty maps), so non-craft disciplines fall back to the terrain cascade.
 _BIKE_GROUPS = {"D-008": ["bike_offroad"], "D-006": ["bike_pavement"]}
 _BIKE_GROUP_KIND = {"bike_offroad": "bike", "bike_pavement": "bike"}
 
 
-def _patch_craft(monkeypatch, *, craft_disc, craft_kind, disc_groups, group_kind):
+def _patch_craft(
+    monkeypatch, *, craft_disc, craft_kind, disc_groups, group_kind, craft_terrain=None
+):
     monkeypatch.setattr(orchestrator, "_q_craft_discipline_aliases", lambda db: craft_disc)
     monkeypatch.setattr(orchestrator, "_q_craft_group_kind", lambda db: craft_kind)
     monkeypatch.setattr(orchestrator, "_q_modality_groups", lambda db: disc_groups)
     monkeypatch.setattr(orchestrator, "_q_modality_group_kind", lambda db: group_kind)
+    monkeypatch.setattr(
+        orchestrator, "_q_craft_terrain_compatibility", lambda db: craft_terrain or {}
+    )
 
 
 def test_build_craft_swap_road_bike_for_mtb(monkeypatch):
-    # Race wants MTB (D-008); athlete owns only a road bike + the cluster has
-    # off-road terrain (so terrain alone would prescribe an un-equippable MTB
-    # ride). The craft axis swaps the MTB allocation to Road Cycling, and the
-    # terrain axis re-runs on THAT discipline (road surface, TRN-001).
+    # Race wants MTB (D-008); athlete owns only a road bike, which can't ride any
+    # MTB terrain. The cluster has road (TRN-001) + groomed trail (TRN-002). The
+    # unified cascade can't ride the trail on a road bike (tier 3 misses), so it
+    # rides the road bike on the road and swaps the allocation to Road Cycling
+    # (tier 4). The owned-outright road discipline resolves exact on TRN-001.
     cone = _cone(
         exercises=[],
         flags=[],
@@ -176,22 +183,23 @@ def test_build_craft_swap_road_bike_for_mtb(monkeypatch):
         craft_kind={"road_bike": "bike"},
         disc_groups=_BIKE_GROUPS,
         group_kind=_BIKE_GROUP_KIND,
+        craft_terrain={"road_bike": {"TRN-001", "TRN-004"}},  # no off-road terrain
     )
     feas = orchestrator._build_terrain_feasibility(_FakeDb([]), 1, cone)
     mtb = feas["D-008"]
     assert mtb.craft_tier == "swap"
     assert mtb.owned_craft == "road_bike"
     assert mtb.craft_swap_to_name == "Road Cycling"
-    # Terrain resolved for the SWAPPED discipline (road), not MTB's trail.
+    # Ride the proxy on its OWN terrain (road, TRN-001), not MTB's trail.
     assert mtb.tier == "exact" and mtb.terrain_id == "TRN-001"
     # The owned-outright road discipline carries no craft action.
     assert feas["D-006"].craft_tier == "" and feas["D-006"].tier == "exact"
 
 
 def test_build_craft_strength_when_no_bike_owned(monkeypatch):
-    # Own no bike at all: even though the cluster has MTB terrain (TRN-002), the
-    # craft terminal fires FIRST → strength from the discipline's own pool, at
-    # the equipment-bearing locale.
+    # Own no bike at all and no indoor machine: even though the cluster has MTB
+    # terrain (TRN-002), tiers 1–5 all miss (no craft, no trainer) → strength
+    # from the discipline's own pool, at the equipment-bearing locale.
     cone = _cone(
         exercises=[_ex("EX-SQUAT", ["D-008"], 1, {"D-008": "Critical"}, "Back Squat")],
         flags=[],

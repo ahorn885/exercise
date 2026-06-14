@@ -2059,6 +2059,10 @@ class TestLayer0TableFamilyMap:
         # terrain_gap_rules is a 0C serving table created outside schema.sql
         # (etl/sources/populate_terrain_gap_rules.sql); read by Layer 2B.
         assert _LAYER0_TABLE_FAMILY.get("terrain_gap_rules") == "0C"
+        # craft_terrain_compatibility (#586 WS-I) is a 0A serving table created by
+        # migration 0004 (not schema.sql); read by the unified craft/terrain
+        # cascade. Without it, grid edits wouldn't invalidate plan-gen caches.
+        assert _LAYER0_TABLE_FAMILY.get("craft_terrain_compatibility") == "0A"
 
     def test_families_are_canonical(self):
         assert set(_LAYER0_TABLE_FAMILY.values()) == {"0A", "0B", "0C"}

@@ -360,7 +360,6 @@ _CRAFT_ALIASES = {
     "road_bike": ["D-006"],
     "gravel_bike": ["D-006", "D-030", "D-031"],
     "mountain_bike": ["D-008", "D-031"],
-    "cycling_trainer": ["D-006", "D-007", "D-008", "D-030", "D-031"],
 }
 
 
@@ -398,11 +397,6 @@ class TestX1b3bCraftNarrowing:
         # sole matching craft → no narrowing flag
         assert not [f for f in _resolve("D-006", ["gravel_bike"]).coaching_flags
                     if f.flag_type in ("craft_substitution", "craft_unavailable")]
-
-    def test_trainer_matches_every_bike_discipline(self):
-        for disc in ("D-006", "D-007", "D-008", "D-030", "D-031"):
-            p = _resolve(disc, ["cycling_trainer"])
-            assert p.recommendations[0].candidate_training_crafts == ["cycling_trainer"]
 
     def test_paddle_only_athlete_unavailable_for_bike_block(self):
         # Owns only a kayak; race needs MTB → empty + per-block craft_unavailable.

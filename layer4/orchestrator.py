@@ -72,7 +72,7 @@ Vertical-slice limitations carried as forward-pointers:
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from datetime import date, datetime, time
 from typing import Any, Literal
 
@@ -115,7 +115,7 @@ from layer4.session_feasibility import (
     TerrainResolution,
     indoor_machines,
     required_terrains,
-    resolve_craft_feasibility,
+    resolve_craft_terrain_feasibility,
     resolve_terrain_feasibility,
 )
 from layer4.single_session import SingleSessionRequest
@@ -310,6 +310,23 @@ def _q_craft_group_kind(db: Any) -> dict[str, str]:
     return {row["craft_name"]: row["group_kind"] for row in cur.fetchall()}
 
 
+def _q_craft_terrain_compatibility(db: Any) -> dict[str, set[str]]:
+    """#586 WS-I — `{craft_name: {terrain_id, ...}}` (the terrains a craft can be
+    ridden on) from `layer0.craft_terrain_compatibility` (active rows). Declared
+    explicitly, not derived from the discipline graph (design §4), so the unified
+    craft/terrain cascade can tell a road bike (no singletrack) from a gravel bike.
+    Empty dict → the craft cascade's tiers 1–4 all miss (every craft discipline
+    falls through to INDOOR/STRENGTH), so a missing table degrades, not crashes."""
+    cur = db.execute(
+        "SELECT craft_name, terrain_id FROM layer0.craft_terrain_compatibility "
+        "WHERE superseded_at IS NULL"
+    )
+    out: dict[str, set[str]] = {}
+    for row in cur.fetchall():
+        out.setdefault(row["craft_name"], set()).add(row["terrain_id"])
+    return out
+
+
 def _q_terrain_gap_rules(db: Any) -> dict[str, list[tuple[str, float]]]:
     """#540 slice 2c.2 — `{target_terrain_id: [(proxy_terrain_id, fidelity), ...]}`
     from `layer0.terrain_gap_rules` (active rows with a proxy). Feeds the PROXY
@@ -366,10 +383,12 @@ def _build_terrain_feasibility(
     equip_by_locale = locations.cluster_equipment_by_locale(db, user_id, cluster)
     gap_rules = _q_terrain_gap_rules(db)
 
-    # Craft axis (#540 2c.2c) maps — runs per discipline AHEAD of terrain.
+    # Unified craft/terrain cascade (#586 WS-I) maps — craft disciplines walk
+    # resolve_craft_terrain_feasibility; non-craft fall back to the terrain-only one.
     owned_crafts = _collect_athlete_crafts(cone.layer1_payload)
     craft_disciplines = _q_craft_discipline_aliases(db)
     craft_kind = _q_craft_group_kind(db)
+    craft_terrain = _q_craft_terrain_compatibility(db)
     discipline_groups = _q_modality_groups(db)
     group_kind_by_group = _q_modality_group_kind(db)
 
@@ -396,11 +415,6 @@ def _build_terrain_feasibility(
     name_by_discipline = {
         d.discipline_id: d.discipline_name for d in cone.layer2a_payload.disciplines
     }
-    # Strength locale for a craft terminal: the gym — first cluster locale that
-    # carries equipment, else home. Mirrors the terrain STRENGTH tier's choice.
-    strength_locale = next(
-        (loc for loc in cluster if equip_by_locale.get(loc)), cluster[0]
-    )
 
     def _terrain(disc_id: str) -> TerrainResolution | None:
         return resolve_terrain_feasibility(
@@ -412,68 +426,37 @@ def _build_terrain_feasibility(
             discipline_exercise_ids=pool_by_discipline.get(disc_id, []),
         )
 
-    def _craft_kind_of(disc_id: str) -> str:
-        """The craft-bearing group_kind (bike/paddle) of a discipline, for the
-        STRENGTH terminal's reason line."""
-        for g in discipline_groups.get(disc_id, []):
-            k = group_kind_by_group.get(g)
-            if k in ("bike", "paddle"):
-                return k
-        return "craft"
-
     out: dict[str, TerrainResolution] = {}
     for d in included:
         if d.discipline_id in gated:
             continue
-        craft = resolve_craft_feasibility(
+        # Craft disciplines (bike/paddle) walk the unified craft/terrain cascade;
+        # it returns None for non-craft disciplines, which fall back to terrain-only.
+        resolution = resolve_craft_terrain_feasibility(
             d.discipline_id,
             owned_crafts=owned_crafts,
             craft_disciplines=craft_disciplines,
             craft_group_kind=craft_kind,
             discipline_groups=discipline_groups,
             group_kind=group_kind_by_group,
+            craft_terrain=craft_terrain,
+            locale_order=cluster,
+            cluster_terrain_by_locale=terrain_by_locale,
+            cluster_equipment_by_locale=equip_by_locale,
+            discipline_exercise_ids=pool_by_discipline.get(d.discipline_id, []),
+            discipline_names=name_by_discipline,
         )
-        # ── Craft STRENGTH terminal — own no craft of this kind at all ───────
-        if craft is not None and craft.tier == "strength":
-            out[d.discipline_id] = TerrainResolution(
-                discipline_id=d.discipline_id,
-                tier="strength",
-                locale_id=strength_locale,
-                substitute_exercise_ids=list(
-                    pool_by_discipline.get(d.discipline_id, [])
-                ),
-                craft_tier="strength",
-                owned_craft=craft.owned_craft,
-                craft_kind=_craft_kind_of(d.discipline_id),
-            )
-            continue
-        # ── Craft SWAP — own a same-kind craft, but only in another group ────
-        if craft is not None and craft.tier == "swap":
-            eff = craft.effective_discipline_id
-            resolution = _terrain(eff)
-            if resolution is None:
-                # Swap target carries no terrain requirement (freely doable) —
-                # emit a craft-only line so the swap still reaches synthesis.
-                resolution = TerrainResolution(
-                    discipline_id=eff, tier="exact", locale_id=cluster[0]
-                )
-            out[d.discipline_id] = replace(
-                resolution,
-                craft_tier="swap",
-                owned_craft=craft.owned_craft,
-                craft_swap_to_name=name_by_discipline.get(eff, eff),
-            )
-            continue
-        # ── Owned craft, or a non-craft discipline — terrain axis as-is ──────
-        resolution = _terrain(d.discipline_id)
+        if resolution is None:
+            resolution = _terrain(d.discipline_id)
         if resolution is not None:
             out[d.discipline_id] = resolution
 
     # Rule #15 observability: the cascade was print()-silent, so a plan
     # over-saturated with strength substitutions couldn't be traced to its
     # cause. Log, per discipline, WHY each tier resolved as it did — required
-    # vs. available terrain (EXACT), applicable proxies + fidelity + whether
-    # they're in the cluster (PROXY), indoor machines + whether they're in the
+    # vs. available terrain, the owned/proxy crafts + which of their compatible
+    # terrains are in-cluster (the craft cascade's tiers 1–4), gap-rule proxies
+    # (the non-craft PROXY tier), indoor machines + whether they're in the
     # equipment pool (INDOOR), strength-pool size (STRENGTH) — plus the
     # skill-gate toggle and craft status. A STRENGTH/reallocate outcome is then
     # attributable to a real gap vs. a mis-read/empty terrain/equipment input
@@ -488,8 +471,17 @@ def _build_terrain_feasibility(
         f"_build_terrain_feasibility: user_id={user_id} cluster={cluster} "
         f"terrain_by_locale={_terr_by_loc} equipment_by_locale={_equip_by_loc} "
         f"owned_crafts={sorted(owned_crafts) if owned_crafts else []} "
+        f"craft_terrain={ {c: sorted(t) for c, t in sorted(craft_terrain.items())} } "
         f"skill_gated={dict(sorted(gated.items()))}"
     )
+
+    def _craft_kind_of(disc_id: str) -> str | None:
+        for g in discipline_groups.get(disc_id, []):
+            k = group_kind_by_group.get(g)
+            if k in ("bike", "paddle"):
+                return k
+        return None
+
     for d in included:
         d_id = d.discipline_id
         d_name = name_by_discipline.get(d_id, "?")
@@ -507,7 +499,6 @@ def _build_terrain_feasibility(
                 f"(no terrain requirement) — scheduled as-is"
             )
             continue
-        proxies = sorted({(p, round(f, 2)) for r in req for p, f in gap_rules.get(r, [])})
         machines = list(indoor_machines(d_id))
         res = out.get(d_id)
         tier = res.tier if res is not None else "DROPPED"
@@ -516,12 +507,28 @@ def _build_terrain_feasibility(
             if res is not None and res.craft_tier
             else ""
         )
+        kind = _craft_kind_of(d_id)
+        if kind is not None:
+            # Craft discipline — log the crafts and the terrains they can ride.
+            same_kind = [c for c in sorted(set(owned_crafts)) if craft_kind.get(c) == kind]
+            rideable = {
+                c: sorted((craft_terrain.get(c, set()) & _cluster_terr)) for c in same_kind
+            }
+            detail = (
+                f"craft_kind={kind} owned_same_kind={same_kind} "
+                f"craft_rideable_in_cluster={rideable}"
+            )
+        else:
+            proxies = sorted({(p, round(f, 2)) for r in req for p, f in gap_rules.get(r, [])})
+            detail = (
+                f"proxies={proxies} "
+                f"proxy_in_cluster={[p for p, _f in proxies if p in _cluster_terr]}"
+            )
         print(
             f"  feasibility[{d_id}/{d_name}]: tier={tier}{craft} "
             f"required_terrain={req} "
             f"exact_match={sorted(set(req) & _cluster_terr)} "
-            f"proxies={proxies} "
-            f"proxy_in_cluster={[p for p, _f in proxies if p in _cluster_terr]} "
+            f"{detail} "
             f"indoor_machines={machines} "
             f"machine_in_cluster={[m for m in machines if m in _cluster_equip]} "
             f"strength_pool_n={len(pool_by_discipline.get(d_id, []))}"
@@ -1338,6 +1345,10 @@ _LAYER0_TABLE_FAMILY: dict[str, str] = {
     "modality_groups": "0A",
     "discipline_modality_membership": "0A",
     "craft_discipline_aliases": "0A",
+    # craft_terrain_compatibility (#586 WS-I) is created by migration 0004, not
+    # schema.sql (like terrain_gap_rules); read by the unified craft/terrain
+    # cascade. Same 0A family as its sibling craft_discipline_aliases.
+    "craft_terrain_compatibility": "0A",
     # 0B — exercise library
     "exercises": "0B",
     "sport_exercise_map": "0B",
