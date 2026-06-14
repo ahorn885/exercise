@@ -3,7 +3,7 @@
 **Session:** Shipped the cascade half of WS-I — the rewrite where the live **craft-STRENGTH-preempts-INDOOR** bug actually gets fixed. Replaced the two non-composing feasibility axes (a craft ladder that short-circuited ahead of terrain) with a single nested craft/terrain cascade reading the explicit `craft_terrain_compatibility` map Slice A seeded. WS-I is now complete.
 **Date:** 2026-06-14
 **Predecessor handoff:** `V5_Implementation_WSI_SliceA_CraftEquipmentTaxonomy_2026_06_14_Closing_Handoff_v1.md`
-**Branch / PR:** `claude/zealous-gauss-bl22ek` — PR TBD (scope is WS-I Slice B). Ready for review.
+**Branch / PR:** [#588](https://github.com/ahorn885/exercise/pull/588) (`claude/zealous-gauss-bl22ek` — scope is WS-I Slice B). **Squash-merged to `main`, CI-green.** Closes WS-I (#586).
 **North-star plan:** `plans/Feasibility_Saturation_And_Locale_Retirement_Plan_v1.md` (WS-I).
 **Design:** `designs/CraftEquipment_Taxonomy_And_FeasibilityCascade_Design_v1.md` (§3 cascade, §4 craft↔terrain data).
 **Status:** 6 files (2 code + 4 tests). One over the 5-substantive ceiling; the four test edits were all pre-scoped by the Slice A handoff §6.1 (family-map guard, new tier matrix, §4 stale-fixture cleanup) and are mechanical — flagged here per the ceiling rule.
@@ -79,7 +79,7 @@ No SQL this slice — reads the already-applied `0004`. Behavioral correctness p
 ## 6. Next session pointers
 
 ### 6.1 WS-I is complete
-Taxonomy (Slice A) + cascade (Slice B) both shipped. After the Slice B PR merges, WS-I (#586) closes. **No owed-hands deploy remains** for WS-I (this slice added no DDL).
+Taxonomy (Slice A, #587) + cascade (Slice B, #588) both shipped + squash-merged to `main`. WS-I (#586) closed. **No owed-hands deploy remains** for WS-I (this slice added no DDL).
 
 ### 6.2 Architect-recommended next forward move
 Down the plan's lower-priority arc (pick per the 4-tier next-step order in `CLAUDE.md`):
@@ -142,4 +142,4 @@ Down the plan's lower-priority arc (pick per the 4-tier next-step order in `CLAU
 
 ## 10. Owed Andy's hands (Neon — container has no egress)
 
-**None for WS-I.** This slice added no DDL and reads the already-applied `0004`. Only remaining action: **merge the Slice B PR** when satisfied → WS-I (#586) closes.
+**None for WS-I.** This slice added no DDL and reads the already-applied `0004`. PR #588 squash-merged → WS-I (#586) closed. Nothing owed.

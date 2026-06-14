@@ -13,13 +13,13 @@ Rolling-state for items spanning multiple sessions. **Edit in place** — don't 
 
 ---
 
-## WS-I Slice B — unified craft/terrain feasibility cascade (2026-06-14) — the bug fix; PR TBD
+## WS-I Slice B — unified craft/terrain feasibility cascade (2026-06-14) — the bug fix; PR #588 (merged)
 
-**Cascade-rewrite half of WS-I ([#586](https://github.com/ahorn885/exercise/issues/586)) — WS-I now COMPLETE.** Handoff: `V5_Implementation_WSI_SliceB_UnifiedCraftTerrainCascade_2026_06_14_Closing_Handoff_v1.md`. Branch `claude/zealous-gauss-bl22ek`.
+**Cascade-rewrite half of WS-I ([#586](https://github.com/ahorn885/exercise/issues/586)) — WS-I COMPLETE + MERGED, #586 closed.** Handoff: `V5_Implementation_WSI_SliceB_UnifiedCraftTerrainCascade_2026_06_14_Closing_Handoff_v1.md`. Branch `claude/zealous-gauss-bl22ek`.
 
-- ✅ **Slice B shipped + full suite green (2379 passed, 30 skipped).** Replaced the two non-composing axes with the single nested `resolve_craft_terrain_feasibility` (design §3, tier 3 > tier 4); removed the `orchestrator.py:437` craft-STRENGTH short-circuit. Craftless-with-trainer now resolves INDOOR (the live bug, design §1b). New `_q_craft_terrain_compatibility` reader; tiers 2–4 read `layer0.craft_terrain_compatibility`. Registered it `→0A` in `_LAYER0_TABLE_FAMILY`. Rule #15 logging rewritten. Stale `cycling_trainer` synthetic fixtures (§4) cleaned.
+- ✅ **Slice B shipped + squash-merged to `main` (PR [#588](https://github.com/ahorn885/exercise/pull/588), CI-green); full suite green (2379 passed, 30 skipped).** Replaced the two non-composing axes with the single nested `resolve_craft_terrain_feasibility` (design §3, tier 3 > tier 4); removed the `orchestrator.py:437` craft-STRENGTH short-circuit. Craftless-with-trainer now resolves INDOOR (the live bug, design §1b). New `_q_craft_terrain_compatibility` reader; tiers 2–4 read `layer0.craft_terrain_compatibility`. Registered it `→0A` in `_LAYER0_TABLE_FAMILY`. Rule #15 logging rewritten. Stale `cycling_trainer` synthetic fixtures (§4) cleaned.
 - ✅ **Deploy-ordering satisfied:** Slice B reads + cache-registers `craft_terrain_compatibility`, and `0004` is already on Neon (applied in Slice A) → no prod query against a missing table. The reader degrades (empty dict → tiers 1–4 miss) rather than crashing if the table were absent.
-- ⬜ **Merge the Slice B PR after review** → WS-I closed end-to-end (taxonomy + data + cascade). No further owed-hands deploy for WS-I (no new DDL this slice).
+- ✅ **WS-I closed end-to-end** (taxonomy + data + cascade). No owed-hands deploy for WS-I (no new DDL this slice).
 - 📌 **Profile UI:** no change needed — the craft picker derives from the post-Slice-A `BIKE_TYPES` (no `cycling_trainer`), and "Cycling trainer" is already a `layer0.equipment_items` row, so the INDOOR tier reads it from set C.
 - 🩺 **Local Postgres gate recipe** (no Neon egress): container has PG binaries (`/usr/lib/postgresql/*/bin`), won't run as root → `useradd -m pgrunner` + run `initdb`/`pg_ctl`/the CI gate steps as that user. Reproduces `layer0-gate` exactly.
 
