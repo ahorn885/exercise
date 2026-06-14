@@ -321,7 +321,7 @@ class TestSkillsRoute:
         assert captured['post_step_skills_target'] == '/onboarding/schedule'
         # 2c.2b — the craft picker shares this step.
         assert [c['slug'] for c in captured['craft_catalog']['cycling']] == [
-            'road_bike', 'mountain_bike', 'gravel_bike', 'cycling_trainer']
+            'road_bike', 'mountain_bike', 'gravel_bike']  # cycling_trainer dropped (WS-I, #586)
         assert [c['slug'] for c in captured['craft_catalog']['paddling']] == [
             'kayak', 'canoe', 'packraft']
         assert captured['athlete_crafts'] == {'bike_types': [], 'paddle_crafts': []}

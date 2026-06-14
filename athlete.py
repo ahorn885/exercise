@@ -317,7 +317,11 @@ MTB_SKILL_LEVELS = ('beginner', 'intermediate', 'advanced')
 # with the layer0.craft_discipline_aliases keys (the X1b.3b craft-substitution
 # path — owned craft → discipline). Slugs == EQUIPMENT_CATEGORIES['Cycling
 # Equipment'] tags. Previously left free-text (design wave §3.4).
-BIKE_TYPES = ('road_bike', 'mountain_bike', 'gravel_bike', 'cycling_trainer')
+# WS-I (#586, 2026-06-13): cycling_trainer dropped — a trainer/erg is fixed gear,
+# not a mobile vessel, so it is EQUIPMENT (gym profile), not a craft. Craft =
+# mobile, athlete-owned vessels only. Its craft_discipline_aliases rows retire in
+# the same change (etl/migrations/layer0/0004_*).
+BIKE_TYPES = ('road_bike', 'mountain_bike', 'gravel_bike')
 
 # §D.3 — discipline_baseline_swimming.ow_experience.
 OW_EXPERIENCE_LEVELS = ('none', 'limited', 'experienced')
@@ -334,7 +338,6 @@ CRAFT_LABELS = {
     'road_bike': 'Road bike',
     'mountain_bike': 'Mountain bike',
     'gravel_bike': 'Gravel bike',
-    'cycling_trainer': 'Cycling trainer / smart trainer',
     'kayak': 'Kayak',
     'canoe': 'Canoe',
     'packraft': 'Packraft',
