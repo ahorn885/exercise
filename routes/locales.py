@@ -21,6 +21,11 @@ bp = Blueprint('locales', __name__)
 # location" redirect bounces back there instead of dead-ending on /locales.
 # Mirrors the OAuth return_to convention in routes/coros.py (same safety check).
 _LOCALE_RETURN_TO = 'locale_return_to'
+# Event Windows Slice 2 — `?away=1` on the new-locale flow marks the locale being
+# built as a travel destination (locale_profiles.is_away). Stashed in the session
+# so it survives the multi-step search → ack → save round-trip, then consumed at
+# save (mirrors the return_to stash).
+_LOCALE_AWAY_INTENT = 'locale_away_intent'
 
 
 def _stash_return_to():
@@ -28,6 +33,27 @@ def _stash_return_to():
     rt = request.args.get('return_to')
     if rt and rt.startswith('/') and not rt.startswith('//'):
         session[_LOCALE_RETURN_TO] = rt
+
+
+def _stash_away_intent():
+    """Persist the `?away=1` travel-destination intent for the locale flow."""
+    if request.args.get('away') == '1':
+        session[_LOCALE_AWAY_INTENT] = True
+
+
+def _consume_away_intent() -> bool:
+    """Pop the travel-destination intent (consumed once at save time)."""
+    return bool(session.pop(_LOCALE_AWAY_INTENT, False))
+
+
+def _mark_locale_away(db, uid: int, slug: str) -> None:
+    """Flag a just-created locale as a travel destination so the home-cluster
+    sweep excludes it (locations.cluster_locale_ids). Used by the away
+    inline-create path; a normal locale leaves is_away at its FALSE default."""
+    db.execute(
+        "UPDATE locale_profiles SET is_away = TRUE WHERE user_id = ? AND locale = ?",
+        (uid, slug),
+    )
 
 
 def _locale_flow_redirect():
@@ -800,6 +826,7 @@ def new_locale():
     if request.method == 'POST':
         return _save_mapbox_anchored(db, uid)
     _stash_return_to()
+    _stash_away_intent()
     manual = request.args.get('manual') == '1'
     query = (request.args.get('q') or '').strip()
     # D-59 §6 step 3 — `?upgrade=<slug>` lets athletes flip an existing
@@ -950,7 +977,12 @@ def _save_mapbox_anchored(db, uid: int):
         (uid, slug, locale_name, mapbox_id, lat, lng,
          chain_id, chain_name, category, opt_out, raw_payload or place_name),
     )
-    _ensure_home(db, uid, slug)  # first-locale-auto-home (Track 1 §10)
+    if _consume_away_intent():
+        # Travel destination (Event Windows Slice 2): flag is_away (excluded from
+        # the home cluster) and DON'T auto-home it — an away locale is never home.
+        _mark_locale_away(db, uid, slug)
+    else:
+        _ensure_home(db, uid, slug)  # first-locale-auto-home (Track 1 §10)
     db.commit()
     flash(f'Saved {locale_name}.', 'success')
     if chain_id:
@@ -990,7 +1022,10 @@ def save_manual_locale():
            VALUES (?, ?, ?, ?, ?, ?, TRUE, ?, CURRENT_TIMESTAMP)''',
         (uid, slug, locale_name, address, '', category or None, opt_out),
     )
-    _ensure_home(db, uid, slug)  # first-locale-auto-home (Track 1 §10)
+    if _consume_away_intent():
+        _mark_locale_away(db, uid, slug)  # travel destination — never home
+    else:
+        _ensure_home(db, uid, slug)  # first-locale-auto-home (Track 1 §10)
     db.commit()
     flash(f'Saved {locale_name} (manual entry).', 'success')
     return _locale_flow_redirect()

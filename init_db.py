@@ -2303,6 +2303,16 @@ _PG_MIGRATIONS = [
     # (mirrors the no-CHECK sibling columns sex, doubles_feasible).
     "CREATE TABLE IF NOT EXISTS athlete_event_windows (id SERIAL PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES users(id), start_date DATE NOT NULL, end_date DATE NOT NULL, override_type TEXT NOT NULL, unavailable_locale TEXT, notes TEXT DEFAULT '', created_at TIMESTAMP DEFAULT NOW())",
     "CREATE INDEX IF NOT EXISTS idx_aew_user ON athlete_event_windows(user_id)",
+    # Event Windows Slice 2 (#581 WS-H) — the 'away' override_type: the home
+    # cluster is REPLACED by a destination locale for the window dates. The window
+    # names the destination in away_locale (a locale_profiles.locale slug, picked
+    # or built inline). locale_profiles.is_away marks a row as a travel
+    # destination so it is EXCLUDED from the home-cluster radius sweep
+    # (locations.cluster_locale_ids) — a travel locale is never part of where the
+    # athlete trains day-to-day. DEPLOY ORDERING: apply these BEFORE the Slice-2
+    # code goes live — cluster_locale_ids reads is_away on a hot path.
+    "ALTER TABLE athlete_event_windows ADD COLUMN IF NOT EXISTS away_locale TEXT",
+    "ALTER TABLE locale_profiles ADD COLUMN IF NOT EXISTS is_away BOOLEAN NOT NULL DEFAULT FALSE",
 ]
 
 _CLOTHING_SEEDS = [

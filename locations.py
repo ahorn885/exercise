@@ -116,9 +116,15 @@ def cluster_locale_ids(db: Any, user_id: int) -> list[str]:
         )
         return ids
     home_lat, home_lng = float(home["lat"]), float(home["lng"])
+    # `is_away` locales are event-window travel destinations (Event Windows
+    # Slice 2) — they must NEVER join the home training cluster even when they
+    # fall inside the radius (a hotel in the next town over is still "away", not
+    # part of where the athlete trains day-to-day). Excluded here at the source so
+    # every cluster consumer (feasibility, 2B terrain, 2C equipment) agrees.
     others = db.execute(
         "SELECT locale, lat, lng FROM locale_profiles "
-        "WHERE user_id = ? AND locale != ? AND lat IS NOT NULL AND lng IS NOT NULL",
+        "WHERE user_id = ? AND locale != ? AND lat IS NOT NULL AND lng IS NOT NULL "
+        "AND NOT COALESCE(is_away, FALSE)",
         (user_id, home["locale"]),
     ).fetchall()
     for r in others:

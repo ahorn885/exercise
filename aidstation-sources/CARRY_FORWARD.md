@@ -13,6 +13,22 @@ Rolling-state for items spanning multiple sessions. **Edit in place** — don't 
 
 ---
 
+## WS-H — Event Windows — Slice 2 BUILT (away destinations) (2026-06-14, PR TBD)
+
+**Slice 2 (away windows) built this session.** Handoff: `V5_Implementation_WSH_EventWindows_Slice2_Build_2026_06_14_Closing_Handoff_v1.md`. Branch `claude/eventwindows-slice-2-8nnn3h`. Arc design `designs/Event_Windows_Design_v1.md` §6.
+
+- ✅ **Slice 2 shipped:** the `away` override_type — home cluster REPLACED by a destination `locale_profiles` row for the window dates. `orchestrator._away_env` (destination terrain/equipment via the cluster readers on a single-locale list) + away dispatch in `_build_event_window_overlay` (away wins over co-active subtractive; empty `owned_crafts` per F4 — away craft is Slice 4); `_resolve_included_feasibility` gained an `owned_crafts` kwarg. `locations.cluster_locale_ids` excludes `is_away` locales from the home sweep (load-bearing: a nearby travel dest would else pollute home feasibility). `compute_event_windows_hash` folds `away_locale` (omit-when-None → subtractive digest byte-identical to Slice 1). `per_phase` away label + Trigger-#1 wording ("reduced **or** replaced by a travel destination", **signed off**). Capture: away picker (`is_away` locales) + "+ Add a travel location" → the existing `new_locale` Mapbox wizard via `?away=1&return_to=` (no rewrite; mapbox_id dedup free). Tests: `tests/test_layer4_event_windows.py` now 37 (+8). Suite green (2428 passed / 30 skipped).
+- 🩺 **OWED Andy's hands — apply Slice-2 DDL on Neon BEFORE deploy** (deploy-ordering: `cluster_locale_ids` reads `is_away` on a hot path):
+  ```sql
+  ALTER TABLE athlete_event_windows ADD COLUMN IF NOT EXISTS away_locale TEXT;
+  ALTER TABLE locale_profiles ADD COLUMN IF NOT EXISTS is_away BOOLEAN NOT NULL DEFAULT FALSE;
+  ```
+- ⚠️ **Scope flag:** ~9 substantive files (over the 5-ceiling) — Andy chose full scope (away + full inline create + discriminator) over a pick-existing split.
+- 📌 **Slice order:** ~~1 home-constraint~~ → ~~2 away locale~~ → **3 category baselines** (Trigger #2) → 4 away craft (the literal WS-H (b)+(c); replaces the hard `set()` in `_away_env`'s caller) → 5 capture UX (review-panel hook, nav-link, existing-locale→away toggle).
+- ⬜ **Still deferred (create-first, now covers away too):** refresh-overlay render — wire `orchestrate_plan_refresh` to feed `event_windows_hash` + thread `event_window_segments` into the tier prompts.
+
+---
+
 ## WS-H — Event Windows — Slice 1 BUILT + MERGED (2026-06-14, PR #596); arc design PRs #591+#594 (merged)
 
 **Slice 1 (subtractive home windows) built + squash-merged to `main` this session (PR [#596](https://github.com/ahorn885/exercise/pull/596)).** Handoffs: `V5_Implementation_WSH_EventWindows_Slice1_Build_2026_06_14_Closing_Handoff_v1.md` (build) + `..._Design_..._v1.md` (arc). Design `designs/Event_Windows_Design_v1.md` + Slice-1 spec `designs/Event_Windows_Slice1_HomeWindows_Spec_v1.md`.

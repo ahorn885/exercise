@@ -884,16 +884,23 @@ def _format_session_feasibility(
 
 
 def _event_window_label(segment: "EventWindowSegment") -> str:
-    """Human-readable label for a date-segment's active subtractive overrides
-    (Event Windows Slice 1). Joined with ' + ' when a segment carries more than
-    one (overlapping windows)."""
+    """Human-readable label for a date-segment's active overrides (Event Windows).
+    Joined with ' + ' when a segment carries more than one (overlapping windows).
+    An `away` segment is resolved against its destination alone (the overlay
+    builder discards any co-active subtractive override on away days), so the
+    label leads with the away destination."""
+    away = next(
+        (ov for ov in segment.overrides if ov.override_type == "away"), None
+    )
+    if away is not None:
+        return f"away — training at \"{away.away_locale}\""
     parts: list[str] = []
     for ov in segment.overrides:
         if ov.override_type == "indoor_only":
             parts.append("indoor-only (no outdoor terrain available)")
         elif ov.override_type == "locale_unavailable":
             parts.append(f"\"{ov.unavailable_locale}\" unavailable (closed this window)")
-        else:  # defensive — Slice 2 introduces 'away'
+        else:  # defensive
             parts.append(ov.override_type)
     return " + ".join(parts)
 
@@ -905,17 +912,19 @@ def _format_event_window_overlay(
     layer2a_payload: Layer2APayload | None,
     layer2c_payloads: dict[str, Layer2CPayload],
 ) -> list[str]:
-    """Event Windows Slice 1 (#581 WS-H) — render the date-scoped overlay for any
+    """Event Windows (#581 WS-H) — render the date-scoped overlay for any
     event-window segment overlapping THIS synthesis unit's date window.
 
-    Each segment's environment is a subtraction of the home cluster (Slice 1:
-    `indoor_only` / `locale_unavailable`); its `resolutions` already hold only
-    the disciplines whose routing the window CHANGES, resolved by the existing
-    cascade against the reduced environment. The displayed date range is clipped
-    to the unit window so the synthesizer knows which of THIS block's dates are
-    affected. Empty when no segment overlaps (the common case → no overlay).
+    Each segment's environment differs from the home cluster — a subtraction
+    (Slice 1: `indoor_only` / `locale_unavailable`) or a replacement (Slice 2:
+    `away` at a destination locale); its `resolutions` already hold only the
+    disciplines whose routing the window CHANGES, resolved by the existing cascade
+    against that environment. The displayed date range is clipped to the unit
+    window so the synthesizer knows which of THIS block's dates are affected.
+    Empty when no segment overlaps (the common case → no overlay).
 
-    Wording sign-off: Andy 2026-06-14 (Trigger #1)."""
+    Wording sign-off: Andy 2026-06-14 (Slice 1) + 2026-06-14 (Slice 2 away
+    variant), Trigger #1."""
     if not event_window_segments or unit_start is None or unit_end is None:
         return []
     overlapping = [
@@ -935,11 +944,13 @@ def _format_event_window_overlay(
     out: list[str] = [
         "=== Event-window overlay (deterministic — date-scoped routing) ===",
         "Part of this block falls inside a declared event window where the "
-        "training environment is reduced. On the dates below, routing differs "
-        "from the default feasibility block above. Compose any session dated "
-        "within a window against THAT window's routing; sessions outside the "
-        "windows use the default. Counts are unchanged — a session that lands on "
-        "a window day is composed at that day's environment, never dropped.",
+        "training environment differs from home — either reduced (indoor-only, or "
+        "a closed locale) or replaced by a travel destination. On the dates below, "
+        "routing differs from the default feasibility block above. Compose any "
+        "session dated within a window against THAT window's routing; sessions "
+        "outside the windows use the default. Counts are unchanged — a session "
+        "that lands on a window day is composed at that day's environment, never "
+        "dropped.",
     ]
     for seg in sorted(overlapping, key=lambda s: (s.start_date, s.end_date)):
         disp_start = max(seg.start_date, unit_start)
@@ -958,9 +969,9 @@ def _format_event_window_overlay(
             )
     out.append(
         "Placement preference (soft): where a discipline's weekly count leaves a "
-        "choice of days, prefer scheduling its outdoor-dependent sessions on the "
-        "unconstrained days; let indoor/strength-appropriate work fall on the "
-        "window days."
+        "choice of days, prefer placing each session on a day whose environment "
+        "supports it as prescribed (outdoor-dependent work on unconstrained/home "
+        "days); let indoor/strength-appropriate work fall on the window days."
     )
     out.append("")
     return out

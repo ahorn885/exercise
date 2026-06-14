@@ -461,23 +461,27 @@ def _resolve_included_feasibility(
     locale_order: list[str],
     terrain_by_locale: dict[str, set[str]],
     equip_by_locale: dict[str, set[str]],
+    owned_crafts: set[str] | None = None,
 ) -> dict[str, TerrainResolution]:
     """Run the existing EXACT→PROXY→INDOOR→STRENGTH→REALLOCATE cascade for every
     included, non-skill-gated discipline against the supplied environment.
 
     The logic is identical for the home cluster and for an event window's reduced
-    environment — only the `(locale_order, terrain, equipment)` inputs differ
-    (Andy 2026-06-14: a window is just different terrain/equipment, not new
-    resolution logic). Craft disciplines (bike/paddle) walk the unified
-    craft/terrain cascade; it returns None for non-craft disciplines, which fall
-    back to the terrain-only cascade."""
+    or replaced environment — only the `(locale_order, terrain, equipment)` inputs
+    differ (Andy 2026-06-14: a window is just different terrain/equipment, not new
+    resolution logic). `owned_crafts` defaults to the athlete's home set
+    (`fi.owned_crafts`); an `away` segment passes the empty set (F4 — no brought
+    craft away unless declared, which is Slice 4). Craft disciplines (bike/paddle)
+    walk the unified craft/terrain cascade; it returns None for non-craft
+    disciplines, which fall back to the terrain-only cascade."""
+    crafts = fi.owned_crafts if owned_crafts is None else owned_crafts
     out: dict[str, TerrainResolution] = {}
     for d in fi.included:
         if d.discipline_id in fi.gated:
             continue
         resolution = resolve_craft_terrain_feasibility(
             d.discipline_id,
-            owned_crafts=fi.owned_crafts,
+            owned_crafts=crafts,
             craft_disciplines=fi.craft_disciplines,
             craft_group_kind=fi.craft_kind,
             discipline_groups=fi.discipline_groups,
@@ -658,6 +662,20 @@ def _reduced_env(
     return locale_order, terrain, equip
 
 
+def _away_env(
+    db: Any, user_id: int, away_locale: str
+) -> tuple[list[str], dict[str, set[str]], dict[str, set[str]]]:
+    """Build the REPLACEMENT environment for an `away` segment (Slice 2): the
+    destination locale's own terrain + equipment, read via the same cluster
+    readers applied to a single-locale "cluster". The home cluster is discarded
+    — an away day resolves entirely against the destination. Brought craft is NOT
+    carried here (F4); the caller passes the empty craft set so away bike/paddle
+    disciplines degrade through indoor/strength until declared (Slice 4)."""
+    terrain = locations.cluster_terrain_by_locale(db, user_id, [away_locale])
+    equip = locations.cluster_equipment_by_locale(db, user_id, [away_locale])
+    return [away_locale], terrain, equip
+
+
 def _build_event_window_overlay(
     db: Any,
     user_id: int,
@@ -667,9 +685,11 @@ def _build_event_window_overlay(
     plan_end: date,
     home_feasibility: dict[str, TerrainResolution],
 ) -> tuple[list[EventWindowSegment], list[Any]]:
-    """Event Windows Slice 1 (#581 WS-H) — date-segment the plan span by the
-    athlete's declared event windows and resolve the EXISTING cascade once per
-    reduced environment. Returns `(segments, overlapping_windows)`:
+    """Event Windows (#581 WS-H) — date-segment the plan span by the athlete's
+    declared event windows and resolve the EXISTING cascade once per distinct
+    environment — reduced (Slice 1: `indoor_only` / `locale_unavailable`) or
+    replaced (Slice 2: `away` at a destination locale). Returns
+    `(segments, overlapping_windows)`:
 
       - `segments` — the atomic date sub-ranges whose routing DIFFERS from home,
         each carrying only the changed disciplines (the synthesis overlay
@@ -687,11 +707,12 @@ def _build_event_window_overlay(
         return [], []
     fi = _gather_feasibility_inputs(db, user_id, cone)
     if fi is None:
-        # No resolvable home cluster — windows can't subtract from an empty env.
-        # Still surface the overlapping windows so the cache key reflects them.
+        # No resolvable home cluster (WS-C gates onboarding on a home, so this is
+        # degenerate). Windows can't resolve against an empty env; still surface
+        # the overlapping windows so the cache key reflects them.
         print(
             f"event_window_overlay: user_id={user_id} {len(overlapping)} window(s) "
-            f"overlap the plan span but cluster=[] — no reduced-env resolution"
+            f"overlap the plan span but cluster=[] — no windowed-env resolution"
         )
         return [], overlapping
 
@@ -699,26 +720,44 @@ def _build_event_window_overlay(
         (
             w.start_date,
             w.end_date,
-            EventWindowOverride(w.override_type, w.unavailable_locale),
+            EventWindowOverride(w.override_type, w.unavailable_locale, w.away_locale),
         )
         for w in overlapping
     ]
     segments: list[EventWindowSegment] = []
     for seg_start, seg_end, active in segment_window_boundaries(plan_start, plan_end, raw):
-        locale_order, terrain, equip = _reduced_env(fi, active)
-        reduced = _resolve_included_feasibility(
-            fi,
-            locale_order=locale_order,
-            terrain_by_locale=terrain,
-            equip_by_locale=equip,
-        )
-        changed = {d: r for d, r in reduced.items() if home_feasibility.get(d) != r}
+        away_ovs = [ov for ov in active if ov.override_type == "away"]
+        if away_ovs:
+            # away REPLACES the home cluster. If more than one away window
+            # overlaps the same days (a declaration error — you can't be in two
+            # places), the deterministic first (sorted by away_locale) wins.
+            # Any subtractive overrides on an away day are moot (you can't be
+            # "indoor-only at home" while away) and are ignored.
+            away_locale = away_ovs[0].away_locale
+            locale_order, terrain, equip = _away_env(db, user_id, away_locale)
+            windowed = _resolve_included_feasibility(
+                fi,
+                locale_order=locale_order,
+                terrain_by_locale=terrain,
+                equip_by_locale=equip,
+                owned_crafts=set(),
+            )
+        else:
+            locale_order, terrain, equip = _reduced_env(fi, active)
+            windowed = _resolve_included_feasibility(
+                fi,
+                locale_order=locale_order,
+                terrain_by_locale=terrain,
+                equip_by_locale=equip,
+            )
+        changed = {d: r for d, r in windowed.items() if home_feasibility.get(d) != r}
         # Rule #15 (spec §7): name, per discipline, the tier the cascade landed
         # on for this segment — so a surprising windowed-day plan is diagnosable
         # from logs alone (never assuming indoor/strength).
         _ov = ",".join(
             ov.override_type
             + (f":{ov.unavailable_locale}" if ov.unavailable_locale else "")
+            + (f"@{ov.away_locale}" if ov.away_locale else "")
             for ov in active
         )
         print(

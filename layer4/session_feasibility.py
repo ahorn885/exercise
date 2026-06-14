@@ -595,19 +595,27 @@ def grid_annotation(resolution: TerrainResolution) -> str:
 
 @dataclass(frozen=True)
 class EventWindowOverride:
-    """One subtractive override active over a date-segment. `unavailable_locale`
-    is the `locale_profiles.locale` slug for `locale_unavailable`, else None."""
+    """One environment override active over a date-segment.
 
-    override_type: Literal["indoor_only", "locale_unavailable"]
+    The first two types SUBTRACT from the home cluster (Slice 1):
+    `unavailable_locale` is the `locale_profiles.locale` slug for
+    `locale_unavailable`, else None. The third REPLACES it (Slice 2): `away`
+    carries `away_locale`, the destination `locale_profiles.locale` slug whose
+    terrain/equipment the segment resolves against instead of the home cluster."""
+
+    override_type: Literal["indoor_only", "locale_unavailable", "away"]
     unavailable_locale: str | None = None
+    away_locale: str | None = None
 
 
 @dataclass(frozen=True)
 class EventWindowSegment:
-    """An atomic date sub-range of the plan span whose environment is a
-    subtraction of the home cluster, plus the per-discipline resolutions the
-    window CHANGES. `resolutions` holds only the disciplines whose reduced-env
-    routing differs from the home resolution — the set the synthesis overlay
+    """An atomic date sub-range of the plan span whose environment differs from
+    the home cluster — a subtraction (Slice 1: `indoor_only` / `locale_unavailable`)
+    or a replacement (Slice 2: `away` at a destination locale) — plus the
+    per-discipline resolutions the window CHANGES. `resolutions` holds only the
+    disciplines whose windowed-env routing differs from the home resolution — the
+    set the synthesis overlay
     renders (an empty change-set means the window is a no-op for this athlete's
     disciplines and the segment is not emitted)."""
 
@@ -653,7 +661,11 @@ def segment_window_boundaries(
         active = tuple(
             sorted(
                 (ov for (s, e, ov) in clamped if s <= seg_start and e >= seg_end),
-                key=lambda o: (o.override_type, o.unavailable_locale or ""),
+                key=lambda o: (
+                    o.override_type,
+                    o.unavailable_locale or "",
+                    o.away_locale or "",
+                ),
             )
         )
         if active:

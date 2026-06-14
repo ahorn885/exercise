@@ -102,32 +102,42 @@ def compute_terrain_feasibility_hash(terrain_feasibility: dict[str, Any]) -> str
 
 
 def compute_event_windows_hash(windows: list[Any]) -> str:
-    """Event Windows Slice 1 (#581 WS-H) — SHA-256 of the declared event windows
+    """Event Windows (#581 WS-H) — SHA-256 of the declared event windows
     overlapping the plan span.
 
     Each window contributes `(override_type, start_date, end_date,
-    unavailable_locale)` — the declared inputs, NOT the derived resolutions (the
-    cluster terrain/equipment that resolution depends on is already keyed via
-    `compute_terrain_feasibility_hash`). Sorted for a stable digest. Folds into
-    `plan_create_key` / `plan_refresh_key`; the caller passes None when no window
-    overlaps the span so the key collapses to '' and stays byte-identical to the
-    pre-Slice-1 key (the no-windows regression criterion).
+    unavailable_locale)` plus `away_locale` for `away` windows — the declared
+    inputs, NOT the derived resolutions (the cluster/destination terrain/equipment
+    resolution depends on is already keyed via `compute_terrain_feasibility_hash`
+    for home; an away destination's profile edits change its own equipment, which
+    the F6 arrival-regen loop handles via cache eviction). `away_locale` is
+    OMITTED from the per-window dict when unset, so a subtractive-only window
+    hashes byte-identically to the Slice-1 digest (no needless cache bust).
+    Sorted for a stable digest. Folds into `plan_create_key` / `plan_refresh_key`;
+    the caller passes None when no window overlaps the span so the key collapses
+    to '' and stays byte-identical to the pre-Event-Windows key (the no-windows
+    regression criterion).
     """
+    def _window_dict(w: Any) -> dict[str, Any]:
+        d = {
+            "override_type": w.override_type,
+            "start_date": w.start_date,
+            "end_date": w.end_date,
+            "unavailable_locale": w.unavailable_locale,
+        }
+        away = getattr(w, "away_locale", None)
+        if away:
+            d["away_locale"] = away
+        return d
+
     flat = sorted(
-        (
-            {
-                "override_type": w.override_type,
-                "start_date": w.start_date,
-                "end_date": w.end_date,
-                "unavailable_locale": w.unavailable_locale,
-            }
-            for w in windows
-        ),
+        (_window_dict(w) for w in windows),
         key=lambda d: (
             d["start_date"],
             d["end_date"],
             d["override_type"],
             d["unavailable_locale"] or "",
+            d.get("away_locale") or "",
         ),
     )
     return _sha256_hex(canonical_json(flat))

@@ -635,17 +635,24 @@ def event_windows():
     db = get_db()
     uid = current_user_id()
     windows = load_event_windows(db, uid)
-    locales = [
-        r['locale']
-        for r in db.execute(
-            "SELECT locale FROM locale_profiles WHERE user_id = ? ORDER BY locale",
-            (uid,),
-        ).fetchall()
+    # Home-cluster locales feed the `locale_unavailable` picker; travel
+    # destinations (is_away, Slice 2) feed the `away` picker. A locale is one or
+    # the other, never both, so split them by the flag.
+    rows = db.execute(
+        "SELECT locale, locale_name, COALESCE(is_away, FALSE) AS is_away "
+        "FROM locale_profiles WHERE user_id = ? ORDER BY locale",
+        (uid,),
+    ).fetchall()
+    locales = [r['locale'] for r in rows if not r['is_away']]
+    away_locales = [
+        {'locale': r['locale'], 'label': r['locale_name'] or r['locale']}
+        for r in rows if r['is_away']
     ]
     return render_template(
         'profile/event_windows.html',
         windows=windows,
         locales=locales,
+        away_locales=away_locales,
         override_types=OVERRIDE_TYPES,
     )
 
@@ -670,6 +677,7 @@ def add_event_window_route():
             end_date=end,
             override_type=(request.form.get('override_type') or '').strip(),
             unavailable_locale=(request.form.get('unavailable_locale') or None),
+            away_locale=(request.form.get('away_locale') or None),
             notes=(request.form.get('notes') or '').strip(),
         )
     except EventWindowError as exc:
