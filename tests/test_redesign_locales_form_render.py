@@ -220,3 +220,90 @@ def test_event_windows_capture_renders_away_create_link():
     assert 'own page</a>' in html and '/locales' in html
     # Strict-CSP: no inline style/handlers.
     assert 'style="' not in html and 'onclick=' not in html
+    # Slice 5b: no plan-gen round-trip when reached standalone (no return_to) —
+    # the back-link banner stays hidden.
+    assert 'Back to plan generation' not in html
+
+
+def test_event_windows_renders_plan_gen_round_trip_when_return_to_set():
+    """Slice 5b (WS-H #581): reached from the plan-gen review panel, the page
+    shows a 'back to plan generation' link and threads return_to through the
+    add/delete forms so the round-trip survives an edit."""
+    html = _render('profile/event_windows.html',
+                   windows=[],
+                   locales=['home'],
+                   override_types=('indoor_only', 'locale_unavailable', 'away'),
+                   craft_catalog={'cycling': [], 'paddling': []},
+                   return_to='/plans/v2/new')
+    assert 'Back to plan generation' in html
+    assert 'href="/plans/v2/new"' in html
+    # The add form preserves return_to so an append bounces back to create.
+    assert 'name="return_to"' in html and 'value="/plans/v2/new"' in html
+    # The inline new-location create link nests return_to so creating a
+    # destination still lands back in the round-trip.
+    assert '/plans/v2/new' in html
+    assert 'style="' not in html and 'onclick=' not in html
+
+
+# ─── plan_create/new_form.html — Slice 5b event-windows review panel ──────
+
+
+def _ew(start, end, override_type, **kw):
+    import types as _types
+    from datetime import date as _date
+    return _types.SimpleNamespace(
+        start_date=_date.fromisoformat(start),
+        end_date=_date.fromisoformat(end),
+        override_type=override_type,
+        unavailable_locale=kw.get('unavailable_locale'),
+        away_locale=kw.get('away_locale'),
+        brought_craft=kw.get('brought_craft', ()),
+        notes=kw.get('notes', ''),
+    )
+
+
+def test_plan_create_form_lists_event_windows_for_review():
+    """The create form surfaces upcoming windows for review at plan generation
+    (F1) and links to the dedicated editor with a return_to back here."""
+    html = _render('plan_create/new_form.html',
+                   race_event=None,
+                   today_iso='2026-06-14',
+                   event_windows=[
+                       _ew('2026-07-03', '2026-07-05', 'away',
+                           away_locale='belfast-hotel', brought_craft=('packraft',)),
+                       _ew('2026-08-12', '2026-08-12', 'indoor_only'),
+                   ])
+    assert 'app-shell' in html
+    assert 'Event windows' in html
+    assert 'belfast-hotel' in html and 'packraft' in html
+    assert 'Indoor only' in html
+    # Round-trip into the dedicated editor, returning to the create form.
+    assert '/profile/event-windows?return_to=' in html
+    assert 'Add / edit event windows' in html
+    assert 'style="' not in html and 'onclick=' not in html
+
+
+def test_plan_create_form_empty_event_windows_prompts_declaration():
+    """With no upcoming windows the panel still renders the edit link + a
+    prompt to declare any travel/indoor windows."""
+    html = _render('plan_create/new_form.html',
+                   race_event=None,
+                   today_iso='2026-06-14',
+                   event_windows=[])
+    assert 'No upcoming event windows' in html
+    assert '/profile/event-windows?return_to=' in html
+
+
+# ─── Slice 5b open-redirect guard on the round-trip return_to ─────────────
+
+
+def test_event_windows_return_to_rejects_non_local_paths():
+    """The plan-gen round-trip return_to must be a local same-site path — an
+    absolute/protocol-relative URL is dropped so it can't become an open
+    redirect (mirrors routes/locales._stash_return_to)."""
+    from routes.profile import _safe_local_path
+    assert _safe_local_path('/plans/v2/new') == '/plans/v2/new'
+    assert _safe_local_path('//evil.example.com') is None
+    assert _safe_local_path('https://evil.example.com') is None
+    assert _safe_local_path('') is None
+    assert _safe_local_path(None) is None

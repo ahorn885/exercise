@@ -627,7 +627,28 @@ def save_crafts():
 # Minimal capture: list + add + delete of date-bounded SUBTRACTIVE home windows
 # (`indoor_only` / `locale_unavailable`). Plan generation date-segments the plan
 # span against these and resolves the existing feasibility cascade per reduced
-# environment. (Nav-linking + the plan-gen review-panel hook are Slice-5 polish.)
+# environment. (Nav-linking shipped in Slice 5a; the plan-gen review-panel
+# round-trip — `?return_to` below — is Slice 5b.)
+
+
+def _safe_local_path(value):
+    """A `?return_to` / form return path is honored only when it's a local,
+    same-site path — mirrors `routes/locales._stash_return_to`'s safety check so
+    the plan-gen round-trip can't be turned into an open redirect."""
+    if value and value.startswith('/') and not value.startswith('//'):
+        return value
+    return None
+
+
+def _event_windows_redirect(return_to):
+    """Redirect back to the event-windows page, PRESERVING a safe `return_to` so
+    the Slice-5b 'back to plan generation' link survives across an add/delete
+    write (each of which redirects here). `url_for` drops a None query arg, so a
+    standalone visit (no round-trip) lands on the bare page unchanged."""
+    return redirect(
+        url_for('profile.event_windows', return_to=_safe_local_path(return_to))
+    )
+
 
 @bp.route('/event-windows')
 def event_windows():
@@ -651,6 +672,11 @@ def event_windows():
         # catalog. (The standing craft↔locale (b) capture moved to the per-locale
         # edit page in Slice 5.)
         craft_catalog=load_craft_catalog(),
+        # Slice 5b (#581 WS-H) — when the athlete reached this page from the
+        # plan-gen review panel, thread the create-form path through so the
+        # add/delete forms preserve it and the "back to plan generation" link can
+        # round-trip them back to where they started.
+        return_to=_safe_local_path(request.args.get('return_to')),
     )
 
 
@@ -660,12 +686,13 @@ def add_event_window_route():
     override/locale rules), then evict the plan-gen caches it feeds."""
     db = get_db()
     uid = current_user_id()
+    return_to = request.form.get('return_to')
     try:
         start = date.fromisoformat((request.form.get('start_date') or '').strip())
         end = date.fromisoformat((request.form.get('end_date') or '').strip())
     except ValueError:
         flash('Enter valid start and end dates.', 'error')
-        return redirect(url_for('profile.event_windows'))
+        return _event_windows_redirect(return_to)
     try:
         add_event_window(
             db,
@@ -680,11 +707,11 @@ def add_event_window_route():
         )
     except EventWindowError as exc:
         flash(str(exc), 'error')
-        return redirect(url_for('profile.event_windows'))
+        return _event_windows_redirect(return_to)
     db.commit()
     evict_plan_caches_on_event_windows_change(db, uid)
     flash('Event window saved.', 'success')
-    return redirect(url_for('profile.event_windows'))
+    return _event_windows_redirect(return_to)
 
 
 @bp.route('/event-windows/<int:window_id>/delete', methods=['POST'])
@@ -696,7 +723,7 @@ def delete_event_window_route(window_id):
     db.commit()
     evict_plan_caches_on_event_windows_change(db, uid)
     flash('Event window removed.', 'success')
-    return redirect(url_for('profile.event_windows'))
+    return _event_windows_redirect(request.form.get('return_to'))
 
 
 @bp.route('/connections/<provider>/disconnect', methods=['POST'])
