@@ -650,6 +650,35 @@ def _event_windows_redirect(return_to):
     )
 
 
+# Form-state preservation (#608 item 2, WS-H) — creating a not-yet-saved away
+# destination mid-capture round-trips out to /locales/new and back; without this
+# the half-filled window form would reset (strict CSP forbids the inline-JS
+# client-side fix). Stash the in-progress form in the session, consumed once on
+# the next render, so the round-trip returns to a repopulated form. Mirrors the
+# locale flow's own session-stashed return_to (routes/locales._stash_return_to).
+_EVENT_WINDOW_DRAFT = 'event_window_draft'
+
+
+def _stash_event_window_draft(form):
+    """Persist the in-progress add-window form across a /locales/new round-trip."""
+    from flask import session as flask_session
+    flask_session[_EVENT_WINDOW_DRAFT] = {
+        'start_date': (form.get('start_date') or '').strip(),
+        'end_date': (form.get('end_date') or '').strip(),
+        'override_type': (form.get('override_type') or '').strip(),
+        'unavailable_locale': (form.get('unavailable_locale') or '').strip(),
+        'away_locale': (form.get('away_locale') or '').strip(),
+        'brought_craft': form.getlist('brought_craft'),
+        'notes': (form.get('notes') or '').strip(),
+    }
+
+
+def _pop_event_window_draft():
+    """Return + clear any stashed add-window draft (consumed once on render)."""
+    from flask import session as flask_session
+    return flask_session.pop(_EVENT_WINDOW_DRAFT, None)
+
+
 @bp.route('/event-windows')
 def event_windows():
     """List + capture the athlete's event windows."""
@@ -677,6 +706,9 @@ def event_windows():
         # add/delete forms preserve it and the "back to plan generation" link can
         # round-trip them back to where they started.
         return_to=_safe_local_path(request.args.get('return_to')),
+        # #608 item 2 — repopulate the add-window form after an inline
+        # new-location round-trip (consumed once); None on a normal visit.
+        draft=_pop_event_window_draft(),
     )
 
 
@@ -724,6 +756,24 @@ def delete_event_window_route(window_id):
     evict_plan_caches_on_event_windows_change(db, uid)
     flash('Event window removed.', 'success')
     return _event_windows_redirect(request.form.get('return_to'))
+
+
+@bp.route('/event-windows/new-locale', methods=['POST'])
+def event_window_new_locale_route():
+    """Hand off to the locale builder to create a not-yet-saved away destination
+    mid-window-capture, preserving the in-progress form (#608 item 2). Stashes
+    the add-window draft (repopulated on return), then redirects to /locales/new
+    with a return_to back here that itself carries any plan-gen return_to."""
+    uid = current_user_id()
+    _stash_event_window_draft(request.form)
+    return_to = _safe_local_path(request.form.get('return_to'))
+    back = url_for('profile.event_windows', return_to=return_to)
+    print(
+        f"event_window_draft_stash: user={uid} "
+        f"override={(request.form.get('override_type') or '').strip()!r} "
+        f"return_to={return_to!r} -> locales.new_locale"
+    )
+    return redirect(url_for('locales.new_locale', return_to=back))
 
 
 @bp.route('/connections/<provider>/disconnect', methods=['POST'])
