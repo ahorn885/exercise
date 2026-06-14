@@ -1,7 +1,7 @@
 # Event Windows — Slice 1: subtractive home windows — Build Spec v1
 
 **Parent design:** `designs/Event_Windows_Design_v1.md` (forks ratified 2026-06-14). **This is the Slice-1 build spec** — the smallest end-to-end vertical: `indoor_only` + `locale_unavailable` home windows, consumed by plan-gen.
-**Status:** SPEC — **one ratification gate remains: §4 the grid↔synthesis seam (Trigger #5).** Build after Andy picks the seam option. DDL owed Andy's hands.
+**Status:** SPEC — **BUILD-READY.** §4 seam ratified Option A (Andy 2026-06-14, with the cascade-resolves-the-tier correction). Remaining: Trigger-#1 prompt wording (at build) + DDL apply on Neon (owed Andy's hands).
 **Date:** 2026-06-14
 
 ---
@@ -50,14 +50,18 @@ Constraints kept in app code (mirrors the project's no-CHECK convention): `end_d
 
 **The problem.** The deterministic grid emits **weekly per-discipline counts** (`session_grid.DisciplineAllocation.sessions_this_week`); the LLM **places** them on days (`per_phase` synthesis). A window covers *part* of a week (each grid week → a date range via `per_phase.py:1647-1654` `phase_spec.start_date + (week-1)*7`). So within one week a discipline can be feasible on some days and not others. How do per-day constraints meet weekly counts?
 
-**Shared mechanics (both options).** Per (phase, week): compute the week's date range, find overlapping windows, and derive `constrained_days` (the dates under each subtraction) and `unconstrained_days = 7 − |days under a subtraction that makes discipline D infeasible|`. Resolve `_build_terrain_feasibility` for the reduced environment (home maps minus outdoor terrain, or minus locale L) — **no new resolver, just a smaller locale/terrain input** (design §5).
+**Shared mechanics (both options).** Per (phase, week): compute the week's date range (`per_phase.py:1647-1654`), find overlapping windows, and resolve `_build_terrain_feasibility` **per distinct environment present that week** — the default home cluster AND the reduced environment (home minus outdoor terrain for `indoor_only`, or minus locale L for `locale_unavailable`). **No new resolver — just a smaller locale/terrain input** (design §5). Each day then has an active environment, hence a per-(day, discipline) cascade tier. `good_days(D)` = the days whose active environment gives D its **primary** (default-home) tier; the rest are the window days where D takes its **reduced-environment** tier (which the cascade may still resolve to a valid outdoor terrain).
 
-### Option A — deterministic overflow retiering (RECOMMENDED)
-For each discipline D infeasible under the week's subtraction:
-- if `D.sessions_this_week ≤ unconstrained_days` → **keep count + normal tier**; emit a placement directive ("place D's sessions on the non-constrained days: <dates>"). The LLM just avoids the constrained days. **No substitution** (the common case — a 1-2 day window with slack).
-- else → the overflow `(sessions_this_week − unconstrained_days)` sessions are **deterministically retiered** to the constrained-env substitution (indoor/strength), exactly like the existing feasibility/E2 substitution; the remainder stay normal on the good days.
+### Option A — deterministic overflow retiering (RATIFIED, Andy 2026-06-14)
+**Key correction (Andy): the overflow tier is NOT a fixed indoor/strength downgrade — it's whatever the per-environment cascade resolves.** These are *events*, so the changed environment gets its own full `resolve_craft_terrain_feasibility` pass and may land on a **different-but-valid outdoor terrain** (a hotel-neighborhood run, scree-running in the Alps), **another cluster locale** (`locale_unavailable` where the discipline still has terrain elsewhere in the cluster), **indoor**, *or* **strength** — whatever that environment yields. The seam never assumes a downgrade.
 
-*Deterministic for count/substitution; the LLM only places within allowed days (its existing job).* Fits the arc's "deterministic defensive routes; reserve the LLM for content" principle (Andy 2026-06-13). Reuses the cascade's substitution concept; the only new code is the per-week constrained-days arithmetic + the directive.
+So, per (week, discipline), let **`good_days(D)`** = the days in the week whose active environment resolves D to its **primary desired tier** (the home/default resolution), and let the **reduced tier** = D's cascade tier under the window's environment (which itself may still be a fine outdoor tier):
+- if `D.sessions_this_week ≤ |good_days(D)|` → **all sessions at the primary tier**; emit a placement directive ("place D's sessions on `<good_days>`"). The LLM just avoids the windowed days. **No retier** (the common 1-2-day-slack case).
+- else → the overflow `(sessions_this_week − |good_days(D)|)` sessions are **deterministically retiered to D's reduced-environment cascade tier** (different terrain / another locale / indoor / strength — per the cascade, not assumed), placed on the windowed days; the remainder stay primary on the good days.
+
+For Slice 1's home subtractions the reduced tier usually resolves to: `indoor_only` → indoor/strength (no outdoor terrain remains); `locale_unavailable` → often **unchanged** (the discipline still has terrain at another cluster locale → no retier at all), else indoor/strength. The away outdoor cases (hotel run, Alps scree) ride the **same** mechanism in Slice 2 — the cascade simply resolves the destination's real terrain.
+
+*Deterministic for count + tier; the LLM only places within the named days (its existing job).* Fits the arc's "deterministic defensive routes; reserve the LLM for content" principle (Andy 2026-06-13). The only new code is the per-(week,discipline) good-days arithmetic + the directive; the tier itself reuses the existing cascade.
 
 ### Option B — LLM placement-feasibility
 Feed the date→environment map + per-environment tiers; instruct the LLM to place feasible-where-feasible and substitute when it can't fit. Less new deterministic code, but pushes the *which-substitutes* decision to the LLM — the exact probabilistic-defensive-route shape the saturation arc was built to remove. **Not recommended.**
@@ -87,7 +91,7 @@ The DDL migration rides in `init_db.py` (bookkeeping-adjacent; the substantive l
 
 ## 7. Rule #15 logging
 
-Per (phase, week) with an active window, print the inputs + decision: `event_window_overlay: <phase>:w<W> dates=<range> override=<indoor_only|locale_unavailable:L> constrained_days=<n> unconstrained_days=<n> retiered={D-008:1,...}`. So a surprising away-day plan is diagnosable from logs alone (Rule #15).
+Per (phase, week) with an active window, print the inputs + decision: `event_window_overlay: <phase>:w<W> dates=<range> override=<indoor_only|locale_unavailable:L> good_days={D-008:5,...} retiered={D-008:[1→indoor],...}` — naming, per retiered session, the **tier the cascade landed on** (not assuming indoor/strength). So a surprising windowed-day plan is diagnosable from logs alone (Rule #15).
 
 ---
 
@@ -103,20 +107,20 @@ Per (phase, week) with an active window, print the inputs + decision: `event_win
 ## 9. Test scenarios
 1. No windows → identical grid + feasibility + cache key. *Regression.*
 2. `indoor_only` 2 days, discipline has slack → count kept, directive names the good days, no substitution.
-3. `indoor_only` covering ≥ enough days that an outdoor count can't fit → deterministic overflow retiers the excess to indoor/strength (count conserved across disciplines).
-4. `locale_unavailable` on the only climbing gym → climbing routes to another cluster locale; park unaffected.
-5. `locale_unavailable` on a park (terrain) → trail run routes to another trail locale or substitutes; gym unaffected.
+3. `indoor_only` covering enough days that an outdoor count can't fit the good days → deterministic overflow retiers the excess to its reduced-env tier (indoor/strength, since no outdoor remains); count conserved across disciplines.
+4. `locale_unavailable` on a park where **another cluster locale has the same terrain** → trail run stays `exact` at the fallback locale (**no retier** — the "not always a downgrade" case); the gym is unaffected.
+5. `locale_unavailable` on the **only** locale with a terrain → that discipline's window-day sessions retier to whatever the cascade then resolves (indoor/strength); other disciplines unaffected.
 6. Cache: add/move/delete a window → only overlapping weeks’ synthesis recomputes.
 7. Rule #15 line present + correct on a windowed week.
 
 ---
 
 ## 10. Open items / sign-off
-- **§4 seam: Option A vs B — the one ratification gate.** (Recommend A.)
-- Trigger-#1 feasibility-block + placement-directive wording — at build.
+- **§4 seam — RATIFIED Option A** (Andy 2026-06-14), with the correction that the retier tier is the per-environment **cascade** result (may be valid outdoor / another locale / indoor / strength), never an assumed downgrade. **Spec is build-ready.**
+- Trigger-#1 feasibility-block + placement-directive wording — at build (the only remaining sign-off).
 - DDL apply on Neon — owed Andy's hands.
 
 ## 11. Gut check
 - **The seam is the whole risk; everything else is mechanical.** Option A localizes the new determinism to a small per-week arithmetic and keeps the LLM in its existing placement lane — lowest-surprise path. If A's overflow rule feels too clever, the fallback isn't B (probabilistic) but "fail the week to the existing E2/strength path" — uglier but still deterministic.
-- **Counts-conserved claim depends on the overflow retier** behaving like the E2 substitution (strength/indoor in-place), so volume is preserved, not dropped — consistent with E2's "never drop training time."
+- **Counts-conserved claim depends on the overflow retier** composing the session at its reduced-env cascade tier *in place* (different terrain / locale / indoor / strength), so volume is preserved, not dropped — consistent with E2's "never drop training time."
 - **What might bite:** a week split across many tiny windows (Slice 2's 3-4-locations case) makes `unconstrained_days` per-discipline bookkeeping fiddlier — but Slice 1 is home-only (at most indoor_only + a locale drop), so the arithmetic stays simple here; the multi-window stress lands in Slice 2 by design.
