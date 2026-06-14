@@ -3,7 +3,7 @@
 **Session:** Built **Slice 2b** of the Event-Windows arc — the UX follow-up Slice 2a explicitly deferred. The away-window capture on `/profile/event-windows` now lets the athlete **create a not-yet-saved destination during window capture** by linking into the existing `/locales/new` Mapbox flow with a `return_to` back to the event-windows page. Pure UX over the schema 2a shipped; **no new route, no schema, no DDL.**
 **Date:** 2026-06-14
 **Predecessor handoff:** `V5_Implementation_WSH_EventWindows_Slice2a_AwayWindows_2026_06_14_Closing_Handoff_v1.md` (away windows + counts-follow-away, PR #600 merged + live).
-**Branch:** `claude/eventwindows-away-windows-xon8mb` (PR to open).
+**Branch:** `claude/eventwindows-away-windows-xon8mb` (PR [#601](https://github.com/ahorn885/exercise/pull/601), squash-merged to `main` 2026-06-14; CI green).
 **Spec:** `designs/Event_Windows_Slice2_AwayWindows_Spec_v1.md` §5 "Slice 2b". **Arc:** `designs/Event_Windows_Design_v1.md` §6 bullet 2 (F1/F2). **North-star:** `plans/Feasibility_Saturation_And_Locale_Retirement_Plan_v1.md` §2 WS-H. **Epic:** [#581](https://github.com/ahorn885/exercise/issues/581).
 
 ---
