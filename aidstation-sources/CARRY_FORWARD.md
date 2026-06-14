@@ -13,6 +13,18 @@ Rolling-state for items spanning multiple sessions. **Edit in place** — don't 
 
 ---
 
+## WS-H — Event Windows arc DESIGN (2026-06-14) — PRs #591+#594 (merged); BUILD is the next slice
+
+**Design-first slice; the build hasn't started.** Handoff: `V5_Implementation_WSH_EventWindows_Design_2026_06_14_Closing_Handoff_v1.md`. Design `designs/Event_Windows_Design_v1.md` + build-ready Slice-1 spec `designs/Event_Windows_Slice1_HomeWindows_Spec_v1.md`.
+
+- ⬜ **NEXT: BUILD Slice 1** (subtractive home windows: `indoor_only` + `locale_unavailable`). 5 files per spec §5; the resolution model (§4) = the **existing cascade resolved per date-segment** (no new substitution logic — a window is just different terrain/equipment inputs). Fresh branch.
+- 🩺 **Owed Andy's hands (Slice-1 build):** the `athlete_event_windows` DDL on Neon (container has no Neon egress — write the idempotent `_PG_MIGRATIONS` CREATE, Andy applies). **Trigger #1:** the Slice-1 synthesis date-scoped feasibility-block + soft placement-directive wording — bring exact text for sign-off at build.
+- 📌 **Trigger #2 (Slice 3):** the category equipment baselines are for **commercial / hotel / climbing gyms** (the current `routes/locales.py:205 MANUAL_CATEGORIES`, NOT the retired `home/hotel/partner/airport` enum). Baseline *contents* need Andy's sign-off — don't author them blind.
+- 📌 **Slice order:** 1 home-constraint → 2 away locale (+inline create, `mapbox_id` dedup) → 3 category baselines (Trigger #2) → 4 away craft (the literal WS-H (b)+(c)) → 5 capture UX.
+- ↪️ **Split out:** #592 race-location terrain/weather inference (treated separately from training locations); #593 reduced-volume / in-transit travel days.
+
+---
+
 ## WS-B/WS-C — retire legacy `LOCALES` enum + onboarding forced-home gate (2026-06-14) — PR #589 (squash-merged to `main`)
 
 **Next slice off the locale-retirement north star (`Feasibility_Saturation_And_Locale_Retirement_Plan_v1` §4/§5).** Handoff: `V5_Implementation_WSBC_LocaleRetirement_OnboardingHome_2026_06_14_Closing_Handoff_v1.md`. Branch `claude/ws-bc-locale-retirement-onboarding-home`.
