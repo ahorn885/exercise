@@ -3,7 +3,7 @@
 **Session:** Shipped the next slice off the locale-retirement north star — WS-B (retire the legacy `home/hotel/partner/airport` enum so locales are purely athlete-created) + WS-C (make the onboarding locations step a gate requiring ≥1 built locale and one tagged home). Both land together per Andy's call.
 **Date:** 2026-06-14
 **Predecessor handoff:** `V5_Implementation_WSI_SliceB_UnifiedCraftTerrainCascade_2026_06_14_Closing_Handoff_v1.md` (WS-I complete).
-**Branch / PR:** [#589](https://github.com/ahorn885/exercise/pull/589) (`claude/ws-bc-locale-retirement-onboarding-home`). Open + CI-green (Vercel deploy success).
+**Branch / PR:** [#589](https://github.com/ahorn885/exercise/pull/589) (`claude/ws-bc-locale-retirement-onboarding-home`). **Squash-merged to `main`, CI-green.** Closes WS-B (#582) + WS-C (#583).
 **North-star plan:** `plans/Feasibility_Saturation_And_Locale_Retirement_Plan_v1.md` (§4 WS-B, §5 WS-C).
 **Status:** 7 substantive files (4 code/template + 3 mechanical test edits) — **2 over the 5-file ceiling, flagged.** Andy chose to land B+C together after the ceiling risk was surfaced; the test edits are mechanical follow-ons to the code change. No DDL.
 
@@ -74,7 +74,7 @@ No SQL — the schema already supports athlete-created locales + the `preferred`
 ## 6. Next session pointers
 
 ### 6.1 This slice
-WS-B + WS-C **shipped** on #589 (open, CI-green). Plan §2 table flipped to SHIPPED for both. No owed deploy (no DDL).
+WS-B + WS-C **shipped + squash-merged to `main`** on #589 (CI-green). Plan §2 table flipped to SHIPPED for both; issues #582 (WS-B) + #583 (WS-C) closed. No owed deploy (no DDL). **#583 note:** closed for the home-gate (the load-bearing go-live correctness piece); the issue's secondary "make craft capture required" bullet was **not** implemented as a hard gate — a universal craft requirement would wrongly block craftless foot/swim/climb athletes, and empty craft now degrades gracefully through the WS-I cascade (INDOOR/strength) rather than crashing. The craft *capture* surface already shipped (slice 2c.2b). A conditional bike/paddle-only craft prompt is a possible small follow-up if Andy wants it.
 
 ### 6.2 Next forward moves (4-tier order)
 - **STILL OWED (carried, Tier 1):** the post-#572 live **T3 *refresh*** re-verify (paired: diag token + Andy pasting logs, Rule #14). pv=71 was a *create*; a *refresh* has never been live-verified post-#572.
@@ -140,4 +140,4 @@ WS-B + WS-C **shipped** on #589 (open, CI-green). Plan §2 table flipped to SHIP
 
 ## 10. Owed Andy's hands (Neon — container has no egress)
 
-**None.** This slice added no DDL and made no Neon write. PR #589 is open + CI-green; merging it is the only remaining step. (Carried, unrelated: the post-#572 live T3 *refresh* re-verify.)
+**None.** This slice added no DDL and made no Neon write. PR #589 squash-merged to `main` (CI-green); nothing remaining. (Carried, unrelated: the post-#572 live T3 *refresh* re-verify.)
