@@ -70,7 +70,7 @@ Ran `./scripts/verify-handoff.sh` against the design handoff — clean except `t
 ## 6. Next session
 
 ### 6.1 Owed Andy's hands
-- **Apply the `athlete_event_windows` DDL on Neon** (no container egress). Until applied, `/profile/event-windows` + the overlay are inert in prod. The idempotent `CREATE TABLE IF NOT EXISTS athlete_event_windows (…)` + `CREATE INDEX IF NOT EXISTS idx_aew_user …` are the last two entries in `init_db._PG_MIGRATIONS`.
+- ~~Apply the `athlete_event_windows` DDL on Neon~~ — **DONE 2026-06-14** (Andy applied + verified the 8-column schema). **Slice 1 is fully live in prod** (`/profile/event-windows` capture + the plan-gen overlay active). The idempotent CREATE + index live in `init_db._PG_MIGRATIONS` for cold starts.
 - (carried) the post-#572 live **T3 *refresh*** re-verify (diag token + Andy pasting logs, Rule #14).
 
 ### 6.2 Deferred follow-ups (flagged)
@@ -107,5 +107,5 @@ Ran `./scripts/verify-handoff.sh` against the design handoff — clean except `t
 ---
 
 ## 8. Owed Andy's hands
-- **`athlete_event_windows` DDL on Neon** (Neon egress blocked from the container).
+- ~~`athlete_event_windows` DDL on Neon~~ — **APPLIED + verified 2026-06-14** (8-column schema matches `init_db`). Slice 1 fully live.
 - (carried, unrelated) the post-#572 live T3 *refresh* re-verify.

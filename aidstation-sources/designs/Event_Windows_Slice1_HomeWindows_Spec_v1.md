@@ -1,7 +1,7 @@
 # Event Windows — Slice 1: subtractive home windows — Build Spec v1
 
 **Parent design:** `designs/Event_Windows_Design_v1.md` (forks ratified 2026-06-14). **This is the Slice-1 build spec** — the smallest end-to-end vertical: `indoor_only` + `locale_unavailable` home windows, consumed by plan-gen.
-**Status:** **BUILT + MERGED 2026-06-14** (PR [#596](https://github.com/ahorn885/exercise/pull/596) squash-merged to `main`; branch `claude/compassionate-keller-ej5tcx`; handoff `handoffs/V5_Implementation_WSH_EventWindows_Slice1_Build_2026_06_14_Closing_Handoff_v1.md`). §4 model held as built (existing cascade per date-segment). Trigger-#1 overlay wording **signed off by Andy 2026-06-14**. **Owed Andy's hands:** apply the `athlete_event_windows` DDL on Neon. **Deferred (flagged):** refresh-overlay render is create-first (the hash param is on `plan_refresh_key`; the refresh caller doesn't feed it yet).
+**Status:** **BUILT + MERGED 2026-06-14** (PR [#596](https://github.com/ahorn885/exercise/pull/596) squash-merged to `main`; branch `claude/compassionate-keller-ej5tcx`; handoff `handoffs/V5_Implementation_WSH_EventWindows_Slice1_Build_2026_06_14_Closing_Handoff_v1.md`). §4 model held as built (existing cascade per date-segment). Trigger-#1 overlay wording **signed off by Andy 2026-06-14**. **DDL APPLIED on Neon 2026-06-14 (verified — 8 columns) → Slice 1 fully live in prod.** **Deferred (flagged):** refresh-overlay render is create-first (the hash param is on `plan_refresh_key`; the refresh caller doesn't feed it yet).
 **Date:** 2026-06-14
 
 ---
@@ -111,7 +111,7 @@ Per date-segment with an active window, print the inputs + decision: `event_wind
 ## 10. Open items / sign-off
 - **§4 model — SETTLED** (Andy 2026-06-14): the existing cascade resolved per date-segment; no bespoke seam arithmetic. **BUILT.**
 - **Trigger-#1 wording — SIGNED OFF** (Andy 2026-06-14): the `=== Event-window overlay (deterministic — date-scoped routing) ===` block + the `Placement preference (soft)` directive, rendered by `per_phase._format_event_window_overlay`.
-- **DDL apply on Neon — STILL owed Andy's hands** (the idempotent CREATE is in `init_db._PG_MIGRATIONS`).
+- **DDL apply on Neon — DONE 2026-06-14** (Andy applied + verified the 8-column schema; the idempotent CREATE is in `init_db._PG_MIGRATIONS`).
 - **Deferred follow-up:** refresh-overlay render (create-first this slice, mirroring #540→#557). The `event_windows_hash` param is present on `plan_refresh_key`; wiring the refresh caller to supply it + render the overlay in the tier prompts is the next step.
 
 ## 11. Gut check
