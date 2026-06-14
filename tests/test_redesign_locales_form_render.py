@@ -162,3 +162,28 @@ def test_refresh_confirm_renders_diff():
     assert 'Yes, update' in html
     assert 'Planet Fitness — Downtown' in html
     assert 'style="' not in html
+
+
+# ─── profile/event_windows.html ─────────────────────────────────────────
+# Slice 2b (WS-H #581): the away-destination capture links into the existing
+# /locales/new Mapbox flow with a return_to back to the event-windows page,
+# rather than embedding a duplicate search UI. This render asserts the
+# pick-existing dropdown (2a) and the inline-create link (2b) both render.
+
+
+def test_event_windows_capture_renders_away_create_link():
+    html = _render('profile/event_windows.html',
+                   windows=[],
+                   locales=['home', 'belfast-hotel'],
+                   override_types=('indoor_only', 'locale_unavailable', 'away'))
+    assert 'app-shell' in html
+    # 2a — pick-existing destination dropdown.
+    assert 'name="away_locale"' in html
+    assert 'belfast-hotel' in html
+    # 2b — inline-create link into the existing new_locale flow, carrying a
+    # return_to back to the event-windows page (consumed by _locale_flow_redirect).
+    assert '/locales/new?return_to=' in html
+    assert 'event-windows' in html
+    assert 'Add a new location' in html
+    # Strict-CSP: no inline style/handlers.
+    assert 'style="' not in html and 'onclick=' not in html
