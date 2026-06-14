@@ -17,7 +17,13 @@ from typing import Any, Iterable, Iterator, Sequence
 import psycopg2
 from psycopg2.extras import Json, execute_values
 
-SCHEMA_PATH = Path(__file__).parent / "schema.sql"
+# schema.sql was folded into the v1.7.0 baseline snapshot and archived (#604).
+# apply_schema() below is retired (no callers since the xlsx path was retired,
+# epic #488) but kept rather than deleted; point at the archived copy so it
+# stays internally consistent if ever resurrected.
+SCHEMA_PATH = (
+    Path(__file__).parent.parent / "_archive" / "pre_v1.7.0_baseline" / "schema.sql"
+)
 
 
 def _database_url() -> str:

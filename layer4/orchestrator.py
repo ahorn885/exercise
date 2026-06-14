@@ -1645,8 +1645,9 @@ def _max_etl_version(versions: list[str]) -> str:
 # `insert_versioned` call in `etl/layer0/run.py`. Family is a property of the
 # *table*, not the version string — discovery does not parse the `0X-` prefix.
 # `tests/test_layer4_orchestrator.py::TestLayer0TableFamilyMap` guards this
-# against drift from `etl/layer0/schema.sql`; keep it in sync when a versioned
-# table is added.
+# against drift from the committed Layer 0 baseline snapshot
+# (`etl/output/layer0_etl_v*.sql`); keep it in sync when a versioned table is
+# added.
 _LAYER0_TABLE_FAMILY: dict[str, str] = {
     # 0A — sports framework
     "sports": "0A",

@@ -55,11 +55,13 @@ jobs:
 
   layer0-gate:
     name: Layer 0 integrity gate
-    # Stands up a throwaway Postgres, loads the schema + the latest committed
-    # genesis snapshot (etl/output/layer0_etl_v*.sql), and runs validate_layer0
-    # against it — the DB-side integrity gate (decision C, all checks FAIL with
-    # a sum_to_100 waiver bucket). A FAIL here means the committed snapshot has
-    # an unwaived integrity violation to fix or waive; no live DB / Neon needed.
+    # Stands up a throwaway Postgres and loads the latest committed genesis
+    # baseline (etl/output/layer0_etl_v*.sql — a full pg_dump of live layer0,
+    # schema + data, self-contained), then any post-baseline migrations
+    # (etl/migrations/layer0/), and runs validate_layer0 against it — the DB-side
+    # integrity gate (decision C, all checks FAIL with a sum_to_100 waiver
+    # bucket). A FAIL here means the committed baseline has an unwaived integrity
+    # violation to fix or waive; no live DB / Neon needed.
     if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     services:
@@ -85,16 +87,22 @@ jobs:
           cache: pip
       - name: Install deps
         run: pip install -r requirements.txt
-      - name: Load schema + genesis snapshot
+      - name: Load genesis baseline snapshot
+        # The committed snapshot is a full pg_dump of live layer0 (schema + data),
+        # self-contained — no separate schema.sql. Strip the PG17/18 dump artifacts
+        # (\restrict / \unrestrict psql meta-commands; the PG17-only
+        # transaction_timeout GUC) so a raw dump loads on postgres:16 without any
+        # hand-editing of the committed file.
         run: |
-          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f etl/layer0/schema.sql
           snapshot="$(ls etl/output/layer0_etl_v*.sql | sort -V | tail -1)"
-          echo "Loading snapshot: $snapshot"
-          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f "$snapshot"
+          echo "Loading baseline: $snapshot"
+          sed -E '/^\\restrict /d; /^\\unrestrict /d; /^SET transaction_timeout/d' "$snapshot" \
+            | psql "$DATABASE_URL" -v ON_ERROR_STOP=1
       - name: Apply Layer 0 migrations
-        # DB-native edits stack on the frozen genesis snapshot in sort -V order
-        # (etl/migrations/layer0/README.md). Validating snapshot + migrations is
-        # the "would-be-applied state" the gate guards before Andy hits Neon.
+        # Post-baseline DB-native edits stack on the v1.7.0 baseline in sort -V
+        # order, starting at 0006 (0001-0005 are folded into the baseline and
+        # archived). Empty until the next migration lands; the gate then guards
+        # baseline + migrations as the would-be-applied state before Neon.
         run: |
           shopt -s nullglob
           for m in $(ls etl/migrations/layer0/*.sql 2>/dev/null | sort -V); do

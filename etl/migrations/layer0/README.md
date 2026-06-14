@@ -6,16 +6,20 @@ data, replacing the xlsx → `etl.layer0.run` re-import loop. See
 (epic [#488](https://github.com/ahorn885/exercise/issues/488)) for the why; this
 README is the how.
 
-The genesis snapshot (`etl/output/layer0_etl_v1.6.7.sql`) is the frozen baseline.
-Migrations stack on top of it in order. **Do not emit new full snapshots while
-migrations are in flight** — the snapshot stays the genesis baseline and the
-`*.sql` files here are the forward history.
+The genesis baseline (`etl/output/layer0_etl_v1.7.0.sql`) is a full `pg_dump` of
+live `layer0` (schema + data, self-contained) — refreshed from live and collapsed
+with the pre-existing `schema.sql` + migrations `0001`–`0005` (now in
+`etl/_archive/pre_v1.7.0_baseline/`, issue
+[#604](https://github.com/ahorn885/exercise/issues/604)). Migrations stack on top
+of it in order, **starting at `0006`**. Periodically the baseline is re-dumped
+from live and the intervening migrations fold into it — the consolidation that
+closed the v1.6.7 genesis lag.
 
 ## Edit flow (§5.1 of the design spec)
 
 ```
 1. write etl/migrations/layer0/NNNN_<slug>.sql
-2. CI "Layer 0 integrity gate" loads schema + genesis snapshot, applies every
+2. CI "Layer 0 integrity gate" loads the genesis baseline snapshot, applies every
    migration in order, then runs validate_layer0 — a bad migration fails here
    BEFORE it ever reaches the database
 3. review the .sql diff in the PR
@@ -89,49 +93,37 @@ UPDATE layer0.terrain_types SET superseded_at = now()
 > (`_q_current_etl_version_set` + the Layer 2 builders reading the active set);
 > it replaced the earlier per-family re-stamp.
 
-## Tables that are not in the genesis snapshot (spec-sourced, not ETL-emitted)
+## Versioned tables and the cache-invalidation map
 
-Most `layer0.*` tables are emitted by the ETL into the genesis snapshot
-(`etl/output/layer0_etl_v1.6.x.sql`). A few are **spec-sourced** — hand-authored
-from a spec rather than parsed from a workbook — so they never appeared in the
-snapshot and historically lived as one-shot `etl/sources/migrate_*.sql` files the
-gate never saw. Bring such a table into the gate with **one self-contained
-migration** here: `CREATE TABLE IF NOT EXISTS` + the seed
-(`INSERT … ON CONFLICT DO NOTHING`), so a standalone Neon SQL-editor paste
-provisions it without any separate schema step. Mirror the table's *existing*
-live shape exactly — do not "normalize" column types/columns in the same step,
-or you risk drift with a copy already on Neon.
+The v1.7.0 baseline is a full dump of live, so **every** `layer0.*` table — DDL
+and data — is present, including ones that used to be hand-authored as one-shot
+`etl/sources/migrate_*.sql` files outside the old `schema.sql`. When a `0006+`
+migration introduces a **new** versioned table, also add it to
+`_LAYER0_TABLE_FAMILY` (`layer4/orchestrator.py`), the per-table
+cache-invalidation digest pinned to the `{0A, 0B, 0C}` families — otherwise its
+edits won't invalidate plan-gen caches. The `TestLayer0TableFamilyMap` drift guard
+(`tests/test_layer4_orchestrator.py`) enforces this by reading the **baseline
+snapshot** and requiring every `etl_version`-bearing table to be mapped.
 
-**Do not add their DDL to `etl/layer0/schema.sql`.** The
-`TestLayer0TableFamilyMap` drift guard
-(`tests/test_layer4_orchestrator.py`) requires every `etl_version`-bearing table
-in `schema.sql` to appear in `_LAYER0_TABLE_FAMILY` (`layer4/orchestrator.py`),
-the per-table cache-invalidation digest — and that map is pinned to the
-`{0A, 0B, 0C}` families. A table that is **outside** that cone, or versioned on
-its own line, must therefore stay out of `schema.sql` (the existing precedent:
-`terrain_gap_rules` is created by `etl/sources/populate_terrain_gap_rules.sql`,
-not `schema.sql`). The self-contained migration is what the gate runs.
+**Two standing exceptions** (deliberately *not* in the map; the guard's
+`_FAMILY_MAP_EXCEPTIONS` excludes them explicitly):
+- `supplement_vocabulary` — read by Layer 2E, versioned on its own `supp_vocab.*`
+  line, **outside** the 0A/0B/0C cone; 2E reads the active set live, so its edits
+  serve without a cache-key dependency.
+- `discipline_technique_foci` — `0B`-versioned but with no reader anywhere in app
+  code (dead serving data), so there is no cache for its edits to invalidate.
 
-`0002_seed_supplement_vocabulary.sql` and `0003_seed_terrain_gap_rules.sql` are
-the worked examples (epic #488). `0002` de-orphans `layer0.supplement_vocabulary`
-(read by Layer 2E, versioned on its own `supp_vocab.*` line — **outside** the
-0A/0B/0C cone, so deliberately not in `_LAYER0_TABLE_FAMILY` per slice 3b),
-subsuming the legacy `migrate_supplement_vocabulary.sql` (base seed) + the D-21
-`migrate_supplement_vocab_contraindication_retag_v1.sql` (the seed already carries
-the canonical §B tokens the retag produced). `0003` de-orphans
-`layer0.terrain_gap_rules` — the **last** spec-sourced orphan — subsuming
-`populate_terrain_gap_rules.sql` (CREATE + 16 gap rows) + the `partial`→4-band
-`migrate_terrain_gap_rules_severity.sql` reclassification. Note `terrain_gap_rules`
-*is* a 0C **cone** table (read by Layer 2B) and already in `_LAYER0_TABLE_FAMILY`
-as `0C`, so the drift guard would *not* object to it being in `schema.sql`; it
-stays out anyway, for consistency with this self-contained shape and to keep the
-`test_includes_out_of_schema_serving_tables` guard true.
+If you add a table that genuinely belongs outside the cone (its own version line,
+or no serving reader), add it to `_FAMILY_MAP_EXCEPTIONS` with a note mirroring the
+design note on `_LAYER0_TABLE_FAMILY` — don't silently weaken the guard.
 
 ## The gate
 
 The `layer0-gate` job in `.github/workflows/ci.yml` is the integrity backstop:
-it stands up a throwaway Postgres, loads `etl/layer0/schema.sql` + the genesis
-snapshot, applies every migration here in order, and runs
+it stands up a throwaway Postgres, loads the genesis baseline snapshot
+(self-contained — schema + data; the PG17/18 `\restrict` / `transaction_timeout`
+dump artifacts are stripped at load so a raw `pg_dump` loads on postgres:16),
+applies every migration here in order, and runs
 `python -m etl.layer0.validate_layer0`. A migration that introduces a dangling
 FK, a canon violation, a sub-100 phase load, etc. fails CI before it can be
 applied to Neon. Run order and disposition are owned by

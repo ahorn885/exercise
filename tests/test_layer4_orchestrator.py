@@ -2036,37 +2036,67 @@ class TestLayer0TableFamilyMap:
     versioned table left out would silently not contribute to any family's
     cache-invalidation signal."""
 
-    def _schema_versioned_tables(self) -> set[str]:
-        schema = (
-            Path(__file__).resolve().parent.parent
-            / "etl" / "layer0" / "schema.sql"
+    # Versioned layer0.* tables intentionally OUTSIDE the 0A/0B/0C cache-
+    # invalidation scheme — kept in sync with the design note on
+    # `_LAYER0_TABLE_FAMILY` in layer4/orchestrator.py.
+    _FAMILY_MAP_EXCEPTIONS = frozenset({
+        # supplement_vocabulary carries its own supp_vocab.* version line (never
+        # part of etl_version_set); Layer 2E reads active rows live, so its edits
+        # serve without a cache-key dependency.
+        "supplement_vocabulary",
+        # discipline_technique_foci is 0B-versioned but has no reader anywhere in
+        # app code (dead serving data) — no cache for its edits to invalidate.
+        "discipline_technique_foci",
+    })
+
+    def _baseline_versioned_tables(self) -> set[str]:
+        # Source of truth post-v1.7.0: the committed full baseline snapshot (a
+        # pg_dump of live layer0), not the now-archived schema.sql. Pick the
+        # newest by version, mirroring the gate's `sort -V | tail -1`.
+        out = Path(__file__).resolve().parent.parent / "etl" / "output"
+        baseline = max(
+            out.glob("layer0_etl_v*.sql"),
+            key=lambda p: tuple(
+                int(x) for x in re.search(r"v(\d+)\.(\d+)\.(\d+)", p.name).groups()
+            ),
         ).read_text()
         tables: set[str] = set()
-        for block in re.split(r"CREATE TABLE IF NOT EXISTS ", schema)[1:]:
+        for block in re.split(r"CREATE TABLE (?:IF NOT EXISTS )?", baseline)[1:]:
             name = block.split("(", 1)[0].strip()
-            if name.startswith("layer0.") and re.search(r"\betl_version\b", block):
+            # `\n\s+etl_version` matches the column-definition line only, so data
+            # rows that happen to contain the string don't false-positive.
+            if name.startswith("layer0.") and re.search(r"\n\s+etl_version\b", block):
                 tables.add(name.split(".", 1)[1])
-        return tables
+        return tables - self._FAMILY_MAP_EXCEPTIONS
 
-    def test_map_covers_every_schema_versioned_table(self):
-        missing = self._schema_versioned_tables() - set(_LAYER0_TABLE_FAMILY)
+    def test_map_covers_every_baseline_versioned_table(self):
+        missing = self._baseline_versioned_tables() - set(_LAYER0_TABLE_FAMILY)
         assert not missing, (
             f"versioned layer0 tables absent from _LAYER0_TABLE_FAMILY: "
             f"{sorted(missing)} — add them or their edits won't invalidate caches"
         )
 
-    def test_includes_out_of_schema_serving_tables(self):
-        # terrain_gap_rules is a 0C serving table created outside schema.sql
-        # (etl/sources/populate_terrain_gap_rules.sql); read by Layer 2B.
+    def test_intentional_exceptions_stay_unmapped(self):
+        # Locks the documented design (the orchestrator note): these two are
+        # deliberately not in the family map. If a future change maps one, this
+        # fails so the decision is made consciously, not by drift.
+        for table in self._FAMILY_MAP_EXCEPTIONS:
+            assert table not in _LAYER0_TABLE_FAMILY, (
+                f"{table} is an intentional family-map exception — see the note "
+                f"on _LAYER0_TABLE_FAMILY before mapping it"
+            )
+
+    def test_includes_serving_tables(self):
+        # All three live in the v1.7.0 baseline now; these assertions lock their
+        # families (each feeds a Layer-2/4 cascade, so edits must invalidate
+        # plan-gen caches).
+        # terrain_gap_rules — 0C serving table; read by Layer 2B.
         assert _LAYER0_TABLE_FAMILY.get("terrain_gap_rules") == "0C"
-        # craft_terrain_compatibility (#586 WS-I) is a 0A serving table created by
-        # migration 0004 (not schema.sql); read by the unified craft/terrain
-        # cascade. Without it, grid edits wouldn't invalidate plan-gen caches.
+        # craft_terrain_compatibility (#586 WS-I) — 0A; read by the unified
+        # craft/terrain cascade.
         assert _LAYER0_TABLE_FAMILY.get("craft_terrain_compatibility") == "0A"
-        # location_category_equipment_baseline (#581 WS-H Slice 3 / F8) is a 0C
-        # serving table created by migration 0005; read via
-        # locations.load_category_baselines. Without it, a baseline edit wouldn't
-        # invalidate plan-gen caches.
+        # location_category_equipment_baseline (#581 WS-H Slice 3 / F8) — 0C;
+        # read via locations.load_category_baselines.
         assert (
             _LAYER0_TABLE_FAMILY.get("location_category_equipment_baseline") == "0C"
         )
