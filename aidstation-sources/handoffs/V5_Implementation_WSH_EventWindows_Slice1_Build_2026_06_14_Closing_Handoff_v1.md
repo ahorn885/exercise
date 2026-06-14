@@ -3,7 +3,7 @@
 **Session:** Built **Slice 1** of the Event-Windows arc (issue [#581](https://github.com/ahorn885/exercise/issues/581) Phase H) per the build-ready spec `designs/Event_Windows_Slice1_HomeWindows_Spec_v1.md`. The athlete declares date-bounded **subtractive home windows** — `indoor_only` + `locale_unavailable` — and plan-gen resolves the affected days against the reduced home environment via the **existing cascade run per date-segment** (Andy's settled §4 model).
 **Date:** 2026-06-14
 **Predecessor handoff:** `V5_Implementation_WSH_EventWindows_Design_2026_06_14_Closing_Handoff_v1.md` (the arc design + this spec, #591+#594).
-**Branch:** `claude/compassionate-keller-ej5tcx` (PR opened this session).
+**Branch:** `claude/compassionate-keller-ej5tcx` (PR [#596](https://github.com/ahorn885/exercise/pull/596), squash-merged to `main` 2026-06-14; CI green).
 **North-star plan:** `plans/Feasibility_Saturation_And_Locale_Retirement_Plan_v1.md` §2 WS-H.
 
 ---

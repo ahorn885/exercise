@@ -13,9 +13,9 @@ Rolling-state for items spanning multiple sessions. **Edit in place** — don't 
 
 ---
 
-## WS-H — Event Windows — Slice 1 BUILT (2026-06-14); arc design PRs #591+#594 (merged)
+## WS-H — Event Windows — Slice 1 BUILT + MERGED (2026-06-14, PR #596); arc design PRs #591+#594 (merged)
 
-**Slice 1 (subtractive home windows) built this session.** Handoffs: `V5_Implementation_WSH_EventWindows_Slice1_Build_2026_06_14_Closing_Handoff_v1.md` (build) + `..._Design_..._v1.md` (arc). Design `designs/Event_Windows_Design_v1.md` + Slice-1 spec `designs/Event_Windows_Slice1_HomeWindows_Spec_v1.md`.
+**Slice 1 (subtractive home windows) built + squash-merged to `main` this session (PR [#596](https://github.com/ahorn885/exercise/pull/596)).** Handoffs: `V5_Implementation_WSH_EventWindows_Slice1_Build_2026_06_14_Closing_Handoff_v1.md` (build) + `..._Design_..._v1.md` (arc). Design `designs/Event_Windows_Design_v1.md` + Slice-1 spec `designs/Event_Windows_Slice1_HomeWindows_Spec_v1.md`.
 
 - ✅ **Slice 1 shipped:** `athlete_event_windows_repo.py` + DDL (`init_db._PG_MIGRATIONS`), the existing cascade resolved **per date-segment** (`orchestrator._build_event_window_overlay`; gather/resolve refactored so the cascade runs against a reduced `(terrain,equipment)` env), `compute_event_windows_hash` folded into `plan_create_key` + `plan_refresh_key` (None → byte-identical), the date-scoped synthesis overlay + soft placement directive (`per_phase._format_event_window_overlay`, **Trigger-#1 wording signed off by Andy 2026-06-14**), minimal capture UI (`routes/profile` `/profile/event-windows` + template). Tests: `tests/test_layer4_event_windows.py` (29). Suite green (2418 passed / 30 skipped).
 - 🩺 **OWED Andy's hands:** **apply the `athlete_event_windows` DDL on Neon** (no container Neon egress — idempotent `CREATE TABLE IF NOT EXISTS athlete_event_windows` + `idx_aew_user` are in `init_db._PG_MIGRATIONS`; until applied the capture page + overlay are inert in prod). Optional: nav-link `/profile/event-windows` from the Athlete tab (left as Slice-5 UX polish).

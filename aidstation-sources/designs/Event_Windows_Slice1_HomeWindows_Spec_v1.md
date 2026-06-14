@@ -1,7 +1,7 @@
 # Event Windows — Slice 1: subtractive home windows — Build Spec v1
 
 **Parent design:** `designs/Event_Windows_Design_v1.md` (forks ratified 2026-06-14). **This is the Slice-1 build spec** — the smallest end-to-end vertical: `indoor_only` + `locale_unavailable` home windows, consumed by plan-gen.
-**Status:** **BUILT 2026-06-14** (branch `claude/compassionate-keller-ej5tcx`; handoff `handoffs/V5_Implementation_WSH_EventWindows_Slice1_Build_2026_06_14_Closing_Handoff_v1.md`). §4 model held as built (existing cascade per date-segment). Trigger-#1 overlay wording **signed off by Andy 2026-06-14**. **Owed Andy's hands:** apply the `athlete_event_windows` DDL on Neon. **Deferred (flagged):** refresh-overlay render is create-first (the hash param is on `plan_refresh_key`; the refresh caller doesn't feed it yet).
+**Status:** **BUILT + MERGED 2026-06-14** (PR [#596](https://github.com/ahorn885/exercise/pull/596) squash-merged to `main`; branch `claude/compassionate-keller-ej5tcx`; handoff `handoffs/V5_Implementation_WSH_EventWindows_Slice1_Build_2026_06_14_Closing_Handoff_v1.md`). §4 model held as built (existing cascade per date-segment). Trigger-#1 overlay wording **signed off by Andy 2026-06-14**. **Owed Andy's hands:** apply the `athlete_event_windows` DDL on Neon. **Deferred (flagged):** refresh-overlay render is create-first (the hash param is on `plan_refresh_key`; the refresh caller doesn't feed it yet).
 **Date:** 2026-06-14
 
 ---
