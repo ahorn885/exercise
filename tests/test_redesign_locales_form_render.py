@@ -205,11 +205,23 @@ def test_event_windows_capture_renders_away_create_link():
     # 2a — pick-existing destination dropdown.
     assert 'name="away_locale"' in html
     assert 'belfast-hotel' in html
-    # 2b — inline-create link into the existing new_locale flow, carrying a
-    # return_to back to the event-windows page (consumed by _locale_flow_redirect).
-    assert '/locales/new?return_to=' in html
+    # 2b + #608 item 2 — inline-create is now a formaction submit button that
+    # POSTs the in-progress form to the stash route (which hands off to
+    # /locales/new server-side, preserving form state), not a plain href.
+    assert '/profile/event-windows/new-locale' in html
+    assert 'formaction=' in html and 'formnovalidate' in html
     assert 'event-windows' in html
     assert 'Add a new location' in html
+    # The new-location submit appears before the visible "Add window" submit, so
+    # a first visually-hidden duplicate must claim the Enter-key default — else
+    # pressing Enter would bounce to /locales/new. Lock that ordering within the
+    # add-window form (anchored on its action so the shell can't interfere).
+    form_start = html.index('action="/profile/event-windows/add"')
+    hidden_default = html.index('visually-hidden', form_start)
+    new_loc_submit = html.index('formaction=', form_start)
+    assert hidden_default < new_loc_submit
+    # No draft on a fresh visit → date/notes fields render an empty value.
+    assert 'value=""' in html
     # Slice 4 (WS-H #581): brought-craft (c) on the away window, fed from the
     # closed craft catalog.
     assert 'name="brought_craft"' in html
@@ -242,6 +254,35 @@ def test_event_windows_renders_plan_gen_round_trip_when_return_to_set():
     # The inline new-location create link nests return_to so creating a
     # destination still lands back in the round-trip.
     assert '/plans/v2/new' in html
+    assert 'style="' not in html and 'onclick=' not in html
+
+
+def test_event_windows_form_repopulates_from_draft():
+    """#608 item 2 (WS-H): after an inline new-location round-trip, the stashed
+    in-progress window form is replayed into the add form — dates, the away
+    constraint + destination, brought-craft, and notes all come back selected,
+    so the athlete doesn't re-enter what the strict-CSP reload would have wiped."""
+    html = _render('profile/event_windows.html',
+                   windows=[],
+                   locales=['home', 'belfast-hotel'],
+                   override_types=('indoor_only', 'locale_unavailable', 'away'),
+                   craft_catalog={'paddling': [{'slug': 'packraft', 'label': 'Packraft'}]},
+                   draft={
+                       'start_date': '2026-07-03',
+                       'end_date': '2026-07-05',
+                       'override_type': 'away',
+                       'unavailable_locale': '',
+                       'away_locale': 'belfast-hotel',
+                       'brought_craft': ['packraft'],
+                       'notes': 'work travel',
+                   })
+    assert 'value="2026-07-03"' in html and 'value="2026-07-05"' in html
+    assert 'value="work travel"' in html
+    # The away constraint + destination come back selected.
+    assert '<option value="away" selected>' in html
+    assert '<option value="belfast-hotel" selected>belfast-hotel</option>' in html
+    # The brought-craft checkbox comes back checked.
+    assert 'value="packraft" checked>' in html
     assert 'style="' not in html and 'onclick=' not in html
 
 
@@ -307,3 +348,28 @@ def test_event_windows_return_to_rejects_non_local_paths():
     assert _safe_local_path('https://evil.example.com') is None
     assert _safe_local_path('') is None
     assert _safe_local_path(None) is None
+
+
+def test_event_window_draft_stash_is_consumed_once():
+    """#608 item 2: the in-progress add-window form is stashed in the session
+    (preserving the multi-valued brought-craft list) and popped exactly once on
+    the next render, so a stale draft can't leak onto a later unrelated visit —
+    same single-consume contract as the locale flow's return_to stash."""
+    from werkzeug.datastructures import MultiDict
+    from routes.profile import _stash_event_window_draft, _pop_event_window_draft
+    form = MultiDict([
+        ('start_date', '2026-07-03'), ('end_date', '2026-07-05'),
+        ('override_type', 'away'), ('away_locale', 'belfast-hotel'),
+        ('brought_craft', 'packraft'), ('brought_craft', 'kayak'),
+        ('notes', '  work travel  '),
+    ])
+    with _appmod.app.test_request_context('/'):
+        _stash_event_window_draft(form)
+        draft = _pop_event_window_draft()
+        assert draft['start_date'] == '2026-07-03'
+        assert draft['override_type'] == 'away'
+        assert draft['away_locale'] == 'belfast-hotel'
+        assert draft['brought_craft'] == ['packraft', 'kayak']
+        assert draft['notes'] == 'work travel'      # stripped
+        # Consumed once — a second pop in the same session returns nothing.
+        assert _pop_event_window_draft() is None

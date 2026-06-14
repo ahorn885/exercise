@@ -5,6 +5,8 @@
    environment. Slice 2b: when the destination isn't saved yet, the away field
    links into the existing /locales/new Mapbox flow with a return_to back here
    (reusing its geocoding-consent + mapbox_id dedup) — no duplicated search UI.
+   #608 item 2: that round-trip submits the in-progress form to a stash route so
+   the half-filled window survives the trip and returns repopulated (`draft`).
    Slice 4 (c): brought-craft on the away window. (Slice 5: the (b) standing
    craft↔locale capture moved to the per-locale edit page — craft kept at a place
    is a property of the place; see templates/locales/form.html.) #}
@@ -72,39 +74,57 @@
 
   <div class="card card-pad">
     <p class="eyebrow">● Add a window</p>
+    {# #608 item 2 — `draft` repopulates the form after an inline new-location
+       round-trip (server-side session stash; strict CSP forbids the JS fix).
+       Empty dict on a normal visit → every field renders blank as before. #}
+    {% set d = draft or {} %}
     <form method="post" action="{{ url_for('profile.add_event_window_route') }}">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <input type="hidden" name="return_to" value="{{ return_to or '' }}">
+      {# Keep "Add window" the implicit-submission (Enter-key) default even though
+         the "Add a new location" submit button appears earlier in the form: the
+         first submit button in tree order wins implicit submission, so a first,
+         visually-hidden duplicate of the primary submit claims it. No inline JS
+         (strict CSP); kept out of the tab order + a11y tree. #}
+      <button type="submit" class="visually-hidden" tabindex="-1" aria-hidden="true">Add window</button>
       <div class="pf-grid">
         <label class="field"><span class="lbl">Start date</span>
-          <input type="date" name="start_date" class="form-control form-control-sm" required></label>
+          <input type="date" name="start_date" class="form-control form-control-sm"
+                 value="{{ d.get('start_date', '') }}" required></label>
         <label class="field"><span class="lbl">End date (inclusive)</span>
-          <input type="date" name="end_date" class="form-control form-control-sm" required></label>
+          <input type="date" name="end_date" class="form-control form-control-sm"
+                 value="{{ d.get('end_date', '') }}" required></label>
         <label class="field"><span class="lbl">Constraint</span>
+          {% set ot = d.get('override_type', '') %}
           <select name="override_type" class="form-control form-control-sm" required>
-            <option value="indoor_only">Indoor only — no outdoor terrain</option>
-            <option value="locale_unavailable">A locale is unavailable</option>
-            <option value="away">Away — training at a different location</option>
+            <option value="indoor_only"{{ ' selected' if ot == 'indoor_only' else '' }}>Indoor only — no outdoor terrain</option>
+            <option value="locale_unavailable"{{ ' selected' if ot == 'locale_unavailable' else '' }}>A locale is unavailable</option>
+            <option value="away"{{ ' selected' if ot == 'away' else '' }}>Away — training at a different location</option>
           </select></label>
         <label class="field"><span class="lbl">Unavailable locale <span class="dim">(if a locale is closed)</span></span>
+          {% set ul = d.get('unavailable_locale', '') %}
           <select name="unavailable_locale" class="form-control form-control-sm">
             <option value="">—</option>
-            {% for loc in locales %}<option value="{{ loc }}">{{ loc }}</option>{% endfor %}
+            {% for loc in locales %}<option value="{{ loc }}"{{ ' selected' if loc == ul else '' }}>{{ loc }}</option>{% endfor %}
           </select></label>
         <label class="field"><span class="lbl">Away destination <span class="dim">(if training away)</span></span>
+          {% set al = d.get('away_locale', '') %}
           <select name="away_locale" class="form-control form-control-sm">
             <option value="">—</option>
-            {% for loc in locales %}<option value="{{ loc }}">{{ loc }}</option>{% endfor %}
+            {% for loc in locales %}<option value="{{ loc }}"{{ ' selected' if loc == al else '' }}>{{ loc }}</option>{% endfor %}
           </select>
           <span class="dim">Destination not saved yet?
-            <a href="{{ url_for('locales.new_locale', return_to=url_for('profile.event_windows', return_to=return_to)) }}">Add a new location</a>
-            — you'll return here to finish the window.</span></label>
+            <button type="submit" formnovalidate
+                    formaction="{{ url_for('profile.event_window_new_locale_route') }}"
+                    class="btn btn-sm btn-link p-0">Add a new location</button>
+            — you'll return here to finish the window, with what you've entered preserved.</span></label>
         <fieldset class="field field-wide"><span class="lbl">Craft brought <span class="dim">(if training away — only craft you bring counts at the destination)</span></span>
+          {% set bc = d.get('brought_craft', []) %}
           {% for group, items in craft_catalog.items() %}
             {% for c in items %}
             <div class="form-check">
               <input class="form-check-input" type="checkbox" id="brought_{{ c.slug }}"
-                     name="brought_craft" value="{{ c.slug }}">
+                     name="brought_craft" value="{{ c.slug }}"{{ ' checked' if c.slug in bc else '' }}>
               <label class="form-check-label" for="brought_{{ c.slug }}">{{ c.label }}</label>
             </div>
             {% endfor %}
@@ -112,6 +132,7 @@
         </fieldset>
         <label class="field field-wide"><span class="lbl">Notes <span class="dim">(optional)</span></span>
           <input type="text" name="notes" maxlength="200" class="form-control form-control-sm"
+                 value="{{ d.get('notes', '') }}"
                  placeholder="e.g. work travel, gym remodel, training camp"></label>
       </div>
       <div class="pf-save">
