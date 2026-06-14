@@ -2063,6 +2063,13 @@ class TestLayer0TableFamilyMap:
         # migration 0004 (not schema.sql); read by the unified craft/terrain
         # cascade. Without it, grid edits wouldn't invalidate plan-gen caches.
         assert _LAYER0_TABLE_FAMILY.get("craft_terrain_compatibility") == "0A"
+        # location_category_equipment_baseline (#581 WS-H Slice 3 / F8) is a 0C
+        # serving table created by migration 0005; read via
+        # locations.load_category_baselines. Without it, a baseline edit wouldn't
+        # invalidate plan-gen caches.
+        assert (
+            _LAYER0_TABLE_FAMILY.get("location_category_equipment_baseline") == "0C"
+        )
 
     def test_families_are_canonical(self):
         assert set(_LAYER0_TABLE_FAMILY.values()) == {"0A", "0B", "0C"}

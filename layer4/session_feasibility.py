@@ -619,13 +619,20 @@ class EventWindowSegment:
     (`discipline -> TerrainResolution`), set only on `away` segments. The overlay
     renders the terse `resolutions` diff; the session grid needs the complete map
     to count a fully-away week against the destination (counts-follow-away,
-    spec §4.1). None on subtractive segments."""
+    spec §4.1). None on subtractive segments.
+
+    `assumed_baseline_category` (Slice 3 / F8) is the display label of the
+    category equipment baseline the destination ASSUMED — set only on an `away`
+    segment whose destination is cold (no logged equipment/terrain). It drives
+    the overlay's "log actuals on arrival" note (Trigger-#1 wording); None
+    whenever the destination has logged data or its category has no baseline."""
 
     start_date: date
     end_date: date
     overrides: tuple[EventWindowOverride, ...]
     resolutions: dict[str, TerrainResolution]
     away_feasibility: dict[str, TerrainResolution] | None = None
+    assumed_baseline_category: str | None = None
 
 
 def segment_window_boundaries(

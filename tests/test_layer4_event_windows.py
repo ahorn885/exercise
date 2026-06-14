@@ -554,6 +554,40 @@ class TestOverlayRender:
         assert "no brought craft" in text
         assert "or replaced" in text  # away-aware intro
 
+    def test_assumed_baseline_note_renders_on_cold_away_segment(self):
+        # Slice 3 (F8): a cold destination resolved on the category baseline →
+        # the overlay tells the athlete to log actuals on arrival.
+        res = TerrainResolution(
+            discipline_id="D-008", tier="indoor", locale_id="belfast_hotel",
+            note="assumed",
+        )
+        seg = EventWindowSegment(
+            date(2026, 6, 10), date(2026, 6, 12),
+            (EventWindowOverride("away", away_locale="belfast_hotel"),),
+            {"D-008": res}, away_feasibility={"D-008": res},
+            assumed_baseline_category="hotel gym",
+        )
+        text = "\n".join(_format_event_window_overlay(
+            [seg], date(2026, 6, 1), date(2026, 6, 14), None, {},
+        ))
+        assert "assumed from the standard hotel gym baseline" in text
+        assert "log the gym's actual equipment on arrival" in text
+
+    def test_no_baseline_note_when_destination_logged(self):
+        # assumed_baseline_category None (logged destination) → no note.
+        res = TerrainResolution(
+            discipline_id="D-008", tier="strength", locale_id=None, note="x",
+        )
+        seg = EventWindowSegment(
+            date(2026, 6, 10), date(2026, 6, 12),
+            (EventWindowOverride("away", away_locale="hotel"),),
+            {"D-008": res}, away_feasibility={"D-008": res},
+        )
+        text = "\n".join(_format_event_window_overlay(
+            [seg], date(2026, 6, 1), date(2026, 6, 14), None, {},
+        ))
+        assert "baseline" not in text
+
 
 # ─── hashing + cache-key regression ──────────────────────────────────────────
 
