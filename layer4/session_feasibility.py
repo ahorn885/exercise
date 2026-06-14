@@ -30,9 +30,10 @@ locales — not just home):
 
 The resolver is pure (no DB, no LLM): the orchestrator gathers the cluster
 terrain/equipment maps + gap rules + the discipline→exercise sets from existing
-readers and hands them in. The CRAFT axis ("own the bike?") and its capture
-integrity are deferred to slices 2c.2b/2c.2c (craft ownership is not reliably
-captured yet); this slice is terrain-only.
+readers and hands them in. Craft disciplines (bike/paddle) instead walk the
+unified `resolve_craft_terrain_feasibility` cascade (#586 WS-I, below), which
+composes craft ownership with terrain off `layer0.craft_terrain_compatibility`;
+this terrain-only resolver still owns the non-craft (foot/swim/climb) disciplines.
 
 Discipline→required-terrain and discipline→indoor-machine are Python constants
 here, not Layer 0 columns — the same precedent as the route keeping its own
@@ -140,13 +141,15 @@ class TerrainResolution:
     machine: str | None = None
     substitute_exercise_ids: list[str] = field(default_factory=list)
     note: str = ""
-    # Craft axis (#540 2c.2c) overlay, set by the orchestrator after the craft
-    # ladder runs. "" → no craft action (terrain line renders untouched). "swap"
-    # → terrain fields describe the SWAPPED-TO discipline; `craft_swap_to_name` +
-    # `owned_craft` render the "train as X" prefix. "strength" → a craft terminal
-    # (own no craft of the kind); `tier` is "strength" and `craft_kind` supplies
-    # the reason in place of the terrain one.
-    craft_tier: Literal["", "swap", "strength"] = ""
+    # Craft overlay, set by the unified craft/terrain cascade (#586 WS-I). ""
+    # → no craft action (terrain line renders untouched: own-craft exact/alt, or
+    # a non-craft discipline). "proxy" → real terrain on a proxy craft you own
+    # (cascade tier 3); `owned_craft` names the proxy, the sport is unchanged.
+    # "swap" → ride the proxy on its OWN terrain (tier 4); `craft_swap_to_name`
+    # + `owned_craft` render the "train as X" prefix. "strength" → a craft
+    # terminal (own no craft of the kind); `tier` is "strength" and `craft_kind`
+    # supplies the reason in place of the terrain one.
+    craft_tier: Literal["", "swap", "strength", "proxy"] = ""
     owned_craft: str | None = None
     craft_swap_to_name: str = ""
     craft_kind: str = ""
@@ -282,50 +285,27 @@ def resolve_terrain_feasibility(
     )
 
 
-# ─── Craft axis (#540 slice 2c.2c) ───────────────────────────────────────────
-# Terrain feasibility answers "is there a surface to train discipline D?"; the
-# craft axis answers "does the athlete OWN the vehicle?". They compose: the
-# craft axis runs FIRST per discipline and either keeps it (athlete can equip),
-# swaps it to a discipline the athlete CAN equip (road-bike-for-MTB), or, when no
-# craft of the kind is owned, terminates in strength. The orchestrator then runs
-# the terrain axis on the (possibly swapped) effective discipline.
+# ─── Unified craft/terrain cascade (#586 WS-I, design §3) ────────────────────
+# Craft disciplines (modality `group_kind ∈ {bike, paddle}`) walk ONE ordered
+# cascade that composes craft ownership with terrain — replacing the old
+# two-non-composing-axes split (a craft ladder that short-circuited ahead of
+# terrain, so a craftless athlete with a trainer was sent to STRENGTH instead of
+# the INDOOR machine they own). Non-craft disciplines (foot/swim/climb) keep the
+# terrain-only `resolve_terrain_feasibility` cascade untouched.
 #
-# Only bike + paddle disciplines carry a craft (foot = shoes, climb/snow = kit
-# toggles, swim = no vessel) — those `group_kind`s are the craft-bearing ones.
-# This is a FEASIBILITY substitute axis (which session to actually do), distinct
-# from Layer 2A's group_id pooling that redistributes WEIGHT within a modality
-# group (Modality_Group_Spec §3.3/§5.3). Same-group ownership (a gravel bike for
-# MTB — both `bike_offroad`) counts as "owned"; only a same-`group_kind`-but-
-# other-group craft (a road bike for MTB — `bike_pavement` vs `bike_offroad`)
-# triggers a swap.
+# For each owned craft in priority order (the discipline's own craft first, then
+# same-`group_kind` proxy crafts) a terrain sub-check runs — can the craft ride a
+# required terrain that's in-cluster? then any terrain it's compatible with? —
+# before falling through to indoor → strength → reallocate. "Craftless" is not a
+# special branch: tiers 1–4 simply all miss and the walk lands on INDOOR (tier 5).
+# Which terrains a craft can be ridden on is read explicitly from
+# `layer0.craft_terrain_compatibility` (design §4) — NOT derived from the
+# discipline graph, so a road bike and a gravel bike (both aliasing road/XC
+# disciplines) differ on singletrack.
 _CRAFT_GROUP_KINDS = frozenset({"bike", "paddle"})
 
 
-@dataclass(frozen=True)
-class CraftResolution:
-    """The deterministic craft decision for one discipline the grid wants.
-
-    - owned    → the athlete owns a craft that trains this discipline's modality
-                 group; train the discipline as-is (terrain axis resolves where).
-    - swap     → owns no craft for this group but owns a same-kind craft in
-                 another group; train this allocation as `effective_discipline_id`
-                 (e.g. MTB → road cycling), then the terrain axis resolves THAT
-                 discipline's surface.
-    - strength → owns no craft of this kind at all; substitute a strength session
-                 (the craft terminal, mirroring terrain's STRENGTH tier).
-
-    `effective_discipline_id` == `discipline_id` except on a swap. The resolver
-    returns None for non-craft disciplines — terrain handles them untouched.
-    """
-
-    discipline_id: str
-    tier: Literal["owned", "swap", "strength"]
-    effective_discipline_id: str
-    owned_craft: str | None = None
-    note: str = ""
-
-
-def resolve_craft_feasibility(
+def resolve_craft_terrain_feasibility(
     discipline_id: str,
     *,
     owned_crafts: list[str],
@@ -333,53 +313,145 @@ def resolve_craft_feasibility(
     craft_group_kind: dict[str, str],
     discipline_groups: dict[str, list[str]],
     group_kind: dict[str, str],
-) -> CraftResolution | None:
-    """Resolve whether the athlete can equip `discipline_id`, and if not, how to
-    substitute. Pure. Returns None when the discipline carries no craft (its
-    modality group's `group_kind` is not bike/paddle) — the terrain axis owns it.
+    craft_terrain: dict[str, set[str]],
+    locale_order: list[str],
+    cluster_terrain_by_locale: dict[str, set[str]],
+    cluster_equipment_by_locale: dict[str, set[str]],
+    discipline_exercise_ids: list[str],
+    discipline_names: dict[str, str] | None = None,
+) -> TerrainResolution | None:
+    """The unified craft/terrain cascade for one craft discipline (design §3).
 
-    Args:
-        owned_crafts: the athlete's owned craft slugs (`_collect_athlete_crafts`).
-        craft_disciplines: `{craft_slug: [discipline_id, ...]}`
-            (`layer0.craft_discipline_aliases`).
-        craft_group_kind: `{craft_slug: group_kind}` (same table's column).
-        discipline_groups: `{discipline_id: [group_id, ...]}`
-            (`layer0.discipline_modality_membership`).
-        group_kind: `{group_id: group_kind}` (`layer0.modality_groups`).
+    Pure. Returns None when the discipline carries no craft (its modality group's
+    `group_kind` is not bike/paddle) — the caller runs the terrain-only cascade
+    instead. Otherwise walks the 7-tier cascade (first match wins):
+
+      1. own the discipline's craft AND it can ride a required terrain in-cluster
+      2. own the craft; ride it on an alternate terrain it's compatible with
+      3. own a same-kind PROXY craft that can ride the DESIRED (required) terrain
+      4. own a proxy craft; ride it on ITS OWN terrain → swap to the proxy's sport
+      5. INDOOR — a trainer/erg for this discipline is in the equipment pool
+      6. STRENGTH — substitute from the discipline's mapped pool
+      7. REALLOCATE — nothing available
+
+    Tier 3 ranks above tier 4 (Andy-ratified): desired-terrain-on-a-proxy beats
+    proxy-on-its-own-terrain.
+
+    Args mirror `resolve_craft_feasibility`'s predecessor plus the terrain inputs
+    of `resolve_terrain_feasibility`; `craft_terrain` is
+    `{craft_slug: {TRN-xxx, ...}}` from `layer0.craft_terrain_compatibility`.
     """
     my_groups = set(discipline_groups.get(discipline_id, []))
     my_kinds = {group_kind[g] for g in my_groups if g in group_kind}
     target_kind = next((k for k in sorted(my_kinds) if k in _CRAFT_GROUP_KINDS), None)
     if target_kind is None:
-        return None  # non-craft discipline — terrain axis handles it
+        return None  # non-craft discipline — caller uses the terrain-only cascade
 
-    owned = sorted(set(owned_crafts))
-    same_kind = [c for c in owned if craft_group_kind.get(c) == target_kind]
+    required = required_terrains(discipline_id)
+    same_kind = [c for c in sorted(set(owned_crafts)) if craft_group_kind.get(c) == target_kind]
 
-    # ── Tier 1: OWNED — a same-kind craft that trains this discipline's group ──
-    for c in same_kind:
+    def _trains(c: str) -> bool:
+        """True when craft `c` is the discipline's OWN craft — directly aliased
+        to it, or to a sibling discipline sharing its modality group."""
         c_discs = craft_disciplines.get(c, [])
-        if discipline_id in c_discs or any(
+        return discipline_id in c_discs or any(
             my_groups & set(discipline_groups.get(cd, [])) for cd in c_discs
-        ):
-            return CraftResolution(discipline_id, "owned", discipline_id, owned_craft=c)
+        )
 
-    # ── Tier 2: SWAP — own a same-kind craft, but only in a different group ────
-    for c in same_kind:
-        c_discs = sorted(craft_disciplines.get(c, []))
-        if c_discs:
-            return CraftResolution(
-                discipline_id, "swap", c_discs[0], owned_craft=c,
+    own_crafts = [c for c in same_kind if _trains(c)]
+    proxy_crafts = [c for c in same_kind if c not in own_crafts]
+    names = discipline_names or {}
+
+    def _first(allowed: frozenset[str] | set[str]) -> tuple[str, str] | None:
+        """First (locale, terrain) in locale_order where an allowed terrain is
+        present — home-first deterministic, mirrors the terrain cascade."""
+        for locale in locale_order:
+            have = cluster_terrain_by_locale.get(locale, set()) & allowed
+            if have:
+                return locale, sorted(have)[0]
+        return None
+
+    # ── Tier 1: own the discipline's craft, ride its REQUIRED terrain ────────
+    for c in own_crafts:
+        hit = _first(required & craft_terrain.get(c, set()))
+        if hit:
+            locale, terrain = hit
+            return TerrainResolution(
+                discipline_id, "exact", locale, terrain_id=terrain, owned_craft=c,
+                note=f"own {c}; required terrain {terrain} in cluster at {locale}",
+            )
+
+    # ── Tier 2: own the craft, ride an ALTERNATE terrain it's compatible with ─
+    for c in own_crafts:
+        hit = _first(craft_terrain.get(c, set()) - required)
+        if hit:
+            locale, terrain = hit
+            return TerrainResolution(
+                discipline_id, "proxy", locale, terrain_id=terrain, owned_craft=c,
                 note=(
-                    f"athlete owns {c} (not a {discipline_id} craft) — train this "
-                    f"allocation as {c_discs[0]}"
+                    f"own {c}; no required terrain in cluster — alternate surface "
+                    f"{terrain} at {locale}"
                 ),
             )
 
-    # ── Tier 3: STRENGTH — own no craft of this kind at all ───────────────────
-    return CraftResolution(
-        discipline_id, "strength", discipline_id,
-        note=f"athlete owns no {target_kind} craft — substitute strength",
+    # ── Tier 3: PROXY craft on the DESIRED (required) terrain ────────────────
+    for c in proxy_crafts:
+        hit = _first(required & craft_terrain.get(c, set()))
+        if hit:
+            locale, terrain = hit
+            return TerrainResolution(
+                discipline_id, "exact", locale, terrain_id=terrain,
+                craft_tier="proxy", owned_craft=c,
+                note=f"proxy craft {c} can ride required {terrain} at {locale}",
+            )
+
+    # ── Tier 4: PROXY craft on ITS OWN terrain → swap to the proxy's sport ───
+    for c in proxy_crafts:
+        hit = _first(craft_terrain.get(c, set()) - required)
+        if hit:
+            locale, terrain = hit
+            c_discs = sorted(craft_disciplines.get(c, []))
+            swap_to = c_discs[0] if c_discs else discipline_id
+            return TerrainResolution(
+                discipline_id, "exact", locale, terrain_id=terrain,
+                craft_tier="swap", owned_craft=c,
+                craft_swap_to_name=names.get(swap_to, swap_to),
+                note=f"own {c}; train this allocation as {swap_to} on {terrain} at {locale}",
+            )
+
+    # ── Tier 5: INDOOR — trainer/erg in the equipment pool (craft-independent) ─
+    machines = indoor_machines(discipline_id)
+    if machines:
+        for locale in locale_order:
+            pool = cluster_equipment_by_locale.get(locale, set())
+            for machine in machines:
+                if machine in pool:
+                    return TerrainResolution(
+                        discipline_id, "indoor", locale, machine=machine,
+                        note=f"no rideable terrain in cluster — indoor {machine} at {locale}",
+                    )
+
+    # ── Tier 6: STRENGTH — substitute from the discipline's mapped pool ───────
+    # Craftless (own no craft of the kind) flags the craft reason; owning a craft
+    # but lacking terrain/machine keeps the terrain reason (craft_tier="").
+    if discipline_exercise_ids:
+        locale = next(
+            (loc for loc in locale_order if cluster_equipment_by_locale.get(loc)),
+            locale_order[0] if locale_order else None,
+        )
+        craftless = not same_kind
+        return TerrainResolution(
+            discipline_id, "strength", locale,
+            substitute_exercise_ids=list(discipline_exercise_ids),
+            craft_tier="strength" if craftless else "",
+            craft_kind=target_kind if craftless else "",
+            note="no rideable craft/terrain or indoor machine — substitute strength",
+        )
+
+    # ── Tier 7: REALLOCATE — nothing works anywhere ───────────────────────────
+    return TerrainResolution(
+        discipline_id, "reallocate", None,
+        note="no craft, terrain, machine, or strength pool — reallocate this time",
     )
 
 
@@ -408,10 +480,11 @@ def feasibility_line(
     """
     loc = resolution.locale_id
     tier = resolution.tier
-    # Craft axis (#540 2c.2c) composes ahead of the terrain detail. A SWAP
-    # prepends "you own <craft> — train as <effective discipline>" and the terrain
-    # body below already describes that swapped-to discipline's surface. A craft
-    # STRENGTH terminal supplies its own reason in place of the terrain one.
+    # The craft overlay (#586 WS-I) composes ahead of the terrain detail. A SWAP
+    # prepends "you own <craft> — train as <swap-to discipline>" and the body
+    # describes that swapped-to surface. A PROXY keeps the sport but notes you're
+    # riding a different craft you own on the real terrain. A craft STRENGTH
+    # terminal supplies its own reason in place of the terrain one.
     craft_prefix = ""
     if resolution.craft_tier == "swap":
         owned = (resolution.owned_craft or "your craft").replace("_", " ")
@@ -419,6 +492,12 @@ def feasibility_line(
         craft_prefix = (
             f"you own a {owned}, not the gear for it — train this allocation as "
             f"{swap_to}. "
+        )
+    elif resolution.craft_tier == "proxy":
+        owned = (resolution.owned_craft or "a craft you own").replace("_", " ")
+        craft_prefix = (
+            f"you don't own this discipline's craft, but your {owned} can ride the "
+            "required terrain — use it there. "
         )
     if tier == "strength":
         names = ", ".join(
@@ -439,6 +518,15 @@ def feasibility_line(
         body = (
             f"real terrain available at \"{loc}\" ({resolution.terrain_id}) — "
             "train it for real there."
+        )
+    elif tier == "proxy" and resolution.proxy_fidelity is None:
+        # Craft-alt (#586 WS-I tier 2): own the craft, ride a substitute surface
+        # it's compatible with (no gap-rule fidelity — the craft itself qualifies).
+        owned = (resolution.owned_craft or "your craft").replace("_", " ")
+        body = (
+            f"no required terrain in your locales — ride your {owned} on the "
+            f"available surface ({resolution.terrain_id}) at \"{loc}\". Compose "
+            "for that surface."
         )
     elif tier == "proxy":
         body = (
@@ -494,8 +582,7 @@ def grid_annotation(resolution: TerrainResolution) -> str:
 __all__ = [
     "TerrainResolution",
     "resolve_terrain_feasibility",
-    "CraftResolution",
-    "resolve_craft_feasibility",
+    "resolve_craft_terrain_feasibility",
     "required_terrains",
     "indoor_machines",
     "feasibility_line",
