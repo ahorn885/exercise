@@ -33,8 +33,8 @@ pv=69 is `created_via=plan_create`. The Peak week resolved **5 strength sessions
 | G | Craft = athlete-owned canonical store (set B), available home-cluster-wide | **VALIDATED LIVE** (pv=71, 2026-06-13 — set B populated → D-008/D-009 `tier=exact` → plan `ready`; #585) | #585 |
 | H | Away craft availability — (b) craft↔location + (c) craft attached to a travel event | **DECIDED** — design + build (new schema/UI) | follow-up PR |
 | I | Craft/equipment taxonomy + unified feasibility cascade | **DESIGNED** (`designs/CraftEquipment_Taxonomy_And_FeasibilityCascade_Design_v1.md`) — ordering + explicit craft↔terrain ratified; OPEN: the craft→terrain seed grid (Trigger #2) | follow-up PR |
-| B | Retire the legacy `LOCALES` enum | queued (same one-source-of-truth theme) | follow-up PR |
-| C | Onboarding: force build + tag a home locale (+ capture athlete craft) | queued | follow-up PR |
+| B | Retire the legacy `LOCALES` enum | **SHIPPED** (2026-06-14) — enum + all force-render/auto-create/undeletable special cases gone; locales purely athlete-created | #589 |
+| C | Onboarding: force build + tag a home locale (+ capture athlete craft) | **SHIPPED** (2026-06-14) — `locales_continue` gates on ≥1 locale + a `preferred` home; craft capture already shipped (WS-G/Slice 2c.2b) | #589 |
 | V | Full Vocabulary arc V1–V7 (`Vocabulary_TargetState_and_Plan_v1`) | durable follow-up (already decided) | — |
 
 **Root cause (WS-D RESOLVED):** the live re-run (plan-70) proved the saturation is a **craft source-of-truth drift**, *not* genuine infeasibility (Andy's prior held). The craft axis reads the athlete-level `bike_types_available`/`paddle_craft_types` capture columns (**set B**), which were **empty** for the athlete, while the bikes/boats were entered as **location equipment** (`gym_profiles.equipment`). So D-008 Mountain Biking (grid-allocated 5×) + D-009 Packrafting craft-fail to strength → 7 strength/week → the `no strength+strength` collision.

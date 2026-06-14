@@ -115,7 +115,7 @@ def test_locations_grid_with_profiles(monkeypatch):
     html = resp.get_data(as_text=True)
     assert 'app-shell' in html
     assert 'Where you train.' in html
-    # Legacy enum (home) + custom (Equinox) both render as cards.
+    # Both athlete-created locales (home + Equinox) render as cards.
     assert 'loc-grid' in html
     assert 'Equinox Capitol Hill' in html
     assert 'Barbell' in html
@@ -140,8 +140,9 @@ def test_locations_empty_hero(monkeypatch):
     # Nothing configured → the "Where do you train?" hero, not blank cards.
     assert 'Where do you train?' in html
     assert 'loc-grid' not in html
-    # Each legacy enum offers a set-up shortcut to its edit route.
-    assert '/locales/home/edit' in html
-    assert '/locales/hotel/edit' in html
+    # Legacy enum set-up shortcuts are retired (WS-B) — the empty hero leads
+    # with the search/add path to the real new-locale route.
+    assert '/locales/home/edit' not in html
+    assert '/locales/new' in html
     assert 'Search by address'.lower() in html.lower()
     assert 'style="' not in html

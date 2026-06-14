@@ -486,9 +486,17 @@ class TestDeleteLocale:
         lp_idx = _sql_indices(conn.calls, 'DELETE FROM locale_profiles')
         assert lp_idx, 'expected a DELETE FROM locale_profiles call'
 
-    def test_legacy_locale_short_circuits_without_delete(self, monkeypatch):
+    def test_former_legacy_slug_is_now_deletable(self, monkeypatch):
+        # WS-B — the legacy enum is retired, so a locale that happens to use a
+        # former-legacy slug ('home') is just an athlete-created row: it is
+        # deleted like any other, no short-circuit-to-edit.
         app = _make_app()
         conn = _FakeConn()
+        conn.queue_response(row={
+            'category': 'home_gym',
+            'gym_profile_id': None,
+            'locale_name': 'Home',
+        })
         import routes.locales as locales_mod
         monkeypatch.setattr(locales_mod, 'get_db', lambda: conn)
         monkeypatch.setattr(locales_mod, 'current_user_id', lambda: 1)
@@ -496,8 +504,8 @@ class TestDeleteLocale:
         with app.test_request_context('/locales/home/delete', method='POST'):
             delete_locale('home')
 
-        # Legacy enum slot → redirected to edit, no DELETEs issued.
-        assert not _sql_indices(conn.calls, 'DELETE FROM locale_profiles')
+        assert _sql_indices(conn.calls, 'DELETE FROM locale_profiles'), \
+            'former-legacy slug should now delete like any athlete-created locale'
 
 
 # ─── unified edit path — locale_terrain_ids round-trip ─────────────────────
