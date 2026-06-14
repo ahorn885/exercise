@@ -61,13 +61,6 @@ from athlete_event_windows_repo import (
     evict_plan_caches_on_event_windows_change,
     load_event_windows,
 )
-from athlete_craft_locale_repo import (
-    CraftLocaleError,
-    delete_craft_locale,
-    evict_plan_caches_on_craft_locale_change,
-    load_craft_locales,
-    replace_craft_locale,
-)
 from athlete_skill_toggles_repo import (
     evict_layer1_on_skill_toggle_change,
     get_athlete_skill_toggles,
@@ -654,10 +647,10 @@ def event_windows():
         windows=windows,
         locales=locales,
         override_types=OVERRIDE_TYPES,
-        # Slice 4 (#581 WS-H) — away-craft capture: the picker catalog + the
-        # athlete's standing craft↔locale map ({locale: [slug]}).
+        # Slice 4 (#581 WS-H) — away-craft capture: the brought-craft (c) picker
+        # catalog. (The standing craft↔locale (b) capture moved to the per-locale
+        # edit page in Slice 5.)
         craft_catalog=load_craft_catalog(),
-        craft_locales=load_craft_locales(db, uid),
     )
 
 
@@ -703,42 +696,6 @@ def delete_event_window_route(window_id):
     db.commit()
     evict_plan_caches_on_event_windows_change(db, uid)
     flash('Event window removed.', 'success')
-    return redirect(url_for('profile.event_windows'))
-
-
-@bp.route('/event-windows/crafts-at-locale', methods=['POST'])
-def save_craft_locale_route():
-    """Slice 4 (#581 WS-H) — the (b) surface: replace the crafts the athlete keeps
-    at one locale (a standing association, available whenever that locale falls in
-    an away cluster). Replace-all per locale; the repo validates the slugs +
-    locale, then plan caches are evicted."""
-    db = get_db()
-    uid = current_user_id()
-    try:
-        replace_craft_locale(
-            db,
-            uid,
-            (request.form.get('locale') or '').strip(),
-            request.form.getlist('craft_slug'),
-        )
-    except CraftLocaleError as exc:
-        flash(str(exc), 'error')
-        return redirect(url_for('profile.event_windows'))
-    db.commit()
-    evict_plan_caches_on_craft_locale_change(db, uid)
-    flash('Crafts kept at this location saved.', 'success')
-    return redirect(url_for('profile.event_windows'))
-
-
-@bp.route('/event-windows/crafts-at-locale/delete', methods=['POST'])
-def delete_craft_locale_route():
-    """Clear all crafts kept at one locale (user-scoped) + evict plan caches."""
-    db = get_db()
-    uid = current_user_id()
-    delete_craft_locale(db, uid, (request.form.get('locale') or '').strip())
-    db.commit()
-    evict_plan_caches_on_craft_locale_change(db, uid)
-    flash('Crafts at this location cleared.', 'success')
     return redirect(url_for('profile.event_windows'))
 
 

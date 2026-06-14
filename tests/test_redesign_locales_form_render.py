@@ -45,6 +45,10 @@ def _form_ctx(**kw):
         is_deletable=False, display_address='',
         privacy_locked=False, privacy_opt_out=False, privacy_effective=False,
         terrain_choices=_TERRAIN, active_terrain_ids={'trail'},
+        # WS-H Slice 5 — the relocated (b) craft↔locale capture.
+        craft_catalog={'cycling': [{'slug': 'mountain_bike', 'label': 'Mountain bike'}],
+                       'paddling': [{'slug': 'kayak', 'label': 'Kayak'}]},
+        crafts_here=['kayak'],
     )
     base.update(kw)
     return base
@@ -90,6 +94,22 @@ def test_form_deletable_shows_delete():
     assert '/locales/home/delete' in html
     assert 'data-confirm=' in html     # delete still confirms
     assert 'style="' not in html
+
+
+def test_form_renders_craft_kept_here():
+    """WS-H #581 Slice 5 — the (b) standing craft↔locale capture, relocated off the
+    event-windows page onto the per-locale edit page (craft kept at a place is a
+    property of the place), posting to the locale-scoped `save_locale_crafts`."""
+    html = _render('locales/form.html', **_form_ctx())
+    assert 'Craft you keep here' in html
+    assert 'name="craft_slug"' in html
+    assert '/locales/home/crafts' in html          # locale-scoped save route
+    assert 'Mountain bike' in html and 'Kayak' in html
+    assert 'id="kept_kayak"' in html               # crafts_here drives checked state
+    # Hidden when no catalog (e.g. pre-Slice-5 callers) — guarded render.
+    bare = _render('locales/form.html', **_form_ctx(craft_catalog=None))
+    assert 'Craft you keep here' not in bare
+    assert 'style="' not in html and 'onclick=' not in html
 
 
 # ─── locales/new.html ───────────────────────────────────────────────────
@@ -180,8 +200,7 @@ def test_event_windows_capture_renders_away_create_link():
                    windows=[],
                    locales=['home', 'belfast-hotel'],
                    override_types=('indoor_only', 'locale_unavailable', 'away'),
-                   craft_catalog=catalog,
-                   craft_locales={})
+                   craft_catalog=catalog)
     assert 'app-shell' in html
     # 2a — pick-existing destination dropdown.
     assert 'name="away_locale"' in html
@@ -191,11 +210,13 @@ def test_event_windows_capture_renders_away_create_link():
     assert '/locales/new?return_to=' in html
     assert 'event-windows' in html
     assert 'Add a new location' in html
-    # Slice 4 (WS-H #581): brought-craft (c) on the away window + the standing
-    # craft↔locale (b) section, both fed from the closed craft catalog.
+    # Slice 4 (WS-H #581): brought-craft (c) on the away window, fed from the
+    # closed craft catalog.
     assert 'name="brought_craft"' in html
-    assert 'name="craft_slug"' in html
-    assert 'crafts-at-locale' in html
     assert 'Packraft' in html and 'Mountain bike' in html
+    # Slice 5: the standing craft↔locale (b) capture moved to the per-locale edit
+    # page — this page now only links there, no in-page craft_slug form.
+    assert 'name="craft_slug"' not in html
+    assert 'own page</a>' in html and '/locales' in html
     # Strict-CSP: no inline style/handlers.
     assert 'style="' not in html and 'onclick=' not in html
