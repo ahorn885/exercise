@@ -106,12 +106,14 @@ def compute_event_windows_hash(windows: list[Any]) -> str:
     overlapping the plan span.
 
     Each window contributes `(override_type, start_date, end_date,
-    unavailable_locale)` — the declared inputs, NOT the derived resolutions (the
-    cluster terrain/equipment that resolution depends on is already keyed via
-    `compute_terrain_feasibility_hash`). Sorted for a stable digest. Folds into
-    `plan_create_key` / `plan_refresh_key`; the caller passes None when no window
-    overlaps the span so the key collapses to '' and stays byte-identical to the
-    pre-Slice-1 key (the no-windows regression criterion).
+    unavailable_locale, away_locale)` — the declared inputs, NOT the derived
+    resolutions (the cluster terrain/equipment that resolution depends on is
+    already keyed via `compute_terrain_feasibility_hash`; an away destination's
+    equipment edit evicts the plan caches via the locale-edit path). Sorted for a
+    stable digest. Folds into `plan_create_key` / `plan_refresh_key`; the caller
+    passes None when no window overlaps the span so the key collapses to '' and
+    stays byte-identical to the pre-Slice-1 key (the no-windows regression
+    criterion).
     """
     flat = sorted(
         (
@@ -120,6 +122,7 @@ def compute_event_windows_hash(windows: list[Any]) -> str:
                 "start_date": w.start_date,
                 "end_date": w.end_date,
                 "unavailable_locale": w.unavailable_locale,
+                "away_locale": getattr(w, "away_locale", None),
             }
             for w in windows
         ),
@@ -128,6 +131,7 @@ def compute_event_windows_hash(windows: list[Any]) -> str:
             d["end_date"],
             d["override_type"],
             d["unavailable_locale"] or "",
+            d["away_locale"] or "",
         ),
     )
     return _sha256_hex(canonical_json(flat))

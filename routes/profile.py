@@ -670,6 +670,7 @@ def add_event_window_route():
             end_date=end,
             override_type=(request.form.get('override_type') or '').strip(),
             unavailable_locale=(request.form.get('unavailable_locale') or None),
+            away_locale=(request.form.get('away_locale') or None),
             notes=(request.form.get('notes') or '').strip(),
         )
     except EventWindowError as exc:

@@ -893,7 +893,13 @@ def _event_window_label(segment: "EventWindowSegment") -> str:
             parts.append("indoor-only (no outdoor terrain available)")
         elif ov.override_type == "locale_unavailable":
             parts.append(f"\"{ov.unavailable_locale}\" unavailable (closed this window)")
-        else:  # defensive — Slice 2 introduces 'away'
+        elif ov.override_type == "away":
+            # Trigger-#1 wording APPROVED (Andy 2026-06-14).
+            parts.append(
+                f"away at \"{ov.away_locale}\" (training environment: that "
+                f"location's terrain/equipment; no brought craft)"
+            )
+        else:  # defensive
             parts.append(ov.override_type)
     return " + ".join(parts)
 
@@ -934,12 +940,14 @@ def _format_event_window_overlay(
 
     out: list[str] = [
         "=== Event-window overlay (deterministic — date-scoped routing) ===",
+        # Trigger-#1 wording APPROVED (Andy 2026-06-14) — away-aware (Slice 2).
         "Part of this block falls inside a declared event window where the "
-        "training environment is reduced. On the dates below, routing differs "
-        "from the default feasibility block above. Compose any session dated "
-        "within a window against THAT window's routing; sessions outside the "
-        "windows use the default. Counts are unchanged — a session that lands on "
-        "a window day is composed at that day's environment, never dropped.",
+        "training environment differs — either reduced (home, indoor-only or a "
+        "locale closed) or replaced (training away at another location). On the "
+        "dates below, routing differs from the default feasibility block above. "
+        "Compose any session dated within a window against THAT window's routing; "
+        "sessions outside the windows use the default. A session that lands on a "
+        "window day is composed at that day's environment, never dropped.",
     ]
     for seg in sorted(overlapping, key=lambda s: (s.start_date, s.end_date)):
         disp_start = max(seg.start_date, unit_start)
@@ -976,6 +984,7 @@ def _format_session_grid(
     week_range: tuple[int, int] | None = None,
     skill_gated: dict[str, str] | None = None,
     terrain_feasibility: dict[str, TerrainResolution] | None = None,
+    event_window_segments: list["EventWindowSegment"] | None = None,
 ) -> list[str]:
     """Track 2 slice 2b: render the deterministic per-week session grid that
     replaces the prior `_format_phase_load_bands` block. The grid is
@@ -1015,8 +1024,40 @@ def _format_session_grid(
         )
         weeks = range(1, phase_weeks_n + 1)
 
+    # Counts-follow-away (Event Windows Slice 2, spec §4.1): a plan week FULLY
+    # inside an `away` window is counted against the destination, not home — so
+    # WS-E2's per-week reallocation shifts the weekly counts toward what the
+    # destination supports. A partial/mixed week keeps home counts (its away days
+    # are handled by per-day composition / the overlay). Resolve the phase span
+    # once for the per-week date math (week w spans start_date+(w-1)*7 .. +6d).
+    _phase_spec = next(
+        (p for p in phase_structure.phases if p.phase_name == phase_name), None
+    )
+    _away_segments = [
+        s for s in (event_window_segments or []) if s.away_feasibility is not None
+    ]
+
     out: list[str] = []
     for w in weeks:
+        week_feasibility = terrain_feasibility
+        if _phase_spec is not None and _away_segments:
+            wk_start = _phase_spec.start_date + timedelta(days=(w - 1) * 7)
+            wk_end = wk_start + timedelta(days=6)
+            away_seg = next(
+                (
+                    s for s in _away_segments
+                    if s.start_date <= wk_start and s.end_date >= wk_end
+                ),
+                None,
+            )
+            if away_seg is not None:
+                week_feasibility = away_seg.away_feasibility
+                print(
+                    f"counts_follow_away: {phase_name}:w{w} "
+                    f"dates={wk_start.isoformat()}..{wk_end.isoformat()} "
+                    f"fully-away → grid counted against the away env "
+                    f"tiers={ {d: r.tier for d, r in sorted(away_seg.away_feasibility.items())} }"
+                )
         grid = build_session_grid(
             layer2a_payload,
             phase_structure,
@@ -1029,8 +1070,8 @@ def _format_session_grid(
             two_a_day_preference=two_a_day_preference,
             peak_sessions_max=peak_sessions_max,
             strength_feasibility_tiers=(
-                {d: r.tier for d, r in terrain_feasibility.items()}
-                if terrain_feasibility else None
+                {d: r.tier for d, r in week_feasibility.items()}
+                if week_feasibility else None
             ),
             skill_gated_ids=frozenset(skill_gated or {}),
         )
@@ -1433,6 +1474,7 @@ def render_user_prompt(
             week_range=week_range,
             skill_gated=skill_gated,
             terrain_feasibility=terrain_feasibility,
+            event_window_segments=event_window_segments,
         )
     )
     parts.append("")

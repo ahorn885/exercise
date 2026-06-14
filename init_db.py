@@ -2297,12 +2297,17 @@ _PG_MIGRATIONS = [
     # where the training environment differs from the default home cluster.
     # Slice 1 = two SUBTRACTIVE override types: 'indoor_only' (home cluster minus
     # outdoor terrain) and 'locale_unavailable' (home cluster minus one locale,
-    # named in unavailable_locale). Slice 2 adds the 'away' override_type.
-    # Athlete-scoped (F1). No DB CHECK per the project convention — override_type
-    # / locale / date constraints are enforced in athlete_event_windows_repo.py
-    # (mirrors the no-CHECK sibling columns sex, doubles_feasible).
-    "CREATE TABLE IF NOT EXISTS athlete_event_windows (id SERIAL PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES users(id), start_date DATE NOT NULL, end_date DATE NOT NULL, override_type TEXT NOT NULL, unavailable_locale TEXT, notes TEXT DEFAULT '', created_at TIMESTAMP DEFAULT NOW())",
+    # named in unavailable_locale). Slice 2 adds the 'away' override_type +
+    # away_locale (the destination locale_profiles slug, used as the cluster
+    # ANCHOR — plan-gen resolves the away days against the destination's own
+    # radius cluster, same logic as home). Athlete-scoped (F1). No DB CHECK per
+    # the project convention — override_type / locale / date constraints are
+    # enforced in athlete_event_windows_repo.py (mirrors the no-CHECK sibling
+    # columns sex, doubles_feasible).
+    "CREATE TABLE IF NOT EXISTS athlete_event_windows (id SERIAL PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES users(id), start_date DATE NOT NULL, end_date DATE NOT NULL, override_type TEXT NOT NULL, unavailable_locale TEXT, away_locale TEXT, notes TEXT DEFAULT '', created_at TIMESTAMP DEFAULT NOW())",
     "CREATE INDEX IF NOT EXISTS idx_aew_user ON athlete_event_windows(user_id)",
+    # Event Windows Slice 2 (#581 WS-H) — away_locale on the pre-existing table.
+    "ALTER TABLE athlete_event_windows ADD COLUMN IF NOT EXISTS away_locale TEXT",
 ]
 
 _CLOTHING_SEEDS = [

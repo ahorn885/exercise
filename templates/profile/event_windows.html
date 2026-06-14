@@ -1,7 +1,8 @@
-{# Event Windows — Slice 1 (#581 WS-H). Minimal capture: declare date-bounded
-   SUBTRACTIVE home windows (indoor-only / a closed locale). Plan generation
-   date-segments the plan span against these and reroutes the affected days
-   against the reduced environment. Away windows are Slice 2. #}
+{# Event Windows — Slice 1 + 2 (#581 WS-H). Minimal capture: declare date-bounded
+   windows — SUBTRACTIVE home (indoor-only / a closed locale) or AWAY (training
+   from a different saved location). Plan generation date-segments the plan span
+   against these and resolves the affected days against the reduced/replacement
+   environment. Inline-create-a-new-destination is Slice 2b. #}
 {% extends 'base.html' %}
 {% set nav_active = 'athlete' %}
 {% block title %}Event windows — AIDSTATION{% endblock %}
@@ -12,9 +13,10 @@
   <div class="races-intro">
     <p class="eyebrow accent">● Training · event windows</p>
     <h1 class="page-title">Event windows.</h1>
-    <p class="page-sub">Date-bounded periods when your training environment is reduced — weather or
-      childcare forcing you indoors, or one of your locales closed (gym remodel, flooded park).
-      Plan generation reroutes the affected days against what's still available.</p>
+    <p class="page-sub">Date-bounded periods when your training environment differs — weather or
+      childcare forcing you indoors, one of your locales closed (gym remodel, flooded park),
+      or training <b>away</b> at a different location. Plan generation resolves the affected days
+      against that environment (away uses the destination's own cluster).</p>
   </div>
 </div>
 
@@ -34,6 +36,7 @@
           <td>
             {% if w.override_type == 'indoor_only' %}Indoor only (no outdoor terrain)
             {% elif w.override_type == 'locale_unavailable' %}“{{ w.unavailable_locale }}” unavailable
+            {% elif w.override_type == 'away' %}Away at “{{ w.away_locale }}”
             {% else %}{{ w.override_type }}{% endif %}
           </td>
           <td class="dim">{{ w.notes or '—' }}</td>
@@ -66,18 +69,24 @@
           <select name="override_type" class="form-control form-control-sm" required>
             <option value="indoor_only">Indoor only — no outdoor terrain</option>
             <option value="locale_unavailable">A locale is unavailable</option>
+            <option value="away">Away — training at a different location</option>
           </select></label>
         <label class="field"><span class="lbl">Unavailable locale <span class="dim">(if a locale is closed)</span></span>
           <select name="unavailable_locale" class="form-control form-control-sm">
             <option value="">—</option>
             {% for loc in locales %}<option value="{{ loc }}">{{ loc }}</option>{% endfor %}
           </select></label>
+        <label class="field"><span class="lbl">Away destination <span class="dim">(if training away)</span></span>
+          <select name="away_locale" class="form-control form-control-sm">
+            <option value="">—</option>
+            {% for loc in locales %}<option value="{{ loc }}">{{ loc }}</option>{% endfor %}
+          </select></label>
         <label class="field field-wide"><span class="lbl">Notes <span class="dim">(optional)</span></span>
           <input type="text" name="notes" maxlength="200" class="form-control form-control-sm"
-                 placeholder="e.g. work travel, gym remodel"></label>
+                 placeholder="e.g. work travel, gym remodel, training camp"></label>
       </div>
       <div class="pf-save">
-        <span class="pf-saved mono">Indoor-only drops outdoor terrain · locale-unavailable drops that one place</span>
+        <span class="pf-saved mono">Indoor-only drops outdoor terrain · locale-unavailable drops that one place · away swaps to the destination's cluster</span>
         <button type="submit" class="btn btn-primary">Add window</button>
       </div>
     </form>

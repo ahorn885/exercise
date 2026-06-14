@@ -88,31 +88,45 @@ def locale_effective_tags(db: Any, user_id: int, locale: str) -> set[str]:
     return (shared | adds) - removes
 
 
-def cluster_locale_ids(db: Any, user_id: int) -> list[str]:
-    """The athlete's training cluster: the home locale + every saved locale
-    within `_CLUSTER_RADIUS_KM` of home by lat/lng (§5.2). Home is always
-    first. Manual-entry locales without coordinates are excluded from the
-    radius sweep (home itself is included even when it lacks coords).
-    Returns [] only when no home is set (callers guard via primary_locale)."""
-    home = db.execute(
-        "SELECT locale, lat, lng FROM locale_profiles "
-        "WHERE user_id = ? AND preferred LIMIT 1",
-        (user_id,),
-    ).fetchone()
+def cluster_locale_ids(
+    db: Any, user_id: int, anchor_locale: str | None = None
+) -> list[str]:
+    """The athlete's training cluster: the anchor locale + every saved locale
+    within `_CLUSTER_RADIUS_KM` of the anchor by lat/lng (§5.2). The anchor is
+    always first. Manual-entry locales without coordinates are excluded from the
+    radius sweep (the anchor itself is included even when it lacks coords).
+
+    `anchor_locale=None` → the anchor is the athlete's `preferred` home locale
+    (the default plan cluster; byte-identical to the pre-Slice-2 signature). A
+    supplied `anchor_locale` → the radius sweep re-anchors at that locale (Event
+    Windows Slice 2 `away` — the destination's own cluster, same logic as home).
+    Returns [] only when the anchor row can't be resolved (callers guard)."""
+    if anchor_locale is None:
+        home = db.execute(
+            "SELECT locale, lat, lng FROM locale_profiles "
+            "WHERE user_id = ? AND preferred LIMIT 1",
+            (user_id,),
+        ).fetchone()
+    else:
+        home = db.execute(
+            "SELECT locale, lat, lng FROM locale_profiles "
+            "WHERE user_id = ? AND locale = ? LIMIT 1",
+            (user_id, anchor_locale),
+        ).fetchone()
     if home is None:
         print(
-            f"cluster_locale_ids: user_id={user_id} no preferred/home locale set "
-            f"→ cluster=[] (feasibility resolution will be skipped)"
+            f"cluster_locale_ids: user_id={user_id} anchor={anchor_locale or 'home'} "
+            f"unresolvable → cluster=[] (feasibility resolution will be skipped)"
         )
         return []
     ids = [home["locale"]]
     if home["lat"] is None or home["lng"] is None:
-        # Rule #15 observability: a home without coords yields a single-locale
+        # Rule #15 observability: an anchor without coords yields a single-locale
         # cluster (radius sweep skipped) that looks normal downstream but can
         # starve the feasibility cascade of terrain/equipment at other locales.
         print(
-            f"cluster_locale_ids: user_id={user_id} home={home['locale']!r} has "
-            f"no coords → cluster=[home] only (radius sweep skipped)"
+            f"cluster_locale_ids: user_id={user_id} anchor={home['locale']!r} has "
+            f"no coords → cluster=[anchor] only (radius sweep skipped)"
         )
         return ids
     home_lat, home_lng = float(home["lat"]), float(home["lng"])
