@@ -134,12 +134,5 @@ Ran the **full Layer 0 gate locally against a throwaway Postgres** (exact CI ste
 ## 10. Owed Andy's hands (Neon — container has no egress)
 
 1. **Apply `0004` on Neon** — ✅ **DONE this session** (Andy ran it; was briefly hitting `3F000 schema "layer0" does not exist` from the SQL editor being in the **wrong Neon project** — resolved by switching to the correct project; the migration assumes `layer0` pre-exists, never creates it).
-2. **Per-athlete data fix — STATUS TO CONFIRM.** Andy currently has `cycling_trainer` in set B (pv=71). Strip it from the bike craft store + add the trainer to home gym equipment:
-   ```sql
-   UPDATE discipline_baseline_cycling
-      SET bike_types_available = NULLIF(array_to_string(
-            array_remove(string_to_array(bike_types_available, ','), 'cycling_trainer'), ','), '')
-    WHERE bike_types_available LIKE '%cycling_trainer%';
-   ```
-   Then tick **Cycling trainer** in the home locale's equipment via the profile UI (cleaner than hand-editing `locale_equipment` — routes through the `equipment_items` tag map; the INDOOR tier reads it there). Not required for Slice A correctness; matters for Slice B's INDOOR tier.
-3. **Merge #587** when satisfied — then Slice B can build on a fresh branch.
+2. **Per-athlete data fix — ✅ DONE** (Andy, 2026-06-14). Ran the `discipline_baseline_cycling.bike_types_available` strip (`array_remove` the `cycling_trainer` token) **and** ticked **Cycling trainer** in his home locale's equipment via the profile UI. Set B is now trainer-free; the trainer lives in set C, where Slice B's INDOOR tier will read it.
+3. **Merge #587** when satisfied — then Slice B can build on a fresh branch. *(Only remaining owed item.)*
