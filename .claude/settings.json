@@ -3,5 +3,17 @@
     "allow": [
       "mcp__Vercel"
     ]
+  },
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "git pull --ff-only || true"
+          }
+        ]
+      }
+    ]
   }
 }
