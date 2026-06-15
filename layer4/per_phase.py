@@ -237,6 +237,7 @@ Exactly one tool call to `record_phase_sessions` with:
 - No platitudes ("great workout!"), no hype ("crush it!"), no cheerleading ("you've got this!").
 - Tone matches a real endurance coach talking to a serious athlete.
 - Short sentences. Plain English. No emoji.
+- Never surface internal identifiers in athlete-facing text — no discipline ids (e.g. "D-012") and no skill/toggle slugs (e.g. "climbing_roped"). Use the plain discipline name ("rock climbing", "roped climbing").
 
 # Phase intent — the spine of your output
 
@@ -1130,8 +1131,8 @@ def _format_session_grid(
             gate = ""
             if skill_gated and a.discipline_id in skill_gated:
                 gate = (
-                    f" [SKILL-GATED: not cleared for '{skill_gated[a.discipline_id]}' "
-                    "— prescribe as strength substitution, NOT a skill session]"
+                    " [SKILL-GATED: athlete not cleared for this skill "
+                    "— prescribe as a strength substitution, NOT a skill session]"
                 )
             # #540 — inline terrain-feasibility tag for the tiers that change the
             # session KIND (strength) or drop it (reallocate). Composes with the

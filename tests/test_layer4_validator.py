@@ -1624,7 +1624,12 @@ def test_skill_capability_gate_blocks_cardio_for_gated_discipline():
     sg = [f for f in failures if f.rule_name.startswith("skill_capability_gate")]
     assert sg
     assert sg[0].severity == "blocker"
-    assert "climbing_roped" in sg[0].detail
+    # #618 — the correction feedback names the gated discipline + the strength
+    # substitution, but must NOT leak the raw toggle slug (it was echoing into
+    # athlete-facing coaching_intent).
+    assert "climbing_roped" not in sg[0].detail
+    assert "D-012" in sg[0].detail
+    assert "strength" in sg[0].detail
     assert not validate_layer4_payload(payload, ctx).accepted
 
 

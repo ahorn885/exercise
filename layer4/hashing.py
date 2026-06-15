@@ -34,7 +34,10 @@ _LAYER2_BUNDLE_ATTRS = frozenset({"a", "b", "c", "d", "e"})
 # synthesis or refresh prompt body changes in a way that should re-synthesize
 # cached plans. "2" = #335 Phase 2 strength two-template restructure
 # (per_phase + plan_refresh T1/T2 + shared strength_guidance).
-LAYER4_PROMPT_REVISION = "2"
+# "3" = #618 humanize skill-gate wording — drop the raw toggle slug from the
+# per_phase grid annotation + the validator correction feedback, + a VOICE rule
+# (per_phase + T1/T2/T3) barring internal ids/slugs in athlete-facing text.
+LAYER4_PROMPT_REVISION = "3"
 
 
 def _to_jsonable(obj: Any) -> Any:

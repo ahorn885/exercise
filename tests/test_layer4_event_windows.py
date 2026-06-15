@@ -590,6 +590,20 @@ class TestCountsFollowAway:
         )
         assert "counts_follow_away" not in capsys.readouterr().out
 
+    def test_skill_gated_annotation_carries_no_slug(self):
+        # #618 — the skill-gate grid annotation flags the gated discipline for a
+        # strength substitution, but must not leak the raw toggle slug into the
+        # synthesis prompt (the LLM was echoing it into athlete-facing text).
+        start = date(2026, 6, 1)
+        lines = _format_session_grid(
+            {"identity": {"weekly_hours_target": 15.0}},
+            self._l2a(), self._phase(start), "Peak", None,
+            skill_gated={"D-008": "climbing_roped"},
+        )
+        out = "\n".join(lines)
+        assert "SKILL-GATED" in out
+        assert "climbing_roped" not in out
+
 
 # ─── synthesis overlay render (Trigger #1 wording) ───────────────────────────
 
