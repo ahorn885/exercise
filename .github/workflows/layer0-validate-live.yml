@@ -1,0 +1,37 @@
+name: Layer 0 validate live prod
+
+# Scheduled (nightly) + manual integrity check of LIVE prod Neon, complementing
+# the layer0-gate (which only validates the committed baseline snapshot). Runs
+# the same validate_layer0 checks — including the primary_movement guard —
+# against ACTUAL prod via the read-only role, so live drift (e.g. an ETL re-run
+# clobbering a served column, the #616 primary_movement regression class)
+# surfaces automatically instead of by accident weeks later. Read-only: uses
+# NEON_RO_DATABASE_URL; the checks are all SELECTs.
+
+on:
+  schedule:
+    - cron: "0 7 * * *"   # 07:00 UTC, staggered from the 06:00 real-llm-smoke
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate-live:
+    name: validate_layer0 against live prod
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install deps
+        run: pip install -r requirements.txt
+      - name: Run validate_layer0 against live (read-only)
+        env:
+          DATABASE_URL: ${{ secrets.NEON_RO_DATABASE_URL }}
+        run: |
+          set -euo pipefail
+          test -n "${DATABASE_URL:-}" || { echo "::error::NEON_RO_DATABASE_URL secret unset (create the read-only role + secret)"; exit 1; }
+          python -m etl.layer0.validate_layer0
