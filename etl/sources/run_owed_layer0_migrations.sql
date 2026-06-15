@@ -6,7 +6,8 @@
 -- CURRENT_STATE.md "Open next moves":
 --   - PR #156  migrate_disciplines_add_primary_movement_v1.sql  (HARD prereq —
 --              Layer 2A SELECTs layer0.disciplines.primary_movement)
---   - K3       populate_equipment_items_K3_additions.sql        (additive)
+--   - (K3 equipment additions REMOVED 2026-06-15 — those items are unwanted;
+--      climbing gear lives in sport_specific_gear_toggles. See closed #613.)
 --   - D-74     populate_terrain_gap_rules.sql / _skill_capability_toggles.sql /
 --              _discipline_technique_foci.sql                    (idempotency
 --              re-runs; Neon already has the correct rows from the R6 deploy —
@@ -32,19 +33,16 @@
 
 \set ON_ERROR_STOP on
 
-\echo '=== [1/5] PR #156 — layer0.disciplines.primary_movement (schema; HARD prereq) ==='
+\echo '=== [1/4] PR #156 — layer0.disciplines.primary_movement (schema; HARD prereq) ==='
 \ir migrate_disciplines_add_primary_movement_v1.sql
 
-\echo '=== [2/5] K3 — layer0.equipment_items additions (additive) ==='
-\ir populate_equipment_items_K3_additions.sql
-
-\echo '=== [3/5] D-74 — layer0.terrain_gap_rules (idempotency re-run; etl/sources copy) ==='
+\echo '=== [2/4] D-74 — layer0.terrain_gap_rules (idempotency re-run; etl/sources copy) ==='
 \ir populate_terrain_gap_rules.sql
 
-\echo '=== [4/5] D-74 — layer0.skill_capability_toggles (idempotency re-run) ==='
+\echo '=== [3/4] D-74 — layer0.skill_capability_toggles (idempotency re-run) ==='
 \ir populate_skill_capability_toggles.sql
 
-\echo '=== [5/5] D-74 — layer0.discipline_technique_foci (idempotency re-run) ==='
+\echo '=== [4/4] D-74 — layer0.discipline_technique_foci (idempotency re-run) ==='
 \ir populate_discipline_technique_foci.sql
 
 \echo '=== owed layer0 migrations complete ==='

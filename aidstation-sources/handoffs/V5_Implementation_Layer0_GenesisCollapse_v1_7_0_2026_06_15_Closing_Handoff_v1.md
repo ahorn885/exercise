@@ -31,7 +31,7 @@ The gate (`.github/workflows/ci.yml` `layer0-gate`) now:
 ## 4. Bugs found / corrections
 
 - **`nullglob` + `ls $glob` gate bug (CI-found, fixed).** The first CI run failed: with the migrations dir now empty, `shopt -s nullglob; ls etl/migrations/layer0/*.sql` expanded the glob to nothing and ran `ls` argument-less → it listed the repo root → the loop tried to `psql DATABASE.md` (`syntax error at or near "#"`). Latent in the original workflow; the collapse exposed it. Fixed by iterating the glob directly (`for m in etl/migrations/layer0/*.sql`).
-- **K3 over-reach (caught + corrected).** `populate_equipment_items_K3_additions.sql` was briefly archived, then **restored**. `CARRY_FORWARD` (Slice-5a re-look) had flagged that K3 is **not dead**: `run_owed_layer0_migrations.sql:39` still `\ir`s it, and it carries equipment **not yet in live** — verified against the baseline: `Rope` / `Quickdraws` / `Harness` / `Climbing gym membership` are absent from the live active set (plus the retired `Crash pad`). Archiving it broke the runner and dropped a pending deploy. Restored; the K3 deploy stays owed (see §7).
+- **K3 — resolved (Andy 2026-06-15, [#613](https://github.com/ahorn885/exercise/issues/613) closed not-planned).** Briefly over-archived mid-session then restored once I re-read the Slice-5a `CARRY_FORWARD` note — but Andy then confirmed the K3 items are **unwanted**: climbing gear was long ago consolidated into `sport_specific_gear_toggles` (`Climbing — roped` = the roped kit; `Bouldering` / `Rappelling / abseiling` / `Via ferrata` / `Mountaineering` the rest). The non-climbing K3 items (`Treadmill` / `Road bike` / `Hangboard` / `Kayak` / `Canoe`) are already in live; only the unwanted climbing ones (`Rope` / `Quickdraws` / `Harness` / `Climbing gym membership` / `Crash pad`) weren't. So K3 has nothing wanted-and-missing → in the follow-up cleanup it was **archived** and its `\ir` **dropped** from `run_owed_layer0_migrations.sql` (now a 4-include runner).
 
 ## 5. Verification
 
@@ -44,7 +44,7 @@ The gate (`.github/workflows/ci.yml` `layer0-gate`) now:
 ### 6.3 Read order
 1. `CLAUDE.md` — stable rules
 2. `CURRENT_STATE.md` — "Last shipped" is now this genesis collapse
-3. `CARRY_FORWARD.md` — the #604 entry is ✅ DONE; the **K3 owed** sub-bullet is live
+3. `CARRY_FORWARD.md` — the #604 entry is ✅ DONE; K3 is ✅ resolved (#613 not-planned); the live **owed** item is `primary_movement` (see §7)
 4. This handoff
 5. `./scripts/verify-handoff.sh`
 
@@ -55,7 +55,8 @@ The gate (`.github/workflows/ci.yml` `layer0-gate`) now:
 
 ## 7. Owed / next
 
-- ⬜ **K3 fold-in (Trigger #2).** Fold K3's genuinely-wanted items (`Rope` / `Quickdraws` / `Harness` / `Climbing gym membership` — **minus** the retired `Crash pad`) into a **migration `0006`** under the new model (deciding to add equipment vocab is Trigger #2 — get Andy's sign-off on the exact set). Then `run_owed_layer0_migrations.sql` + the K3 file can retire. Until then K3 stays in `etl/sources/` and its deploy is owed.
+- ✅ **K3 — done, do not re-pursue ([#613](https://github.com/ahorn885/exercise/issues/613) not-planned).** Items unwanted (covered by `sport_specific_gear_toggles`); K3 archived, runner de-K3'd.
+- ⬜ **OWED (surfaced this cleanup, Andy's hands): `migrate_disciplines_add_primary_movement_v1.sql`.** Live `layer0.disciplines.primary_movement` is **empty (0 active rows)** — `run_owed_layer0_migrations.sql` step [1/4] is genuinely unapplied, and the header flags it a **HARD Layer-2A prereq** (2A SELECTs `primary_movement`). Confirm whether that's a real prod gap or expected, then `psql "$DATABASE_URL" -f etl/sources/run_owed_layer0_migrations.sql` (the other 3 includes are applied — idempotent).
 - Resume the WS-H Slice-5b remainder (#608) / new functionality (off-plan #592 race terrain/weather, #593 reduced-volume travel days).
 - **STILL OWED (carried, unrelated):** the post-#572 live **T3 *refresh*** re-verify (diag token + Andy pasting logs, Rule #14).
 
@@ -70,5 +71,5 @@ The gate (`.github/workflows/ci.yml` `layer0-gate`) now:
 | `.github/workflows/ci.yml` | `for m in etl/migrations/layer0/*.sql` | present (no `ls $glob`) |
 | `tests/test_layer4_orchestrator.py` | `_FAMILY_MAP_EXCEPTIONS` | present; `_baseline_versioned_tables` reads `etl/output/layer0_etl_v*.sql` |
 | `layer4/orchestrator.py` | `supplement_vocabulary` … `intentionally\nabsent` | the note is intact; map unchanged |
-| `etl/sources/populate_equipment_items_K3_additions.sql` | (path) | **present** (restored — owed deploy) |
+| `etl/sources/populate_equipment_items_K3_additions.sql` | (path) | **absent** — archived (#613 not-planned); runner de-K3'd (4 includes, no `K3`) |
 | `etl/_archive/pre_v1.7.0_baseline/` | `ls` | `schema.sql`, `0001`–`0005`, `batch_a`/`K`/`K2`, `old_snapshots/`, addendum, `README.md` |
