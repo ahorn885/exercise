@@ -1,7 +1,7 @@
 # V5 Implementation — Layer 0 `primary_movement` backfill (migration `0006`) + standing guard — Closing Handoff
 
 **Date:** 2026-06-15
-**Branch:** `claude/intelligent-euler-hjggno` (PR OPEN — CI pending).
+**Branch:** `claude/intelligent-euler-hjggno` (PR [#615](https://github.com/ahorn885/exercise/pull/615) — CI green [Layer 0 gate / Python / JS], squash-merged to `main`; closes [#616](https://github.com/ahorn885/exercise/issues/616)).
 **Predecessor handoffs (Andy linked both, "lets keep working"):** `V5_Implementation_WSH_EventWindows_Slice5b_OnboardingPanelF5_2026_06_14_Closing_Handoff_v1.md` (#608 done/closed) + `V5_Implementation_Layer0_GenesisCollapse_v1_7_0_2026_06_15_Closing_Handoff_v1.md` (#604 done/closed). Both arcs are merged + closed; this picks up the genesis collapse's freshest owed item.
 **Arc:** the `primary_movement` line of the #604 genesis-collapse follow-up.
 
