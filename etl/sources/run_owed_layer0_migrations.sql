@@ -4,8 +4,11 @@
 --
 -- Generated 2026-05-25 (FormRefresh A1 session). Owed set is sourced from
 -- CURRENT_STATE.md "Open next moves":
---   - PR #156  migrate_disciplines_add_primary_movement_v1.sql  (HARD prereq —
---              Layer 2A SELECTs layer0.disciplines.primary_movement)
+--   - (primary_movement MOVED 2026-06-15 to the migrations pipeline —
+--      etl/migrations/layer0/0006_populate_disciplines_primary_movement.sql.
+--      The old one-shot migrate_disciplines_add_primary_movement_v1.sql was
+--      stale (pre-drift D-001..D-029 keyspace) and is retired; 0006 backfills
+--      the current canon and is gated in CI. See the genesis/#604 follow-up.)
 --   - (K3 equipment additions REMOVED 2026-06-15 — those items are unwanted;
 --      climbing gear lives in sport_specific_gear_toggles. See closed #613.)
 --   - D-74     populate_terrain_gap_rules.sql / _skill_capability_toggles.sql /
@@ -33,16 +36,13 @@
 
 \set ON_ERROR_STOP on
 
-\echo '=== [1/4] PR #156 — layer0.disciplines.primary_movement (schema; HARD prereq) ==='
-\ir migrate_disciplines_add_primary_movement_v1.sql
-
-\echo '=== [2/4] D-74 — layer0.terrain_gap_rules (idempotency re-run; etl/sources copy) ==='
+\echo '=== [1/3] D-74 — layer0.terrain_gap_rules (idempotency re-run; etl/sources copy) ==='
 \ir populate_terrain_gap_rules.sql
 
-\echo '=== [3/4] D-74 — layer0.skill_capability_toggles (idempotency re-run) ==='
+\echo '=== [2/3] D-74 — layer0.skill_capability_toggles (idempotency re-run) ==='
 \ir populate_skill_capability_toggles.sql
 
-\echo '=== [4/4] D-74 — layer0.discipline_technique_foci (idempotency re-run) ==='
+\echo '=== [3/3] D-74 — layer0.discipline_technique_foci (idempotency re-run) ==='
 \ir populate_discipline_technique_foci.sql
 
 \echo '=== owed layer0 migrations complete ==='
