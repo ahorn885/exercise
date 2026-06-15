@@ -181,8 +181,19 @@ These are stable across sessions — look them up here, don't re-derive them eac
 - **Runtime-log gotcha:** a `query timed out before all pages were fetched` warning makes a NEGATIVE log result UNRELIABLE (the search aborted mid-scan). Only clean negatives + any positive match are trustworthy. Narrow the time window or filter by `deploymentId` to get a clean query.
 
 **Container env (true every web session):**
-- DB egress to **Neon is blocked** from the container — can't run `init_db.py` / `psql` against Neon here, so schema migrations stay owed-Andy's-hands actions. PyPI egress works.
+- DB egress to **Neon is blocked** from the container — can't run `init_db.py` / `psql` against Neon here. **Layer 0 migrations are no longer owed-Andy's-local-hands, though** (changed 2026-06-15): apply them via the gated **`layer0-apply`** GitHub Action — Claude triggers it, Andy one-tap-approves the `production` environment. See *Ops automation* below. (Public-schema `_PG_MIGRATIONS` still auto-apply on each Vercel deploy.) PyPI egress works.
 - `pytest` is **not** in `requirements.txt`: `python -m venv /tmp/venv && /tmp/venv/bin/pip install -r requirements.txt pytest`. Isolated single-file collection hits a circular-import quirk → run the full `tests/` (or front-load a `tests/test_layer4_*.py`).
+
+**Ops automation — cloud DB ops + autonomous PRs (added 2026-06-15, record issue [#630](https://github.com/ahorn885/exercise/issues/630)).** The container can't reach Neon, but GitHub Actions can — so prod DB work and merges run in the cloud, Claude drives them, and Andy only approves the irreversible bits. This is the "decide-not-do" model (Andy is mobile / device-changing; consistent access is Claude Code web/Android).
+- **Operating flow:** Claude opens a PR → calls `enable_pr_auto_merge` → it **self-merges once required checks pass** (branch protection: required checks `Python unit suite (stubbed)` / `JS harness (jsdom)` / `Layer 0 integrity gate`, **0 approvals** — solo can't self-approve — admin-bypass **off**). Don't merge mid-run; let auto-merge land it. CODEOWNERS auto-requests Andy's review on `etl/migrations/` (soft nudge, not enforced).
+- **Triggerable workflows** (`actions_run_trigger` `run_workflow`, or Actions tab):
+  - **`layer0-apply.yml`** — applies `etl/migrations/layer0/*.sql` to prod Neon; **gated by the `production` environment** (required reviewer = Andy → one tap). Idempotent; safe to re-run.
+  - **`layer0-redump.yml`** (input `version`) — `pg_dump` live `layer0` → `etl/output/layer0_etl_v<ver>.sql` on a branch; then open the PR so the `layer0-gate` validates the snapshot.
+  - **`neon-query.yml`** (input `query`) — read-only diagnostic SELECT vs prod (read-only role + `default_transaction_read_only=on`); result in the job log.
+  - **`layer0-validate-live.yml`** — nightly + manual `validate_layer0` vs **live** prod; catches live drift (the #616 `primary_movement`-clobber class) automatically.
+- **Secrets:** `NEON_DATABASE_URL` (write — apply/redump), `NEON_RO_DATABASE_URL` (read-only — diag/validate-live).
+- **Prod logs (Rule #14):** readable via `GET /admin/logs?token=<DIAG_TOKEN>` (WebFetch) — Andy pastes the current `DIAG_TOKEN` per debugging session (chat-only, never commit; rotated 2026-06-15). This is the preferred path over the truncating Vercel runtime-log MCP.
+- Full record: CARRY_FORWARD *Ops automation / operating model* section + the `..._OpsAutomation_OperatingModelCodified_2026_06_15` handoff.
 
 ---
 
