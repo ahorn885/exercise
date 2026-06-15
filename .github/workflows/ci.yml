@@ -66,7 +66,7 @@ jobs:
     runs-on: ubuntu-latest
     services:
       postgres:
-        image: postgres:16
+        image: postgres:17
         env:
           POSTGRES_PASSWORD: postgres
           POSTGRES_DB: layer0
@@ -89,10 +89,11 @@ jobs:
         run: pip install -r requirements.txt
       - name: Load genesis baseline snapshot
         # The committed snapshot is a full pg_dump of live layer0 (schema + data),
-        # self-contained — no separate schema.sql. Strip the PG17/18 dump artifacts
-        # (\restrict / \unrestrict psql meta-commands; the PG17-only
-        # transaction_timeout GUC) so a raw dump loads on postgres:16 without any
-        # hand-editing of the committed file.
+        # self-contained — no separate schema.sql. Strip the PG18 psql meta-commands
+        # (\restrict / \unrestrict — the runner's psql client is < 18) and the
+        # transaction_timeout GUC (defensive) so a raw dump loads with no
+        # hand-editing of the committed file. The service is postgres:17 to match
+        # prod Neon.
         run: |
           snapshot="$(ls etl/output/layer0_etl_v*.sql | sort -V | tail -1)"
           echo "Loading baseline: $snapshot"

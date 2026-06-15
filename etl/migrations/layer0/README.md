@@ -120,10 +120,11 @@ design note on `_LAYER0_TABLE_FAMILY` — don't silently weaken the guard.
 ## The gate
 
 The `layer0-gate` job in `.github/workflows/ci.yml` is the integrity backstop:
-it stands up a throwaway Postgres, loads the genesis baseline snapshot
-(self-contained — schema + data; the PG17/18 `\restrict` / `transaction_timeout`
-dump artifacts are stripped at load so a raw `pg_dump` loads on postgres:16),
-applies every migration here in order, and runs
+it stands up a throwaway Postgres (`postgres:17`, matching prod Neon), loads the
+genesis baseline snapshot (self-contained — schema + data; the PG18 `\restrict` /
+`\unrestrict` psql meta-commands and the `transaction_timeout` GUC are stripped at
+load so a raw `pg_dump` loads without hand-editing), applies every migration here
+in order, and runs
 `python -m etl.layer0.validate_layer0`. A migration that introduces a dangling
 FK, a canon violation, a sub-100 phase load, etc. fails CI before it can be
 applied to Neon. Run order and disposition are owned by
