@@ -1119,11 +1119,12 @@ def _rule_skill_capability_gate(
                 phase_name=s.phase_metadata.phase_name if s.phase_metadata else None,
                 severity="blocker",
                 detail=(
-                    f"discipline {s.discipline_id} requires the '{toggle}' skill "
-                    "capability the athlete has not enabled; substitute a "
+                    f"discipline {s.discipline_id} requires a skill capability "
+                    "the athlete has not enabled; substitute a "
                     "strength-and-conditioning session (kind='strength') that builds "
                     "the underlying capacity instead of a skill-specific session, "
-                    "and note the substitution in coaching_intent until cleared"
+                    "and note the substitution in the athlete-facing coaching_intent "
+                    "using the discipline's plain name — never an id or internal slug"
                 ),
                 affected_session_ids=[s.session_id],
             )
