@@ -104,8 +104,12 @@ jobs:
         # archived). Empty until the next migration lands; the gate then guards
         # baseline + migrations as the would-be-applied state before Neon.
         run: |
+          # Iterate the glob directly: with nullglob an empty dir yields zero
+          # iterations. (Do NOT `ls $glob` — under nullglob an empty glob makes
+          # `ls` run argument-less and list the cwd.) Zero-padded NNNN names
+          # sort in apply order under default pathname expansion.
           shopt -s nullglob
-          for m in $(ls etl/migrations/layer0/*.sql 2>/dev/null | sort -V); do
+          for m in etl/migrations/layer0/*.sql; do
             echo "Applying migration: $m"
             psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f "$m"
           done
