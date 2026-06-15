@@ -25,19 +25,26 @@ migration) + a smoke check that the shipped `Layer2CPayload` still constructs.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pytest
 
 
 class TestSchemaSubstrate:
-    """Verifies the four new columns are declared in `etl/layer0/schema.sql`
-    (canonical schema for fresh DB init) + the migration SQL for the
-    toggle columns exists. These are sanity checks, not full integration
-    tests — Andy operationally applies the migrations against Neon per the
-    closing handoff §5 sequence."""
+    """Verifies the four new columns are declared in the Layer 0 baseline
+    snapshot (`etl/output/layer0_etl_v*.sql`, the canonical schema for fresh DB
+    init since the v1.7.0 collapse) + the migration SQL for the toggle columns
+    exists. These are sanity checks, not full integration tests — Andy
+    operationally applies the migrations against Neon per the closing handoff §5
+    sequence."""
 
-    SCHEMA_PATH = Path(__file__).parent.parent / "etl" / "layer0" / "schema.sql"
+    SCHEMA_PATH = max(
+        (Path(__file__).parent.parent / "etl" / "output").glob("layer0_etl_v*.sql"),
+        key=lambda p: tuple(
+            int(x) for x in re.search(r"v(\d+)\.(\d+)\.(\d+)", p.name).groups()
+        ),
+    )
     MIGRATION_PATH = (
         Path(__file__).parent.parent
         / "aidstation-sources"
@@ -51,13 +58,13 @@ class TestSchemaSubstrate:
         text = self.SCHEMA_PATH.read_text()
         assert "terrain_required" in text
         # Column lands on layer0.exercises (not somewhere else).
-        ex_block_start = text.index("CREATE TABLE IF NOT EXISTS layer0.exercises")
+        ex_block_start = text.index("CREATE TABLE layer0.exercises")
         ex_block_end = text.index(");", ex_block_start)
         assert "terrain_required" in text[ex_block_start:ex_block_end]
 
     def test_schema_declares_substitutes_structured_on_exercises(self):
         text = self.SCHEMA_PATH.read_text()
-        ex_block_start = text.index("CREATE TABLE IF NOT EXISTS layer0.exercises")
+        ex_block_start = text.index("CREATE TABLE layer0.exercises")
         ex_block_end = text.index(");", ex_block_start)
         block = text[ex_block_start:ex_block_end]
         assert "equipment_substitutes_structured" in block
@@ -65,7 +72,7 @@ class TestSchemaSubstrate:
     def test_schema_declares_also_satisfies_and_gated_on_toggles(self):
         text = self.SCHEMA_PATH.read_text()
         tog_start = text.index(
-            "CREATE TABLE IF NOT EXISTS layer0.sport_specific_gear_toggles"
+            "CREATE TABLE layer0.sport_specific_gear_toggles"
         )
         tog_end = text.index(");", tog_start)
         block = text[tog_start:tog_end]
