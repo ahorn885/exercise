@@ -13,6 +13,26 @@ Rolling-state for items spanning multiple sessions. **Edit in place** — don't 
 
 ---
 
+## Ops automation / operating model — LIVE (2026-06-15; record issue #630)
+
+**This changed how we work. Read it before doing prod DB ops or merges.** The web container can't reach Neon, but GitHub Actions can — so prod DB work + merges run in the cloud, Claude drives them, and Andy only approves the irreversible bits ("decide-not-do"; Andy is mobile / device-changing, consistent access = Claude Code web/Android). All of the below is built, merged, and **test-fired green** this session.
+
+**Operating flow (default for every change):** Claude opens a PR → `enable_pr_auto_merge` (SQUASH) → it **self-merges once required checks pass**. Branch protection on `main`: required checks (`Python unit suite (stubbed)` / `JS harness (jsdom)` / `Layer 0 integrity gate`), **0 approvals** (solo can't self-approve — do NOT require reviews or it deadlocks), **admin-bypass off**. Auto-merge is enabled repo-wide. Don't merge mid-run; let it land. `.github/CODEOWNERS` auto-requests Andy's review on `etl/migrations/` (soft nudge only — never flip on "require code-owner review").
+
+**Triggerable workflows** (Claude via `actions_run_trigger run_workflow`, or Andy via Actions tab → Run workflow):
+- **`layer0-apply.yml`** — applies `etl/migrations/layer0/*.sql` to prod Neon, **gated by the `production` GitHub Environment** (required reviewer = Andy → one tap to approve; admin-bypass off; prevent-self-review off so Andy can approve Claude-triggered runs). Idempotent → safe to re-run. **This replaces the old "Andy pastes SQL into the Neon editor" step.**
+- **`layer0-redump.yml`** (input `version`, default next) — `pg_dump`s live `layer0` → `etl/output/layer0_etl_v<ver>.sql` on branch `claude/layer0-baseline-v<ver>`; then open the PR so the `layer0-gate` validates the snapshot before merge. Keeps the committed baseline in lockstep with live (prevents the drift that caused #616).
+- **`neon-query.yml`** (input `query`) — read-only diagnostic SELECT vs prod via the read-only role; read-only enforced by role grants + `default_transaction_read_only=on`; result in the job log (Claude reads via `get_job_logs`).
+- **`layer0-validate-live.yml`** — **nightly** (cron `0 7 * * *`) + manual `validate_layer0` vs **live** prod via the read-only role; catches live integrity drift (the #616 `primary_movement`-clobber class) automatically + emails Andy on failure. First run PASS.
+
+**Secrets / gates (one-time, all set):** `NEON_DATABASE_URL` (write — apply/redump) · `NEON_RO_DATABASE_URL` (read-only Neon role `claude_ro`, SELECT on `layer0`+`public` — diag/validate-live) · `production` environment (required reviewer = @ahorn885).
+
+**Prod logs (Rule #14 — no more traceback-pasting):** `GET /admin/logs?token=<DIAG_TOKEN>` (Claude via WebFetch). Andy pastes the current `DIAG_TOKEN` per debugging session (**chat-only, never commit**); rotated 2026-06-15. Preferred over the truncating Vercel runtime-log MCP. (The token was confirmed NOT repo-leaked — a prior false alarm.)
+
+**Local sync:** `.claude/settings.json` has a `SessionStart` `git pull --ff-only` hook so Andy's local clone auto-syncs with web-session merges.
+
+---
+
 ## WS-H — Event Windows — Slices 1–4 BUILT + MERGED + LIVE (2026-06-14, PRs #596/#599/#600/#601/#603/#605 + DDL applied; #581 CLOSED); arc design PRs #591+#594 (merged). Only Slice 5 (capture UX polish) remains.
 
 **Slice 1 (subtractive home windows) built + squash-merged to `main` this session (PR [#596](https://github.com/ahorn885/exercise/pull/596)).** Handoffs: `V5_Implementation_WSH_EventWindows_Slice1_Build_2026_06_14_Closing_Handoff_v1.md` (build) + `..._Design_..._v1.md` (arc). Design `designs/Event_Windows_Design_v1.md` + Slice-1 spec `designs/Event_Windows_Slice1_HomeWindows_Spec_v1.md`.
