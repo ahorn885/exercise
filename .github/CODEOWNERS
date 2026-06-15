@@ -1,0 +1,14 @@
+# Code owners. GitHub auto-requests review from these owners on PRs that touch
+# the matching paths — a visible "look at this" flag on the highest-stakes
+# surfaces.
+#
+# IMPORTANT (solo-repo footgun): this is a SOFT nudge only — review is
+# auto-REQUESTED, not REQUIRED. Do NOT turn on "Require review from Code Owners"
+# in branch protection: PRs here are authored under @ahorn885, GitHub forbids
+# approving your own PR, so a hard requirement would deadlock every merge (with
+# admin-bypass off). The real prod-write checkpoint is the `production`
+# environment's required-reviewer approval on the layer0-apply workflow, not a
+# merge-time review.
+
+# Prod Layer 0 DB migrations — the highest-stakes change surface.
+/etl/migrations/ @ahorn885
