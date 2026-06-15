@@ -251,6 +251,7 @@ def _load_plan_version(db, user_id: int, plan_version_id: int) -> dict | None:
         "SELECT id, user_id, created_at, created_via, scope_start_date, "
         "scope_end_date, pattern, generation_status, generation_error, "
         "generation_units_cached, generation_stall_passes, "
+        "completed_at, archived_at, "
         "refresh_nl_text, refresh_parent_version_id, "
         "refresh_triggered_by_ad_hoc_id, refresh_cap_overridden, "
         "refresh_parsed_intent_json, refresh_used_degraded "
@@ -269,6 +270,8 @@ def _load_plan_version(db, user_id: int, plan_version_id: int) -> dict | None:
         'pattern': row['pattern'],
         'generation_status': row['generation_status'],
         'generation_error': row['generation_error'],
+        'completed_at': row['completed_at'],
+        'archived_at': row['archived_at'],
         'generation_units_cached': int(row['generation_units_cached'] or 0),
         'generation_stall_passes': int(row['generation_stall_passes'] or 0),
         # #208 async-refresh inputs (NULL on plan-create rows).
@@ -921,11 +924,66 @@ def new_plan():
     )
 
 
+def _coerce_view_date(value) -> date | None:
+    """Best-effort coerce a plan_versions date column to a `date` for the
+    lifecycle label. psycopg returns DATE as `date` already; the render
+    harness's fake cursor hands back ISO strings. Returns None for anything
+    unparseable so a bad value just degrades the label rather than 500-ing."""
+    if value is None or isinstance(value, date):
+        return value
+    try:
+        return date.fromisoformat(str(value)[:10])
+    except ValueError:
+        return None
+
+
+def _plan_lifecycle_label(plan_version: dict, today: date) -> str:
+    """State-appropriate label for a READY plan (#618 — never surface the raw
+    internal `created_via`, e.g. 'plan create', to the athlete). Mirrors the
+    plans-list bucketing in `routes/plans.py` so the vocabulary matches."""
+    if plan_version.get('archived_at') is not None:
+        return 'Archived'
+    if plan_version.get('completed_at') is not None:
+        return 'Completed'
+    end = _coerce_view_date(plan_version.get('scope_end_date'))
+    start = _coerce_view_date(plan_version.get('scope_start_date'))
+    if end is not None and end < today:
+        return 'Completed'
+    if start is not None and start > today:
+        return 'Upcoming'
+    return 'Active'
+
+
+def _plan_days_with_rest_gaps(sessions_by_date: dict) -> list:
+    """Ordered `(date, day_of_week, sessions)` covering every calendar day from
+    the first to the last session date. Days with no persisted session surface
+    as explicit rest days (empty `sessions`) so the week reads continuously
+    rather than skipping straight past off days (#618).
+
+    Production keys are real `date`s (`PlanSession.date`) → they get the
+    gap-fill. A key that can't be coerced to a date (a render-harness fake)
+    degrades to a no-fill passthrough rather than erroring."""
+    if not sessions_by_date:
+        return []
+    ordered = sorted(sessions_by_date.items(), key=lambda kv: str(kv[0]))
+    coerced = [(_coerce_view_date(d), d, ss) for d, ss in ordered]
+    if any(cd is None for cd, _, _ in coerced):
+        # Non-date keys → list the dated days as-is, no synthetic rest gaps.
+        return [(d, (ss[0].day_of_week if ss else ''), ss) for _, d, ss in coerced]
+    by_date = {cd: ss for cd, _, ss in coerced}
+    days = []
+    d, last = coerced[0][0], coerced[-1][0]
+    while d <= last:
+        days.append((d, d.strftime('%a'), by_date.get(d, [])))
+        d += timedelta(days=1)
+    return days
+
+
 @bp.route('/<int:plan_version_id>', methods=['GET'])
 def view_plan(plan_version_id: int):
-    """Render the plan: scope dates + pattern + per-session list grouped
-    by date. 404 + cross-user-defense via the user_id filter in
-    `_load_plan_version`."""
+    """Render the plan: scope dates + per-session list grouped by date, with
+    off days shown as explicit rest. 404 + cross-user-defense via the user_id
+    filter in `_load_plan_version`."""
     db = get_db()
     uid = current_user_id()
 
@@ -971,7 +1029,8 @@ def view_plan(plan_version_id: int):
         'plan_create/view.html',
         plan_version=plan_version,
         plan_version_id=plan_version_id,
-        sessions_by_date=sorted(sessions_by_date.items()),
+        lifecycle_state=_plan_lifecycle_label(plan_version, date.today()),
+        days=_plan_days_with_rest_gaps(sessions_by_date),
         session_count=len(sessions),
         nutrition=nutrition,
         nutrition_by_date=nutrition_by_date,

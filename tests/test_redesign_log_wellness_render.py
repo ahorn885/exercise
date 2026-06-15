@@ -163,7 +163,11 @@ def test_plan_gen_view_renders_sessions(client, monkeypatch):
     assert resp.status_code == 200
     html = resp.get_data(as_text=True)
     assert 'Training plan' in html
-    assert 'Pattern A' in html
+    # #618 — internal "Pattern A" jargon + raw created_via are gone; a
+    # state-appropriate lifecycle label shows instead (dates bracket today).
+    assert 'Pattern A' not in html
+    assert 'plan create' not in html
+    assert 'Active' in html
     assert 'Base phase' in html
     assert 'Easy run' in html
     assert 'style="' not in html
