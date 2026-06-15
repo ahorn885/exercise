@@ -40,6 +40,7 @@ from etl.layer0.validation.fk_checks import (
     run_training_gap_fks,
 )
 from etl.layer0.validation.modality_group_orphan import run_modality_group_orphan
+from etl.layer0.validation.primary_movement_check import run_primary_movement
 from etl.layer0.validation.terrain_types_check import run_terrain_types
 from etl.layer0.validation.sum_to_100 import run_sum_to_100
 from etl.layer0.validation.vocab_alignment import run_vocab_alignment
@@ -85,6 +86,14 @@ def _v_discipline_canon(r: dict) -> list[Violation]:
 
 def _v_modality_group_orphan(r: dict) -> list[Violation]:
     return [Violation(d, "no modality-group membership") for d in r["orphans"]]
+
+
+def _v_primary_movement(r: dict) -> list[Violation]:
+    return [
+        Violation(e["discipline_id"],
+                  f"{e['discipline_name']}: {e['problem']} ({e['primary_movement']!r})")
+        for e in r["errors"]
+    ]
 
 
 def _v_terrain_types(r: dict) -> list[Violation]:
@@ -145,11 +154,13 @@ class Check:
 
 
 # Registry order = report order. fk_checks splits into two runners; the rest
-# are 1:1 with the seven logical checks in spec §5.2.
+# are 1:1 with their logical checks (the spec §5.2 seven, plus terrain_types and
+# primary_movement added with the DB-source-of-truth model).
 CHECKS: tuple[Check, ...] = (
     Check("substitution_fks", run_substitution_fks, _v_substitution_fks),
     Check("training_gap_fks", run_training_gap_fks, _v_training_gap_fks),
     Check("discipline_canon", run_discipline_canon_conformance, _v_discipline_canon),
+    Check("primary_movement", run_primary_movement, _v_primary_movement),
     Check("modality_group_orphan", run_modality_group_orphan, _v_modality_group_orphan),
     Check("terrain_types", run_terrain_types, _v_terrain_types),
     Check("sum_to_100", run_sum_to_100, _v_sum_to_100),

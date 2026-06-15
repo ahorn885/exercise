@@ -18,6 +18,7 @@ def _clean_results() -> dict[str, dict]:
         "substitution_fks": {"errors": []},
         "training_gap_fks": {"errors": []},
         "discipline_canon": {"errors": []},
+        "primary_movement": {"errors": []},
         "modality_group_orphan": {"orphans": []},
         "terrain_types": {"malformed_ids": [], "duplicate_ids": [], "duplicate_names": []},
         "sum_to_100": {
@@ -41,13 +42,15 @@ def test_clean_results_pass() -> None:
 
 
 def test_registry_has_all_logical_checks() -> None:
-    # fk_checks splits into two runners → 9 entries (8 logical checks: the
-    # original 7 + terrain_types added with the xlsx-authoring freeze).
-    assert len(v.CHECKS) == 9
+    # fk_checks splits into two runners → 10 entries (9 logical checks: the
+    # original 7 + terrain_types and primary_movement, both added with the
+    # DB-source-of-truth model).
+    assert len(v.CHECKS) == 10
     names = [c.name for c in v.CHECKS]
     assert names.count("substitution_fks") == 1
     assert names.count("training_gap_fks") == 1
     assert "terrain_types" in names
+    assert "primary_movement" in names
 
 
 def test_fk_violation_fails_the_gate() -> None:
@@ -98,6 +101,22 @@ def test_sum_to_100_unwaived_fails() -> None:
     assert "base" in s2.unwaived[0].detail
 
 
+def test_missing_primary_movement_fails_the_gate() -> None:
+    # The exact regression migration 0006 closes: an active discipline with no
+    # movement must fail the gate (not waivable — fix-the-data).
+    results = _clean_results()
+    results["primary_movement"] = {
+        "errors": [{"discipline_id": "D-001", "discipline_name": "Trail Running",
+                    "primary_movement": None, "problem": "missing primary_movement"}],
+    }
+    outcomes = v.evaluate(results, {})
+    assert v.gate_failed(outcomes)
+    pm = next(o for o in outcomes if o.name == "primary_movement")
+    assert pm.failed
+    assert pm.unwaived[0].id == "D-001"
+    assert "missing primary_movement" in pm.unwaived[0].detail
+
+
 def test_waiver_only_suppresses_matching_check() -> None:
     # A sum_to_100 waiver must NOT suppress an identically-named violation in
     # another check.
@@ -120,6 +139,10 @@ def test_extractors_produce_expected_ids() -> None:
                      "problem": "non-canonical id"}]}
     )[0].id == "layer0.disciplines.discipline_id:D-99"
     assert v._v_modality_group_orphan({"orphans": ["D-007"]})[0].id == "D-007"
+    assert v._v_primary_movement(
+        {"errors": [{"discipline_id": "D-032", "discipline_name": "Stand-up Paddleboard",
+                     "primary_movement": "rowing", "problem": "non-enum primary_movement"}]}
+    )[0].id == "D-032"
     assert v._v_vocab_alignment(
         {"exercise_warnings": [{"exercise_id": "E-1", "exercise_name": "x",
                                 "unknown_parts": ["Toe"]}],
