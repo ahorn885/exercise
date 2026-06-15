@@ -13,10 +13,10 @@
 
 {% block content %}
 <div class="plan-gen">
-  <p class="eyebrow accent">● Plan · Pattern {{ plan_version.pattern }}</p>
+  <p class="eyebrow accent">● Plan</p>
   <div class="plan-view-head">
     <h1 class="plan-gen-title">Training plan</h1>
-    <span class="chip">{{ plan_version.created_via|replace('_', ' ') }}</span>
+    <span class="chip">{{ lifecycle_state }}</span>
   </div>
   <p class="page-sub">
     {{ plan_version.scope_start_date }} → {{ plan_version.scope_end_date }}
@@ -56,10 +56,10 @@
     {% endif %}
   </div>
 
-  {% if sessions_by_date %}
+  {% if days %}
   <div class="sec">
     {% set ns = namespace(phase=None, week=None) %}
-    {% for d, sessions in sessions_by_date %}
+    {% for d, dow, sessions in days %}
       {% set pm = sessions | selectattr('phase_metadata') | map(attribute='phase_metadata') | first %}
       {% if pm and (pm.phase_name != ns.phase or pm.week_in_phase != ns.week) %}
         <div class="phase-head">
@@ -72,9 +72,9 @@
         {% set ns.phase = pm.phase_name %}
         {% set ns.week = pm.week_in_phase %}
       {% endif %}
-      <div class="day-group">
+      <div class="day-group{{ ' day-rest' if not sessions else '' }}">
         <div class="day-label">
-          <strong>{{ d }}</strong><span class="dow">{{ sessions[0].day_of_week }}</span>
+          <strong>{{ d }}</strong><span class="dow">{{ dow }}</span>
         </div>
         {% set dn = nutrition_by_date.get(d) %}
         {% if dn %}
@@ -92,6 +92,16 @@
           {% endif %}
         </div>
         {% endif %}
+        {% if not sessions %}
+        <div class="stack">
+          <div class="card card-pad sess-card sess-rest">
+            <div class="sess-head">
+              <span class="sess-name">Rest</span>
+            </div>
+            <p class="sess-intent">Off day — recovery.</p>
+          </div>
+        </div>
+        {% else %}
         <div class="stack">
           {% for sess in sessions %}
           <div class="card card-pad sess-card">
@@ -105,6 +115,11 @@
               {% if sess.time_of_day != 'unspecified' %}<span class="rail-note">{{ sess.time_of_day }}</span>{% endif %}
               {% if sess.locale_name %}<span class="rail-note">@ {{ sess.locale_name }}</span>{% endif %}
             </div>
+            {% if sess.coaching_flags %}
+            <div class="sess-flags">
+              {% for f in sess.coaching_flags %}<span class="chip warn">{{ f|replace('_', ' ') }}</span>{% endfor %}
+            </div>
+            {% endif %}
             {% if sess.coaching_intent %}<p class="sess-intent">{{ sess.coaching_intent }}</p>{% endif %}
             {% if sess.session_notes %}<p class="sess-notes">{{ sess.session_notes }}</p>{% endif %}
 
@@ -158,15 +173,10 @@
               {% endfor %}
             </ol>
             {% endif %}
-
-            {% if sess.coaching_flags %}
-            <div class="sess-flags">
-              {% for f in sess.coaching_flags %}<span class="chip warn">{{ f|replace('_', ' ') }}</span>{% endfor %}
-            </div>
-            {% endif %}
           </div>
           {% endfor %}
         </div>
+        {% endif %}
       </div>
     {% endfor %}
   </div>

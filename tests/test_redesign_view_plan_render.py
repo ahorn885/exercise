@@ -280,3 +280,51 @@ def test_mixed_day_renders_all_three_kinds(client, monkeypatch):
     assert 'Rest — Taper drop' in html
     # No leftover Jinja artifacts.
     assert '{{' not in html and '{%' not in html
+
+
+def test_internal_jargon_hidden_from_plan_view(client, monkeypatch):
+    # #618 — neither the internal "Pattern A" synthesis term nor the raw
+    # `created_via` slug ("plan create") may surface to the athlete.
+    _patch_view(monkeypatch, [_cardio_session()])
+    html = client.get('/plans/v2/46').get_data(as_text=True)
+    assert 'Pattern A' not in html
+    assert 'plan create' not in html
+
+
+def test_lifecycle_label_shown_not_created_via(client, monkeypatch):
+    # #618 — a state-appropriate lifecycle label replaces "plan create": a
+    # completed plan reads "Completed" regardless of its scope dates.
+    import routes.plan_create as pc
+    pv = dict(PV)
+    pv['completed_at'] = '2026-06-10'
+    monkeypatch.setattr(pc, '_load_plan_version', lambda db, uid, pvid: pv)
+    monkeypatch.setattr(
+        pc, 'load_plan_sessions_by_version',
+        lambda db, pvid: [_cardio_session()],
+    )
+    html = client.get('/plans/v2/46').get_data(as_text=True)
+    assert 'Completed' in html
+    assert 'plan create' not in html
+
+
+def test_coaching_flags_render_above_workout_detail(client, monkeypatch):
+    # #618 — workout-type / coaching flags (e.g. "long slow distance") sit with
+    # the coach notes ABOVE the per-block detail, not buried below it.
+    _patch_view(monkeypatch, [_cardio_session(coaching_flags=['long_slow_distance'])])
+    html = client.get('/plans/v2/46').get_data(as_text=True)
+    assert 'long slow distance' in html
+    # The flag appears before the first block's humanized kind ("Warmup").
+    assert html.index('long slow distance') < html.index('Warmup')
+
+
+def test_off_days_render_as_explicit_rest(client, monkeypatch):
+    # #618 — a gap between session dates surfaces as explicit rest days so the
+    # week reads continuously (Mon + Thu sessions → Tue & Wed shown as rest).
+    mon = _cardio_session(session_id='s-mon', date=date(2026, 6, 1), day_of_week='Mon')
+    thu = _cardio_session(session_id='s-thu', date=date(2026, 6, 4), day_of_week='Thu')
+    _patch_view(monkeypatch, [mon, thu])
+    html = client.get('/plans/v2/46').get_data(as_text=True)
+    assert 'Off day — recovery.' in html
+    # Two interior gap days (Tue + Wed) → two rest cards; the dated sessions stay.
+    assert html.count('sess-rest') == 2
+    assert 'Run — 60 min' in html

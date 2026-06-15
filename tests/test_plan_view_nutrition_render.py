@@ -133,7 +133,8 @@ def _render(nutrition):
     return tmpl.render(
         plan_version=plan_version,
         plan_version_id=1,
-        sessions_by_date=[(RACE_DATE, [session])],
+        lifecycle_state="Active",
+        days=[(RACE_DATE, RACE_DATE.strftime("%a"), [session])],
         session_count=1,
         nutrition=nutrition,
         nutrition_by_date=nutrition_by_date,
