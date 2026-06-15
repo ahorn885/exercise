@@ -1,0 +1,57 @@
+name: Layer 0 apply migrations to prod
+
+# Manually-triggered apply of the committed Layer 0 migrations to LIVE Neon.
+#
+# Runs behind the protected `production` GitHub Environment, so the prod write
+# requires that environment's required-reviewer approval (a one-tap gate on
+# mobile). IMPORTANT: create the `production` environment with a required
+# reviewer in repo Settings -> Environments FIRST — if the environment does not
+# exist, GitHub creates it unprotected on first run and the gate is a no-op.
+#
+# Applies every etl/migrations/layer0/*.sql in sort order with ON_ERROR_STOP,
+# mirroring the layer0-gate. Migrations are written idempotent (README
+# "safe to re-run"), so re-applying the full 0006+ set is safe even after a
+# baseline re-dump has folded one in.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  apply:
+    name: psql apply layer0 migrations -> prod Neon
+    runs-on: ubuntu-latest
+    environment: production
+    env:
+      PGSSLMODE: require
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install psql 17 (match prod Neon)
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y postgresql-common
+          sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y
+          sudo apt-get install -y postgresql-client-17
+          echo "/usr/lib/postgresql/17/bin" >> "$GITHUB_PATH"
+
+      - name: Apply migrations in order
+        env:
+          NEON_DATABASE_URL: ${{ secrets.NEON_DATABASE_URL }}
+        run: |
+          set -euo pipefail
+          test -n "${NEON_DATABASE_URL:-}" || { echo "::error::NEON_DATABASE_URL secret unset"; exit 1; }
+          shopt -s nullglob
+          mig=(etl/migrations/layer0/*.sql)
+          if [ "${#mig[@]}" -eq 0 ]; then echo "No migrations to apply."; exit 0; fi
+          psql "$NEON_DATABASE_URL" -v ON_ERROR_STOP=1 -c "SELECT version();"
+          echo "## Applied Layer 0 migrations" >> "$GITHUB_STEP_SUMMARY"
+          for m in "${mig[@]}"; do
+            echo "::group::apply $m"
+            psql "$NEON_DATABASE_URL" -v ON_ERROR_STOP=1 -f "$m"
+            echo "::endgroup::"
+            echo "- \`$m\`" >> "$GITHUB_STEP_SUMMARY"
+          done

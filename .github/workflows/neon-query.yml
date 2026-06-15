@@ -1,0 +1,52 @@
+name: Neon read-only query
+
+# Manually-triggered read-only diagnostic query against prod Neon, for
+# investigating data without a local client. Uses the read-only role
+# (NEON_RO_DATABASE_URL secret); read-only is enforced twice — by the role's
+# grants AND by default_transaction_read_only=on — so a stray write can't land.
+# The result is printed to the job log (readable via the Actions API) and the
+# run summary.
+
+on:
+  workflow_dispatch:
+    inputs:
+      query:
+        description: "Read-only SQL to run against prod (e.g. SELECT ... FROM layer0.disciplines ...)"
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  query:
+    name: psql read-only query -> prod Neon
+    runs-on: ubuntu-latest
+    env:
+      PGSSLMODE: require
+      PGOPTIONS: "-c default_transaction_read_only=on"
+    steps:
+      - name: Install psql 17 (match prod Neon)
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y postgresql-common
+          sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y
+          sudo apt-get install -y postgresql-client-17
+          echo "/usr/lib/postgresql/17/bin" >> "$GITHUB_PATH"
+
+      - name: Run query (read-only)
+        env:
+          NEON_RO_DATABASE_URL: ${{ secrets.NEON_RO_DATABASE_URL }}
+          QUERY: ${{ inputs.query }}
+        run: |
+          set -euo pipefail
+          test -n "${NEON_RO_DATABASE_URL:-}" || { echo "::error::NEON_RO_DATABASE_URL secret unset (create a read-only Neon role)"; exit 1; }
+          echo "Query: $QUERY"
+          out="$(psql "$NEON_RO_DATABASE_URL" -v ON_ERROR_STOP=1 -P pager=off -c "$QUERY")"
+          printf '%s\n' "$out"
+          {
+            echo "### Read-only query result"
+            echo '```'
+            printf '%s\n' "$out"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
