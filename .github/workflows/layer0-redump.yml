@@ -1,0 +1,82 @@
+name: Layer 0 baseline re-dump
+
+# Manually-triggered refresh of the Layer 0 genesis baseline snapshot.
+#
+# Runs `pg_dump` against live Neon (the NEON_DATABASE_URL secret — use the
+# UNPOOLED connection string; the pooled endpoint can break a dump mid-stream)
+# and pushes etl/output/layer0_etl_v<version>.sql to a fresh branch.
+#
+# It deliberately pushes a BRANCH rather than opening a PR: a PR opened by the
+# default GITHUB_TOKEN does not trigger the pull_request CI (GitHub's recursion
+# guard), so the layer0-gate would be skipped. Open the PR from the pushed
+# branch by hand (or ask Claude) — that triggers the gate, which loads the new
+# baseline, applies migrations on top, and runs validate_layer0 before merge.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Baseline version, e.g. 1.8.0 -> etl/output/layer0_etl_v<version>.sql"
+        required: true
+        default: "1.8.0"
+
+permissions:
+  contents: write
+
+jobs:
+  redump:
+    name: pg_dump live layer0 -> baseline snapshot
+    runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ inputs.version }}
+      PGSSLMODE: require
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install pg_dump 17 (match prod Neon)
+        # ubuntu-latest ships postgresql-client 16; pg_dump refuses a newer
+        # server, so pull client 17 from the official PGDG apt repo.
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y postgresql-common
+          sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y
+          sudo apt-get install -y postgresql-client-17
+          echo "/usr/lib/postgresql/17/bin" >> "$GITHUB_PATH"
+
+      - name: Dump live layer0
+        env:
+          NEON_DATABASE_URL: ${{ secrets.NEON_DATABASE_URL }}
+        run: |
+          set -euo pipefail
+          test -n "${NEON_DATABASE_URL:-}" || { echo "::error::NEON_DATABASE_URL secret is empty/unset"; exit 1; }
+          out="etl/output/layer0_etl_v${VERSION}.sql"
+          pg_dump --version
+          pg_dump --schema=layer0 --column-inserts --no-owner --no-privileges \
+            "$NEON_DATABASE_URL" > "$out"
+          echo "Wrote $out ($(wc -l < "$out") lines)"
+          # Sanity: self-contained schema + populated primary_movement.
+          grep -q "CREATE SCHEMA layer0" "$out" || { echo "::error::dump missing 'CREATE SCHEMA layer0'"; exit 1; }
+          grep -q "CREATE TABLE layer0.disciplines" "$out" || { echo "::error::dump missing disciplines table"; exit 1; }
+          pm="$(grep -c "primary_movement" "$out" || true)"
+          echo "primary_movement references in dump: $pm"
+          test "$pm" -gt 0 || { echo "::error::no primary_movement in dump (did 0006 apply to live?)"; exit 1; }
+
+      - name: Commit + push to a branch
+        run: |
+          set -euo pipefail
+          branch="claude/layer0-baseline-v${VERSION}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$branch"
+          git add "etl/output/layer0_etl_v${VERSION}.sql"
+          git commit -m "Layer 0: refresh genesis baseline to v${VERSION} (pg_dump of live layer0)"
+          git push -f origin "$branch"
+          {
+            echo "### Baseline re-dump pushed"
+            echo ""
+            echo "Branch: \`$branch\`"
+            echo "File: \`etl/output/layer0_etl_v${VERSION}.sql\`"
+            echo ""
+            echo "Open a PR from this branch (or ask Claude) so the Layer 0 gate validates it before merge."
+          } >> "$GITHUB_STEP_SUMMARY"
