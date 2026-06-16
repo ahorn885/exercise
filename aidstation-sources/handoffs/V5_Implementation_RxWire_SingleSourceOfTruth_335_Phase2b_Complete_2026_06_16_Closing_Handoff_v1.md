@@ -25,8 +25,17 @@
 ## 4. Code/tests
 All green: rx_wire 34, Layer-4/plan/render suites 1510 passed / 5 skipped, etl/tests 90, rx/progression 18. Migration validated locally on PG16 (baseline + 0006–0011 apply clean + idempotent; `validate_layer0` PASS, `exercises_fk` 0 violations).
 
-## 5. Manual verification — OWED (Andy-action)
-The visible #335 win renders only on a **freshly generated/refreshed plan** (rx_wire is post-synthesis; it re-runs at gen time, so existing persisted `plan_sessions` don't retroactively change). **Owed:** generate/refresh a plan for Andy and confirm via read-only `neon-query` on `plan_sessions` that the backfilled lifts (Back Squat, …, and the 4 new ones once logged) render capacity-derived loads, **not** `first_exposure`. Expect the `rx_wire: hits=N (id=… name=…)` line in `/admin/logs` to show non-zero `id=` hits.
+## 5. Manual verification — DONE (pv=73, 2026-06-16)
+Andy ran a fresh plan-create (pv=73). On `ready` (45 sessions) the prod log showed:
+```
+rx_wire: hits=8 (id=8 name=0) first_exposure=35 skipped=0 (exercise_count=43)
+```
+- **All 8 capacity hits resolved via the EX-id path** (`id=8 name=0` — the name path was never needed). Pre-fix pv=71 was 0 hits / 100% `first_exposure`.
+- Bulgarian Split Squat (DB) rendered `2×6 @ 60 lb` / `3×6 @ 60 lb` / `3×8 @ 60 lb` — a real capacity-derived, phase-aware load, not a calibration placeholder.
+- It was the only backfilled lift pv=73 programmed; the plan's strength skewed to un-logged lower-body durability moves (Nordic Curl, Tibialis Raise, Step-Up, Sled Drag…) → correctly `first_exposure`. Broader coverage is a function of plan exercise-selection + logging history, not the keying mechanism.
+- **#335 CLOSED completed.**
+
+**Log-access gotcha fixed this session:** prod `/admin/logs?token=` (and `/admin/plan/<id>/diag?token=`) must be fetched via the **Vercel MCP `mcp__Vercel__web_fetch_vercel_url`** tool, NOT plain `WebFetch` — the deployment is behind Vercel Authentication, so an anonymous fetcher 403s at the edge *before* the app's `DIAG_TOKEN` gate (a 403 there is not a bad token). Corrected in `CLAUDE.md` (Ops automation → Prod logs) + `CARRY_FORWARD.md`.
 
 ## 6. Next session pointers
 
@@ -66,7 +75,7 @@ The visible #335 win renders only on a **freshly generated/refreshed plan** (rx_
 **Bookkeeping:** design-doc status flip, `CURRENT_STATE.md`, this handoff, #335 issue comment.
 
 ## 10. Carry-forward
-The fresh-plan live verification (§5) is the one owed item from this arc. Plus the standing pre-existing carry: the post-#572 live **T3 *refresh*** re-verify (Rule #14).
+Nothing owed from this arc — verified live on pv=73 (§5) and #335 closed. Standing pre-existing carry remains: the post-#572 live **T3 *refresh*** re-verify (Rule #14).
 
 ---
 
