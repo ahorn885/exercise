@@ -2331,6 +2331,28 @@ _PG_MIGRATIONS = [
     # name->EX-id backfill (D2); read by rx_engine.current_rx_by_layer0_id().
     "ALTER TABLE current_rx ADD COLUMN IF NOT EXISTS layer0_exercise_id TEXT",
     "CREATE INDEX IF NOT EXISTS idx_current_rx_user_layer0 ON current_rx(user_id, layer0_exercise_id)",
+    # #335 Phase 2b backfill — curated name->layer0 EX-id map (fuzzy + Andy's
+    # HITL review, 2026-06-16). Name-keyed (not user-scoped): the mapping is a
+    # general fact, so any user who logged this exact name resolves to the same
+    # EX-id. Idempotent (`layer0_exercise_id IS NULL` guard). The 4 names that
+    # need NEW layer0 exercises (barbell row, plain biceps curl, sit-up, KB halo)
+    # are deferred to a follow-up after those entries are added (Trigger #2).
+    "UPDATE current_rx SET layer0_exercise_id='EX001' WHERE exercise='Back Squat' AND layer0_exercise_id IS NULL",
+    "UPDATE current_rx SET layer0_exercise_id='EX001' WHERE exercise='Squat' AND layer0_exercise_id IS NULL",
+    "UPDATE current_rx SET layer0_exercise_id='EX019' WHERE exercise='Barbell Hip Thrust' AND layer0_exercise_id IS NULL",
+    "UPDATE current_rx SET layer0_exercise_id='EX021' WHERE exercise='Bulgarian Split Squat' AND layer0_exercise_id IS NULL",
+    "UPDATE current_rx SET layer0_exercise_id='EX002' WHERE exercise='Goblet Squat' AND layer0_exercise_id IS NULL",
+    "UPDATE current_rx SET layer0_exercise_id='EX217' WHERE exercise='Dead Bug' AND layer0_exercise_id IS NULL",
+    "UPDATE current_rx SET layer0_exercise_id='EX009' WHERE exercise='Farmer Carry' AND layer0_exercise_id IS NULL",
+    "UPDATE current_rx SET layer0_exercise_id='EX078' WHERE exercise='Single-Arm DB Row (Staggered)' AND layer0_exercise_id IS NULL",
+    "UPDATE current_rx SET layer0_exercise_id='EX233' WHERE exercise='Lateral Raise' AND layer0_exercise_id IS NULL",
+    "UPDATE current_rx SET layer0_exercise_id='EX216' WHERE exercise='Plank' AND layer0_exercise_id IS NULL",
+    "UPDATE current_rx SET layer0_exercise_id='EX219' WHERE exercise='Side Plank' AND layer0_exercise_id IS NULL",
+    "UPDATE current_rx SET layer0_exercise_id='EX006' WHERE exercise='Pull Up' AND layer0_exercise_id IS NULL",
+    "UPDATE current_rx SET layer0_exercise_id='EX228' WHERE exercise='Push Up' AND layer0_exercise_id IS NULL",
+    "UPDATE current_rx SET layer0_exercise_id='EX229' WHERE exercise='Bench Press' AND layer0_exercise_id IS NULL",
+    "UPDATE current_rx SET layer0_exercise_id='EX230' WHERE exercise='Deadlift' AND layer0_exercise_id IS NULL",
+    "UPDATE current_rx SET layer0_exercise_id='EX235' WHERE exercise='Triceps Extension' AND layer0_exercise_id IS NULL",
 ]
 
 _CLOTHING_SEEDS = [
