@@ -1,6 +1,6 @@
 # Layer 4 — Strength Rx: single source of truth + load progression (#335 Phase 2b) — Design v1
 
-**Status:** DRAFT — decisions below marked **[PROPOSED]** pending Andy sign-off. Spec-first; no code until the load-bearing forks (D2/D5/D7) are locked. Stop-and-ask #3 (cross-layer) area.
+**Status:** Decisions LOCKED (Andy, 2026-06-16): **D5 = phase-aware %1RM**, **D7 = identity + load model in one arc (split into PRs)**, **D2 = backfill history to EX-ids**, D3 crosswalk per §4. Implementation underway — PR 1 = the `movement_patterns[]→progression-key` crosswalk (`layer0_progression.py`). Stop-and-ask #3 gate cleared by sign-off.
 **Fixes:** #335 (the reopened "strength loads not keyed off capacity records" gap). Phase 2b of `Layer4_StrengthProgramming_Phase2_Design_v2.md` (which deferred "rx_engine absolute loads").
 **Date:** 2026-06-16
 **Predecessor:** the #335 render slice (PR #662) fixed the double-render + made rx_wire `print()`-visible; this design is the substantive fix behind it.
