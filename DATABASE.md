@@ -103,15 +103,27 @@ branch). List them with `vercel env ls preview` (optionally per-branch:
 The running app reads only the **unscoped** `DATABASE_URL` (`database.py:5`), so
 deleting the stale branch-scoped copies is safe for prod and normal previews.
 
-To stop the accrual and clean up:
-- **Stop new ones** — in Neon Console → Integrations → Vercel (or Vercel →
-  Project → Storage/Integrations → Neon → Settings): turn **off** per-preview
-  branch creation, **and/or** turn **on** "delete the Neon branch when the Git
-  branch is deleted" (prunes the branch and its env vars on PR close).
-- **Clean up existing** — Vercel → Project → Settings → Environment Variables,
-  filter to **Preview**, delete the stale branch-scoped `DATABASE_URL` /
-  `DATABASE_URL_UNPOOLED` entries (keep Production + the active branch), then
-  delete the matching orphaned branches in Neon → Branches.
+**Resolved 2026-06-16** — the integration is now configured to self-clean. The
+controls (under **Neon Console → Integrations → Vercel**):
+- **Automation workflows → "Automatically delete Neon preview branches after the
+  corresponding git branch is merged or deleted"** — *enabled*. This is the
+  stop-the-accrual lever: when a preview branch's git branch goes away, Neon
+  deletes the branch and the integration removes its Vercel env vars.
+- **GitHub → repo Settings → "Automatically delete head branches"** — *enabled*,
+  so merged PR branches are actually deleted, which is what triggers the Neon
+  automation above. Without it the automation never fires.
+- **"Vercel environment variables" checklist** (DATABASE_URL,
+  DATABASE_URL_UNPOOLED, PGHOST, PGUSER, PGDATABASE, PGPASSWORD, …) controls
+  *which* vars are pushed per branch. The app only needs `DATABASE_URL`, so the
+  rest can be unchecked to shrink the per-branch footprint.
+
+The automation is **not retroactive**, so the backlog of vars from
+already-merged branches was cleaned up once by hand: delete the orphaned
+branches in **Neon → Branches** (removes their linked Vercel env vars via the
+integration); any leftovers go via **Vercel → Project → Settings → Environment
+Variables → filter Preview → ⋯ → Remove**, or the CLI
+(`vercel env ls preview` → `vercel env rm <NAME> preview <branch> -y`). Keep the
+Production pair and any open-PR branch.
 
 ### The `database.py` compatibility layer
 
