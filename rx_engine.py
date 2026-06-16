@@ -29,9 +29,31 @@ from calculations import (
     calculate_next_rx,
     project_next_from_current,
 )
+from layer0_progression import NAME_TO_EX_ID, progression_pattern
 
 
 DELOAD_THRESHOLD = 5
+
+
+def _layer0_progression_pattern(db, layer0_exercise_id):
+    """Resolve the rx progression key from `layer0.exercises.movement_patterns`
+    for an EX-id — the single source of truth (#335 / #430 Slice C), replacing
+    the old `exercise_inventory.movement_pattern` name-keyed read.
+
+    Returns the collapsed `PROGRESSION_RULES` key (`progression_pattern()`),
+    or None when the EX-id is absent or unknown to layer0, so the caller can
+    fall back to the legacy pattern (no regression for un-migrated names).
+    """
+    if not layer0_exercise_id:
+        return None
+    row = db.execute(
+        '''SELECT movement_patterns FROM layer0.exercises
+            WHERE exercise_id=? AND superseded_at IS NULL''',
+        (layer0_exercise_id,),
+    ).fetchone()
+    if row is None:
+        return None
+    return progression_pattern(list(row['movement_patterns'] or []))
 
 
 def current_rx(db, user_id, exercise_name):
@@ -152,25 +174,35 @@ def apply_session_outcome(db, exercise, date, sets,
     # constraint — that's the gating UNIQUE debt 2D resolves.
     rx = db.execute(
         '''SELECT movement_pattern, weight_increment, consecutive_failures,
-                  sessions_since_progress,
+                  sessions_since_progress, layer0_exercise_id,
                   current_sets, current_reps, current_weight, current_duration
            FROM current_rx WHERE exercise=? AND user_id=?''',
         (exercise, user_id)
     ).fetchone()
 
     ei = db.execute(
-        '''SELECT id, discipline, type, movement_pattern,
-                  suggested_volume, weight_increment
+        '''SELECT id, discipline, type, movement_pattern, suggested_volume
            FROM exercise_inventory WHERE exercise=?''',
         (exercise,)
     ).fetchone()
     exercise_id = ei['id'] if ei else None
 
+    # #430 Slice C — key the progression off the layer0 EX-id (single source of
+    # truth), not the v1 exercise_inventory name. Prefer the row's backfilled
+    # EX-id; for a never-logged exercise resolve the curated v1-name->EX-id map.
+    # `movement_patterns` from layer0 collapses to the rx progression key via the
+    # crosswalk; falls back to the legacy denormalized/exercise_inventory pattern
+    # only when no EX-id resolves (un-migrated name → status quo, no regression).
+    layer0_exercise_id = (rx['layer0_exercise_id'] if rx else None) or NAME_TO_EX_ID.get(exercise)
+    layer0_pattern = _layer0_progression_pattern(db, layer0_exercise_id)
+
+    # weight_increment: layer0 carries no per-exercise increment (#335 D4), and
+    # the exercise_inventory column is unseeded (always NULL). Keep only the
+    # per-user current_rx override; None falls through to calculations'
+    # actual-weight runtime rule then the pattern default.
     if rx:
-        movement_pattern = rx['movement_pattern'] or (ei['movement_pattern'] if ei else None)
+        movement_pattern = layer0_pattern or rx['movement_pattern'] or (ei['movement_pattern'] if ei else None)
         weight_increment = rx['weight_increment']
-        if weight_increment is None and ei:
-            weight_increment = ei['weight_increment']
         consecutive_failures = rx['consecutive_failures'] or 0
         sessions_since_progress = rx['sessions_since_progress'] or 0
         baseline_sets = rx['current_sets']
@@ -178,8 +210,8 @@ def apply_session_outcome(db, exercise, date, sets,
         baseline_weight = rx['current_weight']
         baseline_duration = rx['current_duration']
     else:
-        movement_pattern = ei['movement_pattern'] if ei else None
-        weight_increment = ei['weight_increment'] if ei else None
+        movement_pattern = layer0_pattern or (ei['movement_pattern'] if ei else None)
+        weight_increment = None
         consecutive_failures = 0
         sessions_since_progress = 0
         baseline_sets = baseline_reps = baseline_weight = baseline_duration = None
@@ -267,16 +299,22 @@ def apply_session_outcome(db, exercise, date, sets,
     else:
         new_sessions_since_progress = sessions_since_progress
 
-    # UPSERT current_rx
+    # UPSERT current_rx. layer0_exercise_id is written on every path so a
+    # newly-logged exercise self-heals its EX-id (#430 Slice C) — the #335
+    # backfill was a one-time snapshot; without this the write path would keep
+    # minting NULL-EX-id rows invisible to the rx_wire EX-id lookup.
     if rx:
         db.execute(
             '''UPDATE current_rx SET
-                 exercise_id=?, current_sets=?, current_reps=?, current_weight=?, current_duration=?,
+                 exercise_id=?, layer0_exercise_id=COALESCE(layer0_exercise_id, ?),
+                 movement_pattern=?,
+                 current_sets=?, current_reps=?, current_weight=?, current_duration=?,
                  last_performed=?, last_outcome=?, consecutive_failures=?, sessions_since_progress=?,
                  next_sets=?, next_reps=?, next_weight=?, next_duration=?,
                  rx_source=?
                WHERE exercise=? AND user_id=?''',
-            (exercise_id, new_baseline_sets, new_baseline_reps, new_baseline_weight, new_baseline_duration,
+            (exercise_id, layer0_exercise_id, movement_pattern,
+             new_baseline_sets, new_baseline_reps, new_baseline_weight, new_baseline_duration,
              date, outcome, new_failures, new_sessions_since_progress,
              nxt['next_sets'], nxt['next_reps'], nxt['next_weight'], nxt['next_duration'],
              rx_source, exercise, user_id)
@@ -287,18 +325,28 @@ def apply_session_outcome(db, exercise, date, sets,
         sugg_vol = ei['suggested_volume'] if ei else None
         db.execute(
             '''INSERT INTO current_rx
-                 (exercise, exercise_id, discipline, type, movement_pattern,
+                 (exercise, exercise_id, layer0_exercise_id, discipline, type, movement_pattern,
                   inventory_sugg_volume, current_sets, current_reps, current_weight, current_duration,
                   last_performed, last_outcome, consecutive_failures, sessions_since_progress,
                   weight_increment,
                   next_sets, next_reps, next_weight, next_duration, rx_source, user_id)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
-            (exercise, exercise_id, discipline, ex_type, movement_pattern,
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
+            (exercise, exercise_id, layer0_exercise_id, discipline, ex_type, movement_pattern,
              sugg_vol, new_baseline_sets, new_baseline_reps, new_baseline_weight, new_baseline_duration,
              date, outcome, new_failures, new_sessions_since_progress, weight_increment,
              nxt['next_sets'], nxt['next_reps'], nxt['next_weight'], nxt['next_duration'],
              rx_source, user_id)
         )
+
+    # Rule #15 — log the EX-id resolution + chosen progression key so a wrong
+    # progression in prod is diagnosable from /admin/logs alone. `layer0=y`
+    # means the key came from layer0 movement_patterns; `n` means the legacy
+    # fallback (un-migrated name).
+    print(
+        f"rx_engine.apply_session_outcome: user={user_id} exercise={exercise!r} "
+        f"ex_id={layer0_exercise_id} progression={movement_pattern} "
+        f"layer0={'y' if layer0_pattern is not None else 'n'} outcome={outcome}"
+    )
 
     return {
         'movement_pattern': movement_pattern,
