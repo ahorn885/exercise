@@ -237,7 +237,9 @@ class TestCurrentRxHit:
         new_payload, diag = apply_current_rx(_payload([session]), db, 1, {"home": l2c})
 
         result_ex = new_payload.sessions[0].strength_exercises[0]
-        assert result_ex.load_prescription == "3 × 5 @ 185 lb"
+        # Load-only: view.html prepends `sets × reps @`, so the prescription
+        # field carries the weight alone (no double-rendered `3 × 5 @ ...`).
+        assert result_ex.load_prescription == "185 lb"
         assert "first_exposure" not in result_ex.coaching_flags
         assert diag.current_rx_hits == 1
         assert diag.first_exposure_count == 0
@@ -253,7 +255,7 @@ class TestCurrentRxHit:
 
         new_payload, _ = apply_current_rx(_payload([session]), db, 1, {"home": l2c})
 
-        assert new_payload.sessions[0].strength_exercises[0].load_prescription == "3 × 5 @ 187 lb"
+        assert new_payload.sessions[0].strength_exercises[0].load_prescription == "187 lb"
 
     def test_duration_only_renders_seconds(self):
         ex = _strength_ex("EX-PLANK", name="Plank")
@@ -263,7 +265,7 @@ class TestCurrentRxHit:
 
         new_payload, diag = apply_current_rx(_payload([session]), db, 1, {"home": l2c})
 
-        assert new_payload.sessions[0].strength_exercises[0].load_prescription == "3 × 45s"
+        assert new_payload.sessions[0].strength_exercises[0].load_prescription == "45s"
         assert diag.current_rx_hits == 1
 
     def test_sparse_row_with_no_weight_or_duration_falls_through(self):
