@@ -27,7 +27,7 @@ Rolling-state for items spanning multiple sessions. **Edit in place** — don't 
 
 **Secrets / gates (one-time, all set):** `NEON_DATABASE_URL` (write — apply/redump) · `NEON_RO_DATABASE_URL` (read-only Neon role `claude_ro`, SELECT on `layer0`+`public` — diag/validate-live) · `production` environment (required reviewer = @ahorn885).
 
-**Prod logs (Rule #14 — no more traceback-pasting):** `GET /admin/logs?token=<DIAG_TOKEN>` (Claude via WebFetch). Andy pastes the current `DIAG_TOKEN` per debugging session (**chat-only, never commit**); rotated 2026-06-15. Preferred over the truncating Vercel runtime-log MCP. (The token was confirmed NOT repo-leaked — a prior false alarm.)
+**Prod logs (Rule #14 — no more traceback-pasting):** `GET /admin/logs?token=<DIAG_TOKEN>` (optional `&q=<substr>&minutes=N`), fetched via the **Vercel MCP `mcp__Vercel__web_fetch_vercel_url`** tool — **NOT plain `WebFetch`**. The prod deployment is behind Vercel Authentication: an anonymous fetcher (`WebFetch`) 403s at the Vercel edge *before* the app's token gate, so a 403 there is an auth-layer block, not a bad token. The Vercel MCP tool carries the team's Vercel auth → 200 (confirmed 2026-06-16; `get_access_to_vercel_url` is the fallback for cookie-based share links). Andy pastes the current `DIAG_TOKEN` per debugging session (**chat-only, never commit**); rotated 2026-06-16 (`sk_…` form, supersedes `0dKHoR2…`). Preferred over the truncating Vercel runtime-log MCP.
 
 **Local sync:** `.claude/settings.json` has a `SessionStart` `git pull --ff-only` hook so Andy's local clone auto-syncs with web-session merges.
 
