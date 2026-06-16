@@ -71,6 +71,44 @@ def current_rx(db, user_id, exercise_name):
     }
 
 
+def current_rx_by_layer0_id(db, user_id, layer0_exercise_id):
+    """Read the current prescription row for `(user_id, layer0_exercise_id)`.
+
+    Mirrors `current_rx()` but keys off the **layer0 EX-id** — the single source
+    of truth the synthesizer emits on `StrengthExercise.exercise_id` — instead of
+    the exercise NAME. The name path could never match the layer0 catalog's
+    qualified names ("Back Squat (Barbell)") against the bare logged names
+    ("Back Squat"); the EX-id is identical on both sides (#335 Phase 2b).
+
+    Returns the same `{sets, reps, weight_kg, duration_sec, movement_pattern}`
+    dict as `current_rx()` when a row exists with at least one of weight or
+    duration recorded; None otherwise. `rx_wire.apply_current_rx` calls this
+    first, falling back to the name path only for rows not yet backfilled.
+    """
+    if not layer0_exercise_id:
+        return None
+    row = db.execute(
+        '''SELECT current_sets, current_reps, current_weight, current_duration,
+                  movement_pattern
+             FROM current_rx
+            WHERE layer0_exercise_id=? AND user_id=?''',
+        (layer0_exercise_id, user_id),
+    ).fetchone()
+    if row is None:
+        return None
+    weight = row['current_weight']
+    duration = row['current_duration']
+    if weight is None and duration is None:
+        return None
+    return {
+        'sets': row['current_sets'],
+        'reps': row['current_reps'],
+        'weight_kg': weight,
+        'duration_sec': duration,
+        'movement_pattern': row['movement_pattern'],
+    }
+
+
 def _bootstrap_baseline(sets):
     """Derive baseline values from a target-less session (FIT bootstrap).
 
