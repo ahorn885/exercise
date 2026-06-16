@@ -1648,7 +1648,7 @@ class CyclingBaseline(_Base):
     # always matches a layer0.craft_discipline_aliases key (no silent miss in
     # the craft-substitution lookup). Mirrors paddle_craft_types' Literal.
     bike_types_available: list[
-        Literal["road_bike", "mountain_bike", "gravel_bike", "cycling_trainer"]
+        Literal["road_bike", "mountain_bike", "gravel_bike", "cycling_trainer", "tt_bike"]
     ] = Field(default_factory=list)
     mtb_skill: Literal["beginner", "intermediate", "advanced"] | None = None
     longest_ride_distance_km: float | None = Field(default=None, ge=0)
@@ -1669,7 +1669,7 @@ class SwimmingBaseline(_Base):
 class PaddlingBaseline(_Base):
     longest_paddle_km: float | None = Field(default=None, ge=0)
     longest_paddle_hrs: float | None = Field(default=None, ge=0)
-    paddle_craft_types: list[Literal["kayak", "canoe", "packraft"]] = Field(
+    paddle_craft_types: list[Literal["kayak", "canoe", "packraft", "sup", "raft"]] = Field(
         default_factory=list
     )
 

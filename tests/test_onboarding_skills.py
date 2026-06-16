@@ -353,10 +353,11 @@ class TestSkillsRoute:
         assert captured['current_states'] == {'climbing_roped': True}
         assert captured['post_step_skills_target'] == '/onboarding/schedule'
         # 2c.2b — the craft picker shares this step.
+        # cycling_trainer dropped (WS-I, #586); tt_bike/sup/raft added (#622)
         assert [c['slug'] for c in captured['craft_catalog']['cycling']] == [
-            'road_bike', 'mountain_bike', 'gravel_bike']  # cycling_trainer dropped (WS-I, #586)
+            'road_bike', 'mountain_bike', 'gravel_bike', 'tt_bike']
         assert [c['slug'] for c in captured['craft_catalog']['paddling']] == [
-            'kayak', 'canoe', 'packraft']
+            'kayak', 'canoe', 'packraft', 'sup', 'raft']
         assert captured['athlete_crafts'] == {'bike_types': [], 'paddle_crafts': []}
 
     def test_post_upserts_state_and_evicts_layer1(self, monkeypatch):

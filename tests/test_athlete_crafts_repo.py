@@ -132,9 +132,11 @@ class TestModelGuard:
 # instead (the craft-domain analogue of V4c's equipment-token coverage guard).
 # cycling_trainer retired as a craft (WS-I, #586) — it is equipment, not a mobile
 # vessel; its alias rows superseded in etl/migrations/layer0/0004_*.
+# tt_bike / sup / raft added as crafts (#622) — relocated out of the equipment
+# vocabulary; their alias rows land in etl/migrations/layer0/0007_*.
 _ALIAS_CRAFT_NAMES = {
-    "kayak", "canoe", "packraft",
-    "road_bike", "gravel_bike", "mountain_bike",
+    "kayak", "canoe", "packraft", "sup", "raft",
+    "road_bike", "gravel_bike", "mountain_bike", "tt_bike",
 }
 
 

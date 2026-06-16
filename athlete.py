@@ -321,7 +321,10 @@ MTB_SKILL_LEVELS = ('beginner', 'intermediate', 'advanced')
 # not a mobile vessel, so it is EQUIPMENT (gym profile), not a craft. Craft =
 # mobile, athlete-owned vessels only. Its craft_discipline_aliases rows retire in
 # the same change (etl/migrations/layer0/0004_*).
-BIKE_TYPES = ('road_bike', 'mountain_bike', 'gravel_bike')
+# #622 (2026-06-16): tt_bike added — the time-trial / triathlon bike is a mobile
+# vessel (aliases to D-007 Time-Trial Cycling), relocated out of the equipment
+# vocabulary into the craft store (etl/migrations/layer0/0007_*).
+BIKE_TYPES = ('road_bike', 'mountain_bike', 'gravel_bike', 'tt_bike')
 
 # §D.3 — discipline_baseline_swimming.ow_experience.
 OW_EXPERIENCE_LEVELS = ('none', 'limited', 'experienced')
@@ -330,7 +333,10 @@ OW_EXPERIENCE_LEVELS = ('none', 'limited', 'experienced')
 # Vocabulary V4 §4: 'surfski' pruned (enum-only vessel, never tracked to a
 # discipline). Hard-removed per build decision — any pre-existing athlete row
 # storing 'surfski' must be migrated (it will otherwise fail enum validation).
-PADDLE_CRAFT_TYPES = ('kayak', 'canoe', 'packraft')
+# #622 (2026-06-16): 'sup' (Stand-up Paddleboard, aliases to D-032) + 'raft'
+# (Paddle Rafting, aliases to D-019) added — both mobile vessels relocated out of
+# the equipment vocabulary into the craft store (etl/migrations/layer0/0007_*).
+PADDLE_CRAFT_TYPES = ('kayak', 'canoe', 'packraft', 'sup', 'raft')
 
 # Display labels for the owned-craft pickers (bike + paddle, 2c.2b). Slugs are
 # the stored + aliased keys; labels are presentation-only.
@@ -338,9 +344,12 @@ CRAFT_LABELS = {
     'road_bike': 'Road bike',
     'mountain_bike': 'Mountain bike',
     'gravel_bike': 'Gravel bike',
+    'tt_bike': 'TT / triathlon bike',
     'kayak': 'Kayak',
     'canoe': 'Canoe',
     'packraft': 'Packraft',
+    'sup': 'Stand-up paddleboard',
+    'raft': 'Raft',
 }
 
 # §D.5 — discipline_baseline_skiing.ski_disciplines (multi-select).
