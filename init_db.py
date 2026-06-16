@@ -2335,8 +2335,9 @@ _PG_MIGRATIONS = [
     # HITL review, 2026-06-16). Name-keyed (not user-scoped): the mapping is a
     # general fact, so any user who logged this exact name resolves to the same
     # EX-id. Idempotent (`layer0_exercise_id IS NULL` guard). The 4 names that
-    # need NEW layer0 exercises (barbell row, plain biceps curl, sit-up, KB halo)
-    # are deferred to a follow-up after those entries are added (Trigger #2).
+    # needed NEW layer0 exercises (barbell row, plain biceps curl, sit-up, KB
+    # halo) now map to EX246-EX249, added in layer0 migration
+    # 0011_add_strength_rx_exercises.sql (Trigger #2, Andy-ratified 2026-06-16).
     "UPDATE current_rx SET layer0_exercise_id='EX001' WHERE exercise='Back Squat' AND layer0_exercise_id IS NULL",
     "UPDATE current_rx SET layer0_exercise_id='EX001' WHERE exercise='Squat' AND layer0_exercise_id IS NULL",
     "UPDATE current_rx SET layer0_exercise_id='EX019' WHERE exercise='Barbell Hip Thrust' AND layer0_exercise_id IS NULL",
@@ -2353,6 +2354,11 @@ _PG_MIGRATIONS = [
     "UPDATE current_rx SET layer0_exercise_id='EX229' WHERE exercise='Bench Press' AND layer0_exercise_id IS NULL",
     "UPDATE current_rx SET layer0_exercise_id='EX230' WHERE exercise='Deadlift' AND layer0_exercise_id IS NULL",
     "UPDATE current_rx SET layer0_exercise_id='EX235' WHERE exercise='Triceps Extension' AND layer0_exercise_id IS NULL",
+    # The 4 that needed new layer0 entries (0011) — backfilled now those EX-ids exist.
+    "UPDATE current_rx SET layer0_exercise_id='EX246' WHERE exercise='Row' AND layer0_exercise_id IS NULL",
+    "UPDATE current_rx SET layer0_exercise_id='EX247' WHERE exercise='Curl' AND layer0_exercise_id IS NULL",
+    "UPDATE current_rx SET layer0_exercise_id='EX248' WHERE exercise='Sit Up' AND layer0_exercise_id IS NULL",
+    "UPDATE current_rx SET layer0_exercise_id='EX249' WHERE exercise='KB Halo' AND layer0_exercise_id IS NULL",
 ]
 
 _CLOTHING_SEEDS = [
