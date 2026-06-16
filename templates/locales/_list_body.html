@@ -1,0 +1,103 @@
+{# Locales list body (#619) — the card grid / empty hero, factored out of
+   locales/list.html so the profile Locations tab can embed the same surface.
+   Context (locales, profiles, counts, tags_by_locale, display_addresses,
+   home_locale) is built by routes.locales.build_locales_list_context. The
+   surrounding page owns the dash-head intro and any topbar actions. #}
+{% if profiles or tags_by_locale %}
+<div class="loc-grid">
+  {% for locale in locales %}
+    {% set p = profiles.get(locale) %}
+    {% set tag_count = counts.get(locale, 0) %}
+    {% set locale_tags = tags_by_locale.get(locale, []) %}
+    {% set display_name = (p['locale_name'] if p and p['locale_name'] else locale) %}
+    <div class="card loc-card">
+      <div class="loc-head">
+        <div class="loc-id">
+          <div class="loc-title">
+            <span class="loc-name">{{ display_name }}</span>
+            {% if p and p['chain_name'] %}<span class="chip accent">{{ p['chain_name'] }}</span>{% endif %}
+            {% if p and p['category'] %}<span class="chip solid">{{ p['category'].replace('_', ' ') }}</span>{% endif %}
+            {% if p and p['manual_entry'] %}<span class="chip">manual</span>{% endif %}
+            {% if home_locale and locale == home_locale %}<span class="chip accent" title="Your home location">★ Home</span>{% endif %}
+          </div>
+          {% set addr = display_addresses.get(locale) %}
+          {% if addr %}<p class="loc-addr mono">▽ {{ addr }}</p>{% endif %}
+        </div>
+        <div class="loc-actions">
+          {% if p and p['mapbox_id'] %}
+          <form method="post" action="{{ url_for('locales.refresh_from_mapbox', locale=locale) }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button type="submit" class="btn btn-ghost btn-sm" title="Refresh from Mapbox">⟳</button>
+          </form>
+          {% endif %}
+          {% if p and not (home_locale and locale == home_locale) %}
+          <form method="post" action="{{ url_for('locales.make_home', locale=locale) }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button type="submit" class="btn btn-ghost btn-sm" title="Make this your home location">★ Make home</button>
+          </form>
+          {% endif %}
+          <a class="btn btn-ghost btn-sm" href="{{ url_for('locales.edit_profile', locale=locale) }}">Edit</a>
+          {% if p %}
+          <form method="post" action="{{ url_for('locales.delete_locale', locale=locale) }}"
+                data-confirm="Delete &quot;{{ display_name }}&quot;? Equipment overrides for this location will be removed too. This cannot be undone.">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button type="submit" class="btn btn-ghost btn-sm loc-del">Delete</button>
+          </form>
+          {% endif %}
+        </div>
+      </div>
+
+      <div class="loc-body">
+        {% if tag_count > 0 %}
+          <div class="loc-tags">
+            {% for item in locale_tags[:8] %}
+              <span class="chip solid">{{ item['label'] }}</span>
+            {% endfor %}
+            {% if locale_tags|length > 8 %}
+              <span class="loc-more mono">+{{ locale_tags|length - 8 }} more</span>
+            {% endif %}
+          </div>
+          {% if p and p['notes'] %}<p class="loc-notes">{{ p['notes'] }}</p>{% endif %}
+        {% else %}
+          <p class="loc-empty-body">No profile set — exercise filter uses static location tags only.</p>
+        {% endif %}
+      </div>
+
+      <div class="loc-foot">
+        <span class="meta mono">
+          {{ tag_count }} item{{ 's' if tag_count != 1 else '' }}
+          {% if p and p['city'] %} · {{ p['city'] }}{% endif %}
+          · updated {{ (p['updated_at']|string)[:10] if p and p['updated_at'] else '—' }}
+        </span>
+        <a class="edit mono" href="{{ url_for('locales.edit_profile', locale=locale) }}">Edit →</a>
+      </div>
+    </div>
+  {% endfor %}
+
+  <a class="card card-flush loc-add" href="{{ url_for('locales.new_locale') }}">
+    <svg class="icon" width="20" height="20" aria-hidden="true"><use href="#i-plus"></use></svg>
+    <span class="loc-add-title">Add another location</span>
+    <span class="loc-add-sub mono">Home · Gym · Route · Hotel</span>
+  </a>
+</div>
+
+{% else %}
+{# ── No locations configured yet → "Where do you train?" hero ── #}
+<div class="stack">
+  <div class="loc-empty">
+    <p class="eyebrow accent">● No locations saved</p>
+    <h1 class="loc-empty-title">Where do you train?</h1>
+    <p class="loc-empty-sub">Each location has its own equipment profile. We filter exercises to
+      what's actually available. Search by address or business name to add your first one — your home
+      gym, the trails you ride, the pool you swim at.</p>
+    <a class="card card-flush loc-search" href="{{ url_for('locales.new_locale') }}">
+      <span class="eyebrow">Or search by address</span>
+      <span class="loc-search-row">
+        <svg class="icon" width="14" height="14" aria-hidden="true"><use href="#i-search"></use></svg>
+        <span class="loc-search-hint">Equinox, Planet Fitness, an address…</span>
+        <span class="btn btn-primary btn-sm">Search</span>
+      </span>
+    </a>
+  </div>
+</div>
+{% endif %}
