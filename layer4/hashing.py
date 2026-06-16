@@ -41,7 +41,11 @@ _LAYER2_BUNDLE_ATTRS = frozenset({"a", "b", "c", "d", "e"})
 # names the nearest saved locale per terrain (display name + distance) instead of
 # one slug, so the synthesizer cites real nearby venues (no 'no nearby groomed
 # trail' / invented park) and uses the locale's display name consistently.
-LAYER4_PROMPT_REVISION = "4"
+# "5" = #624 surface-specific routing — the EXACT feasibility line now routes
+# each session purpose (easy/long aerobic vs hill/vert vs technical) to the
+# nearest venue carrying the matching surface, so the synthesizer stops
+# collapsing every session onto the nearest surface.
+LAYER4_PROMPT_REVISION = "5"
 
 
 def _to_jsonable(obj: Any) -> Any:

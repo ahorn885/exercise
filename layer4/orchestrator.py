@@ -371,6 +371,28 @@ def _q_terrain_names(db: Any) -> dict[str, str]:
         return {}
 
 
+def _q_terrain_attributes(db: Any) -> dict[str, dict[str, bool]]:
+    """`{terrain_id: {requires_elevation, technical_surface}}` from
+    `layer0.terrain_types` — the surface attributes that derive a surface's
+    training purpose for the #624 surface-specific routing (no new vocab; the
+    columns already exist). Empty dict → routing no-ops and the feasibility line
+    falls back to the flat venue menu (degrades, doesn't crash)."""
+    try:
+        cur = db.execute(
+            "SELECT terrain_id, requires_elevation, technical_surface "
+            "FROM layer0.terrain_types WHERE superseded_at IS NULL"
+        )
+        return {
+            r["terrain_id"]: {
+                "requires_elevation": bool(r["requires_elevation"]),
+                "technical_surface": bool(r["technical_surface"]),
+            }
+            for r in cur.fetchall()
+        }
+    except Exception:  # table unreachable → routing degrades to the flat menu
+        return {}
+
+
 # Layer 2C `priority_per_discipline` rank — best (Critical) first. Drives the
 # order of the strength-substitute exercise pool handed to the STRENGTH tier.
 _PRIORITY_RANK: dict[str, int] = {"Critical": 0, "High": 1, "Medium": 2, "Low": 3}
@@ -404,6 +426,10 @@ class _FeasibilityInputs:
     # against the destination anchor; the subtractive segments reuse this.
     locale_meta: dict[str, dict[str, Any]]
     terrain_names: dict[str, str]
+    # Surface attributes (#624) — terrain id → {requires_elevation,
+    # technical_surface} — drive the per-purpose surface routing in
+    # enrich_resolution_display. Read once with terrain_names.
+    terrain_attrs: dict[str, dict[str, bool]]
 
 
 def _gather_feasibility_inputs(
@@ -428,6 +454,7 @@ def _gather_feasibility_inputs(
     gap_rules = _q_terrain_gap_rules(db)
     locale_meta = locations.cluster_locale_meta(db, user_id, cluster)
     terrain_names = _q_terrain_names(db)
+    terrain_attrs = _q_terrain_attributes(db)
 
     # Unified craft/terrain cascade (#586 WS-I) maps — craft disciplines walk
     # resolve_craft_terrain_feasibility; non-craft fall back to the terrain-only one.
@@ -478,6 +505,7 @@ def _gather_feasibility_inputs(
         name_by_discipline=name_by_discipline,
         locale_meta=locale_meta,
         terrain_names=terrain_names,
+        terrain_attrs=terrain_attrs,
     )
 
 
@@ -544,6 +572,7 @@ def _resolve_included_feasibility(
                 locale_meta=meta,
                 terrain_names=fi.terrain_names,
                 terrain_by_locale=terrain_by_locale,
+                terrain_attrs=fi.terrain_attrs,
             )
     return out
 

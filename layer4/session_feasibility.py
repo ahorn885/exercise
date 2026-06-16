@@ -167,6 +167,42 @@ class TerrainResolution:
     locale_name: str | None = None
     locale_distance_km: float | None = None
     terrain_venues: tuple[tuple[str, str, float | None], ...] = ()
+    # Surface-specific routing (#624), attached by `enrich_resolution_display`
+    # when `terrain_attrs` is supplied. EXACT (non-craft) only: the nearest
+    # carrying venue PER training purpose among the discipline's required
+    # surfaces, as (purpose_label, terrain_name, locale_name, distance_km), in
+    # coaching order. Emitted only when ≥2 distinct purposes map to ≥2 distinct
+    # locales (otherwise routing is a no-op and `terrain_venues` renders). Lets
+    # the synthesizer send each session to the surface its purpose calls for
+    # (long aerobic → groomed/flat; hill work → hills) instead of collapsing
+    # every session onto the nearest surface.
+    surface_routes: tuple[tuple[str, str, str, float | None], ...] = ()
+
+
+# ─── Surface training-purpose taxonomy (#624 surface-specific routing) ────────
+# A multi-surface discipline routes each KIND of session to the surface that
+# trains it. The purpose a surface serves is DERIVED from the live
+# `layer0.terrain_types` attributes (`requires_elevation` / `technical_surface`)
+# — no new vocab: elevation surfaces carry hill/vert work, non-elevation
+# technical surfaces carry skill work, and flat non-technical surfaces carry
+# easy/long aerobic volume. A surface that is BOTH elevation and technical
+# (Mountain/Alpine, Fell) routes to vert — the elevation stimulus dominates.
+SURFACE_AEROBIC = "easy / long aerobic"
+SURFACE_VERT = "hill / vert work"
+SURFACE_TECHNICAL = "technical / skill work"
+
+# Coaching render order: aerobic base, then vert quality, then technical skill.
+_SURFACE_PURPOSE_ORDER = (SURFACE_AEROBIC, SURFACE_VERT, SURFACE_TECHNICAL)
+
+
+def surface_purpose(requires_elevation: bool, technical_surface: bool) -> str:
+    """The training purpose a surface serves, from its `layer0.terrain_types`
+    attributes. Elevation dominates technical when both are set."""
+    if requires_elevation:
+        return SURFACE_VERT
+    if technical_surface:
+        return SURFACE_TECHNICAL
+    return SURFACE_AEROBIC
 
 
 def required_terrains(discipline_id: str) -> frozenset[str]:
@@ -504,6 +540,7 @@ def enrich_resolution_display(
     locale_meta: dict[str, dict[str, Any]],
     terrain_names: dict[str, str],
     terrain_by_locale: dict[str, set[str]],
+    terrain_attrs: dict[str, dict[str, bool]] | None = None,
 ) -> TerrainResolution:
     """Attach deterministic venue display data to a resolved discipline (#624 /
     #618-7) so the synthesis feasibility line cites the athlete's real saved
@@ -514,37 +551,68 @@ def enrich_resolution_display(
     tier). For the EXACT terrain tier (non-craft), also computes `terrain_venues`:
     each required terrain present anywhere in the cluster mapped to its NEAREST
     carrying locale (`locale_order` is distance-sorted), nearest-first — the menu
-    that grounds the synthesizer in every real nearby surface."""
+    that grounds the synthesizer in every real nearby surface.
+
+    When `terrain_attrs` (`{terrain_id: {requires_elevation, technical_surface}}`)
+    is supplied, also computes `surface_routes` (#624): the nearest carrying venue
+    PER training purpose, emitted only when ≥2 distinct purposes map to ≥2 distinct
+    locales — the routing that sends each session to the surface its purpose calls
+    for. Bare callers (no attrs) get the unchanged menu behavior."""
     loc = resolution.locale_id
     meta = locale_meta.get(loc) if loc is not None else None
     name = meta.get("name") if meta else None
     dist = meta.get("distance_km") if meta else None
 
     venues: tuple[tuple[str, str, float | None], ...] = ()
+    routes: tuple[tuple[str, str, str, float | None], ...] = ()
     if resolution.tier == "exact" and resolution.craft_tier == "":
-        rows: list[tuple[float, str, str, float | None]] = []
+        # (sortkey, terrain_name, locale_name, distance, purpose) — the nearest
+        # carrier per required terrain (locale_order is distance-sorted, so the
+        # first carrier seen is the nearest).
+        rows: list[tuple[float, str, str, float | None, str | None]] = []
         for terr in required_terrains(resolution.discipline_id):
             for cand in locale_order:  # distance-sorted → first carrier = nearest
                 if terr in terrain_by_locale.get(cand, set()):
                     cmeta = locale_meta.get(cand) or {}
                     cdist = cmeta.get("distance_km")
+                    attrs = (terrain_attrs or {}).get(terr)
+                    purpose = (
+                        surface_purpose(
+                            bool(attrs.get("requires_elevation")),
+                            bool(attrs.get("technical_surface")),
+                        )
+                        if attrs is not None
+                        else None
+                    )
                     rows.append(
                         (
                             cdist if cdist is not None else float("inf"),
                             terrain_names.get(terr, terr),
                             cmeta.get("name") or cand,
                             cdist,
+                            purpose,
                         )
                     )
                     break
         rows.sort(key=lambda t: (t[0], t[1]))
-        venues = tuple((tn, ln, d) for _s, tn, ln, d in rows)
+        venues = tuple((tn, ln, d) for _s, tn, ln, d, _p in rows)
+        # Purpose-grouped routing: keep the nearest carrier per purpose (rows are
+        # nearest-first, so the first seen per purpose wins).
+        by_purpose: dict[str, tuple[str, str, float | None]] = {}
+        for _s, tn, ln, d, p in rows:
+            if p is not None:
+                by_purpose.setdefault(p, (tn, ln, d))
+        if len(by_purpose) >= 2 and len({v[1] for v in by_purpose.values()}) >= 2:
+            routes = tuple(
+                (p, *by_purpose[p]) for p in _SURFACE_PURPOSE_ORDER if p in by_purpose
+            )
 
     return replace(
         resolution,
         locale_name=name,
         locale_distance_km=dist,
         terrain_venues=venues,
+        surface_routes=routes,
     )
 
 
@@ -599,7 +667,22 @@ def feasibility_line(
             "Keep the target hours; compose as strength."
         )
     if tier == "exact":
-        if resolution.terrain_venues:
+        if resolution.surface_routes:
+            # Surface-specific routing (#624): each session purpose mapped to the
+            # nearest venue carrying the surface that trains it, so the synthesizer
+            # sends long/easy aerobic to flat-groomed and hill work to the hills
+            # rather than collapsing every session onto the nearest surface.
+            routing = "; ".join(
+                f"{purpose} on {_venue_label(ln, None, d)} ({tn})"
+                for purpose, tn, ln, d in resolution.surface_routes
+            )
+            body = (
+                f"real terrain in your saved locales, routed by session purpose — "
+                f"{routing}. Match each session to the surface its purpose calls for; "
+                "do not collapse every session onto the nearest one. Train at these "
+                "named locales only; never name or suggest a location not in this list."
+            )
+        elif resolution.terrain_venues:
             # Deterministic venue menu (#624): every real nearby surface + where,
             # so the synthesizer can't claim 'none nearby' or invent a farther one.
             menu = "; ".join(
@@ -784,6 +867,7 @@ __all__ = [
     "resolve_craft_terrain_feasibility",
     "required_terrains",
     "indoor_machines",
+    "surface_purpose",
     "feasibility_line",
     "grid_annotation",
     "EventWindowOverride",
