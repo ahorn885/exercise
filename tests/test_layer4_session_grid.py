@@ -24,6 +24,7 @@ from layer4.session_grid import (
     apply_session_ceiling,
     build_session_grid,
     phase_session_ceiling,
+    placeable_days_in_week,
     resolve_available_days,
 )
 
@@ -525,6 +526,59 @@ class TestResolveAvailableDays:
     def test_defaults_to_all_seven_when_unset(self):
         assert resolve_available_days({}) == 7
         assert resolve_available_days(None) == 7
+
+
+class TestPlaceableDaysInWeek:
+    # A 7-day window, Mon 2026-07-13 .. Sun 2026-07-19. The race is Fri 2026-07-17;
+    # with the pre-race day reserved as rest, the last trainable day is Wed 07-15,
+    # so cutoff = event_date − 2 = 2026-07-15.
+    WK_START = date(2026, 7, 13)
+    WK_END = date(2026, 7, 19)
+    CUTOFF = date(2026, 7, 15)
+
+    def _windows(self, enabled_days):
+        # layer1_payload with one window per weekday; `enabled_days` = the Mon..Sun
+        # short names that train.
+        all_dows = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+        return {
+            "daily_availability_windows": [
+                {"day_of_week": d, "enabled": d in enabled_days} for d in all_dows
+            ]
+        }
+
+    def test_no_cutoff_returns_available_days_unchanged(self):
+        # Open-ended plan (no race): never truncate.
+        assert placeable_days_in_week(5, {}, self.WK_START, self.WK_END, None) == 5
+
+    def test_week_fully_before_cutoff_unchanged(self):
+        # A normal mid-plan week ends well before the race → identical to today.
+        far = date(2026, 9, 1)
+        assert placeable_days_in_week(
+            5, self._windows(["Mon", "Tue", "Wed", "Thu", "Fri"]),
+            self.WK_START, self.WK_END, far,
+        ) == 5
+
+    def test_race_week_truncates_to_enabled_days_before_cutoff(self):
+        # Trains Mon–Fri; only Mon/Tue/Wed survive the Wed cutoff → 3.
+        wins = self._windows(["Mon", "Tue", "Wed", "Thu", "Fri"])
+        assert placeable_days_in_week(5, wins, self.WK_START, self.WK_END, self.CUTOFF) == 3
+
+    def test_pre_race_rest_day_is_excluded(self):
+        # Athlete trains Wed/Thu/Fri/Sat/Sun. Thu (07-16) is the pre-race rest day
+        # and Fri (07-17) is race day — both past the Wed cutoff. Only Wed remains.
+        wins = self._windows(["Wed", "Thu", "Fri", "Sat", "Sun"])
+        assert placeable_days_in_week(5, wins, self.WK_START, self.WK_END, self.CUTOFF) == 1
+
+    def test_capped_by_available_days_without_windows(self):
+        # No per-day windows: cap nominal availability by surviving calendar days
+        # (Mon/Tue/Wed ≤ cutoff = 3). available_days_per_week=5 → min(5, 3) = 3.
+        assert placeable_days_in_week(5, {}, self.WK_START, self.WK_END, self.CUTOFF) == 3
+
+    def test_result_never_exceeds_available_days(self):
+        # Every weekday enabled but the athlete only trains 2 days/week → the
+        # nominal availability still caps the placeable count.
+        wins = self._windows(["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"])
+        assert placeable_days_in_week(2, wins, self.WK_START, self.WK_END, self.CUTOFF) == 2
 
 
 class TestBuildGridCeilingIntegration:
