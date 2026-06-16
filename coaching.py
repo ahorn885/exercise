@@ -349,7 +349,7 @@ def get_coaching_context(db, plan_id=None, lookback_days=14, locale='home'):
                   ei.skills_ar_carryover, ei.recovery_cost,
                   ei.movement_pattern, ei.where_available, ei.discipline
            FROM current_rx cr
-           LEFT JOIN exercise_inventory ei ON ei.id = cr.exercise_id
+           LEFT JOIN exercise_inventory ei ON ei.exercise = cr.exercise
            WHERE cr.user_id = ?
            ORDER BY cr.last_performed DESC''',
         (uid,)

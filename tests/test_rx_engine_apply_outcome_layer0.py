@@ -118,3 +118,31 @@ class TestLayer0ProgressionSource:
         res = apply_session_outcome(db, "Back Squat", "2026-06-16", _sets(),
                                     rx_source="From FIT Import", user_id=1)
         assert res["movement_pattern"] == "Pull"
+
+
+class TestPublicFkRetired:
+    """#430 Slice C (C2) — the public exercise_inventory.id FK is no longer
+    read, written, or returned; the per-user tables key off the layer0 EX-id."""
+
+    def test_result_returns_layer0_ex_id_not_public_id(self):
+        db = _FakeDb(layer0_patterns={"EX001": ["Squat"]})
+        res = apply_session_outcome(db, "Squat", "2026-06-16", _sets(),
+                                    rx_source="From FIT Import", user_id=1)
+        assert "exercise_id" not in res
+        assert res["layer0_exercise_id"] == "EX001"
+
+    def test_writes_never_reference_public_exercise_id(self):
+        # Even with an exercise_inventory row present, no write sets exercise_id.
+        db = _FakeDb(
+            current_rx_row=_rx_row(layer0_exercise_id="EX001"),
+            ei_row={"discipline": "Bike", "type": "Staple",
+                    "movement_pattern": "Squat", "suggested_volume": "3x8"},
+            layer0_patterns={"EX001": ["Squat"]},
+        )
+        apply_session_outcome(db, "Back Squat", "2026-06-16", _sets(),
+                              rx_source="From FIT Import", user_id=1)
+        for sql, _ in db.writes:
+            # Strip the layer0_ column first so the substring check targets the
+            # public `exercise_id` only (it's a substring of layer0_exercise_id).
+            cleaned = sql.replace("layer0_exercise_id", "")
+            assert "exercise_id" not in cleaned

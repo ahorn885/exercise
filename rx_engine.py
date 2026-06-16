@@ -161,12 +161,16 @@ def apply_session_outcome(db, exercise, date, sets,
 
     Returns:
         {
-          movement_pattern, exercise_id,
+          movement_pattern, layer0_exercise_id,
           outcome, exceeded_significantly,
           baseline_sets, baseline_reps, baseline_weight, baseline_duration,
           next_sets, next_reps, next_weight, next_duration,
           consecutive_failures,
         }
+
+    The public `exercise_inventory.id` FK was retired here (#430 Slice C): the
+    per-user tables key off the layer0 EX-id, and the catalog is read by name
+    only for the denormalized display fields (discipline/type/suggested_volume).
     """
     # Scope by user_id so each user keeps their own prescription. Until Session
     # 2D replaces UNIQUE(exercise) with UNIQUE(user_id, exercise), a second
@@ -180,12 +184,17 @@ def apply_session_outcome(db, exercise, date, sets,
         (exercise, user_id)
     ).fetchone()
 
+    # exercise_inventory read by NAME only — for the denormalized display fields
+    # (discipline/type/suggested_volume) + the movement_pattern fallback. The
+    # public `id` FK is no longer read (#430 Slice C); per-user tables key off
+    # the layer0 EX-id. discipline has no clean layer0 source and the v1 rx page
+    # (routes/rx.py) groups by it, so the catalog name read stays until the
+    # broader #430 sources it from the sport map.
     ei = db.execute(
-        '''SELECT id, discipline, type, movement_pattern, suggested_volume
+        '''SELECT discipline, type, movement_pattern, suggested_volume
            FROM exercise_inventory WHERE exercise=?''',
         (exercise,)
     ).fetchone()
-    exercise_id = ei['id'] if ei else None
 
     # #430 Slice C — key the progression off the layer0 EX-id (single source of
     # truth), not the v1 exercise_inventory name. Prefer the row's backfilled
@@ -306,14 +315,14 @@ def apply_session_outcome(db, exercise, date, sets,
     if rx:
         db.execute(
             '''UPDATE current_rx SET
-                 exercise_id=?, layer0_exercise_id=COALESCE(layer0_exercise_id, ?),
+                 layer0_exercise_id=COALESCE(layer0_exercise_id, ?),
                  movement_pattern=?,
                  current_sets=?, current_reps=?, current_weight=?, current_duration=?,
                  last_performed=?, last_outcome=?, consecutive_failures=?, sessions_since_progress=?,
                  next_sets=?, next_reps=?, next_weight=?, next_duration=?,
                  rx_source=?
                WHERE exercise=? AND user_id=?''',
-            (exercise_id, layer0_exercise_id, movement_pattern,
+            (layer0_exercise_id, movement_pattern,
              new_baseline_sets, new_baseline_reps, new_baseline_weight, new_baseline_duration,
              date, outcome, new_failures, new_sessions_since_progress,
              nxt['next_sets'], nxt['next_reps'], nxt['next_weight'], nxt['next_duration'],
@@ -325,13 +334,13 @@ def apply_session_outcome(db, exercise, date, sets,
         sugg_vol = ei['suggested_volume'] if ei else None
         db.execute(
             '''INSERT INTO current_rx
-                 (exercise, exercise_id, layer0_exercise_id, discipline, type, movement_pattern,
+                 (exercise, layer0_exercise_id, discipline, type, movement_pattern,
                   inventory_sugg_volume, current_sets, current_reps, current_weight, current_duration,
                   last_performed, last_outcome, consecutive_failures, sessions_since_progress,
                   weight_increment,
                   next_sets, next_reps, next_weight, next_duration, rx_source, user_id)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
-            (exercise, exercise_id, layer0_exercise_id, discipline, ex_type, movement_pattern,
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
+            (exercise, layer0_exercise_id, discipline, ex_type, movement_pattern,
              sugg_vol, new_baseline_sets, new_baseline_reps, new_baseline_weight, new_baseline_duration,
              date, outcome, new_failures, new_sessions_since_progress, weight_increment,
              nxt['next_sets'], nxt['next_reps'], nxt['next_weight'], nxt['next_duration'],
@@ -350,7 +359,7 @@ def apply_session_outcome(db, exercise, date, sets,
 
     return {
         'movement_pattern': movement_pattern,
-        'exercise_id': exercise_id,
+        'layer0_exercise_id': layer0_exercise_id,
         'outcome': outcome,
         'exceeded_significantly': exceeded,
         'baseline_sets': new_baseline_sets,
