@@ -12,11 +12,20 @@ NO LLM in this path. The first-exposure templates are a deterministic
 lookup off a 5-bucket categorisation derived from the exercise's
 `movement_patterns` (from the 2C `ResolvedExercise` side) + its name.
 
-Track 3 dependency: `rx_engine.current_rx` reads `public.exercise_inventory`
-via the `current_rx.exercise` (TEXT name) column; Track 3 moves rx storage
-to layer0 ids. Until then, a layer0-only exercise (no public-catalog name
-match) falls through to first-exposure. Acceptable v1 behaviour; full
-coverage follows Track 3.
+Identity (#335 Phase 2b): the lookup keys off the **layer0 EX-id** — the
+single source of truth the synthesizer emits on `StrengthExercise.exercise_id`
+— via `rx_engine.current_rx_by_layer0_id`, falling back to the legacy
+name-keyed `current_rx` only for rows not yet backfilled to an EX-id. The
+name path could never match the catalog's qualified names
+("Back Squat (Barbell)") against the bare logged names ("Back Squat"); the
+EX-id is identical on both sides, so a backfilled baseline now resolves.
+
+Load model (#335 Phase 2b, D5b): when the resolved baseline carries a
+weight + reps, the rendered load is **phase-aware** — the athlete's logged
+capacity is converted to an estimated 1RM (Epley) and re-expressed at the
+phase's prescribed reps (`reps_per_set`) via the Epley inverse, so the
+displayed `sets × reps @ load` is internally consistent. `first_exposure`
+remains the genuine no-history fallback.
 
 Observability (Rule #14): every `apply_current_rx` call returns an
 `RxWireDiagnostic` summarising per-exercise outcomes (rx hit, first-exposure
@@ -26,6 +35,7 @@ legibility.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -167,7 +177,43 @@ def _classify_category(
     return "compound_barbell" if is_compound else "bodyweight"
 
 
-def _render_current_rx(rx: dict[str, Any], unit_pref: str | None = None) -> str | None:
+def _parse_target_reps(reps_per_set: int | str | None) -> int | None:
+    """Coerce `StrengthExercise.reps_per_set` to a single rep count for the
+    %1RM load lookup. Plain ints pass through; a range string ("8-12") takes
+    its midpoint; a non-numeric scheme ("AMRAP", "max") returns None so the
+    caller renders the logged baseline weight unadjusted."""
+    if isinstance(reps_per_set, bool):  # bool is an int subclass — guard first
+        return None
+    if isinstance(reps_per_set, int):
+        return reps_per_set if reps_per_set > 0 else None
+    if isinstance(reps_per_set, str):
+        nums = [int(n) for n in re.findall(r"\d+", reps_per_set)]
+        nums = [n for n in nums if n > 0]
+        if not nums:
+            return None
+        if len(nums) == 1:
+            return nums[0]
+        return round(sum(nums) / len(nums))  # midpoint of the prescribed range
+    return None
+
+
+def _round_to_gym_increment(weight_kg: float, unit_pref: str | None) -> float:
+    """Round a %1RM-derived load to a settable gym increment in the athlete's
+    unit — nearest 5 lb (imperial) / 2.5 kg (metric). A derived estimate read
+    as a clean target ("185 lb"), not false precision ("186 lb")."""
+    from units import IMPERIAL, kg_to_lb, lb_to_kg, normalize_unit_preference
+
+    if normalize_unit_preference(unit_pref) == IMPERIAL:
+        lbs = kg_to_lb(weight_kg)
+        return lb_to_kg(round(lbs / 5.0) * 5.0)
+    return round(weight_kg / 2.5) * 2.5
+
+
+def _render_current_rx(
+    rx: dict[str, Any],
+    target_reps: int | None = None,
+    unit_pref: str | None = None,
+) -> str | None:
     """Format the athlete's logged baseline as a LOAD-ONLY directive — the
     weight (`"185 lb"`) or, for time-based exercises, the per-set duration
     (`"45s"`).
@@ -180,27 +226,40 @@ def _render_current_rx(rx: dict[str, Any], unit_pref: str | None = None) -> str 
     `3 × 5 @ 3 × 5 @ 185 lb`; load-only keeps the field's contract consistent
     across all three paths.
 
+    Phase-aware load (#335 Phase 2b, D5b): when the baseline carries both a
+    weight and the logged reps, and the block prescribes a usable `target_reps`,
+    the weight is re-expressed for the phase's reps. Estimate 1RM from the
+    logged set (Epley: `1RM = w·(1 + r/30)`, `calculations.calculate_1rm`), then
+    take the working load at the target reps via the Epley inverse
+    (`load = 1RM / (1 + target_reps/30)`) — self-consistent with the estimate,
+    so a baseline logged at 5 reps renders a lighter load when the phase calls
+    for 8–12, and heavier when it calls for 3–5. The derived load is rounded to
+    a settable gym increment. Falls back to the logged weight unadjusted when
+    the reps are missing/unparseable (the estimate would be unfounded).
+
     `unit_pref` selects the athlete's display unit (`imperial` → lb, `metric`
-    → kg). Storage is canonical kg; `units.format_weight` handles rounding so
-    imperial loads still read as whole numbers.
+    → kg). Storage is canonical kg; `units.format_weight` handles display.
 
     Returns None when the row is too sparse to render meaningfully
     (no weight + no duration); the caller falls through to first-exposure.
-
-    NOTE: the displayed sets/reps stay the synthesizer's, so on a hit the
-    weight rides whatever reps the block emitted. Reconciling the athlete's
-    logged sets/reps and progressing via `current_rx.next_*` against the phase
-    dose policy — keyed off a single source of truth for the exercise names —
-    is the deferred #335 progression arc.
     """
-    from units import format_weight  # local import — module load order
+    from calculations import calculate_1rm  # local import — module load order
+    from units import format_weight
 
     weight = rx.get("weight_kg")
     duration = rx.get("duration_sec")
 
     if weight is not None and weight > 0:
+        load_kg = float(weight)
+        baseline_reps = rx.get("reps")
+        if target_reps and baseline_reps:
+            est_1rm = calculate_1rm(weight, baseline_reps)
+            if est_1rm:
+                load_kg = _round_to_gym_increment(
+                    est_1rm / (1.0 + target_reps / 30.0), unit_pref
+                )
         try:
-            weight_str = format_weight(float(weight), unit_pref)
+            weight_str = format_weight(load_kg, unit_pref)
         except (TypeError, ValueError):
             return None
         return weight_str or None
@@ -238,7 +297,7 @@ def apply_current_rx(
     wedge plan generation.
     """
     # Import lazily to avoid circular-import risk at module load.
-    from rx_engine import current_rx
+    from rx_engine import current_rx, current_rx_by_layer0_id
     from athlete import get_athlete_profile
     from units import normalize_unit_preference
 
@@ -257,6 +316,8 @@ def apply_current_rx(
 
     outcomes: list[ExerciseRxOutcome] = []
     hits = 0
+    id_hits = 0    # resolved via the layer0 EX-id (the single source of truth)
+    name_hits = 0  # resolved via the legacy name path (not yet backfilled)
     first_exposure = 0
     skipped = 0
 
@@ -271,8 +332,18 @@ def apply_current_rx(
 
         for ex in session.strength_exercises:
             rx = None
+            rx_via = None  # "id" | "name" — which key resolved the baseline
             try:
-                rx = current_rx(db, user_id, ex.exercise_name)
+                # EX-id first (the single source of truth the synthesizer
+                # emits); fall back to the legacy name key only for rows not
+                # yet backfilled to a layer0_exercise_id (#335 Phase 2b).
+                rx = current_rx_by_layer0_id(db, user_id, ex.exercise_id)
+                if rx is not None:
+                    rx_via = "id"
+                else:
+                    rx = current_rx(db, user_id, ex.exercise_name)
+                    if rx is not None:
+                        rx_via = "name"
             except Exception as exc:  # noqa: BLE001 — degraded path
                 # print() (not logging) so the line reaches the Vercel drain →
                 # /admin/logs past the app login (Rule #14/#15).
@@ -289,11 +360,20 @@ def apply_current_rx(
                 new_exercises.append(ex)
                 continue
 
-            rendered = _render_current_rx(rx, unit_pref=unit_pref) if rx else None
+            rendered = (
+                _render_current_rx(
+                    rx, _parse_target_reps(ex.reps_per_set), unit_pref=unit_pref
+                )
+                if rx else None
+            )
             if rendered:
                 new_ex = ex.model_copy(update={"load_prescription": rendered})
                 new_exercises.append(new_ex)
                 hits += 1
+                if rx_via == "id":
+                    id_hits += 1
+                else:
+                    name_hits += 1
                 outcomes.append(ExerciseRxOutcome(
                     session_id=session.session_id,
                     exercise_id=ex.exercise_id,
@@ -341,8 +421,9 @@ def apply_current_rx(
     # `_log.info` summary was silent in prod — which is why an all-first-exposure
     # strength plan (every current_rx lookup missing on the name) went unseen.
     print(
-        f"rx_wire: hits={hits} first_exposure={first_exposure} "
-        f"skipped={skipped} (exercise_count={len(outcomes)})"
+        f"rx_wire: hits={hits} (id={id_hits} name={name_hits}) "
+        f"first_exposure={first_exposure} skipped={skipped} "
+        f"(exercise_count={len(outcomes)})"
     )
     # No-op short-circuit: if no exercises were touched (no current_rx hit + no
     # first-exposure write), the payload is semantically identical to the input

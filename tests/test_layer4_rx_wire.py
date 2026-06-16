@@ -24,6 +24,8 @@ from layer4.rx_wire import (
     RxWireDiagnostic,
     _FIRST_EXPOSURE_TEMPLATES,
     _classify_category,
+    _parse_target_reps,
+    _round_to_gym_increment,
     apply_current_rx,
 )
 
@@ -114,6 +116,7 @@ def _strength_ex(
     ex_id: str,
     *,
     name: str | None = None,
+    reps_per_set: int | str = 8,
     coaching_flags: list[str] | None = None,
 ) -> StrengthExercise:
     return StrengthExercise(
@@ -121,7 +124,7 @@ def _strength_ex(
         exercise_name=name or ex_id,
         resolution_tier=1,
         sets=3,
-        reps_per_set=8,
+        reps_per_set=reps_per_set,
         load_prescription="LLM advisory: RPE 7-8",
         rest_between_sets_sec=90,
         instructions="Standard execution.",
@@ -228,11 +231,12 @@ class TestCurrentRxHit:
 
     def test_renders_weight_reps_sets(self):
         # #469 — storage is canonical kg; imperial-default display renders lb.
-        # 83.9 kg ≈ 185 lb after conversion.
-        ex = _strength_ex("EX-001", name="Back Squat")
+        # 83.9 kg ≈ 185 lb. Baseline reps (8) == the block's prescribed reps (8),
+        # so the phase-aware step is a no-op and the logged weight renders as-is.
+        ex = _strength_ex("EX-001", name="Back Squat", reps_per_set=8)
         session = _strength_session("S-1", [ex])
         l2c = _layer2c("home", [_resolved("EX-001", "Back Squat", patterns=["Squat"])])
-        db = _FakeDb({("Back Squat", 1): _row(sets=3, reps=5, weight=83.9146)})
+        db = _FakeDb({("Back Squat", 1): _row(sets=3, reps=8, weight=83.9146)})
 
         new_payload, diag = apply_current_rx(_payload([session]), db, 1, {"home": l2c})
 
@@ -245,10 +249,12 @@ class TestCurrentRxHit:
         assert diag.first_exposure_count == 0
         assert diag.outcomes[0].path == "current_rx"
 
-    def test_rounds_weight_to_whole_lbs(self):
-        # #469 — 84.6 kg → 186.5 lb → rounds to 187 lb. Whole-number
-        # rendering reads cleaner than "186.5 lb".
-        ex = _strength_ex("EX-001", name="Back Squat")
+    def test_nonnumeric_reps_falls_back_to_logged_weight(self):
+        # A non-numeric scheme ("AMRAP") yields no target reps → the %1RM step
+        # is skipped and the logged weight renders unadjusted, rounded to the
+        # whole lb (84.6 kg → 186.5 lb → "187 lb"). Covers the fallback path's
+        # whole-number display (#469).
+        ex = _strength_ex("EX-001", name="Back Squat", reps_per_set="AMRAP")
         session = _strength_session("S-1", [ex])
         l2c = _layer2c("home", [_resolved("EX-001", "Back Squat", patterns=["Squat"])])
         db = _FakeDb({("Back Squat", 1): _row(sets=3, reps=5, weight=84.6)})
@@ -280,6 +286,142 @@ class TestCurrentRxHit:
 
         assert diag.current_rx_hits == 0
         assert diag.first_exposure_count == 1
+
+
+class TestEXIdLookup:
+    """#335 Phase 2b — the lookup keys off the layer0 EX-id first, falling back
+    to the legacy name path only for rows not yet backfilled."""
+
+    def test_resolves_via_ex_id_when_name_would_miss(self):
+        # Seed ONLY by EX-id (NOT by name). A hit proves the EX-id path
+        # resolved — the name path ("Back Squat (Barbell)") would have missed
+        # against the bare logged name, which is the whole #335 bug.
+        ex = _strength_ex("EX001", name="Back Squat (Barbell)", reps_per_set=5)
+        session = _strength_session("S-1", [ex])
+        l2c = _layer2c("home", [_resolved("EX001", "Back Squat (Barbell)", patterns=["Squat"])])
+        db = _FakeDb({("EX001", 1): _row(sets=3, reps=5, weight=83.9146)})
+
+        new_payload, diag = apply_current_rx(_payload([session]), db, 1, {"home": l2c})
+
+        result_ex = new_payload.sessions[0].strength_exercises[0]
+        assert result_ex.load_prescription == "185 lb"  # reps match → no-op
+        assert diag.current_rx_hits == 1
+        assert diag.first_exposure_count == 0
+
+    def test_falls_back_to_name_when_no_ex_id_row(self):
+        # No EX-id row seeded → the name path resolves the not-yet-backfilled
+        # baseline (the transitional state until the backfill runs in prod).
+        ex = _strength_ex("EX001", name="Back Squat", reps_per_set=5)
+        session = _strength_session("S-1", [ex])
+        l2c = _layer2c("home", [_resolved("EX001", "Back Squat", patterns=["Squat"])])
+        db = _FakeDb({("Back Squat", 1): _row(sets=3, reps=5, weight=83.9146)})
+
+        new_payload, diag = apply_current_rx(_payload([session]), db, 1, {"home": l2c})
+
+        assert new_payload.sessions[0].strength_exercises[0].load_prescription == "185 lb"
+        assert diag.current_rx_hits == 1
+
+    def test_ex_id_row_wins_over_name_row(self):
+        # Both seeded with different weights → the EX-id row must win.
+        ex = _strength_ex("EX001", name="Back Squat", reps_per_set=8)
+        session = _strength_session("S-1", [ex])
+        l2c = _layer2c("home", [_resolved("EX001", "Back Squat", patterns=["Squat"])])
+        db = _FakeDb({
+            ("EX001", 1): _row(sets=3, reps=8, weight=90.7),       # ≈ 200 lb
+            ("Back Squat", 1): _row(sets=3, reps=8, weight=45.36),  # ≈ 100 lb
+        })
+
+        new_payload, _ = apply_current_rx(_payload([session]), db, 1, {"home": l2c})
+
+        assert new_payload.sessions[0].strength_exercises[0].load_prescription == "200 lb"
+
+
+class TestPhaseAwareLoad:
+    """#335 Phase 2b D5b — the logged baseline is re-expressed at the block's
+    prescribed reps via Epley + its inverse, rounded to a gym increment."""
+
+    def test_heavier_when_phase_prescribes_fewer_reps(self):
+        # Logged 100 kg × 10; phase calls for 5 reps → heavier working load.
+        # est_1RM = 100·(1+10/30) = 133.3; load = 133.3/(1+5/30) = 114.3 kg
+        # ≈ 251.9 lb → rounds to 250 lb.
+        ex = _strength_ex("EX001", name="Back Squat", reps_per_set=5)
+        session = _strength_session("S-1", [ex])
+        l2c = _layer2c("home", [_resolved("EX001", "Back Squat", patterns=["Squat"])])
+        db = _FakeDb({("EX001", 1): _row(sets=3, reps=10, weight=100.0)})
+
+        new_payload, _ = apply_current_rx(_payload([session]), db, 1, {"home": l2c})
+
+        assert new_payload.sessions[0].strength_exercises[0].load_prescription == "250 lb"
+
+    def test_lighter_when_phase_prescribes_more_reps(self):
+        # Logged 100 kg × 5; phase calls for 12 reps → lighter working load.
+        # est_1RM = 100·(1+5/30) = 116.7; load = 116.7/(1+12/30) = 83.4 kg
+        # ≈ 183.8 lb → rounds to 185 lb.
+        ex = _strength_ex("EX001", name="Back Squat", reps_per_set=12)
+        session = _strength_session("S-1", [ex])
+        l2c = _layer2c("home", [_resolved("EX001", "Back Squat", patterns=["Squat"])])
+        db = _FakeDb({("EX001", 1): _row(sets=3, reps=5, weight=100.0)})
+
+        new_payload, _ = apply_current_rx(_payload([session]), db, 1, {"home": l2c})
+
+        assert new_payload.sessions[0].strength_exercises[0].load_prescription == "185 lb"
+
+    def test_rep_range_uses_midpoint(self):
+        # "8-12" → midpoint 10. Logged 100 kg × 10 → load at 10 reps == baseline
+        # (est_1RM/(1+10/30) == logged weight) → 100 kg ≈ 220 lb.
+        ex = _strength_ex("EX001", name="Back Squat", reps_per_set="8-12")
+        session = _strength_session("S-1", [ex])
+        l2c = _layer2c("home", [_resolved("EX001", "Back Squat", patterns=["Squat"])])
+        db = _FakeDb({("EX001", 1): _row(sets=3, reps=10, weight=100.0)})
+
+        new_payload, _ = apply_current_rx(_payload([session]), db, 1, {"home": l2c})
+
+        assert new_payload.sessions[0].strength_exercises[0].load_prescription == "220 lb"
+
+    def test_no_baseline_reps_renders_logged_weight(self):
+        # A bootstrapped row with weight but no reps can't seed an est-1RM →
+        # the logged weight renders unadjusted (90.7 kg → 200 lb).
+        ex = _strength_ex("EX001", name="Back Squat", reps_per_set=5)
+        session = _strength_session("S-1", [ex])
+        l2c = _layer2c("home", [_resolved("EX001", "Back Squat", patterns=["Squat"])])
+        db = _FakeDb({("EX001", 1): _row(sets=3, reps=None, weight=90.7)})
+
+        new_payload, _ = apply_current_rx(_payload([session]), db, 1, {"home": l2c})
+
+        assert new_payload.sessions[0].strength_exercises[0].load_prescription == "200 lb"
+
+
+class TestRepsAndRounding:
+    """Direct unit coverage of the load helpers."""
+
+    def test_parse_int_reps(self):
+        assert _parse_target_reps(8) == 8
+
+    def test_parse_zero_and_negative(self):
+        assert _parse_target_reps(0) is None
+
+    def test_parse_bool_guarded(self):
+        # bool is an int subclass — must not be read as reps.
+        assert _parse_target_reps(True) is None
+
+    def test_parse_single_string(self):
+        assert _parse_target_reps("10") == 10
+
+    def test_parse_range_midpoint(self):
+        assert _parse_target_reps("8-12") == 10
+
+    def test_parse_nonnumeric(self):
+        assert _parse_target_reps("AMRAP") is None
+        assert _parse_target_reps(None) is None
+
+    def test_round_imperial_nearest_5lb(self):
+        # 114.3 kg ≈ 251.9 lb → 250 lb → back to ≈ 113.4 kg.
+        rounded = _round_to_gym_increment(114.3, "imperial")
+        from units import kg_to_lb
+        assert round(kg_to_lb(rounded)) == 250
+
+    def test_round_metric_nearest_2_5kg(self):
+        assert _round_to_gym_increment(83.4, "metric") == 82.5
 
 
 class TestFirstExposure:
