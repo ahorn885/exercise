@@ -102,7 +102,14 @@ class TestV2SessionCard:
         assert card["intensity"] == "moderate"
         assert card["plan_version_id"] == 65
         assert card["item_date"] == "2026-06-12"
-        assert card["plan_name"] == "Generated plan"
+        # No race name supplied → the plain fallback label (#620).
+        assert card["plan_name"] == "Training plan"
+
+    def test_plan_name_uses_supplied_name(self):
+        card = _v2_session_card(
+            _fake_session(), plan_name="Pocket Gopher Extreme 2026 — 16-week build"
+        )
+        assert card["plan_name"] == "Pocket Gopher Extreme 2026 — 16-week build"
 
     def test_strength_prefixes_sport(self):
         card = _v2_session_card(

@@ -11,6 +11,7 @@ import zipfile
 from flask import Blueprint, render_template, request, redirect, url_for, flash, jsonify, Response
 from database import get_db
 from routes.auth import current_user_id
+from plan_naming import target_race_name, generated_plan_name
 
 bp = Blueprint('plans', __name__, url_prefix='/plans')
 
@@ -250,6 +251,16 @@ def list_plans():
            ORDER BY pv.scope_start_date ASC, pv.created_at ASC''',
         (current_user_id(),)
     ).fetchall()
+
+    # Derive a human label for each generated plan from the athlete's target
+    # race (#620) — `plan_versions` rows have no stored name. One race read for
+    # the whole list; each plan's week-suffix comes from its own scope dates.
+    race_name = target_race_name(db, current_user_id())
+    gen_rows = [
+        {**dict(r), 'display_name': generated_plan_name(
+            race_name, r['scope_start_date'], r['scope_end_date'])}
+        for r in gen_rows
+    ]
 
     # Bucket the ready plans by their scope dates against today: a plan whose
     # scope hasn't started is Upcoming, one whose scope is live is Active, one

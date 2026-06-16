@@ -7,13 +7,37 @@ from database import get_db
 from datetime import date, timedelta
 from routes.auth import current_user_id
 from plan_sessions_repo import load_scheduled_sessions_for_window
+from plan_naming import target_race_name, generated_plan_name
 
 bp = Blueprint('dashboard', __name__)
 
 _weather_cache = {}
 
 
-def _v2_session_card(session) -> dict:
+def _v2_plan_names(db, user_id: int, sessions) -> dict:
+    """Map each v2 session's `plan_version_id` to its derived display name
+    (#620), so the dashboard's plan reference matches the plans list + header.
+    One target-race read for the batch; the per-plan week suffix comes from each
+    version's scope dates. Returns {} when there are no v2 sessions (the common
+    new-user case) so we skip the queries entirely."""
+    ids = {s.plan_version_id for s in sessions}
+    if not ids:
+        return {}
+    race_name = target_race_name(db, user_id)
+    placeholders = ','.join('?' * len(ids))
+    rows = db.execute(
+        f"SELECT id, scope_start_date, scope_end_date FROM plan_versions "
+        f"WHERE id IN ({placeholders}) AND user_id = ?",
+        list(ids) + [user_id],
+    ).fetchall()
+    return {
+        r['id']: generated_plan_name(
+            race_name, r['scope_start_date'], r['scope_end_date'])
+        for r in rows
+    }
+
+
+def _v2_session_card(session, plan_name=None) -> dict:
     """Normalize a v2 `PlanSession` into the dict shape the dashboard
     Today/Tomorrow cards render for legacy `plan_items` rows, so both models
     flow through the same template markup. `is_v2` flips the card's links +
@@ -43,7 +67,7 @@ def _v2_session_card(session) -> dict:
         # Rest days carry no meaningful intensity; the template hides falsy.
         'intensity': None if kind == 'rest' else session.intensity_summary,
         'locale_name': session.locale_name,
-        'plan_name': 'Generated plan',
+        'plan_name': plan_name or 'Training plan',
         'item_date': item_date.isoformat() if hasattr(item_date, 'isoformat')
         else item_date,
     }
@@ -166,17 +190,16 @@ def index():
     # rows and v2 cards coexist in the same lists; `is_v2` switches the links.
     today_d = date.today()
     tomorrow_d = today_d + timedelta(days=1)
+    today_v2 = load_scheduled_sessions_for_window(db, uid, start=today_d, end=today_d)
+    tomorrow_v2 = load_scheduled_sessions_for_window(
+        db, uid, start=tomorrow_d, end=tomorrow_d
+    )
+    v2_names = _v2_plan_names(db, uid, today_v2 + tomorrow_v2)
     today_workouts = list(today_workouts) + [
-        _v2_session_card(s)
-        for s in load_scheduled_sessions_for_window(
-            db, uid, start=today_d, end=today_d
-        )
+        _v2_session_card(s, v2_names.get(s.plan_version_id)) for s in today_v2
     ]
     tomorrow_workouts = list(tomorrow_workouts) + [
-        _v2_session_card(s)
-        for s in load_scheduled_sessions_for_window(
-            db, uid, start=tomorrow_d, end=tomorrow_d
-        )
+        _v2_session_card(s, v2_names.get(s.plan_version_id)) for s in tomorrow_v2
     ]
 
     missed_workouts = db.execute(

@@ -150,6 +150,9 @@ def test_plan_gen_view_renders_sessions(client, monkeypatch):
         'generation_status': 'ready', 'pattern': 'A', 'created_via': 'plan_create',
         'scope_start_date': '2026-06-01', 'scope_end_date': '2026-11-01',
     })
+    # No-target-race branch (#620) — keeps the header off the race_events DB
+    # shape; the plain "Training plan" fallback label is asserted below.
+    monkeypatch.setattr(pc, 'target_race_name', lambda *a, **k: None)
     pm = types.SimpleNamespace(phase_name='Base', week_in_phase=1,
                                total_weeks_in_phase=4, intended_volume_band=(6, 8))
     sess = types.SimpleNamespace(date='2026-06-01', day_of_week='Mon', kind='run',

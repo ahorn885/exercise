@@ -1,7 +1,7 @@
 {% extends 'base.html' %}
 {% set nav_active = 'plan' %}
-{% block title %}Training plan · AIDSTATION{% endblock %}
-{% block crumbs %}<a href="{{ url_for('dashboard.index') }}">Plan</a> <span class="sep">/</span> <b>Generated plan</b>{% endblock %}
+{% block title %}{{ plan_name }} · AIDSTATION{% endblock %}
+{% block crumbs %}<a href="{{ url_for('dashboard.index') }}">Plan</a> <span class="sep">/</span> <b>{{ plan_name }}</b>{% endblock %}
 {% block topbar_actions %}
   {# Refresh acts on the athlete's latest plan version (the refresh page
      resolves the parent + shows the tier picker) — same entry point as the
@@ -15,7 +15,7 @@
 <div class="plan-gen">
   <p class="eyebrow accent">● Plan</p>
   <div class="plan-view-head">
-    <h1 class="plan-gen-title">Training plan</h1>
+    <h1 class="plan-gen-title">{{ plan_name }}</h1>
     <span class="chip">{{ lifecycle_state }}</span>
   </div>
   <p class="page-sub">
