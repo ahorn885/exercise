@@ -86,6 +86,45 @@ equipment, purchase recommendations, training modalities, locale
 `get_db()` raises `RuntimeError` if `DATABASE_URL` is unset — the app
 has no SQLite fallback path.
 
+### Duplicate `DATABASE_URL` / `DATABASE_URL_UNPOOLED` in the Vercel env list
+
+If the project's Environment Variables list shows `DATABASE_URL` (and its
+Neon companion `DATABASE_URL_UNPOOLED`) repeated many times, nothing in this
+repo is adding them — there is no `vercel env add` in any script, workflow, or
+hook. They are **branch-scoped Preview variables** created by the Neon ↔ Vercel
+integration, which provisions a Neon database branch plus a per-branch
+`DATABASE_URL`/`DATABASE_URL_UNPOOLED` pair for **every preview deployment**.
+Each PR — and each Claude Code web session, which opens a fresh `claude/*`
+branch — spawns another pair, and they are never pruned when the branch/PR
+closes, so they accumulate under the same names (each scoped to a different Git
+branch). List them with `vercel env ls preview` (optionally per-branch:
+`vercel env ls preview <branch>`).
+
+The running app reads only the **unscoped** `DATABASE_URL` (`database.py:5`), so
+deleting the stale branch-scoped copies is safe for prod and normal previews.
+
+**Resolved 2026-06-16** — the integration is now configured to self-clean. The
+controls (under **Neon Console → Integrations → Vercel**):
+- **Automation workflows → "Automatically delete Neon preview branches after the
+  corresponding git branch is merged or deleted"** — *enabled*. This is the
+  stop-the-accrual lever: when a preview branch's git branch goes away, Neon
+  deletes the branch and the integration removes its Vercel env vars.
+- **GitHub → repo Settings → "Automatically delete head branches"** — *enabled*,
+  so merged PR branches are actually deleted, which is what triggers the Neon
+  automation above. Without it the automation never fires.
+- **"Vercel environment variables" checklist** (DATABASE_URL,
+  DATABASE_URL_UNPOOLED, PGHOST, PGUSER, PGDATABASE, PGPASSWORD, …) controls
+  *which* vars are pushed per branch. The app only needs `DATABASE_URL`, so the
+  rest can be unchecked to shrink the per-branch footprint.
+
+The automation is **not retroactive**, so the backlog of vars from
+already-merged branches was cleaned up once by hand: delete the orphaned
+branches in **Neon → Branches** (removes their linked Vercel env vars via the
+integration); any leftovers go via **Vercel → Project → Settings → Environment
+Variables → filter Preview → ⋯ → Remove**, or the CLI
+(`vercel env ls preview` → `vercel env rm <NAME> preview <branch> -y`). Keep the
+Production pair and any open-PR branch.
+
 ### The `database.py` compatibility layer
 
 ```

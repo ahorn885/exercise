@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field, replace
+from datetime import date as _date, timedelta
 from typing import Literal
 
 from layer4.context import Layer2APayload
@@ -403,6 +404,50 @@ def resolve_available_days(layer1_payload: dict | None) -> int:
         if (w.get("enabled") if isinstance(w, dict) else getattr(w, "enabled", False))
     )
     return enabled if enabled > 0 else _DEFAULT_AVAILABLE_DAYS
+
+
+def placeable_days_in_week(
+    available_days: int,
+    layer1_payload: dict | None,
+    week_start: _date,
+    week_end: _date,
+    cutoff_date: _date | None,
+) -> int:
+    """Race-week-aware truncation of the resolved weekly `available_days` to the
+    days of THIS calendar week that can still hold a session.
+
+    The session-count ceiling (`apply_session_ceiling`) clamps a week to
+    `2 × available_days`, but `available_days` is the athlete's *nominal* weekly
+    availability — it doesn't know the final taper week is cut short by the race.
+    Without this, the ceiling permits more sessions than there are placeable days,
+    the synthesizer can't lay them out at ≤2/day, every payload-validation pass
+    fails (`Layer4Payload._check_two_per_day`), and the block exhausts its budget
+    and stalls (the plan-72 failure mode). Feeding the *per-week* placeable-day
+    count in makes the deterministic `2 × days` clamp a real ≤2/day feasibility
+    guarantee instead of resting on the post-hoc validator.
+
+    A day is placeable when it is on/before `cutoff_date` (the caller sets this to
+    the last trainable day before the race — race day and the immediate pre-race
+    rest day excluded) and, when per-day windows are on file, an enabled weekday.
+    Returns `min(available_days, <placeable count>)`, so a normal mid-plan week is
+    returned unchanged and only the race-adjacent week shrinks. `cutoff_date is
+    None` (open-ended / no race) leaves `available_days` untouched."""
+    # Fast path: open-ended plan, or the whole week is before the cutoff → no
+    # truncation, identical to pre-existing behaviour for every non-final week.
+    if cutoff_date is None or week_end <= cutoff_date:
+        return available_days
+    enabled_dows = {
+        (w.get("day_of_week") if isinstance(w, dict) else getattr(w, "day_of_week", None))
+        for w in ((layer1_payload or {}).get("daily_availability_windows") or [])
+        if (w.get("enabled") if isinstance(w, dict) else getattr(w, "enabled", False))
+    }
+    placeable = 0
+    d = week_start
+    while d <= week_end:
+        if d <= cutoff_date and (not enabled_dows or d.strftime("%a") in enabled_dows):
+            placeable += 1
+        d += timedelta(days=1)
+    return min(available_days, placeable)
 
 
 def _peak_ceiling(
@@ -799,5 +844,6 @@ __all__ = [
     "apply_strength_saturation_cap",
     "build_session_grid",
     "phase_session_ceiling",
+    "placeable_days_in_week",
     "resolve_available_days",
 ]

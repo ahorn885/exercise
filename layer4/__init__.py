@@ -186,6 +186,7 @@ from layer4.rx_wire import (
 from layer4.session_grid import (
     apply_session_ceiling,
     phase_session_ceiling,
+    placeable_days_in_week,
     resolve_available_days,
 )
 from layer4.single_session import (
@@ -425,6 +426,7 @@ __all__ = [
     # Track 2 slice 2b.2 — session-count ceiling (session_grid.py)
     "apply_session_ceiling",
     "phase_session_ceiling",
+    "placeable_days_in_week",
     "resolve_available_days",
     # Track 2 slice 2d — deterministic rx wiring (rx_wire.py)
     "ExerciseRxOutcome",

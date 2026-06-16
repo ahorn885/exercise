@@ -70,7 +70,11 @@ from layer4.session_feasibility import (
     feasibility_line,
     grid_annotation,
 )
-from layer4.session_grid import build_session_grid, resolve_available_days
+from layer4.session_grid import (
+    build_session_grid,
+    placeable_days_in_week,
+    resolve_available_days,
+)
 from layer4.validator import (
     ValidatorContext,
     phase_volume_bands_hours,
@@ -1058,13 +1062,39 @@ def _format_session_grid(
     _away_segments = [
         s for s in (event_window_segments or []) if s.away_feasibility is not None
     ]
+    # plan-72 root fix: the race truncates the final taper week, but `available_days`
+    # is the athlete's nominal weekly figure — so the session ceiling (2×days) lets
+    # the grid emit more sessions than there are placeable days, the synthesizer
+    # can't lay them out at ≤2/day, every validation pass fails, and the block
+    # stalls out its budget. Anchor a per-week placeable-day cutoff at the last
+    # trainable day before the race: race day and the immediate pre-race day (rest)
+    # are both excluded → cutoff = event_date − 2. Open-ended plans → no cutoff.
+    _race_cutoff: _date_type | None = (
+        race_event_payload.event_date - timedelta(days=2)
+        if race_event_payload is not None and race_event_payload.event_date is not None
+        else None
+    )
 
     out: list[str] = []
     for w in weeks:
         week_feasibility = terrain_feasibility
-        if _phase_spec is not None and _away_segments:
+        week_available_days = available_days
+        if _phase_spec is not None:
             wk_start = _phase_spec.start_date + timedelta(days=(w - 1) * 7)
             wk_end = wk_start + timedelta(days=6)
+            week_available_days = placeable_days_in_week(
+                available_days, layer1_payload, wk_start, wk_end, _race_cutoff
+            )
+            if week_available_days != available_days:
+                # Rule #15: the race-week truncation that shrinks the ceiling.
+                print(
+                    f"placeable_days: {phase_name}:w{w} "
+                    f"dates={wk_start.isoformat()}..{wk_end.isoformat()} "
+                    f"race_cutoff={_race_cutoff.isoformat() if _race_cutoff else None} "
+                    f"available_days {available_days}→{week_available_days} "
+                    f"(ceiling now ≤2×{week_available_days})"
+                )
+        if _phase_spec is not None and _away_segments:
             away_seg = next(
                 (
                     s for s in _away_segments
@@ -1088,7 +1118,7 @@ def _format_session_grid(
             capacity_hours=capacity,
             race_format=race_format,
             race_duration_h=race_duration_h,
-            available_days=available_days,
+            available_days=week_available_days,
             two_a_day_preference=two_a_day_preference,
             peak_sessions_max=peak_sessions_max,
             strength_feasibility_tiers=(
