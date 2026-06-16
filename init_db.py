@@ -2322,6 +2322,15 @@ _PG_MIGRATIONS = [
     "locale TEXT NOT NULL, created_at TIMESTAMP DEFAULT NOW(), "
     "PRIMARY KEY (user_id, craft_slug, locale))",
     "CREATE INDEX IF NOT EXISTS idx_acl_user ON athlete_craft_locale(user_id)",
+    # #335 Phase 2b — key the strength-rx path off the layer0 EX-id (the single
+    # source of truth the synthesizer emits on StrengthExercise.exercise_id)
+    # instead of the exercise NAME, which never matched the layer0 qualified
+    # names ("Back Squat (Barbell)" vs logged "Back Squat"). TEXT soft-reference
+    # to layer0.exercises.exercise_id — no cross-schema FK (matches the layer0
+    # soft-ref convention; layer0 is ETL-versioned). Populated by the curated
+    # name->EX-id backfill (D2); read by rx_engine.current_rx_by_layer0_id().
+    "ALTER TABLE current_rx ADD COLUMN IF NOT EXISTS layer0_exercise_id TEXT",
+    "CREATE INDEX IF NOT EXISTS idx_current_rx_user_layer0 ON current_rx(user_id, layer0_exercise_id)",
 ]
 
 _CLOTHING_SEEDS = [
