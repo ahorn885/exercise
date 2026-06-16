@@ -33,12 +33,24 @@ Session opened on the #644 closing handoff ("V5_Implementation_Locations_CullTec
 - **`etl/layer0/validate_layer0.py`** — import `run_exercises_fk`; add `_v_exercises_fk` extractor (Violation id `"{ref_kind}:{holder}->{missing_id}"`, fix-not-waive); register `Check("exercises_fk", …)` **3rd in `CHECKS`** (after the two disciplines FK checks). Registry is now **11 entries**.
 - **`etl/tests/test_validate_layer0.py`** — `exercises_fk` added to `_clean_results()`; registry-count assertion 10→**11** (+`"exercises_fk" in names`); new `test_dangling_exercise_ref_fails_the_gate`; `_v_exercises_fk` id/detail assertions in `test_extractors_produce_expected_ids`.
 
-### Why no DDL / migration / prod apply
-This is a **Python validator**, not a data edit. It runs wherever `validate_layer0` runs:
-- **CI `layer0-gate`** (`.github/workflows/ci.yml`) loads the newest `etl/output/layer0_etl_v*.sql` baseline, applies `etl/migrations/layer0/*.sql` (`0006`–`0009`), then runs `python -m etl.layer0.validate_layer0` — the new check is driven by the `CHECKS` registry, so **no workflow change**.
-- **Nightly `layer0-validate-live`** runs the same gate vs **live** prod via the read-only role — the new check rides it automatically.
+### The validator immediately caught real corruption → migration `0010`
+The validator runs wherever `validate_layer0` runs — the **CI `layer0-gate`** (baseline + `0006`–`00NN`, `python -m etl.layer0.validate_layer0`, driven by the `CHECKS` registry → **no workflow change**) and the **nightly `layer0-validate-live`** vs live prod.
 
-The live exercises graph is already clean (the #644 verification confirmed **0 dangling prog/regr/proxy refs, 0 stale `sport_exercise_map` rows**), so the validator passes on the current state. Per-migration DO-blocks are now a redundant belt rather than the only guard.
+Its **first gate run failed — for the right reason.** It found **11 dangling references** the #644 verification never saw (that check scanned only refs *into the cull set*; this scans the whole graph). **10 active exercises reference 5 exercise_ids that were never created** (phantom progression/regression/`physical_proxies` targets named during curation but never added as real entries; their names don't resolve to any real exercise under another id either — several carry a coaching note baked into the "name"):
+
+| Phantom id | Name | Referenced by | Ref kind |
+|---|---|---|---|
+| EX059 | Neck Isometric Hold | EX057, EX058, EX069, EX140, EX158 | physical_proxy ×5 |
+| EX193 | Shooting Breath Control & Stance | EX139, EX194 (proxy); EX194 (regr) | proxy ×2 + regression |
+| EX141 | Wetsuit Swimming Technique | EX176 | regression |
+| EX147 | Loose Surface Threshold Braking | EX184 | regression |
+| EX204 | On-Water Boat Balance Drill | EX200 | progression |
+
+**Decision (Andy via `AskUserQuestion`, 2026-06-16): STRIP all 11** (over authoring the missing exercises — Trigger #2 padding, and most names are non-exercise cues; no valid id to repoint to).
+
+- **`etl/migrations/layer0/0010_strip_dangling_exercise_refs.sql`** — supersede + reinsert the 10 active holders at `0B-v1.6.10`→`0B-v1.6.11` with the phantom `physical_proxies` elements removed (order preserved; non-array/NULL preserved) and any phantom `progression`/`regression` id+name cleared to NULL. Serving-relevant edit (proxies feed Tier-3; progression/regression feed display) — same supersede+reinsert/digest-bump pattern as `0007`/`0008`/`0009`. Atomic DO-block RAISEs unless **0** active exercises reference a phantom AND exactly **10** rows are reinserted at `0B-v1.6.11`. Idempotent (reinsert guarded to phantom-bearing rows not already at the bumped version). **NO DDL, no `LAYER4_PROMPT_REVISION` bump** (data-only; cache rides the `0B` digest).
+
+The gate goes green once `0010` applies in the `layer0-gate` (it strips the refs before the validator runs). Per-migration DO-blocks are now a redundant belt rather than the only guard.
 
 ### Not a Stop-and-ask Trigger
 Hardening only — no vocab/exercise-DB entry (Trigger #2), no prompt body (Trigger #1), no cross-layer contract / cache-key change (Trigger #3). Executed directly.
@@ -49,12 +61,12 @@ Hardening only — no vocab/exercise-DB entry (Trigger #2), no prompt body (Trig
 
 ---
 
-## 2. STILL OWED
-- **Nothing on #648** once the PR merges — code-only; the validator is live the moment CI/nightly run it. No prod apply step.
-- The PR auto-merges on green (CI `layer0-gate` is the real exercise of the new SQL).
+## 2. STILL OWED — #648
+- **Apply `0010` to prod** via the gated `layer0-apply` action (Andy one-tap-approves the `production` env), then **verify** via read-only `neon-query` (assert 0 active exercises reference EX059/EX141/EX147/EX193/EX204; 10 holders at `0B-v1.6.11`). Then **#648 CLOSES completed** — same apply+verify path as #644's `0009`.
+- PR #651 auto-merges on green (CI `layer0-gate` applies `0006`–`0010` then runs the validator → the real exercise of both the new SQL and the strip migration).
 
 ## 3. Side-findings
-- None new.
+- **The #644 verification's "0 dangling refs" was scoped to the cull set only** — the whole-graph scan this validator added found 11 pre-existing phantom refs that predate the cull. Worth remembering: a targeted neon-query verification proves the targeted claim, not graph-wide integrity. The standing validator now covers the gap.
 
 ## 4. NEXT STEPS — "Locations & Gear" arc
 - **[#619](https://github.com/ahorn885/exercise/issues/619)** — profile Locations tab + nav/profile IA cleanup (sidebar reorg, profile tabs, supplements tab, Schedule-tab theming, Sources ~3-per-row). Pure UI/IA, `priority:med`. Multi-item — likely splits into slices.
@@ -77,9 +89,10 @@ Hardening only — no vocab/exercise-DB entry (Trigger #2), no prompt body (Trig
 | Validator | `etl/layer0/validation/exercises_fk_check.py` | `def run_exercises_fk(conn)`; `_load_active_exercise_ids`; checks progression/regression/`physical_proxies`/`sport_exercise_map`; returns `{rows_checked, pass_count, error_count, errors}` |
 | Wiring | `etl/layer0/validate_layer0.py` | `from etl.layer0.validation.exercises_fk_check import run_exercises_fk`; `_v_exercises_fk` extractor; `Check("exercises_fk", run_exercises_fk, _v_exercises_fk)` 3rd in `CHECKS` (11 entries) |
 | Tests | `etl/tests/test_validate_layer0.py` | `"exercises_fk"` in `_clean_results()`; `len(v.CHECKS) == 11`; `test_dangling_exercise_ref_fails_the_gate`; `_v_exercises_fk` id `physical_proxy:EX176->EX094` |
+| Migration | `etl/migrations/layer0/0010_strip_dangling_exercise_refs.sql` | `_phantom_ids` = EX059/EX141/EX147/EX193/EX204; supersede+reinsert 10 holders at `'0B-v1.6.11'` with phantom proxy elems removed + phantom prog/regr cleared; DO-block RAISEs unless 0 dangling refs + 10 reinserted |
 | Precedent | `etl/layer0/validation/primary_movement_check.py` | fix-not-waive validator wired into `validate_layer0` (the `0006` pattern this mirrors) |
 | FK gap (now closed) | `etl/layer0/validation/fk_checks.py` | was disciplines-family only; the exercises-FK gap #648 tracked is now covered by the new check |
-| CI gate | `.github/workflows/ci.yml` (`layer0-gate`) | baseline + `0006`–`0009`, `python -m etl.layer0.validate_layer0` — new check runs via the registry, no workflow edit |
+| CI gate | `.github/workflows/ci.yml` (`layer0-gate`) | baseline + `0006`–`0010`, `python -m etl.layer0.validate_layer0` — new check runs via the registry, no workflow edit; first run RED surfaced the 11 phantom refs, green once `0010` applies |
 | Tests run | — | `etl/tests/` 90 passed (container: psql client only → CI is the authoritative live-DB gate) |
-| Issue #648 | — | CLOSES completed on PR merge (code-only; no prod apply) |
-| Owed | — | none on #648; carried: post-#572 live T3-refresh re-verify (Rule #14) |
+| Issue #648 | — | CLOSES completed after `0010` applied to prod (`layer0-apply`) + verified (`neon-query`) — apply+verify owed |
+| Owed | — | #648: apply+verify `0010`; carried: post-#572 live T3-refresh re-verify (Rule #14) |
