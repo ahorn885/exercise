@@ -82,6 +82,7 @@ from plan_sessions_repo import (
     snapshot_progress_blocks,
 )
 from race_events_repo import load_target_race_event_payload
+from plan_naming import target_race_name, generated_plan_name
 from athlete_event_windows_repo import load_event_windows
 from plan_nutrition_repo import load_plan_nutrition_by_version
 from layer5 import generate_and_persist_plan_nutrition
@@ -1025,10 +1026,17 @@ def view_plan(plan_version_id: int):
         {day.date: day for day in nutrition.days} if nutrition else {}
     )
 
+    plan_name = generated_plan_name(
+        target_race_name(db, uid),
+        plan_version['scope_start_date'],
+        plan_version['scope_end_date'],
+    )
+
     return render_template(
         'plan_create/view.html',
         plan_version=plan_version,
         plan_version_id=plan_version_id,
+        plan_name=plan_name,
         lifecycle_state=_plan_lifecycle_label(plan_version, date.today()),
         days=_plan_days_with_rest_gaps(sessions_by_date),
         session_count=len(sessions),

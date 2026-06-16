@@ -28,7 +28,7 @@
   <div class="plan-card-head">
     <div class="pl-id">
       <div class="pl-title">
-        <a class="pl-name" href="{{ url_for('plan_create.view_plan', plan_version_id=c.id) }}">Generated plan</a>
+        <a class="pl-name" href="{{ url_for('plan_create.view_plan', plan_version_id=c.id) }}">{{ c.display_name }}</a>
         <span class="chip accent">Pattern {{ c.pattern }}</span>
         {% if c.generation_status == 'generating' %}<span class="chip solid">Generating…</span>{% endif %}
         {% if archived %}<span class="chip solid">Archived</span>{% elif c.completed_at %}<span class="chip solid">Marked complete</span>{% endif %}

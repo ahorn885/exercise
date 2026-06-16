@@ -40,16 +40,33 @@ class _ListCursor:
         return self._rows
 
 
-class _ListConn:
-    """Routes the route's two fetchall() reads by SQL: the legacy
-    `training_plans` list vs. the `plan_versions` (generated) list. The
-    auth/user lookups use fetchone(), which ignores both."""
+class _RaceCursor:
+    """Serves the target-race name read (#620). fetchone() returns a single
+    `name` row, or None when the athlete has no target race set."""
 
-    def __init__(self, rows, generated=()):
+    def __init__(self, race_name):
+        self._race_name = race_name
+
+    def fetchone(self):
+        return _FakeRow(name=self._race_name) if self._race_name else None
+
+    def fetchall(self):
+        return []
+
+
+class _ListConn:
+    """Routes the route's reads by SQL: the target-race name lookup, the
+    `plan_versions` (generated) list, and the legacy `training_plans` list. The
+    auth/user lookups use fetchone(), which the default cursor serves."""
+
+    def __init__(self, rows, generated=(), race_name=None):
         self._rows = rows
         self._generated = list(generated)
+        self._race_name = race_name
 
     def execute(self, sql, *a, **k):
+        if 'race_events' in sql:
+            return _RaceCursor(self._race_name)
         if 'plan_versions' in sql:
             return _ListCursor(self._generated)
         return _ListCursor(self._rows)
@@ -83,12 +100,13 @@ def _gen(**kw):
     return _FakeRow(base)
 
 
-def _client(monkeypatch, rows, generated=()):
+def _client(monkeypatch, rows, generated=(), race_name=None):
     for mod in list(sys.modules.values()):
         if mod is not None and getattr(mod, 'get_db', None) is not None:
             monkeypatch.setattr(
                 mod, 'get_db',
-                lambda rows=rows, generated=generated: _ListConn(rows, generated),
+                lambda rows=rows, generated=generated, race_name=race_name:
+                    _ListConn(rows, generated, race_name),
                 raising=False)
     _appmod.app.config['TESTING'] = True
     c = _appmod.app.test_client()
@@ -166,6 +184,26 @@ def test_generated_plans_bucketed_by_scope_dates(monkeypatch):
     assert '/plans/v2/11/delete' in html
     assert 'style="' not in html
     assert 'onclick=' not in html
+    # #620 — no target race set → generated cards fall back to "Training plan"
+    # (never the old internal "Generated plan" label).
+    assert 'Training plan' in html
+    assert 'Generated plan' not in html
+
+
+def test_generated_plan_named_after_target_race(monkeypatch):
+    today = date.today()
+    client = _client(monkeypatch, [], generated=[
+        _gen(id=11, scope_start_date=today - timedelta(days=3),
+             scope_end_date=today + timedelta(days=30)),
+    ], race_name='Pocket Gopher Extreme 2026')
+    resp = client.get('/plans/')
+    assert resp.status_code == 200
+    html = resp.get_data(as_text=True)
+    # #620 — the generated plan is named after the athlete's target race, with
+    # a derived "<N>-week build" suffix from its scope dates.
+    assert 'Pocket Gopher Extreme 2026' in html
+    assert 'week build' in html
+    assert 'Generated plan' not in html
 
 
 def test_archived_generated_plan_shown_with_restore(monkeypatch):
