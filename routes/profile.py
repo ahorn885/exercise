@@ -456,6 +456,15 @@ def edit():
     health_conditions = list_health_conditions(db, uid)
     medications = list_medications(db, uid)
 
+    # Locations tab (#619) embeds the full locales surface. Build its context
+    # only when that tab is active so the per-locale equipment-tag queries don't
+    # run on every profile view. Local import avoids a routes.locales <-> profile
+    # import cycle (connections already imports load_connections from here).
+    locales_ctx = {}
+    if request.args.get('tab') == 'locations':
+        from routes.locales import build_locales_list_context
+        locales_ctx = build_locales_list_context(db, uid)
+
     from datetime import datetime as _dt
     return render_template(
         'profile/edit.html',
@@ -506,6 +515,7 @@ def edit():
         # Used by the template to render an "Expired" badge without
         # round-tripping the timestamp through a Jinja-only comparison.
         now_iso=_dt.utcnow().isoformat(timespec='seconds'),
+        **locales_ctx,
     )
 
 

@@ -570,15 +570,17 @@ def _existing_locale_by_mapbox_id(db, uid: int, mapbox_id: str, exclude_slug: st
     return row
 
 
-@bp.route('/locales')
-def list_profiles():
-    db = get_db()
-    uid = current_user_id()
-    _stash_return_to()
-    # locale_profiles is parent-scoped; locale_equipment is parent-JOIN scoped
-    # via locale_profiles. Session 3 makes the locale PK composite (user_id, locale)
-    # so users can have independent locales — until then, the global PK means a
-    # user 2 can't claim a locale name user 1 already owns.
+def build_locales_list_context(db, uid):
+    """Build the locales-list render context (cards, equipment tags, home, and
+    display addresses) for a user. Shared by the standalone Locations page and
+    the profile Locations tab (#619); the request-specific `return_to` is added
+    by the caller.
+
+    locale_profiles is parent-scoped; locale_equipment is parent-JOIN scoped via
+    locale_profiles. Session 3 makes the locale PK composite (user_id, locale)
+    so users can have independent locales — until then, the global PK means a
+    user 2 can't claim a locale name user 1 already owns.
+    """
     profiles = {
         r['locale']: r for r in db.execute(
             'SELECT * FROM locale_profiles WHERE user_id = ?', (uid,)
@@ -601,12 +603,19 @@ def list_profiles():
         None,
     )
     display_addresses = {loc: _display_address(p) for loc, p in profiles.items()}
-    return render_template('locales/list.html', locales=displayed_locales,
-                           profiles=profiles,
-                           home_locale=home_locale,
-                           tags_by_locale=tags_by_locale, counts=counts,
-                           display_addresses=display_addresses,
-                           return_to=session.get(_LOCALE_RETURN_TO))
+    return dict(locales=displayed_locales, profiles=profiles,
+                home_locale=home_locale, tags_by_locale=tags_by_locale,
+                counts=counts, display_addresses=display_addresses)
+
+
+@bp.route('/locales')
+def list_profiles():
+    db = get_db()
+    uid = current_user_id()
+    _stash_return_to()
+    return render_template('locales/list.html',
+                           return_to=session.get(_LOCALE_RETURN_TO),
+                           **build_locales_list_context(db, uid))
 
 
 @bp.route('/locales/<locale>/edit', methods=['GET', 'POST'])

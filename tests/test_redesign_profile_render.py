@@ -129,6 +129,20 @@ def test_profile_skills_tab(monkeypatch):
     assert 'style="' not in html
 
 
+def test_profile_locations_tab_embeds_locales_surface(monkeypatch):
+    # The Locations tab (#619) embeds the full locales surface via the shared
+    # _list_body partial. With no saved locales the empty hero renders, and the
+    # add-location route is reachable.
+    client = _client(monkeypatch, _Conn(profile={}))
+    resp = client.get('/profile/?tab=locations')
+    assert resp.status_code == 200
+    html = resp.get_data(as_text=True)
+    assert 'Where do you train?' in html
+    assert '/locales/new' in html          # add affordance from the partial
+    assert '?tab=locations' in html        # tab present in the profile strip
+    assert 'style="' not in html
+
+
 # ── §19 Account settings ─────────────────────────────────────────────
 
 def test_account_settings(monkeypatch):
