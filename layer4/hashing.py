@@ -37,7 +37,11 @@ _LAYER2_BUNDLE_ATTRS = frozenset({"a", "b", "c", "d", "e"})
 # "3" = #618 humanize skill-gate wording — drop the raw toggle slug from the
 # per_phase grid annotation + the validator correction feedback, + a VOICE rule
 # (per_phase + T1/T2/T3) barring internal ids/slugs in athlete-facing text.
-LAYER4_PROMPT_REVISION = "3"
+# "4" = #624 / #618-7 deterministic venue pick — the EXACT feasibility line now
+# names the nearest saved locale per terrain (display name + distance) instead of
+# one slug, so the synthesizer cites real nearby venues (no 'no nearby groomed
+# trail' / invented park) and uses the locale's display name consistently.
+LAYER4_PROMPT_REVISION = "4"
 
 
 def _to_jsonable(obj: Any) -> Any:

@@ -43,9 +43,9 @@ filed as a follow-up to #540.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import date, timedelta
-from typing import Literal
+from typing import Any, Literal
 
 # Below this proxy fidelity a `terrain_gap_rules` proxy is not worth scheduling
 # the session on — fall through to the indoor machine / strength tiers instead.
@@ -154,6 +154,19 @@ class TerrainResolution:
     owned_craft: str | None = None
     craft_swap_to_name: str = ""
     craft_kind: str = ""
+    # Deterministic venue display (#624 / #618-7), attached post-resolution by the
+    # orchestrator (`enrich_resolution_display`) where DB reads live. The pure
+    # cascade leaves these defaulted; the synthesis line falls back to the slug.
+    # - locale_name / locale_distance_km: display name + km of `locale_id` (every
+    #   tier) — the synthesizer cites the saved locale by name, never the slug.
+    # - terrain_venues: EXACT (non-craft) only — each required terrain present in
+    #   the cluster mapped to its NEAREST carrying locale, nearest-first, as
+    #   (terrain_name, locale_name, distance_km). The menu that grounds the
+    #   synthesizer in real nearby surfaces ('Groomed Trail at Cleburne, 18 km')
+    #   so it can't claim 'no nearby groomed trail' or invent a farther park.
+    locale_name: str | None = None
+    locale_distance_km: float | None = None
+    terrain_venues: tuple[tuple[str, str, float | None], ...] = ()
 
 
 def required_terrains(discipline_id: str) -> frozenset[str]:
@@ -184,9 +197,10 @@ def resolve_terrain_feasibility(
 
     Args:
         discipline_id: the discipline the grid wants.
-        locale_order: cluster locale ids, deterministic (home first). The first
-            satisfying locale wins at each tier — a stand-in for nearest until a
-            haversine sort is wired (mirrors `locale_assign`'s ordering choice).
+        locale_order: cluster locale ids, deterministic and NEAREST-first
+            (`locations.cluster_locale_ids` haversine-sorts the cluster, home at
+            0 km). The first satisfying locale wins at each tier → the nearest
+            satisfying locale (the deterministic venue pick, #624).
         cluster_terrain_by_locale: locale_id → set of available TRN-xxx ids.
         cluster_equipment_by_locale: locale_id → set of canonical equipment tags.
         gap_rules: required-terrain id → [(proxy TRN id, fidelity), ...]
@@ -468,6 +482,72 @@ def resolve_craft_terrain_feasibility(
 #     (reallocate), so the count is never read as the as-prescribed sport.
 
 
+def _venue_label(
+    name: str | None, slug: str | None, distance_km: float | None
+) -> str:
+    """A locale reference for the synthesis line: the display NAME (never the
+    slug) in quotes, suffixed with its distance from home. '(home)' at ~0 km;
+    no suffix when distance is unknown (manual-entry locale)."""
+    base = name or (slug.replace("_", " ").title() if slug else "your locale")
+    label = f'"{base}"'
+    if distance_km is None:
+        return label
+    if distance_km <= 0.1:
+        return f"{label} (home)"
+    return f"{label} ({distance_km:.0f} km away)"
+
+
+def enrich_resolution_display(
+    resolution: TerrainResolution,
+    *,
+    locale_order: list[str],
+    locale_meta: dict[str, dict[str, Any]],
+    terrain_names: dict[str, str],
+    terrain_by_locale: dict[str, set[str]],
+) -> TerrainResolution:
+    """Attach deterministic venue display data to a resolved discipline (#624 /
+    #618-7) so the synthesis feasibility line cites the athlete's real saved
+    locales by NAME + distance rather than leaking a slug or letting the LLM
+    invent a venue. Pure — the maps come from the orchestrator's DB reads.
+
+    Fills `locale_name` / `locale_distance_km` for the scheduling locale (every
+    tier). For the EXACT terrain tier (non-craft), also computes `terrain_venues`:
+    each required terrain present anywhere in the cluster mapped to its NEAREST
+    carrying locale (`locale_order` is distance-sorted), nearest-first — the menu
+    that grounds the synthesizer in every real nearby surface."""
+    loc = resolution.locale_id
+    meta = locale_meta.get(loc) if loc is not None else None
+    name = meta.get("name") if meta else None
+    dist = meta.get("distance_km") if meta else None
+
+    venues: tuple[tuple[str, str, float | None], ...] = ()
+    if resolution.tier == "exact" and resolution.craft_tier == "":
+        rows: list[tuple[float, str, str, float | None]] = []
+        for terr in required_terrains(resolution.discipline_id):
+            for cand in locale_order:  # distance-sorted → first carrier = nearest
+                if terr in terrain_by_locale.get(cand, set()):
+                    cmeta = locale_meta.get(cand) or {}
+                    cdist = cmeta.get("distance_km")
+                    rows.append(
+                        (
+                            cdist if cdist is not None else float("inf"),
+                            terrain_names.get(terr, terr),
+                            cmeta.get("name") or cand,
+                            cdist,
+                        )
+                    )
+                    break
+        rows.sort(key=lambda t: (t[0], t[1]))
+        venues = tuple((tn, ln, d) for _s, tn, ln, d in rows)
+
+    return replace(
+        resolution,
+        locale_name=name,
+        locale_distance_km=dist,
+        terrain_venues=venues,
+    )
+
+
 def feasibility_line(
     resolution: TerrainResolution,
     *,
@@ -480,6 +560,9 @@ def feasibility_line(
     STRENGTH tier consumes it (falls back to the id when a name is missing).
     """
     loc = resolution.locale_id
+    loc_label = _venue_label(
+        resolution.locale_name, loc, resolution.locale_distance_km
+    )
     tier = resolution.tier
     # The craft overlay (#586 WS-I) composes ahead of the terrain detail. A SWAP
     # prepends "you own <craft> — train as <swap-to discipline>" and the body
@@ -512,33 +595,45 @@ def feasibility_line(
         )
         return (
             f"- {discipline_name}: {reason} — substitute a STRENGTH session "
-            f"targeting this discipline's demands at \"{loc}\" from: {names}. "
+            f"targeting this discipline's demands at {loc_label} from: {names}. "
             "Keep the target hours; compose as strength."
         )
     if tier == "exact":
-        body = (
-            f"real terrain available at \"{loc}\" ({resolution.terrain_id}) — "
-            "train it for real there."
-        )
+        if resolution.terrain_venues:
+            # Deterministic venue menu (#624): every real nearby surface + where,
+            # so the synthesizer can't claim 'none nearby' or invent a farther one.
+            menu = "; ".join(
+                f"{tn} at {_venue_label(ln, None, d)}"
+                for tn, ln, d in resolution.terrain_venues
+            )
+            body = (
+                f"real terrain in your saved locales — {menu}. Train at these named "
+                "locales only; never name or suggest a location not in this list."
+            )
+        else:
+            body = (
+                f"real terrain available at {loc_label} ({resolution.terrain_id}) — "
+                "train it for real there."
+            )
     elif tier == "proxy" and resolution.proxy_fidelity is None:
         # Craft-alt (#586 WS-I tier 2): own the craft, ride a substitute surface
         # it's compatible with (no gap-rule fidelity — the craft itself qualifies).
         owned = (resolution.owned_craft or "your craft").replace("_", " ")
         body = (
             f"no required terrain in your locales — ride your {owned} on the "
-            f"available surface ({resolution.terrain_id}) at \"{loc}\". Compose "
+            f"available surface ({resolution.terrain_id}) at {loc_label}. Compose "
             "for that surface."
         )
     elif tier == "proxy":
         body = (
             f"no required terrain in your locales — train as the nearest surface "
             f"({resolution.terrain_id}, fidelity {resolution.proxy_fidelity:.2f}) "
-            f"at \"{loc}\". Compose for that surface."
+            f"at {loc_label}. Compose for that surface."
         )
     elif tier == "indoor":
         body = (
             f"no outdoor terrain in your locales — train indoors on the "
-            f"{resolution.machine} at \"{loc}\"."
+            f"{resolution.machine} at {loc_label}."
         )
     else:  # reallocate
         body = (

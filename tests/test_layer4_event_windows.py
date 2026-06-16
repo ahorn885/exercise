@@ -118,6 +118,8 @@ def _mk_inputs(
         gated={},
         included=[SimpleNamespace(discipline_id=d) for d in disciplines],
         name_by_discipline={d: d for d in disciplines},
+        locale_meta={loc: {"name": loc, "distance_km": None} for loc in cluster},
+        terrain_names={},
     )
 
 
@@ -339,6 +341,12 @@ class TestAwayWindows:
             orch.locations, "cluster_equipment_by_locale",
             lambda db, uid, c: equip,
         )
+        monkeypatch.setattr(
+            orch.locations, "cluster_locale_meta",
+            lambda db, uid, c, anchor_locale=None: {
+                loc: {"name": loc, "distance_km": None} for loc in c
+            },
+        )
 
     def _away_win(self, dest):
         return EventWindow(
@@ -441,7 +449,7 @@ class TestAwayCraft:
         recorded: dict = {}
 
         def _spy(_fi, *, locale_order, terrain_by_locale, equip_by_locale,
-                 owned_crafts=None):
+                 owned_crafts=None, locale_meta=None):
             recorded["owned_crafts"] = owned_crafts
             return {}
 
@@ -460,6 +468,10 @@ class TestAwayCraft:
         )
         monkeypatch.setattr(
             orch.locations, "cluster_equipment_by_locale", lambda db, uid, c: {}
+        )
+        monkeypatch.setattr(
+            orch.locations, "cluster_locale_meta",
+            lambda db, uid, c, anchor_locale=None: {},
         )
         _build_event_window_overlay(
             None, 7, None, plan_start=date(2026, 6, 1), plan_end=date(2026, 6, 30),

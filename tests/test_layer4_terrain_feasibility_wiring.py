@@ -134,6 +134,17 @@ def _patch_cluster(monkeypatch, *, cluster, terrain, equipment, gaps):
         orchestrator.locations, "cluster_equipment_by_locale", lambda db, uid, c: equipment
     )
     monkeypatch.setattr(orchestrator, "_q_terrain_gap_rules", lambda db: gaps)
+    # Deterministic venue display (#624): meta + terrain names. Trivial stubs —
+    # name = slug, no distance — so these wiring tests stay focused on tier/locale
+    # routing (the venue-menu rendering is covered in test_layer4_session_feasibility).
+    monkeypatch.setattr(
+        orchestrator.locations,
+        "cluster_locale_meta",
+        lambda db, uid, c, anchor_locale=None: {
+            loc: {"name": loc, "distance_km": None} for loc in c
+        },
+    )
+    monkeypatch.setattr(orchestrator, "_q_terrain_names", lambda db: {})
 
 
 # Craft/terrain cascade maps (#586 WS-I). Default: empty → craft cascade tiers
