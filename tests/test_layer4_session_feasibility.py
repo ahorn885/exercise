@@ -15,6 +15,7 @@ from layer4.session_feasibility import (
     indoor_machines,
     required_terrains,
     resolve_terrain_feasibility,
+    surface_purpose,
 )
 
 
@@ -244,13 +245,23 @@ class TestDeterministicVenueDisplay:
     }
     _NAMES = {"TRN-002": "Groomed Trail", "TRN-003": "Technical Trail", "TRN-004": "Hill / Rolling"}
 
-    def _enrich(self, resolution):
+    # Surface attributes (#624) — from layer0.terrain_types: Groomed flat/non-tech
+    # (aerobic), Technical Trail non-elev/tech (technical), Hill/Rolling elevation
+    # (vert).
+    _ATTRS = {
+        "TRN-002": {"requires_elevation": False, "technical_surface": False},
+        "TRN-003": {"requires_elevation": False, "technical_surface": True},
+        "TRN-004": {"requires_elevation": True, "technical_surface": False},
+    }
+
+    def _enrich(self, resolution, terrain_attrs=None):
         return enrich_resolution_display(
             resolution,
             locale_order=self._ORDER,
             locale_meta=self._META,
             terrain_names=self._NAMES,
             terrain_by_locale=self._TERRAIN,
+            terrain_attrs=terrain_attrs,
         )
 
     def test_exact_menu_names_nearest_venue_per_terrain(self):
@@ -279,6 +290,68 @@ class TestDeterministicVenueDisplay:
         # No slug / TRN-id leak in the athlete-facing line.
         assert "509_williams_avenue" not in line and "TRN-" not in line
 
+    def test_surface_routing_sends_each_purpose_to_its_nearest_surface(self):
+        # #624: with terrain attrs, Trail Running routes easy/long aerobic to the
+        # nearest FLAT trail (Groomed at Cleburne, 18 km — home has only hills),
+        # hill/vert work to the home hills, technical to the nearest tech trail.
+        r = resolve_terrain_feasibility(
+            "D-001",
+            locale_order=self._ORDER,
+            cluster_terrain_by_locale=self._TERRAIN,
+            cluster_equipment_by_locale={},
+            gap_rules={},
+            discipline_exercise_ids=[],
+        )
+        r = self._enrich(r, terrain_attrs=self._ATTRS)
+        routes = {purpose: (ln, d) for purpose, _tn, ln, d in r.surface_routes}
+        assert routes["easy / long aerobic"] == ("Cleburne State Park", 18.0)
+        assert routes["hill / vert work"] == ("509 Williams Avenue", 0.0)
+        assert routes["technical / skill work"] == ("Cleburne State Park", 18.0)
+
+        line = feasibility_line(r, discipline_name="Trail Running")
+        assert "routed by session purpose" in line
+        assert 'easy / long aerobic on "Cleburne State Park" (18 km away)' in line
+        assert 'hill / vert work on "509 Williams Avenue" (home)' in line
+        assert "do not collapse every session onto the nearest one" in line
+        assert "509_williams_avenue" not in line and "TRN-" not in line
+
+    def test_no_routing_without_attrs_falls_back_to_menu(self):
+        # Backward-compat: no terrain_attrs → surface_routes empty, the existing
+        # nearest-venue MENU renders unchanged.
+        r = resolve_terrain_feasibility(
+            "D-001",
+            locale_order=self._ORDER,
+            cluster_terrain_by_locale=self._TERRAIN,
+            cluster_equipment_by_locale={},
+            gap_rules={},
+            discipline_exercise_ids=[],
+        )
+        r = self._enrich(r)  # no attrs
+        assert r.surface_routes == ()
+        line = feasibility_line(r, discipline_name="Trail Running")
+        assert "routed by session purpose" not in line
+        assert 'Groomed Trail at "Cleburne State Park" (18 km away)' in line
+
+    def test_no_routing_when_surfaces_share_one_locale(self):
+        # Not meaningful: every required surface (and purpose) sits at home → no
+        # routing, the single/menu rendering is used instead.
+        order = ["home"]
+        terrain = {"home": {"TRN-002", "TRN-003", "TRN-004"}}
+        meta = {"home": {"name": "Home", "distance_km": 0.0}}
+        r = resolve_terrain_feasibility(
+            "D-001",
+            locale_order=order,
+            cluster_terrain_by_locale=terrain,
+            cluster_equipment_by_locale={},
+            gap_rules={},
+            discipline_exercise_ids=[],
+        )
+        r = enrich_resolution_display(
+            r, locale_order=order, locale_meta=meta, terrain_names=self._NAMES,
+            terrain_by_locale=terrain, terrain_attrs=self._ATTRS,
+        )
+        assert r.surface_routes == ()
+
     def test_display_name_used_not_slug_all_tiers(self):
         # #618-7: the strength tier cites the locale display name, not the slug.
         r = TerrainResolution(
@@ -300,3 +373,10 @@ class TestMaps:
         assert "Treadmill" in indoor_machines("D-001")
         assert "Ski erg" in indoor_machines("D-028")
         assert indoor_machines("D-012") == ()  # climbing has no machine
+
+    def test_surface_purpose_classifier(self):
+        # #624: derived from layer0.terrain_types attrs, elevation dominates.
+        assert surface_purpose(False, False) == "easy / long aerobic"   # Groomed/Road
+        assert surface_purpose(True, False) == "hill / vert work"        # Hill/Rolling
+        assert surface_purpose(False, True) == "technical / skill work"  # Technical Trail
+        assert surface_purpose(True, True) == "hill / vert work"         # Mtn/Alpine, Fell

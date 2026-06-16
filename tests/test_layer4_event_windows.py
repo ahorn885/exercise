@@ -120,6 +120,7 @@ def _mk_inputs(
         name_by_discipline={d: d for d in disciplines},
         locale_meta={loc: {"name": loc, "distance_km": None} for loc in cluster},
         terrain_names={},
+        terrain_attrs={},
     )
 
 
