@@ -35,6 +35,7 @@ from etl.layer0.validation.default_inclusion import run_default_inclusion
 from etl.layer0.validation.discipline_canon_check import (
     run_discipline_canon_conformance,
 )
+from etl.layer0.validation.exercises_fk_check import run_exercises_fk
 from etl.layer0.validation.fk_checks import (
     run_substitution_fks,
     run_training_gap_fks,
@@ -73,6 +74,15 @@ def _v_training_gap_fks(r: dict) -> list[Violation]:
     return [
         Violation(e["discipline_id"],
                   f"{e['discipline_name']} (gap_type={e['gap_type']}) has no discipline row")
+        for e in r["errors"]
+    ]
+
+
+def _v_exercises_fk(r: dict) -> list[Violation]:
+    return [
+        Violation(f"{e['ref_kind']}:{e['holder']}->{e['missing_id']}",
+                  f"{e['ref_kind']} ref from {e['holder']} → {e['missing_id']!r} "
+                  f"is not an active exercise")
         for e in r["errors"]
     ]
 
@@ -154,11 +164,12 @@ class Check:
 
 
 # Registry order = report order. fk_checks splits into two runners; the rest
-# are 1:1 with their logical checks (the spec §5.2 seven, plus terrain_types and
-# primary_movement added with the DB-source-of-truth model).
+# are 1:1 with their logical checks (the spec §5.2 seven, plus terrain_types,
+# primary_movement, and exercises_fk added with the DB-source-of-truth model).
 CHECKS: tuple[Check, ...] = (
     Check("substitution_fks", run_substitution_fks, _v_substitution_fks),
     Check("training_gap_fks", run_training_gap_fks, _v_training_gap_fks),
+    Check("exercises_fk", run_exercises_fk, _v_exercises_fk),
     Check("discipline_canon", run_discipline_canon_conformance, _v_discipline_canon),
     Check("primary_movement", run_primary_movement, _v_primary_movement),
     Check("modality_group_orphan", run_modality_group_orphan, _v_modality_group_orphan),
