@@ -364,6 +364,90 @@ class TestDeterministicVenueDisplay:
         assert "509_williams_avenue" not in line
 
 
+class TestCraftSurfaceRouting:
+    """#624 Slice 3 — craft own/proxy EXACT resolutions get the per-purpose
+    surface routing too, but constrained to the resolved craft's rideable
+    terrains so a bike/paddle session is never routed to a required surface its
+    craft can't traverse. The SWAP tier (sport changes) is left untouched."""
+
+    # MTB (D-008) requires TRN-002 Groomed (aerobic) / TRN-003 Technical
+    # (technical) / TRN-015 Pump Track (vert). Each at a different locale.
+    _ORDER = ["home", "park", "faraway"]
+    _TERRAIN = {"home": {"TRN-002"}, "park": {"TRN-003"}, "faraway": {"TRN-015"}}
+    _META = {
+        "home": {"name": "Home", "distance_km": 0.0},
+        "park": {"name": "Park", "distance_km": 10.0},
+        "faraway": {"name": "Faraway", "distance_km": 80.0},
+    }
+    _NAMES = {"TRN-002": "Groomed Trail", "TRN-003": "Technical Trail", "TRN-015": "Pump Track"}
+    _ATTRS = {
+        "TRN-002": {"requires_elevation": False, "technical_surface": False},
+        "TRN-003": {"requires_elevation": False, "technical_surface": True},
+        "TRN-015": {"requires_elevation": True, "technical_surface": True},
+    }
+    # The owned mountain bike rides groomed + technical, but NOT the pump track.
+    _CRAFT_TERRAIN = {"mountain_bike": {"TRN-002", "TRN-003"}}
+
+    def _enrich(self, resolution, *, craft_terrain=None):
+        return enrich_resolution_display(
+            resolution,
+            locale_order=self._ORDER,
+            locale_meta=self._META,
+            terrain_names=self._NAMES,
+            terrain_by_locale=self._TERRAIN,
+            terrain_attrs=self._ATTRS,
+            craft_terrain=craft_terrain,
+        )
+
+    def test_own_craft_routing_excludes_unrideable_surface(self):
+        # Tier 1: own the MTB on a required terrain. Pump Track (TRN-015) is a
+        # required surface present in-cluster but the bike can't ride it → it must
+        # NOT appear in the routing or the venue menu.
+        r = TerrainResolution("D-008", "exact", "home", terrain_id="TRN-002", owned_craft="mountain_bike")
+        r = self._enrich(r, craft_terrain=self._CRAFT_TERRAIN)
+        routes = {purpose: ln for purpose, _tn, ln, _d in r.surface_routes}
+        assert routes == {
+            "easy / long aerobic": "Home",
+            "technical / skill work": "Park",
+        }
+        assert "hill / vert work" not in routes
+        assert all(tn != "Pump Track" for tn, _ln, _d in r.terrain_venues)
+
+    def test_proxy_craft_tier_gets_constrained_routing(self):
+        # Tier 3: a proxy craft rides the required terrain — now routed too,
+        # constrained the same way.
+        r = TerrainResolution(
+            "D-008", "exact", "home", terrain_id="TRN-002",
+            craft_tier="proxy", owned_craft="mountain_bike",
+        )
+        r = self._enrich(r, craft_terrain=self._CRAFT_TERRAIN)
+        routes = {purpose for purpose, _tn, _ln, _d in r.surface_routes}
+        assert routes == {"easy / long aerobic", "technical / skill work"}
+        line = feasibility_line(r, discipline_name="Mountain Biking")
+        assert "routed by session purpose" in line
+
+    def test_swap_tier_gets_no_routing(self):
+        # Tier 4 SWAP: the sport itself changes (train as the proxy's discipline),
+        # so the original discipline's purpose routing would be wrong → left empty.
+        r = TerrainResolution(
+            "D-008", "exact", "home", terrain_id="TRN-002",
+            craft_tier="swap", owned_craft="road_bike", craft_swap_to_name="Road Cycling",
+        )
+        r = self._enrich(r, craft_terrain=self._CRAFT_TERRAIN)
+        assert r.surface_routes == ()
+        assert r.terrain_venues == ()
+
+    def test_noncraft_unchanged_when_craft_terrain_supplied(self):
+        # A non-craft resolution (owned_craft None) is byte-identical whether or
+        # not craft_terrain is passed — the constraint only applies to crafts.
+        r = TerrainResolution("D-008", "exact", "home", terrain_id="TRN-002")
+        with_ct = self._enrich(r, craft_terrain=self._CRAFT_TERRAIN)
+        without_ct = self._enrich(r, craft_terrain=None)
+        assert with_ct.surface_routes == without_ct.surface_routes
+        # Unconstrained → Pump Track's vert purpose IS present (no craft to gate it).
+        assert "hill / vert work" in {p for p, _tn, _ln, _d in with_ct.surface_routes}
+
+
 class TestMaps:
     def test_required_terrains_lookup(self):
         assert required_terrains("D-018") == frozenset({"TRN-005", "TRN-007", "TRN-012"})

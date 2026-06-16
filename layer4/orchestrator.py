@@ -573,6 +573,7 @@ def _resolve_included_feasibility(
                 terrain_names=fi.terrain_names,
                 terrain_by_locale=terrain_by_locale,
                 terrain_attrs=fi.terrain_attrs,
+                craft_terrain=fi.craft_terrain,
             )
     return out
 

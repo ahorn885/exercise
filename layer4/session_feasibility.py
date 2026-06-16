@@ -159,8 +159,9 @@ class TerrainResolution:
     # cascade leaves these defaulted; the synthesis line falls back to the slug.
     # - locale_name / locale_distance_km: display name + km of `locale_id` (every
     #   tier) — the synthesizer cites the saved locale by name, never the slug.
-    # - terrain_venues: EXACT (non-craft) only — each required terrain present in
-    #   the cluster mapped to its NEAREST carrying locale, nearest-first, as
+    # - terrain_venues: EXACT only (non-craft, or craft own/proxy tier constrained
+    #   to the craft's rideable terrains — #624 Slice 3) — each candidate terrain
+    #   present in the cluster mapped to its NEAREST carrying locale, nearest-first, as
     #   (terrain_name, locale_name, distance_km). The menu that grounds the
     #   synthesizer in real nearby surfaces ('Groomed Trail at Cleburne, 18 km')
     #   so it can't claim 'no nearby groomed trail' or invent a farther park.
@@ -168,9 +169,10 @@ class TerrainResolution:
     locale_distance_km: float | None = None
     terrain_venues: tuple[tuple[str, str, float | None], ...] = ()
     # Surface-specific routing (#624), attached by `enrich_resolution_display`
-    # when `terrain_attrs` is supplied. EXACT (non-craft) only: the nearest
-    # carrying venue PER training purpose among the discipline's required
-    # surfaces, as (purpose_label, terrain_name, locale_name, distance_km), in
+    # when `terrain_attrs` is supplied. EXACT only (non-craft, or craft own/proxy
+    # tier — #624 Slice 3 — with candidates constrained to the craft's rideable
+    # terrains): the nearest carrying venue PER training purpose among the
+    # candidate surfaces, as (purpose_label, terrain_name, locale_name, distance_km), in
     # coaching order. Emitted only when ≥2 distinct purposes map to ≥2 distinct
     # locales (otherwise routing is a no-op and `terrain_venues` renders). Lets
     # the synthesizer send each session to the surface its purpose calls for
@@ -541,6 +543,7 @@ def enrich_resolution_display(
     terrain_names: dict[str, str],
     terrain_by_locale: dict[str, set[str]],
     terrain_attrs: dict[str, dict[str, bool]] | None = None,
+    craft_terrain: dict[str, set[str]] | None = None,
 ) -> TerrainResolution:
     """Attach deterministic venue display data to a resolved discipline (#624 /
     #618-7) so the synthesis feasibility line cites the athlete's real saved
@@ -557,7 +560,15 @@ def enrich_resolution_display(
     is supplied, also computes `surface_routes` (#624): the nearest carrying venue
     PER training purpose, emitted only when ≥2 distinct purposes map to ≥2 distinct
     locales — the routing that sends each session to the surface its purpose calls
-    for. Bare callers (no attrs) get the unchanged menu behavior."""
+    for. Bare callers (no attrs) get the unchanged menu behavior.
+
+    For craft disciplines (#624 Slice 3): EXACT own-craft (tier 1) and proxy-craft
+    (tier 3) resolutions get the same venue menu + surface routing, BUT the
+    candidate surfaces are intersected with the resolved craft's rideable terrains
+    (`craft_terrain[owned_craft]`) so a paddle/bike session is never routed to a
+    required surface the craft cannot actually traverse. The SWAP tier (the sport
+    itself changes) is left untouched. Non-craft callers pass `craft_terrain=None`
+    → byte-identical to the pre-Slice-3 behavior."""
     loc = resolution.locale_id
     meta = locale_meta.get(loc) if loc is not None else None
     name = meta.get("name") if meta else None
@@ -565,12 +576,23 @@ def enrich_resolution_display(
 
     venues: tuple[tuple[str, str, float | None], ...] = ()
     routes: tuple[tuple[str, str, str, float | None], ...] = ()
-    if resolution.tier == "exact" and resolution.craft_tier == "":
+    if resolution.tier == "exact" and resolution.craft_tier in ("", "proxy"):
+        # Candidate surfaces = the discipline's required terrains, intersected with
+        # what the resolved craft can ride (#624 Slice 3) so a craft session is
+        # never routed to a surface its craft can't traverse. Non-craft (no
+        # owned_craft / no craft_terrain) → unconstrained, as before.
+        cand_terrains: frozenset[str] | set[str] = required_terrains(
+            resolution.discipline_id
+        )
+        if resolution.owned_craft is not None and craft_terrain is not None:
+            cand_terrains = cand_terrains & craft_terrain.get(
+                resolution.owned_craft, set()
+            )
         # (sortkey, terrain_name, locale_name, distance, purpose) — the nearest
-        # carrier per required terrain (locale_order is distance-sorted, so the
+        # carrier per candidate terrain (locale_order is distance-sorted, so the
         # first carrier seen is the nearest).
         rows: list[tuple[float, str, str, float | None, str | None]] = []
-        for terr in required_terrains(resolution.discipline_id):
+        for terr in cand_terrains:
             for cand in locale_order:  # distance-sorted → first carrier = nearest
                 if terr in terrain_by_locale.get(cand, set()):
                     cmeta = locale_meta.get(cand) or {}

@@ -49,7 +49,11 @@ _LAYER2_BUNDLE_ATTRS = frozenset({"a", "b", "c", "d", "e"})
 # cardio discipline's count into long/easy/quality slots, binding the surface
 # routing to deterministic per-slot counts; the synthesis prompt directs
 # long+easy → aerobic surface, quality → vert/technical surface.
-LAYER4_PROMPT_REVISION = "6"
+# "7" = #624 Slice 3 craft-discipline surface routing — craft own/proxy EXACT
+# resolutions now get the per-purpose surface routing too, constrained to the
+# resolved craft's rideable terrains (a bike/paddle session is never routed to
+# a required surface its craft can't traverse).
+LAYER4_PROMPT_REVISION = "7"
 
 
 def _to_jsonable(obj: Any) -> Any:
