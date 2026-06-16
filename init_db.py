@@ -86,7 +86,6 @@ PG_SCHEMA = '''
         id SERIAL PRIMARY KEY,
         user_id INTEGER REFERENCES users(id),
         date TEXT NOT NULL, exercise TEXT NOT NULL,
-        exercise_id INTEGER REFERENCES exercise_inventory(id),
         sub_group TEXT, recovery_cost TEXT,
         target_sets INTEGER, target_reps INTEGER, target_weight REAL, target_duration INTEGER,
         actual_sets INTEGER, actual_reps INTEGER, actual_weight REAL, actual_duration INTEGER,
@@ -110,7 +109,7 @@ PG_SCHEMA = '''
     CREATE TABLE IF NOT EXISTS current_rx (
         id SERIAL PRIMARY KEY,
         user_id INTEGER REFERENCES users(id),
-        exercise TEXT NOT NULL, exercise_id INTEGER REFERENCES exercise_inventory(id),
+        exercise TEXT NOT NULL,
         discipline TEXT, type TEXT, movement_pattern TEXT,
         inventory_sugg_volume TEXT, current_sets INTEGER, current_reps INTEGER,
         current_weight REAL, current_duration INTEGER, last_performed TEXT,
@@ -603,10 +602,12 @@ _PG_MIGRATIONS = [
     "ALTER TABLE cardio_log ADD COLUMN IF NOT EXISTS plan_item_id INTEGER REFERENCES plan_items(id)",
     "ALTER TABLE training_log ADD COLUMN IF NOT EXISTS plan_item_id INTEGER REFERENCES plan_items(id)",
     "ALTER TABLE conditions_log ADD COLUMN IF NOT EXISTS cardio_log_id INTEGER REFERENCES cardio_log(id)",
-    "ALTER TABLE training_log ADD COLUMN IF NOT EXISTS exercise_id INTEGER REFERENCES exercise_inventory(id)",
-    "UPDATE training_log SET exercise_id = ei.id FROM exercise_inventory ei WHERE ei.exercise = training_log.exercise AND training_log.exercise_id IS NULL",
-    "ALTER TABLE current_rx ADD COLUMN IF NOT EXISTS exercise_id INTEGER REFERENCES exercise_inventory(id)",
-    "UPDATE current_rx SET exercise_id = ei.id FROM exercise_inventory ei WHERE ei.exercise = current_rx.exercise AND current_rx.exercise_id IS NULL",
+    # #430 Slice C (C3) — drop the public exercise_inventory.id FK from the
+    # per-user rx tables. The columns are vestigial after C2 (no reads, no
+    # writes; the rx path keys off layer0_exercise_id). DROP cascades the FK
+    # constraint. Idempotent via IF EXISTS.
+    "ALTER TABLE training_log DROP COLUMN IF EXISTS exercise_id",
+    "ALTER TABLE current_rx DROP COLUMN IF EXISTS exercise_id",
     "ALTER TABLE locale_equipment ADD CONSTRAINT IF NOT EXISTS locale_equipment_locale_fk FOREIGN KEY (locale) REFERENCES locale_profiles(locale)",
     "CREATE TABLE IF NOT EXISTS plan_reviews (id SERIAL PRIMARY KEY, plan_id INTEGER NOT NULL REFERENCES training_plans(id), tier INTEGER NOT NULL, sessions_reviewed INTEGER DEFAULT 0, notes TEXT, created_at TIMESTAMP DEFAULT NOW())",
     "ALTER TABLE cardio_log ADD COLUMN IF NOT EXISTS garmin_activity_id TEXT",
@@ -2814,13 +2815,9 @@ def init_postgres():
     # backfill retired with Track 1: the locale_equipment table is dropped and
     # every locale now stores equipment as layer0 canonical names in
     # gym_profiles + locale_equipment_overrides.
-    # Phase 5 — Backfill exercise_id FKs (runs after seeding so exercise_inventory is populated)
-    cur.execute('''UPDATE current_rx SET exercise_id = ei.id
-        FROM exercise_inventory ei WHERE ei.exercise = current_rx.exercise
-        AND current_rx.exercise_id IS NULL''')
-    cur.execute('''UPDATE training_log SET exercise_id = ei.id
-        FROM exercise_inventory ei WHERE ei.exercise = training_log.exercise
-        AND training_log.exercise_id IS NULL''')
+    # Phase 5 — (removed) the public exercise_id FK backfill on current_rx /
+    # training_log retired with #430 Slice C (C3): those columns are dropped;
+    # the rx path keys off layer0_exercise_id.
     # clothing_options is now per-user (Session 3) — values accumulate as
     # the user types into the conditions form. No global seed.
     conn.commit()
