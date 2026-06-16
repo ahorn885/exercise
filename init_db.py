@@ -1,6 +1,8 @@
 """Initialize the PostgreSQL database — schema + idempotent migrations + seeds."""
 import os
 
+from layer0_progression import NAME_TO_EX_ID
+
 DATABASE_URL = os.environ.get('DATABASE_URL')
 
 PG_SCHEMA = '''
@@ -2334,31 +2336,17 @@ _PG_MIGRATIONS = [
     # #335 Phase 2b backfill — curated name->layer0 EX-id map (fuzzy + Andy's
     # HITL review, 2026-06-16). Name-keyed (not user-scoped): the mapping is a
     # general fact, so any user who logged this exact name resolves to the same
-    # EX-id. Idempotent (`layer0_exercise_id IS NULL` guard). The 4 names that
-    # needed NEW layer0 exercises (barbell row, plain biceps curl, sit-up, KB
-    # halo) now map to EX246-EX249, added in layer0 migration
+    # EX-id. Idempotent (`layer0_exercise_id IS NULL` guard). The map lives in
+    # `layer0_progression.NAME_TO_EX_ID` (single source — also read by the
+    # rx_engine write path, #430 Slice C); generated here so the two never drift.
+    # The 4 names that needed NEW layer0 exercises (barbell row, plain biceps
+    # curl, sit-up, KB halo) map to EX246-EX249 from layer0 migration
     # 0011_add_strength_rx_exercises.sql (Trigger #2, Andy-ratified 2026-06-16).
-    "UPDATE current_rx SET layer0_exercise_id='EX001' WHERE exercise='Back Squat' AND layer0_exercise_id IS NULL",
-    "UPDATE current_rx SET layer0_exercise_id='EX001' WHERE exercise='Squat' AND layer0_exercise_id IS NULL",
-    "UPDATE current_rx SET layer0_exercise_id='EX019' WHERE exercise='Barbell Hip Thrust' AND layer0_exercise_id IS NULL",
-    "UPDATE current_rx SET layer0_exercise_id='EX021' WHERE exercise='Bulgarian Split Squat' AND layer0_exercise_id IS NULL",
-    "UPDATE current_rx SET layer0_exercise_id='EX002' WHERE exercise='Goblet Squat' AND layer0_exercise_id IS NULL",
-    "UPDATE current_rx SET layer0_exercise_id='EX217' WHERE exercise='Dead Bug' AND layer0_exercise_id IS NULL",
-    "UPDATE current_rx SET layer0_exercise_id='EX009' WHERE exercise='Farmer Carry' AND layer0_exercise_id IS NULL",
-    "UPDATE current_rx SET layer0_exercise_id='EX078' WHERE exercise='Single-Arm DB Row (Staggered)' AND layer0_exercise_id IS NULL",
-    "UPDATE current_rx SET layer0_exercise_id='EX233' WHERE exercise='Lateral Raise' AND layer0_exercise_id IS NULL",
-    "UPDATE current_rx SET layer0_exercise_id='EX216' WHERE exercise='Plank' AND layer0_exercise_id IS NULL",
-    "UPDATE current_rx SET layer0_exercise_id='EX219' WHERE exercise='Side Plank' AND layer0_exercise_id IS NULL",
-    "UPDATE current_rx SET layer0_exercise_id='EX006' WHERE exercise='Pull Up' AND layer0_exercise_id IS NULL",
-    "UPDATE current_rx SET layer0_exercise_id='EX228' WHERE exercise='Push Up' AND layer0_exercise_id IS NULL",
-    "UPDATE current_rx SET layer0_exercise_id='EX229' WHERE exercise='Bench Press' AND layer0_exercise_id IS NULL",
-    "UPDATE current_rx SET layer0_exercise_id='EX230' WHERE exercise='Deadlift' AND layer0_exercise_id IS NULL",
-    "UPDATE current_rx SET layer0_exercise_id='EX235' WHERE exercise='Triceps Extension' AND layer0_exercise_id IS NULL",
-    # The 4 that needed new layer0 entries (0011) — backfilled now those EX-ids exist.
-    "UPDATE current_rx SET layer0_exercise_id='EX246' WHERE exercise='Row' AND layer0_exercise_id IS NULL",
-    "UPDATE current_rx SET layer0_exercise_id='EX247' WHERE exercise='Curl' AND layer0_exercise_id IS NULL",
-    "UPDATE current_rx SET layer0_exercise_id='EX248' WHERE exercise='Sit Up' AND layer0_exercise_id IS NULL",
-    "UPDATE current_rx SET layer0_exercise_id='EX249' WHERE exercise='KB Halo' AND layer0_exercise_id IS NULL",
+    *[
+        f"UPDATE current_rx SET layer0_exercise_id='{ex_id}' "
+        f"WHERE exercise='{name}' AND layer0_exercise_id IS NULL"
+        for name, ex_id in NAME_TO_EX_ID.items()
+    ],
 ]
 
 _CLOTHING_SEEDS = [

@@ -21,6 +21,42 @@ Design: `aidstation-sources/designs/Layer4_StrengthRxSingleSourceOfTruth_335_Pha
 from __future__ import annotations
 
 
+# Curated v1-name → layer0 EX-id map (#335 Phase 2b D2; fuzzy + Andy's HITL
+# review, 2026-06-16). The single source of truth for resolving a logged/seeded
+# exercise NAME to its canonical layer0 EX-id. Two consumers read it:
+#   - init_db `_PG_MIGRATIONS` — the idempotent `current_rx` backfill.
+#   - rx_engine.apply_session_outcome — the write-path EX-id resolution (#430
+#     Slice C), so newly-logged exercises self-heal their `layer0_exercise_id`
+#     and key the progression off layer0 movement_patterns.
+# Names absent here resolve to None → the caller falls back to the legacy
+# exercise_inventory pattern (status quo; no regression). "Back Squat" and the
+# FIT-generic "Squat" both map to EX001 by design.
+NAME_TO_EX_ID: dict[str, str] = {
+    "Back Squat": "EX001",
+    "Squat": "EX001",
+    "Barbell Hip Thrust": "EX019",
+    "Bulgarian Split Squat": "EX021",
+    "Goblet Squat": "EX002",
+    "Dead Bug": "EX217",
+    "Farmer Carry": "EX009",
+    "Single-Arm DB Row (Staggered)": "EX078",
+    "Lateral Raise": "EX233",
+    "Plank": "EX216",
+    "Side Plank": "EX219",
+    "Pull Up": "EX006",
+    "Push Up": "EX228",
+    "Bench Press": "EX229",
+    "Deadlift": "EX230",
+    "Triceps Extension": "EX235",
+    # The 4 that needed new layer0 entries (0011_add_strength_rx_exercises.sql,
+    # EX246-EX249; Trigger #2, Andy-ratified 2026-06-16).
+    "Row": "EX246",
+    "Curl": "EX247",
+    "Sit Up": "EX248",
+    "KB Halo": "EX249",
+}
+
+
 # layer0 movement_pattern value → rx PROGRESSION_RULES key. Values not listed
 # here fall through to "Various" (the PROGRESSION_RULES fallback row).
 _LAYER0_TO_PROGRESSION: dict[str, str] = {
