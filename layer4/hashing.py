@@ -45,7 +45,11 @@ _LAYER2_BUNDLE_ATTRS = frozenset({"a", "b", "c", "d", "e"})
 # each session purpose (easy/long aerobic vs hill/vert vs technical) to the
 # nearest venue carrying the matching surface, so the synthesizer stops
 # collapsing every session onto the nearest surface.
-LAYER4_PROMPT_REVISION = "5"
+# "6" = #624 Slice 2 grid session-typing — the session grid now types each
+# cardio discipline's count into long/easy/quality slots, binding the surface
+# routing to deterministic per-slot counts; the synthesis prompt directs
+# long+easy → aerobic surface, quality → vert/technical surface.
+LAYER4_PROMPT_REVISION = "6"
 
 
 def _to_jsonable(obj: Any) -> Any:

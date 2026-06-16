@@ -102,6 +102,27 @@ _RACE_SIM_TAPER_SCALE = 0.6  # Taper-1 race-sim ≈ 60% of Peak race-sim
 
 
 @dataclass(frozen=True)
+class SessionTypeSplit:
+    """Per-discipline typing of the week's sessions into purpose slots (#624
+    Slice 2). Binds to the Slice-1 surface routing: `long` is the LSD aerobic
+    cornerstone (primary discipline, phase-gated) and `easy` sessions are
+    aerobic — both go on the discipline's aerobic surface; `quality` are the
+    hard sessions — placed on the vert/technical surface (the LLM matches each
+    quality session's intent to vert-vs-technical from `surface_routes`). The
+    counts are deterministic; sum(quality) == the week `IntensityMix.hard_count`
+    and sum(long+easy) == `easy_count`, so the per-discipline typing and the
+    week-level polarized mix are consistent by construction."""
+
+    long: int
+    easy: int
+    quality: int
+
+    @property
+    def total(self) -> int:
+        return self.long + self.easy + self.quality
+
+
+@dataclass(frozen=True)
 class DisciplineAllocation:
     """One discipline's per-week session count + cadence reasoning."""
 
@@ -111,6 +132,9 @@ class DisciplineAllocation:
     typical_session_minutes: int
     target_hours_this_week: float  # mid of `phase_week_volume_bands_hours` band
     cadence_note: str | None = None  # "maintenance: 1× every 3 weeks" when sub-threshold
+    # #624 Slice 2 — per-discipline long/easy/quality typing (cardio only; None
+    # for strength + zero-session allocations). Set in `build_session_grid`.
+    session_types: SessionTypeSplit | None = None
 
 
 @dataclass(frozen=True)
@@ -239,6 +263,70 @@ def _intensity_mix(phase_name: str, total_cardio_sessions: int) -> IntensityMix:
         easy_count=total_cardio_sessions - hard_count,
         hard_count=hard_count,
     )
+
+
+def _type_sessions(
+    allocations: list[DisciplineAllocation],
+    phase_name: str,
+    intensity: IntensityMix,
+) -> list[DisciplineAllocation]:
+    """Type each cardio discipline's sessions into long/easy/quality slots (#624
+    Slice 2), binding the surface routing to deterministic per-slot counts.
+
+    The week-level `intensity.hard_count` is the authority on how many quality
+    (hard) sessions the week carries; it is distributed across the cardio
+    disciplines proportional to their session counts (largest-remainder, capped
+    at each discipline's count) so sum(quality) == hard_count exactly. Each
+    discipline's remaining (aerobic) sessions are `easy`, except the primary
+    (highest-load-weight) discipline carves one `long` LSD cornerstone in every
+    phase but Taper. Strength + zero-session allocations are left untyped (None).
+
+    Returns the input list with `session_types` set on each cardio allocation
+    (identity-preserving for the strength/zero rows)."""
+    cardio = [
+        a for a in allocations
+        if a.discipline_id != "strength" and a.sessions_this_week > 0
+    ]
+    if not cardio:
+        return allocations
+
+    total_cardio = sum(a.sessions_this_week for a in cardio)
+    # Distribute the week hard_count proportional to each discipline's session
+    # count via largest-remainder, capped at the discipline's own count.
+    hard_total = min(intensity.hard_count, total_cardio)
+    quotas = {
+        a.discipline_id: hard_total * a.sessions_this_week / total_cardio
+        for a in cardio
+    }
+    quality_by_id = {a.discipline_id: int(quotas[a.discipline_id]) for a in cardio}
+    remaining = hard_total - sum(quality_by_id.values())
+    # Hand out the remaining hard sessions to the largest fractional remainders,
+    # skipping any discipline already at its session cap.
+    for a in sorted(
+        cardio,
+        key=lambda a: quotas[a.discipline_id] - int(quotas[a.discipline_id]),
+        reverse=True,
+    ):
+        if remaining <= 0:
+            break
+        if quality_by_id[a.discipline_id] < a.sessions_this_week:
+            quality_by_id[a.discipline_id] += 1
+            remaining -= 1
+
+    primary_id = cardio[0].discipline_id  # allocations are load-weight-sorted desc
+    out: list[DisciplineAllocation] = []
+    for a in allocations:
+        if a.discipline_id == "strength" or a.sessions_this_week <= 0:
+            out.append(a)
+            continue
+        quality = quality_by_id[a.discipline_id]
+        aerobic = a.sessions_this_week - quality
+        long = 1 if (a.discipline_id == primary_id and phase_name != "Taper" and aerobic >= 1) else 0
+        out.append(replace(
+            a,
+            session_types=SessionTypeSplit(long=long, easy=aerobic - long, quality=quality),
+        ))
+    return out
 
 
 def _race_sim_slot(
@@ -670,6 +758,11 @@ def build_session_grid(
     )
     intensity = _intensity_mix(phase_name, cardio_total)
 
+    # §5.1 Slice 2 — type each cardio discipline's sessions into long/easy/quality
+    # so the surface routing binds to deterministic per-slot counts. Consistent
+    # with the week-level mix by construction (sum(quality) == hard_count).
+    allocations = _type_sessions(allocations, phase_name, intensity)
+
     # Race-sim slot requires phase_weeks for the Taper-week-1 check.
     phase_weeks: int | None = None
     if phase_structure is not None:
@@ -701,6 +794,7 @@ __all__ = [
     "IntensityMix",
     "RaceSimLongDay",
     "SessionGrid",
+    "SessionTypeSplit",
     "apply_session_ceiling",
     "apply_strength_saturation_cap",
     "build_session_grid",

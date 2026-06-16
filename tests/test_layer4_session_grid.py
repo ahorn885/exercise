@@ -305,6 +305,81 @@ class TestIntensityMix:
         assert grid.intensity_mix.total == running.sessions_this_week
 
 
+# ─── §5.1 Slice 2 session typing (#624) ──────────────────────────────────────
+
+
+class TestSessionTypes:
+    def test_quality_counts_sum_to_week_hard_count(self):
+        """The per-discipline quality counts sum exactly to the week-level
+        hard_count — the typing and the polarized mix are consistent."""
+        l2a = _layer2a([
+            _discipline("trail_running", "Running", load_weight=3.0,
+                        build_pct=(40.0, 50.0)),
+            _discipline("mtb_outdoor", "MTB", load_weight=2.0,
+                        build_pct=(25.0, 35.0)),
+        ])
+        ps = _phase_structure({"Base": 4, "Build": 4, "Peak": 4, "Taper": 2})
+        grid = build_session_grid(l2a, ps, "Build", 1, capacity_hours=14.0)
+        typed = [a for a in grid.discipline_allocations if a.session_types is not None]
+        assert typed, "expected cardio disciplines to be typed"
+        assert sum(a.session_types.quality for a in typed) == grid.intensity_mix.hard_count
+        # Each discipline's slots account for exactly its session count.
+        for a in typed:
+            assert a.session_types.total == a.sessions_this_week
+
+    def test_primary_discipline_gets_one_long_anchor(self):
+        """The highest-load-weight cardio discipline carves exactly one long
+        LSD cornerstone; secondaries carry none."""
+        l2a = _layer2a([
+            _discipline("trail_running", "Running", load_weight=3.0,
+                        build_pct=(40.0, 50.0)),
+            _discipline("mtb_outdoor", "MTB", load_weight=2.0,
+                        build_pct=(25.0, 35.0)),
+        ])
+        ps = _phase_structure({"Base": 4, "Build": 4, "Peak": 4, "Taper": 2})
+        grid = build_session_grid(l2a, ps, "Build", 1, capacity_hours=14.0)
+        primary = next(a for a in grid.discipline_allocations if a.discipline_id == "trail_running")
+        secondary = next(a for a in grid.discipline_allocations if a.discipline_id == "mtb_outdoor")
+        assert primary.session_types.long == 1
+        assert secondary.session_types.long == 0
+
+    def test_taper_drops_the_long_anchor(self):
+        """No phase but Taper carries the long cornerstone; Taper drops LSD."""
+        l2a = _layer2a([
+            _discipline("trail_running", "Running", load_weight=3.0,
+                        taper_pct=(40.0, 50.0)),
+        ])
+        ps = _phase_structure({"Base": 4, "Build": 4, "Peak": 4, "Taper": 2})
+        grid = build_session_grid(l2a, ps, "Taper", 1, capacity_hours=7.0)
+        primary = next(a for a in grid.discipline_allocations if a.discipline_id == "trail_running")
+        if primary.sessions_this_week > 0:
+            assert primary.session_types.long == 0
+
+    def test_strength_is_not_typed(self):
+        """Strength is not surface-routed → session_types stays None."""
+        l2a = _layer2a([
+            _discipline("trail_running", "Running", load_weight=3.0,
+                        build_pct=(50.0, 60.0)),
+            _discipline("strength", "Strength", load_weight=1.0,
+                        build_pct=(20.0, 30.0)),
+        ])
+        ps = _phase_structure({"Base": 4, "Build": 4, "Peak": 4, "Taper": 2})
+        grid = build_session_grid(l2a, ps, "Build", 1, capacity_hours=14.0)
+        strength = next(a for a in grid.discipline_allocations if a.discipline_id == "strength")
+        assert strength.session_types is None
+
+    def test_no_negative_easy_when_all_sessions_are_quality(self):
+        """quality never exceeds the discipline's session count, so easy ≥ 0."""
+        l2a = _layer2a([_discipline("trail_running", "Running", load_weight=3.0)])
+        ps = _phase_structure({"Base": 4, "Build": 4, "Peak": 4, "Taper": 2})
+        for phase in ("Base", "Build", "Peak", "Taper"):
+            grid = build_session_grid(l2a, ps, phase, 1, capacity_hours=14.0)
+            for a in grid.discipline_allocations:
+                if a.session_types is not None:
+                    assert a.session_types.easy >= 0
+                    assert a.session_types.quality <= a.sessions_this_week
+
+
 # ─── §5.2 race-sim long day ─────────────────────────────────────────────────
 
 
