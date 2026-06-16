@@ -102,6 +102,16 @@ When you build a new feature or edit an existing one, **add logging if it doesn'
 
 Rationale: the pv=69 triage (2026-06-13) burned a long investigation because both the terrain-feasibility cascade and the per-block payload-validation reject were `print()`-silent on the decision detail — the offending sessions were truncated inside the pydantic error and the cascade inputs were never logged, so root cause had to be reverse-engineered from indirect signals. This is the build-side complement to Rule #14 (which governs *reading* logs); Rule #14 only helps when the line was written in the first place.
 
+### Rule #16 — Plan generation is slow by design; diagnose root cause, not timing (Andy 2026-06-16)
+
+Two coupled habits when watching or debugging a live plan-create/refresh:
+
+1. **Don't read "slow" as "stuck."** Generation legitimately takes many minutes — it's multi-pass and resumable, individual block-synthesis LLM calls run **~100s+** (thinking-heavy), and a full plan can be **20–30+ min**. The normal in-flight signals *look* alarming but are not: `plan_sessions` stays **empty until the plan flips `ready`** (it's a single all-at-once write at the end); `plan_progress_blocks` fills slowly and holds **pre-`rx_wire`** raw synthesizer text (not the final loads); and `/admin/logs` shows the every-minute cron/poller logging `advance lock held elsewhere … skipping` while one pass holds the lock and runs the cone. **None of these mean a stall.** Before concluding anything is wrong, confirm forward progress from `plan_versions.generation_units_cached`, the newest `plan_progress_blocks.snapshot_at`, or the latest `synthesize_phase … llm call <ms>` log line. The *real* stall signal is explicit and loud: the D-77 `stall backstop tripped` log + a `failed` row.
+
+2. **When something is genuinely slow or failing, find WHY a pipeline step is expensive — do not reach for the time budget.** Raising the Vercel function cap / `PLAN_GEN_FUNCTION_CAP_S` / the advance-lock TTL is almost never the fix and wastes effort; *the time allowed is rarely the root cause.* Read the logs for the **reason** a step is slow or fumbling — which block, which LLM call, token counts, retries, a thinking-budget blowup (#423), a payload-validation reject — and fix that, not the timeout.
+
+Rationale: every recent live-plan watch (pv=71, pv=73, …) burned turns treating ordinary slow generation as an orphaned-lock/stall before the full log revealed a healthy ~108s block synthesis. The timing/budget angle has repeatedly been the wrong place to look. (Live-plan timing facts + the `web_fetch_vercel_url` log recipe live in *Environment quick-reference → Ops automation*.)
+
 ---
 
 ## Stop-and-ask triggers
