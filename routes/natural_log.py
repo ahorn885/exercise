@@ -350,11 +350,9 @@ def save():
                         'duration_sec': s.get('duration_sec'),
                     })
 
-                # exercise_inventory is a shared catalog
-                ei = db.execute(
-                    'SELECT id FROM exercise_inventory WHERE exercise=?', (exercise,)
-                ).fetchone()
-                exercise_id = ei['id'] if ei else None
+                # sub_group denormalizes the progression movement_pattern from
+                # current_rx. The public exercise_inventory.id FK is no longer
+                # written (#430 Slice C) — training_log keys off the name.
                 rx = db.execute(
                     'SELECT movement_pattern FROM current_rx WHERE exercise=? AND user_id=?',
                     (exercise, uid)
@@ -370,11 +368,11 @@ def save():
 
                 log_cur = db.execute(
                     '''INSERT INTO training_log
-                       (date, exercise, exercise_id, sub_group, session_id,
+                       (date, exercise, sub_group, session_id,
                         actual_sets, actual_reps, actual_weight, actual_duration,
                         rpe, volume, body_weight, plan_item_id, notes, user_id)
-                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) RETURNING id''',
-                    (session_date, exercise, exercise_id, movement_pattern, session_id,
+                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?) RETURNING id''',
+                    (session_date, exercise, movement_pattern, session_id,
                      actual_sets, last_reps, max_weight, last_duration,
                      ex_data.get('rpe'), volume, body_weight,
                      plan_item_id, ex_data.get('notes', ''), uid)

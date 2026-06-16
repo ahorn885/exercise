@@ -302,13 +302,13 @@ def save_session():
 
         log_cur = db.execute(
             '''INSERT INTO training_log
-               (date, exercise, exercise_id, sub_group, recovery_cost, session_id,
+               (date, exercise, sub_group, recovery_cost, session_id,
                 target_sets, target_reps, target_weight, target_duration,
                 actual_sets, actual_reps, actual_weight, actual_duration,
                 rpe, rest_sec, outcome, est_1rm, volume, body_weight,
                 next_weight, next_sets, next_reps, next_duration, plan_item_id, notes, user_id)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) RETURNING id''',
-            (date, exercise, rx['exercise_id'], rx['movement_pattern'], None, session_id,
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) RETURNING id''',
+            (date, exercise, rx['movement_pattern'], None, session_id,
              target_sets, target_reps, target_weight, target_duration,
              actual_sets, last_reps, max_weight, last_duration,
              rpe, rest_sec, rx['outcome'], est_1rm, volume, body_weight,
@@ -533,13 +533,13 @@ def _save_entry(db, entry_id):
 
     if entry_id:
         db.execute('''UPDATE training_log SET
-            date=?, exercise=?, exercise_id=?, sub_group=?, recovery_cost=?,
+            date=?, exercise=?, sub_group=?, recovery_cost=?,
             target_sets=?, target_reps=?, target_weight=?, target_duration=?,
             actual_sets=?, actual_reps=?, actual_weight=?, actual_duration=?,
             rpe=?, rest_sec=?, outcome=?, est_1rm=?, volume=?, body_weight=?,
             next_weight=?, next_sets=?, next_reps=?, next_duration=?, plan_item_id=?, notes=?
             WHERE id=? AND user_id=?''',
-            (date, exercise, rx['exercise_id'], rx['movement_pattern'], None,
+            (date, exercise, rx['movement_pattern'], None,
              target_sets, target_reps, target_weight, target_duration,
              actual_sets, actual_reps, actual_weight, actual_duration,
              rpe, rest_sec, rx['outcome'], est_1rm, volume, body_weight,
@@ -547,13 +547,13 @@ def _save_entry(db, entry_id):
              plan_item_id, f.get('notes', ''), entry_id, uid))
     else:
         db.execute('''INSERT INTO training_log
-            (date, exercise, exercise_id, sub_group, recovery_cost,
+            (date, exercise, sub_group, recovery_cost,
              target_sets, target_reps, target_weight, target_duration,
              actual_sets, actual_reps, actual_weight, actual_duration,
              rpe, rest_sec, outcome, est_1rm, volume, body_weight,
              next_weight, next_sets, next_reps, next_duration, plan_item_id, notes, user_id)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
-            (date, exercise, rx['exercise_id'], rx['movement_pattern'], None,
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
+            (date, exercise, rx['movement_pattern'], None,
              target_sets, target_reps, target_weight, target_duration,
              actual_sets, actual_reps, actual_weight, actual_duration,
              rpe, rest_sec, rx['outcome'], est_1rm, volume, body_weight,

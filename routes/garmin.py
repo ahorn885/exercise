@@ -317,12 +317,12 @@ def import_confirm():
 
             log_cur = db.execute(
                 '''INSERT INTO training_log
-                   (date, exercise, exercise_id, sub_group, session_id,
+                   (date, exercise, sub_group, session_id,
                     actual_sets, actual_reps, actual_weight, actual_duration,
                     outcome, est_1rm, volume, body_weight,
                     next_weight, next_sets, next_reps, next_duration, plan_item_id, notes, user_id)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) RETURNING id''',
-                (row.get('date'), exercise, rx['exercise_id'], rx['movement_pattern'], session_id,
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) RETURNING id''',
+                (row.get('date'), exercise, rx['movement_pattern'], session_id,
                  actual_sets, last_reps, max_weight, last_duration,
                  rx['outcome'], est_1rm, volume, body_weight,
                  rx['next_weight'], rx['next_sets'], rx['next_reps'], rx['next_duration'],
@@ -491,13 +491,13 @@ def _bulk_insert_strength(db, rows: list, uid: int, gid: str,
 
         log_cur = db.execute(
             '''INSERT INTO training_log
-               (date, exercise, exercise_id, sub_group, session_id,
+               (date, exercise, sub_group, session_id,
                 actual_sets, actual_reps, actual_weight, actual_duration,
                 outcome, est_1rm, volume, body_weight,
                 next_weight, next_sets, next_reps, next_duration,
                 garmin_activity_id, plan_item_id, notes, user_id)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) RETURNING id''',
-            (row.get('date'), exercise, rx['exercise_id'], rx['movement_pattern'], session_id,
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) RETURNING id''',
+            (row.get('date'), exercise, rx['movement_pattern'], session_id,
              actual_sets, last_reps, max_weight, last_duration,
              rx['outcome'], est_1rm, volume, body_weight,
              rx['next_weight'], rx['next_sets'], rx['next_reps'], rx['next_duration'],
@@ -789,13 +789,13 @@ def _import_activity(db, act: dict, plan_item, compliance: dict,
 
                 log_cur = db.execute(
                     '''INSERT INTO training_log
-                       (date, exercise, exercise_id, sub_group, session_id,
+                       (date, exercise, sub_group, session_id,
                         actual_sets, actual_reps, actual_weight, actual_duration,
                         outcome, est_1rm, volume, body_weight,
                         next_weight, next_sets, next_reps, next_duration,
                         garmin_activity_id, plan_item_id, notes, user_id)
-                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) RETURNING id''',
-                    (row.get('date'), exercise, rx['exercise_id'], rx['movement_pattern'], session_id,
+                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) RETURNING id''',
+                    (row.get('date'), exercise, rx['movement_pattern'], session_id,
                      actual_sets, last_reps, max_weight, last_duration,
                      rx['outcome'], est_1rm, volume, body_weight,
                      rx['next_weight'], rx['next_sets'], rx['next_reps'], rx['next_duration'],
