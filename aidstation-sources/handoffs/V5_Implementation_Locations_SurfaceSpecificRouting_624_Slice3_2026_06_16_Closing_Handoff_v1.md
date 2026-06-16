@@ -2,7 +2,7 @@
 
 **Date:** 2026-06-16
 **Branch:** `claude/aidstation-surface-routing-ddhuyv`
-**PR:** #642 — opened ready-for-review, auto-merge enabled, awaiting CI (Layer 0 integrity gate + Python unit suite + JS harness).
+**PR:** [#642](https://github.com/ahorn885/exercise/pull/642) — opened ready-for-review, auto-merge enabled, awaiting CI (Layer 0 integrity gate + Python unit suite + JS harness).
 **Design:** `designs/Layer4_SurfaceSpecificRouting_624_Design_v3.md` (bumped from v2 — Slice 3 as-built; v2 archived under `archive/superseded-specs/`).
 **Predecessor handoff:** `handoffs/V5_Implementation_Locations_SurfaceSpecificRouting_624_Slice2_2026_06_16_Closing_Handoff_v1.md` (#624 Slice 2, PR #641 merged).
 
