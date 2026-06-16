@@ -86,6 +86,33 @@ equipment, purchase recommendations, training modalities, locale
 `get_db()` raises `RuntimeError` if `DATABASE_URL` is unset — the app
 has no SQLite fallback path.
 
+### Duplicate `DATABASE_URL` / `DATABASE_URL_UNPOOLED` in the Vercel env list
+
+If the project's Environment Variables list shows `DATABASE_URL` (and its
+Neon companion `DATABASE_URL_UNPOOLED`) repeated many times, nothing in this
+repo is adding them — there is no `vercel env add` in any script, workflow, or
+hook. They are **branch-scoped Preview variables** created by the Neon ↔ Vercel
+integration, which provisions a Neon database branch plus a per-branch
+`DATABASE_URL`/`DATABASE_URL_UNPOOLED` pair for **every preview deployment**.
+Each PR — and each Claude Code web session, which opens a fresh `claude/*`
+branch — spawns another pair, and they are never pruned when the branch/PR
+closes, so they accumulate under the same names (each scoped to a different Git
+branch). List them with `vercel env ls preview` (optionally per-branch:
+`vercel env ls preview <branch>`).
+
+The running app reads only the **unscoped** `DATABASE_URL` (`database.py:5`), so
+deleting the stale branch-scoped copies is safe for prod and normal previews.
+
+To stop the accrual and clean up:
+- **Stop new ones** — in Neon Console → Integrations → Vercel (or Vercel →
+  Project → Storage/Integrations → Neon → Settings): turn **off** per-preview
+  branch creation, **and/or** turn **on** "delete the Neon branch when the Git
+  branch is deleted" (prunes the branch and its env vars on PR close).
+- **Clean up existing** — Vercel → Project → Settings → Environment Variables,
+  filter to **Preview**, delete the stale branch-scoped `DATABASE_URL` /
+  `DATABASE_URL_UNPOOLED` entries (keep Production + the active branch), then
+  delete the matching orphaned branches in Neon → Branches.
+
 ### The `database.py` compatibility layer
 
 ```
