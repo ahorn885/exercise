@@ -249,11 +249,12 @@ The user prompt's `=== Session grid ===` block is computed deterministically fro
 
 - Per-discipline session counts each week (including maintenance-cadence rotations for small-share disciplines — a discipline at e.g. 3% of phase_load gets ~1 session every 3–4 weeks rather than once weekly).
 - The cardio polarized intensity mix (easy vs hard session count at the week level — no Z3/moderate; polarized training avoids it).
+- The per-discipline session typing — each cardio discipline's count is typed into `long` / `easy` / `quality` slots (these sum to the week-level mix). Honor each discipline's typed counts.
 - Race-sim long day slot (present only when the race format is `continuous_multi_day`; multi-discipline, weekend-anchored).
 
-Your job: PLACE these sessions across the week — pick the day, the time-of-day, the exercise/discipline content within the constraints, and the coaching intent. Do NOT deviate from the counts, the intensity mix, or the maintenance cadence. If a discipline shows 0 sessions for this week (maintenance-week skip), honor that. If the grid is genuinely wrong (e.g. an excluded discipline shows allocation), call it out in `phase_synthesis_notes` and produce the best plan you can within the grid.
+Your job: PLACE these sessions across the week — pick the day, the time-of-day, the exercise/discipline content within the constraints, and the coaching intent. Do NOT deviate from the counts, the intensity mix, the per-discipline typing, or the maintenance cadence. If a discipline shows 0 sessions for this week (maintenance-week skip), honor that. If the grid is genuinely wrong (e.g. an excluded discipline shows allocation), call it out in `phase_synthesis_notes` and produce the best plan you can within the grid.
 
-The intensity mix is at-the-week level, not per-discipline — distribute the easy/hard count across the cardio sessions as you see fit. Typically the long session is hard or moderate-effort and short sessions are easy; the race-sim long day (when present) counts as one hard session.
+Session typing is prescribed **per discipline** (long / easy / quality), not just the week-level mix. The `long` session is the LSD aerobic cornerstone and `easy` sessions are aerobic — place BOTH on the discipline's **aerobic** surface from the feasibility surface routing. The `quality` sessions are the hard sessions — place them on the discipline's **vert or technical** surface, matching each quality session's intent to the surface its purpose calls for (hill/vert work on the elevation surface; skill/technical work on the technical surface). Do not collapse every session onto one surface. The race-sim long day (when present) counts as one quality session. When a discipline has no surface routing (single-surface, or all surfaces at one locale), the typing still governs the effort distribution.
 
 # Coaching-flag emission (closed-set; 6 flags LLM-emitted)
 
@@ -1103,6 +1104,11 @@ def _format_session_grid(
         # is attributable to the grid vs. the failover substitution.
         _alloc_dbg = ", ".join(
             f"{a.discipline_id}:{a.sessions_this_week}x{a.typical_session_minutes}m"
+            + (
+                f"(L{a.session_types.long}/E{a.session_types.easy}/Q{a.session_types.quality})"
+                if a.session_types is not None
+                else ""
+            )
             for a in grid.discipline_allocations
         )
         print(
@@ -1146,9 +1152,23 @@ def _format_session_grid(
                 f"{a.sessions_this_week} session(s) × ~{a.typical_session_minutes} min, "
                 f"target {a.target_hours_this_week:.1f} hours{cadence}.{gate}{terrain_tag}"
             )
+            # #624 Slice 2 — the deterministic long/easy/quality typing that binds
+            # to the feasibility surface routing (long + easy → aerobic surface;
+            # quality → vert/technical surface).
+            st = a.session_types
+            if st is not None and st.total > 0:
+                parts = []
+                if st.long:
+                    parts.append(f"{st.long}× long (LSD, aerobic)")
+                if st.easy:
+                    parts.append(f"{st.easy}× easy (aerobic)")
+                if st.quality:
+                    parts.append(f"{st.quality}× quality (vert/technical)")
+                out.append(f"    Session types (deterministic): {' + '.join(parts)}.")
         if grid.intensity_mix.total > 0:
             out.append(
-                f"  Cardio intensity mix (polarized, week-level): "
+                f"  Cardio intensity mix (polarized, week-level aggregate — the "
+                f"per-discipline quality counts above sum to it): "
                 f"{grid.intensity_mix.easy_count} easy + "
                 f"{grid.intensity_mix.hard_count} hard."
             )
