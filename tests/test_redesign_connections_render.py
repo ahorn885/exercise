@@ -102,9 +102,9 @@ def test_sources_tab(monkeypatch):
     html = resp.get_data(as_text=True)
     assert 'app-shell' in html
     assert 'Bring data in.' in html
-    # Three tabs present.
+    # Two tabs present (Preferences tab removed, #619).
     assert 'role="tablist"' in html
-    assert '?tab=files' in html and '?tab=prefs' in html
+    assert '?tab=files' in html and '?tab=prefs' not in html
     # Real OAuth providers + Garmin PAUSED + at least one stub.
     assert 'COROS' in html
     assert 'Polar' in html
@@ -174,17 +174,15 @@ def test_files_tab_empty(monkeypatch):
     assert 'style="' not in html
 
 
-def test_prefs_tab_is_grounded(monkeypatch):
+def test_prefs_tab_removed_falls_back_to_sources(monkeypatch):
+    # The Preferences tab was removed (#619); ?tab=prefs is no longer a valid
+    # tab, so it falls back to Sources.
     client = _client(monkeypatch)
     resp = client.get('/connections/?tab=prefs')
     assert resp.status_code == 200
     html = resp.get_data(as_text=True)
-    assert 'app-shell' in html
-    # Grounded, real-behavior facts — no fabricated toggles.
-    assert 'Duplicate detection' in html
-    assert 'SHA-256' in html
-    assert 'Paused' in html
-    assert 'style="' not in html
+    assert 'Auto-sync providers' in html
+    assert 'Duplicate detection' not in html
 
 
 def test_bad_tab_falls_back_to_sources(monkeypatch):

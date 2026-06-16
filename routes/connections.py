@@ -43,7 +43,7 @@ STUB_PROVIDERS = (
     {'slug': 'ride_with_gps', 'label': 'Ride With GPS', 'scopes': 'routes'},
 )
 
-VALID_TABS = ('sources', 'files', 'prefs')
+VALID_TABS = ('sources', 'files')
 
 _ACTIVITY_SQL = (
     'SELECT id, date, activity, activity_name, duration_min, distance_mi, '

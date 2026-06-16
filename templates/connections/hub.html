@@ -31,8 +31,7 @@
 <div class="conn-tabs" role="tablist" aria-label="Data sections">
   {% for key, label, sub in [
        ('sources', 'Sources', 'providers + upload'),
-       ('files', 'Files', 'import history'),
-       ('prefs', 'Preferences', 'how ingestion works')] %}
+       ('files', 'Files', 'import history')] %}
   <a class="conn-tab{{ ' is-on' if tab == key else '' }}" role="tab"
      aria-selected="{{ 'true' if tab == key else 'false' }}"
      href="{{ url_for('connections.hub', tab=key) }}">
@@ -144,7 +143,7 @@
 </div>
 
 {# ════════════════════════ FILES ════════════════════════ #}
-{% elif tab == 'files' %}
+{% else %}
 <div class="conn-files">
 
   <div class="cf-list">
@@ -182,47 +181,6 @@
     {% endif %}
   </div>
 
-</div>
-
-{# ════════════════════════ PREFERENCES ════════════════════════ #}
-{% else %}
-<div class="stack conn-prefs">
-  <p class="page-sub conn-prefs-lede">How ingestion behaves today. These are the live rules — there's
-    no toggles to set yet; the configurable trust-order, pull-window, and retention controls arrive
-    with a settings backend.</p>
-
-  <div class="row">
-    <div class="col">
-      <div class="card card-pad">
-        <p class="eyebrow">● Duplicates &amp; matching</p>
-        <dl class="pref-facts">
-          <dt>Duplicate detection</dt>
-          <dd>Exact file-content match (SHA-256). Re-uploading the same .FIT — or re-syncing an
-            activity we've already pulled — is skipped automatically.</dd>
-          <dt>Plan matching</dt>
-          <dd>Imports are matched to a planned workout when the date and sport line up, so completing
-            a session updates the plan.</dd>
-          <dt>Sport detection</dt>
-          <dd>Read from the .FIT sport field when present; we fall back to the file naming otherwise.</dd>
-        </dl>
-      </div>
-    </div>
-    <div class="col">
-      <div class="card card-pad">
-        <p class="eyebrow">● Sources &amp; providers</p>
-        <dl class="pref-facts">
-          <dt>Manual + auto, one log</dt>
-          <dd>Manual .FIT uploads and provider syncs land in the same activity log — nothing is
-            siloed by source.</dd>
-          <dt>Garmin</dt>
-          <dd>Paused — Garmin Connect API access is closed. Export a .FIT and upload it manually.</dd>
-          <dt>Provider connections</dt>
-          <dd>Connect, re-authorise, or revoke a provider on the
-            <a href="{{ url_for('connections.hub', tab='sources') }}">Sources</a> tab.</dd>
-        </dl>
-      </div>
-    </div>
-  </div>
 </div>
 {% endif %}
 {% endblock %}
