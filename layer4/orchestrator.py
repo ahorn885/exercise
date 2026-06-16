@@ -362,7 +362,10 @@ def _q_terrain_names(db: Any) -> dict[str, str]:
     venue menu in the feasibility line (#624). Empty dict → the menu falls back to
     the raw TRN id (degrades, doesn't crash)."""
     try:
-        cur = db.execute("SELECT terrain_id, canonical_name FROM layer0.terrain_types")
+        cur = db.execute(
+            "SELECT terrain_id, canonical_name FROM layer0.terrain_types "
+            "WHERE superseded_at IS NULL"
+        )
         return {r["terrain_id"]: r["canonical_name"] for r in cur.fetchall()}
     except Exception:  # table unreachable → menu degrades to raw ids
         return {}
