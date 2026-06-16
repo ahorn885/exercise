@@ -51,8 +51,8 @@ Rejected authoring a bespoke terrain→purpose table — it duplicates the attrs
 
 ## 3. STILL OWED
 
-- ⬜ **`layer0-apply` for `0007`** (carried from #622) — the prod Neon apply, awaiting Andy's one-tap `production`-environment approval. Idempotent.
-- ⬜ **post-#572 live T3 *refresh* re-verify** (Rule #14) — needs a live refresh on a real plan + the diag token. Unrelated to this session.
+- ✅ **`layer0-apply` for `0007`** (carried from #622) — **APPLIED to prod Neon (Andy's one-tap, 2026-06-16 02:42 UTC; [`layer0-apply` run #2](https://github.com/ahorn885/exercise/actions/runs/27589849174) → success).** Log confirms real work, not a no-op: `0007` superseded 9 equipment vessels, added 3 craft aliases + 7 craft_terrain rows, de-drifted 27 exercises (`NOTICE: 0007: OK`); `0006` re-ran as a clean idempotent no-op first. The vessels are out of the equipment picker live. (Also re-verified via read-only `neon-query` in the Slice-2 session.)
+- ⬜ **post-#572 live T3 *refresh* re-verify** (Rule #14) — needs a live refresh on a real plan + the diag token. Unrelated to this session. (Now the only outstanding owed item.)
 
 ## 4. NEXT STEPS — the "Locations & Gear" arc continues
 
@@ -84,4 +84,4 @@ Rejected authoring a bespoke terrain→purpose table — it duplicates the attrs
 | Suite | — | tests/ 2487 passed / 30 skipped; etl/tests 89 |
 | Gate | — | NO DDL (reads existing columns); Layer-0 gate + JS harness unaffected |
 | Issue | #624 | OPEN, narrowed to Slice 2/3 |
-| Owed | — | `layer0-apply` for 0007 (#622, Andy's one-tap); T3-refresh re-verify carried |
+| Owed | — | `layer0-apply` for 0007 (#622) **APPLIED 2026-06-16 (run #2, success)**; T3-refresh re-verify the only carried owed |
