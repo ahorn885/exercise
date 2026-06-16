@@ -8,10 +8,14 @@ name: Layer 0 apply migrations to prod
 # reviewer in repo Settings -> Environments FIRST — if the environment does not
 # exist, GitHub creates it unprotected on first run and the gate is a no-op.
 #
-# Applies every etl/migrations/layer0/*.sql in sort order with ON_ERROR_STOP,
-# mirroring the layer0-gate. Migrations are written idempotent (README
-# "safe to re-run"), so re-applying the full 0006+ set is safe even after a
-# baseline re-dump has folded one in.
+# Applies the committed etl/migrations/layer0/[0-9]*.sql migrations to LIVE Neon,
+# each one EXACTLY ONCE via the layer0._applied_migrations ledger
+# (etl/migrations/layer0/_apply_ledger.sql). Re-applying the full chain every run
+# is NOT safe: a migration's atomic verify-block asserts the state right after
+# itself, which a later migration legitimately moves on (e.g. 0009 supersedes
+# rows 0008 pins; 0010 re-versions a row 0009 pins) — so a re-run falsely fails.
+# The ledger applies each migration once, in order, right after which its verify
+# block still holds. The data UPDATEs remain idempotent regardless.
 
 on:
   workflow_dispatch:
@@ -38,20 +42,39 @@ jobs:
           sudo apt-get install -y postgresql-client-17
           echo "/usr/lib/postgresql/17/bin" >> "$GITHUB_PATH"
 
-      - name: Apply migrations in order
+      - name: Apply pending migrations (ledger-tracked, once each)
         env:
           NEON_DATABASE_URL: ${{ secrets.NEON_DATABASE_URL }}
         run: |
           set -euo pipefail
           test -n "${NEON_DATABASE_URL:-}" || { echo "::error::NEON_DATABASE_URL secret unset"; exit 1; }
-          shopt -s nullglob
-          mig=(etl/migrations/layer0/*.sql)
-          if [ "${#mig[@]}" -eq 0 ]; then echo "No migrations to apply."; exit 0; fi
           psql "$NEON_DATABASE_URL" -v ON_ERROR_STOP=1 -c "SELECT version();"
-          echo "## Applied Layer 0 migrations" >> "$GITHUB_STEP_SUMMARY"
+
+          # Ensure the ledger + seed the migrations already applied pre-ledger.
+          psql "$NEON_DATABASE_URL" -v ON_ERROR_STOP=1 -f etl/migrations/layer0/_apply_ledger.sql
+
+          shopt -s nullglob
+          mig=(etl/migrations/layer0/[0-9]*.sql)
+          if [ "${#mig[@]}" -eq 0 ]; then echo "No migrations found."; exit 0; fi
+
+          echo "## Layer 0 apply" >> "$GITHUB_STEP_SUMMARY"
+          applied_any=0
           for m in "${mig[@]}"; do
-            echo "::group::apply $m"
+            fname="$(basename "$m")"
+            already="$(psql "$NEON_DATABASE_URL" -tAc \
+              "SELECT 1 FROM layer0._applied_migrations WHERE filename = '$fname'")"
+            if [ "$already" = "1" ]; then
+              echo "skip (already applied): $fname"
+              echo "- \`$fname\` — skipped (already applied)" >> "$GITHUB_STEP_SUMMARY"
+              continue
+            fi
+            echo "::group::apply $fname"
             psql "$NEON_DATABASE_URL" -v ON_ERROR_STOP=1 -f "$m"
+            # Record only after a clean apply (ON_ERROR_STOP + set -e abort first).
+            psql "$NEON_DATABASE_URL" -v ON_ERROR_STOP=1 \
+              -c "INSERT INTO layer0._applied_migrations (filename) VALUES ('$fname') ON CONFLICT (filename) DO NOTHING;"
             echo "::endgroup::"
-            echo "- \`$m\`" >> "$GITHUB_STEP_SUMMARY"
+            echo "- \`$fname\` — applied" >> "$GITHUB_STEP_SUMMARY"
+            applied_any=1
           done
+          [ "$applied_any" = "1" ] || echo "No pending migrations — all already applied."

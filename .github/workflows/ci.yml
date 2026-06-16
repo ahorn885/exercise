@@ -108,9 +108,12 @@ jobs:
           # Iterate the glob directly: with nullglob an empty dir yields zero
           # iterations. (Do NOT `ls $glob` — under nullglob an empty glob makes
           # `ls` run argument-less and list the cwd.) Zero-padded NNNN names
-          # sort in apply order under default pathname expansion.
+          # sort in apply order under default pathname expansion. The [0-9]*
+          # prefix applies only the numbered migrations in-order from the
+          # baseline (the gate proves they compose); underscore-prefixed helpers
+          # like _apply_ledger.sql are apply-time infra, not gate migrations.
           shopt -s nullglob
-          for m in etl/migrations/layer0/*.sql; do
+          for m in etl/migrations/layer0/[0-9]*.sql; do
             echo "Applying migration: $m"
             psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f "$m"
           done
