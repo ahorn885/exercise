@@ -75,9 +75,10 @@ The CI `layer0-gate` never sees this — it applies the chain in-order from a cl
 
 (Note: a future `layer0-redump` captures `layer0._applied_migrations` in the baseline → add it to `_FAMILY_MAP_EXCEPTIONS` like `supplement_vocabulary`/`discipline_technique_foci`. Flagged in the bootstrap comment.)
 
-## 2. STILL OWED — #648
-- **Re-trigger `layer0-apply` once the apply-ledger PR merges** → it skips `0006`–`0009` (seeded) and applies only `0010` (verify runs right after it). Then **verify** via read-only `neon-query` (0 active exercises reference EX059/EX141/EX147/EX193/EX204; 10 holders at `0B-v1.6.11`). Then **#648 CLOSES completed**.
-- PR #651 (validator + `0010`) already merged (gate green). The apply-ledger fix is its own PR (auto-merge on green).
+## 2. #648 — DONE (applied + verified + closed)
+- **`0010` applied to prod** via `layer0-apply` ([run 27623585346](https://github.com/ahorn885/exercise/actions/runs/27623585346)) — the apply-ledger seeded `0006`–`0009`, **skipped all four**, and applied **only `0010`** (`0010: OK — 11 dangling phantom refs stripped across 10 active exercises; reinserted at 0B-v1.6.11`), then recorded `0010` in the ledger.
+- **Verified** via read-only `neon-query` ([run 27624398459](https://github.com/ahorn885/exercise/actions/runs/27624398459)): `dangling_prog=0, dangling_regr=0, dangling_proxy=0, holders_at_bump=10, ledger_rows=5`.
+- **#648 CLOSED completed.** PRs #651 (validator + `0010`) and #653 (apply-ledger, closes #652) both merged.
 
 ## 3. Side-findings
 - **The #644 verification's "0 dangling refs" was scoped to the cull set only** — the whole-graph scan this validator added found 11 pre-existing phantom refs that predate the cull. Worth remembering: a targeted neon-query verification proves the targeted claim, not graph-wide integrity. The standing validator now covers the gap.
@@ -109,5 +110,7 @@ The CI `layer0-gate` never sees this — it applies the chain in-order from a cl
 | FK gap (now closed) | `etl/layer0/validation/fk_checks.py` | was disciplines-family only; the exercises-FK gap #648 tracked is now covered by the new check |
 | CI gate | `.github/workflows/ci.yml` (`layer0-gate`) | baseline + `0006`–`0010`, `python -m etl.layer0.validate_layer0` — new check runs via the registry, no workflow edit; first run RED surfaced the 11 phantom refs, green once `0010` applies |
 | Tests run | — | `etl/tests/` 90 passed (container: psql client only → CI is the authoritative live-DB gate) |
-| Issue #648 | — | CLOSES completed after `0010` applied to prod (`layer0-apply`) + verified (`neon-query`) — apply+verify owed |
-| Owed | — | #648: apply+verify `0010`; carried: post-#572 live T3-refresh re-verify (Rule #14) |
+| Prod apply | — | `layer0-apply` run 27623585346 (ledger skipped 0006–0009, applied only 0010); `neon-query` run 27624398459 → `0 / 0 / 0 / 10 / 5` |
+| Issue #648 | — | CLOSED completed (0010 applied + verified) |
+| Issue #652 | — | NEW — apply-model bug; CLOSED via #653 (apply-ledger) |
+| Owed | — | none on #648; carried: post-#572 live T3-refresh re-verify (Rule #14) |
