@@ -26,14 +26,11 @@ legibility.
 
 from __future__ import annotations
 
-import logging
 from dataclasses import dataclass, field
 from typing import Any
 
 from layer4.context import Layer2CPayload, ResolvedExercise
 from layer4.payload import Layer4Payload, PlanSession, StrengthExercise
-
-_log = logging.getLogger(__name__)
 
 _FIRST_EXPOSURE_FLAG = "first_exposure"
 
@@ -171,19 +168,33 @@ def _classify_category(
 
 
 def _render_current_rx(rx: dict[str, Any], unit_pref: str | None = None) -> str | None:
-    """Format `{sets, reps, weight_kg}` as `"{sets} × {reps} @ {wt} {unit}"`.
+    """Format the athlete's logged baseline as a LOAD-ONLY directive — the
+    weight (`"185 lb"`) or, for time-based exercises, the per-set duration
+    (`"45s"`).
+
+    Returns the load portion ONLY, not `"{sets} × {reps} @ {weight}"`:
+    `templates/plan_create/view.html` already renders the prescription as
+    `{{ ex.sets }} × {{ ex.reps_per_set }} @ {{ ex.load_prescription }}`, and
+    the LLM-free-text + first-exposure paths likewise fill `load_prescription`
+    with a load qualifier. Returning the full string here double-rendered as
+    `3 × 5 @ 3 × 5 @ 185 lb`; load-only keeps the field's contract consistent
+    across all three paths.
 
     `unit_pref` selects the athlete's display unit (`imperial` → lb, `metric`
-    → kg). Storage is canonical kg; the `units.format_weight` helper handles
-    rounding so imperial loads still read as whole numbers.
+    → kg). Storage is canonical kg; `units.format_weight` handles rounding so
+    imperial loads still read as whole numbers.
 
     Returns None when the row is too sparse to render meaningfully
     (no weight + no duration); the caller falls through to first-exposure.
+
+    NOTE: the displayed sets/reps stay the synthesizer's, so on a hit the
+    weight rides whatever reps the block emitted. Reconciling the athlete's
+    logged sets/reps and progressing via `current_rx.next_*` against the phase
+    dose policy — keyed off a single source of truth for the exercise names —
+    is the deferred #335 progression arc.
     """
     from units import format_weight  # local import — module load order
 
-    sets = rx.get("sets")
-    reps = rx.get("reps")
     weight = rx.get("weight_kg")
     duration = rx.get("duration_sec")
 
@@ -192,22 +203,13 @@ def _render_current_rx(rx: dict[str, Any], unit_pref: str | None = None) -> str 
             weight_str = format_weight(float(weight), unit_pref)
         except (TypeError, ValueError):
             return None
-        if not weight_str:
-            return None
-        if sets and reps:
-            return f"{sets} × {reps} @ {weight_str}"
-        if reps:
-            return f"{reps} reps @ {weight_str}"
-        return weight_str
+        return weight_str or None
     if duration is not None and duration > 0:
         # Duration-target exercise (e.g. plank). Render as time per set.
         try:
-            dur_str = f"{int(round(float(duration)))}s"
+            return f"{int(round(float(duration)))}s"
         except (TypeError, ValueError):
             return None
-        if sets:
-            return f"{sets} × {dur_str}"
-        return dur_str
     return None
 
 
@@ -225,7 +227,7 @@ def apply_current_rx(
     For each strength exercise across all sessions:
       - Look up `current_rx(db, user_id, exercise_name)`.
       - If hit + renderable: overwrite `load_prescription` with the precise
-        baseline (`"3 × 8 @ 185 lbs"`).
+        load-only baseline (`"185 lb"`); view.html prepends `sets × reps @`.
       - Else first-exposure: classify category from name + cluster_index,
         write the calibration template, append `first_exposure` to
         `coaching_flags`.
@@ -272,9 +274,11 @@ def apply_current_rx(
             try:
                 rx = current_rx(db, user_id, ex.exercise_name)
             except Exception as exc:  # noqa: BLE001 — degraded path
-                _log.warning(
-                    "rx_wire: session=%s exercise_id=%s current_rx lookup failed: %s",
-                    session.session_id, ex.exercise_id, exc,
+                # print() (not logging) so the line reaches the Vercel drain →
+                # /admin/logs past the app login (Rule #14/#15).
+                print(
+                    f"rx_wire: session={session.session_id} "
+                    f"exercise_id={ex.exercise_id} current_rx lookup failed: {exc}"
                 )
                 skipped += 1
                 outcomes.append(ExerciseRxOutcome(
@@ -332,9 +336,13 @@ def apply_current_rx(
         first_exposure_count=first_exposure,
         skipped_count=skipped,
     )
-    _log.info(
-        "rx_wire: hits=%d first_exposure=%d skipped=%d (exercise_count=%d)",
-        hits, first_exposure, skipped, len(outcomes),
+    # print() (not logging) so the decision summary reaches the Vercel drain →
+    # /admin/logs (Rule #15). The module logger had no handler, so the prior
+    # `_log.info` summary was silent in prod — which is why an all-first-exposure
+    # strength plan (every current_rx lookup missing on the name) went unseen.
+    print(
+        f"rx_wire: hits={hits} first_exposure={first_exposure} "
+        f"skipped={skipped} (exercise_count={len(outcomes)})"
     )
     # No-op short-circuit: if no exercises were touched (no current_rx hit + no
     # first-exposure write), the payload is semantically identical to the input
