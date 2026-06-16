@@ -135,13 +135,71 @@ def cluster_locale_ids(
         "WHERE user_id = ? AND locale != ? AND lat IS NOT NULL AND lng IS NOT NULL",
         (user_id, home["locale"]),
     ).fetchall()
+    # Distance-sorted, NEAREST first (#624): the feasibility cascade resolves the
+    # FIRST cluster locale carrying a required terrain at each tier, so ordering
+    # the cluster by distance makes "first satisfying locale" mean "nearest
+    # satisfying locale" — the deterministic venue pick. (Wires the haversine sort
+    # `resolve_terrain_feasibility` long flagged as a stand-in.) Slug breaks
+    # distance ties for a stable order (the cache key reads this order).
+    within: list[tuple[float, str]] = []
     for r in others:
-        if (
-            _haversine_km(home_lat, home_lng, float(r["lat"]), float(r["lng"]))
-            <= _CLUSTER_RADIUS_KM
-        ):
-            ids.append(r["locale"])
+        d = _haversine_km(home_lat, home_lng, float(r["lat"]), float(r["lng"]))
+        if d <= _CLUSTER_RADIUS_KM:
+            within.append((d, r["locale"]))
+    within.sort(key=lambda t: (t[0], t[1]))
+    ids.extend(locale for _d, locale in within)
     return ids
+
+
+def _humanize_locale_slug(slug: str) -> str:
+    """Fallback display label for a locale that carries no `locale_name`
+    (`'509_williams_avenue'` → `'509 Williams Avenue'`)."""
+    return slug.replace("_", " ").title()
+
+
+def cluster_locale_meta(
+    db: Any, user_id: int, cluster: list[str], anchor_locale: str | None = None
+) -> dict[str, dict[str, Any]]:
+    """Display metadata per cluster locale: its human `name`
+    (`locale_profiles.locale_name`, falling back to a humanized slug) and its
+    great-circle `distance_km` from the cluster anchor (the first cluster locale
+    by default — home).
+
+    Feeds the deterministic venue naming in the synthesis feasibility block
+    (#624 / #618-7) so the synthesizer cites the athlete's real saved locales by
+    NAME + distance instead of inventing a venue or mangling a slug
+    ('509 Williams Avenue' vs 'Williams'). `distance_km` is None when either the
+    anchor or the locale carries no coordinates (manual-entry locales)."""
+    anchor = anchor_locale or (cluster[0] if cluster else None)
+    alat = alng = None
+    if anchor is not None:
+        arow = db.execute(
+            "SELECT lat, lng FROM locale_profiles "
+            "WHERE user_id = ? AND locale = ? LIMIT 1",
+            (user_id, anchor),
+        ).fetchone()
+        if arow is not None and arow["lat"] is not None and arow["lng"] is not None:
+            alat, alng = float(arow["lat"]), float(arow["lng"])
+    out: dict[str, dict[str, Any]] = {}
+    for locale in cluster:
+        row = db.execute(
+            "SELECT locale_name, lat, lng FROM locale_profiles "
+            "WHERE user_id = ? AND locale = ? LIMIT 1",
+            (user_id, locale),
+        ).fetchone()
+        name = (row["locale_name"] if row and row["locale_name"] else "") or (
+            _humanize_locale_slug(locale)
+        )
+        dist: float | None = None
+        if (
+            alat is not None
+            and row is not None
+            and row["lat"] is not None
+            and row["lng"] is not None
+        ):
+            dist = _haversine_km(alat, alng, float(row["lat"]), float(row["lng"]))
+        out[locale] = {"name": name, "distance_km": dist}
+    return out
 
 
 def cluster_effective_tags(db: Any, user_id: int, cluster: list[str]) -> list[str]:

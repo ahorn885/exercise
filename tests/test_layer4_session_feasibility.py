@@ -10,6 +10,8 @@ from __future__ import annotations
 
 from layer4.session_feasibility import (
     TerrainResolution,
+    enrich_resolution_display,
+    feasibility_line,
     indoor_machines,
     required_terrains,
     resolve_terrain_feasibility,
@@ -218,6 +220,75 @@ class TestCascadeOrder:
             gap_rules={"TRN-003": [("TRN-020", 0.65)]},
         )
         assert r.tier == "proxy"
+
+
+class TestDeterministicVenueDisplay:
+    """#624 / #618-7 — the EXACT venue menu names the NEAREST saved locale per
+    terrain (display name + distance), so the synthesizer can't claim 'no nearby
+    groomed trail' or invent a farther park, and cites the locale by its display
+    name rather than its slug ('509 Williams Avenue' not 'Williams')."""
+
+    # pv=71's real cluster shape (distance-sorted as cluster_locale_ids returns):
+    # home has hills only; groomed trail (TRN-002) lives at the nearer Cleburne,
+    # not the farther Dinosaur Valley.
+    _ORDER = ["509_williams_avenue", "cleburne_state_park", "dinosaur_valley_state_park"]
+    _TERRAIN = {
+        "509_williams_avenue": {"TRN-001", "TRN-004"},          # Road, Hill/Rolling
+        "cleburne_state_park": {"TRN-002", "TRN-003", "TRN-004"},  # Groomed/Tech/Hill
+        "dinosaur_valley_state_park": {"TRN-002", "TRN-003"},
+    }
+    _META = {
+        "509_williams_avenue": {"name": "509 Williams Avenue", "distance_km": 0.0},
+        "cleburne_state_park": {"name": "Cleburne State Park", "distance_km": 18.0},
+        "dinosaur_valley_state_park": {"name": "Dinosaur Valley State Park", "distance_km": 40.0},
+    }
+    _NAMES = {"TRN-002": "Groomed Trail", "TRN-003": "Technical Trail", "TRN-004": "Hill / Rolling"}
+
+    def _enrich(self, resolution):
+        return enrich_resolution_display(
+            resolution,
+            locale_order=self._ORDER,
+            locale_meta=self._META,
+            terrain_names=self._NAMES,
+            terrain_by_locale=self._TERRAIN,
+        )
+
+    def test_exact_menu_names_nearest_venue_per_terrain(self):
+        # Trail Running (D-001 needs TRN-002/003/004): home wins EXACT on hills,
+        # but the menu must surface groomed trail at the NEARER Cleburne (18 km),
+        # never the farther Dinosaur Valley (40 km).
+        r = resolve_terrain_feasibility(
+            "D-001",
+            locale_order=self._ORDER,
+            cluster_terrain_by_locale=self._TERRAIN,
+            cluster_equipment_by_locale={},
+            gap_rules={},
+            discipline_exercise_ids=[],
+        )
+        r = self._enrich(r)
+        venues = dict((tn, (ln, d)) for tn, ln, d in r.terrain_venues)
+        assert venues["Groomed Trail"] == ("Cleburne State Park", 18.0)
+        assert venues["Hill / Rolling"] == ("509 Williams Avenue", 0.0)
+        # Dinosaur Valley (farther) is never the chosen venue for any terrain.
+        assert all(ln != "Dinosaur Valley State Park" for ln, _d in venues.values())
+
+        line = feasibility_line(r, discipline_name="Trail Running")
+        assert "Groomed Trail at \"Cleburne State Park\" (18 km away)" in line
+        assert "Hill / Rolling at \"509 Williams Avenue\" (home)" in line
+        assert "never name or suggest a location not in this list" in line
+        # No slug / TRN-id leak in the athlete-facing line.
+        assert "509_williams_avenue" not in line and "TRN-" not in line
+
+    def test_display_name_used_not_slug_all_tiers(self):
+        # #618-7: the strength tier cites the locale display name, not the slug.
+        r = TerrainResolution(
+            "D-012", "strength", "509_williams_avenue",
+            substitute_exercise_ids=["EX-1"],
+        )
+        r = self._enrich(r)
+        line = feasibility_line(r, discipline_name="Rock Climbing")
+        assert '"509 Williams Avenue" (home)' in line
+        assert "509_williams_avenue" not in line
 
 
 class TestMaps:

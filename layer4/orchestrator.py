@@ -118,6 +118,7 @@ from layer4.session_feasibility import (
     EventWindowOverride,
     EventWindowSegment,
     TerrainResolution,
+    enrich_resolution_display,
     indoor_machines,
     required_terrains,
     resolve_craft_terrain_feasibility,
@@ -355,6 +356,18 @@ def _q_terrain_gap_rules(db: Any) -> dict[str, list[tuple[str, float]]]:
     return out
 
 
+def _q_terrain_names(db: Any) -> dict[str, str]:
+    """`{terrain_id: canonical_name}` from `layer0.terrain_types` — maps TRN-xxx
+    to the human surface name ('TRN-002' → 'Groomed Trail') for the deterministic
+    venue menu in the feasibility line (#624). Empty dict → the menu falls back to
+    the raw TRN id (degrades, doesn't crash)."""
+    try:
+        cur = db.execute("SELECT terrain_id, canonical_name FROM layer0.terrain_types")
+        return {r["terrain_id"]: r["canonical_name"] for r in cur.fetchall()}
+    except Exception:  # table unreachable → menu degrades to raw ids
+        return {}
+
+
 # Layer 2C `priority_per_discipline` rank — best (Critical) first. Drives the
 # order of the strength-substitute exercise pool handed to the STRENGTH tier.
 _PRIORITY_RANK: dict[str, int] = {"Critical": 0, "High": 1, "Medium": 2, "Low": 3}
@@ -383,6 +396,11 @@ class _FeasibilityInputs:
     gated: dict[str, str]
     included: list[Any]
     name_by_discipline: dict[str, str]
+    # Deterministic venue display (#624 / #618-7): home-cluster locale → {name,
+    # distance_km}, and terrain id → canonical name. Away segments rebuild meta
+    # against the destination anchor; the subtractive segments reuse this.
+    locale_meta: dict[str, dict[str, Any]]
+    terrain_names: dict[str, str]
 
 
 def _gather_feasibility_inputs(
@@ -405,6 +423,8 @@ def _gather_feasibility_inputs(
     terrain_by_locale = locations.cluster_terrain_by_locale(db, user_id, cluster)
     equip_by_locale = locations.cluster_equipment_by_locale(db, user_id, cluster)
     gap_rules = _q_terrain_gap_rules(db)
+    locale_meta = locations.cluster_locale_meta(db, user_id, cluster)
+    terrain_names = _q_terrain_names(db)
 
     # Unified craft/terrain cascade (#586 WS-I) maps — craft disciplines walk
     # resolve_craft_terrain_feasibility; non-craft fall back to the terrain-only one.
@@ -453,6 +473,8 @@ def _gather_feasibility_inputs(
         gated=gated,
         included=included,
         name_by_discipline=name_by_discipline,
+        locale_meta=locale_meta,
+        terrain_names=terrain_names,
     )
 
 
@@ -463,6 +485,7 @@ def _resolve_included_feasibility(
     terrain_by_locale: dict[str, set[str]],
     equip_by_locale: dict[str, set[str]],
     owned_crafts: list[str] | None = None,
+    locale_meta: dict[str, dict[str, Any]] | None = None,
 ) -> dict[str, TerrainResolution]:
     """Run the existing EXACT→PROXY→INDOOR→STRENGTH→REALLOCATE cascade for every
     included, non-skill-gated discipline against the supplied environment.
@@ -479,6 +502,7 @@ def _resolve_included_feasibility(
     SAME cascade runs, the craft tiers just find nothing and the walk degrades
     through INDOOR→STRENGTH→REALLOCATE). Slice 4 supplies declared brought-craft."""
     crafts = fi.owned_crafts if owned_crafts is None else owned_crafts
+    meta = fi.locale_meta if locale_meta is None else locale_meta
     out: dict[str, TerrainResolution] = {}
     for d in fi.included:
         if d.discipline_id in fi.gated:
@@ -507,7 +531,17 @@ def _resolve_included_feasibility(
                 discipline_exercise_ids=fi.pool_by_discipline.get(d.discipline_id, []),
             )
         if resolution is not None:
-            out[d.discipline_id] = resolution
+            # Deterministic venue display (#624 / #618-7): attach the saved-locale
+            # NAME + distance (and, for EXACT, the per-terrain nearest-venue menu)
+            # so the synthesis line cites real locales instead of leaking a slug or
+            # inventing a venue.
+            out[d.discipline_id] = enrich_resolution_display(
+                resolution,
+                locale_order=locale_order,
+                locale_meta=meta,
+                terrain_names=fi.terrain_names,
+                terrain_by_locale=terrain_by_locale,
+            )
     return out
 
 
@@ -754,6 +788,10 @@ def _build_event_window_overlay(
                     db, user_id, away_cluster
                 ),
                 owned_crafts=away_crafts,
+                # Re-anchor venue display at the destination (its own distances).
+                locale_meta=locations.cluster_locale_meta(
+                    db, user_id, away_cluster, anchor_locale=away_ov.away_locale
+                ),
             )
             away_feasibility = reduced
             # Slice 3 (F8): if the destination is cold (no logged equipment/
