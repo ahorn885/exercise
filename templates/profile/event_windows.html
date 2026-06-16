@@ -87,7 +87,7 @@
          visually-hidden duplicate of the primary submit claims it. No inline JS
          (strict CSP); kept out of the tab order + a11y tree. #}
       <button type="submit" class="visually-hidden" tabindex="-1" aria-hidden="true">Add window</button>
-      <div class="pf-grid">
+      <div class="pf-grid pf-windows">
         <label class="field"><span class="lbl">Start date</span>
           <input type="date" name="start_date" class="form-control form-control-sm"
                  value="{{ d.get('start_date', '') }}" required></label>
@@ -107,7 +107,7 @@
             <option value="">—</option>
             {% for loc in locales %}<option value="{{ loc }}"{{ ' selected' if loc == ul else '' }}>{{ loc }}</option>{% endfor %}
           </select></label>
-        <label class="field"><span class="lbl">Away destination <span class="dim">(if training away)</span></span>
+        <label class="field field-full"><span class="lbl">Away destination <span class="dim">(if training away)</span></span>
           {% set al = d.get('away_locale', '') %}
           <select name="away_locale" class="form-control form-control-sm">
             <option value="">—</option>
@@ -118,7 +118,7 @@
                     formaction="{{ url_for('profile.event_window_new_locale_route') }}"
                     class="btn btn-sm btn-link p-0">Add a new location</button>
             — you'll return here to finish the window, with what you've entered preserved.</span></label>
-        <fieldset class="field field-wide"><span class="lbl">Craft brought <span class="dim">(if training away — only craft you bring counts at the destination)</span></span>
+        <fieldset class="field field-wide pf-craftset"><span class="lbl">Craft brought <span class="dim">(if training away — only craft you bring counts at the destination)</span></span>
           {% set bc = d.get('brought_craft', []) %}
           {% for group, items in craft_catalog.items() %}
             {% for c in items %}
