@@ -235,9 +235,10 @@ def test_profile_nutrition_protocol_renders(monkeypatch):
     assert 'high fructose' in html
     assert 'value="200"' in html
     assert 'checked' in html  # multi-select tokens pre-checked
-    # Supplements moved to a structured editor (separate card), not a textarea.
+    # Supplements moved to a structured editor (separate card), not a textarea,
+    # and now live on their own ?tab=supplements surface (#619) — not here.
     assert 'name="supplement_protocol_notes"' not in html
-    assert 'Current supplements' in html
+    assert 'Current supplements' not in html
     # No live plan in the default conn -> the plan-baseline card stays hidden.
     assert 'Active plan · daily baseline' not in html
     assert 'style="' not in html
@@ -383,7 +384,7 @@ def test_profile_supplements_card_renders(monkeypatch):
                       timing='post_exercise', notes='micronized')]
     client = _client(monkeypatch, _SuppConn(vocab=vocab, supps=supps,
                                             profile={'primary_sport': 'run', 'updated_at': 'x'}))
-    html = client.get('/profile/?tab=athlete').get_data(as_text=True)
+    html = client.get('/profile/?tab=supplements').get_data(as_text=True)
     assert 'Current supplements' in html
     assert 'Creatine monohydrate' in html                             # the record
     # Stored tokens render via their vocab labels, not the raw token.
@@ -511,7 +512,7 @@ def test_health_inputs_cards_render(monkeypatch):
                             medication_name='warfarin', notes=None)]
     client = _client(monkeypatch, _SuppConn(conditions=conditions, medications=medications,
                                             profile={'primary_sport': 'run', 'updated_at': 'x'}))
-    html = client.get('/profile/?tab=athlete').get_data(as_text=True)
+    html = client.get('/profile/?tab=supplements').get_data(as_text=True)
     # Both cards + the stored records (rendered via their §B labels).
     assert 'Health conditions' in html and 'Medications' in html
     assert 'Atrial fibrillation' in html and 'Cardiac' in html

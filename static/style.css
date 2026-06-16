@@ -1586,6 +1586,10 @@ body.bulk-mode { padding-bottom: 80px; }
    the .pf-form, outside its flex gap, so they'd otherwise butt together. Give each
    the same 16px rhythm. */
 .app .pf-form ~ .pf-nutrition { margin-top: 16px; }
+/* Consecutive profile forms (main profile / discipline-weighting / owned-gear)
+   are separate <form>s, so the flex gap doesn't apply between them and the Save
+   button butts against the next card. Give them the same 16px rhythm (#619). */
+.app .pf-form + .pf-form { margin-top: 16px; }
 .app .pf-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 14px; }
 .app .pf-grid .field { margin-bottom: 0; }
 .app .pf-grid .field-wide { grid-column: span 2; }

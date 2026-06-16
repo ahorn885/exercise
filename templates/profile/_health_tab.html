@@ -1,0 +1,164 @@
+{# Profile › Supplements tab (#619) — structured supplement / health-condition /
+   medication capture, moved out of the Athlete tab into its own surface. Each
+   add/delete is its own form (can't nest inside the main profile form); mirrors
+   the coach-memory editor. All context vars (supplements, supplement_vocab,
+   health_conditions, medications, *_labels, *_choices) are always loaded by
+   profile.edit regardless of the active tab. #}
+<div class="card card-pad stack pf-nutrition">
+  <div>
+    <p class="eyebrow">● Current supplements</p>
+    <p class="pf-hint">What you already take — so the coach can account for it and avoid conflicts.
+      Recommended supplements will come from your plan.</p>
+  </div>
+
+  {% if supplements %}
+  <ul class="supp-list">
+    {% for s in supplements %}
+    <li class="supp-row">
+      <div class="supp-main">
+        <span class="supp-name">{{ s.canonical_name }}</span>
+        {% if s.category %}<span class="chip">{{ s.category }}</span>{% endif %}
+        {% if s.dose %}<span class="supp-meta">{{ s.dose }}</span>{% endif %}
+        {% if s.frequency %}<span class="chip">{{ frequency_labels.get(s.frequency, s.frequency) }}</span>{% endif %}
+        {% if s.timing %}<span class="rail-note">{{ timing_labels.get(s.timing, s.timing) }}</span>{% endif %}
+        {% if s.notes %}<span class="rail-note">· {{ s.notes }}</span>{% endif %}
+      </div>
+      <form method="post" action="{{ url_for('profile.delete_supplement', supp_id=s.id) }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button type="submit" class="btn btn-text supp-del" aria-label="Remove {{ s.canonical_name }}">Remove</button>
+      </form>
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p class="pf-hint">No supplements added yet.</p>
+  {% endif %}
+
+  {% if supplement_vocab %}
+  <form method="post" action="{{ url_for('profile.add_supplement') }}" class="supp-add pf-grid">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <label class="field"><span class="lbl">Supplement</span>
+      <select name="supplement_id" class="form-select form-select-sm" required>
+        <option value="">Choose…</option>
+        {% for cat, items in supplement_vocab|groupby('category') %}
+        <optgroup label="{{ cat }}">
+          {% for v in items %}
+          <option value="{{ v.supplement_id }}">{{ v.canonical_name }}</option>
+          {% endfor %}
+        </optgroup>
+        {% endfor %}
+      </select></label>
+    <label class="field"><span class="lbl">Dose</span>
+      <input type="text" name="dose" class="form-control form-control-sm" placeholder="e.g. 5 g"></label>
+    <label class="field"><span class="lbl">Frequency</span>
+      <select name="frequency" class="form-select form-select-sm">
+        <option value="">—</option>
+        {% for value, label in supplement_frequencies %}
+        <option value="{{ value }}">{{ label }}</option>
+        {% endfor %}
+      </select></label>
+    <label class="field"><span class="lbl">Timing</span>
+      <select name="timing" class="form-select form-select-sm">
+        <option value="">—</option>
+        {% for value, label in supplement_timings %}
+        <option value="{{ value }}">{{ label }}</option>
+        {% endfor %}
+      </select></label>
+    <label class="field field-wide"><span class="lbl">Notes (optional)</span>
+      <input type="text" name="notes" class="form-control form-control-sm" placeholder="caveats, brand, interactions…"></label>
+    <div class="supp-add-actions"><button type="submit" class="btn btn-primary">Add supplement</button></div>
+  </form>
+  {% else %}
+  <p class="pf-hint mono">Supplement catalog unavailable right now — try again shortly.</p>
+  {% endif %}
+</div>
+
+{# §B health conditions — feeds the Layer 2E supplement contraindication screen. #}
+<div class="card card-pad stack pf-nutrition">
+  <div>
+    <p class="eyebrow">● Health conditions</p>
+    <p class="pf-hint">Active conditions the coach should account for — used to flag supplements
+      that conflict with them. Add only what's current.</p>
+  </div>
+
+  {% if health_conditions %}
+  <ul class="supp-list">
+    {% for c in health_conditions %}
+    <li class="supp-row">
+      <div class="supp-main">
+        <span class="supp-name">{{ c.condition_name }}</span>
+        <span class="chip">{{ system_category_labels.get(c.system_category, c.system_category) }}</span>
+        {% if c.severity %}<span class="supp-meta">severity {{ c.severity }}/5</span>{% endif %}
+        {% if c.notes %}<span class="rail-note">· {{ c.notes }}</span>{% endif %}
+      </div>
+      <form method="post" action="{{ url_for('profile.delete_condition', condition_id=c.id) }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button type="submit" class="btn btn-text supp-del" aria-label="Remove {{ c.condition_name }}">Remove</button>
+      </form>
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p class="pf-hint">No health conditions added yet.</p>
+  {% endif %}
+
+  <form method="post" action="{{ url_for('profile.add_condition') }}" class="supp-add pf-grid">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <label class="field"><span class="lbl">System</span>
+      <select name="system_category" class="form-select form-select-sm" required>
+        <option value="">Choose…</option>
+        {% for value, label in system_category_choices %}
+        <option value="{{ value }}">{{ label }}</option>
+        {% endfor %}
+      </select></label>
+    <label class="field"><span class="lbl">Condition</span>
+      <input type="text" name="condition_name" class="form-control form-control-sm" placeholder="e.g. atrial fibrillation" required></label>
+    <label class="field"><span class="lbl">Severity (1–5)</span>
+      <input type="number" name="severity" min="1" max="5" class="form-control form-control-sm" placeholder="optional"></label>
+    <label class="field field-wide"><span class="lbl">Notes (optional)</span>
+      <input type="text" name="notes" class="form-control form-control-sm" placeholder="context, management…"></label>
+    <div class="supp-add-actions"><button type="submit" class="btn btn-primary">Add condition</button></div>
+  </form>
+</div>
+
+{# §B medications — feeds the Layer 2E supplement contraindication screen. #}
+<div class="card card-pad stack pf-nutrition">
+  <div>
+    <p class="eyebrow">● Medications</p>
+    <p class="pf-hint">Medications you currently take — used to flag supplements that interact with them.
+      Class only; no need for exact names or doses.</p>
+  </div>
+
+  {% if medications %}
+  <ul class="supp-list">
+    {% for m in medications %}
+    <li class="supp-row">
+      <div class="supp-main">
+        <span class="supp-name">{{ medication_class_labels.get(m.medication_class, m.medication_class) }}</span>
+        {% if m.notes %}<span class="rail-note">· {{ m.notes }}</span>{% endif %}
+      </div>
+      <form method="post" action="{{ url_for('profile.delete_medication_route', medication_id=m.id) }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button type="submit" class="btn btn-text supp-del" aria-label="Remove medication">Remove</button>
+      </form>
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p class="pf-hint">No medications added yet.</p>
+  {% endif %}
+
+  <form method="post" action="{{ url_for('profile.add_medication_route') }}" class="supp-add pf-grid">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <label class="field"><span class="lbl">Class</span>
+      <select name="medication_class" class="form-select form-select-sm" required>
+        <option value="">Choose…</option>
+        {% for value, label in medication_class_choices %}
+        <option value="{{ value }}">{{ label }}</option>
+        {% endfor %}
+      </select></label>
+    <label class="field field-wide"><span class="lbl">Notes (optional)</span>
+      <input type="text" name="notes" class="form-control form-control-sm" placeholder="context…"></label>
+    <div class="supp-add-actions"><button type="submit" class="btn btn-primary">Add medication</button></div>
+  </form>
+</div>
