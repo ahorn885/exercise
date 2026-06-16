@@ -193,7 +193,7 @@ These are stable across sessions — look them up here, don't re-derive them eac
   - **`neon-query.yml`** (input `query`) — read-only diagnostic SELECT vs prod (read-only role + `default_transaction_read_only=on`); result in the job log.
   - **`layer0-validate-live.yml`** — nightly + manual `validate_layer0` vs **live** prod; catches live drift (the #616 `primary_movement`-clobber class) automatically.
 - **Secrets:** `NEON_DATABASE_URL` (write — apply/redump), `NEON_RO_DATABASE_URL` (read-only — diag/validate-live).
-- **Prod logs (Rule #14):** readable via `GET /admin/logs?token=<DIAG_TOKEN>` (WebFetch) — Andy pastes the current `DIAG_TOKEN` per debugging session (chat-only, never commit; rotated 2026-06-15). This is the preferred path over the truncating Vercel runtime-log MCP.
+- **Prod logs (Rule #14):** read `GET /admin/logs?token=<DIAG_TOKEN>` (optional `&q=<substr>&minutes=N`) via the **Vercel MCP `mcp__Vercel__web_fetch_vercel_url`** tool — **NOT plain `WebFetch`**. The prod deployment sits behind Vercel Authentication, so an anonymous fetcher (`WebFetch`) gets **403 at the Vercel edge before the app's token gate ever runs** — a 403 there is NOT a bad token. The Vercel MCP tool carries the team's Vercel auth and returns 200 (confirmed 2026-06-16). Andy pastes the current `DIAG_TOKEN` per debugging session (chat-only, never commit; rotated 2026-06-16 → `sk_…` form). Same gate gates `GET /admin/plan/<id>/diag?token=`. Preferred over the truncating Vercel runtime-log MCP.
 - Full record: CARRY_FORWARD *Ops automation / operating model* section + the `..._OpsAutomation_OperatingModelCodified_2026_06_15` handoff.
 
 ---
