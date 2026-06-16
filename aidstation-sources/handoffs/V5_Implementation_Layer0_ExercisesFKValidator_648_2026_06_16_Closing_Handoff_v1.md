@@ -61,9 +61,23 @@ Hardening only — no vocab/exercise-DB entry (Trigger #2), no prompt body (Trig
 
 ---
 
+### Apply-model bug found + fixed (apply-ledger)
+The first `layer0-apply` run (after #651 merged) **failed re-applying `0008`**: `0008: expected 4 non-retired survivor tokens, found 2`. Root cause is the **apply model, not `0008`'s data**: `layer0-apply` re-applied the *entire* `0006`→`0010` chain every run, but each migration's atomic verify-block asserts the state right after **itself**, which a later migration legitimately moves on:
+- `0008` pins EX150/EX153 keeping survivor tokens → `0009` superseded them (snowshoe cull) → `0008` re-run finds 2, fails.
+- `0009` pins EX176 at `0B-v1.6.10` → `0010` re-versions it to `0B-v1.6.11` → `0009` re-run would fail next.
+
+The CI `layer0-gate` never sees this — it applies the chain in-order from a clean baseline, so every verify runs *before* the migration that invalidates it. The bug only bites a re-apply against a prod that already has the later migrations.
+
+**Fix (Andy via `AskUserQuestion`): apply-ledger** — apply each migration exactly once, ever (mirrors the public-schema `_PG_MIGRATIONS` runner):
+- **`etl/migrations/layer0/_apply_ledger.sql`** (NEW bootstrap) — `CREATE TABLE IF NOT EXISTS layer0._applied_migrations(filename PK, applied_at)` + one-time seed of `0006`–`0009` (already live pre-ledger) via `ON CONFLICT DO NOTHING`. Idempotent.
+- **`.github/workflows/layer0-apply.yml`** — runs the bootstrap first, then loops `[0-9]*.sql`: skip if in the ledger, else apply and record (recorded only after a clean `psql -f`, so a failed migration is not marked). The data UPDATEs stay idempotent regardless.
+- **`.github/workflows/ci.yml`** — gate glob narrowed `*.sql`→`[0-9]*.sql` so the underscore-prefixed bootstrap is apply-time infra only, never a gate migration.
+
+(Note: a future `layer0-redump` captures `layer0._applied_migrations` in the baseline → add it to `_FAMILY_MAP_EXCEPTIONS` like `supplement_vocabulary`/`discipline_technique_foci`. Flagged in the bootstrap comment.)
+
 ## 2. STILL OWED — #648
-- **Apply `0010` to prod** via the gated `layer0-apply` action (Andy one-tap-approves the `production` env), then **verify** via read-only `neon-query` (assert 0 active exercises reference EX059/EX141/EX147/EX193/EX204; 10 holders at `0B-v1.6.11`). Then **#648 CLOSES completed** — same apply+verify path as #644's `0009`.
-- PR #651 auto-merges on green (CI `layer0-gate` applies `0006`–`0010` then runs the validator → the real exercise of both the new SQL and the strip migration).
+- **Re-trigger `layer0-apply` once the apply-ledger PR merges** → it skips `0006`–`0009` (seeded) and applies only `0010` (verify runs right after it). Then **verify** via read-only `neon-query` (0 active exercises reference EX059/EX141/EX147/EX193/EX204; 10 holders at `0B-v1.6.11`). Then **#648 CLOSES completed**.
+- PR #651 (validator + `0010`) already merged (gate green). The apply-ledger fix is its own PR (auto-merge on green).
 
 ## 3. Side-findings
 - **The #644 verification's "0 dangling refs" was scoped to the cull set only** — the whole-graph scan this validator added found 11 pre-existing phantom refs that predate the cull. Worth remembering: a targeted neon-query verification proves the targeted claim, not graph-wide integrity. The standing validator now covers the gap.
@@ -90,6 +104,7 @@ Hardening only — no vocab/exercise-DB entry (Trigger #2), no prompt body (Trig
 | Wiring | `etl/layer0/validate_layer0.py` | `from etl.layer0.validation.exercises_fk_check import run_exercises_fk`; `_v_exercises_fk` extractor; `Check("exercises_fk", run_exercises_fk, _v_exercises_fk)` 3rd in `CHECKS` (11 entries) |
 | Tests | `etl/tests/test_validate_layer0.py` | `"exercises_fk"` in `_clean_results()`; `len(v.CHECKS) == 11`; `test_dangling_exercise_ref_fails_the_gate`; `_v_exercises_fk` id `physical_proxy:EX176->EX094` |
 | Migration | `etl/migrations/layer0/0010_strip_dangling_exercise_refs.sql` | `_phantom_ids` = EX059/EX141/EX147/EX193/EX204; supersede+reinsert 10 holders at `'0B-v1.6.11'` with phantom proxy elems removed + phantom prog/regr cleared; DO-block RAISEs unless 0 dangling refs + 10 reinserted |
+| Apply-ledger | `etl/migrations/layer0/_apply_ledger.sql`, `.github/workflows/layer0-apply.yml`, `.github/workflows/ci.yml` | `layer0._applied_migrations` ledger seeded `0006`–`0009`; apply loop applies `[0-9]*.sql` once each (skip if recorded); CI gate glob `[0-9]*.sql` excludes the bootstrap |
 | Precedent | `etl/layer0/validation/primary_movement_check.py` | fix-not-waive validator wired into `validate_layer0` (the `0006` pattern this mirrors) |
 | FK gap (now closed) | `etl/layer0/validation/fk_checks.py` | was disciplines-family only; the exercises-FK gap #648 tracked is now covered by the new check |
 | CI gate | `.github/workflows/ci.yml` (`layer0-gate`) | baseline + `0006`–`0010`, `python -m etl.layer0.validate_layer0` — new check runs via the registry, no workflow edit; first run RED surfaced the 11 phantom refs, green once `0010` applies |
