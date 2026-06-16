@@ -13,6 +13,12 @@ Rolling-state for items spanning multiple sessions. **Edit in place** — don't 
 
 ---
 
+## #430 Slice C rx FK cutover — MERGED (2026-06-16, PRs #676/#677/#678); 1 live-verify owed + Slice D filed (#679)
+- **Shipped:** rx write-path keys off the layer0 EX-id; public `exercise_inventory.id` FK dropped from `current_rx`/`training_log`; `current_rx.layer0_exercise_id` self-heals on every write. Dance pattern — #335 baselines preserved.
+- **Live-verify owed (Andy-action, can't trigger from container):** log a strength session (manual or Garmin) → confirm `layer0_exercise_id` populated on the write (`rx_engine.apply_session_outcome: … layer0=y/n` via `/admin/logs`), then a plan-gen reads it (rx_wire `id=` hit).
+- **#679 (Slice D) — Garmin FIT-name → EX-id resolver:** FIT emits 1,261 subtype-preferred names ("Barbell Back Squat"); only 14 coarse-category names overlap `NAME_TO_EX_ID`, so most Garmin lifts stay `first_exposure`. This is the real fix for "do garmin uploads map correctly" — highest dogfood impact. Fuzzy+HITL over Garmin enum tables → layer0 qualified names.
+- **Rest of #430 (not done):** read-only routes + coaching still read `exercise_inventory` by name (discipline has no layer0 source yet); equipment unification untouched.
+
 ## Ops automation / operating model — LIVE (2026-06-15; record issue #630)
 
 **This changed how we work. Read it before doing prod DB ops or merges.** The web container can't reach Neon, but GitHub Actions can — so prod DB work + merges run in the cloud, Claude drives them, and Andy only approves the irreversible bits ("decide-not-do"; Andy is mobile / device-changing, consistent access = Claude Code web/Android). All of the below is built, merged, and **test-fired green** this session.
