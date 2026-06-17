@@ -2,6 +2,7 @@
 import os
 
 from layer0_progression import NAME_TO_EX_ID
+from provider_strength_resolve import GARMIN_STRENGTH_ALIASES, LOGGED_NAME_ALIASES
 
 DATABASE_URL = os.environ.get('DATABASE_URL')
 
@@ -2343,10 +2344,20 @@ _PG_MIGRATIONS = [
     # The 4 names that needed NEW layer0 exercises (barbell row, plain biceps
     # curl, sit-up, KB halo) map to EX246-EX249 from layer0 migration
     # 0011_add_strength_rx_exercises.sql (Trigger #2, Andy-ratified 2026-06-16).
+    # #679 (2026-06-17): extend the backfill to the full strength alias map —
+    # NAME_TO_EX_ID plus the Garmin-FIT specifics (GARMIN_STRENGTH_ALIASES) and
+    # Andy's logged-prescription vocabulary (LOGGED_NAME_ALIASES), incl. the 40
+    # new exercises minted in layer0 0012-0016. Heals existing current_rx rows to
+    # their EX-id immediately rather than only on next log. Same single source as
+    # the resolver write path (provider_strength_resolve._alias_map). Idempotent
+    # (`layer0_exercise_id IS NULL` guard). The #694-culled names are intentionally
+    # absent from the alias map, so they are not resolved here — the cull below
+    # removes their rows outright (Andy: respect the cull, 2026-06-17).
     *[
         f"UPDATE current_rx SET layer0_exercise_id='{ex_id}' "
         f"WHERE exercise='{name}' AND layer0_exercise_id IS NULL"
-        for name, ex_id in NAME_TO_EX_ID.items()
+        for name, ex_id in {**NAME_TO_EX_ID, **GARMIN_STRENGTH_ALIASES,
+                            **LOGGED_NAME_ALIASES}.items()
     ],
     # ── Cull non-trainable / mis-classified v1 exercise_inventory entries ──
     # (#694, Andy-ratified 2026-06-17). Five 'Novel' rows that are cardio
