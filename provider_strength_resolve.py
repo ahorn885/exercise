@@ -134,7 +134,6 @@ LOGGED_NAME_ALIASES: dict[str, str] = {
     "Half-Kneeling 1-Arm Cable Row": "EX078",
     "Hangboard Max Hangs": "EX100",
     "Hanging Knee Raise": "EX223",
-    "Hanging Leg Raise in Boots": "EX223",
     "Hillbounding": "EX036",
     "Isometric Lunge Hold": "EX038",
     "KB Swing on Inverted BOSU": "EX031",
@@ -143,7 +142,6 @@ LOGGED_NAME_ALIASES: dict[str, str] = {
     "Med Ball Torso Rotation (Seated)": "EX088",
     "Med Ball Wall Throws (Rotational)": "EX085",
     "Mountain Climbers": "EX221",
-    "Nasal-Breathing-Only Climbing": "EX139",
     "Nordic Hamstring Curl": "EX020",
     "Oblique Press (Contralateral)": "EX011",
     "Overhead Carry": "EX244",
@@ -177,7 +175,6 @@ LOGGED_NAME_ALIASES: dict[str, str] = {
     "Wall Chest / Doorway Stretch": "EX077",
     "Wall Sit": "EX037",
     "Weighted Box Step-Up": "EX119",
-    "Weighted Treadmill Incline Walk": "EX050",
     # current_rx names Andy ratified as NEW exercises (minted in 0012-0015) →
     # their new EX-ids (2026-06-17). These previously fell to bucket-3.
     "Banded Pull-Through": "EX256",
