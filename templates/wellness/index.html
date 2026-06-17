@@ -77,6 +77,24 @@
   </div>
   {% else %}
 
+  {# "What changed" strip (#527) — the few metrics that moved most vs their
+     7-day average, so an athlete sees at a glance whether they're under-
+     recovered before reading the 30 cards. Hidden until a baseline exists. #}
+  {% if headline %}
+  <div class="card card-pad wl-headline">
+    <span class="eyebrow">What changed · yesterday vs 7-day avg</span>
+    <div class="wl-headline-row">
+      {% for h in headline %}
+      <span class="wl-stat wl-stat-{{ h.tone }}">
+        <span class="wl-stat-arrow">{{ '⬆' if h.direction == 'up' else '⬇' }}</span>
+        <span class="wl-stat-name">{{ h.name }}</span>
+        <span class="wl-stat-delta mono">{{ h.delta_abs }}{{ h.unit }}</span>
+      </span>
+      {% endfor %}
+    </div>
+  </div>
+  {% endif %}
+
   {# Charts grouped into 4 collapsible sections (#526) so the 30-ish cards
      don't read as one long scroll. The chart <script> binds by canvas id, so
      grouping is pure DOM rearrangement — no JS change. Sleep + Body can be

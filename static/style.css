@@ -1173,6 +1173,15 @@ body.bulk-mode { padding-bottom: 80px; }
 .app .wl-section[open] > summary::before { content: '▾'; }
 .app .wl-section-body { display: flex; flex-direction: column; gap: 16px; margin-top: 16px; }
 
+/* "What changed" headline strip (#527) — the few metrics that moved most vs
+   their 7-day average, colour-coded by whether the move is good or concerning. */
+.app .wl-headline .wl-headline-row { display: flex; flex-wrap: wrap; gap: 8px 18px; margin-top: 10px; }
+.app .wl-stat { display: inline-flex; align-items: baseline; gap: 6px; font-size: 13px; }
+.app .wl-stat-name { color: var(--fg-2); }
+.app .wl-stat-delta { font-variant-numeric: tabular-nums; }
+.app .wl-stat-good .wl-stat-arrow, .app .wl-stat-good .wl-stat-delta { color: var(--good); }
+.app .wl-stat-bad  .wl-stat-arrow, .app .wl-stat-bad  .wl-stat-delta { color: var(--bad); }
+
 /* ══ Plan generation (§04) ═════════════════════════════════════════════ */
 .app .plan-gen { max-width: 920px; }
 .app .plan-gen-title { font-size: 40px; font-weight: 800; letter-spacing: -0.025em; line-height: 1.06; margin: 8px 0; }

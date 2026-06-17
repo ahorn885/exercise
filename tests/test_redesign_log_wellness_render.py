@@ -129,6 +129,29 @@ def test_wellness_charts_grouped_into_collapsible_sections(client, monkeypatch):
     assert 'onclick=' not in html
 
 
+def test_wellness_headline_strip_renders(client, monkeypatch):
+    # #527 — the "what changed" strip renders above the charts when there's a
+    # baseline. Patch the strip builder (its selection logic is unit-tested in
+    # test_wellness_headline.py) and assert the markup + CSP hygiene.
+    import routes.wellness as wl
+    base = wl._build_chart_data([], [], [], [], [], [])
+    base['sleep_hours'] = [{'x': '2026-06-01', 'y': 1}]   # has_any_data → True
+    monkeypatch.setattr(wl, '_build_chart_data', lambda *a, **k: base)
+    monkeypatch.setattr(wl, '_build_headline_strip', lambda cd: [
+        {'name': 'Resting HR', 'unit': ' bpm', 'direction': 'up', 'tone': 'bad',
+         'delta_abs': '+2', 'delta_pct': 4, 'abs_pct': 4},
+    ])
+    resp = client.get('/wellness')
+    assert resp.status_code == 200
+    html = resp.get_data(as_text=True)
+    assert 'wl-headline' in html
+    assert 'What changed' in html
+    assert 'wl-stat-bad' in html
+    assert 'Resting HR' in html
+    assert '+2 bpm' in html
+    assert 'style="' not in html
+
+
 def test_log_picker_wellness_tile_targets_self_report_anchor(client):
     # The picker renders inside any log pane; the cardio default carries it.
     resp = client.get('/cardio/new')
