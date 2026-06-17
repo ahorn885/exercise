@@ -234,6 +234,11 @@ def test_strength_exercises_render_with_prescription(client, monkeypatch):
     # Resolution-tier 2 carries a "substitute" chip + substitute_text.
     assert 'substitute' in html
     assert 'Subbed for step-ups' in html
+    # #691 — the Tier-2 substitute is surfaced as the directive ("Do instead:"
+    # in the elevated sess-exercise-sub line), not buried as a footnote, so the
+    # athlete isn't read the un-available base exercise as the headline.
+    assert 'sess-exercise-sub' in html
+    assert 'Do instead: Subbed for step-ups (knee).' in html
     # Locale chip rendered for strength session.
     assert '@ Home gym' in html
     assert 'style="' not in html
