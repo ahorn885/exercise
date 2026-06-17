@@ -105,20 +105,57 @@
   <form method="post" action="{{ url_for('profile.add_condition') }}" class="supp-add pf-grid">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <label class="field"><span class="lbl">System</span>
-      <select name="system_category" class="form-select form-select-sm" required>
+      <select name="system_category" id="condSystem" class="form-select form-select-sm" required>
         <option value="">Choose…</option>
         {% for value, label in system_category_choices %}
         <option value="{{ value }}">{{ label }}</option>
         {% endfor %}
       </select></label>
     <label class="field"><span class="lbl">Condition</span>
-      <input type="text" name="condition_name" class="form-control form-control-sm" placeholder="e.g. atrial fibrillation" required></label>
+      {# System-filtered select (#543); the free-text input is the escape for the
+         "Other" system or a category's "Other (not listed)" — it keeps the
+         chosen system_category. Options are populated by the script below. #}
+      <select name="condition_name" id="condSelect" class="form-select form-select-sm d-none">
+        <option value="">Choose…</option>
+      </select>
+      <input type="text" name="condition_name_other" id="condOther"
+             class="form-control form-control-sm d-none"
+             placeholder="Name the condition"></label>
     <label class="field"><span class="lbl">Severity (1–5)</span>
       <input type="number" name="severity" min="1" max="5" class="form-control form-control-sm" placeholder="optional"></label>
     <label class="field field-wide"><span class="lbl">Notes (optional)</span>
       <input type="text" name="notes" class="form-control form-control-sm" placeholder="context, management…"></label>
     <div class="supp-add-actions"><button type="submit" class="btn btn-primary">Add condition</button></div>
   </form>
+  <script nonce="{{ csp_nonce() }}">
+  (function () {
+    var sys = document.getElementById('condSystem');
+    var sel = document.getElementById('condSelect');
+    var other = document.getElementById('condOther');
+    if (!sys || !sel || !other) return;
+    var MAP = {{ conditions_by_category | tojson }};
+    function showOther(on) {
+      other.classList.toggle('d-none', !on);
+      other.required = on;
+      if (!on) other.value = '';
+    }
+    function rebuild() {
+      var cat = sys.value;
+      var opts = MAP[cat] || [];
+      sel.innerHTML = '';
+      sel.add(new Option('Choose…', ''));
+      opts.forEach(function (name) { sel.add(new Option(name, name)); });
+      if (opts.length) sel.add(new Option('Other (not listed)…', '__other__'));
+      var freeText = !!cat && opts.length === 0;   // 'other' system → free text
+      sel.classList.toggle('d-none', !cat || freeText);
+      sel.required = !!cat && !freeText;
+      showOther(freeText);
+    }
+    sys.addEventListener('change', rebuild);
+    sel.addEventListener('change', function () { showOther(sel.value === '__other__'); });
+    rebuild();
+  })();
+  </script>
 </div>
 
 {# §B medications — feeds the Layer 2E supplement contraindication screen. #}

@@ -1122,10 +1122,12 @@ def delete_plan(plan_version_id: int):
     """Hard-delete a generated plan version + its sessions/nutrition (ON DELETE
     CASCADE handles plan_sessions / plan_progress_blocks / plan_nutrition /
     plan_nutrition_inputs). The non-cascading back-references — a superseded
-    predecessor's `superseded_by_version_id` pointer and the plan_refresh_log
-    audit rows — are nulled first so the DELETE doesn't trip an FK violation.
-    Cross-user guard via the ownership check + the user_id filter on every
-    write."""
+    predecessor's `superseded_by_version_id` pointer, a refresh child's
+    `refresh_parent_version_id` pointer, and the plan_refresh_log audit rows —
+    are nulled first so the DELETE doesn't trip an FK violation. (A plan that was
+    later refreshed is the `refresh_parent_version_id` of its child version; that
+    pointer 500'd the delete before it was nulled here — #688.) Cross-user guard
+    via the ownership check + the user_id filter on every write."""
     db = get_db()
     uid = current_user_id()
     if not db.execute(
@@ -1137,6 +1139,11 @@ def delete_plan(plan_version_id: int):
     db.execute(
         "UPDATE plan_versions SET superseded_by_version_id = NULL "
         "WHERE superseded_by_version_id = ? AND user_id = ?",
+        (plan_version_id, uid),
+    )
+    db.execute(
+        "UPDATE plan_versions SET refresh_parent_version_id = NULL "
+        "WHERE refresh_parent_version_id = ? AND user_id = ?",
         (plan_version_id, uid),
     )
     db.execute(
@@ -1154,6 +1161,10 @@ def delete_plan(plan_version_id: int):
         (plan_version_id, uid),
     )
     db.commit()
+    print(
+        f"delete_plan: pv={plan_version_id} user={uid} deleted "
+        "(nulled superseded_by/refresh_parent back-refs + refresh-log audit)"
+    )
     flash("Plan deleted.", 'warning')
     return redirect(url_for('plans.list_plans'))
 
