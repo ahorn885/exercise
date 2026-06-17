@@ -71,7 +71,9 @@ from layer4.session_feasibility import (
     grid_annotation,
 )
 from layer4.session_grid import (
+    _RECOVERY_SESSIONS_PER_WEEK,
     build_session_grid,
+    compute_recovery_dose,
     placeable_days_in_week,
     resolve_available_days,
 )
@@ -289,6 +291,16 @@ Pick exercises from the rendered `=== Strength exercise pool ===` for the sessio
 
 Attribute each strength session's `discipline_id` to the discipline it most supports. Place strength as the second session on an easy/moderate cardio day, not on the same day as a key intensity/long session. Do not prescribe a time of day; if strength shares a day with a hard session, add a `session_notes` cue to separate them by a few hours and avoid heavy legs right before the quality session. Honor 2D injury exclusions/accommodations.
 
+# Recovery programming
+
+`kind='recovery'` is a small mobility / soft-tissue / breathwork session — sub-threshold, low-cost, distinct from a training session. The `=== Recovery programming ===` block in the user prompt is **authoritative** for how many recovery sessions to place each week and their duration (deterministic, off the training cap); honor the per-week count.
+
+Recovery sessions are ADDITIVE and do **not** count toward the ≤2/day training cap: a day may carry ≤2 training (cardio/strength) PLUS ≤1 recovery, and the recovery session takes the last `session_index_in_day` slot of its day. Place them on or after hard days, or on lighter / rest-adjacent days; never stack two recovery sessions on one day. Keep `intensity_summary` at `easy` or `rest`. A `recovery` session sets `discipline_id` and `locale_id` to null — it is not a discipline and is not locale-routed; the framing goes in `coaching_intent` / `session_notes`.
+
+Prescribe the movements as a `recovery_exercises[]` block (the structural analog of `strength_exercises`): pick `exercise_id`s from the rendered `=== Recovery exercise pool ===` only (never invent them), and give each a free-text `prescription` (e.g. "2×30s/side", "5 min @ ~6 breaths/min") plus brief `instructions`. Leave `cardio_blocks` / `strength_exercises` / `rest_reason` null.
+
+Load-adaptive rest: full rest is the protective floor and recovery sessions are the active-recovery mechanism — the two are adaptation-neutral, so under high load (Peak phase or a deload week) prefer genuine full rest over active recovery and keep any recovery minimal and short.
+
 # Schedule respect
 
 Layer 1 §K `daily_availability_windows` per-day windows: prescribe on `available=True` days only; session `duration_min` must fit within the day's window minutes (validator: `daily_window_fit_*`). Sessions on `available=False` days raise unless explicitly flagged `athlete_self_scheduled` (not in this flag enum — orchestrator path only). The athlete's **long-session day** is the day carrying the longest enabled window — FormRefresh Slice C retired the standalone long-session input, so the longest window now *is* the long-session capacity. Anchor the primary discipline's weekly `long_slow_distance` cornerstone (flag list above) on that day; secondary-discipline LSDs fit their own longest available day. The `=== Schedule ===` block names the computed long-session day.
@@ -481,7 +493,66 @@ def compute_feasible_pool_ids(
     return sorted(pool)
 
 
-def _session_schema(feasible_pool_ids: list[str] | None = None) -> dict[str, Any]:
+# #698 Track 1 (Slice 2) — the recovery/mobility analog of
+# `_STRENGTH_POOL_EXERCISE_TYPES`. The recovery session pool (the enum bounding
+# `recovery_exercises[*].exercise_id` + the rendered pool) must only contain the
+# soft-tissue / mobility / breathwork `exercise_type`s — the orphaned 0B catalog
+# this session kind gives a home (#698). Lowercased + matched case-insensitively
+# (prod values are title-case, e.g. "Mobility"), mirroring `_is_strength_pool_type`.
+# These types are exactly the complement excluded from the strength allowlist.
+_RECOVERY_POOL_EXERCISE_TYPES = frozenset(
+    {
+        "mobility", "flexibility / stretching", "recovery / soft tissue",
+        "breathwork",
+    }
+)
+
+
+def _is_recovery_pool_type(exercise_type: str) -> bool:
+    return (exercise_type or "").strip().lower() in _RECOVERY_POOL_EXERCISE_TYPES
+
+
+def compute_recovery_pool_ids(
+    layer2c_payloads: dict[str, Layer2CPayload],
+    layer2d_payload: Layer2DPayload | None,
+) -> list[str]:
+    """#698 Track 1 (Slice 2, D1) — cluster-union of resolved recovery/mobility
+    `exercise_id`s across every locale, minus 2D-excluded ids (wrist/injury
+    contraindications honored). Mirrors `compute_feasible_pool_ids` but with the
+    recovery type allowlist; filters the SAME `l2c.exercises_resolved` surface.
+    Sorted+deduped for deterministic enum ordering (cache-key stability). Empty
+    result → caller passes no enum (the schema falls back to a free string)."""
+    if not layer2c_payloads:
+        return []
+    excluded: set[str] = (
+        {er.exercise_id for er in layer2d_payload.excluded_exercises}
+        if layer2d_payload is not None
+        else set()
+    )
+    pool: set[str] = set()
+    dropped_by_type: dict[str, int] = {}
+    for l2c in layer2c_payloads.values():
+        for rx in l2c.exercises_resolved:
+            if rx.exercise_id in excluded:
+                continue
+            if not _is_recovery_pool_type(rx.exercise_type):
+                dropped_by_type[rx.exercise_type] = (
+                    dropped_by_type.get(rx.exercise_type, 0) + 1
+                )
+                continue
+            pool.add(rx.exercise_id)
+    # Rule #15 — log the non-recovery rows the type filter excluded (by type),
+    # so a "missing exercise" in a recovery session is attributable in prod.
+    if dropped_by_type:
+        _dbg = ", ".join(f"{t}={n}" for t, n in sorted(dropped_by_type.items()))
+        print(f"compute_recovery_pool_ids: non-recovery-type dropped [{_dbg}]")
+    return sorted(pool)
+
+
+def _session_schema(
+    feasible_pool_ids: list[str] | None = None,
+    recovery_pool_ids: list[str] | None = None,
+) -> dict[str, Any]:
     """One element of `sessions[]`. Full PlanSession contract mirror per the
     Step 4a Option 2 precedent. Includes `rest` kind (Pattern A produces full
     schedules including rest days; differs from refresh/single_session which
@@ -489,7 +560,8 @@ def _session_schema(feasible_pool_ids: list[str] | None = None) -> dict[str, Any
 
     Track 2 D1: when `feasible_pool_ids` is non-empty, the
     `strength_exercises.exercise_id` property is bounded by enum, making
-    out-of-pool picks structurally impossible at the SDK boundary."""
+    out-of-pool picks structurally impossible at the SDK boundary. #698 Track 1
+    (Slice 2): `recovery_pool_ids` does the same for `recovery_exercises`."""
     return {
         "type": "object",
         "additionalProperties": False,
@@ -511,12 +583,17 @@ def _session_schema(feasible_pool_ids: list[str] | None = None) -> dict[str, Any
                 "type": "string",
                 "enum": ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"],
             },
-            "session_index_in_day": {"type": "integer", "minimum": 0, "maximum": 1},
+            # #698 Track 1 — max→2 so a recovery session can take the 3rd daily
+            # slot (≤2 training + ≤1 recovery; mirrors PlanSession.session_index_in_day).
+            "session_index_in_day": {"type": "integer", "minimum": 0, "maximum": 2},
             "time_of_day": {
                 "type": "string",
                 "enum": ["morning", "afternoon", "evening", "unspecified"],
             },
-            "kind": {"type": "string", "enum": ["cardio", "strength", "rest"]},
+            "kind": {
+                "type": "string",
+                "enum": ["cardio", "strength", "rest", "recovery"],
+            },
             "discipline_id": {"type": ["string", "null"]},
             "discipline_name": {"type": ["string", "null"]},
             "locale_id": {"type": ["string", "null"]},
@@ -641,6 +718,33 @@ def _session_schema(feasible_pool_ids: list[str] | None = None) -> dict[str, Any
                     None,
                 ],
             },
+            # #698 Track 1 (Slice 2, D1) — structured recovery/mobility block,
+            # the analog of strength_exercises. exercise_id is enum-bound to the
+            # recovery pool when resolvable, so out-of-pool picks are structurally
+            # impossible at the SDK boundary (mirrors strength_exercises).
+            "recovery_exercises": {
+                "type": ["array", "null"],
+                "items": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "required": [
+                        "exercise_id",
+                        "exercise_name",
+                        "prescription",
+                        "instructions",
+                    ],
+                    "properties": {
+                        "exercise_id": (
+                            {"type": "string", "enum": recovery_pool_ids}
+                            if recovery_pool_ids
+                            else {"type": "string"}
+                        ),
+                        "exercise_name": {"type": "string"},
+                        "prescription": {"type": "string", "maxLength": 120},
+                        "instructions": {"type": "string", "maxLength": 240},
+                    },
+                },
+            },
         },
     }
 
@@ -648,6 +752,7 @@ def _session_schema(feasible_pool_ids: list[str] | None = None) -> dict[str, Any
 def build_record_phase_sessions_tool(
     max_sessions: int = 56,
     feasible_pool_ids: list[str] | None = None,
+    recovery_pool_ids: list[str] | None = None,
 ) -> dict[str, Any]:
     """Anthropic tool definition for `record_phase_sessions`. Sessions array
     `maxItems` accommodates up to 4 weeks × 7 days × 2/day = 56 for the
@@ -657,7 +762,9 @@ def build_record_phase_sessions_tool(
 
     Track 2 D1: `feasible_pool_ids` (when non-empty) bounds
     `strength_exercises.exercise_id` via JSON-schema enum. Production callers
-    pass `compute_feasible_pool_ids(layer2c_payloads, layer2d_payload)`."""
+    pass `compute_feasible_pool_ids(layer2c_payloads, layer2d_payload)`. #698
+    Track 1: `recovery_pool_ids` bounds `recovery_exercises.exercise_id` the
+    same way (`compute_recovery_pool_ids(...)`)."""
     return {
         "name": "record_phase_sessions",
         "description": (
@@ -674,7 +781,7 @@ def build_record_phase_sessions_tool(
                     "type": "array",
                     "minItems": 0,
                     "maxItems": max_sessions,
-                    "items": _session_schema(feasible_pool_ids),
+                    "items": _session_schema(feasible_pool_ids, recovery_pool_ids),
                 },
                 "phase_synthesis_notes": {
                     "type": "string",
@@ -843,6 +950,54 @@ def _format_strength_exercise_pool(
         if locale_lines:
             out.append(f"- Locale {locale_id}:")
             out.extend(locale_lines)
+    return out
+
+
+# #698 Track 1 (Slice 2) — cap the rendered recovery pool. Recovery dose is
+# small (the evidence: benefit plateaus at ~10 min/wk per muscle group), so a
+# short menu is plenty; this also bounds input-token cost (#316).
+_RECOVERY_POOL_CAP = 12
+
+
+def _format_recovery_exercise_pool(
+    layer2c_payloads: dict[str, Layer2CPayload],
+    layer2d_payload: Layer2DPayload | None,
+) -> list[str]:
+    """#698 Track 1 (Slice 2, D1) — render the resolved recovery/mobility surface
+    so the synthesizer prescribes real, locale-available `exercise_id`s for
+    `recovery_exercises` instead of inventing them (the structural analog of
+    `_format_strength_exercise_pool`, bound to the same enum via
+    `compute_recovery_pool_ids`). Recovery is NOT discipline- or locale-routed
+    (the kind carries `discipline_id`/`locale_id` = None), so this is a single
+    flat, deduped, capped menu across all locales — no per-discipline ranking or
+    core/accessory split (recovery has no progression model). 2D-excluded ids
+    dropped (injury contraindications honored). Empty when nothing resolves."""
+    if not layer2c_payloads:
+        return []
+    excluded_ids = (
+        {er.exercise_id for er in layer2d_payload.excluded_exercises}
+        if layer2d_payload is not None
+        else set()
+    )
+    seen: set[str] = set()
+    items: list[tuple[str, str, str]] = []  # (id, name, type) for stable sort
+    for l2c in layer2c_payloads.values():
+        for rx in l2c.exercises_resolved:
+            if (
+                rx.exercise_id in excluded_ids
+                or rx.exercise_id in seen
+                or not _is_recovery_pool_type(rx.exercise_type)
+            ):
+                continue
+            seen.add(rx.exercise_id)
+            items.append((rx.exercise_id, rx.exercise_name, rx.exercise_type))
+    if not items:
+        return []
+    items.sort(key=lambda it: it[0])  # deterministic id order
+    items = items[:_RECOVERY_POOL_CAP]
+    out = ["- Recovery / mobility menu (pick from these ids only):"]
+    for ex_id, name, ex_type in items:
+        out.append(f"  - {ex_id} ({name}) [{ex_type}]")
     return out
 
 
@@ -1255,6 +1410,83 @@ def _format_session_grid(
     return out
 
 
+def _format_recovery_programming(
+    phase_structure: PhaseStructure | None,
+    phase_name: str,
+    week_range: tuple[int, int] | None,
+) -> list[str]:
+    """#698 Track 1 (Slice 2, D2) — render the deterministic per-week recovery
+    dose, allocated OFF the training session ceiling (it is not in the session
+    grid's discipline allocations and does not count toward the daily cap). The
+    `high_load` per-week bias is a planned deload week (D4 — bias to full rest);
+    `compute_recovery_dose` trims one session toward genuine rest on those weeks.
+    Empty for any phase without a defined recovery dose (e.g. an unknown phase),
+    so nothing is rendered and behavior matches today. A deload week that zeros a
+    KNOWN recovery phase still renders an explicit full-rest line (a deliberate
+    decision, not a missing block)."""
+    if phase_name not in _RECOVERY_SESSIONS_PER_WEEK:
+        return []
+    if week_range is not None:
+        weeks: range = range(week_range[0], week_range[1] + 1)
+    else:
+        phase_weeks_n = next(
+            (
+                p.weeks
+                for p in (phase_structure.phases if phase_structure else [])
+                if p.phase_name == phase_name
+            ),
+            0,
+        )
+        weeks = range(1, phase_weeks_n + 1)
+
+    week_lines: list[str] = []
+    any_high_load = False
+    for w in weeks:
+        high_load = periodization.is_deload_week_for(phase_structure, phase_name, w)
+        dose = compute_recovery_dose(phase_name, high_load)
+        any_high_load = any_high_load or high_load
+        if dose.sessions_this_week <= 0:
+            # Rule #15 — a zeroed recovery week (deload bias → full rest) is a
+            # deliberate decision, not a missing block; make it attributable.
+            print(
+                f"compute_recovery_dose: {phase_name}:w{w} sessions=0 "
+                f"high_load={high_load} (full-rest bias)"
+            )
+            week_lines.append(
+                f"  Week {w}: 0 recovery sessions — full rest "
+                f"({'deload — ' if high_load else ''}prefer genuine rest)."
+            )
+            continue
+        week_lines.append(
+            f"  Week {w}: {dose.sessions_this_week} recovery session(s) "
+            f"× ~{dose.session_minutes} min — mobility / soft-tissue / breathwork."
+        )
+
+    # Defensive: an empty week range (e.g. 0-week phase) → nothing to render.
+    if not week_lines:
+        return []
+
+    out = [
+        "=== Recovery programming (deterministic — off the training cap) ===",
+        "Recovery/mobility sessions (kind='recovery') are ADDITIVE and do NOT "
+        "count toward the ≤2/day training cap — a day may carry ≤2 training "
+        "(cardio/strength) PLUS ≤1 recovery (the recovery takes the last daily "
+        "slot). Place them on/after hard days or on lighter/rest-adjacent days; "
+        "keep them sub-threshold (intensity easy/rest). Prescribe each session's "
+        "movements from the `=== Recovery exercise pool ===` ids only.",
+    ]
+    out.extend(week_lines)
+    if phase_name == "Peak" or any_high_load:
+        # D4 — load-adaptive rest directive (broader than the count trim): under
+        # high load, full rest is the protective default (adaptation-neutral vs
+        # active recovery per the evidence).
+        out.append(
+            "  Under high load (Peak phase or a deload week), prefer GENUINE "
+            "full rest over active recovery; keep any recovery minimal and short."
+        )
+    return out
+
+
 def _format_weekly_rollup_for_prior_phase(sessions: list[PlanSession]) -> list[str]:
     """Compute a weekly rollup table from prior-phase accepted sessions.
     Per-week (week_in_phase, discipline) — total volume hours, zone breakdown,
@@ -1593,6 +1825,15 @@ def render_user_prompt(
         )
     )
     parts.append("")
+    # #698 Track 1 (Slice 2) — the deterministic recovery dose, rendered right
+    # after the training grid but allocated OFF its ceiling (additive; see
+    # `_format_recovery_programming`). Empty for zero-dose phases → no block.
+    recovery_lines = _format_recovery_programming(
+        phase_structure, phase_spec.phase_name, week_range
+    )
+    if recovery_lines:
+        parts.extend(recovery_lines)
+        parts.append("")
     parts.extend(
         _format_skill_capability_gates(layer2c_payloads or {}, layer2a_payload)
     )
@@ -1758,6 +1999,20 @@ def render_user_prompt(
         parts.append("=== Strength exercise pool ===")
         parts.extend(pool_lines)
         parts.append("")
+
+    # #698 Track 1 (Slice 2) — the resolved recovery/mobility pool. Track 1 D1
+    # binds the tool-schema enum to these ids (see `compute_recovery_pool_ids` +
+    # `build_record_phase_sessions_tool(..., recovery_pool_ids=...)`). Rendered
+    # only when the recovery dose is in play (a recovery block was emitted above)
+    # AND the pool resolves — no menu when there's nothing to prescribe.
+    if recovery_lines:
+        recovery_pool_lines = _format_recovery_exercise_pool(
+            layer2c_payloads, layer2d_payload
+        )
+        if recovery_pool_lines:
+            parts.append("=== Recovery exercise pool ===")
+            parts.extend(recovery_pool_lines)
+            parts.append("")
 
     # === Best-fit training substitution ===
     if training_substitution_payload is not None:
@@ -2302,9 +2557,11 @@ def synthesize_phase(
             _FEASIBLE_POOL_ENUM_WARN_THRESHOLD,
             unit_tag,
         )
+    recovery_pool_ids = compute_recovery_pool_ids(layer2c_payloads, layer2d_payload)
     tool_schema = build_record_phase_sessions_tool(
         max_sessions_this_unit,
         feasible_pool_ids=feasible_pool_ids or None,
+        recovery_pool_ids=recovery_pool_ids or None,
     )
 
     rule_failures: list[RuleFailure] = []

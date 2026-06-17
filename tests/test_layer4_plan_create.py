@@ -886,10 +886,12 @@ class TestRecordPhaseSessionsTool:
     def test_session_kind_includes_rest(self):
         t = build_record_phase_sessions_tool()
         sess_items = t["input_schema"]["properties"]["sessions"]["items"]
+        # #698 Track 1 (Slice 2) — `recovery` is the 4th session kind.
         assert set(sess_items["properties"]["kind"]["enum"]) == {
             "cardio",
             "strength",
             "rest",
+            "recovery",
         }
 
     def test_intensity_target_oneof_nine_shapes(self):
