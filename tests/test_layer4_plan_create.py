@@ -609,11 +609,11 @@ class TestTopLevelPayloadValidationRetryable:
 
         calls = {"n": 0}
         # Three cardio sessions all dated to week-1 day 2 (inside the block
-        # window). Each parses fine on its own — `session_index_in_day` stays
-        # ∈{0,1} (the per-row `<= 1` validator), so the parse step accepts them
-        # — but the cross-session `_check_two_per_day` invariant, which only
-        # fires at payload construction, rejects 3-on-a-day. This is exactly the
-        # boundary #47 fell through.
+        # window). Each parses fine on its own — but the cross-session
+        # `_check_two_per_day` invariant, which only fires at payload
+        # construction, rejects 3 TRAINING sessions on a day (recovery is exempt
+        # and additive, #698 Track 1; three cardio are all training). This is
+        # exactly the boundary #47 fell through.
         bad = {
             "sessions": [
                 _cardio_session(d=_PLAN_START + timedelta(days=1), idx=0),
@@ -638,7 +638,7 @@ class TestTopLevelPayloadValidationRetryable:
         # Surfaced as the RETRYABLE typed code — not a raw ValidationError that
         # the route would treat as a fatal "unexpected" and discard the plan.
         assert exc.value.code == "schema_violation"
-        assert "2 sessions per day" in str(exc.value.detail)
+        assert "2 training sessions per day" in str(exc.value.detail)
         # Retried across the full cap (capped_retries=2 → 3 attempts) before
         # giving up, rather than failing fatally on the first bad attempt.
         assert calls["n"] == 3

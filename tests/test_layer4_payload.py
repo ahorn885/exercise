@@ -31,6 +31,7 @@ from layer4.payload import (
     PowerTarget,
     RPETarget,
     RacePlan,
+    RecoveryExercise,
     RaceSegment,
     RaceWeekBrief,
     RuleFailure,
@@ -181,6 +182,39 @@ def _rest_session(
         phase_metadata=_phase_metadata() if with_phase_metadata else None,
         session_notes="Rest day.",
         coaching_intent="Recovery.",
+        coaching_flags=[],
+    )
+
+
+def _recovery_session(
+    *,
+    session_id: str = "s-recovery-1",
+    date_: date = date(2026, 6, 4),
+    day_of_week: str = "Thu",
+    session_index_in_day: int = 0,
+    with_phase_metadata: bool = True,
+) -> PlanSession:
+    return PlanSession(
+        session_id=session_id,
+        plan_version_id=42,
+        date=date_,
+        day_of_week=day_of_week,
+        session_index_in_day=session_index_in_day,
+        time_of_day="evening",
+        kind="recovery",
+        duration_min=15,
+        intensity_summary="easy",
+        recovery_exercises=[
+            RecoveryExercise(
+                exercise_id="EX014",
+                exercise_name="World's Greatest Stretch",
+                prescription="2×5/side",
+                instructions="Slow, controlled; breathe into the hip.",
+            )
+        ],
+        phase_metadata=_phase_metadata() if with_phase_metadata else None,
+        session_notes="Mobility + soft tissue.",
+        coaching_intent="Maintain ROM under load.",
         coaching_flags=[],
     )
 
@@ -639,8 +673,102 @@ def test_two_hard_same_day_rejected():
         )
 
 
+# ─── #698 Track 1 — recovery session kind ───────────────────────────────────
+
+
+def test_recovery_session_valid():
+    _plan_create_payload(sessions=[_recovery_session()])
+
+
+def test_recovery_requires_recovery_exercises():
+    with pytest.raises(ValidationError, match="recovery_exercises non-None and non-empty"):
+        PlanSession(
+            session_id="r", plan_version_id=42, date=date(2026, 6, 4),
+            day_of_week="Thu", session_index_in_day=0, time_of_day="evening",
+            kind="recovery", duration_min=15, intensity_summary="easy",
+            recovery_exercises=None,
+            session_notes="x", coaching_intent="y", coaching_flags=[],
+        )
+
+
+def test_recovery_forbids_cardio_strength_rest_fields():
+    with pytest.raises(ValidationError, match="kind=='recovery' requires cardio_blocks is None"):
+        PlanSession(
+            session_id="r", plan_version_id=42, date=date(2026, 6, 4),
+            day_of_week="Thu", session_index_in_day=0, time_of_day="evening",
+            kind="recovery", duration_min=15, intensity_summary="easy",
+            recovery_exercises=[RecoveryExercise(
+                exercise_id="EX014", exercise_name="WGS",
+                prescription="2×5", instructions="x")],
+            cardio_blocks=[_cardio_block()],
+            session_notes="x", coaching_intent="y", coaching_flags=[],
+        )
+
+
+def test_cardio_forbids_recovery_exercises():
+    with pytest.raises(ValidationError, match="kind=='cardio' requires recovery_exercises is None"):
+        PlanSession(
+            session_id="c", plan_version_id=42, date=date(2026, 6, 4),
+            day_of_week="Thu", session_index_in_day=0, time_of_day="morning",
+            kind="cardio", discipline_id="run", discipline_name="Run",
+            locale_id="l", locale_name="L", duration_min=45,
+            intensity_summary="moderate", cardio_blocks=[_cardio_block()],
+            recovery_exercises=[RecoveryExercise(
+                exercise_id="EX014", exercise_name="WGS",
+                prescription="2×5", instructions="x")],
+            session_notes="x", coaching_intent="y", coaching_flags=[],
+        )
+
+
+def test_two_cardio_plus_recovery_same_day_ok():
+    # Andy: "2 cardio + 1 recovery is OK" — recovery is exempt from the cap.
+    _plan_create_payload(sessions=[
+        _cardio_session(session_id="c0", date_=date(2026, 6, 5), day_of_week="Fri",
+                        session_index_in_day=0),
+        _cardio_session(session_id="c1", date_=date(2026, 6, 5), day_of_week="Fri",
+                        session_index_in_day=1),
+        _recovery_session(session_id="r0", date_=date(2026, 6, 5), day_of_week="Fri",
+                          session_index_in_day=2),
+    ])
+
+
+def test_cardio_strength_recovery_same_day_ok():
+    # Andy: "1 cardio + 1 strength + 1 recovery is OK".
+    _plan_create_payload(sessions=[
+        _cardio_session(session_id="c0", date_=date(2026, 6, 5), day_of_week="Fri",
+                        session_index_in_day=0),
+        _strength_session(session_id="s0", date_=date(2026, 6, 5), day_of_week="Fri",
+                          session_index_in_day=1),
+        _recovery_session(session_id="r0", date_=date(2026, 6, 5), day_of_week="Fri",
+                          session_index_in_day=2),
+    ])
+
+
+def test_two_recovery_same_day_rejected():
+    with pytest.raises(ValidationError, match="max 1 recovery session per day"):
+        _plan_create_payload(sessions=[
+            _recovery_session(session_id="r0", date_=date(2026, 6, 5), day_of_week="Fri",
+                              session_index_in_day=0),
+            _recovery_session(session_id="r1", date_=date(2026, 6, 5), day_of_week="Fri",
+                              session_index_in_day=1),
+        ])
+
+
+def test_three_training_one_recovery_rejected():
+    # The recovery exemption does NOT lift the training cap: 3 training still fails.
+    with pytest.raises(ValidationError, match="max 2 training sessions per day"):
+        _plan_create_payload(sessions=[
+            _cardio_session(session_id=f"c{i}", date_=date(2026, 6, 5), day_of_week="Fri",
+                            session_index_in_day=min(i, 2))
+            for i in range(3)
+        ] + [
+            _recovery_session(session_id="r0", date_=date(2026, 6, 5), day_of_week="Fri",
+                              session_index_in_day=2),
+        ])
+
+
 def test_more_than_two_per_day_rejected():
-    with pytest.raises(ValidationError, match="max 2 sessions per day"):
+    with pytest.raises(ValidationError, match="max 2 training sessions per day"):
         _plan_create_payload(
             sessions=[
                 _cardio_session(
