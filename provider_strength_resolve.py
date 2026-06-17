@@ -64,6 +64,27 @@ GARMIN_STRENGTH_ALIASES: dict[str, str] = {
     "Seated Calf Raise": "EX026",             # Seated Calf Raise
     "Single Arm Dumbbell Bench Press": "EX242",  # Single-Arm DB Bench Press
     "Wide Grip Lat Pulldown": "EX080",        # Lat Pulldown (Wide Grip)
+    # Batch A — Andy-ratified Garmin specifics → existing EX-ids (2026-06-17,
+    # designs/ProviderTranslation_GarminStrength_679_CandidateBatch_v1.md). These
+    # map to a live exercise that covers the same stimulus; the equipment-prefix
+    # the Garmin name carries is dropped because the EX-id is the same lift.
+    "Goblet Squat": "EX002",                  # Goblet Squat (DB/KB)
+    "Barbell Front Squat": "EX231",           # Front Squat (Barbell/KB)
+    "Thoracic Rotation": "EX016",             # Thoracic Rotation Drill
+    "Cable External Rotation": "EX082",       # External Rotation (Band/Cable)
+    "Band External Rotation": "EX082",        # External Rotation (Band/Cable)
+    "Face Pull": "EX081",                     # Band Face Pull
+    "Fire Hydrant Kicks": "EX042",            # Donkey Kick / Fire Hydrant
+    "Seated Barbell Good Morning": "EX061",   # Good Morning (Barbell)
+    "Split Barbell Good Morning": "EX061",    # Good Morning (Barbell)
+    "Single Leg Barbell Good Morning": "EX061",  # Good Morning (Barbell)
+    "High Box Jump": "EX007",                 # Box Jump
+    "Barbell Reverse Wrist Curl": "EX111",    # Reverse Wrist Curl (DB)
+    "Reverse Grip Wrist Curl": "EX111",       # Reverse Wrist Curl (DB)
+    "Weighted Bicycle Crunch": "EX224",       # Bicycle Crunch
+    "Weighted Mountain Climber": "EX221",     # Mountain Climber
+    "Barbell Bulgarian Split Squat": "EX021",  # Bulgarian Split Squat (DB)
+    "Wall Slide": "EX065",                    # Scapular Wall Slide
 }
 
 
