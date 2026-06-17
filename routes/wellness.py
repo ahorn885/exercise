@@ -274,6 +274,7 @@ def index():
         range_choices=sorted(_RANGE_CHOICES.values()),
         chart_data=chart_data,
         has_any_data=_has_any_data(chart_data),
+        headline=_build_headline_strip(chart_data),
         provider_count=len(provider_slugs()),
     )
 
@@ -628,3 +629,63 @@ def _has_any_data(chart_data) -> bool:
                 if sub:
                     return True
     return False
+
+
+# Curated "what changed" whitelist (#527): (chart_data key path, label, unit,
+# good_direction). good_direction is the direction that's *good* for the athlete
+# (HRV up is good; resting HR up is bad) — used only to colour the delta.
+_HEADLINE_METRICS = [
+    ('hrv.overnight',                'HRV',         ' ms',  'up'),
+    ('heart_rate.resting',           'Resting HR',  ' bpm', 'down'),
+    ('sleep_score.device',           'Sleep score', '',     'up'),
+    ('body_battery.overnight_delta', 'BB recovery', '',     'up'),
+    ('restless_moments',             'Restless',    '',     'down'),
+]
+
+# Prior points needed to form a baseline average. Keeps the strip off a
+# single-day "baseline" — effectively hides it for the first few days of data.
+_HEADLINE_MIN_BASELINE = 3
+
+
+def _series_points(chart_data, key_path):
+    """Resolve a dotted key path (e.g. 'hrv.overnight') to its {x,y} point list."""
+    node = chart_data
+    for part in key_path.split('.'):
+        if not isinstance(node, dict):
+            return []
+        node = node.get(part)
+    return node if isinstance(node, list) else []
+
+
+def _build_headline_strip(chart_data):
+    """The top-of-page "what changed" strip (#527): for each whitelisted metric,
+    its latest value vs the mean of the up-to-7 days before it — the ones that
+    moved most by % deviation, capped at 5. Returns [] when nothing has a real
+    baseline yet, so the template hides the strip for the first few days."""
+    out = []
+    for key_path, label, unit, good_dir in _HEADLINE_METRICS:
+        pts = _series_points(chart_data, key_path)
+        if len(pts) < _HEADLINE_MIN_BASELINE + 1:
+            continue
+        latest = pts[-1].get('y')
+        prior = [p.get('y') for p in pts[-8:-1] if p.get('y') is not None]
+        if latest is None or len(prior) < _HEADLINE_MIN_BASELINE:
+            continue
+        baseline = sum(prior) / len(prior)
+        if baseline == 0:
+            continue
+        delta = latest - baseline
+        if round(delta) == 0:
+            continue  # no meaningful move
+        direction = 'up' if delta > 0 else 'down'
+        out.append({
+            'name': label,
+            'unit': unit,
+            'direction': direction,
+            'tone': 'good' if direction == good_dir else 'bad',
+            'delta_abs': f'{round(delta):+d}',
+            'delta_pct': round(delta / baseline * 100),
+            'abs_pct': abs(delta / baseline * 100),
+        })
+    out.sort(key=lambda h: h['abs_pct'], reverse=True)
+    return out[:5]
