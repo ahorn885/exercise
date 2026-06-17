@@ -25,6 +25,17 @@ Truly "folding" *saved* gear means rewriting `gym_profiles.equipment` (a JSON ar
 ## 4. #698 — the 8-exercise check (logged this session)
 The 8 `Cycling trainer` `0B` exercises are cardio/skill types (Interval/Tempo, Technical/Skill, Isometric). **Finding 1:** the cardio engine prescribes zone/interval *blocks*, not `0B` exercise selection → these are never prescribed for cardio (orphaned). **Finding 2 (higher severity):** the strength feasible pool (`compute_feasible_pool_ids` + `_format_strength_exercise_pool`) has **no `exercise_type` filter**, and the 8 are in `sport_exercise_map`, so a cardio drill (e.g. `EX073 Threshold Intervals (Bike)`) is a valid `strength_exercises[*].exercise_id` the synthesizer can pick — i.e. can be **mis-prescribed as a strength lift**. Recommended its own deterministic fix (filter the pool to `Strength`/`Power`). Commented on #698.
 
+## 4b. OPEN THREAD — continue in the next session: is the cardio `0B` catalog doing any work? (Answer: NO)
+Andy's follow-up (2026-06-17): are the cardio/skill `0B` exercises (threshold/VO2/sweet-spot intervals, cadence & skill drills — incl. the 8 cycling-trainer ones) ever consumed to prescribe **structured, type-aware** cardio — e.g. recognizing "do threshold intervals" → "Z4 10 min / Z2 2 min recovery ×4" — vs. just "Z2 bike 70 min"?
+
+**Traced → No, they do no work.**
+- Cardio is `cardio_blocks` the **synthesizer free-composes** from prompt zone/interval guidance. The schema *supports* structure (`interval_set` → `repetitions`+`rest_between_min`+`rest_intensity_zone`, `per_phase.py:312-313, 497-516`; a `discipline_specific_intensity` session type exists) but the **`0B` cardio catalog is never fed to the model** — there is **no cardio analog of `_format_strength_exercise_pool`** (only the strength pool is rendered). So nothing tells the agent "threshold vs VO2 vs sweet-spot" from the catalog; it composes freely, and per **#337** often vaguely.
+- The cardio/skill rows' only path into a plan is the **strength-pool leak (Finding 2)** — mis-prescription, not their purpose.
+
+**Two follow-ups (logged on #698):**
+1. **Finding 2 — bug, deterministic, no trigger:** type-filter the strength feasible pool (`compute_feasible_pool_ids` + `_format_strength_exercise_pool` → `Strength`/`Power` only). *This is the recommended first build next session.*
+2. **Opportunity — overlaps #337:** wire the cardio `0B` catalog into cardio prescription so the agent prescribes type-aware structured intervals *from the catalog* instead of free-composing. Larger; likely Trigger #1 (prompt). That's what those rows were built for; nothing consumes them today.
+
 ## 5. Decisions / triggers
 | # | Decision | By |
 |---|---|---|
@@ -44,7 +55,10 @@ The 8 `Cycling trainer` `0B` exercises are cardio/skill types (Interval/Tempo, T
 **Substantive:** `etl/migrations/layer0/0012_retire_spin_stationary_bike.sql`, `layer4/session_feasibility.py` (comment). **Bookkeeping:** `CURRENT_STATE.md`, this handoff, GitHub issues #692 / #698.
 
 ## 9. Next pointers (Rule #13 read order): `CLAUDE.md` → `CURRENT_STATE.md` → `CARRY_FORWARD.md` → this handoff → `verify-handoff.sh`.
-Best next: the **#698 strength-pool type-filter** bug (deterministic, no trigger — a real correctness fix), or #690/#624/#689 (Trigger #1 prompt — trace + bring the prompt change).
+**Continue THIS thread (the cardio-catalog investigation, §4b + #698):**
+1. **First build — #698 Finding 2 (deterministic, no trigger):** type-filter the strength feasible pool so cardio/skill `0B` rows can't be mis-prescribed as strength lifts.
+2. **Then the opportunity (overlaps #337, Trigger #1):** wire the cardio `0B` catalog into cardio prescription for type-aware structured intervals.
+Other open: #690/#624/#689 (Trigger #1 prompt — trace + bring the prompt change); #283 (FIT-decode prod log).
 
 ---
 
