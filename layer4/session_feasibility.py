@@ -103,6 +103,10 @@ _DISCIPLINE_INDOOR_MACHINES: dict[str, tuple[str, ...]] = {
     "D-022": ("Ski erg",),
     "D-024": ("Treadmill", "Stair climber"),
     "D-028": ("Ski erg",),
+    # #692 — `Spin bike`/`Stationary bike` were retired from the equipment picker
+    # (layer0 migration 0012, folded into `Cycling trainer`). They stay listed
+    # here so an athlete who *already* saved one keeps indoor routing; new gear
+    # is captured as `Cycling trainer`/`Assault bike`.
     "D-006": ("Cycling trainer", "Stationary bike", "Spin bike", "Assault bike"),
     "D-007": ("Cycling trainer", "Stationary bike", "Spin bike", "Assault bike"),
     "D-008": ("Cycling trainer", "Stationary bike", "Spin bike", "Assault bike"),
