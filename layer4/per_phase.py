@@ -416,6 +416,28 @@ def _intensity_target_schema() -> dict[str, Any]:
 
 _FEASIBLE_POOL_ENUM_WARN_THRESHOLD = 200
 
+# #698 Finding 2 — the strength pool (both the SDK enum bounding
+# `strength_exercises[*].exercise_id` and the rendered pool the synthesizer
+# reads) must only contain resistance-training `exercise_type`s. Without this,
+# every `sport_exercise_map`-mapped 0B row leaked in regardless of type, so a
+# cardio/skill drill (e.g. EX073 "Threshold Intervals (Bike)", a Interval/Tempo
+# row) was a structurally-valid strength-exercise pick the model could
+# mis-prescribe as a lift. The allowlist is the resistance modalities (Andy-
+# ratified 2026-06-17): everything else — cardio (Interval/Tempo,
+# Aerobic/Endurance), skill (Technical/Skill, Agility, Balance/Proprioception),
+# and recovery/mobility (Mobility, Flexibility/Stretching, Recovery/Soft Tissue,
+# Breathwork, Activation/Primer) — is excluded from the strength surface.
+# Stored lowercased + matched case-insensitively (mirrors _strength_pattern_match
+# against the 0B vocab): prod values are title-case ("Strength"), but the compare
+# tolerates casing/whitespace drift.
+_STRENGTH_POOL_EXERCISE_TYPES = frozenset(
+    {"strength", "power", "loaded carry", "plyometric", "isometric"}
+)
+
+
+def _is_strength_pool_type(exercise_type: str) -> bool:
+    return (exercise_type or "").strip().lower() in _STRENGTH_POOL_EXERCISE_TYPES
+
 
 def compute_feasible_pool_ids(
     layer2c_payloads: dict[str, Layer2CPayload],
@@ -434,10 +456,24 @@ def compute_feasible_pool_ids(
         else set()
     )
     pool: set[str] = set()
+    dropped_by_type: dict[str, int] = {}
     for l2c in layer2c_payloads.values():
         for rx in l2c.exercises_resolved:
-            if rx.exercise_id not in excluded:
-                pool.add(rx.exercise_id)
+            if rx.exercise_id in excluded:
+                continue
+            # #698 Finding 2 — keep only resistance-training types in the
+            # strength enum so cardio/skill rows can't be picked as lifts.
+            if not _is_strength_pool_type(rx.exercise_type):
+                dropped_by_type[rx.exercise_type] = (
+                    dropped_by_type.get(rx.exercise_type, 0) + 1
+                )
+                continue
+            pool.add(rx.exercise_id)
+    # Rule #15 — log the non-strength rows the type filter excluded (by type),
+    # so a "missing exercise" in a strength session is attributable in prod.
+    if dropped_by_type:
+        _dbg = ", ".join(f"{t}={n}" for t, n in sorted(dropped_by_type.items()))
+        print(f"compute_feasible_pool_ids: non-strength-type dropped [{_dbg}]")
     return sorted(pool)
 
 
@@ -747,6 +783,10 @@ def _format_strength_exercise_pool(
                 if d_id in rx.discipline_ids
                 and rx.exercise_id not in excluded_ids
                 and rx.exercise_id not in seen
+                # #698 Finding 2 — render only resistance-training types; this
+                # mirrors the compute_feasible_pool_ids enum so the rendered
+                # pool and the structural enum stay in lockstep.
+                and _is_strength_pool_type(rx.exercise_type)
             ]
             cands.sort(
                 key=lambda rx: (
