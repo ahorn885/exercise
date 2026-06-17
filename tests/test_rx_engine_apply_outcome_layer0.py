@@ -120,6 +120,53 @@ class TestLayer0ProgressionSource:
         assert res["movement_pattern"] == "Pull"
 
 
+class TestStrength679Resolution:
+    """#679 — the logged NAME resolves through alias → category-collapse →
+    bucket-3 at the write chokepoint, and the outcome carries `match_kind` +
+    `bucket3` so the completed-history record is tagged, not silently dropped."""
+
+    def test_specific_subtype_resolves_to_specific_ex_id_via_alias(self):
+        # "Dumbbell Hammer Curl" hits the specific hammer-curl EX234 via the
+        # alias step — NOT collapsed to the coarse "Curl" (EX247).
+        db = _FakeDb(layer0_patterns={"EX234": ["Pull-H"]})
+        res = apply_session_outcome(db, "Dumbbell Hammer Curl", "2026-06-17", _sets(),
+                                    rx_source="From FIT Import", user_id=1)
+        assert res["layer0_exercise_id"] == "EX234"
+        assert res["match_kind"] == "alias"
+        assert res["bucket3"] is False
+
+    def test_unaliased_subtype_resolves_via_category_collapse(self):
+        # "Barbell Bench Press" has no alias; its FIT category "Bench Press"
+        # collapses through the coarse map to EX229 (real garmin_fit_parser map).
+        db = _FakeDb(layer0_patterns={"EX229": ["Push-H"]})
+        res = apply_session_outcome(db, "Barbell Bench Press", "2026-06-17", _sets(),
+                                    rx_source="From FIT Import", user_id=1)
+        assert res["layer0_exercise_id"] == "EX229"
+        assert res["match_kind"] == "category"
+        assert res["bucket3"] is False
+
+    def test_unmapped_name_is_explicit_bucket3_not_silent(self):
+        # A legitimate but unmapped name resolves to None AND is tagged bucket-3
+        # (record-don't-drop) rather than an ambiguous first-exposure row.
+        db = _FakeDb(ei_row={"discipline": "Bike", "type": "Staple",
+                             "movement_pattern": "Hinge", "suggested_volume": "3x8"})
+        res = apply_session_outcome(db, "Some Obscure Lift", "2026-06-17", _sets(),
+                                    rx_source="From Training Log", user_id=1)
+        assert res["layer0_exercise_id"] is None
+        assert res["bucket3"] is True
+        assert res["match_kind"] == "bucket3"
+        # Legacy exercise_inventory fallback preserved (no regression).
+        assert res["movement_pattern"] == "Hinge"
+
+    def test_existing_row_ex_id_marks_match_kind_existing(self):
+        db = _FakeDb(current_rx_row=_rx_row(layer0_exercise_id="EX001"),
+                     layer0_patterns={"EX001": ["Squat"]})
+        res = apply_session_outcome(db, "Back Squat", "2026-06-17", _sets(),
+                                    rx_source="From FIT Import", user_id=1)
+        assert res["match_kind"] == "existing"
+        assert res["bucket3"] is False
+
+
 class TestPublicFkRetired:
     """#430 Slice C (C2) — the public exercise_inventory.id FK is no longer
     read, written, or returned; the per-user tables key off the layer0 EX-id."""
