@@ -209,6 +209,24 @@ class StrengthExercise(_Base):
         return self
 
 
+# ─── §7.4b RecoveryExercise (#698 Track 1 — recovery session kind) ──────────
+
+
+class RecoveryExercise(_Base):
+    """One prescribed recovery/mobility movement. Structured analog of
+    StrengthExercise (D1, ratified 2026-06-17): the synthesizer picks
+    `exercise_id` from the deterministic recovery pool
+    (`per_phase.compute_recovery_pool_ids`, the Mobility / Flexibility /
+    Recovery-Soft-Tissue / Breathwork 0B types) — never invents one. Lean
+    by design (the evidence: recovery dose is small): an id + a free-text
+    `prescription` (e.g. "2×30s/side", "5 min @ ~6 breaths/min") + instructions."""
+
+    exercise_id: str
+    exercise_name: str
+    prescription: str
+    instructions: str
+
+
 # ─── §7.5 SessionPhaseMetadata ─────────────────────────────────────────────
 
 
@@ -228,9 +246,11 @@ class PlanSession(_Base):
     plan_version_id: int
     date: date
     day_of_week: Literal["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
-    session_index_in_day: int = Field(ge=0, le=1)
+    # #698 Track 1 — max→2 so a recovery session can take the 3rd daily slot
+    # (≤2 training + ≤1 recovery; see `_check_two_per_day`).
+    session_index_in_day: int = Field(ge=0, le=2)
     time_of_day: Literal["morning", "afternoon", "evening", "unspecified"]
-    kind: Literal["cardio", "strength", "rest"]
+    kind: Literal["cardio", "strength", "rest", "recovery"]
 
     discipline_id: str | None = None
     discipline_name: str | None = None
@@ -241,6 +261,7 @@ class PlanSession(_Base):
 
     cardio_blocks: list[CardioBlock] | None = None
     strength_exercises: list[StrengthExercise] | None = None
+    recovery_exercises: list[RecoveryExercise] | None = None
     rest_reason: (
         Literal[
             "planned_recovery",
@@ -268,6 +289,8 @@ class PlanSession(_Base):
                 raise ValueError("kind=='cardio' requires cardio_blocks non-None and non-empty")
             if self.strength_exercises is not None:
                 raise ValueError("kind=='cardio' requires strength_exercises is None")
+            if self.recovery_exercises is not None:
+                raise ValueError("kind=='cardio' requires recovery_exercises is None")
             if self.rest_reason is not None:
                 raise ValueError("kind=='cardio' requires rest_reason is None")
         elif self.kind == "strength":
@@ -277,13 +300,33 @@ class PlanSession(_Base):
                 )
             if self.cardio_blocks is not None:
                 raise ValueError("kind=='strength' requires cardio_blocks is None")
+            if self.recovery_exercises is not None:
+                raise ValueError("kind=='strength' requires recovery_exercises is None")
             if self.rest_reason is not None:
                 raise ValueError("kind=='strength' requires rest_reason is None")
+        elif self.kind == "recovery":
+            # #698 Track 1 — structured recovery/mobility session (D1).
+            if not self.recovery_exercises:
+                raise ValueError(
+                    "kind=='recovery' requires recovery_exercises non-None and non-empty"
+                )
+            if self.cardio_blocks is not None:
+                raise ValueError("kind=='recovery' requires cardio_blocks is None")
+            if self.strength_exercises is not None:
+                raise ValueError("kind=='recovery' requires strength_exercises is None")
+            if self.rest_reason is not None:
+                raise ValueError("kind=='recovery' requires rest_reason is None")
+            if self.discipline_id is not None:
+                raise ValueError("kind=='recovery' requires discipline_id is None")
+            if self.locale_id is not None:
+                raise ValueError("kind=='recovery' requires locale_id is None")
         elif self.kind == "rest":
             if self.cardio_blocks is not None:
                 raise ValueError("kind=='rest' requires cardio_blocks is None")
             if self.strength_exercises is not None:
                 raise ValueError("kind=='rest' requires strength_exercises is None")
+            if self.recovery_exercises is not None:
+                raise ValueError("kind=='rest' requires recovery_exercises is None")
             if self.rest_reason is None:
                 raise ValueError("kind=='rest' requires rest_reason non-None")
             if self.duration_min != 0:
@@ -605,22 +648,38 @@ class Layer4Payload(_Base):
         for s in self.sessions:
             by_date[s.date].append(s)
         for d, ss in by_date.items():
-            if len(ss) > 2:
-                raise ValueError(f"{d}: max 2 sessions per day (got {len(ss)})")
-            if len(ss) == 2:
-                if all(s.kind == "strength" for s in ss):
+            # #698 Track 1 — the daily cap is on TRAINING sessions only
+            # (cardio/strength); recovery is exempt and additive: ≤2 training
+            # + ≤1 recovery (Andy: "2 cardio + 1 recovery OK; 1 cardio +
+            # 1 strength + 1 recovery OK"). rest is solitary by its own
+            # invariants, so it never co-occurs in practice.
+            training = [s for s in ss if s.kind in ("cardio", "strength")]
+            recovery = [s for s in ss if s.kind == "recovery"]
+            if len(training) > 2:
+                raise ValueError(
+                    f"{d}: max 2 training sessions per day (got {len(training)})"
+                )
+            if len(recovery) > 1:
+                raise ValueError(
+                    f"{d}: max 1 recovery session per day (got {len(recovery)})"
+                )
+            if len(training) == 2:
+                if all(s.kind == "strength" for s in training):
                     raise ValueError(f"{d}: no strength+strength on same day")
-                if all(s.intensity_summary == "hard" for s in ss):
+                if all(s.intensity_summary == "hard" for s in training):
                     raise ValueError(f"{d}: no two hard sessions on same day")
-                if not any(s.kind == "cardio" for s in ss):
+                if not any(s.kind == "cardio" for s in training):
                     raise ValueError(
-                        f"{d}: at least one of two sessions must have kind=='cardio'"
+                        f"{d}: at least one of two training sessions must have kind=='cardio'"
                     )
-                indices = sorted(s.session_index_in_day for s in ss)
-                if indices != [0, 1]:
-                    raise ValueError(
-                        f"{d}: two sessions same day must have session_index_in_day 0 and 1"
-                    )
+            # Indices must be contiguous 0..n-1 across all the day's sessions
+            # (recovery takes the last slot; field is capped at le=2 → max 3/day).
+            indices = sorted(s.session_index_in_day for s in ss)
+            if indices != list(range(len(ss))):
+                raise ValueError(
+                    f"{d}: session_index_in_day must be contiguous 0..{len(ss) - 1} "
+                    f"(got {indices})"
+                )
         return self
 
     @model_validator(mode="after")
