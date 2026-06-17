@@ -81,6 +81,7 @@ from health_inputs_repo import (
     list_medications, add_medication, delete_medication, clean_severity,
     SYSTEM_CATEGORY_CHOICES, MEDICATION_CLASS_CHOICES,
     SYSTEM_CATEGORY_LABELS, MEDICATION_CLASS_LABELS,
+    CONDITIONS_BY_CATEGORY,
 )
 from routes import provider_auth as pa
 
@@ -476,6 +477,7 @@ def edit():
         health_conditions=health_conditions,
         medications=medications,
         system_category_choices=SYSTEM_CATEGORY_CHOICES,
+        conditions_by_category=CONDITIONS_BY_CATEGORY,
         medication_class_choices=MEDICATION_CLASS_CHOICES,
         system_category_labels=SYSTEM_CATEGORY_LABELS,
         medication_class_labels=MEDICATION_CLASS_LABELS,
@@ -911,10 +913,17 @@ def add_condition():
     """Add one active health condition. system_category is validated against the
     §B vocab; a tampered category or blank name is rejected (no insert)."""
     db = get_db()
+    system = (request.form.get('system_category') or '').strip()
+    # The Condition field is a system-filtered select (#543); the free-text
+    # `condition_name_other` is the escape for the `other` system or a listed
+    # category's "Other (not listed)" sentinel — it keeps the system_category.
+    name = (request.form.get('condition_name') or '').strip()
+    if system == 'other' or name in ('', '__other__'):
+        name = (request.form.get('condition_name_other') or '').strip()
     ok = add_health_condition(
         db, current_user_id(),
-        system_category=(request.form.get('system_category') or '').strip(),
-        condition_name=request.form.get('condition_name') or '',
+        system_category=system,
+        condition_name=name,
         severity=clean_severity(request.form.get('severity')),
         notes=(request.form.get('notes') or '').strip() or None,
     )

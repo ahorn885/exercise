@@ -533,6 +533,10 @@ def test_health_inputs_cards_render(monkeypatch):
     # Medication shows by class only — the exact name is no longer captured/shown.
     assert 'Anticoagulant' in html
     assert 'warfarin' not in html and 'name="medication_name"' not in html
+    # Condition capture is now a system-filtered select + free-text escape
+    # (#543), not a bare text input; the curated vocab ships to the client.
+    assert 'id="condSelect"' in html and 'name="condition_name_other"' in html
+    assert 'Hypertension' in html      # a curated condition in the JSON map
     # Vocab-backed add selects + scoped delete forms.
     assert 'name="system_category"' in html and 'name="medication_class"' in html
     assert '/profile/condition/add' in html and '/profile/condition/3/delete' in html
@@ -551,6 +555,42 @@ def test_condition_add_validates_category(monkeypatch):
     assert resp.status_code in (302, 303)
     assert calls[0]['system_category'] == 'cardiac'
     assert calls[0]['condition_name'] == 'SVT' and calls[0]['severity'] == 3
+
+
+def test_condition_add_uses_freetext_for_other_not_listed(monkeypatch):
+    # The "Other (not listed)" select sentinel keeps the system_category but
+    # takes the name from the free-text escape (#543).
+    calls = []
+    monkeypatch.setattr(_profile, 'add_health_condition',
+                        lambda db, uid, **kw: calls.append(kw) or True)
+    monkeypatch.setitem(_appmod.app.config, 'WTF_CSRF_ENABLED', False)
+    client = _client(monkeypatch, _Conn(profile={}))
+    client.post('/profile/condition/add', data={
+        'system_category': 'cardiac', 'condition_name': '__other__',
+        'condition_name_other': 'Brugada syndrome'})
+    assert calls[0]['system_category'] == 'cardiac'
+    assert calls[0]['condition_name'] == 'Brugada syndrome'
+
+
+def test_condition_add_other_system_uses_freetext(monkeypatch):
+    # The `other` system has no curated list → the free-text input is the name.
+    calls = []
+    monkeypatch.setattr(_profile, 'add_health_condition',
+                        lambda db, uid, **kw: calls.append(kw) or True)
+    monkeypatch.setitem(_appmod.app.config, 'WTF_CSRF_ENABLED', False)
+    client = _client(monkeypatch, _Conn(profile={}))
+    client.post('/profile/condition/add', data={
+        'system_category': 'other', 'condition_name': '',
+        'condition_name_other': 'Idiopathic something'})
+    assert calls[0]['condition_name'] == 'Idiopathic something'
+
+
+def test_conditions_vocab_keys_are_valid_categories():
+    from athlete import KNOWN_SYSTEM_CATEGORIES
+    keys = set(_hi_repo.CONDITIONS_BY_CATEGORY)
+    assert keys <= set(KNOWN_SYSTEM_CATEGORIES)   # no stray category
+    assert 'other' not in keys                    # 'other' is free-text only
+    assert all(_hi_repo.CONDITIONS_BY_CATEGORY.values())  # no empty lists
 
 
 def test_condition_add_rejects_unknown_category(monkeypatch):
