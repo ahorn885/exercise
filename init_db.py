@@ -2348,6 +2348,16 @@ _PG_MIGRATIONS = [
         f"WHERE exercise='{name}' AND layer0_exercise_id IS NULL"
         for name, ex_id in NAME_TO_EX_ID.items()
     ],
+    # ── Cull non-trainable / mis-classified v1 exercise_inventory entries ──
+    # (#694, Andy-ratified 2026-06-17). Five 'Novel' rows that are cardio
+    # sessions or coaching cues, not trackable strength exercises — v1-catalog
+    # (/rx Exercises page) only; layer0 0B / plan-gen unaffected. Also pulled
+    # from the EXERCISES + EXERCISE_EQUIPMENT seeds so they don't re-seed.
+    # FK-safe order: child rows before the catalog row.
+    "DELETE FROM exercise_equipment WHERE exercise_id IN (SELECT id FROM exercise_inventory WHERE exercise IN ('1,000 Step-Up Challenge','Hanging Leg Raise in Boots','Weighted Treadmill Incline Walk','High-Rep Strength Endurance Sets','Nasal-Breathing-Only Climbing'))",
+    "DELETE FROM injury_exercise_modifications WHERE exercise_id IN (SELECT id FROM exercise_inventory WHERE exercise IN ('1,000 Step-Up Challenge','Hanging Leg Raise in Boots','Weighted Treadmill Incline Walk','High-Rep Strength Endurance Sets','Nasal-Breathing-Only Climbing')) OR substitute_exercise_id IN (SELECT id FROM exercise_inventory WHERE exercise IN ('1,000 Step-Up Challenge','Hanging Leg Raise in Boots','Weighted Treadmill Incline Walk','High-Rep Strength Endurance Sets','Nasal-Breathing-Only Climbing'))",
+    "DELETE FROM current_rx WHERE exercise IN ('1,000 Step-Up Challenge','Hanging Leg Raise in Boots','Weighted Treadmill Incline Walk','High-Rep Strength Endurance Sets','Nasal-Breathing-Only Climbing')",
+    "DELETE FROM exercise_inventory WHERE exercise IN ('1,000 Step-Up Challenge','Hanging Leg Raise in Boots','Weighted Treadmill Incline Walk','High-Rep Strength Endurance Sets','Nasal-Breathing-Only Climbing')",
 ]
 
 _CLOTHING_SEEDS = [
@@ -2562,13 +2572,10 @@ EXERCISE_EQUIPMENT = {
     # Foot — Novel
     'Hillbounding':                      '',
     '4-Side Box Step-Up/Off':            'plyo_box',
-    '1,000 Step-Up Challenge':           'weighted_vest',
     'Single-Leg Stance Eyes Closed':     '',
     'Towel Pull-Up':                     'pull_up_bar',
-    'Hanging Leg Raise in Boots':        'pull_up_bar',
     'Side Split Lunges (Deep)':          '',
     'Rapid Calf Raises':                 '',
-    'Weighted Treadmill Incline Walk':   'treadmill',
     # Water — Staple
     'Seated Cable Row':                  'cable_machine',
     'Bent-Over Barbell Row':             'barbell',
@@ -2591,7 +2598,6 @@ EXERCISE_EQUIPMENT = {
     'Russian Twist (Feet Elevated)':     'dumbbells|med_ball',
     'Single-Arm DB Row (Staggered)':     'dumbbells',
     'Med Ball Torso Rotation (Seated)':  'med_ball',
-    'High-Rep Strength Endurance Sets':  '',
     # Cross — Staple
     'KB Halo':                           'kettlebell',
     'Push Press':                        'barbell|dumbbells|kettlebell',
@@ -2612,7 +2618,6 @@ EXERCISE_EQUIPMENT = {
     'Rice Bucket':                       'rice_bucket',
     'L-Sit Pull-Up':                     'pull_up_bar|rings',
     'Treadwall Intervals':               'treadwall',
-    'Nasal-Breathing-Only Climbing':     'climbing_wall|treadwall',
     'Stability Ball Seated Shoulder Press': 'stability_ball,dumbbells',
     'Stability Ball Single-Arm DB Press':   'stability_ball,dumbbells',
     'Stability Ball Hamstring Curl':        'stability_ball',
@@ -2685,13 +2690,10 @@ EXERCISES = [
     ('Lunge to Rotation (Slam Ball/DB)',   'Foot',  'Staple', 'Lunge',        '3x8-10 ea',         'home'),
     ('Hillbounding',                      'Foot',  'Novel',  'Plyo',         '6-10x30s',          ''),
     ('4-Side Box Step-Up/Off',            'Foot',  'Novel',  'Lunge',        'Build to 4 circuits','home'),
-    ('1,000 Step-Up Challenge',           'Foot',  'Novel',  'Lunge',        'Build to 1000 w/25lb','home'),
     ('Single-Leg Stance Eyes Closed',     'Foot',  'Novel',  'Balance',      '3x30s ea, daily',   'home,hotel,partner,airport'),
     ('Towel Pull-Up',                     'Foot',  'Novel',  'Pull',         '3x max',            'home'),
-    ('Hanging Leg Raise in Boots',        'Foot',  'Novel',  'Core',         '3x8-12',            'home'),
     ('Side Split Lunges (Deep)',           'Foot',  'Novel',  'Squat',        '3x8 ea',            'home,hotel,partner,airport'),
     ('Rapid Calf Raises',                 'Foot',  'Novel',  'Plyo',         '3x30s',             'home,hotel,partner,airport'),
-    ('Weighted Treadmill Incline Walk',   'Foot',  'Novel',  'Locomotion',   '30-60 min Z2-3',    ''),
     ('Seated Cable Row',                  'Water', 'Staple', 'Pull',         '3x10-12',           ''),
     ('Bent-Over Barbell Row',             'Water', 'Staple', 'Pull',         '3x6-8',             'home'),
     ('Lat Pulldown',                      'Water', 'Staple', 'Pull',         '3x10-12',           ''),
@@ -2712,7 +2714,6 @@ EXERCISES = [
     ('Russian Twist (Feet Elevated)',      'Water', 'Novel',  'Rotation',     '3x20',              'home,hotel,partner'),
     ('Single-Arm DB Row (Staggered)',      'Water', 'Novel',  'Pull',         '3x8-10 ea',         'home'),
     ('Med Ball Torso Rotation (Seated)',   'Water', 'Novel',  'Rotation',     '3x15 ea',           ''),
-    ('High-Rep Strength Endurance Sets',  'Water', 'Novel',  'Various',      '3-5x12-20',         ''),
     ('KB Halo',                           'Cross', 'Staple', 'Core',         '2-3x8 ea dir.',     'home'),
     ('Push Press',                        'Cross', 'Staple', 'Push',         '3x5-8',             'home'),
     ('Sumo Deadlift High Pull',           'Cross', 'Staple', 'Pull',         '3x6-8',             'home'),
@@ -2729,7 +2730,6 @@ EXERCISES = [
     ('Rice Bucket',                       'Cross', 'Novel',  'Grip',         '3-5 min daily',     'home'),
     ('L-Sit Pull-Up',                     'Cross', 'Novel',  'Pull',         '3x max',            'home'),
     ('Treadwall Intervals',               'Cross', 'Novel',  'Conditioning', '6x30s on/off',      ''),
-    ('Nasal-Breathing-Only Climbing',     'Cross', 'Novel',  'Various',      '15-30 min cont.',   ''),
     ('Stability Ball Seated Shoulder Press','Water','Novel', 'Push',         '3x8-10',            'home'),
     ('Stability Ball Single-Arm DB Press','Cross', 'Novel',  'Push',         '3x8-10 ea',         'home'),
     ('Stability Ball Hamstring Curl',     'Foot',  'Novel',  'Hinge',        '3x10-12',           'home'),
