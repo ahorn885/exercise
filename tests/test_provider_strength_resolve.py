@@ -41,6 +41,26 @@ class TestAliasStep:
         )
         assert (ex_id, kind) == ("EX026", "alias")
 
+    def test_batch_a_ratified_aliases_resolve(self):
+        # Andy's Batch A sign-off (2026-06-17). Spot-checks across the set,
+        # including the ones whose coarse category-collapse would otherwise
+        # flatten specificity (Goblet/Front Squat → Squat; Good Morning → no
+        # coarse home; Wall Slide → no coarse home).
+        cases = {
+            "Goblet Squat": "EX002",
+            "Barbell Front Squat": "EX231",
+            "Thoracic Rotation": "EX016",
+            "Face Pull": "EX081",
+            "Seated Barbell Good Morning": "EX061",
+            "Single Leg Barbell Good Morning": "EX061",
+            "Barbell Reverse Wrist Curl": "EX111",
+            "Weighted Bicycle Crunch": "EX224",
+            "Barbell Bulgarian Split Squat": "EX021",
+            "Wall Slide": "EX065",
+        }
+        for name, ex_id in cases.items():
+            assert resolve_strength_ex_id(name) == (ex_id, "alias"), name
+
 
 class TestCategoryStep:
     def test_specific_subtype_collapses_to_coarse_ex_id(self):
