@@ -193,19 +193,60 @@ We have **two** discipline representations, and parent §2.1 names both ("discip
 
 ---
 
-## 4. Oura — `daily_sleep` / `sleep` / `daily_readiness` / `daily_activity` / `daily_spo2` / `workout`
+## 4. Oura — `sleep` / `daily_sleep` / `daily_readiness` / `daily_activity` / `daily_spo2` / `vO2_max` / `workout`
 
-<!-- PENDING: fill from the Oura research agent (a316738837d12376a) on return. Reserve structure:
-### 4.1 Sleep (data_type=sleep) — daily_sleep + sleep documents [s→min conversions]
-### 4.2 Readiness/recovery (data_type=wellness) — daily_readiness [readiness score + contributors → mostly bucket-2]
-### 4.3 Activity / SpO2 / other daily metrics — daily_activity (calories→kcal), daily_spo2→spo2_pct
-### 4.4 Body temperature — DEVIATION not absolute °C → bucket-2 (do NOT map to a temperature)
-### 4.5 Workouts/tags — activity-type enum → disciplines or bucket-3
-### 4.6 Oura bucket-2 — readiness/sleep-score contributors, resilience, stress, cardiovascular age
-Sources: cloud.ouraring.com / Oura API v2 reference.
--->
+**Mechanism:** OAuth2 REST v2 (base `https://api.ouraring.com/v2`; per-day "document" collections at `/v2/usercollection/{type}`, each a 24h scored summary from 4 a.m.) + optional webhooks (`create`/`update`/`delete` per data_type). Scopes: `email`, `personal`, `daily`, `heartrate`, `workout`, `tag`, `session`, `spo2`. Mechanism class = OAuth REST + webhook (parent §5).
 
-*(Section 4 reserved — Oura research in flight; will be filled before this doc leaves DRAFT.)*
+**Oura's shape:** it's the **cleanest bucket-1 wellness source of Batch 1** — sleep stages, resting HR, HRV, respiration all map directly — but **almost everything Oura *scores* is bucket-2** (readiness/sleep/activity scores + their 1–100 contributors are composites, not physiology). **All durations are in SECONDS → ÷60 to the `*_min` keys** (parent assumed minutes for some sources). Oura has **no HR-zone model** (workout `intensity` is `easy/moderate/hard`, *not* Z1–Z5) and **never reports absolute temperature** (deviation only — §4.4).
+
+### 4.1 Sleep (data_type=`sleep`) — `sleep` (detailed period) + `daily_sleep` (score)
+
+| Oura field | Unit | Canonical | Bucket | Note |
+|---|---|---|---|---|
+| `sleep.total_sleep_duration` | **s** | `sleep_total_min` | 1 | **÷60** ("Total sleep duration in seconds") — this is asleep total, matching Polar/COROS convention |
+| `sleep.deep_sleep_duration` | **s** | `sleep_deep_min` | 1 | ÷60 |
+| `sleep.rem_sleep_duration` | **s** | `sleep_rem_min` | 1 | ÷60 |
+| `sleep.light_sleep_duration` | **s** | `sleep_light_min` | 1 | ÷60 |
+| `sleep.lowest_heart_rate` | bpm | `resting_hr_bpm` | 1 | **the real RHR source** (NOT the readiness `resting_heart_rate` contributor, which is a 1–100 score) |
+| `sleep.average_heart_rate` | bpm | `hr_avg_bpm` | 1 | sleep avg; spec warns it differs from the app (30s vs 5-min samples) |
+| `sleep.average_hrv` | ms | `hrv_rmssd_ms` | 1 | ⚠️ spec says only `integer` + "Average HRV"; **rMSSD-in-ms is confirmed by Oura's *consumer* docs, not the API contract** — note this |
+| `sleep.average_breath` | brpm | `respiration_rate_brpm` | 1 | — |
+| `daily_sleep.score` | 0–100 | `sleep_score` | 1 | the genuine device composite (parent §2.3's `sleep_score.device`) — **better source than WHOOP's proprietary %** |
+| `sleep.efficiency` | 1–100 **rating** | **bucket-2** | 2 | ⚠️ a 1–100 rating, **NOT a percentage** — don't treat as a fraction |
+| `sleep.awake_time`, `time_in_bed`, `latency`, `heart_rate[]`/`hrv[]` samples | s / series | raw | — | no canonical key; `raw_payload` |
+| `daily_sleep.contributors.*` (deep_sleep, efficiency, latency, rem_sleep, restfulness, timing, total_sleep) | 1–100 | **bucket-2** | 2 | proprietary sub-scores |
+
+### 4.2 Readiness / recovery (data_type=`wellness`) — `daily_readiness`
+
+**Entirely bucket-2.** `score` (readiness composite) and **all 9 contributors** — `activity_balance`, `body_temperature`, `hrv_balance`, `previous_day_activity`, `previous_night`, `recovery_index`, `resting_heart_rate`, `sleep_balance`, `sleep_regularity` — are 1–100 *contribution scores*, not raw values. **Trap:** the contributor literally named `resting_heart_rate` is the RHR's contribution to the score, **not a bpm** — the real RHR is `sleep.lowest_heart_rate` (§4.1). Record all raw. `temperature_deviation` / `temperature_trend_deviation` → §4.4.
+
+### 4.3 Activity / SpO2 / VO₂max / other daily docs
+
+| Oura field | Unit | Canonical | Bucket | Note |
+|---|---|---|---|---|
+| `daily_activity.total_calories` / `active_calories` | kcal | energy (kcal) | 1 | already kcal ("expended in kilocalories") |
+| `daily_activity.steps` | count | `steps` | 1 | ⚠️ `steps` is a canonical target in parent §6.3 (COROS) but is **missing from the §2.3 registry table** — registry omission to reconcile |
+| `daily_activity.equivalent_walking_distance` / `target_meters` | m | distance (m) | 1 | raw (derived metric) |
+| `daily_spo2.spo2_percentage.average` | % | `spo2_pct` | 1 | ⚠️ value is **nested at `.average`**, not the object itself |
+| `vO2_max.vo2_max` | ml/kg/min | `vo2max_running` | 1 | ⚠️ **ONE undifferentiated value — Oura does NOT split running vs cycling**; fills `vo2max_running` only (or a generic), `vo2max_cycling` stays unmapped from Oura. Endpoint casing is literally `/v2/usercollection/vO2_max`. |
+| `daily_activity.score` + 6 contributors; `daily_resilience`; `daily_stress`; `daily_cardiovascular_age.vascular_age`; `daily_spo2.breathing_disturbance_index` | 1–100 / enum / sec | **bucket-2** | 2 | proprietary composites/indices — record raw, dormant |
+
+**No Oura source for:** `ftp_w`, `resting_metabolic_rate_kcal`, `vo2max_cycling`, `body_fat_pct`. `body_mass_kg` exists **only as a static `personal_info.weight` (kg)** profile field — not a daily time series (like Strava's `athlete.weight`).
+
+### 4.4 Body temperature — DEVIATION only (do not map to absolute)
+
+Oura never reports absolute body/skin temperature in v2. The only temp fields — `daily_readiness.temperature_deviation` and `temperature_trend_deviation` (both °C, both a **delta from the user's personal baseline**) — have no canonical home → **bucket-2, record raw** (preserve the sign; it's a °C-delta, not a temperature). Do **not** map to any absolute-temperature key.
+
+### 4.5 Workout (data_type=`cardio`) — `workout`
+
+- **`activity` is a FREE-FORM string, NOT an enum** — Oura publishes no closed activity list (the only API-verified literal is `"cycling"`, lowercase). **Map dynamically:** match the `activity` string against our discipline ids (per §1 option C — `running`→D-002, `cycling`→D-006, `swimming`→D-004, `hiking`→D-003, `walking`→walking, `strength_training`→strength_training, …); **any unrecognized string → bucket-3.** Don't hardcode an enum — exact spellings for multi-word activities are unverifiable.
+- **Metrics:** `calories`→energy (kcal, —), `distance`→distance (m, —). `intensity` (`easy`/`moderate`/`hard`) → **bucket-2 / coarse label — NOT Z1–Z5** (Oura has no zone model). `source` (`manual`/`autodetected`/`confirmed`/`workout_heart_rate`) → provenance flag. `tag`/`enhanced_tag` → free-form user labels (raw).
+
+### 4.6 Oura bucket-2 (record raw, dormant)
+
+readiness `score` + 9 contributors · `temperature_deviation` / `temperature_trend_deviation` · `daily_sleep.score` + 7 contributors · `daily_activity.score` + 6 contributors · `sleep.efficiency` (1–100 rating) · `daily_resilience` (level + 3 contributors) · `daily_stress` (stress_high/recovery_high/day_summary) · `daily_cardiovascular_age.vascular_age` · `daily_spo2.breathing_disturbance_index` · `workout.intensity`.
+
+**Sources:** Oura official OpenAPI v2 spec (parsed verbatim); cloud.ouraring.com/v2/docs; support.ouraring.com (HRV=rMSSD/ms, temperature-deviation) (fetched 2026-06-17). *Flagged unverified against the API contract: exact multi-word `activity` spellings (only `cycling` confirmed); the SpO2 scope literal (`spo2` vs `spo2Daily`); that `average_hrv` is specifically rMSSD/ms (true per consumer docs, not the field definition).*
 
 ---
 
@@ -215,20 +256,23 @@ Which canonical metric keys each provider can source (1 = mapped, 2 = proprietar
 
 | Canonical key | Strava | Oura | WHOOP |
 |---|---|---|---|
-| `resting_hr_bpm` | — | *(pending)* | 1 |
-| `hr_avg_bpm` / `hr_peak_bpm` | 1 (activity) | *(pending)* | 1 (cycle/workout) |
-| `hrv_rmssd_ms` | — | *(pending)* | 1 |
-| `sleep_total_min` + stages | — | *(pending)* | 1 |
-| `sleep_score` | — | *(pending)* | 2 (proprietary %) |
-| `respiration_rate_brpm` | — | *(pending)* | 1 |
-| `spo2_pct` | — | *(pending)* | 1 |
-| `body_mass_kg` | 1 (current only) | — | 1 |
+| `resting_hr_bpm` | — | 1 (sleep.lowest_hr) | 1 |
+| `hr_avg_bpm` | 1 (activity) | 1 (sleep avg) | 1 (cycle/workout) |
+| `hr_peak_bpm` | 1 (activity) | — | 1 (cycle/workout) |
+| `hrv_rmssd_ms` | — | 1 | 1 |
+| `sleep_total_min` + stages | — | 1 (s→min) | 1 (ms→min) |
+| `sleep_score` | — | **1 (device composite)** | 2 (proprietary %) |
+| `respiration_rate_brpm` | — | 1 | 1 |
+| `spo2_pct` | — | 1 | 1 |
+| `body_mass_kg` | 1 (current only) | 1 (static profile) | 1 |
 | `ftp_w` | **1** | — | — |
-| `body_fat_pct`, `vo2max_*`, `resting_metabolic_rate_kcal` | — | *(pending)* | — |
-| discipline (cardio) | 1 (56-enum) | *(pending)* | 1 (~140-enum) |
-| HR zones Z1–Z5 | 1 (positional) | *(pending)* | 1 (zone_one–five) |
+| `vo2max_running` | — | 1 (no disc split) | — |
+| `vo2max_cycling` | — | — | — |
+| `body_fat_pct`, `resting_metabolic_rate_kcal` | — | — | — |
+| discipline (cardio) | 1 (56-enum) | 1 (free-form string) | 1 (~140-enum) |
+| HR zones Z1–Z5 | 1 (positional) | **— (no zone model)** | 1 (zone_one–five) |
 
-Takeaway so far: **Strava = cardio + ftp/weight**, no wellness. **WHOOP = wellness + workout cardio**, no ftp/bodyfat/VO2max. They're complementary, which is why a unified canonical store (parent §4) beats per-provider tables — an athlete on both fills the picture neither covers alone.
+Takeaways: **Strava = cardio + ftp/weight, zero wellness. Oura = the wellness/sleep/RHR/HRV bucket-1 anchor, zero zones/ftp. WHOOP = wellness + workout cardio + zones, zero ftp/bodyfat/VO2max.** Three providers, three near-disjoint coverage footprints — which is the case *for* a unified canonical store (parent §4) over per-provider tables: an athlete on all three fills a picture no one covers alone, and `sleep_score`/`resting_hr_bpm` arrive from two sources needing one canonical home + a precedence rule.
 
 ---
 
@@ -238,8 +282,13 @@ Per parent §7.4 + the CLAUDE.md no-padding rule, these are **flagged, not added
 
 - **New discipline "Rowing"** — Strava `Rowing`/`VirtualRow` (and WHOOP rowing sports) have no D-id. Rowing is a legitimate endurance modality (erg + on-water). **Recommend: mint a Rowing D-id.** Gut check: it's not in AIDSTATION's named target markets, but it's a mainstream endurance sport an athlete will log; bucket-3 record-and-surface is an acceptable interim.
 - **No new sleep/recovery metric keys needed** — the §2.3 registry covers everything WHOOP/Oura map to bucket-1; their extra numbers (strain, recovery %, readiness, sleep performance %) are correctly **bucket-2** (proprietary composites we don't model), not missing keys.
-- **Possible new raw-but-unkeyed dimensions** (not registry keys; just raw columns we don't have): `skin_temp_celsius` (WHOOP), `elevation_gain_m` (Strava/WHOOP), `height_m` (WHOOP/Oura body), per-activity `cadence`. These ride in `provider_raw_record.raw_payload` (parent §4.3) — no registry change needed.
-- **(Pending Oura)** Oura body-temperature **deviation** — explicitly **not** a canonical key (it's a delta from baseline, not absolute °C); stays bucket-2 raw.
+- **Possible new raw-but-unkeyed dimensions** (not registry keys; just raw columns we don't have): `skin_temp_celsius` (WHOOP), Oura `temperature_deviation` (°C-**delta**, never absolute), `elevation_gain_m` (Strava/WHOOP), `height_m` (WHOOP/Oura body), per-activity `cadence`. These ride in `provider_raw_record.raw_payload` (parent §4.3) — no registry change needed.
+
+**Registry reconciliations the matrix surfaced (parent §2.3 fixes, not new padding):**
+- **`steps` is missing from the §2.3 registry table** but is already used as a canonical target in parent §6.3 (COROS) and is sourced by Oura `daily_activity.steps`. Add `steps` (count, no SI conversion) to the §2.3 registry — it's a consumed key the table omits.
+- **`vo2max_running` / `vo2max_cycling` split doesn't always map:** Oura emits **one undifferentiated `vo2_max`** (no discipline). The split is fine for Garmin (which does distinguish), but the registry/ingest must tolerate a single-value provider filling only `vo2max_running` (or a generic). Not a new key — a fill-rule note.
+
+**New architectural need the matrix surfaced — multi-source precedence (for the build wave, parent §4):** `sleep_score` arrives from **Oura (device composite)** *and* WHOOP (proprietary %); `resting_hr_bpm` from **Oura (sleep.lowest_hr)** *and* WHOOP; `body_mass_kg` from Strava/Oura/WHOOP. One canonical key, multiple providers → the canonical store needs a **per-(user, metric) source-precedence rule** (e.g. prefer the dedicated wellness device over an activity platform, or most-recent-wins). Flag for the §4 build; not a vocabulary change.
 
 ---
 

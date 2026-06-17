@@ -13,6 +13,12 @@ Rolling-state for items spanning multiple sessions. **Edit in place** — don't 
 
 ---
 
+## #681 Wave 2 — provider inbound matrix (Batch 1: Strava/Oura/WHOOP) — DRAFTED, awaiting ratification (2026-06-17)
+- **In flight (not merged).** `specs/Provider_Inbound_Matrix_v1.md` drafted + pushed on `claude/optimistic-pasteur-1g10vg` (PR open). Full-roster extension of `Provider_Data_Translation_Layer_Spec` §6; Batch 1 = Strava + Oura + WHOOP, each mapped from official docs (fetched 2026-06-17) to the real layer0 discipline canon + §2.3 metric registry. Spec only — no code.
+- **TWO Andy decisions gate it leaving DRAFT:** (1) **§1 cardio-discipline target** — fine layer0 D-id + coarse collapse (rec, option C) vs coarse `_plan_sport_type` only (A). The whole cardio matrix is authored assuming C. (2) **§6 candidate new discipline "Rowing"** (Trigger #2 — Strava `Rowing`/`VirtualRow` + WHOOP rowing have no D-id; mint or leave bucket-3).
+- **Registry fixes the matrix surfaced (parent §2.3, for whoever revises that spec):** add `steps` (used in §6.3 COROS + Oura, missing from the §2.3 table); note `vo2max_*` split must tolerate a single-value provider (Oura emits one undifferentiated `vo2_max`); the build wave needs a **multi-source precedence rule** (`sleep_score`/`resting_hr_bpm`/`body_mass_kg` each arrive from 2–3 providers → one canonical home).
+- **Next batches (doc §7):** Batch 2 Wahoo + RWGPS (RWGPS already wired); Batch 3 TrainingPeaks + Zwift (mostly outbound); Batch 4 MyFitnessPal (blocked on Layer-2E nutrition model); Batch 5 Apple/Samsung/Google Health (SDK, native-client-gated). Then the §4 build wave (create `provider_value_map`/`provider_raw_record`/`provider_outbound_ref` + backfill the dicts).
+
 ## #430 Slice C rx FK cutover — MERGED (2026-06-16, PRs #676/#677/#678); 1 live-verify owed + Slice D filed (#679)
 - **Shipped:** rx write-path keys off the layer0 EX-id; public `exercise_inventory.id` FK dropped from `current_rx`/`training_log`; `current_rx.layer0_exercise_id` self-heals on every write. Dance pattern — #335 baselines preserved.
 - **Live-verify owed (Andy-action, can't trigger from container):** log a strength session (manual or Garmin) → confirm `layer0_exercise_id` populated on the write (`rx_engine.apply_session_outcome: … layer0=y/n` via `/admin/logs`), then a plan-gen reads it (rx_wire `id=` hit).
