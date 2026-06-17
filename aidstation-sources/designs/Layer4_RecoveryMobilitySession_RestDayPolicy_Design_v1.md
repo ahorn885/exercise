@@ -1,10 +1,10 @@
 # Layer 4 — Recovery/Mobility session kind + load-adaptive rest days — Design
 
-**Status:** RATIFIED (Andy 2026-06-17) — ready to build (Trigger #1 prompt + Trigger #3 schema/cross-layer). Build in slices (>5 files; see §13a).
+**Status:** RATIFIED (Andy 2026-06-17) — ready to build (Trigger #1 prompt + Trigger #3 schema/cross-layer). Build in slices (>5 files; see §13a). **D2 dose LOCKED 2026-06-17** to `{Base:3, Build:3, Peak:2, Taper:1}` × ~15–20 min after a second, dose-specific research pass (see §5 / §13 / the research doc's *Recovery-session dose* addendum).
 **Date:** 2026-06-17
 **Issue:** #698 follow-up (Track 1). **Evidence base:** `research/RecoveryMobility_RestDay_CardioDrills_EnduranceEvidence_v1.md`.
 **Ratified decisions (Andy 2026-06-17):** new `recovery` session **kind** (not a discipline); **recovery is exempt from the ≤2/day training cap** — "2 cardio + 1 recovery OK; 1 cardio + 1 strength + 1 recovery OK"; recovery allocation must **not interfere with strength/cardio assignment**; **load-adaptive** rest days (full-rest floor + active-recovery variant, biased to full rest under high load); build this track **first**.
-**Open decisions — RATIFIED:** **D1 = structured `recovery_exercises[]` block now** (parallel to `strength_exercises`, EX-id-bound to a recovery pool — NOT free-text); **D2 = `{Base:2, Build:2, Peak:2, Taper:1}` × ~15 min** (the evidence-supported frequency — ACSM ≥2–3 days/wk — at the small per-session volume the ROM-plateau data demands; no endurance-specific session count exists in the literature, so this is calibrated, tunable); **D3 = ≤2 training + ≤1 recovery/day** (`session_index_in_day` max→2); **D4 = bias to full rest when phase==Peak OR deload/taper week**; **D5 = `per_phase` (plan-create) + `race_week_brief` now; `plan_refresh`/`single_session` later.**
+**Open decisions — RATIFIED:** **D1 = structured `recovery_exercises[]` block now** (parallel to `strength_exercises`, EX-id-bound to a recovery pool — NOT free-text); **D2 = `{Base:3, Build:3, Peak:2, Taper:1}` × ~15–20 min** (LOCKED 2026-06-17 — anchored to the one endurance-specific dedicated-session prescription found, 80/20 Endurance's 3×/wk × 15–20 min, trimmed at Peak/Taper for freshness; the periodization authorities periodize recovery as deload *weeks/days*, not weekly mobility sessions — so the exact count is a defensible, tunable default, weak-RCT-evidence by its own admission); **D3 = ≤2 training + ≤1 recovery/day** (`session_index_in_day` max→2); **D4 = bias to full rest when phase==Peak OR deload/taper week**; **D5 = `per_phase` (plan-create) + `race_week_brief` now; `plan_refresh`/`single_session` later.**
 
 ---
 
@@ -52,10 +52,10 @@ The recovery dose is **never** passed through `apply_session_ceiling` and **neve
 Mirror the strength-dose constant pattern (`_STRENGTH_SESSIONS_PER_WEEK = {Base:2,Build:2,Peak:1,Taper:1}`):
 
 ```
-_RECOVERY_SESSIONS_PER_WEEK = {"Base": 2, "Build": 2, "Peak": 2, "Taper": 1}   # PROPOSED — D2
-_RECOVERY_SESSION_MINUTES = 15                                                  # PROPOSED — D2
+_RECOVERY_SESSIONS_PER_WEEK = {"Base": 3, "Build": 3, "Peak": 2, "Taper": 1}   # LOCKED 2026-06-17 — D2
+_RECOVERY_SESSION_MINUTES = 18                                                  # LOCKED 2026-06-17 — D2 (~15–20 min band; 18 = midpoint)
 ```
-Rationale: small, steady through Base/Build/Peak (recovery emphasis *rises* with load — Peak holds at 2, not 1 like strength), trimmed in Taper (everything tapers; freshness > mobility volume). `compute_recovery_dose(phase_name, week_flags) -> RecoveryAllocation` returns the count + per-session minutes; rendered as its own prompt block (§6). **Not** in `discipline_allocations`, **not** ceilinged.
+Rationale (dose-specific research pass, 2026-06-17): **3×/wk × 15–20 min** matches the single endurance-specific dedicated-session prescription in the literature — 80/20 Endurance (Fitzgerald/Warden) — and the practitioner consensus cluster for runners/cyclists (2–3×/wk × 15–20 min). Held at 3 through Base/Build, trimmed to 2 at Peak and 1 in Taper for freshness (the periodized deload *week* — Friel: every 3rd–4th week — carries phase-level recovery, per D4, not a higher session count). `compute_recovery_dose(phase_name, week_flags) -> RecoveryAllocation` returns the count + per-session minutes; rendered as its own prompt block (§6). **Not** in `discipline_allocations`, **not** ceilinged. The integers stay tuning knobs — the RCT base for an exact session count is weak (one coaching program + practitioner blogs); what's firm is the *small per-session* volume and the deload-week construct.
 
 ## 6. Prompt changes (Trigger #1) — `per_phase.py`
 1. **`# Recovery programming` system-prompt section:** explains the recovery kind — small mobility/soft-tissue/breathwork sessions, sub-threshold, that **do not count toward the daily session cap**, placed on/after hard days or rest-adjacent; full rest is preferred under high load (§7).
@@ -98,7 +98,7 @@ Add `{% elif sess.kind == 'recovery' %}` → "Recovery — {{ duration_min }} mi
 
 ## 13. Decisions — ALL RATIFIED (Andy 2026-06-17)
 - **D1 — recovery content:** ✅ **structured `recovery_exercises[]` block now** (EX-id-bound to the recovery pool; §3/§6).
-- **D2 — dose numbers:** ✅ `{Base:2, Build:2, Peak:2, Taper:1}` × ~15 min — the evidence-supported frequency (ACSM ≥2–3 days/wk) at the small per-session volume the ROM-plateau caps demand; no endurance-specific count exists in the literature → calibrated/tunable.
+- **D2 — dose numbers:** ✅ **LOCKED 2026-06-17** `{Base:3, Build:3, Peak:2, Taper:1}` × ~15–20 min (`_RECOVERY_SESSION_MINUTES = 18`). Grounded in a second, dose-specific research pass: 80/20 Endurance prescribes **3 mobility sessions/wk × 15–20 min** (the only endurance-specific dedicated-session dose found); practitioner sources for runners/cyclists cluster at 2–3×/wk × 15–20 min; the periodization authorities (Friel/Bompa/NSCA) periodize recovery as deload *weeks/days*, not weekly mobility sessions. Trimmed to 2 (Peak) / 1 (Taper) for freshness. Evidence strength weak on the exact count → tuning knob, not settled science. See the research doc's *Recovery-session dose* addendum.
 - **D3 — daily cap:** ✅ ≤2 training + ≤1 recovery, `session_index_in_day` max→2 (matches Andy's examples).
 - **D4 — high-load:** ✅ bias to full rest when `phase=="Peak"` OR deload/taper week (no new signal; ACWR/strain flag is a later add).
 - **D5 — scope:** ✅ `per_phase` + `race_week_brief` now; `plan_refresh`/`single_session` later.
