@@ -15,9 +15,13 @@ from types import SimpleNamespace as NS
 
 from layer4.per_phase import (
     SYSTEM_PROMPT,
+    _RECOVERY_POOL_CAP,
     _STRENGTH_CORE_CAP,
     _STRENGTH_POOL_CAP_PER_DISCIPLINE,
     compute_feasible_pool_ids,
+    compute_recovery_pool_ids,
+    _format_recovery_exercise_pool,
+    _format_recovery_programming,
     _format_skill_capability_gates,
     _format_strength_exercise_pool,
 )
@@ -290,3 +294,118 @@ def test_system_prompt_has_strength_section_and_no_invent_rule():
     # Track 2 slice 2b: session counts moved to the deterministic grid;
     # the prompt now references the grid rather than hardcoded "2 sessions/week".
     assert "session grid" in SYSTEM_PROMPT.lower()
+
+
+# ─── #698 Track 1 (Slice 2) — recovery pool + dose + prompt ──────────────────
+
+
+def _l2c_recovery(locale_id, resolved):
+    return NS(locale_id=locale_id, exercises_resolved=resolved)
+
+
+def test_compute_recovery_pool_ids_keeps_only_recovery_types():
+    pool = {"home": _l2c_recovery("home", [
+        _rx("EX-MOB", "Hip 90/90", ["D-003"], {"D-003": "High"},
+            exercise_type="Mobility"),
+        _rx("EX-FLEX", "Hamstring Stretch", ["D-003"], {"D-003": "High"},
+            exercise_type="Flexibility / Stretching"),
+        _rx("EX-SOFT", "Foam Roll Quads", ["D-003"], {"D-003": "High"},
+            exercise_type="Recovery / Soft Tissue"),
+        _rx("EX-BREATH", "Box Breathing", ["D-003"], {"D-003": "High"},
+            exercise_type="Breathwork"),
+        # Strength + cardio rows must NOT leak into the recovery pool.
+        _rx("EX-LIFT", "Squat", ["D-003"], {"D-003": "High"},
+            exercise_type="Strength"),
+        _rx("EX-CARDIO", "Threshold Intervals", ["D-003"], {"D-003": "High"},
+            exercise_type="Interval / Tempo"),
+    ])}
+    ids = compute_recovery_pool_ids(pool, None)
+    assert ids == ["EX-BREATH", "EX-FLEX", "EX-MOB", "EX-SOFT"]
+
+
+def test_compute_recovery_pool_ids_drops_2d_excluded():
+    pool = {"home": _l2c_recovery("home", [
+        _rx("EX-MOB", "Wrist Circles", ["D-003"], {"D-003": "High"},
+            exercise_type="Mobility"),
+        _rx("EX-OK", "Ankle Mobility", ["D-003"], {"D-003": "High"},
+            exercise_type="Mobility"),
+    ])}
+    ids = compute_recovery_pool_ids(pool, _l2d(["EX-MOB"]))
+    assert ids == ["EX-OK"]  # wrist-contraindicated mobility never offered
+
+
+def test_compute_recovery_pool_ids_case_insensitive_and_empty():
+    pool = {"home": _l2c_recovery("home", [
+        _rx("EX-LC", "Mobility Flow", ["D-003"], {"D-003": "High"},
+            exercise_type="mobility"),
+    ])}
+    assert compute_recovery_pool_ids(pool, None) == ["EX-LC"]
+    assert compute_recovery_pool_ids({}, None) == []
+
+
+def test_recovery_pool_render_lists_ids_and_drops_non_recovery():
+    pool = {"home": _l2c_recovery("home", [
+        _rx("EX-MOB", "Hip 90/90", ["D-003"], {"D-003": "High"},
+            exercise_type="Mobility"),
+        _rx("EX-LIFT", "Squat", ["D-003"], {"D-003": "High"},
+            exercise_type="Strength"),
+    ])}
+    text = "\n".join(_format_recovery_exercise_pool(pool, None))
+    assert "Recovery / mobility menu" in text
+    assert "EX-MOB (Hip 90/90) [Mobility]" in text
+    assert "EX-LIFT" not in text
+
+
+def test_recovery_pool_render_dedups_and_caps():
+    many = [
+        _rx(f"EX-{i:03d}", f"Mob{i}", ["D-003"], {"D-003": "High"},
+            exercise_type="Mobility")
+        for i in range(_RECOVERY_POOL_CAP + 5)
+    ]
+    # add a duplicate id across a second locale — must render once.
+    pool = {
+        "home": _l2c_recovery("home", many),
+        "gym": _l2c_recovery("gym", [many[0]]),
+    }
+    lines = _format_recovery_exercise_pool(pool, None)
+    rendered = [ln for ln in lines if ln.strip().startswith("- EX")]
+    assert len(rendered) == _RECOVERY_POOL_CAP
+    assert "\n".join(lines).count("EX-000") == 1
+
+
+def test_recovery_pool_render_empty_when_no_recovery_types():
+    pool = {"home": _l2c_recovery("home", [
+        _rx("EX-LIFT", "Squat", ["D-003"], {"D-003": "High"},
+            exercise_type="Strength"),
+    ])}
+    assert _format_recovery_exercise_pool(pool, None) == []
+
+
+def test_recovery_programming_renders_dose_per_week():
+    # phase_structure=None → is_deload_week_for is False, so the base dose holds.
+    lines = _format_recovery_programming(None, "Base", (1, 2))
+    text = "\n".join(lines)
+    assert "Recovery programming (deterministic — off the training cap)" in text
+    assert "do NOT" in text  # the off-the-cap directive
+    assert "Week 1: 3 recovery session(s) × ~18 min" in text
+    assert "Week 2: 3 recovery session(s) × ~18 min" in text
+
+
+def test_recovery_programming_peak_emits_full_rest_directive():
+    lines = _format_recovery_programming(None, "Peak", (1, 1))
+    text = "\n".join(lines)
+    assert "Week 1: 2 recovery session(s)" in text
+    # D4 — Peak phase always carries the load-adaptive full-rest directive.
+    assert "prefer GENUINE" in text
+
+
+def test_recovery_programming_unknown_phase_renders_nothing():
+    # A phase with no defined recovery dose renders nothing (matches today).
+    assert _format_recovery_programming(None, "Transition", (1, 3)) == []
+
+
+def test_system_prompt_has_recovery_section():
+    assert "# Recovery programming" in SYSTEM_PROMPT
+    assert "=== Recovery exercise pool ===" in SYSTEM_PROMPT
+    assert "do **not** count toward the ≤2/day training cap" in SYSTEM_PROMPT
+    assert "recovery_exercises[]" in SYSTEM_PROMPT

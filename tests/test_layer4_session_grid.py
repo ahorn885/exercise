@@ -603,3 +603,58 @@ class TestBuildGridCeilingIntegration:
         grid = build_session_grid(l2a, ps, "Peak", 1, capacity_hours=14.0)
         total = sum(a.sessions_this_week for a in grid.discipline_allocations)
         assert total >= 7  # ≥1-per-discipline floor, no ceiling applied
+
+
+# ─── #698 Track 1 (Slice 2) — recovery dose, allocated OFF the ceiling ───────
+
+
+class TestRecoveryDose:
+    def test_dose_per_phase_matches_locked_table(self):
+        from layer4.session_grid import (
+            _RECOVERY_SESSION_MINUTES,
+            _RECOVERY_SESSIONS_PER_WEEK,
+            compute_recovery_dose,
+        )
+
+        # D2 LOCKED 2026-06-17.
+        assert _RECOVERY_SESSIONS_PER_WEEK == {
+            "Base": 3, "Build": 3, "Peak": 2, "Taper": 1
+        }
+        assert _RECOVERY_SESSION_MINUTES == 18
+        for phase, expected in _RECOVERY_SESSIONS_PER_WEEK.items():
+            d = compute_recovery_dose(phase, high_load=False)
+            assert d.sessions_this_week == expected
+            assert d.session_minutes == 18
+            assert d.high_load is False
+
+    def test_high_load_trims_one_session_toward_full_rest(self):
+        from layer4.session_grid import compute_recovery_dose
+
+        # The deload bias trims one session (floor 0). The phase-level Peak/Taper
+        # freshness already lives in the base table, so high_load is the ADDED
+        # per-week deload trim — it must not double-trim Peak/Taper.
+        assert compute_recovery_dose("Base", True).sessions_this_week == 2
+        assert compute_recovery_dose("Build", True).sessions_this_week == 2
+        assert compute_recovery_dose("Peak", True).sessions_this_week == 1
+        # Taper base is already 1 → a deload taper week trims to genuine full rest.
+        d = compute_recovery_dose("Taper", True)
+        assert d.sessions_this_week == 0
+        assert d.high_load is True
+
+    def test_unknown_phase_is_zero_dose(self):
+        from layer4.session_grid import compute_recovery_dose
+
+        assert compute_recovery_dose("Transition", False).sessions_this_week == 0
+        assert compute_recovery_dose("", True).sessions_this_week == 0
+
+    def test_recovery_is_off_the_grid(self):
+        # The "doesn't interfere with cardio/strength" guarantee (design §2):
+        # recovery is computed by a SEPARATE function and never appears in the
+        # SessionGrid / discipline allocations the ceiling operates on.
+        l2a = _layer2a([_discipline("d0", "D0")])
+        ps = _phase_structure({"Base": 4, "Build": 4, "Peak": 4, "Taper": 2})
+        grid = build_session_grid(l2a, ps, "Base", 1, capacity_hours=6.0)
+        assert not hasattr(grid, "recovery_allocation")
+        assert all(
+            "recovery" not in a.discipline_id for a in grid.discipline_allocations
+        )

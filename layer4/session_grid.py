@@ -182,6 +182,56 @@ class SessionGrid:
     saturation_note: str | None = None
 
 
+# ─── Recovery dose (#698 Track 1, D2 LOCKED 2026-06-17) ─────────────────────
+#
+# A deterministic per-week recovery/mobility dose, allocated OFF the training
+# session ceiling — it is never passed through `apply_session_ceiling`, never
+# counted in `cardio_total` / `IntensityMix` / strength logic, and never added
+# to `discipline_allocations`. This is the mechanical meaning of the design's
+# "doesn't interfere with cardio/strength assignment" guarantee (§2): recovery
+# is a parallel, low-cost track the per_phase prompt renders alongside the grid.
+#
+# D2 LOCKED 2026-06-17: 3×/wk × 15–20 min matches the one endurance-specific
+# dedicated-session prescription in the literature (80/20 Endurance) + the
+# runner/cyclist practitioner cluster; held at 3 through Base/Build, trimmed to
+# 2 at Peak and 1 in Taper for freshness. The phase-level freshness trim lives
+# in THIS table — so the `high_load` per-week bias (below) is the ADDITIONAL
+# deload-week trim only, NOT a second Peak/Taper trim (that would double-trim).
+# The integers are tuning knobs (weak RCT base); the small per-session volume +
+# the deload construct are the firm parts. See the research doc §6 addendum.
+_RECOVERY_SESSIONS_PER_WEEK = {"Base": 3, "Build": 3, "Peak": 2, "Taper": 1}
+_RECOVERY_SESSION_MINUTES = 18  # ~15–20 min band; 18 = midpoint
+
+
+@dataclass(frozen=True)
+class RecoveryAllocation:
+    """The week's recovery/mobility dose. `sessions_this_week` is the count of
+    `kind="recovery"` sessions the synthesizer should place (off the daily
+    training cap); `session_minutes` is the per-session duration. `high_load`
+    records whether the deload bias fired (D4 — bias to full rest)."""
+
+    sessions_this_week: int
+    session_minutes: int
+    high_load: bool
+
+
+def compute_recovery_dose(phase_name: str, high_load: bool) -> RecoveryAllocation:
+    """Deterministic recovery dose for one (phase, week). `high_load` is the
+    per-week deload bias (D4): when True (a planned deload week), trim one
+    session toward full rest (floor 0) — full rest is adaptation-neutral vs
+    active recovery, so the protective default under accumulated load is genuine
+    rest. The phase-level Peak/Taper freshness is already in
+    `_RECOVERY_SESSIONS_PER_WEEK`, so `high_load` does NOT re-trim for Peak.
+    Unknown phase → zero dose (no recovery block rendered)."""
+    base = _RECOVERY_SESSIONS_PER_WEEK.get(phase_name, 0)
+    sessions = max(base - 1, 0) if high_load else base
+    return RecoveryAllocation(
+        sessions_this_week=sessions,
+        session_minutes=_RECOVERY_SESSION_MINUTES,
+        high_load=high_load,
+    )
+
+
 # ─── Algorithm ──────────────────────────────────────────────────────────────
 
 

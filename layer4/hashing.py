@@ -53,7 +53,12 @@ _LAYER2_BUNDLE_ATTRS = frozenset({"a", "b", "c", "d", "e"})
 # resolutions now get the per-purpose surface routing too, constrained to the
 # resolved craft's rideable terrains (a bike/paddle session is never routed to
 # a required surface its craft can't traverse).
-LAYER4_PROMPT_REVISION = "7"
+# "8" = #698 Track 1 Slice 2 recovery session kind — the synthesis prompt gains
+# a `# Recovery programming` section, a rendered recovery-exercise pool + a
+# deterministic per-week recovery dose block (off the training cap), and the
+# tool schema gains the `recovery` kind + `recovery_exercises` enum-bound block;
+# all change synthesis output, so cached plans must regenerate.
+LAYER4_PROMPT_REVISION = "8"
 
 
 def _to_jsonable(obj: Any) -> Any:
