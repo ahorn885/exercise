@@ -1,6 +1,6 @@
 # Provider Translation — Garmin FIT strength name → layer0 EX-id (#679, Slice D of #430) — Design v1
 
-**Status:** Draft v1, 2026-06-17. Decisions proposed (Andy to ratify). The first concrete **inbound** slice of the provider data translation layer (`Provider_Data_Translation_Layer_Spec` §6.1). Spec/design only — no code ships from this doc.
+**Status:** RATIFIED v1 (Andy, 2026-06-17). Design ratified; **build deferred to a dedicated next session** (Andy's call). New Garmin-derived EX-id candidates are ratified in **one consolidated batch at the end** of the build (not per-entry — Andy, 2026-06-17). The first concrete **inbound** slice of the provider data translation layer (`Provider_Data_Translation_Layer_Spec` §6.1). Spec/design only — no code ships from this doc.
 **Type:** Build design (data-mapping). Sits on the EX-id single-source-of-truth (#335, CLOSED) and the rx write-path FK cutover (#430 Slice C, MERGED — PR #676/#677/#678).
 **Date:** 2026-06-17
 **Predecessor:** #430 Slice C made the rx write path key off the layer0 EX-id; this slice is how an arbitrary Garmin FIT exercise name *reaches* an EX-id (or gets recorded when it can't).
@@ -29,7 +29,7 @@ The gap, measured:
 | 3 | **Storage of the map** | Author as the **strength rows of `provider_value_map`** (translation spec §4.2: `provider='garmin', data_type='strength', direction='in'`); generalizes today's curated `NAME_TO_EX_ID`. | Aligns the first slice with the layer's schema instead of growing another bespoke dict. (If the table isn't built when #679 ships, an expanded in-code seed is the interim, migrated into the table — call this out at build.) |
 | 4 | **Fallback** | **Category-collapse, through the name, as a backstop only** (cat 28 → `"Squat"` → `EX001`). | There is no direct category→EX-id map; the coarse name already routes via the map. Used only when no specific alias exists — never the default (preserves specificity). |
 | 5 | **No match → bucket-3** | Record + **surface inline** in completed as "logged, not prescribed" (NULL EX-id), an **explicit** state. | Replaces the ambiguous `first_exposure` rendering with an intentional record-don't-drop signal (translation spec §6.4). |
-| 6 | **New EX-ids** | **Identify candidates, do not pad**; flag for Andy ratification (Trigger #2). | Precedent: EX246–EX249 (migration `0011`, ratified 2026-06-16). A common Garmin specific with no layer0 home is a candidate add, not an auto-insert. |
+| 6 | **New EX-ids** | **Identify candidates, do not pad**; ratify in **one consolidated batch at the end** of the build (Andy, 2026-06-17 — not per-entry). | Precedent: EX246–EX249 (migration `0011`, ratified 2026-06-16). A common Garmin specific with no layer0 home is a candidate add, not an auto-insert; author the whole alias map, then bring Andy one list. |
 
 ---
 
@@ -88,10 +88,10 @@ During authoring, Garmin specifics that are common and legitimate but have **no*
 
 ---
 
-## 7. Open questions for Andy
+## 7. Open questions for Andy (carried into the build session)
 1. **Authoring scope for v1:** map only the high-frequency names in your Garmin history first (recommended), or attempt the full ~1,261 up front? (Recommend incremental, frequency-first.)
 2. **Interim vs table:** if `provider_value_map` (translation spec §4.2) isn't built when #679 ships, OK to ship the alias set as an expanded in-code seed and migrate it into the table later? (Recommend yes — keeps #679 shippable independently.)
-3. **Candidate new EX-ids:** confirm you want the candidate list surfaced for ratification as part of this slice (vs a follow-on).
+3. **Candidate new EX-ids — RESOLVED (Andy, 2026-06-17):** ratify in **one consolidated batch at the end** of the build, not per-entry.
 
 ---
 

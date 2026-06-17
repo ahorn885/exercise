@@ -1,7 +1,7 @@
 # V5 Spec — Provider Data Translation Layer (#681) + AIDSTATION API (#682) co-design + #679 design — Wave 1 — Closing Handoff v1
 
 **Date:** 2026-06-17
-**Type:** Spec/design session (no code). PR [#695](https://github.com/ahorn885/exercise/pull/695) OPEN, CI green. **Pending Andy ratification — sign-off gates any build.**
+**Type:** Spec/design session (no code). PR [#695](https://github.com/ahorn885/exercise/pull/695), CI green. **D1/D2/D3 RATIFIED by Andy 2026-06-17; auto-merge enabled.** Build of #679 deferred to a fresh session (Andy's call).
 **Branch:** `claude/trusting-cori-7adynl` (harness-pinned; kept).
 
 ---
@@ -31,15 +31,15 @@ None — spec only. PR #695 CI all green (`Python unit suite (stubbed)`, `JS har
 
 ## §5 — Manual verification owed (Andy)
 
-- **Ratify D1/D2/D3** (PR #695). Sign-off gates the #679 build and the later waves. Specific ratifications needed: the **minted SI metric registry** (Trigger #2, spec §2.3), the **canonical 5-zone HR model** (Trigger #2, spec §2.4), the **replace+consolidate** migration direction (already decided with evidence; confirm in the spec), and the **outbound two-tier** model.
+- **DONE — D1/D2/D3 RATIFIED (Andy, 2026-06-17); PR #695 auto-merge enabled.** The **SI metric registry** (spec §2.3) and the **5-zone HR anchor** (spec §2.4) remain Trigger-#2 ratifications, but they're consumed by *later* waves — **not needed for #679** (strength name→EX-id only).
 - Carried from prior sessions: post-#572 live **T3 refresh** re-verify (Rule #14); #430 Slice C live-verify of EX-id self-heal on a real log + downstream plan-gen.
 
 ## §6 — Next session pointers
 
 **§6.3 read order (Rule #13):** `CLAUDE.md` → `CURRENT_STATE.md` → `CARRY_FORWARD.md` → this handoff → `./scripts/verify-handoff.sh`.
 
-**Next moves (after ratification):**
-1. **Build #679** — the dogfood win (Garmin lifts → capacity-derived loads). Turnkey design in `ProviderTranslation_GarminStrength_679_Design`. Adds `rapidfuzz` to `requirements.txt`; offline alias authoring (frequency-first) + Andy HITL; resolution at `rx_engine.apply_session_outcome`.
+**Next moves (D1/D2/D3 ratified):**
+1. **Build #679 — THIS IS THE NEXT SESSION'S TASK (Andy).** The dogfood win (Garmin lifts → capacity-derived loads). Turnkey design in `ProviderTranslation_GarminStrength_679_Design` (now RATIFIED). Steps: add `rapidfuzz` to `requirements.txt`; offline alias authoring (frequency-first) over Garmin names × ~250 layer0 qualified names; resolution at `rx_engine.apply_session_outcome` (backfilled EX-id → alias → category-collapse backstop → `None` = bucket-3); explicit bucket-3 record-don't-drop replacing `first_exposure`; tests per design §6. **New Garmin-derived EX-id candidates: author the whole map, then bring Andy ONE consolidated batch to ratify at the end (Andy, not per-entry).** Open build questions carried in design §7 (authoring scope; interim in-code seed vs `provider_value_map` table).
 2. **Wave 2** — full inbound matrix (Strava, Whoop, Wahoo, Oura, MyFitnessPal/nutrition, RWGPS, TrainingPeaks, Zwift, Apple/Samsung/Google Health) from provider docs.
 3. **Wave 3a/3b** — outbound: calendar serializer; then native training-platform workout serializers (TrainingPeaks/Garmin/Zwift/Wahoo).
 4. **Wave 4** — bucket-3 inline UI surfacing (`Bucket3_InlineCompleted_Surfacing_Design`).
@@ -59,7 +59,8 @@ None — spec only. PR #695 CI all green (`Python unit suite (stubbed)`, `JS har
 | D-7 | Bucket-3 | Surfaces **inline** in completed (data + API + UI) |
 | D-8 | Storage | **Replace + consolidate** per-provider tables (decided WITH the evidence that Polar/COROS ingest is wired → real migration, gated on zero-row check) |
 | D-9 | #679 resolution point | `rx_engine.apply_session_outcome` EX-id step |
-| D-10 | #679 matching | Preserve subtype specificity; collapse only as backstop; identify-don't-pad new EX-ids |
+| D-10 | #679 matching | Preserve subtype specificity; collapse only as backstop; identify-don't-pad new EX-ids — **ratify candidates in one batch at the end of the build** (Andy, 2026-06-17) |
+| D-14 | Spec ratification + #679 timing | **D1/D2/D3 RATIFIED (Andy, 2026-06-17); #679 built in a fresh session** |
 | D-11 | Sequencing | As many waves as needed; Wave 1 = architecture + #679 |
 | D-12 | API security | Designed (not deferred) — provider-secret + consumer-credential planes, published API + issuance flow (Wave 5) |
 | D-13 | MCP server | Spec'd (Wave 6) |

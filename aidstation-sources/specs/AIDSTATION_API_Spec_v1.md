@@ -1,6 +1,6 @@
 # AIDSTATION API — structured endpoints over the canonical model (#682) — Spec v1
 
-**Status:** Draft v1, 2026-06-17. **Co-designed with `Provider_Data_Translation_Layer_Spec` (#681)** in one planning arc so ingest and API speak one contract. This wave fixes the **response/request shape**, the **endpoint surface sketch** (non-binding per #682), the **native-client dependency**, and the **direction of security/versioning work** (now in scope per Andy — designed in `AIDSTATION_API_Security_and_Developer_Platform_Spec`). Concrete route signatures, auth wiring, and the OpenAPI document are later waves. Spec only.
+**Status:** RATIFIED v1 (Andy, 2026-06-17). **Co-designed with `Provider_Data_Translation_Layer_Spec` (#681)** in one planning arc so ingest and API speak one contract. This wave fixes the **response/request shape**, the **endpoint surface sketch** (non-binding per #682), the **native-client dependency**, and the **direction of security/versioning work** (now in scope per Andy — designed in `AIDSTATION_API_Security_and_Developer_Platform_Spec`). Concrete route signatures, auth wiring, and the OpenAPI document are later waves. Spec only.
 
 **Type:** API contract. Reads **and writes** the canonical model (#681). Outbound push (calendar/workout) makes the API a writer, not only a reader.
 
