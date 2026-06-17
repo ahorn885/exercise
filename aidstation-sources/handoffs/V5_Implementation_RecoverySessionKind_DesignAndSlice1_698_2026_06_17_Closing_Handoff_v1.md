@@ -1,10 +1,12 @@
 # #698 Cardio/Recovery Catalog Arc — strength-pool filter + recovery-session design + Slice 1 — Closing Handoff
 
-**Session:** Long multi-step arc continuing the #692/#698 cardio-catalog thread ("check it out and keep working"). Shipped the strength-pool type leak fix, expanded the allowlist, ran cited sport-science research, ratified a design for a new `recovery` session kind, and built Slice 1 (schema).
+**Session:** Long multi-step arc continuing the #692/#698 cardio-catalog thread ("check it out and keep working"). Shipped the strength-pool type leak fix, expanded the allowlist, ran cited sport-science research, ratified a design for a new `recovery` session kind, and built Slice 1 (schema). **Addendum 2026-06-17:** ran a second, dose-specific research pass and **LOCKED D2** (the recovery-session dose) — see the D2-lock note below; this handoff is now the **programming-entry** for Slice 2.
 **Date:** 2026-06-17
 **Predecessor handoff:** `V5_Implementation_IndoorBikeFold_692_2026_06_17_Closing_Handoff_v1.md`
 **Branch:** `claude/admiring-cori-hjdqaq`
-**PRs (all auto-merge SQUASH):** [#704](https://github.com/ahorn885/exercise/pull/704) MERGED · [#705](https://github.com/ahorn885/exercise/pull/705) MERGED · [#706](https://github.com/ahorn885/exercise/pull/706) MERGED · [#708](https://github.com/ahorn885/exercise/pull/708) MERGED · [#711](https://github.com/ahorn885/exercise/pull/711) (Slice 1) auto-merge.
+**PRs (all auto-merge SQUASH):** [#704](https://github.com/ahorn885/exercise/pull/704) MERGED · [#705](https://github.com/ahorn885/exercise/pull/705) MERGED · [#706](https://github.com/ahorn885/exercise/pull/706) MERGED · [#708](https://github.com/ahorn885/exercise/pull/708) MERGED · [#711](https://github.com/ahorn885/exercise/pull/711) (Slice 1) MERGED · [#712](https://github.com/ahorn885/exercise/pull/712) (bookkeeping) MERGED · D2-lock PR (this addendum).
+
+> **D2 LOCKED (2026-06-17).** Dose = `{Base:3, Build:3, Peak:2, Taper:1}` × ~15–20 min (`_RECOVERY_SESSION_MINUTES = 18`), up from the proposed `{2,2,2,1}×15`. Grounded in a dose-specific research pass (research doc §6 addendum): 80/20 Endurance's 3×/wk × 15–20 min is the only endurance-specific dedicated-session dose in the literature; practitioner sources cluster 2–3×/wk × 15–20 min; periodization authorities periodize recovery as deload *weeks*, not weekly sessions (carried by D4). Evidence weak on the exact count → tuning knob, not settled science. Design §5/§13 + research §6 updated.
 
 ---
 
@@ -18,7 +20,7 @@
 - New `recovery` session **kind** (not a discipline), with **independent allocation that does not interfere with cardio/strength** (allocated *after/outside* the §5.1.1 session ceiling + saturation cap).
 - **Exempt from the ≤2/day training cap:** ≤2 training (cardio/strength) **+ ≤1 recovery** ("2 cardio + 1 recovery OK; 1 cardio + 1 strength + 1 recovery OK").
 - **D1 = structured `recovery_exercises[]` block** (EX-id-bound to a recovery pool, parallel to strength — NOT free-text).
-- **D2 = dose `{Base:2, Build:2, Peak:2, Taper:1}` × ~15 min** — the evidence-supported frequency (ACSM ≥2–3 days/wk) at the small per-session volume the ROM-plateau data demands; no endurance-specific count exists in the literature → calibrated/tunable.
+- **D2 = dose `{Base:3, Build:3, Peak:2, Taper:1}` × ~15–20 min** (LOCKED 2026-06-17, `_RECOVERY_SESSION_MINUTES = 18`) — anchored to 80/20 Endurance (3×/wk × 15–20 min, the one endurance-specific dedicated-session dose) + the practitioner cluster; Peak/Taper trimmed for freshness; deload-week carries phase-level recovery (D4). Weak-RCT → tuning knob. See research doc §6.
 - **D3 = ≤2 training + ≤1 recovery/day**, `session_index_in_day` max→2.
 - **D4 = bias rest days to full rest when `phase=="Peak"` OR deload/taper week** (active recovery allowed otherwise; adaptation-neutral per the evidence).
 - **D5 = `per_phase` (plan-create) + `race_week_brief` now; `plan_refresh`/`single_session` later.**
@@ -31,7 +33,7 @@
 ## 4. NEXT — finish Track 1 (mechanically spec'd in design §13a)
 **Slice 2 — pool + dose + prompt (the LLM-facing slice; cache bump):**
 - `layer4/per_phase.py`: `_RECOVERY_POOL_EXERCISE_TYPES = {mobility, flexibility / stretching, recovery / soft tissue, breathwork}` (lowercased, case-insensitive — mirror `_STRENGTH_POOL_EXERCISE_TYPES`); `compute_recovery_pool_ids(...)` (the EX-id enum) + `_format_recovery_exercise_pool(...)` (rendered pool) — both filter the SAME `l2c.exercises_resolved`, 2D-excluded dropped; a `# Recovery programming` SYSTEM_PROMPT section (recovery is off the daily cap; placed on/after hard or rest-adjacent days; full-rest bias under high load); a rendered recovery dose block; the session schema `kind` enum += `"recovery"` and `session_index_in_day` schema `maximum` 1→2; the `recovery_exercises` property bound to the pool enum.
-- `layer4/session_grid.py`: `_RECOVERY_SESSIONS_PER_WEEK = {"Base":2,"Build":2,"Peak":2,"Taper":1}` + `_RECOVERY_SESSION_MINUTES = 15` + `compute_recovery_dose(phase_name, high_load: bool)` — allocated **off** the ceiling (NOT in `discipline_allocations`, NOT in `apply_session_ceiling`/`cardio_total`/intensity).
+- `layer4/session_grid.py`: `_RECOVERY_SESSIONS_PER_WEEK = {"Base":3,"Build":3,"Peak":2,"Taper":1}` (D2 LOCKED) + `_RECOVERY_SESSION_MINUTES = 18` + `compute_recovery_dose(phase_name, high_load: bool)` — allocated **off** the ceiling (NOT in `discipline_allocations`, NOT in `apply_session_ceiling`/`cardio_total`/intensity).
 - `layer4/hashing.py`: `LAYER4_PROMPT_REVISION "7"→"8"`.
 - Tests: pool filter (recovery types in, others out), dose per phase, ceiling-unaffected-by-recovery assertion.
 
