@@ -162,12 +162,15 @@
                   {% if ex.resolution_tier == 2 %}<span class="chip">substitute</span>
                   {% elif ex.resolution_tier == 3 %}<span class="chip">proxy</span>{% endif %}
                 </div>
+                {% if ex.resolution_tier == 2 and ex.substitute_text %}
+                <p class="sess-exercise-sub">Do instead: {{ ex.substitute_text }}</p>
+                {% endif %}
                 <div class="sess-exercise-prescription">
                   {{ ex.sets }} × {{ ex.reps_per_set }} @ {{ ex.load_prescription }}
                   · rest {{ ex.rest_between_sets_sec }}s
                   {% if ex.tempo %} · tempo {{ ex.tempo }}{% endif %}
                 </div>
-                {% if ex.substitute_text %}<p class="sess-block-instr">{{ ex.substitute_text }}</p>{% endif %}
+                {% if ex.resolution_tier != 2 and ex.substitute_text %}<p class="sess-block-instr">{{ ex.substitute_text }}</p>{% endif %}
                 {% if ex.instructions %}<p class="sess-block-instr">{{ ex.instructions }}</p>{% endif %}
               </li>
               {% endfor %}
