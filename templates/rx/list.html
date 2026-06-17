@@ -148,6 +148,8 @@
                 {% if e.consecutive_failures and e.consecutive_failures > 0 %}
                   <span class="rx-fails mono" title="{{ e.consecutive_failures }} consecutive failure(s) — regression fires at 3">{{ e.consecutive_failures }}/3</span>
                 {% endif %}
+              {% elif e.current_sets %}
+                <span class="dim">no log yet</span>
               {% else %}
                 <span class="dim">needs setup</span>
               {% endif %}
