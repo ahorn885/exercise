@@ -898,3 +898,38 @@ class TestPlanLifecycleRoutes:
         assert 'completed_at = NULL' in sql
         assert 'WHERE id = ? AND user_id = ?' in sql
         assert params == (30, 3)
+
+    def test_delete_nulls_refresh_parent_back_reference(self, monkeypatch):
+        # #688: a plan that was later refreshed is the
+        # `refresh_parent_version_id` of its child version. That non-cascading
+        # self-reference must be nulled before the DELETE or the FK trips a 500
+        # — the same handling `superseded_by_version_id` already gets.
+        conn = _FakeConn()
+        conn.queue_response(row={'one': 1})  # ownership SELECT → plan found
+        client = self._client(monkeypatch, conn)
+        resp = client.post('/plans/v2/30/delete')
+        assert resp.status_code == 302
+        assert resp.headers['Location'].endswith('/plans/')
+        assert conn.commits == 1
+        sqls = [sql for sql, _ in conn.calls]
+        assert any('refresh_parent_version_id = NULL' in s for s in sqls)
+        assert any('superseded_by_version_id = NULL' in s for s in sqls)
+        # The null-update precedes the DELETE…
+        null_idx = next(i for i, s in enumerate(sqls)
+                        if 'refresh_parent_version_id = NULL' in s)
+        del_idx = next(i for i, s in enumerate(sqls)
+                       if s.strip().startswith('DELETE FROM plan_versions'))
+        assert null_idx < del_idx
+        # …and is scoped to the children pointing at this plan + this user.
+        upd_params = next(p for s, p in conn.calls
+                          if 'refresh_parent_version_id = NULL' in s)
+        assert upd_params == (30, 3)
+
+    def test_delete_missing_plan_skips_writes(self, monkeypatch):
+        # Ownership SELECT returns nothing → redirect with no destructive SQL.
+        conn = _FakeConn()  # no queued response → fetchone() is None
+        client = self._client(monkeypatch, conn)
+        resp = client.post('/plans/v2/30/delete')
+        assert resp.status_code == 302
+        assert conn.commits == 0
+        assert not any('DELETE FROM plan_versions' in s for s, _ in conn.calls)

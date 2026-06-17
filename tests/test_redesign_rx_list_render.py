@@ -144,6 +144,23 @@ def test_rx_list_no_rx_hero(monkeypatch):
     assert 'style="' not in html
 
 
+def test_rx_list_prescribed_but_unlogged_reads_no_log_yet(monkeypatch):
+    # #693: a prescribed exercise (has current_sets) that hasn't been logged yet
+    # is "set up" — its Outcome cell must read "no log yet", not the misleading
+    # "needs setup" (which wrongly implied the exercise wasn't configured).
+    entries = [
+        _entry(id=5, exercise='Front squat', current_sets=3, current_reps=5,
+               last_outcome=None, last_performed=None),
+    ]
+    client = _client(monkeypatch, entries, [], [])
+    resp = client.get('/rx')
+    assert resp.status_code == 200
+    html = resp.get_data(as_text=True)
+    assert 'Front squat' in html
+    assert 'no log yet' in html
+    assert 'needs setup' not in html
+
+
 def test_rx_list_filtered_empty_shows_clear(monkeypatch):
     client = _client(monkeypatch, [], [], [])
     resp = client.get('/rx?discipline=Bike')
