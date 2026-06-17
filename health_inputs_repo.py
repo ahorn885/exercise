@@ -55,6 +55,43 @@ MEDICATION_CLASS_CHOICES: list[tuple[str, str]] = [
     for m in KNOWN_MEDICATION_CLASSES
 ]
 
+# Curated, training-relevant condition vocab per system category (#543), sourced
+# from the reviewed `research/Vocabulary_Audit_v3.md` §2.2 canonical list mapped
+# onto the live 8-category enum. Drives the add-form's system-filtered Condition
+# select so capture is structured, not free text. The `other` category carries
+# no list (free text only); each listed category also offers an "Other (not
+# listed)" escape in the UI that *keeps* the system_category — so the Layer 2E
+# screen (which keys on `system_category`, not the name) never loses signal.
+CONDITIONS_BY_CATEGORY: dict[str, list[str]] = {
+    "cardiac": [
+        "Hypertension", "Arrhythmia", "Post-MI / cardiac event",
+        "Hypertrophic cardiomyopathy", "Heart valve disorder",
+    ],
+    "respiratory": [
+        "Asthma", "Exercise-induced bronchoconstriction", "COPD",
+        "Post-COVID respiratory",
+    ],
+    "metabolic": [
+        "Type 1 diabetes", "Type 2 diabetes", "Metabolic syndrome",
+        "Reactive hypoglycemia",
+    ],
+    "endocrine": [
+        "Hypothyroidism", "Hyperthyroidism", "Adrenal insufficiency", "PCOS",
+    ],
+    "gi_immune": [
+        "IBS", "IBD / Crohn's / colitis", "Celiac disease",
+        "Chronic reflux (GERD)", "Rheumatoid arthritis", "Lupus", "MCAS",
+    ],
+    "musculoskeletal": [
+        "Osteoarthritis", "Fibromyalgia", "Hypermobility / EDS",
+        "Chronic tendinopathy",
+    ],
+    "neurological": [
+        "Concussion history", "Migraine", "Epilepsy / seizure disorder",
+        "Multiple sclerosis", "Peripheral neuropathy",
+    ],
+}
+
 
 def clean_severity(value: str | None) -> int | None:
     """1–5 or None — anything else (blank, out of range, non-numeric) → None."""
