@@ -77,279 +77,323 @@
   </div>
   {% else %}
 
-  {# Sleep hours — self-report only #}
-  {% if chart_data.sleep_hours %}
-  <div class="card card-pad">
-    <span class="eyebrow">Sleep · hours</span>
-    <div class="chart-box wide sec-sm"><canvas id="chart-sleep-hours"></canvas></div>
-  </div>
-  {% endif %}
+  {# Charts grouped into 4 collapsible sections (#526) so the 30-ish cards
+     don't read as one long scroll. The chart <script> binds by canvas id, so
+     grouping is pure DOM rearrangement — no JS change. Sleep + Body can be
+     fully empty (auto-collapse with a "No data yet" note); Stress & Recovery
+     and Activity always carry at least their always-present scaffold cards
+     (HRV / VO₂max), so they stay open. #}
+  {% set sleep_has = chart_data.sleep_hours or chart_data.sleep_score.self or chart_data.sleep_score.device
+                     or chart_data.sleep_deep_min or chart_data.sleep_stress_avg or chart_data.sleep_wake_count
+                     or chart_data.sleep_sub_scores.light or chart_data.sleep_sub_scores.rem
+                     or chart_data.sleep_sub_scores.stress or chart_data.sleep_sub_scores.awake
+                     or chart_data.sleep_stress_above_resting or chart_data.restless_moments %}
+  {% set body_has = chart_data.body or chart_data.soreness or chart_data.mood
+                    or chart_data.energy.self or chart_data.energy.device %}
 
-  {# Sleep score — self-report (1–5 → ×20) overlaid with Garmin sleep score #}
-  {% if chart_data.sleep_score.self or chart_data.sleep_score.device %}
-  <div class="card card-pad">
-    <span class="eyebrow">Sleep score · self vs device (0–100)</span>
-    <div class="chart-box wide sec-sm"><canvas id="chart-sleep-score"></canvas></div>
-    {% if not chart_data.sleep_score.device %}
-    <p class="rail-note">Upload Garmin <code>_METRICS.fit</code> or <code>_SLEEP_DATA.fit</code> files to overlay the device sleep score.</p>
-    {% endif %}
-  </div>
-  {% endif %}
+  {# ════ Sleep ════ #}
+  <details class="wl-section"{% if sleep_has %} open{% endif %}>
+    <summary>Sleep</summary>
+    <div class="wl-section-body">
+      {% if not sleep_has %}<p class="rail-note">No data yet.</p>{% endif %}
 
-  {# Energy — self-report (1–5 → ×20) overlaid with Garmin body battery (daily trough) #}
-  {% if chart_data.energy.self or chart_data.energy.device %}
-  <div class="card card-pad">
-    <span class="eyebrow">Energy · self vs body battery (0–100)</span>
-    <div class="chart-box wide sec-sm"><canvas id="chart-energy"></canvas></div>
-  </div>
-  {% endif %}
+      {# Sleep hours — self-report only #}
+      {% if chart_data.sleep_hours %}
+      <div class="card card-pad">
+        <span class="eyebrow">Sleep · hours</span>
+        <div class="chart-box wide sec-sm"><canvas id="chart-sleep-hours"></canvas></div>
+      </div>
+      {% endif %}
 
-  {# Soreness — self-report 1–5 #}
-  {% if chart_data.soreness %}
-  <div class="card card-pad">
-    <span class="eyebrow">Soreness · 1–5 (5 = fresh)</span>
-    <div class="chart-box wide sec-sm"><canvas id="chart-soreness"></canvas></div>
-  </div>
-  {% endif %}
+      {# Sleep score — self-report (1–5 → ×20) overlaid with Garmin sleep score #}
+      {% if chart_data.sleep_score.self or chart_data.sleep_score.device %}
+      <div class="card card-pad">
+        <span class="eyebrow">Sleep score · self vs device (0–100)</span>
+        <div class="chart-box wide sec-sm"><canvas id="chart-sleep-score"></canvas></div>
+        {% if not chart_data.sleep_score.device %}
+        <p class="rail-note">Upload Garmin <code>_METRICS.fit</code> or <code>_SLEEP_DATA.fit</code> files to overlay the device sleep score.</p>
+        {% endif %}
+      </div>
+      {% endif %}
 
-  {# Mood — self-report 1–5 #}
-  {% if chart_data.mood %}
-  <div class="card card-pad">
-    <span class="eyebrow">Mood · 1–5</span>
-    <div class="chart-box wide sec-sm"><canvas id="chart-mood"></canvas></div>
-  </div>
-  {% endif %}
+      {# Sleep contributor sub-scores — Light / REM / Stress / Awake, all 4
+         locked Jun 10 against [346] field_5/7/8/10. Multi-line chart shows
+         which contributor drags a night's score down. #}
+      {% if chart_data.sleep_sub_scores.light or chart_data.sleep_sub_scores.rem or chart_data.sleep_sub_scores.stress or chart_data.sleep_sub_scores.awake %}
+      <div class="card card-pad">
+        <span class="eyebrow">Sleep contributor sub-scores · device (0–100)</span>
+        <div class="chart-box wide sec-sm"><canvas id="chart-sleep-sub-scores"></canvas></div>
+      </div>
+      {% endif %}
 
-  {# HRV — _HRV_STATUS.fit overnight avg + highest 5-min #}
-  <div class="card card-pad">
-    <span class="eyebrow">HRV · device (ms)</span>
-    {% if chart_data.hrv.overnight or chart_data.hrv.highest_5min %}
-    <div class="chart-box wide sec-sm"><canvas id="chart-hrv"></canvas></div>
-    {% else %}
-    <p class="rail-note">Upload Garmin <code>_HRV_STATUS.fit</code> files at
-      <a href="{{ url_for('garmin.import_wellness') }}">Garmin → Import wellness</a> to see overnight HRV.</p>
-    {% endif %}
-  </div>
+      {# Sleep stress fraction — [384] field_18 best-guess: % of overnight
+         stress samples above Garmin's "resting" threshold. Complement to
+         body-battery overnight recovery; flags nights where stress was
+         elevated even if the average looked benign. #}
+      {% if chart_data.sleep_stress_above_resting %}
+      <div class="card card-pad">
+        <span class="eyebrow">Sleep stress fraction · device (% above resting, best-guess)</span>
+        <div class="chart-box wide sec-sm"><canvas id="chart-sleep-stress-fraction"></canvas></div>
+      </div>
+      {% endif %}
 
-  {# Acute training load — _METRICS.fit (Andy's interpretation, May 2026) #}
-  {% if chart_data.acute_load %}
-  <div class="card card-pad">
-    <span class="eyebrow">Acute training load · device</span>
-    <div class="chart-box wide sec-sm"><canvas id="chart-acute-load"></canvas></div>
-  </div>
-  {% endif %}
+      {# Deep sleep minutes — _SLEEP_DATA.fit [346] field_9 (PR #489) #}
+      {% if chart_data.sleep_deep_min %}
+      <div class="card card-pad">
+        <span class="eyebrow">Deep sleep · device (min/night)</span>
+        <div class="chart-box wide sec-sm"><canvas id="chart-sleep-deep-min"></canvas></div>
+      </div>
+      {% endif %}
 
-  {# Deep sleep minutes — _SLEEP_DATA.fit [346] field_9 (PR #489) #}
-  {% if chart_data.sleep_deep_min %}
-  <div class="card card-pad">
-    <span class="eyebrow">Deep sleep · device (min/night)</span>
-    <div class="chart-box wide sec-sm"><canvas id="chart-sleep-deep-min"></canvas></div>
-  </div>
-  {% endif %}
+      {# Sleep stress avg — _SLEEP_DATA.fit [346] field_15 ÷ samples (PR #489) #}
+      {% if chart_data.sleep_stress_avg %}
+      <div class="card card-pad">
+        <span class="eyebrow">Sleep stress · device (avg 0–100)</span>
+        <div class="chart-box wide sec-sm"><canvas id="chart-sleep-stress-avg"></canvas></div>
+      </div>
+      {% endif %}
 
-  {# Sleep stress avg — _SLEEP_DATA.fit [346] field_15 ÷ samples (PR #489) #}
-  {% if chart_data.sleep_stress_avg %}
-  <div class="card card-pad">
-    <span class="eyebrow">Sleep stress · device (avg 0–100)</span>
-    <div class="chart-box wide sec-sm"><canvas id="chart-sleep-stress-avg"></canvas></div>
-  </div>
-  {% endif %}
+      {# Wake events per night — _SLEEP_DATA.fit [382] field_2 (PR #489) #}
+      {% if chart_data.sleep_wake_count %}
+      <div class="card card-pad">
+        <span class="eyebrow">Wake events · device (count/night)</span>
+        <div class="chart-box wide sec-sm"><canvas id="chart-sleep-wake-count"></canvas></div>
+      </div>
+      {% endif %}
 
-  {# Wake events per night — _SLEEP_DATA.fit [382] field_2 (PR #489) #}
-  {% if chart_data.sleep_wake_count %}
-  <div class="card card-pad">
-    <span class="eyebrow">Wake events · device (count/night)</span>
-    <div class="chart-box wide sec-sm"><canvas id="chart-sleep-wake-count"></canvas></div>
-  </div>
-  {% endif %}
-
-  {# Sleep contributor sub-scores — Light / REM / Stress / Awake, all 4
-     locked Jun 10 against [346] field_5/7/8/10. Multi-line chart shows
-     which contributor drags a night's score down. #}
-  {% if chart_data.sleep_sub_scores.light or chart_data.sleep_sub_scores.rem or chart_data.sleep_sub_scores.stress or chart_data.sleep_sub_scores.awake %}
-  <div class="card card-pad">
-    <span class="eyebrow">Sleep contributor sub-scores · device (0–100)</span>
-    <div class="chart-box wide sec-sm"><canvas id="chart-sleep-sub-scores"></canvas></div>
-  </div>
-  {% endif %}
-
-  {# Sleep stress fraction — [384] field_18 best-guess: % of overnight
-     stress samples above Garmin's "resting" threshold. Complement to
-     body-battery overnight recovery; flags nights where stress was
-     elevated even if the average looked benign. #}
-  {% if chart_data.sleep_stress_above_resting %}
-  <div class="card card-pad">
-    <span class="eyebrow">Sleep stress fraction · device (% above resting, best-guess)</span>
-    <div class="chart-box wide sec-sm"><canvas id="chart-sleep-stress-fraction"></canvas></div>
-  </div>
-  {% endif %}
-
-  {# Heat acclimation — _METRICS.fit #}
-  {% if chart_data.heat_acclimation %}
-  <div class="card card-pad">
-    <span class="eyebrow">Heat acclimation · device (%)</span>
-    <div class="chart-box wide sec-sm"><canvas id="chart-heat-acclimation"></canvas></div>
-  </div>
-  {% endif %}
-
-  {# Heart rate — resting (min overnight) / avg / peak from wellness_log #}
-  {% if chart_data.heart_rate.resting or chart_data.heart_rate.avg or chart_data.heart_rate.peak %}
-  <div class="card card-pad">
-    <span class="eyebrow">Heart rate · device (bpm)</span>
-    <div class="chart-box wide sec-sm"><canvas id="chart-heart-rate"></canvas></div>
-  </div>
-  {% endif %}
-
-  {# Intensity minutes — Garmin's published metric (moderate + 2×vigorous)
-     from MonitoringMessage activity-minute attributes #}
-  {% if chart_data.intensity_minutes %}
-  <div class="card card-pad">
-    <span class="eyebrow">Intensity minutes · device</span>
-    <div class="chart-box wide sec-sm"><canvas id="chart-intensity-min"></canvas></div>
-  </div>
-  {% endif %}
-
-  {# Training load — cardio + strength minutes/day #}
-  {% if chart_data.training %}
-  <div class="card card-pad">
-    <span class="eyebrow">Training load · minutes/day</span>
-    <div class="chart-box wide sec-sm"><canvas id="chart-load"></canvas></div>
-  </div>
-  {% endif %}
-
-  {# VO2max running — _METRICS.fit (Phase B scaffold) #}
-  <div class="card card-pad">
-    <span class="eyebrow">VO₂max · running</span>
-    {% if chart_data.vo2max_running %}
-    <div class="chart-box wide sec-sm"><canvas id="chart-vo2-run"></canvas></div>
-    {% else %}
-    <p class="rail-note">Will appear once <code>_METRICS.fit</code> ingestion lands (#283).</p>
-    {% endif %}
-  </div>
-
-  {# VO2max cycling — _METRICS.fit (Phase B scaffold) #}
-  <div class="card card-pad">
-    <span class="eyebrow">VO₂max · cycling</span>
-    {% if chart_data.vo2max_cycling %}
-    <div class="chart-box wide sec-sm"><canvas id="chart-vo2-bike"></canvas></div>
-    {% else %}
-    <p class="rail-note">Will appear once <code>_METRICS.fit</code> ingestion lands (#283).</p>
-    {% endif %}
-  </div>
-
-  {# Activities done that day #}
-  {% if chart_data.activities %}
-  <div class="card card-pad">
-    <span class="eyebrow">Activities · per day</span>
-    <div class="chart-box wide sec-sm"><canvas id="chart-activities"></canvas></div>
-  </div>
-  {% endif %}
-
-  {# Stress — avg + peak from wellness_log #}
-  {% if chart_data.stress.avg or chart_data.stress.peak %}
-  <div class="card card-pad">
-    <span class="eyebrow">Stress · device (0–100)</span>
-    <div class="chart-box wide sec-sm"><canvas id="chart-stress"></canvas></div>
-  </div>
-  {% endif %}
-
-  {# Stress time-in-zone — stacked minutes per bucket per day #}
-  {% if chart_data.stress_minutes.rest or chart_data.stress_minutes.low or chart_data.stress_minutes.medium or chart_data.stress_minutes.high %}
-  <div class="card card-pad">
-    <span class="eyebrow">Stress · time-in-zone (min/day)</span>
-    <div class="chart-box wide sec-sm"><canvas id="chart-stress-zones"></canvas></div>
-  </div>
-  {% endif %}
-
-  {# Respiration — avg + lowest from wellness_log #}
-  {% if chart_data.respiration.avg or chart_data.respiration.low %}
-  <div class="card card-pad">
-    <span class="eyebrow">Respiration · device (breaths/min)</span>
-    <div class="chart-box wide sec-sm"><canvas id="chart-respiration"></canvas></div>
-  </div>
-  {% endif %}
-
-  {# Body battery — daily high + low (low also overlaid into Energy above) #}
-  {% if chart_data.body_battery.high or chart_data.body_battery.low %}
-  <div class="card card-pad">
-    <span class="eyebrow">Body battery · device (0–100)</span>
-    <div class="chart-box wide sec-sm"><canvas id="chart-body-battery"></canvas></div>
-  </div>
-  {% endif %}
-
-  {# Body battery charged vs drained — daily delta totals #}
-  {% if chart_data.body_battery.charged or chart_data.body_battery.drained %}
-  <div class="card card-pad">
-    <span class="eyebrow">Body battery · charged / drained per day</span>
-    <div class="chart-box wide sec-sm"><canvas id="chart-body-battery-delta"></canvas></div>
-  </div>
-  {% endif %}
-
-  {# Body battery overnight recovery — BB jump during the per-night sleep
-     window. #283 follow-up: cleaner "how restful was this sleep?" signal
-     than the raw score, anchored to garmin_daily_metrics.sleep_start/end_ms. #}
-  {% if chart_data.body_battery.overnight_delta %}
-  <div class="card card-pad">
-    <span class="eyebrow">Body battery · overnight recovery (per night)</span>
-    <div class="chart-box wide sec-sm"><canvas id="chart-body-battery-overnight"></canvas></div>
-  </div>
-  {% endif %}
-
-  {# Daily activity — cumulative MAX from wellness_log per day #}
-  {% if chart_data.daily_activity.steps or chart_data.daily_activity.active_cal or chart_data.daily_activity.distance_mi %}
-  <div class="card card-pad">
-    <span class="eyebrow">Daily activity · device</span>
-    <div class="chart-grid">
-      {% if chart_data.daily_activity.steps %}<div class="chart-box"><canvas id="chart-steps"></canvas></div>{% endif %}
-      {% if chart_data.daily_activity.active_cal %}<div class="chart-box"><canvas id="chart-active-cal"></canvas></div>{% endif %}
-      {% if chart_data.daily_activity.distance_mi %}<div class="chart-box"><canvas id="chart-distance"></canvas></div>{% endif %}
+      {# Restless moments — sleep events #}
+      {% if chart_data.restless_moments %}
+      <div class="card card-pad">
+        <span class="eyebrow">Restless moments · device (count/night)</span>
+        <div class="chart-box wide sec-sm"><canvas id="chart-restless"></canvas></div>
+      </div>
+      {% endif %}
     </div>
-  </div>
-  {% endif %}
+  </details>
 
-  {# Resting calories — Garmin's RMR computed from profile + activity baseline #}
-  {% if chart_data.resting_calories %}
-  <div class="card card-pad">
-    <span class="eyebrow">Resting calories · device (kcal/day)</span>
-    <div class="chart-box wide sec-sm"><canvas id="chart-resting-cal"></canvas></div>
-  </div>
-  {% endif %}
+  {# ════ Stress & Recovery ════ #}
+  <details class="wl-section" open>
+    <summary>Stress &amp; Recovery</summary>
+    <div class="wl-section-body">
 
-  {# Restless moments — sleep events #}
-  {% if chart_data.restless_moments %}
-  <div class="card card-pad">
-    <span class="eyebrow">Restless moments · device (count/night)</span>
-    <div class="chart-box wide sec-sm"><canvas id="chart-restless"></canvas></div>
-  </div>
-  {% endif %}
+      {# Stress — avg + peak from wellness_log #}
+      {% if chart_data.stress.avg or chart_data.stress.peak %}
+      <div class="card card-pad">
+        <span class="eyebrow">Stress · device (0–100)</span>
+        <div class="chart-box wide sec-sm"><canvas id="chart-stress"></canvas></div>
+      </div>
+      {% endif %}
 
-  {# Floors — climbed + descended per day #}
-  {% if chart_data.floors.climbed or chart_data.floors.descended %}
-  <div class="card card-pad">
-    <span class="eyebrow">Floors · device (per day)</span>
-    <div class="chart-box wide sec-sm"><canvas id="chart-floors"></canvas></div>
-  </div>
-  {% endif %}
+      {# Stress time-in-zone — stacked minutes per bucket per day #}
+      {% if chart_data.stress_minutes.rest or chart_data.stress_minutes.low or chart_data.stress_minutes.medium or chart_data.stress_minutes.high %}
+      <div class="card card-pad">
+        <span class="eyebrow">Stress · time-in-zone (min/day)</span>
+        <div class="chart-box wide sec-sm"><canvas id="chart-stress-zones"></canvas></div>
+      </div>
+      {% endif %}
 
-  {# SpO₂ — avg + low if the watch emits pulse_ox in MonitoringMessage #}
-  {% if chart_data.spo2.avg or chart_data.spo2.low %}
-  <div class="card card-pad">
-    <span class="eyebrow">SpO₂ · device (%)</span>
-    <div class="chart-box wide sec-sm"><canvas id="chart-spo2"></canvas></div>
-  </div>
-  {% endif %}
+      {# Body battery — daily high + low (low also overlaid into Energy) #}
+      {% if chart_data.body_battery.high or chart_data.body_battery.low %}
+      <div class="card card-pad">
+        <span class="eyebrow">Body battery · device (0–100)</span>
+        <div class="chart-box wide sec-sm"><canvas id="chart-body-battery"></canvas></div>
+      </div>
+      {% endif %}
 
-  {# Body composition #}
-  {% if chart_data.body %}
-  <div class="card card-pad">
-    <span class="eyebrow">Body composition</span>
-    <div class="chart-grid">
-      {% if chart_data.body.weight %}<div class="chart-box"><canvas id="chart-weight"></canvas></div>{% endif %}
-      {% if chart_data.body.body_fat_pct %}<div class="chart-box"><canvas id="chart-bf"></canvas></div>{% endif %}
-      {% if chart_data.body.resting_hr %}<div class="chart-box"><canvas id="chart-rhr"></canvas></div>{% endif %}
+      {# Body battery charged vs drained — daily delta totals #}
+      {% if chart_data.body_battery.charged or chart_data.body_battery.drained %}
+      <div class="card card-pad">
+        <span class="eyebrow">Body battery · charged / drained per day</span>
+        <div class="chart-box wide sec-sm"><canvas id="chart-body-battery-delta"></canvas></div>
+      </div>
+      {% endif %}
+
+      {# Body battery overnight recovery — BB jump during the per-night sleep
+         window. #283 follow-up: cleaner "how restful was this sleep?" signal
+         than the raw score, anchored to garmin_daily_metrics.sleep_start/end_ms. #}
+      {% if chart_data.body_battery.overnight_delta %}
+      <div class="card card-pad">
+        <span class="eyebrow">Body battery · overnight recovery (per night)</span>
+        <div class="chart-box wide sec-sm"><canvas id="chart-body-battery-overnight"></canvas></div>
+      </div>
+      {% endif %}
+
+      {# HRV — _HRV_STATUS.fit overnight avg + highest 5-min #}
+      <div class="card card-pad">
+        <span class="eyebrow">HRV · device (ms)</span>
+        {% if chart_data.hrv.overnight or chart_data.hrv.highest_5min %}
+        <div class="chart-box wide sec-sm"><canvas id="chart-hrv"></canvas></div>
+        {% else %}
+        <p class="rail-note">Upload Garmin <code>_HRV_STATUS.fit</code> files at
+          <a href="{{ url_for('garmin.import_wellness') }}">Garmin → Import wellness</a> to see overnight HRV.</p>
+        {% endif %}
+      </div>
+
+      {# Heart rate — resting (min overnight) / avg / peak from wellness_log #}
+      {% if chart_data.heart_rate.resting or chart_data.heart_rate.avg or chart_data.heart_rate.peak %}
+      <div class="card card-pad">
+        <span class="eyebrow">Heart rate · device (bpm)</span>
+        <div class="chart-box wide sec-sm"><canvas id="chart-heart-rate"></canvas></div>
+      </div>
+      {% endif %}
+
+      {# Respiration — avg + lowest from wellness_log #}
+      {% if chart_data.respiration.avg or chart_data.respiration.low %}
+      <div class="card card-pad">
+        <span class="eyebrow">Respiration · device (breaths/min)</span>
+        <div class="chart-box wide sec-sm"><canvas id="chart-respiration"></canvas></div>
+      </div>
+      {% endif %}
+
+      {# SpO₂ — avg + low if the watch emits pulse_ox in MonitoringMessage #}
+      {% if chart_data.spo2.avg or chart_data.spo2.low %}
+      <div class="card card-pad">
+        <span class="eyebrow">SpO₂ · device (%)</span>
+        <div class="chart-box wide sec-sm"><canvas id="chart-spo2"></canvas></div>
+      </div>
+      {% endif %}
     </div>
-  </div>
-  {% endif %}
+  </details>
+
+  {# ════ Body ════ #}
+  <details class="wl-section"{% if body_has %} open{% endif %}>
+    <summary>Body</summary>
+    <div class="wl-section-body">
+      {% if not body_has %}<p class="rail-note">No data yet.</p>{% endif %}
+
+      {# Body composition #}
+      {% if chart_data.body %}
+      <div class="card card-pad">
+        <span class="eyebrow">Body composition</span>
+        <div class="chart-grid">
+          {% if chart_data.body.weight %}<div class="chart-box"><canvas id="chart-weight"></canvas></div>{% endif %}
+          {% if chart_data.body.body_fat_pct %}<div class="chart-box"><canvas id="chart-bf"></canvas></div>{% endif %}
+          {% if chart_data.body.resting_hr %}<div class="chart-box"><canvas id="chart-rhr"></canvas></div>{% endif %}
+        </div>
+      </div>
+      {% endif %}
+
+      {# Soreness — self-report 1–5 #}
+      {% if chart_data.soreness %}
+      <div class="card card-pad">
+        <span class="eyebrow">Soreness · 1–5 (5 = fresh)</span>
+        <div class="chart-box wide sec-sm"><canvas id="chart-soreness"></canvas></div>
+      </div>
+      {% endif %}
+
+      {# Mood — self-report 1–5 #}
+      {% if chart_data.mood %}
+      <div class="card card-pad">
+        <span class="eyebrow">Mood · 1–5</span>
+        <div class="chart-box wide sec-sm"><canvas id="chart-mood"></canvas></div>
+      </div>
+      {% endif %}
+
+      {# Energy — self-report (1–5 → ×20) overlaid with Garmin body battery (daily trough) #}
+      {% if chart_data.energy.self or chart_data.energy.device %}
+      <div class="card card-pad">
+        <span class="eyebrow">Energy · self vs body battery (0–100)</span>
+        <div class="chart-box wide sec-sm"><canvas id="chart-energy"></canvas></div>
+      </div>
+      {% endif %}
+    </div>
+  </details>
+
+  {# ════ Activity ════ #}
+  <details class="wl-section" open>
+    <summary>Activity</summary>
+    <div class="wl-section-body">
+
+      {# Activities done that day #}
+      {% if chart_data.activities %}
+      <div class="card card-pad">
+        <span class="eyebrow">Activities · per day</span>
+        <div class="chart-box wide sec-sm"><canvas id="chart-activities"></canvas></div>
+      </div>
+      {% endif %}
+
+      {# Training load — cardio + strength minutes/day #}
+      {% if chart_data.training %}
+      <div class="card card-pad">
+        <span class="eyebrow">Training load · minutes/day</span>
+        <div class="chart-box wide sec-sm"><canvas id="chart-load"></canvas></div>
+      </div>
+      {% endif %}
+
+      {# Acute training load — _METRICS.fit (Andy's interpretation, May 2026) #}
+      {% if chart_data.acute_load %}
+      <div class="card card-pad">
+        <span class="eyebrow">Acute training load · device</span>
+        <div class="chart-box wide sec-sm"><canvas id="chart-acute-load"></canvas></div>
+      </div>
+      {% endif %}
+
+      {# Intensity minutes — Garmin's published metric (moderate + 2×vigorous)
+         from MonitoringMessage activity-minute attributes #}
+      {% if chart_data.intensity_minutes %}
+      <div class="card card-pad">
+        <span class="eyebrow">Intensity minutes · device</span>
+        <div class="chart-box wide sec-sm"><canvas id="chart-intensity-min"></canvas></div>
+      </div>
+      {% endif %}
+
+      {# Daily activity — cumulative MAX from wellness_log per day #}
+      {% if chart_data.daily_activity.steps or chart_data.daily_activity.active_cal or chart_data.daily_activity.distance_mi %}
+      <div class="card card-pad">
+        <span class="eyebrow">Daily activity · device</span>
+        <div class="chart-grid">
+          {% if chart_data.daily_activity.steps %}<div class="chart-box"><canvas id="chart-steps"></canvas></div>{% endif %}
+          {% if chart_data.daily_activity.active_cal %}<div class="chart-box"><canvas id="chart-active-cal"></canvas></div>{% endif %}
+          {% if chart_data.daily_activity.distance_mi %}<div class="chart-box"><canvas id="chart-distance"></canvas></div>{% endif %}
+        </div>
+      </div>
+      {% endif %}
+
+      {# Floors — climbed + descended per day #}
+      {% if chart_data.floors.climbed or chart_data.floors.descended %}
+      <div class="card card-pad">
+        <span class="eyebrow">Floors · device (per day)</span>
+        <div class="chart-box wide sec-sm"><canvas id="chart-floors"></canvas></div>
+      </div>
+      {% endif %}
+
+      {# Heat acclimation — _METRICS.fit #}
+      {% if chart_data.heat_acclimation %}
+      <div class="card card-pad">
+        <span class="eyebrow">Heat acclimation · device (%)</span>
+        <div class="chart-box wide sec-sm"><canvas id="chart-heat-acclimation"></canvas></div>
+      </div>
+      {% endif %}
+
+      {# Resting calories — Garmin's RMR computed from profile + activity baseline #}
+      {% if chart_data.resting_calories %}
+      <div class="card card-pad">
+        <span class="eyebrow">Resting calories · device (kcal/day)</span>
+        <div class="chart-box wide sec-sm"><canvas id="chart-resting-cal"></canvas></div>
+      </div>
+      {% endif %}
+
+      {# VO2max running — _METRICS.fit (Phase B scaffold) #}
+      <div class="card card-pad">
+        <span class="eyebrow">VO₂max · running</span>
+        {% if chart_data.vo2max_running %}
+        <div class="chart-box wide sec-sm"><canvas id="chart-vo2-run"></canvas></div>
+        {% else %}
+        <p class="rail-note">Will appear once <code>_METRICS.fit</code> ingestion lands (#283).</p>
+        {% endif %}
+      </div>
+
+      {# VO2max cycling — _METRICS.fit (Phase B scaffold) #}
+      <div class="card card-pad">
+        <span class="eyebrow">VO₂max · cycling</span>
+        {% if chart_data.vo2max_cycling %}
+        <div class="chart-box wide sec-sm"><canvas id="chart-vo2-bike"></canvas></div>
+        {% else %}
+        <p class="rail-note">Will appear once <code>_METRICS.fit</code> ingestion lands (#283).</p>
+        {% endif %}
+      </div>
+    </div>
+  </details>
 
   {% endif %}
 

@@ -102,6 +102,33 @@ def test_wellness_renders_on_redesign_shell(client):
     assert 'style="' not in html
 
 
+def test_wellness_charts_grouped_into_collapsible_sections(client, monkeypatch):
+    # #526 — with data present, the charts render inside 4 collapsible
+    # <details> sections instead of one flat scroll. Populate one chart per
+    # section so has_any_data is True and each section carries content.
+    import routes.wellness as wl
+    # Build the full-shaped (all-empty) chart_data the strict-Undefined template
+    # expects, then seed one existing leaf series per section.
+    base = wl._build_chart_data([], [], [], [], [], [])
+    pt = [{'x': '2026-06-01', 'y': 1}]
+    base['sleep_hours'] = pt        # Sleep
+    base['stress']['avg'] = pt      # Stress & Recovery
+    base['soreness'] = pt           # Body
+    base['activities'] = pt         # Activity
+    monkeypatch.setattr(wl, '_build_chart_data', lambda *a, **k: base)
+    resp = client.get('/wellness')
+    assert resp.status_code == 200
+    html = resp.get_data(as_text=True)
+    assert html.count('<details class="wl-section"') == 4
+    for heading in ('Sleep', 'Stress &amp; Recovery', 'Body', 'Activity'):
+        assert '<summary>' + heading + '</summary>' in html
+    # Grouping is pure DOM rearrangement — cards still bind by their canvas id.
+    assert 'id="chart-sleep-hours"' in html
+    assert 'id="chart-soreness"' in html
+    assert 'style="' not in html
+    assert 'onclick=' not in html
+
+
 def test_log_picker_wellness_tile_targets_self_report_anchor(client):
     # The picker renders inside any log pane; the cardio default carries it.
     resp = client.get('/cardio/new')
