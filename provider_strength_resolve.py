@@ -88,6 +88,89 @@ GARMIN_STRENGTH_ALIASES: dict[str, str] = {
 }
 
 
+# Andy's logged-prescription vocabulary → existing layer0 EX-id. These are the
+# names that show up in his `current_rx` (the v2 synthesizer's output + manual
+# setup), NOT Garmin FIT subtype names — mapped 2026-06-17 against his real
+# logged set (read-only prod query) on his "map them all" greenlight. Each maps
+# to a live exercise covering the same movement; `H` matches are the same lift
+# bar naming/equipment, `M` are a close variant routed to the nearest canonical
+# (audit list: designs/ProviderTranslation_GarminStrength_679_CandidateBatch_v1.md
+# §"current_rx vocabulary"). Names with no existing home are NOT here — they're
+# the new-exercise batch (Trigger #2, authored separately).
+LOGGED_NAME_ALIASES: dict[str, str] = {
+    "1,000 Step-Up Challenge": "EX024",
+    "4-Side Box Step-Up/Off": "EX024",
+    "7/3 Repeaters (Hangboard)": "EX100",
+    "Ab Wheel Rollout": "EX222",
+    "Asymmetric Stab. Ball Push-Up": "EX228",
+    "Back Extension / Rev. Hyper": "EX220",
+    "Band Pull-Apart": "EX066",
+    "Bent-Over Barbell Row": "EX246",
+    "Bird Dog": "EX218",
+    "Box Jump": "EX007",
+    "Cable Woodchop (High-to-Low)": "EX087",
+    "Cable Woodchop (Low-to-High)": "EX087",
+    "Clamshell (Banded)": "EX040",
+    "Copenhagen Plank": "EX012",
+    "Deadlift (Standard)": "EX230",
+    "Dumbbell Chest Press": "EX229",
+    "Elevated Reverse Lunge": "EX022",
+    "Fire Hydrant (Banded)": "EX042",
+    "Front Squat": "EX231",
+    "Glute Bridge / Hip Thrust": "EX039",
+    "Glute Kickback (Banded)": "EX042",
+    "Good Morning": "EX061",
+    "Half-Kneeling 1-Arm Cable Row": "EX078",
+    "Hangboard Max Hangs": "EX100",
+    "Hanging Knee Raise": "EX223",
+    "Hanging Leg Raise in Boots": "EX223",
+    "Hillbounding": "EX036",
+    "Isometric Lunge Hold": "EX038",
+    "KB Swing on Inverted BOSU": "EX031",
+    "Kettlebell Swing (Two-Hand)": "EX031",
+    "Lat Pulldown": "EX080",
+    "Med Ball Torso Rotation (Seated)": "EX088",
+    "Med Ball Wall Throws (Rotational)": "EX085",
+    "Mountain Climbers": "EX221",
+    "Nasal-Breathing-Only Climbing": "EX139",
+    "Nordic Hamstring Curl": "EX020",
+    "Oblique Press (Contralateral)": "EX011",
+    "Overhead Carry": "EX244",
+    "Pallof Press": "EX011",
+    "Pistol Squat": "EX028",
+    "Plank with Rotation": "EX216",
+    "Pull-Up": "EX006",
+    "Push-Up": "EX228",
+    "Rapid Calf Raises": "EX025",
+    "Rice Bucket": "EX104",
+    "Romanian Deadlift": "EX003",
+    "Russian Twist (Feet Elevated)": "EX088",
+    "Sandbag / Pack Carry (Bear Hug)": "EX095",
+    "Seated Cable Row": "EX079",
+    "Side Plank + Banded Leg Raise": "EX219",
+    "Side Split Lunges (Deep)": "EX023",
+    "Single-Leg Calf Raise": "EX025",
+    "Single-Leg Deadlift": "EX004",
+    "Single-Leg Stance Eyes Closed": "EX043",
+    "Sled Pull (Hand-Over-Hand)": "EX030",
+    "Sled Push": "EX029",
+    "Stability Ball Seated Shoulder Press": "EX098",
+    "Stability Ball Single-Arm DB Press": "EX242",
+    "Standing Figure-4 Stretch": "EX015",
+    "Standing Hip Flexor Stretch": "EX046",
+    "Step-Down (Eccentric)": "EX117",
+    "Suitcase Carry": "EX243",
+    "TRX Mtn Climber / Unstable Bar": "EX221",
+    "Towel Pull-Up": "EX006",
+    "Turkish Get-Up": "EX239",
+    "Wall Calf Stretch": "EX047",
+    "Wall Chest / Doorway Stretch": "EX077",
+    "Wall Sit": "EX037",
+    "Weighted Box Step-Up": "EX119",
+    "Weighted Treadmill Incline Walk": "EX050",
+}
+
+
 # Inverted Garmin subtype-name → coarse FIT category name, derived from
 # garmin_fit_parser's maps (the SAME source the parser emits names from, so the
 # reverse map cannot drift from the names actually seen). Built lazily and
@@ -122,9 +205,10 @@ def _subtype_to_category() -> dict[str, str]:
 
 
 def _alias_map() -> dict[str, str]:
-    """Curated `NAME_TO_EX_ID` (coarse + manual-log names) extended/superseded by
-    the #679 Garmin specifics. The Garmin entries win on any key collision."""
-    return {**NAME_TO_EX_ID, **GARMIN_STRENGTH_ALIASES}
+    """Curated `NAME_TO_EX_ID` (coarse + manual-log names) extended by the #679
+    Garmin specifics and Andy's logged-prescription vocabulary. Later maps win on
+    a key collision (none today — the three keyspaces are disjoint)."""
+    return {**NAME_TO_EX_ID, **GARMIN_STRENGTH_ALIASES, **LOGGED_NAME_ALIASES}
 
 
 def resolve_strength_ex_id(exercise, *, subtype_to_category=None):

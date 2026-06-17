@@ -12,6 +12,7 @@ from __future__ import annotations
 from provider_strength_resolve import (
     resolve_strength_ex_id,
     GARMIN_STRENGTH_ALIASES,
+    LOGGED_NAME_ALIASES,
 )
 from layer0_progression import NAME_TO_EX_ID
 
@@ -60,6 +61,40 @@ class TestAliasStep:
         }
         for name, ex_id in cases.items():
             assert resolve_strength_ex_id(name) == (ex_id, "alias"), name
+
+
+class TestLoggedVocabularyAliases:
+    """Andy's current_rx vocabulary → EX-id, mapped on the "map them all"
+    greenlight (2026-06-17). These resolve via the alias step."""
+
+    def test_logged_vocab_resolves_via_alias(self):
+        cases = {
+            "Bent-Over Barbell Row": "EX246",
+            "Front Squat": "EX231",
+            "Romanian Deadlift": "EX003",
+            "Good Morning": "EX061",
+            "Lat Pulldown": "EX080",
+            "Pallof Press": "EX011",
+            "Push-Up": "EX228",
+            "Pull-Up": "EX006",
+            "Deadlift (Standard)": "EX230",
+            "Turkish Get-Up": "EX239",
+        }
+        for name, ex_id in cases.items():
+            assert resolve_strength_ex_id(name) == (ex_id, "alias"), name
+
+    def test_keyspaces_are_disjoint_or_agree(self):
+        # A name appearing in more than one alias map must map to the SAME EX-id,
+        # so the merge order in _alias_map() can never silently override.
+        maps = {"NAME_TO_EX_ID": NAME_TO_EX_ID,
+                "GARMIN": GARMIN_STRENGTH_ALIASES,
+                "LOGGED": LOGGED_NAME_ALIASES}
+        seen: dict[str, str] = {}
+        for label, m in maps.items():
+            for name, ex_id in m.items():
+                if name in seen:
+                    assert seen[name] == ex_id, f"{name}: {seen[name]} vs {ex_id} ({label})"
+                seen[name] = ex_id
 
 
 class TestCategoryStep:

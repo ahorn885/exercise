@@ -124,3 +124,73 @@ families with **no** layer0 exercise covering the same stimulus. Candidates to m
 I'll apply your marks in a follow-up PR (alias rows + coarse-map lines; new EX-ids as a
 gated `layer0` migration like 0011 if you greenlight Batch C). The shipped core stands on
 its own regardless.
+
+---
+
+# Round 2 — `current_rx` vocabulary mapping (Andy: "map them all", 2026-06-17)
+
+The read-only prod query showed the real precision target is **Andy's own logged
+vocabulary** (117 `current_rx` rows), not the Garmin enum — his Garmin imports come in
+*coarse* (`Squat`, `Deadlift`) and already resolve. Of the **97 unmapped** rows: everything
+he's actually weighted/logged already had an EX-id; the rest are unperformed prescription
+scaffolding. Classified all 97 against the live catalog: **70 → existing-EX alias (shipped),
+24 → new exercise (0B batch), 1 → leave bucket-3, 1 (`Face Pull`) already aliased in Batch A,
++ his Garmin-name reqs from Batch A.**
+
+## R2-A — Shipped aliases (audit + flag any wrong; `H`=same lift, `M`=close-variant lean)
+
+`H` (same movement, naming/equipment only): Ab Wheel Rollout→EX222, Back Extension/Rev.Hyper→EX220,
+Band Pull-Apart→EX066, Bent-Over Barbell Row→EX246, Bird Dog→EX218, Box Jump→EX007,
+Cable Woodchop (High-to-Low)→EX087, Clamshell (Banded)→EX040, Copenhagen Plank→EX012,
+Deadlift (Standard)→EX230, Dumbbell Chest Press→EX229, Fire Hydrant (Banded)→EX042,
+Front Squat→EX231, Glute Kickback (Banded)→EX042, Good Morning→EX061, Hanging Knee Raise→EX223,
+Isometric Lunge Hold→EX038, Kettlebell Swing (Two-Hand)→EX031, Lat Pulldown→EX080,
+Med Ball Wall Throws (Rotational)→EX085, Mountain Climbers→EX221, Nordic Hamstring Curl→EX020,
+Overhead Carry→EX244, Pallof Press→EX011, Pistol Squat→EX028, Pull-Up→EX006, Push-Up→EX228,
+Rice Bucket→EX104, Romanian Deadlift→EX003, Russian Twist (Feet Elevated)→EX088,
+Seated Cable Row→EX079, Single-Leg Calf Raise→EX025, Single-Leg Deadlift→EX004, Sled Push→EX029,
+Step-Down (Eccentric)→EX117, Suitcase Carry→EX243, Turkish Get-Up→EX239, Wall Calf Stretch→EX047,
+Wall Chest/Doorway Stretch→EX077, Wall Sit→EX037, Weighted Box Step-Up→EX119,
+Weighted Treadmill Incline Walk→EX050.
+
+`M` (close-variant lean — most likely to want a tweak): 1,000 Step-Up Challenge→EX024,
+4-Side Box Step-Up/Off→EX024, 7/3 Repeaters (Hangboard)→EX100, Asymmetric Stab.Ball Push-Up→EX228,
+Cable Woodchop (Low-to-High)→EX087, Elevated Reverse Lunge→EX022, Glute Bridge/Hip Thrust→EX039,
+Half-Kneeling 1-Arm Cable Row→EX078, Hangboard Max Hangs→EX100, Hanging Leg Raise in Boots→EX223,
+Hillbounding→EX036, KB Swing on Inverted BOSU→EX031, Med Ball Torso Rotation (Seated)→EX088,
+Nasal-Breathing-Only Climbing→EX139, Oblique Press (Contralateral)→EX011, Plank with Rotation→EX216,
+Rapid Calf Raises→EX025, Sandbag/Pack Carry (Bear Hug)→EX095, Side Plank + Banded Leg Raise→EX219,
+Side Split Lunges (Deep)→EX023, Single-Leg Stance Eyes Closed→EX043, Sled Pull (Hand-Over-Hand)→EX030,
+Stability Ball Seated Shoulder Press→EX098, Stability Ball Single-Arm DB Press→EX242,
+Standing Figure-4 Stretch→EX015, Standing Hip Flexor Stretch→EX046, TRX Mtn Climber→EX221,
+Towel Pull-Up→EX006.
+
+## R2-B — New-exercise 0B batch (Trigger #2 — author specs, your per-entry sign-off)
+
+From `current_rx` (24): Banded Pull-Through, Battle Ropes, Dip, Forearm Wrist Curls (flexion —
+note your wrist injury), Front Lever Progression, KB Clean & Press, KB Snatch, KB Sumo Deadlift,
+KB Windmill, L-Sit Pull-Up, Lunge to Rotation, Pedal Stance Deadlift, Push Press, Rack Carry,
+Renegade Row, Sandbag Get-Up, Seated Glute Squeeze (Iso), Single-Arm KB Swing,
+Single-Leg Glute Bridge, Stability Ball Hamstring Curl, Straight-Arm Lat Pulldown,
+Sumo Deadlift High Pull, Treadwall Intervals, Walking Lunge.
+
+From Batch A (10): Overhead Bulgarian Split Squat, Wide-Grip Seated Cable Row,
+Close-Grip Lat Pulldown, Chest Flye, Hack Squat, Box Squat, Standing Calf Raise, Spiderman Plank,
+Side Kick Plank, Side Plank Lift.
+
+**= ~34 new exercises.** Each needs full 0B fields (movement_patterns→rx class, muscles,
+equipment, injury flags, coaching cues, sport_exercise_map rows) + the alias. Authored as
+migration `0012`, applied via gated `layer0-apply`. I'll bring the specs as a batch (likely
+sliced by movement family) for sign-off — too big to ship blind.
+
+## R2-C — Renames (drop equipment qualifiers; bundled into 0012)
+
+EX002 `Goblet Squat (DB/KB)`→`Goblet Squat`, EX231 `Front Squat (Barbell/KB)`→`Front Squat`,
+EX016 `Thoracic Rotation Drill`→`Thoracic Rotation`, EX081 `Band Face Pull`→`Face Pull`,
+EX061 `Good Morning (Barbell)`→`Good Morning`, EX111 `Reverse Wrist Curl (DB)`→`Reverse Wrist Curl`,
+EX021 `Bulgarian Split Squat (DB)`→`Bulgarian Split Squat`. Versioned 0B change (cache-invalidating)
++ denormalized-name updates across `sport_exercise_map`/proxies/progression/regression.
+
+## R2-D — Leave bucket-3
+
+`High-Rep Strength Endurance Sets` (a protocol, not a discrete exercise).
