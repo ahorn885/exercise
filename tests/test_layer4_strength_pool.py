@@ -17,15 +17,18 @@ from layer4.per_phase import (
     SYSTEM_PROMPT,
     _STRENGTH_CORE_CAP,
     _STRENGTH_POOL_CAP_PER_DISCIPLINE,
+    compute_feasible_pool_ids,
     _format_skill_capability_gates,
     _format_strength_exercise_pool,
 )
 
 
-def _rx(exercise_id, name, disciplines, priorities, tier=1, patterns=(), detail=None):
+def _rx(exercise_id, name, disciplines, priorities, tier=1, patterns=(), detail=None,
+        exercise_type="Strength"):
     return NS(
         exercise_id=exercise_id,
         exercise_name=name,
+        exercise_type=exercise_type,
         discipline_ids=list(disciplines),
         priority_per_discipline=dict(priorities),
         movement_patterns=list(patterns),
@@ -162,6 +165,62 @@ def test_tier2_substitute_and_tier3_proxy_notes():
 
 def test_no_layer2c_returns_empty():
     assert _format_strength_exercise_pool({}, _l2a({"D-003": 1.0}), None) == []
+
+
+# ─── #698 Finding 2 — strength-type filter (cardio/skill rows can't leak) ────
+
+
+def test_rendered_pool_drops_non_strength_types():
+    pool = {"home": _l2c("home", [
+        _rx("EX-LIFT", "Goblet Squat", ["D-006"], {"D-006": "High"},
+            patterns=["Squat"], exercise_type="Strength"),
+        # A cycling cardio drill mapped to the same discipline — must NOT render.
+        _rx("EX-CARDIO", "Threshold Intervals (Bike)", ["D-006"],
+            {"D-006": "Critical"}, exercise_type="Interval / Tempo"),
+        _rx("EX-SKILL", "High Cadence Spin Drill", ["D-006"],
+            {"D-006": "Critical"}, exercise_type="Technical / Skill"),
+    ])}
+    text = "\n".join(_format_strength_exercise_pool(pool, _l2a({"D-006": 1.0}), None))
+    assert "EX-LIFT" in text
+    assert "EX-CARDIO" not in text
+    assert "EX-SKILL" not in text
+
+
+def test_rendered_pool_keeps_resistance_modalities():
+    # Loaded Carry / Plyometric / Isometric are real strength work and stay in.
+    pool = {"home": _l2c("home", [
+        _rx("EX-CARRY", "Farmer Carry", ["D-003"], {"D-003": "High"},
+            exercise_type="Loaded Carry"),
+        _rx("EX-JUMP", "Box Jump", ["D-003"], {"D-003": "High"},
+            exercise_type="Plyometric"),
+        _rx("EX-ISO", "Wall Sit", ["D-003"], {"D-003": "High"},
+            exercise_type="Isometric"),
+    ])}
+    text = "\n".join(_format_strength_exercise_pool(pool, _l2a({"D-003": 1.0}), None))
+    assert "EX-CARRY" in text
+    assert "EX-JUMP" in text
+    assert "EX-ISO" in text
+
+
+def test_type_match_is_case_insensitive():
+    # Real prod values are title-case ("Strength"); a lowercase fixture must
+    # still resolve (mirrors the movement-pattern case-insensitive match).
+    pool = {"home": _l2c("home", [
+        _rx("EX-LC", "Squat", ["D-003"], {"D-003": "High"}, exercise_type="strength"),
+    ])}
+    text = "\n".join(_format_strength_exercise_pool(pool, _l2a({"D-003": 1.0}), None))
+    assert "EX-LC" in text
+
+
+def test_compute_feasible_pool_ids_excludes_non_strength_types():
+    pool = {"home": _l2c("home", [
+        _rx("EX-LIFT", "Squat", ["D-006"], {"D-006": "High"},
+            exercise_type="Strength"),
+        _rx("EX-CARDIO", "VO2 Max Intervals (Bike)", ["D-006"], {"D-006": "High"},
+            exercise_type="Interval / Tempo"),
+    ])}
+    ids = compute_feasible_pool_ids(pool, None)
+    assert ids == ["EX-LIFT"]
 
 
 # ─── #336 skill-capability gate substitution directive ──────────────────────
