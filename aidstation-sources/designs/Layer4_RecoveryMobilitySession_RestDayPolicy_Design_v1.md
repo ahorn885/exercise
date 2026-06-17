@@ -1,9 +1,10 @@
 # Layer 4 — Recovery/Mobility session kind + load-adaptive rest days — Design
 
-**Status:** DRAFT — awaiting Andy ratification (Trigger #1 prompt + Trigger #3 schema/cross-layer). Do not implement until ratified.
+**Status:** RATIFIED (Andy 2026-06-17) — ready to build (Trigger #1 prompt + Trigger #3 schema/cross-layer). Build in slices (>5 files; see §13a).
 **Date:** 2026-06-17
 **Issue:** #698 follow-up (Track 1). **Evidence base:** `research/RecoveryMobility_RestDay_CardioDrills_EnduranceEvidence_v1.md`.
 **Ratified decisions (Andy 2026-06-17):** new `recovery` session **kind** (not a discipline); **recovery is exempt from the ≤2/day training cap** — "2 cardio + 1 recovery OK; 1 cardio + 1 strength + 1 recovery OK"; recovery allocation must **not interfere with strength/cardio assignment**; **load-adaptive** rest days (full-rest floor + active-recovery variant, biased to full rest under high load); build this track **first**.
+**Open decisions — RATIFIED:** **D1 = structured `recovery_exercises[]` block now** (parallel to `strength_exercises`, EX-id-bound to a recovery pool — NOT free-text); **D2 = `{Base:2, Build:2, Peak:2, Taper:1}` × ~15 min** (the evidence-supported frequency — ACSM ≥2–3 days/wk — at the small per-session volume the ROM-plateau data demands; no endurance-specific session count exists in the literature, so this is calibrated, tunable); **D3 = ≤2 training + ≤1 recovery/day** (`session_index_in_day` max→2); **D4 = bias to full rest when phase==Peak OR deload/taper week**; **D5 = `per_phase` (plan-create) + `race_week_brief` now; `plan_refresh`/`single_session` later.**
 
 ---
 
@@ -25,6 +26,7 @@ The recovery dose is **never** passed through `apply_session_ceiling` and **neve
 | File:line | Change |
 |---|---|
 | `layer4/payload.py:233` | `PlanSession.kind`: add `"recovery"` → `Literal["cardio","strength","rest","recovery"]` |
+| `layer4/payload.py` `PlanSession` | NEW field `recovery_exercises: list[RecoveryExercise] | None` (D1 structured block — mirror `strength_exercises`; `RecoveryExercise` carries `exercise_id` + free `prescription` text e.g. "2×30s/side"). EX-id-bound to the recovery pool enum in the schema. |
 | `layer4/payload.py` `_check_kind_invariants` (~265–295) | add a `recovery` branch (§4) |
 | `layer4/payload.py` `_check_two_per_day` (~602–624) | recovery exempt from the count + the cardio/strength pairing rules (§4) |
 | `layer4/per_phase.py:519` | session-schema `kind` enum: add `"recovery"` |
@@ -36,10 +38,10 @@ The recovery dose is **never** passed through `apply_session_ceiling` and **neve
 
 ## 4. `kind="recovery"` invariants & the daily-cap exemption
 **Recovery session invariants** (`_check_kind_invariants`):
-- `cardio_blocks` is None/empty; `strength_exercises` is None/empty; `rest_reason` is None.
+- `recovery_exercises` is **non-empty** (D1 structured — the analog of strength's "strength_exercises required"); `cardio_blocks` is None/empty; `strength_exercises` is None/empty; `rest_reason` is None.
 - `duration_min` ∈ [5, 45] (small-dose evidence; typical 10–20).
 - `intensity_summary` ∈ {`rest`, `easy`} (recovery is sub-threshold).
-- `discipline_id` / `locale_id` = None (recovery is not a discipline; like rest it isn't locale-routed). Content lives in `session_notes` + `coaching_intent`, grounded by the rendered recovery pool (§6, D1: free-text for v1).
+- `discipline_id` / `locale_id` = None (recovery is not a discipline; like rest it isn't locale-routed). `coaching_intent`/`session_notes` carry the framing; the prescribed work is the structured `recovery_exercises` (EX-ids from the recovery pool, §6).
 
 **Daily-cap exemption** (`_check_two_per_day` + validator `_rule_two_per_day`): redefine the cap over **training sessions only** (`kind ∈ {cardio, strength}`):
 - ≤ 2 training sessions/day **plus** ≤ 1 recovery session/day (so 2 cardio + 1 recovery ✓; 1 cardio + 1 strength + 1 recovery ✓; 2 strength still ✗; a day with only training sessions still needs ≥1 cardio if it has 2 training).
@@ -58,7 +60,7 @@ Rationale: small, steady through Base/Build/Peak (recovery emphasis *rises* with
 ## 6. Prompt changes (Trigger #1) — `per_phase.py`
 1. **`# Recovery programming` system-prompt section:** explains the recovery kind — small mobility/soft-tissue/breathwork sessions, sub-threshold, that **do not count toward the daily session cap**, placed on/after hard days or rest-adjacent; full rest is preferred under high load (§7).
 2. **Rendered recovery block** (deterministic, from `compute_recovery_dose`): "Recovery: N sessions this week, ~M min each — mobility/soft-tissue/breathwork; place off the training cap."
-3. **Recovery/mobility "consider these" pool** (the cardio-pool analog, scoped to recovery): render the active `Mobility` / `Flexibility / Stretching` / `Recovery / Soft Tissue` / `Breathwork` 0B rows so the LLM grounds recovery content in the catalog. **D1: v1 = render the pool + free-text composition** (no structured `recovery_exercises` block — mirrors how cardio is free-composed; keeps schema surface minimal). v2 may add structure if logging needs it.
+3. **Recovery exercise pool — structurally consumed (D1).** Build the strength-pool analog scoped to recovery types: `_RECOVERY_POOL_EXERCISE_TYPES = {mobility, flexibility / stretching, recovery / soft tissue, breathwork}` (case-insensitive, mirrors `_STRENGTH_POOL_EXERCISE_TYPES`), plus `compute_recovery_pool_ids(...)` (the EX-id enum bounding `recovery_exercises[*].exercise_id`) and `_format_recovery_exercise_pool(...)` (the rendered pool). Both filter the SAME `l2c.exercises_resolved` already used by the strength pool — reuses the #704 infrastructure; just a different type allowlist. 2D-excluded ids dropped (wrist/injury contraindications honored). The synthesizer picks `recovery_exercises` EX-ids from this enum (never invents), exactly like strength. **This is what gives the orphaned Mobility/Flexibility/Recovery/Breathwork catalog a real, structured home.**
 
 ## 7. Load-adaptive rest-day policy (Trigger #1, deterministic input)
 Rest stays athlete-owned (no forced rest count). The policy governs **whether a non-training day is full rest or light active recovery**:
@@ -70,6 +72,7 @@ Rest stays athlete-owned (no forced rest count). The policy governs **whether a 
 Add recovery to the kind-keyed rules, treating it like rest (zero-load, low-friction) **except** it carries a duration:
 - **Exclude** from: volume-band grading (`_rule_volume_band`), ACWR load (`_rule_acwr` — recovery ≈ 0 training load), intensity/rest-spacing (`_rule_rest_spacing` — recovery isn't hard), strength-count (`_rule_strength_sessions_per_phase`), discipline-excluded / skill-gate / sport-locale / indoor-only (recovery has no discipline).
 - **Apply (amended):** the two-per-day rule per §4.
+- **New (D1 structured):** a recovery-pool-membership rule — the Rule-6a analog: every `recovery_exercises[*].exercise_id` must be in `compute_recovery_pool_ids(...)` (blocker if not, mirroring the strength `equipment_unavailable`/out-of-pool reject). The enum bound makes this structurally near-impossible, but the validator backstops it.
 - **New (optional, low priority):** a soft check that the week's recovery count ≈ the deterministic dose (advisory, not a blocker) — Rule #15 log rather than a hard rule for v1.
 
 ## 9. Render (`templates/plan_create/view.html:110–112`)
@@ -93,12 +96,17 @@ Add `{% elif sess.kind == 'recovery' %}` → "Recovery — {{ duration_min }} mi
 - render: recovery branch.
 - Full suite green; `LAYER4_PROMPT_REVISION` bump reflected in hashing tests.
 
-## 13. Open decisions for Andy (ratify before build)
-- **D1 — recovery content:** v1 free-text grounded by a rendered recovery pool (RECOMMEND, lean) vs a structured `recovery_exercises` block now (more surface, better logging). *Rec: free-text v1.*
-- **D2 — dose numbers:** `{Base:2, Build:2, Peak:2, Taper:1}` × ~15 min. Evidence supports "small + recovery-emphasis-rises-with-load"; exact integers are practitioner-calibrated. *Rec: as proposed; easy to tune.*
-- **D3 — daily cap:** ≤2 training + ≤1 recovery, `session_index_in_day` max→2. *Rec: as in §4 (matches your examples).*
-- **D4 — high-load definition** for the rest-day bias: Peak OR deload/taper week OR periodizer high-strain flag. *Rec: start with Peak + Taper + deload weeks (simple, no new signal); add an ACWR/strain flag later.*
-- **D5 — scope:** plan-create (`per_phase`) + race-week now; `plan_refresh`/`single_session` later. *Rec: yes.*
+## 13. Decisions — ALL RATIFIED (Andy 2026-06-17)
+- **D1 — recovery content:** ✅ **structured `recovery_exercises[]` block now** (EX-id-bound to the recovery pool; §3/§6).
+- **D2 — dose numbers:** ✅ `{Base:2, Build:2, Peak:2, Taper:1}` × ~15 min — the evidence-supported frequency (ACSM ≥2–3 days/wk) at the small per-session volume the ROM-plateau caps demand; no endurance-specific count exists in the literature → calibrated/tunable.
+- **D3 — daily cap:** ✅ ≤2 training + ≤1 recovery, `session_index_in_day` max→2 (matches Andy's examples).
+- **D4 — high-load:** ✅ bias to full rest when `phase=="Peak"` OR deload/taper week (no new signal; ACWR/strain flag is a later add).
+- **D5 — scope:** ✅ `per_phase` + `race_week_brief` now; `plan_refresh`/`single_session` later.
+
+## 13a. Build slices (>5 files → split per the 5-file ceiling)
+- **Slice 1 — schema + invariants:** `payload.py` (`kind` += recovery; new `RecoveryExercise` model + `recovery_exercises` field; `_check_kind_invariants` recovery branch; `_check_two_per_day` training-only cap + recovery exemption; `session_index_in_day` max→2) + tests. No prompt/grid yet — payload contract first.
+- **Slice 2 — pool + dose + prompt:** `per_phase.py` (recovery schema enum + `session_index_in_day` schema max; `_RECOVERY_POOL_EXERCISE_TYPES` + `compute_recovery_pool_ids` + `_format_recovery_exercise_pool`; `# Recovery programming` prompt section + rendered recovery block; load-adaptive rest-day directive), `session_grid.py` (`_RECOVERY_SESSIONS_PER_WEEK` + `compute_recovery_dose`, allocated off the ceiling), `hashing.py` (`LAYER4_PROMPT_REVISION "7"→"8"`) + tests.
+- **Slice 3 — validator + render:** `validator.py` (recovery handling + pool-membership rule + amended two-per-day) + `race_week_brief.py` (enum) + `templates/plan_create/view.html` (recovery branch) + tests.
 
 ## 14. Gut check
 - **Biggest risk:** over-engineering recovery into something heavy — the evidence is explicit that the dose is small and the performance/injury payoff is modest. The design keeps it capped, free-text, and off the training budget; resist scope creep into structured blocks/big volumes.
