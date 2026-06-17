@@ -29,7 +29,8 @@ from calculations import (
     calculate_next_rx,
     project_next_from_current,
 )
-from layer0_progression import NAME_TO_EX_ID, progression_pattern
+from layer0_progression import progression_pattern
+from provider_strength_resolve import resolve_strength_ex_id
 
 
 DELOAD_THRESHOLD = 5
@@ -161,7 +162,7 @@ def apply_session_outcome(db, exercise, date, sets,
 
     Returns:
         {
-          movement_pattern, layer0_exercise_id,
+          movement_pattern, layer0_exercise_id, match_kind, bucket3,
           outcome, exceeded_significantly,
           baseline_sets, baseline_reps, baseline_weight, baseline_duration,
           next_sets, next_reps, next_weight, next_duration,
@@ -196,13 +197,21 @@ def apply_session_outcome(db, exercise, date, sets,
         (exercise,)
     ).fetchone()
 
-    # #430 Slice C — key the progression off the layer0 EX-id (single source of
-    # truth), not the v1 exercise_inventory name. Prefer the row's backfilled
-    # EX-id; for a never-logged exercise resolve the curated v1-name->EX-id map.
+    # #430 Slice C + #679 — key the progression off the layer0 EX-id (single
+    # source of truth), not the v1 exercise_inventory name. Prefer the row's
+    # already-backfilled EX-id; otherwise resolve the logged NAME through the
+    # #679 chain (alias → coarse category-collapse → bucket-3). `match_kind`
+    # records which step resolved it; `bucket3` (EX-id None) is the explicit
+    # record-don't-drop state that replaces the ambiguous "first exposure"
+    # rendering for Garmin lifts with no canonical home.
     # `movement_patterns` from layer0 collapses to the rx progression key via the
     # crosswalk; falls back to the legacy denormalized/exercise_inventory pattern
     # only when no EX-id resolves (un-migrated name → status quo, no regression).
-    layer0_exercise_id = (rx['layer0_exercise_id'] if rx else None) or NAME_TO_EX_ID.get(exercise)
+    row_ex_id = rx['layer0_exercise_id'] if rx else None
+    if row_ex_id:
+        layer0_exercise_id, match_kind = row_ex_id, 'existing'
+    else:
+        layer0_exercise_id, match_kind = resolve_strength_ex_id(exercise)
     layer0_pattern = _layer0_progression_pattern(db, layer0_exercise_id)
 
     # weight_increment: layer0 carries no per-exercise increment (#335 D4), and
@@ -347,19 +356,27 @@ def apply_session_outcome(db, exercise, date, sets,
              rx_source, user_id)
         )
 
-    # Rule #15 — log the EX-id resolution + chosen progression key so a wrong
-    # progression in prod is diagnosable from /admin/logs alone. `layer0=y`
-    # means the key came from layer0 movement_patterns; `n` means the legacy
-    # fallback (un-migrated name).
+    # Rule #15 — log the EX-id resolution (which name, which #679 step, resolved
+    # EX-id or bucket-3) + chosen progression key so a wrong resolution or
+    # progression in prod is diagnosable from /admin/logs alone. `match_kind` is
+    # the #679 step (existing/alias/category/bucket3); `bucket3` flags the
+    # record-don't-drop case; `layer0=y` means the progression key came from
+    # layer0 movement_patterns, `n` the legacy fallback (un-migrated name).
     print(
         f"rx_engine.apply_session_outcome: user={user_id} exercise={exercise!r} "
-        f"ex_id={layer0_exercise_id} progression={movement_pattern} "
+        f"ex_id={layer0_exercise_id} match_kind={match_kind} "
+        f"bucket3={layer0_exercise_id is None} progression={movement_pattern} "
         f"layer0={'y' if layer0_pattern is not None else 'n'} outcome={outcome}"
     )
 
     return {
         'movement_pattern': movement_pattern,
         'layer0_exercise_id': layer0_exercise_id,
+        # #679 — resolution provenance for the completed-history record. `bucket3`
+        # marks "logged, not prescribed" (no canonical EX-id); a later wave
+        # surfaces it inline instead of as an ambiguous first-exposure row.
+        'match_kind': match_kind,
+        'bucket3': layer0_exercise_id is None,
         'outcome': outcome,
         'exceeded_significantly': exceeded,
         'baseline_sets': new_baseline_sets,
