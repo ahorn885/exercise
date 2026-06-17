@@ -202,6 +202,23 @@ def test_rendered_pool_keeps_resistance_modalities():
     assert "EX-ISO" in text
 
 
+def test_rendered_pool_keeps_athletic_development_types():
+    # Andy 2026-06-17: agility / activation / balance count as strength-session
+    # work and belong in the strength pool.
+    pool = {"home": _l2c("home", [
+        _rx("EX-AGI", "Agility Ladder Drill", ["D-003"], {"D-003": "High"},
+            exercise_type="Agility"),
+        _rx("EX-ACT", "Band Pull-Apart", ["D-003"], {"D-003": "High"},
+            exercise_type="Activation / Primer"),
+        _rx("EX-BAL", "Single-Leg Balance Hold", ["D-003"], {"D-003": "High"},
+            exercise_type="Balance / Proprioception"),
+    ])}
+    text = "\n".join(_format_strength_exercise_pool(pool, _l2a({"D-003": 1.0}), None))
+    assert "EX-AGI" in text
+    assert "EX-ACT" in text
+    assert "EX-BAL" in text
+
+
 def test_type_match_is_case_insensitive():
     # Real prod values are title-case ("Strength"); a lowercase fixture must
     # still resolve (mirrors the movement-pattern case-insensitive match).
