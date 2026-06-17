@@ -85,6 +85,18 @@ GARMIN_STRENGTH_ALIASES: dict[str, str] = {
     "Weighted Mountain Climber": "EX221",     # Mountain Climber
     "Barbell Bulgarian Split Squat": "EX021",  # Bulgarian Split Squat (DB)
     "Wall Slide": "EX065",                    # Scapular Wall Slide
+    # Batch-A names Andy ratified as NEW exercises (minted in 0012-0015) →
+    # their new EX-ids (2026-06-17).
+    "Overhead Bulgarian Split Squat": "EX251",
+    "Barbell Hack Squat": "EX252",
+    "Barbell Box Squat": "EX253",
+    "Wide Grip Seated Cable Row": "EX265",
+    "Close Grip Lat Pulldown": "EX266",
+    "Kettlebell Flye": "EX271",               # → Chest Flye
+    "Standing Calf Raise": "EX258",
+    "Spiderman Plank": "EX280",
+    "Side Kick Plank": "EX281",
+    "Side Plank Lift": "EX282",
 }
 
 
@@ -98,18 +110,17 @@ GARMIN_STRENGTH_ALIASES: dict[str, str] = {
 # §"current_rx vocabulary"). Names with no existing home are NOT here — they're
 # the new-exercise batch (Trigger #2, authored separately).
 LOGGED_NAME_ALIASES: dict[str, str] = {
-    "1,000 Step-Up Challenge": "EX024",
     "4-Side Box Step-Up/Off": "EX024",
     "7/3 Repeaters (Hangboard)": "EX100",
     "Ab Wheel Rollout": "EX222",
-    "Asymmetric Stab. Ball Push-Up": "EX228",
+    "Asymmetric Stab. Ball Push-Up": "EX272",
     "Back Extension / Rev. Hyper": "EX220",
     "Band Pull-Apart": "EX066",
     "Bent-Over Barbell Row": "EX246",
     "Bird Dog": "EX218",
     "Box Jump": "EX007",
     "Cable Woodchop (High-to-Low)": "EX087",
-    "Cable Woodchop (Low-to-High)": "EX087",
+    "Cable Woodchop (Low-to-High)": "EX284",
     "Clamshell (Banded)": "EX040",
     "Copenhagen Plank": "EX012",
     "Deadlift (Standard)": "EX230",
@@ -138,20 +149,19 @@ LOGGED_NAME_ALIASES: dict[str, str] = {
     "Overhead Carry": "EX244",
     "Pallof Press": "EX011",
     "Pistol Squat": "EX028",
-    "Plank with Rotation": "EX216",
+    "Plank with Rotation": "EX285",
     "Pull-Up": "EX006",
     "Push-Up": "EX228",
     "Rapid Calf Raises": "EX025",
     "Rice Bucket": "EX104",
     "Romanian Deadlift": "EX003",
     "Russian Twist (Feet Elevated)": "EX088",
-    "Sandbag / Pack Carry (Bear Hug)": "EX095",
+    "Sandbag / Pack Carry (Bear Hug)": "EX279",
     "Seated Cable Row": "EX079",
-    "Side Plank + Banded Leg Raise": "EX219",
+    "Side Plank + Banded Leg Raise": "EX286",
     "Side Split Lunges (Deep)": "EX023",
     "Single-Leg Calf Raise": "EX025",
     "Single-Leg Deadlift": "EX004",
-    "Single-Leg Stance Eyes Closed": "EX043",
     "Sled Pull (Hand-Over-Hand)": "EX030",
     "Sled Push": "EX029",
     "Stability Ball Seated Shoulder Press": "EX098",
@@ -161,13 +171,39 @@ LOGGED_NAME_ALIASES: dict[str, str] = {
     "Step-Down (Eccentric)": "EX117",
     "Suitcase Carry": "EX243",
     "TRX Mtn Climber / Unstable Bar": "EX221",
-    "Towel Pull-Up": "EX006",
+    "Towel Pull-Up": "EX267",
     "Turkish Get-Up": "EX239",
     "Wall Calf Stretch": "EX047",
     "Wall Chest / Doorway Stretch": "EX077",
     "Wall Sit": "EX037",
     "Weighted Box Step-Up": "EX119",
     "Weighted Treadmill Incline Walk": "EX050",
+    # current_rx names Andy ratified as NEW exercises (minted in 0012-0015) →
+    # their new EX-ids (2026-06-17). These previously fell to bucket-3.
+    "Banded Pull-Through": "EX256",
+    "Battle Ropes": "EX287",
+    "Dip": "EX268",
+    "Forearm Wrist Curls": "EX289",
+    "Front Lever Progression": "EX264",
+    "KB Clean & Press": "EX270",
+    "KB Snatch": "EX273",
+    "KB Sumo Deadlift": "EX254",
+    "KB Windmill": "EX275",
+    "L-Sit Pull-Up": "EX263",
+    "Lunge to Rotation (Slam Ball/DB)": "EX260",
+    "Pedal Stance Deadlift": "EX259",
+    "Push Press": "EX269",
+    "Rack Carry": "EX278",
+    "Renegade Row (Plank + DB Row)": "EX261",
+    "Sandbag Get-Up": "EX277",
+    "Seated Glute Squeeze (Isometric)": "EX283",
+    "Single-Arm KB Swing": "EX274",
+    "Single-Leg Glute Bridge": "EX255",
+    "Stability Ball Hamstring Curl": "EX257",
+    "Straight-Arm Lat Pulldown": "EX262",
+    "Sumo Deadlift High Pull": "EX276",
+    "Treadwall Intervals": "EX288",
+    "Walking Lunge": "EX250",
 }
 
 

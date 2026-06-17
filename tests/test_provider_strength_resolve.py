@@ -83,6 +83,35 @@ class TestLoggedVocabularyAliases:
         for name, ex_id in cases.items():
             assert resolve_strength_ex_id(name) == (ex_id, "alias"), name
 
+    def test_new_exercise_names_resolve_to_new_ex_ids(self):
+        # The 40 exercises minted in migrations 0012-0015 resolve from their
+        # logged/Garmin names (alias step). Spot-check across all four slices.
+        cases = {
+            "Walking Lunge": "EX250",            # 0012
+            "Barbell Hack Squat": "EX252",       # 0012 (Garmin name)
+            "KB Sumo Deadlift": "EX254",         # 0012 (current_rx name)
+            "Single-Leg Glute Bridge": "EX255",  # 0013
+            "Front Lever Progression": "EX264",  # 0013
+            "Dip": "EX268",                      # 0014
+            "KB Snatch": "EX273",                # 0014
+            "Bear-Hug carry source": None,       # placeholder removed below
+        }
+        cases.pop("Bear-Hug carry source")
+        for name, ex_id in cases.items():
+            assert resolve_strength_ex_id(name) == (ex_id, "alias"), name
+
+    def test_part3_repoints_and_drops(self):
+        # The 5 Part-3 promotions now point at their new EX-ids, not the old
+        # nearest-canonical; the 2 drops fall through to bucket-3.
+        assert resolve_strength_ex_id("Towel Pull-Up") == ("EX267", "alias")
+        assert resolve_strength_ex_id("Plank with Rotation") == ("EX285", "alias")
+        assert resolve_strength_ex_id("Sandbag / Pack Carry (Bear Hug)") == ("EX279", "alias")
+        # Dropped — no longer aliased (Andy: delete).
+        assert resolve_strength_ex_id("1,000 Step-Up Challenge",
+                                      subtype_to_category={}) == (None, "bucket3")
+        assert resolve_strength_ex_id("Single-Leg Stance Eyes Closed",
+                                      subtype_to_category={}) == (None, "bucket3")
+
     def test_keyspaces_are_disjoint_or_agree(self):
         # A name appearing in more than one alias map must map to the SAME EX-id,
         # so the merge order in _alias_map() can never silently override.
@@ -108,10 +137,11 @@ class TestCategoryStep:
         assert (ex_id, kind) == ("EX229", "category")
 
     def test_category_with_no_coarse_home_falls_to_bucket3(self):
-        # "Calf Raise" category has no coarse NAME_TO_EX_ID home → bucket-3.
+        # "Calf Raise" category has no coarse NAME_TO_EX_ID home → bucket-3
+        # (use a subtype with no specific alias of its own).
         ex_id, kind = resolve_strength_ex_id(
-            "Standing Calf Raise",
-            subtype_to_category={"Standing Calf Raise": "Calf Raise"},
+            "Donkey Calf Raise",
+            subtype_to_category={"Donkey Calf Raise": "Calf Raise"},
         )
         assert ex_id is None and kind == "bucket3"
 
