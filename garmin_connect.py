@@ -15,6 +15,10 @@ import tempfile
 
 from routes.auth import current_user_id
 
+# Garmin activity typeKey → coarse `_plan_sport_type` now lives in the
+# consolidated provider seed (#681 §4); re-exported here for the cardio path.
+from provider_value_map_seed import GARMIN_TYPE_TO_PLAN_SPORT
+
 GARTH_TMP = os.path.join(tempfile.gettempdir(), 'garth_session')
 
 SPORT_TYPES = {
@@ -43,25 +47,6 @@ _GARMIN_TYPE_TO_ACTIVITY = {
     'open_water_swimming': 'Open Water Swimming',
     'hiking': 'Hiking',
     'walking': 'Walking',
-}
-
-# Garmin typeKey → plan sport_type category (for plan item matching)
-GARMIN_TYPE_TO_PLAN_SPORT = {
-    'running': 'running',
-    'trail_running': 'running',
-    'treadmill_running': 'running',
-    'track_running': 'running',
-    'cycling': 'cycling',
-    'road_biking': 'cycling',
-    'mountain_biking': 'cycling',
-    'gravel_cycling': 'cycling',
-    'indoor_cycling': 'cycling',
-    'virtual_ride': 'cycling',
-    'strength_training': 'strength_training',
-    'swimming': 'swimming',
-    'open_water_swimming': 'swimming',
-    'hiking': 'hiking',
-    'walking': 'walking',
 }
 
 

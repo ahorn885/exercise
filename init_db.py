@@ -1,8 +1,7 @@
 """Initialize the PostgreSQL database — schema + idempotent migrations + seeds."""
 import os
 
-from layer0_progression import NAME_TO_EX_ID
-from provider_strength_resolve import GARMIN_STRENGTH_ALIASES, LOGGED_NAME_ALIASES
+from provider_value_map_seed import STRENGTH_NAME_TO_EX_ID, provider_value_map_rows
 
 DATABASE_URL = os.environ.get('DATABASE_URL')
 
@@ -133,6 +132,35 @@ PG_SCHEMA = '''
         garmin_activity_id TEXT,
         plan_item_id INTEGER REFERENCES plan_items(id),
         notes TEXT, created_at TIMESTAMP DEFAULT NOW()
+    );
+    CREATE TABLE IF NOT EXISTS provider_value_map (
+        provider           TEXT NOT NULL,
+        data_type          TEXT NOT NULL,
+        direction          TEXT NOT NULL,
+        source_value       TEXT NOT NULL,
+        canonical_kind     TEXT NOT NULL,
+        canonical_value    TEXT,
+        match_kind         TEXT NOT NULL,
+        confidence         REAL NOT NULL DEFAULT 1.0,
+        no_canonical_match BOOLEAN NOT NULL DEFAULT FALSE,
+        notes              TEXT,
+        PRIMARY KEY (provider, data_type, direction, source_value)
+    );
+    -- Generic raw-passthrough store (record-don't-drop, all buckets). Created in
+    -- Slice 1; its first writers (bucket-3 raw + the indoor-machine flag) land in
+    -- Slice 2 per ProviderTranslation_StorageSchema_681_BuildDesign §3.3/§7.
+    CREATE TABLE IF NOT EXISTS provider_raw_record (
+        id            SERIAL PRIMARY KEY,
+        user_id       INTEGER REFERENCES users(id),
+        provider      TEXT NOT NULL,
+        data_type     TEXT NOT NULL,
+        external_id   TEXT,
+        observed_at   TIMESTAMP,
+        raw_payload   JSONB,
+        bucket        SMALLINT,
+        canonical_ref TEXT,
+        fetched_at    TIMESTAMP DEFAULT NOW(),
+        UNIQUE (user_id, provider, data_type, external_id)
     );
     CREATE TABLE IF NOT EXISTS body_metrics (
         id SERIAL PRIMARY KEY,
@@ -2344,10 +2372,11 @@ _PG_MIGRATIONS = [
     # The 4 names that needed NEW layer0 exercises (barbell row, plain biceps
     # curl, sit-up, KB halo) map to EX246-EX249 from layer0 migration
     # 0011_add_strength_rx_exercises.sql (Trigger #2, Andy-ratified 2026-06-16).
-    # #679 (2026-06-17): extend the backfill to the full strength alias map —
-    # NAME_TO_EX_ID plus the Garmin-FIT specifics (GARMIN_STRENGTH_ALIASES) and
-    # Andy's logged-prescription vocabulary (LOGGED_NAME_ALIASES), incl. the 40
-    # new exercises minted in layer0 0012-0016. Heals existing current_rx rows to
+    # #679 (2026-06-17): extend the backfill to the full strength alias map,
+    # now the consolidated `provider_value_map_seed.STRENGTH_NAME_TO_EX_ID`
+    # (#681 §4 — coarse/manual canon + Garmin-FIT specifics + Andy's logged
+    # vocabulary, incl. the 40 new exercises minted in layer0 0012-0016).
+    # Heals existing current_rx rows to
     # their EX-id immediately rather than only on next log. Same single source as
     # the resolver write path (provider_strength_resolve._alias_map). Idempotent
     # (`layer0_exercise_id IS NULL` guard). The #694-culled names are intentionally
@@ -2356,8 +2385,7 @@ _PG_MIGRATIONS = [
     *[
         f"UPDATE current_rx SET layer0_exercise_id='{ex_id}' "
         f"WHERE exercise='{name}' AND layer0_exercise_id IS NULL"
-        for name, ex_id in {**NAME_TO_EX_ID, **GARMIN_STRENGTH_ALIASES,
-                            **LOGGED_NAME_ALIASES}.items()
+        for name, ex_id in STRENGTH_NAME_TO_EX_ID.items()
     ],
     # ── Cull non-trainable / mis-classified v1 exercise_inventory entries ──
     # (#694, Andy-ratified 2026-06-17). Five 'Novel' rows that are cardio
@@ -2786,6 +2814,25 @@ def init_postgres():
            ON CONFLICT (exercise) DO NOTHING''',
         EXERCISES
     )
+    # Seed provider_value_map (#681 §4) from the consolidated seed module. The
+    # table is the runtime-canonical store; the seed module is its git authoring
+    # source, so ON CONFLICT DO UPDATE re-syncs the table to the seed each deploy.
+    _pvm_rows = list(provider_value_map_rows())
+    cur.executemany(
+        '''INSERT INTO provider_value_map
+           (provider, data_type, direction, source_value, canonical_kind,
+            canonical_value, match_kind, confidence, no_canonical_match, notes)
+           VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+           ON CONFLICT (provider, data_type, direction, source_value)
+           DO UPDATE SET canonical_kind=EXCLUDED.canonical_kind,
+                         canonical_value=EXCLUDED.canonical_value,
+                         match_kind=EXCLUDED.match_kind,
+                         confidence=EXCLUDED.confidence,
+                         no_canonical_match=EXCLUDED.no_canonical_match,
+                         notes=EXCLUDED.notes''',
+        _pvm_rows
+    )
+    print(f"[init_db] seeded provider_value_map: {len(_pvm_rows)} rows")  # Rule #15
     # Seed exercise equipment tags (always update — safe to re-run)
     for exercise, tags in EXERCISE_EQUIPMENT.items():
         cur.execute(
