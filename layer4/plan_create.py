@@ -1384,6 +1384,17 @@ def _run_pattern_a_engine(
     if final_validator.accepted:
         validator_results.append(final_validator)
     else:
+        # Rule #15 — the final cross-phase pass demotes surviving blockers to
+        # warnings (best_effort_plan) and was otherwise SILENT: a degraded plan
+        # shipped with no log signal as to which rule failed or why. Log each
+        # failure (rule_name + detail) so a best-effort plan is diagnosable from
+        # logs — esp. the #698 Slice-3b availability rules (daily_window_fit /
+        # recovery_placement_match) newly active in prod.
+        for _f in final_validator.rule_failures:
+            print(
+                f"_run_pattern_a_engine: final cross-phase pass FAILED — "
+                f"{_f.severity} {_f.rule_name} demoted→warning: {_f.detail}"
+            )
         # Distinguish: if a blocker survives the final pass after per-phase
         # retries, emit best_effort_plan + demote.
         demoted = [

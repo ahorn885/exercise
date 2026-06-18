@@ -2965,6 +2965,17 @@ def synthesize_phase(
             f"synthesize_phase: {unit_tag} attempt {current_pass + 1} validator "
             f"rejected ({len(validator_result.rule_failures)} failure(s)): {_failed}"
         )
+        # Rule #15 — the rule_name set above is the WHAT; the `detail` is the WHY
+        # (which day overran its window, actual-vs-assigned recovery dates). Surface
+        # blocker details so a rejection is diagnosable from logs alone — esp. the
+        # #698 Slice-3b availability rules (daily_window_fit / schedule_violation /
+        # recovery_placement_match) newly active in prod, where a placement-vs-
+        # window-fit deadlock would show both rule_names with their dates here.
+        for _f in validator_result.rule_failures:
+            if _f.severity == "blocker":
+                print(
+                    f"synthesize_phase: {unit_tag}   blocker {_f.rule_name}: {_f.detail}"
+                )
         if current_pass >= capped_retries:
             cap_hit = True
             final_retries_used = current_pass
