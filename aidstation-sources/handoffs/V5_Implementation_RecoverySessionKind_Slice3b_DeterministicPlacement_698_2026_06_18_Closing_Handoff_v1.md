@@ -3,7 +3,7 @@
 **Session:** Implementation. Built the ratified design v2 §6a/§8/§13a **Slice 3b — deterministic recovery PLACEMENT (D6)**: the grid now computes the exact recovery dates per week and renders them as a hard prompt constraint, validator-enforced; the LLM keeps only exercise selection. Code + tests; one mid-build architectural decision ratified by Andy in chat (windows → validator ctx, below).
 **Date:** 2026-06-18
 **Predecessor handoff:** `V5_Implementation_RecoverySessionKind_Slice3a_ValidatorFreezeFix_Render_698_2026_06_18_Closing_Handoff_v1.md`
-**Branch/PR:** branch `claude/recovery-validator-freeze-fix-dr0spu` (harness-pinned; kept per the session's explicit branch instruction — overrides the rename-to-scope convention). PR pending at handoff write.
+**Branch/PR:** branch `claude/recovery-validator-freeze-fix-dr0spu`; **PR [#727](https://github.com/ahorn885/exercise/pull/727) MERGED** (squash). **Follow-up PR [#728](https://github.com/ahorn885/exercise/pull/728) MERGED** — Rule #15 logging for the newly-active availability rules (Andy-asked; branch `claude/recovery-availability-rule-logging-dr0spu`); see §3a.
 
 ---
 
@@ -33,6 +33,12 @@ Full suite **2639 passed / 30 skipped** (+13: 8 placement/band/derive unit tests
 **Discovery:** `daily_availability_windows` was **never populated in the production `ValidatorContext`** — only in tests. So the existing window-keyed rules (`daily_window_fit` [**blocker**], `schedule_violation` [warning]) AND the new D6 rule were all **dormant in prod** (enforced render-side via the prompt only). My D6 rule, written to guard on that field (like the other grid rules), would have been dead in prod too.
 - I surfaced the tradeoff: **(A)** keep render-side enforcement + validator backstop (surgical, no behavior change), vs **(B)** thread windows in (D6 prod-enforced, but **activates `daily_window_fit` as a prod blocker for the first time** — a cross-cutting change, Rule #16 churn risk).
 - **Andy chose (B).** Threaded `daily_windows_from_layer1(...)` into both ctx constructions. This is the **5th substantive file** (`plan_create.py`) beyond the design's 4 — flagged.
+
+## 3a. Logging follow-up — PR #728 (Rule #15; Andy-asked after merge)
+Andy asked whether the newly-threaded availability rules emit watchable failure logs. They under-did: the per-block `synthesize_phase` loop logged only `rule_name(severity)` (dropped the `detail`), and `_run_pattern_a_engine`'s final cross-phase pass was **silent** — a surviving blocker was demoted to a warning (`best_effort_plan`) with no log line. Fixed (pure logging, no behavior change):
+- `per_phase.py` per-block loop now prints each **blocker's `detail`** after the summary.
+- `plan_create.py` final cross-phase pass now logs **every failure** (`rule_name + detail`) before demoting.
+So a `daily_window_fit_*` / `recovery_placement_mismatch_*` rejection — and the §3 deadlock (both co-occurring) — is now diagnosable from `/admin/logs` without a repro. **Clarified for Andy:** windows were never "unwired" — they always drove the prompt (`=== Schedule ===` render) + the grid (capacity / session-count ceiling); only the **validator enforcement leg** (windows→ctx) was missing, so the layout was *requested but unverified* in prod until Slice 3b.
 
 ## 3. Watch-outs
 - **🔴 #1 — `daily_window_fit` is now a LIVE PROD BLOCKER for the first time.** Any plan where the LLM stacks a day's total session minutes over its window now **blocks** (was previously silent in prod). Expected/intended per Andy's choice — but watch the first live plan-create for unexpected `daily_window_fit_*` rejections / correction-loop churn. The prompt already renders `=== Schedule ===` windows, so the LLM has the info to comply.
