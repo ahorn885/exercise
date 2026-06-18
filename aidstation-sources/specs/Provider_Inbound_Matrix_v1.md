@@ -6,7 +6,9 @@
 
 **Parent:** `specs/Provider_Data_Translation_Layer_Spec` (RATIFIED v1) — owns the canonical model (§2: metric keys, SI units, disciplines, HR zones), the 3-bucket inbound model (§1.1), the storage schema (§4), and the authoring workflow (§7). This doc does **not** redefine any of that; it populates the matrix against it.
 
-**This batch (Batch 1):** **Strava, Oura, WHOOP** — the three highest-value non-Garmin consumer providers. They span both canonical targets (Strava → discipline crosswalk + activity metrics; Oura/WHOOP → the §2.3 metric registry + §2.4 HR zones) and exercise all three buckets (Strava's `Pickleball` → bucket-3; WHOOP `recovery_score` / Oura readiness → bucket-2). Remaining providers (Wahoo, RWGPS, TrainingPeaks, Zwift, MyFitnessPal, Apple/Samsung/Google Health) are subsequent batches — §7.
+**Batch 1 (§2–4):** **Strava, Oura, WHOOP** — the three highest-value non-Garmin consumer providers. They span both canonical targets (Strava → discipline crosswalk + activity metrics; Oura/WHOOP → the §2.3 metric registry + §2.4 HR zones) and exercise all three buckets (Strava's `Pickleball` → bucket-3; WHOOP `recovery_score` / Oura readiness → bucket-2).
+
+**Batch 2 (§10):** **Wahoo + RWGPS** (added 2026-06-17) — cardio/cycling activity platforms (the wired/next-to-wire pair). Remaining providers (TrainingPeaks, Zwift, MyFitnessPal, Apple/Samsung/Google Health) are later batches — §7.
 
 **All provider field names, units, and enum values below are sourced from each provider's official developer docs (URLs in each provider's "Sources" line), fetched 2026-06-17. Anything not confirmable against an official doc is flagged inline.**
 
@@ -288,7 +290,13 @@ Per parent §7.4 + the CLAUDE.md no-padding rule, these are **flagged, not added
 - **`steps` is missing from the §2.3 registry table** but is already used as a canonical target in parent §6.3 (COROS) and is sourced by Oura `daily_activity.steps`. Add `steps` (count, no SI conversion) to the §2.3 registry — it's a consumed key the table omits.
 - **`vo2max_running` / `vo2max_cycling` split doesn't always map:** Oura emits **one undifferentiated `vo2_max`** (no discipline). The split is fine for Garmin (which does distinguish), but the registry/ingest must tolerate a single-value provider filling only `vo2max_running` (or a generic). Not a new key — a fill-rule note.
 
-**New architectural need the matrix surfaced — multi-source precedence (for the build wave, parent §4):** `sleep_score` arrives from **Oura (device composite)** *and* WHOOP (proprietary %); `resting_hr_bpm` from **Oura (sleep.lowest_hr)** *and* WHOOP; `body_mass_kg` from Strava/Oura/WHOOP. One canonical key, multiple providers → the canonical store needs a **per-(user, metric) source-precedence rule** (e.g. prefer the dedicated wellness device over an activity platform, or most-recent-wins). Flag for the §4 build; not a vocabulary change.
+**New architectural need the matrix surfaced — multi-source precedence (for the build wave, parent §4):** `sleep_score` arrives from **Oura (device composite)** *and* WHOOP (proprietary %); `resting_hr_bpm` from **Oura (sleep.lowest_hr)** *and* WHOOP; `body_mass_kg` from Strava/Oura/WHOOP; **`ftp_w` from Strava *and* Wahoo** (Batch 2). One canonical key, multiple providers → the canonical store needs a **per-(user, metric) source-precedence rule** (e.g. prefer the dedicated wellness device over an activity platform, or most-recent-wins). Flag for the §4 build; not a vocabulary change.
+
+**Candidate canonical POWER-zone model (Batch 2, Trigger #2/#5 — flag, don't add):** Wahoo exposes a **7-zone power model** (`zone_1..zone_7` + `ftp` + `critical_power`) plus NP/TSS; Strava exposes power zones too. Parent §2.4 mints only a **5-zone HR** model — power zones are a **different axis** (intensity by watts, conventionally the 7-band Coggan model), not normalizable onto HR Z1–Z5. **Recommend: don't force-map; record raw (bucket-2) until we decide whether to mint a canonical power-zone vocab** (its own design, tied to the parent §11.3 training-load question — NP/TSS live there too). Not needed for Batch 1/2 ingest.
+
+**Reinforced — Rowing (§6 candidate):** Wahoo `ROWING` (39) + `FE_ROWER` (22) join Strava `Rowing`/`VirtualRow` as bucket-3-with-no-D-id → strengthens the case to mint a Rowing discipline.
+
+**No new vocab from the FIT path:** Wahoo ships a FIT file at `workout_summary.file.url` (and RWGPS carries `fit_sport`/`fit_sub_sport`) → reuse our existing `garmin_fit_parser` + the #679 FIT category/subtype maps cross-provider. This is the parent §1.2 "consolidate scattered dicts" thesis: **one FIT decoder, many providers** — an architecture note for the build wave, not a vocabulary change.
 
 ---
 
@@ -297,7 +305,7 @@ Per parent §7.4 + the CLAUDE.md no-padding rule, these are **flagged, not added
 | Batch | Providers | Why grouped | Notes |
 |---|---|---|---|
 | **1 (this doc)** | Strava, Oura, WHOOP | highest-value consumer; spans cardio + wellness + all 3 buckets | — |
-| **2** | Wahoo, RWGPS | cycling/activity; **RWGPS is already shipped**, Wahoo is "next" to wire | extends the cardio crosswalk; RWGPS routes → discipline + GPS |
+| **2 ✅ (this doc, §10)** | Wahoo, RWGPS | cycling/activity; RWGPS shipped, Wahoo next to wire | DONE — extends the cardio crosswalk; both cardio-only (Wahoo adds `ftp_w`); RWGPS routes → Tier-1 outbound |
 | **3** | TrainingPeaks, Zwift | structured-workout platforms | mostly **outbound** (parent Wave 3b) — inbound is completed-workout import |
 | **4** | MyFitnessPal | nutrition | **blocked** — ties Layer 2E, which has no nutrition table (parent §11.4); canonical nutrition keys are a Layer-2E co-design, not a like-for-like matrix row |
 | **5** | Apple Health, Samsung Health, Google Health Connect | SDK on-device | needs a native client (parent §5); their data model is HealthKit/Health-Connect *types*, not a REST enum — different authoring shape |
@@ -318,4 +326,129 @@ When the build wave wires these maps, every inbound resolution emits a `print()`
 - **"Observed-not-guaranteed" Strava HR.** Activity-level HR is in real payloads but not Strava's documented schema. If we hard-depend on it and Strava tightens the schema, it breaks. Low risk (it's been stable for years), but the matrix flags it rather than assuming.
 - **WHOOP `sleep_total_min` convention** (in-bed vs asleep) and the **zone_one=Z1 inference** are the two places WHOOP's docs don't hand us an exact answer — both flagged inline; both need a one-line decision at build, not more research.
 - **Am I authoring rows for a table that doesn't exist?** Yes — by design (Path A, Andy's pick). The risk is the matrix drifts from `provider_value_map`'s final shape. Mitigation: every row here is written in that table's exact column vocabulary (parent §4.2), so the build is a transcription, not a re-derivation.
-- **Three providers, not eleven.** Deliberate — a shallow 11-provider pass would be lower-value than three deep, sourced ones. The §7 batch plan sequences the rest by wiring reality. Best argument against: if Andy wanted the *breadth* (a thin all-roster skeleton) over depth, this isn't that — but depth is what makes these rows build-ready.
+- **Five providers across two batches, not eleven at once.** Deliberate — a shallow 11-provider pass would be lower-value than depth-first batches. §7 sequences the rest by wiring reality. Best argument against: if Andy wanted *breadth* (a thin all-roster skeleton) over depth, this isn't that — but depth is what makes these rows build-ready.
+
+---
+
+## 10. Batch 2 — RWGPS + Wahoo (cardio/cycling; added 2026-06-17)
+
+Both are **activity/cardio platforms, not wellness devices** — near-zero metric-registry surface (Wahoo adds `ftp_w` + power zones; neither has sleep/HRV/RHR/body/VO2max/resp/SpO2). Authored same as Batch 1 (option C discipline target; official docs fetched 2026-06-17). Both are **schema-stubbed in our app today** (`rwgps_trip_id`/`wahoo_workout_id` dedup columns exist in `init_db.py`/`PROVIDERS_SCHEMA.md`; no live ingest) — the matrix is build-ready, the ingest is the §4-build wave's job.
+
+### 10.1 Ride with GPS (RWGPS) — data_type=`cardio` (+ planned `route` for outbound)
+
+**Mechanism:** REST v1 (`https://ridewithgps.com/api/v1`), OAuth2 (or Basic api_key+token), webhooks per API client for `route`/`trip` `created/updated/deleted` (POST `{user_id, item_url}` + `x-rwgps-signature`; **no retries, no 3xx-follow** → endpoint must 2xx directly, then fetch `item_url`). Mechanism class = OAuth REST + webhook (parent §5).
+
+**Trip (completed) metrics** — units stated by RWGPS; ⚠️ **speed is km/h, not m/s** (the one conversion; distance/elevation are meters — a within-provider unit inconsistency):
+
+| RWGPS field | Unit | Canonical | Bucket | Note |
+|---|---|---|---|---|
+| `distance` | m | distance (m) | 1 | Integer meters |
+| `duration` / `moving_time` | s | duration (s) | 1 | total / moving |
+| `elevation_gain` / `elevation_loss` | m | elevation (m) | 1 | raw |
+| `avg_speed` / `max_speed` | **km/h** | speed (m/s) | 1 | **÷3.6** |
+| `avg_hr` / `max_hr` | bpm | `hr_avg_bpm` / `hr_peak_bpm` | 1 | nullable (FIT-sourced) |
+| `avg_watts` / `max_watts` | W | power (W) | 1 | nullable |
+| `avg_cad` | rpm | cadence | 1 | raw |
+| `calories` | "calories" ⚠️ | energy (kcal) | 1 | unit unstamped — assume kcal, verify on a known trip |
+| `min_hr` / `min_watts` / `min_cad` | bpm/W/rpm | **bucket-2** | 2 | no canonical "min" slot |
+| `is_stationary` | bool | indoor/trainer flag | 1 | corroborates an indoor `activity_type` |
+| `activity_type` | enum | **discipline** | 1/3 | enum below |
+| `fit_sport` / `fit_sub_sport` | FIT int | discipline tie-breaker | — | fallback when `activity_type` is `generic`/`unknown` |
+
+**`activity_type` enum → discipline** (option C; RWGPS is multi-sport, namespaced `family:variant`):
+
+| RWGPS `activity_type` | Fine D-id | Coarse | Bucket |
+|---|---|---|---|
+| `cycling:road` | D-006 | cycling | 1 |
+| `cycling:gravel` | D-030 | cycling | 1 |
+| `cycling:mountain` | D-008 | cycling | 1 |
+| `cycling:generic/commute/indoor/virtual/cyclocross/recumbent/hand_cycling` | D-006 (closest) | cycling | 1 |
+| `e_biking:*` | D-006 / D-008 | cycling | 1 (e-bike flag in raw) |
+| `running:road` | D-002 | running | 1 |
+| `running:trail` | D-001 | running | 1 |
+| `running:generic/indoor` | D-002 (closest) | running | 1 |
+| `walking:hiking` | D-003 | hiking | 1 |
+| `walking:generic/indoor/speed` | — | walking | 1 |
+| `swimming:generic/lap/open_water` | D-004 | swimming | 1 |
+| `snow:alpine_skiing` / `cross_country_skiing` / `snowshoeing` / `snowboarding` | D-022 / D-028 / D-017 / *(none→3)* | — | 1/3 |
+| `driving:*`, `motorcycling:*` | *(none)* | — | 3 |
+| `training:*` (strength/cardio/yoga/hiit) | *(none)* | — | 3 |
+| `other:generic`, `unknown:generic` | *(none)* | — | 3 |
+
+> `training:strength` from a GPS provider → **bucket-3**, NOT the #679 EX-id resolver (that path is for strength-device logs, not a cardio platform's strength tag).
+
+**Routes (planned)** — first-class `route` objects (`GET /routes`); `activity_types` is an **array** (≤3, smaller enum); fields distance/elevation/`surface`/`unpaved_pct` but **no** speed/HR/power. Relevant to **Tier-1/2 outbound** (parent Wave 3) — noted, not specced here.
+
+**N/A for RWGPS:** all wellness/body — no HR zones, sleep, HRV, RHR, body mass/fat, VO2max, FTP, respiration, SpO2 (confirmed against the full v1 schema list). RWGPS is a GPS-track platform.
+
+**Bucket-2:** `min_hr`/`min_watts`/`min_cad`, `is_stationary`, route `unpaved_pct`/`surface`/`track_type`/`terrain`/`difficulty`, `fit_sport`/`fit_sub_sport`.
+
+**Sources:** ridewithgps.com/api/v1/doc/{overview, authentication, webhooks, reference/routes_and_trips, reference/activity_types} (fetched 2026-06-17). ⚠️ live docs are JS-rendered (403 to plain fetch); extracted via Tavily. The one unverified point: `calories` = kcal vs cal.
+
+### 10.2 Wahoo Cloud API — data_type=`cardio` (+ `plan` outbound, power zones)
+
+**Mechanism:** OAuth2 REST (`api.wahooligan.com`) + a `workout_summary` **webhook** (gated by `offline_data` scope); detailed streams arrive as a **FIT file** at `workout_summary.file.url` (not in the JSON). 12 scopes incl. `workouts_read`, `power_zones_read`, `plans_write`. App approval gated (sandbox→prod). Mechanism class = OAuth REST + webhook (parent §5).
+
+**`workout_summary` metrics** — values are JSON strings; mostly SI-canonical (⚠️ contrast RWGPS: Wahoo **speed is m/s**, but **work is JOULES, not kJ**):
+
+| Wahoo field | Unit | Canonical | Bucket | Note |
+|---|---|---|---|---|
+| `distance_accum` | m | distance (m) | 1 | — |
+| `duration_total_accum` / `duration_active_accum` | s | duration (s) | 1 | total / active |
+| `ascent_accum` | m | elevation (m) | 1 | — |
+| `speed_avg` | m/s | speed (m/s) | 1 | **already canonical** (vs RWGPS km/h) |
+| `power_avg` / `power_bike_avg` | W | power (W) | 1 | — |
+| `heart_rate_avg` | bpm | `hr_avg_bpm` | 1 | — |
+| `cadence_avg` | rpm | cadence | 1 | raw |
+| `work_accum` | **joules** ⚠️ | energy (kcal) | 1 | **÷4184 → kcal** (NOT kJ; parent assumed kJ); sample magnitudes inconsistent → validate empirically |
+| `calories_accum` | kcal ⚠️ | energy (kcal) | 1 | unit unstamped — assume kcal, verify |
+| `power_bike_np_last` | W | **bucket-2** (Normalized Power) | 2 | |
+| `power_bike_tss_last` | — | **bucket-2** (TSS) | 2 | training-load (parent §11.3) |
+| `workout_type_id` | int enum | **discipline** | 1/3 | enum below |
+| `file.url` | FIT | stream source | — | **reusable via our `garmin_fit_parser`**; FIT `sport`/`sub_sport` gives finer Road/Gravel/MTB than `workout_type_id` |
+
+**`workout_type_id` → discipline** (option C; the mapped subset — the ~40 unmapped ids are bucket-3 families: snow/skating/gym/motorized/golf/etc.):
+
+| Wahoo `workout_type_id` | Fine D-id | Coarse |
+|---|---|---|
+| 0 BIKING · 15 _ROAD · 16 _TRACK · 14 _RECUMBENT · 12 _INDOOR · 49/68 indoor-class/virtual · 61 _INDOOR_TRAINER (KICKR) · 70 HANDCYCLING · 64 EBIKING | D-006 | cycling |
+| 13 BIKING_MOUNTAIN | D-008 | cycling |
+| 11 BIKING_CYCLECROSS | D-006 (closest) | cycling |
+| 1 RUNNING · 3 _TRACK · 5 _TREADMILL · 67 _RACE · 71 _INDOOR_VIRTUAL · 19 FE_TREADMILL | D-002 | running |
+| 4 RUNNING_TRAIL | D-001 | running |
+| 6/7/8 WALKING* · 56 _TREADMILL | — | walking |
+| 9 HIKING | D-003 | hiking |
+| 10 MOUNTAINEERING | D-018 | hiking |
+| 25 SWIMMING_LAP · 26 _OPEN_WATER | D-004 | swimming |
+| 29 SKIING_DOWNHILL · 28 SKIING | D-022 | — |
+| 30 SKIINGCROSS_COUNTRY | D-028 | — |
+| 37 CANOEING | D-011 | — |
+| 38 KAYAKING | D-010 | — |
+| 41 STAND_UP_PADDLE_BOARD | D-032 | — |
+| 39 ROWING · 22 FE_ROWER | *(none — Rowing candidate, §6)* | — |
+| 27 SNOWBOARDING · 17 motorcycling · 35-36/40 sail/windsurf/kite · 31-34 skating · 42-44/18/20/23 gym/FE · 46 golf · 62 multisport · 66 yoga · 47/255 other/unknown | *(none)* | — |
+
+(bucket: every mapped row = 1; the final catch-all row = 3.) `workout_type_family_id` (0 bike / 1 run / 2 swim / 9 walk / …) is the coarse fallback when an id is unmapped; `workout_type_location_id` sets the indoor flag.
+
+**Power zones + FTP** — `power_zones_read`: `PowerZone{zone_1..zone_7 (W boundaries), ftp (W), critical_power (W)}` → **`ftp_w`** (bucket-1; **2nd source after Strava**). ⚠️ Wahoo uses **7 power zones** vs our canonical **5 HR zones** — a different axis (§6 candidate power-zone model; bucket-2 for now). A dedicated HR-zone endpoint is implied by the portal but **not confirmed** in the REST reference.
+
+**Plans (outbound, Tier-2 note)** — `plans_write` pushes a Wahoo-proprietary **`plan.json`** (Base64; `header` + `intervals[]` with `targets`/`triggers`; units time=s / distance=m / `kj2`=**kJ**; TARGET_TYPE `wu/tempo/lt/map/ac/nm/ftp/cd/recover/rest`). The native Tier-2 target for the parent's Wave 3b. Constraint (community-reported): one target dimension per plan, UTC times.
+
+**N/A for Wahoo:** sleep, HRV, RHR, body mass/fat (no scale), VO2max, respiration, SpO2, recovery. Wahoo = workout + power-zone + plans/routes only.
+
+**Bucket-2:** `power_bike_np_last` (NP), `power_bike_tss_last` (TSS), `critical_power`, the 7-zone power boundaries, plan `kj2`/`map`/`ac`/`nm`, `fitness_app_id`.
+
+**Sources:** cloud-api.wahooligan.com, developers.wahooligan.com/cloud, plan-json-format.pdf + the api-evangelist/wahoo OpenAPI mirror (`work_accum`=joules) (fetched 2026-06-17). ⚠️ unverified: `work_accum` magnitude (samples inconsistent — trust the "joules" definition), `calories_accum` unit, the HR-zone endpoint.
+
+### 10.3 Batch-2 coverage + takeaways
+
+| Canonical | RWGPS | Wahoo |
+|---|---|---|
+| discipline (cardio) | 1 (namespaced enum) | 1 (~60-id enum) |
+| distance / duration / elevation / speed / power / cadence / HR avg+max | 1 | 1 |
+| energy `kcal` | 1 (⚠️ cal?) | 1 (⚠️ work=J) |
+| `ftp_w` | — | 1 (power zones) |
+| HR zones Z1–Z5 | — | ⚠️ power Z1–Z7 only (HR unconfirmed) |
+| sleep / HRV / RHR / body / VO2max / resp / SpO2 | — | — |
+
+**Takeaways:** (1) Both cardio-only — they extend the **discipline** crosswalk + cardio metrics, ~no wellness. (2) **`ftp_w` now has two sources** (Strava + Wahoo) → reinforces the §6 multi-source-precedence need. (3) **Unit traps cluster here** — RWGPS speed=km/h vs Wahoo speed=m/s; Wahoo work=joules vs plan `kj2`=kJ; both `calories` unstamped → the §8 instrumentation must log the converted value + source unit. (4) **FIT-file reuse:** Wahoo (and any FIT-emitting provider) ships a FIT at `file.url`; RWGPS carries `fit_sport`/`fit_sub_sport` → our existing `garmin_fit_parser` + the #679 FIT maps are **reusable cross-provider** (parent §1.2 "one decoder, many providers"). (5) **Gut check:** the biggest Batch-2 risk is the energy units (Wahoo joules-vs-kJ, both providers' kcal-vs-cal) — flagged at every row; resolve with one empirical check against a known activity at build, per Rule #14 rather than guessing.
