@@ -1,7 +1,7 @@
 # V5 Design — Provider Translation Layer Storage-Schema Build (#681 §4 wave) — Closing Handoff v1
 
 **Date:** 2026-06-18
-**Type:** Build design (no code). Design-only this session at Andy's instruction; ratify §9 then build Slice 1.
+**Type:** Build design + **Slice 1 build**. Andy ratified §9 Q1–Q5 + table-canonical this session; Slice 1 shipped (full suite 2650 passed / 30 skipped).
 **Branch:** `claude/admiring-euler-rj3gqh` (scope matches; kept). PR pending.
 **Predecessor handoff:** `handoffs/V5_Spec_ProviderInboundMatrix_681_Wave2_v2_RowingMintReversal_2026_06_18_Closing_Handoff_v1.md` (the merged matrix-v2 spec; its §6 NEXT = this build wave).
 
@@ -27,14 +27,20 @@ Wrote `designs/ProviderTranslation_StorageSchema_681_BuildDesign_v1.md` — conc
 
 ## §3 — Files (substantive vs bookkeeping)
 
-**Substantive (1 — under ceiling):**
-- `aidstation-sources/designs/ProviderTranslation_StorageSchema_681_BuildDesign_v1.md` — NEW.
+**Substantive (design + Slice 1 = 7; one coherent dicts→table refactor):**
+- `aidstation-sources/designs/ProviderTranslation_StorageSchema_681_BuildDesign_v1.md` — NEW (build design; §0 records the as-built realization).
+- `provider_value_map_seed.py` — NEW (the consolidated seed = git authoring surface + table source; 147 strength + 15 cardio = 162 rows).
+- `provider_strength_resolve.py` — `_alias_map` + category backstop read the seed; deleted the 2 alias dicts + the `layer0_progression` import.
+- `garmin_connect.py` — `_plan_sport_type` reads the seed; deleted `GARMIN_TYPE_TO_PLAN_SPORT`.
+- `layer0_progression.py` — deleted `NAME_TO_EX_ID` (moved to the seed).
+- `init_db.py` — `CREATE provider_value_map` + `provider_raw_record` (PG_SCHEMA); materialize the seed (`ON CONFLICT DO UPDATE`); repointed the `current_rx` backfill to the seed map.
+- `tests/test_provider_strength_resolve.py` — repointed imports + 3 new seed-rows tests.
 
-**Bookkeeping (ceiling-exempt):** `CURRENT_STATE.md`, this handoff, PR (to be opened), #681 comment.
+**Bookkeeping (ceiling-exempt):** `CURRENT_STATE.md`, this handoff, PR #733, #681 comment.
 
 ## §4 — Code / tests
 
-None — design doc only. No code, no DDL, no test changes. (Full suite was 2647 passed / 30 skipped at the predecessor session; untouched.)
+**Slice 1 shipped.** New tables `provider_value_map` (seeded, 162 rows) + `provider_raw_record` (created for Slice 2's writers) via public `PG_SCHEMA` (auto-applies on Vercel deploy — NOT `layer0-apply`). The 4 scattered provider dicts were consolidated into `provider_value_map_seed.py` — **generated verbatim from the live dicts** (a one-off script; fidelity asserted equal before deleting the originals) — and deleted from their old homes. Consumers import the seed module; `init_db` materializes the same seed into the table (so they cannot drift). **Verification:** resolver parity **152/152 identical** vs a captured pre-refactor baseline; full suite **2650 passed / 30 skipped** (+3 seed tests); DDL parens balanced; `init_db` imports clean. Rule #15: `init_db` prints the seeded row count. **No behavior change** (deterministic refactor; no LLM cache bump).
 
 ## §5 — Manual verification owed (Andy)
 
@@ -46,9 +52,9 @@ None — design doc only. No code, no DDL, no test changes. (Full suite was 2647
 **§6.3 read order (Rule #13):** `CLAUDE.md` → `CURRENT_STATE.md` → `CARRY_FORWARD.md` → this handoff → `./scripts/verify-handoff.sh`.
 
 **Next moves (priority order):**
-1. **Ratify the design's §9 open questions** (Q1–Q5; my rec on each is in the doc) — then **build Slice 1** (Trigger #3 already satisfied by *this* ratified design; the build is execution). Slice 1 = create the 3 tables (public `_PG_MIGRATIONS`) + seed `provider_value_map` (strength `ex_id` rows + the 15 coarse-cardio rows, verbatim) + repoint the 4 consumers (§5 of the design) + delete the dicts. Additive, no behavior change; golden parity test gates the dict→table move.
-2. **Slice 2** — cardio fidelity: `cardio_log.discipline_id` + fine-D-id cardio rows (matrix option C) + the D-id→coarse collapse + the §12 indoor-machine flag in `raw_payload`.
-3. **Slice 3** — Polar/COROS ingest consolidation + the **zero-row-guarded** bespoke-table drops (irreversible; gated on a live `neon-query` check). `provider_outbound_ref` consumers wait for the outbound wave (3a/3b).
+1. **Slice 1 — DONE** (Q1–Q5 ratified; PR #733; suite 2650). 
+2. **NEXT = Slice 2 (cardio fidelity, design §6).** `ALTER TABLE cardio_log ADD COLUMN IF NOT EXISTS discipline_id TEXT`; author the **fine-D-id cardio rows** into `provider_value_map_seed` (`canonical_kind='discipline'`) transcribed from the matrix-v2 per-provider cardio tables (`Provider_Inbound_Matrix_v2.md` §2 Strava / §10 Wahoo·RWGPS / §11 TP — each row gives the fine D-id); add the **D-id→coarse collapse** as a Python `dict` next to the resolver (ratified Q3; matrix §1 option-C mapping); write the **§12 indoor-machine flag** into `provider_raw_record.raw_payload` (the table's first writer) + repoint the cardio ingest to carry the D-id. Rule #15 log the `(provider,typeKey)→D-id→coarse` decision. Deterministic — no LLM cache bump.
+3. **Slice 3** — Polar/COROS ingest consolidation into core + `provider_raw_record`; then the **zero-row-guarded** bespoke-table drops (irreversible; gated on a live `neon-query` check first). `provider_outbound_ref` waits for the outbound wave (3a/3b).
 4. **Deferred batches (matrix §7):** Batch 4 MyFitnessPal (Layer-2E-blocked); Batch 5 Apple/Samsung/Google Health (native-client-gated).
 
 ## §7 — Decisions pinned (Andy, this session)
@@ -58,17 +64,19 @@ None — design doc only. No code, no DDL, no test changes. (Full suite was 2647
 | S4-1 | Source of truth for `provider_value_map` | **Table is canonical now** — retire the scattered dicts into it (no parallel authoring home) |
 | S4-2 | Scope this session | **Design only, no build** — ratify §9 first |
 
-**Proposed in the design, awaiting ratification (design §9):** Q1 consolidated seed module (rec yes) · Q2 public-schema `_PG_MIGRATIONS` not `layer0-apply` (rec yes) · Q3 D-id→coarse collapse as a Python dict (rec yes) · Q4 defer `provider_outbound_ref` to the outbound wave (rec defer) · Q5 Slice-1 auto-merge (rec yes).
+**§9 RATIFIED (Andy 2026-06-18): Q1 yes (consolidated seed module) · Q2 yes (public `PG_SCHEMA`, not `layer0-apply`) · Q3 dict (D-id→coarse collapse) · Q4 defer `provider_outbound_ref` · Q5 yes (Slice-1 auto-merge).** As-built deviation from design §5 (recorded in doc §0): consumers **import the consolidated seed module**, not the table-with-cache, because `resolve_strength_ex_id` is a pure function asserted ~20× with no DB and runs off the `apply_session_outcome` hot path — a table read would break the suite for zero gain. The table stays the canonical store, materialized from the seed (can't drift). Resolver parity 152/152.
 
 ## §8 — Session-end verification (Rule #10) — anchor table
 
 | Area | Path | Anchor / check |
 |---|---|---|
-| Design doc (new) | `aidstation-sources/designs/ProviderTranslation_StorageSchema_681_BuildDesign_v1.md` | exists; §2.1 "table becomes canonical source of truth, now"; §3 the 3 `CREATE TABLE` blocks; §5 "Consumer repoint graph" 4-row table + "ordering constraint C1"; §7 the 4-slice table; §9 Q1–Q5 |
-| Rolling state | `aidstation-sources/CURRENT_STATE.md` | "Last shipped" = storage-schema build design / design-only / names this handoff; matrix v2 demoted to first Predecessor |
+| Design doc | `aidstation-sources/designs/ProviderTranslation_StorageSchema_681_BuildDesign_v1.md` | exists; **§0 "Ratification & as-built status"** (Q1–Q5 ratified + realization adjustment); §3 the 3 `CREATE TABLE` blocks; §6 the cardio Slice 2 plan |
+| Seed module (new) | `provider_value_map_seed.py` | `STRENGTH_NAME_TO_EX_ID` (147) + `GARMIN_TYPE_TO_PLAN_SPORT` (15) + `provider_value_map_rows()` yields 162 ten-col tuples; the old dict symbols (`NAME_TO_EX_ID` etc.) exist ONLY here now |
+| Table CREATE + seed | `init_db.py` | `PG_SCHEMA` has `CREATE TABLE IF NOT EXISTS provider_value_map` + `provider_raw_record`; `INSERT … ON CONFLICT … DO UPDATE` from `provider_value_map_rows()`; backfill loops `STRENGTH_NAME_TO_EX_ID` |
+| Resolver repoint | `provider_strength_resolve.py` | `_alias_map()` returns `STRENGTH_NAME_TO_EX_ID`; backstop uses `STRENGTH_COARSE_NAME_TO_EX_ID`; no local dicts. `pytest tests/test_provider_strength_resolve.py` = 19 passed |
+| Rolling state | `aidstation-sources/CURRENT_STATE.md` | "Last shipped" = storage-schema design **+ Slice 1 built** / names this handoff; matrix v2 demoted to first Predecessor |
 | Canon (still unchanged) | `etl/layer0/discipline_canon.py` | highest D-032; no `etl/` `D-033` (this wave adds no discipline) |
-| Parent spec (unchanged) | `aidstation-sources/specs/Provider_Data_Translation_Layer_Spec_v1.md` | §4.2–4.4 are the DDL source this design refines |
-| PR / issue | PR pending; GitHub #681 (open) | open the PR ready-for-review; comment #681 with the design link; epic kept open |
+| PR / issue | PR [#733](https://github.com/ahorn885/exercise/pull/733); GitHub #681 (open) | #733 = design + Slice 1; #681 has the wave comment; epic kept open |
 
 ## §9 — Carry-forward
 

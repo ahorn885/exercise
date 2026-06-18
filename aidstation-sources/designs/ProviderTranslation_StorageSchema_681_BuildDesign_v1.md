@@ -10,6 +10,17 @@ This is the "§4 build wave" the matrix-v2 closing handoff names as the next hig
 
 ---
 
+## 0. Ratification & as-built status (2026-06-18)
+
+**Andy ratified §9 Q1–Q5** (yes / yes / dict / defer / yes) and **Slice 1 is built** (PR #733; full suite 2650 passed / 30 skipped). Two refinements were made against this doc during the build, both toward simplicity / lower risk — recorded here so the doc matches what shipped (Rule #10):
+
+- **Realization adjustment (supersedes §5's "read the table, module-cached").** `resolve_strength_ex_id` is a **pure function** called off the `apply_session_outcome` hot path and asserted ~20× in tests **with no DB**, so making it query `provider_value_map` would break the suite and thread a connection through a hot path for **zero behavioral gain today**. As built, the consumers (resolver `_alias_map` + category backstop, `garmin._plan_sport_type`, the `init_db` `current_rx` backfill) import the **consolidated seed module** `provider_value_map_seed`; `init_db` **materializes that same seed into the `provider_value_map` table** via `ON CONFLICT DO UPDATE`. The table remains the **canonical store** (what the API / Slices 2–3 read); the in-process path reads the seed the table is built from, so the two cannot drift. The **§5 "ordering constraint C1" (seed-before-backfill) no longer applies** — the backfill reads the Python seed, not the table.
+- **`provider_outbound_ref` deferred (ratified Q4).** Slice 1 creates the two **inbound** tables only (`provider_value_map` seeded + read; `provider_raw_record` created ready for Slice 2's writers). The outbound-ref table lands with the Wave-3 outbound serializers.
+
+The rest of this doc stands as the build spec for Slices 2–3.
+
+---
+
 ## 1. Problem / scope
 
 The provider→canonical mappings live today as **scattered Python dicts** with no single store, no provenance, no raw-passthrough, and no place for the matrix-v2 seed rows the spec session just authored:
