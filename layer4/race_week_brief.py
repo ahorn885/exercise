@@ -67,7 +67,7 @@ from layer4.context import (
     TrainingSubstitutionPayload,
 )
 from layer4.errors import Layer4InputError, Layer4OutputError
-from layer4.per_phase import compute_feasible_pool_ids
+from layer4.per_phase import compute_feasible_pool_ids, compute_recovery_pool_ids
 from layer4.payload import (
     CardioBlock,
     Contingency,
@@ -80,6 +80,7 @@ from layer4.payload import (
     RacePlan,
     RaceSegment,
     RaceWeekBrief,
+    RecoveryExercise,
     RuleFailure,
     StrengthExercise,
     TransitionSpec,
@@ -194,6 +195,7 @@ def _intensity_target_schema() -> dict[str, Any]:
 
 def _taper_override_session_schema(
     feasible_pool_ids: list[str] | None = None,
+    recovery_pool_ids: list[str] | None = None,
 ) -> dict[str, Any]:
     """Schema for one Taper-session override per `Layer4_RaceWeekBrief_v2.md`
     §4.1. Mirrors `PlanSession` shape with the closed 2-flag race-week-brief
@@ -203,7 +205,10 @@ def _taper_override_session_schema(
 
     Track 2 D1: when `feasible_pool_ids` is non-empty, the
     `strength_exercises.exercise_id` property is bounded by enum, making
-    out-of-pool picks structurally impossible at the SDK boundary."""
+    out-of-pool picks structurally impossible at the SDK boundary. #698 Track 1:
+    `recovery_pool_ids` does the same for `recovery_exercises`, and `kind` gains
+    `recovery` so a prior Taper recovery session can be echoed/trimmed (selection
+    only — no D6 placement on this path, which has no grid)."""
     return {
         "type": "object",
         "additionalProperties": False,
@@ -227,12 +232,18 @@ def _taper_override_session_schema(
                 "type": "string",
                 "enum": ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"],
             },
-            "session_index_in_day": {"type": "integer", "minimum": 0, "maximum": 1},
+            # #698 Track 1 — max→2 so a prior recovery session occupying the 3rd
+            # daily slot (≤2 training + ≤1 recovery) can be echoed as an override
+            # (mirrors `payload.PlanSession.session_index_in_day` le=2).
+            "session_index_in_day": {"type": "integer", "minimum": 0, "maximum": 2},
             "time_of_day": {
                 "type": "string",
                 "enum": ["morning", "afternoon", "evening", "unspecified"],
             },
-            "kind": {"type": "string", "enum": ["cardio", "strength", "rest"]},
+            "kind": {
+                "type": "string",
+                "enum": ["cardio", "strength", "rest", "recovery"],
+            },
             "discipline_id": {"type": ["string", "null"]},
             "discipline_name": {"type": ["string", "null"]},
             "locale_id": {"type": ["string", "null"]},
@@ -349,6 +360,33 @@ def _taper_override_session_schema(
                             "maxItems": 4,
                             "uniqueItems": True,
                         },
+                    },
+                },
+            },
+            # #698 Track 1 — structured recovery/mobility block (the analog of
+            # strength_exercises). exercise_id is enum-bound to the recovery pool
+            # when resolvable, so out-of-pool picks are structurally impossible at
+            # the SDK boundary (mirrors `per_phase._session_schema`).
+            "recovery_exercises": {
+                "type": ["array", "null"],
+                "items": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "required": [
+                        "exercise_id",
+                        "exercise_name",
+                        "prescription",
+                        "instructions",
+                    ],
+                    "properties": {
+                        "exercise_id": (
+                            {"type": "string", "enum": recovery_pool_ids}
+                            if recovery_pool_ids
+                            else {"type": "string"}
+                        ),
+                        "exercise_name": {"type": "string"},
+                        "prescription": {"type": "string", "maxLength": 120},
+                        "instructions": {"type": "string", "maxLength": 240},
                     },
                 },
             },
@@ -634,6 +672,7 @@ def _race_plan_schema() -> dict[str, Any]:
 
 def build_record_race_week_brief_tool(
     feasible_pool_ids: list[str] | None = None,
+    recovery_pool_ids: list[str] | None = None,
 ) -> dict[str, Any]:
     """The `record_race_week_brief` Anthropic tool definition per
     `Layer4_RaceWeekBrief_v2.md` §4.1 — mirrors the full `RaceWeekBrief`
@@ -641,7 +680,10 @@ def build_record_race_week_brief_tool(
 
     Track 2 D1: `feasible_pool_ids` (when non-empty) bounds
     `strength_exercises.exercise_id` via JSON-schema enum. Production callers
-    pass `compute_feasible_pool_ids(layer2c_payloads, layer2d_payload)`."""
+    pass `compute_feasible_pool_ids(layer2c_payloads, layer2d_payload)`. #698
+    Track 1: `recovery_pool_ids` (when non-empty) bounds
+    `recovery_exercises.exercise_id` the same way
+    (`compute_recovery_pool_ids(layer2c_payloads, layer2d_payload)`)."""
     return {
         "name": "record_race_week_brief",
         "description": (
@@ -657,7 +699,9 @@ def build_record_race_week_brief_tool(
                 "taper_session_overrides": {
                     "type": "array",
                     "maxItems": 42,
-                    "items": _taper_override_session_schema(feasible_pool_ids),
+                    "items": _taper_override_session_schema(
+                        feasible_pool_ids, recovery_pool_ids
+                    ),
                 },
                 "race_week_brief": _race_week_brief_schema(),
                 "race_plan": _race_plan_schema(),
@@ -799,6 +843,8 @@ Spec-auto Taper coaching flags (`race_rehearsal`, `fueling_practice`, `kit_check
 The athlete's Taper sessions are already in `prior_taper_sessions`. Modify only what needs modifying for race-week. Sessions at `days_to_event ≤ 2` go light + easy + no novel stimulus. Sessions at `days_to_event ∈ [3, 5]` include one moderate-or-easy session with ≥30 min at race-target zone. Sessions at `days_to_event == 7` are low-cognitive-load (recovery spin, easy walk) so the athlete can focus on kit checks. One Taper session per week, typically the longest scheduled, structures as a race-rehearsal with full race-day fueling + pacing + kit practice (60–120 min, not race-distance). All Taper cardio sessions ≥ 60 min cue race-day fueling tier from 2E.
 
 When 3A signals (fatigue markers, ACWR elevated, sleep deficit, lingering illness) suggest pulling back further than the prior-plan Taper structure: modulate intensity downward, emit `intensity_modulated`, and explain the modulation in `session_notes` in two short sentences.
+
+Recovery sessions (`kind=recovery`): the prior plan may include a light mobility/breathwork recovery session (its movements are listed under `recovery_exercises:` in the prior-session block). Race-week bias is toward freshness, not added stimulus — keep a recovery session only when it aids recovery without adding fatigue, and never introduce novel recovery stimulus this close to the event. When you keep one, emit `kind=recovery` and echo or trim the prior `recovery_exercises` (each item: `exercise_id`, `exercise_name`, a free-text `prescription`, and `instructions`); pick `exercise_id`s only from those already prescribed in the prior session — never invent one. When the session no longer serves race-week, drop it to full rest instead: `kind=rest`, `intensity_summary=rest`, `rest_reason=planned_recovery`, and a null `recovery_exercises`.
 
 # Race-week brief synthesis
 
@@ -1140,6 +1186,18 @@ def _render_user_prompt(
                 parts.append(
                     f"    existing flags: {', '.join(s.coaching_flags)}"
                 )
+            # #698 Track 1 — surface a prior recovery session's structured
+            # movements so the synthesizer can echo or trim them (and only ever
+            # picks exercise_ids it has already seen prescribed). Without this the
+            # recovery_exercises block is invisible and the LLM can't carry it
+            # forward into a recovery override.
+            if s.recovery_exercises:
+                parts.append("    recovery_exercises:")
+                for rx in s.recovery_exercises:
+                    parts.append(
+                        f"      - {rx.exercise_id} ({rx.exercise_name}): "
+                        f"{rx.prescription}"
+                    )
             if s.session_notes:
                 parts.append(f"    notes: {s.session_notes}")
     parts.append("")
@@ -1284,6 +1342,11 @@ def _build_session_override(
     if raw_exercises:
         exercises = [StrengthExercise(**e) for e in raw_exercises]
 
+    raw_recovery = override_data.get("recovery_exercises")
+    recovery_exercises: list[RecoveryExercise] | None = None
+    if raw_recovery:
+        recovery_exercises = [RecoveryExercise(**r) for r in raw_recovery]
+
     return PlanSession(
         session_id=sid,
         plan_version_id=plan_version_id,
@@ -1300,6 +1363,7 @@ def _build_session_override(
         intensity_summary=override_data["intensity_summary"],
         cardio_blocks=blocks,
         strength_exercises=exercises,
+        recovery_exercises=recovery_exercises,
         rest_reason=override_data.get("rest_reason"),
         phase_metadata=prior.phase_metadata,
         session_notes=override_data["session_notes"],
@@ -1594,8 +1658,10 @@ def llm_layer4_race_week_brief(
 
     caller: LLMCaller = llm_caller or _default_llm_caller
     feasible_pool_ids = compute_feasible_pool_ids(layer2c_payloads, layer2d_payload)
+    recovery_pool_ids = compute_recovery_pool_ids(layer2c_payloads, layer2d_payload)
     tool_schema = build_record_race_week_brief_tool(
-        feasible_pool_ids=feasible_pool_ids or None
+        feasible_pool_ids=feasible_pool_ids or None,
+        recovery_pool_ids=recovery_pool_ids or None,
     )
 
     # Climate normals for the weather contingency (best-effort; None when the

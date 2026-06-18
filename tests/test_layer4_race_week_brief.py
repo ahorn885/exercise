@@ -74,10 +74,13 @@ from layer4 import (
     llm_layer4_race_week_brief,
 )
 from layer4.race_week_brief import (
+    _SYSTEM_PROMPT,
     _SynthesizerOutput,
+    _build_session_override,
     _emit_route_locales_anchor_observations,
     _render_training_substitution_section,
     _render_user_prompt,
+    _taper_override_session_schema,
 )
 from layer4.context import (
     TerrainEmphasis,
@@ -957,6 +960,153 @@ class TestToolSchema:
         # D1 amendment 2026-05-17: typed IntensityTarget union (9 shapes).
         assert "oneOf" in pacing
         assert len(pacing["oneOf"]) == 9
+
+
+# ─── #698 Track 1 — race-week-brief recovery slice ──────────────────────────
+
+
+def _prior_recovery_taper_session(session_id: str = "R-1") -> Any:
+    """A prior-plan Taper recovery session (the shape Slice 2/3b plan-create
+    emits) — its `recovery_exercises` are what the brief should surface + echo."""
+    from layer4 import PlanSession, SessionPhaseMetadata
+    from layer4.payload import RecoveryExercise
+
+    d = _TODAY + timedelta(days=3)
+    dow_map = {0: "Mon", 1: "Tue", 2: "Wed", 3: "Thu", 4: "Fri", 5: "Sat", 6: "Sun"}
+    return PlanSession(
+        session_id=session_id,
+        plan_version_id=1,
+        date=d,
+        day_of_week=dow_map[d.weekday()],  # type: ignore[arg-type]
+        session_index_in_day=2,
+        time_of_day="evening",
+        kind="recovery",
+        duration_min=18,
+        intensity_summary="easy",
+        recovery_exercises=[
+            RecoveryExercise(
+                exercise_id="E-mob",
+                exercise_name="Hip Mobility Flow",
+                prescription="2×30s/side",
+                instructions="Slow, controlled.",
+            )
+        ],
+        phase_metadata=SessionPhaseMetadata(
+            phase_name="Taper",
+            week_in_phase=1,
+            total_weeks_in_phase=2,
+            intended_volume_band=(3.0, 6.0),
+            intended_intensity_distribution={"Z1-Z2": 0.85, "Z3": 0.10, "Z4-Z5": 0.05},
+        ),
+        session_notes="x",
+        coaching_intent="x",
+        coaching_flags=[],
+    )
+
+
+def _recovery_override_obj(session_id: str = "R-1") -> dict[str, Any]:
+    d = _TODAY + timedelta(days=3)
+    dow_map = {0: "Mon", 1: "Tue", 2: "Wed", 3: "Thu", 4: "Fri", 5: "Sat", 6: "Sun"}
+    return {
+        "session_id_to_override": session_id,
+        "date": d.isoformat(),
+        "day_of_week": dow_map[d.weekday()],
+        "session_index_in_day": 2,
+        "time_of_day": "evening",
+        "kind": "recovery",
+        "duration_min": 15,
+        "intensity_summary": "easy",
+        "session_notes": "Light mobility; keep it short.",
+        "coaching_intent": "Stay fresh.",
+        "coaching_flags": [],
+        "recovery_exercises": [
+            {
+                "exercise_id": "E-mob",
+                "exercise_name": "Hip Mobility Flow",
+                "prescription": "2×30s/side",
+                "instructions": "Slow, controlled.",
+            }
+        ],
+    }
+
+
+class TestRecoverySlice:
+    def test_kind_enum_includes_recovery(self):
+        schema = _taper_override_session_schema()
+        assert schema["properties"]["kind"]["enum"] == [
+            "cardio",
+            "strength",
+            "rest",
+            "recovery",
+        ]
+
+    def test_session_index_max_two(self):
+        # A prior recovery session can occupy the 3rd daily slot (index 2);
+        # the override schema must allow echoing it.
+        schema = _taper_override_session_schema()
+        assert schema["properties"]["session_index_in_day"]["maximum"] == 2
+
+    def test_recovery_exercises_block_present_free_string_when_no_pool(self):
+        schema = _taper_override_session_schema()
+        rx = schema["properties"]["recovery_exercises"]
+        assert rx["type"] == ["array", "null"]
+        ex_id = rx["items"]["properties"]["exercise_id"]
+        assert ex_id == {"type": "string"}  # no enum when pool empty
+
+    def test_recovery_exercises_enum_bound_when_pool_present(self):
+        schema = _taper_override_session_schema(recovery_pool_ids=["E-mob", "E-breath"])
+        ex_id = schema["properties"]["recovery_exercises"]["items"]["properties"][
+            "exercise_id"
+        ]
+        assert ex_id == {"type": "string", "enum": ["E-mob", "E-breath"]}
+
+    def test_tool_threads_recovery_pool_ids(self):
+        tool = build_record_race_week_brief_tool(recovery_pool_ids=["E-mob"])
+        sess = tool["input_schema"]["properties"]["taper_session_overrides"]["items"]
+        ex_id = sess["properties"]["recovery_exercises"]["items"]["properties"][
+            "exercise_id"
+        ]
+        assert ex_id["enum"] == ["E-mob"]
+
+    def test_build_session_override_parses_recovery(self):
+        prior = _prior_recovery_taper_session()
+        out = _build_session_override(
+            _recovery_override_obj(),
+            plan_version_id=7,
+            prior_by_id={prior.session_id: prior},
+        )
+        assert out.kind == "recovery"
+        assert out.recovery_exercises is not None
+        assert len(out.recovery_exercises) == 1
+        assert out.recovery_exercises[0].exercise_id == "E-mob"
+        assert out.cardio_blocks is None
+        assert out.strength_exercises is None
+
+    def test_prior_recovery_exercises_rendered(self):
+        prompt = _render_user_prompt(
+            layer1_payload=_layer1(),
+            layer2a_payload=_layer2a(),
+            layer2b_payload=_layer2b(),
+            layer2c_payloads={"home_gym": _layer2c()},
+            layer2d_payload=_layer2d(),
+            layer2e_payload=_layer2e(),
+            layer3a_payload=_layer3a(),
+            layer3b_payload=_layer3b(event_date=_EVENT_DATE),
+            race_event_payload=_race_event_payload(),
+            prior_plan_session_window=[_prior_recovery_taper_session()],
+            days_to_event=7,
+            today=_TODAY,
+            retries_used=0,
+            rule_failures=[],
+        )
+        assert "recovery_exercises:" in prompt
+        assert "E-mob (Hip Mobility Flow): 2×30s/side" in prompt
+
+    def test_system_prompt_has_recovery_instruction(self):
+        assert "kind=recovery" in _SYSTEM_PROMPT
+        # The race-week bias toward rest is explicit so the LLM defaults to
+        # dropping rather than adding recovery stimulus.
+        assert "never introduce novel recovery stimulus" in _SYSTEM_PROMPT
 
 
 # ─── §4.5 input validation ──────────────────────────────────────────────────

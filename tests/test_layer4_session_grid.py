@@ -23,6 +23,10 @@ from layer4.session_grid import (
     SessionGrid,
     apply_session_ceiling,
     build_session_grid,
+    classify_recovery_load_band,
+    compute_recovery_placement,
+    derive_enabled_days,
+    derive_long_session_dow,
     phase_session_ceiling,
     placeable_days_in_week,
     resolve_available_days,
@@ -658,3 +662,97 @@ class TestRecoveryDose:
         assert all(
             "recovery" not in a.discipline_id for a in grid.discipline_allocations
         )
+
+
+# ─── #698 Track 1 (Slice 3b, D6) — deterministic recovery placement ──────────
+#
+# Week of Mon 2026-04-06 … Sun 2026-04-12; Sat (04-11) is the long-session day.
+
+_WK = [date(2026, 4, 6) + timedelta(days=i) for i in range(7)]  # Mon..Sun
+_ALL_DAYS = {"Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"}
+_LONG = "Sat"
+
+
+def test_placement_moderate_anchors_day_after_long_and_excludes_long():
+    placed = compute_recovery_placement(
+        _WK, _ALL_DAYS, _LONG, dose_count=3, load_band="moderate", pool_is_empty=False
+    )
+    # Sun 04-12 is the day AFTER the long Sat; the long day itself is excluded.
+    assert date(2026, 4, 11) not in placed  # long day
+    assert date(2026, 4, 12) in placed  # day-after-long anchor
+    assert placed == [date(2026, 4, 6), date(2026, 4, 10), date(2026, 4, 12)]
+
+
+def test_placement_extreme_excludes_long_and_pre_key_day():
+    placed = compute_recovery_placement(
+        _WK, _ALL_DAYS, _LONG, dose_count=2, load_band="extreme", pool_is_empty=False
+    )
+    assert date(2026, 4, 11) not in placed  # long day (Sat)
+    assert date(2026, 4, 10) not in placed  # pre-key day (Fri)
+    assert placed == [date(2026, 4, 6), date(2026, 4, 12)]
+
+
+def test_placement_light_is_unconstrained_even_spread():
+    placed = compute_recovery_placement(
+        _WK, _ALL_DAYS, _LONG, dose_count=3, load_band="light", pool_is_empty=False
+    )
+    assert placed == [date(2026, 4, 6), date(2026, 4, 9), date(2026, 4, 12)]
+
+
+def test_placement_empty_pool_and_zero_dose_return_empty():
+    assert (
+        compute_recovery_placement(
+            _WK, _ALL_DAYS, _LONG, dose_count=3, load_band="light", pool_is_empty=True
+        )
+        == []
+    )
+    assert (
+        compute_recovery_placement(
+            _WK, _ALL_DAYS, _LONG, dose_count=0, load_band="light", pool_is_empty=False
+        )
+        == []
+    )
+
+
+def test_placement_clamps_to_feasible_candidate_days():
+    # Only Mon + Wed enabled, but the dose asks for 5 → clamp to the 2 placeable.
+    placed = compute_recovery_placement(
+        _WK, {"Mon", "Wed"}, _LONG, dose_count=5, load_band="light", pool_is_empty=False
+    )
+    assert placed == [date(2026, 4, 6), date(2026, 4, 8)]
+
+
+def test_classify_load_band_peak_and_deload_force_extreme():
+    # Peak / deload bias to genuine rest regardless of capacity.
+    assert classify_recovery_load_band(1.0, (5.0, 10.0), "Peak", False) == "extreme"
+    assert classify_recovery_load_band(1.0, (5.0, 10.0), "Base", True) == "extreme"
+
+
+def test_classify_load_band_against_phase_band():
+    band = (5.0, 10.0)
+    assert classify_recovery_load_band(4.0, band, "Base", False) == "light"  # <= low
+    assert classify_recovery_load_band(5.0, band, "Base", False) == "light"  # == low
+    assert classify_recovery_load_band(7.0, band, "Base", False) == "moderate"
+    assert classify_recovery_load_band(10.0, band, "Base", False) == "extreme"  # >= high
+    # No band / no capacity → light (unconstrained).
+    assert classify_recovery_load_band(None, band, "Base", False) == "light"
+    assert classify_recovery_load_band(7.0, None, "Base", False) == "light"
+
+
+def test_derive_enabled_and_long_session_dow_dict_and_object():
+    dict_windows = [
+        {"day_of_week": "Mon", "enabled": True, "window_duration": 60},
+        {"day_of_week": "Wed", "enabled": False, "window_duration": None},
+        {"day_of_week": "Sat", "enabled": True, "window_duration": 180},
+    ]
+    assert derive_enabled_days(dict_windows) == {"Mon", "Sat"}
+    assert derive_long_session_dow(dict_windows) == "Sat"
+
+    from types import SimpleNamespace as NS
+
+    obj_windows = [
+        NS(day_of_week="Tue", enabled=True, window_duration=90),
+        NS(day_of_week="Fri", enabled=True, window_duration=90),  # tie → earliest
+    ]
+    assert derive_enabled_days(obj_windows) == {"Tue", "Fri"}
+    assert derive_long_session_dow(obj_windows) == "Tue"

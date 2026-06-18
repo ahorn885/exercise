@@ -58,7 +58,15 @@ _LAYER2_BUNDLE_ATTRS = frozenset({"a", "b", "c", "d", "e"})
 # deterministic per-week recovery dose block (off the training cap), and the
 # tool schema gains the `recovery` kind + `recovery_exercises` enum-bound block;
 # all change synthesis output, so cached plans must regenerate.
-LAYER4_PROMPT_REVISION = "8"
+# "9" = #698 Track 1 Slice 3b deterministic recovery placement (D6) — the
+# recovery block changes from a per-week COUNT to the explicit assigned DATES
+# (`compute_recovery_placement`), and the recovery instruction is suppressed when
+# the pool is empty; both change synthesis output, so cached plans must regenerate.
+# "10" = #698 Track 1 race-week-brief recovery — the race_week_brief synthesizer
+# gains a recovery instruction, renders prior `recovery_exercises`, and its tool
+# schema gains the `recovery` kind + enum-bound `recovery_exercises` block; all
+# change synthesis output, so cached plans must regenerate.
+LAYER4_PROMPT_REVISION = "10"
 
 
 def _to_jsonable(obj: Any) -> Any:

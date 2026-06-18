@@ -104,11 +104,12 @@
         {% else %}
         <div class="stack">
           {% for sess in sessions %}
-          <div class="card card-pad sess-card">
+          <div class="card card-pad sess-card{% if sess.kind == 'recovery' %} sess-recovery{% endif %}">
             <div class="sess-head">
               <span class="sess-name">
                 {% if sess.kind == 'rest' %}Rest{% if sess.rest_reason %} — {{ sess.rest_reason|replace('_', ' ')|capitalize }}{% endif %}
                 {% elif sess.kind == 'strength' %}Strength{% if sess.discipline_name %} · {{ sess.discipline_name }}{% endif %} — {{ sess.duration_min }} min
+                {% elif sess.kind == 'recovery' %}Recovery — {{ sess.duration_min }} min
                 {% else %}{{ sess.discipline_name or sess.discipline_id or sess.kind|title }} — {{ sess.duration_min }} min{% endif %}
               </span>
               {% if sess.kind != 'rest' %}<span class="chip">{{ sess.intensity_summary|title }}</span>{% endif %}
@@ -171,6 +172,20 @@
                   {% if ex.tempo %} · tempo {{ ex.tempo }}{% endif %}
                 </div>
                 {% if ex.resolution_tier != 2 and ex.substitute_text %}<p class="sess-block-instr">{{ ex.substitute_text }}</p>{% endif %}
+                {% if ex.instructions %}<p class="sess-block-instr">{{ ex.instructions }}</p>{% endif %}
+              </li>
+              {% endfor %}
+            </ol>
+            {% endif %}
+
+            {% if sess.kind == 'recovery' and sess.recovery_exercises %}
+            <ol class="sess-exercises">
+              {% for ex in sess.recovery_exercises %}
+              <li class="sess-exercise">
+                <div class="sess-exercise-head">
+                  <span class="sess-exercise-name">{{ ex.exercise_name }}</span>
+                </div>
+                {% if ex.prescription %}<div class="sess-exercise-prescription">{{ ex.prescription }}</div>{% endif %}
                 {% if ex.instructions %}<p class="sess-block-instr">{{ ex.instructions }}</p>{% endif %}
               </li>
               {% endfor %}
