@@ -232,6 +232,137 @@ def compute_recovery_dose(phase_name: str, high_load: bool) -> RecoveryAllocatio
     )
 
 
+# ─── Recovery placement (#698 Track 1, Slice 3b — D6 deterministic) ──────────
+#
+# Recovery PLACEMENT is deterministic (the grid decides which day(s) carry
+# recovery, rendered to the prompt as a hard constraint and enforced by the
+# validator); the LLM keeps only exercise SELECTION from the rendered pool.
+# `compute_recovery_placement` is the single source of truth for both the
+# rendered prompt block (`per_phase._format_recovery_programming`) and the
+# validator placement-match rule (`validator._rule_recovery_placement_match`),
+# so the two can never disagree — they call this same pure function with the
+# same upstream-derived inputs. See design v2 §6a.
+
+_DOW_ABBR = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")  # by date.weekday()
+
+
+def _window_attr(w: object, key: str, default: object = None) -> object:
+    """Read a field off a daily-availability window that may be a dict (Layer 1
+    `model_dump()`) or a `DailyAvailabilityWindow` object (validator context)."""
+    return w.get(key, default) if isinstance(w, dict) else getattr(w, key, default)
+
+
+def derive_enabled_days(windows: object) -> set[str]:
+    """The set of `day_of_week` abbreviations with an enabled window."""
+    out: set[str] = set()
+    for w in windows or []:  # type: ignore[union-attr]
+        if _window_attr(w, "enabled"):
+            dow = _window_attr(w, "day_of_week")
+            if dow:
+                out.add(dow)  # type: ignore[arg-type]
+    return out
+
+
+def derive_long_session_dow(windows: object) -> str | None:
+    """The `day_of_week` carrying the longest enabled primary window; ties → the
+    earliest in list order. Mirrors `_format_daily_windows_schedule` so the
+    rendered `=== Schedule ===` long day and the placement anchor agree."""
+    long_dow: str | None = None
+    long_dur = 0
+    for w in windows or []:  # type: ignore[union-attr]
+        if not _window_attr(w, "enabled"):
+            continue
+        dur = _window_attr(w, "window_duration", 0) or 0
+        if dur > long_dur:  # strict → earliest among equal-duration days wins
+            long_dur = dur  # type: ignore[assignment]
+            long_dow = _window_attr(w, "day_of_week")  # type: ignore[assignment]
+    return long_dow
+
+
+def classify_recovery_load_band(
+    capacity_hours: float | None,
+    phase_band: tuple[float, float] | None,
+    phase_name: str,
+    is_deload: bool,
+) -> Literal["light", "moderate", "extreme"]:
+    """Classify the week's load for recovery placement (§6a). The athlete's
+    bounded weekly `capacity_hours` is compared to the phase's total weekly-hour
+    band `[low, high]` (2A `weekly_total_hours_by_phase`). Peak phase OR a deload
+    week forces `extreme` (D4 — bias to genuine full rest) regardless of
+    capacity. No band / no capacity → `light` (unconstrained)."""
+    if phase_name == "Peak" or is_deload:
+        return "extreme"
+    if not phase_band or capacity_hours is None:
+        return "light"
+    low, high = phase_band
+    if capacity_hours >= high:
+        return "extreme"
+    if capacity_hours <= low:
+        return "light"
+    return "moderate"
+
+
+def _even_spread(items: list[_date], k: int) -> list[_date]:
+    """Pick `k` dates evenly spaced across a sorted list (endpoints included).
+    Deterministic; integer-floor indices so no banker's-rounding collisions."""
+    n = len(items)
+    if k <= 0 or n == 0:
+        return []
+    if k >= n:
+        return list(items)
+    if k == 1:
+        return [items[0]]
+    return [items[i * (n - 1) // (k - 1)] for i in range(k)]
+
+
+def compute_recovery_placement(
+    week_dates: list[_date],
+    enabled_days: set[str],
+    long_session_dow: str | None,
+    dose_count: int,
+    load_band: Literal["light", "moderate", "extreme"],
+    pool_is_empty: bool,
+) -> list[_date]:
+    """The EXACT dates a week's recovery sessions must land on (§6a, D6).
+
+    `pool_is_empty` or `dose_count <= 0` → `[]` (suppress-on-empty / zeroed
+    deload week). Otherwise: take the enabled dates in the week, drop the
+    excluded days per the band rule (`moderate` excludes the long-session day;
+    `extreme` also excludes the day before it to keep the pre-key day clean;
+    `light` excludes nothing), order them (under `moderate`, anchor the day
+    AFTER the long-session day first, then an even spread; else an even spread),
+    and take `dose_count` — clamped to the feasible candidate days (a day can't
+    hold two recovery sessions). The caller logs the clamp (Rule #15)."""
+    if pool_is_empty or dose_count <= 0:
+        return []
+    candidates = sorted(d for d in week_dates if _DOW_ABBR[d.weekday()] in enabled_days)
+    if not candidates:
+        return []
+    long_dates = (
+        {d for d in candidates if _DOW_ABBR[d.weekday()] == long_session_dow}
+        if long_session_dow
+        else set()
+    )
+    excluded: set[_date] = set()
+    if load_band in ("moderate", "extreme"):
+        excluded |= long_dates
+    if load_band == "extreme":
+        excluded |= {d - timedelta(days=1) for d in long_dates}
+    eligible = [d for d in candidates if d not in excluded]
+    if not eligible:
+        return []
+    picks: list[_date] = []
+    if load_band == "moderate":
+        anchor = next(
+            (d for d in eligible if (d - timedelta(days=1)) in long_dates), None
+        )
+        if anchor is not None:
+            picks.append(anchor)
+            eligible = [d for d in eligible if d != anchor]
+    picks.extend(_even_spread(eligible, dose_count - len(picks)))
+    return sorted(picks)
+
+
 # ─── Algorithm ──────────────────────────────────────────────────────────────
 
 

@@ -77,6 +77,7 @@ from layer4.seam_review import (
 )
 from layer4.validator import (
     ValidatorContext,
+    daily_windows_from_layer1,
     validate_layer4_payload,
     weekly_capacity_hours,
 )
@@ -1371,6 +1372,7 @@ def _run_pattern_a_engine(
         layer3b_payload=layer3b_payload,
         race_event=race_event_payload,
         capacity_hours=weekly_capacity_hours(layer1_payload),
+        daily_availability_windows=daily_windows_from_layer1(layer1_payload),
     )
     final_validator = validate_layer4_payload(
         final_payload, ctx, pass_index=len(validator_results)

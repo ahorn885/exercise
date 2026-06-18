@@ -11,6 +11,7 @@ plus the `# Strength programming` system-prompt section.
 """
 from __future__ import annotations
 
+from datetime import date, timedelta
 from types import SimpleNamespace as NS
 
 from layer4.per_phase import (
@@ -381,27 +382,80 @@ def test_recovery_pool_render_empty_when_no_recovery_types():
     assert _format_recovery_exercise_pool(pool, None) == []
 
 
-def test_recovery_programming_renders_dose_per_week():
-    # phase_structure=None → is_deload_week_for is False, so the base dose holds.
-    lines = _format_recovery_programming(None, "Base", (1, 2))
+# #698 Track 1 (Slice 3b, D6) — `_format_recovery_programming` now renders the
+# EXACT assigned placement dates (not a per-week count) + suppresses on empty.
+# Windows: Sat is the longest enabled window (→ long-session day); goal 7h with
+# >7h available → capacity 7h, inside the Base band (5,10) → `moderate`.
+def _l1_windows():
+    durs = {"Mon": 60, "Tue": 60, "Wed": 60, "Thu": 60, "Fri": 60, "Sat": 180, "Sun": 60}
+    return {
+        "daily_availability_windows": [
+            {"day_of_week": d, "enabled": True, "window_duration": durs[d]} for d in durs
+        ],
+        "identity": {"weekly_hours_target": 7.0},
+    }
+
+
+_L2A_BANDS = NS(weekly_total_hours_by_phase={"Base": (5.0, 10.0), "Peak": (6.0, 9.0)})
+
+
+def _spec(phase_name="Base", start=date(2026, 4, 6), weeks=2):  # 2026-04-06 = Mon
+    return NS(
+        phase_name=phase_name,
+        start_date=start,
+        end_date=start + timedelta(days=weeks * 7 - 1),
+        weeks=weeks,
+    )
+
+
+def test_recovery_programming_renders_assigned_dates():
+    # phase_structure=None → is_deload_week_for False, so the base dose (3) holds.
+    lines = _format_recovery_programming(
+        None, _spec("Base", weeks=1), (1, 1), _l1_windows(), _L2A_BANDS, False
+    )
     text = "\n".join(lines)
     assert "Recovery programming (deterministic — off the training cap)" in text
     assert "do NOT" in text  # the off-the-cap directive
-    assert "Week 1: 3 recovery session(s) × ~18 min" in text
-    assert "Week 2: 3 recovery session(s) × ~18 min" in text
+    assert "place a recovery session on" in text
+    assert "ASSIGNED" in text
+    # moderate band excludes the long-session day (Sat 2026-04-11)…
+    assert "2026-04-11" not in text
+    # …and anchors the day AFTER the long day (Sun 2026-04-12).
+    assert "2026-04-12" in text
 
 
 def test_recovery_programming_peak_emits_full_rest_directive():
-    lines = _format_recovery_programming(None, "Peak", (1, 1))
+    lines = _format_recovery_programming(
+        None, _spec("Peak", weeks=1), (1, 1), _l1_windows(), _L2A_BANDS, False
+    )
     text = "\n".join(lines)
-    assert "Week 1: 2 recovery session(s)" in text
+    assert "place a recovery session on" in text
     # D4 — Peak phase always carries the load-adaptive full-rest directive.
-    assert "prefer GENUINE" in text
+    assert "full rest is the protective default" in text
+    # extreme band (Peak) keeps recovery off the long day (Sat 04-11) AND the
+    # pre-key day before it (Fri 04-10).
+    assert "2026-04-11" not in text
+    assert "2026-04-10" not in text
+
+
+def test_recovery_programming_suppressed_when_pool_empty():
+    # Suppress-on-empty (§6.3) — no block when the recovery pool resolves empty.
+    assert (
+        _format_recovery_programming(
+            None, _spec("Base"), (1, 2), _l1_windows(), _L2A_BANDS, True
+        )
+        == []
+    )
 
 
 def test_recovery_programming_unknown_phase_renders_nothing():
     # A phase with no defined recovery dose renders nothing (matches today).
-    assert _format_recovery_programming(None, "Transition", (1, 3)) == []
+    assert (
+        _format_recovery_programming(
+            None, _spec("Transition", weeks=3), (1, 3), _l1_windows(), _L2A_BANDS, False
+        )
+        == []
+    )
 
 
 def test_system_prompt_has_recovery_section():

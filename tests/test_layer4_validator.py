@@ -1247,6 +1247,103 @@ def test_recovery_pool_membership_skipped_when_pool_empty():
     assert not any(f.rule_name.startswith("recovery_pool_membership") for f in failures)
 
 
+# ─── #698 Track 1 (Slice 3b) — recovery placement-match (D6) ────────────────
+
+
+def _recovery_placement_ctx(*, with_2c: bool = True) -> ValidatorContext:
+    return ValidatorContext(
+        layer2a_payload=_layer2a_with_band(),
+        layer2c_payloads=(
+            {"L-home": _layer2c(exercise_ids=["E-mob"], exercise_type="mobility")}
+            if with_2c
+            else {}
+        ),
+        daily_availability_windows=tuple(_full_week_windows()),
+    )
+
+
+def _assigned_recovery_dates() -> list[date]:
+    """The exact dates the validator/render will assign for Base week 1 —
+    computed with the SAME pure functions, so the test isn't pinned to the
+    spread algorithm's internals."""
+    from layer4.session_grid import (
+        classify_recovery_load_band,
+        compute_recovery_dose,
+        compute_recovery_placement,
+        derive_enabled_days,
+        derive_long_session_dow,
+    )
+
+    windows = _full_week_windows()
+    band = classify_recovery_load_band(
+        None, _layer2a_with_band().weekly_total_hours_by_phase.get("Base"), "Base", False
+    )
+    return compute_recovery_placement(
+        [_SCOPE_START + timedelta(days=i) for i in range(7)],
+        derive_enabled_days(windows),
+        derive_long_session_dow(windows),
+        compute_recovery_dose("Base", False).sessions_this_week,
+        band,
+        False,
+    )
+
+
+def test_recovery_placement_extra_when_none_assigned_blocks():
+    """No recovery pool (no 2C) → suppress-on-empty assigns []. A placed recovery
+    session is then an unassigned extra → blocker."""
+    payload = _minimal_layer4(sessions=[_recovery_session(d=_SCOPE_START)])
+    failures = validate_layer4_payload(
+        payload, _recovery_placement_ctx(with_2c=False)
+    ).rule_failures
+    rpm = [f for f in failures if f.rule_name.startswith("recovery_placement_mismatch")]
+    assert rpm
+    assert rpm[0].severity == "blocker"
+
+
+def test_recovery_placement_skipped_without_windows():
+    """Guard — no availability windows in context → the rule no-ops (a refresh /
+    single-session path that doesn't carry the grid)."""
+    payload = _minimal_layer4(sessions=[_recovery_session(d=_SCOPE_START)])
+    ctx = ValidatorContext(
+        layer2a_payload=_layer2a_with_band(),
+        layer2c_payloads={
+            "L-home": _layer2c(exercise_ids=["E-mob"], exercise_type="mobility")
+        },
+    )  # no daily_availability_windows
+    failures = validate_layer4_payload(payload, ctx).rule_failures
+    assert not any(
+        f.rule_name.startswith("recovery_placement_mismatch") for f in failures
+    )
+
+
+def test_recovery_placement_matches_assigned_dates_passes():
+    dates = _assigned_recovery_dates()
+    assert dates  # sanity — Base week 1 assigns ≥1 recovery date
+    sessions = [
+        _recovery_session(session_id=f"S-r{i}", d=d) for i, d in enumerate(dates)
+    ]
+    payload = _minimal_layer4(sessions=sessions)
+    failures = validate_layer4_payload(payload, _recovery_placement_ctx()).rule_failures
+    assert not any(
+        f.rule_name.startswith("recovery_placement_mismatch") for f in failures
+    )
+
+
+def test_recovery_placement_moved_date_blocks():
+    dates = _assigned_recovery_dates()
+    # Move one assigned recovery to a different enabled day not in the set.
+    moved = sorted(set(_SCOPE_START + timedelta(days=i) for i in range(7)) - set(dates))[0]
+    shifted = [moved] + dates[1:]
+    sessions = [
+        _recovery_session(session_id=f"S-r{i}", d=d) for i, d in enumerate(shifted)
+    ]
+    payload = _minimal_layer4(sessions=sessions)
+    failures = validate_layer4_payload(payload, _recovery_placement_ctx()).rule_failures
+    rpm = [f for f in failures if f.rule_name.startswith("recovery_placement_mismatch")]
+    assert rpm
+    assert rpm[0].severity == "blocker"
+
+
 # ─── Rule 6a retired (Track 2 D1) — see Layer4_DeterminismFirst_Synthesis_Design_v1.md.
 #     Out-of-pool exercise_id is now structurally impossible via tool-schema
 #     enum (`compute_feasible_pool_ids` in `layer4/per_phase.py`). Enum behavior
