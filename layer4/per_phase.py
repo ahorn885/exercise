@@ -73,12 +73,17 @@ from layer4.session_feasibility import (
 from layer4.session_grid import (
     _RECOVERY_SESSIONS_PER_WEEK,
     build_session_grid,
+    classify_recovery_load_band,
     compute_recovery_dose,
+    compute_recovery_placement,
+    derive_enabled_days,
+    derive_long_session_dow,
     placeable_days_in_week,
     resolve_available_days,
 )
 from layer4.validator import (
     ValidatorContext,
+    daily_windows_from_layer1,
     phase_volume_bands_hours,
     skill_gated_disciplines,
     validate_layer4_payload,
@@ -1412,54 +1417,90 @@ def _format_session_grid(
 
 def _format_recovery_programming(
     phase_structure: PhaseStructure | None,
-    phase_name: str,
+    phase_spec: PhaseSpec,
     week_range: tuple[int, int] | None,
+    layer1_payload: dict[str, Any],
+    layer2a_payload: Layer2APayload | None,
+    pool_is_empty: bool,
 ) -> list[str]:
-    """#698 Track 1 (Slice 2, D2) — render the deterministic per-week recovery
-    dose, allocated OFF the training session ceiling (it is not in the session
-    grid's discipline allocations and does not count toward the daily cap). The
-    `high_load` per-week bias is a planned deload week (D4 — bias to full rest);
-    `compute_recovery_dose` trims one session toward genuine rest on those weeks.
-    Empty for any phase without a defined recovery dose (e.g. an unknown phase),
-    so nothing is rendered and behavior matches today. A deload week that zeros a
-    KNOWN recovery phase still renders an explicit full-rest line (a deliberate
-    decision, not a missing block)."""
+    """#698 Track 1 (Slice 3b, D6) — render the deterministic per-week recovery
+    dose AND its EXACT placement dates, allocated OFF the training session
+    ceiling (not in the grid's discipline allocations; does not count toward the
+    daily cap). Placement is deterministic (`compute_recovery_placement`, §6a):
+    the LLM is told the recovery days are *assigned*, not chosen — its only job
+    is filling `recovery_exercises` from the pool. The same pure function backs
+    the validator placement-match rule, so render and enforcement can't drift.
+
+    `high_load` per week is a planned deload week (D4 — bias to full rest);
+    `compute_recovery_dose` trims one session toward genuine rest there, and the
+    `extreme` band keeps recovery off the long day + the pre-key day.
+
+    Suppress-on-empty (§6.3): when the recovery pool resolves empty, NO block is
+    rendered — the LLM is never asked to fill an unfillable `recovery_exercises`
+    (a guaranteed-invalid payload + a wasted correction-loop retry). Empty for
+    any phase without a defined dose (unknown phase) too. A deload week that
+    zeros a KNOWN recovery phase still renders an explicit full-rest line."""
+    phase_name = phase_spec.phase_name
     if phase_name not in _RECOVERY_SESSIONS_PER_WEEK:
+        return []
+    if pool_is_empty:
+        # Rule #15 — suppress-on-empty: attributable, not a silent drop.
+        print(
+            f"compute_recovery_placement: {phase_name} recovery pool empty — "
+            "suppressing the recovery block (no recovery prescribed)"
+        )
         return []
     if week_range is not None:
         weeks: range = range(week_range[0], week_range[1] + 1)
     else:
-        phase_weeks_n = next(
-            (
-                p.weeks
-                for p in (phase_structure.phases if phase_structure else [])
-                if p.phase_name == phase_name
-            ),
-            0,
-        )
-        weeks = range(1, phase_weeks_n + 1)
+        weeks = range(1, phase_spec.weeks + 1)
+
+    capacity = weekly_capacity_hours(layer1_payload)
+    windows = layer1_payload.get("daily_availability_windows") or []
+    enabled_days = derive_enabled_days(windows)
+    long_dow = derive_long_session_dow(windows)
+    phase_band = (
+        (layer2a_payload.weekly_total_hours_by_phase or {}).get(phase_name)
+        if layer2a_payload is not None
+        else None
+    )
 
     week_lines: list[str] = []
     any_high_load = False
     for w in weeks:
         high_load = periodization.is_deload_week_for(phase_structure, phase_name, w)
-        dose = compute_recovery_dose(phase_name, high_load)
         any_high_load = any_high_load or high_load
-        if dose.sessions_this_week <= 0:
-            # Rule #15 — a zeroed recovery week (deload bias → full rest) is a
-            # deliberate decision, not a missing block; make it attributable.
+        dose = compute_recovery_dose(phase_name, high_load)
+        # The week's calendar dates (week 1 = the first 7 days of the phase),
+        # clamped to the phase end — mirrors `_block_date_window`.
+        wk_start = phase_spec.start_date + timedelta(days=(w - 1) * 7)
+        wk_end = min(phase_spec.start_date + timedelta(days=w * 7 - 1), phase_spec.end_date)
+        week_dates = [
+            wk_start + timedelta(days=i) for i in range((wk_end - wk_start).days + 1)
+        ]
+        band = classify_recovery_load_band(capacity, phase_band, phase_name, high_load)
+        placed = compute_recovery_placement(
+            week_dates, enabled_days, long_dow, dose.sessions_this_week, band, pool_is_empty
+        )
+        if len(placed) < dose.sessions_this_week:
+            # Rule #15 — fewer feasible candidate days than the dose requested
+            # (clamp), or a zeroed deload week. Either way, attributable.
             print(
-                f"compute_recovery_dose: {phase_name}:w{w} sessions=0 "
-                f"high_load={high_load} (full-rest bias)"
+                f"compute_recovery_placement: {phase_name}:w{w} dose="
+                f"{dose.sessions_this_week} placed={len(placed)} band={band} "
+                f"high_load={high_load} (clamped to feasible days)"
             )
+        if not placed:
             week_lines.append(
                 f"  Week {w}: 0 recovery sessions — full rest "
                 f"({'deload — ' if high_load else ''}prefer genuine rest)."
             )
             continue
+        dates_txt = ", ".join(d.isoformat() for d in placed)
         week_lines.append(
-            f"  Week {w}: {dose.sessions_this_week} recovery session(s) "
-            f"× ~{dose.session_minutes} min — mobility / soft-tissue / breathwork."
+            f"  Week {w}: place a recovery session on {dates_txt} "
+            f"(~{dose.session_minutes} min each) — mobility / soft-tissue / "
+            "breathwork. These dates are ASSIGNED; do not add, drop, or move them."
         )
 
     # Defensive: an empty week range (e.g. 0-week phase) → nothing to render.
@@ -1471,18 +1512,20 @@ def _format_recovery_programming(
         "Recovery/mobility sessions (kind='recovery') are ADDITIVE and do NOT "
         "count toward the ≤2/day training cap — a day may carry ≤2 training "
         "(cardio/strength) PLUS ≤1 recovery (the recovery takes the last daily "
-        "slot). Place them on/after hard days or on lighter/rest-adjacent days; "
-        "keep them sub-threshold (intensity easy/rest). Prescribe each session's "
-        "movements from the `=== Recovery exercise pool ===` ids only.",
+        "slot). Recovery PLACEMENT is assigned below (deterministic) — emit a "
+        "recovery session on exactly the listed dates, no more and no fewer; "
+        "keep them sub-threshold (intensity easy/rest). Your only job on a "
+        "recovery session is choosing its `recovery_exercises` from the "
+        "`=== Recovery exercise pool ===` ids.",
     ]
     out.extend(week_lines)
     if phase_name == "Peak" or any_high_load:
-        # D4 — load-adaptive rest directive (broader than the count trim): under
-        # high load, full rest is the protective default (adaptation-neutral vs
-        # active recovery per the evidence).
+        # D4 — load-adaptive rest directive (belt-and-suspenders to the assigned
+        # dates, which already encode the high-load bias): under high load, full
+        # rest is the protective default (adaptation-neutral vs active recovery).
         out.append(
-            "  Under high load (Peak phase or a deload week), prefer GENUINE "
-            "full rest over active recovery; keep any recovery minimal and short."
+            "  Under high load (Peak phase or a deload week), full rest is the "
+            "protective default; the assigned recovery dates already reflect this."
         )
     return out
 
@@ -1681,15 +1724,23 @@ def _format_daily_windows_schedule(layer1_payload: dict[str, Any]) -> list[str]:
         lines.append("")
         return lines
 
-    longest_idx: int | None = None
-    longest_dur = 0
-    for i, w in enumerate(windows):
-        if not w.get("enabled"):
-            continue
-        dur = w.get("window_duration") or 0
-        if dur > longest_dur:
-            longest_dur = dur
-            longest_idx = i
+    # Single-source the long-session day with `session_grid.derive_long_session_dow`
+    # (used by deterministic recovery placement) so the rendered `=== Schedule ===`
+    # long day and the recovery placement anchor can never disagree (#698 Slice 3b).
+    long_dow = derive_long_session_dow(windows)
+    longest_idx: int | None = next(
+        (
+            i
+            for i, w in enumerate(windows)
+            if w.get("enabled") and w.get("day_of_week") == long_dow
+        ),
+        None,
+    )
+    longest_dur = (
+        (windows[longest_idx].get("window_duration") or 0)
+        if longest_idx is not None
+        else 0
+    )
 
     for i, w in enumerate(windows):
         dow = w.get("day_of_week", "?")
@@ -1708,8 +1759,7 @@ def _format_daily_windows_schedule(layer1_payload: dict[str, Any]) -> list[str]:
     if doubles:
         lines.append(f"Doubles feasible: {doubles}")
 
-    if longest_idx is not None:
-        long_dow = windows[longest_idx].get("day_of_week", "?")
+    if long_dow is not None:
         lines.append(
             f"Long-session day = {long_dow} ({longest_dur} min, the longest enabled "
             "window). Anchor the primary discipline's weekly `long_slow_distance` "
@@ -1825,11 +1875,21 @@ def render_user_prompt(
         )
     )
     parts.append("")
-    # #698 Track 1 (Slice 2) — the deterministic recovery dose, rendered right
-    # after the training grid but allocated OFF its ceiling (additive; see
-    # `_format_recovery_programming`). Empty for zero-dose phases → no block.
+    # #698 Track 1 (Slice 3b) — the deterministic recovery dose + its assigned
+    # placement DATES, rendered right after the training grid but allocated OFF
+    # its ceiling (additive; see `_format_recovery_programming`). Suppressed when
+    # the recovery pool resolves empty (no unfillable payload); empty for
+    # zero-dose phases too → no block.
+    recovery_pool_is_empty = not compute_recovery_pool_ids(
+        layer2c_payloads or {}, layer2d_payload
+    )
     recovery_lines = _format_recovery_programming(
-        phase_structure, phase_spec.phase_name, week_range
+        phase_structure,
+        phase_spec,
+        week_range,
+        layer1_payload,
+        layer2a_payload,
+        recovery_pool_is_empty,
     )
     if recovery_lines:
         parts.extend(recovery_lines)
@@ -2881,6 +2941,7 @@ def synthesize_phase(
             layer3b_payload=layer3b_payload,
             race_event=race_event_payload,
             capacity_hours=weekly_capacity_hours(layer1_payload),
+            daily_availability_windows=daily_windows_from_layer1(layer1_payload),
         )
         validator_result = validate_layer4_payload(
             payload_attempt, ctx, pass_index=current_pass

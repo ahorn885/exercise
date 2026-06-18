@@ -74,7 +74,7 @@ from layer4.payload import (
     SwimPaceTarget,
     ValidatorResult,
 )
-from layer4.periodization import week_volume_multiplier
+from layer4.periodization import is_deload_week_for, week_volume_multiplier
 
 
 # ─── ValidatorContext ───────────────────────────────────────────────────────
@@ -372,6 +372,26 @@ def weekly_capacity_hours(layer1_payload: dict | None) -> float | None:
     goal = (layer1_payload.get("identity") or {}).get("weekly_hours_target")
     candidates = [x for x in (available, goal) if x is not None and x > 0]
     return min(candidates) if candidates else None
+
+
+def daily_windows_from_layer1(
+    layer1_payload: dict | None,
+) -> tuple[DailyAvailabilityWindow, ...]:
+    """Rebuild the typed `DailyAvailabilityWindow` tuple for `ValidatorContext`
+    from `Layer1Payload.model_dump()` (windows are dicts there). Lets the
+    window-keyed rules (`daily_window_fit`, `schedule_violation`, and the #698
+    Slice-3b `recovery_placement_match`) run against the real availability grid
+    instead of no-opping on an empty tuple. Skips malformed rows defensively."""
+    out: list[DailyAvailabilityWindow] = []
+    for w in (layer1_payload or {}).get("daily_availability_windows") or []:
+        if isinstance(w, DailyAvailabilityWindow):
+            out.append(w)
+        elif isinstance(w, dict):
+            try:
+                out.append(DailyAvailabilityWindow(**w))
+            except (TypeError, ValueError):
+                continue
+    return tuple(out)
 
 
 # ─── Rule 1: volume_band ────────────────────────────────────────────────────
@@ -741,6 +761,115 @@ def _rule_recovery_pool_membership(
                     affected_session_ids=[s.session_id],
                 )
             )
+    return out
+
+
+# ─── Rule 6a-recovery-placement: D6 placement-match (#698 Track 1, Slice 3b) ─
+
+
+def _rule_recovery_placement_match(
+    payload: Layer4Payload, ctx: ValidatorContext
+) -> list[RuleFailure]:
+    """D6 — the week's set of `kind=='recovery'` session DATES must equal the
+    deterministic `compute_recovery_placement(...)` for that week (blocker on any
+    extra, missing, or moved recovery day). This is what makes deterministic
+    placement *enforced*, not merely *requested*. The same pure placement
+    function backs the rendered prompt block (`per_phase`), so a compliant
+    synthesizer payload matches by construction.
+
+    Guarded on grid-derivable context (phase_structure + 2A + availability
+    windows), like the other grid-derived rules — a refresh/single-session path
+    without that context no-ops. Suppress-on-empty is honored: when the recovery
+    pool resolves empty, placement is `[]` for every week, so any placed
+    recovery session is a (correctly-blocked) mistake — but per_phase suppresses
+    the block in that case, so a compliant plan places none and matches."""
+    if payload.mode == "single_session_synthesize":
+        return []
+    if payload.phase_structure is None or ctx.layer2a_payload is None:
+        return []
+    if not ctx.daily_availability_windows:
+        return []
+    # Local imports — `session_grid` and `per_phase` both import THIS module at
+    # top level, so module-level imports here would cycle. Deferred to call time
+    # (mirrors `_rule_recovery_pool_membership`'s lazy `per_phase` import).
+    from layer4.per_phase import compute_recovery_pool_ids
+    from layer4.session_grid import (
+        classify_recovery_load_band,
+        compute_recovery_dose,
+        compute_recovery_placement,
+        derive_enabled_days,
+        derive_long_session_dow,
+    )
+
+    pool_is_empty = True
+    if ctx.layer2c_payloads:
+        pool_is_empty = not compute_recovery_pool_ids(
+            ctx.layer2c_payloads, ctx.layer2d_payload
+        )
+    enabled_days = derive_enabled_days(ctx.daily_availability_windows)
+    long_dow = derive_long_session_dow(ctx.daily_availability_windows)
+    spec_by_phase = {p.phase_name: p for p in payload.phase_structure.phases}
+    total_bands = ctx.layer2a_payload.weekly_total_hours_by_phase or {}
+
+    # Group recovery dates + record every (phase, week) unit present in the
+    # payload (a missing recovery day is a failure, so every week is checked —
+    # not just the weeks that happen to carry recovery).
+    actual_by_week: dict[tuple[str, int], set[date]] = {}
+    weeks_present: set[tuple[str, int]] = set()
+    for s in payload.sessions:
+        if s.phase_metadata is None:
+            continue
+        key = (s.phase_metadata.phase_name, s.phase_metadata.week_in_phase)
+        weeks_present.add(key)
+        if s.kind == "recovery":
+            actual_by_week.setdefault(key, set()).add(s.date)
+
+    out: list[RuleFailure] = []
+    for phase_name, wk in sorted(weeks_present):
+        spec = spec_by_phase.get(phase_name)
+        if spec is None:
+            continue
+        wk_start = spec.start_date + timedelta(days=(wk - 1) * 7)
+        wk_end = min(spec.start_date + timedelta(days=wk * 7 - 1), spec.end_date)
+        week_dates = [
+            wk_start + timedelta(days=i) for i in range((wk_end - wk_start).days + 1)
+        ]
+        high_load = is_deload_week_for(payload.phase_structure, phase_name, wk)
+        dose = compute_recovery_dose(phase_name, high_load).sessions_this_week
+        band = classify_recovery_load_band(
+            ctx.capacity_hours, total_bands.get(phase_name), phase_name, high_load
+        )
+        expected = set(
+            compute_recovery_placement(
+                week_dates, enabled_days, long_dow, dose, band, pool_is_empty
+            )
+        )
+        actual = actual_by_week.get((phase_name, wk), set())
+        if actual == expected:
+            continue
+        extra = sorted(d.isoformat() for d in actual - expected)
+        missing = sorted(d.isoformat() for d in expected - actual)
+        out.append(
+            RuleFailure(
+                rule_name=f"recovery_placement_mismatch_{phase_name.lower()}_w{wk}",
+                phase_name=phase_name,
+                severity="blocker",
+                detail=(
+                    f"{phase_name} week {wk}: recovery dates "
+                    f"{sorted(d.isoformat() for d in actual)} != assigned "
+                    f"{sorted(d.isoformat() for d in expected)} "
+                    f"(extra={extra}, missing={missing})"
+                ),
+                affected_session_ids=[
+                    s.session_id
+                    for s in payload.sessions
+                    if s.kind == "recovery"
+                    and s.phase_metadata is not None
+                    and (s.phase_metadata.phase_name, s.phase_metadata.week_in_phase)
+                    == (phase_name, wk)
+                ],
+            )
+        )
     return out
 
 
@@ -1707,6 +1836,7 @@ _ALL_RULES: tuple[Callable[[Layer4Payload, ValidatorContext], list[RuleFailure]]
     _rule_intensity_dist,
     _rule_two_per_day,
     _rule_recovery_pool_membership,
+    _rule_recovery_placement_match,
     _rule_session_multi_locale,
     _rule_session_locale_not_in_cluster,
     _rule_injury_violation,
