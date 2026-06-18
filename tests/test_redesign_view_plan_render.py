@@ -30,6 +30,7 @@ from layer4.payload import (  # noqa: E402
     PaceTarget,
     PlanSession,
     PowerTarget,
+    RecoveryExercise,
     SessionPhaseMetadata,
     StrengthExercise,
 )
@@ -166,6 +167,28 @@ def _rest_session(**kw):
     return PlanSession(**base)
 
 
+def _recovery_session(**kw):
+    base = dict(
+        session_id='s-rec-1', plan_version_id=46,
+        date=date(2026, 6, 4), day_of_week='Thu', session_index_in_day=0,
+        time_of_day='evening', kind='recovery',
+        duration_min=18, intensity_summary='easy',
+        recovery_exercises=[
+            RecoveryExercise(
+                exercise_id='EX014', exercise_name='Cat-Cow Flow',
+                prescription='2×5/side',
+                instructions='Slow, controlled; breathe into the hip.',
+            ),
+        ],
+        phase_metadata=_phase(),
+        session_notes='Mobility + soft tissue.',
+        coaching_intent='Keep tissue quality up between key days.',
+        coaching_flags=[],
+    )
+    base.update(kw)
+    return PlanSession(**base)
+
+
 @pytest.fixture()
 def client(monkeypatch):
     for mod in list(sys.modules.values()):
@@ -267,6 +290,24 @@ def test_rest_session_surfaces_reason(client, monkeypatch):
     # (The replace is structural: no chip with the word "Rest" outside the name.)
     # Coaching intent still surfaces on rest cards.
     assert 'Recovery for Thursday quality.' in html
+    assert 'style="' not in html
+
+
+def test_recovery_session_renders_as_subordinate_card_with_movements(client, monkeypatch):
+    # #698 Track 1 — a recovery/mobility session renders a distinct light card
+    # (sess-recovery) labeled "Recovery — N min", with its structured movements.
+    _patch_view(monkeypatch, [_recovery_session()])
+    resp = client.get('/plans/v2/46')
+    assert resp.status_code == 200
+    html = resp.get_data(as_text=True)
+    assert 'Recovery — 18 min' in html
+    # Visually subordinate card class is applied.
+    assert 'sess-recovery' in html
+    # The structured recovery_exercises block surfaces (name + prescription).
+    assert 'Cat-Cow Flow' in html
+    assert '2×5/side' in html
+    # Not mislabeled as cardio/strength; no leftover Jinja.
+    assert '{{' not in html and '{%' not in html
     assert 'style="' not in html
 
 

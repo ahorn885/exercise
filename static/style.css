@@ -1276,6 +1276,10 @@ body.bulk-mode { padding-bottom: 80px; }
    un-available base exercise. Surface it as the directive, not a footnote. */
 .app .sess-exercise-sub { font-size: 12px; font-weight: 600; color: var(--fg-1); margin: 3px 0 0; line-height: 1.5; }
 .app .sess-flags { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+/* #698 Track 1 — recovery/mobility session: a light, subordinate card so it
+   reads as secondary to the day's training sessions. */
+.app .sess-card.sess-recovery { border-left: 2px solid var(--hairline); opacity: 0.9; }
+.app .sess-card.sess-recovery .sess-name { color: var(--fg-2); }
 
 /* Layer 5A nutrition — plan-level baseline + per-day fuel */
 .app .nutri-card { margin-top: 16px; }

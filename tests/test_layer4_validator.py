@@ -65,7 +65,7 @@ from layer4 import (
     WeightResult,
     validate_layer4_payload,
 )
-from layer4.payload import RuleFailure
+from layer4.payload import RecoveryExercise, RuleFailure
 from layer4.validator import (
     _iso_week,
     phase_volume_bands_hours,
@@ -206,6 +206,46 @@ def _strength_session(
         session_notes="x",
         coaching_intent="x",
         coaching_flags=coaching_flags or [],
+    )
+
+
+def _recovery_exercise(exercise_id: str = "E-mob") -> RecoveryExercise:
+    return RecoveryExercise(
+        exercise_id=exercise_id,
+        exercise_name=exercise_id,
+        prescription="2×30s/side",
+        instructions="Slow, controlled.",
+    )
+
+
+def _recovery_session(
+    *,
+    session_id: str = "S-rec",
+    d: date = _SCOPE_START,
+    index: int = 0,
+    duration_min: int = 18,
+    intensity_summary: str = "easy",
+    recovery_exercises: list[RecoveryExercise] | None = None,
+    phase_metadata: object = _UNSET,
+) -> PlanSession:
+    dow_map = {0: "Mon", 1: "Tue", 2: "Wed", 3: "Thu", 4: "Fri", 5: "Sat", 6: "Sun"}
+    if phase_metadata is _UNSET:
+        phase_metadata = _phase_metadata()
+    return PlanSession(
+        session_id=session_id,
+        plan_version_id=1,
+        date=d,
+        day_of_week=dow_map[d.weekday()],  # type: ignore[arg-type]
+        session_index_in_day=index,
+        time_of_day="evening",
+        kind="recovery",
+        duration_min=duration_min,
+        intensity_summary=intensity_summary,  # type: ignore[arg-type]
+        recovery_exercises=recovery_exercises or [_recovery_exercise()],
+        phase_metadata=phase_metadata,  # type: ignore[arg-type]
+        session_notes="x",
+        coaching_intent="x",
+        coaching_flags=[],
     )
 
 
@@ -373,13 +413,14 @@ def _layer2c(
     discipline_id: str = "D-001",
     coverage_pct: float = 0.9,
     total_exercises: int = 10,
+    exercise_type: str = "strength",
 ) -> Layer2CPayload:
     exercise_ids = exercise_ids if exercise_ids is not None else ["E-squat"]
     resolved = [
         ResolvedExercise(
             exercise_id=ex,
             exercise_name=ex,
-            exercise_type="strength",
+            exercise_type=exercise_type,
             discipline_ids=[discipline_id],
             sport_relevance_notes={discipline_id: "x"},
             priority_per_discipline={discipline_id: "Medium"},
@@ -1055,6 +1096,155 @@ def test_two_per_day_fires_via_model_construct_bypass():
     tpd = [f for f in failures if f.rule_name.startswith("two_per_day")]
     assert tpd
     assert any("max_exceeded" in f.rule_name for f in tpd)
+
+
+# ─── #698 Track 1 (Slice 3a) — THE FREEZE FIX: two_per_day counts TRAINING
+#     only; recovery is exempt + additive. These are the regression cases that
+#     `validator.py:_rule_two_per_day` froze before the split (a valid
+#     2-training + 1-recovery day tripped `two_per_day_max_exceeded`).
+
+
+def test_two_per_day_2cardio_1recovery_passes_pydantic_and_validator():
+    """The exact frozen scenario: 2 cardio + 1 recovery on one day. Pydantic
+    now accepts it (Slice 1) and the §5.4 rule must agree — no two_per_day."""
+    sessions = [
+        _cardio_session(session_id="S-1", d=_SCOPE_START, index=0),
+        _cardio_session(session_id="S-2", d=_SCOPE_START, index=1),
+        _recovery_session(session_id="S-rec", d=_SCOPE_START, index=2),
+    ]
+    payload = _minimal_layer4(sessions=sessions)  # constructs → pydantic accepts
+    failures = validate_layer4_payload(payload, ValidatorContext()).rule_failures
+    assert not any(f.rule_name.startswith("two_per_day") for f in failures)
+
+
+def test_two_per_day_cardio_strength_recovery_ok():
+    sessions = [
+        _cardio_session(session_id="S-1", d=_SCOPE_START, index=0),
+        _strength_session(session_id="S-2", d=_SCOPE_START, index=1),
+        _recovery_session(session_id="S-rec", d=_SCOPE_START, index=2),
+    ]
+    payload = _minimal_layer4(sessions=sessions)
+    failures = validate_layer4_payload(payload, ValidatorContext()).rule_failures
+    assert not any(f.rule_name.startswith("two_per_day") for f in failures)
+
+
+def test_two_per_day_strength_plus_recovery_does_not_trip_no_cardio():
+    """1 strength + 1 recovery: the training pair has only 1 member, so the
+    '≥1 of 2 must be cardio' blocker must NOT fire (recovery isn't training)."""
+    sessions = [
+        _strength_session(session_id="S-1", d=_SCOPE_START, index=0),
+        _recovery_session(session_id="S-rec", d=_SCOPE_START, index=1),
+    ]
+    payload = _minimal_layer4(sessions=sessions)
+    failures = validate_layer4_payload(payload, ValidatorContext()).rule_failures
+    assert not any("no_cardio" in f.rule_name for f in failures)
+
+
+def test_two_per_day_three_training_blocks_counting_training_only():
+    """3 training on one day still blocks — but the count is TRAINING, and a
+    recovery in the mix doesn't change that (model_construct bypasses pydantic)."""
+    s1 = _cardio_session(session_id="S-1", d=_SCOPE_START, index=0)
+    s2 = _cardio_session(session_id="S-2", d=_SCOPE_START, index=1)
+    s3 = _strength_session(session_id="S-3", d=_SCOPE_START, index=2)
+    rec = _recovery_session(session_id="S-rec", d=_SCOPE_START, index=2)
+    payload = _minimal_layer4(sessions=[_cardio_session()])
+    payload = Layer4Payload.model_construct(
+        **{**payload.__dict__, "sessions": [s1, s2, s3, rec]}
+    )
+    failures = validate_layer4_payload(payload, ValidatorContext()).rule_failures
+    mx = [f for f in failures if "max_exceeded" in f.rule_name]
+    assert mx
+    assert "3 training" in mx[0].detail  # the recovery is not counted
+
+
+def test_two_per_day_double_strength_still_blocks():
+    s1 = _strength_session(session_id="S-1", d=_SCOPE_START, index=0)
+    s2 = _strength_session(session_id="S-2", d=_SCOPE_START, index=1)
+    payload = _minimal_layer4(sessions=[_cardio_session()])
+    payload = Layer4Payload.model_construct(
+        **{**payload.__dict__, "sessions": [s1, s2]}
+    )
+    failures = validate_layer4_payload(payload, ValidatorContext()).rule_failures
+    assert any("double_strength" in f.rule_name for f in failures)
+
+
+def test_two_per_day_two_recovery_same_day_blocks():
+    rec1 = _recovery_session(session_id="S-r1", d=_SCOPE_START, index=0)
+    rec2 = _recovery_session(session_id="S-r2", d=_SCOPE_START, index=1)
+    payload = _minimal_layer4(sessions=[_cardio_session()])
+    payload = Layer4Payload.model_construct(
+        **{**payload.__dict__, "sessions": [rec1, rec2]}
+    )
+    failures = validate_layer4_payload(payload, ValidatorContext()).rule_failures
+    assert any("recovery_exceeded" in f.rule_name for f in failures)
+
+
+def test_recovery_excluded_from_acwr_load():
+    """A recovery session carries ~0 training load — `_session_volume_hours`
+    zeroes it (the ACWR-exclusion mechanism), the same as `rest`."""
+    from layer4.validator import _session_volume_hours
+
+    assert _session_volume_hours(_recovery_session(duration_min=18)) == 0.0
+    assert _session_volume_hours(_cardio_session(duration_min=60)) == 1.0
+
+
+# ─── #698 Track 1 (Slice 3a) — recovery_pool_membership (Rule 6a-recovery) ──
+
+
+def test_recovery_pool_membership_in_pool_no_fire():
+    sessions = [
+        _recovery_session(recovery_exercises=[_recovery_exercise(exercise_id="E-mob")])
+    ]
+    payload = _minimal_layer4(sessions=sessions)
+    ctx = ValidatorContext(
+        layer2c_payloads={
+            "L-home": _layer2c(exercise_ids=["E-mob"], exercise_type="mobility")
+        }
+    )
+    failures = validate_layer4_payload(payload, ctx).rule_failures
+    assert not any(f.rule_name.startswith("recovery_pool_membership") for f in failures)
+
+
+def test_recovery_pool_membership_out_of_pool_blocks():
+    sessions = [
+        _recovery_session(recovery_exercises=[_recovery_exercise(exercise_id="E-fake")])
+    ]
+    payload = _minimal_layer4(sessions=sessions)
+    ctx = ValidatorContext(
+        layer2c_payloads={
+            "L-home": _layer2c(exercise_ids=["E-mob"], exercise_type="mobility")
+        }
+    )
+    failures = validate_layer4_payload(payload, ctx).rule_failures
+    rpm = [f for f in failures if f.rule_name.startswith("recovery_pool_membership")]
+    assert rpm
+    assert rpm[0].severity == "blocker"
+
+
+def test_recovery_pool_membership_skipped_without_2c():
+    sessions = [
+        _recovery_session(recovery_exercises=[_recovery_exercise(exercise_id="E-fake")])
+    ]
+    payload = _minimal_layer4(sessions=sessions)
+    failures = validate_layer4_payload(payload, ValidatorContext()).rule_failures
+    assert not any(f.rule_name.startswith("recovery_pool_membership") for f in failures)
+
+
+def test_recovery_pool_membership_skipped_when_pool_empty():
+    """Empty pool (no recovery-type rows resolve) → skip, don't re-freeze; the
+    suppress-on-empty path (Slice 3b) owns that case."""
+    sessions = [
+        _recovery_session(recovery_exercises=[_recovery_exercise(exercise_id="E-fake")])
+    ]
+    payload = _minimal_layer4(sessions=sessions)
+    # 2C present but only strength-type rows → recovery pool resolves empty.
+    ctx = ValidatorContext(
+        layer2c_payloads={
+            "L-home": _layer2c(exercise_ids=["E-squat"], exercise_type="strength")
+        }
+    )
+    failures = validate_layer4_payload(payload, ctx).rule_failures
+    assert not any(f.rule_name.startswith("recovery_pool_membership") for f in failures)
 
 
 # ─── Rule 6a retired (Track 2 D1) — see Layer4_DeterminismFirst_Synthesis_Design_v1.md.
