@@ -224,14 +224,11 @@ stripped). Tables exist only when the provider exposes data that
 doesn't fit the existing `cardio_log` / `training_log` / `wellness_log`
 shape.
 
-**Polar (AccessLink):**
-
-| Table | For | Uniqueness |
-|---|---|---|
-| `polar_sleep` | Per-night sleep summary + stages (stages stored as JSON column) | `UNIQUE (user_id, date)` |
-| `polar_nightly_recharge` | Per-night ANS charge, HRV RMSSD, breathing rate, recovery indicator | `UNIQUE (user_id, date)` |
-| `polar_cardio_load` | Daily TRIMP cardio load, acute/chronic ratio, training strain | `UNIQUE (user_id, date)` |
-| `polar_continuous_hr_samples` | Time-series 24/7 HR (opt-in; downsampled to 1-min during ingest) | `UNIQUE (user_id, timestamp_ms)` |
+**Polar (AccessLink):** the per-provider wellness tables were retired in
+#681 §4 Slice 3 — sleep / nightly-recharge / cardio-load now record into the
+canonical `provider_raw_record` (`provider='polar'`, `data_type` ∈
+`sleep`/`hrv`/`cardio_load`), and continuous HR into `wellness_log`
+(`source='polar'`). Layer-3A reads them back filtered to `provider='polar'`.
 
 **Wahoo (Cloud API):**
 
@@ -243,9 +240,12 @@ shape.
 
 | Table | For | Uniqueness |
 |---|---|---|
-| `coros_daily_summary` | Per-day: resting HR (`rhr`), calories, steps, overnight HRV (`ppgHrv`), mean sleep HR (`sleepAvgHr`), sleep start/end timestamps | `UNIQUE (user_id, happen_day)` |
-| `coros_hrv_samples` | Per-sample HRV readings (`(timestamp_s, hrv, hr)` triples from `dailyList[].hrvList[]`) | `UNIQUE (user_id, timestamp_s)` |
 | `coros_plans` | Plans pushed via `/coros/tp/list/push` (mirrors `wahoo_plans`) | `id` PK |
+
+COROS wellness was retired in #681 §4 Slice 3: `coros_daily_summary` records into
+`provider_raw_record` (`provider='coros'`, `data_type='daily_summary'`) and the
+per-sample HR into `wellness_log` (`source='coros'`); `coros_hrv_samples` was
+dropped (the per-second HRV value has no consumer).
 
 **RWGPS, Strava, Whoop, etc.:** TBD per provider — add a sub-table
 only when the data doesn't fit an existing log.

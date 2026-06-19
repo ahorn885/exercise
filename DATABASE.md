@@ -856,20 +856,16 @@ Append-only audit + dedup log for incoming provider pushes.
 - Indexes: lookup `(provider, provider_user_id, entity_id, event_type)`;
   partial pending index on `received_at` WHERE `processed_at IS NULL`.
 
-#### `polar_sleep`, `polar_nightly_recharge`, `polar_cardio_load`, `polar_continuous_hr_samples`
+#### Polar wellness — RETIRED (#681 §4 Slice 3)
 
-Per-provider Polar tables. All user-scoped.
-
-- `polar_sleep` — UNIQUE `(user_id, date)`; sleep stages in
-  `stages_json`; UPSERT-capable per spec note (Polar re-analyzes
-  post-sync).
-- `polar_nightly_recharge` — ANS charge + HRV + recovery.
-  UNIQUE `(user_id, date)`.
-- `polar_cardio_load` — daily TRIMP + acute/chronic load.
-  UNIQUE `(user_id, date)`. Polar's ACWR equivalent; treat as one
-  input, not authoritative.
-- `polar_continuous_hr_samples` — opt-in continuous HR.
-  UNIQUE `(user_id, timestamp_ms)`; index `(user_id, timestamp_ms)`.
+The per-provider Polar wellness tables (`polar_sleep`,
+`polar_nightly_recharge`, `polar_cardio_load`,
+`polar_continuous_hr_samples`) were dropped (all empty in prod). Polar daily
+wellness now records into the canonical **`provider_raw_record`**
+(provider-tagged; `data_type` ∈ `sleep` / `hrv` / `cardio_load`;
+record-don't-drop), and continuous HR into the canonical **`wellness_log`**
+(`source='polar'`). Layer-3A reads the daily signals back from
+`provider_raw_record` filtered to `provider='polar'`.
 
 #### `wahoo_plans`
 
@@ -883,16 +879,15 @@ Outbound push log for Wahoo workout plans.
 - **Note:** inbound Wahoo activities flow into `cardio_log` via the
   new `cardio_log.wahoo_workout_id` column; no separate inbound table.
 
-#### `coros_daily_summary`, `coros_hrv_samples`, `coros_plans`
+#### `coros_plans` (+ retired COROS wellness — #681 §4 Slice 3)
 
-Per-provider COROS tables.
-
-- `coros_daily_summary` — daily wellness + sleep window.
-  UNIQUE `(user_id, happen_day)`.
-- `coros_hrv_samples` — per-sample HRV + HR.
-  UNIQUE `(user_id, timestamp_s)`.
 - `coros_plans` — outbound plan push log. FK `plan_items`.
   Index `(plan_item_id)`.
+- **Retired:** `coros_daily_summary` + `coros_hrv_samples` were dropped (empty
+  in prod). COROS daily wellness records into `provider_raw_record`
+  (`provider='coros'`, `data_type='daily_summary'`) and per-sample HR into
+  `wellness_log` (`source='coros'`); the per-second HRV value has no consumer
+  and is not retained.
 
 #### Foreign-id columns on existing tables
 

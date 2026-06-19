@@ -162,10 +162,11 @@ def q_layer3A_recent_sleep(
     since_days: int = _DEFAULT_SLEEP_WINDOW_DAYS,
 ) -> list[SleepRecord]:
     """Recent sleep across three sources: `wellness_self_report` (self-report,
-    `sleep_hours` + `sleep_quality`), `polar_sleep` (`total_sleep_min`),
-    `coros_daily_summary` (`sleep_start_ms` + `sleep_end_ms` deltas). Garmin
-    wellness-log sleep is named in the spec but no Garmin sleep table is
-    deployed; skipped in v1.
+    `sleep_hours` + `sleep_quality`), Polar sleep (`total_sleep_min`) and COROS
+    daily summary (`sleep_start_ms` + `sleep_end_ms` deltas) — both now read from
+    `provider_raw_record` (provider-tagged; #681 §4 Slice 3). Garmin daily sleep
+    sits in `daily_wellness_metrics` but is intentionally not surfaced to
+    Layer-3A yet (tracked as a follow-up); skipped in v1.
 
     Sleep quality is captured only from self-report (1-10 scale); provider
     rows leave it None. Integration Spec §10 says "LLM in 3A resolves
@@ -184,12 +185,17 @@ def q_layer3A_recent_sleep(
     )
     self_report_rows = list(cur.fetchall())
 
+    # Polar sleep + COROS daily summary now live in `provider_raw_record`
+    # (#681 §4 Slice 3), provider-tagged with normalised snake_case fields in
+    # raw_payload (`external_id` is the ISO day).
     cur = db.execute(
         """
-        SELECT date, total_sleep_min
-          FROM polar_sleep
-         WHERE user_id = %s AND date >= %s
-         ORDER BY date DESC
+        SELECT external_id AS date,
+               (raw_payload->>'total_sleep_min')::int AS total_sleep_min
+          FROM provider_raw_record
+         WHERE user_id = %s AND provider = 'polar' AND data_type = 'sleep'
+           AND external_id >= %s
+         ORDER BY external_id DESC
         """,
         (user_id, cutoff_iso),
     )
@@ -197,12 +203,15 @@ def q_layer3A_recent_sleep(
 
     cur = db.execute(
         """
-        SELECT happen_day AS date, sleep_start_ms, sleep_end_ms
-          FROM coros_daily_summary
-         WHERE user_id = %s AND happen_day >= %s
-           AND sleep_start_ms IS NOT NULL
-           AND sleep_end_ms IS NOT NULL
-         ORDER BY happen_day DESC
+        SELECT external_id AS date,
+               (raw_payload->>'sleep_start_ms')::bigint AS sleep_start_ms,
+               (raw_payload->>'sleep_end_ms')::bigint   AS sleep_end_ms
+          FROM provider_raw_record
+         WHERE user_id = %s AND provider = 'coros' AND data_type = 'daily_summary'
+           AND external_id >= %s
+           AND (raw_payload->>'sleep_start_ms') IS NOT NULL
+           AND (raw_payload->>'sleep_end_ms') IS NOT NULL
+         ORDER BY external_id DESC
         """,
         (user_id, cutoff_iso),
     )
@@ -255,20 +264,25 @@ def q_layer3A_recent_hrv(
     *,
     since_days: int = _DEFAULT_HRV_WINDOW_DAYS,
 ) -> list[HRVRecord]:
-    """Recent HRV across two sources: `polar_nightly_recharge.hrv_rmssd_ms`
-    (true RMSSD) and `coros_daily_summary.ppg_hrv` (nightly PPG-derived).
-    High-resolution `coros_hrv_samples` is named in Integration Spec §10 with
-    a "downsampled to nightly" note — out of substrate scope for v1; the
-    nightly COROS summary suffices."""
+    """Recent HRV across two sources, both now read from `provider_raw_record`
+    (provider-tagged; #681 §4 Slice 3): Polar nightly-recharge `hrv_rmssd_ms`
+    (true RMSSD, data_type='hrv') and COROS daily-summary `ppg_hrv` (nightly
+    PPG-derived). COROS per-sample HRV is not retained (no consumer / no
+    canonical home); the nightly COROS summary suffices."""
     cutoff = _window_cutoff(as_of, since_days)
     cutoff_iso = cutoff.isoformat()
 
+    # Polar nightly-recharge (data_type='hrv') + COROS daily summary now live in
+    # `provider_raw_record` (#681 §4 Slice 3).
     cur = db.execute(
         """
-        SELECT date, hrv_rmssd_ms
-          FROM polar_nightly_recharge
-         WHERE user_id = %s AND date >= %s AND hrv_rmssd_ms IS NOT NULL
-         ORDER BY date DESC
+        SELECT external_id AS date,
+               (raw_payload->>'hrv_rmssd_ms')::float AS hrv_rmssd_ms
+          FROM provider_raw_record
+         WHERE user_id = %s AND provider = 'polar' AND data_type = 'hrv'
+           AND external_id >= %s
+           AND (raw_payload->>'hrv_rmssd_ms') IS NOT NULL
+         ORDER BY external_id DESC
         """,
         (user_id, cutoff_iso),
     )
@@ -276,10 +290,12 @@ def q_layer3A_recent_hrv(
 
     cur = db.execute(
         """
-        SELECT happen_day AS date, ppg_hrv
-          FROM coros_daily_summary
-         WHERE user_id = %s AND happen_day >= %s AND ppg_hrv IS NOT NULL
-         ORDER BY happen_day DESC
+        SELECT external_id AS date, (raw_payload->>'ppg_hrv')::float AS ppg_hrv
+          FROM provider_raw_record
+         WHERE user_id = %s AND provider = 'coros' AND data_type = 'daily_summary'
+           AND external_id >= %s
+           AND (raw_payload->>'ppg_hrv') IS NOT NULL
+         ORDER BY external_id DESC
         """,
         (user_id, cutoff_iso),
     )
@@ -362,9 +378,10 @@ def q_layer3A_combined_load(
     acute_window_days: int = _DEFAULT_ACUTE_WINDOW_DAYS,
 ) -> CombinedLoadReport:
     """ACWR per discipline + combined, computed from `cardio_log.duration_min`
-    over the chronic window. `polar_cardio_load` is read for the cross-
-    reference (latest row only) but is NOT the primary load source per
-    Integration Spec §10."""
+    over the chronic window. Polar cardio-load (now in `provider_raw_record`,
+    data_type='cardio_load'; #681 §4 Slice 3) is read for the cross-reference
+    (latest row only) but is NOT the primary load source per Integration
+    Spec §10."""
     chronic_cutoff = _window_cutoff(as_of, window_days)
     acute_cutoff = _window_cutoff(as_of, acute_window_days)
     chronic_iso = chronic_cutoff.isoformat()
@@ -417,12 +434,19 @@ def q_layer3A_combined_load(
         combined_acute, combined_chronic, window_days, acute_window_days
     )
 
+    # Polar cardio-load now lives in `provider_raw_record` (#681 §4 Slice 3) —
+    # latest day's normalised fields for the cross-reference.
     cur = db.execute(
         """
-        SELECT date, daily_load, acute_load, chronic_load, cardio_load_status, strain
-          FROM polar_cardio_load
-         WHERE user_id = %s
-         ORDER BY date DESC
+        SELECT external_id AS date,
+               (raw_payload->>'daily_load')::float   AS daily_load,
+               (raw_payload->>'acute_load')::float   AS acute_load,
+               (raw_payload->>'chronic_load')::float AS chronic_load,
+               raw_payload->>'cardio_load_status'    AS cardio_load_status,
+               (raw_payload->>'strain')::float       AS strain
+          FROM provider_raw_record
+         WHERE user_id = %s AND provider = 'polar' AND data_type = 'cardio_load'
+         ORDER BY external_id DESC
          LIMIT 1
         """,
         (user_id,),
@@ -527,17 +551,23 @@ def q_layer3A_connected_providers(
         "coros": (wrow.get("coros_n") or 0) > 0,
     }
 
+    # Coverage counts now come from `provider_raw_record` (#681 §4 Slice 3),
+    # same provider-tagged windows as the per-data accessors above.
     cur = db.execute(
-        "SELECT COUNT(*) AS n FROM polar_sleep WHERE user_id = %s AND date >= %s",
+        """
+        SELECT COUNT(*) AS n FROM provider_raw_record
+         WHERE user_id = %s AND provider = 'polar' AND data_type = 'sleep'
+           AND external_id >= %s
+        """,
         (user_id, sleep_cutoff),
     )
     polar_sleep_n = (cur.fetchone() or {}).get("n") or 0
 
     cur = db.execute(
         """
-        SELECT COUNT(*) AS n
-          FROM coros_daily_summary
-         WHERE user_id = %s AND happen_day >= %s AND sleep_start_ms IS NOT NULL
+        SELECT COUNT(*) AS n FROM provider_raw_record
+         WHERE user_id = %s AND provider = 'coros' AND data_type = 'daily_summary'
+           AND external_id >= %s AND (raw_payload->>'sleep_start_ms') IS NOT NULL
         """,
         (user_id, sleep_cutoff),
     )
@@ -545,9 +575,9 @@ def q_layer3A_connected_providers(
 
     cur = db.execute(
         """
-        SELECT COUNT(*) AS n
-          FROM polar_nightly_recharge
-         WHERE user_id = %s AND date >= %s AND hrv_rmssd_ms IS NOT NULL
+        SELECT COUNT(*) AS n FROM provider_raw_record
+         WHERE user_id = %s AND provider = 'polar' AND data_type = 'hrv'
+           AND external_id >= %s AND (raw_payload->>'hrv_rmssd_ms') IS NOT NULL
         """,
         (user_id, hrv_cutoff),
     )
@@ -555,9 +585,9 @@ def q_layer3A_connected_providers(
 
     cur = db.execute(
         """
-        SELECT COUNT(*) AS n
-          FROM coros_daily_summary
-         WHERE user_id = %s AND happen_day >= %s AND ppg_hrv IS NOT NULL
+        SELECT COUNT(*) AS n FROM provider_raw_record
+         WHERE user_id = %s AND provider = 'coros' AND data_type = 'daily_summary'
+           AND external_id >= %s AND (raw_payload->>'ppg_hrv') IS NOT NULL
         """,
         (user_id, hrv_cutoff),
     )

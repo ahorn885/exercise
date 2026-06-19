@@ -893,7 +893,23 @@ _PG_MIGRATIONS = [
     # Columns left nullable cover metrics whose FIT field mapping isn't
     # locked yet (sleep stages, training readiness, VO2max, SpO2) — they'll
     # populate as the parser's TODO mappings are resolved.
-    """CREATE TABLE IF NOT EXISTS garmin_daily_metrics (
+    # Slice 3 (#681 §4): provider-neutral rename — this table now holds
+    # device-derived daily wellness for ANY provider (Garmin populates it today;
+    # Polar/COROS land their raw daily wellness in provider_raw_record, promoted
+    # here in a later multi-source wave). Idempotent: rename only when the legacy
+    # table exists and the new name doesn't; carry the explicit index name across
+    # too so we don't leave a duplicate. A fresh DB skips this and the CREATE
+    # below builds the table under its new name directly.
+    """DO $$
+    BEGIN
+      IF to_regclass('public.garmin_daily_metrics') IS NOT NULL
+         AND to_regclass('public.daily_wellness_metrics') IS NULL THEN
+        ALTER TABLE garmin_daily_metrics RENAME TO daily_wellness_metrics;
+        ALTER INDEX IF EXISTS garmin_daily_metrics_user_date_idx
+              RENAME TO daily_wellness_metrics_user_date_idx;
+      END IF;
+    END $$""",
+    """CREATE TABLE IF NOT EXISTS daily_wellness_metrics (
         id SERIAL PRIMARY KEY,
         user_id INTEGER NOT NULL REFERENCES users(id),
         date TEXT NOT NULL,
@@ -932,38 +948,38 @@ _PG_MIGRATIONS = [
         updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
         UNIQUE(user_id, date)
     )""",
-    "CREATE INDEX IF NOT EXISTS garmin_daily_metrics_user_date_idx ON garmin_daily_metrics(user_id, date)",
-    # Backfill columns for environments where garmin_daily_metrics was created
+    "CREATE INDEX IF NOT EXISTS daily_wellness_metrics_user_date_idx ON daily_wellness_metrics(user_id, date)",
+    # Backfill columns for environments where daily_wellness_metrics was created
     # by an earlier migration (#460 / #463). IF NOT EXISTS keeps these
     # idempotent across re-runs.
-    "ALTER TABLE garmin_daily_metrics ADD COLUMN IF NOT EXISTS resting_metabolic_rate INTEGER",
-    "ALTER TABLE garmin_daily_metrics ADD COLUMN IF NOT EXISTS resting_hr INTEGER",
-    "ALTER TABLE garmin_daily_metrics ADD COLUMN IF NOT EXISTS resting_hr_7day_avg INTEGER",
-    "ALTER TABLE garmin_daily_metrics ADD COLUMN IF NOT EXISTS sleep_duration_sub_score INTEGER",
-    "ALTER TABLE garmin_daily_metrics ADD COLUMN IF NOT EXISTS hrv_highest_5min_ms REAL",
-    "ALTER TABLE garmin_daily_metrics ADD COLUMN IF NOT EXISTS heat_acclimation_pct INTEGER",
-    "ALTER TABLE garmin_daily_metrics ADD COLUMN IF NOT EXISTS acute_training_load INTEGER",
-    "ALTER TABLE garmin_daily_metrics ADD COLUMN IF NOT EXISTS restless_moments INTEGER",
-    "ALTER TABLE garmin_daily_metrics ADD COLUMN IF NOT EXISTS floors_climbed INTEGER",
-    "ALTER TABLE garmin_daily_metrics ADD COLUMN IF NOT EXISTS floors_descended INTEGER",
-    "ALTER TABLE garmin_daily_metrics ADD COLUMN IF NOT EXISTS intensity_minutes INTEGER",
+    "ALTER TABLE daily_wellness_metrics ADD COLUMN IF NOT EXISTS resting_metabolic_rate INTEGER",
+    "ALTER TABLE daily_wellness_metrics ADD COLUMN IF NOT EXISTS resting_hr INTEGER",
+    "ALTER TABLE daily_wellness_metrics ADD COLUMN IF NOT EXISTS resting_hr_7day_avg INTEGER",
+    "ALTER TABLE daily_wellness_metrics ADD COLUMN IF NOT EXISTS sleep_duration_sub_score INTEGER",
+    "ALTER TABLE daily_wellness_metrics ADD COLUMN IF NOT EXISTS hrv_highest_5min_ms REAL",
+    "ALTER TABLE daily_wellness_metrics ADD COLUMN IF NOT EXISTS heat_acclimation_pct INTEGER",
+    "ALTER TABLE daily_wellness_metrics ADD COLUMN IF NOT EXISTS acute_training_load INTEGER",
+    "ALTER TABLE daily_wellness_metrics ADD COLUMN IF NOT EXISTS restless_moments INTEGER",
+    "ALTER TABLE daily_wellness_metrics ADD COLUMN IF NOT EXISTS floors_climbed INTEGER",
+    "ALTER TABLE daily_wellness_metrics ADD COLUMN IF NOT EXISTS floors_descended INTEGER",
+    "ALTER TABLE daily_wellness_metrics ADD COLUMN IF NOT EXISTS intensity_minutes INTEGER",
     # PR #489 — new mappings decoded from May 28 + May 30 reference data:
     # sleep_deep_min via [346] field_9 (already in the table create above
     # but Phase B environments may pre-date it), sleep_stress_avg derived
     # from [346] field_15 ÷ sample_count, sleep_wake_count from [382] field_2.
-    "ALTER TABLE garmin_daily_metrics ADD COLUMN IF NOT EXISTS sleep_stress_avg REAL",
-    "ALTER TABLE garmin_daily_metrics ADD COLUMN IF NOT EXISTS sleep_wake_count INTEGER",
+    "ALTER TABLE daily_wellness_metrics ADD COLUMN IF NOT EXISTS sleep_stress_avg REAL",
+    "ALTER TABLE daily_wellness_metrics ADD COLUMN IF NOT EXISTS sleep_wake_count INTEGER",
     # `[346]` sub-score contributors (#283) — all 4 positions locked Jun 10
     # 2026 against 6 reference nights (Sep 8 2025 was the disambiguator).
     # field_5 = Light, field_7 = REM, field_8 = Stress, field_10 = Awake.
-    "ALTER TABLE garmin_daily_metrics ADD COLUMN IF NOT EXISTS sleep_light_sub_score INTEGER",
-    "ALTER TABLE garmin_daily_metrics ADD COLUMN IF NOT EXISTS sleep_rem_sub_score INTEGER",
-    "ALTER TABLE garmin_daily_metrics ADD COLUMN IF NOT EXISTS sleep_stress_sub_score INTEGER",
-    "ALTER TABLE garmin_daily_metrics ADD COLUMN IF NOT EXISTS sleep_awake_sub_score INTEGER",
+    "ALTER TABLE daily_wellness_metrics ADD COLUMN IF NOT EXISTS sleep_light_sub_score INTEGER",
+    "ALTER TABLE daily_wellness_metrics ADD COLUMN IF NOT EXISTS sleep_rem_sub_score INTEGER",
+    "ALTER TABLE daily_wellness_metrics ADD COLUMN IF NOT EXISTS sleep_stress_sub_score INTEGER",
+    "ALTER TABLE daily_wellness_metrics ADD COLUMN IF NOT EXISTS sleep_awake_sub_score INTEGER",
     # `[384] field_18` best-guess = % of overnight stress samples above
     # Garmin's "resting" threshold (>25 on the 0-100 scale). Fits 6
     # reference nights within rounding. Not Connect-visible directly.
-    "ALTER TABLE garmin_daily_metrics ADD COLUMN IF NOT EXISTS sleep_stress_above_resting_pct INTEGER",
+    "ALTER TABLE daily_wellness_metrics ADD COLUMN IF NOT EXISTS sleep_stress_above_resting_pct INTEGER",
     # D-50 Phase 1 — provider integration tables. Mirrors the SQLite block
     # above with PG-native types (SERIAL, TIMESTAMP DEFAULT NOW(), BIGINT,
     # BOOLEAN). Per Athlete_Data_Integration_Spec v3 §4–§6. Garmin paused
@@ -1002,57 +1018,15 @@ _PG_MIGRATIONS = [
     )""",
     "CREATE INDEX IF NOT EXISTS idx_webhook_events_lookup ON webhook_events (provider, provider_user_id, entity_id, event_type)",
     "CREATE INDEX IF NOT EXISTS idx_webhook_events_pending ON webhook_events (received_at) WHERE processed_at IS NULL",
-    """CREATE TABLE IF NOT EXISTS polar_sleep (
-        id SERIAL PRIMARY KEY,
-        user_id INTEGER NOT NULL REFERENCES users(id),
-        date TEXT NOT NULL,
-        sleep_start_time TIMESTAMP,
-        sleep_end_time TIMESTAMP,
-        total_sleep_min INTEGER,
-        continuity REAL,
-        light_sleep_min INTEGER,
-        deep_sleep_min INTEGER,
-        rem_sleep_min INTEGER,
-        unknown_sleep_min INTEGER,
-        stages_json TEXT,
-        raw_payload TEXT,
-        fetched_at TIMESTAMP DEFAULT NOW(),
-        UNIQUE (user_id, date)
-    )""",
-    """CREATE TABLE IF NOT EXISTS polar_nightly_recharge (
-        id SERIAL PRIMARY KEY,
-        user_id INTEGER NOT NULL REFERENCES users(id),
-        date TEXT NOT NULL,
-        ans_charge INTEGER,
-        ans_charge_status TEXT,
-        hrv_rmssd_ms REAL,
-        breathing_rate REAL,
-        recovery_indicator TEXT,
-        raw_payload TEXT,
-        fetched_at TIMESTAMP DEFAULT NOW(),
-        UNIQUE (user_id, date)
-    )""",
-    """CREATE TABLE IF NOT EXISTS polar_cardio_load (
-        id SERIAL PRIMARY KEY,
-        user_id INTEGER NOT NULL REFERENCES users(id),
-        date TEXT NOT NULL,
-        daily_load REAL,
-        acute_load REAL,
-        chronic_load REAL,
-        cardio_load_status TEXT,
-        strain REAL,
-        raw_payload TEXT,
-        fetched_at TIMESTAMP DEFAULT NOW(),
-        UNIQUE (user_id, date)
-    )""",
-    """CREATE TABLE IF NOT EXISTS polar_continuous_hr_samples (
-        id SERIAL PRIMARY KEY,
-        user_id INTEGER NOT NULL REFERENCES users(id),
-        timestamp_ms BIGINT NOT NULL,
-        heart_rate INTEGER,
-        UNIQUE (user_id, timestamp_ms)
-    )""",
-    "CREATE INDEX IF NOT EXISTS idx_polar_hr_user_time ON polar_continuous_hr_samples (user_id, timestamp_ms)",
+    # Slice 3 (#681 §4): the per-provider Polar wellness tables are retired.
+    # Polar sleep / nightly-recharge / cardio-load now record into the canonical
+    # provider_raw_record (record-don't-drop, provider-tagged), and continuous HR
+    # into wellness_log. Empty in prod (zero-row gate verified 2026-06-19), so
+    # the drops are clean. DROP IF EXISTS keeps this idempotent across deploys.
+    "DROP TABLE IF EXISTS polar_sleep",
+    "DROP TABLE IF EXISTS polar_nightly_recharge",
+    "DROP TABLE IF EXISTS polar_cardio_load",
+    "DROP TABLE IF EXISTS polar_continuous_hr_samples",
     """CREATE TABLE IF NOT EXISTS wahoo_plans (
         id SERIAL PRIMARY KEY,
         user_id INTEGER NOT NULL REFERENCES users(id),
@@ -1067,29 +1041,12 @@ _PG_MIGRATIONS = [
         updated_at TIMESTAMP DEFAULT NOW()
     )""",
     "CREATE INDEX IF NOT EXISTS idx_wahoo_plans_plan_item ON wahoo_plans (plan_item_id)",
-    """CREATE TABLE IF NOT EXISTS coros_daily_summary (
-        id SERIAL PRIMARY KEY,
-        user_id INTEGER NOT NULL REFERENCES users(id),
-        happen_day TEXT NOT NULL,
-        rhr INTEGER,
-        calories INTEGER,
-        steps INTEGER,
-        ppg_hrv INTEGER,
-        sleep_avg_hr INTEGER,
-        sleep_start_ms BIGINT,
-        sleep_end_ms BIGINT,
-        raw_payload TEXT,
-        fetched_at TIMESTAMP DEFAULT NOW(),
-        UNIQUE (user_id, happen_day)
-    )""",
-    """CREATE TABLE IF NOT EXISTS coros_hrv_samples (
-        id SERIAL PRIMARY KEY,
-        user_id INTEGER NOT NULL REFERENCES users(id),
-        timestamp_s BIGINT NOT NULL,
-        hrv INTEGER,
-        hr INTEGER,
-        UNIQUE (user_id, timestamp_s)
-    )""",
+    # Slice 3 (#681 §4): COROS daily-summary now records into provider_raw_record
+    # and per-sample HR into wellness_log; the per-provider tables are retired
+    # (empty in prod — zero-row gate verified 2026-06-19). coros_plans below is
+    # the plan-PUSH table and is unaffected.
+    "DROP TABLE IF EXISTS coros_daily_summary",
+    "DROP TABLE IF EXISTS coros_hrv_samples",
     """CREATE TABLE IF NOT EXISTS coros_plans (
         id SERIAL PRIMARY KEY,
         user_id INTEGER NOT NULL REFERENCES users(id),
