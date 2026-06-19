@@ -147,7 +147,7 @@ PG_SCHEMA = '''
         PRIMARY KEY (provider, data_type, direction, source_value)
     );
     -- Generic raw-passthrough store (record-don't-drop, all buckets). Created in
-    -- Slice 1; its first writers (bucket-3 raw + the indoor-machine flag) land in
+    -- Slice 1. First writers (bucket-3 raw + the indoor-machine flag) land in
     -- Slice 2 per ProviderTranslation_StorageSchema_681_BuildDesign §3.3/§7.
     CREATE TABLE IF NOT EXISTS provider_raw_record (
         id            SERIAL PRIMARY KEY,
@@ -2792,8 +2792,20 @@ def init_postgres():
     import psycopg2
     conn = psycopg2.connect(DATABASE_URL)
     cur = conn.cursor()
+    # Each schema statement commits on its own. Previously the whole block ran
+    # in one uncommitted transaction with no per-statement guard, so a single
+    # bad fragment aborted the ENTIRE init (silently, caught by app.py) — which
+    # is exactly what a ';' inside a SQL comment did: the naive split(';') broke
+    # the comment mid-line into a non-statement fragment, a syntax error that
+    # blocked every schema/migration change from Slice 1 on (#681 §4 prod
+    # incident, 2026-06-19). IF NOT EXISTS makes each statement safe to re-run.
     for stmt in [s.strip() for s in PG_SCHEMA.split(';') if s.strip()]:
-        cur.execute(stmt)
+        try:
+            cur.execute(stmt)
+            conn.commit()
+        except Exception as e:
+            conn.rollback()
+            print(f"[init_db] schema stmt failed (skipped): {e!r} :: {stmt[:100]!r}")  # Rule #15
     # Run migrations for columns added after initial deploy. Callable migrations
     # receive `cur`; string migrations are executed directly. Each migration
     # runs in its own transaction so a failure (e.g. SET NOT NULL on a column
