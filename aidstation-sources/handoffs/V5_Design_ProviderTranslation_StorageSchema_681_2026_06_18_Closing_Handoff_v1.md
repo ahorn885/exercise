@@ -76,7 +76,7 @@ Wrote `designs/ProviderTranslation_StorageSchema_681_BuildDesign_v1.md` — conc
 | Resolver repoint | `provider_strength_resolve.py` | `_alias_map()` returns `STRENGTH_NAME_TO_EX_ID`; backstop uses `STRENGTH_COARSE_NAME_TO_EX_ID`; no local dicts. `pytest tests/test_provider_strength_resolve.py` = 19 passed |
 | Rolling state | `aidstation-sources/CURRENT_STATE.md` | "Last shipped" = storage-schema design **+ Slice 1 built** / names this handoff; matrix v2 demoted to first Predecessor |
 | Canon (still unchanged) | `etl/layer0/discipline_canon.py` | highest D-032; no `etl/` `D-033` (this wave adds no discipline) |
-| PR / issue | PR [#733](https://github.com/ahorn885/exercise/pull/733); GitHub #681 (open) | #733 = design + Slice 1; #681 has the wave comment; epic kept open |
+| PR / issue | PR [#733](https://github.com/ahorn885/exercise/pull/733) **MERGED** (squash `30e7aa8`); GitHub #681 (open) | #733 = design + Slice 1; #681 has the wave comment; epic kept open |
 
 ## §9 — Carry-forward
 
