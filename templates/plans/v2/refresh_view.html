@@ -61,6 +61,15 @@
           </div>
           {% if sess.coaching_intent %}<p class="sess-intent">{{ sess.coaching_intent }}</p>{% endif %}
           {% if sess.session_notes %}<p class="sess-notes">{{ sess.session_notes }}</p>{% endif %}
+          {# #698 Track 2 (Slice C2) — optional cardio drill on a cardio session #}
+          {% if sess.cardio_drills %}
+            {% for drill in sess.cardio_drills %}
+              <p class="sess-notes">
+                <span class="chip accent">drill</span>
+                {{ drill.exercise_name }}{% if drill.prescription %} — {{ drill.prescription }}{% endif %}
+              </p>
+            {% endfor %}
+          {% endif %}
         </div>
       {% endfor %}
     </div>
