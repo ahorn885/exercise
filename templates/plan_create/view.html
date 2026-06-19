@@ -154,6 +154,21 @@
             </ol>
             {% endif %}
 
+            {% if sess.kind == 'cardio' and sess.cardio_drills %}
+            <ol class="sess-exercises">
+              {% for ex in sess.cardio_drills %}
+              <li class="sess-exercise">
+                <div class="sess-exercise-head">
+                  <span class="sess-exercise-name">{{ ex.exercise_name }}</span>
+                  <span class="chip">drill</span>
+                </div>
+                {% if ex.prescription %}<div class="sess-exercise-prescription">{{ ex.prescription }}</div>{% endif %}
+                {% if ex.instructions %}<p class="sess-block-instr">{{ ex.instructions }}</p>{% endif %}
+              </li>
+              {% endfor %}
+            </ol>
+            {% endif %}
+
             {% if sess.kind == 'strength' and sess.strength_exercises %}
             <ol class="sess-exercises">
               {% for ex in sess.strength_exercises %}
