@@ -7,14 +7,16 @@ on payload shape (which top-level list is populated):
 
   - `sportDataList`  → activities → `cardio_log` (UPSERT on
                                     `(user_id, coros_label_id)`)
-  - `dailyDataList`  → daily summary → `coros_daily_summary` (UPSERT on
-                                       `(user_id, happen_day)`)
-  - `hrvDataList`    → HRV samples → `coros_hrv_samples` (UPSERT on
-                                     `(user_id, timestamp_s)`)
+  - `dailyDataList`  → daily summary → `provider_raw_record`
+                       (provider='coros', data_type='daily_summary')
+  - `hrvDataList`    → per-sample HR → canonical `wellness_log`
 
 Per Integration v4 §5.3 + §6. COROS does not have a per-activity table;
 activities flow into `cardio_log` directly with `coros_label_id` as
-the dedup key per §6.
+the dedup key per §6. #681 §4 Slice 3 retired the per-provider COROS
+wellness tables: the daily summary records into `provider_raw_record`
+(provider-tagged, record-don't-drop — Layer-3A reads it back filtered to
+`provider='coros'`) and per-sample HR flows into the canonical `wellness_log`.
 
 First-pass mapping. COROS's full payload surface is wider than what we
 read here; missing fields land in `webhook_events.payload` (raw JSON)
@@ -134,54 +136,73 @@ def _ingest_activity(db: Any, user_id: int, item: dict) -> None:
 
 
 def _ingest_daily_summary(db: Any, user_id: int, item: dict) -> None:
-    """COROS daily summary → `coros_daily_summary`. UPSERT on
-    `(user_id, happen_day)`; COROS may re-emit the same day after
-    later device sync, in which case the new payload supersedes."""
+    """COROS daily summary → `provider_raw_record` (provider='coros',
+    data_type='daily_summary'). Idempotent per (user, provider, data_type,
+    external_id=happen_day); COROS may re-emit the same day after a later device
+    sync, in which case the new payload supersedes. Normalised snake_case keys
+    so Layer-3A reads stable fields back out of raw_payload (`sleep_start_ms` /
+    `sleep_end_ms` for sleep, `ppg_hrv` for HRV); `_raw` carries the full body."""
     happen_day = _normalise_happen_day(item.get('happenDay'))
     if not happen_day:
         return
 
-    db.execute(
-        'INSERT INTO coros_daily_summary '
-        '(user_id, happen_day, rhr, calories, steps, ppg_hrv, '
-        ' sleep_avg_hr, sleep_start_ms, sleep_end_ms, raw_payload) '
-        'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) '
-        'ON CONFLICT (user_id, happen_day) DO UPDATE SET '
-        '    rhr = EXCLUDED.rhr, '
-        '    calories = EXCLUDED.calories, '
-        '    steps = EXCLUDED.steps, '
-        '    ppg_hrv = EXCLUDED.ppg_hrv, '
-        '    sleep_avg_hr = EXCLUDED.sleep_avg_hr, '
-        '    sleep_start_ms = EXCLUDED.sleep_start_ms, '
-        '    sleep_end_ms = EXCLUDED.sleep_end_ms, '
-        '    raw_payload = EXCLUDED.raw_payload, '
-        '    fetched_at = NOW()',
-        (
-            user_id, happen_day,
-            _as_int(item.get('rhr')),
-            _as_int(item.get('calories')),
-            _as_int(item.get('steps')),
-            _as_int(item.get('ppgHrv')),
-            _as_int(item.get('sleepAvgHr')),
-            _as_int(item.get('sleepStartTime')),
-            _as_int(item.get('sleepEndTime')),
-            json.dumps(item),
-        ),
-    )
+    _record_raw(db, user_id, 'daily_summary', happen_day, {
+        'rhr': _as_int(item.get('rhr')),
+        'calories': _as_int(item.get('calories')),
+        'steps': _as_int(item.get('steps')),
+        'ppg_hrv': _as_int(item.get('ppgHrv')),
+        'sleep_avg_hr': _as_int(item.get('sleepAvgHr')),
+        'sleep_start_ms': _as_int(item.get('sleepStartTime')),
+        'sleep_end_ms': _as_int(item.get('sleepEndTime')),
+        '_raw': item,
+    })
 
 
 def _ingest_hrv_sample(db: Any, user_id: int, item: dict) -> None:
-    """COROS HRV sample → `coros_hrv_samples`. Idempotent on
-    `(user_id, timestamp_s)`; per-second granularity per COROS docs."""
+    """COROS HRV sample → canonical `wellness_log` (per-timestamp HR,
+    `source='coros'`). COROS HRV timestamps are seconds → ms for wellness_log.
+    The per-second HRV value itself has no canonical home and no consumer, so
+    only the HR is retained; the nightly PPG-HRV that Layer-3A reads comes from
+    the daily summary."""
     ts = _as_int(item.get('timestamp') or item.get('timestampS'))
     if ts is None:
         return
+    _record_hr_sample(db, user_id, ts * 1000, _as_int(item.get('hr')))
+
+
+# ── Canonical writers (#681 §4 Slice 3) ───────────────────────────────
+
+def _record_raw(
+    db: Any, user_id: int, data_type: str, external_id: str, payload: dict,
+) -> None:
+    """Record a COROS daily-wellness signal into `provider_raw_record`
+    (record-don't-drop, provider-tagged). Idempotent per
+    (user_id, provider, data_type, external_id). `external_id` is the ISO day;
+    `observed_at` mirrors it (a daily aggregate has no finer timestamp). A raise
+    propagates to the webhook handler so the `webhook_events` row stays for
+    re-dispatch (the existing contract)."""
     db.execute(
-        'INSERT INTO coros_hrv_samples (user_id, timestamp_s, hrv, hr) '
-        'VALUES (?, ?, ?, ?) '
-        'ON CONFLICT (user_id, timestamp_s) DO UPDATE SET '
-        '    hrv = EXCLUDED.hrv, hr = EXCLUDED.hr',
-        (user_id, ts, _as_int(item.get('hrv')), _as_int(item.get('hr'))),
+        'INSERT INTO provider_raw_record '
+        '(user_id, provider, data_type, external_id, observed_at, raw_payload) '
+        'VALUES (?, ?, ?, ?, ?, ?::jsonb) '
+        'ON CONFLICT (user_id, provider, data_type, external_id) DO UPDATE SET '
+        '    observed_at = EXCLUDED.observed_at, '
+        '    raw_payload = EXCLUDED.raw_payload, '
+        '    fetched_at = NOW()',
+        (user_id, 'coros', data_type, external_id, external_id, json.dumps(payload)),
+    )
+
+
+def _record_hr_sample(db: Any, user_id: int, ts_ms: int, heart_rate: int | None) -> None:
+    """COROS HR sample → canonical `wellness_log` (per-timestamp HR,
+    `source='coros'`). Idempotent on (user_id, timestamp_ms)."""
+    date = datetime.fromtimestamp(ts_ms / 1000, tz=timezone.utc).date().isoformat()
+    db.execute(
+        'INSERT INTO wellness_log (user_id, date, timestamp_ms, heart_rate, source) '
+        'VALUES (?, ?, ?, ?, ?) '
+        'ON CONFLICT (user_id, timestamp_ms) DO UPDATE SET '
+        '    heart_rate = EXCLUDED.heart_rate, source = EXCLUDED.source',
+        (user_id, date, ts_ms, heart_rate, 'coros'),
     )
 
 

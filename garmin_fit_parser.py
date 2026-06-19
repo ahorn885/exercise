@@ -1060,7 +1060,7 @@ def parse_wellness_daily_extras(fit_bytes: bytes) -> dict:
     Returns `{date, resting_metabolic_rate?, resting_hr?, resting_hr_7day_avg?,
     floors_climbed?, floors_descended?, intensity_minutes?, spo2_avg?,
     spo2_low?}` or `{}` if none of the daily fields are present. The bulk
-    importer UPSERTs this into `garmin_daily_metrics` so the wellness page
+    importer UPSERTs this into `daily_wellness_metrics` so the wellness page
     can surface it alongside the daily activity card.
     """
     from fit_tool.fit_file import FitFile
@@ -2079,7 +2079,7 @@ def parse_metrics_fit(fit_bytes: bytes) -> dict:
     """Parse a Garmin `_METRICS.fit` file (FileIdMessage.type = 44).
 
     Returns a dict of daily-derived metrics keyed for UPSERT into
-    `garmin_daily_metrics`. `date` is the UTC date of the record timestamp
+    `daily_wellness_metrics`. `date` is the UTC date of the record timestamp
     (Garmin attributes the night to the wake day). Returns `{}` if the file
     carries no recognized metric.
 
@@ -2191,7 +2191,7 @@ def parse_sleep_data_fit(fit_bytes: bytes) -> dict:
     """Parse a Garmin `_SLEEP_DATA.fit` file (FileIdMessage.type = 49).
 
     Returns the daily-derived sleep keys for UPSERT into
-    `garmin_daily_metrics`: sleep_score, the 4 contributor sub-scores
+    `daily_wellness_metrics`: sleep_score, the 4 contributor sub-scores
     (Light/REM/Stress/Awake — all locked Jun 10 2026), Deep minutes,
     Stress sum/sample-count, restless moments.
     """

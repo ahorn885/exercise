@@ -958,9 +958,10 @@ class HRVRecord(_Base):
 
 
 class PolarCardioLoadCrossRef(_Base):
-    """Latest `polar_cardio_load` row, exposed per Integration Spec §10 as a
-    cross-reference (NOT the primary ACWR number). Primary acute/chronic per
-    `CombinedLoadReport` is computed from `cardio_log` durations in hours."""
+    """Latest Polar cardio-load record (from `provider_raw_record`,
+    data_type='cardio_load'; #681 §4 Slice 3), exposed per Integration Spec §10
+    as a cross-reference (NOT the primary ACWR number). Primary acute/chronic
+    per `CombinedLoadReport` is computed from `cardio_log` durations in hours."""
 
     date: date
     daily_load: float | None = None

@@ -12,13 +12,19 @@ resource from AccessLink before persisting:
               the transaction URI to commit (Polar then stops re-queuing
               those exercises in subsequent transactions).
   - SLEEP → GET /v3/users/{uid}/sleep (or the notification's `url`) →
-            upsert per-date into `polar_sleep`.
-  - NIGHTLY_RECHARGE → GET /v3/users/{uid}/nightly-recharge → upsert
-            per-date into `polar_nightly_recharge`.
-  - CARDIO_LOAD → GET /v3/users/{uid}/cardio-load → upsert per-date
-            into `polar_cardio_load`.
+            record per-date into `provider_raw_record`
+            (provider='polar', data_type='sleep').
+  - NIGHTLY_RECHARGE → GET /v3/users/{uid}/nightly-recharge → record
+            per-date into `provider_raw_record` (data_type='hrv').
+  - CARDIO_LOAD → GET /v3/users/{uid}/cardio-load → record per-date
+            into `provider_raw_record` (data_type='cardio_load').
   - CONTINUOUS_HEART_RATE → GET the resource → upsert per-timestamp
-            into `polar_continuous_hr_samples`.
+            into the canonical `wellness_log`.
+
+Per #681 §4 Slice 3 the per-provider Polar wellness tables were retired:
+sleep / nightly-recharge / cardio-load land in `provider_raw_record`
+(provider-tagged, record-don't-drop — Layer-3A reads them back filtered to
+`provider='polar'`), and continuous HR flows into the canonical `wellness_log`.
 
 Per Integration v4 §5.3 + §6. The exercise-transaction handshake is
 Polar-specific; the daily pulls are direct reads with no commit step.
@@ -218,38 +224,21 @@ def _ingest_sleep(
         date = night.get('date')
         if not date:
             continue
-        db.execute(
-            'INSERT INTO polar_sleep '
-            '(user_id, date, sleep_start_time, sleep_end_time, total_sleep_min, '
-            ' continuity, light_sleep_min, deep_sleep_min, rem_sleep_min, '
-            ' unknown_sleep_min, stages_json, raw_payload) '
-            'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) '
-            'ON CONFLICT (user_id, date) DO UPDATE SET '
-            '    sleep_start_time = EXCLUDED.sleep_start_time, '
-            '    sleep_end_time = EXCLUDED.sleep_end_time, '
-            '    total_sleep_min = EXCLUDED.total_sleep_min, '
-            '    continuity = EXCLUDED.continuity, '
-            '    light_sleep_min = EXCLUDED.light_sleep_min, '
-            '    deep_sleep_min = EXCLUDED.deep_sleep_min, '
-            '    rem_sleep_min = EXCLUDED.rem_sleep_min, '
-            '    unknown_sleep_min = EXCLUDED.unknown_sleep_min, '
-            '    stages_json = EXCLUDED.stages_json, '
-            '    raw_payload = EXCLUDED.raw_payload, '
-            '    fetched_at = NOW()',
-            (
-                user_id, date,
-                night.get('sleep_start_time'),
-                night.get('sleep_end_time'),
-                _as_int(night.get('total_sleep_min') or night.get('total-sleep-min')),
-                _as_float(night.get('continuity')),
-                _as_int(night.get('light_sleep_min')),
-                _as_int(night.get('deep_sleep_min')),
-                _as_int(night.get('rem_sleep_min')),
-                _as_int(night.get('unknown_sleep_min')),
-                json.dumps(night.get('sleep_stages') or night.get('stages') or {}),
-                json.dumps(night),
-            ),
-        )
+        # Normalised snake_case keys so Layer-3A reads stable fields back out of
+        # raw_payload; `_raw` carries the full provider body (record-don't-drop).
+        _record_raw(db, user_id, 'sleep', date, {
+            'total_sleep_min': _as_int(
+                night.get('total_sleep_min') or night.get('total-sleep-min')),
+            'continuity': _as_float(night.get('continuity')),
+            'light_sleep_min': _as_int(night.get('light_sleep_min')),
+            'deep_sleep_min': _as_int(night.get('deep_sleep_min')),
+            'rem_sleep_min': _as_int(night.get('rem_sleep_min')),
+            'unknown_sleep_min': _as_int(night.get('unknown_sleep_min')),
+            'sleep_start_time': night.get('sleep_start_time'),
+            'sleep_end_time': night.get('sleep_end_time'),
+            'stages': night.get('sleep_stages') or night.get('stages') or {},
+            '_raw': night,
+        })
 
 
 # ── NIGHTLY_RECHARGE: direct pull ─────────────────────────────────────
@@ -269,29 +258,17 @@ def _ingest_nightly_recharge(
         date = item.get('date')
         if not date:
             continue
-        db.execute(
-            'INSERT INTO polar_nightly_recharge '
-            '(user_id, date, ans_charge, ans_charge_status, hrv_rmssd_ms, '
-            ' breathing_rate, recovery_indicator, raw_payload) '
-            'VALUES (?, ?, ?, ?, ?, ?, ?, ?) '
-            'ON CONFLICT (user_id, date) DO UPDATE SET '
-            '    ans_charge = EXCLUDED.ans_charge, '
-            '    ans_charge_status = EXCLUDED.ans_charge_status, '
-            '    hrv_rmssd_ms = EXCLUDED.hrv_rmssd_ms, '
-            '    breathing_rate = EXCLUDED.breathing_rate, '
-            '    recovery_indicator = EXCLUDED.recovery_indicator, '
-            '    raw_payload = EXCLUDED.raw_payload, '
-            '    fetched_at = NOW()',
-            (
-                user_id, date,
-                _as_int(item.get('ans_charge')),
-                item.get('ans_charge_status'),
-                _as_float(item.get('hrv_rmssd_ms') or item.get('hrv-rmssd-ms')),
-                _as_float(item.get('breathing_rate') or item.get('breathing_rate_avg')),
-                item.get('recovery_indicator'),
-                json.dumps(item),
-            ),
-        )
+        # data_type='hrv' — Layer-3A's recent-HRV accessor reads `hrv_rmssd_ms`.
+        _record_raw(db, user_id, 'hrv', date, {
+            'hrv_rmssd_ms': _as_float(
+                item.get('hrv_rmssd_ms') or item.get('hrv-rmssd-ms')),
+            'ans_charge': _as_int(item.get('ans_charge')),
+            'ans_charge_status': item.get('ans_charge_status'),
+            'breathing_rate': _as_float(
+                item.get('breathing_rate') or item.get('breathing_rate_avg')),
+            'recovery_indicator': item.get('recovery_indicator'),
+            '_raw': item,
+        })
 
 
 # ── CARDIO_LOAD: direct pull ──────────────────────────────────────────
@@ -311,29 +288,16 @@ def _ingest_cardio_load(
         date = item.get('date')
         if not date:
             continue
-        db.execute(
-            'INSERT INTO polar_cardio_load '
-            '(user_id, date, daily_load, acute_load, chronic_load, '
-            ' cardio_load_status, strain, raw_payload) '
-            'VALUES (?, ?, ?, ?, ?, ?, ?, ?) '
-            'ON CONFLICT (user_id, date) DO UPDATE SET '
-            '    daily_load = EXCLUDED.daily_load, '
-            '    acute_load = EXCLUDED.acute_load, '
-            '    chronic_load = EXCLUDED.chronic_load, '
-            '    cardio_load_status = EXCLUDED.cardio_load_status, '
-            '    strain = EXCLUDED.strain, '
-            '    raw_payload = EXCLUDED.raw_payload, '
-            '    fetched_at = NOW()',
-            (
-                user_id, date,
-                _as_float(item.get('daily_load')),
-                _as_float(item.get('acute_load')),
-                _as_float(item.get('chronic_load')),
-                item.get('cardio_load_status'),
-                _as_float(item.get('strain')),
-                json.dumps(item),
-            ),
-        )
+        # data_type='cardio_load' — Layer-3A's combined-load accessor reads the
+        # latest of these as a Polar cross-reference (not the primary ACWR).
+        _record_raw(db, user_id, 'cardio_load', date, {
+            'daily_load': _as_float(item.get('daily_load')),
+            'acute_load': _as_float(item.get('acute_load')),
+            'chronic_load': _as_float(item.get('chronic_load')),
+            'cardio_load_status': item.get('cardio_load_status'),
+            'strain': _as_float(item.get('strain')),
+            '_raw': item,
+        })
 
 
 # ── CONTINUOUS_HEART_RATE: direct pull ────────────────────────────────
@@ -358,13 +322,8 @@ def _ingest_continuous_hr(
         ts = _as_int(s.get('timestamp_ms') or s.get('timestamp-ms') or s.get('timestamp'))
         if ts is None:
             continue
-        db.execute(
-            'INSERT INTO polar_continuous_hr_samples '
-            '(user_id, timestamp_ms, heart_rate) '
-            'VALUES (?, ?, ?) '
-            'ON CONFLICT (user_id, timestamp_ms) DO UPDATE SET '
-            '    heart_rate = EXCLUDED.heart_rate',
-            (user_id, ts, _as_int(s.get('heart_rate') or s.get('heart-rate'))),
+        _record_hr_sample(
+            db, user_id, ts, _as_int(s.get('heart_rate') or s.get('heart-rate')),
         )
 
 
@@ -383,6 +342,42 @@ def _get_json(url: str, access_token: str) -> dict:
     )
     resp.raise_for_status()
     return resp.json() if resp.content else {}
+
+
+# ── Canonical writers (#681 §4 Slice 3) ───────────────────────────────
+
+def _record_raw(
+    db: Any, user_id: int, data_type: str, external_id: str, payload: dict,
+) -> None:
+    """Record a Polar daily-wellness signal into `provider_raw_record`
+    (record-don't-drop, provider-tagged). Idempotent per
+    (user_id, provider, data_type, external_id) so a re-delivered day refreshes
+    in place. `external_id` is the ISO date; `observed_at` mirrors it (a daily
+    aggregate has no finer timestamp). A raise propagates to the webhook handler
+    so the `webhook_events` row stays for re-dispatch (the existing contract)."""
+    db.execute(
+        'INSERT INTO provider_raw_record '
+        '(user_id, provider, data_type, external_id, observed_at, raw_payload) '
+        'VALUES (?, ?, ?, ?, ?, ?::jsonb) '
+        'ON CONFLICT (user_id, provider, data_type, external_id) DO UPDATE SET '
+        '    observed_at = EXCLUDED.observed_at, '
+        '    raw_payload = EXCLUDED.raw_payload, '
+        '    fetched_at = NOW()',
+        (user_id, 'polar', data_type, external_id, external_id, json.dumps(payload)),
+    )
+
+
+def _record_hr_sample(db: Any, user_id: int, ts_ms: int, heart_rate: int | None) -> None:
+    """Polar continuous-HR sample → canonical `wellness_log` (per-timestamp HR,
+    `source='polar'`). Idempotent on (user_id, timestamp_ms)."""
+    date = datetime.fromtimestamp(ts_ms / 1000, tz=timezone.utc).date().isoformat()
+    db.execute(
+        'INSERT INTO wellness_log (user_id, date, timestamp_ms, heart_rate, source) '
+        'VALUES (?, ?, ?, ?, ?) '
+        'ON CONFLICT (user_id, timestamp_ms) DO UPDATE SET '
+        '    heart_rate = EXCLUDED.heart_rate, source = EXCLUDED.source',
+        (user_id, date, ts_ms, heart_rate, 'polar'),
+    )
 
 
 # ── Coercion helpers ──────────────────────────────────────────────────

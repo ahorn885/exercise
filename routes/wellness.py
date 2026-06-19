@@ -6,7 +6,7 @@ measure the same thing (sleep score, energy / body battery). Reads pull from:
   - `wellness_self_report`   — self-reported sleep, energy, soreness, mood
   - `body_metrics`           — weight, body fat %, resting HR
   - `wellness_log`           — Garmin per-second wellness (`_WELLNESS.fit`)
-  - `garmin_daily_metrics`   — Garmin daily-derived metrics from
+  - `daily_wellness_metrics`   — Garmin daily-derived metrics from
                                `_METRICS.fit` / `_SLEEP_DATA.fit` /
                                `_HRV_STATUS.fit` (sleep score, HRV, …)
   - `cardio_log`             — cardio activities (count + duration)
@@ -202,7 +202,7 @@ def index():
     # minus BB value at sleep_start. This is the cleanest single-number
     # "how well did this sleep recover you?" signal: it's directly visible
     # in the wellness_log time-series, anchored to the per-night sleep
-    # window from `garmin_daily_metrics.sleep_start_ms / sleep_end_ms`.
+    # window from `daily_wellness_metrics.sleep_start_ms / sleep_end_ms`.
     # ROW_NUMBER() picks the first BB sample at/after sleep_start and the
     # last sample at/before sleep_end so partial-coverage nights still
     # land an honest delta. Partitioned by dm.date (the sleep-night
@@ -213,7 +213,7 @@ def index():
         '  SELECT dm.date AS sleep_date, wl.body_battery, wl.timestamp_ms, '
         '    ROW_NUMBER() OVER (PARTITION BY dm.date ORDER BY wl.timestamp_ms ASC)  AS rn_start, '
         '    ROW_NUMBER() OVER (PARTITION BY dm.date ORDER BY wl.timestamp_ms DESC) AS rn_end '
-        '  FROM garmin_daily_metrics dm '
+        '  FROM daily_wellness_metrics dm '
         '  JOIN wellness_log wl ON wl.user_id = dm.user_id '
         '    AND wl.body_battery IS NOT NULL '
         '    AND wl.timestamp_ms BETWEEN dm.sleep_start_ms AND dm.sleep_end_ms '
@@ -241,7 +241,7 @@ def index():
         '  sleep_light_sub_score, sleep_rem_sub_score, '
         '  sleep_stress_sub_score, sleep_awake_sub_score, '
         '  sleep_stress_above_resting_pct '
-        'FROM garmin_daily_metrics WHERE user_id=? AND date >= ? ORDER BY date',
+        'FROM daily_wellness_metrics WHERE user_id=? AND date >= ? ORDER BY date',
         (uid, cutoff)
     ).fetchall()
 
@@ -465,7 +465,7 @@ def _build_chart_data(self_rows, body_rows, cardio_rows, strength_rows,
     resting_calories = _maybe_series(daily_by_date, 'resting_metabolic_rate')
 
     # Heart-rate card already pulls min/avg/max from wellness_log; if
-    # garmin_daily_metrics has the authoritative resting HR from [211],
+    # daily_wellness_metrics has the authoritative resting HR from [211],
     # that wins over wellness_log's MIN (which can catch brief dips and
     # under-report). Render both — the rest line on the HR card swaps to
     # Garmin's value when present.

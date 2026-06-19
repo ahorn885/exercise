@@ -655,7 +655,7 @@ def import_bulk():
     for a whole export folder. Activity files (cardio / strength) are logged and
     optionally auto-matched to a scheduled plan workout (pass match_plan=0 to log
     raw); wellness / daily-metric files (`_WELLNESS`, `_METRICS`, `_SLEEP_DATA`,
-    `_HRV_STATUS`) are merged into wellness_log / garmin_daily_metrics instead.
+    `_HRV_STATUS`) are merged into wellness_log / daily_wellness_metrics instead.
     Idempotent (content-hash dedup for activities, per-row dedup for wellness).
     Returns JSON for the drag-and-drop UI."""
     db = get_db()
@@ -1405,13 +1405,13 @@ def _upsert_garmin_daily_metrics(db, uid: int, date: str, fields: dict) -> bool:
     cols = [c for c in _DAILY_METRICS_COLUMNS if c in fields]
     if not cols:
         return False
-    set_clause = ', '.join(f'{c} = COALESCE(EXCLUDED.{c}, garmin_daily_metrics.{c})'
+    set_clause = ', '.join(f'{c} = COALESCE(EXCLUDED.{c}, daily_wellness_metrics.{c})'
                            for c in cols)
     col_sql = ', '.join(cols)
     placeholder_sql = ', '.join(['?'] * len(cols))
     values = [fields[c] for c in cols]
     db.execute(
-        f'INSERT INTO garmin_daily_metrics (user_id, date, {col_sql}, updated_at) '
+        f'INSERT INTO daily_wellness_metrics (user_id, date, {col_sql}, updated_at) '
         f'VALUES (?, ?, {placeholder_sql}, NOW()) '
         f'ON CONFLICT (user_id, date) DO UPDATE SET '
         f'{set_clause}, updated_at = NOW()',
@@ -1421,7 +1421,7 @@ def _upsert_garmin_daily_metrics(db, uid: int, date: str, fields: dict) -> bool:
 
 
 def _metrics_to_db_fields(parsed: dict) -> dict:
-    """Translate the parser's dict shape into `garmin_daily_metrics` column
+    """Translate the parser's dict shape into `daily_wellness_metrics` column
     values. Lists land as JSON strings; ms timestamps pass through."""
     out: dict = {}
     # sleep_avg_respiration intentionally NOT in this list — retired Jun 7
@@ -1454,7 +1454,7 @@ def _metrics_to_db_fields(parsed: dict) -> dict:
 
 def _ingest_wellness_fit(db, uid, name, raw, kind, results, summary):
     """Ingest one non-activity .FIT — daily metrics (`_METRICS`/`_SLEEP_DATA`/
-    `_HRV_STATUS`) into garmin_daily_metrics, or per-second `_WELLNESS` data into
+    `_HRV_STATUS`) into daily_wellness_metrics, or per-second `_WELLNESS` data into
     wellness_log (+ daily extras). Appends one row to `results` and updates
     `summary` in place. Shared by the wellness bulk endpoint and the unified
     activity+wellness bulk endpoint so both route files identically.
@@ -1556,7 +1556,7 @@ def import_wellness_bulk():
 
       - `_WELLNESS.fit` (per-second monitoring) → `wellness_log`
       - `_METRICS.fit` / `_SLEEP_DATA.fit` / `_HRV_STATUS.fit` (daily-derived
-        metrics) → `garmin_daily_metrics`, UPSERTed by (user, date) so the
+        metrics) → `daily_wellness_metrics`, UPSERTed by (user, date) so the
         three file types can land in any order and each contributes the
         columns it owns
 
