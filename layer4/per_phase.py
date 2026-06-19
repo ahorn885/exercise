@@ -229,6 +229,22 @@ _TAPER_ANCHOR_BY_FORMAT: dict[str, str] = {
 }
 
 
+# The ratified `# Cardio drills` SYSTEM_PROMPT section (#698 Track 2). Defined as
+# a shared constant so the plan-refresh path (`plan_refresh._synthesize_refresh_tier`)
+# renders the identical instruction without duplicating the wording. Spliced into
+# SYSTEM_PROMPT below (byte-identical to the prior inline copy).
+CARDIO_DRILLS_PROMPT_SECTION = """# Cardio drills
+
+A cardio session may optionally carry **one** drill from the `=== Cardio drill pool (consider these) ===` menu — a discrete, catalog-defined skill, transition, or interval drill that sharpens a discipline (a brick run, a single-leg cycling drill, a swim CSS set). Drills are optional and additive to the session's free-composed `cardio_blocks`: they refine *how* a session trains a discipline; they do not add sessions or volume. Most cardio sessions carry none.
+
+- **At most one drill per session.** A session targets one technical focus, not a drill circuit. Never emit more than one `cardio_drills` entry.
+- **Pick only from the rendered pool, by id.** Choose `exercise_id`s from the menu only — never invent one, and never name a drill or drill-type that isn't in the menu. If no menu is rendered, prescribe no drills.
+- **Attach a drill only to a session of its own discipline.** The menu is grouped under each discipline header; a drill belongs on a session training that discipline (a bike over-under on a bike session, a swim set on a swim session), never on an unrelated one.
+- **Emphasis follows the drill's character, noted inline per row.** Skill/transition/form drills are a Base-phase tool — build technique early and let them fade toward the race. Interval and endurance drills follow the session's normal phase intent (threshold/VO2 work belongs in Build/Peak).
+- **Two cautions:** (a) a form/cadence drill does **not** move steady road economy — for a pure road run or ride, prioritize volume and strength, and reach for a cadence/single-leg cue only for a specific biomechanics or injury reason, not as default seasoning; (b) a brick or transition drill belongs **only** on a day that actually pairs the two sports — a brick run goes on a day with a bike session immediately before it, not on a standalone run.
+- Give each drill a free-text `prescription` (e.g. "4×50m, focus on catch", "15 min off the bike at goal pace") and brief `instructions`. `cardio_drills` rides `kind='cardio'` sessions only; leave it null on strength / recovery / rest."""
+
+
 SYSTEM_PROMPT = (
     """You are AIDSTATION's Layer 4 per-phase synthesizer.
 
@@ -306,16 +322,9 @@ Prescribe the movements as a `recovery_exercises[]` block (the structural analog
 
 Load-adaptive rest: full rest is the protective floor and recovery sessions are the active-recovery mechanism — the two are adaptation-neutral, so under high load (Peak phase or a deload week) prefer genuine full rest over active recovery and keep any recovery minimal and short.
 
-# Cardio drills
-
-A cardio session may optionally carry **one** drill from the `=== Cardio drill pool (consider these) ===` menu — a discrete, catalog-defined skill, transition, or interval drill that sharpens a discipline (a brick run, a single-leg cycling drill, a swim CSS set). Drills are optional and additive to the session's free-composed `cardio_blocks`: they refine *how* a session trains a discipline; they do not add sessions or volume. Most cardio sessions carry none.
-
-- **At most one drill per session.** A session targets one technical focus, not a drill circuit. Never emit more than one `cardio_drills` entry.
-- **Pick only from the rendered pool, by id.** Choose `exercise_id`s from the menu only — never invent one, and never name a drill or drill-type that isn't in the menu. If no menu is rendered, prescribe no drills.
-- **Attach a drill only to a session of its own discipline.** The menu is grouped under each discipline header; a drill belongs on a session training that discipline (a bike over-under on a bike session, a swim set on a swim session), never on an unrelated one.
-- **Emphasis follows the drill's character, noted inline per row.** Skill/transition/form drills are a Base-phase tool — build technique early and let them fade toward the race. Interval and endurance drills follow the session's normal phase intent (threshold/VO2 work belongs in Build/Peak).
-- **Two cautions:** (a) a form/cadence drill does **not** move steady road economy — for a pure road run or ride, prioritize volume and strength, and reach for a cadence/single-leg cue only for a specific biomechanics or injury reason, not as default seasoning; (b) a brick or transition drill belongs **only** on a day that actually pairs the two sports — a brick run goes on a day with a bike session immediately before it, not on a standalone run.
-- Give each drill a free-text `prescription` (e.g. "4×50m, focus on catch", "15 min off the bike at goal pace") and brief `instructions`. `cardio_drills` rides `kind='cardio'` sessions only; leave it null on strength / recovery / rest.
+"""
+    + CARDIO_DRILLS_PROMPT_SECTION
+    + """
 
 # Schedule respect
 

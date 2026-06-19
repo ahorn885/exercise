@@ -59,6 +59,7 @@ from layer4.context import (
 )
 from layer4.errors import Layer4InputError, Layer4OutputError
 from layer4.per_phase import (
+    CARDIO_DRILLS_PROMPT_SECTION,
     _format_cardio_drill_pool,
     block_output_budget,
     compute_cardio_drill_pool_ids,
@@ -465,24 +466,6 @@ _T3_MAX_SCOPE_DAYS = 32
 # Drives both the tool schema's `maxItems` and the output-token budget the driver
 # sizes per `per_phase.block_output_budget` (so a dense block doesn't truncate).
 _TIER_MAX_SESSIONS = {"T1": 4, "T2": 14, "T3": 56}
-
-
-# #698 Track 2 (Slice C2) — the cardio-drill SYSTEM_PROMPT section, appended to
-# each refresh tier's prompt so a refresh has the SAME drill fidelity as plan
-# generation. VERBATIM mirror of the Andy-ratified `# Cardio drills` section in
-# `per_phase.py`'s SYSTEM_PROMPT (A2) — keep the two in sync if either changes.
-_CARDIO_DRILLS_PROMPT_SECTION = """
-
-# Cardio drills
-
-A cardio session may optionally carry **one** drill from the `=== Cardio drill pool (consider these) ===` menu — a discrete, catalog-defined skill, transition, or interval drill that sharpens a discipline (a brick run, a single-leg cycling drill, a swim CSS set). Drills are optional and additive to the session's free-composed `cardio_blocks`: they refine *how* a session trains a discipline; they do not add sessions or volume. Most cardio sessions carry none.
-
-- **At most one drill per session.** A session targets one technical focus, not a drill circuit. Never emit more than one `cardio_drills` entry.
-- **Pick only from the rendered pool, by id.** Choose `exercise_id`s from the menu only — never invent one, and never name a drill or drill-type that isn't in the menu. If no menu is rendered, prescribe no drills.
-- **Attach a drill only to a session of its own discipline.** The menu is grouped under each discipline header; a drill belongs on a session training that discipline (a bike over-under on a bike session, a swim set on a swim session), never on an unrelated one.
-- **Emphasis follows the drill's character, noted inline per row.** Skill/transition/form drills are a Base-phase tool — build technique early and let them fade toward the race. Interval and endurance drills follow the session's normal phase intent (threshold/VO2 work belongs in Build/Peak).
-- **Two cautions:** (a) a form/cadence drill does **not** move steady road economy — for a pure road run or ride, prioritize volume and strength, and reach for a cadence/single-leg cue only for a specific biomechanics or injury reason, not as default seasoning; (b) a brick or transition drill belongs **only** on a day that actually pairs the two sports — a brick run goes on a day with a bike session immediately before it, not on a standalone run.
-- Give each drill a free-text `prescription` (e.g. "4×50m, focus on catch", "15 min off the bike at goal pace") and brief `instructions`. `cardio_drills` rides `kind='cardio'` sessions only; leave it null on strength / recovery / rest."""
 
 
 def _validate_inputs(
@@ -1056,7 +1039,7 @@ def llm_layer4_plan_refresh(
     # Suppress-on-empty: only carry the drill instructions when a menu renders,
     # so the LLM is never handed an unfillable cardio_drills[] (mirrors §6a-G1).
     if cardio_drill_pool_lines:
-        system_prompt = system_prompt + _CARDIO_DRILLS_PROMPT_SECTION
+        system_prompt = system_prompt + "\n\n" + CARDIO_DRILLS_PROMPT_SECTION
     tool_schema = build_record_refresh_sessions_tool(
         tier,
         feasible_pool_ids=feasible_pool_ids or None,

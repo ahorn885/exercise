@@ -38,14 +38,25 @@
       <div class="card mb-2">
         <div class="card-body">
           <h6 class="card-title">
-            {{ block.block_type|replace('_', ' ')|title }} &middot; {{ block.duration_min }} min
+            {{ block.block_kind|replace('_', ' ')|title }} &middot; {{ block.duration_min }} min &middot; {{ block.intensity_zone }}
           </h6>
-          {% if block.description %}
-            <p class="card-text mb-1">{{ block.description }}</p>
+          {% if block.block_kind == 'interval_set' and block.repetitions %}
+            <p class="card-text mb-1"><small>{{ block.repetitions }}× &middot; rest {{ block.rest_between_min }} min {{ block.rest_intensity_zone or '' }}</small></p>
           {% endif %}
-          {% if block.hr_target %}
-            <small class="text-muted">HR target: {{ block.hr_target.hr_bpm_low }}–{{ block.hr_target.hr_bpm_high }} bpm</small>
+          {% set t = block.intensity_target %}
+          {% set target_str = '' %}
+          {% if t.hr_bpm_low is defined %}{% set target_str = 'HR ' ~ t.hr_bpm_low ~ '–' ~ t.hr_bpm_high ~ ' bpm' %}
+          {% elif t.power_w_low is defined %}{% set target_str = t.power_w_low ~ '–' ~ t.power_w_high ~ ' W' %}
+          {% elif t.pace_per_km_low is defined %}{% set target_str = 'pace ' ~ t.pace_per_km_low ~ '–' ~ t.pace_per_km_high ~ ' /km' %}
+          {% elif t.pace_per_100m_low is defined %}{% set target_str = 'pace ' ~ t.pace_per_100m_low ~ '–' ~ t.pace_per_100m_high ~ ' /100m' %}
+          {% elif t.rpe_low is defined %}{% set target_str = 'RPE ' ~ t.rpe_low ~ '–' ~ t.rpe_high %}
+          {% elif t.vert_m_per_hr_low is defined %}{% set target_str = t.vert_m_per_hr_low ~ '–' ~ t.vert_m_per_hr_high ~ ' vm/h' %}
+          {% elif t.strokes_per_min_low is defined %}{% set target_str = t.strokes_per_min_low ~ '–' ~ t.strokes_per_min_high ~ ' spm' %}
+          {% elif t.rpm_low is defined %}{% set target_str = t.rpm_low ~ '–' ~ t.rpm_high ~ ' rpm' %}
+          {% elif t.grade_min is defined %}{% set target_str = t.grade_min ~ '–' ~ t.grade_max ~ ' (' ~ t.grade_system|replace('_', ' ') ~ ')' %}
           {% endif %}
+          {% if target_str %}<p class="card-text mb-1"><small class="text-muted">{{ target_str }}</small></p>{% endif %}
+          {% if block.instructions %}<p class="card-text mb-0">{{ block.instructions }}</p>{% endif %}
         </div>
       </div>
     {% endfor %}
@@ -53,10 +64,14 @@
     <ul class="list-group mb-3">
       {% for ex in sess.strength_exercises %}
         <li class="list-group-item">
-          <strong>{{ ex.exercise_name }}</strong> &mdash;
-          {{ ex.sets }} × {{ ex.reps }}
-          {% if ex.load_kg %}@ {{ ex.load_kg }} kg{% endif %}
-          {% if ex.notes %}<br><small class="text-muted">{{ ex.notes }}</small>{% endif %}
+          <strong>{{ ex.exercise_name }}</strong>
+          {% if ex.resolution_tier == 2 %}<span class="badge bg-secondary">substitute</span>
+          {% elif ex.resolution_tier == 3 %}<span class="badge bg-secondary">proxy</span>{% endif %}
+          <br>
+          {{ ex.sets }} × {{ ex.reps_per_set }} @ {{ ex.load_prescription }}
+          &middot; rest {{ ex.rest_between_sets_sec }}s
+          {% if ex.tempo %}&middot; tempo {{ ex.tempo }}{% endif %}
+          {% if ex.instructions %}<br><small class="text-muted">{{ ex.instructions }}</small>{% endif %}
         </li>
       {% endfor %}
     </ul>
