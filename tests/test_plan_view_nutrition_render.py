@@ -15,6 +15,7 @@ from datetime import date, datetime, timezone
 from jinja2 import ChoiceLoader, DictLoader, Environment, FileSystemLoader
 
 from layer4.context import (
+    CaffeineRacedayPlan,
     DailyNutritionBaseline,
     DailyPhaseTargets,
     MacroTargets,
@@ -97,10 +98,15 @@ def _race_fueling() -> RaceDayFueling:
         cho_g_per_hr_low=60.0, cho_g_per_hr_high=90.0,
         na_mg_per_hr_low=400.0, na_mg_per_hr_high=700.0,
         fluid_ml_per_hr_low=450.0, fluid_ml_per_hr_high=750.0,
+        protein_g_per_hr_after_hr_n=(6, 5.0, 10.0),
         sport_modifier_applied=1.0, salt_tolerance_modifier_applied=1.0,
         heat_acclim_modifier_applied=1.0,
-        recommended_formats=["gel"], blocked_formats=[],
-        sleep_dep_overlay_applies=False, notes=[],
+        recommended_formats=["gel", "drink mix"], blocked_formats=["solid bar"],
+        caffeine_plan=CaffeineRacedayPlan(
+            pre_race_mg=100.0, during_race_mg_per_hr=50.0,
+            timing="from hr 4", notes="cap at 400 mg/day",
+        ),
+        sleep_dep_overlay_applies=True, notes=["start fueling early"],
     )
 
 
@@ -156,6 +162,17 @@ def test_renders_plan_level_and_per_day_nutrition():
     assert "Spring 100" in html
     assert "g/h" in html
     assert "ml/h" in html
+    # Full race-day fueling detail (#300 item 2): protein-after, caffeine,
+    # recommended/blocked formats, sleep-dep overlay, and notes all surface.
+    assert "protein 5–10 g/h after hr 6" in html
+    assert "caffeine: from hr 4" in html
+    assert "pre-race 100 mg" in html
+    assert "50 mg/h" in html
+    assert "cap at 400 mg/day" in html
+    assert "formats: gel, drink mix" in html
+    assert "avoid: solid bar" in html
+    assert "sleep-dep fueling overlay" in html
+    assert "start fueling early" in html
 
 
 def test_renders_without_nutrition():

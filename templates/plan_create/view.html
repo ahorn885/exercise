@@ -87,6 +87,12 @@
             <div class="race-fuel">
               <span class="chip warn">🏁 {{ rf.event_name }}</span>
               <span class="rail-note">CHO {{ '%g'|format(rf.cho_g_per_hr[0]) }}–{{ '%g'|format(rf.cho_g_per_hr[1]) }} g/h · Na {{ '%g'|format(rf.na_mg_per_hr[0]) }}–{{ '%g'|format(rf.na_mg_per_hr[1]) }} mg/h{% if rf.fluid_ml_per_hr %} · fluid {{ '%g'|format(rf.fluid_ml_per_hr[0]) }}–{{ '%g'|format(rf.fluid_ml_per_hr[1]) }} ml/h{% endif %}</span>
+              {% if rf.protein_after %}<span class="rail-note">protein {{ '%g'|format(rf.protein_after[1]) }}–{{ '%g'|format(rf.protein_after[2]) }} g/h after hr {{ rf.protein_after[0] }}</span>{% endif %}
+              {% if rf.caffeine %}<span class="rail-note">caffeine: {{ rf.caffeine.timing }}{% if rf.caffeine.pre_race_mg %} · pre-race {{ '%g'|format(rf.caffeine.pre_race_mg) }} mg{% endif %}{% if rf.caffeine.during_race_mg_per_hr %} · {{ '%g'|format(rf.caffeine.during_race_mg_per_hr) }} mg/h{% endif %}{% if rf.caffeine.notes %} — {{ rf.caffeine.notes }}{% endif %}</span>{% endif %}
+              {% if rf.recommended_formats %}<span class="rail-note">formats: {{ rf.recommended_formats | join(', ') }}</span>{% endif %}
+              {% if rf.blocked_formats %}<span class="rail-note">avoid: {{ rf.blocked_formats | join(', ') }}</span>{% endif %}
+              {% if rf.sleep_dep_overlay_applies %}<span class="chip warn">sleep-dep fueling overlay</span>{% endif %}
+              {% for n in rf.notes %}<p class="day-fuel-note">{{ n }}</p>{% endfor %}
             </div>
             {% endfor %}
           {% endif %}
