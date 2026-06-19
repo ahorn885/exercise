@@ -52,9 +52,11 @@ from layer4.context import (
 )
 from layer4.errors import Layer4InputError, Layer4OutputError
 from layer4.per_phase import (
+    CARDIO_PROGRAMMING_PROMPT_SECTION,
     _format_cardio_drill_pool,
     compute_cardio_drill_pool_ids,
     compute_feasible_pool_ids,
+    format_measured_physiology,
 )
 from layer4.payload import (
     CardioBlock,
@@ -487,7 +489,8 @@ def _validate_inputs(
 # ─── Prompt rendering (Layer4_SingleSession_v2.md §5 + §6) ───────────────────
 
 
-_SYSTEM_PROMPT = """You are AIDSTATION's single-session workout synthesizer. The athlete has fired an on-demand workout request through D-63: pick a sport, pick a duration, pick an intensity, pick a location (saved locale or "somewhere else" with quick equipment). Your job is to produce one structured workout matching the request, respecting active injuries and recent training load, in a direct coaching voice.
+_SYSTEM_PROMPT = (
+    """You are AIDSTATION's single-session workout synthesizer. The athlete has fired an on-demand workout request through D-63: pick a sport, pick a duration, pick an intensity, pick a location (saved locale or "somewhere else" with quick equipment). Your job is to produce one structured workout matching the request, respecting active injuries and recent training load, in a direct coaching voice.
 
 # What you produce
 
@@ -526,6 +529,10 @@ When `request.locale_slug` is non-None: prescribe only from `layer2c_payload_for
 
 When `request.quick_equipment` is non-empty (athlete is "Somewhere else"): prescribe only from `request.quick_equipment` plus bodyweight movements. No Tier 2/3 substitution available. State equipment constraints explicitly in `session_notes`.
 
+"""
+    + CARDIO_PROGRAMMING_PROMPT_SECTION
+    + """
+
 # Cardio drills
 
 A cardio session may optionally carry **one** drill from the `=== Cardio drill pool (consider these) ===` menu — a discrete, catalog-defined skill, transition, or interval drill that sharpens the requested sport (a single-leg cycling drill, a swim CSS set, a threshold-interval block). Drills are optional and additive to the session's free-composed `cardio_blocks`: they refine *how* this session trains the sport; they do not replace its main work. Most on-demand sessions carry none — reach for one only when it genuinely sharpens today's request.
@@ -545,6 +552,7 @@ A cardio session may optionally carry **one** drill from the `=== Cardio drill p
 - Exercise IDs reference Layer 0B canonical IDs; populate `exercise_name` with the human-readable name.
 - For interval_set cardio_blocks: emit `repetitions`, `rest_between_min`, `rest_intensity_zone`. For other block_kinds: leave those three fields null.
 """
+)
 
 
 def _render_user_prompt(
@@ -591,6 +599,15 @@ def _render_user_prompt(
     voice = layer1_payload.get("coaching_voice_preferences")
     if voice:
         parts.append(f"Voice preferences: {voice}")
+    # #337 — measured physiological anchors so the synthesizer grounds
+    # intensity_target numbers in real values (suppress-on-empty).
+    physiology_lines = format_measured_physiology(layer1_payload)
+    if physiology_lines:
+        parts.extend(physiology_lines)
+    print(
+        "single_session _render_user_prompt: measured_physiology surfaced="
+        f"{bool(physiology_lines)}"
+    )
     parts.append("")
 
     # § Active injuries — read from 2D excluded + accommodated lists

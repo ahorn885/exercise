@@ -1943,3 +1943,46 @@ class TestCardioDrillsSliceC2:
             "items"
         ]["properties"]["cardio_drills"]["items"]["properties"]["exercise_id"]
         assert prop == {"type": "string"}
+
+
+class TestStructuredCardio337:
+    """#337 — structured cardio prescription on the refresh path: the shared
+    `# Cardio programming` section is always in the system prompt, and the
+    measured-physiology block reaches the user prompt only when Layer 1 carries
+    a physiological anchor (suppress-on-empty)."""
+
+    def test_cardio_programming_section_always_in_system_prompt(self):
+        caller, captured = _capturing_caller(
+            {"sessions": [_cardio_session(d=_T1_START)]}
+        )
+        _call_t1(llm_caller=caller)
+        assert "# Cardio programming" in captured["system_prompt"]
+        assert "ground intensity targets" in captured["system_prompt"].lower() or (
+            "measured physiology" in captured["system_prompt"].lower()
+        )
+
+    def test_measured_physiology_surfaced_when_anchors_present(self):
+        caller, captured = _capturing_caller(
+            {"sessions": [_cardio_session(d=_T1_START)]}
+        )
+        layer1 = {
+            "experience_level": "advanced",
+            "coaching_voice_preferences": None,
+            "performance": {
+                "hrmax_bpm": 188,
+                "lactate_threshold_hr_bpm": 168,
+                "cycling_ftp_w": 245,
+            },
+        }
+        _call_t1(layer1=layer1, llm_caller=caller)
+        assert "Measured physiology" in captured["user_prompt"]
+        assert "HR max 188 bpm" in captured["user_prompt"]
+        assert "LT-HR 168 bpm" in captured["user_prompt"]
+        assert "cycling FTP 245 W" in captured["user_prompt"]
+
+    def test_measured_physiology_suppressed_when_no_anchors(self):
+        caller, captured = _capturing_caller(
+            {"sessions": [_cardio_session(d=_T1_START)]}
+        )
+        _call_t1(llm_caller=caller)  # default _layer1() has no `performance`
+        assert "Measured physiology" not in captured["user_prompt"]

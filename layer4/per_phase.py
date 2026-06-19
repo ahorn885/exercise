@@ -245,6 +245,19 @@ A cardio session may optionally carry **one** drill from the `=== Cardio drill p
 - Give each drill a free-text `prescription` (e.g. "4×50m, focus on catch", "15 min off the bike at goal pace") and brief `instructions`. `cardio_drills` rides `kind='cardio'` sessions only; leave it null on strength / recovery / rest."""
 
 
+# The ratified `# Cardio programming` SYSTEM_PROMPT section (#337). Shared across
+# the three synthesizer paths (per_phase, single_session, plan_refresh) so the
+# warm-up/work/cool-down structure guidance + the measured-physiology grounding
+# rule are worded identically everywhere. The athlete-context reference is
+# path-neutral on purpose (per_phase renders `=== Athlete context ===`,
+# single_session `# Athlete context`, plan_refresh a centrally-appended block).
+CARDIO_PROGRAMMING_PROMPT_SECTION = """# Cardio programming
+
+Structure each cardio session as a deliberate sequence of cardio_blocks, not one undifferentiated effort. Where the intent warrants it, give it a clear arc: a Z1–Z2 warm-up, the main work (a steady main_set or an interval_set with explicit repetitions/rest), and a Z1–Z2 cool-down. Easy aerobic sessions may be a single main_set; quality sessions (threshold, VO2, tempo) carry an explicit warm-up and cool-down. Block durations sum to the session's duration_min.
+
+Ground every intensity_target in the athlete's measured physiology shown in the athlete-context section when present: HRTarget hr_bpm_low/high from HR max / LT-HR, PowerTarget from cycling FTP, PaceTarget from run threshold pace, SwimPaceTarget from swim CSS. When the relevant anchor is absent, fall back to an RPETarget or a clearly zone-relative range rather than inventing precise numbers the athlete can't trust."""
+
+
 SYSTEM_PROMPT = (
     """You are AIDSTATION's Layer 4 per-phase synthesizer.
 
@@ -321,6 +334,10 @@ Recovery sessions are ADDITIVE and do **not** count toward the ≤2/day training
 Prescribe the movements as a `recovery_exercises[]` block (the structural analog of `strength_exercises`): pick `exercise_id`s from the rendered `=== Recovery exercise pool ===` only (never invent them), and give each a free-text `prescription` (e.g. "2×30s/side", "5 min @ ~6 breaths/min") plus brief `instructions`. Leave `cardio_blocks` / `strength_exercises` / `rest_reason` null.
 
 Load-adaptive rest: full rest is the protective floor and recovery sessions are the active-recovery mechanism — the two are adaptation-neutral, so under high load (Peak phase or a deload week) prefer genuine full rest over active recovery and keep any recovery minimal and short.
+
+"""
+    + CARDIO_PROGRAMMING_PROMPT_SECTION
+    + """
 
 """
     + CARDIO_DRILLS_PROMPT_SECTION
@@ -1971,6 +1988,50 @@ def _format_training_substitution_per_phase(
     return lines
 
 
+def _fmt_pace_mmss(sec: int) -> str:
+    """Seconds → `m:ss` (e.g. 245 → "4:05"). For pace anchors (run /km, swim
+    /100m) the synthesizer grounds intensity targets in (#337)."""
+    m, s = divmod(int(sec), 60)
+    return f"{m}:{s:02d}"
+
+
+def format_measured_physiology(layer1_payload: dict[str, Any]) -> list[str]:
+    """#337 — render the athlete's measured physiological anchors (HR max,
+    LT-HR, cycling FTP, run threshold pace, swim CSS) so the synthesizer can
+    ground `intensity_target` numbers in real measured values instead of
+    inventing them. Suppress-on-empty: returns `[]` when no anchor is populated
+    (the `# Cardio programming` section then directs an RPE / zone-relative
+    fallback). `layer1_payload` is `Layer1Payload.model_dump()`; shared by the
+    single_session + plan_refresh paths via import."""
+    perf = (layer1_payload or {}).get("performance") or {}
+    hr_parts: list[str] = []
+    if perf.get("hrmax_bpm"):
+        hr_parts.append(f"HR max {perf['hrmax_bpm']} bpm")
+    if perf.get("lactate_threshold_hr_bpm"):
+        hr_parts.append(f"LT-HR {perf['lactate_threshold_hr_bpm']} bpm")
+    other: list[str] = []
+    if perf.get("cycling_ftp_w"):
+        other.append(f"cycling FTP {perf['cycling_ftp_w']} W")
+    if perf.get("running_threshold_pace_sec_per_km"):
+        other.append(
+            f"run threshold pace {_fmt_pace_mmss(perf['running_threshold_pace_sec_per_km'])} /km"
+        )
+    if perf.get("css_swim_sec_per_100m"):
+        other.append(
+            f"swim CSS {_fmt_pace_mmss(perf['css_swim_sec_per_100m'])} /100m"
+        )
+    if not hr_parts and not other:
+        return []
+    lines = [
+        "Measured physiology (ground intensity targets in these where present):"
+    ]
+    if hr_parts:
+        lines.append("- " + " · ".join(hr_parts))
+    if other:
+        lines.append("- " + " · ".join(other))
+    return lines
+
+
 def _format_daily_windows_schedule(layer1_payload: dict[str, Any]) -> list[str]:
     """Render the `=== Schedule ===` section: per-day availability windows +
     the derived long-session day. Shared by per_phase + plan_refresh T2/T3.
@@ -2280,6 +2341,16 @@ def render_user_prompt(
         f"recent workouts, "
         f"{layer3a_payload.data_density.integration_data_days} days of "
         f"integration data"
+    )
+    # #337 — measured physiological anchors so the synthesizer grounds
+    # intensity_target numbers in real values (suppress-on-empty).
+    physiology_lines = format_measured_physiology(layer1_payload)
+    if physiology_lines:
+        parts.append("")
+        parts.extend(physiology_lines)
+    print(
+        "per_phase _render_user_prompt: measured_physiology surfaced="
+        f"{bool(physiology_lines)}"
     )
     parts.append("")
 
