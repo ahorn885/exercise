@@ -1312,3 +1312,61 @@ class TestCardioDrillsSliceC1:
         ]["session"]["properties"]["cardio_drills"]["items"]["properties"][
             "exercise_id"
         ]["enum"]
+
+
+class TestStructuredCardio337:
+    """#337 — structured cardio prescription on the single-session path: the
+    shared `# Cardio programming` section is in the system prompt, and the
+    measured-physiology block renders into `# Athlete context` only when Layer 1
+    carries a physiological anchor (suppress-on-empty)."""
+
+    def test_cardio_programming_section_in_system_prompt(self):
+        from layer4.single_session import _SYSTEM_PROMPT
+
+        assert "# Cardio programming" in _SYSTEM_PROMPT
+
+    def test_measured_physiology_surfaced_when_anchors_present(self):
+        from layer4.single_session import _render_user_prompt
+
+        req = SingleSessionRequest(
+            sport="running", duration_min=60, intensity="hard", locale_slug="home_gym"
+        )
+        layer1 = {
+            "experience_level": "advanced",
+            "coaching_voice_preferences": None,
+            "performance": {
+                "hrmax_bpm": 188,
+                "running_threshold_pace_sec_per_km": 245,
+            },
+        }
+        prompt = _render_user_prompt(
+            request=req,
+            layer1_payload=layer1,
+            layer2c_payload_for_locale=_layer2c_with_drill(),
+            layer2d_payload=_layer2d(),
+            layer3a_payload=_layer3a(),
+            session_date=_DATE,
+            retries_used=0,
+            rule_failures=[],
+        )
+        assert "Measured physiology" in prompt
+        assert "HR max 188 bpm" in prompt
+        assert "run threshold pace 4:05 /km" in prompt
+
+    def test_measured_physiology_suppressed_when_no_anchors(self):
+        from layer4.single_session import _render_user_prompt
+
+        req = SingleSessionRequest(
+            sport="running", duration_min=60, intensity="hard", locale_slug="home_gym"
+        )
+        prompt = _render_user_prompt(
+            request=req,
+            layer1_payload=_layer1(),  # no `performance` key
+            layer2c_payload_for_locale=_layer2c_with_drill(),
+            layer2d_payload=_layer2d(),
+            layer3a_payload=_layer3a(),
+            session_date=_DATE,
+            retries_used=0,
+            rule_failures=[],
+        )
+        assert "Measured physiology" not in prompt

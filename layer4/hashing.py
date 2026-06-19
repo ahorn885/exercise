@@ -76,7 +76,13 @@ _LAYER2_BUNDLE_ATTRS = frozenset({"a", "b", "c", "d", "e"})
 # fidelity as plan generation); changes refresh synthesis output, so cached
 # refreshes must regenerate. (single_session Slice C1 needs no bump — ad-hoc,
 # not cache-keyed.)
-LAYER4_PROMPT_REVISION = "12"
+# "13" = #337 structured cardio prescription — both the plan-create (per_phase)
+# and plan-refresh synthesizers gain the `# Cardio programming` instruction
+# (warm-up/work/cool-down structure + ground intensity targets in measured
+# physiology) plus a measured-physiology block in the rendered prompt; changes
+# synthesis output, so cached plans + refreshes must regenerate. (single_session
+# needs no bump — ad-hoc, not cache-keyed.)
+LAYER4_PROMPT_REVISION = "13"
 
 
 def _to_jsonable(obj: Any) -> Any:

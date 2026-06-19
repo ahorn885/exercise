@@ -60,10 +60,12 @@ from layer4.context import (
 from layer4.errors import Layer4InputError, Layer4OutputError
 from layer4.per_phase import (
     CARDIO_DRILLS_PROMPT_SECTION,
+    CARDIO_PROGRAMMING_PROMPT_SECTION,
     _format_cardio_drill_pool,
     block_output_budget,
     compute_cardio_drill_pool_ids,
     compute_feasible_pool_ids,
+    format_measured_physiology,
 )
 from layer4.payload import (
     CardioBlock,
@@ -988,6 +990,12 @@ def llm_layer4_plan_refresh(
         else tier_module.DEFAULT_EXTENDED_THINKING_BUDGET
     )
     system_prompt = tier_module.SYSTEM_PROMPT
+    # #337 — structured cardio prescription: append the shared `# Cardio
+    # programming` section (warm-up/work/cool-down structure + ground intensity
+    # targets in the athlete's measured physiology) so refresh has the same
+    # fidelity as plan generation. Unconditional (general cardio guidance, not
+    # pool-gated); centralized here so the three tier modules stay untouched.
+    system_prompt = system_prompt + "\n\n" + CARDIO_PROGRAMMING_PROMPT_SECTION
     feasible_pool_ids = compute_feasible_pool_ids(
         dict(layer2_bundle.c), layer2_bundle.d
     )
@@ -1100,6 +1108,18 @@ def llm_layer4_plan_refresh(
                 "discipline, from the pool below (pick by id only):\n"
                 + "\n".join(cardio_drill_pool_lines)
             )
+        # #337 — measured physiological anchors so the synthesizer grounds
+        # intensity_target numbers in real values (suppress-on-empty);
+        # centralized append, the same fidelity as the plan-create path.
+        physiology_lines = format_measured_physiology(layer1_payload)
+        if physiology_lines:
+            user_prompt += "\n\n=== Measured physiology ===\n" + "\n".join(
+                physiology_lines
+            )
+        print(
+            "plan_refresh _synthesize_refresh_tier: measured_physiology "
+            f"surfaced={bool(physiology_lines)}"
+        )
 
         llm_out = caller(
             system_prompt,
