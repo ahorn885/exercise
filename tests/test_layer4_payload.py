@@ -16,6 +16,7 @@ from pydantic import ValidationError
 from layer4.payload import (
     CadenceTarget,
     CardioBlock,
+    CardioDrill,
     ClimbingGradeTarget,
     Contingency,
     FuelingStrategy,
@@ -78,6 +79,15 @@ def _cardio_block(block_kind: str = "main_set") -> CardioBlock:
     if block_kind == "interval_set":
         base.update({"repetitions": 4, "rest_between_min": 2, "rest_intensity_zone": "Z1"})
     return CardioBlock(**base)
+
+
+def _cardio_drill(exercise_id: str = "EX291") -> CardioDrill:
+    return CardioDrill(
+        exercise_id=exercise_id,
+        exercise_name="Swim CSS / Threshold Intervals",
+        prescription="6×100m at CSS pace, 15s rest",
+        instructions=None,
+    )
 
 
 def _cardio_session(
@@ -443,6 +453,75 @@ def test_cardio_forbids_strength_exercises():
             **{
                 **_cardio_session().model_dump(),
                 "strength_exercises": [_strength_exercise().model_dump()],
+            }
+        )
+
+
+# ─── #698 Track 2 (Part A) — cardio_drills invariants ───────────────────────
+
+
+def test_cardio_accepts_one_drill():
+    s = PlanSession(
+        **{**_cardio_session().model_dump(), "cardio_drills": [_cardio_drill().model_dump()]}
+    )
+    assert s.cardio_drills is not None and len(s.cardio_drills) == 1
+    assert s.cardio_drills[0].exercise_id == "EX291"
+
+
+def test_cardio_allows_no_drills():
+    # Optional field — a cardio session without drills is valid (the default).
+    assert _cardio_session().cardio_drills is None
+
+
+def test_cardio_drills_capped_at_one():
+    with pytest.raises(ValidationError, match="at most one cardio_drills entry"):
+        PlanSession(
+            **{
+                **_cardio_session().model_dump(),
+                "cardio_drills": [
+                    _cardio_drill("EX291").model_dump(),
+                    _cardio_drill("EX290").model_dump(),
+                ],
+            }
+        )
+
+
+def test_cardio_drills_require_non_empty_exercise_id():
+    with pytest.raises(ValidationError, match="non-empty exercise_id"):
+        PlanSession(
+            **{
+                **_cardio_session().model_dump(),
+                "cardio_drills": [_cardio_drill("  ").model_dump()],
+            }
+        )
+
+
+def test_strength_forbids_cardio_drills():
+    with pytest.raises(ValidationError, match="cardio_drills is None"):
+        PlanSession(
+            **{
+                **_strength_session().model_dump(),
+                "cardio_drills": [_cardio_drill().model_dump()],
+            }
+        )
+
+
+def test_recovery_forbids_cardio_drills():
+    with pytest.raises(ValidationError, match="cardio_drills is None"):
+        PlanSession(
+            **{
+                **_recovery_session().model_dump(),
+                "cardio_drills": [_cardio_drill().model_dump()],
+            }
+        )
+
+
+def test_rest_forbids_cardio_drills():
+    with pytest.raises(ValidationError, match="cardio_drills is None"):
+        PlanSession(
+            **{
+                **_rest_session().model_dump(),
+                "cardio_drills": [_cardio_drill().model_dump()],
             }
         )
 
