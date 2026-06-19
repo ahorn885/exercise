@@ -1905,7 +1905,7 @@ _PG_MIGRATIONS = [
         user_id INTEGER NOT NULL REFERENCES users(id),
         session_id TEXT NOT NULL,
         date DATE NOT NULL,
-        session_index_in_day SMALLINT NOT NULL CHECK (session_index_in_day IN (0, 1)),
+        session_index_in_day SMALLINT NOT NULL CHECK (session_index_in_day IN (0, 1, 2)),
         payload_json JSONB NOT NULL,
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         UNIQUE (plan_version_id, date, session_index_in_day)
@@ -2190,6 +2190,23 @@ _PG_MIGRATIONS = [
         ALTER TABLE layer4_cache DROP CONSTRAINT IF EXISTS layer4_cache_entry_point_check;
         ALTER TABLE layer4_cache ADD CONSTRAINT layer4_cache_entry_point_check
             CHECK (entry_point IN ('plan_create', 'plan_refresh', 'single_session_synthesize', 'race_week_brief', 'llm_layer3a_athlete_state', 'llm_layer3b_goal_timeline_viability', 'nl_parser_parse_intent'));
+    END $$;""",
+    # #698 recovery-slot DB alignment (plan #75 persist failure, 2026-06-19). #698
+    # made recovery sessions ADDITIVE — a day may carry ≤2 training (cardio/
+    # strength) PLUS ≤1 recovery, so `session_index_in_day` legitimately reaches 2
+    # (the 3rd slot). The model (payload.py `Field(ge=0, le=2)`), the prompt schema
+    # (per_phase.py `maximum: 2`) and the day invariant (`_check_two_per_day`) were
+    # all widened, but this DB CHECK stayed `IN (0,1)` — so any plan whose
+    # deterministic recovery placement used the 3rd slot passed every in-memory
+    # gate then died at INSERT with a CheckViolation, discarding the WHOLE plan
+    # (all blocks). Realign the deployed constraint with the shipped contract.
+    # Drop-then-add is idempotent; (0,1,2) is a superset so existing rows satisfy
+    # it. (single_session / plan_refresh keep index ≤1 — they emit no recovery.)
+    """DO $$
+    BEGIN
+        ALTER TABLE plan_sessions DROP CONSTRAINT IF EXISTS plan_sessions_session_index_in_day_check;
+        ALTER TABLE plan_sessions ADD CONSTRAINT plan_sessions_session_index_in_day_check
+            CHECK (session_index_in_day IN (0, 1, 2));
     END $$;""",
     # ── Locations Consolidation (Track 1) ────────────────────────────────
     # Home is `locale_profiles.preferred`; this partial unique index backstops

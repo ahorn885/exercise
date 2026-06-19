@@ -3670,6 +3670,48 @@ def synthesize_phase(
         + (f", flags: {_accepted_flags}" if latest_validator.rule_failures else "")
     )
 
+    # plan #75 / Rule #15 — the per-day layout was printed ONLY on the payload-
+    # invariant-failure path (the `multi-session days` dump in the except handler
+    # above), so an ACCEPTED block hid its day composition. That blinded the
+    # plan-75 triage: two same-discipline cardio sessions on one day pass every
+    # guard when one is tagged non-hard (no rule checks same-discipline; the two-
+    # hard invariant only fires when BOTH are hard), so the doubled-MTB day was
+    # invisible on the passing pass. Log the accepted per-day layout (date / kind /
+    # discipline / slot / intensity for every multi-session day) AND flag the two
+    # day-compositions the guards do NOT block — two sessions of the SAME
+    # discipline, and two hard sessions — so they're attributable from logs alone.
+    _by_day: dict = {}
+    for s in latest_sessions:
+        _by_day.setdefault(s.date, []).append(s)
+    _multi_lines: list[str] = []
+    _comp_flags: list[str] = []
+    for _d in sorted(_by_day):
+        _ss = sorted(_by_day[_d], key=lambda x: x.session_index_in_day)
+        if len(_ss) < 2:
+            continue
+        _multi_lines.append(
+            f"{_d}: " + ", ".join(
+                f"{x.kind}/{x.discipline_id or '-'}/idx{x.session_index_in_day}"
+                f"({x.intensity_summary})" for x in _ss
+            )
+        )
+        _training = [x for x in _ss if x.kind in ("cardio", "strength")]
+        _disc = [x.discipline_id for x in _training if x.discipline_id]
+        if len(_disc) != len(set(_disc)):
+            _comp_flags.append(f"{_d}:two_same_discipline")
+        if sum(1 for x in _training if x.intensity_summary == "hard") >= 2:
+            _comp_flags.append(f"{_d}:two_hard")
+    if _multi_lines:
+        print(
+            f"synthesize_phase: {unit_tag} multi-session days (accepted) — "
+            + "; ".join(_multi_lines)
+        )
+    if _comp_flags:
+        print(
+            f"synthesize_phase: {unit_tag} DAY-COMPOSITION FLAG (passed validation, "
+            f"not guarded) — " + "; ".join(_comp_flags)
+        )
+
     # #321 observability — opt-in per-session content dump
     # (`PLAN_GEN_LOG_BLOCK_CONTENT=1`). Off by default so prod logs aren't
     # flooded; on, it dumps one compact line per session in the accepted block —
