@@ -1782,3 +1782,164 @@ class TestPromptRendering:
         # The driver doesn't raise — the degraded ParsedIntent is rendered
         # internally and the synthesis proceeds.
         assert result.mode == "plan_refresh"
+
+
+# ─── #698 Track 2 (Slice C2) — cardio drills on the plan-refresh path ────────
+
+
+def _layer2c_with_drill(
+    locale_id: str = "home_gym",
+    drill_id: str = "EX290",
+    drill_type: str = "Interval / Tempo",
+    discipline_id: str = "D-run",
+    coaching_cue: str | None = "6×3min @ VO2 / 3min jog",
+) -> Layer2CPayload:
+    """A locale 2C carrying one cardio-drill-type resolved exercise so the
+    Slice-C2 refresh pool resolves non-empty for the `D-run` athlete."""
+    return Layer2CPayload(
+        locale_id=locale_id,
+        etl_version_set={"layer0": "v7"},
+        effective_pool=[drill_id],
+        discipline_coverage=[
+            DisciplineCoverage(
+                discipline_id=discipline_id,
+                discipline_name=discipline_id,
+                exercise_db_sport="x",
+                total_exercises=1,
+                tier_1_count=1,
+                tier_2_count=0,
+                tier_3_count=0,
+                unavailable_count=0,
+                coverage_pct=1.0,
+            )
+        ],
+        exercises_resolved=[
+            ResolvedExercise(
+                exercise_id=drill_id,
+                exercise_name="Flat VO2max Run Intervals",
+                exercise_type=drill_type,
+                discipline_ids=[discipline_id],
+                sport_relevance_notes={discipline_id: "x"},
+                priority_per_discipline={discipline_id: "High"},
+                tier=1,
+                terrain_required=[],
+                contraindicated_parts=[],
+                contraindicated_conditions=[],
+                accommodations=[],
+                coaching_cue=coaching_cue,
+            )
+        ],
+        coaching_flags=[],
+    )
+
+
+def _bundle_with_drill() -> Layer2Bundle:
+    return Layer2Bundle(
+        a=_layer2a(),
+        b=None,
+        c={"home_gym": _layer2c_with_drill()},
+        d=_layer2d(),
+        e=None,
+    )
+
+
+def _capturing_caller(tool_args: dict[str, Any]):
+    """An LLMCaller that records the (system_prompt, user_prompt, tool_schema)
+    it was handed and returns `tool_args`."""
+    captured: dict[str, Any] = {}
+
+    def _call(*args, **_kwargs) -> _SynthesizerOutput:
+        captured["system_prompt"] = args[0]
+        captured["user_prompt"] = args[1]
+        captured["tool_schema"] = args[2]
+        return _SynthesizerOutput(
+            tool_args=tool_args,
+            input_tokens=10,
+            output_tokens=10,
+            latency_ms=5,
+        )
+
+    return _call, captured
+
+
+class TestCardioDrillsSliceC2:
+    def test_schema_has_capped_cardio_drills_block(self):
+        for tier in ("T1", "T2", "T3"):
+            sess = build_record_refresh_sessions_tool(tier)["input_schema"][  # type: ignore[arg-type]
+                "properties"
+            ]["sessions"]["items"]
+            drills = sess["properties"]["cardio_drills"]
+            assert drills["type"] == ["array", "null"]
+            assert drills["maxItems"] == 1
+            assert drills["items"]["required"] == [
+                "exercise_id",
+                "exercise_name",
+                "prescription",
+            ]
+
+    def test_exercise_id_enum_bound_when_pool_nonempty(self):
+        sess = build_record_refresh_sessions_tool(
+            "T1", cardio_drill_pool_ids=["EX290", "EX073"]
+        )["input_schema"]["properties"]["sessions"]["items"]
+        prop = sess["properties"]["cardio_drills"]["items"]["properties"]["exercise_id"]
+        assert prop == {"type": "string", "enum": ["EX290", "EX073"]}
+
+    def test_exercise_id_free_string_when_pool_empty(self):
+        sess = build_record_refresh_sessions_tool("T1", cardio_drill_pool_ids=None)[
+            "input_schema"
+        ]["properties"]["sessions"]["items"]
+        prop = sess["properties"]["cardio_drills"]["items"]["properties"]["exercise_id"]
+        assert prop == {"type": "string"}
+
+    def test_build_session_output_parses_cardio_drills(self):
+        from layer4.plan_refresh import _build_plan_session as _build_session_output
+
+        data = _cardio_session(d=_T1_START)
+        data["cardio_drills"] = [
+            {
+                "exercise_id": "EX290",
+                "exercise_name": "Flat VO2max Run Intervals",
+                "prescription": "6×3min @ VO2 / 3min jog",
+                "instructions": "Hold even splits across reps.",
+            }
+        ]
+        sess = _build_session_output(data, session_id="S-x", plan_version_id=2)
+        assert sess.cardio_drills is not None
+        assert sess.cardio_drills[0].exercise_id == "EX290"
+
+    def test_prompt_section_and_menu_appear_when_pool_nonempty(self):
+        out = _cardio_session(d=_T1_START)
+        out["cardio_drills"] = [
+            {
+                "exercise_id": "EX290",
+                "exercise_name": "Flat VO2max Run Intervals",
+                "prescription": "6×3min @ VO2 / 3min jog",
+                "instructions": None,
+            }
+        ]
+        caller, captured = _capturing_caller({"sessions": [out]})
+        result = _call_t1(bundle=_bundle_with_drill(), llm_caller=caller)
+        assert result.sessions[0].cardio_drills is not None
+        assert result.sessions[0].cardio_drills[0].exercise_id == "EX290"
+        # the ratified prompt section + the rendered menu both reach the model
+        assert "# Cardio drills" in captured["system_prompt"]
+        assert "=== Cardio drill pool (consider these) ===" in captured["user_prompt"]
+        assert "EX290" in captured["user_prompt"]
+        # enum-bound at the SDK boundary
+        prop = captured["tool_schema"]["input_schema"]["properties"]["sessions"][
+            "items"
+        ]["properties"]["cardio_drills"]["items"]["properties"]["exercise_id"]
+        assert prop == {"type": "string", "enum": ["EX290"]}
+
+    def test_prompt_section_and_menu_suppressed_when_pool_empty(self):
+        # default bundle's 2C carries only strength-type exercises → empty pool
+        caller, captured = _capturing_caller(
+            {"sessions": [_cardio_session(d=_T1_START)]}
+        )
+        _call_t1(llm_caller=caller)
+        assert "# Cardio drills" not in captured["system_prompt"]
+        assert "Cardio drill pool" not in captured["user_prompt"]
+        prop = captured["tool_schema"]["input_schema"]["properties"]["sessions"][
+            "items"
+        ]["properties"]["cardio_drills"]["items"]["properties"]["exercise_id"]
+        assert prop == {"type": "string"}

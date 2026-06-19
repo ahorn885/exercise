@@ -62,6 +62,26 @@
     </ul>
   {% endif %}
 
+  {# #698 Track 2 (Slice C1) — optional cardio drill on a cardio session #}
+  {% if sess.kind == 'cardio' and sess.cardio_drills %}
+    {% for drill in sess.cardio_drills %}
+      <div class="card mb-2">
+        <div class="card-body">
+          <h6 class="card-title">
+            {{ drill.exercise_name }}
+            <span class="badge bg-info text-dark">drill</span>
+          </h6>
+          {% if drill.prescription %}
+            <p class="card-text mb-1">{{ drill.prescription }}</p>
+          {% endif %}
+          {% if drill.instructions %}
+            <small class="text-muted">{{ drill.instructions }}</small>
+          {% endif %}
+        </div>
+      </div>
+    {% endfor %}
+  {% endif %}
+
   {% if sess.session_notes %}
     <div class="card mb-3">
       <div class="card-body">
