@@ -55,6 +55,7 @@ from layer4.payload import (
     PhaseSpec,
     PhaseStructure,
     PlanSession,
+    RecoveryExercise,
     RuleFailure,
     SessionPhaseMetadata,
     StrengthExercise,
@@ -563,6 +564,117 @@ def compute_recovery_pool_ids(
         _dbg = ", ".join(f"{t}={n}" for t, n in sorted(dropped_by_type.items()))
         print(f"compute_recovery_pool_ids: non-recovery-type dropped [{_dbg}]")
     return sorted(pool)
+
+
+# #698 Track 1 — deterministic `recovery_exercises` crash-guard inputs. Recovery
+# placement is ASSIGNED (`compute_recovery_placement`) and the validator's
+# placement-match rule BLOCKS a missing/moved recovery day, so a forced recovery
+# session can't be dropped — it MUST carry a non-empty, pool-valid
+# `recovery_exercises`. But the tool schema can't hard-require that block per kind
+# (Anthropic tool schemas are advisory, like `maxItems`), so the synthesizer can
+# emit a `kind=='recovery'` session with `recovery_exercises` null/empty — which
+# trips the PlanSession invariant (`payload.PlanSession._check_kind_invariants`)
+# and discards the WHOLE block as unparseable (prod plan #74 Build:w1,
+# 2026-06-19). `_repair_recovery_exercises` self-heals it in code BEFORE
+# validation (mirrors `_repair_strength_collisions`), filling from the SAME
+# resolved pool the prompt rendered so an auto-fill can't reference an
+# out-of-pool id.
+_RECOVERY_FILL_COUNT = 2  # lean by design (RecoveryExercise docstring, §7.4b)
+
+# Sub-threshold free-text `prescription` + `instructions` per recovery
+# `exercise_type` (the fields the model would otherwise compose; deterministic
+# here). Keyed on the lowercased `_RECOVERY_POOL_EXERCISE_TYPES`.
+_RECOVERY_FILL_PRESCRIPTION: dict[str, tuple[str, str]] = {
+    "flexibility / stretching": (
+        "2×30s/side", "Gentle static stretch — hold steady, no bouncing."
+    ),
+    "mobility": (
+        "2×8 controlled reps/side", "Slow through-range movement, unloaded."
+    ),
+    "recovery / soft tissue": (
+        "1-2 min/area", "Light soft-tissue / foam-roll; ease off any sharp pressure."
+    ),
+    "breathwork": (
+        "5 min @ ~6 breaths/min", "Nasal diaphragmatic breathing — long, slow exhale."
+    ),
+}
+_RECOVERY_FILL_DEFAULT = ("5 min easy", "Keep it sub-threshold and relaxed.")
+
+
+def _recovery_pool_entries(
+    layer2c_payloads: dict[str, Layer2CPayload],
+    layer2d_payload: Layer2DPayload | None,
+) -> dict[str, tuple[str, str]]:
+    """`exercise_id -> (exercise_name, exercise_type)` for the resolved recovery
+    pool — the SAME selection as `compute_recovery_pool_ids` /
+    `_format_recovery_exercise_pool` (recovery-pool types, minus 2D-excluded ids),
+    so a `_repair_recovery_exercises` auto-fill always references an in-pool id
+    (honors `validator._rule_recovery_pool_membership`). Empty mirrors an empty
+    pool — the caller then no-ops (placement is suppressed upstream in that
+    case)."""
+    if not layer2c_payloads:
+        return {}
+    excluded: set[str] = (
+        {er.exercise_id for er in layer2d_payload.excluded_exercises}
+        if layer2d_payload is not None
+        else set()
+    )
+    entries: dict[str, tuple[str, str]] = {}
+    for l2c in layer2c_payloads.values():
+        for rx in l2c.exercises_resolved:
+            if rx.exercise_id in excluded or rx.exercise_id in entries:
+                continue
+            if not _is_recovery_pool_type(rx.exercise_type):
+                continue
+            entries[rx.exercise_id] = (rx.exercise_name, rx.exercise_type)
+    return entries
+
+
+def _repair_recovery_exercises(
+    raw_sessions: list[dict[str, Any]],
+    pool_entries: dict[str, tuple[str, str]],
+    *,
+    fill_count: int = _RECOVERY_FILL_COUNT,
+) -> tuple[list[dict[str, Any]], list[str]]:
+    """Deterministic crash-guard (mirrors `_repair_strength_collisions`): for any
+    `kind=='recovery'` session the synthesizer left with a null/empty
+    `recovery_exercises`, fill the block from `pool_entries` BEFORE pydantic
+    validation so the forced recovery day self-heals instead of discarding the
+    whole block (#698 Track 1; prod plan #74). No-op when `pool_entries` is empty
+    (recovery placement is suppressed upstream then) or the block is already
+    populated. Picks the first `fill_count` ids in deterministic id-sorted order —
+    recovery carries no progression model, so any in-pool member is an acceptable
+    sub-threshold prescription. Mutates + returns `raw_sessions` plus Rule #15
+    attributable notes for the caller to log."""
+    if not pool_entries:
+        return raw_sessions, []
+    ordered_ids = sorted(pool_entries)[: max(1, fill_count)]
+    notes: list[str] = []
+    for s in raw_sessions:
+        if not isinstance(s, dict) or s.get("kind") != "recovery":
+            continue
+        if s.get("recovery_exercises"):  # already non-empty — leave it
+            continue
+        filled: list[dict[str, str]] = []
+        for ex_id in ordered_ids:
+            name, ex_type = pool_entries[ex_id]
+            prescription, instructions = _RECOVERY_FILL_PRESCRIPTION.get(
+                (ex_type or "").strip().lower(), _RECOVERY_FILL_DEFAULT
+            )
+            filled.append(
+                {
+                    "exercise_id": ex_id,
+                    "exercise_name": name,
+                    "prescription": prescription,
+                    "instructions": instructions,
+                }
+            )
+        s["recovery_exercises"] = filled
+        notes.append(
+            f"{s.get('date', '?')}: filled {len(filled)} recovery_exercises "
+            f"({', '.join(ordered_ids)}) — synthesizer left the block empty"
+        )
+    return raw_sessions, notes
 
 
 # #698 Track 2 (A2) — the cardio drill pool exercise types: Part B's 24-row
@@ -2600,6 +2712,16 @@ def _build_plan_session(
     if raw_exercises:
         exercises = [StrengthExercise(**e) for e in raw_exercises]
 
+    # #698 Track 1 — thread the structured recovery block through to PlanSession.
+    # Without this the field was silently dropped, so EVERY `kind=='recovery'`
+    # session (now force-placed by the deterministic Slice-3b dose) hit the
+    # PlanSession invariant `kind=='recovery' requires recovery_exercises
+    # non-None and non-empty` and discarded the whole block — prod plan #74.
+    raw_recovery = session_data.get("recovery_exercises")
+    recovery: list[RecoveryExercise] | None = None
+    if raw_recovery:
+        recovery = [RecoveryExercise(**r) for r in raw_recovery]
+
     session_date = _parse_date(session_data["date"])
 
     return PlanSession(
@@ -2618,6 +2740,7 @@ def _build_plan_session(
         intensity_summary=session_data["intensity_summary"],
         cardio_blocks=blocks,
         strength_exercises=exercises,
+        recovery_exercises=recovery,
         rest_reason=session_data.get("rest_reason"),
         phase_metadata=_build_session_phase_metadata(phase_spec, session_date),
         session_notes=session_data["session_notes"],
@@ -2909,6 +3032,9 @@ def synthesize_phase(
             unit_tag,
         )
     recovery_pool_ids = compute_recovery_pool_ids(layer2c_payloads, layer2d_payload)
+    # #698 Track 1 — id->(name,type) for the SAME pool, used by the
+    # `_repair_recovery_exercises` crash-guard below (prod plan #74).
+    recovery_pool_entries = _recovery_pool_entries(layer2c_payloads, layer2d_payload)
     # #698 Track 2 (A2) — bind cardio_drills.exercise_id to the discipline/phase-
     # scoped drill pool (same enum the prompt renders). Empty → no enum (free
     # string) + suppressed prompt block, so an unfillable cardio_drills[] is
@@ -3115,6 +3241,20 @@ def synthesize_phase(
         raw_sessions = _clamp_sessions_over_emit(
             raw_sessions, phase_spec.phase_name, max_sessions_this_unit
         )
+
+        # #698 Track 1 — deterministic recovery_exercises crash-guard: fill a
+        # forced recovery session the synthesizer left empty BEFORE validation, so
+        # the block self-heals instead of being discarded as unparseable (the prod
+        # plan #74 Build:w1 class). Runs every pass (mirrors the strength-collision
+        # repair below).
+        raw_sessions, _recovery_fill_notes = _repair_recovery_exercises(
+            raw_sessions, recovery_pool_entries
+        )
+        if _recovery_fill_notes:
+            print(
+                f"synthesize_phase: {unit_tag} recovery auto-fill — "
+                + "; ".join(_recovery_fill_notes)
+            )
 
         try:
             sessions = [

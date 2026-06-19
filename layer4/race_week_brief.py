@@ -67,7 +67,12 @@ from layer4.context import (
     TrainingSubstitutionPayload,
 )
 from layer4.errors import Layer4InputError, Layer4OutputError
-from layer4.per_phase import compute_feasible_pool_ids, compute_recovery_pool_ids
+from layer4.per_phase import (
+    compute_feasible_pool_ids,
+    compute_recovery_pool_ids,
+    _recovery_pool_entries,
+    _repair_recovery_exercises,
+)
 from layer4.payload import (
     CardioBlock,
     Contingency,
@@ -1659,6 +1664,10 @@ def llm_layer4_race_week_brief(
     caller: LLMCaller = llm_caller or _default_llm_caller
     feasible_pool_ids = compute_feasible_pool_ids(layer2c_payloads, layer2d_payload)
     recovery_pool_ids = compute_recovery_pool_ids(layer2c_payloads, layer2d_payload)
+    # #698 Track 1 — id->(name,type) for the SAME pool, feeding the
+    # `_repair_recovery_exercises` crash-guard on taper recovery overrides
+    # (mirrors per_phase; prod plan #74 was the per-phase sibling).
+    recovery_pool_entries = _recovery_pool_entries(layer2c_payloads, layer2d_payload)
     tool_schema = build_record_race_week_brief_tool(
         feasible_pool_ids=feasible_pool_ids or None,
         recovery_pool_ids=recovery_pool_ids or None,
@@ -1735,6 +1744,18 @@ def llm_layer4_race_week_brief(
                 raise Layer4OutputError(
                     "schema_violation",
                     detail="taper_session_overrides not a list",
+                )
+            # #698 Track 1 — deterministic recovery_exercises crash-guard: fill a
+            # recovery override the synthesizer left empty BEFORE pydantic, so the
+            # forced recovery day self-heals instead of failing the brief (the
+            # taper sibling of the prod plan #74 per-phase failure).
+            override_data_list, _recovery_fill_notes = _repair_recovery_exercises(
+                override_data_list, recovery_pool_entries
+            )
+            if _recovery_fill_notes:
+                print(
+                    "synthesize_race_week_brief: recovery auto-fill — "
+                    + "; ".join(_recovery_fill_notes)
                 )
             override_sessions = [
                 _build_session_override(
