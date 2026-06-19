@@ -50,9 +50,13 @@ Path wiring:
 1. With measured HR/FTP/threshold-pace/CSS set on the athlete profile, generate or refresh a plan → confirm `/admin/logs` (needs `DIAG_TOKEN`) shows `measured_physiology surfaced=True` for the per_phase/refresh path, and a cardio session's `HRTarget` `hr_bpm_low/high` lands inside the athlete's real measured zones (not generic numbers). With **no** anchors set, confirm `surfaced=False` and the synthesizer falls back to RPE/zone-relative ranges (no invented precise bpm).
 2. Cache bumped to "13" → the next plan-gen / refresh regenerates.
 
-**Next moves:**
-1. **PR-open (Andy's go):** single clean commit `974327b`; bookkeeping rides the same branch.
-2. **Optional follow-on:** `race_week_brief` also emits intensity targets and was left out of scope here (consistent with the cardio_drills slicing) — a clean copy if ever wanted.
+**Next moves (work these next — Andy 2026-06-19):**
+1. **#333 — Plan UI render gaps (pv=46).** The remaining open item is the "Sparse daily view" rendering (its cardio-zone render already shipped via #499; nutrition rendering blocked on #300, weather on #289). Close out what's renderable now.
+2. **#295 / #304 — orphaned built-but-not-wired data sweep.** #337's item 3 was a textbook *flavor-B "captured-but-not-threaded Layer 1"* orphan: `Layer1Performance` (`hrmax_bpm`/`lactate_threshold_hr_bpm`/`cycling_ftp_w`/`running_threshold_pace_sec_per_km`/`css_swim_sec_per_100m`) was in `layer1_payload.performance` with zero prompt readers — and **#304's Layer-1 sweep missed it** (it lists pack-load history / network / disclosures, not the performance baselines). This session threaded those in, so note that on #304/#295 and work the rest of the per-field decisions (thread-or-stop-capturing) in the #295 epic.
+
+**Earlier-stated follow-ons (lower priority):**
+1. **Integration→`Layer1Performance` measured-zone wire** (#283 Garmin FIT HR decode + #196 unified health-data layer): today the #337 grounding only fires when the athlete *manually* entered their HR max / LT / FTP / threshold pace / CSS. Wiring integration-derived measured zones into `Layer1Performance` would make the grounding fire automatically — its own scope.
+2. **`race_week_brief`** also emits intensity targets and was left out of scope here (consistent with the cardio_drills slicing) — a clean copy if ever wanted.
 
 ## 6. Deferred edits (Rule #11)
 
