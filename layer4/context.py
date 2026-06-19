@@ -941,25 +941,48 @@ class WorkoutRecord(_Base):
     source: WorkoutSource
 
 
-SleepSource = Literal["wellness_self_report", "polar", "coros"]
+SleepSource = Literal["wellness_self_report"]
 
 
 class SleepRecord(_Base):
+    """Self-report sleep only — the §6.1 subjective lane. Device sleep is
+    coalesced separately into `DailyWellnessRecord`; self-report stays distinct
+    so the LLM weighs subjective `sleep_quality` + self-reported hours against
+    the device numbers per §6.1 rather than having them silently merged."""
+
     date: date
     total_sleep_hours: float | None = Field(default=None, ge=0.0, le=24.0)
-    # Self-report 1-10 only; provider rows leave None. Integration Spec §10
-    # says "LLM in 3A resolves conflicts" — no normalization here.
+    # Self-report 1-10 only. Integration Spec §10 says "LLM in 3A resolves
+    # conflicts" — no normalization here.
     sleep_quality: int | None = Field(default=None, ge=1, le=10)
-    source: SleepSource
+    source: SleepSource = "wellness_self_report"
 
 
-HRVSource = Literal["polar", "coros"]
+WellnessSource = Literal["garmin", "polar", "coros"]
 
 
-class HRVRecord(_Base):
+class DailyWellnessRecord(_Base):
+    """One coalesced row per calendar day, merging device wellness across
+    providers (garmin/polar/coros) field-by-field. Each metric carries a
+    `*_source` provenance tag naming the device whose value won the
+    freshest-non-null coalesce: per field, the value from the source with the
+    newest ingest timestamp (`daily_wellness_metrics.updated_at` /
+    `provider_raw_record.fetched_at`) wins, ties break garmin>polar>coros for
+    determinism (the bundle hash folds into the 3A cache key). A NULL or older
+    source never clobbers a populated or newer one.
+
+    Self-report is NOT merged here (see `SleepRecord`) so the §6.1
+    objective-vs-subjective weighting stays intact. `resting_hr` is currently
+    garmin-only (the sole confirmed device source). Per Layer3_3A_Spec §3 /
+    Athlete_Data_Integration_Spec §10."""
+
     date: date
+    total_sleep_hours: float | None = Field(default=None, ge=0.0, le=24.0)
+    total_sleep_hours_source: WellnessSource | None = None
     hrv_rmssd_ms: float | None = Field(default=None, ge=0.0)
-    source: HRVSource
+    hrv_rmssd_ms_source: WellnessSource | None = None
+    resting_hr: int | None = Field(default=None, ge=0, le=250)
+    resting_hr_source: WellnessSource | None = None
 
 
 class PolarCardioLoadCrossRef(_Base):
@@ -1004,8 +1027,8 @@ class Layer3AIntegrationBundle(_Base):
 
     as_of: datetime
     recent_workouts: list[WorkoutRecord]
-    recent_sleep: list[SleepRecord]
-    recent_hrv: list[HRVRecord]
+    recent_wellness: list[DailyWellnessRecord]
+    recent_self_report_sleep: list[SleepRecord]
     combined_load: CombinedLoadReport
     connected_providers: list[ProviderStatus]
 

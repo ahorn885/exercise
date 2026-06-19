@@ -34,8 +34,8 @@ from layer3a.builder import llm_layer3a_athlete_state
 from layer4.context import (
     ACWREntry,
     CombinedLoadReport,
+    DailyWellnessRecord,
     DisciplineWeightRecord,
-    HRVRecord,
     Layer1Availability,
     Layer1Disclosures,
     Layer1DisciplineBaselines,
@@ -168,20 +168,23 @@ def _make_bundle_dense() -> Layer3AIntegrationBundle:
         )
         for i in range(20)
     ]
-    sleep = [
+    wellness = [
+        DailyWellnessRecord(
+            date=_AS_OF.date() - timedelta(days=i),
+            total_sleep_hours=7.5,
+            total_sleep_hours_source="polar",
+            hrv_rmssd_ms=45.0 - (i * 0.2),
+            hrv_rmssd_ms_source="polar",
+            resting_hr=48,
+            resting_hr_source="garmin",
+        )
+        for i in range(14)
+    ]
+    self_report_sleep = [
         SleepRecord(
             date=_AS_OF.date() - timedelta(days=i),
             total_sleep_hours=7.5,
             sleep_quality=8 if i % 2 == 0 else 7,
-            source="polar",
-        )
-        for i in range(14)
-    ]
-    hrv = [
-        HRVRecord(
-            date=_AS_OF.date() - timedelta(days=i),
-            hrv_rmssd_ms=45.0 - (i * 0.2),
-            source="polar",
         )
         for i in range(14)
     ]
@@ -195,8 +198,8 @@ def _make_bundle_dense() -> Layer3AIntegrationBundle:
     return Layer3AIntegrationBundle(
         as_of=_AS_OF,
         recent_workouts=workouts,
-        recent_sleep=sleep,
-        recent_hrv=hrv,
+        recent_wellness=wellness,
+        recent_self_report_sleep=self_report_sleep,
         combined_load=CombinedLoadReport(
             per_discipline={},
             combined=combined,
@@ -228,8 +231,8 @@ def _make_bundle_sparse() -> Layer3AIntegrationBundle:
     return Layer3AIntegrationBundle(
         as_of=_AS_OF,
         recent_workouts=[],
-        recent_sleep=[],
-        recent_hrv=[],
+        recent_wellness=[],
+        recent_self_report_sleep=[],
         combined_load=CombinedLoadReport(
             per_discipline={},
             combined=None,
@@ -375,13 +378,26 @@ def _make_bundle(
         )
         for i in range(n_workouts)
     ]
-    sleep = (
+    # Device sleep (no HRV in these scenarios → preserves the old recent_hrv=[]
+    # shape so the §6.2 "no recent HRV" floor still fires).
+    wellness = (
+        [
+            DailyWellnessRecord(
+                date=_AS_OF.date() - timedelta(days=i),
+                total_sleep_hours=sleep_hours,
+                total_sleep_hours_source="polar",
+            )
+            for i in range(14)
+        ]
+        if (with_sleep and providers)
+        else []
+    )
+    self_report_sleep = (
         [
             SleepRecord(
                 date=_AS_OF.date() - timedelta(days=i),
                 total_sleep_hours=sleep_hours,
                 sleep_quality=8 if i % 2 == 0 else 7,
-                source="polar",
             )
             for i in range(14)
         ]
@@ -416,8 +432,8 @@ def _make_bundle(
     return Layer3AIntegrationBundle(
         as_of=_AS_OF,
         recent_workouts=workouts,
-        recent_sleep=sleep,
-        recent_hrv=[],
+        recent_wellness=wellness,
+        recent_self_report_sleep=self_report_sleep,
         combined_load=CombinedLoadReport(
             per_discipline={},
             combined=combined,

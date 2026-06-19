@@ -63,8 +63,8 @@ def _make_integration_bundle() -> Layer3AIntegrationBundle:
     return Layer3AIntegrationBundle(
         as_of=_AS_OF,
         recent_workouts=[],
-        recent_sleep=[],
-        recent_hrv=[],
+        recent_wellness=[],
+        recent_self_report_sleep=[],
         combined_load=CombinedLoadReport(per_discipline={}, combined=None),
         connected_providers=[],
     )

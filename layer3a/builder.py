@@ -36,6 +36,7 @@ from layer4.context import (
     ACWRStatus,
     Assessment,
     CurrentState,
+    DailyWellnessRecord,
     DataDensity,
     Layer1Payload,
     Layer2APayload,
@@ -586,6 +587,33 @@ def _render_lifestyle(layer1_payload: Layer1Payload) -> str:
     return "\n".join(lines) if lines else "(no lifestyle fields populated)"
 
 
+def _render_wellness_metric(
+    records: list[DailyWellnessRecord],
+    label: str,
+    value_attr: str,
+    source_attr: str,
+    num_fmt: str,
+    count_label: str,
+) -> str | None:
+    """One `recent_wellness` metric line: latest value + provenance + window
+    average + populated-day count. Returns None when no day carries the metric
+    (suppress-on-empty) so a sleep-only provider doesn't print a bare
+    `resting_hr` line."""
+    populated = sorted(
+        (r for r in records if getattr(r, value_attr) is not None),
+        key=lambda r: r.date,
+    )
+    if not populated:
+        return None
+    latest = populated[-1]
+    avg = sum(getattr(r, value_attr) for r in populated) / len(populated)
+    return (
+        f"  - {label}: latest={num_fmt.format(getattr(latest, value_attr))} "
+        f"({getattr(latest, source_attr)}, {latest.date})  "
+        f"14d-avg={num_fmt.format(avg)}  {count_label}={len(populated)}"
+    )
+
+
 def _render_integration_summary(bundle: Layer3AIntegrationBundle) -> str:
     lines = []
 
@@ -603,33 +631,51 @@ def _render_integration_summary(bundle: Layer3AIntegrationBundle) -> str:
     else:
         lines.append("- recent_workouts: count=0")
 
-    # recent_sleep
-    rs = bundle.recent_sleep
-    if rs:
-        sources = {}
-        for s in rs:
-            sources[s.source] = sources.get(s.source, 0) + 1
-        breakdown = ", ".join(f"{k}:{v}" for k, v in sorted(sources.items()))
-        first, last = min(s.date for s in rs), max(s.date for s in rs)
+    # recent_wellness — device sources coalesced per-field with provenance.
+    rw_well = bundle.recent_wellness
+    if rw_well:
+        first, last = min(r.date for r in rw_well), max(r.date for r in rw_well)
+        lines.append(f"- recent_wellness: count={len(rw_well)} range=[{first}, {last}]")
         lines.append(
-            f"- recent_sleep: count={len(rs)} range=[{first}, {last}] sources={{{breakdown}}}"
+            "    (one row/day; device sources coalesced per-field, "
+            "freshest-non-null; provenance in parens)"
         )
+        for metric_line in (
+            _render_wellness_metric(
+                rw_well, "sleep_hours", "total_sleep_hours",
+                "total_sleep_hours_source", "{:.1f}", "nights",
+            ),
+            _render_wellness_metric(
+                rw_well, "hrv_rmssd_ms", "hrv_rmssd_ms",
+                "hrv_rmssd_ms_source", "{:.0f}", "nights",
+            ),
+            _render_wellness_metric(
+                rw_well, "resting_hr", "resting_hr",
+                "resting_hr_source", "{:.0f}", "days",
+            ),
+        ):
+            if metric_line is not None:
+                lines.append(metric_line)
     else:
-        lines.append("- recent_sleep: count=0")
+        lines.append("- recent_wellness: count=0")
 
-    # recent_hrv
-    rh = bundle.recent_hrv
-    if rh:
-        sources = {}
-        for h in rh:
-            sources[h.source] = sources.get(h.source, 0) + 1
-        breakdown = ", ".join(f"{k}:{v}" for k, v in sorted(sources.items()))
-        first, last = min(h.date for h in rh), max(h.date for h in rh)
+    # self_report_sleep — kept separate from the device coalesce so §6.1 can
+    # weigh subjective sleep_quality / self-reported hours against device data.
+    sr = bundle.recent_self_report_sleep
+    if sr:
+        first, last = min(s.date for s in sr), max(s.date for s in sr)
+        latest = max(sr, key=lambda s: s.date)
+        parts = []
+        if latest.total_sleep_hours is not None:
+            parts.append(f"latest_hours={latest.total_sleep_hours:.1f}")
+        if latest.sleep_quality is not None:
+            parts.append(f"latest_quality={latest.sleep_quality}/10")
+        detail = ("  " + " ".join(parts)) if parts else ""
         lines.append(
-            f"- recent_hrv: count={len(rh)} range=[{first}, {last}] sources={{{breakdown}}}"
+            f"- self_report_sleep: count={len(sr)} range=[{first}, {last}]{detail}"
         )
     else:
-        lines.append("- recent_hrv: count=0")
+        lines.append("- self_report_sleep: count=0")
 
     # combined_load
     cl = bundle.combined_load
@@ -759,8 +805,10 @@ def _build_prep_dict(
         for k, v in life.model_dump().items():
             d[f"section_i.{k}"] = v
     d["integration.recent_workouts"] = len(integration_bundle.recent_workouts)
-    d["integration.recent_sleep"] = len(integration_bundle.recent_sleep)
-    d["integration.recent_hrv"] = len(integration_bundle.recent_hrv)
+    d["integration.recent_wellness"] = len(integration_bundle.recent_wellness)
+    d["integration.recent_self_report_sleep"] = len(
+        integration_bundle.recent_self_report_sleep
+    )
     d["integration.combined_load"] = integration_bundle.combined_load
     d["integration.connected_providers"] = [
         p.provider for p in integration_bundle.connected_providers
@@ -795,9 +843,13 @@ Hard rules:
    signal, not a contradiction.
 
 4. Weighting rules when self-report and integration data disagree:
-   - Objective metrics (volume, HR averages, sleep duration, vertical):
-     integration data dominates. Self-report is sanity-check only. Flag
-     >25% divergence as a `data_hygiene` observation.
+   - Objective metrics (volume, HR averages, sleep duration, resting HR,
+     HRV, vertical): integration data dominates. Self-report is
+     sanity-check only. Flag >25% divergence as a `data_hygiene`
+     observation. Device wellness (`integration.recent_wellness`) is
+     coalesced per-field across providers (freshest-non-null); each metric's
+     winning source is tagged in parens — cite it when a value drives an
+     assessment.
    - Subjective metrics (perceived stress, motivation, sleep quality
      felt): self-report dominates. Integration may inform agreement but
      cannot override.
@@ -1046,8 +1098,8 @@ def _apply_confidence_floors(
             rt = rt.model_copy(update={"confidence": "low"})
         signals.append("sparse_recent_workouts")
 
-    # Floor 3: recent_hrv == 0 → trajectory ≤ medium
-    if not bundle.recent_hrv:
+    # Floor 3: no device HRV anywhere in recent_wellness → trajectory ≤ medium
+    if not any(r.hrv_rmssd_ms is not None for r in bundle.recent_wellness):
         if _CONFIDENCE_RANK[rt.confidence] > _CONFIDENCE_RANK["medium"]:
             rt = rt.model_copy(update={"confidence": "medium"})
         signals.append("no_recent_hrv")
@@ -1113,7 +1165,7 @@ def _apply_confidence_floors(
                 evidence_basis=[
                     "integration.connected_providers",
                     "integration.recent_workouts",
-                    "integration.recent_hrv",
+                    "integration.recent_wellness",
                     "section_c.years_structured_training",
                 ],
                 elevates_to_hitl=False,

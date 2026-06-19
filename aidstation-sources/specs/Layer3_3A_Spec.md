@@ -106,7 +106,7 @@ Prep transformations:
 4. **§E Strength Benchmarks → bullet list.** Front plank, dead bug, side plank, push-ups, BW squat, single-leg squat, pull-up max, dead hang, grip strength. Missing values shown as "not tested".
 5. **§F Performance Testing → bullet list.** HRmax, LT HR, VO2max, FTP, Running Threshold Pace, CSS — with source (measured / estimated) and test date age.
 6. **§I Lifestyle → bullet list.** Sleep avg, sleep quality, stress, diet pattern, supplement protocol summary, caffeine strategy, altitude history.
-7. **Integration bundle → summary table.** Per accessor (recent_workouts, recent_sleep, recent_hrv, combined_load, connected_providers): record counts, date ranges, per-source breakdown. ACWR per-discipline shown as ratio + risk zone (per `q_layer3A_combined_load` output).
+7. **Integration bundle → summary table.** Per accessor (recent_workouts, recent_wellness, recent_self_report_sleep, combined_load, connected_providers): record counts, date ranges, per-source breakdown. `recent_wellness` is one coalesced row per calendar day — sleep duration, overnight HRV, and resting HR each resolved by freshest-non-null across device providers (garmin/polar/coros) and rendered as latest-value + provenance + window-average per metric (a NULL or older source never clobbers a populated or newer one; ties break garmin>polar>coros). Self-report sleep rides separately in `recent_self_report_sleep` so §6.1's objective-vs-subjective weighting stays intact. ACWR per-discipline shown as ratio + risk zone (per `q_layer3A_combined_load` output).
 8. **2A phase context → single block.** Current phase name, weeks into phase, target weekly volume range for current phase, phase_load_allocation row for the current phase.
 
 The prep output is a structured prompt-ready dict; templating into the actual prompt string is deterministic.
@@ -191,7 +191,7 @@ Different field categories follow different rules. The LLM is told the rules exp
 
 | Field category | Examples | Weighting rule |
 |---|---|---|
-| **Objective metrics** | Volume hours, distance, HR averages, sleep duration, vertical gain, activity count | **Integration data dominates when present.** Self-report is informative only as a sanity check. If self-report and integration diverge by >25%, flag in `notable_observations` as data-hygiene issue (athlete may have misremembered, or provider may be misconfigured). |
+| **Objective metrics** | Volume hours, distance, HR averages, sleep duration, resting HR, HRV, vertical gain, activity count | **Integration data dominates when present.** Self-report is informative only as a sanity check. If self-report and integration diverge by >25%, flag in `notable_observations` as data-hygiene issue (athlete may have misremembered, or provider may be misconfigured). Device wellness metrics (sleep duration, HRV, resting HR) arrive pre-coalesced per-field in `recent_wellness` with each metric's winning source tagged; the LLM cites the tagged source when a value drives an assessment. |
 | **Subjective metrics** | Perceived fitness, stress level, motivation, sleep quality (felt), perceived recovery | **Self-report dominates.** Integration may inform (e.g., low HRV alongside reported low energy = high-confidence agreement) but cannot override. There is no objective measure of "how the athlete feels." |
 | **Hybrid metrics** | Sleep (duration objective + quality subjective), recovery status, readiness | **Both shown to the LLM with sources tagged.** The LLM synthesizes. Disagreement (athlete reports good sleep; provider records 4h actual) is itself a signal — flag in observations. |
 | **Skill / experience fields** | Trail running experience, MTB technical skill, climbing grade | **Self-report only.** No integration source covers these. Confidence is bounded by recency-of-claim (if athlete reports "Advanced" but hasn't logged a relevant activity in 18 months, confidence drops). |
@@ -208,8 +208,8 @@ Each assessment field carries a `confidence` enum (high / medium / low). The LLM
 |---|---|
 | `connected_providers.count == 0` | Trajectory confidence ≤ medium. State confidence not affected. |
 | `recent_workouts.count < 5` in last 28 days | Trajectory confidence ≤ low. |
-| `recent_sleep.count == 0` in last 14 days | Recovery-related observations ≤ medium confidence. |
-| `recent_hrv.count == 0` in last 14 days | Trajectory confidence ≤ medium. (Not low — workouts alone support medium-confidence trajectory.) |
+| No `recent_wellness` day carries a sleep value in last 14 days (and no `recent_self_report_sleep`) | Recovery-related observations ≤ medium confidence. |
+| No `recent_wellness` day carries an HRV value in last 14 days | Trajectory confidence ≤ medium. (Not low — workouts alone support medium-confidence trajectory.) |
 | `§C.years_training < 0.25` | All current_state assessments ≤ medium (insufficient training history to characterize). |
 | `§F.HRmax.source == 'estimated'` | Aerobic capacity assessment caveat: "HRmax estimated, not measured" — confidence not auto-reduced but noted. |
 | ETL data older than 12 months feeding any assessment | That assessment ≤ medium. |
@@ -309,8 +309,8 @@ class DataDensity:
     connected_providers: list[str]              # provider names with active data
     integration_data_days: int                  # length of integration window with non-zero data
     recent_workouts_count: int                  # last 28 days
-    recent_sleep_count: int                     # last 14 days
-    recent_hrv_count: int                       # last 14 days
+    recent_sleep_count: int                     # last 14 days — recent_wellness days carrying a sleep value (the `nights=` count rendered per metric)
+    recent_hrv_count: int                       # last 14 days — recent_wellness days carrying an HRV value
     self_report_freshness_days: int             # days since most recent wellness_self_report
     section_completeness: dict[str, float]      # §C/§D/§E/§F/§I → 0.0-1.0 ratio of populated fields
 
