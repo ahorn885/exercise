@@ -13,6 +13,10 @@ Rolling-state for items spanning multiple sessions. **Edit in place** — don't 
 
 ---
 
+## #681 §4 Slice 2c — indoor-machine flag → provider_raw_record (2026-06-19; PR #751) — SHIPPED; 1 live-verify owed
+- **First writer to `provider_raw_record`** (created empty in Slice 1; live in prod since #742). Every Garmin cardio ingest now records the raw provider signal (record-don't-drop) + the indoor-machine flag when the activity used one (`Cycling trainer`/`Treadmill`/`Stair climber`/`Rowing ergometer` — existing `equipment_items` vocab only). Andy scope call: **every cardio ingest**, not indoor-only. Additive; no migration (table pre-existed); no downstream consumer yet.
+- **LIVE-VERIFY owed (Andy-action, container can't reach Neon):** a real indoor FIT import → `neon-query` `SELECT … raw_payload->>'indoor_machine' FROM provider_raw_record ORDER BY id DESC LIMIT 5;` (expect an indoor row with `Cycling trainer`; outdoor rows present with NULL machine) + `/admin/logs?q=provider-raw`.
+
 ## FIT-import prod incident + hub uploader unify (2026-06-19) — FIXED; one residual (#747)
 - **`init_postgres` silently aborted on every cold start since #733 (2026-06-18).** A `;` inside a SQL comment in `PG_SCHEMA` broke the char-based `PG_SCHEMA.split(';')` into a bare-text fragment that syntax-errored in the UNGUARDED schema loop (caught only by app.py's broad `except` → "DB init skipped"). Net: **no schema/migration from #733 on reached prod** — `provider_value_map`, `provider_raw_record` (Slice 1), `cardio_log.discipline_id` (Slice 2a) all absent until **PR #742** (remove the `;` + per-statement-guard the schema loop + Rule #15 log + `tests/test_init_db_schema.py`). Surfaced as a prod `500 UndefinedColumn discipline_id` on a real FIT import. **Verified fixed via `neon-query`:** provider_value_map (263 rows) + provider_raw_record + discipline_id now live.
 - **§5 Slice-2 live-verify (MTB) — DONE:** re-import landed `cardio_log` row `Mountain Biking, discipline_id=D-008`. Trail-run → D-001 half still optional (not required).
