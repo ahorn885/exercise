@@ -1063,6 +1063,10 @@ _PG_MIGRATIONS = [
     "ALTER TABLE cardio_log ADD COLUMN IF NOT EXISTS wahoo_workout_id TEXT",
     "ALTER TABLE cardio_log ADD COLUMN IF NOT EXISTS coros_label_id TEXT",
     "ALTER TABLE cardio_log ADD COLUMN IF NOT EXISTS rwgps_trip_id TEXT",
+    # Strava manual-archive upload dedup/source tag (#757 follow-up — manual
+    # multi-service upload). Bulk export carries original device files; tagged
+    # `strava-file:<hash>` so Layer-3A reads source='strava'.
+    "ALTER TABLE cardio_log ADD COLUMN IF NOT EXISTS strava_activity_id TEXT",
     "ALTER TABLE training_log ADD COLUMN IF NOT EXISTS polar_exercise_id TEXT",
     "ALTER TABLE training_log ADD COLUMN IF NOT EXISTS wahoo_workout_id TEXT",
     "ALTER TABLE training_log ADD COLUMN IF NOT EXISTS coros_label_id TEXT",

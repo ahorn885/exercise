@@ -1,9 +1,17 @@
 # Multi-Service Manual Upload Ingestion — Design v1
 
-**Status:** draft for ratification (2026-06-19). Follows #757 (Garmin wellness →
+**Status:** ratified (2026-06-19, Andy). Follows #757 (Garmin wellness →
 Layer-3A). Goal: let an athlete feed Layer-3A from **file exports** of services
 whose live API/webhook isn't connected (or doesn't exist), the way Garmin `.fit`
 upload already works.
+
+**Ratified decisions:** slice order as in §7 (FIT-generalize first); Strava gets
+a dedicated `cardio_log.strava_activity_id` column (§4.3); Whoop wellness
+extends `WellnessSource` with priority garmin > whoop > polar > coros (§6).
+**Groundwork landed this session:** `strava_activity_id` column +
+`WorkoutSource`/`_detect_workout_source` Strava support (the foundation every
+activity-upload slice writes to). Importer-generalization + parsers are the
+remaining slices.
 
 ## 1. Purpose + problem
 
@@ -78,9 +86,10 @@ to the provider id column, `ON CONFLICT` skip. Covers re-dropping the same
 export/zip. **Cross-source dedup** (same ride exported from both Strava and
 Garmin) is explicitly *out* — the LLM already arbitrates duplicate workouts, and
 provider-id columns differ so the UNIQUE keys won't collide. Strava archives
-carry original device files (often FIT) → tag by the archive's `activities.csv`
-provider where possible, else `source='manual'` with a `strava-file:` dedup key
-(needs a real `strava_*_id` column or reuse of an existing one — **open item**).
+carry original device files (often FIT) → tagged `source='strava'` via the
+dedicated **`cardio_log.strava_activity_id`** column (added this session) with a
+`strava-file:<hash>` dedup key, ranked last in `_detect_workout_source` so a
+co-present native-device id wins.
 
 ### 4.4 Routing / UI
 
@@ -156,13 +165,32 @@ freshest-non-null coalesce.
 
 ## 10. Open items
 
-- Strava activity source tagging / dedup column (no `strava_*_id` column exists
-  in `cardio_log` today — add one, or tag `manual`?).
-- Whoop coalesce priority rank + landing table (provider_raw_record vs dedicated).
-- Polar GDPR JSON bundle schema (needs a real export sample to map — Rule #14:
-  ask Andy for a sample rather than guess field names).
-- Whether to also surface uploaded-but-unconnected providers on the connections
-  page as "file-import only."
+- ~~Strava activity source tagging / dedup column~~ — **resolved:** dedicated
+  `cardio_log.strava_activity_id` added this session.
+- ~~Whoop coalesce priority rank~~ — **resolved:** garmin > whoop > polar > coros.
+  Landing table still open: reuse `provider_raw_record` (`provider='whoop'`,
+  `data_type='sleep'`/`'hrv'`) read by a whoop branch in `q_layer3A_recent_wellness`
+  (recommended — mirrors Polar) vs a dedicated table.
+- Polar GDPR JSON bundle schema still needs a real export sample to map (Rule
+  #14 — Andy has none; the bundle is account-level, not on public GitHub).
+- Whether to surface uploaded-but-unconnected providers on the connections page
+  as "file-import only."
+
+### 10.1 Verified online sample sources (Andy has no personal exports)
+
+Andy lacks personal exports for the non-Garmin formats, so parser slices build
+against these public samples (fetch + commit as `tests/fixtures/` alongside the
+parser that consumes them — not committed yet to avoid unused fixtures):
+
+- **TCX:** `aaron-schroeder/activereader` (`testdata.tcx`), `dblock/tcx`,
+  `mlt/schwinn810` wiki — running activities with HR/cadence/power trackpoints.
+- **GPX:** Garmin TPX-extension samples in the same TCX repos + standard GPX
+  track exports.
+- **Whoop CSV:** `Philipp0205/whoop-dashboard` + `rowesk/Whoop-Data-Downloader`
+  — export bundle is `physiological_cycles.csv` (recovery score, **HRV ms**,
+  **resting HR**, strain) + `sleeps.csv` (duration/stages) + `recoveries.csv` +
+  `workouts.csv`. `physiological_cycles.csv` is the row-per-day source for
+  `recent_wellness` (HRV + RHR + sleep summary in one file).
 
 ## 11. Test scenarios
 
