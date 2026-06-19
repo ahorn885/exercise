@@ -408,40 +408,61 @@ def _fit_dedup_id(raw: bytes, prefix: str = 'fit:') -> str:
     return prefix + hashlib.sha256(raw).hexdigest()
 
 
-def _iter_fit_blobs(files):
-    """Expand an uploaded file list into (name, fit_bytes, error) tuples.
+# Activity upload formats and their parser dispatch key. .fit is Garmin's path;
+# .tcx/.gpx (#767 slice 2) are the non-Garmin per-session exports (Polar/COROS/
+# Strava) — each parser emits the same normalized cardio dict, so the writer is
+# shared. The key is the lowercased extension sans dot.
+_ACTIVITY_EXTS = ('fit', 'tcx', 'gpx')
 
-    Each upload is a .fit (one blob) or a .zip (every .fit entry inside, so a
-    whole exported folder zipped up imports in one shot). Exactly one of
-    fit_bytes / error is set per yielded tuple."""
+
+def _blob_ext(name: str) -> str | None:
+    """The activity-format key for a filename, or None if not an activity file."""
+    low = name.lower()
+    for ext in _ACTIVITY_EXTS:
+        if low.endswith('.' + ext):
+            return ext
+    return None
+
+
+def _iter_activity_blobs(files):
+    """Expand an uploaded file list into (name, bytes, ext, error) tuples.
+
+    Each upload is an activity file (.fit/.tcx/.gpx) or a .zip (every activity
+    entry inside, so a whole exported folder zipped up imports in one shot).
+    `ext` is the parser-dispatch key ('fit'|'tcx'|'gpx'); exactly one of
+    (bytes+ext) / error is set per yielded tuple."""
     import zipfile
     import io
     for f in files:
         if not f or not f.filename:
             continue
         name = secure_filename(f.filename or '') or '(unnamed)'
-        low = name.lower()
-        try:
-            raw = f.read()
-        except Exception as e:
-            yield (name, None, f'could not read upload: {e}')
-            continue
-        if low.endswith('.zip'):
+        if name.lower().endswith('.zip'):
+            try:
+                raw = f.read()
+            except Exception as e:
+                yield (name, None, None, f'could not read upload: {e}')
+                continue
             try:
                 with zipfile.ZipFile(io.BytesIO(raw)) as zf:
-                    fit_names = [n for n in zf.namelist() if n.lower().endswith('.fit')]
-                if not fit_names:
-                    yield (name, None, 'no .fit files inside zip')
-                    continue
-                with zipfile.ZipFile(io.BytesIO(raw)) as zf:
-                    for n in fit_names:
-                        yield (f'{name}:{n}', zf.read(n), None)
+                    entries = [(n, _blob_ext(n)) for n in zf.namelist()]
+                    entries = [(n, ext) for n, ext in entries if ext]
+                    if not entries:
+                        yield (name, None, None, 'no .fit/.tcx/.gpx files inside zip')
+                        continue
+                    for n, ext in entries:
+                        yield (f'{name}:{n}', zf.read(n), ext, None)
             except zipfile.BadZipFile:
-                yield (name, None, 'not a valid zip file')
-        elif low.endswith('.fit'):
-            yield (name, raw, None)
-        else:
-            yield (name, None, 'not a .fit or .zip file')
+                yield (name, None, None, 'not a valid zip file')
+            continue
+        ext = _blob_ext(name)
+        if not ext:
+            yield (name, None, None, 'not a .fit/.tcx/.gpx or .zip file')
+            continue
+        try:
+            yield (name, f.read(), ext, None)
+        except Exception as e:
+            yield (name, None, None, f'could not read upload: {e}')
 
 
 def _record_provider_raw_cardio(db, raw: dict, uid: int, external_id,
@@ -696,13 +717,16 @@ def _bulk_log_one(db, uid: int, gid: str, result: dict, match_plan: bool,
 
 @bp.route('/import/bulk', methods=['POST'])
 def import_bulk():
-    """Parse many .FIT files and route each to the right place — one drop zone
-    for a whole export folder. Activity files (cardio / strength) are logged and
-    optionally auto-matched to a scheduled plan workout (pass match_plan=0 to log
-    raw); wellness / daily-metric files (`_WELLNESS`, `_METRICS`, `_SLEEP_DATA`,
-    `_HRV_STATUS`) are merged into wellness_log / daily_wellness_metrics instead.
-    Idempotent (content-hash dedup for activities, per-row dedup for wellness).
-    Returns JSON for the drag-and-drop UI."""
+    """Parse many activity files (.fit/.tcx/.gpx) and route each to the right
+    place — one drop zone for a whole export folder. .tcx/.gpx (#767 slice 2)
+    are the non-Garmin per-session exports; each parser emits the same normalized
+    cardio dict, so the writer is shared. Activity files (cardio / strength) are
+    logged and optionally auto-matched to a scheduled plan workout (pass
+    match_plan=0 to log raw); FIT wellness / daily-metric files (`_WELLNESS`,
+    `_METRICS`, `_SLEEP_DATA`, `_HRV_STATUS`) are merged into wellness_log /
+    daily_wellness_metrics instead. Idempotent (content-hash dedup for
+    activities, per-row dedup for wellness). Returns JSON for the drag-and-drop
+    UI."""
     db = get_db()
     uid = current_user_id()
     files = request.files.getlist('files')
@@ -710,6 +734,8 @@ def import_bulk():
         return jsonify({'ok': False, 'error': 'No files in request.'}), 400
 
     from garmin_fit_parser import parse_fit, fit_file_meta
+    from tcx_gpx_parser import parse_tcx, parse_gpx
+    _ACTIVITY_PARSERS = {'fit': parse_fit, 'tcx': parse_tcx, 'gpx': parse_gpx}
 
     match_plan = request.form.get('match_plan', '1') not in ('0', 'false', 'no', 'off', '')
 
@@ -733,22 +759,25 @@ def import_bulk():
     # 'unknown' files) go to the activity path below, which itself falls back to
     # wellness ingestion if parse_fit finds no session. Each file's result row
     # records where it landed (Rule #15: the decision is legible per file).
+    # Only FIT files carry wellness/daily-metric payloads; TCX/GPX are always
+    # activities (no wellness variant), so they skip the FileId classification.
     _WELLNESS_KINDS = {'wellness', 'metrics', 'sleep_data', 'hrv_status'}
     wellness_pending = []   # (time_ms, name, raw, kind)
-    activity_blobs = []     # (name, raw)
-    for name, raw, err in _iter_fit_blobs(files):
+    activity_blobs = []     # (name, raw, ext)
+    for name, raw, ext, err in _iter_activity_blobs(files):
         if err:
             results.append({'name': name, 'status': 'skipped', 'detail': err})
             summary['skipped'] += 1
             continue
-        try:
-            kind, time_ms = fit_file_meta(raw)
-        except Exception:
-            kind, time_ms = 'unknown', 0
-        if kind in _WELLNESS_KINDS:
-            wellness_pending.append((time_ms, name, raw, kind))
-        else:
-            activity_blobs.append((name, raw))
+        if ext == 'fit':
+            try:
+                kind, time_ms = fit_file_meta(raw)
+            except Exception:
+                kind, time_ms = 'unknown', 0
+            if kind in _WELLNESS_KINDS:
+                wellness_pending.append((time_ms, name, raw, kind))
+                continue
+        activity_blobs.append((name, raw, ext))
 
     # Wellness / daily-metric ingestion — chronological so same-day _METRICS
     # files UPSERT newest-last (the acute-load / RMR race, see _ingest_wellness_fit).
@@ -760,17 +789,17 @@ def import_bulk():
     # sessions can be applied oldest-first (rx_engine is order-aware).
     to_insert = []   # (name, gid, result)
     seen = set()
-    for name, raw in activity_blobs:
+    for name, raw, ext in activity_blobs:
         gid = _fit_dedup_id(raw, prefix)
         if gid in seen or _already_imported(db, gid, source):
             results.append({'name': name, 'status': 'duplicate', 'detail': 'already imported'})
             summary['duplicates'] += 1
             continue
         try:
-            result = parse_fit(raw)
+            result = _ACTIVITY_PARSERS[ext](raw)
         except ValueError as e:
             msg = str(e)
-            if 'session' in msg.lower():
+            if ext == 'fit' and 'session' in msg.lower():
                 # Not an activity after all (e.g. an older wellness file with no
                 # FileIdMessage) — route to wellness ingestion rather than drop it.
                 _ingest_wellness_fit(db, uid, name, raw, 'wellness', results, summary)
