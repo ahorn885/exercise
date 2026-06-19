@@ -291,6 +291,7 @@ class ResolvedExercise:
     discipline_ids: list[str]            # Which included disciplines this exercise serves
     sport_relevance_notes: dict[str, str]  # discipline_id → sport_relevance_note from sxm
     priority_per_discipline: dict[str, str]  # discipline_id → priority string
+    coaching_cue: str | None             # 0B exercises.coaching_cues pass-through (#698 Track 2 A2 — carries the interval dose, e.g. EX290 "3–5 min reps at ~95–100% vVO2max"); None when the 0B row has none. Defaulted None so pre-change cached 2C payloads hydrate cleanly.
     tier: int                            # 0 (unavailable), 1, 2, or 3
     resolution_detail: ResolutionDetail | None
     terrain_required: list[str]          # Pass-through for Layer 4 cross-ref with 2B

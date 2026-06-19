@@ -284,6 +284,7 @@ def _load_exercises(
           e.contraindicated_parts,
           e.contraindicated_conditions,
           e.movement_patterns,
+          e.coaching_cues,
           sdb.discipline_id,
           sdb.discipline_name,
           sdb.exercise_db_sport
@@ -458,6 +459,10 @@ def _dedupe_by_exercise(
                     r.get("contraindicated_conditions") or []
                 ),
                 "movement_patterns": list(r.get("movement_patterns") or []),
+                # #698 Track 2 (A2) — 0B coaching_cues pass-through for the
+                # cardio drill pool render (interval dose). Per-exercise, not
+                # per-discipline, so it lives on the deduped entry not a dict.
+                "coaching_cue": r.get("coaching_cues"),
                 "discipline_ids": [],
                 "sport_relevance_notes": {},
                 "priority_per_discipline": {},
@@ -842,6 +847,7 @@ def q_layer2c_equipment_mapper_payload(
                 discipline_ids=list(ex["discipline_ids"]),
                 sport_relevance_notes=dict(ex["sport_relevance_notes"]),
                 priority_per_discipline=dict(ex["priority_per_discipline"]),
+                coaching_cue=ex.get("coaching_cue"),
                 movement_patterns=list(ex["movement_patterns"]),
                 tier=tier,
                 resolution_detail=detail,

@@ -252,8 +252,12 @@ Cardio session card gains a subordinate `cardio_drills` list (the `recovery_exer
 - **Periodization** — by drill character (skill/transition Base-heavy → dropped Peak/Taper; interval/endurance follow normal phase emphasis).
 - **Adjacency** — prompt-steered placement + a deterministic constituent-sport pool gate on EX175/EX176 (athlete needs both a cycling and a running discipline).
 
+**Ratified (Andy 2026-06-19, A2 prep session):**
+- **Prompt-body wording** (§6 / §6a-G1) — **RATIFIED verbatim** (Trigger #1 cleared). The `# Cardio drills` SYSTEM_PROMPT section + the `=== Cardio drill pool (consider these) ===` render header/row format are signed off as drafted in the A2-prep handoff §"Drafted prompt body"; build them as-is.
+- **Coaching-cue handling — thread the cue through 2C** (over render-without-cue). The catalog `coaching_cues` (dose) was NOT reachable from `l2c.exercises_resolved`; Andy chose the Trigger-#3 cross-layer add over shipping the render without it. **DONE this session (A1.5):** `coaching_cues` now threads 0B → `_load_exercises` SELECT → `_dedupe_by_exercise` → `ResolvedExercise.coaching_cue` (`layer2c/builder.py` + `layer4/context.py` + `Layer2C_Spec.md` §7). A2's `_format_cardio_drill_pool` reads `rx.coaching_cue` for the per-row dose.
+
 **Open (ratify before the respective slice lands):**
-- **Prompt-body wording** (§6 / §6a-G1) — Trigger #1 ratification (before A2). The shape is ratified; the verbatim wording is not yet.
+- **Constituent-sport gate taxonomy (§5) — OPEN, blocks A2.** `_CONSTITUENT_SPORT_GATE` needs the concrete `discipline_id` sets that count as "a cycling discipline" and "a running discipline" (the EX175/EX176 include test). The live `layer0.disciplines` id space is **not** cleanly hardcodeable from the container (ids reused across sports + heavy version drift; the `primary_movement` column is the likeliest clean classifier but must be read live). Decide the source before building the gate: (a) explicit hardcoded cycling/running `discipline_id` frozensets, or (b) derive from `disciplines.primary_movement` / a modality-group families read. Without the gate, EX175 Brick Run leaks to AR-paddle-climb athletes (incl. Andy's PGE set) — so A2's pool is not shippable until this is resolved.
 - **Tighten-later (§6a-G5):** add a soft `severity=warning` discipline-match check **only if** wrong-discipline picks show up live — kept out of v1 to avoid churn.
 
 ---
@@ -261,8 +265,9 @@ Cardio session card gains a subordinate `cardio_drills` list (the `recovery_exer
 ## 13a. Build slices (>5 files → split per the 5-file ceiling)
 
 - **~~B (catalog)~~ — DONE + PROD-LIVE** via `0017` (cull 55→8) + `0018` (EX290–292). No further catalog work for Part A.
-- **A1 — schema:** `payload.py` `CardioDrill` + field + invariants + tests. No prompt/cache.
-- **A2 — pool + prompt + cache:** `per_phase.py` `compute_cardio_drill_pool_ids` + `_format_cardio_drill_pool` + `# Cardio drills` section + schema enum-bind thread; `hashing.py` revision bump. (Prompt ratified first.)
+- **A1 — schema:** `payload.py` `CardioDrill` + field + invariants + tests. No prompt/cache. **DONE (#755).**
+- **A1.5 — 2C coaching-cue threading:** `layer2c/builder.py` (SELECT `e.coaching_cues` + dedupe + construction) + `layer4/context.py` (`ResolvedExercise.coaching_cue`) + `Layer2C_Spec.md` §7 + tests. Additive, defaulted None. **DONE (this session)** — unblocks A2's cue-carrying render.
+- **A2 — pool + prompt + cache:** `per_phase.py` `compute_cardio_drill_pool_ids` + `_format_cardio_drill_pool` (reads `rx.coaching_cue`) + `# Cardio drills` section + schema enum-bind thread; `hashing.py` revision bump. Prompt ratified ✅; **still gated on the §13 constituent-sport gate taxonomy decision.**
 - **A3 — validator + render:** `validator.py` `_rule_cardio_drill_pool_membership`; `templates/plan_create/view.html` + CSS.
 
 ---
