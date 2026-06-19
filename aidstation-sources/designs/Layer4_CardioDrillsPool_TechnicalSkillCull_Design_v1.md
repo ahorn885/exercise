@@ -1,6 +1,6 @@
 # Layer 4 — Cardio drills "consider these" pool + Technical/Skill catalog cull — Design
 
-**Status:** v1 — sequencing + binding ratified (Andy 2026-06-18); **§6a LLM-reliability guardrails + the one-drill-per-session cap added 2026-06-19 (Andy-ratified)**; per-row cull list + discipline-weight map OPEN (ratify before the Part B migration / Part A pool land).
+**Status:** v1 — sequencing + binding ratified (Andy 2026-06-18); §6a guardrails + one-drill cap (2026-06-19); **§3a per-row audit RATIFIED + CORRECTED (2026-06-19).** ⚠ **Read §3a as authoritative over the §1–§3 body counts:** the §1/§3 "65 Technical/Skill / 13 conflation" figures are raw-snapshot estimates; the live post-migration truth (snapshot + `0006–0016`) is **68 active target rows (55 T/S + 9 I/T + 4 A/E)**, the **Technical/Skill cull was already executed by migration 0009/#644**, and Part B reduces to **hygiene only** (11 gear-toggle token strips + EX194 SEM restore).
 **Issue:** #698 Track 2 (follow-on to the closed Track 1 recovery-session arc, PR #730).
 **Evidence base:** `research/RecoveryMobility_RestDay_CardioDrills_EnduranceEvidence_v1.md` §3 (cardio drills vs volume) + §"Design implication".
 **Differentiator:** #6 science-backed, and #4 multi-sport-first — the orphaned catalog is overwhelmingly underserved-discipline skill content (paddle, ski, swim, scramble).
@@ -44,149 +44,140 @@ A read-only audit of all 65 active `Technical / Skill` rows (+ the 8 Interval/Te
 
 **Disposition buckets:**
 1. **KEEP + discipline-tag (expected majority).** The row is a prescribable, discipline-relevant drill. Confirm its `sport_exercise_map` membership + `terrain_required` so the pool can discipline-weight it (§5). No content change.
-2. **HYGIENE-FIX (the 13 conflation rows).** Skill/discipline tokens mis-filed in `equipment_required` (`Climbing — roped` ×5 → skill-capability gate #336 `climbing_roped`; `Mountaineering` ×3 → skill-capability gate `mountaineering`; `Touring/AT ski setup` ×5 → equipment-vocab gap, no ski skill-toggle exists). Move the token to the correct gate; correct `equipment_required`. These rows otherwise KEEP. *(Per-token counts corrected from the v1 estimate ×8/×4/×1 to the on-disk audited ×5/×3/×5 — total holds at 13; see §3a.)*
-3. **CULL (expected few).** Genuinely non-prescribable (no real training stimulus / pure logistics, e.g. candidate `EX094 Packraft Inflation/Deflation Drill`, `EX123 Pack Fit Optimization Drill` — gear-handling, not a session) or exact-duplicate of another row. Each cull cites the reason + any inbound `physical_proxies`/substitute references to repoint.
+2. **HYGIENE-FIX (the conflation rows).** Gear-bundle tokens mis-filed in `equipment_required` — each is an active `sport_specific_gear_toggles` entry (268/272/265), not an `equipment_items` piece. Fix = remove the toggle name from `equipment_required` (no new vocab). In the **live (post-0009) catalog** this is **11 in-scope rows**: `Climbing — roped` ×5, `Mountaineering` ×1 (EX149 — EX148/EX150 were among 0009's culls), `Touring/AT ski setup` ×5. (The earlier "13 / ×5-×3-×5" figure counted EX148/EX150 before recognising 0009 had retired them; see §3a H1–H3.)
+3. **CULL.** ⚠ **Already done (see §3a).** The non-trainable Technical/Skill cull — incl. `EX094 Packraft Inflation/Deflation` and `EX123 Pack Fit Optimization` — was executed by migration **0009 (#644, Andy-ratified 2026-06-16)**, which retired 10 rows. Part B carries **no new culls**; this bucket is empty against the live (post-0009) catalog.
 
 **Deliverable:** an audit table (`exercise_id | name | discipline | terrain | disposition | reason`) appended to this design as §3a before the migration, ratified by Andy. The migration supersedes culled rows (`superseded_at`, not hard-delete — Rule #12 history) and applies hygiene edits.
 
 ---
 
-## 3a. Per-row audit & dispositions — PROPOSED (awaiting Andy ratification, 2026-06-19)
+## 3a. Per-row audit & dispositions — RATIFIED + CORRECTED (Andy 2026-06-19)
 
-**Status:** PROPOSED. This is the §3 deliverable — the read-only per-row audit Andy ratifies **before** the B1 cull/hygiene migration runs (Trigger #2: no cull without review; Trigger #3: cross-layer hygiene). Nothing here is applied to `etl/` yet.
+**Status:** RATIFIED (Andy 2026-06-19), then **CORRECTED** the same day after a Rule #9 reconciliation (below). These dispositions are the spec for the **B1 hygiene migration** (§13a); nothing is applied to `etl/` until B1.
 
-**Audit method:** read-only parse of `etl/output/layer0_etl_v1.8.0.sql`, **active rows only** (`superseded_at IS NULL`), cross-referenced against active `sport_exercise_map` (discipline membership), `equipment_items` (canonical equipment vocab, 127 names), and `skill_capability_toggles` (#336 — `climbing_roped` #21, `mountaineering` #25, `whitewater_handling` #23, `swim_open_water` #24, `via_ferrata` #22).
+**⚠ Methodology correction (Rule #9) — the audit basis was wrong, now fixed.** The first cut of §3a parsed the **raw** baseline snapshot `etl/output/layer0_etl_v1.8.0.sql` (77 rows: 65 T/S + 8 I/T + 4 A/E). But the authoritative Layer 0 state = **baseline snapshot + the `etl/migrations/layer0/0006–0016` migrations applied on top** — exactly what the CI `layer0-gate` validates (`ls layer0_etl_v*.sql | sort -V | tail -1` + every numbered migration). Re-running that composite in a throwaway Postgres gives the true active set: **68 rows — 55 T/S + 9 I/T + 4 A/E.** The raw-snapshot 77 was stale by **−10 / +1**:
 
-**Disposition tally (77 active target rows):**
+- **−10 already culled:** migration **0009 (#644, Andy-ratified 2026-06-16) already retired** EX094, EX121, EX122, EX123, EX148, EX150, EX152, EX153, EX154, EX155 as non-trainable Technical/Skill — *the same "narrow cull" Part B set out to do.* So the two rows I re-flagged (EX094, EX123) **and** the 8 I'd wrongly marked KEEP are all already retired.
+- **+1 missing:** EX288 *Treadwall Intervals* (I/T, added by 0016 at `0B-v1.6.14`) — active, absent from the snapshot's active set.
+
+**Net for Part B: the cull is already complete (0009/#644); what remains is HYGIENE ONLY.**
+
+**Disposition tally (68 active target rows — authoritative post-migration):**
 
 | Disposition | Count | Rows |
 |---|---|---|
-| **KEEP + discipline-tag** | 61 | all not listed below |
-| **HYGIENE-FIX** | 14 | EX112/113/114/130/131 (climbing-roped→skill-cap); EX148/149/150 (mountaineering→skill-cap); EX168/169/170/171/172 (ski-setup equip-vocab gap); EX194 (lost SEM membership) |
-| **CULL?** (ratify) | 2 | EX094, EX123 |
+| **KEEP + discipline-tag** | 56 | all not listed below |
+| **HYGIENE — gear-toggle token** | 11 | EX112/113/114/130/131 (climbing), EX149 (mountaineering), EX168–172 (ski) |
+| **HYGIENE — SEM restore** | 1 | EX194 (restore lost Modern Pentathlon membership) |
+| **CULL** | 0 | already executed by 0009/#644 |
 
-**Reframe confirmed by the audit:** 61 of 65 Technical/Skill rows are clean KEEP, and the cull set is **2** (both gear-handling, not movement sessions). This is an asset inventory + narrow hygiene cull, exactly as §2 framed — **not** a mass deletion. No exact-duplicate rows were found; the near-pairs (EX118/EX183 pole technique, EX175/EX197 brick, EX070/EX186 cycling, EX051/EX215 uphill, EX052/EX213/EX214 descent) are each explicitly differentiated in their `coaching_cues` by pace/terrain/discipline.
+**Audit basis:** authoritative DB = `v1.8.0` snapshot + migrations `0006–0016`, queried in a local Postgres (the gate's exact recipe). Cross-referenced against active `sport_exercise_map`, `equipment_items` (127 names), `skill_capability_toggles`, and `sport_specific_gear_toggles` (12 active — the conflation tokens live here as gear bundles: `Touring/AT ski setup` #265, `Climbing — roped` #268, `Mountaineering` #272). EX194 is the **only** target row with zero active SEM.
 
-**Drift correction (Rule #9):** §3 v1 estimated the conflation split as `Climbing — roped ×8 / Touring-AT ski ×4 / Mountaineering ×1`. The on-disk audited reality is **`Climbing — roped ×5 / Mountaineering ×3 / Touring-AT ski ×5`** (total holds at 13). The ski-setup token is **not** a skill-capability conflation (no ski/skimo toggle exists in `skill_capability_toggles`) — it is a genuine equipment item missing from the `equipment_items` canon (see hygiene call H3 below).
+### Per-row table (`T/S` Technical/Skill · `I/T` Interval/Tempo · `A/E` Aerobic/Endurance; 68 active, ordered by id)
 
-### Per-row table (`T/S` = Technical/Skill, `I/T` = Interval/Tempo, `A/E` = Aerobic/Endurance)
-
-| exercise_id | name | type | discipline(s) — active SEM | terrain_required | disposition |
+| exercise_id | name | type | discipline(s) — active Critical SEM (or count) | terrain_required | disposition |
 |---|---|---|---|---|---|
-| EX048 | Hill Repeats | I/T | Trail Running, SkiMo, Ultramarathon … | Outdoor Hill | KEEP+tag |
-| EX049 | Strides (Flying Sprints) | I/T | Trail Running, Orienteering, Triathlon … | — | KEEP+tag |
-| EX051 | Uphill Running Technique Drill | T/S | Trail Running, Ultramarathon, Mtn/Sky Running … | Outdoor Hill | KEEP+tag |
-| EX052 | Downhill Running Technique Drill | T/S | Trail Running, Ultramarathon, LD Orienteering … | Outdoor Hill | KEEP+tag |
-| EX057 | Map Navigation Run | T/S | Orienteering, LD Orienteering … | — | KEEP+tag |
-| EX058 | Compass Bearing Walk / Run | T/S | Orienteering, LD Orienteering … | — | KEEP+tag |
-| EX070 | Single-Leg Cycling Drill (Trainer) | T/S | Mountain Biking, XC / AR Cycling … | — | KEEP+tag |
-| EX071 | Cornering Technique Drill (MTB) | T/S | Mountain Biking, Gravel Cycling, Multi-Sport | Trail | KEEP+tag |
-| EX072 | Pump Track / Trail Feature Technique | T/S | Mountain Biking | Pump Track | KEEP+tag |
-| EX073 | Threshold Intervals (Bike) | I/T | Mountain Biking, XC / AR Cycling, Triathlon … | — | KEEP+tag |
-| EX074 | VO2 Max Intervals (Bike) | I/T | Mountain Biking … | — | KEEP+tag |
-| EX075 | Sweet Spot Training (Bike) | I/T | Mountain Biking, XC / AR Cycling, Triathlon … | — | KEEP+tag |
-| EX090 | Paddling Ergometer Session | A/E | Packrafting, Kayaking, Canoeing … | — | KEEP+tag |
-| EX091 | Forward Stroke Technique Drill | T/S | Packrafting, Kayaking, Canoeing … | — | KEEP+tag |
-| EX092 | Bracing Stroke Drill (High and Low) | T/S | Packrafting, Kayaking … | — | KEEP+tag |
-| EX093 | Eskimo Roll Practice | T/S | Kayaking … | Pool or Flat Water | KEEP+tag |
-| **EX094** | **Packraft Inflation / Deflation Drill** | T/S | Packrafting | — | **CULL?** |
-| EX112 | Belay Simulation (Device Practice) | T/S | Rock Climbing … | — | HYGIENE (H1) |
-| EX113 | Movement on Route (Top-Rope / Lead) | T/S | Rock Climbing | Rock Wall | HYGIENE (H1) |
-| EX114 | Flagging / Hip Drop Technique Drill | T/S | Rock Climbing | — | HYGIENE (H1) |
-| EX116 | Mantling Technique Drill | T/S | Rock Climbing | Rock Wall | KEEP+tag |
-| EX118 | Trekking Pole Push Drill | T/S | Hiking, XC Skiing | — | KEEP+tag |
-| EX120 | Sustained LISS (Hiking Pace) | A/E | Hiking, Mountaineering, Snowshoeing … | — | KEEP+tag |
-| EX121 | Trekking Pole Technique (Descent Braking) | T/S | Hiking | — | KEEP+tag |
-| EX122 | Hip Hinge Under Pack (Practice Drill) | T/S | Hiking, LD Orienteering | — | KEEP+tag |
-| **EX123** | **Pack Fit Optimization Drill** | T/S | Hiking, LD Orienteering … | — | **CULL?** |
-| EX124 | Power Hiking Technique | T/S | Hiking, Ultramarathon, LD Orienteering … | — | KEEP+tag |
-| EX125 | Quad-Eccentric Walk (Controlled Descent) | T/S | Hiking | — | KEEP+tag |
-| EX126 | Freestyle Pull (With Buoy) | A/E | Triathlon, SwimRun … | Pool | KEEP+tag |
-| EX128 | Kicking Drill (Flutter / Frog) | A/E | Swimming, Triathlon | Pool | KEEP+tag |
-| EX130 | Rappel Device Operation Drill | T/S | Rappelling / Abseiling | — | HYGIENE (H1) |
-| EX131 | Wall Walk Descent Technique | T/S | Rappelling / Abseiling | Rock Wall | HYGIENE (H1) |
+| EX048 | Hill Repeats | I/T | Fell Running, Long Distance Orienteering … | Outdoor Hill | KEEP+tag |
+| EX049 | Strides (Flying Sprints) | I/T | (9 SEM) | — | KEEP+tag |
+| EX051 | Uphill Running Technique Drill | T/S | Fell Running, Mountain Running / Sky Running … | Outdoor Hill | KEEP+tag |
+| EX052 | Downhill Running Technique Drill | T/S | Fell Running, Long Distance Orienteering … | Outdoor Hill | KEEP+tag |
+| EX057 | Map Navigation Run | T/S | Long Distance Orienteering, Orienteering | — | KEEP+tag |
+| EX058 | Compass Bearing Walk / Run | T/S | Long Distance Orienteering, Orienteering | — | KEEP+tag |
+| EX070 | Single-Leg Cycling Drill (Trainer) | T/S | Mountain Biking, XC / AR Cycling | — | KEEP+tag |
+| EX071 | Cornering Technique Drill (MTB) | T/S | (3 SEM) | Trail | KEEP+tag |
+| EX072 | Pump Track / Trail Feature Technique | T/S | (1 SEM) | Pump Track | KEEP+tag |
+| EX073 | Threshold Intervals (Bike) | I/T | Gravel Cycling, Mountain Biking, Road Cycling … | — | KEEP+tag |
+| EX074 | VO2 Max Intervals (Bike) | I/T | Mountain Biking | — | KEEP+tag |
+| EX075 | Sweet Spot Training (Bike) | I/T | Bikepacking, Gravel Cycling, Mountain Biking … | — | KEEP+tag |
+| EX090 | Paddling Ergometer Session | A/E | Canoeing, Kayaking, Long Distance Paddle Racing, Packrafting | — | KEEP+tag |
+| EX091 | Forward Stroke Technique Drill | T/S | Canoeing, Kayaking, Long Distance Paddle Racing, Packrafting | — | KEEP+tag |
+| EX092 | Bracing Stroke Drill (High and Low) | T/S | Kayaking, Packrafting | — | KEEP+tag |
+| EX093 | Eskimo Roll Practice | T/S | Kayaking | Pool or Flat Water | KEEP+tag |
+| **EX112** | Belay Simulation (Device Practice) | T/S | Rock Climbing | — | HYGIENE (token) |
+| **EX113** | Movement on Route (Top-Rope / Lead) | T/S | Rock Climbing | Rock Wall | HYGIENE (token) |
+| **EX114** | Flagging / Hip Drop Technique Drill | T/S | (1 SEM) | — | HYGIENE (token) |
+| EX116 | Mantling Technique Drill | T/S | (1 SEM) | Rock Wall | KEEP+tag |
+| EX118 | Trekking Pole Push Drill | T/S | (2 SEM) | — | KEEP+tag |
+| EX120 | Sustained LISS (Hiking Pace) | A/E | Bikepacking, Hiking, Long Distance Orienteering … | — | KEEP+tag |
+| EX124 | Power Hiking Technique | T/S | Hiking, Long Distance Orienteering … | — | KEEP+tag |
+| EX125 | Quad-Eccentric Walk (Controlled Descent) | T/S | (1 SEM) | — | KEEP+tag |
+| EX126 | Freestyle Pull (With Buoy) | A/E | SwimRun, Triathlon | Pool | KEEP+tag |
+| EX128 | Kicking Drill (Flutter / Frog) | A/E | (2 SEM) | Pool | KEEP+tag |
+| **EX130** | Rappel Device Operation Drill | T/S | Rappelling / Abseiling | — | HYGIENE (token) |
+| **EX131** | Wall Walk Descent Technique | T/S | Rappelling / Abseiling | Rock Wall | HYGIENE (token) |
 | EX138 | Rest Position & Shake-Out Drill | T/S | Rock Climbing | Rock Wall | KEEP+tag |
-| EX140 | Open Water Sighting Drill | T/S | Swimming, Triathlon, SwimRun … | Open Water Body; Pool | KEEP+tag |
-| EX142 | Bilateral Breathing Drill | T/S | Swimming, Triathlon, SwimRun | Pool; Open Water | KEEP+tag |
-| EX144 | Hike-a-Bike Carry Drill | T/S | XC / AR Cycling, Bikepacking | — | KEEP+tag |
-| EX148 | Crampon Walking Technique | T/S | Mountaineering, SkiMo | — | HYGIENE (H2) |
-| EX149 | Ice Axe Self-Arrest | T/S | Mountaineering, SkiMo | — | HYGIENE (H2) |
-| EX150 | Rest Step Technique | T/S | Mountaineering … | — | HYGIENE (H2) |
-| EX152 | Post-Hole Recovery Gait | T/S | Mountaineering, SkiMo | Deep Snow or Sand | KEEP+tag |
-| EX153 | Snowshoe Gait Technique | T/S | Snowshoeing | — | KEEP+tag |
-| EX154 | Plunge Step Descent (Snowshoe) | T/S | Snowshoeing | — | KEEP+tag |
-| EX155 | Snowshoe Sidehill Traverse & Kickturn | T/S | Snowshoeing | — | KEEP+tag |
-| EX156 | Sweep Stroke Technique Drill | T/S | Canoeing … | — | KEEP+tag |
-| EX157 | Draw Stroke & Pry Technique | T/S | Canoeing … | — | KEEP+tag |
-| EX158 | Whitewater Line Reading | T/S | Kayaking, Canoeing, Paddle Rafting … | River | KEEP+tag |
-| EX159 | Wet Exit & Re-entry (Kayak) | T/S | Kayaking … | Pool or Flat Water | KEEP+tag |
-| EX162 | Tandem Canoe Coordination Drill | T/S | Canoeing, LD Paddle Racing | — | KEEP+tag |
-| EX163 | Canoe Portage Yoke Carry | T/S | Canoeing, LD Paddle Racing | — | KEEP+tag |
+| EX140 | Open Water Sighting Drill | T/S | SwimRun, Swimming, Triathlon | Open Water Body; Pool | KEEP+tag |
+| EX142 | Bilateral Breathing Drill | T/S | (3 SEM) | Pool; Open Water | KEEP+tag |
+| EX144 | Hike-a-Bike Carry Drill | T/S | Bikepacking, XC / AR Cycling | — | KEEP+tag |
+| **EX149** | Ice Axe Self-Arrest | T/S | Mountaineering, SkiMo | — | HYGIENE (token) |
+| EX156 | Sweep Stroke Technique Drill | T/S | Canoeing | — | KEEP+tag |
+| EX157 | Draw Stroke & Pry Technique | T/S | Canoeing | — | KEEP+tag |
+| EX158 | Whitewater Line Reading | T/S | Canoeing, Kayaking, Paddle Rafting | River | KEEP+tag |
+| EX159 | Wet Exit & Re-entry (Kayak) | T/S | Kayaking | Pool or Flat Water | KEEP+tag |
+| EX162 | Tandem Canoe Coordination Drill | T/S | Canoeing, Long Distance Paddle Racing | — | KEEP+tag |
+| EX163 | Canoe Portage Yoke Carry | T/S | Canoeing, Long Distance Paddle Racing | — | KEEP+tag |
 | EX164 | High-Side Command Response Drill | T/S | Paddle Rafting | — | KEEP+tag |
 | EX165 | Raft Paddle Synchronisation & Power Phase | T/S | Paddle Rafting | — | KEEP+tag |
-| EX166 | Ferry & Eddy Turn Technique | T/S | Kayaking, Canoeing … | Moving Water | KEEP+tag |
-| EX167 | Ocean / Surf Zone Entry & Exit | T/S | Kayaking | Ocean or Surf | KEEP+tag |
-| EX168 | Skinning Uphill Technique | T/S | SkiMo | — | HYGIENE (H3) |
-| EX169 | Ski Kick-Turn on Slope | T/S | SkiMo | — | HYGIENE (H3) |
-| EX170 | SkiMo Race Transition Drill | T/S | SkiMo | — | HYGIENE (H3) |
-| EX171 | Touring Ski Descent Technique | T/S | SkiMo | — | HYGIENE (H3) |
-| EX172 | Lateral Ski Edge Control Drill | T/S | SkiMo | Groomed Slope | HYGIENE (H3) |
-| EX175 | Brick Run Drill (Bike-to-Run Transition) | T/S | Triathlon, RBR Duathlon, Multi-Sport | — | KEEP+tag |
-| EX176 | Triathlon Transition Practice (T1 & T2) | T/S | Triathlon, Multi-Sport … | — | KEEP+tag |
-| EX178 | Tempo Run (Flat / Road) | I/T | Marathon, RBR Duathlon … | Road; Flat Trail | KEEP+tag |
-| EX179 | Marathon Pace Run | I/T | Marathon … | Road; Flat Trail | KEEP+tag |
-| EX180 | Walk-Run Interval Method (Ultra Pacing) | T/S | Ultramarathon, LD Orienteering | Trail; Road | KEEP+tag |
-| EX183 | Running with Poles (Trail / Ultra) | T/S | Ultramarathon … | Trail | KEEP+tag |
-| EX184 | Road Cycling Descending Technique | T/S | Road Cycling … | Descent Road | KEEP+tag |
-| EX185 | Climb Pacing & Cadence Management | T/S | Road Cycling, Gravel Cycling, Bikepacking | — | KEEP+tag |
-| EX186 | High Cadence Spin Drill | T/S | Road Cycling, Gravel Cycling, Bikepacking | — | KEEP+tag |
-| **EX194** | Laser-Run Drill (Run-to-Shoot Transition) | T/S | **—(no active SEM; Modern Pentathlon dropped)** | — | HYGIENE (H4) |
+| EX166 | Ferry & Eddy Turn Technique | T/S | Canoeing, Kayaking | Moving Water | KEEP+tag |
+| EX167 | Ocean / Surf Zone Entry & Exit | T/S | (1 SEM) | Ocean or Surf | KEEP+tag |
+| **EX168** | Skinning Uphill Technique | T/S | SkiMo | — | HYGIENE (token) |
+| **EX169** | Ski Kick-Turn on Slope | T/S | SkiMo | — | HYGIENE (token) |
+| **EX170** | SkiMo Race Transition Drill | T/S | SkiMo | — | HYGIENE (token) |
+| **EX171** | Touring Ski Descent Technique | T/S | SkiMo | — | HYGIENE (token) |
+| **EX172** | Lateral Ski Edge Control Drill | T/S | (1 SEM) | Groomed Slope | HYGIENE (token) |
+| EX175 | Brick Run Drill (Bike-to-Run Transition) | T/S | Multi-Sport Race, Run-Bike-Run Duathlon, Triathlon | — | KEEP+tag |
+| EX176 | Triathlon Transition Practice (T1 & T2) | T/S | Multi-Sport Race, Triathlon | — | KEEP+tag |
+| EX178 | Tempo Run (Flat / Road) | I/T | Marathon, Run-Bike-Run Duathlon | Road; Flat Trail | KEEP+tag |
+| EX179 | Marathon Pace Run | I/T | Marathon | Road; Flat Trail | KEEP+tag |
+| EX180 | Walk-Run Interval Method (Ultra Pacing) | T/S | Long Distance Orienteering, Ultramarathon | Trail; Road | KEEP+tag |
+| EX183 | Running with Poles (Trail / Ultra) | T/S | Ultramarathon | Trail | KEEP+tag |
+| EX184 | Road Cycling Descending Technique | T/S | Road Cycling | Descent Road | KEEP+tag |
+| EX185 | Climb Pacing & Cadence Management | T/S | Bikepacking, Gravel Cycling, Road Cycling | — | KEEP+tag |
+| EX186 | High Cadence Spin Drill | T/S | (3 SEM) | — | KEEP+tag |
+| **EX194** | Laser-Run Drill (Run-to-Shoot Transition) | T/S | (0 SEM) | — | HYGIENE (SEM) |
 | EX196 | Obstacle Vault & Wall Traversal | T/S | Obstacle Course Racing | — | KEEP+tag |
-| EX197 | Double Brick / Run-Bike-Run Pacing Drill | T/S | RBR Duathlon, Multi-Sport | Road; Trail | KEEP+tag |
+| EX197 | Double Brick / Run-Bike-Run Pacing Drill | T/S | Multi-Sport Race, Run-Bike-Run Duathlon | Road; Trail | KEEP+tag |
 | EX199 | SwimRun Water Entry & Exit Technique | T/S | SwimRun | Open Water | KEEP+tag |
 | EX200 | Rowing Drive Sequence Drill | T/S | Rowing | — | KEEP+tag |
 | EX203 | Rowing Erg Interval Session | I/T | Rowing | — | KEEP+tag |
-| EX212 | Scrambling Technique (Moving Terrain) | T/S | Mtn/Sky Running | Rocky Terrain; Steep Hill; Boulders | KEEP+tag |
-| EX213 | Scree Running Descent Technique | T/S | Mtn/Sky Running | Scree Field; Loose Rocky Slope | KEEP+tag |
-| EX214 | Fell Descent Technique (Grass, Bog, Heather) | T/S | Fell Running | Fell Terrain | KEEP+tag |
-| EX215 | Extreme Gradient Uphill Pacing (VK / Sky) | T/S | Mtn/Sky Running, Fell Running | Steep Mountain | KEEP+tag |
+| EX212 | Scrambling Technique (Moving Terrain) | T/S | Mountain Running / Sky Running | Rocky Terrain; Steep Hill; Boulders | KEEP+tag |
+| EX213 | Scree Running Descent Technique | T/S | Mountain Running / Sky Running | Scree Field; Loose Rocky Slope | KEEP+tag |
+| EX214 | Fell Descent Technique (Steep Grass, Bog, Heather) | T/S | Fell Running | Fell Terrain | KEEP+tag |
+| EX215 | Extreme Gradient Uphill Pacing (VK / Sky Technique) | T/S | Fell Running, Mountain Running / Sky Running | Steep Mountain | KEEP+tag |
+| EX288 | Treadwall Intervals | I/T | (2 SEM) | — | KEEP+tag |
 
-### Hygiene-fix detail (these rows KEEP; only the mis-filed token moves)
+### Hygiene-fix detail (these rows KEEP; only the mis-filed token / missing SEM is fixed)
 
-- **H1 — `Climbing — roped` → `climbing_roped` skill-capability gate (#336, toggle #21).** 5 rows (EX112, EX113, EX114, EX130, EX131). The token is a *capability* (rope-protected climbing skill), not a piece of equipment. Migration: remove `Climbing — roped` from `equipment_required`; the row is already discipline-gated via SEM (Rock Climbing / Rappelling). No new equipment.
-- **H2 — `Mountaineering` → `mountaineering` skill-capability gate (toggle #25).** 3 rows (EX148, EX149, EX150). Same pattern — alpine/glacier travel is a capability, not equipment. (Note: real gear *is* needed — crampons/ice axe — but those belong as their own equipment tokens if we want them, a separate no-padding call; H2 only removes the mis-filed discipline token.)
-- **H3 — `Touring/AT ski setup` equipment-vocab gap.** 5 rows (EX168–172). This token **is** genuine equipment (AT/touring ski gear) but is **absent from the 127-name `equipment_items` canon** and there is **no ski/skimo skill-capability toggle**. Two options for Andy (§3a-OPEN-3 below).
-- **H4 — EX194 lost its `sport_exercise_map` membership.** EX194 (Laser-Run Drill) is an active exercise but all its SEM rows are superseded (last active `0B-v19.0-r1`, superseded 2026-05-25) — so it currently has **no active discipline tag** and cannot be surfaced/weighted in the drill pool. The `Modern Pentathlon` sport is still active. Migration: restore the EX194 → Modern Pentathlon SEM row (priority `Critical`, the dropped note text preserved). This is a hygiene *restore*, not a new mapping.
+All three conflation tokens already exist as active `sport_specific_gear_toggles` (268/272/265) — gear *bundles*, not `equipment_items` pieces and not `skill_capability_toggles`. Fix = remove the toggle name from `equipment_required` (no new vocab). Genuine `equipment_items` pieces in those rows (e.g. Backpack, Snowshoes, Trekking poles) stay.
 
-### CULL candidates — ratify each (Trigger #2)
+- **H1 — remove `Climbing — roped`** (gear toggle #268): EX112, EX113, EX114, EX130, EX131 (5).
+- **H2 — remove `Mountaineering`** (gear toggle #272): EX149 (1 — EX148/EX150 were among 0009's culls).
+- **H3 — remove `Touring/AT ski setup`** (gear toggle #265 — already exists): EX168, EX169, EX170, EX171, EX172 (5).
+- **H4 — restore EX194's `sport_exercise_map` membership:** active exercise, all SEM rows superseded (last `0B-v19.0-r1`, 2026-05-25) → no active discipline tag → un-poolable. `Modern Pentathlon` sport still active. Restore the EX194 → Modern Pentathlon `Critical` row.
 
-Both are gear-handling/setup tasks with no locomotor or movement-skill training stimulus — they would render as odd drill picks ("today: optimize your pack fit"). Recommendation: **CULL both** (supersede, repoint inbound proxies). The contestable one is EX094 — its keep-argument is spelled out so Andy can overrule.
+*(Out-of-scope aside: EX115 Foot Smear Strength [Balance/Proprioception] and EX195 Rope Climb [Strength] also carry `Climbing — roped` in `equipment_required` — same conflation, but they are not drill-pool target types, so they are noted here, not handled by B1.)*
 
-- **EX123 Pack Fit Optimization Drill — CULL (firm).** "80% load on hip belt, 20% shoulders, adjust every 30–60 min." A one-time fitting/setup task, not a repeatable trainable session. No inbound `physical_proxies` reference it. Clean cull.
-- **EX094 Packraft Inflation / Deflation Drill — CULL (contestable).** "Timed practice… oral inflation vs pump bag; deflation, fold, pack." Pure equipment manipulation. **Keep-argument:** AR packraft transitions *are* timed and trainable, and the catalog retains analogous transition drills (EX170 SkiMo Race Transition, EX176 Triathlon T1/T2) — so culling EX094 while keeping those is arguably inconsistent. **Distinguishing line (why I still lean cull):** EX170/EX176 are whole-body movement sequences (running, mounting, wetsuit strip); EX094 is static gear inflation with no locomotion. **Repoint note:** EX176 lists EX094 in its `physical_proxies` — the migration must drop/repoint that reference. If Andy keeps EX094, it stays a LIGHT-tier utility drill.
+### Discipline → weight-tier map — RATIFIED (Andy 2026-06-19)
 
-### Discipline → weight-tier map — PROPOSED (the §13 OPEN item, ratify here)
+One knob: for a discipline, how much of its matched drill pool surfaces. Form/economy drills don't move steady road run/cycle economy (LIGHT — minimal, de-emphasized); technical-discipline drills transfer (HEAVY — full pool).
 
-Per evidence §3: form/economy drills don't move steady road run/cycle economy (surface a minimal set, de-emphasize); technical-discipline drills transfer strongly (surface the full pool). Mapped to the active sport names on these rows:
+- **HEAVY:** Kayaking, Canoeing, Packrafting, Paddle Rafting, Long Distance Paddle Racing, SUP, Swimming, SwimRun, SkiMo, XC Skiing, Snowshoeing, Mountaineering, Rock Climbing, Rappelling/Abseiling, Mountain Biking, XC/AR Cycling, Mountain Running/Sky Running, Fell Running, Orienteering, Long Distance Orienteering, Modern Pentathlon, Obstacle Course Racing, Rowing, **and — ratified HEAVY — Hiking + Trail Running + Ultramarathon** (pole/pack/pacing drills are efficiency skills, not run-economy form; also surfaces them in Andy's hiking-heavy PGE plan).
+- **LIGHT:** Road Cycling, Gravel Cycling, Marathon, Triathlon, Run-Bike-Run Duathlon, Bikepacking.
+- **Guardrail:** §5 weights per discipline; the LIGHT tier keeps the pure road-economy form drills (EX070, EX186) near-empty for road specialists (§7/§14).
 
-- **HEAVY (surface full discipline-matched pool):** Kayaking, Canoeing, Packrafting, Paddle Rafting, Long Distance Paddle Racing, SUP, Swimming, SwimRun, SkiMo, XC Skiing, Snowshoeing, Mountaineering, Rock Climbing, Rappelling/Abseiling, Mountain Biking, XC/AR Cycling, Mountain Running/Sky Running, Fell Running, Orienteering, Long Distance Orienteering, Modern Pentathlon, Obstacle Course Racing, Rowing.
-- **LIGHT (minimal set, prompt de-emphasizes):** Road Cycling, Gravel Cycling, Marathon, Triathlon, Run-Bike-Run Duathlon, Bikepacking.
-- **CONTESTABLE — Andy's call (flagged, not silently bucketed):**
-  - **Hiking** — recommend **HEAVY**: its drills (pole technique EX118/EX121, power-hike EX124, rest-step-adjacent, hip-hinge-under-pack EX122) are efficiency/load skills that genuinely transfer in AR, *not* running-economy form drills. The "drills don't help" evidence is about run/cycle *form*, not pole/pack technique.
-  - **Trail Running / Ultramarathon** — recommend **HEAVY** for the *technique/pacing* rows (uphill/downhill technique EX051/052, walk-run pacing EX180, poles EX183) which matter on technical terrain, even though their *steady-running* economy is LIGHT. The split is per-drill, not cleanly per-discipline — see the guardrail note.
-  - **Guardrail consequence:** because §5 weights per *discipline*, a discipline placed HEAVY surfaces all its matched rows. The LIGHT tier's whole job is to keep the pure road-economy form drills (EX070, EX186, EX051 on flat) near-empty for road specialists — consistent with §7's "binding mostly bites where evidence is strong" and §14's "watch the LIGHT-tier pool stays near-empty."
+### Interval/Tempo scope — RATIFIED: include now (Andy 2026-06-19)
 
-### Interval/Tempo scope — PROPOSED
+**Andy ratified including the (now 9) Interval/Tempo rows in the v1 `cardio_drills` pool** (incl. EX288 Treadwall Intervals), over my defer-to-#337 recommendation. The pool spans all three types — matching the §5 `_CARDIO_DRILL_POOL_EXERCISE_TYPES` allowlist. Each interval row's `coaching_cue` carries the dose (e.g. EX074 "3–8 min at RPE 9; 3–5 reps"), so it renders serviceably. *(Watch-out: a structured interval is heavier than a one-cue skill drill; revisit under #337 if the `maxItems:1` framing reads oddly live.)*
 
-Recommend **defer the 8 Interval/Tempo rows from the v1 drill pool** (include `Aerobic/Endurance` ×4 + Technical/Skill survivors now). Rationale matches §13/§6: a "skill drill" (one technical focus, `maxItems:1`) is a different object than a structured interval prescription ("Z5 4×4min"), which is #337's catalog-driven interval-structure design. Folding intervals into the drill pool now would conflate the two and stress the `maxItems:1` framing (you don't do "one interval"). The 8 rows stay KEEP in the catalog, just out of the `cardio_drills` pool — revisit under #337.
+### Ratified decisions (Andy 2026-06-19)
 
-### What Andy ratifies before B1 runs
+1. **CULL — N/A.** The Technical/Skill cull was **already executed** by migration 0009/#644 (EX094/EX123 + 8 others). Part B carries **no new culls**; the "cull both" ratification is satisfied by the existing 0009.
+2. **Hygiene H1–H4** — 11 gear-toggle token removals + EX194 SEM restore (the entire remaining Part B scope).
+3. **Gear-toggle home confirmed** — `sport_specific_gear_toggles`, no `equipment_items`/skill-cap addition.
+4. **Weight-tier map** — Hiking + Trail/Ultra = HEAVY.
+5. **Interval/Tempo** — included now (9 rows incl. EX288).
 
-1. **CULL list** — EX094 (contestable) + EX123, or a subset.
-2. **Hygiene H1–H4** — confirm the 4 fixes (climbing-roped/mountaineering→skill-cap; ski-vocab option; EX194 SEM restore).
-3. **§3a-OPEN-3 (ski-vocab):** add `Touring/AT ski setup` to the `equipment_items` canon (no-padding call — it's a real, currently-uncatalogued gear item) **or** leave the token in place as a known wart. Recommend **add to `equipment_items`** (it's legitimate gear the canon is simply missing).
-4. **Discipline→weight-tier map** — incl. the Hiking / Trail / Ultra HEAVY-vs-LIGHT calls.
-5. **Interval/Tempo deferral** to #337.
+**NEXT = B1 hygiene migration** (12 rows: 11 `equipment_required` token strips + 1 SEM restore; no cull), built against this corrected §3a.
 
 ---
 
@@ -317,19 +308,19 @@ Cardio session card gains a subordinate `cardio_drills` list (the `recovery_exer
 - Binding: **enforced enum-bound** (reconciled per §7 — binds vocabulary, not presence).
 - **One drill per session — hard cap `maxItems:1`** (2026-06-19, §4).
 - **§6a LLM-reliability guardrails G1–G8** (2026-06-19) — optional+pool-derived prompt; one membership blocker only; retryable invariants; legible capped render; discipline-scope via prompt not rule; clean-enum-first; Rule #15 logging.
+- **§3a per-row dispositions** (2026-06-19, CORRECTED) — against the live post-migration catalog (68 active): **56 KEEP / 12 HYGIENE / 0 CULL**. The Technical/Skill cull was **already executed by 0009/#644** (EX094/EX123 + 8 others). Remaining Part B = hygiene: H1–H3 strip mis-filed gear-toggle tokens from `equipment_required` (11 rows; `sport_specific_gear_toggles`, no new vocab); H4 restore EX194's SEM row. See §3a.
+- **Discipline→weight-tier map** (2026-06-19) — HEAVY technical disciplines incl. **Hiking + Trail/Ultra**; LIGHT road run/cycle. See §3a.
+- **Interval/Tempo scope** (2026-06-19) — **include** the 8 Interval/Tempo rows in the v1 drill pool now (not deferred to #337). See §3a.
 
 **Open (ratify before the respective slice lands):**
-- **§3a per-row cull/keep/hygiene list** — the actual dispositions for the 65+12 rows (Trigger #2; no cull without review).
-- **Discipline→weight-tier map** — which disciplines are HEAVY vs LIGHT (decided with §3a, same tags).
-- **Prompt-body wording** (§6 / §6a-G1) — Trigger #1 ratification.
-- **Interval/Tempo scope** — are the 8 Interval/Tempo rows in the *drill* pool, or reserved for a future catalog-driven interval-structure design (#337)? Recommend: include `Aerobic/Endurance` + technical drills now; **defer** structured intervals to #337 to avoid conflating "skill drill" with "interval prescription."
+- **Prompt-body wording** (§6 / §6a-G1) — Trigger #1 ratification (before A2).
 - **Tighten-later (§6a-G5):** add a soft `severity=warning` discipline-match check (drill's `sport_exercise_map` ∩ session discipline) **only if** wrong-discipline picks show up live — kept out of v1 to avoid churn.
 
 ---
 
 ## 13a. Build slices (>5 files → split per the 5-file ceiling)
 
-- **B1 — audit + cull migration:** §3a audit table (ratified) → one layer0 migration (supersede culls + hygiene edits) + repoint inbound proxies. Bookkeeping + `etl/` only.
+- **B1 — hygiene migration** (cull already done by 0009/#644): one layer0 migration applying §3a's 12 hygiene edits — strip the 11 mis-filed gear-toggle tokens from `equipment_required` + restore EX194's Modern Pentathlon SEM row. Serving-relevant 0B edit (supersede + re-insert at a bumped version; the 0016 pattern). Bookkeeping + `etl/` only.
 - **A1 — schema:** `payload.py` `CardioDrill` + field + invariants + tests. No prompt/cache.
 - **A2 — pool + prompt + cache:** `per_phase.py` `compute_cardio_drill_pool_ids` + `_format_cardio_drill_pool` + `# Cardio drills` section + schema enum-bind thread; `hashing.py` revision bump. (Prompt ratified first.)
 - **A3 — validator + render:** `validator.py` `_rule_cardio_drill_pool_membership`; `templates/plan_create/view.html` + CSS.
