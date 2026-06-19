@@ -1,0 +1,38 @@
+{# #767 slice 4 — minimal WHOOP wellness CSV upload. physiological_cycles.csv
+   (or the .zip export bundle) → provider_raw_record (provider='whoop'). The
+   polished provider+format picker is slice 5; this is the working endpoint. #}
+{% extends 'base.html' %}
+{% set nav_active = 'link' %}
+{% block title %}Import WHOOP wellness{% endblock %}
+{% block crumbs %}<a href="{{ url_for('connections.hub') }}">Data</a> <span class="sep">/</span> <b>WHOOP CSV</b>{% endblock %}
+
+{% block content %}
+<div class="dash-head">
+  <div class="races-intro">
+    <p class="eyebrow accent">● Data · wellness data</p>
+    <h1 class="page-title">Import WHOOP wellness.</h1>
+    <p class="page-sub">Upload your WHOOP <code>physiological_cycles.csv</code> (or the whole
+      <code>.zip</code> from “Export your data”) to bring in daily sleep, HRV, and resting heart rate.
+      Re-uploading the same export refreshes those days in place.</p>
+  </div>
+</div>
+
+<div class="stack fit-wrap">
+  {% if result %}
+  <section class="card card-pad fit-card">
+    <p class="page-sub">Imported <b>{{ result.days }}</b> day(s) of WHOOP wellness.</p>
+  </section>
+  {% endif %}
+
+  <section class="card card-pad fit-card">
+    <p class="eyebrow accent fit-sec-label">● Upload physiological_cycles.csv</p>
+    <form method="post" action="{{ url_for('whoop.import_wellness') }}" enctype="multipart/form-data">
+      <label class="btn btn-ghost btn-sm fit-file-btn">
+        Choose file
+        <input name="csv_file" type="file" accept=".csv,.zip" hidden>
+      </label>
+      <button class="btn btn-primary btn-sm" type="submit">Import</button>
+    </form>
+  </section>
+</div>
+{% endblock %}

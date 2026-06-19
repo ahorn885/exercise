@@ -232,8 +232,8 @@ class TestRecentWellness:
         conn = _FakeConn()
         out = q_layer3A_recent_wellness(conn, 1, _AS_OF)
         assert out == []
-        # Four SELECTs: garmin, polar sleep, polar hrv, coros daily summary.
-        assert len(conn.calls) == 4
+        # Five SELECTs: garmin, polar sleep, polar hrv, coros, whoop daily.
+        assert len(conn.calls) == 5
 
     def test_default_window_14d(self):
         conn = _FakeConn()
@@ -380,6 +380,68 @@ class TestRecentWellness:
         # No device reports resting HR here → stays None.
         assert r.resting_hr is None
         assert r.resting_hr_source is None
+
+    def test_whoop_contributes_sleep_hrv_and_resting_hr(self):
+        # #767 slice 4: a Whoop daily_summary row feeds all three metrics —
+        # and resting_hr from a non-Garmin source for the first time.
+        conn = _FakeConn()
+        conn.queue()  # garmin
+        conn.queue()  # polar sleep
+        conn.queue()  # polar hrv
+        conn.queue()  # coros
+        conn.queue(
+            {
+                "date": "2026-05-18",
+                "total_sleep_min": 450.0,  # 7.5h
+                "hrv_rmssd_ms": 72.0,
+                "resting_hr": 44.0,
+                "fetched_at": datetime(2026, 5, 18, 7, 0),
+            }
+        )
+        out = q_layer3A_recent_wellness(conn, 1, _AS_OF)
+        assert len(out) == 1
+        r = out[0]
+        assert r.total_sleep_hours == pytest.approx(7.5)
+        assert r.total_sleep_hours_source == "whoop"
+        assert r.hrv_rmssd_ms == 72.0
+        assert r.hrv_rmssd_ms_source == "whoop"
+        assert r.resting_hr == 44
+        assert r.resting_hr_source == "whoop"
+
+    def test_whoop_priority_below_garmin_above_polar_on_tie(self):
+        # Equal ingest timestamps: garmin beats whoop (sleep); whoop beats polar
+        # (HRV). Confirms the garmin>whoop>polar>coros tiebreak order.
+        ts = datetime(2026, 5, 17, 7, 0)
+        conn = _FakeConn()
+        conn.queue(
+            _garmin_wellness_row(
+                date_str="2026-05-17",
+                sleep_start_ms=0,
+                sleep_end_ms=7 * 3_600_000,
+                updated_at=ts,
+            )
+        )
+        conn.queue()  # polar sleep
+        conn.queue(
+            {"date": "2026-05-17", "hrv_rmssd_ms": 50.0, "fetched_at": ts}
+        )  # polar hrv
+        conn.queue()  # coros
+        conn.queue(
+            {
+                "date": "2026-05-17",
+                "total_sleep_min": 540.0,  # 9.0h — loses to garmin on tie
+                "hrv_rmssd_ms": 65.0,      # beats polar on tie
+                "resting_hr": None,
+                "fetched_at": ts,
+            }
+        )
+        out = q_layer3A_recent_wellness(conn, 1, _AS_OF)
+        assert len(out) == 1
+        r = out[0]
+        assert r.total_sleep_hours == pytest.approx(7.0)
+        assert r.total_sleep_hours_source == "garmin"  # garmin > whoop
+        assert r.hrv_rmssd_ms == 65.0
+        assert r.hrv_rmssd_ms_source == "whoop"  # whoop > polar
 
     def test_multi_day_sorted_desc(self):
         conn = _FakeConn()
@@ -674,7 +736,8 @@ class TestAssembleBundle:
         conn = _FakeConn()
         # q_layer3A_recent_workouts: 1 query
         conn.queue(_workout_row(date_str="2026-05-19", activity="Run"))
-        # q_layer3A_recent_wellness: 4 queries (garmin, polar sleep, polar hrv, coros)
+        # q_layer3A_recent_wellness: 5 queries (garmin, polar sleep, polar hrv,
+        # coros, whoop)
         conn.queue(
             _garmin_wellness_row(
                 date_str="2026-05-19",
@@ -684,6 +747,7 @@ class TestAssembleBundle:
                 resting_hr=48,
             )
         )
+        conn.queue()
         conn.queue()
         conn.queue()
         conn.queue()
@@ -720,7 +784,7 @@ class TestAssembleBundle:
         the bundle still constructs (the §10.2 "no providers connected" + the
         §10.1 "just-onboarded athlete" path)."""
         conn = _FakeConn()
-        for _ in range(15):  # 1 + 4 + 1 + 2 + 7
+        for _ in range(16):  # 1 + 5 + 1 + 2 + 7
             conn.queue()
         bundle = assemble_layer3a_integration_bundle(conn, 1, _AS_OF)
         assert bundle.recent_workouts == []
@@ -740,7 +804,7 @@ class TestAssembleBundle:
         DB responses must hash identically."""
         def _assemble() -> Layer3AIntegrationBundle:
             conn = _FakeConn()
-            for _ in range(15):  # 1 + 4 + 1 + 2 + 7
+            for _ in range(16):  # 1 + 5 + 1 + 2 + 7
                 conn.queue()
             return assemble_layer3a_integration_bundle(conn, 1, _AS_OF)
 
