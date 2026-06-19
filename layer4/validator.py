@@ -873,6 +873,73 @@ def _rule_recovery_placement_match(
     return out
 
 
+# ─── Rule 6a-cardio-drill: cardio_drill_pool_membership (#698 Track 2, A3) ───
+
+
+def _rule_cardio_drill_pool_membership(
+    payload: Layer4Payload, ctx: ValidatorContext
+) -> list[RuleFailure]:
+    """The cardio-drill analog of `_rule_recovery_pool_membership`: every
+    `cardio_drills[*].exercise_id` must be in the deterministic drill pool
+    (`per_phase.compute_cardio_drill_pool_ids` — the Technical/Skill +
+    Interval/Tempo + Aerobic/Endurance 0B types, discipline-matched, 2D-excluded,
+    constituent-sport-gated, character-periodized). The A2 tool-schema enum makes
+    an out-of-pool pick structurally near-impossible on the normal path; this is
+    the ONLY drill blocker (§6a-G2 — no discipline-match/count rule) and
+    backstops the `model_construct`/injected-session path.
+
+    The pool is phase-scoped (skill/transition drills drop in Peak/Taper), so it's
+    computed per distinct phase (memoized to keep the Rule #15 log to one line per
+    phase). Skipped when 2C or 2A context is missing (can't compute the
+    discipline-matched pool) or the phase's pool resolves empty — the empty-pool
+    case is owned by suppress-on-empty (A2), so blocking here would re-freeze."""
+    if not ctx.layer2c_payloads or ctx.layer2a_payload is None:
+        return []
+    # Local import — `per_phase` imports this module at top level (mirrors the
+    # `_rule_recovery_pool_membership` lazy-import precedent).
+    from layer4.per_phase import compute_cardio_drill_pool_ids
+
+    disciplines = {
+        d.discipline_id
+        for d in ctx.layer2a_payload.disciplines
+        if d.inclusion == "included"
+    }
+    pools: dict[str, set[str]] = {}  # phase_name → pool ids (memoized)
+    out: list[RuleFailure] = []
+    for s in payload.sessions:
+        if s.kind != "cardio" or not s.cardio_drills or s.phase_metadata is None:
+            continue
+        phase = s.phase_metadata.phase_name
+        if phase not in pools:
+            pools[phase] = set(
+                compute_cardio_drill_pool_ids(
+                    ctx.layer2c_payloads,
+                    ctx.layer2d_payload,
+                    disciplines=disciplines,
+                    phase=phase,
+                )
+            )
+        pool = pools[phase]
+        if not pool:
+            continue  # empty-pool owned by suppress-on-empty (A2)
+        for ex in s.cardio_drills:
+            if ex.exercise_id in pool:
+                continue
+            out.append(
+                RuleFailure(
+                    rule_name=f"cardio_drill_pool_membership_{ex.exercise_id}_in_{s.session_id}",
+                    phase_name=phase,
+                    severity="blocker",
+                    detail=(
+                        f"cardio drill {ex.exercise_id} ('{ex.exercise_name}') is not in "
+                        "the resolved cardio drill pool (compute_cardio_drill_pool_ids)"
+                    ),
+                    affected_session_ids=[s.session_id],
+                )
+            )
+    return out
+
+
 # ─── Rule 6b: session_multi_locale ─────────────────────────────────────────
 
 
@@ -1837,6 +1904,7 @@ _ALL_RULES: tuple[Callable[[Layer4Payload, ValidatorContext], list[RuleFailure]]
     _rule_two_per_day,
     _rule_recovery_pool_membership,
     _rule_recovery_placement_match,
+    _rule_cardio_drill_pool_membership,
     _rule_session_multi_locale,
     _rule_session_locale_not_in_cluster,
     _rule_injury_violation,

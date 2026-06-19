@@ -65,7 +65,7 @@ from layer4 import (
     WeightResult,
     validate_layer4_payload,
 )
-from layer4.payload import RecoveryExercise, RuleFailure
+from layer4.payload import CardioDrill, RecoveryExercise, RuleFailure
 from layer4.validator import (
     _iso_week,
     phase_volume_bands_hours,
@@ -143,6 +143,7 @@ def _cardio_session(
     locale_id: str = "L-home",
     intensity_summary: str = "moderate",
     blocks: list[CardioBlock] | None = None,
+    cardio_drills: list[CardioDrill] | None = None,
     phase_metadata: object = _UNSET,
     coaching_flags: list[str] | None = None,
 ) -> PlanSession:
@@ -164,6 +165,7 @@ def _cardio_session(
         duration_min=duration_min,
         intensity_summary=intensity_summary,  # type: ignore[arg-type]
         cardio_blocks=blocks or [_cardio_block(duration_min=duration_min)],
+        cardio_drills=cardio_drills,
         phase_metadata=phase_metadata,  # type: ignore[arg-type]
         session_notes="x",
         coaching_intent="x",
@@ -1245,6 +1247,86 @@ def test_recovery_pool_membership_skipped_when_pool_empty():
     )
     failures = validate_layer4_payload(payload, ctx).rule_failures
     assert not any(f.rule_name.startswith("recovery_pool_membership") for f in failures)
+
+
+# ─── #698 Track 2 (A3) — cardio_drill_pool_membership (Rule 6a-cardio-drill) ─
+
+
+def _drill(exercise_id: str = "EX073") -> CardioDrill:
+    return CardioDrill(
+        exercise_id=exercise_id,
+        exercise_name=exercise_id,
+        prescription="4×8min @ threshold",
+    )
+
+
+def test_cardio_drill_pool_membership_in_pool_no_fire():
+    sessions = [_cardio_session(cardio_drills=[_drill("EX073")])]
+    payload = _minimal_layer4(sessions=sessions)
+    ctx = ValidatorContext(
+        layer2a_payload=_layer2a_with_band(discipline_id="D-001"),
+        layer2c_payloads={
+            "L-home": _layer2c(
+                exercise_ids=["EX073"], discipline_id="D-001",
+                exercise_type="Interval / Tempo",
+            )
+        },
+    )
+    failures = validate_layer4_payload(payload, ctx).rule_failures
+    assert not any(
+        f.rule_name.startswith("cardio_drill_pool_membership") for f in failures
+    )
+
+
+def test_cardio_drill_pool_membership_out_of_pool_blocks():
+    sessions = [_cardio_session(cardio_drills=[_drill("EX999")])]
+    payload = _minimal_layer4(sessions=sessions)
+    ctx = ValidatorContext(
+        layer2a_payload=_layer2a_with_band(discipline_id="D-001"),
+        layer2c_payloads={
+            "L-home": _layer2c(
+                exercise_ids=["EX073"], discipline_id="D-001",
+                exercise_type="Interval / Tempo",
+            )
+        },
+    )
+    failures = validate_layer4_payload(payload, ctx).rule_failures
+    cdm = [
+        f for f in failures if f.rule_name.startswith("cardio_drill_pool_membership")
+    ]
+    assert cdm
+    assert cdm[0].severity == "blocker"
+
+
+def test_cardio_drill_pool_membership_skipped_without_2c():
+    sessions = [_cardio_session(cardio_drills=[_drill("EX999")])]
+    payload = _minimal_layer4(sessions=sessions)
+    ctx = ValidatorContext(layer2a_payload=_layer2a_with_band(discipline_id="D-001"))
+    failures = validate_layer4_payload(payload, ctx).rule_failures
+    assert not any(
+        f.rule_name.startswith("cardio_drill_pool_membership") for f in failures
+    )
+
+
+def test_cardio_drill_pool_membership_skipped_when_pool_empty():
+    """Empty pool (no drill-type rows match the athlete's disciplines) → skip,
+    don't re-freeze; suppress-on-empty (A2) owns that case."""
+    sessions = [_cardio_session(cardio_drills=[_drill("EX999")])]
+    payload = _minimal_layer4(sessions=sessions)
+    ctx = ValidatorContext(
+        layer2a_payload=_layer2a_with_band(discipline_id="D-001"),
+        # 2C present but only strength-type rows → drill pool resolves empty.
+        layer2c_payloads={
+            "L-home": _layer2c(
+                exercise_ids=["E-squat"], discipline_id="D-001",
+                exercise_type="strength",
+            )
+        },
+    )
+    failures = validate_layer4_payload(payload, ctx).rule_failures
+    assert not any(
+        f.rule_name.startswith("cardio_drill_pool_membership") for f in failures
+    )
 
 
 # ─── #698 Track 1 (Slice 3b) — recovery placement-match (D6) ────────────────

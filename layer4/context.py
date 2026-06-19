@@ -423,6 +423,11 @@ class ResolvedExercise(_Base):
     discipline_ids: list[str]
     sport_relevance_notes: dict[str, str]
     priority_per_discipline: dict[str, str]
+    # #698 Track 2 (A2) — 0B `exercises.coaching_cues` pass-through. Carries the
+    # interval/drill dose for the cardio drill pool render (e.g. EX290 "3–5 min
+    # reps at ~95–100% vVO2max; 4–6 reps"). Defaulted None so pre-change cached
+    # 2C payloads hydrate cleanly.
+    coaching_cue: str | None = None
     # 0B `exercises.movement_patterns` (e.g. ["Single-Leg", "Hinge"]). Threaded
     # through 2C (#335 Phase 2) so the Layer 4 strength pool can rank by pattern
     # and derive a compound core. Defaulted so pre-change cached 2C payloads

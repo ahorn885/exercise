@@ -1125,3 +1125,190 @@ class TestPromptRendering:
             rule_failures=[],
         )
         assert "focus on form" in prompt
+
+
+# ─── #698 Track 2 (Slice C1) — on-demand cardio drills ───────────────────────
+
+
+def _layer2c_with_drill(
+    locale_id: str = "home_gym",
+    drill_id: str = "EX292",
+    drill_type: str = "Interval / Tempo",
+    discipline_id: str = "D-bike",
+    coaching_cue: str | None = "6×3min Z4 / 3min Z2",
+) -> Layer2CPayload:
+    """A locale 2C carrying one cardio-drill-type resolved exercise so the
+    Slice-C1 pool resolves non-empty."""
+    return Layer2CPayload(
+        locale_id=locale_id,
+        etl_version_set={"layer0": "v7"},
+        effective_pool=[drill_id],
+        discipline_coverage=[
+            DisciplineCoverage(
+                discipline_id=discipline_id,
+                discipline_name=discipline_id,
+                exercise_db_sport="x",
+                total_exercises=1,
+                tier_1_count=1,
+                tier_2_count=0,
+                tier_3_count=0,
+                unavailable_count=0,
+                coverage_pct=1.0,
+            )
+        ],
+        exercises_resolved=[
+            ResolvedExercise(
+                exercise_id=drill_id,
+                exercise_name="Bike Over-Under Intervals",
+                exercise_type=drill_type,
+                discipline_ids=[discipline_id],
+                sport_relevance_notes={discipline_id: "x"},
+                priority_per_discipline={discipline_id: "High"},
+                tier=1,
+                terrain_required=[],
+                contraindicated_parts=[],
+                contraindicated_conditions=[],
+                accommodations=[],
+                coaching_cue=coaching_cue,
+            )
+        ],
+        coaching_flags=[],
+    )
+
+
+class TestCardioDrillsSliceC1:
+    def test_schema_has_capped_cardio_drills_block(self):
+        tool = build_record_single_session_tool()
+        drills = tool["input_schema"]["properties"]["session"]["properties"][
+            "cardio_drills"
+        ]
+        assert drills["type"] == ["array", "null"]
+        assert drills["maxItems"] == 1
+        assert drills["items"]["required"] == [
+            "exercise_id",
+            "exercise_name",
+            "prescription",
+        ]
+
+    def test_exercise_id_enum_bound_when_pool_nonempty(self):
+        tool = build_record_single_session_tool(cardio_drill_pool_ids=["EX292", "EX073"])
+        prop = tool["input_schema"]["properties"]["session"]["properties"][
+            "cardio_drills"
+        ]["items"]["properties"]["exercise_id"]
+        assert prop == {"type": "string", "enum": ["EX292", "EX073"]}
+
+    def test_exercise_id_free_string_when_pool_empty(self):
+        tool = build_record_single_session_tool(cardio_drill_pool_ids=None)
+        prop = tool["input_schema"]["properties"]["session"]["properties"][
+            "cardio_drills"
+        ]["items"]["properties"]["exercise_id"]
+        assert prop == {"type": "string"}
+
+    def test_system_prompt_has_cardio_drills_section(self):
+        from layer4.single_session import _SYSTEM_PROMPT
+
+        assert "# Cardio drills" in _SYSTEM_PROMPT
+        assert "At most one drill" in _SYSTEM_PROMPT
+
+    def test_user_prompt_renders_pool_when_lines_present(self):
+        from layer4.single_session import _render_user_prompt
+
+        req = SingleSessionRequest(
+            sport="cycling", duration_min=60, intensity="hard", locale_slug="home_gym"
+        )
+        prompt = _render_user_prompt(
+            request=req,
+            layer1_payload=_layer1(),
+            layer2c_payload_for_locale=_layer2c_with_drill(),
+            layer2d_payload=_layer2d(),
+            layer3a_payload=_layer3a(),
+            session_date=_DATE,
+            retries_used=0,
+            rule_failures=[],
+            cardio_drill_pool_lines=["- D-bike:", "  - EX292 (Bike Over-Under Intervals)"],
+        )
+        assert "=== Cardio drill pool (consider these) ===" in prompt
+        assert "EX292" in prompt
+
+    def test_user_prompt_suppresses_pool_when_no_lines(self):
+        from layer4.single_session import _render_user_prompt
+
+        req = SingleSessionRequest(
+            sport="cycling", duration_min=60, intensity="hard", locale_slug="home_gym"
+        )
+        prompt = _render_user_prompt(
+            request=req,
+            layer1_payload=_layer1(),
+            layer2c_payload_for_locale=_layer2c_with_drill(),
+            layer2d_payload=_layer2d(),
+            layer3a_payload=_layer3a(),
+            session_date=_DATE,
+            retries_used=0,
+            rule_failures=[],
+            cardio_drill_pool_lines=[],
+        )
+        assert "Cardio drill pool" not in prompt
+
+    def test_build_plan_session_parses_cardio_drills(self):
+        from layer4.single_session import _build_plan_session
+
+        out = _cardio_tool_output(discipline_id="D-bike")
+        out["session"]["cardio_drills"] = [
+            {
+                "exercise_id": "EX292",
+                "exercise_name": "Bike Over-Under Intervals",
+                "prescription": "6×3min Z4 / 3min Z2",
+                "instructions": "Hold the over just above threshold.",
+            }
+        ]
+        sess = _build_plan_session(
+            out["session"],
+            session_id="S-test",
+            plan_version_id=1,
+            request=SingleSessionRequest(
+                sport="cycling",
+                duration_min=60,
+                intensity="hard",
+                locale_slug="home_gym",
+            ),
+        )
+        assert sess.cardio_drills is not None
+        assert len(sess.cardio_drills) == 1
+        assert sess.cardio_drills[0].exercise_id == "EX292"
+
+    def test_end_to_end_drill_lands_and_pool_enum_binds(self):
+        from layer4.single_session import build_record_single_session_tool as _t
+
+        req = SingleSessionRequest(
+            sport="cycling", duration_min=60, intensity="hard", locale_slug="home_gym"
+        )
+        out = _cardio_tool_output(discipline_id="D-bike")
+        out["session"]["cardio_drills"] = [
+            {
+                "exercise_id": "EX292",
+                "exercise_name": "Bike Over-Under Intervals",
+                "prescription": "6×3min Z4 / 3min Z2",
+                "instructions": None,
+            }
+        ]
+        payload = llm_layer4_single_session_synthesize(
+            request=req,
+            layer2c_payload_for_locale=_layer2c_with_drill(),
+            llm_caller=_stub_caller(out),
+            user_id=42,
+            layer1_payload=_layer1(),
+            layer2d_payload=_layer2d(),
+            layer3a_payload=_layer3a(),
+            suggestion_id=999,
+            etl_version_set={"layer0": "v7"},
+            session_date=_DATE,
+        )
+        sess = payload.sessions[0]
+        assert sess.cardio_drills is not None
+        assert sess.cardio_drills[0].exercise_id == "EX292"
+        # the drill-bearing locale resolves a non-empty pool → enum-bound schema
+        assert "EX292" in _t(cardio_drill_pool_ids=["EX292"])["input_schema"][
+            "properties"
+        ]["session"]["properties"]["cardio_drills"]["items"]["properties"][
+            "exercise_id"
+        ]["enum"]

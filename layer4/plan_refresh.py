@@ -58,9 +58,16 @@ from layer4.context import (
     TrainingSubstitutionPayload,
 )
 from layer4.errors import Layer4InputError, Layer4OutputError
-from layer4.per_phase import block_output_budget, compute_feasible_pool_ids
+from layer4.per_phase import (
+    CARDIO_DRILLS_PROMPT_SECTION,
+    _format_cardio_drill_pool,
+    block_output_budget,
+    compute_cardio_drill_pool_ids,
+    compute_feasible_pool_ids,
+)
 from layer4.payload import (
     CardioBlock,
+    CardioDrill,
     Layer4Payload,
     Observation,
     PlanSession,
@@ -212,7 +219,10 @@ _REFRESH_COACHING_FLAGS = [
 ]
 
 
-def _session_schema(feasible_pool_ids: list[str] | None = None) -> dict[str, Any]:
+def _session_schema(
+    feasible_pool_ids: list[str] | None = None,
+    cardio_drill_pool_ids: list[str] | None = None,
+) -> dict[str, Any]:
     """One element of the `sessions` array — the full PlanSession contract
     mirror per Step 4a precedent. Differs from single_session.py only in the
     closed coaching_flags enum (7 refresh flags vs 3 single-session flags)
@@ -361,6 +371,34 @@ def _session_schema(feasible_pool_ids: list[str] | None = None) -> dict[str, Any
                     },
                 },
             },
+            # #698 Track 2 (Slice C2) — structured cardio drill block, the
+            # analog of the plan-create cardio_drills (same fidelity as plan
+            # generation). HARD CAP maxItems:1; exercise_id enum-bound to the
+            # drill pool when resolvable, so out-of-pool picks are structurally
+            # impossible at the SDK boundary.
+            "cardio_drills": {
+                "type": ["array", "null"],
+                "maxItems": 1,
+                "items": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "required": [
+                        "exercise_id",
+                        "exercise_name",
+                        "prescription",
+                    ],
+                    "properties": {
+                        "exercise_id": (
+                            {"type": "string", "enum": cardio_drill_pool_ids}
+                            if cardio_drill_pool_ids
+                            else {"type": "string"}
+                        ),
+                        "exercise_name": {"type": "string"},
+                        "prescription": {"type": "string", "maxLength": 120},
+                        "instructions": {"type": ["string", "null"], "maxLength": 240},
+                    },
+                },
+            },
             "rest_reason": {
                 "type": ["string", "null"],
                 "enum": [
@@ -379,6 +417,7 @@ def _session_schema(feasible_pool_ids: list[str] | None = None) -> dict[str, Any
 def build_record_refresh_sessions_tool(
     tier: Literal["T1", "T2", "T3"],
     feasible_pool_ids: list[str] | None = None,
+    cardio_drill_pool_ids: list[str] | None = None,
 ) -> dict[str, Any]:
     """Anthropic tool definition for `record_refresh_sessions`. Sessions
     array `maxItems` is tier-specific: T1=4 (2-day window × max 2/day);
@@ -409,7 +448,7 @@ def build_record_refresh_sessions_tool(
                     "type": "array",
                     "minItems": 0,
                     "maxItems": max_items,
-                    "items": _session_schema(feasible_pool_ids),
+                    "items": _session_schema(feasible_pool_ids, cardio_drill_pool_ids),
                 }
             },
         },
@@ -605,6 +644,11 @@ def _build_plan_session(
     if raw_exercises:
         exercises = [StrengthExercise(**e) for e in raw_exercises]
 
+    raw_drills = session_data.get("cardio_drills")
+    drills: list[CardioDrill] | None = None
+    if raw_drills:
+        drills = [CardioDrill(**d) for d in raw_drills]
+
     return PlanSession(
         session_id=session_id,
         plan_version_id=plan_version_id,
@@ -621,6 +665,7 @@ def _build_plan_session(
         intensity_summary=session_data["intensity_summary"],
         cardio_blocks=blocks,
         strength_exercises=exercises,
+        cardio_drills=drills,
         rest_reason=session_data.get("rest_reason"),
         phase_metadata=None,
         session_notes=session_data["session_notes"],
@@ -946,8 +991,59 @@ def llm_layer4_plan_refresh(
     feasible_pool_ids = compute_feasible_pool_ids(
         dict(layer2_bundle.c), layer2_bundle.d
     )
+    # #698 Track 2 (Slice C2) — give refresh the SAME cardio-drill fidelity as
+    # plan generation: rendered menu + enum-bind + the ratified prompt section,
+    # centralized here so the three tier prompt modules stay untouched. The
+    # discipline set is the athlete's included disciplines (2A; falls back to the
+    # union of the 2C-resolved disciplines if 2A is absent). The phase is the
+    # periodization phase covering the refresh window — true plan-create fidelity,
+    # so skill/transition drills drop in Peak/Taper — reusing the T3 dominant
+    # phase when known, else derived from 3B + plan_start_date, else permissive
+    # "Base" (a T1/T2 refresh with no plan_start_date). T3 cross-phase already
+    # returned to the Pattern A engine above, which carries its own drill pool.
+    drill_disciplines: set[str] = (
+        {
+            d.discipline_id
+            for d in layer2_bundle.a.disciplines
+            if d.inclusion == "included"
+        }
+        if layer2_bundle.a is not None
+        else {
+            disc
+            for l2c in layer2_bundle.c.values()
+            for rx in l2c.exercises_resolved
+            for disc in rx.discipline_ids
+        }
+    )
+    drill_phase = dominant_phase_name or "Base"
+    if dominant_phase_name is None and plan_start_date is not None:
+        from layer4.phase_structure import phase_for_date, phase_structure_from_3b
+
+        _drill_ps = phase_structure_from_3b(layer3b_payload, plan_start_date)
+        _drill_phase_obj = phase_for_date(_drill_ps, refresh_scope_start)
+        if _drill_phase_obj is not None:
+            drill_phase = _drill_phase_obj.phase_name
+    cardio_drill_pool_ids = compute_cardio_drill_pool_ids(
+        dict(layer2_bundle.c),
+        layer2_bundle.d,
+        disciplines=drill_disciplines,
+        phase=drill_phase,
+    )
+    cardio_drill_pool_lines = _format_cardio_drill_pool(
+        dict(layer2_bundle.c),
+        layer2_bundle.a,
+        layer2_bundle.d,
+        disciplines=drill_disciplines,
+        phase=drill_phase,
+    )
+    # Suppress-on-empty: only carry the drill instructions when a menu renders,
+    # so the LLM is never handed an unfillable cardio_drills[] (mirrors §6a-G1).
+    if cardio_drill_pool_lines:
+        system_prompt = system_prompt + "\n\n" + CARDIO_DRILLS_PROMPT_SECTION
     tool_schema = build_record_refresh_sessions_tool(
-        tier, feasible_pool_ids=feasible_pool_ids or None
+        tier,
+        feasible_pool_ids=feasible_pool_ids or None,
+        cardio_drill_pool_ids=cardio_drill_pool_ids or None,
     )
     caller: LLMCaller = llm_caller or _default_llm_caller
 
@@ -993,6 +1089,17 @@ def llm_layer4_plan_refresh(
             event_window_segments=event_window_segments,
             **extra_kwargs,
         )
+        # #698 Track 2 (Slice C2) — append the rendered drill menu (grouped by
+        # discipline, carrying each row's coaching_cue dose), the same menu the
+        # plan-create path renders. Centralized append keeps the tier render
+        # functions untouched. Suppressed when the pool resolves empty.
+        if cardio_drill_pool_lines:
+            user_prompt += (
+                "\n\n=== Cardio drill pool (consider these) ===\n"
+                "Optionally attach one drill appropriate to the session's "
+                "discipline, from the pool below (pick by id only):\n"
+                + "\n".join(cardio_drill_pool_lines)
+            )
 
         llm_out = caller(
             system_prompt,

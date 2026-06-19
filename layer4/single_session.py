@@ -51,9 +51,14 @@ from layer4.context import (
     Layer3APayload,
 )
 from layer4.errors import Layer4InputError, Layer4OutputError
-from layer4.per_phase import compute_feasible_pool_ids
+from layer4.per_phase import (
+    _format_cardio_drill_pool,
+    compute_cardio_drill_pool_ids,
+    compute_feasible_pool_ids,
+)
 from layer4.payload import (
     CardioBlock,
+    CardioDrill,
     Layer4Payload,
     Observation,
     PlanSession,
@@ -204,6 +209,7 @@ def _intensity_target_schema() -> dict[str, Any]:
 
 def build_record_single_session_tool(
     feasible_pool_ids: list[str] | None = None,
+    cardio_drill_pool_ids: list[str] | None = None,
 ) -> dict[str, Any]:
     """The `record_single_session` Anthropic tool definition per
     `Layer4_SingleSession_v2.md` §4.1 — mirrors the full `PlanSession`
@@ -214,7 +220,11 @@ def build_record_single_session_tool(
     Track 2 D1: `feasible_pool_ids` (when non-empty) bounds
     `strength_exercises.exercise_id` via JSON-schema enum, making out-of-pool
     picks structurally impossible at the SDK boundary. Production callers
-    pass `compute_feasible_pool_ids({locale_id: layer2c}, layer2d_payload)`."""
+    pass `compute_feasible_pool_ids({locale_id: layer2c}, layer2d_payload)`.
+
+    #698 Track 2 (Slice C1): `cardio_drill_pool_ids` (when non-empty) bounds
+    `cardio_drills.exercise_id` the same way — the on-demand analog of the
+    plan-create drill pool (`compute_cardio_drill_pool_ids(...)`)."""
     return {
         "name": "record_single_session",
         "description": (
@@ -373,6 +383,40 @@ def build_record_single_session_tool(
                                 },
                             },
                         },
+                        # #698 Track 2 (Slice C1) — structured cardio drill block,
+                        # the analog of the plan-create cardio_drills. HARD CAP
+                        # maxItems:1 (one technical/interval focus per session;
+                        # mirrors the PlanSession pydantic invariant). exercise_id
+                        # is enum-bound to the drill pool when resolvable, so
+                        # out-of-pool picks are structurally impossible at the SDK
+                        # boundary (the sole guard here — the validator membership
+                        # rule is dormant on this path, phase_metadata=None).
+                        "cardio_drills": {
+                            "type": ["array", "null"],
+                            "maxItems": 1,
+                            "items": {
+                                "type": "object",
+                                "additionalProperties": False,
+                                "required": [
+                                    "exercise_id",
+                                    "exercise_name",
+                                    "prescription",
+                                ],
+                                "properties": {
+                                    "exercise_id": (
+                                        {"type": "string", "enum": cardio_drill_pool_ids}
+                                        if cardio_drill_pool_ids
+                                        else {"type": "string"}
+                                    ),
+                                    "exercise_name": {"type": "string"},
+                                    "prescription": {"type": "string", "maxLength": 120},
+                                    "instructions": {
+                                        "type": ["string", "null"],
+                                        "maxLength": 240,
+                                    },
+                                },
+                            },
+                        },
                         "rest_reason": {
                             "type": ["string", "null"],
                             "enum": [
@@ -482,6 +526,16 @@ When `request.locale_slug` is non-None: prescribe only from `layer2c_payload_for
 
 When `request.quick_equipment` is non-empty (athlete is "Somewhere else"): prescribe only from `request.quick_equipment` plus bodyweight movements. No Tier 2/3 substitution available. State equipment constraints explicitly in `session_notes`.
 
+# Cardio drills
+
+A cardio session may optionally carry **one** drill from the `=== Cardio drill pool (consider these) ===` menu — a discrete, catalog-defined skill, transition, or interval drill that sharpens the requested sport (a single-leg cycling drill, a swim CSS set, a threshold-interval block). Drills are optional and additive to the session's free-composed `cardio_blocks`: they refine *how* this session trains the sport; they do not replace its main work. Most on-demand sessions carry none — reach for one only when it genuinely sharpens today's request.
+
+- **At most one drill.** A session targets one technical or interval focus, not a drill circuit. Never emit more than one `cardio_drills` entry.
+- **Pick only from the rendered pool, by id.** Choose an `exercise_id` from the menu only — never invent one, and never name a drill or drill-type that isn't in the menu. If no menu is rendered, prescribe no drill.
+- **Match the drill to the requested sport.** The menu is grouped under discipline headers; only attach a drill that trains the sport the athlete asked for (a bike drill on a bike request, a swim set on a swim request). Never attach an unrelated-discipline drill.
+- **A form/cadence drill does not replace steady aerobic work.** For a plain easy or steady session, prioritize the requested volume and intensity; reach for a cadence/single-leg/technique drill only when the athlete's note or the sport gives a specific reason, not as default seasoning.
+- Give the drill a free-text `prescription` (e.g. "4×50m, focus on catch", "6×30s single-leg, 30s easy between") and brief `instructions`. `cardio_drills` rides `kind='cardio'` sessions only; leave it null on a strength session.
+
 # Output discipline
 
 - One tool call per invocation. Do not emit prose outside the tool call.
@@ -502,6 +556,7 @@ def _render_user_prompt(
     session_date: _date_type,
     retries_used: int,
     rule_failures: list[RuleFailure],
+    cardio_drill_pool_lines: list[str] | None = None,
 ) -> str:
     """Render the user prompt per `Layer4_SingleSession_v2.md` §6. Inline
     Python rendering instead of Mustache to avoid the dependency."""
@@ -637,6 +692,19 @@ def _render_user_prompt(
             )
         parts.append("")
 
+    # § Cardio drill pool — #698 Track 2 (Slice C1). Grouped by discipline +
+    # carrying each row's coaching_cue dose; bound to the tool-schema enum via
+    # compute_cardio_drill_pool_ids. Suppress-on-empty: no menu → the LLM is
+    # never handed an unfillable cardio_drills[] (mirrors plan-create + §6a-G1).
+    if cardio_drill_pool_lines:
+        parts.append("=== Cardio drill pool (consider these) ===")
+        parts.append(
+            "Optionally attach one drill appropriate to the requested sport, from "
+            "the pool below (pick by id only):"
+        )
+        parts.extend(cardio_drill_pool_lines)
+        parts.append("")
+
     # § Task
     parts.append("# Your task")
     parts.append("")
@@ -734,6 +802,11 @@ def _build_plan_session(
     if raw_exercises:
         exercises = [StrengthExercise(**e) for e in raw_exercises]
 
+    raw_drills = session_data.get("cardio_drills")
+    drills: list[CardioDrill] | None = None
+    if raw_drills:
+        drills = [CardioDrill(**d) for d in raw_drills]
+
     return PlanSession(
         session_id=session_id,
         plan_version_id=plan_version_id,
@@ -750,6 +823,7 @@ def _build_plan_session(
         intensity_summary=session_data["intensity_summary"],
         cardio_blocks=blocks,
         strength_exercises=exercises,
+        cardio_drills=drills,
         rest_reason=session_data.get("rest_reason"),
         phase_metadata=None,
         session_notes=session_data["session_notes"],
@@ -885,16 +959,48 @@ def llm_layer4_single_session_synthesize(
         session_date = _date_type.today()
 
     caller: LLMCaller = llm_caller or _default_llm_caller
+    locale_l2c = (
+        {layer2c_payload_for_locale.locale_id: layer2c_payload_for_locale}
+        if layer2c_payload_for_locale is not None
+        else {}
+    )
     feasible_pool_ids = (
-        compute_feasible_pool_ids(
-            {layer2c_payload_for_locale.locale_id: layer2c_payload_for_locale},
-            layer2d_payload,
-        )
+        compute_feasible_pool_ids(locale_l2c, layer2d_payload)
         if layer2c_payload_for_locale is not None
         else []
     )
+    # #698 Track 2 (Slice C1) — on-demand cardio drill pool. single_session is
+    # phase-agnostic (no periodization phase → pass permissive "Base" so no
+    # character-by-phase drop) and has no layer2a; the discipline set is the
+    # union of disciplines trainable at the picked locale (the menu groups by
+    # discipline + the prompt tells the LLM to match today's requested sport —
+    # G5 discipline-scope-via-prompt). Off-locale ("somewhere else", no 2C) →
+    # empty pool → suppressed block + free-string schema.
+    cardio_drill_disciplines: set[str] = (
+        {
+            d
+            for rx in layer2c_payload_for_locale.exercises_resolved
+            for d in rx.discipline_ids
+        }
+        if layer2c_payload_for_locale is not None
+        else set()
+    )
+    cardio_drill_pool_ids = compute_cardio_drill_pool_ids(
+        locale_l2c,
+        layer2d_payload,
+        disciplines=cardio_drill_disciplines,
+        phase="Base",
+    )
+    cardio_drill_pool_lines = _format_cardio_drill_pool(
+        locale_l2c,
+        None,
+        layer2d_payload,
+        disciplines=cardio_drill_disciplines,
+        phase="Base",
+    )
     tool_schema = build_record_single_session_tool(
-        feasible_pool_ids=feasible_pool_ids or None
+        feasible_pool_ids=feasible_pool_ids or None,
+        cardio_drill_pool_ids=cardio_drill_pool_ids or None,
     )
 
     rule_failures: list[RuleFailure] = []
@@ -920,6 +1026,7 @@ def llm_layer4_single_session_synthesize(
             session_date=session_date,
             retries_used=retries_used,
             rule_failures=rule_failures,
+            cardio_drill_pool_lines=cardio_drill_pool_lines,
         )
 
         try:
