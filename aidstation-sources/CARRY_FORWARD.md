@@ -13,6 +13,11 @@ Rolling-state for items spanning multiple sessions. **Edit in place** — don't 
 
 ---
 
+## #698 Track 2 — Technical/Skill cull (0017) + cardio adds (0018) (2026-06-19; PR #750) — SHIPPED TO REPO; PROD-APPLY owed
+- **Catalog reshape landed in-repo, NOT yet live.** `0017` retires 47 Technical/Skill drills (55→8 keeps: EX070/144/163/170/175/176/183/196) + supersedes 104 `sport_exercise_map` rows + repoints 7 survivors; `0018` adds EX290 (Flat VO2max Run Intervals) / EX291 (Swim CSS/Threshold Intervals) / EX292 (Bike Over-Under Intervals) + 23 SEM rows. Validated locally via the full `layer0-gate` recipe → `validate_layer0` PASS; idempotent.
+- **PROD-APPLY owed (Andy-action — the required step):** after #750 merges, trigger the **`layer0-apply`** Action (one-tap the `production` env) to apply `0017`+`0018` to live Neon. Then live-verify: `neon-query` `SELECT exercise_type, count(*) FROM layer0.exercises WHERE superseded_at IS NULL AND exercise_type IN ('Technical / Skill','Interval / Tempo') GROUP BY 1;` → expect **T/S=8, I/T=12**; EX290/291/292 active at `0B-v1.6.16`. **Until applied, the green local gate does NOT prove prod changed (Rule #9/#10).**
+- **Evidence caveat (for Part A copy):** the EX290–292 prescription numbers are WebSearch-extracted (WebFetch was 403-blocked), flagged per-claim in the design doc — re-verify against the primary PDFs before any go into user-facing coaching copy.
+
 ## #681 §4 Slice 2c — indoor-machine flag → provider_raw_record (2026-06-19; PR #751) — SHIPPED; 1 live-verify owed
 - **First writer to `provider_raw_record`** (created empty in Slice 1; live in prod since #742). Every Garmin cardio ingest now records the raw provider signal (record-don't-drop) + the indoor-machine flag when the activity used one (`Cycling trainer`/`Treadmill`/`Stair climber`/`Rowing ergometer` — existing `equipment_items` vocab only). Andy scope call: **every cardio ingest**, not indoor-only. Additive; no migration (table pre-existed); no downstream consumer yet.
 - **LIVE-VERIFY owed (Andy-action, container can't reach Neon):** a real indoor FIT import → `neon-query` `SELECT … raw_payload->>'indoor_machine' FROM provider_raw_record ORDER BY id DESC LIMIT 5;` (expect an indoor row with `Cycling trainer`; outdoor rows present with NULL machine) + `/admin/logs?q=provider-raw`.
