@@ -252,8 +252,14 @@ Cardio session card gains a subordinate `cardio_drills` list (the `recovery_exer
 - **Periodization** — by drill character (skill/transition Base-heavy → dropped Peak/Taper; interval/endurance follow normal phase emphasis).
 - **Adjacency** — prompt-steered placement + a deterministic constituent-sport pool gate on EX175/EX176 (athlete needs both a cycling and a running discipline).
 
+**Ratified (Andy 2026-06-19, A2 prep session):**
+- **Prompt-body wording** (§6 / §6a-G1) — **RATIFIED verbatim** (Trigger #1 cleared). The `# Cardio drills` SYSTEM_PROMPT section + the `=== Cardio drill pool (consider these) ===` render header/row format are signed off as drafted in the A2-prep handoff §"Drafted prompt body"; build them as-is.
+- **Coaching-cue handling — thread the cue through 2C** (over render-without-cue). The catalog `coaching_cues` (dose) was NOT reachable from `l2c.exercises_resolved`; Andy chose the Trigger-#3 cross-layer add over shipping the render without it. **DONE this session (A1.5):** `coaching_cues` now threads 0B → `_load_exercises` SELECT → `_dedupe_by_exercise` → `ResolvedExercise.coaching_cue` (`layer2c/builder.py` + `layer4/context.py` + `Layer2C_Spec.md` §7). A2's `_format_cardio_drill_pool` reads `rx.coaching_cue` for the per-row dose.
+
+**Resolved (A2 build, 2026-06-19):**
+- **Constituent-sport gate taxonomy (§5) — RESOLVED via hardcoded D-id frozensets.** Read the live `layer0.disciplines` `primary_movement` (read-only neon-query run 27828748291): it's clean — `cycling` = {D-006, D-007, D-008, D-030, D-031}, `running` = {D-001, D-002, D-024, D-027}. `primary_movement` is **not** threaded into the Layer-4 context (deriving it would be another cross-layer add), and the D-id classification is clean + stable (canon is locked Layer 0), so per simplicity-first the gate hardcodes `_CYCLING_DISCIPLINE_IDS`/`_RUNNING_DISCIPLINE_IDS` frozensets in `per_phase.py`, grounded in that live read (commented for re-derivation if a discipline is added). EX175/EX176 included only when the athlete's included disciplines intersect **both**. (Note: Andy's PGE set has MTB [D-008] + trail running [D-001] → it passes the gate; the gate's real job is filtering the paddle/climb-only AR athlete with no bike+run, per §3a.)
+
 **Open (ratify before the respective slice lands):**
-- **Prompt-body wording** (§6 / §6a-G1) — Trigger #1 ratification (before A2). The shape is ratified; the verbatim wording is not yet.
 - **Tighten-later (§6a-G5):** add a soft `severity=warning` discipline-match check **only if** wrong-discipline picks show up live — kept out of v1 to avoid churn.
 
 ---
@@ -261,8 +267,9 @@ Cardio session card gains a subordinate `cardio_drills` list (the `recovery_exer
 ## 13a. Build slices (>5 files → split per the 5-file ceiling)
 
 - **~~B (catalog)~~ — DONE + PROD-LIVE** via `0017` (cull 55→8) + `0018` (EX290–292). No further catalog work for Part A.
-- **A1 — schema:** `payload.py` `CardioDrill` + field + invariants + tests. No prompt/cache.
-- **A2 — pool + prompt + cache:** `per_phase.py` `compute_cardio_drill_pool_ids` + `_format_cardio_drill_pool` + `# Cardio drills` section + schema enum-bind thread; `hashing.py` revision bump. (Prompt ratified first.)
+- **A1 — schema:** `payload.py` `CardioDrill` + field + invariants + tests. No prompt/cache. **DONE (#755).**
+- **A1.5 — 2C coaching-cue threading:** `layer2c/builder.py` (SELECT `e.coaching_cues` + dedupe + construction) + `layer4/context.py` (`ResolvedExercise.coaching_cue`) + `Layer2C_Spec.md` §7 + tests. Additive, defaulted None. **DONE (this session)** — unblocks A2's cue-carrying render.
+- **A2 — pool + prompt + cache — DONE (this session).** `per_phase.py` `compute_cardio_drill_pool_ids` (type allowlist + 2D + discipline-match + constituent-sport gate + character periodization + Rule #15 log) + `_format_cardio_drill_pool` (grouped-by-discipline, reads `rx.coaching_cue`, character tag, ≤12 cap) + `# Cardio drills` SYSTEM_PROMPT section + `=== Cardio drill pool ===` render + enum-bind (`_session_schema`/`build_record_phase_sessions_tool`/`synthesize_phase` caller, `maxItems:1`) + `hashing.py` `LAYER4_PROMPT_REVISION "10"→"11"`. Constituent-sport gate taxonomy resolved (§13). +13 tests.
 - **A3 — validator + render:** `validator.py` `_rule_cardio_drill_pool_membership`; `templates/plan_create/view.html` + CSS.
 
 ---

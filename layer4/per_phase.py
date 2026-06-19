@@ -306,6 +306,17 @@ Prescribe the movements as a `recovery_exercises[]` block (the structural analog
 
 Load-adaptive rest: full rest is the protective floor and recovery sessions are the active-recovery mechanism — the two are adaptation-neutral, so under high load (Peak phase or a deload week) prefer genuine full rest over active recovery and keep any recovery minimal and short.
 
+# Cardio drills
+
+A cardio session may optionally carry **one** drill from the `=== Cardio drill pool (consider these) ===` menu — a discrete, catalog-defined skill, transition, or interval drill that sharpens a discipline (a brick run, a single-leg cycling drill, a swim CSS set). Drills are optional and additive to the session's free-composed `cardio_blocks`: they refine *how* a session trains a discipline; they do not add sessions or volume. Most cardio sessions carry none.
+
+- **At most one drill per session.** A session targets one technical focus, not a drill circuit. Never emit more than one `cardio_drills` entry.
+- **Pick only from the rendered pool, by id.** Choose `exercise_id`s from the menu only — never invent one, and never name a drill or drill-type that isn't in the menu. If no menu is rendered, prescribe no drills.
+- **Attach a drill only to a session of its own discipline.** The menu is grouped under each discipline header; a drill belongs on a session training that discipline (a bike over-under on a bike session, a swim set on a swim session), never on an unrelated one.
+- **Emphasis follows the drill's character, noted inline per row.** Skill/transition/form drills are a Base-phase tool — build technique early and let them fade toward the race. Interval and endurance drills follow the session's normal phase intent (threshold/VO2 work belongs in Build/Peak).
+- **Two cautions:** (a) a form/cadence drill does **not** move steady road economy — for a pure road run or ride, prioritize volume and strength, and reach for a cadence/single-leg cue only for a specific biomechanics or injury reason, not as default seasoning; (b) a brick or transition drill belongs **only** on a day that actually pairs the two sports — a brick run goes on a day with a bike session immediately before it, not on a standalone run.
+- Give each drill a free-text `prescription` (e.g. "4×50m, focus on catch", "15 min off the bike at goal pace") and brief `instructions`. `cardio_drills` rides `kind='cardio'` sessions only; leave it null on strength / recovery / rest.
+
 # Schedule respect
 
 Layer 1 §K `daily_availability_windows` per-day windows: prescribe on `available=True` days only; session `duration_min` must fit within the day's window minutes (validator: `daily_window_fit_*`). Sessions on `available=False` days raise unless explicitly flagged `athlete_self_scheduled` (not in this flag enum — orchestrator path only). The athlete's **long-session day** is the day carrying the longest enabled window — FormRefresh Slice C retired the standalone long-session input, so the longest window now *is* the long-session capacity. Anchor the primary discipline's weekly `long_slow_distance` cornerstone (flag list above) on that day; secondary-discipline LSDs fit their own longest available day. The `=== Schedule ===` block names the computed long-session day.
@@ -554,9 +565,116 @@ def compute_recovery_pool_ids(
     return sorted(pool)
 
 
+# #698 Track 2 (A2) — the cardio drill pool exercise types: Part B's 24-row
+# surviving 0B catalog (Technical/Skill transition+form drills, Interval/Tempo
+# structured intervals, Aerobic/Endurance). The `_RECOVERY_POOL_EXERCISE_TYPES`
+# analog. Lowercased + matched case-insensitively (prod values are title-case,
+# e.g. "Interval / Tempo"), mirroring `_is_recovery_pool_type`.
+_CARDIO_DRILL_POOL_EXERCISE_TYPES = frozenset(
+    {"technical / skill", "interval / tempo", "aerobic / endurance"}
+)
+# Character periodization (design §5): skill/transition/form drills (Technical/
+# Skill) are a Base-phase tool — kept in Base/Build, dropped in Peak/Taper.
+# Interval/endurance (Interval/Tempo + Aerobic/Endurance) follow normal phase
+# emphasis → never phase-suppressed (gating VO2/threshold out of Build/Peak would
+# hide the pool's most useful rows).
+_CARDIO_DRILL_SKILL_TYPE = "technical / skill"
+_CARDIO_DRILL_SKILL_DROP_PHASES = frozenset({"Peak", "Taper"})
+# The constituent-sport gate (design §5/§3a): EX175 Brick Run + EX176 Tri
+# Transition SEM-match the composite "Multi-Sport Race"/Triathlon/Duathlon
+# sports — broad enough to match a paddle/climb-only AR athlete with no bike/run
+# leg. Include them ONLY when the athlete trains BOTH a cycling AND a running
+# discipline. The cycling/running discipline-id sets are the live
+# `layer0.disciplines` rows whose `primary_movement` is 'cycling'/'running'
+# (read-only neon-query run 27828748291, 2026-06-19); hardcoded by stable D-id
+# (canon is locked Layer 0 — re-derive from that query if a discipline is added).
+# The other 3 transition keeps (EX144/EX163/EX170) are intra-discipline → the
+# plain discipline-match gates them, no extra check.
+_CYCLING_DISCIPLINE_IDS = frozenset({"D-006", "D-007", "D-008", "D-030", "D-031"})
+_RUNNING_DISCIPLINE_IDS = frozenset({"D-001", "D-002", "D-024", "D-027"})
+_CONSTITUENT_SPORT_GATED_DRILLS = frozenset({"EX175", "EX176"})
+
+
+def _is_cardio_drill_pool_type(exercise_type: str) -> bool:
+    return (
+        (exercise_type or "").strip().lower() in _CARDIO_DRILL_POOL_EXERCISE_TYPES
+    )
+
+
+def _cardio_drill_phase_allows(exercise_type: str, phase: str) -> bool:
+    """Skill/transition drills drop in Peak/Taper; interval/endurance always keep."""
+    if (exercise_type or "").strip().lower() == _CARDIO_DRILL_SKILL_TYPE:
+        return phase not in _CARDIO_DRILL_SKILL_DROP_PHASES
+    return True
+
+
+def _constituent_sport_gate_ok(exercise_id: str, disciplines: set[str]) -> bool:
+    """EX175/EX176 require the athlete to hold both a cycling AND a running
+    discipline; every other drill passes (its plain SEM-match already gates it)."""
+    if exercise_id not in _CONSTITUENT_SPORT_GATED_DRILLS:
+        return True
+    return bool(disciplines & _CYCLING_DISCIPLINE_IDS) and bool(
+        disciplines & _RUNNING_DISCIPLINE_IDS
+    )
+
+
+def compute_cardio_drill_pool_ids(
+    layer2c_payloads: dict[str, Layer2CPayload],
+    layer2d_payload: Layer2DPayload | None,
+    *,
+    disciplines: set[str],
+    phase: str,
+) -> list[str]:
+    """#698 Track 2 (A2) — the cardio drill pool: the union of resolved drill-type
+    `exercise_id`s across every locale whose `discipline_ids` intersect the
+    athlete's included disciplines, minus 2D-excluded ids, minus the
+    constituent-sport-gated transition drills (EX175/EX176) when the athlete lacks
+    both a cycling and a running discipline, minus skill/transition drills in
+    Peak/Taper. Mirrors `compute_recovery_pool_ids` (reads the SAME
+    `exercises_resolved` surface). Sorted+deduped for deterministic enum ordering
+    (cache-key stability). Empty → caller passes no enum (the schema falls back to
+    a free string) and the prompt block is suppressed."""
+    if not layer2c_payloads:
+        return []
+    excluded: set[str] = (
+        {er.exercise_id for er in layer2d_payload.excluded_exercises}
+        if layer2d_payload is not None
+        else set()
+    )
+    pool: set[str] = set()
+    dropped = {"excluded": 0, "discipline": 0, "gate": 0, "phase": 0}
+    for l2c in layer2c_payloads.values():
+        for rx in l2c.exercises_resolved:
+            if not _is_cardio_drill_pool_type(rx.exercise_type):
+                continue  # non-drill types are the silent majority
+            if rx.exercise_id in excluded:
+                dropped["excluded"] += 1
+                continue
+            if not (set(rx.discipline_ids) & disciplines):
+                dropped["discipline"] += 1
+                continue
+            if not _constituent_sport_gate_ok(rx.exercise_id, disciplines):
+                dropped["gate"] += 1
+                continue
+            if not _cardio_drill_phase_allows(rx.exercise_type, phase):
+                dropped["phase"] += 1
+                continue
+            pool.add(rx.exercise_id)
+    # Rule #15 — log the inputs + the chosen pool + why drill-type rows dropped,
+    # so a missing/surprising cardio drill is a one-read /admin/logs diagnosis.
+    print(
+        f"compute_cardio_drill_pool_ids: phase={phase} "
+        f"athlete_disciplines={sorted(disciplines)} pool={sorted(pool)} "
+        f"dropped(excluded={dropped['excluded']},discipline={dropped['discipline']},"
+        f"gate={dropped['gate']},phase={dropped['phase']})"
+    )
+    return sorted(pool)
+
+
 def _session_schema(
     feasible_pool_ids: list[str] | None = None,
     recovery_pool_ids: list[str] | None = None,
+    cardio_drill_pool_ids: list[str] | None = None,
 ) -> dict[str, Any]:
     """One element of `sessions[]`. Full PlanSession contract mirror per the
     Step 4a Option 2 precedent. Includes `rest` kind (Pattern A produces full
@@ -750,6 +868,35 @@ def _session_schema(
                     },
                 },
             },
+            # #698 Track 2 (A2) — structured cardio drill block, the analog of
+            # recovery_exercises. HARD CAP maxItems:1 (a session targets one
+            # technical/interval focus, not a drill circuit; mirrors the
+            # PlanSession pydantic invariant). exercise_id is enum-bound to the
+            # drill pool when resolvable, so out-of-pool picks are structurally
+            # impossible at the SDK boundary.
+            "cardio_drills": {
+                "type": ["array", "null"],
+                "maxItems": 1,
+                "items": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "required": [
+                        "exercise_id",
+                        "exercise_name",
+                        "prescription",
+                    ],
+                    "properties": {
+                        "exercise_id": (
+                            {"type": "string", "enum": cardio_drill_pool_ids}
+                            if cardio_drill_pool_ids
+                            else {"type": "string"}
+                        ),
+                        "exercise_name": {"type": "string"},
+                        "prescription": {"type": "string", "maxLength": 120},
+                        "instructions": {"type": ["string", "null"], "maxLength": 240},
+                    },
+                },
+            },
         },
     }
 
@@ -758,6 +905,7 @@ def build_record_phase_sessions_tool(
     max_sessions: int = 56,
     feasible_pool_ids: list[str] | None = None,
     recovery_pool_ids: list[str] | None = None,
+    cardio_drill_pool_ids: list[str] | None = None,
 ) -> dict[str, Any]:
     """Anthropic tool definition for `record_phase_sessions`. Sessions array
     `maxItems` accommodates up to 4 weeks × 7 days × 2/day = 56 for the
@@ -786,7 +934,9 @@ def build_record_phase_sessions_tool(
                     "type": "array",
                     "minItems": 0,
                     "maxItems": max_sessions,
-                    "items": _session_schema(feasible_pool_ids, recovery_pool_ids),
+                    "items": _session_schema(
+                        feasible_pool_ids, recovery_pool_ids, cardio_drill_pool_ids
+                    ),
                 },
                 "phase_synthesis_notes": {
                     "type": "string",
@@ -1003,6 +1153,117 @@ def _format_recovery_exercise_pool(
     out = ["- Recovery / mobility menu (pick from these ids only):"]
     for ex_id, name, ex_type in items:
         out.append(f"  - {ex_id} ({name}) [{ex_type}]")
+    return out
+
+
+# #698 Track 2 (A2) — cap the rendered cardio drill pool (design §6). A
+# multisport athlete's union can exceed this; keep the highest-SEM-priority rows
+# per discipline (the render is weight-ordered + priority-sorted, so the cap
+# naturally retains them) and bound input-token cost.
+_CARDIO_DRILL_POOL_CAP = 12
+_CARDIO_DRILL_PRIORITY_RANK = {"Critical": 0, "High": 1, "Medium": 2}
+
+
+def _cardio_drill_character_tag(exercise_type: str) -> str:
+    """The inline phase-emphasis annotation, keyed on drill character (§6)."""
+    t = (exercise_type or "").strip().lower()
+    if t == _CARDIO_DRILL_SKILL_TYPE:
+        return "transition/skill — Base tool, fades to race"
+    if t == "interval / tempo":
+        return "interval — follow phase intent"
+    return "endurance — follow phase intent"
+
+
+def _format_cardio_drill_pool(
+    layer2c_payloads: dict[str, Layer2CPayload],
+    layer2a_payload: Layer2APayload | None,
+    layer2d_payload: Layer2DPayload | None,
+    *,
+    disciplines: set[str],
+    phase: str,
+) -> list[str]:
+    """#698 Track 2 (A2) — render the cardio drill pool grouped under the
+    athlete's discipline headers, each row carrying its catalog `coaching_cue`
+    (the interval dose, threaded via A1.5) + a phase-emphasis-by-character tag, so
+    the synthesizer matches a drill to today's discipline by reading, not guessing
+    (the `_format_recovery_exercise_pool` analog, bound to the same enum via
+    `compute_cardio_drill_pool_ids`). Same filters as the compute fn (type / 2D /
+    discipline / constituent-sport gate / phase-by-character). Deduped across
+    disciplines (under the highest-load-weight discipline that surfaces it),
+    highest-SEM-priority first, capped at `_CARDIO_DRILL_POOL_CAP` rows total.
+    Empty when nothing resolves → the caller suppresses the block."""
+    if not layer2c_payloads:
+        return []
+    excluded_ids = (
+        {er.exercise_id for er in layer2d_payload.excluded_exercises}
+        if layer2d_payload is not None
+        else set()
+    )
+    names: dict[str, str] = {}
+    weight_order: list[str] = []
+    if layer2a_payload is not None:
+        included = [
+            d for d in layer2a_payload.disciplines if d.inclusion == "included"
+        ]
+        included.sort(key=lambda d: d.load_weight.value, reverse=True)
+        weight_order = [d.discipline_id for d in included]
+        names = {
+            d.discipline_id: d.discipline_name for d in layer2a_payload.disciplines
+        }
+    # Collect drill-type rows passing the compute filters, deduped by id.
+    by_id: dict[str, ResolvedExercise] = {}
+    for l2c in layer2c_payloads.values():
+        for rx in l2c.exercises_resolved:
+            if (
+                _is_cardio_drill_pool_type(rx.exercise_type)
+                and rx.exercise_id not in excluded_ids
+                and (set(rx.discipline_ids) & disciplines)
+                and _constituent_sport_gate_ok(rx.exercise_id, disciplines)
+                and _cardio_drill_phase_allows(rx.exercise_type, phase)
+            ):
+                by_id.setdefault(rx.exercise_id, rx)
+    if not by_id:
+        return []
+    present = {
+        d for rx in by_id.values() for d in rx.discipline_ids if d in disciplines
+    }
+    ordered = [d for d in weight_order if d in present] + sorted(
+        present - set(weight_order)
+    )
+    seen: set[str] = set()
+    rendered = 0
+    out: list[str] = []
+    for d_id in ordered:
+        if rendered >= _CARDIO_DRILL_POOL_CAP:
+            break
+        cands = [
+            rx
+            for rx in by_id.values()
+            if d_id in rx.discipline_ids and rx.exercise_id not in seen
+        ]
+        cands.sort(
+            key=lambda rx: (
+                _CARDIO_DRILL_PRIORITY_RANK.get(
+                    rx.priority_per_discipline.get(d_id, ""), 3
+                ),
+                rx.exercise_id,
+            )
+        )
+        disc_lines: list[str] = []
+        for rx in cands:
+            if rendered >= _CARDIO_DRILL_POOL_CAP:
+                break
+            seen.add(rx.exercise_id)
+            rendered += 1
+            cue = (rx.coaching_cue or "").strip()
+            cue_seg = f" — {cue}" if cue else ""
+            tag = _cardio_drill_character_tag(rx.exercise_type)
+            disc_lines.append(
+                f"  - {rx.exercise_id} ({rx.exercise_name}){cue_seg} [{tag}]"
+            )
+        if disc_lines:
+            out.append(f"- {names.get(d_id, d_id)}:")
+            out.extend(disc_lines)
     return out
 
 
@@ -2074,6 +2335,36 @@ def render_user_prompt(
             parts.extend(recovery_pool_lines)
             parts.append("")
 
+    # #698 Track 2 (A2) — the cardio drill pool, grouped by discipline + carrying
+    # each row's coaching_cue dose. Bound to the tool-schema enum the same way
+    # (compute_cardio_drill_pool_ids + build_record_phase_sessions_tool(...,
+    # cardio_drill_pool_ids=...)). Suppress-on-empty: no menu → the LLM is never
+    # handed an unfillable cardio_drills[] (mirrors recovery + §6a-G1).
+    cardio_drill_disciplines = (
+        {
+            d.discipline_id
+            for d in layer2a_payload.disciplines
+            if d.inclusion == "included"
+        }
+        if layer2a_payload is not None
+        else set()
+    )
+    cardio_drill_pool_lines = _format_cardio_drill_pool(
+        layer2c_payloads or {},
+        layer2a_payload,
+        layer2d_payload,
+        disciplines=cardio_drill_disciplines,
+        phase=phase_spec.phase_name,
+    )
+    if cardio_drill_pool_lines:
+        parts.append("=== Cardio drill pool (consider these) ===")
+        parts.append(
+            "Optionally attach one drill appropriate to today's discipline, from "
+            "the pool below (pick by id only):"
+        )
+        parts.extend(cardio_drill_pool_lines)
+        parts.append("")
+
     # === Best-fit training substitution ===
     if training_substitution_payload is not None:
         parts.extend(_format_training_substitution_per_phase(training_substitution_payload))
@@ -2618,10 +2909,30 @@ def synthesize_phase(
             unit_tag,
         )
     recovery_pool_ids = compute_recovery_pool_ids(layer2c_payloads, layer2d_payload)
+    # #698 Track 2 (A2) — bind cardio_drills.exercise_id to the discipline/phase-
+    # scoped drill pool (same enum the prompt renders). Empty → no enum (free
+    # string) + suppressed prompt block, so an unfillable cardio_drills[] is
+    # impossible (§6a-G1).
+    cardio_drill_disciplines = (
+        {
+            d.discipline_id
+            for d in layer2a_payload.disciplines
+            if d.inclusion == "included"
+        }
+        if layer2a_payload is not None
+        else set()
+    )
+    cardio_drill_pool_ids = compute_cardio_drill_pool_ids(
+        layer2c_payloads,
+        layer2d_payload,
+        disciplines=cardio_drill_disciplines,
+        phase=phase_spec.phase_name,
+    )
     tool_schema = build_record_phase_sessions_tool(
         max_sessions_this_unit,
         feasible_pool_ids=feasible_pool_ids or None,
         recovery_pool_ids=recovery_pool_ids or None,
+        cardio_drill_pool_ids=cardio_drill_pool_ids or None,
     )
 
     rule_failures: list[RuleFailure] = []

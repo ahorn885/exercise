@@ -137,6 +137,7 @@ def _ex_row(
     terrain_required: list[str] | None = None,
     contraindicated_parts: list[str] | None = None,
     contraindicated_conditions: list[str] | None = None,
+    coaching_cues: str | None = None,
 ) -> dict[str, Any]:
     return {
         "exercise_id": exercise_id,
@@ -153,6 +154,7 @@ def _ex_row(
         "terrain_required": list(terrain_required or []),
         "contraindicated_parts": list(contraindicated_parts or []),
         "contraindicated_conditions": list(contraindicated_conditions or []),
+        "coaching_cues": coaching_cues,
         "discipline_id": discipline_id,
         "discipline_name": discipline_name,
         "exercise_db_sport": exercise_db_sport,
@@ -627,6 +629,58 @@ class TestCoverageAndDedup:
         assert cov["D-001"].tier_1_count == 1
         assert cov["D-003"].total_exercises == 1
         assert cov["D-001"].coverage_pct == 1.0
+
+    def test_coaching_cue_passes_through(self):
+        """#698 Track 2 (A2) — 0B `exercises.coaching_cues` threads onto
+        ResolvedExercise.coaching_cue for the cardio drill pool render."""
+        conn = _FakeConn()
+        conn.queue()
+        conn.queue(_sdb_row("D-001", "Trail Running", "Running"))
+        conn.queue(_ex_row(
+            exercise_id="EX290",
+            exercise_name="Flat VO2max Run Intervals",
+            discipline_id="D-001",
+            discipline_name="Trail Running",
+            exercise_db_sport="Running",
+            equipment_required=[],
+            coaching_cues="3–5 min reps at ~95–100% vVO2max; 4–6 reps",
+        ))
+        payload = q_layer2c_equipment_mapper_payload(
+            conn,
+            locale_id="home",
+            locale_equipment_pool=[],
+            cluster_locale_ids=["home"],
+            cluster_gear_toggle_states={},
+            included_discipline_ids=["D-001"],
+            etl_version_set=_DEFAULT_ETL,
+        )
+        r = payload.exercises_resolved[0]
+        assert r.coaching_cue == "3–5 min reps at ~95–100% vVO2max; 4–6 reps"
+
+    def test_coaching_cue_defaults_none_when_absent(self):
+        """No 0B coaching_cues → coaching_cue is None (pre-change cached 2C
+        payloads also hydrate cleanly via the model default)."""
+        conn = _FakeConn()
+        conn.queue()
+        conn.queue(_sdb_row("D-001", "Trail Running", "Running"))
+        conn.queue(_ex_row(
+            exercise_id="EX001",
+            exercise_name="Back Squat",
+            discipline_id="D-001",
+            discipline_name="Trail Running",
+            exercise_db_sport="Running",
+            equipment_required=[],
+        ))
+        payload = q_layer2c_equipment_mapper_payload(
+            conn,
+            locale_id="home",
+            locale_equipment_pool=[],
+            cluster_locale_ids=["home"],
+            cluster_gear_toggle_states={},
+            included_discipline_ids=["D-001"],
+            etl_version_set=_DEFAULT_ETL,
+        )
+        assert payload.exercises_resolved[0].coaching_cue is None
 
     def test_coverage_pct_mixed_tiers(self):
         """Coverage = (t1 + t2 + t3) / total. Tier 0 doesn't count."""

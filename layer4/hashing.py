@@ -66,7 +66,11 @@ _LAYER2_BUNDLE_ATTRS = frozenset({"a", "b", "c", "d", "e"})
 # gains a recovery instruction, renders prior `recovery_exercises`, and its tool
 # schema gains the `recovery` kind + enum-bound `recovery_exercises` block; all
 # change synthesis output, so cached plans must regenerate.
-LAYER4_PROMPT_REVISION = "10"
+# "11" = #698 Track 2 (A2) cardio drills pool — the per-phase synthesizer gains a
+# `# Cardio drills` instruction + a `=== Cardio drill pool ===` render, and its
+# tool schema gains the enum-bound `cardio_drills` block (maxItems:1); changes
+# synthesis output, so cached plans must regenerate.
+LAYER4_PROMPT_REVISION = "11"
 
 
 def _to_jsonable(obj: Any) -> Any:
