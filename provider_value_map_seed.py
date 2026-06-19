@@ -235,6 +235,35 @@ GARMIN_TYPE_TO_PLAN_SPORT: dict[str, str] = {
 # Strava §2.2, RWGPS §10.1, Wahoo §10.2 (source_value = workout_type_id), TP §11.1.
 # Garmin's own typeKey→D-id rows land with the live-path repoint (Slice 2b).
 CARDIO_DISCIPLINE_MAP: dict[str, dict[str, tuple[str, str | None]]] = {
+    # ── Garmin (Slice 2b — the wired path: Connect API `typeKey` + FIT
+    #    sport/sub_sport, same option-C mappings) ──────────────────────────────
+    # Keyed on the fine Garmin token (the API typeKey, or the sub_sport-refined
+    # token the FIT path computes — see garmin_fit_parser._garmin_disc_token).
+    # The coarse `_plan_sport_type` for plan-item matching still comes from
+    # GARMIN_TYPE_TO_PLAN_SPORT (unchanged live behavior); discipline_id is the
+    # new fine fidelity derived here (its coarse collapse agrees with that dict —
+    # guarded in tests).
+    'garmin': {
+        'running': ('discipline', 'D-002'),
+        'trail_running': ('discipline', 'D-001'),
+        'treadmill_running': ('discipline', 'D-002'),
+        'track_running': ('discipline', 'D-002'),
+        'cycling': ('discipline', 'D-006'),
+        'road_biking': ('discipline', 'D-006'),
+        'mountain_biking': ('discipline', 'D-008'),
+        'gravel_cycling': ('discipline', 'D-030'),
+        'indoor_cycling': ('discipline', 'D-006'),     # + indoor flag (2c)
+        'virtual_ride': ('discipline', 'D-006'),
+        'swimming': ('discipline', 'D-004'),
+        'open_water_swimming': ('discipline', 'D-004'),
+        'hiking': ('discipline', 'D-003'),
+        'kayaking': ('discipline', 'D-010'),
+        'walking': ('modality', 'walking'),
+        'strength_training': ('modality', 'strength_training'),
+        'rowing': ('bucket3', None),                   # §6/§12 — training modality
+        'indoor_rowing': ('bucket3', None),
+        'yoga': ('bucket3', None),                     # §12 — CATEGORY_MOBILITY
+    },
     # ── Strava `sport_type` (§2.2) ──────────────────────────────────────────
     'strava': {
         'Run': ('discipline', 'D-002'),
@@ -352,13 +381,13 @@ def provider_value_map_rows():
     (provider, data_type, direction, source_value, canonical_kind,
      canonical_value, match_kind, confidence, no_canonical_match, notes).
 
-    Strength names + the Garmin coarse-cardio map (Slice 1) + the fine-D-id
-    provider cardio crosswalk (Slice 2; CARDIO_DISCIPLINE_MAP).
+    Strength names (Slice 1) + the fine-D-id provider cardio crosswalk
+    (Slice 2; CARDIO_DISCIPLINE_MAP — Garmin included as of Slice 2b, so the
+    Garmin cardio rows are now fine `discipline` rows, not the Slice-1 coarse
+    `modality` rows; the coarse `_plan_sport_type` is derived via the collapse).
     """
     for name, ex_id in STRENGTH_NAME_TO_EX_ID.items():
         yield ('garmin', 'strength', 'in', name, 'ex_id', ex_id, 'manual', 1.0, False, None)
-    for type_key, sport in GARMIN_TYPE_TO_PLAN_SPORT.items():
-        yield ('garmin', 'cardio', 'in', type_key, 'modality', sport, 'manual', 1.0, False, None)
     for provider, mapping in CARDIO_DISCIPLINE_MAP.items():
         for source_value, (kind, value) in mapping.items():
             if kind == 'bucket3':
