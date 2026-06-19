@@ -18,6 +18,8 @@ from routes.auth import current_user_id
 # Garmin activity typeKey → coarse `_plan_sport_type` now lives in the
 # consolidated provider seed (#681 §4); re-exported here for the cardio path.
 from provider_value_map_seed import GARMIN_TYPE_TO_PLAN_SPORT
+# Fine layer0 discipline id for a completed cardio activity (#681 §4 Slice 2b).
+from provider_cardio_resolve import resolve_cardio_discipline
 
 GARTH_TMP = os.path.join(tempfile.gettempdir(), 'garth_session')
 
@@ -304,6 +306,15 @@ def normalize_activity(a: dict) -> dict:
     if cadence is not None:
         cadence = int(cadence * 2) if ('run' in garmin_type.lower() and cadence < 120) else int(cadence)
 
+    # #681 §4 Slice 2b — carry the fine layer0 discipline id (option C); coarse
+    # `_plan_sport_type` is unchanged (still the GARMIN_TYPE_TO_PLAN_SPORT dict).
+    disc = resolve_cardio_discipline('garmin', garmin_type)
+    print(  # Rule #15
+        f"[cardio-ingest] garmin-api typeKey={garmin_type!r} "
+        f"-> discipline_id={disc.discipline_id} coarse={disc.plan_sport_type} "
+        f"bucket={disc.bucket}"
+    )
+
     return {
         'date': (a.get('startTimeLocal') or '')[:10],
         'activity': activity,
@@ -326,4 +337,5 @@ def normalize_activity(a: dict) -> dict:
         'anaerobic_te': a.get('anaerobicTrainingEffect'),
         'garmin_activity_id': str(a.get('activityId', '')),
         '_plan_sport_type': GARMIN_TYPE_TO_PLAN_SPORT.get(garmin_type, ''),
+        'discipline_id': disc.discipline_id,
     }

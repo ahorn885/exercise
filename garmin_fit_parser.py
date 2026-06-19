@@ -5,6 +5,9 @@ import uuid
 import tempfile
 from datetime import datetime, timezone
 
+# Fine layer0 discipline id for a completed cardio activity (#681 §4 Slice 2b).
+from provider_cardio_resolve import resolve_cardio_discipline
+
 # Garmin FIT sport enum → exercise site activity name
 SPORT_MAP = {
     'running': 'Running',
@@ -245,6 +248,28 @@ def _resolve_activity(sport: str, sub_sport: str):
     return name, sport
 
 
+def _garmin_disc_token(sport: str, sub_sport: str) -> str:
+    """Refine a FIT (sport, sub_sport) into the fine Garmin token the discipline
+    crosswalk keys on (#681 §4 Slice 2b). The FIT `sport_key` is coarse (the
+    sub_sport carries the trail/MTB/gravel/open-water signal that the display
+    name already uses), so mirror that refinement for the discipline id."""
+    s = (sport or '').lower()
+    ss = (sub_sport or '').lower()
+    if s == 'running':
+        return 'trail_running' if ss == 'trail_running' else 'running'
+    if s == 'cycling':
+        if ss == 'mountain':
+            return 'mountain_biking'
+        if ss == 'gravel_cycling':
+            return 'gravel_cycling'
+        if ss in ('indoor_cycling', 'spin'):
+            return 'indoor_cycling'
+        return 'cycling'
+    if s == 'swimming':
+        return 'open_water_swimming' if ss == 'open_water' else 'swimming'
+    return s
+
+
 def _pace_from_speed(speed_ms: float) -> str:
     """Convert m/s to MM:SS per mile string."""
     if not speed_ms or speed_ms <= 0:
@@ -316,7 +341,16 @@ def parse_fit(fit_bytes: bytes) -> dict:
     if activity_name == '__strength__':
         return _parse_strength(session, sets)
 
-    return _parse_cardio(session, activity_name, sport_key)
+    result = _parse_cardio(session, activity_name, sport_key)
+    # #681 §4 Slice 2b — carry the fine layer0 discipline id (option C).
+    disc = resolve_cardio_discipline('garmin', _garmin_disc_token(sport_key, sub_key))
+    result['data']['discipline_id'] = disc.discipline_id
+    print(  # Rule #15
+        f"[cardio-ingest] garmin-fit sport={sport_key!r} sub={sub_key!r} "
+        f"-> discipline_id={disc.discipline_id} coarse={disc.plan_sport_type} "
+        f"bucket={disc.bucket}"
+    )
+    return result
 
 
 def _parse_cardio(session, activity_name: str, sport_key: str) -> dict:

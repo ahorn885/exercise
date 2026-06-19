@@ -243,8 +243,8 @@ def import_confirm():
                 avg_power, max_power, norm_power, aerobic_te, anaerobic_te,
                 swolf, active_lengths,
                 stride_length_m, vert_oscillation_cm, vert_ratio_pct,
-                gct_ms, gct_balance, plan_item_id, notes, user_id)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) RETURNING id''',
+                gct_ms, gct_balance, discipline_id, plan_item_id, notes, user_id)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) RETURNING id''',
             (data.get('date'), data.get('activity'), data.get('activity_name'),
              data.get('duration_min'), data.get('moving_time_min'),
              data.get('distance_mi'), data.get('avg_pace'), data.get('avg_speed'),
@@ -256,7 +256,7 @@ def import_confirm():
              data.get('swolf'), data.get('active_lengths'),
              data.get('stride_length_m'), data.get('vert_oscillation_cm'),
              data.get('vert_ratio_pct'), data.get('gct_ms'), data.get('gct_balance'),
-             plan_item_id, data.get('notes'), uid)
+             data.get('discipline_id'), plan_item_id, data.get('notes'), uid)
         )
         log_id = cur.lastrowid
         _record_disposition_for_import(
@@ -422,8 +422,8 @@ def _bulk_insert_cardio(db, data: dict, uid: int, gid: str,
             avg_power, max_power, norm_power, aerobic_te, anaerobic_te,
             swolf, active_lengths,
             stride_length_m, vert_oscillation_cm, vert_ratio_pct,
-            gct_ms, gct_balance, garmin_activity_id, plan_item_id, notes, user_id)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) RETURNING id''',
+            gct_ms, gct_balance, discipline_id, garmin_activity_id, plan_item_id, notes, user_id)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) RETURNING id''',
         (data.get('date'), data.get('activity'), data.get('activity_name'),
          data.get('duration_min'), data.get('moving_time_min'),
          data.get('distance_mi'), data.get('avg_pace'), data.get('avg_speed'),
@@ -435,7 +435,7 @@ def _bulk_insert_cardio(db, data: dict, uid: int, gid: str,
          data.get('swolf'), data.get('active_lengths'),
          data.get('stride_length_m'), data.get('vert_oscillation_cm'),
          data.get('vert_ratio_pct'), data.get('gct_ms'), data.get('gct_balance'),
-         gid, plan_item_id,
+         data.get('discipline_id'), gid, plan_item_id,
          (notes if notes is not None else (data.get('notes') or None)), uid)
     )
     return cur.lastrowid
@@ -829,8 +829,8 @@ def _import_activity(db, act: dict, plan_item, compliance: dict,
             distance_mi, avg_pace, avg_speed, avg_hr, max_hr, calories,
             elev_gain_ft, elev_loss_ft, avg_cadence,
             avg_power, max_power, norm_power, aerobic_te, anaerobic_te,
-            garmin_activity_id, plan_item_id, notes, user_id)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) RETURNING id''',
+            discipline_id, garmin_activity_id, plan_item_id, notes, user_id)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) RETURNING id''',
         (act.get('date'), act.get('activity'), act.get('activity_name'),
          act.get('duration_min'), act.get('moving_time_min'),
          act.get('distance_mi'), act.get('avg_pace'), act.get('avg_speed'),
@@ -838,7 +838,7 @@ def _import_activity(db, act: dict, plan_item, compliance: dict,
          act.get('elev_gain_ft'), act.get('elev_loss_ft'), act.get('avg_cadence'),
          act.get('avg_power'), act.get('max_power'), act.get('norm_power'),
          act.get('aerobic_te'), act.get('anaerobic_te'),
-         gid, plan_item_id, notes, uid)
+         act.get('discipline_id'), gid, plan_item_id, notes, uid)
     )
     if raw_plan_item_id:
         _record_disposition_for_import(

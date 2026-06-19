@@ -74,6 +74,40 @@ class TestResolveCardioDiscipline:
         # No road/trail split → run collapses to road running D-002, not trail D-001.
         assert resolve_cardio_discipline("trainingpeaks", "run").discipline_id == "D-002"
 
+    def test_garmin_fine_discipline(self):
+        # The wired path (Slice 2b): typeKey / FIT-refined token → fine D-id.
+        assert resolve_cardio_discipline("garmin", "trail_running").discipline_id == "D-001"
+        assert resolve_cardio_discipline("garmin", "mountain_biking").discipline_id == "D-008"
+        assert resolve_cardio_discipline("garmin", "gravel_cycling").discipline_id == "D-030"
+        assert resolve_cardio_discipline("garmin", "walking") == CardioResolution(
+            None, "walking", 1, "manual")
+        assert resolve_cardio_discipline("garmin", "rowing") == CardioResolution(
+            None, None, 3, "manual")
+
+
+class TestGarminCoarsePathConsistency:
+    def test_fine_collapse_agrees_with_legacy_coarse_dict(self):
+        # GARMIN_TYPE_TO_PLAN_SPORT still drives `_plan_sport_type` (live plan
+        # matching); the new fine D-id must collapse back to the SAME coarse value
+        # for every Garmin typeKey, or the two paths would disagree.
+        from provider_value_map_seed import GARMIN_TYPE_TO_PLAN_SPORT
+        for type_key, coarse in GARMIN_TYPE_TO_PLAN_SPORT.items():
+            res = resolve_cardio_discipline("garmin", type_key)
+            assert res.plan_sport_type == coarse, (type_key, res.plan_sport_type, coarse)
+
+    def test_fit_sub_sport_refines_to_fine_token(self):
+        from garmin_fit_parser import _garmin_disc_token
+        assert _garmin_disc_token("running", "trail_running") == "trail_running"
+        assert _garmin_disc_token("running", "treadmill") == "running"
+        assert _garmin_disc_token("cycling", "mountain") == "mountain_biking"
+        assert _garmin_disc_token("cycling", "gravel_cycling") == "gravel_cycling"
+        assert _garmin_disc_token("cycling", "spin") == "indoor_cycling"
+        assert _garmin_disc_token("swimming", "open_water") == "open_water_swimming"
+        assert _garmin_disc_token("hiking", "") == "hiking"
+        # A trail run resolves all the way to D-001 (the signal coarse would drop).
+        assert resolve_cardio_discipline(
+            "garmin", _garmin_disc_token("running", "trail_running")).discipline_id == "D-001"
+
 
 class TestSeedTranscriptionIntegrity:
     def test_every_authored_discipline_is_a_real_canonical_id(self):
