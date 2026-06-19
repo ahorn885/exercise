@@ -2397,6 +2397,13 @@ _PG_MIGRATIONS = [
     "DELETE FROM injury_exercise_modifications WHERE exercise_id IN (SELECT id FROM exercise_inventory WHERE exercise IN ('1,000 Step-Up Challenge','Hanging Leg Raise in Boots','Weighted Treadmill Incline Walk','High-Rep Strength Endurance Sets','Nasal-Breathing-Only Climbing')) OR substitute_exercise_id IN (SELECT id FROM exercise_inventory WHERE exercise IN ('1,000 Step-Up Challenge','Hanging Leg Raise in Boots','Weighted Treadmill Incline Walk','High-Rep Strength Endurance Sets','Nasal-Breathing-Only Climbing'))",
     "DELETE FROM current_rx WHERE exercise IN ('1,000 Step-Up Challenge','Hanging Leg Raise in Boots','Weighted Treadmill Incline Walk','High-Rep Strength Endurance Sets','Nasal-Breathing-Only Climbing')",
     "DELETE FROM exercise_inventory WHERE exercise IN ('1,000 Step-Up Challenge','Hanging Leg Raise in Boots','Weighted Treadmill Incline Walk','High-Rep Strength Endurance Sets','Nasal-Breathing-Only Climbing')",
+    # #681 §4 Slice 2 (cardio fidelity) — the fine layer0 discipline id of a
+    # completed cardio activity (matrix-v2 §1 option C: store the fine D-id where
+    # one exists, derive coarse `_plan_sport_type` via DISCIPLINE_TO_PLAN_SPORT in
+    # provider_cardio_resolve). Additive + nullable; raw `activity`/typeKey stays
+    # (record-don't-drop). Populated by the provider cardio-ingest repoint
+    # (Slice 2b); NULL on existing rows + manual/unmapped activities.
+    "ALTER TABLE cardio_log ADD COLUMN IF NOT EXISTS discipline_id TEXT",
 ]
 
 _CLOTHING_SEEDS = [
