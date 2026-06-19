@@ -227,6 +227,25 @@ class RecoveryExercise(_Base):
     instructions: str
 
 
+# ─── §7.4c CardioDrill (#698 Track 2 — cardio drills "consider these" pool) ──
+
+
+class CardioDrill(_Base):
+    """One prescribed cardio drill. Structural analog of RecoveryExercise
+    (#698 Track 2, Part A): the synthesizer picks `exercise_id` from the
+    deterministic drill pool (`per_phase.compute_cardio_drill_pool_ids`, the
+    Technical/Skill + Interval/Tempo + Aerobic/Endurance 0B types) — never
+    invents one. Rides `kind=='cardio'` sessions alongside the free-composed
+    `cardio_blocks`; it is NOT a new session kind. One per session (maxItems:1,
+    enforced as a PlanSession invariant): a session targets one technical/
+    interval focus, not a drill circuit."""
+
+    exercise_id: str
+    exercise_name: str
+    prescription: str
+    instructions: str | None = None
+
+
 # ─── §7.5 SessionPhaseMetadata ─────────────────────────────────────────────
 
 
@@ -262,6 +281,10 @@ class PlanSession(_Base):
     cardio_blocks: list[CardioBlock] | None = None
     strength_exercises: list[StrengthExercise] | None = None
     recovery_exercises: list[RecoveryExercise] | None = None
+    # #698 Track 2 (Part A) — optional drills on a cardio session, drawn from
+    # the deterministic cardio drill pool. Only on kind=='cardio'; ≤1 (the
+    # invariant below enforces the maxItems:1 cap independent of the tool schema).
+    cardio_drills: list[CardioDrill] | None = None
     rest_reason: (
         Literal[
             "planned_recovery",
@@ -293,6 +316,15 @@ class PlanSession(_Base):
                 raise ValueError("kind=='cardio' requires recovery_exercises is None")
             if self.rest_reason is not None:
                 raise ValueError("kind=='cardio' requires rest_reason is None")
+            # #698 Track 2 (Part A) — drills are optional on cardio, capped at one
+            # (a session targets one focus, not a circuit), each with a real id.
+            if self.cardio_drills is not None:
+                if len(self.cardio_drills) > 1:
+                    raise ValueError(
+                        "kind=='cardio' allows at most one cardio_drills entry (maxItems:1)"
+                    )
+                if any(not d.exercise_id.strip() for d in self.cardio_drills):
+                    raise ValueError("cardio_drills entries require a non-empty exercise_id")
         elif self.kind == "strength":
             if not self.strength_exercises:
                 raise ValueError(
@@ -302,6 +334,8 @@ class PlanSession(_Base):
                 raise ValueError("kind=='strength' requires cardio_blocks is None")
             if self.recovery_exercises is not None:
                 raise ValueError("kind=='strength' requires recovery_exercises is None")
+            if self.cardio_drills is not None:
+                raise ValueError("kind=='strength' requires cardio_drills is None")
             if self.rest_reason is not None:
                 raise ValueError("kind=='strength' requires rest_reason is None")
         elif self.kind == "recovery":
@@ -314,6 +348,8 @@ class PlanSession(_Base):
                 raise ValueError("kind=='recovery' requires cardio_blocks is None")
             if self.strength_exercises is not None:
                 raise ValueError("kind=='recovery' requires strength_exercises is None")
+            if self.cardio_drills is not None:
+                raise ValueError("kind=='recovery' requires cardio_drills is None")
             if self.rest_reason is not None:
                 raise ValueError("kind=='recovery' requires rest_reason is None")
             if self.discipline_id is not None:
@@ -327,6 +363,8 @@ class PlanSession(_Base):
                 raise ValueError("kind=='rest' requires strength_exercises is None")
             if self.recovery_exercises is not None:
                 raise ValueError("kind=='rest' requires recovery_exercises is None")
+            if self.cardio_drills is not None:
+                raise ValueError("kind=='rest' requires cardio_drills is None")
             if self.rest_reason is None:
                 raise ValueError("kind=='rest' requires rest_reason non-None")
             if self.duration_min != 0:
