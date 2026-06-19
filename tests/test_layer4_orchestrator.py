@@ -379,7 +379,6 @@ def _fake_layer2d_payload() -> Layer2DPayload:
         coaching_flags=[],
         hitl_required=False,
         hitl_items=[],
-        body_part_vocab_misses=[],
     )
 
 

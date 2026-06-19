@@ -249,7 +249,6 @@ class TestCleanBaseline:
         assert payload.coaching_flags == []
         assert payload.hitl_required is False
         assert payload.hitl_items == []
-        assert payload.body_part_vocab_misses == []
 
 
 # ─── §13.1 Andy baseline — Chronic-Managed wrist tendinopathy ────────────────
@@ -682,17 +681,23 @@ class TestGapTimesHighRisk:
         assert payload.hitl_required is True
 
 
-# ─── §10 body-part vocab miss ────────────────────────────────────────────────
+# ─── §10 body-part vocab miss — RETIRED ──────────────────────────────────────
+# The `body_part_vocab_miss` coaching flag + `Layer2DPayload.body_part_vocab_misses`
+# field were retired (2026-06). The injury form's `body_part` is a closed
+# structured dropdown over the canonical parts (Abdomen mapped, 'Other' catch-all
+# removed), so an out-of-vocab selection can't occur; and matching falls back to
+# the lowercased body part regardless (`BODY_PART_KEYWORDS.get(canonical,
+# [canonical.lower()])`), so the strict key-membership audit added no value.
 
 
-class TestBodyPartVocabMiss:
-    def test_unrecognized_body_part_flags_but_does_not_fail(self):
+class TestBodyPartVocabMissRetired:
+    def test_no_vocab_miss_flag_or_field(self):
         conn = _FakeConn()
         conn.queue_response(rows=[_exercise("E-001", "Squat", "D-001")])
         conn.queue_response(rows=[_discipline("D-001", "Running")])
         conn.queue_response(rows=[])
         injuries = [_injury(
-            "Brain",  # Not in BODY_PART_KEYWORDS
+            "Brain",  # historically out-of-vocab — once tripped the audit
             severity="Chronic-Managed",
             injury_type="Other / uncertain",
             movement_constraints=[],
@@ -700,30 +705,9 @@ class TestBodyPartVocabMiss:
         payload = q_layer2d_injury_risk_profile_payload(
             conn, injuries, [], ["D-001"], etl_version_set=_PIN,
         )
-        assert "Brain" in payload.body_part_vocab_misses
-        flag_types = {f.flag_type for f in payload.coaching_flags}
-        assert "body_part_vocab_miss" in flag_types
-
-    def test_abdomen_is_recognized_no_vocab_miss(self):
-        # 'Abdomen' is a canonical injury-form body part (a structured-field
-        # selection); it was added to BODY_PART_KEYWORDS so abdominal injuries
-        # participate in matching instead of tripping body_part_vocab_miss.
-        conn = _FakeConn()
-        conn.queue_response(rows=[_exercise("E-001", "Squat", "D-001")])
-        conn.queue_response(rows=[_discipline("D-001", "Running")])
-        conn.queue_response(rows=[])
-        injuries = [_injury(
-            "Abdomen",
-            severity="Chronic-Managed",
-            injury_type="Acute soft tissue (strain / sprain / tear)",
-            movement_constraints=[],
-        )]
-        payload = q_layer2d_injury_risk_profile_payload(
-            conn, injuries, [], ["D-001"], etl_version_set=_PIN,
-        )
-        assert "Abdomen" not in payload.body_part_vocab_misses
         flag_types = {f.flag_type for f in payload.coaching_flags}
         assert "body_part_vocab_miss" not in flag_types
+        assert not hasattr(payload, "body_part_vocab_misses")
 
 
 # ─── Smoke — payload constructs against empty connection ─────────────────────

@@ -12,8 +12,8 @@ from athlete import BODY_PART_CONSTRAINTS, KNOWN_MOVEMENT_CONSTRAINTS
 # because routes.injuries pulls Flask.
 CANONICAL_PARTS = {
     "Hand", "Wrist", "Elbow", "Shoulder", "Knee", "Ankle", "Foot", "Hip",
-    "Hamstring", "Quad", "Groin", "Abdomen", "Lower Back", "Upper Back",
-    "Neck",
+    "Hamstring", "Quad", "Glute", "Calf", "Shin", "Achilles", "Groin",
+    "Abdomen", "Chest", "Rib", "Lower Back", "Upper Back", "Neck",
 }
 
 
