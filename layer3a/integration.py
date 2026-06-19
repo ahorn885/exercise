@@ -28,13 +28,12 @@ from typing import Any, Iterable
 from layer4.context import (
     ACWREntry,
     CombinedLoadReport,
-    HRVRecord,
-    HRVSource,
+    DailyWellnessRecord,
     Layer3AIntegrationBundle,
     PolarCardioLoadCrossRef,
     ProviderStatus,
     SleepRecord,
-    SleepSource,
+    WellnessSource,
     WorkoutRecord,
     WorkoutSource,
 )
@@ -151,29 +150,185 @@ def q_layer3A_recent_workouts(
     return out
 
 
-# ─── 2. q_layer3A_recent_sleep ───────────────────────────────────────────────
+# ─── 2. q_layer3A_recent_wellness ────────────────────────────────────────────
+
+# Device priority for the freshest-non-null coalesce tiebreak. Higher wins
+# when two sources carry the same field for a day at equal (or missing) ingest
+# timestamps. Garmin first — it is the richest, highest-fidelity daily source.
+_WELLNESS_SOURCE_PRIORITY: dict[str, int] = {"garmin": 3, "polar": 2, "coros": 1}
+
+# A candidate value for one (day, field): (ingest_timestamp, value, source).
+_WellnessCandidate = tuple["datetime | None", float, str]
 
 
-def q_layer3A_recent_sleep(
+def _coalesce_wellness_field(
+    candidates: list[_WellnessCandidate],
+) -> tuple[float | None, WellnessSource | None]:
+    """Freshest-non-null pick: among the sources that carry a non-null value
+    for this (day, field), choose the one whose ingest timestamp is newest.
+    A NULL source never reaches here (callers skip nulls), so a populated
+    older value never loses to a fresher NULL. Ties (equal or missing
+    timestamps) break on `_WELLNESS_SOURCE_PRIORITY` so the result is
+    deterministic — the bundle hash folds into the 3A cache key, and a
+    non-deterministic pick would drift that key across resumable passes."""
+    if not candidates:
+        return None, None
+    best = max(
+        candidates,
+        key=lambda c: (c[0] or datetime.min, _WELLNESS_SOURCE_PRIORITY[c[2]]),
+    )
+    return best[1], best[2]  # type: ignore[return-value]
+
+
+def q_layer3A_recent_wellness(
+    db: Any,
+    user_id: int,
+    as_of: datetime | date,
+    *,
+    since_days: int = _DEFAULT_SLEEP_WINDOW_DAYS,
+) -> list[DailyWellnessRecord]:
+    """Per-day device wellness, coalesced field-by-field across providers into
+    one `DailyWellnessRecord` per calendar day (newest first). Sources:
+    Garmin `daily_wellness_metrics` (sleep span, `hrv_overnight_avg_ms`,
+    `resting_hr`), Polar (`provider_raw_record` sleep + nightly-recharge HRV)
+    and COROS (`provider_raw_record` daily summary: sleep span + `ppg_hrv`),
+    the latter two provider-tagged per #681 §4 Slice 3.
+
+    Each field is resolved by freshest-non-null (`_coalesce_wellness_field`):
+    the value from the source with the newest ingest timestamp wins, ties
+    break garmin>polar>coros. Self-report sleep is intentionally excluded —
+    it rides separately via `q_layer3A_recent_self_report_sleep` so the §6.1
+    objective-vs-subjective weighting stays intact. `resting_hr` is garmin-only
+    (the sole confirmed device source today)."""
+    cutoff_iso = _window_cutoff(as_of, since_days).isoformat()
+
+    sleep_cand: dict[date, list[_WellnessCandidate]] = defaultdict(list)
+    hrv_cand: dict[date, list[_WellnessCandidate]] = defaultdict(list)
+    rhr_cand: dict[date, list[_WellnessCandidate]] = defaultdict(list)
+
+    # Garmin — daily_wellness_metrics (sleep span, overnight HRV, resting HR).
+    cur = db.execute(
+        """
+        SELECT date, sleep_start_ms, sleep_end_ms, hrv_overnight_avg_ms,
+               resting_hr, updated_at
+          FROM daily_wellness_metrics
+         WHERE user_id = %s AND date >= %s
+         ORDER BY date DESC
+        """,
+        (user_id, cutoff_iso),
+    )
+    for row in cur.fetchall():
+        d = _as_date(row["date"])
+        ts = row["updated_at"]
+        start_ms, end_ms = row["sleep_start_ms"], row["sleep_end_ms"]
+        if start_ms is not None and end_ms is not None and end_ms > start_ms:
+            sleep_cand[d].append((ts, (end_ms - start_ms) / 3600_000.0, "garmin"))
+        hrv = row["hrv_overnight_avg_ms"]
+        if hrv is not None:
+            hrv_cand[d].append((ts, float(hrv), "garmin"))
+        rhr = row["resting_hr"]
+        if rhr is not None:
+            rhr_cand[d].append((ts, float(rhr), "garmin"))
+
+    # Polar sleep (provider_raw_record, data_type='sleep').
+    cur = db.execute(
+        """
+        SELECT external_id AS date,
+               (raw_payload->>'total_sleep_min')::int AS total_sleep_min,
+               fetched_at
+          FROM provider_raw_record
+         WHERE user_id = %s AND provider = 'polar' AND data_type = 'sleep'
+           AND external_id >= %s
+        """,
+        (user_id, cutoff_iso),
+    )
+    for row in cur.fetchall():
+        mins = row["total_sleep_min"]
+        if mins is not None:
+            sleep_cand[_as_date(row["date"])].append(
+                (row["fetched_at"], mins / 60.0, "polar")
+            )
+
+    # Polar HRV (provider_raw_record, data_type='hrv' — true RMSSD).
+    cur = db.execute(
+        """
+        SELECT external_id AS date,
+               (raw_payload->>'hrv_rmssd_ms')::float AS hrv_rmssd_ms,
+               fetched_at
+          FROM provider_raw_record
+         WHERE user_id = %s AND provider = 'polar' AND data_type = 'hrv'
+           AND external_id >= %s
+           AND (raw_payload->>'hrv_rmssd_ms') IS NOT NULL
+        """,
+        (user_id, cutoff_iso),
+    )
+    for row in cur.fetchall():
+        v = row["hrv_rmssd_ms"]
+        if v is not None:
+            hrv_cand[_as_date(row["date"])].append(
+                (row["fetched_at"], float(v), "polar")
+            )
+
+    # COROS daily summary (provider_raw_record): sleep span + nightly PPG HRV.
+    cur = db.execute(
+        """
+        SELECT external_id AS date,
+               (raw_payload->>'sleep_start_ms')::bigint AS sleep_start_ms,
+               (raw_payload->>'sleep_end_ms')::bigint   AS sleep_end_ms,
+               (raw_payload->>'ppg_hrv')::float         AS ppg_hrv,
+               fetched_at
+          FROM provider_raw_record
+         WHERE user_id = %s AND provider = 'coros' AND data_type = 'daily_summary'
+           AND external_id >= %s
+        """,
+        (user_id, cutoff_iso),
+    )
+    for row in cur.fetchall():
+        d = _as_date(row["date"])
+        ts = row["fetched_at"]
+        start_ms, end_ms = row["sleep_start_ms"], row["sleep_end_ms"]
+        if start_ms is not None and end_ms is not None and end_ms > start_ms:
+            sleep_cand[d].append((ts, (end_ms - start_ms) / 3600_000.0, "coros"))
+        ppg = row["ppg_hrv"]
+        if ppg is not None:
+            hrv_cand[d].append((ts, float(ppg), "coros"))
+
+    out: list[DailyWellnessRecord] = []
+    for d in sorted(set(sleep_cand) | set(hrv_cand) | set(rhr_cand), reverse=True):
+        sleep_h, sleep_src = _coalesce_wellness_field(sleep_cand.get(d, []))
+        hrv_v, hrv_src = _coalesce_wellness_field(hrv_cand.get(d, []))
+        rhr_v, rhr_src = _coalesce_wellness_field(rhr_cand.get(d, []))
+        out.append(
+            DailyWellnessRecord(
+                date=d,
+                total_sleep_hours=round(sleep_h, 3) if sleep_h is not None else None,
+                total_sleep_hours_source=sleep_src,
+                hrv_rmssd_ms=hrv_v,
+                hrv_rmssd_ms_source=hrv_src,
+                resting_hr=int(round(rhr_v)) if rhr_v is not None else None,
+                resting_hr_source=rhr_src,
+            )
+        )
+    return out
+
+
+# ─── 3. q_layer3A_recent_self_report_sleep ───────────────────────────────────
+
+
+def q_layer3A_recent_self_report_sleep(
     db: Any,
     user_id: int,
     as_of: datetime | date,
     *,
     since_days: int = _DEFAULT_SLEEP_WINDOW_DAYS,
 ) -> list[SleepRecord]:
-    """Recent sleep across three sources: `wellness_self_report` (self-report,
-    `sleep_hours` + `sleep_quality`), Polar sleep (`total_sleep_min`) and COROS
-    daily summary (`sleep_start_ms` + `sleep_end_ms` deltas) — both now read from
-    `provider_raw_record` (provider-tagged; #681 §4 Slice 3). Garmin daily sleep
-    sits in `daily_wellness_metrics` but is intentionally not surfaced to
-    Layer-3A yet (tracked as a follow-up); skipped in v1.
-
-    Sleep quality is captured only from self-report (1-10 scale); provider
-    rows leave it None. Integration Spec §10 says "LLM in 3A resolves
-    conflicts" — no normalization here, the LLM weighs sources per §6.1."""
+    """Recent self-report sleep from `wellness_self_report` (`sleep_hours` +
+    `sleep_quality`, 1-10), newest first. Kept separate from the device
+    coalesce in `q_layer3A_recent_wellness` so the §6.1 weighting can treat
+    subjective sleep_quality as self-report-dominant while objective sleep
+    duration stays integration-dominant. No normalization — the LLM is the
+    arbiter (Integration Spec §10)."""
     cutoff = _window_cutoff(as_of, since_days)
-    cutoff_iso = cutoff.isoformat()
-
     cur = db.execute(
         """
         SELECT date, sleep_hours, sleep_quality
@@ -181,44 +336,10 @@ def q_layer3A_recent_sleep(
          WHERE user_id = %s AND date >= %s
          ORDER BY date DESC
         """,
-        (user_id, cutoff_iso),
+        (user_id, cutoff.isoformat()),
     )
-    self_report_rows = list(cur.fetchall())
-
-    # Polar sleep + COROS daily summary now live in `provider_raw_record`
-    # (#681 §4 Slice 3), provider-tagged with normalised snake_case fields in
-    # raw_payload (`external_id` is the ISO day).
-    cur = db.execute(
-        """
-        SELECT external_id AS date,
-               (raw_payload->>'total_sleep_min')::int AS total_sleep_min
-          FROM provider_raw_record
-         WHERE user_id = %s AND provider = 'polar' AND data_type = 'sleep'
-           AND external_id >= %s
-         ORDER BY external_id DESC
-        """,
-        (user_id, cutoff_iso),
-    )
-    polar_rows = list(cur.fetchall())
-
-    cur = db.execute(
-        """
-        SELECT external_id AS date,
-               (raw_payload->>'sleep_start_ms')::bigint AS sleep_start_ms,
-               (raw_payload->>'sleep_end_ms')::bigint   AS sleep_end_ms
-          FROM provider_raw_record
-         WHERE user_id = %s AND provider = 'coros' AND data_type = 'daily_summary'
-           AND external_id >= %s
-           AND (raw_payload->>'sleep_start_ms') IS NOT NULL
-           AND (raw_payload->>'sleep_end_ms') IS NOT NULL
-         ORDER BY external_id DESC
-        """,
-        (user_id, cutoff_iso),
-    )
-    coros_rows = list(cur.fetchall())
-
     out: list[SleepRecord] = []
-    for row in self_report_rows:
+    for row in cur.fetchall():
         out.append(
             SleepRecord(
                 date=_as_date(row["date"]),
@@ -227,100 +348,6 @@ def q_layer3A_recent_sleep(
                 source="wellness_self_report",
             )
         )
-    for row in polar_rows:
-        mins = row["total_sleep_min"]
-        out.append(
-            SleepRecord(
-                date=_as_date(row["date"]),
-                total_sleep_hours=(mins / 60.0) if mins is not None else None,
-                sleep_quality=None,
-                source="polar",
-            )
-        )
-    for row in coros_rows:
-        start_ms = row["sleep_start_ms"]
-        end_ms = row["sleep_end_ms"]
-        hours = (end_ms - start_ms) / 3600_000.0 if (start_ms and end_ms) else None
-        out.append(
-            SleepRecord(
-                date=_as_date(row["date"]),
-                total_sleep_hours=hours,
-                sleep_quality=None,
-                source="coros",
-            )
-        )
-
-    out.sort(key=lambda r: (r.date, r.source), reverse=True)
-    return out
-
-
-# ─── 3. q_layer3A_recent_hrv ─────────────────────────────────────────────────
-
-
-def q_layer3A_recent_hrv(
-    db: Any,
-    user_id: int,
-    as_of: datetime | date,
-    *,
-    since_days: int = _DEFAULT_HRV_WINDOW_DAYS,
-) -> list[HRVRecord]:
-    """Recent HRV across two sources, both now read from `provider_raw_record`
-    (provider-tagged; #681 §4 Slice 3): Polar nightly-recharge `hrv_rmssd_ms`
-    (true RMSSD, data_type='hrv') and COROS daily-summary `ppg_hrv` (nightly
-    PPG-derived). COROS per-sample HRV is not retained (no consumer / no
-    canonical home); the nightly COROS summary suffices."""
-    cutoff = _window_cutoff(as_of, since_days)
-    cutoff_iso = cutoff.isoformat()
-
-    # Polar nightly-recharge (data_type='hrv') + COROS daily summary now live in
-    # `provider_raw_record` (#681 §4 Slice 3).
-    cur = db.execute(
-        """
-        SELECT external_id AS date,
-               (raw_payload->>'hrv_rmssd_ms')::float AS hrv_rmssd_ms
-          FROM provider_raw_record
-         WHERE user_id = %s AND provider = 'polar' AND data_type = 'hrv'
-           AND external_id >= %s
-           AND (raw_payload->>'hrv_rmssd_ms') IS NOT NULL
-         ORDER BY external_id DESC
-        """,
-        (user_id, cutoff_iso),
-    )
-    polar_rows = list(cur.fetchall())
-
-    cur = db.execute(
-        """
-        SELECT external_id AS date, (raw_payload->>'ppg_hrv')::float AS ppg_hrv
-          FROM provider_raw_record
-         WHERE user_id = %s AND provider = 'coros' AND data_type = 'daily_summary'
-           AND external_id >= %s
-           AND (raw_payload->>'ppg_hrv') IS NOT NULL
-         ORDER BY external_id DESC
-        """,
-        (user_id, cutoff_iso),
-    )
-    coros_rows = list(cur.fetchall())
-
-    out: list[HRVRecord] = []
-    for row in polar_rows:
-        out.append(
-            HRVRecord(
-                date=_as_date(row["date"]),
-                hrv_rmssd_ms=row["hrv_rmssd_ms"],
-                source="polar",
-            )
-        )
-    for row in coros_rows:
-        ppg = row["ppg_hrv"]
-        out.append(
-            HRVRecord(
-                date=_as_date(row["date"]),
-                hrv_rmssd_ms=float(ppg) if ppg is not None else None,
-                source="coros",
-            )
-        )
-
-    out.sort(key=lambda r: (r.date, r.source), reverse=True)
     return out
 
 
@@ -646,8 +673,8 @@ def assemble_layer3a_integration_bundle(
     return Layer3AIntegrationBundle(
         as_of=as_of,
         recent_workouts=q_layer3A_recent_workouts(db, user_id, as_of),
-        recent_sleep=q_layer3A_recent_sleep(db, user_id, as_of),
-        recent_hrv=q_layer3A_recent_hrv(db, user_id, as_of),
+        recent_wellness=q_layer3A_recent_wellness(db, user_id, as_of),
+        recent_self_report_sleep=q_layer3A_recent_self_report_sleep(db, user_id, as_of),
         combined_load=q_layer3A_combined_load(db, user_id, as_of),
         connected_providers=q_layer3A_connected_providers(db, user_id, as_of=as_of),
     )
@@ -657,7 +684,7 @@ __all__ = [
     "assemble_layer3a_integration_bundle",
     "q_layer3A_combined_load",
     "q_layer3A_connected_providers",
-    "q_layer3A_recent_hrv",
-    "q_layer3A_recent_sleep",
+    "q_layer3A_recent_self_report_sleep",
+    "q_layer3A_recent_wellness",
     "q_layer3A_recent_workouts",
 ]

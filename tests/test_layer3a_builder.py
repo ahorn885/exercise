@@ -40,8 +40,8 @@ from layer4.cache import InMemoryCacheBackend
 from layer4.context import (
     ACWREntry,
     CombinedLoadReport,
+    DailyWellnessRecord,
     DisciplineWeightRecord,
-    HRVRecord,
     InjuryRecord,
     Layer1Availability,
     Layer1Disclosures,
@@ -201,22 +201,27 @@ def _make_bundle(
         )
         for i in range(workouts_count)
     ]
-    sleep = [
+    # Device wellness — one coalesced row/day; sleep populated for the first
+    # `sleep_count` days, HRV + resting HR for the first `hrv_count` days.
+    wellness = [
+        DailyWellnessRecord(
+            date=as_of.date() - timedelta(days=i),
+            total_sleep_hours=7.5 if i < sleep_count else None,
+            total_sleep_hours_source="garmin" if i < sleep_count else None,
+            hrv_rmssd_ms=(45.0 - i * 0.2) if i < hrv_count else None,
+            hrv_rmssd_ms_source="garmin" if i < hrv_count else None,
+            resting_hr=48 if i < hrv_count else None,
+            resting_hr_source="garmin" if i < hrv_count else None,
+        )
+        for i in range(max(sleep_count, hrv_count))
+    ]
+    self_report_sleep = [
         SleepRecord(
             date=as_of.date() - timedelta(days=i),
             total_sleep_hours=7.5,
             sleep_quality=8 if i % 2 == 0 else None,
-            source="polar",
         )
         for i in range(sleep_count)
-    ]
-    hrv = [
-        HRVRecord(
-            date=as_of.date() - timedelta(days=i),
-            hrv_rmssd_ms=45.0 - (i * 0.2),
-            source="polar",
-        )
-        for i in range(hrv_count)
     ]
     combined: ACWREntry | None = None
     if combined_acwr is not None:
@@ -249,8 +254,8 @@ def _make_bundle(
     return Layer3AIntegrationBundle(
         as_of=as_of,
         recent_workouts=workouts,
-        recent_sleep=sleep,
-        recent_hrv=hrv,
+        recent_wellness=wellness,
+        recent_self_report_sleep=self_report_sleep,
         combined_load=cl,
         connected_providers=ps_list,
     )
@@ -885,7 +890,7 @@ class TestObservationTextClamp:
                 {
                     "category": "warning",
                     "text": exact,
-                    "evidence_basis": ["integration.recent_hrv"],
+                    "evidence_basis": ["integration.recent_wellness"],
                     "elevates_to_hitl": False,
                 }
             ]

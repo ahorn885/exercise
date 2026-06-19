@@ -774,18 +774,25 @@ def q_layer3A_recent_workouts(user_id: int, since_days: int = 28) -> list[Workou
     (manual / fit / polar / wahoo / coros / garmin).
     """
 
-def q_layer3A_recent_sleep(user_id: int, since_days: int = 14) -> list[SleepRecord]:
-    """Union of wellness_self_report.sleep_* + polar_sleep + coros_daily_summary
-    + Garmin wellness_log sleep entries.
+def q_layer3A_recent_wellness(user_id: int, since_days: int = 14) -> list[DailyWellnessRecord]:
+    """Per-day device wellness, coalesced field-by-field across providers.
 
-    Returns per-night records, source-tagged. LLM in 3A resolves conflicts.
+    Sources: Garmin `daily_wellness_metrics` (sleep span, `hrv_overnight_avg_ms`,
+    `resting_hr`), Polar (`provider_raw_record` sleep + nightly-recharge HRV),
+    COROS (`provider_raw_record` daily summary: sleep span + `ppg_hrv`). One
+    `DailyWellnessRecord` per calendar day; each metric (total_sleep_hours,
+    hrv_rmssd_ms, resting_hr) resolved by freshest-non-null — the value from
+    the source with the newest ingest timestamp wins, a NULL/older source
+    never clobbers a populated/newer one, ties break garmin>polar>coros — and
+    carries a `*_source` provenance tag. Self-report is excluded (see
+    `q_layer3A_recent_self_report_sleep`); resting_hr is garmin-only today.
     """
 
-def q_layer3A_recent_hrv(user_id: int, since_days: int = 14) -> list[HRVRecord]:
-    """Polar nightly_recharge + COROS daily_summary.ppg_hrv + COROS hrv_samples
-    (downsampled to nightly).
-
-    Returns per-night HRV records, source-tagged.
+def q_layer3A_recent_self_report_sleep(user_id: int, since_days: int = 14) -> list[SleepRecord]:
+    """`wellness_self_report` sleep (sleep_hours + sleep_quality 1-10), newest
+    first. Kept separate from the device coalesce so §6.1 can treat subjective
+    sleep_quality as self-report-dominant while objective sleep duration stays
+    integration-dominant. LLM in 3A resolves conflicts; no normalization here.
     """
 
 def q_layer3A_combined_load(user_id: int, as_of: datetime, window_days: int = 28) -> CombinedLoadReport:

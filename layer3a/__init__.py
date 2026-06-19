@@ -31,8 +31,8 @@ from layer3a.integration import (
     assemble_layer3a_integration_bundle,
     q_layer3A_combined_load,
     q_layer3A_connected_providers,
-    q_layer3A_recent_hrv,
-    q_layer3A_recent_sleep,
+    q_layer3A_recent_self_report_sleep,
+    q_layer3A_recent_wellness,
     q_layer3A_recent_workouts,
 )
 
@@ -48,7 +48,7 @@ __all__ = [
     "llm_layer3a_athlete_state_cached",
     "q_layer3A_combined_load",
     "q_layer3A_connected_providers",
-    "q_layer3A_recent_hrv",
-    "q_layer3A_recent_sleep",
+    "q_layer3A_recent_self_report_sleep",
+    "q_layer3A_recent_wellness",
     "q_layer3A_recent_workouts",
 ]
