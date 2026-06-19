@@ -96,3 +96,44 @@ def resolve_cardio_discipline(provider: str, source_value: str | None) -> Cardio
         return CardioResolution(None, value, 1, 'manual')
     # 'bucket3' — explicitly-recorded known-unmapped (e.g. Rowing, §6/§12)
     return CardioResolution(None, None, 3, 'manual')
+
+
+# Provider indoor activity-type token → canonical layer0 `equipment_items` machine
+# (#681 §4 Slice 2c; matrix-v2 §12.3 gap 1). The INBOUND analog of the Layer-4
+# feasibility cascade's `_DISCIPLINE_INDOOR_MACHINES` (which EMITS a machine
+# outbound): record which machine a completed indoor activity used, so it can
+# corroborate the athlete's equipment pool. NO new vocab — every value is an
+# existing canonical `equipment_items` machine (matches `_DISCIPLINE_INDOOR_MACHINES`),
+# and it rides inside `provider_raw_record.raw_payload`, not a value-map row
+# (per design §6.4: "no registry/vocab change"). The Garmin keys cover BOTH ingest
+# vocabularies (they do not collide): FIT sub_sport tokens (`indoor_cycling`/`spin`/
+# `treadmill`/`indoor_rowing`) and Garmin Connect typeKeys (`virtual_ride`/
+# `treadmill_running`/`indoor_running`/`stair_climbing`).
+INDOOR_MACHINE_MAP: dict[str, dict[str, str]] = {
+    'garmin': {
+        # indoor / virtual cycling → the Cycling trainer machine (#692: indoor
+        # bikes fold into `Cycling trainer`; they are not a discipline).
+        'indoor_cycling':    'Cycling trainer',
+        'spin':              'Cycling trainer',
+        'virtual_ride':      'Cycling trainer',
+        # indoor running → Treadmill
+        'treadmill':         'Treadmill',
+        'treadmill_running': 'Treadmill',
+        'indoor_running':    'Treadmill',
+        # indoor rowing → Rowing ergometer
+        'indoor_rowing':     'Rowing ergometer',
+        # stair stepping → Stair climber
+        'stair_climbing':    'Stair climber',
+    },
+}
+
+
+def resolve_indoor_machine(provider: str, source_value: str | None) -> str | None:
+    """Resolve a provider indoor activity token to its canonical machine name.
+
+    Returns the `equipment_items` machine the completed activity used (Cycling
+    trainer / Treadmill / Stair climber / Rowing ergometer), or None for an
+    outdoor / non-machine activity. `source_value` is the FIT sub_sport token or
+    the Garmin Connect typeKey (both keyed under 'garmin'). Never raises.
+    """
+    return INDOOR_MACHINE_MAP.get((provider or '').lower(), {}).get(source_value or '')

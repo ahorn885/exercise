@@ -5,8 +5,9 @@ import uuid
 import tempfile
 from datetime import datetime, timezone
 
-# Fine layer0 discipline id for a completed cardio activity (#681 §4 Slice 2b).
-from provider_cardio_resolve import resolve_cardio_discipline
+# Fine layer0 discipline id for a completed cardio activity (#681 §4 Slice 2b);
+# the indoor-machine flag for provider_raw_record (#681 §4 Slice 2c).
+from provider_cardio_resolve import resolve_cardio_discipline, resolve_indoor_machine
 
 # Garmin FIT sport enum → exercise site activity name
 SPORT_MAP = {
@@ -345,10 +346,30 @@ def parse_fit(fit_bytes: bytes) -> dict:
     # #681 §4 Slice 2b — carry the fine layer0 discipline id (option C).
     disc = resolve_cardio_discipline('garmin', _garmin_disc_token(sport_key, sub_key))
     result['data']['discipline_id'] = disc.discipline_id
+    # #681 §4 Slice 2c — the raw provider signal (record-don't-drop) + the
+    # indoor-machine flag for provider_raw_record. The indoor signal is the FIT
+    # sub_sport (indoor_cycling/spin/treadmill/indoor_rowing); fall back to the
+    # sport for the rare case it lands there.
+    machine = (resolve_indoor_machine('garmin', sub_key)
+               or resolve_indoor_machine('garmin', sport_key))
+    result['data']['_provider_raw'] = {
+        'provider': 'garmin',
+        'observed_at': result['data'].get('date'),
+        'bucket': disc.bucket,
+        'canonical_ref': disc.discipline_id or machine,
+        'payload': {
+            'sport': sport_key,
+            'sub_sport': sub_key,
+            'activity': activity_name,
+            'discipline_id': disc.discipline_id,
+            'plan_sport_type': disc.plan_sport_type,
+            'indoor_machine': machine,
+        },
+    }
     print(  # Rule #15
         f"[cardio-ingest] garmin-fit sport={sport_key!r} sub={sub_key!r} "
         f"-> discipline_id={disc.discipline_id} coarse={disc.plan_sport_type} "
-        f"bucket={disc.bucket}"
+        f"bucket={disc.bucket} machine={machine!r}"
     )
     return result
 

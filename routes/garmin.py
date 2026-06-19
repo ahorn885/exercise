@@ -55,6 +55,9 @@ def import_fit():
                     raw = zf.read(fit_names[0])
             from garmin_fit_parser import parse_fit
             result = parse_fit(raw)
+            # Stable dedup key so the cardio provider_raw_record write (Slice 2c,
+            # in import_confirm) keys on the same id the bulk path uses.
+            result['fit_dedup_id'] = _fit_dedup_id(raw)
             flask_session['fit_import'] = result
             flask_session['fit_name_override'] = request.form.get('activity_name', '')
             flask_session['fit_notes'] = request.form.get('notes', '')
@@ -259,6 +262,8 @@ def import_confirm():
              data.get('discipline_id'), plan_item_id, data.get('notes'), uid)
         )
         log_id = cur.lastrowid
+        _record_provider_raw_cardio(
+            db, data.get('_provider_raw'), uid, result.get('fit_dedup_id'))
         _record_disposition_for_import(
             db, disposition, plan_item_id, raw_plan_item_id,
             log_type='cardio', log_id=log_id, reason=swap_reason, user_id=uid,
@@ -411,6 +416,42 @@ def _iter_fit_blobs(files):
             yield (name, None, 'not a .fit or .zip file')
 
 
+def _record_provider_raw_cardio(db, raw: dict, uid: int, external_id) -> None:
+    """#681 §4 Slice 2c — record the raw provider cardio signal into
+    provider_raw_record (record-don't-drop), carrying the indoor-machine flag
+    when the completed activity used one.
+
+    This is the table's first writer. Idempotent per
+    (user_id, provider, data_type, external_id) so re-importing the same
+    activity refreshes rather than duplicates; a NULL external_id (the rare
+    single-file path with no dedup key) cannot conflict, so it inserts.
+    `raw` is the `_provider_raw` dict that parse_fit / normalize_activity attach;
+    a falsy raw (e.g. a session payload parsed before this slice) is a no-op."""
+    if not raw:
+        return
+    machine = (raw.get('payload') or {}).get('indoor_machine')
+    db.execute(
+        '''INSERT INTO provider_raw_record
+               (user_id, provider, data_type, external_id, observed_at,
+                raw_payload, bucket, canonical_ref)
+           VALUES (?,?,?,?,?,?::jsonb,?,?)
+           ON CONFLICT (user_id, provider, data_type, external_id) DO UPDATE SET
+               observed_at = EXCLUDED.observed_at,
+               raw_payload = EXCLUDED.raw_payload,
+               bucket = EXCLUDED.bucket,
+               canonical_ref = EXCLUDED.canonical_ref,
+               fetched_at = NOW()''',
+        (uid, raw.get('provider', 'garmin'), 'cardio', external_id,
+         raw.get('observed_at'), json.dumps(raw.get('payload') or {}),
+         raw.get('bucket'), raw.get('canonical_ref'))
+    )
+    print(  # Rule #15
+        f"[provider-raw] garmin cardio external_id={external_id!r} "
+        f"bucket={raw.get('bucket')} canonical_ref={raw.get('canonical_ref')!r} "
+        f"machine={machine!r}"
+    )
+
+
 def _bulk_insert_cardio(db, data: dict, uid: int, gid: str,
                         plan_item_id=None, notes=None) -> int:
     """Insert one parsed cardio activity. Returns the new cardio_log id."""
@@ -438,7 +479,9 @@ def _bulk_insert_cardio(db, data: dict, uid: int, gid: str,
          data.get('discipline_id'), gid, plan_item_id,
          (notes if notes is not None else (data.get('notes') or None)), uid)
     )
-    return cur.lastrowid
+    rec_id = cur.lastrowid
+    _record_provider_raw_cardio(db, data.get('_provider_raw'), uid, gid)
+    return rec_id
 
 
 def _bulk_insert_strength(db, rows: list, uid: int, gid: str,
@@ -868,6 +911,7 @@ def _import_activity(db, act: dict, plan_item, compliance: dict,
          act.get('aerobic_te'), act.get('anaerobic_te'),
          act.get('discipline_id'), gid, plan_item_id, notes, uid)
     )
+    _record_provider_raw_cardio(db, act.get('_provider_raw'), uid, gid)
     if raw_plan_item_id:
         _record_disposition_for_import(
             db, disposition, plan_item_id, raw_plan_item_id,
