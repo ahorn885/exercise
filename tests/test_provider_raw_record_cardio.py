@@ -94,18 +94,26 @@ class _FakeCursor:
 
 
 class _FakeConn:
-    def __init__(self):
+    """Records SQL; optionally raises on any statement containing `fail_on`."""
+    def __init__(self, fail_on=None):
         self.calls = []
+        self.fail_on = fail_on
 
     def execute(self, sql, params=()):
         self.calls.append((sql, params))
+        if self.fail_on and self.fail_on in sql:
+            raise RuntimeError("boom")
         return _FakeCursor()
 
 
-def _raw(machine, *, bucket=1, canonical_ref="D-006"):
+def _insert_call(conn):
+    return next((c for c in conn.calls if "provider_raw_record" in c[0]), None)
+
+
+def _raw(machine, *, bucket=1, canonical_ref="D-006", observed_at="2026-06-01"):
     return {
         "provider": "garmin",
-        "observed_at": "2026-06-01",
+        "observed_at": observed_at,
         "bucket": bucket,
         "canonical_ref": canonical_ref,
         "payload": {"type_key": "virtual_ride", "indoor_machine": machine},
@@ -117,9 +125,10 @@ class TestRecordProviderRawCardio:
         from routes.garmin import _record_provider_raw_cardio
         conn = _FakeConn()
         _record_provider_raw_cardio(conn, _raw("Cycling trainer"), uid=3, external_id="555")
-        assert len(conn.calls) == 1
-        sql, params = conn.calls[0]
-        assert "provider_raw_record" in sql
+        sqls = [c[0] for c in conn.calls]
+        assert any("SAVEPOINT provider_raw_cardio" in s for s in sqls)   # best-effort wrap
+        assert any("RELEASE SAVEPOINT provider_raw_cardio" in s for s in sqls)
+        sql, params = _insert_call(conn)
         assert "ON CONFLICT" in sql                       # idempotent
         assert params[0] == 3                             # user_id
         assert params[1:4] == ("garmin", "cardio", "555")  # provider/type/external_id
@@ -134,10 +143,26 @@ class TestRecordProviderRawCardio:
         conn = _FakeConn()
         _record_provider_raw_cardio(
             conn, _raw(None, canonical_ref="D-001"), uid=3, external_id="fit:abc")
-        assert len(conn.calls) == 1
-        params = conn.calls[0][1]
+        params = _insert_call(conn)[1]
         assert json.loads(params[5])["indoor_machine"] is None
         assert params[7] == "D-001"
+
+    def test_empty_observed_at_coerced_to_null(self):
+        # A FIT whose session timestamp didn't parse → date '' must become NULL,
+        # not an invalid TIMESTAMP literal that 500s the whole import.
+        from routes.garmin import _record_provider_raw_cardio
+        conn = _FakeConn()
+        _record_provider_raw_cardio(conn, _raw(None, observed_at=""), uid=3, external_id="z")
+        assert _insert_call(conn)[1][4] is None
+
+    def test_db_error_is_swallowed_and_rolled_back(self):
+        # Best-effort: a failing corroboration write must NOT propagate (which
+        # would abort the cardio_log import) — it rolls back to the savepoint.
+        from routes.garmin import _record_provider_raw_cardio
+        conn = _FakeConn(fail_on="INSERT INTO provider_raw_record")
+        _record_provider_raw_cardio(conn, _raw("Treadmill"), uid=3, external_id="555")
+        sqls = [c[0] for c in conn.calls]
+        assert any("ROLLBACK TO SAVEPOINT provider_raw_cardio" in s for s in sqls)
 
     def test_falsy_payload_is_noop(self):
         from routes.garmin import _record_provider_raw_cardio

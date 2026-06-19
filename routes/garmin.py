@@ -426,25 +426,47 @@ def _record_provider_raw_cardio(db, raw: dict, uid: int, external_id) -> None:
     activity refreshes rather than duplicates; a NULL external_id (the rare
     single-file path with no dedup key) cannot conflict, so it inserts.
     `raw` is the `_provider_raw` dict that parse_fit / normalize_activity attach;
-    a falsy raw (e.g. a session payload parsed before this slice) is a no-op."""
+    a falsy raw (e.g. a session payload parsed before this slice) is a no-op.
+
+    BEST-EFFORT: this raw passthrough is corroboration data, not the athlete's
+    log, so the write is wrapped in a SAVEPOINT — a failure is logged and
+    swallowed, never aborting the cardio_log import it rides alongside (the
+    write shares the import's transaction)."""
     if not raw:
         return
-    machine = (raw.get('payload') or {}).get('indoor_machine')
-    db.execute(
-        '''INSERT INTO provider_raw_record
-               (user_id, provider, data_type, external_id, observed_at,
-                raw_payload, bucket, canonical_ref)
-           VALUES (?,?,?,?,?,?::jsonb,?,?)
-           ON CONFLICT (user_id, provider, data_type, external_id) DO UPDATE SET
-               observed_at = EXCLUDED.observed_at,
-               raw_payload = EXCLUDED.raw_payload,
-               bucket = EXCLUDED.bucket,
-               canonical_ref = EXCLUDED.canonical_ref,
-               fetched_at = NOW()''',
-        (uid, raw.get('provider', 'garmin'), 'cardio', external_id,
-         raw.get('observed_at'), json.dumps(raw.get('payload') or {}),
-         raw.get('bucket'), raw.get('canonical_ref'))
-    )
+    payload = raw.get('payload') or {}
+    machine = payload.get('indoor_machine')
+    # '' (a FIT whose session timestamp didn't parse) is not a valid TIMESTAMP
+    # literal — store NULL rather than letting it error the import.
+    observed_at = raw.get('observed_at') or None
+    try:
+        db.execute('SAVEPOINT provider_raw_cardio')
+        db.execute(
+            '''INSERT INTO provider_raw_record
+                   (user_id, provider, data_type, external_id, observed_at,
+                    raw_payload, bucket, canonical_ref)
+               VALUES (?,?,?,?,?,?::jsonb,?,?)
+               ON CONFLICT (user_id, provider, data_type, external_id) DO UPDATE SET
+                   observed_at = EXCLUDED.observed_at,
+                   raw_payload = EXCLUDED.raw_payload,
+                   bucket = EXCLUDED.bucket,
+                   canonical_ref = EXCLUDED.canonical_ref,
+                   fetched_at = NOW()''',
+            (uid, raw.get('provider', 'garmin'), 'cardio', external_id,
+             observed_at, json.dumps(payload),
+             raw.get('bucket'), raw.get('canonical_ref'))
+        )
+        db.execute('RELEASE SAVEPOINT provider_raw_cardio')
+    except Exception as e:  # Rule #15 — never break the import on a corroboration write
+        try:
+            db.execute('ROLLBACK TO SAVEPOINT provider_raw_cardio')
+        except Exception:
+            pass
+        print(
+            f"[provider-raw] garmin cardio external_id={external_id!r} "
+            f"SKIPPED ({type(e).__name__}: {e})"
+        )
+        return
     print(  # Rule #15
         f"[provider-raw] garmin cardio external_id={external_id!r} "
         f"bucket={raw.get('bucket')} canonical_ref={raw.get('canonical_ref')!r} "
