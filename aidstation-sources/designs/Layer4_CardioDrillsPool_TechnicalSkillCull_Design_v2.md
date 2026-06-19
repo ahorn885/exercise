@@ -1,6 +1,6 @@
 # Layer 4 — Cardio drills "consider these" pool + Technical/Skill catalog cull — Design
 
-**Status:** v2 — Part B (catalog cull) DONE + PROD-LIVE; Part A (pool) reshaped for the post-cull catalog and RATIFIED (Andy 2026-06-19), pending build. Supersedes v1 (`archive/superseded-specs/`).
+**Status:** v2 — Part B (catalog cull) DONE + PROD-LIVE; **Part A (pool) CODE-COMPLETE (A1 #755 + A1.5/A2 #760 + A3) — only live-verify owed** (see §13a). Supersedes v1 (`archive/superseded-specs/`).
 
 **⚠ v2 changelog — why this supersedes v1 (read first).** v1 specced Part B as a *hygiene-only* pass over **68 active rows (56 keep)** because it (correctly, at the time) found migration `0009/#644` had already done a narrow cull. **After v1, Andy ratified an AGGRESSIVE Technical/Skill cull** (full-catalog audit → keep 8, retire 47) **plus three evidence-based cardio adds (EX290–292)** — shipped as migrations `0017`+`0018` (PR #750) and **prod-verified live** (T/S 55→8, I/T 9→12; read-only `neon-query` 2026-06-19, run 27808520792). So **Part B is complete and live, not pending**; the v1 §2/§3/§3a hygiene-audit narrative is now **historical** (its 11 gear-toggle-token rows were almost all culled by `0017` — only EX170 survives among them; EX194, the SEM-restore target, was itself culled). **Part A's pool source is now the 24 active rows** (8 T/S + 12 I/T + 4 A/E), which inverts v1's §5 assumptions — see the reshaped §3a (catalog) + §5 (knobs) below.
 
@@ -270,7 +270,7 @@ Cardio session card gains a subordinate `cardio_drills` list (the `recovery_exer
 - **A1 — schema:** `payload.py` `CardioDrill` + field + invariants + tests. No prompt/cache. **DONE (#755).**
 - **A1.5 — 2C coaching-cue threading:** `layer2c/builder.py` (SELECT `e.coaching_cues` + dedupe + construction) + `layer4/context.py` (`ResolvedExercise.coaching_cue`) + `Layer2C_Spec.md` §7 + tests. Additive, defaulted None. **DONE (this session)** — unblocks A2's cue-carrying render.
 - **A2 — pool + prompt + cache — DONE (this session).** `per_phase.py` `compute_cardio_drill_pool_ids` (type allowlist + 2D + discipline-match + constituent-sport gate + character periodization + Rule #15 log) + `_format_cardio_drill_pool` (grouped-by-discipline, reads `rx.coaching_cue`, character tag, ≤12 cap) + `# Cardio drills` SYSTEM_PROMPT section + `=== Cardio drill pool ===` render + enum-bind (`_session_schema`/`build_record_phase_sessions_tool`/`synthesize_phase` caller, `maxItems:1`) + `hashing.py` `LAYER4_PROMPT_REVISION "10"→"11"`. Constituent-sport gate taxonomy resolved (§13). +13 tests.
-- **A3 — validator + render:** `validator.py` `_rule_cardio_drill_pool_membership`; `templates/plan_create/view.html` + CSS.
+- **A3 — validator + render — DONE (this session).** `validator.py` `_rule_cardio_drill_pool_membership` (only blocker; phase-scoped pool memoized; lazy `per_phase` import; skip on no-2C/no-2A/empty-pool; registered in `_ALL_RULES`) + `templates/plan_create/view.html` `cardio_drills` branch (`drill` chip; reuses `.sess-exercises`/`.chip` — no new CSS; no route change). +4 tests. **Part A is now code-complete; only live-verify owed.**
 
 ---
 

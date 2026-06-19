@@ -1,8 +1,10 @@
-# #698 Track 2 Part A — A1.5 (2C coaching-cue threading) + A2 prompt-body ratified — Closing Handoff
+# #698 Track 2 Part A — A1.5 + A2 + A3: cardio_drills pool COMPLETE — Closing Handoff
 
 **Issue:** #698 Track 2 Part A (the `cardio_drills` "consider these" session block).
-**PR:** _this branch_ `claude/cardio-drills-pool-impl-0zki9l` (A1.5 — 2C cue threading; auto-merge enabled).
+**PRs:** [#760](https://github.com/ahorn885/exercise/pull/760) MERGED (A1.5 + A2) + a follow-on PR on `claude/cardio-drills-pool-impl-0zki9l` (A3 — validator + render).
 **Predecessor:** `handoffs/V5_Implementation_CardioDrillsPool_DesignV2_A1Schema_Track2_698_2026_06_19_Closing_Handoff_v1.md` (design v2 + A1 schema, on main via #755).
+
+> **Part A is code-COMPLETE this session:** A1 (#755) + A1.5 + A2 (#760, merged) + A3 (this PR). The `cardio_drills` block is wired end-to-end on the plan-create path — schema, 2C cue threading, pool fn, prompt, enum-bind, cache bump, validator blocker, render. Only **live-verify** (a real plan generating a drill) remains owed.
 
 ---
 
@@ -23,7 +25,31 @@ Threads `layer0.exercises.coaching_cues` → `ResolvedExercise.coaching_cue` so 
 - **`layer4/context.py`:** `ResolvedExercise.coaching_cue: str | None = None` (defaulted).
 - **`aidstation-sources/specs/Layer2C_Spec.md`:** §7 `ResolvedExercise` schema gains `coaching_cue`.
 - **`tests/test_layer2c.py`:** `_ex_row` gains a `coaching_cues=` param; +2 tests (`test_coaching_cue_passes_through`, `test_coaching_cue_defaults_none_when_absent`).
-- **`aidstation-sources/designs/Layer4_CardioDrillsPool_TechnicalSkillCull_Design_v2.md`:** §13 records the ratifications (prompt body ✅, cue-through-2C ✅) + adds the constituent-sport-gate-taxonomy open item; §13a marks A1.5 DONE.
+- **`aidstation-sources/designs/Layer4_CardioDrillsPool_TechnicalSkillCull_Design_v2.md`:** §13 records the ratifications (prompt body ✅, cue-through-2C ✅, constituent-sport gate taxonomy resolved ✅); §13a marks A1.5 + A2 DONE.
+
+## 2b. What shipped (A2 — pool + prompt + cache, this session)
+
+The `cardio_drills` block wired end-to-end on the plan-create per-phase path. The ratified prompt body (§7) + the A1.5 `coaching_cue` make the pool a read-not-guess menu.
+
+- **`layer4/per_phase.py`:**
+  - `compute_cardio_drill_pool_ids(layer2c_payloads, layer2d_payload, *, disciplines, phase)` — type allowlist (`_CARDIO_DRILL_POOL_EXERCISE_TYPES` = T/S, I/T, A/E) + 2D exclusion + discipline-match (`discipline_ids` ∩ included) + **constituent-sport gate** (`_constituent_sport_gate_ok` — EX175/EX176 require both a cycling AND a running discipline) + **character periodization** (`_cardio_drill_phase_allows` — Technical/Skill drops in Peak/Taper; Interval/Tempo + Aerobic/Endurance always kept). Sorted+deduped. Rule #15 log: `compute_cardio_drill_pool_ids: phase=… athlete_disciplines=… pool=… dropped(…)`.
+  - `_format_cardio_drill_pool(...)` — grouped under discipline headers (load-weight order), reads `rx.coaching_cue` for the per-row dose, character tag, highest-SEM-priority first, capped at `_CARDIO_DRILL_POOL_CAP=12`.
+  - `# Cardio drills` SYSTEM_PROMPT section (§7.1 verbatim) + the `=== Cardio drill pool (consider these) ===` render block in `render_user_prompt` (suppress-on-empty).
+  - enum-bind: `_session_schema` / `build_record_phase_sessions_tool` / `synthesize_phase` thread `cardio_drill_pool_ids` onto `cardio_drills[*].exercise_id` (enum when non-empty, free string when empty), `maxItems:1`.
+- **`layer4/hashing.py`:** `LAYER4_PROMPT_REVISION "10" → "11"`.
+- **`tests/test_layer4_cardio_drill_pool.py` (NEW):** +13 (compute filters/gate/phase/empty, render grouping/cue/cap/empty, schema enum-bind + cap, prompt section).
+- **Constituent-sport gate taxonomy (the §13 open item) — RESOLVED.** Read the live `layer0.disciplines.primary_movement` (read-only neon-query run 27828748291): clean — `cycling` = {D-006, D-007, D-008, D-030, D-031}, `running` = {D-001, D-002, D-024, D-027}. Hardcoded as `_CYCLING_DISCIPLINE_IDS` / `_RUNNING_DISCIPLINE_IDS` frozensets in `per_phase.py` (grounded in that read, commented for re-derivation). Chose hardcode over threading `primary_movement` through the L4 context (simplicity-first; D-id is stable locked-canon) — **flagged for Andy's review in the PR.**
+
+## 2c. Scope note (A2/A3 = plan-create path only)
+
+A2/A3 wire `cardio_drills` into the **plan-create per-phase synthesizer + validator + view** only. The refresh / single-session / race-week-brief paths are untouched (the field defaults `None`, so they're unaffected). Extending drills to those paths is a separate, later slice if wanted.
+
+## 2d. What shipped (A3 — validator + render, this session)
+
+- **`layer4/validator.py`:** `_rule_cardio_drill_pool_membership` — the `_rule_recovery_pool_membership` analog. Every `cardio_drills[*].exercise_id` ∈ `compute_cardio_drill_pool_ids(...)`. **Blocker; the ONLY drill rule** (§6a-G2). Lazy-imports `per_phase` (cycle dodge). Pool is phase-scoped → computed per distinct phase (memoized → one Rule #15 log line per phase). Skips on no-2C / no-2A / empty-pool (suppress-on-empty owns empty). Registered in `_ALL_RULES` after `_rule_recovery_placement_match`.
+- **`templates/plan_create/view.html`:** a `cardio_drills` render branch on the cardio session card (after `cardio_blocks`) — drill name + a `drill` chip + prescription + instructions. **Reuses `.sess-exercises`/`.sess-exercise`/`.chip` — no new CSS** (drills ride the cardio card; no card-level class needed, unlike recovery's `.sess-recovery`). No route change — `cardio_drills` rides `PlanSession` like `recovery_exercises`, already passed to the template.
+- **`tests/test_layer4_validator.py`:** `_cardio_session` gains a `cardio_drills=` param; +4 tests (in-pool no-fire, out-of-pool blocks, skip-without-2C, skip-when-empty).
+- Full suite **2716 passed / 30 skipped** (+4).
 
 ## 3. Ratified decisions (Andy, this session)
 
@@ -44,24 +70,13 @@ Threads `layer0.exercises.coaching_cues` → `ResolvedExercise.coaching_cue` so 
 
 **§6.3 read order (Rule #13):** `CLAUDE.md` → `CURRENT_STATE.md` → `CARRY_FORWARD.md` → this handoff → `./scripts/verify-handoff.sh`.
 
-**Next move = A2 (pool + prompt + cache).** Prompt body is ratified (§7). **A2 is gated on ONE remaining decision:**
+**Part A (A1 + A1.5 + A2 + A3) is code-COMPLETE.** Everything is wired on the plan-create path; the suite is green at 2716.
 
-- **CONSTITUENT-SPORT GATE TAXONOMY (design §13 open) — bring to Andy before building the pool fn.** `compute_cardio_drill_pool_ids` must include EX175 (Brick Run) / EX176 (Tri Transition) **only if** the athlete's discipline set holds **both** a cycling discipline AND a running discipline (§5). This needs the concrete `discipline_id` sets for "cycling" and "running." The live `layer0.disciplines` id space is **not cleanly hardcodeable from the container** (ids reused across sports + heavy version drift; see the failed parse in this session). Two options to put to Andy:
-  - **(a) Hardcoded frozensets** of cycling / running `discipline_id`s in `per_phase.py` (`_CONSTITUENT_SPORT_GATE`). Simple, but brittle to canon changes and needs a live `neon-query` to enumerate the right ids first.
-  - **(b) Derive from `disciplines.primary_movement`** (or a modality-group families read) — robust to id drift, but needs that column threaded/queried. Likely the cleaner classifier; confirm its live values via `neon-query` first.
-  - Without the gate, EX175 Brick Run leaks to the AR-paddle-climb athlete (incl. **Andy's own PGE set** — packraft/MTB/climb, no run+bike pairing in the brick sense) → A2's pool is **not shippable** until resolved.
+**Next moves (priority order):**
+1. **LIVE-VERIFY (Andy-action) — the only thing owed for Part A.** Generate a real plan for a multi-discipline athlete (Andy's PGE set works — it has cycling D-008 + running D-001 so EX175 surfaces) and confirm: (a) `/admin/logs` shows the `compute_cardio_drill_pool_ids: phase=… pool=…` line with a sensible pool; (b) the plan view renders a `cardio_drills` drill (name + `drill` chip + prescription) on at least one cardio session; (c) no `cardio_drill_pool_membership` blocker churn. Note: A2 bumped `LAYER4_PROMPT_REVISION 10→11`, so cached plans regenerate on next plan-gen — a fresh plan will exercise the new path.
+2. **Optional follow-ups (file as issues if wanted):** extend `cardio_drills` to the refresh / single-session / race-week-brief synthesizers (currently plan-create only, §2c); the §6a-G5 soft `severity=warning` discipline-match check **only if** wrong-discipline picks show up live; the #337 catalog-driven interval *structure* (deliberately walled off, design §13).
 
-**A2 build checklist (once the gate decision lands):**
-1. `per_phase.py` `compute_cardio_drill_pool_ids(layer2c_payloads, layer2d_payload, *, disciplines, phase)` — type allowlist (`Technical / Skill`, `Interval / Tempo`, `Aerobic / Endurance` frozenset) + 2D exclusion + discipline-match (intersect `ResolvedExercise.discipline_ids`) + the constituent-sport gate + character-keyed phase periodization (skill/transition Base-heavy→drop Peak/Taper; interval/endurance no suppression). Sorted+deduped. Rule #15 log on rows dropped by type/discipline/gate/phase.
-2. `per_phase.py` `_format_cardio_drill_pool(...)` — the §7 render; grouped by discipline, **reads `rx.coaching_cue` for the per-row dose**, character annotation, ≤12 cap (highest SEM-priority per discipline on overflow).
-3. `per_phase.py` `# Cardio drills` SYSTEM_PROMPT section — §7 verbatim.
-4. `per_phase.py` enum-bind thread — `_session_schema` + `build_record_phase_sessions_tool` gain `cardio_drill_pool_ids` (mirror `recovery_pool_ids` exactly: `{"type":"string","enum":cardio_drill_pool_ids} if cardio_drill_pool_ids else {"type":"string"}` on `cardio_drills[*].exercise_id`, `maxItems:1` already in the payload invariant); production caller computes the pool + passes it; suppress the render block when the pool is empty.
-5. `hashing.py` `LAYER4_PROMPT_REVISION "10"→"11"`.
-6. Tests: type allowlist; 2D exclusion (EX288 drops for wrist); discipline-match; constituent-sport gate (EX175/176 present iff cycling+running both present); phase-by-character; deterministic order; empty-pool; enum-bind present when non-empty / free-string when empty; cue renders in the menu.
-
-**A3 (after A2):** `validator._rule_cardio_drill_pool_membership` (only blocker; skip on empty/no-2C) + `templates/plan_create/view.html` cardio_drills branch + CSS (reuse `.sess-recovery`).
-
-**5-file ceiling:** A2 is ~`per_phase.py` + `hashing.py` + tests (3–4) — fits. A3 is its own slice (§13a).
+**5-file ceiling:** A3 was `validator.py` + `view.html` + tests (3) — fit.
 
 ## 7. The ratified A2 prompt body (Rule #11 — build verbatim)
 
@@ -102,12 +117,19 @@ Optionally attach one drill appropriate to today's discipline, from the pool bel
 | 2C cue (model) | `layer4/context.py` | `coaching_cue: str \| None = None` on `class ResolvedExercise(_Base)` |
 | 2C cue (spec) | `aidstation-sources/specs/Layer2C_Spec.md` | `coaching_cue` in the `ResolvedExercise` dataclass (§7) |
 | 2C cue (tests) | `tests/test_layer2c.py` | `test_coaching_cue_passes_through`, `test_coaching_cue_defaults_none_when_absent`; `_ex_row(..., coaching_cues=...)` |
-| Design ratify | `aidstation-sources/designs/Layer4_CardioDrillsPool_TechnicalSkillCull_Design_v2.md` | §13 "RATIFIED verbatim" prompt body + "thread the cue through 2C"; §13 open "Constituent-sport gate taxonomy"; §13a A1.5 DONE |
-| Suite | `tests/` | `/tmp/venv/bin/python -m pytest tests/ -q` → 2692 passed / 30 skipped |
-| PR / issues | this branch PR; #698 (open, commented) | — |
+| A2 pool fn | `layer4/per_phase.py` | `def compute_cardio_drill_pool_ids`; `_CARDIO_DRILL_POOL_EXERCISE_TYPES`; `_CYCLING_DISCIPLINE_IDS`/`_RUNNING_DISCIPLINE_IDS`; `_constituent_sport_gate_ok`; `_cardio_drill_phase_allows` |
+| A2 render + prompt | `layer4/per_phase.py` | `def _format_cardio_drill_pool` (reads `rx.coaching_cue`); `# Cardio drills` in `SYSTEM_PROMPT`; `=== Cardio drill pool (consider these) ===` in `render_user_prompt`; `cardio_drill_pool_ids` threaded through `_session_schema`/`build_record_phase_sessions_tool`/`synthesize_phase` (`maxItems:1`) |
+| A2 cache | `layer4/hashing.py` | `LAYER4_PROMPT_REVISION = "11"` |
+| A2 tests | `tests/test_layer4_cardio_drill_pool.py` | 13 tests (compute/render/schema/prompt) |
+| A3 validator | `layer4/validator.py` | `def _rule_cardio_drill_pool_membership`; in `_ALL_RULES` after `_rule_recovery_placement_match` |
+| A3 render | `templates/plan_create/view.html` | `{% if sess.kind == 'cardio' and sess.cardio_drills %}` branch + `drill` chip |
+| A3 tests | `tests/test_layer4_validator.py` | `test_cardio_drill_pool_membership_*` (4); `_cardio_session(..., cardio_drills=...)` |
+| Design | `aidstation-sources/designs/Layer4_CardioDrillsPool_TechnicalSkillCull_Design_v2.md` | §13 ratifications + constituent-sport gate RESOLVED; §13a A1.5/A2/A3 DONE |
+| Suite | `tests/` | `/tmp/venv/bin/python -m pytest tests/ -q` → 2716 passed / 30 skipped |
+| PRs / issues | #760 MERGED (A1.5+A2); A3 PR (this branch); #698 (open, commented) | — |
 
 ## 9. Carry-forward
 
-- **A1 (schema) + A1.5 (2C cue threading) DONE.** Part A remaining: **A2 (gated on the constituent-sport gate taxonomy decision) + A3.**
-- **Active Part-A pool source = 24 rows** (8 T/S + 12 I/T + 4 A/E) — design v2 §3a.
+- **Part A COMPLETE: A1 (#755) + A1.5 + A2 (#760, merged) + A3 (this PR).** The only thing owed is **live-verify** (§6 move 1).
+- **Active Part-A pool source = 24 rows** (8 T/S + 12 I/T + 4 A/E) — design v2 §3a. Cache bumped to revision "11" → next plan-gen regenerates with drills.
 - **STILL OWED (carried, unchanged):** post-#572 live T3 refresh re-verify (Rule #14); #430 Slice C / #679 EX-id self-heal live-verify; #698 Slice 3b + race-week-brief recovery live-verify; #732 parked.
