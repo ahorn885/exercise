@@ -45,24 +45,55 @@
 {% if tab == 'sources' %}
 <div class="stack">
 
-  {# .FIT drop zone — real import pipeline #}
-  <form class="conn-drop" method="post" action="{{ url_for('garmin.import_fit') }}"
-        enctype="multipart/form-data">
-    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  {# .FIT drop zone — real import pipeline. Multi-file + drag-and-drop via the
+     shared bulk uploader ([data-bulk-*] → static/app.js, posts to import_bulk);
+     duplicate files are skipped server-side. The single-file review-and-plan-
+     match path lives on the full Import .FIT page (linked below). #}
+  <div class="conn-drop" data-bulk-upload
+       data-endpoint="{{ url_for('garmin.import_bulk') }}" data-accept=".fit,.zip">
     <div class="drop-ic">
       <svg class="icon" width="18" height="18" aria-hidden="true"><use href="#i-upload"></use></svg>
     </div>
-    <div class="drop-title">Upload a .FIT file</div>
+    <div class="drop-title">Upload .FIT files</div>
     <p class="drop-sub">Any device that exports .FIT — Garmin, Wahoo, COROS, Polar, Suunto, Apple
-      Watch. We sniff sport &amp; type automatically; nothing else to pick.</p>
-    <label class="field drop-file">
-      <span class="lbl">Choose .fit or .zip</span>
-      <input type="file" name="fit_file" accept=".fit,.zip" class="form-control form-control-sm">
+      Watch. Drop several at once; we sniff sport &amp; type automatically and skip duplicates.</p>
+
+    <div data-bulk-drop class="fit-drop">
+      <p class="fit-drop-hint">Drag &amp; drop <code>.fit</code> / <code>.zip</code> files here</p>
+      <div class="fit-drop-actions">
+        <label class="btn btn-ghost btn-sm fit-file-btn">
+          Choose files
+          <input data-bulk-files type="file" accept=".fit,.zip" multiple hidden>
+        </label>
+        <label class="btn btn-ghost btn-sm fit-file-btn">
+          Choose folder
+          <input data-bulk-folder type="file" accept=".fit,.zip" webkitdirectory hidden>
+        </label>
+      </div>
+    </div>
+
+    <label class="fit-match">
+      <input type="checkbox" value="1" name="match_plan" data-bulk-field checked>
+      <span>Match to scheduled plan workouts <span class="dim">— links each activity to a same-week
+        planned workout and marks it complete. Uncheck to log raw.</span></span>
     </label>
-    <button type="submit" class="btn btn-primary btn-sm">
-      <svg class="icon" width="11" height="11" aria-hidden="true"><use href="#i-upload"></use></svg> Upload &amp; preview
-    </button>
-  </form>
+
+    <div data-bulk-selection class="fit-selection dim"></div>
+    <button data-bulk-start type="button" class="btn btn-primary btn-sm" disabled>Import 0 files</button>
+
+    <div data-bulk-progress class="fit-progress d-none">
+      <div class="progress" role="progressbar" aria-label="Import progress">
+        <div data-bulk-bar class="progress-bar"></div>
+      </div>
+      <div data-bulk-progress-text class="dim fit-progress-text"></div>
+    </div>
+
+    <div data-bulk-summary class="fit-summary"></div>
+    <div data-bulk-results class="fit-results"></div>
+
+    <p class="drop-sub">Need to preview one activity and match it to a planned workout?
+      <a href="{{ url_for('garmin.import_fit') }}">Use the full importer</a>.</p>
+  </div>
 
   <section>
     <p class="eyebrow conn-sec-label">Auto-sync providers · {{ connected_count }} of {{ provider_total }} connected</p>

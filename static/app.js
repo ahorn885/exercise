@@ -320,6 +320,25 @@
   }
 })();
 
+// Window-level file-drop guard. Without it, a file dropped anywhere *outside* a
+// drop zone makes the browser navigate to (open) the file — losing the page,
+// which reads as "drag-and-drop is broken." Swallow file drags globally so a
+// near-miss on a [data-bulk-drop] zone is a harmless no-op. Element-level drop
+// handlers still receive their own event (this only suppresses the browser
+// default; it never stops propagation). Scoped to file drags so text/element
+// drags are untouched.
+(function () {
+  function isFileDrag(e) {
+    var types = e.dataTransfer && e.dataTransfer.types;
+    return !!types && Array.prototype.indexOf.call(types, 'Files') !== -1;
+  }
+  ['dragover', 'drop'].forEach(function (ev) {
+    window.addEventListener(ev, function (e) {
+      if (isFileDrag(e)) e.preventDefault();
+    });
+  });
+})();
+
 // §23 command palette (⌘K) + §24 keyboard-shortcuts cheat sheet. Both are
 // client-only overlays rendered hidden by _shell/cmdk.html; this wires
 // open / close / filter / keyboard-navigate. No inline handlers (CSP):

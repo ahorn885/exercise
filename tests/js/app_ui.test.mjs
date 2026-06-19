@@ -62,3 +62,35 @@ test("theme toggle syncs aria-pressed on the control", () => {
   btn.dispatchEvent(new w.MouseEvent("click", { bubbles: true }));
   assert.notEqual(btn.getAttribute("aria-pressed"), before);
 });
+
+// A file dropped outside a drop zone must be swallowed so the browser doesn't
+// navigate to (open) the file — the symptom behind the "drag-and-drop doesn't
+// work, it just opens the file" report. jsdom Events carry no dataTransfer, so
+// attach a minimal stub advertising a 'Files' drag.
+function fileDrag(w, type) {
+  const ev = new w.Event(type, { bubbles: true, cancelable: true });
+  Object.defineProperty(ev, "dataTransfer", { value: { types: ["Files"], files: [] } });
+  return ev;
+}
+
+test("a stray file drop is prevented from opening in the browser", () => {
+  const w = loadApp({ html: page("<div>no drop zone here</div>") });
+  const ev = fileDrag(w, "drop");
+  w.document.body.dispatchEvent(ev);
+  assert.equal(ev.defaultPrevented, true);
+});
+
+test("a stray file dragover is prevented (so the drop can be swallowed)", () => {
+  const w = loadApp({ html: page("<div>no drop zone here</div>") });
+  const ev = fileDrag(w, "dragover");
+  w.document.body.dispatchEvent(ev);
+  assert.equal(ev.defaultPrevented, true);
+});
+
+test("a non-file drag is left untouched", () => {
+  const w = loadApp({ html: page("<div>x</div>") });
+  const ev = new w.Event("dragover", { bubbles: true, cancelable: true });
+  Object.defineProperty(ev, "dataTransfer", { value: { types: ["text/plain"] } });
+  w.document.body.dispatchEvent(ev);
+  assert.equal(ev.defaultPrevented, false);
+});
