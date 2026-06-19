@@ -50,6 +50,7 @@ from layer4.context import (
 from layer4.errors import Layer4OutputError
 from layer4.payload import (
     CardioBlock,
+    CardioDrill,
     Layer4Payload,
     Observation,
     PhaseSpec,
@@ -2722,6 +2723,25 @@ def _build_plan_session(
     if raw_recovery:
         recovery = [RecoveryExercise(**r) for r in raw_recovery]
 
+    # #698 Track 2 (A2) — thread the structured cardio drill through to
+    # PlanSession. Like recovery_exercises, this field was silently dropped here,
+    # so the synthesizer's pool-bound drills never reached the plan (the
+    # `_rule_cardio_drill_pool_membership` validator was a dead no-op as a
+    # result). Drills ride `kind=='cardio'` only and are capped at one
+    # (PlanSession invariant `maxItems:1`); clamp to the first entry and skip a
+    # blank exercise_id defensively, so a stray over-emit degrades to dropped data
+    # rather than failing pydantic and discarding the whole block.
+    raw_drills = session_data.get("cardio_drills")
+    drills: list[CardioDrill] | None = None
+    if raw_drills and session_data.get("kind") == "cardio":
+        valid = [
+            d
+            for d in raw_drills
+            if isinstance(d, dict) and str(d.get("exercise_id", "")).strip()
+        ][:1]
+        if valid:
+            drills = [CardioDrill(**d) for d in valid]
+
     session_date = _parse_date(session_data["date"])
 
     return PlanSession(
@@ -2741,6 +2761,7 @@ def _build_plan_session(
         cardio_blocks=blocks,
         strength_exercises=exercises,
         recovery_exercises=recovery,
+        cardio_drills=drills,
         rest_reason=session_data.get("rest_reason"),
         phase_metadata=_build_session_phase_metadata(phase_spec, session_date),
         session_notes=session_data["session_notes"],
