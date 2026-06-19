@@ -9,12 +9,15 @@ against the real `garmin_fit_parser` map (end-to-end name→category→EX-id gua
 
 from __future__ import annotations
 
-from provider_strength_resolve import (
-    resolve_strength_ex_id,
+from provider_strength_resolve import resolve_strength_ex_id
+
+# The strength maps now live in the consolidated provider seed (#681 §4); the
+# coarse map is aliased to its former name to keep these assertions unchanged.
+from provider_value_map_seed import (
     GARMIN_STRENGTH_ALIASES,
     LOGGED_NAME_ALIASES,
+    STRENGTH_COARSE_NAME_TO_EX_ID as NAME_TO_EX_ID,
 )
-from layer0_progression import NAME_TO_EX_ID
 
 
 class TestAliasStep:
@@ -175,3 +178,35 @@ class TestSeedIntegrity:
         # Entries already verbatim in NAME_TO_EX_ID are intentionally omitted.
         for name in ("Dead Bug", "Side Plank", "Sit Up"):
             assert name not in GARMIN_STRENGTH_ALIASES
+
+
+class TestProviderValueMapSeed:
+    """The consolidated seed (#681 §4 Slice 1) that both the resolver imports and
+    init_db materializes into the `provider_value_map` table."""
+
+    def test_rows_cover_every_strength_and_cardio_entry(self):
+        from provider_value_map_seed import (
+            provider_value_map_rows,
+            STRENGTH_NAME_TO_EX_ID,
+            GARMIN_TYPE_TO_PLAN_SPORT,
+        )
+        rows = list(provider_value_map_rows())
+        assert len(rows) == len(STRENGTH_NAME_TO_EX_ID) + len(GARMIN_TYPE_TO_PLAN_SPORT)
+        strength = {r[3]: r for r in rows if r[1] == "strength"}
+        cardio = {r[3]: r for r in rows if r[1] == "cardio"}
+        assert set(strength) == set(STRENGTH_NAME_TO_EX_ID)
+        assert set(cardio) == set(GARMIN_TYPE_TO_PLAN_SPORT)
+        for name, ex_id in STRENGTH_NAME_TO_EX_ID.items():
+            assert strength[name] == (
+                "garmin", "strength", "in", name, "ex_id", ex_id, "manual", 1.0, False, None)
+
+    def test_rows_are_unique_on_the_table_primary_key(self):
+        from provider_value_map_seed import provider_value_map_rows
+        pks = [(r[0], r[1], r[2], r[3]) for r in provider_value_map_rows()]
+        assert len(pks) == len(set(pks)), "duplicate (provider,data_type,direction,source_value)"
+
+    def test_merged_strength_map_matches_resolver(self):
+        # The map the resolver reads IS the seed's merged map (no drift).
+        from provider_value_map_seed import STRENGTH_NAME_TO_EX_ID
+        for name, ex_id in STRENGTH_NAME_TO_EX_ID.items():
+            assert resolve_strength_ex_id(name) == (ex_id, "alias"), name
