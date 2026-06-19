@@ -1,7 +1,7 @@
 # V5 Implementation — Provider Translation: Indoor-Machine Flag (Slice 2c, #681 §4) — Closing Handoff v1
 
 **Date:** 2026-06-19
-**Type:** Build (v1 app, provider FIT/Connect cardio ingest). One PR: **#751** (branch `claude/kind-fermi-ygkavu`).
+**Type:** Build (v1 app, provider FIT/Connect cardio ingest). PRs: **#751** (slice) + **#752** (same-day hotfix) — both MERGED (squash). Branch `claude/kind-fermi-ygkavu` (slice) + `claude/slice2c-rawrecord-import-hotfix` (hotfix). **Shipped + LIVE-VERIFIED ✅.**
 **Predecessor handoff:** `handoffs/V5_Implementation_FITImport_ProdIncident_HubUploaderUnify_2026_06_19_Closing_Handoff_v1.md` (its §6 next-move #1 = this slice).
 
 ---
@@ -25,17 +25,34 @@ Slice 2c = design `ProviderTranslation_StorageSchema_681_BuildDesign_v1.md` §6 
 
 **Bookkeeping (ceiling-exempt):** `CURRENT_STATE.md`, `CARRY_FORWARD.md`, this handoff, #681 comment.
 
+## §3a — Hotfix (#752, same day — the slice broke FIT uploads)
+
+Andy bulk-uploaded right after #751 deployed and **every file errored**. Root-caused by reproducing the exact write path against a **local Postgres** (the slice's tests used a *fake* DB connection, so the real SQL never ran in CI — that's the coverage gap).
+
+- **Root cause:** `_record_provider_raw_cardio` reads `observed_at` from the parsed activity date; a FIT whose session timestamp doesn't parse yields `date=''`, and `''` is not a valid `TIMESTAMP` → `psycopg2.errors.InvalidDatetimeFormat`. Because the raw write **shares the import's transaction**, the error aborted the whole `cardio_log` import → the per-file handler reported every file as `error`.
+- **Fix (`routes/garmin.py` only):** (1) coerce an empty `observed_at` to `NULL`; (2) wrap the write in a `SAVEPOINT` so the corroboration write is **best-effort** — a failure logs `[provider-raw] … SKIPPED (…)` and rolls back to the savepoint, never aborting the athlete's import.
+- **Verified against real Postgres:** empty date stores `NULL` + commits; a forced raw-write error is swallowed while the preceding `cardio_log` insert in the same transaction survives + commits. Test file extended (empty-date→NULL, savepoint wrap, error-swallowed-and-rolled-back).
+
 ## §4 — Code / tests / verification
 
-- Full Python suite **2681 passed / 30 skipped** (2671 baseline + 10 new). Imports clean (`routes.garmin`, `garmin_connect`, `garmin_fit_parser`, `provider_cardio_resolve`).
+- Full Python suite **2683 passed / 30 skipped** (2671 baseline + 10 slice + 2 hotfix). Imports clean (`routes.garmin`, `garmin_connect`, `garmin_fit_parser`, `provider_cardio_resolve`).
 - **No migration** — the table already exists in prod (Slice 1, applied via #742); `init_db.py` untouched.
 - **Additive** — no change to `cardio_log` writes or discipline resolution; the discipline path (Slice 2a/2b) is unchanged.
 
-## §5 — Manual verification owed (Andy — container can't reach Neon / read prod logs)
+## §5 — Live verification — DONE ✅ (read-only `neon-query`, 2026-06-19)
 
-- **Live-verify** a real indoor FIT import writes a `provider_raw_record` row:
-  - `neon-query`: `SELECT provider, data_type, canonical_ref, raw_payload->>'indoor_machine' FROM provider_raw_record ORDER BY id DESC LIMIT 5;` — expect an indoor ride row with `indoor_machine = Cycling trainer` (and outdoor rows present with `indoor_machine` NULL, confirming broad scope).
-  - `/admin/logs?q=provider-raw` shows `[provider-raw] garmin cardio … machine='Cycling trainer'`.
+Andy bulk-uploaded (post-#752); `provider_raw_record` holds **6 rows**, all `provider='garmin'`/`data_type='cardio'`, dedup keys = FIT content hashes:
+
+| id | date | bucket | canonical_ref | machine |
+|---|---|---|---|---|
+| 5 | 2026-06-03 | 1 | D-006 | **Cycling trainer** |
+| 4 | 2026-06-02 | 1 | D-002 | **Treadmill** |
+| 3 | 2026-06-01 | 1 | D-006 | **Cycling trainer** |
+| 2 | 2026-05-31 | 1 | D-006 | **Cycling trainer** |
+| 1, 6 | — | 3 | — | — (non-indoor: bucket-3, NULL machine) |
+
+The 4 indoor activities carry the correct machine + fine D-id; the 2 non-indoor rows confirm the **broad scope** (a row for every cardio ingest, machine NULL when not indoor). The hotfix held (no failures, dates populated). **Both prior §5 items closed.**
+
 - Carried, unchanged: post-#572 live T3 refresh re-verify (Rule #14); #430 Slice C / #679 EX-id self-heal live-verify; #698 Slice 3b + race-week-brief recovery live-verify; #732 parked.
 
 ## §6 — Next session pointers
@@ -64,11 +81,15 @@ Slice 2c = design `ProviderTranslation_StorageSchema_681_BuildDesign_v1.md` §6 
 | Writer | `routes/garmin.py` | `_record_provider_raw_cardio`: `INSERT INTO provider_raw_record … ON CONFLICT (user_id, provider, data_type, external_id) DO UPDATE`; called at `import_confirm` + `_bulk_insert_cardio` + `_import_activity` |
 | Dedup key | `routes/garmin.py` | `import_fit` sets `result['fit_dedup_id'] = _fit_dedup_id(raw)` |
 | No new vocab | `tests/test_provider_raw_record_cardio.py` | `test_no_new_vocab_every_machine_is_canonical` (machine ∈ `_DISCIPLINE_INDOOR_MACHINES` values) |
-| Tests | full suite | 2681 passed / 30 skipped |
-| PR / issues | #751 (open); #681 (open, commented) | — |
+| Hotfix (#752) | `routes/garmin.py` | `_record_provider_raw_cardio`: `observed_at = raw.get('observed_at') or None`; body wrapped in `SAVEPOINT provider_raw_cardio` / `ROLLBACK TO SAVEPOINT` on failure (best-effort) |
+| Hotfix tests | `tests/test_provider_raw_record_cardio.py` | `test_empty_observed_at_coerced_to_null` + `test_db_error_is_swallowed_and_rolled_back` |
+| Live state | prod `neon-query` | `provider_raw_record` 6 rows; indoor rows carry `Cycling trainer`(D-006)/`Treadmill`(D-002); non-indoor bucket-3/NULL machine |
+| Tests | full suite | 2683 passed / 30 skipped |
+| PRs / issues | #751 + #752 (MERGED); #681 (open, commented) | — |
 
 ## §9 — Carry-forward
 
-- **`provider_raw_record` now has its first writer** — Garmin cardio, every ingest, indoor-machine flag when applicable. **No downstream consumer yet.**
+- **`provider_raw_record` now has its first writer** — Garmin cardio, every ingest, indoor-machine flag when applicable; **live-verified** (§5). **No downstream consumer yet** — consumers (Layer-1 fidelity, completed-history, multi-source precedence, equipment-pool corroboration) land in later waves.
 - **No new vocab; no migration** (the table pre-existed in prod since #742). `init_db.py` untouched.
-- **Lesson re-applied:** the prod write is verifiable only via a read-only `neon-query` (container can't reach Neon) — §5 owed-Andy.
+- **Coverage gap (follow-up, low-pri):** the route-level cardio write paths (`_record_provider_raw_cardio`, `_bulk_insert_cardio`, `_import_activity`, `import_confirm`) have **no real-Postgres integration test** — which is why the `''`-timestamp SQL error (#752) wasn't caught pre-merge. A fake-DB unit test cannot catch a live SQL fault. Consider a small Postgres-backed ingest test (the `layer0-gate` already runs Postgres in CI).
+- **Lesson re-applied (twice this arc):** a green local/CI run does not prove the prod DB behaves — the prod write was confirmed only via read-only `neon-query` (container can't reach Neon), and the `''`-timestamp bug was found only by running the real SQL against a local Postgres.
