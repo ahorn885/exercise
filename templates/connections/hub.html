@@ -73,6 +73,19 @@
       </div>
     </div>
 
+    <label class="fit-source">
+      <span>Source</span>
+      <select name="source" data-bulk-field class="form-select form-select-sm">
+        <option value="garmin" selected>Garmin</option>
+        <option value="coros">COROS</option>
+        <option value="wahoo">Wahoo</option>
+        <option value="polar">Polar</option>
+        <option value="strava">Strava</option>
+      </select>
+      <span class="dim">— which service these activity files were exported from. Wellness /
+        daily-metric files route automatically regardless.</span>
+    </label>
+
     <label class="fit-match">
       <input type="checkbox" value="1" name="match_plan" data-bulk-field checked>
       <span>Match to scheduled plan workouts <span class="dim">— links each activity to a same-week

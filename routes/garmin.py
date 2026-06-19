@@ -369,15 +369,43 @@ def import_confirm():
 # files wants. The browser uploads files in size-bounded batches to the JSON
 # endpoints below (see static/app.js `data-bulk-upload`).
 
-def _fit_dedup_id(raw: bytes) -> str:
+# #767 slice 1 — manual-upload source generalization. The same drop zone now
+# ingests FIT activities exported from non-Garmin services (a service down or
+# never-wired connection can't sync, but the athlete can still export). A
+# manually uploaded FIT carries no provider activity-id, so we hash the bytes
+# for an idempotent dedup key (see _fit_dedup_id) and store it in the id column
+# matching the source, with a source-specific prefix so keys never collide
+# across providers. Garmin stays the default (the existing single-file + Connect-
+# sync paths). training_log has every column except strava_activity_id — but
+# Strava exports no strength-set FITs, so a Strava strength upload can't occur.
+_SOURCE_MAP = {
+    'garmin': ('garmin_activity_id', 'fit:'),
+    'coros':  ('coros_label_id',     'coros-file:'),
+    'wahoo':  ('wahoo_workout_id',   'wahoo-file:'),
+    'polar':  ('polar_exercise_id',  'polar-file:'),
+    'strava': ('strava_activity_id', 'strava-file:'),
+}
+
+
+def _source_column(source: str) -> str:
+    """The cardio_log / training_log provider-id column an upload source writes to."""
+    return _SOURCE_MAP.get(source, _SOURCE_MAP['garmin'])[0]
+
+
+def _source_prefix(source: str) -> str:
+    """The dedup-key prefix that namespaces an upload source's content hashes."""
+    return _SOURCE_MAP.get(source, _SOURCE_MAP['garmin'])[1]
+
+
+def _fit_dedup_id(raw: bytes, prefix: str = 'fit:') -> str:
     """Stable per-file dedup key for manually uploaded activity FITs.
 
-    Garmin Connect activity IDs only exist for API-synced activities; a raw
-    uploaded .fit has none. Hashing the bytes gives an idempotent key so
-    re-dropping the same folder skips files already imported. Stored in
-    garmin_activity_id with a 'fit:' prefix so it never collides with a numeric
-    Connect ID."""
-    return 'fit:' + hashlib.sha256(raw).hexdigest()
+    Provider activity IDs only exist for API-synced activities; a raw uploaded
+    .fit has none. Hashing the bytes gives an idempotent key so re-dropping the
+    same folder skips files already imported. Stored in the source's id column
+    (see _SOURCE_MAP) with a source-specific `prefix` so it never collides with
+    a numeric service ID or a hash from another provider."""
+    return prefix + hashlib.sha256(raw).hexdigest()
 
 
 def _iter_fit_blobs(files):
@@ -416,7 +444,8 @@ def _iter_fit_blobs(files):
             yield (name, None, 'not a .fit or .zip file')
 
 
-def _record_provider_raw_cardio(db, raw: dict, uid: int, external_id) -> None:
+def _record_provider_raw_cardio(db, raw: dict, uid: int, external_id,
+                                provider: str | None = None) -> None:
     """#681 §4 Slice 2c — record the raw provider cardio signal into
     provider_raw_record (record-don't-drop), carrying the indoor-machine flag
     when the completed activity used one.
@@ -427,6 +456,9 @@ def _record_provider_raw_cardio(db, raw: dict, uid: int, external_id) -> None:
     single-file path with no dedup key) cannot conflict, so it inserts.
     `raw` is the `_provider_raw` dict that parse_fit / normalize_activity attach;
     a falsy raw (e.g. a session payload parsed before this slice) is a no-op.
+    `provider` (#767 slice 1) tags the corroboration row with the upload source
+    (coros/wahoo/polar/strava) instead of the parser default — None keeps the
+    raw dict's own provider (garmin).
 
     BEST-EFFORT: this raw passthrough is corroboration data, not the athlete's
     log, so the write is wrapped in a SAVEPOINT — a failure is logged and
@@ -452,7 +484,7 @@ def _record_provider_raw_cardio(db, raw: dict, uid: int, external_id) -> None:
                    bucket = EXCLUDED.bucket,
                    canonical_ref = EXCLUDED.canonical_ref,
                    fetched_at = NOW()''',
-            (uid, raw.get('provider', 'garmin'), 'cardio', external_id,
+            (uid, provider or raw.get('provider', 'garmin'), 'cardio', external_id,
              observed_at, json.dumps(payload),
              raw.get('bucket'), raw.get('canonical_ref'))
         )
@@ -463,29 +495,36 @@ def _record_provider_raw_cardio(db, raw: dict, uid: int, external_id) -> None:
         except Exception:
             pass
         print(
-            f"[provider-raw] garmin cardio external_id={external_id!r} "
-            f"SKIPPED ({type(e).__name__}: {e})"
+            f"[provider-raw] {provider or raw.get('provider', 'garmin')} cardio "
+            f"external_id={external_id!r} SKIPPED ({type(e).__name__}: {e})"
         )
         return
     print(  # Rule #15
-        f"[provider-raw] garmin cardio external_id={external_id!r} "
+        f"[provider-raw] {provider or raw.get('provider', 'garmin')} cardio "
+        f"external_id={external_id!r} "
         f"bucket={raw.get('bucket')} canonical_ref={raw.get('canonical_ref')!r} "
         f"machine={machine!r}"
     )
 
 
 def _bulk_insert_cardio(db, data: dict, uid: int, gid: str,
-                        plan_item_id=None, notes=None) -> int:
-    """Insert one parsed cardio activity. Returns the new cardio_log id."""
+                        plan_item_id=None, notes=None, source: str = 'garmin') -> int:
+    """Insert one parsed cardio activity. Returns the new cardio_log id.
+
+    `source` (#767 slice 1) selects which provider-id column `gid` lands in:
+    garmin_activity_id for the default Garmin path, or the matching column for a
+    COROS / Wahoo / Polar / Strava manual upload. The column comes from the
+    fixed _SOURCE_MAP allowlist (no user-supplied identifier reaches the SQL)."""
+    col = _source_column(source)
     cur = db.execute(
-        '''INSERT INTO cardio_log
+        f'''INSERT INTO cardio_log
            (date, activity, activity_name, duration_min, moving_time_min,
             distance_mi, avg_pace, avg_speed, avg_hr, max_hr, calories,
             elev_gain_ft, elev_loss_ft, avg_cadence, max_cadence,
             avg_power, max_power, norm_power, aerobic_te, anaerobic_te,
             swolf, active_lengths,
             stride_length_m, vert_oscillation_cm, vert_ratio_pct,
-            gct_ms, gct_balance, discipline_id, garmin_activity_id, plan_item_id, notes, user_id)
+            gct_ms, gct_balance, discipline_id, {col}, plan_item_id, notes, user_id)
            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) RETURNING id''',
         (data.get('date'), data.get('activity'), data.get('activity_name'),
          data.get('duration_min'), data.get('moving_time_min'),
@@ -502,20 +541,25 @@ def _bulk_insert_cardio(db, data: dict, uid: int, gid: str,
          (notes if notes is not None else (data.get('notes') or None)), uid)
     )
     rec_id = cur.lastrowid
-    _record_provider_raw_cardio(db, data.get('_provider_raw'), uid, gid)
+    _record_provider_raw_cardio(db, data.get('_provider_raw'), uid, gid, provider=source)
     return rec_id
 
 
 def _bulk_insert_strength(db, rows: list, uid: int, gid: str,
-                          plan_item_id=None, notes=None) -> tuple:
+                          plan_item_id=None, notes=None, source: str = 'garmin') -> tuple:
     """Insert a parsed strength FIT session (one training_log row per
     exercise, plus per-set rows). Returns (n_exercises, first_log_id); the
     first log id is the canonical anchor for a plan-item disposition.
 
     Mirrors the single-file confirm path: rx_engine seeds/advances progression
-    in bootstrap mode since manual FITs carry no plan targets."""
+    in bootstrap mode since manual FITs carry no plan targets.
+
+    `source` (#767 slice 1) picks the provider-id column, same as the cardio
+    path. Strava is excluded (no training_log strava column) but exports no
+    strength FITs, so that pairing never reaches here."""
     if not rows:
         return 0, None
+    col = _source_column(source)
     session_date = rows[0].get('date') or date.today().isoformat()
     sess_cur = db.execute(
         'INSERT INTO training_sessions (date, notes, plan_item_id, user_id) VALUES (?,?,?,?) RETURNING id',
@@ -555,12 +599,12 @@ def _bulk_insert_strength(db, rows: list, uid: int, gid: str,
         )
 
         log_cur = db.execute(
-            '''INSERT INTO training_log
+            f'''INSERT INTO training_log
                (date, exercise, sub_group, session_id,
                 actual_sets, actual_reps, actual_weight, actual_duration,
                 outcome, est_1rm, volume, body_weight,
                 next_weight, next_sets, next_reps, next_duration,
-                garmin_activity_id, plan_item_id, notes, user_id)
+                {col}, plan_item_id, notes, user_id)
                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) RETURNING id''',
             (row.get('date'), exercise, rx['movement_pattern'], session_id,
              actual_sets, last_reps, max_weight, last_duration,
@@ -613,7 +657,8 @@ def _match_notes(plan_item, compliance: dict) -> str:
     return '. '.join(parts)
 
 
-def _bulk_log_one(db, uid: int, gid: str, result: dict, match_plan: bool) -> dict:
+def _bulk_log_one(db, uid: int, gid: str, result: dict, match_plan: bool,
+                  source: str = 'garmin') -> dict:
     """Insert one parsed activity, optionally auto-matching it to a scheduled
     plan item (and marking that item complete). Caller owns commit/rollback.
 
@@ -635,13 +680,13 @@ def _bulk_log_one(db, uid: int, gid: str, result: dict, match_plan: bool) -> dic
         match_detail = f' → "{plan_item["workout_name"]}" ({compliance["label"]})'
 
     if log_type == 'cardio':
-        log_id = _bulk_insert_cardio(db, result['data'], uid, gid, plan_item_id, notes)
+        log_id = _bulk_insert_cardio(db, result['data'], uid, gid, plan_item_id, notes, source)
         if plan_item_id:
             record_disposition(db, plan_item_id, 'cardio', log_id, 'completed', user_id=uid)
         return {'status': 'imported', 'log_type': 'cardio', 'matched': bool(plan_item_id),
                 'detail': _cardio_detail(result['data']) + match_detail}
     if log_type == 'strength':
-        n, first_log_id = _bulk_insert_strength(db, result['data'], uid, gid, plan_item_id, notes)
+        n, first_log_id = _bulk_insert_strength(db, result['data'], uid, gid, plan_item_id, notes, source)
         if plan_item_id and first_log_id:
             record_disposition(db, plan_item_id, 'strength', first_log_id, 'completed', user_id=uid)
         return {'status': 'imported', 'log_type': 'strength', 'matched': bool(plan_item_id),
@@ -667,6 +712,17 @@ def import_bulk():
     from garmin_fit_parser import parse_fit, fit_file_meta
 
     match_plan = request.form.get('match_plan', '1') not in ('0', 'false', 'no', 'off', '')
+
+    # #767 slice 1 — which service these files came from. Selects the provider-id
+    # column + dedup prefix; an unknown value falls back to Garmin (the default).
+    source = request.form.get('source', 'garmin').strip().lower()
+    if source not in _SOURCE_MAP:
+        source = 'garmin'
+    prefix = _source_prefix(source)
+    print(  # Rule #15 — chosen source + id-column for this import batch
+        f"[bulk-import] source={source} id_column={_source_column(source)} "
+        f"files={len(files)}"
+    )
 
     results = []
     summary = {'imported': 0, 'matched': 0, 'duplicates': 0, 'skipped': 0,
@@ -705,8 +761,8 @@ def import_bulk():
     to_insert = []   # (name, gid, result)
     seen = set()
     for name, raw in activity_blobs:
-        gid = _fit_dedup_id(raw)
-        if gid in seen or _already_imported(db, gid):
+        gid = _fit_dedup_id(raw, prefix)
+        if gid in seen or _already_imported(db, gid, source):
             results.append({'name': name, 'status': 'duplicate', 'detail': 'already imported'})
             summary['duplicates'] += 1
             continue
@@ -736,7 +792,7 @@ def import_bulk():
     # phase 1) so each completed plan item is claimed once, in date order.
     for name, gid, result in to_insert:
         try:
-            r = _bulk_log_one(db, uid, gid, result, match_plan)
+            r = _bulk_log_one(db, uid, gid, result, match_plan, source)
             if r is None:
                 db.rollback()
                 results.append({'name': name, 'status': 'skipped', 'detail': 'unknown activity type'})
@@ -756,20 +812,23 @@ def import_bulk():
     return jsonify({'ok': True, 'summary': summary, 'results': results})
 
 
-def _already_imported(db, gid: str) -> bool:
-    """Return True if this Garmin activity ID is already in cardio_log or training_log
-    for the current user. Two users sharing a Garmin account import independently."""
+def _already_imported(db, gid: str, source: str = 'garmin') -> bool:
+    """Return True if this dedup id is already in cardio_log or training_log for
+    the current user, in the provider-id column matching the upload `source`
+    (#767 slice 1). Two users sharing an account import independently."""
     uid = current_user_id()
-    return (
-        db.execute(
-            'SELECT id FROM cardio_log WHERE garmin_activity_id=? AND user_id=?',
-            (gid, uid)
-        ).fetchone() is not None
-        or db.execute(
-            'SELECT id FROM training_log WHERE garmin_activity_id=? AND user_id=?',
-            (gid, uid)
-        ).fetchone() is not None
-    )
+    col = _source_column(source)
+    if db.execute(
+        f'SELECT id FROM cardio_log WHERE {col}=? AND user_id=?', (gid, uid)
+    ).fetchone() is not None:
+        return True
+    # training_log carries every provider-id column except strava_activity_id;
+    # Strava exports no strength FITs, so a Strava strength dup can't occur.
+    if source == 'strava':
+        return False
+    return db.execute(
+        f'SELECT id FROM training_log WHERE {col}=? AND user_id=?', (gid, uid)
+    ).fetchone() is not None
 
 
 def _import_activity(db, act: dict, plan_item, compliance: dict,
