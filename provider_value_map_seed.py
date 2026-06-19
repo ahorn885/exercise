@@ -215,15 +215,156 @@ GARMIN_TYPE_TO_PLAN_SPORT: dict[str, str] = {
 }
 
 
+# Provider cardio activity-type → canonical discipline (#681 §4 Slice 2; the
+# fine-D-id fidelity upgrade, matrix-v2 §1 option C). Each value is a
+# `(canonical_kind, canonical_value)` pair:
+#   ('discipline', 'D-0xx') — bucket-1 fine layer0 discipline; the coarse
+#                             `_plan_sport_type` is DERIVED via
+#                             `provider_cardio_resolve.DISCIPLINE_TO_PLAN_SPORT`
+#                             (the collapse is a canon-internal fact, kept next to
+#                             the resolver — NOT a value-map row; ratified Q3).
+#   ('modality', '<coarse>') — bucket-1 coarse-only (walking / strength_training):
+#                              a real activity with no race-discipline D-id (§12).
+#   ('bucket3', None)        — an explicitly-recorded "known, deliberately
+#                              unmapped" type (record raw + surface; §6/§12 — e.g.
+#                              Rowing, mint reversed 2026-06-18). Any source value
+#                              NOT listed here also resolves to bucket-3 at runtime
+#                              (record-don't-drop); only the §12-dispositioned
+#                              training modalities are pinned explicitly.
+# Transcribed verbatim from `specs/Provider_Inbound_Matrix_v2.md` (Andy-ratified):
+# Strava §2.2, RWGPS §10.1, Wahoo §10.2 (source_value = workout_type_id), TP §11.1.
+# Garmin's own typeKey→D-id rows land with the live-path repoint (Slice 2b).
+CARDIO_DISCIPLINE_MAP: dict[str, dict[str, tuple[str, str | None]]] = {
+    # ── Strava `sport_type` (§2.2) ──────────────────────────────────────────
+    'strava': {
+        'Run': ('discipline', 'D-002'),
+        'TrailRun': ('discipline', 'D-001'),
+        'VirtualRun': ('discipline', 'D-002'),        # closest; raw kept
+        'Ride': ('discipline', 'D-006'),
+        'VirtualRide': ('discipline', 'D-006'),        # indoor; + indoor flag (2b)
+        'MountainBikeRide': ('discipline', 'D-008'),
+        'EMountainBikeRide': ('discipline', 'D-008'),  # e-assist flag in raw
+        'GravelRide': ('discipline', 'D-030'),
+        'EBikeRide': ('discipline', 'D-006'),          # e-assist flag in raw
+        'Handcycle': ('discipline', 'D-006'),          # adaptive flag in raw
+        'Velomobile': ('discipline', 'D-006'),
+        'Swim': ('discipline', 'D-004'),
+        'Hike': ('discipline', 'D-003'),
+        'Snowshoe': ('discipline', 'D-017'),
+        'Kayaking': ('discipline', 'D-010'),
+        'Canoeing': ('discipline', 'D-011'),
+        'StandUpPaddling': ('discipline', 'D-032'),
+        'RockClimbing': ('discipline', 'D-012'),
+        'AlpineSki': ('discipline', 'D-022'),
+        'NordicSki': ('discipline', 'D-028'),
+        'BackcountrySki': ('discipline', 'D-021'),     # the skimo signal
+        'RollerSki': ('discipline', 'D-028'),          # dryland proxy; raw flags rollerski
+        'WeightTraining': ('modality', 'strength_training'),
+        'Walk': ('modality', 'walking'),
+        'Rowing': ('bucket3', None),                   # §6/§12 — training modality
+        'VirtualRow': ('bucket3', None),
+    },
+    # ── Ride with GPS `activity_type` (§10.1; namespaced family:variant) ─────
+    'rwgps': {
+        'cycling:road': ('discipline', 'D-006'),
+        'cycling:gravel': ('discipline', 'D-030'),
+        'cycling:mountain': ('discipline', 'D-008'),
+        'cycling:generic': ('discipline', 'D-006'),
+        'cycling:commute': ('discipline', 'D-006'),
+        'cycling:indoor': ('discipline', 'D-006'),     # + indoor flag (2b)
+        'cycling:virtual': ('discipline', 'D-006'),
+        'cycling:cyclocross': ('discipline', 'D-006'),
+        'cycling:recumbent': ('discipline', 'D-006'),
+        'cycling:hand_cycling': ('discipline', 'D-006'),
+        'e_biking:road': ('discipline', 'D-006'),      # e-bike flag in raw
+        'e_biking:mountain': ('discipline', 'D-008'),
+        'e_biking:generic': ('discipline', 'D-006'),
+        'running:road': ('discipline', 'D-002'),
+        'running:trail': ('discipline', 'D-001'),
+        'running:generic': ('discipline', 'D-002'),
+        'running:indoor': ('discipline', 'D-002'),
+        'walking:hiking': ('discipline', 'D-003'),
+        'walking:generic': ('modality', 'walking'),
+        'walking:indoor': ('modality', 'walking'),
+        'walking:speed': ('modality', 'walking'),
+        'swimming:generic': ('discipline', 'D-004'),
+        'swimming:lap': ('discipline', 'D-004'),
+        'swimming:open_water': ('discipline', 'D-004'),
+        'snow:alpine_skiing': ('discipline', 'D-022'),
+        'snow:cross_country_skiing': ('discipline', 'D-028'),
+        'snow:snowshoeing': ('discipline', 'D-017'),
+    },
+    # ── Wahoo `workout_type_id` (§10.2; source_value = the integer id) ───────
+    'wahoo': {
+        '0': ('discipline', 'D-006'),    # BIKING
+        '15': ('discipline', 'D-006'),   # BIKING_ROAD
+        '16': ('discipline', 'D-006'),   # BIKING_TRACK
+        '14': ('discipline', 'D-006'),   # BIKING_RECUMBENT
+        '12': ('discipline', 'D-006'),   # BIKING_INDOOR  (+ indoor flag 2b)
+        '49': ('discipline', 'D-006'),   # BIKING_INDOOR_CLASS
+        '68': ('discipline', 'D-006'),   # BIKING_VIRTUAL
+        '61': ('discipline', 'D-006'),   # BIKING_INDOOR_TRAINER (KICKR)
+        '70': ('discipline', 'D-006'),   # HANDCYCLING
+        '64': ('discipline', 'D-006'),   # EBIKING
+        '13': ('discipline', 'D-008'),   # BIKING_MOUNTAIN
+        '11': ('discipline', 'D-006'),   # BIKING_CYCLECROSS (closest)
+        '1': ('discipline', 'D-002'),    # RUNNING
+        '3': ('discipline', 'D-002'),    # RUNNING_TRACK
+        '5': ('discipline', 'D-002'),    # RUNNING_TREADMILL
+        '67': ('discipline', 'D-002'),   # RUNNING_RACE
+        '71': ('discipline', 'D-002'),   # RUNNING_INDOOR_VIRTUAL
+        '19': ('discipline', 'D-002'),   # FE_TREADMILL
+        '4': ('discipline', 'D-001'),    # RUNNING_TRAIL
+        '9': ('discipline', 'D-003'),    # HIKING
+        '10': ('discipline', 'D-018'),   # MOUNTAINEERING
+        '25': ('discipline', 'D-004'),   # SWIMMING_LAP
+        '26': ('discipline', 'D-004'),   # SWIMMING_OPEN_WATER
+        '29': ('discipline', 'D-022'),   # SKIING_DOWNHILL
+        '28': ('discipline', 'D-022'),   # SKIING
+        '30': ('discipline', 'D-028'),   # SKIING_CROSS_COUNTRY
+        '37': ('discipline', 'D-011'),   # CANOEING
+        '38': ('discipline', 'D-010'),   # KAYAKING
+        '41': ('discipline', 'D-032'),   # STAND_UP_PADDLE_BOARD
+        '6': ('modality', 'walking'),    # WALKING
+        '7': ('modality', 'walking'),    # WALKING_*
+        '8': ('modality', 'walking'),    # WALKING_*
+        '56': ('modality', 'walking'),   # WALKING_TREADMILL
+        '39': ('bucket3', None),         # ROWING — §6/§12
+        '22': ('bucket3', None),         # FE_ROWER — §6/§12
+    },
+    # ── TrainingPeaks `WorkoutType` (§11.1) ─────────────────────────────────
+    'trainingpeaks': {
+        'swim': ('discipline', 'D-004'),
+        'bike': ('discipline', 'D-006'),
+        'mtb': ('discipline', 'D-008'),
+        'Mountain Bike': ('discipline', 'D-008'),
+        'run': ('discipline', 'D-002'),       # no road/trail split → D-001 not derivable
+        'xc-ski': ('discipline', 'D-028'),
+        'walk': ('modality', 'walking'),
+        'strength': ('modality', 'strength_training'),
+        'rowing': ('bucket3', None),          # §6/§12 — mint reversed
+    },
+}
+
+
 def provider_value_map_rows():
     """Yield `provider_value_map` seed rows as tuples matching the table columns:
     (provider, data_type, direction, source_value, canonical_kind,
      canonical_value, match_kind, confidence, no_canonical_match, notes).
 
-    Strength names + the Garmin coarse-cardio map (Slice 1). Fine-D-id cardio
-    rows from the matrix are authored in Slice 2.
+    Strength names + the Garmin coarse-cardio map (Slice 1) + the fine-D-id
+    provider cardio crosswalk (Slice 2; CARDIO_DISCIPLINE_MAP).
     """
     for name, ex_id in STRENGTH_NAME_TO_EX_ID.items():
         yield ('garmin', 'strength', 'in', name, 'ex_id', ex_id, 'manual', 1.0, False, None)
     for type_key, sport in GARMIN_TYPE_TO_PLAN_SPORT.items():
         yield ('garmin', 'cardio', 'in', type_key, 'modality', sport, 'manual', 1.0, False, None)
+    for provider, mapping in CARDIO_DISCIPLINE_MAP.items():
+        for source_value, (kind, value) in mapping.items():
+            if kind == 'bucket3':
+                # explicit known-unmapped: record raw, no canonical match
+                yield (provider, 'cardio', 'in', source_value, 'discipline', None,
+                       'manual', 1.0, True, None)
+            else:
+                yield (provider, 'cardio', 'in', source_value, kind, value,
+                       'manual', 1.0, False, None)

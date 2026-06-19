@@ -191,14 +191,18 @@ class TestProviderValueMapSeed:
             GARMIN_TYPE_TO_PLAN_SPORT,
         )
         rows = list(provider_value_map_rows())
-        assert len(rows) == len(STRENGTH_NAME_TO_EX_ID) + len(GARMIN_TYPE_TO_PLAN_SPORT)
         strength = {r[3]: r for r in rows if r[1] == "strength"}
-        cardio = {r[3]: r for r in rows if r[1] == "cardio"}
+        # Cardio now spans multiple providers (Slice 2 CARDIO_DISCIPLINE_MAP);
+        # the Garmin coarse map (Slice 1) is the garmin-provider subset.
+        garmin_cardio = {r[3]: r for r in rows if r[1] == "cardio" and r[0] == "garmin"}
         assert set(strength) == set(STRENGTH_NAME_TO_EX_ID)
-        assert set(cardio) == set(GARMIN_TYPE_TO_PLAN_SPORT)
+        assert set(garmin_cardio) == set(GARMIN_TYPE_TO_PLAN_SPORT)
         for name, ex_id in STRENGTH_NAME_TO_EX_ID.items():
             assert strength[name] == (
                 "garmin", "strength", "in", name, "ex_id", ex_id, "manual", 1.0, False, None)
+        for type_key, sport in GARMIN_TYPE_TO_PLAN_SPORT.items():
+            assert garmin_cardio[type_key] == (
+                "garmin", "cardio", "in", type_key, "modality", sport, "manual", 1.0, False, None)
 
     def test_rows_are_unique_on_the_table_primary_key(self):
         from provider_value_map_seed import provider_value_map_rows
