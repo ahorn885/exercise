@@ -87,6 +87,7 @@ def _workout_row(
     polar_exercise_id: str | None = None,
     wahoo_workout_id: str | None = None,
     coros_label_id: str | None = None,
+    strava_activity_id: str | None = None,
 ) -> dict[str, Any]:
     return {
         "date": date_str,
@@ -102,6 +103,7 @@ def _workout_row(
         "polar_exercise_id": polar_exercise_id,
         "wahoo_workout_id": wahoo_workout_id,
         "coros_label_id": coros_label_id,
+        "strava_activity_id": strava_activity_id,
     }
 
 
@@ -144,20 +146,29 @@ class TestRecentWorkouts:
             _workout_row(
                 date_str="2026-05-15", activity="coros_run", coros_label_id="C1"
             ),
+            _workout_row(
+                date_str="2026-05-14", activity="strava_run", strava_activity_id="S1"
+            ),
         )
         out = q_layer3A_recent_workouts(conn, 1, _AS_OF)
         sources = [r.source for r in out]
-        assert sources == ["manual", "garmin", "polar", "wahoo", "coros"]
+        assert sources == ["manual", "garmin", "polar", "wahoo", "coros", "strava"]
 
     def test_source_priority_garmin_wins_over_others(self):
-        # Defensive: garmin > polar > wahoo > coros if multiple IDs present.
+        # Defensive: garmin > polar > wahoo > coros > strava if multiple IDs present.
         row = _workout_row(
             garmin_activity_id="G1",
             polar_exercise_id="P1",
             wahoo_workout_id="W1",
             coros_label_id="C1",
+            strava_activity_id="S1",
         )
         assert _detect_workout_source(_FakeRow(row)) == "garmin"
+
+    def test_strava_source_detection(self):
+        # Strava ranks last among providers, but a strava-only row tags strava.
+        row = _workout_row(strava_activity_id="strava-file:abc123")
+        assert _detect_workout_source(_FakeRow(row)) == "strava"
 
     def test_full_row_fields(self):
         conn = _FakeConn()

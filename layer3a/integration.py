@@ -89,7 +89,9 @@ def _window_cutoff(as_of: datetime | date, days: int) -> date:
 def _detect_workout_source(row: Any) -> WorkoutSource:
     """Source detection by foreign-id column presence. Order matters when a
     row carries multiple IDs (rare; provider de-dupe is supposed to merge):
-    Garmin > Polar > Wahoo > COROS > manual."""
+    Garmin > Polar > Wahoo > COROS > Strava > manual. Strava ranks last among
+    providers — its bulk export carries files originally from another device, so
+    a native-device id (if also present) better identifies the true source."""
     if row["garmin_activity_id"]:
         return "garmin"
     if row["polar_exercise_id"]:
@@ -98,6 +100,8 @@ def _detect_workout_source(row: Any) -> WorkoutSource:
         return "wahoo"
     if row["coros_label_id"]:
         return "coros"
+    if row["strava_activity_id"]:
+        return "strava"
     return "manual"
 
 
@@ -124,7 +128,8 @@ def q_layer3A_recent_workouts(
         """
         SELECT date, activity, duration_min, moving_time_min, distance_mi,
                avg_hr, max_hr, avg_power, elev_gain_ft,
-               garmin_activity_id, polar_exercise_id, wahoo_workout_id, coros_label_id
+               garmin_activity_id, polar_exercise_id, wahoo_workout_id,
+               coros_label_id, strava_activity_id
           FROM cardio_log
          WHERE user_id = %s AND date >= %s
          ORDER BY date DESC, id DESC

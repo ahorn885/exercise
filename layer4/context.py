@@ -925,7 +925,7 @@ class Layer3APayload(_Base):
 # resolve conflicts — the LLM is the arbiter.
 
 
-WorkoutSource = Literal["manual", "garmin", "polar", "wahoo", "coros"]
+WorkoutSource = Literal["manual", "garmin", "polar", "wahoo", "coros", "strava"]
 
 
 class WorkoutRecord(_Base):
