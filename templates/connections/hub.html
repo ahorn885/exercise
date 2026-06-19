@@ -50,25 +50,26 @@
      duplicate files are skipped server-side. The single-file review-and-plan-
      match path lives on the full Import .FIT page (linked below). #}
   <div class="conn-drop" data-bulk-upload
-       data-endpoint="{{ url_for('garmin.import_bulk') }}" data-accept=".fit,.zip">
+       data-endpoint="{{ url_for('garmin.import_bulk') }}" data-accept=".fit,.tcx,.gpx,.zip">
     <div class="drop-ic">
       <svg class="icon" width="18" height="18" aria-hidden="true"><use href="#i-upload"></use></svg>
     </div>
-    <div class="drop-title">Upload .FIT files</div>
-    <p class="drop-sub">Drop a whole export folder — workouts <em>and</em> wellness/daily-metric files
-      (<code>_WELLNESS</code>, <code>_METRICS</code>, <code>_SLEEP_DATA</code>, <code>_HRV_STATUS</code>).
-      Each is routed automatically; duplicates are skipped.</p>
+    <div class="drop-title">Upload activity files</div>
+    <p class="drop-sub">Drop a whole export folder — Garmin <code>.fit</code> workouts <em>and</em>
+      wellness/daily-metric files (<code>_WELLNESS</code>, <code>_METRICS</code>, <code>_SLEEP_DATA</code>,
+      <code>_HRV_STATUS</code>), or <code>.tcx</code> / <code>.gpx</code> activities from COROS / Polar /
+      Strava. Each is routed automatically; duplicates are skipped.</p>
 
     <div data-bulk-drop class="fit-drop">
-      <p class="fit-drop-hint">Drag &amp; drop <code>.fit</code> / <code>.zip</code> files here</p>
+      <p class="fit-drop-hint">Drag &amp; drop <code>.fit</code> / <code>.tcx</code> / <code>.gpx</code> / <code>.zip</code> files here</p>
       <div class="fit-drop-actions">
         <label class="btn btn-ghost btn-sm fit-file-btn">
           Choose files
-          <input data-bulk-files type="file" accept=".fit,.zip" multiple hidden>
+          <input data-bulk-files type="file" accept=".fit,.tcx,.gpx,.zip" multiple hidden>
         </label>
         <label class="btn btn-ghost btn-sm fit-file-btn">
           Choose folder
-          <input data-bulk-folder type="file" accept=".fit,.zip" webkitdirectory hidden>
+          <input data-bulk-folder type="file" accept=".fit,.tcx,.gpx,.zip" webkitdirectory hidden>
         </label>
       </div>
     </div>
