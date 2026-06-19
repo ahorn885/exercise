@@ -66,6 +66,7 @@ from layer4.per_phase import (
     compute_cardio_drill_pool_ids,
     compute_feasible_pool_ids,
     format_measured_physiology,
+    format_upstream_coaching_flags,
 )
 from layer4.payload import (
     CardioBlock,
@@ -1120,6 +1121,19 @@ def llm_layer4_plan_refresh(
             "plan_refresh _synthesize_refresh_tier: measured_physiology "
             f"surfaced={bool(physiology_lines)}"
         )
+        # #307 — surface the upstream Layer 2A/2B/2C/2D coaching_flags
+        # advisory channel (suppress-on-empty).
+        upstream_flag_lines = format_upstream_coaching_flags(
+            layer2a=layer2_bundle.a,
+            layer2b=layer2_bundle.b,
+            layer2c_payloads=layer2_bundle.c.values(),
+            layer2d=layer2_bundle.d,
+        )
+        if upstream_flag_lines:
+            user_prompt += (
+                "\n\n=== Upstream coaching flags ===\n"
+                + "\n".join(upstream_flag_lines)
+            )
 
         llm_out = caller(
             system_prompt,

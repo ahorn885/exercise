@@ -229,6 +229,7 @@ BODY_PART_KEYWORDS: dict[str, list[str]] = {
     # Trunk
     "Rib": ["rib", "rib fracture"],
     "Chest": ["chest", "sternum"],
+    "Abdomen": ["abdomen", "abdominal", "oblique", "rectus abdominis"],
 }
 
 

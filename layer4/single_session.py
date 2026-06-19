@@ -57,6 +57,7 @@ from layer4.per_phase import (
     compute_cardio_drill_pool_ids,
     compute_feasible_pool_ids,
     format_measured_physiology,
+    format_upstream_coaching_flags,
 )
 from layer4.payload import (
     CardioBlock,
@@ -608,6 +609,18 @@ def _render_user_prompt(
         "single_session _render_user_prompt: measured_physiology surfaced="
         f"{bool(physiology_lines)}"
     )
+    # #307 — surface the upstream coaching_flags advisory channel. Single
+    # session only has the locale 2C + 2D payloads in scope (no 2A/2B).
+    upstream_flag_lines = format_upstream_coaching_flags(
+        layer2c_payloads=(
+            [layer2c_payload_for_locale]
+            if layer2c_payload_for_locale is not None
+            else None
+        ),
+        layer2d=layer2d_payload,
+    )
+    if upstream_flag_lines:
+        parts.extend(upstream_flag_lines)
     parts.append("")
 
     # § Active injuries — read from 2D excluded + accommodated lists

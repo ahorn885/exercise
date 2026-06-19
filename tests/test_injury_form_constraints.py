@@ -13,7 +13,7 @@ from athlete import BODY_PART_CONSTRAINTS, KNOWN_MOVEMENT_CONSTRAINTS
 CANONICAL_PARTS = {
     "Hand", "Wrist", "Elbow", "Shoulder", "Knee", "Ankle", "Foot", "Hip",
     "Hamstring", "Quad", "Groin", "Abdomen", "Lower Back", "Upper Back",
-    "Neck", "Other",
+    "Neck",
 }
 
 
@@ -43,5 +43,8 @@ class TestBodyPartConstraints:
         for part, constraints in BODY_PART_CONSTRAINTS.items():
             assert len(constraints) == len(set(constraints)), part
 
-    def test_other_is_catch_all(self):
-        assert set(BODY_PART_CONSTRAINTS["Other"]) == set(KNOWN_MOVEMENT_CONSTRAINTS)
+    def test_other_catch_all_retired(self):
+        # 'Other' was removed from the injury-form vocab (2026-06): the
+        # structured body_part field is now closed over the canonical parts so
+        # it can't produce a Layer 2D body_part_vocab_miss. No catch-all option.
+        assert "Other" not in BODY_PART_CONSTRAINTS

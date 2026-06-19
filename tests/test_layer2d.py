@@ -704,6 +704,27 @@ class TestBodyPartVocabMiss:
         flag_types = {f.flag_type for f in payload.coaching_flags}
         assert "body_part_vocab_miss" in flag_types
 
+    def test_abdomen_is_recognized_no_vocab_miss(self):
+        # 'Abdomen' is a canonical injury-form body part (a structured-field
+        # selection); it was added to BODY_PART_KEYWORDS so abdominal injuries
+        # participate in matching instead of tripping body_part_vocab_miss.
+        conn = _FakeConn()
+        conn.queue_response(rows=[_exercise("E-001", "Squat", "D-001")])
+        conn.queue_response(rows=[_discipline("D-001", "Running")])
+        conn.queue_response(rows=[])
+        injuries = [_injury(
+            "Abdomen",
+            severity="Chronic-Managed",
+            injury_type="Acute soft tissue (strain / sprain / tear)",
+            movement_constraints=[],
+        )]
+        payload = q_layer2d_injury_risk_profile_payload(
+            conn, injuries, [], ["D-001"], etl_version_set=_PIN,
+        )
+        assert "Abdomen" not in payload.body_part_vocab_misses
+        flag_types = {f.flag_type for f in payload.coaching_flags}
+        assert "body_part_vocab_miss" not in flag_types
+
 
 # ─── Smoke — payload constructs against empty connection ─────────────────────
 

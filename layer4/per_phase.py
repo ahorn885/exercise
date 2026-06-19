@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import os
 import uuid
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import date as _date_type, datetime, timedelta
 from typing import Any, Callable, Literal
@@ -2145,6 +2146,78 @@ def format_measured_physiology(layer1_payload: dict[str, Any]) -> list[str]:
     return lines
 
 
+def format_upstream_coaching_flags(
+    *,
+    layer2a: Layer2APayload | None = None,
+    layer2b: Layer2BPayload | None = None,
+    layer2c_payloads: Iterable[Layer2CPayload] | None = None,
+    layer2d: Layer2DPayload | None = None,
+) -> list[str]:
+    """#307 — surface the upstream `coaching_flags` advisory channel (Layers
+    2A discipline / 2B terrain / 2C equipment / 2D injury) into the plan-gen
+    prompt. Every Layer 2 builder emits these soft signals, but apart from the
+    training-substitution flags no Layer 4 prompt ever rendered them — a
+    systemically dead channel. Mirrors `format_measured_physiology`:
+    suppress-on-empty (returns `[]` when no flag is present), self-contained
+    lines, shared by single_session + plan_refresh + race_week_brief by import.
+
+    2E (nutrition) is intentionally excluded — Layer 5A consumes the nutrition
+    baseline downstream in the correct training→nutrition direction, so it's
+    surfaced there, not in the training-gen prompt (#300). 3A/3B carry no
+    `coaching_flags`. The training-substitution flags keep their own
+    contextual render block inside the substitution section (#307) and are not
+    duplicated here.
+
+    Advisory only: the hard injury/equipment constraints are already applied
+    upstream (exercise exclusions, feasible pools). `layer2c_payloads` is any
+    iterable of `Layer2CPayload` — callers pass `.values()` of the per-locale
+    dict (single_session passes a one-element list); per-locale duplicate flags
+    are de-duplicated.
+    """
+    sources: list[tuple[str, list[Any]]] = []
+    if layer2a is not None:
+        sources.append(("discipline", list(layer2a.coaching_flags)))
+    if layer2b is not None:
+        sources.append(("terrain", list(layer2b.coaching_flags)))
+    if layer2c_payloads is not None:
+        c_flags: list[Any] = []
+        for p in layer2c_payloads:
+            c_flags.extend(p.coaching_flags)
+        sources.append(("equipment", c_flags))
+    if layer2d is not None:
+        sources.append(("injury", list(layer2d.coaching_flags)))
+
+    lines: list[str] = []
+    seen: set[tuple[str, str, str]] = set()
+    for label, flags in sources:
+        for fl in flags:
+            key = (label, fl.flag_type, fl.message)
+            if key in seen:
+                continue
+            seen.add(key)
+            scope_bits: list[str] = []
+            disc = (
+                getattr(fl, "discipline_name", None)
+                or getattr(fl, "discipline_id", None)
+            )
+            if disc:
+                scope_bits.append(disc)
+            terrain = getattr(fl, "target_terrain_id", None)
+            if terrain:
+                scope_bits.append(terrain)
+            scope = f" ({' / '.join(scope_bits)})" if scope_bits else ""
+            lines.append(f"- [{label}] {fl.flag_type}{scope}: {fl.message}")
+    if not lines:
+        return []
+    return [
+        "Upstream coaching flags (advisory soft guidance from the Layer 2 "
+        "analyzers — reflect in `coaching_intent` / `session_notes` in natural "
+        "language, never the internal id strings; the hard constraints are "
+        "already applied upstream):",
+        *lines,
+    ]
+
+
 def _format_daily_windows_schedule(layer1_payload: dict[str, Any]) -> list[str]:
     """Render the `=== Schedule ===` section: per-day availability windows +
     the derived long-session day. Shared by per_phase + plan_refresh T2/T3.
@@ -2465,6 +2538,17 @@ def render_user_prompt(
         "per_phase _render_user_prompt: measured_physiology surfaced="
         f"{bool(physiology_lines)}"
     )
+    # #307 — surface the upstream Layer 2A/2B/2C/2D coaching_flags advisory
+    # channel (suppress-on-empty).
+    upstream_flag_lines = format_upstream_coaching_flags(
+        layer2a=layer2a_payload,
+        layer2b=layer2b_payload,
+        layer2c_payloads=layer2c_payloads.values(),
+        layer2d=layer2d_payload,
+    )
+    if upstream_flag_lines:
+        parts.append("")
+        parts.extend(upstream_flag_lines)
     parts.append("")
 
     # === Race + locale + equipment ===

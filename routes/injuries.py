@@ -28,7 +28,6 @@ BODY_PARTS = [
     'Abdomen',
     'Lower Back', 'Upper Back',
     'Neck',
-    'Other',
 ]
 
 MOD_TYPES = [
