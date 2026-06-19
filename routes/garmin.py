@@ -586,32 +586,60 @@ def _bulk_log_one(db, uid: int, gid: str, result: dict, match_plan: bool) -> dic
 
 @bp.route('/import/bulk', methods=['POST'])
 def import_bulk():
-    """Parse many activity FITs and log each one (cardio or strength). By
-    default each is auto-matched to a scheduled plan workout (mirroring the
-    Garmin sync); pass match_plan=0 to log them raw. Idempotent via a
-    content-hash dedup key. Returns JSON for the drag-and-drop UI."""
+    """Parse many .FIT files and route each to the right place — one drop zone
+    for a whole export folder. Activity files (cardio / strength) are logged and
+    optionally auto-matched to a scheduled plan workout (pass match_plan=0 to log
+    raw); wellness / daily-metric files (`_WELLNESS`, `_METRICS`, `_SLEEP_DATA`,
+    `_HRV_STATUS`) are merged into wellness_log / garmin_daily_metrics instead.
+    Idempotent (content-hash dedup for activities, per-row dedup for wellness).
+    Returns JSON for the drag-and-drop UI."""
     db = get_db()
     uid = current_user_id()
     files = request.files.getlist('files')
     if not files:
         return jsonify({'ok': False, 'error': 'No files in request.'}), 400
 
-    from garmin_fit_parser import parse_fit
+    from garmin_fit_parser import parse_fit, fit_file_meta
 
     match_plan = request.form.get('match_plan', '1') not in ('0', 'false', 'no', 'off', '')
 
     results = []
-    summary = {'imported': 0, 'matched': 0, 'duplicates': 0, 'skipped': 0, 'errors': 0}
+    summary = {'imported': 0, 'matched': 0, 'duplicates': 0, 'skipped': 0,
+               'errors': 0, 'files': 0, 'metrics_days': 0}
 
-    # Phase 1 — expand zips, hash, dedup, parse. Inserts are deferred so
-    # strength sessions can be applied oldest-first (rx_engine is order-aware).
-    to_insert = []   # (name, gid, result)
-    seen = set()
+    # Phase 0 — classify each file by its FileIdMessage kind. Wellness / daily-
+    # metric files go to the wellness tables; activities (and FileId-less
+    # 'unknown' files) go to the activity path below, which itself falls back to
+    # wellness ingestion if parse_fit finds no session. Each file's result row
+    # records where it landed (Rule #15: the decision is legible per file).
+    _WELLNESS_KINDS = {'wellness', 'metrics', 'sleep_data', 'hrv_status'}
+    wellness_pending = []   # (time_ms, name, raw, kind)
+    activity_blobs = []     # (name, raw)
     for name, raw, err in _iter_fit_blobs(files):
         if err:
             results.append({'name': name, 'status': 'skipped', 'detail': err})
             summary['skipped'] += 1
             continue
+        try:
+            kind, time_ms = fit_file_meta(raw)
+        except Exception:
+            kind, time_ms = 'unknown', 0
+        if kind in _WELLNESS_KINDS:
+            wellness_pending.append((time_ms, name, raw, kind))
+        else:
+            activity_blobs.append((name, raw))
+
+    # Wellness / daily-metric ingestion — chronological so same-day _METRICS
+    # files UPSERT newest-last (the acute-load / RMR race, see _ingest_wellness_fit).
+    wellness_pending.sort(key=lambda p: p[0])
+    for _time_ms, name, raw, kind in wellness_pending:
+        _ingest_wellness_fit(db, uid, name, raw, kind, results, summary)
+
+    # Phase 1 (activities) — hash, dedup, parse. Inserts are deferred so strength
+    # sessions can be applied oldest-first (rx_engine is order-aware).
+    to_insert = []   # (name, gid, result)
+    seen = set()
+    for name, raw in activity_blobs:
         gid = _fit_dedup_id(raw)
         if gid in seen or _already_imported(db, gid):
             results.append({'name': name, 'status': 'duplicate', 'detail': 'already imported'})
@@ -622,9 +650,9 @@ def import_bulk():
         except ValueError as e:
             msg = str(e)
             if 'session' in msg.lower():
-                results.append({'name': name, 'status': 'skipped',
-                                'detail': 'no activity session (looks like a wellness file)'})
-                summary['skipped'] += 1
+                # Not an activity after all (e.g. an older wellness file with no
+                # FileIdMessage) — route to wellness ingestion rather than drop it.
+                _ingest_wellness_fit(db, uid, name, raw, 'wellness', results, summary)
             else:
                 results.append({'name': name, 'status': 'error', 'detail': msg})
                 summary['errors'] += 1
@@ -1358,6 +1386,104 @@ def _metrics_to_db_fields(parsed: dict) -> dict:
     return out
 
 
+def _ingest_wellness_fit(db, uid, name, raw, kind, results, summary):
+    """Ingest one non-activity .FIT — daily metrics (`_METRICS`/`_SLEEP_DATA`/
+    `_HRV_STATUS`) into garmin_daily_metrics, or per-second `_WELLNESS` data into
+    wellness_log (+ daily extras). Appends one row to `results` and updates
+    `summary` in place. Shared by the wellness bulk endpoint and the unified
+    activity+wellness bulk endpoint so both route files identically.
+    """
+    from garmin_fit_parser import (
+        parse_wellness_fit, parse_wellness_daily_extras,
+        parse_metrics_fit, parse_sleep_data_fit, parse_hrv_status_fit,
+    )
+    if kind in ('metrics', 'sleep_data', 'hrv_status'):
+        parser = {
+            'metrics':    parse_metrics_fit,
+            'sleep_data': parse_sleep_data_fit,
+            'hrv_status': parse_hrv_status_fit,
+        }[kind]
+        try:
+            parsed = parser(raw)
+        except Exception as e:
+            db.rollback()
+            results.append({'name': name, 'status': 'error', 'detail': str(e)})
+            summary['errors'] += 1
+            return
+        if not parsed or 'date' not in parsed:
+            results.append({'name': name, 'status': 'skipped',
+                            'detail': f'no {kind} fields recognized'})
+            summary['skipped'] += 1
+            return
+        try:
+            fields = _metrics_to_db_fields(parsed)
+            wrote = _upsert_garmin_daily_metrics(db, uid, parsed['date'], fields)
+            db.commit()
+            detail_keys = ', '.join(sorted(fields.keys())) or '(no columns)'
+            results.append({'name': name, 'status': 'imported',
+                            'detail': f"{kind} · {parsed['date']} · {detail_keys}"})
+            if wrote:
+                summary['metrics_days'] += 1
+            summary['files'] += 1
+        except Exception as e:
+            db.rollback()
+            results.append({'name': name, 'status': 'error', 'detail': str(e)})
+            summary['errors'] += 1
+        return
+
+    # Wellness path (kind == 'wellness' or 'unknown' — older files w/o
+    # FileIdMessage fall here too, and parse_wellness_fit will return [] if
+    # there's truly nothing recognizable).
+    try:
+        rows = parse_wellness_fit(raw)
+    except Exception as e:
+        db.rollback()
+        results.append({'name': name, 'status': 'error', 'detail': str(e)})
+        summary['errors'] += 1
+        return
+    if not rows:
+        results.append({'name': name, 'status': 'skipped',
+                        'detail': _wellness_skip_detail(name)})
+        summary['skipped'] += 1
+        return
+    try:
+        ins, dup = _bulk_insert_wellness(db, rows, uid)
+        # Also harvest the daily-aggregate values that live in WELLNESS files
+        # (resting metabolic rate, resting HR, 7d-avg resting HR). Best-effort:
+        # a parse failure here shouldn't fail the per-second insert above.
+        try:
+            extras = parse_wellness_daily_extras(raw)
+            if extras.get('date'):
+                extras_fields = {
+                    k: v for k, v in extras.items()
+                    if k in ('resting_metabolic_rate', 'resting_hr',
+                             'resting_hr_7day_avg',
+                             'floors_climbed', 'floors_descended',
+                             'intensity_minutes',
+                             'spo2_avg', 'spo2_low')
+                }
+                if extras_fields:
+                    _upsert_garmin_daily_metrics(
+                        db, uid, extras['date'], extras_fields,
+                    )
+        except Exception:
+            pass
+        db.commit()
+        dates = sorted({r['date'] for r in rows if r.get('date')})
+        drange = dates[0] if dates else '?'
+        if len(dates) > 1:
+            drange += f' → {dates[-1]}'
+        results.append({'name': name, 'status': 'imported',
+                        'detail': f'{ins} new, {dup} dup · {drange}'})
+        summary['imported'] += ins
+        summary['duplicates'] += dup
+        summary['files'] += 1
+    except Exception as e:
+        db.rollback()
+        results.append({'name': name, 'status': 'error', 'detail': str(e)})
+        summary['errors'] += 1
+
+
 @bp.route('/import-wellness/bulk', methods=['POST'])
 def import_wellness_bulk():
     """Parse many Garmin daily FITs and merge them into the right table:
@@ -1377,10 +1503,7 @@ def import_wellness_bulk():
     if not files:
         return jsonify({'ok': False, 'error': 'No files in request.'}), 400
 
-    from garmin_fit_parser import (
-        fit_file_meta, parse_wellness_fit, parse_wellness_daily_extras,
-        parse_metrics_fit, parse_sleep_data_fit, parse_hrv_status_fit,
-    )
+    from garmin_fit_parser import fit_file_meta
 
     results = []
     summary = {'imported': 0, 'duplicates': 0, 'skipped': 0, 'errors': 0,
@@ -1414,92 +1537,7 @@ def import_wellness_bulk():
     pending.sort(key=lambda p: p[0])
 
     for _time_ms, name, raw, kind in pending:
-        if kind in ('metrics', 'sleep_data', 'hrv_status'):
-            parser = {
-                'metrics':    parse_metrics_fit,
-                'sleep_data': parse_sleep_data_fit,
-                'hrv_status': parse_hrv_status_fit,
-            }[kind]
-            try:
-                parsed = parser(raw)
-            except Exception as e:
-                db.rollback()
-                results.append({'name': name, 'status': 'error', 'detail': str(e)})
-                summary['errors'] += 1
-                continue
-            if not parsed or 'date' not in parsed:
-                results.append({'name': name, 'status': 'skipped',
-                                'detail': f'no {kind} fields recognized'})
-                summary['skipped'] += 1
-                continue
-            try:
-                fields = _metrics_to_db_fields(parsed)
-                wrote = _upsert_garmin_daily_metrics(db, uid, parsed['date'], fields)
-                db.commit()
-                detail_keys = ', '.join(sorted(fields.keys())) or '(no columns)'
-                results.append({'name': name, 'status': 'imported',
-                                'detail': f"{kind} · {parsed['date']} · {detail_keys}"})
-                if wrote:
-                    summary['metrics_days'] += 1
-                summary['files'] += 1
-            except Exception as e:
-                db.rollback()
-                results.append({'name': name, 'status': 'error', 'detail': str(e)})
-                summary['errors'] += 1
-            continue
-
-        # Wellness path (kind == 'wellness' or 'unknown' — older files w/o
-        # FileIdMessage fall here too, and parse_wellness_fit will return []
-        # if there's truly nothing recognizable).
-        try:
-            rows = parse_wellness_fit(raw)
-        except Exception as e:
-            db.rollback()
-            results.append({'name': name, 'status': 'error', 'detail': str(e)})
-            summary['errors'] += 1
-            continue
-        if not rows:
-            results.append({'name': name, 'status': 'skipped',
-                            'detail': _wellness_skip_detail(name)})
-            summary['skipped'] += 1
-            continue
-        try:
-            ins, dup = _bulk_insert_wellness(db, rows, uid)
-            # Also harvest the daily-aggregate values that live in WELLNESS
-            # files (resting metabolic rate, resting HR, 7d-avg resting HR).
-            # Best-effort: a parse failure here shouldn't fail the per-second
-            # insert above.
-            try:
-                extras = parse_wellness_daily_extras(raw)
-                if extras.get('date'):
-                    extras_fields = {
-                        k: v for k, v in extras.items()
-                        if k in ('resting_metabolic_rate', 'resting_hr',
-                                 'resting_hr_7day_avg',
-                                 'floors_climbed', 'floors_descended',
-                                 'intensity_minutes',
-                                 'spo2_avg', 'spo2_low')
-                    }
-                    if extras_fields:
-                        _upsert_garmin_daily_metrics(
-                            db, uid, extras['date'], extras_fields,
-                        )
-            except Exception:
-                pass
-            db.commit()
-            dates = sorted({r['date'] for r in rows if r.get('date')})
-            drange = dates[0] if dates else '?'
-            if len(dates) > 1:
-                drange += f' → {dates[-1]}'
-            results.append({'name': name, 'status': 'imported',
-                            'detail': f'{ins} new, {dup} dup · {drange}'})
-            summary['imported'] += ins
-            summary['duplicates'] += dup
-            summary['files'] += 1
-        except Exception as e:
-            db.rollback()
-            results.append({'name': name, 'status': 'error', 'detail': str(e)})
-            summary['errors'] += 1
+        _ingest_wellness_fit(db, uid, name, raw, kind, results, summary)
 
     return jsonify({'ok': True, 'summary': summary, 'results': results})
 
