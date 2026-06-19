@@ -5,6 +5,20 @@ Layer-3A). Goal: let an athlete feed Layer-3A from **file exports** of services
 whose live API/webhook isn't connected (or doesn't exist), the way Garmin `.fit`
 upload already works.
 
+> **Correction (2026-06-19, Andy) — slice 3 retired.** During slice-3 scoping
+> the premise broke: **neither Polar nor COROS offers a wellness *file* to
+> upload.** Polar's "export all your data" (GDPR) ZIP **omits sleep + nightly
+> recharge** — those are algorithm-derived and live **only** behind the
+> AccessLink API (confirmed: Polar support "activity and sleep information are
+> not included in the exported file"; intervals.icu users report the export
+> carries activities but no sleep/recharge). COROS wellness is app-only (§3) —
+> no export file either. Both providers' wellness already flows in via their
+> live webhooks (`routes/polar_ingest.py`, `routes/coros_ingest.py`), so there
+> is **no artifact to parse and nothing to build**. Slice 3 is closed
+> `not_planned` on #767. The wellness-upload value moves to **slice 4 (Whoop)** —
+> the only non-Garmin service with a real single-file wellness export
+> (`physiological_cycles.csv`). See the per-section notes below.
+
 **Ratified decisions:** slice order as in §7 (FIT-generalize first); Strava gets
 a dedicated `cardio_log.strava_activity_id` column (§4.3); Whoop wellness
 extends `WellnessSource` with priority garmin > whoop > polar > coros (§6).
@@ -44,7 +58,7 @@ readers beyond the one `WellnessSource` extension (§6); plan-file imports
 |---|---|---|
 | Garmin | FIT ✓ done | FIT ✓ done |
 | COROS | FIT / TCX / GPX per activity | thin (app-only) |
-| Polar | TCX / GPX / CSV per session; GDPR JSON bundle | only inside GDPR JSON bundle |
+| Polar | TCX / GPX / CSV per session; GDPR JSON bundle | **none in any export** — sleep/recharge are algorithm-derived, AccessLink-API-only (the GDPR ZIP omits them; corrected 2026-06-19) |
 | Wahoo | FIT per activity | none |
 | Strava | bulk archive: original FIT/GPX/TCX + `activities.csv` | none |
 | Whoop | CSV (workouts) | **CSV ✓ — recovery (HRV+RHR) + sleep** |
@@ -53,7 +67,9 @@ readers beyond the one `WellnessSource` extension (§6); plan-file imports
 - **A. Activities → `cardio_log`** (feeds `recent_workouts` + ACWR). FIT is
   common; TCX/GPX cover the rest. No wellness.
 - **B. Wellness → `recent_wellness`** (sleep/HRV/RHR). Bespoke per platform;
-  **Whoop CSV is the only rich non-Garmin single-file source.**
+  **Whoop CSV is the only rich non-Garmin single-file source** — and, per the
+  2026-06-19 correction, the *only* non-Garmin wellness source with an uploadable
+  file at all (Polar/COROS wellness is webhook-only, no export file).
 
 ## 4. Architecture
 
@@ -138,8 +154,11 @@ Polar/COROS/Wahoo manual uploads need **no** contract change (existing sources).
    with `<provider>-file:` dedup. Covers COROS/Wahoo/Strava-from-FIT activities.
    Reuses `parse_fit`. No new format, no contract change. *(Cheapest real win.)*
 2. **TCX/GPX activity parser** — Polar/Strava per-session exports → `cardio_log`.
-3. **Polar/COROS wellness upload** — GDPR/app exports → `provider_raw_record` via
-   `_record_raw`. No contract change.
+3. ~~**Polar/COROS wellness upload** — GDPR/app exports → `provider_raw_record` via
+   `_record_raw`.~~ **RETIRED (2026-06-19, `not_planned`):** no wellness export
+   file exists for either provider (Polar GDPR ZIP omits sleep/recharge; COROS
+   wellness is app-only). Both already ingest via their live webhooks — nothing
+   to parse. See the top-of-doc correction.
 4. **Whoop CSV wellness** — `recovery.csv`+`sleep.csv` → `recent_wellness`;
    includes the §6 `WellnessSource` extension. *(Highest wellness value.)*
 5. **Unified upload UI** — provider+format picker, zip expansion, preview/bulk.
@@ -171,8 +190,9 @@ freshest-non-null coalesce.
   Landing table still open: reuse `provider_raw_record` (`provider='whoop'`,
   `data_type='sleep'`/`'hrv'`) read by a whoop branch in `q_layer3A_recent_wellness`
   (recommended — mirrors Polar) vs a dedicated table.
-- Polar GDPR JSON bundle schema still needs a real export sample to map (Rule
-  #14 — Andy has none; the bundle is account-level, not on public GitHub).
+- ~~Polar GDPR JSON bundle schema still needs a real export sample to map~~ —
+  **moot (2026-06-19):** the Polar export omits sleep/recharge entirely (not a
+  schema-unknown, an absence), so there is nothing to map. Slice 3 retired.
 - Whether to surface uploaded-but-unconnected providers on the connections page
   as "file-import only."
 
