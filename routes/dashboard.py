@@ -74,6 +74,48 @@ def _v2_session_card(session, plan_name=None) -> dict:
     }
 
 
+def _supplement_summary(db, user_id: int, today_sessions, today_d) -> dict | None:
+    """Standard + today's Daily supplement recommendations for the home page (#621).
+
+    Resolves the plan version scheduled today (or the athlete's latest version),
+    loads its Layer 5A `PlanNutrition`, and returns the standing ("always take")
+    list plus today's effort/event-based list. Best-effort — any miss (no plan,
+    no nutrition artifact yet, today outside scope) returns None / empty so the
+    card simply omits rather than breaking the dashboard.
+    """
+    try:
+        from plan_nutrition_repo import load_plan_nutrition_by_version
+
+        pv_id = None
+        if today_sessions:
+            pv_id = today_sessions[0].plan_version_id
+        else:
+            row = db.execute(
+                "SELECT id FROM plan_versions WHERE user_id = ? "
+                "ORDER BY id DESC LIMIT 1",
+                (user_id,),
+            ).fetchone()
+            pv_id = row["id"] if row else None
+        if pv_id is None:
+            return None
+
+        nutrition = load_plan_nutrition_by_version(db, pv_id)
+        if nutrition is None or not nutrition.standing_supplements:
+            return None
+
+        today_recs = []
+        for day in nutrition.days:
+            if day.date == today_d:
+                today_recs = day.supplement_recs
+                break
+        return {
+            'standard': nutrition.standing_supplements,
+            'daily': today_recs,
+        }
+    except Exception:
+        return None
+
+
 def _has_plan_version(db, user_id: int) -> bool:
     """True when the athlete has at least one `plan_versions` row.
 
@@ -209,6 +251,8 @@ def index():
 
     has_plan_version = _has_plan_version(db, uid)
 
+    supplement_summary = _supplement_summary(db, uid, today_v2, today_d)
+
     weather = _get_weather(db)
 
     # Cardio sessions in the last 7 days with no conditions log entry
@@ -246,4 +290,5 @@ def index():
                            today=today,
                            clothing_recs=clothing_recs,
                            unconditioned_cardio=unconditioned_cardio,
+                           supplement_summary=supplement_summary,
                            has_plan_version=has_plan_version)
