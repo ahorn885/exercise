@@ -13,7 +13,7 @@ Coverage:
 
 All tests use the `_FakeConn` / `_FakeCursor` pattern from
 `tests/test_race_events_repo.py` — no real DB connection. The builder issues
-24 SELECTs in a fixed order; tests queue 24 responses to match.
+26 SELECTs in a fixed order; tests queue 26 responses to match.
 """
 
 from __future__ import annotations
@@ -76,11 +76,12 @@ class _FakeConn:
 
 
 def _queue_empty_athlete(conn: _FakeConn) -> None:
-    """Queue 25 empty responses — every SELECT returns no rows.
+    """Queue 26 empty responses — every SELECT returns no rows.
     (D-73 Phase 5.2 Bucket C (l) added the `_load_skill_toggle_states`
     query; the dead `food_allergies` load was later removed; 2E-6 §I.1 added
-    the `_load_supplements` query.)"""
-    for _ in range(25):
+    the `_load_supplements` query; #690 added the `_load_coaching_preferences`
+    query.)"""
+    for _ in range(26):
         conn.queue_response()
 
 
@@ -142,6 +143,7 @@ class TestEmptyUser:
         # Top-level convenience fields.
         assert payload.experience_level is None
         assert payload.coaching_voice_preferences is None
+        assert payload.coaching_preferences == []
         assert payload.available_days_per_week == 0
         assert payload.travel_constraint is None
         assert payload.sleep_baseline is None
@@ -170,7 +172,7 @@ class TestEmptyUser:
         assert payload.network.network_links == []
         assert payload.disclosures.acknowledgments == []
 
-    def test_25_selects_issued(self):
+    def test_26_selects_issued(self):
         conn = _FakeConn()
         _queue_empty_athlete(conn)
         build_layer1_payload(conn, user_id=1)
@@ -178,8 +180,9 @@ class TestEmptyUser:
         # skill-toggle SELECT added by D-73 Phase 5.2 Bucket C (l) stays);
         # back to 25 with the 2E-6 §I.1 `_load_supplements` SELECT. #304 swapped
         # the retired `_load_target_race_event_id` SELECT for the event-windows
-        # `travel_constraint` SELECT — net-zero, still 25.
-        assert len(conn.calls) == 25
+        # `travel_constraint` SELECT — net-zero, 25. #690 added the
+        # `_load_coaching_preferences` SELECT — 26.
+        assert len(conn.calls) == 26
 
     def test_user_id_required(self):
         conn = _FakeConn()
@@ -405,6 +408,17 @@ class TestFullyPopulated:
              "unavailable_locale": None, "away_locale": None,
              "brought_craft": "", "notes": ""},
         ])
+        # 26) coaching_preferences — #690 Coaching Memory. One permanent
+        # high-variety pref + one advisory avoid note; ordered created_at ASC.
+        conn.queue_response(rows=[
+            {"category": "training",
+             "content": "Wants high exercise variety; dislikes repeating the "
+                        "same strength sessions.",
+             "permanent": 1},
+            {"category": "avoid_exercise",
+             "content": "No overhead pressing for now.",
+             "permanent": 0},
+        ])
 
     def test_identity_populated(self):
         conn = _FakeConn()
@@ -497,6 +511,21 @@ class TestFullyPopulated:
         assert "brings gravel_bike" in payload.travel_constraint
         assert "training camp" in payload.travel_constraint
         assert "2026-07-10–2026-07-12: indoor only" in payload.travel_constraint
+
+    def test_coaching_preferences_thread_through(self):
+        # #690 — durable Coaching Memory rows surface as typed
+        # Layer1CoachingPreference (int `permanent` normalized to bool),
+        # ordered created_at ASC, so the synthesizer can honor a high-variety
+        # request + avoid/prefer notes.
+        conn = _FakeConn()
+        self._queue_andy(conn)
+        payload = build_layer1_payload(conn, user_id=1)
+        assert len(payload.coaching_preferences) == 2
+        first = payload.coaching_preferences[0]
+        assert first.category == "training"
+        assert first.permanent is True
+        assert "high exercise variety" in first.content
+        assert payload.coaching_preferences[1].permanent is False
 
     def test_lifestyle_multi_select_split(self):
         conn = _FakeConn()

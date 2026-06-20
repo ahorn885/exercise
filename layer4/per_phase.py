@@ -324,7 +324,7 @@ Layer 2C per-locale `effective_pool` + `exercises_resolved` (Tier 1 direct / Tie
     + STRENGTH_PROGRAMMING_GUIDANCE
     + """
 
-Pick exercises from the rendered `=== Strength exercise pool ===` for the session's locale (never invent `exercise_id`s). Keep a stable core of 2–3 compound lifts across the phase for progression; rotate accessory exercises week-to-week. If the athlete has no logged history for an exercise, prescribe the reps and tell them to use a load they can complete for that many reps with ~2 reps in reserve, and log it — they set their own baseline; do not withhold an exercise for lack of history.
+Pick exercises from the rendered `=== Strength exercise pool ===` for the session's locale (never invent `exercise_id`s). Keep a stable core of 2–3 compound lifts across the phase for progression, and rotate the accessory exercises every week — draw across the FULL rendered pool and its movement patterns so successive strength sessions never read as the same workout; do not settle on one fixed accessory template for the phase. When the `Coaching memory` block asks for high variety, widen the rotation further still and touch most of the resolved accessory pool over the phase; honor any `prefer_exercise` / `avoid_exercise` preference there by selecting (or skipping) the matching exercise within the pool. If the athlete has no logged history for an exercise, prescribe the reps and tell them to use a load they can complete for that many reps with ~2 reps in reserve, and log it — they set their own baseline; do not withhold an exercise for lack of history.
 
 Attribute each strength session's `discipline_id` to the discipline it most supports. Place strength as the second session on an easy/moderate cardio day, not on the same day as a key intensity/long session. Do not prescribe a time of day; if strength shares a day with a hard session, add a `session_notes` cue to separate them by a few hours and avoid heavy legs right before the quality session. Honor 2D injury exclusions/accommodations.
 
@@ -2295,6 +2295,29 @@ def _format_daily_windows_schedule(layer1_payload: dict[str, Any]) -> list[str]:
     return lines
 
 
+def _format_coaching_memory(layer1_payload: dict[str, Any]) -> list[str]:
+    """#690 — render the athlete's durable Coaching Memory preferences
+    (`coaching_preferences`, surfaced onto Layer 1) so the synthesizer can honor
+    them — notably an explicit high-variety request, plus prefer/avoid-exercise
+    notes. Permanent preferences are framed as strict, non-permanent as
+    advisory (mirrors the v1 framing). Suppress-on-empty: no block when the
+    athlete has set no preferences, so existing payloads render unchanged."""
+    prefs = layer1_payload.get("coaching_preferences") or []
+    if not prefs:
+        return []
+    out = [
+        "Coaching memory (durable athlete preferences — honor permanent ones "
+        "strictly; treat non-permanent ones as advisory; apply those relevant "
+        "to training):"
+    ]
+    for p in prefs:
+        tag = "permanent" if p.get("permanent") else "advisory"
+        category = p.get("category") or "general"
+        content = p.get("content") or ""
+        out.append(f"- [{tag}] {category}: {content}")
+    return out
+
+
 def render_user_prompt(
     *,
     phase_spec: PhaseSpec,
@@ -2506,6 +2529,10 @@ def render_user_prompt(
     voice = layer1_payload.get("coaching_voice_preferences")
     if voice:
         parts.append(f"Voice notes: {voice}")
+    # #690 — surface the durable Coaching Memory preferences (suppress-on-empty)
+    # so the synthesizer honors an explicit high-variety request + prefer/avoid
+    # exercise notes; the strength section reads this block by name.
+    parts.extend(_format_coaching_memory(layer1_payload))
     parts.append("")
     parts.append("Active injuries (hard constraints; never overridable):")
     parts.extend(_format_active_injuries(layer2d_payload))

@@ -297,6 +297,18 @@ def test_system_prompt_has_strength_section_and_no_invent_rule():
     assert "session grid" in SYSTEM_PROMPT.lower()
 
 
+def test_system_prompt_strength_variety_directive():
+    # #690 — the strength section pushes accessory rotation across the full pool
+    # and ties harder rotation to the rendered Coaching memory block.
+    from layer4.strength_guidance import STRENGTH_PROGRAMMING_GUIDANCE
+
+    assert "rotate the accessory exercises every week" in SYSTEM_PROMPT
+    assert "Coaching memory" in SYSTEM_PROMPT
+    # The shared guidance (spliced into SYSTEM_PROMPT + the T1/T2 refresh prompts)
+    # carries the self-contained rotation directive so refresh strength varies too.
+    assert "ROTATION, not a fixed template" in STRENGTH_PROGRAMMING_GUIDANCE
+
+
 # ─── #698 Track 1 (Slice 2) — recovery pool + dose + prompt ──────────────────
 
 
