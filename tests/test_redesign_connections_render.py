@@ -9,6 +9,7 @@ exercises each tab. Assertions stay structural + CSP-clean.
 
 from __future__ import annotations
 
+import io
 import os
 import sys
 
@@ -61,6 +62,9 @@ class _Conn:
     def commit(self):
         pass
 
+    def rollback(self):
+        pass
+
 
 def _activity(**kw):
     base = {
@@ -89,6 +93,9 @@ def _client(monkeypatch, providers=(), activities=(), strength=()):
             monkeypatch.setattr(mod, 'get_db', lambda conn=conn: conn,
                                 raising=False)
     _appmod.app.config['TESTING'] = True
+    # The unified-uploader POST tests hit /garmin/import/bulk (not csrf-exempt;
+    # the real JS uploader sends the X-CSRFToken header).
+    monkeypatch.setitem(_appmod.app.config, 'WTF_CSRF_ENABLED', False)
     c = _appmod.app.test_client()
     with c.session_transaction() as sess:
         sess['user_id'] = 1
@@ -114,6 +121,69 @@ def test_sources_tab(monkeypatch):
     assert '/garmin/import' in html
     assert 'style="' not in html
     assert 'onclick=' not in html
+
+
+def test_sources_tab_unified_uploader_accepts_csv(monkeypatch):
+    # #767 slice 5 — ONE uploader auto-detects activity files AND a WHOOP
+    # wellness CSV; there is no separate wellness card / route.
+    client = _client(monkeypatch)
+    resp = client.get('/connections/')
+    html = resp.get_data(as_text=True)
+    # The single drop zone advertises .csv alongside the activity formats.
+    assert 'data-accept=".fit,.tcx,.gpx,.csv,.zip"' in html
+    assert 'accept=".fit,.tcx,.gpx,.csv,.zip"' in html
+    # Copy names the WHOOP wellness export it now auto-routes.
+    assert 'physiological_cycles.csv' in html
+    # The standalone whoop form/route is gone (folded into the one uploader).
+    assert '/whoop/import' not in html
+    assert 'name="csv_file"' not in html
+    assert 'style="' not in html
+
+
+def test_whoop_import_route_is_removed(monkeypatch):
+    # The standalone /whoop/import page/route no longer exists.
+    client = _client(monkeypatch)
+    assert client.get('/whoop/import').status_code == 404
+    assert client.post('/whoop/import').status_code == 404
+
+
+def test_bulk_import_auto_routes_whoop_csv(monkeypatch):
+    # A WHOOP CSV dropped into the unified uploader is detected + ingested as
+    # wellness (provider_raw_record), reported back as imported.
+    client = _client(monkeypatch)
+    csv = (
+        b'Cycle start time,Resting heart rate (bpm),'
+        b'Heart rate variability (ms),Asleep duration (min)\n'
+        b'2026-06-18 22:00:00,48,65,420\n'
+    )
+    resp = client.post(
+        '/garmin/import/bulk',
+        data={'files': (io.BytesIO(csv), 'physiological_cycles.csv')},
+        content_type='multipart/form-data',
+    )
+    assert resp.status_code == 200
+    body = resp.get_json()
+    assert body['ok'] is True
+    assert body['summary']['metrics_days'] == 1
+    assert body['summary']['files'] == 1
+    row = body['results'][0]
+    assert row['status'] == 'imported' and 'WHOOP wellness' in row['detail']
+
+
+def test_bulk_import_rejects_non_whoop_csv(monkeypatch):
+    # A CSV that isn't a usable WHOOP export is reported as an error, not dropped.
+    client = _client(monkeypatch)
+    csv = b'a,b,c\n1,2,3\n'
+    resp = client.post(
+        '/garmin/import/bulk',
+        data={'files': (io.BytesIO(csv), 'random.csv')},
+        content_type='multipart/form-data',
+    )
+    assert resp.status_code == 200
+    body = resp.get_json()
+    assert body['summary']['errors'] == 1
+    assert body['results'][0]['status'] == 'error'
+    assert 'WHOOP' in body['results'][0]['detail']
 
 
 def test_files_tab_lists_activities(monkeypatch):

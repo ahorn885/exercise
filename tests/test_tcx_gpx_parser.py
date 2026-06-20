@@ -234,9 +234,15 @@ class TestBlobExt:
         assert _blob_ext('run.TCX') == 'tcx'
         assert _blob_ext('hike.gpx') == 'gpx'
 
-    def test_rejects_non_activity(self):
-        assert _blob_ext('cycles.csv') is None
+    def test_recognizes_wellness_csv(self):
+        # #767 slice 5 — a WHOOP physiological_cycles.csv is now ingestible
+        # (routed to the wellness path, not cardio_log).
+        assert _blob_ext('physiological_cycles.csv') == 'csv'
+        assert _blob_ext('CYCLES.CSV') == 'csv'
+
+    def test_rejects_non_ingestible(self):
         assert _blob_ext('export.zip') is None
+        assert _blob_ext('readme.txt') is None
 
 
 class TestIterActivityBlobs:
@@ -248,8 +254,14 @@ class TestIterActivityBlobs:
         assert [(n.split('.')[-1], ext, err) for n, _r, ext, err in out] == [
             ('tcx', 'tcx', None), ('gpx', 'gpx', None)]
 
+    def test_csv_blob_carries_csv_ext(self):
+        # #767 slice 5 — a .csv yields ext='csv' (the import_bulk loop routes it
+        # to the WHOOP wellness path); the parser validates the contents later.
+        (name, raw, ext, err), = _iter_activity_blobs([_Upload('cycles.csv', b'a,b')])
+        assert ext == 'csv' and err is None and raw == b'a,b'
+
     def test_unsupported_file_is_an_error(self):
-        (name, raw, ext, err), = _iter_activity_blobs([_Upload('x.csv', b'a,b')])
+        (name, raw, ext, err), = _iter_activity_blobs([_Upload('notes.txt', b'hi')])
         assert raw is None and ext is None and 'not a' in err
 
     def test_zip_expands_to_entries_with_ext(self):
@@ -267,4 +279,4 @@ class TestIterActivityBlobs:
         with zipfile.ZipFile(buf, 'w') as zf:
             zf.writestr('readme.txt', b'nothing here')
         (name, raw, ext, err), = _iter_activity_blobs([_Upload('export.zip', buf.getvalue())])
-        assert raw is None and 'no .fit/.tcx/.gpx' in err
+        assert raw is None and 'no .fit/.tcx/.gpx/.csv' in err
