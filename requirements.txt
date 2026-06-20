@@ -11,3 +11,4 @@ requests>=2.31
 bcrypt>=4.1
 zxcvbn>=4.4.28
 pydantic>=2.5
+cryptography>=42.0
