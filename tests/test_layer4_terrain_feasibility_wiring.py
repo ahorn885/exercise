@@ -116,9 +116,15 @@ def _cone(
         layer1_payload=SimpleNamespace(
             discipline_baselines=SimpleNamespace(paddling=paddling, cycling=cycling)
         ),
-        layer2c_payload=SimpleNamespace(
-            exercises_resolved=exercises, coaching_flags=flags
-        ),
+        # #780 — the cone carries one 2C payload per cluster locale (keyed by
+        # locale_id). `_gather_feasibility_inputs` reads the primary entry for the
+        # strength pool + the full dict for skill-gating, so the primary locale
+        # must be present as a key.
+        layer2c_payloads={
+            primary_locale: SimpleNamespace(
+                exercises_resolved=exercises, coaching_flags=flags
+            )
+        },
         layer2a_payload=SimpleNamespace(disciplines=disciplines),
     )
 
