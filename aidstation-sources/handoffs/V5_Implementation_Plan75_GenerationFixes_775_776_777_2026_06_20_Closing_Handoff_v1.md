@@ -72,15 +72,32 @@ is tagged `Mountain Biking` and every active D-009 row `Packrafting`.
 
 ## 4. Owed (Andy-action)
 
-1. **Live-verify `0019` (Rule #14).** Read-only `neon-query`: confirm active
-   D-008/D-009 `sport_discipline_bridge` rows tag `Mountain Biking` / `Packrafting`
-   at `0A-v1.6.8`. Then regenerate plan #75 and confirm `strength_pool_n` is
-   **37 / 35** (not 0) and that a strength substitute breaks up the stacked
-   same-discipline day. Until verified, the green suite does **not** prove the
-   live DB half (Rule #9/#10 — the container can't reach Neon).
-2. **`layer0-redump` (non-urgent housekeeping).** Fold `0019` into the baseline
-   snapshot `etl/output/layer0_etl_v1.8.0.sql` so the genesis dump no longer lags
-   live — same pattern as the `0006` re-dump (PR #626).
+### 4.0 Done since merge (2026-06-20)
+- **`0019` DB-half LIVE-VERIFIED ✅** via the `neon-query` workflow (read-only,
+  run against prod). Result:
+
+  | discipline_id | exercise_db_sport | etl_version | total_pool | strength_pool* |
+  |---|---|---|---|---|
+  | D-008 | Mountain Biking | `0A-v1.6.8` | **37** | 14 |
+  | D-009 | Packrafting | `0A-v1.6.8` | **39** | 15 |
+
+  Both retagged correctly at `0A-v1.6.8`; **pool is non-empty (37 / 39, was 0)** —
+  the core #777 fix is confirmed live. *(`strength_pool*` used an `ILIKE
+  '%strength%'` probe on `exercise_type`, narrower than the system's real
+  strength-type definition — the authoritative count is whatever the feasibility
+  log reports on a regen; the meaningful result here is total_pool > 0.)*
+- **`layer0-redump` (baseline v1.9.0) RUNNING** — triggered 2026-06-20 to fold
+  `0007`/`0017`/`0018`/`0019` into `etl/output/layer0_etl_v1.9.0.sql`; the workflow
+  opens a PR for the `layer0-gate` to validate, then it merges on green.
+
+### 4.1 Remaining (next session — Andy)
+- **Plan-#75 end-to-end regen** — the one piece left to fully close #777. Regenerate
+  plan #75 (MTB + packraft) and confirm in `/admin/logs`:
+  `feasibility[D-008/Mountain Biking]: … strength_pool_n=<N>` (and D-009) with
+  **N > 0**, and the 2026-07-09 day no longer stacks two MTB sessions. The DB-half
+  above already guarantees the pool is non-empty; this confirms generation
+  *consumes* it. If the pool is non-empty but the day still stacks, that's
+  **#778/#779** (auto-repair), not #777.
 
 ## 5. Next moves (Andy, 2026-06-20)
 
@@ -111,7 +128,7 @@ via #781/#782; their feature branches are spent.
 1. `CLAUDE.md` — stable rules
 2. `CURRENT_STATE.md` — what just shipped + current focus (this work is the first
    predecessor block under the #307/#774 last-shipped pointer)
-3. `CARRY_FORWARD.md` — the Plan-75 operational entry (live-verify + redump owed)
+3. `CARRY_FORWARD.md` — the Plan-75 operational entry (DB-verify done; plan-regen + redump-PR-merge owed)
 4. This handoff
 5. `./scripts/verify-handoff.sh` — automated anchor sweep
 
@@ -122,7 +139,7 @@ via #781/#782; their feature branches are spent.
 | #775/#776 merged | `main` `9587a13` | `git log --oneline \| grep 9587a13` → "#775 + #776 … (#781)" |
 | #777 merged | `main` `86a8e71` | `git log --oneline \| grep 86a8e71` → "#777 … (#782)" |
 | Migration present | `etl/migrations/layer0/0019_map_mtb_packraft_strength_subs.sql` | file exists on `main`; retags D-008→`Mountain Biking` / D-009→`Packrafting` at `0A-v1.6.8`; verify DO block |
-| Prod-applied | live Neon | `layer0-apply` run (Andy, 2026-06-20) — **live-verify still owed via `neon-query`** |
+| Prod-applied + DB-verified | live Neon | `layer0-apply` run (Andy, 2026-06-20); `neon-query` confirms D-008→`Mountain Biking` / D-009→`Packrafting` at `0A-v1.6.8`, pools 37/39 (was 0) — see §4.0. **Plan-regen end-to-end still owed.** |
 | CURRENT_STATE updated | `aidstation-sources/CURRENT_STATE.md` | predecessor block "Plan-75 generation fixes …" after the #307 last-shipped block |
 | CARRY_FORWARD updated | `aidstation-sources/CARRY_FORWARD.md` | "Plan-75 generation fixes — #775/#776 … #777 … (`0019`)" entry above the #307 entry |
 
