@@ -22,8 +22,8 @@
   <div class="races-intro">
     <p class="eyebrow accent">● Data · everything that feeds the app</p>
     <h1 class="page-title">Bring data in.</h1>
-    <p class="page-sub">One place for every source — auto-sync providers, manual .FIT uploads, and
-      how we handle the overlap. Both paths feed the same engine; your plan adapts either way.</p>
+    <p class="page-sub">One place for every source — auto-sync providers plus manual uploads of both
+      activity files and wellness exports. Every path feeds the same engine; your plan adapts either way.</p>
   </div>
 </div>
 
@@ -45,31 +45,35 @@
 {% if tab == 'sources' %}
 <div class="stack">
 
-  {# .FIT drop zone — real import pipeline. Multi-file + drag-and-drop via the
-     shared bulk uploader ([data-bulk-*] → static/app.js, posts to import_bulk);
+  {# Unified drop zone (#767 slice 5) — one uploader that auto-detects what each
+     file is and routes it server-side (routes.garmin.import_bulk): .fit/.tcx/.gpx
+     activities → cardio_log; Garmin wellness/daily-metric FITs → wellness tables;
+     a WHOOP physiological_cycles.csv → provider_raw_record. Multi-file + drag-
+     and-drop via the shared bulk uploader ([data-bulk-*] → static/app.js);
      duplicate files are skipped server-side. The single-file review-and-plan-
      match path lives on the full Import .FIT page (linked below). #}
   <div class="conn-drop" data-bulk-upload
-       data-endpoint="{{ url_for('garmin.import_bulk') }}" data-accept=".fit,.tcx,.gpx,.zip">
+       data-endpoint="{{ url_for('garmin.import_bulk') }}" data-accept=".fit,.tcx,.gpx,.csv,.zip">
     <div class="drop-ic">
       <svg class="icon" width="18" height="18" aria-hidden="true"><use href="#i-upload"></use></svg>
     </div>
-    <div class="drop-title">Upload activity files</div>
+    <div class="drop-title">Upload your data</div>
     <p class="drop-sub">Drop a whole export folder — Garmin <code>.fit</code> workouts <em>and</em>
       wellness/daily-metric files (<code>_WELLNESS</code>, <code>_METRICS</code>, <code>_SLEEP_DATA</code>,
-      <code>_HRV_STATUS</code>), or <code>.tcx</code> / <code>.gpx</code> activities from COROS / Polar /
-      Strava. Each is routed automatically; duplicates are skipped.</p>
+      <code>_HRV_STATUS</code>), <code>.tcx</code> / <code>.gpx</code> activities from COROS / Polar /
+      Strava, or a WHOOP <code>physiological_cycles.csv</code> (sleep / HRV / resting HR). We detect
+      what each file is and route it automatically; duplicates are skipped.</p>
 
     <div data-bulk-drop class="fit-drop">
-      <p class="fit-drop-hint">Drag &amp; drop <code>.fit</code> / <code>.tcx</code> / <code>.gpx</code> / <code>.zip</code> files here</p>
+      <p class="fit-drop-hint">Drag &amp; drop <code>.fit</code> / <code>.tcx</code> / <code>.gpx</code> / <code>.csv</code> / <code>.zip</code> files here</p>
       <div class="fit-drop-actions">
         <label class="btn btn-ghost btn-sm fit-file-btn">
           Choose files
-          <input data-bulk-files type="file" accept=".fit,.tcx,.gpx,.zip" multiple hidden>
+          <input data-bulk-files type="file" accept=".fit,.tcx,.gpx,.csv,.zip" multiple hidden>
         </label>
         <label class="btn btn-ghost btn-sm fit-file-btn">
           Choose folder
-          <input data-bulk-folder type="file" accept=".fit,.tcx,.gpx,.zip" webkitdirectory hidden>
+          <input data-bulk-folder type="file" accept=".fit,.tcx,.gpx,.csv,.zip" webkitdirectory hidden>
         </label>
       </div>
     </div>
@@ -83,8 +87,8 @@
         <option value="polar">Polar</option>
         <option value="strava">Strava</option>
       </select>
-      <span class="dim">— which service these activity files were exported from. Wellness /
-        daily-metric files route automatically regardless.</span>
+      <span class="dim">— which service the <em>activity</em> files came from. Wellness / daily-metric
+        files and a WHOOP <code>.csv</code> route automatically regardless.</span>
     </label>
 
     <label class="fit-match">

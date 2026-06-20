@@ -414,11 +414,20 @@ def _fit_dedup_id(raw: bytes, prefix: str = 'fit:') -> str:
 # shared. The key is the lowercased extension sans dot.
 _ACTIVITY_EXTS = ('fit', 'tcx', 'gpx')
 
+# #767 slice 5 — the unified uploader also auto-detects a WHOOP wellness export
+# (`physiological_cycles.csv`) and routes it to provider_raw_record (the
+# wellness path) instead of cardio_log. CSV is the only non-activity upload
+# format, so a `.csv` blob == a WHOOP wellness export (the parser validates).
+_WELLNESS_CSV_EXT = 'csv'
+_UPLOAD_EXTS = _ACTIVITY_EXTS + (_WELLNESS_CSV_EXT,)
+
 
 def _blob_ext(name: str) -> str | None:
-    """The activity-format key for a filename, or None if not an activity file."""
+    """The upload-format key for a filename, or None if it isn't ingestible.
+    Activity formats ('fit'|'tcx'|'gpx') route to cardio_log; 'csv' is a WHOOP
+    wellness export routed to provider_raw_record (#767 slice 5)."""
     low = name.lower()
-    for ext in _ACTIVITY_EXTS:
+    for ext in _UPLOAD_EXTS:
         if low.endswith('.' + ext):
             return ext
     return None
@@ -427,10 +436,11 @@ def _blob_ext(name: str) -> str | None:
 def _iter_activity_blobs(files):
     """Expand an uploaded file list into (name, bytes, ext, error) tuples.
 
-    Each upload is an activity file (.fit/.tcx/.gpx) or a .zip (every activity
-    entry inside, so a whole exported folder zipped up imports in one shot).
-    `ext` is the parser-dispatch key ('fit'|'tcx'|'gpx'); exactly one of
-    (bytes+ext) / error is set per yielded tuple."""
+    Each upload is an ingestible file (.fit/.tcx/.gpx activity or a .csv WHOOP
+    wellness export) or a .zip (every ingestible entry inside, so a whole
+    exported folder zipped up imports in one shot). `ext` is the dispatch key
+    ('fit'|'tcx'|'gpx'|'csv'); exactly one of (bytes+ext) / error is set per
+    yielded tuple."""
     import zipfile
     import io
     for f in files:
@@ -448,7 +458,7 @@ def _iter_activity_blobs(files):
                     entries = [(n, _blob_ext(n)) for n in zf.namelist()]
                     entries = [(n, ext) for n, ext in entries if ext]
                     if not entries:
-                        yield (name, None, None, 'no .fit/.tcx/.gpx files inside zip')
+                        yield (name, None, None, 'no .fit/.tcx/.gpx/.csv files inside zip')
                         continue
                     for n, ext in entries:
                         yield (f'{name}:{n}', zf.read(n), ext, None)
@@ -457,7 +467,7 @@ def _iter_activity_blobs(files):
             continue
         ext = _blob_ext(name)
         if not ext:
-            yield (name, None, None, 'not a .fit/.tcx/.gpx or .zip file')
+            yield (name, None, None, 'not a .fit/.tcx/.gpx/.csv or .zip file')
             continue
         try:
             yield (name, f.read(), ext, None)
@@ -717,16 +727,18 @@ def _bulk_log_one(db, uid: int, gid: str, result: dict, match_plan: bool,
 
 @bp.route('/import/bulk', methods=['POST'])
 def import_bulk():
-    """Parse many activity files (.fit/.tcx/.gpx) and route each to the right
-    place — one drop zone for a whole export folder. .tcx/.gpx (#767 slice 2)
-    are the non-Garmin per-session exports; each parser emits the same normalized
-    cardio dict, so the writer is shared. Activity files (cardio / strength) are
-    logged and optionally auto-matched to a scheduled plan workout (pass
-    match_plan=0 to log raw); FIT wellness / daily-metric files (`_WELLNESS`,
-    `_METRICS`, `_SLEEP_DATA`, `_HRV_STATUS`) are merged into wellness_log /
-    daily_wellness_metrics instead. Idempotent (content-hash dedup for
-    activities, per-row dedup for wellness). Returns JSON for the drag-and-drop
-    UI."""
+    """Parse many uploaded files and auto-route each to the right place — one
+    drop zone for a whole export folder, activities AND wellness. .tcx/.gpx
+    (#767 slice 2) are the non-Garmin per-session activity exports; each parser
+    emits the same normalized cardio dict, so the writer is shared. Activity
+    files (cardio / strength) are logged and optionally auto-matched to a
+    scheduled plan workout (pass match_plan=0 to log raw); FIT wellness /
+    daily-metric files (`_WELLNESS`, `_METRICS`, `_SLEEP_DATA`, `_HRV_STATUS`)
+    merge into wellness_log / daily_wellness_metrics; and a WHOOP
+    `physiological_cycles.csv` (#767 slice 5) is auto-detected by extension and
+    ingested into provider_raw_record (provider='whoop'). Idempotent
+    (content-hash dedup for activities, per-row dedup for wellness). Returns JSON
+    for the drag-and-drop UI."""
     db = get_db()
     uid = current_user_id()
     files = request.files.getlist('files')
@@ -762,12 +774,16 @@ def import_bulk():
     # Only FIT files carry wellness/daily-metric payloads; TCX/GPX are always
     # activities (no wellness variant), so they skip the FileId classification.
     _WELLNESS_KINDS = {'wellness', 'metrics', 'sleep_data', 'hrv_status'}
-    wellness_pending = []   # (time_ms, name, raw, kind)
-    activity_blobs = []     # (name, raw, ext)
+    wellness_pending = []      # (time_ms, name, raw, kind)
+    wellness_csv_pending = []  # (name, raw) — WHOOP physiological_cycles.csv
+    activity_blobs = []        # (name, raw, ext)
     for name, raw, ext, err in _iter_activity_blobs(files):
         if err:
             results.append({'name': name, 'status': 'skipped', 'detail': err})
             summary['skipped'] += 1
+            continue
+        if ext == 'csv':
+            wellness_csv_pending.append((name, raw))
             continue
         if ext == 'fit':
             try:
@@ -784,6 +800,12 @@ def import_bulk():
     wellness_pending.sort(key=lambda p: p[0])
     for _time_ms, name, raw, kind in wellness_pending:
         _ingest_wellness_fit(db, uid, name, raw, kind, results, summary)
+
+    # WHOOP wellness CSVs (#767 slice 5) — auto-detected; ingested into
+    # provider_raw_record via the whoop writer (the same daily_summary path the
+    # standalone /whoop/import used before it was folded into this one uploader).
+    for name, raw in wellness_csv_pending:
+        _ingest_wellness_csv(db, uid, name, raw, results, summary)
 
     # Phase 1 (activities) — hash, dedup, parse. Inserts are deferred so strength
     # sessions can be applied oldest-first (rx_engine is order-aware).
@@ -1636,6 +1658,37 @@ def _ingest_wellness_fit(db, uid, name, raw, kind, results, summary):
         db.rollback()
         results.append({'name': name, 'status': 'error', 'detail': str(e)})
         summary['errors'] += 1
+
+
+def _ingest_wellness_csv(db, uid, name, raw, results, summary):
+    """Ingest one auto-detected WHOOP `physiological_cycles.csv` (#767 slice 5)
+    into provider_raw_record via the whoop writer. Appends one row to `results`
+    and updates `summary` in place — same contract as `_ingest_wellness_fit`, so
+    the unified uploader routes a wellness CSV exactly like a wellness FIT. A CSV
+    that isn't a usable WHOOP export is reported as an error, not dropped."""
+    from routes.whoop import ingest_whoop_csv
+    try:
+        days = ingest_whoop_csv(db, uid, raw)
+        db.commit()
+    except ValueError as e:
+        db.rollback()
+        results.append({'name': name, 'status': 'error',
+                        'detail': f'not a usable WHOOP CSV: {e}'})
+        summary['errors'] += 1
+        return
+    except Exception as e:
+        db.rollback()
+        results.append({'name': name, 'status': 'error', 'detail': str(e)})
+        summary['errors'] += 1
+        return
+    results.append({'name': name, 'status': 'imported',
+                    'detail': f'WHOOP wellness · {days} day(s)'})
+    summary['files'] += 1
+    summary['metrics_days'] += days
+    print(  # Rule #15 — where this CSV landed
+        f"[bulk-import] wellness-csv name={name} provider=whoop "
+        f"ingested {days} day(s)"
+    )
 
 
 @bp.route('/import-wellness/bulk', methods=['POST'])
