@@ -106,7 +106,10 @@
                      or chart_data.sleep_deep_min or chart_data.sleep_stress_avg or chart_data.sleep_wake_count
                      or chart_data.sleep_sub_scores.light or chart_data.sleep_sub_scores.rem
                      or chart_data.sleep_sub_scores.stress or chart_data.sleep_sub_scores.awake
-                     or chart_data.sleep_stress_above_resting or chart_data.restless_moments %}
+                     or chart_data.sleep_stress_above_resting or chart_data.restless_moments
+                     or chart_data.sleep_onset_latency
+                     or chart_data.sleep_stage_smoothing.deep or chart_data.sleep_stage_smoothing.awake
+                     or chart_data.sleep_stage_smoothing.light or chart_data.sleep_stage_smoothing.rem %}
   {% set body_has = chart_data.body or chart_data.soreness or chart_data.mood
                     or chart_data.energy.self or chart_data.energy.device %}
 
@@ -188,6 +191,29 @@
         <div class="chart-box wide sec-sm"><canvas id="chart-restless"></canvas></div>
       </div>
       {% endif %}
+
+      {# Sleep onset latency — _METRICS.fit [384] field_3 = Connect's "Time to
+         fall asleep" (#524). Absent on perfect-onset nights (Garmin omits
+         zero), so those nights simply don't plot. #}
+      {% if chart_data.sleep_onset_latency %}
+      <div class="card card-pad">
+        <span class="eyebrow">Sleep onset latency · device (min/night)</span>
+        <div class="chart-box wide sec-sm"><canvas id="chart-sleep-onset-latency"></canvas></div>
+      </div>
+      {% endif %}
+
+      {# Raw-vs-smoothed sleep-stage smoothing (#524) — minutes Garmin Connect
+         redistributed into each visible stage from the watch's raw [275]
+         "Unmeasurable" bucket. Only Deep + Awake have decoded smoothed values
+         today; Light/REM stay flat until their smoothed split is locked. #}
+      {% if chart_data.sleep_stage_smoothing.deep or chart_data.sleep_stage_smoothing.awake
+            or chart_data.sleep_stage_smoothing.light or chart_data.sleep_stage_smoothing.rem %}
+      <div class="card card-pad">
+        <span class="eyebrow">Sleep stage smoothing · device (min added per stage)</span>
+        <div class="chart-box wide sec-sm"><canvas id="chart-sleep-stage-smoothing"></canvas></div>
+        <p class="rail-note">Deep + Awake only — smoothed Light/REM aren't decoded yet.</p>
+      </div>
+      {% endif %}
     </div>
   </details>
 
@@ -235,6 +261,17 @@
       <div class="card card-pad">
         <span class="eyebrow">Body battery · overnight recovery (per night)</span>
         <div class="chart-box wide sec-sm"><canvas id="chart-body-battery-overnight"></canvas></div>
+      </div>
+      {% endif %}
+
+      {# Body battery sleep-window low + high (#525) — the trough and peak BB
+         reading during the per-night sleep window. Read alongside the
+         overnight delta above: same end−start gain can hide a dip-then-climb
+         vs. a recovery pinned near the ceiling. #}
+      {% if chart_data.body_battery.overnight_low or chart_data.body_battery.overnight_high %}
+      <div class="card card-pad">
+        <span class="eyebrow">Body battery · sleep window low / high (0–100)</span>
+        <div class="chart-box wide sec-sm"><canvas id="chart-body-battery-sleep-range"></canvas></div>
       </div>
       {% endif %}
 
@@ -684,6 +721,13 @@ if (data.body_battery) {
          [bar('Overnight recovery', data.body_battery.overnight_delta, good)],
          { type: 'bar', yAxis: { beginAtZero: true } });
   }
+
+  // Sleep-window low + high (#525) — trough/peak BB during the sleep window,
+  // so the recovery shape behind the delta is visible.
+  const sleepRange = [];
+  if (data.body_battery.overnight_low  && data.body_battery.overnight_low.length)  sleepRange.push(ds('Low',  data.body_battery.overnight_low,  accent));
+  if (data.body_battery.overnight_high && data.body_battery.overnight_high.length) sleepRange.push(ds('High', data.body_battery.overnight_high, good));
+  if (sleepRange.length) line('chart-body-battery-sleep-range', sleepRange, { yAxis: { min: 0, max: 100 } });
 }
 
 // ─── Daily activity (steps / cal / distance) ────────────────
@@ -787,6 +831,24 @@ if (data.sleep_stress_above_resting && data.sleep_stress_above_resting.length) {
   line('chart-sleep-stress-fraction',
        [ds('% above resting', data.sleep_stress_above_resting, accent)],
        { yAxis: { min: 0, max: 100 }, unit: '%' });
+}
+
+// ─── Sleep onset latency (min/night, #524) ─────────────────
+if (data.sleep_onset_latency && data.sleep_onset_latency.length) {
+  line('chart-sleep-onset-latency', [bar('Onset latency', data.sleep_onset_latency, accent)],
+       { type: 'bar', unit: ' min', yAxis: { beginAtZero: true } });
+}
+
+// ─── Sleep stage smoothing (min added per stage, #524) ─────
+// Deep + Awake populate today; Light/REM stay flat until their smoothed
+// split is decoded.
+if (data.sleep_stage_smoothing) {
+  const smSeries = [];
+  if (data.sleep_stage_smoothing.deep  && data.sleep_stage_smoothing.deep.length)  smSeries.push(ds('Deep',  data.sleep_stage_smoothing.deep,  info));
+  if (data.sleep_stage_smoothing.light && data.sleep_stage_smoothing.light.length) smSeries.push(ds('Light', data.sleep_stage_smoothing.light, fg));
+  if (data.sleep_stage_smoothing.rem   && data.sleep_stage_smoothing.rem.length)   smSeries.push(ds('REM',   data.sleep_stage_smoothing.rem,   accent));
+  if (data.sleep_stage_smoothing.awake && data.sleep_stage_smoothing.awake.length) smSeries.push(ds('Awake', data.sleep_stage_smoothing.awake, good));
+  if (smSeries.length) line('chart-sleep-stage-smoothing', smSeries, { unit: ' min' });
 }
 
 // ─── Body composition ──────────────────────────────────────

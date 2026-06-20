@@ -134,6 +134,23 @@ def test_metrics_to_db_fields_only_emits_present_keys():
     assert set(fields.keys()) == {'hrv_overnight_avg_ms', 'hrv_samples_json'}
 
 
+def test_metrics_to_db_fields_routes_onset_latency_and_raw_stage_tally():
+    """#524 — sleep_onset_latency_sec passes through scalar; the raw `[275]`
+    per-code tally is JSON-encoded into sleep_stage_raw_min_json so the route
+    can recover it for the smoothing chart."""
+    import json
+    from routes.garmin import _metrics_to_db_fields
+    fields = _metrics_to_db_fields({
+        'date': '2026-05-30',
+        'sleep_onset_latency_sec': 889,
+        'sleep_stage_minutes_by_code_partial': {1: 74, 2: 125, 3: 57, 4: 38},
+    })
+    assert fields['sleep_onset_latency_sec'] == 889
+    assert json.loads(fields['sleep_stage_raw_min_json']) == {
+        '1': 74, '2': 125, '3': 57, '4': 38,
+    }
+
+
 # ── Follow-up additions (RMR, stress bucketing, body battery deltas) ─────────
 
 def test_resting_calories_surface_from_garmin_daily_metrics():
@@ -315,6 +332,108 @@ def test_body_battery_overnight_delta_skips_partial_coverage():
     assert chart['body_battery']['overnight_delta'] == [
         {'x': '2026-05-28', 'y': 75},
     ]
+
+
+def test_body_battery_overnight_low_high_land_per_night():
+    """`body_battery.overnight_{low,high}` land from bb_overnight_rows' MIN/MAX
+    over the sleep window (#525). Two nights with the same end−start delta read
+    apart once the trough/peak shape shows: 05-30 dipped to 35 then climbed to
+    88 (delta +47), 06-02 stayed pinned 60→73 (delta only +13, but a high
+    floor)."""
+    bb_overnight_rows = [
+        _r(date='2026-05-30', bb_start=41, bb_end=88, bb_low=35, bb_high=88),
+        _r(date='2026-06-02', bb_start=60, bb_end=73, bb_low=60, bb_high=73),
+    ]
+    chart = _build_chart_data([], [], [], [], [], [], (),
+                              bb_overnight_rows=bb_overnight_rows)
+    assert chart['body_battery']['overnight_low'] == [
+        {'x': '2026-05-30', 'y': 35},
+        {'x': '2026-06-02', 'y': 60},
+    ]
+    assert chart['body_battery']['overnight_high'] == [
+        {'x': '2026-05-30', 'y': 88},
+        {'x': '2026-06-02', 'y': 73},
+    ]
+
+
+def test_body_battery_overnight_low_high_absent_when_columns_missing():
+    """Rows from an older SELECT (no bb_low/bb_high) don't blow up — the
+    low/high series just stay empty while the delta still lands."""
+    bb_overnight_rows = [_r(date='2026-05-28', bb_start=20, bb_end=95)]
+    chart = _build_chart_data([], [], [], [], [], [], (),
+                              bb_overnight_rows=bb_overnight_rows)
+    assert chart['body_battery']['overnight_low'] == []
+    assert chart['body_battery']['overnight_high'] == []
+    assert chart['body_battery']['overnight_delta'] == [{'x': '2026-05-28', 'y': 75}]
+
+
+# ── #524 — sleep onset latency + raw-vs-smoothed stage smoothing ─────────────
+
+def test_sleep_onset_latency_charts_minutes_from_seconds():
+    """`[384] field_3` is seconds; the chart surfaces minutes/night (#524).
+    May 30 = 889 s → 14.8 min, May 29 = 976 s → 16.3 min. Perfect-onset
+    nights (field absent ⇒ NULL) drop out rather than charting a false 0."""
+    daily_rows = [
+        _r(date='2026-05-29', sleep_onset_latency_sec=976),
+        _r(date='2026-05-30', sleep_onset_latency_sec=889),
+        _r(date='2026-06-02', sleep_onset_latency_sec=None),  # perfect onset
+    ]
+    chart = _build_chart_data([], [], [], [], [], [],
+                              daily_metric_rows=daily_rows)
+    assert chart['sleep_onset_latency'] == [
+        {'x': '2026-05-29', 'y': 16.3},
+        {'x': '2026-05-30', 'y': 14.8},
+    ]
+
+
+def test_sleep_stage_smoothing_added_pins_may_30():
+    """Pure helper: per visible stage, smoothed (Connect) minus raw [275]
+    tally (#524). May 30 ground truth — raw {1:74, 2:125, 3:57, 4:38},
+    Connect Deep=70 Light=180 REM=47 Awake=8 → +13 Deep, +55 Light, +9 REM,
+    +8 Awake (Awake has no raw [275] code, so its raw is 0)."""
+    from garmin_fit_parser import sleep_stage_smoothing_added
+    raw = {1: 74, 2: 125, 3: 57, 4: 38}
+    smoothed = {'deep': 70, 'light': 180, 'rem': 47, 'awake': 8}
+    assert sleep_stage_smoothing_added(raw, smoothed) == {
+        'deep': 13, 'light': 55, 'rem': 9, 'awake': 8,
+    }
+
+
+def test_sleep_stage_smoothing_added_only_emits_passed_stages():
+    """When the caller only knows smoothed Deep + Awake (Light/REM not decoded
+    yet), the helper emits exactly those two — no fabricated Light/REM."""
+    from garmin_fit_parser import sleep_stage_smoothing_added
+    raw = {1: 74, 2: 125, 3: 57, 4: 38}
+    out = sleep_stage_smoothing_added(raw, {'deep': 70, 'awake': 8})
+    assert out == {'deep': 13, 'awake': 8}
+
+
+def test_sleep_stage_smoothing_chart_lands_deep_and_awake_only():
+    """The chart computes smoothing from the stored raw [275] JSON tally +
+    smoothed Deep (`[346]` field_9) + Awake (`[384]` field_24). Light/REM
+    stay empty because their smoothed split isn't decoded (#524)."""
+    import json
+    daily_rows = [
+        _r(date='2026-05-30',
+           sleep_stage_raw_min_json=json.dumps({1: 74, 2: 125, 3: 57, 4: 38}),
+           sleep_deep_min=70, sleep_awake_min=8),
+    ]
+    chart = _build_chart_data([], [], [], [], [], [],
+                              daily_metric_rows=daily_rows)
+    assert chart['sleep_stage_smoothing']['deep'] == [{'x': '2026-05-30', 'y': 13}]
+    assert chart['sleep_stage_smoothing']['awake'] == [{'x': '2026-05-30', 'y': 8}]
+    assert chart['sleep_stage_smoothing']['light'] == []
+    assert chart['sleep_stage_smoothing']['rem'] == []
+
+
+def test_sleep_stage_smoothing_chart_empty_without_raw_tally():
+    """No raw [275] JSON ⇒ all four smoothing series empty (nothing to diff)."""
+    daily_rows = [_r(date='2026-05-30', sleep_deep_min=70, sleep_awake_min=8)]
+    chart = _build_chart_data([], [], [], [], [], [],
+                              daily_metric_rows=daily_rows)
+    assert chart['sleep_stage_smoothing'] == {
+        'deep': [], 'light': [], 'rem': [], 'awake': [],
+    }
 
 
 # ── Field-mapping audit (Jun 7) ──────────────────────────────────────────────

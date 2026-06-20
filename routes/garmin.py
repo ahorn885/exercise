@@ -1493,7 +1493,8 @@ _DAILY_METRICS_COLUMNS = (
     'sleep_avg_respiration', 'sleep_contributors_json',
     'sleep_light_sub_score', 'sleep_rem_sub_score',
     'sleep_stress_sub_score', 'sleep_awake_sub_score',
-    'sleep_stress_above_resting_pct',
+    'sleep_stress_above_resting_pct', 'sleep_onset_latency_sec',
+    'sleep_stage_raw_min_json',
     'sleep_deep_min', 'sleep_light_min', 'sleep_rem_min',
     'sleep_stress_avg', 'sleep_wake_count',
     'sleep_duration_sub_score', 'restless_moments',
@@ -1541,7 +1542,7 @@ def _metrics_to_db_fields(parsed: dict) -> dict:
                 'sleep_duration_sub_score', 'restless_moments',
                 'sleep_light_sub_score', 'sleep_rem_sub_score',
                 'sleep_stress_sub_score', 'sleep_awake_sub_score',
-                'sleep_stress_above_resting_pct',
+                'sleep_stress_above_resting_pct', 'sleep_onset_latency_sec',
                 'hrv_overnight_avg_ms', 'hrv_7d_avg_ms',
                 'hrv_highest_5min_ms',
                 'training_readiness', 'vo2max_running', 'vo2max_cycling',
@@ -1556,6 +1557,12 @@ def _metrics_to_db_fields(parsed: dict) -> dict:
             out[key] = parsed[key]
     if 'sleep_contributors' in parsed:
         out['sleep_contributors_json'] = json.dumps(parsed['sleep_contributors'])
+    # Raw [275] stage tally (#524) — `{code: minutes}` from _SLEEP_DATA.fit.
+    # JSON-encoded so the route can recover it for the smoothing-delta chart.
+    if 'sleep_stage_minutes_by_code_partial' in parsed:
+        out['sleep_stage_raw_min_json'] = json.dumps(
+            parsed['sleep_stage_minutes_by_code_partial']
+        )
     if 'hrv_samples' in parsed:
         # Compact list of [ts_ms, ms_value] pairs for the overnight chart.
         out['hrv_samples_json'] = json.dumps(parsed['hrv_samples'])

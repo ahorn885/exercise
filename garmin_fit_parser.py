@@ -1246,6 +1246,12 @@ _METRICS_SLEEP_SCORE_SIMPLE_MSG = 330
 #   field_24             = awake_minutes (May 28: 4 ✓, May 30: 8 ✓, Jun 2: 10 ✓)
 #                          field_17 also = 4 on May 28 (coincidence) but
 #                          diverged on May 30 (3 vs actual 8) — NOT awake.
+#   field_3              = sleep_onset_latency_sec — Connect's "Time to fall
+#                          asleep" (#524). May 30: 889 s = 14:49, May 29:
+#                          976 s ≈ 16:16. ABSENT on perfect-onset nights
+#                          (May 28, Jun 2) — Garmin omits the field when the
+#                          value is zero, so a missing field means ~0 min.
+#                          Surfaced as the "Sleep onset latency" bar card.
 # RETRACTED in this PR:
 #   field_18 was claimed = sleep_avg_respiration (May 28 was 13 brpm, both
 #   field and Connect agreed). Jun 2 disproved it — Andy's Connect breath
@@ -1295,7 +1301,8 @@ _METRICS_SLEEP_SCORE_SIMPLE_MSG = 330
 #   they're some other per-night metric we haven't named yet. After /65536:
 #   f5 = 357.25 / 109.33 / 149.50 min; f6 = 174.33 / 544.92 / 558.34 min.
 #   The stage split lives in some other field position of `[384]` —
-#   field_3, _8, _10, _12, _13, _14, _15 are unprobed. `_dump_fit` now
+#   field_8, _10, _12, _13, _14, _15 are unprobed (field_3 = onset latency,
+#   see above). `_dump_fit` now
 #   surfaces every field plus the `_sleep_stage_decode_candidates` block,
 #   so the next pass can grep the dump for the known stage minute values
 #   (70 / 180 / 47 on May 30) across every field.
@@ -1777,6 +1784,46 @@ def _stage_minutes_from_events(events: list, *, sleep_end_ts: int = None) -> dic
     return {code: round(s / 60) for code, s in durations_s.items()}
 
 
+# [275] raw stage codes → the visible Connect stage name. Code 1
+# (Unmeasurable) is the bucket Garmin redistributes FROM, so it has no
+# visible-stage counterpart; Awake has no raw [275] code (the watch only
+# tallies sleep stages), so its raw minutes are treated as 0.
+_STAGE_NAME_TO_CODE = {'light': 2, 'deep': 3, 'rem': 4}
+
+
+def sleep_stage_smoothing_added(raw_tally: dict, smoothed: dict) -> dict:
+    """Per visible sleep stage, the minutes Garmin Connect's smoothing added
+    (positive) or removed (negative) relative to the watch's raw `[275]`
+    stage tally (#524).
+
+    Garmin redistributes the raw "Unmeasurable" (`[275]` code 1) minutes —
+    plus any untracked in-bed time — into the 4 visible stages before showing
+    them in Connect. This helper exposes that per-stage redistribution.
+
+    `raw_tally` is `{code: minutes}` keyed by `[275]` code (1=Unmeasurable,
+    2=Light, 3=Deep, 4=REM), as produced by `_stage_minutes_from_events`.
+    `smoothed` is `{stage_name: minutes}` for any of
+    'deep'/'light'/'rem'/'awake' that are known — Deep (`[346]` field_9) and
+    Awake (`[384]` field_24) are locked; smoothed Light/REM individually
+    aren't decoded yet (in-bed − Deep − Awake only yields their combined sum),
+    so callers pass just the stages they have.
+
+    Returns `{stage_name: added_min}` for exactly the stages present (with a
+    non-None value) in `smoothed`. Because the redistribution draws on the
+    Unmeasurable bucket *and* untracked in-bed minutes, the per-stage adds
+    sum to more than the raw Unmeasurable total — e.g. May 30 adds 85 min
+    against a 74-min Unmeasurable tally.
+    """
+    out = {}
+    for stage, smoothed_min in smoothed.items():
+        if smoothed_min is None:
+            continue
+        code = _STAGE_NAME_TO_CODE.get(stage)  # None for 'awake' ⇒ raw 0
+        raw_min = raw_tally.get(code, 0) if code is not None else 0
+        out[stage] = int(smoothed_min) - int(raw_min)
+    return out
+
+
 def find_sleep_stage_decoder(reference_set, *, tolerance_min: float = 2.0) -> list:
     """Brute-force find a (decoder, field-to-stage permutation) that maps
     `[384] field_5/6/7` to (Deep, Light, REM) minutes consistently across a
@@ -2136,6 +2183,13 @@ def parse_metrics_fit(fit_bytes: bytes) -> dict:
             # stayed low. Not Connect-visible directly.
             if fields.get(18) is not None:
                 out['sleep_stress_above_resting_pct'] = int(fields[18])
+            # field_3 = sleep_onset_latency_sec (#524 — "Time to fall asleep").
+            # Garmin skips the field on perfect-onset nights (May 28, Jun 2),
+            # the classic "omit when zero" pattern, so absent ⇒ ~0 min.
+            # Pinned: May 30 field_3 = 889 s (14:49), May 29 = 976 s (≈16:16).
+            # See the `_METRICS_SLEEP_SUMMARY_MSG` comment block.
+            if fields.get(3) is not None:
+                out['sleep_onset_latency_sec'] = int(fields[3])
             # Date = the wake day (sleep is attributed to the morning).
             if end_ts:
                 out['date'] = datetime.fromtimestamp(
