@@ -9,7 +9,9 @@ emitted a tier-1 (exact) pick WITH a stray `substitute_text` note →
 
 `_apply_strength_resolution` fixes this by overwriting the three fields from the
 chosen `exercise_id`'s deterministic 2C resolution BEFORE `StrengthExercise(**e)`
-construction. These cover the helper directly (duck-typed 2C fakes — it only
+construction. The helper lives in `per_phase` and is wired into all four
+synthesis construction sites (per_phase / single_session / plan_refresh /
+race_week_brief). These cover the helper directly (duck-typed 2C fakes — it only
 does attribute access) plus the regression that the failing pv77 shape now
 constructs.
 """

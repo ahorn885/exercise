@@ -53,6 +53,7 @@ from layer4.context import (
 from layer4.errors import Layer4InputError, Layer4OutputError
 from layer4.per_phase import (
     CARDIO_PROGRAMMING_PROMPT_SECTION,
+    _apply_strength_resolution,
     _format_cardio_drill_pool,
     compute_cardio_drill_pool_ids,
     compute_feasible_pool_ids,
@@ -1083,6 +1084,21 @@ def llm_layer4_single_session_synthesize(
                 "schema_violation",
                 detail="tool args missing 'session' object",
             )
+
+        # #803 — set strength resolution_tier/substitute_text/proxy_origin_id
+        # deterministically from the locale's 2C resolution before construction
+        # (mirrors per_phase). Only when a locale surface exists; the
+        # locale-agnostic path has no resolution map to derive from.
+        if layer2c_payload_for_locale is not None:
+            _res_notes = _apply_strength_resolution(
+                [session_data],
+                {layer2c_payload_for_locale.locale_id: layer2c_payload_for_locale},
+            )
+            if _res_notes:
+                print(
+                    "single_session: strength resolution defaulted to exact for "
+                    f"unresolved picks: {', '.join(_res_notes)}"
+                )
 
         try:
             session = _build_plan_session(
