@@ -1,6 +1,6 @@
 # V5 Implementation — #681 (B) live-provider wiring: Strava + Whoop OAuth connect + Strava ingest — Closing Handoff (2026-06-20)
 
-**Branch:** `claude/provider-integrations-api-kickoff-3poeuw` · **PR:** pending Andy's go (PR-gated) · **Suite:** 2859 passed / 30 skipped. Continues the same session as the §4 wellness-row transcription (handoff `..._WellnessRowTranscription_681_...`).
+**Branch:** `claude/provider-integrations-api-kickoff-3poeuw` · **PR:** pending Andy's go (PR-gated) · **Suite:** 2870 passed / 30 skipped. Continues the same session as the §4 wellness-row transcription (handoff `..._WellnessRowTranscription_681_...`). **Slices: B1 (connect) + B2a (Strava ingest) + B2b (Whoop ingest).**
 
 ## 1. What this session did (the B arc)
 
@@ -32,14 +32,16 @@ Strava webhooks are thin pointers (`{object_type, object_id, owner_id, aspect_ty
 2. Register the **Whoop** OAuth app (redirect_uri = `…/whoop/oauth/callback`) → set `WHOOP_CLIENT_ID` / `WHOOP_CLIENT_SECRET`.
 3. Then **live-verify** (Rule #14): Connect Strava on the hub → `/admin/logs` `[strava-oauth] connected …`; complete a Strava activity → `[strava-ingest] activity=… -> cardio_log discipline=…` + the row in `cardio_log` with `strava_activity_id` + a `provider_raw_record` corroboration row. The OAuth URLs are env-overridable with documented defaults; confirm them against current provider docs before creating the subscription.
 
-## 4. NEXT — B2b Whoop live ingest (needs a design call; do NOT guess)
-Whoop's webhooks (`recovery.updated` / `sleep.updated` / `workout.updated`) are **separate per-domain events**, each carrying only PART of the Layer-3A `daily_summary` (recovery → `hrv_rmssd_ms` + `resting_hr`; sleep → `total_sleep_min` from the stage-sum, per the §3.2 Σstages decision). So the ingest must:
-1. **Merge-partial into the existing day's `provider_raw_record` row** (read-modify-write the subset this event provides — a sleep event must not clobber the recovery event's hrv/rhr, and vice versa). The CSV path already writes the exact target shape (`total_sleep_min`/`hrv_rmssd_ms`/`resting_hr`, keyed on the ISO date in `external_id`).
-2. **Derive the daily date** for a recovery/sleep (cycle calendar day / sleep wake date).
-3. **Verify HMAC-SHA256** over the raw body with `WHOOP_CLIENT_SECRET` (base64 in `X-WHOOP-Signature`) + the `X-WHOOP-Signature-Timestamp` window.
-4. Reuse `provider_auth.get_fresh_access_token` (already built) + the §2.3/§3 `WELLNESS_VALUE_MAP` rows transcribed this session.
+### B2b — Whoop live ingest (commit `a669fd3`) — BUILT (Andy: "build B2b now")
+Built per the design this handoff had flagged, against Whoop's documented v2 schema (best-effort, env-overridable, verify-owed — same posture as Strava/COROS).
+- `routes/whoop_ingest.py` (NEW): `verify_signature` (HMAC-SHA256 over `timestamp + raw_body`, base64, vs `X-WHOOP-Signature`; the signed timestamp is in the MAC input — no separate age-reject, units unverified). `process_event` dispatches `.updated` events; per-domain ingesters — recovery → `{hrv_rmssd_ms` (already ms), `resting_hr}` + bucket-2 corroboration (`recovery_score`/`spo2`/`skin_temp`); sleep → `total_sleep_min` = Σ(deep+rem+light)/60000 (the §3.2 asleep decision, in-bed NOT used); workout → `provider_raw_record` raw (no `cardio_log` whoop id column yet). **`_merge_daily`** is the read-modify-write that lets recovery + sleep (separate events, same day) coexist — writing the exact shape the CSV path writes + `layer3a/integration.py` reads (`total_sleep_min`/`hrv_rmssd_ms`/`resting_hr`, keyed on the ISO date). Reuses `get_fresh_access_token`.
+- `routes/whoop.py`: webhook POST verifies the signature, records → `webhook_events`, maps `user_id` → local user, ingests synchronously on `.updated` (always 200; failure recorded on the event row).
+- `tests/test_whoop_ingest.py` (+11), incl. the recovery+sleep-coexist merge case.
 
-This is fiddly against Whoop's live payloads and Rule #14 says don't guess unverifiable API specifics — bring the merge-semantics + date-derivation to Andy (or build against a real captured payload) rather than blind. Then Wahoo/Oura/RWGPS connect+ingest; then (C) #682 API.
+**VERIFY-OWED at go-live (Rule #14):** the v2 endpoint paths (`WHOOP_RECOVERY_PATH`/`WHOOP_SLEEP_PATH`/`WHOOP_WORKOUT_PATH`), the signature scheme, and the date derivation are the documented form, env-overridable, unverified against live payloads.
+
+## 4. NEXT
+**Wahoo / Oura / RWGPS** (connect + ingest, same pattern — each gated on an OAuth app registration), and/or **(C) #682 API** (Trigger #5 design pass). `provider_outbound_ref` + outbound serializers remain Wave 3b.
 
 ## 6.3 Read order for next session (Rule #13)
 1. `CLAUDE.md`. 2. `CURRENT_STATE.md` (last-shipped = this B arc). 3. `CARRY_FORWARD.md` *"Provider integrations & API — ACTIVE THREAD"* → (B) sub-bullets (B1/B2a ✅, B2b ⏭). 4. This handoff. 5. `routes/strava_ingest.py` + `routes/provider_auth.py` (the refresh helper) as the pattern Whoop mirrors. 6. `./scripts/verify-handoff.sh`.
@@ -55,6 +57,8 @@ This is fiddly against Whoop's live payloads and Rule #14 says don't guess unver
 | Strava ingest | `routes/strava_ingest.py` | `normalize_strava_activity` (m→mi `_M_TO_MI`, resolver, indoor `_CYCLING_DISCIPLINES`) + `fetch_and_ingest_activity` (dedup SELECT → token → GET → `_bulk_insert_cardio(source='strava')`) |
 | Webhook dispatch | `routes/strava.py` | webhook POST: `INSERT INTO webhook_events`, `get_auth_by_provider_user_id`, dispatch on `object_type=='activity'` + `aspect_type in (create,update)`, always 200 |
 | Dedup index | `init_db.py` | `cardio_log_strava_activity_uidx ON cardio_log (user_id, strava_activity_id) WHERE strava_activity_id IS NOT NULL` |
-| Tests | `tests/test_provider_oauth_connect.py` + `tests/test_strava_ingest.py` | +7 / +13 |
-| Suite | — | `/tmp/venv/bin/python -m pytest tests/ -q` → 2859 passed / 30 skipped |
-| Issue | #681 | comment: B1 + B2a shipped; gated on OAuth registrations; B2b Whoop next |
+| Whoop ingest | `routes/whoop_ingest.py` | `verify_signature` (timestamp+body HMAC); `_merge_daily` (read-modify-write daily_summary); recovery `hrv_rmssd_milli`→`hrv_rmssd_ms`; sleep Σstages→`total_sleep_min` |
+| Whoop webhook | `routes/whoop.py` | webhook POST: `verify_signature`, `INSERT INTO webhook_events`, dispatch on `(event_type).endswith('.updated')`, always 200 |
+| Tests | `tests/test_provider_oauth_connect.py` + `tests/test_strava_ingest.py` + `tests/test_whoop_ingest.py` | +7 / +13 / +11 |
+| Suite | — | `/tmp/venv/bin/python -m pytest tests/ -q` → 2870 passed / 30 skipped |
+| Issue | #681 | comment: B1 + B2a + B2b shipped; gated on OAuth registrations; Wahoo/Oura/RWGPS or (C) next |
