@@ -30,7 +30,12 @@ from layer5.payload import (
     EnergyModelMeta,
     PlanNutrition,
     RaceFuelingPlan,
+    SupplementRec,
     WeekReconciliation,
+)
+from layer5.supplements import (
+    build_standing_supplements,
+    effort_supplements_for_day,
 )
 
 __all__ = [
@@ -38,10 +43,13 @@ __all__ = [
     "build_plan_nutrition",
     "build_race_day_fueling_plan",
     "generate_and_persist_plan_nutrition",
+    "build_standing_supplements",
+    "effort_supplements_for_day",
     "DayNutrition",
     "EnergyModelMeta",
     "PlanNutrition",
     "RaceFuelingPlan",
+    "SupplementRec",
     "WeekReconciliation",
     "CONDITIONS_MODEL_NAME",
     "build_plan_conditions",

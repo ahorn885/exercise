@@ -14,7 +14,11 @@ from __future__ import annotations
 from datetime import date
 from types import SimpleNamespace
 
-from routes.dashboard import _has_plan_version, _v2_session_card
+from routes.dashboard import (
+    _has_plan_version,
+    _supplement_summary,
+    _v2_session_card,
+)
 from plan_sessions_repo import load_scheduled_sessions_for_window
 
 
@@ -181,3 +185,43 @@ class TestLoadScheduledSessionsForWindow:
         assert "s.user_id = ?" in sql
         assert "s.date BETWEEN ? AND ?" in sql
         assert params == (42, date(2026, 6, 12), date(2026, 6, 13))
+
+
+class TestSupplementSummary:
+    """`_supplement_summary` resolves the home-page Standard + today's Daily
+    supplement blocks (#621). Best-effort — any miss returns None so the card
+    omits rather than breaking the dashboard."""
+
+    def test_returns_standard_and_today_daily(self, monkeypatch):
+        from routes import dashboard as dash
+        today = date(2026, 6, 1)
+        today_day = SimpleNamespace(date=today, supplement_recs=["electrolytes"])
+        other_day = SimpleNamespace(date=date(2026, 6, 2), supplement_recs=[])
+        nutrition = SimpleNamespace(
+            standing_supplements=["creatine"], days=[other_day, today_day])
+        monkeypatch.setattr(
+            "plan_nutrition_repo.load_plan_nutrition_by_version",
+            lambda db, pv: nutrition,
+        )
+        sessions = [SimpleNamespace(plan_version_id=5)]
+        out = dash._supplement_summary(_FakeConn(), 42, sessions, today)
+        assert out["standard"] == ["creatine"]
+        assert out["daily"] == ["electrolytes"]
+
+    def test_none_when_no_plan_at_all(self):
+        from routes import dashboard as dash
+        # No today sessions and no plan_versions row → None (no crash).
+        out = dash._supplement_summary(_FakeConn(), 42, [], date(2026, 6, 1))
+        assert out is None
+
+    def test_none_when_nutrition_has_no_standing(self, monkeypatch):
+        from routes import dashboard as dash
+        nutrition = SimpleNamespace(standing_supplements=[], days=[])
+        monkeypatch.setattr(
+            "plan_nutrition_repo.load_plan_nutrition_by_version",
+            lambda db, pv: nutrition,
+        )
+        sessions = [SimpleNamespace(plan_version_id=5)]
+        out = dash._supplement_summary(
+            _FakeConn(), 42, sessions, date(2026, 6, 1))
+        assert out is None

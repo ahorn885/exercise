@@ -17,8 +17,11 @@ from datetime import date, datetime, timedelta, timezone
 from layer4.context import (
     DailyNutritionBaseline,
     DailyPhaseTargets,
+    DietaryPatternFlag,
     MacroTargets,
     RaceDayFueling,
+    RaceDaySupplementSuggestion,
+    SupplementIntegrationPayload,
 )
 from layer4.payload import (
     CardioBlock,
@@ -431,3 +434,62 @@ def test_no_carb_loading_without_events():
     )
     assert all(not d.carb_loading_applied for d in out.days)
     assert all(w.carb_loading_surplus_kcal == 0 for w in out.week_reconciliation)
+
+
+# ─── supplement recommendations (#621) ───────────────────────────────────────
+
+
+def test_standing_and_per_day_supplements_populated():
+    monday = date(2026, 6, 1)
+    si = SupplementIntegrationPayload(
+        integrated=[], race_day_suggestions=[],
+        contraindication_flags=[], contraindication_hitl_items=[],
+    )
+    flags = [DietaryPatternFlag(
+        pattern="Vegan", concern="b12_deficiency_risk", severity="moderate",
+        rationale="risk", suggested_supplement_id="vitamin_b12",
+    )]
+    out = build_plan_nutrition(
+        plan_version_id=1,
+        sessions=_moderate_week(monday),
+        baseline=_baseline(3000),
+        bmr_kcal=1600.0,
+        body_weight_kg=BW,
+        supplement_integration=si,
+        dietary_flags=flags,
+    )
+    # Standard block carries the baseline + the Vegan B12 addition.
+    names = [r.name for r in out.standing_supplements]
+    assert "Creatine" in names and "Vitamin B12" in names
+    # Each day carries an effort-based block keyed off its load tier; rest days
+    # carry none. At least one training day has a recommendation.
+    by_day = {d.date: d for d in out.days}
+    assert by_day[date(2026, 6, 7)].supplement_recs == []  # Sunday rest
+    assert any(d.supplement_recs for d in out.days if not d.is_rest_day)
+
+
+def test_race_day_supplement_recs_from_2e():
+    race_date = date(2026, 6, 6)
+    si = SupplementIntegrationPayload(
+        integrated=[],
+        race_day_suggestions=[RaceDaySupplementSuggestion(
+            event_id="e1", supplement_id="electrolyte_mix",
+            canonical_name="Electrolyte mix", reason="replace sodium",
+            already_in_athlete_protocol=False,
+        )],
+        contraindication_flags=[], contraindication_hitl_items=[],
+    )
+    out = build_plan_nutrition(
+        plan_version_id=1,
+        sessions=[_cardio(race_date, duration_min=120, zone="Z3")],
+        baseline=_baseline(3000),
+        bmr_kcal=1600.0,
+        body_weight_kg=BW,
+        race_day_fueling=[_race_fueling("e1")],
+        event_dates={"e1": race_date},
+        supplement_integration=si,
+    )
+    day = out.days[0]
+    assert day.is_race_day is True
+    assert [r.name for r in day.supplement_recs] == ["Electrolyte mix"]
+    assert day.supplement_recs[0].source == "race"

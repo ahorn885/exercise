@@ -54,6 +54,7 @@ from layer4.context import (
     DietaryPatternFlag,
     MacroTargets,
     RaceDayFueling,
+    SupplementIntegrationPayload,
 )
 from layer4.payload import PlanSession
 from layer5.payload import (
@@ -62,6 +63,10 @@ from layer5.payload import (
     PlanNutrition,
     RaceFuelingPlan,
     WeekReconciliation,
+)
+from layer5.supplements import (
+    build_standing_supplements,
+    effort_supplements_for_day,
 )
 
 # ─── §5A.2 energy constants ──────────────────────────────────────────────────
@@ -306,15 +311,17 @@ def build_plan_nutrition(
     race_day_fueling: list[RaceDayFueling] | None = None,
     event_dates: dict[str, date] | None = None,
     standing_supplement_notes: str | None = None,
+    supplement_integration: SupplementIntegrationPayload | None = None,
     dietary_flags: list[DietaryPatternFlag] | None = None,
     generated_at: datetime | None = None,
 ) -> PlanNutrition:
     """Build the Layer 5A nutrition artifact for one plan version.
 
     `sessions` is the plan version's persisted `PlanSession` list. `baseline`,
-    `bmr_kcal`, `race_day_fueling`, `dietary_flags` and the standing supplement
-    notes come from the Layer 2E payload. Pure + deterministic: identical inputs
-    yield an identical artifact (modulo the supplied `generated_at`).
+    `bmr_kcal`, `race_day_fueling`, `supplement_integration`, `dietary_flags` and
+    the standing supplement notes come from the Layer 2E payload. Pure +
+    deterministic: identical inputs yield an identical artifact (modulo the
+    supplied `generated_at`).
     """
     if body_weight_kg <= 0:
         raise ValueError("body_weight_kg must be > 0")
@@ -402,6 +409,12 @@ def build_plan_nutrition(
             "floor_applied": floor_applied,
         }
 
+    # Race-day supplement suggestions (2E), grouped by event for per-day lookup.
+    race_sugs_by_event: dict[str, list] = defaultdict(list)
+    if supplement_integration is not None:
+        for sug in supplement_integration.race_day_suggestions:
+            race_sugs_by_event[sug.event_id].append(sug)
+
     # Pass 2 — per-day records. Carb-load days pin CHO at the loading target and
     # recompute total upward (loading adds energy beyond the redistribution).
     days: list[DayNutrition] = []
@@ -435,6 +448,11 @@ def build_plan_nutrition(
         if is_carb_load:
             week_load_surplus[wk] += total - day_total[d]
 
+        day_race_sugs = [s for eid in race_ids for s in race_sugs_by_event[eid]]
+        supp_recs = effort_supplements_for_day(
+            tier, is_race_day=is_race, race_suggestions=day_race_sugs
+        )
+
         days.append(
             DayNutrition(
                 date=d,
@@ -453,6 +471,7 @@ def build_plan_nutrition(
                 carb_loading_applied=is_carb_load,
                 race_fueling_event_ids=race_ids,
                 fueling_note=note,
+                supplement_recs=supp_recs,
             )
         )
 
@@ -493,5 +512,8 @@ def build_plan_nutrition(
             race_day_fueling, event_dates=event_dates
         ),
         standing_supplement_notes=standing_supplement_notes,
+        standing_supplements=build_standing_supplements(
+            supplement_integration, dietary_flags
+        ),
         dietary_flags=list(dietary_flags or []),
     )
