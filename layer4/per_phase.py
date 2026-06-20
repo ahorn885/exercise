@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import os
 import uuid
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import date as _date_type, datetime, timedelta
 from typing import Any, Callable, Literal
@@ -2145,6 +2146,78 @@ def format_measured_physiology(layer1_payload: dict[str, Any]) -> list[str]:
     return lines
 
 
+def format_upstream_coaching_flags(
+    *,
+    layer2a: Layer2APayload | None = None,
+    layer2b: Layer2BPayload | None = None,
+    layer2c_payloads: Iterable[Layer2CPayload] | None = None,
+    layer2d: Layer2DPayload | None = None,
+) -> list[str]:
+    """#307 — surface the upstream `coaching_flags` advisory channel (Layers
+    2A discipline / 2B terrain / 2C equipment / 2D injury) into the plan-gen
+    prompt. Every Layer 2 builder emits these soft signals, but apart from the
+    training-substitution flags no Layer 4 prompt ever rendered them — a
+    systemically dead channel. Mirrors `format_measured_physiology`:
+    suppress-on-empty (returns `[]` when no flag is present), self-contained
+    lines, shared by single_session + plan_refresh + race_week_brief by import.
+
+    2E (nutrition) is intentionally excluded — Layer 5A consumes the nutrition
+    baseline downstream in the correct training→nutrition direction, so it's
+    surfaced there, not in the training-gen prompt (#300). 3A/3B carry no
+    `coaching_flags`. The training-substitution flags keep their own
+    contextual render block inside the substitution section (#307) and are not
+    duplicated here.
+
+    Advisory only: the hard injury/equipment constraints are already applied
+    upstream (exercise exclusions, feasible pools). `layer2c_payloads` is any
+    iterable of `Layer2CPayload` — callers pass `.values()` of the per-locale
+    dict (single_session passes a one-element list); per-locale duplicate flags
+    are de-duplicated.
+    """
+    sources: list[tuple[str, list[Any]]] = []
+    if layer2a is not None:
+        sources.append(("discipline", list(layer2a.coaching_flags)))
+    if layer2b is not None:
+        sources.append(("terrain", list(layer2b.coaching_flags)))
+    if layer2c_payloads is not None:
+        c_flags: list[Any] = []
+        for p in layer2c_payloads:
+            c_flags.extend(p.coaching_flags)
+        sources.append(("equipment", c_flags))
+    if layer2d is not None:
+        sources.append(("injury", list(layer2d.coaching_flags)))
+
+    lines: list[str] = []
+    seen: set[tuple[str, str, str]] = set()
+    for label, flags in sources:
+        for fl in flags:
+            key = (label, fl.flag_type, fl.message)
+            if key in seen:
+                continue
+            seen.add(key)
+            scope_bits: list[str] = []
+            disc = (
+                getattr(fl, "discipline_name", None)
+                or getattr(fl, "discipline_id", None)
+            )
+            if disc:
+                scope_bits.append(disc)
+            terrain = getattr(fl, "target_terrain_id", None)
+            if terrain:
+                scope_bits.append(terrain)
+            scope = f" ({' / '.join(scope_bits)})" if scope_bits else ""
+            lines.append(f"- [{label}] {fl.flag_type}{scope}: {fl.message}")
+    if not lines:
+        return []
+    return [
+        "Upstream coaching flags (advisory soft guidance from the Layer 2 "
+        "analyzers — reflect in `coaching_intent` / `session_notes` in natural "
+        "language, never the internal id strings; the hard constraints are "
+        "already applied upstream):",
+        *lines,
+    ]
+
+
 def _format_daily_windows_schedule(layer1_payload: dict[str, Any]) -> list[str]:
     """Render the `=== Schedule ===` section: per-day availability windows +
     the derived long-session day. Shared by per_phase + plan_refresh T2/T3.
@@ -2465,6 +2538,17 @@ def render_user_prompt(
         "per_phase _render_user_prompt: measured_physiology surfaced="
         f"{bool(physiology_lines)}"
     )
+    # #307 — surface the upstream Layer 2A/2B/2C/2D coaching_flags advisory
+    # channel (suppress-on-empty).
+    upstream_flag_lines = format_upstream_coaching_flags(
+        layer2a=layer2a_payload,
+        layer2b=layer2b_payload,
+        layer2c_payloads=layer2c_payloads.values(),
+        layer2d=layer2d_payload,
+    )
+    if upstream_flag_lines:
+        parts.append("")
+        parts.extend(upstream_flag_lines)
     parts.append("")
 
     # === Race + locale + equipment ===
@@ -3585,6 +3669,48 @@ def synthesize_phase(
         f"sessions={len(latest_sessions)}"
         + (f", flags: {_accepted_flags}" if latest_validator.rule_failures else "")
     )
+
+    # plan #75 / Rule #15 — the per-day layout was printed ONLY on the payload-
+    # invariant-failure path (the `multi-session days` dump in the except handler
+    # above), so an ACCEPTED block hid its day composition. That blinded the
+    # plan-75 triage: two same-discipline cardio sessions on one day pass every
+    # guard when one is tagged non-hard (no rule checks same-discipline; the two-
+    # hard invariant only fires when BOTH are hard), so the doubled-MTB day was
+    # invisible on the passing pass. Log the accepted per-day layout (date / kind /
+    # discipline / slot / intensity for every multi-session day) AND flag the two
+    # day-compositions the guards do NOT block — two sessions of the SAME
+    # discipline, and two hard sessions — so they're attributable from logs alone.
+    _by_day: dict = {}
+    for s in latest_sessions:
+        _by_day.setdefault(s.date, []).append(s)
+    _multi_lines: list[str] = []
+    _comp_flags: list[str] = []
+    for _d in sorted(_by_day):
+        _ss = sorted(_by_day[_d], key=lambda x: x.session_index_in_day)
+        if len(_ss) < 2:
+            continue
+        _multi_lines.append(
+            f"{_d}: " + ", ".join(
+                f"{x.kind}/{x.discipline_id or '-'}/idx{x.session_index_in_day}"
+                f"({x.intensity_summary})" for x in _ss
+            )
+        )
+        _training = [x for x in _ss if x.kind in ("cardio", "strength")]
+        _disc = [x.discipline_id for x in _training if x.discipline_id]
+        if len(_disc) != len(set(_disc)):
+            _comp_flags.append(f"{_d}:two_same_discipline")
+        if sum(1 for x in _training if x.intensity_summary == "hard") >= 2:
+            _comp_flags.append(f"{_d}:two_hard")
+    if _multi_lines:
+        print(
+            f"synthesize_phase: {unit_tag} multi-session days (accepted) — "
+            + "; ".join(_multi_lines)
+        )
+    if _comp_flags:
+        print(
+            f"synthesize_phase: {unit_tag} DAY-COMPOSITION FLAG (passed validation, "
+            f"not guarded) — " + "; ".join(_comp_flags)
+        )
 
     # #321 observability — opt-in per-session content dump
     # (`PLAN_GEN_LOG_BLOCK_CONTENT=1`). Off by default so prod logs aren't

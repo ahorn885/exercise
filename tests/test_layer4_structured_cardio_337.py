@@ -8,12 +8,26 @@ The single_session + plan_refresh path wiring is covered in
 `tests/test_layer4_single_session.py` / `tests/test_layer4_plan_refresh.py`.
 """
 
+from types import SimpleNamespace
+
 from layer4.per_phase import (
     CARDIO_PROGRAMMING_PROMPT_SECTION,
     SYSTEM_PROMPT,
     _fmt_pace_mmss,
     format_measured_physiology,
+    format_upstream_coaching_flags,
 )
+
+
+def _flag(flag_type, message, **scope):
+    """Duck-typed stand-in for the Layer 2 coaching-flag models — the render
+    helper only reads `.flag_type` / `.message` and probes scope fields via
+    getattr, so a SimpleNamespace exercises it without the pydantic payloads."""
+    return SimpleNamespace(flag_type=flag_type, message=message, **scope)
+
+
+def _payload(*flags):
+    return SimpleNamespace(coaching_flags=list(flags))
 
 
 class TestFmtPaceMmss:
@@ -75,6 +89,81 @@ class TestFormatMeasuredPhysiology:
             "Measured physiology (ground intensity targets in these where present):",
             "- cycling FTP 300 W",
         ]
+
+
+class TestFormatUpstreamCoachingFlags:
+    """#307 — the generic upstream coaching_flags render block (Layers
+    2A/2B/2C/2D). Suppress-on-empty, per-layer label, scope rendering, and
+    de-dup of per-locale 2C flags."""
+
+    def test_empty_when_no_payloads(self):
+        assert format_upstream_coaching_flags() == []
+
+    def test_empty_when_all_flag_lists_empty(self):
+        assert (
+            format_upstream_coaching_flags(
+                layer2a=_payload(), layer2d=_payload()
+            )
+            == []
+        )
+
+    def test_injury_flag_renders_with_label_and_header(self):
+        lines = format_upstream_coaching_flags(
+            layer2d=_payload(
+                _flag(
+                    "multi_body_part_load_concern",
+                    "You have 3 active injuries.",
+                )
+            )
+        )
+        assert lines[0].startswith("Upstream coaching flags")
+        assert lines[1] == "- [injury] multi_body_part_load_concern: You have 3 active injuries."
+
+    def test_discipline_name_preferred_over_id_in_scope(self):
+        lines = format_upstream_coaching_flags(
+            layer2d=_payload(
+                _flag(
+                    "elevated_discipline_risk",
+                    "Elevated risk.",
+                    discipline_id="D-001",
+                    discipline_name="Trail Running",
+                )
+            )
+        )
+        assert lines[1] == "- [injury] elevated_discipline_risk (Trail Running): Elevated risk."
+
+    def test_discipline_id_used_when_no_name(self):
+        lines = format_upstream_coaching_flags(
+            layer2a=_payload(_flag("foo", "bar", discipline_id="D-009"))
+        )
+        assert lines[1] == "- [discipline] foo (D-009): bar"
+
+    def test_terrain_scope_rendered(self):
+        lines = format_upstream_coaching_flags(
+            layer2b=_payload(
+                _flag("race_terrain_unset", "Terrain missing.", target_terrain_id="TRN-3")
+            )
+        )
+        assert lines[1] == "- [terrain] race_terrain_unset (TRN-3): Terrain missing."
+
+    def test_per_locale_2c_flags_deduped(self):
+        # Same flag emitted across two locale payloads collapses to one line.
+        dup = _flag("equipment_gap", "No pool nearby.")
+        lines = format_upstream_coaching_flags(
+            layer2c_payloads=[_payload(dup), _payload(_flag("equipment_gap", "No pool nearby."))]
+        )
+        flag_lines = [ln for ln in lines if ln.startswith("- ")]
+        assert flag_lines == ["- [equipment] equipment_gap: No pool nearby."]
+
+    def test_multiple_layers_ordered_by_source(self):
+        lines = format_upstream_coaching_flags(
+            layer2a=_payload(_flag("a_flag", "a")),
+            layer2b=_payload(_flag("b_flag", "b")),
+            layer2c_payloads=[_payload(_flag("c_flag", "c"))],
+            layer2d=_payload(_flag("d_flag", "d")),
+        )
+        labels = [ln.split("]")[0] for ln in lines if ln.startswith("- ")]
+        assert labels == ["- [discipline", "- [terrain", "- [equipment", "- [injury"]
 
 
 class TestCardioProgrammingSection:

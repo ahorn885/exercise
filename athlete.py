@@ -214,7 +214,7 @@ KNOWN_INJURY_SIDES = ('Left', 'Right', 'Both', 'N/A')
 # side-less canonical body part (the injury form's body_part values double
 # Left/Right — strip the prefix before lookup). Drives the injury form's
 # swap-on-change filtering so only relevant constraints render. Values MUST
-# be a subset of KNOWN_MOVEMENT_CONSTRAINTS; 'Other' is the catch-all.
+# be a subset of KNOWN_MOVEMENT_CONSTRAINTS.
 _MC = {c: c for c in KNOWN_MOVEMENT_CONSTRAINTS}
 BODY_PART_CONSTRAINTS = {
     'Hand':       [_MC['Pain with loading'], _MC['Pain above specific joint angle'], _MC['Pain with grip / sustained hold'], _MC['Instability'], _MC['Reduced ROM'], _MC['Pain at high volume only']],
@@ -227,12 +227,17 @@ BODY_PART_CONSTRAINTS = {
     'Hip':        [_MC['Pain with loading'], _MC['Pain with impact'], _MC['Pain above specific joint angle'], _MC['Pain on descent / eccentric'], _MC['Pain on rotation'], _MC['Instability'], _MC['Reduced ROM'], _MC['Pain at high volume only']],
     'Hamstring':  [_MC['Pain with loading'], _MC['Pain above specific joint angle'], _MC['Pain on descent / eccentric'], _MC['Pain at high volume only']],
     'Quad':       [_MC['Pain with loading'], _MC['Pain above specific joint angle'], _MC['Pain on descent / eccentric'], _MC['Pain at high volume only']],
+    'Glute':      [_MC['Pain with loading'], _MC['Pain on descent / eccentric'], _MC['Pain on rotation'], _MC['Pain at high volume only']],
+    'Calf':       [_MC['Pain with loading'], _MC['Pain with impact'], _MC['Pain on descent / eccentric'], _MC['Pain at high volume only']],
+    'Shin':       [_MC['Pain with loading'], _MC['Pain with impact'], _MC['Pain at high volume only']],
+    'Achilles':   [_MC['Pain with loading'], _MC['Pain with impact'], _MC['Pain on descent / eccentric'], _MC['Pain at high volume only']],
     'Groin':      [_MC['Pain with loading'], _MC['Pain above specific joint angle'], _MC['Pain on rotation'], _MC['Pain at high volume only']],
     'Abdomen':    [_MC['Pain with loading'], _MC['Pain on rotation'], _MC['Pain at high volume only']],
+    'Chest':      [_MC['Pain with loading'], _MC['Pain with overhead movement'], _MC['Pain at high volume only']],
+    'Rib':        [_MC['Pain with loading'], _MC['Pain on rotation'], _MC['Pain at high volume only']],
     'Lower Back': [_MC['Pain with loading'], _MC['Pain with impact'], _MC['Pain above specific joint angle'], _MC['Pain on rotation'], _MC['Pain at high volume only']],
     'Upper Back': [_MC['Pain with loading'], _MC['Pain above specific joint angle'], _MC['Pain on rotation'], _MC['Pain with overhead movement'], _MC['Pain at high volume only']],
     'Neck':       [_MC['Pain above specific joint angle'], _MC['Pain on rotation'], _MC['Pain with overhead movement'], _MC['Reduced ROM'], _MC['Pain at high volume only']],
-    'Other':      list(KNOWN_MOVEMENT_CONSTRAINTS),
 }
 del _MC
 

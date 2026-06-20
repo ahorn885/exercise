@@ -213,7 +213,6 @@ def _layer2d() -> Layer2DPayload:
         coaching_flags=[],
         hitl_required=False,
         hitl_items=[],
-        body_part_vocab_misses=[],
     )
 
 
@@ -1030,7 +1029,6 @@ class TestComputeFeasiblePoolIds:
             coaching_flags=[],
             hitl_required=False,
             hitl_items=[],
-            body_part_vocab_misses=[],
         )
         assert compute_feasible_pool_ids({"L-home": l2c}, l2d) == [
             "E-back-squat",

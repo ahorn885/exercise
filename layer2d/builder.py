@@ -229,6 +229,7 @@ BODY_PART_KEYWORDS: dict[str, list[str]] = {
     # Trunk
     "Rib": ["rib", "rib fracture"],
     "Chest": ["chest", "sternum"],
+    "Abdomen": ["abdomen", "abdominal", "oblique", "rectus abdominis"],
 }
 
 
@@ -1101,7 +1102,6 @@ def _emit_coaching_flags(
     discipline_risks: list[DisciplineRisk],
     current_injuries: list[InjuryRecord],
     history_conditions: list[HealthConditionRecord],
-    body_part_vocab_misses: list[str],
 ) -> list[Layer2DCoachingFlag]:
     flags: list[Layer2DCoachingFlag] = []
     # §8.1 elevated_discipline_risk + §8.2 discipline_substitution_suggested
@@ -1198,17 +1198,6 @@ def _emit_coaching_flags(
                     "name": cond.condition_name,
                 },
             ))
-    # §8.6 body_part_vocab_miss
-    for bp in body_part_vocab_misses:
-        flags.append(Layer2DCoachingFlag(
-            flag_type="body_part_vocab_miss",
-            message=(
-                f"Injury record references body part '{bp}' not in canonical "
-                "vocabulary. Skipped from auto-matching. Consider standardizing "
-                "the entry."
-            ),
-            metadata={"unrecognized_body_part": bp},
-        ))
     return flags
 
 
@@ -1280,16 +1269,6 @@ def q_layer2d_injury_risk_profile_payload(
     history_injuries = [i for i in injuries if i.status != "Active"]
     current_conditions = [c for c in conditions if c.status == "Active"]
     history_conditions = [c for c in conditions if c.status != "Active"]
-    # Body-part vocab miss audit per §8.6 / spec §4 precondition 2.
-    body_part_vocab_misses: list[str] = []
-    for inj in current_injuries + history_injuries:
-        canonical = _strip_side(inj.body_part)
-        if (
-            canonical not in BODY_PART_KEYWORDS
-            and inj.body_part not in BODY_PART_KEYWORDS
-        ):
-            if canonical not in body_part_vocab_misses:
-                body_part_vocab_misses.append(canonical)
     # §5.2 candidate exercises.
     candidates = _load_candidates(db, included_discipline_ids)
     # §5.3 per-exercise verdict.
@@ -1367,7 +1346,6 @@ def q_layer2d_injury_risk_profile_payload(
         discipline_risks,
         current_injuries,
         history_conditions,
-        body_part_vocab_misses,
     )
     return Layer2DPayload(
         etl_version_set=dict(etl_version_set),
@@ -1378,7 +1356,6 @@ def q_layer2d_injury_risk_profile_payload(
         coaching_flags=coaching_flags,
         hitl_required=hitl_required,
         hitl_items=hitl_items,
-        body_part_vocab_misses=body_part_vocab_misses,
     )
 
 

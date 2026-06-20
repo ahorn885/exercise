@@ -644,7 +644,6 @@ class Layer2DPayload(_Base):
     coaching_flags: list[Layer2DCoachingFlag]
     hitl_required: bool
     hitl_items: list[Layer2DHitlItem]
-    body_part_vocab_misses: list[str]
 
     @model_validator(mode="after")
     def _check_excluded_verdict(self) -> "Layer2DPayload":

@@ -476,7 +476,6 @@ def _layer2d_with_excluded(exercise_ids: list[str]) -> Layer2DPayload:
         coaching_flags=[],
         hitl_required=False,
         hitl_items=[],
-        body_part_vocab_misses=[],
     )
 
 
@@ -501,7 +500,6 @@ def _layer2d_with_accommodated(
         coaching_flags=[],
         hitl_required=False,
         hitl_items=[],
-        body_part_vocab_misses=[],
     )
 
 
