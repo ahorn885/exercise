@@ -231,6 +231,7 @@
                     <input class="form-check-input" type="checkbox"
                            name="included_discipline_ids" value="{{ dc.id }}"
                            id="discipline-{{ dc.id }}"
+                           data-label="{{ dc.label }}"
                            {% if race and race.included_discipline_ids and dc.id in race.included_discipline_ids %}checked{% endif %}>
                     <label class="form-check-label" for="discipline-{{ dc.id }}">
                       {{ dc.label }}
@@ -504,7 +505,8 @@
             '<div class="form-check">' +
               '<input class="form-check-input" type="checkbox" ' +
                      'name="included_discipline_ids" value="' + safeId + '" ' +
-                     'id="discipline-' + safeId + '"' + checked + '>' +
+                     'id="discipline-' + safeId + '" ' +
+                     'data-label="' + safeLabel + '"' + checked + '>' +
               '<label class="form-check-label" for="discipline-' + safeId + '">' +
                 '<strong>' + safeId + '</strong> ' + safeLabel +
               '</label>' +
@@ -515,20 +517,42 @@
       grid.innerHTML = '<div class="row g-2">' + cells.join('') + '</div>';
     }
 
-    function refreshTerrainDisciplineSelects(results) {
-      const selects = document.querySelectorAll('select[data-discipline-select="1"]');
-      const knownIds = new Set((results || []).map((r) => r.id));
-      selects.forEach((sel) => {
+    // Issue #342 — the per-row terrain discipline <select> must only offer
+    // disciplines the race actually includes, so an excluded discipline can't
+    // be picked. The included set is the checked checkboxes; when none are
+    // checked the athlete hasn't narrowed it (server treats that as "use
+    // bridge defaults" → full set), so fall back to every discipline.
+    function effectiveDisciplineOptions() {
+      const boxes = Array.from(
+        grid.querySelectorAll('input[name="included_discipline_ids"]')
+      );
+      const checked = boxes.filter((b) => b.checked);
+      const src = checked.length ? checked : boxes;
+      return src.map((b) => ({ id: b.value, label: b.dataset.label || '' }));
+    }
+
+    function applyTerrainDisciplineSelects() {
+      const opts = effectiveDisciplineOptions();
+      const optIds = new Set(opts.map((o) => o.id));
+      document.querySelectorAll('select[data-discipline-select="1"]').forEach((sel) => {
         const prior = sel.value;
-        const preserved = knownIds.has(prior) ? prior : '';
+        // Preserve a prior value that's outside the included set (e.g. a
+        // legacy row saved before #342 validation, or one just orphaned by
+        // un-checking its discipline) rather than silently rewriting the
+        // athlete's data — flag it instead. The server still blocks the
+        // save until they consciously change it, and they can only pick an
+        // included discipline.
+        const keepPrior = prior && !optIds.has(prior);
         let html = '<option value="">Race-wide</option>';
-        (results || []).forEach((r) => {
-          const safeId = htmlEscape(r.id);
-          const safeLabel = htmlEscape(r.label);
-          const selected = r.id === preserved ? ' selected' : '';
-          html += '<option value="' + safeId + '"' + selected + '>' +
-                    safeId + ' &mdash; ' + safeLabel + '</option>';
+        opts.forEach((o) => {
+          const selected = o.id === prior ? ' selected' : '';
+          html += '<option value="' + htmlEscape(o.id) + '"' + selected + '>' +
+                    htmlEscape(o.id) + ' &mdash; ' + htmlEscape(o.label) + '</option>';
         });
+        if (keepPrior) {
+          html += '<option value="' + htmlEscape(prior) + '" selected>' +
+                    htmlEscape(prior) + ' &mdash; (not in included disciplines)</option>';
+        }
         sel.innerHTML = html;
       });
     }
@@ -541,7 +565,7 @@
         const data = await resp.json();
         const results = (data && data.results) || [];
         refreshGrid(results);
-        refreshTerrainDisciplineSelects(results);
+        applyTerrainDisciplineSelects();
       } catch (_e) { /* network/parse error — leave existing grid alone */ }
     }
 
@@ -551,6 +575,27 @@
         fetchDisciplinesAndRebind(fsInput.value.trim());
       }, 350);
     });
+
+    // Re-narrow the per-row selects whenever the included set changes.
+    // Delegated because grid.innerHTML is replaced wholesale on sport rebind.
+    grid.addEventListener('change', function (ev) {
+      if (ev.target && ev.target.name === 'included_discipline_ids') {
+        applyTerrainDisciplineSelects();
+      }
+    });
+
+    // Newly-added terrain rows are cloned (by the editor partial's own
+    // script) from a server-rendered template carrying the full discipline
+    // set; narrow each new row to the included set as it lands.
+    const terrainRows = document.getElementById('race-terrain-rows');
+    if (terrainRows && 'MutationObserver' in window) {
+      new MutationObserver(function () {
+        applyTerrainDisciplineSelects();
+      }).observe(terrainRows, { childList: true });
+    }
+
+    // Initial pass — narrow the server-rendered selects on load.
+    applyTerrainDisciplineSelects();
   })();
 </script>
 

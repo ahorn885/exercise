@@ -185,6 +185,55 @@ def _parse_discipline_id_filter(form) -> list[str] | None:
     return values or None
 
 
+def _terrain_discipline_mismatches(
+    race_terrain: list[dict], included_discipline_ids: list[str] | None
+) -> list[str]:
+    """Return the sorted, de-duplicated discipline IDs that terrain rows
+    scope to but that are *not* among the race's included disciplines.
+
+    Issue #342 — the terrain editor's per-row discipline `<select>` offers
+    every discipline mapped to the race's `framework_sport` (the full
+    `sport_discipline_bridge` set), not just the athlete's included subset,
+    so a row can be scoped to a discipline the race doesn't actually
+    include. Layer 2A then silently ignores that terrain row (no bridge
+    match → falls through as race-wide), creating a confusing mismatch
+    ("terrain says road cycling matters here" while the discipline list
+    says the athlete doesn't do road cycling in this race). The save routes
+    treat any mismatch as a blocking validation error.
+
+    When `included_discipline_ids` is None/empty the athlete hasn't narrowed
+    the set — Layer 2A falls back to the full `framework_sport` bridge, so
+    every discipline the per-row select could offer is in scope and there
+    is no mismatch. An empty result means "no mismatch".
+    """
+    if not included_discipline_ids:
+        return []
+    included = set(included_discipline_ids)
+    offending = {
+        entry['discipline_id']
+        for entry in race_terrain
+        if entry.get('discipline_id') and entry['discipline_id'] not in included
+    }
+    return sorted(offending)
+
+
+def _terrain_discipline_mismatch_flash(mismatches: list[str]) -> str:
+    """Build the athlete-facing flash copy for an issue #342 mismatch.
+
+    Centralised so the wording stays identical across the new-race,
+    update-race, and onboarding target-race save paths.
+    """
+    ids = ', '.join(mismatches)
+    plural = len(mismatches) > 1
+    return (
+        f'Terrain is scoped to discipline{"s" if plural else ""} '
+        f'({ids}) that {"are" if plural else "is"} not in this race’s '
+        f'included disciplines. Either add {"them" if plural else "it"} to '
+        'the discipline list above, or set the terrain row’s discipline '
+        'back to "Race-wide".'
+    )
+
+
 def _disciplines_for_framework_sport(db, framework_sport: str) -> list[dict]:
     """Return `{id, label}` dicts for disciplines mapped to a
     `framework_sport` via `layer0.sport_discipline_bridge`.
@@ -529,6 +578,19 @@ def new_race():
         if not locale_fields['event_locale_mapbox_id']:
             flash('Pick a race location before saving.', 'danger')
             return redirect(url_for('race_events.new_race'))
+
+        new_race_terrain = _parse_race_terrain(request.form)
+        new_discipline_filter = _parse_discipline_id_filter(request.form)
+        # Issue #342 — block terrain rows scoped to a discipline the race
+        # doesn't include. No prior selection to auto-clear on the create
+        # path, so validate the parsed values directly.
+        mismatches = _terrain_discipline_mismatches(
+            new_race_terrain, new_discipline_filter
+        )
+        if mismatches:
+            flash(_terrain_discipline_mismatch_flash(mismatches), 'danger')
+            return redirect(url_for('race_events.new_race'))
+
         race_event_id = create_race_event(
             db, uid,
             name=name,
@@ -541,11 +603,11 @@ def new_race():
             estimated_duration_hr=_parse_estimated_duration_hr(request.form),
             primary_metric=_parse_primary_metric(request.form),
             notes=_parse_str(request.form, 'notes'),
-            race_terrain=_parse_race_terrain(request.form),
+            race_terrain=new_race_terrain,
             previous_attempts=_parse_previous_attempts(request.form),
             race_url=_parse_race_url(request.form),
             framework_sport=_parse_str(request.form, 'framework_sport'),
-            included_discipline_ids=_parse_discipline_id_filter(request.form),
+            included_discipline_ids=new_discipline_filter,
             goal_outcome=_parse_goal_outcome(request.form),
             first_time_at_distance=_parse_first_time_at_distance(request.form),
             time_goal=_parse_str(request.form, 'time_goal'),
@@ -709,6 +771,18 @@ def update_race(race_event_id: int):
         )
     else:
         new_discipline_filter = parsed_discipline_filter
+
+    # Issue #342 — block terrain rows scoped to a discipline that isn't in
+    # the race's included disciplines. Validate against the *effective*
+    # filter (post auto-clear): when framework_sport changed and the picks
+    # were cleared to None, every bridge discipline is back in scope, so
+    # there's nothing to block.
+    mismatches = _terrain_discipline_mismatches(
+        new_race_terrain, new_discipline_filter
+    )
+    if mismatches:
+        flash(_terrain_discipline_mismatch_flash(mismatches), 'danger')
+        return redirect(url_for('race_events.edit_race', race_event_id=race_event_id))
 
     # D-73 Phase 5.2 walkthrough #1 — the race-details form no longer carries
     # `event_locale_id` (legacy dropdown removed); the 5 Mapbox columns are
