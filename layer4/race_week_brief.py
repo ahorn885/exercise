@@ -68,9 +68,11 @@ from layer4.context import (
 )
 from layer4.errors import Layer4InputError, Layer4OutputError
 from layer4.per_phase import (
+    VARIETY_CARVEOUT_PROMPT_SECTION,
     compute_feasible_pool_ids,
     compute_recovery_pool_ids,
     format_upstream_coaching_flags,
+    _format_coaching_memory,
     _recovery_pool_entries,
     _repair_recovery_exercises,
 )
@@ -1162,6 +1164,16 @@ def _render_user_prompt(
         parts.extend(upstream_flag_lines)
         parts.append("")
 
+    # #339 — surface the durable Coaching Memory block (#690 rendered it on
+    # plan-create only); suppress-on-empty. The variety carve-out's guard defers
+    # to race-week specificity, so this mainly carries non-variety prefs here.
+    coaching_memory_lines = _format_coaching_memory(layer1_payload)
+    if coaching_memory_lines:
+        parts.append("# Coaching memory")
+        parts.append("")
+        parts.extend(coaching_memory_lines)
+        parts.append("")
+
     # § Race-day fueling tier (2E)
     parts.append("# Race-day fueling tier (2E)")
     parts.append("")
@@ -1736,7 +1748,10 @@ def llm_layer4_race_week_brief(
         )
 
         llm_out = caller(
-            _SYSTEM_PROMPT,
+            # #339 — append the variety carve-out (self-limiting: its guard
+            # defers to race-week specificity, so it stays inert in taper while
+            # honoring non-variety Coaching-memory prefs surfaced above).
+            _SYSTEM_PROMPT + "\n\n" + VARIETY_CARVEOUT_PROMPT_SECTION,
             user_prompt,
             tool_schema,
             model,

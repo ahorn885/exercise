@@ -1047,6 +1047,33 @@ class TestPromptRendering:
         assert "E-foo" in prompt
         assert "E-bar" in prompt
 
+    def test_coaching_memory_renders_when_present_339(self):
+        # #339 — the durable Coaching-memory block now renders on the
+        # single-session path too (#690 rendered it on plan-create only), so
+        # non-variety prefs (e.g. avoid-exercise notes) reach the ad-hoc session.
+        from layer4.single_session import _render_user_prompt
+
+        req = SingleSessionRequest(
+            sport="running", duration_min=60, intensity="easy", locale_slug="home_gym"
+        )
+        l1 = dict(_layer1())
+        l1["coaching_preferences"] = [
+            {"category": "avoid_exercise", "content": "No overhead pressing.",
+             "permanent": False},
+        ]
+        prompt = _render_user_prompt(
+            request=req,
+            layer1_payload=l1,
+            layer2c_payload_for_locale=_layer2c(exercise_ids=("E-foo",)),
+            layer2d_payload=_layer2d(),
+            layer3a_payload=_layer3a(),
+            session_date=_DATE,
+            retries_used=0,
+            rule_failures=[],
+        )
+        assert "Coaching memory" in prompt
+        assert "No overhead pressing." in prompt
+
     def test_resolved_exercises_render_excludes_tier0(self):
         # #691 — a tier-0 (equipment-infeasible, no substitute/proxy) exercise
         # must NOT appear in the "Resolved exercises" prompt menu, where it would

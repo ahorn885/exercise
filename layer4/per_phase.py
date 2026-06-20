@@ -261,6 +261,26 @@ Structure each cardio session as a deliberate sequence of cardio_blocks, not one
 Ground every intensity_target in the athlete's measured physiology shown in the athlete-context section when present: HRTarget hr_bpm_low/high from HR max / LT-HR, PowerTarget from cycling FTP, PaceTarget from run threshold pace, SwimPaceTarget from swim CSS. When the relevant anchor is absent, fall back to an RPETarget or a clearly zone-relative range rather than inventing precise numbers the athlete can't trust."""
 
 
+# #339 — equivalent-discipline variety carve-out. Path-neutral like
+# `CARDIO_PROGRAMMING_PROMPT_SECTION`: included in per_phase's SYSTEM_PROMPT and
+# appended by the plan_refresh / single_session / race_week_brief system prompts
+# so all four synthesizers honor an explicit variety preference. Gated on the
+# `Coaching memory` block (#690 surfaced it onto Layer 1; suppress-on-empty), so
+# it is inert for athletes who set no preference. Scoped to EASY foot-based
+# sessions — counts / long / quality / race specificity are never traded away.
+VARIETY_CARVEOUT_PROMPT_SECTION = """# Variety / cross-training substitution (easy foot-based sessions only)
+
+If — and ONLY if — the athlete's `Coaching memory` block expresses a preference for variety or cross-training, you MAY render the *content* of an **easy**-typed foot-based session as a training-equivalent foot discipline to relieve monotony and manage repetitive joint load — e.g. an easy **road run** in lieu of an easy **trail run**, or an easy hike / treadmill effort in lieu of an easy run. Hard rules that always hold:
+
+- The per-discipline session **count**, the **long** (LSD) session, and **every quality** session stay on the race-specific discipline — race specificity is non-negotiable there. Substitute on `easy`-typed sessions only.
+- This does NOT change the prescribed counts, typing, or target hours: an easy trail-run slot rendered as an easy road run still counts as that discipline's easy session.
+- Keep it a minority of the easy volume so the race-specific discipline still dominates the athlete's weekly foot volume.
+- Name the swap in `coaching_intent` (e.g. "easy road run for surface variety — trail volume preserved on the long + quality days").
+- Never override an athlete's explicit, just-made request for a specific session (e.g. an on-demand single-session sport pick), and never trade away race-week specificity for variety — in those contexts prescribe exactly the discipline asked for.
+
+Only **foot-based** equivalents are in scope; do NOT swap across cardio modes (e.g. a road-bike spin for an MTB session) for variety. Absent an explicit variety / cross-training preference in `Coaching memory`, prescribe the disciplines exactly as given."""
+
+
 SYSTEM_PROMPT = (
     """You are AIDSTATION's Layer 4 per-phase synthesizer.
 
@@ -337,6 +357,10 @@ Recovery sessions are ADDITIVE and do **not** count toward the ≤2/day training
 Prescribe the movements as a `recovery_exercises[]` block (the structural analog of `strength_exercises`): pick `exercise_id`s from the rendered `=== Recovery exercise pool ===` only (never invent them), and give each a free-text `prescription` (e.g. "2×30s/side", "5 min @ ~6 breaths/min") plus brief `instructions`. Leave `cardio_blocks` / `strength_exercises` / `rest_reason` null.
 
 Load-adaptive rest: full rest is the protective floor and recovery sessions are the active-recovery mechanism — the two are adaptation-neutral, so under high load (Peak phase or a deload week) prefer genuine full rest over active recovery and keep any recovery minimal and short.
+
+"""
+    + VARIETY_CARVEOUT_PROMPT_SECTION
+    + """
 
 """
     + CARDIO_PROGRAMMING_PROMPT_SECTION

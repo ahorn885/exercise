@@ -100,7 +100,13 @@ _LAYER2_BUNDLE_ATTRS = frozenset({"a", "b", "c", "d", "e"})
 # an unavailable-gear exercise can no longer be prescribed. Changes the feasible
 # enum + rendered pool, so cached plans + refreshes must regenerate. (single_session
 # needs no bump — ad-hoc, not cache-keyed — but reads the same corrected fns.)
-LAYER4_PROMPT_REVISION = "16"
+# "17" = #339 cross-discipline variety — (A) the durable Coaching Memory block
+# (#690 / `_format_coaching_memory`) is now rendered on the plan_refresh +
+# single_session + race_week_brief paths too (was per_phase-only), and (B) all
+# four synthesizers gain the `VARIETY_CARVEOUT_PROMPT_SECTION` (gated on a stated
+# variety preference; easy foot-based sessions only — counts / long / quality
+# preserved). Changes the rendered prompt, so cached plans + refreshes regenerate.
+LAYER4_PROMPT_REVISION = "17"
 
 
 def _to_jsonable(obj: Any) -> Any:
