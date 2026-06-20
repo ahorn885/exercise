@@ -295,14 +295,14 @@ Macro targets are computed per phase using `body_weight_kg` as the denominator. 
 
 | Phase | CHO low | CHO high | Protein low | Protein high | Fat min |
 |---|---|---|---|---|---|
-| Base | 5.0 | 7.0 | 1.4 | 1.7 | 1.0 |
-| Build | 6.0 | 9.0 | 1.6 | 1.9 | 1.0 |
-| Peak | 7.0 | 12.0 | 1.7 | 2.0 | 1.0 |
-| Taper | 5.0 | 7.0 | 1.6 | 1.9 | 1.0 |
+| Base | 5.0 | 7.0 | 1.6 | 1.8 | 1.0 |
+| Build | 6.0 | 9.0 | 1.7 | 2.0 | 1.0 |
+| Peak | 7.0 | 12.0 | 1.8 | 2.2 | 1.0 |
+| Taper | 5.0 | 7.0 | 1.8 | 2.0 | 1.0 |
 
 **Source anchor:**
 - CHO bands: Burke et al. (2018) "Re-Examining High-Fat Diets for Sports Performance"; Jeukendrup (2014) "A step towards personalized sports nutrition: carbohydrate intake during exercise"; ISSN position stand (2018, updated 2023)
-- Protein: Phillips & Van Loon (2011) plus 2022 ISSN update; bands account for endurance-athlete elevations beyond general 0.8 g/kg RDA
+- Protein (bands raised 2026-06-20, issue #542 — daily protein was under-recommended): anchored on modern trained-athlete evidence that puts the *endurance* floor near 1.6 g/kg, not the older ~1.2-1.4 g/kg figure. Kato et al. (2016, indicator-amino-acid-oxidation — endurance requirement ~1.65 g/kg, safe intake ~1.83 g/kg on training days); Morton et al. (2018 meta-analysis — ~1.6 g/kg breakpoint for training-induced lean-mass gains); ISSN protein position stand (Jäger et al. 2017 — 1.4-2.0 g/kg, trending toward 2.3-3.1 g/kg in hypocaloric periods). Peak tops at 2.2 g/kg; Taper held at 1.8-2.0 g/kg because the race-week energy pull-back is a mild deficit where higher protein preserves lean mass (Helms et al. 2014).
 - Fat floor: 1.0 g/kg minimum is a hormonal-function and fat-soluble-vitamin safety floor (Loucks, IOC RED-S guidance 2018)
 
 #### 5.3.2 Computation

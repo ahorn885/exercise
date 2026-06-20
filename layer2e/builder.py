@@ -113,11 +113,28 @@ _PHASE_DEFAULT_MULTIPLIER: dict[str, float] = {
 
 # §5.3.1 macro band table (g/kg/day). `cho_low/high`, `protein_low/high`,
 # `fat_min` per phase.
+#
+# Protein bands raised 2026-06-20 (issue #542 — daily protein was under-
+# recommended). The prior floors (Base 1.4, Build/Taper 1.6, Peak 1.7) sat at
+# the bottom of, or below, the modern evidence band: contemporary work on
+# trained athletes converges on ~1.6 g/kg as the floor for endurance athletes,
+# not the old ~1.2-1.4 g/kg endurance figure —
+#   • Kato et al. (2016), IAAO method: endurance protein requirement ~1.65 g/kg
+#     and a safe intake ~1.83 g/kg on training days (well above the RDA / older
+#     ACSM endurance band).
+#   • Morton et al. (2018) meta-analysis: ~1.6 g/kg is the breakpoint that
+#     maximises training-induced lean-mass gains.
+#   • ISSN protein position stand (Jäger 2017): 1.4-2.0 g/kg for building/
+#     maintaining muscle in exercising individuals, trending higher (toward
+#     2.3-3.1 g/kg) during hypocaloric periods to preserve lean mass.
+# Bands now run 1.6 (Base) → 2.2 (Peak), with Taper held high (1.8-2.0) because
+# the race-week energy pull-back is a mild deficit where higher protein protects
+# lean mass (Helms et al. 2014). CHO + fat_min unchanged (still spec-anchored).
 _MACRO_BANDS: dict[str, dict[str, float]] = {
-    "Base":  {"cho_low": 5.0, "cho_high": 7.0,  "protein_low": 1.4, "protein_high": 1.7, "fat_min": 1.0},
-    "Build": {"cho_low": 6.0, "cho_high": 9.0,  "protein_low": 1.6, "protein_high": 1.9, "fat_min": 1.0},
-    "Peak":  {"cho_low": 7.0, "cho_high": 12.0, "protein_low": 1.7, "protein_high": 2.0, "fat_min": 1.0},
-    "Taper": {"cho_low": 5.0, "cho_high": 7.0,  "protein_low": 1.6, "protein_high": 1.9, "fat_min": 1.0},
+    "Base":  {"cho_low": 5.0, "cho_high": 7.0,  "protein_low": 1.6, "protein_high": 1.8, "fat_min": 1.0},
+    "Build": {"cho_low": 6.0, "cho_high": 9.0,  "protein_low": 1.7, "protein_high": 2.0, "fat_min": 1.0},
+    "Peak":  {"cho_low": 7.0, "cho_high": 12.0, "protein_low": 1.8, "protein_high": 2.2, "fat_min": 1.0},
+    "Taper": {"cho_low": 5.0, "cho_high": 7.0,  "protein_low": 1.8, "protein_high": 2.0, "fat_min": 1.0},
 }
 
 # §5.4.2 race-day base bands by duration tier.

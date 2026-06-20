@@ -1021,3 +1021,79 @@ class TestMultipleEvents:
         # Sleep-dep overlay applies to WTM + PGE (both >20hr)
         assert payload.sleep_dep_overlay is not None
         assert set(payload.sleep_dep_overlay.applicable_events) == {"wtm", "pge"}
+
+
+# ─── §5.3 evidence-based macro bands (issue #542) ────────────────────────────
+
+
+class TestMacroBandsEvidenceBased:
+    """Issue #542 — daily protein was under-recommended. The macro bands must
+    land protein in an evidence-based g/kg range for the athlete's training
+    load (Kato 2016 IAAO endurance floor ~1.65-1.83; Morton 2018 ~1.6 g/kg
+    breakpoint; ISSN 1.4-2.0, up to ~2.2 in peak/lean-mass-preservation).
+    Validated against a reference athlete-day per the issue's acceptance."""
+
+    @staticmethod
+    def _marathoner() -> list[Layer2ADiscipline]:
+        # Single pure-endurance, non-strength-movement discipline → the
+        # protein band position floors at 0.4 (the worst case for "too low").
+        return [_ar_discipline("D-002", weight=1.0)]
+
+    def test_protein_lands_in_evidence_band_every_phase(self):
+        db = _FakeConn()
+        db.queue_pla_for_all_phases((4, 6), (6, 10), (8, 12), (3, 6))
+        payload = _andy_baseline_call(
+            db, target_events=[], disciplines=self._marathoner(),
+            framework_sport="Marathon",
+        )
+        per_phase = payload.daily_nutrition_baseline.per_phase
+        # No phase under-recommends protein: ≥1.6 g/kg (modern trained-athlete
+        # floor) and ≤2.2 g/kg (peak/deficit ceiling). The old Base value for
+        # this athlete was ~1.52 g/kg — the regression this issue fixes.
+        for phase, targets in per_phase.items():
+            p = targets.macros.protein_g_per_kg
+            assert 1.6 <= p <= 2.2, f"{phase} protein {p} g/kg outside evidence band"
+        # For a fixed athlete the phase progression is monotonic Base→Build→Peak
+        # (protein scales with training load).
+        assert (
+            per_phase["Base"].macros.protein_g_per_kg
+            <= per_phase["Build"].macros.protein_g_per_kg
+            <= per_phase["Peak"].macros.protein_g_per_kg
+        )
+        # protein_g is the g/kg target × body weight, rounded.
+        for targets in per_phase.values():
+            assert targets.macros.protein_g == round(
+                targets.macros.protein_g_per_kg * 80.0
+            )
+
+    def test_reference_day_cho_fat_split_reads_sensibly(self):
+        # CHO/fat split review (issue #542 acceptance): fat sits at/above the
+        # 1.0 g/kg RED-S floor, CHO stays the dominant fuel, and grams convert
+        # to kcal consistently — the macros "read as sensible" on the chips.
+        db = _FakeConn()
+        db.queue_pla_for_all_phases((4, 6), (6, 10), (8, 12), (3, 6))
+        payload = _andy_baseline_call(
+            db, target_events=[], disciplines=self._marathoner(),
+            framework_sport="Marathon",
+        )
+        build = payload.daily_nutrition_baseline.per_phase["Build"]
+        m = build.macros
+        assert m.fat_g >= round(1.0 * 80.0)        # at/above the fat floor
+        assert m.cho_kcal > m.protein_kcal          # CHO is the largest macro
+        assert m.cho_kcal > m.fat_kcal
+        assert m.protein_kcal == m.protein_g * 4
+        assert m.cho_kcal == m.cho_g * 4
+        assert m.fat_kcal == m.fat_g * 9
+
+    def test_strength_biased_athlete_reaches_band_top(self):
+        # A climbing-movement (strength-biased) mix pushes protein toward the
+        # band top — Peak should reach ~2.2 g/kg, not sit mid-band.
+        db = _FakeConn()
+        db.queue_pla_for_all_phases((4, 6), (6, 10), (8, 12), (3, 6))
+        climbers = [_ar_discipline("D-012", weight=1.0)]  # Rock Climbing
+        payload = _andy_baseline_call(
+            db, target_events=[], disciplines=climbers,
+            framework_sport="Adventure Racing",
+        )
+        peak = payload.daily_nutrition_baseline.per_phase["Peak"].macros
+        assert peak.protein_g_per_kg == 2.2
