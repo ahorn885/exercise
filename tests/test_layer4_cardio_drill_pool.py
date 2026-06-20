@@ -22,7 +22,7 @@ from layer4.per_phase import (
 
 
 def _rx(exercise_id, name, disciplines, *, exercise_type="Interval / Tempo",
-        priorities=None, coaching_cue=None):
+        priorities=None, coaching_cue=None, tier=1):
     return NS(
         exercise_id=exercise_id,
         exercise_name=name,
@@ -30,6 +30,8 @@ def _rx(exercise_id, name, disciplines, *, exercise_type="Interval / Tempo",
         discipline_ids=list(disciplines),
         priority_per_discipline=dict(priorities or {}),
         coaching_cue=coaching_cue,
+        # tier defaults to 1 (feasible); the pool fns now drop tier-0 (#691).
+        tier=tier,
     )
 
 
@@ -65,6 +67,31 @@ def test_compute_keeps_only_drill_types():
         pool, None, disciplines={"D-006"}, phase="Base"
     )
     assert ids == ["EX070", "EX073", "EX120"]  # sorted; strength + mobility dropped
+
+
+# #691 — tier 0 = equipment-infeasible with no substitute/proxy; a drill that
+# needs gear the athlete lacks must not enter the pool or the rendered menu.
+def test_compute_excludes_tier0():
+    pool = {"loc": _l2c("loc", [
+        _rx("EX073", "Threshold Bike", ["D-006"], tier=1),
+        _rx("EX-GONE", "Erg Intervals", ["D-006"], tier=0),  # no erg, no sub
+    ])}
+    ids = compute_cardio_drill_pool_ids(
+        pool, None, disciplines={"D-006"}, phase="Base"
+    )
+    assert ids == ["EX073"]
+
+
+def test_render_excludes_tier0():
+    pool = {"loc": _l2c("loc", [
+        _rx("EX073", "Threshold Bike", ["D-006"], tier=1, coaching_cue="Z4 4x4"),
+        _rx("EX-GONE", "Erg Intervals", ["D-006"], tier=0),
+    ])}
+    text = "\n".join(_format_cardio_drill_pool(
+        pool, _l2a({"D-006": 1.0}), None, disciplines={"D-006"}, phase="Base"
+    ))
+    assert "EX073" in text
+    assert "EX-GONE" not in text
 
 
 def test_compute_discipline_match_required():
