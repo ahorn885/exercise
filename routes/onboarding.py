@@ -1064,6 +1064,8 @@ def target_race_save():
         _parse_previous_attempts,
         _parse_primary_metric,
         _parse_race_url,
+        _terrain_discipline_mismatch_flash,
+        _terrain_discipline_mismatches,
     )
     new_locale_fields = _extract_mapbox_locale_from_form(request.form)
     new_race_url = _parse_race_url(request.form)
@@ -1106,6 +1108,16 @@ def target_race_save():
         prior_framework_sport = None
         prior_discipline_filter = None
         new_discipline_filter = parsed_discipline_filter
+
+    # Issue #342 — block terrain rows scoped to a discipline that isn't in
+    # the race's included disciplines (validated against the effective
+    # filter, post auto-clear). Mirrors routes/race_events.py.
+    mismatches = _terrain_discipline_mismatches(
+        new_race_terrain, new_discipline_filter
+    )
+    if mismatches:
+        flash(_terrain_discipline_mismatch_flash(mismatches), 'danger')
+        return redirect(url_for('onboarding.target_race'))
 
     if target:
         update_race_event(
