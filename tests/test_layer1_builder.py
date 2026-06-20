@@ -165,7 +165,7 @@ class TestEmptyUser:
         assert payload.strength_benchmarks is None
         assert payload.performance.hrmax_bpm is None
         assert payload.availability.doubles_feasible is None
-        assert payload.event_goal.target_race_event_id is None
+        assert payload.event_goal.plan_duration_weeks_no_event is None
         assert payload.lifestyle.sleep_baseline_hours is None
         assert payload.network.network_links == []
         assert payload.disclosures.acknowledgments == []
@@ -176,7 +176,9 @@ class TestEmptyUser:
         build_layer1_payload(conn, user_id=1)
         # 25 → 24 after the dead `food_allergies` load was removed (the
         # skill-toggle SELECT added by D-73 Phase 5.2 Bucket C (l) stays);
-        # back to 25 with the 2E-6 §I.1 `_load_supplements` SELECT.
+        # back to 25 with the 2E-6 §I.1 `_load_supplements` SELECT. #304 swapped
+        # the retired `_load_target_race_event_id` SELECT for the event-windows
+        # `travel_constraint` SELECT — net-zero, still 25.
         assert len(conn.calls) == 25
 
     def test_user_id_required(self):
@@ -237,6 +239,8 @@ class TestFullyPopulated:
             "salt_electrolyte_tolerance": "high",
             "sleep_deprivation_max_hrs_continuous_awake": 36,
             "sleep_deprivation_strategy_notes": "30-min naps at PGE",
+            "experience_level": "advanced",
+            "coaching_voice_preferences": "Blunt, no cheerleading.",
         })
         # 2) body_metrics
         conn.queue_response(row={"resting_hr": 48})
@@ -351,27 +355,25 @@ class TestFullyPopulated:
             "rock_climbing_outdoor_grade": "5.10a", "rock_climbing_indoor_grade": "V3",
             "abseiling_experience": True,
         })
-        # 20) race_events target
-        conn.queue_response(row={"id": 99})
-        # 21) athlete_network_links
+        # 20) athlete_network_links
         conn.queue_response(rows=[
             {"id": 500, "partner_name": "Alex", "linked_account_user_id": None,
              "relationship_types": "race_teammate,training_partner",
              "partner_specific_rules": None, "race_event_id": 99,
              "discipline_focus_on_team": "navigation"},
         ])
-        # 22) linked_partner_consents
+        # 21) linked_partner_consents
         conn.queue_response(rows=[
             {"id": 600, "link_id": 500, "consent_scope": "activity_summaries",
              "granted_at": datetime(2026, 5, 1, 10, 0, 0), "revoked_at": None},
         ])
-        # 23) disclosure_acknowledgments
+        # 22) disclosure_acknowledgments
         conn.queue_response(rows=[
             {"disclosure_id": "account_creation_ack", "version_id": "v1",
              "scopes_granted": None, "delivery_method": "in_app",
              "acknowledged_at": datetime(2026, 4, 1, 9, 0, 0)},
         ])
-        # 24) athlete_skill_toggles — D-73 Phase 5.2 Bucket C (l). Andy
+        # 23) athlete_skill_toggles — D-73 Phase 5.2 Bucket C (l). Andy
         # has the climbing_roped + whitewater_handling toggles enabled
         # (PGE 2026 athlete with real AR experience), the rest implicit
         # OFF since they're not in the athlete_skill_toggles table.
@@ -379,7 +381,7 @@ class TestFullyPopulated:
             {"toggle_name": "climbing_roped", "enabled": True},
             {"toggle_name": "whitewater_handling", "enabled": True},
         ])
-        # 25) athlete_supplements — 2E-6 §I.1 structured protocol. Two records;
+        # 24) athlete_supplements — 2E-6 §I.1 structured protocol. Two records;
         # frequency/timing are closed-vocab tokens, dose/notes free text.
         conn.queue_response(rows=[
             {"supplement_id": "creatine_monohydrate",
@@ -390,6 +392,18 @@ class TestFullyPopulated:
              "canonical_name": "Electrolyte mix", "category": "Race-day",
              "dose": "1 scoop", "frequency": "as_needed",
              "timing": "during_exercise", "notes": None},
+        ])
+        # 25) athlete_event_windows — #304 travel_constraint source. One 'away'
+        # window with brought craft + one 'indoor_only' window.
+        conn.queue_response(rows=[
+            {"id": 1, "user_id": 1, "start_date": date(2026, 7, 1),
+             "end_date": date(2026, 7, 5), "override_type": "away",
+             "unavailable_locale": None, "away_locale": "Moab",
+             "brought_craft": "gravel_bike", "notes": "training camp"},
+            {"id": 2, "user_id": 1, "start_date": date(2026, 7, 10),
+             "end_date": date(2026, 7, 12), "override_type": "indoor_only",
+             "unavailable_locale": None, "away_locale": None,
+             "brought_craft": "", "notes": ""},
         ])
 
     def test_identity_populated(self):
@@ -466,8 +480,23 @@ class TestFullyPopulated:
         conn = _FakeConn()
         self._queue_andy(conn)
         payload = build_layer1_payload(conn, user_id=1)
-        assert payload.event_goal.target_race_event_id == 99
+        # Event mode → the no-event plan-duration field stays None (the target
+        # race is threaded via RaceEventPayload, not off event_goal — #304).
         assert payload.event_goal.plan_duration_weeks_no_event is None
+
+    def test_convenience_fields_threaded(self):
+        # #304 — experience_level + coaching_voice_preferences round-trip from
+        # athlete_profile; travel_constraint is summarized from event windows.
+        conn = _FakeConn()
+        self._queue_andy(conn)
+        payload = build_layer1_payload(conn, user_id=1)
+        assert payload.experience_level == "advanced"
+        assert payload.coaching_voice_preferences == "Blunt, no cheerleading."
+        assert payload.travel_constraint is not None
+        assert "2026-07-01–2026-07-05: training at Moab" in payload.travel_constraint
+        assert "brings gravel_bike" in payload.travel_constraint
+        assert "training camp" in payload.travel_constraint
+        assert "2026-07-10–2026-07-12: indoor only" in payload.travel_constraint
 
     def test_lifestyle_multi_select_split(self):
         conn = _FakeConn()
@@ -588,8 +617,10 @@ class TestSkillToggleStates:
         (absent from dict) at the consumer if it cares. Layer 2B/2C
         currently treat both as OFF so the semantics collapse."""
         conn = _FakeConn()
-        # Queue 23 empty + 1 populated for the trailing toggle SELECT.
-        for _ in range(23):
+        # Queue 22 empty + 1 populated for the toggle SELECT (#23 of 25 after
+        # #304 retired the target-race SELECT); supplements + event-windows
+        # SELECTs trail it and read empty.
+        for _ in range(22):
             conn.queue_response()
         conn.queue_response(rows=[
             {"toggle_name": "climbing_roped", "enabled": False},
@@ -680,4 +711,5 @@ _PROFILE_COL_NAMES = (
     "salt_electrolyte_tolerance",
     "sleep_deprivation_max_hrs_continuous_awake",
     "sleep_deprivation_strategy_notes",
+    "experience_level", "coaching_voice_preferences",
 )

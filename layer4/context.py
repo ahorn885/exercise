@@ -1783,7 +1783,9 @@ class Layer1Availability(_Base):
 
 # §H — event/goal
 class Layer1EventGoal(_Base):
-    target_race_event_id: int | None = None
+    # NOTE: the target race is threaded via the separate `RaceEventPayload`
+    # (and the Layer 3B cache key's `race_event_id`), not off this sub-model —
+    # a former `target_race_event_id` field here was a dead duplicate (#304).
     plan_duration_weeks_no_event: Literal[8, 12, 16, 20, 24] | None = None
     non_event_goal_type: Literal[
         "endurance", "general_fitness", "strength", "mixed"
@@ -1899,8 +1901,8 @@ class Layer1Payload(_Base):
     # Layer-4-consumed convenience fields (top-level so `.model_dump()` produces
     # a dict where Layer 4's `.get("experience_level")` etc. continue to work
     # per `Upstream_Implementation_Plan_v1.md` §8 mitigation). `experience_level`
-    # / `coaching_voice_preferences` / `travel_constraint` carry no v1 storage —
-    # builder leaves them None; derivation is a future Layer 1 enhancement.
+    # + `coaching_voice_preferences` are self-reported on `athlete_profile`;
+    # `travel_constraint` is summarized from the athlete's event windows (#304).
     experience_level: Literal[
         "novice", "developing", "intermediate", "advanced", "elite"
     ] | None = None

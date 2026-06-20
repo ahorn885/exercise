@@ -2382,6 +2382,12 @@ _PG_MIGRATIONS = [
     # (record-don't-drop). Populated by the provider cardio-ingest repoint
     # (Slice 2b); NULL on existing rows + manual/unmapped activities.
     "ALTER TABLE cardio_log ADD COLUMN IF NOT EXISTS discipline_id TEXT",
+    # #304 — self-reported Layer-4 convenience fields that the Layer 4 prompt
+    # builders already read but the Layer 1 builder previously hardcoded to NULL.
+    # `experience_level` is a closed self-select band; `coaching_voice_
+    # preferences` is free text. Additive + nullable.
+    "ALTER TABLE athlete_profile ADD COLUMN IF NOT EXISTS experience_level TEXT",
+    "ALTER TABLE athlete_profile ADD COLUMN IF NOT EXISTS coaching_voice_preferences TEXT",
 ]
 
 _CLOTHING_SEEDS = [
