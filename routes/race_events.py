@@ -540,8 +540,6 @@ def new_race():
             ),
             estimated_duration_hr=_parse_estimated_duration_hr(request.form),
             primary_metric=_parse_primary_metric(request.form),
-            race_rules_summary=_parse_str(request.form, 'race_rules_summary'),
-            mandatory_gear_text=_parse_str(request.form, 'mandatory_gear_text'),
             notes=_parse_str(request.form, 'notes'),
             race_terrain=_parse_race_terrain(request.form),
             previous_attempts=_parse_previous_attempts(request.form),
@@ -579,8 +577,8 @@ def new_race():
     # which fetches from the JSON `locale_search` endpoint and fills the
     # 5 hidden inputs on result-click. This sidesteps the form-state
     # preservation problem the GET round-trip would have introduced
-    # (mandatory_gear_text + race_rules_summary can be multi-KB and the
-    # URL line limit is 8KB).
+    # (the merged race notes field can be multi-KB and the URL line
+    # limit is 8KB).
     return render_template(
         'profile/race_event_edit.html',
         race=None,
@@ -680,8 +678,6 @@ def update_race(race_event_id: int):
     )
     new_estimated_duration_hr = _parse_estimated_duration_hr(request.form)
     new_primary_metric = _parse_primary_metric(request.form)
-    new_race_rules_summary = _parse_str(request.form, 'race_rules_summary')
-    new_mandatory_gear_text = _parse_str(request.form, 'mandatory_gear_text')
     new_notes = _parse_str(request.form, 'notes')
     new_race_terrain = _parse_race_terrain(request.form)
     new_previous_attempts = _parse_previous_attempts(request.form)
@@ -730,8 +726,6 @@ def update_race(race_event_id: int):
         total_elevation_gain_m=new_total_elevation_gain_m,
         estimated_duration_hr=new_estimated_duration_hr,
         primary_metric=new_primary_metric,
-        race_rules_summary=new_race_rules_summary,
-        mandatory_gear_text=new_mandatory_gear_text,
         event_locale_id=race['event_locale_id'],  # legacy FK preserved
         event_locale_name=race.get('event_locale_name'),
         event_locale_mapbox_id=race.get('event_locale_mapbox_id'),
@@ -802,8 +796,6 @@ def update_race(race_event_id: int):
         brief_only_changed = (
             race['distance_km'] != new_distance_km
             or race['total_elevation_gain_m'] != new_total_elevation_gain_m
-            or race['race_rules_summary'] != new_race_rules_summary
-            or race['mandatory_gear_text'] != new_mandatory_gear_text
             or race['notes'] != new_notes
             or prior_terrain != new_race_terrain
             or prior_race_url != new_race_url

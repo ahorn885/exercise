@@ -176,8 +176,6 @@ def _queue_target_race_event(
             "race_format": race_format,
             "distance_km": None,
             "total_elevation_gain_m": None,
-            "race_rules_summary": None,
-            "mandatory_gear_text": None,
             # FormRefresh A1 (2026-05-25) — magnitude axis. Default None
             # exercises the format-keyed duration fallback; tests override
             # to assert the explicit-value precedence path.

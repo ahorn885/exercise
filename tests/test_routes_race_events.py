@@ -724,8 +724,6 @@ class TestUpdateRaceMapboxRequired:
                 'race_format': 'single_day',
                 'distance_km': None,
                 'total_elevation_gain_m': None,
-                'race_rules_summary': None,
-                'mandatory_gear_text': None,
                 'event_locale_id': None,  # legacy FK; load path preserves
                 'notes': None,
                 'race_terrain': [],
