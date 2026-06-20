@@ -127,9 +127,21 @@ def test_rollup_climbing_roped():
     assert out == ["Climbing — roped"]
 
 
-def test_rollup_bouldering():
+def test_former_bouldering_tokens_repoint_to_roped():
+    # #502: the Bouldering toggle was removed (not a discipline in any of our
+    # sports). Its former tokens re-point to the surviving roped-climbing
+    # toggle, matching the V4b precedent (climbing holds → Climbing — roped).
     out, _ = transform_equipment_string("Bouldering Shoes, Crash Pad")
-    assert out == ["Bouldering"]
+    assert out == ["Climbing — roped"]
+
+
+def test_chalk_dropped():
+    # #502: chalk no longer rolls up to Bouldering; it is an untracked generic
+    # accessory and drops out entirely ("chalk = chalk", Vocab Audit v3).
+    out, _ = transform_equipment_string("Chalk")
+    assert out == []
+    out, _ = transform_equipment_string("Bouldering Shoes, Chalk")
+    assert out == ["Climbing — roped"]
 
 
 def test_rollup_touring_at_ski():
@@ -203,7 +215,7 @@ def test_dedupe_preserves_order():
     out, _ = transform_equipment_string(
         "Climbing Rope, Bouldering Shoes, Carabiners, Crash Pad"
     )
-    assert out == ["Climbing — roped", "Bouldering"]
+    assert out == ["Climbing — roped"]
 
 
 # ---------------------------------------------------------------------------
