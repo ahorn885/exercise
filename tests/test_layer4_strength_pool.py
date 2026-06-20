@@ -245,6 +245,43 @@ def test_compute_feasible_pool_ids_excludes_non_strength_types():
     assert ids == ["EX-LIFT"]
 
 
+# ─── #691 — tier-0 (equipment-infeasible) exclusion from the feasible pool ───
+#
+# Tier 0 = the athlete lacks the required equipment AND there's no resolvable
+# substitute (tier 2) or proxy (tier 3) — not prescribable. Such a row must
+# appear in NEITHER the SDK enum (`compute_feasible_pool_ids`, the sole strength-
+# membership guard since validator Rule 6a retired) NOR the rendered menu. This
+# is the gate leak #691 reported: a sled drag offered to an athlete with no sled.
+
+
+def test_compute_feasible_pool_ids_excludes_tier0():
+    pool = {"home": _l2c("home", [
+        _rx("EX-OK", "Goblet Squat", ["D-003"], {"D-003": "High"}, tier=1),
+        _rx("EX-SUB", "Reverse Sled Drag", ["D-003"], {"D-003": "High"}, tier=2),
+        # No sled, no substitute, no proxy → tier 0 → never prescribable.
+        _rx("EX-GONE", "Barbell Hip Thrust", ["D-003"], {"D-003": "Critical"},
+            tier=0),
+    ])}
+    ids = compute_feasible_pool_ids(pool, None)
+    assert ids == ["EX-OK", "EX-SUB"]
+    assert "EX-GONE" not in ids
+
+
+def test_rendered_strength_pool_excludes_tier0():
+    pool = {"home": _l2c("home", [
+        _rx("EX-OK", "Goblet Squat", ["D-003"], {"D-003": "High"}, tier=1,
+            patterns=["Squat"]),
+        _rx("EX-GONE", "Sled Drag", ["D-003"], {"D-003": "Critical"}, tier=0,
+            patterns=["Hinge"]),
+    ])}
+    text = "\n".join(_format_strength_exercise_pool(pool, _l2a({"D-003": 1.0}), None))
+    assert "EX-OK" in text
+    # The infeasible tier-0 row is never rendered (it would otherwise show as
+    # "Tier 0" with no "Do instead" substitute — the exact #691 symptom).
+    assert "EX-GONE" not in text
+    assert "Tier 0" not in text
+
+
 # ─── #336 skill-capability gate substitution directive ──────────────────────
 
 
@@ -295,6 +332,18 @@ def test_system_prompt_has_strength_section_and_no_invent_rule():
     # Track 2 slice 2b: session counts moved to the deterministic grid;
     # the prompt now references the grid rather than hardcoded "2 sessions/week".
     assert "session grid" in SYSTEM_PROMPT.lower()
+
+
+def test_system_prompt_strength_variety_directive():
+    # #690 — the strength section pushes accessory rotation across the full pool
+    # and ties harder rotation to the rendered Coaching memory block.
+    from layer4.strength_guidance import STRENGTH_PROGRAMMING_GUIDANCE
+
+    assert "rotate the accessory exercises every week" in SYSTEM_PROMPT
+    assert "Coaching memory" in SYSTEM_PROMPT
+    # The shared guidance (spliced into SYSTEM_PROMPT + the T1/T2 refresh prompts)
+    # carries the self-contained rotation directive so refresh strength varies too.
+    assert "ROTATION, not a fixed template" in STRENGTH_PROGRAMMING_GUIDANCE
 
 
 # ─── #698 Track 1 (Slice 2) — recovery pool + dose + prompt ──────────────────
@@ -380,6 +429,31 @@ def test_recovery_pool_render_empty_when_no_recovery_types():
             exercise_type="Strength"),
     ])}
     assert _format_recovery_exercise_pool(pool, None) == []
+
+
+# #691 — the recovery pool has the same tier-0 leak class as strength. A
+# recovery/mobility row needing equipment the athlete lacks (e.g. a foam roller),
+# with no substitute, resolves tier 0 and must not be prescribable.
+def test_compute_recovery_pool_ids_excludes_tier0():
+    pool = {"home": _l2c_recovery("home", [
+        _rx("EX-MOB", "Hip 90/90", ["D-003"], {"D-003": "High"},
+            exercise_type="Mobility", tier=1),
+        _rx("EX-ROLL", "Foam Roll Quads", ["D-003"], {"D-003": "High"},
+            exercise_type="Recovery / Soft Tissue", tier=0),
+    ])}
+    assert compute_recovery_pool_ids(pool, None) == ["EX-MOB"]
+
+
+def test_recovery_pool_render_excludes_tier0():
+    pool = {"home": _l2c_recovery("home", [
+        _rx("EX-MOB", "Hip 90/90", ["D-003"], {"D-003": "High"},
+            exercise_type="Mobility", tier=1),
+        _rx("EX-ROLL", "Foam Roll Quads", ["D-003"], {"D-003": "High"},
+            exercise_type="Recovery / Soft Tissue", tier=0),
+    ])}
+    text = "\n".join(_format_recovery_exercise_pool(pool, None))
+    assert "EX-MOB" in text
+    assert "EX-ROLL" not in text
 
 
 # #698 Track 1 (Slice 3b, D6) — `_format_recovery_programming` now renders the

@@ -1975,6 +1975,28 @@ _PG_MIGRATIONS = [
         UNIQUE (plan_version_id)
     )""",
     "CREATE INDEX IF NOT EXISTS plan_nutrition_inputs_user_version_idx ON plan_nutrition_inputs (user_id, plan_version_id)",
+    # Layer 5B conditions synthesis — deterministic per-day clothing/conditions
+    # advisory computed AFTER a plan reaches `ready` (zero-LLM advisory tier; see
+    # `layer5/conditions_*`). One row per plan_version holds the whole
+    # `PlanConditions` bundle (per-day thermal band + clothing/kit + flags,
+    # derived from climate normals at each session's locale) as JSONB.
+    # UNIQUE (plan_version_id) makes the write an idempotent upsert so a
+    # regenerate overwrites in place. `model` is denormalized so a future
+    # model-version bump can find + recompute stale artifacts. ON DELETE CASCADE
+    # mirrors plan_nutrition: the artifact is meaningless without its plan.
+    # WRITE-ONLY / advisory — never an input to any Layer 4 cache key.
+    """CREATE TABLE IF NOT EXISTS plan_conditions (
+        id BIGSERIAL PRIMARY KEY,
+        plan_version_id BIGINT NOT NULL REFERENCES plan_versions(id) ON DELETE CASCADE,
+        user_id INTEGER NOT NULL REFERENCES users(id),
+        model TEXT NOT NULL,
+        payload_json JSONB NOT NULL,
+        generated_at TIMESTAMPTZ NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        UNIQUE (plan_version_id)
+    )""",
+    "CREATE INDEX IF NOT EXISTS plan_conditions_user_version_idx ON plan_conditions (user_id, plan_version_id)",
     # D-63 §5.3 — ad_hoc_workout_suggestions. Holds generated-but-not-yet-
     # logged single-session synthesizer outputs. request_payload carries the
     # SingleSessionRequest; generated_session carries the single PlanSession

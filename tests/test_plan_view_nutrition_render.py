@@ -144,6 +144,10 @@ def _render(nutrition):
         session_count=1,
         nutrition=nutrition,
         nutrition_by_date=nutrition_by_date,
+        # 5B conditions are exercised in test_plan_view_conditions_render.py;
+        # here they're absent so the nutrition assertions stay isolated.
+        conditions=None,
+        conditions_by_date={},
     )
 
 

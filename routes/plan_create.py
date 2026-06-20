@@ -85,7 +85,11 @@ from race_events_repo import load_target_race_event_payload
 from plan_naming import target_race_name, generated_plan_name
 from athlete_event_windows_repo import load_event_windows
 from plan_nutrition_repo import load_plan_nutrition_by_version
-from layer5 import generate_and_persist_plan_nutrition
+from plan_conditions_repo import load_plan_conditions_by_version
+from layer5 import (
+    generate_and_persist_plan_nutrition,
+    generate_and_persist_plan_conditions,
+)
 from routes.auth import cron_authorized, current_user_id
 
 
@@ -700,6 +704,22 @@ def _advance_plan_generation_locked(db, uid: int, plan_version_id: int,
                     f"_advance_plan_generation: post-ready nutrition synthesis failed "
                     f"for plan_version_id={plan_version_id} (non-fatal): {_nutr_exc}"
                 )
+
+            # Layer 5B — best-effort post-`ready` conditions/clothing advisory.
+            # Isolated in its own try (a separate stage from 5A so a fault in one
+            # never skips the other). Unlike 5A this makes bounded climate-normal
+            # lookups (memoized per locale-month, ≤6 s each, degrade to None), so
+            # worst case it just doesn't persist this pass — the plan is already
+            # durable + `ready`, and the user can regenerate from the view.
+            try:
+                if generate_and_persist_plan_conditions(db, uid, plan_version_id) is not None:
+                    db.commit()
+            except Exception as _cond_exc:  # noqa: BLE001 — advisory must not break gen
+                db.rollback()
+                print(
+                    f"_advance_plan_generation: post-ready conditions synthesis failed "
+                    f"for plan_version_id={plan_version_id} (non-fatal): {_cond_exc}"
+                )
         return {"status": "ready"}
     except Layer4GenerationIncomplete as exc:
         # D-77 budget spent mid-pass -- NOT a failure. Blocks synthesized this
@@ -1026,6 +1046,22 @@ def view_plan(plan_version_id: int):
         {day.date: day for day in nutrition.days} if nutrition else {}
     )
 
+    # Layer 5B — the per-day conditions/clothing advisory (None until the
+    # post-`ready` stage has run, or absent when no session locale carried
+    # coordinates); keyed by date for the per-day cards. Advisory: a load fault
+    # must NEVER 500 the plan view, so degrade to "no conditions".
+    try:
+        conditions = load_plan_conditions_by_version(db, plan_version_id)
+    except Exception as _cond_exc:  # noqa: BLE001 — advisory must not break the view
+        print(
+            f"view_plan: conditions load failed for "
+            f"plan_version_id={plan_version_id} (non-fatal): {_cond_exc}"
+        )
+        conditions = None
+    conditions_by_date = (
+        {day.date: day for day in conditions.days} if conditions else {}
+    )
+
     plan_name = generated_plan_name(
         target_race_name(db, uid),
         plan_version['scope_start_date'],
@@ -1042,6 +1078,8 @@ def view_plan(plan_version_id: int):
         session_count=len(sessions),
         nutrition=nutrition,
         nutrition_by_date=nutrition_by_date,
+        conditions=conditions,
+        conditions_by_date=conditions_by_date,
     )
 
 
@@ -1203,6 +1241,44 @@ def regenerate_nutrition(plan_version_id: int):
             f"regenerate_nutrition: failed for plan_version_id={plan_version_id}: {exc}"
         )
         flash("Couldn't regenerate nutrition. Please try again.", 'error')
+    return redirect(_view_plan_url(plan_version_id))
+
+
+@bp.route('/<int:plan_version_id>/conditions/regenerate', methods=['POST'])
+def regenerate_conditions(plan_version_id: int):
+    """Manually (re)generate the Layer 5B conditions advisory for a ready plan.
+
+    The auto-trigger runs once when a plan flips `ready`; this lets the athlete
+    re-run it on demand (e.g. after adding coordinates to a locale, or if the
+    best-effort auto-run was skipped or the weather source was unreachable).
+    Same cross-user guard as the other per-plan actions; redirects back to the
+    plan view either way.
+    """
+    db = get_db()
+    uid = current_user_id()
+    plan_version = _load_plan_version(db, uid, plan_version_id)
+    if plan_version is None:
+        abort(404)
+    if plan_version['generation_status'] != 'ready':
+        flash("Conditions are only available once the plan is ready.", 'error')
+        return redirect(_view_plan_url(plan_version_id))
+    try:
+        result = generate_and_persist_plan_conditions(db, uid, plan_version_id)
+        db.commit()
+        if result is None:
+            flash(
+                "Conditions couldn't be derived — add coordinates to this plan's "
+                "locales (via Locations) and try again.",
+                'error',
+            )
+        else:
+            flash("Conditions regenerated.", 'success')
+    except Exception as exc:  # noqa: BLE001 — surface a friendly message, don't 500
+        db.rollback()
+        print(
+            f"regenerate_conditions: failed for plan_version_id={plan_version_id}: {exc}"
+        )
+        flash("Couldn't regenerate conditions. Please try again.", 'error')
     return redirect(_view_plan_url(plan_version_id))
 
 

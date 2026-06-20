@@ -1895,6 +1895,20 @@ class Layer1Disclosures(_Base):
 # ─── Layer1Payload (top-level) ───────────────────────────────────────────────
 
 
+class Layer1CoachingPreference(_Base):
+    """A durable athlete coaching preference from the `coaching_preferences`
+    table (Coaching Memory — captured from chat / reviews / natural-log /
+    workout notes). #690: surfaced into Layer 1 so the V2 plan-gen pipeline can
+    honor explicit preferences (e.g. an athlete asking for high exercise
+    variety) instead of leaving the table a dead channel only the retired v1
+    `coaching.py` ever read. `permanent` preferences are honored strictly;
+    non-permanent ones are advisory (mirrors the v1 framing)."""
+
+    category: str
+    content: str
+    permanent: bool
+
+
 class Layer1Payload(_Base):
     user_id: int
     as_of: datetime
@@ -1908,6 +1922,13 @@ class Layer1Payload(_Base):
         "novice", "developing", "intermediate", "advanced", "elite"
     ] | None = None
     coaching_voice_preferences: str | None = None
+    # #690 — durable Coaching Memory preferences. Surfaced top-level so it both
+    # rides into `layer1_hash` (every Layer 4 cache entry invalidates when prefs
+    # change) and is readable as `.get("coaching_preferences")` by the
+    # synthesizer prompt renderers, exactly like the other convenience fields.
+    coaching_preferences: list[Layer1CoachingPreference] = Field(
+        default_factory=list
+    )
     available_days_per_week: int | None = Field(default=None, ge=0, le=7)
     travel_constraint: str | None = None
     sleep_baseline: float | None = Field(default=None, ge=0)
