@@ -333,6 +333,7 @@ def phase_week_volume_bands_hours(
     week_in_phase: int,
     phase_structure: PhaseStructure | None,
     capacity_hours: float | None,
+    layer3a_payload: Layer3APayload | None = None,
 ) -> dict[str, tuple[float, float]]:
     """Per-discipline weekly-HOUR band for ONE `(phase, week_in_phase)`.
 
@@ -342,11 +343,16 @@ def phase_week_volume_bands_hours(
     truth shared with the synthesizer prompt and `recovery_week` stamping. When
     the structure can't resolve the week the multiplier is 1.0, so this is
     identical to the flat band (graceful degradation for entry points without a
-    `phase_structure`)."""
+    `phase_structure`).
+
+    `layer3a_payload` (#424) personalizes the ramp slope / deload depth per
+    athlete; `None` → the v1 athlete-agnostic curve."""
     flat = phase_volume_bands_hours(layer2a, phase_name, capacity_hours)
     if not flat:
         return {}
-    m = week_volume_multiplier(phase_structure, phase_name, week_in_phase)
+    m = week_volume_multiplier(
+        phase_structure, phase_name, week_in_phase, layer3a_payload
+    )
     if m == 1.0:
         return flat
     return {did: (lo * m, hi * m) for did, (lo, hi) in flat.items()}
@@ -446,6 +452,7 @@ def _rule_volume_band(payload: Layer4Payload, ctx: ValidatorContext) -> list[Rul
                 wk,
                 payload.phase_structure,
                 ctx.capacity_hours,
+                ctx.layer3a_payload,
             )
         band = bands_by_phase_week[(phase, wk)].get(disc)
         if band is None:
