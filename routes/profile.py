@@ -109,6 +109,7 @@ CONNECTION_PROVIDERS = (
     ('polar', 'Polar', 'polar.oauth_start'),
     ('strava', 'Strava', 'strava.oauth_start'),
     ('whoop', 'Whoop', 'whoop.oauth_start'),
+    ('wahoo', 'Wahoo', 'wahoo.oauth_start'),
 )
 
 

@@ -230,6 +230,7 @@ from routes.polar import bp as polar_bp
 from routes.ride_with_gps import bp as ride_with_gps_bp
 from routes.strava import bp as strava_bp
 from routes.whoop import bp as whoop_bp
+from routes.wahoo import bp as wahoo_bp
 from routes.trainingpeaks import bp as trainingpeaks_bp
 from routes.zwift import bp as zwift_bp
 from routes.nudges import bp as nudges_bp, get_active_nudges
@@ -267,6 +268,7 @@ app.register_blueprint(polar_bp)
 app.register_blueprint(ride_with_gps_bp)
 app.register_blueprint(strava_bp)
 app.register_blueprint(whoop_bp)
+app.register_blueprint(wahoo_bp)
 app.register_blueprint(trainingpeaks_bp)
 app.register_blueprint(zwift_bp)
 app.register_blueprint(nudges_bp)
@@ -291,6 +293,7 @@ csrf.exempt(ride_with_gps_bp)
 # provider servers, not a browser session — same CSRF rationale.
 csrf.exempt(strava_bp)
 csrf.exempt(whoop_bp)
+csrf.exempt(wahoo_bp)
 csrf.exempt(trainingpeaks_bp)
 csrf.exempt(zwift_bp)
 # Vercel POSTs log batches to /admin/logs/drain from its log-drain servers,
@@ -324,6 +327,7 @@ _AUTH_EXEMPT_ENDPOINTS = {
     'ride_with_gps.webhook',
     'strava.webhook',
     'whoop.webhook',
+    'wahoo.webhook',
     'trainingpeaks.webhook',
     'zwift.webhook',
     # Vercel Cron hits these scanners with no session cookie; auth is via
