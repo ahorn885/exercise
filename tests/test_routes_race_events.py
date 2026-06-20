@@ -32,6 +32,8 @@ from routes.race_events import (
     _parse_race_url,
     _resolve_effective_framework_sport,
     _run_mapbox_search,
+    _terrain_discipline_mismatch_flash,
+    _terrain_discipline_mismatches,
 )
 
 
@@ -453,6 +455,79 @@ class TestParseRaceTerrainDisciplineId:
         ]
 
 
+# ─── _terrain_discipline_mismatches (issue #342) ────────────────────────────
+
+
+class TestTerrainDisciplineMismatches:
+    """Issue #342 — terrain rows may not scope to a discipline that isn't in
+    the race's included disciplines."""
+
+    def test_none_included_filter_never_mismatches(self):
+        # included=None means "use bridge defaults" (full framework_sport
+        # set), so every per-row discipline the select could offer is in
+        # scope — nothing to block.
+        terrain = [
+            {'terrain_id': 'TRN-002', 'pct_of_race': 40.0, 'discipline_id': 'D-006'},
+        ]
+        assert _terrain_discipline_mismatches(terrain, None) == []
+
+    def test_empty_included_filter_never_mismatches(self):
+        terrain = [
+            {'terrain_id': 'TRN-002', 'pct_of_race': 40.0, 'discipline_id': 'D-006'},
+        ]
+        assert _terrain_discipline_mismatches(terrain, []) == []
+
+    def test_scoped_discipline_in_included_set_is_ok(self):
+        terrain = [
+            {'terrain_id': 'TRN-002', 'pct_of_race': 40.0, 'discipline_id': 'D-001'},
+        ]
+        assert _terrain_discipline_mismatches(terrain, ['D-001', 'D-010']) == []
+
+    def test_race_wide_rows_never_mismatch(self):
+        # discipline_id=None (race-wide) is always fine regardless of filter.
+        terrain = [
+            {'terrain_id': 'TRN-002', 'pct_of_race': 40.0, 'discipline_id': None},
+        ]
+        assert _terrain_discipline_mismatches(terrain, ['D-001']) == []
+
+    def test_scoped_discipline_outside_included_set_flagged(self):
+        # The pv=46 case: terrain scoped to D-006 (road cycling) but the race
+        # only includes D-001 / D-010.
+        terrain = [
+            {'terrain_id': 'TRN-002', 'pct_of_race': 40.0, 'discipline_id': 'D-006'},
+        ]
+        assert _terrain_discipline_mismatches(
+            terrain, ['D-001', 'D-010']
+        ) == ['D-006']
+
+    def test_multiple_offenders_deduped_and_sorted(self):
+        terrain = [
+            {'terrain_id': 'TRN-002', 'pct_of_race': 30.0, 'discipline_id': 'D-015'},
+            {'terrain_id': 'TRN-017', 'pct_of_race': 30.0, 'discipline_id': 'D-006'},
+            {'terrain_id': 'TRN-003', 'pct_of_race': 40.0, 'discipline_id': 'D-006'},
+        ]
+        assert _terrain_discipline_mismatches(
+            terrain, ['D-001']
+        ) == ['D-006', 'D-015']
+
+
+class TestTerrainDisciplineMismatchFlash:
+    """The athlete-facing flash copy is shared across all three save paths."""
+
+    def test_singular_phrasing(self):
+        msg = _terrain_discipline_mismatch_flash(['D-006'])
+        assert 'D-006' in msg
+        assert 'discipline (' in msg  # singular, no trailing 's'
+        assert 'is not' in msg
+        assert 'Race-wide' in msg
+
+    def test_plural_phrasing(self):
+        msg = _terrain_discipline_mismatch_flash(['D-006', 'D-015'])
+        assert 'D-006, D-015' in msg
+        assert 'disciplines (' in msg
+        assert 'are not' in msg
+
+
 # ─── _disciplines_for_framework_sport ───────────────────────────────────────
 
 
@@ -724,8 +799,6 @@ class TestUpdateRaceMapboxRequired:
                 'race_format': 'single_day',
                 'distance_km': None,
                 'total_elevation_gain_m': None,
-                'race_rules_summary': None,
-                'mandatory_gear_text': None,
                 'event_locale_id': None,  # legacy FK; load path preserves
                 'notes': None,
                 'race_terrain': [],

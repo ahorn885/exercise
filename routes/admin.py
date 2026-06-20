@@ -43,8 +43,6 @@ def _delete_user_and_data(db, user_id):
     db.execute('DELETE FROM plan_items                    WHERE user_id = ?', (user_id,))
     db.execute('DELETE FROM plan_reviews WHERE plan_id IN '
                '(SELECT id FROM training_plans WHERE user_id = ?)', (user_id,))
-    db.execute('DELETE FROM plan_travel  WHERE plan_id IN '
-               '(SELECT id FROM training_plans WHERE user_id = ?)', (user_id,))
     db.execute('DELETE FROM coaching_chat                 WHERE user_id = ?', (user_id,))
     db.execute('DELETE FROM training_plans                WHERE user_id = ?', (user_id,))
     db.execute('DELETE FROM training_log                  WHERE user_id = ?', (user_id,))

@@ -46,6 +46,20 @@
     {% if nutrition.standing_supplement_notes %}
     <p class="sess-notes">💊 {{ nutrition.standing_supplement_notes }}</p>
     {% endif %}
+    {% if nutrition.standing_supplements %}
+    <div class="supp-standing">
+      <p class="eyebrow">💊 Standard supplements — what you take every day</p>
+      <div class="gear-chips">
+        {% for s in nutrition.standing_supplements %}
+        <span class="chip{{ ' accent' if s.already_in_protocol else '' }}"
+              title="{{ s.reason }}{% if s.timing %} · {{ s.timing }}{% endif %}">
+          {{ s.name }}{% if s.dose %} {{ s.dose }}{% endif %}{% if s.already_in_protocol %} ✓{% endif %}
+        </span>
+        {% endfor %}
+      </div>
+      <p class="rail-note">Effort-based picks for each day appear with that day's fuel below. ✓ = already in your logged protocol.</p>
+    </div>
+    {% endif %}
     {% if nutrition.dietary_flags %}
     <div class="sess-flags">
       {% for f in nutrition.dietary_flags %}<span class="chip warn">{{ f.pattern }} — {{ f.concern }}</span>{% endfor %}
@@ -53,6 +67,23 @@
     {% endif %}
     {% else %}
     <p class="rail-note">Nutrition hasn't been generated for this plan yet.</p>
+    {% endif %}
+  </div>
+
+  <div class="card card-pad sec cond-card">
+    <div class="nutri-head">
+      <p class="eyebrow accent">● Conditions</p>
+      <form method="post" class="nutri-regen"
+            action="{{ url_for('plan_create.regenerate_conditions', plan_version_id=plan_version_id) }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button type="submit" class="btn btn-ghost btn-sm">{{ 'Regenerate' if conditions and conditions.days else 'Generate' }}</button>
+      </form>
+    </div>
+    {% if conditions and conditions.days %}
+    {% for n in conditions.notes %}<p class="rail-note">{{ n }}</p>{% endfor %}
+    <p class="rail-note">Typical high/low, rain chance and what to wear appear on each outdoor training day below.</p>
+    {% else %}
+    <p class="rail-note">Conditions haven't been generated for this plan yet — they need at least one session at a locale with coordinates.</p>
     {% endif %}
   </div>
 
@@ -80,8 +111,12 @@
         {% if dn %}
         <div class="day-fuel">
           <span class="chip{{ ' accent' if dn.load_tier in ['hard', 'peak'] else '' }}">⚡ {{ dn.total_kcal }} kcal</span>
+          {% if dn.carb_loading_applied %}<span class="chip accent">🍝 carb load</span>{% endif %}
           <span class="rail-note day-fuel-macros">C {{ dn.macros.cho_g }} · P {{ dn.macros.protein_g }} · F {{ dn.macros.fat_g }} g</span>
           {% if dn.fueling_note %}<p class="day-fuel-note">{{ dn.fueling_note }}</p>{% endif %}
+          {% if dn.supplement_recs %}
+          <p class="day-fuel-note">💊 {% for s in dn.supplement_recs %}{{ s.name }}{% if s.dose %} {{ s.dose }}{% endif %}{% if s.timing %} ({{ s.timing }}){% endif %}{% if not loop.last %} · {% endif %}{% endfor %}</p>
+          {% endif %}
           {% if dn.is_race_day %}
             {% for rf in nutrition.race_fueling if rf.event_id in dn.race_fueling_event_ids %}
             <div class="race-fuel">
@@ -95,6 +130,21 @@
               {% for n in rf.notes %}<p class="day-fuel-note">{{ n }}</p>{% endfor %}
             </div>
             {% endfor %}
+          {% endif %}
+        </div>
+        {% endif %}
+        {% set dc = conditions_by_date.get(d) %}
+        {% if dc %}
+        {% set band_icon = {'freezing': '🥶', 'cold': '❄️', 'cool': '🌥️', 'mild': '🌤️', 'warm': '☀️', 'hot': '🔥'} %}
+        <div class="day-weather">
+          <span class="chip{{ ' warn' if dc.thermal_band in ['freezing', 'hot'] else '' }}">{{ band_icon.get(dc.thermal_band, '🌡️') }} {{ dc.thermal_band|capitalize }}</span>
+          <span class="rail-note day-weather-temps">{{ dc.temp_max_c|round|int }}° / {{ dc.temp_min_c|round|int }}°C{% if dc.wet_day_probability_pct %} · 💧 {{ dc.wet_day_probability_pct }}%{% endif %}</span>
+          {% if dc.clothing_summary %}<p class="day-weather-note">👕 {{ dc.clothing_summary }}</p>{% endif %}
+          {% if dc.kit_items %}<p class="day-weather-note">🎒 {{ dc.kit_items | join(', ') }}</p>{% endif %}
+          {% if dc.advisory_flags %}
+          <div class="day-weather-flags">
+            {% for f in dc.advisory_flags %}<span class="chip warn">{{ f }}</span>{% endfor %}
+          </div>
           {% endif %}
         </div>
         {% endif %}
@@ -127,8 +177,9 @@
               {% for f in sess.coaching_flags %}<span class="chip warn">{{ f|replace('_', ' ') }}</span>{% endfor %}
             </div>
             {% endif %}
-            {% if sess.coaching_intent %}<p class="sess-intent">{{ sess.coaching_intent }}</p>{% endif %}
-            {% if sess.session_notes %}<p class="sess-notes">{{ sess.session_notes }}</p>{% endif %}
+            {# #689 — label the two narrative fields so their distinct purposes read clearly (coaching_intent = why this session; session_notes = scheduling / focus), matching the labels already used on the suggestion view. #}
+            {% if sess.coaching_intent %}<p class="sess-intent"><strong>Coaching intent.</strong> {{ sess.coaching_intent }}</p>{% endif %}
+            {% if sess.session_notes %}<p class="sess-notes"><strong>Session notes.</strong> {{ sess.session_notes }}</p>{% endif %}
 
             {% if sess.kind == 'cardio' and sess.cardio_blocks %}
             <ol class="sess-blocks">

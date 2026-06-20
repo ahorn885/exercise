@@ -25,10 +25,11 @@ single `record_race_week_brief` tool call:
    continuous_multi_day / stage_race).
 
 **D-66 contract (2026-05-18):** The `race_event_payload: RaceEventPayload`
-arg carries the route-locale graph + mandatory_gear_text + race_rules_summary
-+ distance/elevation. Layer 3B continues to expose race_format / event_date /
-event_locale_id / time_to_event_weeks for periodization decisions; the
-race_event_payload arg carries the brief-rendering-relevant surface. See
+arg carries the route-locale graph + the merged free-text race `notes` (race
+rules + mandatory gear + context, per #439) + distance/elevation. Layer 3B
+continues to expose race_format / event_date / event_locale_id /
+time_to_event_weeks for periodization decisions; the race_event_payload arg
+carries the brief-rendering-relevant surface. See
 `Race_Events_D66_Design_v1.md` §4.
 
 **Layer 1 payload handling (v1).** `Layer1Payload` is opaque `dict[str, Any]`
@@ -68,10 +69,12 @@ from layer4.context import (
 )
 from layer4.errors import Layer4InputError, Layer4OutputError
 from layer4.per_phase import (
+    VARIETY_CARVEOUT_PROMPT_SECTION,
     compute_feasible_pool_ids,
     compute_recovery_pool_ids,
     format_upstream_coaching_flags,
     _apply_strength_resolution,
+    _format_coaching_memory,
     _recovery_pool_entries,
     _repair_recovery_exercises,
 )
@@ -859,7 +862,7 @@ The `race_week_brief` is athlete-facing and consumed by the brief UI surface + L
 
 Weather contingency: every race happens outdoors at a known location on a known date, so a weather contingency is always required. When an `## Expected conditions` block is present in the request, anchor the weather contingency to those climate normals (e.g. heat + electrolyte protocol when typical highs are hot; a lightning/exposure bail plan for storm-prone windows; a layering/hypothermia plan when typical lows are cold or precipitation likelihood is high). When that block is absent, reason from the race location + date yourself (regional seasonal climate) — do not omit the weather contingency.
 
-Kit-manifest synthesis (D-66 active): the athlete's race_event_payload now carries structured route-locale equipment per the D-66 amendment. Render mandatory_gear_text + per-route-locale equipment items into the flat kit_manifest list. Prefer canonical layer0 names (`layer0_canonical=True`); free-text fallback (`layer0_canonical=False`) when no canonical exists.
+Kit-manifest synthesis (D-66 active): the athlete's race_event_payload now carries structured route-locale equipment per the D-66 amendment. Render any mandatory-gear lines from the free-text race notes + per-route-locale equipment items into the flat kit_manifest list. Prefer canonical layer0 names (`layer0_canonical=True`); free-text fallback (`layer0_canonical=False`) when no canonical exists.
 
 # Race plan synthesis (multi-day events only)
 
@@ -997,17 +1000,17 @@ def _render_user_prompt(
         parts.append(
             f"**Elevation gain:** {race_event_payload.total_elevation_gain_m} m"
         )
-    if race_event_payload.race_rules_summary:
+    # #439 — the prior split "Race rules summary" / "Notes" form fields were
+    # merged into the single `notes` field, and the brief now renders it in
+    # full. The prior split left `notes` captured but never rendered into the
+    # prompt (the #306/#338 root: race rules the athlete typed never reached the
+    # synthesizer). Free text covers race rules + mandatory gear + portage + any
+    # other context the athlete wants the brief to reason against.
+    if race_event_payload.notes:
         parts.append("")
-        parts.append("**Race rules summary (verbatim from athlete):**")
+        parts.append("**Race notes & rules (verbatim from athlete):**")
         parts.append("```")
-        parts.append(race_event_payload.race_rules_summary)
-        parts.append("```")
-    if race_event_payload.mandatory_gear_text:
-        parts.append("")
-        parts.append("**Mandatory gear text (verbatim from athlete):**")
-        parts.append("```")
-        parts.append(race_event_payload.mandatory_gear_text)
+        parts.append(race_event_payload.notes)
         parts.append("```")
     parts.append("")
 
@@ -1161,6 +1164,16 @@ def _render_user_prompt(
         parts.append("# Upstream coaching flags")
         parts.append("")
         parts.extend(upstream_flag_lines)
+        parts.append("")
+
+    # #339 — surface the durable Coaching Memory block (#690 rendered it on
+    # plan-create only); suppress-on-empty. The variety carve-out's guard defers
+    # to race-week specificity, so this mainly carries non-variety prefs here.
+    coaching_memory_lines = _format_coaching_memory(layer1_payload)
+    if coaching_memory_lines:
+        parts.append("# Coaching memory")
+        parts.append("")
+        parts.extend(coaching_memory_lines)
         parts.append("")
 
     # § Race-day fueling tier (2E)
@@ -1737,7 +1750,10 @@ def llm_layer4_race_week_brief(
         )
 
         llm_out = caller(
-            _SYSTEM_PROMPT,
+            # #339 — append the variety carve-out (self-limiting: its guard
+            # defers to race-week specificity, so it stays inert in taper while
+            # honoring non-variety Coaching-memory prefs surfaced above).
+            _SYSTEM_PROMPT + "\n\n" + VARIETY_CARVEOUT_PROMPT_SECTION,
             user_prompt,
             tool_schema,
             model,

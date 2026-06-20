@@ -375,8 +375,6 @@ def _race_event(weeks_out: int = 8) -> RaceEventPayload:
         race_format="single_day",
         distance_km=Decimal("42.2"),
         total_elevation_gain_m=None,
-        race_rules_summary=None,
-        mandatory_gear_text=None,
         event_locale_id=None,
         event_locale_mapbox_id="poi.test_anchor",
         is_target_event=True,
@@ -1619,6 +1617,74 @@ class TestPerPhasePromptRendering:
         )
         assert "First phase of plan; no prior context." in text
 
+    def test_coaching_memory_renders_when_present(self):
+        # #690 — durable coaching_preferences surface in the Athlete context so
+        # the synthesizer can honor an explicit high-variety request + notes.
+        from layer4.per_phase import render_user_prompt
+        from layer4.phase_structure import phase_structure_from_3b
+
+        l3b = _layer3b()
+        ps = phase_structure_from_3b(l3b, _PLAN_START)
+        l1 = dict(_layer1())
+        l1["coaching_preferences"] = [
+            {"category": "training",
+             "content": "Wants high exercise variety.", "permanent": True},
+            {"category": "avoid_exercise",
+             "content": "No overhead pressing.", "permanent": False},
+        ]
+        text = render_user_prompt(
+            phase_spec=ps.phases[0],
+            phase_structure=ps,
+            phase_index_in_plan=0,
+            is_first_phase_in_plan=True,
+            layer1_payload=l1,
+            layer2a_payload=_layer2a(),
+            layer2b_payload=_layer2b(),
+            layer2c_payloads=_layer2c(),
+            layer2d_payload=_layer2d(),
+            layer2e_payload=_layer2e(),
+            layer3a_payload=_layer3a(),
+            layer3b_payload=l3b,
+            race_event_payload=None,
+            prior_block_sessions=[],
+            retries_used=0,
+            rule_failures=[],
+            seam_issues=[],
+            seam_direction=None,
+        )
+        assert "Coaching memory" in text
+        assert "[permanent] training: Wants high exercise variety." in text
+        assert "[advisory] avoid_exercise: No overhead pressing." in text
+
+    def test_coaching_memory_suppressed_when_absent(self):
+        # Suppress-on-empty: the default _layer1() carries no coaching_preferences.
+        from layer4.per_phase import render_user_prompt
+        from layer4.phase_structure import phase_structure_from_3b
+
+        l3b = _layer3b()
+        ps = phase_structure_from_3b(l3b, _PLAN_START)
+        text = render_user_prompt(
+            phase_spec=ps.phases[0],
+            phase_structure=ps,
+            phase_index_in_plan=0,
+            is_first_phase_in_plan=True,
+            layer1_payload=_layer1(),
+            layer2a_payload=_layer2a(),
+            layer2b_payload=_layer2b(),
+            layer2c_payloads=_layer2c(),
+            layer2d_payload=_layer2d(),
+            layer2e_payload=_layer2e(),
+            layer3a_payload=_layer3a(),
+            layer3b_payload=l3b,
+            race_event_payload=None,
+            prior_block_sessions=[],
+            retries_used=0,
+            rule_failures=[],
+            seam_issues=[],
+            seam_direction=None,
+        )
+        assert "Coaching memory" not in text
+
     def test_open_ended_mode_no_race_pace_specific(self):
         """Open-ended mode prompt instructs no race_pace_specific."""
         from layer4.per_phase import render_user_prompt
@@ -1662,8 +1728,6 @@ class TestPerPhasePromptRendering:
             race_format="stage_race",
             distance_km=Decimal("100.0"),
             total_elevation_gain_m=Decimal("2500"),
-            race_rules_summary=None,
-            mandatory_gear_text=None,
             event_locale_id=None,
             event_locale_mapbox_id="poi.test_anchor",
             is_target_event=True,

@@ -53,8 +53,10 @@ from layer4.context import (
 from layer4.errors import Layer4InputError, Layer4OutputError
 from layer4.per_phase import (
     CARDIO_PROGRAMMING_PROMPT_SECTION,
+    VARIETY_CARVEOUT_PROMPT_SECTION,
     _apply_strength_resolution,
     _format_cardio_drill_pool,
+    _format_coaching_memory,
     compute_cardio_drill_pool_ids,
     compute_feasible_pool_ids,
     format_measured_physiology,
@@ -554,6 +556,11 @@ A cardio session may optionally carry **one** drill from the `=== Cardio drill p
 - Exercise IDs reference Layer 0B canonical IDs; populate `exercise_name` with the human-readable name.
 - For interval_set cardio_blocks: emit `repetitions`, `rest_between_min`, `rest_intensity_zone`. For other block_kinds: leave those three fields null.
 """
+    # #339 — variety carve-out (self-limiting: its guard clause defers to the
+    # athlete's explicit on-demand sport pick, so it stays inert here while still
+    # honoring non-variety Coaching-memory prefs surfaced in the user prompt).
+    + "\n\n"
+    + VARIETY_CARVEOUT_PROMPT_SECTION
 )
 
 
@@ -622,6 +629,12 @@ def _render_user_prompt(
     )
     if upstream_flag_lines:
         parts.extend(upstream_flag_lines)
+    # #339 — surface the durable Coaching Memory block (#690 rendered it on
+    # plan-create only); honors non-variety prefs (e.g. avoid-exercise notes)
+    # for this ad-hoc session (suppress-on-empty).
+    coaching_memory_lines = _format_coaching_memory(layer1_payload)
+    if coaching_memory_lines:
+        parts.extend(coaching_memory_lines)
     parts.append("")
 
     # § Active injuries — read from 2D excluded + accommodated lists
@@ -656,7 +669,13 @@ def _render_user_prompt(
         parts.append("Effective pool: " + ", ".join(layer2c_payload_for_locale.effective_pool))
         parts.append("")
         parts.append("Resolved exercises (subset):")
-        for rx in layer2c_payload_for_locale.exercises_resolved[:50]:
+        # #691 — exclude tier-0 (equipment-infeasible, no substitute/proxy) so the
+        # model never sees an unavailable exercise as a resolved option. Filter
+        # before the 50-row cap so the subset is up to 50 *feasible* exercises.
+        feasible_resolved = [
+            rx for rx in layer2c_payload_for_locale.exercises_resolved if rx.tier != 0
+        ]
+        for rx in feasible_resolved[:50]:
             note = ""
             if rx.tier != 1 and rx.resolution_detail:
                 note = f" (Tier {rx.tier}"

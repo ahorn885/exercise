@@ -957,7 +957,7 @@ class SleepRecord(_Base):
     source: SleepSource = "wellness_self_report"
 
 
-WellnessSource = Literal["garmin", "polar", "coros", "whoop"]
+WellnessSource = Literal["garmin", "polar", "coros", "whoop", "oura"]
 
 
 class DailyWellnessRecord(_Base):
@@ -1262,8 +1262,6 @@ class RaceEventPayload(_Base):
     race_format: RaceFormat
     distance_km: Decimal | None = Field(default=None, ge=0)
     total_elevation_gain_m: Decimal | None = Field(default=None, ge=0)
-    race_rules_summary: str | None = Field(default=None, max_length=8000)
-    mandatory_gear_text: str | None = Field(default=None, max_length=8000)
     # FormRefresh A1 (2026-05-25) — magnitude axis. `estimated_duration_hr`
     # is the athlete-entered expected finish/cutoff time in hours; the
     # orchestrator prefers it over the coarse `_DURATION_HR_BY_RACE_FORMAT`
@@ -1298,7 +1296,11 @@ class RaceEventPayload(_Base):
     event_locale_lat: float | None = Field(default=None, ge=-90.0, le=90.0)
     event_locale_lng: float | None = Field(default=None, ge=-180.0, le=180.0)
     is_target_event: bool
-    notes: str | None = Field(default=None, max_length=2000)
+    # #439 — the race-edit form's "Race rules summary" + "Notes" fields were
+    # merged into this single free-text field (the brief now reads it in full,
+    # closing the #306/#338 "rules captured but never reached synth" root). The
+    # max_length subsumes the prior 8000-char rules field plus general notes.
+    notes: str | None = Field(default=None, max_length=10000)
     # Phase 5.1 form-refresh A (2026-05-20) — closes Layer2B_Spec.md §12
     # Open Item 2B-3 for the race-event edit path. `race_terrain` carries
     # the athlete-entered terrain breakdown as canonical TRN-xxx IDs +
@@ -1895,6 +1897,20 @@ class Layer1Disclosures(_Base):
 # ─── Layer1Payload (top-level) ───────────────────────────────────────────────
 
 
+class Layer1CoachingPreference(_Base):
+    """A durable athlete coaching preference from the `coaching_preferences`
+    table (Coaching Memory — captured from chat / reviews / natural-log /
+    workout notes). #690: surfaced into Layer 1 so the V2 plan-gen pipeline can
+    honor explicit preferences (e.g. an athlete asking for high exercise
+    variety) instead of leaving the table a dead channel only the retired v1
+    `coaching.py` ever read. `permanent` preferences are honored strictly;
+    non-permanent ones are advisory (mirrors the v1 framing)."""
+
+    category: str
+    content: str
+    permanent: bool
+
+
 class Layer1Payload(_Base):
     user_id: int
     as_of: datetime
@@ -1908,6 +1924,13 @@ class Layer1Payload(_Base):
         "novice", "developing", "intermediate", "advanced", "elite"
     ] | None = None
     coaching_voice_preferences: str | None = None
+    # #690 — durable Coaching Memory preferences. Surfaced top-level so it both
+    # rides into `layer1_hash` (every Layer 4 cache entry invalidates when prefs
+    # change) and is readable as `.get("coaching_preferences")` by the
+    # synthesizer prompt renderers, exactly like the other convenience fields.
+    coaching_preferences: list[Layer1CoachingPreference] = Field(
+        default_factory=list
+    )
     available_days_per_week: int | None = Field(default=None, ge=0, le=7)
     travel_constraint: str | None = None
     sleep_baseline: float | None = Field(default=None, ge=0)

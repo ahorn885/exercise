@@ -170,8 +170,6 @@ def _race_row(**overrides):
         # so existing tests see "not captured"; new-shape tests override.
         "estimated_duration_hr": None,
         "primary_metric": None,
-        "race_rules_summary": "Mandatory checkpoints; 56h cutoff.",
-        "mandatory_gear_text": "Headlamp; bivvy; 6L water cap.",
         "event_locale_slug": "nerstrand_finish",
         "is_target_event": True,
         "notes": "Crew at TA2.",
@@ -409,24 +407,22 @@ class TestCreateRaceEvent:
             total_elevation_gain_m=Decimal("3000"),
             estimated_duration_hr=Decimal("56"),
             primary_metric="duration",
-            race_rules_summary="rules text",
-            mandatory_gear_text="gear text",
             event_locale_id=5,
             is_target_event=True,
             notes="crew notes",
         )
         params = conn.calls[0][1]
         # FormRefresh A1 inserted estimated_duration_hr + primary_metric
-        # after total_elevation_gain_m, shifting the trailing fields by 2.
+        # after total_elevation_gain_m; #438/#439 then removed
+        # race_rules_summary + mandatory_gear_text, so event_locale_id /
+        # is_target_event / notes follow primary_metric directly.
         assert params[4] == Decimal("160")  # distance_km
         assert params[5] == Decimal("3000")  # total_elevation_gain_m
         assert params[6] == Decimal("56")  # estimated_duration_hr
         assert params[7] == "duration"  # primary_metric
-        assert params[8] == "rules text"
-        assert params[9] == "gear text"
-        assert params[10] == 5  # event_locale_id
-        assert params[11] is True  # is_target_event
-        assert params[12] == "crew notes"
+        assert params[8] == 5  # event_locale_id
+        assert params[9] is True  # is_target_event
+        assert params[10] == "crew notes"
 
     def test_serializes_etl_version_set_as_json(self):
         conn = _FakeConn()
@@ -613,7 +609,7 @@ class TestGetRaceEvent:
         assert result["id"] == 10
         assert result["user_id"] == 1
         assert result["name"] == "Pocket Gopher Extreme 2026"
-        assert result["race_rules_summary"] == "Mandatory checkpoints; 56h cutoff."
+        assert result["notes"] == "Crew at TA2."
 
 
 # ─── update_race_event ───────────────────────────────────────────────────────
@@ -637,8 +633,7 @@ class TestUpdateRaceEvent:
         assert "UPDATE race_events" in sql
         assert "WHERE id = ? AND user_id = ?" in sql
         # name + event_date + race_format + distance_km + total_elevation_gain_m
-        # + race_rules_summary + mandatory_gear_text + event_locale_id + notes
-        # + race_event_id + user_id
+        # + event_locale_id + notes + race_event_id + user_id
         assert params[0] == "Renamed Race"
         assert params[1] == date(2026, 8, 1)
         assert params[2] == "continuous_multi_day"
@@ -952,8 +947,6 @@ class TestRaceTerrain:
             "race_format": "continuous_multi_day",
             "distance_km": None,
             "total_elevation_gain_m": None,
-            "race_rules_summary": None,
-            "mandatory_gear_text": None,
             "event_locale_id": None,
             "is_target_event": True,
             "notes": None,
@@ -1133,8 +1126,6 @@ class TestMapboxRaceLocationColumns:
             "race_format": "continuous_multi_day",
             "distance_km": None,
             "total_elevation_gain_m": None,
-            "race_rules_summary": None,
-            "mandatory_gear_text": None,
             "event_locale_id": None,
             "is_target_event": True,
             "notes": None,

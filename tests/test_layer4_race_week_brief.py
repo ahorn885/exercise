@@ -17,8 +17,8 @@ Coverage:
 - Schema violation (missing tool args + multi-day without race_plan)
 - Layer4Payload composition invariants (mode + pattern + race_week_brief +
   race_plan null/non-null + phase_metadata pass-through per §7.12 C2)
-- Prompt rendering (race_rules_summary verbatim + mandatory_gear_text
-  verbatim + route_locales structured rendering + retry context conditional)
+- Prompt rendering (merged race notes verbatim + route_locales structured
+  rendering + retry context conditional)
 
 LLM calls mocked via a stub `llm_caller` dependency. No real Anthropic SDK
 invocations.
@@ -397,8 +397,7 @@ def _race_event_payload(
     route_locales: list[RouteLocale] | None = None,
     distance_km: Decimal | None = None,
     total_elevation_gain_m: Decimal | None = None,
-    race_rules_summary: str | None = None,
-    mandatory_gear_text: str | None = None,
+    notes: str | None = None,
 ) -> RaceEventPayload:
     return RaceEventPayload(
         race_event_id=1,
@@ -408,8 +407,7 @@ def _race_event_payload(
         race_format=race_format,  # type: ignore[arg-type]
         distance_km=distance_km,
         total_elevation_gain_m=total_elevation_gain_m,
-        race_rules_summary=race_rules_summary,
-        mandatory_gear_text=mandatory_gear_text,
+        notes=notes,
         event_locale_id="L-finish",
         event_locale_mapbox_id="poi.test_anchor",
         is_target_event=True,
@@ -1677,11 +1675,14 @@ class TestLayer4PayloadComposition:
 
 
 class TestPromptRendering:
-    def test_race_rules_summary_rendered_verbatim(self):
-        rules = "Mandatory checkpoint at TA2 by hour 18 or DQ."
+    def test_notes_rendered_verbatim(self):
+        # #439 — the merged race-rules+notes free-text field renders verbatim
+        # into the prompt (the brief now reads `notes`; the prior split left it
+        # captured but never rendered — the #306/#338 root).
+        notes = "Mandatory checkpoint at TA2 by hour 18 or DQ."
         re = _race_event_payload(
             race_format="continuous_multi_day",
-            race_rules_summary=rules,
+            notes=notes,
             route_locales=[
                 _route_locale(sequence_idx=1, role="start"),
                 _route_locale(sequence_idx=2, role="finish"),
@@ -1703,13 +1704,15 @@ class TestPromptRendering:
             retries_used=0,
             rule_failures=[],
         )
-        assert rules in prompt
+        assert notes in prompt
 
-    def test_mandatory_gear_text_rendered_verbatim(self):
-        gear = "Headlamp w/ backup batteries; emergency bivvy; full medical kit."
+    def test_notes_with_gear_content_rendered_verbatim(self):
+        # #438 — gear no longer has a dedicated field; gear lines pasted into
+        # the merged `notes` field still reach the synthesizer for kit_manifest.
+        notes = "Headlamp w/ backup batteries; emergency bivvy; full medical kit."
         re = _race_event_payload(
             race_format="continuous_multi_day",
-            mandatory_gear_text=gear,
+            notes=notes,
             route_locales=[
                 _route_locale(sequence_idx=1, role="start"),
                 _route_locale(sequence_idx=2, role="finish"),
@@ -1731,7 +1734,7 @@ class TestPromptRendering:
             retries_used=0,
             rule_failures=[],
         )
-        assert gear in prompt
+        assert notes in prompt
 
     def test_expected_conditions_section_rendered_when_present(self):
         from weather_client import ExpectedConditions

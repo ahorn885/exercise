@@ -32,6 +32,7 @@ Build it in layers; scale the depth to the phase and the race demands — deeper
 - One plyometric / explosive movement (jumps, bounds) for rate-of-force-development and low-speed economy.
 - One trunk anti-rotation or loaded carry (suitcase carry, Pallof press) — efficient trunk and grip work; honor any wrist / joint accommodations.
 Dose: 2 programmed sessions/week in Base/Build, 1/week in Peak/Taper, never more than 3. In Peak/Taper, trim toward the heavy core plus one plyometric and one carry and cut sets — but keep the load heavy; never maintain by lowering the weight.
+Variety: keep the 2–3 heavy compound lifts stable across the phase so they progress, but treat the accessory work — the durability, plyometric, carry, and trunk movements — as a ROTATION, not a fixed template: swap in different accessory exercises week to week and span the movement patterns (knee-dominant, hip-hinge, single-leg, carry, anti-rotation, plyometric) rather than repeating the same handful. Across a phase, draw broadly from the accessory options the athlete has access to; do not let two strength sessions read as the same workout.
 
 FAILOVER STRENGTH (a cardio session the grid flags [TERRAIN-INFEASIBLE] or [NO CRAFT] — compose as a strength substitution, NOT a cardio session):
 This session stands in for an infeasible endurance session, so it must REPLACE aerobic work, not add a heavy CNS day:

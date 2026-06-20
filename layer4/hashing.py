@@ -87,7 +87,36 @@ _LAYER2_BUNDLE_ATTRS = frozenset({"a", "b", "c", "d", "e"})
 # 2A/2B/2C/2D advisory flags (suppress-on-empty); changes the rendered prompt, so
 # cached plans + refreshes must regenerate. (single_session needs no bump — ad-hoc,
 # not cache-keyed.)
-LAYER4_PROMPT_REVISION = "14"
+# "15" = #690 strength variety + Coaching Memory — the per_phase synthesizer gains
+# a `Coaching memory` render block (durable `coaching_preferences`, suppress-on-
+# empty) and a stronger strength rotation/variety directive (shared
+# `strength_guidance` + per_phase), so the high-variety preference is honored and
+# accessory work spans the resolved pool. Changes the rendered prompt; cached
+# plans must regenerate. (The pref VALUES also ride `layer1_hash` now, so a
+# preference edit invalidates independently of this tag.)
+# "16" = #691 tier-0 equipment-gate fix — the strength / recovery / cardio-drill
+# pools (both the SDK enums `compute_*_pool_ids` and the rendered `_format_*_pool`
+# menus) now drop tier-0 (equipment-infeasible, no substitute/proxy) exercises, so
+# an unavailable-gear exercise can no longer be prescribed. Changes the feasible
+# enum + rendered pool, so cached plans + refreshes must regenerate. (single_session
+# needs no bump — ad-hoc, not cache-keyed — but reads the same corrected fns.)
+# "17" = #339 cross-discipline variety — (A) the durable Coaching Memory block
+# (#690 / `_format_coaching_memory`) is now rendered on the plan_refresh +
+# single_session + race_week_brief paths too (was per_phase-only), and (B) all
+# four synthesizers gain the `VARIETY_CARVEOUT_PROMPT_SECTION` (gated on a stated
+# variety preference; easy foot-based sessions only — counts / long / quality
+# preserved). Changes the rendered prompt, so cached plans + refreshes regenerate.
+# "18" = #339 follow-on — the variety carve-out generalized from foot-only to ANY
+# within-mode equivalent (adds the wheel group: road-bike ↔ MTB ↔ gravel, the
+# cycling analog of road ↔ trail run), and the cross-mode exclusion corrected to
+# mean foot↔wheel↔water (not the within-cycling road↔MTB swap). Prompt body
+# changed, so cached plans + refreshes regenerate.
+# "19" = #803 strength resolution metadata derived deterministically — the
+# per_phase SYSTEM_PROMPT strength bullet no longer asks the LLM to set
+# resolution_tier / substitute_text / proxy_origin_id (the synthesizer sets them
+# from each pick's 2C resolution before StrengthExercise construction). Prompt
+# body changed, so cached plans regenerate.
+LAYER4_PROMPT_REVISION = "19"
 
 
 def _to_jsonable(obj: Any) -> Any:

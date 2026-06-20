@@ -8,6 +8,7 @@ from datetime import date, timedelta
 from routes.auth import current_user_id
 from plan_sessions_repo import load_scheduled_sessions_for_window
 from plan_naming import target_race_name, generated_plan_name
+from athlete_event_windows_repo import resolve_weather_city
 
 bp = Blueprint('dashboard', __name__)
 
@@ -73,6 +74,48 @@ def _v2_session_card(session, plan_name=None) -> dict:
     }
 
 
+def _supplement_summary(db, user_id: int, today_sessions, today_d) -> dict | None:
+    """Standard + today's Daily supplement recommendations for the home page (#621).
+
+    Resolves the plan version scheduled today (or the athlete's latest version),
+    loads its Layer 5A `PlanNutrition`, and returns the standing ("always take")
+    list plus today's effort/event-based list. Best-effort — any miss (no plan,
+    no nutrition artifact yet, today outside scope) returns None / empty so the
+    card simply omits rather than breaking the dashboard.
+    """
+    try:
+        from plan_nutrition_repo import load_plan_nutrition_by_version
+
+        pv_id = None
+        if today_sessions:
+            pv_id = today_sessions[0].plan_version_id
+        else:
+            row = db.execute(
+                "SELECT id FROM plan_versions WHERE user_id = ? "
+                "ORDER BY id DESC LIMIT 1",
+                (user_id,),
+            ).fetchone()
+            pv_id = row["id"] if row else None
+        if pv_id is None:
+            return None
+
+        nutrition = load_plan_nutrition_by_version(db, pv_id)
+        if nutrition is None or not nutrition.standing_supplements:
+            return None
+
+        today_recs = []
+        for day in nutrition.days:
+            if day.date == today_d:
+                today_recs = day.supplement_recs
+                break
+        return {
+            'standard': nutrition.standing_supplements,
+            'daily': today_recs,
+        }
+    except Exception:
+        return None
+
+
 def _has_plan_version(db, user_id: int) -> bool:
     """True when the athlete has at least one `plan_versions` row.
 
@@ -89,26 +132,10 @@ def _has_plan_version(db, user_id: int) -> bool:
 
 
 def _get_weather(db):
-    today = date.today().isoformat()
     ts_now = time.time()
     uid = current_user_id()
 
-    loc = ''
-    # plan_travel is parent-JOIN scoped via training_plans
-    trip = db.execute(
-        "SELECT pt.city FROM plan_travel pt "
-        "JOIN training_plans tp ON tp.id = pt.plan_id "
-        "WHERE tp.user_id=? AND pt.start_date<=? AND pt.end_date>=? AND pt.city!='' LIMIT 1",
-        (uid, today, today)).fetchone()
-    if trip:
-        loc = trip['city']
-    else:
-        home = db.execute(
-            "SELECT city FROM locale_profiles WHERE preferred AND user_id=? LIMIT 1",
-            (uid,)
-        ).fetchone()
-        if home and home['city']:
-            loc = home['city']
+    loc = resolve_weather_city(db, uid, date.today())
     if not loc:
         loc = os.environ.get('WEATHER_LOCATION', '')
 
@@ -224,6 +251,8 @@ def index():
 
     has_plan_version = _has_plan_version(db, uid)
 
+    supplement_summary = _supplement_summary(db, uid, today_v2, today_d)
+
     weather = _get_weather(db)
 
     # Cardio sessions in the last 7 days with no conditions log entry
@@ -246,21 +275,7 @@ def index():
             (uid,)
         ).fetchone()
         if active_plan:
-            today_str = date.today().isoformat()
-            trip = db.execute(
-                "SELECT pt.city FROM plan_travel pt "
-                "JOIN training_plans tp ON tp.id = pt.plan_id "
-                "WHERE tp.user_id=? AND pt.start_date<=? AND pt.end_date>=? "
-                "  AND pt.city!='' LIMIT 1",
-                (uid, today_str, today_str)
-            ).fetchone()
-            city = trip['city'] if trip else ''
-            if not city:
-                home = db.execute(
-                    "SELECT city FROM locale_profiles WHERE preferred AND user_id=? LIMIT 1",
-                    (uid,)
-                ).fetchone()
-                city = home['city'] if home and home['city'] else ''
+            city = resolve_weather_city(db, uid, date.today())
             clothing_recs = get_clothing_context(db, active_plan['id'], city)
     except Exception:
         pass
@@ -275,4 +290,5 @@ def index():
                            today=today,
                            clothing_recs=clothing_recs,
                            unconditioned_cardio=unconditioned_cardio,
+                           supplement_summary=supplement_summary,
                            has_plan_version=has_plan_version)

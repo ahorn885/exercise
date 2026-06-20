@@ -264,7 +264,6 @@ turned on whether a table is queried directly by id:
 | `plan_items` | `training_plans` | denormalized `user_id` |
 | `plan_item_disposition` | `plan_items` | denormalized `user_id` |
 | `plan_reviews` | `training_plans` | parent-JOIN |
-| `plan_travel` | `training_plans` | parent-JOIN |
 | `coaching_chat` | `training_plans` | denormalized `user_id` |
 | `locale_equipment` | `locale_profiles` | denormalized `user_id` (composite key) |
 | `exercise_equipment` | shared catalogs | unscoped (shared) |
@@ -661,16 +660,6 @@ review progress.
   `notes`, `created_at`.
 - Scoping: parent-JOIN through `training_plans.user_id`.
 
-#### `plan_travel`
-
-Travel periods linked to a plan — date range + locale + city, used by
-the coach to plan around hotel-gym constraints.
-
-- Columns: `id`, `plan_id` (FK), `start_date`, `end_date`, `locale`
-  (`home`/`hotel`/`partner`/`airport`), `city`, `notes`,
-  `indoor_only`, `created_at`.
-- Scoping: parent-JOIN.
-
 ### Coaching
 
 #### `coaching_chat`
@@ -968,7 +957,6 @@ that touches X, look here."
 | `plan_items` | `cardio`, `coaching`, `dashboard`, `garmin`, `natural_log`, `plans`, `training`, `admin` | `coaching.py`, `plan_match.py` |
 | `plan_item_disposition` | `admin` | `coaching.py`, `plan_match.py` |
 | `plan_reviews` | `coaching`, `plans`, `admin` | — |
-| `plan_travel` | `coaching`, `dashboard`, `plans`, `admin` | — |
 | `coaching_chat` | `coaching`, `plans`, `admin` | — |
 | `coaching_preferences` | `coaching`, `profile`, `admin` | `coaching.py` |
 | `feedback_log` | `profile`, `admin` | `coaching.py` |
@@ -1187,8 +1175,7 @@ back to the tables it touches.
    system prompt + the context block.
 4. Response parsed → `routes/plans.py:_create_plan_from_dict` writes
    one `training_plans` row + N `plan_items` rows in a transaction.
-5. Travel schedule from the form → N `plan_travel` rows.
-6. `_log_usage(usage, 'generate')` prints token cost to stdout.
+5. `_log_usage(usage, 'generate')` prints token cost to stdout.
 
 ### Auto-matching a Garmin FIT to a scheduled plan item
 
@@ -1237,7 +1224,7 @@ back to the tables it touches.
 3. `_delete_user_and_data(db, user_id)` walks the FK-safe DELETE
    chain in a single transaction:
    - Children first: `training_log_sets`, `plan_item_disposition`,
-     `plan_items`, `plan_reviews` and `plan_travel` (parent-JOIN),
+     `plan_items`, `plan_reviews` (parent-JOIN),
      `coaching_chat`, `training_plans`.
    - Then: `training_log`, `training_sessions`, `cardio_log`,
      `body_metrics`, `conditions_log`,

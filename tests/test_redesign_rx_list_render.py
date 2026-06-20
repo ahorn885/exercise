@@ -161,6 +161,41 @@ def test_rx_list_prescribed_but_unlogged_reads_no_log_yet(monkeypatch):
     assert 'needs setup' not in html
 
 
+def test_rx_list_capacity_without_sets_is_not_needs_setup(monkeypatch):
+    # #693: a capacity record / manual edit that carries only a weight (or a
+    # duration) but no current_sets must read "no log yet", not "needs setup".
+    # Keying the label off current_sets alone (the prior partial fix) mislabeled
+    # these set-up rows as unconfigured — the residual bug this issue reopened.
+    entries = [
+        _entry(id=7, exercise='Trap-bar deadlift', current_sets=None,
+               current_reps=None, current_weight=140, last_outcome=None,
+               last_performed=None, rx_source='Manual override'),
+    ]
+    client = _client(monkeypatch, entries, [], [])
+    resp = client.get('/rx')
+    assert resp.status_code == 200
+    html = resp.get_data(as_text=True)
+    assert 'Trap-bar deadlift' in html
+    assert 'no log yet' in html
+    assert 'needs setup' not in html
+
+
+def test_rx_list_pristine_seed_reads_needs_setup(monkeypatch):
+    # #693: the one state that still reads "needs setup" — a brand-new seed row
+    # (rx_source='Needs initial setup', every dimension NULL, never logged).
+    entries = [
+        _entry(id=8, exercise='Sled push', current_sets=None, current_reps=None,
+               current_weight=None, current_duration=None, last_outcome=None,
+               last_performed=None, rx_source='Needs initial setup'),
+    ]
+    client = _client(monkeypatch, entries, [], [])
+    resp = client.get('/rx')
+    assert resp.status_code == 200
+    html = resp.get_data(as_text=True)
+    assert 'Sled push' in html
+    assert 'needs setup' in html
+
+
 def test_rx_list_filtered_empty_shows_clear(monkeypatch):
     client = _client(monkeypatch, [], [], [])
     resp = client.get('/rx?discipline=Bike')

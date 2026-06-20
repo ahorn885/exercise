@@ -22,8 +22,8 @@ doubles, preferred rest days).
 
 Step 3c — D-66 §H.2 target-race — captures race name, event_date,
 race_format (closed 4-enum), and the multi-day-only extension fields
-(distance_km, total_elevation_gain_m, race_rules_summary,
-mandatory_gear_text). Writes a `race_events` row with `is_target_event=TRUE`
+(distance_km, total_elevation_gain_m, and the merged free-text race
+notes). Writes a `race_events` row with `is_target_event=TRUE`
 (or UPDATEs the existing target row). All picks redirect to the §H.4
 route-locale step (optional on every event type). Skip writes an
 `'target_race_skipped'` account_nudge + redirects to the profile form.
@@ -910,7 +910,7 @@ def _get_target_race_row(db, uid):
     """
     cur = db.execute(
         'SELECT id, name, event_date, race_format, distance_km, '
-        '       total_elevation_gain_m, race_rules_summary, mandatory_gear_text, '
+        '       total_elevation_gain_m, '
         '       event_locale_id, notes, race_terrain, previous_attempts, '
         '       goal_outcome, first_time_at_distance, time_goal, race_pack_weight_kg, '
         '       event_locale_name, event_locale_mapbox_id, event_locale_place_name, '
@@ -1048,8 +1048,6 @@ def target_race_save():
     new_total_elevation_gain_m = _parse_decimal_field(
         request.form, 'total_elevation_gain_m'
     )
-    new_race_rules_summary = _parse_str_field(request.form, 'race_rules_summary')
-    new_mandatory_gear_text = _parse_str_field(request.form, 'mandatory_gear_text')
     new_notes = _parse_str_field(request.form, 'notes')
     new_race_terrain = _parse_race_terrain(request.form)
     # D-73 Phase 5.2 walkthrough #1 + #2a (2026-05-21) — Mapbox-anchored race
@@ -1064,6 +1062,8 @@ def target_race_save():
         _parse_previous_attempts,
         _parse_primary_metric,
         _parse_race_url,
+        _terrain_discipline_mismatch_flash,
+        _terrain_discipline_mismatches,
     )
     new_locale_fields = _extract_mapbox_locale_from_form(request.form)
     new_race_url = _parse_race_url(request.form)
@@ -1107,6 +1107,16 @@ def target_race_save():
         prior_discipline_filter = None
         new_discipline_filter = parsed_discipline_filter
 
+    # Issue #342 — block terrain rows scoped to a discipline that isn't in
+    # the race's included disciplines (validated against the effective
+    # filter, post auto-clear). Mirrors routes/race_events.py.
+    mismatches = _terrain_discipline_mismatches(
+        new_race_terrain, new_discipline_filter
+    )
+    if mismatches:
+        flash(_terrain_discipline_mismatch_flash(mismatches), 'danger')
+        return redirect(url_for('onboarding.target_race'))
+
     if target:
         update_race_event(
             db, uid, int(target['id']),
@@ -1117,8 +1127,6 @@ def target_race_save():
             total_elevation_gain_m=new_total_elevation_gain_m,
             estimated_duration_hr=new_estimated_duration_hr,
             primary_metric=new_primary_metric,
-            race_rules_summary=new_race_rules_summary,
-            mandatory_gear_text=new_mandatory_gear_text,
             event_locale_id=None,
             notes=new_notes,
             race_terrain=new_race_terrain,
@@ -1172,8 +1180,6 @@ def target_race_save():
         brief_only_changed = (
             target['distance_km'] != new_distance_km
             or target['total_elevation_gain_m'] != new_total_elevation_gain_m
-            or target['race_rules_summary'] != new_race_rules_summary
-            or target['mandatory_gear_text'] != new_mandatory_gear_text
             or target['notes'] != new_notes
             or prior_terrain != new_race_terrain
             or prior_race_url != new_race_url
@@ -1199,8 +1205,6 @@ def target_race_save():
             total_elevation_gain_m=new_total_elevation_gain_m,
             estimated_duration_hr=new_estimated_duration_hr,
             primary_metric=new_primary_metric,
-            race_rules_summary=new_race_rules_summary,
-            mandatory_gear_text=new_mandatory_gear_text,
             is_target_event=True,
             notes=new_notes,
             race_terrain=new_race_terrain,

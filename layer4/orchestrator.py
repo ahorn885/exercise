@@ -179,9 +179,10 @@ class _UpstreamFullCone:
     see module docstring for the cone-shape variance).
 
     Field shapes match the upstream payload types verbatim; consumers
-    reshape into entry-point-specific kwargs (e.g., race_week_brief wraps
-    layer2c_payload into a `{primary_locale: payload}` dict; plan_refresh
-    packs all 5 layer-2 payloads into a `Layer2Bundle`).
+    reshape into entry-point-specific kwargs (e.g., plan_refresh packs all 5
+    layer-2 payloads into a `Layer2Bundle`). `layer2c_payloads` is already the
+    per-locale dict the validator + locale-assign consume (#780 — one 2C
+    resolution per cluster locale, not a single primary-only entry).
     """
 
     etl_version_set: dict[str, str]
@@ -190,7 +191,14 @@ class _UpstreamFullCone:
     layer1_payload: Layer1Payload
     layer2a_payload: Layer2APayload
     layer2b_payload: Layer2BPayload
-    layer2c_payload: Layer2CPayload
+    # #780 — one Layer 2C payload per cluster locale (keyed by locale_id), each
+    # resolved against THAT locale's own effective equipment. The validator's
+    # cluster check + the locale-assign candidate set are keyed off this dict, so
+    # every saved locale is in-cluster (was: a single primary-only entry carrying
+    # the cluster-union pool — the documented stub that made nearby venues look
+    # "not in cluster"). The primary entry is always present (cluster[0] is the
+    # preferred locale; empty-cluster cones fall back to {primary_locale}).
+    layer2c_payloads: dict[str, Layer2CPayload]
     layer2d_payload: Layer2DPayload
     layer2e_payload: Layer2EPayload
     # Training-substitution resolver output (terrain emphasis + craft candidate
@@ -467,8 +475,15 @@ def _gather_feasibility_inputs(
 
     # The discipline's own mapped strength pool, ranked best-first by 2C
     # priority. tier 0 = unavailable at this locale set; keep 1/2/3.
+    # #780 — the strength substitute pool reads the PRIMARY locale's 2C entry
+    # (home-gym equipment; a home-substituted strength session is done at home),
+    # while skill-gating dedupes across the FULL cluster (the same dict the
+    # validator passes to `skill_gated_disciplines`). The primary entry is always
+    # present (cluster[0] is the preferred locale; empty-cluster cones fall back
+    # to {primary_locale}).
+    primary_l2c = cone.layer2c_payloads[cone.primary_locale]
     pool_by_discipline: dict[str, list[str]] = {}
-    for ex in cone.layer2c_payload.exercises_resolved:
+    for ex in primary_l2c.exercises_resolved:
         if ex.tier not in (1, 2, 3):
             continue
         for d_id in ex.discipline_ids:
@@ -479,11 +494,11 @@ def _gather_feasibility_inputs(
             ex.exercise_id: _PRIORITY_RANK.get(
                 ex.priority_per_discipline.get(d_id, ""), 99
             )
-            for ex in cone.layer2c_payload.exercises_resolved
+            for ex in primary_l2c.exercises_resolved
         }
         ids.sort(key=lambda e: rank_of.get(e, 99))
 
-    gated = skill_gated_disciplines({cone.primary_locale: cone.layer2c_payload})
+    gated = skill_gated_disciplines(cone.layer2c_payloads)
     included = [d for d in cone.layer2a_payload.disciplines if d.inclusion == "included"]
     name_by_discipline = {
         d.discipline_id: d.discipline_name for d in cone.layer2a_payload.disciplines
@@ -990,18 +1005,44 @@ def _upstream_full_cone(
     )
 
     cluster = locations.cluster_locale_ids(db, user_id)
-    locale_equipment_pool = locations.cluster_effective_tags(db, user_id, cluster)
-    layer2c_payload = q_layer2c_equipment_mapper_payload(
-        db,
-        locale_id=primary_locale,
-        locale_equipment_pool=locale_equipment_pool,
-        cluster_locale_ids=cluster,
-        cluster_gear_toggle_states={},
-        included_discipline_ids=included_discipline_ids,
-        layer2d_payload=layer2d_payload,
-        etl_version_set=etl_version_set,
-        # D-73 Phase 5.2 Bucket C (l) — mirror of the 2B wire above.
-        skill_toggle_states=layer1_payload.lifestyle.skill_toggle_states,
+    # #780 — invoke Layer 2C once per cluster locale, each resolved against THAT
+    # locale's own effective equipment (was: a single call for the primary locale
+    # carrying the cluster-UNION pool — the documented "today stubbed to
+    # [primary_locale]" stub). The per-locale dict is what the validator's cluster
+    # check (rule 6c) and the locale-assign candidate set read, so a session
+    # correctly placed at a nearby venue (e.g. groomed trail at Cleburne) is no
+    # longer rejected as "not in cluster" and nearby venues enter the candidate
+    # set. Each payload's hash folds into the Layer-4 cache key via
+    # compute_layer2c_bundle_hash, so adding/removing a saved locale invalidates
+    # cached blocks (single-locale clusters stay byte-identical). Empty cluster (no
+    # resolvable home) falls back to the primary locale alone, preserving the
+    # primary entry that the strength pool + skill-gate read.
+    cluster_for_2c = cluster or [primary_locale]
+    layer2c_payloads = {
+        locale: q_layer2c_equipment_mapper_payload(
+            db,
+            locale_id=locale,
+            locale_equipment_pool=sorted(
+                locations.locale_effective_tags(db, user_id, locale)
+            ),
+            cluster_locale_ids=cluster_for_2c,
+            cluster_gear_toggle_states={},
+            included_discipline_ids=included_discipline_ids,
+            layer2d_payload=layer2d_payload,
+            etl_version_set=etl_version_set,
+            # D-73 Phase 5.2 Bucket C (l) — mirror of the 2B wire above.
+            skill_toggle_states=layer1_payload.lifestyle.skill_toggle_states,
+        )
+        for locale in cluster_for_2c
+    }
+    # Rule #15 — trace the per-locale 2C fan-out: which locales got a payload and
+    # each one's effective-pool size. A starved cluster (single locale, or a
+    # nearby locale resolving an empty pool) is then attributable here rather than
+    # surfacing downstream as a mystery "session not in cluster" / no-venue plan.
+    print(
+        f"_upstream_full_cone: user_id={user_id} layer2c built per-locale for "
+        f"cluster={cluster_for_2c} pool_sizes="
+        f"{ {loc: len(p.effective_pool) for loc, p in layer2c_payloads.items()} }"
     )
 
     integration_bundle = assemble_layer3a_integration_bundle(db, user_id, as_of)
@@ -1136,7 +1177,7 @@ def _upstream_full_cone(
         layer1_payload=layer1_payload,
         layer2a_payload=layer2a_payload,
         layer2b_payload=layer2b_payload,
-        layer2c_payload=layer2c_payload,
+        layer2c_payloads=layer2c_payloads,
         layer2d_payload=layer2d_payload,
         layer2e_payload=layer2e_payload,
         training_substitution_payload=training_substitution_payload,
@@ -1267,7 +1308,7 @@ def orchestrate_race_week_brief(
         layer1_payload=cone.layer1_payload.model_dump(mode="json"),
         layer2a_payload=cone.layer2a_payload,
         layer2b_payload=cone.layer2b_payload,
-        layer2c_payloads={cone.primary_locale: cone.layer2c_payload},
+        layer2c_payloads=cone.layer2c_payloads,
         layer2d_payload=cone.layer2d_payload,
         layer2e_payload=cone.layer2e_payload,
         layer3a_payload=cone.layer3a_payload,
@@ -1474,7 +1515,7 @@ def orchestrate_plan_refresh(
     layer2_bundle = Layer2Bundle(
         a=cone.layer2a_payload,
         b=cone.layer2b_payload,
-        c={cone.primary_locale: cone.layer2c_payload},
+        c=cone.layer2c_payloads,
         d=cone.layer2d_payload,
         e=cone.layer2e_payload,
     )
@@ -1590,7 +1631,7 @@ def orchestrate_plan_create(
         viability_current_date=plan_start_date,
     )
 
-    layer2c_payloads = {cone.primary_locale: cone.layer2c_payload}
+    layer2c_payloads = cone.layer2c_payloads
     # #540 slice 2c.2 — deterministic per-discipline terrain feasibility across
     # the locale cluster, resolved pre-synthesis so the synthesizer is handed a
     # session that already works (never a Rock Climbing session at a home with no

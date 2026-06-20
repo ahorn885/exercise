@@ -61,8 +61,10 @@ from layer4.errors import Layer4InputError, Layer4OutputError
 from layer4.per_phase import (
     CARDIO_DRILLS_PROMPT_SECTION,
     CARDIO_PROGRAMMING_PROMPT_SECTION,
+    VARIETY_CARVEOUT_PROMPT_SECTION,
     _apply_strength_resolution,
     _format_cardio_drill_pool,
+    _format_coaching_memory,
     block_output_budget,
     compute_cardio_drill_pool_ids,
     compute_feasible_pool_ids,
@@ -998,6 +1000,11 @@ def llm_layer4_plan_refresh(
     # fidelity as plan generation. Unconditional (general cardio guidance, not
     # pool-gated); centralized here so the three tier modules stay untouched.
     system_prompt = system_prompt + "\n\n" + CARDIO_PROGRAMMING_PROMPT_SECTION
+    # #339 — equivalent-discipline variety carve-out (easy foot-based sessions
+    # only; gated on the athlete's `Coaching memory` block, appended below).
+    # Centralized here so the three tier modules stay untouched, mirroring the
+    # cardio-section append above.
+    system_prompt = system_prompt + "\n\n" + VARIETY_CARVEOUT_PROMPT_SECTION
     feasible_pool_ids = compute_feasible_pool_ids(
         dict(layer2_bundle.c), layer2_bundle.d
     )
@@ -1135,6 +1142,12 @@ def llm_layer4_plan_refresh(
                 "\n\n=== Upstream coaching flags ===\n"
                 + "\n".join(upstream_flag_lines)
             )
+        # #339 — surface the durable Coaching Memory block on the refresh path
+        # too (#690 rendered it on plan-create only), so a stated variety
+        # preference reaches the carve-out above (suppress-on-empty).
+        coaching_memory_lines = _format_coaching_memory(layer1_payload)
+        if coaching_memory_lines:
+            user_prompt += "\n\n" + "\n".join(coaching_memory_lines)
 
         llm_out = caller(
             system_prompt,

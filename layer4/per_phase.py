@@ -262,6 +262,28 @@ Structure each cardio session as a deliberate sequence of cardio_blocks, not one
 Ground every intensity_target in the athlete's measured physiology shown in the athlete-context section when present: HRTarget hr_bpm_low/high from HR max / LT-HR, PowerTarget from cycling FTP, PaceTarget from run threshold pace, SwimPaceTarget from swim CSS. When the relevant anchor is absent, fall back to an RPETarget or a clearly zone-relative range rather than inventing precise numbers the athlete can't trust."""
 
 
+# #339 — equivalent-discipline variety carve-out. Path-neutral like
+# `CARDIO_PROGRAMMING_PROMPT_SECTION`: included in per_phase's SYSTEM_PROMPT and
+# appended by the plan_refresh / single_session / race_week_brief system prompts
+# so all four synthesizers honor an explicit variety preference. Gated on the
+# `Coaching memory` block (#690 surfaced it onto Layer 1; suppress-on-empty), so
+# it is inert for athletes who set no preference. Scoped to EASY sessions and to
+# WITHIN-MODE equivalents only (foot↔foot, wheel↔wheel) — counts / long / quality
+# / race specificity are never traded away, and the training stimulus is unchanged.
+VARIETY_CARVEOUT_PROMPT_SECTION = """# Variety / cross-training substitution (easy sessions; within-mode equivalents only)
+
+If — and ONLY if — the athlete's `Coaching memory` block expresses a preference for variety or cross-training, you MAY render the *content* of an **easy**-typed cardio session as a training-equivalent discipline **within the same locomotion mode** to relieve monotony and manage repetitive load — e.g. an easy **road run** in lieu of an easy **trail run** (foot group: road / trail / treadmill / hike), or an easy **road-bike spin** in lieu of an easy **mountain-bike** session (wheel group: road / gravel / MTB). Hard rules that always hold:
+
+- The per-discipline session **count**, the **long** (LSD) session, and **every quality** session stay on the race-specific discipline — race specificity is non-negotiable there. Substitute on `easy`-typed sessions only.
+- This does NOT change the prescribed counts, typing, or target hours: an easy trail-run slot rendered as an easy road run still counts as that discipline's easy session.
+- Keep it a minority of the easy volume so the race-specific discipline still dominates the athlete's weekly volume in that mode.
+- Substitute **only within the same locomotion mode** (foot↔foot, wheel↔wheel). Do NOT swap across modes (a bike session for a run, a paddle for a ride) for variety — that changes the training stimulus, not just the surface.
+- Name the swap in `coaching_intent` (e.g. "easy road run for surface variety — trail volume preserved on the long + quality days").
+- Never override an athlete's explicit, just-made request for a specific session (e.g. an on-demand single-session sport pick), and never trade away race-week specificity for variety — in those contexts prescribe exactly the discipline asked for.
+
+Absent an explicit variety / cross-training preference in `Coaching memory`, prescribe the disciplines exactly as given."""
+
+
 SYSTEM_PROMPT = (
     """You are AIDSTATION's Layer 4 per-phase synthesizer.
 
@@ -325,7 +347,7 @@ Layer 2C per-locale `effective_pool` + `exercises_resolved` (Tier 1 direct / Tie
     + STRENGTH_PROGRAMMING_GUIDANCE
     + """
 
-Pick exercises from the rendered `=== Strength exercise pool ===` for the session's locale (never invent `exercise_id`s). Keep a stable core of 2–3 compound lifts across the phase for progression; rotate accessory exercises week-to-week. If the athlete has no logged history for an exercise, prescribe the reps and tell them to use a load they can complete for that many reps with ~2 reps in reserve, and log it — they set their own baseline; do not withhold an exercise for lack of history.
+Pick exercises from the rendered `=== Strength exercise pool ===` for the session's locale (never invent `exercise_id`s). Keep a stable core of 2–3 compound lifts across the phase for progression, and rotate the accessory exercises every week — draw across the FULL rendered pool and its movement patterns so successive strength sessions never read as the same workout; do not settle on one fixed accessory template for the phase. When the `Coaching memory` block asks for high variety, widen the rotation further still and touch most of the resolved accessory pool over the phase; honor any `prefer_exercise` / `avoid_exercise` preference there by selecting (or skipping) the matching exercise within the pool. If the athlete has no logged history for an exercise, prescribe the reps and tell them to use a load they can complete for that many reps with ~2 reps in reserve, and log it — they set their own baseline; do not withhold an exercise for lack of history.
 
 Attribute each strength session's `discipline_id` to the discipline it most supports. Place strength as the second session on an easy/moderate cardio day, not on the same day as a key intensity/long session. Do not prescribe a time of day; if strength shares a day with a hard session, add a `session_notes` cue to separate them by a few hours and avoid heavy legs right before the quality session. Honor 2D injury exclusions/accommodations.
 
@@ -338,6 +360,10 @@ Recovery sessions are ADDITIVE and do **not** count toward the ≤2/day training
 Prescribe the movements as a `recovery_exercises[]` block (the structural analog of `strength_exercises`): pick `exercise_id`s from the rendered `=== Recovery exercise pool ===` only (never invent them), and give each a free-text `prescription` (e.g. "2×30s/side", "5 min @ ~6 breaths/min") plus brief `instructions`. Leave `cardio_blocks` / `strength_exercises` / `rest_reason` null.
 
 Load-adaptive rest: full rest is the protective floor and recovery sessions are the active-recovery mechanism — the two are adaptation-neutral, so under high load (Peak phase or a deload week) prefer genuine full rest over active recovery and keep any recovery minimal and short.
+
+"""
+    + VARIETY_CARVEOUT_PROMPT_SECTION
+    + """
 
 """
     + CARDIO_PROGRAMMING_PROMPT_SECTION
@@ -519,6 +545,7 @@ def compute_feasible_pool_ids(
     )
     pool: set[str] = set()
     dropped_by_type: dict[str, int] = {}
+    dropped_tier0 = 0
     for l2c in layer2c_payloads.values():
         for rx in l2c.exercises_resolved:
             if rx.exercise_id in excluded:
@@ -530,12 +557,26 @@ def compute_feasible_pool_ids(
                     dropped_by_type.get(rx.exercise_type, 0) + 1
                 )
                 continue
+            # #691 — tier 0 is equipment-infeasible with no substitute (tier 2)
+            # or proxy (tier 3): the athlete lacks the gear AND there's no
+            # fallback, so it must never enter the "feasible" pool. Since Rule 6a
+            # retired (validator.py §6a), this SDK enum is the SOLE strength-
+            # membership guard — a tier-0 id here is a structurally-valid pick
+            # the athlete can't perform (e.g. a sled drag for an athlete with no
+            # sled and no resolvable substitute), exactly the gate leak #691 hit.
+            if rx.tier == 0:
+                dropped_tier0 += 1
+                continue
             pool.add(rx.exercise_id)
-    # Rule #15 — log the non-strength rows the type filter excluded (by type),
-    # so a "missing exercise" in a strength session is attributable in prod.
-    if dropped_by_type:
+    # Rule #15 — log the rows the filters excluded (non-strength type + the #691
+    # tier-0 infeasible drop), so a "missing exercise" in a strength session is
+    # attributable in prod.
+    if dropped_by_type or dropped_tier0:
         _dbg = ", ".join(f"{t}={n}" for t, n in sorted(dropped_by_type.items()))
-        print(f"compute_feasible_pool_ids: non-strength-type dropped [{_dbg}]")
+        print(
+            f"compute_feasible_pool_ids: non-strength-type dropped [{_dbg}] "
+            f"tier0_infeasible_dropped={dropped_tier0}"
+        )
     return sorted(pool)
 
 
@@ -577,6 +618,7 @@ def compute_recovery_pool_ids(
     )
     pool: set[str] = set()
     dropped_by_type: dict[str, int] = {}
+    dropped_tier0 = 0
     for l2c in layer2c_payloads.values():
         for rx in l2c.exercises_resolved:
             if rx.exercise_id in excluded:
@@ -586,12 +628,24 @@ def compute_recovery_pool_ids(
                     dropped_by_type.get(rx.exercise_type, 0) + 1
                 )
                 continue
+            # #691 — a recovery/mobility row that needs equipment the athlete
+            # lacks, with no substitute/proxy, resolves tier 0; it's infeasible
+            # and must not enter the pool (the recovery enum + the validator's
+            # `_rule_recovery_pool_membership` both read this list, so the same
+            # equipment-gate leak class is closed here too).
+            if rx.tier == 0:
+                dropped_tier0 += 1
+                continue
             pool.add(rx.exercise_id)
-    # Rule #15 — log the non-recovery rows the type filter excluded (by type),
-    # so a "missing exercise" in a recovery session is attributable in prod.
-    if dropped_by_type:
+    # Rule #15 — log the rows the filters excluded (non-recovery type + the #691
+    # tier-0 infeasible drop), so a "missing exercise" in a recovery session is
+    # attributable in prod.
+    if dropped_by_type or dropped_tier0:
         _dbg = ", ".join(f"{t}={n}" for t, n in sorted(dropped_by_type.items()))
-        print(f"compute_recovery_pool_ids: non-recovery-type dropped [{_dbg}]")
+        print(
+            f"compute_recovery_pool_ids: non-recovery-type dropped [{_dbg}] "
+            f"tier0_infeasible_dropped={dropped_tier0}"
+        )
     return sorted(pool)
 
 
@@ -654,6 +708,11 @@ def _recovery_pool_entries(
             if rx.exercise_id in excluded or rx.exercise_id in entries:
                 continue
             if not _is_recovery_pool_type(rx.exercise_type):
+                continue
+            # #691 — stay in lockstep with compute_recovery_pool_ids (which now
+            # drops tier-0): an auto-fill must never reference an infeasible id
+            # the validator's `_rule_recovery_pool_membership` would then reject.
+            if rx.tier == 0:
                 continue
             entries[rx.exercise_id] = (rx.exercise_name, rx.exercise_type)
     return entries
@@ -783,11 +842,16 @@ def compute_cardio_drill_pool_ids(
         else set()
     )
     pool: set[str] = set()
-    dropped = {"excluded": 0, "discipline": 0, "gate": 0, "phase": 0}
+    dropped = {"tier0": 0, "excluded": 0, "discipline": 0, "gate": 0, "phase": 0}
     for l2c in layer2c_payloads.values():
         for rx in l2c.exercises_resolved:
             if not _is_cardio_drill_pool_type(rx.exercise_type):
                 continue  # non-drill types are the silent majority
+            # #691 — tier 0 is equipment-infeasible with no substitute/proxy;
+            # never prescribable, so it can't enter the drill pool.
+            if rx.tier == 0:
+                dropped["tier0"] += 1
+                continue
             if rx.exercise_id in excluded:
                 dropped["excluded"] += 1
                 continue
@@ -806,7 +870,8 @@ def compute_cardio_drill_pool_ids(
     print(
         f"compute_cardio_drill_pool_ids: phase={phase} "
         f"athlete_disciplines={sorted(disciplines)} pool={sorted(pool)} "
-        f"dropped(excluded={dropped['excluded']},discipline={dropped['discipline']},"
+        f"dropped(tier0={dropped['tier0']},excluded={dropped['excluded']},"
+        f"discipline={dropped['discipline']},"
         f"gate={dropped['gate']},phase={dropped['phase']})"
     )
     return sorted(pool)
@@ -1190,10 +1255,12 @@ def _format_strength_exercise_pool(
                 if d_id in rx.discipline_ids
                 and rx.exercise_id not in excluded_ids
                 and rx.exercise_id not in seen
-                # #698 Finding 2 — render only resistance-training types; this
-                # mirrors the compute_feasible_pool_ids enum so the rendered
-                # pool and the structural enum stay in lockstep.
+                # #698 Finding 2 — render only resistance-training types; and
+                # #691 — exclude tier-0 (equipment-infeasible, no substitute/
+                # proxy). Both mirror the compute_feasible_pool_ids enum so the
+                # rendered pool and the structural enum stay in lockstep.
                 and _is_strength_pool_type(rx.exercise_type)
+                and rx.tier > 0
             ]
             cands.sort(
                 key=lambda rx: (
@@ -1283,6 +1350,9 @@ def _format_recovery_exercise_pool(
                 rx.exercise_id in excluded_ids
                 or rx.exercise_id in seen
                 or not _is_recovery_pool_type(rx.exercise_type)
+                # #691 — exclude tier-0 (infeasible); lockstep with the
+                # compute_recovery_pool_ids enum.
+                or rx.tier == 0
             ):
                 continue
             seen.add(rx.exercise_id)
@@ -1358,6 +1428,9 @@ def _format_cardio_drill_pool(
             if (
                 _is_cardio_drill_pool_type(rx.exercise_type)
                 and rx.exercise_id not in excluded_ids
+                # #691 — exclude tier-0 (infeasible); lockstep with the
+                # compute_cardio_drill_pool_ids enum.
+                and rx.tier > 0
                 and (set(rx.discipline_ids) & disciplines)
                 and _constituent_sport_gate_ok(rx.exercise_id, disciplines)
                 and _cardio_drill_phase_allows(rx.exercise_type, phase)
@@ -2296,6 +2369,29 @@ def _format_daily_windows_schedule(layer1_payload: dict[str, Any]) -> list[str]:
     return lines
 
 
+def _format_coaching_memory(layer1_payload: dict[str, Any]) -> list[str]:
+    """#690 — render the athlete's durable Coaching Memory preferences
+    (`coaching_preferences`, surfaced onto Layer 1) so the synthesizer can honor
+    them — notably an explicit high-variety request, plus prefer/avoid-exercise
+    notes. Permanent preferences are framed as strict, non-permanent as
+    advisory (mirrors the v1 framing). Suppress-on-empty: no block when the
+    athlete has set no preferences, so existing payloads render unchanged."""
+    prefs = layer1_payload.get("coaching_preferences") or []
+    if not prefs:
+        return []
+    out = [
+        "Coaching memory (durable athlete preferences — honor permanent ones "
+        "strictly; treat non-permanent ones as advisory; apply those relevant "
+        "to training):"
+    ]
+    for p in prefs:
+        tag = "permanent" if p.get("permanent") else "advisory"
+        category = p.get("category") or "general"
+        content = p.get("content") or ""
+        out.append(f"- [{tag}] {category}: {content}")
+    return out
+
+
 def render_user_prompt(
     *,
     phase_spec: PhaseSpec,
@@ -2507,6 +2603,10 @@ def render_user_prompt(
     voice = layer1_payload.get("coaching_voice_preferences")
     if voice:
         parts.append(f"Voice notes: {voice}")
+    # #690 — surface the durable Coaching Memory preferences (suppress-on-empty)
+    # so the synthesizer honors an explicit high-variety request + prefer/avoid
+    # exercise notes; the strength section reads this block by name.
+    parts.extend(_format_coaching_memory(layer1_payload))
     parts.append("")
     parts.append("Active injuries (hard constraints; never overridable):")
     parts.extend(_format_active_injuries(layer2d_payload))

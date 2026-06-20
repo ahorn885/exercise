@@ -27,12 +27,26 @@ weekly energy is invented; it is only moved around.
 Per-day macros: protein held ≈ constant g/kg (recovery-driven), fat held at the
 phase value (already ≥ floor), carbohydrate absorbs the day-to-day swing
 ("fuel for the work required"), with a glycogen-maintenance CHO floor.
+
+Race-week carbohydrate loading
+------------------------------
+The ``_CARB_LOAD_DAYS`` (2) calendar days before each race event are flagged as
+carb-loading days: carbohydrate is pinned at ``_CARB_LOAD_G_PER_KG`` (10 g/kg)
+for glycogen supercompensation (ACSM/AND/DC 2016: 10-12 g/kg/day for 36-48 h
+before events >90 min). Unlike a normal day, loading drives total energy *up*
+(CHO is the fixed target, not the residual), so a loading week's assigned energy
+exceeds the redistribution baseline by ``carb_loading_surplus_kcal`` — a
+deliberate surplus, not a redistribution. The race day itself fuels per hour
+(``race_fueling``), so it is excluded from the loading window. Per Andy
+(2026-06-20) every target event is an endurance event >90 min, so all events
+qualify — no per-event duration gate.
 """
 
 from __future__ import annotations
 
 from collections import Counter, defaultdict
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
+from typing import Any
 
 from layer4.context import (
     DailyNutritionBaseline,
@@ -40,6 +54,7 @@ from layer4.context import (
     DietaryPatternFlag,
     MacroTargets,
     RaceDayFueling,
+    SupplementIntegrationPayload,
 )
 from layer4.payload import PlanSession
 from layer5.payload import (
@@ -48,6 +63,10 @@ from layer5.payload import (
     PlanNutrition,
     RaceFuelingPlan,
     WeekReconciliation,
+)
+from layer5.supplements import (
+    build_standing_supplements,
+    effort_supplements_for_day,
 )
 
 # ─── §5A.2 energy constants ──────────────────────────────────────────────────
@@ -78,6 +97,14 @@ _STRENGTH_MET = 5.0
 _RMR_FLOOR_MULT = 1.2
 # Glycogen-maintenance carbohydrate floor on low-load days (g/kg/day).
 _CHO_FLOOR_G_PER_KG = 3.0
+
+# Race-week carbohydrate loading — glycogen supercompensation in the days before
+# a race. 10 g/kg/day across the 2 days pre-race maximises muscle glycogen
+# (ACSM/AND/DC 2016: 10-12 g/kg/day for 36-48 h before events >90 min). Andy
+# 2026-06-20: we coach endurance athletes, so every target event qualifies — no
+# per-event duration gate.
+_CARB_LOAD_G_PER_KG = 10.0
+_CARB_LOAD_DAYS = 2
 
 _TOTAL_ROUND = 25  # round per-day kcal to the nearest 25
 
@@ -142,6 +169,13 @@ def _fueling_note(tier: str, is_race_day: bool, cho_floor_constrained: bool) -> 
     return note
 
 
+def _carb_load_note(cho_g: int) -> str:
+    return (
+        f"Carb-load day — raise carbohydrate to ~10 g/kg (~{cho_g} g) to top off "
+        "muscle glycogen for the race; keep fat and fibre low and hydrate well."
+    )
+
+
 # ─── macros ──────────────────────────────────────────────────────────────────
 
 
@@ -181,6 +215,32 @@ def _day_macros(
         fat_floor_constrained=bool(base.fat_floor_constrained),
     )
     return macros, cho_floor_constrained
+
+
+def _carb_load_macros(
+    phase_targets: DailyPhaseTargets, body_weight_kg: float
+) -> MacroTargets:
+    """Race-week carb-loading macros — CHO pinned at the loading target for
+    glycogen supercompensation; protein held at the phase g/kg (recovery /
+    lean-mass); fat held at the phase value (already near the 1.0 g/kg floor for
+    endurance athletes — loading runs low-fat / low-fibre). Total energy is
+    driven *up* by the CHO target rather than CHO absorbing a fixed budget."""
+    base = phase_targets.macros
+    protein_g = round(base.protein_g_per_kg * body_weight_kg)
+    fat_g = base.fat_g
+    cho_g = round(_CARB_LOAD_G_PER_KG * body_weight_kg)
+    cho_g_per_kg = cho_g / body_weight_kg if body_weight_kg > 0 else 0.0
+    return MacroTargets(
+        cho_g=int(cho_g),
+        cho_g_per_kg=round(float(cho_g_per_kg), 3),
+        cho_kcal=int(cho_g * 4),
+        protein_g=int(protein_g),
+        protein_g_per_kg=round(float(base.protein_g_per_kg), 3),
+        protein_kcal=int(protein_g * 4),
+        fat_g=int(fat_g),
+        fat_kcal=int(fat_g * 9),
+        fat_floor_constrained=bool(base.fat_floor_constrained),
+    )
 
 
 # ─── race-day fueling (standalone, reusable) ─────────────────────────────────
@@ -251,15 +311,17 @@ def build_plan_nutrition(
     race_day_fueling: list[RaceDayFueling] | None = None,
     event_dates: dict[str, date] | None = None,
     standing_supplement_notes: str | None = None,
+    supplement_integration: SupplementIntegrationPayload | None = None,
     dietary_flags: list[DietaryPatternFlag] | None = None,
     generated_at: datetime | None = None,
 ) -> PlanNutrition:
     """Build the Layer 5A nutrition artifact for one plan version.
 
     `sessions` is the plan version's persisted `PlanSession` list. `baseline`,
-    `bmr_kcal`, `race_day_fueling`, `dietary_flags` and the standing supplement
-    notes come from the Layer 2E payload. Pure + deterministic: identical inputs
-    yield an identical artifact (modulo the supplied `generated_at`).
+    `bmr_kcal`, `race_day_fueling`, `supplement_integration`, `dietary_flags` and
+    the standing supplement notes come from the Layer 2E payload. Pure +
+    deterministic: identical inputs yield an identical artifact (modulo the
+    supplied `generated_at`).
     """
     if body_weight_kg <= 0:
         raise ValueError("body_weight_kg must be > 0")
@@ -292,15 +354,27 @@ def build_plan_nutrition(
         )
         day_phase[d] = _day_phase(day_sessions)
 
+    # Carb-loading window — the `_CARB_LOAD_DAYS` calendar days before each race
+    # event. The race day itself fuels per hour (race_fueling), so it's excluded;
+    # only days present in the plan can carry a target.
+    race_dates = set(race_event_ids_by_date)
+    carb_load_dates: set[date] = set()
+    for rd in race_dates:
+        for back in range(1, _CARB_LOAD_DAYS + 1):
+            load_day = rd - timedelta(days=back)
+            if load_day in by_date and load_day not in race_dates:
+                carb_load_dates.add(load_day)
+
     # Group dates into ISO weeks; resolve each week's dominant phase + baseline.
     weeks: dict[tuple[int, int], list[date]] = defaultdict(list)
     for d in by_date:
         iso = d.isocalendar()
         weeks[(iso[0], iso[1])].append(d)
 
+    # Pass 1 — per-week redistribution baseline (training energy only).
     day_total: dict[date, int] = {}
     day_floor_applied: dict[date, bool] = {}
-    week_recon: list[WeekReconciliation] = []
+    week_meta: dict[tuple[int, int], dict[str, Any]] = {}
 
     for (iso_year, iso_week), week_dates in sorted(weeks.items()):
         week_dates.sort()
@@ -322,40 +396,62 @@ def build_plan_nutrition(
         if floor_applied:
             base = floor
 
-        assigned = 0
         for d in week_dates:
             raw = base + day_exercise[d]
-            total = int(round(raw / _TOTAL_ROUND) * _TOTAL_ROUND)
-            day_total[d] = total
+            day_total[d] = int(round(raw / _TOTAL_ROUND) * _TOTAL_ROUND)
             day_floor_applied[d] = floor_applied
-            assigned += total
 
-        week_recon.append(
-            WeekReconciliation(
-                week_key=f"{iso_year}-W{iso_week:02d}",
-                week_start=date.fromisocalendar(iso_year, iso_week, 1),
-                phase_name=resolved_phase,  # type: ignore[arg-type]
-                days=n,
-                baseline_daily_kcal=baseline_daily,
-                weekly_baseline_kcal=weekly_baseline,
-                weekly_assigned_kcal=assigned,
-                non_training_floor_applied=floor_applied,
-            )
-        )
+        week_meta[(iso_year, iso_week)] = {
+            "resolved_phase": resolved_phase,
+            "days": n,
+            "baseline_daily": baseline_daily,
+            "weekly_baseline": weekly_baseline,
+            "floor_applied": floor_applied,
+        }
 
-    # Build per-day records in date order.
+    # Race-day supplement suggestions (2E), grouped by event for per-day lookup.
+    race_sugs_by_event: dict[str, list] = defaultdict(list)
+    if supplement_integration is not None:
+        for sug in supplement_integration.race_day_suggestions:
+            race_sugs_by_event[sug.event_id].append(sug)
+
+    # Pass 2 — per-day records. Carb-load days pin CHO at the loading target and
+    # recompute total upward (loading adds energy beyond the redistribution).
     days: list[DayNutrition] = []
+    week_assigned: dict[tuple[int, int], int] = defaultdict(int)
+    week_load_surplus: dict[tuple[int, int], int] = defaultdict(int)
+
     for d in sorted(by_date):
         day_sessions = by_date[d]
         e_kcal = day_exercise[d]
         is_rest = all(s.kind == "rest" for s in day_sessions)
         race_ids = race_event_ids_by_date.get(d, [])
         is_race = bool(race_ids)
+        is_carb_load = d in carb_load_dates
 
         resolved_phase, phase_targets = _phase_targets(baseline, day_phase[d])
-        total = day_total[d]
-        macros, cho_constrained = _day_macros(phase_targets, body_weight_kg, total)
         tier = _load_tier(is_rest, e_kcal, body_weight_kg)
+
+        if is_carb_load:
+            macros = _carb_load_macros(phase_targets, body_weight_kg)
+            total = macros.cho_kcal + macros.protein_kcal + macros.fat_kcal
+            cho_constrained = False
+            note = _carb_load_note(macros.cho_g)
+        else:
+            total = day_total[d]
+            macros, cho_constrained = _day_macros(phase_targets, body_weight_kg, total)
+            note = _fueling_note(tier, is_race, cho_constrained)
+
+        iso = d.isocalendar()
+        wk = (iso[0], iso[1])
+        week_assigned[wk] += total
+        if is_carb_load:
+            week_load_surplus[wk] += total - day_total[d]
+
+        day_race_sugs = [s for eid in race_ids for s in race_sugs_by_event[eid]]
+        supp_recs = effort_supplements_for_day(
+            tier, is_race_day=is_race, race_suggestions=day_race_sugs
+        )
 
         days.append(
             DayNutrition(
@@ -372,8 +468,29 @@ def build_plan_nutrition(
                 load_tier=tier,  # type: ignore[arg-type]
                 cho_floor_constrained=cho_constrained,
                 non_training_floor_applied=day_floor_applied[d],
+                carb_loading_applied=is_carb_load,
                 race_fueling_event_ids=race_ids,
-                fueling_note=_fueling_note(tier, is_race, cho_constrained),
+                fueling_note=note,
+                supplement_recs=supp_recs,
+            )
+        )
+
+    # Pass 3 — week reconciliation from the final per-day totals, so the
+    # carb-load surplus shows up and Σ(per-day total) == Σ(weekly_assigned).
+    week_recon: list[WeekReconciliation] = []
+    for (iso_year, iso_week), meta in sorted(week_meta.items()):
+        wk = (iso_year, iso_week)
+        week_recon.append(
+            WeekReconciliation(
+                week_key=f"{iso_year}-W{iso_week:02d}",
+                week_start=date.fromisocalendar(iso_year, iso_week, 1),
+                phase_name=meta["resolved_phase"],  # type: ignore[arg-type]
+                days=meta["days"],
+                baseline_daily_kcal=meta["baseline_daily"],
+                weekly_baseline_kcal=meta["weekly_baseline"],
+                weekly_assigned_kcal=week_assigned[wk],
+                non_training_floor_applied=meta["floor_applied"],
+                carb_loading_surplus_kcal=week_load_surplus[wk],
             )
         )
 
@@ -395,5 +512,8 @@ def build_plan_nutrition(
             race_day_fueling, event_dates=event_dates
         ),
         standing_supplement_notes=standing_supplement_notes,
+        standing_supplements=build_standing_supplements(
+            supplement_integration, dietary_flags
+        ),
         dietary_flags=list(dietary_flags or []),
     )

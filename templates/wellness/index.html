@@ -101,7 +101,8 @@
      fully empty (auto-collapse with a "No data yet" note); Stress & Recovery
      and Activity always carry at least their always-present scaffold cards
      (HRV / VO₂max), so they stay open. #}
-  {% set sleep_has = chart_data.sleep_hours or chart_data.sleep_score.self or chart_data.sleep_score.device
+  {% set sleep_has = chart_data.sleep_hours or chart_data.sleep_hours_device
+                     or chart_data.sleep_score.self or chart_data.sleep_score.device
                      or chart_data.sleep_deep_min or chart_data.sleep_stress_avg or chart_data.sleep_wake_count
                      or chart_data.sleep_sub_scores.light or chart_data.sleep_sub_scores.rem
                      or chart_data.sleep_sub_scores.stress or chart_data.sleep_sub_scores.awake
@@ -115,10 +116,11 @@
     <div class="wl-section-body">
       {% if not sleep_has %}<p class="rail-note">No data yet.</p>{% endif %}
 
-      {# Sleep hours — self-report only #}
-      {% if chart_data.sleep_hours %}
+      {# Sleep hours — self-report overlaid with the device duration
+         (coalesced across Garmin sleep span / Polar / COROS / Whoop). #}
+      {% if chart_data.sleep_hours or chart_data.sleep_hours_device %}
       <div class="card card-pad">
-        <span class="eyebrow">Sleep · hours</span>
+        <span class="eyebrow">Sleep · hours{% if chart_data.sleep_hours_device %} (self vs device){% endif %}</span>
         <div class="chart-box wide sec-sm"><canvas id="chart-sleep-hours"></canvas></div>
       </div>
       {% endif %}
@@ -236,16 +238,24 @@
       </div>
       {% endif %}
 
-      {# HRV — _HRV_STATUS.fit overnight avg + highest 5-min #}
+      {# HRV — overnight avg coalesced across devices (Garmin _HRV_STATUS.fit /
+         Polar nightly recharge / COROS PPG / Whoop) + Garmin highest 5-min #}
       <div class="card card-pad">
         <span class="eyebrow">HRV · device (ms)</span>
         {% if chart_data.hrv.overnight or chart_data.hrv.highest_5min %}
         <div class="chart-box wide sec-sm"><canvas id="chart-hrv"></canvas></div>
         {% else %}
-        <p class="rail-note">Upload Garmin <code>_HRV_STATUS.fit</code> files at
-          <a href="{{ url_for('garmin.import_wellness') }}">Garmin → Import wellness</a> to see overnight HRV.</p>
+        <p class="rail-note">Upload Garmin <code>_HRV_STATUS.fit</code> files, or connect Polar / COROS / Whoop, to see overnight HRV.</p>
         {% endif %}
       </div>
+
+      {# Recovery readiness (0–100) — Whoop recovery score / Polar ANS charge #}
+      {% if chart_data.recovery %}
+      <div class="card card-pad">
+        <span class="eyebrow">Recovery · device (0–100)</span>
+        <div class="chart-box wide sec-sm"><canvas id="chart-recovery"></canvas></div>
+      </div>
+      {% endif %}
 
       {# Heart rate — resting (min overnight) / avg / peak from wellness_log #}
       {% if chart_data.heart_rate.resting or chart_data.heart_rate.avg or chart_data.heart_rate.peak %}
@@ -346,6 +356,22 @@
       </div>
       {% endif %}
 
+      {# Training strain — Whoop day strain (0–21) #}
+      {% if chart_data.strain %}
+      <div class="card card-pad">
+        <span class="eyebrow">Training strain · device (0–21)</span>
+        <div class="chart-box wide sec-sm"><canvas id="chart-strain"></canvas></div>
+      </div>
+      {% endif %}
+
+      {# Cardio load — Polar daily / acute / chronic load #}
+      {% if chart_data.cardio_load.daily or chart_data.cardio_load.acute or chart_data.cardio_load.chronic %}
+      <div class="card card-pad">
+        <span class="eyebrow">Cardio load · device (Polar)</span>
+        <div class="chart-box wide sec-sm"><canvas id="chart-cardio-load"></canvas></div>
+      </div>
+      {% endif %}
+
       {# Intensity minutes — Garmin's published metric (moderate + 2×vigorous)
          from MonitoringMessage activity-minute attributes #}
       {% if chart_data.intensity_minutes %}
@@ -391,23 +417,23 @@
       </div>
       {% endif %}
 
-      {# VO2max running — _METRICS.fit (Phase B scaffold) #}
+      {# VO2max running — Garmin daily metrics or a manual body_metrics.vo2_max #}
       <div class="card card-pad">
         <span class="eyebrow">VO₂max · running</span>
         {% if chart_data.vo2max_running %}
         <div class="chart-box wide sec-sm"><canvas id="chart-vo2-run"></canvas></div>
         {% else %}
-        <p class="rail-note">Will appear once <code>_METRICS.fit</code> ingestion lands (#283).</p>
+        <p class="rail-note">Add a VO₂max under <a href="{{ url_for('body.new_entry') }}">body metrics</a>, or upload Garmin <code>_METRICS.fit</code>, to chart it.</p>
         {% endif %}
       </div>
 
-      {# VO2max cycling — _METRICS.fit (Phase B scaffold) #}
+      {# VO2max cycling — Garmin daily metrics (emitted only when it changes) #}
       <div class="card card-pad">
         <span class="eyebrow">VO₂max · cycling</span>
         {% if chart_data.vo2max_cycling %}
         <div class="chart-box wide sec-sm"><canvas id="chart-vo2-bike"></canvas></div>
         {% else %}
-        <p class="rail-note">Will appear once <code>_METRICS.fit</code> ingestion lands (#283).</p>
+        <p class="rail-note">Appears when Garmin emits a cycling VO₂max in <code>_METRICS.fit</code>.</p>
         {% endif %}
       </div>
     </div>
@@ -496,11 +522,13 @@ function bar(label, points, color) {
   };
 }
 
-// ─── Sleep hours ────────────────────────────────────────────
-if (data.sleep_hours && data.sleep_hours.length) {
-  line('chart-sleep-hours',
-    [ds('Sleep (h)', data.sleep_hours, fg)],
-    { unit: ' h' });
+// ─── Sleep hours (self-report + coalesced device duration) ──
+if ((data.sleep_hours && data.sleep_hours.length) ||
+    (data.sleep_hours_device && data.sleep_hours_device.length)) {
+  const series = [];
+  if (data.sleep_hours && data.sleep_hours.length)               series.push(ds('Self-report', data.sleep_hours, fg));
+  if (data.sleep_hours_device && data.sleep_hours_device.length) series.push(ds('Device', data.sleep_hours_device, accent));
+  line('chart-sleep-hours', series, { unit: ' h' });
 }
 
 // ─── Sleep score (self ×20 vs device 0–100) ────────────────
@@ -535,7 +563,32 @@ if (data.hrv) {
   if (series.length) line('chart-hrv', series, { unit: ' ms' });
 }
 
-// ─── VO2max / training-readiness / active-minutes — follow-up scaffolds ───
+// ─── VO₂max (running + cycling), coalesced across sources ──
+if (data.vo2max_running && data.vo2max_running.length) {
+  line('chart-vo2-run', [ds('VO₂max (run)', data.vo2max_running, accent)], { unit: ' ml/kg/min' });
+}
+if (data.vo2max_cycling && data.vo2max_cycling.length) {
+  line('chart-vo2-bike', [ds('VO₂max (bike)', data.vo2max_cycling, info)], { unit: ' ml/kg/min' });
+}
+
+// ─── Recovery readiness (Whoop recovery / Polar ANS charge, 0–100) ──
+if (data.recovery && data.recovery.length) {
+  line('chart-recovery', [ds('Recovery', data.recovery, good)], { yAxis: { min: 0, max: 100 } });
+}
+
+// ─── Training strain (Whoop day strain, 0–21) ──────────────
+if (data.strain && data.strain.length) {
+  line('chart-strain', [ds('Strain', data.strain, accent)], { yAxis: { min: 0, max: 21 } });
+}
+
+// ─── Cardio load (Polar daily / acute / chronic) ───────────
+if (data.cardio_load) {
+  const series = [];
+  if (data.cardio_load.daily   && data.cardio_load.daily.length)   series.push(ds('Daily',   data.cardio_load.daily,   fg));
+  if (data.cardio_load.acute   && data.cardio_load.acute.length)   series.push(ds('Acute',   data.cardio_load.acute,   accent));
+  if (data.cardio_load.chronic && data.cardio_load.chronic.length) series.push(ds('Chronic', data.cardio_load.chronic, info));
+  if (series.length) line('chart-cardio-load', series, { yAxis: { beginAtZero: true } });
+}
 
 // ─── Heart rate (resting / 7d-avg resting / avg / peak) ────
 if (data.heart_rate) {

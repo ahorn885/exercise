@@ -63,6 +63,7 @@ def generate_and_persist_plan_nutrition(
         body_weight_kg=body_weight_kg,
         race_day_fueling=l2e.race_day_fueling,
         event_dates=event_dates,
+        supplement_integration=l2e.supplement_integration,
         dietary_flags=l2e.dietary_pattern_adjustments,
     )
     persist_plan_nutrition(db, user_id, nutrition)

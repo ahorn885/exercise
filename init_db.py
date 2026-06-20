@@ -260,16 +260,6 @@ PG_SCHEMA = '''
         updated_at TIMESTAMP DEFAULT NOW(),
         PRIMARY KEY (user_id, locale)
     );
-    CREATE TABLE IF NOT EXISTS plan_travel (
-        id SERIAL PRIMARY KEY,
-        plan_id INTEGER NOT NULL REFERENCES training_plans(id),
-        start_date TEXT NOT NULL,
-        end_date TEXT NOT NULL,
-        locale TEXT NOT NULL,
-        city TEXT DEFAULT '',
-        notes TEXT DEFAULT '',
-        created_at TIMESTAMP DEFAULT NOW()
-    );
     CREATE TABLE IF NOT EXISTS equipment_items (
         id       SERIAL PRIMARY KEY,
         tag      TEXT NOT NULL UNIQUE,
@@ -649,7 +639,6 @@ _PG_MIGRATIONS = [
     "ALTER TABLE plan_items ADD COLUMN IF NOT EXISTS macro_fat_pct INTEGER",
     "ALTER TABLE plan_items ADD COLUMN IF NOT EXISTS session_fueling TEXT",
     "ALTER TABLE locale_profiles ADD COLUMN IF NOT EXISTS city TEXT DEFAULT ''",
-    "CREATE TABLE IF NOT EXISTS plan_travel (id SERIAL PRIMARY KEY, plan_id INTEGER NOT NULL REFERENCES training_plans(id), start_date TEXT NOT NULL, end_date TEXT NOT NULL, locale TEXT NOT NULL, city TEXT DEFAULT '', notes TEXT DEFAULT '', created_at TIMESTAMP DEFAULT NOW())",
     "CREATE TABLE IF NOT EXISTS training_sessions (id SERIAL PRIMARY KEY, date TEXT NOT NULL, notes TEXT, plan_item_id INTEGER REFERENCES plan_items(id), created_at TIMESTAMP DEFAULT NOW())",
     "CREATE TABLE IF NOT EXISTS training_log_sets (id SERIAL PRIMARY KEY, training_log_id INTEGER NOT NULL REFERENCES training_log(id) ON DELETE CASCADE, set_number INTEGER NOT NULL, reps INTEGER, weight_kg REAL, duration_sec INTEGER)",
     "ALTER TABLE training_log ADD COLUMN IF NOT EXISTS session_id INTEGER REFERENCES training_sessions(id)",
@@ -657,7 +646,6 @@ _PG_MIGRATIONS = [
     "CREATE INDEX IF NOT EXISTS idx_tls_log ON training_log_sets(training_log_id)",
     "CREATE INDEX IF NOT EXISTS idx_ts_date ON training_sessions(date)",
     "CREATE TABLE IF NOT EXISTS clothing_options (id SERIAL PRIMARY KEY, category TEXT NOT NULL, value TEXT NOT NULL, UNIQUE(category, value))",
-    "ALTER TABLE plan_travel ADD COLUMN IF NOT EXISTS indoor_only INTEGER DEFAULT 0",
     "ALTER TABLE training_plans ADD COLUMN IF NOT EXISTS race_goals TEXT DEFAULT ''",
     "CREATE TABLE IF NOT EXISTS wellness_log (id SERIAL PRIMARY KEY, date TEXT NOT NULL, timestamp_ms BIGINT NOT NULL, heart_rate INTEGER, stress_level INTEGER, body_battery INTEGER, respiration_rate REAL, steps INTEGER, active_calories INTEGER, active_time_s REAL, distance_m REAL, activity_type INTEGER, source TEXT DEFAULT 'wellness_fit', UNIQUE(timestamp_ms))",
     "CREATE INDEX IF NOT EXISTS idx_wl_date ON wellness_log(date)",
@@ -1250,6 +1238,12 @@ _PG_MIGRATIONS = [
     "CREATE UNIQUE INDEX IF NOT EXISTS cardio_log_polar_exercise_uidx ON cardio_log (user_id, polar_exercise_id) WHERE polar_exercise_id IS NOT NULL",
     "CREATE UNIQUE INDEX IF NOT EXISTS cardio_log_coros_label_uidx ON cardio_log (user_id, coros_label_id) WHERE coros_label_id IS NOT NULL",
     "CREATE UNIQUE INDEX IF NOT EXISTS cardio_log_wahoo_workout_uidx ON cardio_log (user_id, wahoo_workout_id) WHERE wahoo_workout_id IS NOT NULL",
+    # #681 (B) — Strava live ingest dedup. The #765 groundwork added the
+    # strava_activity_id column; this is the idempotency guard the live webhook
+    # ingest needs (mirrors the coros/polar/wahoo partial-unique pattern).
+    "CREATE UNIQUE INDEX IF NOT EXISTS cardio_log_strava_activity_uidx ON cardio_log (user_id, strava_activity_id) WHERE strava_activity_id IS NOT NULL",
+    # #681 (B) — RWGPS live ingest dedup (the rwgps_trip_id column already exists).
+    "CREATE UNIQUE INDEX IF NOT EXISTS cardio_log_rwgps_trip_uidx ON cardio_log (user_id, rwgps_trip_id) WHERE rwgps_trip_id IS NOT NULL",
     # PR6 (D-51) — v5 §A.2 prefill-eligible baselines added to athlete_profile.
     # Self-report at onboarding today; provider extractors (D2a/PR7) will
     # populate via athlete_profile_field_provenance once registry + UI ship.
@@ -1363,8 +1357,6 @@ _PG_MIGRATIONS = [
         race_format TEXT NOT NULL CHECK (race_format IN ('single_day', 'continuous_multi_day', 'stage_race')),
         distance_km NUMERIC NULL,
         total_elevation_gain_m NUMERIC NULL,
-        race_rules_summary TEXT NULL,
-        mandatory_gear_text TEXT NULL,
         event_locale_id BIGINT NULL REFERENCES locale_profiles(id) ON DELETE SET NULL,
         is_target_event BOOLEAN NOT NULL DEFAULT FALSE,
         notes TEXT NULL,
@@ -1449,7 +1441,7 @@ _PG_MIGRATIONS = [
     # their actual goal; the orchestrator threads them into the Layer 3B call.
     # All nullable so legacy rows survive without backfill; the goal_outcome
     # CHECK mirrors layer3b.builder._VALID_GOAL_OUTCOMES, and pack-weight is a
-    # numeric kg alongside the free-text mandatory_gear_text.
+    # numeric kg (the structured complement to the free-text race notes).
     "ALTER TABLE race_events ADD COLUMN IF NOT EXISTS goal_outcome TEXT NULL CHECK (goal_outcome IS NULL OR goal_outcome IN ('Finish', 'Compete mid-pack', 'Podium'))",
     "ALTER TABLE race_events ADD COLUMN IF NOT EXISTS first_time_at_distance BOOLEAN NULL",
     "ALTER TABLE race_events ADD COLUMN IF NOT EXISTS time_goal TEXT NULL",
@@ -1975,6 +1967,28 @@ _PG_MIGRATIONS = [
         UNIQUE (plan_version_id)
     )""",
     "CREATE INDEX IF NOT EXISTS plan_nutrition_inputs_user_version_idx ON plan_nutrition_inputs (user_id, plan_version_id)",
+    # Layer 5B conditions synthesis — deterministic per-day clothing/conditions
+    # advisory computed AFTER a plan reaches `ready` (zero-LLM advisory tier; see
+    # `layer5/conditions_*`). One row per plan_version holds the whole
+    # `PlanConditions` bundle (per-day thermal band + clothing/kit + flags,
+    # derived from climate normals at each session's locale) as JSONB.
+    # UNIQUE (plan_version_id) makes the write an idempotent upsert so a
+    # regenerate overwrites in place. `model` is denormalized so a future
+    # model-version bump can find + recompute stale artifacts. ON DELETE CASCADE
+    # mirrors plan_nutrition: the artifact is meaningless without its plan.
+    # WRITE-ONLY / advisory — never an input to any Layer 4 cache key.
+    """CREATE TABLE IF NOT EXISTS plan_conditions (
+        id BIGSERIAL PRIMARY KEY,
+        plan_version_id BIGINT NOT NULL REFERENCES plan_versions(id) ON DELETE CASCADE,
+        user_id INTEGER NOT NULL REFERENCES users(id),
+        model TEXT NOT NULL,
+        payload_json JSONB NOT NULL,
+        generated_at TIMESTAMPTZ NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        UNIQUE (plan_version_id)
+    )""",
+    "CREATE INDEX IF NOT EXISTS plan_conditions_user_version_idx ON plan_conditions (user_id, plan_version_id)",
     # D-63 §5.3 — ad_hoc_workout_suggestions. Holds generated-but-not-yet-
     # logged single-session synthesizer outputs. request_payload carries the
     # SingleSessionRequest; generated_session carries the single PlanSession
@@ -2388,6 +2402,56 @@ _PG_MIGRATIONS = [
     # preferences` is free text. Additive + nullable.
     "ALTER TABLE athlete_profile ADD COLUMN IF NOT EXISTS experience_level TEXT",
     "ALTER TABLE athlete_profile ADD COLUMN IF NOT EXISTS coaching_voice_preferences TEXT",
+    # #787 / #304 PR B — retire the legacy v1 plan_travel table. Its three city
+    # read-sites moved to athlete_event_windows (away windows) + locale_profiles
+    # (preferred-home city); the v1 coaching-review writer + form were removed.
+    # Empty in prod at drop time (0 rows). DROP IF EXISTS is idempotent.
+    "DROP TABLE IF EXISTS plan_travel",
+    # ── #438 — drop the free-text `mandatory_gear_text` race-event field ──────
+    # Required kit is captured structurally by the route-locale equipment model
+    # (race_route_locale_equipment) + the locale equipment overrides; the
+    # free-text paste-from-race-director duplicate drove no consumer that the
+    # structured surface doesn't serve better. The race-week brief no longer
+    # reads it (kit_manifest now synthesizes from route-locale equipment + the
+    # merged race notes). DROP IF EXISTS is idempotent + no-op on a fresh DB
+    # (the column was removed from CREATE TABLE in the same change).
+    "ALTER TABLE race_events DROP COLUMN IF EXISTS mandatory_gear_text",
+    # ── #439 — merge `race_rules_summary` into `notes` (single free-text field) ─
+    # The race-edit form split "Race rules summary" and "Notes" into two adjacent
+    # textareas. The brief reader only rendered race_rules_summary, so anything
+    # the athlete typed into Notes never reached the synthesizer (the #306/#338
+    # root: rules captured but never read). The two columns fold into the
+    # surviving `notes` field (the more general name — rules + context + portage),
+    # and the brief now renders `notes` in full. Guarded DO block so the fold +
+    # column drop run exactly once: when race_rules_summary still exists, prepend
+    # its content to notes (blank-line separated; either side may be NULL/empty),
+    # then drop the column. No-op on a fresh DB (column already absent from
+    # CREATE TABLE) and on re-run (column already dropped).
+    """DO $$
+    BEGIN
+        IF EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_name = 'race_events' AND column_name = 'race_rules_summary'
+        ) THEN
+            UPDATE race_events
+               SET notes = NULLIF(
+                       btrim(
+                           COALESCE(race_rules_summary, '')
+                           || CASE
+                                WHEN COALESCE(race_rules_summary, '') <> ''
+                                     AND COALESCE(notes, '') <> ''
+                                THEN E'\\n\\n'
+                                ELSE ''
+                              END
+                           || COALESCE(notes, ''),
+                           E'\\n'
+                       ),
+                       ''
+                   )
+             WHERE COALESCE(race_rules_summary, '') <> '';
+            ALTER TABLE race_events DROP COLUMN race_rules_summary;
+        END IF;
+    END $$;""",
 ]
 
 _CLOTHING_SEEDS = [

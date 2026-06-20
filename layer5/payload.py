@@ -52,6 +52,27 @@ class EnergyModelMeta(_Base):
     zone_met: dict[str, float]
 
 
+class SupplementRec(_Base):
+    """One recommended supplement line — Standard (always-take) or Daily
+    (effort / event-based). Deterministic, advisory; never medical instruction.
+
+    `source` records provenance so the UI can group + style:
+      - "baseline" — system standard-daily recommendation for an endurance athlete
+      - "dietary"  — driven by a Layer 2E dietary-pattern flag (e.g. Vegan → B12)
+      - "effort"   — driven by that day's training load tier
+      - "race"     — a Layer 2E race-day suggestion for an event on this day
+    `already_in_protocol` is True when the athlete already logs this supplement,
+    so the UI can mark it "already covered" rather than nag.
+    """
+
+    name: str
+    dose: str | None = None
+    timing: str | None = None
+    reason: str | None = None
+    source: Literal["baseline", "dietary", "effort", "race"]
+    already_in_protocol: bool = False
+
+
 class DayNutrition(_Base):
     """Per-day nutrition target, load-modulated off the 2E phase baseline."""
 
@@ -69,8 +90,16 @@ class DayNutrition(_Base):
     load_tier: LoadTier
     cho_floor_constrained: bool = False
     non_training_floor_applied: bool = False
+    # Race-week carbohydrate loading — the 2 days before a race carry a glycogen-
+    # supercompensation CHO target (~10 g/kg). When True, `total_kcal` and
+    # `macros` reflect the loading (CHO pinned high, energy driven up) rather than
+    # the normal load-redistribution.
+    carb_loading_applied: bool = False
     race_fueling_event_ids: list[str] = Field(default_factory=list)
     fueling_note: str
+    # Daily / effort-based supplement recommendations for this day (#621): keyed
+    # off `load_tier`, or the Layer 2E race-day suggestions on a race day.
+    supplement_recs: list[SupplementRec] = Field(default_factory=list)
 
 
 class WeekReconciliation(_Base):
@@ -84,6 +113,11 @@ class WeekReconciliation(_Base):
     weekly_baseline_kcal: int = Field(ge=0)
     weekly_assigned_kcal: int = Field(ge=0)
     non_training_floor_applied: bool = False
+    # Energy added on top of the redistribution baseline by race-week carb
+    # loading (Σ over the week's carb-load days of loaded − redistributed kcal).
+    # Explains why `weekly_assigned_kcal` exceeds `weekly_baseline_kcal` on a
+    # loading week — the surplus is deliberate glycogen supercompensation.
+    carb_loading_surplus_kcal: int = 0
 
 
 class RaceFuelingPlan(_Base):
@@ -126,4 +160,7 @@ class PlanNutrition(_Base):
     week_reconciliation: list[WeekReconciliation]
     race_fueling: list[RaceFuelingPlan] = Field(default_factory=list)
     standing_supplement_notes: str | None = None
+    # Standard "what you always take" supplement recommendations (#621): the
+    # system daily baseline + dietary-pattern additions, contraindication-screened.
+    standing_supplements: list[SupplementRec] = Field(default_factory=list)
     dietary_flags: list[DietaryPatternFlag] = Field(default_factory=list)
