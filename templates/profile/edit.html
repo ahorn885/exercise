@@ -85,6 +85,13 @@
       <label class="field"><span class="lbl">Weekly hours target</span>
         <input type="number" step="0.5" name="weekly_hours_target" class="form-control form-control-sm"
                value="{{ profile.weekly_hours_target if profile.weekly_hours_target is not none else '' }}"></label>
+      <label class="field"><span class="lbl">Experience level</span>
+        <select name="experience_level" class="form-select form-select-sm">
+          <option value="">—</option>
+          {% for lvl in (experience_level_choices or []) %}
+            <option value="{{ lvl }}" {% if profile.experience_level == lvl %}selected{% endif %}>{{ lvl|capitalize }}</option>
+          {% endfor %}
+        </select></label>
     </div>
   </div>
 
@@ -136,6 +143,11 @@
     <label class="field">
       <textarea name="notes" rows="3" class="form-control form-control-sm"
                 placeholder="Anything the coach should know that doesn't fit elsewhere — life constraints, schedule pressure, training context, etc.">{{ profile.notes or '' }}</textarea>
+    </label>
+    <label class="field">
+      <span class="lbl">Coaching voice preferences</span>
+      <textarea name="coaching_voice_preferences" rows="2" class="form-control form-control-sm"
+                placeholder="How you want the coach to communicate — e.g. blunt and concise, more context on the why, minimal cheerleading.">{{ profile.coaching_voice_preferences or '' }}</textarea>
     </label>
   </div>
 

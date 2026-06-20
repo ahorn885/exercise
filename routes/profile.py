@@ -30,7 +30,7 @@ from athlete import (
     DOUBLES_FEASIBLE_CHOICES, TWO_A_DAY_CHOICES,
     DIETARY_PATTERN_CHOICES, FUELING_FORMAT_CHOICES,
     CAFFEINE_TOLERANCE_CHOICES, CAFFEINE_RACE_DAY_STRATEGY_CHOICES,
-    SALT_ELECTROLYTE_TOLERANCE_CHOICES,
+    SALT_ELECTROLYTE_TOLERANCE_CHOICES, EXPERIENCE_LEVEL_CHOICES,
     get_athlete_profile, upsert_athlete_profile,
     get_daily_availability_windows, upsert_daily_availability_windows,
 )
@@ -343,6 +343,10 @@ def edit():
             'vo2max': _num('vo2max'),
             'cycling_ftp_w': _num('cycling_ftp_w', cast=int),
         }
+        # #304 — self-select band; reject a tampered value to the closed set.
+        experience_level = _str('experience_level')
+        if experience_level not in EXPERIENCE_LEVEL_CHOICES:
+            experience_level = None
         upsert_athlete_profile(
             db, uid,
             date_of_birth=_str('date_of_birth'),
@@ -351,6 +355,8 @@ def edit():
             primary_sport=_str('primary_sport'),
             weekly_hours_target=_num('weekly_hours_target'),
             notes=_str('notes'),
+            experience_level=experience_level,
+            coaching_voice_preferences=_str('coaching_voice_preferences'),
             unit_preference=submitted_unit_pref,
             # §I.2 nutrition & fueling protocol.
             dietary_pattern=_csv('dietary_pattern', DIETARY_PATTERN_CHOICES),
@@ -508,6 +514,7 @@ def edit():
         caffeine_tolerance_choices=CAFFEINE_TOLERANCE_CHOICES,
         caffeine_race_day_strategy_choices=CAFFEINE_RACE_DAY_STRATEGY_CHOICES,
         salt_electrolyte_tolerance_choices=SALT_ELECTROLYTE_TOLERANCE_CHOICES,
+        experience_level_choices=EXPERIENCE_LEVEL_CHOICES,
         skill_toggle_defs=skill_toggle_defs,
         skill_toggle_states=skill_toggle_states,
         discipline_catalog=discipline_catalog,

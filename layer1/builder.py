@@ -19,6 +19,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
+from athlete_event_windows_repo import load_event_windows
 from layer4.context import (
     AthleteNetworkLink,
     AthleteSupplementRecord,
@@ -91,9 +92,8 @@ def build_layer1_payload(db, user_id: int) -> Layer1Payload:
     if user_id is None:
         raise ValueError("user_id required")
 
-    identity, performance, training_scalars, event_scalars, lifestyle, availability_scalars = (
-        _load_athlete_profile(db, user_id)
-    )
+    (identity, performance, training_scalars, event_scalars, lifestyle,
+     availability_scalars, convenience) = _load_athlete_profile(db, user_id)
     resting_hr_bpm = _load_resting_hr(db, user_id)
     sleep_baseline_hours = _load_sleep_baseline(db, user_id)
     daily_windows = _load_daily_windows(db, user_id, availability_scalars)
@@ -106,12 +106,12 @@ def build_layer1_payload(db, user_id: int) -> Layer1Payload:
     pack_load_history = _load_pack_load_history(db, user_id)
     strength_benchmarks = _load_strength_benchmarks(db, user_id)
     discipline_baselines = _load_discipline_baselines(db, user_id)
-    target_race_event_id = _load_target_race_event_id(db, user_id)
     network_links = _load_network_links(db, user_id)
     linked_partner_consents = _load_linked_partner_consents(db, user_id)
     disclosures = _load_disclosures(db, user_id)
     skill_toggle_states = _load_skill_toggle_states(db, user_id)
     supplements = _load_supplements(db, user_id)
+    travel_constraint = _summarize_travel_constraint(db, user_id)
 
     health_status = Layer1HealthStatus(
         current_injuries=current_injuries,
@@ -129,10 +129,7 @@ def build_layer1_payload(db, user_id: int) -> Layer1Payload:
         recent_race_results=recent_race_results,
         pack_load_history=pack_load_history,
     )
-    event_goal = Layer1EventGoal(
-        target_race_event_id=target_race_event_id,
-        **event_scalars,
-    )
+    event_goal = Layer1EventGoal(**event_scalars)
     lifestyle_model = Layer1Lifestyle(
         sleep_baseline_hours=sleep_baseline_hours,
         skill_toggle_states=skill_toggle_states,
@@ -160,10 +157,10 @@ def build_layer1_payload(db, user_id: int) -> Layer1Payload:
         # day hit the same entry).
         as_of=datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0),
         # Layer-4-consumed convenience fields.
-        experience_level=None,
-        coaching_voice_preferences=None,
+        experience_level=convenience["experience_level"],
+        coaching_voice_preferences=convenience["coaching_voice_preferences"],
         available_days_per_week=available_days_per_week,
-        travel_constraint=None,
+        travel_constraint=travel_constraint,
         sleep_baseline=sleep_baseline_hours,
         daily_availability_windows=daily_windows,
         # Full §A-§L mirror.
@@ -230,16 +227,20 @@ _PROFILE_COLS = (
     "salt_electrolyte_tolerance",
     "sleep_deprivation_max_hrs_continuous_awake",
     "sleep_deprivation_strategy_notes",
+    # Layer-4 convenience fields, self-reported on the profile (#304).
+    "experience_level",
+    "coaching_voice_preferences",
 )
 
 
 def _load_athlete_profile(db, user_id: int):
-    """Read athlete_profile and split into the six section dicts.
+    """Read athlete_profile and split into the six section dicts plus the
+    top-level convenience dict.
 
     Returns (identity, performance, training_scalars, event_scalars,
-    lifestyle_scalars, availability_scalars). Missing row returns
-    section models with all-None scalars (matching the "row absent =
-    onboarding incomplete" convention).
+    lifestyle_scalars, availability_scalars, convenience). Missing row returns
+    section models with all-None scalars + a None-valued convenience dict
+    (matching the "row absent = onboarding incomplete" convention).
     """
     cols = ", ".join(_PROFILE_COLS)
     cur = db.execute(
@@ -255,6 +256,7 @@ def _load_athlete_profile(db, user_id: int):
             _empty_event_scalars(),
             _empty_lifestyle(),
             _empty_availability_scalars(),
+            {"experience_level": None, "coaching_voice_preferences": None},
         )
 
     identity = Layer1Identity(
@@ -316,7 +318,12 @@ def _load_athlete_profile(db, user_id: int):
         "two_a_day_preference": row["two_a_day_preference"],
         "peak_sessions_max": row["peak_sessions_max"],
     }
-    return identity, performance, training_scalars, event_scalars, lifestyle, availability_scalars
+    convenience = {
+        "experience_level": row["experience_level"],
+        "coaching_voice_preferences": row["coaching_voice_preferences"],
+    }
+    return (identity, performance, training_scalars, event_scalars, lifestyle,
+            availability_scalars, convenience)
 
 
 def _empty_training_scalars() -> dict[str, Any]:
@@ -867,17 +874,40 @@ def _load_technical_baseline(db, user_id: int) -> TechnicalBaseline | None:
     )
 
 
-# ─── race_events — target_race_event_id ──────────────────────────────────────
+# ─── athlete_event_windows — travel_constraint summary ───────────────────────
 
 
-def _load_target_race_event_id(db, user_id: int) -> int | None:
-    cur = db.execute(
-        "SELECT id FROM race_events "
-        "WHERE user_id = ? AND is_target_event = TRUE LIMIT 1",
-        (user_id,),
+def _summarize_travel_constraint(db, user_id: int) -> str | None:
+    """Condense the athlete's declared event windows into the free-text
+    `travel_constraint` string Layer 4 renders ("Travel constraint: ..."). One
+    phrase per window; `None` when the athlete has declared none (the prompt
+    suppresses an empty constraint). Replaces the retired v1 `plan_travel`
+    surface as the travel source (#304)."""
+    windows = load_event_windows(db, user_id)
+    if not windows:
+        return None
+    phrases = []
+    for w in windows:
+        span = f"{w.start_date.isoformat()}–{w.end_date.isoformat()}"
+        if w.override_type == "indoor_only":
+            what = "indoor only"
+        elif w.override_type == "locale_unavailable":
+            what = f"{w.unavailable_locale or 'a locale'} unavailable"
+        elif w.override_type == "away":
+            what = f"training at {w.away_locale or 'an away location'}"
+            if w.brought_craft:
+                what += f" (brings {', '.join(w.brought_craft)})"
+        else:
+            what = w.override_type
+        if w.notes:
+            what += f" — {w.notes}"
+        phrases.append(f"{span}: {what}")
+    summary = "; ".join(phrases)
+    print(  # Rule #15 — deterministic summary of the event-window inputs.
+        f"[layer1-travel] user={user_id} windows={len(windows)} "
+        f"-> travel_constraint={summary!r}"
     )
-    row = cur.fetchone()
-    return int(row["id"]) if row else None
+    return summary
 
 
 # ─── athlete_network_links ───────────────────────────────────────────────────

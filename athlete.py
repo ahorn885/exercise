@@ -101,6 +101,17 @@ PROFILE_FIELDS = (
     'salt_electrolyte_tolerance',
     'sleep_deprivation_max_hrs_continuous_awake',
     'sleep_deprivation_strategy_notes',
+    # #304 — self-reported Layer-4 convenience fields. `experience_level` is a
+    # closed self-select band (EXPERIENCE_LEVEL_CHOICES); `coaching_voice_
+    # preferences` is free text rendered into the synthesizer's athlete context.
+    'experience_level',
+    'coaching_voice_preferences',
+)
+
+# #304 — self-select athlete experience band. Mirrors the
+# `Layer1Payload.experience_level` Literal the Layer 4 prompts read.
+EXPERIENCE_LEVEL_CHOICES = (
+    'novice', 'developing', 'intermediate', 'advanced', 'elite',
 )
 
 # Subset of PROFILE_FIELDS that v5 §A.2.1 marks as provider-prefill-eligible.
