@@ -2978,12 +2978,106 @@ class TestOrchestratePlanCreateHappyPath:
         # layer1_payload threaded as dict (matches race_week_brief +
         # plan_refresh — driver expects dict[str, Any]).
         assert isinstance(kw["layer1_payload"], dict)
-        # layer2c_payloads keyed by primary locale (race_week_brief shape;
-        # plan_refresh uses Layer2Bundle but plan_create takes the dict).
+        # layer2c_payloads is the per-locale dict (#780): one 2C entry per cluster
+        # locale, falling back to the primary locale alone when the cluster can't
+        # be resolved. This fixture resolves to just the home entry.
         assert set(kw["layer2c_payloads"].keys()) == {"home"}
         # race_event_payload threads through (event-mode).
         assert kw["race_event_payload"] is not None
         assert kw["race_event_payload"].race_event_id == 1
+
+    def test_layer2c_built_per_cluster_locale(self):
+        """#780 — `_upstream_full_cone` invokes Layer 2C once per cluster locale,
+        each resolved against THAT locale's own effective equipment, and threads
+        the full per-locale dict (not a single primary-only entry) to the
+        synthesizer. This un-starves the validator's cluster check + the
+        locale-assign candidate set: a session correctly placed at a nearby venue
+        is no longer a `session_locale_not_in_cluster` false positive."""
+        conn = _FakeConn()
+        _queue_target_race_event(conn)
+        _queue_etl_version_set(conn)
+        _queue_primary_locale(conn)  # primary resolves to "home"
+        cache = Layer4Cache(InMemoryCacheBackend())
+
+        # Two-locale cluster, each carrying its OWN equipment.
+        locale_tags = {"home": {"barbell", "rack"}, "park": {"trail"}}
+
+        def _l2c_side_effect(db, *, locale_id, locale_equipment_pool, **kw):
+            return Layer2CPayload(
+                locale_id=locale_id,
+                etl_version_set=_DEFAULT_ETL,
+                effective_pool=list(locale_equipment_pool),
+                discipline_coverage=[],
+                exercises_resolved=[],
+                coaching_flags=[],
+            )
+
+        sentinel = _fake_plan_create_layer4_payload(plan_version_id=3)
+        stack = [
+            patch("layer4.orchestrator.build_layer1_payload",
+                  return_value=_fake_layer1_payload()),
+            patch("layer4.orchestrator.q_layer2a_discipline_classifier_payload",
+                  return_value=_fake_layer2a_payload()),
+            patch("layer4.orchestrator.q_layer2b_terrain_classifier_payload",
+                  return_value=_fake_layer2b_payload()),
+            patch("layer4.orchestrator.locations.cluster_locale_ids",
+                  return_value=["home", "park"]),
+            patch("layer4.orchestrator.locations.locale_effective_tags",
+                  side_effect=lambda db, uid, loc: locale_tags[loc]),
+            patch("layer4.orchestrator.q_layer2c_equipment_mapper_payload",
+                  side_effect=_l2c_side_effect),
+            patch("layer4.orchestrator.q_layer2d_injury_risk_profile_payload",
+                  return_value=_fake_layer2d_payload()),
+            patch("layer4.orchestrator.q_layer2e_nutrition_baseline_payload",
+                  return_value=_fake_layer2e_payload()),
+            patch("layer4.orchestrator.assemble_layer3a_integration_bundle",
+                  return_value=object()),
+            patch("layer4.orchestrator.llm_layer3a_athlete_state_cached",
+                  return_value=_fake_layer3a_payload()),
+            patch("layer4.orchestrator.llm_layer3b_goal_timeline_viability_cached",
+                  return_value=_fake_layer3b_payload()),
+            # Isolate the 2C-dict assertion from the real terrain / event-window
+            # cascades (covered by their own tests; they'd query the 2-locale
+            # cluster against the fake conn).
+            patch("layer4.orchestrator._build_terrain_feasibility", return_value={}),
+            patch("layer4.orchestrator._build_event_window_overlay",
+                  return_value=([], [])),
+            patch("layer4.orchestrator.llm_layer4_plan_create_cached",
+                  return_value=sentinel),
+        ]
+        mocks = _enter_all(stack)
+        m_2c, m_wrapper = mocks[5], mocks[-1]
+        try:
+            orchestrate_plan_create(
+                conn,
+                _USER_ID,
+                plan_start_date=date(2026, 6, 1),
+                plan_version_id=3,
+                cache=cache,
+                today=_TODAY,
+            )
+        finally:
+            _exit_all(stack)
+
+        # 2C invoked once per cluster locale, each against its OWN equipment pool
+        # (sorted) — not the cluster union.
+        assert m_2c.call_count == 2
+        pools_by_locale = {
+            c.kwargs["locale_id"]: c.kwargs["locale_equipment_pool"]
+            for c in m_2c.call_args_list
+        }
+        assert pools_by_locale == {
+            "home": ["barbell", "rack"],
+            "park": ["trail"],
+        }
+
+        # The full per-locale dict reaches the synthesizer (was a single
+        # primary-only entry) — every saved locale is now in-cluster.
+        l2c_payloads = m_wrapper.call_args.kwargs["layer2c_payloads"]
+        assert set(l2c_payloads) == {"home", "park"}
+        assert l2c_payloads["park"].locale_id == "park"
+        assert l2c_payloads["park"].effective_pool == ["trail"]
+        assert l2c_payloads["home"].effective_pool == ["barbell", "rack"]
 
     def test_3b_current_date_anchored_on_plan_start_date(self):
         """Regression: 3B's `current_date` (the goal/timeline viability
