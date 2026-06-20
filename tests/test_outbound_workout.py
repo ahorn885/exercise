@@ -162,6 +162,17 @@ class TestTpStructure:
         assert wu['Steps'][0]['IntensityClass'] == 'WarmUp'
 
 
+class TestIsZwiftExportable:
+    def test_bike_and_run_disciplines_exportable(self):
+        assert ow.is_zwift_exportable('D-006')  # cycling
+        assert ow.is_zwift_exportable('D-002')  # running
+
+    def test_other_and_none_not_exportable(self):
+        assert not ow.is_zwift_exportable('D-003')  # hiking
+        assert not ow.is_zwift_exportable('D-004')  # swimming
+        assert not ow.is_zwift_exportable(None)
+
+
 # ── Zwift .zwo download route ──────────────────────────────────────────
 
 class TestZwiftExportRoute:

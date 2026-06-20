@@ -51,6 +51,12 @@ _MIXED_FALLBACK = 'Z2'
 _COARSE_TO_ZWIFT_SPORT: dict[str, str] = {'cycling': 'bike', 'running': 'run'}
 
 
+def is_zwift_exportable(discipline_id: str | None) -> bool:
+    """True if a cardio session of this discipline can render a Zwift `.zwo`
+    (bike/run disciplines only). Used to gate the download link in the plan view."""
+    return DISCIPLINE_TO_PLAN_SPORT.get(discipline_id or '') in _COARSE_TO_ZWIFT_SPORT
+
+
 class Step(NamedTuple):
     """One provider-agnostic workout step. Intervals carry rep/rest fields."""
     kind: str                 # warmup|main_set|cooldown|interval_set|transition

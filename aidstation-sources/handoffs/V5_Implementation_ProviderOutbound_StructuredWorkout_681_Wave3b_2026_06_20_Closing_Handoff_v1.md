@@ -35,10 +35,16 @@ TP is a *push destination* → OAuth connect + a structured-workout push (the sy
 - **Zwift `.zwo`** is testable end-to-end in-container (pure serializer + a download route) — verify-owed only that real Zwift imports our `.zwo` (well-formed XML asserted; the block/attribute names are the community-doc form).
 - **Zone→% tables** are documented standard 5-zone models (power Coggan / HR Friel); tunable constants — Andy may retune.
 
+### Slice 1b — surface the `.zwo` download link (commit `<this session>`) — SHIPPED
+The route was built but unsurfaced; now linked on the plan view.
+- `routes/outbound_workout.is_zwift_exportable(discipline_id)` — bike/run gate.
+- `routes/plan_create.view_plan` passes `zwift_exportable=is_zwift_exportable` into the template.
+- `templates/plan_create/view.html` — a `↓ Zwift .zwo` download link under each bike/run cardio session's blocks, gated `{% if zwift_exportable is defined and zwift_exportable(...) %}` (the `is defined` guard keeps the isolated-template render tests green).
+- `tests/test_outbound_workout.py` +2 (`is_zwift_exportable` true/false).
+
 ## 3. NEXT (4-tier order)
-1. **Slice 1b (finish-the-open, tier 3):** surface the `.zwo` download button on the plan/session view (the route exists but is unsurfaced — dead to users until linked). Small template + view change.
-2. **(C) #682 AIDSTATION API (tier 4):** the documented next epic — Trigger #5 design pass (surface + auth model). The **Tier-1 calendar export** there is the other real `provider_outbound_ref` consumer.
-3. Later outbound: Wahoo `plan.json` Tier-2 push (matrix §10.2).
+1. **(C) #682 AIDSTATION API (tier 4):** the documented next epic — Trigger #5 design pass (surface + auth model). The **Tier-1 calendar export** there is the other real `provider_outbound_ref` consumer.
+2. Later outbound: Wahoo `plan.json` Tier-2 push (matrix §10.2).
 
 ## 6.3 Read order for next session (Rule #13)
 1. `CLAUDE.md`. 2. `CURRENT_STATE.md` (last-shipped = this Wave-3b entry). 3. `CARRY_FORWARD.md` *"Provider integrations & API — ACTIVE THREAD"* → **(D) Wave 3b**. 4. This handoff. 5. `routes/outbound_workout.py` (the serializer core) + `designs/ProviderOutbound_StructuredWorkout_681_Wave3b_BuildDesign_v1.md`. 6. `./scripts/verify-handoff.sh`.
@@ -55,6 +61,7 @@ TP is a *push destination* → OAuth connect + a structured-workout push (the sy
 | TP connect | `routes/trainingpeaks.py` | `def oauth_start` + `def oauth_callback`; `_TP_SCOPES='athlete:profile workouts:plan'`; fetches `_TP_PROFILE_URL` for `provider_user_id`; redirect `?trainingpeaks_connected=1` |
 | TP push | `routes/trainingpeaks.py` | `def push_session` (POST `/push/<pv>/<date>/<idx>`); `to_tp_structure` → `_TP_PLAN_URL`; idempotent via `provider_outbound_ref` (`pushed_payload_hash`); `_record_outbound` upsert tier=2 |
 | Hub wiring | `routes/profile.py` / `routes/connections.py` | `('trainingpeaks','TrainingPeaks','trainingpeaks.oauth_start')` in `CONNECTION_PROVIDERS`; `STUB_PROVIDERS` = zwift only |
-| Tests | `test_outbound_workout` + `test_trainingpeaks_outbound` | +21 / +9 |
-| Suite | — | `/tmp/venv/bin/python -m pytest tests/ -q` → 2994 passed / 30 skipped |
+| Slice 1b link | `routes/outbound_workout.py` / `routes/plan_create.py` / `templates/plan_create/view.html` | `is_zwift_exportable`; `zwift_exportable=is_zwift_exportable` in `view_plan`; `↓ Zwift .zwo` link gated `{% if zwift_exportable is defined and ... %}` |
+| Tests | `test_outbound_workout` + `test_trainingpeaks_outbound` | +23 / +9 |
+| Suite | — | `/tmp/venv/bin/python -m pytest tests/ -q` → 2996 passed / 30 skipped |
 | Issue | #681 | comment: Wave 3b outbound (Zwift `.zwo` + TP push + `provider_outbound_ref`) shipped; TP partner-gated verify-owed; epic stays open |

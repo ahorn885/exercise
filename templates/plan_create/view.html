@@ -192,6 +192,10 @@
               </li>
               {% endfor %}
             </ol>
+            {% if zwift_exportable is defined and zwift_exportable(sess.discipline_id) %}
+            <a class="rail-note sess-export" download
+               href="{{ url_for('zwift.export_zwo', plan_version_id=plan_version_id, date=sess.date, idx=sess.session_index_in_day) }}">↓ Zwift .zwo</a>
+            {% endif %}
             {% endif %}
 
             {% if sess.kind == 'cardio' and sess.cardio_drills %}

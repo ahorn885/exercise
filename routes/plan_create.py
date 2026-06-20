@@ -91,6 +91,7 @@ from layer5 import (
     generate_and_persist_plan_conditions,
 )
 from routes.auth import cron_authorized, current_user_id
+from routes.outbound_workout import is_zwift_exportable
 
 
 bp = Blueprint('plan_create', __name__, url_prefix='/plans/v2')
@@ -1080,6 +1081,7 @@ def view_plan(plan_version_id: int):
         nutrition_by_date=nutrition_by_date,
         conditions=conditions,
         conditions_by_date=conditions_by_date,
+        zwift_exportable=is_zwift_exportable,
     )
 
 
