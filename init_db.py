@@ -929,6 +929,8 @@ _PG_MIGRATIONS = [
         sleep_stress_sub_score INTEGER,
         sleep_awake_sub_score INTEGER,
         sleep_stress_above_resting_pct INTEGER,
+        sleep_onset_latency_sec INTEGER,
+        sleep_stage_raw_min_json TEXT,
         sleep_deep_min INTEGER,
         sleep_light_min INTEGER,
         sleep_rem_min INTEGER,
@@ -985,6 +987,13 @@ _PG_MIGRATIONS = [
     # Garmin's "resting" threshold (>25 on the 0-100 scale). Fits 6
     # reference nights within rounding. Not Connect-visible directly.
     "ALTER TABLE daily_wellness_metrics ADD COLUMN IF NOT EXISTS sleep_stress_above_resting_pct INTEGER",
+    # `[384] field_3` = sleep_onset_latency_sec — Connect's "Time to fall
+    # asleep" (#524). Absent on perfect-onset nights (Garmin omits zero).
+    "ALTER TABLE daily_wellness_metrics ADD COLUMN IF NOT EXISTS sleep_onset_latency_sec INTEGER",
+    # Raw `[275]` per-stage minute tally as JSON `{code: minutes}` (#524) —
+    # 1=Unmeasurable, 2=Light, 3=Deep, 4=REM. Feeds the raw-vs-smoothed
+    # "stage smoothing" chart: smoothed (Connect) minus this raw tally.
+    "ALTER TABLE daily_wellness_metrics ADD COLUMN IF NOT EXISTS sleep_stage_raw_min_json TEXT",
     # D-50 Phase 1 — provider integration tables. Mirrors the SQLite block
     # above with PG-native types (SERIAL, TIMESTAMP DEFAULT NOW(), BIGINT,
     # BOOLEAN). Per Athlete_Data_Integration_Spec v3 §4–§6. Garmin paused

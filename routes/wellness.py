@@ -215,6 +215,11 @@ def index():
     # land an honest delta. Partitioned by dm.date (the sleep-night
     # anchor) so a sleep window that crosses midnight still groups as
     # one night.
+    #
+    # MIN/MAX over the same window add the per-night BB low + high (#525):
+    # two nights with the same end−start delta can have very different
+    # recovery shapes (dipped-then-climbed vs. constrained near the
+    # ceiling), and the trough/peak surface that.
     bb_overnight_rows = db.execute(
         'WITH bb_in_sleep AS ( '
         '  SELECT dm.date AS sleep_date, wl.body_battery, wl.timestamp_ms, '
@@ -229,7 +234,9 @@ def index():
         ') '
         'SELECT sleep_date AS date, '
         '  MAX(CASE WHEN rn_start = 1 THEN body_battery END) AS bb_start, '
-        '  MAX(CASE WHEN rn_end   = 1 THEN body_battery END) AS bb_end '
+        '  MAX(CASE WHEN rn_end   = 1 THEN body_battery END) AS bb_end, '
+        '  MIN(body_battery) AS bb_low, '
+        '  MAX(body_battery) AS bb_high '
         'FROM bb_in_sleep GROUP BY sleep_date ORDER BY sleep_date',
         (uid, cutoff)
     ).fetchall()
@@ -245,6 +252,8 @@ def index():
         '  restless_moments, floors_climbed, floors_descended, '
         '  intensity_minutes, spo2_avg, spo2_low, '
         '  sleep_deep_min, sleep_stress_avg, sleep_wake_count, '
+        '  sleep_awake_min, sleep_stage_raw_min_json, '
+        '  sleep_onset_latency_sec, '
         '  sleep_start_ms, sleep_end_ms, vo2max_running, vo2max_cycling, '
         '  sleep_light_sub_score, sleep_rem_sub_score, '
         '  sleep_stress_sub_score, sleep_awake_sub_score, '
@@ -360,6 +369,16 @@ def _save_self_report(db, uid):
 def _d(value) -> str:
     """Stringify a date that may arrive as datetime.date (PG) or str (SQLite)."""
     return str(value)[:10] if value is not None else ''
+
+
+def _row_get(row, key):
+    """Read a column from a DB Row or dict, tolerating rows that don't carry it
+    (older SELECTs, unit-test fixtures). Row objects raise on a missing key, so
+    plain `row[key]` isn't safe for newly-added columns."""
+    try:
+        return row[key]
+    except (KeyError, IndexError):
+        return None
 
 
 _STRESS_SAMPLE_MIN = 3.0  # Garmin samples stress ~every 3 minutes
@@ -753,6 +772,56 @@ def _build_chart_data(self_rows, body_rows, cardio_rows, strength_rows,
         for d, r in bb_overnight_by_date.items()
         if r['bb_start'] is not None and r['bb_end'] is not None
     ]
+    # Body battery sleep-window low + high (#525) — the trough and peak BB
+    # reading during the same per-night window. Plotted alongside the delta
+    # so two nights with an identical end−start gain but different recovery
+    # shapes (dipped-then-climbed vs. pinned near the ceiling) read apart.
+    body_battery['overnight_low'] = [
+        {'x': d, 'y': int(_row_get(r, 'bb_low'))}
+        for d, r in bb_overnight_by_date.items()
+        if _row_get(r, 'bb_low') is not None
+    ]
+    body_battery['overnight_high'] = [
+        {'x': d, 'y': int(_row_get(r, 'bb_high'))}
+        for d, r in bb_overnight_by_date.items()
+        if _row_get(r, 'bb_high') is not None
+    ]
+
+    # Sleep onset latency (#524) — `[384] field_3` in seconds → minutes/night.
+    # Absent on perfect-onset nights (Garmin omits zero), so those simply
+    # drop out rather than charting a misleading 0.
+    sleep_onset_latency = [
+        {'x': d, 'y': round(int(_row_get(r, 'sleep_onset_latency_sec')) / 60.0, 1)}
+        for d, r in daily_by_date.items()
+        if _row_get(r, 'sleep_onset_latency_sec') is not None
+    ]
+
+    # Raw-vs-smoothed sleep-stage smoothing (#524) — per night, the minutes
+    # Garmin Connect redistributed into each visible stage vs the watch's raw
+    # `[275]` tally. Only Deep (`[346]` field_9) and Awake (`[384]` field_24)
+    # are decoded smoothed values today, so Light/REM stay empty until their
+    # smoothed split is locked. The raw tally is the partial `[275]` walk
+    # (last segment dropped without a cross-filed sleep_end_ts) — close enough
+    # for this best-guess research chart.
+    from garmin_fit_parser import sleep_stage_smoothing_added
+    sleep_stage_smoothing = {'deep': [], 'light': [], 'rem': [], 'awake': []}
+    for d, r in daily_by_date.items():
+        raw_json = _row_get(r, 'sleep_stage_raw_min_json')
+        if not raw_json:
+            continue
+        try:
+            raw_tally = {int(k): int(v) for k, v in json.loads(raw_json).items()}
+        except (ValueError, TypeError):
+            continue
+        smoothed = {}
+        deep = _row_get(r, 'sleep_deep_min')
+        awake = _row_get(r, 'sleep_awake_min')
+        if deep is not None:
+            smoothed['deep'] = deep
+        if awake is not None:
+            smoothed['awake'] = awake
+        for stage, added in sleep_stage_smoothing_added(raw_tally, smoothed).items():
+            sleep_stage_smoothing[stage].append({'x': d, 'y': added})
 
     return {
         'sleep_hours':   sleep_hours,
@@ -783,6 +852,8 @@ def _build_chart_data(self_rows, body_rows, cardio_rows, strength_rows,
         'sleep_wake_count': sleep_wake_count,
         'sleep_sub_scores': sleep_sub_scores,
         'sleep_stress_above_resting': sleep_stress_above_resting,
+        'sleep_onset_latency': sleep_onset_latency,
+        'sleep_stage_smoothing': sleep_stage_smoothing,
         # Cross-source recovery / load metrics (#283 expansion): Whoop recovery
         # + Polar ANS charge, Whoop strain, Polar cardio-load.
         'recovery':         recovery,
