@@ -56,8 +56,10 @@ Vertical-slice limitations carried as forward-pointers:
   + `parsed_intent` + `plan_start_date` are caller-supplied kwargs on
   `orchestrate_plan_refresh` + `orchestrate_plan_create` pending the
   D-64 caller-side route + `plan_versions` table (matches the slice 1 D4
-  precedent for D-63's `suggestion_id`). Race_week_brief continues to pass
-  `prior_plan_session_window=[]` + `plan_version_id=1` placeholders.
+  precedent for D-63's `suggestion_id`). Race_week_brief now resolves both
+  from the athlete's active plan internally (#732 slice 1): the prior Taper
+  window is the currently-scheduled sessions through the event date and
+  `plan_version_id` is the active plan version — the placeholders are gone.
 - Layer 3A + Layer 3B run through the cached wrappers
   (`layer3a.cached_wrapper.llm_layer3a_athlete_state_cached` +
   `layer3b.cached_wrapper.llm_layer3b_goal_timeline_viability_cached`)
@@ -130,14 +132,14 @@ from layer4.validator import skill_gated_disciplines
 import locations
 from athlete_event_windows_repo import load_event_windows
 from athlete_craft_locale_repo import load_craft_locales
+from plan_sessions_repo import (
+    load_active_plan_version_id,
+    load_scheduled_sessions_for_window,
+)
 from race_events_repo import load_target_race_event_payload
 
 
 _AUTO_FIRE_DAYS_TO_EVENT_MAX = 14
-
-# TODO(plan-versioning): replace once the v2 plan-versioning surface lands;
-# every cache row currently keys on plan_version_id=1 for race-week-brief.
-_RACE_WEEK_BRIEF_PLAN_VERSION_ID_PLACEHOLDER = 1
 
 # Coarse race-format-based duration estimate for Layer 2E's TargetEvent
 # (estimated_duration_hr > 0 is required). FALLBACK ONLY — the per-race
@@ -1275,7 +1277,18 @@ def orchestrate_race_week_brief(
        in `llm_layer4_race_week_brief` will also reject the same case.
     3. Compose upstream cone via `_upstream_full_cone` (shared with
        `orchestrate_plan_refresh` per Phase 5.2 slice 2 D1 extract).
-    4. Compose via `llm_layer4_race_week_brief_cached`.
+    4. Resolve the real prior Taper window + plan version from the athlete's
+       active plan (#732 slice 1 — was two placeholders). The prior window is
+       the currently-scheduled sessions over `[today, event_date]`: the
+       athlete is ≤14 days out (gate above), so every session in that window
+       is in the Taper phase by definition and is a candidate for the brief's
+       `taper_session_overrides`. `plan_version_id` is the athlete's active
+       plan version, the one the overrides are stamped with (and that #732
+       slice 2 will persist them under). Raises
+       `OrchestrationError('no_active_plan')` when the athlete has no active
+       (`ready`, non-archived) plan version — the brief has nothing to
+       attach its overrides to.
+    5. Compose via `llm_layer4_race_week_brief_cached`.
 
     Failures from any upstream layer propagate verbatim; the orchestrator
     does not try/except them. Layer-3A / Layer-3B LLM failures surface as
@@ -1303,6 +1316,21 @@ def orchestrate_race_week_brief(
         db, user_id, today, cache=cache, target_race_event=race_event
     )
 
+    # #732 slice 1 — resolve the real prior Taper window + plan version
+    # (was `prior_plan_session_window=[]` + `plan_version_id=1` placeholders).
+    # Mirrors the caller-supplied inputs `orchestrate_plan_refresh` receives:
+    # the brief MODIFIES the athlete's existing Taper sessions, so it needs
+    # the real upcoming-session window and a real version to stamp/persist.
+    plan_version_id = load_active_plan_version_id(db, user_id)
+    if plan_version_id is None:
+        raise OrchestrationError(
+            "no_active_plan",
+            f"user_id={user_id} has no active (ready, non-archived) plan version",
+        )
+    prior_plan_session_window = load_scheduled_sessions_for_window(
+        db, user_id, start=today, end=race_event.event_date
+    )
+
     return llm_layer4_race_week_brief_cached(
         user_id=user_id,
         layer1_payload=cone.layer1_payload.model_dump(mode="json"),
@@ -1314,8 +1342,8 @@ def orchestrate_race_week_brief(
         layer3a_payload=cone.layer3a_payload,
         layer3b_payload=cone.layer3b_payload,
         race_event_payload=race_event,
-        prior_plan_session_window=[],
-        plan_version_id=_RACE_WEEK_BRIEF_PLAN_VERSION_ID_PLACEHOLDER,
+        prior_plan_session_window=prior_plan_session_window,
+        plan_version_id=plan_version_id,
         etl_version_set=cone.etl_version_set,
         cache=cache,
         # Thread the training-substitution payload from the cone into the

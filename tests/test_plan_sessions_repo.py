@@ -35,6 +35,7 @@ from layer4.payload import (
 from plan_sessions_repo import (
     _PRIOR_WINDOW_DAYS_BY_TIER,
     allocate_plan_version_row,
+    load_active_plan_version_id,
     load_plan_sessions_by_version,
     load_prior_plan_session_window,
     persist_layer4_sessions,
@@ -561,6 +562,42 @@ class TestLoadPriorPlanSessionWindow:
         assert len(result) == 1
         assert isinstance(result[0], PlanSession)
         assert result[0].session_id == sess.session_id
+
+
+# ─── load_active_plan_version_id ────────────────────────────────────────────
+
+
+class TestLoadActivePlanVersionId:
+    def test_returns_int_id_when_active_version_exists(self):
+        conn = _FakeConn()
+        conn.queue(row={"id": 314})
+
+        result = load_active_plan_version_id(conn, _USER_ID)
+
+        assert result == 314
+        assert isinstance(result, int)
+
+    def test_returns_none_when_no_active_version(self):
+        """No active plan version (never created, or only in-flight /
+        archived / completed) — the race-week-brief orchestrator maps this
+        to `no_active_plan`."""
+        conn = _FakeConn()
+        conn.queue(row=None)
+
+        assert load_active_plan_version_id(conn, _USER_ID) is None
+
+    def test_sql_filters_active_and_orders_latest_first(self):
+        conn = _FakeConn()
+        conn.queue(row={"id": 1})
+
+        load_active_plan_version_id(conn, _USER_ID)
+
+        sql, params = conn.calls[0]
+        assert params == (_USER_ID,)
+        assert "generation_status = 'ready'" in sql
+        assert "archived_at IS NULL" in sql
+        assert "completed_at IS NULL" in sql
+        assert "ORDER BY created_at DESC" in sql
 
 
 class TestTierDefaultMapping:
