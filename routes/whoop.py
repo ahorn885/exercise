@@ -207,10 +207,77 @@ def oauth_callback():
     return redirect(f'{return_to}{sep}whoop_connected=1')
 
 
-# ── Webhook (stub — real verify + dispatch is the ingest slice) ───────
+# ── Webhook ───────────────────────────────────────────────────────────
 
 @bp.route('/webhook', methods=['GET', 'POST'])
 def webhook():
+    """Whoop push handler. GET is a liveness probe. POST verifies the
+    `X-WHOOP-Signature` HMAC, records the thin event `{user_id, id, type}` to
+    `webhook_events`, maps `user_id` → local user, and on an `.updated` event
+    synchronously fetches + ingests the resource (`routes.whoop_ingest`). Always
+    returns 200 (a non-2xx would make Whoop retry → re-record); a failed ingest
+    is recorded against the event row for re-delivery."""
+    if request.method == 'GET':
+        return jsonify(status='ok'), 200
+
+    raw_body = request.get_data() or b''
+    signature = request.headers.get('X-WHOOP-Signature')
+    timestamp = request.headers.get('X-WHOOP-Signature-Timestamp')
+    from routes import whoop_ingest
+    sig_ok = whoop_ingest.verify_signature(
+        raw_body, signature, timestamp, os.environ.get('WHOOP_CLIENT_SECRET'))
+
+    try:
+        event = json.loads(raw_body.decode('utf-8')) if raw_body else {}
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        event = {}
+    if not isinstance(event, dict):
+        event = {}
+
+    whoop_user_id = event.get('user_id')
+    resource_id = event.get('id')
+    event_type = event.get('type')
+
+    db = get_db()
+    auth_row = (
+        pa.get_auth_by_provider_user_id(db, 'whoop', str(whoop_user_id))
+        if whoop_user_id is not None else None
+    )
+    user_id = auth_row['user_id'] if auth_row else None
+
+    cur = db.execute(
+        'INSERT INTO webhook_events '
+        '(provider, event_type, provider_user_id, entity_id, user_id, '
+        ' payload, signature_ok, received_at) '
+        'VALUES (?, ?, ?, ?, ?, ?, ?, NOW()) RETURNING id',
+        ('whoop', event_type,
+         str(whoop_user_id) if whoop_user_id is not None else None,
+         str(resource_id) if resource_id is not None else None,
+         user_id, raw_body.decode('utf-8', 'replace'), sig_ok),
+    )
+    event_id = cur.fetchone()['id']
+    db.commit()
+
+    should_ingest = (
+        sig_ok and user_id is not None and resource_id is not None
+        and (event_type or '').endswith('.updated')
+    )
+    if should_ingest:
+        try:
+            whoop_ingest.process_event(db, event_type, resource_id, user_id)
+            db.execute(
+                'UPDATE webhook_events SET processed_at = NOW() WHERE id = ?',
+                (event_id,),
+            )
+            db.commit()
+        except Exception as exc:  # noqa: BLE001 — log + record + still 200
+            current_app.logger.exception('Whoop ingestion failed for event %s', event_id)
+            db.execute(
+                'UPDATE webhook_events SET processed_at = NOW(), error = ? WHERE id = ?',
+                (str(exc)[:500], event_id),
+            )
+            db.commit()
+
     return jsonify(status='ok'), 200
 
 
