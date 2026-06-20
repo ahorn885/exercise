@@ -116,14 +116,17 @@ _USER_ID = 42
 _ACTIVE_PLAN_VERSION_ID = 7
 
 
+# The orchestrator lazy-imports these from `plan_sessions_repo` (avoids a
+# circular import), so patches must target the repo module, not
+# `layer4.orchestrator`.
 @pytest.fixture(autouse=True)
 def _default_active_plan(monkeypatch):
     monkeypatch.setattr(
-        "layer4.orchestrator.load_active_plan_version_id",
+        "plan_sessions_repo.load_active_plan_version_id",
         lambda db, user_id: _ACTIVE_PLAN_VERSION_ID,
     )
     monkeypatch.setattr(
-        "layer4.orchestrator.load_scheduled_sessions_for_window",
+        "plan_sessions_repo.load_scheduled_sessions_for_window",
         lambda db, user_id, *, start, end: [],
     )
 
@@ -778,13 +781,13 @@ class TestPriorTaperWindowAndPlanVersion:
 
         stack.append(
             patch(
-                "layer4.orchestrator.load_active_plan_version_id",
+                "plan_sessions_repo.load_active_plan_version_id",
                 return_value=active_pvid,
             )
         )
         stack.append(
             patch(
-                "layer4.orchestrator.load_scheduled_sessions_for_window",
+                "plan_sessions_repo.load_scheduled_sessions_for_window",
                 _fake_window,
             )
         )
@@ -840,7 +843,7 @@ class TestPriorTaperWindowAndPlanVersion:
         )
         stack.append(
             patch(
-                "layer4.orchestrator.load_active_plan_version_id",
+                "plan_sessions_repo.load_active_plan_version_id",
                 return_value=None,
             )
         )

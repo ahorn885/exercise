@@ -132,10 +132,6 @@ from layer4.validator import skill_gated_disciplines
 import locations
 from athlete_event_windows_repo import load_event_windows
 from athlete_craft_locale_repo import load_craft_locales
-from plan_sessions_repo import (
-    load_active_plan_version_id,
-    load_scheduled_sessions_for_window,
-)
 from race_events_repo import load_target_race_event_payload
 
 
@@ -1321,6 +1317,14 @@ def orchestrate_race_week_brief(
     # Mirrors the caller-supplied inputs `orchestrate_plan_refresh` receives:
     # the brief MODIFIES the athlete's existing Taper sessions, so it needs
     # the real upcoming-session window and a real version to stamp/persist.
+    # Lazy import: `plan_sessions_repo` imports `layer4.payload`, which pulls
+    # in `layer4/__init__` -> this module; a top-level import here cycles when
+    # `plan_sessions_repo` is imported first (e.g. via `routes/dashboard.py`).
+    from plan_sessions_repo import (
+        load_active_plan_version_id,
+        load_scheduled_sessions_for_window,
+    )
+
     plan_version_id = load_active_plan_version_id(db, user_id)
     if plan_version_id is None:
         raise OrchestrationError(
