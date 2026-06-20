@@ -70,6 +70,7 @@ from layer4.errors import Layer4InputError, Layer4OutputError
 from layer4.per_phase import (
     compute_feasible_pool_ids,
     compute_recovery_pool_ids,
+    format_upstream_coaching_flags,
     _recovery_pool_entries,
     _repair_recovery_exercises,
 )
@@ -1147,6 +1148,19 @@ def _render_user_prompt(
         parts.extend(
             _render_training_substitution_section(training_substitution_payload)
         )
+
+    # § Upstream coaching flags — #307 advisory channel (Layer 2A/2B/2C/2D)
+    upstream_flag_lines = format_upstream_coaching_flags(
+        layer2a=layer2a_payload,
+        layer2b=layer2b_payload,
+        layer2c_payloads=layer2c_payloads.values(),
+        layer2d=layer2d_payload,
+    )
+    if upstream_flag_lines:
+        parts.append("# Upstream coaching flags")
+        parts.append("")
+        parts.extend(upstream_flag_lines)
+        parts.append("")
 
     # § Race-day fueling tier (2E)
     parts.append("# Race-day fueling tier (2E)")

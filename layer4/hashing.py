@@ -82,7 +82,12 @@ _LAYER2_BUNDLE_ATTRS = frozenset({"a", "b", "c", "d", "e"})
 # physiology) plus a measured-physiology block in the rendered prompt; changes
 # synthesis output, so cached plans + refreshes must regenerate. (single_session
 # needs no bump — ad-hoc, not cache-keyed.)
-LAYER4_PROMPT_REVISION = "13"
+# "14" = #307 upstream coaching_flags render — the plan-create (per_phase) and
+# plan-refresh synthesizers gain an `Upstream coaching flags` block surfacing the
+# 2A/2B/2C/2D advisory flags (suppress-on-empty); changes the rendered prompt, so
+# cached plans + refreshes must regenerate. (single_session needs no bump — ad-hoc,
+# not cache-keyed.)
+LAYER4_PROMPT_REVISION = "14"
 
 
 def _to_jsonable(obj: Any) -> Any:
