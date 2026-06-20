@@ -179,6 +179,24 @@ def load_plan_sessions_by_version(
     ]
 
 
+def load_plan_session_payload(
+    db: Any, user_id: int, plan_version_id: int, date: str, session_index_in_day: int
+) -> dict[str, Any] | None:
+    """Load one session's raw payload dict by its natural key, user-scoped.
+
+    Returns the decoded `PlanSession` payload dict (the shape the #681 Wave-3b
+    outbound serializers consume), or None if no such row belongs to the user.
+    """
+    row = db.execute(
+        """SELECT payload_json
+             FROM plan_sessions
+            WHERE plan_version_id = ? AND date = ? AND session_index_in_day = ?
+              AND user_id = ?""",
+        (plan_version_id, date, session_index_in_day, user_id),
+    ).fetchone()
+    return _decode_payload(row["payload_json"]) if row else None
+
+
 def snapshot_progress_blocks(
     db: Any,
     user_id: int,

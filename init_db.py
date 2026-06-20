@@ -162,6 +162,23 @@ PG_SCHEMA = '''
         fetched_at    TIMESTAMP DEFAULT NOW(),
         UNIQUE (user_id, provider, data_type, external_id)
     );
+    -- #681 Wave 3b outbound: idempotent push ledger (translation spec §4.4 /
+    -- StorageSchema design §3.3). First writer = the TrainingPeaks push
+    -- (Slice 2), where pushed_payload_hash drives upsert-on-change vs no-op.
+    -- Zwift is a file download with no external id, so it does not write here.
+    CREATE TABLE IF NOT EXISTS provider_outbound_ref (
+        id                  SERIAL PRIMARY KEY,
+        user_id             INTEGER REFERENCES users(id),
+        provider            TEXT NOT NULL,
+        session_id          TEXT,
+        external_id         TEXT,
+        tier                SMALLINT,
+        pushed_payload_hash TEXT,
+        status              TEXT,
+        created_at          TIMESTAMP DEFAULT NOW(),
+        updated_at          TIMESTAMP DEFAULT NOW(),
+        UNIQUE (user_id, provider, session_id)
+    );
     CREATE TABLE IF NOT EXISTS body_metrics (
         id SERIAL PRIMARY KEY,
         user_id INTEGER REFERENCES users(id),
