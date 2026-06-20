@@ -42,8 +42,13 @@ from pydantic import ValidationError
 # ─── fixtures (duck-typed, like test_layer4_strength_pool) ───────────────────
 
 
-def _rx(exercise_id, name, exercise_type):
-    return NS(exercise_id=exercise_id, exercise_name=name, exercise_type=exercise_type)
+def _rx(exercise_id, name, exercise_type, tier=1):
+    # tier defaults to 1 (feasible); the real ResolvedExercise always carries it,
+    # and the pool fns now drop tier-0 (#691).
+    return NS(
+        exercise_id=exercise_id, exercise_name=name, exercise_type=exercise_type,
+        tier=tier,
+    )
 
 
 def _l2c(locale_id, resolved):
@@ -136,6 +141,20 @@ def test_pool_entries_match_compute_pool_and_carry_name_type():
     assert sorted(entries) == compute_recovery_pool_ids(_pool(), None)
     assert "EX900" not in entries  # Strength row dropped
     assert entries["EX001"] == ("Cat-Cow", "Mobility")
+
+
+def test_pool_entries_exclude_tier0_in_lockstep_with_compute():
+    # #691 — a tier-0 (equipment-infeasible) recovery row must be excluded here
+    # too, or the auto-fill could reference an id the validator's
+    # _rule_recovery_pool_membership (which reads compute_recovery_pool_ids,
+    # also tier-0-free) would then reject.
+    pool = {"home": _l2c("home", [
+        _rx("EX001", "Cat-Cow", "Mobility", tier=1),
+        _rx("EX700", "Foam Roll (no roller)", "Recovery / Soft Tissue", tier=0),
+    ])}
+    entries = _recovery_pool_entries(pool, None)
+    assert "EX700" not in entries
+    assert sorted(entries) == compute_recovery_pool_ids(pool, None) == ["EX001"]
 
 
 def test_pool_entries_honor_2d_exclusions():

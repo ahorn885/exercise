@@ -518,6 +518,7 @@ def compute_feasible_pool_ids(
     )
     pool: set[str] = set()
     dropped_by_type: dict[str, int] = {}
+    dropped_tier0 = 0
     for l2c in layer2c_payloads.values():
         for rx in l2c.exercises_resolved:
             if rx.exercise_id in excluded:
@@ -529,12 +530,26 @@ def compute_feasible_pool_ids(
                     dropped_by_type.get(rx.exercise_type, 0) + 1
                 )
                 continue
+            # #691 — tier 0 is equipment-infeasible with no substitute (tier 2)
+            # or proxy (tier 3): the athlete lacks the gear AND there's no
+            # fallback, so it must never enter the "feasible" pool. Since Rule 6a
+            # retired (validator.py §6a), this SDK enum is the SOLE strength-
+            # membership guard — a tier-0 id here is a structurally-valid pick
+            # the athlete can't perform (e.g. a sled drag for an athlete with no
+            # sled and no resolvable substitute), exactly the gate leak #691 hit.
+            if rx.tier == 0:
+                dropped_tier0 += 1
+                continue
             pool.add(rx.exercise_id)
-    # Rule #15 — log the non-strength rows the type filter excluded (by type),
-    # so a "missing exercise" in a strength session is attributable in prod.
-    if dropped_by_type:
+    # Rule #15 — log the rows the filters excluded (non-strength type + the #691
+    # tier-0 infeasible drop), so a "missing exercise" in a strength session is
+    # attributable in prod.
+    if dropped_by_type or dropped_tier0:
         _dbg = ", ".join(f"{t}={n}" for t, n in sorted(dropped_by_type.items()))
-        print(f"compute_feasible_pool_ids: non-strength-type dropped [{_dbg}]")
+        print(
+            f"compute_feasible_pool_ids: non-strength-type dropped [{_dbg}] "
+            f"tier0_infeasible_dropped={dropped_tier0}"
+        )
     return sorted(pool)
 
 
@@ -576,6 +591,7 @@ def compute_recovery_pool_ids(
     )
     pool: set[str] = set()
     dropped_by_type: dict[str, int] = {}
+    dropped_tier0 = 0
     for l2c in layer2c_payloads.values():
         for rx in l2c.exercises_resolved:
             if rx.exercise_id in excluded:
@@ -585,12 +601,24 @@ def compute_recovery_pool_ids(
                     dropped_by_type.get(rx.exercise_type, 0) + 1
                 )
                 continue
+            # #691 — a recovery/mobility row that needs equipment the athlete
+            # lacks, with no substitute/proxy, resolves tier 0; it's infeasible
+            # and must not enter the pool (the recovery enum + the validator's
+            # `_rule_recovery_pool_membership` both read this list, so the same
+            # equipment-gate leak class is closed here too).
+            if rx.tier == 0:
+                dropped_tier0 += 1
+                continue
             pool.add(rx.exercise_id)
-    # Rule #15 — log the non-recovery rows the type filter excluded (by type),
-    # so a "missing exercise" in a recovery session is attributable in prod.
-    if dropped_by_type:
+    # Rule #15 — log the rows the filters excluded (non-recovery type + the #691
+    # tier-0 infeasible drop), so a "missing exercise" in a recovery session is
+    # attributable in prod.
+    if dropped_by_type or dropped_tier0:
         _dbg = ", ".join(f"{t}={n}" for t, n in sorted(dropped_by_type.items()))
-        print(f"compute_recovery_pool_ids: non-recovery-type dropped [{_dbg}]")
+        print(
+            f"compute_recovery_pool_ids: non-recovery-type dropped [{_dbg}] "
+            f"tier0_infeasible_dropped={dropped_tier0}"
+        )
     return sorted(pool)
 
 
@@ -653,6 +681,11 @@ def _recovery_pool_entries(
             if rx.exercise_id in excluded or rx.exercise_id in entries:
                 continue
             if not _is_recovery_pool_type(rx.exercise_type):
+                continue
+            # #691 — stay in lockstep with compute_recovery_pool_ids (which now
+            # drops tier-0): an auto-fill must never reference an infeasible id
+            # the validator's `_rule_recovery_pool_membership` would then reject.
+            if rx.tier == 0:
                 continue
             entries[rx.exercise_id] = (rx.exercise_name, rx.exercise_type)
     return entries
@@ -782,11 +815,16 @@ def compute_cardio_drill_pool_ids(
         else set()
     )
     pool: set[str] = set()
-    dropped = {"excluded": 0, "discipline": 0, "gate": 0, "phase": 0}
+    dropped = {"tier0": 0, "excluded": 0, "discipline": 0, "gate": 0, "phase": 0}
     for l2c in layer2c_payloads.values():
         for rx in l2c.exercises_resolved:
             if not _is_cardio_drill_pool_type(rx.exercise_type):
                 continue  # non-drill types are the silent majority
+            # #691 — tier 0 is equipment-infeasible with no substitute/proxy;
+            # never prescribable, so it can't enter the drill pool.
+            if rx.tier == 0:
+                dropped["tier0"] += 1
+                continue
             if rx.exercise_id in excluded:
                 dropped["excluded"] += 1
                 continue
@@ -805,7 +843,8 @@ def compute_cardio_drill_pool_ids(
     print(
         f"compute_cardio_drill_pool_ids: phase={phase} "
         f"athlete_disciplines={sorted(disciplines)} pool={sorted(pool)} "
-        f"dropped(excluded={dropped['excluded']},discipline={dropped['discipline']},"
+        f"dropped(tier0={dropped['tier0']},excluded={dropped['excluded']},"
+        f"discipline={dropped['discipline']},"
         f"gate={dropped['gate']},phase={dropped['phase']})"
     )
     return sorted(pool)
@@ -1189,10 +1228,12 @@ def _format_strength_exercise_pool(
                 if d_id in rx.discipline_ids
                 and rx.exercise_id not in excluded_ids
                 and rx.exercise_id not in seen
-                # #698 Finding 2 — render only resistance-training types; this
-                # mirrors the compute_feasible_pool_ids enum so the rendered
-                # pool and the structural enum stay in lockstep.
+                # #698 Finding 2 — render only resistance-training types; and
+                # #691 — exclude tier-0 (equipment-infeasible, no substitute/
+                # proxy). Both mirror the compute_feasible_pool_ids enum so the
+                # rendered pool and the structural enum stay in lockstep.
                 and _is_strength_pool_type(rx.exercise_type)
+                and rx.tier > 0
             ]
             cands.sort(
                 key=lambda rx: (
@@ -1282,6 +1323,9 @@ def _format_recovery_exercise_pool(
                 rx.exercise_id in excluded_ids
                 or rx.exercise_id in seen
                 or not _is_recovery_pool_type(rx.exercise_type)
+                # #691 — exclude tier-0 (infeasible); lockstep with the
+                # compute_recovery_pool_ids enum.
+                or rx.tier == 0
             ):
                 continue
             seen.add(rx.exercise_id)
@@ -1357,6 +1401,9 @@ def _format_cardio_drill_pool(
             if (
                 _is_cardio_drill_pool_type(rx.exercise_type)
                 and rx.exercise_id not in excluded_ids
+                # #691 — exclude tier-0 (infeasible); lockstep with the
+                # compute_cardio_drill_pool_ids enum.
+                and rx.tier > 0
                 and (set(rx.discipline_ids) & disciplines)
                 and _constituent_sport_gate_ok(rx.exercise_id, disciplines)
                 and _cardio_drill_phase_allows(rx.exercise_type, phase)

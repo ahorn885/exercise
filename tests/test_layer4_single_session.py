@@ -112,7 +112,23 @@ def _layer2c(
     locale_id: str = "home_gym",
     exercise_ids: tuple[str, ...] = ("E-squat", "E-pushup"),
     discipline_id: str = "D-run",
+    tier0_ids: tuple[str, ...] = (),
 ) -> Layer2CPayload:
+    def _resolved(ex: str, tier: int) -> ResolvedExercise:
+        return ResolvedExercise(
+            exercise_id=ex,
+            exercise_name=ex,
+            exercise_type="strength",
+            discipline_ids=[discipline_id],
+            sport_relevance_notes={discipline_id: "x"},
+            priority_per_discipline={discipline_id: "Medium"},
+            tier=tier,
+            terrain_required=[],
+            contraindicated_parts=[],
+            contraindicated_conditions=[],
+            accommodations=[],
+        )
+
     return Layer2CPayload(
         locale_id=locale_id,
         etl_version_set={"layer0": "v7"},
@@ -122,30 +138,18 @@ def _layer2c(
                 discipline_id=discipline_id,
                 discipline_name=discipline_id,
                 exercise_db_sport="x",
-                total_exercises=len(exercise_ids),
+                total_exercises=len(exercise_ids) + len(tier0_ids),
                 tier_1_count=len(exercise_ids),
                 tier_2_count=0,
                 tier_3_count=0,
-                unavailable_count=0,
+                unavailable_count=len(tier0_ids),
                 coverage_pct=1.0,
             )
         ],
-        exercises_resolved=[
-            ResolvedExercise(
-                exercise_id=ex,
-                exercise_name=ex,
-                exercise_type="strength",
-                discipline_ids=[discipline_id],
-                sport_relevance_notes={discipline_id: "x"},
-                priority_per_discipline={discipline_id: "Medium"},
-                tier=1,
-                terrain_required=[],
-                contraindicated_parts=[],
-                contraindicated_conditions=[],
-                accommodations=[],
-            )
-            for ex in exercise_ids
-        ],
+        exercises_resolved=(
+            [_resolved(ex, 1) for ex in exercise_ids]
+            + [_resolved(ex, 0) for ex in tier0_ids]
+        ),
         coaching_flags=[],
     )
 
@@ -1042,6 +1046,30 @@ class TestPromptRendering:
         assert "Effective pool" in prompt
         assert "E-foo" in prompt
         assert "E-bar" in prompt
+
+    def test_resolved_exercises_render_excludes_tier0(self):
+        # #691 — a tier-0 (equipment-infeasible, no substitute/proxy) exercise
+        # must NOT appear in the "Resolved exercises" prompt menu, where it would
+        # otherwise render as a plain bullet (no tier note) the model could pick.
+        from layer4.single_session import _render_user_prompt
+
+        req = SingleSessionRequest(
+            sport="running", duration_min=60, intensity="easy", locale_slug="home_gym"
+        )
+        prompt = _render_user_prompt(
+            request=req,
+            layer1_payload=_layer1(),
+            layer2c_payload_for_locale=_layer2c(
+                exercise_ids=("E-feasible",), tier0_ids=("E-nosled",)
+            ),
+            layer2d_payload=_layer2d(),
+            layer3a_payload=_layer3a(),
+            session_date=_DATE,
+            retries_used=0,
+            rule_failures=[],
+        )
+        assert "E-feasible" in prompt
+        assert "E-nosled" not in prompt
 
     def test_quick_equipment_branch_renders_list(self):
         from layer4.single_session import _render_user_prompt
