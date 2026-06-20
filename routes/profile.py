@@ -111,6 +111,7 @@ CONNECTION_PROVIDERS = (
     ('whoop', 'Whoop', 'whoop.oauth_start'),
     ('wahoo', 'Wahoo', 'wahoo.oauth_start'),
     ('oura', 'Oura', 'oura.oauth_start'),
+    ('rwgps', 'Ride With GPS', 'ride_with_gps.oauth_start'),
 )
 
 

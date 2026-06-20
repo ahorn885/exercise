@@ -339,6 +339,7 @@ _AUTH_EXEMPT_ENDPOINTS = {
     # route (`routes.auth.cron_authorized`).
     'nudges.scan_connect_provider_14d',
     'plan_create.cron_generate_pending',
+    'ride_with_gps.cron_process',
     # Plan-gen diag endpoint: deliberately readable WITHOUT the app login so
     # an operator/agent debugging from outside a browser session can fetch the
     # real fault. Auth is verified INSIDE the route (`admin._diag_authorized`:

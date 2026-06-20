@@ -38,7 +38,6 @@ bp = Blueprint('connections', __name__, url_prefix='/connections')
 STUB_PROVIDERS = (
     {'slug': 'trainingpeaks', 'label': 'TrainingPeaks', 'scopes': 'workouts · planned'},
     {'slug': 'zwift', 'label': 'Zwift', 'scopes': 'indoor activities'},
-    {'slug': 'ride_with_gps', 'label': 'Ride With GPS', 'scopes': 'routes'},
 )
 
 VALID_TABS = ('sources', 'files')

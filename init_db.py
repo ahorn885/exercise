@@ -1254,6 +1254,8 @@ _PG_MIGRATIONS = [
     # strava_activity_id column; this is the idempotency guard the live webhook
     # ingest needs (mirrors the coros/polar/wahoo partial-unique pattern).
     "CREATE UNIQUE INDEX IF NOT EXISTS cardio_log_strava_activity_uidx ON cardio_log (user_id, strava_activity_id) WHERE strava_activity_id IS NOT NULL",
+    # #681 (B) — RWGPS live ingest dedup (the rwgps_trip_id column already exists).
+    "CREATE UNIQUE INDEX IF NOT EXISTS cardio_log_rwgps_trip_uidx ON cardio_log (user_id, rwgps_trip_id) WHERE rwgps_trip_id IS NOT NULL",
     # PR6 (D-51) — v5 §A.2 prefill-eligible baselines added to athlete_profile.
     # Self-report at onboarding today; provider extractors (D2a/PR7) will
     # populate via athlete_profile_field_provenance once registry + UI ship.
