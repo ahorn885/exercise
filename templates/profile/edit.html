@@ -10,7 +10,7 @@
 {% set nav_active = 'athlete' %}
 {% set sub = active_tab if active_tab in ['athlete', 'supplements', 'schedule', 'skills', 'locations'] else 'athlete' %}
 {% set is_first_run = not (profile.date_of_birth or profile.primary_sport or profile.height_cm
-   or profile.weekly_hours_target or profile.body_weight_kg or profile.notes) %}
+   or profile.weekly_hours_target or profile.body_weight_kg or profile.coach_notes) %}
 {% set unit_pref = profile.unit_preference or 'imperial' %}
 {% set wt_label = profile.weight_unit_label or 'lb' %}
 {% block title %}Athlete — AIDSTATION{% endblock %}
@@ -141,13 +141,8 @@
   <div class="card card-pad stack">
     <p class="eyebrow">● Notes for the coach</p>
     <label class="field">
-      <textarea name="notes" rows="3" class="form-control form-control-sm"
-                placeholder="Anything the coach should know that doesn't fit elsewhere — life constraints, schedule pressure, training context, etc.">{{ profile.notes or '' }}</textarea>
-    </label>
-    <label class="field">
-      <span class="lbl">Coaching voice preferences</span>
-      <textarea name="coaching_voice_preferences" rows="2" class="form-control form-control-sm"
-                placeholder="How you want the coach to communicate — e.g. blunt and concise, more context on the why, minimal cheerleading.">{{ profile.coaching_voice_preferences or '' }}</textarea>
+      <textarea name="coach_notes" rows="4" class="form-control form-control-sm"
+                placeholder="Anything the coach should know — life constraints, schedule pressure, training context — and how you want the coach to communicate (e.g. blunt and concise, more context on the why, minimal cheerleading).">{{ profile.coach_notes or '' }}</textarea>
     </label>
   </div>
 
@@ -209,6 +204,21 @@
       <input type="text" name="gi_triggers_known" class="form-control form-control-sm"
              placeholder="e.g. high fructose, dairy mid-effort"
              value="{{ profile.gi_triggers_known or '' }}"></label>
+    {# §I altitude exposure — feeds the Layer 3A athlete-state read. #}
+    <div class="pf-grid">
+      <label class="field"><span class="lbl">Altitude acclimatization</span>
+        <select name="altitude_acclimatization_history" class="form-select form-select-sm">
+          <option value="">—</option>
+          <option value="yes" {% if profile.altitude_acclimatization_history is true %}selected{% endif %}>Yes</option>
+          <option value="no" {% if profile.altitude_acclimatization_history is false %}selected{% endif %}>No</option>
+        </select></label>
+      <label class="field"><span class="lbl">Max altitude exposure (m)</span>
+        <input type="number" step="100" min="0" max="9000" name="altitude_max_exposure_m" class="form-control form-control-sm"
+               value="{{ profile.altitude_max_exposure_m if profile.altitude_max_exposure_m is not none else '' }}"></label>
+      <label class="field"><span class="lbl"># of altitude exposures</span>
+        <input type="number" step="1" min="0" max="999" name="altitude_exposure_count" class="form-control form-control-sm"
+               value="{{ profile.altitude_exposure_count if profile.altitude_exposure_count is not none else '' }}"></label>
+    </div>
   </div>
 
   <div class="pf-save">
@@ -276,6 +286,55 @@
     <button type="submit" class="btn btn-primary">Save gear</button>
   </div>
 </form>
+
+{# §C pack-load history — the athlete's load-carriage base. Summarized into
+   Layer 3B against the target race's pack weight. Each add/delete is its own
+   form (can't nest in the main profile form); mirrors the health-tab records. #}
+<div class="card card-pad stack pf-nutrition">
+  <div>
+    <p class="eyebrow">● Pack-load experience</p>
+    <p class="pf-hint">If you train carrying a pack (rucking, expedition, fastpacking), log the
+      weights you train at so the coach can judge load-carriage readiness for a pack-carry race.
+      Optional — leave empty if it doesn't apply.</p>
+  </div>
+
+  {% if pack_loads %}
+  <ul class="supp-list">
+    {% for p in pack_loads %}
+    <li class="supp-row">
+      <div class="supp-main">
+        <span class="supp-name">{{ '%.1f'|format(p.pack_weight_kg) }} kg</span>
+        {% if p.session_count_4wk is not none %}<span class="chip">{{ p.session_count_4wk }} sessions/4wk</span>{% endif %}
+        {% if p.longest_session_hrs is not none %}<span class="supp-meta">longest {{ '%.1f'|format(p.longest_session_hrs) }} h</span>{% endif %}
+        {% if p.terrain_type %}<span class="chip">{{ p.terrain_type }}</span>{% endif %}
+        {% if p.notes %}<span class="rail-note">· {{ p.notes }}</span>{% endif %}
+      </div>
+      <form method="post" action="{{ url_for('profile.delete_pack_load_route', pack_load_id=p.id) }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button type="submit" class="btn btn-text supp-del" aria-label="Remove pack-load record">Remove</button>
+      </form>
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p class="pf-hint">No pack-load records added yet.</p>
+  {% endif %}
+
+  <form method="post" action="{{ url_for('profile.add_pack_load_route') }}" class="supp-add pf-grid">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <label class="field"><span class="lbl">Pack weight (kg)</span>
+      <input type="number" step="0.5" min="0" max="60" name="pack_weight_kg" class="form-control form-control-sm" required></label>
+    <label class="field"><span class="lbl">Sessions / 4 wk</span>
+      <input type="number" step="1" min="0" max="60" name="session_count_4wk" class="form-control form-control-sm" placeholder="optional"></label>
+    <label class="field"><span class="lbl">Longest session (h)</span>
+      <input type="number" step="0.5" min="0" max="48" name="longest_session_hrs" class="form-control form-control-sm" placeholder="optional"></label>
+    <label class="field"><span class="lbl">Terrain</span>
+      <input type="text" name="terrain_type" class="form-control form-control-sm" placeholder="e.g. trail, road, mixed"></label>
+    <label class="field field-wide"><span class="lbl">Notes (optional)</span>
+      <input type="text" name="notes" class="form-control form-control-sm" placeholder="context…"></label>
+    <div class="supp-add-actions"><button type="submit" class="btn btn-primary">Add pack-load</button></div>
+  </form>
+</div>
 
 {# Plan-specific daily baseline — only when a plan is live (slice 4 PlanNutrition). #}
 {% if plan_nutrition %}

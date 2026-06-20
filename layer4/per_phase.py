@@ -1706,9 +1706,8 @@ def _format_session_grid(
     # (slice 2b.2b). Both default to None when the athlete hasn't set them, so
     # the grid falls back to its spec defaults (occasionally / derive-from-pref).
     available_days = resolve_available_days(layer1_payload)
-    _availability = (layer1_payload or {}).get("availability") or {}
-    two_a_day_preference = _availability.get("two_a_day_preference")
-    peak_sessions_max = _availability.get("peak_sessions_max")
+    two_a_day_preference = (layer1_payload or {}).get("two_a_day_preference")
+    peak_sessions_max = (layer1_payload or {}).get("peak_sessions_max")
 
     race_format: str | None = None
     race_duration_h: float | None = None
@@ -2597,9 +2596,9 @@ def render_user_prompt(
     parts.append(
         f"Experience level: {layer1_payload.get('experience_level', 'unknown')}"
     )
-    voice = layer1_payload.get("coaching_voice_preferences")
-    if voice:
-        parts.append(f"Voice notes: {voice}")
+    coach_notes = layer1_payload.get("coach_notes")
+    if coach_notes:
+        parts.append(f"Coach notes: {coach_notes}")
     # #690 — surface the durable Coaching Memory preferences (suppress-on-empty)
     # so the synthesizer honors an explicit high-variety request + prefer/avoid
     # exercise notes; the strength section reads this block by name.

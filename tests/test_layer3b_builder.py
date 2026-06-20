@@ -55,7 +55,6 @@ from layer4.context import (
     CurrentState,
     DataDensity,
     DisciplineWeightRecord,
-    Layer1Availability,
     Layer1Disclosures,
     Layer1DisciplineBaselines,
     Layer1EventGoal,
@@ -119,7 +118,6 @@ def _make_layer1(
         discipline_baselines=Layer1DisciplineBaselines(),
         strength_benchmarks=Layer1StrengthBenchmarks(),
         performance=Layer1Performance(body_weight_kg=75.0, hrmax_bpm=185),
-        availability=Layer1Availability(),
         event_goal=Layer1EventGoal(
             plan_duration_weeks_no_event=plan_duration_weeks_no_event,
             non_event_goal_type=non_event_goal_type,

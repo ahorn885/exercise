@@ -599,6 +599,18 @@ def _render_block_2_goal_context(
             lines.append(f"- race_terrain: {', '.join(race_terrain)}")
         if race_pack_weight_kg is not None:
             lines.append(f"- race_pack_weight_kg: {race_pack_weight_kg:.1f}")
+        # Athlete's load-carriage base vs the race's pack demand above —
+        # summarized (heaviest trained load + longest carry + record count) so
+        # the viability/periodization reasoning can gauge the gap. Advisory
+        # training context, suppress-on-empty (most athletes carry no pack).
+        plh = layer1_payload.training_history.pack_load_history
+        if plh:
+            heaviest = max(p.pack_weight_kg for p in plh)
+            longest = max((p.longest_session_hrs or 0.0) for p in plh)
+            lines.append(
+                f"- pack_load_training: heaviest_kg={heaviest:.1f}, "
+                f"longest_session_hrs={longest:.1f}, records={len(plh)}"
+            )
         return "\n".join(lines)
 
     # No-event mode

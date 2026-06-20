@@ -202,7 +202,6 @@ def _andy_identity() -> Layer1Identity:
         height_cm=178.0,
         primary_sport="Adventure Racing",
         weekly_hours_target=10.0,
-        notes=None,
     )
 
 

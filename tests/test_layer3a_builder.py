@@ -43,7 +43,6 @@ from layer4.context import (
     DailyWellnessRecord,
     DisciplineWeightRecord,
     InjuryRecord,
-    Layer1Availability,
     Layer1Disclosures,
     Layer1DisciplineBaselines,
     Layer1EventGoal,
@@ -133,7 +132,6 @@ def _make_layer1(
             cycling_ftp_w=cycling_ftp_w,
             cycling_ftp_test_date=date(2026, 1, 15),
         ),
-        availability=Layer1Availability(),
         event_goal=Layer1EventGoal(),
         lifestyle=Layer1Lifestyle(
             sleep_baseline_hours=sleep_baseline_hours,
@@ -1210,7 +1208,7 @@ class TestPrepDict:
             _make_bundle(),
             datetime(2026, 5, 20, 0, 0),
         )
-        assert "no active injuries" in prompt
+        assert "no health context recorded" in prompt
 
     def test_prompt_renders_retry_error_when_provided(self):
         prompt = _render_user_prompt(
