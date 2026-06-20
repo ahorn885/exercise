@@ -32,6 +32,7 @@ hosts via `STRAVA_AUTH_URL` / `STRAVA_TOKEN_URL` if Strava rotates them.
 from __future__ import annotations
 
 import hmac
+import json
 import os
 import secrets
 import urllib.parse
@@ -194,16 +195,84 @@ def oauth_callback():
     return redirect(f'{return_to}{sep}strava_connected=1')
 
 
-# ── Webhook (handshake live; event dispatch is the ingest slice) ──────
+# ── Webhook ───────────────────────────────────────────────────────────
 
 @bp.route('/webhook', methods=['GET', 'POST'])
 def webhook():
-    """Strava push subscription. The GET handshake echoes `hub.challenge` so
-    the subscription validates; POST events return 200 (dispatch lands in the
-    ingest slice — a thin event needs a REST fetch + token refresh)."""
+    """Strava push subscription handler.
+
+    GET: the subscription-validation handshake — echo `hub.challenge`.
+
+    POST: a thin event `{object_type, object_id, aspect_type, owner_id,
+    subscription_id}`. Record it to `webhook_events`, map `owner_id` → local
+    user, and on an `activity` `create`/`update` synchronously fetch + ingest the
+    activity over REST (`routes.strava_ingest`). Strava events carry no
+    signature — the only authenticity check is the `subscription_id` matching the
+    one subscription we own (when `STRAVA_SUBSCRIPTION_ID` is configured). We
+    always return 200 (Strava retries any non-2xx, which would re-record); a
+    failed ingest is recorded against the event row for re-delivery."""
     if request.method == 'GET':
         challenge = request.args.get('hub.challenge')
         if challenge is not None:
             return jsonify({'hub.challenge': challenge}), 200
         return jsonify(status='ok'), 200
+
+    raw_body = request.get_data(as_text=True) or ''
+    try:
+        event = json.loads(raw_body) if raw_body else {}
+    except json.JSONDecodeError:
+        event = {}
+    if not isinstance(event, dict):
+        event = {}
+
+    expected_sub = os.environ.get('STRAVA_SUBSCRIPTION_ID')
+    received_sub = str(event.get('subscription_id') or '')
+    sig_ok = (not expected_sub) or hmac.compare_digest(received_sub, expected_sub)
+
+    object_type = event.get('object_type')
+    object_id = event.get('object_id')
+    aspect_type = event.get('aspect_type')
+    owner_id = event.get('owner_id')
+
+    db = get_db()
+    auth_row = (
+        pa.get_auth_by_provider_user_id(db, 'strava', str(owner_id))
+        if owner_id is not None else None
+    )
+    user_id = auth_row['user_id'] if auth_row else None
+
+    cur = db.execute(
+        'INSERT INTO webhook_events '
+        '(provider, event_type, provider_user_id, entity_id, user_id, '
+        ' payload, signature_ok, received_at) '
+        'VALUES (?, ?, ?, ?, ?, ?, ?, NOW()) RETURNING id',
+        ('strava', f'{object_type}.{aspect_type}',
+         str(owner_id) if owner_id is not None else None,
+         str(object_id) if object_id is not None else None,
+         user_id, raw_body, sig_ok),
+    )
+    event_id = cur.fetchone()['id']
+    db.commit()
+
+    should_ingest = (
+        sig_ok and user_id is not None
+        and object_type == 'activity' and aspect_type in ('create', 'update')
+    )
+    if should_ingest:
+        from routes import strava_ingest
+        try:
+            strava_ingest.fetch_and_ingest_activity(db, user_id, object_id)
+            db.execute(
+                'UPDATE webhook_events SET processed_at = NOW() WHERE id = ?',
+                (event_id,),
+            )
+            db.commit()
+        except Exception as exc:  # noqa: BLE001 — log + record + still 200
+            current_app.logger.exception('Strava ingestion failed for event %s', event_id)
+            db.execute(
+                'UPDATE webhook_events SET processed_at = NOW(), error = ? WHERE id = ?',
+                (str(exc)[:500], event_id),
+            )
+            db.commit()
+
     return jsonify(status='ok'), 200
