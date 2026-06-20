@@ -5,17 +5,24 @@ measure the same thing (sleep score, energy / body battery). Reads pull from:
 
   - `wellness_self_report`   — self-reported sleep, energy, soreness, mood
   - `body_metrics`           — weight, body fat %, resting HR
-  - `wellness_log`           — Garmin per-second wellness (`_WELLNESS.fit`)
+  - `wellness_log`           — per-second wellness: Garmin (`_WELLNESS.fit`),
+                               plus Polar / COROS continuous HR (`source` tag)
   - `daily_wellness_metrics`   — Garmin daily-derived metrics from
                                `_METRICS.fit` / `_SLEEP_DATA.fit` /
                                `_HRV_STATUS.fit` (sleep score, HRV, …)
+  - `provider_raw_record`    — external-provider daily wellness (Polar sleep /
+                               nightly-recharge HRV / cardio-load, COROS daily
+                               summary, Whoop daily cycle), the same
+                               provider-tagged rows Layer-3A coalesces
   - `cardio_log`             — cardio activities (count + duration)
   - `training_log`           — strength activities (count + duration)
 
-Sleep score and energy charts overlay self-report (normalized to 0–100) against
-the device reading on a single axis. VO2max / training readiness / active
-minutes still render as empty scaffolds — they live in FIT file types we
-haven't seen yet (#283 follow-up).
+Metrics that several devices all report — sleep hours, overnight HRV, resting
+HR, VO₂max, steps, calories — are coalesced per day across sources (highest
+device priority with a value wins), so whichever device the athlete wears
+charts its data rather than leaving a Garmin-only blank (#283). Sleep score and
+energy charts overlay self-report (normalized to 0–100) against the device
+reading on a single axis.
 """
 import json
 from datetime import date, datetime, timedelta
@@ -112,7 +119,7 @@ def index():
     ).fetchall()
 
     body_rows = db.execute(
-        'SELECT date, weight_kg, body_fat_pct, resting_hr '
+        'SELECT date, weight_kg, body_fat_pct, resting_hr, vo2_max '
         'FROM body_metrics WHERE user_id=? AND date >= ? ORDER BY date',
         (uid, cutoff)
     ).fetchall()
@@ -238,12 +245,25 @@ def index():
         '  restless_moments, floors_climbed, floors_descended, '
         '  intensity_minutes, spo2_avg, spo2_low, '
         '  sleep_deep_min, sleep_stress_avg, sleep_wake_count, '
+        '  sleep_start_ms, sleep_end_ms, vo2max_running, vo2max_cycling, '
         '  sleep_light_sub_score, sleep_rem_sub_score, '
         '  sleep_stress_sub_score, sleep_awake_sub_score, '
         '  sleep_stress_above_resting_pct '
         'FROM daily_wellness_metrics WHERE user_id=? AND date >= ? ORDER BY date',
         (uid, cutoff)
     ).fetchall()
+
+    # External-provider daily wellness (Polar / COROS / WHOOP) from
+    # provider_raw_record — the same provider-tagged daily records that feed
+    # Layer-3A coaching, now wired into the charts so non-Garmin sources surface
+    # too (#283 expansion). Defensive: a read failure (e.g. the table absent in
+    # a cold env) must never break the dashboard — log it (Rule #15) and fall
+    # back to no external rows so the Garmin/self-report charts still render.
+    try:
+        provider_rows = _provider_wellness_rows(db, uid, cutoff)
+    except Exception as exc:  # pragma: no cover - defensive
+        print(f'[wellness] provider_raw_record read failed: {exc!r}')
+        provider_rows = []
 
     # #469 — surface athlete's display unit so body-weight series renders
     # in their chosen unit.
@@ -257,6 +277,7 @@ def index():
         cardio_load, strength_load, strength_counts,
         garmin_rows, daily_metric_rows, bb_delta_rows,
         bb_overnight_rows=bb_overnight_rows,
+        provider_rows=provider_rows,
         unit_pref=unit_pref,
     )
     # Surface the body-series unit label to the chart JS without polluting
@@ -343,10 +364,129 @@ def _d(value) -> str:
 
 _STRESS_SAMPLE_MIN = 3.0  # Garmin samples stress ~every 3 minutes
 
+# Device priority for the per-(day, metric) coalesce — the highest-priority
+# source with a value for a given day wins. Mirrors the Layer-3A
+# `_coalesce_wellness_field` ordering (garmin>whoop>polar>coros) so the charts
+# and the coaching state agree on which device a value came from; `body` (a
+# manual/derived `body_metrics` entry) sits below the devices.
+_SOURCE_PRIORITY = {'garmin': 4, 'whoop': 3, 'polar': 2, 'coros': 1, 'body': 0}
+
+
+def _coalesce_series(candidates) -> list:
+    """Per date, the value from the highest-priority source wins
+    (garmin>whoop>polar>coros>body); NULLs are skipped. `candidates` is an
+    iterable of `(date_str, value, source)`. Returns a date-sorted [{x,y}]
+    series, so a metric that arrives from any connected device charts the same
+    way regardless of which device produced it."""
+    best: dict = {}
+    for d, value, source in candidates:
+        if value is None:
+            continue
+        prio = _SOURCE_PRIORITY.get(source, -1)
+        if d not in best or prio > best[d][0]:
+            best[d] = (prio, float(value))
+    return [{'x': d, 'y': best[d][1]} for d in sorted(best)]
+
+
+def _provider_wellness_rows(db, uid: int, cutoff: str) -> list[dict]:
+    """Per-day external-provider wellness from `provider_raw_record`, normalised
+    into a uniform shape the chart builder can coalesce alongside Garmin.
+
+    Reads the same provider-tagged rows Layer-3A's `q_layer3A_recent_wellness`
+    coalesces (`layer3a/integration.py`) — Polar sleep / nightly-recharge HRV /
+    cardio-load, COROS daily summary, Whoop daily cycle — and extracts the
+    metrics each carries. Sleep durations are normalised to hours; a COROS sleep
+    span (start/end ms) becomes hours too. One returned dict per source row;
+    `provider` carries the source tag for the coalesce priority."""
+    out: list[dict] = []
+
+    # Polar sleep (data_type='sleep') → total sleep minutes.
+    for r in db.execute(
+        "SELECT external_id AS date, "
+        "  (raw_payload->>'total_sleep_min')::float AS total_sleep_min "
+        "FROM provider_raw_record WHERE user_id=? AND provider='polar' "
+        "  AND data_type='sleep' AND external_id >= ?",
+        (uid, cutoff),
+    ).fetchall():
+        mins = r['total_sleep_min']
+        out.append({'date': r['date'], 'provider': 'polar',
+                    'sleep_hours': (mins / 60.0) if mins is not None else None})
+
+    # Polar nightly recharge (data_type='hrv') → RMSSD HRV + ANS-charge recovery.
+    for r in db.execute(
+        "SELECT external_id AS date, "
+        "  (raw_payload->>'hrv_rmssd_ms')::float AS hrv_ms, "
+        "  (raw_payload->>'ans_charge')::float AS ans_charge "
+        "FROM provider_raw_record WHERE user_id=? AND provider='polar' "
+        "  AND data_type='hrv' AND external_id >= ?",
+        (uid, cutoff),
+    ).fetchall():
+        out.append({'date': r['date'], 'provider': 'polar',
+                    'hrv_ms': r['hrv_ms'], 'recovery_score': r['ans_charge']})
+
+    # Polar cardio-load (data_type='cardio_load') → daily / acute / chronic.
+    for r in db.execute(
+        "SELECT external_id AS date, "
+        "  (raw_payload->>'daily_load')::float   AS daily_load, "
+        "  (raw_payload->>'acute_load')::float   AS acute_load, "
+        "  (raw_payload->>'chronic_load')::float AS chronic_load "
+        "FROM provider_raw_record WHERE user_id=? AND provider='polar' "
+        "  AND data_type='cardio_load' AND external_id >= ?",
+        (uid, cutoff),
+    ).fetchall():
+        out.append({'date': r['date'], 'provider': 'polar',
+                    'daily_load': r['daily_load'], 'acute_load': r['acute_load'],
+                    'chronic_load': r['chronic_load']})
+
+    # COROS daily summary → resting HR, nightly PPG-HRV, steps, calories, sleep
+    # span. The per-second HRV/HR stream lives in wellness_log (already charted).
+    for r in db.execute(
+        "SELECT external_id AS date, "
+        "  (raw_payload->>'rhr')::float            AS rhr, "
+        "  (raw_payload->>'ppg_hrv')::float        AS ppg_hrv, "
+        "  (raw_payload->>'steps')::float          AS steps, "
+        "  (raw_payload->>'calories')::float       AS calories, "
+        "  (raw_payload->>'sleep_start_ms')::bigint AS sleep_start_ms, "
+        "  (raw_payload->>'sleep_end_ms')::bigint   AS sleep_end_ms "
+        "FROM provider_raw_record WHERE user_id=? AND provider='coros' "
+        "  AND data_type='daily_summary' AND external_id >= ?",
+        (uid, cutoff),
+    ).fetchall():
+        s, e = r['sleep_start_ms'], r['sleep_end_ms']
+        sleep_hours = ((e - s) / 3_600_000.0
+                       if s is not None and e is not None and e > s else None)
+        out.append({'date': r['date'], 'provider': 'coros',
+                    'resting_hr': r['rhr'], 'hrv_ms': r['ppg_hrv'],
+                    'steps': r['steps'], 'calories': r['calories'],
+                    'sleep_hours': sleep_hours})
+
+    # Whoop daily cycle (physiological_cycles.csv) → sleep / HRV / resting HR +
+    # recovery score + day strain.
+    for r in db.execute(
+        "SELECT external_id AS date, "
+        "  (raw_payload->>'total_sleep_min')::float AS total_sleep_min, "
+        "  (raw_payload->>'hrv_rmssd_ms')::float    AS hrv_ms, "
+        "  (raw_payload->>'resting_hr')::float      AS resting_hr, "
+        "  (raw_payload->>'recovery_score')::float  AS recovery_score, "
+        "  (raw_payload->>'day_strain')::float      AS day_strain "
+        "FROM provider_raw_record WHERE user_id=? AND provider='whoop' "
+        "  AND data_type='daily_summary' AND external_id >= ?",
+        (uid, cutoff),
+    ).fetchall():
+        mins = r['total_sleep_min']
+        out.append({'date': r['date'], 'provider': 'whoop',
+                    'sleep_hours': (mins / 60.0) if mins is not None else None,
+                    'hrv_ms': r['hrv_ms'], 'resting_hr': r['resting_hr'],
+                    'recovery_score': r['recovery_score'],
+                    'strain': r['day_strain']})
+
+    return out
+
 
 def _build_chart_data(self_rows, body_rows, cardio_rows, strength_rows,
                       strength_count_rows, garmin_rows, daily_metric_rows=(),
-                      bb_delta_rows=(), bb_overnight_rows=(), unit_pref=None):
+                      bb_delta_rows=(), bb_overnight_rows=(), provider_rows=(),
+                      unit_pref=None):
     self_by_date = {_d(r['date']): r for r in self_rows}
     garmin_by_date = {_d(r['date']): r for r in garmin_rows}
     daily_by_date = {_d(r['date']): r for r in daily_metric_rows}
@@ -464,17 +604,74 @@ def _build_chart_data(self_rows, body_rows, cardio_rows, strength_rows,
     }
     resting_calories = _maybe_series(daily_by_date, 'resting_metabolic_rate')
 
-    # Heart-rate card already pulls min/avg/max from wellness_log; if
-    # daily_wellness_metrics has the authoritative resting HR from [211],
-    # that wins over wellness_log's MIN (which can catch brief dips and
-    # under-report). Render both — the rest line on the HR card swaps to
-    # Garmin's value when present.
-    garmin_resting_hr = _maybe_series(daily_by_date, 'resting_hr')
-    if garmin_resting_hr:
-        heart_rate['resting'] = garmin_resting_hr
+    # ── Multi-source device coalesce (#283 expansion) ─────────────────────
+    # Sleep hours, overnight HRV, resting HR, VO₂max, steps and calories each
+    # arrive from several devices (Garmin daily metrics, plus Polar / COROS /
+    # Whoop via provider_raw_record). Per (day, metric) the highest-priority
+    # source with a value wins (garmin>whoop>polar>coros>body), so whichever
+    # device the athlete wears charts its data — non-Garmin users are no longer
+    # blank. Garmin's richer native sub-metrics (HRV highest-5min, sleep
+    # sub-scores, body battery) stay Garmin-only on their own cards.
+    sleep_hours_c, hrv_c, rhr_c, vo2_c = [], [], [], []
+    recovery_c, strain_c = [], []
+    load_daily_c, load_acute_c, load_chronic_c = [], [], []
+    steps_c, cal_c = [], []
+
+    for d, r in daily_by_date.items():
+        s, e = r.get('sleep_start_ms'), r.get('sleep_end_ms')
+        if s is not None and e is not None and e > s:
+            sleep_hours_c.append((d, (e - s) / 3_600_000.0, 'garmin'))
+        hrv_c.append((d, r.get('hrv_overnight_avg_ms'), 'garmin'))
+        rhr_c.append((d, r.get('resting_hr'), 'garmin'))
+        vo2_c.append((d, r.get('vo2max_running'), 'garmin'))
+
+    for r in garmin_rows:
+        d = _d(r['date'])
+        steps_c.append((d, r.get('daily_steps'), 'garmin'))
+        cal_c.append((d, r.get('daily_active_cal'), 'garmin'))
+
+    for r in body_rows:
+        vo2_c.append((_d(r['date']), r.get('vo2_max'), 'body'))
+
+    for r in provider_rows:
+        d = _d(r['date'])
+        src = r.get('provider', '')
+        sleep_hours_c.append((d, r.get('sleep_hours'), src))
+        hrv_c.append((d, r.get('hrv_ms'), src))
+        rhr_c.append((d, r.get('resting_hr'), src))
+        recovery_c.append((d, r.get('recovery_score'), src))
+        strain_c.append((d, r.get('strain'), src))
+        load_daily_c.append((d, r.get('daily_load'), src))
+        load_acute_c.append((d, r.get('acute_load'), src))
+        load_chronic_c.append((d, r.get('chronic_load'), src))
+        steps_c.append((d, r.get('steps'), src))
+        cal_c.append((d, r.get('calories'), src))
+
+    sleep_hours_device = _coalesce_series(sleep_hours_c)
+    # Heart-rate card already pulls min/avg/max from wellness_log; the
+    # authoritative daily resting HR (Garmin [211], COROS rhr, Whoop) wins over
+    # wellness_log's MIN (which catches brief dips and under-reports) when any
+    # device reports it.
+    device_rhr = _coalesce_series(rhr_c)
+    if device_rhr:
+        heart_rate['resting'] = device_rhr
     heart_rate['resting_7day_avg'] = _maybe_series(
         daily_by_date, 'resting_hr_7day_avg'
     )
+    hrv['overnight'] = _coalesce_series(hrv_c)
+    daily_activity['steps'] = _coalesce_series(steps_c)
+    daily_activity['active_cal'] = _coalesce_series(cal_c)
+    vo2max_running = _coalesce_series(vo2_c)
+    vo2max_cycling = _maybe_series(daily_by_date, 'vo2max_cycling')
+    # Recovery readiness (0–100): Whoop recovery score + Polar ANS charge.
+    recovery = _coalesce_series(recovery_c)
+    # Training strain (Whoop, 0–21) and Polar cardio-load (daily/acute/chronic).
+    strain = _coalesce_series(strain_c)
+    cardio_load = {
+        'daily':   _coalesce_series(load_daily_c),
+        'acute':   _coalesce_series(load_acute_c),
+        'chronic': _coalesce_series(load_chronic_c),
+    }
 
     heat_acclimation = _maybe_series(daily_by_date, 'heat_acclimation_pct')
     acute_load = _maybe_series(daily_by_date, 'acute_training_load')
@@ -559,6 +756,7 @@ def _build_chart_data(self_rows, body_rows, cardio_rows, strength_rows,
 
     return {
         'sleep_hours':   sleep_hours,
+        'sleep_hours_device': sleep_hours_device,
         'sleep_score':   sleep_score,
         'energy':        energy,
         'soreness':      soreness,
@@ -585,13 +783,19 @@ def _build_chart_data(self_rows, body_rows, cardio_rows, strength_rows,
         'sleep_wake_count': sleep_wake_count,
         'sleep_sub_scores': sleep_sub_scores,
         'sleep_stress_above_resting': sleep_stress_above_resting,
-        # #283 follow-up — these still need their own FIT file types or a
-        # field map we haven't decoded. `active_minutes` was retired in
-        # favour of `intensity_minutes` (Garmin's published metric =
-        # moderate + 2 × vigorous, already wired from MonitoringMessage).
+        # Cross-source recovery / load metrics (#283 expansion): Whoop recovery
+        # + Polar ANS charge, Whoop strain, Polar cardio-load.
+        'recovery':         recovery,
+        'strain':           strain,
+        'cardio_load':      cardio_load,
+        # VO₂max now lights up from any source — Garmin daily metrics or a
+        # manual/derived `body_metrics.vo2_max` entry (#283 expansion).
+        'vo2max_running':   vo2max_running,
+        'vo2max_cycling':   vo2max_cycling,
+        # `active_minutes` was retired in favour of `intensity_minutes`
+        # (Garmin's published metric = moderate + 2 × vigorous). Training
+        # readiness still needs a decoded FIT field / provider source.
         'training_readiness': [],
-        'vo2max_running':     [],
-        'vo2max_cycling':     [],
     }
 
 
@@ -638,6 +842,7 @@ _HEADLINE_METRICS = [
     ('hrv.overnight',                'HRV',         ' ms',  'up'),
     ('heart_rate.resting',           'Resting HR',  ' bpm', 'down'),
     ('sleep_score.device',           'Sleep score', '',     'up'),
+    ('recovery',                     'Recovery',    '',     'up'),
     ('body_battery.overnight_delta', 'BB recovery', '',     'up'),
     ('restless_moments',             'Restless',    '',     'down'),
 ]
