@@ -1357,8 +1357,6 @@ _PG_MIGRATIONS = [
         race_format TEXT NOT NULL CHECK (race_format IN ('single_day', 'continuous_multi_day', 'stage_race')),
         distance_km NUMERIC NULL,
         total_elevation_gain_m NUMERIC NULL,
-        race_rules_summary TEXT NULL,
-        mandatory_gear_text TEXT NULL,
         event_locale_id BIGINT NULL REFERENCES locale_profiles(id) ON DELETE SET NULL,
         is_target_event BOOLEAN NOT NULL DEFAULT FALSE,
         notes TEXT NULL,
@@ -1443,7 +1441,7 @@ _PG_MIGRATIONS = [
     # their actual goal; the orchestrator threads them into the Layer 3B call.
     # All nullable so legacy rows survive without backfill; the goal_outcome
     # CHECK mirrors layer3b.builder._VALID_GOAL_OUTCOMES, and pack-weight is a
-    # numeric kg alongside the free-text mandatory_gear_text.
+    # numeric kg (the structured complement to the free-text race notes).
     "ALTER TABLE race_events ADD COLUMN IF NOT EXISTS goal_outcome TEXT NULL CHECK (goal_outcome IS NULL OR goal_outcome IN ('Finish', 'Compete mid-pack', 'Podium'))",
     "ALTER TABLE race_events ADD COLUMN IF NOT EXISTS first_time_at_distance BOOLEAN NULL",
     "ALTER TABLE race_events ADD COLUMN IF NOT EXISTS time_goal TEXT NULL",
@@ -2409,6 +2407,51 @@ _PG_MIGRATIONS = [
     # (preferred-home city); the v1 coaching-review writer + form were removed.
     # Empty in prod at drop time (0 rows). DROP IF EXISTS is idempotent.
     "DROP TABLE IF EXISTS plan_travel",
+    # ── #438 — drop the free-text `mandatory_gear_text` race-event field ──────
+    # Required kit is captured structurally by the route-locale equipment model
+    # (race_route_locale_equipment) + the locale equipment overrides; the
+    # free-text paste-from-race-director duplicate drove no consumer that the
+    # structured surface doesn't serve better. The race-week brief no longer
+    # reads it (kit_manifest now synthesizes from route-locale equipment + the
+    # merged race notes). DROP IF EXISTS is idempotent + no-op on a fresh DB
+    # (the column was removed from CREATE TABLE in the same change).
+    "ALTER TABLE race_events DROP COLUMN IF EXISTS mandatory_gear_text",
+    # ── #439 — merge `race_rules_summary` into `notes` (single free-text field) ─
+    # The race-edit form split "Race rules summary" and "Notes" into two adjacent
+    # textareas. The brief reader only rendered race_rules_summary, so anything
+    # the athlete typed into Notes never reached the synthesizer (the #306/#338
+    # root: rules captured but never read). The two columns fold into the
+    # surviving `notes` field (the more general name — rules + context + portage),
+    # and the brief now renders `notes` in full. Guarded DO block so the fold +
+    # column drop run exactly once: when race_rules_summary still exists, prepend
+    # its content to notes (blank-line separated; either side may be NULL/empty),
+    # then drop the column. No-op on a fresh DB (column already absent from
+    # CREATE TABLE) and on re-run (column already dropped).
+    """DO $$
+    BEGIN
+        IF EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_name = 'race_events' AND column_name = 'race_rules_summary'
+        ) THEN
+            UPDATE race_events
+               SET notes = NULLIF(
+                       btrim(
+                           COALESCE(race_rules_summary, '')
+                           || CASE
+                                WHEN COALESCE(race_rules_summary, '') <> ''
+                                     AND COALESCE(notes, '') <> ''
+                                THEN E'\\n\\n'
+                                ELSE ''
+                              END
+                           || COALESCE(notes, ''),
+                           E'\\n'
+                       ),
+                       ''
+                   )
+             WHERE COALESCE(race_rules_summary, '') <> '';
+            ALTER TABLE race_events DROP COLUMN race_rules_summary;
+        END IF;
+    END $$;""",
 ]
 
 _CLOTHING_SEEDS = [

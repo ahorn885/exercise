@@ -245,27 +245,15 @@
         </div>
       </div>
 
-      <div class="col-12">
-        <label class="form-label" for="race_rules_summary">Race rules summary</label>
-        <textarea class="form-control" id="race_rules_summary" name="race_rules_summary" rows="3"
-                  placeholder="Paste mandatory checkpoints, time cuts, support rules, gear inspections, etc.">{{ race.race_rules_summary if race and race.race_rules_summary else '' }}</textarea>
-      </div>
-
-      <div class="col-12">
-        <label class="form-label" for="mandatory_gear_text">Mandatory gear list</label>
-        <textarea class="form-control" id="mandatory_gear_text" name="mandatory_gear_text" rows="3"
-                  placeholder="Paste the race-director-published mandatory gear list.">{{ race.mandatory_gear_text if race and race.mandatory_gear_text else '' }}</textarea>
-      </div>
-
       {% set existing_terrain = (race.race_terrain if race and race.race_terrain else []) %}
       {% include '_race_terrain_editor.html' %}
 
       <div class="col-12">
-        <label class="form-label" for="notes">Notes</label>
-        <textarea class="form-control" id="notes" name="notes" rows="2"
-                  placeholder="Training context, travel logistics, family attending, etc.">{{ race.notes if race and race.notes else '' }}</textarea>
+        <label class="form-label" for="notes">Race notes &amp; rules</label>
+        <textarea class="form-control" id="notes" name="notes" rows="5"
+                  placeholder="Race rules (mandatory checkpoints, time cuts, support rules, gear inspections) plus any other context — training, travel logistics, family attending.">{{ race.notes if race and race.notes else '' }}</textarea>
         <small class="text-muted">
-          Carrying a boat, packraft, or other gear between legs (portage)? Note the load and where it's carried here.
+          One free-text field the race-week brief reads in full: race rules and any other context. Carrying a boat, packraft, or other gear between legs (portage)? Note the load and where it's carried here.
         </small>
       </div>
 

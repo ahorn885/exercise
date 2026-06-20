@@ -35,8 +35,7 @@ The §3.1 Event metadata table is amended as follows (changed rows shown; unchan
 
 | Variable | Source | Notes |
 |---|---|---|
-| `event.race_rules_summary` | **`race_event_payload.race_rules_summary` (D-66 amendment 2026-05-18; v1 pointed to Layer 1 §H.2)** | Mandatory-gear list, cut-off times, segment-specific rules. Drives `kit_manifest` mandatory entries. Free-text per `Race_Events_D66_Design_v1.md` Decision 3; LLM consumes verbatim per D9 hybrid. |
-| `event.mandatory_gear_text` | **`race_event_payload.mandatory_gear_text` (D-66 amendment 2026-05-18; new v2 source pointer)** | Free-text mandatory gear list as the athlete pasted from the race director's published guide. LLM extracts items into `kit_manifest` per D9 hybrid + flags non-canonical items with `layer0_canonical=false`. |
+| `event.notes` | **`race_event_payload.notes` (#439 merge 2026-06-20; supersedes the split `race_rules_summary` + `mandatory_gear_text` source pointers)** | Single merged free-text field — race rules (mandatory checkpoints, cut-off times, support rules, gear inspections), any mandatory-gear lines the athlete pasted, portage/logistics, and general context. Drives `kit_manifest` mandatory entries; LLM consumes verbatim per D9 hybrid + flags non-canonical gear items with `layer0_canonical=false`. (#438 removed the dedicated `mandatory_gear_text` field — structured route-locale equipment is the primary kit surface; #439 merged the prior `race_rules_summary` + `notes` textareas because the brief reader only pulled a subset of fields, so Notes text never reached the synthesizer.) |
 | `event.locales[]` | **DEPRECATED (D-66 amendment 2026-05-18).** Replaced by structured `route_locales[]` from `race_event_payload.route_locales` per new §3.11 below. Single-day events with no route-locale graph fall through to empty (rendered as "Single-day event; no structured route-locale graph"). | — |
 
 ### 3.11 NEW — Route locales (D-66 structured graph)
@@ -47,10 +46,10 @@ Added 2026-05-18 (paired D-66 implementation Step 4e). Replaces v1's flat `event
 |---|---|---|
 | `race_event_payload.route_locales[]` | `layer4/context.py` `RaceEventPayload.route_locales` (D-66 typed contract) | Ordered (sorted ascending by `sequence_idx`) list of `RouteLocale` records. Each entry: `role` (closed 7-element enum: start / transition_area / aid_station / drop_bag_point / bivvy / finish / other), `sequence_idx` (1-indexed; gaps allowed), `name`, optional `mile_marker`, optional `lat`/`lng`/`mapbox_id` (Mapbox anchoring; v1 does not consume coordinates), optional `notes`, nested `equipment: list[RouteLocaleEquipment]` (each with `equipment_name`, optional `quantity_text`, optional `notes`). |
 | `race_event_payload.route_locales[].role`-anchor invariant | Enforced at construction (per `Race_Events_D66_Design_v1.md` §4.2) | When `route_locales` non-empty: first entry has `role='start'` and last has `role='finish'`. Single-day events that fill in start + finish only meet this trivially; multi-day events fill in intermediate aid stations / transition areas / drop bag points / bivvy points. |
-| Single-day events with empty `route_locales` | Legal per `Race_Events_D66_Design_v1.md` §4.2 structural invariant 4 | Validator rule `kit_manifest_inputs_incomplete` skips when `race_format == 'single_day'` per §5.4 D-66 active branch. The synthesizer reads `mandatory_gear_text` (free-text) for kit_manifest construction. |
-| Multi-day events with empty `route_locales` | Soft warning per validator rule `kit_manifest_inputs_incomplete_no_route_locales` | Synthesizer renders the kit_manifest from `mandatory_gear_text` only; orchestrator emits `Observation(category='data_gap')` post-validation; brief ships as-drafted. |
+| Single-day events with empty `route_locales` | Legal per `Race_Events_D66_Design_v1.md` §4.2 structural invariant 4 | Validator rule `kit_manifest_inputs_incomplete` skips when `race_format == 'single_day'` per §5.4 D-66 active branch. The synthesizer reads the free-text `notes` (#439 merged field) for kit_manifest construction. |
+| Multi-day events with empty `route_locales` | Soft warning per validator rule `kit_manifest_inputs_incomplete_no_route_locales` | Synthesizer renders the kit_manifest from the free-text `notes` only; orchestrator emits `Observation(category='data_gap')` post-validation; brief ships as-drafted. |
 
-**Coaching consumption pattern (synthesizer-side):** when route_locales is non-empty, render kit_manifest items grouped by route-locale role (start kit / aid-station resupply / transition gear / drop-bag contents / finish-line recovery). When route_locales is empty + multi-day, kit_manifest degrades to a flat list extracted from `mandatory_gear_text`.
+**Coaching consumption pattern (synthesizer-side):** when route_locales is non-empty, render kit_manifest items grouped by route-locale role (start kit / aid-station resupply / transition gear / drop-bag contents / finish-line recovery). When route_locales is empty + multi-day, kit_manifest degrades to a flat list extracted from the free-text `notes`.
 
 ### 4.1 Tool schema (v2 surgical amendments)
 
@@ -83,19 +82,12 @@ Per-shape discipline guidance per `Layer4_Spec.md` §7.3.1: HRTarget = universal
 Added to the v1 §6 template after the existing Event-metadata header block, before "# Athlete profile":
 
 ```
-{{#race_event_payload.race_rules_summary}}
-**Race rules summary (verbatim from athlete):**
+{{#race_event_payload.notes}}
+**Race notes & rules (verbatim from athlete):**
 ```
-{{race_event_payload.race_rules_summary}}
+{{race_event_payload.notes}}
 ```
-{{/race_event_payload.race_rules_summary}}
-
-{{#race_event_payload.mandatory_gear_text}}
-**Mandatory gear text (verbatim from athlete):**
-```
-{{race_event_payload.mandatory_gear_text}}
-```
-{{/race_event_payload.mandatory_gear_text}}
+{{/race_event_payload.notes}}
 
 {{#race_event_payload.route_locales}}
 # Route locales (D-66 structured graph)

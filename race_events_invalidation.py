@@ -13,9 +13,9 @@ that consume the affected fields:
 | target-row race_format / target-row deletion       |                                                  | _NON_SINGLE_SESSION = plan_create + plan_refresh +   |
 |                                                    |                                                  | race_week_brief (the periodization-grade set)        |
 | Brief-only fields on target row (distance_km /     | `evict_on_target_event_brief_field_change()`     | `cache.invalidate_entry_point('race_week_brief')` —  |
-| total_elevation_gain_m / race_rules_summary /      |                                                  | narrowest cut; only the brief reads these fields     |
-| mandatory_gear_text / notes) + route_locales CRUD  |                                                  |                                                      |
-| + route_locale_equipment CRUD on target race       |                                                  |                                                      |
+| total_elevation_gain_m / notes — the merged race-  |                                                  | narrowest cut; only the brief reads these fields     |
+| rules+notes free-text field, #439) + route_locales |                                                  |                                                      |
+| CRUD + route_locale_equipment CRUD on target race  |                                                  |                                                      |
 | Any edit on a non-target race_events row           | (no helper — writer skips the call)              | No invalidation; race not in scope of any plan       |
 
 Non-target edits (e.g., updating a future race that is not the athlete's
