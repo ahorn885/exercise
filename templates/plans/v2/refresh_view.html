@@ -59,8 +59,9 @@
               <span class="dow">{{ sess.time_of_day }}</span>
             {% endif %}
           </div>
-          {% if sess.coaching_intent %}<p class="sess-intent">{{ sess.coaching_intent }}</p>{% endif %}
-          {% if sess.session_notes %}<p class="sess-notes">{{ sess.session_notes }}</p>{% endif %}
+          {# #689 — label the two narrative fields so their distinct purposes read clearly (coaching_intent = why this session; session_notes = scheduling / focus), matching the labels already used on the suggestion view. #}
+          {% if sess.coaching_intent %}<p class="sess-intent"><strong>Coaching intent.</strong> {{ sess.coaching_intent }}</p>{% endif %}
+          {% if sess.session_notes %}<p class="sess-notes"><strong>Session notes.</strong> {{ sess.session_notes }}</p>{% endif %}
           {# #698 Track 2 (Slice C2) — optional cardio drill on a cardio session #}
           {% if sess.cardio_drills %}
             {% for drill in sess.cardio_drills %}

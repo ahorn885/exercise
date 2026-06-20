@@ -78,7 +78,7 @@ Today this logic is **duplicated and divergent**: `routes/locales.py::_effective
 
 ### 5.2 Cluster (home + nearby)
 - `cluster_locale_ids(db, user_id)` = the home locale **+ every saved locale within `_CLUSTER_RADIUS_KM` of home** by `lat`/`lng` (reuse D-59's `42.2 km` nearby radius). Manual-entry locales (no coords) are included only if explicitly the home or flagged in-cluster.
-- Plan-gen passes the full `cluster_locale_ids` to Layer 2C (today stubbed to `[primary_locale]`); 2C already accepts a list and produces one `effective_pool` per locale. **Session→locale assignment stays in Track 2** — Track 1 only guarantees 2C sees every cluster locale's pool.
+- Plan-gen passes the full `cluster_locale_ids` to Layer 2C (~~today stubbed to `[primary_locale]`~~ **stub lifted #780, 2026-06-20:** `_upstream_full_cone` now invokes 2C **once per cluster locale**, each against that locale's own `locale_effective_tags`, and threads the per-locale `dict[locale_id, Layer2CPayload]` to the validator + locale-assign + cache key — so every saved locale is in-cluster and a nearby-venue session is no longer a `session_locale_not_in_cluster` false positive). **Session→locale assignment stays in Track 2** — Track 1 only guarantees 2C sees every cluster locale's pool.
 - **Cluster rule (RESOLVED — Andy 2026-06-05):** radius-based — home + every saved locale within **26.2 mi / 42.2 km** of home (the existing D-59 nearby radius). A manual "include this one anyway" (a place just outside the radius the athlete trains at often) is a **deferred** follow-up, not in this track.
 - `_CLUSTER_RADIUS_KM = 42.2` (= 26.2 mi); reuse the D-59 great-circle distance on `lat`/`lng`.
 

@@ -56,6 +56,23 @@
     {% endif %}
   </div>
 
+  <div class="card card-pad sec cond-card">
+    <div class="nutri-head">
+      <p class="eyebrow accent">● Conditions</p>
+      <form method="post" class="nutri-regen"
+            action="{{ url_for('plan_create.regenerate_conditions', plan_version_id=plan_version_id) }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button type="submit" class="btn btn-ghost btn-sm">{{ 'Regenerate' if conditions and conditions.days else 'Generate' }}</button>
+      </form>
+    </div>
+    {% if conditions and conditions.days %}
+    {% for n in conditions.notes %}<p class="rail-note">{{ n }}</p>{% endfor %}
+    <p class="rail-note">Typical high/low, rain chance and what to wear appear on each outdoor training day below.</p>
+    {% else %}
+    <p class="rail-note">Conditions haven't been generated for this plan yet — they need at least one session at a locale with coordinates.</p>
+    {% endif %}
+  </div>
+
   {% if days %}
   <div class="sec">
     {% set ns = namespace(phase=None, week=None) %}
@@ -98,6 +115,21 @@
           {% endif %}
         </div>
         {% endif %}
+        {% set dc = conditions_by_date.get(d) %}
+        {% if dc %}
+        {% set band_icon = {'freezing': '🥶', 'cold': '❄️', 'cool': '🌥️', 'mild': '🌤️', 'warm': '☀️', 'hot': '🔥'} %}
+        <div class="day-weather">
+          <span class="chip{{ ' warn' if dc.thermal_band in ['freezing', 'hot'] else '' }}">{{ band_icon.get(dc.thermal_band, '🌡️') }} {{ dc.thermal_band|capitalize }}</span>
+          <span class="rail-note day-weather-temps">{{ dc.temp_max_c|round|int }}° / {{ dc.temp_min_c|round|int }}°C{% if dc.wet_day_probability_pct %} · 💧 {{ dc.wet_day_probability_pct }}%{% endif %}</span>
+          {% if dc.clothing_summary %}<p class="day-weather-note">👕 {{ dc.clothing_summary }}</p>{% endif %}
+          {% if dc.kit_items %}<p class="day-weather-note">🎒 {{ dc.kit_items | join(', ') }}</p>{% endif %}
+          {% if dc.advisory_flags %}
+          <div class="day-weather-flags">
+            {% for f in dc.advisory_flags %}<span class="chip warn">{{ f }}</span>{% endfor %}
+          </div>
+          {% endif %}
+        </div>
+        {% endif %}
         {% if not sessions %}
         <div class="stack">
           <div class="card card-pad sess-card sess-rest">
@@ -127,8 +159,9 @@
               {% for f in sess.coaching_flags %}<span class="chip warn">{{ f|replace('_', ' ') }}</span>{% endfor %}
             </div>
             {% endif %}
-            {% if sess.coaching_intent %}<p class="sess-intent">{{ sess.coaching_intent }}</p>{% endif %}
-            {% if sess.session_notes %}<p class="sess-notes">{{ sess.session_notes }}</p>{% endif %}
+            {# #689 — label the two narrative fields so their distinct purposes read clearly (coaching_intent = why this session; session_notes = scheduling / focus), matching the labels already used on the suggestion view. #}
+            {% if sess.coaching_intent %}<p class="sess-intent"><strong>Coaching intent.</strong> {{ sess.coaching_intent }}</p>{% endif %}
+            {% if sess.session_notes %}<p class="sess-notes"><strong>Session notes.</strong> {{ sess.session_notes }}</p>{% endif %}
 
             {% if sess.kind == 'cardio' and sess.cardio_blocks %}
             <ol class="sess-blocks">

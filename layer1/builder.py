@@ -30,6 +30,7 @@ from layer4.context import (
     HealthConditionRecord,
     InjuryRecord,
     Layer1Availability,
+    Layer1CoachingPreference,
     Layer1Disclosures,
     Layer1DisciplineBaselines,
     Layer1EventGoal,
@@ -112,6 +113,7 @@ def build_layer1_payload(db, user_id: int) -> Layer1Payload:
     skill_toggle_states = _load_skill_toggle_states(db, user_id)
     supplements = _load_supplements(db, user_id)
     travel_constraint = _summarize_travel_constraint(db, user_id)
+    coaching_preferences = _load_coaching_preferences(db, user_id)
 
     health_status = Layer1HealthStatus(
         current_injuries=current_injuries,
@@ -159,6 +161,7 @@ def build_layer1_payload(db, user_id: int) -> Layer1Payload:
         # Layer-4-consumed convenience fields.
         experience_level=convenience["experience_level"],
         coaching_voice_preferences=convenience["coaching_voice_preferences"],
+        coaching_preferences=coaching_preferences,
         available_days_per_week=available_days_per_week,
         travel_constraint=travel_constraint,
         sleep_baseline=sleep_baseline_hours,
@@ -908,6 +911,35 @@ def _summarize_travel_constraint(db, user_id: int) -> str | None:
         f"-> travel_constraint={summary!r}"
     )
     return summary
+
+
+# ─── coaching_preferences (Coaching Memory) ──────────────────────────────────
+
+
+def _load_coaching_preferences(db, user_id: int) -> list[Layer1CoachingPreference]:
+    """#690 — durable Coaching Memory preferences. Ordered oldest-first with an
+    `id` tiebreaker so the list (and therefore `layer1_hash`) is deterministic
+    across reads even when two rows share a `created_at`. Mirrors the v1
+    `coaching.py` read so manually-added + auto-extracted prefs surface the same
+    way; the int `permanent` flag is normalized to bool for the typed model."""
+    cur = db.execute(
+        "SELECT category, content, permanent FROM coaching_preferences "
+        "WHERE user_id = ? ORDER BY created_at ASC, id ASC",
+        (user_id,),
+    )
+    prefs = [
+        Layer1CoachingPreference(
+            category=r["category"],
+            content=r["content"],
+            permanent=bool(r["permanent"]),
+        )
+        for r in cur.fetchall()
+    ]
+    print(  # Rule #15 — what reached the synthesizer's coaching-memory channel.
+        f"[layer1-coaching-memory] user={user_id} prefs={len(prefs)} "
+        f"permanent={sum(1 for p in prefs if p.permanent)}"
+    )
+    return prefs
 
 
 # ─── athlete_network_links ───────────────────────────────────────────────────
