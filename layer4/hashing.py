@@ -87,7 +87,14 @@ _LAYER2_BUNDLE_ATTRS = frozenset({"a", "b", "c", "d", "e"})
 # 2A/2B/2C/2D advisory flags (suppress-on-empty); changes the rendered prompt, so
 # cached plans + refreshes must regenerate. (single_session needs no bump — ad-hoc,
 # not cache-keyed.)
-LAYER4_PROMPT_REVISION = "14"
+# "15" = #690 strength variety + Coaching Memory — the per_phase synthesizer gains
+# a `Coaching memory` render block (durable `coaching_preferences`, suppress-on-
+# empty) and a stronger strength rotation/variety directive (shared
+# `strength_guidance` + per_phase), so the high-variety preference is honored and
+# accessory work spans the resolved pool. Changes the rendered prompt; cached
+# plans must regenerate. (The pref VALUES also ride `layer1_hash` now, so a
+# preference edit invalidates independently of this tag.)
+LAYER4_PROMPT_REVISION = "15"
 
 
 def _to_jsonable(obj: Any) -> Any:

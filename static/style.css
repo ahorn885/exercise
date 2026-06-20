@@ -1301,6 +1301,16 @@ body.bulk-mode { padding-bottom: 80px; }
 .app .day-fuel-note { width: 100%; font-size: 12px; color: var(--fg-3); margin: 2px 0 0; line-height: 1.5; }
 .app .race-fuel { width: 100%; display: flex; align-items: baseline; flex-wrap: wrap; gap: 6px 10px; margin-top: 4px; }
 
+.app .cond-card { margin-top: 16px; }
+.app .day-weather {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 6px 10px;
+  margin-bottom: 8px; padding: 6px 10px;
+  border-left: 2px solid var(--hairline); border-radius: 4px;
+}
+.app .day-weather .day-weather-temps { margin-top: 0; font-family: var(--mono); }
+.app .day-weather-note { width: 100%; font-size: 12px; color: var(--fg-3); margin: 2px 0 0; line-height: 1.5; }
+.app .day-weather-flags { width: 100%; display: flex; flex-wrap: wrap; gap: 6px; margin-top: 2px; }
+
 @media (max-width: 859.98px) {
   .app .plan-gen-title { font-size: 30px; }
   .app .gen-title { font-size: 32px; }

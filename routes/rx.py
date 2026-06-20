@@ -11,6 +11,16 @@ from athlete import get_athlete_profile
 
 bp = Blueprint('rx', __name__)
 
+# The per-user seed (init_db._seed_current_rx_for_user) stamps brand-new rows
+# with this rx_source and every dimension NULL — the single "genuinely
+# unconfigured" sentinel. A logged session ('From Training Log'), a manual edit
+# ('Manual override'), or a deload ('Auto-deload') all overwrite rx_source and
+# fill at least one dimension.
+SEED_RX_SOURCE = 'Needs initial setup'
+
+# The prescription dimensions that make a row a real capacity record.
+_RX_DIMENSIONS = ('current_sets', 'current_reps', 'current_weight', 'current_duration')
+
 
 def _unit_pref(db, uid):
     profile = get_athlete_profile(db, uid) or {}
@@ -22,6 +32,15 @@ def _decorate_entry(entry, unit_pref):
     for col in ('current_weight', 'next_weight', 'weight_increment'):
         v = display_weight(row.get(col), unit_pref)
         row[col + '_display'] = round(v, 1) if v is not None else None
+    # #693 — "needs setup" must reflect whether the exercise has been set up at
+    # all (a capacity record from a logged session, a manual edit, or a deload),
+    # not merely whether current_sets is populated. Keying off current_sets alone
+    # mislabeled capacity/edited rows that carry only a weight or duration as
+    # "needs setup". Reserve the label for a still-pristine seed row.
+    row['needs_setup'] = (
+        (row.get('rx_source') or SEED_RX_SOURCE) == SEED_RX_SOURCE
+        and not any(row.get(col) for col in _RX_DIMENSIONS)
+    )
     return row
 
 
