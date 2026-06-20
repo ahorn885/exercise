@@ -19,11 +19,9 @@ RHR, `average_hrv` is rMSSD/ms. Written in the same daily_summary shape the
 manual-CSV / Whoop paths use (`total_sleep_min`/`hrv_rmssd_ms`/`resting_hr`,
 keyed on the sleep `day`).
 
-NOTE: Oura is NOT yet read by Layer-3A's wellness coalesce (it reads garmin/
-whoop/polar/coros). This slice lands the data (record-don't-drop); wiring `oura`
-into `layer3a/integration.py` + the `_WELLNESS_SOURCE_PRIORITY` tiebreak is a
-bounded follow-up (mirrors #757 for whoop) — it carries a precedence decision
-(where Oura ranks), surfaced separately.
+Layer-3A reads this back: `layer3a/integration.py` has an `oura` daily_summary
+reader branch + `oura` in `_WELLNESS_SOURCE_PRIORITY` (ranked just under Whoop,
+above Polar/COROS), so Oura sleep/HRV/RHR reaches the coaching coalesce.
 
 BEST-EFFORT / VERIFY-OWED (Rule #14): the OAuth/token/personal_info/webhook
 surface + the event payload shape are Oura's documented form, env-overridable,
@@ -283,8 +281,8 @@ def _fetch(db: Any, user_id: int, path: str) -> dict | None:
 
 
 def _merge_daily(db: Any, user_id: int, day: str, partial: dict) -> None:
-    """Read-modify-write the day's oura daily_summary row (record-don't-drop;
-    not yet read by Layer-3A — see the module note)."""
+    """Read-modify-write the day's oura daily_summary row (the shape Layer-3A's
+    oura reader branch consumes)."""
     if not partial:
         return
     row = db.execute(
