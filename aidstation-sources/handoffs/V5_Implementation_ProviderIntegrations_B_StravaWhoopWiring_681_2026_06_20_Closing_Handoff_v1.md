@@ -1,6 +1,6 @@
 # V5 Implementation — #681 (B) live-provider wiring: Strava + Whoop OAuth connect + Strava ingest — Closing Handoff (2026-06-20)
 
-**Branch:** `claude/provider-integrations-api-kickoff-3poeuw` · **PR:** pending Andy's go (PR-gated) · **Suite:** 2870 passed / 30 skipped. Continues the same session as the §4 wellness-row transcription (handoff `..._WellnessRowTranscription_681_...`). **Slices: B1 (connect) + B2a (Strava ingest) + B2b (Whoop ingest).**
+**Branch:** `claude/provider-integrations-api-kickoff-3poeuw` · **PR:** pending Andy's go (PR-gated) · **Suite:** 2886 passed / 30 skipped. Continues the same session as the §4 wellness-row transcription (handoff `..._WellnessRowTranscription_681_...`). **Slices: B1 (Strava+Whoop connect) + B2a (Strava ingest) + B2b (Whoop ingest) + B3 (Wahoo) + B4 (Oura).** Four providers now have OAuth connect + inbound ingest through the #681 store (on top of the pre-existing COROS + Polar).
 
 ## 1. What this session did (the B arc)
 
@@ -40,8 +40,19 @@ Built per the design this handoff had flagged, against Whoop's documented v2 sch
 
 **VERIFY-OWED at go-live (Rule #14):** the v2 endpoint paths (`WHOOP_RECOVERY_PATH`/`WHOOP_SLEEP_PATH`/`WHOOP_WORKOUT_PATH`), the signature scheme, and the date derivation are the documented form, env-overridable, unverified against live payloads.
 
-## 4. NEXT
-**Wahoo / Oura / RWGPS** (connect + ingest, same pattern — each gated on an OAuth app registration), and/or **(C) #682 API** (Trigger #5 design pass). `provider_outbound_ref` + outbound serializers remain Wave 3b.
+### B3 — Wahoo (commit `82b29f6`)
+- `routes/wahoo.py` (NEW): `oauth_start`/`oauth_callback` (fetches `/v1/user` for the id) + webhook. Wahoo pushes the `workout_summary` inline, so ingest is **synchronous-from-payload** (no thin-pointer fetch). `normalize_wahoo_summary` per matrix §10.2: `workout_type_id` → discipline; distance m→mi, ascent m→ft, duration s→min; `work_accum` joules ÷4184 → kcal (`calories_accum` fallback). Writes via the shared cardio writer (source='wahoo', `wahoo_workout_id` dedup — column + uidx already existed). Configured `WAHOO_WEBHOOK_TOKEN` is the webhook auth gate.
+- `app.py` register + csrf/auth-exempt; `routes/profile.py` `CONNECTION_PROVIDERS`. `tests/test_wahoo_ingest.py` (+9).
+
+### B4 — Oura (commit `7f6e72c`)
+- `routes/oura.py` (NEW): `oauth_start`/`oauth_callback` (fetches `personal_info` for the id) + webhook (GET subscription-`challenge` handshake; POST thin event → on a `sleep` create/update GET the doc → `daily_summary` merge). `_ingest_sleep` per matrix §4.1: `total_sleep_duration` s→min, `lowest_heart_rate`→`resting_hr` (the real RHR, not the readiness contributor), `average_hrv`→`hrv_rmssd_ms`. Same merge-partial pattern as Whoop (record-don't-drop).
+- **NOT yet read by Layer-3A** — the coalesce reads garmin/whoop/polar/coros; Oura data lands but doesn't reach coaching until wired (see §4 decision 2).
+- `app.py` register + csrf/auth-exempt; `routes/profile.py` `CONNECTION_PROVIDERS`. `tests/test_oura_ingest.py` (+7).
+
+## 4. NEXT — two open decisions (surfaced, not guessed) + (C)
+1. **RWGPS ingest** — `routes/ride_with_gps.py` is still a stub. Its webhook is **1s-ack, no-retry** (RWGPS docs), so a synchronous fetch is genuinely lossy (a slow fetch → the event is gone for good). This is the case that justifies the **record-and-defer cron processor** (the `idx_webhook_events_pending` index + the every-minute Vercel cron already exist) — which would also be the shared reliability upgrade for Strava/Whoop/Wahoo/Oura. Decide the processor (new `/cron/webhooks/process` route + `vercel.json` cron) before wiring RWGPS.
+2. **Oura → Layer-3A coalesce** — add an `'oura'` reader branch in `layer3a/integration.py` + its rank in `_WELLNESS_SOURCE_PRIORITY` (currently garmin>whoop>polar>coros) so Oura sleep/HRV/RHR reaches coaching. Bounded (mirrors #757 for whoop), but the precedence rank is a judgment call (Oura is a dedicated recovery device → likely high, near whoop).
+3. Then **(C) #682 API** (Trigger #5 design pass). `provider_outbound_ref` + outbound serializers remain Wave 3b.
 
 ## 6.3 Read order for next session (Rule #13)
 1. `CLAUDE.md`. 2. `CURRENT_STATE.md` (last-shipped = this B arc). 3. `CARRY_FORWARD.md` *"Provider integrations & API — ACTIVE THREAD"* → (B) sub-bullets (B1/B2a ✅, B2b ⏭). 4. This handoff. 5. `routes/strava_ingest.py` + `routes/provider_auth.py` (the refresh helper) as the pattern Whoop mirrors. 6. `./scripts/verify-handoff.sh`.
@@ -59,6 +70,9 @@ Built per the design this handoff had flagged, against Whoop's documented v2 sch
 | Dedup index | `init_db.py` | `cardio_log_strava_activity_uidx ON cardio_log (user_id, strava_activity_id) WHERE strava_activity_id IS NOT NULL` |
 | Whoop ingest | `routes/whoop_ingest.py` | `verify_signature` (timestamp+body HMAC); `_merge_daily` (read-modify-write daily_summary); recovery `hrv_rmssd_milli`→`hrv_rmssd_ms`; sleep Σstages→`total_sleep_min` |
 | Whoop webhook | `routes/whoop.py` | webhook POST: `verify_signature`, `INSERT INTO webhook_events`, dispatch on `(event_type).endswith('.updated')`, always 200 |
-| Tests | `tests/test_provider_oauth_connect.py` + `tests/test_strava_ingest.py` + `tests/test_whoop_ingest.py` | +7 / +13 / +11 |
-| Suite | — | `/tmp/venv/bin/python -m pytest tests/ -q` → 2870 passed / 30 skipped |
-| Issue | #681 | comment: B1 + B2a + B2b shipped; gated on OAuth registrations; Wahoo/Oura/RWGPS or (C) next |
+| Wahoo | `routes/wahoo.py` | `oauth_start`/`oauth_callback`; `normalize_wahoo_summary` (`work_accum`*`_J_TO_KCAL`); webhook ingests `workout_summary` → `_ingest_workout_summary` source='wahoo' |
+| Oura | `routes/oura.py` | `oauth_start`/`oauth_callback`; webhook GET echoes `challenge`; `_ingest_sleep` → `_merge_daily` provider='oura'; total_sleep_duration/60, lowest_heart_rate→resting_hr |
+| Registration | `app.py` / `routes/profile.py` | `wahoo_bp`/`oura_bp` registered + csrf/auth-exempt; `('wahoo',…)`/`('oura',…)` in `CONNECTION_PROVIDERS` |
+| Tests | `test_provider_oauth_connect` + `test_strava_ingest` + `test_whoop_ingest` + `test_wahoo_ingest` + `test_oura_ingest` | +7 / +13 / +11 / +9 / +7 |
+| Suite | — | `/tmp/venv/bin/python -m pytest tests/ -q` → 2886 passed / 30 skipped |
+| Issue | #681 | comment: B1–B4 (Strava/Whoop/Wahoo/Oura) shipped; gated on OAuth registrations; RWGPS + Oura-coalesce decisions + (C) next |
