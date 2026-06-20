@@ -645,7 +645,6 @@ def generate_plan(db, start_date: str, weeks: int = 4, notes: str = '',
                   race_goals: str = '',
                   locale: str = 'home',
                   nutrition_goal: str = 'maintain',
-                  travel_schedule: list = None,
                   weekly_hours: float = 10.0,
                   rest_days=None,
                   race_philosophy: str = 'Compete',
@@ -685,17 +684,6 @@ def generate_plan(db, start_date: str, weeks: int = 4, notes: str = '',
 
     nutrition_section = _build_nutrition_context(ctx.get('body_metrics', []), nutrition_goal, race_philosophy)
 
-    travel_section = ''
-    if travel_schedule:
-        lines = ['## Locale Updates (adapt equipment and workout selection for these date ranges)']
-        for t in travel_schedule:
-            loc = t.get('locale', 'hotel')
-            city = t.get('city', '')
-            city_str = f' ({city})' if city else ''
-            indoor = ' — INDOOR ONLY (no outdoor activities)' if t.get('indoor_only') else ''
-            lines.append(f"- {t.get('start_date')} → {t.get('end_date')}: {loc.title()}{city_str}{indoor}")
-        travel_section = '\n'.join(lines) + '\n'
-
     user_msg = f"""Generate a {weeks}-week training plan block starting {start_date}.
 
 {race_section}
@@ -704,7 +692,7 @@ def generate_plan(db, start_date: str, weeks: int = 4, notes: str = '',
 
 {nutrition_section}
 
-{travel_section}Determine the correct training phase based on start date vs race date above.
+Determine the correct training phase based on start date vs race date above.
 Apply the periodization structure, weekly layout preferences, and variety rules from your coaching framework.
 Honour the preferred rest day and weekly hours target above.
 Tailor discipline emphasis to the race disciplines listed above.

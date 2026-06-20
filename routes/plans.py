@@ -12,6 +12,7 @@ from flask import Blueprint, render_template, request, redirect, url_for, flash,
 from database import get_db
 from routes.auth import current_user_id
 from plan_naming import target_race_name, generated_plan_name
+from athlete_event_windows_repo import resolve_weather_city
 
 bp = Blueprint('plans', __name__, url_prefix='/plans')
 
@@ -721,24 +722,10 @@ def view_plan(plan_id):
     clothing_recs = []
     try:
         from coaching import get_clothing_context
-        today_str = date_type.today().isoformat()
-        # plan_travel is parent-JOIN scoped via training_plans
-        trip = db.execute(
-            '''SELECT pt.city FROM plan_travel pt
-               JOIN training_plans tp ON tp.id = pt.plan_id
-               WHERE pt.plan_id=? AND tp.user_id=?
-                 AND pt.start_date<=? AND pt.end_date>=? AND pt.city!='' LIMIT 1''',
-            (plan_id, uid, today_str, today_str)
-        ).fetchone()
-        city = trip['city'] if trip else ''
-        if not city:
-            # Track 1 — home city via the preferred-flagged locale (replaces
-            # the hardcoded locale='home').
-            home = db.execute(
-                "SELECT city FROM locale_profiles WHERE preferred AND user_id=? LIMIT 1",
-                (uid,)
-            ).fetchone()
-            city = home['city'] if home and home['city'] else ''
+        # City for weather/clothing: an 'away' event window covering today wins,
+        # else the preferred-home city. Athlete-scoped — replaces the retired
+        # per-plan plan_travel read.
+        city = resolve_weather_city(db, uid, date_type.today())
         clothing_recs = get_clothing_context(db, plan_id, city)
     except Exception:
         pass
