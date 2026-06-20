@@ -69,6 +69,11 @@ class DayNutrition(_Base):
     load_tier: LoadTier
     cho_floor_constrained: bool = False
     non_training_floor_applied: bool = False
+    # Race-week carbohydrate loading — the 2 days before a race carry a glycogen-
+    # supercompensation CHO target (~10 g/kg). When True, `total_kcal` and
+    # `macros` reflect the loading (CHO pinned high, energy driven up) rather than
+    # the normal load-redistribution.
+    carb_loading_applied: bool = False
     race_fueling_event_ids: list[str] = Field(default_factory=list)
     fueling_note: str
 
@@ -84,6 +89,11 @@ class WeekReconciliation(_Base):
     weekly_baseline_kcal: int = Field(ge=0)
     weekly_assigned_kcal: int = Field(ge=0)
     non_training_floor_applied: bool = False
+    # Energy added on top of the redistribution baseline by race-week carb
+    # loading (Σ over the week's carb-load days of loaded − redistributed kcal).
+    # Explains why `weekly_assigned_kcal` exceeds `weekly_baseline_kcal` on a
+    # loading week — the surplus is deliberate glycogen supercompensation.
+    carb_loading_surplus_kcal: int = 0
 
 
 class RaceFuelingPlan(_Base):

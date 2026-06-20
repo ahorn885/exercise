@@ -37,6 +37,15 @@ The #767 manual file-upload sub-track is **COMPLETE** (slices 1+2+4 merged, 3 re
 
 ---
 
+## #283 — wellness charts wired to ALL sources (the read-side payoff of the canonical store) (2026-06-20) — BUILT; live-verify owed
+
+The `/wellness` dashboard now reads `provider_raw_record` (Polar / COROS / Whoop) + internal `body_metrics.vo2_max`, not just Garmin. `routes/wellness.py:_provider_wellness_rows()` runs the same `raw_payload->>'…'` extractions Layer-3A uses; `_coalesce_series()` + `_SOURCE_PRIORITY` (garmin>whoop>polar>coros>body) pick the per-day winner for overlapping metrics (sleep hours, overnight HRV, resting HR, VO₂max, steps, calories). New cards: Recovery (Whoop recovery / Polar ANS charge), Training strain (Whoop), Cardio load (Polar daily/acute/chronic); VO₂max cards now draw. Garmin-non-regressive; full suite 2838/30. Handoff `handoffs/V5_Implementation_Wellness_MultiSourceCharts_283_2026_06_20_Closing_Handoff_v1.md`.
+
+- **LIVE-VERIFY owed (Andy-action, Rule #14 — container can't reach Neon):** open `/wellness` with the already-uploaded Whoop CSV (± Polar/COROS connected) → the Recovery / Training-strain / Sleep-hours-"Device" / HRV cards carry the non-Garmin days. Optional `neon-query` `count(*)` of `daily_wellness_metrics` + `provider_raw_record` per provider for Andy's user confirms whether the residual #283 Garmin symptom was the #742 schema-init prod-incident (fixed Jun 19, post-dates the Jun-17 report). **#283 stays open until this is walked.**
+- **Easy follow-ups** (one-line `_provider_wellness_rows` add + a card each, if Andy wants them): Polar nightly breathing rate, COROS `sleep_avg_hr`, Whoop `sleep_performance_pct` / `recovery_score` already surfaced via the Recovery card.
+
+---
+
 ## Plan-75 generation fixes — #775/#776 recovery DB fix + logging, #777 MTB/packraft strength pool (`0019`) (2026-06-19/20; PRs #781 + #782) — SHIPPED + `0019` PROD-APPLIED ✅ + DB-VERIFIED ✅; plan-regen + redump-PR-merge owed
 - **Arc:** the plan #74/#75 multi-discipline generation was discarded at the final write. Three root causes fixed + merged to `main`:
   - **#775 recovery 3rd-slot `CheckViolation`** (a recovery session in a day's 3rd slot tripped a DB CHECK → whole accepted plan rolled back at persist) + **#776 accepted-path day logging** (no Rule #15 log on the success path → silent discard left no trail). Both in **#781** (`9587a13`).

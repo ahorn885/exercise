@@ -97,6 +97,7 @@
         {% if dn %}
         <div class="day-fuel">
           <span class="chip{{ ' accent' if dn.load_tier in ['hard', 'peak'] else '' }}">⚡ {{ dn.total_kcal }} kcal</span>
+          {% if dn.carb_loading_applied %}<span class="chip accent">🍝 carb load</span>{% endif %}
           <span class="rail-note day-fuel-macros">C {{ dn.macros.cho_g }} · P {{ dn.macros.protein_g }} · F {{ dn.macros.fat_g }} g</span>
           {% if dn.fueling_note %}<p class="day-fuel-note">{{ dn.fueling_note }}</p>{% endif %}
           {% if dn.is_race_day %}

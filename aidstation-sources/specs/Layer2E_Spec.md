@@ -295,14 +295,14 @@ Macro targets are computed per phase using `body_weight_kg` as the denominator. 
 
 | Phase | CHO low | CHO high | Protein low | Protein high | Fat min |
 |---|---|---|---|---|---|
-| Base | 5.0 | 7.0 | 1.4 | 1.7 | 1.0 |
-| Build | 6.0 | 9.0 | 1.6 | 1.9 | 1.0 |
-| Peak | 7.0 | 12.0 | 1.7 | 2.0 | 1.0 |
-| Taper | 5.0 | 7.0 | 1.6 | 1.9 | 1.0 |
+| Base | 5.0 | 7.0 | 1.6 | 1.8 | 1.0 |
+| Build | 6.0 | 9.0 | 1.7 | 2.0 | 1.0 |
+| Peak | 7.0 | 12.0 | 1.8 | 2.2 | 1.0 |
+| Taper | 5.0 | 7.0 | 1.8 | 2.0 | 1.0 |
 
 **Source anchor:**
 - CHO bands: Burke et al. (2018) "Re-Examining High-Fat Diets for Sports Performance"; Jeukendrup (2014) "A step towards personalized sports nutrition: carbohydrate intake during exercise"; ISSN position stand (2018, updated 2023)
-- Protein: Phillips & Van Loon (2011) plus 2022 ISSN update; bands account for endurance-athlete elevations beyond general 0.8 g/kg RDA
+- Protein (bands raised 2026-06-20, issue #542 — daily protein was under-recommended): anchored on modern trained-athlete evidence that puts the *endurance* floor near 1.6 g/kg, not the older ~1.2-1.4 g/kg figure. Kato et al. (2016, indicator-amino-acid-oxidation — endurance requirement ~1.65 g/kg, safe intake ~1.83 g/kg on training days); Morton et al. (2018 meta-analysis — ~1.6 g/kg breakpoint for training-induced lean-mass gains); ISSN protein position stand (Jäger et al. 2017 — 1.4-2.0 g/kg, trending toward 2.3-3.1 g/kg in hypocaloric periods). Peak tops at 2.2 g/kg; Taper held at 1.8-2.0 g/kg because the race-week energy pull-back is a mild deficit where higher protein preserves lean mass (Helms et al. 2014).
 - Fat floor: 1.0 g/kg minimum is a hormonal-function and fat-soluble-vitamin safety floor (Loucks, IOC RED-S guidance 2018)
 
 #### 5.3.2 Computation
@@ -1312,7 +1312,7 @@ Expected:
 - **Vegetarian and pescatarian sub-pattern handling.** §5.6 sketches the logic but only Vegan and Low-FODMAP are fully spec'd. Vegetarian, Pescatarian, Halal, Kosher need fleshed-out flag logic. v2 cleanup.
 - **Beta blocker handling.** Current spec marks it as a Cardiac-condition-only flag, not a medication-presence-only flag. Reasonable for v1 (avoid false inferences) but means an athlete on a beta blocker without a Cardiac condition record gets a coaching flag opportunity missed. 2E-10 tracks.
 - **Per-event aid station fueling availability lookup.** Spec assumes Layer 4 reads race rules / event URL fetch and reconciles aid-station stocking. 2E doesn't currently model "this race has 2 aid stations, athlete needs to self-pack 80% of fuel." A Layer 4 surface; 2E provides the per-hour band only.
-- **Carb loading protocol for events.** 2E mentions taper-phase carb loading (5.3 reference table comment) but doesn't spec the protocol. That's a Layer 4 plan-gen rendering concern more than a 2E target-setting concern, but the boundary is fuzzy.
+- **Carb loading protocol for events.** ~~2E mentions taper-phase carb loading (5.3 reference table comment) but doesn't spec the protocol.~~ **Resolved 2026-06-20 (issue #542 follow-on):** implemented deterministically in **Layer 5A**, not 2E — the calendar projection belongs with the per-day synthesis, not the per-phase target-setting. `layer5/builder.py` flags the 2 days before each race event and pins CHO at 10 g/kg (glycogen supercompensation; ACSM/AND/DC 2016 10-12 g/kg/day for 36-48 h before events >90 min). Per Andy: we coach endurance athletes, so all target events qualify — no per-event duration gate, so 2E's `estimated_duration_hr` is not needed and the 2E→5A contract is unchanged.
 
 **Best argument against this spec as drafted:**
 2E is the most opinionated of the five Layer 2 nodes. Calorie targets, macro splits, and fueling bands are all band-based recommendations with material practitioner variance. Hard-coding even well-cited bands creates a single-source-of-truth that's harder to dispute than per-athlete reasoning would be. The alternative — letting the athlete or coach override every band — defeats the value proposition of the app (give me a recommendation, don't make me pick a band). The spec lands on the side of explicit recommendations + override flags, which is the right tradeoff for the product but creates curation pressure on §5.4.2, §5.3.1, and §5.2.2 tables.
