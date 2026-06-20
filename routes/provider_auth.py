@@ -22,6 +22,8 @@ from typing import Any, Mapping, Optional
 
 import requests
 
+from routes.provider_token_crypto import decrypt_token, encrypt_token
+
 STATUS_ACTIVE = 'active'
 STATUS_REVOKED = 'revoked'
 STATUS_ERROR = 'error'
@@ -66,6 +68,12 @@ def upsert_auth(
     if 'status' in fields and fields['status'] not in _VALID_STATUSES:
         raise ValueError(f'Invalid status {fields["status"]!r}; expected one of {sorted(_VALID_STATUSES)}')
 
+    # Encrypt the OAuth secrets at rest (#682/D-12); transparent — passes
+    # through unchanged when PROVIDER_TOKEN_ENC_KEY is unset.
+    for _tok in ('access_token', 'refresh_token'):
+        if _tok in fields:
+            fields[_tok] = encrypt_token(fields[_tok])
+
     columns = ['user_id', 'provider'] + list(fields)
     placeholders = ', '.join(['?'] * len(columns))
     update_cols = list(fields) + ['updated_at']
@@ -87,13 +95,26 @@ def upsert_auth(
     return row['id'] if row else None
 
 
+def _decrypt_row(row: Optional[Mapping[str, Any]]) -> Optional[dict]:
+    """Return the row as a dict with `access_token`/`refresh_token` decrypted
+    (transparent for legacy-plaintext rows + key-unset). None passes through."""
+    if row is None:
+        return None
+    d = dict(row)
+    for _tok in ('access_token', 'refresh_token'):
+        if _tok in d:
+            d[_tok] = decrypt_token(d[_tok])
+    return d
+
+
 def get_auth(db: Any, user_id: int, provider: str) -> Optional[Mapping[str, Any]]:
-    """Fetch the `(user_id, provider)` row, or None if not present."""
+    """Fetch the `(user_id, provider)` row, or None if not present.
+    OAuth secrets are decrypted on the way out (#682/D-12)."""
     cur = db.execute(
         'SELECT * FROM provider_auth WHERE user_id = ? AND provider = ?',
         (user_id, provider),
     )
-    return cur.fetchone()
+    return _decrypt_row(cur.fetchone())
 
 
 def get_auth_by_provider_user_id(
@@ -108,7 +129,7 @@ def get_auth_by_provider_user_id(
         'SELECT * FROM provider_auth WHERE provider = ? AND provider_user_id = ?',
         (provider, provider_user_id),
     )
-    return cur.fetchone()
+    return _decrypt_row(cur.fetchone())
 
 
 def set_status(db: Any, auth_id: int, status: str) -> None:
