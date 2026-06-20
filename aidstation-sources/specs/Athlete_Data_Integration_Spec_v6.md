@@ -500,6 +500,8 @@ No new per-provider table for Garmin — existing `garmin_workouts` and `wellnes
 
 Schemas not specified at v1. Strava activity data may flow into `cardio_log` only (with `cardio_log.strava_activity_id`) if the activity shape fits; Whoop recovery/strain/sleep data may need per-provider tables analogous to Polar. Backlog row D-48 tracks the deferred design.
 
+**Whoop wellness — manual CSV upload shipped (#767 slice 4, 2026-06-19).** Rather than a per-provider table, Whoop wellness lands in the canonical `provider_raw_record` (`provider='whoop'`, `data_type='daily_summary'`) exactly like Polar/COROS: a `physiological_cycles.csv` export → one daily row carrying `total_sleep_min` + `hrv_rmssd_ms` (RMSSD) + `resting_hr`, read back by the new whoop branch of `q_layer3A_recent_wellness`. `WellnessSource` gained `"whoop"` (priority garmin>whoop>polar>coros) — the one contract change. Live OAuth/webhook ingestion remains a stub (D-48); the manual `/whoop/import` path is independent of it.
+
 ### 5.6 RWGPS
 
 No per-provider table. Trip metadata flows into `cardio_log` with `cardio_log.rwgps_trip_id` set.
@@ -779,13 +781,17 @@ def q_layer3A_recent_wellness(user_id: int, since_days: int = 14) -> list[DailyW
 
     Sources: Garmin `daily_wellness_metrics` (sleep span, `hrv_overnight_avg_ms`,
     `resting_hr`), Polar (`provider_raw_record` sleep + nightly-recharge HRV),
-    COROS (`provider_raw_record` daily summary: sleep span + `ppg_hrv`). One
+    COROS (`provider_raw_record` daily summary: sleep span + `ppg_hrv`), Whoop
+    (`provider_raw_record` daily summary: sleep minutes + RMSSD HRV + resting HR
+    — manual `physiological_cycles.csv` upload, #767 slice 4). One
     `DailyWellnessRecord` per calendar day; each metric (total_sleep_hours,
     hrv_rmssd_ms, resting_hr) resolved by freshest-non-null — the value from
     the source with the newest ingest timestamp wins, a NULL/older source
-    never clobbers a populated/newer one, ties break garmin>polar>coros — and
-    carries a `*_source` provenance tag. Self-report is excluded (see
-    `q_layer3A_recent_self_report_sleep`); resting_hr is garmin-only today.
+    never clobbers a populated/newer one, ties break garmin>whoop>polar>coros —
+    and carries a `*_source` provenance tag. `WellnessSource` =
+    Literal["garmin","polar","coros","whoop"]. Self-report is excluded (see
+    `q_layer3A_recent_self_report_sleep`); resting_hr was garmin-only until Whoop
+    joined it (slice 4).
     """
 
 def q_layer3A_recent_self_report_sleep(user_id: int, since_days: int = 14) -> list[SleepRecord]:

@@ -159,8 +159,14 @@ def q_layer3A_recent_workouts(
 
 # Device priority for the freshest-non-null coalesce tiebreak. Higher wins
 # when two sources carry the same field for a day at equal (or missing) ingest
-# timestamps. Garmin first — it is the richest, highest-fidelity daily source.
-_WELLNESS_SOURCE_PRIORITY: dict[str, int] = {"garmin": 3, "polar": 2, "coros": 1}
+# timestamps. Garmin first — richest, highest-fidelity daily source; Whoop next
+# — a dedicated recovery device (#767 slice 4, garmin>whoop>polar>coros).
+_WELLNESS_SOURCE_PRIORITY: dict[str, int] = {
+    "garmin": 4,
+    "whoop": 3,
+    "polar": 2,
+    "coros": 1,
+}
 
 # A candidate value for one (day, field): (ingest_timestamp, value, source).
 _WellnessCandidate = tuple["datetime | None", float, str]
@@ -195,16 +201,18 @@ def q_layer3A_recent_wellness(
     """Per-day device wellness, coalesced field-by-field across providers into
     one `DailyWellnessRecord` per calendar day (newest first). Sources:
     Garmin `daily_wellness_metrics` (sleep span, `hrv_overnight_avg_ms`,
-    `resting_hr`), Polar (`provider_raw_record` sleep + nightly-recharge HRV)
-    and COROS (`provider_raw_record` daily summary: sleep span + `ppg_hrv`),
-    the latter two provider-tagged per #681 §4 Slice 3.
+    `resting_hr`), Polar (`provider_raw_record` sleep + nightly-recharge HRV),
+    COROS (`provider_raw_record` daily summary: sleep span + `ppg_hrv`) and
+    Whoop (`provider_raw_record` daily summary: sleep minutes + RMSSD HRV +
+    resting HR — #767 slice 4); the non-Garmin three are provider-tagged in
+    `provider_raw_record`.
 
     Each field is resolved by freshest-non-null (`_coalesce_wellness_field`):
     the value from the source with the newest ingest timestamp wins, ties
-    break garmin>polar>coros. Self-report sleep is intentionally excluded —
-    it rides separately via `q_layer3A_recent_self_report_sleep` so the §6.1
-    objective-vs-subjective weighting stays intact. `resting_hr` is garmin-only
-    (the sole confirmed device source today)."""
+    break garmin>whoop>polar>coros. Self-report sleep is intentionally excluded
+    — it rides separately via `q_layer3A_recent_self_report_sleep` so the §6.1
+    objective-vs-subjective weighting stays intact. `resting_hr` was garmin-only
+    until Whoop (slice 4) joined it as a second device source."""
     cutoff_iso = _window_cutoff(as_of, since_days).isoformat()
 
     sleep_cand: dict[date, list[_WellnessCandidate]] = defaultdict(list)
@@ -297,6 +305,35 @@ def q_layer3A_recent_wellness(
         ppg = row["ppg_hrv"]
         if ppg is not None:
             hrv_cand[d].append((ts, float(ppg), "coros"))
+
+    # Whoop daily cycle (provider_raw_record, data_type='daily_summary';
+    # #767 slice 4): sleep minutes + overnight HRV (RMSSD) + resting HR, one row
+    # per day from physiological_cycles.csv. First non-Garmin resting-HR source.
+    cur = db.execute(
+        """
+        SELECT external_id AS date,
+               (raw_payload->>'total_sleep_min')::float AS total_sleep_min,
+               (raw_payload->>'hrv_rmssd_ms')::float    AS hrv_rmssd_ms,
+               (raw_payload->>'resting_hr')::float       AS resting_hr,
+               fetched_at
+          FROM provider_raw_record
+         WHERE user_id = %s AND provider = 'whoop' AND data_type = 'daily_summary'
+           AND external_id >= %s
+        """,
+        (user_id, cutoff_iso),
+    )
+    for row in cur.fetchall():
+        d = _as_date(row["date"])
+        ts = row["fetched_at"]
+        mins = row["total_sleep_min"]
+        if mins is not None:
+            sleep_cand[d].append((ts, mins / 60.0, "whoop"))
+        hrv = row["hrv_rmssd_ms"]
+        if hrv is not None:
+            hrv_cand[d].append((ts, float(hrv), "whoop"))
+        rhr = row["resting_hr"]
+        if rhr is not None:
+            rhr_cand[d].append((ts, float(rhr), "whoop"))
 
     out: list[DailyWellnessRecord] = []
     for d in sorted(set(sleep_cand) | set(hrv_cand) | set(rhr_cand), reverse=True):

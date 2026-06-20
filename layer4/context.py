@@ -957,22 +957,23 @@ class SleepRecord(_Base):
     source: SleepSource = "wellness_self_report"
 
 
-WellnessSource = Literal["garmin", "polar", "coros"]
+WellnessSource = Literal["garmin", "polar", "coros", "whoop"]
 
 
 class DailyWellnessRecord(_Base):
     """One coalesced row per calendar day, merging device wellness across
-    providers (garmin/polar/coros) field-by-field. Each metric carries a
+    providers (garmin/polar/coros/whoop) field-by-field. Each metric carries a
     `*_source` provenance tag naming the device whose value won the
     freshest-non-null coalesce: per field, the value from the source with the
     newest ingest timestamp (`daily_wellness_metrics.updated_at` /
-    `provider_raw_record.fetched_at`) wins, ties break garmin>polar>coros for
-    determinism (the bundle hash folds into the 3A cache key). A NULL or older
-    source never clobbers a populated or newer one.
+    `provider_raw_record.fetched_at`) wins, ties break garmin>whoop>polar>coros
+    for determinism (the bundle hash folds into the 3A cache key). A NULL or
+    older source never clobbers a populated or newer one.
 
     Self-report is NOT merged here (see `SleepRecord`) so the §6.1
-    objective-vs-subjective weighting stays intact. `resting_hr` is currently
-    garmin-only (the sole confirmed device source). Per Layer3_3A_Spec §3 /
+    objective-vs-subjective weighting stays intact. `resting_hr` was garmin-only
+    until #767 slice 4 added Whoop (`physiological_cycles.csv` carries resting
+    HR), so it is now multi-source like sleep/HRV. Per Layer3_3A_Spec §3 /
     Athlete_Data_Integration_Spec §10."""
 
     date: date
