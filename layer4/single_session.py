@@ -655,7 +655,13 @@ def _render_user_prompt(
         parts.append("Effective pool: " + ", ".join(layer2c_payload_for_locale.effective_pool))
         parts.append("")
         parts.append("Resolved exercises (subset):")
-        for rx in layer2c_payload_for_locale.exercises_resolved[:50]:
+        # #691 — exclude tier-0 (equipment-infeasible, no substitute/proxy) so the
+        # model never sees an unavailable exercise as a resolved option. Filter
+        # before the 50-row cap so the subset is up to 50 *feasible* exercises.
+        feasible_resolved = [
+            rx for rx in layer2c_payload_for_locale.exercises_resolved if rx.tier != 0
+        ]
+        for rx in feasible_resolved[:50]:
             note = ""
             if rx.tier != 1 and rx.resolution_detail:
                 note = f" (Tier {rx.tier}"

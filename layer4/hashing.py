@@ -87,7 +87,13 @@ _LAYER2_BUNDLE_ATTRS = frozenset({"a", "b", "c", "d", "e"})
 # 2A/2B/2C/2D advisory flags (suppress-on-empty); changes the rendered prompt, so
 # cached plans + refreshes must regenerate. (single_session needs no bump — ad-hoc,
 # not cache-keyed.)
-LAYER4_PROMPT_REVISION = "14"
+# "15" = #691 tier-0 equipment-gate fix — the strength / recovery / cardio-drill
+# pools (both the SDK enums `compute_*_pool_ids` and the rendered `_format_*_pool`
+# menus) now drop tier-0 (equipment-infeasible, no substitute/proxy) exercises, so
+# an unavailable-gear exercise can no longer be prescribed. Changes the feasible
+# enum + rendered pool, so cached plans + refreshes must regenerate. (single_session
+# needs no bump — ad-hoc, not cache-keyed — but reads the same corrected fns.)
+LAYER4_PROMPT_REVISION = "15"
 
 
 def _to_jsonable(obj: Any) -> Any:
