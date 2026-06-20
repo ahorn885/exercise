@@ -73,6 +73,7 @@ from layer4.per_phase import (
     compute_feasible_pool_ids,
     compute_recovery_pool_ids,
     format_upstream_coaching_flags,
+    _apply_strength_resolution,
     _format_coaching_memory,
     _recovery_pool_entries,
     _repair_recovery_exercises,
@@ -1786,6 +1787,15 @@ def llm_layer4_race_week_brief(
                 print(
                     "synthesize_race_week_brief: recovery auto-fill — "
                     + "; ".join(_recovery_fill_notes)
+                )
+            # #803 — set strength resolution metadata deterministically from each
+            # pick's 2C resolution before construction (mirrors per_phase). Taper
+            # overrides can carry strength blocks.
+            _res_notes = _apply_strength_resolution(override_data_list, layer2c_payloads)
+            if _res_notes:
+                print(
+                    "synthesize_race_week_brief: strength resolution defaulted to "
+                    f"exact for unresolved picks: {', '.join(_res_notes)}"
                 )
             override_sessions = [
                 _build_session_override(

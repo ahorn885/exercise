@@ -46,6 +46,7 @@ from layer4.context import (
     Layer3APayload,
     Layer3BPayload,
     RaceEventPayload,
+    ResolvedExercise,
     TrainingSubstitutionPayload,
 )
 from layer4.errors import Layer4OutputError
@@ -266,19 +267,21 @@ Ground every intensity_target in the athlete's measured physiology shown in the 
 # appended by the plan_refresh / single_session / race_week_brief system prompts
 # so all four synthesizers honor an explicit variety preference. Gated on the
 # `Coaching memory` block (#690 surfaced it onto Layer 1; suppress-on-empty), so
-# it is inert for athletes who set no preference. Scoped to EASY foot-based
-# sessions — counts / long / quality / race specificity are never traded away.
-VARIETY_CARVEOUT_PROMPT_SECTION = """# Variety / cross-training substitution (easy foot-based sessions only)
+# it is inert for athletes who set no preference. Scoped to EASY sessions and to
+# WITHIN-MODE equivalents only (foot↔foot, wheel↔wheel) — counts / long / quality
+# / race specificity are never traded away, and the training stimulus is unchanged.
+VARIETY_CARVEOUT_PROMPT_SECTION = """# Variety / cross-training substitution (easy sessions; within-mode equivalents only)
 
-If — and ONLY if — the athlete's `Coaching memory` block expresses a preference for variety or cross-training, you MAY render the *content* of an **easy**-typed foot-based session as a training-equivalent foot discipline to relieve monotony and manage repetitive joint load — e.g. an easy **road run** in lieu of an easy **trail run**, or an easy hike / treadmill effort in lieu of an easy run. Hard rules that always hold:
+If — and ONLY if — the athlete's `Coaching memory` block expresses a preference for variety or cross-training, you MAY render the *content* of an **easy**-typed cardio session as a training-equivalent discipline **within the same locomotion mode** to relieve monotony and manage repetitive load — e.g. an easy **road run** in lieu of an easy **trail run** (foot group: road / trail / treadmill / hike), or an easy **road-bike spin** in lieu of an easy **mountain-bike** session (wheel group: road / gravel / MTB). Hard rules that always hold:
 
 - The per-discipline session **count**, the **long** (LSD) session, and **every quality** session stay on the race-specific discipline — race specificity is non-negotiable there. Substitute on `easy`-typed sessions only.
 - This does NOT change the prescribed counts, typing, or target hours: an easy trail-run slot rendered as an easy road run still counts as that discipline's easy session.
-- Keep it a minority of the easy volume so the race-specific discipline still dominates the athlete's weekly foot volume.
+- Keep it a minority of the easy volume so the race-specific discipline still dominates the athlete's weekly volume in that mode.
+- Substitute **only within the same locomotion mode** (foot↔foot, wheel↔wheel). Do NOT swap across modes (a bike session for a run, a paddle for a ride) for variety — that changes the training stimulus, not just the surface.
 - Name the swap in `coaching_intent` (e.g. "easy road run for surface variety — trail volume preserved on the long + quality days").
 - Never override an athlete's explicit, just-made request for a specific session (e.g. an on-demand single-session sport pick), and never trade away race-week specificity for variety — in those contexts prescribe exactly the discipline asked for.
 
-Only **foot-based** equivalents are in scope; do NOT swap across cardio modes (e.g. a road-bike spin for an MTB session) for variety. Absent an explicit variety / cross-training preference in `Coaching memory`, prescribe the disciplines exactly as given."""
+Absent an explicit variety / cross-training preference in `Coaching memory`, prescribe the disciplines exactly as given."""
 
 
 SYSTEM_PROMPT = (
@@ -392,7 +395,7 @@ When `start_phase != 'Base'` (athlete starts partway through), the prior phase's
 - One tool call per invocation. No prose outside the tool call.
 - Each cardio_block requires an `intensity_zone` (Z1-Z5 or mixed) and an `intensity_target` matching the sport (HRTarget endurance / PowerTarget bike-run-skimo-row / PaceTarget run-hike-paddle-ski / SwimPaceTarget swim / RPETarget universal-fallback / VerticalRateTarget skimo-hiking / StrokeRateTarget swim-paddle-row / CadenceTarget cycling / ClimbingGradeTarget outdoor-rock).
 - `interval_set` cardio_blocks emit `repetitions` + `rest_between_min` + `rest_intensity_zone`. Other block_kinds leave those three null.
-- Strength `exercise_id` references Layer 0B canonical IDs; populate `exercise_name`. `resolution_tier` 1 / 2 / 3 maps to 2C's substitution metadata; `substitute_text` set for tier 2; `proxy_origin_id` set for tier 3.
+- Strength `exercise_id` references Layer 0B canonical IDs (pick from the rendered strength pool); populate `exercise_name`. Set `resolution_tier`=1 and leave `substitute_text` / `proxy_origin_id` null — the system finalizes the substitution tier deterministically from your `exercise_id` pick (you don't compute it).
 - All athlete-facing text fields are bounded by `maxLength` in the schema — be concise. `session_notes` 1–3 sentences; `coaching_intent` one line.
 """
 )
@@ -2955,6 +2958,81 @@ def _build_session_phase_metadata(
     )
 
 
+def _strength_resolution_fields(
+    rx: ResolvedExercise | None,
+) -> tuple[int, str | None, str | None]:
+    """#803 — map a 2C `ResolvedExercise` to the `StrengthExercise` resolution
+    triplet `(resolution_tier, substitute_text, proxy_origin_id)` that satisfies
+    the payload's tier↔field contract (`payload.py` `_check_resolution_tier`):
+    tier 1 ⇒ both None; tier 2 ⇒ substitute_text set; tier 3 ⇒ proxy_origin_id
+    set. An unknown pick or a tier-0 (infeasible-at-locale) row degrades to exact
+    (tier 1) so the payload still constructs — pick feasibility is a separate
+    concern the rendered pool already steers. Mirrors `locale_assign` swap shapes."""
+    if rx is None or rx.tier == 0:
+        return 1, None, None
+    if rx.tier == 2:
+        sub = rx.resolution_detail.substitute_text if rx.resolution_detail else None
+        return (2, sub, None) if sub is not None else (1, None, None)
+    if rx.tier == 3:
+        proxy = rx.resolution_detail.proxy_exercise_id if rx.resolution_detail else None
+        return (3, None, proxy) if proxy is not None else (1, None, None)
+    return 1, None, None  # tier 1 (exact)
+
+
+def _apply_strength_resolution(
+    raw_sessions: list[dict[str, Any]],
+    layer2c_payloads: dict[str, Layer2CPayload],
+) -> list[str]:
+    """#803 — overwrite each emitted strength exercise's `resolution_tier` /
+    `substitute_text` / `proxy_origin_id` with the authoritative values derived
+    from the chosen `exercise_id`'s 2C resolution at the session's locale, BEFORE
+    `StrengthExercise(**e)` construction.
+
+    The tier↔substitute/proxy rule is a cross-field constraint the JSON tool
+    schema can't express and the prompt only half-stated, so the synthesizer
+    routinely emitted tier-1 picks *with* a `substitute_text` note →
+    `ValidationError` → Build block-fumble → plan failed (pv76/pv77, #803).
+    Resolution is deterministic given the enum-locked `exercise_id`, so Layer 4
+    sets it rather than trust the LLM to transcribe it. Mutates `raw_sessions` in
+    place; returns `id@locale` notes for picks that couldn't be resolved at their
+    locale (defaulted to exact) so a surprising prescription is attributable in
+    prod logs (Rule #15)."""
+    by_locale: dict[str, dict[str, ResolvedExercise]] = {
+        loc: {rx.exercise_id: rx for rx in l2c.exercises_resolved}
+        for loc, l2c in layer2c_payloads.items()
+    }
+    # Cross-locale fallback for a pick whose session locale doesn't carry it
+    # (the exercise_id enum is the cluster-union, locale-agnostic). Prefer the
+    # best feasible tier (1 < 2 < 3); skip tier-0 (infeasible) rows.
+    any_locale: dict[str, ResolvedExercise] = {}
+    for loc_map in by_locale.values():
+        for ex_id, rx in loc_map.items():
+            if rx.tier == 0:
+                continue
+            cur = any_locale.get(ex_id)
+            if cur is None or rx.tier < cur.tier:
+                any_locale[ex_id] = rx
+    notes: list[str] = []
+    for s in raw_sessions:
+        raw = s.get("strength_exercises")
+        if not raw:
+            continue
+        locale_id = s.get("locale_id")
+        loc_map = by_locale.get(locale_id, {}) if locale_id else {}
+        for e in raw:
+            if not isinstance(e, dict):
+                continue
+            ex_id = e.get("exercise_id")
+            rx = loc_map.get(ex_id) or any_locale.get(ex_id)
+            if rx is None or rx.tier == 0:
+                notes.append(f"{ex_id}@{locale_id or '?'}")
+            tier, sub, proxy = _strength_resolution_fields(rx)
+            e["resolution_tier"] = tier
+            e["substitute_text"] = sub
+            e["proxy_origin_id"] = proxy
+    return notes
+
+
 def _build_plan_session(
     session_data: dict[str, Any],
     *,
@@ -3537,6 +3615,17 @@ def synthesize_phase(
             print(
                 f"synthesize_phase: {unit_tag} recovery auto-fill — "
                 + "; ".join(_recovery_fill_notes)
+            )
+
+        # #803 — set strength resolution_tier/substitute_text/proxy_origin_id
+        # deterministically from each pick's 2C resolution BEFORE construction,
+        # so a tier-1 pick the synthesizer tagged with a stray substitute_text
+        # can't trip the StrengthExercise validator and fumble the whole block.
+        _strength_res_notes = _apply_strength_resolution(raw_sessions, layer2c_payloads)
+        if _strength_res_notes:
+            print(
+                f"synthesize_phase: {unit_tag} strength resolution defaulted to "
+                f"exact for unresolved picks: {', '.join(_strength_res_notes)}"
             )
 
         try:

@@ -3,7 +3,8 @@
 `VARIETY_CARVEOUT_PROMPT_SECTION` is a path-neutral prompt section (like
 `CARDIO_PROGRAMMING_PROMPT_SECTION`) gated on the athlete's Coaching-memory
 variety preference (#690 surfaced that block onto Layer 1), scoped to easy
-foot-based sessions, and self-limiting so it defers to an explicit single-session
+sessions and to within-mode equivalents only (foot↔foot, wheel↔wheel: road↔trail
+run, road-bike↔MTB), and self-limiting so it defers to an explicit single-session
 sport pick + race-week specificity. It is included in per_phase's SYSTEM_PROMPT
 and appended by the plan_refresh / single_session / race_week_brief system
 prompts. The durable Coaching-memory render itself was per_phase-only under #690;
@@ -32,9 +33,21 @@ class TestVarietyCarveOutSection:
         assert "long" in low and "quality" in low  # long + quality stay on-discipline
         assert "count" in low                      # counts unchanged
 
+    def test_within_mode_groups_in_scope(self):
+        # both #339 named equivalences are in scope: foot group (road <-> trail
+        # run) AND wheel group (road-bike <-> MTB).
+        low = VARIETY_CARVEOUT_PROMPT_SECTION.lower()
+        assert "road run" in low and "trail run" in low       # foot group
+        assert "road-bike" in low and "mountain-bike" in low  # wheel group
+        assert "foot group" in low and "wheel group" in low
+
     def test_cross_mode_swaps_excluded(self):
-        # bike-for-run (and any cross cardio-mode) swap is out of scope
-        assert "do not swap across cardio modes" in VARIETY_CARVEOUT_PROMPT_SECTION.lower()
+        # the genuine cross-mode swap (a bike for a run, a paddle for a ride) is
+        # out of scope — substitution stays WITHIN a locomotion mode. road<->MTB
+        # is within the wheel mode, NOT a cross-mode swap (the #800 mislabel fix).
+        low = VARIETY_CARVEOUT_PROMPT_SECTION.lower()
+        assert "do not swap across modes" in low
+        assert "within the same locomotion mode" in low
 
     def test_self_limiting_guard_defers_to_explicit_requests(self):
         low = VARIETY_CARVEOUT_PROMPT_SECTION.lower()

@@ -249,6 +249,38 @@
 </div>
 {% endif %}
 
+{# ── Supplements · Standard + today's Daily (#621) ── #}
+{% if supplement_summary %}
+<div class="card card-pad">
+  <div class="card-head"><span class="eyebrow">💊 Supplements</span></div>
+  <div class="supp-block">
+    <p class="eyebrow">Standard · every day</p>
+    <div class="gear-chips">
+      {% for s in supplement_summary.standard %}
+      <span class="chip{{ ' accent' if s.already_in_protocol else '' }}"
+            title="{{ s.reason }}{% if s.timing %} · {{ s.timing }}{% endif %}">
+        {{ s.name }}{% if s.dose %} {{ s.dose }}{% endif %}{% if s.already_in_protocol %} ✓{% endif %}
+      </span>
+      {% endfor %}
+    </div>
+  </div>
+  <div class="supp-block">
+    <p class="eyebrow">Daily · based on today's training</p>
+    {% if supplement_summary.daily %}
+    <div class="gear-chips">
+      {% for s in supplement_summary.daily %}
+      <span class="chip" title="{{ s.reason }}">
+        {{ s.name }}{% if s.dose %} {{ s.dose }}{% endif %}{% if s.timing %} ({{ s.timing }}){% endif %}
+      </span>
+      {% endfor %}
+    </div>
+    {% else %}
+    <p class="dim">Nothing extra today beyond your standard set.</p>
+    {% endif %}
+  </div>
+</div>
+{% endif %}
+
 {# ── Stats strip ── #}
 <div class="dash-stats">
   <div class="stat-card"><div class="k">Strength</div><div class="v num">{{ stats.training_total }}</div><div class="delta">entries</div></div>

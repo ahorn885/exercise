@@ -46,6 +46,20 @@
     {% if nutrition.standing_supplement_notes %}
     <p class="sess-notes">💊 {{ nutrition.standing_supplement_notes }}</p>
     {% endif %}
+    {% if nutrition.standing_supplements %}
+    <div class="supp-standing">
+      <p class="eyebrow">💊 Standard supplements — what you take every day</p>
+      <div class="gear-chips">
+        {% for s in nutrition.standing_supplements %}
+        <span class="chip{{ ' accent' if s.already_in_protocol else '' }}"
+              title="{{ s.reason }}{% if s.timing %} · {{ s.timing }}{% endif %}">
+          {{ s.name }}{% if s.dose %} {{ s.dose }}{% endif %}{% if s.already_in_protocol %} ✓{% endif %}
+        </span>
+        {% endfor %}
+      </div>
+      <p class="rail-note">Effort-based picks for each day appear with that day's fuel below. ✓ = already in your logged protocol.</p>
+    </div>
+    {% endif %}
     {% if nutrition.dietary_flags %}
     <div class="sess-flags">
       {% for f in nutrition.dietary_flags %}<span class="chip warn">{{ f.pattern }} — {{ f.concern }}</span>{% endfor %}
@@ -100,6 +114,9 @@
           {% if dn.carb_loading_applied %}<span class="chip accent">🍝 carb load</span>{% endif %}
           <span class="rail-note day-fuel-macros">C {{ dn.macros.cho_g }} · P {{ dn.macros.protein_g }} · F {{ dn.macros.fat_g }} g</span>
           {% if dn.fueling_note %}<p class="day-fuel-note">{{ dn.fueling_note }}</p>{% endif %}
+          {% if dn.supplement_recs %}
+          <p class="day-fuel-note">💊 {% for s in dn.supplement_recs %}{{ s.name }}{% if s.dose %} {{ s.dose }}{% endif %}{% if s.timing %} ({{ s.timing }}){% endif %}{% if not loop.last %} · {% endif %}{% endfor %}</p>
+          {% endif %}
           {% if dn.is_race_day %}
             {% for rf in nutrition.race_fueling if rf.event_id in dn.race_fueling_event_ids %}
             <div class="race-fuel">

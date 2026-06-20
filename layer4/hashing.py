@@ -106,7 +106,17 @@ _LAYER2_BUNDLE_ATTRS = frozenset({"a", "b", "c", "d", "e"})
 # four synthesizers gain the `VARIETY_CARVEOUT_PROMPT_SECTION` (gated on a stated
 # variety preference; easy foot-based sessions only — counts / long / quality
 # preserved). Changes the rendered prompt, so cached plans + refreshes regenerate.
-LAYER4_PROMPT_REVISION = "17"
+# "18" = #339 follow-on — the variety carve-out generalized from foot-only to ANY
+# within-mode equivalent (adds the wheel group: road-bike ↔ MTB ↔ gravel, the
+# cycling analog of road ↔ trail run), and the cross-mode exclusion corrected to
+# mean foot↔wheel↔water (not the within-cycling road↔MTB swap). Prompt body
+# changed, so cached plans + refreshes regenerate.
+# "19" = #803 strength resolution metadata derived deterministically — the
+# per_phase SYSTEM_PROMPT strength bullet no longer asks the LLM to set
+# resolution_tier / substitute_text / proxy_origin_id (the synthesizer sets them
+# from each pick's 2C resolution before StrengthExercise construction). Prompt
+# body changed, so cached plans regenerate.
+LAYER4_PROMPT_REVISION = "19"
 
 
 def _to_jsonable(obj: Any) -> Any:

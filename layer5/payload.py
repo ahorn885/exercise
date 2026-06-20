@@ -52,6 +52,27 @@ class EnergyModelMeta(_Base):
     zone_met: dict[str, float]
 
 
+class SupplementRec(_Base):
+    """One recommended supplement line — Standard (always-take) or Daily
+    (effort / event-based). Deterministic, advisory; never medical instruction.
+
+    `source` records provenance so the UI can group + style:
+      - "baseline" — system standard-daily recommendation for an endurance athlete
+      - "dietary"  — driven by a Layer 2E dietary-pattern flag (e.g. Vegan → B12)
+      - "effort"   — driven by that day's training load tier
+      - "race"     — a Layer 2E race-day suggestion for an event on this day
+    `already_in_protocol` is True when the athlete already logs this supplement,
+    so the UI can mark it "already covered" rather than nag.
+    """
+
+    name: str
+    dose: str | None = None
+    timing: str | None = None
+    reason: str | None = None
+    source: Literal["baseline", "dietary", "effort", "race"]
+    already_in_protocol: bool = False
+
+
 class DayNutrition(_Base):
     """Per-day nutrition target, load-modulated off the 2E phase baseline."""
 
@@ -76,6 +97,9 @@ class DayNutrition(_Base):
     carb_loading_applied: bool = False
     race_fueling_event_ids: list[str] = Field(default_factory=list)
     fueling_note: str
+    # Daily / effort-based supplement recommendations for this day (#621): keyed
+    # off `load_tier`, or the Layer 2E race-day suggestions on a race day.
+    supplement_recs: list[SupplementRec] = Field(default_factory=list)
 
 
 class WeekReconciliation(_Base):
@@ -136,4 +160,7 @@ class PlanNutrition(_Base):
     week_reconciliation: list[WeekReconciliation]
     race_fueling: list[RaceFuelingPlan] = Field(default_factory=list)
     standing_supplement_notes: str | None = None
+    # Standard "what you always take" supplement recommendations (#621): the
+    # system daily baseline + dietary-pattern additions, contraindication-screened.
+    standing_supplements: list[SupplementRec] = Field(default_factory=list)
     dietary_flags: list[DietaryPatternFlag] = Field(default_factory=list)
