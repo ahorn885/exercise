@@ -62,6 +62,7 @@ from layer4.per_phase import (
     CARDIO_DRILLS_PROMPT_SECTION,
     CARDIO_PROGRAMMING_PROMPT_SECTION,
     VARIETY_CARVEOUT_PROMPT_SECTION,
+    _apply_strength_resolution,
     _format_cardio_drill_pool,
     _format_coaching_memory,
     block_output_budget,
@@ -1168,6 +1169,16 @@ def llm_layer4_plan_refresh(
             raise Layer4OutputError(
                 "schema_violation",
                 detail="tool args missing 'sessions' array",
+            )
+
+        # #803 — set strength resolution metadata deterministically from each
+        # pick's 2C resolution before construction (mirrors per_phase).
+        # layer2_bundle.c is the per-locale 2C map.
+        _res_notes = _apply_strength_resolution(raw_sessions, dict(layer2_bundle.c))
+        if _res_notes:
+            print(
+                "llm_layer4_plan_refresh: strength resolution defaulted to exact "
+                f"for unresolved picks: {', '.join(_res_notes)}"
             )
 
         try:
