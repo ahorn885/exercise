@@ -96,6 +96,11 @@ _DROP_TOKENS: set[str] = {
     # kayak seat or paddle separately.
     "chairs",
     "canoe seat",
+    # #502: chalk is an untracked generic accessory. It formerly rolled up to
+    # the Bouldering toggle when paired with bouldering kit; with Bouldering
+    # removed (not a discipline in any of our sports) there is no toggle to
+    # route it to. Per Vocab Audit v3 — "chalk = chalk" — drop the distinction.
+    "chalk",
 }
 
 
@@ -167,12 +172,15 @@ _ROLLUP: dict[str, str] = {
     "climbing wall": "Climbing — roped",
     "harness": "Climbing — roped",
     # V4b: legacy training-wall token. NOT routed to Bouldering — bouldering is
-    # not a discipline in any of our sports and is slated for removal (see
-    # follow-up issue); route to the surviving roped-climbing toggle instead.
+    # not a discipline in any of our sports (the Bouldering toggle was removed,
+    # #502); route to the surviving roped-climbing toggle instead.
     "climbing holds": "Climbing — roped",
-    # Bouldering
-    "bouldering shoes": "Bouldering",
-    "crash pad": "Bouldering",
+    # Former Bouldering toggle tokens. Bouldering was removed (#502) — it is not
+    # a discipline in any of our sports. Re-pointed to the surviving roped-
+    # climbing toggle, matching the V4b precedent (climbing holds → Climbing —
+    # roped) for climbing gear that legitimately needs a wall.
+    "bouldering shoes": "Climbing — roped",
+    "crash pad": "Climbing — roped",
     # Rappelling
     "rappel device": "Rappelling",
     "backup prusik": "Rappelling",
@@ -215,8 +223,6 @@ _ROLLUP: dict[str, str] = {
 #   "Crampons" → Mountaineering (default; or Touring/AT ski setup if SkiMo)
 #   "Ice axe" → Mountaineering (default; or Touring/AT ski setup if SkiMo)
 #   "Harness (when context = roped climbing)" → Climbing — roped
-#   "Chalk (when bouldering)" → Bouldering — but chalk is also a generic
-#       weightlifting accessory; only roll up when paired with bouldering kit.
 # We pick the documented default. If the equipment string contains a clearly
 # stronger context signal (e.g. SkiMo / ski tokens already present), we route
 # to the alternate. The full per-exercise context is the role of v2's
@@ -226,7 +232,6 @@ _AMBIGUOUS_DEFAULT: dict[str, str] = {
     "crampons": "Mountaineering",
     "ice axe": "Mountaineering",
     "harness": "Climbing — roped",
-    "chalk": "Bouldering",
 }
 
 # Mountaineering harness is referenced in Touring/AT context too; we
@@ -238,12 +243,6 @@ _SKI_CONTEXT_TOKENS = {
     "ski",
     "skis",
     "ski poles",
-}
-
-_BOULDERING_CONTEXT_TOKENS = {
-    "bouldering shoes",
-    "crash pad",
-    "bouldering",
 }
 
 
@@ -560,13 +559,6 @@ def _resolve_token(token: str, all_lower: set[str]) -> str | None:
     if lower in _AMBIGUOUS_DEFAULT:
         if lower in {"crampons", "ice axe"} and _has_ski_context(all_lower):
             return "Touring/AT ski setup"
-        if lower == "chalk":
-            # Only rollup chalk if we're clearly in a bouldering context;
-            # otherwise leave as a generic gym accessory (drop for now —
-            # chalk isn't in the canonical equipment list).
-            if _has_bouldering_context(all_lower):
-                return "Bouldering"
-            return None
         return _AMBIGUOUS_DEFAULT[lower]
 
     # 5. No transform — return as-is, with a basic title-case normalization
@@ -576,7 +568,3 @@ def _resolve_token(token: str, all_lower: set[str]) -> str | None:
 
 def _has_ski_context(tokens: set[str]) -> bool:
     return any(any(t.startswith(p) or p in t for p in _SKI_CONTEXT_TOKENS) for t in tokens)
-
-
-def _has_bouldering_context(tokens: set[str]) -> bool:
-    return any(t in _BOULDERING_CONTEXT_TOKENS for t in tokens)
