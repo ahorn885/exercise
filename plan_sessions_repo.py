@@ -450,6 +450,31 @@ def load_scheduled_sessions_for_window(
     ]
 
 
+def load_active_plan_version_id(db: Any, user_id: int) -> int | None:
+    """Return the athlete's currently-active plan version id, or None.
+
+    Active := `generation_status = 'ready'`, not archived, not completed —
+    the same predicate `load_scheduled_sessions_for_window` filters on for
+    "what's currently scheduled". The most-recently-created qualifying row
+    wins: a T1/T2/T3 refresh supersedes its parent for the dates it
+    re-plans but both stay `ready`, and the latest version is the one the
+    race-week brief attaches its Taper-session overrides to.
+
+    Returns None when the athlete has no active plan version (never created
+    a plan, or only has in-flight / archived / completed versions). The
+    race-week-brief orchestrator treats that as `no_active_plan` — the brief
+    has nothing to attach its overrides to.
+    """
+    row = db.execute(
+        "SELECT id FROM plan_versions "
+        "WHERE user_id = ? AND generation_status = 'ready' "
+        "AND archived_at IS NULL AND completed_at IS NULL "
+        "ORDER BY created_at DESC, id DESC LIMIT 1",
+        (user_id,),
+    ).fetchone()
+    return int(row["id"]) if row else None
+
+
 def _decode_json(raw: Any) -> Any:
     """Type-agnostic JSONB normalizer (dict, list, or JSON string). Unlike
     `_decode_payload`, tolerates a JSON *array* column (e.g. the

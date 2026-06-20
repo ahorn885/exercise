@@ -106,6 +106,30 @@ _TODAY = date(2026, 6, 1)
 _EVENT_DATE = date(2026, 6, 8)  # 7 days out — within auto-fire window
 _USER_ID = 42
 
+# #732 slice 1 — the race-week-brief orchestrator now resolves the prior
+# Taper window + plan version from the athlete's active plan via two repo
+# helpers (`load_active_plan_version_id` + `load_scheduled_sessions_for_window`).
+# Default them module-wide so the existing pipeline tests (which queue no
+# plan_versions / plan_sessions rows on `_FakeConn`) keep exercising the
+# composition path; the dedicated `TestPriorTaperWindowAndPlanVersion` class
+# overrides these to assert the real wiring + the `no_active_plan` gate.
+_ACTIVE_PLAN_VERSION_ID = 7
+
+
+# The orchestrator lazy-imports these from `plan_sessions_repo` (avoids a
+# circular import), so patches must target the repo module, not
+# `layer4.orchestrator`.
+@pytest.fixture(autouse=True)
+def _default_active_plan(monkeypatch):
+    monkeypatch.setattr(
+        "plan_sessions_repo.load_active_plan_version_id",
+        lambda db, user_id: _ACTIVE_PLAN_VERSION_ID,
+    )
+    monkeypatch.setattr(
+        "plan_sessions_repo.load_scheduled_sessions_for_window",
+        lambda db, user_id, *, start, end: [],
+    )
+
 
 # ─── _FakeConn — covers the orchestrator's direct queries + race_events_repo ─
 
@@ -712,7 +736,9 @@ class TestHappyPath:
         # Layer 4 cached wrapper receives composed payloads
         l4_kwargs = m_l4.call_args.kwargs
         assert l4_kwargs["user_id"] == _USER_ID
-        assert l4_kwargs["plan_version_id"] == 1
+        # #732 slice 1 — resolved from the active plan, not the old
+        # `plan_version_id=1` / `prior_plan_session_window=[]` placeholders.
+        assert l4_kwargs["plan_version_id"] == _ACTIVE_PLAN_VERSION_ID
         assert l4_kwargs["prior_plan_session_window"] == []
         assert l4_kwargs["cache"] is cache
         assert l4_kwargs["today"] == _TODAY
@@ -721,6 +747,119 @@ class TestHappyPath:
         assert isinstance(l4_kwargs["layer1_payload"], dict)
         # Per-locale dict keyed by primary locale slug
         assert set(l4_kwargs["layer2c_payloads"].keys()) == {"home"}
+
+
+# ─── #732 slice 1: prior Taper window + plan version resolution ──────────────
+
+
+class TestPriorTaperWindowAndPlanVersion:
+    """#732 slice 1 — the orchestrator resolves the prior Taper window +
+    plan version from the athlete's active plan instead of the old
+    `prior_plan_session_window=[]` / `plan_version_id=1` placeholders."""
+
+    def _run(self, conn, cache, *, active_pvid, window):
+        race_event_for_l4 = RaceEventPayload(
+            race_event_id=1,
+            user_id=_USER_ID,
+            name="Test Race 2026",
+            event_date=_EVENT_DATE,
+            race_format="single_day",
+            event_locale_id="home",
+            event_locale_mapbox_id="poi.test_anchor",
+            is_target_event=True,
+        )
+        stack = _patches(
+            layer4_return=_fake_layer4_payload(race_event_payload=race_event_for_l4)
+        )
+        # Override the autouse defaults with this test's fixtures + capture the
+        # `load_scheduled_sessions_for_window` call args to assert the window.
+        captured: dict[str, Any] = {}
+
+        def _fake_window(db, user_id, *, start, end):
+            captured["start"], captured["end"] = start, end
+            return window
+
+        stack.append(
+            patch(
+                "plan_sessions_repo.load_active_plan_version_id",
+                return_value=active_pvid,
+            )
+        )
+        stack.append(
+            patch(
+                "plan_sessions_repo.load_scheduled_sessions_for_window",
+                _fake_window,
+            )
+        )
+        mocks = _enter_all(stack)
+        try:
+            orchestrate_race_week_brief(conn, _USER_ID, cache=cache, today=_TODAY)
+        finally:
+            _exit_all(stack)
+        # m_l4 is the 10th patch (the cached wrapper); the two repo patches
+        # were appended after it.
+        return mocks[9].call_args.kwargs, captured
+
+    def test_resolved_window_and_version_thread_to_wrapper(self):
+        conn = _FakeConn()
+        _queue_target_race_event(conn)
+        _queue_etl_version_set(conn)
+        _queue_primary_locale(conn)
+        _queue_locale_equipment_pool(conn)
+        cache = Layer4Cache(InMemoryCacheBackend())
+
+        window = _default_prior_plan_session_window()
+        l4_kwargs, captured = self._run(
+            conn, cache, active_pvid=314, window=window
+        )
+
+        assert l4_kwargs["plan_version_id"] == 314
+        assert l4_kwargs["prior_plan_session_window"] is window
+        # Window spans [today, event_date] — every session in that range is
+        # in the Taper phase by the ≤14-day gate.
+        assert captured["start"] == _TODAY
+        assert captured["end"] == _EVENT_DATE
+
+    def test_no_active_plan_raises_after_cone(self):
+        conn = _FakeConn()
+        _queue_target_race_event(conn)
+        _queue_etl_version_set(conn)
+        _queue_primary_locale(conn)
+        _queue_locale_equipment_pool(conn)
+        cache = Layer4Cache(InMemoryCacheBackend())
+
+        race_event_for_l4 = RaceEventPayload(
+            race_event_id=1,
+            user_id=_USER_ID,
+            name="Test Race 2026",
+            event_date=_EVENT_DATE,
+            race_format="single_day",
+            event_locale_id="home",
+            event_locale_mapbox_id="poi.test_anchor",
+            is_target_event=True,
+        )
+        stack = _patches(
+            layer4_return=_fake_layer4_payload(race_event_payload=race_event_for_l4)
+        )
+        stack.append(
+            patch(
+                "plan_sessions_repo.load_active_plan_version_id",
+                return_value=None,
+            )
+        )
+        mocks = _enter_all(stack)
+        try:
+            with pytest.raises(OrchestrationError) as exc:
+                orchestrate_race_week_brief(
+                    conn, _USER_ID, cache=cache, today=_TODAY
+                )
+        finally:
+            _exit_all(stack)
+
+        assert exc.value.code == "no_active_plan"
+        # The cached wrapper (last of the 10 `_patches` entries) is never
+        # reached — `no_active_plan` raises before composition.
+        assert mocks[9].call_count == 0
 
 
 # ─── pre-flight gates ───────────────────────────────────────────────────────
