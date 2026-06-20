@@ -266,19 +266,21 @@ Ground every intensity_target in the athlete's measured physiology shown in the 
 # appended by the plan_refresh / single_session / race_week_brief system prompts
 # so all four synthesizers honor an explicit variety preference. Gated on the
 # `Coaching memory` block (#690 surfaced it onto Layer 1; suppress-on-empty), so
-# it is inert for athletes who set no preference. Scoped to EASY foot-based
-# sessions — counts / long / quality / race specificity are never traded away.
-VARIETY_CARVEOUT_PROMPT_SECTION = """# Variety / cross-training substitution (easy foot-based sessions only)
+# it is inert for athletes who set no preference. Scoped to EASY sessions and to
+# WITHIN-MODE equivalents only (foot↔foot, wheel↔wheel) — counts / long / quality
+# / race specificity are never traded away, and the training stimulus is unchanged.
+VARIETY_CARVEOUT_PROMPT_SECTION = """# Variety / cross-training substitution (easy sessions; within-mode equivalents only)
 
-If — and ONLY if — the athlete's `Coaching memory` block expresses a preference for variety or cross-training, you MAY render the *content* of an **easy**-typed foot-based session as a training-equivalent foot discipline to relieve monotony and manage repetitive joint load — e.g. an easy **road run** in lieu of an easy **trail run**, or an easy hike / treadmill effort in lieu of an easy run. Hard rules that always hold:
+If — and ONLY if — the athlete's `Coaching memory` block expresses a preference for variety or cross-training, you MAY render the *content* of an **easy**-typed cardio session as a training-equivalent discipline **within the same locomotion mode** to relieve monotony and manage repetitive load — e.g. an easy **road run** in lieu of an easy **trail run** (foot group: road / trail / treadmill / hike), or an easy **road-bike spin** in lieu of an easy **mountain-bike** session (wheel group: road / gravel / MTB). Hard rules that always hold:
 
 - The per-discipline session **count**, the **long** (LSD) session, and **every quality** session stay on the race-specific discipline — race specificity is non-negotiable there. Substitute on `easy`-typed sessions only.
 - This does NOT change the prescribed counts, typing, or target hours: an easy trail-run slot rendered as an easy road run still counts as that discipline's easy session.
-- Keep it a minority of the easy volume so the race-specific discipline still dominates the athlete's weekly foot volume.
+- Keep it a minority of the easy volume so the race-specific discipline still dominates the athlete's weekly volume in that mode.
+- Substitute **only within the same locomotion mode** (foot↔foot, wheel↔wheel). Do NOT swap across modes (a bike session for a run, a paddle for a ride) for variety — that changes the training stimulus, not just the surface.
 - Name the swap in `coaching_intent` (e.g. "easy road run for surface variety — trail volume preserved on the long + quality days").
 - Never override an athlete's explicit, just-made request for a specific session (e.g. an on-demand single-session sport pick), and never trade away race-week specificity for variety — in those contexts prescribe exactly the discipline asked for.
 
-Only **foot-based** equivalents are in scope; do NOT swap across cardio modes (e.g. a road-bike spin for an MTB session) for variety. Absent an explicit variety / cross-training preference in `Coaching memory`, prescribe the disciplines exactly as given."""
+Absent an explicit variety / cross-training preference in `Coaching memory`, prescribe the disciplines exactly as given."""
 
 
 SYSTEM_PROMPT = (
