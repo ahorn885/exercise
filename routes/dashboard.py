@@ -8,6 +8,7 @@ from datetime import date, timedelta
 from routes.auth import current_user_id
 from plan_sessions_repo import load_scheduled_sessions_for_window
 from plan_naming import target_race_name, generated_plan_name
+from athlete_event_windows_repo import resolve_weather_city
 
 bp = Blueprint('dashboard', __name__)
 
@@ -89,26 +90,10 @@ def _has_plan_version(db, user_id: int) -> bool:
 
 
 def _get_weather(db):
-    today = date.today().isoformat()
     ts_now = time.time()
     uid = current_user_id()
 
-    loc = ''
-    # plan_travel is parent-JOIN scoped via training_plans
-    trip = db.execute(
-        "SELECT pt.city FROM plan_travel pt "
-        "JOIN training_plans tp ON tp.id = pt.plan_id "
-        "WHERE tp.user_id=? AND pt.start_date<=? AND pt.end_date>=? AND pt.city!='' LIMIT 1",
-        (uid, today, today)).fetchone()
-    if trip:
-        loc = trip['city']
-    else:
-        home = db.execute(
-            "SELECT city FROM locale_profiles WHERE preferred AND user_id=? LIMIT 1",
-            (uid,)
-        ).fetchone()
-        if home and home['city']:
-            loc = home['city']
+    loc = resolve_weather_city(db, uid, date.today())
     if not loc:
         loc = os.environ.get('WEATHER_LOCATION', '')
 
@@ -246,21 +231,7 @@ def index():
             (uid,)
         ).fetchone()
         if active_plan:
-            today_str = date.today().isoformat()
-            trip = db.execute(
-                "SELECT pt.city FROM plan_travel pt "
-                "JOIN training_plans tp ON tp.id = pt.plan_id "
-                "WHERE tp.user_id=? AND pt.start_date<=? AND pt.end_date>=? "
-                "  AND pt.city!='' LIMIT 1",
-                (uid, today_str, today_str)
-            ).fetchone()
-            city = trip['city'] if trip else ''
-            if not city:
-                home = db.execute(
-                    "SELECT city FROM locale_profiles WHERE preferred AND user_id=? LIMIT 1",
-                    (uid,)
-                ).fetchone()
-                city = home['city'] if home and home['city'] else ''
+            city = resolve_weather_city(db, uid, date.today())
             clothing_recs = get_clothing_context(db, active_plan['id'], city)
     except Exception:
         pass

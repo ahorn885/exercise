@@ -260,16 +260,6 @@ PG_SCHEMA = '''
         updated_at TIMESTAMP DEFAULT NOW(),
         PRIMARY KEY (user_id, locale)
     );
-    CREATE TABLE IF NOT EXISTS plan_travel (
-        id SERIAL PRIMARY KEY,
-        plan_id INTEGER NOT NULL REFERENCES training_plans(id),
-        start_date TEXT NOT NULL,
-        end_date TEXT NOT NULL,
-        locale TEXT NOT NULL,
-        city TEXT DEFAULT '',
-        notes TEXT DEFAULT '',
-        created_at TIMESTAMP DEFAULT NOW()
-    );
     CREATE TABLE IF NOT EXISTS equipment_items (
         id       SERIAL PRIMARY KEY,
         tag      TEXT NOT NULL UNIQUE,
@@ -649,7 +639,6 @@ _PG_MIGRATIONS = [
     "ALTER TABLE plan_items ADD COLUMN IF NOT EXISTS macro_fat_pct INTEGER",
     "ALTER TABLE plan_items ADD COLUMN IF NOT EXISTS session_fueling TEXT",
     "ALTER TABLE locale_profiles ADD COLUMN IF NOT EXISTS city TEXT DEFAULT ''",
-    "CREATE TABLE IF NOT EXISTS plan_travel (id SERIAL PRIMARY KEY, plan_id INTEGER NOT NULL REFERENCES training_plans(id), start_date TEXT NOT NULL, end_date TEXT NOT NULL, locale TEXT NOT NULL, city TEXT DEFAULT '', notes TEXT DEFAULT '', created_at TIMESTAMP DEFAULT NOW())",
     "CREATE TABLE IF NOT EXISTS training_sessions (id SERIAL PRIMARY KEY, date TEXT NOT NULL, notes TEXT, plan_item_id INTEGER REFERENCES plan_items(id), created_at TIMESTAMP DEFAULT NOW())",
     "CREATE TABLE IF NOT EXISTS training_log_sets (id SERIAL PRIMARY KEY, training_log_id INTEGER NOT NULL REFERENCES training_log(id) ON DELETE CASCADE, set_number INTEGER NOT NULL, reps INTEGER, weight_kg REAL, duration_sec INTEGER)",
     "ALTER TABLE training_log ADD COLUMN IF NOT EXISTS session_id INTEGER REFERENCES training_sessions(id)",
@@ -657,7 +646,6 @@ _PG_MIGRATIONS = [
     "CREATE INDEX IF NOT EXISTS idx_tls_log ON training_log_sets(training_log_id)",
     "CREATE INDEX IF NOT EXISTS idx_ts_date ON training_sessions(date)",
     "CREATE TABLE IF NOT EXISTS clothing_options (id SERIAL PRIMARY KEY, category TEXT NOT NULL, value TEXT NOT NULL, UNIQUE(category, value))",
-    "ALTER TABLE plan_travel ADD COLUMN IF NOT EXISTS indoor_only INTEGER DEFAULT 0",
     "ALTER TABLE training_plans ADD COLUMN IF NOT EXISTS race_goals TEXT DEFAULT ''",
     "CREATE TABLE IF NOT EXISTS wellness_log (id SERIAL PRIMARY KEY, date TEXT NOT NULL, timestamp_ms BIGINT NOT NULL, heart_rate INTEGER, stress_level INTEGER, body_battery INTEGER, respiration_rate REAL, steps INTEGER, active_calories INTEGER, active_time_s REAL, distance_m REAL, activity_type INTEGER, source TEXT DEFAULT 'wellness_fit', UNIQUE(timestamp_ms))",
     "CREATE INDEX IF NOT EXISTS idx_wl_date ON wellness_log(date)",
@@ -2388,6 +2376,11 @@ _PG_MIGRATIONS = [
     # preferences` is free text. Additive + nullable.
     "ALTER TABLE athlete_profile ADD COLUMN IF NOT EXISTS experience_level TEXT",
     "ALTER TABLE athlete_profile ADD COLUMN IF NOT EXISTS coaching_voice_preferences TEXT",
+    # #787 / #304 PR B — retire the legacy v1 plan_travel table. Its three city
+    # read-sites moved to athlete_event_windows (away windows) + locale_profiles
+    # (preferred-home city); the v1 coaching-review writer + form were removed.
+    # Empty in prod at drop time (0 rows). DROP IF EXISTS is idempotent.
+    "DROP TABLE IF EXISTS plan_travel",
 ]
 
 _CLOTHING_SEEDS = [

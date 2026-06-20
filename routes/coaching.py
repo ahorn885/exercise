@@ -20,13 +20,6 @@ def context():
     return jsonify(ctx)
 
 
-# Trip-environment-type taxonomy used by plan_travel.locale + Claude prompt
-# construction. Separate from the athlete's saved-locale list — trip-locales
-# are kinds of places (hotel, partner gym, airport gym) the athlete will be at
-# during travel, not specific saved locations.
-TRIP_LOCALE_TYPES = ('home', 'hotel', 'partner', 'airport')
-
-
 @bp.route('/review/<int:plan_id>', methods=['GET', 'POST'])
 def review(plan_id):
     db = get_db()
@@ -52,24 +45,7 @@ def review(plan_id):
 
         # ── Pre-review actions (applied before the AI call) ──────────────────
 
-        # 1. Locale updates
-        try:
-            locale_updates = json.loads(request.form.get('locale_updates', '[]'))
-            if not isinstance(locale_updates, list):
-                locale_updates = []
-        except (json.JSONDecodeError, ValueError):
-            locale_updates = []
-        for trip in locale_updates:
-            s = trip.get('start_date', '')
-            e = trip.get('end_date', '')
-            if s and e:
-                db.execute(
-                    'INSERT INTO plan_travel (plan_id, start_date, end_date, locale, city, indoor_only) VALUES (?,?,?,?,?,?)',
-                    (plan_id, s, e, trip.get('locale', 'hotel'), trip.get('city', ''),
-                     1 if trip.get('indoor_only') else 0)
-                )
-
-        # 2. Intensity adjustment — bulk-shift all remaining scheduled sessions
+        # 1. Intensity adjustment — bulk-shift all remaining scheduled sessions
         difficulty = request.form.get('difficulty_feedback', 'just_right')
         adjust_intensity = bool(request.form.get('adjust_intensity'))
         intensity_direction = ''
@@ -95,7 +71,7 @@ def review(plan_id):
                 "SELECT changes()"
             ).fetchone()[0]
 
-        # 3. Race goals update
+        # 2. Race goals update
         race_goals_changed = bool(request.form.get('race_goals_changed'))
         current_race_goals = plan['race_goals'] if 'race_goals' in plan.keys() else ''
         if race_goals_changed:
@@ -193,7 +169,6 @@ def review(plan_id):
     current_race_goals = plan['race_goals'] if 'race_goals' in plan.keys() else ''
     return render_template('coaching/review.html', plan=plan, health=health,
                            locales=athlete_locale_choices(db, uid),
-                           trip_locale_types=TRIP_LOCALE_TYPES,
                            current_race_goals=current_race_goals,
                            api_configured=_check_api_key())
 
