@@ -957,7 +957,7 @@ class SleepRecord(_Base):
     source: SleepSource = "wellness_self_report"
 
 
-WellnessSource = Literal["garmin", "polar", "coros", "whoop"]
+WellnessSource = Literal["garmin", "polar", "coros", "whoop", "oura"]
 
 
 class DailyWellnessRecord(_Base):

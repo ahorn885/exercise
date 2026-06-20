@@ -159,11 +159,13 @@ def q_layer3A_recent_workouts(
 
 # Device priority for the freshest-non-null coalesce tiebreak. Higher wins
 # when two sources carry the same field for a day at equal (or missing) ingest
-# timestamps. Garmin first — richest, highest-fidelity daily source; Whoop next
-# — a dedicated recovery device (#767 slice 4, garmin>whoop>polar>coros).
+# timestamps. Garmin first — richest, highest-fidelity daily source; then Whoop +
+# Oura (dedicated recovery/sleep devices) above the watch sources Polar/COROS
+# (#767 slice 4 + #681 (B); garmin>whoop>oura>polar>coros — Oura just under Whoop).
 _WELLNESS_SOURCE_PRIORITY: dict[str, int] = {
-    "garmin": 4,
-    "whoop": 3,
+    "garmin": 5,
+    "whoop": 4,
+    "oura": 3,
     "polar": 2,
     "coros": 1,
 }
@@ -334,6 +336,36 @@ def q_layer3A_recent_wellness(
         rhr = row["resting_hr"]
         if rhr is not None:
             rhr_cand[d].append((ts, float(rhr), "whoop"))
+
+    # Oura daily sleep (provider_raw_record, data_type='daily_summary'; #681 (B)):
+    # same daily_summary shape as Whoop — total sleep minutes + overnight HRV
+    # (RMSSD) + resting HR (sleep.lowest_heart_rate). Ranks just under Whoop in
+    # the tiebreak (both dedicated recovery/sleep devices, above the watches).
+    cur = db.execute(
+        """
+        SELECT external_id AS date,
+               (raw_payload->>'total_sleep_min')::float AS total_sleep_min,
+               (raw_payload->>'hrv_rmssd_ms')::float    AS hrv_rmssd_ms,
+               (raw_payload->>'resting_hr')::float       AS resting_hr,
+               fetched_at
+          FROM provider_raw_record
+         WHERE user_id = %s AND provider = 'oura' AND data_type = 'daily_summary'
+           AND external_id >= %s
+        """,
+        (user_id, cutoff_iso),
+    )
+    for row in cur.fetchall():
+        d = _as_date(row["date"])
+        ts = row["fetched_at"]
+        mins = row["total_sleep_min"]
+        if mins is not None:
+            sleep_cand[d].append((ts, mins / 60.0, "oura"))
+        hrv = row["hrv_rmssd_ms"]
+        if hrv is not None:
+            hrv_cand[d].append((ts, float(hrv), "oura"))
+        rhr = row["resting_hr"]
+        if rhr is not None:
+            rhr_cand[d].append((ts, float(rhr), "oura"))
 
     out: list[DailyWellnessRecord] = []
     for d in sorted(set(sleep_cand) | set(hrv_cand) | set(rhr_cand), reverse=True):

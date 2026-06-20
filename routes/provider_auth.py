@@ -17,7 +17,10 @@ on-disk schema does not have a `connected` value.
 """
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 from typing import Any, Mapping, Optional
+
+import requests
 
 STATUS_ACTIVE = 'active'
 STATUS_REVOKED = 'revoked'
@@ -167,6 +170,91 @@ def rotate_webhook_token(
     `provider_auth` row exists yet (it should — OAuth callback creates
     it — but defensive UPSERT avoids a webhook-before-OAuth race)."""
     upsert_auth(db, user_id, provider, webhook_token=webhook_token)
+
+
+# Refresh the access token this far ahead of its stored expiry (clock skew +
+# in-flight request slack), so a token that's about to lapse mid-fetch is
+# rotated first.
+_REFRESH_SKEW = timedelta(minutes=5)
+
+
+def _expiry_from_response(data: Mapping[str, Any]) -> Optional[datetime]:
+    """Normalise the two expiry shapes providers return on a token grant: Strava
+    sends `expires_at` (absolute epoch seconds), Whoop sends `expires_in`
+    (seconds from now). Returns an aware UTC datetime, or None (long-lived)."""
+    if data.get('expires_at'):
+        return datetime.fromtimestamp(int(data['expires_at']), tz=timezone.utc)
+    if data.get('expires_in'):
+        return datetime.now(timezone.utc) + timedelta(seconds=int(data['expires_in']))
+    return None
+
+
+def refresh_access_token(
+    db: Any, user_id: int, provider: str, *,
+    token_url: str, client_id: Optional[str], client_secret: Optional[str],
+) -> Optional[str]:
+    """Run the OAuth2 refresh-token grant for `(user_id, provider)`, persist the
+    rotated tokens, and return the new access token (None on failure).
+
+    This is the refresh path Integration v4 §4.1 sketched but no provider had
+    exercised (COROS/Polar tokens are long-lived) — Strava (~6h) and Whoop (~1h)
+    expire, so the live ingest needs it. On any failure the row is flipped to
+    `error` so the connect UI can prompt a re-auth. The provider rotates the
+    refresh token on some grants; keep the new one, fall back to the old."""
+    row = get_auth(db, user_id, provider)
+    if not row or not row.get('refresh_token'):
+        return None
+    if not client_id or not client_secret:
+        return None
+    try:
+        resp = requests.post(token_url, data={
+            'grant_type': 'refresh_token',
+            'refresh_token': row['refresh_token'],
+            'client_id': client_id,
+            'client_secret': client_secret,
+        }, timeout=10)
+        resp.raise_for_status()
+        data = resp.json()
+    except requests.RequestException:
+        set_status(db, row['id'], STATUS_ERROR)
+        return None
+    access = data.get('access_token')
+    if not access:
+        set_status(db, row['id'], STATUS_ERROR)
+        return None
+    upsert_auth(
+        db, user_id, provider,
+        access_token=access,
+        refresh_token=data.get('refresh_token') or row['refresh_token'],
+        token_expires_at=_expiry_from_response(data),
+        status=STATUS_ACTIVE,
+    )
+    return access
+
+
+def get_fresh_access_token(
+    db: Any, user_id: int, provider: str, *,
+    token_url: str, client_id: Optional[str], client_secret: Optional[str],
+) -> Optional[str]:
+    """Return a usable access token for `(user_id, provider)`, refreshing first
+    if the stored token is within `_REFRESH_SKEW` of expiry. Returns None if
+    there's no active auth row. A row with no `token_expires_at` (COROS/Polar
+    long-lived) returns its stored token unchanged."""
+    row = get_auth(db, user_id, provider)
+    if not row or row.get('status') != STATUS_ACTIVE:
+        return None
+    expires_at = row.get('token_expires_at')
+    if expires_at is not None:
+        if isinstance(expires_at, str):
+            expires_at = datetime.fromisoformat(expires_at)
+        if expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=timezone.utc)
+        if expires_at <= datetime.now(timezone.utc) + _REFRESH_SKEW:
+            return refresh_access_token(
+                db, user_id, provider,
+                token_url=token_url, client_id=client_id, client_secret=client_secret,
+            )
+    return row.get('access_token')
 
 
 def record_oauth_scope_ack(

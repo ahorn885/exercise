@@ -107,6 +107,11 @@ PREFERENCE_CATEGORIES = (
 CONNECTION_PROVIDERS = (
     ('coros', 'COROS', 'coros.oauth_start'),
     ('polar', 'Polar', 'polar.oauth_start'),
+    ('strava', 'Strava', 'strava.oauth_start'),
+    ('whoop', 'Whoop', 'whoop.oauth_start'),
+    ('wahoo', 'Wahoo', 'wahoo.oauth_start'),
+    ('oura', 'Oura', 'oura.oauth_start'),
+    ('rwgps', 'Ride With GPS', 'ride_with_gps.oauth_start'),
 )
 
 
