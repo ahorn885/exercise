@@ -110,6 +110,7 @@ CONNECTION_PROVIDERS = (
     ('strava', 'Strava', 'strava.oauth_start'),
     ('whoop', 'Whoop', 'whoop.oauth_start'),
     ('wahoo', 'Wahoo', 'wahoo.oauth_start'),
+    ('oura', 'Oura', 'oura.oauth_start'),
 )
 
 
