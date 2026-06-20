@@ -1,28 +1,206 @@
-"""Strava integration.
+"""Strava integration — OAuth connect flow (#681 (B) live wiring) + webhook stub.
 
-Phase 0: webhook stub only. Strava push subscriptions use the
-Stripe/Slack-style verification handshake: when we eventually POST to
-their `/push_subscriptions` API, Strava immediately GETs this URL with
-`hub.mode=subscribe`, `hub.verify_token=<our token>`, and
-`hub.challenge=<their token>`, and expects a JSON body
-`{"hub.challenge": "<their token>"}` — otherwise the subscription is
-rejected. The handshake is baked in here so the stub already works the
-day we create the subscription; before that, GETs without the query
-params and POST events just return 200.
+Three endpoints (the OAuth pair mirrors `routes/coros.py`):
 
-Real event dispatch (aspect_type create/update/delete, object_type
-activity/athlete) and `webhook_events` recording land alongside the
-OAuth connect flow in Phase 1 of the master plan. Strava events carry
-no signature — auth is by `subscription_id` match against the one
-subscription we own.
+- `GET  /strava/oauth/start`     — generates a CSRF state token, stashes it +
+                                   the post-callback redirect target in session,
+                                   and redirects to Strava's authorization URL.
+- `GET  /strava/oauth/callback`  — receives `?code=…&state=…&scope=…`, exchanges
+                                   the code for tokens via `provider_auth.
+                                   upsert_auth`, records the per-provider scope
+                                   ack, and redirects back with `?strava_connected=1`.
+- `GET/POST /strava/webhook`     — Strava push subscription. The GET handshake
+                                   (`hub.mode`/`hub.verify_token`/`hub.challenge`)
+                                   is live so the subscription validates; POST
+                                   event dispatch (thin `{object_type, object_id,
+                                   aspect_type, owner_id}` event → REST fetch of
+                                   the activity, with token refresh) lands in the
+                                   ingest slice — see CARRY_FORWARD (B) ingest
+                                   architecture (token refresh + thin-webhook
+                                   fetch, Trigger #5).
+
+Strava OAuth surface (developers.strava.com/docs/authentication): scope is
+**comma-separated**; the token response carries `access_token`, `refresh_token`,
+`expires_at` (absolute epoch seconds), and `athlete.id` (→ `provider_user_id`).
+Strava lets the athlete deselect scopes at the consent screen, so the callback's
+`scope` query param is the *granted* set — recorded over the requested set.
+
+Pre-deploy verification: confirm the authorize/token hosts + the scope syntax
+against current Strava docs before the subscription is created. Override the
+hosts via `STRAVA_AUTH_URL` / `STRAVA_TOKEN_URL` if Strava rotates them.
 """
-from flask import Blueprint, jsonify, request
+from __future__ import annotations
+
+import hmac
+import os
+import secrets
+import urllib.parse
+from datetime import datetime, timezone
+
+import requests
+from flask import (
+    Blueprint, abort, current_app, jsonify, redirect, request, session, url_for,
+)
+
+from database import get_db
+from routes import provider_auth as pa
+from routes.auth import current_user_id
 
 bp = Blueprint('strava', __name__, url_prefix='/strava')
 
+_STRAVA_AUTH_URL = os.environ.get(
+    'STRAVA_AUTH_URL', 'https://www.strava.com/oauth/authorize',
+)
+_STRAVA_TOKEN_URL = os.environ.get(
+    'STRAVA_TOKEN_URL', 'https://www.strava.com/oauth/token',
+)
+
+# Read scopes per Provider_Inbound_Matrix_v2 §2: activities + webhooks need
+# `activity:read_all`; the `/athlete/zones` + profile fields need
+# `profile:read_all`. Comma-separated (Strava convention). Bump the version on
+# any change — re-ack is keyed on version_id in disclosure_acknowledgments.
+_STRAVA_SCOPES = 'activity:read_all,profile:read_all'
+_STRAVA_SCOPE_VERSION = '2026-06-20'
+
+_OAUTH_STATE = 'strava_oauth_state'
+_OAUTH_RETURN_TO = 'strava_oauth_return_to'
+
+
+# ── OAuth initiation ──────────────────────────────────────────────────
+
+@bp.route('/oauth/start', methods=['GET'])
+def oauth_start():
+    """Stash a state token + the post-callback redirect target, then bounce
+    the user to Strava's consent screen."""
+    if current_user_id() is None:
+        return redirect(url_for('auth.login', next=request.url))
+
+    client_id = os.environ.get('STRAVA_CLIENT_ID')
+    if not client_id:
+        current_app.logger.error('STRAVA_CLIENT_ID not configured')
+        abort(503)
+
+    state = secrets.token_urlsafe(32)
+    session[_OAUTH_STATE] = state
+    return_to = request.args.get('return_to') or '/'
+    if not return_to.startswith('/') or return_to.startswith('//'):
+        return_to = '/'
+    session[_OAUTH_RETURN_TO] = return_to
+
+    redirect_uri = url_for('strava.oauth_callback', _external=True)
+    params = {
+        'client_id': client_id,
+        'redirect_uri': redirect_uri,
+        'response_type': 'code',
+        'scope': _STRAVA_SCOPES,
+        'approval_prompt': 'auto',
+        'state': state,
+    }
+    return redirect(f'{_STRAVA_AUTH_URL}?{urllib.parse.urlencode(params)}')
+
+
+# ── OAuth callback ────────────────────────────────────────────────────
+
+@bp.route('/oauth/callback', methods=['GET'])
+def oauth_callback():
+    """Strava redirects back with `?code=…&state=…&scope=…`. Exchange the
+    code for tokens, persist via `provider_auth`, record the scope ack."""
+    user_id = current_user_id()
+    if user_id is None:
+        return redirect(url_for('auth.login'))
+
+    expected_state = session.pop(_OAUTH_STATE, None)
+    return_to = session.pop(_OAUTH_RETURN_TO, '/')
+    received_state = request.args.get('state')
+    if not expected_state or not received_state or not hmac.compare_digest(
+        expected_state, received_state,
+    ):
+        current_app.logger.warning('Strava OAuth state mismatch for user %s', user_id)
+        abort(400)
+
+    if 'error' in request.args:
+        return redirect(f'{return_to}?strava_oauth_error={request.args.get("error")}')
+
+    code = request.args.get('code')
+    if not code:
+        abort(400)
+
+    client_id = os.environ.get('STRAVA_CLIENT_ID')
+    client_secret = os.environ.get('STRAVA_CLIENT_SECRET')
+    if not client_id or not client_secret:
+        current_app.logger.error('Strava client credentials not configured')
+        abort(503)
+
+    try:
+        resp = requests.post(
+            _STRAVA_TOKEN_URL,
+            data={
+                'client_id': client_id,
+                'client_secret': client_secret,
+                'code': code,
+                'grant_type': 'authorization_code',
+            },
+            timeout=10,
+        )
+        resp.raise_for_status()
+        token_data = resp.json()
+    except requests.RequestException as exc:
+        current_app.logger.exception('Strava token exchange failed: %s', exc)
+        abort(502)
+
+    access_token = token_data.get('access_token')
+    refresh_token = token_data.get('refresh_token')
+    expires_at = token_data.get('expires_at')  # absolute epoch seconds
+    athlete_id = (token_data.get('athlete') or {}).get('id')
+    if not access_token or not athlete_id:
+        current_app.logger.error('Strava token response missing fields: %s', token_data)
+        abort(502)
+
+    token_expires_at = (
+        datetime.fromtimestamp(int(expires_at), tz=timezone.utc)
+        if expires_at else None
+    )
+    # The athlete may have deselected scopes at consent → the callback `scope`
+    # is the granted set (comma-separated). Fall back to the requested set.
+    granted_scopes = request.args.get('scope') or _STRAVA_SCOPES
+
+    db = get_db()
+    pa.upsert_auth(
+        db,
+        user_id=user_id,
+        provider='strava',
+        access_token=access_token,
+        refresh_token=refresh_token,
+        token_expires_at=token_expires_at,
+        provider_user_id=str(athlete_id),
+        scopes=granted_scopes,
+        status=pa.STATUS_ACTIVE,
+        registered_at=datetime.now(timezone.utc),
+    )
+    pa.record_oauth_scope_ack(
+        db,
+        user_id=user_id,
+        provider='strava',
+        scopes_granted=granted_scopes,
+        version_id=_STRAVA_SCOPE_VERSION,
+    )
+    # Rule #15 — record the connect decision (no token material).
+    print(  # noqa: T201
+        f'[strava-oauth] connected user={user_id} athlete_id={athlete_id} '
+        f'scopes={granted_scopes!r} expires_at={expires_at}'
+    )
+
+    sep = '&' if '?' in return_to else '?'
+    return redirect(f'{return_to}{sep}strava_connected=1')
+
+
+# ── Webhook (handshake live; event dispatch is the ingest slice) ──────
 
 @bp.route('/webhook', methods=['GET', 'POST'])
 def webhook():
+    """Strava push subscription. The GET handshake echoes `hub.challenge` so
+    the subscription validates; POST events return 200 (dispatch lands in the
+    ingest slice — a thin event needs a REST fetch + token refresh)."""
     if request.method == 'GET':
         challenge = request.args.get('hub.challenge')
         if challenge is not None:

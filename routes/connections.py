@@ -36,8 +36,6 @@ bp = Blueprint('connections', __name__, url_prefix='/connections')
 # as "not available yet" rather than a dead CONNECT button (grounding: don't
 # offer an action with no route behind it).
 STUB_PROVIDERS = (
-    {'slug': 'strava', 'label': 'Strava', 'scopes': 'activity · wellness'},
-    {'slug': 'whoop', 'label': 'Whoop', 'scopes': 'workouts · sleep · recovery'},
     {'slug': 'trainingpeaks', 'label': 'TrainingPeaks', 'scopes': 'workouts · planned'},
     {'slug': 'zwift', 'label': 'Zwift', 'scopes': 'indoor activities'},
     {'slug': 'ride_with_gps', 'label': 'Ride With GPS', 'scopes': 'routes'},
