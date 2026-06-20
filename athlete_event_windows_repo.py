@@ -92,6 +92,47 @@ def load_event_windows(db, user_id: int) -> list[EventWindow]:
     ]
 
 
+def resolve_weather_city(db, user_id: int, on_date: date) -> str:
+    """City to drive weather / clothing lookups for ``on_date``.
+
+    An ``away`` event window covering the date wins — its destination
+    (``away_locale``) resolves to that ``locale_profiles`` row's ``city``;
+    otherwise the athlete's preferred-home city; otherwise ``''`` (the caller
+    supplies its own fallback, e.g. the ``WEATHER_LOCATION`` env default).
+
+    Replaces the retired ``plan_travel`` city read. Event windows are
+    athlete-scoped, so the answer no longer varies by plan. Mirrors the old
+    empty-city fall-through: an ``away`` window whose destination has no
+    recorded city defers to the home city rather than blanking the lookup.
+    """
+    away = db.execute(
+        "SELECT lp.city AS city FROM athlete_event_windows w "
+        "JOIN locale_profiles lp "
+        "  ON lp.user_id = w.user_id AND lp.locale = w.away_locale "
+        "WHERE w.user_id = ? AND w.override_type = 'away' "
+        "  AND w.start_date <= ? AND w.end_date >= ? AND lp.city != '' "
+        "ORDER BY w.start_date, w.id LIMIT 1",
+        (user_id, on_date, on_date),
+    ).fetchone()
+    if away:
+        city, source = away["city"], "away"
+    else:
+        home = db.execute(
+            "SELECT city FROM locale_profiles "
+            "WHERE preferred AND user_id = ? LIMIT 1",
+            (user_id,),
+        ).fetchone()
+        if home and home["city"]:
+            city, source = home["city"], "home"
+        else:
+            city, source = "", "none"
+    print(  # Rule #15 — which surface decided the weather/clothing city.
+        f"[trip-city] user={user_id} date={on_date.isoformat()} "
+        f"source={source} city={city!r}"
+    )
+    return city
+
+
 def add_event_window(
     db,
     user_id: int,

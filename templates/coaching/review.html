@@ -87,19 +87,6 @@
         </div>
       </div>
 
-      {# ── Locale updates ── #}
-      <div class="card mb-3">
-        <div class="card-header d-flex justify-content-between align-items-center">
-          <span class="fw-semibold">Upcoming Location Changes <span class="text-muted small fw-normal">(optional)</span></span>
-          <button type="button" class="btn btn-sm btn-outline-secondary" id="add-locale-btn">+ Add</button>
-        </div>
-        <div class="card-body">
-          <p class="text-muted small mb-2">Add date ranges where your training environment changes — travel, events, or restricted access. Claude will factor these in.</p>
-          <div id="locale-rows"></div>
-          <input type="hidden" name="locale_updates" id="locale-updates-json" value="[]">
-        </div>
-      </div>
-
       {# ── Plan difficulty ── #}
       <div class="card mb-3">
         <div class="card-header fw-semibold">How is the Plan Feeling?</div>
@@ -212,39 +199,6 @@
   </div>
 </div>
 
-<template id="locale-row-template">
-  <div class="locale-row border rounded p-2 mb-2 position-relative">
-    <button type="button" class="btn-close position-absolute top-0 end-0 m-1 remove-locale" aria-label="Remove"></button>
-    <div class="row g-2 align-items-end">
-      <div class="col-md-3">
-        <label class="form-label small mb-1">From</label>
-        <input type="date" class="form-control form-control-sm lr-start">
-      </div>
-      <div class="col-md-3">
-        <label class="form-label small mb-1">To</label>
-        <input type="date" class="form-control form-control-sm lr-end">
-      </div>
-      <div class="col-md-2">
-        <label class="form-label small mb-1">Location</label>
-        <select class="form-select form-select-sm lr-locale">
-          {% for t in trip_locale_types %}
-          <option value="{{ t }}" {% if t == 'hotel' %}selected{% endif %}>{{ t | capitalize }}</option>
-          {% endfor %}
-        </select>
-      </div>
-      <div class="col-md-3">
-        <label class="form-label small mb-1">City</label>
-        <input type="text" class="form-control form-control-sm lr-city" placeholder="e.g. Denver, CO">
-      </div>
-      <div class="col-md-1 d-flex align-items-end pb-1">
-        <div class="form-check" title="Indoor only">
-          <input class="form-check-input lr-indoor" type="checkbox">
-          <label class="form-check-label small">Indoor<br>only</label>
-        </div>
-      </div>
-    </div>
-  </div>
-</template>
 {% endblock %}
 
 {% block scripts %}
@@ -289,37 +243,12 @@ document.querySelectorAll('.difficulty-feedback-radio').forEach(el => {
 });
 document.getElementById('goals-changed-cb').addEventListener('change', toggleGoalsEdit);
 
-// Locale updates
-const localeRows = document.getElementById('locale-rows');
-const localeTemplate = document.getElementById('locale-row-template');
-document.getElementById('add-locale-btn').addEventListener('click', () => {
-  const row = localeTemplate.content.cloneNode(true);
-  row.querySelector('.remove-locale').addEventListener('click', function() {
-    this.closest('.locale-row').remove();
-  });
-  localeRows.appendChild(row);
-});
-
-function serializeLocaleUpdates() {
-  const updates = [];
-  localeRows.querySelectorAll('.locale-row').forEach(row => {
-    const start  = row.querySelector('.lr-start').value;
-    const end    = row.querySelector('.lr-end').value;
-    const locale = row.querySelector('.lr-locale').value;
-    const city   = row.querySelector('.lr-city').value.trim();
-    const indoor = row.querySelector('.lr-indoor').checked;
-    if (start && end) updates.push({ start_date: start, end_date: end, locale, city, indoor_only: indoor });
-  });
-  document.getElementById('locale-updates-json').value = JSON.stringify(updates);
-}
-
 // ── Clarification flow ──────────────────────────────────────────────────────
 const reviewSubmitBtn  = document.getElementById('review-submit-btn');
 const clarifySection   = document.getElementById('clarify-section');
 const clarifyQs        = document.getElementById('clarify-questions');
 
 reviewSubmitBtn.addEventListener('click', async () => {
-  serializeLocaleUpdates();
   const notesEl = document.querySelector('textarea[name="notes"]');
   const notes   = notesEl ? notesEl.value.trim() : '';
 

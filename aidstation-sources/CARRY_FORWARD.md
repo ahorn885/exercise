@@ -36,6 +36,25 @@ The #767 manual file-upload sub-track is **COMPLETE** (slices 1+2+4 merged, 3 re
 
 ---
 
+## #304 PR B — legacy `plan_travel` retired, replaced by event windows (2026-06-20; PR #795 `Closes #787`) — PR OPEN, CI GREEN, auto-merge armed; live-verify owed
+- **What:** the v1 `plan_travel` surface is gone; the v2 `athlete_event_windows` model (+ `locale_profiles.city`) is the sole travel/environment source. New `athlete_event_windows_repo.resolve_weather_city(db, uid, on_date)`: an `away` window covering the date → its `away_locale`'s `locale_profiles.city`; else the preferred-home city; else `''` (callers keep the `WEATHER_LOCATION` env fallback). Empty-city fall-through-to-home preserved (v1 parity).
+- **Re-pointed reads:** `routes/dashboard.py` weather + clothing, `routes/plans.py` plan-view clothing. **Behavior delta (intended):** event windows are athlete-scoped, so `plans.py` no longer scopes the trip to a specific `plan_id` — any active away window applies.
+- **Removed:** v1 coaching-review writer (`locale_updates`→`plan_travel` INSERT) + the "Upcoming Location Changes" card/row-template/JS in `templates/coaching/review.html`; `TRIP_LOCALE_TYPES`; the dead `travel_schedule` param + prompt block in `coaching.generate_plan`; `DELETE FROM plan_travel` in the admin purge; `plan_travel` DDL in `init_db.py` (inline + both migrations).
+- **Schema drop:** appended idempotent `"DROP TABLE IF EXISTS plan_travel"` to `_PG_MIGRATIONS` (auto-applies on deploy). **Prod was empty** — `neon-query` (read-only) confirmed 0 rows / 0 plans before the drop call. `DATABASE.md` scrubbed. New `tests/test_athlete_event_windows_repo.py` (9 cases). Full suite 2929 passed / 30 skipped.
+- **LIVE-VERIFY owed (Andy-action):** on deploy with `plan_travel` dropped, confirm dashboard weather + clothing + plan-view clothing still resolve a city (away-window city when in an away window, else preferred-home) and don't error.
+- **#304 stays OPEN → Part B:** the captured-but-unthreaded Layer-1 fields (`pack_load_history`, `network`, `disclosures`, `previous_coaching`, `altitude_exposure_count`, the `_history` lists, `identity.notes`, redundant `Layer1Availability`) still need per-field thread-or-stop-capturing decisions.
+
+---
+
+## #283 — wellness charts wired to ALL sources (the read-side payoff of the canonical store) (2026-06-20) — BUILT; live-verify owed
+
+The `/wellness` dashboard now reads `provider_raw_record` (Polar / COROS / Whoop) + internal `body_metrics.vo2_max`, not just Garmin. `routes/wellness.py:_provider_wellness_rows()` runs the same `raw_payload->>'…'` extractions Layer-3A uses; `_coalesce_series()` + `_SOURCE_PRIORITY` (garmin>whoop>polar>coros>body) pick the per-day winner for overlapping metrics (sleep hours, overnight HRV, resting HR, VO₂max, steps, calories). New cards: Recovery (Whoop recovery / Polar ANS charge), Training strain (Whoop), Cardio load (Polar daily/acute/chronic); VO₂max cards now draw. Garmin-non-regressive; full suite 2838/30. Handoff `handoffs/V5_Implementation_Wellness_MultiSourceCharts_283_2026_06_20_Closing_Handoff_v1.md`.
+
+- **LIVE-VERIFY owed (Andy-action, Rule #14 — container can't reach Neon):** open `/wellness` with the already-uploaded Whoop CSV (± Polar/COROS connected) → the Recovery / Training-strain / Sleep-hours-"Device" / HRV cards carry the non-Garmin days. Optional `neon-query` `count(*)` of `daily_wellness_metrics` + `provider_raw_record` per provider for Andy's user confirms whether the residual #283 Garmin symptom was the #742 schema-init prod-incident (fixed Jun 19, post-dates the Jun-17 report). **#283 stays open until this is walked.**
+- **Easy follow-ups** (one-line `_provider_wellness_rows` add + a card each, if Andy wants them): Polar nightly breathing rate, COROS `sleep_avg_hr`, Whoop `sleep_performance_pct` / `recovery_score` already surfaced via the Recovery card.
+
+---
+
 ## Plan-75 generation fixes — #775/#776 recovery DB fix + logging, #777 MTB/packraft strength pool (`0019`) (2026-06-19/20; PRs #781 + #782) — SHIPPED + `0019` PROD-APPLIED ✅ + DB-VERIFIED ✅; plan-regen + redump-PR-merge owed
 - **Arc:** the plan #74/#75 multi-discipline generation was discarded at the final write. Three root causes fixed + merged to `main`:
   - **#775 recovery 3rd-slot `CheckViolation`** (a recovery session in a day's 3rd slot tripped a DB CHECK → whole accepted plan rolled back at persist) + **#776 accepted-path day logging** (no Rule #15 log on the success path → silent discard left no trail). Both in **#781** (`9587a13`).
