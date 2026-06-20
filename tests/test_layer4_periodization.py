@@ -122,6 +122,102 @@ def test_week_volume_multiplier_graceful_fallback():
     )
 
 
+# ─── ramp_modulation_for (#424 — 3A coupling) ────────────────────────────────
+
+
+def _l3a(direction="steady", zone=None, workouts=30):
+    """Fake Layer3APayload: the modulation reader only touches
+    recent_trajectory.medium_term.direction, recent_trajectory.acwr_status.
+    combined.zone, and data_density.recent_workouts_count."""
+    combined = SimpleNamespace(zone=zone) if zone is not None else None
+    return SimpleNamespace(
+        recent_trajectory=SimpleNamespace(
+            medium_term=SimpleNamespace(direction=direction),
+            acwr_status=SimpleNamespace(combined=combined),
+        ),
+        data_density=SimpleNamespace(recent_workouts_count=workouts),
+    )
+
+
+def test_modulation_none_is_neutral():
+    assert pz.ramp_modulation_for(None) == pz.NEUTRAL_MODULATION
+    # A steady, data-rich, sweet-spot athlete also lands on the v1 curve.
+    assert pz.ramp_modulation_for(_l3a("steady", "sweet_spot", 30)) == (
+        pz.NEUTRAL_MODULATION
+    )
+
+
+def test_modulation_building_steepens_ramp():
+    mod = pz.ramp_modulation_for(_l3a(direction="building"))
+    assert mod.ramp_step_factor > 1.0
+    assert mod.deload_multiplier == pz._M_DELOAD  # not a fatigue signal
+
+
+def test_modulation_fatigue_gentler_ramp_and_deeper_deload():
+    mod = pz.ramp_modulation_for(_l3a(direction="fatigued"))
+    assert mod.ramp_step_factor < 1.0
+    assert mod.deload_multiplier < pz._M_DELOAD  # deload deepened
+
+
+def test_modulation_sparse_data_gentler_ramp():
+    very = pz.ramp_modulation_for(_l3a(workouts=3)).ramp_step_factor
+    sparse = pz.ramp_modulation_for(_l3a(workouts=8)).ramp_step_factor
+    dense = pz.ramp_modulation_for(_l3a(workouts=30)).ramp_step_factor
+    assert very < sparse < dense == 1.0
+
+
+def test_modulation_acwr_caps_and_deepens():
+    nfo = pz.ramp_modulation_for(_l3a(zone="non_functional_overreach"))
+    fo = pz.ramp_modulation_for(_l3a(zone="functional_overreach"))
+    assert nfo.ramp_step_factor < fo.ramp_step_factor < 1.0
+    # Only the non-functional zone forces a deeper deload.
+    assert nfo.deload_multiplier < pz._M_DELOAD
+    assert fo.deload_multiplier == pz._M_DELOAD
+
+
+def test_modulation_factor_clamped():
+    # Even stacked gentling signals stay within the clamp band (slope > 0).
+    mod = pz.ramp_modulation_for(
+        _l3a(direction="fatigued", zone="non_functional_overreach", workouts=1)
+    )
+    assert pz._K_CLAMP[0] <= mod.ramp_step_factor <= pz._K_CLAMP[1]
+    assert mod.deload_multiplier >= pz._DELOAD_DEEPEST
+
+
+def test_modulation_preserves_volume_neutrality():
+    # The whole point of scaling the SLOPE (not levels): Base/Build/Peak stay
+    # volume-neutral under any modulation.
+    for mod in (
+        pz.ramp_modulation_for(_l3a(direction="building")),
+        pz.ramp_modulation_for(_l3a(direction="fatigued")),
+        pz.ramp_modulation_for(
+            _l3a(direction="fatigued", zone="non_functional_overreach", workouts=2)
+        ),
+    ):
+        for phase in ("Base", "Build", "Peak"):
+            for weeks in (4, 6, 8):
+                m = pz.phase_week_multipliers(phase, weeks, 1, "standard", mod)
+                assert abs(sum(m) / weeks - 1.0) < 1e-9, (phase, weeks, mod)
+
+
+def test_log_ramp_modulation_defensive(capsys):
+    pz.log_ramp_modulation(None)  # no payload → no line
+    assert capsys.readouterr().out == ""
+    pz.log_ramp_modulation(_l3a(direction="building", zone="sweet_spot", workouts=20))
+    assert "ramp_modulation:" in capsys.readouterr().out
+
+
+def test_modulation_threads_through_for_phase():
+    ps = _ps([("Base", 8)])
+    building = pz.phase_week_multipliers_for_phase(ps, "Base", _l3a("building"))
+    fatigued = pz.phase_week_multipliers_for_phase(ps, "Base", _l3a("fatigued"))
+    neutral = pz.phase_week_multipliers_for_phase(ps, "Base")
+    # Steeper ramp → a wider week-1-to-week-3 spread than the neutral curve;
+    # gentler ramp → narrower. (Both volume-neutral, so the peak rises/falls.)
+    assert (building[2] - building[0]) > (neutral[2] - neutral[0])
+    assert (fatigued[2] - fatigued[0]) < (neutral[2] - neutral[0])
+
+
 # ─── stamp_recovery_week ─────────────────────────────────────────────────────
 
 

@@ -1690,6 +1690,7 @@ def _format_session_grid(
     skill_gated: dict[str, str] | None = None,
     terrain_feasibility: dict[str, TerrainResolution] | None = None,
     event_window_segments: list["EventWindowSegment"] | None = None,
+    layer3a_payload: Layer3APayload | None = None,
 ) -> list[str]:
     """Track 2 slice 2b: render the deterministic per-week session grid that
     replaces the prior `_format_phase_load_bands` block. The grid is
@@ -1754,6 +1755,10 @@ def _format_session_grid(
         else None
     )
 
+    # #424 — log the per-athlete ramp/deload modulation once per phase render
+    # (the grid below threads the same layer3a_payload into every week's band).
+    periodization.log_ramp_modulation(layer3a_payload)
+
     out: list[str] = []
     for w in weeks:
         week_feasibility = terrain_feasibility
@@ -1805,6 +1810,7 @@ def _format_session_grid(
                 if week_feasibility else None
             ),
             skill_gated_ids=frozenset(skill_gated or {}),
+            layer3a_payload=layer3a_payload,
         )
         # Rule #15 observability: the deterministic grid decides sessions/week
         # per discipline BEFORE feasibility runs — the upstream half of a
@@ -2486,6 +2492,7 @@ def render_user_prompt(
             skill_gated=skill_gated,
             terrain_feasibility=terrain_feasibility,
             event_window_segments=event_window_segments,
+            layer3a_payload=layer3a_payload,
         )
     )
     parts.append("")

@@ -35,7 +35,7 @@ from dataclasses import dataclass, field, replace
 from datetime import date as _date, timedelta
 from typing import Literal
 
-from layer4.context import Layer2APayload
+from layer4.context import Layer2APayload, Layer3APayload
 from layer4.payload import PhaseStructure
 from layer4.validator import (
     _STRENGTH_SESSIONS_PER_WEEK as _STRENGTH_DOSE_PER_WEEK,
@@ -913,6 +913,7 @@ def build_session_grid(
     peak_sessions_max: int | None = None,
     strength_feasibility_tiers: dict[str, str] | None = None,
     skill_gated_ids: frozenset[str] | set[str] = frozenset(),
+    layer3a_payload: Layer3APayload | None = None,
 ) -> SessionGrid:
     """The §5.1 deterministic grid for one `(phase, week_in_phase)`. Returns an
     empty-but-typed `SessionGrid` when inputs are insufficient (graceful
@@ -924,7 +925,8 @@ def build_session_grid(
     feasible disciplines proportional to load_weight. Bare callers omit it → no
     cap (mirrors the `available_days`-gated ceiling)."""
     bands = phase_week_volume_bands_hours(
-        layer2a, phase_name, week_in_phase, phase_structure, capacity_hours
+        layer2a, phase_name, week_in_phase, phase_structure, capacity_hours,
+        layer3a_payload,
     )
 
     allocations: list[DisciplineAllocation] = []

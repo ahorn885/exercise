@@ -28,16 +28,38 @@ signed off 2026-06-05):
   * Taper is deliberately net-NEGATIVE (a Bosquet-2007 descent: ~41–60% volume
     reduction across its final weeks, intensity held), so it is NOT renormalized.
 
-v2 (committed follow-up, tracked separately): 3A coupling — modulate the ramp
-steepness by `recent_trajectory` / `data_density` / ACWR. v1 here is
-athlete-agnostic (scaled only by the athlete's capacity-derived 2A bands).
+v2 (#424) — 3A coupling. `ramp_modulation_for(layer3a_payload)` derives a
+`RampModulation(ramp_step_factor, deload_multiplier)` from three Layer-3A
+signals and threads it into `phase_week_multipliers`:
+
+  * `recent_trajectory.medium_term.direction` drives ramp slope (the 3A spec's
+    "drives volume ramp shape"): building → steeper, fatigued/overreached/
+    detrained → gentler.
+  * `data_density.recent_workouts_count` → sparse-data athletes get a more
+    conservative (flatter) ramp (`Layer4_Spec.md` §8.2 intent).
+  * ACWR (`recent_trajectory.acwr_status.combined.zone`) caps the ramp slope
+    when the athlete is already loaded, keeping the acute:chronic ratio in the
+    safe band for THAT athlete's chronic load.
+
+The factor scales the ramp STEP (week-to-week slope), not the absolute levels,
+so the Base/Build/Peak phase-mean renormalization keeps the volume-neutral
+invariant for free: a capped ramp just makes the phase flatter, it never
+changes the phase total (that stays the 2A allocation's job). Fatigue signals
+ALSO deepen the deload (lower `deload_multiplier`); renormalization keeps the
+phase volume-neutral, so a deeper deload sharpens the recovery dip without
+inflating the total. Absent payload → `NEUTRAL_MODULATION` → the v1
+athlete-agnostic curve, so every entry point without 3A degrades gracefully.
+
+Modulation magnitudes are v1 defaults (`_K_*`, `_DELOAD_DEEPEN_STEP`); tune
+post-launch per the `Layer4_Spec.md` §8.3 calibration pattern.
 """
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Literal, NamedTuple
 
 if TYPE_CHECKING:
+    from layer4.context import Layer3APayload
     from layer4.payload import PhaseStructure, PlanSession
 
 PeriodizationMode = Literal["standard", "compressed", "extended", "custom"]
@@ -80,6 +102,129 @@ _TAPER_FACTOR_EARLY = 0.75
 """Taper weeks earlier than the final two sit at a milder reduction."""
 
 _LOADING_PHASES = frozenset({"Base", "Build", "Peak"})
+
+
+# ── v2 (#424) 3A modulation — v1 defaults, tune post-launch (Spec §8.3) ──────
+#
+# `ramp_step_factor` multiplies `_RAMP_STEP` (the week-to-week slope); the three
+# sub-factors below multiply together then clamp to `_K_CLAMP`. 1.0 = neutral.
+
+_K_TRAJECTORY: dict[str, float] = {
+    "building": 1.15,  # rising → steeper ramp
+    "peaking": 1.0,
+    "recovered": 1.0,
+    "steady": 1.0,
+    "insufficient_data": 1.0,
+    "fatigued": 0.85,  # flat/detrained/fatigued → gentler ramp
+    "overreached": 0.85,
+    "detrained": 0.85,
+}
+
+# Sparse-data athletes ramp conservatively (Spec §8.2). Keyed off
+# `recent_workouts_count`; <5 mirrors the 3A builder's "very sparse" floor.
+_K_DENSITY_VERY_SPARSE_MAX = 5
+_K_DENSITY_SPARSE_MAX = 12
+_K_DENSITY_VERY_SPARSE = 0.80
+_K_DENSITY_SPARSE = 0.90
+
+# ACWR cap — already-loaded athletes get a flatter ramp so acute:chronic stays
+# in the safe band. Keyed on the 3A zone (which already classifies the
+# no-chronic-base sentinel into `non_functional_overreach`). Sweet-spot /
+# undertraining / detraining → 1.0 (never ACCELERATE on an ACWR signal alone).
+_K_ACWR: dict[str, float] = {
+    "non_functional_overreach": 0.70,
+    "functional_overreach": 0.85,
+}
+
+_K_CLAMP = (0.5, 1.5)
+
+# Deeper deload for fatigued / non-functional-overreached athletes. Each signal
+# subtracts a step from `_M_DELOAD`, floored at `_DELOAD_DEEPEST` (~60% cut, the
+# bottom of the cited 30–60% deloading band). Volume-neutrality keeps the phase
+# total fixed → a deeper deload just sharpens the recovery dip.
+_DELOAD_DEEPEN_STEP = 0.075
+_DELOAD_DEEPEST = 0.40
+_FATIGUE_DIRECTIONS = frozenset({"fatigued", "overreached", "detrained"})
+
+
+class RampModulation(NamedTuple):
+    """Per-athlete shaping of the loading curve, derived from Layer 3A.
+
+    `ramp_step_factor` scales `_RAMP_STEP` (slope); `deload_multiplier` is the
+    deload-week value (≤ `_M_DELOAD`). `NEUTRAL_MODULATION` = the v1
+    athlete-agnostic curve."""
+
+    ramp_step_factor: float
+    deload_multiplier: float
+
+
+NEUTRAL_MODULATION = RampModulation(1.0, _M_DELOAD)
+
+
+def _clamp(x: float, lo: float, hi: float) -> float:
+    return max(lo, min(hi, x))
+
+
+def ramp_modulation_for(
+    layer3a_payload: "Layer3APayload | None",
+) -> RampModulation:
+    """Map the three Layer-3A signals to a `RampModulation`. Reads only
+    `recent_trajectory.medium_term.direction`,
+    `recent_trajectory.acwr_status.combined.zone`, and
+    `data_density.recent_workouts_count` — defensively, so a missing field or a
+    `None` payload degrades to `NEUTRAL_MODULATION` (the v1 curve)."""
+    if layer3a_payload is None:
+        return NEUTRAL_MODULATION
+
+    rt = getattr(layer3a_payload, "recent_trajectory", None)
+    direction = getattr(getattr(rt, "medium_term", None), "direction", None)
+    combined = getattr(getattr(rt, "acwr_status", None), "combined", None)
+    zone = getattr(combined, "zone", None)
+    workouts = getattr(
+        getattr(layer3a_payload, "data_density", None), "recent_workouts_count", None
+    )
+
+    k_traj = _K_TRAJECTORY.get(direction or "", 1.0)
+    if workouts is None:
+        k_density = 1.0
+    elif workouts < _K_DENSITY_VERY_SPARSE_MAX:
+        k_density = _K_DENSITY_VERY_SPARSE
+    elif workouts < _K_DENSITY_SPARSE_MAX:
+        k_density = _K_DENSITY_SPARSE
+    else:
+        k_density = 1.0
+    k_acwr = _K_ACWR.get(zone or "", 1.0)
+    ramp_step_factor = _clamp(k_traj * k_density * k_acwr, *_K_CLAMP)
+
+    deepen = 0.0
+    if direction in _FATIGUE_DIRECTIONS:
+        deepen += _DELOAD_DEEPEN_STEP
+    if zone == "non_functional_overreach":
+        deepen += _DELOAD_DEEPEN_STEP
+    deload_multiplier = max(_M_DELOAD - deepen, _DELOAD_DEEPEST)
+
+    return RampModulation(ramp_step_factor, deload_multiplier)
+
+
+def log_ramp_modulation(layer3a_payload: "Layer3APayload | None") -> None:
+    """Rule #15 — emit the per-athlete modulation decision (inputs + chosen
+    factor) ONCE at the prompt-build path. `ramp_modulation_for` is pure and
+    runs per memoized phase-week in the validator, so logging lives here rather
+    than in the hot function to keep one attributable line per phase render."""
+    if layer3a_payload is None:
+        return
+    rt = getattr(layer3a_payload, "recent_trajectory", None)
+    direction = getattr(getattr(rt, "medium_term", None), "direction", None)
+    zone = getattr(getattr(getattr(rt, "acwr_status", None), "combined", None), "zone", None)
+    workouts = getattr(
+        getattr(layer3a_payload, "data_density", None), "recent_workouts_count", None
+    )
+    mod = ramp_modulation_for(layer3a_payload)
+    print(
+        f"ramp_modulation: medium_term={direction} acwr_zone={zone} "
+        f"workouts={workouts} → ramp_step_factor={mod.ramp_step_factor:.3f} "
+        f"deload_multiplier={mod.deload_multiplier:.3f}"
+    )
 
 
 def mode_from_derived_from(derived_from: str | None) -> PeriodizationMode:
@@ -144,27 +289,35 @@ def phase_week_multipliers(
     phase_weeks: int,
     phase_global_start: int,
     mode: PeriodizationMode,
+    modulation: RampModulation = NEUTRAL_MODULATION,
 ) -> list[float]:
     """Volume multipliers for `week_in_phase` 1..`phase_weeks` (index `w-1` →
     week `w`).
 
     Loading phases (Base/Build/Peak): a ramp + planned deload, renormalized so
     the phase mean is 1.0 (volume-neutral). Taper: a Bosquet descent (NOT
-    renormalized). Returns `[]` for a non-positive week count."""
+    renormalized). Returns `[]` for a non-positive week count.
+
+    `modulation` (#424) personalizes the loading curve from Layer 3A: it scales
+    the ramp slope (`ramp_step_factor`) and sets the deload depth
+    (`deload_multiplier`). The phase-mean renormalization below keeps Base/Build/
+    Peak volume-neutral regardless of the modulation; default
+    `NEUTRAL_MODULATION` reproduces the v1 athlete-agnostic curve."""
     if phase_weeks <= 0:
         return []
     if phase_name not in _LOADING_PHASES:  # Taper (and any non-loading phase)
         return _taper_multipliers(phase_weeks)
 
+    step = _RAMP_STEP * modulation.ramp_step_factor
     raw: list[float] = []
     loading_idx = 0  # loading weeks since the last deload (ramp position)
     for w in range(1, phase_weeks + 1):
         gw = phase_global_start + (w - 1)
         if is_deload_week(gw, mode):
-            raw.append(_M_DELOAD)
+            raw.append(modulation.deload_multiplier)
             loading_idx = 0
         else:
-            raw.append(1.0 + _RAMP_STEP * loading_idx)
+            raw.append(1.0 + step * loading_idx)
             loading_idx += 1
 
     mean = sum(raw) / len(raw)
@@ -174,29 +327,38 @@ def phase_week_multipliers(
 
 
 def phase_week_multipliers_for_phase(
-    phase_structure: "PhaseStructure | None", phase_name: str
+    phase_structure: "PhaseStructure | None",
+    phase_name: str,
+    layer3a_payload: "Layer3APayload | None" = None,
 ) -> list[float]:
     """The full per-week multiplier vector for `phase_name`, deriving cadence,
     global-week offset, and week count from `phase_structure`. `[]` when the
     structure can't resolve the phase. Both the validator band and the prompt
-    target route through this, so they compute identically (no cadence drift)."""
+    target route through this, so they compute identically (no cadence drift).
+
+    `layer3a_payload` (#424) personalizes the loading curve per athlete; `None`
+    → the v1 athlete-agnostic curve (graceful degradation)."""
     weeks = _phase_weeks_of(phase_structure, phase_name)
     gstart = phase_global_start_week(phase_structure, phase_name)
     if weeks is None or gstart is None:
         return []
     mode = mode_from_derived_from(getattr(phase_structure, "derived_from", None))
-    return phase_week_multipliers(phase_name, weeks, gstart, mode)
+    modulation = ramp_modulation_for(layer3a_payload)
+    return phase_week_multipliers(phase_name, weeks, gstart, mode, modulation)
 
 
 def week_volume_multiplier(
     phase_structure: "PhaseStructure | None",
     phase_name: str,
     week_in_phase: int,
+    layer3a_payload: "Layer3APayload | None" = None,
 ) -> float:
     """The single per-week multiplier for one `(phase, week_in_phase)`. Returns
     1.0 (flat / no reshaping) when the structure can't resolve the week — so
     callers degrade gracefully to the flat per-phase band."""
-    mults = phase_week_multipliers_for_phase(phase_structure, phase_name)
+    mults = phase_week_multipliers_for_phase(
+        phase_structure, phase_name, layer3a_payload
+    )
     if not (1 <= week_in_phase <= len(mults)):
         return 1.0
     return mults[week_in_phase - 1]
