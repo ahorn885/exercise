@@ -805,13 +805,20 @@ class EventWindowOverride:
     types SUBTRACT from the home cluster; `away` REPLACES it with the
     destination's own radius cluster."""
 
-    override_type: Literal["indoor_only", "locale_unavailable", "away"]
+    override_type: Literal[
+        "indoor_only", "locale_unavailable", "away", "reduced_volume", "no_training"
+    ]
     unavailable_locale: str | None = None
     away_locale: str | None = None
     # Slice 4 (#581 WS-H) — craft brought to this `away` window (the (c) surface);
     # unioned with the standing craft↔locale set for the destination cluster to
     # form the away segment's `owned_crafts`. Empty on non-away overrides.
     brought_craft: tuple[str, ...] = ()
+    # Slice 6 (#593) — retained capacity fraction for a `reduced_volume` override
+    # (0 < pct < 1). None on every other type; `no_training` is the discrete 0%
+    # type. Volume overrides change capacity, not feasibility — they carry no
+    # terrain/locale subtraction (`_reduced_env` ignores them).
+    volume_pct: float | None = None
 
 
 @dataclass(frozen=True)
@@ -841,6 +848,14 @@ class EventWindowSegment:
     resolutions: dict[str, TerrainResolution]
     away_feasibility: dict[str, TerrainResolution] | None = None
     assumed_baseline_category: str | None = None
+    # Slice 6 (#593) — the segment's net VOLUME effect, computed from its active
+    # volume overrides: 0.0 when any `no_training` covers it (day zeroed + dropped
+    # from the placement pool), else the smallest `reduced_volume` fraction, else
+    # None (no volume effect). The grid scales this segment's days' target hours
+    # by it; the overlay renders the in-transit directive. A segment may carry
+    # BOTH a feasibility change (`resolutions`) and `volume_pct` (union on the
+    # same dates).
+    volume_pct: float | None = None
 
 
 def segment_window_boundaries(

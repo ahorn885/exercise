@@ -50,7 +50,11 @@ from layer4.orchestrator import (
     _resolve_included_feasibility,
 )
 from layer4.payload import PhaseSpec, PhaseStructure, SynthesisMetadata
-from layer4.per_phase import _format_event_window_overlay, _format_session_grid
+from layer4.per_phase import (
+    _format_event_window_overlay,
+    _format_session_grid,
+    _week_volume_capacity,
+)
 from layer4.session_feasibility import (
     EventWindowOverride,
     EventWindowSegment,
@@ -675,7 +679,7 @@ class TestOverlayRender:
         ))
         assert 'away at "hotel"' in text
         assert "any craft you have there" in text  # Slice 4 dropped "no brought craft"
-        assert "or replaced" in text  # away-aware intro
+        assert "replaced (training away" in text  # away-aware intro
 
     def test_assumed_baseline_note_renders_on_cold_away_segment(self):
         # Slice 3 (F8): a cold destination resolved on the category baseline →
@@ -790,11 +794,12 @@ class TestRepo:
             {"id": 1, "user_id": 7, "start_date": "2026-06-10",
              "end_date": "2026-06-12", "override_type": "indoor_only",
              "unavailable_locale": None, "away_locale": None,
-             "brought_craft": None, "notes": ""},
+             "brought_craft": None, "volume_pct": None, "notes": ""},
         ])
         windows = load_event_windows(conn, 7)
         assert windows[0].start_date == date(2026, 6, 10)
         assert isinstance(windows[0].start_date, date)
+        assert windows[0].volume_pct is None
         assert "ORDER BY start_date" in conn.calls[0][0]
 
     def test_add_rejects_unknown_override_type(self):
@@ -833,7 +838,7 @@ class TestRepo:
         insert = conn.calls[-1]
         assert "INSERT INTO athlete_event_windows" in insert[0]
         assert insert[1] == (7, date(2026, 6, 1), date(2026, 6, 2),
-                             "locale_unavailable", "park", None, None, "x")
+                             "locale_unavailable", "park", None, None, None, "x")
 
     def test_away_requires_resolvable_destination(self):
         conn = _FakeConn()
@@ -1035,3 +1040,163 @@ class TestRenderUserPromptIntegration:
             event_window_segments=[seg], week_range=(1, 1),
         )
         assert "Event-window overlay" not in text
+
+
+# ─── Slice 6 (#593) — volume / in-transit windows ────────────────────────────
+
+
+class TestVolumeRepo:
+    """reduced_volume / no_training validation + persistence (the data layer)."""
+
+    def test_reduced_volume_requires_pct_in_unit_interval(self):
+        conn = _FakeConn()
+        for bad in (None, 0.0, 1.0, 1.5, -0.2):
+            with pytest.raises(EventWindowError):
+                add_event_window(
+                    conn, 7, start_date=date(2026, 6, 1), end_date=date(2026, 6, 2),
+                    override_type="reduced_volume", volume_pct=bad,
+                )
+        assert conn.calls == []  # validation precedes any write
+
+    def test_reduced_volume_inserts_pct_and_clears_locale(self):
+        conn = _FakeConn()
+        add_event_window(
+            conn, 7, start_date=date(2026, 6, 1), end_date=date(2026, 6, 2),
+            override_type="reduced_volume", volume_pct=0.5,
+            unavailable_locale="park",  # must be cleared (volume carries no locale)
+        )
+        params = conn.calls[-1][1]
+        # (..., unavail, away, brought_craft, volume_pct, notes)
+        assert params[4] is None and params[5] is None  # locale fields cleared
+        assert params[7] == 0.5
+
+    def test_no_training_inserts_with_null_pct(self):
+        conn = _FakeConn()
+        add_event_window(
+            conn, 7, start_date=date(2026, 6, 1), end_date=date(2026, 6, 3),
+            override_type="no_training",
+        )
+        params = conn.calls[-1][1]
+        assert params[3] == "no_training"
+        assert params[7] is None  # no_training stores no pct
+
+    def test_load_round_trips_volume_pct(self):
+        conn = _FakeConn()
+        conn.queue_response(rows=[
+            {"id": 1, "user_id": 7, "start_date": "2026-06-10",
+             "end_date": "2026-06-12", "override_type": "reduced_volume",
+             "unavailable_locale": None, "away_locale": None,
+             "brought_craft": None, "volume_pct": 0.5, "notes": ""},
+        ])
+        w = load_event_windows(conn, 7)[0]
+        assert w.override_type == "reduced_volume"
+        assert w.volume_pct == 0.5
+
+
+class TestVolumeHash:
+    """A volume_pct (slider) change must invalidate the overlapping synthesis."""
+
+    def _win(self, override_type, volume_pct=None):
+        return EventWindow(
+            id=1, user_id=7, start_date=date(2026, 6, 1), end_date=date(2026, 6, 2),
+            override_type=override_type, unavailable_locale=None, away_locale=None,
+            notes="", volume_pct=volume_pct,
+        )
+
+    def test_pct_change_changes_digest(self):
+        a = compute_event_windows_hash([self._win("reduced_volume", 0.5)])
+        b = compute_event_windows_hash([self._win("reduced_volume", 0.25)])
+        assert a != b
+
+    def test_no_training_vs_reduced_differ(self):
+        a = compute_event_windows_hash([self._win("no_training")])
+        b = compute_event_windows_hash([self._win("reduced_volume", 0.5)])
+        assert a != b
+
+
+class TestWeekVolumeCapacity:
+    """The per-week deterministic capacity factor (`_week_volume_capacity`)."""
+
+    def _seg(self, start, end, volume_pct):
+        return EventWindowSegment(
+            start, end, (), {}, volume_pct=volume_pct,
+        )
+
+    def test_no_segment_is_identity(self):
+        # Mon 2026-06-01 .. Sun 2026-06-07
+        factor, no_train = _week_volume_capacity(
+            date(2026, 6, 1), date(2026, 6, 7), set(), []
+        )
+        assert factor == 1.0 and no_train == 0
+
+    def test_single_no_training_day_all_week_enabled(self):
+        seg = self._seg(date(2026, 6, 3), date(2026, 6, 3), 0.0)  # one Wed
+        factor, no_train = _week_volume_capacity(
+            date(2026, 6, 1), date(2026, 6, 7), set(), [seg]
+        )
+        assert no_train == 1
+        assert factor == pytest.approx(6 / 7)
+
+    def test_single_reduced_day(self):
+        seg = self._seg(date(2026, 6, 3), date(2026, 6, 3), 0.5)
+        factor, no_train = _week_volume_capacity(
+            date(2026, 6, 1), date(2026, 6, 7), set(), [seg]
+        )
+        assert no_train == 0
+        assert factor == pytest.approx((6 + 0.5) / 7)
+
+    def test_whole_week_no_training_is_zero(self):
+        seg = self._seg(date(2026, 6, 1), date(2026, 6, 7), 0.0)
+        factor, no_train = _week_volume_capacity(
+            date(2026, 6, 1), date(2026, 6, 7), set(), [seg]
+        )
+        assert factor == 0.0 and no_train == 7
+
+    def test_enabled_dows_restrict_the_denominator(self):
+        # Only Mon/Wed/Fri enabled; a no_training Wed → 1 of 3 enabled days zeroed.
+        seg = self._seg(date(2026, 6, 3), date(2026, 6, 3), 0.0)  # Wed
+        factor, no_train = _week_volume_capacity(
+            date(2026, 6, 1), date(2026, 6, 7), {"Mon", "Wed", "Fri"}, [seg]
+        )
+        assert no_train == 1
+        assert factor == pytest.approx(2 / 3)
+
+    def test_no_training_wins_over_reduced_on_same_day(self):
+        # Two segments cover the same Wed; the most-reducing (0.0) wins.
+        segs = [
+            self._seg(date(2026, 6, 3), date(2026, 6, 3), 0.0),
+            self._seg(date(2026, 6, 3), date(2026, 6, 3), 0.5),
+        ]
+        factor, no_train = _week_volume_capacity(
+            date(2026, 6, 1), date(2026, 6, 7), set(), segs
+        )
+        assert no_train == 1
+        assert factor == pytest.approx(6 / 7)
+
+
+class TestVolumeOverlayRender:
+    """The date-scoped overlay renders the in-transit directive for a volume
+    segment (Trigger-#1 wording — owed Andy's sign-off at build)."""
+
+    def test_no_training_segment_renders_directive(self):
+        seg = EventWindowSegment(
+            date(2026, 6, 10), date(2026, 6, 11),
+            (EventWindowOverride("no_training"),), {}, volume_pct=0.0,
+        )
+        text = "\n".join(_format_event_window_overlay(
+            [seg], date(2026, 6, 1), date(2026, 6, 14), None, {},
+        ))
+        assert "no training" in text
+        assert "In-transit dates" in text  # the placement directive
+
+    def test_reduced_volume_segment_shows_percent(self):
+        seg = EventWindowSegment(
+            date(2026, 6, 10), date(2026, 6, 11),
+            (EventWindowOverride("reduced_volume", volume_pct=0.5),), {},
+            volume_pct=0.5,
+        )
+        text = "\n".join(_format_event_window_overlay(
+            [seg], date(2026, 6, 1), date(2026, 6, 14), None, {},
+        ))
+        assert "reduced volume" in text
+        assert "50%" in text

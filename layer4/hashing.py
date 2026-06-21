@@ -209,6 +209,10 @@ def compute_event_windows_hash(windows: list[Any]) -> str:
                 "unavailable_locale": w.unavailable_locale,
                 "away_locale": getattr(w, "away_locale", None),
                 "brought_craft": sorted(getattr(w, "brought_craft", ()) or ()),
+                # Slice 6 (#593) — the per-window volume slider; a change must
+                # invalidate the overlapping synthesis. None on non-volume types
+                # → no effect on the existing no-windows / feasibility-only keys.
+                "volume_pct": getattr(w, "volume_pct", None),
             }
             for w in windows
         ),
@@ -219,6 +223,7 @@ def compute_event_windows_hash(windows: list[Any]) -> str:
             d["unavailable_locale"] or "",
             d["away_locale"] or "",
             tuple(d["brought_craft"]),
+            d["volume_pct"] if d["volume_pct"] is not None else -1.0,
         ),
     )
     return _sha256_hex(canonical_json(flat))

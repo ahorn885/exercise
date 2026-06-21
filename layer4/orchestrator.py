@@ -838,6 +838,7 @@ def _build_event_window_overlay(
                 w.unavailable_locale,
                 w.away_locale,
                 brought_craft=tuple(w.brought_craft),
+                volume_pct=w.volume_pct,
             ),
         )
         for w in overlapping
@@ -907,6 +908,23 @@ def _build_event_window_overlay(
                 equip_by_locale=equip,
             )
         changed = {d: r for d, r in reduced.items() if home_feasibility.get(d) != r}
+        # Slice 6 (#593) — the segment's net VOLUME effect from its active volume
+        # overrides: no_training (0.0) wins over reduced_volume; among reduced, the
+        # smallest retained fraction wins (most-reducing); None when neither is
+        # active. Volume composes by union with any feasibility change above.
+        seg_volume_pct: float | None = None
+        vol_overrides = [
+            ov for ov in active
+            if ov.override_type in ("reduced_volume", "no_training")
+        ]
+        if vol_overrides:
+            if any(ov.override_type == "no_training" for ov in vol_overrides):
+                seg_volume_pct = 0.0
+            else:
+                seg_volume_pct = min(
+                    ov.volume_pct for ov in vol_overrides
+                    if ov.volume_pct is not None
+                )
         # Rule #15 (spec §7): name, per discipline, the tier the cascade landed
         # on for this segment — so a surprising windowed-day plan is diagnosable
         # from logs alone (never assuming indoor/strength).
@@ -916,19 +934,22 @@ def _build_event_window_overlay(
             + (f":{ov.away_locale}" if ov.away_locale else "")
             for ov in active
         )
+        _emit = bool(changed) or seg_volume_pct is not None
         print(
             f"event_window_overlay: user_id={user_id} "
             f"dates={seg_start.isoformat()}..{seg_end.isoformat()} override={_ov}"
             f"{_away_dbg} "
             f"tiers={ {d: r.tier for d, r in sorted(changed.items())} }"
-            + ("" if changed else " (no routing change — segment not emitted)")
+            + (f" volume_pct={seg_volume_pct}" if seg_volume_pct is not None else "")
+            + ("" if _emit else " (no routing/volume change — segment not emitted)")
         )
-        if changed:
+        if _emit:
             segments.append(
                 EventWindowSegment(
                     seg_start, seg_end, active, changed,
                     away_feasibility=away_feasibility,
                     assumed_baseline_category=assumed_baseline,
+                    volume_pct=seg_volume_pct,
                 )
             )
     return segments, overlapping
