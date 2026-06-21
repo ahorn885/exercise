@@ -15,7 +15,7 @@ import requests
 
 import locations
 from routes.auth import current_user_id
-from exercise_inventory_bridge import inventory_display_by_exid
+from layer0_catalog import strength_catalog_by_exid
 
 # ── Base system prompt (generic, always included) ─────────────────────────────
 
@@ -341,16 +341,13 @@ def get_coaching_context(db, plan_id=None, lookback_days=14, locale='home'):
     except Exception:
         ctx['injury_modifications'] = []
 
-    # Current Rx — all exercises with per-exercise success data and inventory
-    # metadata. The inventory fields are keyed on the v1 short names, but a
-    # layer0-renamed lift is prescribed under its layer0 name, so a direct
-    # `ei.exercise = cr.exercise` join misses (#814). Read by EX-id as well:
-    # an inventory row's v1 name bridges to the EX-id the layer0-named row
-    # carries, so its skills/recovery/movement/discipline still enrich the
-    # coaching context.
-    inv_rows = db.execute('SELECT * FROM exercise_inventory').fetchall()
-    inv_by_name = {r['exercise']: r for r in inv_rows}
-    inv_by_exid = inventory_display_by_exid(inv_rows)
+    # Current Rx — per-exercise success data enriched from the single canonical
+    # catalog (layer0), keyed by the EX-id the current_rx row carries. The v1
+    # exercise_inventory metadata is retired; movement-pattern group +
+    # exercise_type + derived where_available are the meaningful fields (the old
+    # skills_ar_carryover / recovery_cost / discipline columns were unseeded /
+    # cardio-only and are dropped).
+    cat_by_exid = strength_catalog_by_exid(db)
     rx = db.execute(
         '''SELECT cr.exercise, cr.layer0_exercise_id,
                   cr.current_sets, cr.current_reps, cr.current_weight,
@@ -365,10 +362,10 @@ def get_coaching_context(db, plan_id=None, lookback_days=14, locale='home'):
 
     def _enrich_rx(row):
         r = dict(row)
-        inv = inv_by_name.get(r['exercise']) or inv_by_exid.get(r.get('layer0_exercise_id'))
-        for col in ('skills_ar_carryover', 'recovery_cost',
-                    'movement_pattern', 'where_available', 'discipline'):
-            r[col] = inv.get(col) if inv else None
+        cat = cat_by_exid.get(r.get('layer0_exercise_id'))
+        r['movement_pattern'] = cat['movement_pattern'] if cat else None
+        r['exercise_type'] = cat['exercise_type'] if cat else None
+        r['where_available'] = cat['where_available'] if cat else None
         r.pop('layer0_exercise_id', None)
         return r
 
