@@ -9,6 +9,23 @@
   <a class="btn btn-ghost" href="{{ url_for('plan_refresh.refresh') }}">
     <svg class="icon" width="12" height="12" aria-hidden="true"><use href="#i-arrow"></use></svg> Refresh plan
   </a>
+  {# #732 slice 3 — race-week brief. Surfaced only within 14 days of the target
+     event (the orchestrator's auto-fire gate). Once generated, the button links
+     straight to the stored brief; otherwise it POSTs to synthesize one. #}
+  {% if race_week_brief_exists %}
+  <a class="btn btn-ghost" href="{{ url_for('race_week_brief.view_brief', plan_version_id=plan_version_id) }}">
+    <svg class="icon" width="12" height="12" aria-hidden="true"><use href="#i-flag"></use></svg> Race-week brief
+  </a>
+  {% elif race_week_brief_available %}
+  <form method="post" action="{{ url_for('race_week_brief.generate_brief') }}" class="inline-form">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <input type="hidden" name="plan_version_id" value="{{ plan_version_id }}">
+    <button type="submit" class="btn btn-primary">
+      <svg class="icon" width="12" height="12" aria-hidden="true"><use href="#i-flag"></use></svg>
+      Generate race-week brief{% if days_to_event is not none %} · {{ days_to_event }}d to go{% endif %}
+    </button>
+  </form>
+  {% endif %}
 {% endblock %}
 
 {% block content %}
