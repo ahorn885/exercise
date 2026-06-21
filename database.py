@@ -52,6 +52,15 @@ class _CompatCursor:
         row = self._c.fetchone()
         return list(row.values())[0] if row else None
 
+    @property
+    def rowcount(self):
+        """Rows affected by the last statement, off the wrapped psycopg2
+        cursor. UPDATE/DELETE callers branch on it (provider_identity
+        link/unlink, provider_auth.disconnect, account_merge); without it they
+        raise AttributeError on `cur.rowcount`. RETURNING-based callers use
+        fetchone()/lastrowid instead (see routes/garmin.py)."""
+        return self._c.rowcount
+
 
 class _PgConn:
     """Thin wrapper around a psycopg2 connection that accepts ? placeholders
