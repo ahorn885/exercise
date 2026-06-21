@@ -372,20 +372,22 @@ class TestInputValidation:
             )
         assert exc.value.code == "missing_layer1"
 
-    def test_missing_primary_sport_raises_incomplete_onboarding(self):
+    def test_missing_primary_sport_does_not_raise(self):
+        # #447 — the planning sport comes from the target race, so a missing
+        # profile primary_sport must NOT block a race-tier plan. The real gate
+        # is the non-empty 2A discipline set (covered by the tests below).
         l1 = _make_layer1()
         l1.identity.primary_sport = None
-        with pytest.raises(Layer3AInputError) as exc:
-            llm_layer3a_athlete_state(
-                user_id=1,
-                layer1_payload=l1,
-                layer2a_payload=_make_layer2a(),
-                integration_bundle=_make_bundle(),
-                as_of=datetime(2026, 5, 20, 0, 0),
-                etl_version_set=_DEFAULT_ETL,
-                llm_caller=_stub_caller(_good_tool_args()),
-            )
-        assert exc.value.code == "incomplete_onboarding"
+        result = llm_layer3a_athlete_state(
+            user_id=1,
+            layer1_payload=l1,
+            layer2a_payload=_make_layer2a(),
+            integration_bundle=_make_bundle(),
+            as_of=datetime(2026, 5, 20, 0, 0),
+            etl_version_set=_DEFAULT_ETL,
+            llm_caller=_stub_caller(_good_tool_args()),
+        )
+        assert result is not None
 
     def test_missing_2a_raises(self):
         with pytest.raises(Layer3AInputError) as exc:
@@ -483,10 +485,11 @@ class TestInputValidation:
             )
         assert exc.value.code == "invalid_temp"
 
-    def test_incomplete_onboarding_when_identity_missing_dob(self):
-        # identity itself is required; primary_sport is the specific gate
+    def test_incomplete_onboarding_when_identity_missing(self):
+        # identity itself is required (#447 retired the primary_sport gate —
+        # the planning sport comes from the race, not the profile)
         l1 = _make_layer1()
-        l1.identity.primary_sport = None
+        l1.identity = None
         with pytest.raises(Layer3AInputError) as exc:
             llm_layer3a_athlete_state(
                 user_id=1,
@@ -1104,25 +1107,26 @@ class TestS13Scenarios:
         assert payload.current_state.aerobic_capacity.confidence == "medium"
 
     def test_s13_7_precondition_failure_no_llm_call(self):
-        """§13.7 — primary_sport missing → precondition fails, LLM NOT
-        invoked. Stub raises if called."""
+        """§13.7 — a precondition failure (here: empty 2A discipline set, the
+        real 'do we have a sport to plan' gate per #447) fails before the LLM
+        is invoked. Stub raises if called."""
 
         def _explode(*_args, **_kwargs):
             raise AssertionError("LLM should not be called when preconditions fail")
 
-        l1 = _make_layer1()
-        l1.identity.primary_sport = None
+        l2a = _make_layer2a()
+        l2a.disciplines.clear()
         with pytest.raises(Layer3AInputError) as exc:
             llm_layer3a_athlete_state(
                 user_id=1,
-                layer1_payload=l1,
-                layer2a_payload=_make_layer2a(),
+                layer1_payload=_make_layer1(),
+                layer2a_payload=l2a,
                 integration_bundle=_make_bundle(),
                 as_of=datetime(2026, 5, 20, 0, 0),
                 etl_version_set=_DEFAULT_ETL,
                 llm_caller=_explode,
             )
-        assert exc.value.code == "incomplete_onboarding"
+        assert exc.value.code == "missing_2a"
 
     def test_s13_10_acwr_red_zone(self):
         """§13.10 — ACWR combined = 1.62 → warning observation with

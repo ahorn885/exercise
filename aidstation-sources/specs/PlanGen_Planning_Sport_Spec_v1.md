@@ -113,14 +113,15 @@ Checklist item 1. Classification: **PLANNING** = used as the planning sport (mus
 
 Single source of truth: §3's resolution should live in **one** helper (`_resolve_planning_sport`) in the orchestrator; `routes/race_events.py`'s UI mirror documents that it intentionally re-implements the same order for page-load render (it cannot import the cone) and must be kept in lockstep.
 
-## 8. Implementation delta (for the follow-on build)
+## 8. Implementation delta
 
-Not done in this spec. When built:
+**Status (2026-06-21):** items 1, 2, 4, 5 **shipped**; item 3 (the Layer 2A fold) **deferred** — it is the cross-layer weighting change entangled with #338 (§5.2) and needs a weighting-precedence decision + a `Layer2A_Spec` amendment first.
 
-1. **`layer4/orchestrator.py:935-949`** — replace the "override" comment + inline resolution with a `_resolve_planning_sport(target_race_event, layer1_payload)` helper implementing §3 (race ?? primary; Tier-3 gate unchanged) and Rule-#15 logging. Compute `cross_training_sport` (§5.1).
-2. **`layer3a/builder.py:390-393`** — stop hard-requiring `primary_sport`; a race-tier plan must build without a profile primary sport. Gate on the resolved planning sport / non-empty 2A disciplines. *(This is a latent blocker even today: a race plan fails if the athlete left primary sport blank — arguably the highest-value concrete fix here, and shippable ahead of the fold.)*
-3. **Cross-training fold (§5)** — inject `cross_training_sport`'s disciplines into Layer 2A at a low cross-training weight, below the #338 race-share signal. New Layer 2A input + `Layer2A_Spec` amendment; cross-layer surface (trigger #3); sequence after / coordinate with #338.
-4. **Remove the "override" framing** in the comments at `routes/race_events.py:280`, `routes/onboarding.py:988`, and `orchestrator.py:935-944`. Behaviour at the UI mirrors is unchanged.
+1. ✅ **`layer4/orchestrator.py`** — `_resolve_planning_sport(target_race_event, layer1_payload, user_id)` helper implements §3 (race ?? primary; Tier-3 gate unchanged) with Rule-#15 logging; `_upstream_full_cone` calls it. (`cross_training_sport` not yet computed — gated on item 3.)
+2. ✅ **`layer3a/builder.py`** — dropped the hard `primary_sport is None` requirement; a race-tier plan now builds without a profile primary sport. The non-empty 2A discipline set is the real gate.
+3. ⏳ **Cross-training fold (§5)** — *deferred.* Inject `cross_training_sport`'s disciplines into Layer 2A at a low cross-training weight, below the #338 race-share signal. New Layer 2A input + `Layer2A_Spec` amendment; cross-layer surface (trigger #3); sequence after / coordinate with #338.
+4. ✅ **Removed the "override" framing** in `routes/race_events.py` (`_resolve_effective_framework_sport` docstring) and `orchestrator.py`. Behaviour at the UI mirror is unchanged.
+5. ✅ **No change** to the single-session path — already athlete-overriding by design.
 5. **No change** to the single-session path (`orchestrator.py:1342`) — already athlete-overriding by design.
 
 ## 9. Edge cases
