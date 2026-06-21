@@ -7,9 +7,22 @@ from flask import Flask, request, redirect, url_for, session, g, render_template
 from flask_wtf.csrf import CSRFProtect, CSRFError
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
+from werkzeug.middleware.proxy_fix import ProxyFix
 from database import init_app, get_db
 
 app = Flask(__name__, instance_relative_config=True)
+
+# Trust Vercel's edge proxy for the forwarded scheme + host. Vercel terminates
+# TLS at the edge and forwards the request to the Python function over plain
+# HTTP, so WSGI's `url_scheme` is 'http' without this. That made
+# `url_for(..., _external=True)` build `http://` links — most visibly the
+# password-reset / 2FA-recovery email links and the OAuth `redirect_uri`s —
+# which then tripped browser "not secure" warnings. ProxyFix rewrites
+# `wsgi.url_scheme` / host from `X-Forwarded-Proto` / `X-Forwarded-Host` so
+# external URLs come out `https://`. Safe here because the function always sits
+# behind exactly one trusted proxy hop (Vercel's edge); x_proto/x_host=1 trust
+# only the nearest hop's header.
+app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1, x_host=1)
 
 # SECRET_KEY is mandatory: Flask session cookies are signed with it, so a
 # predictable value lets anyone forge a session for any user. Refuse to
