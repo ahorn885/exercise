@@ -2040,6 +2040,31 @@ _PG_MIGRATIONS = [
         UNIQUE (plan_version_id)
     )""",
     "CREATE INDEX IF NOT EXISTS race_week_briefs_user_version_idx ON race_week_briefs (user_id, plan_version_id)",
+    # #732 slice 4 — race_week_brief_log. One row per race-week-brief generation
+    # ATTEMPT (success or failure), mirroring plan_refresh_log (D-64 §7.1). The
+    # race_week_briefs table only holds successful artifacts; this log is the
+    # observability surface — it records failures (which never reach
+    # race_week_briefs, since a failed attempt doesn't commit the brief) with
+    # their failure_reason, plus the per-attempt cost telemetry the orchestrator
+    # returns on the Layer4Payload (duration_ms / input+output tokens /
+    # llm_call_count). plan_version_id is nullable: a success row stamps the
+    # active version the brief attached to; a failure row stamps the originating
+    # plan view's version when known, else NULL.
+    """CREATE TABLE IF NOT EXISTS race_week_brief_log (
+        id BIGSERIAL PRIMARY KEY,
+        user_id INTEGER NOT NULL REFERENCES users(id),
+        triggered_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        plan_version_id BIGINT REFERENCES plan_versions(id),
+        days_to_event INTEGER,
+        duration_ms INTEGER,
+        input_tokens INTEGER,
+        output_tokens INTEGER,
+        llm_call_count INTEGER,
+        success BOOLEAN NOT NULL,
+        failure_reason TEXT,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )""",
+    "CREATE INDEX IF NOT EXISTS race_week_brief_log_user_triggered_idx ON race_week_brief_log (user_id, triggered_at DESC)",
     # D-63 §5.3 — ad_hoc_workout_suggestions. Holds generated-but-not-yet-
     # logged single-session synthesizer outputs. request_payload carries the
     # SingleSessionRequest; generated_session carries the single PlanSession
