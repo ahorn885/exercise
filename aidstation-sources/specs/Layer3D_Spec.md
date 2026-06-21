@@ -110,7 +110,7 @@ evaluate_layer3d_gate(...):
 
 After applying 2D exclusions to each phase's exercise pool (the 2C `effective_pool` minus 2D `excluded_exercises`):
 
-- **Strength pool empty.** If a phase needs strength sessions (2A includes a strength-weighted discipline with a non-zero phase band) and the post-exclusion strength pool has `< 2` distinct usable exercises, raise a blocker item for that phase. (Each strength session needs ≥2 distinct exercises; a pool below that can't fill a single session.)
+- **Strength pool empty.** If a phase needs strength sessions (2A includes a strength-weighted discipline with a non-zero phase band) and the post-exclusion strength pool has `< 3` distinct usable exercises, raise a blocker item for that phase. (A workable strength session needs ≥3 distinct exercises; a pool below that can't fill a single session. v1 floor — Andy 2026-06-21.)
 - **Cardio modality banned.** If 2D excludes the only available cardio modality for an included discipline (e.g. an all-running-banned wrist-fall injury removes the discipline's sole modality), raise a blocker item for that discipline.
 
 `evidence` carries the phase/discipline, the count of usable exercises after exclusion, and the 2D exclusion ids that emptied the pool. Resolution = **revise** (`revise_target` points at the Layer 1 §B injury record, or the 2A discipline-inclusion toggle, so the athlete can relax the injury input or drop the discipline). This is the one #214 detector that survives as a hard stop.
