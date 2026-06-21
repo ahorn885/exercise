@@ -9,7 +9,7 @@
    list, not an invented route — there is no add/import endpoint for rx). #}
 {% extends 'base.html' %}
 {% set nav_active = 'library' %}
-{% set has_filter = discipline or status or locale_filter %}
+{% set has_filter = pattern or status or locale_filter %}
 {% block title %}Exercises{% endblock %}
 {% block crumbs %}<b>Exercises</b>{% endblock %}
 
@@ -29,11 +29,11 @@
   <span class="eyebrow">Filter</span>
   <div class="rx-filter-controls">
     <label class="field">
-      <span class="lbl">Discipline</span>
-      <select name="discipline" class="form-select form-select-sm">
-        <option value="">All disciplines</option>
-        {% for d in ['Bike','Foot','Water','Cross'] %}
-          <option value="{{ d }}" {% if discipline == d %}selected{% endif %}>{{ d }}</option>
+      <span class="lbl">Pattern</span>
+      <select name="pattern" class="form-select form-select-sm">
+        <option value="">All patterns</option>
+        {% for p in patterns %}
+          <option value="{{ p }}" {% if pattern == p %}selected{% endif %}>{{ p }}</option>
         {% endfor %}
       </select>
     </label>
@@ -71,22 +71,15 @@
     <table class="data rx-table rx-catalog">
       <thead>
         <tr>
-          <th>Exercise</th><th>Disc.</th><th>Type</th><th>Pattern</th>
-          <th>Sugg. vol</th><th>Where</th>
+          <th>Exercise</th><th>Type</th><th>Pattern</th><th>Where</th>
         </tr>
       </thead>
       <tbody>
         {% for e in inventory_only %}
         <tr class="is-catalog">
-          <td class="rx-ex">
-            {% if e.video_reference %}
-              <a href="{{ e.video_reference }}" target="_blank" rel="noopener">{{ e.exercise }} ↗</a>
-            {% else %}{{ e.exercise }}{% endif %}
-          </td>
-          <td><span class="chip solid">{{ e.discipline }}</span></td>
-          <td class="dim">{{ e.type }}</td>
+          <td class="rx-ex">{{ e.exercise }}</td>
+          <td class="dim">{{ e.exercise_type }}</td>
           <td class="dim">{{ e.movement_pattern }}</td>
-          <td class="dim">{{ e.suggested_volume or '—' }}</td>
           <td class="dim">{{ e.where_available or '—' }}</td>
         </tr>
         {% endfor %}
@@ -120,7 +113,7 @@
       <table class="data rx-table">
         <thead>
           <tr>
-            <th>Exercise</th><th>Disc.</th><th>Type</th><th>Pattern</th>
+            <th>Exercise</th><th>Type</th><th>Pattern</th>
             <th>Sets</th><th>Reps</th><th>Weight</th><th>Last done</th>
             <th>Outcome</th><th></th>
           </tr>
@@ -129,13 +122,8 @@
           {% for e in entries %}
           {% set flagged = e.sessions_since_progress and e.sessions_since_progress >= deload_threshold %}
           <tr>
-            <td class="rx-ex">
-              {% if e.video_reference %}
-                <a href="{{ e.video_reference }}" target="_blank" rel="noopener">{{ e.exercise }} ↗</a>
-              {% else %}{{ e.exercise }}{% endif %}
-            </td>
-            <td><span class="chip solid">{{ e.discipline }}</span></td>
-            <td class="dim">{{ e.type }}</td>
+            <td class="rx-ex">{{ e.exercise }}</td>
+            <td class="dim">{{ e.exercise_type }}</td>
             <td class="dim">{{ e.movement_pattern }}</td>
             <td class="num">{{ e.current_sets or '—' }}</td>
             <td class="num">{{ e.current_reps or '—' }}</td>

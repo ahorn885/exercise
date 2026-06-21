@@ -8,8 +8,7 @@ from units import (
     weight_unit_label,
 )
 from athlete import get_athlete_profile
-from exercise_inventory_bridge import inventory_display_by_exid
-from provider_value_map_seed import STRENGTH_NAME_TO_EX_ID
+from layer0_catalog import strength_catalog_by_exid
 
 bp = Blueprint('rx', __name__)
 
@@ -50,27 +49,21 @@ def _decorate_entry(entry, unit_pref):
 def list_entries():
     db = get_db()
     uid = current_user_id()
-    discipline = request.args.get('discipline', '')
+    pattern = request.args.get('pattern', '')
     status = request.args.get('status', '')
     locale_filter = request.args.get('locale', '')
 
-    # #814 — the display fields live in exercise_inventory keyed on the v1 short
-    # names, but plan-gen prescribes (and current_rx stores) the layer0 canonical
-    # names, so a direct `ei.exercise = cr.exercise` join misses for every
-    # layer0-renamed lift. Index the catalog two ways: by its v1 name (the direct
-    # hit) and by the EX-id that name bridges to. A layer0-named current_rx row
-    # then finds its display row by its layer0_exercise_id. ORDER BY makes the
-    # by-exid winner deterministic when an EX-id has >1 v1 alias.
-    inv_rows = db.execute(
-        'SELECT * FROM exercise_inventory ORDER BY exercise'
-    ).fetchall()
-    inv_by_name = {r['exercise']: r for r in inv_rows}
-    inv_by_exid = inventory_display_by_exid(inv_rows)
+    # Single canonical catalog: layer0, keyed by EX-id (the id current_rx and
+    # plan-gen both carry). Replaces the v1 `exercise_inventory` display read +
+    # the #814 name↔EX-id bridge — one source of truth, no name drift. Display
+    # is organized by the layer0-native movement-pattern group + exercise_type;
+    # the v1 `discipline` (a cardio concept) / `type` (Staple/Novel) /
+    # `suggested_volume` are dropped, and `where_available` is derived from gear.
+    cat_by_exid = strength_catalog_by_exid(db)
 
     # current_rx rows for this user. The status filter keys off cr alone; the
-    # discipline and locale filters are applied AFTER enrichment, because a
-    # layer0-renamed row's discipline / where_available come from the bridged
-    # inventory row (cr.discipline / cr.where_available is NULL on those rows).
+    # pattern and locale filters are applied AFTER enrichment, since a row's
+    # movement-pattern group + where_available come from its layer0 catalog row.
     query = 'SELECT * FROM current_rx WHERE user_id = ?'
     params = [uid]
     if status:
@@ -80,44 +73,38 @@ def list_entries():
 
     def _enrich(row):
         e = dict(row)
-        # Direct v1-name hit first; fall back to the EX-id bridge (#814).
-        inv = inv_by_name.get(e['exercise']) or inv_by_exid.get(e.get('layer0_exercise_id'))
-        e['video_reference'] = inv.get('video_reference') if inv else None
-        e['where_available'] = inv.get('where_available') if inv else None
-        e['ei_recovery_cost'] = inv.get('recovery_cost') if inv else None
-        e['ei_suggested_volume'] = inv.get('suggested_volume') if inv else None
-        # discipline / type / movement_pattern fall back to the bridged row only
-        # where the stored cr value is NULL — a layer0-named row never had them
-        # written (rx_engine's name read missed at INSERT time), while a directly
-        # matched row keeps its own stored value.
-        if inv:
-            e['discipline'] = e.get('discipline') or inv.get('discipline')
-            e['type'] = e.get('type') or inv.get('type')
-            e['movement_pattern'] = e.get('movement_pattern') or inv.get('movement_pattern')
+        cat = cat_by_exid.get(e.get('layer0_exercise_id'))
+        if cat:
+            e['exercise_type'] = cat['exercise_type']
+            e['movement_pattern'] = e.get('movement_pattern') or cat['movement_pattern']
+            e['where_available'] = cat['where_available']
+        else:
+            # bucket-3 / un-resolved row: no layer0 home, keep its stored values.
+            e['exercise_type'] = None
+            e['where_available'] = None
         return e
 
     entries = [_enrich(r) for r in rows]
-    if discipline:
-        entries = [e for e in entries if e.get('discipline') == discipline]
+    if pattern:
+        entries = [e for e in entries if e.get('movement_pattern') == pattern]
     if locale_filter:
         entries = [e for e in entries
                    if locale_filter in (e.get('where_available') or '')]
-    entries.sort(key=lambda e: ((e.get('discipline') or ''), (e.get('exercise') or '')))
+    entries.sort(key=lambda e: ((e.get('movement_pattern') or ''), (e.get('exercise') or '')))
 
-    # Catalog: inventory exercises with no current Rx for this user — excluded by
-    # NAME or by EX-id (#814), so a lift prescribed under its layer0 name no
-    # longer double-lists here under its v1 name.
-    prescribed_names = {r['exercise'] for r in rows}
-    prescribed_exids = {r.get('layer0_exercise_id') for r in rows if r.get('layer0_exercise_id')}
+    # Browse: layer0 strength exercises with no current Rx for this user,
+    # excluded by EX-id (a prescribed lift never double-lists here).
+    prescribed_exids = {r['layer0_exercise_id'] for r in rows if r['layer0_exercise_id']}
     inventory_only = [
-        r for r in inv_rows
-        if r['exercise'] not in prescribed_names
-        and STRENGTH_NAME_TO_EX_ID.get(r['exercise']) not in prescribed_exids
+        c for c in cat_by_exid.values()
+        if c['layer0_exercise_id'] not in prescribed_exids
     ]
     if locale_filter:
-        inventory_only = [r for r in inventory_only
-                          if locale_filter in (r['where_available'] or '')]
-    inventory_only.sort(key=lambda r: ((r['discipline'] or ''), (r['exercise'] or '')))
+        inventory_only = [c for c in inventory_only
+                          if locale_filter in (c['where_available'] or '')]
+    inventory_only.sort(key=lambda c: ((c['movement_pattern'] or ''), (c['exercise'] or '')))
+    # Distinct movement-pattern groups present, for the filter dropdown.
+    patterns = sorted({c['movement_pattern'] for c in cat_by_exid.values() if c['movement_pattern']})
 
     locales = db.execute(
         'SELECT locale FROM locale_profiles WHERE user_id = ? ORDER BY locale',
@@ -135,7 +122,7 @@ def list_entries():
 
     return render_template('rx/list.html', entries=entries_view,
                            inventory_only=inventory_only,
-                           discipline=discipline, status=status,
+                           pattern=pattern, patterns=patterns, status=status,
                            locale_filter=locale_filter, locales=locales,
                            deload_pending=deload_pending_view,
                            deload_threshold=DELOAD_THRESHOLD,
