@@ -378,6 +378,36 @@ class TestPersistLayer4Sessions:
             _, params = call
             assert params[1] == _USER_ID
 
+    def test_default_is_plain_insert_no_conflict_clause(self):
+        """Plan-create / plan-refresh INSERT under a fresh version — no
+        ON CONFLICT clause is emitted by default."""
+        conn = _FakeConn()
+        payload = _make_layer4_payload(
+            plan_version_id=7, sessions=[_make_plan_session(plan_version_id=7)]
+        )
+
+        persist_layer4_sessions(conn, payload)
+
+        sql, _ = conn.calls[0]
+        assert "ON CONFLICT" not in sql
+
+    def test_on_conflict_update_upserts_in_place(self):
+        """#732 slice 2 — the race-week brief mutates the active version in
+        place, so `on_conflict_update=True` upserts on the natural key."""
+        conn = _FakeConn()
+        payload = _make_layer4_payload(
+            plan_version_id=7, sessions=[_make_plan_session(plan_version_id=7)]
+        )
+
+        persist_layer4_sessions(conn, payload, on_conflict_update=True)
+
+        sql, _ = conn.calls[0]
+        assert (
+            "ON CONFLICT (plan_version_id, date, session_index_in_day)" in sql
+        )
+        assert "DO UPDATE SET" in sql
+        assert "payload_json = EXCLUDED.payload_json" in sql
+
 
 # ─── load_plan_sessions_by_version ──────────────────────────────────────────
 

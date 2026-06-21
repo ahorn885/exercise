@@ -2015,6 +2015,31 @@ _PG_MIGRATIONS = [
         UNIQUE (plan_version_id)
     )""",
     "CREATE INDEX IF NOT EXISTS plan_conditions_user_version_idx ON plan_conditions (user_id, plan_version_id)",
+    # #732 slice 2 — race_week_briefs. Storage home for the structured Layer 4
+    # race-week-brief output (the `RaceWeekBrief` + optional multi-day `RacePlan`
+    # from a `Layer4Payload`). The Taper-session OVERRIDES are mutated back into
+    # `plan_sessions` in place (per-day pointer + ON CONFLICT upsert under the
+    # athlete's active plan version, #732 slice 2 ratified decision); this table
+    # is the home for the brief/race_plan payloads that have no equivalent in
+    # plan_sessions. One row per plan_version; UNIQUE (plan_version_id) makes a
+    # re-fired brief an idempotent overwrite in place, matching the in-place
+    # mutation model. event_date + race_format are denormalized for queryability
+    # (e.g. "show the brief for the upcoming race"). ON DELETE CASCADE mirrors
+    # plan_nutrition: the brief is meaningless without its plan version.
+    """CREATE TABLE IF NOT EXISTS race_week_briefs (
+        id BIGSERIAL PRIMARY KEY,
+        plan_version_id BIGINT NOT NULL REFERENCES plan_versions(id) ON DELETE CASCADE,
+        user_id INTEGER NOT NULL REFERENCES users(id),
+        event_date DATE NOT NULL,
+        race_format TEXT NOT NULL,
+        brief_json JSONB NOT NULL,
+        race_plan_json JSONB,
+        generated_at TIMESTAMPTZ NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        UNIQUE (plan_version_id)
+    )""",
+    "CREATE INDEX IF NOT EXISTS race_week_briefs_user_version_idx ON race_week_briefs (user_id, plan_version_id)",
     # D-63 §5.3 — ad_hoc_workout_suggestions. Holds generated-but-not-yet-
     # logged single-session synthesizer outputs. request_payload carries the
     # SingleSessionRequest; generated_session carries the single PlanSession
