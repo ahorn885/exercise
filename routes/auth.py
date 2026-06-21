@@ -29,6 +29,9 @@ PASSWORD_RESET_TTL_MIN = 30
 # urgency to a verify link (it only flips a flag; it can't change credentials),
 # and athletes click them at leisure.
 EMAIL_VERIFY_TTL_HOURS = 24
+# Admin invite links (#274). A week is plenty for someone to accept; expired
+# invites can be re-issued.
+INVITE_TTL_DAYS = 7
 # zxcvbn score table: 0=too guessable, 1=very guessable,
 # 2=somewhat guessable, 3=safely unguessable, 4=very unguessable.
 # 3 protects against offline slow-hash attack; with bcrypt + the rate
@@ -342,12 +345,17 @@ def logout():
 def register():
     db = get_db()
     is_bootstrap = _no_users(db)
-    if not is_bootstrap and not _registration_open():
+    # A valid invite (#274) opens registration even when it's otherwise closed,
+    # and pins the email to the invited address.
+    invite = lookup_invite(db, request.values.get('invite'))
+    invite_token = invite['token'] if invite else None
+    invited_email = invite['email'] if invite else None
+    if not is_bootstrap and not _registration_open() and not invite:
         return ('Registration is closed.', 403)
 
     if request.method == 'POST':
         username = (request.form.get('username') or '').strip()
-        email = (request.form.get('email') or '').strip() or None
+        email = invited_email or ((request.form.get('email') or '').strip() or None)
         display_name = (request.form.get('display_name') or '').strip() or None
         password = request.form.get('password') or ''
         confirm = request.form.get('confirm') or ''
@@ -377,6 +385,8 @@ def register():
                                    username=username, email=email or '',
                                    display_name=display_name or '',
                                    is_bootstrap=is_bootstrap,
+                                   invite_token=invite_token,
+                                   invited_email=invited_email,
                                    signin_providers=pi.enabled_signin_providers())
 
         cur = db.execute(
@@ -399,10 +409,21 @@ def register():
             pass
         db.commit()
 
-        # Confirm the email if one was given (#251). Best-effort: a mail
-        # failure must not block registration — the athlete can resend from
-        # account settings.
-        if email:
+        if invite:
+            # Invite acceptance proves control of the email (the link was
+            # delivered to it and presented back), so the account starts
+            # verified and the invite is marked used (#274).
+            db.execute('UPDATE users SET email_verified = TRUE WHERE id = ?',
+                       (new_user_id,))
+            db.execute('UPDATE user_invites SET accepted_at = ?, '
+                       'accepted_user_id = ? WHERE token = ?',
+                       (datetime.utcnow().isoformat(timespec='seconds'),
+                        new_user_id, invite_token))
+            db.commit()
+        elif email:
+            # Confirm the email if one was given (#251). Best-effort: a mail
+            # failure must not block registration — the athlete can resend from
+            # account settings.
             try:
                 send_verification_email(db, new_user_id, email)
             except Exception:
@@ -422,8 +443,11 @@ def register():
         return redirect(url_for('onboarding.connect'))
 
     return render_template('auth/register.html',
-                           username='', email='', display_name='',
+                           username='', email=invited_email or '',
+                           display_name='',
                            is_bootstrap=is_bootstrap,
+                           invite_token=invite_token,
+                           invited_email=invited_email,
                            signin_providers=pi.enabled_signin_providers())
 
 
@@ -693,3 +717,67 @@ def resend_verification():
         flash(f'Confirmation link sent to {row["email"]}. Check your inbox '
               f'(and spam folder).', 'info')
     return redirect(url_for('profile.account_settings'))
+
+
+# ── Admin invites ──────────────────────────────────────────────────────────
+
+def issue_invite(db, email: str, created_by: int) -> str:
+    """Create a single-use, time-limited invite token for `email`. Returns the
+    token; caller sends the link."""
+    token = secrets.token_urlsafe(32)
+    expires = datetime.utcnow() + timedelta(days=INVITE_TTL_DAYS)
+    db.execute(
+        'INSERT INTO user_invites (token, email, created_by, expires_at) '
+        'VALUES (?,?,?,?)',
+        (token, email, created_by, expires.isoformat(timespec='seconds')),
+    )
+    db.commit()
+    return token
+
+
+def lookup_invite(db, token):
+    """Return the invite row if `token` is valid (exists, unaccepted,
+    unexpired), else None. The gate for invite-only registration."""
+    if not token:
+        return None
+    row = db.execute(
+        'SELECT token, email, accepted_at, expires_at FROM user_invites '
+        'WHERE token = ?', (token,)
+    ).fetchone()
+    if not row or row['accepted_at']:
+        return None
+    expires_at = row['expires_at']
+    expires_dt = (expires_at if isinstance(expires_at, datetime)
+                  else datetime.fromisoformat(str(expires_at)))
+    if expires_dt < datetime.utcnow():
+        return None
+    return row
+
+
+def send_invite_email(db, email: str, created_by: int) -> str:
+    """Issue an invite token and email the registration link. Returns the token
+    (False-y send still logs the link via send_email's dev fallback)."""
+    token = issue_invite(db, email, created_by)
+    invite_url = url_for('auth.register', invite=token, _external=True)
+    _send_invite_email(email, invite_url)
+    print(f'[invite] issued to {email} by user={created_by}')  # Rule #15 — no token
+    return token
+
+
+def _send_invite_email(to_address: str, invite_url: str) -> None:
+    subject = "You're invited to AIDSTATION"
+    text = (
+        f'You\'ve been invited to AIDSTATION. Create your account here:\n\n'
+        f'  {invite_url}\n\n'
+        f'The link expires in {INVITE_TTL_DAYS} days.\n\n'
+        f'— AIDSTATION\n'
+    )
+    html = f"""<!doctype html>
+<html><body style="font-family:system-ui,-apple-system,sans-serif;line-height:1.5;color:#0E0F11;">
+<p>You've been invited to AIDSTATION.</p>
+<p><a href="{invite_url}" style="display:inline-block;padding:10px 18px;background:#ED7A2D;color:#fff;text-decoration:none;border-radius:4px;">Create your account</a></p>
+<p style="font-size:12px;color:#666;">Or paste this into your browser:<br><span style="font-family:ui-monospace,monospace;word-break:break-all;">{invite_url}</span></p>
+<p style="font-size:12px;color:#666;">The link expires in {INVITE_TTL_DAYS} days.</p>
+<p style="font-size:12px;color:#666;">— AIDSTATION</p>
+</body></html>"""
+    send_email(to_address, subject, text, html)
