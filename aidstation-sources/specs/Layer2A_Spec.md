@@ -193,7 +193,9 @@ Procedure (in `_fold_cross_training_disciplines`):
 
 1. Re-run the §5.2 disciplines query for `cross_training_sport`.
 2. **De-dupe** against the race discipline set — any home-sport discipline whose `discipline_id` already appears (the race already covers it) is dropped, never double-counted (Andy 2026-06-21).
-3. Append each remaining home-sport discipline as `inclusion = 'included'`, `role = 'Cross-training'`, at a **fixed low weight** = `_CROSS_TRAINING_WEIGHT_FACTOR` (0.5) × the smallest included race discipline's weight. This guarantees every folded discipline sits **strictly below every race discipline** ("fixed low cap below race", Andy 2026-06-21).
+3. Append each remaining home-sport discipline as `inclusion = 'included'`, `role = 'Cross-training'`, capped on **both** weighting axes at `_CROSS_TRAINING_WEIGHT_FACTOR` (0.5) × the smallest included race discipline ("fixed low cap below race", Andy 2026-06-21):
+   - **`load_weight`** (priority axis) — 0.5 × smallest race `load_weight`. Governs ceiling-shed order + absorber reallocation in `session_grid` (lowest = first shed). **Not** the volume axis.
+   - **`phase_load`** (volume axis) — 0.5 × the smallest race **phase-load midpoint**, applied flat across all four phases; the home sport's own phase-load shape is discarded. This is the axis `validator.phase_volume_bands_hours` → `session_grid` (the #338/#433 race-share volume engine) renormalizes into weekly HOURS, so it — **not** `load_weight` — is what actually makes cross-training a minor maintenance dose (small enough to trip the sub-0.5-session/week maintenance-cadence rule → intermittent, not weekly). None when no race discipline carries phase_load (the volume engine no-ops for everyone), → folded `phase_load` left off.
 
 **Ordering (load-bearing):** the fold runs **after** §5.3/§5.4 inclusion+weighting **and after** modality-group pooling (X1b.2), but **before** the sum-to-1.0 normalization. Consequences:
 
@@ -204,7 +206,7 @@ Procedure (in `_fold_cross_training_disciplines`):
 
 **Cache:** no new key component is required — `layer2a_hash = compute_payload_hash(layer2a_payload)` is a content hash, so the injected disciplines change the hash (and every downstream plan cache key) automatically.
 
-**Pending:** the fold's weight precedence is intentionally a flat cap, kept **below** the #338 race-share weighting signal. If/when #338 lands a richer race-share model, re-validate that the cross-training cap still slots strictly beneath it.
+**#338 (closed, shipped via #433):** the race-share volume model is `layer4/session_grid.py` + `validator.phase_volume_bands_hours`, driven by **`phase_load`** (renormalized across the included set × weekly-total hours), with the maintenance-cadence rule for sub-0.5-session/week disciplines — **not** `_apply_modality_group_pooling`, and **not** `load_weight`. The fold's `phase_load` cap (above) is what slots cross-training beneath that signal; the `load_weight` cap only sets shed-priority. Both are flat `0.5 ×` caps relative to the smallest race discipline on their respective axes.
 
 ## 6. Drift items affecting 2A
 

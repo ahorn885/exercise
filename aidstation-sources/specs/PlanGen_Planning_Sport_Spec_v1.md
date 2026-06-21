@@ -80,7 +80,7 @@ Guardrails (carry over the spirit of the existing variety carveout, `layer4/per_
 
 Option A (extend the per-phase variety-carveout prompt) was considered and **not** chosen: it would keep the fold as soft LLM discretion on easy days only. Andy chose the discipline-set injection so the folded sport is a real, weighted member of the plan's discipline mix and flows through the whole cone deterministically.
 
-**Cost / coordination (the load-bearing risk):** this touches Layer 2A's classifier output and weighting, which is exactly the surface #338 (race-share weighting) rebalances via `_apply_modality_group_pooling` (precedence: race terrain mix › athlete split › bridge midpoints). The cross-training weight must slot **below** the race-share signal so it cannot dilute race specificity. Sequence this fold **after** #338 lands, or co-design the weighting precedence so the two do not fight. This is a Layer 2A payload/algorithm change → a `Layer2A_Spec` amendment is owed in the build, and it is a cross-layer surface change (Stop-and-ask trigger #3).
+**Cost / coordination (the load-bearing risk):** this touches Layer 2A's classifier output and weighting. The cross-training weight must slot **below** the race-share signal so it cannot dilute race specificity. *(Build correction, 2026-06-21: this section originally assumed #338's race-share signal lived in `_apply_modality_group_pooling`/`load_weight`. It does **not** — #338 shipped via #433 as the `session_grid`/`phase_volume_bands_hours` volume engine, driven by **`phase_load`**. So the fold caps **both** axes: `load_weight` for shed-priority and, decisively, `phase_load` for volume. See `Layer2A_Spec` §5.7.)* This is a Layer 2A payload/algorithm change → a `Layer2A_Spec` amendment was owed in the build (done), and it is a cross-layer surface change (Stop-and-ask trigger #3).
 
 ### 5.3 Inert cases
 
@@ -115,11 +115,11 @@ Single source of truth: §3's resolution should live in **one** helper (`_resolv
 
 ## 8. Implementation delta
 
-**Status (2026-06-21):** all items shipped. The Layer 2A fold (item 3) landed with the decisions: **fixed low cap below the smallest race discipline** + **de-dupe overlapping disciplines** (Andy 2026-06-21). It is kept flat/below the #338 race-share signal pending a richer #338 model (see `Layer2A_Spec` §5.7).
+**Status (2026-06-21):** all items shipped. The Layer 2A fold (item 3) landed with the decisions: **fixed low cap below the smallest race discipline** + **de-dupe overlapping disciplines** (Andy 2026-06-21), capped on **both** the `load_weight` (priority) and `phase_load` (volume) axes — the latter is the axis the #338/#433 race-share volume engine (`session_grid` + `phase_volume_bands_hours`) actually consumes, so the cap there is what keeps cross-training a minor maintenance dose. #338 is **closed** (shipped via #433); see `Layer2A_Spec` §5.7.
 
 1. ✅ **`layer4/orchestrator.py`** — `_resolve_planning_sport(target_race_event, layer1_payload, user_id)` helper implements §3 (race ?? primary; Tier-3 gate unchanged) with Rule-#15 logging; `_upstream_full_cone` calls it. (`cross_training_sport` not yet computed — gated on item 3.)
 2. ✅ **`layer3a/builder.py`** — dropped the hard `primary_sport is None` requirement; a race-tier plan now builds without a profile primary sport. The non-empty 2A discipline set is the real gate.
-3. ✅ **Cross-training fold (§5)** — `cross_training_sport` (orchestrator) → `_fold_cross_training_disciplines` (Layer 2A): de-duped against the race set, injected as `role="Cross-training"` at a fixed cap = 0.5 × smallest race discipline, after pooling / before normalize. Documented in `Layer2A_Spec` §5.7. Kept below the #338 race-share signal pending a richer #338 model.
+3. ✅ **Cross-training fold (§5)** — `cross_training_sport` (orchestrator) → `_fold_cross_training_disciplines` (Layer 2A): de-duped against the race set, injected as `role="Cross-training"` after pooling / before normalize, capped at 0.5 × smallest race discipline on **both** axes — `load_weight` (shed-priority) and `phase_load` (volume; the axis #338/#433's `session_grid` consumes, so the cap there is what actually keeps cross-training minor). Documented in `Layer2A_Spec` §5.7.
 4. ✅ **Removed the "override" framing** in `routes/race_events.py` (`_resolve_effective_framework_sport` docstring) and `orchestrator.py`. Behaviour at the UI mirror is unchanged.
 5. ✅ **No change** to the single-session path — already athlete-overriding by design.
 5. **No change** to the single-session path (`orchestrator.py:1342`) — already athlete-overriding by design.
@@ -149,7 +149,7 @@ Single source of truth: §3's resolution should live in **one** helper (`_resolv
 
 ## 11. Open items
 
-- **§5 fold weight + #338 interaction** — fix the exact precedence so the cross-training weight slots below the race-share signal in `_apply_modality_group_pooling`. Decide sequencing (after #338, or co-designed). Owes a `Layer2A_Spec` amendment in the build.
+- ✅ **§5 fold weight + #338 interaction** *(resolved 2026-06-21)* — #338 turned out to be **closed** (shipped #433) and its race-share signal is the `session_grid`/`phase_volume_bands_hours` **volume** engine driven by `phase_load`, not `_apply_modality_group_pooling`/`load_weight`. The fold caps both axes at `0.5 ×` the smallest race discipline; the `phase_load` cap is the one that keeps cross-training minor. `Layer2A_Spec` §5.7 amendment landed.
 - **`routes/race_events.py` mirror** — keep the UI-side resolution in lockstep with `_resolve_planning_sport`; consider a shared order constant or a comment-anchored contract test so they cannot drift.
 - **`layer3a/builder.py:390` fix** — confirm the loosened gate condition (resolved planning sport / non-empty 2A disciplines) and that it does not mask a genuinely empty cone.
 

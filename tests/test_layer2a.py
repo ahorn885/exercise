@@ -298,6 +298,50 @@ class TestCrossTrainingFold:
         race_weights = [by_id["D-001"], by_id["D-008"]]
         assert all(folded < w for w in race_weights)
 
+    def _run_with_fold_phase_load(self):
+        # Race set carries phase_load; min base midpoint = D-008 = 7.5 → cap 3.75.
+        race = [
+            _row("D-001", "Trail Running", "Primary",
+                 race_time_pct_low=20, race_time_pct_high=40,
+                 base_pct_low=30, base_pct_high=40),
+            _row("D-008", "Packrafting", "Secondary",
+                 race_time_pct_low=10, race_time_pct_high=20,
+                 base_pct_low=5, base_pct_high=10),
+        ]
+        # Home discipline has a LARGE home-sport phase_load (base mid 50) that
+        # must be discarded and replaced by the flat cap, not carried through.
+        cross = [
+            _row("D-020", "Road Running", "Primary",
+                 race_time_pct_low=40, race_time_pct_high=60,
+                 base_pct_low=40, base_pct_high=60),
+        ]
+        conn = _FakeConn()
+        conn.queue_response(rows=race)
+        conn.queue_response(rows=[])
+        conn.queue_response(rows=cross)
+        return q_layer2a_discipline_classifier_payload(
+            conn, "Adventure Racing",
+            cross_training_sport="Trail Running",
+            etl_version_set=_DEFAULT_ETL,
+        )
+
+    def test_folded_phase_load_capped_below_smallest_race(self):
+        payload = self._run_with_fold_phase_load()
+        folded = next(d for d in payload.disciplines if d.discipline_id == "D-020")
+        # Home-sport base midpoint (50) is discarded; folded base = flat 3.75
+        # cap = 0.5 × smallest race base midpoint (D-008 = 7.5).
+        assert folded.phase_load is not None
+        assert folded.phase_load.base_low == 3.75
+        assert folded.phase_load.base_high == 3.75
+        # Strictly below every race discipline's base midpoint.
+        race_base_mids = [
+            (d.phase_load.base_low + d.phase_load.base_high) / 2.0
+            for d in payload.disciplines
+            if d.discipline_id in ("D-001", "D-008")
+        ]
+        folded_mid = (folded.phase_load.base_low + folded.phase_load.base_high) / 2.0
+        assert all(folded_mid < m for m in race_base_mids)
+
     def test_folded_set_still_normalizes_to_one(self):
         payload = self._run_with_fold()
         total = sum(
