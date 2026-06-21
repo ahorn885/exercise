@@ -1099,7 +1099,8 @@ def account_settings():
     db = get_db()
     uid = current_user_id()
     user_row = db.execute(
-        'SELECT username, display_name, email, last_login FROM users WHERE id=?',
+        'SELECT username, display_name, email, email_verified, last_login '
+        'FROM users WHERE id=?',
         (uid,)
     ).fetchone()
     return render_template('profile/account.html',

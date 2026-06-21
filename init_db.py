@@ -848,6 +848,18 @@ _PG_MIGRATIONS = [
         used_at TIMESTAMP
     )""",
     "CREATE INDEX IF NOT EXISTS password_resets_user_id_idx ON password_resets(user_id)",
+    # #251 — email verification tokens. Single-use, time-limited. `email` is
+    # captured at issue time so a token can't verify a *different* address the
+    # athlete later switched to (consume checks it still matches users.email).
+    """CREATE TABLE IF NOT EXISTS email_verifications (
+        token TEXT PRIMARY KEY,
+        user_id INTEGER NOT NULL REFERENCES users(id),
+        email TEXT NOT NULL,
+        created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        expires_at TIMESTAMP NOT NULL,
+        used_at TIMESTAMP
+    )""",
+    "CREATE INDEX IF NOT EXISTS email_verifications_user_id_idx ON email_verifications(user_id)",
     # Admin action audit log. See SQLite migration above for rationale.
     """CREATE TABLE IF NOT EXISTS admin_audit (
         id SERIAL PRIMARY KEY,
