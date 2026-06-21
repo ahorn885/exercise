@@ -123,6 +123,25 @@ def test_sources_tab(monkeypatch):
     assert 'onclick=' not in html
 
 
+def test_unconfigured_provider_renders_not_available(monkeypatch):
+    # With no STRAVA_CLIENT_ID in the env, Strava is shown "Not available yet"
+    # rather than a Connect button that dead-ends in oauth_start's abort(503).
+    monkeypatch.delenv('STRAVA_CLIENT_ID', raising=False)
+    client = _client(monkeypatch)
+    html = client.get('/connections/').get_data(as_text=True)
+    assert 'Strava' in html and 'Not available yet' in html
+    assert '/strava/oauth/start' not in html  # no dead-end Connect link
+
+
+def test_configured_provider_renders_connect(monkeypatch):
+    # Setting STRAVA_CLIENT_ID flips Strava to a live Connect button — the
+    # gating is config-driven and self-heals with no code change.
+    monkeypatch.setenv('STRAVA_CLIENT_ID', 'cid')
+    client = _client(monkeypatch)
+    html = client.get('/connections/').get_data(as_text=True)
+    assert '/strava/oauth/start' in html
+
+
 def test_sources_tab_unified_uploader_accepts_csv(monkeypatch):
     # #767 slice 5 — ONE uploader auto-detects activity files AND a WHOOP
     # wellness CSV; there is no separate wellness card / route.
