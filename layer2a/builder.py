@@ -559,6 +559,32 @@ def _apply_modality_group_pooling(
     return diagnostics
 
 
+def _phase_load_midpoints(pl: "PhaseLoadBands") -> list[float]:
+    """The per-phase midpoints of a `PhaseLoadBands` (base/build/peak/taper).
+
+    These are the percentages the volume engine (`validator.
+    phase_volume_bands_hours` → `session_grid`) renormalizes into weekly HOURS —
+    so they, not `load_weight`, govern how much volume a discipline actually
+    gets. Used by the cross-training fold to cap the folded volume below the
+    smallest race discipline.
+    """
+    pairs = (
+        ("base_low", "base_high"),
+        ("build_low", "build_high"),
+        ("peak_low", "peak_high"),
+        ("taper_low", "taper_high"),
+    )
+    mids: list[float] = []
+    for lo_attr, hi_attr in pairs:
+        lo = getattr(pl, lo_attr)
+        hi = getattr(pl, hi_attr)
+        if lo is not None and hi is not None:
+            mids.append((float(lo) + float(hi)) / 2.0)
+        elif lo is not None:
+            mids.append(float(lo))
+    return mids
+
+
 def _fold_cross_training_disciplines(
     db,
     disciplines: list["Layer2ADiscipline"],
@@ -570,9 +596,21 @@ def _fold_cross_training_disciplines(
     sport (an off-discipline race, e.g. a trail runner doing an AR). Loads the
     home sport's disciplines, **de-dupes** against the race set (no double-count
     for a discipline the race already covers — Andy 2026-06-21), and appends the
-    remainder as `included` cross-training disciplines at a **fixed low weight**
-    strictly below the smallest included race discipline, so race specificity
-    always dominates.
+    remainder as `included` cross-training disciplines, capped on **both**
+    weighting axes strictly below the smallest included race discipline so race
+    specificity always dominates (Andy 2026-06-21):
+
+    - `load_weight` (priority axis) → governs ceiling-shed order + absorber
+      reallocation. Capped at `factor × smallest race load_weight`.
+    - `phase_load` (volume axis) → the percentages `validator.
+      phase_volume_bands_hours`/`session_grid` (#338/#433) renormalize into
+      weekly HOURS, i.e. what actually drives how much you train. Capped at
+      `factor × smallest race phase-load midpoint`, flat across all phases, so
+      the folded volume sits below every race discipline in every phase and
+      typically trips the maintenance-cadence rule (a sub-0.5-session/week
+      discipline runs intermittently, not weekly). The home sport's own
+      phase-load shape is deliberately discarded — its percentages are sized to
+      a home-sport plan, not a cross-training dose.
 
     Runs AFTER `_apply_modality_group_pooling` (so the cap reads the final race
     weights and cross-training never perturbs the race modality pools) and
@@ -598,6 +636,36 @@ def _fold_cross_training_disciplines(
         return
 
     cap = min(race_weights) * _CROSS_TRAINING_WEIGHT_FACTOR
+
+    # Volume-axis cap: smallest per-phase phase-load midpoint across the race
+    # set. None when no race discipline carries phase_load (the volume engine
+    # then no-ops for everyone, so the folded value is moot → leave phase_load
+    # off rather than fabricate a band).
+    race_phase_mids = [
+        m
+        for d in disciplines
+        if d.inclusion == "included" and d.phase_load is not None
+        for m in _phase_load_midpoints(d.phase_load)
+        if m > 0
+    ]
+    phase_cap = (
+        min(race_phase_mids) * _CROSS_TRAINING_WEIGHT_FACTOR
+        if race_phase_mids
+        else None
+    )
+    folded_phase_load = (
+        PhaseLoadBands(
+            base_low=phase_cap, base_high=phase_cap,
+            build_low=phase_cap, build_high=phase_cap,
+            peak_low=phase_cap, peak_high=phase_cap,
+            taper_low=phase_cap, taper_high=phase_cap,
+            notes_conditions=None,
+            default_inclusion="included",
+        )
+        if phase_cap is not None
+        else None
+    )
+
     existing_ids = {d.discipline_id for d in disciplines}
     xt_rows = _load_disciplines(
         db, _strip_sub_format(cross_training_sport), cross_training_sport
@@ -632,7 +700,7 @@ def _fold_cross_training_disciplines(
                     else None
                 ),
                 sport_specific_context=row.get("sport_specific_context"),
-                phase_load=_build_phase_load(row),
+                phase_load=folded_phase_load,
                 sleep_deprivation_relevant=False,
                 training_gap=_build_training_gap(row),
                 rationale=(
@@ -644,11 +712,12 @@ def _fold_cross_training_disciplines(
             )
         )
         folded += 1
-    # Rule #15 — log the fold decision (sport, cap, how many injected vs deduped).
+    # Rule #15 — log the fold decision (sport, both caps, injected vs deduped).
+    phase_cap_str = f"{phase_cap:.4f}" if phase_cap is not None else "none"
     print(
         f"_fold_cross_training_disciplines: cross_training_sport="
-        f"{cross_training_sport!r} cap={cap:.4f} folded={folded} "
-        f"deduped={len(xt_rows) - folded}"
+        f"{cross_training_sport!r} weight_cap={cap:.4f} phase_cap={phase_cap_str} "
+        f"folded={folded} deduped={len(xt_rows) - folded}"
     )
 
 
