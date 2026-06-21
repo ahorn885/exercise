@@ -234,6 +234,10 @@ class TestWahooSignin:
         monkeypatch.setattr(wahoo.pi, 'get_identity', lambda db, p, u: None)
         monkeypatch.setattr(wahoo.pi, 'create_signin_user',
                             lambda db, **kw: captured.update(kw) or (123, 'alex'))
+        monkeypatch.setattr(wahoo.pi, 'get_email',
+                            lambda db, uid: captured.setdefault('acct_email', 'a@b.test'))
+        monkeypatch.setattr(wahoo, 'send_verification_email',
+                            lambda db, uid, email: captured.setdefault('verify_sent', (uid, email)))
         monkeypatch.setattr(wahoo, '_persist_wahoo_auth',
                             lambda *a, **k: captured.setdefault('persisted', a[1]))
         client = _make_app(wahoo.bp).test_client()
@@ -249,6 +253,33 @@ class TestWahooSignin:
         assert captured['email'] == 'a@b.test'
         assert captured['display_name'] == 'Alex P'
         assert captured['persisted'] == 123  # auth persisted for the new user
+        # provider-seeded email triggers a confirmation link
+        assert captured['verify_sent'] == (123, 'a@b.test')
+
+    def test_new_account_no_verification_when_email_dropped(self, monkeypatch):
+        import routes.wahoo as wahoo
+        captured = {}
+        monkeypatch.setattr(wahoo, 'current_user_id', lambda: None)
+        monkeypatch.setattr(wahoo, 'get_db', lambda: object())
+        monkeypatch.setenv('PROVIDER_OAUTH_SIGNIN', '1')
+        monkeypatch.setenv('WAHOO_CLIENT_ID', 'cid')
+        monkeypatch.setenv('WAHOO_CLIENT_SECRET', 'secret')
+        monkeypatch.setattr(wahoo.requests, 'post', lambda *a, **k: self._token_resp())
+        monkeypatch.setattr(wahoo, '_fetch_wahoo_profile', lambda _t: {
+            'id': 555, 'email': 'collides@b.test', 'first': 'Alex'})
+        monkeypatch.setattr(wahoo.pi, 'get_identity', lambda db, p, u: None)
+        monkeypatch.setattr(wahoo.pi, 'create_signin_user', lambda db, **kw: (123, 'alex'))
+        # Collision: create_signin_user dropped the email → account has none.
+        monkeypatch.setattr(wahoo.pi, 'get_email', lambda db, uid: None)
+        monkeypatch.setattr(wahoo, 'send_verification_email',
+                            lambda *a, **k: captured.setdefault('verify_sent', True))
+        monkeypatch.setattr(wahoo, '_persist_wahoo_auth', lambda *a, **k: None)
+        client = _make_app(wahoo.bp).test_client()
+        start = client.get('/wahoo/oauth/start')
+        state = _state_from_location(start.headers['Location'])
+        resp = client.get(f'/wahoo/oauth/callback?code=C&state={state}')
+        assert resp.status_code == 302
+        assert 'verify_sent' not in captured  # nothing to confirm
 
     def test_callback_logs_in_existing_identity(self, monkeypatch):
         import routes.wahoo as wahoo
@@ -451,6 +482,10 @@ class TestOuraSignin:
         monkeypatch.setattr(oura.pi, 'get_identity', lambda db, p, u: None)
         monkeypatch.setattr(oura.pi, 'create_signin_user',
                             lambda db, **kw: captured.update(kw) or (123, 'ringwearer'))
+        monkeypatch.setattr(oura.pi, 'get_email',
+                            lambda db, uid: 'ringwearer@b.test')
+        monkeypatch.setattr(oura, 'send_verification_email',
+                            lambda db, uid, email: captured.setdefault('verify_sent', (uid, email)))
         monkeypatch.setattr(oura, '_persist_oura_auth',
                             lambda *a, **k: captured.setdefault('persisted', a[1]))
         client = _make_app(oura.bp).test_client()
@@ -467,6 +502,8 @@ class TestOuraSignin:
         assert captured['display_name'] is None       # Oura exposes no name
         assert captured['username_hint'] == 'ringwearer'  # email local-part
         assert captured['persisted'] == 123
+        # provider-seeded email triggers a confirmation link
+        assert captured['verify_sent'] == (123, 'ringwearer@b.test')
 
     def test_callback_logs_in_existing_identity(self, monkeypatch):
         import routes.oura as oura

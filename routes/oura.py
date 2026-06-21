@@ -45,7 +45,7 @@ from flask import (
 from database import get_db
 from routes import provider_auth as pa
 from routes import provider_identity as pi
-from routes.auth import current_user_id
+from routes.auth import current_user_id, send_verification_email
 
 bp = Blueprint('oura', __name__, url_prefix='/oura')
 
@@ -172,6 +172,14 @@ def oauth_callback():
             dest = url_for('onboarding.connect')
             print(f'[oura-signin] new-account user={user_id} '  # noqa: T201
                   f'oura_user_id={oura_user_id} username={username}')
+            # Confirm the provider-seeded email if one was actually stored
+            # (dropped to NULL on collision). Best-effort — never block sign-in.
+            acct_email = pi.get_email(db, user_id)
+            if acct_email:
+                try:
+                    send_verification_email(db, user_id, acct_email)
+                except Exception:
+                    pass
         _persist_oura_auth(db, user_id, access_token, refresh_token,
                            expires_in, oura_user_id)
         session.clear()

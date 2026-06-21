@@ -79,6 +79,14 @@ def get_username(db: Any, user_id: int) -> Optional[str]:
     return row['username'] if row else None
 
 
+def get_email(db: Any, user_id: int) -> Optional[str]:
+    """The email actually stored on the account, or None. After
+    create_signin_user this reflects what was kept (a colliding provider email
+    is dropped to NULL), so callers know whether there's an address to verify."""
+    row = db.execute('SELECT email FROM users WHERE id = ?', (user_id,)).fetchone()
+    return (row['email'] if row else None) or None
+
+
 def bump_last_login(db: Any, identity_id: int) -> None:
     db.execute(
         'UPDATE provider_identity SET last_login_at = NOW() WHERE id = ?',

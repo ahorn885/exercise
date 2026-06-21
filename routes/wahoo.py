@@ -43,7 +43,7 @@ from database import get_db
 from provider_cardio_resolve import resolve_cardio_discipline
 from routes import provider_auth as pa
 from routes import provider_identity as pi
-from routes.auth import current_user_id
+from routes.auth import current_user_id, send_verification_email
 
 bp = Blueprint('wahoo', __name__, url_prefix='/wahoo')
 
@@ -178,6 +178,14 @@ def oauth_callback():
             dest = url_for('onboarding.connect')
             print(f'[wahoo-signin] new-account user={user_id} '  # noqa: T201
                   f'wahoo_user_id={wahoo_user_id} username={username}')
+            # Confirm the provider-seeded email if one was actually stored
+            # (dropped to NULL on collision). Best-effort — never block sign-in.
+            acct_email = pi.get_email(db, user_id)
+            if acct_email:
+                try:
+                    send_verification_email(db, user_id, acct_email)
+                except Exception:
+                    pass
 
         # Write the sync credential + scope ack just like the connect path, so
         # D-58 prefill has tokens immediately for the just-signed-in athlete.
