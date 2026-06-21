@@ -5,8 +5,10 @@ and updated via UPSERT on slug, so cost/copy edits propagate without
 disturbing per-user state. Per-user state lives in
 `user_purchase_recommendations` keyed on (user_id, purchase_id).
 
-Each recommendation is bound to an `equipment_items.tag` so "exercises this
-unlocks" is derived live from `exercise_equipment` rather than stored.
+Each recommendation is bound to an `equipment_items.tag`; "exercises this
+unlocks" is derived live from the canonical layer0 catalog (count active
+`layer0.exercises` whose `equipment_required` carries the token the tag maps to,
+via `equipment_tag_layer0`) rather than the retired `exercise_equipment` join.
 Items the user already owns in any locale (via `locale_equipment`) get a
 hint badge — the explicit status toggle is independent so the user can
 override (e.g. mark something "passed" even if a stray instance shows up
@@ -15,6 +17,10 @@ in a hotel-gym locale).
 from flask import Blueprint, render_template, request, redirect, url_for, flash
 from database import get_db
 from routes.auth import current_user_id
+from layer0_progression import progression_pattern
+from equipment_tag_layer0 import (
+    layer0_token_for_tag, layer0_equipment_exercise_counts,
+)
 
 bp = Blueprint('purchases', __name__)
 
@@ -52,20 +58,18 @@ def list_purchases():
     # owned/wanted/passed status below is unaffected.
     owned_equipment_ids = set()
 
-    # Impacted-exercise counts in one query, then attach per row.
-    impact_counts = {
-        r['equipment_id']: r['cnt'] for r in db.execute(
-            '''SELECT equipment_id, COUNT(DISTINCT exercise_id) AS cnt
-               FROM exercise_equipment
-               GROUP BY equipment_id'''
-        ).fetchall()
-    }
+    # Impacted-exercise counts from the single canonical catalog: count active
+    # layer0 exercises whose equipment_required carries the token a
+    # recommendation's equipment (tag) maps to. Cardio/craft/generically-modelled
+    # equipment has no layer0 token → 0 (matches the pre-unification reality).
+    l0_counts = layer0_equipment_exercise_counts(db)
 
     grouped = {'high': [], 'medium': [], 'low': []}
     counts_by_status = {'wanted': 0, 'owned': 0, 'passed': 0, 'none': 0}
     for r in rows:
         d = dict(r)
-        d['impacted_count'] = impact_counts.get(d['equipment_id'], 0)
+        token = layer0_token_for_tag(d.get('equipment_tag'))
+        d['impacted_count'] = l0_counts.get(token, 0) if token else 0
         d['in_locale'] = d['equipment_id'] in owned_equipment_ids
         status = d['status'] or 'none'
         counts_by_status[status] = counts_by_status.get(status, 0) + 1
@@ -97,16 +101,23 @@ def detail(purchase_id):
         flash('Recommendation not found.', 'danger')
         return redirect(url_for('purchases.list_purchases'))
 
+    # The exercises this equipment unlocks, from the canonical layer0 catalog:
+    # active exercises whose equipment_required carries the mapped token.
     impacted = []
-    if pr['equipment_id']:
-        impacted = db.execute(
-            '''SELECT DISTINCT ei.id, ei.exercise, ei.discipline, ei.movement_pattern
-               FROM exercise_equipment ee
-               JOIN exercise_inventory ei ON ei.id = ee.exercise_id
-               WHERE ee.equipment_id = ?
-               ORDER BY ei.discipline, ei.exercise''',
-            (pr['equipment_id'],)
+    token = layer0_token_for_tag(pr['equipment_tag'])
+    if token:
+        raw = db.execute(
+            '''SELECT exercise_id, exercise_name, exercise_type, movement_patterns
+               FROM layer0.exercises
+               WHERE superseded_at IS NULL AND ? = ANY(equipment_required)
+               ORDER BY exercise_name''',
+            (token,)
         ).fetchall()
+        impacted = [
+            {'exercise': r['exercise_name'], 'exercise_type': r['exercise_type'],
+             'movement_pattern': progression_pattern(list(r['movement_patterns'] or []))}
+            for r in raw
+        ]
 
     return render_template('purchases/detail.html', pr=dict(pr), impacted=impacted,
                            valid_statuses=sorted(VALID_STATUSES))
