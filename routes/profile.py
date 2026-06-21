@@ -721,6 +721,7 @@ def _stash_event_window_draft(form):
         'unavailable_locale': (form.get('unavailable_locale') or '').strip(),
         'away_locale': (form.get('away_locale') or '').strip(),
         'brought_craft': form.getlist('brought_craft'),
+        'volume_pct': (form.get('volume_pct') or '').strip(),
         'notes': (form.get('notes') or '').strip(),
     }
 
@@ -779,6 +780,17 @@ def add_event_window_route():
     except ValueError:
         flash('Enter valid start and end dates.', 'error')
         return _event_windows_redirect(return_to)
+    # Slice 6 (#593) — the reduced-volume control captures a PERCENT of a normal
+    # training day; the repo stores the fraction (0,1). Only meaningful for the
+    # reduced_volume type (the repo ignores it for every other type).
+    vol_raw = (request.form.get('volume_pct') or '').strip()
+    volume_pct = None
+    if vol_raw:
+        try:
+            volume_pct = float(vol_raw) / 100.0
+        except ValueError:
+            flash('Enter a valid reduced-volume percentage.', 'error')
+            return _event_windows_redirect(return_to)
     try:
         add_event_window(
             db,
@@ -789,6 +801,7 @@ def add_event_window_route():
             unavailable_locale=(request.form.get('unavailable_locale') or None),
             away_locale=(request.form.get('away_locale') or None),
             brought_craft=request.form.getlist('brought_craft'),
+            volume_pct=volume_pct,
             notes=(request.form.get('notes') or '').strip(),
         )
     except EventWindowError as exc:
