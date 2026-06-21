@@ -36,7 +36,7 @@
     <button type="submit" class="btn btn-primary btn-sm">Send invite</button>
   </form>
   {% if invites %}
-  <table class="data" style="margin-top:14px;">
+  <table class="data adm-invite-table">
     <thead><tr><th>Pending invite</th><th>Sent</th><th>Expires</th><th></th></tr></thead>
     <tbody>
       {% for inv in invites %}
@@ -55,7 +55,7 @@
     </tbody>
   </table>
   {% else %}
-  <p class="pv-meta mono" style="margin-top:10px;">No pending invites.</p>
+  <p class="pv-meta mono adm-invite-empty">No pending invites.</p>
   {% endif %}
 </div>
 
