@@ -238,6 +238,7 @@ from routes.nudges import bp as nudges_bp, get_active_nudges
 from routes.ad_hoc_workouts import bp as ad_hoc_workouts_bp
 from routes.plan_create import bp as plan_create_bp
 from routes.plan_refresh import bp as plan_refresh_bp
+from routes.race_week_brief import bp as race_week_brief_bp
 from routes.logs import bp as logs_bp
 
 app.register_blueprint(dashboard_bp)
@@ -277,6 +278,7 @@ app.register_blueprint(nudges_bp)
 app.register_blueprint(ad_hoc_workouts_bp)
 app.register_blueprint(plan_create_bp)
 app.register_blueprint(plan_refresh_bp)
+app.register_blueprint(race_week_brief_bp)
 app.register_blueprint(logs_bp)
 # COROS pushes workout-summary data to /coros/webhook from their servers,
 # not from a browser session, so the global CSRF protection doesn't apply

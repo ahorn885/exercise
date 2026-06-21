@@ -86,6 +86,7 @@ from plan_naming import target_race_name, generated_plan_name
 from athlete_event_windows_repo import load_event_windows
 from plan_nutrition_repo import load_plan_nutrition_by_version
 from plan_conditions_repo import load_plan_conditions_by_version
+from race_week_brief_repo import load_race_week_brief
 from layer5 import (
     generate_and_persist_plan_nutrition,
     generate_and_persist_plan_conditions,
@@ -1069,6 +1070,26 @@ def view_plan(plan_version_id: int):
         plan_version['scope_end_date'],
     )
 
+    # #732 slice 3 — race-week-brief trigger gate. The brief unlocks within 14
+    # days of a target event (the orchestrator's auto-fire window); surface the
+    # [Generate race-week brief] button only inside that window and a link to the
+    # stored brief once it exists. Advisory: any fault here must NEVER 500 the
+    # plan view, so degrade to "button hidden".
+    race_week_brief_available = False
+    race_week_brief_exists = False
+    days_to_event = None
+    try:
+        target_race = load_target_race_event_payload(db, uid)
+        if target_race is not None and getattr(target_race, 'event_date', None):
+            days_to_event = (target_race.event_date - date.today()).days
+            race_week_brief_available = 1 <= days_to_event <= 14
+        race_week_brief_exists = load_race_week_brief(db, plan_version_id) is not None
+    except Exception as _rwb_exc:  # noqa: BLE001 — advisory must not break the view
+        print(
+            f"view_plan: race-week-brief gate check failed for "
+            f"plan_version_id={plan_version_id} (non-fatal): {_rwb_exc}"
+        )
+
     return render_template(
         'plan_create/view.html',
         plan_version=plan_version,
@@ -1082,6 +1103,9 @@ def view_plan(plan_version_id: int):
         conditions=conditions,
         conditions_by_date=conditions_by_date,
         zwift_exportable=is_zwift_exportable,
+        race_week_brief_available=race_week_brief_available,
+        race_week_brief_exists=race_week_brief_exists,
+        days_to_event=days_to_event,
     )
 
 
