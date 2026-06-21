@@ -27,6 +27,38 @@
   </div>
 </div>
 
+<div class="card card-pad">
+  <p class="eyebrow">● Invite a user</p>
+  <form method="post" action="{{ url_for('admin.invite') }}" class="acct-email-form">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <input type="email" name="email" placeholder="person@example.com"
+           autocomplete="off" class="form-control form-control-sm" required>
+    <button type="submit" class="btn btn-primary btn-sm">Send invite</button>
+  </form>
+  {% if invites %}
+  <table class="data adm-invite-table">
+    <thead><tr><th>Pending invite</th><th>Sent</th><th>Expires</th><th></th></tr></thead>
+    <tbody>
+      {% for inv in invites %}
+      <tr>
+        <td>{{ inv.email }}</td>
+        <td class="dim">{{ (inv.created_at|string)[:10] }}</td>
+        <td class="dim">{{ (inv.expires_at|string)[:10] }}</td>
+        <td class="num">
+          <form method="post" action="{{ url_for('admin.revoke_invite', token=inv.token) }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button type="submit" class="btn btn-ghost btn-sm">Revoke</button>
+          </form>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="pv-meta mono adm-invite-empty">No pending invites.</p>
+  {% endif %}
+</div>
+
 <div class="card card-flush adm-tablewrap">
   <table class="data">
     <thead>

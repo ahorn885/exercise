@@ -6,6 +6,10 @@
 <p class="eyebrow accent">● First run</p>
 <h1 class="auth-title">Set up the owner.</h1>
 <p class="auth-sub">No accounts exist yet. Create the owner account to continue.</p>
+{% elif invited_email %}
+<p class="eyebrow accent">● You're invited</p>
+<h1 class="auth-title">Create account.</h1>
+<p class="auth-sub">Finish setting up the account for <strong>{{ invited_email }}</strong>.</p>
 {% else %}
 <p class="eyebrow accent">● Get started</p>
 <h1 class="auth-title">Create account.</h1>
@@ -14,6 +18,7 @@
 
 <form method="post" action="{{ url_for('auth.register') }}" class="auth-form">
   <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  {% if invite_token %}<input type="hidden" name="invite" value="{{ invite_token }}">{% endif %}
   <label class="field">
     <span class="lbl">Username</span>
     <input type="text" class="form-control" name="username" value="{{ username }}"
@@ -25,9 +30,15 @@
            autocomplete="name">
   </label>
   <label class="field">
+    {% if invited_email %}
+    <span class="lbl">Email <span class="dim">(confirmed via invite)</span></span>
+    <input type="email" class="form-control" name="email" value="{{ invited_email }}"
+           autocomplete="email" readonly>
+    {% else %}
     <span class="lbl">Email <span class="dim">(optional)</span></span>
     <input type="email" class="form-control" name="email" value="{{ email }}"
            autocomplete="email">
+    {% endif %}
   </label>
   <label class="field">
     <span class="lbl">Password</span>

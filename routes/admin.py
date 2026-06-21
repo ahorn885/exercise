@@ -75,6 +75,9 @@ def _delete_user_and_data(db, user_id):
     db.execute('DELETE FROM user_purchase_recommendations WHERE user_id = ?', (user_id,))
     db.execute('DELETE FROM api_tokens                    WHERE user_id = ?', (user_id,))
     db.execute('DELETE FROM user_totp                     WHERE user_id = ?', (user_id,))
+    # #274 — invites created by or accepted by this user (FK to users(id)).
+    db.execute('DELETE FROM user_invites                  WHERE created_by = ? '
+               'OR accepted_user_id = ?', (user_id, user_id))
     db.execute('DELETE FROM users                         WHERE id = ?',      (user_id,))
 
 
@@ -91,8 +94,45 @@ def dashboard():
              FROM users u
             ORDER BY u.id'''
     ).fetchall()
+    invites = db.execute(
+        'SELECT token, email, created_at, expires_at FROM user_invites '
+        'WHERE accepted_at IS NULL ORDER BY created_at DESC'
+    ).fetchall()
     return render_template('admin/dashboard.html', users=users,
-                           admin_user_id=ADMIN_USER_ID)
+                           admin_user_id=ADMIN_USER_ID, invites=invites)
+
+
+@bp.route('/invite', methods=['POST'])
+def invite():
+    """Email a registration link to `email` (#274). The link lets that address
+    register even when ALLOW_REGISTRATION is off, and registering through it
+    marks the email verified."""
+    _require_admin()
+    db = get_db()
+    email = (request.form.get('email') or '').strip()
+    if not email or '@' not in email or '.' not in email.split('@')[-1]:
+        flash('Enter a valid email to invite.', 'danger')
+        return redirect(url_for('admin.dashboard'))
+    if db.execute('SELECT 1 FROM users WHERE LOWER(email) = LOWER(?)',
+                  (email,)).fetchone():
+        flash(f'{email} already has an account.', 'warning')
+        return redirect(url_for('admin.dashboard'))
+    from routes.auth import send_invite_email
+    send_invite_email(db, email, ADMIN_USER_ID)
+    flash(f'Invite sent to {email}.', 'success')
+    return redirect(url_for('admin.dashboard'))
+
+
+@bp.route('/invite/<token>/revoke', methods=['POST'])
+def revoke_invite(token):
+    """Revoke a pending (unaccepted) invite."""
+    _require_admin()
+    db = get_db()
+    db.execute('DELETE FROM user_invites WHERE token = ? AND accepted_at IS NULL',
+               (token,))
+    db.commit()
+    flash('Invite revoked.', 'info')
+    return redirect(url_for('admin.dashboard'))
 
 
 @bp.route('/fit-inspect', methods=['GET', 'POST'])

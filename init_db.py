@@ -883,6 +883,21 @@ _PG_MIGRATIONS = [
         used_at TIMESTAMP
     )""",
     "CREATE INDEX IF NOT EXISTS email_verifications_user_id_idx ON email_verifications(user_id)",
+    # #274 — admin invite tokens. An admin issues an invite to an email; the
+    # link lets that address register even when ALLOW_REGISTRATION is off, and
+    # registering through it marks the email verified (the token was delivered
+    # to that inbox and presented back — same proof as the verify link).
+    # Single-use, time-limited; accepted_user_id ties it to the created account.
+    """CREATE TABLE IF NOT EXISTS user_invites (
+        token TEXT PRIMARY KEY,
+        email TEXT NOT NULL,
+        created_by INTEGER NOT NULL REFERENCES users(id),
+        created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        expires_at TIMESTAMP NOT NULL,
+        accepted_at TIMESTAMP,
+        accepted_user_id INTEGER REFERENCES users(id)
+    )""",
+    "CREATE INDEX IF NOT EXISTS user_invites_pending_idx ON user_invites(created_at DESC) WHERE accepted_at IS NULL",
     # Admin action audit log. See SQLite migration above for rationale.
     """CREATE TABLE IF NOT EXISTS admin_audit (
         id SERIAL PRIMARY KEY,
