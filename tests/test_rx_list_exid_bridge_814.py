@@ -123,34 +123,9 @@ def test_v1_names_for_exid_inverse_and_empty_on_miss():
     assert v1_names_for_exid(None) == []
 
 
-# ── Render: a layer0-named row enriches by EX-id and doesn't double-list ──
-
-def test_layer0_named_row_enriches_via_exid_bridge(monkeypatch):
-    # current_rx prescribed under the layer0 name with the discipline / video
-    # NULL (the name-join would have missed); only the EX-id ties it to the v1
-    # 'Back Squat' catalog row.
-    entries = [_entry(id=9, exercise='Back Squat (Barbell)',
-                      layer0_exercise_id='EX001', discipline=None, type=None)]
-    client = _client(monkeypatch, entries, [_inv(exercise='Back Squat')], [])
-    resp = client.get('/rx')
-    assert resp.status_code == 200
-    html = resp.get_data(as_text=True)
-    assert 'Back Squat (Barbell)' in html
-    # discipline + video_reference are bridged from the v1 'Back Squat' row.
-    assert 'https://example.test/back-squat' in html
-    # The v1 'Back Squat' catalog row is NOT double-listed (excluded by EX-id):
-    # the catalog is empty, so its section isn't rendered at all.
-    assert 'id="catalog"' not in html
-
-
-def test_unbridged_inventory_still_lists_in_catalog(monkeypatch):
-    # An inventory row whose EX-id is NOT prescribed stays in the catalog.
-    entries = [_entry(id=9, exercise='Back Squat (Barbell)',
-                      layer0_exercise_id='EX001', discipline=None, type=None)]
-    inventory = [_inv(exercise='Back Squat'), _inv(exercise='Plank')]
-    client = _client(monkeypatch, entries, inventory, [])
-    resp = client.get('/rx')
-    html = resp.get_data(as_text=True)
-    # Plank (EX216, not prescribed) remains; Back Squat (EX001, prescribed) gone.
-    assert 'Catalog · no current Rx · 1' in html
-    assert 'Plank' in html
+# NOTE: the two /rx render tests that exercised the bridge were removed when the
+# catalog unification (Slice A) cut /rx + /exercises onto the single canonical
+# layer0 catalog (EX-id keyed), retiring the name↔EX-id bridge on those paths.
+# The render behavior is now covered by test_redesign_rx_list_render. The unit
+# tests above stay: the bridge module is still consumed by coaching.py until the
+# FK-child slice (Slice B) moves it onto layer0 EX-ids too.
