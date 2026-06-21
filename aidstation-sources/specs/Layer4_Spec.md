@@ -1091,6 +1091,17 @@ When 3B sets `start_phase` to Build/Peak/Taper:
 
 Refresh-path implication: a T3 refresh whose scope predates the original `start_phase`'s start_date (e.g., athlete started at Build; refresh wants to cover dates before the Build start) raises `Layer4InputError('refresh_predates_start_phase')` — Layer 4 does not synthesize phases the athlete was supposed to have completed before plan_create.
 
+### 6.6 Intra-phase week-seam reviewer (D-77 Slice 3)
+
+With per-week decomposition (§5.2 D-77), a phase's weeks are synthesized as independent blocks, so weeks WITHIN a phase can show abrupt week-to-week cliffs. The **week-seam reviewer** (`layer4/week_seam_review.py`, prompt `prompts/Layer4_WeekSeamReviewer_v1.md`) is the corrective complement to the phase-seam reviewer (§6.2): it runs at intra-phase seams (between adjacent week-blocks of the same synthesized phase) and judges whether the actual week-over-week change tracks the **planned periodization grid** rather than the raw size of the change.
+
+- **Anchor (ratified 2026-06-21):** the reviewer compares each week's actual volume/intensity against the deterministic per-week target the grid already fixed (`periodization.week_volume_multiplier` + `is_deload_week_for` — the same grid the synthesizer prompt and the `volume_band` validator use). This **inverts** the phase-seam anchors: a planned recovery (deload) week's ~45% dip is CORRECT here, not a cliff; only an *unjustified* divergence from the planned progression is flagged (e.g. volume that holds/climbs through a planned deload, or flattens where the grid ramps).
+- **Reused machinery:** the 4-verdict enum, the `record_seam_review` tool, the invalid-combination coercion (§6.2 pv=55 advisory-degrade), the thinking-aware caller, and `SeamReviewCallResult` are all imported from `seam_review.py`. Only the system prompt body + the planned-vs-actual prompt renderer are new. Iter-1 reviews are cached (disjoint `phase_idx` namespace `_WEEK_SEAM_CACHE_PHASE_IDX_BASE=2000 + week_seam_idx`, via `compute_week_seam_review_cache_key`), parallelized across non-overlapping seams; the orchestrator counts them as zero-progress for the stall backstop (they are reviews, not synthesis blocks).
+- **Scope:** only seams between two blocks of a phase that was synthesized this call. A phase is synthesized as a whole, so a week seam never straddles a synthesized + carryover boundary (that boundary is the PHASE seam, §6.2). Phase-seam reviews stay exactly as-is; the week-seam reviewer is additive.
+- **v1 review-and-escalate ship:** a non-clean verdict surfaces a `notable_observation` (a `warning` for `flagged_minor`; HITL-escalated `seam_unresolved` for `flagged_major`/`patched`). The β auto-resynth of a single week-block (the §6.2 propose-patch authority applied at week grain) is **gated on the real-LLM walk** (design §7 cascade-invalidation watch item + §14) and tracked as a fast-follow — the propose-patch direction is still emitted + recorded so that wiring is a later orchestrator-only change with no prompt revision. Week-seam findings ride `notable_observations` (no new `Layer4Payload` field — avoids a cross-layer schema change).
+
+Full design: `designs/Layer4_PerWeekDecomposition_D77_Design_v1.md` §5.2 / §7 / §14.
+
 ## 8. Coaching flag rules
 
 Two distinct surfaces:
