@@ -1,8 +1,9 @@
 # Plan-Gen — Planning-Sport Resolution & Cross-Training Fold (Spec v1)
 
 **Status:** New spec, 2026-06-21. Closes #447 (part of #201 plan-gen reliability & convergence). Related: #338 (race-share weighting), #339 (synth substitutions), #305 (ParsedIntent re-run cascade).
-**Type:** Cross-cutting plan-gen resolution rule. Spans the Layer 4 orchestrator's upstream-cone composition (`_upstream_full_cone`), the Layer 2A input boundary, Layer 3A/3B context, and the Layer 4 per-phase synth. Not a per-node spec — it constrains how an existing input (`framework_sport`) is sourced and adds one new behaviour (the cross-training fold).
-**Source:** Andy walkthrough batch 2026-06-06; precedence-order confirmation 2026-06-21 ("race > athlete > standard").
+**Type:** Cross-cutting plan-gen resolution rule. Spans the Layer 4 orchestrator's upstream-cone composition (`_upstream_full_cone`), the Layer 2A input boundary, and Layer 3A context. Not a per-node spec — it constrains how an existing input (`framework_sport`) is sourced and adds one new behaviour (the cross-training fold).
+**Decisions baked in (Andy, 2026-06-21):** standard tier resolves to the athlete's primary sport (§6); cross-training fold is implemented at the Layer 2A discipline-set level (§5).
+**Source:** Andy walkthrough batch 2026-06-06; precedence-order + decisions 2026-06-21 ("race > athlete > standard").
 
 ---
 
@@ -13,9 +14,9 @@ Pin down where the **planning sport** comes from, and stop treating the athlete-
 When an athlete has a target race, the plan is built around **that race's sport**. The athlete-profile primary sport is the athlete's *home discipline*, not the plan's organizing sport — and it serves only two narrower purposes:
 
 1. **Cross-training selection** — when the active race is not the athlete's home discipline (e.g. an ultrarunner doing a one-off adventure race), the profile's primary sport chooses what cross-training to fold in.
-2. **No-race organizing sport** — when there is no target race, the profile's primary sport is the plan's organizing sport.
+2. **No-race organizing sport** — when there is no target race, the profile's primary sport is the plan's organizing sport, and the plan is a *standard* (non-race-specific) one.
 
-This spec codifies the resolution as a three-tier precedence — **race sport › athlete primary sport › standard** — and specifies the cross-training fold rule. It does **not** implement; the implementation deltas in §8 are the follow-on build (gated on the §6 and §5 decisions below, both of which are Stop-and-ask items).
+This spec codifies the resolution as the precedence **race sport › athlete primary sport › standard**, and specifies the cross-training fold rule. It does **not** implement; the implementation deltas in §8 are the follow-on build.
 
 ## 2. The reframe: "override" is the wrong level
 
@@ -23,27 +24,30 @@ Today the resolution is written as a *race-row override of the profile primary s
 
 > `layer4/orchestrator.py:935-944` — *"race-row override takes precedence over athlete-profile `primary_sport` … Falls back to `primary_sport` when the override is unset OR no target race exists."*
 
-Behaviourally that two-tier fallback already lands on the right sport in the race-present and no-race cases. The defect is **conceptual and structural**, with three consequences worth fixing:
+Behaviourally that fallback already lands on the right sport in the race-present and no-race cases. The defect is **conceptual and structural**, with two consequences worth fixing:
 
-- The profile primary sport is modelled as *the* planning sport that a race happens to override. Andy's framing inverts this: the **race's sport is the planning sport**; the profile sport is the home discipline that only feeds cross-training + the no-race case.
-- There is **no third tier**. When neither a race sport nor a profile primary sport exists, the cone raises `framework_sport_missing` (`orchestrator.py:945-949`) — a hard stop where a **standard** plan should be produced.
+- The profile primary sport is modelled as *the* planning sport that a race happens to override. Andy's framing inverts this: the **race's sport is the planning sport**; the profile sport is the home discipline that only feeds cross-training + the no-race ("standard") case.
 - There is **no cross-training fold**. The home discipline is dropped entirely once a race of a different sport exists, instead of being folded in as cross-training (issue checklist item 3).
 
-## 3. The three-tier resolution rule
+(There is no third *sport source* to add: the no-race "standard" plan is organized around the athlete's primary sport — §6 — so the bottom of the cascade is the existing "set your primary sport" gate, not a new generic-plan mechanism.)
 
-`planning_sport` is resolved by this precedence (highest tier that yields a value wins):
+## 3. The resolution rule: race › athlete › standard
 
-| Tier | Name | Condition | `planning_sport` source |
-|---|---|---|---|
-| 1 | **Race** | A target race exists **and** `race.framework_sport` is set | `race.framework_sport` |
-| 2 | **Athlete** | No target race, **or** a target race with `framework_sport` unset | `profile.primary_sport` |
-| 3 | **Standard** | No target race **and** no `profile.primary_sport` | the standard/general fallback (see §6) |
+`planning_sport` and plan mode resolve by this precedence (highest tier that yields a value wins):
+
+| Tier | Andy's label | Sport source | Plan mode | Condition |
+|---|---|---|---|---|
+| 1 | **Race** | `race.framework_sport` | race-specific | A target race exists **and** `race.framework_sport` is set |
+| 2 | **Athlete → Standard** | `profile.primary_sport` | **standard** (non-race-specific) | No target race (or a target race with `framework_sport` unset) **and** `primary_sport` is set |
+| 3 | *(gate)* | — | — (no plan generated) | No target race **and** no `primary_sport` → keep today's "Set your primary sport" gate |
+
+Reading of Andy's "race > athlete > standard": tier 1 is the **race** sport; absent a race, the planning sport is the **athlete**'s primary sport and the plan is a **standard** (non-race-specific) one; below that there is no sport to plan around, so the existing gate stands. "Athlete" and "standard" are not two different sports — "standard" is the *plan style* you get when the sport source is the athlete's primary sport.
 
 Notes:
 
-- `RaceEventPayload.framework_sport` is `Optional` (`layer4/context.py:1318-1323`). A target race that carries no `framework_sport` therefore falls through to Tier 2 — same as today (`orchestrator.py:940-944` `if not framework_sport: framework_sport = primary_sport`). The reframe keeps this fall-through; it is not a separate error.
-- Tier 3 replaces the current `framework_sport_missing` hard stop on the **plan-gen** path. The user-facing "Set your primary sport…" copy (`routes/plan_create.py:411`, `routes/plan_refresh.py:279`, `routes/ad_hoc_workouts.py:224`) stays only for the surfaces where a sport is genuinely required and Tier 3 does not apply (see §6 / §9).
-- The resolution is **deterministic** and must be logged with its inputs and chosen tier (Rule #15): log `target_race_present`, `race.framework_sport`, `profile.primary_sport`, and the resolved `(tier, planning_sport)`.
+- `RaceEventPayload.framework_sport` is `Optional` (`layer4/context.py:1318-1323`). A target race that carries no `framework_sport` falls through to Tier 2 — same as today (`orchestrator.py:940-944`). The reframe keeps this fall-through; it is not a separate error.
+- **Tier 3 keeps the existing `framework_sport_missing` gate** (`orchestrator.py:945-949`; user copy at `routes/plan_create.py:411`, `routes/plan_refresh.py:279`, `routes/ad_hoc_workouts.py:224`). No generic/sportless plan is invented. We do **not** build a plan with no sport.
+- The resolution is **deterministic** and must be logged with its inputs and chosen tier (Rule #15): log `target_race_present`, `race.framework_sport`, `profile.primary_sport`, and the resolved `(tier, planning_sport, cross_training_sport)`.
 
 ## 4. The profile primary sport's two narrow roles
 
@@ -51,43 +55,42 @@ Outside the no-race Tier-2 case, the profile primary sport is **not** the planni
 
 ### 4.1 Cross-training selection (Tier-1 race, off-discipline)
 
-When a target race exists and `race.framework_sport != profile.primary_sport`, the athlete is training toward a sport that is not their home discipline. The home discipline is folded in as cross-training per §5 — both to preserve the athlete's base fitness in their own sport and to give variety/relief during an off-discipline block.
+When a target race exists and `race.framework_sport != profile.primary_sport`, the athlete is training toward a sport that is not their home discipline. The home discipline is folded in as cross-training per §5 — to preserve the athlete's base fitness in their own sport and give variety during an off-discipline block.
 
-### 4.2 No-race organizing sport (Tier-2)
+### 4.2 No-race organizing sport (Tier-2, "standard")
 
-When there is no target race, the profile primary sport *is* the planning sport (Tier 2). This is the existing no-race / open-ended plan mode (Layer 3B `non_event_goal_type` ∈ {endurance, general_fitness, strength, mixed}; `plan_duration_weeks_no_event`). No fold applies — the home discipline already *is* the plan's sport.
+When there is no target race, the profile primary sport *is* the planning sport (Tier 2), and the plan is a standard non-race-specific block (the existing no-race / open-ended mode: Layer 3B `non_event_goal_type` ∈ {endurance, general_fitness, strength, mixed}; `plan_duration_weeks_no_event`). No fold applies — the home discipline already *is* the plan's sport.
 
 ## 5. The cross-training fold rule
 
 **Rule:** when a target race exists and `race.framework_sport != profile.primary_sport`, fold `profile.primary_sport` into the plan's cross-training pool.
 
-### 5.1 What the "cross-training pool" is today
+**Decision (Andy, 2026-06-21): implement at the Layer 2A discipline-set level (option B).**
 
-The only cross-training mechanism in the synth is the **variety carveout** (`layer4/per_phase.py:273` `VARIETY_CARVEOUT_PROMPT_SECTION`): on *easy*-typed cardio sessions only, render the content as a training-equivalent discipline **within the same locomotion mode** (foot↔foot, wheel↔wheel), and only if `Coaching memory` expresses a variety/cross-training preference. Counts, long sessions, and every quality session stay on the race-specific discipline. There is no concept today of pulling the athlete's *home discipline* into the plan when it differs from the race sport.
+### 5.1 Mechanism
 
-The fold rule is **narrower in trigger** (it fires on the structural `race.sport != primary_sport` condition, not on a coaching-memory preference) and **potentially broader in mode** (the home discipline may be a different locomotion mode than the race sport — an ultrarunner's run vs. an AR's paddle/bike/nav mix).
+The orchestrator computes `cross_training_sport = profile.primary_sport` when it differs from the resolved `planning_sport`, else `None`. When set, its disciplines (resolved from `sport_discipline_bridge` for `cross_training_sport`) are injected into Layer 2A's classified discipline set with a **distinct cross-training role at low weight**, so the entire downstream cone (2B terrain, 2C equipment/modality, 2D injury filter, 3A/3B, 4 synth) sees them as first-class **minor** disciplines rather than relying on the synthesizer to improvise them.
 
-### 5.2 Open placement decision (Stop-and-ask: prompt design #1 + cross-layer #3)
+Guardrails (carry over the spirit of the existing variety carveout, `layer4/per_phase.py:273-284`):
 
-Two viable placements; this needs Andy's call before implementation:
+- **Low weight, minority share.** The race-specific disciplines must continue to dominate weekly volume in their mode. The fold adds maintenance/cross-training volume; it does not trade away race specificity — counts, long sessions, and quality sessions stay on the race disciplines.
+- **Single source.** The fold sport and the injection happen once, in the cone (`_upstream_full_cone`), keyed off the §3 resolution — not re-derived per layer.
 
-- **(a) Synth/prompt level (Layer 4 per-phase).** Extend the variety-carveout section so that, when the cone passes a non-empty `cross_training_sport` (= `profile.primary_sport`, set only when it differs from the planning sport), the synthesizer may render a *minority* of easy/aerobic-maintenance volume as the home discipline. Cheapest; keeps race specificity intact (counts/long/quality stay on race disciplines); no Layer 2A churn. Risk: it is an LLM-discretion rule, so dosage is soft.
-- **(b) Discipline-set level (Layer 2A).** Inject the home discipline's disciplines into the classifier's set as a low-weight cross-training role, so the whole downstream cone (2B/2C/2D/3A/3B/4) sees them as first-class minor disciplines. More faithful to "fold into the pool," but it perturbs race-specific weighting (the #338 race-share work) and the included-discipline cone, and risks diluting race specificity.
+### 5.2 Why Layer 2A and not the synth prompt
 
-**Recommendation:** start with **(a)** — it satisfies the rule (home discipline appears as cross-training) at minimum blast radius and keeps race specificity non-negotiable, matching the existing carveout's hard rules. Promote to (b) only if dogfooding shows the synth under-uses the folded sport. Either way the fold is **easy-volume only, a minority of weekly volume, race specificity preserved** — the carveout's existing guardrails (`per_phase.py:277-280`) carry over.
+Option A (extend the per-phase variety-carveout prompt) was considered and **not** chosen: it would keep the fold as soft LLM discretion on easy days only. Andy chose the discipline-set injection so the folded sport is a real, weighted member of the plan's discipline mix and flows through the whole cone deterministically.
+
+**Cost / coordination (the load-bearing risk):** this touches Layer 2A's classifier output and weighting, which is exactly the surface #338 (race-share weighting) rebalances via `_apply_modality_group_pooling` (precedence: race terrain mix › athlete split › bridge midpoints). The cross-training weight must slot **below** the race-share signal so it cannot dilute race specificity. Sequence this fold **after** #338 lands, or co-design the weighting precedence so the two do not fight. This is a Layer 2A payload/algorithm change → a `Layer2A_Spec` amendment is owed in the build, and it is a cross-layer surface change (Stop-and-ask trigger #3).
 
 ### 5.3 Inert cases
 
-The fold produces nothing (no `cross_training_sport` passed) when: `race.framework_sport == profile.primary_sport`; no profile primary sport is set (Tier-1 race with an unset home discipline); or there is no target race (Tier-2/3 — the home discipline already is the planning sport, or there is none).
+The fold produces nothing (no `cross_training_sport`) when: `race.framework_sport == profile.primary_sport`; no profile primary sport is set (Tier-1 race with an unset home discipline); or there is no target race (Tier-2/3 — the home discipline already is the planning sport, or there is none).
 
-## 6. The "standard" tier (open architectural decision)
+## 6. The "standard" tier resolves to the athlete's primary sport
 
-Tier 3 fires when there is no target race and no profile primary sport. Layer 2A *requires* a `framework_sport` to classify disciplines (`Layer2A_Spec.md` §4.1), so "standard" needs a defined behaviour. Two options (Stop-and-ask: cross-layer surface #3):
+**Decision (Andy, 2026-06-21):** the standard (no-race) plan is organized around `profile.primary_sport`. There is **no** invented "General Fitness" framework sport and **no** sportless plan. This is the existing no-race / open-ended general plan mode, which already reads `primary_sport` as its sport via the `_upstream_full_cone` fallback.
 
-- **(a) Designate a default `framework_sport`.** Feed Layer 2A a general endurance/conditioning template sport. Requires a curated `framework_sport` row (Layer0_ETL_Spec mentions a "General Conditioning" grouping, line 1013, but there is no general *framework sport* in `sport_discipline_bridge` today) — i.e. new Layer-0 data + the no-padding gate.
-- **(b) Route the standard tier through the existing no-race general-fitness path.** Tier 3 = a no-race plan with `non_event_goal_type = 'general_fitness'` (Layer 3B already supports this, `layer3b/builder.py:107`), discipline-agnostic, without a race-specific discipline cone. No new Layer-0 data.
-
-**Recommendation:** **(b)**. It reuses the shipped no-race general-fitness machinery, needs no new vocabulary, and matches what "standard plan" means — a sensible general-fitness block when the athlete has told us neither a race nor a home discipline. (a) is heavier and drags in the padding-refusal trigger. **Andy decides** — this is the one genuinely new architectural surface in the issue.
+When there is no race **and** no primary sport, the existing `framework_sport_missing` gate stands (§3 Tier 3) — Layer 2A genuinely needs a sport to classify disciplines, and we do not generate a plan from nothing. This keeps the shipped "Set your primary sport in your profile before creating a plan" copy meaningful.
 
 ## 7. Audit — every plan-gen read of `primary_sport`
 
@@ -95,14 +98,14 @@ Checklist item 1. Classification: **PLANNING** = used as the planning sport (mus
 
 | Location | Current use | Class | Action |
 |---|---|---|---|
-| `layer4/orchestrator.py:940-949` (`_upstream_full_cone`) | `framework_sport = race.framework_sport ?? primary_sport`; else raise `framework_sport_missing` | **PLANNING** | Reframe as `_resolve_planning_sport` (§3); add Tier-3 standard (§6); remove "override" framing |
+| `layer4/orchestrator.py:940-949` (`_upstream_full_cone`) | `framework_sport = race.framework_sport ?? primary_sport`; else raise `framework_sport_missing` | **PLANNING** | Reframe as `_resolve_planning_sport` (§3); behaviour kept (race ?? primary, else gate); remove "override" framing; compute `cross_training_sport` (§5) |
 | `layer1/builder.py:191,269` | Reads `primary_sport` from the DB row into `Layer1Identity.primary_sport` | HOME (source) | No change — this is the profile field's origin |
-| `layer3a/builder.py:390-393` | Raises `incomplete_onboarding` when `identity.primary_sport is None` | **PLANNING (bug)** | **Loosen** — a Tier-1 race plan must generate even with no profile primary sport; gate on the resolved `planning_sport`/2A disciplines, not `primary_sport` |
+| `layer3a/builder.py:390-393` | Raises `incomplete_onboarding` when `identity.primary_sport is None` | **PLANNING (bug)** | **Loosen** — a Tier-1 race plan must generate even with no profile primary sport; gate on the resolved `planning_sport` / 2A disciplines, not `primary_sport` |
 | `layer3a/builder.py:453-454` | Renders `- primary_sport: {primary}` into the athlete-state prompt | HOME | No change (home-discipline context); already falls back to `"unspecified"` |
 | `layer3a/builder.py:772` | Telemetry `section_a.primary_sport` | HOME | No change |
 | `layer3b/builder.py:605,613` | Renders `- primary_sport: {primary}` into the viability prompt (`"unspecified"` fallback) | HOME | No change |
 | `layer3b/builder.py:701` | Telemetry `c.primary_sport` | HOME | No change |
-| `layer3b/builder.py:852-866` | No-event goal-type vs `primary_sport` mismatch → `goal_type_primary_sport_mismatch` observation | HOME (no-race) | No change — this is a Tier-2 home-discipline cross-check |
+| `layer3b/builder.py:852-866` | No-event goal-type vs `primary_sport` mismatch → `goal_type_primary_sport_mismatch` observation | HOME (no-race) | No change — Tier-2 home-discipline cross-check |
 | `layer4/context.py:1491` | `Layer1Identity.primary_sport` field definition | HOME (schema) | No change |
 | `routes/race_events.py:276-289` (`_resolve_effective_framework_sport`) | UI mirror of `race.framework_sport ?? primary_sport` for the discipline-grid render | **PLANNING** | Re-comment to "planning sport" framing; behaviour unchanged (UI render only) |
 | `routes/onboarding.py:988-998` | Calls `_resolve_effective_framework_sport` for the onboarding discipline grid | **PLANNING** | Re-comment; behaviour unchanged |
@@ -114,9 +117,9 @@ Single source of truth: §3's resolution should live in **one** helper (`_resolv
 
 Not done in this spec. When built:
 
-1. **`layer4/orchestrator.py:935-949`** — replace the "override" comment + inline resolution with a `_resolve_planning_sport(target_race_event, layer1_payload)` helper implementing §3 (Tiers 1-3) and Rule-#15 logging. Tier 3 dispatches per the §6 decision instead of raising `framework_sport_missing`.
-2. **`layer3a/builder.py:390-393`** — stop hard-requiring `primary_sport`; a race-tier plan must build without a profile primary sport. Gate on the resolved planning sport / non-empty 2A disciplines.
-3. **Cross-training fold (§5)** — thread `cross_training_sport` (= `profile.primary_sport` when it differs from `planning_sport`, else `None`) through the cone to the chosen placement (recommended: Layer 4 per-phase carveout). Prompt-body change ⇒ Stop-and-ask trigger #1.
+1. **`layer4/orchestrator.py:935-949`** — replace the "override" comment + inline resolution with a `_resolve_planning_sport(target_race_event, layer1_payload)` helper implementing §3 (race ?? primary; Tier-3 gate unchanged) and Rule-#15 logging. Compute `cross_training_sport` (§5.1).
+2. **`layer3a/builder.py:390-393`** — stop hard-requiring `primary_sport`; a race-tier plan must build without a profile primary sport. Gate on the resolved planning sport / non-empty 2A disciplines. *(This is a latent blocker even today: a race plan fails if the athlete left primary sport blank — arguably the highest-value concrete fix here, and shippable ahead of the fold.)*
+3. **Cross-training fold (§5)** — inject `cross_training_sport`'s disciplines into Layer 2A at a low cross-training weight, below the #338 race-share signal. New Layer 2A input + `Layer2A_Spec` amendment; cross-layer surface (trigger #3); sequence after / coordinate with #338.
 4. **Remove the "override" framing** in the comments at `routes/race_events.py:280`, `routes/onboarding.py:988`, and `orchestrator.py:935-944`. Behaviour at the UI mirrors is unchanged.
 5. **No change** to the single-session path (`orchestrator.py:1342`) — already athlete-overriding by design.
 
@@ -125,33 +128,33 @@ Not done in this spec. When built:
 | Case | Resolution |
 |---|---|
 | Target race with `framework_sport` set | Tier 1 — plan around `race.framework_sport` |
-| Target race, `framework_sport` unset, profile primary set | Tier 2 — plan around `primary_sport` (existing fall-through) |
+| Target race, `framework_sport` unset, primary set | Tier 2 — standard plan around `primary_sport` (existing fall-through) |
 | Target race (sport set), **no** profile primary sport | Tier 1 — plan around race; fold inert (no home discipline); Layer 3A must **not** block (§8.2) |
 | Target race sport **==** profile primary sport | Tier 1 — plan around race; **no fold** (race specificity already covers the home discipline) |
-| No target race, profile primary set | Tier 2 — plan around `primary_sport`; no fold |
-| No target race, **no** profile primary sport | Tier 3 — standard plan (§6) |
-| Off-discipline race (sport ≠ home), both set | Tier 1 — plan around race; **fold** `primary_sport` as cross-training (§5) |
+| No target race, profile primary set | Tier 2 — standard plan on `primary_sport`; no fold |
+| No target race, **no** profile primary sport | Tier 3 — existing "set your primary sport" gate; no plan generated |
+| Off-discipline race (sport ≠ home), both set | Tier 1 — plan around race; **fold** `primary_sport` into the 2A discipline set as low-weight cross-training (§5) |
 
 ## 10. Test scenarios
 
-1. Race sport set, primary sport different → plan organizes on race sport; home discipline appears as cross-training (easy volume only); counts/long/quality stay on race disciplines.
+1. Race sport set, primary sport different → plan organizes on race sport; home discipline appears in the 2A discipline set as a low-weight cross-training role; counts/long/quality stay race-specific.
 2. Race sport set, no primary sport → plan generates end-to-end (no `incomplete_onboarding`); no fold.
 3. Race sport set == primary sport → plan organizes on the sport; no fold injected.
-4. No race, primary sport set → Tier-2 no-race plan on primary sport; `goal_type_primary_sport_mismatch` cross-check still fires.
-5. No race, no primary sport → Tier-3 standard plan produced (no `framework_sport_missing` on the plan-gen path).
+4. No race, primary sport set → Tier-2 standard plan on primary sport; `goal_type_primary_sport_mismatch` cross-check still fires.
+5. No race, no primary sport → Tier-3 gate (`framework_sport_missing`); no plan.
 6. Race with `framework_sport` unset, primary set → Tier-2 fall-through to primary sport.
-7. Resolution logging: each plan-gen run logs inputs + `(tier, planning_sport, cross_training_sport)`.
+7. Fold weight vs #338: with a race-discipline terrain mix present, the race-share signal still dominates the cross-training weight (race specificity preserved).
+8. Resolution logging: each plan-gen run logs inputs + `(tier, planning_sport, cross_training_sport)`.
 
 ## 11. Open items
 
-- **§6 standard-tier mechanism** — default `framework_sport` (a) vs. no-race general-fitness route (b). Recommend (b). **Andy decision** (cross-layer surface, padding-refusal if (a)).
-- **§5 fold placement + dosage** — synth/prompt (a) vs. Layer 2A discipline-set (b). Recommend (a). **Andy decision** (prompt-design trigger).
-- **`routes/race_events.py` mirror** — keep the UI-side resolution in lockstep with `_resolve_planning_sport`; consider a shared constant/order or a comment-anchored contract test so they cannot drift.
-- **Tier-3 user surfaces** — confirm which surfaces (plan_create / plan_refresh / ad_hoc) adopt the standard fallback vs. keep the "set your primary sport" gate. Single-session/ad-hoc is athlete-driven and out of scope for Tier 3.
+- **§5 fold weight + #338 interaction** — fix the exact precedence so the cross-training weight slots below the race-share signal in `_apply_modality_group_pooling`. Decide sequencing (after #338, or co-designed). Owes a `Layer2A_Spec` amendment in the build.
+- **`routes/race_events.py` mirror** — keep the UI-side resolution in lockstep with `_resolve_planning_sport`; consider a shared order constant or a comment-anchored contract test so they cannot drift.
+- **`layer3a/builder.py:390` fix** — confirm the loosened gate condition (resolved planning sport / non-empty 2A disciplines) and that it does not mask a genuinely empty cone.
 
 ## 12. Gut check
 
-- **Risk — the behaviour barely moves, the framing moves a lot.** Tiers 1-2 are already what the code does; the load-bearing *new* behaviour is Tier 3 (standard) and the §5 fold. If those two are deferred, this PR is a rename + comment cleanup. That is fine for a `type:spec` issue, but don't oversell the delta.
-- **Best argument against the fold (§5):** for a one-off off-discipline race, an athlete arguably wants *maximum* race specificity, not their home sport diluting the block. The mitigation is the carveout guardrails — easy volume only, minority share, race specificity untouched — but the dosage is LLM-discretion under option (a), so it could under- or over-fire. Watch this in dogfooding before trusting it.
-- **What might be missing:** "standard" is under-defined until §6 is decided — Layer 2A genuinely needs *a* sport, so Tier 3 is not free. And `layer3a/builder.py:390` is a latent blocker even for the *race-present* case today (a race plan fails if the athlete left primary sport blank); §8.2 is arguably the highest-value concrete fix in here and could ship ahead of the rest.
-- **Scope honesty:** #338 (race-share weighting) and #339 (synth substitutions) overlap the §5 fold's blast radius. Sequence the fold *after* those land, or coordinate, so the cross-training weighting doesn't fight race-share weighting.
+- **Risk — the framing moves more than the behaviour.** Tiers 1-2 are already what the code does, and Tier 3 stays a gate. The load-bearing *new* behaviour is the §5 fold and the §8.2 Layer-3A loosening. Don't oversell the delta: minus the fold, this is a rename + comment cleanup + one real bug fix.
+- **The fold (§5, option B) is the genuinely risky piece.** Injecting the home discipline into the 2A set perturbs the same weighting surface #338 rebalances. If the cross-training weight isn't strictly below the race-share signal, an off-discipline plan could lose race specificity — the exact opposite of what an athlete training for a one-off race wants. This is why §5.2/§11 insist on sequencing after #338 and a contract test on the weighting precedence.
+- **Highest-value shippable slice:** the `layer3a/builder.py:390` loosening (§8.2). Today a race plan fails outright when the athlete left primary sport blank — a clear bug under the new model, fixable independent of the fold or the reframe.
+- **What might be missing:** "off-discipline" is treated as a clean `race.sport != primary_sport` boolean. Real multisport overlaps (an AR athlete whose primary sport is Trail Running, and AR *includes* trail running) mean the "home discipline" may already be in the race's discipline set — the fold should no-op or de-dupe against the existing 2A set rather than double-count. Worth an explicit rule in the build.
