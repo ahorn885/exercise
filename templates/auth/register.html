@@ -45,6 +45,13 @@
   </button>
 </form>
 
+{% if signin_providers and not is_bootstrap %}
+<p class="auth-alt">or</p>
+{% for p in signin_providers %}
+<a class="btn btn-secondary auth-submit" href="{{ url_for(p.endpoint) }}">Continue with {{ p.label }}</a>
+{% endfor %}
+{% endif %}
+
 {% if not is_bootstrap %}
 <p class="auth-alt">Already have an account? <a href="{{ url_for('auth.login') }}">Sign in</a></p>
 {% endif %}

@@ -87,6 +87,31 @@ class TestIdentityHelpers:
         assert 'garmin' not in pi.SIGNIN_PROVIDERS
         assert {'strava', 'wahoo', 'oura'} <= pi.SIGNIN_PROVIDERS
 
+    def test_enabled_signin_providers_empty_when_flag_off(self, monkeypatch):
+        from routes import provider_identity as pi
+        monkeypatch.delenv('PROVIDER_OAUTH_SIGNIN', raising=False)
+        monkeypatch.setenv('STRAVA_CLIENT_ID', 'cid')
+        assert pi.enabled_signin_providers() == []
+
+    def test_enabled_signin_providers_needs_client_id(self, monkeypatch):
+        from routes import provider_identity as pi
+        monkeypatch.setenv('PROVIDER_OAUTH_SIGNIN', '1')
+        monkeypatch.setenv('STRAVA_CLIENT_ID', 'cid')
+        monkeypatch.delenv('WAHOO_CLIENT_ID', raising=False)
+        slugs = [p['slug'] for p in pi.enabled_signin_providers()]
+        assert slugs == ['strava']  # wahoo omitted — no client id configured
+
+    def test_enabled_signin_providers_both(self, monkeypatch):
+        from routes import provider_identity as pi
+        monkeypatch.setenv('PROVIDER_OAUTH_SIGNIN', '1')
+        monkeypatch.setenv('STRAVA_CLIENT_ID', 'cid')
+        monkeypatch.setenv('WAHOO_CLIENT_ID', 'cid')
+        providers = pi.enabled_signin_providers()
+        slugs = {p['slug'] for p in providers}
+        assert slugs == {'strava', 'wahoo'}
+        # endpoint references are well-formed for url_for
+        assert all(p['endpoint'].endswith('.oauth_start') for p in providers)
+
 
 # ── Wahoo no-session sign-in ──────────────────────────────────────────────
 

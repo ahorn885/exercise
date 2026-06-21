@@ -21,6 +21,7 @@ from zxcvbn import zxcvbn
 
 from database import get_db
 from email_helper import send_email, email_configured
+from routes import provider_identity as pi
 
 PASSWORD_RESET_TTL_MIN = 30
 # zxcvbn score table: 0=too guessable, 1=very guessable,
@@ -228,7 +229,8 @@ def login():
         if not username or not password:
             flash('Username and password are required.', 'danger')
             return render_template('auth/login.html', username=username,
-                                   registration_open=_registration_open())
+                                   registration_open=_registration_open(),
+                                   signin_providers=pi.enabled_signin_providers())
 
         row = db.execute(
             'SELECT id, password_hash FROM users WHERE username=?', (username,)
@@ -236,7 +238,8 @@ def login():
         if not row or not _check_password(password, row['password_hash']):
             flash('Invalid username or password.', 'danger')
             return render_template('auth/login.html', username=username,
-                                   registration_open=_registration_open())
+                                   registration_open=_registration_open(),
+                                   signin_providers=pi.enabled_signin_providers())
 
         session.clear()
         session['user_id'] = row['id']
@@ -252,7 +255,8 @@ def login():
         return redirect(next_url)
 
     return render_template('auth/login.html', username='',
-                           registration_open=_registration_open())
+                           registration_open=_registration_open(),
+                           signin_providers=pi.enabled_signin_providers())
 
 
 @bp.route('/logout', methods=['GET', 'POST'])
@@ -301,7 +305,8 @@ def register():
             return render_template('auth/register.html',
                                    username=username, email=email or '',
                                    display_name=display_name or '',
-                                   is_bootstrap=is_bootstrap)
+                                   is_bootstrap=is_bootstrap,
+                                   signin_providers=pi.enabled_signin_providers())
 
         cur = db.execute(
             'INSERT INTO users (username, email, password_hash, display_name) '
@@ -336,7 +341,8 @@ def register():
 
     return render_template('auth/register.html',
                            username='', email='', display_name='',
-                           is_bootstrap=is_bootstrap)
+                           is_bootstrap=is_bootstrap,
+                           signin_providers=pi.enabled_signin_providers())
 
 
 # ── Password reset ───────────────────────────────────────────────────────────

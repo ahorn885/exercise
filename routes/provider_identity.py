@@ -40,6 +40,29 @@ def signin_enabled() -> bool:
     )
 
 
+# Providers whose no-session branch is actually IMPLEMENTED and so can render a
+# "Continue with <provider>" button. Oura is in SIGNIN_PROVIDERS by design but
+# joins this list when its callback branch lands. (slug, label, start endpoint,
+# client-id env var.)
+_SIGNIN_BUTTONS = (
+    ('strava', 'Strava', 'strava.oauth_start', 'STRAVA_CLIENT_ID'),
+    ('wahoo', 'Wahoo', 'wahoo.oauth_start', 'WAHOO_CLIENT_ID'),
+)
+
+
+def enabled_signin_providers() -> list[dict]:
+    """[{slug, label, endpoint}] for the buttons that should render on the
+    auth pages: feature flag on AND the provider's client id configured.
+    Returns [] when the flag is off, so the auth pages stay password-only."""
+    if not signin_enabled():
+        return []
+    return [
+        {'slug': slug, 'label': label, 'endpoint': endpoint}
+        for slug, label, endpoint, id_env in _SIGNIN_BUTTONS
+        if os.environ.get(id_env)
+    ]
+
+
 def get_identity(db: Any, provider: str, provider_user_id: Any) -> Optional[dict]:
     """The provider_identity row for `(provider, provider_user_id)`, or None.
     This is the login lookup: a hit means an existing account to sign into."""
