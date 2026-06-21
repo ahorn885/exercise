@@ -3,6 +3,7 @@ from database import get_db
 import locations
 from routes.auth import current_user_id
 from routes.locales import athlete_locale_choices
+from layer0_catalog import strength_catalog
 
 bp = Blueprint('references', __name__)
 
@@ -15,7 +16,11 @@ def exercises():
     valid_slugs = {c['slug'] for c in locale_choices}
     locale_filter = [s for s in request.args.getlist('locale') if s in valid_slugs]
 
-    rows = db.execute('SELECT * FROM exercise_inventory ORDER BY discipline, exercise').fetchall()
+    # Single canonical catalog: layer0 strength exercises (the v1
+    # exercise_inventory table is retired). Ordered by movement-pattern group
+    # then name; where_available is derived from required equipment.
+    rows = sorted(strength_catalog(db),
+                  key=lambda r: ((r['movement_pattern'] or ''), (r['exercise'] or '')))
 
     profiles_active = {}
     equipment_counts = {}

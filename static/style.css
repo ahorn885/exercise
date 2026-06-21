@@ -848,6 +848,9 @@ body.app { margin: 0; min-height: 100vh; }
 
 /* Search affordance is a <button> — keep it looking like the input chip */
 .app .topbar .search { cursor: pointer; text-align: left; }
+/* #732 — race-week-brief trigger is a POST form (CSRF) sitting inline with the
+   topbar's ghost buttons; neutralize the form margin so it aligns with them. */
+.app .topbar form, .app .inline-form { margin: 0; }
 .app .crumbs .sep { opacity: 0.5; }
 
 /* Themed Bootstrap dropdown (user chip menu) under the token system */

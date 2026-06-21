@@ -387,10 +387,12 @@ def _validate_inputs(
         raise Layer3AInputError(
             "incomplete_onboarding", detail="Layer1Payload.identity is None"
         )
-    if layer1_payload.identity.primary_sport is None:
-        raise Layer3AInputError(
-            "incomplete_onboarding", detail="identity.primary_sport is None"
-        )
+    # #447 — do NOT require a profile `primary_sport`. The planning sport now
+    # comes from the target race (PlanGen_Planning_Sport_Spec_v1 §3), so a
+    # race-tier plan must build even when the athlete left primary_sport blank.
+    # The real "do we have a sport to plan" gate is the non-empty 2A discipline
+    # set below; `primary_sport` is only home-discipline context downstream and
+    # renders as "unspecified" when None.
     if layer2a_payload is None:
         raise Layer3AInputError("missing_2a")
     if not layer2a_payload.disciplines:

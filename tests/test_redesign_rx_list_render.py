@@ -48,11 +48,13 @@ class _Conn:
 
     def execute(self, sql, *a, **k):
         s = ' '.join(sql.split())
-        # Order matters: the inventory query carries a `FROM current_rx cr`
-        # NOT EXISTS subquery, so match it before the plain current_rx read.
-        if 'FROM exercise_inventory ei' in s and 'NOT EXISTS' in s:
+        # The catalog is now the single canonical source — layer0.exercises —
+        # read once and indexed by EX-id in Python (the v1 exercise_inventory
+        # table + the #814 name bridge are retired). The current_rx read is a
+        # plain user-scoped select; enrichment joins to the catalog by EX-id.
+        if 'FROM layer0.exercises' in s:
             return _Cursor(self._inventory)
-        if 'FROM current_rx cr' in s:
+        if 'FROM current_rx' in s:
             return _Cursor(self._entries)
         if 'FROM locale_profiles' in s:
             return _Cursor(self._locales)
@@ -64,24 +66,23 @@ class _Conn:
 
 def _entry(**kw):
     base = {
-        'id': 1, 'exercise': 'Back squat', 'discipline': 'Foot',
-        'type': 'Compound', 'movement_pattern': 'Squat',
+        'id': 1, 'exercise': 'Back squat', 'layer0_exercise_id': 'EX001',
+        'movement_pattern': 'Squat',
         'current_sets': 3, 'current_reps': 5, 'current_weight': 225,
         'last_performed': '2026-05-25', 'last_outcome': '↑ progress',
         'consecutive_failures': 0, 'sessions_since_progress': 0,
-        'video_reference': None, 'where_available': None,
-        'ei_suggested_volume': None,
     }
     base.update(kw)
     return _FakeRow(base)
 
 
 def _inv(**kw):
+    # layer0.exercises-shaped row (the canonical catalog source). strength_catalog
+    # filters on exercise_type and derives the movement-pattern group + where.
     base = {
-        'exercise': 'Kettlebell swing', 'discipline': 'Cross',
-        'type': 'Assist.', 'movement_pattern': 'Hinge',
-        'suggested_volume': '3 × 15', 'where_available': 'Home gym',
-        'video_reference': None,
+        'exercise_id': 'EX031', 'exercise_name': 'Kettlebell swing',
+        'exercise_type': 'Power', 'movement_patterns': ['Hinge'],
+        'equipment_required': ['Kettlebell'],
     }
     base.update(kw)
     return _FakeRow(base)
@@ -198,7 +199,7 @@ def test_rx_list_pristine_seed_reads_needs_setup(monkeypatch):
 
 def test_rx_list_filtered_empty_shows_clear(monkeypatch):
     client = _client(monkeypatch, [], [], [])
-    resp = client.get('/rx?discipline=Bike')
+    resp = client.get('/rx?pattern=Squat')
     assert resp.status_code == 200
     html = resp.get_data(as_text=True)
     assert 'app-shell' in html
