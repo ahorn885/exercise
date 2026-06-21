@@ -9,6 +9,7 @@ from athlete import (
     KNOWN_MOVEMENT_CONSTRAINTS,
     BODY_PART_CONSTRAINTS,
 )
+from layer0_catalog import strength_catalog
 
 bp = Blueprint('injuries', __name__)
 
@@ -64,12 +65,14 @@ def list_entries():
 
     # Load all modifications grouped by injury_id (parent-JOIN scoped via injury_log)
     mod_rows = db.execute(
-        '''SELECT iem.*, ei.exercise as exercise_name,
-                  ei_sub.exercise as substitute_name
+        '''SELECT iem.*, lx.exercise_name AS exercise_name,
+                  lx_sub.exercise_name AS substitute_name
            FROM injury_exercise_modifications iem
            JOIN injury_log il ON il.id = iem.injury_id
-           JOIN exercise_inventory ei ON ei.id = iem.exercise_id
-           LEFT JOIN exercise_inventory ei_sub ON ei_sub.id = iem.substitute_exercise_id
+           LEFT JOIN layer0.exercises lx
+                  ON lx.exercise_id = iem.exercise_ex_id AND lx.superseded_at IS NULL
+           LEFT JOIN layer0.exercises lx_sub
+                  ON lx_sub.exercise_id = iem.substitute_ex_id AND lx_sub.superseded_at IS NULL
            WHERE il.user_id = ?
            ORDER BY iem.injury_id, iem.id''',
         (uid,)
@@ -78,9 +81,10 @@ def list_entries():
     for m in mod_rows:
         modifications.setdefault(m['injury_id'], []).append(m)
 
-    exercises = db.execute(
-        'SELECT id, exercise, discipline, movement_pattern FROM exercise_inventory ORDER BY discipline, exercise'
-    ).fetchall()
+    # Exercise picker for the modification form: the single canonical layer0
+    # catalog, keyed by EX-id (the value the form posts + we store).
+    exercises = sorted(strength_catalog(db),
+                       key=lambda r: ((r['movement_pattern'] or ''), (r['exercise'] or '')))
 
     return render_template('injuries/list.html', entries=entries,
                            modifications=modifications, exercises=exercises,
@@ -158,12 +162,14 @@ def delete_entry(entry_id):
 @bp.route('/injuries/<int:entry_id>/modifications/add', methods=['POST'])
 def add_modification(entry_id):
     db = get_db()
-    exercise_id = request.form.get('exercise_id', type=int)
-    substitute_id = request.form.get('substitute_exercise_id', type=int) or None
+    # The picker now posts layer0 EX-ids (the single canonical catalog), stored
+    # directly in exercise_ex_id / substitute_ex_id.
+    exercise_ex_id = (request.form.get('exercise_id') or '').strip()
+    substitute_ex_id = (request.form.get('substitute_exercise_id') or '').strip() or None
     mod_type = request.form.get('modification_type', 'modify')
     notes = request.form.get('modification_notes', '').strip()
 
-    if not exercise_id:
+    if not exercise_ex_id:
         flash('Select an exercise to modify.', 'warning')
         return redirect(url_for('injuries.list_entries') + f'#injury-{entry_id}')
 
@@ -181,9 +187,9 @@ def add_modification(entry_id):
 
     db.execute(
         '''INSERT INTO injury_exercise_modifications
-           (injury_id, exercise_id, substitute_exercise_id, modification_type, modification_notes)
+           (injury_id, exercise_ex_id, substitute_ex_id, modification_type, modification_notes)
            VALUES (?, ?, ?, ?, ?)''',
-        (entry_id, exercise_id, substitute_id, mod_type, notes or None)
+        (entry_id, exercise_ex_id, substitute_ex_id, mod_type, notes or None)
     )
     db.commit()
     flash('Exercise modification saved.', 'success')
