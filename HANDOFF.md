@@ -184,24 +184,36 @@ priority, NLP bypass, FIT-without-targets, no concurrency control).
 
 ## Carry-forward operator items
 
-### Tabled — pending operator action
+### ✅ SendGrid email — live in production (2026-06-21)
 
-**SendGrid setup** *(unchanged from the previous two handoffs)*. PR
-#8 shipped the email helper + password reset code; live deploy still
-logs reset links to stdout. Same setup steps:
+Resolved (was tabled across the prior handoffs). Live email send is
+configured and verified in prod, so password reset **and** the
+plan-ready / plan-failed notifications (#260) now deliver real email.
 
-1. sendgrid.com (free tier: 100/day).
-2. Verify a sender.
-3. Restricted-Access API key, Mail Send → Full Access.
-4. Set on Vercel + TrueNAS env: `SENDGRID_API_KEY`,
-   `EMAIL_FROM_ADDRESS` (and optionally `EMAIL_FROM_NAME`).
-5. Vercel: redeploy. TrueNAS: `cd /mnt/storage/exercise && docker
-   compose up -d`.
+**Production setup (done):**
 
-Until configured, password-reset is functionally unavailable to
-anyone without shell access to the function logs. **If the v2
-rebuild lands first, fold this into v2's email layer rather than
-configuring v1.**
+1. SendGrid account (free tier: 100/day).
+2. **Sending domain verified** in SendGrid — authorizes any
+   `From: …@that-domain` address (a single verified sender also works).
+3. Restricted-access API key, Mail Send → Full Access.
+4. Prod env (Vercel) set: `SENDGRID_API_KEY`, `EMAIL_FROM_ADDRESS`
+   (`noreply@<verified-domain>`), optional `EMAIL_FROM_NAME` (defaults
+   to `AIDSTATION`). Mirror the same vars on TrueNAS if run there.
+
+**Operating notes:**
+
+- Vercel applies env-var changes only to **new** deployments — redeploy
+  (or push) after changing any of these. TrueNAS: `cd
+  /mnt/storage/exercise && docker compose up -d`.
+- The From-address must be on the verified domain / a verified sender,
+  or SendGrid 4xx-rejects (`[email:sendgrid_rejected]` in the function
+  logs). `email_configured()` only checks the vars are *set*, not that
+  the sender is verified.
+- Per-send outcome is observable in logs: `email_helper` prints
+  `[email:sent]` / `[email:sendgrid_rejected]` / `[email:unconfigured]`,
+  and `notify_plan_terminal` logs `email_sent=<bool>` per plan (#853).
+- Unset any var → silent stdout fallback (no email): the intended
+  local-dev / preview behavior.
 
 ### Optional spot-checks on the post-merge live site
 
@@ -251,7 +263,7 @@ Everything from prior handoffs plus this session's security stack
   plus a fourth **API access** tab as of PR #15.
 - **Admin dashboard** for cascade-delete user, plus `admin_audit`
   trail since PR #12.
-- **Password reset** flow (still SendGrid-blocked).
+- **Password reset** + **plan-ready / plan-failed emails** (#260) — SendGrid live in prod (2026-06-21).
 - **Recommended-purchases catalog** + per-user state.
 - **Locations** (`/locales` URL, "Location" UI).
 - **Per-user API tokens** (`api_tokens`) for headless access to
@@ -290,12 +302,14 @@ Everything from prior handoffs plus this session's security stack
 - **Purchases catalog curation** in `init_db.py:PURCHASE_RECOMMENDATIONS`.
   Iterative content work.
 
-### Dependent on SendGrid
+### Dependent on SendGrid *(now unblocked — SendGrid live in prod)*
 
 - **Email invites flow** — admin form → invite token → emailed
   registration link bypassing `ALLOW_REGISTRATION=0`.
 - **Email verification** on signup.
-- **Password reset is functionally tabled** until SendGrid is live.
+
+_Password reset and plan-ready / plan-failed emails (#260) are already
+live — see "✅ SendGrid email" under Carry-forward operator items._
 
 ### Parked
 
@@ -489,9 +503,9 @@ rx_engine_spec.md   — NEW this session. Standalone spec for the
 | `RATELIMIT_STORAGE_URI`    | no       | Swap Flask-Limiter's storage from in-memory to e.g. `redis://...`.               | `memory://`                            |
 | `CSP_REPORT_ONLY`          | no       | Set to `1` to ship CSP as `Content-Security-Policy-Report-Only`.                 | unset (enforced)                       |
 | `ALLOW_REGISTRATION`       | no       | Close registration with `0/false/no/off`.                                        | open                                   |
-| `SENDGRID_API_KEY`         | no       | Enables real email sending. Without it, links log to stdout.                     | unset                                  |
-| `EMAIL_FROM_ADDRESS`       | no       | Required for SendGrid send.                                                      | unset                                  |
-| `EMAIL_FROM_NAME`          | no       | Friendly From-name on outgoing email.                                            | unset                                  |
+| `SENDGRID_API_KEY`         | yes for email | Live email send via SendGrid HTTP API. Unset → mail logs to stdout (local/preview). | set in prod                  |
+| `EMAIL_FROM_ADDRESS`       | yes for email | From-address; must be a SendGrid-verified sender or on a verified sending domain.   | set in prod (`noreply@<domain>`) |
+| `EMAIL_FROM_NAME`          | no            | Friendly From-name on outgoing email.                                              | `AIDSTATION`                 |
 | `ANTHROPIC_API_KEY`        | yes for AI | Coaching / generation.                                                         | unset (AI features disabled)           |
 | `DATABASE_URL`             | yes for prod | Postgres connection string. Absence selects SQLite (local / TrueNAS).        | unset (SQLite at `/instance/training.db`) |
 

@@ -118,6 +118,9 @@ class TestOAuth:
         monkeypatch.setattr(oura.requests, 'get', lambda *a, **k: _FakeResp({'id': 'ouid'}))
         monkeypatch.setattr(oura.pa, 'upsert_auth', lambda db, **kw: captured.update(kw) or 1)
         monkeypatch.setattr(oura.pa, 'record_oauth_scope_ack', lambda db, **kw: 1)
+        # Connect path now also records the identity link (#251 §6.2); stub it —
+        # identity behaviour is covered in test_provider_oauth_signin.
+        monkeypatch.setattr(oura.pi, 'link_identity', lambda *a, **k: (True, 'linked'))
         client = _make_app(oura.bp).test_client()
         start = client.get('/oura/oauth/start?return_to=/connections')
         state = urllib.parse.parse_qs(

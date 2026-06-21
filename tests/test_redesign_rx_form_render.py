@@ -25,7 +25,6 @@ class _Row(dict):
 def _entry(**kw):
     base = {
         'id': 7, 'exercise': 'Back squat', 'movement_pattern': 'Squat',
-        'discipline': 'Foot', 'type': 'Compound', 'inventory_sugg_volume': '3 × 5',
         'current_sets': 3, 'current_reps': 5, 'current_weight': 225,
         'current_duration': None, 'weight_increment': None,
         'consecutive_failures': 0, 'sessions_since_progress': 0,
@@ -84,7 +83,7 @@ def test_rx_form_renders_fields(monkeypatch):
     assert 'Back squat' in html
     # Field names preserved for the POST handler.
     for name in ('current_sets', 'current_reps', 'current_weight',
-                 'current_duration', 'inventory_sugg_volume', 'weight_increment'):
+                 'current_duration', 'weight_increment'):
         assert 'name="%s"' % name in html
     # Clean counters → no reset checkboxes.
     assert 'name="reset_failures"' not in html

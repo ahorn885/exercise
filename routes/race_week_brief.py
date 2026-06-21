@@ -43,6 +43,7 @@ from race_week_brief_repo import (
     persist_race_week_brief_result,
     write_race_week_brief_log,
 )
+from evidence_repo import load_plan_evidence
 from routes.auth import current_user_id
 
 
@@ -196,9 +197,23 @@ def view_brief(plan_version_id: int):
         abort(404)
     brief, race_plan = loaded
 
+    # #826 — the always-visible "science behind your plan" panel. The brief +
+    # race plan key off this same plan_version, so they reuse its evidence
+    # links. Read-only; a load fault must NEVER 500 the brief, so degrade to no
+    # panel (mirrors the plan-view gate in routes/plan_create.view_plan).
+    try:
+        evidence_sources = load_plan_evidence(db, plan_version_id)
+    except Exception as _ev_exc:  # noqa: BLE001 — advisory must not break the view
+        print(
+            f"view_brief: evidence load failed for "
+            f"plan_version_id={plan_version_id} (non-fatal): {_ev_exc}"
+        )
+        evidence_sources = []
+
     return render_template(
         "plans/v2/race_week_brief.html",
         plan_version_id=plan_version_id,
         brief=brief,
         race_plan=race_plan,
+        evidence_sources=evidence_sources,
     )

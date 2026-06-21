@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import json
 import uuid
+from collections import defaultdict
 from concurrent.futures import Executor, ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import date as _date_type
@@ -46,6 +47,7 @@ from layer4.hashing import (
     compute_seam_resynth_block_cache_key,
     compute_seam_review_cache_key,
     compute_seam_review_iter2_cache_key,
+    compute_week_seam_review_cache_key,
 )
 from layer4.payload import (
     Layer4Payload,
@@ -76,6 +78,8 @@ from layer4.seam_review import (
     compose_seam_review_row,
     review_seam,
 )
+from layer4.week_seam_review import review_week_seam
+from layer4 import periodization
 from layer4.validator import (
     ValidatorContext,
     daily_windows_from_layer1,
@@ -445,14 +449,20 @@ def _aggregate_block_results(
 #                  rows in [0, _SEAM_CACHE_PHASE_IDX_BASE), so a long seam
 #                  re-synth registers as progress and resumes instead of stalling
 #                  — no route SQL change needed.
-#   [1000, 2000) — iter-1 seam-review cache rows (base + seam_idx).
-#   [2000, ...)  — iter-2 (re-synthesis-driven) seam-review cache rows
+#   [1000, 2000) — iter-1 PHASE-seam-review cache rows (base + seam_idx).
+#   [2000, 3000) — iter-2 (re-synthesis-driven) PHASE-seam-review cache rows
 #                  (base + seam_idx). Like iter-1, kept >= _SEAM_CACHE_PHASE_IDX_BASE
 #                  so it stays OFF the [0, 1000) stall-backstop progress band.
+#   [3000, ...)  — iter-1 WEEK-seam-review cache rows (base + week_seam_idx),
+#                  the D-77 Slice 3 intra-phase reviewer. Disjoint from the
+#                  phase-seam rows; like them, NOT counted by the stall-backstop
+#                  progress counter (it counts [0, _SEAM_CACHE_PHASE_IDX_BASE)),
+#                  since a review is not a synthesis block.
 _SEAM_RESYNTH_BLOCK_IDX_BASE = 500
 _SEAM_RESYNTH_BLOCK_IDX_STRIDE = 100
 _SEAM_CACHE_PHASE_IDX_BASE = 1000
 _SEAM_ITER2_CACHE_PHASE_IDX_BASE = 2000
+_WEEK_SEAM_CACHE_PHASE_IDX_BASE = 3000
 
 
 def _seam_resynth_block_phase_idx(seam_idx: int, week_in_phase: int) -> int:
@@ -1374,6 +1384,197 @@ def _run_pattern_a_engine(
             reviewer_model=model_seam_reviewer,
             triggered_resynthesis=triggered_resynthesis,
             re_prompted_phase_name=re_prompted_phase_name,
+        )
+
+    # --- Intra-phase WEEK-seam reviews (D-77 Slice 3) -------------------
+    # The per-week-block decomposition (Slices 1+2) generates each week
+    # independently, so weeks within a phase can show abrupt week-to-week
+    # cliffs. This reviewer blends them: for each adjacent week pair WITHIN a
+    # synthesized phase it judges whether the actual week-over-week change
+    # tracks the planned periodization grid (`periodization.py`) — a planned
+    # recovery week's dip is correct, only UNJUSTIFIED divergence is flagged
+    # (ratified design §5.2 + `Layer4_WeekSeamReviewer_v1.md`).
+    #
+    # v1 ships in REVIEW-AND-ESCALATE mode: a non-clean verdict surfaces a
+    # `notable_observation` (HITL-escalated for major). The β auto-resynth of a
+    # week-block is gated on the real-LLM walk (design §7 cascade-invalidation
+    # watch item + §14) and tracked as a fast-follow — the propose-patch
+    # direction is still emitted + recorded so that wiring is a later
+    # orchestrator-only change with no prompt revision. Only intra-phase seams of
+    # synthesized phases are reviewed (a phase is synthesized as a whole, so a
+    # week seam never straddles a synthesized + carryover boundary — that
+    # boundary is the PHASE seam, handled above).
+    @dataclass
+    class _WeekSeam:
+        phase_index: int
+        phase: PhaseSpec
+        prior_week: int
+        next_week: int
+        prior_sessions: list[PlanSession]
+        next_sessions: list[PlanSession]
+        global_index: int
+
+    week_seams: list[_WeekSeam] = []
+    _ws_global = 0
+    for i in sorted(phase_indices_to_synthesize):
+        phase = phase_structure.phases[i]
+        sessions_i = results_by_index[i].sessions if i in results_by_index else []
+        by_week: dict[int, list[PlanSession]] = defaultdict(list)
+        for s in sessions_i:
+            if s.phase_metadata is not None:
+                by_week[s.phase_metadata.week_in_phase].append(s)
+        for w in range(1, phase.weeks):
+            prior_ss = by_week.get(w, [])
+            next_ss = by_week.get(w + 1, [])
+            if not prior_ss or not next_ss:
+                # A week with no sessions either side -> no seam to blend.
+                continue
+            week_seams.append(
+                _WeekSeam(
+                    phase_index=i,
+                    phase=phase,
+                    prior_week=w,
+                    next_week=w + 1,
+                    prior_sessions=prior_ss,
+                    next_sessions=next_ss,
+                    global_index=_ws_global,
+                )
+            )
+            _ws_global += 1
+
+    def _week_planned(phase_name: str, w: int) -> tuple[float, bool]:
+        return (
+            periodization.week_volume_multiplier(
+                phase_structure, phase_name, w, layer3a_payload
+            ),
+            periodization.is_deload_week_for(phase_structure, phase_name, w),
+        )
+
+    def _week_seam_cache_key(ws: "_WeekSeam") -> str:
+        return compute_week_seam_review_cache_key(
+            call_cache_key=call_cache_key,  # type: ignore[arg-type]
+            week_seam_index=ws.global_index,
+            prior_week_sessions=ws.prior_sessions,
+            next_week_sessions=ws.next_sessions,
+            model=model_seam_reviewer,
+            max_tokens=seam_max_tokens,
+            extended_thinking_budget=seam_thinking_budget,
+        )
+
+    def _week_seam_task(ws: "_WeekSeam") -> tuple[int, SeamReviewCallResult]:
+        prior_mult, prior_recovery = _week_planned(ws.phase.phase_name, ws.prior_week)
+        next_mult, next_recovery = _week_planned(ws.phase.phase_name, ws.next_week)
+        res = review_week_seam(
+            phase_name=ws.phase.phase_name,
+            prior_week_in_phase=ws.prior_week,
+            next_week_in_phase=ws.next_week,
+            prior_week_sessions=ws.prior_sessions,
+            next_week_sessions=ws.next_sessions,
+            prior_planned_multiplier=prior_mult,
+            next_planned_multiplier=next_mult,
+            prior_is_recovery=prior_recovery,
+            next_is_recovery=next_recovery,
+            phase_volume_band=ws.phase.intended_volume_band,
+            prior_intended_intensity=ws.phase.intended_intensity_distribution,
+            next_intended_intensity=ws.phase.intended_intensity_distribution,
+            layer2d_payload=layer2d_payload,
+            discipline_mix=discipline_mix,
+            mode=mode_str,
+            race_format=race_format_str,
+            event_date=event_date,
+            seam_iteration=1,
+            prior_seam_issues=[],
+            model=model_seam_reviewer,
+            temperature=0.15,
+            max_tokens=seam_max_tokens,
+            extended_thinking_budget=seam_thinking_budget,
+            caller=seam_caller,
+        )
+        return (ws.global_index, res)
+
+    ws_cache_enabled = cache is not None and call_cache_key is not None
+    ws_cached_indices: set[int] = set()
+    ws_results: list[tuple[int, SeamReviewCallResult]] = []
+    ws_uncached: list[_WeekSeam] = list(week_seams)
+    if ws_cache_enabled:
+        ws_uncached = []
+        for ws in week_seams:
+            entry = cache.backend.get(
+                _week_seam_cache_key(ws),
+                _WEEK_SEAM_CACHE_PHASE_IDX_BASE + ws.global_index,
+            )
+            if entry is not None:
+                cache.metrics.record_hit(cache_entry_point, is_phase=True)
+                ws_cached_indices.add(ws.global_index)
+                ws_results.append(
+                    (ws.global_index, _hydrate_seam_call_result(json.loads(entry.payload_json)))
+                )
+            else:
+                cache.metrics.record_miss(cache_entry_point, is_phase=True)
+                ws_uncached.append(ws)
+
+    ws_fresh: list[tuple[int, SeamReviewCallResult]] = []
+    if len(ws_uncached) >= 2 and executor is not None:
+        ws_fresh = list(executor.map(_week_seam_task, ws_uncached))
+    elif len(ws_uncached) >= 2:
+        with ThreadPoolExecutor(max_workers=min(4, len(ws_uncached))) as _ws_exe:
+            ws_fresh = list(_ws_exe.map(_week_seam_task, ws_uncached))
+    elif len(ws_uncached) == 1:
+        ws_fresh = [_week_seam_task(ws_uncached[0])]
+
+    if ws_cache_enabled:
+        ws_by_index = {ws.global_index: ws for ws in week_seams}
+        for ws_idx, res in ws_fresh:
+            ws = ws_by_index[ws_idx]
+            cache.backend.put(
+                cache_key=_week_seam_cache_key(ws),
+                phase_idx=_WEEK_SEAM_CACHE_PHASE_IDX_BASE + ws_idx,
+                user_id=user_id,
+                entry_point=cache_entry_point,
+                phase_name=f"__week_seam_{ws_idx}__",
+                payload_json=json.dumps(
+                    _serialize_seam_call_result(res),
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ),
+            )
+    ws_results.extend(ws_fresh)
+    ws_results.sort(key=lambda t: t[0])
+
+    ws_by_index = {ws.global_index: ws for ws in week_seams}
+    for ws_idx, res in ws_results:
+        ws = ws_by_index[ws_idx]
+        total_input_tokens += res.input_tokens
+        total_output_tokens += res.output_tokens
+        total_latency_ms += res.latency_ms
+        if ws_idx not in ws_cached_indices:
+            llm_call_count += 1
+        seam_label = (
+            f"{ws.phase.phase_name} wk{ws.prior_week}→wk{ws.next_week}"
+        )
+        # Rule #15: log the verdict + the planned-vs-actual inputs the reviewer
+        # decided on, so a surprising flag (or a silent miss) is attributable.
+        print(
+            f"week_seam_review: {seam_label} verdict={res.verdict} "
+            f"direction={res.proposed_patch_direction} "
+            f"issues={len(res.seam_issues)}"
+        )
+        if res.verdict == "approved":
+            continue
+        # flagged_minor: record-only warning. flagged_major / patched (any
+        # direction) + accept_with_observation: escalate to HITL in v1
+        # review-and-escalate mode (no auto-resynth this slice).
+        elevates = res.verdict in ("flagged_major", "patched")
+        summary = "; ".join(res.seam_issues)[:240] or (
+            f"week seam {seam_label}: {res.verdict}"
+        )
+        notable_observations.append(
+            Observation(
+                category="warning" if not elevates else "seam_unresolved",
+                text=summary,
+                evidence_basis=[f"week_seam_review {seam_label}"],
+                elevates_to_hitl=elevates,
+            )
         )
 
     # --- Compose all_sessions (synthesized + carryover) sorted by date ---

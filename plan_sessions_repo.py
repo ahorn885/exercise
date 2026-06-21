@@ -99,6 +99,64 @@ def allocate_plan_version_row(
     return int(row["id"])
 
 
+# ─── Layer 3D HITL gate persistence (#213, Layer3D_Spec §10) ─────────────────
+
+
+def save_hitl_gate(db: Any, user_id: int, plan_version_id: int, gate: Any) -> None:
+    """Persist a `Layer3DGate` to `plan_versions.hitl_gate` (one JSONB blob —
+    items + resolutions + gate_status + evaluated_against; §10). Stamps
+    `evaluated_at` if the pure gate function left it unset (§6.1 — the caller
+    owns the timestamp). Writes ONLY the column; the `generation_status`
+    transition to/from `needs_review` is the caller's concern. Caller owns the
+    transaction boundary (no commit here)."""
+    from datetime import datetime, timezone
+
+    if getattr(gate, "evaluated_at", None) is None:
+        gate = gate.model_copy(update={"evaluated_at": datetime.now(timezone.utc)})
+    db.execute(
+        "UPDATE plan_versions SET hitl_gate = ? WHERE id = ? AND user_id = ?",
+        (json.dumps(gate.model_dump(mode="json")), plan_version_id, user_id),
+    )
+
+
+def load_hitl_gate(db: Any, user_id: int, plan_version_id: int) -> Any | None:
+    """Load the persisted `Layer3DGate` for a plan version, or None when the
+    column is NULL (no gate evaluated yet / clean athlete). Tolerates a missing
+    column (pre-migration) by returning None."""
+    from layer3d.gate import Layer3DGate
+
+    try:
+        row = db.execute(
+            "SELECT hitl_gate FROM plan_versions WHERE id = ? AND user_id = ?",
+            (plan_version_id, user_id),
+        ).fetchone()
+    except Exception:  # noqa: BLE001 — pre-migration column absence is non-fatal
+        return None
+    if row is None:
+        return None
+    raw = row["hitl_gate"]
+    if raw is None:
+        return None
+    data = _decode_json(raw)
+    return Layer3DGate.model_validate(data)
+
+
+def load_prior_resolutions(
+    db: Any, user_id: int, plan_version_id: int
+) -> dict[str, Any]:
+    """Extract the athlete's prior `GateResolution`s (keyed by `item_key`) from
+    the persisted gate, for `evaluate_layer3d_gate(prior_resolutions=...)`. Empty
+    dict when there's no gate or no resolutions yet (§5 step 5 / §6.4)."""
+    gate = load_hitl_gate(db, user_id, plan_version_id)
+    if gate is None:
+        return {}
+    return {
+        it.item_key: it.resolution
+        for it in gate.items
+        if it.resolution is not None
+    }
+
+
 def persist_layer4_sessions(
     db: Any, payload: Layer4Payload, *, on_conflict_update: bool = False
 ) -> None:

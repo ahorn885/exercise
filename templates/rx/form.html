@@ -11,7 +11,7 @@
   <div class="races-intro">
     <p class="eyebrow accent">● Edit Rx</p>
     <h1 class="page-title">{{ entry.exercise }}.</h1>
-    <p class="page-sub">{{ entry.movement_pattern }} · {{ entry.discipline }} · {{ entry.type }}{% if entry.inventory_sugg_volume %} · suggested {{ entry.inventory_sugg_volume }}{% endif %}</p>
+    <p class="page-sub">{{ entry.movement_pattern }}</p>
   </div>
 </div>
 
@@ -27,8 +27,6 @@
         <input type="number" step="0.5" name="current_weight" class="form-control form-control-sm" value="{{ entry.current_weight_display or '' }}"></label>
       <label class="field"><span class="lbl">Duration (sec)</span>
         <input type="number" name="current_duration" class="form-control form-control-sm" value="{{ entry.current_duration or '' }}"></label>
-      <label class="field"><span class="lbl">Suggested volume</span>
-        <input type="text" name="inventory_sugg_volume" class="form-control form-control-sm" value="{{ entry.inventory_sugg_volume or '' }}"></label>
       <label class="field"><span class="lbl">Weight step override ({{ weight_unit_label or 'lb' }})</span>
         <input type="number" step="0.5" name="weight_increment" class="form-control form-control-sm"
                value="{{ entry.weight_increment_display or '' }}" placeholder="{{ 'blank = auto (1.25 / 2.5)' if weight_unit_label == 'kg' else 'blank = auto (2.75 / 5.5)' }}"></label>

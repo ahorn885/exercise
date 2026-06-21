@@ -192,10 +192,15 @@ def notify_plan_terminal(db, user_id: int, plan_version_id: int,
             _plan_url(plan_version_id, status),
             plan_version.get('generation_error'),
         )
-        send_email(to_address, subject, text_body, html_body)
+        sent = send_email(to_address, subject, text_body, html_body)
+        # `sent` is False when SendGrid is unconfigured (stdout fallback) or
+        # rejected the send (e.g. an unverified EMAIL_FROM_ADDRESS) — the in-app
+        # badge is armed either way. Surfacing the outcome here lets prod logs
+        # confirm a real send per plan, not just that we reached dispatch.
         print(
-            f"notify_plan_terminal: {status} notification dispatched for "
-            f"plan_version_id={plan_version_id} user_id={user_id}"
+            f"notify_plan_terminal: {status} notification for "
+            f"plan_version_id={plan_version_id} user_id={user_id} "
+            f"(email_sent={sent}; in-app badge armed)"
         )
         return True
     except Exception as exc:  # noqa: BLE001 — notification must not break generation

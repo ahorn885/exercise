@@ -45,6 +45,24 @@
 {% if tab == 'sources' %}
 <div class="stack">
 
+  {# OAuth round-trip outcome appended by the provider callbacks
+     (?<slug>_connected=1 / ?<slug>_oauth_error=…). #}
+  {% if just_connected_label %}
+  <div class="alert alert-success" role="alert">
+    <strong>{{ just_connected_label }} connected.</strong>
+    We'll start pulling your activity and heart-rate data on the next provider sync.
+    <a href="{{ url_for('connections.hub') }}" class="btn-close" aria-label="Dismiss"></a>
+  </div>
+  {% endif %}
+  {% if oauth_error_label %}
+  <div class="alert alert-danger" role="alert">
+    <strong>{{ oauth_error_label }} did not connect.</strong>
+    The OAuth handshake failed. Try Connect again; if it keeps failing, the provider app's
+    redirect URL or credentials may be misconfigured.
+    <a href="{{ url_for('connections.hub') }}" class="btn-close" aria-label="Dismiss"></a>
+  </div>
+  {% endif %}
+
   {# Unified drop zone (#767 slice 5) — one uploader that auto-detects what each
      file is and routes it server-side (routes.garmin.import_bulk): .fit/.tcx/.gpx
      activities → cardio_log; Garmin wellness/daily-metric FITs → wellness tables;
@@ -134,6 +152,7 @@
             {% else %}
               <span class="chip">{{ p.status_label }}</span>
             {% endif %}
+            {% if p.is_signin %}<span class="chip">Sign-in</span>{% endif %}
           </div>
           {% if p.is_connected %}
             <p class="pv-meta mono">
@@ -154,6 +173,13 @@
             </form>
           {% else %}
             <a class="btn btn-primary btn-sm" href="{{ p.connect_url }}">Connect</a>
+          {% endif %}
+          {% if p.is_signin %}
+            <form method="post" action="{{ url_for('profile.unlink_provider_signin', provider=p.slug) }}"
+                  data-confirm="Remove {{ p.label }} as a sign-in method? You'll no longer be able to log in with {{ p.label }}. This does not affect data sync.">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <button type="submit" class="btn btn-ghost btn-sm pv-revoke">Remove sign-in</button>
+            </form>
           {% endif %}
         </div>
       </div>

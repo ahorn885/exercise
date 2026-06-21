@@ -441,19 +441,24 @@ def get_rx(exercise):
         'SELECT * FROM current_rx WHERE exercise=? AND user_id=?', (exercise, uid)
     ).fetchone()
     result = dict(rx) if rx else {}
-    # Include active injury modifications (parent-JOIN scoped via injury_log)
+    # Include active injury modifications (parent-JOIN scoped via injury_log).
+    # Mods are keyed by the layer0 EX-id now (catalog unification), so resolve
+    # the logged exercise name to its EX-id and match on that — a name with no
+    # canonical home resolves to None and carries no mods (was: v1-name join).
+    from provider_strength_resolve import resolve_strength_ex_id
+    ex_id, _ = resolve_strength_ex_id(exercise)
     mods = db.execute(
         '''SELECT iem.id, iem.modification_type, iem.modification_notes,
                   il.body_part, il.status,
-                  ei_sub.exercise as substitute_name
+                  lx_sub.exercise_name as substitute_name
            FROM injury_exercise_modifications iem
            JOIN injury_log il ON il.id = iem.injury_id
-           JOIN exercise_inventory ei ON ei.id = iem.exercise_id
-           LEFT JOIN exercise_inventory ei_sub ON ei_sub.id = iem.substitute_exercise_id
-           WHERE ei.exercise = ? AND il.user_id = ?
+           LEFT JOIN layer0.exercises lx_sub
+                  ON lx_sub.exercise_id = iem.substitute_ex_id AND lx_sub.superseded_at IS NULL
+           WHERE iem.exercise_ex_id = ? AND il.user_id = ?
              AND il.status IN (\'Active\', \'Managing\')''',
-        (exercise, uid)
-    ).fetchall()
+        (ex_id, uid)
+    ).fetchall() if ex_id else []
     result['injury_mods'] = [dict(m) for m in mods]
     # #469 — surface display-unit values + label so the session-form JS can
     # render rx targets in the athlete's chosen unit without re-fetching the
