@@ -566,13 +566,18 @@ class TestPerBlockBudgetGuard:
 
 class TestTopLevelPayloadValidationRetryable:
     """#47 (2026-05-31): a top-level `Layer4Payload` @model_validator failure
-    (here `_check_two_per_day` — the synthesizer over-emitted 3 sessions on one
-    day) raises at `_build_payload_for_validation` construction, OUTSIDE the
-    per-row parse try/except. It used to escape as a raw pydantic
-    ValidationError → the route catch-all marked the WHOLE plan 'failed
-    unexpectedly' and discarded it (prod plan #47: "max 2 sessions per day (got
-    3)"). It must instead surface as a RETRYABLE
-    `Layer4OutputError(schema_violation)` so the block re-synthesizes."""
+    raises at `_build_payload_for_validation` construction, OUTSIDE the per-row
+    parse try/except. It used to escape as a raw pydantic ValidationError → the
+    route catch-all marked the WHOLE plan 'failed unexpectedly' and discarded it
+    (prod plan #47: "max 2 sessions per day (got 3)"). It must instead surface as
+    a RETRYABLE `Layer4OutputError(schema_violation)` so the block re-synthesizes.
+
+    The original #47 trigger (>2 training sessions on one day) now self-heals
+    deterministically via the #351 per-day clamp BEFORE construction — proven by
+    `test_three_training_one_day_self_heals_via_clamp` — so the retryable wrap is
+    no longer exercised by that input. `test_payload_validation_error_is_retryable_not_fatal`
+    keeps the #47/#349 wrap under test for the cross-session invariants that are
+    NOT clamped (e.g. >1 recovery/day)."""
 
     def _run(self, caller):
         from layer4 import per_phase
@@ -601,43 +606,79 @@ class TestTopLevelPayloadValidationRetryable:
             llm_caller=caller,
         )
 
-    def test_three_sessions_one_day_is_retryable_not_fatal(self):
-        from layer4.errors import Layer4OutputError
-
-        calls = {"n": 0}
-        # Three cardio sessions all dated to week-1 day 2 (inside the block
-        # window). Each parses fine on its own — but the cross-session
-        # `_check_two_per_day` invariant, which only fires at payload
-        # construction, rejects 3 TRAINING sessions on a day (recovery is exempt
-        # and additive, #698 Track 1; three cardio are all training). This is
-        # exactly the boundary #47 fell through.
-        bad = {
+    def test_three_training_one_day_self_heals_via_clamp(self):
+        # #351: three cardio sessions all dated to week-1 day 2 — 3 TRAINING
+        # sessions on one day, which `_check_two_per_day` rejects (`max 2 training
+        # sessions per day`; the exact boundary #47 fell through). The per-day
+        # clamp now trims that day to 2 BEFORE payload construction, so the block
+        # NO LONGER fumbles on the payload invariant — it proceeds past
+        # construction with the day clamped to 2 (zero retries spent on the
+        # over-emit). (The thin 2-session block may still draw periodization-
+        # validator retries on volume grounds — orthogonal to the clamp — so this
+        # asserts the clamp outcome, not the call count.)
+        d2 = _PLAN_START + timedelta(days=1)
+        out = {
             "sessions": [
-                _cardio_session(d=_PLAN_START + timedelta(days=1), idx=0),
-                _cardio_session(d=_PLAN_START + timedelta(days=1), idx=1),
-                _cardio_session(d=_PLAN_START + timedelta(days=1), idx=1),
+                _cardio_session(d=d2, idx=0),
+                _cardio_session(d=d2, idx=1),
+                _cardio_session(d=d2, idx=1),
             ],
             "phase_synthesis_notes": "over-emitted a 3rd session on day 2",
         }
 
         def _caller(*_a, **_kw):
+            return _PhaseOut(
+                tool_args=out, input_tokens=6000, output_tokens=2000, latency_ms=8000
+            )
+
+        # Does NOT raise the schema_violation payload fumble — returns a result.
+        result = self._run(_caller)
+
+        day2 = [s for s in result.sessions if s.date == d2]
+        assert len(day2) == 2  # clamped from 3 to 2
+        assert sum(1 for s in day2 if s.kind == "cardio") >= 1  # a cardio kept
+        assert sorted(s.session_index_in_day for s in day2) == [0, 1]
+
+    def test_payload_validation_error_is_retryable_not_fatal(self):
+        # #47/#349 contract: ANY top-level Layer4Payload ValidationError at
+        # construction must surface as a RETRYABLE `schema_violation` (not a raw
+        # pydantic error the route discards the whole plan over). Monkeypatch
+        # construction to raise — standing in for the cross-session invariants
+        # that AREN'T deterministically clamped (e.g. >1 recovery/day) — and
+        # confirm it retries across the full cap, then raises the typed code.
+        import pydantic
+
+        from layer4 import per_phase
+        from layer4.errors import Layer4OutputError
+
+        calls = {"n": 0}
+
+        def _caller(*_a, **_kw):
             calls["n"] += 1
             return _PhaseOut(
-                tool_args=bad,
+                tool_args={
+                    "sessions": [_cardio_session(d=_PLAN_START + timedelta(days=1), idx=0)],
+                    "phase_synthesis_notes": "ok",
+                },
                 input_tokens=6000,
                 output_tokens=2000,
                 latency_ms=8000,
             )
 
-        with pytest.raises(Layer4OutputError) as exc:
-            self._run(_caller)
+        def _raise_validation(*_a, **_kw):
+            raise pydantic.ValidationError.from_exception_data("Layer4Payload", [])
 
-        # Surfaced as the RETRYABLE typed code — not a raw ValidationError that
-        # the route would treat as a fatal "unexpected" and discard the plan.
+        orig = per_phase._build_payload_for_validation
+        per_phase._build_payload_for_validation = _raise_validation
+        try:
+            with pytest.raises(Layer4OutputError) as exc:
+                self._run(_caller)
+        finally:
+            per_phase._build_payload_for_validation = orig
+
+        # Surfaced as the RETRYABLE typed code, retried across the full cap
+        # (capped_retries=2 → 3 attempts) rather than failing fatally on attempt 1.
         assert exc.value.code == "schema_violation"
-        assert "2 training sessions per day" in str(exc.value.detail)
-        # Retried across the full cap (capped_retries=2 → 3 attempts) before
-        # giving up, rather than failing fatally on the first bad attempt.
         assert calls["n"] == 3
 
     def test_budget_break_with_no_validator_is_retryable(self):
@@ -2800,4 +2841,156 @@ class TestSessionsOverEmitClamp:
         at_cap = [{"i": i} for i in range(_MAX_SESSIONS_PER_PHASE)]
         out = _clamp_sessions_over_emit(at_cap, "Build")
         assert len(out) == _MAX_SESSIONS_PER_PHASE
+
+
+def _plan_session(
+    kind: str,
+    d: date,
+    idx: int,
+    *,
+    intensity: str = "easy",
+    sid: str | None = None,
+):
+    """Build a minimal valid `PlanSession` of the given kind for the per-day
+    clamp unit tests (the clamp operates on built `PlanSession` objects)."""
+    from layer4.payload import (
+        CardioBlock,
+        PlanSession,
+        RecoveryExercise,
+        StrengthExercise,
+    )
+
+    kw: dict[str, Any] = dict(
+        session_id=sid or f"S-{kind}-{d.isoformat()}-{idx}-{intensity}",
+        plan_version_id=1,
+        date=d,
+        day_of_week=d.strftime("%a"),
+        session_index_in_day=idx,
+        time_of_day="morning",
+        kind=kind,
+        duration_min=60,
+        intensity_summary=intensity,
+        session_notes="n.",
+        coaching_intent="c.",
+        coaching_flags=[],
+    )
+    if kind == "cardio":
+        kw["discipline_id"] = "D-run"
+        kw["locale_id"] = "home_gym"
+        kw["cardio_blocks"] = [
+            CardioBlock(
+                block_kind="main_set",
+                duration_min=60,
+                intensity_zone="Z2",
+                intensity_target={"hr_bpm_low": 130, "hr_bpm_high": 145},
+                instructions="steady.",
+            )
+        ]
+    elif kind == "strength":
+        kw["discipline_id"] = "D-strength"
+        kw["locale_id"] = "home_gym"
+        kw["strength_exercises"] = [
+            StrengthExercise(
+                exercise_id="E-1",
+                exercise_name="Squat",
+                resolution_tier=1,
+                sets=3,
+                reps_per_set=5,
+                load_prescription="bodyweight",
+                rest_between_sets_sec=90,
+                instructions="x.",
+                coaching_flags=[],
+            )
+        ]
+    elif kind == "recovery":
+        kw["duration_min"] = 20
+        kw["recovery_exercises"] = [
+            RecoveryExercise(
+                exercise_id="R-1",
+                exercise_name="Foam roll",
+                prescription="2x30s/side",
+                instructions="x.",
+            )
+        ]
+    return PlanSession(**kw)
+
+
+class TestPerDayTrainingClamp:
+    """#351 — `_clamp_sessions_per_day` caps TRAINING sessions at 2 per calendar
+    day pre-validation (drop policy: keep a cardio + one other), so the common
+    >2/day over-emit self-heals with zero retries. Recovery is exempt and
+    additive — never counted or trimmed."""
+
+    def test_keeps_the_lone_cardio(self):
+        # 1 cardio + 2 strength on one day. The drop policy keeps a cardio + one
+        # other, so the lone cardio must SURVIVE (never dropped to leave a
+        # strength+strength pair), satisfying the "≥1 cardio" composition rule.
+        from layer4.per_phase import _clamp_sessions_per_day
+
+        d = date(2026, 4, 6)
+        sessions = [
+            _plan_session("strength", d, 0, sid="s0"),
+            _plan_session("cardio", d, 1, sid="c1"),
+            _plan_session("strength", d, 2, sid="s2"),
+        ]
+        out, notes = _clamp_sessions_per_day(sessions)
+        assert notes  # the clamp fired
+        kept = [s for s in out if s.date == d]
+        assert len(kept) == 2
+        assert sum(1 for s in kept if s.kind == "cardio") == 1
+        assert "c1" in {s.session_id for s in kept}
+        # surviving sessions renumbered to a contiguous 0..n-1
+        assert sorted(s.session_index_in_day for s in kept) == [0, 1]
+
+    def test_prefers_non_hard(self):
+        # 3 cardio, one hard + two easy. The hard one sorts last and is dropped.
+        from layer4.per_phase import _clamp_sessions_per_day
+
+        d = date(2026, 4, 6)
+        sessions = [
+            _plan_session("cardio", d, 0, intensity="hard", sid="hard"),
+            _plan_session("cardio", d, 1, intensity="easy", sid="easy1"),
+            _plan_session("cardio", d, 2, intensity="easy", sid="easy2"),
+        ]
+        out, _ = _clamp_sessions_per_day(sessions)
+        kept_ids = {s.session_id for s in out}
+        assert "hard" not in kept_ids
+        assert kept_ids == {"easy1", "easy2"}
+
+    def test_recovery_preserved_when_training_clamped(self):
+        # 3 training + 1 additive recovery on one day. The clamp trims TRAINING to
+        # 2 but the recovery is never counted or dropped (≤2 training + ≤1
+        # recovery, #698 Track 1). Survivors renumber to a contiguous 0..2.
+        from layer4.per_phase import _clamp_sessions_per_day
+
+        d = date(2026, 4, 6)
+        sessions = [
+            _plan_session("cardio", d, 0, sid="c0"),
+            _plan_session("cardio", d, 1, sid="c1a"),
+            _plan_session("cardio", d, 1, sid="c1b"),
+            _plan_session("recovery", d, 2, sid="rec"),
+        ]
+        out, notes = _clamp_sessions_per_day(sessions)
+        assert notes
+        ids = {s.session_id for s in out}
+        assert "rec" in ids
+        day_out = [s for s in out if s.date == d]
+        training = [s for s in day_out if s.kind in ("cardio", "strength")]
+        assert len(training) == 2
+        assert sorted(s.session_index_in_day for s in day_out) == [0, 1, 2]
+
+    def test_passthrough_two_training_plus_recovery(self):
+        # The normal additive-recovery day (2 training + 1 recovery) is at the cap,
+        # not over it — the clamp must leave it completely untouched.
+        from layer4.per_phase import _clamp_sessions_per_day
+
+        d = date(2026, 4, 6)
+        sessions = [
+            _plan_session("cardio", d, 0),
+            _plan_session("strength", d, 1),
+            _plan_session("recovery", d, 2),
+        ]
+        out, notes = _clamp_sessions_per_day(sessions)
+        assert notes == []
+        assert out == sessions
 
