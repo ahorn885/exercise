@@ -238,6 +238,48 @@ def _athlete_discipline_overrides(layer1_payload: Layer1Payload) -> dict[str, di
     }
 
 
+def _resolve_planning_sport(
+    target_race_event: RaceEventPayload | None,
+    layer1_payload: Layer1Payload,
+    user_id: int,
+) -> str:
+    """Resolve the plan's organizing sport per `PlanGen_Planning_Sport_Spec_v1` §3.
+
+    Precedence — race > athlete > standard:
+      1. **Race** — a target race carrying a `framework_sport` → that sport
+         (race-specific plan).
+      2. **Athlete** — no race (or a race with no `framework_sport`) → the
+         profile `primary_sport`, organized as a standard, non-race plan.
+      3. **Standard gate** — no race AND no `primary_sport` → there is no sport
+         to plan around; raise `framework_sport_missing`. Layer 2A needs a
+         sport; we do not generate a plan from nothing.
+
+    The profile `primary_sport` is the athlete's HOME discipline, not a
+    planning-sport override — the race's sport IS the planning sport when a
+    race exists. Reframes the former D-73 Phase 5.2 Bucket E.(b) "race-row
+    override" model (#447).
+    """
+    race_sport = (
+        target_race_event.framework_sport if target_race_event is not None else None
+    )
+    primary_sport = layer1_payload.identity.primary_sport
+    planning_sport = race_sport or primary_sport
+    tier = "race" if race_sport else ("athlete" if primary_sport else "standard_gate")
+    # Rule #15 — log the resolution inputs + the chosen tier.
+    print(
+        f"_resolve_planning_sport: user_id={user_id} "
+        f"target_race_present={target_race_event is not None} "
+        f"race_sport={race_sport!r} primary_sport={primary_sport!r} "
+        f"-> tier={tier} planning_sport={planning_sport!r}"
+    )
+    if not planning_sport:
+        raise OrchestrationError(
+            "framework_sport_missing",
+            f"no target-race sport and no profile primary_sport for user_id={user_id}",
+        )
+    return planning_sport
+
+
 def _derive_race_discipline_mix(
     target_race_event: RaceEventPayload | None,
 ) -> dict[str, float]:
@@ -930,21 +972,22 @@ def _upstream_full_cone(
     as_of = datetime.combine(today, time.min)
 
     layer1_payload = build_layer1_payload(db, user_id)
-    # D-73 Phase 5.2 Bucket E.(b) — race-row override takes precedence over
-    # athlete-profile primary_sport. When set on the target race, Layer 2A
-    # classifies for the race's own sport (e.g. trail runner doing one AR
-    # race) without churning the athlete's profile. Falls back to
-    # primary_sport when the override is unset OR no target race exists.
-    framework_sport = (
-        target_race_event.framework_sport if target_race_event is not None else None
+    # #447 — planning sport = race.framework_sport when a target race exists,
+    # else the profile primary_sport, else the standard gate. The race's sport
+    # IS the planning sport; primary_sport is the athlete's home discipline,
+    # not a planning-sport override. Resolution + logging in the helper.
+    framework_sport = _resolve_planning_sport(
+        target_race_event, layer1_payload, user_id
     )
-    if not framework_sport:
-        framework_sport = layer1_payload.identity.primary_sport
-    if not framework_sport:
-        raise OrchestrationError(
-            "framework_sport_missing",
-            f"layer1.identity.primary_sport is empty for user_id={user_id}",
-        )
+    # #447 §5 — when the race sport differs from the athlete's home discipline,
+    # fold the home sport into Layer 2A as low-weight cross-training. Inert
+    # (None) when there's no primary_sport or it already IS the planning sport.
+    _primary_sport = layer1_payload.identity.primary_sport
+    cross_training_sport = (
+        _primary_sport
+        if (_primary_sport and _primary_sport != framework_sport)
+        else None
+    )
 
     # D-73 Phase 5.2 Bucket E.(b)-B2 — race-row `included_discipline_ids`
     # narrows the bridge-derived discipline list when supplied. Layer 2A
@@ -967,6 +1010,9 @@ def _upstream_full_cone(
         # bridge midpoints (precedence resolved in _apply_modality_group_pooling).
         # Inert when the race carries no discipline-tagged terrain.
         race_discipline_overrides=_derive_race_discipline_mix(target_race_event),
+        # #447 §5 — fold the home sport in as low-weight cross-training when the
+        # race sport differs from it.
+        cross_training_sport=cross_training_sport,
     )
     included_discipline_ids = [
         d.discipline_id

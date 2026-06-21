@@ -695,14 +695,16 @@ def view_plan(plan_id):
     active_mods = db.execute(
         '''SELECT iem.modification_type, iem.modification_notes,
                   il.body_part, il.status,
-                  ei.exercise as exercise_name,
-                  ei_sub.exercise as substitute_name
+                  lx.exercise_name as exercise_name,
+                  lx_sub.exercise_name as substitute_name
            FROM injury_exercise_modifications iem
            JOIN injury_log il ON il.id = iem.injury_id
-           JOIN exercise_inventory ei ON ei.id = iem.exercise_id
-           LEFT JOIN exercise_inventory ei_sub ON ei_sub.id = iem.substitute_exercise_id
+           LEFT JOIN layer0.exercises lx
+                  ON lx.exercise_id = iem.exercise_ex_id AND lx.superseded_at IS NULL
+           LEFT JOIN layer0.exercises lx_sub
+                  ON lx_sub.exercise_id = iem.substitute_ex_id AND lx_sub.superseded_at IS NULL
            WHERE il.user_id = ? AND il.status IN ('Active', 'Managing')
-           ORDER BY il.status, il.body_part, ei.exercise''',
+           ORDER BY il.status, il.body_part, lx.exercise_name''',
         (uid,)
     ).fetchall()
 

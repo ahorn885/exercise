@@ -308,6 +308,10 @@ class TestAdvancePlanGeneration:
 
         monkeypatch.setattr(plan_create, 'orchestrate_plan_create', _fake_orchestrate)
         monkeypatch.setattr(plan_create, '_build_layer4_cache', lambda: 'CACHE')
+        # #259/#260 — the terminal-ready notification is a separate side-effect
+        # (own claim + commit, tested in test_plan_notifications.py); stub it so
+        # this test's commit accounting stays focused on the generation writes.
+        monkeypatch.setattr(plan_create, 'notify_plan_terminal', lambda *a, **k: True)
         persisted = {}
         monkeypatch.setattr(
             plan_create, 'persist_layer4_sessions',
@@ -326,6 +330,26 @@ class TestAdvancePlanGeneration:
         # 2 commits: the D-77 progress-backstop counter persist (pass start) +
         # the success status flip.
         assert conn.commits == 2
+
+    def test_ready_path_fires_notification(self, monkeypatch):
+        # #259/#260 — a pass that flips the row to `ready` hands the terminal
+        # notification the row with status overridden to 'ready'. Wiring guard.
+        conn = _FakeConn()
+        _queue_plan_version(conn, status='generating')
+        monkeypatch.setattr(
+            plan_create, 'orchestrate_plan_create', lambda *a, **k: 'R')
+        monkeypatch.setattr(plan_create, '_build_layer4_cache', lambda: 'CACHE')
+        monkeypatch.setattr(
+            plan_create, 'persist_layer4_sessions', lambda db, result: None)
+        fired = {}
+        monkeypatch.setattr(
+            plan_create, 'notify_plan_terminal',
+            lambda db, uid, pvid, pv: fired.update(uid=uid, pvid=pvid, pv=pv),
+        )
+        out = _advance_plan_generation(conn, 3, 7)
+        assert out == {'status': 'ready'}
+        assert fired['uid'] == 3 and fired['pvid'] == 7
+        assert fired['pv']['generation_status'] == 'ready'
 
     def test_generating_persist_failure_marks_failed(self, monkeypatch):
         # Regression: persist + ready-flip now run INSIDE the try, so a
@@ -839,8 +863,12 @@ class TestCronGeneratePending:
 
 
 class TestMarkPlanFailed:
-    def test_persists_failure_and_returns_json(self):
+    def test_persists_failure_and_returns_json(self, monkeypatch):
         conn = _FakeConn()
+        # #259/#260 — the terminal-failed notification is a separate side-effect
+        # (own claim + commit, tested in test_plan_notifications.py); stub it so
+        # this test's commit/rollback accounting stays focused on the failure write.
+        monkeypatch.setattr(plan_create, 'notify_plan_terminal', lambda *a, **k: True)
         out = _mark_plan_failed(conn, plan_version_id=7, user_id=3, message='nope')
         assert out == {'status': 'failed', 'error': 'nope'}
         # Rolls back to clear any aborted/pending txn, then writes + commits.
@@ -850,6 +878,21 @@ class TestMarkPlanFailed:
         assert "generation_status = 'failed'" in sql
         assert "WHERE id = ? AND user_id = ?" in sql
         assert params == ('nope', 7, 3)
+
+    def test_fires_failed_notification(self, monkeypatch):
+        # #259/#260 — the failure path hands the terminal-failed notification the
+        # plan id, user, and the user-facing message (which becomes the email +
+        # the in-app badge copy). Wiring guard for the call site.
+        fired = {}
+        monkeypatch.setattr(
+            plan_create, 'notify_plan_terminal',
+            lambda db, uid, pvid, pv: fired.update(uid=uid, pvid=pvid, pv=pv),
+        )
+        conn = _FakeConn()
+        _mark_plan_failed(conn, plan_version_id=7, user_id=3, message='nope (x)')
+        assert fired['uid'] == 3 and fired['pvid'] == 7
+        assert fired['pv']['generation_status'] == 'failed'
+        assert fired['pv']['generation_error'] == 'nope (x)'
 
 
 # ─── mark_plan_complete / reopen_plan (Plan-list lifecycle actions) ───────────

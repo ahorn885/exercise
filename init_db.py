@@ -1342,6 +1342,69 @@ _PG_MIGRATIONS = [
     )""",
     "CREATE INDEX IF NOT EXISTS plan_versions_user_created_idx ON plan_versions (user_id, created_at DESC)",
     "CREATE INDEX IF NOT EXISTS plan_versions_user_scope_idx ON plan_versions (user_id, scope_start_date, scope_end_date)",
+    # #826 — science-provenance backbone. These tables reference `plan_versions`
+    # (created just above), so they live here in the migration list rather than
+    # `PG_SCHEMA` (which runs before the migration list). `evidence_sources` is
+    # the canonical, referenceable store of the external, credible research /
+    # training-science a plan decision rests on — the prose that used to live as
+    # free text in `training_methods.source` / `training_modalities`. Constrained
+    # to three credible kinds (study | guideline | expert_coach): there is
+    # deliberately no generic "internal/heuristic" kind — a decision that can't
+    # cite one of these is a curation gap (`evidence_curation_flags`), not a 4th
+    # kind. `is_baseline` marks the house-methodology sources every plan rests on
+    # (the per-`plan_version` "whys" for v1); `status` + `superseded_by_id` give a
+    # clean supersede/version model the #451 "your plan may change" delta job can
+    # diff against.
+    """CREATE TABLE IF NOT EXISTS evidence_sources (
+        id SERIAL PRIMARY KEY,
+        slug TEXT NOT NULL UNIQUE,
+        kind TEXT NOT NULL CHECK (kind IN ('study', 'guideline', 'expert_coach')),
+        title TEXT NOT NULL,
+        summary TEXT,
+        citation TEXT,
+        url TEXT,
+        status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'superseded')),
+        superseded_by_id INTEGER REFERENCES evidence_sources(id),
+        is_baseline BOOLEAN NOT NULL DEFAULT FALSE,
+        as_of DATE,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )""",
+    "CREATE INDEX IF NOT EXISTS evidence_sources_baseline_idx ON evidence_sources (is_baseline, status)",
+    # Link curated `training_methods` rows to a canonical source (forward-looking:
+    # the table is unseeded today, so this migrates the free-text `source` model
+    # toward the referenceable store as rows land).
+    "ALTER TABLE training_methods ADD COLUMN IF NOT EXISTS evidence_source_id INTEGER REFERENCES evidence_sources(id)",
+    # The persisted provenance link. Per-`plan_version` grain for v1 (one set of
+    # "whys" per plan as a whole); the per-phase/session locator column is the
+    # documented follow-up. Race-week briefs + race-day plans are always tied to a
+    # `plan_version`, so they reuse these links (single table, no brief-scoped
+    # variant). Superseding/adding an `evidence_sources` row joins straight back
+    # here to find affected plans (the #451 backbone).
+    """CREATE TABLE IF NOT EXISTS plan_version_evidence (
+        plan_version_id BIGINT NOT NULL REFERENCES plan_versions(id) ON DELETE CASCADE,
+        evidence_source_id INTEGER NOT NULL REFERENCES evidence_sources(id),
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        PRIMARY KEY (plan_version_id, evidence_source_id)
+    )""",
+    "CREATE INDEX IF NOT EXISTS plan_version_evidence_source_idx ON plan_version_evidence (evidence_source_id)",
+    # Curation-gap intake. When a decision wants to cite research but no matching
+    # `evidence_sources` row exists, we flag it here (the decision still stands,
+    # unattributed) rather than dropping it silently or hard-failing the plan. An
+    # operator triages open flags in the admin view and either creates the missing
+    # source (resolve) or dismisses the gap.
+    """CREATE TABLE IF NOT EXISTS evidence_curation_flags (
+        id SERIAL PRIMARY KEY,
+        plan_version_id BIGINT REFERENCES plan_versions(id) ON DELETE CASCADE,
+        raised_by_layer TEXT,
+        context_text TEXT NOT NULL,
+        cited_token TEXT,
+        occurrences INTEGER NOT NULL DEFAULT 1,
+        status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'resolved', 'dismissed')),
+        resolved_by_evidence_source_id INTEGER REFERENCES evidence_sources(id),
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        resolved_at TIMESTAMPTZ
+    )""",
+    "CREATE INDEX IF NOT EXISTS evidence_curation_flags_status_idx ON evidence_curation_flags (status, created_at DESC)",
     # Layer 4 Step 5 cache layer — `layer4_cache` table per `Layer4_Spec.md`
     # §9. Stores per-entry-point cache rows (phase_idx = -1) and per-phase
     # Pattern A rows (phase_idx >= 0). cache_key is a sha256 hex digest from
@@ -2040,6 +2103,31 @@ _PG_MIGRATIONS = [
         UNIQUE (plan_version_id)
     )""",
     "CREATE INDEX IF NOT EXISTS race_week_briefs_user_version_idx ON race_week_briefs (user_id, plan_version_id)",
+    # #732 slice 4 — race_week_brief_log. One row per race-week-brief generation
+    # ATTEMPT (success or failure), mirroring plan_refresh_log (D-64 §7.1). The
+    # race_week_briefs table only holds successful artifacts; this log is the
+    # observability surface — it records failures (which never reach
+    # race_week_briefs, since a failed attempt doesn't commit the brief) with
+    # their failure_reason, plus the per-attempt cost telemetry the orchestrator
+    # returns on the Layer4Payload (duration_ms / input+output tokens /
+    # llm_call_count). plan_version_id is nullable: a success row stamps the
+    # active version the brief attached to; a failure row stamps the originating
+    # plan view's version when known, else NULL.
+    """CREATE TABLE IF NOT EXISTS race_week_brief_log (
+        id BIGSERIAL PRIMARY KEY,
+        user_id INTEGER NOT NULL REFERENCES users(id),
+        triggered_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        plan_version_id BIGINT REFERENCES plan_versions(id),
+        days_to_event INTEGER,
+        duration_ms INTEGER,
+        input_tokens INTEGER,
+        output_tokens INTEGER,
+        llm_call_count INTEGER,
+        success BOOLEAN NOT NULL,
+        failure_reason TEXT,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )""",
+    "CREATE INDEX IF NOT EXISTS race_week_brief_log_user_triggered_idx ON race_week_brief_log (user_id, triggered_at DESC)",
     # D-63 §5.3 — ad_hoc_workout_suggestions. Holds generated-but-not-yet-
     # logged single-session synthesizer outputs. request_payload carries the
     # SingleSessionRequest; generated_session carries the single PlanSession
@@ -2430,6 +2518,30 @@ _PG_MIGRATIONS = [
         f"WHERE exercise='{name}' AND layer0_exercise_id IS NULL"
         for name, ex_id in STRENGTH_NAME_TO_EX_ID.items()
     ],
+    # ── Catalog unification (Slice B2): migrate injury_exercise_modifications off
+    # the public exercise_inventory.id FK onto layer0 EX-ids. Add TEXT EX-id
+    # columns + backfill from the still-present v1 catalog via the same
+    # STRENGTH_NAME_TO_EX_ID crosswalk; make the legacy int FK column nullable so
+    # new rows (written as EX-ids) need not populate it. The legacy
+    # exercise_id / substitute_exercise_id columns + their FK to exercise_inventory
+    # are dropped with the table in the table-drop slice. Idempotent (ADD COLUMN
+    # IF NOT EXISTS + `… ex_id IS NULL` guards); on a fresh DB both tables are
+    # empty at this point so the backfill is a no-op.
+    "ALTER TABLE injury_exercise_modifications ADD COLUMN IF NOT EXISTS exercise_ex_id TEXT",
+    "ALTER TABLE injury_exercise_modifications ADD COLUMN IF NOT EXISTS substitute_ex_id TEXT",
+    "ALTER TABLE injury_exercise_modifications ALTER COLUMN exercise_id DROP NOT NULL",
+    *[
+        f"UPDATE injury_exercise_modifications SET exercise_ex_id='{ex_id}' "
+        f"WHERE exercise_ex_id IS NULL AND exercise_id IN "
+        f"(SELECT id FROM exercise_inventory WHERE exercise='{name}')"
+        for name, ex_id in STRENGTH_NAME_TO_EX_ID.items()
+    ],
+    *[
+        f"UPDATE injury_exercise_modifications SET substitute_ex_id='{ex_id}' "
+        f"WHERE substitute_ex_id IS NULL AND substitute_exercise_id IN "
+        f"(SELECT id FROM exercise_inventory WHERE exercise='{name}')"
+        for name, ex_id in STRENGTH_NAME_TO_EX_ID.items()
+    ],
     # ── Cull non-trainable / mis-classified v1 exercise_inventory entries ──
     # (#694, Andy-ratified 2026-06-17). Five 'Novel' rows that are cardio
     # sessions or coaching cues, not trackable strength exercises — v1-catalog
@@ -2533,6 +2645,28 @@ _PG_MIGRATIONS = [
     "ALTER TABLE athlete_profile DROP COLUMN IF EXISTS notes",
     "ALTER TABLE athlete_profile DROP COLUMN IF EXISTS coaching_voice_preferences",
     "ALTER TABLE athlete_profile DROP COLUMN IF EXISTS previous_coaching",
+    # Plan-lifecycle notifications (#259/#260) — email + in-app badge when plan
+    # generation reaches a terminal status (`ready`/`failed`) in
+    # `_advance_plan_generation`. Both the progress-screen poller AND the
+    # every-minute cron drive that transition, so the notification is fired
+    # under an ATOMIC claim on `notified_at`: the first writer to flip it from
+    # NULL to NOW() wins and sends the one email; a racing second pass matches 0
+    # rows and no-ops. This is the double-send guard the issue calls for — keyed
+    # on the row, not a per-process flag, so it holds across the poller/cron
+    # race. `notification_seen_at` is the in-app dismissal stamp: the dashboard
+    # badge shows rows with `notified_at` set AND `notification_seen_at` NULL, so
+    # gating on `notified_at IS NOT NULL` keeps legacy `ready`-by-default rows
+    # (which never went through the notification path) from suddenly badging.
+    # Both nullable; the claim/read SQL (plan_notifications.py) tolerates their
+    # absence so the code is deploy-safe even before this column lands.
+    "ALTER TABLE plan_versions ADD COLUMN IF NOT EXISTS notified_at TIMESTAMPTZ",
+    "ALTER TABLE plan_versions ADD COLUMN IF NOT EXISTS notification_seen_at TIMESTAMPTZ",
+    # Partial index backing the dashboard badge read (the unseen-notification
+    # SELECT is user-scoped + filtered to the small set of fired-but-unseen
+    # rows); keeps the per-render context cost negligible like `active_nudges`.
+    "CREATE INDEX IF NOT EXISTS plan_versions_unseen_notification_idx "
+    "ON plan_versions (user_id) "
+    "WHERE notified_at IS NOT NULL AND notification_seen_at IS NULL",
 ]
 
 _CLOTHING_SEEDS = [
@@ -2917,6 +3051,66 @@ EXERCISES = [
 ]
 
 
+# #826 — baseline science-provenance sources: the credible, external
+# training-science the periodization engine always applies, so every generated
+# plan is linked to this set (the per-`plan_version` "whys" for v1). Each is a
+# real, recognized source constrained to one of the three allowed kinds
+# (study | guideline | expert_coach). Tuples: (slug, kind, title, summary,
+# citation, url). Seeded with is_baseline=TRUE in `init_postgres`.
+EVIDENCE_SOURCE_BASELINE_SEEDS = [
+    (
+        'periodization-foundations', 'expert_coach',
+        'Periodized training structure',
+        'Plans are organized into Base → Build → Peak → Taper phases that '
+        'progressively develop fitness then sharpen it for the goal date, the '
+        'foundational model behind every generated plan.',
+        'Bompa, T.O. & Haff, G.G. Periodization: Theory and Methodology of '
+        'Training (5th ed.). Human Kinetics.',
+        None,
+    ),
+    (
+        'polarized-intensity', 'study',
+        'Polarized training-intensity distribution',
+        'Endurance work is weighted toward easy aerobic volume with a smaller '
+        'share of high-intensity work, which outperforms threshold-heavy '
+        'distributions for most endurance athletes.',
+        'Seiler, S. (2010). What is best practice for training intensity and '
+        'duration distribution in endurance athletes? Int J Sports Physiol '
+        'Perform, 5(3), 276-291.',
+        None,
+    ),
+    (
+        'progressive-overload', 'guideline',
+        'Progressive overload in resistance training',
+        'Strength and load are advanced gradually and systematically rather '
+        'than all at once, the basis for how week-over-week load is stepped up.',
+        'ACSM Position Stand: Progression Models in Resistance Training for '
+        'Healthy Adults. Med Sci Sports Exerc, 41(3), 687-708 (2009).',
+        None,
+    ),
+    (
+        'tapering-peak', 'study',
+        'Tapering before the goal event',
+        'A pre-event reduction in training volume while preserving intensity '
+        'restores freshness and improves performance, the basis for the Taper '
+        'phase shape.',
+        'Bosquet, L. et al. (2007). Effects of tapering on performance: a '
+        'meta-analysis. Med Sci Sports Exerc, 39(8), 1358-1365.',
+        None,
+    ),
+    (
+        'recovery-adaptation', 'guideline',
+        'Recovery and the overload-adaptation cycle',
+        'Adaptation happens during recovery, so rest days and lighter weeks are '
+        'scheduled deliberately to let the prescribed load translate into '
+        'fitness and to manage injury risk.',
+        'Kellmann, M. et al. (2018). Recovery and Performance in Sport: '
+        'Consensus Statement. Int J Sports Physiol Perform, 13(2), 240-245.',
+        None,
+    ),
+]
+
+
 def init_postgres():
     import psycopg2
     conn = psycopg2.connect(DATABASE_URL)
@@ -2981,6 +3175,22 @@ def init_postgres():
         _pvm_rows
     )
     print(f"[init_db] seeded provider_value_map: {len(_pvm_rows)} rows")  # Rule #15
+    # #826 — seed the baseline science-provenance sources (the house-methodology
+    # "whys" every periodized plan rests on). ON CONFLICT (slug) DO UPDATE re-syncs
+    # the table to this authoring source each deploy, mirroring provider_value_map.
+    # `evidence_sources` is created in the migration list above, so the table is
+    # guaranteed present here.
+    cur.executemany(
+        '''INSERT INTO evidence_sources
+           (slug, kind, title, summary, citation, url, is_baseline)
+           VALUES (%s, %s, %s, %s, %s, %s, TRUE)
+           ON CONFLICT (slug) DO UPDATE SET
+               kind=EXCLUDED.kind, title=EXCLUDED.title, summary=EXCLUDED.summary,
+               citation=EXCLUDED.citation, url=EXCLUDED.url, is_baseline=TRUE''',
+        EVIDENCE_SOURCE_BASELINE_SEEDS,
+    )
+    print(f"[init_db] seeded evidence_sources: "  # Rule #15
+          f"{len(EVIDENCE_SOURCE_BASELINE_SEEDS)} baseline rows")
     # Seed exercise equipment tags (always update — safe to re-run)
     for exercise, tags in EXERCISE_EQUIPMENT.items():
         cur.execute(

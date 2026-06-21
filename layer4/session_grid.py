@@ -726,8 +726,8 @@ def apply_session_ceiling(
 # strength/week is capped at `dose + this`; excess failover is reallocated to
 # feasible disciplines rather than crowding the week with strength (Andy §7:
 # "Cap = dose + 2 total strength/week"). The deterministic crash-guard
-# (`per_phase._repair_strength_collisions`, #579) still backstops a same-day
-# strength collision; this cap is the upstream periodization-quality guard.
+# (`per_phase._normalize_day_composition`, #579/#778/plan-78) still backstops a
+# same-day strength collision; this cap is the upstream periodization-quality guard.
 _FAILOVER_STRENGTH_HEADROOM = 2
 
 # A single feasible discipline may absorb at most this multiple of its own

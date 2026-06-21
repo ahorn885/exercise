@@ -32,6 +32,7 @@ def q_layer2a_discipline_classifier_payload(
     athlete_discipline_overrides: dict[str, dict] | None,
     estimated_race_duration_hours: float | None,
     team_format: str | None,
+    cross_training_sport: str | None,
     etl_version_set: dict[str, str]
 ) -> Layer2APayload:
     ...
@@ -45,6 +46,7 @@ def q_layer2a_discipline_classifier_payload(
 | `athlete_discipline_overrides` | dict\|None | `§C Discipline Weighting` (athlete overrides) | Optional. Athletes can override system-default weights or exclude `*Conditional` disciplines. Shape: `{discipline_id: {weight: float, included: bool}}`. |
 | `estimated_race_duration_hours` | float\|None | `§H.2 Estimated Duration` | Used for certain sleep-deprivation flags. |
 | `team_format` | str\|None | `§H.2 Team Format` | Affects relay-leg discipline selection for relay sports. AR is not a relay sport — typically None for AR. |
+| `cross_training_sport` | str\|None | Orchestrator (`_upstream_full_cone`) | **#447 §5 cross-training fold.** The athlete-profile `primary_sport`, passed **only** when it differs from `framework_sport` (an off-discipline race). Triggers the fold in **§5.7**. None = no fold (no home sport, or the home sport already IS the planning sport). |
 | `etl_version_set` | dict[str,str] | Plan-gen pin | Per ETL spec v3 §5.1 Decision 2. Locks Layer 0 version for the plan. |
 
 ### Return type
@@ -182,6 +184,29 @@ Example: `"Trail Running is a core discipline of Adventure Racing. It accounts f
 HITL does NOT fire on:
 - Curator-`excluded` disciplines (#509) — `excluded` is a deterministic curator decision, not a prompt. The four AR rows the curator marked Kayaking `included` / Canoeing · Snowshoeing · Mountaineering `excluded` now resolve to those values and do **not** trip the gate (pre-#509 all four leaked through as `prompt_required` and spuriously gated).
 - Training gaps alone (gaps surface as informational warnings, not gates)
+
+### 5.7 Cross-training fold (#447 §5)
+
+When `cross_training_sport` is supplied — i.e. the target race's sport differs from the athlete's profile primary sport (resolved upstream in `_upstream_full_cone`, `PlanGen_Planning_Sport_Spec_v1` §5) — the athlete's **home sport** is folded into the discipline set as low-weight cross-training, so an off-discipline race block (e.g. a trail runner doing an AR) still maintains home-discipline fitness without losing race specificity.
+
+Procedure (in `_fold_cross_training_disciplines`):
+
+1. Re-run the §5.2 disciplines query for `cross_training_sport`.
+2. **De-dupe** against the race discipline set — any home-sport discipline whose `discipline_id` already appears (the race already covers it) is dropped, never double-counted (Andy 2026-06-21).
+3. Append each remaining home-sport discipline as `inclusion = 'included'`, `role = 'Cross-training'`, capped on **both** weighting axes at `_CROSS_TRAINING_WEIGHT_FACTOR` (0.5) × the smallest included race discipline ("fixed low cap below race", Andy 2026-06-21):
+   - **`load_weight`** (priority axis) — 0.5 × smallest race `load_weight`. Governs ceiling-shed order + absorber reallocation in `session_grid` (lowest = first shed). **Not** the volume axis.
+   - **`phase_load`** (volume axis) — 0.5 × the smallest race **phase-load midpoint**, applied flat across all four phases; the home sport's own phase-load shape is discarded. This is the axis `validator.phase_volume_bands_hours` → `session_grid` (the #338/#433 race-share volume engine) renormalizes into weekly HOURS, so it — **not** `load_weight` — is what actually makes cross-training a minor maintenance dose (small enough to trip the sub-0.5-session/week maintenance-cadence rule → intermittent, not weekly). None when no race discipline carries phase_load (the volume engine no-ops for everyone), → folded `phase_load` left off.
+
+**Ordering (load-bearing):** the fold runs **after** §5.3/§5.4 inclusion+weighting **and after** modality-group pooling (X1b.2), but **before** the sum-to-1.0 normalization. Consequences:
+
+- The cap reads the **final** race weights, so the strict-below guarantee holds even when a race override (race terrain mix, §5.3) lowered a race discipline.
+- Cross-training disciplines do **not** participate in modality-group pooling — they never perturb the race modality pools (§5.4 precedence `race > athlete > bridge` is untouched).
+- Folded disciplines are **not** in the §5.5 rationale-divergence flags, §5.6 HITL determination, or the training-gaps summary — those stay race-specific by design.
+- The folded disciplines share in the final normalization, so the included set (race + cross-training) still sums to ≈1.0 (`Layer4_Spec` §4.2).
+
+**Cache:** no new key component is required — `layer2a_hash = compute_payload_hash(layer2a_payload)` is a content hash, so the injected disciplines change the hash (and every downstream plan cache key) automatically.
+
+**#338 (closed, shipped via #433):** the race-share volume model is `layer4/session_grid.py` + `validator.phase_volume_bands_hours`, driven by **`phase_load`** (renormalized across the included set × weekly-total hours), with the maintenance-cadence rule for sub-0.5-session/week disciplines — **not** `_apply_modality_group_pooling`, and **not** `load_weight`. The fold's `phase_load` cap (above) is what slots cross-training beneath that signal; the `load_weight` cap only sets shed-priority. Both are flat `0.5 ×` caps relative to the smallest race discipline on their respective axes.
 
 ## 6. Drift items affecting 2A
 
