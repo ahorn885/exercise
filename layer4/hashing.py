@@ -507,9 +507,9 @@ def compute_seam_review_cache_key(
     `call_cache_key` (layer2a/2d, discipline mix, periodization mode +
     start_phase, race format, event date) plus the reviewer model + token
     config. Only the per-call-variable session lists are hashed here;
-    everything else rides on `call_cache_key`. Iteration-2 (re-synthesis-
-    driven) reviews are NOT cached — they mutate phase state and are the
-    rare flagged path.
+    everything else rides on `call_cache_key`. The iteration-2 (re-synthesis-
+    driven) review of the same seam is cached under a distinct key — see
+    `compute_seam_review_iter2_cache_key`.
     """
     components = [
         call_cache_key,
@@ -517,6 +517,49 @@ def compute_seam_review_cache_key(
         str(seam_index),
         _sha256_hex(canonical_json([s.model_dump(mode="json") for s in prior_phase_sessions])),
         _sha256_hex(canonical_json([s.model_dump(mode="json") for s in next_phase_sessions])),
+        model,
+        str(max_tokens),
+        str(extended_thinking_budget),
+    ]
+    return _sha256_hex("||".join(components))
+
+
+def compute_seam_review_iter2_cache_key(
+    *,
+    call_cache_key: str,
+    seam_index: int,
+    prior_phase_sessions: list[PlanSession],
+    next_phase_sessions: list[PlanSession],
+    prior_seam_issues: list[str],
+    seam_direction: str | None,
+    model: str,
+    max_tokens: int,
+    extended_thinking_budget: int,
+) -> str:
+    """Per §9.2 — cache key for an iteration-2 (re-synthesis-driven) seam review.
+
+    The iter-2 review re-runs once (per §6.2 cap) after seam `seam_index`
+    flagged in iter-1 and drove a re-synthesis of one of its phases. It is a
+    pure function of the (now re-synthesized) two phases' session outputs —
+    which are themselves deterministically reproduced from the seam-resynth
+    block cache on a resumed pass — plus the iter-1 seam issues threaded into
+    the prompt (`prior_seam_issues`), the re-prompt direction that drove the
+    re-synthesis (`seam_direction`), and the upstream inputs already folded
+    into `call_cache_key`. This closes the §9.2 gap where the iter-2 seam
+    review tail re-ran whole on every resumable pass.
+
+    Keyed distinctly from the iter-1 review (`compute_seam_review_cache_key`)
+    via the "seam_iter2" tag plus the extra iter-1-issues / direction
+    components, so the two iterations of the same seam can never collide.
+    """
+    components = [
+        call_cache_key,
+        "seam_iter2",
+        str(seam_index),
+        _sha256_hex(canonical_json([s.model_dump(mode="json") for s in prior_phase_sessions])),
+        _sha256_hex(canonical_json([s.model_dump(mode="json") for s in next_phase_sessions])),
+        _sha256_hex("␟".join(prior_seam_issues)),
+        seam_direction or "",
         model,
         str(max_tokens),
         str(extended_thinking_budget),
