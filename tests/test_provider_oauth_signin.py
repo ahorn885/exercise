@@ -98,17 +98,19 @@ class TestIdentityHelpers:
         monkeypatch.setenv('PROVIDER_OAUTH_SIGNIN', '1')
         monkeypatch.setenv('STRAVA_CLIENT_ID', 'cid')
         monkeypatch.delenv('WAHOO_CLIENT_ID', raising=False)
+        monkeypatch.delenv('OURA_CLIENT_ID', raising=False)
         slugs = [p['slug'] for p in pi.enabled_signin_providers()]
-        assert slugs == ['strava']  # wahoo omitted — no client id configured
+        assert slugs == ['strava']  # wahoo/oura omitted — no client id configured
 
-    def test_enabled_signin_providers_both(self, monkeypatch):
+    def test_enabled_signin_providers_all_configured(self, monkeypatch):
         from routes import provider_identity as pi
         monkeypatch.setenv('PROVIDER_OAUTH_SIGNIN', '1')
         monkeypatch.setenv('STRAVA_CLIENT_ID', 'cid')
         monkeypatch.setenv('WAHOO_CLIENT_ID', 'cid')
+        monkeypatch.setenv('OURA_CLIENT_ID', 'cid')
         providers = pi.enabled_signin_providers()
         slugs = {p['slug'] for p in providers}
-        assert slugs == {'strava', 'wahoo'}
+        assert slugs == {'strava', 'wahoo', 'oura'}
         # endpoint references are well-formed for url_for
         assert all(p['endpoint'].endswith('.oauth_start') for p in providers)
 
@@ -348,3 +350,73 @@ class TestStravaSignin:
         assert resp.headers['Location'] == '/connections?strava_connected=1'
         assert captured['persisted'] == 7
         assert captured['link'] == (7, 'strava', '42')
+
+
+# ── Oura no-session sign-in (email scope, no name) ────────────────────────
+
+class TestOuraSignin:
+    def _token_resp(self):
+        return _FakeResp({'access_token': 'AT', 'refresh_token': 'RT',
+                          'expires_in': 86400})
+
+    def test_callback_creates_account_seeding_username_from_email(self, monkeypatch):
+        import routes.oura as oura
+        captured = {}
+        monkeypatch.setattr(oura, 'current_user_id', lambda: None)
+        monkeypatch.setattr(oura, 'get_db', lambda: object())
+        monkeypatch.setenv('PROVIDER_OAUTH_SIGNIN', '1')
+        monkeypatch.setenv('OURA_CLIENT_ID', 'cid')
+        monkeypatch.setenv('OURA_CLIENT_SECRET', 'secret')
+        monkeypatch.setattr(oura.requests, 'post', lambda *a, **k: self._token_resp())
+        monkeypatch.setattr(oura, '_fetch_oura_personal_info',
+                            lambda _t: {'id': 'oura-99', 'email': 'ringwearer@b.test'})
+        monkeypatch.setattr(oura.pi, 'get_identity', lambda db, p, u: None)
+        monkeypatch.setattr(oura.pi, 'create_signin_user',
+                            lambda db, **kw: captured.update(kw) or (123, 'ringwearer'))
+        monkeypatch.setattr(oura, '_persist_oura_auth',
+                            lambda *a, **k: captured.setdefault('persisted', a[1]))
+        client = _make_app(oura.bp).test_client()
+
+        start = client.get('/oura/oauth/start')
+        state = _state_from_location(start.headers['Location'])
+        resp = client.get(f'/oura/oauth/callback?code=C&state={state}')
+
+        assert resp.status_code == 302
+        assert resp.headers['Location'] == '/onboarding/connect'
+        assert captured['provider'] == 'oura'
+        assert captured['provider_user_id'] == 'oura-99'
+        assert captured['email'] == 'ringwearer@b.test'
+        assert captured['display_name'] is None       # Oura exposes no name
+        assert captured['username_hint'] == 'ringwearer'  # email local-part
+        assert captured['persisted'] == 123
+
+    def test_callback_logs_in_existing_identity(self, monkeypatch):
+        import routes.oura as oura
+        seen = {}
+        monkeypatch.setattr(oura, 'current_user_id', lambda: None)
+        monkeypatch.setattr(oura, 'get_db', lambda: object())
+        monkeypatch.setenv('PROVIDER_OAUTH_SIGNIN', '1')
+        monkeypatch.setenv('OURA_CLIENT_ID', 'cid')
+        monkeypatch.setenv('OURA_CLIENT_SECRET', 'secret')
+        monkeypatch.setattr(oura.requests, 'post', lambda *a, **k: self._token_resp())
+        monkeypatch.setattr(oura, '_fetch_oura_personal_info',
+                            lambda _t: {'id': 'oura-99', 'email': None})
+        monkeypatch.setattr(oura.pi, 'get_identity',
+                            lambda db, p, u: {'id': 5, 'user_id': 88})
+        monkeypatch.setattr(oura.pi, 'bump_last_login',
+                            lambda db, iid: seen.setdefault('bumped', iid))
+        monkeypatch.setattr(oura.pi, 'get_username', lambda db, uid: 'ringwearer')
+        monkeypatch.setattr(oura.pi, 'create_signin_user',
+                            lambda *a, **k: pytest.fail('must not create on match'))
+        monkeypatch.setattr(oura, '_persist_oura_auth',
+                            lambda *a, **k: seen.setdefault('persisted', a[1]))
+        client = _make_app(oura.bp).test_client()
+
+        start = client.get('/oura/oauth/start')
+        state = _state_from_location(start.headers['Location'])
+        resp = client.get(f'/oura/oauth/callback?code=C&state={state}')
+
+        assert resp.status_code == 302
+        assert resp.headers['Location'] == '/dash'
+        assert seen['bumped'] == 5
+        assert seen['persisted'] == 88

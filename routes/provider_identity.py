@@ -41,12 +41,12 @@ def signin_enabled() -> bool:
 
 
 # Providers whose no-session branch is actually IMPLEMENTED and so can render a
-# "Continue with <provider>" button. Oura is in SIGNIN_PROVIDERS by design but
-# joins this list when its callback branch lands. (slug, label, start endpoint,
-# client-id env var.)
+# "Continue with <provider>" button. (slug, label, start endpoint, client-id
+# env var.) Garmin is excluded by design (no OAuth).
 _SIGNIN_BUTTONS = (
     ('strava', 'Strava', 'strava.oauth_start', 'STRAVA_CLIENT_ID'),
     ('wahoo', 'Wahoo', 'wahoo.oauth_start', 'WAHOO_CLIENT_ID'),
+    ('oura', 'Oura', 'oura.oauth_start', 'OURA_CLIENT_ID'),
 )
 
 
