@@ -48,11 +48,13 @@ class _Conn:
 
     def execute(self, sql, *a, **k):
         s = ' '.join(sql.split())
-        # Order matters: the inventory query carries a `FROM current_rx cr`
-        # NOT EXISTS subquery, so match it before the plain current_rx read.
-        if 'FROM exercise_inventory ei' in s and 'NOT EXISTS' in s:
+        # #814 — the catalog is now fetched once (`SELECT * FROM
+        # exercise_inventory`) and the catalog/enrichment bridge is built in
+        # Python; the current_rx read is a plain user-scoped select (the v1
+        # name-join was replaced by the EX-id bridge).
+        if 'FROM exercise_inventory' in s:
             return _Cursor(self._inventory)
-        if 'FROM current_rx cr' in s:
+        if 'FROM current_rx' in s:
             return _Cursor(self._entries)
         if 'FROM locale_profiles' in s:
             return _Cursor(self._locales)
